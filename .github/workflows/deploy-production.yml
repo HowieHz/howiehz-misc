@@ -1,0 +1,67 @@
+name: Build and Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy to Halo after build"
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  # 动态组名：
+  # - push 到 main → production 组
+  # - workflow_dispatch 且 deploy=true → production 组
+  # - workflow_dispatch 且 deploy=false → 基于当前 commit hash 的唯一组（如 build-only-<sha>）
+  group: |
+    ${{
+      (github.event_name == 'push') && 'production' ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy == 'true') && 'production' ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy == 'false') && format('build-only-{0}', github.sha) ||
+      'other'
+    }}
+  cancel-in-progress: false # 等待当前组任务完成，不自动取消（唯一组不受影响）
+
+jobs:
+  build:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build with composite action
+        uses: ./.github/actions/build-docs
+
+  deploy:
+    needs: build
+    # 仅当满足以下条件时才执行部署：
+    # - push 到 main 且不是 dependabot
+    # - workflow_dispatch 且 deploy 输入为 true
+    if: |
+      (github.event_name == 'push' && github.actor != 'dependabot[bot]') ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy == true)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: docs-dist
+          path: docs/.vitepress/dist
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: "pnpm"
+      - name: Deploy Doc to Halo
+        run: |
+          pnpm --package=halo-static-pages-deploy-cli dlx halo-static-pages-deploy deploy \
+            -e ${{ secrets.DOCS_ENDPOINT }} \
+            -i ${{ secrets.DOCS_ID }} \
+            -t ${{ secrets.DOCS_PAT }} \
+            -f docs/.vitepress/dist

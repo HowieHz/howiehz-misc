@@ -33,6 +33,21 @@ import { withBase } from "vitepress";
   - 访问量：944
   - 评论量：1
   - 删除原因：现在应参考[《样式参考 | Higan Haozi》](https://howiehz.top/halo-theme-higan-haozi/guide/style-reference)。
+- Higan Haozi - 一款响应式、简洁清爽的 Halo CMS 主题
+  - 链接：`/archives/halo-theme-higan-hz`
+  - 分类：`资源图谱 > 博客生态`
+  - 标签：
+  - 描述：项目 README 镜像和一段感想：
+    > 为了定制主题，临时学了一点前端知识。  
+    > Halo CMS，Thymeleaf 的文档写的都很完善，所以改的比较顺畅。  
+    > 
+    > guqing 大佬的代码写的很好，所以改起来很快（实际上因为太菜，走了很多弯路QAQ）。  
+    > 
+    > 没提 PR 是因为自己写的代码质量不高，没许可证是因为原项目也没有许可证。
+  - 发布时间：2024-04-05T20:31:47+08:00
+  - 访问量：399
+  - 评论量：0
+  - 删除原因：现在应参考 [Higan Haozi](https://howiehz.top/halo-theme-higan-haozi)。
 - 重要通知：我们的 QQ 群与百度、必应和谷歌等搜索引擎建立了战略合作伙伴关系
   - 链接：`/archives/our-group-has-established-strategic-partnerships-with-search-engines`
   - 分类：`<无分类>`

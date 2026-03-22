@@ -2,7 +2,7 @@
 publish: false
 ---
 
-# Archive
+# Junk
 
 <script setup lang="ts">
 import { data as posts } from "./posts.data.ts";

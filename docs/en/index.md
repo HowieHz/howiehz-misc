@@ -19,7 +19,7 @@ hero:
 
 features:
   - icon: 📦
-    title: Archive
+    title: Junk
     details: Archived outdated or low-quality content, for reference only.
     link: /en/posts/junk/
     linkText: View junk

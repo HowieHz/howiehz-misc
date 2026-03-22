@@ -22,6 +22,7 @@ publish: false
 
 ```yaml
 ---
+outline: deep
 published: 2025-12-07T21:45:30Z
 author:
   - name: 投稿者 A

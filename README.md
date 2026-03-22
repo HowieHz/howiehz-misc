@@ -1,2 +1,3 @@
 # howiehz-misc
-Personal misc site: legacy articles &amp; online tools.
+
+Personal Misc Site: For things that don't belong on the main site.

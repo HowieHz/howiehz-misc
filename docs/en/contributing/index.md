@@ -22,6 +22,7 @@ Feel free to submit or revise content via PR.
 
 ```yaml
 ---
+outline: deep
 published: 2025-12-07T21:45:30Z
 author:
   - name: Contributor A

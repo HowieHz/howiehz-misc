@@ -8,7 +8,7 @@ author:
 
 <!-- markdownlint-disable MD024 -->
 
-# HRBUST ICPC 练习 2024 级题解分享
+# HRBUST XCPC 练习 2024 级题解分享
 
 ::: details 迁移自主站
 

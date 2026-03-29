@@ -4,9 +4,7 @@ import { computed } from "vue";
 
 const { page, site } = useData();
 
-
 const base = computed(() => site.value.base);
-
 
 const isEnglish = computed(() => page.value.relativePath?.startsWith("en/") ?? false);
 const copy = computed(() => {

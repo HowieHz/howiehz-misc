@@ -51,7 +51,7 @@ jobs:
           name: docs-dist
           path: docs/.vitepress/dist
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           run_install: false
       - uses: actions/setup-node@v6

@@ -37,7 +37,7 @@ jobs:
           # ref: https://github.com/stefanzweifel/git-auto-commit-action/tree/v7/?tab=readme-ov-file#commits-made-by-this-action-do-not-trigger-new-workflow-runs
           token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         name: Install pnpm
         with:
           run_install: false

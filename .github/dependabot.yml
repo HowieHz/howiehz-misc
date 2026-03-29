@@ -9,3 +9,76 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "daily"
+      time: "04:30"
+      timezone: "Asia/Shanghai"
+    groups:
+      docs-stack:
+        dependency-type: "development"
+        patterns:
+          - "vitepress"
+          - "vitepress-plugin-*"
+          - "pagefind"
+          - "@nolebase/*"
+          - "vue"
+          - "@giscus/vue"
+        update-types:
+          - "minor"
+          - "patch"
+      lint-and-format:
+        dependency-type: "development"
+        patterns:
+          - "eslint"
+          - "eslint-*"
+          - "@eslint/*"
+          - "@typescript-eslint/*"
+          - "typescript-eslint"
+          - "eslint-plugin-*"
+          - "vue-eslint-parser"
+          - "oxlint"
+          - "oxlint-*"
+          - "oxfmt"
+          - "stylelint"
+          - "stylelint-*"
+          - "markdownlint-cli"
+          - "autocorrect-node"
+          - "globals"
+        update-types:
+          - "minor"
+          - "patch"
+      build-and-platform:
+        dependency-type: "development"
+        patterns:
+          - "browserslist"
+          - "lightningcss"
+          - "@types/*"
+        update-types:
+          - "minor"
+          - "patch"
+      misc-dev:
+        dependency-type: "development"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      misc-prod:
+        dependency-type: "production"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # This group updates GitHub Actions referenced in workflows only.
+  # Dependabot does not update dependencies used inside local composite actions
+  # such as .github/actions/build-docs/action.yml.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "04:30"
+      timezone: "Asia/Shanghai"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

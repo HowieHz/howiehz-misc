@@ -4,3 +4,4 @@ allowBuilds:
   esbuild: true
   sharp: true
   unrs-resolver: true
+engineStrict: true # engines.node will be strictly enforced when installing dependencies

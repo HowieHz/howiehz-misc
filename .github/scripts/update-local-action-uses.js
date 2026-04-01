@@ -3,9 +3,12 @@ import path from "node:path";
 
 const defaultActionRoot = path.join(".github", "actions");
 const targetFilesFromArgs = process.argv.slice(2);
-// Only advance a semver-based action reference after the current latest release
-// itself has aged for at least 24 hours. If the latest release is still too new,
-// we intentionally keep the current ref instead of falling back to an older tag.
+// Only advance a semver-based action reference after the current GitHub latest
+// release itself has aged for at least 24 hours. We never "fall back" to an
+// older tag while a newer latest is still within that holdback window. For
+// example, if v1.0.0 was published at 00:00 and v1.1.0 became the new latest at
+// 12:00 on the same day, we do not update to either v1.0.0 or v1.1.0 until the
+// current latest v1.1.0 has been out for a full 24 hours.
 const latestReleaseMinAgeMs = 24 * 60 * 60 * 1000;
 
 const collectActionYamlFiles = async (directoryPath) => {
@@ -55,7 +58,7 @@ const appendGitHubOutput = (name, value) => {
     return;
   }
 
-  return fs.appendFile(outputPath, `${name}=${value}\n`);
+  return fs.appendFile(outputPath, `${name}=${value}\n`, "utf8");
 };
 
 const parseTimestamp = (value) => {
@@ -159,19 +162,30 @@ const fetchRepositoryMetadata = async (repository) => {
   return metadata;
 };
 
-const logLatestReleaseStatus = (repository, latestVersion, publishedAt, eligible, skipReason) => {
-  if (eligible) {
-    console.log(`Resolved ${repository} latest release ${latestVersion.tag} published at ${publishedAt}`);
+const logLatestReleaseStatus = (repository, latestRelease) => {
+  if (latestRelease.eligible) {
+    console.log(
+      `Resolved ${repository} latest release ${latestRelease.latestVersion.tag} published at ${latestRelease.publishedAt}`,
+    );
     return;
   }
 
-  if (skipReason === "missing_release") {
-    console.log(`Skipped ${repository} because no latest stable GitHub release is available`);
+  if (latestRelease.skipReason === "missing_latest_release") {
+    console.log(
+      `Skipped ${repository} because GitHub does not expose a latest release, so a strict 24-hour holdback cannot be verified`,
+    );
+    return;
+  }
+
+  if (latestRelease.skipReason === "unsupported_latest_release") {
+    console.log(
+      `Skipped ${repository} because the current latest release cannot be mapped to a stable semver tag with a published timestamp`,
+    );
     return;
   }
 
   console.log(
-    `Skipped ${repository} because latest release ${latestVersion.tag} was published at ${publishedAt} and is still within the 24-hour holdback`,
+    `Skipped ${repository} because latest release ${latestRelease.latestVersion.tag} was published at ${latestRelease.publishedAt} and is still within the 24-hour holdback`,
   );
 };
 
@@ -191,10 +205,10 @@ const fetchLatestStableRelease = async (repository) => {
       eligible: false,
       latestVersion: null,
       publishedAt: null,
-      skipReason: "missing_release",
+      skipReason: "missing_latest_release",
     };
     latestReleaseCache.set(repository, result);
-    logLatestReleaseStatus(repository, { tag: "<none>" }, null, result.eligible, result.skipReason);
+    logLatestReleaseStatus(repository, result);
     return result;
   }
 
@@ -207,15 +221,18 @@ const fetchLatestStableRelease = async (repository) => {
   const release = await response.json();
   const latestTag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
   const latestVersion = parseStableSemVer(latestTag);
-
-  if (!latestVersion) {
-    throw new Error(`Invalid latest stable release tag for ${repository}: ${latestTag || "<empty>"}`);
-  }
-
   const publishedAt = typeof release.published_at === "string" ? release.published_at.trim() : "";
 
-  if (!publishedAt) {
-    throw new Error(`Missing published_at for ${repository}@${latestVersion.tag}`);
+  if (!latestVersion || !publishedAt || release.draft === true || release.prerelease === true) {
+    const result = {
+      eligible: false,
+      latestVersion,
+      publishedAt: publishedAt || null,
+      skipReason: "unsupported_latest_release",
+    };
+    latestReleaseCache.set(repository, result);
+    logLatestReleaseStatus(repository, result);
+    return result;
   }
 
   const result = {
@@ -225,7 +242,7 @@ const fetchLatestStableRelease = async (repository) => {
     skipReason: null,
   };
   latestReleaseCache.set(repository, result);
-  logLatestReleaseStatus(repository, result.latestVersion, result.publishedAt, result.eligible, result.skipReason);
+  logLatestReleaseStatus(repository, result);
   return result;
 };
 
@@ -296,9 +313,17 @@ const buildCommitRefUpdate = async (repository, currentRef, suffix) => {
   }
 
   const latestRelease = await fetchLatestStableRelease(repository);
-  const targetTag = latestRelease.latestVersion ? resolveTargetRef(commentTag, latestRelease.latestVersion) : null;
 
-  if (!targetTag || !latestRelease.eligible) {
+  // Release-based pins only move after the current GitHub latest release clears
+  // the 24-hour holdback. If the latest is still too new, do not update to an
+  // older tag or to that new latest yet.
+  if (!latestRelease.eligible) {
+    return null;
+  }
+
+  const targetTag = resolveTargetRef(commentTag, latestRelease.latestVersion);
+
+  if (!targetTag) {
     return null;
   }
 
@@ -332,11 +357,14 @@ const updateFile = async (filePath) => {
       update = await buildCommitRefUpdate(repository, currentRef, suffix);
     } else {
       const latestRelease = await fetchLatestStableRelease(repository);
-      const targetVersion = latestRelease.latestVersion
-        ? resolveTargetRef(currentRef, latestRelease.latestVersion)
-        : null;
 
-      if (targetVersion && latestRelease.eligible) {
+      if (!latestRelease.eligible) {
+        continue;
+      }
+
+      const targetVersion = resolveTargetRef(currentRef, latestRelease.latestVersion);
+
+      if (targetVersion) {
         update = {
           nextRef: targetVersion,
           nextSuffix: replaceCommentTag(suffix, currentRef, targetVersion),
@@ -361,7 +389,7 @@ const updateFile = async (filePath) => {
     return [];
   }
 
-  await fs.writeFile(absolutePath, lines.join(lineEnding));
+  await fs.writeFile(absolutePath, lines.join(lineEnding), "utf8");
   return updates;
 };
 

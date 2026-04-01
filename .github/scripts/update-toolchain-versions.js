@@ -163,8 +163,7 @@ const fetchLatestPnpmVersion = async (currentPnpmVersion) => {
   }
 
   const metadata = await response.json();
-  const latestVersion =
-    typeof metadata["dist-tags"]?.latest === "string" ? metadata["dist-tags"].latest.trim() : "";
+  const latestVersion = typeof metadata["dist-tags"]?.latest === "string" ? metadata["dist-tags"].latest.trim() : "";
 
   if (!parseSemVer(latestVersion)) {
     throw new Error(`Invalid pnpm latest version: ${latestVersion || "<empty>"}`);
@@ -246,10 +245,7 @@ const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
 const replaceWorkflowStepInputValue = (content, actionPattern, inputName, nextValue) => {
   const lines = content.split(/\r?\n/u);
-  const inputPattern = new RegExp(
-    `^(\\s*${escapeRegExp(inputName)}:\\s*)(["']?)([^"'#\\s]+)\\2(\\s*(?:#.*)?)$`,
-    "u",
-  );
+  const inputPattern = new RegExp(`^(\\s*${escapeRegExp(inputName)}:\\s*)(["']?)([^"'#\\s]+)\\2(\\s*(?:#.*)?)$`, "u");
   let changed = false;
   let stepUsesTargetAction = false;
   let withinWithBlock = false;

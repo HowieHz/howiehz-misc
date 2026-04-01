@@ -119,9 +119,7 @@ const fetchLatestPnpmVersion = async () => {
   });
 
   if (!latestResponse.ok) {
-    throw new Error(
-      `Failed to fetch pnpm latest metadata: ${latestResponse.status} ${latestResponse.statusText}`,
-    );
+    throw new Error(`Failed to fetch pnpm latest metadata: ${latestResponse.status} ${latestResponse.statusText}`);
   }
 
   const latestMetadata = await latestResponse.json();
@@ -146,7 +144,9 @@ const fetchLatestPnpmVersion = async () => {
   const cooldownThreshold = getReleaseCooldownThreshold();
   const eligibleVersions = Object.entries(metadata.time ?? {})
     .filter(([version]) => parseSemVer(version))
-    .filter(([, publishedAt]) => typeof publishedAt === "string" && isOutsideReleaseCooldown(publishedAt, cooldownThreshold))
+    .filter(
+      ([, publishedAt]) => typeof publishedAt === "string" && isOutsideReleaseCooldown(publishedAt, cooldownThreshold),
+    )
     .map(([version]) => version)
     .sort((left, right) => compareSemVer(parseSemVer(right), parseSemVer(left)));
 

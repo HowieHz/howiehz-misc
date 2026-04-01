@@ -6,8 +6,9 @@ const githubDirPath = ".github";
 const workflowsDirPath = path.join(githubDirPath, "workflows");
 const actionsDirPath = path.join(githubDirPath, "actions");
 const dryRun = process.argv.includes("--dry-run");
-const releaseCooldownDays = 1;
-const millisecondsPerDay = 24 * 60 * 60 * 1000;
+// Only promote a toolchain release after the current latest itself has aged for at least 24 hours.
+// We intentionally do not fall back to an older version when a newer latest is still within this holdback window.
+const latestReleaseMinAgeMs = 24 * 60 * 60 * 1000;
 
 const appendGitHubOutput = async (name, value) => {
   const outputPath = process.env.GITHUB_OUTPUT;
@@ -18,8 +19,6 @@ const appendGitHubOutput = async (name, value) => {
 
   await fs.appendFile(outputPath, `${name}=${value}\n`, "utf8");
 };
-
-const compareNumbers = (left, right) => left - right;
 
 const parseSemVer = (version) => {
   const match = /^v?(\d+)\.(\d+)\.(\d+)$/u.exec(version);
@@ -35,14 +34,30 @@ const parseSemVer = (version) => {
   };
 };
 
-const compareSemVer = (left, right) =>
-  compareNumbers(left.major, right.major) ||
-  compareNumbers(left.minor, right.minor) ||
-  compareNumbers(left.patch, right.patch);
+const parseNodeEngineMajor = (value) => {
+  const match = /^>=(\d+)$/u.exec(typeof value === "string" ? value.trim() : "");
 
-const parseIsoDateTime = (value) => {
-  const normalizedValue = /^\d{4}-\d{2}-\d{2}$/u.test(value) ? `${value}T00:00:00.000Z` : value;
-  const timestamp = Date.parse(normalizedValue);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
+};
+
+const parsePackageManagerPnpmVersion = (value) => {
+  const match = /^pnpm@(.+)$/u.exec(typeof value === "string" ? value.trim() : "");
+
+  if (!match) {
+    return null;
+  }
+
+  const version = match[1].trim();
+
+  return parseSemVer(version) ? version : null;
+};
+
+const parseTimestamp = (value) => {
+  const timestamp = Date.parse(typeof value === "string" ? value.trim() : "");
 
   if (Number.isNaN(timestamp)) {
     return null;
@@ -51,16 +66,14 @@ const parseIsoDateTime = (value) => {
   return timestamp;
 };
 
-const getReleaseCooldownThreshold = () => Date.now() - releaseCooldownDays * millisecondsPerDay;
-
-const isOutsideReleaseCooldown = (publishedAt, cooldownThreshold = getReleaseCooldownThreshold()) => {
-  const publishedTimestamp = parseIsoDateTime(publishedAt);
+const hasReachedLatestReleaseMinAge = (publishedAt, now = Date.now()) => {
+  const publishedTimestamp = parseTimestamp(publishedAt);
 
   if (publishedTimestamp === null) {
     throw new Error(`Invalid published date: ${publishedAt || "<empty>"}`);
   }
 
-  return publishedTimestamp <= cooldownThreshold;
+  return now - publishedTimestamp >= latestReleaseMinAgeMs;
 };
 
 const stripUtf8Bom = (content) => content.replace(/^\uFEFF/u, "");
@@ -83,8 +96,62 @@ const maybeWriteFile = async (filePath, nextContent) => {
   await fs.writeFile(path.resolve(process.cwd(), filePath), nextContent, "utf8");
 };
 
-const fetchLatestNodeMajor = async () => {
-  const response = await fetch("https://nodejs.org/dist/index.json", {
+const readCurrentToolchainVersions = async () => {
+  const { content } = await readUtf8FileWithLineEnding(packageJsonPath);
+  const packageJson = JSON.parse(content);
+  const nodeMajor = parseNodeEngineMajor(packageJson.engines?.node);
+  const pnpmVersion = parsePackageManagerPnpmVersion(packageJson.packageManager);
+
+  if (nodeMajor === null) {
+    throw new Error(`Invalid current Node.js engine range in ${packageJsonPath}`);
+  }
+
+  if (!pnpmVersion) {
+    throw new Error(`Invalid current pnpm packageManager value in ${packageJsonPath}`);
+  }
+
+  return {
+    nodeMajor,
+    pnpmVersion,
+  };
+};
+
+const fetchLatestNodeMajor = async (currentNodeMajor) => {
+  // nodejs.org/dist/index.json only exposes a calendar date, which cannot enforce a strict 24-hour holdback.
+  // GitHub releases expose the published timestamp for the current latest release, which matches the intended rule.
+  const response = await fetch("https://api.github.com/repos/nodejs/node/releases/latest", {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "howiehz-misc-toolchain-updater",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Node.js latest release: ${response.status} ${response.statusText}`);
+  }
+
+  const release = await response.json();
+  const latestVersion = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+  const publishedAt = typeof release.published_at === "string" ? release.published_at.trim() : "";
+  const parsedVersion = parseSemVer(latestVersion);
+
+  if (!parsedVersion) {
+    throw new Error(`Invalid Node.js latest release tag: ${latestVersion || "<empty>"}`);
+  }
+
+  if (!hasReachedLatestReleaseMinAge(publishedAt)) {
+    console.log(
+      `Skipping Node.js update because latest ${latestVersion} was published at ${publishedAt} and is still within the 24-hour holdback`,
+    );
+    return currentNodeMajor;
+  }
+
+  return parsedVersion.major;
+};
+
+const fetchLatestPnpmVersion = async (currentPnpmVersion) => {
+  const response = await fetch("https://registry.npmjs.org/pnpm", {
     headers: {
       Accept: "application/json",
       "User-Agent": "howiehz-misc-toolchain-updater",
@@ -92,69 +159,31 @@ const fetchLatestNodeMajor = async () => {
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch Node.js releases: ${response.status} ${response.statusText}`);
+    throw new Error(`Failed to fetch pnpm package metadata: ${response.status} ${response.statusText}`);
   }
 
-  const releases = await response.json();
-  const cooldownThreshold = getReleaseCooldownThreshold();
-  const stableVersions = releases
-    .filter((release) => isOutsideReleaseCooldown(release.date, cooldownThreshold))
-    .map((release) => parseSemVer(release.version))
-    .filter(Boolean)
-    .sort((left, right) => compareSemVer(right, left));
-
-  if (stableVersions.length === 0) {
-    throw new Error(`No stable Node.js versions found outside the ${releaseCooldownDays}-day cooldown window`);
-  }
-
-  return stableVersions[0].major;
-};
-
-const fetchLatestPnpmVersion = async () => {
-  const latestResponse = await fetch("https://registry.npmjs.org/pnpm/latest", {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "howiehz-misc-toolchain-updater",
-    },
-  });
-
-  if (!latestResponse.ok) {
-    throw new Error(`Failed to fetch pnpm latest metadata: ${latestResponse.status} ${latestResponse.statusText}`);
-  }
-
-  const latestMetadata = await latestResponse.json();
-  const latestVersion = typeof latestMetadata.version === "string" ? latestMetadata.version.trim() : "";
+  const metadata = await response.json();
+  const latestVersion =
+    typeof metadata["dist-tags"]?.latest === "string" ? metadata["dist-tags"].latest.trim() : "";
 
   if (!parseSemVer(latestVersion)) {
     throw new Error(`Invalid pnpm latest version: ${latestVersion || "<empty>"}`);
   }
 
-  const metadataResponse = await fetch("https://registry.npmjs.org/pnpm", {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "howiehz-misc-toolchain-updater",
-    },
-  });
+  const publishedAt = metadata.time?.[latestVersion];
 
-  if (!metadataResponse.ok) {
-    throw new Error(`Failed to fetch pnpm package metadata: ${metadataResponse.status} ${metadataResponse.statusText}`);
+  if (typeof publishedAt !== "string") {
+    throw new Error(`Missing published time for pnpm latest version: ${latestVersion}`);
   }
 
-  const metadata = await metadataResponse.json();
-  const cooldownThreshold = getReleaseCooldownThreshold();
-  const eligibleVersions = Object.entries(metadata.time ?? {})
-    .filter(([version]) => parseSemVer(version))
-    .filter(
-      ([, publishedAt]) => typeof publishedAt === "string" && isOutsideReleaseCooldown(publishedAt, cooldownThreshold),
-    )
-    .map(([version]) => version)
-    .sort((left, right) => compareSemVer(parseSemVer(right), parseSemVer(left)));
-
-  if (eligibleVersions.length === 0) {
-    throw new Error(`No pnpm versions found outside the ${releaseCooldownDays}-day cooldown window`);
+  if (!hasReachedLatestReleaseMinAge(publishedAt)) {
+    console.log(
+      `Skipping pnpm update because latest ${latestVersion} was published at ${publishedAt} and is still within the 24-hour holdback`,
+    );
+    return currentPnpmVersion;
   }
 
-  return eligibleVersions[0];
+  return latestVersion;
 };
 
 const collectFilesByName = async (directoryPath, fileName) => {
@@ -213,19 +242,63 @@ const updatePackageJson = async (nodeMajor, pnpmVersion) => {
   return updatedFields;
 };
 
-const replaceNodeVersionValue = (content, nodeMajor) => {
-  const nodeVersionPattern = /^(\s*node-version:\s*)(["']?)(?:lts\/\*|\d+)\2(\s*(?:#.*)?)$/gmu;
-  let changed = false;
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
-  const nextContent = content.replace(nodeVersionPattern, (_, prefix, quote, suffix) => {
+const replaceWorkflowStepInputValue = (content, actionPattern, inputName, nextValue) => {
+  const lines = content.split(/\r?\n/u);
+  const inputPattern = new RegExp(
+    `^(\\s*${escapeRegExp(inputName)}:\\s*)(["']?)([^"'#\\s]+)\\2(\\s*(?:#.*)?)$`,
+    "u",
+  );
+  let changed = false;
+  let stepUsesTargetAction = false;
+  let withinWithBlock = false;
+  let withIndent = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const normalizedLine = line.replace(/^(\s*)-\s+/u, "$1");
+    const trimmed = line.trim();
+    const indent = line.match(/^\s*/u)?.[0].length ?? 0;
+
+    if (/^\s*-\s+/u.test(line)) {
+      stepUsesTargetAction = false;
+      withinWithBlock = false;
+      withIndent = -1;
+    }
+
+    if (withinWithBlock && trimmed && indent <= withIndent) {
+      withinWithBlock = false;
+      withIndent = -1;
+    }
+
+    if (/^\s*uses:\s*/u.test(normalizedLine)) {
+      stepUsesTargetAction = actionPattern.test(normalizedLine);
+    }
+
+    if (stepUsesTargetAction && /^\s*with:\s*$/u.test(normalizedLine)) {
+      withinWithBlock = true;
+      withIndent = indent;
+      continue;
+    }
+
+    if (!stepUsesTargetAction || !withinWithBlock) {
+      continue;
+    }
+
+    const match = line.match(inputPattern);
+
+    if (!match || match[3] === nextValue) {
+      continue;
+    }
+
+    lines[index] = `${match[1]}${match[2]}${nextValue}${match[2]}${match[4]}`;
     changed = true;
-    const wrappedValue = `${quote}${nodeMajor}${quote}`;
-    return `${prefix}${wrappedValue}${suffix}`;
-  });
+  }
 
   return {
     changed,
-    nextContent,
+    nextContent: lines.join("\n"),
   };
 };
 
@@ -236,7 +309,12 @@ const updateNodeVersionFile = async (filePath, nodeMajor) => {
     return [];
   }
 
-  const { changed, nextContent } = replaceNodeVersionValue(content, nodeMajor);
+  const { changed, nextContent } = replaceWorkflowStepInputValue(
+    content,
+    /uses:\s*actions\/setup-node@/u,
+    "node-version",
+    String(nodeMajor),
+  );
 
   if (!changed || nextContent === content) {
     return [];
@@ -267,11 +345,12 @@ const updateNodeVersionFiles = async (nodeMajor) => {
   return updateGroups;
 };
 
-const nodeMajor = await fetchLatestNodeMajor();
-const pnpmVersion = await fetchLatestPnpmVersion();
+const currentToolchainVersions = await readCurrentToolchainVersions();
+const nodeMajor = await fetchLatestNodeMajor(currentToolchainVersions.nodeMajor);
+const pnpmVersion = await fetchLatestPnpmVersion(currentToolchainVersions.pnpmVersion);
 
-console.log(`Resolved latest Node.js major: ${nodeMajor}`);
-console.log(`Resolved latest pnpm version: ${pnpmVersion}`);
+console.log(`Resolved target Node.js major: ${nodeMajor}`);
+console.log(`Resolved target pnpm version: ${pnpmVersion}`);
 
 const nodeVersionUpdateGroups = await updateNodeVersionFiles(nodeMajor);
 

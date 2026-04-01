@@ -6,6 +6,8 @@ const githubDirPath = ".github";
 const workflowsDirPath = path.join(githubDirPath, "workflows");
 const actionsDirPath = path.join(githubDirPath, "actions");
 const dryRun = process.argv.includes("--dry-run");
+const releaseCooldownDays = 1;
+const millisecondsPerDay = 24 * 60 * 60 * 1000;
 
 const appendGitHubOutput = async (name, value) => {
   const outputPath = process.env.GITHUB_OUTPUT;
@@ -37,6 +39,29 @@ const compareSemVer = (left, right) =>
   compareNumbers(left.major, right.major) ||
   compareNumbers(left.minor, right.minor) ||
   compareNumbers(left.patch, right.patch);
+
+const parseIsoDateTime = (value) => {
+  const normalizedValue = /^\d{4}-\d{2}-\d{2}$/u.test(value) ? `${value}T00:00:00.000Z` : value;
+  const timestamp = Date.parse(normalizedValue);
+
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+
+  return timestamp;
+};
+
+const getReleaseCooldownThreshold = () => Date.now() - releaseCooldownDays * millisecondsPerDay;
+
+const isOutsideReleaseCooldown = (publishedAt, cooldownThreshold = getReleaseCooldownThreshold()) => {
+  const publishedTimestamp = parseIsoDateTime(publishedAt);
+
+  if (publishedTimestamp === null) {
+    throw new Error(`Invalid published date: ${publishedAt || "<empty>"}`);
+  }
+
+  return publishedTimestamp <= cooldownThreshold;
+};
 
 const stripUtf8Bom = (content) => content.replace(/^\uFEFF/u, "");
 
@@ -71,38 +96,65 @@ const fetchLatestNodeMajor = async () => {
   }
 
   const releases = await response.json();
+  const cooldownThreshold = getReleaseCooldownThreshold();
   const stableVersions = releases
+    .filter((release) => isOutsideReleaseCooldown(release.date, cooldownThreshold))
     .map((release) => parseSemVer(release.version))
     .filter(Boolean)
     .sort((left, right) => compareSemVer(right, left));
 
   if (stableVersions.length === 0) {
-    throw new Error("No stable Node.js versions found in release index");
+    throw new Error(`No stable Node.js versions found outside the ${releaseCooldownDays}-day cooldown window`);
   }
 
   return stableVersions[0].major;
 };
 
 const fetchLatestPnpmVersion = async () => {
-  const response = await fetch("https://registry.npmjs.org/pnpm/latest", {
+  const latestResponse = await fetch("https://registry.npmjs.org/pnpm/latest", {
     headers: {
       Accept: "application/json",
       "User-Agent": "howiehz-misc-toolchain-updater",
     },
   });
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch pnpm latest metadata: ${response.status} ${response.statusText}`);
+  if (!latestResponse.ok) {
+    throw new Error(
+      `Failed to fetch pnpm latest metadata: ${latestResponse.status} ${latestResponse.statusText}`,
+    );
   }
 
-  const metadata = await response.json();
-  const version = typeof metadata.version === "string" ? metadata.version.trim() : "";
+  const latestMetadata = await latestResponse.json();
+  const latestVersion = typeof latestMetadata.version === "string" ? latestMetadata.version.trim() : "";
 
-  if (!parseSemVer(version)) {
-    throw new Error(`Invalid pnpm latest version: ${version || "<empty>"}`);
+  if (!parseSemVer(latestVersion)) {
+    throw new Error(`Invalid pnpm latest version: ${latestVersion || "<empty>"}`);
   }
 
-  return version;
+  const metadataResponse = await fetch("https://registry.npmjs.org/pnpm", {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "howiehz-misc-toolchain-updater",
+    },
+  });
+
+  if (!metadataResponse.ok) {
+    throw new Error(`Failed to fetch pnpm package metadata: ${metadataResponse.status} ${metadataResponse.statusText}`);
+  }
+
+  const metadata = await metadataResponse.json();
+  const cooldownThreshold = getReleaseCooldownThreshold();
+  const eligibleVersions = Object.entries(metadata.time ?? {})
+    .filter(([version]) => parseSemVer(version))
+    .filter(([, publishedAt]) => typeof publishedAt === "string" && isOutsideReleaseCooldown(publishedAt, cooldownThreshold))
+    .map(([version]) => version)
+    .sort((left, right) => compareSemVer(parseSemVer(right), parseSemVer(left)));
+
+  if (eligibleVersions.length === 0) {
+    throw new Error(`No pnpm versions found outside the ${releaseCooldownDays}-day cooldown window`);
+  }
+
+  return eligibleVersions[0];
 };
 
 const collectFilesByName = async (directoryPath, fileName) => {

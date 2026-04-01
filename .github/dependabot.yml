@@ -11,6 +11,8 @@ updates:
       interval: "daily"
       time: "04:30"
       timezone: "Asia/Shanghai"
+    cooldown:
+      default-days: 1
     groups:
       docs-stack:
         dependency-type: "development"
@@ -78,6 +80,8 @@ updates:
       interval: "daily"
       time: "04:30"
       timezone: "Asia/Shanghai"
+    cooldown:
+      default-days: 1
     groups:
       github-actions:
         patterns:

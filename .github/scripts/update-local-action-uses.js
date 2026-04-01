@@ -3,6 +3,13 @@ import path from "node:path";
 
 const defaultActionRoot = path.join(".github", "actions");
 const targetFilesFromArgs = process.argv.slice(2);
+// Only advance a semver-based action reference after the current GitHub latest
+// release itself has aged for at least 24 hours. We never "fall back" to an
+// older tag while a newer latest is still within that holdback window. For
+// example, if v1.0.0 was published at 00:00 and v1.1.0 became the new latest at
+// 12:00 on the same day, we do not update to either v1.0.0 or v1.1.0 until the
+// current latest v1.1.0 has been out for a full 24 hours.
+const latestReleaseMinAgeMs = 24 * 60 * 60 * 1000;
 
 const collectActionYamlFiles = async (directoryPath) => {
   const absoluteDirectoryPath = path.resolve(process.cwd(), directoryPath);
@@ -31,7 +38,7 @@ const usesPattern =
   /^(\s*-?\s*uses:\s*)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./-]+)?)@([^\s#]+)(\s*(#.*)?)$/u;
 const commitRefPattern = /^[0-9a-f]{7,40}$/iu;
 const releaseTagUrlPattern = /\/releases\/tag\/([^/\s#]+)$/u;
-const versionCache = new Map();
+const latestReleaseCache = new Map();
 const repoMetadataCache = new Map();
 const tagCommitCache = new Map();
 const githubHeaders = {
@@ -51,7 +58,27 @@ const appendGitHubOutput = (name, value) => {
     return;
   }
 
-  return fs.appendFile(outputPath, `${name}=${value}\n`);
+  return fs.appendFile(outputPath, `${name}=${value}\n`, "utf8");
+};
+
+const parseTimestamp = (value) => {
+  const timestamp = Date.parse(typeof value === "string" ? value.trim() : "");
+
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+
+  return timestamp;
+};
+
+const hasReachedLatestReleaseMinAge = (publishedAt, now = Date.now()) => {
+  const publishedTimestamp = parseTimestamp(publishedAt);
+
+  if (publishedTimestamp === null) {
+    throw new Error(`Invalid release timestamp: ${publishedAt || "<empty>"}`);
+  }
+
+  return now - publishedTimestamp >= latestReleaseMinAgeMs;
 };
 
 const parseStableSemVer = (tag) => {
@@ -101,18 +128,6 @@ const replaceCommentTag = (comment, currentTag, nextTag) => {
     );
 };
 
-const compareSemVer = (left, right) => {
-  if (left.major !== right.major) {
-    return left.major - right.major;
-  }
-
-  if (left.minor !== right.minor) {
-    return left.minor - right.minor;
-  }
-
-  return left.patch - right.patch;
-};
-
 const resolveTargetRef = (currentRef, latestVersion) => {
   const hasVPrefix = currentRef.startsWith("v");
 
@@ -147,33 +162,88 @@ const fetchRepositoryMetadata = async (repository) => {
   return metadata;
 };
 
-const fetchLatestStableVersion = async (repository) => {
-  const cached = versionCache.get(repository);
+const logLatestReleaseStatus = (repository, latestRelease) => {
+  if (latestRelease.eligible) {
+    console.log(
+      `Resolved ${repository} latest release ${latestRelease.latestVersion.tag} published at ${latestRelease.publishedAt}`,
+    );
+    return;
+  }
+
+  if (latestRelease.skipReason === "missing_latest_release") {
+    console.log(
+      `Skipped ${repository} because GitHub does not expose a latest release, so a strict 24-hour holdback cannot be verified`,
+    );
+    return;
+  }
+
+  if (latestRelease.skipReason === "unsupported_latest_release") {
+    console.log(
+      `Skipped ${repository} because the current latest release cannot be mapped to a stable semver tag with a published timestamp`,
+    );
+    return;
+  }
+
+  console.log(
+    `Skipped ${repository} because latest release ${latestRelease.latestVersion.tag} was published at ${latestRelease.publishedAt} and is still within the 24-hour holdback`,
+  );
+};
+
+const fetchLatestStableRelease = async (repository) => {
+  const cached = latestReleaseCache.get(repository);
 
   if (cached) {
     return cached;
   }
 
-  const response = await fetch(`https://api.github.com/repos/${repository}/tags?per_page=100`, {
+  const response = await fetch(`https://api.github.com/repos/${repository}/releases/latest`, {
     headers: githubHeaders,
   });
 
+  if (response.status === 404) {
+    const result = {
+      eligible: false,
+      latestVersion: null,
+      publishedAt: null,
+      skipReason: "missing_latest_release",
+    };
+    latestReleaseCache.set(repository, result);
+    logLatestReleaseStatus(repository, result);
+    return result;
+  }
+
   if (!response.ok) {
-    throw new Error(`Failed to fetch tags for ${repository}: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Failed to fetch latest release metadata for ${repository}: ${response.status} ${response.statusText}`,
+    );
   }
 
-  const tags = await response.json();
-  const latestVersion = tags
-    .map(({ name }) => parseStableSemVer(name))
-    .filter(Boolean)
-    .sort((left, right) => compareSemVer(right, left))[0];
+  const release = await response.json();
+  const latestTag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+  const latestVersion = parseStableSemVer(latestTag);
+  const publishedAt = typeof release.published_at === "string" ? release.published_at.trim() : "";
 
-  if (!latestVersion) {
-    throw new Error(`No stable semver tags found for ${repository}`);
+  if (!latestVersion || !publishedAt || release.draft === true || release.prerelease === true) {
+    const result = {
+      eligible: false,
+      latestVersion,
+      publishedAt: publishedAt || null,
+      skipReason: "unsupported_latest_release",
+    };
+    latestReleaseCache.set(repository, result);
+    logLatestReleaseStatus(repository, result);
+    return result;
   }
 
-  versionCache.set(repository, latestVersion);
-  return latestVersion;
+  const result = {
+    eligible: hasReachedLatestReleaseMinAge(publishedAt),
+    latestVersion,
+    publishedAt,
+    skipReason: null,
+  };
+  latestReleaseCache.set(repository, result);
+  logLatestReleaseStatus(repository, result);
+  return result;
 };
 
 const fetchCommitShaForTag = async (repository, tag) => {
@@ -232,6 +302,8 @@ const buildCommitRefUpdate = async (repository, currentRef, suffix) => {
   const commentTag = extractSemVerTagFromComment(suffix);
 
   if (!commentTag) {
+    // A raw commit pin without a release tag comment tracks the default branch head by design,
+    // so there is no release timestamp that can participate in the 24-hour holdback.
     const targetRef = await fetchDefaultBranchHeadSha(repository);
     return {
       nextRef: targetRef,
@@ -240,8 +312,16 @@ const buildCommitRefUpdate = async (repository, currentRef, suffix) => {
     };
   }
 
-  const latestVersion = await fetchLatestStableVersion(repository);
-  const targetTag = resolveTargetRef(commentTag, latestVersion);
+  const latestRelease = await fetchLatestStableRelease(repository);
+
+  // Release-based pins only move after the current GitHub latest release clears
+  // the 24-hour holdback. If the latest is still too new, do not update to an
+  // older tag or to that new latest yet.
+  if (!latestRelease.eligible) {
+    return null;
+  }
+
+  const targetTag = resolveTargetRef(commentTag, latestRelease.latestVersion);
 
   if (!targetTag) {
     return null;
@@ -276,7 +356,13 @@ const updateFile = async (filePath) => {
     if (isCommitRef(currentRef)) {
       update = await buildCommitRefUpdate(repository, currentRef, suffix);
     } else {
-      const targetVersion = resolveTargetRef(currentRef, await fetchLatestStableVersion(repository));
+      const latestRelease = await fetchLatestStableRelease(repository);
+
+      if (!latestRelease.eligible) {
+        continue;
+      }
+
+      const targetVersion = resolveTargetRef(currentRef, latestRelease.latestVersion);
 
       if (targetVersion) {
         update = {
@@ -303,7 +389,7 @@ const updateFile = async (filePath) => {
     return [];
   }
 
-  await fs.writeFile(absolutePath, lines.join(lineEnding));
+  await fs.writeFile(absolutePath, lines.join(lineEnding), "utf8");
   return updates;
 };
 

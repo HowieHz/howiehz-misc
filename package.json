@@ -22,7 +22,7 @@
     "docs:dev": "vitepress dev docs",
     "docs:preview": "pnpm run docs:build && vitepress preview docs",
     "fmt": "pnpm run \"/^fmt:/\"",
-    "fmt:oxfmt": "oxfmt \"**/*.{json,jsonc,yaml,md,css,js,ts,vue,html}\" \".github/**/*.{yml,js,json}\"",
+    "fmt:oxfmt": "oxfmt \"**/*.{json,jsonc,yaml,md,css,js,ts,vue,html}\"",
     "lint": "pnpm run \"/^lint:/\"",
     "lint:autocorrect": "autocorrect --fix",
     "lint:md": "markdownlint --fix \"**/*.md\" --ignore-path .gitignore",
@@ -30,6 +30,9 @@
     "lint:style": "stylelint --fix \"**/*.{css,vue}\" \"docs/.vitepress/**/*.{css,vue}\" --ignore-path .gitignore",
     "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm run fmt",
     "preinstall": "npx only-allow pnpm"
+  },
+  "dependencies": {
+    "lunar-javascript": "^1.7.7"
   },
   "devDependencies": {
     "@eslint/compat": "^2.0.3",

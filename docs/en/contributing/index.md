@@ -14,11 +14,40 @@ Feel free to submit or revise content via PR.
 4. Preview artifacts: `pnpm docs:preview`
 5. Before submitting, run: `pnpm fmt` and `pnpm lint`
 
+## Using Vue in Markdown
+
+In VitePress, every Markdown file is compiled into HTML and treated as a Vue Single-File Component. That means you can use Vue dynamic templates, components, and `<script>` logic directly in Markdown. Before editing related pages, read the [official VitePress docs](https://vitepress.dev/guide/using-vue) first.
+
+On top of that, keep raw HTML template blocks contiguous and structurally stable. Do not insert arbitrary blank lines inside containers like `<select>...</select>`, or VitePress may report a Vue template parse error during dev/build through `vite:vue` / the Vue SFC compiler, such as `Element is missing end tag`.
+
+- Bad:
+
+<!-- prettier-ignore-start -->
+```html
+<select v-model="dayType">
+
+<option
+  value="0"
+>
+Next Day
+</option>
+</select>
+```
+<!-- prettier-ignore-end -->
+
+- Good:
+
+```html
+<select v-model="dayType">
+  <option value="0">Next Day</option>
+</select>
+```
+
 ## Categories
 
 - [Junk](/en/posts/junk/) · [docs/posts/junk/](https://github.com/HowieHz/howiehz-misc/tree/main/docs/posts/junk)
 
-## Frontmatter Template
+## Article Frontmatter Template
 
 ```yaml
 ---
@@ -51,3 +80,19 @@ Field explanation:
     - Example: `ia: https://web.archive.org/web/...` or `wayback: https://...`
 
 > Frontmatter must be placed at the very beginning of the Markdown file, wrapped by a pair of `---`, with fields in between. The article content must begin with `# Article Title` as a level-one heading.
+
+## Tool Frontmatter Template
+
+```yaml
+---
+publish: false
+published: 2025-12-07T21:45:30Z
+---
+```
+
+Field explanation:
+
+- `publish: false` (required): prevents publishing to RSS feeds.
+- `published` (required): publication time.
+
+> Frontmatter must be placed at the very beginning of the Markdown file, wrapped by a pair of `---`, with fields in between. The content must begin with `# Tool Name` as a level-one heading.

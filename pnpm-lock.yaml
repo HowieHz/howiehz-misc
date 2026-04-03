@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      lunar-javascript:
+        specifier: ^1.7.7
+        version: 1.7.7
     devDependencies:
       '@eslint/compat':
         specifier: ^2.0.3
@@ -2170,6 +2174,9 @@ packages:
 
   lodash.truncate@4.4.2:
     resolution: {integrity: sha512-jttmRe7bRse52OsWIMDLaXxWqRAmtIUccAQ3garviCqJjafXOfNMO0yMfNpdD6zbGaTU0P5Nz7e7gAT6cKmJRw==}
+
+  lunar-javascript@1.7.7:
+    resolution: {integrity: sha512-u/KYiwPIBo/0bT+WWfU7qO1d+aqeB90Tuy4ErXenr2Gam0QcWeezUvtiOIyXR7HbVnW2I1DKfU0NBvzMZhbVQw==}
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
@@ -4524,6 +4531,8 @@ snapshots:
       p-locate: 5.0.0
 
   lodash.truncate@4.4.2: {}
+
+  lunar-javascript@1.7.7: {}
 
   magic-string@0.30.21:
     dependencies:

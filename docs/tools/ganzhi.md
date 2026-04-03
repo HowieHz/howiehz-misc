@@ -8,7 +8,7 @@ published: 2026-04-03T20:00:00+08:00
 <!-- autocorrect-disable -->
 <script setup lang="ts">
 import { Foto, Lunar, LunarMonth, LunarYear, Solar, Tao } from "lunar-javascript";
-import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from "vue";
 
 type CalendarMode = "solar" | "lunar" | "foto" | "tao";
 type LunisolarMode = Exclude<CalendarMode, "solar">;
@@ -222,6 +222,8 @@ const activeParsedSolar = computed(() => (
   calendarMode.value === "solar" ? parseSolarInput() : parseLunisolarInput(calendarMode.value)
 ));
 const lastValidSolar = ref(todaySolar);
+const copyStatus = ref<"idle" | "success" | "error">("idle");
+let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 const activeLunisolarState = computed(() => (
   calendarMode.value === "solar" ? undefined : lunisolarModeState[calendarMode.value]
 ));
@@ -310,6 +312,48 @@ const result = computed<GanzhiResult | undefined>(() => {
     zodiacEmoji: zodiacEmojiMap[zodiac] ?? "",
   };
 });
+const resultCopyText = computed(() => {
+  if (!result.value) {
+    return "";
+  }
+
+  return [
+    `年柱 ${result.value.yearPillar}`,
+    `月柱 ${result.value.monthPillar}`,
+    `日柱 ${result.value.dayPillar}`,
+    `时柱 ${result.value.timePillar}`,
+    `公历 ${result.value.solarLabel}`,
+    `农历 ${result.value.lunarLabel}`,
+    `生肖 ${result.value.zodiac}${result.value.zodiacEmoji ? ` ${result.value.zodiacEmoji}` : ""}`,
+  ].join("\n");
+});
+const copyButtonIcon = computed(() => {
+  if (copyStatus.value === "success") {
+    return "✓";
+  }
+  if (copyStatus.value === "error") {
+    return "!";
+  }
+  return "⧉";
+});
+const copyButtonText = computed(() => {
+  if (copyStatus.value === "success") {
+    return "已复制";
+  }
+  if (copyStatus.value === "error") {
+    return "复制失败";
+  }
+  return "复制";
+});
+const copyStatusAnnouncement = computed(() => {
+  if (copyStatus.value === "success") {
+    return "结果已复制到剪贴板";
+  }
+  if (copyStatus.value === "error") {
+    return "复制失败，请手动复制";
+  }
+  return "";
+});
 
 watch(activeParsedSolar, (state) => {
   if (state.ok) {
@@ -340,6 +384,39 @@ watch(calendarMode, (mode, previousMode) => {
 
   syncLunisolarInputs(mode, solar.getLunar());
 });
+
+onBeforeUnmount(() => {
+  if (copyStatusTimer) {
+    clearTimeout(copyStatusTimer);
+  }
+});
+
+async function copyResult() {
+  if (!resultCopyText.value) {
+    return;
+  }
+
+  try {
+    await copyText(resultCopyText.value);
+    setCopyStatus("success");
+  } catch {
+    setCopyStatus("error");
+  }
+}
+
+function setCopyStatus(status: "idle" | "success" | "error") {
+  copyStatus.value = status;
+  if (copyStatusTimer) {
+    clearTimeout(copyStatusTimer);
+  }
+
+  if (status !== "idle") {
+    copyStatusTimer = setTimeout(() => {
+      copyStatus.value = "idle";
+      copyStatusTimer = undefined;
+    }, 2000);
+  }
+}
 
 function parseSolarInput(): ParsedSolarState {
   const year = parseYearInRange(solarYear.value, MIN_SOLAR_YEAR, MAX_SOLAR_YEAR);
@@ -676,6 +753,31 @@ function registerLunisolarOptionSync(mode: LunisolarMode) {
     clampSelectedValue(refs.day, dayOptions.value);
   });
 }
+
+async function copyText(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard API unavailable");
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) {
+    throw new Error("Copy failed");
+  }
+}
 </script>
 <!-- autocorrect-enable -->
 
@@ -871,17 +973,71 @@ function registerLunisolarOptionSync(mode: LunisolarMode) {
       </select>
     </div>
   </div>
-  <div class="ganzhi-tool__field">
+  <div class="ganzhi-tool__label-row">
     <label>结果</label>
+    <button
+      v-if="result"
+      type="button"
+      class="ganzhi-tool__copy-button"
+      :class="{
+        'ganzhi-tool__copy-button--success': copyStatus === 'success',
+        'ganzhi-tool__copy-button--error': copyStatus === 'error',
+      }"
+      :aria-label="copyStatus === 'success' ? '结果已复制' : '复制结果'"
+      @click="copyResult"
+    >
+      <span
+        class="ganzhi-tool__copy-icon"
+        aria-hidden="true"
+      >
+        {{ copyButtonIcon }}
+      </span>
+      <span>{{ copyButtonText }}</span>
+    </button>
   </div>
   <div
     v-if="result"
     class="ganzhi-tool__result"
   >
-    <p class="ganzhi-tool__main">{{ result.yearPillar }}年 {{ result.monthPillar }}月 {{ result.dayPillar }}日 {{ result.timePillar }}时</p>
-    <p>公历：{{ result.solarLabel }}</p>
-    <p>农历：{{ result.lunarLabel }}</p>
-    <p>生肖：{{ result.zodiac }}{{ result.zodiacEmoji ? ` ${result.zodiacEmoji}` : "" }}</p>
+    <p
+      class="ganzhi-tool__sr-only"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      {{ copyStatusAnnouncement }}
+    </p>
+    <div class="ganzhi-tool__pillar-grid">
+      <div class="ganzhi-tool__result-item">
+        <span class="ganzhi-tool__result-label">年柱</span>
+        <strong class="ganzhi-tool__result-value">{{ result.yearPillar }}</strong>
+      </div>
+      <div class="ganzhi-tool__result-item">
+        <span class="ganzhi-tool__result-label">月柱</span>
+        <strong class="ganzhi-tool__result-value">{{ result.monthPillar }}</strong>
+      </div>
+      <div class="ganzhi-tool__result-item">
+        <span class="ganzhi-tool__result-label">日柱</span>
+        <strong class="ganzhi-tool__result-value">{{ result.dayPillar }}</strong>
+      </div>
+      <div class="ganzhi-tool__result-item">
+        <span class="ganzhi-tool__result-label">时柱</span>
+        <strong class="ganzhi-tool__result-value">{{ result.timePillar }}</strong>
+      </div>
+    </div>
+    <div class="ganzhi-tool__meta-grid">
+      <div class="ganzhi-tool__result-item">
+        <span class="ganzhi-tool__result-label">公历</span>
+        <strong class="ganzhi-tool__meta-value">{{ result.solarLabel }}</strong>
+      </div>
+      <div class="ganzhi-tool__result-item ganzhi-tool__result-item--wide">
+        <span class="ganzhi-tool__result-label">农历</span>
+        <strong class="ganzhi-tool__meta-value">{{ result.lunarLabel }}</strong>
+      </div>
+      <div class="ganzhi-tool__result-item">
+        <span class="ganzhi-tool__result-label">生肖</span>
+        <strong class="ganzhi-tool__meta-value">{{ result.zodiac }}{{ result.zodiacEmoji ? ` ${result.zodiacEmoji}` : "" }}</strong>
+      </div>
+    </div>
   </div>
   <p
     v-else
@@ -937,6 +1093,7 @@ function registerLunisolarOptionSync(mode: LunisolarMode) {
   border: 1px solid var(--vp-c-divider);
   border-radius: 10px;
   background: var(--vp-c-bg);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .ganzhi-tool input[aria-invalid="true"] {
@@ -955,6 +1112,7 @@ function registerLunisolarOptionSync(mode: LunisolarMode) {
   border-radius: 999px;
   background: var(--vp-c-bg);
   cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
 
 .ganzhi-tool__mode-button--active {
@@ -1000,6 +1158,7 @@ function registerLunisolarOptionSync(mode: LunisolarMode) {
   background: var(--vp-c-bg);
   cursor: pointer;
   font-size: 1rem;
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
 }
 
 .ganzhi-tool__hint {
@@ -1011,24 +1170,137 @@ function registerLunisolarOptionSync(mode: LunisolarMode) {
 
 .ganzhi-tool__result {
   display: grid;
-  gap: 4px;
-  padding: 12px;
-  border-radius: 10px;
-  background: var(--vp-c-bg);
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 88%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--vp-c-bg) 97%, var(--vp-c-bg-soft) 3%);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.04);
 }
 
-.ganzhi-tool__main {
+.ganzhi-tool__result-kicker,
+.ganzhi-tool__result-label {
   margin: 0;
+  font-size: 0.85rem;
+  color: var(--vp-c-text-2);
+}
+
+.ganzhi-tool__pillar-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ganzhi-tool__meta-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.ganzhi-tool__result-item {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 92%, transparent);
+  border-radius: 10px;
+  background: transparent;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, color 0.22s ease;
+}
+
+.ganzhi-tool__result-item:hover {
+  border-color: var(--vp-c-brand-1);
+  box-shadow: 0 8px 20px rgb(15 23 42 / 0.06);
+  transform: translateY(-1px);
+}
+
+.ganzhi-tool__result-value,
+.ganzhi-tool__meta-value {
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.ganzhi-tool__result-value {
   font-size: 1.1rem;
   font-weight: 700;
 }
 
-.ganzhi-tool__result p,
-.ganzhi-tool__error {
-  margin: 0;
+.ganzhi-tool__meta-value {
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.ganzhi-tool__result-item--wide .ganzhi-tool__meta-value {
+  white-space: nowrap;
+}
+
+.ganzhi-tool__copy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-1);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+}
+
+.ganzhi-tool__copy-button:hover {
+  border-color: var(--vp-c-brand-1);
+  color: var(--vp-c-brand-1);
+  transform: translateY(-1px);
+}
+
+.ganzhi-tool__copy-button--success {
+  border-color: var(--vp-c-brand-1);
+  color: var(--vp-c-brand-1);
+}
+
+.ganzhi-tool__copy-button--error {
+  border-color: color-mix(in srgb, var(--vp-c-danger-1) 45%, var(--vp-c-divider));
+  color: var(--vp-c-danger-1);
+}
+
+.ganzhi-tool__copy-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.ganzhi-tool__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ganzhi-tool button:focus-visible,
+.ganzhi-tool select:focus-visible,
+.ganzhi-tool input:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
+}
+
+.ganzhi-tool__mode button:hover,
+.ganzhi-tool__year-stepper button:hover {
+  transform: translateY(-1px);
+  border-color: var(--vp-c-brand-1);
 }
 
 .ganzhi-tool__error {
+  margin: 0;
   color: var(--vp-c-danger-1);
 }
 
@@ -1047,6 +1319,8 @@ function registerLunisolarOptionSync(mode: LunisolarMode) {
     white-space: normal;
   }
 
+  .ganzhi-tool__pillar-grid,
+  .ganzhi-tool__meta-grid,
   .ganzhi-tool__select-grid,
   .ganzhi-tool__compact-grid {
     grid-template-columns: 1fr;

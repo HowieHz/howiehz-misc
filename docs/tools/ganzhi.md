@@ -3,7 +3,7 @@ publish: false
 published: 2026-04-03T20:00:00+08:00
 ---
 
-# 天干地支年月日计算器
+# 天干地支计算器
 
 <script setup lang="ts">
 import { Lunar, LunarMonth, LunarYear, Solar } from "lunar-javascript";
@@ -523,7 +523,15 @@ function formatHourLabel(hourValue: number): string {
     </div>
   </template>
   <template v-else>
-    <label>农历日期</label>
+    <div class="ganzhi-tool__label-row">
+      <label>农历日期</label>
+      <span
+        v-if="leapMonthHint"
+        class="ganzhi-tool__hint"
+      >
+        {{ leapMonthHint }}
+      </span>
+    </div>
     <div class="ganzhi-tool__select-grid">
       <div class="ganzhi-tool__year-field">
         <div class="ganzhi-tool__year-stepper">
@@ -577,12 +585,6 @@ function formatHourLabel(hourValue: number): string {
         </option>
       </select>
     </div>
-    <p
-      v-if="leapMonthHint"
-      class="ganzhi-tool__hint"
-    >
-      {{ leapMonthHint }}
-    </p>
   </template>
   <div class="ganzhi-tool__compact-grid">
     <div class="ganzhi-tool__field">
@@ -643,10 +645,10 @@ function formatHourLabel(hourValue: number): string {
 
 ## 名词解释
 
-- 年柱：用天干地支表示的年份。
-- 月柱：用天干地支表示的月份。
-- 日柱：用天干地支表示的日期。
-- 时柱：用天干地支表示的时辰。
+- 年柱：用天干地支表示的年份，如丙午年。
+- 月柱：用天干地支表示的月份，如辛卯月。
+- 日柱：用天干地支表示的日期，如丁未日。
+- 时柱：用天干地支表示的时辰，如辛亥时。
 
 ## 说明
 
@@ -725,6 +727,12 @@ function formatHourLabel(hourValue: number): string {
   min-width: 0;
 }
 
+.ganzhi-tool__label-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
 .ganzhi-tool__year-field {
   min-width: 0;
 }
@@ -745,7 +753,9 @@ function formatHourLabel(hourValue: number): string {
 
 .ganzhi-tool__hint {
   margin: 0;
+  font-size: 0.9rem;
   color: var(--vp-c-text-2);
+  white-space: nowrap;
 }
 
 .ganzhi-tool__result {
@@ -772,6 +782,20 @@ function formatHourLabel(hourValue: number): string {
 }
 
 @media (max-width: 640px) {
+  .ganzhi-tool__label-row,
+  .ganzhi-tool__select-grid,
+  .ganzhi-tool__compact-grid {
+    display: grid;
+  }
+
+  .ganzhi-tool__label-row {
+    gap: 4px;
+  }
+
+  .ganzhi-tool__hint {
+    white-space: normal;
+  }
+
   .ganzhi-tool__select-grid,
   .ganzhi-tool__compact-grid {
     grid-template-columns: 1fr;

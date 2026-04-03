@@ -83,20 +83,23 @@ const hourOptions = Array.from({ length: 24 }, (_, hour) => ({
   value: String(hour),
   label: formatHourLabel(hour),
 })) satisfies SelectOption[];
+
+// autocorrect-disable
 const zodiacEmojiMap = {
-  鼠："🐭",
-  牛："🐮",
-  虎："🐯",
-  兔："🐰",
-  龙："🐲",
-  蛇："🐍",
-  马："🐴",
-  羊："🐏",
-  猴："🐵",
-  鸡："🐔",
-  狗："🐶",
-  猪："🐷",
+  鼠: "🐭",
+  牛: "🐮",
+  虎: "🐯",
+  兔: "🐰",
+  龙: "🐲",
+  蛇: "🐍",
+  马: "🐴",
+  羊: "🐏",
+  猴: "🐵",
+  鸡: "🐔",
+  狗: "🐶",
+  猪: "🐷",
 } as const satisfies Record<string, string>;
+// autocorrect-enable
 
 const today = new Date();
 const currentHour = today.getHours();

@@ -1064,7 +1064,6 @@ async function copyText(text: string) {
 - 公历日期会过滤历史上不存在的日期，例如 1582 年 10 月 5 日至 14 日。
 - 年计算方式支持正月初一起算和立春零点起算，影响年柱和生肖。
 - 日计算方式支持晚子时算明天和晚子时算当天，影响日柱。
-- 时柱按所选小时直接计算。
 - 本页基于 [`lunar-javascript`](https://www.npmjs.com/package/lunar-javascript) 计算，感谢这个出色的开源项目。
 
 <style scoped>

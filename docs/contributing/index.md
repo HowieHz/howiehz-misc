@@ -24,12 +24,7 @@ publish: false
 
 ```html
 <select v-model="dayType">
-
-<option
-  value="0"
->
-Next Day
-</option>
+  <option value="0">Next Day</option>
 </select>
 ```
 
@@ -37,9 +32,7 @@ Next Day
 
 ```html
 <select v-model="dayType">
-  <option value="0">
-    Next Day
-  </option>
+  <option value="0">Next Day</option>
 </select>
 ```
 

@@ -5,6 +5,7 @@ published: 2026-04-03T20:00:00+08:00
 
 # 天干地支计算器
 
+<!-- autocorrect-disable -->
 <script setup lang="ts">
 import { Foto, Lunar, LunarMonth, LunarYear, Solar, Tao } from "lunar-javascript";
 import { computed, ref, watch } from "vue";
@@ -84,7 +85,6 @@ const hourOptions = Array.from({ length: 24 }, (_, hour) => ({
   label: formatHourLabel(hour),
 })) satisfies SelectOption[];
 
-// autocorrect-disable
 const zodiacEmojiMap = {
   鼠: "🐭",
   牛: "🐮",
@@ -99,7 +99,6 @@ const zodiacEmojiMap = {
   狗: "🐶",
   猪: "🐷",
 } as const satisfies Record<string, string>;
-// autocorrect-enable
 
 const today = new Date();
 const currentHour = today.getHours();
@@ -590,6 +589,7 @@ function formatHourLabel(hourValue: number): string {
   return `${start}-${end}（${zhiLabels[index]}时）`;
 }
 </script>
+<!-- autocorrect-enable -->
 
 选择公历、农历、佛历或道历日期，快速查看对应的年柱、月柱、日柱、时柱。
 

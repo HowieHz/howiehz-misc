@@ -20,19 +20,28 @@ publish: false
 
 在此基础上，请让原始 HTML 模板块保持连续、规整，不要在 `<select>...</select>` 这类容器内部随意插入空行，否则可能在 VitePress 开发或构建阶段触发由 `vite:vue` / Vue SFC 编译器报出的模板解析错误，例如 `Element is missing end tag`。
 
-- Bad:
+- 错误示例：
 
+<!-- prettier-ignore-start -->
 ```html
 <select v-model="dayType">
-  <option value="0">Next Day</option>
+
+<option
+  value="0"
+>
+Next Day
+</option>
 </select>
 ```
+<!-- prettier-ignore-end -->
 
-- Good:
+- 正确示例：
 
 ```html
 <select v-model="dayType">
-  <option value="0">Next Day</option>
+  <option value="0">
+    Next Day
+  </option>
 </select>
 ```
 

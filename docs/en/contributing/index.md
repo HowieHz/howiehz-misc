@@ -22,17 +22,26 @@ On top of that, keep raw HTML template blocks contiguous and structurally stable
 
 - Bad:
 
+<!-- prettier-ignore-start -->
 ```html
 <select v-model="dayType">
-  <option value="0">Next Day</option>
+
+<option
+  value="0"
+>
+Next Day
+</option>
 </select>
 ```
+<!-- prettier-ignore-end -->
 
 - Good:
 
 ```html
 <select v-model="dayType">
-  <option value="0">Next Day</option>
+  <option value="0">
+    Next Day
+  </option>
 </select>
 ```
 

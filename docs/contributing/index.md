@@ -14,6 +14,35 @@ publish: false
 4. 预览产物：`pnpm docs:preview`
 5. 提交前执行：`pnpm fmt`、`pnpm lint`
 
+## 在 Markdown 使用 Vue
+
+在 VitePress 中，每个 Markdown 文件都会被编译成 HTML，并作为 Vue 单文件组件处理。这意味着可以在 Markdown 中使用 Vue 的动态模板、组件以及 `<script>` 逻辑。开始修改相关页面前，请先阅读 [VitePress 官方文档](https://vitepress.dev/zh/guide/using-vue)。
+
+在此基础上，请让原始 HTML 模板块保持连续、规整，不要在 `<select>...</select>` 这类容器内部随意插入空行，否则可能在 VitePress 开发或构建阶段触发由 `vite:vue` / Vue SFC 编译器报出的模板解析错误，例如 `Element is missing end tag`。
+
+- Bad:
+
+```html
+<select v-model="dayType">
+
+<option
+  value="0"
+>
+Next Day
+</option>
+</select>
+```
+
+- Good:
+
+```html
+<select v-model="dayType">
+  <option value="0">
+    Next Day
+  </option>
+</select>
+```
+
 ## 分类
 
 - [过时/低质量文章归档](/posts/junk/) · [docs/posts/junk/](https://github.com/HowieHz/howiehz-misc/tree/main/docs/posts/junk)

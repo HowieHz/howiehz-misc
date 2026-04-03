@@ -14,6 +14,35 @@ Feel free to submit or revise content via PR.
 4. Preview artifacts: `pnpm docs:preview`
 5. Before submitting, run: `pnpm fmt` and `pnpm lint`
 
+## Using Vue in Markdown
+
+In VitePress, every Markdown file is compiled into HTML and treated as a Vue Single-File Component. That means you can use Vue dynamic templates, components, and `<script>` logic directly in Markdown. Before editing related pages, read the [official VitePress docs](https://vitepress.dev/guide/using-vue) first.
+
+On top of that, keep raw HTML template blocks contiguous and structurally stable. Do not insert arbitrary blank lines inside containers like `<select>...</select>`, or VitePress may report a Vue template parse error during dev/build through `vite:vue` / the Vue SFC compiler, such as `Element is missing end tag`.
+
+- Bad:
+
+```html
+<select v-model="dayType">
+
+<option
+  value="0"
+>
+Next Day
+</option>
+</select>
+```
+
+- Good:
+
+```html
+<select v-model="dayType">
+  <option value="0">
+    Next Day
+  </option>
+</select>
+```
+
 ## Categories
 
 - [Junk](/en/posts/junk/) · [docs/posts/junk/](https://github.com/HowieHz/howiehz-misc/tree/main/docs/posts/junk)

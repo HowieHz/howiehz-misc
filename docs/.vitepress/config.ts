@@ -20,6 +20,7 @@ const ROOT_INFO_SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
     items: [
       { text: "关于", link: "/about/" },
+      { text: "投稿指南", link: "/contributing/" },
       { text: "版权说明", link: "/license/" },
     ],
   },
@@ -29,6 +30,7 @@ const EN_INFO_SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
     items: [
       { text: "About", link: "/en/about/" },
+      { text: "Contribution Guide", link: "/en/contributing/" },
       { text: "License Overview", link: "/en/license/" },
     ],
   },
@@ -359,11 +361,19 @@ export default defineConfig({
             items: [{ text: "过时/低质量文章归档", link: "/posts/junk/" }],
           },
           { text: "工具", link: "/tools/" },
-          { text: "关于", link: "/about/" },
+          {
+            text: "关于",
+            items: [
+              { text: "关于本站", link: "/about/" },
+              { text: "投稿指南", link: "/contributing/" },
+              { text: "版权说明", link: "/license/" },
+            ],
+          },
         ],
         sidebar: {
           "/posts/": buildPostSidebar("root"),
           "/tools/": ROOT_TOOLS_SIDEBAR,
+          "/contributing/": ROOT_INFO_SIDEBAR,
           "/about/": ROOT_INFO_SIDEBAR,
           "/license/": ROOT_INFO_SIDEBAR,
         },
@@ -421,11 +431,19 @@ export default defineConfig({
             items: [{ text: "Junk", link: "/en/posts/junk/" }],
           },
           { text: "Tools", link: "/en/tools/" },
-          { text: "About", link: "/en/about/" },
+          {
+            text: "About",
+            items: [
+              { text: "About This Site", link: "/en/about/" },
+              { text: "Contribution Guide", link: "/en/contributing/" },
+              { text: "License Overview", link: "/en/license/" },
+            ],
+          },
         ],
         sidebar: {
           "/en/posts/": buildPostSidebar("en"),
           "/en/tools/": EN_TOOLS_SIDEBAR,
+          "/en/contributing/": EN_INFO_SIDEBAR,
           "/en/about/": EN_INFO_SIDEBAR,
           "/en/license/": EN_INFO_SIDEBAR,
         },

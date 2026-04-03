@@ -287,7 +287,7 @@ const activeLeapMonthHint = computed(() => {
 
   try {
     const leapMonth = LunarYear.fromYear(toLunarYear(calendarMode.value, displayYear)).getLeapMonth();
-    return leapMonth > 0 ? `该年闰 ${leapMonth} 月` : "该年无闰月";
+    return leapMonth > 0 ? `该年闰${monthNames[leapMonth - 1]}月` : "该年无闰月";
   } catch {
     return undefined;
   }
@@ -1164,25 +1164,21 @@ async function copyText(text: string) {
 .ganzhi-tool__hint {
   margin: 0;
   font-size: 0.9rem;
-  color: var(--vp-c-text-2);
+  color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
   white-space: nowrap;
 }
 
 .ganzhi-tool__result {
   display: grid;
   gap: 12px;
-  padding: 16px;
-  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 88%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--vp-c-bg) 97%, var(--vp-c-bg-soft) 3%);
-  box-shadow: 0 8px 24px rgb(15 23 42 / 0.04);
+  padding: 4px 0 0;
 }
 
 .ganzhi-tool__result-kicker,
 .ganzhi-tool__result-label {
   margin: 0;
   font-size: 0.85rem;
-  color: var(--vp-c-text-2);
+  color: color-mix(in srgb, var(--vp-c-text-1) 76%, var(--vp-c-text-2) 24%);
 }
 
 .ganzhi-tool__pillar-grid {

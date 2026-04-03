@@ -8,16 +8,61 @@ published: 2026-04-03T20:00:00+08:00
 <!-- autocorrect-disable -->
 <script setup lang="ts">
 import { Foto, Lunar, LunarMonth, LunarYear, Solar, Tao } from "lunar-javascript";
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
 
 type CalendarMode = "solar" | "lunar" | "foto" | "tao";
 type LunisolarMode = Exclude<CalendarMode, "solar">;
 type YearType = "0" | "1";
 type DayType = "0" | "1";
+type ParseIssue = "year-range" | "invalid-date";
+
+const LUNISOLAR_MODES = ["lunar", "foto", "tao"] as const satisfies readonly LunisolarMode[];
 
 interface SelectOption {
   label: string;
   value: string;
+}
+
+interface DateBoundary {
+  year: number;
+  month: number;
+  day: number;
+}
+
+interface LunisolarLimit {
+  label: string;
+  start: DateBoundary;
+  end: DateBoundary;
+  yearOffset: number;
+}
+
+interface DateFieldRefs {
+  year: Ref<string>;
+  month: Ref<string>;
+  day: Ref<string>;
+}
+
+type ParsedSolarState =
+  | { ok: true; solar: Solar }
+  | { ok: false; issue: ParseIssue };
+
+interface GanzhiResult {
+  solarLabel: string;
+  lunarLabel: string;
+  yearPillar: string;
+  monthPillar: string;
+  dayPillar: string;
+  timePillar: string;
+  zodiac: string;
+  zodiacEmoji: string;
+}
+
+interface LunisolarModeState {
+  limit: LunisolarLimit;
+  refs: DateFieldRefs;
+  monthOptions: ComputedRef<SelectOption[]>;
+  dayOptions: ComputedRef<SelectOption[]>;
+  yearError: ComputedRef<string | undefined>;
 }
 
 const MIN_SOLAR_YEAR = 1;
@@ -30,19 +75,10 @@ const MAX_SOLAR_YEAR = 9999;
 // 参考本地库测试与 6tail FAQ：
 // https://6tail.cn/calendar/api.html#faq.html
 const LUNISOLAR_LIMITS = {
-  lunar: { label: "农历日期", minYear: 0, maxYear: 9999, minMonth: 11, minDay: 18, maxMonth: 12, maxDay: 2, yearOffset: 0 },
-  foto: { label: "佛历日期", minYear: 544, maxYear: 10543, minMonth: 11, minDay: 18, maxMonth: 12, maxDay: 2, yearOffset: 544 },
-  tao: { label: "道历日期", minYear: 2697, maxYear: 12696, minMonth: 11, minDay: 18, maxMonth: 12, maxDay: 2, yearOffset: 2697 },
-} as const satisfies Record<LunisolarMode, {
-  label: string;
-  minYear: number;
-  maxYear: number;
-  minMonth: number;
-  minDay: number;
-  maxMonth: number;
-  maxDay: number;
-  yearOffset: number;
-}>;
+  lunar: { label: "农历日期", start: { year: 0, month: 11, day: 18 }, end: { year: 9999, month: 12, day: 2 }, yearOffset: 0 },
+  foto: { label: "佛历日期", start: { year: 544, month: 11, day: 18 }, end: { year: 10543, month: 12, day: 2 }, yearOffset: 544 },
+  tao: { label: "道历日期", start: { year: 2697, month: 11, day: 18 }, end: { year: 12696, month: 12, day: 2 }, yearOffset: 2697 },
+} as const satisfies Record<LunisolarMode, LunisolarLimit>;
 const monthNames = ["正", "二", "三", "四", "五", "六", "七", "八", "九", "十", "冬", "腊"] as const;
 const dayNames = [
   "初一",
@@ -128,6 +164,13 @@ const taoYear = ref(String(todayTao.getYear()));
 const taoMonth = ref(String(todayTao.getMonth()));
 const taoDay = ref(String(todayTao.getDay()));
 
+const solarRefs = { year: solarYear, month: solarMonth, day: solarDay } as const satisfies DateFieldRefs;
+const lunisolarRefsMap = {
+  lunar: { year: lunarYear, month: lunarMonth, day: lunarDay },
+  foto: { year: fotoYear, month: fotoMonth, day: fotoDay },
+  tao: { year: taoYear, month: taoMonth, day: taoDay },
+} as const satisfies Record<LunisolarMode, DateFieldRefs>;
+
 const solarDayOptions = computed(() => {
   const year = Number.parseInt(solarYear.value, 10);
   const month = Number.parseInt(solarMonth.value, 10);
@@ -147,84 +190,95 @@ const fotoDayOptions = computed(() => createLunisolarDayOptions("foto", fotoYear
 const taoDayOptions = computed(() => createLunisolarDayOptions("tao", taoYear.value, taoMonth.value));
 
 const solarYearError = computed(() => getYearRangeError(solarYear.value, MIN_SOLAR_YEAR, MAX_SOLAR_YEAR));
-const lunarYearError = computed(() => getYearRangeError(lunarYear.value, LUNISOLAR_LIMITS.lunar.minYear, LUNISOLAR_LIMITS.lunar.maxYear));
-const fotoYearError = computed(() => getYearRangeError(fotoYear.value, LUNISOLAR_LIMITS.foto.minYear, LUNISOLAR_LIMITS.foto.maxYear));
-const taoYearError = computed(() => getYearRangeError(taoYear.value, LUNISOLAR_LIMITS.tao.minYear, LUNISOLAR_LIMITS.tao.maxYear));
+const lunarYearError = computed(() => getYearRangeError(lunarYear.value, LUNISOLAR_LIMITS.lunar.start.year, LUNISOLAR_LIMITS.lunar.end.year));
+const fotoYearError = computed(() => getYearRangeError(fotoYear.value, LUNISOLAR_LIMITS.foto.start.year, LUNISOLAR_LIMITS.foto.end.year));
+const taoYearError = computed(() => getYearRangeError(taoYear.value, LUNISOLAR_LIMITS.tao.start.year, LUNISOLAR_LIMITS.tao.end.year));
+
+const lunisolarModeState = {
+  lunar: {
+    limit: LUNISOLAR_LIMITS.lunar,
+    refs: lunisolarRefsMap.lunar,
+    monthOptions: lunarMonthOptions,
+    dayOptions: lunarDayOptions,
+    yearError: lunarYearError,
+  },
+  foto: {
+    limit: LUNISOLAR_LIMITS.foto,
+    refs: lunisolarRefsMap.foto,
+    monthOptions: fotoMonthOptions,
+    dayOptions: fotoDayOptions,
+    yearError: fotoYearError,
+  },
+  tao: {
+    limit: LUNISOLAR_LIMITS.tao,
+    refs: lunisolarRefsMap.tao,
+    monthOptions: taoMonthOptions,
+    dayOptions: taoDayOptions,
+    yearError: taoYearError,
+  },
+} as const satisfies Record<LunisolarMode, LunisolarModeState>;
+
+const activeParsedSolar = computed(() => (
+  calendarMode.value === "solar" ? parseSolarInput() : parseLunisolarInput(calendarMode.value)
+));
+const lastValidSolar = ref(todaySolar);
+const activeLunisolarState = computed(() => (
+  calendarMode.value === "solar" ? undefined : lunisolarModeState[calendarMode.value]
+));
 
 const activeError = computed(() => {
-  const yearError = calendarMode.value === "solar"
-    ? solarYearError.value
-    : calendarMode.value === "lunar"
-      ? lunarYearError.value
-      : calendarMode.value === "foto"
-        ? fotoYearError.value
-        : taoYearError.value;
-  if (yearError) {
-    return yearError;
+  if (activeParsedSolar.value.ok) {
+    return undefined;
+  }
+
+  if (activeParsedSolar.value.issue === "year-range") {
+    return calendarMode.value === "solar" ? solarYearError.value : activeLunisolarState.value?.yearError.value;
   }
 
   return "请输入合法日期";
 });
 
-const activeLunisolarLabel = computed(() => calendarMode.value === "solar" ? "" : LUNISOLAR_LIMITS[calendarMode.value].label);
-const activeLunisolarYearText = computed(() => calendarMode.value === "solar" ? "" : getLunisolarRefs(calendarMode.value).year.value);
-const activeLunisolarYearError = computed(() => calendarMode.value === "solar"
-  ? undefined
-  : calendarMode.value === "lunar"
-    ? lunarYearError.value
-    : calendarMode.value === "foto"
-      ? fotoYearError.value
-      : taoYearError.value);
-const activeLunisolarYearMaxLength = computed(() => calendarMode.value === "solar" ? 4 : String(LUNISOLAR_LIMITS[calendarMode.value].maxYear).length);
+const activeLunisolarLabel = computed(() => activeLunisolarState.value?.limit.label ?? "");
+const activeLunisolarYearText = computed(() => activeLunisolarState.value?.refs.year.value ?? "");
+const activeLunisolarYearError = computed(() => activeLunisolarState.value?.yearError.value);
+const activeLunisolarYearMaxLength = computed(() => activeLunisolarState.value ? String(activeLunisolarState.value.limit.end.year).length : 4);
 const activeLunisolarMonthOptions = computed(() => calendarMode.value === "solar"
   ? []
-  : calendarMode.value === "lunar"
-    ? lunarMonthOptions.value
-    : calendarMode.value === "foto"
-      ? fotoMonthOptions.value
-      : taoMonthOptions.value);
+  : activeLunisolarState.value?.monthOptions.value ?? []);
 const activeLunisolarDayOptions = computed(() => calendarMode.value === "solar"
   ? []
-  : calendarMode.value === "lunar"
-    ? lunarDayOptions.value
-    : calendarMode.value === "foto"
-      ? fotoDayOptions.value
-      : taoDayOptions.value);
+  : activeLunisolarState.value?.dayOptions.value ?? []);
 const activeLunisolarMonth = computed({
   get() {
-    if (calendarMode.value === "solar") {
-      return "";
-    }
-    return getLunisolarRefs(calendarMode.value).month.value;
+    return activeLunisolarState.value?.refs.month.value ?? "";
   },
   set(value: string) {
-    if (calendarMode.value === "solar") {
-      return;
+    if (activeLunisolarState.value) {
+      activeLunisolarState.value.refs.month.value = value;
     }
-    getLunisolarRefs(calendarMode.value).month.value = value;
   },
 });
 const activeLunisolarDay = computed({
   get() {
-    if (calendarMode.value === "solar") {
-      return "";
-    }
-    return getLunisolarRefs(calendarMode.value).day.value;
+    return activeLunisolarState.value?.refs.day.value ?? "";
   },
   set(value: string) {
-    if (calendarMode.value === "solar") {
-      return;
+    if (activeLunisolarState.value) {
+      activeLunisolarState.value.refs.day.value = value;
     }
-    getLunisolarRefs(calendarMode.value).day.value = value;
   },
 });
 const activeLeapMonthHint = computed(() => {
-  if (calendarMode.value === "solar") {
+  if (!activeLunisolarState.value) {
     return undefined;
   }
 
-  const limits = LUNISOLAR_LIMITS[calendarMode.value];
-  const displayYear = parseYearInRange(getLunisolarRefs(calendarMode.value).year.value, limits.minYear, limits.maxYear);
+  const { limit, refs } = activeLunisolarState.value;
+  const displayYear = parseYearInRange(
+    refs.year.value,
+    limit.start.year,
+    limit.end.year,
+  );
   if (!Number.isInteger(displayYear)) {
     return undefined;
   }
@@ -237,66 +291,47 @@ const activeLeapMonthHint = computed(() => {
   }
 });
 
-const result = computed(() => {
-  try {
-    const solar = calendarMode.value === "solar" ? parseSolarInput() : parseLunisolarInput(calendarMode.value);
-    if (!solar) {
-      return undefined;
-    }
-
-    const lunar = solar.getLunar();
-    return {
-      solarLabel: solar.toYmd(),
-      lunarLabel: lunar.toString(),
-      yearPillar: yearType.value === "0" ? lunar.getYearInGanZhi() : lunar.getYearInGanZhiByLiChun(),
-      monthPillar: lunar.getMonthInGanZhi(),
-      dayPillar: dayType.value === "0" ? lunar.getDayInGanZhiExact() : lunar.getDayInGanZhiExact2(),
-      timePillar: lunar.getTimeInGanZhi(),
-      zodiac: yearType.value === "0" ? lunar.getYearShengXiao() : lunar.getYearShengXiaoByLiChun(),
-      zodiacEmoji: zodiacEmojiMap[yearType.value === "0" ? lunar.getYearShengXiao() : lunar.getYearShengXiaoByLiChun()] ?? "",
-    };
-  } catch {
+const result = computed<GanzhiResult | undefined>(() => {
+  if (!activeParsedSolar.value.ok) {
     return undefined;
   }
+
+  const { solar } = activeParsedSolar.value;
+  const lunar = solar.getLunar();
+  const zodiac = yearType.value === "0" ? lunar.getYearShengXiao() : lunar.getYearShengXiaoByLiChun();
+  return {
+    solarLabel: solar.toYmd(),
+    lunarLabel: lunar.toString(),
+    yearPillar: yearType.value === "0" ? lunar.getYearInGanZhi() : lunar.getYearInGanZhiByLiChun(),
+    monthPillar: lunar.getMonthInGanZhi(),
+    dayPillar: dayType.value === "0" ? lunar.getDayInGanZhiExact() : lunar.getDayInGanZhiExact2(),
+    timePillar: lunar.getTimeInGanZhi(),
+    zodiac,
+    zodiacEmoji: zodiacEmojiMap[zodiac] ?? "",
+  };
 });
 
-watch([solarYear, solarMonth, solarDayOptions], () => {
-  clampSelectedValue(solarDay, solarDayOptions.value);
+watch(activeParsedSolar, (state) => {
+  if (state.ok) {
+    lastValidSolar.value = state.solar;
+  }
+}, { immediate: true });
+
+watch([solarRefs.year, solarRefs.month, solarDayOptions], () => {
+  clampSelectedValue(solarRefs.day, solarDayOptions.value);
 });
 
-watch([lunarYear, lunarMonthOptions], () => {
-  clampSelectedValue(lunarMonth, lunarMonthOptions.value);
-});
-
-watch([lunarYear, lunarMonth, lunarDayOptions], () => {
-  clampSelectedValue(lunarDay, lunarDayOptions.value);
-});
-
-watch([fotoYear, fotoMonthOptions], () => {
-  clampSelectedValue(fotoMonth, fotoMonthOptions.value);
-});
-
-watch([fotoYear, fotoMonth, fotoDayOptions], () => {
-  clampSelectedValue(fotoDay, fotoDayOptions.value);
-});
-
-watch([taoYear, taoMonthOptions], () => {
-  clampSelectedValue(taoMonth, taoMonthOptions.value);
-});
-
-watch([taoYear, taoMonth, taoDayOptions], () => {
-  clampSelectedValue(taoDay, taoDayOptions.value);
-});
+for (const mode of LUNISOLAR_MODES) {
+  registerLunisolarOptionSync(mode);
+}
 
 watch(calendarMode, (mode, previousMode) => {
   if (mode === previousMode) {
     return;
   }
 
-  const solar = previousMode === "solar" ? parseSolarInput() : parseLunisolarInput(previousMode);
-  if (!solar) {
-    return;
-  }
+  const previousParsedState = previousMode === "solar" ? parseSolarInput() : parseLunisolarInput(previousMode);
+  const solar = previousParsedState.ok ? previousParsedState.solar : lastValidSolar.value;
 
   if (mode === "solar") {
     syncSolarInputs(solar);
@@ -306,35 +341,54 @@ watch(calendarMode, (mode, previousMode) => {
   syncLunisolarInputs(mode, solar.getLunar());
 });
 
-function parseSolarInput() {
+function parseSolarInput(): ParsedSolarState {
   const year = parseYearInRange(solarYear.value, MIN_SOLAR_YEAR, MAX_SOLAR_YEAR);
+  if (!Number.isInteger(year)) {
+    return { ok: false, issue: "year-range" };
+  }
+
   const month = Number.parseInt(solarMonth.value, 10);
   const day = Number.parseInt(solarDay.value, 10);
   const selectedHour = Number.parseInt(hour.value, 10);
   if (![year, month, day, selectedHour].every(Number.isInteger)) {
-    return undefined;
+    return { ok: false, issue: "invalid-date" };
   }
 
-  const solar = Solar.fromYmdHms(year, month, day, selectedHour, 0, 0);
-  return solar.toYmd() === formatSolarYmd(year, month, day) ? solar : undefined;
+  try {
+    const solar = Solar.fromYmdHms(year, month, day, selectedHour, 0, 0);
+    return solar.toYmd() === formatSolarYmd(year, month, day) ? { ok: true, solar } : { ok: false, issue: "invalid-date" };
+  } catch {
+    return { ok: false, issue: "invalid-date" };
+  }
 }
 
-function parseLunisolarInput(mode: LunisolarMode) {
-  const limits = LUNISOLAR_LIMITS[mode];
-  const refs = getLunisolarRefs(mode);
-  const year = parseYearInRange(refs.year.value, limits.minYear, limits.maxYear);
+function parseLunisolarInput(mode: LunisolarMode): ParsedSolarState {
+  const { limit, refs } = lunisolarModeState[mode];
+  const year = parseYearInRange(refs.year.value, limit.start.year, limit.end.year);
+  if (!Number.isInteger(year)) {
+    return { ok: false, issue: "year-range" };
+  }
+
   const month = Number.parseInt(refs.month.value.trim(), 10);
   const day = Number.parseInt(refs.day.value.trim(), 10);
   const selectedHour = Number.parseInt(hour.value, 10);
   if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day) || !Number.isInteger(selectedHour)) {
-    return undefined;
+    return { ok: false, issue: "invalid-date" };
   }
 
   if (Math.abs(month) < 1 || Math.abs(month) > 12 || day < 1 || day > 30) {
-    return undefined;
+    return { ok: false, issue: "invalid-date" };
   }
 
-  return Lunar.fromYmdHms(toLunarYear(mode, year), month, day, selectedHour, 0, 0).getSolar();
+  if (!isWithinSupportedLunisolarDateRange(mode, year, month, day)) {
+    return { ok: false, issue: "invalid-date" };
+  }
+
+  try {
+    return { ok: true, solar: Lunar.fromYmdHms(toLunarYear(mode, year), month, day, selectedHour, 0, 0).getSolar() };
+  } catch {
+    return { ok: false, issue: "invalid-date" };
+  }
 }
 
 function syncSolarInputs(solar: { getYear(): number; getMonth(): number; getDay(): number }) {
@@ -344,7 +398,7 @@ function syncSolarInputs(solar: { getYear(): number; getMonth(): number; getDay(
 }
 
 function syncLunisolarInputs(mode: LunisolarMode, lunar: { getYear(): number; getMonth(): number; getDay(): number }) {
-  const refs = getLunisolarRefs(mode);
+  const { refs } = lunisolarModeState[mode];
   refs.year.value = String(fromLunarYear(mode, lunar.getYear()));
   refs.month.value = String(lunar.getMonth());
   refs.day.value = String(lunar.getDay());
@@ -365,7 +419,7 @@ function createSolarDayOptions(year: number, month: number): SelectOption[] {
 
 function createLunisolarMonthOptions(mode: LunisolarMode, yearText: string): SelectOption[] {
   const limits = LUNISOLAR_LIMITS[mode];
-  const year = parseYearInRange(yearText, limits.minYear, limits.maxYear);
+  const year = parseYearInRange(yearText, limits.start.year, limits.end.year);
   if (!Number.isInteger(year)) {
     return [];
   }
@@ -395,7 +449,7 @@ function createLunisolarMonthOptions(mode: LunisolarMode, yearText: string): Sel
 
 function createLunisolarDayOptions(mode: LunisolarMode, yearText: string, monthText: string): SelectOption[] {
   const limits = LUNISOLAR_LIMITS[mode];
-  const year = parseYearInRange(yearText, limits.minYear, limits.maxYear);
+  const year = parseYearInRange(yearText, limits.start.year, limits.end.year);
   const month = Number.parseInt(monthText, 10);
   if (!Number.isInteger(year) || !Number.isInteger(month) || month === 0) {
     return [];
@@ -417,13 +471,13 @@ function createLunisolarDayOptions(mode: LunisolarMode, yearText: string, monthT
 function isWithinSupportedLunisolarMonthRange(mode: LunisolarMode, year: number, month: number) {
   const limits = LUNISOLAR_LIMITS[mode];
   const normalizedMonth = Math.abs(month);
-  if (year < limits.minYear || year > limits.maxYear) {
+  if (year < limits.start.year || year > limits.end.year) {
     return false;
   }
-  if (year === limits.minYear && normalizedMonth < limits.minMonth) {
+  if (year === limits.start.year && normalizedMonth < limits.start.month) {
     return false;
   }
-  if (year === limits.maxYear && normalizedMonth > limits.maxMonth) {
+  if (year === limits.end.year && normalizedMonth > limits.end.month) {
     return false;
   }
   return true;
@@ -435,13 +489,23 @@ function isWithinSupportedLunisolarDateRange(mode: LunisolarMode, year: number, 
   if (!isWithinSupportedLunisolarMonthRange(mode, year, month)) {
     return false;
   }
-  if (year === limits.minYear && normalizedMonth === limits.minMonth && day < limits.minDay) {
+  if (compareDateBoundary({ year, month: normalizedMonth, day }, limits.start) < 0) {
     return false;
   }
-  if (year === limits.maxYear && normalizedMonth === limits.maxMonth && day > limits.maxDay) {
+  if (compareDateBoundary({ year, month: normalizedMonth, day }, limits.end) > 0) {
     return false;
   }
   return true;
+}
+
+function compareDateBoundary(left: DateBoundary, right: DateBoundary) {
+  if (left.year !== right.year) {
+    return left.year - right.year;
+  }
+  if (left.month !== right.month) {
+    return left.month - right.month;
+  }
+  return left.day - right.day;
 }
 
 function isValidSolarDate(year: number, month: number, day: number) {
@@ -461,12 +525,36 @@ function formatSolarYmd(year: number, month: number, day: number) {
 
 function clampSelectedValue(target: { value: string }, options: SelectOption[]) {
   if (!options.length) {
+    target.value = "";
     return;
   }
 
   if (!options.some((option) => option.value === target.value)) {
-    target.value = options[0].value;
+    target.value = findClosestOptionValue(target.value, options) ?? options[0].value;
   }
+}
+
+function findClosestOptionValue(currentValue: string, options: SelectOption[]) {
+  const currentNumber = Number.parseInt(currentValue, 10);
+  if (!Number.isInteger(currentNumber)) {
+    return undefined;
+  }
+
+  let closestValue: string | undefined;
+  let smallestDistance = Number.POSITIVE_INFINITY;
+  for (const option of options) {
+    const optionNumber = Number.parseInt(option.value, 10);
+    if (!Number.isInteger(optionNumber)) {
+      continue;
+    }
+
+    const distance = Math.abs(optionNumber - currentNumber);
+    if (distance < smallestDistance) {
+      smallestDistance = distance;
+      closestValue = option.value;
+    }
+  }
+  return closestValue;
 }
 
 function parseYearInRange(value: string, minYear: number, maxYear: number) {
@@ -492,25 +580,13 @@ function normalizeYearInput(value: string, maxLength: number) {
   return value.replace(/\D+/g, "").slice(0, maxLength);
 }
 
-function getLunisolarRefs(mode: LunisolarMode) {
-  switch (mode) {
-    case "lunar":
-      return { year: lunarYear, month: lunarMonth, day: lunarDay };
-    case "foto":
-      return { year: fotoYear, month: fotoMonth, day: fotoDay };
-    case "tao":
-      return { year: taoYear, month: taoMonth, day: taoDay };
-  }
-}
-
 function getYearModel(mode: CalendarMode) {
   if (mode === "solar") {
-    return { target: solarYear, minYear: MIN_SOLAR_YEAR, maxYear: MAX_SOLAR_YEAR, maxLength: 4 };
+    return { target: solarRefs.year, minYear: MIN_SOLAR_YEAR, maxYear: MAX_SOLAR_YEAR, maxLength: 4 };
   }
 
-  const { year } = getLunisolarRefs(mode);
-  const limits = LUNISOLAR_LIMITS[mode];
-  return { target: year, minYear: limits.minYear, maxYear: limits.maxYear, maxLength: String(limits.maxYear).length };
+  const { refs, limit } = lunisolarModeState[mode];
+  return { target: refs.year, minYear: limit.start.year, maxYear: limit.end.year, maxLength: String(limit.end.year).length };
 }
 
 function updateYearValue(mode: CalendarMode, value: string) {
@@ -587,6 +663,18 @@ function formatHourLabel(hourValue: number): string {
   const zhiLabels = ["丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"] as const;
   const index = Math.floor((hourValue - 1) / 2);
   return `${start}-${end}（${zhiLabels[index]}时）`;
+}
+
+function registerLunisolarOptionSync(mode: LunisolarMode) {
+  const { refs, monthOptions, dayOptions } = lunisolarModeState[mode];
+
+  watch([refs.year, monthOptions], () => {
+    clampSelectedValue(refs.month, monthOptions.value);
+  });
+
+  watch([refs.year, refs.month, dayOptions], () => {
+    clampSelectedValue(refs.day, dayOptions.value);
+  });
 }
 </script>
 <!-- autocorrect-enable -->

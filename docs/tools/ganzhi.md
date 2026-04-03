@@ -21,7 +21,7 @@ interface SelectOption {
 
 // `lunar-javascript` 在这页实际覆盖的边界范围：
 // - 公历：0001-01-01 ~ 9999-12-31
-// - 农历：0年11月18日 ~ 9999年12月2日
+// - 农历：0 年 11 月 18 日 ~ 9999 年 12 月 2 日
 // 参考本地库测试与 6tail FAQ：
 // https://6tail.cn/calendar/api.html#faq.html
 const MIN_SOLAR_YEAR = 1;

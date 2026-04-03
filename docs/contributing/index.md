@@ -47,7 +47,7 @@ Next Day
 
 - [过时/低质量文章归档](/posts/junk/) · [docs/posts/junk/](https://github.com/HowieHz/howiehz-misc/tree/main/docs/posts/junk)
 
-## Frontmatter 模板
+## 文章 Frontmatter 模板
 
 ```yaml
 ---
@@ -80,3 +80,19 @@ references:
     - 示例：`ia: https://web.archive.org/web/...` 或 `wayback: https://...`
 
 > Frontmatter 必须位于 Markdown 文件最开头，并用一对 `---` 包裹，中间填写上述字段；正文须以 `# 文章标题` 的一级标题开头。
+
+## 工具 Frontmatter 模板
+
+```yaml
+---
+publish: false
+published: 2025-12-07T21:45:30Z
+---
+```
+
+字段说明：
+
+- `publish: false`（必填）：避免发布到 RSS 源内。
+- `published`（必填）：发布时间。
+
+> Frontmatter 必须位于 Markdown 文件最开头，并用一对 `---` 包裹，中间填写上述字段；正文须以 `# 工具名` 的一级标题开头。

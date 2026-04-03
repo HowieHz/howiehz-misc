@@ -47,7 +47,7 @@ Next Day
 
 - [Junk](/en/posts/junk/) · [docs/posts/junk/](https://github.com/HowieHz/howiehz-misc/tree/main/docs/posts/junk)
 
-## Frontmatter Template
+## Article Frontmatter Template
 
 ```yaml
 ---
@@ -80,3 +80,19 @@ Field explanation:
     - Example: `ia: https://web.archive.org/web/...` or `wayback: https://...`
 
 > Frontmatter must be placed at the very beginning of the Markdown file, wrapped by a pair of `---`, with fields in between. The article content must begin with `# Article Title` as a level-one heading.
+
+## Tool Frontmatter Template
+
+```yaml
+---
+publish: false
+published: 2025-12-07T21:45:30Z
+---
+```
+
+Field explanation:
+
+- `publish: false` (required): prevents publishing to RSS feeds.
+- `published` (required): publication time.
+
+> Frontmatter must be placed at the very beginning of the Markdown file, wrapped by a pair of `---`, with fields in between. The content must begin with `# Tool Name` as a level-one heading.

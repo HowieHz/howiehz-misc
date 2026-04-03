@@ -1,6 +1,6 @@
 ﻿---
-published: 2026-04-03T20:00:00+08:00
 publish: false
+published: 2026-04-03T20:00:00+08:00
 ---
 
 # 天干地支年月日计算器
@@ -257,9 +257,6 @@ function formatHourLabel(hourValue: number): string {
 
 输入公历或农历日期，快速查看对应的天干地支年柱、月柱、日柱。
 
-> [!NOTE]
-> 本页基于 `lunar-javascript` 计算，公历 / 农历切换和闰月换算也走同一套规则。
-
 <div class="ganzhi-tool">
   <div class="ganzhi-tool__mode">
     <button
@@ -350,28 +347,36 @@ function formatHourLabel(hourValue: number): string {
     </p>
   </template>
 
-  <label>选择时辰</label>
-  <select v-model="hour">
-    <option
-      v-for="option in hourOptions"
-      :key="option.value"
-      :value="option.value"
-    >
-      {{ option.label }}
-    </option>
-  </select>
+  <div class="ganzhi-tool__compact-grid">
+    <div class="ganzhi-tool__field">
+      <label>选择时辰</label>
+      <select v-model="hour">
+        <option
+          v-for="option in hourOptions"
+          :key="option.value"
+          :value="option.value"
+        >
+          {{ option.label }}
+        </option>
+      </select>
+    </div>
 
-  <label>年计算方式</label>
-  <select v-model="yearType">
-    <option value="0">新年以正月初一起算</option>
-    <option value="1">新年以立春零点起算</option>
-  </select>
+    <div class="ganzhi-tool__field">
+      <label>年计算方式</label>
+      <select v-model="yearType">
+        <option value="0">正月初一起算</option>
+        <option value="1">立春零点起算</option>
+      </select>
+    </div>
 
-  <label>日计算方式</label>
-  <select v-model="dayType">
-    <option value="0">晚子时日柱算明天</option>
-    <option value="1">晚子时日柱算当天</option>
-  </select>
+    <div class="ganzhi-tool__field">
+      <label>日计算方式</label>
+      <select v-model="dayType">
+        <option value="0">晚子时算明天</option>
+        <option value="1">晚子时算当天</option>
+      </select>
+    </div>
+  </div>
 
   <div
     v-if="result"
@@ -392,11 +397,12 @@ function formatHourLabel(hourValue: number): string {
 
 ## 说明
 
-- 公历 / 农历两种输入都支持
-- 农历模式下会根据所选农历年月日时换算到对应公历
-- 年计算方式支持“正月初一起算”和“立春零点起算”
-- 日计算方式支持“晚子时算明天”和“晚子时算当天”
-- 时柱按所选小时直接计算
+- 公历 / 农历两种输入都支持。
+- 农历模式下会根据所选农历年月日时换算到对应公历。
+- 年计算方式支持“正月初一起算”和“立春零点起算”。
+- 日计算方式支持“晚子时算明天”和“晚子时算当天”。
+- 时柱按所选小时直接计算。
+- 本页基于 [`lunar-javascript`](https://www.npmjs.com/package/lunar-javascript) 计算，感谢这个出色的开源项目。
 
 <style scoped>
 .ganzhi-tool {
@@ -411,6 +417,8 @@ function formatHourLabel(hourValue: number): string {
 }
 
 .ganzhi-tool label {
+  display: block;
+  margin-bottom: 4px;
   font-weight: 600;
 }
 
@@ -446,6 +454,16 @@ function formatHourLabel(hourValue: number): string {
   gap: 8px;
 }
 
+.ganzhi-tool__compact-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ganzhi-tool__field {
+  min-width: 0;
+}
+
 .ganzhi-tool__hint {
   margin: 0;
   color: var(--vp-c-text-2);
@@ -475,10 +493,10 @@ function formatHourLabel(hourValue: number): string {
 }
 
 @media (max-width: 640px) {
-  .ganzhi-tool__select-grid {
+  .ganzhi-tool__select-grid,
+  .ganzhi-tool__compact-grid {
     grid-template-columns: 1fr;
   }
 }
 </style>
-
 

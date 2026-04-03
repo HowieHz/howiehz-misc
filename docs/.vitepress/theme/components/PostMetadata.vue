@@ -93,26 +93,52 @@ function buildReference(label: string, url: string, archives?: { type: string; u
 </script>
 
 <template>
-  <section v-if="shouldRender" class="post-meta">
-    <div v-if="contributors.length" class="post-meta__row">
+  <section
+    v-if="shouldRender"
+    class="post-meta"
+  >
+    <div
+      v-if="contributors.length"
+      class="post-meta__row"
+    >
       <span class="post-meta__label">{{ labels.contributors }}：</span>
       <ul class="post-meta__list">
-        <li v-for="(contributor, index) in contributors" :key="contributor.label + (contributor.link || '')">
+        <li
+          v-for="(contributor, index) in contributors"
+          :key="contributor.label + (contributor.link || '')"
+        >
           <template v-if="contributor.link">
-            <a :href="contributor.link" target="_blank" rel="noreferrer">{{ contributor.label }}</a>
+            <a
+              :href="contributor.link"
+              target="_blank"
+              rel="noreferrer"
+            >{{ contributor.label }}</a>
           </template>
           <template v-else>
             <span>{{ contributor.label }}</span>
           </template>
-          <span v-if="index < contributors.length - 1" aria-hidden="true">, </span>
+          <span
+            v-if="index < contributors.length - 1"
+            aria-hidden="true"
+          >, </span>
         </li>
       </ul>
     </div>
-    <div v-if="references.length" class="post-meta__row">
+    <div
+      v-if="references.length"
+      class="post-meta__row"
+    >
       <span class="post-meta__label">{{ labels.references }}：</span>
       <ul class="post-meta__list">
-        <li v-for="(reference, index) in references" :key="reference.url">
-          <a :href="reference.url" target="_blank" rel="noreferrer">{{ reference.label }}</a>
+        <li
+          v-for="(reference, index) in references"
+          :key="reference.url"
+        >
+          <a
+            :href="reference.url"
+            target="_blank"
+            rel="noreferrer"
+          >{{ reference.label }}</a>
           <a
             v-for="archive in reference.archives"
             :key="archive.type"
@@ -120,9 +146,11 @@ function buildReference(label: string, url: string, archives?: { type: string; u
             target="_blank"
             rel="noreferrer"
             class="archive-link"
-            >[{{ archive.type.toUpperCase() }}]</a
-          >
-          <span v-if="index < references.length - 1" aria-hidden="true">, </span>
+          >[{{ archive.type.toUpperCase() }}]</a>
+          <span
+            v-if="index < references.length - 1"
+            aria-hidden="true"
+          >, </span>
         </li>
       </ul>
     </div>

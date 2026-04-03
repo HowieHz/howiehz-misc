@@ -19,6 +19,14 @@ interface SelectOption {
 }
 
 const yearOptions = createYearOptions(1940, 2030);
+const yearTypeOptions = [
+  { value: "0", label: "正月初一起算" },
+  { value: "1", label: "立春零点起算" },
+] satisfies SelectOption[];
+const dayTypeOptions = [
+  { value: "0", label: "晚子时算明天" },
+  { value: "1", label: "晚子时算当天" },
+] satisfies SelectOption[];
 const monthNames = ["正", "二", "三", "四", "五", "六", "七", "八", "九", "十", "冬", "腊"] as const;
 const dayNames = [
   "初一",
@@ -239,6 +247,21 @@ function clampSelectedValue(target: { value: string }, options: SelectOption[]) 
   }
 }
 
+function handleSelectWheel(event: WheelEvent, target: { value: string }, options: SelectOption[]) {
+  if (!options.length || event.deltaY === 0) {
+    return;
+  }
+
+  const currentIndex = options.findIndex((option) => option.value === target.value);
+  const fallbackIndex = currentIndex >= 0 ? currentIndex : 0;
+  const direction = event.deltaY > 0 ? 1 : -1;
+  const nextIndex = Math.min(Math.max(fallbackIndex + direction, 0), options.length - 1);
+
+  if (nextIndex !== fallbackIndex) {
+    target.value = options[nextIndex].value;
+  }
+}
+
 function formatHourLabel(hourValue: number): string {
   const start = `${String(hourValue).padStart(2, "0")}:00`;
   const end = `${String(hourValue).padStart(2, "0")}:59`;
@@ -277,7 +300,10 @@ function formatHourLabel(hourValue: number): string {
   <template v-if="calendarMode === 'solar'">
     <label>公历日期</label>
     <div class="ganzhi-tool__select-grid">
-      <select v-model="solarYear">
+      <select
+        v-model="solarYear"
+        @wheel.prevent="handleSelectWheel($event, solarYear, yearOptions)"
+      >
         <option
           v-for="option in yearOptions"
           :key="option.value"
@@ -286,7 +312,10 @@ function formatHourLabel(hourValue: number): string {
           {{ option.label }}
         </option>
       </select>
-      <select v-model="solarMonth">
+      <select
+        v-model="solarMonth"
+        @wheel.prevent="handleSelectWheel($event, solarMonth, solarMonthOptions)"
+      >
         <option
           v-for="option in solarMonthOptions"
           :key="option.value"
@@ -295,7 +324,10 @@ function formatHourLabel(hourValue: number): string {
           {{ option.label }}
         </option>
       </select>
-      <select v-model="solarDay">
+      <select
+        v-model="solarDay"
+        @wheel.prevent="handleSelectWheel($event, solarDay, solarDayOptions)"
+      >
         <option
           v-for="option in solarDayOptions"
           :key="option.value"
@@ -309,7 +341,10 @@ function formatHourLabel(hourValue: number): string {
   <template v-else>
     <label>农历日期</label>
     <div class="ganzhi-tool__select-grid">
-      <select v-model="lunarYear">
+      <select
+        v-model="lunarYear"
+        @wheel.prevent="handleSelectWheel($event, lunarYear, yearOptions)"
+      >
         <option
           v-for="option in yearOptions"
           :key="option.value"
@@ -318,7 +353,10 @@ function formatHourLabel(hourValue: number): string {
           {{ option.label }}
         </option>
       </select>
-      <select v-model="lunarMonth">
+      <select
+        v-model="lunarMonth"
+        @wheel.prevent="handleSelectWheel($event, lunarMonth, lunarMonthOptions)"
+      >
         <option
           v-for="option in lunarMonthOptions"
           :key="option.value"
@@ -327,7 +365,10 @@ function formatHourLabel(hourValue: number): string {
           {{ option.label }}
         </option>
       </select>
-      <select v-model="lunarDay">
+      <select
+        v-model="lunarDay"
+        @wheel.prevent="handleSelectWheel($event, lunarDay, lunarDayOptions)"
+      >
         <option
           v-for="option in lunarDayOptions"
           :key="option.value"
@@ -347,7 +388,10 @@ function formatHourLabel(hourValue: number): string {
   <div class="ganzhi-tool__compact-grid">
     <div class="ganzhi-tool__field">
       <label>选择时辰</label>
-      <select v-model="hour">
+      <select
+        v-model="hour"
+        @wheel.prevent="handleSelectWheel($event, hour, hourOptions)"
+      >
         <option
           v-for="option in hourOptions"
           :key="option.value"
@@ -359,14 +403,20 @@ function formatHourLabel(hourValue: number): string {
     </div>
     <div class="ganzhi-tool__field">
       <label>年计算方式</label>
-      <select v-model="yearType">
+      <select
+        v-model="yearType"
+        @wheel.prevent="handleSelectWheel($event, yearType, yearTypeOptions)"
+      >
         <option value="0">正月初一起算</option>
         <option value="1">立春零点起算</option>
       </select>
     </div>
     <div class="ganzhi-tool__field">
       <label>日计算方式</label>
-      <select v-model="dayType">
+      <select
+        v-model="dayType"
+        @wheel.prevent="handleSelectWheel($event, dayType, dayTypeOptions)"
+      >
         <option value="0">晚子时算明天</option>
         <option value="1">晚子时算当天</option>
       </select>

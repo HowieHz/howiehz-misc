@@ -1,4 +1,4 @@
----
+﻿---
 published: 2026-04-03T20:00:00+08:00
 publish: false
 ---
@@ -350,31 +350,28 @@ function formatHourLabel(hourValue: number): string {
     </p>
   </template>
 
-<label>选择时辰</label>
-<select v-model="hour">
-
-<option
+  <label>选择时辰</label>
+  <select v-model="hour">
+    <option
       v-for="option in hourOptions"
       :key="option.value"
       :value="option.value"
     >
-{{ option.label }}
-</option>
-</select>
+      {{ option.label }}
+    </option>
+  </select>
 
-<label>年计算方式</label>
-<select v-model="yearType">
+  <label>年计算方式</label>
+  <select v-model="yearType">
+    <option value="0">新年以正月初一起算</option>
+    <option value="1">新年以立春零点起算</option>
+  </select>
 
-<option value="0">新年以正月初一起算</option>
-<option value="1">新年以立春零点起算</option>
-</select>
-
-<label>日计算方式</label>
-<select v-model="dayType">
-
-<option value="0">晚子时日柱算明天</option>
-<option value="1">晚子时日柱算当天</option>
-</select>
+  <label>日计算方式</label>
+  <select v-model="dayType">
+    <option value="0">晚子时日柱算明天</option>
+    <option value="1">晚子时日柱算当天</option>
+  </select>
 
   <div
     v-if="result"
@@ -483,3 +480,5 @@ function formatHourLabel(hourValue: number): string {
   }
 }
 </style>
+
+

@@ -24,12 +24,19 @@ function getDefaultTitle(content: string): string {
   return match?.[1]?.trim() || "";
 }
 
-export function createCategoryLoader(globPattern: string, baseUrl: string, options: LoaderOptions = {}) {
+/**
+ * Create a VitePress content loader for a category listing page.
+ *
+ * @param globPattern Glob pattern used by `createContentLoader` to find category posts.
+ * @param categoryIndexUrl URL of the category index page itself; this page is excluded from the returned post list.
+ * @param options Optional loader settings, such as a custom sort function.
+ */
+export function createCategoryLoader(globPattern: string, categoryIndexUrl: string, options: LoaderOptions = {}) {
   return createContentLoader(globPattern, {
     excerpt: false,
     transform(items) {
       const posts: CategoryPostMeta[] = items
-        .filter((item) => normalizeUrl(item.url) !== normalizeUrl(baseUrl))
+        .filter((item) => normalizeUrl(item.url) !== normalizeUrl(categoryIndexUrl))
         .map((item) => {
           const { frontmatter = {}, url } = item;
           let title = frontmatter.title;
@@ -52,7 +59,7 @@ export function createCategoryLoader(globPattern: string, baseUrl: string, optio
           // 最后的备选方案：从 URL 推断
           title = title || inferTitleFromUrl(url);
 
-          const rawDate = item.lastUpdated;
+          const rawDate = frontmatter.published;
           const lastUpdated = formatDateToYMD(rawDate) || rawDate;
           return { title, url, lastUpdated };
         });

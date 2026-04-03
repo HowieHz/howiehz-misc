@@ -274,7 +274,6 @@ function formatHourLabel(hourValue: number): string {
       农历
     </button>
   </div>
-
   <template v-if="calendarMode === 'solar'">
     <label>公历日期</label>
     <div class="ganzhi-tool__select-grid">
@@ -307,7 +306,6 @@ function formatHourLabel(hourValue: number): string {
       </select>
     </div>
   </template>
-
   <template v-else>
     <label>农历日期</label>
     <div class="ganzhi-tool__select-grid">
@@ -346,7 +344,6 @@ function formatHourLabel(hourValue: number): string {
       {{ leapMonthHint }}
     </p>
   </template>
-
   <div class="ganzhi-tool__compact-grid">
     <div class="ganzhi-tool__field">
       <label>选择时辰</label>
@@ -360,7 +357,6 @@ function formatHourLabel(hourValue: number): string {
         </option>
       </select>
     </div>
-
     <div class="ganzhi-tool__field">
       <label>年计算方式</label>
       <select v-model="yearType">
@@ -368,7 +364,6 @@ function formatHourLabel(hourValue: number): string {
         <option value="1">立春零点起算</option>
       </select>
     </div>
-
     <div class="ganzhi-tool__field">
       <label>日计算方式</label>
       <select v-model="dayType">
@@ -377,7 +372,6 @@ function formatHourLabel(hourValue: number): string {
       </select>
     </div>
   </div>
-
   <div
     v-if="result"
     class="ganzhi-tool__result"
@@ -499,4 +493,3 @@ function formatHourLabel(hourValue: number): string {
   }
 }
 </style>
-

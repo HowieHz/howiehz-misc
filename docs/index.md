@@ -23,4 +23,9 @@ features:
     details: 存档过时或低质量的内容，仅供参考。
     link: /posts/junk/
     linkText: 查看归档
+  - icon: 🛠️
+    title: 实用工具
+    details: 一些可以直接在页面里使用的小工具。
+    link: /tools/
+    linkText: 查看工具
 ---

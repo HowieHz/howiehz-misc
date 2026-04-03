@@ -23,4 +23,9 @@ features:
     details: Archived outdated or low-quality content, for reference only.
     link: /en/posts/junk/
     linkText: View junk
+  - icon: 🛠️
+    title: Tools
+    details: Small utilities you can use directly in the page.
+    link: /en/tools/
+    linkText: View tools
 ---

@@ -34,6 +34,20 @@ const EN_INFO_SIDEBAR: DefaultTheme.SidebarItem[] = [
   },
 ];
 
+const ROOT_TOOLS_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  {
+    text: "工具",
+    items: [{ text: "工具首页", link: "/tools/" }, ...collectTools("root")],
+  },
+];
+
+const EN_TOOLS_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  {
+    text: "Tools",
+    items: [{ text: "Tools Home", link: "/en/tools/" }, ...collectTools("en")],
+  },
+];
+
 type LocaleKey = "root" | "en";
 
 const POST_LABELS: Record<
@@ -106,6 +120,29 @@ function collectPosts(locale: LocaleKey, category: (typeof POST_GROUPS)[number])
     });
 }
 
+function collectTools(locale: LocaleKey): DefaultTheme.SidebarItem[] {
+  const baseDir = path.join(DOCS_ROOT, locale === "root" ? "" : "en", "tools");
+  if (!fs.existsSync(baseDir)) {
+    return [];
+  }
+
+  const linkPrefix = locale === "root" ? "" : "/en";
+  const collator = new Intl.Collator(locale === "root" ? "zh-Hans-CN" : "en");
+
+  return fs
+    .readdirSync(baseDir)
+    .filter((file) => file.endsWith(".md") && file !== "index.md")
+    .map((file) => {
+      const filePath = path.join(baseDir, file);
+      const slug = file.replace(/\.md$/, "");
+      return {
+        text: extractH1Title(filePath) ?? slug,
+        link: `${linkPrefix}/tools/${slug}`,
+      } satisfies DefaultTheme.SidebarItem;
+    })
+    .sort((a, b) => collator.compare(a.text, b.text));
+}
+
 function extractTitle(filePath: string): string | undefined {
   const content = fs.readFileSync(filePath, "utf8");
   const frontmatterMatch = content.match(/^---[\r\n]+([\s\S]*?)[\r\n]+---/);
@@ -123,6 +160,12 @@ function extractTitle(filePath: string): string | undefined {
   }
 
   const headingMatch = content.match(/^#\s+(.+)$/m);
+  return headingMatch ? headingMatch[1].trim() : undefined;
+}
+
+function extractH1Title(filePath: string): string | undefined {
+  const content = fs.readFileSync(filePath, "utf8");
+  const headingMatch = content.match(/^\s*#\s+(.+?)(?:\r?\n|$)/m);
   return headingMatch ? headingMatch[1].trim() : undefined;
 }
 
@@ -315,10 +358,12 @@ export default defineConfig({
             text: "文章分类",
             items: [{ text: "过时/低质量文章归档", link: "/posts/junk/" }],
           },
+          { text: "工具", link: "/tools/" },
           { text: "关于", link: "/about/" },
         ],
         sidebar: {
           "/posts/": buildPostSidebar("root"),
+          "/tools/": ROOT_TOOLS_SIDEBAR,
           "/about/": ROOT_INFO_SIDEBAR,
           "/license/": ROOT_INFO_SIDEBAR,
         },
@@ -375,10 +420,12 @@ export default defineConfig({
             text: "Categories",
             items: [{ text: "Junk", link: "/en/posts/junk/" }],
           },
+          { text: "Tools", link: "/en/tools/" },
           { text: "About", link: "/en/about/" },
         ],
         sidebar: {
           "/en/posts/": buildPostSidebar("en"),
+          "/en/tools/": EN_TOOLS_SIDEBAR,
           "/en/about/": EN_INFO_SIDEBAR,
           "/en/license/": EN_INFO_SIDEBAR,
         },

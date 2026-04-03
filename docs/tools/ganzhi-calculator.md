@@ -1,0 +1,485 @@
+---
+published: 2026-04-03T20:00:00+08:00
+publish: false
+---
+
+# 天干地支年月日计算器
+
+<script setup lang="ts">
+import { Lunar, LunarMonth, LunarYear, Solar } from "lunar-javascript";
+import { computed, ref, watch } from "vue";
+
+type CalendarMode = "solar" | "lunar";
+type YearType = "0" | "1";
+type DayType = "0" | "1";
+
+interface SelectOption {
+  label: string;
+  value: string;
+}
+
+const yearOptions = createYearOptions(1940, 2030);
+const monthNames = ["正", "二", "三", "四", "五", "六", "七", "八", "九", "十", "冬", "腊"] as const;
+const dayNames = [
+  "初一",
+  "初二",
+  "初三",
+  "初四",
+  "初五",
+  "初六",
+  "初七",
+  "初八",
+  "初九",
+  "初十",
+  "十一",
+  "十二",
+  "十三",
+  "十四",
+  "十五",
+  "十六",
+  "十七",
+  "十八",
+  "十九",
+  "二十",
+  "廿一",
+  "廿二",
+  "廿三",
+  "廿四",
+  "廿五",
+  "廿六",
+  "廿七",
+  "廿八",
+  "廿九",
+  "三十",
+] as const;
+const solarMonthOptions = Array.from({ length: 12 }, (_, index) => {
+  const month = index + 1;
+  return { value: String(month), label: `${String(month).padStart(2, "0")}月` } satisfies SelectOption;
+});
+const hourOptions = Array.from({ length: 24 }, (_, hour) => ({
+  value: String(hour),
+  label: formatHourLabel(hour),
+})) satisfies SelectOption[];
+
+const today = new Date();
+const currentHour = today.getHours();
+const todaySolar = Solar.fromYmdHms(today.getFullYear(), today.getMonth() + 1, today.getDate(), currentHour, 0, 0);
+const todayLunar = todaySolar.getLunar();
+
+const calendarMode = ref<CalendarMode>("solar");
+const yearType = ref<YearType>("0");
+const dayType = ref<DayType>("0");
+const hour = ref(String(currentHour));
+
+const solarYear = ref(String(today.getFullYear()));
+const solarMonth = ref(String(today.getMonth() + 1));
+const solarDay = ref(String(today.getDate()));
+
+const lunarYear = ref(String(todayLunar.getYear()));
+const lunarMonth = ref(String(todayLunar.getMonth()));
+const lunarDay = ref(String(todayLunar.getDay()));
+
+const solarDayOptions = computed(() => {
+  const year = Number.parseInt(solarYear.value, 10);
+  const month = Number.parseInt(solarMonth.value, 10);
+  if (!Number.isInteger(year) || !Number.isInteger(month)) {
+    return [];
+  }
+
+  const dayCount = new Date(year, month, 0).getDate();
+  return createDayOptions(dayCount, (day) => `${String(day).padStart(2, "0")}日`);
+});
+
+const lunarMonthOptions = computed(() => {
+  const year = Number.parseInt(lunarYear.value, 10);
+  if (!Number.isInteger(year) || year === 0) {
+    return [];
+  }
+
+  try {
+    const leapMonth = LunarYear.fromYear(year).getLeapMonth();
+    const options: SelectOption[] = [];
+    for (let month = 1; month <= 12; month++) {
+      options.push({
+        value: String(month),
+        label: `${monthNames[month - 1]}月`,
+      });
+      if (month === leapMonth) {
+        options.push({
+          value: String(-month),
+          label: `闰${monthNames[month - 1]}`,
+        });
+      }
+    }
+    return options;
+  } catch {
+    return [];
+  }
+});
+
+const lunarDayOptions = computed(() => {
+  const year = Number.parseInt(lunarYear.value, 10);
+  const month = Number.parseInt(lunarMonth.value, 10);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || year === 0 || month === 0) {
+    return [];
+  }
+
+  try {
+    const dayCount = LunarMonth.fromYm(year, month).getDayCount();
+    return createDayOptions(dayCount, (day) => dayNames[day - 1]);
+  } catch {
+    return [];
+  }
+});
+
+const leapMonthHint = computed(() => {
+  const year = Number.parseInt(lunarYear.value, 10);
+  if (!Number.isInteger(year) || year === 0) {
+    return undefined;
+  }
+
+  try {
+    const leapMonth = LunarYear.fromYear(year).getLeapMonth();
+    return leapMonth > 0 ? `该年闰 ${leapMonth} 月` : "该年无闰月";
+  } catch {
+    return undefined;
+  }
+});
+
+const result = computed(() => {
+  try {
+    const solar = calendarMode.value === "solar" ? parseSolarInput() : parseLunarInput();
+    if (!solar) {
+      return undefined;
+    }
+
+    const lunar = solar.getLunar();
+    return {
+      solarLabel: solar.toYmd(),
+      lunarLabel: lunar.toString(),
+      yearPillar: yearType.value === "0" ? lunar.getYearInGanZhi() : lunar.getYearInGanZhiByLiChun(),
+      monthPillar: lunar.getMonthInGanZhi(),
+      dayPillar: dayType.value === "0" ? lunar.getDayInGanZhiExact() : lunar.getDayInGanZhiExact2(),
+      timePillar: lunar.getTimeInGanZhi(),
+      zodiac: yearType.value === "0" ? lunar.getYearShengXiao() : lunar.getYearShengXiaoByLiChun(),
+    };
+  } catch {
+    return undefined;
+  }
+});
+
+watch([solarYear, solarMonth, solarDayOptions], () => {
+  clampSelectedValue(solarDay, solarDayOptions.value);
+});
+
+watch([lunarYear, lunarMonthOptions], () => {
+  clampSelectedValue(lunarMonth, lunarMonthOptions.value);
+});
+
+watch([lunarYear, lunarMonth, lunarDayOptions], () => {
+  clampSelectedValue(lunarDay, lunarDayOptions.value);
+});
+
+function parseSolarInput() {
+  const year = Number.parseInt(solarYear.value, 10);
+  const month = Number.parseInt(solarMonth.value, 10);
+  const day = Number.parseInt(solarDay.value, 10);
+  const selectedHour = Number.parseInt(hour.value, 10);
+  if (![year, month, day, selectedHour].every(Number.isInteger)) {
+    return undefined;
+  }
+
+  const solar = Solar.fromYmdHms(year, month, day, selectedHour, 0, 0);
+  return solar.toYmd() === `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}` ? solar : undefined;
+}
+
+function parseLunarInput() {
+  const year = Number.parseInt(lunarYear.value.trim(), 10);
+  const month = Number.parseInt(lunarMonth.value.trim(), 10);
+  const day = Number.parseInt(lunarDay.value.trim(), 10);
+  const selectedHour = Number.parseInt(hour.value, 10);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day) || !Number.isInteger(selectedHour) || year === 0) {
+    return undefined;
+  }
+
+  if (Math.abs(month) < 1 || Math.abs(month) > 12 || day < 1 || day > 30) {
+    return undefined;
+  }
+
+  return Lunar.fromYmdHms(year, month, day, selectedHour, 0, 0).getSolar();
+}
+
+function createYearOptions(start: number, end: number): SelectOption[] {
+  return Array.from({ length: end - start + 1 }, (_, index) => {
+    const year = start + index;
+    return {
+      value: String(year),
+      label: `${year}年`,
+    };
+  });
+}
+
+function createDayOptions(dayCount: number, formatLabel: (day: number) => string): SelectOption[] {
+  return Array.from({ length: dayCount }, (_, index) => {
+    const day = index + 1;
+    return {
+      value: String(day),
+      label: formatLabel(day),
+    };
+  });
+}
+
+function clampSelectedValue(target: { value: string }, options: SelectOption[]) {
+  if (!options.length) {
+    return;
+  }
+
+  if (!options.some((option) => option.value === target.value)) {
+    target.value = options[0].value;
+  }
+}
+
+function formatHourLabel(hourValue: number): string {
+  const start = `${String(hourValue).padStart(2, "0")}:00`;
+  const end = `${String(hourValue).padStart(2, "0")}:59`;
+  if (hourValue === 0) {
+    return `${start}-${end}（早子）`;
+  }
+  if (hourValue === 23) {
+    return `${start}-${end}（晚子）`;
+  }
+
+  const zhiLabels = ["丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"] as const;
+  const index = Math.floor((hourValue - 1) / 2);
+  return `${start}-${end}（${zhiLabels[index]}时）`;
+}
+</script>
+
+输入公历或农历日期，快速查看对应的天干地支年柱、月柱、日柱。
+
+> [!NOTE]
+> 本页基于 `lunar-javascript` 计算，公历 / 农历切换和闰月换算也走同一套规则。
+
+<div class="ganzhi-tool">
+  <div class="ganzhi-tool__mode">
+    <button
+      :class="{ 'ganzhi-tool__mode-button--active': calendarMode === 'solar' }"
+      type="button"
+      @click="calendarMode = 'solar'"
+    >
+      公历
+    </button>
+    <button
+      :class="{ 'ganzhi-tool__mode-button--active': calendarMode === 'lunar' }"
+      type="button"
+      @click="calendarMode = 'lunar'"
+    >
+      农历
+    </button>
+  </div>
+
+  <template v-if="calendarMode === 'solar'">
+    <label>公历日期</label>
+    <div class="ganzhi-tool__select-grid">
+      <select v-model="solarYear">
+        <option
+          v-for="option in yearOptions"
+          :key="option.value"
+          :value="option.value"
+        >
+          {{ option.label }}
+        </option>
+      </select>
+      <select v-model="solarMonth">
+        <option
+          v-for="option in solarMonthOptions"
+          :key="option.value"
+          :value="option.value"
+        >
+          {{ option.label }}
+        </option>
+      </select>
+      <select v-model="solarDay">
+        <option
+          v-for="option in solarDayOptions"
+          :key="option.value"
+          :value="option.value"
+        >
+          {{ option.label }}
+        </option>
+      </select>
+    </div>
+  </template>
+
+  <template v-else>
+    <label>农历日期</label>
+    <div class="ganzhi-tool__select-grid">
+      <select v-model="lunarYear">
+        <option
+          v-for="option in yearOptions"
+          :key="option.value"
+          :value="option.value"
+        >
+          {{ option.label }}
+        </option>
+      </select>
+      <select v-model="lunarMonth">
+        <option
+          v-for="option in lunarMonthOptions"
+          :key="option.value"
+          :value="option.value"
+        >
+          {{ option.label }}
+        </option>
+      </select>
+      <select v-model="lunarDay">
+        <option
+          v-for="option in lunarDayOptions"
+          :key="option.value"
+          :value="option.value"
+        >
+          {{ option.label }}
+        </option>
+      </select>
+    </div>
+    <p
+      v-if="leapMonthHint"
+      class="ganzhi-tool__hint"
+    >
+      {{ leapMonthHint }}
+    </p>
+  </template>
+
+<label>选择时辰</label>
+<select v-model="hour">
+
+<option
+      v-for="option in hourOptions"
+      :key="option.value"
+      :value="option.value"
+    >
+{{ option.label }}
+</option>
+</select>
+
+<label>年计算方式</label>
+<select v-model="yearType">
+
+<option value="0">新年以正月初一起算</option>
+<option value="1">新年以立春零点起算</option>
+</select>
+
+<label>日计算方式</label>
+<select v-model="dayType">
+
+<option value="0">晚子时日柱算明天</option>
+<option value="1">晚子时日柱算当天</option>
+</select>
+
+  <div
+    v-if="result"
+    class="ganzhi-tool__result"
+  >
+    <p class="ganzhi-tool__main">{{ result.yearPillar }}年 {{ result.monthPillar }}月 {{ result.dayPillar }}日 {{ result.timePillar }}时</p>
+    <p>公历：{{ result.solarLabel }}</p>
+    <p>农历：{{ result.lunarLabel }}</p>
+    <p>生肖：{{ result.zodiac }}</p>
+  </div>
+  <p
+    v-else
+    class="ganzhi-tool__error"
+  >
+    请输入合法日期；农历模式下闰月要直接选对应的“闰 X”月份。
+  </p>
+</div>
+
+## 说明
+
+- 公历 / 农历两种输入都支持
+- 农历模式下会根据所选农历年月日时换算到对应公历
+- 年计算方式支持“正月初一起算”和“立春零点起算”
+- 日计算方式支持“晚子时算明天”和“晚子时算当天”
+- 时柱按所选小时直接计算
+
+<style scoped>
+.ganzhi-tool {
+  display: grid;
+  gap: 12px;
+  max-width: 720px;
+  margin: 16px 0 24px;
+  padding: 16px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  background: var(--vp-c-bg-soft);
+}
+
+.ganzhi-tool label {
+  font-weight: 600;
+}
+
+.ganzhi-tool select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  background: var(--vp-c-bg);
+}
+
+.ganzhi-tool__mode {
+  display: flex;
+  gap: 8px;
+}
+
+.ganzhi-tool__mode button {
+  padding: 8px 14px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  background: var(--vp-c-bg);
+  cursor: pointer;
+}
+
+.ganzhi-tool__mode-button--active {
+  border-color: var(--vp-c-brand-1);
+  color: var(--vp-c-brand-1);
+}
+
+.ganzhi-tool__select-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ganzhi-tool__hint {
+  margin: 0;
+  color: var(--vp-c-text-2);
+}
+
+.ganzhi-tool__result {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--vp-c-bg);
+}
+
+.ganzhi-tool__main {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.ganzhi-tool__result p,
+.ganzhi-tool__error {
+  margin: 0;
+}
+
+.ganzhi-tool__error {
+  color: var(--vp-c-danger-1);
+}
+
+@media (max-width: 640px) {
+  .ganzhi-tool__select-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

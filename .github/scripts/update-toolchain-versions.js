@@ -36,8 +36,7 @@ const parseSemVer = (version) => {
   };
 };
 
-const compareSemVer = (left, right) =>
-  left.major - right.major || left.minor - right.minor || left.patch - right.patch;
+const compareSemVer = (left, right) => left.major - right.major || left.minor - right.minor || left.patch - right.patch;
 
 const parseNodeEngineMajor = (value) => {
   const match = /^>=(\d+)$/u.exec(typeof value === "string" ? value.trim() : "");
@@ -122,13 +121,16 @@ const readCurrentToolchainVersions = async () => {
 };
 
 const fetchNodeReleasePublishedAt = async (versionTag) => {
-  const response = await fetch(`https://api.github.com/repos/nodejs/node/releases/tags/${encodeURIComponent(versionTag)}`, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "howiehz-misc-toolchain-updater",
-      "X-GitHub-Api-Version": "2022-11-28",
+  const response = await fetch(
+    `https://api.github.com/repos/nodejs/node/releases/tags/${encodeURIComponent(versionTag)}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "howiehz-misc-toolchain-updater",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
     },
-  });
+  );
 
   if (!response.ok) {
     throw new Error(`Failed to fetch Node.js release ${versionTag}: ${response.status} ${response.statusText}`);
@@ -443,10 +445,9 @@ console.log(`Resolved target pnpm version: ${pnpmVersion}`);
 const nodeVersionUpdateGroups = await updateNodeVersionFiles(nodeMajor);
 const packageJsonUpdateGroups = await updatePackageJsonFiles(nodeMajor, pnpmVersion);
 
-const updateGroups = [
-  ...packageJsonUpdateGroups,
-  ...nodeVersionUpdateGroups,
-].filter(({ updates }) => updates.length > 0);
+const updateGroups = [...packageJsonUpdateGroups, ...nodeVersionUpdateGroups].filter(
+  ({ updates }) => updates.length > 0,
+);
 
 if (updateGroups.length === 0) {
   console.log("No toolchain version updates were required");

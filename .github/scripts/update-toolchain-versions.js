@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const packageJsonPath = "package.json";
+const rootPackageJsonPath = "package.json";
 const githubDirPath = ".github";
 const workflowsDirPath = path.join(githubDirPath, "workflows");
 const actionsDirPath = path.join(githubDirPath, "actions");
@@ -9,6 +9,8 @@ const dryRun = process.argv.includes("--dry-run");
 // Only promote a toolchain release after the current latest itself has aged for at least 24 hours.
 // We intentionally do not fall back to an older version when a newer latest is still within this holdback window.
 const latestReleaseMinAgeMs = 24 * 60 * 60 * 1000;
+const resolveRelativePath = (directoryPath, entryName) =>
+  directoryPath === "." ? entryName : path.join(directoryPath, entryName);
 
 const appendGitHubOutput = async (name, value) => {
   const outputPath = process.env.GITHUB_OUTPUT;
@@ -33,6 +35,9 @@ const parseSemVer = (version) => {
     patch: Number(match[3]),
   };
 };
+
+const compareSemVer = (left, right) =>
+  left.major - right.major || left.minor - right.minor || left.patch - right.patch;
 
 const parseNodeEngineMajor = (value) => {
   const match = /^>=(\d+)$/u.exec(typeof value === "string" ? value.trim() : "");
@@ -97,17 +102,17 @@ const maybeWriteFile = async (filePath, nextContent) => {
 };
 
 const readCurrentToolchainVersions = async () => {
-  const { content } = await readUtf8FileWithLineEnding(packageJsonPath);
+  const { content } = await readUtf8FileWithLineEnding(rootPackageJsonPath);
   const packageJson = JSON.parse(content);
   const nodeMajor = parseNodeEngineMajor(packageJson.engines?.node);
   const pnpmVersion = parsePackageManagerPnpmVersion(packageJson.packageManager);
 
   if (nodeMajor === null) {
-    throw new Error(`Invalid current Node.js engine range in ${packageJsonPath}`);
+    throw new Error(`Invalid current Node.js engine range in ${rootPackageJsonPath}`);
   }
 
   if (!pnpmVersion) {
-    throw new Error(`Invalid current pnpm packageManager value in ${packageJsonPath}`);
+    throw new Error(`Invalid current pnpm packageManager value in ${rootPackageJsonPath}`);
   }
 
   return {
@@ -116,10 +121,8 @@ const readCurrentToolchainVersions = async () => {
   };
 };
 
-const fetchLatestNodeMajor = async (currentNodeMajor) => {
-  // nodejs.org/dist/index.json only exposes a calendar date, which cannot enforce a strict 24-hour holdback.
-  // GitHub releases expose the published timestamp for the current latest release, which matches the intended rule.
-  const response = await fetch("https://api.github.com/repos/nodejs/node/releases/latest", {
+const fetchNodeReleasePublishedAt = async (versionTag) => {
+  const response = await fetch(`https://api.github.com/repos/nodejs/node/releases/tags/${encodeURIComponent(versionTag)}`, {
     headers: {
       Accept: "application/vnd.github+json",
       "User-Agent": "howiehz-misc-toolchain-updater",
@@ -128,26 +131,70 @@ const fetchLatestNodeMajor = async (currentNodeMajor) => {
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch Node.js latest release: ${response.status} ${response.statusText}`);
+    throw new Error(`Failed to fetch Node.js release ${versionTag}: ${response.status} ${response.statusText}`);
   }
 
   const release = await response.json();
-  const latestVersion = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
   const publishedAt = typeof release.published_at === "string" ? release.published_at.trim() : "";
-  const parsedVersion = parseSemVer(latestVersion);
 
-  if (!parsedVersion) {
-    throw new Error(`Invalid Node.js latest release tag: ${latestVersion || "<empty>"}`);
+  if (!publishedAt) {
+    throw new Error(`Missing published date for Node.js release ${versionTag}`);
   }
+
+  return publishedAt;
+};
+
+const fetchLatestNodeLtsMajor = async (currentNodeMajor) => {
+  // The official Node.js release index identifies the currently active LTS line.
+  // GitHub releases expose an exact published timestamp so the 24-hour holdback remains strict.
+  const response = await fetch("https://nodejs.org/download/release/index.json", {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "howiehz-misc-toolchain-updater",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Node.js release index: ${response.status} ${response.statusText}`);
+  }
+
+  const releases = await response.json();
+
+  if (!Array.isArray(releases)) {
+    throw new Error("Invalid Node.js release index response");
+  }
+
+  const latestLtsRelease = releases
+    .map((release) => {
+      const version = typeof release.version === "string" ? release.version.trim() : "";
+      const parsedVersion = parseSemVer(version);
+
+      if (!release.lts || !parsedVersion) {
+        return null;
+      }
+
+      return {
+        version,
+        parsedVersion,
+      };
+    })
+    .filter((release) => release !== null)
+    .sort((left, right) => compareSemVer(right.parsedVersion, left.parsedVersion))[0];
+
+  if (!latestLtsRelease) {
+    throw new Error("Unable to determine the latest Node.js LTS release");
+  }
+
+  const publishedAt = await fetchNodeReleasePublishedAt(latestLtsRelease.version);
 
   if (!hasReachedLatestReleaseMinAge(publishedAt)) {
     console.log(
-      `Skipping Node.js update because latest ${latestVersion} was published at ${publishedAt} and is still within the 24-hour holdback`,
+      `Skipping Node.js update because latest LTS ${latestLtsRelease.version} was published at ${publishedAt} and is still within the 24-hour holdback`,
     );
     return currentNodeMajor;
   }
 
-  return parsedVersion.major;
+  return latestLtsRelease.parsedVersion.major;
 };
 
 const fetchLatestPnpmVersion = async (currentPnpmVersion) => {
@@ -191,7 +238,7 @@ const collectFilesByName = async (directoryPath, fileName) => {
   const filePaths = [];
 
   for (const entry of entries) {
-    const relativePath = path.join(directoryPath, entry.name);
+    const relativePath = resolveRelativePath(directoryPath, entry.name);
 
     if (entry.isDirectory()) {
       filePaths.push(...(await collectFilesByName(relativePath, fileName)));
@@ -206,30 +253,58 @@ const collectFilesByName = async (directoryPath, fileName) => {
   return filePaths.sort((left, right) => left.localeCompare(right));
 };
 
-const updatePackageJson = async (nodeMajor, pnpmVersion) => {
-  const { content, lineEnding } = await readUtf8FileWithLineEnding(packageJsonPath);
+const collectPackageJsonFiles = async (directoryPath = ".") => {
+  const absoluteDirectoryPath = path.resolve(process.cwd(), directoryPath);
+  const entries = await fs.readdir(absoluteDirectoryPath, { withFileTypes: true });
+  const filePaths = [];
+
+  for (const entry of entries) {
+    const relativePath = resolveRelativePath(directoryPath, entry.name);
+
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) {
+        continue;
+      }
+
+      filePaths.push(...(await collectPackageJsonFiles(relativePath)));
+      continue;
+    }
+
+    if (entry.isFile() && entry.name === "package.json") {
+      filePaths.push(relativePath);
+    }
+  }
+
+  return filePaths.sort((left, right) => left.localeCompare(right));
+};
+
+const updatePackageJson = async (filePath, nodeMajor, pnpmVersion) => {
+  const { content, lineEnding } = await readUtf8FileWithLineEnding(filePath);
   const packageJson = JSON.parse(content);
   const updatedFields = [];
 
   packageJson.engines ??= {};
 
   const nextNodeRange = `>=${nodeMajor}`;
-  const nextPnpmRange = `^${pnpmVersion}`;
-  const nextPackageManager = `pnpm@${pnpmVersion}`;
 
   if (packageJson.engines.node !== nextNodeRange) {
     packageJson.engines.node = nextNodeRange;
     updatedFields.push(`engines.node -> ${nextNodeRange}`);
   }
 
-  if (packageJson.engines.pnpm !== nextPnpmRange) {
-    packageJson.engines.pnpm = nextPnpmRange;
-    updatedFields.push(`engines.pnpm -> ${nextPnpmRange}`);
-  }
+  if (filePath === rootPackageJsonPath) {
+    const nextPnpmRange = `^${pnpmVersion}`;
+    const nextPackageManager = `pnpm@${pnpmVersion}`;
 
-  if (packageJson.packageManager !== nextPackageManager) {
-    packageJson.packageManager = nextPackageManager;
-    updatedFields.push(`packageManager -> ${nextPackageManager}`);
+    if (packageJson.engines.pnpm !== nextPnpmRange) {
+      packageJson.engines.pnpm = nextPnpmRange;
+      updatedFields.push(`engines.pnpm -> ${nextPnpmRange}`);
+    }
+
+    if (packageJson.packageManager !== nextPackageManager) {
+      packageJson.packageManager = nextPackageManager;
+      updatedFields.push(`packageManager -> ${nextPackageManager}`);
+    }
   }
 
   if (updatedFields.length === 0) {
@@ -237,8 +312,23 @@ const updatePackageJson = async (nodeMajor, pnpmVersion) => {
   }
 
   const nextContent = `${JSON.stringify(packageJson, null, 2)}${lineEnding}`.replace(/\n/gu, lineEnding);
-  await maybeWriteFile(packageJsonPath, nextContent);
+  await maybeWriteFile(filePath, nextContent);
   return updatedFields;
+};
+
+const updatePackageJsonFiles = async (nodeMajor, pnpmVersion) => {
+  const packageJsonFiles = await collectPackageJsonFiles();
+  const updateGroups = [];
+
+  for (const filePath of packageJsonFiles) {
+    const updates = await updatePackageJson(filePath, nodeMajor, pnpmVersion);
+
+    if (updates.length > 0) {
+      updateGroups.push({ filePath, updates });
+    }
+  }
+
+  return updateGroups;
 };
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -305,11 +395,13 @@ const updateNodeVersionFile = async (filePath, nodeMajor) => {
     return [];
   }
 
+  const nextNodeVersion = String(nodeMajor);
+
   const { changed, nextContent } = replaceWorkflowStepInputValue(
     content,
     /uses:\s*actions\/setup-node@/u,
     "node-version",
-    String(nodeMajor),
+    nextNodeVersion,
   );
 
   if (!changed || nextContent === content) {
@@ -317,7 +409,7 @@ const updateNodeVersionFile = async (filePath, nodeMajor) => {
   }
 
   await maybeWriteFile(filePath, nextContent.replace(/\n/gu, lineEnding));
-  return [`node-version -> ${nodeMajor}`];
+  return [`node-version -> ${nextNodeVersion}`];
 };
 
 const updateNodeVersionFiles = async (nodeMajor) => {
@@ -342,19 +434,17 @@ const updateNodeVersionFiles = async (nodeMajor) => {
 };
 
 const currentToolchainVersions = await readCurrentToolchainVersions();
-const nodeMajor = await fetchLatestNodeMajor(currentToolchainVersions.nodeMajor);
+const nodeMajor = await fetchLatestNodeLtsMajor(currentToolchainVersions.nodeMajor);
 const pnpmVersion = await fetchLatestPnpmVersion(currentToolchainVersions.pnpmVersion);
 
-console.log(`Resolved target Node.js major: ${nodeMajor}`);
+console.log(`Resolved target Node.js LTS major: ${nodeMajor}`);
 console.log(`Resolved target pnpm version: ${pnpmVersion}`);
 
 const nodeVersionUpdateGroups = await updateNodeVersionFiles(nodeMajor);
+const packageJsonUpdateGroups = await updatePackageJsonFiles(nodeMajor, pnpmVersion);
 
 const updateGroups = [
-  {
-    filePath: packageJsonPath,
-    updates: await updatePackageJson(nodeMajor, pnpmVersion),
-  },
+  ...packageJsonUpdateGroups,
   ...nodeVersionUpdateGroups,
 ].filter(({ updates }) => updates.length > 0);
 

@@ -54,7 +54,7 @@
     "oxfmt": "^0.44.0",
     "oxlint": "^1.59.0",
     "oxlint-tsgolint": "^0.20.0",
-    "pagefind": "^1.5.0",
+    "pagefind": "^1.5.2",
     "stylelint": "^17.6.0",
     "stylelint-config-html": "^1.1.0",
     "stylelint-config-recommended-vue": "^1.6.1",

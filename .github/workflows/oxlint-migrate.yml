@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # https://github.com/actions/checkout/releases/tag/v6.0.2
 
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # https://github.com/pnpm/action-setup/releases/tag/v5.0.0
+      - uses: pnpm/action-setup@08c4be7e2e672a47d11bd04269e27e5f3e8529cb # https://github.com/pnpm/action-setup/releases/tag/v6.0.0
         name: Install pnpm
         with:
           run_install: false
@@ -34,7 +34,7 @@ jobs:
         run: pnpm run migrate:oxlint
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # https://github.com/peter-evans/create-pull-request/releases/tag/v8.1.0
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # https://github.com/peter-evans/create-pull-request/releases/tag/v8.1.1
         with:
           token: ${{ secrets.PR_WORKFLOW_TOKEN }}
           # 使用 PAT 而非 GITHUB_TOKEN，以便创建的 PR 能触发其他工作流

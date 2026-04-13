@@ -54,7 +54,7 @@
     "oxfmt": "^0.42.0",
     "oxlint": "^1.57.0",
     "oxlint-tsgolint": "^0.18.1",
-    "pagefind": "^1.4.0",
+    "pagefind": "^1.5.0",
     "stylelint": "^17.6.0",
     "stylelint-config-html": "^1.1.0",
     "stylelint-config-recommended-vue": "^1.6.1",
@@ -64,7 +64,7 @@
     "vitepress": "2.0.0-alpha.17",
     "vitepress-plugin-pagefind": "^0.4.19",
     "vitepress-plugin-rss": "^0.4.3",
-    "vue": "^3.5.30",
+    "vue": "^3.5.32",
     "vue-eslint-parser": "^10.4.0"
   },
   "overrides": {

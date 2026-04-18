@@ -611,59 +611,53 @@ function completeRound() {
       </ol>
       <div
         v-if="(targetCount ?? 0) > TARGET_PREVIEW_COUNT"
-        class="compat-test-tool__target-toolbar"
+        class="compat-test-tool__pagination"
+        role="group"
+        aria-label="目标列表分页"
       >
-        <div class="compat-test-tool__toolbar-actions">
-          <div
-            class="compat-test-tool__pagination"
-            role="group"
-            aria-label="目标列表分页"
+        <button
+          type="button"
+          class="compat-test-tool__secondary-button"
+          :disabled="targetListPage <= 1"
+          aria-controls="compat-test-target-list"
+          @click="stepTargetListPage(-1)"
+        >
+          上一页
+        </button>
+        <div class="compat-test-tool__page-status-slot">
+          <button
+            v-if="!isEditingTargetListPage"
+            type="button"
+            class="compat-test-tool__page-status compat-test-tool__page-status-button"
+            :aria-label="`当前第 ${targetListPage} 页，共 ${targetListPageCount} 页。点击后可跳转页码`"
+            @click="startEditingTargetListPage"
           >
-            <button
-              type="button"
-              class="compat-test-tool__secondary-button"
-              :disabled="targetListPage <= 1"
-              aria-controls="compat-test-target-list"
-              @click="stepTargetListPage(-1)"
-            >
-              上一页
-            </button>
-            <div class="compat-test-tool__page-status-slot">
-              <button
-                v-if="!isEditingTargetListPage"
-                type="button"
-                class="compat-test-tool__page-status compat-test-tool__page-status-button"
-                :aria-label="`当前第 ${targetListPage} 页，共 ${targetListPageCount} 页。点击后可跳转页码`"
-                @click="startEditingTargetListPage"
-              >
-                {{ targetListPage }} / {{ targetListPageCount }}
-              </button>
-              <input
-                v-else
-                ref="targetListPageInputRef"
-                :value="targetListPageText"
-                type="text"
-                inputmode="numeric"
-                autocomplete="off"
-                class="compat-test-tool__page-status-input"
-                :aria-label="`输入要跳转的页码，当前共 ${targetListPageCount} 页`"
-                @input="handleTargetListPageInput"
-                @blur="finishEditingTargetListPage"
-                @keydown.enter.prevent="finishEditingTargetListPage"
-                @keydown.esc.prevent="cancelEditingTargetListPage"
-              >
-            </div>
-            <button
-              type="button"
-              class="compat-test-tool__secondary-button"
-              :disabled="targetListPage >= targetListPageCount"
-              aria-controls="compat-test-target-list"
-              @click="stepTargetListPage(1)"
-            >
-              下一页
-            </button>
-          </div>
+            {{ targetListPage }} / {{ targetListPageCount }}
+          </button>
+          <input
+            v-else
+            ref="targetListPageInputRef"
+            :value="targetListPageText"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            class="compat-test-tool__page-status-input"
+            :aria-label="`输入要跳转的页码，当前共 ${targetListPageCount} 页`"
+            @input="handleTargetListPageInput"
+            @blur="finishEditingTargetListPage"
+            @keydown.enter.prevent="finishEditingTargetListPage"
+            @keydown.esc.prevent="cancelEditingTargetListPage"
+          >
         </div>
+        <button
+          type="button"
+          class="compat-test-tool__secondary-button"
+          :disabled="targetListPage >= targetListPageCount"
+          aria-controls="compat-test-target-list"
+          @click="stepTargetListPage(1)"
+        >
+          下一页
+        </button>
       </div>
     </template>
   </div>
@@ -1197,17 +1191,11 @@ function completeRound() {
   cursor: pointer;
 }
 
-.compat-test-tool__target-toolbar,
-.compat-test-tool__bulk-import-actions,
-.compat-test-tool__toolbar-actions {
+.compat-test-tool__bulk-import-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-
-.compat-test-tool__target-toolbar .compat-test-tool__toolbar-actions {
-  margin-left: auto;
 }
 
 .compat-test-tool__pagination {
@@ -1501,15 +1489,9 @@ function completeRound() {
     gap: 8px;
   }
 
-  .compat-test-tool__target-toolbar,
-  .compat-test-tool__bulk-import-actions,
-  .compat-test-tool__toolbar-actions {
+  .compat-test-tool__bulk-import-actions {
     display: grid;
     justify-content: stretch;
-  }
-
-  .compat-test-tool__target-toolbar .compat-test-tool__toolbar-actions {
-    margin-left: 0;
   }
 
   .compat-test-tool__input-mode {

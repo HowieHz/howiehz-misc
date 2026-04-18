@@ -17,9 +17,9 @@ interface Scenario {
 }
 
 interface DebugStep {
-  insideTargetRange: TargetRange;
-  outsideTargetRanges: readonly TargetRange[];
-  definedTargetRanges: readonly TargetRange[];
+  activeTargetRange: TargetRange;
+  pendingTargetRanges: readonly TargetRange[];
+  confirmedTargetRanges: readonly TargetRange[];
   requiresAnswer: boolean;
 }
 
@@ -33,6 +33,26 @@ const scenarios: Record<string, Scenario> = {
     targetCount: 4,
     answers: [true, false, true],
     expectedPromptRanges: [[range(1, 2)], [range(1, 1)], [range(2, 2)]],
+    expectedDebugSteps: [
+      {
+        activeTargetRange: range(1, 2),
+        pendingTargetRanges: [],
+        confirmedTargetRanges: [],
+        requiresAnswer: true,
+      },
+      {
+        activeTargetRange: range(1, 1),
+        pendingTargetRanges: [],
+        confirmedTargetRanges: [],
+        requiresAnswer: true,
+      },
+      {
+        activeTargetRange: range(2, 2),
+        pendingTargetRanges: [],
+        confirmedTargetRanges: [],
+        requiresAnswer: true,
+      },
+    ],
     expectedResult: [2],
   },
   "9 pick 2": {
@@ -51,63 +71,63 @@ const scenarios: Record<string, Scenario> = {
     ],
     expectedDebugSteps: [
       {
-        insideTargetRange: range(1, 5),
-        outsideTargetRanges: [],
-        definedTargetRanges: [],
+        activeTargetRange: range(1, 5),
+        pendingTargetRanges: [],
+        confirmedTargetRanges: [],
         requiresAnswer: true,
       },
       {
-        insideTargetRange: range(6, 9),
-        outsideTargetRanges: [],
-        definedTargetRanges: [],
+        activeTargetRange: range(6, 9),
+        pendingTargetRanges: [],
+        confirmedTargetRanges: [],
         requiresAnswer: true,
       },
       {
-        insideTargetRange: range(1, 3),
-        outsideTargetRanges: [range(6, 9)],
-        definedTargetRanges: [],
+        activeTargetRange: range(1, 3),
+        pendingTargetRanges: [range(6, 9)],
+        confirmedTargetRanges: [],
         requiresAnswer: true,
       },
       {
-        insideTargetRange: range(1, 2),
-        outsideTargetRanges: [range(6, 9)],
-        definedTargetRanges: [],
+        activeTargetRange: range(1, 2),
+        pendingTargetRanges: [range(6, 9)],
+        confirmedTargetRanges: [],
         requiresAnswer: true,
       },
       {
-        insideTargetRange: range(1, 1),
-        outsideTargetRanges: [range(6, 9)],
-        definedTargetRanges: [],
+        activeTargetRange: range(1, 1),
+        pendingTargetRanges: [range(6, 9)],
+        confirmedTargetRanges: [],
         requiresAnswer: true,
       },
       {
-        insideTargetRange: range(2, 2),
-        outsideTargetRanges: [range(6, 9)],
-        definedTargetRanges: [],
+        activeTargetRange: range(2, 2),
+        pendingTargetRanges: [range(6, 9)],
+        confirmedTargetRanges: [],
         requiresAnswer: true,
       },
       {
-        insideTargetRange: range(6, 9),
-        outsideTargetRanges: [],
-        definedTargetRanges: [range(2, 2)],
+        activeTargetRange: range(6, 9),
+        pendingTargetRanges: [],
+        confirmedTargetRanges: [range(2, 2)],
         requiresAnswer: false,
       },
       {
-        insideTargetRange: range(6, 7),
-        outsideTargetRanges: [],
-        definedTargetRanges: [range(2, 2)],
+        activeTargetRange: range(6, 7),
+        pendingTargetRanges: [],
+        confirmedTargetRanges: [range(2, 2)],
         requiresAnswer: true,
       },
       {
-        insideTargetRange: range(6, 6),
-        outsideTargetRanges: [],
-        definedTargetRanges: [range(2, 2)],
+        activeTargetRange: range(6, 6),
+        pendingTargetRanges: [],
+        confirmedTargetRanges: [range(2, 2)],
         requiresAnswer: true,
       },
       {
-        insideTargetRange: range(7, 7),
-        outsideTargetRanges: [],
-        definedTargetRanges: [range(2, 2)],
+        activeTargetRange: range(7, 7),
+        pendingTargetRanges: [],
+        confirmedTargetRanges: [range(2, 2)],
         requiresAnswer: true,
       },
     ],
@@ -216,10 +236,15 @@ describe("compatibility test engine", () => {
   });
 
   it("keeps range-based debug steps for internal tracing", () => {
-    const scenario = scenarios["9 pick 2"];
-    const result = runScenario(scenario);
+    for (const scenario of Object.values(scenarios)) {
+      if (!scenario.expectedDebugSteps) {
+        continue;
+      }
 
-    expect(result.debugSteps).toEqual(scenario.expectedDebugSteps);
+      const result = runScenario(scenario);
+
+      expect(result.debugSteps).toEqual(scenario.expectedDebugSteps);
+    }
   });
 
   it("stops safely when every test result is pass", () => {
@@ -284,9 +309,9 @@ function runScenario(scenario: Scenario) {
 
   while (step) {
     debugSteps.push({
-      insideTargetRange: { ...step.debug.insideTargetRange },
-      outsideTargetRanges: copyRanges(step.debug.outsideTargetRanges),
-      definedTargetRanges: copyRanges(step.debug.definedTargetRanges),
+      activeTargetRange: { ...step.debug.activeTargetRange },
+      pendingTargetRanges: copyRanges(step.debug.pendingTargetRanges),
+      confirmedTargetRanges: copyRanges(step.debug.confirmedTargetRanges),
       requiresAnswer: step.requiresAnswer,
     });
     steps.push({

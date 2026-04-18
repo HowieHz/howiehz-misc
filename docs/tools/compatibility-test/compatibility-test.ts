@@ -11,9 +11,9 @@ export interface CompatibilityTestStep {
 }
 
 export interface CompatibilityTestDebugStep {
-  insideTargetRange: TargetRange;
-  outsideTargetRanges: readonly TargetRange[];
-  definedTargetRanges: readonly TargetRange[];
+  activeTargetRange: TargetRange;
+  pendingTargetRanges: readonly TargetRange[];
+  confirmedTargetRanges: readonly TargetRange[];
 }
 
 export interface CompatibilityTestState {
@@ -223,9 +223,9 @@ function getPromptTargetRanges(state: CompatibilityTestState): TargetRange[] {
 
 function getCompatibilityTestDebugStep(state: CompatibilityTestState): CompatibilityTestDebugStep {
   return {
-    insideTargetRange: resolveArrowRange(state, state.insideArrow),
-    outsideTargetRanges: state.outsideArrows.map((arrow) => resolveArrowRange(state, arrow)),
-    definedTargetRanges: state.definedTargets.map((target) => ({ start: target, end: target })),
+    activeTargetRange: resolveArrowRange(state, state.insideArrow),
+    pendingTargetRanges: state.outsideArrows.map((arrow) => resolveArrowRange(state, arrow)),
+    confirmedTargetRanges: state.definedTargets.map((target) => ({ start: target, end: target })),
   };
 }
 

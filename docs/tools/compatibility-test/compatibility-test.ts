@@ -99,10 +99,10 @@ export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState):
 /**
  * Resolves an arrow path like "llr" into the corresponding target subset.
  */
-export function resolveArrow(state: CompatibilityTestState, arrow: string): number[] {
+export function resolveArrow(state: CompatibilityTestState, arrow: string): readonly number[] {
   let targets = state.numberList;
   if (arrow === "") {
-    return targets;
+    return targets.slice();
   }
 
   for (const sign of arrow) {

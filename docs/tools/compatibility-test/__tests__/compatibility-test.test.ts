@@ -6,7 +6,7 @@ import {
   getCurrentCompatibilityTestStep,
   skipCachedCompatibilityTestSteps,
   type CompatibilityTestStep,
-} from "./compatibility-test";
+} from "../compatibility-test";
 
 interface Scenario {
   targetCount: number;
@@ -164,7 +164,7 @@ describe("compatibility test engine", () => {
 
   it("stops safely when every test result is pass", () => {
     const state = createCompatibilityTestState(9);
-    const prompts: Array<readonly number[]> = [];
+    const prompts: (readonly number[])[] = [];
     let step = getCurrentCompatibilityTestStep(state);
     let guard = 0;
 
@@ -200,13 +200,15 @@ describe("compatibility test engine", () => {
   it("rejects invalid target counts", () => {
     expect(() => createCompatibilityTestState(0)).toThrow("targetCount must be an integer greater than or equal to 1");
     expect(() => createCompatibilityTestState(-1)).toThrow("targetCount must be an integer greater than or equal to 1");
-    expect(() => createCompatibilityTestState(1.5)).toThrow("targetCount must be an integer greater than or equal to 1");
+    expect(() => createCompatibilityTestState(1.5)).toThrow(
+      "targetCount must be an integer greater than or equal to 1",
+    );
   });
 });
 
 function runScenario(scenario: Scenario) {
   const state = createCompatibilityTestState(scenario.targetCount);
-  const prompts: Array<readonly number[]> = [];
+  const prompts: (readonly number[])[] = [];
   const debugSteps: DebugStep[] = [];
   let answerIndex = 0;
   let step = getCurrentCompatibilityTestStep(state);

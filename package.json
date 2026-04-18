@@ -28,10 +28,10 @@
     "lint:md": "markdownlint --fix \"**/*.md\" --ignore-path .gitignore",
     "lint:oxlint+eslint": "oxlint --type-aware --fix && eslint --fix",
     "lint:style": "stylelint --fix \"**/*.{css,vue}\" \"docs/.vitepress/**/*.{css,vue}\" --ignore-path .gitignore",
+    "lint:type-check": "tsgo -b",
     "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm run fmt",
     "preinstall": "npx only-allow pnpm",
-    "test": "vitest run",
-    "typecheck": "tsgo --noEmit"
+    "test": "vitest run"
   },
   "dependencies": {
     "lunar-javascript": "^1.7.7"

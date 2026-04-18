@@ -5,7 +5,7 @@ import browserslist from "browserslist";
 import { browserslistToTargets } from "lightningcss";
 import { defineConfig, type DefaultTheme } from "vitepress";
 import { chineseSearchOptimize, pagefindPlugin } from "vitepress-plugin-pagefind";
-import { RSSOptions, RssPlugin } from "vitepress-plugin-rss";
+import { RssPlugin, type RSSOptions } from "vitepress-plugin-rss";
 
 import pkg from "../../package.json";
 

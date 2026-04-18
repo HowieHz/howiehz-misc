@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { createContentLoader } from "vitepress";
+import { createContentLoader, type ContentOptions } from "vitepress";
 
 import { formatDateToYMD } from "../utils/formatDate";
 
@@ -9,6 +9,11 @@ export interface CategoryPostMeta {
   title: string;
   url: string;
   lastUpdated?: string;
+}
+
+export interface CategoryLoaderModule {
+  watch: string[];
+  load: () => Promise<CategoryPostMeta[]>;
 }
 
 interface LoaderOptions {
@@ -31,8 +36,12 @@ function getDefaultTitle(content: string): string {
  * @param categoryIndexUrl URL of the category index page itself; this page is excluded from the returned post list.
  * @param options Optional loader settings, such as a custom sort function.
  */
-export function createCategoryLoader(globPattern: string, categoryIndexUrl: string, options: LoaderOptions = {}) {
-  return createContentLoader(globPattern, {
+export function createCategoryLoader(
+  globPattern: string,
+  categoryIndexUrl: string,
+  options: LoaderOptions = {},
+): CategoryLoaderModule {
+  const loaderOptions: ContentOptions<CategoryPostMeta[]> = {
     excerpt: false,
     transform(items) {
       const posts: CategoryPostMeta[] = items
@@ -67,7 +76,9 @@ export function createCategoryLoader(globPattern: string, categoryIndexUrl: stri
       const sorted = options.sort ? [...posts].sort(options.sort) : posts.sort(sortByDateDesc);
       return sorted;
     },
-  });
+  };
+
+  return createContentLoader<CategoryPostMeta[]>(globPattern, loaderOptions) as CategoryLoaderModule;
 }
 
 function inferTitleFromUrl(url: string): string {

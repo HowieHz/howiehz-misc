@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "./node_modules/.tmp/types/app",
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "types": ["node"]
+  },
+  "include": [
+    "docs/.vitepress/theme/**/*.ts",
+    "docs/.vitepress/types/**/*.d.ts",
+    "docs/tools/compatibility-test/compatibility-test.ts"
+  ]
+}

@@ -57,7 +57,7 @@ const targetCount = computed(() => parsedTargetCount.value);
 const targetCountError = computed(() => {
   const normalizedValue = targetCountText.value.trim();
   if (normalizedValue === "") {
-    return undefined;
+    return "请输入大于 0 的整数";
   }
 
   if (parsedTargetCount.value === undefined) {
@@ -421,6 +421,7 @@ function completeRound() {
 <div class="compat-test-tool">
   <p
     class="compat-test-tool__sr-only"
+    role="status"
     aria-live="polite"
     aria-atomic="true"
   >
@@ -452,10 +453,12 @@ function completeRound() {
         <input
           id="compat-test-count"
           :value="targetCountText"
+          required
+          pattern="[0-9]*"
           inputmode="numeric"
           autocomplete="off"
           :aria-invalid="Boolean(targetCountError)"
-          :aria-describedby="targetCountError ? 'compat-test-count-error' : undefined"
+          :aria-errormessage="targetCountError ? 'compat-test-count-error' : undefined"
           @input="handleTargetCountInput"
         >
         <button
@@ -612,32 +615,57 @@ function completeRound() {
           <input
             v-model="diffModeEnabled"
             type="checkbox"
+            role="switch"
+            :aria-checked="diffModeEnabled"
+            aria-describedby="compat-test-diff-mode-note"
           >
           <span>差异模式</span>
         </label>
+        <span
+          id="compat-test-diff-mode-note"
+          class="compat-test-tool__sr-only"
+        >
+          开启后会按与上一步相同、本次新增和本次移除三组显示目标变化。
+        </span>
       </div>
     </div>
     <template v-if="status === 'testing'">
       <div
         ref="testingPromptRef"
         class="compat-test-tool__prompt"
+        role="group"
+        aria-labelledby="compat-test-current compat-test-current-summary"
         tabindex="-1"
       >
-        <p class="compat-test-tool__prompt-kicker">{{ currentGroupSummary }}</p>
+        <p
+          id="compat-test-current-summary"
+          class="compat-test-tool__prompt-kicker"
+        >
+          {{ currentGroupSummary }}
+        </p>
       </div>
       <div
         v-if="!diffModeEnabled"
         class="compat-test-tool__diff-group"
+        role="group"
+        aria-labelledby="compat-test-current-targets-label"
       >
-        <p class="compat-test-tool__diff-label">请测试下列目标</p>
+        <p
+          id="compat-test-current-targets-label"
+          class="compat-test-tool__diff-label"
+        >
+          请测试下列目标
+        </p>
         <div
           class="compat-test-tool__chip-list"
-          aria-label="本次测试目标"
+          role="list"
+          aria-labelledby="compat-test-current-targets-label"
         >
           <span
             v-for="target in currentStep?.promptTargets ?? []"
             :key="target"
             class="compat-test-tool__chip"
+            role="listitem"
           >
             {{ getTargetLabel(target) }}
           </span>
@@ -646,14 +674,25 @@ function completeRound() {
       <template v-if="diffModeEnabled">
         <div
           class="compat-test-tool__diff-group"
-          aria-label="与上一步相同的目标"
+          role="group"
+          aria-labelledby="compat-test-diff-same-label"
         >
-          <p class="compat-test-tool__diff-label">与上一步相同</p>
-          <div class="compat-test-tool__chip-list">
+          <p
+            id="compat-test-diff-same-label"
+            class="compat-test-tool__diff-label"
+          >
+            与上一步相同
+          </p>
+          <div
+            class="compat-test-tool__chip-list"
+            role="list"
+            aria-labelledby="compat-test-diff-same-label"
+          >
             <span
               v-for="target in targetsUnchanged"
               :key="`unchanged-${target}`"
               class="compat-test-tool__chip"
+              role="listitem"
             >
               {{ getTargetLabel(target) }}
             </span>
@@ -667,14 +706,25 @@ function completeRound() {
         </div>
         <div
           class="compat-test-tool__diff-group"
-          aria-label="本次新增的目标"
+          role="group"
+          aria-labelledby="compat-test-diff-add-label"
         >
-          <p class="compat-test-tool__diff-label">本次新增</p>
-          <div class="compat-test-tool__chip-list">
+          <p
+            id="compat-test-diff-add-label"
+            class="compat-test-tool__diff-label"
+          >
+            本次新增
+          </p>
+          <div
+            class="compat-test-tool__chip-list"
+            role="list"
+            aria-labelledby="compat-test-diff-add-label"
+          >
             <span
               v-for="target in targetsToAdd"
               :key="`add-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--add"
+              role="listitem"
             >
               {{ getTargetLabel(target) }}
             </span>
@@ -688,14 +738,25 @@ function completeRound() {
         </div>
         <div
           class="compat-test-tool__diff-group"
-          aria-label="本次移除的目标"
+          role="group"
+          aria-labelledby="compat-test-diff-remove-label"
         >
-          <p class="compat-test-tool__diff-label">本次移除</p>
-          <div class="compat-test-tool__chip-list">
+          <p
+            id="compat-test-diff-remove-label"
+            class="compat-test-tool__diff-label"
+          >
+            本次移除
+          </p>
+          <div
+            class="compat-test-tool__chip-list"
+            role="list"
+            aria-labelledby="compat-test-diff-remove-label"
+          >
             <span
               v-for="target in targetsToRemove"
               :key="`remove-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--remove"
+              role="listitem"
             >
               {{ getTargetLabel(target) }}
             </span>
@@ -737,19 +798,33 @@ function completeRound() {
       <div
         ref="resultCardRef"
         class="compat-test-tool__result-card"
+        role="group"
+        aria-labelledby="compat-test-result-title compat-test-result-summary"
         tabindex="-1"
       >
-        <p class="compat-test-tool__prompt-kicker">测试完成</p>
-        <p class="compat-test-tool__prompt-text">{{ resultSummary }}</p>
+        <p
+          id="compat-test-result-title"
+          class="compat-test-tool__prompt-kicker"
+        >
+          测试完成
+        </p>
+        <p
+          id="compat-test-result-summary"
+          class="compat-test-tool__prompt-text"
+        >
+          {{ resultSummary }}
+        </p>
         <div
           v-if="incompatibleTargets.length > 0"
           class="compat-test-tool__chip-list"
+          role="list"
           aria-label="有兼容性问题的目标"
         >
           <span
             v-for="target in incompatibleTargets"
             :key="`result-${target}`"
             class="compat-test-tool__chip compat-test-tool__chip--remove"
+            role="listitem"
           >
             {{ getTargetLabel(target) }}
           </span>

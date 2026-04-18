@@ -35,7 +35,7 @@ interface TestRecord {
 
 const RECOMMENDED_MAX_TARGET_COUNT = 10000;
 const ABSOLUTE_MAX_TARGET_COUNT = 100000;
-const TARGET_PREVIEW_COUNT = 7;
+const TARGET_PREVIEW_COUNT = 5;
 const TARGET_PREVIEW_LIMIT = 8;
 
 const targetCountText = ref("5");
@@ -128,7 +128,7 @@ const currentInstruction = computed(() => {
     return "填写目标后开始测试。";
   }
 
-  return `将你的目标和 ${formatTargetNames(currentStep.value.promptTargets)} 一起测试。`;
+  return `将下列目标一起测试：${formatTargetNames(currentStep.value.promptTargets)}。`;
 });
 const currentGroupSummary = computed(() => {
   const count = currentStep.value?.promptTargets.length ?? 0;
@@ -163,7 +163,7 @@ const resultSummary = computed(() => {
     return "已完成兼容性测试，未发现兼容性问题。";
   }
 
-  return `已完成兼容性测试，发现 ${incompatibleTargets.value.length} 个问题目标。`;
+  return `已完成兼容性测试，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题。`;
 });
 
 watch(status, async (value, previousValue) => {
@@ -191,7 +191,10 @@ watch(targetCount, (value) => {
 
   if (value <= TARGET_PREVIEW_COUNT) {
     setTargetListExpanded(false);
-    return;
+  }
+
+  if (inputMode.value === "bulk" && bulkImportText.value.trim() !== "") {
+    syncBulkImportToTargetNames();
   }
 });
 
@@ -238,13 +241,15 @@ function handleBulkImportInput(event: Event) {
   }
 
   bulkImportText.value = input.value;
+  if (inputMode.value === "bulk") {
+    syncBulkImportToTargetNames();
+  }
 }
 
-function applyBulkImport() {
+function syncBulkImportToTargetNames() {
   const count = targetCount.value;
   if (!count) {
-    announcement.value = "请先填写有效的测试目标总数。";
-    return;
+    return false;
   }
 
   const lines = bulkImportText.value
@@ -256,8 +261,7 @@ function applyBulkImport() {
   }
 
   if (lines.length === 0) {
-    announcement.value = "没有可导入的目标名称。";
-    return;
+    return true;
   }
 
   const importCount = Math.min(lines.length, count);
@@ -266,14 +270,12 @@ function applyBulkImport() {
     nextNames.push("");
   }
 
-  for (let index = 0; index < importCount; index += 1) {
-    nextNames[index] = lines[index] ?? "";
+  for (let index = 0; index < count; index += 1) {
+    nextNames[index] = index < importCount ? (lines[index] ?? "") : "";
   }
 
   targetNames.value = nextNames;
-  announcement.value = lines.length > count
-    ? `已导入前 ${importCount} 个目标名称，超出的行已忽略。`
-    : `已导入 ${importCount} 个目标名称。`;
+  return true;
 }
 
 function handleTargetNameInput(event: Event, index: number) {
@@ -335,6 +337,10 @@ function startTest() {
   }
 
   const count = parsedCount;
+  if (inputMode.value === "bulk" && !syncBulkImportToTargetNames()) {
+    announcement.value = "请先填写有效的测试目标总数。";
+    return;
+  }
 
   currentRoundCount.value = count;
   incompatibleTargets.value = [];
@@ -511,24 +517,17 @@ function completeRound() {
       v-if="inputMode === 'bulk'"
       class="compat-test-tool__bulk-import"
     >
-      <label for="compat-test-bulk-import">批量输入目标名称</label>
       <textarea
         id="compat-test-bulk-import"
         :value="bulkImportText"
         rows="4"
         placeholder="每行一个名称"
+        aria-label="批量输入目标名称"
         aria-describedby="compat-test-bulk-import-description"
         @input="handleBulkImportInput"
       />
       <div class="compat-test-tool__bulk-import-actions">
         <span id="compat-test-bulk-import-description">{{ bulkImportDescription }}</span>
-        <button
-          type="button"
-          class="compat-test-tool__secondary-button"
-          @click="applyBulkImport"
-        >
-          应用到目标列表
-        </button>
       </div>
     </div>
     <ol
@@ -614,7 +613,7 @@ function completeRound() {
       </div>
       <div class="compat-test-tool__summary-grid">
         <div>
-          <span>问题目标</span>
+          <span>有兼容性问题的目标</span>
           <strong>{{ foundTargetsText }}</strong>
         </div>
       </div>
@@ -669,13 +668,8 @@ function completeRound() {
 
 ## 说明
 
-- 本工具用分组测试逐步缩小范围，适合排查多个待测目标之间的兼容性问题。
+- 本工具基于二分法和分治思想，用分组测试逐步缩小范围，适合快速排查多个待测目标之间的兼容性问题。
 - 每次按页面提示组合测试后，选择“有兼容性问题”或“没有兼容性问题”即可进入下一步。
-- 测试会按原始 Python 脚本的分组流程逐步缩小范围，直到定位问题目标。
-- 支持两种输入方式切换：批量输入，或逐项填写。
-- 逐项填写时默认只展示前 7 个目标，超过后可展开查看其余输入框。
-- 按行导入时超出数量的行会自动忽略。
-- 修改测试数量或开始新一轮不会清除已经输入过的目标名称。
 - 本页由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
 
 <style scoped>
@@ -825,6 +819,10 @@ function completeRound() {
   gap: 8px;
 }
 
+.compat-test-tool__target-toolbar .compat-test-tool__toolbar-actions {
+  margin-left: auto;
+}
+
 .compat-test-tool__target-meta,
 .compat-test-tool__bulk-import-actions span {
   font-size: 0.88rem;
@@ -843,10 +841,11 @@ function completeRound() {
 .compat-test-tool__target-list {
   display: grid;
   gap: 8px;
-  max-height: 420px;
+  max-height: 300px;
   margin: 0;
-  padding: 0;
+  padding: 0 12px 0 0;
   overflow: auto;
+  scrollbar-gutter: stable;
   list-style: none;
 }
 

@@ -519,29 +519,30 @@ function completeRound() {
   >
     <div class="compat-test-tool__label-row">
       <h2 id="compat-test-targets">测试目标</h2>
-      <div
-        class="compat-test-tool__toolbar-actions"
-        role="group"
-        aria-label="测试目标输入方式"
-      >
-        <button
-          type="button"
-          class="compat-test-tool__secondary-button"
-          :class="{ 'compat-test-tool__mode-button--active': inputMode === 'bulk' }"
-          :aria-pressed="inputMode === 'bulk'"
-          @click="inputMode = 'bulk'"
+      <div class="compat-test-tool__input-mode">
+        <span
+          class="compat-test-tool__input-mode-label"
+          :class="{ 'compat-test-tool__input-mode-label--active': inputMode === 'bulk' }"
         >
           批量输入
-        </button>
-        <button
-          type="button"
-          class="compat-test-tool__secondary-button"
-          :class="{ 'compat-test-tool__mode-button--active': inputMode === 'list' }"
-          :aria-pressed="inputMode === 'list'"
-          @click="inputMode = 'list'"
+        </span>
+        <label class="compat-test-tool__mode-switch">
+          <span class="compat-test-tool__sr-only">测试目标输入方式</span>
+          <input
+            :checked="inputMode === 'list'"
+            type="checkbox"
+            role="switch"
+            :aria-checked="inputMode === 'list'"
+            aria-label="切换测试目标输入方式"
+            @change="inputMode = inputMode === 'list' ? 'bulk' : 'list'"
+          >
+        </label>
+        <span
+          class="compat-test-tool__input-mode-label"
+          :class="{ 'compat-test-tool__input-mode-label--active': inputMode === 'list' }"
         >
           逐项填写
-        </button>
+        </span>
       </div>
     </div>
     <div
@@ -1129,7 +1130,8 @@ function completeRound() {
   cursor: pointer;
 }
 
-.compat-test-tool__switch input {
+.compat-test-tool__switch input,
+.compat-test-tool__mode-switch input {
   display: block;
   flex: none;
   box-sizing: border-box;
@@ -1151,7 +1153,8 @@ function completeRound() {
   line-height: 1.2;
 }
 
-.compat-test-tool__switch input::after {
+.compat-test-tool__switch input::after,
+.compat-test-tool__mode-switch input::after {
   content: "";
   position: absolute;
   top: 2px;
@@ -1164,13 +1167,38 @@ function completeRound() {
   transition: transform 0.2s ease;
 }
 
-.compat-test-tool__switch input:checked {
+.compat-test-tool__switch input:checked,
+.compat-test-tool__mode-switch input:checked {
   border-color: var(--vp-c-brand-1);
   background: color-mix(in srgb, var(--vp-c-brand-1) 78%, white);
 }
 
-.compat-test-tool__switch input:checked::after {
+.compat-test-tool__switch input:checked::after,
+.compat-test-tool__mode-switch input:checked::after {
   transform: translateX(16px);
+}
+
+.compat-test-tool__input-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compat-test-tool__input-mode-label {
+  font-size: 0.88rem;
+  color: color-mix(in srgb, var(--vp-c-text-1) 62%, var(--vp-c-text-2) 38%);
+  white-space: nowrap;
+}
+
+.compat-test-tool__input-mode-label--active {
+  color: var(--vp-c-brand-1);
+  font-weight: 700;
+}
+
+.compat-test-tool label.compat-test-tool__mode-switch {
+  display: inline-flex;
+  margin: 0;
+  cursor: pointer;
 }
 
 .compat-test-tool__target-toolbar,
@@ -1375,11 +1403,6 @@ function completeRound() {
   color: color-mix(in srgb, var(--vp-c-green-1) 82%, var(--vp-c-text-1));
 }
 
-.compat-test-tool__mode-button--active {
-  border-color: var(--vp-c-brand-1);
-  color: var(--vp-c-brand-1);
-}
-
 .compat-test-tool__danger-button {
   border-color: color-mix(in srgb, var(--vp-c-danger-1) 45%, var(--vp-c-divider));
   background: color-mix(in srgb, var(--vp-c-danger-soft) 50%, var(--vp-c-bg));
@@ -1493,14 +1516,8 @@ function completeRound() {
     margin-left: 0;
   }
 
-  .compat-test-tool__label-row > .compat-test-tool__toolbar-actions {
-    display: flex;
-    flex-wrap: nowrap;
-  }
-
-  .compat-test-tool__label-row > .compat-test-tool__toolbar-actions .compat-test-tool__secondary-button {
-    width: auto;
-    flex: 1 1 0;
+  .compat-test-tool__input-mode {
+    justify-content: space-between;
   }
 
   .compat-test-tool__pagination {

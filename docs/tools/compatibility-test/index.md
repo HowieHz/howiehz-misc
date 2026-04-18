@@ -158,11 +158,6 @@ const currentAnnouncement = computed(() => {
 
   return `请测试下列目标：${formatTargetNames(currentStep.value.promptTargets)}。`;
 });
-const foundTargetsText = computed(() => (
-  incompatibleTargets.value.length > 0
-    ? formatTargetNames(incompatibleTargets.value, Number.POSITIVE_INFINITY)
-    : "暂无"
-));
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
 const previousPromptTargets = computed(() => testHistory.value.at(-1)?.targets ?? []);
@@ -410,7 +405,7 @@ function completeRound() {
   status.value = "complete";
   currentStep.value = undefined;
   announcement.value = incompatibleTargets.value.length > 0
-    ? `测试完成，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题：${foundTargetsText.value}。`
+    ? `测试完成，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题：${formatTargetNames(incompatibleTargets.value, Number.POSITIVE_INFINITY)}。`
     : "测试完成，未发现兼容性问题。";
 }
 </script>
@@ -685,8 +680,8 @@ function completeRound() {
           </p>
           <div
             class="compat-test-tool__chip-list"
-            role="list"
-            aria-labelledby="compat-test-diff-same-label"
+            :role="targetsUnchanged.length > 0 ? 'list' : undefined"
+            :aria-labelledby="targetsUnchanged.length > 0 ? 'compat-test-diff-same-label' : undefined"
           >
             <span
               v-for="target in targetsUnchanged"
@@ -699,6 +694,7 @@ function completeRound() {
             <span
               v-if="targetsUnchanged.length === 0"
               class="compat-test-tool__diff-empty"
+              role="status"
             >
               无
             </span>
@@ -717,8 +713,8 @@ function completeRound() {
           </p>
           <div
             class="compat-test-tool__chip-list"
-            role="list"
-            aria-labelledby="compat-test-diff-add-label"
+            :role="targetsToAdd.length > 0 ? 'list' : undefined"
+            :aria-labelledby="targetsToAdd.length > 0 ? 'compat-test-diff-add-label' : undefined"
           >
             <span
               v-for="target in targetsToAdd"
@@ -731,6 +727,7 @@ function completeRound() {
             <span
               v-if="targetsToAdd.length === 0"
               class="compat-test-tool__diff-empty"
+              role="status"
             >
               无
             </span>
@@ -749,8 +746,8 @@ function completeRound() {
           </p>
           <div
             class="compat-test-tool__chip-list"
-            role="list"
-            aria-labelledby="compat-test-diff-remove-label"
+            :role="targetsToRemove.length > 0 ? 'list' : undefined"
+            :aria-labelledby="targetsToRemove.length > 0 ? 'compat-test-diff-remove-label' : undefined"
           >
             <span
               v-for="target in targetsToRemove"
@@ -763,6 +760,7 @@ function completeRound() {
             <span
               v-if="targetsToRemove.length === 0"
               class="compat-test-tool__diff-empty"
+              role="status"
             >
               无
             </span>

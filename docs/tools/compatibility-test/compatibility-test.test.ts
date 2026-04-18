@@ -196,6 +196,12 @@ describe("compatibility test engine", () => {
       [1, 2, 3, 4, 5, 6, 7, 8, 9],
     ]);
   });
+
+  it("rejects invalid target counts", () => {
+    expect(() => createCompatibilityTestState(0)).toThrow("targetCount must be an integer greater than or equal to 1");
+    expect(() => createCompatibilityTestState(-1)).toThrow("targetCount must be an integer greater than or equal to 1");
+    expect(() => createCompatibilityTestState(1.5)).toThrow("targetCount must be an integer greater than or equal to 1");
+  });
 });
 
 function runScenario(scenario: Scenario) {

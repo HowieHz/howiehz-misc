@@ -20,6 +20,10 @@ export interface CompatibilityTestState {
  * Creates the initial state for the legacy-compatible compatibility test flow.
  */
 export function createCompatibilityTestState(targetCount: number): CompatibilityTestState {
+  if (!Number.isInteger(targetCount) || targetCount < 1) {
+    throw new Error("targetCount must be an integer greater than or equal to 1");
+  }
+
   return {
     numberList: Array.from({ length: targetCount }, (_, index) => index + 1),
     insideArrow: "l",

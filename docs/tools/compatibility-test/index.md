@@ -1447,8 +1447,7 @@ function completeRound() {
   box-shadow: 0 8px 20px rgb(15 23 42 / 0.06);
 }
 
-.compat-test-tool__secondary-button:hover:not(:disabled),
-.compat-test-tool__target-index:hover {
+.compat-test-tool__secondary-button:hover:not(:disabled) {
   border-color: var(--vp-c-brand-1);
 }
 

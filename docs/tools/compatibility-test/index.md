@@ -44,6 +44,7 @@ const currentRoundCount = ref(0);
 const incompatibleTargets = ref<number[]>([]);
 const testHistory = ref<TestRecord[]>([]);
 const announcement = ref("");
+const diffModeEnabled = ref(false);
 const nextRecordId = ref(1);
 const testingPromptRef = ref<HTMLElement>();
 const resultCardRef = ref<HTMLElement>();
@@ -164,6 +165,23 @@ const foundTargetsText = computed(() => (
 ));
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
+const previousPromptTargets = computed(() => testHistory.value.at(-1)?.targets ?? []);
+const targetsToAdd = computed(() => {
+  if (!diffModeEnabled.value || !currentStep.value) {
+    return [];
+  }
+
+  const previousTargets = new Set(previousPromptTargets.value);
+  return currentStep.value.promptTargets.filter((target) => !previousTargets.has(target));
+});
+const targetsToRemove = computed(() => {
+  if (!diffModeEnabled.value || !currentStep.value) {
+    return [];
+  }
+
+  const currentTargets = new Set(currentStep.value.promptTargets);
+  return previousPromptTargets.value.filter((target) => !currentTargets.has(target));
+});
 const progressText = computed(() => {
   if (status.value === "idle") {
     return "尚未开始";
@@ -586,7 +604,20 @@ function completeRound() {
   <div class="compat-test-tool__test-panel">
     <div class="compat-test-tool__label-row">
       <h2 id="compat-test-current">当前测试</h2>
-      <span>{{ progressText }}</span>
+      <div
+        class="compat-test-tool__label-row-actions"
+        role="group"
+        aria-label="当前测试选项"
+      >
+        <span>{{ progressText }}</span>
+        <label class="compat-test-tool__switch">
+          <input
+            v-model="diffModeEnabled"
+            type="checkbox"
+          >
+          <span>差异模式</span>
+        </label>
+      </div>
     </div>
     <template v-if="status === 'testing'">
       <div
@@ -609,6 +640,50 @@ function completeRound() {
           {{ getTargetLabel(target) }}
         </span>
       </div>
+      <template v-if="diffModeEnabled">
+        <div
+          class="compat-test-tool__diff-group"
+          aria-label="应添加的目标"
+        >
+          <p class="compat-test-tool__diff-label">应添加</p>
+          <div class="compat-test-tool__chip-list">
+            <span
+              v-for="target in targetsToAdd"
+              :key="`add-${target}`"
+              class="compat-test-tool__chip compat-test-tool__chip--add"
+            >
+              {{ getTargetLabel(target) }}
+            </span>
+            <span
+              v-if="targetsToAdd.length === 0"
+              class="compat-test-tool__diff-empty"
+            >
+              无
+            </span>
+          </div>
+        </div>
+        <div
+          class="compat-test-tool__diff-group"
+          aria-label="应移除的目标"
+        >
+          <p class="compat-test-tool__diff-label">应移除</p>
+          <div class="compat-test-tool__chip-list">
+            <span
+              v-for="target in targetsToRemove"
+              :key="`remove-${target}`"
+              class="compat-test-tool__chip compat-test-tool__chip--remove"
+            >
+              {{ getTargetLabel(target) }}
+            </span>
+            <span
+              v-if="targetsToRemove.length === 0"
+              class="compat-test-tool__diff-empty"
+            >
+              无
+            </span>
+          </div>
+        </div>
+      </template>
       <div class="compat-test-tool__actions">
         <button
           type="button"
@@ -842,10 +917,59 @@ function completeRound() {
   gap: 12px;
 }
 
+.compat-test-tool__label-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .compat-test-tool__label-row span {
   font-size: 0.88rem;
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
   white-space: nowrap;
+}
+
+.compat-test-tool__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.compat-test-tool__switch input {
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vp-c-bg-soft) 80%, var(--vp-c-bg));
+  position: relative;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.compat-test-tool__switch input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--vp-c-bg);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.18);
+  transition: transform 0.2s ease;
+}
+
+.compat-test-tool__switch input:checked {
+  border-color: var(--vp-c-brand-1);
+  background: color-mix(in srgb, var(--vp-c-brand-1) 78%, white);
+}
+
+.compat-test-tool__switch input:checked::after {
+  transform: translateX(16px);
 }
 
 .compat-test-tool__target-toolbar,
@@ -947,6 +1071,17 @@ function completeRound() {
   gap: 8px;
 }
 
+.compat-test-tool__diff-group {
+  display: grid;
+  gap: 6px;
+}
+
+.compat-test-tool__diff-label {
+  margin: 0;
+  font-size: 0.88rem;
+  color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
+}
+
 .compat-test-tool__chip {
   display: inline-flex;
   align-items: center;
@@ -956,6 +1091,23 @@ function completeRound() {
   border-radius: 999px;
   background: var(--vp-c-bg-soft);
   font-size: 0.9rem;
+}
+
+.compat-test-tool__chip--add {
+  border-color: color-mix(in srgb, var(--vp-c-green-1) 42%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-green-soft) 64%, var(--vp-c-bg));
+  color: color-mix(in srgb, var(--vp-c-green-1) 78%, var(--vp-c-text-1));
+}
+
+.compat-test-tool__chip--remove {
+  border-color: color-mix(in srgb, var(--vp-c-danger-1) 42%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-danger-soft) 58%, var(--vp-c-bg));
+  color: var(--vp-c-danger-1);
+}
+
+.compat-test-tool__diff-empty {
+  font-size: 0.9rem;
+  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
 }
 
 .compat-test-tool__actions {
@@ -1070,6 +1222,11 @@ function completeRound() {
     display: grid;
     justify-content: stretch;
     gap: 4px;
+  }
+
+  .compat-test-tool__label-row-actions {
+    display: grid;
+    gap: 8px;
   }
 
   .compat-test-tool__target-toolbar,

@@ -3,17 +3,13 @@ import path from "node:path";
 
 import { createContentLoader, type ContentOptions } from "vitepress";
 
+import type { ContentLoader } from "./content-loader";
 import { formatDateToYMD } from "../utils/formatDate";
 
 export interface CategoryPostMeta {
   title: string;
   url: string;
   lastUpdated?: string;
-}
-
-export interface CategoryLoaderModule {
-  watch: string[];
-  load: () => Promise<CategoryPostMeta[]>;
 }
 
 interface LoaderOptions {
@@ -40,7 +36,7 @@ export function createCategoryLoader(
   globPattern: string,
   categoryIndexUrl: string,
   options: LoaderOptions = {},
-): CategoryLoaderModule {
+): ContentLoader<CategoryPostMeta> {
   const loaderOptions: ContentOptions<CategoryPostMeta[]> = {
     excerpt: false,
     transform(items) {
@@ -78,7 +74,7 @@ export function createCategoryLoader(
     },
   };
 
-  return createContentLoader<CategoryPostMeta[]>(globPattern, loaderOptions) as CategoryLoaderModule;
+  return createContentLoader<CategoryPostMeta[]>(globPattern, loaderOptions) as ContentLoader<CategoryPostMeta>;
 }
 
 function inferTitleFromUrl(url: string): string {

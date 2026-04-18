@@ -1,13 +1,10 @@
 import { createContentLoader, type ContentOptions } from "vitepress";
 
+import type { ContentLoader } from "./content-loader";
+
 export interface TitleLinkItem {
   title: string;
   url: string;
-}
-
-export interface TitleLoaderModule {
-  watch: string[];
-  load: () => Promise<TitleLinkItem[]>;
 }
 
 interface LoaderOptions {
@@ -41,7 +38,7 @@ export function createTitleLoader(
   globPattern: string,
   indexUrl: string,
   options: LoaderOptions = {},
-): TitleLoaderModule {
+): ContentLoader<TitleLinkItem> {
   const loaderOptions: ContentOptions<TitleLinkItem[]> = {
     includeSrc: true,
     excerpt: false,
@@ -67,5 +64,5 @@ export function createTitleLoader(
     },
   };
 
-  return createContentLoader<TitleLinkItem[]>(globPattern, loaderOptions) as TitleLoaderModule;
+  return createContentLoader<TitleLinkItem[]>(globPattern, loaderOptions) as ContentLoader<TitleLinkItem>;
 }

@@ -197,20 +197,11 @@ const progressText = computed(() => {
 
   return `已完成 ${testHistory.value.length} 次测试`;
 });
-const resultTitle = computed(() => {
-  if (incompatibleTargets.value.length === 0) {
-    return "未发现兼容性问题";
-  }
-
-  return "测试完成";
-});
-const resultSummary = computed(() => {
-  if (incompatibleTargets.value.length === 0) {
-    return "已完成兼容性测试，未发现兼容性问题。";
-  }
-
-  return `已完成兼容性测试，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题。`;
-});
+const resultSummary = computed(() => (
+  incompatibleTargets.value.length === 0
+    ? "未发现兼容性问题"
+    : `下列 ${incompatibleTargets.value.length} 个目标有兼容性问题`
+));
 
 watch(status, async (value, previousValue) => {
   if (value === previousValue) {
@@ -419,8 +410,8 @@ function completeRound() {
   status.value = "complete";
   currentStep.value = undefined;
   announcement.value = incompatibleTargets.value.length > 0
-    ? `${resultSummary.value} 有兼容性问题的目标：${foundTargetsText.value}。`
-    : resultSummary.value;
+    ? `测试完成，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题：${foundTargetsText.value}。`
+    : "测试完成，未发现兼容性问题。";
 }
 </script>
 <!-- autocorrect-enable -->
@@ -748,14 +739,21 @@ function completeRound() {
         class="compat-test-tool__result-card"
         tabindex="-1"
       >
-        <p class="compat-test-tool__prompt-kicker">{{ resultTitle }}</p>
+        <p class="compat-test-tool__prompt-kicker">测试完成</p>
         <p class="compat-test-tool__prompt-text">{{ resultSummary }}</p>
-        <p
+        <div
           v-if="incompatibleTargets.length > 0"
-          class="compat-test-tool__result-detail"
+          class="compat-test-tool__chip-list"
+          aria-label="有兼容性问题的目标"
         >
-          有兼容性问题的目标：{{ foundTargetsText }}
-        </p>
+          <span
+            v-for="target in incompatibleTargets"
+            :key="`result-${target}`"
+            class="compat-test-tool__chip compat-test-tool__chip--remove"
+          >
+            {{ getTargetLabel(target) }}
+          </span>
+        </div>
       </div>
       <div class="compat-test-tool__actions">
         <button
@@ -815,7 +813,7 @@ function completeRound() {
 
 ## 说明
 
-- 本工具用于排查多个目标之间的兼容性问题，基于二分法和分治思想逐步缩小范围，提高排查效率。
+- 本工具用于排查多个目标之间的兼容性问题，基于二分法和分治思想逐步缩小范围。
 - 页面每次都会给出下一轮需要测试的目标。你只需要按提示完成测试，再根据实际结果选择“有兼容性问题”或“没有兼容性问题”。
 - 由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
 - 如果这个工具对你有帮助，欢迎前往 [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc) 点个 ⭐ 支持一下。

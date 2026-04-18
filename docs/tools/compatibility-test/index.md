@@ -307,6 +307,10 @@ function getTargetLabel(index: number) {
   return name.length > 0 ? name : `目标 ${index}`;
 }
 
+function getConfirmedTargetA11yLabel(index: number) {
+  return `${getTargetLabel(index)}（已确定）`;
+}
+
 function formatTargetNames(indices: readonly number[], limit = TARGET_PREVIEW_LIMIT) {
   const labels = indices.map((index) => getTargetLabel(index));
   if (labels.length <= limit) {
@@ -731,6 +735,7 @@ function completeRound() {
             :key="target"
             class="compat-test-tool__chip"
             :class="{ 'compat-test-tool__chip--confirmed': confirmedTargetSet.has(target) }"
+            :aria-label="confirmedTargetSet.has(target) ? getConfirmedTargetA11yLabel(target) : undefined"
             role="listitem"
           >
             {{ getTargetLabel(target) }}
@@ -759,6 +764,7 @@ function completeRound() {
               :key="`unchanged-${target}`"
               class="compat-test-tool__chip"
               :class="{ 'compat-test-tool__chip--confirmed': confirmedTargetSet.has(target) }"
+              :aria-label="confirmedTargetSet.has(target) ? getConfirmedTargetA11yLabel(target) : undefined"
               role="listitem"
             >
               {{ getTargetLabel(target) }}
@@ -1507,6 +1513,15 @@ function completeRound() {
 .compat-test-tool__prompt:focus-visible,
 .compat-test-tool__result-card:focus-visible {
   outline: none;
+  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
+}
+
+.compat-test-tool__complete-result:focus-visible {
+  outline: none;
+}
+
+.compat-test-tool__complete-result:focus-visible .compat-test-tool__result-card {
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
 }

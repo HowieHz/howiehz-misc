@@ -544,60 +544,6 @@ function completeRound() {
         </button>
       </div>
     </div>
-    <div class="compat-test-tool__target-toolbar">
-      <div class="compat-test-tool__toolbar-actions">
-        <div
-          v-if="inputMode === 'list' && (targetCount ?? 0) > TARGET_PREVIEW_COUNT"
-          class="compat-test-tool__pagination"
-          role="group"
-          aria-label="目标列表分页"
-        >
-          <button
-            type="button"
-            class="compat-test-tool__secondary-button"
-            :disabled="targetListPage <= 1"
-            aria-controls="compat-test-target-list"
-            @click="stepTargetListPage(-1)"
-          >
-            上一页
-          </button>
-          <div class="compat-test-tool__page-status-slot">
-            <button
-              v-if="!isEditingTargetListPage"
-              type="button"
-              class="compat-test-tool__page-status compat-test-tool__page-status-button"
-              :aria-label="`当前第 ${targetListPage} 页，共 ${targetListPageCount} 页。点击后可跳转页码`"
-              @click="startEditingTargetListPage"
-            >
-              {{ targetListPage }} / {{ targetListPageCount }}
-            </button>
-            <input
-              v-else
-              ref="targetListPageInputRef"
-              :value="targetListPageText"
-              type="text"
-              inputmode="numeric"
-              autocomplete="off"
-              class="compat-test-tool__page-status-input"
-              :aria-label="`输入要跳转的页码，当前共 ${targetListPageCount} 页`"
-              @input="handleTargetListPageInput"
-              @blur="finishEditingTargetListPage"
-              @keydown.enter.prevent="finishEditingTargetListPage"
-              @keydown.esc.prevent="cancelEditingTargetListPage"
-            >
-          </div>
-          <button
-            type="button"
-            class="compat-test-tool__secondary-button"
-            :disabled="targetListPage >= targetListPageCount"
-            aria-controls="compat-test-target-list"
-            @click="stepTargetListPage(1)"
-          >
-            下一页
-          </button>
-        </div>
-      </div>
-    </div>
     <div
       v-if="inputMode === 'bulk'"
       class="compat-test-tool__bulk-import"
@@ -633,39 +579,96 @@ function completeRound() {
     >
       目标名称可以留空；留空时会使用默认名称。
     </p>
-    <ol
-      v-if="inputMode === 'list'"
-      id="compat-test-target-list"
-      class="compat-test-tool__target-list"
-      aria-labelledby="compat-test-targets"
-    >
-      <li
-        v-for="target in visibleTargetRows"
-        :key="target.index"
-        class="compat-test-tool__target-item"
+    <template v-if="inputMode === 'list'">
+      <ol
+        id="compat-test-target-list"
+        class="compat-test-tool__target-list"
+        aria-labelledby="compat-test-targets"
       >
-        <span
-          class="compat-test-tool__target-index"
-          aria-hidden="true"
+        <li
+          v-for="target in visibleTargetRows"
+          :key="target.index"
+          class="compat-test-tool__target-item"
         >
-          {{ target.index }}
-        </span>
-        <label
-          class="compat-test-tool__sr-only"
-          :for="target.id"
-        >
-          第 {{ target.index }} 个测试目标名称
-        </label>
-        <input
-          :id="target.id"
-          :value="getTargetName(target.index)"
-          autocomplete="off"
-          :placeholder="`目标 ${target.index}`"
-          aria-describedby="compat-test-target-name-note"
-          @input="handleTargetNameInput($event, target.index)"
-        >
-      </li>
-    </ol>
+          <span
+            class="compat-test-tool__target-index"
+            aria-hidden="true"
+          >
+            {{ target.index }}
+          </span>
+          <label
+            class="compat-test-tool__sr-only"
+            :for="target.id"
+          >
+            第 {{ target.index }} 个测试目标名称
+          </label>
+          <input
+            :id="target.id"
+            :value="getTargetName(target.index)"
+            autocomplete="off"
+            :placeholder="`目标 ${target.index}`"
+            aria-describedby="compat-test-target-name-note"
+            @input="handleTargetNameInput($event, target.index)"
+          >
+        </li>
+      </ol>
+      <div
+        v-if="(targetCount ?? 0) > TARGET_PREVIEW_COUNT"
+        class="compat-test-tool__target-toolbar"
+      >
+        <div class="compat-test-tool__toolbar-actions">
+          <div
+            class="compat-test-tool__pagination"
+            role="group"
+            aria-label="目标列表分页"
+          >
+            <button
+              type="button"
+              class="compat-test-tool__secondary-button"
+              :disabled="targetListPage <= 1"
+              aria-controls="compat-test-target-list"
+              @click="stepTargetListPage(-1)"
+            >
+              上一页
+            </button>
+            <div class="compat-test-tool__page-status-slot">
+              <button
+                v-if="!isEditingTargetListPage"
+                type="button"
+                class="compat-test-tool__page-status compat-test-tool__page-status-button"
+                :aria-label="`当前第 ${targetListPage} 页，共 ${targetListPageCount} 页。点击后可跳转页码`"
+                @click="startEditingTargetListPage"
+              >
+                {{ targetListPage }} / {{ targetListPageCount }}
+              </button>
+              <input
+                v-else
+                ref="targetListPageInputRef"
+                :value="targetListPageText"
+                type="text"
+                inputmode="numeric"
+                autocomplete="off"
+                class="compat-test-tool__page-status-input"
+                :aria-label="`输入要跳转的页码，当前共 ${targetListPageCount} 页`"
+                @input="handleTargetListPageInput"
+                @blur="finishEditingTargetListPage"
+                @keydown.enter.prevent="finishEditingTargetListPage"
+                @keydown.esc.prevent="cancelEditingTargetListPage"
+              >
+            </div>
+            <button
+              type="button"
+              class="compat-test-tool__secondary-button"
+              :disabled="targetListPage >= targetListPageCount"
+              aria-controls="compat-test-target-list"
+              @click="stepTargetListPage(1)"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
   <div class="compat-test-tool__test-panel">
     <div class="compat-test-tool__label-row">

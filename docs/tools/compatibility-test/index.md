@@ -18,7 +18,7 @@ import {
   type CompatibilityTestStep,
 } from "./compatibility-test";
 
-type TestStatus = "idle" | "testing" | "found" | "complete";
+type TestStatus = "idle" | "testing" | "complete";
 type TestResult = "issue" | "pass";
 type InputMode = "bulk" | "list";
 
@@ -47,10 +47,8 @@ const currentRoundCount = ref(0);
 const incompatibleTargets = ref<number[]>([]);
 const testHistory = ref<TestRecord[]>([]);
 const announcement = ref("");
-const stoppedEarly = ref(false);
 const nextRecordId = ref(1);
 const testingPromptRef = ref<HTMLElement>();
-const continueButtonRef = ref<HTMLButtonElement>();
 const restartButtonRef = ref<HTMLButtonElement>();
 const targetListExpanded = ref(false);
 const engineState = ref<CompatibilityTestState>();
@@ -118,7 +116,13 @@ const targetListStatusText = computed(() => {
 
   return "";
 });
-const isRoundActive = computed(() => status.value === "testing" || status.value === "found");
+const bulkImportDescription = computed(() => {
+  const count = targetCount.value ?? 0;
+  return count > 0
+    ? `每行一个名称，将按顺序应用到前 ${count} 个目标；超出的行会自动忽略。`
+    : "每行一个名称，超出的行会自动忽略。";
+});
+const isRoundActive = computed(() => status.value === "testing");
 const currentInstruction = computed(() => {
   if (status.value !== "testing" || !currentStep.value) {
     return "填写目标后开始测试。";
@@ -149,16 +153,12 @@ const progressText = computed(() => {
 });
 const resultTitle = computed(() => {
   if (incompatibleTargets.value.length === 0) {
-    return stoppedEarly.value ? "本轮已结束" : "未发现兼容性问题";
+    return "未发现兼容性问题";
   }
 
-  return stoppedEarly.value ? "已结束本轮排查" : "测试完成";
+  return "测试完成";
 });
 const resultSummary = computed(() => {
-  if (stoppedEarly.value) {
-    return `已确认 ${incompatibleTargets.value.length} 个问题目标。`;
-  }
-
   if (incompatibleTargets.value.length === 0) {
     return `已完成 ${currentRoundCount.value} 个目标的兼容性测试，未发现兼容性问题。`;
   }
@@ -175,11 +175,6 @@ watch(status, async (value, previousValue) => {
 
   if (value === "testing" && previousValue !== "testing") {
     testingPromptRef.value?.focus();
-    return;
-  }
-
-  if (value === "found") {
-    continueButtonRef.value?.focus();
     return;
   }
 
@@ -345,7 +340,6 @@ function startTest() {
   incompatibleTargets.value = [];
   testHistory.value = [];
   status.value = "testing";
-  stoppedEarly.value = false;
   nextRecordId.value = 1;
   engineState.value = createCompatibilityTestState(count);
   currentStep.value = getCurrentCompatibilityTestStep(engineState.value);
@@ -358,18 +352,8 @@ function answerCurrentTest(hasIssue: boolean) {
   }
 
   const group = currentStep.value.promptTargets.slice();
-  const definedTargetCount = engineState.value.definedTargets.length;
   recordTestResult(group, hasIssue);
   applyCompatibilityTestAnswer(engineState.value, hasIssue);
-
-  if (hasIssue && !engineState.value.stopped && engineState.value.definedTargets.length > definedTargetCount) {
-    incompatibleTargets.value = engineState.value.definedTargets.slice().sort((left, right) => left - right);
-    currentStep.value = undefined;
-    status.value = "found";
-    announcement.value = `已找到 ${formatTargetNames(engineState.value.definedTargets.slice(definedTargetCount))}。可以继续查找其他问题目标，或结束本轮。`;
-    return;
-  }
-
   syncFromEngineState();
 }
 
@@ -382,23 +366,6 @@ function recordTestResult(group: number[], hasIssue: boolean) {
   nextRecordId.value += 1;
 }
 
-function continueTesting() {
-  if (status.value !== "found") {
-    return;
-  }
-
-  status.value = "testing";
-  syncFromEngineState();
-}
-
-function finishRoundEarly() {
-  if (status.value !== "found") {
-    return;
-  }
-
-  completeRound(true);
-}
-
 function syncFromEngineState() {
   if (!engineState.value) {
     return;
@@ -408,7 +375,7 @@ function syncFromEngineState() {
 
   if (engineState.value.stopped) {
     incompatibleTargets.value = engineState.value.resultTargets.slice();
-    completeRound(false);
+    completeRound();
     return;
   }
 
@@ -416,10 +383,9 @@ function syncFromEngineState() {
   announcement.value = currentInstruction.value;
 }
 
-function completeRound(isStoppedEarly: boolean) {
+function completeRound() {
   status.value = "complete";
   currentStep.value = undefined;
-  stoppedEarly.value = isStoppedEarly;
   announcement.value = resultSummary.value;
 }
 </script>
@@ -495,6 +461,7 @@ function completeRound(isStoppedEarly: boolean) {
           type="button"
           class="compat-test-tool__secondary-button"
           :class="{ 'compat-test-tool__mode-button--active': inputMode === 'bulk' }"
+          :aria-pressed="inputMode === 'bulk'"
           @click="inputMode = 'bulk'"
         >
           批量输入
@@ -503,6 +470,7 @@ function completeRound(isStoppedEarly: boolean) {
           type="button"
           class="compat-test-tool__secondary-button"
           :class="{ 'compat-test-tool__mode-button--active': inputMode === 'list' }"
+          :aria-pressed="inputMode === 'list'"
           @click="inputMode = 'list'"
         >
           逐项填写
@@ -510,12 +478,19 @@ function completeRound(isStoppedEarly: boolean) {
       </div>
     </div>
     <div class="compat-test-tool__target-toolbar">
-      <span class="compat-test-tool__target-meta">{{ targetListStatusText }}</span>
+      <span
+        v-if="targetListStatusText"
+        class="compat-test-tool__target-meta"
+      >
+        {{ targetListStatusText }}
+      </span>
       <div class="compat-test-tool__toolbar-actions">
         <button
           v-if="inputMode === 'list' && hiddenTargetCount > 0"
           type="button"
           class="compat-test-tool__secondary-button"
+          :aria-expanded="targetListExpanded"
+          aria-controls="compat-test-target-list"
           @click="setTargetListExpanded(true)"
         >
           展开其余 {{ hiddenTargetCount }} 个
@@ -524,6 +499,8 @@ function completeRound(isStoppedEarly: boolean) {
           v-else-if="inputMode === 'list' && targetListExpanded && (targetCount ?? 0) > TARGET_PREVIEW_COUNT"
           type="button"
           class="compat-test-tool__secondary-button"
+          :aria-expanded="targetListExpanded"
+          aria-controls="compat-test-target-list"
           @click="setTargetListExpanded(false)"
         >
           收起到前 {{ TARGET_PREVIEW_COUNT }} 个
@@ -540,10 +517,11 @@ function completeRound(isStoppedEarly: boolean) {
         :value="bulkImportText"
         rows="4"
         placeholder="每行一个名称"
+        aria-describedby="compat-test-bulk-import-description"
         @input="handleBulkImportInput"
       />
       <div class="compat-test-tool__bulk-import-actions">
-        <span>每行一个名称，超出的行会自动忽略。</span>
+        <span id="compat-test-bulk-import-description">{{ bulkImportDescription }}</span>
         <button
           type="button"
           class="compat-test-tool__secondary-button"
@@ -555,6 +533,7 @@ function completeRound(isStoppedEarly: boolean) {
     </div>
     <ol
       v-if="inputMode === 'list'"
+      id="compat-test-target-list"
       class="compat-test-tool__target-list"
       aria-labelledby="compat-test-targets"
     >
@@ -625,29 +604,6 @@ function completeRound(isStoppedEarly: boolean) {
           @click="answerCurrentTest(false)"
         >
           没有兼容性问题
-        </button>
-      </div>
-    </template>
-    <template v-else-if="status === 'found'">
-      <div class="compat-test-tool__result-card compat-test-tool__result-card--issue">
-        <p class="compat-test-tool__prompt-kicker">已找到问题目标</p>
-        <p class="compat-test-tool__prompt-text">{{ foundTargetsText }}</p>
-      </div>
-      <div class="compat-test-tool__actions">
-        <button
-          ref="continueButtonRef"
-          type="button"
-          class="compat-test-tool__primary-button"
-          @click="continueTesting"
-        >
-          继续查找其他问题目标
-        </button>
-        <button
-          type="button"
-          class="compat-test-tool__secondary-button"
-          @click="finishRoundEarly"
-        >
-          结束本轮
         </button>
       </div>
     </template>

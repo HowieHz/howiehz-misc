@@ -51,7 +51,7 @@ const announcement = ref("");
 const diffModeEnabled = ref(false);
 const nextRecordId = ref(1);
 const testingPromptRef = ref<HTMLElement>();
-const resultCardRef = ref<HTMLElement>();
+const completeResultRef = ref<HTMLElement>();
 const targetListPageInputRef = ref<HTMLInputElement>();
 const targetListPage = ref(1);
 const targetListPageText = ref("1");
@@ -186,7 +186,7 @@ watch(status, async (value, previousValue) => {
   await nextTick();
 
   if (value === "complete") {
-    resultCardRef.value?.focus();
+    completeResultRef.value?.focus();
   }
 });
 
@@ -859,50 +859,53 @@ function completeRound() {
     </template>
     <template v-else-if="status === 'complete'">
       <div
-        ref="resultCardRef"
-        class="compat-test-tool__result-card"
+        ref="completeResultRef"
         role="group"
         aria-labelledby="compat-test-result-title compat-test-result-summary"
         tabindex="-1"
       >
-        <p
-          id="compat-test-result-title"
-          class="compat-test-tool__prompt-kicker"
-        >
-          测试完成
-        </p>
-        <p
-          id="compat-test-result-summary"
-          class="compat-test-tool__prompt-text"
-        >
-          {{ resultSummary }}
-        </p>
-      </div>
-      <div
-        v-if="incompatibleTargets.length > 0"
-        class="compat-test-tool__result-targets"
-        role="group"
-        aria-labelledby="compat-test-result-targets-label"
-      >
-        <p
-          id="compat-test-result-targets-label"
-          class="compat-test-tool__diff-label"
-        >
-          {{ resultTargetsLabel }}
-        </p>
         <div
-          class="compat-test-tool__chip-list"
-          role="list"
+          class="compat-test-tool__result-card"
+        >
+          <p
+            id="compat-test-result-title"
+            class="compat-test-tool__prompt-kicker"
+          >
+            测试完成
+          </p>
+          <p
+            id="compat-test-result-summary"
+            class="compat-test-tool__prompt-text"
+          >
+            {{ resultSummary }}
+          </p>
+        </div>
+        <div
+          v-if="incompatibleTargets.length > 0"
+          class="compat-test-tool__result-targets"
+          role="group"
           aria-labelledby="compat-test-result-targets-label"
         >
-        <span
-          v-for="target in incompatibleTargets"
-          :key="`result-${target}`"
-          class="compat-test-tool__chip compat-test-tool__chip--confirmed"
-          role="listitem"
-        >
-          {{ getTargetLabel(target) }}
-        </span>
+          <p
+            id="compat-test-result-targets-label"
+            class="compat-test-tool__diff-label"
+          >
+            {{ resultTargetsLabel }}
+          </p>
+          <div
+            class="compat-test-tool__chip-list"
+            role="list"
+            aria-labelledby="compat-test-result-targets-label"
+          >
+            <span
+              v-for="target in incompatibleTargets"
+              :key="`result-${target}`"
+              class="compat-test-tool__chip compat-test-tool__chip--confirmed"
+              role="listitem"
+            >
+              {{ getTargetLabel(target) }}
+            </span>
+          </div>
         </div>
       </div>
       <div class="compat-test-tool__actions">

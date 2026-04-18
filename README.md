@@ -5,5 +5,5 @@
 
 ## 子项目目录
 
-- [兼容性问题排查器](/docs/tools/compatibility-test/README.md)
-- [天干地支计算器](/docs/tools/ganzhi/README.md)
+- [兼容性问题排查器](docs/tools/compatibility-test/README.md)
+- [天干地支计算器](docs/tools/ganzhi/README.md)

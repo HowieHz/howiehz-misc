@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "lib": ["esnext"],
+    "types": ["node"]
+  },
+  "include": [
+    "docs/.vitepress/config.ts",
+    "docs/.vitepress/data/**/*.ts",
+    "docs/.vitepress/utils/**/*.ts",
+    "docs/.vitepress/types/**/*.d.ts",
+    "docs/**/*.data.ts"
+  ]
+}

@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 input_number: str = input(
     "输入你要测试的插件总数量（除去你的插件）\n（换一种问法：你的插件要和多少个其他插件做兼容性测试）\n（请输入大于 0 的整数）\n（要展示详细的内部操作请在数字前加上 d，例 d9）："
 )
@@ -16,12 +18,12 @@ inside_arrow: str = ""
 outside_arrows_set: list[str] = []
 defined_elements_set: list[int] = []
 
-set_pair_test_result: dict = (
+set_pair_test_result: dict[str, bool] = (
     {}
 )  # 因为有些步骤仅仅是移动元素，比如 inside_arrow 的移动到 defined_elements_set，所以如果有重复的就不需要用户再次输入结果。
 
 
-def result_input(sets: dict[list[int], bool]) -> bool:
+def result_input(sets: Sequence[int]) -> bool:
     global set_pair_test_result, inside_arrow, outside_arrows_set, defined_elements_set
     if debug:
         print(

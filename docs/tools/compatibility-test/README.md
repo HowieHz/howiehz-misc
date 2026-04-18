@@ -8,5 +8,5 @@
 
 - [legacy.py](./legacy.py) 是原始 Python 实现版本。
 - [compatibility-test.ts](./compatibility-test.ts) 是兼容性排查引擎的 TypeScript 实现。
-- [compatibility-test.test.ts](./compatibility-test.test.ts) 是排查引擎的测试文件。
+- [**tests**/compatibility-test.test.ts](./__tests__/compatibility-test.test.ts) 是排查引擎的测试文件。
 - [index.md](./index.md) 是工具页面与交互面板。

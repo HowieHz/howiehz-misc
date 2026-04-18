@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    }
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "lib": ["esnext"],
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["docs/tools/compatibility-test/__tests__/**/*.ts"]
+}

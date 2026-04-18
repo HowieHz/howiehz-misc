@@ -1,8 +1,8 @@
 export interface CompatibilityTestStep {
-  promptTargets: number[];
-  insideTargets: number[];
-  outsideTargetGroups: number[][];
-  definedTargets: number[];
+  promptTargets: readonly number[];
+  insideTargets: readonly number[];
+  outsideTargetGroups: readonly (readonly number[])[];
+  definedTargets: readonly number[];
   requiresAnswer: boolean;
 }
 
@@ -20,6 +20,10 @@ export interface CompatibilityTestState {
  * Creates the initial state for the legacy-compatible compatibility test flow.
  */
 export function createCompatibilityTestState(targetCount: number): CompatibilityTestState {
+  if (!Number.isInteger(targetCount) || targetCount < 1) {
+    throw new Error("targetCount must be an integer greater than or equal to 1");
+  }
+
   return {
     numberList: Array.from({ length: targetCount }, (_, index) => index + 1),
     insideArrow: "l",
@@ -95,10 +99,10 @@ export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState):
 /**
  * Resolves an arrow path like "llr" into the corresponding target subset.
  */
-export function resolveArrow(state: CompatibilityTestState, arrow: string): number[] {
+export function resolveArrow(state: CompatibilityTestState, arrow: string): readonly number[] {
   let targets = state.numberList;
   if (arrow === "") {
-    return targets;
+    return targets.slice();
   }
 
   for (const sign of arrow) {

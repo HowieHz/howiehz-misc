@@ -1,4 +1,6 @@
-import { createContentLoader } from "vitepress";
+import { createContentLoader, type ContentOptions } from "vitepress";
+
+import type { ContentLoader } from "./content-loader";
 
 export interface TitleLinkItem {
   title: string;
@@ -32,8 +34,12 @@ function extractH1Title(content?: string): string | undefined {
  * @param indexUrl URL of the index page itself; this page is excluded from the returned list.
  * @param options Optional loader settings, such as locale-aware sorting.
  */
-export function createTitleLoader(globPattern: string, indexUrl: string, options: LoaderOptions = {}) {
-  return createContentLoader(globPattern, {
+export function createTitleLoader(
+  globPattern: string,
+  indexUrl: string,
+  options: LoaderOptions = {},
+): ContentLoader<TitleLinkItem[]> {
+  return createContentLoader<TitleLinkItem[]>(globPattern, {
     includeSrc: true,
     excerpt: false,
     transform(items) {
@@ -56,5 +62,5 @@ export function createTitleLoader(globPattern: string, indexUrl: string, options
 
       return options.sort ? [...pages].sort(options.sort) : pages.sort((a, b) => collator.compare(a.title, b.title));
     },
-  });
+  } satisfies ContentOptions<TitleLinkItem[]>);
 }

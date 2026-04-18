@@ -12,7 +12,7 @@ publish: false
 2. 启动文档站：`pnpm docs:dev`
 3. 构建产物：`pnpm docs:build`
 4. 预览产物：`pnpm docs:preview`
-5. 提交前执行：`pnpm fmt`、`pnpm lint`
+5. 提交前执行：`pnpm fmt`、`pnpm lint`、`pnpm test`
 
 ## 在 Markdown 使用 Vue
 

@@ -815,10 +815,10 @@ function completeRound() {
 
 ## 说明
 
-- 本工具基于二分法和分治思想，通过分组测试逐步缩小范围。
-- 页面每次都会告诉你下一轮该测试哪些目标。你只需要按提示去测试，然后根据实际结果选择“有兼容性问题”或“没有兼容性问题”。
-- 如果目标数量比较多，这种方式通常会比逐个试过去更省时间，也更容易把范围收敛到具体目标。
-- 本页由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
+- 本工具用于排查多个目标之间的兼容性问题，基于二分法和分治思想逐步缩小范围，提高排查效率。
+- 页面每次都会给出下一轮需要测试的目标。你只需要按提示完成测试，再根据实际结果选择“有兼容性问题”或“没有兼容性问题”。
+- 由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
+- 如果这个工具对你有帮助，欢迎前往 [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc) 点个 ⭐ 支持一下。
 
 ## 使用场景
 

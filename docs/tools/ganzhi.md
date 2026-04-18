@@ -1065,6 +1065,7 @@ async function copyText(text: string) {
 - 年计算方式支持正月初一起算和立春零点起算，影响年柱和生肖。
 - 日计算方式支持晚子时算明天和晚子时算当天，影响日柱。
 - 本页基于 [`lunar-javascript`](https://www.npmjs.com/package/lunar-javascript) 计算，感谢这个出色的开源项目。
+- 如果这个工具对你有帮助，欢迎前往 [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc) 点个 ⭐ 支持一下。
 
 <style scoped>
 .ganzhi-tool {

@@ -130,19 +130,36 @@ function collectTools(locale: LocaleKey): DefaultTheme.SidebarItem[] {
 
   const linkPrefix = locale === "root" ? "" : "/en";
   const collator = new Intl.Collator(locale === "root" ? "zh-Hans-CN" : "en");
+  const toolFiles = collectToolMarkdownFiles(baseDir);
 
-  return fs
-    .readdirSync(baseDir)
-    .filter((file) => file.endsWith(".md") && file !== "index.md")
-    .map((file) => {
-      const filePath = path.join(baseDir, file);
-      const slug = file.replace(/\.md$/, "");
+  return toolFiles
+    .map((filePath) => {
+      const relativePath = path.relative(baseDir, filePath);
+      const slug = relativePath
+        .replace(/\\/g, "/")
+        .replace(/\/index\.md$/, "")
+        .replace(/\.md$/, "");
+      const link = slug.length > 0 ? `${linkPrefix}/tools/${slug}` : `${linkPrefix}/tools/`;
       return {
-        text: extractH1Title(filePath) ?? slug,
-        link: `${linkPrefix}/tools/${slug}`,
+        text: extractH1Title(filePath) ?? path.basename(slug || "tools"),
+        link,
       } satisfies DefaultTheme.SidebarItem;
     })
     .sort((a, b) => collator.compare(a.text, b.text));
+}
+
+function collectToolMarkdownFiles(baseDir: string): string[] {
+  return fs
+    .readdirSync(baseDir, { withFileTypes: true })
+    .flatMap((entry) => {
+      const entryPath = path.join(baseDir, entry.name);
+      if (entry.isDirectory()) {
+        const indexFilePath = path.join(entryPath, "index.md");
+        return fs.existsSync(indexFilePath) ? [indexFilePath] : [];
+      }
+
+      return entry.isFile() && entry.name.endsWith(".md") && entry.name !== "index.md" ? [entryPath] : [];
+    });
 }
 
 function extractTitle(filePath: string): string | undefined {

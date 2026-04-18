@@ -13,9 +13,13 @@ import {
   applyCompatibilityTestAnswer,
   createCompatibilityTestState,
   getCurrentCompatibilityTestStep,
+  intersectTargetRanges,
   skipCachedCompatibilityTestSteps,
+  subtractTargetRanges,
+  takeTargetsFromRanges,
   type CompatibilityTestState,
   type CompatibilityTestStep,
+  type TargetRange,
 } from "./compatibility-test";
 
 type TestStatus = "idle" | "testing" | "complete";
@@ -30,7 +34,7 @@ interface TargetRow {
 interface TestRecord {
   id: number;
   result: TestResult;
-  targets: number[];
+  targetRanges: TargetRange[];
 }
 
 const TARGET_PREVIEW_COUNT = 5;
@@ -150,30 +154,27 @@ const currentAnnouncement = computed(() => {
 });
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
-const previousPromptTargets = computed(() => testHistory.value.at(-1)?.targets ?? []);
+const previousPromptRanges = computed(() => testHistory.value.at(-1)?.targetRanges ?? []);
 const targetsUnchanged = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
   }
 
-  const previousTargets = new Set(previousPromptTargets.value);
-  return currentStep.value.promptTargets.filter((target) => previousTargets.has(target));
+  return intersectTargetRanges(currentStep.value.promptTargetRanges, previousPromptRanges.value);
 });
 const targetsToAdd = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
   }
 
-  const previousTargets = new Set(previousPromptTargets.value);
-  return currentStep.value.promptTargets.filter((target) => !previousTargets.has(target));
+  return subtractTargetRanges(currentStep.value.promptTargetRanges, previousPromptRanges.value);
 });
 const targetsToRemove = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
   }
 
-  const currentTargets = new Set(currentStep.value.promptTargets);
-  return previousPromptTargets.value.filter((target) => !currentTargets.has(target));
+  return subtractTargetRanges(previousPromptRanges.value, currentStep.value.promptTargetRanges);
 });
 const progressText = computed(() => {
   if (status.value === "idle") {
@@ -290,6 +291,24 @@ function formatTargetNames(indices: readonly number[], limit = TARGET_PREVIEW_LI
   return `${joinTargetLabels(labels.slice(0, limit))} 等 ${labels.length} 个目标`;
 }
 
+function getTargetRangePreview(ranges: readonly TargetRange[], limit = TARGET_PREVIEW_LIMIT) {
+  return takeTargetsFromRanges(ranges, limit);
+}
+
+function getTargetRangeCount(ranges: readonly TargetRange[]) {
+  return ranges.reduce((total, range) => total + Math.max(range.end - range.start + 1, 0), 0);
+}
+
+function formatTargetRanges(ranges: readonly TargetRange[], limit = TARGET_PREVIEW_LIMIT) {
+  const count = getTargetRangeCount(ranges);
+  const previewTargets = getTargetRangePreview(ranges, limit);
+  if (count <= limit) {
+    return formatTargetNames(previewTargets, limit);
+  }
+
+  return `${formatTargetNames(previewTargets, limit)} 等 ${count} 个目标`;
+}
+
 function joinTargetLabels(labels: readonly string[]) {
   if (labels.length === 0) {
     return "暂无目标";
@@ -329,17 +348,17 @@ function answerCurrentTest(hasIssue: boolean) {
     return;
   }
 
-  const group = currentStep.value.promptTargets.slice();
+  const group = currentStep.value.promptTargetRanges.map((range) => ({ ...range }));
   recordTestResult(group, hasIssue);
   applyCompatibilityTestAnswer(engineState.value, hasIssue);
   syncFromEngineState();
 }
 
-function recordTestResult(group: number[], hasIssue: boolean) {
+function recordTestResult(group: TargetRange[], hasIssue: boolean) {
   testHistory.value.push({
     id: nextRecordId.value,
     result: hasIssue ? "issue" : "pass",
-    targets: group,
+    targetRanges: group,
   });
   nextRecordId.value += 1;
 }
@@ -395,7 +414,7 @@ function completeRound() {
   status.value = "complete";
   currentStep.value = undefined;
   announcement.value = incompatibleTargets.value.length > 0
-    ? `测试完成，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题：${formatTargetNames(incompatibleTargets.value, Number.POSITIVE_INFINITY)}。`
+    ? `测试完成，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题：${formatTargetNames(incompatibleTargets.value)}。`
     : "测试完成，未发现兼容性问题。";
 }
 </script>
@@ -647,12 +666,18 @@ function completeRound() {
           aria-labelledby="compat-test-current-targets-label"
         >
           <span
-            v-for="target in currentStep?.promptTargets ?? []"
+            v-for="target in currentStep ? getTargetRangePreview(currentStep.promptTargetRanges) : []"
             :key="target"
             class="compat-test-tool__chip"
             role="listitem"
           >
             {{ getTargetLabel(target) }}
+          </span>
+          <span
+            v-if="currentStep && currentStep.promptTargetCount > TARGET_PREVIEW_LIMIT"
+            class="compat-test-tool__diff-empty"
+          >
+            等 {{ currentStep.promptTargetCount }} 个目标
           </span>
         </div>
       </div>
@@ -670,11 +695,11 @@ function completeRound() {
           </p>
           <div
             class="compat-test-tool__chip-list"
-            :role="targetsUnchanged.length > 0 ? 'list' : undefined"
-            :aria-labelledby="targetsUnchanged.length > 0 ? 'compat-test-diff-same-label' : undefined"
+            :role="getTargetRangeCount(targetsUnchanged) > 0 ? 'list' : undefined"
+            :aria-labelledby="getTargetRangeCount(targetsUnchanged) > 0 ? 'compat-test-diff-same-label' : undefined"
           >
             <span
-              v-for="target in targetsUnchanged"
+              v-for="target in getTargetRangePreview(targetsUnchanged)"
               :key="`unchanged-${target}`"
               class="compat-test-tool__chip"
               role="listitem"
@@ -682,7 +707,13 @@ function completeRound() {
               {{ getTargetLabel(target) }}
             </span>
             <span
-              v-if="targetsUnchanged.length === 0"
+              v-if="getTargetRangeCount(targetsUnchanged) > TARGET_PREVIEW_LIMIT"
+              class="compat-test-tool__diff-empty"
+            >
+              等 {{ getTargetRangeCount(targetsUnchanged) }} 个目标
+            </span>
+            <span
+              v-if="getTargetRangeCount(targetsUnchanged) === 0"
               class="compat-test-tool__diff-empty"
               role="status"
             >
@@ -703,11 +734,11 @@ function completeRound() {
           </p>
           <div
             class="compat-test-tool__chip-list"
-            :role="targetsToAdd.length > 0 ? 'list' : undefined"
-            :aria-labelledby="targetsToAdd.length > 0 ? 'compat-test-diff-add-label' : undefined"
+            :role="getTargetRangeCount(targetsToAdd) > 0 ? 'list' : undefined"
+            :aria-labelledby="getTargetRangeCount(targetsToAdd) > 0 ? 'compat-test-diff-add-label' : undefined"
           >
             <span
-              v-for="target in targetsToAdd"
+              v-for="target in getTargetRangePreview(targetsToAdd)"
               :key="`add-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--add"
               role="listitem"
@@ -715,7 +746,13 @@ function completeRound() {
               {{ getTargetLabel(target) }}
             </span>
             <span
-              v-if="targetsToAdd.length === 0"
+              v-if="getTargetRangeCount(targetsToAdd) > TARGET_PREVIEW_LIMIT"
+              class="compat-test-tool__diff-empty"
+            >
+              等 {{ getTargetRangeCount(targetsToAdd) }} 个目标
+            </span>
+            <span
+              v-if="getTargetRangeCount(targetsToAdd) === 0"
               class="compat-test-tool__diff-empty"
               role="status"
             >
@@ -736,11 +773,11 @@ function completeRound() {
           </p>
           <div
             class="compat-test-tool__chip-list"
-            :role="targetsToRemove.length > 0 ? 'list' : undefined"
-            :aria-labelledby="targetsToRemove.length > 0 ? 'compat-test-diff-remove-label' : undefined"
+            :role="getTargetRangeCount(targetsToRemove) > 0 ? 'list' : undefined"
+            :aria-labelledby="getTargetRangeCount(targetsToRemove) > 0 ? 'compat-test-diff-remove-label' : undefined"
           >
             <span
-              v-for="target in targetsToRemove"
+              v-for="target in getTargetRangePreview(targetsToRemove)"
               :key="`remove-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--remove"
               role="listitem"
@@ -748,7 +785,13 @@ function completeRound() {
               {{ getTargetLabel(target) }}
             </span>
             <span
-              v-if="targetsToRemove.length === 0"
+              v-if="getTargetRangeCount(targetsToRemove) > TARGET_PREVIEW_LIMIT"
+              class="compat-test-tool__diff-empty"
+            >
+              等 {{ getTargetRangeCount(targetsToRemove) }} 个目标
+            </span>
+            <span
+              v-if="getTargetRangeCount(targetsToRemove) === 0"
               class="compat-test-tool__diff-empty"
               role="status"
             >
@@ -868,7 +911,7 @@ function completeRound() {
         >
           {{ record.result === "issue" ? "有问题" : "无问题" }}
         </span>
-        <span>{{ formatTargetNames(record.targets) }}</span>
+        <span>{{ formatTargetRanges(record.targetRanges) }}</span>
       </li>
     </ol>
   </div>

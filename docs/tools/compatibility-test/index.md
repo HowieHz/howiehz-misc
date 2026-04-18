@@ -135,7 +135,7 @@ const foundTargetsText = computed(() => (
     ? formatTargetNames(incompatibleTargets.value, Number.POSITIVE_INFINITY)
     : "暂无"
 ));
-const latestHistory = computed(() => testHistory.value.slice(-6).reverse());
+const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
 const progressText = computed(() => {
   if (status.value === "idle") {
@@ -542,7 +542,7 @@ function completeRound() {
         id="compat-test-bulk-import"
         :value="bulkImportText"
         rows="4"
-        placeholder="每行一个名称"
+        placeholder="请在此处输入目标名称；不填写则采用默认名称。"
         aria-label="批量输入目标名称"
         aria-describedby="compat-test-bulk-import-description"
         @input="handleBulkImportInput"
@@ -639,12 +639,12 @@ function completeRound() {
       <div class="compat-test-tool__result-card">
         <p class="compat-test-tool__prompt-kicker">{{ resultTitle }}</p>
         <p class="compat-test-tool__prompt-text">{{ resultSummary }}</p>
-      </div>
-      <div class="compat-test-tool__summary-grid">
-        <div>
-          <span>有兼容性问题的目标</span>
-          <strong>{{ foundTargetsText }}</strong>
-        </div>
+        <p
+          v-if="incompatibleTargets.length > 0"
+          class="compat-test-tool__result-detail"
+        >
+          有兼容性问题的目标：{{ foundTargetsText }}
+        </p>
       </div>
       <div class="compat-test-tool__actions">
         <button
@@ -933,6 +933,12 @@ function completeRound() {
   line-height: 1.55;
 }
 
+.compat-test-tool__result-detail {
+  margin: 0;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
 .compat-test-tool__chip-list {
   display: flex;
   flex-wrap: wrap;
@@ -982,32 +988,6 @@ function completeRound() {
   border-color: color-mix(in srgb, var(--vp-c-danger-1) 45%, var(--vp-c-divider));
   background: color-mix(in srgb, var(--vp-c-danger-soft) 50%, var(--vp-c-bg));
   color: var(--vp-c-danger-1);
-}
-
-.compat-test-tool__summary-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.compat-test-tool__summary-grid div {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 10px;
-  background: var(--vp-c-bg-soft);
-}
-
-.compat-test-tool__summary-grid span {
-  color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
-  font-size: 0.86rem;
-}
-
-.compat-test-tool__summary-grid strong {
-  line-height: 1.45;
-  word-break: break-word;
 }
 
 .compat-test-tool__history-list {
@@ -1079,8 +1059,7 @@ function completeRound() {
 }
 
 @media (max-width: 640px) {
-  .compat-test-tool__setup,
-  .compat-test-tool__summary-grid {
+  .compat-test-tool__setup {
     grid-template-columns: 1fr;
   }
 

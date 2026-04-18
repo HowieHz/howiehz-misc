@@ -47,7 +47,7 @@ const testHistory = ref<TestRecord[]>([]);
 const announcement = ref("");
 const nextRecordId = ref(1);
 const testingPromptRef = ref<HTMLElement>();
-const restartButtonRef = ref<HTMLButtonElement>();
+const resultCardRef = ref<HTMLElement>();
 const targetListExpanded = ref(false);
 const engineState = ref<CompatibilityTestState>();
 const currentStep = ref<CompatibilityTestStep>();
@@ -172,7 +172,7 @@ watch(status, async (value, previousValue) => {
   }
 
   if (value === "complete") {
-    restartButtonRef.value?.focus();
+    resultCardRef.value?.focus();
   }
 });
 
@@ -413,7 +413,9 @@ function syncFromEngineState() {
 function completeRound() {
   status.value = "complete";
   currentStep.value = undefined;
-  announcement.value = resultSummary.value;
+  announcement.value = incompatibleTargets.value.length > 0
+    ? `${resultSummary.value} 有兼容性问题的目标：${foundTargetsText.value}。`
+    : resultSummary.value;
 }
 </script>
 <!-- autocorrect-enable -->
@@ -483,7 +485,11 @@ function completeRound() {
   >
     <div class="compat-test-tool__label-row">
       <h2 id="compat-test-targets">测试目标</h2>
-      <div class="compat-test-tool__toolbar-actions">
+      <div
+        class="compat-test-tool__toolbar-actions"
+        role="group"
+        aria-label="测试目标输入方式"
+      >
         <button
           type="button"
           class="compat-test-tool__secondary-button"
@@ -544,13 +550,26 @@ function completeRound() {
         rows="4"
         placeholder="请在此处输入目标名称；不填写则采用默认名称。"
         aria-label="批量输入目标名称"
-        aria-describedby="compat-test-bulk-import-description"
+        aria-describedby="compat-test-bulk-import-description compat-test-bulk-import-note"
         @input="handleBulkImportInput"
       />
       <div class="compat-test-tool__bulk-import-actions">
         <span id="compat-test-bulk-import-description">{{ bulkImportDescription }}</span>
+        <span
+          id="compat-test-bulk-import-note"
+          class="compat-test-tool__sr-only"
+        >
+          不填写的目标会使用默认名称。
+        </span>
       </div>
     </div>
+    <p
+      v-if="inputMode === 'list'"
+      id="compat-test-target-name-note"
+      class="compat-test-tool__sr-only"
+    >
+      目标名称可以留空；留空时会使用默认名称。
+    </p>
     <ol
       v-if="inputMode === 'list'"
       id="compat-test-target-list"
@@ -579,6 +598,7 @@ function completeRound() {
           :value="getTargetName(target.index)"
           autocomplete="off"
           :placeholder="`目标 ${target.index}`"
+          aria-describedby="compat-test-target-name-note"
           @input="handleTargetNameInput($event, target.index)"
         >
       </li>
@@ -636,7 +656,11 @@ function completeRound() {
       </div>
     </template>
     <template v-else-if="status === 'complete'">
-      <div class="compat-test-tool__result-card">
+      <div
+        ref="resultCardRef"
+        class="compat-test-tool__result-card"
+        tabindex="-1"
+      >
         <p class="compat-test-tool__prompt-kicker">{{ resultTitle }}</p>
         <p class="compat-test-tool__prompt-text">{{ resultSummary }}</p>
         <p
@@ -648,7 +672,6 @@ function completeRound() {
       </div>
       <div class="compat-test-tool__actions">
         <button
-          ref="restartButtonRef"
           type="button"
           class="compat-test-tool__primary-button"
           @click="startTest"

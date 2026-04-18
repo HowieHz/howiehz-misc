@@ -33,8 +33,6 @@ interface TestRecord {
   targets: number[];
 }
 
-const RECOMMENDED_MAX_TARGET_COUNT = 10000;
-const ABSOLUTE_MAX_TARGET_COUNT = 100000;
 const TARGET_PREVIEW_COUNT = 5;
 const TARGET_PREVIEW_LIMIT = 8;
 
@@ -55,9 +53,7 @@ const engineState = ref<CompatibilityTestState>();
 const currentStep = ref<CompatibilityTestStep>();
 
 const parsedTargetCount = computed(() => parseTargetCount(targetCountText.value));
-const targetCount = computed(() => (
-  parsedTargetCount.value !== undefined && parsedTargetCount.value <= ABSOLUTE_MAX_TARGET_COUNT ? parsedTargetCount.value : undefined
-));
+const targetCount = computed(() => parsedTargetCount.value);
 const targetCountError = computed(() => {
   const normalizedValue = targetCountText.value.trim();
   if (normalizedValue === "") {
@@ -66,10 +62,6 @@ const targetCountError = computed(() => {
 
   if (parsedTargetCount.value === undefined) {
     return "请输入大于 0 的整数";
-  }
-
-  if (parsedTargetCount.value > ABSOLUTE_MAX_TARGET_COUNT) {
-    return `当前页面最多支持 ${ABSOLUTE_MAX_TARGET_COUNT.toLocaleString("zh-CN")} 个目标`;
   }
 
   return undefined;
@@ -144,6 +136,7 @@ const foundTargetsText = computed(() => (
     : "暂无"
 ));
 const latestHistory = computed(() => testHistory.value.slice(-6).reverse());
+const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
 const progressText = computed(() => {
   if (status.value === "idle") {
     return "尚未开始";
@@ -218,7 +211,7 @@ function handleTargetCountInput(event: Event) {
     return;
   }
 
-  const normalizedValue = input.value.replace(/\D+/g, "").slice(0, String(ABSOLUTE_MAX_TARGET_COUNT).length);
+  const normalizedValue = input.value.replace(/\D+/g, "");
   input.value = normalizedValue;
   targetCountText.value = normalizedValue;
 }
@@ -226,7 +219,7 @@ function handleTargetCountInput(event: Event) {
 function stepTargetCount(delta: number) {
   const currentCount = parsedTargetCount.value;
   const baseCount = currentCount ?? 1;
-  const nextCount = Math.min(Math.max(baseCount + delta, 1), ABSOLUTE_MAX_TARGET_COUNT);
+  const nextCount = Math.max(baseCount + delta, 1);
   targetCountText.value = String(nextCount);
 }
 
@@ -321,19 +314,9 @@ function joinTargetLabels(labels: readonly string[]) {
 
 function startTest() {
   const parsedCount = parsedTargetCount.value;
-  if (parsedCount === undefined || parsedCount > ABSOLUTE_MAX_TARGET_COUNT) {
+  if (parsedCount === undefined) {
     announcement.value = `无法开始测试：${targetCountError.value}`;
     return;
-  }
-
-  if (parsedCount > RECOMMENDED_MAX_TARGET_COUNT && typeof window !== "undefined") {
-    const shouldContinue = window.confirm(
-      `当前填写了 ${parsedCount.toLocaleString("zh-CN")} 个目标，超过建议上限 ${RECOMMENDED_MAX_TARGET_COUNT.toLocaleString("zh-CN")}，继续可能导致页面变慢。要继续开始测试吗？`,
-    );
-    if (!shouldContinue) {
-      announcement.value = "已取消超限测试。";
-      return;
-    }
   }
 
   const count = parsedCount;
@@ -347,9 +330,17 @@ function startTest() {
   testHistory.value = [];
   status.value = "testing";
   nextRecordId.value = 1;
-  engineState.value = createCompatibilityTestState(count);
-  currentStep.value = getCurrentCompatibilityTestStep(engineState.value);
-  announcement.value = `已开始新一轮测试，共 ${count} 个目标。`;
+  try {
+    engineState.value = createCompatibilityTestState(count);
+    currentStep.value = getCurrentCompatibilityTestStep(engineState.value);
+    announcement.value = `已开始新一轮测试，共 ${count} 个目标。`;
+  } catch (error) {
+    status.value = "idle";
+    engineState.value = undefined;
+    currentStep.value = undefined;
+    const message = error instanceof Error ? error.message : "当前数量过大，页面暂时无法完成初始化。";
+    announcement.value = `无法开始测试：${message}`;
+  }
 }
 
 function answerCurrentTest(hasIssue: boolean) {
@@ -370,6 +361,36 @@ function recordTestResult(group: number[], hasIssue: boolean) {
     targets: group,
   });
   nextRecordId.value += 1;
+}
+
+function rebuildEngineStateFromHistory() {
+  const nextState = createCompatibilityTestState(currentRoundCount.value);
+  for (const record of testHistory.value) {
+    applyCompatibilityTestAnswer(nextState, record.result === "issue");
+    if (nextState.stopped) {
+      break;
+    }
+
+    skipCachedCompatibilityTestSteps(nextState);
+  }
+
+  return nextState;
+}
+
+async function undoLastTest() {
+  if (!canUndoLastTest.value) {
+    return;
+  }
+
+  testHistory.value = testHistory.value.slice(0, -1);
+  nextRecordId.value = Math.max(testHistory.value.length + 1, 1);
+  incompatibleTargets.value = [];
+  engineState.value = rebuildEngineStateFromHistory();
+  status.value = "testing";
+  syncFromEngineState();
+  announcement.value = "已撤回到上一步。";
+  await nextTick();
+  testingPromptRef.value?.focus();
 }
 
 function syncFromEngineState() {
@@ -604,6 +625,14 @@ function completeRound() {
         >
           没有兼容性问题
         </button>
+        <button
+          type="button"
+          class="compat-test-tool__secondary-button"
+          :disabled="!canUndoLastTest"
+          @click="undoLastTest"
+        >
+          撤回上一步
+        </button>
       </div>
     </template>
     <template v-else-if="status === 'complete'">
@@ -626,6 +655,14 @@ function completeRound() {
         >
           重新开始测试
         </button>
+        <button
+          v-if="canUndoLastTest"
+          type="button"
+          class="compat-test-tool__secondary-button"
+          @click="undoLastTest"
+        >
+          撤回上一步
+        </button>
       </div>
     </template>
     <p
@@ -641,7 +678,6 @@ function completeRound() {
   >
     <div class="compat-test-tool__label-row">
       <h2 id="compat-test-history">测试记录</h2>
-      <span>最多显示 6 条</span>
     </div>
     <ol
       class="compat-test-tool__history-list"

@@ -188,9 +188,7 @@ function extractH1Title(filePath: string): string | undefined {
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  srcExclude: [
-    "**/README.md",
-  ],
+  srcExclude: ["**/README.md"],
   vite: {
     plugins: [
       // Pagefind search plugin

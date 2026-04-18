@@ -52,7 +52,10 @@ const diffModeEnabled = ref(false);
 const nextRecordId = ref(1);
 const testingPromptRef = ref<HTMLElement>();
 const resultCardRef = ref<HTMLElement>();
+const targetListPageInputRef = ref<HTMLInputElement>();
 const targetListPage = ref(1);
+const targetListPageText = ref("1");
+const isEditingTargetListPage = ref(false);
 const engineState = ref<CompatibilityTestState>();
 const currentStep = ref<CompatibilityTestStep>();
 
@@ -190,10 +193,16 @@ watch(status, async (value, previousValue) => {
 watch(targetCount, (value) => {
   if (!value) {
     targetListPage.value = 1;
+    targetListPageText.value = "1";
     return;
   }
 
   targetListPage.value = Math.min(targetListPage.value, targetListPageCount.value);
+  targetListPageText.value = String(targetListPage.value);
+});
+
+watch(targetListPage, (value) => {
+  targetListPageText.value = String(value);
 });
 
 function parseTargetCount(value: string) {
@@ -227,6 +236,43 @@ function stepTargetCount(delta: number) {
 function stepTargetListPage(delta: number) {
   const nextPage = targetListPage.value + delta;
   targetListPage.value = Math.min(Math.max(nextPage, 1), targetListPageCount.value);
+}
+
+async function startEditingTargetListPage() {
+  isEditingTargetListPage.value = true;
+  targetListPageText.value = String(targetListPage.value);
+  await nextTick();
+  targetListPageInputRef.value?.focus();
+  targetListPageInputRef.value?.select();
+}
+
+function handleTargetListPageInput(event: Event) {
+  const input = event.currentTarget;
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const normalizedValue = input.value.replace(/\D+/g, "");
+  input.value = normalizedValue;
+  targetListPageText.value = normalizedValue;
+}
+
+function finishEditingTargetListPage() {
+  const parsedPage = Number.parseInt(targetListPageText.value, 10);
+  if (Number.isNaN(parsedPage)) {
+    targetListPageText.value = String(targetListPage.value);
+    isEditingTargetListPage.value = false;
+    return;
+  }
+
+  targetListPage.value = Math.min(Math.max(parsedPage, 1), targetListPageCount.value);
+  targetListPageText.value = String(targetListPage.value);
+  isEditingTargetListPage.value = false;
+}
+
+function cancelEditingTargetListPage() {
+  targetListPageText.value = String(targetListPage.value);
+  isEditingTargetListPage.value = false;
 }
 
 function handleBulkImportInput(event: Event) {
@@ -515,12 +561,31 @@ function completeRound() {
           >
             上一页
           </button>
-          <span
-            class="compat-test-tool__page-status"
-            aria-live="polite"
-          >
-            第 {{ targetListPage }} / {{ targetListPageCount }} 页
-          </span>
+          <div class="compat-test-tool__page-status-slot">
+            <button
+              v-if="!isEditingTargetListPage"
+              type="button"
+              class="compat-test-tool__page-status compat-test-tool__page-status-button"
+              :aria-label="`当前第 ${targetListPage} 页，共 ${targetListPageCount} 页。点击后可跳转页码`"
+              @click="startEditingTargetListPage"
+            >
+              {{ targetListPage }} / {{ targetListPageCount }}
+            </button>
+            <input
+              v-else
+              ref="targetListPageInputRef"
+              :value="targetListPageText"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              class="compat-test-tool__page-status-input"
+              :aria-label="`输入要跳转的页码，当前共 ${targetListPageCount} 页`"
+              @input="handleTargetListPageInput"
+              @blur="finishEditingTargetListPage"
+              @keydown.enter.prevent="finishEditingTargetListPage"
+              @keydown.esc.prevent="cancelEditingTargetListPage"
+            >
+          </div>
           <button
             type="button"
             class="compat-test-tool__secondary-button"
@@ -778,7 +843,7 @@ function completeRound() {
         </button>
         <button
           type="button"
-          class="compat-test-tool__secondary-button"
+          class="compat-test-tool__success-button"
           @click="answerCurrentTest(false)"
         >
           没有兼容性问题
@@ -1136,6 +1201,39 @@ function completeRound() {
   white-space: nowrap;
 }
 
+.compat-test-tool__page-status-slot {
+  display: flex;
+  justify-content: center;
+}
+
+.compat-test-tool__page-status-button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transform: none;
+  box-shadow: none;
+}
+
+.compat-test-tool__page-status-button:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  color: var(--vp-c-brand-1);
+}
+
+.compat-test-tool__page-status-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 12px;
+  text-align: center;
+}
+
 .compat-test-tool__bulk-import {
   display: grid;
   gap: 8px;
@@ -1252,6 +1350,7 @@ function completeRound() {
 
 .compat-test-tool__primary-button,
 .compat-test-tool__secondary-button,
+.compat-test-tool__success-button,
 .compat-test-tool__danger-button {
   padding: 9px 14px;
 }
@@ -1265,6 +1364,12 @@ function completeRound() {
 .compat-test-tool__secondary-button {
   background: var(--vp-c-bg);
   color: var(--vp-c-text-1);
+}
+
+.compat-test-tool__success-button {
+  border-color: color-mix(in srgb, var(--vp-c-green-1) 45%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-green-soft) 56%, var(--vp-c-bg));
+  color: color-mix(in srgb, var(--vp-c-green-1) 82%, var(--vp-c-text-1));
 }
 
 .compat-test-tool__mode-button--active {
@@ -1337,6 +1442,16 @@ function completeRound() {
   border-color: var(--vp-c-brand-1);
 }
 
+.compat-test-tool__success-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--vp-c-green-1) 60%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-green-soft) 68%, var(--vp-c-bg));
+}
+
+.compat-test-tool__danger-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--vp-c-danger-1) 60%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-danger-soft) 62%, var(--vp-c-bg));
+}
+
 .compat-test-tool button:focus-visible,
 .compat-test-tool input:focus-visible,
 .compat-test-tool textarea:focus-visible,
@@ -1399,6 +1514,7 @@ function completeRound() {
 
   .compat-test-tool__primary-button,
   .compat-test-tool__secondary-button,
+  .compat-test-tool__success-button,
   .compat-test-tool__danger-button {
     width: 100%;
   }
@@ -1410,6 +1526,15 @@ function completeRound() {
 
   .compat-test-tool__pagination .compat-test-tool__page-status {
     text-align: center;
+  }
+
+  .compat-test-tool__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .compat-test-tool__actions > :nth-child(3) {
+    grid-column: 1 / -1;
   }
 }
 </style>

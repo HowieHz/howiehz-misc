@@ -5,8 +5,7 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "declarationDir": "./node_modules/.tmp/types/app",
-    "lib": ["esnext", "dom", "dom.iterable"],
-    "types": ["node"]
+    "lib": ["esnext", "dom", "dom.iterable"]
   },
   "include": [
     "docs/.vitepress/theme/**/*.ts",

@@ -2,7 +2,7 @@
 publish: false
 ---
 
-# 在线兼容性测试器
+# 兼容性问题排查器
 
 由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来，用于检测任意目标之间的兼容性测试。
 

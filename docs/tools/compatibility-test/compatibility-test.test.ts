@@ -143,6 +143,41 @@ describe("compatibility test engine", () => {
 
     expect(result.debugSteps).toEqual(scenarios["9 pick 2"].expectedDebugSteps);
   });
+
+  it("stops safely when every test result is pass", () => {
+    const state = createCompatibilityTestState(9);
+    const prompts: number[][] = [];
+    let step = getCurrentCompatibilityTestStep(state);
+    let guard = 0;
+
+    while (step) {
+      guard += 1;
+      expect(guard).toBeLessThanOrEqual(32);
+
+      if (!step.requiresAnswer) {
+        step = skipCachedCompatibilityTestSteps(state);
+        continue;
+      }
+
+      prompts.push(step.promptTargets);
+      applyCompatibilityTestAnswer(state, false);
+      step = getCurrentCompatibilityTestStep(state);
+    }
+
+    expect(state.stopped).toBe(true);
+    expect(state.resultTargets).toEqual([]);
+    expect(prompts).toEqual([
+      [1, 2, 3, 4, 5],
+      [6, 7, 8, 9],
+      [1, 2, 3, 6, 7, 8, 9],
+      [4, 5, 6, 7, 8, 9],
+      [1, 2, 4, 5, 6, 7, 8, 9],
+      [3, 4, 5, 6, 7, 8, 9],
+      [1, 3, 4, 5, 6, 7, 8, 9],
+      [2, 3, 4, 5, 6, 7, 8, 9],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    ]);
+  });
 });
 
 function runScenario(scenario: Scenario) {

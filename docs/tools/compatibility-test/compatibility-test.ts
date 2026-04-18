@@ -53,6 +53,11 @@ export function applyCompatibilityTestAnswer(state: CompatibilityTestState, hasI
 
   const cacheKey = getTargetSetKey(currentStep.promptTargets);
   state.cachedResults.set(cacheKey, hasIssue);
+  if (!hasIssue && isFullTargetSet(state, currentStep.promptTargets)) {
+    stopCompatibilityTest(state, []);
+    return undefined;
+  }
+
   advanceCompatibilityTestState(state, hasIssue);
   return getCurrentCompatibilityTestStep(state);
 }
@@ -60,6 +65,11 @@ export function applyCompatibilityTestAnswer(state: CompatibilityTestState, hasI
 export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState): CompatibilityTestStep | undefined {
   let step = getCurrentCompatibilityTestStep(state);
   while (step && !step.requiresAnswer) {
+    if (!state.cachedResults.get(getTargetSetKey(step.promptTargets)) && isFullTargetSet(state, step.promptTargets)) {
+      stopCompatibilityTest(state, []);
+      return undefined;
+    }
+
     advanceCompatibilityTestState(state, state.cachedResults.get(getTargetSetKey(step.promptTargets)) ?? false);
     step = getCurrentCompatibilityTestStep(state);
   }
@@ -138,4 +148,14 @@ function advancePassState(state: CompatibilityTestState) {
 
 function getTargetSetKey(targets: readonly number[]) {
   return targets.join(",");
+}
+
+function isFullTargetSet(state: CompatibilityTestState, targets: readonly number[]) {
+  return targets.length === state.numberList.length
+    && targets.every((target, index) => target === state.numberList[index]);
+}
+
+function stopCompatibilityTest(state: CompatibilityTestState, resultTargets: readonly number[]) {
+  state.resultTargets = [...resultTargets];
+  state.stopped = true;
 }

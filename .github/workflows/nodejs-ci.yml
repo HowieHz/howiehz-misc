@@ -57,6 +57,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Test
+        run: pnpm test
+
       - name: Commit changes
         if: (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]')
         uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # https://github.com/stefanzweifel/git-auto-commit-action/releases/tag/v7.1.0

@@ -160,10 +160,10 @@ const resultTitle = computed(() => {
 });
 const resultSummary = computed(() => {
   if (incompatibleTargets.value.length === 0) {
-    return `已完成 ${currentRoundCount.value} 个目标的兼容性测试，未发现兼容性问题。`;
+    return "已完成兼容性测试，未发现兼容性问题。";
   }
 
-  return `已完成 ${currentRoundCount.value} 个目标的兼容性测试，发现 ${incompatibleTargets.value.length} 个问题目标。`;
+  return `已完成兼容性测试，发现 ${incompatibleTargets.value.length} 个问题目标。`;
 });
 
 watch(status, async (value, previousValue) => {

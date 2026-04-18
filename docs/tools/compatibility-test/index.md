@@ -163,6 +163,9 @@ const targetsToRemove = computed(() => {
 
   return subtractTargetRanges(previousPromptRanges.value, currentStep.value.promptTargetRanges);
 });
+const confirmedTargets = computed(() => (
+  currentStep.value ? getAllTargetsFromRanges(currentStep.value.debug.confirmedTargetRanges) : []
+));
 const progressText = computed(() => {
   if (status.value === "idle") {
     return "尚未开始";
@@ -171,10 +174,9 @@ const progressText = computed(() => {
   return `已完成 ${testHistory.value.length} 次测试`;
 });
 const resultSummary = computed(() => (
-  incompatibleTargets.value.length === 0
-    ? "未发现兼容性问题"
-    : `下列 ${incompatibleTargets.value.length} 个目标有兼容性问题`
+  incompatibleTargets.value.length === 0 ? "未发现兼容性问题" : "已找到存在兼容性问题的目标"
 ));
+const resultTargetsLabel = computed(() => `下列 ${incompatibleTargets.value.length} 个目标有兼容性问题`);
 
 watch(status, async (value, previousValue) => {
   if (value === previousValue) {
@@ -300,6 +302,10 @@ function getTargetName(index: number) {
 function getTargetLabel(index: number) {
   const name = getTargetName(index).trim();
   return name.length > 0 ? name : `目标 ${index}`;
+}
+
+function isConfirmedTarget(index: number) {
+  return confirmedTargets.value.includes(index);
 }
 
 function formatTargetNames(indices: readonly number[], limit = TARGET_PREVIEW_LIMIT) {
@@ -720,6 +726,7 @@ function completeRound() {
             v-for="target in currentStep ? getAllTargetsFromRanges(currentStep.promptTargetRanges) : []"
             :key="target"
             class="compat-test-tool__chip"
+            :class="{ 'compat-test-tool__chip--confirmed': isConfirmedTarget(target) }"
             role="listitem"
           >
             {{ getTargetLabel(target) }}
@@ -747,6 +754,7 @@ function completeRound() {
               v-for="target in getAllTargetsFromRanges(targetsUnchanged)"
               :key="`unchanged-${target}`"
               class="compat-test-tool__chip"
+              :class="{ 'compat-test-tool__chip--confirmed': isConfirmedTarget(target) }"
               role="listitem"
             >
               {{ getTargetLabel(target) }}
@@ -869,20 +877,32 @@ function completeRound() {
         >
           {{ resultSummary }}
         </p>
+      </div>
+      <div
+        v-if="incompatibleTargets.length > 0"
+        class="compat-test-tool__result-targets"
+        role="group"
+        aria-labelledby="compat-test-result-targets-label"
+      >
+        <p
+          id="compat-test-result-targets-label"
+          class="compat-test-tool__diff-label"
+        >
+          {{ resultTargetsLabel }}
+        </p>
         <div
-          v-if="incompatibleTargets.length > 0"
           class="compat-test-tool__chip-list"
           role="list"
-          aria-label="有兼容性问题的目标"
+          aria-labelledby="compat-test-result-targets-label"
         >
-          <span
-            v-for="target in incompatibleTargets"
-            :key="`result-${target}`"
-            class="compat-test-tool__chip compat-test-tool__chip--remove"
-            role="listitem"
-          >
-            {{ getTargetLabel(target) }}
-          </span>
+        <span
+          v-for="target in incompatibleTargets"
+          :key="`result-${target}`"
+          class="compat-test-tool__chip compat-test-tool__chip--confirmed"
+          role="listitem"
+        >
+          {{ getTargetLabel(target) }}
+        </span>
         </div>
       </div>
       <div class="compat-test-tool__actions">
@@ -1347,6 +1367,18 @@ function completeRound() {
   border-color: color-mix(in srgb, var(--vp-c-danger-1) 42%, var(--vp-c-divider));
   background: color-mix(in srgb, var(--vp-c-danger-soft) 58%, var(--vp-c-bg));
   color: var(--vp-c-danger-1);
+}
+
+.compat-test-tool__chip--confirmed {
+  border-color: color-mix(in srgb, var(--vp-c-brand-1) 48%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-brand-soft) 72%, var(--vp-c-bg));
+  color: color-mix(in srgb, var(--vp-c-brand-1) 82%, var(--vp-c-text-1));
+  font-weight: 700;
+}
+
+.compat-test-tool__result-targets {
+  display: grid;
+  gap: 8px;
 }
 
 .compat-test-tool__diff-empty {

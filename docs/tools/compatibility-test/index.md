@@ -1416,8 +1416,8 @@ function completeRound() {
 }
 
 .compat-test-tool__history-badge--pass {
-  background: color-mix(in srgb, var(--vp-c-brand-soft) 70%, var(--vp-c-bg));
-  color: var(--vp-c-brand-1);
+  background: color-mix(in srgb, var(--vp-c-green-soft) 64%, var(--vp-c-bg));
+  color: color-mix(in srgb, var(--vp-c-green-1) 82%, var(--vp-c-text-1));
 }
 
 .compat-test-tool__sr-only {

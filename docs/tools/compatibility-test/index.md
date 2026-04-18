@@ -134,7 +134,10 @@ const currentAnnouncement = computed(() => {
     return "填写目标后开始测试。";
   }
 
-  return `请测试下列目标：${formatAllTargetRanges(currentStep.value.promptTargetRanges)}。`;
+  return `请测试下列目标：${formatTargetNames(
+    getAllTargetsFromRanges(currentStep.value.promptTargetRanges),
+    Number.MAX_SAFE_INTEGER,
+  )}。`;
 });
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
@@ -323,10 +326,6 @@ function getAllTargetsFromRanges(ranges: readonly TargetRange[]) {
 
 function getTargetRangeCount(ranges: readonly TargetRange[]) {
   return ranges.reduce((total, range) => total + Math.max(range.end - range.start + 1, 0), 0);
-}
-
-function formatAllTargetRanges(ranges: readonly TargetRange[]) {
-  return formatTargetNames(getAllTargetsFromRanges(ranges), Number.MAX_SAFE_INTEGER);
 }
 
 function formatTargetRanges(ranges: readonly TargetRange[], limit = TARGET_PREVIEW_LIMIT) {
@@ -527,13 +526,14 @@ function completeRound() {
           批量输入
         </span>
         <label class="compat-test-tool__mode-switch">
-          <span class="compat-test-tool__sr-only">测试目标输入方式</span>
           <input
             :checked="inputMode === 'list'"
             type="checkbox"
             role="switch"
             :aria-checked="inputMode === 'list'"
-            aria-label="切换测试目标输入方式"
+            :aria-label="inputMode === 'list'
+              ? '当前为逐项填写，点击切换为批量输入'
+              : '当前为批量输入，点击切换为逐项填写'"
             @change="inputMode = inputMode === 'list' ? 'bulk' : 'list'"
           >
         </label>

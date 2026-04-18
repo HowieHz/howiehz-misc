@@ -38,7 +38,6 @@ const TARGET_PREVIEW_LIMIT = 8;
 
 const targetCountText = ref("5");
 const targetNames = ref<string[]>([]);
-const bulkImportText = ref("");
 const inputMode = ref<InputMode>("list");
 const status = ref<TestStatus>("idle");
 const currentRoundCount = ref(0);
@@ -111,8 +110,36 @@ const targetListStatusText = computed(() => {
 const bulkImportDescription = computed(() => {
   const count = targetCount.value ?? 0;
   return count > 0
-    ? `每行一个名称，将按顺序应用到前 ${count} 个目标；超出的行会自动忽略。`
-    : "每行一个名称，超出的行会自动忽略。";
+    ? `每行对应一个目标，将按顺序映射到前 ${count} 个目标；超出的行会自动忽略。`
+    : "每行对应一个目标，超出的行会自动忽略。";
+});
+const bulkInputValue = computed({
+  get() {
+    const count = targetCount.value ?? 0;
+    if (count <= 0) {
+      return "";
+    }
+
+    return targetNames.value.slice(0, count).join("\n");
+  },
+  set(value: string) {
+    const count = targetCount.value;
+    if (!count) {
+      return;
+    }
+
+    const lines = value.replace(/\r/g, "").split("\n");
+    const nextNames = targetNames.value.slice();
+    while (nextNames.length < count) {
+      nextNames.push("");
+    }
+
+    for (let index = 0; index < count; index += 1) {
+      nextNames[index] = lines[index] ?? "";
+    }
+
+    targetNames.value = nextNames;
+  },
 });
 const isRoundActive = computed(() => status.value === "testing");
 const currentInstruction = computed(() => {
@@ -185,10 +212,6 @@ watch(targetCount, (value) => {
   if (value <= TARGET_PREVIEW_COUNT) {
     setTargetListExpanded(false);
   }
-
-  if (inputMode.value === "bulk" && bulkImportText.value.trim() !== "") {
-    syncBulkImportToTargetNames();
-  }
 });
 
 function parseTargetCount(value: string) {
@@ -199,10 +222,6 @@ function parseTargetCount(value: string) {
 
   const count = Number.parseInt(normalizedValue, 10);
   return count >= 1 ? count : undefined;
-}
-
-function createTargetRange(count: number) {
-  return Array.from({ length: count }, (_, index) => index + 1);
 }
 
 function handleTargetCountInput(event: Event) {
@@ -233,42 +252,7 @@ function handleBulkImportInput(event: Event) {
     return;
   }
 
-  bulkImportText.value = input.value;
-  if (inputMode.value === "bulk") {
-    syncBulkImportToTargetNames();
-  }
-}
-
-function syncBulkImportToTargetNames() {
-  const count = targetCount.value;
-  if (!count) {
-    return false;
-  }
-
-  const lines = bulkImportText.value
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => line.trim());
-  while (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-
-  if (lines.length === 0) {
-    return true;
-  }
-
-  const importCount = Math.min(lines.length, count);
-  const nextNames = targetNames.value.slice();
-  while (nextNames.length < count) {
-    nextNames.push("");
-  }
-
-  for (let index = 0; index < count; index += 1) {
-    nextNames[index] = index < importCount ? (lines[index] ?? "") : "";
-  }
-
-  targetNames.value = nextNames;
-  return true;
+  bulkInputValue.value = input.value;
 }
 
 function handleTargetNameInput(event: Event, index: number) {
@@ -320,11 +304,6 @@ function startTest() {
   }
 
   const count = parsedCount;
-  if (inputMode.value === "bulk" && !syncBulkImportToTargetNames()) {
-    announcement.value = "请先填写有效的测试目标总数。";
-    return;
-  }
-
   currentRoundCount.value = count;
   incompatibleTargets.value = [];
   testHistory.value = [];
@@ -546,7 +525,7 @@ function completeRound() {
     >
       <textarea
         id="compat-test-bulk-import"
-        :value="bulkImportText"
+        :value="bulkInputValue"
         rows="4"
         placeholder="请在此处输入目标名称；不填写则采用默认名称。"
         aria-label="批量输入目标名称"

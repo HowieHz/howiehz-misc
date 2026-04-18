@@ -316,10 +316,6 @@ function formatTargetNames(indices: readonly number[], limit = TARGET_PREVIEW_LI
   return `${joinTargetLabels(labels.slice(0, limit))} 等 ${labels.length} 个目标`;
 }
 
-function getTargetRangePreview(ranges: readonly TargetRange[], limit = TARGET_PREVIEW_LIMIT) {
-  return takeTargetsFromRanges(ranges, limit);
-}
-
 function getAllTargetsFromRanges(ranges: readonly TargetRange[]) {
   return takeTargetsFromRanges(ranges, getTargetRangeCount(ranges));
 }
@@ -330,7 +326,7 @@ function getTargetRangeCount(ranges: readonly TargetRange[]) {
 
 function formatTargetRanges(ranges: readonly TargetRange[], limit = TARGET_PREVIEW_LIMIT) {
   const count = getTargetRangeCount(ranges);
-  const previewTargets = getTargetRangePreview(ranges, limit);
+  const previewTargets = takeTargetsFromRanges(ranges, limit);
   if (count <= limit) {
     return formatTargetNames(previewTargets, limit);
   }
@@ -1113,7 +1109,7 @@ function completeRound() {
   gap: 12px;
 }
 
-.compat-test-tool__label-row span {
+.compat-test-tool__label-row > span {
   font-size: 0.88rem;
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
   white-space: nowrap;
@@ -1528,7 +1524,7 @@ function completeRound() {
     width: 100%;
   }
 
-  .compat-test-tool__label-row span {
+  .compat-test-tool__label-row > span {
     white-space: normal;
   }
 

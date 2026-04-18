@@ -51,7 +51,7 @@ const announcement = ref("");
 const diffModeEnabled = ref(false);
 const nextRecordId = ref(1);
 const testingPromptRef = ref<HTMLElement>();
-const resultCardRef = ref<HTMLElement>();
+const completeResultRef = ref<HTMLElement>();
 const targetListPageInputRef = ref<HTMLInputElement>();
 const targetListPage = ref(1);
 const targetListPageText = ref("1");
@@ -163,6 +163,11 @@ const targetsToRemove = computed(() => {
 
   return subtractTargetRanges(previousPromptRanges.value, currentStep.value.promptTargetRanges);
 });
+const confirmedTargetSet = computed(() => (
+  new Set(
+    currentStep.value ? getAllTargetsFromRanges(currentStep.value.debug.confirmedTargetRanges) : [],
+  )
+));
 const progressText = computed(() => {
   if (status.value === "idle") {
     return "尚未开始";
@@ -171,10 +176,9 @@ const progressText = computed(() => {
   return `已完成 ${testHistory.value.length} 次测试`;
 });
 const resultSummary = computed(() => (
-  incompatibleTargets.value.length === 0
-    ? "未发现兼容性问题"
-    : `下列 ${incompatibleTargets.value.length} 个目标有兼容性问题`
+  incompatibleTargets.value.length === 0 ? "未发现兼容性问题" : "已找到存在兼容性问题的目标"
 ));
+const resultTargetsLabel = computed(() => `下列 ${incompatibleTargets.value.length} 个目标有兼容性问题`);
 
 watch(status, async (value, previousValue) => {
   if (value === previousValue) {
@@ -183,13 +187,8 @@ watch(status, async (value, previousValue) => {
 
   await nextTick();
 
-  if (value === "testing" && previousValue !== "testing") {
-    testingPromptRef.value?.focus();
-    return;
-  }
-
   if (value === "complete") {
-    resultCardRef.value?.focus();
+    completeResultRef.value?.focus();
   }
 });
 
@@ -342,7 +341,7 @@ function joinTargetLabels(labels: readonly string[]) {
   return labels.join("、");
 }
 
-function startTest() {
+async function startTest() {
   const parsedCount = parsedTargetCount.value;
   if (parsedCount === undefined) {
     announcement.value = `无法开始测试：${targetCountError.value}`;
@@ -359,6 +358,8 @@ function startTest() {
     engineState.value = createCompatibilityTestState(count);
     currentStep.value = getCurrentCompatibilityTestStep(engineState.value);
     announcement.value = `已开始新一轮测试，共 ${count} 个目标。`;
+    await nextTick();
+    testingPromptRef.value?.focus();
   } catch (error) {
     status.value = "idle";
     engineState.value = undefined;
@@ -723,6 +724,7 @@ function completeRound() {
             v-for="target in currentStep ? getAllTargetsFromRanges(currentStep.promptTargetRanges) : []"
             :key="target"
             class="compat-test-tool__chip"
+            :class="{ 'compat-test-tool__chip--confirmed': confirmedTargetSet.has(target) }"
             role="listitem"
           >
             {{ getTargetLabel(target) }}
@@ -750,6 +752,7 @@ function completeRound() {
               v-for="target in getAllTargetsFromRanges(targetsUnchanged)"
               :key="`unchanged-${target}`"
               class="compat-test-tool__chip"
+              :class="{ 'compat-test-tool__chip--confirmed': confirmedTargetSet.has(target) }"
               role="listitem"
             >
               {{ getTargetLabel(target) }}
@@ -854,38 +857,53 @@ function completeRound() {
     </template>
     <template v-else-if="status === 'complete'">
       <div
-        ref="resultCardRef"
-        class="compat-test-tool__result-card"
+        ref="completeResultRef"
         role="group"
         aria-labelledby="compat-test-result-title compat-test-result-summary"
         tabindex="-1"
       >
-        <p
-          id="compat-test-result-title"
-          class="compat-test-tool__prompt-kicker"
+        <div
+          class="compat-test-tool__result-card"
         >
-          测试完成
-        </p>
-        <p
-          id="compat-test-result-summary"
-          class="compat-test-tool__prompt-text"
-        >
-          {{ resultSummary }}
-        </p>
+          <p
+            id="compat-test-result-title"
+            class="compat-test-tool__prompt-kicker"
+          >
+            测试完成
+          </p>
+          <p
+            id="compat-test-result-summary"
+            class="compat-test-tool__prompt-text"
+          >
+            {{ resultSummary }}
+          </p>
+        </div>
         <div
           v-if="incompatibleTargets.length > 0"
-          class="compat-test-tool__chip-list"
-          role="list"
-          aria-label="有兼容性问题的目标"
+          class="compat-test-tool__result-targets"
+          role="group"
+          aria-labelledby="compat-test-result-targets-label"
         >
-          <span
-            v-for="target in incompatibleTargets"
-            :key="`result-${target}`"
-            class="compat-test-tool__chip compat-test-tool__chip--remove"
-            role="listitem"
+          <p
+            id="compat-test-result-targets-label"
+            class="compat-test-tool__diff-label"
           >
-            {{ getTargetLabel(target) }}
-          </span>
+            {{ resultTargetsLabel }}
+          </p>
+          <div
+            class="compat-test-tool__chip-list"
+            role="list"
+            aria-labelledby="compat-test-result-targets-label"
+          >
+            <span
+              v-for="target in incompatibleTargets"
+              :key="`result-${target}`"
+              class="compat-test-tool__chip compat-test-tool__chip--confirmed"
+              role="listitem"
+            >
+              {{ getTargetLabel(target) }}
+            </span>
+          </div>
         </div>
       </div>
       <div class="compat-test-tool__actions">
@@ -1352,6 +1370,18 @@ function completeRound() {
   color: var(--vp-c-danger-1);
 }
 
+.compat-test-tool__chip--confirmed {
+  border-color: color-mix(in srgb, var(--vp-c-brand-1) 48%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-brand-soft) 72%, var(--vp-c-bg));
+  color: color-mix(in srgb, var(--vp-c-brand-1) 82%, var(--vp-c-text-1));
+  font-weight: 700;
+}
+
+.compat-test-tool__result-targets {
+  display: grid;
+  gap: 8px;
+}
+
 .compat-test-tool__diff-empty {
   font-size: 0.9rem;
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
@@ -1486,6 +1516,36 @@ function completeRound() {
   .compat-test-tool__label-row-actions {
     display: grid;
     gap: 8px;
+  }
+
+  .compat-test-tool__test-panel .compat-test-tool__label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .compat-test-tool__test-panel .compat-test-tool__label-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+    flex-shrink: 0;
+  }
+
+  .compat-test-tool__target-panel .compat-test-tool__label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .compat-test-tool__target-panel .compat-test-tool__input-mode {
+    justify-content: flex-end;
+    gap: 6px;
+    min-width: 0;
+    flex-shrink: 0;
   }
 
   .compat-test-tool__bulk-import-actions {

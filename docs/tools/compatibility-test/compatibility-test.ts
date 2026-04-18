@@ -1,8 +1,8 @@
 export interface CompatibilityTestStep {
-  promptTargets: number[];
-  insideTargets: number[];
-  outsideTargetGroups: number[][];
-  definedTargets: number[];
+  promptTargets: readonly number[];
+  insideTargets: readonly number[];
+  outsideTargetGroups: readonly (readonly number[])[];
+  definedTargets: readonly number[];
   requiresAnswer: boolean;
 }
 

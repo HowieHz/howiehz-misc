@@ -17,9 +17,9 @@ interface Scenario {
 }
 
 interface DebugStep {
-  inside: number[];
-  outside: number[][];
-  defined: number[];
+  inside: readonly number[];
+  outside: readonly (readonly number[])[];
+  defined: readonly number[];
   requiresAnswer: boolean;
 }
 
@@ -164,7 +164,7 @@ describe("compatibility test engine", () => {
 
   it("stops safely when every test result is pass", () => {
     const state = createCompatibilityTestState(9);
-    const prompts: number[][] = [];
+    const prompts: Array<readonly number[]> = [];
     let step = getCurrentCompatibilityTestStep(state);
     let guard = 0;
 
@@ -206,7 +206,7 @@ describe("compatibility test engine", () => {
 
 function runScenario(scenario: Scenario) {
   const state = createCompatibilityTestState(scenario.targetCount);
-  const prompts: number[][] = [];
+  const prompts: Array<readonly number[]> = [];
   const debugSteps: DebugStep[] = [];
   let answerIndex = 0;
   let step = getCurrentCompatibilityTestStep(state);

@@ -175,10 +175,11 @@ const progressText = computed(() => {
 
   return `已完成 ${testHistory.value.length} 次测试`;
 });
-const resultSummary = computed(() => (
-  incompatibleTargets.value.length === 0 ? "未发现兼容性问题" : "已找到存在兼容性问题的目标"
+const resultLabel = computed(() => (
+  incompatibleTargets.value.length > 0
+    ? `下列 ${incompatibleTargets.value.length} 个目标有兼容性问题`
+    : "未发现兼容性问题"
 ));
-const resultTargetsLabel = computed(() => `下列 ${incompatibleTargets.value.length} 个目标有兼容性问题`);
 
 watch(status, async (value, previousValue) => {
   if (value === previousValue) {
@@ -678,7 +679,12 @@ function completeRound() {
             :aria-checked="diffModeEnabled"
             aria-describedby="compat-test-diff-mode-note"
           >
-          <span>差异模式</span>
+          <span
+            class="compat-test-tool__input-mode-label"
+            :class="{ 'compat-test-tool__input-mode-label--active': diffModeEnabled }"
+          >
+            差异模式
+          </span>
         </label>
         <span
           id="compat-test-diff-mode-note"
@@ -858,8 +864,9 @@ function completeRound() {
     <template v-else-if="status === 'complete'">
       <div
         ref="completeResultRef"
+        class="compat-test-tool__complete-result"
         role="group"
-        aria-labelledby="compat-test-result-title compat-test-result-summary"
+        aria-labelledby="compat-test-result-title compat-test-result-targets-label"
         tabindex="-1"
       >
         <div
@@ -871,15 +878,8 @@ function completeRound() {
           >
             测试完成
           </p>
-          <p
-            id="compat-test-result-summary"
-            class="compat-test-tool__prompt-text"
-          >
-            {{ resultSummary }}
-          </p>
         </div>
         <div
-          v-if="incompatibleTargets.length > 0"
           class="compat-test-tool__result-targets"
           role="group"
           aria-labelledby="compat-test-result-targets-label"
@@ -888,9 +888,10 @@ function completeRound() {
             id="compat-test-result-targets-label"
             class="compat-test-tool__diff-label"
           >
-            {{ resultTargetsLabel }}
+            {{ resultLabel }}
           </p>
           <div
+            v-if="incompatibleTargets.length > 0"
             class="compat-test-tool__chip-list"
             role="list"
             aria-labelledby="compat-test-result-targets-label"
@@ -1161,6 +1162,10 @@ function completeRound() {
   line-height: 1.2;
 }
 
+.compat-test-tool__switch .compat-test-tool__input-mode-label {
+  font-weight: 400;
+}
+
 .compat-test-tool__switch input::after,
 .compat-test-tool__mode-switch input::after {
   content: "";
@@ -1380,6 +1385,11 @@ function completeRound() {
 .compat-test-tool__result-targets {
   display: grid;
   gap: 8px;
+}
+
+.compat-test-tool__complete-result {
+  display: grid;
+  gap: 12px;
 }
 
 .compat-test-tool__diff-empty {

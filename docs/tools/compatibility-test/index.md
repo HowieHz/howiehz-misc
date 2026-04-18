@@ -131,7 +131,7 @@ const currentAnnouncement = computed(() => {
     return "填写目标后开始测试。";
   }
 
-  return `请测试下列目标：${formatTargetRanges(currentStep.value.promptTargetRanges)}。`;
+  return `请测试下列目标：${formatAllTargetRanges(currentStep.value.promptTargetRanges)}。`;
 });
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
@@ -271,8 +271,16 @@ function getTargetRangePreview(ranges: readonly TargetRange[], limit = TARGET_PR
   return takeTargetsFromRanges(ranges, limit);
 }
 
+function getAllTargetsFromRanges(ranges: readonly TargetRange[]) {
+  return takeTargetsFromRanges(ranges, getTargetRangeCount(ranges));
+}
+
 function getTargetRangeCount(ranges: readonly TargetRange[]) {
   return ranges.reduce((total, range) => total + Math.max(range.end - range.start + 1, 0), 0);
+}
+
+function formatAllTargetRanges(ranges: readonly TargetRange[]) {
+  return formatTargetNames(getAllTargetsFromRanges(ranges), Number.MAX_SAFE_INTEGER);
 }
 
 function formatTargetRanges(ranges: readonly TargetRange[], limit = TARGET_PREVIEW_LIMIT) {
@@ -653,7 +661,7 @@ function completeRound() {
           aria-labelledby="compat-test-current-targets-label"
         >
           <span
-            v-for="target in currentStep ? getTargetRangePreview(currentStep.promptTargetRanges) : []"
+            v-for="target in currentStep ? getAllTargetsFromRanges(currentStep.promptTargetRanges) : []"
             :key="target"
             class="compat-test-tool__chip"
             role="listitem"
@@ -661,12 +669,6 @@ function completeRound() {
             {{ getTargetLabel(target) }}
           </span>
         </div>
-        <p
-          v-if="currentStep && currentStep.promptTargetCount > TARGET_PREVIEW_LIMIT"
-          class="compat-test-tool__diff-empty"
-        >
-          等 {{ currentStep.promptTargetCount }} 个目标
-        </p>
       </div>
       <template v-if="diffModeEnabled">
         <div
@@ -686,7 +688,7 @@ function completeRound() {
             :aria-labelledby="getTargetRangeCount(targetsUnchanged) > 0 ? 'compat-test-diff-same-label' : undefined"
           >
             <span
-              v-for="target in getTargetRangePreview(targetsUnchanged)"
+              v-for="target in getAllTargetsFromRanges(targetsUnchanged)"
               :key="`unchanged-${target}`"
               class="compat-test-tool__chip"
               role="listitem"
@@ -695,13 +697,7 @@ function completeRound() {
             </span>
           </div>
           <p
-            v-if="getTargetRangeCount(targetsUnchanged) > TARGET_PREVIEW_LIMIT"
-            class="compat-test-tool__diff-empty"
-          >
-            等 {{ getTargetRangeCount(targetsUnchanged) }} 个目标
-          </p>
-          <p
-            v-else-if="getTargetRangeCount(targetsUnchanged) === 0"
+            v-if="getTargetRangeCount(targetsUnchanged) === 0"
             class="compat-test-tool__diff-empty"
           >
             无
@@ -724,7 +720,7 @@ function completeRound() {
             :aria-labelledby="getTargetRangeCount(targetsToAdd) > 0 ? 'compat-test-diff-add-label' : undefined"
           >
             <span
-              v-for="target in getTargetRangePreview(targetsToAdd)"
+              v-for="target in getAllTargetsFromRanges(targetsToAdd)"
               :key="`add-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--add"
               role="listitem"
@@ -733,13 +729,7 @@ function completeRound() {
             </span>
           </div>
           <p
-            v-if="getTargetRangeCount(targetsToAdd) > TARGET_PREVIEW_LIMIT"
-            class="compat-test-tool__diff-empty"
-          >
-            等 {{ getTargetRangeCount(targetsToAdd) }} 个目标
-          </p>
-          <p
-            v-else-if="getTargetRangeCount(targetsToAdd) === 0"
+            v-if="getTargetRangeCount(targetsToAdd) === 0"
             class="compat-test-tool__diff-empty"
           >
             无
@@ -762,7 +752,7 @@ function completeRound() {
             :aria-labelledby="getTargetRangeCount(targetsToRemove) > 0 ? 'compat-test-diff-remove-label' : undefined"
           >
             <span
-              v-for="target in getTargetRangePreview(targetsToRemove)"
+              v-for="target in getAllTargetsFromRanges(targetsToRemove)"
               :key="`remove-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--remove"
               role="listitem"
@@ -771,13 +761,7 @@ function completeRound() {
             </span>
           </div>
           <p
-            v-if="getTargetRangeCount(targetsToRemove) > TARGET_PREVIEW_LIMIT"
-            class="compat-test-tool__diff-empty"
-          >
-            等 {{ getTargetRangeCount(targetsToRemove) }} 个目标
-          </p>
-          <p
-            v-else-if="getTargetRangeCount(targetsToRemove) === 0"
+            v-if="getTargetRangeCount(targetsToRemove) === 0"
             class="compat-test-tool__diff-empty"
           >
             无
@@ -1148,6 +1132,10 @@ function completeRound() {
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
 }
 
+.compat-test-tool__page-status {
+  white-space: nowrap;
+}
+
 .compat-test-tool__bulk-import {
   display: grid;
   gap: 8px;
@@ -1378,10 +1366,31 @@ function completeRound() {
 
   .compat-test-tool__target-toolbar,
   .compat-test-tool__bulk-import-actions,
-  .compat-test-tool__toolbar-actions,
-  .compat-test-tool__pagination {
+  .compat-test-tool__toolbar-actions {
     display: grid;
     justify-content: stretch;
+  }
+
+  .compat-test-tool__target-toolbar .compat-test-tool__toolbar-actions {
+    margin-left: 0;
+  }
+
+  .compat-test-tool__label-row > .compat-test-tool__toolbar-actions {
+    display: flex;
+    flex-wrap: nowrap;
+  }
+
+  .compat-test-tool__label-row > .compat-test-tool__toolbar-actions .compat-test-tool__secondary-button {
+    width: auto;
+    flex: 1 1 0;
+  }
+
+  .compat-test-tool__pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    width: 100%;
   }
 
   .compat-test-tool__label-row span {
@@ -1392,6 +1401,15 @@ function completeRound() {
   .compat-test-tool__secondary-button,
   .compat-test-tool__danger-button {
     width: 100%;
+  }
+
+  .compat-test-tool__pagination .compat-test-tool__secondary-button {
+    width: auto;
+    flex: 1 1 0;
+  }
+
+  .compat-test-tool__pagination .compat-test-tool__page-status {
+    text-align: center;
   }
 }
 </style>

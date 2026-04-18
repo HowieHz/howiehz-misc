@@ -111,35 +111,25 @@ const targetListStatusText = computed(() => {
 const bulkImportDescription = computed(() => {
   const count = targetCount.value ?? 0;
   return count > 0
-    ? `每行对应一个目标，将按顺序映射到前 ${count} 个目标；超出的行会自动忽略。`
-    : "每行对应一个目标，超出的行会自动忽略。";
+    ? `每行对应一个目标，将按顺序映射到前 ${count} 个目标。`
+    : "每行对应一个目标。";
 });
 const bulkInputValue = computed({
   get() {
-    const count = targetCount.value ?? 0;
-    if (count <= 0) {
-      return "";
-    }
-
-    return targetNames.value.slice(0, count).join("\n");
+    return targetNames.value.join("\n");
   },
   set(value: string) {
-    const count = targetCount.value;
-    if (!count) {
-      return;
-    }
-
     const lines = value.replace(/\r/g, "").split("\n");
     const nextNames = targetNames.value.slice();
-    while (nextNames.length < count) {
-      nextNames.push("");
-    }
 
-    for (let index = 0; index < count; index += 1) {
+    for (let index = 0; index < lines.length; index += 1) {
       nextNames[index] = lines[index] ?? "";
     }
 
     targetNames.value = nextNames;
+    if (lines.length > (targetCount.value ?? 0)) {
+      targetCountText.value = String(lines.length);
+    }
   },
 });
 const isRoundActive = computed(() => status.value === "testing");

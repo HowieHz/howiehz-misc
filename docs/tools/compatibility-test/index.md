@@ -119,7 +119,7 @@ const bulkInputValue = computed({
 });
 const isRoundActive = computed(() => status.value === "testing");
 const currentGroupSummary = computed(() => {
-  const count = currentStep.value?.promptTargets.length ?? 0;
+  const count = currentStep.value?.promptTargetCount ?? 0;
   if (count === 0) {
     return "";
   }
@@ -131,7 +131,7 @@ const currentAnnouncement = computed(() => {
     return "填写目标后开始测试。";
   }
 
-  return `请测试下列目标：${formatTargetNames(currentStep.value.promptTargets)}。`;
+  return `请测试下列目标：${formatTargetRanges(currentStep.value.promptTargetRanges)}。`;
 });
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
@@ -1139,7 +1139,6 @@ function completeRound() {
   flex-wrap: wrap;
 }
 
-.compat-test-tool__target-meta,
 .compat-test-tool__bulk-import-actions span,
 .compat-test-tool__page-status {
   font-size: 0.88rem;

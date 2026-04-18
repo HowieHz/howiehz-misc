@@ -183,11 +183,6 @@ watch(status, async (value, previousValue) => {
 
   await nextTick();
 
-  if (value === "testing" && previousValue !== "testing") {
-    testingPromptRef.value?.focus();
-    return;
-  }
-
   if (value === "complete") {
     resultCardRef.value?.focus();
   }
@@ -342,7 +337,7 @@ function joinTargetLabels(labels: readonly string[]) {
   return labels.join("、");
 }
 
-function startTest() {
+async function startTest() {
   const parsedCount = parsedTargetCount.value;
   if (parsedCount === undefined) {
     announcement.value = `无法开始测试：${targetCountError.value}`;
@@ -359,6 +354,8 @@ function startTest() {
     engineState.value = createCompatibilityTestState(count);
     currentStep.value = getCurrentCompatibilityTestStep(engineState.value);
     announcement.value = `已开始新一轮测试，共 ${count} 个目标。`;
+    await nextTick();
+    testingPromptRef.value?.focus();
   } catch (error) {
     status.value = "idle";
     engineState.value = undefined;

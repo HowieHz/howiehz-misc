@@ -36,7 +36,7 @@ export function createCategoryLoader(
   globPattern: string,
   categoryIndexUrl: string,
   options: LoaderOptions = {},
-): ContentLoader<CategoryPostMeta> {
+): ContentLoader<CategoryPostMeta[]> {
   const loaderOptions: ContentOptions<CategoryPostMeta[]> = {
     excerpt: false,
     transform(items) {
@@ -74,7 +74,7 @@ export function createCategoryLoader(
     },
   };
 
-  return createContentLoader<CategoryPostMeta[]>(globPattern, loaderOptions) as ContentLoader<CategoryPostMeta>;
+  return createContentLoader<CategoryPostMeta[]>(globPattern, loaderOptions) as ContentLoader<CategoryPostMeta[]>;
 }
 
 function inferTitleFromUrl(url: string): string {

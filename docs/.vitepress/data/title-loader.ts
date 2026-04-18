@@ -38,7 +38,7 @@ export function createTitleLoader(
   globPattern: string,
   indexUrl: string,
   options: LoaderOptions = {},
-): ContentLoader<TitleLinkItem> {
+): ContentLoader<TitleLinkItem[]> {
   const loaderOptions: ContentOptions<TitleLinkItem[]> = {
     includeSrc: true,
     excerpt: false,
@@ -64,5 +64,5 @@ export function createTitleLoader(
     },
   };
 
-  return createContentLoader<TitleLinkItem[]>(globPattern, loaderOptions) as ContentLoader<TitleLinkItem>;
+  return createContentLoader<TitleLinkItem[]>(globPattern, loaderOptions) as ContentLoader<TitleLinkItem[]>;
 }

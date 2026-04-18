@@ -1173,7 +1173,6 @@ async function copyText(text: string) {
   padding: 4px 0 0;
 }
 
-.ganzhi-tool__result-kicker,
 .ganzhi-tool__result-label {
   margin: 0;
   font-size: 0.85rem;

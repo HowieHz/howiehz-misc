@@ -998,16 +998,12 @@ function completeRound() {
   background: var(--vp-c-bg);
 }
 
-.compat-test-tool__hint,
-.compat-test-tool__round-note,
 .compat-test-tool__empty,
 .compat-test-tool__error {
   margin: 6px 0 0;
   font-size: 0.92rem;
 }
 
-.compat-test-tool__hint,
-.compat-test-tool__round-note,
 .compat-test-tool__empty {
   color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
 }
@@ -1179,11 +1175,6 @@ function completeRound() {
   background: color-mix(in srgb, var(--vp-c-brand-soft) 64%, var(--vp-c-bg));
 }
 
-.compat-test-tool__result-card--issue {
-  border-color: color-mix(in srgb, var(--vp-c-danger-1) 30%, var(--vp-c-divider));
-  background: color-mix(in srgb, var(--vp-c-danger-soft) 45%, var(--vp-c-bg));
-}
-
 .compat-test-tool__prompt-kicker {
   margin: 0;
   color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
@@ -1195,12 +1186,6 @@ function completeRound() {
   font-size: 1.08rem;
   font-weight: 700;
   line-height: 1.55;
-}
-
-.compat-test-tool__result-detail {
-  margin: 0;
-  line-height: 1.5;
-  word-break: break-word;
 }
 
 .compat-test-tool__chip-list {

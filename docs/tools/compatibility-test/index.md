@@ -52,7 +52,7 @@ const diffModeEnabled = ref(false);
 const nextRecordId = ref(1);
 const testingPromptRef = ref<HTMLElement>();
 const resultCardRef = ref<HTMLElement>();
-const targetListExpanded = ref(false);
+const targetListPage = ref(1);
 const engineState = ref<CompatibilityTestState>();
 const currentStep = ref<CompatibilityTestStep>();
 
@@ -70,29 +70,17 @@ const targetCountError = computed(() => {
 
   return undefined;
 });
-const isTargetListCollapsed = computed(() => (
-  inputMode.value === "list" && (targetCount.value ?? 0) > TARGET_PREVIEW_COUNT && !targetListExpanded.value
-));
-const hiddenTargetCount = computed(() => {
-  const count = targetCount.value ?? 0;
-  return isTargetListCollapsed.value ? Math.max(count - TARGET_PREVIEW_COUNT, 0) : 0;
-});
+const targetListPageCount = computed(() => Math.max(Math.ceil((targetCount.value ?? 0) / TARGET_PREVIEW_COUNT), 1));
 const visibleTargetRange = computed(() => {
   const count = targetCount.value ?? 0;
   if (count === 0) {
     return { start: 0, end: 0 };
   }
 
-  if (isTargetListCollapsed.value) {
-    return {
-      start: 1,
-      end: Math.min(TARGET_PREVIEW_COUNT, count),
-    };
-  }
-
+  const start = (targetListPage.value - 1) * TARGET_PREVIEW_COUNT + 1;
   return {
-    start: 1,
-    end: count,
+    start,
+    end: Math.min(start + TARGET_PREVIEW_COUNT - 1, count),
   };
 });
 const visibleTargetRows = computed<TargetRow[]>(() => {
@@ -104,13 +92,6 @@ const visibleTargetRows = computed<TargetRow[]>(() => {
       index: targetIndex,
     };
   });
-});
-const targetListStatusText = computed(() => {
-  if (isTargetListCollapsed.value) {
-    return `已折叠 ${hiddenTargetCount.value} 个`;
-  }
-
-  return "";
 });
 const bulkImportDescription = computed(() => {
   const count = targetCount.value ?? 0;
@@ -208,13 +189,11 @@ watch(status, async (value, previousValue) => {
 
 watch(targetCount, (value) => {
   if (!value) {
-    setTargetListExpanded(false);
+    targetListPage.value = 1;
     return;
   }
 
-  if (value <= TARGET_PREVIEW_COUNT) {
-    setTargetListExpanded(false);
-  }
+  targetListPage.value = Math.min(targetListPage.value, targetListPageCount.value);
 });
 
 function parseTargetCount(value: string) {
@@ -245,8 +224,9 @@ function stepTargetCount(delta: number) {
   targetCountText.value = String(nextCount);
 }
 
-function setTargetListExpanded(nextValue: boolean) {
-  targetListExpanded.value = nextValue;
+function stepTargetListPage(delta: number) {
+  const nextPage = targetListPage.value + delta;
+  targetListPage.value = Math.min(Math.max(nextPage, 1), targetListPageCount.value);
 }
 
 function handleBulkImportInput(event: Event) {
@@ -265,10 +245,6 @@ function handleTargetNameInput(event: Event, index: number) {
   }
 
   const nextNames = targetNames.value.slice();
-  while (nextNames.length < index) {
-    nextNames.push("");
-  }
-
   nextNames[index - 1] = input.value;
   targetNames.value = nextNames;
 }
@@ -514,33 +490,38 @@ function completeRound() {
       </div>
     </div>
     <div class="compat-test-tool__target-toolbar">
-      <span
-        v-if="targetListStatusText"
-        class="compat-test-tool__target-meta"
-      >
-        {{ targetListStatusText }}
-      </span>
       <div class="compat-test-tool__toolbar-actions">
-        <button
-          v-if="inputMode === 'list' && hiddenTargetCount > 0"
-          type="button"
-          class="compat-test-tool__secondary-button"
-          :aria-expanded="targetListExpanded"
-          aria-controls="compat-test-target-list"
-          @click="setTargetListExpanded(true)"
+        <div
+          v-if="inputMode === 'list' && (targetCount ?? 0) > TARGET_PREVIEW_COUNT"
+          class="compat-test-tool__pagination"
+          role="group"
+          aria-label="目标列表分页"
         >
-          展开其余 {{ hiddenTargetCount }} 个
-        </button>
-        <button
-          v-else-if="inputMode === 'list' && targetListExpanded && (targetCount ?? 0) > TARGET_PREVIEW_COUNT"
-          type="button"
-          class="compat-test-tool__secondary-button"
-          :aria-expanded="targetListExpanded"
-          aria-controls="compat-test-target-list"
-          @click="setTargetListExpanded(false)"
-        >
-          收起到前 {{ TARGET_PREVIEW_COUNT }} 个
-        </button>
+          <button
+            type="button"
+            class="compat-test-tool__secondary-button"
+            :disabled="targetListPage <= 1"
+            aria-controls="compat-test-target-list"
+            @click="stepTargetListPage(-1)"
+          >
+            上一页
+          </button>
+          <span
+            class="compat-test-tool__page-status"
+            aria-live="polite"
+          >
+            第 {{ targetListPage }} / {{ targetListPageCount }} 页
+          </span>
+          <button
+            type="button"
+            class="compat-test-tool__secondary-button"
+            :disabled="targetListPage >= targetListPageCount"
+            aria-controls="compat-test-target-list"
+            @click="stepTargetListPage(1)"
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </div>
     <div
@@ -1150,8 +1131,17 @@ function completeRound() {
   margin-left: auto;
 }
 
+.compat-test-tool__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .compat-test-tool__target-meta,
-.compat-test-tool__bulk-import-actions span {
+.compat-test-tool__bulk-import-actions span,
+.compat-test-tool__page-status {
   font-size: 0.88rem;
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
 }
@@ -1385,7 +1375,8 @@ function completeRound() {
 
   .compat-test-tool__target-toolbar,
   .compat-test-tool__bulk-import-actions,
-  .compat-test-tool__toolbar-actions {
+  .compat-test-tool__toolbar-actions,
+  .compat-test-tool__pagination {
     display: grid;
     justify-content: stretch;
   }

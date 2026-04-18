@@ -6,11 +6,14 @@ export interface TargetRange {
 export interface CompatibilityTestStep {
   promptTargetRanges: readonly TargetRange[];
   promptTargetCount: number;
-  promptTargets: readonly number[];
-  insideTargets: readonly number[];
-  outsideTargetGroups: readonly (readonly number[])[];
-  definedTargets: readonly number[];
+  debug: CompatibilityTestDebugStep;
   requiresAnswer: boolean;
+}
+
+export interface CompatibilityTestDebugStep {
+  insideTargetRange: TargetRange;
+  outsideTargetRanges: readonly TargetRange[];
+  definedTargetRanges: readonly TargetRange[];
 }
 
 export interface CompatibilityTestState {
@@ -24,7 +27,7 @@ export interface CompatibilityTestState {
 }
 
 /**
- * Creates the initial state for the legacy-compatible compatibility test flow.
+ * Creates the initial state for the compatibility test flow.
  */
 export function createCompatibilityTestState(targetCount: number): CompatibilityTestState {
   if (!Number.isInteger(targetCount) || targetCount < 1) {
@@ -56,18 +59,7 @@ export function getCurrentCompatibilityTestStep(state: CompatibilityTestState): 
   return {
     promptTargetRanges,
     promptTargetCount: countTargetsInRanges(promptTargetRanges),
-    get promptTargets() {
-      return materializeTargetRanges(promptTargetRanges);
-    },
-    get insideTargets() {
-      return resolveArrow(state, state.insideArrow);
-    },
-    get outsideTargetGroups() {
-      return state.outsideArrows.map((arrow) => resolveArrow(state, arrow));
-    },
-    get definedTargets() {
-      return state.definedTargets.slice();
-    },
+    debug: getCompatibilityTestDebugStep(state),
     requiresAnswer: !state.cachedResults.has(cacheKey),
   };
 }
@@ -112,13 +104,6 @@ export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState):
   }
 
   return step;
-}
-
-/**
- * Resolves an arrow path like "llr" into the corresponding target subset.
- */
-export function resolveArrow(state: CompatibilityTestState, arrow: string): readonly number[] {
-  return materializeTargetRanges([resolveArrowRange(state, arrow)]);
 }
 
 export function countTargetsInRanges(ranges: readonly TargetRange[]) {
@@ -236,6 +221,14 @@ function getPromptTargetRanges(state: CompatibilityTestState): TargetRange[] {
   ]);
 }
 
+function getCompatibilityTestDebugStep(state: CompatibilityTestState): CompatibilityTestDebugStep {
+  return {
+    insideTargetRange: resolveArrowRange(state, state.insideArrow),
+    outsideTargetRanges: state.outsideArrows.map((arrow) => resolveArrowRange(state, arrow)),
+    definedTargetRanges: state.definedTargets.map((target) => ({ start: target, end: target })),
+  };
+}
+
 /**
  * Dispatches to the next transition branch based on the latest test result.
  */
@@ -299,7 +292,9 @@ function getTargetSetKey(ranges: readonly TargetRange[]) {
  */
 function isFullTargetSet(state: CompatibilityTestState, ranges: readonly TargetRange[]) {
   const normalizedRanges = normalizeRanges(ranges);
-  return normalizedRanges.length === 1 && normalizedRanges[0].start === 1 && normalizedRanges[0].end === state.targetCount;
+  return (
+    normalizedRanges.length === 1 && normalizedRanges[0].start === 1 && normalizedRanges[0].end === state.targetCount
+  );
 }
 
 /**
@@ -332,15 +327,4 @@ function normalizeRanges(ranges: readonly TargetRange[]) {
   }
 
   return normalizedRanges;
-}
-
-function materializeTargetRanges(ranges: readonly TargetRange[]) {
-  const targets: number[] = [];
-  for (const range of ranges) {
-    for (let target = range.start; target <= range.end; target += 1) {
-      targets.push(target);
-    }
-  }
-
-  return targets;
 }

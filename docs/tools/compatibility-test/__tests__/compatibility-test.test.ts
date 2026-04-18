@@ -5,21 +5,26 @@ import {
   createCompatibilityTestState,
   getCurrentCompatibilityTestStep,
   skipCachedCompatibilityTestSteps,
-  type CompatibilityTestStep,
+  type TargetRange,
 } from "../compatibility-test";
 
 interface Scenario {
   targetCount: number;
   answers: boolean[];
-  expectedPrompts: number[][];
+  expectedPromptRanges: TargetRange[][];
   expectedDebugSteps?: DebugStep[];
   expectedResult: number[];
 }
 
 interface DebugStep {
-  inside: readonly number[];
-  outside: readonly (readonly number[])[];
-  defined: readonly number[];
+  insideTargetRange: TargetRange;
+  outsideTargetRanges: readonly TargetRange[];
+  definedTargetRanges: readonly TargetRange[];
+  requiresAnswer: boolean;
+}
+
+interface StepTrace {
+  promptRanges: readonly TargetRange[];
   requiresAnswer: boolean;
 }
 
@@ -27,78 +32,123 @@ const scenarios: Record<string, Scenario> = {
   "4 pick 1": {
     targetCount: 4,
     answers: [true, false, true],
-    expectedPrompts: [[1, 2], [1], [2]],
-    expectedDebugSteps: [
-      { inside: [1, 2], outside: [], defined: [], requiresAnswer: true },
-      { inside: [1], outside: [], defined: [], requiresAnswer: true },
-      { inside: [2], outside: [], defined: [], requiresAnswer: true },
-    ],
+    expectedPromptRanges: [[range(1, 2)], [range(1, 1)], [range(2, 2)]],
     expectedResult: [2],
   },
   "9 pick 2": {
     targetCount: 9,
     answers: [false, false, true, true, false, true, true, false, true],
-    expectedPrompts: [
-      [1, 2, 3, 4, 5],
-      [6, 7, 8, 9],
-      [1, 2, 3, 6, 7, 8, 9],
-      [1, 2, 6, 7, 8, 9],
-      [1, 6, 7, 8, 9],
-      [2, 6, 7, 8, 9],
-      [2, 6, 7],
-      [2, 6],
-      [2, 7],
+    expectedPromptRanges: [
+      [range(1, 5)],
+      [range(6, 9)],
+      [range(1, 3), range(6, 9)],
+      [range(1, 2), range(6, 9)],
+      [range(1, 1), range(6, 9)],
+      [range(2, 2), range(6, 9)],
+      [range(2, 2), range(6, 7)],
+      [range(2, 2), range(6, 6)],
+      [range(2, 2), range(7, 7)],
     ],
     expectedDebugSteps: [
-      { inside: [1, 2, 3, 4, 5], outside: [], defined: [], requiresAnswer: true },
-      { inside: [6, 7, 8, 9], outside: [], defined: [], requiresAnswer: true },
-      { inside: [1, 2, 3], outside: [[6, 7, 8, 9]], defined: [], requiresAnswer: true },
-      { inside: [1, 2], outside: [[6, 7, 8, 9]], defined: [], requiresAnswer: true },
-      { inside: [1], outside: [[6, 7, 8, 9]], defined: [], requiresAnswer: true },
-      { inside: [2], outside: [[6, 7, 8, 9]], defined: [], requiresAnswer: true },
-      { inside: [6, 7, 8, 9], outside: [], defined: [2], requiresAnswer: false },
-      { inside: [6, 7], outside: [], defined: [2], requiresAnswer: true },
-      { inside: [6], outside: [], defined: [2], requiresAnswer: true },
-      { inside: [7], outside: [], defined: [2], requiresAnswer: true },
+      {
+        insideTargetRange: range(1, 5),
+        outsideTargetRanges: [],
+        definedTargetRanges: [],
+        requiresAnswer: true,
+      },
+      {
+        insideTargetRange: range(6, 9),
+        outsideTargetRanges: [],
+        definedTargetRanges: [],
+        requiresAnswer: true,
+      },
+      {
+        insideTargetRange: range(1, 3),
+        outsideTargetRanges: [range(6, 9)],
+        definedTargetRanges: [],
+        requiresAnswer: true,
+      },
+      {
+        insideTargetRange: range(1, 2),
+        outsideTargetRanges: [range(6, 9)],
+        definedTargetRanges: [],
+        requiresAnswer: true,
+      },
+      {
+        insideTargetRange: range(1, 1),
+        outsideTargetRanges: [range(6, 9)],
+        definedTargetRanges: [],
+        requiresAnswer: true,
+      },
+      {
+        insideTargetRange: range(2, 2),
+        outsideTargetRanges: [range(6, 9)],
+        definedTargetRanges: [],
+        requiresAnswer: true,
+      },
+      {
+        insideTargetRange: range(6, 9),
+        outsideTargetRanges: [],
+        definedTargetRanges: [range(2, 2)],
+        requiresAnswer: false,
+      },
+      {
+        insideTargetRange: range(6, 7),
+        outsideTargetRanges: [],
+        definedTargetRanges: [range(2, 2)],
+        requiresAnswer: true,
+      },
+      {
+        insideTargetRange: range(6, 6),
+        outsideTargetRanges: [],
+        definedTargetRanges: [range(2, 2)],
+        requiresAnswer: true,
+      },
+      {
+        insideTargetRange: range(7, 7),
+        outsideTargetRanges: [],
+        definedTargetRanges: [range(2, 2)],
+        requiresAnswer: true,
+      },
     ],
     expectedResult: [2, 7],
   },
   "23 pick 2": {
     targetCount: 23,
     answers: [true, true, false, false, true, false, true, false, true],
-    expectedPrompts: [
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-      [1, 2, 3, 4, 5, 6],
-      [1, 2, 3],
-      [4, 5, 6],
-      [1, 2, 4, 5, 6],
-      [1, 4, 5, 6],
-      [2, 4, 5, 6],
-      [2, 4, 5],
-      [2, 6],
+    expectedPromptRanges: [
+      [range(1, 12)],
+      [range(1, 6)],
+      [range(1, 3)],
+      [range(4, 6)],
+      [range(1, 2), range(4, 6)],
+      [range(1, 1), range(4, 6)],
+      [range(2, 2), range(4, 6)],
+      [range(2, 2), range(4, 5)],
+      [range(2, 2), range(6, 6)],
     ],
     expectedResult: [2, 6],
   },
   "128 pick 2": {
     targetCount: 128,
     answers: [false, false, true, true, true, true, true, false, true, true, true, true, true, false, true, true],
-    expectedPrompts: [
-      range(1, 64),
-      range(65, 128),
-      [...range(1, 32), ...range(65, 128)],
-      [...range(1, 16), ...range(65, 128)],
-      [...range(1, 8), ...range(65, 128)],
-      [...range(1, 4), ...range(65, 128)],
-      [...range(1, 2), ...range(65, 128)],
-      [1, ...range(65, 128)],
-      [2, ...range(65, 128)],
-      [2, ...range(65, 96)],
-      [2, ...range(65, 80)],
-      [2, ...range(65, 72)],
-      [2, ...range(65, 68)],
-      [2, 65, 66],
-      [2, 67, 68],
-      [2, 67],
+    expectedPromptRanges: [
+      [range(1, 64)],
+      [range(65, 128)],
+      [range(1, 32), range(65, 128)],
+      [range(1, 16), range(65, 128)],
+      [range(1, 8), range(65, 128)],
+      [range(1, 4), range(65, 128)],
+      [range(1, 2), range(65, 128)],
+      [range(1, 1), range(65, 128)],
+      [range(2, 2), range(65, 128)],
+      [range(2, 2), range(65, 96)],
+      [range(2, 2), range(65, 80)],
+      [range(2, 2), range(65, 72)],
+      [range(2, 2), range(65, 68)],
+      [range(2, 2), range(65, 66)],
+      [range(2, 2), range(67, 68)],
+      [range(2, 2), range(67, 67)],
     ],
     expectedResult: [2, 67],
   },
@@ -123,24 +173,24 @@ const scenarios: Record<string, Scenario> = {
       true,
       true,
     ],
-    expectedPrompts: [
-      range(1, 14),
-      range(15, 27),
-      [...range(1, 7), ...range(15, 27)],
-      [...range(8, 14), ...range(15, 27)],
-      [...range(1, 4), ...range(8, 27)],
-      [1, 2, ...range(8, 27)],
-      [1, ...range(8, 27)],
-      [1, ...range(8, 11), ...range(15, 27)],
-      [1, 8, 9, ...range(15, 27)],
-      [1, 10, 11, ...range(15, 27)],
-      [1, 10, ...range(15, 27)],
-      [1, 11, ...range(15, 27)],
-      [1, 11, ...range(15, 21)],
-      [1, 11, ...range(22, 27)],
-      [1, 11, 22, 23, 24],
-      [1, 11, 22, 23],
-      [1, 11, 22],
+    expectedPromptRanges: [
+      [range(1, 14)],
+      [range(15, 27)],
+      [range(1, 7), range(15, 27)],
+      [range(8, 27)],
+      [range(1, 4), range(8, 27)],
+      [range(1, 2), range(8, 27)],
+      [range(1, 1), range(8, 27)],
+      [range(1, 1), range(8, 11), range(15, 27)],
+      [range(1, 1), range(8, 9), range(15, 27)],
+      [range(1, 1), range(10, 11), range(15, 27)],
+      [range(1, 1), range(10, 10), range(15, 27)],
+      [range(1, 1), range(11, 11), range(15, 27)],
+      [range(1, 1), range(11, 11), range(15, 21)],
+      [range(1, 1), range(11, 11), range(22, 27)],
+      [range(1, 1), range(11, 11), range(22, 24)],
+      [range(1, 1), range(11, 11), range(22, 23)],
+      [range(1, 1), range(11, 11), range(22, 22)],
     ],
     expectedResult: [1, 11, 22],
   },
@@ -151,20 +201,30 @@ describe("compatibility test engine", () => {
     it(`matches sample ${name}`, () => {
       const result = runScenario(scenario);
 
-      expect(result.prompts).toEqual(scenario.expectedPrompts);
+      expect(result.promptRanges).toEqual(scenario.expectedPromptRanges);
       expect(result.resultTargets).toEqual(scenario.expectedResult);
     });
   }
 
-  it("includes cached debug steps for 9 pick 2", () => {
+  it("keeps cached steps in the trace without materializing prompts", () => {
     const result = runScenario(scenarios["9 pick 2"]);
 
-    expect(result.debugSteps).toEqual(scenarios["9 pick 2"].expectedDebugSteps);
+    expect(result.steps).toContainEqual({
+      promptRanges: [range(2, 2), range(6, 9)],
+      requiresAnswer: false,
+    });
+  });
+
+  it("keeps range-based debug steps for internal tracing", () => {
+    const scenario = scenarios["9 pick 2"];
+    const result = runScenario(scenario);
+
+    expect(result.debugSteps).toEqual(scenario.expectedDebugSteps);
   });
 
   it("stops safely when every test result is pass", () => {
     const state = createCompatibilityTestState(9);
-    const prompts: (readonly number[])[] = [];
+    const promptRanges: (readonly TargetRange[])[] = [];
     let step = getCurrentCompatibilityTestStep(state);
     let guard = 0;
 
@@ -177,24 +237,32 @@ describe("compatibility test engine", () => {
         continue;
       }
 
-      prompts.push(step.promptTargets);
+      promptRanges.push(copyRanges(step.promptTargetRanges));
       applyCompatibilityTestAnswer(state, false);
       step = getCurrentCompatibilityTestStep(state);
     }
 
     expect(state.stopped).toBe(true);
     expect(state.resultTargets).toEqual([]);
-    expect(prompts).toEqual([
-      [1, 2, 3, 4, 5],
-      [6, 7, 8, 9],
-      [1, 2, 3, 6, 7, 8, 9],
-      [4, 5, 6, 7, 8, 9],
-      [1, 2, 4, 5, 6, 7, 8, 9],
-      [3, 4, 5, 6, 7, 8, 9],
-      [1, 3, 4, 5, 6, 7, 8, 9],
-      [2, 3, 4, 5, 6, 7, 8, 9],
-      [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    expect(promptRanges).toEqual([
+      [range(1, 5)],
+      [range(6, 9)],
+      [range(1, 3), range(6, 9)],
+      [range(4, 9)],
+      [range(1, 2), range(4, 9)],
+      [range(3, 9)],
+      [range(1, 1), range(3, 9)],
+      [range(2, 9)],
+      [range(1, 9)],
     ]);
+  });
+
+  it("represents very large tests as ranges", () => {
+    const state = createCompatibilityTestState(9_999_999);
+    const step = getCurrentCompatibilityTestStep(state);
+
+    expect(step?.promptTargetRanges).toEqual([range(1, 5_000_000)]);
+    expect(step?.promptTargetCount).toBe(5_000_000);
   });
 
   it("rejects invalid target counts", () => {
@@ -208,20 +276,30 @@ describe("compatibility test engine", () => {
 
 function runScenario(scenario: Scenario) {
   const state = createCompatibilityTestState(scenario.targetCount);
-  const prompts: (readonly number[])[] = [];
+  const promptRanges: (readonly TargetRange[])[] = [];
+  const steps: StepTrace[] = [];
   const debugSteps: DebugStep[] = [];
   let answerIndex = 0;
   let step = getCurrentCompatibilityTestStep(state);
 
   while (step) {
-    debugSteps.push(toDebugStep(step));
+    debugSteps.push({
+      insideTargetRange: { ...step.debug.insideTargetRange },
+      outsideTargetRanges: copyRanges(step.debug.outsideTargetRanges),
+      definedTargetRanges: copyRanges(step.debug.definedTargetRanges),
+      requiresAnswer: step.requiresAnswer,
+    });
+    steps.push({
+      promptRanges: copyRanges(step.promptTargetRanges),
+      requiresAnswer: step.requiresAnswer,
+    });
 
     if (!step.requiresAnswer) {
       step = skipCachedCompatibilityTestSteps(state);
       continue;
     }
 
-    prompts.push(step.promptTargets);
+    promptRanges.push(copyRanges(step.promptTargetRanges));
     const answer = scenario.answers[answerIndex];
     if (answer === undefined) {
       throw new Error(`Missing answer for prompt ${answerIndex}`);
@@ -234,21 +312,17 @@ function runScenario(scenario: Scenario) {
 
   expect(answerIndex).toBe(scenario.answers.length);
   return {
-    prompts,
     debugSteps,
+    promptRanges,
     resultTargets: state.resultTargets,
+    steps,
   };
 }
 
-function toDebugStep(step: CompatibilityTestStep): DebugStep {
-  return {
-    inside: step.insideTargets,
-    outside: step.outsideTargetGroups,
-    defined: step.definedTargets,
-    requiresAnswer: step.requiresAnswer,
-  };
+function range(start: number, end: number): TargetRange {
+  return { start, end };
 }
 
-function range(start: number, end: number) {
-  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+function copyRanges(ranges: readonly TargetRange[]) {
+  return ranges.map((range) => ({ ...range }));
 }

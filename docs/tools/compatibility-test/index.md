@@ -143,13 +143,6 @@ const bulkInputValue = computed({
   },
 });
 const isRoundActive = computed(() => status.value === "testing");
-const currentInstruction = computed(() => {
-  if (status.value !== "testing" || !currentStep.value) {
-    return "填写目标后开始测试。";
-  }
-
-  return `将下列目标一起测试：${formatTargetNames(currentStep.value.promptTargets)}。`;
-});
 const currentGroupSummary = computed(() => {
   const count = currentStep.value?.promptTargets.length ?? 0;
   if (count === 0) {
@@ -157,6 +150,13 @@ const currentGroupSummary = computed(() => {
   }
 
   return `本次包含 ${count} 个测试目标`;
+});
+const currentAnnouncement = computed(() => {
+  if (status.value !== "testing" || !currentStep.value) {
+    return "填写目标后开始测试。";
+  }
+
+  return `请测试下列目标：${formatTargetNames(currentStep.value.promptTargets)}。`;
 });
 const foundTargetsText = computed(() => (
   incompatibleTargets.value.length > 0
@@ -166,6 +166,14 @@ const foundTargetsText = computed(() => (
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
 const previousPromptTargets = computed(() => testHistory.value.at(-1)?.targets ?? []);
+const targetsUnchanged = computed(() => {
+  if (!diffModeEnabled.value || !currentStep.value) {
+    return [];
+  }
+
+  const previousTargets = new Set(previousPromptTargets.value);
+  return currentStep.value.promptTargets.filter((target) => previousTargets.has(target));
+});
 const targetsToAdd = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
@@ -404,7 +412,7 @@ function syncFromEngineState() {
   }
 
   status.value = "testing";
-  announcement.value = currentInstruction.value;
+  announcement.value = currentAnnouncement.value;
 }
 
 function completeRound() {
@@ -609,7 +617,6 @@ function completeRound() {
         role="group"
         aria-label="当前测试选项"
       >
-        <span>{{ progressText }}</span>
         <label class="compat-test-tool__switch">
           <input
             v-model="diffModeEnabled"
@@ -626,26 +633,52 @@ function completeRound() {
         tabindex="-1"
       >
         <p class="compat-test-tool__prompt-kicker">{{ currentGroupSummary }}</p>
-        <p class="compat-test-tool__prompt-text">{{ currentInstruction }}</p>
       </div>
       <div
-        class="compat-test-tool__chip-list"
-        aria-label="本次测试目标"
+        v-if="!diffModeEnabled"
+        class="compat-test-tool__diff-group"
       >
-        <span
-          v-for="target in currentStep?.promptTargets ?? []"
-          :key="target"
-          class="compat-test-tool__chip"
+        <p class="compat-test-tool__diff-label">请测试下列目标</p>
+        <div
+          class="compat-test-tool__chip-list"
+          aria-label="本次测试目标"
         >
-          {{ getTargetLabel(target) }}
-        </span>
+          <span
+            v-for="target in currentStep?.promptTargets ?? []"
+            :key="target"
+            class="compat-test-tool__chip"
+          >
+            {{ getTargetLabel(target) }}
+          </span>
+        </div>
       </div>
       <template v-if="diffModeEnabled">
         <div
           class="compat-test-tool__diff-group"
-          aria-label="应添加的目标"
+          aria-label="与上一步相同的目标"
         >
-          <p class="compat-test-tool__diff-label">应添加</p>
+          <p class="compat-test-tool__diff-label">与上一步相同</p>
+          <div class="compat-test-tool__chip-list">
+            <span
+              v-for="target in targetsUnchanged"
+              :key="`unchanged-${target}`"
+              class="compat-test-tool__chip"
+            >
+              {{ getTargetLabel(target) }}
+            </span>
+            <span
+              v-if="targetsUnchanged.length === 0"
+              class="compat-test-tool__diff-empty"
+            >
+              无
+            </span>
+          </div>
+        </div>
+        <div
+          class="compat-test-tool__diff-group"
+          aria-label="本次新增的目标"
+        >
+          <p class="compat-test-tool__diff-label">本次新增</p>
           <div class="compat-test-tool__chip-list">
             <span
               v-for="target in targetsToAdd"
@@ -664,9 +697,9 @@ function completeRound() {
         </div>
         <div
           class="compat-test-tool__diff-group"
-          aria-label="应移除的目标"
+          aria-label="本次移除的目标"
         >
-          <p class="compat-test-tool__diff-label">应移除</p>
+          <p class="compat-test-tool__diff-label">本次移除</p>
           <div class="compat-test-tool__chip-list">
             <span
               v-for="target in targetsToRemove"
@@ -755,6 +788,7 @@ function completeRound() {
   >
     <div class="compat-test-tool__label-row">
       <h2 id="compat-test-history">测试记录</h2>
+      <span>{{ progressText }}</span>
     </div>
     <ol
       class="compat-test-tool__history-list"

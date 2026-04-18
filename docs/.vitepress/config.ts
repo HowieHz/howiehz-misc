@@ -149,17 +149,15 @@ function collectTools(locale: LocaleKey): DefaultTheme.SidebarItem[] {
 }
 
 function collectToolMarkdownFiles(baseDir: string): string[] {
-  return fs
-    .readdirSync(baseDir, { withFileTypes: true })
-    .flatMap((entry) => {
-      const entryPath = path.join(baseDir, entry.name);
-      if (entry.isDirectory()) {
-        const indexFilePath = path.join(entryPath, "index.md");
-        return fs.existsSync(indexFilePath) ? [indexFilePath] : [];
-      }
+  return fs.readdirSync(baseDir, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(baseDir, entry.name);
+    if (entry.isDirectory()) {
+      const indexFilePath = path.join(entryPath, "index.md");
+      return fs.existsSync(indexFilePath) ? [indexFilePath] : [];
+    }
 
-      return entry.isFile() && entry.name.endsWith(".md") && entry.name !== "index.md" ? [entryPath] : [];
-    });
+    return entry.isFile() && entry.name.endsWith(".md") && entry.name !== "index.md" ? [entryPath] : [];
+  });
 }
 
 function extractTitle(filePath: string): string | undefined {

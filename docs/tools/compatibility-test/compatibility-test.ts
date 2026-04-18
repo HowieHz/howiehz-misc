@@ -45,7 +45,10 @@ export function getCurrentCompatibilityTestStep(state: CompatibilityTestState): 
   };
 }
 
-export function applyCompatibilityTestAnswer(state: CompatibilityTestState, hasIssue: boolean): CompatibilityTestStep | undefined {
+export function applyCompatibilityTestAnswer(
+  state: CompatibilityTestState,
+  hasIssue: boolean,
+): CompatibilityTestStep | undefined {
   const currentStep = getCurrentCompatibilityTestStep(state);
   if (!currentStep) {
     return undefined;
@@ -151,8 +154,9 @@ function getTargetSetKey(targets: readonly number[]) {
 }
 
 function isFullTargetSet(state: CompatibilityTestState, targets: readonly number[]) {
-  return targets.length === state.numberList.length
-    && targets.every((target, index) => target === state.numberList[index]);
+  return (
+    targets.length === state.numberList.length && targets.every((target, index) => target === state.numberList[index])
+  );
 }
 
 function stopCompatibilityTest(state: CompatibilityTestState, resultTargets: readonly number[]) {

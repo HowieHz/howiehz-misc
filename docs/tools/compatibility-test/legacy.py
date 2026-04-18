@@ -33,7 +33,7 @@ def result_input(sets: dict[list[int], bool]) -> bool:
         if str(sets) in set_pair_test_result:
             return set_pair_test_result[str(sets)]
         print(f"将你的插件和以下序号的插件测试：{sets}")
-    result: str = input("是否有兼容性问题，有输入 y 然后回车，无输入 n 然后回车:")
+    result: str = input("是否有兼容性问题，有输入 y 然后回车，无输入 n 然后回车：")
     if result == "y":
         set_pair_test_result[str(sets)] = True
         return True

@@ -966,6 +966,10 @@ function completeRound() {
   gap: 12px;
 }
 
+.compat-test-tool__test-panel .compat-test-tool__label-row {
+  align-items: center;
+}
+
 .compat-test-tool__label-row-actions {
   display: flex;
   align-items: center;
@@ -978,25 +982,37 @@ function completeRound() {
   white-space: nowrap;
 }
 
-.compat-test-tool__switch {
+.compat-test-tool label.compat-test-tool__switch {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   margin: 0;
+  margin-bottom: 0;
+  line-height: 1;
   font-weight: 500;
   cursor: pointer;
 }
 
 .compat-test-tool__switch input {
+  display: block;
+  flex: none;
+  box-sizing: border-box;
   width: 38px;
   height: 22px;
   margin: 0;
+  padding: 0;
   appearance: none;
   border: 1px solid var(--vp-c-divider);
   border-radius: 999px;
   background: color-mix(in srgb, var(--vp-c-bg-soft) 80%, var(--vp-c-bg));
   position: relative;
   transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.compat-test-tool__switch span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.2;
 }
 
 .compat-test-tool__switch input::after {

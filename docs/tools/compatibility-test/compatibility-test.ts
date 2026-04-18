@@ -1,13 +1,23 @@
+export interface TargetRange {
+  start: number;
+  end: number;
+}
+
 export interface CompatibilityTestStep {
-  promptTargets: readonly number[];
-  insideTargets: readonly number[];
-  outsideTargetGroups: readonly (readonly number[])[];
-  definedTargets: readonly number[];
+  promptTargetRanges: readonly TargetRange[];
+  promptTargetCount: number;
+  debug: CompatibilityTestDebugStep;
   requiresAnswer: boolean;
 }
 
+export interface CompatibilityTestDebugStep {
+  activeTargetRange: TargetRange;
+  pendingTargetRanges: readonly TargetRange[];
+  confirmedTargetRanges: readonly TargetRange[];
+}
+
 export interface CompatibilityTestState {
-  numberList: number[];
+  targetCount: number;
   insideArrow: string;
   outsideArrows: string[];
   definedTargets: number[];
@@ -17,7 +27,7 @@ export interface CompatibilityTestState {
 }
 
 /**
- * Creates the initial state for the legacy-compatible compatibility test flow.
+ * Creates the initial state for the compatibility test flow.
  */
 export function createCompatibilityTestState(targetCount: number): CompatibilityTestState {
   if (!Number.isInteger(targetCount) || targetCount < 1) {
@@ -25,7 +35,7 @@ export function createCompatibilityTestState(targetCount: number): Compatibility
   }
 
   return {
-    numberList: Array.from({ length: targetCount }, (_, index) => index + 1),
+    targetCount,
     insideArrow: "l",
     outsideArrows: [],
     definedTargets: [],
@@ -43,14 +53,13 @@ export function getCurrentCompatibilityTestStep(state: CompatibilityTestState): 
     return undefined;
   }
 
-  const promptTargets = getPromptTargets(state);
-  const cacheKey = getTargetSetKey(promptTargets);
+  const promptTargetRanges = getPromptTargetRanges(state);
+  const cacheKey = getTargetSetKey(promptTargetRanges);
 
   return {
-    promptTargets,
-    insideTargets: resolveArrow(state, state.insideArrow),
-    outsideTargetGroups: state.outsideArrows.map((arrow) => resolveArrow(state, arrow)),
-    definedTargets: state.definedTargets.slice(),
+    promptTargetRanges,
+    promptTargetCount: countTargetsInRanges(promptTargetRanges),
+    debug: getCompatibilityTestDebugStep(state),
     requiresAnswer: !state.cachedResults.has(cacheKey),
   };
 }
@@ -67,9 +76,9 @@ export function applyCompatibilityTestAnswer(
     return undefined;
   }
 
-  const cacheKey = getTargetSetKey(currentStep.promptTargets);
+  const cacheKey = getTargetSetKey(currentStep.promptTargetRanges);
   state.cachedResults.set(cacheKey, hasIssue);
-  if (!hasIssue && isFullTargetSet(state, currentStep.promptTargets)) {
+  if (!hasIssue && isFullTargetSet(state, currentStep.promptTargetRanges)) {
     stopCompatibilityTest(state, []);
     return undefined;
   }
@@ -84,45 +93,140 @@ export function applyCompatibilityTestAnswer(
 export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState): CompatibilityTestStep | undefined {
   let step = getCurrentCompatibilityTestStep(state);
   while (step && !step.requiresAnswer) {
-    if (!state.cachedResults.get(getTargetSetKey(step.promptTargets)) && isFullTargetSet(state, step.promptTargets)) {
+    const cacheKey = getTargetSetKey(step.promptTargetRanges);
+    if (!state.cachedResults.get(cacheKey) && isFullTargetSet(state, step.promptTargetRanges)) {
       stopCompatibilityTest(state, []);
       return undefined;
     }
 
-    advanceCompatibilityTestState(state, state.cachedResults.get(getTargetSetKey(step.promptTargets)) ?? false);
+    advanceCompatibilityTestState(state, state.cachedResults.get(cacheKey) ?? false);
     step = getCurrentCompatibilityTestStep(state);
   }
 
   return step;
 }
 
-/**
- * Resolves an arrow path like "llr" into the corresponding target subset.
- */
-export function resolveArrow(state: CompatibilityTestState, arrow: string): readonly number[] {
-  let targets = state.numberList;
-  if (arrow === "") {
-    return targets.slice();
+export function countTargetsInRanges(ranges: readonly TargetRange[]) {
+  return ranges.reduce((total, range) => total + getRangeLength(range), 0);
+}
+
+export function takeTargetsFromRanges(ranges: readonly TargetRange[], limit: number) {
+  if (limit <= 0) {
+    return [];
   }
 
-  for (const sign of arrow) {
-    const pivot = Math.floor((targets.length + 1) / 2);
-    if (sign === "l") {
-      targets = targets.slice(0, pivot);
-    } else if (sign === "r") {
-      targets = targets.slice(pivot);
+  const targets: number[] = [];
+  for (const range of ranges) {
+    for (let target = range.start; target <= range.end && targets.length < limit; target += 1) {
+      targets.push(target);
+    }
+
+    if (targets.length >= limit) {
+      break;
     }
   }
 
   return targets;
 }
 
-function getPromptTargets(state: CompatibilityTestState): number[] {
-  return [
-    ...resolveArrow(state, state.insideArrow),
-    ...state.outsideArrows.flatMap((arrow) => resolveArrow(state, arrow)),
-    ...state.definedTargets,
-  ].sort((left, right) => left - right);
+export function intersectTargetRanges(leftRanges: readonly TargetRange[], rightRanges: readonly TargetRange[]) {
+  const left = normalizeRanges(leftRanges);
+  const right = normalizeRanges(rightRanges);
+  const intersections: TargetRange[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const leftRange = left[leftIndex];
+    const rightRange = right[rightIndex];
+    const start = Math.max(leftRange.start, rightRange.start);
+    const end = Math.min(leftRange.end, rightRange.end);
+
+    if (start <= end) {
+      intersections.push({ start, end });
+    }
+
+    if (leftRange.end < rightRange.end) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+
+  return intersections;
+}
+
+export function subtractTargetRanges(sourceRanges: readonly TargetRange[], excludedRanges: readonly TargetRange[]) {
+  const source = normalizeRanges(sourceRanges);
+  const excluded = normalizeRanges(excludedRanges);
+  const result: TargetRange[] = [];
+  let excludedIndex = 0;
+
+  for (const sourceRange of source) {
+    let cursor = sourceRange.start;
+
+    while (excludedIndex < excluded.length && excluded[excludedIndex].end < cursor) {
+      excludedIndex += 1;
+    }
+
+    let scanIndex = excludedIndex;
+    while (scanIndex < excluded.length && excluded[scanIndex].start <= sourceRange.end) {
+      const excludedRange = excluded[scanIndex];
+
+      if (excludedRange.start > cursor) {
+        result.push({ start: cursor, end: Math.min(excludedRange.start - 1, sourceRange.end) });
+      }
+
+      cursor = Math.max(cursor, excludedRange.end + 1);
+      if (cursor > sourceRange.end) {
+        break;
+      }
+
+      scanIndex += 1;
+    }
+
+    if (cursor <= sourceRange.end) {
+      result.push({ start: cursor, end: sourceRange.end });
+    }
+  }
+
+  return result;
+}
+
+function resolveArrowRange(state: CompatibilityTestState, arrow: string): TargetRange {
+  let range = { start: 1, end: state.targetCount };
+  for (const sign of arrow) {
+    const pivot = Math.floor((getRangeLength(range) + 1) / 2);
+    if (sign === "l") {
+      range = {
+        start: range.start,
+        end: range.start + pivot - 1,
+      };
+    } else if (sign === "r") {
+      range = {
+        start: range.start + pivot,
+        end: range.end,
+      };
+    }
+  }
+
+  return range;
+}
+
+function getPromptTargetRanges(state: CompatibilityTestState): TargetRange[] {
+  return normalizeRanges([
+    resolveArrowRange(state, state.insideArrow),
+    ...state.outsideArrows.map((arrow) => resolveArrowRange(state, arrow)),
+    ...state.definedTargets.map((target) => ({ start: target, end: target })),
+  ]);
+}
+
+function getCompatibilityTestDebugStep(state: CompatibilityTestState): CompatibilityTestDebugStep {
+  return {
+    activeTargetRange: resolveArrowRange(state, state.insideArrow),
+    pendingTargetRanges: state.outsideArrows.map((arrow) => resolveArrowRange(state, arrow)),
+    confirmedTargetRanges: state.definedTargets.map((target) => ({ start: target, end: target })),
+  };
 }
 
 /**
@@ -141,15 +245,15 @@ function advanceCompatibilityTestState(state: CompatibilityTestState, hasIssue: 
  * Narrows the currently suspected subset when the tested group still reproduces the issue.
  */
 function advanceIssueState(state: CompatibilityTestState) {
-  const insideTargets = resolveArrow(state, state.insideArrow);
-  if (insideTargets.length === 1) {
+  const insideRange = resolveArrowRange(state, state.insideArrow);
+  if (getRangeLength(insideRange) === 1) {
     if (state.outsideArrows.length === 0) {
-      state.resultTargets = [...insideTargets, ...state.definedTargets].sort((left, right) => left - right);
+      state.resultTargets = [insideRange.start, ...state.definedTargets].sort((left, right) => left - right);
       state.stopped = true;
       return;
     }
 
-    state.definedTargets.push(...insideTargets);
+    state.definedTargets.push(insideRange.start);
     const nextInsideArrow = state.outsideArrows.at(-1);
     if (nextInsideArrow === undefined) {
       state.stopped = true;
@@ -177,16 +281,19 @@ function advancePassState(state: CompatibilityTestState) {
   state.insideArrow = `${state.insideArrow.slice(0, -1)}ll`;
 }
 
-function getTargetSetKey(targets: readonly number[]) {
-  return targets.join(",");
+function getTargetSetKey(ranges: readonly TargetRange[]) {
+  return normalizeRanges(ranges)
+    .map((range) => (range.start === range.end ? String(range.start) : `${range.start}-${range.end}`))
+    .join(",");
 }
 
 /**
  * Checks whether the current prompt already spans the full target set.
  */
-function isFullTargetSet(state: CompatibilityTestState, targets: readonly number[]) {
+function isFullTargetSet(state: CompatibilityTestState, ranges: readonly TargetRange[]) {
+  const normalizedRanges = normalizeRanges(ranges);
   return (
-    targets.length === state.numberList.length && targets.every((target, index) => target === state.numberList[index])
+    normalizedRanges.length === 1 && normalizedRanges[0].start === 1 && normalizedRanges[0].end === state.targetCount
   );
 }
 
@@ -196,4 +303,28 @@ function isFullTargetSet(state: CompatibilityTestState, targets: readonly number
 function stopCompatibilityTest(state: CompatibilityTestState, resultTargets: readonly number[]) {
   state.resultTargets = [...resultTargets];
   state.stopped = true;
+}
+
+function getRangeLength(range: TargetRange) {
+  return Math.max(range.end - range.start + 1, 0);
+}
+
+function normalizeRanges(ranges: readonly TargetRange[]) {
+  const sortedRanges = ranges
+    .filter((range) => range.start <= range.end)
+    .map((range) => ({ start: range.start, end: range.end }))
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+
+  const normalizedRanges: TargetRange[] = [];
+  for (const range of sortedRanges) {
+    const previousRange = normalizedRanges.at(-1);
+    if (!previousRange || range.start > previousRange.end + 1) {
+      normalizedRanges.push(range);
+      continue;
+    }
+
+    previousRange.end = Math.max(previousRange.end, range.end);
+  }
+
+  return normalizedRanges;
 }

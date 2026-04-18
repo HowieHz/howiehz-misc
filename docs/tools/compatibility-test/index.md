@@ -13,9 +13,13 @@ import {
   applyCompatibilityTestAnswer,
   createCompatibilityTestState,
   getCurrentCompatibilityTestStep,
+  intersectTargetRanges,
   skipCachedCompatibilityTestSteps,
+  subtractTargetRanges,
+  takeTargetsFromRanges,
   type CompatibilityTestState,
   type CompatibilityTestStep,
+  type TargetRange,
 } from "./compatibility-test";
 
 type TestStatus = "idle" | "testing" | "complete";
@@ -30,7 +34,7 @@ interface TargetRow {
 interface TestRecord {
   id: number;
   result: TestResult;
-  targets: number[];
+  targetRanges: TargetRange[];
 }
 
 const TARGET_PREVIEW_COUNT = 5;
@@ -48,7 +52,10 @@ const diffModeEnabled = ref(false);
 const nextRecordId = ref(1);
 const testingPromptRef = ref<HTMLElement>();
 const resultCardRef = ref<HTMLElement>();
-const targetListExpanded = ref(false);
+const targetListPageInputRef = ref<HTMLInputElement>();
+const targetListPage = ref(1);
+const targetListPageText = ref("1");
+const isEditingTargetListPage = ref(false);
 const engineState = ref<CompatibilityTestState>();
 const currentStep = ref<CompatibilityTestStep>();
 
@@ -66,29 +73,17 @@ const targetCountError = computed(() => {
 
   return undefined;
 });
-const isTargetListCollapsed = computed(() => (
-  inputMode.value === "list" && (targetCount.value ?? 0) > TARGET_PREVIEW_COUNT && !targetListExpanded.value
-));
-const hiddenTargetCount = computed(() => {
-  const count = targetCount.value ?? 0;
-  return isTargetListCollapsed.value ? Math.max(count - TARGET_PREVIEW_COUNT, 0) : 0;
-});
+const targetListPageCount = computed(() => Math.max(Math.ceil((targetCount.value ?? 0) / TARGET_PREVIEW_COUNT), 1));
 const visibleTargetRange = computed(() => {
   const count = targetCount.value ?? 0;
   if (count === 0) {
     return { start: 0, end: 0 };
   }
 
-  if (isTargetListCollapsed.value) {
-    return {
-      start: 1,
-      end: Math.min(TARGET_PREVIEW_COUNT, count),
-    };
-  }
-
+  const start = (targetListPage.value - 1) * TARGET_PREVIEW_COUNT + 1;
   return {
-    start: 1,
-    end: count,
+    start,
+    end: Math.min(start + TARGET_PREVIEW_COUNT - 1, count),
   };
 });
 const visibleTargetRows = computed<TargetRow[]>(() => {
@@ -101,50 +96,33 @@ const visibleTargetRows = computed<TargetRow[]>(() => {
     };
   });
 });
-const targetListStatusText = computed(() => {
-  if (isTargetListCollapsed.value) {
-    return `已折叠 ${hiddenTargetCount.value} 个`;
-  }
-
-  return "";
-});
 const bulkImportDescription = computed(() => {
   const count = targetCount.value ?? 0;
   return count > 0
-    ? `每行对应一个目标，将按顺序映射到前 ${count} 个目标；超出的行会自动忽略。`
-    : "每行对应一个目标，超出的行会自动忽略。";
+    ? `每行对应一个目标，将按顺序映射到 ${count} 个目标。`
+    : "每行对应一个目标。";
 });
 const bulkInputValue = computed({
   get() {
-    const count = targetCount.value ?? 0;
-    if (count <= 0) {
-      return "";
-    }
-
-    return targetNames.value.slice(0, count).join("\n");
+    return targetNames.value.join("\n");
   },
   set(value: string) {
-    const count = targetCount.value;
-    if (!count) {
-      return;
-    }
-
     const lines = value.replace(/\r/g, "").split("\n");
     const nextNames = targetNames.value.slice();
-    while (nextNames.length < count) {
-      nextNames.push("");
-    }
 
-    for (let index = 0; index < count; index += 1) {
+    for (let index = 0; index < lines.length; index += 1) {
       nextNames[index] = lines[index] ?? "";
     }
 
     targetNames.value = nextNames;
+    if (lines.length > (targetCount.value ?? 0)) {
+      targetCountText.value = String(lines.length);
+    }
   },
 });
 const isRoundActive = computed(() => status.value === "testing");
 const currentGroupSummary = computed(() => {
-  const count = currentStep.value?.promptTargets.length ?? 0;
+  const count = currentStep.value?.promptTargetCount ?? 0;
   if (count === 0) {
     return "";
   }
@@ -156,34 +134,34 @@ const currentAnnouncement = computed(() => {
     return "填写目标后开始测试。";
   }
 
-  return `请测试下列目标：${formatTargetNames(currentStep.value.promptTargets)}。`;
+  return `请测试下列目标：${formatTargetNames(
+    getAllTargetsFromRanges(currentStep.value.promptTargetRanges),
+    Number.MAX_SAFE_INTEGER,
+  )}。`;
 });
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
-const previousPromptTargets = computed(() => testHistory.value.at(-1)?.targets ?? []);
+const previousPromptRanges = computed(() => testHistory.value.at(-1)?.targetRanges ?? []);
 const targetsUnchanged = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
   }
 
-  const previousTargets = new Set(previousPromptTargets.value);
-  return currentStep.value.promptTargets.filter((target) => previousTargets.has(target));
+  return intersectTargetRanges(currentStep.value.promptTargetRanges, previousPromptRanges.value);
 });
 const targetsToAdd = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
   }
 
-  const previousTargets = new Set(previousPromptTargets.value);
-  return currentStep.value.promptTargets.filter((target) => !previousTargets.has(target));
+  return subtractTargetRanges(currentStep.value.promptTargetRanges, previousPromptRanges.value);
 });
 const targetsToRemove = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
   }
 
-  const currentTargets = new Set(currentStep.value.promptTargets);
-  return previousPromptTargets.value.filter((target) => !currentTargets.has(target));
+  return subtractTargetRanges(previousPromptRanges.value, currentStep.value.promptTargetRanges);
 });
 const progressText = computed(() => {
   if (status.value === "idle") {
@@ -217,13 +195,17 @@ watch(status, async (value, previousValue) => {
 
 watch(targetCount, (value) => {
   if (!value) {
-    setTargetListExpanded(false);
+    targetListPage.value = 1;
+    targetListPageText.value = "1";
     return;
   }
 
-  if (value <= TARGET_PREVIEW_COUNT) {
-    setTargetListExpanded(false);
-  }
+  targetListPage.value = Math.min(targetListPage.value, targetListPageCount.value);
+  targetListPageText.value = String(targetListPage.value);
+});
+
+watch(targetListPage, (value) => {
+  targetListPageText.value = String(value);
 });
 
 function parseTargetCount(value: string) {
@@ -254,8 +236,46 @@ function stepTargetCount(delta: number) {
   targetCountText.value = String(nextCount);
 }
 
-function setTargetListExpanded(nextValue: boolean) {
-  targetListExpanded.value = nextValue;
+function stepTargetListPage(delta: number) {
+  const nextPage = targetListPage.value + delta;
+  targetListPage.value = Math.min(Math.max(nextPage, 1), targetListPageCount.value);
+}
+
+async function startEditingTargetListPage() {
+  isEditingTargetListPage.value = true;
+  targetListPageText.value = String(targetListPage.value);
+  await nextTick();
+  targetListPageInputRef.value?.focus();
+  targetListPageInputRef.value?.select();
+}
+
+function handleTargetListPageInput(event: Event) {
+  const input = event.currentTarget;
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const normalizedValue = input.value.replace(/\D+/g, "");
+  input.value = normalizedValue;
+  targetListPageText.value = normalizedValue;
+}
+
+function finishEditingTargetListPage() {
+  const parsedPage = Number.parseInt(targetListPageText.value, 10);
+  if (Number.isNaN(parsedPage)) {
+    targetListPageText.value = String(targetListPage.value);
+    isEditingTargetListPage.value = false;
+    return;
+  }
+
+  targetListPage.value = Math.min(Math.max(parsedPage, 1), targetListPageCount.value);
+  targetListPageText.value = String(targetListPage.value);
+  isEditingTargetListPage.value = false;
+}
+
+function cancelEditingTargetListPage() {
+  targetListPageText.value = String(targetListPage.value);
+  isEditingTargetListPage.value = false;
 }
 
 function handleBulkImportInput(event: Event) {
@@ -274,10 +294,6 @@ function handleTargetNameInput(event: Event, index: number) {
   }
 
   const nextNames = targetNames.value.slice();
-  while (nextNames.length < index) {
-    nextNames.push("");
-  }
-
   nextNames[index - 1] = input.value;
   targetNames.value = nextNames;
 }
@@ -298,6 +314,24 @@ function formatTargetNames(indices: readonly number[], limit = TARGET_PREVIEW_LI
   }
 
   return `${joinTargetLabels(labels.slice(0, limit))} 等 ${labels.length} 个目标`;
+}
+
+function getAllTargetsFromRanges(ranges: readonly TargetRange[]) {
+  return takeTargetsFromRanges(ranges, getTargetRangeCount(ranges));
+}
+
+function getTargetRangeCount(ranges: readonly TargetRange[]) {
+  return ranges.reduce((total, range) => total + Math.max(range.end - range.start + 1, 0), 0);
+}
+
+function formatTargetRanges(ranges: readonly TargetRange[], limit = TARGET_PREVIEW_LIMIT) {
+  const count = getTargetRangeCount(ranges);
+  const previewTargets = takeTargetsFromRanges(ranges, limit);
+  if (count <= limit) {
+    return formatTargetNames(previewTargets, limit);
+  }
+
+  return `${formatTargetNames(previewTargets, limit)} 等 ${count} 个目标`;
 }
 
 function joinTargetLabels(labels: readonly string[]) {
@@ -339,17 +373,17 @@ function answerCurrentTest(hasIssue: boolean) {
     return;
   }
 
-  const group = currentStep.value.promptTargets.slice();
+  const group = currentStep.value.promptTargetRanges.map((range) => ({ ...range }));
   recordTestResult(group, hasIssue);
   applyCompatibilityTestAnswer(engineState.value, hasIssue);
   syncFromEngineState();
 }
 
-function recordTestResult(group: number[], hasIssue: boolean) {
+function recordTestResult(group: TargetRange[], hasIssue: boolean) {
   testHistory.value.push({
     id: nextRecordId.value,
     result: hasIssue ? "issue" : "pass",
-    targets: group,
+    targetRanges: group,
   });
   nextRecordId.value += 1;
 }
@@ -405,7 +439,7 @@ function completeRound() {
   status.value = "complete";
   currentStep.value = undefined;
   announcement.value = incompatibleTargets.value.length > 0
-    ? `测试完成，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题：${formatTargetNames(incompatibleTargets.value, Number.POSITIVE_INFINITY)}。`
+    ? `测试完成，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题：${formatTargetNames(incompatibleTargets.value)}。`
     : "测试完成，未发现兼容性问题。";
 }
 </script>
@@ -453,6 +487,7 @@ function completeRound() {
           inputmode="numeric"
           autocomplete="off"
           :aria-invalid="Boolean(targetCountError)"
+          :aria-describedby="targetCountError ? 'compat-test-count-error' : undefined"
           :aria-errormessage="targetCountError ? 'compat-test-count-error' : undefined"
           @input="handleTargetCountInput"
         >
@@ -479,71 +514,48 @@ function completeRound() {
   >
     <div class="compat-test-tool__label-row">
       <h2 id="compat-test-targets">测试目标</h2>
-      <div
-        class="compat-test-tool__toolbar-actions"
-        role="group"
-        aria-label="测试目标输入方式"
-      >
-        <button
-          type="button"
-          class="compat-test-tool__secondary-button"
-          :class="{ 'compat-test-tool__mode-button--active': inputMode === 'bulk' }"
-          :aria-pressed="inputMode === 'bulk'"
-          @click="inputMode = 'bulk'"
+      <div class="compat-test-tool__input-mode">
+        <span
+          class="compat-test-tool__input-mode-label"
+          :class="{ 'compat-test-tool__input-mode-label--active': inputMode === 'bulk' }"
         >
           批量输入
-        </button>
-        <button
-          type="button"
-          class="compat-test-tool__secondary-button"
-          :class="{ 'compat-test-tool__mode-button--active': inputMode === 'list' }"
-          :aria-pressed="inputMode === 'list'"
-          @click="inputMode = 'list'"
+        </span>
+        <label class="compat-test-tool__mode-switch">
+          <input
+            :checked="inputMode === 'list'"
+            type="checkbox"
+            role="switch"
+            :aria-checked="inputMode === 'list'"
+            :aria-label="inputMode === 'list'
+              ? '当前为逐项填写，点击切换为批量输入'
+              : '当前为批量输入，点击切换为逐项填写'"
+            @change="inputMode = inputMode === 'list' ? 'bulk' : 'list'"
+          >
+        </label>
+        <span
+          class="compat-test-tool__input-mode-label"
+          :class="{ 'compat-test-tool__input-mode-label--active': inputMode === 'list' }"
         >
           逐项填写
-        </button>
-      </div>
-    </div>
-    <div class="compat-test-tool__target-toolbar">
-      <span
-        v-if="targetListStatusText"
-        class="compat-test-tool__target-meta"
-      >
-        {{ targetListStatusText }}
-      </span>
-      <div class="compat-test-tool__toolbar-actions">
-        <button
-          v-if="inputMode === 'list' && hiddenTargetCount > 0"
-          type="button"
-          class="compat-test-tool__secondary-button"
-          :aria-expanded="targetListExpanded"
-          aria-controls="compat-test-target-list"
-          @click="setTargetListExpanded(true)"
-        >
-          展开其余 {{ hiddenTargetCount }} 个
-        </button>
-        <button
-          v-else-if="inputMode === 'list' && targetListExpanded && (targetCount ?? 0) > TARGET_PREVIEW_COUNT"
-          type="button"
-          class="compat-test-tool__secondary-button"
-          :aria-expanded="targetListExpanded"
-          aria-controls="compat-test-target-list"
-          @click="setTargetListExpanded(false)"
-        >
-          收起到前 {{ TARGET_PREVIEW_COUNT }} 个
-        </button>
+        </span>
       </div>
     </div>
     <div
       v-if="inputMode === 'bulk'"
       class="compat-test-tool__bulk-import"
     >
+      <label
+        for="compat-test-bulk-import"
+        class="compat-test-tool__sr-only"
+      >
+        批量输入目标名称
+      </label>
       <textarea
         id="compat-test-bulk-import"
         :value="bulkInputValue"
         rows="4"
         placeholder="请在此处输入目标名称；不填写则采用默认名称。"
-        aria-label="批量输入目标名称"
         aria-describedby="compat-test-bulk-import-description compat-test-bulk-import-note"
         @input="handleBulkImportInput"
       />
@@ -564,39 +576,90 @@ function completeRound() {
     >
       目标名称可以留空；留空时会使用默认名称。
     </p>
-    <ol
-      v-if="inputMode === 'list'"
-      id="compat-test-target-list"
-      class="compat-test-tool__target-list"
-      aria-labelledby="compat-test-targets"
-    >
-      <li
-        v-for="target in visibleTargetRows"
-        :key="target.index"
-        class="compat-test-tool__target-item"
+    <template v-if="inputMode === 'list'">
+      <ol
+        id="compat-test-target-list"
+        class="compat-test-tool__target-list"
+        aria-labelledby="compat-test-targets"
       >
-        <span
-          class="compat-test-tool__target-index"
-          aria-hidden="true"
+        <li
+          v-for="target in visibleTargetRows"
+          :key="target.index"
+          class="compat-test-tool__target-item"
         >
-          {{ target.index }}
-        </span>
-        <label
-          class="compat-test-tool__sr-only"
-          :for="target.id"
+          <span
+            class="compat-test-tool__target-index"
+            aria-hidden="true"
+          >
+            {{ target.index }}
+          </span>
+          <label
+            class="compat-test-tool__sr-only"
+            :for="target.id"
+          >
+            第 {{ target.index }} 个测试目标名称
+          </label>
+          <input
+            :id="target.id"
+            :value="getTargetName(target.index)"
+            autocomplete="off"
+            :placeholder="`目标 ${target.index}`"
+            aria-describedby="compat-test-target-name-note"
+            @input="handleTargetNameInput($event, target.index)"
+          >
+        </li>
+      </ol>
+      <div
+        v-if="(targetCount ?? 0) > TARGET_PREVIEW_COUNT"
+        class="compat-test-tool__pagination"
+        role="group"
+        aria-label="目标列表分页"
+      >
+        <button
+          type="button"
+          class="compat-test-tool__secondary-button"
+          :disabled="targetListPage <= 1"
+          aria-controls="compat-test-target-list"
+          @click="stepTargetListPage(-1)"
         >
-          第 {{ target.index }} 个测试目标名称
-        </label>
-        <input
-          :id="target.id"
-          :value="getTargetName(target.index)"
-          autocomplete="off"
-          :placeholder="`目标 ${target.index}`"
-          aria-describedby="compat-test-target-name-note"
-          @input="handleTargetNameInput($event, target.index)"
+          上一页
+        </button>
+        <div class="compat-test-tool__page-status-slot">
+          <button
+            v-if="!isEditingTargetListPage"
+            type="button"
+            class="compat-test-tool__page-status compat-test-tool__page-status-button"
+            :aria-label="`当前第 ${targetListPage} 页，共 ${targetListPageCount} 页。点击后可跳转页码`"
+            @click="startEditingTargetListPage"
+          >
+            {{ targetListPage }} / {{ targetListPageCount }}
+          </button>
+          <input
+            v-else
+            ref="targetListPageInputRef"
+            :value="targetListPageText"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            class="compat-test-tool__page-status-input"
+            :aria-label="`输入要跳转的页码，当前共 ${targetListPageCount} 页`"
+            @input="handleTargetListPageInput"
+            @blur="finishEditingTargetListPage"
+            @keydown.enter.prevent="finishEditingTargetListPage"
+            @keydown.esc.prevent="cancelEditingTargetListPage"
+          >
+        </div>
+        <button
+          type="button"
+          class="compat-test-tool__secondary-button"
+          :disabled="targetListPage >= targetListPageCount"
+          aria-controls="compat-test-target-list"
+          @click="stepTargetListPage(1)"
         >
-      </li>
-    </ol>
+          下一页
+        </button>
+      </div>
+    </template>
   </div>
   <div class="compat-test-tool__test-panel">
     <div class="compat-test-tool__label-row">
@@ -657,7 +720,7 @@ function completeRound() {
           aria-labelledby="compat-test-current-targets-label"
         >
           <span
-            v-for="target in currentStep?.promptTargets ?? []"
+            v-for="target in currentStep ? getAllTargetsFromRanges(currentStep.promptTargetRanges) : []"
             :key="target"
             class="compat-test-tool__chip"
             role="listitem"
@@ -680,25 +743,24 @@ function completeRound() {
           </p>
           <div
             class="compat-test-tool__chip-list"
-            :role="targetsUnchanged.length > 0 ? 'list' : undefined"
-            :aria-labelledby="targetsUnchanged.length > 0 ? 'compat-test-diff-same-label' : undefined"
+            :role="getTargetRangeCount(targetsUnchanged) > 0 ? 'list' : undefined"
+            :aria-labelledby="getTargetRangeCount(targetsUnchanged) > 0 ? 'compat-test-diff-same-label' : undefined"
           >
             <span
-              v-for="target in targetsUnchanged"
+              v-for="target in getAllTargetsFromRanges(targetsUnchanged)"
               :key="`unchanged-${target}`"
               class="compat-test-tool__chip"
               role="listitem"
             >
               {{ getTargetLabel(target) }}
             </span>
-            <span
-              v-if="targetsUnchanged.length === 0"
-              class="compat-test-tool__diff-empty"
-              role="status"
-            >
-              无
-            </span>
           </div>
+          <p
+            v-if="getTargetRangeCount(targetsUnchanged) === 0"
+            class="compat-test-tool__diff-empty"
+          >
+            无
+          </p>
         </div>
         <div
           class="compat-test-tool__diff-group"
@@ -713,25 +775,24 @@ function completeRound() {
           </p>
           <div
             class="compat-test-tool__chip-list"
-            :role="targetsToAdd.length > 0 ? 'list' : undefined"
-            :aria-labelledby="targetsToAdd.length > 0 ? 'compat-test-diff-add-label' : undefined"
+            :role="getTargetRangeCount(targetsToAdd) > 0 ? 'list' : undefined"
+            :aria-labelledby="getTargetRangeCount(targetsToAdd) > 0 ? 'compat-test-diff-add-label' : undefined"
           >
             <span
-              v-for="target in targetsToAdd"
+              v-for="target in getAllTargetsFromRanges(targetsToAdd)"
               :key="`add-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--add"
               role="listitem"
             >
               {{ getTargetLabel(target) }}
             </span>
-            <span
-              v-if="targetsToAdd.length === 0"
-              class="compat-test-tool__diff-empty"
-              role="status"
-            >
-              无
-            </span>
           </div>
+          <p
+            v-if="getTargetRangeCount(targetsToAdd) === 0"
+            class="compat-test-tool__diff-empty"
+          >
+            无
+          </p>
         </div>
         <div
           class="compat-test-tool__diff-group"
@@ -746,25 +807,24 @@ function completeRound() {
           </p>
           <div
             class="compat-test-tool__chip-list"
-            :role="targetsToRemove.length > 0 ? 'list' : undefined"
-            :aria-labelledby="targetsToRemove.length > 0 ? 'compat-test-diff-remove-label' : undefined"
+            :role="getTargetRangeCount(targetsToRemove) > 0 ? 'list' : undefined"
+            :aria-labelledby="getTargetRangeCount(targetsToRemove) > 0 ? 'compat-test-diff-remove-label' : undefined"
           >
             <span
-              v-for="target in targetsToRemove"
+              v-for="target in getAllTargetsFromRanges(targetsToRemove)"
               :key="`remove-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--remove"
               role="listitem"
             >
               {{ getTargetLabel(target) }}
             </span>
-            <span
-              v-if="targetsToRemove.length === 0"
-              class="compat-test-tool__diff-empty"
-              role="status"
-            >
-              无
-            </span>
           </div>
+          <p
+            v-if="getTargetRangeCount(targetsToRemove) === 0"
+            class="compat-test-tool__diff-empty"
+          >
+            无
+          </p>
         </div>
       </template>
       <div class="compat-test-tool__actions">
@@ -777,7 +837,7 @@ function completeRound() {
         </button>
         <button
           type="button"
-          class="compat-test-tool__secondary-button"
+          class="compat-test-tool__success-button"
           @click="answerCurrentTest(false)"
         >
           没有兼容性问题
@@ -878,7 +938,7 @@ function completeRound() {
         >
           {{ record.result === "issue" ? "有问题" : "无问题" }}
         </span>
-        <span>{{ formatTargetNames(record.targets) }}</span>
+        <span>{{ formatTargetRanges(record.targetRanges) }}</span>
       </li>
     </ol>
   </div>
@@ -1043,7 +1103,7 @@ function completeRound() {
   gap: 12px;
 }
 
-.compat-test-tool__label-row span {
+.compat-test-tool__label-row > span {
   font-size: 0.88rem;
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
   white-space: nowrap;
@@ -1060,7 +1120,8 @@ function completeRound() {
   cursor: pointer;
 }
 
-.compat-test-tool__switch input {
+.compat-test-tool__switch input,
+.compat-test-tool__mode-switch input {
   display: block;
   flex: none;
   box-sizing: border-box;
@@ -1082,7 +1143,8 @@ function completeRound() {
   line-height: 1.2;
 }
 
-.compat-test-tool__switch input::after {
+.compat-test-tool__switch input::after,
+.compat-test-tool__mode-switch input::after {
   content: "";
   position: absolute;
   top: 2px;
@@ -1095,32 +1157,96 @@ function completeRound() {
   transition: transform 0.2s ease;
 }
 
-.compat-test-tool__switch input:checked {
+.compat-test-tool__switch input:checked,
+.compat-test-tool__mode-switch input:checked {
   border-color: var(--vp-c-brand-1);
   background: color-mix(in srgb, var(--vp-c-brand-1) 78%, white);
 }
 
-.compat-test-tool__switch input:checked::after {
+.compat-test-tool__switch input:checked::after,
+.compat-test-tool__mode-switch input:checked::after {
   transform: translateX(16px);
 }
 
-.compat-test-tool__target-toolbar,
-.compat-test-tool__bulk-import-actions,
-.compat-test-tool__toolbar-actions {
+.compat-test-tool__input-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compat-test-tool__input-mode-label {
+  font-size: 0.88rem;
+  color: color-mix(in srgb, var(--vp-c-text-1) 62%, var(--vp-c-text-2) 38%);
+  white-space: nowrap;
+}
+
+.compat-test-tool__input-mode-label--active {
+  color: var(--vp-c-brand-1);
+  font-weight: 700;
+}
+
+.compat-test-tool label.compat-test-tool__mode-switch {
+  display: inline-flex;
+  margin: 0;
+  cursor: pointer;
+}
+
+.compat-test-tool__bulk-import-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.compat-test-tool__target-toolbar .compat-test-tool__toolbar-actions {
-  margin-left: auto;
+.compat-test-tool__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.compat-test-tool__target-meta,
-.compat-test-tool__bulk-import-actions span {
+.compat-test-tool__bulk-import-actions span,
+.compat-test-tool__page-status {
   font-size: 0.88rem;
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
+}
+
+.compat-test-tool__page-status {
+  white-space: nowrap;
+}
+
+.compat-test-tool__page-status-slot {
+  display: flex;
+  justify-content: center;
+}
+
+.compat-test-tool__page-status-button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transform: none;
+  box-shadow: none;
+}
+
+.compat-test-tool__page-status-button:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  color: var(--vp-c-brand-1);
+}
+
+.compat-test-tool__page-status-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 12px;
+  text-align: center;
 }
 
 .compat-test-tool__bulk-import {
@@ -1239,6 +1365,7 @@ function completeRound() {
 
 .compat-test-tool__primary-button,
 .compat-test-tool__secondary-button,
+.compat-test-tool__success-button,
 .compat-test-tool__danger-button {
   padding: 9px 14px;
 }
@@ -1254,9 +1381,10 @@ function completeRound() {
   color: var(--vp-c-text-1);
 }
 
-.compat-test-tool__mode-button--active {
-  border-color: var(--vp-c-brand-1);
-  color: var(--vp-c-brand-1);
+.compat-test-tool__success-button {
+  border-color: color-mix(in srgb, var(--vp-c-green-1) 45%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-green-soft) 56%, var(--vp-c-bg));
+  color: color-mix(in srgb, var(--vp-c-green-1) 82%, var(--vp-c-text-1));
 }
 
 .compat-test-tool__danger-button {
@@ -1298,8 +1426,8 @@ function completeRound() {
 }
 
 .compat-test-tool__history-badge--pass {
-  background: color-mix(in srgb, var(--vp-c-brand-soft) 70%, var(--vp-c-bg));
-  color: var(--vp-c-brand-1);
+  background: color-mix(in srgb, var(--vp-c-green-soft) 64%, var(--vp-c-bg));
+  color: color-mix(in srgb, var(--vp-c-green-1) 82%, var(--vp-c-text-1));
 }
 
 .compat-test-tool__sr-only {
@@ -1319,15 +1447,25 @@ function completeRound() {
   box-shadow: 0 8px 20px rgb(15 23 42 / 0.06);
 }
 
-.compat-test-tool__secondary-button:hover:not(:disabled),
-.compat-test-tool__target-index:hover {
+.compat-test-tool__secondary-button:hover:not(:disabled) {
   border-color: var(--vp-c-brand-1);
+}
+
+.compat-test-tool__success-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--vp-c-green-1) 60%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-green-soft) 68%, var(--vp-c-bg));
+}
+
+.compat-test-tool__danger-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--vp-c-danger-1) 60%, var(--vp-c-divider));
+  background: color-mix(in srgb, var(--vp-c-danger-soft) 62%, var(--vp-c-bg));
 }
 
 .compat-test-tool button:focus-visible,
 .compat-test-tool input:focus-visible,
 .compat-test-tool textarea:focus-visible,
-.compat-test-tool__prompt:focus-visible {
+.compat-test-tool__prompt:focus-visible,
+.compat-test-tool__result-card:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
@@ -1350,21 +1488,50 @@ function completeRound() {
     gap: 8px;
   }
 
-  .compat-test-tool__target-toolbar,
-  .compat-test-tool__bulk-import-actions,
-  .compat-test-tool__toolbar-actions {
+  .compat-test-tool__bulk-import-actions {
     display: grid;
     justify-content: stretch;
   }
 
-  .compat-test-tool__label-row span {
+  .compat-test-tool__input-mode {
+    justify-content: space-between;
+  }
+
+  .compat-test-tool__pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+
+  .compat-test-tool__label-row > span {
     white-space: normal;
   }
 
   .compat-test-tool__primary-button,
   .compat-test-tool__secondary-button,
+  .compat-test-tool__success-button,
   .compat-test-tool__danger-button {
     width: 100%;
+  }
+
+  .compat-test-tool__pagination .compat-test-tool__secondary-button {
+    width: auto;
+    flex: 1 1 0;
+  }
+
+  .compat-test-tool__pagination .compat-test-tool__page-status {
+    text-align: center;
+  }
+
+  .compat-test-tool__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .compat-test-tool__actions > :nth-child(3) {
+    grid-column: 1 / -1;
   }
 }
 </style>

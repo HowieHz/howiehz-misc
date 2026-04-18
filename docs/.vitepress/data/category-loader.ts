@@ -37,7 +37,7 @@ export function createCategoryLoader(
   categoryIndexUrl: string,
   options: LoaderOptions = {},
 ): ContentLoader<CategoryPostMeta[]> {
-  const loaderOptions: ContentOptions<CategoryPostMeta[]> = {
+  return createContentLoader<CategoryPostMeta[]>(globPattern, {
     excerpt: false,
     transform(items) {
       const posts: CategoryPostMeta[] = items
@@ -72,9 +72,7 @@ export function createCategoryLoader(
       const sorted = options.sort ? [...posts].sort(options.sort) : posts.sort(sortByDateDesc);
       return sorted;
     },
-  };
-
-  return createContentLoader<CategoryPostMeta[]>(globPattern, loaderOptions);
+  } satisfies ContentOptions<CategoryPostMeta[]>);
 }
 
 function inferTitleFromUrl(url: string): string {

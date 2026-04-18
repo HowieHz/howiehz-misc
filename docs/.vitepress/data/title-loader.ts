@@ -39,7 +39,7 @@ export function createTitleLoader(
   indexUrl: string,
   options: LoaderOptions = {},
 ): ContentLoader<TitleLinkItem[]> {
-  const loaderOptions: ContentOptions<TitleLinkItem[]> = {
+  return createContentLoader<TitleLinkItem[]>(globPattern, {
     includeSrc: true,
     excerpt: false,
     transform(items) {
@@ -62,7 +62,5 @@ export function createTitleLoader(
 
       return options.sort ? [...pages].sort(options.sort) : pages.sort((a, b) => collator.compare(a.title, b.title));
     },
-  };
-
-  return createContentLoader<TitleLinkItem[]>(globPattern, loaderOptions);
+  } satisfies ContentOptions<TitleLinkItem[]>);
 }

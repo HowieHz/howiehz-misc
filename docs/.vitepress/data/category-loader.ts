@@ -3,8 +3,8 @@ import path from "node:path";
 
 import { createContentLoader, type ContentOptions } from "vitepress";
 
-import type { ContentLoader } from "./content-loader";
 import { formatDateToYMD } from "../utils/formatDate";
+import type { ContentLoader } from "./content-loader";
 
 export interface CategoryPostMeta {
   title: string;

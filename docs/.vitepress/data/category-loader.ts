@@ -74,7 +74,7 @@ export function createCategoryLoader(
     },
   };
 
-  return createContentLoader<CategoryPostMeta[]>(globPattern, loaderOptions) as ContentLoader<CategoryPostMeta[]>;
+  return createContentLoader<CategoryPostMeta[]>(globPattern, loaderOptions);
 }
 
 function inferTitleFromUrl(url: string): string {

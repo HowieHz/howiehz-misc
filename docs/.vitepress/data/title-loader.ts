@@ -64,5 +64,5 @@ export function createTitleLoader(
     },
   };
 
-  return createContentLoader<TitleLinkItem[]>(globPattern, loaderOptions) as ContentLoader<TitleLinkItem[]>;
+  return createContentLoader<TitleLinkItem[]>(globPattern, loaderOptions);
 }

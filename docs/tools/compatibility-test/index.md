@@ -163,8 +163,10 @@ const targetsToRemove = computed(() => {
 
   return subtractTargetRanges(previousPromptRanges.value, currentStep.value.promptTargetRanges);
 });
-const confirmedTargets = computed(() => (
-  currentStep.value ? getAllTargetsFromRanges(currentStep.value.debug.confirmedTargetRanges) : []
+const confirmedTargetSet = computed(() => (
+  new Set(
+    currentStep.value ? getAllTargetsFromRanges(currentStep.value.debug.confirmedTargetRanges) : [],
+  )
 ));
 const progressText = computed(() => {
   if (status.value === "idle") {
@@ -302,10 +304,6 @@ function getTargetName(index: number) {
 function getTargetLabel(index: number) {
   const name = getTargetName(index).trim();
   return name.length > 0 ? name : `目标 ${index}`;
-}
-
-function isConfirmedTarget(index: number) {
-  return confirmedTargets.value.includes(index);
 }
 
 function formatTargetNames(indices: readonly number[], limit = TARGET_PREVIEW_LIMIT) {
@@ -726,7 +724,7 @@ function completeRound() {
             v-for="target in currentStep ? getAllTargetsFromRanges(currentStep.promptTargetRanges) : []"
             :key="target"
             class="compat-test-tool__chip"
-            :class="{ 'compat-test-tool__chip--confirmed': isConfirmedTarget(target) }"
+            :class="{ 'compat-test-tool__chip--confirmed': confirmedTargetSet.has(target) }"
             role="listitem"
           >
             {{ getTargetLabel(target) }}
@@ -754,7 +752,7 @@ function completeRound() {
               v-for="target in getAllTargetsFromRanges(targetsUnchanged)"
               :key="`unchanged-${target}`"
               class="compat-test-tool__chip"
-              :class="{ 'compat-test-tool__chip--confirmed': isConfirmedTarget(target) }"
+              :class="{ 'compat-test-tool__chip--confirmed': confirmedTargetSet.has(target) }"
               role="listitem"
             >
               {{ getTargetLabel(target) }}

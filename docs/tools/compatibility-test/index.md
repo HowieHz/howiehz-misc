@@ -1488,6 +1488,36 @@ function completeRound() {
     gap: 8px;
   }
 
+  .compat-test-tool__test-panel .compat-test-tool__label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .compat-test-tool__test-panel .compat-test-tool__label-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+    flex-shrink: 0;
+  }
+
+  .compat-test-tool__target-panel .compat-test-tool__label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .compat-test-tool__target-panel .compat-test-tool__input-mode {
+    justify-content: flex-end;
+    gap: 6px;
+    min-width: 0;
+    flex-shrink: 0;
+  }
+
   .compat-test-tool__bulk-import-actions {
     display: grid;
     justify-content: stretch;

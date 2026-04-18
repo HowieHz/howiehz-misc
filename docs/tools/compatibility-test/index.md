@@ -96,7 +96,7 @@ const visibleTargetRows = computed<TargetRow[]>(() => {
 const bulkImportDescription = computed(() => {
   const count = targetCount.value ?? 0;
   return count > 0
-    ? `每行对应一个目标，将按顺序映射到前 ${count} 个目标。`
+    ? `每行对应一个目标，将按顺序映射到 ${count} 个目标。`
     : "每行对应一个目标。";
 });
 const bulkInputValue = computed({
@@ -438,6 +438,7 @@ function completeRound() {
           inputmode="numeric"
           autocomplete="off"
           :aria-invalid="Boolean(targetCountError)"
+          :aria-describedby="targetCountError ? 'compat-test-count-error' : undefined"
           :aria-errormessage="targetCountError ? 'compat-test-count-error' : undefined"
           @input="handleTargetCountInput"
         >
@@ -528,12 +529,17 @@ function completeRound() {
       v-if="inputMode === 'bulk'"
       class="compat-test-tool__bulk-import"
     >
+      <label
+        for="compat-test-bulk-import"
+        class="compat-test-tool__sr-only"
+      >
+        批量输入目标名称
+      </label>
       <textarea
         id="compat-test-bulk-import"
         :value="bulkInputValue"
         rows="4"
         placeholder="请在此处输入目标名称；不填写则采用默认名称。"
-        aria-label="批量输入目标名称"
         aria-describedby="compat-test-bulk-import-description compat-test-bulk-import-note"
         @input="handleBulkImportInput"
       />
@@ -654,13 +660,13 @@ function completeRound() {
           >
             {{ getTargetLabel(target) }}
           </span>
-          <span
-            v-if="currentStep && currentStep.promptTargetCount > TARGET_PREVIEW_LIMIT"
-            class="compat-test-tool__diff-empty"
-          >
-            等 {{ currentStep.promptTargetCount }} 个目标
-          </span>
         </div>
+        <p
+          v-if="currentStep && currentStep.promptTargetCount > TARGET_PREVIEW_LIMIT"
+          class="compat-test-tool__diff-empty"
+        >
+          等 {{ currentStep.promptTargetCount }} 个目标
+        </p>
       </div>
       <template v-if="diffModeEnabled">
         <div
@@ -687,20 +693,19 @@ function completeRound() {
             >
               {{ getTargetLabel(target) }}
             </span>
-            <span
-              v-if="getTargetRangeCount(targetsUnchanged) > TARGET_PREVIEW_LIMIT"
-              class="compat-test-tool__diff-empty"
-            >
-              等 {{ getTargetRangeCount(targetsUnchanged) }} 个目标
-            </span>
-            <span
-              v-if="getTargetRangeCount(targetsUnchanged) === 0"
-              class="compat-test-tool__diff-empty"
-              role="status"
-            >
-              无
-            </span>
           </div>
+          <p
+            v-if="getTargetRangeCount(targetsUnchanged) > TARGET_PREVIEW_LIMIT"
+            class="compat-test-tool__diff-empty"
+          >
+            等 {{ getTargetRangeCount(targetsUnchanged) }} 个目标
+          </p>
+          <p
+            v-else-if="getTargetRangeCount(targetsUnchanged) === 0"
+            class="compat-test-tool__diff-empty"
+          >
+            无
+          </p>
         </div>
         <div
           class="compat-test-tool__diff-group"
@@ -726,20 +731,19 @@ function completeRound() {
             >
               {{ getTargetLabel(target) }}
             </span>
-            <span
-              v-if="getTargetRangeCount(targetsToAdd) > TARGET_PREVIEW_LIMIT"
-              class="compat-test-tool__diff-empty"
-            >
-              等 {{ getTargetRangeCount(targetsToAdd) }} 个目标
-            </span>
-            <span
-              v-if="getTargetRangeCount(targetsToAdd) === 0"
-              class="compat-test-tool__diff-empty"
-              role="status"
-            >
-              无
-            </span>
           </div>
+          <p
+            v-if="getTargetRangeCount(targetsToAdd) > TARGET_PREVIEW_LIMIT"
+            class="compat-test-tool__diff-empty"
+          >
+            等 {{ getTargetRangeCount(targetsToAdd) }} 个目标
+          </p>
+          <p
+            v-else-if="getTargetRangeCount(targetsToAdd) === 0"
+            class="compat-test-tool__diff-empty"
+          >
+            无
+          </p>
         </div>
         <div
           class="compat-test-tool__diff-group"
@@ -765,20 +769,19 @@ function completeRound() {
             >
               {{ getTargetLabel(target) }}
             </span>
-            <span
-              v-if="getTargetRangeCount(targetsToRemove) > TARGET_PREVIEW_LIMIT"
-              class="compat-test-tool__diff-empty"
-            >
-              等 {{ getTargetRangeCount(targetsToRemove) }} 个目标
-            </span>
-            <span
-              v-if="getTargetRangeCount(targetsToRemove) === 0"
-              class="compat-test-tool__diff-empty"
-              role="status"
-            >
-              无
-            </span>
           </div>
+          <p
+            v-if="getTargetRangeCount(targetsToRemove) > TARGET_PREVIEW_LIMIT"
+            class="compat-test-tool__diff-empty"
+          >
+            等 {{ getTargetRangeCount(targetsToRemove) }} 个目标
+          </p>
+          <p
+            v-else-if="getTargetRangeCount(targetsToRemove) === 0"
+            class="compat-test-tool__diff-empty"
+          >
+            无
+          </p>
         </div>
       </template>
       <div class="compat-test-tool__actions">
@@ -1349,7 +1352,8 @@ function completeRound() {
 .compat-test-tool button:focus-visible,
 .compat-test-tool input:focus-visible,
 .compat-test-tool textarea:focus-visible,
-.compat-test-tool__prompt:focus-visible {
+.compat-test-tool__prompt:focus-visible,
+.compat-test-tool__result-card:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);

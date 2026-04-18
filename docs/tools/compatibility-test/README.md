@@ -10,5 +10,5 @@ publish: false
 
 ## 文件结构
 
-- `legacy.py` 是原始 Python 实现版本。
+- [`legacy.py`](./legacy.py) 是原始 Python 实现版本。
 - [index.md](./index.md) 是 TypeScript 重构版本。

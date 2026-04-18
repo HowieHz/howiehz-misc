@@ -16,6 +16,9 @@ export interface CompatibilityTestState {
   resultTargets: number[];
 }
 
+/**
+ * Creates the initial state for the legacy-compatible compatibility test flow.
+ */
 export function createCompatibilityTestState(targetCount: number): CompatibilityTestState {
   return {
     numberList: Array.from({ length: targetCount }, (_, index) => index + 1),
@@ -28,6 +31,9 @@ export function createCompatibilityTestState(targetCount: number): Compatibility
   };
 }
 
+/**
+ * Builds the current step shown to the user from the internal arrow-based state.
+ */
 export function getCurrentCompatibilityTestStep(state: CompatibilityTestState): CompatibilityTestStep | undefined {
   if (state.stopped) {
     return undefined;
@@ -45,6 +51,9 @@ export function getCurrentCompatibilityTestStep(state: CompatibilityTestState): 
   };
 }
 
+/**
+ * Records the current answer and advances the state machine once.
+ */
 export function applyCompatibilityTestAnswer(
   state: CompatibilityTestState,
   hasIssue: boolean,
@@ -65,6 +74,9 @@ export function applyCompatibilityTestAnswer(
   return getCurrentCompatibilityTestStep(state);
 }
 
+/**
+ * Automatically skips repeated prompt sets that already have cached answers.
+ */
 export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState): CompatibilityTestStep | undefined {
   let step = getCurrentCompatibilityTestStep(state);
   while (step && !step.requiresAnswer) {
@@ -80,6 +92,9 @@ export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState):
   return step;
 }
 
+/**
+ * Resolves an arrow path like "llr" into the corresponding target subset.
+ */
 export function resolveArrow(state: CompatibilityTestState, arrow: string): number[] {
   let targets = state.numberList;
   if (arrow === "") {
@@ -106,6 +121,9 @@ function getPromptTargets(state: CompatibilityTestState): number[] {
   ].sort((left, right) => left - right);
 }
 
+/**
+ * Dispatches to the next transition branch based on the latest test result.
+ */
 function advanceCompatibilityTestState(state: CompatibilityTestState, hasIssue: boolean) {
   if (hasIssue) {
     advanceIssueState(state);
@@ -115,6 +133,9 @@ function advanceCompatibilityTestState(state: CompatibilityTestState, hasIssue: 
   advancePassState(state);
 }
 
+/**
+ * Narrows the currently suspected subset when the tested group still reproduces the issue.
+ */
 function advanceIssueState(state: CompatibilityTestState) {
   const insideTargets = resolveArrow(state, state.insideArrow);
   if (insideTargets.length === 1) {
@@ -139,6 +160,9 @@ function advanceIssueState(state: CompatibilityTestState) {
   state.insideArrow += "l";
 }
 
+/**
+ * Moves to the sibling subset, or promotes the current subset into the outside stack when needed.
+ */
 function advancePassState(state: CompatibilityTestState) {
   if (state.insideArrow.endsWith("l")) {
     state.insideArrow = `${state.insideArrow.slice(0, -1)}r`;
@@ -153,12 +177,18 @@ function getTargetSetKey(targets: readonly number[]) {
   return targets.join(",");
 }
 
+/**
+ * Checks whether the current prompt already spans the full target set.
+ */
 function isFullTargetSet(state: CompatibilityTestState, targets: readonly number[]) {
   return (
     targets.length === state.numberList.length && targets.every((target, index) => target === state.numberList[index])
   );
 }
 
+/**
+ * Marks the state machine as finished and stores the final incompatible targets.
+ */
 function stopCompatibilityTest(state: CompatibilityTestState, resultTargets: readonly number[]) {
   state.resultTargets = [...resultTargets];
   state.stopped = true;

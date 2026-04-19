@@ -1,5 +1,3 @@
-<!-- markdownlint-disable MD024 -->
-
 # docs
 
 ## 1.0.2

@@ -199,4 +199,4 @@ compat-finder next -c 3 -a "y,n,n"
 
 ## 在线版
 
-在线版工具页面见 [compatibility-test](https://github.com/HowieHz/howiehz-misc/tree/main/docs/tools/compatibility-test)。
+在线版工具页面见 [compatibility-test](../../docs/tools/compatibility-test)。

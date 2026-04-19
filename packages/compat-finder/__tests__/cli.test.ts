@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli.ts";
+import { getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli-main.ts";
 
 const TARGET_NAMES = ["Alpha", "Beta", "Gamma", "Delta"] as const;
 

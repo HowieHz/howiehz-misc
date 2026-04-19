@@ -12,5 +12,5 @@
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["src/index.ts", "src/compatibility-test.ts", "src/cli.ts"]
+  "include": ["src/index.ts", "src/compatibility-test.ts", "src/cli.ts", "src/cli-main.ts"]
 }

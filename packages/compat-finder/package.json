@@ -22,21 +22,24 @@
     "directory": "packages/compat-finder"
   },
   "bin": {
-    "compat-finder": "./dist/cli.js"
+    "compat-finder": "./dist/cli.mjs"
   },
   "files": [
     "dist"
   ],
   "type": "module",
-  "types": "./dist/index.d.ts",
+  "types": "./dist/index.d.mts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm run build:dev",
+    "build:dev": "tsdown --sourcemap",
+    "build:release": "tsdown",
+    "prepack": "pnpm run build:release",
     "test": "vitest run"
   }
 }

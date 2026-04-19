@@ -16,9 +16,10 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "build": "pnpm run compat-finder:build && pnpm run docs:build",
+    "build": "pnpm run compat-finder:build:dev && pnpm run docs:build",
     "compat-finder": "node --experimental-strip-types packages/compat-finder/src/cli.ts",
-    "compat-finder:build": "pnpm --filter compat-finder build",
+    "compat-finder:build:dev": "pnpm --filter compat-finder build:dev",
+    "compat-finder:build:release": "pnpm --filter compat-finder build:release",
     "compat-finder:test": "pnpm --filter compat-finder test",
     "dev": "pnpm run \"/:dev$/\"",
     "docs:build": "vitepress build docs",

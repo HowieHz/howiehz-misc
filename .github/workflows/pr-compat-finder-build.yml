@@ -1,0 +1,23 @@
+name: PR compat-finder package Build
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+concurrency:
+  group: pr-compat-finder-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build compat-finder Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # https://github.com/actions/checkout/releases/tag/v6.0.2
+      - name: Build with composite action
+        uses: ./.github/actions/build-package
+        with:
+          build-command: pnpm compat-finder:build
+          artifact-name: compat-finder-dist
+          artifact-path: packages/compat-finder/dist

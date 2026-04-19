@@ -1,4 +1,4 @@
-name: PR Build
+name: PR Documentation Build
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: pr-docs-build-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:

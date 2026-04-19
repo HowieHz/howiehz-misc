@@ -3,11 +3,16 @@
   "version": "0.1.0",
   "description": "Find incompatible targets through guided compatibility checks.",
   "keywords": [
-    "command-line",
     "compatibility",
     "compatibility-test",
-    "conflict",
-    "debugging"
+    "cli",
+    "CLI",
+    "commands",
+    "command-line",
+    "command line",
+    "debug",
+    "tool",
+    "interactive"
   ],
   "homepage": "https://github.com/HowieHz/howiehz-misc/tree/main/packages/compat-finder",
   "bugs": {

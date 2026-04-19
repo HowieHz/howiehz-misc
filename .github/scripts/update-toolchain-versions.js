@@ -186,8 +186,7 @@ const fetchLatestNodeLtsMajor = async (currentNodeMajor) => {
   // GitHub releases expose an exact published timestamp so the 24-hour holdback remains strict.
   const releases = await fetchNodeReleaseIndex();
 
-  const latestLtsRelease = releases
-    .sort((left, right) => compareSemVer(right.parsedVersion, left.parsedVersion))[0];
+  const latestLtsRelease = releases.sort((left, right) => compareSemVer(right.parsedVersion, left.parsedVersion))[0];
 
   if (!latestLtsRelease) {
     throw new Error("Unable to determine the latest Node.js LTS release");
@@ -444,7 +443,12 @@ const collectPackageJsonFiles = async (directoryPath = ".") => {
   return filePaths.sort((left, right) => left.localeCompare(right));
 };
 
-const resolvePackageNodeEngineRange = async (filePath, packageJson, fallbackNodeEngineRange, fallbackParsedNodeEngine) => {
+const resolvePackageNodeEngineRange = async (
+  filePath,
+  packageJson,
+  fallbackNodeEngineRange,
+  fallbackParsedNodeEngine,
+) => {
   const currentNodeEngine = typeof packageJson.engines?.node === "string" ? packageJson.engines.node.trim() : "";
 
   if (currentNodeEngine === "") {

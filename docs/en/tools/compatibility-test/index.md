@@ -131,7 +131,7 @@ const currentGroupSummary = computed(() => {
 });
 const currentAnnouncement = computed(() => {
   if (status.value !== "testing" || !currentStep.value) {
-    return "Enter your targets, then start testing.";
+    return "Enter the target count and names, then start the test.";
   }
 
   return `Test the following targets: ${formatTargetNames(
@@ -173,7 +173,7 @@ const progressText = computed(() => {
     return "Not started";
   }
 
-  return `${testHistory.value.length} tests completed`;
+  return `${testHistory.value.length} test runs completed`;
 });
 const resultLabel = computed(() => (
   incompatibleTargets.value.length > 0
@@ -451,7 +451,7 @@ function completeRound() {
 </script>
 <!-- autocorrect-enable -->
 
-Enter the target count and names, then follow the prompts to test each group and report the result.
+Enter the target count and names, then follow the prompts to test each suggested group and report whether the issue occurs.
 
 <div class="compat-test-tool">
   <p
@@ -525,7 +525,7 @@ Enter the target count and names, then follow the prompts to test each group and
           class="compat-test-tool__input-mode-label"
           :class="{ 'compat-test-tool__input-mode-label--active': inputMode === 'bulk' }"
         >
-          Bulk input
+          Bulk entry
         </span>
         <label class="compat-test-tool__mode-switch">
           <input
@@ -534,8 +534,8 @@ Enter the target count and names, then follow the prompts to test each group and
             role="switch"
             :aria-checked="inputMode === 'list'"
             :aria-label="inputMode === 'list'
-              ? 'Currently using one-by-one input. Click to switch to bulk input.'
-              : 'Currently using bulk input. Click to switch to one-by-one input.'"
+              ? 'Currently using individual entry. Switch to bulk entry.'
+              : 'Currently using bulk entry. Switch to individual entry.'"
             @change="inputMode = inputMode === 'list' ? 'bulk' : 'list'"
           >
         </label>
@@ -543,7 +543,7 @@ Enter the target count and names, then follow the prompts to test each group and
           class="compat-test-tool__input-mode-label"
           :class="{ 'compat-test-tool__input-mode-label--active': inputMode === 'list' }"
         >
-          One by one
+          Individual entry
         </span>
       </div>
     </div>
@@ -669,11 +669,11 @@ Enter the target count and names, then follow the prompts to test each group and
   </div>
   <div class="compat-test-tool__test-panel">
     <div class="compat-test-tool__label-row">
-      <h2 id="compat-test-current">Current test</h2>
+      <h2 id="compat-test-current">Current step</h2>
       <div
         class="compat-test-tool__label-row-actions"
         role="group"
-        aria-label="Current test options"
+        aria-label="Current step options"
       >
         <label class="compat-test-tool__switch">
           <input
@@ -848,14 +848,14 @@ Enter the target count and names, then follow the prompts to test each group and
           class="compat-test-tool__danger-button"
           @click="answerCurrentTest(true)"
         >
-          Issue reproduces
+          Issue present
         </button>
         <button
           type="button"
           class="compat-test-tool__success-button"
           @click="answerCurrentTest(false)"
         >
-          No issue
+          No issue found
         </button>
         <button
           type="button"
@@ -863,7 +863,7 @@ Enter the target count and names, then follow the prompts to test each group and
           :disabled="!canUndoLastTest"
           @click="undoLastTest"
         >
-          Undo previous step
+          Undo last step
         </button>
       </div>
     </template>
@@ -927,7 +927,7 @@ Enter the target count and names, then follow the prompts to test each group and
           class="compat-test-tool__secondary-button"
           @click="undoLastTest"
         >
-          Undo previous step
+          Undo last step
         </button>
       </div>
     </template>
@@ -961,7 +961,7 @@ Enter the target count and names, then follow the prompts to test each group and
             'compat-test-tool__history-badge--pass': record.result === 'pass',
           }"
         >
-          {{ record.result === "issue" ? "Issue" : "No issue" }}
+          {{ record.result === "issue" ? "Issue present" : "No issue found" }}
         </span>
         <span>{{ formatTargetRanges(record.targetRanges) }}</span>
       </li>
@@ -969,28 +969,28 @@ Enter the target count and names, then follow the prompts to test each group and
   </div>
 </div>
 
-## Notes
+## Overview
 
-- This tool helps find compatibility issues across multiple targets by narrowing the range with a divide-and-conquer process similar to binary search.
-- Each step gives the next group of targets to test. Run the test as prompted, then choose "Issue reproduces" or "No issue" based on the actual result.
+- This tool helps isolate compatibility issues across multiple targets by narrowing the range step by step with a divide-and-conquer process similar to binary search.
+- Each step gives you the next group of targets to test. Run that group as prompted, then choose "Issue present" or "No issue found" based on the actual result.
 - It is a rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
 - If this tool helps you, consider starring [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc).
 
-## Use Cases
+## Use cases
 
-### Finding conflicts inside a plugin set
+### Troubleshooting conflicts within a modpack or plugin set
 
-For example, suppose you have a modpack with 20 plugins. It fails on startup, but you do not yet know which plugins conflict with each other. Set the target count to 20, enable or disable plugins according to each group shown by the page, then answer whether the issue is present.
+For example, suppose you have a pack with 20 mods or plugins. It fails to start, but you do not yet know which ones conflict with each other. Set the target count to 20, then enable or disable the items in each group suggested by the page and report whether the issue occurs.
 
-After a few rounds, the finder narrows the range down to specific targets. This avoids testing every plugin one by one from the start and avoids relying entirely on guesswork.
+After a few rounds, the range narrows to the specific targets involved. That lets you avoid testing every item one by one from the start or relying entirely on guesswork.
 
-This is useful for mod troubleshooting in games such as Minecraft, The Elder Scrolls, The Sims, RimWorld, Stardew Valley, Terraria, Mount & Blade, Garry's Mod, and Left 4 Dead. It can also help with userscripts, browser extensions, Rainmeter skins, and other cases where compatibility conflicts need to be isolated.
+This works well for troubleshooting mods in games such as Minecraft, The Elder Scrolls, The Sims, RimWorld, Stardew Valley, Terraria, Mount & Blade, Garry's Mod, and Left 4 Dead. It can also help with userscripts, browser extensions, Rainmeter skins, and other cases where compatibility conflicts need to be isolated.
 
-### Finding what conflicts with your own plugin
+### Finding conflicts with your own plugin
 
-If you wrote a plugin and want to find which of 10 other plugins conflict with it, keep your own plugin enabled and use only the other 10 plugins as test targets.
+If you wrote a plugin and want to find which of 10 other plugins conflict with it, keep your own plugin enabled at all times and use only the other 10 plugins as test targets.
 
-When the page tells you which targets to test, run those targets together with your own plugin. The final result is the set of targets that have compatibility issues with your plugin.
+When the page tells you which targets to test, run them alongside your own plugin. The final result is the set of targets that conflict with it.
 
 <style scoped>
 .compat-test-tool {

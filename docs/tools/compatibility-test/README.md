@@ -1,5 +1,7 @@
 # 兼容性问题排查器
 
+[English](../../en/tools/compatibility-test/) | 简体中文
+
 本工具用于排查多个目标之间的兼容性问题。
 
 ## 在线体验

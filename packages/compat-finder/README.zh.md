@@ -1,6 +1,6 @@
 # 兼容性问题排查器
 
-[**English**](./README.md) | 简体中文
+[English](./README.md) | 简体中文
 
 compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与命令行工具。
 

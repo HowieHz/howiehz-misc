@@ -18,7 +18,7 @@
   "author": "HowieHz",
   "repository": {
     "type": "git",
-    "url": "https://github.com/HowieHz/howiehz-misc",
+    "url": "git+https://github.com/HowieHz/howiehz-misc.git",
     "directory": "packages/compat-finder"
   },
   "bin": {
@@ -28,18 +28,26 @@
     "dist"
   ],
   "type": "module",
-  "types": "./dist/index.d.mts",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.mts",
-      "import": "./dist/index.mjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "scripts": {
-    "build": "pnpm run build:dev",
-    "build:dev": "tsdown --sourcemap",
-    "build:release": "tsdown",
+    "build": "tsdown",
+    "build:release": "tsdown --minify",
     "prepack": "pnpm run build:release",
-    "test": "vitest run"
+    "test": "vitest run",
+    "watch": "tsdown --watch"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/core": "^0.18.2",
+    "publint": "^0.3.18",
+    "tsdown": "^0.21.9"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

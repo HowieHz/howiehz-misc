@@ -13,5 +13,5 @@
     "lib": ["esnext"],
     "types": ["node"]
   },
-  "include": ["src/cli.ts", "src/cli-main.ts"]
+  "include": ["src/cli.ts", "src/cli-main.ts", "tsdown.config.ts"]
 }

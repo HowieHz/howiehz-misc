@@ -3,7 +3,7 @@ import path from "node:path";
 
 import browserslist from "browserslist";
 import { browserslistToTargets } from "lightningcss";
-import { defineConfig, type DefaultTheme } from "vitepress";
+import { defineConfig, type DefaultTheme, type UserConfig } from "vitepress";
 import { chineseSearchOptimize, pagefindPlugin } from "vitepress-plugin-pagefind";
 import { RssPlugin, type RSSOptions } from "vitepress-plugin-rss";
 
@@ -187,7 +187,7 @@ function extractH1Title(filePath: string): string | undefined {
 }
 
 // https://vitepress.dev/reference/site-config
-export default defineConfig({
+const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
   srcExclude: ["**/README.md"],
   vite: {
     plugins: [
@@ -292,7 +292,7 @@ export default defineConfig({
     },
   },
 
-  async transformHtml(code) {
+  async transformHtml(code): Promise<string> {
     // 在 body 开头插入 GTM 的 noscript 回退（便于不支持 JS 的环境统计）
     const noscript = `<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-T447LW69" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>`;
     return code.replace(/<body([^>]*)>/, `<body$1>${noscript}`).replace(/^\s*[\r\n]/gm, "");
@@ -488,3 +488,5 @@ export default defineConfig({
     },
   },
 });
+
+export default vitePressConfig;

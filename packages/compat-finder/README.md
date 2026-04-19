@@ -199,12 +199,4 @@ Key exports:
 
 ## Online Tool
 
-The online version is available at [howiehz.top/misc/en/tools/compatibility-test](https://howiehz.top/misc/en/tools/compatibility-test/).
-
-## Source Layout
-
-- [src/compatibility-test.ts](./src/compatibility-test.ts) contains the TypeScript engine implementation
-- [src/cli-main.ts](./src/cli-main.ts) contains the command-line tool logic
-- [src/cli.ts](./src/cli.ts) is the command-line entrypoint
-- [src/legacy.py](./src/legacy.py) contains the original Python implementation
-- [`__tests__`](./__tests__/) contains tests for the engine and command-line tool
+The online version is available at [compatibility-test](https://github.com/HowieHz/howiehz-misc/tree/main/docs/en/tools/compatibility-test).

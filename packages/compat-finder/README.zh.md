@@ -199,12 +199,4 @@ compat-finder next -c 3 -a "y,n,n"
 
 ## 在线版
 
-在线版工具页面见 [howiehz.top/misc/tools/compatibility-test](https://howiehz.top/misc/tools/compatibility-test/)。
-
-## 源码结构
-
-- [src/compatibility-test.ts](./src/compatibility-test.ts) 是兼容性排查引擎的 TypeScript 实现
-- [src/cli-main.ts](./src/cli-main.ts) 是命令行工具主逻辑
-- [src/cli.ts](./src/cli.ts) 是命令行入口
-- [src/legacy.py](./src/legacy.py) 是原始 Python 实现版本
-- [`__tests__`](./__tests__/) 是排查引擎与命令行工具的测试文件
+在线版工具页面见 [compatibility-test](https://github.com/HowieHz/howiehz-misc/tree/main/docs/tools/compatibility-test)。

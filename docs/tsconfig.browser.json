@@ -6,9 +6,6 @@
     }
   ],
   "compilerOptions": {
-    "composite": true,
-    "declaration": true,
-    "emitDeclarationOnly": true,
     "declarationDir": "../node_modules/.tmp/types/docs/app",
     "lib": ["esnext", "dom", "dom.iterable"]
   },

@@ -9,7 +9,6 @@
     }
   ],
   "compilerOptions": {
-    "composite": true,
     "noEmit": true,
     "lib": ["esnext"],
     "types": ["node", "vitest/globals"]

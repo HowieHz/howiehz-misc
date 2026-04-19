@@ -1,9 +1,6 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "composite": true,
-    "declaration": true,
-    "emitDeclarationOnly": true,
     "declarationDir": "../node_modules/.tmp/types/docs/node",
     "lib": ["esnext"],
     "types": ["node"]

@@ -149,7 +149,7 @@ const COMMAND_DEFINITIONS: Record<CliCommand, CommandDefinition> = {
   },
 };
 
-export async function main() {
+export async function main(): Promise<void> {
   const { options, error } = parseCliArgs(process.argv.slice(2));
 
   if (error) {
@@ -178,7 +178,7 @@ export async function main() {
   console.log(JSON.stringify(result, null, 2));
 }
 
-function getCommandHelpText(command: CliCommand) {
+function getCommandHelpText(command: CliCommand): string {
   const definition = COMMAND_DEFINITIONS[command];
   return [
     `兼容性问题排查命令行工具：${command}`,
@@ -309,7 +309,7 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
   return { options };
 }
 
-export function getRootHelpText() {
+export function getRootHelpText(): string {
   return [
     "兼容性问题排查命令行工具",
     "",
@@ -328,25 +328,25 @@ export function getRootHelpText() {
   ].join("\n");
 }
 
-function getCommandListLines() {
+function getCommandListLines(): string[] {
   return (Object.entries(COMMAND_DEFINITIONS) as [CliCommand, (typeof COMMAND_DEFINITIONS)[CliCommand]][]).map(
     ([command, definition]) => `  ${command} (${definition.alias})`.padEnd(25) + definition.description,
   );
 }
 
-function formatCommandUsage(command: CliCommand, suffix = "") {
+function formatCommandUsage(command: CliCommand, suffix = ""): string {
   return `${CLI_COMMAND_NAME} ${command}${suffix ? ` ${suffix}` : ""}`;
 }
 
-function formatHelpCommand(command: CliCommand) {
+function formatHelpCommand(command: CliCommand): string {
   return `${CLI_COMMAND_NAME} --help ${command}`;
 }
 
-function formatDefaultInteractiveUsage(suffix: string) {
+function formatDefaultInteractiveUsage(suffix: string): string {
   return `${CLI_COMMAND_NAME} ${suffix}`;
 }
 
-function printCliError(message: string) {
+function printCliError(message: string): void {
   console.error(message);
   console.error("");
   console.error(CLI_HELP_HINT);
@@ -365,14 +365,14 @@ function resolveCommandAlias(token: string | undefined): CliCommand | undefined 
   return undefined;
 }
 
-function splitNames(value: string) {
+function splitNames(value: string): string[] {
   return value
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 }
 
-function parseAnswerList(value: string) {
+function parseAnswerList(value: string): boolean[] | undefined {
   const normalizedValue = value.trim();
   if (normalizedValue === "") {
     return [];
@@ -391,24 +391,24 @@ function parseAnswerList(value: string) {
   return answers;
 }
 
-function normalizeTargetNames(targetCount: number, names: readonly string[]) {
+function normalizeTargetNames(targetCount: number, names: readonly string[]): string[] {
   return Array.from({ length: targetCount }, (_, index) => names[index] ?? "");
 }
 
-function getTargetLabel(targetNames: readonly string[], index: number) {
+function getTargetLabel(targetNames: readonly string[], index: number): string {
   const customName = targetNames[index - 1]?.trim();
   return customName && customName.length > 0 ? customName : `目标 ${index}`;
 }
 
-function formatTargetNames(targetNames: readonly string[], targets: readonly number[]) {
+function formatTargetNames(targetNames: readonly string[], targets: readonly number[]): string {
   return targets.map((target) => getTargetLabel(targetNames, target)).join(",");
 }
 
-function getAllTargetsFromRanges(ranges: readonly TargetRange[]) {
+function getAllTargetsFromRanges(ranges: readonly TargetRange[]): number[] {
   return takeTargetsFromRanges(ranges, getTargetRangeCount(ranges));
 }
 
-function getTargetRangeCount(ranges: readonly TargetRange[]) {
+function getTargetRangeCount(ranges: readonly TargetRange[]): number {
   return ranges.reduce((total, range) => total + Math.max(range.end - range.start + 1, 0), 0);
 }
 
@@ -441,7 +441,7 @@ export function getNextCommandResult(
   };
 }
 
-async function runInteractiveCli(targetCount: number, targetNames: readonly string[]) {
+async function runInteractiveCli(targetCount: number, targetNames: readonly string[]): Promise<void> {
   const rl = readline.createInterface({ input, output });
   const history: boolean[] = [];
   let state = createCompatibilityTestState(targetCount);
@@ -497,14 +497,14 @@ async function runInteractiveCli(targetCount: number, targetNames: readonly stri
   }
 }
 
-function printPrompt(step: CompatibilityTestStep, targetNames: readonly string[]) {
+function printPrompt(step: CompatibilityTestStep, targetNames: readonly string[]): void {
   const targets = getAllTargetsFromRanges(step.promptTargetRanges);
   console.log("");
   console.log(`本次请测试 ${step.promptTargetCount} 个目标：`);
   console.log(formatTargetNames(targetNames, targets));
 }
 
-function parseAnswer(value: string) {
+function parseAnswer(value: string): boolean | undefined {
   if (value === "y" || value === "yes" || value === "issue" || value === "1" || value === "true") {
     return true;
   }
@@ -516,7 +516,7 @@ function parseAnswer(value: string) {
   return undefined;
 }
 
-function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[]) {
+function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[]): CompatibilityTestState {
   const nextState = createCompatibilityTestState(targetCount);
 
   for (const answer of answers) {
@@ -531,7 +531,7 @@ function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[
   return nextState;
 }
 
-function printResult(targetNames: readonly string[], state: CompatibilityTestState) {
+function printResult(targetNames: readonly string[], state: CompatibilityTestState): void {
   console.log("");
   if (state.resultTargets.length === 0) {
     console.log("测试完成，不存在兼容性问题。");

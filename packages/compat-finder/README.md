@@ -199,4 +199,4 @@ Key exports:
 
 ## Online Tool
 
-The online version is available at [compatibility-test](https://github.com/HowieHz/howiehz-misc/tree/main/docs/en/tools/compatibility-test).
+The online version is available at [compatibility-test](../../docs/en/tools/compatibility-test).

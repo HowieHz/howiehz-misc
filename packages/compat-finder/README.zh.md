@@ -2,6 +2,8 @@
 
 [English](./README.md) | 简体中文
 
+在线体验：[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
+
 compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与命令行工具。
 
 由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
@@ -197,7 +199,7 @@ compat-finder next -c 3 -a "y,n,n"
 
 ## 在线版
 
-在线版工具页面见 [docs/tools/compatibility-test](../../docs/tools/compatibility-test/)。
+在线版工具页面见 [howiehz.top/misc/tools/compatibility-test](https://howiehz.top/misc/tools/compatibility-test/)。
 
 ## 源码结构
 

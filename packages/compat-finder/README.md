@@ -2,6 +2,8 @@
 
 English | [简体中文](./README.zh.md)
 
+Try it online: [compatibility issue finder](https://howiehz.top/misc/en/tools/compatibility-test/)
+
 compat-finder is an engine and command-line tool for finding compatibility issues across multiple targets.
 
 It is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
@@ -197,7 +199,7 @@ Key exports:
 
 ## Online Tool
 
-The online version is available at [docs/en/tools/compatibility-test](../../docs/en/tools/compatibility-test/).
+The online version is available at [howiehz.top/misc/en/tools/compatibility-test](https://howiehz.top/misc/en/tools/compatibility-test/).
 
 ## Source Layout
 

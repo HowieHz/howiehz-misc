@@ -294,7 +294,7 @@ const fetchActiveNodeLtsMajors = async (now = Date.now()) => {
 
 const formatNodeEngineTrackRange = (releases) =>
   releases
-    .map((release, index) => `${index === releases.length - 1 ? ">=" : "^"}${release.version.replace(/^v/u, "")}`)
+    .map((release, index) => `${index === releases.length - 1 ? ">=" : "^"}${release.parsedVersion.major}`)
     .join(" || ");
 
 const resolveLatestLtsReleaseForMajor = (releases, major) => {

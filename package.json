@@ -18,6 +18,9 @@
   },
   "type": "module",
   "scripts": {
+    "changeset": "changeset",
+    "changeset:publish": "changeset publish",
+    "changeset:version": "changeset version",
     "compat-finder": "node --experimental-strip-types packages/compat-finder/src/cli.ts",
     "compat-finder:build": "pnpm --filter compat-finder build",
     "compat-finder:build:release": "pnpm --filter compat-finder build:release",
@@ -41,6 +44,8 @@
     "watch": "pnpm run \"/:watch$/\""
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.6.0",
+    "@changesets/cli": "^2.31.0",
     "@eslint/compat": "^2.0.5",
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.6.0",

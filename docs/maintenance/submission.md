@@ -1,8 +1,11 @@
 ---
 publish: false
+outline: deep
 ---
 
 # 投稿指南
+
+本文档面向站点内容投稿与公开页面修订。若你要参与仓库维护、CI、发布流程或 npm 包开发，请阅读[维护指南](/maintenance/contributing)。
 
 欢迎通过 PR 提交或修订内容。
 

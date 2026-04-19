@@ -1,8 +1,11 @@
 ---
 publish: false
+outline: deep
 ---
 
 # Contribution Guide
+
+This page is for public site content submissions and content edits. If you are contributing to repository maintenance, CI, release flow, or the npm package, see the [Maintenance Guide](/en/maintenance/contributing).
 
 Feel free to submit or revise content via PR.
 

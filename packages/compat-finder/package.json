@@ -1,6 +1,6 @@
 {
   "name": "compat-finder",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Find incompatible targets through guided compatibility checks.",
   "keywords": [
     "CLI",

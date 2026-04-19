@@ -5,13 +5,7 @@
       "path": "./packages/compat-finder/tsconfig.json"
     },
     {
-      "path": "./tsconfig.shared.json"
-    },
-    {
-      "path": "./tsconfig.node.json"
-    },
-    {
-      "path": "./tsconfig.app.json"
+      "path": "./docs/tsconfig.json"
     }
   ],
   "compilerOptions": {

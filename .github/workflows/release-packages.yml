@@ -45,8 +45,8 @@ jobs:
         uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # https://github.com/changesets/action/releases/tag/v1.7.0
         with:
           version: pnpm changeset:version
-          title: "release: version packages"
-          commit: "release: version packages"
+          title: "release: update package versions"
+          commit: "release: update package versions"
         env:
           GITHUB_TOKEN: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
 
@@ -116,6 +116,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # https://github.com/actions/checkout/releases/tag/v6.0.2
+        with:
+          sparse-checkout: |
+            package.json
+          sparse-checkout-cone-mode: false
+
       - uses: pnpm/action-setup@078e9d416474b29c0c387560859308974f7e9c53 # https://github.com/pnpm/action-setup/releases/tag/v6.0.1
         name: Install pnpm
         with:

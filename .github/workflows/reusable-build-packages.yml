@@ -1,0 +1,92 @@
+name: Reusable Build Release Packages
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        required: false
+        type: string
+        default: npm-package-artifacts
+        description: Name of the uploaded package artifact bundle
+      package-directories-json:
+        required: true
+        type: string
+        description: JSON array of workspace package directories to pack
+
+jobs:
+  build:
+    name: Build, Pack, Upload, and Attest Release Packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # https://github.com/actions/checkout/releases/tag/v6.0.2
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # https://github.com/pnpm/action-setup/releases/tag/v5.0.0
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # https://github.com/actions/setup-node/releases/tag/v6.3.0
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Pack release package tarballs
+        env:
+          PACKAGE_DIRECTORIES_JSON: ${{ inputs.package-directories-json }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { mkdir } from "node:fs/promises";
+          import path from "node:path";
+          import { spawnSync } from "node:child_process";
+
+          const packageDirectories = JSON.parse(process.env.PACKAGE_DIRECTORIES_JSON ?? "[]");
+
+          if (!Array.isArray(packageDirectories) || packageDirectories.length === 0) {
+            console.error("No package directories were provided for packing.");
+            process.exit(1);
+          }
+
+          const packDestination = path.resolve("dist/npm-packages");
+          await mkdir(packDestination, { recursive: true });
+
+          for (const directory of packageDirectories) {
+            if (typeof directory !== "string" || directory.length === 0) {
+              console.error(`Invalid package directory: ${directory}`);
+              process.exit(1);
+            }
+
+            const result = spawnSync(
+              "pnpm",
+              ["pack", "--pack-destination", packDestination],
+              {
+                cwd: path.resolve(directory),
+                stdio: "inherit",
+                shell: process.platform === "win32",
+              },
+            );
+
+            if (result.status !== 0) {
+              process.exit(result.status ?? 1);
+            }
+          }
+          EOF
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist/npm-packages/*.tgz
+
+      - name: Generate package attestations
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # https://github.com/actions/attest/releases/tag/v4.1.0
+        with:
+          subject-path: dist/npm-packages/*.tgz

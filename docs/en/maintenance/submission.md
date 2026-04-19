@@ -5,9 +5,9 @@ outline: deep
 
 # Contribution Guide
 
-This page is for public site content submissions and content edits. If you are contributing to repository maintenance, CI, release flow, or the npm package, see the [Maintenance Guide](/en/maintenance/contributing).
+This guide covers public site content submissions and edits. If you are working on repository maintenance, CI, release flow, or the npm package, see the [Maintenance Guide](/en/maintenance/contributing).
 
-Feel free to submit or revise content via PR.
+Feel free to submit or revise content through pull requests.
 
 ## Quick Start
 
@@ -15,13 +15,13 @@ Feel free to submit or revise content via PR.
 2. Start the docs development server with hot reload: `pnpm docs:watch`
 3. Build the docs site: `pnpm docs:build`
 4. Build the docs site and start the preview server: `pnpm docs:preview`
-5. Before submitting, run: `pnpm fmt` and `pnpm lint`
+5. Before submitting, run `pnpm fmt`, `pnpm lint`, and `pnpm test`
 
 ## Using Vue in Markdown
 
-In VitePress, every Markdown file is compiled into HTML and treated as a Vue Single-File Component. That means you can use Vue dynamic templates, components, and `<script>` logic directly in Markdown. Before editing related pages, read the [official VitePress docs](https://vitepress.dev/guide/using-vue) first.
+In VitePress, each Markdown file is compiled to HTML and treated as a Vue single-file component. That means you can use Vue dynamic templates, components, and `<script>` logic directly in Markdown. Before editing these pages, read the [official VitePress guide](https://vitepress.dev/guide/using-vue) first.
 
-On top of that, keep raw HTML template blocks contiguous and structurally stable. Do not insert arbitrary blank lines inside containers like `<select>...</select>`, or VitePress may report a Vue template parse error during dev/build through `vite:vue` / the Vue SFC compiler, such as `Element is missing end tag`.
+Keep raw HTML template blocks contiguous and well-formed. Do not insert arbitrary blank lines inside containers such as `<select>...</select>`, or VitePress may surface Vue template parse errors during development or build, such as `Element is missing end tag`.
 
 - Bad:
 
@@ -71,18 +71,18 @@ references:
 ---
 ```
 
-Field explanation:
+Field descriptions:
 
-- `published` (required): Publication time.
-- `author` (required): at least one author with `name`; both `link` and `email` are optional.
-  - `link`: Web contact information (can be a personal website, GitHub profile, etc.).
-  - `email`: Email contact information.
-  - Rendering rules: if `link` exists, link to that address; otherwise link to `email` (formatted as `mailto:`); skip linking if both are empty.
-- `references` (optional): reference materials list; each item needs `name`, `link`, and `archive`. Can omit the entire field if no references.
-  - `archive`: backup information. Can include multiple backup types, such as `ia` (Internet Archive), `wayback`, etc., each type corresponding to a backup URL.
+- `published` (required): publication date and time
+- `author` (required): at least one author with `name`; both `link` and `email` are optional
+  - `link`: a web contact such as a personal site or GitHub profile
+  - `email`: an email contact
+  - Rendering rule: if `link` exists, it is used as the author link; otherwise `email` is used as a `mailto:` link; if both are empty, no link is rendered
+- `references` (optional): a list of source materials; each item should include `name`, `link`, and `archive`; omit the field entirely if there are no references
+  - `archive`: archive information. Multiple archive types are allowed, such as `ia` (Internet Archive) or `wayback`, each with its own archive URL
     - Example: `ia: https://web.archive.org/web/...` or `wayback: https://...`
 
-> Frontmatter must be placed at the very beginning of the Markdown file, wrapped by a pair of `---`, with fields in between. The article content must begin with `# Article Title` as a level-one heading.
+> Frontmatter must appear at the beginning of the Markdown file and be wrapped in `---`. The article body must begin with a level-one heading in the form `# Article Title`.
 
 ## Tool Frontmatter Template
 
@@ -93,9 +93,9 @@ published: 2025-12-07T21:45:30Z
 ---
 ```
 
-Field explanation:
+Field descriptions:
 
-- `publish: false` (required): prevents publishing to RSS feeds.
-- `published` (required): publication time.
+- `publish: false` (required): prevents the page from being included in the RSS feed
+- `published` (required): publication date and time
 
-> Frontmatter must be placed at the very beginning of the Markdown file, wrapped by a pair of `---`, with fields in between. The content must begin with `# Tool Name` as a level-one heading.
+> Frontmatter must appear at the beginning of the Markdown file and be wrapped in `---`. The content must begin with a level-one heading in the form `# Tool Name`.

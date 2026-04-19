@@ -1,5 +1,12 @@
 # docs
 
+## 1.0.3
+
+### Patch Changes
+
+- Updated dependencies [[`2806bef`](https://github.com/HowieHz/howiehz-misc/commit/2806bef2fc947ba6d3febb8e82de6a7e0f9288be)]:
+  - compat-finder@1.1.0
+
 ## 1.0.2
 
 ### Patch Changes

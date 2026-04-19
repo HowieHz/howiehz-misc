@@ -1,7 +1,6 @@
 {
   "name": "compat-finder",
   "version": "0.1.0",
-  "private": true,
   "description": "Find incompatible targets through guided compatibility checks.",
   "keywords": [
     "command-line",
@@ -48,6 +47,6 @@
     "tsdown": "^0.21.9"
   },
   "engines": {
-    "node": ">=24"
+    "node": "^20.20.2 || ^22.22.2 || >=24.15.0"
   }
 }

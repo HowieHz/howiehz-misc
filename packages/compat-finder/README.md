@@ -30,10 +30,10 @@ Run an interactive compatibility check:
 compat-finder interactive --count 4
 ```
 
-Run a single-step calculation and print the result:
+Run a single-step calculation and print the next result:
 
 ```bash
-compat-finder next -c 3 -a "y,n"
+compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
 ```
 
 Expected JSON output:
@@ -42,7 +42,7 @@ Expected JSON output:
 {
   "status": "testing",
   "targetCount": 3,
-  "targets": ["目标 2"]
+  "targets": ["Beta"]
 }
 ```
 
@@ -111,8 +111,8 @@ compat-finder i -c 4 -n "A,B,C,D"
 
 Supported input:
 
-- `y` / `yes` / `issue` / `1`: the issue is present
-- `n` / `no` / `pass` / `0`: the issue is not present
+- `y` / `yes` / `issue` / `1`: the issue reproduces
+- `n` / `no` / `pass` / `0`: the issue does not reproduce
 - `u` / `undo`: undo the previous answer
 - `q` / `quit`: quit
 
@@ -134,13 +134,13 @@ Returned fields:
 
 Supported `answers` values:
 
-- `y` / `yes` / `issue` / `1` / `true`: the issue is present
-- `n` / `no` / `pass` / `0` / `false`: the issue is not present
+- `y` / `yes` / `issue` / `1` / `true`: the issue reproduces
+- `n` / `no` / `pass` / `0` / `false`: the issue does not reproduce
 
 Example 1:
 
 ```bash
-compat-finder next -c 3 -a "y"
+compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y"
 ```
 
 Expected JSON output:
@@ -149,14 +149,14 @@ Expected JSON output:
 {
   "status": "testing",
   "targetCount": 3,
-  "targets": ["目标 1"]
+  "targets": ["Alpha"]
 }
 ```
 
 Example 2:
 
 ```bash
-compat-finder next -c 3 -a "y,n"
+compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
 ```
 
 Expected JSON output:
@@ -165,14 +165,14 @@ Expected JSON output:
 {
   "status": "testing",
   "targetCount": 3,
-  "targets": ["目标 2"]
+  "targets": ["Beta"]
 }
 ```
 
 Example 3:
 
 ```bash
-compat-finder next -c 3 -a "y,n,n"
+compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n,n"
 ```
 
 Expected JSON output:
@@ -181,13 +181,13 @@ Expected JSON output:
 {
   "status": "complete",
   "targetCount": 3,
-  "targets": ["目标 1", "目标 2"]
+  "targets": ["Alpha", "Beta"]
 }
 ```
 
 ## API
 
-Core exports:
+Key exports:
 
 - `createCompatibilityTestState(targetCount)`: creates a compatibility check state
 - `getCurrentCompatibilityTestStep(state)`: returns the current step

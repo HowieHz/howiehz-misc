@@ -2,11 +2,11 @@
 
 English | [简体中文](./README.zh.md)
 
-Personal misc site for content that does not belong on the main site.
+A personal misc site for things that do not belong on the main site.
 
 ## Projects
 
-- Compatibility issue finder:
+- Compatibility Issue Finder:
   - [compat-finder](packages/compat-finder/): engine and command-line tool
   - [Online tool](docs/en/tools/compatibility-test/)
-- [Ganzhi calculator](docs/tools/ganzhi/)
+- [Ganzhi calculator (Chinese)](docs/tools/ganzhi/)

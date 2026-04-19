@@ -99,7 +99,7 @@ const visibleTargetRows = computed<TargetRow[]>(() => {
 const bulkImportDescription = computed(() => {
   const count = targetCount.value ?? 0;
   return count > 0
-    ? `Each line maps to one target, in order, across ${count} targets.`
+    ? `Each line maps to one target, in order, across all ${count} targets.`
     : "Each line maps to one target.";
 });
 const bulkInputValue = computed({
@@ -127,11 +127,11 @@ const currentGroupSummary = computed(() => {
     return "";
   }
 
-  return `This step includes ${count} test targets`;
+  return `This step includes ${count} targets`;
 });
 const currentAnnouncement = computed(() => {
   if (status.value !== "testing" || !currentStep.value) {
-    return "Add targets, then start the test.";
+    return "Enter your targets, then start testing.";
   }
 
   return `Test the following targets: ${formatTargetNames(
@@ -317,7 +317,7 @@ function formatTargetNames(indices: readonly number[], limit = TARGET_PREVIEW_LI
     return joinTargetLabels(labels);
   }
 
-  return `${joinTargetLabels(labels.slice(0, limit))} and ${labels.length - limit} more targets`;
+  return `${joinTargetLabels(labels.slice(0, limit))}, plus ${labels.length - limit} more`;
 }
 
 function getAllTargetsFromRanges(ranges: readonly TargetRange[]) {
@@ -335,7 +335,7 @@ function formatTargetRanges(ranges: readonly TargetRange[], limit = TARGET_PREVI
     return formatTargetNames(previewTargets, limit);
   }
 
-  return `${formatTargetNames(previewTargets, limit)} and ${count - limit} more targets`;
+  return `${formatTargetNames(previewTargets, limit)}, plus ${count - limit} more`;
 }
 
 function joinTargetLabels(labels: readonly string[]) {
@@ -343,7 +343,7 @@ function joinTargetLabels(labels: readonly string[]) {
     return "No targets";
   }
 
-  return labels.join("、");
+  return labels.join(", ");
 }
 
 async function startTest() {
@@ -369,7 +369,7 @@ async function startTest() {
     status.value = "idle";
     engineState.value = undefined;
     currentStep.value = undefined;
-    const message = error instanceof Error ? error.message : "The target count is too large to initialize on this page.";
+    const message = error instanceof Error ? error.message : "The target count is too large for this page to initialize.";
     announcement.value = `Unable to start: ${message}`;
   }
 }
@@ -419,7 +419,7 @@ async function undoLastTest() {
   engineState.value = rebuildEngineStateFromHistory();
   status.value = "testing";
   syncFromEngineState();
-  announcement.value = "Undone to the previous step.";
+  announcement.value = "Returned to the previous step.";
   await nextTick();
   testingPromptRef.value?.focus();
 }
@@ -534,8 +534,8 @@ Enter the target count and names, then follow the prompts to test each group and
             role="switch"
             :aria-checked="inputMode === 'list'"
             :aria-label="inputMode === 'list'
-              ? 'Currently using list input. Click to switch to bulk input.'
-              : 'Currently using bulk input. Click to switch to list input.'"
+              ? 'Currently using one-by-one input. Click to switch to bulk input.'
+              : 'Currently using bulk input. Click to switch to one-by-one input.'"
             @change="inputMode = inputMode === 'list' ? 'bulk' : 'list'"
           >
         </label>
@@ -543,7 +543,7 @@ Enter the target count and names, then follow the prompts to test each group and
           class="compat-test-tool__input-mode-label"
           :class="{ 'compat-test-tool__input-mode-label--active': inputMode === 'list' }"
         >
-          List input
+          One by one
         </span>
       </div>
     </div>
@@ -848,14 +848,14 @@ Enter the target count and names, then follow the prompts to test each group and
           class="compat-test-tool__danger-button"
           @click="answerCurrentTest(true)"
         >
-          Has compatibility issue
+          Issue reproduces
         </button>
         <button
           type="button"
           class="compat-test-tool__success-button"
           @click="answerCurrentTest(false)"
         >
-          No compatibility issue
+          No issue
         </button>
         <button
           type="button"
@@ -961,7 +961,7 @@ Enter the target count and names, then follow the prompts to test each group and
             'compat-test-tool__history-badge--pass': record.result === 'pass',
           }"
         >
-          {{ record.result === "issue" ? "Issue" : "Pass" }}
+          {{ record.result === "issue" ? "Issue" : "No issue" }}
         </span>
         <span>{{ formatTargetRanges(record.targetRanges) }}</span>
       </li>
@@ -971,8 +971,8 @@ Enter the target count and names, then follow the prompts to test each group and
 
 ## Notes
 
-- This tool helps find compatibility issues across multiple targets by narrowing the range with a binary-search-like divide-and-conquer process.
-- Each step gives the next group of targets to test. Run the test as prompted, then choose "Has compatibility issue" or "No compatibility issue" based on the actual result.
+- This tool helps find compatibility issues across multiple targets by narrowing the range with a divide-and-conquer process similar to binary search.
+- Each step gives the next group of targets to test. Run the test as prompted, then choose "Issue reproduces" or "No issue" based on the actual result.
 - It is a rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
 - If this tool helps you, consider starring [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc).
 

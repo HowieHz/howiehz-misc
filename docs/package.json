@@ -22,5 +22,8 @@
     "vitepress": "2.0.0-alpha.17",
     "vitepress-plugin-pagefind": "^0.4.19",
     "vitepress-plugin-rss": "^0.4.3"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

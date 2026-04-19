@@ -8,9 +8,9 @@ This tool helps find compatibility issues across multiple targets.
 
 [Start finding compatibility issues](https://howiehz.top/misc/en/tools/compatibility-test/)
 
-## Related Project
+## Related Package
 
-- [packages/compat-finder](../../../../packages/compat-finder/) is the corresponding compatibility issue finder engine and command-line tool.
+- [packages/compat-finder](../../../../packages/compat-finder/) contains the engine and command-line tool that power this page.
 
 ## Source Layout
 

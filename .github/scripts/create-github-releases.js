@@ -61,35 +61,6 @@ const githubRequest = async (url, options = {}) => {
   return response.json();
 };
 
-const extractChangelogEntry = (changelog, version) => {
-  const headingPattern = /^(#{1,6})\s+(.+?)\s*#*\s*$/u;
-  const lines = changelog.split(/\r?\n/u);
-  const startIndex = lines.findIndex((line) => {
-    const match = headingPattern.exec(line.trim());
-    return match?.[2] === version;
-  });
-
-  if (startIndex === -1) {
-    throw new Error(`Could not find a changelog entry for version ${version}.`);
-  }
-
-  const startHeading = headingPattern.exec(lines[startIndex].trim());
-  const startDepth = startHeading?.[1].length;
-  const endIndex = lines.findIndex((line, index) => {
-    if (index <= startIndex) {
-      return false;
-    }
-
-    const match = headingPattern.exec(line.trim());
-    return match?.[1].length === startDepth;
-  });
-
-  return lines
-    .slice(startIndex + 1, endIndex === -1 ? undefined : endIndex)
-    .join("\n")
-    .trim();
-};
-
 const createTag = (tagName) => {
   ensureGitSuccess(runGit(["tag", tagName]), `git tag ${tagName}`);
   ensureGitSuccess(runGit(["push", "origin", `refs/tags/${tagName}`]), `git push origin refs/tags/${tagName}`);
@@ -122,13 +93,13 @@ for (const directory of packageDirectories) {
     continue;
   }
 
-  const changelog = await fs.readFile(path.join(packageDirectory, "CHANGELOG.md"), "utf8");
   const tagName = `${packageJson.name}@${packageJson.version}`;
-  const changelogEntry = extractChangelogEntry(changelog, packageJson.version);
+  const changelogPath = path.posix.join(directory, "CHANGELOG.md");
+  const changelogUrl = `https://github.com/${repository}/blob/main/${changelogPath}`;
 
   createTag(tagName);
   await createGitHubRelease({
-    body: changelogEntry,
+    body: `Please refer to [Changelog](${changelogUrl}) for details.`,
     prerelease: packageJson.version.includes("-"),
     tagName,
   });

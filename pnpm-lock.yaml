@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      compat-finder:
+        specifier: workspace:*
+        version: link:packages/compat-finder
       lunar-javascript:
         specifier: ^1.7.7
         version: 1.7.7
@@ -111,6 +114,8 @@ importers:
       vue-eslint-parser:
         specifier: ^10.4.0
         version: 10.4.0(eslint@10.2.0)
+
+  packages/compat-finder: {}
 
 packages:
 

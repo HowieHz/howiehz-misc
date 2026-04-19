@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
+import path from "node:path";
 import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
 import readline from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
 import {
   applyCompatibilityTestAnswer,
@@ -544,7 +546,8 @@ function printResult(targetNames: readonly string[], state: CompatibilityTestSta
   console.log(formatTargetNames(targetNames, state.resultTargets));
 }
 
+const currentModulePath = fileURLToPath(import.meta.url);
 const invokedPath = process.argv[1];
-if (invokedPath?.endsWith("cli.ts")) {
+if (invokedPath && path.resolve(invokedPath) === currentModulePath) {
   void main();
 }

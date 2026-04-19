@@ -2,12 +2,41 @@
   "name": "compat-finder",
   "version": "0.1.0",
   "private": true,
-  "description": "CLI and engine for narrowing down incompatible targets.",
+  "description": "Find incompatible targets through guided compatibility checks.",
+  "keywords": [
+    "command-line",
+    "compatibility",
+    "compatibility-test",
+    "conflict",
+    "debugging"
+  ],
+  "homepage": "https://github.com/HowieHz/howiehz-misc/tree/main/packages/compat-finder",
+  "bugs": {
+    "url": "https://github.com/HowieHz/howiehz-misc/issues"
+  },
+  "license": "MIT",
+  "author": "HowieHz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HowieHz/howiehz-misc",
+    "directory": "packages/compat-finder"
+  },
+  "bin": {
+    "compat-finder": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "test": "vitest run"
   }
 }

@@ -149,6 +149,11 @@ const COMMAND_DEFINITIONS: Record<CliCommand, CommandDefinition> = {
   },
 };
 
+/**
+ * Runs the command-line entrypoint.
+ *
+ * @returns A promise that resolves when command execution completes.
+ */
 export async function main(): Promise<void> {
   const { options, error } = parseCliArgs(process.argv.slice(2));
 
@@ -196,6 +201,12 @@ function getCommandHelpText(command: CliCommand): string {
   ].join("\n");
 }
 
+/**
+ * Parses CLI arguments into normalized options.
+ *
+ * @param args The raw argument list without the executable and script paths.
+ * @returns The parsed options and an optional validation error.
+ */
 export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
   const options: CliOptions = {
     answers: [],
@@ -309,6 +320,11 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
   return { options };
 }
 
+/**
+ * Returns the root help text shown by the CLI.
+ *
+ * @returns The root help text.
+ */
 export function getRootHelpText(): string {
   return [
     "兼容性问题排查命令行工具",
@@ -412,6 +428,14 @@ function getTargetRangeCount(ranges: readonly TargetRange[]): number {
   return ranges.reduce((total, range) => total + Math.max(range.end - range.start + 1, 0), 0);
 }
 
+/**
+ * Returns the next CLI result for single-step execution.
+ *
+ * @param targetCount The total number of targets in the session.
+ * @param targetNames The target labels to use in the output.
+ * @param answers The answers that have already been applied.
+ * @returns A JSON-ready result for the next step or the final outcome.
+ */
 export function getNextCommandResult(
   targetCount: number,
   targetNames: readonly string[],
@@ -441,6 +465,13 @@ export function getNextCommandResult(
   };
 }
 
+/**
+ * Runs the interactive CLI workflow.
+ *
+ * @param targetCount The total number of targets in the session.
+ * @param targetNames The target labels to use in prompts and results.
+ * @returns A promise that resolves when the interactive session ends.
+ */
 async function runInteractiveCli(targetCount: number, targetNames: readonly string[]): Promise<void> {
   const rl = readline.createInterface({ input, output });
   const history: boolean[] = [];

@@ -4,7 +4,7 @@
 
 在线体验 -> [开始排查兼容性问题](https://howiehz.top/misc/tools/compatibility-test/)
 
-对应的引擎与命令行工具工作区包位于 [packages/compat-finder](../../../packages/compat-finder/)。
+引擎与命令行工具工作区包见：[packages/compat-finder](../../../packages/compat-finder/)。
 
 ## 文件结构
 

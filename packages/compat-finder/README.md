@@ -1,8 +1,10 @@
 # compat-finder
 
-兼容性问题排查引擎与命令行工具工作区包。由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
+- 本工具用于排查多个目标之间的兼容性问题。
+- 这是兼容性问题排查引擎与命令行工具所在的工作区包。
+- 由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
 
-在线版工具页面位于 [docs/tools/compatibility-test](../../docs/tools/compatibility-test/)。
+在线版页面见：[docs/tools/compatibility-test](../../docs/tools/compatibility-test/)。
 
 ## 文件结构
 

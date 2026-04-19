@@ -1,5 +1,10 @@
 {
   "extends": "./tsconfig.json",
+  "references": [
+    {
+      "path": "./tsconfig.shared.json"
+    }
+  ],
   "compilerOptions": {
     "composite": true,
     "declaration": true, // composite 已隐式启用 declaration，这里显式保留以强化意图
@@ -7,9 +12,5 @@
     "declarationDir": "./node_modules/.tmp/types/app",
     "lib": ["esnext", "dom", "dom.iterable"]
   },
-  "include": [
-    "docs/.vitepress/theme/**/*.ts",
-    "docs/.vitepress/types/**/*.d.ts",
-    "docs/tools/compatibility-test/compatibility-test.ts"
-  ]
+  "include": ["docs/.vitepress/theme/**/*.ts", "docs/.vitepress/types/**/*.d.ts"]
 }

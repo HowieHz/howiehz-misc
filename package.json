@@ -17,6 +17,7 @@
   "main": "index.js",
   "scripts": {
     "build": "pnpm run \"/:build$/\"",
+    "compat-test": "node --experimental-strip-types docs/tools/compatibility-test/cli.ts",
     "dev": "pnpm run \"/:dev$/\"",
     "docs:build": "vitepress build docs",
     "docs:dev": "vitepress dev docs",

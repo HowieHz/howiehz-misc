@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true, // composite 已隐式启用 declaration，这里显式保留以强化意图
+    "emitDeclarationOnly": true,
+    "declarationDir": "./node_modules/.tmp/types/shared",
+    "lib": ["esnext"]
+  },
+  "include": ["docs/tools/compatibility-test/compatibility-test.ts"]
+}

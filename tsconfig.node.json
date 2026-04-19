@@ -1,8 +1,15 @@
 {
   "extends": "./tsconfig.json",
+  "references": [
+    {
+      "path": "./tsconfig.shared.json"
+    }
+  ],
   "compilerOptions": {
     "composite": true,
-    "noEmit": true,
+    "declaration": true, // composite 已隐式启用 declaration，这里显式保留以强化意图
+    "emitDeclarationOnly": true,
+    "declarationDir": "./node_modules/.tmp/types/node",
     "lib": ["esnext"],
     "types": ["node"]
   },
@@ -11,6 +18,7 @@
     "docs/.vitepress/data/**/*.ts",
     "docs/.vitepress/utils/**/*.ts",
     "docs/.vitepress/types/**/*.d.ts",
-    "docs/**/*.data.ts"
+    "docs/**/*.data.ts",
+    "docs/tools/compatibility-test/cli.ts"
   ]
 }

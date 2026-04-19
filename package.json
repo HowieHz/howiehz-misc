@@ -27,9 +27,9 @@
     "compat-finder:test": "pnpm --filter compat-finder test",
     "compat-finder:watch": "pnpm --filter compat-finder watch",
     "docs:build": "pnpm run compat-finder:build && pnpm --filter docs build",
-    "docs:preview": "pnpm --filter docs preview",
+    "docs:preview": "pnpm run compat-finder:build && pnpm --filter docs preview",
     "docs:test": "pnpm --filter docs test",
-    "docs:watch": "pnpm --filter docs watch",
+    "docs:watch": "pnpm --parallel --stream --filter compat-finder --filter docs watch",
     "fmt": "pnpm run \"/^fmt:/\"",
     "fmt:oxfmt": "oxfmt \"**/*.{json,jsonc,yaml,md,css,js,ts,vue,html}\"",
     "lint": "pnpm run \"/^lint:/\"",
@@ -40,8 +40,7 @@
     "lint:type-check": "tsgo -b",
     "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm oxfmt -- --write .oxlintrc.json",
     "preinstall": "npx only-allow pnpm",
-    "test": "pnpm run \"/:test$/\"",
-    "watch": "pnpm run \"/:watch$/\""
+    "test": "pnpm run \"/:test$/\""
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.6.0",

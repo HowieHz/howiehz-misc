@@ -99,7 +99,7 @@ for (const directory of packageDirectories) {
 
   createTag(tagName);
   await createGitHubRelease({
-    body: `Please refer to [Changelog](${changelogUrl}) for details.`,
+    body: `Please refer to the [changelog](${changelogUrl}) for details.`,
     prerelease: packageJson.version.includes("-"),
     tagName,
   });

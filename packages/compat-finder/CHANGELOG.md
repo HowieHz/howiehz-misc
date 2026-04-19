@@ -1,6 +1,10 @@
-<!-- markdownlint-disable MD024 -->
-
 # compat-finder
+
+## 1.0.1
+
+### Patch Changes
+
+- [#52](https://github.com/HowieHz/howiehz-misc/pull/52) [`149d6d5`](https://github.com/HowieHz/howiehz-misc/commit/149d6d5fa3cfaf2aa398a20a25c75830125c1eee) Thanks [@HowieHz](https://github.com/HowieHz)! - Fix release workflow errors.
 
 ## 1.0.0
 

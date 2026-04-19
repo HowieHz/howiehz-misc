@@ -1,12 +1,15 @@
 {
   "extends": "../../tsconfig.json",
-  "compilerOptions": {
-    "composite": true,
-    "declaration": true,
-    "emitDeclarationOnly": true,
-    "declarationDir": "../../node_modules/.tmp/types/packages/compat-finder",
-    "lib": ["esnext"],
-    "types": ["node"]
-  },
-  "include": ["src/**/*.ts"]
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.shared.json"
+    },
+    {
+      "path": "./tsconfig.node.json"
+    },
+    {
+      "path": "./tsconfig.test.json"
+    }
+  ]
 }

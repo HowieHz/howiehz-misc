@@ -18,10 +18,12 @@
   "scripts": {
     "build": "pnpm run \"/:build$/\"",
     "compat-finder": "node --experimental-strip-types packages/compat-finder/src/cli.ts",
+    "compat-finder:test": "pnpm --filter compat-finder test",
     "dev": "pnpm run \"/:dev$/\"",
     "docs:build": "vitepress build docs",
     "docs:dev": "vitepress dev docs",
     "docs:preview": "pnpm run docs:build && vitepress preview docs",
+    "docs:test": "node -e \"console.log('No docs tests yet.')\"",
     "fmt": "pnpm run \"/^fmt:/\"",
     "fmt:oxfmt": "oxfmt \"**/*.{json,jsonc,yaml,md,css,js,ts,vue,html}\"",
     "lint": "pnpm run \"/^lint:/\"",
@@ -32,7 +34,7 @@
     "lint:type-check": "tsgo -b",
     "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm oxfmt -- --write .oxlintrc.json",
     "preinstall": "npx only-allow pnpm",
-    "test": "vitest run"
+    "test": "pnpm run \"/:test$/\""
   },
   "dependencies": {
     "compat-finder": "workspace:*",

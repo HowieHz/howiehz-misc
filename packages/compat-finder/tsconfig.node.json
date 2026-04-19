@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "references": [
+    {
+      "path": "./tsconfig.shared.json"
+    }
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "../../node_modules/.tmp/types/packages/compat-finder/node",
+    "lib": ["esnext"],
+    "types": ["node"]
+  },
+  "include": ["src/cli.ts"]
+}

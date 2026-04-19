@@ -1,17 +1,11 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "../../tsconfig.json",
   "references": [
     {
       "path": "./tsconfig.shared.json"
     },
     {
-      "path": "./packages/compat-finder/tsconfig.json"
-    },
-    {
       "path": "./tsconfig.node.json"
-    },
-    {
-      "path": "./tsconfig.app.json"
     }
   ],
   "compilerOptions": {
@@ -20,5 +14,5 @@
     "lib": ["esnext"],
     "types": ["node", "vitest/globals"]
   },
-  "include": ["packages/compat-finder/__tests__/**/*.ts"]
+  "include": ["__tests__/**/*.ts"]
 }

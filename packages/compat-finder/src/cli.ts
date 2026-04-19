@@ -51,7 +51,7 @@ interface CommandDefinition {
   usageLines: readonly string[];
 }
 
-const CLI_COMMAND_NAME = "compat-test";
+const CLI_COMMAND_NAME = "compat-finder";
 const CLI_HELP_HINT = "使用 --help 查看帮助。";
 const COMMAND_DEFINITIONS: Record<CliCommand, CommandDefinition> = {
   interactive: {

@@ -18,7 +18,6 @@
     "docs/.vitepress/data/**/*.ts",
     "docs/.vitepress/utils/**/*.ts",
     "docs/.vitepress/types/**/*.d.ts",
-    "docs/**/*.data.ts",
-    "docs/tools/compatibility-test/cli.ts"
+    "docs/**/*.data.ts"
   ]
 }

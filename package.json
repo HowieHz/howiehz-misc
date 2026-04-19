@@ -17,7 +17,7 @@
   "main": "index.js",
   "scripts": {
     "build": "pnpm run \"/:build$/\"",
-    "compat-test": "node --experimental-strip-types docs/tools/compatibility-test/cli.ts",
+    "compat-finder": "node --experimental-strip-types packages/compat-finder/src/cli.ts",
     "dev": "pnpm run \"/:dev$/\"",
     "docs:build": "vitepress build docs",
     "docs:dev": "vitepress dev docs",
@@ -35,6 +35,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "compat-finder": "workspace:*",
     "lunar-javascript": "^1.7.7"
   },
   "devDependencies": {

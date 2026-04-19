@@ -1,0 +1,10 @@
+{
+  "name": "compat-finder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CLI and engine for narrowing down incompatible targets.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

@@ -20,7 +20,7 @@ import {
   type CompatibilityTestState,
   type CompatibilityTestStep,
   type TargetRange,
-} from "./compatibility-test";
+} from "compat-finder";
 
 type TestStatus = "idle" | "testing" | "complete";
 type TestResult = "issue" | "pass";

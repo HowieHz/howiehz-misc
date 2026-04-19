@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getNextCommandResult, getRootHelpText, parseCliArgs } from "../cli.ts";
+import { getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli.ts";
 
 const TARGET_NAMES = ["Alpha", "Beta", "Gamma", "Delta"] as const;
 
@@ -40,7 +40,7 @@ describe("compatibility test cli", () => {
   it("returns dedicated root help text", () => {
     const helpText = getRootHelpText();
 
-    expect(helpText).toContain("compat-test <子命令> [参数]");
+    expect(helpText).toContain("compat-finder <子命令> [参数]");
     expect(helpText).toContain("interactive (i)");
     expect(helpText).toContain("next (n)");
   });

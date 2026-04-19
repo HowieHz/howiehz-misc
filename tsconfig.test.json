@@ -5,6 +5,9 @@
       "path": "./tsconfig.shared.json"
     },
     {
+      "path": "./packages/compat-finder/tsconfig.json"
+    },
+    {
       "path": "./tsconfig.node.json"
     },
     {
@@ -17,5 +20,5 @@
     "lib": ["esnext"],
     "types": ["node", "vitest/globals"]
   },
-  "include": ["docs/tools/compatibility-test/__tests__/**/*.ts"]
+  "include": ["packages/compat-finder/__tests__/**/*.ts"]
 }

@@ -7,5 +7,5 @@
     "declarationDir": "./node_modules/.tmp/types/shared",
     "lib": ["esnext"]
   },
-  "include": ["docs/tools/compatibility-test/compatibility-test.ts"]
+  "include": []
 }

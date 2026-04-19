@@ -3,6 +3,9 @@
   "references": [
     {
       "path": "./tsconfig.shared.json"
+    },
+    {
+      "path": "./packages/compat-finder/tsconfig.json"
     }
   ],
   "compilerOptions": {

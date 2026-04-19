@@ -9,6 +9,8 @@
     }
   ],
   "compilerOptions": {
+    "composite": true,
+    "emitDeclarationOnly": true,
     "module": "esnext",
     "target": "esnext",
     "moduleResolution": "bundler",

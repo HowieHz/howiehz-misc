@@ -6,8 +6,8 @@ const isDevBuild = process.env.npm_lifecycle_event === "build";
 
 const tsdownConfig: UserConfigExport = defineConfig([
   {
+    tsconfig: "tsconfig.neutral.json",
     dts: {
-      build: true,
       sourcemap: isDevBuild,
     },
     entry: {
@@ -19,11 +19,14 @@ const tsdownConfig: UserConfigExport = defineConfig([
       strict: true,
     },
     attw: {
-      ignoreRules: ['cjs-resolves-to-esm'],
+      profile: "esm-only",
     },
   },
   {
-    dts: false,
+    tsconfig: "tsconfig.node.json",
+    dts: {
+      sourcemap: isDevBuild,
+    },
     entry: {
       cli: "src/cli.ts",
     },

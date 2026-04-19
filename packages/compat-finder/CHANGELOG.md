@@ -1,5 +1,7 @@
 <!-- markdownlint-disable MD024 -->
 
+# compat-finder
+
 ## 1.0.1
 
 ### Patch Changes

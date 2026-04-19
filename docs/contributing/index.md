@@ -9,7 +9,7 @@ publish: false
 ## 快速上手
 
 1. 安装依赖：`pnpm install`
-2. 启动文档站：`pnpm docs:dev`
+2. 启动文档站：`pnpm docs:watch`
 3. 构建产物：`pnpm docs:build`
 4. 预览产物：`pnpm docs:preview`
 5. 提交前执行：`pnpm fmt`、`pnpm lint`、`pnpm test`

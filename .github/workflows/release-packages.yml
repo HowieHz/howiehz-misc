@@ -153,3 +153,24 @@ jobs:
           for package in "${packages[@]}"; do
             npm publish "$package" --access public
           done
+
+  create-github-releases:
+    name: Create GitHub releases
+    needs: [prepare-release, publish-packages]
+    if: needs.prepare-release.outputs.has-release-packages == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # https://github.com/actions/checkout/releases/tag/v6.0.2
+        with:
+          token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
+          sparse-checkout: |
+            .github/scripts
+            packages
+
+      - name: Create Git tags and GitHub releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
+          PACKAGE_DIRECTORIES_JSON: ${{ needs.prepare-release.outputs.package-directories-json }}
+        run: node .github/scripts/create-github-releases.js

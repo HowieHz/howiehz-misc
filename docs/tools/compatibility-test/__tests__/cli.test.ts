@@ -40,7 +40,7 @@ describe("compatibility test cli", () => {
   it("returns dedicated root help text", () => {
     const helpText = getRootHelpText();
 
-    expect(helpText).toContain("pnpm compat-test -- <子命令> [参数]");
+    expect(helpText).toContain("compat-test <子命令> [参数]");
     expect(helpText).toContain("interactive (i)");
     expect(helpText).toContain("next (n)");
   });

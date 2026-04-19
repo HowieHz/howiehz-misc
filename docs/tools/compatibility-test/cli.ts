@@ -51,6 +51,7 @@ interface CommandDefinition {
   usageLines: readonly string[];
 }
 
+const CLI_COMMAND_NAME = "compat-test";
 const CLI_HELP_HINT = "使用 --help 查看帮助。";
 const COMMAND_DEFINITIONS: Record<CliCommand, CommandDefinition> = {
   interactive: {
@@ -315,7 +316,7 @@ export function getRootHelpText() {
     "兼容性问题排查命令行工具",
     "",
     "用法：",
-    "  pnpm compat-test -- <子命令> [参数]",
+    `  ${CLI_COMMAND_NAME} <子命令> [参数]`,
     "",
     "子命令：",
     ...getCommandListLines(),
@@ -336,15 +337,15 @@ function getCommandListLines() {
 }
 
 function formatCommandUsage(command: CliCommand, suffix = "") {
-  return `pnpm compat-test -- ${command}${suffix ? ` ${suffix}` : ""}`;
+  return `${CLI_COMMAND_NAME} ${command}${suffix ? ` ${suffix}` : ""}`;
 }
 
 function formatHelpCommand(command: CliCommand) {
-  return `pnpm compat-test --help ${command}`;
+  return `${CLI_COMMAND_NAME} --help ${command}`;
 }
 
 function formatDefaultInteractiveUsage(suffix: string) {
-  return `pnpm compat-test -- ${suffix}`;
+  return `${CLI_COMMAND_NAME} ${suffix}`;
 }
 
 function printCliError(message: string) {
@@ -402,7 +403,7 @@ function getTargetLabel(targetNames: readonly string[], index: number) {
 }
 
 function formatTargetNames(targetNames: readonly string[], targets: readonly number[]) {
-  return targets.map((target) => getTargetLabel(targetNames, target)).join("、");
+  return targets.map((target) => getTargetLabel(targetNames, target)).join(",");
 }
 
 function getAllTargetsFromRanges(ranges: readonly TargetRange[]) {

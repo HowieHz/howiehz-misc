@@ -7,20 +7,29 @@
     "HowieHz"
   ],
   "homepage": "https://howiehz.top/misc",
+  "bugs": {
+    "url": "https://github.com/HowieHz/howiehz-misc/issues"
+  },
   "license": "MIT",
   "author": "HowieHz",
   "repository": {
     "type": "git",
-    "url": "https://github.com/HowieHz/howiehz-misc"
+    "url": "git+https://github.com/HowieHz/howiehz-misc.git"
   },
   "type": "module",
-  "main": "index.js",
   "scripts": {
-    "build": "pnpm run \"/:build$/\"",
-    "dev": "pnpm run \"/:dev$/\"",
-    "docs:build": "vitepress build docs",
-    "docs:dev": "vitepress dev docs",
-    "docs:preview": "pnpm run docs:build && vitepress preview docs",
+    "changeset": "changeset",
+    "changeset:publish": "changeset publish",
+    "changeset:version": "changeset version",
+    "compat-finder": "node --experimental-strip-types packages/compat-finder/src/cli.ts",
+    "compat-finder:build": "pnpm --filter compat-finder build",
+    "compat-finder:build:release": "pnpm --filter compat-finder build:release",
+    "compat-finder:test": "pnpm --filter compat-finder test",
+    "compat-finder:watch": "pnpm --filter compat-finder watch",
+    "docs:build": "pnpm run compat-finder:build && pnpm --filter docs build",
+    "docs:preview": "pnpm run compat-finder:build && pnpm --filter docs preview",
+    "docs:test": "pnpm --filter docs test",
+    "docs:watch": "pnpm --parallel --stream --filter compat-finder --filter docs watch",
     "fmt": "pnpm run \"/^fmt:/\"",
     "fmt:oxfmt": "oxfmt \"**/*.{json,jsonc,yaml,md,css,js,ts,vue,html}\"",
     "lint": "pnpm run \"/^lint:/\"",
@@ -29,18 +38,15 @@
     "lint:oxlint+eslint": "oxlint --type-aware --fix && eslint --fix",
     "lint:style": "stylelint --fix \"**/*.{css,vue}\" \"docs/.vitepress/**/*.{css,vue}\" --ignore-path .gitignore",
     "lint:type-check": "tsgo -b",
-    "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm run fmt",
+    "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm oxfmt -- --write .oxlintrc.json",
     "preinstall": "npx only-allow pnpm",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "lunar-javascript": "^1.7.7"
+    "test": "pnpm run \"/:test$/\""
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.6.0",
+    "@changesets/cli": "^2.31.0",
     "@eslint/compat": "^2.0.5",
     "@eslint/js": "^10.0.1",
-    "@giscus/vue": "^3.1.1",
-    "@nolebase/vitepress-plugin-highlight-targeted-heading": "^2.18.2",
     "@types/node": "^25.6.0",
     "@typescript-eslint/parser": "^8.58.2",
     "@typescript/native-preview": "7.0.0-dev.20260418.1",
@@ -52,27 +58,18 @@
     "eslint-plugin-oxlint": "^1.60.0",
     "eslint-plugin-vue": "^10.8.0",
     "globals": "^17.5.0",
-    "lightningcss": "^1.32.0",
     "markdownlint-cli": "^0.48.0",
     "oxfmt": "^0.45.0",
     "oxlint": "^1.60.0",
     "oxlint-tsgolint": "^0.21.0",
-    "pagefind": "^1.5.2",
     "stylelint": "^17.8.0",
     "stylelint-config-html": "^1.1.0",
     "stylelint-config-recommended-vue": "^1.6.1",
     "stylelint-config-standard": "^40.0.0",
     "stylelint-order": "^8.1.1",
     "typescript-eslint": "^8.58.2",
-    "vitepress": "2.0.0-alpha.17",
-    "vitepress-plugin-pagefind": "^0.4.19",
-    "vitepress-plugin-rss": "^0.4.3",
     "vitest": "^4.0.16",
-    "vue": "^3.5.32",
     "vue-eslint-parser": "^10.4.0"
-  },
-  "overrides": {
-    "vite": "npm:rolldown-vite@^7.3.1"
   },
   "browserslist": [
     "defaults",

@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "declarationDir": "../node_modules/.tmp/types/docs/node",
+    "lib": ["esnext"],
+    "types": ["node"]
+  },
+  "include": [
+    ".vitepress/config.ts",
+    ".vitepress/data/**/*.ts",
+    ".vitepress/utils/**/*.ts",
+    ".vitepress/types/**/*.d.ts",
+    "**/*.data.ts"
+  ]
+}

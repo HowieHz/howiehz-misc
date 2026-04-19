@@ -2,16 +2,16 @@
   "files": [],
   "references": [
     {
-      "path": "./tsconfig.node.json"
+      "path": "./packages/compat-finder/tsconfig.json"
     },
     {
-      "path": "./tsconfig.app.json"
-    },
-    {
-      "path": "./tsconfig.test.json"
+      "path": "./docs/tsconfig.json"
     }
   ],
   "compilerOptions": {
+    "composite": true,
+    "declaration": true, // 生成 .d.ts 文件 (compostie 为 ture 时此处默认为 true，但保持明确声明)
+    "emitDeclarationOnly": true,
     "module": "esnext",
     "target": "esnext",
     "moduleResolution": "bundler",
@@ -22,7 +22,9 @@
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
-    "isolatedModules": true // 启用了 verbatimModuleSyntax 后这个冗余，但保持明确声明符合文档 https://cn.vitejs.dev/guide/features#isolatedmodules
+    "isolatedModules": true, // 启用了 verbatimModuleSyntax 后这个冗余，但保持明确声明符合文档 https://cn.vitejs.dev/guide/features#isolatedmodules
+    "isolatedDeclarations": true
   }
 }

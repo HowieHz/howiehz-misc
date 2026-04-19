@@ -1,0 +1,58 @@
+{
+  "name": "compat-finder",
+  "version": "0.1.0",
+  "description": "Find incompatible targets through guided compatibility checks.",
+  "keywords": [
+    "CLI",
+    "cli",
+    "command line",
+    "command-line",
+    "commands",
+    "compatibility",
+    "compatibility-test",
+    "debug",
+    "interactive",
+    "tool"
+  ],
+  "homepage": "https://github.com/HowieHz/howiehz-misc/tree/main/packages/compat-finder",
+  "bugs": {
+    "url": "https://github.com/HowieHz/howiehz-misc/issues"
+  },
+  "license": "MIT",
+  "author": "HowieHz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HowieHz/howiehz-misc.git",
+    "directory": "packages/compat-finder"
+  },
+  "bin": {
+    "compat-finder": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "build:release": "tsdown --minify",
+    "prepack": "pnpm run build:release",
+    "test": "vitest run",
+    "watch": "tsdown --watch"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/core": "^0.18.2",
+    "publint": "^0.3.18",
+    "tsdown": "^0.21.9",
+    "vitest": "^4.1.4"
+  },
+  "engines": {
+    "node": "^20 || ^22 || >=24"
+  }
+}

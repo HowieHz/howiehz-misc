@@ -6,7 +6,7 @@ import {
   getCurrentCompatibilityTestStep,
   skipCachedCompatibilityTestSteps,
   type TargetRange,
-} from "../compatibility-test";
+} from "../src/compatibility-test.ts";
 
 interface Scenario {
   targetCount: number;

@@ -1,0 +1,44 @@
+name: Build Package
+description: Setup pnpm & Node.js, install dependencies, build a workspace package, and upload artifact
+
+inputs:
+  build-command:
+    description: pnpm command used to build the package
+    required: false
+    default: "pnpm compat-finder:build"
+  artifact-name:
+    description: Name for the uploaded build artifact
+    required: false
+    default: "compat-finder-dist"
+  artifact-path:
+    description: Path to the build output directory
+    required: false
+    default: "packages/compat-finder/dist"
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # https://github.com/pnpm/action-setup/releases/tag/v5.0.0
+      name: Install pnpm
+      with:
+        run_install: false
+
+    - name: Setup Node.js
+      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # https://github.com/actions/setup-node/releases/tag/v6.3.0
+      with:
+        node-version: 24
+        cache: "pnpm"
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Build Package
+      shell: bash
+      run: ${{ inputs.build-command }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.artifact-path }}

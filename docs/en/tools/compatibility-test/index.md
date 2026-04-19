@@ -3,7 +3,7 @@ publish: false
 published: 2026-04-18T15:30:00+08:00
 ---
 
-# 兼容性问题排查器
+# Compatibility Issue Finder
 
 <!-- autocorrect-disable -->
 <script setup lang="ts">
@@ -64,11 +64,11 @@ const targetCount = computed(() => parsedTargetCount.value);
 const targetCountError = computed(() => {
   const normalizedValue = targetCountText.value.trim();
   if (normalizedValue === "") {
-    return "请输入大于 0 的整数";
+    return "Enter an integer greater than 0";
   }
 
   if (parsedTargetCount.value === undefined) {
-    return "请输入大于 0 的整数";
+    return "Enter an integer greater than 0";
   }
 
   return undefined;
@@ -99,8 +99,8 @@ const visibleTargetRows = computed<TargetRow[]>(() => {
 const bulkImportDescription = computed(() => {
   const count = targetCount.value ?? 0;
   return count > 0
-    ? `每行对应一个目标，将按顺序映射到 ${count} 个目标。`
-    : "每行对应一个目标。";
+    ? `Each line maps to one target, in order, across all ${count} targets.`
+    : "Each line maps to one target.";
 });
 const bulkInputValue = computed({
   get() {
@@ -127,17 +127,17 @@ const currentGroupSummary = computed(() => {
     return "";
   }
 
-  return `本次包含 ${count} 个测试目标`;
+  return `This step includes ${count} targets`;
 });
 const currentAnnouncement = computed(() => {
   if (status.value !== "testing" || !currentStep.value) {
-    return "填写目标后开始测试。";
+    return "Enter the target count and names, then start the test.";
   }
 
-  return `请测试下列目标：${formatTargetNames(
+  return `Test the following targets: ${formatTargetNames(
     getAllTargetsFromRanges(currentStep.value.promptTargetRanges),
     Number.MAX_SAFE_INTEGER,
-  )}。`;
+  )}.`;
 });
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
@@ -170,15 +170,15 @@ const confirmedTargetSet = computed(() => (
 ));
 const progressText = computed(() => {
   if (status.value === "idle") {
-    return "尚未开始";
+    return "Not started";
   }
 
-  return `已完成 ${testHistory.value.length} 次测试`;
+  return `${testHistory.value.length} test runs completed`;
 });
 const resultLabel = computed(() => (
   incompatibleTargets.value.length > 0
-    ? `下列 ${incompatibleTargets.value.length} 个目标有兼容性问题`
-    : "未发现兼容性问题"
+    ? `The following ${incompatibleTargets.value.length} targets have compatibility issues`
+    : "No compatibility issues found"
 ));
 
 watch(status, async (value, previousValue) => {
@@ -304,11 +304,11 @@ function getTargetName(index: number) {
 
 function getTargetLabel(index: number) {
   const name = getTargetName(index).trim();
-  return name.length > 0 ? name : `目标 ${index}`;
+  return name.length > 0 ? name : `Target ${index}`;
 }
 
 function getConfirmedTargetA11yLabel(index: number) {
-  return `${getTargetLabel(index)}（已确定）`;
+  return `${getTargetLabel(index)} (confirmed)`;
 }
 
 function formatTargetNames(indices: readonly number[], limit = TARGET_PREVIEW_LIMIT) {
@@ -317,7 +317,7 @@ function formatTargetNames(indices: readonly number[], limit = TARGET_PREVIEW_LI
     return joinTargetLabels(labels);
   }
 
-  return `${joinTargetLabels(labels.slice(0, limit))} 等 ${labels.length} 个目标`;
+  return `${joinTargetLabels(labels.slice(0, limit))}, plus ${labels.length - limit} more`;
 }
 
 function getAllTargetsFromRanges(ranges: readonly TargetRange[]) {
@@ -335,21 +335,21 @@ function formatTargetRanges(ranges: readonly TargetRange[], limit = TARGET_PREVI
     return formatTargetNames(previewTargets, limit);
   }
 
-  return `${formatTargetNames(previewTargets, limit)} 等 ${count} 个目标`;
+  return `${formatTargetNames(previewTargets, limit)}, plus ${count - limit} more`;
 }
 
 function joinTargetLabels(labels: readonly string[]) {
   if (labels.length === 0) {
-    return "暂无目标";
+    return "No targets";
   }
 
-  return labels.join("、");
+  return labels.join(", ");
 }
 
 async function startTest() {
   const parsedCount = parsedTargetCount.value;
   if (parsedCount === undefined) {
-    announcement.value = `无法开始测试：${targetCountError.value}`;
+    announcement.value = `Unable to start: ${targetCountError.value}`;
     return;
   }
 
@@ -362,15 +362,15 @@ async function startTest() {
   try {
     engineState.value = createCompatibilityTestState(count);
     currentStep.value = getCurrentCompatibilityTestStep(engineState.value);
-    announcement.value = `已开始新一轮测试，共 ${count} 个目标。`;
+    announcement.value = `Started a new test with ${count} targets.`;
     await nextTick();
     testingPromptRef.value?.focus();
   } catch (error) {
     status.value = "idle";
     engineState.value = undefined;
     currentStep.value = undefined;
-    const message = error instanceof Error ? error.message : "当前数量过大，页面暂时无法完成初始化。";
-    announcement.value = `无法开始测试：${message}`;
+    const message = error instanceof Error ? error.message : "The target count is too large for this page to initialize.";
+    announcement.value = `Unable to start: ${message}`;
   }
 }
 
@@ -419,7 +419,7 @@ async function undoLastTest() {
   engineState.value = rebuildEngineStateFromHistory();
   status.value = "testing";
   syncFromEngineState();
-  announcement.value = "已撤回到上一步。";
+  announcement.value = "Returned to the previous step.";
   await nextTick();
   testingPromptRef.value?.focus();
 }
@@ -445,13 +445,13 @@ function completeRound() {
   status.value = "complete";
   currentStep.value = undefined;
   announcement.value = incompatibleTargets.value.length > 0
-    ? `测试完成，发现 ${incompatibleTargets.value.length} 个目标有兼容性问题：${formatTargetNames(incompatibleTargets.value)}。`
-    : "测试完成，未发现兼容性问题。";
+    ? `Test complete. Found ${incompatibleTargets.value.length} targets with compatibility issues: ${formatTargetNames(incompatibleTargets.value)}.`
+    : "Test complete. No compatibility issues found.";
 }
 </script>
 <!-- autocorrect-enable -->
 
-填写测试目标总数和名称后，按页面提示组合测试并反馈结果。
+Enter the target count and names, then follow the prompts to test each suggested group and report whether the issue occurs.
 
 <div class="compat-test-tool">
   <p
@@ -468,7 +468,7 @@ function completeRound() {
   >
     <div class="compat-test-tool__field">
       <div class="compat-test-tool__field-head">
-        <label for="compat-test-count">测试目标总数</label>
+        <label for="compat-test-count">Target count</label>
         <p
           v-if="targetCountError"
           id="compat-test-count-error"
@@ -480,7 +480,7 @@ function completeRound() {
       <div class="compat-test-tool__count-stepper">
         <button
           type="button"
-          aria-label="测试目标总数减一"
+          aria-label="Decrease target count by one"
           @click="stepTargetCount(-1)"
         >
           -
@@ -499,7 +499,7 @@ function completeRound() {
         >
         <button
           type="button"
-          aria-label="测试目标总数加一"
+          aria-label="Increase target count by one"
           @click="stepTargetCount(1)"
         >
           +
@@ -511,7 +511,7 @@ function completeRound() {
       class="compat-test-tool__primary-button"
       :disabled="Boolean(targetCountError)"
     >
-      {{ isRoundActive ? "重新开始测试" : "开始测试" }}
+      {{ isRoundActive ? "Restart test" : "Start test" }}
     </button>
   </form>
   <div
@@ -519,13 +519,13 @@ function completeRound() {
     class="compat-test-tool__target-panel"
   >
     <div class="compat-test-tool__label-row">
-      <h2 id="compat-test-targets">测试目标</h2>
+      <h2 id="compat-test-targets">Test targets</h2>
       <div class="compat-test-tool__input-mode">
         <span
           class="compat-test-tool__input-mode-label"
           :class="{ 'compat-test-tool__input-mode-label--active': inputMode === 'bulk' }"
         >
-          批量输入
+          Bulk entry
         </span>
         <label class="compat-test-tool__mode-switch">
           <input
@@ -534,8 +534,8 @@ function completeRound() {
             role="switch"
             :aria-checked="inputMode === 'list'"
             :aria-label="inputMode === 'list'
-              ? '当前为逐项填写，点击切换为批量输入'
-              : '当前为批量输入，点击切换为逐项填写'"
+              ? 'Currently using individual entry. Switch to bulk entry.'
+              : 'Currently using bulk entry. Switch to individual entry.'"
             @change="inputMode = inputMode === 'list' ? 'bulk' : 'list'"
           >
         </label>
@@ -543,7 +543,7 @@ function completeRound() {
           class="compat-test-tool__input-mode-label"
           :class="{ 'compat-test-tool__input-mode-label--active': inputMode === 'list' }"
         >
-          逐项填写
+          Individual entry
         </span>
       </div>
     </div>
@@ -555,13 +555,13 @@ function completeRound() {
         for="compat-test-bulk-import"
         class="compat-test-tool__sr-only"
       >
-        批量输入目标名称
+        Enter target names in bulk
       </label>
       <textarea
         id="compat-test-bulk-import"
         :value="bulkInputValue"
         rows="4"
-        placeholder="请在此处输入目标名称；不填写则采用默认名称。"
+        placeholder="Enter target names here. Empty lines use default names."
         aria-describedby="compat-test-bulk-import-description compat-test-bulk-import-note"
         @input="handleBulkImportInput"
       />
@@ -571,7 +571,7 @@ function completeRound() {
           id="compat-test-bulk-import-note"
           class="compat-test-tool__sr-only"
         >
-          不填写的目标会使用默认名称。
+          Targets left empty use default names.
         </span>
       </div>
     </div>
@@ -580,7 +580,7 @@ function completeRound() {
       id="compat-test-target-name-note"
       class="compat-test-tool__sr-only"
     >
-      目标名称可以留空；留空时会使用默认名称。
+      Target names can be empty. Empty names use default labels.
     </p>
     <template v-if="inputMode === 'list'">
       <ol
@@ -603,13 +603,13 @@ function completeRound() {
             class="compat-test-tool__sr-only"
             :for="target.id"
           >
-            第 {{ target.index }} 个测试目标名称
+            Name for test target {{ target.index }}
           </label>
           <input
             :id="target.id"
             :value="getTargetName(target.index)"
             autocomplete="off"
-            :placeholder="`目标 ${target.index}`"
+            :placeholder="`Target ${target.index}`"
             aria-describedby="compat-test-target-name-note"
             @input="handleTargetNameInput($event, target.index)"
           >
@@ -619,7 +619,7 @@ function completeRound() {
         v-if="(targetCount ?? 0) > TARGET_PREVIEW_COUNT"
         class="compat-test-tool__pagination"
         role="group"
-        aria-label="目标列表分页"
+        aria-label="Target list pagination"
       >
         <button
           type="button"
@@ -628,14 +628,14 @@ function completeRound() {
           aria-controls="compat-test-target-list"
           @click="stepTargetListPage(-1)"
         >
-          上一页
+          Previous
         </button>
         <div class="compat-test-tool__page-status-slot">
           <button
             v-if="!isEditingTargetListPage"
             type="button"
             class="compat-test-tool__page-status compat-test-tool__page-status-button"
-            :aria-label="`当前第 ${targetListPage} 页，共 ${targetListPageCount} 页。点击后可跳转页码`"
+            :aria-label="`Current page ${targetListPage} of ${targetListPageCount}. Click to jump to a page.`"
             @click="startEditingTargetListPage"
           >
             {{ targetListPage }} / {{ targetListPageCount }}
@@ -648,7 +648,7 @@ function completeRound() {
             inputmode="numeric"
             autocomplete="off"
             class="compat-test-tool__page-status-input"
-            :aria-label="`输入要跳转的页码，当前共 ${targetListPageCount} 页`"
+            :aria-label="`Enter the page number to jump to. There are ${targetListPageCount} pages.`"
             @input="handleTargetListPageInput"
             @blur="finishEditingTargetListPage"
             @keydown.enter.prevent="finishEditingTargetListPage"
@@ -662,18 +662,18 @@ function completeRound() {
           aria-controls="compat-test-target-list"
           @click="stepTargetListPage(1)"
         >
-          下一页
+          Next
         </button>
       </div>
     </template>
   </div>
   <div class="compat-test-tool__test-panel">
     <div class="compat-test-tool__label-row">
-      <h2 id="compat-test-current">当前测试</h2>
+      <h2 id="compat-test-current">Current step</h2>
       <div
         class="compat-test-tool__label-row-actions"
         role="group"
-        aria-label="当前测试选项"
+        aria-label="Current step options"
       >
         <label class="compat-test-tool__switch">
           <input
@@ -687,14 +687,14 @@ function completeRound() {
             class="compat-test-tool__input-mode-label"
             :class="{ 'compat-test-tool__input-mode-label--active': diffModeEnabled }"
           >
-            差异模式
+            Diff mode
           </span>
         </label>
         <span
           id="compat-test-diff-mode-note"
           class="compat-test-tool__sr-only"
         >
-          开启后会按与上一步相同、本次新增和本次移除三组显示目标变化。
+          When enabled, targets are grouped by unchanged, added, and removed targets compared with the previous step.
         </span>
       </div>
     </div>
@@ -723,7 +723,7 @@ function completeRound() {
           id="compat-test-current-targets-label"
           class="compat-test-tool__diff-label"
         >
-          请测试下列目标
+          Test the following targets
         </p>
         <div
           class="compat-test-tool__chip-list"
@@ -752,7 +752,7 @@ function completeRound() {
             id="compat-test-diff-same-label"
             class="compat-test-tool__diff-label"
           >
-            与上一步相同
+            Unchanged from previous step
           </p>
           <div
             class="compat-test-tool__chip-list"
@@ -774,7 +774,7 @@ function completeRound() {
             v-if="getTargetRangeCount(targetsUnchanged) === 0"
             class="compat-test-tool__diff-empty"
           >
-            无
+            None
           </p>
         </div>
         <div
@@ -786,7 +786,7 @@ function completeRound() {
             id="compat-test-diff-add-label"
             class="compat-test-tool__diff-label"
           >
-            本次新增
+            Added this step
           </p>
           <div
             class="compat-test-tool__chip-list"
@@ -806,7 +806,7 @@ function completeRound() {
             v-if="getTargetRangeCount(targetsToAdd) === 0"
             class="compat-test-tool__diff-empty"
           >
-            无
+            None
           </p>
         </div>
         <div
@@ -818,7 +818,7 @@ function completeRound() {
             id="compat-test-diff-remove-label"
             class="compat-test-tool__diff-label"
           >
-            本次移除
+            Removed this step
           </p>
           <div
             class="compat-test-tool__chip-list"
@@ -838,7 +838,7 @@ function completeRound() {
             v-if="getTargetRangeCount(targetsToRemove) === 0"
             class="compat-test-tool__diff-empty"
           >
-            无
+            None
           </p>
         </div>
       </template>
@@ -848,14 +848,14 @@ function completeRound() {
           class="compat-test-tool__danger-button"
           @click="answerCurrentTest(true)"
         >
-          有兼容性问题
+          Issue present
         </button>
         <button
           type="button"
           class="compat-test-tool__success-button"
           @click="answerCurrentTest(false)"
         >
-          没有兼容性问题
+          No issue found
         </button>
         <button
           type="button"
@@ -863,7 +863,7 @@ function completeRound() {
           :disabled="!canUndoLastTest"
           @click="undoLastTest"
         >
-          撤回上一步
+          Undo last step
         </button>
       </div>
     </template>
@@ -882,7 +882,7 @@ function completeRound() {
             id="compat-test-result-title"
             class="compat-test-tool__prompt-kicker"
           >
-            测试完成
+            Test complete
           </p>
         </div>
         <div
@@ -919,7 +919,7 @@ function completeRound() {
           class="compat-test-tool__primary-button"
           @click="startTest"
         >
-          重新开始测试
+          Restart test
         </button>
         <button
           v-if="canUndoLastTest"
@@ -927,7 +927,7 @@ function completeRound() {
           class="compat-test-tool__secondary-button"
           @click="undoLastTest"
         >
-          撤回上一步
+          Undo last step
         </button>
       </div>
     </template>
@@ -935,7 +935,7 @@ function completeRound() {
       v-else
       class="compat-test-tool__empty"
     >
-      填写目标总数和名称后，点击“开始测试”。
+      Enter the target count and names, then click "Start test".
     </p>
   </div>
   <div
@@ -943,7 +943,7 @@ function completeRound() {
     class="compat-test-tool__history"
   >
     <div class="compat-test-tool__label-row">
-      <h2 id="compat-test-history">测试记录</h2>
+      <h2 id="compat-test-history">Test history</h2>
       <span>{{ progressText }}</span>
     </div>
     <ol
@@ -961,7 +961,7 @@ function completeRound() {
             'compat-test-tool__history-badge--pass': record.result === 'pass',
           }"
         >
-          {{ record.result === "issue" ? "有问题" : "无问题" }}
+          {{ record.result === "issue" ? "Issue present" : "No issue found" }}
         </span>
         <span>{{ formatTargetRanges(record.targetRanges) }}</span>
       </li>
@@ -969,28 +969,29 @@ function completeRound() {
   </div>
 </div>
 
-## 说明
+## Overview
 
-- 本工具用于排查多个目标之间的兼容性问题，基于二分法和分治思想逐步缩小范围。
-- 页面每次都会给出下一轮需要测试的目标。你只需要按提示完成测试，再根据实际结果选择“有兼容性问题”或“没有兼容性问题”。
-- 本页由 [`compat-finder`](https://www.npmjs.com/package/compat-finder) 驱动。
-- 如果这个工具对你有帮助，欢迎前往 [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc) 点个 ⭐ 支持一下。
+- This tool helps isolate compatibility issues across multiple targets by narrowing the range step by step with a divide-and-conquer process similar to binary search.
+- Each step gives you the next group of targets to test. Run that group as prompted, then choose "Issue present" or "No issue found" based on the actual result.
+- This page is powered by [`compat-finder`](https://www.npmjs.com/package/compat-finder).
+- It is a rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
+- If this tool helps you, consider starring [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc).
 
-## 使用场景
+## Use cases
 
-### 排查一组插件内部的问题
+### Troubleshooting conflicts within a modpack or plugin set
 
-比如你手上有一个包含 20 个插件的整合包，启动后会报错，但暂时还不清楚究竟是哪几个插件彼此冲突。此时可以先将测试目标总数设为 20，再按照页面给出的分组逐轮启用或禁用插件，并根据实际结果选择“有”或“没有”兼容性问题。
+For example, suppose you have a pack with 20 mods or plugins. It fails to start, but you do not yet know which ones conflict with each other. Set the target count to 20, then enable or disable the items in each group suggested by the page and report whether the issue occurs.
 
-经过几轮测试后，排查器会逐步将范围缩小到具体目标。这样既不用从第一个插件开始逐个排查，也不用完全靠经验猜测。
+After a few rounds, the range narrows to the specific targets involved. That lets you avoid testing every item one by one from the start or relying entirely on guesswork.
 
-这类场景适用于我的世界、上古卷轴、模拟人生、环世界、星露谷物语、泰拉瑞亚、骑马与砍杀、Garry's Mod、求生之路等游戏的模组排查；也适用于油猴脚本、浏览器扩展、Rainmeter 雨滴插件等需要定位兼容性冲突的场景。
+This works well for troubleshooting mods in games such as Minecraft, The Elder Scrolls, The Sims, RimWorld, Stardew Valley, Terraria, Mount & Blade, Garry's Mod, and Left 4 Dead. It can also help with userscripts, browser extensions, Rainmeter skins, and other cases where compatibility conflicts need to be isolated.
 
-### 排查自己的插件和谁冲突
+### Finding conflicts with your own plugin
 
-如果自己写了一个插件，想确认它和另外 10 个插件里哪些存在冲突，可以把自己的插件固定保留，只把另外 10 个插件作为测试目标。
+If you wrote a plugin and want to find which of 10 other plugins conflict with it, keep your own plugin enabled at all times and use only the other 10 plugins as test targets.
 
-页面提示要测试哪些目标，就把这些目标和自己的插件一起放进环境里测试。最后得到的结果，就是和自己的插件存在兼容性问题的目标。
+When the page tells you which targets to test, run them alongside your own plugin. The final result is the set of targets that conflict with it.
 
 <style scoped>
 .compat-test-tool {

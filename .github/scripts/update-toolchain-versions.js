@@ -37,6 +37,11 @@ const parseSemVer = (version) => {
 };
 
 const compareSemVer = (left, right) => left.major - right.major || left.minor - right.minor || left.patch - right.patch;
+const nodeReleasePublishedAtCache = new Map();
+let nodeReleaseIndexPromise;
+let activeNodeLtsMajorsPromise;
+const latestNodeLtsMajorCache = new Map();
+const latestNodeEngineRangeCache = new Map();
 
 const parseNodeEngineMajor = (value) => {
   const match = /^>=(\d+)$/u.exec(typeof value === "string" ? value.trim() : "");
@@ -47,6 +52,25 @@ const parseNodeEngineMajor = (value) => {
 
   return Number(match[1]);
 };
+
+const parseNodeEngineSingleFloor = (value) => {
+  const nodeMajor = parseNodeEngineMajor(value);
+
+  if (nodeMajor === null) {
+    return null;
+  }
+
+  return {
+    major: nodeMajor,
+    mode: "single-floor",
+  };
+};
+
+const parseNodeEngineLtsTracks = (value) => {
+  return typeof value === "string" && value.includes("||") ? { mode: "lts-tracks" } : null;
+};
+
+const parseNodeEngineSpec = (value) => parseNodeEngineSingleFloor(value) ?? parseNodeEngineLtsTracks(value);
 
 const parsePackageManagerPnpmVersion = (value) => {
   const match = /^pnpm@(.+)$/u.exec(typeof value === "string" ? value.trim() : "");
@@ -103,10 +127,11 @@ const maybeWriteFile = async (filePath, nextContent) => {
 const readCurrentToolchainVersions = async () => {
   const { content } = await readUtf8FileWithLineEnding(rootPackageJsonPath);
   const packageJson = JSON.parse(content);
-  const nodeMajor = parseNodeEngineMajor(packageJson.engines?.node);
+  const nodeEngine = typeof packageJson.engines?.node === "string" ? packageJson.engines.node.trim() : "";
+  const parsedNodeEngine = parseNodeEngineSpec(nodeEngine);
   const pnpmVersion = parsePackageManagerPnpmVersion(packageJson.packageManager);
 
-  if (nodeMajor === null) {
+  if (!parsedNodeEngine) {
     throw new Error(`Invalid current Node.js engine range in ${rootPackageJsonPath}`);
   }
 
@@ -115,12 +140,17 @@ const readCurrentToolchainVersions = async () => {
   }
 
   return {
-    nodeMajor,
+    nodeEngine,
+    parsedNodeEngine,
     pnpmVersion,
   };
 };
 
 const fetchNodeReleasePublishedAt = async (versionTag) => {
+  if (nodeReleasePublishedAtCache.has(versionTag)) {
+    return nodeReleasePublishedAtCache.get(versionTag);
+  }
+
   const response = await fetch(
     `https://api.github.com/repos/nodejs/node/releases/tags/${encodeURIComponent(versionTag)}`,
     {
@@ -143,45 +173,20 @@ const fetchNodeReleasePublishedAt = async (versionTag) => {
     throw new Error(`Missing published date for Node.js release ${versionTag}`);
   }
 
+  nodeReleasePublishedAtCache.set(versionTag, publishedAt);
   return publishedAt;
 };
 
 const fetchLatestNodeLtsMajor = async (currentNodeMajor) => {
+  if (latestNodeLtsMajorCache.has(currentNodeMajor)) {
+    return latestNodeLtsMajorCache.get(currentNodeMajor);
+  }
+
   // The official Node.js release index identifies the currently active LTS line.
   // GitHub releases expose an exact published timestamp so the 24-hour holdback remains strict.
-  const response = await fetch("https://nodejs.org/download/release/index.json", {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "howiehz-misc-toolchain-updater",
-    },
-  });
+  const releases = await fetchNodeReleaseIndex();
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Node.js release index: ${response.status} ${response.statusText}`);
-  }
-
-  const releases = await response.json();
-
-  if (!Array.isArray(releases)) {
-    throw new Error("Invalid Node.js release index response");
-  }
-
-  const latestLtsRelease = releases
-    .map((release) => {
-      const version = typeof release.version === "string" ? release.version.trim() : "";
-      const parsedVersion = parseSemVer(version);
-
-      if (!release.lts || !parsedVersion) {
-        return null;
-      }
-
-      return {
-        version,
-        parsedVersion,
-      };
-    })
-    .filter((release) => release !== null)
-    .sort((left, right) => compareSemVer(right.parsedVersion, left.parsedVersion))[0];
+  const latestLtsRelease = releases.sort((left, right) => compareSemVer(right.parsedVersion, left.parsedVersion))[0];
 
   if (!latestLtsRelease) {
     throw new Error("Unable to determine the latest Node.js LTS release");
@@ -193,10 +198,168 @@ const fetchLatestNodeLtsMajor = async (currentNodeMajor) => {
     console.log(
       `Skipping Node.js update because latest LTS ${latestLtsRelease.version} was published at ${publishedAt} and is still within the 24-hour holdback`,
     );
+    latestNodeLtsMajorCache.set(currentNodeMajor, currentNodeMajor);
     return currentNodeMajor;
   }
 
+  latestNodeLtsMajorCache.set(currentNodeMajor, latestLtsRelease.parsedVersion.major);
   return latestLtsRelease.parsedVersion.major;
+};
+
+const fetchNodeReleaseIndex = async () => {
+  nodeReleaseIndexPromise ??= (async () => {
+    const response = await fetch("https://nodejs.org/download/release/index.json", {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "howiehz-misc-toolchain-updater",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Node.js release index: ${response.status} ${response.statusText}`);
+    }
+
+    const releases = await response.json();
+
+    if (!Array.isArray(releases)) {
+      throw new Error("Invalid Node.js release index response");
+    }
+
+    return releases
+      .map((release) => {
+        const version = typeof release.version === "string" ? release.version.trim() : "";
+        const parsedVersion = parseSemVer(version);
+
+        if (!release.lts || !parsedVersion) {
+          return null;
+        }
+
+        return {
+          parsedVersion,
+          version,
+        };
+      })
+      .filter((release) => release !== null);
+  })();
+
+  return nodeReleaseIndexPromise;
+};
+
+const fetchActiveNodeLtsMajors = async (now = Date.now()) => {
+  activeNodeLtsMajorsPromise ??= (async () => {
+    const response = await fetch("https://raw.githubusercontent.com/nodejs/Release/main/schedule.json", {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "howiehz-misc-toolchain-updater",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Node.js release schedule: ${response.status} ${response.statusText}`);
+    }
+
+    const schedule = await response.json();
+
+    if (!schedule || typeof schedule !== "object") {
+      throw new Error("Invalid Node.js release schedule response");
+    }
+
+    return Object.entries(schedule)
+      .map(([key, line]) => {
+        const majorMatch = /^v(\d+)$/u.exec(key);
+
+        if (!majorMatch || !line || typeof line !== "object") {
+          return null;
+        }
+
+        const ltsTimestamp = parseTimestamp(line.lts);
+        const endTimestamp = parseTimestamp(line.end);
+
+        if (ltsTimestamp === null || endTimestamp === null) {
+          return null;
+        }
+
+        if (now < ltsTimestamp || now >= endTimestamp) {
+          return null;
+        }
+
+        return Number(majorMatch[1]);
+      })
+      .filter((major) => major !== null)
+      .sort((left, right) => left - right);
+  })();
+
+  return activeNodeLtsMajorsPromise;
+};
+
+const formatNodeEngineTrackRange = (releases) =>
+  releases
+    .map((release, index) => `${index === releases.length - 1 ? ">=" : "^"}${release.parsedVersion.major}`)
+    .join(" || ");
+
+const resolveLatestLtsReleaseForMajor = (releases, major) => {
+  const release = releases
+    .filter((candidate) => candidate.parsedVersion.major === major)
+    .sort((left, right) => compareSemVer(right.parsedVersion, left.parsedVersion))[0];
+
+  if (!release) {
+    throw new Error(`Unable to determine the latest Node.js LTS release for major ${major}`);
+  }
+
+  return release;
+};
+
+const fetchLatestNodeEngineRange = async (currentNodeEngine, parsedNodeEngine) => {
+  if (latestNodeEngineRangeCache.has(currentNodeEngine)) {
+    return latestNodeEngineRangeCache.get(currentNodeEngine);
+  }
+
+  if (parsedNodeEngine.mode === "single-floor") {
+    const nodeMajor = await fetchLatestNodeLtsMajor(parsedNodeEngine.major);
+
+    const result = {
+      nodeEngineRange: `>=${nodeMajor}`,
+      nodeMajor,
+    };
+
+    latestNodeEngineRangeCache.set(currentNodeEngine, result);
+    return result;
+  }
+
+  const activeLtsMajors = await fetchActiveNodeLtsMajors();
+
+  if (activeLtsMajors.length < 2) {
+    throw new Error("Unable to determine enough active Node.js LTS lines for track-based engine updates");
+  }
+
+  const releases = await fetchNodeReleaseIndex();
+  const selectedReleases = activeLtsMajors.map((major) => resolveLatestLtsReleaseForMajor(releases, major));
+
+  for (const release of selectedReleases) {
+    const publishedAt = await fetchNodeReleasePublishedAt(release.version);
+
+    if (!hasReachedLatestReleaseMinAge(publishedAt)) {
+      console.log(
+        `Skipping Node.js update because latest LTS ${release.version} was published at ${publishedAt} and is still within the 24-hour holdback`,
+      );
+
+      const result = {
+        nodeEngineRange: currentNodeEngine,
+        nodeMajor: selectedReleases.at(-1).parsedVersion.major,
+      };
+
+      latestNodeEngineRangeCache.set(currentNodeEngine, result);
+      return result;
+    }
+  }
+
+  const result = {
+    nodeEngineRange: formatNodeEngineTrackRange(selectedReleases),
+    nodeMajor: selectedReleases.at(-1).parsedVersion.major,
+  };
+
+  latestNodeEngineRangeCache.set(currentNodeEngine, result);
+  return result;
 };
 
 const fetchLatestPnpmVersion = async (currentPnpmVersion) => {
@@ -280,18 +443,46 @@ const collectPackageJsonFiles = async (directoryPath = ".") => {
   return filePaths.sort((left, right) => left.localeCompare(right));
 };
 
-const updatePackageJson = async (filePath, nodeMajor, pnpmVersion) => {
+const resolvePackageNodeEngineRange = async (
+  filePath,
+  packageJson,
+  fallbackNodeEngineRange,
+  fallbackParsedNodeEngine,
+) => {
+  const currentNodeEngine = typeof packageJson.engines?.node === "string" ? packageJson.engines.node.trim() : "";
+
+  if (currentNodeEngine === "") {
+    return {
+      nodeEngineRange: fallbackNodeEngineRange,
+      nodeMajor: fallbackParsedNodeEngine.major ?? null,
+    };
+  }
+
+  const parsedNodeEngine = parseNodeEngineSpec(currentNodeEngine);
+
+  if (!parsedNodeEngine) {
+    throw new Error(`Invalid current Node.js engine range in ${filePath}`);
+  }
+
+  return fetchLatestNodeEngineRange(currentNodeEngine, parsedNodeEngine);
+};
+
+const updatePackageJson = async (filePath, fallbackNodeEngineRange, fallbackParsedNodeEngine, pnpmVersion) => {
   const { content, lineEnding } = await readUtf8FileWithLineEnding(filePath);
   const packageJson = JSON.parse(content);
   const updatedFields = [];
 
   packageJson.engines ??= {};
+  const { nodeEngineRange } = await resolvePackageNodeEngineRange(
+    filePath,
+    packageJson,
+    fallbackNodeEngineRange,
+    fallbackParsedNodeEngine,
+  );
 
-  const nextNodeRange = `>=${nodeMajor}`;
-
-  if (packageJson.engines.node !== nextNodeRange) {
-    packageJson.engines.node = nextNodeRange;
-    updatedFields.push(`engines.node -> ${nextNodeRange}`);
+  if (packageJson.engines.node !== nodeEngineRange) {
+    packageJson.engines.node = nodeEngineRange;
+    updatedFields.push(`engines.node -> ${nodeEngineRange}`);
   }
 
   if (filePath === rootPackageJsonPath) {
@@ -318,12 +509,12 @@ const updatePackageJson = async (filePath, nodeMajor, pnpmVersion) => {
   return updatedFields;
 };
 
-const updatePackageJsonFiles = async (nodeMajor, pnpmVersion) => {
+const updatePackageJsonFiles = async (fallbackNodeEngineRange, fallbackParsedNodeEngine, pnpmVersion) => {
   const packageJsonFiles = await collectPackageJsonFiles();
   const updateGroups = [];
 
   for (const filePath of packageJsonFiles) {
-    const updates = await updatePackageJson(filePath, nodeMajor, pnpmVersion);
+    const updates = await updatePackageJson(filePath, fallbackNodeEngineRange, fallbackParsedNodeEngine, pnpmVersion);
 
     if (updates.length > 0) {
       updateGroups.push({ filePath, updates });
@@ -436,14 +627,21 @@ const updateNodeVersionFiles = async (nodeMajor) => {
 };
 
 const currentToolchainVersions = await readCurrentToolchainVersions();
-const nodeMajor = await fetchLatestNodeLtsMajor(currentToolchainVersions.nodeMajor);
+const { nodeEngineRange, nodeMajor } = await fetchLatestNodeEngineRange(
+  currentToolchainVersions.nodeEngine,
+  currentToolchainVersions.parsedNodeEngine,
+);
 const pnpmVersion = await fetchLatestPnpmVersion(currentToolchainVersions.pnpmVersion);
 
-console.log(`Resolved target Node.js LTS major: ${nodeMajor}`);
+console.log(`Resolved workflow Node.js LTS major: ${nodeMajor}`);
 console.log(`Resolved target pnpm version: ${pnpmVersion}`);
 
 const nodeVersionUpdateGroups = await updateNodeVersionFiles(nodeMajor);
-const packageJsonUpdateGroups = await updatePackageJsonFiles(nodeMajor, pnpmVersion);
+const packageJsonUpdateGroups = await updatePackageJsonFiles(
+  nodeEngineRange,
+  currentToolchainVersions.parsedNodeEngine,
+  pnpmVersion,
+);
 
 const updateGroups = [...packageJsonUpdateGroups, ...nodeVersionUpdateGroups].filter(
   ({ updates }) => updates.length > 0,

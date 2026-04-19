@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "declarationDir": "../../node_modules/.tmp/types/packages/compat-finder/shared",
+    "lib": ["esnext"]
+  },
+  "include": ["src/index.ts", "src/compatibility-test.ts"]
+}

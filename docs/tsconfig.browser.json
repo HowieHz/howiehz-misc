@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.json",
+  "references": [
+    {
+      "path": "../packages/compat-finder/tsconfig.neutral.json"
+    }
+  ],
+  "compilerOptions": {
+    "declarationDir": "../node_modules/.tmp/types/docs/app",
+    "lib": ["esnext", "dom", "dom.iterable"]
+  },
+  "include": [".vitepress/theme/**/*.ts", ".vitepress/types/**/*.d.ts"]
+}

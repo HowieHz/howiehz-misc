@@ -1,9 +1,12 @@
-# 皓子的杂站
+# HowieHz Misc
 
-> Personal Misc Site: For things that don't belong on the main site.  
-> 这个站点主要用来放一些不太适合放在主站里的内容。
+English | [简体中文](./README.zh.md)
 
-## 子项目导航
+A personal misc site for things that do not belong on the main site.
 
-- [兼容性问题排查器](docs/tools/compatibility-test/)
-- [天干地支计算器](docs/tools/ganzhi/)
+## Projects
+
+- Compatibility Issue Finder:
+  - [compat-finder](packages/compat-finder/): engine and command-line tool
+  - [Online tool](docs/en/tools/compatibility-test/)
+- [Ganzhi calculator (Chinese)](docs/tools/ganzhi/)

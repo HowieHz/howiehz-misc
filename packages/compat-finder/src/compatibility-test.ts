@@ -1,8 +1,14 @@
+/**
+ * Represents an inclusive range of target indexes.
+ */
 export interface TargetRange {
   start: number;
   end: number;
 }
 
+/**
+ * Describes the next step to present to the caller.
+ */
 export interface CompatibilityTestStep {
   promptTargetRanges: readonly TargetRange[];
   promptTargetCount: number;
@@ -10,16 +16,25 @@ export interface CompatibilityTestStep {
   requiresAnswer: boolean;
 }
 
+/**
+ * Exposes the current internal search state in range form.
+ */
 export interface CompatibilityTestDebugStep {
   activeTargetRange: TargetRange;
   pendingTargetRanges: readonly TargetRange[];
   confirmedTargetRanges: readonly TargetRange[];
 }
 
+/**
+ * Represents the mutable state of a compatibility test session.
+ */
 export interface CompatibilityTestState {
   targetCount: number;
+  /** Encoded path of the active search branch. */
   insideArrow: string;
+  /** Encoded paths of deferred search branches. */
   outsideArrows: string[];
+  /** Targets already confirmed by previous narrowing steps. */
   definedTargets: number[];
   cachedResults: Map<string, boolean>;
   stopped: boolean;
@@ -27,7 +42,11 @@ export interface CompatibilityTestState {
 }
 
 /**
- * Creates the initial state for the compatibility test flow.
+ * Creates a new compatibility test session.
+ *
+ * @param targetCount The total number of targets to evaluate.
+ * @returns A new mutable session state.
+ * @throws {Error} Thrown when `targetCount` is not a positive integer.
  */
 export function createCompatibilityTestState(targetCount: number): CompatibilityTestState {
   if (!Number.isInteger(targetCount) || targetCount < 1) {
@@ -46,7 +65,10 @@ export function createCompatibilityTestState(targetCount: number): Compatibility
 }
 
 /**
- * Builds the current step shown to the user from the internal arrow-based state.
+ * Returns the current step for the provided session state.
+ *
+ * @param state The session state to inspect.
+ * @returns The current step, or `undefined` when the session is complete.
  */
 export function getCurrentCompatibilityTestStep(state: CompatibilityTestState): CompatibilityTestStep | undefined {
   if (state.stopped) {
@@ -65,7 +87,11 @@ export function getCurrentCompatibilityTestStep(state: CompatibilityTestState): 
 }
 
 /**
- * Records the current answer and advances the state machine once.
+ * Applies one answer and advances the session state.
+ *
+ * @param state The session state to update.
+ * @param hasIssue Whether the current prompt reproduces the compatibility issue.
+ * @returns The next step, or `undefined` when the session is complete.
  */
 export function applyCompatibilityTestAnswer(
   state: CompatibilityTestState,
@@ -88,7 +114,10 @@ export function applyCompatibilityTestAnswer(
 }
 
 /**
- * Automatically skips repeated prompt sets that already have cached answers.
+ * Advances through cached steps until a new answer is required or the session completes.
+ *
+ * @param state The session state to advance.
+ * @returns The next uncached step, or `undefined` when the session is complete.
  */
 export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState): CompatibilityTestStep | undefined {
   let step = getCurrentCompatibilityTestStep(state);
@@ -106,11 +135,24 @@ export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState):
   return step;
 }
 
-export function countTargetsInRanges(ranges: readonly TargetRange[]) {
+/**
+ * Counts the number of targets covered by the provided ranges.
+ *
+ * @param ranges The ranges to count.
+ * @returns The total number of covered targets.
+ */
+export function countTargetsInRanges(ranges: readonly TargetRange[]): number {
   return ranges.reduce((total, range) => total + getRangeLength(range), 0);
 }
 
-export function takeTargetsFromRanges(ranges: readonly TargetRange[], limit: number) {
+/**
+ * Expands target ranges into target indexes up to the provided limit.
+ *
+ * @param ranges The ranges to expand.
+ * @param limit The maximum number of targets to return.
+ * @returns The expanded target indexes, in ascending order.
+ */
+export function takeTargetsFromRanges(ranges: readonly TargetRange[], limit: number): number[] {
   if (limit <= 0) {
     return [];
   }
@@ -129,7 +171,17 @@ export function takeTargetsFromRanges(ranges: readonly TargetRange[], limit: num
   return targets;
 }
 
-export function intersectTargetRanges(leftRanges: readonly TargetRange[], rightRanges: readonly TargetRange[]) {
+/**
+ * Returns the normalized intersection of two target range lists.
+ *
+ * @param leftRanges The left-hand operand.
+ * @param rightRanges The right-hand operand.
+ * @returns The normalized intersection ranges.
+ */
+export function intersectTargetRanges(
+  leftRanges: readonly TargetRange[],
+  rightRanges: readonly TargetRange[],
+): TargetRange[] {
   const left = normalizeRanges(leftRanges);
   const right = normalizeRanges(rightRanges);
   const intersections: TargetRange[] = [];
@@ -156,7 +208,17 @@ export function intersectTargetRanges(leftRanges: readonly TargetRange[], rightR
   return intersections;
 }
 
-export function subtractTargetRanges(sourceRanges: readonly TargetRange[], excludedRanges: readonly TargetRange[]) {
+/**
+ * Removes excluded ranges from the source ranges and returns the normalized remainder.
+ *
+ * @param sourceRanges The source ranges.
+ * @param excludedRanges The ranges to remove from the source.
+ * @returns The normalized remainder.
+ */
+export function subtractTargetRanges(
+  sourceRanges: readonly TargetRange[],
+  excludedRanges: readonly TargetRange[],
+): TargetRange[] {
   const source = normalizeRanges(sourceRanges);
   const excluded = normalizeRanges(excludedRanges);
   const result: TargetRange[] = [];
@@ -229,10 +291,8 @@ function getCompatibilityTestDebugStep(state: CompatibilityTestState): Compatibi
   };
 }
 
-/**
- * Dispatches to the next transition branch based on the latest test result.
- */
-function advanceCompatibilityTestState(state: CompatibilityTestState, hasIssue: boolean) {
+/** Advances the session using the latest test result. */
+function advanceCompatibilityTestState(state: CompatibilityTestState, hasIssue: boolean): void {
   if (hasIssue) {
     advanceIssueState(state);
     return;
@@ -241,10 +301,8 @@ function advanceCompatibilityTestState(state: CompatibilityTestState, hasIssue: 
   advancePassState(state);
 }
 
-/**
- * Narrows the currently suspected subset when the tested group still reproduces the issue.
- */
-function advanceIssueState(state: CompatibilityTestState) {
+/** Narrows the active branch after a failing result. */
+function advanceIssueState(state: CompatibilityTestState): void {
   const insideRange = resolveArrowRange(state, state.insideArrow);
   if (getRangeLength(insideRange) === 1) {
     if (state.outsideArrows.length === 0) {
@@ -268,10 +326,8 @@ function advanceIssueState(state: CompatibilityTestState) {
   state.insideArrow += "l";
 }
 
-/**
- * Moves to the sibling subset, or promotes the current subset into the outside stack when needed.
- */
-function advancePassState(state: CompatibilityTestState) {
+/** Moves to the next branch after a passing result. */
+function advancePassState(state: CompatibilityTestState): void {
   if (state.insideArrow.endsWith("l")) {
     state.insideArrow = `${state.insideArrow.slice(0, -1)}r`;
     return;
@@ -281,35 +337,31 @@ function advancePassState(state: CompatibilityTestState) {
   state.insideArrow = `${state.insideArrow.slice(0, -1)}ll`;
 }
 
-function getTargetSetKey(ranges: readonly TargetRange[]) {
+function getTargetSetKey(ranges: readonly TargetRange[]): string {
   return normalizeRanges(ranges)
     .map((range) => (range.start === range.end ? String(range.start) : `${range.start}-${range.end}`))
     .join(",");
 }
 
-/**
- * Checks whether the current prompt already spans the full target set.
- */
-function isFullTargetSet(state: CompatibilityTestState, ranges: readonly TargetRange[]) {
+/** Returns whether the given ranges cover the full target set. */
+function isFullTargetSet(state: CompatibilityTestState, ranges: readonly TargetRange[]): boolean {
   const normalizedRanges = normalizeRanges(ranges);
   return (
     normalizedRanges.length === 1 && normalizedRanges[0].start === 1 && normalizedRanges[0].end === state.targetCount
   );
 }
 
-/**
- * Marks the state machine as finished and stores the final incompatible targets.
- */
-function stopCompatibilityTest(state: CompatibilityTestState, resultTargets: readonly number[]) {
+/** Marks the session as finished and stores the final result. */
+function stopCompatibilityTest(state: CompatibilityTestState, resultTargets: readonly number[]): void {
   state.resultTargets = [...resultTargets];
   state.stopped = true;
 }
 
-function getRangeLength(range: TargetRange) {
+function getRangeLength(range: TargetRange): number {
   return Math.max(range.end - range.start + 1, 0);
 }
 
-function normalizeRanges(ranges: readonly TargetRange[]) {
+function normalizeRanges(ranges: readonly TargetRange[]): TargetRange[] {
   const sortedRanges = ranges
     .filter((range) => range.start <= range.end)
     .map((range) => ({ start: range.start, end: range.end }))

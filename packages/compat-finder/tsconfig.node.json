@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "references": [
+    {
+      "path": "./tsconfig.neutral.json"
+    }
+  ],
+  "compilerOptions": {
+    "declarationDir": "../../node_modules/.tmp/types/packages/compat-finder/node",
+    "lib": ["esnext"],
+    "types": ["node"]
+  },
+  "include": ["src/cli.ts", "src/cli-main.ts", "tsdown.config.ts"]
+}

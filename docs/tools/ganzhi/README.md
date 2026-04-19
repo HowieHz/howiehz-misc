@@ -2,8 +2,10 @@
 
 因为记不住天干地支，搜索网上的工具时又一直没找到一个无广告、功能完整、用起来顺手的，所以做了这个工具。
 
-在线体验 -> [开始使用天干地支计算器](https://howiehz.top/misc/tools/ganzhi/)
+## 在线体验
 
-## 文件结构
+[开始使用天干地支计算器](https://howiehz.top/misc/tools/ganzhi/)
+
+## 源码结构
 
 - [index.md](./index.md) 是工具页面与交互面板。

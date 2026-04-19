@@ -14,7 +14,6 @@
     "url": "https://github.com/HowieHz/howiehz-misc"
   },
   "type": "module",
-  "main": "index.js",
   "scripts": {
     "build": "pnpm run compat-finder:build:dev && pnpm run docs:build",
     "compat-finder": "node --experimental-strip-types packages/compat-finder/src/cli.ts",

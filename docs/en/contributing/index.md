@@ -9,9 +9,9 @@ Feel free to submit or revise content via PR.
 ## Quick Start
 
 1. Install dependencies: `pnpm install`
-2. Start the docs site: `pnpm docs:dev`
-3. Build artifacts: `pnpm docs:build`
-4. Preview artifacts: `pnpm docs:preview`
+2. Start the docs development server with hot reload: `pnpm docs:watch`
+3. Build the docs site: `pnpm docs:build`
+4. Build the docs site and start the preview server: `pnpm docs:preview`
 5. Before submitting, run: `pnpm fmt` and `pnpm lint`
 
 ## Using Vue in Markdown

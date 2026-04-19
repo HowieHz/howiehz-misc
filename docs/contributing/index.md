@@ -9,9 +9,9 @@ publish: false
 ## 快速上手
 
 1. 安装依赖：`pnpm install`
-2. 启动文档站：`pnpm docs:watch`
-3. 构建产物：`pnpm docs:build`
-4. 预览产物：`pnpm docs:preview`
+2. 启动支持热更新的文档站开发服务器：`pnpm docs:watch`
+3. 构建文档：`pnpm docs:build`
+4. 构建文档站并启动预览服务器：`pnpm docs:preview`
 5. 提交前执行：`pnpm fmt`、`pnpm lint`、`pnpm test`
 
 ## 在 Markdown 使用 Vue

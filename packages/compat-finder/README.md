@@ -100,6 +100,32 @@ compat-finder --help interactive
 compat-finder --help next
 ```
 
+### Locale
+
+CLI messages can be localized with a command-line option or environment variables.
+
+Priority:
+
+1. Command-line option: `--locale` / `-l`
+2. Environment variable: `COMPAT_FINDER_LOCALE`
+3. Environment variable: `LC_ALL`
+4. Environment variable: `LC_MESSAGES`
+5. Environment variable: `LANG`
+6. Default: `en`
+
+Supported locales:
+
+- `en`
+- `zh-CN`
+
+Examples:
+
+```bash
+compat-finder --locale zh-CN --help
+compat-finder -l zh-CN next -c 3 -a "y,n"
+COMPAT_FINDER_LOCALE=zh-CN compat-finder next -c 3 -a "y,n"
+```
+
 ### Commands
 
 #### `interactive`

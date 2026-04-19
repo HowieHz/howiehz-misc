@@ -13,5 +13,5 @@
     "lib": ["esnext"],
     "types": ["node", "vitest/globals"]
   },
-  "include": ["__tests__/**/*.ts"]
+  "include": ["__tests__/**/*.ts", "src/locales/**/*.ts"]
 }

@@ -12,6 +12,13 @@ import {
   type CompatibilityTestStep,
   type TargetRange,
 } from "./compatibility-test.ts";
+import {
+  getCliMessages,
+  normalizeCliLocale,
+  resolveCliLocale,
+  type CliLocale,
+  type CliMessages,
+} from "./locales/index.ts";
 
 type CliCommand = "interactive" | "next";
 type HelpScope = "command" | "root";
@@ -29,6 +36,7 @@ interface CliOptions {
   names: string[];
   help: boolean;
   helpScope: HelpScope;
+  locale: CliLocale;
 }
 
 interface ParsedArgsResult {
@@ -50,74 +58,63 @@ interface CommandDefinition {
 }
 
 const CLI_COMMAND_NAME = "compat-finder";
-const CLI_HELP_HINT = "使用 --help 查看帮助。";
-const COMMAND_DEFINITIONS: Record<CliCommand, CommandDefinition> = {
+const COMMAND_ALIASES: Record<CliCommand, string> = {
+  interactive: "i",
+  next: "n",
+};
+
+const buildCommandDefinitions = (messages: CliMessages): Record<CliCommand, CommandDefinition> => ({
   interactive: {
     alias: "i",
-    description: "启动交互式排查流程",
+    description: messages.commands.interactive.description,
     options: [
-      "--count, -c <number>   测试目标总数，必须是大于 0 的整数",
-      "--names, -n <items>    目标名称列表，使用英文逗号分隔；可选",
-      "--help, -h             显示帮助",
+      `--count, -c <number>   ${messages.countOptionDescription}`,
+      `--names, -n <items>    ${messages.commands.interactive.namesOptionDescription}`,
+      `--locale, -l <locale>  ${messages.localeOptionDescription}`,
+      `--help, -h             ${messages.helpOptionDescription}`,
     ],
     sections: [
       {
         lines: ["i"],
-        title: "别名",
+        title: messages.aliasesTitle,
       },
       {
-        lines: [formatCommandUsage("interactive", "-c 4"), formatCommandUsage("interactive", '-c 4 -n "A,B,C,D"')],
-        title: "示例",
+        lines: messages.commands.interactive.exampleLines,
+        title: messages.examplesTitle,
       },
-      {
-        lines: [
-          "CLI 会逐轮给出需要测试的目标。",
-          "你只需要根据实际结果输入：",
-          "  y / yes / issue / 1    表示“有兼容性问题”",
-          "  n / no / pass / 0      表示“没有兼容性问题”",
-          "  u / undo               撤回上一步",
-          "  q / quit               退出",
-        ],
-        title: "交互说明",
-      },
+      ...messages.commands.interactive.extraSections,
     ],
     usageLines: [
-      formatCommandUsage("interactive", "--count <数量> [--names <名称列表>]"),
-      formatDefaultInteractiveUsage("--count <数量> [--names <名称列表>]"),
+      formatCommandUsage("interactive", messages.commands.interactive.usageSuffix),
+      formatDefaultInteractiveUsage(messages.commands.interactive.usageSuffix),
     ],
   },
   next: {
     alias: "n",
-    description: "执行单步排查计算并输出结果",
+    description: messages.commands.next.description,
     options: [
-      "--count, -c <number>   测试目标总数，必须是大于 0 的整数",
-      "--answers, -a <items>  已有回答列表，使用英文逗号分隔；可选",
-      "--names, -n <items>    目标名称列表，使用英文逗号分隔；可选",
-      "--help, -h             显示帮助",
+      `--count, -c <number>   ${messages.countOptionDescription}`,
+      `--answers, -a <items>  ${messages.commands.next.answerOptionDescription ?? ""}`,
+      `--names, -n <items>    ${messages.commands.next.namesOptionDescription}`,
+      `--locale, -l <locale>  ${messages.localeOptionDescription}`,
+      `--help, -h             ${messages.helpOptionDescription}`,
     ],
     sections: [
       {
         lines: ["n"],
-        title: "别名",
+        title: messages.aliasesTitle,
       },
       {
-        lines: [
-          "status                 testing 表示当前需要按 targets 列表进行测试；complete 表示已经得到最终结果",
-          "targetCount            本轮排查的测试目标总数",
-          "targets                testing 时表示当前需要测试的目标列表；complete 时表示最终结果列表",
-        ],
-        title: "返回字段说明",
+        lines: messages.commands.next.outputFieldLines ?? [],
+        title: messages.commands.next.outputFieldTitle ?? "",
       },
       {
-        lines: [
-          "y / yes / issue / 1 / true      表示“有兼容性问题”",
-          "n / no / pass / 0 / false       表示“没有兼容性问题”",
-        ],
-        title: "answers 取值说明",
+        lines: messages.commands.next.answerHelpLines ?? [],
+        title: "answers",
       },
       {
-        lines: ['--answers "issue,pass,1,0"'],
-        title: "单步模式 answers 示例",
+        lines: messages.commands.next.exampleLines,
+        title: messages.examplesTitle,
       },
       {
         lines: [
@@ -142,12 +139,12 @@ const COMMAND_DEFINITIONS: Record<CliCommand, CommandDefinition> = {
           '  "targets": ["目标 1", "目标 2"]',
           "}",
         ],
-        title: "单步模式输出示例（3 个目标）",
+        title: messages.commands.next.outputExampleTitle ?? "",
       },
     ],
-    usageLines: [formatCommandUsage("next", "--count <数量> [--answers <回答列表>] [--names <名称列表>]")],
+    usageLines: [formatCommandUsage("next", messages.commands.next.usageSuffix)],
   },
-};
+});
 
 /**
  * Runs the command-line entrypoint.
@@ -156,48 +153,50 @@ const COMMAND_DEFINITIONS: Record<CliCommand, CommandDefinition> = {
  */
 export async function main(): Promise<void> {
   const { options, error } = parseCliArgs(process.argv.slice(2));
+  const messages = getCliMessages(options.locale);
 
   if (error) {
-    printCliError(error);
+    printCliError(error, messages);
     return;
   }
 
   if (options.help) {
-    console.log(options.helpScope === "root" ? getRootHelpText() : getCommandHelpText(options.command));
+    console.log(
+      options.helpScope === "root"
+        ? getRootHelpText(options.locale)
+        : getCommandHelpText(options.command, options.locale),
+    );
     return;
   }
 
   const targetCount = options.count;
   if (targetCount === undefined) {
-    printCliError("缺少必填参数 --count。");
+    printCliError(messages.errors.missingCount, messages);
     return;
   }
 
   const targetNames = normalizeTargetNames(targetCount, options.names);
   if (options.command === "interactive") {
-    await runInteractiveCli(targetCount, targetNames);
+    await runInteractiveCli(targetCount, targetNames, options.locale);
     return;
   }
 
-  const result = getNextCommandResult(targetCount, targetNames, options.answers);
+  const result = getNextCommandResult(targetCount, targetNames, options.answers, options.locale);
   console.log(JSON.stringify(result, null, 2));
 }
 
-function getCommandHelpText(command: CliCommand): string {
-  const definition = COMMAND_DEFINITIONS[command];
+function getCommandHelpText(command: CliCommand, locale: CliLocale): string {
+  const messages = getCliMessages(locale);
+  const definition = buildCommandDefinitions(messages)[command];
   return [
-    `兼容性问题排查命令行工具：${command}`,
+    messages.commandTitle(command),
     "",
-    "用法：",
+    `${messages.usageTitle}:`,
     ...definition.usageLines.map((line) => `  ${line}`),
     "",
-    "参数：",
+    `${messages.optionsTitle}:`,
     ...definition.options.map((line) => `  ${line}`),
-    ...definition.sections.flatMap((section) => [
-      "",
-      `${section.title}：`,
-      ...section.lines.map((line) => `  ${line}`),
-    ]),
+    ...definition.sections.flatMap((section) => ["", `${section.title}:`, ...section.lines.map((line) => `  ${line}`)]),
   ].join("\n");
 }
 
@@ -207,14 +206,16 @@ function getCommandHelpText(command: CliCommand): string {
  * @param args The raw argument list without the executable and script paths.
  * @returns The parsed options and an optional validation error.
  */
-export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
+export function parseCliArgs(args: readonly string[], env: NodeJS.ProcessEnv = process.env): ParsedArgsResult {
   const options: CliOptions = {
     answers: [],
     command: "interactive",
     names: [],
     help: false,
     helpScope: "command",
+    locale: resolveCliLocale(getOptionValue(args, "--locale", "-l"), env),
   };
+  const messages = getCliMessages(options.locale);
 
   let index = 0;
   const firstArg = args[0];
@@ -236,7 +237,7 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
     if (!resolvedCommand) {
       return {
         options,
-        error: `未知子命令：${firstArg}`,
+        error: messages.errors.unknownCommand(firstArg),
       };
     }
 
@@ -258,7 +259,7 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
       if (value === undefined) {
         return {
           options,
-          error: "参数 --count 缺少值。",
+          error: messages.errors.missingCountValue,
         };
       }
 
@@ -266,7 +267,7 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
       if (!/^\d+$/.test(value) || count < 1) {
         return {
           options,
-          error: "参数 --count 必须是大于 0 的整数。",
+          error: messages.errors.invalidCount,
         };
       }
 
@@ -280,7 +281,7 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
       if (value === undefined) {
         return {
           options,
-          error: "参数 --answers 缺少值。",
+          error: messages.errors.missingAnswers,
         };
       }
 
@@ -288,7 +289,7 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
       if (parsedAnswers === undefined) {
         return {
           options,
-          error: "参数 --answers 仅支持 y/n、yes/no、issue/pass、1/0、true/false。",
+          error: messages.errors.invalidAnswers,
         };
       }
 
@@ -302,7 +303,7 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
       if (value === undefined) {
         return {
           options,
-          error: "参数 --names 缺少值。",
+          error: messages.errors.missingNames,
         };
       }
 
@@ -311,9 +312,31 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
       continue;
     }
 
+    if (current === "--locale" || current === "-l") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return {
+          options,
+          error: messages.errors.missingLocale,
+        };
+      }
+
+      const requestedLocale = normalizeCliLocale(value);
+      if (requestedLocale === undefined) {
+        return {
+          options,
+          error: messages.errors.unsupportedLocale(value),
+        };
+      }
+
+      options.locale = requestedLocale;
+      index += 1;
+      continue;
+    }
+
     return {
       options,
-      error: `未知参数：${current}`,
+      error: messages.errors.unknownArgument(current),
     };
   }
 
@@ -325,27 +348,30 @@ export function parseCliArgs(args: readonly string[]): ParsedArgsResult {
  *
  * @returns The root help text.
  */
-export function getRootHelpText(): string {
+export function getRootHelpText(locale: CliLocale = "zh-CN"): string {
+  const messages = getCliMessages(locale);
   return [
-    "兼容性问题排查命令行工具",
+    messages.rootTitle,
     "",
-    "用法：",
-    `  ${CLI_COMMAND_NAME} <子命令> [参数]`,
+    `${messages.usageTitle}:`,
+    `  ${messages.rootUsage}`,
     "",
-    "子命令：",
-    ...getCommandListLines(),
+    `${messages.subcommandsTitle}:`,
+    ...getCommandListLines(messages),
     "",
-    "通用参数：",
-    "  --help, -h             显示帮助",
+    `${messages.commonOptionsTitle}:`,
+    `  --locale, -l <locale>  ${messages.localeOptionDescription}`,
+    `  --help, -h             ${messages.helpOptionDescription}`,
     "",
-    "示例：",
+    `${messages.examplesTitle}:`,
     `  ${formatHelpCommand("interactive")}`,
     `  ${formatHelpCommand("next")}`,
   ].join("\n");
 }
 
-function getCommandListLines(): string[] {
-  return (Object.entries(COMMAND_DEFINITIONS) as [CliCommand, (typeof COMMAND_DEFINITIONS)[CliCommand]][]).map(
+function getCommandListLines(messages: CliMessages): string[] {
+  const commandDefinitions = buildCommandDefinitions(messages);
+  return (Object.entries(commandDefinitions) as [CliCommand, (typeof commandDefinitions)[CliCommand]][]).map(
     ([command, definition]) => `  ${command} (${definition.alias})`.padEnd(25) + definition.description,
   );
 }
@@ -362,23 +388,26 @@ function formatDefaultInteractiveUsage(suffix: string): string {
   return `${CLI_COMMAND_NAME} ${suffix}`;
 }
 
-function printCliError(message: string): void {
+function printCliError(message: string, messages: CliMessages): void {
   console.error(message);
   console.error("");
-  console.error(CLI_HELP_HINT);
+  console.error(messages.errorHelpHint);
   process.exitCode = 1;
 }
 
 function resolveCommandAlias(token: string | undefined): CliCommand | undefined {
-  if (token === "interactive" || token === "i") {
-    return "interactive";
-  }
-
-  if (token === "next" || token === "n") {
-    return "next";
+  for (const [command, alias] of Object.entries(COMMAND_ALIASES) as [CliCommand, string][]) {
+    if (token === command || token === alias) {
+      return command;
+    }
   }
 
   return undefined;
+}
+
+function getOptionValue(args: readonly string[], ...optionNames: readonly string[]): string | undefined {
+  const index = args.findIndex((arg) => optionNames.includes(arg));
+  return index === -1 ? undefined : args[index + 1];
 }
 
 function splitNames(value: string): string[] {
@@ -411,13 +440,13 @@ function normalizeTargetNames(targetCount: number, names: readonly string[]): st
   return Array.from({ length: targetCount }, (_, index) => names[index] ?? "");
 }
 
-function getTargetLabel(targetNames: readonly string[], index: number): string {
+function getTargetLabel(targetNames: readonly string[], index: number, messages: CliMessages): string {
   const customName = targetNames[index - 1]?.trim();
-  return customName && customName.length > 0 ? customName : `目标 ${index}`;
+  return customName && customName.length > 0 ? customName : messages.defaultTargetLabel(index);
 }
 
-function formatTargetNames(targetNames: readonly string[], targets: readonly number[]): string {
-  return targets.map((target) => getTargetLabel(targetNames, target)).join(",");
+function formatTargetNames(targetNames: readonly string[], targets: readonly number[], messages: CliMessages): string {
+  return targets.map((target) => getTargetLabel(targetNames, target, messages)).join(",");
 }
 
 function getAllTargetsFromRanges(ranges: readonly TargetRange[]): number[] {
@@ -440,7 +469,9 @@ export function getNextCommandResult(
   targetCount: number,
   targetNames: readonly string[],
   answers: readonly boolean[],
+  locale: CliLocale = "zh-CN",
 ): NextCommandResult {
+  const messages = getCliMessages(locale);
   const state = rebuildStateFromAnswers(targetCount, answers);
   let step = getCurrentCompatibilityTestStep(state);
 
@@ -453,7 +484,7 @@ export function getNextCommandResult(
     return {
       status: "complete",
       targetCount,
-      targets: state.resultTargets.map((target) => getTargetLabel(targetNames, target)),
+      targets: state.resultTargets.map((target) => getTargetLabel(targetNames, target, messages)),
     };
   }
 
@@ -461,7 +492,7 @@ export function getNextCommandResult(
   return {
     status: "testing",
     targetCount,
-    targets: promptTargets.map((target) => getTargetLabel(targetNames, target)),
+    targets: promptTargets.map((target) => getTargetLabel(targetNames, target, messages)),
   };
 }
 
@@ -472,13 +503,18 @@ export function getNextCommandResult(
  * @param targetNames The target labels to use in prompts and results.
  * @returns A promise that resolves when the interactive session ends.
  */
-async function runInteractiveCli(targetCount: number, targetNames: readonly string[]): Promise<void> {
+async function runInteractiveCli(
+  targetCount: number,
+  targetNames: readonly string[],
+  locale: CliLocale,
+): Promise<void> {
+  const messages = getCliMessages(locale);
   const rl = readline.createInterface({ input, output });
   const history: boolean[] = [];
   let state = createCompatibilityTestState(targetCount);
 
-  console.log(`已开始兼容性问题排查，共 ${targetCount} 个目标。`);
-  console.log("输入 y/n 回答是否复现问题，输入 u 撤回上一步，输入 q 退出。");
+  console.log(messages.interactive.start(targetCount));
+  console.log(messages.interactive.usageHint);
 
   try {
     while (true) {
@@ -489,34 +525,34 @@ async function runInteractiveCli(targetCount: number, targetNames: readonly stri
       }
 
       if (!step) {
-        printResult(targetNames, state);
+        printResult(targetNames, state, messages);
         return;
       }
 
-      printPrompt(step, targetNames);
+      printPrompt(step, targetNames, messages);
       const answer = await rl.question("> ");
       const normalizedAnswer = answer.trim().toLowerCase();
 
       if (normalizedAnswer === "q" || normalizedAnswer === "quit") {
-        console.log("已退出。");
+        console.log(messages.interactive.exited);
         return;
       }
 
       if (normalizedAnswer === "u" || normalizedAnswer === "undo") {
         if (history.length === 0) {
-          console.log("当前没有可撤回的步骤。");
+          console.log(messages.interactive.emptyUndoHistory);
           continue;
         }
 
         history.pop();
         state = rebuildStateFromAnswers(targetCount, history);
-        console.log("已撤回到上一步。");
+        console.log(messages.interactive.restoredPreviousStep);
         continue;
       }
 
       const parsedAnswer = parseAnswer(normalizedAnswer);
       if (parsedAnswer === undefined) {
-        console.log("无效输入。请输入 y / n / u / q。");
+        console.log(messages.interactive.invalidInput);
         continue;
       }
 
@@ -528,11 +564,11 @@ async function runInteractiveCli(targetCount: number, targetNames: readonly stri
   }
 }
 
-function printPrompt(step: CompatibilityTestStep, targetNames: readonly string[]): void {
+function printPrompt(step: CompatibilityTestStep, targetNames: readonly string[], messages: CliMessages): void {
   const targets = getAllTargetsFromRanges(step.promptTargetRanges);
   console.log("");
-  console.log(`本次请测试 ${step.promptTargetCount} 个目标：`);
-  console.log(formatTargetNames(targetNames, targets));
+  console.log(messages.interactive.promptTargetCount(step.promptTargetCount));
+  console.log(formatTargetNames(targetNames, targets, messages));
 }
 
 function parseAnswer(value: string): boolean | undefined {
@@ -562,13 +598,13 @@ function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[
   return nextState;
 }
 
-function printResult(targetNames: readonly string[], state: CompatibilityTestState): void {
+function printResult(targetNames: readonly string[], state: CompatibilityTestState, messages: CliMessages): void {
   console.log("");
   if (state.resultTargets.length === 0) {
-    console.log("测试完成，不存在兼容性问题。");
+    console.log(messages.result.completeWithoutIssues);
     return;
   }
 
-  console.log(`测试完成，下列 ${state.resultTargets.length} 个目标有兼容性问题：`);
-  console.log(formatTargetNames(targetNames, state.resultTargets));
+  console.log(messages.result.completeWithIssues(state.resultTargets.length));
+  console.log(formatTargetNames(targetNames, state.resultTargets, messages));
 }

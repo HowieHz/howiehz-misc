@@ -100,6 +100,32 @@ compat-finder --help interactive
 compat-finder --help next
 ```
 
+### 输出语言
+
+CLI 文案可以通过命令行参数或环境变量设置输出语言。
+
+优先级：
+
+1. 命令行参数：`--locale` / `-l`
+2. 环境变量：`COMPAT_FINDER_LOCALE`
+3. 环境变量：`LC_ALL`
+4. 环境变量：`LC_MESSAGES`
+5. 环境变量：`LANG`
+6. 默认值：`en`
+
+支持的语言：
+
+- `en`
+- `zh-CN`
+
+示例：
+
+```bash
+compat-finder --locale zh-CN --help
+compat-finder -l zh-CN next -c 3 -a "y,n"
+COMPAT_FINDER_LOCALE=zh-CN compat-finder next -c 3 -a "y,n"
+```
+
 ### 子命令
 
 #### `interactive`

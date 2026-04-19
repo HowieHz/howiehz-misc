@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli-main.ts";
+import { normalizeCliLocale, resolveCliLocale } from "../src/locales/index.ts";
 
 const TARGET_NAMES = ["Alpha", "Beta", "Gamma", "Delta"] as const;
+const ZH_CN_ENV = { LANG: "zh_CN.UTF-8" } as const;
 
 describe("compatibility test cli", () => {
   it("parses count and names", () => {
-    const result = parseCliArgs(["interactive", "--count", "3", "--names", "Alpha, Beta,Gamma"]);
+    const result = parseCliArgs(["interactive", "--count", "3", "--names", "Alpha, Beta,Gamma"], ZH_CN_ENV);
 
     expect(result).toMatchObject({
       options: {
@@ -18,15 +20,15 @@ describe("compatibility test cli", () => {
   });
 
   it("supports short aliases for subcommands", () => {
-    const interactiveResult = parseCliArgs(["i", "--count", "3"]);
-    const nextResult = parseCliArgs(["n", "--count", "3"]);
+    const interactiveResult = parseCliArgs(["i", "--count", "3"], ZH_CN_ENV);
+    const nextResult = parseCliArgs(["n", "--count", "3"], ZH_CN_ENV);
 
     expect(interactiveResult.options.command).toBe("interactive");
     expect(nextResult.options.command).toBe("next");
   });
 
   it("accepts help without other arguments", () => {
-    const result = parseCliArgs(["--help"]);
+    const result = parseCliArgs(["--help"], ZH_CN_ENV);
 
     expect(result).toMatchObject({
       options: {
@@ -45,8 +47,16 @@ describe("compatibility test cli", () => {
     expect(helpText).toContain("next (n)");
   });
 
+  it("returns localized root help text", () => {
+    const helpText = getRootHelpText("en");
+
+    expect(helpText).toContain("compat-finder <subcommand> [options]");
+    expect(helpText).toContain("interactive (i)");
+    expect(helpText).toContain("next (n)");
+  });
+
   it("keeps interactive as the default command for backward compatibility", () => {
-    const result = parseCliArgs(["--count", "2"]);
+    const result = parseCliArgs(["--count", "2"], ZH_CN_ENV);
 
     expect(result).toMatchObject({
       options: {
@@ -57,7 +67,7 @@ describe("compatibility test cli", () => {
   });
 
   it("parses next answers", () => {
-    const result = parseCliArgs(["next", "--count", "4", "--answers", "issue,pass,1,0"]);
+    const result = parseCliArgs(["next", "--count", "4", "--answers", "issue,pass,1,0"], ZH_CN_ENV);
 
     expect(result).toMatchObject({
       options: {
@@ -69,32 +79,50 @@ describe("compatibility test cli", () => {
   });
 
   it("rejects invalid next answers", () => {
-    const result = parseCliArgs(["next", "--count", "4", "--answers", "issue,wat"]);
+    const result = parseCliArgs(["next", "--count", "4", "--answers", "issue,wat"], ZH_CN_ENV);
 
     expect(result.error).toBe("参数 --answers 仅支持 y/n、yes/no、issue/pass、1/0、true/false。");
   });
 
   it("rejects invalid count", () => {
-    const result = parseCliArgs(["--count", "0"]);
+    const result = parseCliArgs(["--count", "0"], ZH_CN_ENV);
 
     expect(result.error).toBe("参数 --count 必须是大于 0 的整数。");
   });
 
   it("rejects unknown arguments", () => {
-    const result = parseCliArgs(["interactive", "--wat"]);
+    const result = parseCliArgs(["interactive", "--wat"], ZH_CN_ENV);
 
     expect(result.error).toBe("未知参数：--wat");
   });
 
   it("rejects unknown subcommands", () => {
-    const result = parseCliArgs(["wat", "--count", "2"]);
+    const result = parseCliArgs(["wat", "--count", "2"], ZH_CN_ENV);
 
     expect(result.error).toBe("未知子命令：wat");
   });
 
+  it("parses the locale option", () => {
+    const result = parseCliArgs(["next", "--locale", "en", "--count", "2"], ZH_CN_ENV);
+
+    expect(result.options.locale).toBe("en");
+  });
+
+  it("parses the locale short option", () => {
+    const result = parseCliArgs(["next", "-l", "en", "--count", "2"], ZH_CN_ENV);
+
+    expect(result.options.locale).toBe("en");
+  });
+
+  it("rejects unsupported locales", () => {
+    const result = parseCliArgs(["next", "--locale", "fr", "--count", "2"], ZH_CN_ENV);
+
+    expect(result.error).toBe("不支持的语言：fr");
+  });
+
   it("keeps subcommand context for help", () => {
-    const interactiveResult = parseCliArgs(["interactive", "--help"]);
-    const nextResult = parseCliArgs(["next", "--help"]);
+    const interactiveResult = parseCliArgs(["interactive", "--help"], ZH_CN_ENV);
+    const nextResult = parseCliArgs(["next", "--help"], ZH_CN_ENV);
 
     expect(interactiveResult.options.command).toBe("interactive");
     expect(interactiveResult.options.help).toBe(true);
@@ -103,7 +131,7 @@ describe("compatibility test cli", () => {
   });
 
   it("supports root help followed by a subcommand name", () => {
-    const result = parseCliArgs(["--help", "next"]);
+    const result = parseCliArgs(["--help", "next"], ZH_CN_ENV);
 
     expect(result.options.command).toBe("next");
     expect(result.options.help).toBe(true);
@@ -111,8 +139,8 @@ describe("compatibility test cli", () => {
   });
 
   it("supports root help followed by a subcommand alias", () => {
-    const interactiveResult = parseCliArgs(["--help", "i"]);
-    const nextResult = parseCliArgs(["--help", "n"]);
+    const interactiveResult = parseCliArgs(["--help", "i"], ZH_CN_ENV);
+    const nextResult = parseCliArgs(["--help", "n"], ZH_CN_ENV);
 
     expect(interactiveResult.options.command).toBe("interactive");
     expect(interactiveResult.options.help).toBe(true);
@@ -140,5 +168,24 @@ describe("compatibility test cli", () => {
       targetCount: 4,
       targets: ["Beta"],
     });
+  });
+
+  it("localizes default target names in next results", () => {
+    const result = getNextCommandResult(2, [], [], "en");
+
+    expect(result.targets).toEqual(["Target 1"]);
+  });
+
+  it("normalizes locale values", () => {
+    expect(normalizeCliLocale("zh_CN.UTF-8")).toBe("zh-CN");
+    expect(normalizeCliLocale("en_US.UTF-8")).toBe("en");
+    expect(normalizeCliLocale("C")).toBeUndefined();
+  });
+
+  it("resolves locale by explicit option, environment, and fallback order", () => {
+    expect(resolveCliLocale("en", { COMPAT_FINDER_LOCALE: "zh-CN" })).toBe("en");
+    expect(resolveCliLocale(undefined, { COMPAT_FINDER_LOCALE: "zh-CN" })).toBe("zh-CN");
+    expect(resolveCliLocale(undefined, { LC_ALL: "zh_CN.UTF-8", LANG: "en_US.UTF-8" })).toBe("zh-CN");
+    expect(resolveCliLocale(undefined, {})).toBe("en");
   });
 });

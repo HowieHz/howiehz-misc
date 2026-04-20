@@ -4,7 +4,7 @@
 
 compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与命令行工具。
 
-[适用范围](#适用范围) | [安装](#安装) | [快速开始](#快速开始) | [命令行工具](#命令行工具) | [API 参考](#api-参考) | [与 AI 协作](#与-ai-协作) | [在线版](#在线版)
+[适用范围](#适用范围) | [安装](#安装) | [快速开始](#快速开始) | [API 参考](#api-参考) | [命令行工具](#命令行工具) | [与 AI 协作](#与-ai-协作) | [在线版](#在线版)
 
 ## 适用范围
 
@@ -13,69 +13,55 @@ compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与
 
 ## 安装
 
-使用包管理器安装：
+使用你偏好的包管理器安装：
 
 ```bash
 npm install compat-finder
-```
 
-```bash
+# 或
+
 pnpm add compat-finder
-```
 
-```bash
+# 或
+
 yarn add compat-finder
+
+# 或
+
+bun add compat-finder
 ```
 
-```bash
-bun add compat-finder
+然后可以这样导入会话相关函数和范围处理工具：
+
+```ts
+import {
+  applyCompatibilityTestAnswer,
+  createCompatibilityTestState,
+  getCurrentCompatibilityTestStep,
+  skipCachedCompatibilityTestSteps,
+  takeTargetsFromRanges,
+} from "compat-finder";
 ```
 
 也可以直接临时调用命令行工具：
 
 ```bash
 npx compat-finder --help
-```
 
-```bash
+# 或
+
 pnpm dlx compat-finder --help
-```
 
-```bash
+# 或
+
 yarn dlx compat-finder --help
-```
 
-```bash
+# 或
+
 bunx compat-finder --help
 ```
 
 ## 快速开始
-
-### 命令行示例
-
-执行完整的交互式排查流程：
-
-```bash
-compat-finder interactive --count 4
-```
-
-执行单步排查计算并输出结果：
-
-```bash
-compat-finder next -c 3 -a "y,n"
-```
-
-预期输出为以下 JSON：
-
-```json
-{
-  "status": "testing",
-  "targetCount": 3,
-  "targets": ["目标 2"]
-}
-```
-
-查看完整的[命令行工具](#命令行工具)文档了解命令和参数。
 
 ### 库使用示例
 
@@ -116,6 +102,59 @@ console.log(
 ```
 
 查看完整的 [API 参考](#api-参考) 概览了解导出的 API。
+
+### 命令行示例
+
+执行完整的交互式排查流程：
+
+```bash
+compat-finder interactive --count 4
+```
+
+执行单步排查计算并输出结果：
+
+```bash
+compat-finder next -c 3 -a "y,n"
+```
+
+预期输出为以下 JSON：
+
+```json
+{
+  "status": "testing",
+  "targetCount": 3,
+  "targets": ["目标 2"]
+}
+```
+
+查看完整的[命令行工具](#命令行工具)文档了解命令和参数。
+
+## API 参考
+
+库 API 围绕一个可变的排查会话状态展开。
+
+会话流程：
+
+- `createCompatibilityTestState(targetCount)`：创建新的排查会话
+- `getCurrentCompatibilityTestStep(state)`：读取当前步骤；排查结束时返回 `undefined`
+- `applyCompatibilityTestAnswer(state, hasIssue)`：提交一个测试结果并推进会话
+- `skipCachedCompatibilityTestSteps(state)`：跳过已经命中的缓存步骤
+
+范围工具：
+
+- `takeTargetsFromRanges(ranges, limit)`：把范围展开成目标编号列表
+- `countTargetsInRanges(ranges)`：统计范围内包含的目标数量
+- `intersectTargetRanges(leftRanges, rightRanges)`：求两个范围列表的交集
+- `subtractTargetRanges(sourceRanges, excludedRanges)`：从一个范围列表中剔除另一个范围列表
+
+核心类型：
+
+- `CompatibilityTestState`：可变的排查会话状态
+- `CompatibilityTestStep`：当前要展示给调用方的步骤
+- `CompatibilityTestDebugStep`：以范围形式表示的内部搜索状态
+- `TargetRange`：闭区间目标编号范围
+
+参数细节和行为约束请直接参考 [src/compatibility-test.ts](./src/compatibility-test.ts) 中的内联 JSDoc 注释。
 
 ## 命令行工具
 
@@ -264,33 +303,6 @@ compat-finder next -c 3 -a "y,n,n"
   "targets": ["目标 1", "目标 2"]
 }
 ```
-
-## API 参考
-
-库 API 围绕一个可变的排查会话状态展开。
-
-会话流程：
-
-- `createCompatibilityTestState(targetCount)`：创建新的排查会话
-- `getCurrentCompatibilityTestStep(state)`：读取当前步骤；排查结束时返回 `undefined`
-- `applyCompatibilityTestAnswer(state, hasIssue)`：提交一个测试结果并推进会话
-- `skipCachedCompatibilityTestSteps(state)`：跳过已经命中的缓存步骤
-
-范围工具：
-
-- `takeTargetsFromRanges(ranges, limit)`：把范围展开成目标编号列表
-- `countTargetsInRanges(ranges)`：统计范围内包含的目标数量
-- `intersectTargetRanges(leftRanges, rightRanges)`：求两个范围列表的交集
-- `subtractTargetRanges(sourceRanges, excludedRanges)`：从一个范围列表中剔除另一个范围列表
-
-核心类型：
-
-- `CompatibilityTestState`：可变的排查会话状态
-- `CompatibilityTestStep`：当前要展示给调用方的步骤
-- `CompatibilityTestDebugStep`：以范围形式表示的内部搜索状态
-- `TargetRange`：闭区间目标编号范围
-
-参数细节和行为约束请直接参考 [src/compatibility-test.ts](./src/compatibility-test.ts) 中的内联 JSDoc 注释。
 
 ## 与 AI 协作
 

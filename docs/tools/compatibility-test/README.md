@@ -10,7 +10,7 @@
 
 ## 关联项目
 
-- [packages/compat-finder](../../../packages/compat-finder/) 是对应的兼容性问题排查引擎与命令行工具。
+- [packages/compat-finder](../../../packages/compat-finder/) 是支撑本页面的核心库、命令行工具与智能体技能（Agent Skills）。
 
 ## 源码结构
 

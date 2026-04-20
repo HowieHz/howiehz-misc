@@ -16,9 +16,18 @@ compat-finder is an engine and command-line tool for finding compatibility issue
 Install with a package manager:
 
 ```bash
-npm install compat-finder
+npm install compat-
+```
+
+```bash
 pnpm add compat-finder
+```
+
+```bash
 yarn add compat-finder
+```
+
+```bash
 bun add compat-finder
 ```
 
@@ -26,8 +35,17 @@ You can also run the command-line tool without installing it first:
 
 ```bash
 npx compat-finder --help
+```
+
+```bash
 pnpm dlx compat-finder --help
+```
+
+```bash
 yarn dlx compat-finder --help
+```
+
+```bash
 bunx compat-finder --help
 ```
 
@@ -105,7 +123,13 @@ See the full [API Reference](#api-reference) overview for exported APIs.
 
 ```bash
 compat-finder --help
+```
+
+```bash
 compat-finder --help interactive
+```
+
+```bash
 compat-finder --help next
 ```
 
@@ -135,7 +159,13 @@ Examples:
 
 ```bash
 compat-finder --locale zh-Hans --help
+```
+
+```bash
 compat-finder -l zh-Hans next -c 3 -a "y,n"
+```
+
+```bash
 COMPAT_FINDER_LOCALE=zh-Hans compat-finder next -c 3 -a "y,n"
 ```
 
@@ -147,6 +177,9 @@ Start an interactive compatibility check:
 
 ```bash
 compat-finder interactive --count 4
+```
+
+```bash
 compat-finder i -c 4 -n "A,B,C,D"
 ```
 
@@ -163,7 +196,13 @@ Calculate the next targets to test from existing answers, or return the final re
 
 ```bash
 compat-finder next -c 3
+```
+
+```bash
 compat-finder n -c 3 -a "y,n"
+```
+
+```bash
 compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
 ```
 
@@ -262,7 +301,7 @@ compat-finder provides an AI coding agent skill that helps agents understand the
 Install the compat-finder skill to your AI coding agent:
 
 ```bash
-npx skills add HowieHz/howiehz-misc --skill compat-finder --full-depth
+npx skills add HowieHz/howiehz-misc --skill compat-finder
 ```
 
 The skill source code is available in [skills/compat-finder](./skills/compat-finder).

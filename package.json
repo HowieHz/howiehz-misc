@@ -21,7 +21,7 @@
     "changeset": "changeset",
     "changeset:publish": "changeset publish",
     "changeset:version": "changeset version",
-    "compat-finder": "node --experimental-strip-types packages/compat-finder/src/cli.ts",
+    "cli:compat-finder": "node --experimental-strip-types packages/compat-finder/src/cli.ts",
     "compat-finder:build": "pnpm --filter compat-finder build",
     "compat-finder:build:release": "pnpm --filter compat-finder build:release",
     "compat-finder:test": "pnpm --filter compat-finder test",

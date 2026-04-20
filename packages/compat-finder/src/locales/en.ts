@@ -71,7 +71,7 @@ export const enMessages: CliMessages = {
     start: (count) => `Started compatibility issue finding with ${count} target(s).`,
     usageHint: "Enter y/n for whether the issue reproduces, u to undo, or q to quit.",
   },
-  localeOptionDescription: "Set output locale: en or zh-CN",
+  localeOptionDescription: "Set output locale: en or zh-Hans",
   optionsTitle: "Options",
   result: {
     completeWithIssues: (count) => `Test complete. The following ${count} target(s) have compatibility issues:`,

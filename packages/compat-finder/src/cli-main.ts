@@ -348,7 +348,7 @@ export function parseCliArgs(args: readonly string[], env: NodeJS.ProcessEnv = p
  *
  * @returns The root help text.
  */
-export function getRootHelpText(locale: CliLocale = "zh-CN"): string {
+export function getRootHelpText(locale: CliLocale = "zh-Hans"): string {
   const messages = getCliMessages(locale);
   return [
     messages.rootTitle,
@@ -469,7 +469,7 @@ export function getNextCommandResult(
   targetCount: number,
   targetNames: readonly string[],
   answers: readonly boolean[],
-  locale: CliLocale = "zh-CN",
+  locale: CliLocale = "zh-Hans",
 ): NextCommandResult {
   const messages = getCliMessages(locale);
   const state = rebuildStateFromAnswers(targetCount, answers);

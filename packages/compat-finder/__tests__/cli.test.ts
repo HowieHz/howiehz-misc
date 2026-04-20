@@ -120,6 +120,12 @@ describe("compatibility test cli", () => {
     expect(result.error).toBe("不支持的语言：fr");
   });
 
+  it("rejects unsupported explicit Chinese locale variants", () => {
+    const result = parseCliArgs(["next", "--locale", "zh-TW", "--count", "2"], ZH_CN_ENV);
+
+    expect(result.error).toBe("不支持的语言：zh-TW");
+  });
+
   it("keeps subcommand context for help", () => {
     const interactiveResult = parseCliArgs(["interactive", "--help"], ZH_CN_ENV);
     const nextResult = parseCliArgs(["next", "--help"], ZH_CN_ENV);
@@ -177,15 +183,23 @@ describe("compatibility test cli", () => {
   });
 
   it("normalizes locale values", () => {
-    expect(normalizeCliLocale("zh_CN.UTF-8")).toBe("zh-CN");
+    expect(normalizeCliLocale("zh_CN.UTF-8")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh_CN@pinyin")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh_CN.UTF-8@pinyin")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh-Hans")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh-Hans-CN")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh_Hans_CN@pinyin")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh-TW")).toBeUndefined();
+    expect(normalizeCliLocale("zh-Hant")).toBeUndefined();
     expect(normalizeCliLocale("en_US.UTF-8")).toBe("en");
     expect(normalizeCliLocale("C")).toBeUndefined();
   });
 
   it("resolves locale by explicit option, environment, and fallback order", () => {
-    expect(resolveCliLocale("en", { COMPAT_FINDER_LOCALE: "zh-CN" })).toBe("en");
-    expect(resolveCliLocale(undefined, { COMPAT_FINDER_LOCALE: "zh-CN" })).toBe("zh-CN");
-    expect(resolveCliLocale(undefined, { LC_ALL: "zh_CN.UTF-8", LANG: "en_US.UTF-8" })).toBe("zh-CN");
+    expect(resolveCliLocale("en", { COMPAT_FINDER_LOCALE: "zh-Hans" })).toBe("en");
+    expect(resolveCliLocale(undefined, { COMPAT_FINDER_LOCALE: "zh-Hans" })).toBe("zh-Hans");
+    expect(resolveCliLocale(undefined, { COMPAT_FINDER_LOCALE: "zh-CN" })).toBe("zh-Hans");
+    expect(resolveCliLocale(undefined, { LC_ALL: "zh_CN.UTF-8", LANG: "en_US.UTF-8" })).toBe("zh-Hans");
     expect(resolveCliLocale(undefined, {})).toBe("en");
   });
 });

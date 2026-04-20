@@ -2,24 +2,33 @@
 
 English | [简体中文](./README.zh.md)
 
-Try it online: [compatibility issue finder](https://howiehz.top/misc/en/tools/compatibility-test/)
-
 compat-finder is an engine and command-line tool for finding compatibility issues across multiple targets.
 
-It is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
+[Compatibility](#compatibility) | [Install](#install) | [Quick Start](#quick-start) | [CLI](#cli) | [API Reference](#api-reference) | [Work with AI](#work-with-ai) | [Online Tool](#online-tool) | [Related Projects](#related-projects)
+
+## Compatibility
+
+- Library: ESM-only. It has no Node.js built-in dependencies and can also run in browsers and other ESM-compatible runtimes
+- CLI: requires Node.js `^20 || ^22 || >=24`; supports English and Simplified Chinese
 
 ## Install
 
 Install with a package manager:
 
 ```bash
+npm install compat-finder
 pnpm add compat-finder
+yarn add compat-finder
+bun add compat-finder
 ```
 
 You can also run the command-line tool without installing it first:
 
 ```bash
 npx compat-finder --help
+pnpm dlx compat-finder --help
+yarn dlx compat-finder --help
+bunx compat-finder --help
 ```
 
 ## Quick Start
@@ -88,7 +97,7 @@ console.log(
 );
 ```
 
-See the full [API](#api) overview for exported APIs.
+See the full [API Reference](#api-reference) overview for exported APIs.
 
 ## CLI
 
@@ -116,14 +125,18 @@ Priority:
 Supported locales:
 
 - `en`
-- `zh-CN`
+- `zh-Hans`
+
+Legacy Simplified Chinese locale tags such as `zh-CN` and `zh-SG` are normalized to `zh-Hans`.
+Unsupported explicit values, including other Chinese variants such as `zh-TW` and `zh-Hant`, are rejected instead of being silently switched to English.
+Unsupported locale values from environment variables are ignored while the resolver continues through the priority list and finally falls back to `en`.
 
 Examples:
 
 ```bash
-compat-finder --locale zh-CN --help
-compat-finder -l zh-CN next -c 3 -a "y,n"
-COMPAT_FINDER_LOCALE=zh-CN compat-finder next -c 3 -a "y,n"
+compat-finder --locale zh-Hans --help
+compat-finder -l zh-Hans next -c 3 -a "y,n"
+COMPAT_FINDER_LOCALE=zh-Hans compat-finder next -c 3 -a "y,n"
 ```
 
 ### Commands
@@ -213,7 +226,7 @@ Expected JSON output:
 }
 ```
 
-## API
+## API Reference
 
 The library API is built around one mutable session state.
 
@@ -282,4 +295,10 @@ The compat-finder skill provides knowledge about:
 
 ## Online Tool
 
-The online version is available at [compatibility-test](../../docs/en/tools/compatibility-test).
+Try it online: [compatibility issue finder](https://howiehz.top/misc/en/tools/compatibility-test/)
+
+The online tool source is available at [compatibility-test](../../docs/en/tools/compatibility-test).
+
+## Related Projects
+
+compat-finder is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).

@@ -2,24 +2,51 @@
 
 [English](./README.md) | 简体中文
 
-在线体验：[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
-
 compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与命令行工具。
 
-由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
+[适用范围](#适用范围) | [安装](#安装) | [快速开始](#快速开始) | [命令行工具](#命令行工具) | [API 参考](#api-参考) | [与 AI 协作](#与-ai-协作) | [在线版](#在线版) | [相关项目](#相关项目)
+
+## 适用范围
+
+- 作为库使用：仅提供 ESM，不依赖 Node.js 内置模块，也可用于浏览器和其他兼容 ESM 的运行时
+- 作为命令行工具使用：需要 Node.js `^20 || ^22 || >=24`；支持英文和简体中文
 
 ## 安装
 
 使用包管理器安装：
 
 ```bash
+npm install compat-finder
+```
+
+```bash
 pnpm add compat-finder
+```
+
+```bash
+yarn add compat-finder
+```
+
+```bash
+bun add compat-finder
 ```
 
 也可以直接临时调用命令行工具：
 
 ```bash
 npx compat-finder --help
+```
+
+```bash
+pnpm dlx compat-finder --help
+```
+
+```bash
+yarn dlx compat-finder --help
+```
+
+```bash
+bunx compat-finder --help
 ```
 
 ## 快速开始
@@ -88,7 +115,7 @@ console.log(
 );
 ```
 
-查看完整的 [API](#api) 概览了解导出的 API。
+查看完整的 [API 参考](#api-参考) 概览了解导出的 API。
 
 ## 命令行工具
 
@@ -116,14 +143,18 @@ CLI 文案可以通过命令行参数或环境变量设置输出语言。
 支持的语言：
 
 - `en`
-- `zh-CN`
+- `zh-Hans`
+
+兼容旧的简体中文 locale 标签，例如 `zh-CN` 与 `zh-SG` 会被归一化为 `zh-Hans`。
+显式传入不支持的值时会报错，包括 `zh-TW`、`zh-Hant` 等其他中文变体，不会静默切换到英文。
+环境变量中的不支持值会被忽略，并继续按优先级查找；若最终没有匹配到支持语言，则回退到 `en`。
 
 示例：
 
 ```bash
-compat-finder --locale zh-CN --help
-compat-finder -l zh-CN next -c 3 -a "y,n"
-COMPAT_FINDER_LOCALE=zh-CN compat-finder next -c 3 -a "y,n"
+compat-finder --locale zh-Hans --help
+compat-finder -l zh-Hans next -c 3 -a "y,n"
+COMPAT_FINDER_LOCALE=zh-Hans compat-finder next -c 3 -a "y,n"
 ```
 
 ### 子命令
@@ -213,7 +244,7 @@ compat-finder next -c 3 -a "y,n,n"
 }
 ```
 
-## API
+## API 参考
 
 库 API 围绕一个可变的排查会话状态展开。
 
@@ -282,4 +313,10 @@ compat-finder skill 涵盖以下知识：
 
 ## 在线版
 
-在线版工具页面见 [compatibility-test](../../docs/tools/compatibility-test)。
+在线体验：[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
+
+在线版源码在 [compatibility-test](../../docs/tools/compatibility-test)。
+
+## 相关项目
+
+由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。

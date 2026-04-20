@@ -1,6 +1,6 @@
 import type { CliMessages } from "./types.ts";
 
-export const zhCnMessages: CliMessages = {
+export const zhHansMessages: CliMessages = {
   aliasesTitle: "别名",
   commandTitle: (command) => `兼容性问题排查命令行工具：${command}`,
   commands: {
@@ -71,7 +71,7 @@ export const zhCnMessages: CliMessages = {
     start: (count) => `已开始兼容性问题排查，共 ${count} 个目标。`,
     usageHint: "输入 y/n 回答是否复现问题，输入 u 撤回上一步，输入 q 退出。",
   },
-  localeOptionDescription: "设置输出语言：en 或 zh-CN",
+  localeOptionDescription: "设置输出语言：en 或 zh-Hans",
   optionsTitle: "参数",
   result: {
     completeWithIssues: (count) => `测试完成，下列 ${count} 个目标有兼容性问题：`,

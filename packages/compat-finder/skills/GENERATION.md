@@ -105,9 +105,10 @@ git log --oneline 03fe803..HEAD -- packages/compat-finder/
 
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
+| 2026-04-21 | eeac00c | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
 | 2026-04-20 | 03fe803 | Initial compat-finder skill generation with CLI/API and package references |
 
 ---
 
-Last updated: 2026-04-20
-Current SHA: 03fe803
+Last updated: 2026-04-21
+Current SHA: eeac00c

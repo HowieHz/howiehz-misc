@@ -1,4 +1,4 @@
-export type CliLocale = "en" | "zh-CN";
+export type CliLocale = "en" | "zh-Hans";
 
 export interface CliHelpSectionMessages {
   lines: readonly string[];

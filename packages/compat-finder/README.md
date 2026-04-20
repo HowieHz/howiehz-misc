@@ -83,7 +83,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
   console.log("Targets to test:", targets);
   // For browsers, this can read from prompt(), buttons, or forms.
   // For Node.js, this can read from readline, a test script, or your own CLI.
-  return "issue"; // "issue" when reproduced, "pass" when not, or "undo".
+  return "issue"; // "issue" if it reproduces, "pass" if not, or "undo".
 }
 ```
 

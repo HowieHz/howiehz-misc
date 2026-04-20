@@ -96,6 +96,10 @@ export interface CompatibilitySession<Target> {
  * @returns A session with `current()`, `answer(hasIssue)`, and `undo()` methods.
  */
 export function createCompatibilitySession<Target>(targets: readonly Target[]): CompatibilitySession<Target> {
+  if (targets.length < 1) {
+    throw new Error("targets must contain at least one item");
+  }
+
   let state = createCompatibilityTestState(targets.length);
   const answers: boolean[] = [];
 

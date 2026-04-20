@@ -308,7 +308,7 @@ describe("compatibility test engine", () => {
   });
 
   it("rejects empty simple sessions", () => {
-    expect(() => createCompatibilitySession([])).toThrow("targetCount must be an integer greater than or equal to 1");
+    expect(() => createCompatibilitySession([])).toThrow("targets must contain at least one item");
   });
 
   for (const [name, scenario] of Object.entries(scenarios)) {

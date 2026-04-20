@@ -135,6 +135,7 @@ Session steps:
 `session.answer(true)` means the issue appears with the current targets.
 `session.answer(false)` means the issue does not appear with the current targets.
 `session.undo()` is useful when the latest answer was entered by mistake.
+`createCompatibilitySession(targets)` requires at least one target.
 
 ### Advanced API
 

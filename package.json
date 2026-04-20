@@ -36,10 +36,11 @@
     "lint:md": "markdownlint --fix \"**/*.md\" --ignore-path .gitignore",
     "lint:oxlint+eslint": "oxlint --type-aware --fix && eslint --fix",
     "lint:style": "stylelint --fix \"**/*.{css,vue}\" \"docs/.vitepress/**/*.{css,vue}\" --ignore-path .gitignore",
-    "lint:type-check:tsgo": "tsgo -b",
     "lint:type-check:docs:vue-tsc": "vue-tsc -b docs/tsconfig.browser.json",
+    "lint:type-check:tsgo": "tsgo -b",
     "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm oxfmt -- --write .oxlintrc.json",
     "preinstall": "npx only-allow pnpm",
+    "prelint:type-check:docs:vue-tsc": "pnpm run compat-finder:build",
     "test": "pnpm run \"/:test$/\""
   },
   "devDependencies": {

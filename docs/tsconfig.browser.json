@@ -2,9 +2,6 @@
   "extends": "../tsconfig.json",
   "references": [
     {
-      "path": "../packages/compat-finder/tsconfig.neutral.json"
-    },
-    {
       "path": "./tsconfig.node.json"
     }
   ],

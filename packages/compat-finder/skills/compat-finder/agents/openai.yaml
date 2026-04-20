@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compat Finder"
+  short_description: "Guide compatibility triage with compat-finder"
+  default_prompt: "Use $compat-finder to plan or continue a compatibility check with these targets."

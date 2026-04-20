@@ -42,7 +42,7 @@ export function normalizeCliLocale(locale: string | undefined): CliLocale | unde
       normalizedRegion === "SG" ||
       !legacyRegion
       ? "zh-Hans"
-      : "en";
+      : undefined;
   }
 
   if (language.toLowerCase() === "en") {

@@ -120,6 +120,12 @@ describe("compatibility test cli", () => {
     expect(result.error).toBe("不支持的语言：fr");
   });
 
+  it("rejects unsupported explicit Chinese locale variants", () => {
+    const result = parseCliArgs(["next", "--locale", "zh-TW", "--count", "2"], ZH_CN_ENV);
+
+    expect(result.error).toBe("不支持的语言：zh-TW");
+  });
+
   it("keeps subcommand context for help", () => {
     const interactiveResult = parseCliArgs(["interactive", "--help"], ZH_CN_ENV);
     const nextResult = parseCliArgs(["next", "--help"], ZH_CN_ENV);
@@ -183,6 +189,8 @@ describe("compatibility test cli", () => {
     expect(normalizeCliLocale("zh-Hans")).toBe("zh-Hans");
     expect(normalizeCliLocale("zh-Hans-CN")).toBe("zh-Hans");
     expect(normalizeCliLocale("zh_Hans_CN@pinyin")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh-TW")).toBeUndefined();
+    expect(normalizeCliLocale("zh-Hant")).toBeUndefined();
     expect(normalizeCliLocale("en_US.UTF-8")).toBe("en");
     expect(normalizeCliLocale("C")).toBeUndefined();
   });

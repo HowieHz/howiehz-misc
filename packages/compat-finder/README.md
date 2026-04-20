@@ -127,6 +127,10 @@ Supported locales:
 - `en`
 - `zh-Hans`
 
+Legacy Simplified Chinese locale tags such as `zh-CN` and `zh-SG` are normalized to `zh-Hans`.
+Unsupported explicit values, including other Chinese variants such as `zh-TW` and `zh-Hant`, are rejected instead of being silently switched to English.
+Unsupported locale values from environment variables are ignored while the resolver continues through the priority list and finally falls back to `en`.
+
 Examples:
 
 ```bash

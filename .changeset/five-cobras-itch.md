@@ -2,4 +2,4 @@
 "compat-finder": patch
 ---
 
-Fix incorrect locale parsing for POSIX-style locale modifiers.
+Fix locale parsing for POSIX-style locale modifiers and reject unsupported explicit Chinese locale variants.

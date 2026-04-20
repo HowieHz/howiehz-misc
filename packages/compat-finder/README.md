@@ -88,7 +88,7 @@ console.log(
 );
 ```
 
-See the full [API](#api) documentation for exported APIs.
+See the full [API](#api) overview for exported APIs.
 
 ## CLI
 
@@ -215,13 +215,30 @@ Expected JSON output:
 
 ## API
 
-Key exports:
+The library API is built around one mutable session state.
 
-- `createCompatibilityTestState(targetCount)`: creates a compatibility check state
-- `getCurrentCompatibilityTestStep(state)`: returns the current step
-- `applyCompatibilityTestAnswer(state, hasIssue)`: applies the answer for the current step
-- `skipCachedCompatibilityTestSteps(state)`: skips steps that already have cached answers
-- `takeTargetsFromRanges(ranges, limit)`: expands ranges into target indexes
+Session lifecycle:
+
+- `createCompatibilityTestState(targetCount)`: create a new session
+- `getCurrentCompatibilityTestStep(state)`: read the current step, or `undefined` when complete
+- `applyCompatibilityTestAnswer(state, hasIssue)`: apply one answer and advance the session
+- `skipCachedCompatibilityTestSteps(state)`: fast-forward through cached steps
+
+Range utilities:
+
+- `takeTargetsFromRanges(ranges, limit)`: expand ranges into target indexes
+- `countTargetsInRanges(ranges)`: count targets covered by ranges
+- `intersectTargetRanges(leftRanges, rightRanges)`: intersect two range lists
+- `subtractTargetRanges(sourceRanges, excludedRanges)`: remove one range list from another
+
+Key types:
+
+- `CompatibilityTestState`: mutable session state
+- `CompatibilityTestStep`: current step to present to the caller
+- `CompatibilityTestDebugStep`: internal search state in range form
+- `TargetRange`: inclusive target index range
+
+For parameter details and behavior guarantees, see the inline JSDoc in [src/compatibility-test.ts](./src/compatibility-test.ts).
 
 ## Online Tool
 

@@ -113,8 +113,10 @@ jobs:
     needs: [prepare-release, build-packages, verify-attestations]
     if: needs.prepare-release.outputs.has-release-packages == 'true'
     runs-on: ubuntu-latest
+    environment: npm
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # https://github.com/actions/checkout/releases/tag/v6.0.2
         with:
@@ -140,8 +142,6 @@ jobs:
           path: dist/npm-packages
 
       - name: Publish package tarballs
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           shopt -s nullglob
           packages=(dist/npm-packages/*.tgz)
@@ -151,7 +151,7 @@ jobs:
           fi
 
           for package in "${packages[@]}"; do
-            npm publish "$package" --access public
+            npm publish "$package" --access public --provenance
           done
 
   create-github-releases:

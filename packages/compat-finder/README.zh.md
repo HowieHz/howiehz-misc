@@ -88,7 +88,7 @@ console.log(
 );
 ```
 
-查看完整的 [API 参考](#api-参考) 了解导出的 API。
+查看完整的 [API](#api) 概览了解导出的 API。
 
 ## 命令行工具
 
@@ -213,15 +213,32 @@ compat-finder next -c 3 -a "y,n,n"
 }
 ```
 
-## API 参考
+## API
 
-核心导出：
+库 API 围绕一个可变的排查会话状态展开。
 
-- `createCompatibilityTestState(targetCount)`：创建排查流程状态
-- `getCurrentCompatibilityTestStep(state)`：获取当前步骤
-- `applyCompatibilityTestAnswer(state, hasIssue)`：提交当前步骤的测试结果
+会话流程：
+
+- `createCompatibilityTestState(targetCount)`：创建新的排查会话
+- `getCurrentCompatibilityTestStep(state)`：读取当前步骤；排查结束时返回 `undefined`
+- `applyCompatibilityTestAnswer(state, hasIssue)`：提交一个测试结果并推进会话
 - `skipCachedCompatibilityTestSteps(state)`：跳过已经命中的缓存步骤
-- `takeTargetsFromRanges(ranges, limit)`：把范围结果展开成目标编号列表
+
+范围工具：
+
+- `takeTargetsFromRanges(ranges, limit)`：把范围展开成目标编号列表
+- `countTargetsInRanges(ranges)`：统计范围内包含的目标数量
+- `intersectTargetRanges(leftRanges, rightRanges)`：求两个范围列表的交集
+- `subtractTargetRanges(sourceRanges, excludedRanges)`：从一个范围列表中剔除另一个范围列表
+
+核心类型：
+
+- `CompatibilityTestState`：可变的排查会话状态
+- `CompatibilityTestStep`：当前要展示给调用方的步骤
+- `CompatibilityTestDebugStep`：以范围形式表示的内部搜索状态
+- `TargetRange`：闭区间目标编号范围
+
+参数细节和行为约束请直接参考 [src/compatibility-test.ts](./src/compatibility-test.ts) 中的内联 JSDoc 注释。
 
 ## 在线版
 

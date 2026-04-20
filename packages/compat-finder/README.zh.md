@@ -31,16 +31,10 @@ yarn add compat-finder
 bun add compat-finder
 ```
 
-然后可以这样导入会话相关函数和范围处理工具：
+然后可以创建一个兼容性排查会话：
 
 ```ts
-import {
-  applyCompatibilityTestAnswer,
-  createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
-  takeTargetsFromRanges,
-} from "compat-finder";
+import { createCompatibilitySession } from "compat-finder";
 ```
 
 也可以直接临时调用命令行工具：
@@ -66,42 +60,34 @@ bunx compat-finder --help
 ### 库使用示例
 
 ```ts
-import {
-  applyCompatibilityTestAnswer,
-  createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
-  takeTargetsFromRanges,
-} from "compat-finder";
+import { createCompatibilitySession } from "compat-finder";
 
-const targetNames = ["A", "B", "C", "D"];
-const state = createCompatibilityTestState(targetNames.length);
+const session = createCompatibilitySession(["A", "B", "C", "D"]);
 
-let step = getCurrentCompatibilityTestStep(state);
-while (step) {
-  if (!step.requiresAnswer) {
-    step = skipCachedCompatibilityTestSteps(state);
+let step = session.current();
+
+while (step.status === "testing") {
+  const result = askUser(step.targets);
+
+  if (result === "undo") {
+    step = session.undo();
     continue;
   }
 
-  const targets = takeTargetsFromRanges(step.promptTargetRanges, step.promptTargetCount);
-  console.log(
-    "当前需要测试：",
-    targets.map((target) => targetNames[target - 1]),
-  );
-
-  const hasIssue = true;
-  applyCompatibilityTestAnswer(state, hasIssue);
-  step = getCurrentCompatibilityTestStep(state);
+  step = session.answer(result === "issue");
 }
 
-console.log(
-  "最终结果：",
-  state.resultTargets.map((target) => targetNames[target - 1]),
-);
+console.log("最终结果：", step.targets);
+
+function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
+  console.log("当前需要测试：", targets);
+  // 浏览器里可以来自 prompt()、按钮或表单。
+  // Node.js 里可以来自 readline、测试脚本或你自己的 CLI。
+  return "issue"; // 复现返回 "issue"，未复现返回 "pass"，撤销返回 "undo"。
+}
 ```
 
-查看完整的 [API 参考](#api-参考) 概览了解导出的 API。
+更多导出 API 见 [API 参考](#api-参考)。
 
 ### 命令行示例
 
@@ -131,7 +117,28 @@ compat-finder next -c 3 -a "y,n"
 
 ## API 参考
 
-库 API 围绕一个可变的排查会话状态展开。
+多数集成场景优先使用 `createCompatibilitySession`。
+
+简单会话 API：
+
+- `createCompatibilitySession(targets)`：根据目标列表创建兼容性排查会话
+- `session.current()`：读取当前步骤或最终结果
+- `session.answer(hasIssue)`：提交一次测试结果，并进入下一步
+- `session.undo()`：撤销最新一次测试结果，并回到上一步
+
+会话步骤：
+
+- `status`：`testing` 表示当前需要按 `targets` 进行测试；`complete` 表示已经得到最终结果
+- `targets`：来自原始输入列表的目标值
+- `targetNumbers`：从 1 开始的目标编号，适合展示或记录日志
+
+`session.answer(true)` 表示当前这组目标会复现问题。
+`session.answer(false)` 表示当前这组目标不会复现问题。
+如果最新一次结果输入错误，可以调用 `session.undo()` 撤销。
+
+### 高级 API
+
+底层 API 暴露了基于范围的可变状态机，适用于自定义 UI 与诊断场景。
 
 会话流程：
 

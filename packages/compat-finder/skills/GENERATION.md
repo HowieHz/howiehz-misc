@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `1984a7c0e257102afae57dd1d09fd2f7fc791f75`
+- **Commit SHA**: `075fe309dad96ef76c13720f8770aa6a45eaf99f`
 - **Date**: 2026-04-21
-- **Commit**: docs: expand compat-finder README examples
+- **Commit**: Clarify askUser return comment wording
 
 **Source documentation:**
 
@@ -56,13 +56,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff 1984a7c..HEAD -- packages/compat-finder/
+git diff 075fe30..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only 1984a7c..HEAD -- packages/compat-finder/
+git diff --name-only 075fe30..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline 1984a7c..HEAD -- packages/compat-finder/
+git log --oneline 075fe30..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -105,6 +105,7 @@ git log --oneline 1984a7c..HEAD -- packages/compat-finder/
 
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
+| 2026-04-21 | 075fe30 | Sync library session example with askUser, answer, and undo flow           |
 | 2026-04-21 | 1984a7c | Expand README examples and refresh the generated skill baseline            |
 | 2026-04-21 | eeac00c | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
 | 2026-04-20 | 03fe803 | Initial compat-finder skill generation with CLI/API and package references |
@@ -112,4 +113,4 @@ git log --oneline 1984a7c..HEAD -- packages/compat-finder/
 ---
 
 Last updated: 2026-04-21
-Current SHA: 1984a7c
+Current SHA: 075fe30

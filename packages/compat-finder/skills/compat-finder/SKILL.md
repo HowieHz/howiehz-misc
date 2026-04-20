@@ -31,6 +31,7 @@ Use the CLI when the user already has a list of targets and either:
 
 Use the library API when the caller needs to:
 
+- embed the high-level `createCompatibilitySession` flow
 - persist session state in their own app
 - render prompts in a custom UI
 - inspect `CompatibilityTestStep.debug` or operate directly on target ranges
@@ -62,7 +63,16 @@ pnpm cli:compat-finder -- interactive -c 4 -n "Alpha,Beta,Gamma,Delta"
 
 ## Embed the Engine
 
-For code integration, keep the state in the caller and follow this loop:
+For most code integrations, use `createCompatibilitySession(targets)` and follow this loop:
+
+1. Create a session with the user's target list.
+2. Read the current step with `session.current()`.
+3. Test `step.targets`.
+4. Feed the result back with `session.answer(hasIssue)`.
+5. Use `session.undo()` if the latest answer was entered by mistake.
+6. Read final `step.targets` after `step.status === "complete"`.
+
+Use the lower-level state API only when the caller needs custom range/debug control:
 
 1. Create state with `createCompatibilityTestState(targetCount)`.
 2. Read the current step with `getCurrentCompatibilityTestStep(state)`.

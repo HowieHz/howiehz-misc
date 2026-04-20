@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyCompatibilityTestAnswer,
+  createCompatibilitySession,
   createCompatibilityTestState,
   getCurrentCompatibilityTestStep,
   skipCachedCompatibilityTestSteps,
@@ -217,6 +218,99 @@ const scenarios: Record<string, Scenario> = {
 };
 
 describe("compatibility test engine", () => {
+  it("provides a simple session API with concrete targets", () => {
+    const session = createCompatibilitySession(["A", "B", "C", "D"]);
+
+    expect(session.current()).toEqual({
+      status: "testing",
+      targetNumbers: [1, 2],
+      targets: ["A", "B"],
+    });
+
+    expect(session.answer(true)).toEqual({
+      status: "testing",
+      targetNumbers: [1],
+      targets: ["A"],
+    });
+
+    expect(session.answer(false)).toEqual({
+      status: "testing",
+      targetNumbers: [2],
+      targets: ["B"],
+    });
+
+    expect(session.answer(true)).toEqual({
+      status: "complete",
+      targetNumbers: [2],
+      targets: ["B"],
+    });
+  });
+
+  it("completes the simple session API with no incompatible targets", () => {
+    const session = createCompatibilitySession(["A"]);
+
+    expect(session.answer(false)).toEqual({
+      status: "complete",
+      targetNumbers: [],
+      targets: [],
+    });
+  });
+
+  it("rejects answers after a simple session is complete", () => {
+    const session = createCompatibilitySession(["A"]);
+
+    session.answer(false);
+
+    expect(() => session.answer(true)).toThrow("cannot answer after the compatibility session is complete");
+  });
+
+  it("undoes the latest simple session answer", () => {
+    const session = createCompatibilitySession(["A", "B", "C", "D"]);
+
+    session.answer(true);
+    expect(session.answer(false)).toEqual({
+      status: "testing",
+      targetNumbers: [2],
+      targets: ["B"],
+    });
+
+    expect(session.undo()).toEqual({
+      status: "testing",
+      targetNumbers: [1],
+      targets: ["A"],
+    });
+  });
+
+  it("undoes a completed simple session", () => {
+    const session = createCompatibilitySession(["A"]);
+
+    expect(session.answer(false)).toEqual({
+      status: "complete",
+      targetNumbers: [],
+      targets: [],
+    });
+
+    expect(session.undo()).toEqual({
+      status: "testing",
+      targetNumbers: [1],
+      targets: ["A"],
+    });
+  });
+
+  it("keeps simple session undo idempotent without answer history", () => {
+    const session = createCompatibilitySession(["A", "B"]);
+
+    expect(session.undo()).toEqual({
+      status: "testing",
+      targetNumbers: [1],
+      targets: ["A"],
+    });
+  });
+
+  it("rejects empty simple sessions", () => {
+    expect(() => createCompatibilitySession([])).toThrow("targetCount must be an integer greater than or equal to 1");
+  });
+
   for (const [name, scenario] of Object.entries(scenarios)) {
     it(`matches sample ${name}`, () => {
       const result = runScenario(scenario);

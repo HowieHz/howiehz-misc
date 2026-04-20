@@ -31,16 +31,10 @@ yarn add compat-finder
 bun add compat-finder
 ```
 
-Then you can import the session helpers and range utilities:
+Then you can create a compatibility session:
 
 ```ts
-import {
-  applyCompatibilityTestAnswer,
-  createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
-  takeTargetsFromRanges,
-} from "compat-finder";
+import { createCompatibilitySession } from "compat-finder";
 ```
 
 You can also run the command-line tool without installing it first:
@@ -66,42 +60,34 @@ bunx compat-finder --help
 ### Library example
 
 ```ts
-import {
-  applyCompatibilityTestAnswer,
-  createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
-  takeTargetsFromRanges,
-} from "compat-finder";
+import { createCompatibilitySession } from "compat-finder";
 
-const targetNames = ["A", "B", "C", "D"];
-const state = createCompatibilityTestState(targetNames.length);
+const session = createCompatibilitySession(["A", "B", "C", "D"]);
 
-let step = getCurrentCompatibilityTestStep(state);
-while (step) {
-  if (!step.requiresAnswer) {
-    step = skipCachedCompatibilityTestSteps(state);
+let step = session.current();
+
+while (step.status === "testing") {
+  const result = askUser(step.targets);
+
+  if (result === "undo") {
+    step = session.undo();
     continue;
   }
 
-  const targets = takeTargetsFromRanges(step.promptTargetRanges, step.promptTargetCount);
-  console.log(
-    "Targets to test:",
-    targets.map((target) => targetNames[target - 1]),
-  );
-
-  const hasIssue = true;
-  applyCompatibilityTestAnswer(state, hasIssue);
-  step = getCurrentCompatibilityTestStep(state);
+  step = session.answer(result === "issue");
 }
 
-console.log(
-  "Result:",
-  state.resultTargets.map((target) => targetNames[target - 1]),
-);
+console.log("Result:", step.targets);
+
+function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
+  console.log("Targets to test:", targets);
+  // For browsers, this can read from prompt(), buttons, or forms.
+  // For Node.js, this can read from readline, a test script, or your own CLI.
+  return "issue"; // "issue" if it reproduces, "pass" if not, or "undo".
+}
 ```
 
-See the full [API Reference](#api-reference) overview for exported APIs.
+See [API Reference](#api-reference) for the full exported API.
 
 ### Command-line example
 
@@ -131,7 +117,28 @@ See the full [CLI](#cli) documentation for commands and options.
 
 ## API Reference
 
-The library API is built around one mutable session state.
+Use `createCompatibilitySession` for most integrations.
+
+Simple session API:
+
+- `createCompatibilitySession(targets)`: create a compatibility session from your target list
+- `session.current()`: read the current step or final result
+- `session.answer(hasIssue)`: submit one result and move to the next step
+- `session.undo()`: remove the latest answer and return to the previous step
+
+Session steps:
+
+- `status`: `testing` means the current `targets` should be tested; `complete` means the final result is available
+- `targets`: target values from the original input list
+- `targetNumbers`: 1-based target numbers for display or logs
+
+`session.answer(true)` means the issue appears with the current targets.
+`session.answer(false)` means the issue does not appear with the current targets.
+`session.undo()` is useful when the latest answer was entered by mistake.
+
+### Advanced API
+
+The lower-level API exposes the mutable range-based state machine for custom UIs and diagnostics.
 
 Session lifecycle:
 

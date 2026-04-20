@@ -13,7 +13,7 @@ compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与
 
 ## 安装
 
-使用你喜欢的 Node.js 包管理器安装：
+使用你偏好的包管理器安装：
 
 ```bash
 npm install compat-finder
@@ -31,7 +31,7 @@ yarn add compat-finder
 bun add compat-finder
 ```
 
-然后可以导入这些会话辅助函数和范围工具：
+然后可以这样导入会话相关函数和范围处理工具：
 
 ```ts
 import {

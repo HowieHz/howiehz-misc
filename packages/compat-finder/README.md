@@ -13,7 +13,7 @@ compat-finder is an engine and command-line tool for finding compatibility issue
 
 ## Install
 
-Install using your favorite package manager for Node.js:
+Install with your preferred package manager:
 
 ```bash
 npm install compat-finder

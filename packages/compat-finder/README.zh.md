@@ -67,16 +67,23 @@ const session = createCompatibilitySession(["A", "B", "C", "D"]);
 let step = session.current();
 
 while (step.status === "testing") {
-  console.log("当前需要测试：", step.targets);
+  const result = await askUser(step.targets);
 
-  const hasIssue = true; // 换成真实测试结果。
-  step = session.answer(hasIssue);
+  if (result === "undo") {
+    step = session.undo();
+    continue;
+  }
+
+  step = session.answer(result === "issue");
 }
 
 console.log("最终结果：", step.targets);
 ```
 
-查看完整的 [API 参考](#api-参考) 概览了解导出的 API。
+`askUser()` 是你自己的界面、脚本或测试流程。
+当前这组目标会复现问题时返回 `"issue"`，不会复现时返回 `"pass"`，需要撤销最新一次结果时返回 `"undo"`。
+
+更多导出 API 见 [API 参考](#api-参考)。
 
 ### 命令行示例
 

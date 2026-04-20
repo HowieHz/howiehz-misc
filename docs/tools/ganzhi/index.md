@@ -324,7 +324,7 @@ const resultCopyText = computed(() => {
     `时柱 ${result.value.timePillar}`,
     `公历 ${result.value.solarLabel}`,
     `农历 ${result.value.lunarLabel}`,
-    `生肖 ${result.value.zodiac}${result.value.zodiacEmoji ? ` ${result.value.zodiacEmoji}` : ""}`,
+    `生肖 ${result.value.zodiac}${result.value.zodiacEmoji ? " " + result.value.zodiacEmoji : ""}`,
   ].join("\n");
 });
 const copyButtonIcon = computed(() => {

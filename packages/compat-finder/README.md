@@ -318,7 +318,7 @@ compat-finder provides an AI coding agent [skills](https://agentskills.io/) that
 
 ### Installation
 
-Install the compat-finder skills to your AI coding agent:
+Install the compat-finder skill to your AI coding agent:
 
 ```bash
 npx skills add HowieHz/howiehz-misc --skill compat-finder

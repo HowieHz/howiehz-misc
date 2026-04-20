@@ -318,7 +318,7 @@ compat-finder 提供了 AI 编程助手可用的 [skills](https://agentskills.io
 
 ### 安装
 
-将 compat-finder skills 安装到你的 AI 编程助手中：
+将 compat-finder skill 安装到你的 AI 编程助手中：
 
 ```bash
 npx skills add HowieHz/howiehz-misc --skill compat-finder

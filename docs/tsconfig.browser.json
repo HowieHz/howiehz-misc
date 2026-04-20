@@ -3,11 +3,14 @@
   "references": [
     {
       "path": "../packages/compat-finder/tsconfig.neutral.json"
+    },
+    {
+      "path": "./tsconfig.node.json"
     }
   ],
   "compilerOptions": {
-    "declarationDir": "../node_modules/.tmp/types/docs/app",
     "lib": ["esnext", "dom", "dom.iterable"],
+    "noEmit": true,
     "isolatedDeclarations": false,
   },
   "vueCompilerOptions": {

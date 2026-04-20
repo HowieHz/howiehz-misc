@@ -11,9 +11,6 @@
   "compilerOptions": {
     "lib": ["esnext", "dom", "dom.iterable"],
     "noEmit": true,
-    "paths": {
-      "compat-finder": ["../packages/compat-finder/src/index.ts"]
-    },
     "isolatedDeclarations": false
   },
   "vueCompilerOptions": {

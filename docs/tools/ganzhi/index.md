@@ -604,6 +604,7 @@ function isValidSolarDate(year: number, month: number, day: number) {
   }
 }
 
+// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; parameters are used inside template string formatting.
 function formatSolarYmd(year: number, month: number, day: number) {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }

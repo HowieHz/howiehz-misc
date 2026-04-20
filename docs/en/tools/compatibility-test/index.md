@@ -307,6 +307,7 @@ function getTargetLabel(index: number) {
   return name.length > 0 ? name : `Target ${index}`;
 }
 
+// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; parameter is used inside template string.
 function getConfirmedTargetA11yLabel(index: number) {
   return `${getTargetLabel(index)} (confirmed)`;
 }

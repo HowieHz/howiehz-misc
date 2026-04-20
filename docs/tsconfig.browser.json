@@ -12,7 +12,6 @@
     "lib": ["esnext", "dom", "dom.iterable"],
     "noEmit": true,
     "noUnusedLocals": false,
-    "noUnusedParameters": false,
     "isolatedDeclarations": false
   },
   "vueCompilerOptions": {

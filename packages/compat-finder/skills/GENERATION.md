@@ -106,7 +106,7 @@ git log --oneline 1984a7c..HEAD -- packages/compat-finder/
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
 | 2026-04-21 | 1984a7c | Expand README examples and refresh the generated skill baseline            |
-| 2026-04-21 | eeac00c | Update locale guidance to zh-Hans and align API behavior notes with JSDoc |
+| 2026-04-21 | eeac00c | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
 | 2026-04-20 | 03fe803 | Initial compat-finder skill generation with CLI/API and package references |
 
 ---

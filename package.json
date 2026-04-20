@@ -28,7 +28,6 @@
     "compat-finder:watch": "pnpm --filter compat-finder watch",
     "docs:build": "pnpm run compat-finder:build && pnpm --filter docs build",
     "docs:preview": "pnpm run compat-finder:build && pnpm --filter docs preview",
-    "docs:test": "pnpm --filter docs test",
     "docs:watch": "pnpm --parallel --stream --filter compat-finder --filter docs watch",
     "fmt": "pnpm run \"/^fmt:/\"",
     "fmt:oxfmt": "oxfmt \"**/*.{json,jsonc,yaml,md,css,js,ts,vue,html}\"",

@@ -1,4 +1,4 @@
-name: Node.js Format and Lint Check
+name: Node.js CI
 
 on:
   push:
@@ -21,8 +21,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Node.js Format and Lint Check
+  format-lint:
+    name: Format and Lint
     runs-on: ubuntu-latest
 
     permissions:
@@ -57,9 +57,6 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Test
-        run: pnpm test
-
       - name: Commit changes
         if: (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]')
         uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # https://github.com/stefanzweifel/git-auto-commit-action/releases/tag/v7.1.0
@@ -75,3 +72,34 @@ jobs:
       - name: "Run if no changes have been detected"
         if: steps.auto-commit-action.outputs.changes_detected == 'false'
         run: echo "No Changes!"
+
+  test:
+    name: Test (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: [20, 22, 24]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # https://github.com/actions/checkout/releases/tag/v6.0.2
+
+      - uses: pnpm/action-setup@078e9d416474b29c0c387560859308974f7e9c53 # https://github.com/pnpm/action-setup/releases/tag/v6.0.1
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # https://github.com/actions/setup-node/releases/tag/v6.3.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm test

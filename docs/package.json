@@ -6,7 +6,6 @@
   "scripts": {
     "build": "vitepress build .",
     "preview": "pnpm run build && vitepress preview .",
-    "test": "node -e \"console.log('No docs tests yet.')\"",
     "watch": "vitepress dev ."
   },
   "dependencies": {

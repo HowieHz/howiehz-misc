@@ -7,7 +7,7 @@ published: 2026-04-03T20:00:00+08:00
 
 <!-- autocorrect-disable -->
 <script setup lang="ts">
-import { Foto, Lunar, LunarMonth, LunarYear, Solar, Tao } from "lunar-javascript";
+import { Foto, Lunar, LunarMonth, LunarYear, Solar, Tao, type SolarInstance } from "lunar-javascript";
 import { computed, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from "vue";
 
 type CalendarMode = "solar" | "lunar" | "foto" | "tao";
@@ -15,13 +15,6 @@ type LunisolarMode = Exclude<CalendarMode, "solar">;
 type YearType = "0" | "1";
 type DayType = "0" | "1";
 type ParseIssue = "year-range" | "invalid-date";
-interface GanzhiSolar {
-  getDay(): number;
-  getLunar(): ReturnType<typeof Lunar.fromYmdHms>;
-  getMonth(): number;
-  getYear(): number;
-  toYmd(): string;
-}
 
 const LUNISOLAR_MODES = ["lunar", "foto", "tao"] as const satisfies readonly LunisolarMode[];
 
@@ -50,7 +43,7 @@ interface DateFieldRefs {
 }
 
 type ParsedSolarState =
-  | { ok: true; solar: GanzhiSolar }
+  | { ok: true; solar: SolarInstance }
   | { ok: false; issue: ParseIssue };
 
 interface GanzhiResult {
@@ -152,7 +145,7 @@ const todaySolar = Solar.fromYmdHms(
   currentHour,
   0,
   0,
-) as GanzhiSolar;
+);
 const todayLunar = todaySolar.getLunar();
 const todayFoto = Foto.fromLunar(todayLunar);
 const todayTao = Tao.fromLunar(todayLunar);
@@ -447,7 +440,7 @@ function parseSolarInput(): ParsedSolarState {
   }
 
   try {
-    const solar = Solar.fromYmdHms(year, month, day, selectedHour, 0, 0) as GanzhiSolar;
+    const solar = Solar.fromYmdHms(year, month, day, selectedHour, 0, 0);
     return solar.toYmd() === formatSolarYmd(year, month, day) ? { ok: true, solar } : { ok: false, issue: "invalid-date" };
   } catch {
     return { ok: false, issue: "invalid-date" };
@@ -477,7 +470,7 @@ function parseLunisolarInput(mode: LunisolarMode): ParsedSolarState {
   }
 
   try {
-    return { ok: true, solar: Lunar.fromYmdHms(toLunarYear(mode, year), month, day, selectedHour, 0, 0).getSolar() as GanzhiSolar };
+    return { ok: true, solar: Lunar.fromYmdHms(toLunarYear(mode, year), month, day, selectedHour, 0, 0).getSolar() };
   } catch {
     return { ok: false, issue: "invalid-date" };
   }

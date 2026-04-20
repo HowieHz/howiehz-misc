@@ -1,5 +1,5 @@
 declare module "lunar-javascript" {
-  interface LunarInstance {
+  export interface LunarInstance {
     getYear(): number;
     getMonth(): number;
     getDay(): number;
@@ -15,7 +15,7 @@ declare module "lunar-javascript" {
     getSolar(): SolarInstance;
   }
 
-  interface SolarInstance {
+  export interface SolarInstance {
     getDay(): number;
     toYmd(): string;
     getMonth(): number;
@@ -23,7 +23,7 @@ declare module "lunar-javascript" {
     getLunar(): LunarInstance;
   }
 
-  interface LunisolarCalendarInstance {
+  export interface LunisolarCalendarInstance {
     getDay(): number;
     getMonth(): number;
     getYear(): number;

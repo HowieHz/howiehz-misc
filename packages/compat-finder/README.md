@@ -4,7 +4,7 @@ English | [简体中文](./README.zh.md)
 
 compat-finder is an engine and command-line tool for finding compatibility issues across multiple targets.
 
-[Compatibility](#compatibility) | [Install](#install) | [Quick Start](#quick-start) | [CLI](#cli) | [API Reference](#api-reference) | [Work with AI](#work-with-ai) | [Online Tool](#online-tool) | [Related Projects](#related-projects)
+[Compatibility](#compatibility) | [Install](#install) | [Quick Start](#quick-start) | [CLI](#cli) | [API Reference](#api-reference) | [Work with AI](#work-with-ai) | [Online Tool](#online-tool)
 
 ## Compatibility
 

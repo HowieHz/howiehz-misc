@@ -999,7 +999,6 @@ Enter the target count and names, then follow the prompts to test each suggested
 - This tool helps isolate compatibility issues across multiple targets by narrowing the range step by step with a divide-and-conquer process similar to binary search.
 - Each step gives you the next group of targets to test. Run that group as prompted, then choose "Issue present" or "No issue found" based on the actual result.
 - This page is powered by [`compat-finder`](https://www.npmjs.com/package/compat-finder).
-- It is a rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
 - If this tool helps you, consider starring [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc).
 
 ## Use cases

@@ -4,7 +4,7 @@ English | [简体中文](./README.zh.md)
 
 compat-finder is an engine and command-line tool for finding compatibility issues across multiple targets.
 
-[Compatibility](#compatibility) | [Install](#install) | [Quick Start](#quick-start) | [CLI](#cli) | [API Reference](#api-reference) | [Work with AI](#work-with-ai) | [Online Tool](#online-tool)
+[Compatibility](#compatibility) | [Install](#install) | [Quick Start](#quick-start) | [API Reference](#api-reference) | [CLI](#cli) | [Work with AI](#work-with-ai) | [Online Tool](#online-tool)
 
 ## Compatibility
 
@@ -31,6 +31,18 @@ yarn add compat-finder
 bun add compat-finder
 ```
 
+Then you can import the session helpers and range utilities:
+
+```ts
+import {
+  applyCompatibilityTestAnswer,
+  createCompatibilityTestState,
+  getCurrentCompatibilityTestStep,
+  skipCachedCompatibilityTestSteps,
+  takeTargetsFromRanges,
+} from "compat-finder";
+```
+
 You can also run the command-line tool without installing it first:
 
 ```bash
@@ -50,32 +62,6 @@ bunx compat-finder --help
 ```
 
 ## Quick Start
-
-### Command-line example
-
-Run an interactive compatibility check:
-
-```bash
-compat-finder interactive --count 4
-```
-
-Run a single-step calculation and print the next result:
-
-```bash
-compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
-```
-
-Expected JSON output:
-
-```json
-{
-  "status": "testing",
-  "targetCount": 3,
-  "targets": ["Beta"]
-}
-```
-
-See the full [CLI](#cli) documentation for commands and options.
 
 ### Library example
 
@@ -116,6 +102,59 @@ console.log(
 ```
 
 See the full [API Reference](#api-reference) overview for exported APIs.
+
+### Command-line example
+
+Run an interactive compatibility check:
+
+```bash
+compat-finder interactive --count 4
+```
+
+Run a single-step calculation and print the next result:
+
+```bash
+compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```
+
+Expected JSON output:
+
+```json
+{
+  "status": "testing",
+  "targetCount": 3,
+  "targets": ["Beta"]
+}
+```
+
+See the full [CLI](#cli) documentation for commands and options.
+
+## API Reference
+
+The library API is built around one mutable session state.
+
+Session lifecycle:
+
+- `createCompatibilityTestState(targetCount)`: create a new session
+- `getCurrentCompatibilityTestStep(state)`: read the current step, or `undefined` when complete
+- `applyCompatibilityTestAnswer(state, hasIssue)`: apply one answer and advance the session
+- `skipCachedCompatibilityTestSteps(state)`: fast-forward through cached steps
+
+Range utilities:
+
+- `takeTargetsFromRanges(ranges, limit)`: expand ranges into target indexes
+- `countTargetsInRanges(ranges)`: count targets covered by ranges
+- `intersectTargetRanges(leftRanges, rightRanges)`: intersect two range lists
+- `subtractTargetRanges(sourceRanges, excludedRanges)`: remove one range list from another
+
+Key types:
+
+- `CompatibilityTestState`: mutable session state
+- `CompatibilityTestStep`: current step to present to the caller
+- `CompatibilityTestDebugStep`: internal search state in range form
+- `TargetRange`: inclusive target index range
+
+For parameter details and behavior guarantees, see the inline JSDoc in [src/compatibility-test.ts](./src/compatibility-test.ts).
 
 ## CLI
 
@@ -264,33 +303,6 @@ Expected JSON output:
   "targets": ["Alpha", "Beta"]
 }
 ```
-
-## API Reference
-
-The library API is built around one mutable session state.
-
-Session lifecycle:
-
-- `createCompatibilityTestState(targetCount)`: create a new session
-- `getCurrentCompatibilityTestStep(state)`: read the current step, or `undefined` when complete
-- `applyCompatibilityTestAnswer(state, hasIssue)`: apply one answer and advance the session
-- `skipCachedCompatibilityTestSteps(state)`: fast-forward through cached steps
-
-Range utilities:
-
-- `takeTargetsFromRanges(ranges, limit)`: expand ranges into target indexes
-- `countTargetsInRanges(ranges)`: count targets covered by ranges
-- `intersectTargetRanges(leftRanges, rightRanges)`: intersect two range lists
-- `subtractTargetRanges(sourceRanges, excludedRanges)`: remove one range list from another
-
-Key types:
-
-- `CompatibilityTestState`: mutable session state
-- `CompatibilityTestStep`: current step to present to the caller
-- `CompatibilityTestDebugStep`: internal search state in range form
-- `TargetRange`: inclusive target index range
-
-For parameter details and behavior guarantees, see the inline JSDoc in [src/compatibility-test.ts](./src/compatibility-test.ts).
 
 ## Work with AI
 

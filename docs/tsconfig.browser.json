@@ -9,5 +9,10 @@
     "declarationDir": "../node_modules/.tmp/types/docs/app",
     "lib": ["esnext", "dom", "dom.iterable"]
   },
-  "include": [".vitepress/theme/**/*.ts", ".vitepress/types/**/*.d.ts"]
+  "vueCompilerOptions": {
+    "extensions": [".vue"],
+    "vitePressExtensions": [".md"]
+  },
+  "include": [".vitepress/theme/**/*.ts", ".vitepress/types/**/*.d.ts", "**/*.vue", "**/*.md"],
+  "exclude": ["**/README.md"]
 }

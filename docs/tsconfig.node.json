@@ -10,6 +10,6 @@
     ".vitepress/data/**/*.ts",
     ".vitepress/utils/**/*.ts",
     ".vitepress/types/**/*.d.ts",
-    "**/*.data.ts"
+    "**/*.node.data.ts"
   ]
 }

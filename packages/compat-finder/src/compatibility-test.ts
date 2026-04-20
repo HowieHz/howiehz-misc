@@ -1,5 +1,5 @@
 /**
- * Represents an inclusive range of target indexes.
+ * Represents an inclusive range of 1-based target indexes.
  */
 export interface TargetRange {
   start: number;
@@ -10,9 +10,13 @@ export interface TargetRange {
  * Describes the next step to present to the caller.
  */
 export interface CompatibilityTestStep {
+  /** Ranges of 1-based target indexes to test in the current step. */
   promptTargetRanges: readonly TargetRange[];
+  /** Number of targets covered by `promptTargetRanges`. */
   promptTargetCount: number;
+  /** Internal range-based search state for diagnostics and advanced UIs. */
   debug: CompatibilityTestDebugStep;
+  /** Whether the caller needs to provide a new answer for this step. If false, call `skipCachedCompatibilityTestSteps`. */
   requiresAnswer: boolean;
 }
 
@@ -20,13 +24,19 @@ export interface CompatibilityTestStep {
  * Exposes the current internal search state in range form.
  */
 export interface CompatibilityTestDebugStep {
+  /** The currently active search range. */
   activeTargetRange: TargetRange;
+  /** Deferred search ranges that may be revisited later. */
   pendingTargetRanges: readonly TargetRange[];
+  /** Ranges already confirmed by previous narrowing steps. */
   confirmedTargetRanges: readonly TargetRange[];
 }
 
 /**
  * Represents the mutable state of a compatibility test session.
+ *
+ * Keep this object and pass the same instance back to the API functions for the
+ * lifetime of the session.
  */
 export interface CompatibilityTestState {
   targetCount: number;
@@ -38,15 +48,16 @@ export interface CompatibilityTestState {
   definedTargets: number[];
   cachedResults: Map<string, boolean>;
   stopped: boolean;
+  /** Final 1-based target indexes. Meaningful only after the session is complete. */
   resultTargets: number[];
 }
 
 /**
  * Creates a new compatibility test session.
  *
- * @param targetCount The total number of targets to evaluate.
+ * @param targetCount The total number of targets to evaluate. Must be an integer greater than or equal to 1.
  * @returns A new mutable session state.
- * @throws {Error} Thrown when `targetCount` is not a positive integer.
+ * @throws {Error} Thrown when `targetCount` is not an integer greater than or equal to 1.
  */
 export function createCompatibilityTestState(targetCount: number): CompatibilityTestState {
   if (!Number.isInteger(targetCount) || targetCount < 1) {
@@ -68,7 +79,7 @@ export function createCompatibilityTestState(targetCount: number): Compatibility
  * Returns the current step for the provided session state.
  *
  * @param state The session state to inspect.
- * @returns The current step, or `undefined` when the session is complete.
+ * @returns The current step, or `undefined` when the session is already complete.
  */
 export function getCurrentCompatibilityTestStep(state: CompatibilityTestState): CompatibilityTestStep | undefined {
   if (state.stopped) {
@@ -91,7 +102,7 @@ export function getCurrentCompatibilityTestStep(state: CompatibilityTestState): 
  *
  * @param state The session state to update.
  * @param hasIssue Whether the current prompt reproduces the compatibility issue.
- * @returns The next step, or `undefined` when the session is complete.
+ * @returns The next step, or `undefined` when the session is already complete or becomes complete after this answer.
  */
 export function applyCompatibilityTestAnswer(
   state: CompatibilityTestState,
@@ -117,7 +128,7 @@ export function applyCompatibilityTestAnswer(
  * Advances through cached steps until a new answer is required or the session completes.
  *
  * @param state The session state to advance.
- * @returns The next uncached step, or `undefined` when the session is complete.
+ * @returns The next uncached step, or `undefined` when the session is already complete or becomes complete while skipping cached steps.
  */
 export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState): CompatibilityTestStep | undefined {
   let step = getCurrentCompatibilityTestStep(state);

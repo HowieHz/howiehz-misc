@@ -4,14 +4,12 @@ English | [简体中文](./README.zh.md)
 
 compat-finder is an engine and command-line tool for finding compatibility issues across multiple targets.
 
-[Compatibility](#compatibility) | [Install](#install) | [Quick Start](#quick-start) | [CLI](#cli) | [API](#api) | [Work with AI](#work-with-ai) | [Online Tool](#online-tool) | [Related Projects](#related-projects)
+[Compatibility](#compatibility) | [Install](#install) | [Quick Start](#quick-start) | [CLI](#cli) | [API Reference](#api-reference) | [Work with AI](#work-with-ai) | [Online Tool](#online-tool) | [Related Projects](#related-projects)
 
 ## Compatibility
 
-- API: ESM-only; works in modern browsers, Node.js, and other JavaScript runtimes with ES module support
-- CLI:
-  - Node.js: `^20 || ^22 || >=24`
-  - Locales: `en`, `zh-CN`
+- Library: ESM-only. It has no Node.js built-in dependencies and can also run in browsers and other ESM-compatible runtimes
+- CLI: requires Node.js `^20 || ^22 || >=24`; supports English and Simplified Chinese
 
 ## Install
 
@@ -99,7 +97,7 @@ console.log(
 );
 ```
 
-See the full [API](#api) overview for exported APIs.
+See the full [API Reference](#api-reference) overview for exported APIs.
 
 ## CLI
 
@@ -127,14 +125,14 @@ Priority:
 Supported locales:
 
 - `en`
-- `zh-CN`
+- `zh-Hans`
 
 Examples:
 
 ```bash
-compat-finder --locale zh-CN --help
-compat-finder -l zh-CN next -c 3 -a "y,n"
-COMPAT_FINDER_LOCALE=zh-CN compat-finder next -c 3 -a "y,n"
+compat-finder --locale zh-Hans --help
+compat-finder -l zh-Hans next -c 3 -a "y,n"
+COMPAT_FINDER_LOCALE=zh-Hans compat-finder next -c 3 -a "y,n"
 ```
 
 ### Commands
@@ -224,7 +222,7 @@ Expected JSON output:
 }
 ```
 
-## API
+## API Reference
 
 The library API is built around one mutable session state.
 

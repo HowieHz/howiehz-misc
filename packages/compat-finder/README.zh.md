@@ -4,14 +4,12 @@
 
 compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与命令行工具。
 
-[适用范围](#适用范围) | [安装](#安装) | [快速开始](#快速开始) | [命令行工具](#命令行工具) | [API](#api) | [与 AI 协作](#与-ai-协作) | [在线版](#在线版) | [相关项目](#相关项目)
+[适用范围](#适用范围) | [安装](#安装) | [快速开始](#快速开始) | [命令行工具](#命令行工具) | [API 参考](#api-参考) | [与 AI 协作](#与-ai-协作) | [在线版](#在线版) | [相关项目](#相关项目)
 
 ## 适用范围
 
-- API：仅提供 ESM，可用于支持 ES modules 的现代浏览器、Node.js 和其他 JavaScript 运行时
-- CLI：
-  - Node.js：`^20 || ^22 || >=24`
-  - 语言：`en`、`zh-CN`
+- 作为库使用：仅提供 ESM，不依赖 Node.js 内置模块，也可用于浏览器和其他兼容 ESM 的运行时
+- 作为命令行工具使用：需要 Node.js `^20 || ^22 || >=24`；支持英文和简体中文
 
 ## 安装
 
@@ -117,7 +115,7 @@ console.log(
 );
 ```
 
-查看完整的 [API](#api) 概览了解导出的 API。
+查看完整的 [API 参考](#api-参考) 概览了解导出的 API。
 
 ## 命令行工具
 
@@ -145,14 +143,14 @@ CLI 文案可以通过命令行参数或环境变量设置输出语言。
 支持的语言：
 
 - `en`
-- `zh-CN`
+- `zh-Hans`
 
 示例：
 
 ```bash
-compat-finder --locale zh-CN --help
-compat-finder -l zh-CN next -c 3 -a "y,n"
-COMPAT_FINDER_LOCALE=zh-CN compat-finder next -c 3 -a "y,n"
+compat-finder --locale zh-Hans --help
+compat-finder -l zh-Hans next -c 3 -a "y,n"
+COMPAT_FINDER_LOCALE=zh-Hans compat-finder next -c 3 -a "y,n"
 ```
 
 ### 子命令
@@ -242,7 +240,7 @@ compat-finder next -c 3 -a "y,n,n"
 }
 ```
 
-## API
+## API 参考
 
 库 API 围绕一个可变的排查会话状态展开。
 

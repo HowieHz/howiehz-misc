@@ -10,6 +10,8 @@
   "ignorePatterns": [
     "public/assets/lib/**/*",
     "**/.oxlintrc.json.bak",
+    "**/build",
+    "**/tmp",
     "**/logs",
     "**/*.log",
     "**/npm-debug.log*",

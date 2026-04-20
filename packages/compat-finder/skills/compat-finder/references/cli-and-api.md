@@ -47,9 +47,33 @@ Accepted answers:
 - `targetCount`: total targets in the session
 - `targets`: names or fallback labels for the current prompt or final result
 
-## State-Machine API
+## Library API
 
-Primary exports from `src/compatibility-test.ts`:
+Use `createCompatibilitySession(targets)` for most integrations.
+
+Simple session API:
+
+- `session.current()` reads the current step or final result.
+- `session.answer(true)` means the issue appears with the current targets.
+- `session.answer(false)` means the issue does not appear with the current targets.
+- `session.undo()` removes the latest answer and returns to the previous step.
+- Returned steps contain `status`, `targets`, and 1-based `targetNumbers`.
+
+Useful integration loop:
+
+```ts
+const session = createCompatibilitySession(["A", "B", "C", "D"]);
+let step = session.current();
+
+while (step.status === "testing") {
+  const hasIssue = await runRealTest(step.targets);
+  step = session.answer(hasIssue);
+}
+
+console.log(step.targets);
+```
+
+Advanced exports from `src/compatibility-test.ts`:
 
 - `createCompatibilityTestState(targetCount)`
 - `getCurrentCompatibilityTestStep(state)`
@@ -62,6 +86,7 @@ Primary exports from `src/compatibility-test.ts`:
 
 Important behavior:
 
+- `createCompatibilitySession(targets)` requires at least one target and throws otherwise.
 - `createCompatibilityTestState(targetCount)` requires an integer greater than or equal to 1 and throws otherwise.
 - Target indexes are 1-based.
 - `CompatibilityTestState` is mutable and owned by the caller.
@@ -71,7 +96,7 @@ Important behavior:
 - `takeTargetsFromRanges` returns expanded target indexes.
 - `intersectTargetRanges` and `subtractTargetRanges` return normalized target ranges.
 
-Useful integration loop:
+Advanced integration loop:
 
 ```ts
 const state = createCompatibilityTestState(targetNames.length);

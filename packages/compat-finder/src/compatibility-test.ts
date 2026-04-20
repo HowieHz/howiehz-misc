@@ -52,6 +52,95 @@ export interface CompatibilityTestState {
   resultTargets: number[];
 }
 
+export type CompatibilitySessionStep<Target> = CompatibilitySessionTestingStep<Target> | CompatibilitySessionCompleteStep<Target>;
+
+export interface CompatibilitySessionTestingStep<Target> {
+  status: "testing";
+  /** 1-based target numbers to test in this step. */
+  targetNumbers: number[];
+  /** Targets to test in this step, preserving the input target values. */
+  targets: Target[];
+}
+
+export interface CompatibilitySessionCompleteStep<Target> {
+  status: "complete";
+  /** 1-based target numbers identified as incompatible. */
+  targetNumbers: number[];
+  /** Targets identified as incompatible, preserving the input target values. */
+  targets: Target[];
+}
+
+export interface CompatibilitySession<Target> {
+  /** Reads the current answerable step or final result. */
+  current: () => CompatibilitySessionStep<Target>;
+  /**
+   * Applies one answer and returns the next step.
+   *
+   * `true` means the issue appears with the current targets.
+   * `false` means the issue does not appear with the current targets.
+   */
+  answer: (hasIssue: boolean) => CompatibilitySessionStep<Target>;
+  /** Removes the latest answer and returns the restored current step. */
+  undo: () => CompatibilitySessionStep<Target>;
+}
+
+/**
+ * Creates a high-level compatibility test session.
+ *
+ * Use this API for most integrations. It hides the range-based state machine
+ * and returns the concrete target values to test at each step.
+ *
+ * @param targets The targets to evaluate. Must contain at least one item.
+ * @returns A session with `current()`, `answer(hasIssue)`, and `undo()` methods.
+ */
+export function createCompatibilitySession<Target>(targets: readonly Target[]): CompatibilitySession<Target> {
+  let state = createCompatibilityTestState(targets.length);
+  const answers: boolean[] = [];
+
+  const toSessionStep = (): CompatibilitySessionStep<Target> => {
+    const step = getNextAnswerableCompatibilityTestStep(state);
+    if (!step) {
+      const targetNumbers = [...state.resultTargets];
+      return {
+        status: "complete",
+        targetNumbers,
+        targets: getTargetsByNumber(targets, targetNumbers),
+      };
+    }
+
+    const targetNumbers = takeTargetsFromRanges(step.promptTargetRanges, step.promptTargetCount);
+    return {
+      status: "testing",
+      targetNumbers,
+      targets: getTargetsByNumber(targets, targetNumbers),
+    };
+  };
+
+  return {
+    answer(hasIssue) {
+      if (state.stopped) {
+        throw new Error("cannot answer after the compatibility session is complete");
+      }
+
+      answers.push(hasIssue);
+      applyCompatibilityTestAnswer(state, hasIssue);
+      return toSessionStep();
+    },
+    current: toSessionStep,
+    undo() {
+      answers.pop();
+      state = createCompatibilityTestState(targets.length);
+
+      for (const answer of answers) {
+        applyCompatibilityTestAnswer(state, answer);
+        getNextAnswerableCompatibilityTestStep(state);
+      }
+
+      return toSessionStep();
+    },
+  };
+}
+
 /**
  * Creates a new compatibility test session.
  *
@@ -144,6 +233,15 @@ export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState):
   }
 
   return step;
+}
+
+function getNextAnswerableCompatibilityTestStep(state: CompatibilityTestState): CompatibilityTestStep | undefined {
+  const step = getCurrentCompatibilityTestStep(state);
+  return step && !step.requiresAnswer ? skipCachedCompatibilityTestSteps(state) : step;
+}
+
+function getTargetsByNumber<Target>(targets: readonly Target[], targetNumbers: readonly number[]): Target[] {
+  return targetNumbers.map((targetNumber) => targets[targetNumber - 1] as Target);
 }
 
 /**

@@ -16,8 +16,17 @@ declare module "lunar-javascript" {
   }
 
   interface SolarInstance {
+    getDay(): number;
     toYmd(): string;
+    getMonth(): number;
+    getYear(): number;
     getLunar(): LunarInstance;
+  }
+
+  interface LunisolarCalendarInstance {
+    getDay(): number;
+    getMonth(): number;
+    getYear(): number;
   }
 
   export const Solar: {
@@ -43,5 +52,13 @@ declare module "lunar-javascript" {
     fromYear(year: number): {
       getLeapMonth(): number;
     };
+  };
+
+  export const Foto: {
+    fromLunar(lunar: LunarInstance): LunisolarCalendarInstance;
+  };
+
+  export const Tao: {
+    fromLunar(lunar: LunarInstance): LunisolarCalendarInstance;
   };
 }

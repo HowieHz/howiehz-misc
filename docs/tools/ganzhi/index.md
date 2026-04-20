@@ -141,7 +141,7 @@ const zodiacEmojiMap = {
   鸡: "🐔",
   狗: "🐶",
   猪: "🐷",
-} as const satisfies Record<string, string>;
+} as const;
 
 const today = new Date();
 const currentHour = today.getHours();
@@ -324,7 +324,7 @@ const result = computed<GanzhiResult | undefined>(() => {
     dayPillar: dayType.value === "0" ? lunar.getDayInGanZhiExact() : lunar.getDayInGanZhiExact2(),
     timePillar: lunar.getTimeInGanZhi(),
     zodiac,
-    zodiacEmoji: zodiacEmojiMap[zodiac] ?? "",
+    zodiacEmoji: isZodiacEmojiKey(zodiac) ? zodiacEmojiMap[zodiac] : "",
   };
 });
 const resultCopyText = computed(() => {
@@ -613,6 +613,10 @@ function isValidSolarDate(year: number, month: number, day: number) {
 
 function formatSolarYmd(year: number, month: number, day: number) {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function isZodiacEmojiKey(value: string): value is keyof typeof zodiacEmojiMap {
+  return Object.hasOwn(zodiacEmojiMap, value);
 }
 
 function clampSelectedValue(target: { value: string }, options: SelectOption[]) {

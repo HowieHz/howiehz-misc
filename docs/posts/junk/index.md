@@ -5,6 +5,8 @@ publish: false
 # 过时/低质量文章归档
 
 <script setup lang="ts">
+// VitePress data loaders expose this named export at runtime.
+// @ts-expect-error TS checks the source loader module directly.
 import { data as posts } from "./posts.node.data.ts";
 import { withBase } from "vitepress";
 </script>

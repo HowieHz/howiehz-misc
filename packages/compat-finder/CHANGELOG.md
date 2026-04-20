@@ -1,5 +1,15 @@
 # compat-finder
 
+## 1.1.1
+
+### Patch Changes
+
+- [#63](https://github.com/HowieHz/howiehz-misc/pull/63) [`640710d`](https://github.com/HowieHz/howiehz-misc/commit/640710dd5ed892abfbb798cb422a1ca4646979ed) Thanks [@HowieHz](https://github.com/HowieHz)! - Fix locale parsing for POSIX-style locale modifiers and reject unsupported explicit Chinese locale variants.
+
+- [#59](https://github.com/HowieHz/howiehz-misc/pull/59) [`605294b`](https://github.com/HowieHz/howiehz-misc/commit/605294bf8db9f7b372616b92165f86e70ca491e8) Thanks [@HowieHz](https://github.com/HowieHz)! - Enable npm Trusted Publishing for package releases.
+
+- [#63](https://github.com/HowieHz/howiehz-misc/pull/63) [`640710d`](https://github.com/HowieHz/howiehz-misc/commit/640710dd5ed892abfbb798cb422a1ca4646979ed) Thanks [@HowieHz](https://github.com/HowieHz)! - Rename the canonical Simplified Chinese locale to `zh-Hans` and keep `zh-CN` as a backward-compatible alias.
+
 ## 1.1.0
 
 ### Minor Changes

@@ -194,6 +194,11 @@ function extractH1Title(filePath: string): string | undefined {
 const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
   srcExclude: ["**/README.md"],
   vite: {
+    resolve: {
+      alias: {
+        "compat-finder": path.resolve(DOCS_ROOT, "../packages/compat-finder/src/index.ts"),
+      },
+    },
     plugins: [
       // Pagefind search plugin
       pagefindPlugin({

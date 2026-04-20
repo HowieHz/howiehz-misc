@@ -6,7 +6,6 @@
   "scripts": {
     "build": "vitepress build .",
     "preview": "pnpm run build && vitepress preview .",
-    "test": "node -e \"console.log('No docs tests yet.')\"",
     "watch": "vitepress dev ."
   },
   "dependencies": {
@@ -24,6 +23,6 @@
     "vitepress-plugin-rss": "^0.4.3"
   },
   "engines": {
-    "node": ">=24"
+    "node": "^20 || ^22 || >=24"
   }
 }

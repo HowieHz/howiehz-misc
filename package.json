@@ -28,7 +28,6 @@
     "compat-finder:watch": "pnpm --filter compat-finder watch",
     "docs:build": "pnpm run compat-finder:build && pnpm --filter docs build",
     "docs:preview": "pnpm run compat-finder:build && pnpm --filter docs preview",
-    "docs:test": "pnpm --filter docs test",
     "docs:watch": "pnpm --parallel --stream --filter compat-finder --filter docs watch",
     "fmt": "pnpm run \"/^fmt:/\"",
     "fmt:oxfmt": "oxfmt \"**/*.{json,jsonc,yaml,md,css,js,ts,vue,html}\"",
@@ -37,9 +36,11 @@
     "lint:md": "markdownlint --fix \"**/*.md\" --ignore-path .gitignore",
     "lint:oxlint+eslint": "oxlint --type-aware --fix && eslint --fix",
     "lint:style": "stylelint --fix \"**/*.{css,vue}\" \"docs/.vitepress/**/*.{css,vue}\" --ignore-path .gitignore",
-    "lint:type-check": "tsgo -b",
+    "lint:type-check:docs:vue-tsc": "vue-tsc -b docs/tsconfig.browser.json",
+    "lint:type-check:tsgo": "tsgo -b",
     "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm oxfmt -- --write .oxlintrc.json",
     "preinstall": "npx only-allow pnpm",
+    "prelint:type-check:docs:vue-tsc": "pnpm run compat-finder:build",
     "test": "pnpm run \"/:test$/\""
   },
   "devDependencies": {
@@ -68,8 +69,8 @@
     "stylelint-config-standard": "^40.0.0",
     "stylelint-order": "^8.1.1",
     "typescript-eslint": "^8.58.2",
-    "vitest": "^4.0.16",
-    "vue-eslint-parser": "^10.4.0"
+    "vue-eslint-parser": "^10.4.0",
+    "vue-tsc": "^3.2.7"
   },
   "browserslist": [
     "defaults",
@@ -78,7 +79,7 @@
     "Firefox >= 128"
   ],
   "engines": {
-    "node": ">=24",
+    "node": "^20 || ^22 || >=24",
     "pnpm": "^10.33.0"
   },
   "packageManager": "pnpm@10.33.0"

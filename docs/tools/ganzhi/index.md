@@ -7,7 +7,7 @@ published: 2026-04-03T20:00:00+08:00
 
 <!-- autocorrect-disable -->
 <script setup lang="ts">
-import { Foto, Lunar, LunarMonth, LunarYear, Solar, Tao } from "lunar-javascript";
+import { Foto, Lunar, LunarMonth, LunarYear, Solar, Tao, type SolarInstance } from "lunar-javascript";
 import { computed, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from "vue";
 
 type CalendarMode = "solar" | "lunar" | "foto" | "tao";
@@ -43,7 +43,7 @@ interface DateFieldRefs {
 }
 
 type ParsedSolarState =
-  | { ok: true; solar: Solar }
+  | { ok: true; solar: SolarInstance }
   | { ok: false; issue: ParseIssue };
 
 interface GanzhiResult {
@@ -79,6 +79,7 @@ const LUNISOLAR_LIMITS = {
   foto: { label: "佛历日期", start: { year: 544, month: 11, day: 18 }, end: { year: 10543, month: 12, day: 2 }, yearOffset: 544 },
   tao: { label: "道历日期", start: { year: 2697, month: 11, day: 18 }, end: { year: 12696, month: 12, day: 2 }, yearOffset: 2697 },
 } as const satisfies Record<LunisolarMode, LunisolarLimit>;
+// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local labels are used inside template strings.
 const monthNames = ["正", "二", "三", "四", "五", "六", "七", "八", "九", "十", "冬", "腊"] as const;
 const dayNames = [
   "初一",
@@ -134,11 +135,18 @@ const zodiacEmojiMap = {
   鸡: "🐔",
   狗: "🐶",
   猪: "🐷",
-} as const satisfies Record<string, string>;
+} as const;
 
 const today = new Date();
 const currentHour = today.getHours();
-const todaySolar = Solar.fromYmdHms(today.getFullYear(), today.getMonth() + 1, today.getDate(), currentHour, 0, 0);
+const todaySolar = Solar.fromYmdHms(
+  today.getFullYear(),
+  today.getMonth() + 1,
+  today.getDate(),
+  currentHour,
+  0,
+  0,
+);
 const todayLunar = todaySolar.getLunar();
 const todayFoto = Foto.fromLunar(todayLunar);
 const todayTao = Tao.fromLunar(todayLunar);
@@ -271,7 +279,8 @@ const activeLunisolarDay = computed({
   },
 });
 const activeLeapMonthHint = computed(() => {
-  if (!activeLunisolarState.value) {
+  const mode = calendarMode.value;
+  if (mode === "solar" || !activeLunisolarState.value) {
     return undefined;
   }
 
@@ -281,12 +290,12 @@ const activeLeapMonthHint = computed(() => {
     limit.start.year,
     limit.end.year,
   );
-  if (!Number.isInteger(displayYear)) {
+  if (displayYear === undefined) {
     return undefined;
   }
 
   try {
-    const leapMonth = LunarYear.fromYear(toLunarYear(calendarMode.value, displayYear)).getLeapMonth();
+    const leapMonth = LunarYear.fromYear(toLunarYear(mode, displayYear)).getLeapMonth();
     return leapMonth > 0 ? `该年闰${monthNames[leapMonth - 1]}月` : "该年无闰月";
   } catch {
     return undefined;
@@ -309,7 +318,7 @@ const result = computed<GanzhiResult | undefined>(() => {
     dayPillar: dayType.value === "0" ? lunar.getDayInGanZhiExact() : lunar.getDayInGanZhiExact2(),
     timePillar: lunar.getTimeInGanZhi(),
     zodiac,
-    zodiacEmoji: zodiacEmojiMap[zodiac] ?? "",
+    zodiacEmoji: isZodiacEmojiKey(zodiac) ? zodiacEmojiMap[zodiac] : "",
   };
 });
 const resultCopyText = computed(() => {
@@ -324,7 +333,7 @@ const resultCopyText = computed(() => {
     `时柱 ${result.value.timePillar}`,
     `公历 ${result.value.solarLabel}`,
     `农历 ${result.value.lunarLabel}`,
-    `生肖 ${result.value.zodiac}${result.value.zodiacEmoji ? ` ${result.value.zodiacEmoji}` : ""}`,
+    `生肖 ${result.value.zodiac}${result.value.zodiacEmoji ? " " + result.value.zodiacEmoji : ""}`,
   ].join("\n");
 });
 const copyButtonIcon = computed(() => {
@@ -420,7 +429,7 @@ function setCopyStatus(status: "idle" | "success" | "error") {
 
 function parseSolarInput(): ParsedSolarState {
   const year = parseYearInRange(solarYear.value, MIN_SOLAR_YEAR, MAX_SOLAR_YEAR);
-  if (!Number.isInteger(year)) {
+  if (year === undefined) {
     return { ok: false, issue: "year-range" };
   }
 
@@ -442,7 +451,7 @@ function parseSolarInput(): ParsedSolarState {
 function parseLunisolarInput(mode: LunisolarMode): ParsedSolarState {
   const { limit, refs } = lunisolarModeState[mode];
   const year = parseYearInRange(refs.year.value, limit.start.year, limit.end.year);
-  if (!Number.isInteger(year)) {
+  if (year === undefined) {
     return { ok: false, issue: "year-range" };
   }
 
@@ -497,7 +506,7 @@ function createSolarDayOptions(year: number, month: number): SelectOption[] {
 function createLunisolarMonthOptions(mode: LunisolarMode, yearText: string): SelectOption[] {
   const limits = LUNISOLAR_LIMITS[mode];
   const year = parseYearInRange(yearText, limits.start.year, limits.end.year);
-  if (!Number.isInteger(year)) {
+  if (year === undefined) {
     return [];
   }
 
@@ -528,7 +537,7 @@ function createLunisolarDayOptions(mode: LunisolarMode, yearText: string, monthT
   const limits = LUNISOLAR_LIMITS[mode];
   const year = parseYearInRange(yearText, limits.start.year, limits.end.year);
   const month = Number.parseInt(monthText, 10);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || month === 0) {
+  if (year === undefined || !Number.isInteger(month) || month === 0) {
     return [];
   }
 
@@ -596,8 +605,13 @@ function isValidSolarDate(year: number, month: number, day: number) {
   }
 }
 
+// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; parameters are used inside template string formatting.
 function formatSolarYmd(year: number, month: number, day: number) {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function isZodiacEmojiKey(value: string): value is keyof typeof zodiacEmojiMap {
+  return Object.hasOwn(zodiacEmojiMap, value);
 }
 
 function clampSelectedValue(target: { value: string }, options: SelectOption[]) {
@@ -728,7 +742,9 @@ function fromLunarYear(mode: LunisolarMode, lunarYear: number) {
 }
 
 function formatHourLabel(hourValue: number): string {
+  // @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local is used inside template string.
   const start = `${String(hourValue).padStart(2, "0")}:00`;
+  // @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local is used inside template string.
   const end = `${String(hourValue).padStart(2, "0")}:59`;
   if (hourValue === 0) {
     return `${start}-${end}（早子）`;
@@ -737,7 +753,9 @@ function formatHourLabel(hourValue: number): string {
     return `${start}-${end}（晚子）`;
   }
 
+  // @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local is used inside template string.
   const zhiLabels = ["丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"] as const;
+  // @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local is used inside template string.
   const index = Math.floor((hourValue - 1) / 2);
   return `${start}-${end}（${zhiLabels[index]}时）`;
 }

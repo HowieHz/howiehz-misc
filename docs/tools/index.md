@@ -5,7 +5,7 @@ publish: false
 # 实用工具
 
 <script setup lang="ts">
-import { data as tools } from "./tools.data.ts";
+import { data as tools } from "./tools.node.data.ts";
 import { withBase } from "vitepress";
 </script>
 

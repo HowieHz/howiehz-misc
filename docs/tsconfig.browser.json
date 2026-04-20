@@ -2,12 +2,18 @@
   "extends": "../tsconfig.json",
   "references": [
     {
-      "path": "../packages/compat-finder/tsconfig.neutral.json"
+      "path": "./tsconfig.node.json"
     }
   ],
   "compilerOptions": {
-    "declarationDir": "../node_modules/.tmp/types/docs/app",
-    "lib": ["esnext", "dom", "dom.iterable"]
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "noEmit": true,
+    "isolatedDeclarations": false
   },
-  "include": [".vitepress/theme/**/*.ts", ".vitepress/types/**/*.d.ts"]
+  "vueCompilerOptions": {
+    "extensions": [".vue"],
+    "vitePressExtensions": [".md"]
+  },
+  "include": [".vitepress/theme/**/*.ts", ".vitepress/types/**/*.d.ts", "**/*.vue", "**/*.md", ".vitepress/**/*.vue"],
+  "exclude": ["**/README.md"]
 }

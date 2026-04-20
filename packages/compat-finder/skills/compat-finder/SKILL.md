@@ -27,7 +27,7 @@ Use the CLI when the user already has a list of targets and either:
 
 - wants an interactive narrowing flow in the terminal via `interactive`
 - wants a stateless "what should I test next?" answer via `next`
-- wants localized help or output for `en` or `zh-CN`
+- wants localized help or output for `en` or `zh-Hans`
 
 Use the library API when the caller needs to:
 

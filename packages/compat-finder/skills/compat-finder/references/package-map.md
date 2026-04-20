@@ -7,7 +7,7 @@
 - `src/cli.ts`: Node CLI entrypoint
 - `src/index.ts`: library public entrypoint
 - `src/locales/en.ts`: English CLI messages
-- `src/locales/zh-CN.ts`: Simplified Chinese CLI messages
+- `src/locales/zh-CN.ts`: Simplified Chinese CLI messages for the `zh-Hans` locale
 - `__tests__/compatibility-test.test.ts`: state-machine and range utility tests
 - `__tests__/cli.test.ts`: CLI parser, locale, help text, and JSON output tests
 - `README.md`: English package docs

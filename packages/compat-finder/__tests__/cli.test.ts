@@ -177,15 +177,18 @@ describe("compatibility test cli", () => {
   });
 
   it("normalizes locale values", () => {
-    expect(normalizeCliLocale("zh_CN.UTF-8")).toBe("zh-CN");
+    expect(normalizeCliLocale("zh_CN.UTF-8")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh-Hans")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh-Hans-CN")).toBe("zh-Hans");
     expect(normalizeCliLocale("en_US.UTF-8")).toBe("en");
     expect(normalizeCliLocale("C")).toBeUndefined();
   });
 
   it("resolves locale by explicit option, environment, and fallback order", () => {
-    expect(resolveCliLocale("en", { COMPAT_FINDER_LOCALE: "zh-CN" })).toBe("en");
-    expect(resolveCliLocale(undefined, { COMPAT_FINDER_LOCALE: "zh-CN" })).toBe("zh-CN");
-    expect(resolveCliLocale(undefined, { LC_ALL: "zh_CN.UTF-8", LANG: "en_US.UTF-8" })).toBe("zh-CN");
+    expect(resolveCliLocale("en", { COMPAT_FINDER_LOCALE: "zh-Hans" })).toBe("en");
+    expect(resolveCliLocale(undefined, { COMPAT_FINDER_LOCALE: "zh-Hans" })).toBe("zh-Hans");
+    expect(resolveCliLocale(undefined, { COMPAT_FINDER_LOCALE: "zh-CN" })).toBe("zh-Hans");
+    expect(resolveCliLocale(undefined, { LC_ALL: "zh_CN.UTF-8", LANG: "en_US.UTF-8" })).toBe("zh-Hans");
     expect(resolveCliLocale(undefined, {})).toBe("en");
   });
 });

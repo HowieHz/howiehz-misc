@@ -23,7 +23,7 @@ Locale resolution order:
 Supported locales:
 
 - `en`
-- `zh-CN`
+- `zh-Hans`
 
 Accepted answers:
 

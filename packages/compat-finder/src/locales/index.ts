@@ -6,7 +6,7 @@ export type { CliLocale, CliMessages } from "./types.ts";
 
 const CLI_MESSAGES: Record<CliLocale, CliMessages> = {
   en: enMessages,
-  "zh-CN": zhCnMessages,
+  "zh-Hans": zhCnMessages,
 };
 
 const SUPPORTED_LOCALES = Object.keys(CLI_MESSAGES) as CliLocale[];
@@ -20,17 +20,29 @@ export function isSupportedCliLocale(locale: string): locale is CliLocale {
 }
 
 export function normalizeCliLocale(locale: string | undefined): CliLocale | undefined {
-  const normalizedLocale = locale?.trim().replace("_", "-");
+  const normalizedLocale = locale?.trim().replaceAll("_", "-").split(".")[0];
 
   if (!normalizedLocale || normalizedLocale === "C" || normalizedLocale === "POSIX") {
     return undefined;
   }
 
-  const [language, regionWithEncoding] = normalizedLocale.split("-");
-  const region = regionWithEncoding?.split(".")[0]?.toUpperCase();
+  const [language, scriptOrRegion, region] = normalizedLocale.split("-");
 
   if (language.toLowerCase() === "zh") {
-    return region === "CN" || region === "SG" || !region ? "zh-CN" : "en";
+    const normalizedScriptOrRegion = scriptOrRegion?.toLowerCase();
+    if (normalizedScriptOrRegion === "hans") {
+      return "zh-Hans";
+    }
+
+    const legacyRegion = scriptOrRegion?.toUpperCase();
+    const normalizedRegion = region?.toUpperCase();
+    return legacyRegion === "CN" ||
+      legacyRegion === "SG" ||
+      normalizedRegion === "CN" ||
+      normalizedRegion === "SG" ||
+      !legacyRegion
+      ? "zh-Hans"
+      : "en";
   }
 
   if (language.toLowerCase() === "en") {

@@ -271,7 +271,8 @@ const activeLunisolarDay = computed({
   },
 });
 const activeLeapMonthHint = computed(() => {
-  if (!activeLunisolarState.value) {
+  const mode = calendarMode.value;
+  if (mode === "solar" || !activeLunisolarState.value) {
     return undefined;
   }
 
@@ -281,12 +282,12 @@ const activeLeapMonthHint = computed(() => {
     limit.start.year,
     limit.end.year,
   );
-  if (!Number.isInteger(displayYear)) {
+  if (displayYear === undefined) {
     return undefined;
   }
 
   try {
-    const leapMonth = LunarYear.fromYear(toLunarYear(calendarMode.value, displayYear)).getLeapMonth();
+    const leapMonth = LunarYear.fromYear(toLunarYear(mode, displayYear)).getLeapMonth();
     return leapMonth > 0 ? `该年闰${monthNames[leapMonth - 1]}月` : "该年无闰月";
   } catch {
     return undefined;
@@ -420,7 +421,7 @@ function setCopyStatus(status: "idle" | "success" | "error") {
 
 function parseSolarInput(): ParsedSolarState {
   const year = parseYearInRange(solarYear.value, MIN_SOLAR_YEAR, MAX_SOLAR_YEAR);
-  if (!Number.isInteger(year)) {
+  if (year === undefined) {
     return { ok: false, issue: "year-range" };
   }
 
@@ -442,7 +443,7 @@ function parseSolarInput(): ParsedSolarState {
 function parseLunisolarInput(mode: LunisolarMode): ParsedSolarState {
   const { limit, refs } = lunisolarModeState[mode];
   const year = parseYearInRange(refs.year.value, limit.start.year, limit.end.year);
-  if (!Number.isInteger(year)) {
+  if (year === undefined) {
     return { ok: false, issue: "year-range" };
   }
 
@@ -497,7 +498,7 @@ function createSolarDayOptions(year: number, month: number): SelectOption[] {
 function createLunisolarMonthOptions(mode: LunisolarMode, yearText: string): SelectOption[] {
   const limits = LUNISOLAR_LIMITS[mode];
   const year = parseYearInRange(yearText, limits.start.year, limits.end.year);
-  if (!Number.isInteger(year)) {
+  if (year === undefined) {
     return [];
   }
 
@@ -528,7 +529,7 @@ function createLunisolarDayOptions(mode: LunisolarMode, yearText: string, monthT
   const limits = LUNISOLAR_LIMITS[mode];
   const year = parseYearInRange(yearText, limits.start.year, limits.end.year);
   const month = Number.parseInt(monthText, 10);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || month === 0) {
+  if (year === undefined || !Number.isInteger(month) || month === 0) {
     return [];
   }
 

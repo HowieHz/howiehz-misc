@@ -314,7 +314,7 @@ compat-finder next -c 3 -a "y,n,n"
 
 ## 与 AI 协作
 
-compat-finder 提供了 AI 智能体可用的 [skills](https://agentskills.io/)，帮助 AI 理解本包的兼容性排查流程、CLI 命令和 TypeScript API。
+compat-finder 提供了 AI 智能体可用的 [skills](https://agentskills.io/)，帮助 AI 理解本包的兼容性排查流程、CLI 用法和 TypeScript API。
 
 ### 安装
 

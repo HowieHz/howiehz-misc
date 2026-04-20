@@ -314,7 +314,7 @@ Expected JSON output:
 
 ## Work with AI
 
-compat-finder provides an AI agent [skills](https://agentskills.io/) that helps agents understand the package's compatibility-check workflow, CLI commands, and TypeScript API.
+compat-finder provides an AI agent [skills](https://agentskills.io/) that helps agents understand the compatibility troubleshooting workflows, CLI usage, and TypeScript API for this package.
 
 ### Installation
 

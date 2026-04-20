@@ -15,6 +15,7 @@ type LunisolarMode = Exclude<CalendarMode, "solar">;
 type YearType = "0" | "1";
 type DayType = "0" | "1";
 type ParseIssue = "year-range" | "invalid-date";
+type SolarInstance = ReturnType<typeof Solar.fromYmdHms>;
 
 const LUNISOLAR_MODES = ["lunar", "foto", "tao"] as const satisfies readonly LunisolarMode[];
 
@@ -43,7 +44,7 @@ interface DateFieldRefs {
 }
 
 type ParsedSolarState =
-  | { ok: true; solar: Solar }
+  | { ok: true; solar: SolarInstance }
   | { ok: false; issue: ParseIssue };
 
 interface GanzhiResult {

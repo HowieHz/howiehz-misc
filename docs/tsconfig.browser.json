@@ -11,7 +11,7 @@
   "compilerOptions": {
     "lib": ["esnext", "dom", "dom.iterable"],
     "noEmit": true,
-    "isolatedDeclarations": false,
+    "isolatedDeclarations": false
   },
   "vueCompilerOptions": {
     "extensions": [".vue"],

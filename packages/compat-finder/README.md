@@ -252,7 +252,7 @@ Install the compat-finder skill to your AI coding agent:
 npx skills add HowieHz/howiehz-misc --skill compat-finder --full-depth
 ```
 
-The source code of the skill is [here](./skills/compat-finder).
+The skill source code is available in [skills/compat-finder](./skills/compat-finder).
 
 ### Example Prompts
 

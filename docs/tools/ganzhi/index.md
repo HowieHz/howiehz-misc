@@ -15,7 +15,13 @@ type LunisolarMode = Exclude<CalendarMode, "solar">;
 type YearType = "0" | "1";
 type DayType = "0" | "1";
 type ParseIssue = "year-range" | "invalid-date";
-type SolarInstance = ReturnType<typeof Solar.fromYmdHms>;
+interface GanzhiSolar {
+  getDay(): number;
+  getLunar(): ReturnType<typeof Lunar.fromYmdHms>;
+  getMonth(): number;
+  getYear(): number;
+  toYmd(): string;
+}
 
 const LUNISOLAR_MODES = ["lunar", "foto", "tao"] as const satisfies readonly LunisolarMode[];
 
@@ -44,7 +50,7 @@ interface DateFieldRefs {
 }
 
 type ParsedSolarState =
-  | { ok: true; solar: SolarInstance }
+  | { ok: true; solar: GanzhiSolar }
   | { ok: false; issue: ParseIssue };
 
 interface GanzhiResult {
@@ -139,7 +145,14 @@ const zodiacEmojiMap = {
 
 const today = new Date();
 const currentHour = today.getHours();
-const todaySolar = Solar.fromYmdHms(today.getFullYear(), today.getMonth() + 1, today.getDate(), currentHour, 0, 0);
+const todaySolar = Solar.fromYmdHms(
+  today.getFullYear(),
+  today.getMonth() + 1,
+  today.getDate(),
+  currentHour,
+  0,
+  0,
+) as GanzhiSolar;
 const todayLunar = todaySolar.getLunar();
 const todayFoto = Foto.fromLunar(todayLunar);
 const todayTao = Tao.fromLunar(todayLunar);
@@ -434,7 +447,7 @@ function parseSolarInput(): ParsedSolarState {
   }
 
   try {
-    const solar = Solar.fromYmdHms(year, month, day, selectedHour, 0, 0);
+    const solar = Solar.fromYmdHms(year, month, day, selectedHour, 0, 0) as GanzhiSolar;
     return solar.toYmd() === formatSolarYmd(year, month, day) ? { ok: true, solar } : { ok: false, issue: "invalid-date" };
   } catch {
     return { ok: false, issue: "invalid-date" };
@@ -464,7 +477,7 @@ function parseLunisolarInput(mode: LunisolarMode): ParsedSolarState {
   }
 
   try {
-    return { ok: true, solar: Lunar.fromYmdHms(toLunarYear(mode, year), month, day, selectedHour, 0, 0).getSolar() };
+    return { ok: true, solar: Lunar.fromYmdHms(toLunarYear(mode, year), month, day, selectedHour, 0, 0).getSolar() as GanzhiSolar };
   } catch {
     return { ok: false, issue: "invalid-date" };
   }

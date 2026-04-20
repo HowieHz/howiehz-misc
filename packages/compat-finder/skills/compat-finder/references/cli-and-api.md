@@ -66,11 +66,22 @@ const session = createCompatibilitySession(["A", "B", "C", "D"]);
 let step = session.current();
 
 while (step.status === "testing") {
-  const hasIssue = await runRealTest(step.targets);
-  step = session.answer(hasIssue);
+  const result = askUser(step.targets);
+
+  if (result === "undo") {
+    step = session.undo();
+    continue;
+  }
+
+  step = session.answer(result === "issue");
 }
 
 console.log(step.targets);
+
+function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
+  console.log("Targets to test:", targets);
+  return "issue"; // "issue" if it reproduces, "pass" if not, or "undo".
+}
 ```
 
 Advanced exports from `src/compatibility-test.ts`:

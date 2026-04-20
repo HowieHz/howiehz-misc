@@ -56,11 +56,14 @@ Primary exports from `src/compatibility-test.ts`:
 
 Important behavior:
 
+- `createCompatibilityTestState(targetCount)` requires an integer greater than or equal to 1 and throws otherwise.
 - Target indexes are 1-based.
 - `CompatibilityTestState` is mutable and owned by the caller.
 - `CompatibilityTestStep.requiresAnswer === false` means the same prompt was already cached and should usually be skipped.
 - `state.resultTargets` is populated only after the session stops.
 - A full-target-set pass stops the session with an empty result.
+- `takeTargetsFromRanges` returns expanded target indexes.
+- `intersectTargetRanges` and `subtractTargetRanges` return normalized target ranges.
 
 Useful integration loop:
 

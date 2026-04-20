@@ -1,5 +1,11 @@
 # compat-finder
 
+## 1.2.0
+
+### Minor Changes
+
+- [#69](https://github.com/HowieHz/howiehz-misc/pull/69) [`625f51e`](https://github.com/HowieHz/howiehz-misc/commit/625f51e4ba829f8a8698662e6dc4e167164b0c74) Thanks [@HowieHz](https://github.com/HowieHz)! - Add a high-level `createCompatibilitySession` API with `current()`, `answer(hasIssue)`, and `undo()` for simpler library integrations.
+
 ## 1.1.1
 
 ### Patch Changes

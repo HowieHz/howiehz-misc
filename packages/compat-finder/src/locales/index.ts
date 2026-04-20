@@ -1,12 +1,12 @@
 import { enMessages } from "./en.ts";
 import type { CliLocale, CliMessages } from "./types.ts";
-import { zhCnMessages } from "./zh-CN.ts";
+import { zhHansMessages } from "./zh-Hans.ts";
 
 export type { CliLocale, CliMessages } from "./types.ts";
 
 const CLI_MESSAGES: Record<CliLocale, CliMessages> = {
   en: enMessages,
-  "zh-Hans": zhCnMessages,
+  "zh-Hans": zhHansMessages,
 };
 
 const SUPPORTED_LOCALES = Object.keys(CLI_MESSAGES) as CliLocale[];
@@ -20,7 +20,7 @@ export function isSupportedCliLocale(locale: string): locale is CliLocale {
 }
 
 export function normalizeCliLocale(locale: string | undefined): CliLocale | undefined {
-  const normalizedLocale = locale?.trim().replaceAll("_", "-").split(".")[0];
+  const normalizedLocale = locale?.trim().replaceAll("_", "-").split(".")[0].split("@")[0];
 
   if (!normalizedLocale || normalizedLocale === "C" || normalizedLocale === "POSIX") {
     return undefined;

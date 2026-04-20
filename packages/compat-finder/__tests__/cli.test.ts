@@ -178,8 +178,11 @@ describe("compatibility test cli", () => {
 
   it("normalizes locale values", () => {
     expect(normalizeCliLocale("zh_CN.UTF-8")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh_CN@pinyin")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh_CN.UTF-8@pinyin")).toBe("zh-Hans");
     expect(normalizeCliLocale("zh-Hans")).toBe("zh-Hans");
     expect(normalizeCliLocale("zh-Hans-CN")).toBe("zh-Hans");
+    expect(normalizeCliLocale("zh_Hans_CN@pinyin")).toBe("zh-Hans");
     expect(normalizeCliLocale("en_US.UTF-8")).toBe("en");
     expect(normalizeCliLocale("C")).toBeUndefined();
   });

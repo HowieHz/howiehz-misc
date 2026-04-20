@@ -1,6 +1,6 @@
 import type { CliMessages } from "./types.ts";
 
-export const zhCnMessages: CliMessages = {
+export const zhHansMessages: CliMessages = {
   aliasesTitle: "别名",
   commandTitle: (command) => `兼容性问题排查命令行工具：${command}`,
   commands: {

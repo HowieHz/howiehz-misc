@@ -135,6 +135,7 @@ compat-finder next -c 3 -a "y,n"
 `session.answer(true)` 表示当前这组目标会复现问题。
 `session.answer(false)` 表示当前这组目标不会复现问题。
 如果最新一次结果输入错误，可以调用 `session.undo()` 撤销。
+`createCompatibilitySession(targets)` 至少需要一个目标。
 
 ### 高级 API
 

@@ -97,7 +97,7 @@ Advanced exports from `src/compatibility-test.ts`:
 
 Important behavior:
 
-- `createCompatibilitySession(targets)` requires at least one target and throws otherwise.
+- `createCompatibilitySession(targets)` requires at least one target and throws `targets must contain at least one item` otherwise.
 - `createCompatibilityTestState(targetCount)` requires an integer greater than or equal to 1 and throws otherwise.
 - Target indexes are 1-based.
 - `CompatibilityTestState` is mutable and owned by the caller.

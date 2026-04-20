@@ -7,7 +7,8 @@
   ],
   "compilerOptions": {
     "declarationDir": "../node_modules/.tmp/types/docs/app",
-    "lib": ["esnext", "dom", "dom.iterable"]
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "isolatedDeclarations": false,
   },
   "vueCompilerOptions": {
     "extensions": [".vue"],

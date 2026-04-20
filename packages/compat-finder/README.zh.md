@@ -67,7 +67,7 @@ const session = createCompatibilitySession(["A", "B", "C", "D"]);
 let step = session.current();
 
 while (step.status === "testing") {
-  const result = await askUser(step.targets);
+  const result = askUser(step.targets);
 
   if (result === "undo") {
     step = session.undo();
@@ -78,10 +78,14 @@ while (step.status === "testing") {
 }
 
 console.log("最终结果：", step.targets);
-```
 
-`askUser()` 是你自己的界面、脚本或测试流程。
-当前这组目标会复现问题时返回 `"issue"`，不会复现时返回 `"pass"`，需要撤销最新一次结果时返回 `"undo"`。
+function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
+  console.log("当前需要测试：", targets);
+  // 浏览器里可以来自 prompt()、按钮或表单。
+  // Node.js 里可以来自 readline、测试脚本或你自己的 CLI。
+  return "issue"; // 复现返回 "issue"，未复现返回 "pass"，撤销返回 "undo"。
+}
+```
 
 更多导出 API 见 [API 参考](#api-参考)。
 

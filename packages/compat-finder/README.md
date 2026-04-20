@@ -67,7 +67,7 @@ const session = createCompatibilitySession(["A", "B", "C", "D"]);
 let step = session.current();
 
 while (step.status === "testing") {
-  const result = await askUser(step.targets);
+  const result = askUser(step.targets);
 
   if (result === "undo") {
     step = session.undo();
@@ -78,10 +78,14 @@ while (step.status === "testing") {
 }
 
 console.log("Result:", step.targets);
-```
 
-`askUser()` is your own UI, script, or test runner.
-Return `"issue"` when the issue appears, `"pass"` when it does not, or `"undo"` to remove the latest answer.
+function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
+  console.log("Targets to test:", targets);
+  // For browsers, this can read from prompt(), buttons, or forms.
+  // For Node.js, this can read from readline, a test script, or your own CLI.
+  return "issue"; // "issue" when reproduced, "pass" when not, or "undo".
+}
+```
 
 See [API Reference](#api-reference) for the full exported API.
 

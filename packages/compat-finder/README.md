@@ -294,17 +294,17 @@ For parameter details and behavior guarantees, see the inline JSDoc in [src/comp
 
 ## Work with AI
 
-compat-finder provides an AI coding agent skill that helps agents understand the package's compatibility-check workflow, CLI commands, and TypeScript API.
+compat-finder provides an AI coding agent [skills](https://agentskills.io/) that helps agents understand the package's compatibility-check workflow, CLI commands, and TypeScript API.
 
 ### Installation
 
-Install the compat-finder skill to your AI coding agent:
+Install the compat-finder skills to your AI coding agent:
 
 ```bash
 npx skills add HowieHz/howiehz-misc --skill compat-finder
 ```
 
-The skill source code is available in [skills/compat-finder](./skills/compat-finder).
+The skills source code is available in [skills/compat-finder](./skills/compat-finder).
 
 ### Example Prompts
 

@@ -103,10 +103,10 @@ git log --oneline 03fe803..HEAD -- packages/compat-finder/
 
 ## Version History
 
-| Date       | SHA     | Changes                                                                       |
-| ---------- | ------- | ----------------------------------------------------------------------------- |
-| 2026-04-21 | eeac00c | Update locale guidance to zh-Hans and align API behavior notes with JSDoc     |
-| 2026-04-20 | 03fe803 | Initial compat-finder skill generation with CLI/API and package references    |
+| Date       | SHA     | Changes                                                                    |
+| ---------- | ------- | -------------------------------------------------------------------------- |
+| 2026-04-21 | eeac00c | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
+| 2026-04-20 | 03fe803 | Initial compat-finder skill generation with CLI/API and package references |
 
 ---
 

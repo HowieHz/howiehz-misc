@@ -6,4 +6,6 @@ const toolsData: ContentLoader<TitleLinkItem[]> = createTitleLoader("tools/{*.md
   locale: "zh-Hans-CN",
 });
 
+declare const data: TitleLinkItem[];
+export { data };
 export default toolsData;

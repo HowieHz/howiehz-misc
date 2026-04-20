@@ -6,4 +6,6 @@ const toolsData: ContentLoader<TitleLinkItem[]> = createTitleLoader("en/tools/{*
   locale: "en",
 });
 
+declare const data: TitleLinkItem[];
+export { data };
 export default toolsData;

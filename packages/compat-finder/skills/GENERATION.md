@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `03fe80352da09d73b1c2ec5756e900ba32f37502`
-- **Date**: 2026-04-20
-- **Commit**: Refine compat-finder example prompts
+- **Commit SHA**: `1984a7c0e257102afae57dd1d09fd2f7fc791f75`
+- **Date**: 2026-04-21
+- **Commit**: docs: expand compat-finder README examples
 
 **Source documentation:**
 
@@ -18,7 +18,7 @@ This document contains information about how these skills were generated and how
 - Tests: `/packages/compat-finder/__tests__`
 - Package manifest: `/packages/compat-finder/package.json`
 
-**Generation date**: 2026-04-20
+**Generation date**: 2026-04-21
 
 ## Structure
 
@@ -56,13 +56,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff 03fe803..HEAD -- packages/compat-finder/
+git diff 1984a7c..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only 03fe803..HEAD -- packages/compat-finder/
+git diff --name-only 1984a7c..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline 03fe803..HEAD -- packages/compat-finder/
+git log --oneline 1984a7c..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -105,10 +105,11 @@ git log --oneline 03fe803..HEAD -- packages/compat-finder/
 
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
+| 2026-04-21 | 1984a7c | Expand README examples and refresh the generated skill baseline            |
 | 2026-04-21 | eeac00c | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
 | 2026-04-20 | 03fe803 | Initial compat-finder skill generation with CLI/API and package references |
 
 ---
 
 Last updated: 2026-04-21
-Current SHA: eeac00c
+Current SHA: 1984a7c

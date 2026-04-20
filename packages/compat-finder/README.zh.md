@@ -123,7 +123,13 @@ console.log(
 
 ```bash
 compat-finder --help
+```
+
+```bash
 compat-finder --help interactive
+```
+
+```bash
 compat-finder --help next
 ```
 
@@ -153,7 +159,13 @@ CLI 文案可以通过命令行参数或环境变量设置输出语言。
 
 ```bash
 compat-finder --locale zh-Hans --help
+```
+
+```bash
 compat-finder -l zh-Hans next -c 3 -a "y,n"
+```
+
+```bash
 COMPAT_FINDER_LOCALE=zh-Hans compat-finder next -c 3 -a "y,n"
 ```
 
@@ -165,6 +177,9 @@ COMPAT_FINDER_LOCALE=zh-Hans compat-finder next -c 3 -a "y,n"
 
 ```bash
 compat-finder interactive --count 4
+```
+
+```bash
 compat-finder i -c 4 -n "A,B,C,D"
 ```
 
@@ -181,7 +196,13 @@ compat-finder i -c 4 -n "A,B,C,D"
 
 ```bash
 compat-finder next -c 3
+```
+
+```bash
 compat-finder n -c 3 -a "y,n"
+```
+
+```bash
 compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
 ```
 
@@ -273,17 +294,17 @@ compat-finder next -c 3 -a "y,n,n"
 
 ## 与 AI 协作
 
-compat-finder 提供了 AI 编程助手可用的 skill，帮助 AI 理解本包的兼容性排查流程、CLI 命令和 TypeScript API。
+compat-finder 提供了 AI 编程助手可用的 [skills](https://agentskills.io/)，帮助 AI 理解本包的兼容性排查流程、CLI 命令和 TypeScript API。
 
 ### 安装
 
-将 compat-finder skill 安装到你的 AI 编程助手中：
+将 compat-finder skills 安装到你的 AI 编程助手中：
 
 ```bash
-npx skills add HowieHz/howiehz-misc --skill compat-finder --full-depth
+npx skills add HowieHz/howiehz-misc --skill compat-finder
 ```
 
-skill 的源码在 [skills/compat-finder](./skills/compat-finder)。
+skills 的源码在 [skills/compat-finder](./skills/compat-finder)。
 
 ### 示例提示词
 

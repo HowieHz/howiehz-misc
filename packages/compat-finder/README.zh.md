@@ -2,24 +2,53 @@
 
 [English](./README.md) | 简体中文
 
-在线体验：[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
-
 compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与命令行工具。
 
-由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
+[适用范围](#适用范围) | [安装](#安装) | [快速开始](#快速开始) | [命令行工具](#命令行工具) | [API](#api) | [与 AI 协作](#与-ai-协作) | [在线版](#在线版) | [相关项目](#相关项目)
+
+## 适用范围
+
+- API：仅提供 ESM，可用于支持 ES modules 的现代浏览器、Node.js 和其他 JavaScript 运行时
+- CLI：
+  - Node.js：`^20 || ^22 || >=24`
+  - 语言：`en`、`zh-CN`
 
 ## 安装
 
 使用包管理器安装：
 
 ```bash
+npm install compat-finder
+```
+
+```bash
 pnpm add compat-finder
+```
+
+```bash
+yarn add compat-finder
+```
+
+```bash
+bun add compat-finder
 ```
 
 也可以直接临时调用命令行工具：
 
 ```bash
 npx compat-finder --help
+```
+
+```bash
+pnpm dlx compat-finder --help
+```
+
+```bash
+yarn dlx compat-finder --help
+```
+
+```bash
+bunx compat-finder --help
 ```
 
 ## 快速开始
@@ -282,4 +311,10 @@ compat-finder skill 涵盖以下知识：
 
 ## 在线版
 
-在线版工具页面见 [compatibility-test](../../docs/tools/compatibility-test)。
+在线体验：[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
+
+在线版源码在 [compatibility-test](../../docs/tools/compatibility-test)。
+
+## 相关项目
+
+由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。

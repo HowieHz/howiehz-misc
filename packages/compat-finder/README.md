@@ -2,24 +2,35 @@
 
 English | [简体中文](./README.zh.md)
 
-Try it online: [compatibility issue finder](https://howiehz.top/misc/en/tools/compatibility-test/)
-
 compat-finder is an engine and command-line tool for finding compatibility issues across multiple targets.
 
-It is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
+[Compatibility](#compatibility) | [Install](#install) | [Quick Start](#quick-start) | [CLI](#cli) | [API](#api) | [Work with AI](#work-with-ai) | [Online Tool](#online-tool) | [Related Projects](#related-projects)
+
+## Compatibility
+
+- API: ESM-only; works in modern browsers, Node.js, and other JavaScript runtimes with ES module support
+- CLI:
+  - Node.js: `^20 || ^22 || >=24`
+  - Locales: `en`, `zh-CN`
 
 ## Install
 
 Install with a package manager:
 
 ```bash
+npm install compat-finder
 pnpm add compat-finder
+yarn add compat-finder
+bun add compat-finder
 ```
 
 You can also run the command-line tool without installing it first:
 
 ```bash
 npx compat-finder --help
+pnpm dlx compat-finder --help
+yarn dlx compat-finder --help
+bunx compat-finder --help
 ```
 
 ## Quick Start
@@ -282,4 +293,10 @@ The compat-finder skill provides knowledge about:
 
 ## Online Tool
 
-The online version is available at [compatibility-test](../../docs/en/tools/compatibility-test).
+Try it online: [compatibility issue finder](https://howiehz.top/misc/en/tools/compatibility-test/)
+
+The online tool source is available at [compatibility-test](../../docs/en/tools/compatibility-test).
+
+## Related Projects
+
+compat-finder is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).

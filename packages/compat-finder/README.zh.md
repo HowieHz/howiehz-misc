@@ -240,6 +240,46 @@ compat-finder next -c 3 -a "y,n,n"
 
 参数细节和行为约束请直接参考 [src/compatibility-test.ts](./src/compatibility-test.ts) 中的内联 JSDoc 注释。
 
+## 与 AI 协作
+
+compat-finder 提供了 AI 编程助手可用的 skill，帮助 AI 理解本包的兼容性排查流程、CLI 命令和 TypeScript API。
+
+### 安装
+
+将 compat-finder skill 安装到你的 AI 编程助手中：
+
+```bash
+npx skills add HowieHz/howiehz-misc --skill compat-finder --full-depth
+```
+
+skill 的源码在[这里](./skills/compat-finder)。
+
+### 示例提示词
+
+安装后，你可以让 AI 帮助完成各种 compat-finder 相关任务：
+
+```text
+我需要排查插件 1、插件 2、插件 3、插件 4 的兼容性问题。你告诉我下一步测什么，我把结果给你，你继续帮我缩小范围。
+```
+
+```text
+用 compat-finder 扫一遍我游戏 mods 文件夹，直接找出哪些插件会导致游戏启动不了。
+```
+
+```text
+帮我把 compat-finder 接进我的软件，做一个让用户自己排查插件冲突的功能。
+```
+
+### 包含的内容
+
+compat-finder skill 涵盖以下知识：
+
+- CLI 命令、参数、输出语言和回答格式
+- 交互式与单步兼容性排查流程
+- TypeScript 状态机 API 与目标范围工具
+- 包源码结构、测试文件和工作区命令
+- CLI 与 API 变更时的文档更新要求
+
 ## 在线版
 
 在线版工具页面见 [compatibility-test](../../docs/tools/compatibility-test)。

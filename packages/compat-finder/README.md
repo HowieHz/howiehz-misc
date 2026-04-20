@@ -240,6 +240,46 @@ Key types:
 
 For parameter details and behavior guarantees, see the inline JSDoc in [src/compatibility-test.ts](./src/compatibility-test.ts).
 
+## Work with AI
+
+compat-finder provides an AI coding agent skill that helps agents understand the package's compatibility-check workflow, CLI commands, and TypeScript API.
+
+### Installation
+
+Install the compat-finder skill to your AI coding agent:
+
+```bash
+npx skills add HowieHz/howiehz-misc --skill compat-finder --full-depth
+```
+
+The source code of the skill is [here](./skills/compat-finder).
+
+### Example Prompts
+
+Once installed, you can ask agents to help with compat-finder tasks:
+
+```text
+I need to track down a compatibility issue across Plugin 1, Plugin 2, Plugin 3, and Plugin 4. Walk me through the next tests and narrow it down from my results.
+```
+
+```text
+Scan my game's mods folder with compat-finder and find which mods are breaking startup.
+```
+
+```text
+Build a compat-finder powered troubleshooting flow into my app so users can find plugin conflicts on their own.
+```
+
+### What's Included
+
+The compat-finder skill provides knowledge about:
+
+- CLI commands, options, locales, and answer formats
+- Interactive and one-shot compatibility-check workflows
+- The TypeScript state-machine API and target range utilities
+- Package source layout, tests, and workspace commands
+- Documentation update expectations for CLI and API changes
+
 ## Online Tool
 
 The online version is available at [compatibility-test](../../docs/en/tools/compatibility-test).

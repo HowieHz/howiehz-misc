@@ -314,11 +314,11 @@ Expected JSON output:
 
 ## Work with AI
 
-compat-finder provides an AI coding agent [skills](https://agentskills.io/) that helps agents understand the package's compatibility-check workflow, CLI commands, and TypeScript API.
+compat-finder provides an AI agent [skills](https://agentskills.io/) that helps agents understand the package's compatibility-check workflow, CLI commands, and TypeScript API.
 
 ### Installation
 
-Install the compat-finder skill to your AI coding agent:
+Install the compat-finder skill to your AI agent:
 
 ```bash
 npx skills add HowieHz/howiehz-misc --skill compat-finder

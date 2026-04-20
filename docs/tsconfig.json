@@ -1,6 +1,6 @@
 {
   "files": [],
-  "references": [
+  "references": [ // 仅包括能被 tsgo 检查的，vue-tsc 检查不包含在此
     {
       "path": "./tsconfig.node.json"
     }

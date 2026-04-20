@@ -17,6 +17,6 @@
     "extensions": [".vue"],
     "vitePressExtensions": [".md"]
   },
-  "include": [".vitepress/theme/**/*.ts", ".vitepress/types/**/*.d.ts", "**/*.vue", "**/*.md"],
+  "include": [".vitepress/theme/**/*.ts", ".vitepress/types/**/*.d.ts", "**/*.vue", "**/*.md", ".vitepress/**/*.vue"],
   "exclude": ["**/README.md"]
 }

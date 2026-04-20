@@ -13,21 +13,21 @@ compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与
 
 ## 安装
 
-使用包管理器安装：
+使用你喜欢的 Node.js 包管理器安装：
 
 ```bash
 npm install compat-finder
-```
 
-```bash
+# 或
+
 pnpm add compat-finder
-```
 
-```bash
+# 或
+
 yarn add compat-finder
-```
 
-```bash
+# 或
+
 bun add compat-finder
 ```
 
@@ -35,17 +35,17 @@ bun add compat-finder
 
 ```bash
 npx compat-finder --help
-```
 
-```bash
+# 或
+
 pnpm dlx compat-finder --help
-```
 
-```bash
+# 或
+
 yarn dlx compat-finder --help
-```
 
-```bash
+# 或
+
 bunx compat-finder --help
 ```
 

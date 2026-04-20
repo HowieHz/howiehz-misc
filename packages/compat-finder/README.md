@@ -13,21 +13,21 @@ compat-finder is an engine and command-line tool for finding compatibility issue
 
 ## Install
 
-Install with a package manager:
+Install using your favorite package manager for Node.js:
 
 ```bash
-npm install compat-
-```
+npm install compat-finder
 
-```bash
+# or
+
 pnpm add compat-finder
-```
 
-```bash
+# or
+
 yarn add compat-finder
-```
 
-```bash
+# or
+
 bun add compat-finder
 ```
 
@@ -35,17 +35,17 @@ You can also run the command-line tool without installing it first:
 
 ```bash
 npx compat-finder --help
-```
 
-```bash
+# or
+
 pnpm dlx compat-finder --help
-```
 
-```bash
+# or
+
 yarn dlx compat-finder --help
-```
 
-```bash
+# or
+
 bunx compat-finder --help
 ```
 

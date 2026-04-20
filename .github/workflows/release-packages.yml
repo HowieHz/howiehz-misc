@@ -151,7 +151,7 @@ jobs:
           fi
 
           for package in "${packages[@]}"; do
-            npm publish "$package" --access public
+            npm publish "$package" --access public --provenance
           done
 
   create-github-releases:

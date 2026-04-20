@@ -52,7 +52,9 @@ export interface CompatibilityTestState {
   resultTargets: number[];
 }
 
-export type CompatibilitySessionStep<Target> = CompatibilitySessionTestingStep<Target> | CompatibilitySessionCompleteStep<Target>;
+export type CompatibilitySessionStep<Target> =
+  | CompatibilitySessionTestingStep<Target>
+  | CompatibilitySessionCompleteStep<Target>;
 
 export interface CompatibilitySessionTestingStep<Target> {
   status: "testing";

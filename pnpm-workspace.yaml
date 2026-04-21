@@ -14,6 +14,9 @@ packageExtensions:
       vue: "^3.5.32"
     dependencies:
       "@vueuse/core": "^14.2.1"
+  "vitepress-plugin-pagefind":
+    peerDependencies:
+      vue: "^3.5.32"
   "vue-command-palette":
     peerDependencies:
-      vue: "^3.5.0"
+      vue: "^3.5.32"

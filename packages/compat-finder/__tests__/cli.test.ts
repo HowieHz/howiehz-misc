@@ -229,6 +229,10 @@ describe("compatibility test cli", () => {
     });
   });
 
+  it("does not include extra answer metadata while testing", () => {
+    expect(getNextCommandResult(4, TARGET_NAMES, [true, false])).not.toHaveProperty("extraAnswerCount");
+  });
+
   it("localizes default target names in next results", () => {
     const result = getNextCommandResult(2, [], [], "en");
 

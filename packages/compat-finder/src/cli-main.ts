@@ -22,12 +22,18 @@ import {
 type CliCommand = "interactive" | "next";
 type HelpScope = "command" | "root";
 
-interface NextCommandResult {
-  extraAnswerCount?: number;
-  status: "complete" | "testing";
-  targetCount: number;
-  targets: string[];
-}
+type NextCommandResult =
+  | {
+      status: "testing";
+      targetCount: number;
+      targets: string[];
+    }
+  | {
+      extraAnswerCount?: number;
+      status: "complete";
+      targetCount: number;
+      targets: string[];
+    };
 
 interface RebuiltCliState {
   extraAnswerCount: number;
@@ -508,7 +514,6 @@ function buildNextCommandResult(
 
   const promptTargets = getAllTargetsFromRanges(step.promptTargetRanges);
   return {
-    ...(extraAnswerCount > 0 ? { extraAnswerCount } : {}),
     status: "testing",
     targetCount,
     targets: promptTargets.map((target) => getTargetLabel(targetNames, target, messages)),

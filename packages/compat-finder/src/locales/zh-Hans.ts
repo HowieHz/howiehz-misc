@@ -38,7 +38,7 @@ export const zhHansMessages: CliMessages = {
         "status                 testing 表示当前需要按 targets 列表进行测试；complete 表示已经得到最终结果",
         "targetCount            本轮排查的测试目标总数",
         "targets                testing 时表示当前需要测试的目标列表；complete 时表示最终结果列表",
-        "extraAnswerCount       可选。兼容性会话结束后被忽略的多余答案数量",
+        "extraAnswerCount       可选。仅在结果为 complete 且有多余答案时返回",
       ],
       outputFieldTitle: "返回字段说明",
       usageSuffix: "--count <数量> [--answers <回答列表>] [--names <名称列表>]",

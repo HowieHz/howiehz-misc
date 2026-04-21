@@ -38,7 +38,7 @@ export const enMessages: CliMessages = {
         "status                 testing means the targets list should be tested now; complete means the final result is ready",
         "targetCount            Total number of targets in this session",
         "targets                In testing status, the targets to test now; in complete status, the final result list",
-        "extraAnswerCount       Optional. Number of extra answers ignored after the session already completed",
+        "extraAnswerCount       Optional. Returned only when status is complete and extra answers were provided",
       ],
       outputFieldTitle: "Output fields",
       usageSuffix: "--count <count> [--answers <answers>] [--names <names>]",

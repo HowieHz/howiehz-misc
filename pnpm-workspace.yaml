@@ -14,3 +14,6 @@ packageExtensions:
       vue: "^3.5.32"
     dependencies:
       "@vueuse/core": "^14.2.1"
+  "vue-command-palette":
+    peerDependencies:
+      vue: "^3.5.0"

@@ -4,7 +4,7 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-packageExtensionsChecksum: sha256-yKSqxnheIipRu07XrofWe3Sy2pd65KdD0jblXpU5Hj8=
+packageExtensionsChecksum: sha256-dQ3/6k0IpdWFqacwm/c6vB487D2iJ+VECW66Wk4OJvE=
 
 importers:
 
@@ -3649,6 +3649,8 @@ packages:
 
   vue-command-palette@0.1.4:
     resolution: {integrity: sha512-v9wGV5RG/Qe/GLLP3dJGYEvBOHQAH1kTdfzv7/uDj4v51g9uB0J3dQSaREgsrAvAT7tSj/cSbVrGpaalr8z7tg==}
+    peerDependencies:
+      vue: ^3.5.0
 
   vue-eslint-parser@10.4.0:
     resolution: {integrity: sha512-Vxi9pJdbN3ZnVGLODVtZ7y4Y2kzAAE2Cm0CZ3ZDRvydVYxZ6VrnBhLikBsRS+dpwj4Jv4UCv21PTEwF5rQ9WXg==}
@@ -6971,7 +6973,7 @@ snapshots:
       javascript-stringify: 2.1.0
       pagefind: 1.5.2
       vitepress: 2.0.0-alpha.17(@types/node@25.6.0)(less@4.6.4)(lightningcss@1.32.0)(postcss@8.5.10)(typescript@6.0.3)
-      vue-command-palette: 0.1.4
+      vue-command-palette: 0.1.4(vue@3.5.32(typescript@6.0.3))
     transitivePeerDependencies:
       - vue
 
@@ -7060,11 +7062,12 @@ snapshots:
 
   vscode-uri@3.1.0: {}
 
-  vue-command-palette@0.1.4:
+  vue-command-palette@0.1.4(vue@3.5.32(typescript@6.0.3)):
     dependencies:
       fuse.js: 6.6.2
       mitt: 3.0.1
       nanoid: 4.0.2
+      vue: 3.5.32(typescript@6.0.3)
 
   vue-eslint-parser@10.4.0(eslint@10.2.1):
     dependencies:

@@ -29,6 +29,11 @@ interface NextCommandResult {
   targets: string[];
 }
 
+interface RebuiltCliState {
+  state: CompatibilityTestState;
+  step: CompatibilityTestStep | undefined;
+}
+
 type TryNextCommandResult =
   | {
       ok: true;
@@ -543,24 +548,18 @@ export function getNextCommandResult(
   answers: readonly boolean[],
   locale: CliLocale = "zh-Hans",
 ): NextCommandResult {
-  const state = rebuildStateFromAnswers(targetCount, answers);
-  return buildNextCommandResult(targetCount, targetNames, state, locale);
+  const { state, step } = rebuildStateFromAnswers(targetCount, answers);
+  return buildNextCommandResult(targetCount, targetNames, state, step, locale);
 }
 
 function buildNextCommandResult(
   targetCount: number,
   targetNames: readonly string[],
   state: CompatibilityTestState,
+  step: CompatibilityTestStep | undefined,
   locale: CliLocale,
 ): NextCommandResult {
   const messages = getCliMessages(locale);
-  let step = getCurrentCompatibilityTestStep(state);
-
-  while (step && !step.requiresAnswer) {
-    skipCachedCompatibilityTestSteps(state);
-    step = getCurrentCompatibilityTestStep(state);
-  }
-
   if (!step) {
     return {
       status: "complete",
@@ -623,10 +622,10 @@ async function runInteractiveCli(
         if (history.length === 0) {
           console.log(messages.interactive.emptyUndoHistory);
           continue;
-        }
+      }
 
-        history.pop();
-        state = rebuildStateFromAnswers(targetCount, history);
+      history.pop();
+        state = rebuildStateFromAnswers(targetCount, history).state;
         console.log(messages.interactive.restoredPreviousStep);
         continue;
       }
@@ -664,7 +663,7 @@ function parseAnswer(value: string): boolean | undefined {
   return undefined;
 }
 
-function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[]): CompatibilityTestState {
+function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[]): RebuiltCliState {
   const nextState = createCompatibilityTestState(targetCount);
   let completedStepCount = 0;
 
@@ -680,7 +679,10 @@ function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[
     }
   }
 
-  return nextState;
+  return {
+    state: nextState,
+    step: getCurrentCompatibilityTestStep(nextState),
+  };
 }
 
 function printResult(targetNames: readonly string[], state: CompatibilityTestState, messages: CliMessages): void {

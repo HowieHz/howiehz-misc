@@ -82,6 +82,7 @@ git log --oneline e8f8251..HEAD -- packages/compat-finder/
 - Update `compat-finder/references/cli.md` and/or `compat-finder/references/library-api.md`
 - Update `compat-finder/SKILL.md` examples and workflow steps
 - Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` when public usage changes
+- Run the skill evals against each model the skill is expected to support, then record the result in the model validation log below
 - Update this file's reference summary if the scope of the references changes
 
 ### 3. Update Checklist
@@ -91,8 +92,17 @@ git log --oneline e8f8251..HEAD -- packages/compat-finder/
 - [ ] Update `compat-finder/SKILL.md` examples and workflow guidance
 - [ ] Update `compat-finder/evals/trigger-evals.json` when the trigger boundary changes
 - [ ] Update `compat-finder/evals/evals.json` when workflow guidance changes need regression coverage
+- [ ] Run the updated skill against each target model and record the outcome below
 - [ ] Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` if needed
 - [ ] Update this `GENERATION.md` with the new SHA and date
+
+## Model Validation
+
+Record which models were used to validate the current skill revision and what was exercised.
+
+| Date       | Models | Coverage | Result | Notes |
+| ---------- | ------ | -------- | ------ | ----- |
+| 2026-04-22 | Not yet recorded | Trigger evals, workflow evals | Pending | Run the current skill against each target model before treating this generation as fully validated. |
 
 ## Style Guidelines
 
@@ -101,6 +111,7 @@ git log --oneline e8f8251..HEAD -- packages/compat-finder/
 - Favor package-specific behavior over generic AI advice
 - Keep `SKILL.md` focused on routing and decision points; move detail into `references/`
 - Add a table of contents to long reference files so partial reads still expose the available sections
+- Write `SKILL.md` descriptions in third person so discovery metadata stays consistent
 
 ## Version History
 

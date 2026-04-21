@@ -6,6 +6,18 @@ To run the CLI without installing it:
 
 ```bash
 npx compat-finder --help
+
+# or
+
+pnpm dlx compat-finder --help
+
+# or
+
+yarn dlx compat-finder --help
+
+# or
+
+bunx compat-finder --help
 ```
 
 ## Commands

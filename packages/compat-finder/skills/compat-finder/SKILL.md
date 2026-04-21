@@ -42,6 +42,32 @@ When handling CLI troubleshooting, determine which mode fits first:
 
 If the user asks for a broad "scan" or "find what breaks" task, treat it as automatic triage only after the target list, real test command or procedure, and issue/pass signal are concrete enough to execute.
 
+## Handle Broad Scan Requests
+
+When the user starts from a folder, mod pack, plugin directory, or another broad collection instead of a ready-made target list, first turn the request into an executable compat-finder workflow:
+
+1. Identify the concrete target set:
+   list the specific plugins, mods, builds, flags, or files that will become compat-finder targets.
+2. Identify the real test procedure:
+   define the exact command or manual procedure that tests only the currently selected targets.
+3. Identify the `issue` versus `pass` rule:
+   map the observed behavior to compat-finder's normalized vocabulary.
+4. Only then continue as automatic triage.
+
+For directory-style requests, prefer this shape:
+
+```text
+Mode: automatic triage
+Targets: <the concrete target names that will be tested>
+How the targets were derived: <directory listing, manifest entries, feature flag list, or other source>
+Real test command or procedure: <exact command or short procedure using only the selected targets>
+`issue` rule: <what counts as reproducing the problem>
+`pass` rule: <what counts as not reproducing it>
+Next step: <run the first compat-finder round or ask for the missing detail that blocks it>
+```
+
+If the user only says "scan this folder" but there is no way yet to test a selected subset, stop and ask for the missing execution detail instead of pretending compat-finder can infer one.
+
 ## Continue Or Plan A CLI Check
 
 When the user already has target names and prior answers, prefer `compat-finder next` because it is deterministic and JSON-friendly. Use [references/cli.md](./references/cli.md) for accepted answer values, CLI syntax, locale behavior, and install/run examples.
@@ -112,3 +138,13 @@ It is safe to infer:
 
 Do not invent new pass/fail rules, test procedures, target ordering, or toggle semantics.
 In automatic triage mode, when missing details affect what counts as an issue, how the test is executed, or which checks should run, state the assumption explicitly and ask the user to confirm before continuing.
+
+## Self-Check Before Responding
+
+Before sending the answer, verify that it matches the chosen workflow:
+
+- the triage mode or integration path is explicit
+- the next action is concrete instead of re-explaining compat-finder in general terms
+- prior answers and new results are normalized to compat-finder's accepted `issue` or `pass` vocabulary when applicable
+- blockers are labeled as execution problems instead of guessed product results
+- integration guidance defaults to `createCompatibilitySession(targets)` unless the caller explicitly needs lower-level control such as persistence or cached-step handling

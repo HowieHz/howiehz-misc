@@ -24,6 +24,26 @@
     "should_trigger": true
   },
   {
+    "query": "My game's mods folder has five plugins in it and startup crashes. I can launch subsets with `game.exe --mods <targets>`. Help me use compat-finder to narrow which mod is bad.",
+    "should_trigger": true
+  },
+  {
+    "query": "For my compat-finder web UI I need to save the troubleshooting session to Redis and resume it later. Which API should I use and what state do I need to persist?",
+    "should_trigger": true
+  },
+  {
+    "query": "I typoed the last answer in a compat-finder interactive session. How do I undo that round and keep going?",
+    "should_trigger": true
+  },
+  {
+    "query": "I need compat-finder output in Simplified Chinese on a machine that exports `zh_CN.UTF-8`. Will that locale resolve correctly?",
+    "should_trigger": true
+  },
+  {
+    "query": "I only have one plugin left to test with compat-finder. Is that still a valid session, and what will the first step look like?",
+    "should_trigger": true
+  },
+  {
     "query": "I have a failing regression between two git commits. Tell me which commit to test next and whether I should use git bisect.",
     "should_trigger": false
   },
@@ -45,6 +65,14 @@
   },
   {
     "query": "Build me a command-line wizard that asks users questions and narrows causes over time. This is a brand new tool, not an integration with compat-finder.",
+    "should_trigger": false
+  },
+  {
+    "query": "Scan my downloads folder for duplicate files and tell me what to delete. This is just file cleanup, not compat-finder triage.",
+    "should_trigger": false
+  },
+  {
+    "query": "I need a resumable React wizard that stores progress in Redis, but it has nothing to do with compat-finder or compatibility testing.",
     "should_trigger": false
   }
 ]

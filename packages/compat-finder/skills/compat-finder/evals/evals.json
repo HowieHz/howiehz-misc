@@ -77,6 +77,61 @@
         "The response tells the user to run the real test against those targets rather than treating the JSON as a final result.",
         "The response asks the user to report back using normalized `issue` or `pass` style results."
       ]
+    },
+    {
+      "id": 8,
+      "prompt": "I'm building a web UI around compat-finder and I need users to resume a saved troubleshooting session after refresh. Should I keep using `createCompatibilitySession(targets)`, or should I switch APIs? Show me the right persistence approach.",
+      "expected_output": "Explains that resumable persistence should use the lower-level state API rather than the high-level session wrapper, keeps imports on the public `compat-finder` entrypoint, and warns that `CompatibilityTestState.cachedResults` needs explicit serialization because it is a `Map`.",
+      "files": [],
+      "expectations": [
+        "The response says `createCompatibilitySession(targets)` is not the right default for save/resume behavior.",
+        "The response recommends the lower-level state API for persistence or resume support.",
+        "The response mentions the `cachedResults` map serialization caveat or an equivalent explicit map-conversion step."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Use compat-finder to narrow which mod in my game's `mods` folder breaks startup. The folder currently contains `core-ui`, `npc-pack`, `hd-textures`, `weather-plus`, and `retro-sfx`. I can launch the game with `game.exe --mods <targets>` where exit code 0 means pass and any nonzero exit code means issue. What's the right setup and first round?",
+      "expected_output": "Treats the request as automatic triage, turns the folder contents into concrete compat-finder targets, preserves the provided command contract, and proposes the first executable round rather than staying at a generic planning level.",
+      "files": [],
+      "expectations": [
+        "The response identifies the concrete target list from the folder contents.",
+        "The response preserves the provided `issue` versus `pass` rule.",
+        "The response presents the setup in terms of automatic triage and gives a concrete first round or next step."
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "I'm doing a guided compat-finder CLI session and I accidentally reported `pass` for the latest round when it should have been `issue`. How do I correct that without starting over?",
+      "expected_output": "Keeps the answer in the CLI path, explains that interactive mode supports undo, and tells the user how to continue after correcting the mistaken answer.",
+      "files": [],
+      "expectations": [
+        "The response stays focused on the CLI workflow instead of switching to generic troubleshooting.",
+        "The response mentions `u` or `undo` for interactive sessions.",
+        "The response explains that the user can correct the latest answer and continue the session."
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "I need compat-finder CLI output in Simplified Chinese. Which locale should I use, and will `zh-CN.UTF-8` work if that's what the machine already has?",
+      "expected_output": "Explains the supported locale values, prefers `zh-Hans` as the canonical Simplified Chinese locale, and notes that legacy locale tags such as `zh-CN.UTF-8` normalize to `zh-Hans` when detected from the environment.",
+      "files": [],
+      "expectations": [
+        "The response names `zh-Hans` as the supported Simplified Chinese locale.",
+        "The response explains that `zh-CN.UTF-8` or a similar legacy environment value normalizes to `zh-Hans`.",
+        "The response keeps the answer grounded in compat-finder CLI locale behavior."
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "I only have one plugin to check with compat-finder: `legacy-cache`. Is a single-target session valid, and what should the first step look like?",
+      "expected_output": "Explains that compat-finder supports single-target sessions, keeps the answer grounded in the package API or CLI behavior, and describes the first step as testing that single target rather than rejecting the workflow.",
+      "files": [],
+      "expectations": [
+        "The response states that a single-target session is valid.",
+        "The response describes the first testing step as containing the single target.",
+        "The response keeps the answer specific to compat-finder rather than broad generic troubleshooting."
+      ]
     }
   ]
 }

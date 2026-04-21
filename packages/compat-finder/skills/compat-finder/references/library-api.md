@@ -6,6 +6,18 @@ To use the library API, install the package first:
 
 ```bash
 npm install compat-finder
+
+# or
+
+pnpm add compat-finder
+
+# or
+
+yarn add compat-finder
+
+# or
+
+bun add compat-finder
 ```
 
 ## Session API
@@ -23,6 +35,8 @@ Simple session API:
 Typical integration loop:
 
 ```ts
+import { createCompatibilitySession } from "compat-finder";
+
 const session = createCompatibilitySession(["A", "B", "C", "D"]);
 let step = session.current();
 
@@ -45,9 +59,25 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
+Use the high-level session API when the caller only needs to keep the in-memory session alive for the current process or browser tab.
+If the user explicitly needs to resume after refresh, restart, or handoff to another worker, switch to the lower-level state API instead.
+
 ## Lower-Level State API
 
-Lower-level exports from `src/compatibility-test.ts`:
+These lower-level helpers are exported from the public `compat-finder` package entrypoint.
+The implementation currently lives in `src/compatibility-test.ts`, but integration code should import from `compat-finder`:
+
+```ts
+import {
+  applyCompatibilityTestAnswer,
+  createCompatibilityTestState,
+  getCurrentCompatibilityTestStep,
+  skipCachedCompatibilityTestSteps,
+  takeTargetsFromRanges,
+} from "compat-finder";
+```
+
+Key lower-level helpers:
 
 - `createCompatibilityTestState(targetCount)`
 - `getCurrentCompatibilityTestStep(state)`
@@ -62,6 +92,7 @@ Important behavior:
 
 - `createCompatibilitySession(targets)` requires at least one target and throws `targets must contain at least one item` otherwise.
 - `createCompatibilityTestState(targetCount)` requires an integer greater than or equal to 1 and throws otherwise.
+- Single-target sessions are valid. The first testing step simply contains that one target.
 - Target indexes are 1-based.
 - `CompatibilityTestState` is mutable and owned by the caller.
 - `CompatibilityTestStep.requiresAnswer === false` means the same prompt was already cached and should usually be skipped.
@@ -70,9 +101,61 @@ Important behavior:
 - `takeTargetsFromRanges` returns expanded target indexes.
 - `intersectTargetRanges` and `subtractTargetRanges` return normalized target ranges.
 
+Use the lower-level state API when the caller explicitly needs:
+
+- persistence or resume support across refreshes, restarts, or job boundaries
+- custom prompt-range handling
+- cached-step control
+- debug-oriented access to the underlying state machine
+
+Persistence note:
+
+- `createCompatibilitySession(targets)` does not expose a restorable state object, so it is not the right default when the caller needs save/resume behavior.
+- `CompatibilityTestState.cachedResults` is a `Map<string, boolean>`, so a direct `JSON.stringify(state)` will not preserve it correctly.
+- When persisting state, serialize the map explicitly and recreate it when loading.
+
+Example persistence shape:
+
+```ts
+import {
+  type CompatibilityTestState,
+  applyCompatibilityTestAnswer,
+  createCompatibilityTestState,
+  getCurrentCompatibilityTestStep,
+  skipCachedCompatibilityTestSteps,
+  takeTargetsFromRanges,
+} from "compat-finder";
+
+type StoredCompatibilityState = Omit<CompatibilityTestState, "cachedResults"> & {
+  cachedResults: Array<[string, boolean]>;
+};
+
+function serializeState(state: CompatibilityTestState): StoredCompatibilityState {
+  return {
+    ...state,
+    cachedResults: Array.from(state.cachedResults.entries()),
+  };
+}
+
+function deserializeState(saved: StoredCompatibilityState): CompatibilityTestState {
+  return {
+    ...saved,
+    cachedResults: new Map(saved.cachedResults),
+  };
+}
+```
+
 Advanced integration loop:
 
 ```ts
+import {
+  applyCompatibilityTestAnswer,
+  createCompatibilityTestState,
+  getCurrentCompatibilityTestStep,
+  skipCachedCompatibilityTestSteps,
+  takeTargetsFromRanges,
+} from "compat-finder";
+
 const state = createCompatibilityTestState(targetNames.length);
 let step = getCurrentCompatibilityTestStep(state);
 

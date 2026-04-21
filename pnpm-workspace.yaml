@@ -9,7 +9,7 @@ allowBuilds:
 engineStrict: true # engines.node will be strictly enforced when installing dependencies
 hoist: false
 packageExtensions:
-  "@nolebase/vitepress-plugin-highlight-targeted-heading@*":
+  "@nolebase/vitepress-plugin-highlight-targeted-heading":
     peerDependencies:
       vue: "^3.5.32"
     dependencies:

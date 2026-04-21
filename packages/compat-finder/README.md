@@ -2,7 +2,7 @@
 
 English | [简体中文](./README.zh.md)
 
-compat-finder is an engine and command-line tool for finding compatibility issues across multiple targets.
+compat-finder is a library and CLI for troubleshooting compatibility issues across multiple targets.
 
 [Compatibility](#compatibility) | [Install](#install) | [Quick Start](#quick-start) | [API Reference](#api-reference) | [CLI](#cli) | [Work with AI](#work-with-ai) | [Online Tool](#online-tool)
 
@@ -314,17 +314,17 @@ Expected JSON output:
 
 ## Work with AI
 
-compat-finder provides an AI agent [skills](https://agentskills.io/) that helps agents understand the compatibility troubleshooting workflows, CLI usage, and TypeScript API for this package.
+compat-finder provides an [Agent Skill](https://agentskills.io/) that helps AI agents understand the compatibility troubleshooting workflows, CLI usage, and TypeScript API for this package.
 
 ### Installation
 
-Install the compat-finder skill to your AI agent:
+Install the compat-finder skill in your AI agent:
 
 ```bash
 npx skills add HowieHz/howiehz-misc --skill compat-finder
 ```
 
-The skills source code is available in [skills/compat-finder](./skills/compat-finder).
+The skill source code is available in [skills/compat-finder](./skills/compat-finder).
 
 ### Example Prompts
 
@@ -344,7 +344,7 @@ Build a compat-finder powered troubleshooting flow into my app so users can find
 
 ### What's Included
 
-The compat-finder skill provides knowledge about:
+The compat-finder skill covers:
 
 - CLI commands, options, locales, and answer formats
 - Interactive and one-shot compatibility-check workflows

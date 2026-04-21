@@ -7,6 +7,6 @@
 ## 子项目导航
 
 - 兼容性问题排查器：
-  - [compat-finder](packages/compat-finder/)：引擎与命令行工具
+  - [compat-finder](packages/compat-finder/)：库、命令行工具和智能体技能
   - [在线版](docs/tools/compatibility-test/)
 - [天干地支计算器](docs/tools/ganzhi/)

@@ -10,7 +10,7 @@
 
 ## 关联项目
 
-- [packages/compat-finder](../../../packages/compat-finder/) 是支撑本页面的核心库、命令行工具与智能体技能（Agent Skills）。
+- [packages/compat-finder](../../../packages/compat-finder/) 是支撑本页面的核心库、命令行工具和智能体技能（Agent Skill）。
 
 ## 源码结构
 

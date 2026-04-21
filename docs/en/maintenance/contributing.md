@@ -10,7 +10,7 @@ This document is for repository maintainers and code contributors. If you only w
 ## Primary Directories
 
 - `docs/`: the VitePress site and online tool pages
-- `packages/compat-finder/`: the compatibility issue finder engine and command-line package
+- `packages/compat-finder/`: the compatibility troubleshooting library and CLI
 
 ## Development Environment
 

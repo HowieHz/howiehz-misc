@@ -1,11 +1,11 @@
 ---
 name: compat-finder
-description: Guide compatibility issue triage with the compat-finder package in this repository. Use whenever Codex needs to narrow incompatible targets from prior pass or issue results, continue an unfinished compat-finder session, choose between the compat-finder CLI and TypeScript API, interpret `interactive` or `next` output, or implement, test, or document changes under `packages/compat-finder`.
+description: Guide compatibility issue triage with the compat-finder package. Use whenever Codex has an ordered target list plus pass/issue results, needs to choose next targets, continue an unfinished compat-finder session, decide between guided and automatic triage, choose the compat-finder CLI or TypeScript API, interpret `interactive` or `next` output, or implement, test, or document changes under `packages/compat-finder`.
 ---
 
 # Compat Finder
 
-Start by choosing the smallest matching workflow:
+Start by choosing the smallest matching workflow. Read only the referenced file needed for that workflow:
 
 - Continue or plan a compatibility check:
   Read [references/cli-and-api.md](./references/cli-and-api.md). Prefer the CLI when the user wants the next targets to test or a terminal session.
@@ -24,6 +24,8 @@ Before continuing a compatibility check, determine which triage mode the user wa
   The user runs the real test after each step and reports whether the issue reproduced. Act like a conversational wrapper around the CLI flow and do not ask for the test command or machine-executable success criteria up front.
 - automatic triage:
   Codex runs the real test loop, interprets each result, and continues until it can summarize the conclusion. Before starting, confirm how to execute the real test, how to detect `issue` versus `pass`, and any setup or environment constraints that affect the result.
+
+If the user asks for a broad "scan" or "find what breaks" task, treat it as automatic triage only after target discovery, the real test command or procedure, and the issue/pass signal are concrete enough to execute.
 
 Concrete user prompts this skill should handle:
 
@@ -59,13 +61,15 @@ It is safe to infer:
 - how to normalize provided answers to `issue`/`pass` or `true`/`false`
 - the next target set to test from existing answers
 
-Do not invent new screening criteria, test procedures, or toggle semantics. In automatic triage mode, when the missing detail affects what counts as an issue, how the test is executed, or which checks should be enabled, state the assumption explicitly and ask the user to confirm before continuing. In interactive guided triage mode, do not block on test-command details that only the user needs to execute locally.
+Do not invent new screening criteria, test procedures, or toggle semantics.
+In automatic triage mode, when missing details affect what counts as an issue, how the test is executed, or which checks should be enabled, state the assumption explicitly and ask the user to confirm before continuing.
+In interactive guided triage mode, do not block on test-command details that only the user needs to execute locally.
 
 ## Continue Or Plan A Compatibility Check
 
 When the user provides target names and prior answers, prefer `compat-finder next` because it is deterministic and JSON-friendly.
 
-Use this mode split:
+Use this mode split before running commands or asking the user to test:
 
 1. Ask whether the user wants interactive guided triage or automatic triage unless the request already makes that clear.
 2. For interactive guided triage, compute the next targets and ask the user to run the test and report back `issue` or `pass`.
@@ -133,6 +137,6 @@ When editing `packages/compat-finder`, check the package map reference before ch
 
 After edits, run the narrowest useful checks first.
 
-- For docs-only skill changes, run the skill validator on this skill directory.
+- For docs-only skill changes, run `pnpm exec markdownlint --fix "packages/compat-finder/skills/**/*.md"` and `pnpm exec oxfmt --write "packages/compat-finder/skills/**/*.{yaml,md}"`.
 - For package behavior changes, run `pnpm compat-finder:test`.
 - For build-facing changes, also run `pnpm compat-finder:build`.

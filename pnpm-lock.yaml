@@ -4,6 +4,8 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+packageExtensionsChecksum: sha256-H7usYZQBO7DJ9dweX2gbxwoMFwl7Dv9AojPNUPckoQE=
+
 importers:
 
   .:
@@ -65,6 +67,9 @@ importers:
       oxlint-tsgolint:
         specifier: ^0.21.1
         version: 0.21.1
+      postcss-html:
+        specifier: ^1.8.1
+        version: 1.8.1
       stylelint:
         specifier: ^17.8.0
         version: 17.8.0(typescript@6.0.3)
@@ -97,7 +102,7 @@ importers:
         version: 3.1.1(vue@3.5.32(typescript@6.0.3))
       '@nolebase/vitepress-plugin-highlight-targeted-heading':
         specifier: ^2.18.2
-        version: 2.18.2(vitepress@2.0.0-alpha.17(@types/node@25.6.0)(less@4.6.4)(lightningcss@1.32.0)(postcss@8.5.10)(typescript@6.0.3))
+        version: 2.18.2(vitepress@2.0.0-alpha.17(@types/node@25.6.0)(less@4.6.4)(lightningcss@1.32.0)(postcss@8.5.10)(typescript@6.0.3))(vue@3.5.32(typescript@6.0.3))
       compat-finder:
         specifier: workspace:*
         version: link:../packages/compat-finder
@@ -790,6 +795,7 @@ packages:
     resolution: {integrity: sha512-RVrT7FgyjxrnFFR9twc1OJI/5B09+biVbSiO36Yiu2YC+kRMz1Mb553l2DyioLtWJgVNTJ7sj66ZJi40JpDh7g==}
     peerDependencies:
       vitepress: ^1.5.0 || ^2.0.0-alpha.1
+      vue: ^3.5.32
 
   '@oxc-project/types@0.126.0':
     resolution: {integrity: sha512-oGfVtjAgwQVVpfBrbtk4e1XDyWHRFta6BS3GWVzrF8xYBT2VGQAk39yJS/wFSMrZqoiCU4oghT3Ch0HaHGIHcQ==}
@@ -4320,10 +4326,12 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@nolebase/vitepress-plugin-highlight-targeted-heading@2.18.2(vitepress@2.0.0-alpha.17(@types/node@25.6.0)(less@4.6.4)(lightningcss@1.32.0)(postcss@8.5.10)(typescript@6.0.3))':
+  '@nolebase/vitepress-plugin-highlight-targeted-heading@2.18.2(vitepress@2.0.0-alpha.17(@types/node@25.6.0)(less@4.6.4)(lightningcss@1.32.0)(postcss@8.5.10)(typescript@6.0.3))(vue@3.5.32(typescript@6.0.3))':
     dependencies:
+      '@vueuse/core': 14.2.1(vue@3.5.32(typescript@6.0.3))
       less: 4.6.4
       vitepress: 2.0.0-alpha.17(@types/node@25.6.0)(less@4.6.4)(lightningcss@1.32.0)(postcss@8.5.10)(typescript@6.0.3)
+      vue: 3.5.32(typescript@6.0.3)
 
   '@oxc-project/types@0.126.0': {}
 

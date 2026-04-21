@@ -101,6 +101,17 @@
       ]
     },
     {
+      "id": 14,
+      "prompt": "Use compat-finder to scan my game's `mods` folder and tell me what to test next. The folder has `core-ui`, `npc-pack`, `hd-textures`, `weather-plus`, and `retro-sfx`, but I have not set up any command yet for launching only a selected subset.",
+      "expected_output": "Recognizes this as a broad scan request with incomplete execution details, identifies the concrete target set from the folder contents, and stops to ask for the missing executable subset-test procedure instead of pretending compat-finder can continue automatically.",
+      "files": [],
+      "expectations": [
+        "The response identifies the concrete target list from the folder contents.",
+        "The response does not invent a launch command, test procedure, or `issue` versus `pass` rule.",
+        "The response explicitly asks for the missing execution detail needed to test only the currently selected targets."
+      ]
+    },
+    {
       "id": 10,
       "prompt": "I'm doing a guided compat-finder CLI session and I accidentally reported `pass` for the latest round when it should have been `issue`. How do I correct that without starting over?",
       "expected_output": "Keeps the answer in the CLI path, explains that interactive mode supports undo, and tells the user how to continue after correcting the mistaken answer.",

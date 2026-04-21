@@ -1,6 +1,6 @@
 ---
 name: compat-finder
-description: Guides compat-finder troubleshooting and integrations. Use whenever the user is actively using compat-finder, continuing a compat-finder session, or clearly trying to turn versions, plugins, mods, flags, or files into a compat-finder workflow, even if they do not repeat the package name in every follow-up. Handle prior `issue`/`pass` results, `interactive` or `next` output, one-off CLI usage, broad folder-to-target setup, locale or undo questions, and TypeScript session/state API integrations. Do not use for generic test planning, unrelated troubleshooting, or git bisect style workflows that do not involve compat-finder.
+description: Guides compat-finder troubleshooting and integrations. Use whenever the user is actively using compat-finder, continuing a compat-finder session, or clearly trying to turn versions, plugins, mods, flags, or file-based plugin or mod targets into a compat-finder workflow, even if they do not repeat the package name in every follow-up. Handle prior `issue`/`pass` results, `interactive` or `next` output, one-off CLI usage, broad folder-to-target setup, locale or undo questions, and TypeScript session/state API integrations. Do not use for generic test planning, unrelated troubleshooting, or git bisect style workflows that do not involve compat-finder.
 ---
 
 # Compat Finder
@@ -56,7 +56,7 @@ If the user asks for a broad "scan" or "find what breaks" task, treat it as auto
 When the user starts from a folder, mod pack, plugin directory, or another broad collection instead of a ready-made target list, first turn the request into an executable compat-finder workflow:
 
 1. Identify the concrete target set:
-   list the specific plugins, mods, builds, flags, or files that will become compat-finder targets.
+   list the specific plugins, mods, builds, flags, or file-based plugin/mod targets that will become compat-finder targets.
 2. Identify the real test procedure:
    define the exact command or manual procedure that tests only the currently selected targets.
 3. Identify the `issue` versus `pass` rule:

@@ -33,6 +33,17 @@
         "The response includes `__tests__/cli.test.ts` and both README files as alignment points.",
         "The response recommends workspace-root validation commands relevant to CLI or docs changes."
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "Automatically narrow which release broke checkout with compat-finder. Use `pnpm test:checkout -- --targets <targets>` and treat exit code 0 as pass, nonzero as issue. If the command cannot run because setup is missing or the result is ambiguous, do not guess.",
+      "expected_output": "Chooses automatic triage but explicitly stops and reports a blocker when the command cannot be executed or the observed signal cannot be normalized to the agreed pass/issue rule.",
+      "files": [],
+      "expectations": [
+        "The response distinguishes between a real product result and an execution problem.",
+        "The response does not invent an `issue` or `pass` result when the command could not be interpreted confidently.",
+        "The response explains the blocker and states exactly what clarification or environment fix is needed."
+      ]
     }
   ]
 }

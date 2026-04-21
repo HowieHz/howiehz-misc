@@ -18,6 +18,8 @@ Keep the response centered on the user's actual triage state. Avoid re-explainin
 
 Run package commands from the repository root. Assume Node.js, pnpm, and workspace dependencies are available only after verifying the relevant command can run; if dependency setup is missing, report the missing prerequisite instead of guessing at results.
 
+This skill currently relies on repository commands and the compat-finder package itself; it does not require bundled helper scripts. Before using any validation or package command, verify that the underlying tool is available in the workspace instead of assuming it is installed.
+
 Before continuing a compatibility check, determine which triage mode the user wants:
 
 - interactive guided triage:
@@ -80,6 +82,13 @@ Use this mode split before running commands or asking the user to test:
 
 During automatic triage, report each completed round with the tested targets, the command or procedure used, the observed signal, the normalized `issue` or `pass` answer, and the next targets or final result. At the end, summarize the incompatible target set, assumptions, and any runs that could not be interpreted confidently.
 
+Handle execution failures explicitly. If the command cannot run, dependencies are missing, setup is incomplete, or the observed signal does not cleanly map to the agreed `issue` or `pass` rule, stop the automatic loop and report the blockage instead of guessing. Distinguish between:
+
+- a product result:
+  the real test ran and the observed signal can be normalized to `issue` or `pass`
+- an execution problem:
+  the real test did not run correctly, the environment was not ready, or the signal was ambiguous and needs user clarification
+
 Use a compact response shape so the next action is obvious.
 
 For interactive guided triage, prefer this structure:
@@ -100,6 +109,17 @@ Command or procedure: <exact command or short procedure>
 Observed signal: <exit code, log line, manual observation, or other evidence>
 Normalized result: issue|pass
 Next step: <next targets or final conclusion>
+```
+
+If a round is blocked by an execution problem, prefer this structure instead:
+
+```text
+Mode: automatic triage
+Tested targets: <targets or "not run">
+Command or procedure: <exact command or short procedure>
+Blocker: <missing dependency, setup issue, ambiguous signal, or other execution problem>
+Why it is blocked: <brief evidence>
+What is needed: <the exact clarification or environment fix required>
 ```
 
 Use this sequence:
@@ -161,6 +181,6 @@ When editing `packages/compat-finder`, check the package map reference before ch
 
 After edits, run the narrowest useful checks first.
 
-- For docs-only skill changes, run `pnpm exec markdownlint "packages/compat-finder/skills/**/*.md"` and `pnpm exec oxfmt --check "packages/compat-finder/skills/**/*.{yaml,md}"`.
+- For docs-only skill changes, first verify the workspace can run `pnpm exec markdownlint` and `pnpm exec oxfmt`, then run `pnpm exec markdownlint "packages/compat-finder/skills/**/*.md"` and `pnpm exec oxfmt --check "packages/compat-finder/skills/**/*.{yaml,md}"`.
 - For package behavior changes, run `pnpm compat-finder:test`.
 - For build-facing changes, also run `pnpm compat-finder:build`.

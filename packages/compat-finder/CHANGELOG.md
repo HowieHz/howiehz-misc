@@ -1,5 +1,15 @@
 # compat-finder
 
+## 1.3.0
+
+### Minor Changes
+
+- [#79](https://github.com/HowieHz/howiehz-misc/pull/79) [`3d01497`](https://github.com/HowieHz/howiehz-misc/commit/3d0149739035bd8e8424615b3be7f72e44dd925f) Thanks [@HowieHz](https://github.com/HowieHz)! - Add `getNextAnswerableCompatibilityTestStep(state)` as the primary low-level helper, align the CLI and docs around it, and make `compat-finder next` return `extraAnswerCount` instead of failing on extra `--answers` values.
+
+### Patch Changes
+
+- [#79](https://github.com/HowieHz/howiehz-misc/pull/79) [`3d01497`](https://github.com/HowieHz/howiehz-misc/commit/3d0149739035bd8e8424615b3be7f72e44dd925f) Thanks [@HowieHz](https://github.com/HowieHz)! - Tighten CLI answer validation, localize `next --help` output examples correctly, and move the legacy Python prototype into a dedicated `legacy/` folder.
+
 ## 1.2.0
 
 ### Minor Changes

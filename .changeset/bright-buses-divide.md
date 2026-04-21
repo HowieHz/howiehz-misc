@@ -1,3 +1,4 @@
+---
 "compat-finder": patch
 ---
 

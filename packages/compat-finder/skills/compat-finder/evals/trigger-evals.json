@@ -4,6 +4,10 @@
     "should_trigger": true
   },
   {
+    "query": "We already started that compat-finder-style narrowing flow earlier and the last two answers were `issue, pass`. I just need the next targets to test now.",
+    "should_trigger": true
+  },
+  {
     "query": "Can you explain whether I should use compat-finder `interactive` or `next` here? I want a guided CLI flow for narrowing a bad plugin release.",
     "should_trigger": true
   },
@@ -68,7 +72,7 @@
     "should_trigger": false
   },
   {
-    "query": "Scan my downloads folder for duplicate files and tell me what to delete. This is just file cleanup, not compat-finder triage.",
+    "query": "I already have `pass, fail` results for two rows in a QA spreadsheet. Tell me what browser or flag combo to test next, but this is just manual test planning and not compat-finder.",
     "should_trigger": false
   },
   {

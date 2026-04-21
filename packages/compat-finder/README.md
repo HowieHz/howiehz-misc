@@ -342,14 +342,20 @@ Scan my game's mods folder with compat-finder and find which mods are breaking s
 Build a compat-finder powered troubleshooting flow into my app so users can find plugin conflicts on their own.
 ```
 
+```text
+My compat-finder UI needs to save a troubleshooting session and resume it after a page refresh. Which API should I use, and what state should I persist?
+```
+
 ### What's Included
 
 The compat-finder skill covers:
 
-- Installation choices for library usage versus one-off CLI usage
-- CLI commands, options, locales, and answer formats
-- Interactive and one-shot compatibility-check workflows
+- How to choose between one-off CLI usage and library integration
+- CLI commands, options, locales, and supported answer formats
+- Guided and one-shot troubleshooting workflows
+- Help turning broad requests, such as testing a mods or plugins folder, into a concrete compat-finder workflow
 - The TypeScript session API and the lower-level state API
+- When advanced integrations should use the lower-level state API to persist or resume sessions
 - How to choose between guided triage, automatic triage, and app integration workflows
 
 ## Online Tool

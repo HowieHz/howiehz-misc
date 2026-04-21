@@ -1,6 +1,6 @@
 ---
 name: compat-finder
-description: Guides compat-finder troubleshooting and integrations. Use when working with the compat-finder package, CLI, prior `issue`/`pass` results, `interactive` or `next` output, or the TypeScript session/state APIs to narrow which version, target, flag, or configuration introduced a regression, continue a compat-finder session, choose the right interface, or embed compat-finder into another tool or app. Do not use for generic test planning, unrelated troubleshooting, or git bisect style workflows that do not involve compat-finder.
+description: Guides compat-finder troubleshooting and integrations. Use whenever the user is actively using compat-finder, continuing a compat-finder session, or clearly trying to turn versions, plugins, mods, flags, or files into a compat-finder workflow, even if they do not repeat the package name in every follow-up. Handle prior `issue`/`pass` results, `interactive` or `next` output, one-off CLI usage, broad folder-to-target setup, locale or undo questions, and TypeScript session/state API integrations. Do not use for generic test planning, unrelated troubleshooting, or git bisect style workflows that do not involve compat-finder.
 ---
 
 # Compat Finder
@@ -16,6 +16,13 @@ Keep the response centered on the user's current compat-finder state. Do not bro
 
 Before running commands, verify that the required tool is available instead of assuming compat-finder, `npx`, `npm`, or the caller's package manager is already installed.
 
+Typical requests this skill should handle:
+
+- "I already have `issue, pass`. What should I test next?"
+- "Should I use `interactive` or `next` for this CLI session?"
+- "Turn this mods folder and launch command into a compat-finder triage loop."
+- "How do I persist and resume a compat-finder session in my UI?"
+
 ## Route The Request
 
 Choose one path before answering:
@@ -30,6 +37,8 @@ If the request is not actually about compat-finder, do not force this skill onto
 - generic "what should I test next?" requests with no compat-finder context
 - git bisect or commit-level regression isolation
 - general QA planning, feature-flag strategy, or incident response workflows that do not use compat-finder
+
+If earlier turns already established compat-finder context, treat short follow-ups such as "what should I test next?" or "can I undo that round?" as still in scope even when the user does not repeat the package name.
 
 ## Choose The Triage Mode
 
@@ -139,12 +148,13 @@ It is safe to infer:
 Do not invent new pass/fail rules, test procedures, target ordering, or toggle semantics.
 In automatic triage mode, when missing details affect what counts as an issue, how the test is executed, or which checks should run, state the assumption explicitly and ask the user to confirm before continuing.
 
-## Self-Check Before Responding
+## Success Criteria
 
 Before sending the answer, verify that it matches the chosen workflow:
 
 - the triage mode or integration path is explicit
 - the next action is concrete instead of re-explaining compat-finder in general terms
 - prior answers and new results are normalized to compat-finder's accepted `issue` or `pass` vocabulary when applicable
+- the user's real test command, procedure, or persistence requirement is preserved instead of being silently rewritten
 - blockers are labeled as execution problems instead of guessed product results
 - integration guidance defaults to `createCompatibilitySession(targets)` unless the caller explicitly needs lower-level control such as persistence or cached-step handling

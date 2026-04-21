@@ -60,7 +60,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 ```
 
 Use the high-level session API when the caller only needs to keep the in-memory session alive for the current process or browser tab.
-If the user explicitly needs to resume after refresh, restart, or handoff to another worker, switch to the lower-level state API instead.
+If the user explicitly needs to resume after refresh, restart, or in another process or worker, switch to the lower-level state API instead.
 
 ## Lower-Level State API
 
@@ -103,7 +103,7 @@ Important behavior:
 
 Use the lower-level state API when the caller explicitly needs:
 
-- persistence or resume support across refreshes, restarts, or job boundaries
+- persistence or resume support across refreshes, restarts, or background jobs
 - custom prompt-range handling
 - cached-step control
 - debug-oriented access to the underlying state machine

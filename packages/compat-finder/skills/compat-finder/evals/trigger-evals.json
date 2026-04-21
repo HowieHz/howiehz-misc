@@ -24,10 +24,6 @@
     "should_trigger": true
   },
   {
-    "query": "Help me wire compat-finder into a custom React admin tool so support engineers can continue a saved troubleshooting session after refresh.",
-    "should_trigger": true
-  },
-  {
     "query": "My game's mods folder has five plugins in it and startup crashes. I can launch subsets with `game.exe --mods <targets>`. Help me use compat-finder to narrow which mod is bad.",
     "should_trigger": true
   },
@@ -56,11 +52,11 @@
     "should_trigger": false
   },
   {
-    "query": "My login test fails only in production. Help me troubleshoot the service logs and deployment config.",
+    "query": "I already tested two plugin batches and one reproduces the crash while the other does not. I'm not using compat-finder here, but can you suggest the next manual subset to try?",
     "should_trigger": false
   },
   {
-    "query": "Should I store session state in localStorage or Redis for my app's wizard flow? There's no compat-finder logic involved, just normal product state.",
+    "query": "I'm building a resumable plugin-conflict troubleshooting wizard for our app, but it must stay fully custom and not depend on compat-finder. Should I store the state in localStorage or Redis, and what should the state shape look like?",
     "should_trigger": false
   },
   {
@@ -68,7 +64,7 @@
     "should_trigger": false
   },
   {
-    "query": "Build me a command-line wizard that asks users questions and narrows causes over time. This is a brand new tool, not an integration with compat-finder.",
+    "query": "Design a CLI that asks the operator `issue` or `pass` after each round and narrows which feature flag is bad, but do not use compat-finder because we need our own algorithm and output format.",
     "should_trigger": false
   },
   {

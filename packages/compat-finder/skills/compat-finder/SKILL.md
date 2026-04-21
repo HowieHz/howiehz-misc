@@ -1,6 +1,6 @@
 ---
 name: compat-finder
-description: Guide compatibility issue triage with the compat-finder package. Use whenever Codex needs to narrow which version, target, flag, or configuration introduces a regression; continue an unfinished compat-finder session; turn pass/issue results into the next targets to test; decide between guided and automatic triage; choose the compat-finder CLI or TypeScript API; interpret `interactive` or `next` output; or implement, test, review, or document changes under `packages/compat-finder`. Use this skill even when the user does not mention compat-finder by name but is effectively asking "what should I test next?" or "which compat-finder files need to change together?".
+description: Guide compatibility issue triage with the compat-finder package. Use whenever the agent needs to narrow which version, target, flag, or configuration introduces a regression; continue an unfinished compat-finder session; turn pass/issue results into the next targets to test; decide between guided and automatic triage; choose the compat-finder CLI or TypeScript API; interpret `interactive` or `next` output; or implement, test, review, or document changes under `packages/compat-finder`. Use this skill even when the user does not mention compat-finder by name but is effectively asking "what should I test next?" or "which compat-finder files need to change together?".
 ---
 
 # Compat Finder
@@ -25,7 +25,7 @@ Before continuing a compatibility check, determine which triage mode the user wa
 - interactive guided triage:
   The user runs the real test after each step and reports whether the issue reproduced. Act like a conversational wrapper around the CLI flow and do not ask for the test command or machine-executable success criteria up front.
 - automatic triage:
-  Codex runs the real test loop, interprets each result, and continues until it can summarize the conclusion. Before starting, confirm how to execute the real test, how to detect `issue` versus `pass`, and any setup or environment constraints that affect the result.
+  The agent runs the real test loop, interprets each result, and continues until it can summarize the conclusion. Before starting, confirm how to execute the real test, how to detect `issue` versus `pass`, and any setup or environment constraints that affect the result.
 
 If the user asks for a broad "scan" or "find what breaks" task, treat it as automatic triage only after target discovery, the real test command or procedure, and the issue/pass signal are concrete enough to execute.
 

@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `54db511e1bc6855ec5600ddee52661af68282a85`
+- **Commit SHA**: `7c1bd0c1ad9d5b64ea1907405ea463764ec379a8`
 - **Date**: 2026-04-21
-- **Commit**: Improve compat-finder skill docs and metadata
+- **Commit**: compat-finder: check tools and handle blockers
 
 **Source documentation:**
 
@@ -29,6 +29,8 @@ packages/compat-finder/skills/
     ├── SKILL.md
     ├── agents/
     │   └── openai.yaml
+    ├── evals/
+    │   └── evals.json
     └── references/
         ├── cli-and-api.md
         └── package-map.md
@@ -56,13 +58,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff 54db511..HEAD -- packages/compat-finder/
+git diff 7c1bd0c..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only 54db511..HEAD -- packages/compat-finder/
+git diff --name-only 7c1bd0c..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline 54db511..HEAD -- packages/compat-finder/
+git log --oneline 7c1bd0c..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -91,6 +93,7 @@ git log --oneline 54db511..HEAD -- packages/compat-finder/
 - [ ] Read the diff of `packages/compat-finder/` since the last generation
 - [ ] Update affected files in `compat-finder/references/`
 - [ ] Update `compat-finder/SKILL.md` examples and workflow guidance
+- [ ] Update `compat-finder/evals/evals.json` when workflow guidance changes need regression coverage
 - [ ] Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` if needed
 - [ ] Update this `GENERATION.md` with the new SHA and date
 
@@ -105,6 +108,8 @@ git log --oneline 54db511..HEAD -- packages/compat-finder/
 
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
+| 2026-04-21 | 7c1bd0c | Add tool availability checks, automatic triage blockers, and blocker eval  |
+| 2026-04-21 | b7e1c9f | Add compat-finder skill evals and compact triage response shapes           |
 | 2026-04-21 | 54db511 | Improve compat-finder skill docs and metadata                              |
 | 2026-04-21 | a7d5a9b | Improve compat-finder skill command prerequisites and triage reporting     |
 | 2026-04-21 | 075fe30 | Sync library session example with askUser, answer, and undo flow           |
@@ -115,4 +120,4 @@ git log --oneline 54db511..HEAD -- packages/compat-finder/
 ---
 
 Last updated: 2026-04-21
-Current SHA: 54db511
+Current SHA: 7c1bd0c

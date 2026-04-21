@@ -4,7 +4,7 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-packageExtensionsChecksum: sha256-H7usYZQBO7DJ9dweX2gbxwoMFwl7Dv9AojPNUPckoQE=
+packageExtensionsChecksum: sha256-yKSqxnheIipRu07XrofWe3Sy2pd65KdD0jblXpU5Hj8=
 
 importers:
 

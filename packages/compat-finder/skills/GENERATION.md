@@ -109,14 +109,10 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
 | 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                       |
-| 2026-04-21 | 7c1bd0c | Add tool availability checks, automatic triage blockers, and blocker eval  |
-| 2026-04-21 | b7e1c9f | Add compat-finder skill evals and compact triage response shapes           |
-| 2026-04-21 | 54db511 | Improve compat-finder skill docs and metadata                              |
-| 2026-04-21 | a7d5a9b | Improve compat-finder skill command prerequisites and triage reporting     |
-| 2026-04-21 | 075fe30 | Sync library session example with askUser, answer, and undo flow           |
-| 2026-04-21 | 1984a7c | Expand README examples and refresh the generated skill baseline            |
-| 2026-04-21 | eeac00c | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
-| 2026-04-20 | 03fe803 | Initial compat-finder skill generation with CLI/API and package references |
+| 2026-04-21 | 625f51e | Add createCompatibilitySession API                                         |
+| 2026-04-21 | 52df9f0 | Expand README examples and refresh the generated skill baseline            |
+| 2026-04-21 | 640710d | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
+| 2026-04-20 | 00366e2 | Initial compat-finder skill generation with CLI/API and package references |
 
 ---
 

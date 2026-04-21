@@ -346,11 +346,11 @@ Build a compat-finder powered troubleshooting flow into my app so users can find
 
 The compat-finder skill covers:
 
+- Installation choices for library usage versus one-off CLI usage
 - CLI commands, options, locales, and answer formats
 - Interactive and one-shot compatibility-check workflows
-- The TypeScript state-machine API and target range utilities
-- Package source layout, tests, and workspace commands
-- Documentation update expectations for CLI and API changes
+- The TypeScript session API and the lower-level state API
+- How to choose between guided triage, automatic triage, and app integration workflows
 
 ## Online Tool
 

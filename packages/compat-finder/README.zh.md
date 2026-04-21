@@ -346,11 +346,11 @@ npx skills add HowieHz/howiehz-misc --skill compat-finder
 
 compat-finder 智能体技能涵盖以下内容：
 
+- 作为库安装使用与一次性调用 CLI 的不同安装方式
 - CLI 命令、参数、输出语言和回答格式
 - 交互式与单步兼容性排查流程
-- TypeScript 状态机 API 与目标范围工具
-- 包源码结构、测试文件和工作区命令
-- CLI 与 API 变更时的文档更新要求
+- TypeScript 会话 API 与底层状态 API
+- 如何在引导式排查、自动排查和应用集成之间做选择
 
 ## 在线版
 

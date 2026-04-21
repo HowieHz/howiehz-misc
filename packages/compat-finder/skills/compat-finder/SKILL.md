@@ -1,6 +1,6 @@
 ---
 name: compat-finder
-description: Guide compatibility issue triage with the compat-finder package. Use whenever the agent needs to narrow which version, target, flag, or configuration introduces a regression; continue an unfinished compat-finder session; turn pass/issue results into the next targets to test; decide between guided and automatic triage; choose the compat-finder CLI or TypeScript API; interpret `interactive` or `next` output; or implement, test, review, or document changes under `packages/compat-finder`. Use this skill even when the user does not mention compat-finder by name but is effectively asking "what should I test next?" or "which compat-finder files need to change together?".
+description: Help with compatibility issue triage using compat-finder. Use this skill to narrow down which version, target, flag, or configuration causes a regression; continue an existing compat-finder session; show how to install or run compat-finder; choose between the CLI and TypeScript API; interpret `interactive` or `next` output; or integrate compat-finder into another tool or app. Also use it when the user is effectively asking "what should I test next?" or "how should I wire this workflow into my project?" even if they do not mention compat-finder by name.
 ---
 
 # Compat Finder
@@ -11,12 +11,8 @@ Start by choosing the smallest matching workflow. Read only the referenced file 
   Read [references/cli-and-api.md](./references/cli-and-api.md). Prefer the CLI when the user wants the next targets to test or a terminal session.
 - Embed the engine into code:
   Read [references/cli-and-api.md](./references/cli-and-api.md). Prefer the TypeScript session API unless the caller explicitly needs low-level range control.
-- Change or review the package implementation:
-  Read [references/package-map.md](./references/package-map.md) before opening source files or tests.
 
 Keep the response centered on the user's actual triage state. Avoid re-explaining the whole package unless the request is explicitly about package internals.
-
-Run package commands from the repository root. Assume Node.js, pnpm, and workspace dependencies are available only after verifying the relevant command can run; if dependency setup is missing, report the missing prerequisite instead of guessing at results.
 
 This skill currently relies on repository commands and the compat-finder package itself; it does not require bundled helper scripts. Before using any validation or package command, verify that the underlying tool is available in the workspace instead of assuming it is installed.
 
@@ -33,9 +29,10 @@ Concrete user prompts this skill should handle:
 
 - "I have 12 browser extension versions and I tested `issue, pass` for the first two compat-finder prompts. Tell me the next versions to try; I will run the test myself."
 - "Automatically narrow which one of these five feature flags breaks login. Use `pnpm test:login -- --flags <targets>` and treat exit code 0 as pass, nonzero as issue."
-- "I'm changing the compat-finder CLI locale output. Which source files, tests, README examples, and validation commands need to stay aligned?"
+- "How do I install compat-finder and use it without adding it to my project first?"
 - "I already checked 1.8.0 and 1.9.0. One fails and one passes. What should I test next to find the bad release?"
 - "Help me bisect which env toggle breaks signup. I can run the app locally and report back after each round."
+- "Build a compat-finder powered troubleshooting flow into my app so users can find plugin conflicts on their own."
 
 ## Choose The Interface
 
@@ -132,14 +129,14 @@ Use this sequence:
 Examples:
 
 ```bash
-pnpm cli:compat-finder -- next -c 4 -n "Alpha,Beta,Gamma,Delta" -a "y,n"
 npx compat-finder next -c 4 -a "issue,pass"
+pnpm dlx compat-finder next -c 4 -n "Alpha,Beta,Gamma,Delta" -a "y,n"
 ```
 
 If the user wants a full terminal-driven session, use:
 
 ```bash
-pnpm cli:compat-finder -- interactive -c 4 -n "Alpha,Beta,Gamma,Delta"
+npx compat-finder interactive -c 4 -n "Alpha,Beta,Gamma,Delta"
 ```
 
 If the user reports results from a real test run instead of raw CLI answers, translate them back into `issue` or `pass` before deciding the next targets.
@@ -165,22 +162,3 @@ Use the lower-level state API only when the caller needs custom range/debug cont
 6. Read `state.resultTargets` after completion.
 
 Do not reimplement the search algorithm unless the task explicitly requires changing package internals; reuse the exported session API instead.
-
-## Modify the Package
-
-When editing `packages/compat-finder`, check the package map reference before changing code. In particular:
-
-- Keep CLI behavior aligned with the README examples and localized help text.
-- Update or add Vitest coverage for parser changes, output changes, and algorithm changes.
-- Use the package scripts from the workspace root:
-  - `pnpm compat-finder:test`
-  - `pnpm compat-finder:build`
-- If exported API behavior changes, update both `README.md` and `README.zh.md`.
-
-## Validation
-
-After edits, run the narrowest useful checks first.
-
-- For docs-only skill changes, first verify the workspace can run `pnpm exec markdownlint` and `pnpm exec oxfmt`, then run `pnpm exec markdownlint "packages/compat-finder/skills/**/*.md"` and `pnpm exec oxfmt --check "packages/compat-finder/skills/**/*.{yaml,md}"`.
-- For package behavior changes, run `pnpm compat-finder:test`.
-- For build-facing changes, also run `pnpm compat-finder:build`.

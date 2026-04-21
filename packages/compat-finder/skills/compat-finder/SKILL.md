@@ -8,9 +8,9 @@ description: Help with compatibility issue triage using compat-finder. Use this 
 Start by choosing the smallest matching workflow. Read only the referenced file needed for that workflow:
 
 - Continue or plan a compatibility check:
-  Read [references/cli-and-api.md](./references/cli-and-api.md). Prefer the CLI when the user wants the next targets to test or a terminal session.
+  Read [references/cli.md](./references/cli.md). Prefer the CLI when the user wants the next targets to test or a terminal session.
 - Embed the engine into code:
-  Read [references/cli-and-api.md](./references/cli-and-api.md). Prefer the TypeScript session API unless the caller explicitly needs low-level range control.
+  Read [references/library-api.md](./references/library-api.md). Install `compat-finder` first, then prefer the TypeScript session API unless the caller explicitly needs low-level range control.
 
 Keep the response centered on the user's actual triage state. Avoid re-explaining the whole package unless the request is explicitly about package internals.
 
@@ -49,6 +49,12 @@ Use the library API when the caller needs to:
 - render prompts in a custom UI
 - inspect `CompatibilityTestStep.debug` or operate directly on target ranges
 - replay answers and skip cached steps programmatically
+
+For library usage, install the package first:
+
+```bash
+npm install compat-finder
+```
 
 Prefer `createCompatibilitySession(targets)` for integrations. Drop to the low-level state helpers only when the caller truly needs custom prompt-range handling or debug-oriented control.
 
@@ -130,7 +136,7 @@ Examples:
 
 ```bash
 npx compat-finder next -c 4 -a "issue,pass"
-pnpm dlx compat-finder next -c 4 -n "Alpha,Beta,Gamma,Delta" -a "y,n"
+npx compat-finder next -c 4 -n "Alpha,Beta,Gamma,Delta" -a "y,n"
 ```
 
 If the user wants a full terminal-driven session, use:

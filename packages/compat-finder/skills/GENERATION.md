@@ -32,20 +32,23 @@ packages/compat-finder/skills/
     ├── evals/
     │   └── evals.json
     └── references/
-        └── cli-and-api.md
+        ├── cli.md
+        └── library-api.md
 ```
 
 ## File Naming Convention
 
 Reference files are named by scope:
 
-- `cli-and-api.md` - CLI behavior, answers, locales, and library API usage
+- `cli.md` - CLI commands, answers, locales, and command-line triage flow
+- `library-api.md` - package installation and TypeScript API usage
 
 ## Reference Files
 
-### Core References (1 file)
+### Core References (2 files)
 
-- `cli-and-api.md` - CLI commands, locale handling, answer vocabulary, and TypeScript API flow
+- `cli.md` - CLI commands, locale handling, answer vocabulary, and command-line troubleshooting flow
+- `library-api.md` - package installation, session API usage, and lower-level state API guidance
 
 ## How to Update Skills
 
@@ -74,7 +77,7 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 
 **For CLI or API changes:**
 
-- Update `compat-finder/references/cli-and-api.md`
+- Update `compat-finder/references/cli.md` and/or `compat-finder/references/library-api.md`
 - Update `compat-finder/SKILL.md` examples and workflow steps
 - Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` when public usage changes
 - Update this file's reference summary if the scope of the references changes

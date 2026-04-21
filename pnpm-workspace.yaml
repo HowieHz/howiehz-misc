@@ -7,3 +7,16 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 engineStrict: true # engines.node will be strictly enforced when installing dependencies
+hoist: false
+packageExtensions:
+  "@nolebase/vitepress-plugin-highlight-targeted-heading":
+    peerDependencies:
+      vue: "^3.5.32"
+    dependencies:
+      "@vueuse/core": "^14.2.1"
+  "vitepress-plugin-pagefind":
+    peerDependencies:
+      vue: "^3.5.32"
+  "vue-command-palette":
+    peerDependencies:
+      vue: "^3.5.32"

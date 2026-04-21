@@ -5,8 +5,7 @@ import readline from "node:readline/promises";
 import {
   applyCompatibilityTestAnswer,
   createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
+  getNextAnswerableCompatibilityTestStep,
   takeTargetsFromRanges,
   type CompatibilityTestState,
   type CompatibilityTestStep,
@@ -598,11 +597,7 @@ async function runInteractiveCli(
 
   try {
     while (true) {
-      let step = getCurrentCompatibilityTestStep(state);
-      while (step && !step.requiresAnswer) {
-        skipCachedCompatibilityTestSteps(state);
-        step = getCurrentCompatibilityTestStep(state);
-      }
+      const step = getNextAnswerableCompatibilityTestStep(state);
 
       if (!step) {
         printResult(targetNames, state, messages);
@@ -622,9 +617,9 @@ async function runInteractiveCli(
         if (history.length === 0) {
           console.log(messages.interactive.emptyUndoHistory);
           continue;
-      }
+        }
 
-      history.pop();
+        history.pop();
         state = rebuildStateFromAnswers(targetCount, history).state;
         console.log(messages.interactive.restoredPreviousStep);
         continue;
@@ -665,23 +660,22 @@ function parseAnswer(value: string): boolean | undefined {
 
 function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[]): RebuiltCliState {
   const nextState = createCompatibilityTestState(targetCount);
+  let step = getNextAnswerableCompatibilityTestStep(nextState);
   let completedStepCount = 0;
 
   for (const answer of answers) {
-    if (nextState.stopped) {
+    if (!step) {
       throw new TooManyAnswersError(completedStepCount, answers.length - completedStepCount);
     }
 
     applyCompatibilityTestAnswer(nextState, answer);
     completedStepCount += 1;
-    if (!nextState.stopped) {
-      skipCachedCompatibilityTestSteps(nextState);
-    }
+    step = getNextAnswerableCompatibilityTestStep(nextState);
   }
 
   return {
     state: nextState,
-    step: getCurrentCompatibilityTestStep(nextState),
+    step,
   };
 }
 

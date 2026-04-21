@@ -16,7 +16,7 @@ export interface CompatibilityTestStep {
   promptTargetCount: number;
   /** Internal range-based search state for diagnostics and advanced UIs. */
   debug: CompatibilityTestDebugStep;
-  /** Whether the caller needs to provide a new answer for this step. If false, call `skipCachedCompatibilityTestSteps`. */
+  /** Whether the caller needs to provide a new answer for this step. If false, call `getNextAnswerableCompatibilityTestStep` or `skipCachedCompatibilityTestSteps`. */
   requiresAnswer: boolean;
 }
 
@@ -241,7 +241,20 @@ export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState):
   return step;
 }
 
-function getNextAnswerableCompatibilityTestStep(state: CompatibilityTestState): CompatibilityTestStep | undefined {
+/**
+ * Returns the current answerable step, automatically skipping cached steps.
+ *
+ * This helper is the preferred low-level entrypoint for callers that want the
+ * next actionable prompt without manually coordinating
+ * `getCurrentCompatibilityTestStep` and `skipCachedCompatibilityTestSteps`.
+ *
+ * @param state The session state to inspect and advance through cached steps.
+ * @returns The next step that requires a new answer, or `undefined` when the
+ * session is already complete or becomes complete while skipping cached steps.
+ */
+export function getNextAnswerableCompatibilityTestStep(
+  state: CompatibilityTestState,
+): CompatibilityTestStep | undefined {
   const step = getCurrentCompatibilityTestStep(state);
   return step && !step.requiresAnswer ? skipCachedCompatibilityTestSteps(state) : step;
 }

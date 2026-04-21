@@ -144,6 +144,7 @@ The lower-level API exposes the mutable range-based state machine for custom UIs
 Session lifecycle:
 
 - `createCompatibilityTestState(targetCount)`: create a new session
+- `getNextAnswerableCompatibilityTestStep(state)`: read the next actionable step and automatically skip cached steps
 - `getCurrentCompatibilityTestStep(state)`: read the current step, or `undefined` when complete
 - `applyCompatibilityTestAnswer(state, hasIssue)`: apply one answer and advance the session
 - `skipCachedCompatibilityTestSteps(state)`: fast-forward through cached steps

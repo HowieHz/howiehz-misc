@@ -144,6 +144,7 @@ compat-finder next -c 3 -a "y,n"
 会话流程：
 
 - `createCompatibilityTestState(targetCount)`：创建新的排查会话
+- `getNextAnswerableCompatibilityTestStep(state)`：读取下一个真正需要回答的步骤，并自动跳过缓存步骤
 - `getCurrentCompatibilityTestStep(state)`：读取当前步骤；排查结束时返回 `undefined`
 - `applyCompatibilityTestAnswer(state, hasIssue)`：提交一个测试结果并推进会话
 - `skipCachedCompatibilityTestSteps(state)`：跳过已经命中的缓存步骤

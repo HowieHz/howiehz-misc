@@ -5,6 +5,7 @@ import {
   createCompatibilitySession,
   createCompatibilityTestState,
   getCurrentCompatibilityTestStep,
+  getNextAnswerableCompatibilityTestStep,
   skipCachedCompatibilityTestSteps,
   type TargetRange,
 } from "../src/compatibility-test.ts";
@@ -326,6 +327,41 @@ describe("compatibility test engine", () => {
     expect(result.steps).toContainEqual({
       promptRanges: [range(2, 2), range(6, 9)],
       requiresAnswer: false,
+    });
+  });
+
+  it("returns the next answerable step from the low-level state API", () => {
+    const state = createCompatibilityTestState(9);
+
+    expect(getNextAnswerableCompatibilityTestStep(state)?.promptTargetRanges).toEqual([range(1, 5)]);
+
+    applyCompatibilityTestAnswer(state, false);
+
+    expect(getCurrentCompatibilityTestStep(state)).toMatchObject({
+      promptTargetRanges: [range(6, 9)],
+      requiresAnswer: true,
+    });
+
+    applyCompatibilityTestAnswer(state, false);
+
+    expect(getCurrentCompatibilityTestStep(state)).toMatchObject({
+      promptTargetRanges: [range(1, 3), range(6, 9)],
+      requiresAnswer: true,
+    });
+
+    applyCompatibilityTestAnswer(state, true);
+    applyCompatibilityTestAnswer(state, true);
+    applyCompatibilityTestAnswer(state, false);
+    applyCompatibilityTestAnswer(state, true);
+
+    expect(getCurrentCompatibilityTestStep(state)).toMatchObject({
+      promptTargetRanges: [range(2, 2), range(6, 9)],
+      requiresAnswer: false,
+    });
+
+    expect(getNextAnswerableCompatibilityTestStep(state)).toMatchObject({
+      promptTargetRanges: [range(2, 2), range(6, 7)],
+      requiresAnswer: true,
     });
   });
 

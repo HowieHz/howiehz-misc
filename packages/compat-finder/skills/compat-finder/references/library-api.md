@@ -79,8 +79,7 @@ The implementation currently lives in `src/compatibility-test.ts`, but integrati
 import {
   applyCompatibilityTestAnswer,
   createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
+  getNextAnswerableCompatibilityTestStep,
   takeTargetsFromRanges,
 } from "compat-finder";
 ```
@@ -88,6 +87,7 @@ import {
 Key lower-level helpers:
 
 - `createCompatibilityTestState(targetCount)`
+- `getNextAnswerableCompatibilityTestStep(state)`
 - `getCurrentCompatibilityTestStep(state)`
 - `applyCompatibilityTestAnswer(state, hasIssue)`
 - `skipCachedCompatibilityTestSteps(state)`
@@ -129,11 +129,6 @@ Example persistence shape:
 ```ts
 import {
   type CompatibilityTestState,
-  applyCompatibilityTestAnswer,
-  createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
-  takeTargetsFromRanges,
 } from "compat-finder";
 
 type StoredCompatibilityState = Omit<CompatibilityTestState, "cachedResults"> & {
@@ -163,23 +158,18 @@ Advanced integration loop:
 import {
   applyCompatibilityTestAnswer,
   createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
+  getNextAnswerableCompatibilityTestStep,
   takeTargetsFromRanges,
 } from "compat-finder";
 
 const state = createCompatibilityTestState(targetNames.length);
-let step = getCurrentCompatibilityTestStep(state);
+let step = getNextAnswerableCompatibilityTestStep(state);
 
 while (step) {
-  if (!step.requiresAnswer) {
-    step = skipCachedCompatibilityTestSteps(state);
-    continue;
-  }
-
   const targets = takeTargetsFromRanges(step.promptTargetRanges, step.promptTargetCount);
   const hasIssue = await runRealTest(targets);
-  step = applyCompatibilityTestAnswer(state, hasIssue);
+  applyCompatibilityTestAnswer(state, hasIssue);
+  step = getNextAnswerableCompatibilityTestStep(state);
 }
 
 console.log(state.resultTargets);

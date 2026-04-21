@@ -74,6 +74,7 @@ git log --oneline e8f8251..HEAD -- packages/compat-finder/
 
 - Update the relevant file in `compat-finder/references/`
 - Update `compat-finder/SKILL.md` if the quick-start workflow or triggering guidance changes
+- Update `compat-finder/agents/openai.yaml` when the trigger summary or default prompt should stay aligned with `SKILL.md`
 - Update `compat-finder/evals/trigger-evals.json` if the trigger boundary changes
 - Update package README sections if the user-facing examples or installation flow change
 
@@ -81,6 +82,7 @@ git log --oneline e8f8251..HEAD -- packages/compat-finder/
 
 - Update `compat-finder/references/cli.md` and/or `compat-finder/references/library-api.md`
 - Update `compat-finder/SKILL.md` examples and workflow steps
+- Update `compat-finder/agents/openai.yaml` when trigger wording, routing guidance, or the default prompt summary changes
 - Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` when public usage changes
 - Run the skill evals against each model the skill is expected to support, then record the result in the model validation log below
 - Update this file's reference summary if the scope of the references changes
@@ -90,6 +92,7 @@ git log --oneline e8f8251..HEAD -- packages/compat-finder/
 - [ ] Read the diff of `packages/compat-finder/` since the last generation
 - [ ] Update affected files in `compat-finder/references/`
 - [ ] Update `compat-finder/SKILL.md` examples and workflow guidance
+- [ ] Update `compat-finder/agents/openai.yaml` when trigger wording or routing guidance changes
 - [ ] Update `compat-finder/evals/trigger-evals.json` when the trigger boundary changes
 - [ ] Update `compat-finder/evals/evals.json` when workflow guidance changes need regression coverage
 - [ ] Run the updated skill against each target model and record the outcome below

@@ -2,7 +2,7 @@
 
 [English](./README.md) | 简体中文
 
-compat-finder 是一个用于排查多个目标兼容性问题的库和命令行工具。
+compat-finder 是一个用于排查多个目标之间兼容性问题的库和命令行工具。
 
 [适用范围](#适用范围) | [安装](#安装) | [快速开始](#快速开始) | [API 参考](#api-参考) | [命令行工具](#命令行工具) | [与 AI 协作](#与-ai-协作) | [在线版](#在线版)
 
@@ -97,7 +97,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 compat-finder interactive --count 4
 ```
 
-执行单步排查计算并输出结果：
+执行单步排查并输出结果：
 
 ```bash
 compat-finder next -c 3 -a "y,n"
@@ -144,6 +144,7 @@ compat-finder next -c 3 -a "y,n"
 会话流程：
 
 - `createCompatibilityTestState(targetCount)`：创建新的排查会话
+- `getNextAnswerableCompatibilityTestStep(state)`：读取下一个真正需要回答的步骤，并自动跳过缓存步骤
 - `getCurrentCompatibilityTestStep(state)`：读取当前步骤；排查结束时返回 `undefined`
 - `applyCompatibilityTestAnswer(state, hasIssue)`：提交一个测试结果并推进会话
 - `skipCachedCompatibilityTestSteps(state)`：跳过已经命中的缓存步骤
@@ -232,8 +233,8 @@ compat-finder i -c 4 -n "A,B,C,D"
 
 支持以下输入：
 
-- `y` / `yes` / `issue` / `1`：表示“有兼容性问题”
-- `n` / `no` / `pass` / `0`：表示“没有兼容性问题”
+- `y` / `yes` / `issue` / `1` / `true`：表示“有兼容性问题”
+- `n` / `no` / `pass` / `0` / `false`：表示“没有兼容性问题”
 - `u` / `undo`：撤回上一步
 - `q` / `quit`：退出
 
@@ -258,11 +259,14 @@ compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
 - `status`：`testing` 表示当前需要按 `targets` 列表进行测试；`complete` 表示已经得到最终结果
 - `targetCount`：本轮排查的测试目标总数
 - `targets`：`testing` 时表示当前需要测试的目标列表；`complete` 时表示最终结果列表
+- `extraAnswerCount`：可选；仅在结果为 `complete` 且传入了多余 `answers` 值时返回
 
 `answers` 支持以下取值：
 
 - `y` / `yes` / `issue` / `1` / `true`：表示“有兼容性问题”
 - `n` / `no` / `pass` / `0` / `false`：表示“没有兼容性问题”
+
+如果传入的 `answers` 在会话结束后还有多余值，CLI 仍会返回最终结果，并在 JSON 输出中附带 `extraAnswerCount`。
 
 示例 1：
 

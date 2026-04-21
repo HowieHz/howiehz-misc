@@ -1,5 +1,13 @@
 # compat-finder Library API
 
+## Contents
+
+- Install
+- Session API
+- Lower-Level State API
+- Persistence Notes
+- Example Loops
+
 ## Install
 
 To use the library API, install the package first:
@@ -71,8 +79,7 @@ The implementation currently lives in `src/compatibility-test.ts`, but integrati
 import {
   applyCompatibilityTestAnswer,
   createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
+  getNextAnswerableCompatibilityTestStep,
   takeTargetsFromRanges,
 } from "compat-finder";
 ```
@@ -80,6 +87,7 @@ import {
 Key lower-level helpers:
 
 - `createCompatibilityTestState(targetCount)`
+- `getNextAnswerableCompatibilityTestStep(state)`
 - `getCurrentCompatibilityTestStep(state)`
 - `applyCompatibilityTestAnswer(state, hasIssue)`
 - `skipCachedCompatibilityTestSteps(state)`
@@ -108,6 +116,8 @@ Use the lower-level state API when the caller explicitly needs:
 - cached-step control
 - debug-oriented access to the underlying state machine
 
+## Persistence Notes
+
 Persistence note:
 
 - `createCompatibilitySession(targets)` does not expose a restorable state object, so it is not the right default when the caller needs save/resume behavior.
@@ -117,14 +127,7 @@ Persistence note:
 Example persistence shape:
 
 ```ts
-import {
-  type CompatibilityTestState,
-  applyCompatibilityTestAnswer,
-  createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
-  takeTargetsFromRanges,
-} from "compat-finder";
+import { type CompatibilityTestState } from "compat-finder";
 
 type StoredCompatibilityState = Omit<CompatibilityTestState, "cachedResults"> & {
   cachedResults: Array<[string, boolean]>;
@@ -145,29 +148,26 @@ function deserializeState(saved: StoredCompatibilityState): CompatibilityTestSta
 }
 ```
 
+## Example Loops
+
 Advanced integration loop:
 
 ```ts
 import {
   applyCompatibilityTestAnswer,
   createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
+  getNextAnswerableCompatibilityTestStep,
   takeTargetsFromRanges,
 } from "compat-finder";
 
 const state = createCompatibilityTestState(targetNames.length);
-let step = getCurrentCompatibilityTestStep(state);
+let step = getNextAnswerableCompatibilityTestStep(state);
 
 while (step) {
-  if (!step.requiresAnswer) {
-    step = skipCachedCompatibilityTestSteps(state);
-    continue;
-  }
-
   const targets = takeTargetsFromRanges(step.promptTargetRanges, step.promptTargetCount);
   const hasIssue = await runRealTest(targets);
-  step = applyCompatibilityTestAnswer(state, hasIssue);
+  applyCompatibilityTestAnswer(state, hasIssue);
+  step = getNextAnswerableCompatibilityTestStep(state);
 }
 
 console.log(state.resultTargets);

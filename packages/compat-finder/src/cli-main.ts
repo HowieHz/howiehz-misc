@@ -5,8 +5,7 @@ import readline from "node:readline/promises";
 import {
   applyCompatibilityTestAnswer,
   createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
-  skipCachedCompatibilityTestSteps,
+  getNextAnswerableCompatibilityTestStep,
   takeTargetsFromRanges,
   type CompatibilityTestState,
   type CompatibilityTestStep,
@@ -23,10 +22,23 @@ import {
 type CliCommand = "interactive" | "next";
 type HelpScope = "command" | "root";
 
-interface NextCommandResult {
-  status: "complete" | "testing";
-  targetCount: number;
-  targets: string[];
+type NextCommandResult =
+  | {
+      status: "testing";
+      targetCount: number;
+      targets: string[];
+    }
+  | {
+      extraAnswerCount?: number;
+      status: "complete";
+      targetCount: number;
+      targets: string[];
+    };
+
+interface RebuiltCliState {
+  extraAnswerCount: number;
+  state: CompatibilityTestState;
+  step: CompatibilityTestStep | undefined;
 }
 
 interface CliOptions {
@@ -117,28 +129,7 @@ const buildCommandDefinitions = (messages: CliMessages): Record<CliCommand, Comm
         title: messages.examplesTitle,
       },
       {
-        lines: [
-          formatCommandUsage("next", '-c 3 -a "y"'),
-          "{",
-          '  "status": "testing",',
-          '  "targetCount": 3,',
-          '  "targets": ["目标 1"]',
-          "}",
-          "",
-          formatCommandUsage("next", '-c 3 -a "y,n"'),
-          "{",
-          '  "status": "testing",',
-          '  "targetCount": 3,',
-          '  "targets": ["目标 2"]',
-          "}",
-          "",
-          formatCommandUsage("next", '-c 3 -a "y,n,n"'),
-          "{",
-          '  "status": "complete",',
-          '  "targetCount": 3,',
-          '  "targets": ["目标 1", "目标 2"]',
-          "}",
-        ],
+        lines: getNextOutputExampleLines(messages),
         title: messages.commands.next.outputExampleTitle ?? "",
       },
     ],
@@ -185,7 +176,7 @@ export async function main(): Promise<void> {
   console.log(JSON.stringify(result, null, 2));
 }
 
-function getCommandHelpText(command: CliCommand, locale: CliLocale): string {
+export function getCommandHelpText(command: CliCommand, locale: CliLocale): string {
   const messages = getCliMessages(locale);
   const definition = buildCommandDefinitions(messages)[command];
   return [
@@ -388,6 +379,34 @@ function formatDefaultInteractiveUsage(suffix: string): string {
   return `${CLI_COMMAND_NAME} ${suffix}`;
 }
 
+function getNextOutputExampleLines(messages: CliMessages): string[] {
+  const firstTarget = messages.defaultTargetLabel(1);
+  const secondTarget = messages.defaultTargetLabel(2);
+
+  return [
+    formatCommandUsage("next", '-c 3 -a "y"'),
+    "{",
+    '  "status": "testing",',
+    '  "targetCount": 3,',
+    `  "targets": ["${firstTarget}"]`,
+    "}",
+    "",
+    formatCommandUsage("next", '-c 3 -a "y,n"'),
+    "{",
+    '  "status": "testing",',
+    '  "targetCount": 3,',
+    `  "targets": ["${secondTarget}"]`,
+    "}",
+    "",
+    formatCommandUsage("next", '-c 3 -a "y,n,n"'),
+    "{",
+    '  "status": "complete",',
+    '  "targetCount": 3,',
+    `  "targets": ["${firstTarget}", "${secondTarget}"]`,
+    "}",
+  ];
+}
+
 function printCliError(message: string, messages: CliMessages): void {
   console.error(message);
   console.error("");
@@ -471,17 +490,22 @@ export function getNextCommandResult(
   answers: readonly boolean[],
   locale: CliLocale = "zh-Hans",
 ): NextCommandResult {
+  const { extraAnswerCount, state, step } = rebuildStateFromAnswers(targetCount, answers);
+  return buildNextCommandResult(targetCount, targetNames, state, step, extraAnswerCount, locale);
+}
+
+function buildNextCommandResult(
+  targetCount: number,
+  targetNames: readonly string[],
+  state: CompatibilityTestState,
+  step: CompatibilityTestStep | undefined,
+  extraAnswerCount: number,
+  locale: CliLocale,
+): NextCommandResult {
   const messages = getCliMessages(locale);
-  const state = rebuildStateFromAnswers(targetCount, answers);
-  let step = getCurrentCompatibilityTestStep(state);
-
-  while (step && !step.requiresAnswer) {
-    skipCachedCompatibilityTestSteps(state);
-    step = getCurrentCompatibilityTestStep(state);
-  }
-
   if (!step) {
     return {
+      ...(extraAnswerCount > 0 ? { extraAnswerCount } : {}),
       status: "complete",
       targetCount,
       targets: state.resultTargets.map((target) => getTargetLabel(targetNames, target, messages)),
@@ -518,11 +542,7 @@ async function runInteractiveCli(
 
   try {
     while (true) {
-      let step = getCurrentCompatibilityTestStep(state);
-      while (step && !step.requiresAnswer) {
-        skipCachedCompatibilityTestSteps(state);
-        step = getCurrentCompatibilityTestStep(state);
-      }
+      const step = getNextAnswerableCompatibilityTestStep(state);
 
       if (!step) {
         printResult(targetNames, state, messages);
@@ -545,7 +565,7 @@ async function runInteractiveCli(
         }
 
         history.pop();
-        state = rebuildStateFromAnswers(targetCount, history);
+        state = rebuildStateFromAnswers(targetCount, history).state;
         console.log(messages.interactive.restoredPreviousStep);
         continue;
       }
@@ -583,19 +603,26 @@ function parseAnswer(value: string): boolean | undefined {
   return undefined;
 }
 
-function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[]): CompatibilityTestState {
+function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[]): RebuiltCliState {
   const nextState = createCompatibilityTestState(targetCount);
+  let extraAnswerCount = 0;
+  let step = getNextAnswerableCompatibilityTestStep(nextState);
 
   for (const answer of answers) {
-    applyCompatibilityTestAnswer(nextState, answer);
-    if (nextState.stopped) {
-      break;
+    if (!step) {
+      extraAnswerCount += 1;
+      continue;
     }
 
-    skipCachedCompatibilityTestSteps(nextState);
+    applyCompatibilityTestAnswer(nextState, answer);
+    step = getNextAnswerableCompatibilityTestStep(nextState);
   }
 
-  return nextState;
+  return {
+    extraAnswerCount,
+    state: nextState,
+    step,
+  };
 }
 
 function printResult(targetNames: readonly string[], state: CompatibilityTestState, messages: CliMessages): void {

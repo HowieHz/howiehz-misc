@@ -12,9 +12,8 @@ import { computed, nextTick, ref, watch } from "vue";
 import {
   applyCompatibilityTestAnswer,
   createCompatibilityTestState,
-  getCurrentCompatibilityTestStep,
+  getNextAnswerableCompatibilityTestStep,
   intersectTargetRanges,
-  skipCachedCompatibilityTestSteps,
   subtractTargetRanges,
   takeTargetsFromRanges,
   type CompatibilityTestState,
@@ -383,7 +382,7 @@ async function startTest() {
   nextRecordId.value = 1;
   try {
     engineState.value = createCompatibilityTestState(count);
-    currentStep.value = getCurrentCompatibilityTestStep(engineState.value);
+    currentStep.value = getNextAnswerableCompatibilityTestStep(engineState.value);
     announcement.value = `Started a new test with ${count} targets.`;
     await nextTick();
     testingPromptRef.value?.focus();
@@ -422,11 +421,7 @@ function rebuildEngineStateFromHistory() {
   const nextState = createCompatibilityTestState(currentRoundCount.value);
   for (const record of testHistory.value) {
     applyCompatibilityTestAnswer(nextState, record.result === "issue");
-    if (nextState.stopped) {
-      break;
-    }
-
-    skipCachedCompatibilityTestSteps(nextState);
+    getNextAnswerableCompatibilityTestStep(nextState);
   }
 
   return nextState;
@@ -454,7 +449,7 @@ function syncFromEngineState() {
     return;
   }
 
-  currentStep.value = skipCachedCompatibilityTestSteps(engineState.value);
+  currentStep.value = getNextAnswerableCompatibilityTestStep(engineState.value);
 
   if (engineState.value.stopped) {
     incompatibleTargets.value = engineState.value.resultTargets.slice();

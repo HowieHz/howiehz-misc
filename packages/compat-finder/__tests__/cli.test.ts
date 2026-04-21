@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli-main.ts";
+import { getCommandHelpText, getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli-main.ts";
 import { normalizeCliLocale, resolveCliLocale } from "../src/locales/index.ts";
 
 const TARGET_NAMES = ["Alpha", "Beta", "Gamma", "Delta"] as const;
@@ -55,6 +55,15 @@ describe("compatibility test cli", () => {
     expect(helpText).toContain("next (n)");
   });
 
+  it("localizes next help output examples", () => {
+    const enHelpText = getCommandHelpText("next", "en");
+    const zhHelpText = getCommandHelpText("next", "zh-Hans");
+
+    expect(enHelpText).toContain('"targets": ["Target 1"]');
+    expect(enHelpText).not.toContain('"targets": ["目标 1"]');
+    expect(zhHelpText).toContain('"targets": ["目标 1"]');
+  });
+
   it("keeps interactive as the default command for backward compatibility", () => {
     const result = parseCliArgs(["--count", "2"], ZH_CN_ENV);
 
@@ -82,6 +91,18 @@ describe("compatibility test cli", () => {
     const result = parseCliArgs(["next", "--count", "4", "--answers", "issue,wat"], ZH_CN_ENV);
 
     expect(result.error).toBe("参数 --answers 仅支持 y/n、yes/no、issue/pass、1/0、true/false。");
+  });
+
+  it("parses extra answers and leaves semantic validation to next execution", () => {
+    const result = parseCliArgs(["next", "--count", "1", "--answers", "pass,issue"], ZH_CN_ENV);
+
+    expect(result).toMatchObject({
+      options: {
+        answers: [false, true],
+        command: "next",
+        count: 1,
+      },
+    });
   });
 
   it("rejects invalid count", () => {
@@ -176,10 +197,50 @@ describe("compatibility test cli", () => {
     });
   });
 
+  it("returns a typed next result for cli execution", () => {
+    expect(getNextCommandResult(4, TARGET_NAMES, [true, false])).toEqual({
+      status: "testing",
+      targetCount: 4,
+      targets: ["Beta"],
+    });
+  });
+
+  it("rethrows unrelated next execution failures", () => {
+    expect(() => getNextCommandResult(0, ["Only"], [], "en")).toThrow(
+      "targetCount must be an integer greater than or equal to 1",
+    );
+  });
+
+  it("returns a complete result with extra answer metadata", () => {
+    expect(getNextCommandResult(1, ["Only"], [false, true], "en")).toEqual({
+      extraAnswerCount: 1,
+      status: "complete",
+      targetCount: 1,
+      targets: [],
+    });
+  });
+
+  it("reports how many extra answers were provided", () => {
+    expect(getNextCommandResult(1, ["Only"], [false, true, false], "en")).toEqual({
+      extraAnswerCount: 2,
+      status: "complete",
+      targetCount: 1,
+      targets: [],
+    });
+  });
+
+  it("does not include extra answer metadata while testing", () => {
+    expect(getNextCommandResult(4, TARGET_NAMES, [true, false])).not.toHaveProperty("extraAnswerCount");
+  });
+
   it("localizes default target names in next results", () => {
     const result = getNextCommandResult(2, [], [], "en");
 
-    expect(result.targets).toEqual(["Target 1"]);
+    expect(result).toEqual({
+      status: "testing",
+      targetCount: 2,
+      targets: ["Target 1"],
+    });
   });
 
   it("normalizes locale values", () => {

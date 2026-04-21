@@ -2,7 +2,7 @@ import type { CliMessages } from "./types.ts";
 
 export const enMessages: CliMessages = {
   aliasesTitle: "Alias",
-  commandTitle: (command) => `Compatibility issue finder CLI: ${command}`,
+  commandTitle: (command) => `Compatibility Issue Finder CLI: ${command}`,
   commands: {
     interactive: {
       description: "Start an interactive compatibility check",
@@ -12,10 +12,10 @@ export const enMessages: CliMessages = {
           lines: [
             "The CLI will show the targets to test in each round.",
             "Enter the actual test result:",
-            '  y / yes / issue / 1    means "has a compatibility issue"',
-            '  n / no / pass / 0      means "has no compatibility issue"',
-            "  u / undo               undo the previous step",
-            "  q / quit               quit",
+            '  y / yes / issue / 1 / true    means "has a compatibility issue"',
+            '  n / no / pass / 0 / false     means "has no compatibility issue"',
+            "  u / undo                      undo the previous step",
+            "  q / quit                      quit",
           ],
           title: "Interactive guide",
         },
@@ -29,7 +29,7 @@ export const enMessages: CliMessages = {
         'n / no / pass / 0 / false       means "has no compatibility issue"',
       ],
       answerOptionDescription: "Existing answers, separated by commas; optional",
-      description: "Run one compatibility check step and print the result",
+      description: "Run one step and print the result",
       exampleLines: ['--answers "issue,pass,1,0"'],
       extraSections: [],
       namesOptionDescription: "Target names, separated by commas; optional",
@@ -38,6 +38,7 @@ export const enMessages: CliMessages = {
         "status                 testing means the targets list should be tested now; complete means the final result is ready",
         "targetCount            Total number of targets in this session",
         "targets                In testing status, the targets to test now; in complete status, the final result list",
+        "extraAnswerCount       Optional. Returned only when status is complete and extra answers were provided",
       ],
       outputFieldTitle: "Output fields",
       usageSuffix: "--count <count> [--answers <answers>] [--names <names>]",
@@ -65,11 +66,11 @@ export const enMessages: CliMessages = {
   interactive: {
     emptyUndoHistory: "There is no step to undo.",
     exited: "Exited.",
-    invalidInput: "Invalid input. Enter y / n / u / q.",
+    invalidInput: "Invalid input. Enter y/n, issue/pass, 1/0, true/false, u, or q.",
     promptTargetCount: (count) => `Test ${count} target(s) this round:`,
     restoredPreviousStep: "Restored the previous step.",
     start: (count) => `Started compatibility issue finding with ${count} target(s).`,
-    usageHint: "Enter y/n for whether the issue reproduces, u to undo, or q to quit.",
+    usageHint: "Enter y/n, issue/pass, 1/0, or true/false; use u to undo or q to quit.",
   },
   localeOptionDescription: "Set output locale: en or zh-Hans",
   optionsTitle: "Options",
@@ -77,7 +78,7 @@ export const enMessages: CliMessages = {
     completeWithIssues: (count) => `Test complete. The following ${count} target(s) have compatibility issues:`,
     completeWithoutIssues: "Test complete. No compatibility issues found.",
   },
-  rootTitle: "Compatibility issue finder CLI",
+  rootTitle: "Compatibility Issue Finder CLI",
   rootUsage: "compat-finder <subcommand> [options]",
   subcommandsTitle: "Subcommands",
   usageTitle: "Usage",

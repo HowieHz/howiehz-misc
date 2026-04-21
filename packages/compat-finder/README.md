@@ -144,6 +144,7 @@ The lower-level API exposes the mutable range-based state machine for custom UIs
 Session lifecycle:
 
 - `createCompatibilityTestState(targetCount)`: create a new session
+- `getNextAnswerableCompatibilityTestStep(state)`: read the next actionable step and automatically skip cached steps
 - `getCurrentCompatibilityTestStep(state)`: read the current step, or `undefined` when complete
 - `applyCompatibilityTestAnswer(state, hasIssue)`: apply one answer and advance the session
 - `skipCachedCompatibilityTestSteps(state)`: fast-forward through cached steps
@@ -232,8 +233,8 @@ compat-finder i -c 4 -n "A,B,C,D"
 
 Supported input:
 
-- `y` / `yes` / `issue` / `1`: the issue reproduces
-- `n` / `no` / `pass` / `0`: the issue does not reproduce
+- `y` / `yes` / `issue` / `1` / `true`: the issue reproduces
+- `n` / `no` / `pass` / `0` / `false`: the issue does not reproduce
 - `u` / `undo`: undo the previous answer
 - `q` / `quit`: quit
 
@@ -258,11 +259,14 @@ Returned fields:
 - `status`: `testing` means the current `targets` should be tested; `complete` means the final result is available
 - `targetCount`: the total number of targets in the current check
 - `targets`: when `status` is `testing`, the targets to test; when `status` is `complete`, the final result
+- `extraAnswerCount`: optional; returned only when `status` is `complete` and extra `answers` values were provided
 
 Supported `answers` values:
 
 - `y` / `yes` / `issue` / `1` / `true`: the issue reproduces
 - `n` / `no` / `pass` / `0` / `false`: the issue does not reproduce
+
+If `answers` includes extra values after the session is already complete, the CLI still returns the final result and adds `extraAnswerCount` to the JSON output.
 
 Example 1:
 

@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `2c4331f4c246947e2f0695edcf762f0e07d8a2b5`
+- **Commit SHA**: `2fd8a45247d130f216351ceca6040d3ff3c2ffd3`
 - **Date**: 2026-04-21
-- **Commit**: compat-finder: update docs, SHA, and wording
+- **Commit**: compat-finder: add extraAnswerCount, update text
 
 **Source documentation:**
 
@@ -59,13 +59,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff 2c4331f..HEAD -- packages/compat-finder/
+git diff 2fd8a45..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only 2c4331f..HEAD -- packages/compat-finder/
+git diff --name-only 2fd8a45..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline 2c4331f..HEAD -- packages/compat-finder/
+git log --oneline 2fd8a45..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -74,6 +74,7 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 
 - Update the relevant file in `compat-finder/references/`
 - Update `compat-finder/SKILL.md` if the quick-start workflow or triggering guidance changes
+- Update `compat-finder/agents/openai.yaml` when the trigger summary or default prompt should stay aligned with `SKILL.md`
 - Update `compat-finder/evals/trigger-evals.json` if the trigger boundary changes
 - Update package README sections if the user-facing examples or installation flow change
 
@@ -81,7 +82,9 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 
 - Update `compat-finder/references/cli.md` and/or `compat-finder/references/library-api.md`
 - Update `compat-finder/SKILL.md` examples and workflow steps
+- Update `compat-finder/agents/openai.yaml` when trigger wording, routing guidance, or the default prompt summary changes
 - Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` when public usage changes
+- Run the skill evals against each model the skill is expected to support, then record the result in the model validation log below
 - Update this file's reference summary if the scope of the references changes
 
 ### 3. Update Checklist
@@ -89,29 +92,43 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 - [ ] Read the diff of `packages/compat-finder/` since the last generation
 - [ ] Update affected files in `compat-finder/references/`
 - [ ] Update `compat-finder/SKILL.md` examples and workflow guidance
+- [ ] Update `compat-finder/agents/openai.yaml` when trigger wording or routing guidance changes
 - [ ] Update `compat-finder/evals/trigger-evals.json` when the trigger boundary changes
 - [ ] Update `compat-finder/evals/evals.json` when workflow guidance changes need regression coverage
+- [ ] Run the updated skill against each target model and record the outcome below
 - [ ] Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` if needed
 - [ ] Update this `GENERATION.md` with the new SHA and date
+
+## Model Validation
+
+Record which models were used to validate the current skill revision and what was exercised.
+
+| Date       | Models  | Coverage                                                                                                                                | Result | Notes                                                                                                                  |
+| ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-22 | gpt-5.4 | Manual spot-check of CLI next-target guidance, CLI extra-answer metadata handling, session integration, and persistence/resume guidance | Pass   | Matched expected routing and semantics on all 4 sampled prompts. Add more rows when Haiku/Sonnet/Opus coverage is run. |
 
 ## Style Guidelines
 
 - Practical, actionable guidance
 - Short examples that match real compatibility-troubleshooting scenarios
 - Favor package-specific behavior over generic AI advice
-- Keep `SKILL.md` focused on workflows and move detail into `references/`
+- Keep `SKILL.md` focused on routing and decision points; move detail into `references/`
+- Add a table of contents to long reference files so partial reads still expose the available sections
+- Write `SKILL.md` descriptions in third person so discovery metadata stays consistent
 
 ## Version History
 
-| Date       | SHA     | Changes                                                                    |
-| ---------- | ------- | -------------------------------------------------------------------------- |
-| 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                       |
-| 2026-04-21 | 625f51e | Add createCompatibilitySession API                                         |
-| 2026-04-21 | 52df9f0 | Expand README examples and refresh the generated skill baseline            |
-| 2026-04-21 | 640710d | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
-| 2026-04-20 | 00366e2 | Initial compat-finder skill generation with CLI/API and package references |
+| Date       | SHA     | Changes                                                                                                 |
+| ---------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| 2026-04-22 | 2fd8a45 | Return `extraAnswerCount`, add `getNextAnswerableCompatibilityTestStep`, and refresh skill/docs wording |
+| 2026-04-21 | e8f8251 | Tighten CLI answer validation, move legacy script, and refresh skill routing                            |
+| 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                                                    |
+| 2026-04-21 | 625f51e | Add createCompatibilitySession API                                                                      |
+| 2026-04-21 | 52df9f0 | Expand README examples and refresh the generated skill baseline                                         |
+| 2026-04-21 | 640710d | Update locale guidance to zh-Hans and align API behavior notes with JSDoc                               |
+| 2026-04-20 | 00366e2 | Initial compat-finder skill generation with CLI/API and package references                              |
 
 ---
 
-Last updated: 2026-04-21
-Current SHA: 2c4331f
+Last updated: 2026-04-22
+Current SHA: 2fd8a45

@@ -1,4 +1,4 @@
 interface:
   display_name: "Compat Finder"
-  short_description: "Guide compatibility triage with compat-finder"
-  default_prompt: "Use $compat-finder to narrow incompatible targets, integrate the TypeScript API, or update the compat-finder package in this repository."
+  short_description: "Narrow incompatible targets with compat-finder"
+  default_prompt: "Use $compat-finder to continue a compatibility check, choose the right compat-finder interface, or update the compat-finder package in this repository."

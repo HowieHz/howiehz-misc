@@ -1,29 +1,31 @@
 ---
 name: compat-finder
-description: Guide compatibility issue triage with the compat-finder package in this repository. Use when Codex needs to plan or continue a compatibility check across multiple targets, choose between the compat-finder CLI and TypeScript API, interpret interactive or next command results, map user-reported test outcomes to the next targets to verify, or implement and document changes under packages/compat-finder.
+description: Guide compatibility issue triage with the compat-finder package in this repository. Use whenever Codex needs to narrow incompatible targets from prior pass or issue results, continue an unfinished compat-finder session, choose between the compat-finder CLI and TypeScript API, interpret `interactive` or `next` output, or implement, test, or document changes under `packages/compat-finder`.
 ---
 
 # Compat Finder
 
-## Overview
-
-Use this skill to work effectively with the `packages/compat-finder` package as either a CLI tool or a TypeScript library.
-Prefer this skill when the task is about narrowing incompatible targets, continuing an existing test session, or editing the package itself.
-
-## Quick Start
-
-Start by deciding which of these tasks the user actually wants:
+Start by choosing the smallest matching workflow:
 
 - Continue or plan a compatibility check:
-  Read [references/cli-and-api.md](./references/cli-and-api.md) and use the CLI when the user wants a concrete next step from known answers.
+  Read [references/cli-and-api.md](./references/cli-and-api.md). Prefer the CLI when the user wants the next targets to test or a terminal session.
 - Embed the engine into code:
-  Read [references/cli-and-api.md](./references/cli-and-api.md) and wire the TypeScript state-machine API into the caller.
+  Read [references/cli-and-api.md](./references/cli-and-api.md). Prefer the TypeScript session API unless the caller explicitly needs low-level range control.
 - Change or review the package implementation:
-  Read [references/package-map.md](./references/package-map.md) first, then inspect the relevant source and tests.
+  Read [references/package-map.md](./references/package-map.md) before opening source files or tests.
 
-## Choose the Interface
+Keep the response centered on the user's actual triage state. Avoid re-explaining the whole package unless the request is explicitly about package internals.
 
-Use the CLI when the user already has a list of targets and either:
+Before continuing a compatibility check, determine which triage mode the user wants:
+
+- interactive guided triage:
+  The user runs the real test after each step and reports whether the issue reproduced. Act like a conversational wrapper around the CLI flow and do not ask for the test command or machine-executable success criteria up front.
+- automatic triage:
+  Codex runs the real test loop, interprets each result, and continues until it can summarize the conclusion. Before starting, confirm how to execute the real test, how to detect `issue` versus `pass`, and any setup or environment constraints that affect the result.
+
+## Choose The Interface
+
+Use the CLI when the user already has targets and wants one of these outcomes:
 
 - wants an interactive narrowing flow in the terminal via `interactive`
 - wants a stateless "what should I test next?" answer via `next`
@@ -37,11 +39,32 @@ Use the library API when the caller needs to:
 - inspect `CompatibilityTestStep.debug` or operate directly on target ranges
 - replay answers and skip cached steps programmatically
 
-## Continue a Compatibility Check
+Prefer `createCompatibilitySession(targets)` for integrations. Drop to the low-level state helpers only when the caller truly needs custom prompt-range handling or debug-oriented control.
+
+## Handle Missing Triage Details
+
+When the user omits triage details or real-test execution details, infer only the minimum needed to keep the compat-finder workflow moving.
+
+It is safe to infer:
+
+- whether `interactive` or `next` fits the current request
+- how to normalize provided answers to `issue`/`pass` or `true`/`false`
+- the next target set to test from existing answers
+
+Do not invent new screening criteria, test procedures, or toggle semantics. In automatic triage mode, when the missing detail affects what counts as an issue, how the test is executed, or which checks should be enabled, state the assumption explicitly and ask the user to confirm before continuing. In interactive guided triage mode, do not block on test-command details that only the user needs to execute locally.
+
+## Continue Or Plan A Compatibility Check
 
 When the user provides target names and prior answers, prefer `compat-finder next` because it is deterministic and JSON-friendly.
 
-Use this pattern:
+Use this mode split:
+
+1. Ask whether the user wants interactive guided triage or automatic triage unless the request already makes that clear.
+2. For interactive guided triage, compute the next targets and ask the user to run the test and report back `issue` or `pass`.
+3. For automatic triage, confirm the test command, environment, and issue/pass decision rule before running anything.
+4. Then continue the compat-finder loop until the next step or final result is clear.
+
+Use this sequence:
 
 1. Normalize the target count and optional names.
 2. Normalize answers to booleans using the accepted CLI vocabulary.
@@ -60,6 +83,8 @@ If the user wants a full terminal-driven session, use:
 ```bash
 pnpm cli:compat-finder -- interactive -c 4 -n "Alpha,Beta,Gamma,Delta"
 ```
+
+If the user reports results from a real test run instead of raw CLI answers, translate them back into `issue` or `pass` before deciding the next targets.
 
 ## Embed the Engine
 

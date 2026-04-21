@@ -1,25 +1,25 @@
 ---
 name: compat-finder
-description: Help with compatibility issue triage using compat-finder. Use this skill to narrow down which version, target, flag, or configuration causes a regression; continue an existing compat-finder session; show how to install or run compat-finder; choose between the CLI and TypeScript API; interpret `interactive` or `next` output; or integrate compat-finder into another tool or app. Also use it when the user is effectively asking "what should I test next?" or "how should I wire this workflow into my project?" even if they do not mention compat-finder by name.
+description: Troubleshoot compatibility issues with compat-finder. Use this skill to narrow down which version, target, flag, or configuration causes a regression; continue an existing compat-finder session; show how to install or use compat-finder; choose between the CLI and TypeScript API; interpret `interactive` or `next` output; or integrate compat-finder into another tool or app. Also use it when the user is effectively asking "what should I test next?" or "how should I use this in my project?" even if they do not mention compat-finder by name.
 ---
 
 # Compat Finder
 
-Start by choosing the smallest matching workflow. Read only the referenced file needed for that workflow:
+Start with the smallest matching workflow. Read only the reference you need:
 
 - Continue or plan a compatibility check:
-  Read [references/cli.md](./references/cli.md). Prefer the CLI when the user wants the next targets to test or a terminal session.
+  Read [references/cli.md](./references/cli.md). Use the CLI when the user wants the next set of targets to test or wants to work in the terminal.
 - Embed the engine into code:
-  Read [references/library-api.md](./references/library-api.md). Install `compat-finder` first, then prefer the TypeScript session API unless the caller explicitly needs low-level range control.
+  Read [references/library-api.md](./references/library-api.md). Install `compat-finder` first, then use the TypeScript session API unless the caller explicitly needs lower-level state control.
 
-Keep the response centered on the user's actual triage state. Avoid re-explaining the whole package unless the request is explicitly about package internals.
+Keep the response centered on the user's current troubleshooting state. Avoid re-explaining the whole package unless the request is explicitly about package internals.
 
 Before running a command, verify that the required tool is available instead of assuming the environment already has compat-finder or a package manager installed.
 
-Before continuing a compatibility check, determine which triage mode the user wants:
+First, determine which triage mode the user wants:
 
 - interactive guided triage:
-  The user runs the real test after each step and reports whether the issue reproduced. Act like a conversational wrapper around the CLI flow and do not ask for the test command or machine-executable success criteria up front.
+  The user runs the real test after each step and reports whether the issue reproduces. Act like a conversational wrapper around the CLI flow, and do not ask for the test command or an automatable pass/fail rule up front.
 - automatic triage:
   The agent runs the real test loop, interprets each result, and continues until it can summarize the conclusion. Before starting, confirm how to execute the real test, how to detect `issue` versus `pass`, and any setup or environment constraints that affect the result.
 
@@ -39,7 +39,7 @@ Concrete user prompts this skill should handle:
 Use the CLI when the user wants one of these outcomes:
 
 - wants an interactive narrowing flow in the terminal via `interactive`
-- wants a stateless "what should I test next?" answer via `next`
+- wants a one-shot "what should I test next?" answer via `next`
 - wants localized help or output for `en` or `zh-Hans`
 
 Use the library API when the caller needs to:
@@ -56,11 +56,11 @@ For library usage, install the package first:
 npm install compat-finder
 ```
 
-Prefer `createCompatibilitySession(targets)` for integrations. Drop to the low-level state helpers only when the caller truly needs custom prompt-range handling or debug-oriented control.
+Prefer `createCompatibilitySession(targets)` for integrations. Drop to the lower-level state helpers only when the caller truly needs custom prompt-range handling or debug-oriented control.
 
 ## Handle Missing Triage Details
 
-When the user omits triage details or real-test execution details, infer only the minimum needed to keep the compat-finder workflow moving.
+When the user omits triage details or real-test execution details, infer only the minimum needed to keep the workflow moving.
 
 It is safe to infer:
 
@@ -68,7 +68,7 @@ It is safe to infer:
 - how to normalize provided answers to `issue`/`pass` or `true`/`false`
 - the next target set to test from existing answers
 
-Do not invent new screening criteria, test procedures, or toggle semantics.
+Do not invent new pass/fail rules, test procedures, or toggle semantics.
 In automatic triage mode, when missing details affect what counts as an issue, how the test is executed, or which checks should be enabled, state the assumption explicitly and ask the user to confirm before continuing.
 In interactive guided triage mode, do not block on test-command details that only the user needs to execute locally.
 

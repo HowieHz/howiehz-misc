@@ -2,7 +2,7 @@
 
 ## Run Without Installing
 
-For one-off CLI usage, run it without installing:
+To run the CLI without installing it:
 
 ```bash
 npx compat-finder --help
@@ -10,7 +10,7 @@ npx compat-finder --help
 
 ## Commands
 
-Use `interactive` for a terminal session and `next` for a one-shot result.
+Use `interactive` for a guided terminal session and `next` for a one-shot result.
 
 Supported commands:
 
@@ -43,7 +43,7 @@ Locale normalization:
 
 ## Answers
 
-Accepted answers:
+Accepted answer values:
 
 - truthy: `y`, `yes`, `issue`, `1`, `true`
 - falsy: `n`, `no`, `pass`, `0`, `false`
@@ -57,4 +57,4 @@ Accepted answers:
 
 - `status`: `testing` or `complete`
 - `targetCount`: total targets in the session
-- `targets`: names or fallback labels for the current prompt or final result
+- `targets`: user-provided names or fallback labels for the current prompt or final result

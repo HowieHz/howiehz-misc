@@ -2,7 +2,7 @@
 
 ## Install
 
-For library usage, install the package first:
+To use the library API, install the package first:
 
 ```bash
 npm install compat-finder
@@ -20,7 +20,7 @@ Simple session API:
 - `session.undo()` removes the latest answer and returns to the previous step.
 - Returned steps contain `status`, `targets`, and 1-based `targetNumbers`.
 
-Useful integration loop:
+Typical integration loop:
 
 ```ts
 const session = createCompatibilitySession(["A", "B", "C", "D"]);
@@ -47,7 +47,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 
 ## Lower-Level State API
 
-Advanced exports from `src/compatibility-test.ts`:
+Lower-level exports from `src/compatibility-test.ts`:
 
 - `createCompatibilityTestState(targetCount)`
 - `getCurrentCompatibilityTestStep(state)`

@@ -314,11 +314,11 @@ compat-finder next -c 3 -a "y,n,n"
 
 ## 与 AI 协作
 
-compat-finder 提供了 [智能体技能（Agent Skills）](https://agentskills.io/)，帮助 AI 理解本包的兼容性排查流程、CLI 用法和 TypeScript API。
+compat-finder 提供了 [智能体技能（Agent Skill）](https://agentskills.io/)，帮助 AI 理解本包的兼容性排查流程、CLI 用法和 TypeScript API。
 
 ### 安装
 
-将 compat-finder skill 安装到你的 AI 智能体中：
+为你的 AI 智能体安装 compat-finder 智能体技能：
 
 ```bash
 npx skills add HowieHz/howiehz-misc --skill compat-finder

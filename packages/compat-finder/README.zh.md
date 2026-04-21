@@ -342,15 +342,21 @@ npx skills add HowieHz/howiehz-misc --skill compat-finder
 帮我把 compat-finder 接进我的软件，做一个让用户自己排查插件冲突的功能。
 ```
 
+```text
+我的 compat-finder UI 需要把排查会话保存下来，并且在刷新页面后继续。应该用哪个 API，需要持久化哪些状态？
+```
+
 ### 包含的内容
 
 compat-finder 智能体技能涵盖以下内容：
 
-- CLI 命令、参数、输出语言和回答格式
-- 交互式与单步兼容性排查流程
-- TypeScript 状态机 API 与目标范围工具
-- 包源码结构、测试文件和工作区命令
-- CLI 与 API 变更时的文档更新要求
+- 如何选择一次性使用 CLI，还是把它作为库集成
+- CLI 命令、参数、输出语言和可用的回答值
+- 引导式与单步兼容性排查流程
+- 如何把 mods 文件夹、插件目录之类的笼统请求整理成具体的 compat-finder 排查流程
+- TypeScript 会话 API 与底层状态 API
+- 在高级集成场景下，什么时候该用底层状态 API 来持久化或恢复会话
+- 如何在引导式排查、自动排查和应用集成之间做选择
 
 ## 在线版
 

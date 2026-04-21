@@ -30,25 +30,26 @@ packages/compat-finder/skills/
     ├── agents/
     │   └── openai.yaml
     ├── evals/
-    │   └── evals.json
+    │   ├── evals.json
+    │   └── trigger-evals.json
     └── references/
-        ├── cli-and-api.md
-        └── package-map.md
+        ├── cli.md
+        └── library-api.md
 ```
 
 ## File Naming Convention
 
 Reference files are named by scope:
 
-- `cli-and-api.md` - CLI behavior, answers, locales, and library API usage
-- `package-map.md` - Package layout, tests, workspace commands, and update guidance
+- `cli.md` - CLI commands, answers, locales, and command-line triage flow
+- `library-api.md` - package installation and TypeScript API usage
 
 ## Reference Files
 
 ### Core References (2 files)
 
-- `cli-and-api.md` - CLI commands, locale handling, answer vocabulary, and TypeScript API flow
-- `package-map.md` - Source file responsibilities, tests, docs, and workspace commands
+- `cli.md` - CLI commands, locale handling, answer vocabulary, and command-line troubleshooting flow
+- `library-api.md` - package installation, session API usage, and lower-level state API guidance
 
 ## How to Update Skills
 
@@ -73,26 +74,22 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 
 - Update the relevant file in `compat-finder/references/`
 - Update `compat-finder/SKILL.md` if the quick-start workflow or triggering guidance changes
+- Update `compat-finder/evals/trigger-evals.json` if the trigger boundary changes
 - Update package README sections if the user-facing examples or installation flow change
 
 **For CLI or API changes:**
 
-- Update `compat-finder/references/cli-and-api.md`
+- Update `compat-finder/references/cli.md` and/or `compat-finder/references/library-api.md`
 - Update `compat-finder/SKILL.md` examples and workflow steps
 - Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` when public usage changes
 - Update this file's reference summary if the scope of the references changes
-
-**For package structure changes:**
-
-- Update `compat-finder/references/package-map.md`
-- Update the structure tree in this file
-- Update this file with the new SHA and date
 
 ### 3. Update Checklist
 
 - [ ] Read the diff of `packages/compat-finder/` since the last generation
 - [ ] Update affected files in `compat-finder/references/`
 - [ ] Update `compat-finder/SKILL.md` examples and workflow guidance
+- [ ] Update `compat-finder/evals/trigger-evals.json` when the trigger boundary changes
 - [ ] Update `compat-finder/evals/evals.json` when workflow guidance changes need regression coverage
 - [ ] Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` if needed
 - [ ] Update this `GENERATION.md` with the new SHA and date

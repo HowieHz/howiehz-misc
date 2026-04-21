@@ -8,7 +8,7 @@
       "files": [],
       "expectations": [
         "The response identifies this as interactive guided triage.",
-        "The response gives a concrete next target set to test rather than re-explaining the package.",
+        "The response says the next round should test the 4th, 5th, and 6th versions in the ordered list.",
         "The response asks the user to reply with normalized `issue` or `pass` style results."
       ]
     },
@@ -25,13 +25,13 @@
     },
     {
       "id": 3,
-      "prompt": "I'm changing compat-finder CLI locale output for zh-Hans. Which files, tests, docs, and validation commands do I need to keep aligned in this repo?",
-      "expected_output": "Uses the package map workflow, points to the CLI implementation files, locale files, tests, and bilingual READMEs that must stay aligned, and recommends the narrow validation commands from the workspace root.",
+      "prompt": "I want to add compat-finder to my app so users can step through plugin conflict checks in the UI. Show me how to install it and wire up the normal TypeScript session flow.",
+      "expected_output": "Chooses the library integration path, shows that the package must be installed first, uses `createCompatibilitySession`, and outlines the normal session loop for embedding the workflow into an app.",
       "files": [],
       "expectations": [
-        "The response points to `src/cli-main.ts` together with the locale files.",
-        "The response includes `__tests__/cli.test.ts` and both README files as alignment points.",
-        "The response recommends workspace-root validation commands relevant to CLI or docs changes."
+        "The response includes a package installation step such as `npm install compat-finder`.",
+        "The response recommends `createCompatibilitySession(targets)` as the default integration path.",
+        "The response explains the session loop in terms of reading the current step, testing the targets, and feeding the result back."
       ]
     },
     {
@@ -43,6 +43,116 @@
         "The response distinguishes between a real product result and an execution problem.",
         "The response does not invent an `issue` or `pass` result when the command could not be interpreted confidently.",
         "The response explains the blocker and states exactly what clarification or environment fix is needed."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "I'm building a custom troubleshooting UI around compat-finder and I need finer control than the normal session wrapper gives me. When should I use the lower-level state API, and what does that loop look like?",
+      "expected_output": "Keeps the default recommendation on the session API, but switches to the lower-level state API when the caller explicitly needs finer-grained control, and explains the state-based loop without reimplementing the algorithm.",
+      "files": [],
+      "expectations": [
+        "The response explains that `createCompatibilitySession(targets)` is still the default for most integrations.",
+        "The response names lower-level helpers such as `createCompatibilityTestState`, `getCurrentCompatibilityTestStep`, and `applyCompatibilityTestAnswer`.",
+        "The response describes the lower-level loop as state creation, reading the current step, running the real test, and feeding the result back."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "I just want to try compat-finder on this machine without adding it to my project yet. How do I run it once from the terminal, and which subcommand should I use if I either want a guided session or just the next targets to test?",
+      "expected_output": "Shows how to run compat-finder without a prior project install, points to the CLI path, and distinguishes between `interactive` for a guided terminal loop and `next` for a one-shot answer.",
+      "files": [],
+      "expectations": [
+        "The response includes a run-without-installing command such as `npx compat-finder --help` or another valid `npx compat-finder ...` example.",
+        "The response explains that `interactive` is for a guided session.",
+        "The response explains that `next` is for a one-shot next-target result."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "compat-finder next returned JSON with `status: testing`, `targetCount: 6`, and `targets: [\"4.1.0\", \"4.2.0\"]`. What am I supposed to do with that output, and how should I report the result back after I run the real test?",
+      "expected_output": "Interprets compat-finder `next` output as the next targets to test, tells the user to run the real test against those targets, and asks for the result back in normalized `issue` or `pass` terms.",
+      "files": [],
+      "expectations": [
+        "The response explains that the listed targets are the next targets to test.",
+        "The response tells the user to run the real test against those targets rather than treating the JSON as a final result.",
+        "The response asks the user to report back using normalized `issue` or `pass` style results."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "I'm building a web UI around compat-finder and I need users to resume a saved troubleshooting session after refresh. Should I keep using `createCompatibilitySession(targets)`, or should I switch APIs? Show me the right persistence approach.",
+      "expected_output": "Explains that resumable persistence should use the lower-level state API rather than the high-level session wrapper, keeps imports on the public `compat-finder` entrypoint, and warns that `CompatibilityTestState.cachedResults` needs explicit serialization because it is a `Map`.",
+      "files": [],
+      "expectations": [
+        "The response says `createCompatibilitySession(targets)` is not the right default for save/resume behavior.",
+        "The response recommends the lower-level state API for persistence or resume support.",
+        "The response mentions the `cachedResults` map serialization caveat or an equivalent explicit map-conversion step."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Use compat-finder to narrow which mod in my game's `mods` folder breaks startup. The folder currently contains `core-ui`, `npc-pack`, `hd-textures`, `weather-plus`, and `retro-sfx`. I can launch the game with `game.exe --mods <targets>` where exit code 0 means pass and any nonzero exit code means issue. What's the right setup and first round?",
+      "expected_output": "Treats the request as automatic triage, turns the folder contents into concrete compat-finder targets, preserves the provided command contract, and proposes the first executable round rather than staying at a generic planning level.",
+      "files": [],
+      "expectations": [
+        "The response identifies the concrete target list from the folder contents.",
+        "The response preserves the provided `issue` versus `pass` rule.",
+        "The response presents the setup in terms of automatic triage and gives `core-ui`, `npc-pack`, and `hd-textures` as the first round to test."
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "Use compat-finder to scan my game's `mods` folder and tell me what to test next. The folder has `core-ui`, `npc-pack`, `hd-textures`, `weather-plus`, and `retro-sfx`, but I have not set up any command yet for launching only a selected subset.",
+      "expected_output": "Recognizes this as a broad scan request with incomplete execution details, identifies the concrete target set from the folder contents, and stops to ask for the missing executable subset-test procedure instead of pretending compat-finder can continue automatically.",
+      "files": [],
+      "expectations": [
+        "The response identifies the concrete target list from the folder contents.",
+        "The response does not invent a launch command, test procedure, or `issue` versus `pass` rule.",
+        "The response explicitly asks for the missing execution detail needed to test only the currently selected targets."
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "I'm doing a guided compat-finder CLI session and I accidentally reported `pass` for the latest round when it should have been `issue`. How do I correct that without starting over?",
+      "expected_output": "Keeps the answer in the CLI path, explains that interactive mode supports undo, and tells the user how to continue after correcting the mistaken answer.",
+      "files": [],
+      "expectations": [
+        "The response stays focused on the CLI workflow instead of switching to generic troubleshooting.",
+        "The response mentions `u` or `undo` for interactive sessions.",
+        "The response explains that the user can correct the latest answer and continue the session."
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "I need compat-finder CLI output in Simplified Chinese. Which locale should I use, and will `zh-CN.UTF-8` work if that's what the machine already has?",
+      "expected_output": "Explains the supported locale values, prefers `zh-Hans` as the canonical Simplified Chinese locale, and notes that legacy locale tags such as `zh-CN.UTF-8` normalize to `zh-Hans` when detected from the environment.",
+      "files": [],
+      "expectations": [
+        "The response names `zh-Hans` as the supported Simplified Chinese locale.",
+        "The response explains that `zh-CN.UTF-8` or a similar legacy environment value normalizes to `zh-Hans`.",
+        "The response keeps the answer grounded in compat-finder CLI locale behavior."
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "I only have one plugin to check with compat-finder: `legacy-cache`. Is a single-target session valid, and what should the first step look like?",
+      "expected_output": "Explains that compat-finder supports single-target sessions, keeps the answer grounded in the package API or CLI behavior, and describes the first step as testing that single target rather than rejecting the workflow.",
+      "files": [],
+      "expectations": [
+        "The response states that a single-target session is valid.",
+        "The response describes the first testing step as testing only `legacy-cache`.",
+        "The response keeps the answer specific to compat-finder rather than broad generic troubleshooting."
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "We already started that compat-finder-style narrowing flow earlier. The last two answers were `issue, pass`. I do not need a refresher, just tell me the next targets to test and how I should report the result back.",
+      "expected_output": "Treats the prompt as an in-context follow-up to an existing compat-finder CLI triage flow, avoids re-explaining the package, computes the next targets to test, and asks the user to reply with normalized `issue` or `pass` results.",
+      "files": [],
+      "expectations": [
+        "The response treats this as an existing compat-finder-style triage flow even though the package name is not repeated as the main noun in the request.",
+        "The response gives a concrete next target set to test instead of broad generic troubleshooting advice.",
+        "The response asks the user to reply with normalized `issue` or `pass` style results."
       ]
     }
   ]

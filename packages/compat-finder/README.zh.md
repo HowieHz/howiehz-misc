@@ -351,9 +351,9 @@ npx skills add HowieHz/howiehz-misc --skill compat-finder
 compat-finder 智能体技能涵盖以下内容：
 
 - 如何选择一次性使用 CLI，还是把它作为库集成
-- CLI 命令、参数、输出语言和支持的回答格式
+- CLI 命令、参数、输出语言和可用的回答值
 - 引导式与单步兼容性排查流程
-- 如何把 mods 文件夹、插件目录之类的笼统请求落成具体的 compat-finder 排查流程
+- 如何把 mods 文件夹、插件目录之类的笼统请求整理成具体的 compat-finder 排查流程
 - TypeScript 会话 API 与底层状态 API
 - 在需要持久化或恢复会话时，高级集成场景下什么时候该用底层状态 API
 - 如何在引导式排查、自动排查和应用集成之间做选择

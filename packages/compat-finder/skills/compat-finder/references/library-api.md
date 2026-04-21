@@ -127,9 +127,7 @@ Persistence note:
 Example persistence shape:
 
 ```ts
-import {
-  type CompatibilityTestState,
-} from "compat-finder";
+import { type CompatibilityTestState } from "compat-finder";
 
 type StoredCompatibilityState = Omit<CompatibilityTestState, "cachedResults"> & {
   cachedResults: Array<[string, boolean]>;

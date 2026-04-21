@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  getCommandHelpText,
-  getNextCommandResult,
-  getRootHelpText,
-  parseCliArgs,
-  tryGetNextCommandResult,
-} from "../src/cli-main.ts";
+import { getCommandHelpText, getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli-main.ts";
 import { normalizeCliLocale, resolveCliLocale } from "../src/locales/index.ts";
 
 const TARGET_NAMES = ["Alpha", "Beta", "Gamma", "Delta"] as const;
@@ -204,43 +198,34 @@ describe("compatibility test cli", () => {
   });
 
   it("returns a typed next result for cli execution", () => {
-    expect(tryGetNextCommandResult(4, TARGET_NAMES, [true, false])).toEqual({
-      ok: true,
-      result: {
-        status: "testing",
-        targetCount: 4,
-        targets: ["Beta"],
-      },
-    });
-  });
-
-  it("returns a typed error when next execution receives extra answers", () => {
-    expect(tryGetNextCommandResult(1, ["Only"], [false, true], "en")).toEqual({
-      completedStepCount: 1,
-      error: "tooManyAnswers",
-      extraAnswerCount: 1,
-      ok: false,
+    expect(getNextCommandResult(4, TARGET_NAMES, [true, false])).toEqual({
+      status: "testing",
+      targetCount: 4,
+      targets: ["Beta"],
     });
   });
 
   it("rethrows unrelated next execution failures", () => {
-    expect(() => tryGetNextCommandResult(0, ["Only"], [], "en")).toThrow(
+    expect(() => getNextCommandResult(0, ["Only"], [], "en")).toThrow(
       "targetCount must be an integer greater than or equal to 1",
     );
   });
 
-  it("throws when next results are requested with extra answers", () => {
-    expect(() => getNextCommandResult(1, ["Only"], [false, true], "en")).toThrow(
-      "Option --answers includes 1 extra answer: the compatibility session already ended at step 1.",
-    );
+  it("returns a complete result with extra answer metadata", () => {
+    expect(getNextCommandResult(1, ["Only"], [false, true], "en")).toEqual({
+      extraAnswerCount: 1,
+      status: "complete",
+      targetCount: 1,
+      targets: [],
+    });
   });
 
   it("reports how many extra answers were provided", () => {
-    expect(tryGetNextCommandResult(1, ["Only"], [false, true, false], "en")).toEqual({
-      completedStepCount: 1,
-      error: "tooManyAnswers",
+    expect(getNextCommandResult(1, ["Only"], [false, true, false], "en")).toEqual({
       extraAnswerCount: 2,
-      ok: false,
+      status: "complete",
+      targetCount: 1,
+      targets: [],
     });
   });
 

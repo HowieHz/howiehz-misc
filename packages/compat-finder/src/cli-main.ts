@@ -23,40 +23,16 @@ type CliCommand = "interactive" | "next";
 type HelpScope = "command" | "root";
 
 interface NextCommandResult {
+  extraAnswerCount?: number;
   status: "complete" | "testing";
   targetCount: number;
   targets: string[];
 }
 
 interface RebuiltCliState {
+  extraAnswerCount: number;
   state: CompatibilityTestState;
   step: CompatibilityTestStep | undefined;
-}
-
-type TryNextCommandResult =
-  | {
-      ok: true;
-      result: NextCommandResult;
-    }
-  | {
-      completedStepCount: number;
-      error: "tooManyAnswers";
-      extraAnswerCount: number;
-      ok: false;
-    };
-
-class TooManyAnswersError extends Error {
-  readonly completedStepCount: number;
-  readonly extraAnswerCount: number;
-
-  constructor(completedStepCount: number, extraAnswerCount = 1) {
-    super(
-      `Option --answers includes ${extraAnswerCount} extra ${extraAnswerCount === 1 ? "answer" : "answers"}: the compatibility session already ended at step ${completedStepCount}.`,
-    );
-    this.name = "TooManyAnswersError";
-    this.completedStepCount = completedStepCount;
-    this.extraAnswerCount = extraAnswerCount;
-  }
 }
 
 interface CliOptions {
@@ -190,13 +166,8 @@ export async function main(): Promise<void> {
     return;
   }
 
-  const result = tryGetNextCommandResult(targetCount, targetNames, options.answers, options.locale);
-  if (!result.ok) {
-    printCliError(messages.errors.tooManyAnswers(result.extraAnswerCount, result.completedStepCount), messages);
-    return;
-  }
-
-  console.log(JSON.stringify(result.result, null, 2));
+  const result = getNextCommandResult(targetCount, targetNames, options.answers, options.locale);
+  console.log(JSON.stringify(result, null, 2));
 }
 
 export function getCommandHelpText(command: CliCommand, locale: CliLocale): string {
@@ -500,40 +471,6 @@ function getTargetRangeCount(ranges: readonly TargetRange[]): number {
 }
 
 /**
- * Tries to return the next CLI result for single-step execution.
- *
- * @param targetCount The total number of targets in the session.
- * @param targetNames The target labels to use in the output.
- * @param answers The answers that have already been applied.
- * @returns A JSON-ready result for the next step or final outcome, or a typed
- * error when the provided answers exceed the completed session.
- */
-export function tryGetNextCommandResult(
-  targetCount: number,
-  targetNames: readonly string[],
-  answers: readonly boolean[],
-  locale: CliLocale = "zh-Hans",
-): TryNextCommandResult {
-  try {
-    return {
-      ok: true,
-      result: getNextCommandResult(targetCount, targetNames, answers, locale),
-    };
-  } catch (error) {
-    if (!(error instanceof TooManyAnswersError)) {
-      throw error;
-    }
-
-    return {
-      completedStepCount: error.completedStepCount,
-      error: "tooManyAnswers",
-      extraAnswerCount: error.extraAnswerCount,
-      ok: false,
-    };
-  }
-}
-
-/**
  * Returns the next CLI result for single-step execution.
  *
  * @param targetCount The total number of targets in the session.
@@ -547,8 +484,8 @@ export function getNextCommandResult(
   answers: readonly boolean[],
   locale: CliLocale = "zh-Hans",
 ): NextCommandResult {
-  const { state, step } = rebuildStateFromAnswers(targetCount, answers);
-  return buildNextCommandResult(targetCount, targetNames, state, step, locale);
+  const { extraAnswerCount, state, step } = rebuildStateFromAnswers(targetCount, answers);
+  return buildNextCommandResult(targetCount, targetNames, state, step, extraAnswerCount, locale);
 }
 
 function buildNextCommandResult(
@@ -556,11 +493,13 @@ function buildNextCommandResult(
   targetNames: readonly string[],
   state: CompatibilityTestState,
   step: CompatibilityTestStep | undefined,
+  extraAnswerCount: number,
   locale: CliLocale,
 ): NextCommandResult {
   const messages = getCliMessages(locale);
   if (!step) {
     return {
+      ...(extraAnswerCount > 0 ? { extraAnswerCount } : {}),
       status: "complete",
       targetCount,
       targets: state.resultTargets.map((target) => getTargetLabel(targetNames, target, messages)),
@@ -569,6 +508,7 @@ function buildNextCommandResult(
 
   const promptTargets = getAllTargetsFromRanges(step.promptTargetRanges);
   return {
+    ...(extraAnswerCount > 0 ? { extraAnswerCount } : {}),
     status: "testing",
     targetCount,
     targets: promptTargets.map((target) => getTargetLabel(targetNames, target, messages)),
@@ -660,20 +600,21 @@ function parseAnswer(value: string): boolean | undefined {
 
 function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[]): RebuiltCliState {
   const nextState = createCompatibilityTestState(targetCount);
+  let extraAnswerCount = 0;
   let step = getNextAnswerableCompatibilityTestStep(nextState);
-  let completedStepCount = 0;
 
   for (const answer of answers) {
     if (!step) {
-      throw new TooManyAnswersError(completedStepCount, answers.length - completedStepCount);
+      extraAnswerCount += 1;
+      continue;
     }
 
     applyCompatibilityTestAnswer(nextState, answer);
-    completedStepCount += 1;
     step = getNextAnswerableCompatibilityTestStep(nextState);
   }
 
   return {
+    extraAnswerCount,
     state: nextState,
     step,
   };

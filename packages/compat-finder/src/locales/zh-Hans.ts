@@ -38,6 +38,7 @@ export const zhHansMessages: CliMessages = {
         "status                 testing 表示当前需要按 targets 列表进行测试；complete 表示已经得到最终结果",
         "targetCount            本轮排查的测试目标总数",
         "targets                testing 时表示当前需要测试的目标列表；complete 时表示最终结果列表",
+        "extraAnswerCount       可选。兼容性会话结束后被忽略的多余答案数量",
       ],
       outputFieldTitle: "返回字段说明",
       usageSuffix: "--count <数量> [--answers <回答列表>] [--names <名称列表>]",
@@ -55,8 +56,6 @@ export const zhHansMessages: CliMessages = {
     missingCountValue: "参数 --count 缺少值。",
     missingLocale: "参数 --locale 缺少值。",
     missingNames: "参数 --names 缺少值。",
-    tooManyAnswers: (extraAnswerCount, completedStepCount) =>
-      `参数 --answers 多提供了 ${extraAnswerCount} 个答案：兼容性会话已在第 ${completedStepCount} 步结束。`,
     unknownArgument: (argument) => `未知参数：${argument}`,
     unknownCommand: (command) => `未知子命令：${command}`,
     unsupportedLocale: (locale) => `不支持的语言：${locale}`,

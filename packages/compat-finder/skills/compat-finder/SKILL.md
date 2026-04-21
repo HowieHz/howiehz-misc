@@ -14,7 +14,7 @@ Start by choosing the smallest matching workflow. Read only the referenced file 
 
 Keep the response centered on the user's actual triage state. Avoid re-explaining the whole package unless the request is explicitly about package internals.
 
-This skill currently relies on repository commands and the compat-finder package itself; it does not require bundled helper scripts. Before using any validation or package command, verify that the underlying tool is available in the workspace instead of assuming it is installed.
+Before running a command, verify that the required tool is available instead of assuming the environment already has compat-finder or a package manager installed.
 
 Before continuing a compatibility check, determine which triage mode the user wants:
 
@@ -36,7 +36,7 @@ Concrete user prompts this skill should handle:
 
 ## Choose The Interface
 
-Use the CLI when the user already has targets and wants one of these outcomes:
+Use the CLI when the user wants one of these outcomes:
 
 - wants an interactive narrowing flow in the terminal via `interactive`
 - wants a stateless "what should I test next?" answer via `next`

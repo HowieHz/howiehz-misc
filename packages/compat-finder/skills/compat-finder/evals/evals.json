@@ -25,13 +25,13 @@
     },
     {
       "id": 3,
-      "prompt": "I'm changing compat-finder CLI locale output for zh-Hans. Which files, tests, docs, and validation commands do I need to keep aligned in this repo?",
-      "expected_output": "Uses the package map workflow, points to the CLI implementation files, locale files, tests, and bilingual READMEs that must stay aligned, and recommends the narrow validation commands from the workspace root.",
+      "prompt": "I want to add compat-finder to my app so users can step through plugin conflict checks in the UI. Show me how to install it and wire up the normal TypeScript session flow.",
+      "expected_output": "Chooses the library integration path, shows that the package must be installed first, uses `createCompatibilitySession`, and outlines the normal session loop for embedding the workflow into an app.",
       "files": [],
       "expectations": [
-        "The response points to `src/cli-main.ts` together with the locale files.",
-        "The response includes `__tests__/cli.test.ts` and both README files as alignment points.",
-        "The response recommends workspace-root validation commands relevant to CLI or docs changes."
+        "The response includes a package installation step such as `npm install compat-finder`.",
+        "The response recommends `createCompatibilitySession(targets)` as the default integration path.",
+        "The response explains the session loop in terms of reading the current step, testing the targets, and feeding the result back."
       ]
     },
     {
@@ -43,6 +43,17 @@
         "The response distinguishes between a real product result and an execution problem.",
         "The response does not invent an `issue` or `pass` result when the command could not be interpreted confidently.",
         "The response explains the blocker and states exactly what clarification or environment fix is needed."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "I'm building a custom troubleshooting UI around compat-finder and I need finer control than the normal session wrapper gives me. When should I use the lower-level state API, and what does that loop look like?",
+      "expected_output": "Keeps the default recommendation on the session API, but switches to the lower-level state API when the caller explicitly needs finer-grained control, and explains the state-based loop without reimplementing the algorithm.",
+      "files": [],
+      "expectations": [
+        "The response explains that `createCompatibilitySession(targets)` is still the default for most integrations.",
+        "The response names lower-level helpers such as `createCompatibilityTestState`, `getCurrentCompatibilityTestStep`, and `applyCompatibilityTestAnswer`.",
+        "The response describes the lower-level loop as state creation, reading the current step, running the real test, and feeding the result back."
       ]
     }
   ]

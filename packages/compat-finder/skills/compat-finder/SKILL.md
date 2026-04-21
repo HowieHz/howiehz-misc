@@ -16,12 +16,20 @@ Start by choosing the smallest matching workflow:
 
 Keep the response centered on the user's actual triage state. Avoid re-explaining the whole package unless the request is explicitly about package internals.
 
+Run package commands from the repository root. Assume Node.js, pnpm, and workspace dependencies are available only after verifying the relevant command can run; if dependency setup is missing, report the missing prerequisite instead of guessing at results.
+
 Before continuing a compatibility check, determine which triage mode the user wants:
 
 - interactive guided triage:
   The user runs the real test after each step and reports whether the issue reproduced. Act like a conversational wrapper around the CLI flow and do not ask for the test command or machine-executable success criteria up front.
 - automatic triage:
   Codex runs the real test loop, interprets each result, and continues until it can summarize the conclusion. Before starting, confirm how to execute the real test, how to detect `issue` versus `pass`, and any setup or environment constraints that affect the result.
+
+Concrete user prompts this skill should handle:
+
+- "I have 12 browser extension versions and I tested `issue, pass` for the first two compat-finder prompts. Tell me the next versions to try; I will run the test myself."
+- "Automatically narrow which one of these five feature flags breaks login. Use `pnpm test:login -- --flags <targets>` and treat exit code 0 as pass, nonzero as issue."
+- "I'm changing the compat-finder CLI locale output. Which source files, tests, README examples, and validation commands need to stay aligned?"
 
 ## Choose The Interface
 
@@ -63,6 +71,8 @@ Use this mode split:
 2. For interactive guided triage, compute the next targets and ask the user to run the test and report back `issue` or `pass`.
 3. For automatic triage, confirm the test command, environment, and issue/pass decision rule before running anything.
 4. Then continue the compat-finder loop until the next step or final result is clear.
+
+During automatic triage, report each completed round with the tested targets, the command or procedure used, the observed signal, the normalized `issue` or `pass` answer, and the next targets or final result. At the end, summarize the incompatible target set, assumptions, and any runs that could not be interpreted confidently.
 
 Use this sequence:
 

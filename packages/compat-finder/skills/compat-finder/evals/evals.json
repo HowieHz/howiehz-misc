@@ -145,6 +145,17 @@
       ]
     },
     {
+      "id": 15,
+      "prompt": "compat-finder next failed with `Option --answers contains more steps than this session accepts.` I ran it with a single target and passed `pass,issue`. What does that error mean, and what should I change?",
+      "expected_output": "Explains that the provided answer list already completed the compat-finder session before the extra answer, keeps the explanation grounded in `next` CLI behavior, and tells the user to remove the stale extra answer rather than guessing a new workflow.",
+      "files": [],
+      "expectations": [
+        "The response explains that the session had already completed before the extra answer was processed.",
+        "The response says the extra answer should be removed or the answer history should stop at the completion point.",
+        "The response keeps the answer focused on compat-finder CLI semantics rather than generic troubleshooting."
+      ]
+    },
+    {
       "id": 13,
       "prompt": "We already started that compat-finder-style narrowing flow earlier. The last two answers were `issue, pass`. I do not need a refresher, just tell me the next targets to test and how I should report the result back.",
       "expected_output": "Treats the prompt as an in-context follow-up to an existing compat-finder CLI triage flow, avoids re-explaining the package, computes the next targets to test, and asks the user to reply with normalized `issue` or `pass` results.",

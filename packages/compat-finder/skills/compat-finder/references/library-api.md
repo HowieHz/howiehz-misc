@@ -1,5 +1,13 @@
 # compat-finder Library API
 
+## Contents
+
+- Install
+- Session API
+- Lower-Level State API
+- Persistence Notes
+- Example Loops
+
 ## Install
 
 To use the library API, install the package first:
@@ -108,6 +116,8 @@ Use the lower-level state API when the caller explicitly needs:
 - cached-step control
 - debug-oriented access to the underlying state machine
 
+## Persistence Notes
+
 Persistence note:
 
 - `createCompatibilitySession(targets)` does not expose a restorable state object, so it is not the right default when the caller needs save/resume behavior.
@@ -144,6 +154,8 @@ function deserializeState(saved: StoredCompatibilityState): CompatibilityTestSta
   };
 }
 ```
+
+## Example Loops
 
 Advanced integration loop:
 

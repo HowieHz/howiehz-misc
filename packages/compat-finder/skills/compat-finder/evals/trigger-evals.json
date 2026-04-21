@@ -44,7 +44,7 @@
     "should_trigger": true
   },
   {
-    "query": "I only have one plugin left to test with compat-finder. Is that still a valid session, and what will the first step look like?",
+    "query": "compat-finder next says `Option --answers contains more steps than this session accepts.` What does that mean, and how should I fix the answers I passed in?",
     "should_trigger": true
   },
   {

@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `2c4331f4c246947e2f0695edcf762f0e07d8a2b5`
+- **Commit SHA**: `e8f8251b7db6d075f90219a66a1d29106a3db73b`
 - **Date**: 2026-04-21
-- **Commit**: compat-finder: update docs, SHA, and wording
+- **Commit**: fix(compat-finder): reject extra answers after session completion
 
 **Source documentation:**
 
@@ -59,13 +59,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff 2c4331f..HEAD -- packages/compat-finder/
+git diff e8f8251..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only 2c4331f..HEAD -- packages/compat-finder/
+git diff --name-only e8f8251..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline 2c4331f..HEAD -- packages/compat-finder/
+git log --oneline e8f8251..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -99,12 +99,14 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 - Practical, actionable guidance
 - Short examples that match real compatibility-troubleshooting scenarios
 - Favor package-specific behavior over generic AI advice
-- Keep `SKILL.md` focused on workflows and move detail into `references/`
+- Keep `SKILL.md` focused on routing and decision points; move detail into `references/`
+- Add a table of contents to long reference files so partial reads still expose the available sections
 
 ## Version History
 
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
+| 2026-04-21 | e8f8251 | Tighten CLI answer validation, move legacy script, and refresh skill routing |
 | 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                       |
 | 2026-04-21 | 625f51e | Add createCompatibilitySession API                                         |
 | 2026-04-21 | 52df9f0 | Expand README examples and refresh the generated skill baseline            |
@@ -114,4 +116,4 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 ---
 
 Last updated: 2026-04-21
-Current SHA: 2c4331f
+Current SHA: e8f8251

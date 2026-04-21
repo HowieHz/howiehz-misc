@@ -28,6 +28,10 @@
     "should_trigger": true
   },
   {
+    "query": "Use compat-finder to scan my game's mods folder and tell me what to test next. The folder has `core-ui`, `npc-pack`, `hd-textures`, `weather-plus`, and `retro-sfx`, but I have not set up any command yet for launching only a selected subset.",
+    "should_trigger": true
+  },
+  {
     "query": "For my compat-finder web UI I need to save the troubleshooting session to Redis and resume it later. Which API should I use and what state do I need to persist?",
     "should_trigger": true
   },

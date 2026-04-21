@@ -78,5 +78,9 @@
   {
     "query": "I need a resumable React wizard that stores progress in Redis, but it has nothing to do with compat-finder or compatibility testing.",
     "should_trigger": false
+  },
+  {
+    "query": "Update `packages/compat-finder/README.md` to better explain the locale section and clean up the wording. This is a repo docs edit, not a compat-finder triage or integration request.",
+    "should_trigger": false
   }
 ]

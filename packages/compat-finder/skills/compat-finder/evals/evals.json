@@ -8,7 +8,7 @@
       "files": [],
       "expectations": [
         "The response identifies this as interactive guided triage.",
-        "The response gives a concrete next target set to test rather than re-explaining the package.",
+        "The response says the next round should test the 4th, 5th, and 6th versions in the ordered list.",
         "The response asks the user to reply with normalized `issue` or `pass` style results."
       ]
     },
@@ -97,7 +97,7 @@
       "expectations": [
         "The response identifies the concrete target list from the folder contents.",
         "The response preserves the provided `issue` versus `pass` rule.",
-        "The response presents the setup in terms of automatic triage and gives a concrete first round or next step."
+        "The response presents the setup in terms of automatic triage and gives `core-ui`, `npc-pack`, and `hd-textures` as the first round to test."
       ]
     },
     {
@@ -129,8 +129,19 @@
       "files": [],
       "expectations": [
         "The response states that a single-target session is valid.",
-        "The response describes the first testing step as containing the single target.",
+        "The response describes the first testing step as testing only `legacy-cache`.",
         "The response keeps the answer specific to compat-finder rather than broad generic troubleshooting."
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "We already started that compat-finder-style narrowing flow earlier. The last two answers were `issue, pass`. I do not need a refresher, just tell me the next targets to test and how I should report the result back.",
+      "expected_output": "Treats the prompt as an in-context follow-up to an existing compat-finder CLI triage flow, avoids re-explaining the package, computes the next targets to test, and asks the user to reply with normalized `issue` or `pass` results.",
+      "files": [],
+      "expectations": [
+        "The response treats this as an existing compat-finder-style triage flow even though the package name is not repeated as the main noun in the request.",
+        "The response gives a concrete next target set to test instead of broad generic troubleshooting advice.",
+        "The response asks the user to reply with normalized `issue` or `pass` style results."
       ]
     }
   ]

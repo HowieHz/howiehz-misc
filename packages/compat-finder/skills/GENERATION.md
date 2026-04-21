@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `e8f8251b7db6d075f90219a66a1d29106a3db73b`
+- **Commit SHA**: `2fd8a45247d130f216351ceca6040d3ff3c2ffd3`
 - **Date**: 2026-04-21
-- **Commit**: fix(compat-finder): reject extra answers after session completion
+- **Commit**: compat-finder: add extraAnswerCount, update text
 
 **Source documentation:**
 
@@ -59,13 +59,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff e8f8251..HEAD -- packages/compat-finder/
+git diff 2fd8a45..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only e8f8251..HEAD -- packages/compat-finder/
+git diff --name-only 2fd8a45..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline e8f8251..HEAD -- packages/compat-finder/
+git log --oneline 2fd8a45..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -105,7 +105,7 @@ Record which models were used to validate the current skill revision and what wa
 
 | Date       | Models  | Coverage                                                                                                                             | Result | Notes                                                                                                                  |
 | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------ | ---------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-22 | gpt-5.4 | Manual spot-check of CLI next-target guidance, CLI extra-answer error handling, session integration, and persistence/resume guidance | Pass   | Matched expected routing and semantics on all 4 sampled prompts. Add more rows when Haiku/Sonnet/Opus coverage is run. |
+| 2026-04-22 | gpt-5.4 | Manual spot-check of CLI next-target guidance, CLI extra-answer metadata handling, session integration, and persistence/resume guidance | Pass   | Matched expected routing and semantics on all 4 sampled prompts. Add more rows when Haiku/Sonnet/Opus coverage is run. |
 
 ## Style Guidelines
 
@@ -120,6 +120,7 @@ Record which models were used to validate the current skill revision and what wa
 
 | Date       | SHA     | Changes                                                                      |
 | ---------- | ------- | ---------------------------------------------------------------------------- |
+| 2026-04-22 | 2fd8a45 | Return `extraAnswerCount`, add `getNextAnswerableCompatibilityTestStep`, and refresh skill/docs wording |
 | 2026-04-21 | e8f8251 | Tighten CLI answer validation, move legacy script, and refresh skill routing |
 | 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                         |
 | 2026-04-21 | 625f51e | Add createCompatibilitySession API                                           |
@@ -130,4 +131,4 @@ Record which models were used to validate the current skill revision and what wa
 ---
 
 Last updated: 2026-04-22
-Current SHA: e8f8251
+Current SHA: 2fd8a45

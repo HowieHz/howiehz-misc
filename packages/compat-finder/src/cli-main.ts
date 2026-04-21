@@ -29,6 +29,16 @@ interface NextCommandResult {
   targets: string[];
 }
 
+type TryNextCommandResult =
+  | {
+      ok: true;
+      result: NextCommandResult;
+    }
+  | {
+      error: "tooManyAnswers";
+      ok: false;
+    };
+
 interface CliOptions {
   answers: boolean[];
   command: CliCommand;
@@ -160,8 +170,13 @@ export async function main(): Promise<void> {
     return;
   }
 
-  const result = getNextCommandResult(targetCount, targetNames, options.answers, options.locale);
-  console.log(JSON.stringify(result, null, 2));
+  const result = tryGetNextCommandResult(targetCount, targetNames, options.answers, options.locale);
+  if (!result.ok) {
+    printCliError(messages.errors.tooManyAnswers, messages);
+    return;
+  }
+
+  console.log(JSON.stringify(result.result, null, 2));
 }
 
 export function getCommandHelpText(command: CliCommand, locale: CliLocale): string {
@@ -319,17 +334,6 @@ export function parseCliArgs(args: readonly string[], env: NodeJS.ProcessEnv = p
     };
   }
 
-  if (options.command === "next" && options.count !== undefined) {
-    try {
-      rebuildStateFromAnswers(options.count, options.answers);
-    } catch {
-      return {
-        options,
-        error: messages.errors.tooManyAnswers,
-      };
-    }
-  }
-
   return { options };
 }
 
@@ -476,6 +480,34 @@ function getTargetRangeCount(ranges: readonly TargetRange[]): number {
 }
 
 /**
+ * Tries to return the next CLI result for single-step execution.
+ *
+ * @param targetCount The total number of targets in the session.
+ * @param targetNames The target labels to use in the output.
+ * @param answers The answers that have already been applied.
+ * @returns A JSON-ready result for the next step or final outcome, or a typed
+ * error when the provided answers exceed the completed session.
+ */
+export function tryGetNextCommandResult(
+  targetCount: number,
+  targetNames: readonly string[],
+  answers: readonly boolean[],
+  locale: CliLocale = "zh-Hans",
+): TryNextCommandResult {
+  try {
+    return {
+      ok: true,
+      result: getNextCommandResult(targetCount, targetNames, answers, locale),
+    };
+  } catch {
+    return {
+      error: "tooManyAnswers",
+      ok: false,
+    };
+  }
+}
+
+/**
  * Returns the next CLI result for single-step execution.
  *
  * @param targetCount The total number of targets in the session.
@@ -489,8 +521,17 @@ export function getNextCommandResult(
   answers: readonly boolean[],
   locale: CliLocale = "zh-Hans",
 ): NextCommandResult {
-  const messages = getCliMessages(locale);
   const state = rebuildStateFromAnswers(targetCount, answers);
+  return buildNextCommandResult(targetCount, targetNames, state, locale);
+}
+
+function buildNextCommandResult(
+  targetCount: number,
+  targetNames: readonly string[],
+  state: CompatibilityTestState,
+  locale: CliLocale,
+): NextCommandResult {
+  const messages = getCliMessages(locale);
   let step = getCurrentCompatibilityTestStep(state);
 
   while (step && !step.requiresAnswer) {

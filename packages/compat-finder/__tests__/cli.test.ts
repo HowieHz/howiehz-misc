@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getCommandHelpText, getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli-main.ts";
+import { getCommandHelpText, getNextCommandResult, getRootHelpText, parseCliArgs, tryGetNextCommandResult } from "../src/cli-main.ts";
 import { normalizeCliLocale, resolveCliLocale } from "../src/locales/index.ts";
 
 const TARGET_NAMES = ["Alpha", "Beta", "Gamma", "Delta"] as const;
@@ -93,10 +93,16 @@ describe("compatibility test cli", () => {
     expect(result.error).toBe("参数 --answers 仅支持 y/n、yes/no、issue/pass、1/0、true/false。");
   });
 
-  it("rejects extra answers after the session is already complete", () => {
+  it("parses extra answers and leaves semantic validation to next execution", () => {
     const result = parseCliArgs(["next", "--count", "1", "--answers", "pass,issue"], ZH_CN_ENV);
 
-    expect(result.error).toBe("参数 --answers 提供的步骤数超过了当前会话可接受的范围。");
+    expect(result).toMatchObject({
+      options: {
+        answers: [false, true],
+        command: "next",
+        count: 1,
+      },
+    });
   });
 
   it("rejects invalid count", () => {
@@ -191,6 +197,24 @@ describe("compatibility test cli", () => {
     });
   });
 
+  it("returns a typed next result for cli execution", () => {
+    expect(tryGetNextCommandResult(4, TARGET_NAMES, [true, false])).toEqual({
+      ok: true,
+      result: {
+        status: "testing",
+        targetCount: 4,
+        targets: ["Beta"],
+      },
+    });
+  });
+
+  it("returns a typed error when next execution receives extra answers", () => {
+    expect(tryGetNextCommandResult(1, ["Only"], [false, true], "en")).toEqual({
+      error: "tooManyAnswers",
+      ok: false,
+    });
+  });
+
   it("throws when next results are requested with extra answers", () => {
     expect(() => getNextCommandResult(1, ["Only"], [false, true], "en")).toThrow(
       "answers exceed the completed compatibility session",
@@ -200,7 +224,11 @@ describe("compatibility test cli", () => {
   it("localizes default target names in next results", () => {
     const result = getNextCommandResult(2, [], [], "en");
 
-    expect(result.targets).toEqual(["Target 1"]);
+    expect(result).toEqual({
+      status: "testing",
+      targetCount: 2,
+      targets: ["Target 1"],
+    });
   });
 
   it("normalizes locale values", () => {

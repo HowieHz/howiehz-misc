@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `075fe309dad96ef76c13720f8770aa6a45eaf99f`
+- **Commit SHA**: `2c4331f4c246947e2f0695edcf762f0e07d8a2b5`
 - **Date**: 2026-04-21
-- **Commit**: Clarify askUser return comment wording
+- **Commit**: compat-finder: update docs, SHA, and wording
 
 **Source documentation:**
 
@@ -29,6 +29,8 @@ packages/compat-finder/skills/
     ├── SKILL.md
     ├── agents/
     │   └── openai.yaml
+    ├── evals/
+    │   └── evals.json
     └── references/
         ├── cli-and-api.md
         └── package-map.md
@@ -56,13 +58,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff 075fe30..HEAD -- packages/compat-finder/
+git diff 2c4331f..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only 075fe30..HEAD -- packages/compat-finder/
+git diff --name-only 2c4331f..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline 075fe30..HEAD -- packages/compat-finder/
+git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -91,6 +93,7 @@ git log --oneline 075fe30..HEAD -- packages/compat-finder/
 - [ ] Read the diff of `packages/compat-finder/` since the last generation
 - [ ] Update affected files in `compat-finder/references/`
 - [ ] Update `compat-finder/SKILL.md` examples and workflow guidance
+- [ ] Update `compat-finder/evals/evals.json` when workflow guidance changes need regression coverage
 - [ ] Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` if needed
 - [ ] Update this `GENERATION.md` with the new SHA and date
 
@@ -105,12 +108,13 @@ git log --oneline 075fe30..HEAD -- packages/compat-finder/
 
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
-| 2026-04-21 | 075fe30 | Sync library session example with askUser, answer, and undo flow           |
-| 2026-04-21 | 1984a7c | Expand README examples and refresh the generated skill baseline            |
-| 2026-04-21 | eeac00c | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
-| 2026-04-20 | 03fe803 | Initial compat-finder skill generation with CLI/API and package references |
+| 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                       |
+| 2026-04-21 | 625f51e | Add createCompatibilitySession API                                         |
+| 2026-04-21 | 52df9f0 | Expand README examples and refresh the generated skill baseline            |
+| 2026-04-21 | 640710d | Update locale guidance to zh-Hans and align API behavior notes with JSDoc  |
+| 2026-04-20 | 00366e2 | Initial compat-finder skill generation with CLI/API and package references |
 
 ---
 
 Last updated: 2026-04-21
-Current SHA: 075fe30
+Current SHA: 2c4331f

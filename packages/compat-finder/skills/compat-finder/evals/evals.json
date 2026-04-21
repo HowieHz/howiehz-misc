@@ -1,0 +1,49 @@
+{
+  "skill_name": "compat-finder",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I have 12 browser extension versions in order from oldest to newest. I already ran the first two compat-finder rounds and got `issue, pass`. Tell me the next versions to test. I will run the test myself and report back.",
+      "expected_output": "Chooses interactive guided triage, normalizes the prior answers, computes the next targets to test, and asks the user to reply with `issue` or `pass` after running the next round.",
+      "files": [],
+      "expectations": [
+        "The response identifies this as interactive guided triage.",
+        "The response gives a concrete next target set to test rather than re-explaining the package.",
+        "The response asks the user to reply with normalized `issue` or `pass` style results."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Automatically narrow which one of these five feature flags breaks login: alpha-search,beta-banner,new-checkout,legacy-cache,region-lock. Use `pnpm test:login -- --flags <targets>` and treat exit code 0 as pass and any nonzero exit code as issue. Assume dependencies are already installed.",
+      "expected_output": "Chooses automatic triage, uses the provided command contract, reports each round with tested targets and normalized pass/issue status, and continues until a final incompatible target set is identified or the next step is explicit.",
+      "files": [],
+      "expectations": [
+        "The response identifies this as automatic triage.",
+        "The response preserves the provided pass/issue rule instead of inventing a new one.",
+        "The response reports tested targets, observed signal, normalized result, and next step."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I'm changing compat-finder CLI locale output for zh-Hans. Which files, tests, docs, and validation commands do I need to keep aligned in this repo?",
+      "expected_output": "Uses the package map workflow, points to the CLI implementation files, locale files, tests, and bilingual READMEs that must stay aligned, and recommends the narrow validation commands from the workspace root.",
+      "files": [],
+      "expectations": [
+        "The response points to `src/cli-main.ts` together with the locale files.",
+        "The response includes `__tests__/cli.test.ts` and both README files as alignment points.",
+        "The response recommends workspace-root validation commands relevant to CLI or docs changes."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Automatically narrow which release broke checkout with compat-finder. Use `pnpm test:checkout -- --targets <targets>` and treat exit code 0 as pass, nonzero as issue. If the command cannot run because setup is missing or the result is ambiguous, do not guess.",
+      "expected_output": "Chooses automatic triage but explicitly stops and reports a blocker when the command cannot be executed or the observed signal cannot be normalized to the agreed pass/issue rule.",
+      "files": [],
+      "expectations": [
+        "The response distinguishes between a real product result and an execution problem.",
+        "The response does not invent an `issue` or `pass` result when the command could not be interpreted confidently.",
+        "The response explains the blocker and states exactly what clarification or environment fix is needed."
+      ]
+    }
+  ]
+}

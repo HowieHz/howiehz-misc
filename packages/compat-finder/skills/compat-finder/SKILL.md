@@ -1,29 +1,45 @@
 ---
 name: compat-finder
-description: Guide compatibility issue triage with the compat-finder package in this repository. Use when Codex needs to plan or continue a compatibility check across multiple targets, choose between the compat-finder CLI and TypeScript API, interpret interactive or next command results, map user-reported test outcomes to the next targets to verify, or implement and document changes under packages/compat-finder.
+description: Guide compatibility issue triage with the compat-finder package. Use whenever the agent needs to narrow which version, target, flag, or configuration introduces a regression; continue an unfinished compat-finder session; turn pass/issue results into the next targets to test; decide between guided and automatic triage; choose the compat-finder CLI or TypeScript API; interpret `interactive` or `next` output; or implement, test, review, or document changes under `packages/compat-finder`. Use this skill even when the user does not mention compat-finder by name but is effectively asking "what should I test next?" or "which compat-finder files need to change together?".
 ---
 
 # Compat Finder
 
-## Overview
-
-Use this skill to work effectively with the `packages/compat-finder` package as either a CLI tool or a TypeScript library.
-Prefer this skill when the task is about narrowing incompatible targets, continuing an existing test session, or editing the package itself.
-
-## Quick Start
-
-Start by deciding which of these tasks the user actually wants:
+Start by choosing the smallest matching workflow. Read only the referenced file needed for that workflow:
 
 - Continue or plan a compatibility check:
-  Read [references/cli-and-api.md](./references/cli-and-api.md) and use the CLI when the user wants a concrete next step from known answers.
+  Read [references/cli-and-api.md](./references/cli-and-api.md). Prefer the CLI when the user wants the next targets to test or a terminal session.
 - Embed the engine into code:
-  Read [references/cli-and-api.md](./references/cli-and-api.md) and wire the TypeScript state-machine API into the caller.
+  Read [references/cli-and-api.md](./references/cli-and-api.md). Prefer the TypeScript session API unless the caller explicitly needs low-level range control.
 - Change or review the package implementation:
-  Read [references/package-map.md](./references/package-map.md) first, then inspect the relevant source and tests.
+  Read [references/package-map.md](./references/package-map.md) before opening source files or tests.
 
-## Choose the Interface
+Keep the response centered on the user's actual triage state. Avoid re-explaining the whole package unless the request is explicitly about package internals.
 
-Use the CLI when the user already has a list of targets and either:
+Run package commands from the repository root. Assume Node.js, pnpm, and workspace dependencies are available only after verifying the relevant command can run; if dependency setup is missing, report the missing prerequisite instead of guessing at results.
+
+This skill currently relies on repository commands and the compat-finder package itself; it does not require bundled helper scripts. Before using any validation or package command, verify that the underlying tool is available in the workspace instead of assuming it is installed.
+
+Before continuing a compatibility check, determine which triage mode the user wants:
+
+- interactive guided triage:
+  The user runs the real test after each step and reports whether the issue reproduced. Act like a conversational wrapper around the CLI flow and do not ask for the test command or machine-executable success criteria up front.
+- automatic triage:
+  The agent runs the real test loop, interprets each result, and continues until it can summarize the conclusion. Before starting, confirm how to execute the real test, how to detect `issue` versus `pass`, and any setup or environment constraints that affect the result.
+
+If the user asks for a broad "scan" or "find what breaks" task, treat it as automatic triage only after target discovery, the real test command or procedure, and the issue/pass signal are concrete enough to execute.
+
+Concrete user prompts this skill should handle:
+
+- "I have 12 browser extension versions and I tested `issue, pass` for the first two compat-finder prompts. Tell me the next versions to try; I will run the test myself."
+- "Automatically narrow which one of these five feature flags breaks login. Use `pnpm test:login -- --flags <targets>` and treat exit code 0 as pass, nonzero as issue."
+- "I'm changing the compat-finder CLI locale output. Which source files, tests, README examples, and validation commands need to stay aligned?"
+- "I already checked 1.8.0 and 1.9.0. One fails and one passes. What should I test next to find the bad release?"
+- "Help me bisect which env toggle breaks signup. I can run the app locally and report back after each round."
+
+## Choose The Interface
+
+Use the CLI when the user already has targets and wants one of these outcomes:
 
 - wants an interactive narrowing flow in the terminal via `interactive`
 - wants a stateless "what should I test next?" answer via `next`
@@ -37,11 +53,76 @@ Use the library API when the caller needs to:
 - inspect `CompatibilityTestStep.debug` or operate directly on target ranges
 - replay answers and skip cached steps programmatically
 
-## Continue a Compatibility Check
+Prefer `createCompatibilitySession(targets)` for integrations. Drop to the low-level state helpers only when the caller truly needs custom prompt-range handling or debug-oriented control.
+
+## Handle Missing Triage Details
+
+When the user omits triage details or real-test execution details, infer only the minimum needed to keep the compat-finder workflow moving.
+
+It is safe to infer:
+
+- whether `interactive` or `next` fits the current request
+- how to normalize provided answers to `issue`/`pass` or `true`/`false`
+- the next target set to test from existing answers
+
+Do not invent new screening criteria, test procedures, or toggle semantics.
+In automatic triage mode, when missing details affect what counts as an issue, how the test is executed, or which checks should be enabled, state the assumption explicitly and ask the user to confirm before continuing.
+In interactive guided triage mode, do not block on test-command details that only the user needs to execute locally.
+
+## Continue Or Plan A Compatibility Check
 
 When the user provides target names and prior answers, prefer `compat-finder next` because it is deterministic and JSON-friendly.
 
-Use this pattern:
+Use this mode split before running commands or asking the user to test:
+
+1. Ask whether the user wants interactive guided triage or automatic triage unless the request already makes that clear.
+2. For interactive guided triage, compute the next targets and ask the user to run the test and report back `issue` or `pass`.
+3. For automatic triage, confirm the test command, environment, and issue/pass decision rule before running anything.
+4. Then continue the compat-finder loop until the next step or final result is clear.
+
+During automatic triage, report each completed round with the tested targets, the command or procedure used, the observed signal, the normalized `issue` or `pass` answer, and the next targets or final result. At the end, summarize the incompatible target set, assumptions, and any runs that could not be interpreted confidently.
+
+Handle execution failures explicitly. If the command cannot run, dependencies are missing, setup is incomplete, or the observed signal does not cleanly map to the agreed `issue` or `pass` rule, stop the automatic loop and report the blockage instead of guessing. Distinguish between:
+
+- a product result:
+  the real test ran and the observed signal can be normalized to `issue` or `pass`
+- an execution problem:
+  the real test did not run correctly, the environment was not ready, or the signal was ambiguous and needs user clarification
+
+Use a compact response shape so the next action is obvious.
+
+For interactive guided triage, prefer this structure:
+
+```text
+Mode: interactive guided triage
+Known answers: <normalized prior answers>
+Next targets to test: <targets>
+How to reply: report `issue` if the problem reproduces, `pass` if it does not
+```
+
+For automatic triage, prefer this structure after each round:
+
+```text
+Mode: automatic triage
+Tested targets: <targets>
+Command or procedure: <exact command or short procedure>
+Observed signal: <exit code, log line, manual observation, or other evidence>
+Normalized result: issue|pass
+Next step: <next targets or final conclusion>
+```
+
+If a round is blocked by an execution problem, prefer this structure instead:
+
+```text
+Mode: automatic triage
+Tested targets: <targets or "not run">
+Command or procedure: <exact command or short procedure>
+Blocker: <missing dependency, setup issue, ambiguous signal, or other execution problem>
+Why it is blocked: <brief evidence>
+What is needed: <the exact clarification or environment fix required>
+```
+
+Use this sequence:
 
 1. Normalize the target count and optional names.
 2. Normalize answers to booleans using the accepted CLI vocabulary.
@@ -60,6 +141,8 @@ If the user wants a full terminal-driven session, use:
 ```bash
 pnpm cli:compat-finder -- interactive -c 4 -n "Alpha,Beta,Gamma,Delta"
 ```
+
+If the user reports results from a real test run instead of raw CLI answers, translate them back into `issue` or `pass` before deciding the next targets.
 
 ## Embed the Engine
 
@@ -98,6 +181,6 @@ When editing `packages/compat-finder`, check the package map reference before ch
 
 After edits, run the narrowest useful checks first.
 
-- For docs-only skill changes, run the skill validator on this skill directory.
+- For docs-only skill changes, first verify the workspace can run `pnpm exec markdownlint` and `pnpm exec oxfmt`, then run `pnpm exec markdownlint "packages/compat-finder/skills/**/*.md"` and `pnpm exec oxfmt --check "packages/compat-finder/skills/**/*.{yaml,md}"`.
 - For package behavior changes, run `pnpm compat-finder:test`.
 - For build-facing changes, also run `pnpm compat-finder:build`.

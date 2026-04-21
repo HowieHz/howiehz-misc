@@ -55,7 +55,8 @@ export const zhHansMessages: CliMessages = {
     missingCountValue: "参数 --count 缺少值。",
     missingLocale: "参数 --locale 缺少值。",
     missingNames: "参数 --names 缺少值。",
-    tooManyAnswers: "参数 --answers 提供的步骤数超过了当前会话可接受的范围。",
+    tooManyAnswers: (extraAnswerCount, completedStepCount) =>
+      `参数 --answers 多提供了 ${extraAnswerCount} 个答案：兼容性会话已在第 ${completedStepCount} 步结束。`,
     unknownArgument: (argument) => `未知参数：${argument}`,
     unknownCommand: (command) => `未知子命令：${command}`,
     unsupportedLocale: (locale) => `不支持的语言：${locale}`,

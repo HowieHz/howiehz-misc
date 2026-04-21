@@ -216,7 +216,9 @@ describe("compatibility test cli", () => {
 
   it("returns a typed error when next execution receives extra answers", () => {
     expect(tryGetNextCommandResult(1, ["Only"], [false, true], "en")).toEqual({
+      completedStepCount: 1,
       error: "tooManyAnswers",
+      extraAnswerCount: 1,
       ok: false,
     });
   });
@@ -229,8 +231,17 @@ describe("compatibility test cli", () => {
 
   it("throws when next results are requested with extra answers", () => {
     expect(() => getNextCommandResult(1, ["Only"], [false, true], "en")).toThrow(
-      "answers exceed the completed compatibility session",
+      "Option --answers includes 1 extra answer: the compatibility session already ended at step 1.",
     );
+  });
+
+  it("reports how many extra answers were provided", () => {
+    expect(tryGetNextCommandResult(1, ["Only"], [false, true, false], "en")).toEqual({
+      completedStepCount: 1,
+      error: "tooManyAnswers",
+      extraAnswerCount: 2,
+      ok: false,
+    });
   });
 
   it("localizes default target names in next results", () => {

@@ -35,13 +35,23 @@ type TryNextCommandResult =
       result: NextCommandResult;
     }
   | {
+      completedStepCount: number;
       error: "tooManyAnswers";
+      extraAnswerCount: number;
       ok: false;
     };
 
 class TooManyAnswersError extends Error {
-  constructor() {
-    super("answers exceed the completed compatibility session");
+  readonly completedStepCount: number;
+  readonly extraAnswerCount: number;
+
+  constructor(completedStepCount: number, extraAnswerCount = 1) {
+    super(
+      `Option --answers includes ${extraAnswerCount} extra ${extraAnswerCount === 1 ? "answer" : "answers"}: the compatibility session already ended at step ${completedStepCount}.`,
+    );
+    this.name = "TooManyAnswersError";
+    this.completedStepCount = completedStepCount;
+    this.extraAnswerCount = extraAnswerCount;
   }
 }
 
@@ -178,7 +188,7 @@ export async function main(): Promise<void> {
 
   const result = tryGetNextCommandResult(targetCount, targetNames, options.answers, options.locale);
   if (!result.ok) {
-    printCliError(messages.errors.tooManyAnswers, messages);
+    printCliError(messages.errors.tooManyAnswers(result.extraAnswerCount, result.completedStepCount), messages);
     return;
   }
 
@@ -511,7 +521,9 @@ export function tryGetNextCommandResult(
     }
 
     return {
+      completedStepCount: error.completedStepCount,
       error: "tooManyAnswers",
+      extraAnswerCount: error.extraAnswerCount,
       ok: false,
     };
   }
@@ -654,13 +666,15 @@ function parseAnswer(value: string): boolean | undefined {
 
 function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[]): CompatibilityTestState {
   const nextState = createCompatibilityTestState(targetCount);
+  let completedStepCount = 0;
 
   for (const answer of answers) {
     if (nextState.stopped) {
-      throw new TooManyAnswersError();
+      throw new TooManyAnswersError(completedStepCount, answers.length - completedStepCount);
     }
 
     applyCompatibilityTestAnswer(nextState, answer);
+    completedStepCount += 1;
     if (!nextState.stopped) {
       skipCachedCompatibilityTestSteps(nextState);
     }

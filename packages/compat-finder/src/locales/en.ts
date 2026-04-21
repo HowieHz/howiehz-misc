@@ -55,7 +55,8 @@ export const enMessages: CliMessages = {
     missingCountValue: "Option --count requires a value.",
     missingLocale: "Option --locale requires a value.",
     missingNames: "Option --names requires a value.",
-    tooManyAnswers: "Option --answers contains more steps than this session accepts.",
+    tooManyAnswers: (extraAnswerCount, completedStepCount) =>
+      `Option --answers includes ${extraAnswerCount} extra ${extraAnswerCount === 1 ? "answer" : "answers"}: the compatibility session already ended at step ${completedStepCount}.`,
     unknownArgument: (argument) => `Unknown option: ${argument}`,
     unknownCommand: (command) => `Unknown subcommand: ${command}`,
     unsupportedLocale: (locale) => `Unsupported locale: ${locale}`,

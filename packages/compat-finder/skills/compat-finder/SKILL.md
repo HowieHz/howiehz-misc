@@ -1,6 +1,6 @@
 ---
 name: compat-finder
-description: Guide compatibility issue triage with the compat-finder package. Use whenever Codex has an ordered target list plus pass/issue results, needs to choose next targets, continue an unfinished compat-finder session, decide between guided and automatic triage, choose the compat-finder CLI or TypeScript API, interpret `interactive` or `next` output, or implement, test, or document changes under `packages/compat-finder`.
+description: Guide compatibility issue triage with the compat-finder package. Use whenever Codex needs to narrow which version, target, flag, or configuration introduces a regression; continue an unfinished compat-finder session; turn pass/issue results into the next targets to test; decide between guided and automatic triage; choose the compat-finder CLI or TypeScript API; interpret `interactive` or `next` output; or implement, test, review, or document changes under `packages/compat-finder`. Use this skill even when the user does not mention compat-finder by name but is effectively asking "what should I test next?" or "which compat-finder files need to change together?".
 ---
 
 # Compat Finder
@@ -32,6 +32,8 @@ Concrete user prompts this skill should handle:
 - "I have 12 browser extension versions and I tested `issue, pass` for the first two compat-finder prompts. Tell me the next versions to try; I will run the test myself."
 - "Automatically narrow which one of these five feature flags breaks login. Use `pnpm test:login -- --flags <targets>` and treat exit code 0 as pass, nonzero as issue."
 - "I'm changing the compat-finder CLI locale output. Which source files, tests, README examples, and validation commands need to stay aligned?"
+- "I already checked 1.8.0 and 1.9.0. One fails and one passes. What should I test next to find the bad release?"
+- "Help me bisect which env toggle breaks signup. I can run the app locally and report back after each round."
 
 ## Choose The Interface
 
@@ -77,6 +79,28 @@ Use this mode split before running commands or asking the user to test:
 4. Then continue the compat-finder loop until the next step or final result is clear.
 
 During automatic triage, report each completed round with the tested targets, the command or procedure used, the observed signal, the normalized `issue` or `pass` answer, and the next targets or final result. At the end, summarize the incompatible target set, assumptions, and any runs that could not be interpreted confidently.
+
+Use a compact response shape so the next action is obvious.
+
+For interactive guided triage, prefer this structure:
+
+```text
+Mode: interactive guided triage
+Known answers: <normalized prior answers>
+Next targets to test: <targets>
+How to reply: report `issue` if the problem reproduces, `pass` if it does not
+```
+
+For automatic triage, prefer this structure after each round:
+
+```text
+Mode: automatic triage
+Tested targets: <targets>
+Command or procedure: <exact command or short procedure>
+Observed signal: <exit code, log line, manual observation, or other evidence>
+Normalized result: issue|pass
+Next step: <next targets or final conclusion>
+```
 
 Use this sequence:
 
@@ -137,6 +161,6 @@ When editing `packages/compat-finder`, check the package map reference before ch
 
 After edits, run the narrowest useful checks first.
 
-- For docs-only skill changes, run `pnpm exec markdownlint --fix "packages/compat-finder/skills/**/*.md"` and `pnpm exec oxfmt --write "packages/compat-finder/skills/**/*.{yaml,md}"`.
+- For docs-only skill changes, run `pnpm exec markdownlint "packages/compat-finder/skills/**/*.md"` and `pnpm exec oxfmt --check "packages/compat-finder/skills/**/*.{yaml,md}"`.
 - For package behavior changes, run `pnpm compat-finder:test`.
 - For build-facing changes, also run `pnpm compat-finder:build`.

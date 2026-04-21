@@ -1,4 +1,4 @@
 interface:
   display_name: "Compat Finder"
   short_description: "Narrow incompatible targets with compat-finder"
-  default_prompt: "Use $compat-finder to continue a compatibility check, choose the right compat-finder interface, or update the compat-finder package in this repository."
+  default_prompt: "Use $compat-finder whenever you need to narrow which version, target, flag, or configuration introduced a regression; continue a compat-finder triage session; compute the next targets to test from pass/issue results; choose between guided and automatic triage; pick the CLI or TypeScript API; interpret `interactive` or `next` output; or update the compat-finder package in this repository."

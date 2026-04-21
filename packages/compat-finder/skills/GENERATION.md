@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `a7d5a9b9bf5d4b36636062b7ed1fe1bb63d0ab73`
+- **Commit SHA**: `54db511e1bc6855ec5600ddee52661af68282a85`
 - **Date**: 2026-04-21
-- **Commit**: Improve compat-finder SKILL: commands & reporting
+- **Commit**: Improve compat-finder skill docs and metadata
 
 **Source documentation:**
 
@@ -56,13 +56,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff a7d5a9b..HEAD -- packages/compat-finder/
+git diff 54db511..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only a7d5a9b..HEAD -- packages/compat-finder/
+git diff --name-only 54db511..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline a7d5a9b..HEAD -- packages/compat-finder/
+git log --oneline 54db511..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -105,6 +105,7 @@ git log --oneline a7d5a9b..HEAD -- packages/compat-finder/
 
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
+| 2026-04-21 | 54db511 | Improve compat-finder skill docs and metadata                              |
 | 2026-04-21 | a7d5a9b | Improve compat-finder skill command prerequisites and triage reporting     |
 | 2026-04-21 | 075fe30 | Sync library session example with askUser, answer, and undo flow           |
 | 2026-04-21 | 1984a7c | Expand README examples and refresh the generated skill baseline            |
@@ -114,4 +115,4 @@ git log --oneline a7d5a9b..HEAD -- packages/compat-finder/
 ---
 
 Last updated: 2026-04-21
-Current SHA: a7d5a9b
+Current SHA: 54db511

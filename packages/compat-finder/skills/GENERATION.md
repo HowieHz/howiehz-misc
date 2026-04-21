@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `7c1bd0c1ad9d5b64ea1907405ea463764ec379a8`
+- **Commit SHA**: `2c4331f4c246947e2f0695edcf762f0e07d8a2b5`
 - **Date**: 2026-04-21
-- **Commit**: compat-finder: check tools and handle blockers
+- **Commit**: compat-finder: update docs, SHA, and wording
 
 **Source documentation:**
 
@@ -58,13 +58,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff 7c1bd0c..HEAD -- packages/compat-finder/
+git diff 2c4331f..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only 7c1bd0c..HEAD -- packages/compat-finder/
+git diff --name-only 2c4331f..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline 7c1bd0c..HEAD -- packages/compat-finder/
+git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -108,6 +108,7 @@ git log --oneline 7c1bd0c..HEAD -- packages/compat-finder/
 
 | Date       | SHA     | Changes                                                                    |
 | ---------- | ------- | -------------------------------------------------------------------------- |
+| 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                       |
 | 2026-04-21 | 7c1bd0c | Add tool availability checks, automatic triage blockers, and blocker eval  |
 | 2026-04-21 | b7e1c9f | Add compat-finder skill evals and compact triage response shapes           |
 | 2026-04-21 | 54db511 | Improve compat-finder skill docs and metadata                              |
@@ -120,4 +121,4 @@ git log --oneline 7c1bd0c..HEAD -- packages/compat-finder/
 ---
 
 Last updated: 2026-04-21
-Current SHA: 7c1bd0c
+Current SHA: 2c4331f

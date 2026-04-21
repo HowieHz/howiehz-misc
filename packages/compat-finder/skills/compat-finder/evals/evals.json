@@ -55,6 +55,28 @@
         "The response names lower-level helpers such as `createCompatibilityTestState`, `getCurrentCompatibilityTestStep`, and `applyCompatibilityTestAnswer`.",
         "The response describes the lower-level loop as state creation, reading the current step, running the real test, and feeding the result back."
       ]
+    },
+    {
+      "id": 6,
+      "prompt": "I just want to try compat-finder on this machine without adding it to my project yet. How do I run it once from the terminal, and which subcommand should I use if I either want a guided session or just the next targets to test?",
+      "expected_output": "Shows how to run compat-finder without a prior project install, points to the CLI path, and distinguishes between `interactive` for a guided terminal loop and `next` for a one-shot answer.",
+      "files": [],
+      "expectations": [
+        "The response includes a run-without-installing command such as `npx compat-finder --help` or another valid `npx compat-finder ...` example.",
+        "The response explains that `interactive` is for a guided session.",
+        "The response explains that `next` is for a one-shot next-target result."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "compat-finder next returned JSON with `status: testing`, `targetCount: 6`, and `targets: [\"4.1.0\", \"4.2.0\"]`. What am I supposed to do with that output, and how should I report the result back after I run the real test?",
+      "expected_output": "Interprets compat-finder `next` output as the next targets to test, tells the user to run the real test against those targets, and asks for the result back in normalized `issue` or `pass` terms.",
+      "files": [],
+      "expectations": [
+        "The response explains that the listed targets are the next targets to test.",
+        "The response tells the user to run the real test against those targets rather than treating the JSON as a final result.",
+        "The response asks the user to report back using normalized `issue` or `pass` style results."
+      ]
     }
   ]
 }

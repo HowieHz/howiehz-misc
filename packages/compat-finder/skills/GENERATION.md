@@ -30,7 +30,8 @@ packages/compat-finder/skills/
     ├── agents/
     │   └── openai.yaml
     ├── evals/
-    │   └── evals.json
+    │   ├── evals.json
+    │   └── trigger-evals.json
     └── references/
         ├── cli.md
         └── library-api.md
@@ -73,6 +74,7 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 
 - Update the relevant file in `compat-finder/references/`
 - Update `compat-finder/SKILL.md` if the quick-start workflow or triggering guidance changes
+- Update `compat-finder/evals/trigger-evals.json` if the trigger boundary changes
 - Update package README sections if the user-facing examples or installation flow change
 
 **For CLI or API changes:**
@@ -87,6 +89,7 @@ git log --oneline 2c4331f..HEAD -- packages/compat-finder/
 - [ ] Read the diff of `packages/compat-finder/` since the last generation
 - [ ] Update affected files in `compat-finder/references/`
 - [ ] Update `compat-finder/SKILL.md` examples and workflow guidance
+- [ ] Update `compat-finder/evals/trigger-evals.json` when the trigger boundary changes
 - [ ] Update `compat-finder/evals/evals.json` when workflow guidance changes need regression coverage
 - [ ] Update `/packages/compat-finder/README.md` and `/packages/compat-finder/README.zh.md` if needed
 - [ ] Update this `GENERATION.md` with the new SHA and date

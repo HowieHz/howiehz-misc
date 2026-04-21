@@ -1,0 +1,50 @@
+[
+  {
+    "query": "I already ran two compat-finder rounds against 12 extension builds and got `issue, pass`. Which versions should I test next?",
+    "should_trigger": true
+  },
+  {
+    "query": "Can you explain whether I should use compat-finder `interactive` or `next` here? I want a guided CLI flow for narrowing a bad plugin release.",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm adding compat-finder to an internal troubleshooting page. Show me the normal TypeScript session API flow and when I would drop to the lower-level state helpers.",
+    "should_trigger": true
+  },
+  {
+    "query": "compat-finder next gave me `{ \"status\": \"testing\", \"targets\": [\"beta-banner\", \"new-checkout\"] }`. What do those targets mean and how should I report the result back?",
+    "should_trigger": true
+  },
+  {
+    "query": "I want to try compat-finder without installing it into this repo. What's the quickest `npx` command to confirm the CLI is available?",
+    "should_trigger": true
+  },
+  {
+    "query": "Help me wire compat-finder into a custom React admin tool so support engineers can continue a saved troubleshooting session after refresh.",
+    "should_trigger": true
+  },
+  {
+    "query": "I have a failing regression between two git commits. Tell me which commit to test next and whether I should use git bisect.",
+    "should_trigger": false
+  },
+  {
+    "query": "Plan a QA matrix for five feature flags across three browsers. I need a practical test order, but I'm not using compat-finder or any package for this.",
+    "should_trigger": false
+  },
+  {
+    "query": "My login test fails only in production. Help me troubleshoot the service logs and deployment config.",
+    "should_trigger": false
+  },
+  {
+    "query": "Should I store session state in localStorage or Redis for my app's wizard flow? There's no compat-finder logic involved, just normal product state.",
+    "should_trigger": false
+  },
+  {
+    "query": "What's the next thing I should test for this flaky Playwright spec? I don't have pass/issue answers yet and I'm not using compat-finder.",
+    "should_trigger": false
+  },
+  {
+    "query": "Build me a command-line wizard that asks users questions and narrows causes over time. This is a brand new tool, not an integration with compat-finder.",
+    "should_trigger": false
+  }
+]

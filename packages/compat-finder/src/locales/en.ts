@@ -2,7 +2,7 @@ import type { CliMessages } from "./types.ts";
 
 export const enMessages: CliMessages = {
   aliasesTitle: "Alias",
-  commandTitle: (command) => `Compatibility issue finder CLI: ${command}`,
+  commandTitle: (command) => `Compatibility Issue Finder CLI: ${command}`,
   commands: {
     interactive: {
       description: "Start an interactive compatibility check",
@@ -29,7 +29,7 @@ export const enMessages: CliMessages = {
         'n / no / pass / 0 / false       means "has no compatibility issue"',
       ],
       answerOptionDescription: "Existing answers, separated by commas; optional",
-      description: "Run one compatibility check step and print the result",
+      description: "Run one step and print the result",
       exampleLines: ['--answers "issue,pass,1,0"'],
       extraSections: [],
       namesOptionDescription: "Target names, separated by commas; optional",
@@ -78,7 +78,7 @@ export const enMessages: CliMessages = {
     completeWithIssues: (count) => `Test complete. The following ${count} target(s) have compatibility issues:`,
     completeWithoutIssues: "Test complete. No compatibility issues found.",
   },
-  rootTitle: "Compatibility issue finder CLI",
+  rootTitle: "Compatibility Issue Finder CLI",
   rootUsage: "compat-finder <subcommand> [options]",
   subcommandsTitle: "Subcommands",
   usageTitle: "Usage",

@@ -29,7 +29,7 @@ export const zhHansMessages: CliMessages = {
         "n / no / pass / 0 / false       表示“没有兼容性问题”",
       ],
       answerOptionDescription: "已有回答列表，使用英文逗号分隔；可选",
-      description: "执行单步排查计算并输出结果",
+      description: "执行单步排查并输出结果",
       exampleLines: ['--answers "issue,pass,1,0"'],
       extraSections: [],
       namesOptionDescription: "目标名称列表，使用英文逗号分隔；可选",

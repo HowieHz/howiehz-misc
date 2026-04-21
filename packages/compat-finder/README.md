@@ -259,13 +259,14 @@ Returned fields:
 - `status`: `testing` means the current `targets` should be tested; `complete` means the final result is available
 - `targetCount`: the total number of targets in the current check
 - `targets`: when `status` is `testing`, the targets to test; when `status` is `complete`, the final result
+- `extraAnswerCount`: optional; returned only when `status` is `complete` and extra `answers` values were provided
 
 Supported `answers` values:
 
 - `y` / `yes` / `issue` / `1` / `true`: the issue reproduces
 - `n` / `no` / `pass` / `0` / `false`: the issue does not reproduce
 
-If `answers` already contains more steps than the current session can accept, the CLI returns an error instead of silently ignoring the extra values.
+If `answers` includes extra values after the session is already complete, the CLI still returns the final result and adds `extraAnswerCount` to the JSON output.
 
 Example 1:
 

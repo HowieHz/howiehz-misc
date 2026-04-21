@@ -55,12 +55,13 @@ Accepted answer values:
 - `status`: `testing` or `complete`
 - `targetCount`: total targets in the session
 - `targets`: user-provided names or fallback labels for the current prompt or final result
+- `extraAnswerCount`: optional; returned only when `status` is `complete` and extra answers were provided
 
 `next` validation details:
 
 - `--answers` may be empty.
 - `--answers` is normalized from the accepted truthy/falsy vocabulary above.
-- If the provided answers already complete the session and extra answers remain, `next` returns an error instead of silently ignoring them.
+- If the provided answers already complete the session and extra answers remain, `next` still returns the final result and includes `extraAnswerCount`.
 
 ## Triage Modes
 

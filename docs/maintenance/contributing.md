@@ -10,7 +10,7 @@ outline: deep
 ## 主要目录
 
 - `docs/`：VitePress 文档站与在线工具页面。
-- `packages/compat-finder/`：兼容性问题排查引擎与命令行工具包。
+- `packages/compat-finder/`：兼容性排查库和命令行工具。
 
 ## 开发环境
 

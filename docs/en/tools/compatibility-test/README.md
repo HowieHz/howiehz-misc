@@ -10,7 +10,7 @@ This tool helps find compatibility issues across multiple targets.
 
 ## Related Package
 
-- [packages/compat-finder](../../../../packages/compat-finder/) contains the core library, CLI, and Agent Skills that power this page.
+- [packages/compat-finder](../../../../packages/compat-finder/) contains the core library that powers this page, along with a CLI and Agent Skill.
 
 ## Source Layout
 

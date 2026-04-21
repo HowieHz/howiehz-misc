@@ -2,7 +2,7 @@
 
 [English](./README.md) | 简体中文
 
-compat-finder 是一个用于排查多个目标之间兼容性问题的引擎与命令行工具。
+compat-finder 是一个用于排查多个目标兼容性问题的库和命令行工具。
 
 [适用范围](#适用范围) | [安装](#安装) | [快速开始](#快速开始) | [API 参考](#api-参考) | [命令行工具](#命令行工具) | [与 AI 协作](#与-ai-协作) | [在线版](#在线版)
 
@@ -314,17 +314,17 @@ compat-finder next -c 3 -a "y,n,n"
 
 ## 与 AI 协作
 
-compat-finder 提供了 AI 智能体可用的 [skills](https://agentskills.io/)，帮助 AI 理解本包的兼容性排查流程、CLI 用法和 TypeScript API。
+compat-finder 提供了 [智能体技能（Agent Skill）](https://agentskills.io/)，帮助 AI 理解本包的兼容性排查流程、CLI 用法和 TypeScript API。
 
 ### 安装
 
-将 compat-finder skill 安装到你的 AI 智能体中：
+为你的 AI 智能体安装 compat-finder 智能体技能：
 
 ```bash
 npx skills add HowieHz/howiehz-misc --skill compat-finder
 ```
 
-skills 的源码在 [skills/compat-finder](./skills/compat-finder)。
+智能体技能的源码在 [skills/compat-finder](./skills/compat-finder)。
 
 ### 示例提示词
 
@@ -344,7 +344,7 @@ skills 的源码在 [skills/compat-finder](./skills/compat-finder)。
 
 ### 包含的内容
 
-compat-finder skill 涵盖以下知识：
+compat-finder 智能体技能涵盖以下内容：
 
 - CLI 命令、参数、输出语言和回答格式
 - 交互式与单步兼容性排查流程

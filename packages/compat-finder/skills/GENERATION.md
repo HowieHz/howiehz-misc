@@ -103,8 +103,8 @@ git log --oneline 2fd8a45..HEAD -- packages/compat-finder/
 
 Record which models were used to validate the current skill revision and what was exercised.
 
-| Date       | Models  | Coverage                                                                                                                             | Result | Notes                                                                                                                  |
-| ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Date       | Models  | Coverage                                                                                                                                | Result | Notes                                                                                                                  |
+| ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------- |
 | 2026-04-22 | gpt-5.4 | Manual spot-check of CLI next-target guidance, CLI extra-answer metadata handling, session integration, and persistence/resume guidance | Pass   | Matched expected routing and semantics on all 4 sampled prompts. Add more rows when Haiku/Sonnet/Opus coverage is run. |
 
 ## Style Guidelines
@@ -118,15 +118,15 @@ Record which models were used to validate the current skill revision and what wa
 
 ## Version History
 
-| Date       | SHA     | Changes                                                                      |
-| ---------- | ------- | ---------------------------------------------------------------------------- |
+| Date       | SHA     | Changes                                                                                                 |
+| ---------- | ------- | ------------------------------------------------------------------------------------------------------- |
 | 2026-04-22 | 2fd8a45 | Return `extraAnswerCount`, add `getNextAnswerableCompatibilityTestStep`, and refresh skill/docs wording |
-| 2026-04-21 | e8f8251 | Tighten CLI answer validation, move legacy script, and refresh skill routing |
-| 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                         |
-| 2026-04-21 | 625f51e | Add createCompatibilitySession API                                           |
-| 2026-04-21 | 52df9f0 | Expand README examples and refresh the generated skill baseline              |
-| 2026-04-21 | 640710d | Update locale guidance to zh-Hans and align API behavior notes with JSDoc    |
-| 2026-04-20 | 00366e2 | Initial compat-finder skill generation with CLI/API and package references   |
+| 2026-04-21 | e8f8251 | Tighten CLI answer validation, move legacy script, and refresh skill routing                            |
+| 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                                                    |
+| 2026-04-21 | 625f51e | Add createCompatibilitySession API                                                                      |
+| 2026-04-21 | 52df9f0 | Expand README examples and refresh the generated skill baseline                                         |
+| 2026-04-21 | 640710d | Update locale guidance to zh-Hans and align API behavior notes with JSDoc                               |
+| 2026-04-20 | 00366e2 | Initial compat-finder skill generation with CLI/API and package references                              |
 
 ---
 

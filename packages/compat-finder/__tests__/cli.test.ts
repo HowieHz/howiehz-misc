@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli-main.ts";
+import { getCommandHelpText, getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli-main.ts";
 import { normalizeCliLocale, resolveCliLocale } from "../src/locales/index.ts";
 
 const TARGET_NAMES = ["Alpha", "Beta", "Gamma", "Delta"] as const;
@@ -55,6 +55,15 @@ describe("compatibility test cli", () => {
     expect(helpText).toContain("next (n)");
   });
 
+  it("localizes next help output examples", () => {
+    const enHelpText = getCommandHelpText("next", "en");
+    const zhHelpText = getCommandHelpText("next", "zh-Hans");
+
+    expect(enHelpText).toContain('"targets": ["Target 1"]');
+    expect(enHelpText).not.toContain('"targets": ["目标 1"]');
+    expect(zhHelpText).toContain('"targets": ["目标 1"]');
+  });
+
   it("keeps interactive as the default command for backward compatibility", () => {
     const result = parseCliArgs(["--count", "2"], ZH_CN_ENV);
 
@@ -82,6 +91,12 @@ describe("compatibility test cli", () => {
     const result = parseCliArgs(["next", "--count", "4", "--answers", "issue,wat"], ZH_CN_ENV);
 
     expect(result.error).toBe("参数 --answers 仅支持 y/n、yes/no、issue/pass、1/0、true/false。");
+  });
+
+  it("rejects extra answers after the session is already complete", () => {
+    const result = parseCliArgs(["next", "--count", "1", "--answers", "pass,issue"], ZH_CN_ENV);
+
+    expect(result.error).toBe("参数 --answers 提供的步骤数超过了当前会话可接受的范围。");
   });
 
   it("rejects invalid count", () => {
@@ -174,6 +189,12 @@ describe("compatibility test cli", () => {
       targetCount: 4,
       targets: ["Beta"],
     });
+  });
+
+  it("throws when next results are requested with extra answers", () => {
+    expect(() => getNextCommandResult(1, ["Only"], [false, true], "en")).toThrow(
+      "answers exceed the completed compatibility session",
+    );
   });
 
   it("localizes default target names in next results", () => {

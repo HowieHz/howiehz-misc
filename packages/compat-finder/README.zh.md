@@ -232,8 +232,8 @@ compat-finder i -c 4 -n "A,B,C,D"
 
 支持以下输入：
 
-- `y` / `yes` / `issue` / `1`：表示“有兼容性问题”
-- `n` / `no` / `pass` / `0`：表示“没有兼容性问题”
+- `y` / `yes` / `issue` / `1` / `true`：表示“有兼容性问题”
+- `n` / `no` / `pass` / `0` / `false`：表示“没有兼容性问题”
 - `u` / `undo`：撤回上一步
 - `q` / `quit`：退出
 
@@ -263,6 +263,8 @@ compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
 
 - `y` / `yes` / `issue` / `1` / `true`：表示“有兼容性问题”
 - `n` / `no` / `pass` / `0` / `false`：表示“没有兼容性问题”
+
+如果 `answers` 提供的步骤已经超过当前会话可接受的范围，CLI 会直接报错，而不是静默忽略多余值。
 
 示例 1：
 

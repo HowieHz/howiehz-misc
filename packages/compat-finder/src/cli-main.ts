@@ -117,28 +117,7 @@ const buildCommandDefinitions = (messages: CliMessages): Record<CliCommand, Comm
         title: messages.examplesTitle,
       },
       {
-        lines: [
-          formatCommandUsage("next", '-c 3 -a "y"'),
-          "{",
-          '  "status": "testing",',
-          '  "targetCount": 3,',
-          '  "targets": ["目标 1"]',
-          "}",
-          "",
-          formatCommandUsage("next", '-c 3 -a "y,n"'),
-          "{",
-          '  "status": "testing",',
-          '  "targetCount": 3,',
-          '  "targets": ["目标 2"]',
-          "}",
-          "",
-          formatCommandUsage("next", '-c 3 -a "y,n,n"'),
-          "{",
-          '  "status": "complete",',
-          '  "targetCount": 3,',
-          '  "targets": ["目标 1", "目标 2"]',
-          "}",
-        ],
+        lines: getNextOutputExampleLines(messages),
         title: messages.commands.next.outputExampleTitle ?? "",
       },
     ],
@@ -185,7 +164,7 @@ export async function main(): Promise<void> {
   console.log(JSON.stringify(result, null, 2));
 }
 
-function getCommandHelpText(command: CliCommand, locale: CliLocale): string {
+export function getCommandHelpText(command: CliCommand, locale: CliLocale): string {
   const messages = getCliMessages(locale);
   const definition = buildCommandDefinitions(messages)[command];
   return [
@@ -340,6 +319,17 @@ export function parseCliArgs(args: readonly string[], env: NodeJS.ProcessEnv = p
     };
   }
 
+  if (options.command === "next" && options.count !== undefined) {
+    try {
+      rebuildStateFromAnswers(options.count, options.answers);
+    } catch {
+      return {
+        options,
+        error: messages.errors.tooManyAnswers,
+      };
+    }
+  }
+
   return { options };
 }
 
@@ -386,6 +376,34 @@ function formatHelpCommand(command: CliCommand): string {
 
 function formatDefaultInteractiveUsage(suffix: string): string {
   return `${CLI_COMMAND_NAME} ${suffix}`;
+}
+
+function getNextOutputExampleLines(messages: CliMessages): string[] {
+  const firstTarget = messages.defaultTargetLabel(1);
+  const secondTarget = messages.defaultTargetLabel(2);
+
+  return [
+    formatCommandUsage("next", '-c 3 -a "y"'),
+    "{",
+    '  "status": "testing",',
+    '  "targetCount": 3,',
+    `  "targets": ["${firstTarget}"]`,
+    "}",
+    "",
+    formatCommandUsage("next", '-c 3 -a "y,n"'),
+    "{",
+    '  "status": "testing",',
+    '  "targetCount": 3,',
+    `  "targets": ["${secondTarget}"]`,
+    "}",
+    "",
+    formatCommandUsage("next", '-c 3 -a "y,n,n"'),
+    "{",
+    '  "status": "complete",',
+    '  "targetCount": 3,',
+    `  "targets": ["${firstTarget}", "${secondTarget}"]`,
+    "}",
+  ];
 }
 
 function printCliError(message: string, messages: CliMessages): void {
@@ -587,12 +605,14 @@ function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[
   const nextState = createCompatibilityTestState(targetCount);
 
   for (const answer of answers) {
-    applyCompatibilityTestAnswer(nextState, answer);
     if (nextState.stopped) {
-      break;
+      throw new Error("answers exceed the completed compatibility session");
     }
 
-    skipCachedCompatibilityTestSteps(nextState);
+    applyCompatibilityTestAnswer(nextState, answer);
+    if (!nextState.stopped) {
+      skipCachedCompatibilityTestSteps(nextState);
+    }
   }
 
   return nextState;

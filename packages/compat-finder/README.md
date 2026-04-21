@@ -232,8 +232,8 @@ compat-finder i -c 4 -n "A,B,C,D"
 
 Supported input:
 
-- `y` / `yes` / `issue` / `1`: the issue reproduces
-- `n` / `no` / `pass` / `0`: the issue does not reproduce
+- `y` / `yes` / `issue` / `1` / `true`: the issue reproduces
+- `n` / `no` / `pass` / `0` / `false`: the issue does not reproduce
 - `u` / `undo`: undo the previous answer
 - `q` / `quit`: quit
 
@@ -263,6 +263,8 @@ Supported `answers` values:
 
 - `y` / `yes` / `issue` / `1` / `true`: the issue reproduces
 - `n` / `no` / `pass` / `0` / `false`: the issue does not reproduce
+
+If `answers` already contains more steps than the current session can accept, the CLI returns an error instead of silently ignoring the extra values.
 
 Example 1:
 

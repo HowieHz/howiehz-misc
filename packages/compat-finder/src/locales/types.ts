@@ -37,6 +37,7 @@ export interface CliMessages {
     missingCountValue: string;
     missingLocale: string;
     missingNames: string;
+    tooManyAnswers: string;
     unknownArgument: (argument: string) => string;
     unknownCommand: (command: string) => string;
     unsupportedLocale: (locale: string) => string;

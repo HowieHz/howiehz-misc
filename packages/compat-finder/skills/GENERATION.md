@@ -105,7 +105,7 @@ Record which models were used to validate the current skill revision and what wa
 
 | Date       | Models | Coverage | Result | Notes |
 | ---------- | ------ | -------- | ------ | ----- |
-| 2026-04-22 | Not yet recorded | Trigger evals, workflow evals | Pending | Run the current skill against each target model before treating this generation as fully validated. |
+| 2026-04-22 | gpt-5.4 | Manual spot-check of CLI next-target guidance, CLI extra-answer error handling, session integration, and persistence/resume guidance | Pass | Matched expected routing and semantics on all 4 sampled prompts. Add more rows when Haiku/Sonnet/Opus coverage is run. |
 
 ## Style Guidelines
 
@@ -129,5 +129,5 @@ Record which models were used to validate the current skill revision and what wa
 
 ---
 
-Last updated: 2026-04-21
+Last updated: 2026-04-22
 Current SHA: e8f8251

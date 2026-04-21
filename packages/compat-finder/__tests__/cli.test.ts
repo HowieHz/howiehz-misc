@@ -221,6 +221,12 @@ describe("compatibility test cli", () => {
     });
   });
 
+  it("rethrows unrelated next execution failures", () => {
+    expect(() => tryGetNextCommandResult(0, ["Only"], [], "en")).toThrow(
+      "targetCount must be an integer greater than or equal to 1",
+    );
+  });
+
   it("throws when next results are requested with extra answers", () => {
     expect(() => getNextCommandResult(1, ["Only"], [false, true], "en")).toThrow(
       "answers exceed the completed compatibility session",

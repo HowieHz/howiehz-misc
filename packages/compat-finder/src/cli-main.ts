@@ -39,6 +39,12 @@ type TryNextCommandResult =
       ok: false;
     };
 
+class TooManyAnswersError extends Error {
+  constructor() {
+    super("answers exceed the completed compatibility session");
+  }
+}
+
 interface CliOptions {
   answers: boolean[];
   command: CliCommand;
@@ -499,7 +505,11 @@ export function tryGetNextCommandResult(
       ok: true,
       result: getNextCommandResult(targetCount, targetNames, answers, locale),
     };
-  } catch {
+  } catch (error) {
+    if (!(error instanceof TooManyAnswersError)) {
+      throw error;
+    }
+
     return {
       error: "tooManyAnswers",
       ok: false,
@@ -647,7 +657,7 @@ function rebuildStateFromAnswers(targetCount: number, answers: readonly boolean[
 
   for (const answer of answers) {
     if (nextState.stopped) {
-      throw new Error("answers exceed the completed compatibility session");
+      throw new TooManyAnswersError();
     }
 
     applyCompatibilityTestAnswer(nextState, answer);

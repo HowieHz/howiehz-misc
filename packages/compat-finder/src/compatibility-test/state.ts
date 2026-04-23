@@ -167,6 +167,8 @@ function getPromptTargetRanges(state: CompatibilityTestState): TargetRange[] {
       return getAlgorithmDefinition(state.algorithm).getPromptTargetRanges(state);
     case "leave-one-out":
       return getAlgorithmDefinition(state.algorithm).getPromptTargetRanges(state);
+    default:
+      throw new Error(`Unsupported compatibility test algorithm: ${state.algorithm}`);
   }
 }
 
@@ -176,6 +178,8 @@ function getCompatibilityTestDebugStep(state: CompatibilityTestState): Compatibi
       return getAlgorithmDefinition(state.algorithm).getDebugStep(state);
     case "leave-one-out":
       return getAlgorithmDefinition(state.algorithm).getDebugStep(state);
+    default:
+      throw new Error(`Unsupported compatibility test algorithm: ${state.algorithm}`);
   }
 }
 
@@ -187,6 +191,8 @@ function advanceCompatibilityTestState(state: CompatibilityTestState, hasIssue: 
     case "leave-one-out":
       getAlgorithmDefinition(state.algorithm).advanceState(state, hasIssue);
       return;
+    default:
+      throw new Error(`Unsupported compatibility test algorithm: ${state.algorithm}`);
   }
 }
 

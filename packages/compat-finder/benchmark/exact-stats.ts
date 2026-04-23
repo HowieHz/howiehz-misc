@@ -14,6 +14,8 @@ export function computeExactBenchmarkStatsForAlgorithm(
       return computeBinarySplitStats(maxTargetCount);
     case "leave-one-out":
       return computeLeaveOneOutStats(maxTargetCount);
+    default:
+      throw new Error(`Unsupported benchmark algorithm: ${algorithm}`);
   }
 }
 

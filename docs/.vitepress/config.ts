@@ -54,6 +54,36 @@ const EN_TOOLS_SIDEBAR: DefaultTheme.SidebarItem[] = [
   },
 ];
 
+const ROOT_COMPAT_FINDER_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  {
+    text: "compat-finder",
+    items: [
+      { text: "文档首页", link: "/compat-finder/" },
+      { text: "安装", link: "/compat-finder/install" },
+      { text: "快速开始", link: "/compat-finder/quick-start" },
+      { text: "API 参考", link: "/compat-finder/api" },
+      { text: "命令行工具", link: "/compat-finder/cli" },
+      { text: "与 AI 协作", link: "/compat-finder/ai" },
+      { text: "在线版", link: "/compat-finder/online-tool" },
+    ],
+  },
+];
+
+const EN_COMPAT_FINDER_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  {
+    text: "compat-finder",
+    items: [
+      { text: "Overview", link: "/en/compat-finder/" },
+      { text: "Install", link: "/en/compat-finder/install" },
+      { text: "Quick Start", link: "/en/compat-finder/quick-start" },
+      { text: "API Reference", link: "/en/compat-finder/api" },
+      { text: "CLI", link: "/en/compat-finder/cli" },
+      { text: "Work with AI", link: "/en/compat-finder/ai" },
+      { text: "Online Tool", link: "/en/compat-finder/online-tool" },
+    ],
+  },
+];
+
 type LocaleKey = "root" | "en";
 
 const POST_LABELS: Record<
@@ -390,6 +420,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
       themeConfig: {
         socialLinks: [{ icon: "github", link: githubRepoUrl }],
         nav: [
+          { text: "compat-finder", link: "/compat-finder/" },
           {
             text: "文章分类",
             items: [{ text: "过时/低质量文章归档", link: "/posts/junk/" }],
@@ -407,6 +438,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
           },
         ],
         sidebar: {
+          "/compat-finder/": ROOT_COMPAT_FINDER_SIDEBAR,
           "/posts/": buildPostSidebar("root"),
           "/tools/": ROOT_TOOLS_SIDEBAR,
           "/maintenance/": ROOT_INFO_SIDEBAR,
@@ -462,6 +494,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
       themeConfig: {
         socialLinks: [{ icon: "github", link: githubRepoUrl }],
         nav: [
+          { text: "compat-finder", link: "/en/compat-finder/" },
           {
             text: "Categories",
             items: [{ text: "Junk", link: "/en/posts/junk/" }],
@@ -479,6 +512,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
           },
         ],
         sidebar: {
+          "/en/compat-finder/": EN_COMPAT_FINDER_SIDEBAR,
           "/en/posts/": buildPostSidebar("en"),
           "/en/tools/": EN_TOOLS_SIDEBAR,
           "/en/maintenance/": EN_INFO_SIDEBAR,

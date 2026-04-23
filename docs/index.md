@@ -24,6 +24,11 @@ hero:
       link: /about/
 
 features:
+  - icon: 🧩
+    title: compat-finder
+    details: 多目标兼容性问题排查库与命令行工具。
+    link: /compat-finder/
+    linkText: 查看文档
   - icon: 📦
     title: 文章归档
     details: 存档过时或低质量的内容，仅供参考。

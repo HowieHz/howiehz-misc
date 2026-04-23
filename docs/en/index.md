@@ -18,6 +18,11 @@ hero:
       link: /en/about/
 
 features:
+  - icon: 🧩
+    title: compat-finder
+    details: A library and CLI for narrowing down compatibility issues across many targets.
+    link: /en/compat-finder/
+    linkText: View docs
   - icon: 📦
     title: Junk
     details: Archived outdated or low-quality content, for reference only.

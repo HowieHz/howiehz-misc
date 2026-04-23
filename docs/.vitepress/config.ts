@@ -4,6 +4,7 @@ import path from "node:path";
 import browserslist from "browserslist";
 import { browserslistToTargets } from "lightningcss";
 import { defineConfig, type DefaultTheme, type UserConfig } from "vitepress";
+import { groupIconMdPlugin, groupIconVitePlugin } from "vitepress-plugin-group-icons";
 import { chineseSearchOptimize, pagefindPlugin } from "vitepress-plugin-pagefind";
 import { RssPlugin, type RSSOptions } from "vitepress-plugin-rss";
 
@@ -225,6 +226,8 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
   srcExclude: ["**/README.md"],
   vite: {
     plugins: [
+      // Group icons plugin
+      groupIconVitePlugin(),
       // Pagefind search plugin
       pagefindPlugin({
         customSearchQuery: chineseSearchOptimize,
@@ -406,23 +409,8 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
     image: {
       lazyLoading: true,
     },
-    languageAlias: {
-      npm: "bash",
-      pnpm: "bash",
-      yarn: "bash",
-      bun: "bash",
-      deno: "bash",
-      vlt: "bash",
-      vp: "bash",
-    },
-    languageLabel: {
-      npm: "Shell",
-      pnpm: "Shell",
-      yarn: "Shell",
-      bun: "Shell",
-      deno: "Shell",
-      vlt: "Shell",
-      vp: "Shell",
+    config(md) {
+      md.use(groupIconMdPlugin);
     },
   },
 

@@ -11,31 +11,31 @@ Install `compat-finder` with your preferred package manager:
 
 ::: code-group
 
-```npm
+```sh [npm]
 npm install compat-finder
 ```
 
-```pnpm
+```sh [pnpm]
 pnpm add compat-finder
 ```
 
-```yarn
+```sh [yarn]
 yarn add compat-finder
 ```
 
-```bun
+```sh [bun]
 bun add compat-finder
 ```
 
-```deno
+```sh [deno]
 deno add npm:compat-finder
 ```
 
-```vlt
+```sh [vlt]
 vlt install compat-finder
 ```
 
-```vp
+```sh [vp]
 vp add compat-finder
 ```
 
@@ -53,31 +53,31 @@ If you only want to try the CLI first, you can also run it ad hoc:
 
 ::: code-group
 
-```npm
+```sh [npm]
 npx compat-finder --help
 ```
 
-```pnpm
+```sh [pnpm]
 pnpm dlx compat-finder --help
 ```
 
-```yarn
+```sh [yarn]
 yarn dlx compat-finder --help
 ```
 
-```bun
+```sh [bun]
 bunx compat-finder --help
 ```
 
-```deno
+```sh [deno]
 deno run npm:compat-finder --help
 ```
 
-```vlt
+```sh [vlt]
 vlx compat-finder --help
 ```
 
-```vp
+```sh [vp]
 vp exec compat-finder
 ```
 

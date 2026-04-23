@@ -8,13 +8,16 @@
 
 compat-finder 是一个用于排查多个目标之间兼容性问题的库和命令行工具。
 
-## 功能特点
+它帮助你用更少的测试轮次找出导致兼容性问题的一个或多个目标。
 
-- 用于插件、模组、扩展等目标集合的兼容性缩小范围排查
-- 多数场景可直接使用简单会话 API，高级场景可接底层状态 API
-- 内置 `binary-split` 和 `leave-one-out` 两种算法
-- 作为 ESM 库时可用于浏览器和其他兼容 ESM 的运行时
-- 作为 Node.js CLI 使用时支持英文和简体中文
+## 为什么用 compat-finder
+
+- **零运行时依赖**：轻量，安全。
+- **高效排查算法**：默认算法采用二分法结合分治法的策略，通常只需较少测试轮次即可得出结果。
+- **不只简单二分**：排查结果目标可以是一个或多个。
+- **多种接入形式**：提供引导式 CLI、简单 API 和高级 API。
+- **适合多种运行环境**：库仅以 ESM 形式发布，可用于浏览器和其他兼容 ESM 的运行时。
+- **本地化 CLI**：支持英文和简体中文。
 
 ## 文档
 
@@ -26,13 +29,15 @@ compat-finder 是一个用于排查多个目标之间兼容性问题的库和命
 npm install compat-finder
 ```
 
-然后可以创建一个兼容性排查会话：
+然后即可导入使用：
 
 ```ts
 import { createCompatibilitySession } from "compat-finder";
+
+const session = createCompatibilitySession(["A", "B"]);
 ```
 
-也可以直接临时调用命令行工具：
+如果你只是想先试一下 CLI，也可以不安装直接运行：
 
 ```bash
 npx compat-finder --help
@@ -73,10 +78,20 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 命令行示例：
 
 ```bash
-compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+npx compat-finder next -c 4 -n "A,B,C,D" -a "issue,pass"
 ```
 
-完整文档见 [howiehz.top/misc/compat-finder](https://howiehz.top/misc/compat-finder/)。
+如果你想直接开始一轮引导式排查，可以执行：
+
+```bash
+npx compat-finder interactive --count 4
+```
+
+如果你需要完整命令和 API 说明，可以继续阅读[完整文档](https://howiehz.top/misc/compat-finder/)。
+
+## 在线版
+
+在线体验：[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
 
 ## 相关项目
 

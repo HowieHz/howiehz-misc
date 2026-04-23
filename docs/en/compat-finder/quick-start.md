@@ -39,21 +39,105 @@ If you would rather start in the terminal, try these commands first.
 
 Run a full interactive check:
 
-```bash
+::: code-group
+
+```sh [npm]
 npx compat-finder interactive --count 4
 ```
 
+```sh [pnpm]
+pnpm dlx compat-finder interactive --count 4
+```
+
+```sh [yarn]
+yarn dlx compat-finder interactive --count 4
+```
+
+```sh [bun]
+bunx compat-finder interactive --count 4
+```
+
+```sh [deno]
+deno run npm:compat-finder interactive --count 4
+```
+
+```sh [vlt]
+vlx compat-finder interactive --count 4
+```
+
+```sh [vp]
+vp exec compat-finder interactive --count 4
+```
+
+:::
+
 Calculate the next targets to test from existing answers:
 
-```bash
+::: code-group
+
+```sh [npm]
 npx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
 ```
 
+```sh [pnpm]
+pnpm dlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```
+
+```sh [yarn]
+yarn dlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```
+
+```sh [bun]
+bunx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```
+
+```sh [deno]
+deno run npm:compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```
+
+```sh [vlt]
+vlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```
+
+```sh [vp]
+vp exec compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```
+
+:::
+
 Switch algorithms when needed:
 
-```bash
+::: code-group
+
+```sh [npm]
 npx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 ```
+
+```sh [pnpm]
+pnpm dlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [yarn]
+yarn dlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [bun]
+bunx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [deno]
+deno run npm:compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [vlt]
+vlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [vp]
+vp exec compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+:::
 
 Expected JSON output:
 

@@ -39,21 +39,105 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 
 运行完整的交互式排查流程：
 
-```bash
+::: code-group
+
+```sh [npm]
 npx compat-finder interactive --count 4
 ```
 
+```sh [pnpm]
+pnpm dlx compat-finder interactive --count 4
+```
+
+```sh [yarn]
+yarn dlx compat-finder interactive --count 4
+```
+
+```sh [bun]
+bunx compat-finder interactive --count 4
+```
+
+```sh [deno]
+deno run npm:compat-finder interactive --count 4
+```
+
+```sh [vlt]
+vlx compat-finder interactive --count 4
+```
+
+```sh [vp]
+vp exec compat-finder interactive --count 4
+```
+
+:::
+
 根据已有回答计算下一步要测试的目标：
 
-```bash
+::: code-group
+
+```sh [npm]
 npx compat-finder next -c 3 -a "y,n"
 ```
 
+```sh [pnpm]
+pnpm dlx compat-finder next -c 3 -a "y,n"
+```
+
+```sh [yarn]
+yarn dlx compat-finder next -c 3 -a "y,n"
+```
+
+```sh [bun]
+bunx compat-finder next -c 3 -a "y,n"
+```
+
+```sh [deno]
+deno run npm:compat-finder next -c 3 -a "y,n"
+```
+
+```sh [vlt]
+vlx compat-finder next -c 3 -a "y,n"
+```
+
+```sh [vp]
+vp exec compat-finder next -c 3 -a "y,n"
+```
+
+:::
+
 需要切换算法时：
 
-```bash
+::: code-group
+
+```sh [npm]
 npx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 ```
+
+```sh [pnpm]
+pnpm dlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [yarn]
+yarn dlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [bun]
+bunx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [deno]
+deno run npm:compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [vlt]
+vlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+```sh [vp]
+vp exec compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+```
+
+:::
 
 预期会输出如下 JSON：
 

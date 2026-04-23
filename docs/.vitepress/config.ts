@@ -406,6 +406,24 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
     image: {
       lazyLoading: true,
     },
+    languageAlias: {
+      npm: "bash",
+      pnpm: "bash",
+      yarn: "bash",
+      bun: "bash",
+      deno: "bash",
+      vlt: "bash",
+      vp: "bash",
+    },
+    languageLabel: {
+      npm: "Shell",
+      pnpm: "Shell",
+      yarn: "Shell",
+      bun: "Shell",
+      deno: "Shell",
+      vlt: "Shell",
+      vp: "Shell",
+    },
   },
 
   locales: {

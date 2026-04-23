@@ -1,4 +1,91 @@
-# 快速开始
+# 快速上手
+
+本页展示如何安装 `compat-finder`，并用最短路径开始使用库或 CLI。
+
+## 环境要求
+
+- 作为库使用：兼容 ESM 的运行时
+- 作为 CLI 使用：Node.js `^20 || ^22 || >=24`
+
+## 安装
+
+使用你偏好的包管理器安装 `compat-finder`：
+
+::: code-group
+
+```sh [npm]
+npm install compat-finder
+```
+
+```sh [pnpm]
+pnpm add compat-finder
+```
+
+```sh [yarn]
+yarn add compat-finder
+```
+
+```sh [bun]
+bun add compat-finder
+```
+
+```sh [deno]
+deno add npm:compat-finder
+```
+
+```sh [vlt]
+vlt install compat-finder
+```
+
+```sh [vp]
+vp add compat-finder
+```
+
+:::
+
+安装后即可导入并创建会话：
+
+```ts
+import { createCompatibilitySession } from "compat-finder";
+
+const session = createCompatibilitySession(["A", "B"]);
+```
+
+## 使用 CLI
+
+如果你只是想快速试用 CLI，也可以不安装，直接运行：
+
+::: code-group
+
+```sh [npm]
+npx compat-finder --help
+```
+
+```sh [pnpm]
+pnpm dlx compat-finder --help
+```
+
+```sh [yarn]
+yarn dlx compat-finder --help
+```
+
+```sh [bun]
+bunx compat-finder --help
+```
+
+```sh [deno]
+deno run npm:compat-finder --help
+```
+
+```sh [vlt]
+vlx compat-finder --help
+```
+
+```sh [vp]
+vp exec compat-finder
+```
+
+:::
 
 ## 库使用示例
 
@@ -33,7 +120,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 默认算法 `binary-split` 采用二分法结合分治法的策略。  
 如果你想使用“每轮排除 1 个目标”的测试方式，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`。
 
-## 命令行示例
+## CLI 示例
 
 如果你更想直接从命令行开始，可以先试下面几个例子。
 
@@ -101,40 +188,6 @@ vlx compat-finder next -c 3 -a "y,n"
 
 ```sh [vp]
 vp exec compat-finder next -c 3 -a "y,n"
-```
-
-:::
-
-需要切换算法时：
-
-::: code-group
-
-```sh [npm]
-npx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [pnpm]
-pnpm dlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [yarn]
-yarn dlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [bun]
-bunx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [deno]
-deno run npm:compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [vlt]
-vlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [vp]
-vp exec compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 ```
 
 :::

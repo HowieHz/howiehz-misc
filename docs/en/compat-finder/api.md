@@ -1,6 +1,6 @@
 # API Reference
 
-Use `createCompatibilitySession` for most integrations.
+Most integrations should start with the simple session API.
 
 ## Simple Session API
 

@@ -20,8 +20,7 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 
 ## Reading Guide
 
-- [Install](./install): runtime requirements, package manager installs, and ad-hoc CLI usage
-- [Quick Start](./quick-start): the shortest path to a working library or CLI flow
+- [Getting Started](./getting-started): runtime requirements, installation, and the shortest path to using the library or CLI
 - [API Reference](./api): session API, low-level state API, range utilities, and key types
 - [CLI](./cli): help output, locale handling, algorithms, and commands
 - [Work with AI](./ai): Agent Skill installation and prompt examples

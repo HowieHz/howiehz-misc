@@ -5,4 +5,4 @@
 在线版源码位于 [tools/compatibility-test](https://github.com/HowieHz/howiehz-misc/tree/main/docs/tools/compatibility-test)。
 
 如果你只想先快速理解 `compat-finder` 的工作流，在线版通常是最直接的入口。  
-如果你需要把排查流程接进自己的项目，继续阅读 [快速开始](./quick-start)、[API 参考](./api) 和 [命令行工具](./cli)。
+如果你需要把排查流程接进自己的项目，继续阅读 [快速上手](./getting-started)、[API 参考](./api) 和 [命令行工具](./cli)。

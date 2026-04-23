@@ -1,4 +1,91 @@
-# Quick Start
+# Getting Started
+
+This page shows how to install `compat-finder` and start using it from the library or CLI as quickly as possible.
+
+## Requirements
+
+- Library usage: any ESM-compatible runtime
+- CLI usage: Node.js `^20 || ^22 || >=24`
+
+## Installation
+
+Install `compat-finder` with your preferred package manager:
+
+::: code-group
+
+```sh [npm]
+npm install compat-finder
+```
+
+```sh [pnpm]
+pnpm add compat-finder
+```
+
+```sh [yarn]
+yarn add compat-finder
+```
+
+```sh [bun]
+bun add compat-finder
+```
+
+```sh [deno]
+deno add npm:compat-finder
+```
+
+```sh [vlt]
+vlt install compat-finder
+```
+
+```sh [vp]
+vp add compat-finder
+```
+
+:::
+
+Then import it and create a session:
+
+```ts
+import { createCompatibilitySession } from "compat-finder";
+
+const session = createCompatibilitySession(["A", "B"]);
+```
+
+## Using the CLI
+
+If you just want to try the CLI, you can run it without installing it first:
+
+::: code-group
+
+```sh [npm]
+npx compat-finder --help
+```
+
+```sh [pnpm]
+pnpm dlx compat-finder --help
+```
+
+```sh [yarn]
+yarn dlx compat-finder --help
+```
+
+```sh [bun]
+bunx compat-finder --help
+```
+
+```sh [deno]
+deno run npm:compat-finder --help
+```
+
+```sh [vlt]
+vlx compat-finder --help
+```
+
+```sh [vp]
+vp exec compat-finder
+```
+
+:::
 
 ## Library Example
 
@@ -101,40 +188,6 @@ vlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
 
 ```sh [vp]
 vp exec compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
-```
-
-:::
-
-Switch algorithms when needed:
-
-::: code-group
-
-```sh [npm]
-npx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [pnpm]
-pnpm dlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [yarn]
-yarn dlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [bun]
-bunx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [deno]
-deno run npm:compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [vlt]
-vlx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
-```
-
-```sh [vp]
-vp exec compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 ```
 
 :::

@@ -1,6 +1,6 @@
 # API 参考
 
-多数集成场景都应该优先使用 `createCompatibilitySession`。
+多数集成场景都应该优先使用简单会话 API。
 
 ## 简单会话 API
 

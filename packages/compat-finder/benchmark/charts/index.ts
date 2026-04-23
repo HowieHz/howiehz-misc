@@ -13,6 +13,10 @@ const FIFTH_BASELINE_TARGET_COUNT = 5;
 const SIXTH_BASELINE_TARGET_COUNT = 6;
 const SEVENTH_BASELINE_TARGET_COUNT = 7;
 const EIGHTH_BASELINE_TARGET_COUNT = 8;
+const LINEAR_SLOPE_BASIS_POINTS = 2283;
+const LINEAR_SLOPE_BASELINE_TARGET_COUNT = Math.ceil(10_000 / LINEAR_SLOPE_BASIS_POINTS);
+const MAX_LINEAR_SLOPE_BASIS_POINTS = 1377;
+const MAX_LINEAR_SLOPE_BASELINE_TARGET_COUNT = Math.ceil(10_000 / MAX_LINEAR_SLOPE_BASIS_POINTS);
 const FIXED_DECIMAL_DIGITS = 6;
 
 interface BenchmarkChartDefinition {
@@ -33,8 +37,10 @@ const BENCHMARK_CHART_DEFINITIONS: readonly BenchmarkChartDefinition[] = [
   },
   createFloorFractionChartDefinition(1, 1),
   createFloorFractionChartDefinition(1, 5, FIFTH_BASELINE_TARGET_COUNT),
+  createFloorBasisPointsChartDefinition(LINEAR_SLOPE_BASIS_POINTS, LINEAR_SLOPE_BASELINE_TARGET_COUNT),
   createFloorFractionChartDefinition(1, 6, SIXTH_BASELINE_TARGET_COUNT),
   createFloorFractionChartDefinition(1, 7, SEVENTH_BASELINE_TARGET_COUNT),
+  createFloorBasisPointsChartDefinition(MAX_LINEAR_SLOPE_BASIS_POINTS, MAX_LINEAR_SLOPE_BASELINE_TARGET_COUNT),
   createFloorFractionChartDefinition(1, 8, EIGHTH_BASELINE_TARGET_COUNT),
   createFloorFractionChartDefinition(1, 4, QUARTER_BASELINE_TARGET_COUNT),
   {
@@ -63,6 +69,33 @@ export function buildBenchmarkResults(
     charts: BENCHMARK_CHART_DEFINITIONS.map((definition) =>
       createBenchmarkChart(definition, statsByAlgorithm, maxTargetCount),
     ),
+  };
+}
+
+function createFloorBasisPointsChartDefinition(
+  basisPoints: number,
+  baselineTargetCount = 1,
+): BenchmarkChartDefinition {
+  const percentLabel = formatBasisPointsPercent(basisPoints);
+  const id = `pick-${percentLabel.replace(".", "-")}-percent`;
+  const title = `Pick floor(${percentLabel}% n)`;
+  const subsetSizeLabel = `pick floor(${percentLabel}% n)`;
+
+  return {
+    id,
+    title,
+    description:
+      `Exact min / max / average question counts when the failing subset size is ` +
+      `floor(${percentLabel}% of n). Displayed from n = ${baselineTargetCount}.`,
+    xAxisMin: baselineTargetCount,
+    resolvePoint: (stats) => {
+      if (stats.targetCount < baselineTargetCount) {
+        return undefined;
+      }
+
+      const subsetSize = Math.floor((stats.targetCount * basisPoints) / 10_000);
+      return createFixedSizeChartPoint(stats, subsetSize, subsetSizeLabel);
+    },
   };
 }
 
@@ -188,4 +221,10 @@ function ordinalName(value: number): string {
     default:
       return String(value);
   }
+}
+
+function formatBasisPointsPercent(basisPoints: number): string {
+  const integerPart = Math.floor(basisPoints / 100);
+  const fractionalPart = basisPoints % 100;
+  return fractionalPart === 0 ? String(integerPart) : `${integerPart}.${String(fractionalPart).padStart(2, "0")}`;
 }

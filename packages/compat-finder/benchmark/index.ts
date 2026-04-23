@@ -7,13 +7,13 @@ import { Worker } from "node:worker_threads";
 import { COMPATIBILITY_TEST_ALGORITHMS } from "../src/compatibility-test/index.ts";
 import { buildBenchmarkResults } from "./charts/index.ts";
 import { renderBenchmarkChartSvg } from "./charts/svg.ts";
-import { computeExhaustiveBenchmarkStatsForTargetCount } from "./exhaustive-stats.ts";
+import { computeExactBenchmarkStatsForAlgorithm } from "./exact-stats.ts";
 import { createBenchmarkProgressReporter } from "./progress.ts";
 import { getDetectedCpuCount, parseBenchmarkWorkerCount } from "./runtime.ts";
 import { type BenchmarkChart, type ExactBenchmarkStatsByAlgorithm, type ExactTargetCountStats } from "./types.ts";
 import { type BenchmarkWorkerResult, type BenchmarkWorkerTask } from "./worker/protocol.ts";
 
-const DEFAULT_MAX_TARGET_COUNT = 20;
+const DEFAULT_MAX_TARGET_COUNT = 1024;
 const DEFAULT_OUTPUT_DIR = path.resolve(import.meta.dirname, "output");
 const BENCHMARK_WORKER_URL = new URL("./worker/index.ts", import.meta.url);
 
@@ -54,7 +54,7 @@ async function main(): Promise<void> {
 
   const statsTasks = createComputeStatsTasks(maxTargetCount);
   const statsStartedAt = process.hrtime.bigint();
-  progressReporter.startPhase("Computing exhaustive runtime stats", statsTasks.length, sumTaskWorkUnits(statsTasks));
+  progressReporter.startPhase("Computing exact stats", statsTasks.length, sumTaskWorkUnits(statsTasks));
   const statsResults = await runBenchmarkTasks(statsTasks, workerCount, (task, completedTaskCount) => {
     progressReporter.update(task.workUnits, {
       completedTaskCount,
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
       `detectedCpuCount=${detectedCpuCount}`,
       `workerCount=${workerCount}`,
       `maxTargetCount=${maxTargetCount}`,
-      "benchmarkMode=exhaustive-runtime",
+      "benchmarkMode=exact-stats",
       `statsElapsed=${formatDuration(statsElapsedNanoseconds)}`,
       `chartsElapsed=${formatDuration(chartsElapsedNanoseconds)}`,
       `totalElapsed=${formatDuration(process.hrtime.bigint() - benchmarkStartedAt)}`,
@@ -122,23 +122,15 @@ function parseMaxTargetCount(rawValue: string | undefined): number {
 }
 
 function createComputeStatsTasks(maxTargetCount: number): QueuedBenchmarkTask[] {
-  const tasks: QueuedBenchmarkTask[] = [];
-
-  for (const algorithm of COMPATIBILITY_TEST_ALGORITHMS) {
-    for (let targetCount = 1; targetCount <= maxTargetCount; targetCount += 1) {
-      tasks.push({
-        description: `${algorithm} n=${targetCount}`,
-        task: {
-          type: "compute-target-count-stats",
-          algorithm,
-          targetCount,
-        },
-        workUnits: getExhaustiveWorkUnits(targetCount),
-      });
-    }
-  }
-
-  return tasks;
+  return COMPATIBILITY_TEST_ALGORITHMS.map((algorithm) => ({
+    description: algorithm,
+    task: {
+      type: "compute-algorithm-stats",
+      algorithm,
+      maxTargetCount,
+    },
+    workUnits: 1n,
+  }));
 }
 
 function createRenderChartTasks(charts: readonly BenchmarkChart[]): QueuedBenchmarkTask[] {
@@ -150,10 +142,6 @@ function createRenderChartTasks(charts: readonly BenchmarkChart[]): QueuedBenchm
     },
     workUnits: 1n,
   }));
-}
-
-function getExhaustiveWorkUnits(targetCount: number): bigint {
-  return (1n << BigInt(targetCount)) - 1n;
 }
 
 function sumTaskWorkUnits(tasks: readonly QueuedBenchmarkTask[]): bigint {
@@ -222,12 +210,11 @@ async function runTasksWithWorkers(
 
 function runTaskLocally(task: BenchmarkWorkerTask): BenchmarkWorkerResult {
   switch (task.type) {
-    case "compute-target-count-stats":
+    case "compute-algorithm-stats":
       return {
-        type: "compute-target-count-stats",
+        type: "compute-algorithm-stats",
         algorithm: task.algorithm,
-        stats: computeExhaustiveBenchmarkStatsForTargetCount(task.targetCount, task.algorithm),
-        targetCount: task.targetCount,
+        stats: computeExactBenchmarkStatsForAlgorithm(task.maxTargetCount, task.algorithm),
       };
     case "render-chart":
       return {
@@ -245,8 +232,8 @@ function collectComputedStats(
   const statsByAlgorithm = createEmptyStatsByAlgorithm(maxTargetCount);
 
   for (const result of results) {
-    assertComputeTargetCountStatsWorkerResult(result);
-    statsByAlgorithm[result.algorithm][result.targetCount] = result.stats;
+    assertComputeAlgorithmStatsWorkerResult(result);
+    statsByAlgorithm[result.algorithm] = result.stats;
   }
 
   for (const algorithm of COMPATIBILITY_TEST_ALGORITHMS) {
@@ -316,10 +303,10 @@ async function runWorkerLane(
   }
 }
 
-function assertComputeTargetCountStatsWorkerResult(
+function assertComputeAlgorithmStatsWorkerResult(
   result: BenchmarkWorkerResult,
-): asserts result is Extract<BenchmarkWorkerResult, { type: "compute-target-count-stats" }> {
-  if (result.type === "compute-target-count-stats") {
+): asserts result is Extract<BenchmarkWorkerResult, { type: "compute-algorithm-stats" }> {
+  if (result.type === "compute-algorithm-stats") {
     return;
   }
 

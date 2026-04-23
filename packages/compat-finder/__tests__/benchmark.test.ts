@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeExhaustiveBenchmarkStatsForAlgorithm } from "../benchmark/exhaustive-stats.ts";
+import { computeExactBenchmarkStatsForAlgorithm } from "../benchmark/exact-stats.ts";
 import { type ExactQuestionStats } from "../benchmark/types.ts";
 import {
   applyCompatibilityTestAnswer,
@@ -19,10 +19,10 @@ interface MutableQuestionStats {
   maxQuestions: number;
 }
 
-describe("benchmark runtime stats", () => {
+describe("benchmark exact stats", () => {
   it("matches brute-force enumeration for small target counts", () => {
     for (const algorithm of COMPATIBILITY_TEST_ALGORITHMS) {
-      const computed = computeExhaustiveBenchmarkStatsForAlgorithm(8, algorithm);
+      const computed = computeExactBenchmarkStatsForAlgorithm(8, algorithm);
 
       for (let targetCount = 1; targetCount <= 8; targetCount += 1) {
         const bruteForce = bruteForceQuestionStats(targetCount, algorithm);

@@ -6,11 +6,11 @@ vi.mock("node:os", () => ({
 }));
 
 describe("benchmark runtime", () => {
-  it("defaults the worker count to detected cpu count minus two", async () => {
+  it("defaults the worker count to detected cpu count minus four", async () => {
     const { getDefaultBenchmarkWorkerCount, getDetectedCpuCount } = await import("../benchmark/runtime.ts");
 
     expect(getDetectedCpuCount()).toBe(12);
-    expect(getDefaultBenchmarkWorkerCount()).toBe(10);
+    expect(getDefaultBenchmarkWorkerCount()).toBe(8);
   });
 
   it("parses an explicit worker count", async () => {

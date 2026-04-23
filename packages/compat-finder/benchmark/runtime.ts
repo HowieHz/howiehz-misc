@@ -5,7 +5,7 @@ export function getDetectedCpuCount(): number {
 }
 
 export function getDefaultBenchmarkWorkerCount(): number {
-  return Math.max(1, getDetectedCpuCount() - 2);
+  return Math.max(1, getDetectedCpuCount() - 4);
 }
 
 export function parseBenchmarkWorkerCount(rawValue: string | undefined): number {

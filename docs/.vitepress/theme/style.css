@@ -81,8 +81,8 @@
    * Component: Home
    * -------------------------------------------------------------------------- */
   --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(120deg, #1d4ed8 30%, #38bdf8);
-  --vp-home-hero-image-background-image: linear-gradient(-45deg, #1d4ed8 50%, #0ea5e9 50%);
+  --vp-home-hero-name-background: linear-gradient(120deg, #1d4ed8 20%, #38bdf8 90%);
+  --vp-home-hero-image-background-image: linear-gradient(-45deg, #dbe4f0 35%, #f8fafc 100%);
   --vp-home-hero-image-filter: blur(44px);
 
   @media (width >= 640px) {

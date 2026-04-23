@@ -15,8 +15,8 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 - **Zero runtime dependencies**: Keeps installs lightweight and predictable.
 - **Efficient troubleshooting algorithm**: The default strategy combines binary search with divide-and-conquer, usually requiring fewer test rounds to reach a result.
 - **More than simple binary search**: Results can include one or more incompatible targets.
-- **Multiple integration options**: Choose from a guided CLI, a simple API, or an advanced API.
-- **Works across runtimes**: The library is ESM-only and runs in browsers and other ESM-compatible runtimes.
+- **Multiple integration options**: Choose from a guided CLI, a ready-to-use session API, or an advanced API for custom flows.
+- **Works across runtimes**: Published as an ESM-only library, it runs in browsers and other ESM-compatible runtimes.
 - **Localized CLI**: Available in English and Simplified Chinese.
 
 ## Documentation

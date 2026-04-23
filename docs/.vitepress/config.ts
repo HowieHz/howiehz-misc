@@ -426,11 +426,11 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
       themeConfig: {
         socialLinks: [{ icon: "github", link: githubRepoUrl }],
         nav: [
-          { text: "compat-finder", link: "/compat-finder/" },
           {
-            text: "文章分类",
-            items: [{ text: "过时/低质量文章归档", link: "/posts/junk/" }],
+            text: "NPM 包",
+            items: [{ text: "compat-finder", link: "/compat-finder/" }],
           },
+          { text: "文章归档", link: "/posts/" },
           { text: "工具", link: "/tools/" },
           {
             text: "关于",
@@ -500,11 +500,11 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
       themeConfig: {
         socialLinks: [{ icon: "github", link: githubRepoUrl }],
         nav: [
-          { text: "compat-finder", link: "/en/compat-finder/" },
           {
-            text: "Categories",
-            items: [{ text: "Junk", link: "/en/posts/junk/" }],
+            text: "NPM Packages",
+            items: [{ text: "compat-finder", link: "/en/compat-finder/" }],
           },
+          { text: "Archive", link: "/en/posts/" },
           { text: "Tools", link: "/en/tools/" },
           {
             text: "About",

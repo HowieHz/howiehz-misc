@@ -42,7 +42,7 @@ CLI 文案可以通过命令行参数或环境变量设置输出语言。
 
 两个 CLI 子命令都支持 `--algorithm <名称>` 和 `--algo <名称>`。
 
-- `binary-split`：默认缩小范围算法
+- `binary-split`：默认排查算法
 - `leave-one-out`：每轮排除 1 个目标进行测试
 
 例如：

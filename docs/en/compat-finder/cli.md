@@ -42,7 +42,7 @@ Unsupported locale values from environment variables are ignored while the resol
 
 Both CLI subcommands accept `--algorithm <name>` and `--algo <name>`.
 
-- `binary-split`: the default narrowing strategy
+- `binary-split`: the default troubleshooting algorithm
 - `leave-one-out`: test by excluding one target per round
 
 For example:

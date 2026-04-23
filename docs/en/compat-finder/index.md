@@ -2,20 +2,21 @@
 
 compat-finder is a TypeScript library and CLI for troubleshooting compatibility issues across multiple targets.
 
-It is a good fit when you need to:
-
-- narrow down problematic targets across plugins, mods, extensions, or middleware
-- embed a guided compatibility workflow into your own app
-- run an interactive check in the CLI or compute the next step from existing answers
-- hand the workflow to AI tools or other automation
+It helps you find one or more incompatible targets with fewer rounds of testing.
 
 ## Features
 
-- Simple session API for most integrations: `createCompatibilitySession`
-- Lower-level state API for custom UIs, persistence, and resume flows
-- Built-in `binary-split` and `leave-one-out` algorithms
-- CLI support for English and Simplified Chinese
-- Works both as an ESM library and a Node.js CLI
+- **Zero runtime dependencies**: keeps installs lightweight and predictable.
+- **Efficient troubleshooting algorithm**: the default strategy combines binary search with divide-and-conquer, usually requiring fewer test rounds to reach a result.
+- **More than simple binary search**: results can include one or more incompatible targets.
+- **Multiple integration options**: choose from a guided CLI, a ready-to-use session API, or an advanced API for custom flows.
+- **Works across runtimes**: published as an ESM-only library, it runs in browsers and other ESM-compatible runtimes.
+- **Localized CLI**: available in English and Simplified Chinese.
+
+## Compatibility
+
+- Library: published as an ESM-only library; runs in browsers and other ESM-compatible runtimes.
+- CLI: requires Node.js `^20 || ^22 || >=24`; supports English and Simplified Chinese.
 
 ## Reading Guide
 
@@ -25,11 +26,6 @@ It is a good fit when you need to:
 - [CLI](./cli): help output, locale handling, algorithms, and commands
 - [Work with AI](./ai): Agent Skill installation and prompt examples
 - [Online Tool](./online-tool): hosted demo and source location
-
-## Compatibility
-
-- Library: ESM-only. It has no Node.js built-in dependencies and can also run in browsers and other ESM-compatible runtimes
-- CLI: requires Node.js `^20 || ^22 || >=24`; supports English and Simplified Chinese
 
 ## Related Projects
 

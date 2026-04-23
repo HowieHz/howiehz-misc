@@ -16,7 +16,7 @@ Here, "performance" mainly means how many test rounds the troubleshooting flow n
 
 The crossover point is around `13.77%`; below that, in most cases, the worst case for `binary-split` is also better than `leave-one-out`.
 
-**Conclusion:** `binary-split` remains the default because, in real troubleshooting, the failing share is more often small.
+**Conclusion:** `binary-split` remains the default because, in real troubleshooting, problematic targets are usually a minority.
 
 ## How to Choose
 
@@ -57,6 +57,6 @@ Around `22.83%`, the average-case advantage starts to flip.
 
 ## When the Incompatible Set Is Large
 
-When the final result is close to "almost everything is incompatible," `leave-one-out` becomes more predictable and often uses fewer rounds.
+When the final result is close to "almost everything is incompatible," `leave-one-out` becomes more consistent and often uses fewer rounds.
 
 ![Round-count comparison when the final result set covers all targets](/compat-finder/pick-all.svg)

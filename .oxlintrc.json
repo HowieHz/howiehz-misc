@@ -12,6 +12,7 @@
     "**/.oxlintrc.json.bak",
     "**/build",
     "**/tmp",
+    "**/output",
     "**/logs",
     "**/*.log",
     "**/npm-debug.log*",

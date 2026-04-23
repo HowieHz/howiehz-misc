@@ -29,6 +29,7 @@ interface WorkerHandle {
 }
 
 async function main(): Promise<void> {
+  const benchmarkStartedAt = process.hrtime.bigint();
   const { values } = parseArgs({
     allowPositionals: false,
     options: {
@@ -52,6 +53,7 @@ async function main(): Promise<void> {
   const progressReporter = createBenchmarkProgressReporter();
 
   const statsTasks = createComputeStatsTasks(maxTargetCount);
+  const statsStartedAt = process.hrtime.bigint();
   progressReporter.startPhase("Computing exhaustive runtime stats", statsTasks.length, sumTaskWorkUnits(statsTasks));
   const statsResults = await runBenchmarkTasks(statsTasks, workerCount, (task, completedTaskCount) => {
     progressReporter.update(task.workUnits, {
@@ -60,10 +62,12 @@ async function main(): Promise<void> {
     });
   });
   progressReporter.finishPhase();
+  const statsElapsedNanoseconds = process.hrtime.bigint() - statsStartedAt;
   const statsByAlgorithm = collectComputedStats(statsResults, maxTargetCount);
 
   const results = buildBenchmarkResults(maxTargetCount, statsByAlgorithm);
   const chartTasks = createRenderChartTasks(results.charts);
+  const chartsStartedAt = process.hrtime.bigint();
   progressReporter.startPhase("Rendering charts", chartTasks.length, sumTaskWorkUnits(chartTasks));
   const renderedCharts = collectRenderedCharts(
     await runBenchmarkTasks(chartTasks, workerCount, (task, completedTaskCount) => {
@@ -74,6 +78,7 @@ async function main(): Promise<void> {
     }),
   );
   progressReporter.finishPhase();
+  const chartsElapsedNanoseconds = process.hrtime.bigint() - chartsStartedAt;
 
   await mkdir(chartsDir, { recursive: true });
   await writeFile(path.join(outputDir, "results.json"), `${JSON.stringify(results, null, 2)}\n`, "utf8");
@@ -95,6 +100,9 @@ async function main(): Promise<void> {
       `workerCount=${workerCount}`,
       `maxTargetCount=${maxTargetCount}`,
       "benchmarkMode=exhaustive-runtime",
+      `statsElapsed=${formatDuration(statsElapsedNanoseconds)}`,
+      `chartsElapsed=${formatDuration(chartsElapsedNanoseconds)}`,
+      `totalElapsed=${formatDuration(process.hrtime.bigint() - benchmarkStartedAt)}`,
       `charts=${results.charts.length}`,
     ].join("\n"),
   );
@@ -411,6 +419,22 @@ function getUnexpectedWorkerExitMessage(code: number): string {
   }
 
   return `Benchmark worker exited with code ${code}`;
+}
+
+function formatDuration(durationNanoseconds: bigint): string {
+  const durationMilliseconds = Number(durationNanoseconds) / 1_000_000;
+  if (durationMilliseconds < 1_000) {
+    return `${durationMilliseconds.toFixed(1)}ms`;
+  }
+
+  const durationSeconds = durationMilliseconds / 1_000;
+  if (durationSeconds < 60) {
+    return `${durationSeconds.toFixed(2)}s`;
+  }
+
+  const minutes = Math.floor(durationSeconds / 60);
+  const seconds = durationSeconds - minutes * 60;
+  return `${minutes}m ${seconds.toFixed(2)}s`;
 }
 
 await main();

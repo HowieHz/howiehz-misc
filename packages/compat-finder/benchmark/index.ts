@@ -1,19 +1,32 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { stdout } from "node:process";
 import { parseArgs } from "node:util";
 import { Worker } from "node:worker_threads";
 
 import { COMPATIBILITY_TEST_ALGORITHMS } from "../src/compatibility-test/index.ts";
 import { buildBenchmarkResults } from "./charts/index.ts";
 import { renderBenchmarkChartSvg } from "./charts/svg.ts";
+import { computeExhaustiveBenchmarkStatsForTargetCount } from "./exhaustive-stats.ts";
+import { createBenchmarkProgressReporter } from "./progress.ts";
 import { getDetectedCpuCount, parseBenchmarkWorkerCount } from "./runtime.ts";
-import { computeExactBenchmarkStatsForAlgorithm } from "./stats.ts";
-import { type BenchmarkChart, type ExactBenchmarkStatsByAlgorithm } from "./types.ts";
+import { type BenchmarkChart, type ExactBenchmarkStatsByAlgorithm, type ExactTargetCountStats } from "./types.ts";
 import { type BenchmarkWorkerResult, type BenchmarkWorkerTask } from "./worker/protocol.ts";
 
-const DEFAULT_MAX_TARGET_COUNT = 1_000;
+const DEFAULT_MAX_TARGET_COUNT = 20;
 const DEFAULT_OUTPUT_DIR = path.resolve(import.meta.dirname, "output");
 const BENCHMARK_WORKER_URL = new URL("./worker/index.ts", import.meta.url);
+
+interface QueuedBenchmarkTask {
+  description: string;
+  task: BenchmarkWorkerTask;
+  workUnits: bigint;
+}
+
+interface WorkerHandle {
+  close: () => Promise<void>;
+  run: (task: BenchmarkWorkerTask) => Promise<BenchmarkWorkerResult>;
+}
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -36,10 +49,31 @@ async function main(): Promise<void> {
   const workerCount = parseBenchmarkWorkerCount(values.workers);
   const outputDir = values["output-dir"] ? path.resolve(process.cwd(), values["output-dir"]) : DEFAULT_OUTPUT_DIR;
   const chartsDir = path.join(outputDir, "charts");
+  const progressReporter = createBenchmarkProgressReporter();
 
-  const statsByAlgorithm = await computeStatsByAlgorithm(maxTargetCount, workerCount);
+  const statsTasks = createComputeStatsTasks(maxTargetCount);
+  progressReporter.startPhase("Computing exhaustive runtime stats", statsTasks.length, sumTaskWorkUnits(statsTasks));
+  const statsResults = await runBenchmarkTasks(statsTasks, workerCount, (task, completedTaskCount) => {
+    progressReporter.update(task.workUnits, {
+      completedTaskCount,
+      currentTaskDescription: task.description,
+    });
+  });
+  progressReporter.finishPhase();
+  const statsByAlgorithm = collectComputedStats(statsResults, maxTargetCount);
+
   const results = buildBenchmarkResults(maxTargetCount, statsByAlgorithm);
-  const renderedCharts = await renderCharts(results.charts, workerCount);
+  const chartTasks = createRenderChartTasks(results.charts);
+  progressReporter.startPhase("Rendering charts", chartTasks.length, sumTaskWorkUnits(chartTasks));
+  const renderedCharts = collectRenderedCharts(
+    await runBenchmarkTasks(chartTasks, workerCount, (task, completedTaskCount) => {
+      progressReporter.update(task.workUnits, {
+        completedTaskCount,
+        currentTaskDescription: task.description,
+      });
+    }),
+  );
+  progressReporter.finishPhase();
 
   await mkdir(chartsDir, { recursive: true });
   await writeFile(path.join(outputDir, "results.json"), `${JSON.stringify(results, null, 2)}\n`, "utf8");
@@ -54,12 +88,13 @@ async function main(): Promise<void> {
     ),
   );
 
-  process.stdout.write(
+  stdout.write(
     [
       `compat-finder benchmark written to ${outputDir}`,
       `detectedCpuCount=${detectedCpuCount}`,
       `workerCount=${workerCount}`,
       `maxTargetCount=${maxTargetCount}`,
+      "benchmarkMode=exhaustive-runtime",
       `charts=${results.charts.length}`,
     ].join("\n"),
   );
@@ -78,68 +113,157 @@ function parseMaxTargetCount(rawValue: string | undefined): number {
   return parsed;
 }
 
-async function computeStatsByAlgorithm(
-  maxTargetCount: number,
-  workerCount: number,
-): Promise<ExactBenchmarkStatsByAlgorithm> {
-  if (workerCount <= 1) {
-    return computeStatsByAlgorithmLocally(maxTargetCount);
+function createComputeStatsTasks(maxTargetCount: number): QueuedBenchmarkTask[] {
+  const tasks: QueuedBenchmarkTask[] = [];
+
+  for (const algorithm of COMPATIBILITY_TEST_ALGORITHMS) {
+    for (let targetCount = 1; targetCount <= maxTargetCount; targetCount += 1) {
+      tasks.push({
+        description: `${algorithm} n=${targetCount}`,
+        task: {
+          type: "compute-target-count-stats",
+          algorithm,
+          targetCount,
+        },
+        workUnits: getExhaustiveWorkUnits(targetCount),
+      });
+    }
   }
 
-  const tasks = createComputeStatsTasks(maxTargetCount);
-  const results = await runWorkerTasks(tasks, workerCount);
-  return collectComputedStats(results);
+  return tasks;
 }
 
-function computeStatsByAlgorithmLocally(maxTargetCount: number): ExactBenchmarkStatsByAlgorithm {
-  return {
-    "binary-split": computeExactBenchmarkStatsForAlgorithm(maxTargetCount, "binary-split"),
-    "leave-one-out": computeExactBenchmarkStatsForAlgorithm(maxTargetCount, "leave-one-out"),
-  };
-}
-
-function createComputeStatsTasks(maxTargetCount: number): BenchmarkWorkerTask[] {
-  return COMPATIBILITY_TEST_ALGORITHMS.map((algorithm) => ({
-    type: "compute-algorithm-stats",
-    algorithm,
-    maxTargetCount,
+function createRenderChartTasks(charts: readonly BenchmarkChart[]): QueuedBenchmarkTask[] {
+  return charts.map((chart) => ({
+    description: chart.id,
+    task: {
+      type: "render-chart",
+      chart,
+    },
+    workUnits: 1n,
   }));
 }
 
-function collectComputedStats(results: readonly BenchmarkWorkerResult[]): ExactBenchmarkStatsByAlgorithm {
-  let binarySplitStats: ExactBenchmarkStatsByAlgorithm["binary-split"] | undefined;
-  let leaveOneOutStats: ExactBenchmarkStatsByAlgorithm["leave-one-out"] | undefined;
+function getExhaustiveWorkUnits(targetCount: number): bigint {
+  return (1n << BigInt(targetCount)) - 1n;
+}
+
+function sumTaskWorkUnits(tasks: readonly QueuedBenchmarkTask[]): bigint {
+  let totalWorkUnits = 0n;
+
+  for (const task of tasks) {
+    totalWorkUnits += task.workUnits;
+  }
+
+  return totalWorkUnits;
+}
+
+async function runBenchmarkTasks(
+  tasks: readonly QueuedBenchmarkTask[],
+  workerCount: number,
+  onTaskCompleted: (task: QueuedBenchmarkTask, completedTaskCount: number) => void,
+): Promise<BenchmarkWorkerResult[]> {
+  if (tasks.length === 0) {
+    return [];
+  }
+
+  return workerCount <= 1
+    ? runTasksLocally(tasks, onTaskCompleted)
+    : runTasksWithWorkers(tasks, workerCount, onTaskCompleted);
+}
+
+async function runTasksLocally(
+  tasks: readonly QueuedBenchmarkTask[],
+  onTaskCompleted: (task: QueuedBenchmarkTask, completedTaskCount: number) => void,
+): Promise<BenchmarkWorkerResult[]> {
+  const results: BenchmarkWorkerResult[] = [];
+
+  for (const [taskIndex, task] of tasks.entries()) {
+    results[taskIndex] = runTaskLocally(task.task);
+    onTaskCompleted(task, taskIndex + 1);
+  }
+
+  return results;
+}
+
+async function runTasksWithWorkers(
+  tasks: readonly QueuedBenchmarkTask[],
+  workerCount: number,
+  onTaskCompleted: (task: QueuedBenchmarkTask, completedTaskCount: number) => void,
+): Promise<BenchmarkWorkerResult[]> {
+  const results: BenchmarkWorkerResult[] = new Array(tasks.length);
+  const nextTaskIndex = createTaskIndexAllocator();
+  const workerPool = createWorkerPool(workerCount, tasks.length);
+  let completedTaskCount = 0;
+
+  try {
+    await Promise.all(
+      workerPool.map((workerHandle) =>
+        runWorkerLane(workerHandle, tasks, results, nextTaskIndex, (task) => {
+          completedTaskCount += 1;
+          onTaskCompleted(task, completedTaskCount);
+        }),
+      ),
+    );
+  } finally {
+    await Promise.all(workerPool.map((workerHandle) => workerHandle.close()));
+  }
+
+  return results;
+}
+
+function runTaskLocally(task: BenchmarkWorkerTask): BenchmarkWorkerResult {
+  switch (task.type) {
+    case "compute-target-count-stats":
+      return {
+        type: "compute-target-count-stats",
+        algorithm: task.algorithm,
+        stats: computeExhaustiveBenchmarkStatsForTargetCount(task.targetCount, task.algorithm),
+        targetCount: task.targetCount,
+      };
+    case "render-chart":
+      return {
+        type: "render-chart",
+        chartId: task.chart.id,
+        svg: renderBenchmarkChartSvg(task.chart),
+      };
+  }
+}
+
+function collectComputedStats(
+  results: readonly BenchmarkWorkerResult[],
+  maxTargetCount: number,
+): ExactBenchmarkStatsByAlgorithm {
+  const statsByAlgorithm = createEmptyStatsByAlgorithm(maxTargetCount);
 
   for (const result of results) {
-    assertComputeStatsWorkerResult(result);
-    if (result.algorithm === "binary-split") {
-      binarySplitStats = result.stats;
-      continue;
+    assertComputeTargetCountStatsWorkerResult(result);
+    statsByAlgorithm[result.algorithm][result.targetCount] = result.stats;
+  }
+
+  for (const algorithm of COMPATIBILITY_TEST_ALGORITHMS) {
+    for (let targetCount = 1; targetCount <= maxTargetCount; targetCount += 1) {
+      if (!statsByAlgorithm[algorithm][targetCount]) {
+        throw new Error(`Missing benchmark stats for ${algorithm} targetCount=${targetCount}`);
+      }
     }
-
-    leaveOneOutStats = result.stats;
   }
 
-  if (!binarySplitStats || !leaveOneOutStats) {
-    throw new Error("Missing benchmark stats from worker results");
-  }
+  return statsByAlgorithm;
+}
 
+function createEmptyStatsByAlgorithm(maxTargetCount: number): ExactBenchmarkStatsByAlgorithm {
   return {
-    "binary-split": binarySplitStats,
-    "leave-one-out": leaveOneOutStats,
+    "binary-split": new Array<ExactTargetCountStats | undefined>(
+      maxTargetCount + 1,
+    ) as ExactBenchmarkStatsByAlgorithm["binary-split"],
+    "leave-one-out": new Array<ExactTargetCountStats | undefined>(
+      maxTargetCount + 1,
+    ) as ExactBenchmarkStatsByAlgorithm["leave-one-out"],
   };
 }
 
-async function renderCharts(charts: readonly BenchmarkChart[], workerCount: number): Promise<Map<string, string>> {
-  if (workerCount <= 1) {
-    return new Map(charts.map((chart) => [chart.id, renderBenchmarkChartSvg(chart)]));
-  }
-
-  const tasks: BenchmarkWorkerTask[] = charts.map((chart) => ({
-    type: "render-chart",
-    chart,
-  }));
-  const results = await runWorkerTasks(tasks, workerCount);
+function collectRenderedCharts(results: readonly BenchmarkWorkerResult[]): Map<string, string> {
   return new Map(
     results.map((result) => {
       if (result.type !== "render-chart") {
@@ -149,29 +273,6 @@ async function renderCharts(charts: readonly BenchmarkChart[], workerCount: numb
       return [result.chartId, result.svg] as const;
     }),
   );
-}
-
-async function runWorkerTasks(tasks: BenchmarkWorkerTask[], workerCount: number): Promise<BenchmarkWorkerResult[]> {
-  if (tasks.length === 0) {
-    return [];
-  }
-
-  const results: BenchmarkWorkerResult[] = new Array(tasks.length);
-  const nextTaskIndex = createTaskIndexAllocator();
-  const workerPool = createWorkerPool(workerCount, tasks.length);
-
-  try {
-    await Promise.all(workerPool.map((workerHandle) => runWorkerLane(workerHandle, tasks, results, nextTaskIndex)));
-  } finally {
-    await Promise.all(workerPool.map((workerHandle) => workerHandle.close()));
-  }
-
-  return results;
-}
-
-interface WorkerHandle {
-  close: () => Promise<void>;
-  run: (task: BenchmarkWorkerTask) => Promise<BenchmarkWorkerResult>;
 }
 
 function createTaskIndexAllocator(): () => number {
@@ -190,25 +291,27 @@ function createWorkerPool(workerCount: number, taskCount: number): WorkerHandle[
 
 async function runWorkerLane(
   workerHandle: WorkerHandle,
-  tasks: readonly BenchmarkWorkerTask[],
+  tasks: readonly QueuedBenchmarkTask[],
   results: BenchmarkWorkerResult[],
   nextTaskIndex: () => number,
+  onTaskCompleted: (task: QueuedBenchmarkTask) => void,
 ): Promise<void> {
   while (true) {
     const taskIndex = nextTaskIndex();
-    const task = tasks[taskIndex];
-    if (!task) {
+    const queuedTask = tasks[taskIndex];
+    if (!queuedTask) {
       return;
     }
 
-    results[taskIndex] = await workerHandle.run(task);
+    results[taskIndex] = await workerHandle.run(queuedTask.task);
+    onTaskCompleted(queuedTask);
   }
 }
 
-function assertComputeStatsWorkerResult(
+function assertComputeTargetCountStatsWorkerResult(
   result: BenchmarkWorkerResult,
-): asserts result is Extract<BenchmarkWorkerResult, { type: "compute-algorithm-stats" }> {
-  if (result.type === "compute-algorithm-stats") {
+): asserts result is Extract<BenchmarkWorkerResult, { type: "compute-target-count-stats" }> {
+  if (result.type === "compute-target-count-stats") {
     return;
   }
 

@@ -1,12 +1,12 @@
 import { type CompatibilityTestAlgorithm } from "../../src/compatibility-test/index.ts";
 import { type BenchmarkChart, type ExactTargetCountStats } from "../types.ts";
 
-export type BenchmarkWorkerTask = ComputeAlgorithmStatsWorkerTask | RenderChartWorkerTask;
+export type BenchmarkWorkerTask = ComputeTargetCountStatsWorkerTask | RenderChartWorkerTask;
 
-export interface ComputeAlgorithmStatsWorkerTask {
-  type: "compute-algorithm-stats";
+export interface ComputeTargetCountStatsWorkerTask {
+  type: "compute-target-count-stats";
   algorithm: CompatibilityTestAlgorithm;
-  maxTargetCount: number;
+  targetCount: number;
 }
 
 export interface RenderChartWorkerTask {
@@ -14,12 +14,13 @@ export interface RenderChartWorkerTask {
   chart: BenchmarkChart;
 }
 
-export type BenchmarkWorkerResult = ComputeAlgorithmStatsWorkerResult | RenderChartWorkerResult;
+export type BenchmarkWorkerResult = ComputeTargetCountStatsWorkerResult | RenderChartWorkerResult;
 
-export interface ComputeAlgorithmStatsWorkerResult {
-  type: "compute-algorithm-stats";
+export interface ComputeTargetCountStatsWorkerResult {
+  type: "compute-target-count-stats";
   algorithm: CompatibilityTestAlgorithm;
-  stats: ExactTargetCountStats[];
+  stats: ExactTargetCountStats;
+  targetCount: number;
 }
 
 export interface RenderChartWorkerResult {

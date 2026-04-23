@@ -1,7 +1,7 @@
 import { parentPort } from "node:worker_threads";
 
 import { renderBenchmarkChartSvg } from "../charts/svg.ts";
-import { computeExactBenchmarkStatsForAlgorithm } from "../stats.ts";
+import { computeExhaustiveBenchmarkStatsForTargetCount } from "../exhaustive-stats.ts";
 import { type BenchmarkWorkerResult, type BenchmarkWorkerTask } from "./protocol.ts";
 
 const port = parentPort;
@@ -16,11 +16,12 @@ port.on("message", (task: BenchmarkWorkerTask) => {
 
 function runTask(task: BenchmarkWorkerTask): BenchmarkWorkerResult {
   switch (task.type) {
-    case "compute-algorithm-stats":
+    case "compute-target-count-stats":
       return {
-        type: "compute-algorithm-stats",
+        type: "compute-target-count-stats",
         algorithm: task.algorithm,
-        stats: computeExactBenchmarkStatsForAlgorithm(task.maxTargetCount, task.algorithm),
+        stats: computeExhaustiveBenchmarkStatsForTargetCount(task.targetCount, task.algorithm),
+        targetCount: task.targetCount,
       };
     case "render-chart":
       return {

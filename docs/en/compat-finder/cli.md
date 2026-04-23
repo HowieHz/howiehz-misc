@@ -45,6 +45,8 @@ Both CLI subcommands accept `--algorithm <name>` and `--algo <name>`.
 - `binary-split`: the default troubleshooting algorithm
 - `leave-one-out`: test by excluding one target per round
 
+To learn more about the difference between these two algorithms, see [Algorithm Performance](./algorithm-performance).
+
 ## Commands
 
 ### `interactive`

@@ -55,6 +55,8 @@
 - 默认用法：`createCompatibilitySession(targets)`
 - 切换示例：`createCompatibilitySession(targets, { algorithm: "leave-one-out" })`
 
+想了解更多关于这两个算法的区别，请阅读 [算法性能](./algorithm-performance)。
+
 ## 高级 API
 
 底层 API 暴露了基于范围的可变状态机，适合自定义 UI、持久化和诊断场景。

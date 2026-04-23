@@ -2,13 +2,17 @@ import { type BenchmarkChart, type BenchmarkChartPoint, type BenchmarkChartSerie
 
 const FONT_FAMILY = "'IBM Plex Sans', 'Segoe UI', sans-serif";
 const CHART_WIDTH = 1400;
-const CHART_HEIGHT = 880;
+const CHART_HEIGHT = 1080;
 const X_AXIS_TICK_STEP = 200;
+const LEGEND_COLUMNS = 3;
+const LEGEND_COLUMN_WIDTH = 340;
+const LEGEND_ROW_HEIGHT = 50;
+const LEGEND_LINE_WIDTH = 32;
 const CHART_MARGIN = {
   top: 120,
   right: 56,
-  bottom: 78,
-  left: 96,
+  bottom: 240,
+  left: 104,
 };
 const COLOR_BY_SERIES_KEY = {
   "binary-split:min": "#93c5fd",
@@ -66,6 +70,9 @@ export function renderBenchmarkChartSvg(chart: BenchmarkChart): string {
   const yRange = Math.max(yMax, 1);
   const xTickValues = getFixedStepTicks(xMin, xMax, X_AXIS_TICK_STEP);
   const yTickValues = getLinearTicks(yMax, 6);
+  const legendStartX =
+    CHART_MARGIN.left + Math.max((plotWidth - LEGEND_COLUMNS * LEGEND_COLUMN_WIDTH) / 2, 0);
+  const legendStartY = CHART_MARGIN.top + plotHeight + 126;
 
   const gridLines = yTickValues
     .map((tickValue) => {
@@ -98,16 +105,16 @@ export function renderBenchmarkChartSvg(chart: BenchmarkChart): string {
   const legendItems = chart.series.flatMap((series, seriesIndex) =>
     CHART_LINE_METRICS.map((metric, metricIndex) => {
       const legendIndex = seriesIndex * CHART_LINE_METRICS.length + metricIndex;
-      const column = legendIndex % 3;
-      const row = Math.floor(legendIndex / 3);
-      const x = CHART_MARGIN.left + column * 250;
-      const y = 54 + row * 28;
+      const column = legendIndex % LEGEND_COLUMNS;
+      const row = Math.floor(legendIndex / LEGEND_COLUMNS);
+      const x = legendStartX + column * LEGEND_COLUMN_WIDTH;
+      const y = legendStartY + row * LEGEND_ROW_HEIGHT;
       const color = COLOR_BY_SERIES_KEY[`${series.algorithm}:${metric.key}`];
       const dasharray = STROKE_DASHARRAY_BY_METRIC[metric.key];
 
       return [
-        `<line x1="${x}" y1="${y}" x2="${x + 28}" y2="${y}" stroke="${color}" stroke-width="4" stroke-linecap="round"${dasharray === "none" ? "" : ` stroke-dasharray="${dasharray}"`} />`,
-        `<text x="${x + 38}" y="${y + 5}" class="legend-text">${escapeXml(`${series.algorithm} ${metric.label}`)}</text>`,
+        `<line x1="${x}" y1="${y}" x2="${x + LEGEND_LINE_WIDTH}" y2="${y}" stroke="${color}" stroke-width="4" stroke-linecap="round"${dasharray === "none" ? "" : ` stroke-dasharray="${dasharray}"`} />`,
+        `<text x="${x + LEGEND_LINE_WIDTH + 14}" y="${y + 6}" class="legend-text">${escapeXml(`${series.algorithm} ${metric.label}`)}</text>`,
       ].join("");
     }),
   );
@@ -122,27 +129,27 @@ export function renderBenchmarkChartSvg(chart: BenchmarkChart): string {
       font-family: ${FONT_FAMILY};
     }
     .title {
-      font-size: 28px;
+      font-size: 46px;
       font-weight: 700;
     }
     .subtitle {
       fill: #475569;
-      font-size: 15px;
+      font-size: 28px;
     }
     .axis-title {
       fill: #334155;
-      font-size: 14px;
+      font-size: 24px;
       font-weight: 600;
       letter-spacing: 0.03em;
       text-transform: uppercase;
     }
     .axis-label {
       fill: #475569;
-      font-size: 13px;
+      font-size: 22px;
     }
     .legend-text {
       fill: #1e293b;
-      font-size: 13px;
+      font-size: 24px;
       font-weight: 600;
     }
     .grid {
@@ -166,16 +173,16 @@ export function renderBenchmarkChartSvg(chart: BenchmarkChart): string {
     </linearGradient>
   </defs>
   <rect width="${CHART_WIDTH}" height="${CHART_HEIGHT}" fill="#ffffff" />
-  <text x="${CHART_MARGIN.left}" y="42" class="title">${escapeXml(chart.title)}</text>
-  <text x="${CHART_MARGIN.left}" y="72" class="subtitle">${escapeXml(chart.description)}</text>
-  ${legendItems.join("")}
+  <text x="${CHART_MARGIN.left}" y="54" class="title">${escapeXml(chart.title)}</text>
+  <text x="${CHART_MARGIN.left}" y="94" class="subtitle">${escapeXml(chart.description)}</text>
   <rect x="${CHART_MARGIN.left}" y="${CHART_MARGIN.top}" width="${plotWidth}" height="${plotHeight}" class="plot-bg" />
   ${gridLines}
   <line x1="${CHART_MARGIN.left}" y1="${CHART_MARGIN.top + plotHeight}" x2="${CHART_MARGIN.left + plotWidth}" y2="${CHART_MARGIN.top + plotHeight}" class="axis" />
   <line x1="${CHART_MARGIN.left}" y1="${CHART_MARGIN.top}" x2="${CHART_MARGIN.left}" y2="${CHART_MARGIN.top + plotHeight}" class="axis" />
   ${xTicks}
   ${linePaths.join("")}
-  <text x="${CHART_MARGIN.left + plotWidth / 2}" y="${CHART_HEIGHT - 20}" text-anchor="middle" class="axis-title">${escapeXml(chart.xAxisLabel)}</text>
+  <text x="${CHART_MARGIN.left + plotWidth / 2}" y="${CHART_MARGIN.top + plotHeight + 82}" text-anchor="middle" class="axis-title">${escapeXml(chart.xAxisLabel)}</text>
+  ${legendItems.join("")}
   <text x="28" y="${CHART_MARGIN.top + plotHeight / 2}" transform="rotate(-90 28 ${CHART_MARGIN.top + plotHeight / 2})" text-anchor="middle" class="axis-title">${escapeXml(chart.yAxisLabel)}</text>
 </svg>`;
 
@@ -219,6 +226,10 @@ function getFixedStepTicks(min: number, max: number, step: number): number[] {
   const firstAlignedTick = Math.ceil(min / step) * step;
 
   for (let value = firstAlignedTick; value <= max; value += step) {
+    if (value !== min && value !== max && max - value < step * 0.2) {
+      continue;
+    }
+
     tickValues.add(value);
   }
 

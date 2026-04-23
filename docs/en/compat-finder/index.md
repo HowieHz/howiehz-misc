@@ -20,11 +20,12 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 
 ## Reading Guide
 
-- [Getting Started](./getting-started): runtime requirements, installation, and the shortest path to using the library or CLI
-- [Work with AI](./ai): Agent Skill installation and prompt examples
-- [Online Tool](./online-tool): hosted demo and source location
-- [CLI](./cli): help output, locale handling, algorithms, and commands
-- [API Reference](./api): session API, low-level state API, range utilities, and key types
+- [Getting Started](./getting-started): complete one troubleshooting run first and learn the basics of the library and CLI
+- [Work with AI](./ai): use AI to organize targets, generate commands, or integrate the troubleshooting flow
+- [Online Tool](./online-tool): start a troubleshooting run in the browser without installing anything
+- [CLI](./cli): check the basic CLI workflow, common commands, and available options
+- [API Reference](./api): integrate `compat-finder` into your own project or tooling
+- [Algorithm Performance](./algorithm-performance): compare the two algorithms and decide when to switch
 
 ## Related Projects
 

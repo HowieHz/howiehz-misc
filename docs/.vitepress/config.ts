@@ -65,6 +65,7 @@ const ROOT_COMPAT_FINDER_SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "在线版", link: "/compat-finder/online-tool" },
       { text: "命令行工具", link: "/compat-finder/cli" },
       { text: "API 参考", link: "/compat-finder/api" },
+      { text: "算法性能", link: "/compat-finder/algorithm-performance" },
     ],
   },
 ];
@@ -79,6 +80,7 @@ const EN_COMPAT_FINDER_SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Online Tool", link: "/en/compat-finder/online-tool" },
       { text: "CLI", link: "/en/compat-finder/cli" },
       { text: "API Reference", link: "/en/compat-finder/api" },
+      { text: "Algorithm Performance", link: "/en/compat-finder/algorithm-performance" },
     ],
   },
 ];

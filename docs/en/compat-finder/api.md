@@ -55,6 +55,8 @@ Only pass `algorithm` when you want to switch strategies.
 - Default usage: `createCompatibilitySession(targets)`
 - Switching example: `createCompatibilitySession(targets, { algorithm: "leave-one-out" })`
 
+To learn more about the difference between these two algorithms, see [Algorithm Performance](./algorithm-performance).
+
 ## Advanced API
 
 The lower-level API exposes the mutable range-based state machine for custom UIs, persistence, and diagnostics.

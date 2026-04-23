@@ -45,6 +45,8 @@ CLI 文案可以通过命令行参数或环境变量设置输出语言。
 - `binary-split`：默认排查算法
 - `leave-one-out`：每轮排除 1 个目标进行测试
 
+想了解更多关于这两个算法的区别，请阅读 [算法性能](./algorithm-performance)。
+
 ## 子命令
 
 ### `interactive`

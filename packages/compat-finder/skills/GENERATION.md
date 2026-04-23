@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `f9c9600e20c7348ff7149a22afaaea2da574310e`
-- **Date**: 2026-04-23
-- **Commit**: feat(compat-finder): add leave-one-out algorithm
+- **Commit SHA**: `1c63ca1d8a38a89a45ce3cd5cd5bef623198faed`
+- **Date**: 2026-04-24
+- **Commit**: Inline online tool links in docs and READMEs
 
 **Source documentation:**
 
@@ -18,7 +18,7 @@ This document contains information about how these skills were generated and how
 - Tests: `/packages/compat-finder/__tests__`
 - Package manifest: `/packages/compat-finder/package.json`
 
-**Generation date**: 2026-04-23
+**Generation date**: 2026-04-24
 
 ## Structure
 
@@ -59,13 +59,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff f9c9600..HEAD -- packages/compat-finder/
+git diff 1c63ca1d..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only f9c9600..HEAD -- packages/compat-finder/
+git diff --name-only 1c63ca1d..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline f9c9600..HEAD -- packages/compat-finder/
+git log --oneline 1c63ca1d..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -105,6 +105,7 @@ Record which models were used to validate the current skill revision and what wa
 
 | Date       | Models  | Coverage                                                                                                                                | Result | Notes                                                                                                                     |
 | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-24 | gpt-5   | Manual review of README/doc wording sync, algorithm-choice guidance, and high-level API wording across skill references                | Pass   | Updated skill references to keep `binary-split` as the default recommendation when unsure and to clarify session-step wording. |
 | 2026-04-23 | gpt-5   | Manual review of algorithm-selection docs, README/skill synchronization, and English/Chinese wording after `leave-one-out` was added    | Pass   | Verified the README, skill references, and CLI/help wording against the feature commit before the follow-up wording pass. |
 | 2026-04-22 | gpt-5.4 | Manual spot-check of CLI next-target guidance, CLI extra-answer metadata handling, session integration, and persistence/resume guidance | Pass   | Matched expected routing and semantics on all 4 sampled prompts. Add more rows when Haiku/Sonnet/Opus coverage is run.    |
 
@@ -121,6 +122,7 @@ Record which models were used to validate the current skill revision and what wa
 
 | Date       | SHA     | Changes                                                                                                  |
 | ---------- | ------- | -------------------------------------------------------------------------------------------------------- |
+| 2026-04-24 | 1c63ca1d | Refresh skill-reference wording after README/docs reorganization and update generation metadata          |
 | 2026-04-23 | f9c9600 | Add `leave-one-out`, refresh CLI/API/skill docs, and record the generated-skill baseline for the feature |
 | 2026-04-23 | 9a41b17 | Add algorithm selection, document `leave-one-out`, and refresh generated skill/docs                      |
 | 2026-04-22 | 2fd8a45 | Return `extraAnswerCount`, add `getNextAnswerableCompatibilityTestStep`, and refresh skill/docs wording  |
@@ -133,5 +135,5 @@ Record which models were used to validate the current skill revision and what wa
 
 ---
 
-Last updated: 2026-04-23
-Current SHA: f9c9600
+Last updated: 2026-04-24
+Current SHA: 1c63ca1d

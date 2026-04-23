@@ -18,6 +18,13 @@ The crossover point is around `13.77%`; below that, in most cases, the worst cas
 
 **Conclusion:** `binary-split` remains the default because, in real troubleshooting, the failing share is more often small.
 
+## How to Choose
+
+- You expect to end up with only a few incompatible targets: prefer `binary-split`
+- You expect to end up with many incompatible targets: consider `leave-one-out`
+- You are unsure: start with the default `binary-split`
+- You want to see how to switch algorithms in practice: continue with [CLI](./cli#algorithms) and [API Reference](./api#algorithm-selection)
+
 ## Overall Trend
 
 The chart below summarizes the overall behavior across all non-empty result sets.
@@ -53,10 +60,3 @@ Around `22.83%`, the average-case advantage starts to flip.
 When the final result is close to "almost everything is incompatible," `leave-one-out` becomes more predictable and often uses fewer rounds.
 
 ![Round-count comparison when the final result set covers all targets](/compat-finder/pick-all.svg)
-
-## How to Choose
-
-- You expect to end up with only a few incompatible targets: prefer `binary-split`
-- You expect to end up with many incompatible targets: consider `leave-one-out`
-- You are unsure: start with the default `binary-split`
-- You want to see how to switch algorithms in practice: continue with [CLI](./cli#algorithms) and [API Reference](./api#algorithm-selection)

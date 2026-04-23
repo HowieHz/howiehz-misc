@@ -16,37 +16,6 @@ compat-finder --help interactive
 compat-finder --help next
 ```
 
-## Locale
-
-CLI messages can be localized with a command-line option or environment variables.
-
-Priority:
-
-1. Command-line option: `--locale` / `-l`
-2. Environment variable: `COMPAT_FINDER_LOCALE`
-3. Environment variable: `LC_ALL`
-4. Environment variable: `LC_MESSAGES`
-5. Environment variable: `LANG`
-6. Default: `en`
-
-Supported locales:
-
-- `en`
-- `zh-Hans`
-
-Legacy Simplified Chinese locale tags such as `zh-CN` and `zh-SG` are normalized to `zh-Hans`.  
-Unsupported explicit values, including other Chinese variants such as `zh-TW` and `zh-Hant`, are rejected instead of being silently switched to English.  
-Unsupported locale values from environment variables are ignored while the resolver continues through the priority list and finally falls back to `en`.
-
-## Algorithms
-
-Both CLI subcommands accept `--algorithm <name>` and `--algo <name>`.
-
-- `binary-split`: the default troubleshooting algorithm
-- `leave-one-out`: test by excluding one target per round
-
-To learn more about the difference between these two algorithms, see [Algorithm Performance](./algorithm-performance).
-
 ## Commands
 
 ### `interactive`
@@ -145,3 +114,34 @@ Expected JSON output:
   "targets": ["Alpha", "Beta"]
 }
 ```
+
+## Locale
+
+CLI messages can be localized with a command-line option or environment variables.
+
+Priority:
+
+1. Command-line option: `--locale` / `-l`
+2. Environment variable: `COMPAT_FINDER_LOCALE`
+3. Environment variable: `LC_ALL`
+4. Environment variable: `LC_MESSAGES`
+5. Environment variable: `LANG`
+6. Default: `en`
+
+Supported locales:
+
+- `en`
+- `zh-Hans`
+
+Legacy Simplified Chinese locale tags such as `zh-CN` and `zh-SG` are normalized to `zh-Hans`.  
+Unsupported explicit values, including other Chinese variants such as `zh-TW` and `zh-Hant`, are rejected instead of being silently switched to English.  
+Unsupported locale values from environment variables are ignored while the resolver continues through the priority list and finally falls back to `en`.
+
+## Algorithms
+
+Both CLI subcommands accept `--algorithm <name>` and `--algo <name>`.
+
+- `binary-split`: the default troubleshooting algorithm
+- `leave-one-out`: test by excluding one target per round
+
+To learn more about the difference between these two algorithms, see [Algorithm Performance](./algorithm-performance).

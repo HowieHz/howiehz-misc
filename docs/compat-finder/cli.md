@@ -16,37 +16,6 @@ compat-finder --help interactive
 compat-finder --help next
 ```
 
-## 输出语言
-
-CLI 文案可以通过命令行参数或环境变量设置输出语言。
-
-优先级：
-
-1. 命令行参数：`--locale` / `-l`
-2. 环境变量：`COMPAT_FINDER_LOCALE`
-3. 环境变量：`LC_ALL`
-4. 环境变量：`LC_MESSAGES`
-5. 环境变量：`LANG`
-6. 默认值：`en`
-
-支持的语言：
-
-- `en`
-- `zh-Hans`
-
-兼容旧的简体中文 locale 标签，例如 `zh-CN` 与 `zh-SG` 会被归一化为 `zh-Hans`。  
-显式传入不支持的值时会直接报错，包括 `zh-TW`、`zh-Hant` 等其他中文变体，不会静默切换到英文。  
-环境变量中的不支持值会被忽略，并继续按优先级查找；如果最终没有匹配到支持语言，则回退到 `en`。
-
-## 算法
-
-两个 CLI 子命令都支持 `--algorithm <名称>` 和 `--algo <名称>`。
-
-- `binary-split`：默认排查算法
-- `leave-one-out`：每轮排除 1 个目标进行测试
-
-想了解更多关于这两个算法的区别，请阅读 [算法性能](./algorithm-performance)。
-
 ## 子命令
 
 ### `interactive`
@@ -145,3 +114,34 @@ compat-finder next -c 3 -a "y,n,n"
   "targets": ["目标 1", "目标 2"]
 }
 ```
+
+## 输出语言
+
+CLI 文案可以通过命令行参数或环境变量设置输出语言。
+
+优先级：
+
+1. 命令行参数：`--locale` / `-l`
+2. 环境变量：`COMPAT_FINDER_LOCALE`
+3. 环境变量：`LC_ALL`
+4. 环境变量：`LC_MESSAGES`
+5. 环境变量：`LANG`
+6. 默认值：`en`
+
+支持的语言：
+
+- `en`
+- `zh-Hans`
+
+兼容旧的简体中文 locale 标签，例如 `zh-CN` 与 `zh-SG` 会被归一化为 `zh-Hans`。  
+显式传入不支持的值时会直接报错，包括 `zh-TW`、`zh-Hant` 等其他中文变体，不会静默切换到英文。  
+环境变量中的不支持值会被忽略，并继续按优先级查找；如果最终没有匹配到支持语言，则回退到 `en`。
+
+## 算法
+
+两个 CLI 子命令都支持 `--algorithm <名称>` 和 `--algo <名称>`。
+
+- `binary-split`：默认排查算法
+- `leave-one-out`：每轮排除 1 个目标进行测试
+
+想了解更多关于这两个算法的区别，请阅读 [算法性能](./algorithm-performance)。

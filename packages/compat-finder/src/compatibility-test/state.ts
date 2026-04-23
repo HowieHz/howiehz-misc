@@ -53,7 +53,7 @@ const COMPATIBILITY_TEST_ALGORITHM_DEFINITIONS = {
 };
 
 /**
- * Creates a new compatibility test session.
+ * Creates a new low-level compatibility test state object.
  *
  * @param targetCount The total number of targets to evaluate. Must be an integer greater than or equal to 1.
  * @param options Optional engine configuration. Defaults to the existing `binary-split` algorithm.

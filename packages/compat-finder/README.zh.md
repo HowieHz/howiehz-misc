@@ -87,7 +87,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
-如果你想按“每轮排除 1 个目标”的方式测试，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`；默认算法仍然是 `binary-split`。
+如果你想使用“每轮排除 1 个目标”的测试方式，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`；默认算法仍然是 `binary-split`。
 
 更多导出 API 见 [API 参考](#api-参考)。
 
@@ -226,13 +226,13 @@ CLI 文案可以通过命令行参数或环境变量设置输出语言。
 - `binary-split`：默认缩小范围算法
 - `leave-one-out`：每轮排除 1 个目标进行测试
 
-示例：
+例如：
 
 ```bash
 compat-finder interactive -c 5 --algo leave-one-out
 ```
 
-示例：
+语言示例：
 
 ```bash
 compat-finder --locale zh-Hans --help

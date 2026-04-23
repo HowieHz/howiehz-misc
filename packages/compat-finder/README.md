@@ -87,7 +87,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
-Pass `{ algorithm: "leave-one-out" }` as the second argument when you want to test by excluding one target at a time instead of using the default `binary-split` search.
+Pass `{ algorithm: "leave-one-out" }` as the second argument to use a leave-one-out workflow instead of the default `binary-split` search.
 
 See [API Reference](#api-reference) for the full exported API.
 
@@ -226,13 +226,13 @@ Both CLI subcommands accept `--algorithm <name>` and `--algo <name>`.
 - `binary-split`: the default narrowing strategy
 - `leave-one-out`: test by excluding one target per round
 
-Example:
+For example:
 
 ```bash
 compat-finder interactive -c 5 --algo leave-one-out
 ```
 
-Examples:
+Locale examples:
 
 ```bash
 compat-finder --locale zh-Hans --help

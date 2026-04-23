@@ -73,14 +73,14 @@ If the user explicitly needs to resume after refresh, restart, or in another pro
 
 ## Algorithm Selection
 
-Compatibility test creation accepts an optional algorithm:
+Session and state creation accept an optional algorithm:
 
 - `binary-split`:
   default search strategy
 - `leave-one-out`:
   exclude one target per round
 
-Examples:
+For example:
 
 ```ts
 const session = createCompatibilitySession(targets, {
@@ -100,7 +100,7 @@ Keep `binary-split` as the default recommendation otherwise.
 ## Lower-Level State API
 
 These lower-level helpers are exported from the public `compat-finder` package entrypoint.
-The implementation currently lives under `src/compatibility-test/`, but integration code should import from `compat-finder`:
+The public helpers are implemented under `src/compatibility-test/`, but consumers should still import them from `compat-finder`:
 
 ```ts
 import {
@@ -113,7 +113,6 @@ import {
 
 Key lower-level helpers:
 
-- `createCompatibilityTestState(targetCount)`
 - `createCompatibilityTestState(targetCount, options?)`
 - `getNextAnswerableCompatibilityTestStep(state)`
 - `getCurrentCompatibilityTestStep(state)`
@@ -148,7 +147,7 @@ Use the lower-level state API when the caller explicitly needs:
 
 ## Persistence Notes
 
-Persistence note:
+Persistence considerations:
 
 - `createCompatibilitySession(targets)` does not expose a restorable state object, so it is not the right default when the caller needs save/resume behavior.
 - `CompatibilityTestState.cachedResults` is a `Map<string, boolean>`, so a direct `JSON.stringify(state)` will not preserve it correctly.

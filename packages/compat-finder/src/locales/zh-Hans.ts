@@ -1,9 +1,9 @@
 import type { CliMessages } from "./types.ts";
 
 export const zhHansMessages: CliMessages = {
-  algorithmOptionDescription: "兼容性测试算法：binary-split 或 leave-one-out",
+  algorithmOptionDescription: "要使用的算法：binary-split 或 leave-one-out",
   aliasesTitle: "别名",
-  commandTitle: (command) => `兼容性问题排查命令行工具：${command}`,
+  commandTitle: (command) => `兼容性问题排查器：${command}`,
   commands: {
     interactive: {
       description: "启动交互式排查流程",
@@ -15,10 +15,10 @@ export const zhHansMessages: CliMessages = {
       extraSections: [
         {
           lines: [
-            "CLI 会逐轮给出需要测试的目标。",
-            "你只需要根据实际结果输入：",
-            "  y / yes / issue / 1 / true    表示“有兼容性问题”",
-            "  n / no / pass / 0 / false     表示“没有兼容性问题”",
+            "CLI 会在每一轮输出需要测试的目标。",
+            "请根据实际测试结果输入：",
+            "  y / yes / issue / 1 / true    表示“会复现问题”",
+            "  n / no / pass / 0 / false     表示“不会复现问题”",
             "  u / undo                      撤回上一步",
             "  q / quit                      退出",
           ],
@@ -30,19 +30,19 @@ export const zhHansMessages: CliMessages = {
     },
     next: {
       answerHelpLines: [
-        "y / yes / issue / 1 / true      表示“有兼容性问题”",
-        "n / no / pass / 0 / false       表示“没有兼容性问题”",
+        "y / yes / issue / 1 / true      表示“会复现问题”",
+        "n / no / pass / 0 / false       表示“不会复现问题”",
       ],
       answerOptionDescription: "已有回答列表，使用英文逗号分隔；可选",
-      description: "执行单步排查并输出结果",
+      description: "计算下一步并输出结果",
       exampleLines: ['--answers "issue,pass,1,0"', '--algorithm "leave-one-out"'],
       extraSections: [],
       namesOptionDescription: "目标名称列表，使用英文逗号分隔；可选",
       outputExampleTitle: "单步模式输出示例（3 个目标）",
       outputFieldLines: [
-        "status                 testing 表示当前需要按 targets 列表进行测试；complete 表示已经得到最终结果",
+        "status                 testing 表示当前列出的 targets 需要继续测试；complete 表示已经得到最终结果",
         "targetCount            本轮排查的测试目标总数",
-        "targets                testing 时表示当前需要测试的目标列表；complete 时表示最终结果列表",
+        "targets                testing 时表示下一步要测试的目标列表；complete 时表示最终结果列表",
         "extraAnswerCount       可选。仅在结果为 complete 且有多余答案时返回",
       ],
       outputFieldTitle: "返回字段说明",
@@ -76,16 +76,16 @@ export const zhHansMessages: CliMessages = {
     invalidInput: "无效输入。请输入 y/n、issue/pass、1/0、true/false、u 或 q。",
     promptTargetCount: (count) => `本次请测试 ${count} 个目标：`,
     restoredPreviousStep: "已撤回到上一步。",
-    start: (count) => `已开始兼容性问题排查，共 ${count} 个目标。`,
+    start: (count) => `已开始兼容性排查，共有 ${count} 个目标。`,
     usageHint: "输入 y/n、issue/pass、1/0 或 true/false 回答是否复现问题，输入 u 撤回上一步，输入 q 退出。",
   },
   localeOptionDescription: "设置输出语言：en 或 zh-Hans",
   optionsTitle: "参数",
   result: {
-    completeWithIssues: (count) => `测试完成，下列 ${count} 个目标有兼容性问题：`,
-    completeWithoutIssues: "测试完成，不存在兼容性问题。",
+    completeWithIssues: (count) => `测试完成，以下 ${count} 个目标不兼容：`,
+    completeWithoutIssues: "测试完成，未发现不兼容目标。",
   },
-  rootTitle: "兼容性问题排查命令行工具",
+  rootTitle: "兼容性问题排查器",
   rootUsage: "compat-finder <子命令> [参数]",
   subcommandsTitle: "子命令",
   usageTitle: "用法",

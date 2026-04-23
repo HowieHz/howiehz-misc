@@ -1,6 +1,6 @@
 ---
 name: compat-finder
-description: Handles compat-finder CLI triage and TypeScript integrations. Triggers when the user is using compat-finder, continuing a compat-finder narrowing session, interpreting `interactive` or `next` output or CLI parser errors, choosing between guided and automatic triage, selecting `binary-split` versus `leave-one-out`, or turning ordered versions, plugins, mods, flags, or config targets into a compat-finder workflow. Also covers locale, undo, accepted answers, extra-answer validation, persistence, save/resume, and session API versus lower-level state API questions. Excludes generic test planning, git bisect, and unrelated troubleshooting.
+description: Handles compat-finder CLI triage and TypeScript integrations. Triggers when the user is using compat-finder, continuing a compat-finder narrowing session, interpreting `interactive` or `next` output or CLI parser errors, choosing between guided and automatic triage, selecting between `binary-split` and `leave-one-out`, or turning ordered versions, plugins, mods, flags, or config targets into a compat-finder workflow. Also covers locale, undo, accepted answers, extra-answer validation, persistence, save/resume, and session API versus lower-level state API questions. Excludes generic test planning, git bisect, and unrelated troubleshooting.
 ---
 
 # Compat Finder

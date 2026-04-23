@@ -46,7 +46,7 @@ Built-in CLI algorithms:
 - `binary-split`:
   default narrowing strategy
 - `leave-one-out`:
-  exclude one target per round and treat a passing exclusion as evidence that the excluded target belongs in `definedTargets`
+  exclude one target at a time and treat a passing exclusion as evidence that the excluded target belongs in `definedTargets`
 
 Switch algorithms with `--algorithm <name>` or `--algo <name>`.
 
@@ -80,7 +80,7 @@ Accepted answer values:
 
 ## Triage Modes
 
-Use this mode split before answering:
+Choose a mode before answering:
 
 - interactive guided triage:
   the user runs the real test manually after each round, and the agent should compute the next targets and ask for `issue` or `pass`.

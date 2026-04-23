@@ -1,9 +1,9 @@
 import type { CliMessages } from "./types.ts";
 
 export const enMessages: CliMessages = {
-  algorithmOptionDescription: "Compatibility test algorithm: binary-split or leave-one-out",
+  algorithmOptionDescription: "Algorithm to use: binary-split or leave-one-out",
   aliasesTitle: "Alias",
-  commandTitle: (command) => `Compatibility Issue Finder CLI: ${command}`,
+  commandTitle: (command) => `Compatibility Issue Finder: ${command}`,
   commands: {
     interactive: {
       description: "Start an interactive compatibility check",
@@ -15,10 +15,10 @@ export const enMessages: CliMessages = {
       extraSections: [
         {
           lines: [
-            "The CLI will show the targets to test in each round.",
-            "Enter the actual test result:",
-            '  y / yes / issue / 1 / true    means "has a compatibility issue"',
-            '  n / no / pass / 0 / false     means "has no compatibility issue"',
+            "The CLI prints the targets to test in each round.",
+            "Enter the observed result:",
+            '  y / yes / issue / 1 / true    means "the issue reproduces"',
+            '  n / no / pass / 0 / false     means "the issue does not reproduce"',
             "  u / undo                      undo the previous step",
             "  q / quit                      quit",
           ],
@@ -30,19 +30,19 @@ export const enMessages: CliMessages = {
     },
     next: {
       answerHelpLines: [
-        'y / yes / issue / 1 / true      means "has a compatibility issue"',
-        'n / no / pass / 0 / false       means "has no compatibility issue"',
+        'y / yes / issue / 1 / true      means "the issue reproduces"',
+        'n / no / pass / 0 / false       means "the issue does not reproduce"',
       ],
       answerOptionDescription: "Existing answers, separated by commas; optional",
-      description: "Run one step and print the result",
+      description: "Compute the next step and print the result",
       exampleLines: ['--answers "issue,pass,1,0"', '--algorithm "leave-one-out"'],
       extraSections: [],
       namesOptionDescription: "Target names, separated by commas; optional",
       outputExampleTitle: "Single-step output example (3 targets)",
       outputFieldLines: [
-        "status                 testing means the targets list should be tested now; complete means the final result is ready",
+        "status                 testing means the listed targets should be tested next; complete means the final result is ready",
         "targetCount            Total number of targets in this session",
-        "targets                In testing status, the targets to test now; in complete status, the final result list",
+        "targets                In testing status, the targets to test next; in complete status, the final result list",
         "extraAnswerCount       Optional. Returned only when status is complete and extra answers were provided",
       ],
       outputFieldTitle: "Output fields",
@@ -76,16 +76,16 @@ export const enMessages: CliMessages = {
     invalidInput: "Invalid input. Enter y/n, issue/pass, 1/0, true/false, u, or q.",
     promptTargetCount: (count) => `Test ${count} target(s) this round:`,
     restoredPreviousStep: "Restored the previous step.",
-    start: (count) => `Started compatibility issue finding with ${count} target(s).`,
+    start: (count) => `Started a compatibility check with ${count} target(s).`,
     usageHint: "Enter y/n, issue/pass, 1/0, or true/false; use u to undo or q to quit.",
   },
   localeOptionDescription: "Set output locale: en or zh-Hans",
   optionsTitle: "Options",
   result: {
-    completeWithIssues: (count) => `Test complete. The following ${count} target(s) have compatibility issues:`,
-    completeWithoutIssues: "Test complete. No compatibility issues found.",
+    completeWithIssues: (count) => `Test complete. The following ${count} target(s) are incompatible:`,
+    completeWithoutIssues: "Test complete. No incompatible targets found.",
   },
-  rootTitle: "Compatibility Issue Finder CLI",
+  rootTitle: "Compatibility Issue Finder",
   rootUsage: "compat-finder <subcommand> [options]",
   subcommandsTitle: "Subcommands",
   usageTitle: "Usage",

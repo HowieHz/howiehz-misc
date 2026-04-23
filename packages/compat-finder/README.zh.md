@@ -101,9 +101,11 @@ npx compat-finder next -c 3 -a "y,n"
 
 如果你需要完整命令和 API 说明，可以继续阅读[完整文档](https://howiehz.top/misc/compat-finder/)。
 
-## 在线版
+## 在线体验
 
-在线体验：[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
+无需安装，打开即可使用：
+
+[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
 
 ## 相关项目
 

@@ -101,9 +101,11 @@ Expected JSON output:
 
 For full command and API details, see the docs linked above.
 
-## Online Tool
+## Try It Online
 
-Try it online: [Compatibility Issue Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
+No installation required. Open it in your browser:
+
+[Compatibility Issue Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
 
 ## Related Projects
 

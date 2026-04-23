@@ -1,7 +1,7 @@
 # Try It Online
 
-This is the web version of `compat-finder`. No installation required.
+No installation required. Open it in your browser:
 
-Try it online: [Compatibility Issue Finder](../tools/compatibility-test/)
+[Compatibility Issue Finder](../tools/compatibility-test/)
 
 The source code for the online tool is [tools/compatibility-test](https://github.com/HowieHz/howiehz-misc/tree/main/docs/en/tools/compatibility-test).

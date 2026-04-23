@@ -23,6 +23,12 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 
 For full documentation, visit [howiehz.top/misc/en/compat-finder](https://howiehz.top/misc/en/compat-finder/).
 
+## Try It Online
+
+No installation required. Open it in your browser:
+
+[Compatibility Issue Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
+
 ## Install
 
 ```bash
@@ -101,11 +107,15 @@ Expected JSON output:
 
 For full command and API details, see the docs linked above.
 
-## Try It Online
+## Work with AI
 
-No installation required. Open it in your browser:
+If you want your AI agent to help continue a troubleshooting flow or integrate `compat-finder` into your app, install the `compat-finder` Agent Skill:
 
-[Compatibility Issue Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
+```bash
+npx skills add HowieHz/howiehz-misc --skill compat-finder
+```
+
+For prompts and more details, see [Work with AI](https://howiehz.top/misc/en/compat-finder/ai).
 
 ## Related Projects
 

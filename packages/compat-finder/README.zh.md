@@ -23,6 +23,12 @@ compat-finder 是一个用于排查多个目标之间兼容性问题的库和命
 
 完整文档见 [howiehz.top/misc/compat-finder](https://howiehz.top/misc/compat-finder/)。
 
+## 在线体验
+
+无需安装，打开即可使用：
+
+[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
+
 ## 安装
 
 ```bash
@@ -101,11 +107,15 @@ npx compat-finder next -c 3 -a "y,n"
 
 如果你需要完整命令和 API 说明，可以继续阅读[完整文档](https://howiehz.top/misc/compat-finder/)。
 
-## 在线体验
+## 与 AI 协作
 
-无需安装，打开即可使用：
+如果你想让 AI 智能体帮你继续推进排查流程，或把 `compat-finder` 集成进自己的项目，可以安装 `compat-finder` 智能体技能：
 
-[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
+```bash
+npx skills add HowieHz/howiehz-misc --skill compat-finder
+```
+
+更多提示词和说明，见[与 AI 协作](https://howiehz.top/misc/compat-finder/ai)。
 
 ## 相关项目
 

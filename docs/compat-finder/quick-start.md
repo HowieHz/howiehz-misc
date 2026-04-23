@@ -30,7 +30,8 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
-如果你想使用“每轮排除 1 个目标”的测试方式，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`。默认算法是 `binary-split`。
+默认算法 `binary-split` 采用二分法结合分治法的策略。  
+如果你想使用“每轮排除 1 个目标”的测试方式，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`。
 
 ## 命令行示例
 
@@ -39,19 +40,19 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 运行完整的交互式排查流程：
 
 ```bash
-compat-finder interactive --count 4
+npx compat-finder interactive --count 4
 ```
 
 根据已有回答计算下一步要测试的目标：
 
 ```bash
-compat-finder next -c 3 -a "y,n"
+npx compat-finder next -c 3 -a "y,n"
 ```
 
 需要切换算法时：
 
 ```bash
-compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+npx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 ```
 
 预期会输出如下 JSON：

@@ -30,7 +30,8 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
-Pass `{ algorithm: "leave-one-out" }` as the second argument to use a leave-one-out workflow instead of the default `binary-split` search.
+The default `binary-split` strategy combines binary search with divide-and-conquer.  
+Pass `{ algorithm: "leave-one-out" }` as the second argument to use a leave-one-out workflow instead.
 
 ## CLI Example
 
@@ -39,19 +40,19 @@ If you would rather start in the terminal, try these commands first.
 Run a full interactive check:
 
 ```bash
-compat-finder interactive --count 4
+npx compat-finder interactive --count 4
 ```
 
 Calculate the next targets to test from existing answers:
 
 ```bash
-compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+npx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
 ```
 
 Switch algorithms when needed:
 
 ```bash
-compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+npx compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 ```
 
 Expected JSON output:

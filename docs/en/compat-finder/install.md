@@ -47,7 +47,7 @@ Then import it:
 import { createCompatibilitySession } from "compat-finder";
 ```
 
-## Run the CLI Without Installing
+## Using the CLI
 
 If you only want to try the CLI first, you can also run it ad hoc:
 

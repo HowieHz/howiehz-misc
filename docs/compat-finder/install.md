@@ -47,7 +47,7 @@ vp add compat-finder
 import { createCompatibilitySession } from "compat-finder";
 ```
 
-## 临时执行 CLI
+## 使用 CLI
 
 如果你只是想先试一下 CLI，也可以不安装，直接临时运行：
 

@@ -2,6 +2,8 @@
 
 ## 库使用示例
 
+下面的示例展示了一个最小可用的 compat-finder 会话：
+
 ```ts
 import { createCompatibilitySession } from "compat-finder";
 
@@ -28,17 +30,19 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
-如果你想使用“每轮排除 1 个目标”的测试方式，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`；默认算法仍然是 `binary-split`。
+如果你想使用“每轮排除 1 个目标”的测试方式，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`。默认算法是 `binary-split`。
 
 ## 命令行示例
 
-执行完整的交互式排查流程：
+如果你更想直接从命令行开始，可以先试下面几个例子。
+
+运行完整的交互式排查流程：
 
 ```bash
 compat-finder interactive --count 4
 ```
 
-执行单步排查并输出结果：
+根据已有回答计算下一步要测试的目标：
 
 ```bash
 compat-finder next -c 3 -a "y,n"
@@ -50,7 +54,7 @@ compat-finder next -c 3 -a "y,n"
 compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 ```
 
-预期输出为以下 JSON：
+预期会输出如下 JSON：
 
 ```json
 {
@@ -62,5 +66,5 @@ compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 
 ## 下一步
 
-- 查看 [API 参考](./api)
-- 查看 [命令行工具](./cli)
+- 继续阅读 [API 参考](./api)
+- 查看 [命令行工具](./cli) 了解完整命令和参数

@@ -2,6 +2,8 @@
 
 compat-finder 提供了 [智能体技能（Agent Skill）](https://agentskills.io/)，帮助 AI 理解本包的兼容性排查流程、CLI 用法和 TypeScript API。
 
+如果你想把排查流程交给 AI 协助推进，先安装这个智能体技能会更直接。
+
 ## 安装
 
 为你的 AI 智能体安装 compat-finder 智能体技能：
@@ -10,7 +12,7 @@ compat-finder 提供了 [智能体技能（Agent Skill）](https://agentskills.i
 npx skills add HowieHz/howiehz-misc --skill compat-finder
 ```
 
-智能体技能的源码在 `packages/compat-finder/skills/compat-finder`。
+智能体技能的源码位于 `packages/compat-finder/skills/compat-finder`。
 
 ## 示例提示词
 

@@ -7,7 +7,7 @@
 
 ## Install the Package
 
-Install with your preferred package manager:
+Install `compat-finder` with your preferred package manager:
 
 ::: code-group
 
@@ -27,6 +27,18 @@ yarn add compat-finder
 bun add compat-finder
 ```
 
+```deno
+deno add npm:compat-finder
+```
+
+```vlt
+vlt install compat-finder
+```
+
+```vp
+vp add compat-finder
+```
+
 :::
 
 Then import it:
@@ -37,7 +49,7 @@ import { createCompatibilitySession } from "compat-finder";
 
 ## Run the CLI Without Installing
 
-You can also run the CLI ad hoc:
+If you only want to try the CLI first, you can also run it ad hoc:
 
 ::: code-group
 
@@ -55,6 +67,18 @@ yarn dlx compat-finder --help
 
 ```bun
 bunx compat-finder --help
+```
+
+```deno
+deno run npm:compat-finder --help
+```
+
+```vlt
+vlx compat-finder --help
+```
+
+```vp
+vp exec compat-finder
 ```
 
 :::

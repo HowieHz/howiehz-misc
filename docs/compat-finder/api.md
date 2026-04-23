@@ -1,6 +1,6 @@
 # API 参考
 
-多数集成场景优先使用 `createCompatibilitySession`。
+多数集成场景都应该优先使用 `createCompatibilitySession`。
 
 ## 简单会话 API
 
@@ -28,7 +28,9 @@
 
 ## 高级 API
 
-底层 API 暴露了基于范围的可变状态机，适用于自定义 UI 与诊断场景。
+底层 API 暴露了基于范围的可变状态机，适合自定义 UI、持久化和诊断场景。
+
+如果你只需要一个可直接驱动交互流程的封装，通常不必从这一层开始。
 
 ### 会话流程
 
@@ -54,4 +56,4 @@
 - `CompatibilityTestOptions`：会话和状态创建共用的选项对象
 - `TargetRange`：闭区间目标编号范围
 
-参数细节和行为约束请直接参考 `src/compatibility-test/` 下的内联 JSDoc 注释。
+参数细节和行为约束，请直接参考 `src/compatibility-test/` 下的内联 JSDoc 注释。

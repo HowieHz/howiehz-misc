@@ -7,7 +7,7 @@
 
 ## 安装
 
-使用你偏好的包管理器安装：
+使用你偏好的包管理器安装 `compat-finder`：
 
 ::: code-group
 
@@ -27,6 +27,18 @@ yarn add compat-finder
 bun add compat-finder
 ```
 
+```deno
+deno add npm:compat-finder
+```
+
+```vlt
+vlt install compat-finder
+```
+
+```vp
+vp add compat-finder
+```
+
 :::
 
 安装后即可导入：
@@ -37,7 +49,7 @@ import { createCompatibilitySession } from "compat-finder";
 
 ## 临时执行 CLI
 
-也可以不安装，直接临时运行命令行工具：
+如果你只是想先试一下 CLI，也可以不安装，直接临时运行：
 
 ::: code-group
 
@@ -57,9 +69,21 @@ yarn dlx compat-finder --help
 bunx compat-finder --help
 ```
 
+```deno
+deno run npm:compat-finder --help
+```
+
+```vlt
+vlx compat-finder --help
+```
+
+```vp
+vp exec compat-finder
+```
+
 :::
 
 ## 下一步
 
-- 先看 [快速开始](./quick-start)
-- 需要完整参数说明时看 [命令行工具](./cli)
+- 继续阅读 [快速开始](./quick-start)
+- 需要完整命令说明时，查看 [命令行工具](./cli)

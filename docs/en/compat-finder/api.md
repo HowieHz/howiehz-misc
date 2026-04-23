@@ -28,7 +28,9 @@ Use `createCompatibilitySession` for most integrations.
 
 ## Advanced API
 
-The lower-level API exposes the mutable range-based state machine for custom UIs and diagnostics.
+The lower-level API exposes the mutable range-based state machine for custom UIs, persistence, and diagnostics.
+
+If you only need a higher-level flow that already manages the session for you, you usually do not need to start here.
 
 ### Session Lifecycle
 

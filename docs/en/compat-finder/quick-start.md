@@ -2,6 +2,8 @@
 
 ## Library Example
 
+The example below shows the smallest useful compat-finder session:
+
 ```ts
 import { createCompatibilitySession } from "compat-finder";
 
@@ -32,13 +34,15 @@ Pass `{ algorithm: "leave-one-out" }` as the second argument to use a leave-one-
 
 ## CLI Example
 
+If you would rather start in the terminal, try these commands first.
+
 Run a full interactive check:
 
 ```bash
 compat-finder interactive --count 4
 ```
 
-Run a single-step calculation and print the next result:
+Calculate the next targets to test from existing answers:
 
 ```bash
 compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"

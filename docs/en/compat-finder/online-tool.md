@@ -1,6 +1,6 @@
 # Online Tool
 
-Try it online: [compatibility issue finder](https://howiehz.top/misc/en/tools/compatibility-test/)
+Try it online: [Compatibility Issue Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
 
 The online tool source is available at [compatibility-test](../tools/compatibility-test).
 

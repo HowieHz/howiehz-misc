@@ -1,5 +1,7 @@
 # CLI
 
+compat-finder provides two CLI subcommands: `interactive` for guided troubleshooting, and `next` for one-step calculations from existing answers.
+
 ## Help
 
 ```bash
@@ -67,7 +69,7 @@ COMPAT_FINDER_LOCALE=zh-Hans compat-finder next -c 3 -a "y,n"
 
 ### `interactive`
 
-Start an interactive compatibility check:
+Start a full interactive troubleshooting flow:
 
 ```bash
 compat-finder interactive --count 4

@@ -2,6 +2,8 @@
 
 compat-finder provides an [Agent Skill](https://agentskills.io/) that helps AI agents understand the compatibility troubleshooting workflows, CLI usage, and TypeScript API for this package.
 
+If you want an agent to drive the troubleshooting workflow with you, installing the skill first gives it the right context.
+
 ## Installation
 
 Install the compat-finder skill into your AI agent:

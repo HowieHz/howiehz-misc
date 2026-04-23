@@ -1,5 +1,7 @@
 # 命令行工具
 
+compat-finder 提供两个 CLI 子命令：`interactive` 用于引导式排查，`next` 用于根据已有回答做单步推导。
+
 ## 帮助
 
 ```bash
@@ -33,8 +35,8 @@ CLI 文案可以通过命令行参数或环境变量设置输出语言。
 - `zh-Hans`
 
 兼容旧的简体中文 locale 标签，例如 `zh-CN` 与 `zh-SG` 会被归一化为 `zh-Hans`。  
-显式传入不支持的值时会报错，包括 `zh-TW`、`zh-Hant` 等其他中文变体，不会静默切换到英文。  
-环境变量中的不支持值会被忽略，并继续按优先级查找；若最终没有匹配到支持语言，则回退到 `en`。
+显式传入不支持的值时会直接报错，包括 `zh-TW`、`zh-Hant` 等其他中文变体，不会静默切换到英文。  
+环境变量中的不支持值会被忽略，并继续按优先级查找；如果最终没有匹配到支持语言，则回退到 `en`。
 
 ## 算法
 
@@ -67,7 +69,7 @@ COMPAT_FINDER_LOCALE=zh-Hans compat-finder next -c 3 -a "y,n"
 
 ### `interactive`
 
-启动交互式排查流程：
+启动一轮完整的交互式排查流程：
 
 ```bash
 compat-finder interactive --count 4
@@ -90,7 +92,7 @@ compat-finder interactive -c 4 --algo leave-one-out
 
 ### `next`
 
-根据已有回答，计算当前下一步应测试的目标，或直接返回最终结果：
+根据已有回答，计算下一步应测试的目标，或直接返回最终结果：
 
 ```bash
 compat-finder next -c 3

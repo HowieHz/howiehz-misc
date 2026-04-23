@@ -202,4 +202,4 @@ Expected JSON output:
 - Learn how to [Work with AI](./ai)
 - Go to [Try It Online](./online-tool)
 - Or jump to [CLI](./cli)
-- Continue with [API Reference](./api)
+- View [API Reference](./api)

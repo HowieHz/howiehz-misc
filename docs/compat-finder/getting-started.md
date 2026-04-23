@@ -199,7 +199,7 @@ vp exec compat-finder next -c 3 -a "y,n"
 
 ## 下一步
 
-- 了解如何 [与 AI 协作](./ai)
-- 前往 [在线体验](./online-tool)
-- 查看 [命令行工具](./cli) 了解完整命令和参数
-- 继续阅读 [API 参考](./api)
+- 了解如何[与 AI 协作](./ai)
+- 前往[在线体验](./online-tool)
+- 查看[命令行工具](./cli)了解完整命令和参数
+- 查看[API 参考](./api)

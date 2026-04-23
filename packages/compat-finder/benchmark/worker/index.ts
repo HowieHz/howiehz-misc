@@ -28,7 +28,5 @@ function runTask(task: BenchmarkWorkerTask): BenchmarkWorkerResult {
         chartId: task.chart.id,
         svg: renderBenchmarkChartSvg(task.chart),
       };
-    default:
-      throw new Error(`Unsupported benchmark task type: ${task.type}`);
   }
 }

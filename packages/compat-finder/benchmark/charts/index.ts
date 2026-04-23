@@ -72,10 +72,7 @@ export function buildBenchmarkResults(
   };
 }
 
-function createFloorBasisPointsChartDefinition(
-  basisPoints: number,
-  baselineTargetCount = 1,
-): BenchmarkChartDefinition {
+function createFloorBasisPointsChartDefinition(basisPoints: number, baselineTargetCount = 1): BenchmarkChartDefinition {
   const percentLabel = formatBasisPointsPercent(basisPoints);
   const id = `pick-${percentLabel.replace(".", "-")}-percent`;
   const title = `Pick floor(${percentLabel}% n)`;

@@ -38,9 +38,9 @@ describe("benchmark exact stats", () => {
   });
 
   it("rejects unsupported algorithms at runtime", () => {
-    expect(() =>
-      computeExactBenchmarkStatsForAlgorithm(1, "linear" as CompatibilityTestAlgorithm),
-    ).toThrow("Unsupported benchmark algorithm: linear");
+    expect(() => computeExactBenchmarkStatsForAlgorithm(1, "linear" as CompatibilityTestAlgorithm)).toThrow(
+      "Unsupported benchmark algorithm: linear",
+    );
   });
 });
 

@@ -37,11 +37,11 @@
     "lint:md": "markdownlint --fix '**/*.md' --ignore-path .gitignore",
     "lint:oxlint+eslint": "oxlint --type-aware --fix && eslint --fix",
     "lint:style": "stylelint --fix '**/*.{css,vue}' 'docs/.vitepress/**/*.{css,vue}' --ignore-path .gitignore",
-    "lint:type-check:docs:vue-tsc": "vue-tsc -b docs/tsconfig.browser.json",
+    "lint:type-check:docs:vue-tsgo": "vue-tsgo -b docs/tsconfig.browser.json",
     "lint:type-check:tsgo": "tsgo -b",
     "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm oxfmt -- --write .oxlintrc.json",
     "preinstall": "npx only-allow pnpm",
-    "prelint:type-check:docs:vue-tsc": "pnpm run compat-finder:build",
+    "prelint:type-check:docs:vue-tsgo": "pnpm run compat-finder:build",
     "test": "pnpm run '/:test$/'"
   },
   "devDependencies": {
@@ -73,7 +73,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.0",
     "vue-eslint-parser": "^10.4.0",
-    "vue-tsc": "^3.2.7"
+    "vue-tsgo": "^0.2.0"
   },
   "browserslist": [
     "defaults",

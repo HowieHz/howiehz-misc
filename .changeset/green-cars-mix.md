@@ -1,5 +1,6 @@
 ---
-"compat-finder": minor
+"compat-finder": major
 ---
 
-Add algorithm selection for compatibility tests, including a new `leave-one-out` strategy while keeping `binary-split` as the default.
+Make the public `CompatibilityTestState` type a discriminated union keyed by `algorithm`.
+Narrow on `state.algorithm === "binary-split"` before accessing `insideArrow` or `outsideArrows`.

@@ -8,17 +8,20 @@ English | [简体中文](./README.zh.md)
 
 compat-finder is a library and CLI for troubleshooting compatibility issues across multiple targets.
 
-## Features
+It helps you find one or more problematic targets with fewer rounds of testing.
 
-- Guided compatibility narrowing for libraries, plugins, mods, and other target lists
-- Simple session API for most integrations, plus a lower-level state API for advanced flows
-- Built-in `binary-split` and `leave-one-out` algorithms
-- ESM library support for browsers and other ESM runtimes
-- Node.js CLI with English and Simplified Chinese output
+## Why use compat-finder
+
+- **Zero runtime dependencies**: Keeps installs lightweight and predictable.
+- **Efficient troubleshooting algorithm**: The default strategy combines binary search with divide-and-conquer, usually requiring fewer test rounds to reach a result.
+- **More than simple binary search**: The result can include one or more problematic targets.
+- **Multiple integration options**: Choose from a guided CLI, a simple API, or an advanced API.
+- **Works across runtimes**: The library is ESM-only and runs in browsers and other ESM-compatible runtimes.
+- **Localized CLI**: Available in English and Simplified Chinese.
 
 ## Documentation
 
-Full documentation lives at [howiehz.top/misc/en/compat-finder](https://howiehz.top/misc/en/compat-finder/).
+For full documentation, visit [howiehz.top/misc/en/compat-finder](https://howiehz.top/misc/en/compat-finder/).
 
 ## Install
 
@@ -26,13 +29,15 @@ Full documentation lives at [howiehz.top/misc/en/compat-finder](https://howiehz.
 npm install compat-finder
 ```
 
-Then you can create a compatibility session:
+Then import it and create a session:
 
 ```ts
 import { createCompatibilitySession } from "compat-finder";
+
+const session = createCompatibilitySession(["A", "B"]);
 ```
 
-You can also run the command-line tool without installing it first:
+If you only want to try the CLI first, you can run it without installing:
 
 ```bash
 npx compat-finder --help
@@ -73,16 +78,26 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 CLI example:
 
 ```bash
-compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
+npx compat-finder next -c 4 -n "A,B,C,D" -a "issue,pass"
 ```
 
-For full documentation, visit [howiehz.top/misc/en/compat-finder](https://howiehz.top/misc/en/compat-finder/).
+To start a guided troubleshooting flow, run:
+
+```bash
+npx compat-finder interactive --count 4
+```
+
+For full command and API details, see the docs linked above.
+
+## Online Tool
+
+Try it online: [Compatibility Issue Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
 
 ## Related Projects
 
 compat-finder is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
 
-## Licenses
+## License
 
 This project is licensed under the [MIT License](https://raw.githubusercontent.com/howiehz/howiehz-misc/HEAD/packages/compat-finder/LICENSE).
 

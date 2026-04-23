@@ -1,5 +1,9 @@
 # 兼容性问题排查器
 
+[![Open on npmx][npmx-version-src]][npmx-href]
+[![npm downloads][npmx-downloads-src]][npmx-href]
+[![CI][ci-src]][ci-href]
+
 [English](./README.md) | 简体中文
 
 compat-finder 是一个用于排查多个目标之间兼容性问题的库和命令行工具。
@@ -409,3 +413,11 @@ compat-finder 智能体技能涵盖以下内容：
 ## 相关项目
 
 由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
+
+<!-- Badges -->
+
+[npmx-version-src]: https://npmx.dev/api/registry/badge/version/compat-finder
+[npmx-downloads-src]: https://npmx.dev/api/registry/badge/downloads-month/compat-finder
+[npmx-href]: https://npmx.dev/compat-finder
+[ci-src]: https://github.com/HowieHz/howiehz-misc/actions/workflows/nodejs-ci.yml/badge.svg
+[ci-href]: https://github.com/HowieHz/howiehz-misc/actions/workflows/nodejs-ci.yml

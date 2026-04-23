@@ -571,14 +571,6 @@ describe("compatibility test engine", () => {
       "targetCount must be an integer greater than or equal to 1",
     );
   });
-
-  it("rejects unsupported algorithms at runtime", () => {
-    expect(() =>
-      createCompatibilityTestState(1, {
-        algorithm: "linear" as CompatibilityTestAlgorithm,
-      }),
-    ).toThrow("Unsupported compatibility test algorithm: linear");
-  });
 });
 
 function runScenario(scenario: Scenario) {

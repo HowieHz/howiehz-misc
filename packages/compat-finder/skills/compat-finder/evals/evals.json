@@ -165,6 +165,17 @@
         "The response says the extra answer should be removed or the answer history should stop at the completion point.",
         "The response keeps the answer focused on compat-finder CLI semantics rather than generic troubleshooting."
       ]
+    },
+    {
+      "id": 16,
+      "prompt": "I want compat-finder to use the workflow where it removes target 1, then target 2, then target 3, instead of the default narrowing behavior. How do I do that in both the CLI and the TypeScript API?",
+      "expected_output": "Explains that compat-finder has a built-in `leave-one-out` algorithm, keeps `binary-split` as the default, and shows how to select `leave-one-out` in both CLI and TypeScript integration entrypoints.",
+      "files": [],
+      "expectations": [
+        "The response names `leave-one-out` as the built-in algorithm for sequential exclusion.",
+        "The response shows `--algorithm leave-one-out` for the CLI.",
+        "The response shows `createCompatibilitySession(targets, { algorithm: \"leave-one-out\" })` or `createCompatibilityTestState(targetCount, { algorithm: \"leave-one-out\" })` for TypeScript."
+      ]
     }
   ]
 }

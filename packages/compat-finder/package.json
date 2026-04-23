@@ -40,8 +40,10 @@
     }
   },
   "scripts": {
+    "benchmark": "node --experimental-strip-types benchmark/index.ts",
     "build": "tsdown",
     "build:release": "tsdown --minify",
+    "cli": "node --experimental-strip-types src/cli.ts",
     "prepack": "pnpm run build:release",
     "test": "vitest run",
     "watch": "tsdown --watch"

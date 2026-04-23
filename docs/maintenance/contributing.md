@@ -32,7 +32,7 @@ pnpm install
 
 ### compat-finder 包
 
-- 直接运行 CLI：`pnpm cli:compat-finder`
+- 直接运行 CLI：`pnpm compat-finder:cli`
 - 构建包：`pnpm compat-finder:build`
 - 启动监听构建：`pnpm compat-finder:watch`
 - 运行测试：`pnpm compat-finder:test`

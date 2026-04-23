@@ -87,6 +87,8 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
+Pass `{ algorithm: "leave-one-out" }` as the second argument to use a leave-one-out workflow instead of the default `binary-split` search.
+
 See [API Reference](#api-reference) for the full exported API.
 
 ### Command-line example
@@ -101,6 +103,12 @@ Run a single-step calculation and print the next result:
 
 ```bash
 compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```
+
+Switch algorithms when needed:
+
+```bash
+compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 ```
 
 Expected JSON output:
@@ -121,7 +129,7 @@ Use `createCompatibilitySession` for most integrations.
 
 Simple session API:
 
-- `createCompatibilitySession(targets)`: create a compatibility session from your target list
+- `createCompatibilitySession(targets, options?)`: create a compatibility session from your target list
 - `session.current()`: read the current step or final result
 - `session.answer(hasIssue)`: submit one result and move to the next step
 - `session.undo()`: remove the latest answer and return to the previous step
@@ -137,13 +145,19 @@ Session steps:
 `session.undo()` is useful when the latest answer was entered by mistake.
 `createCompatibilitySession(targets)` requires at least one target.
 
+Algorithm selection:
+
+- Default: `binary-split`
+- Alternative: `leave-one-out`
+- Example: `createCompatibilitySession(targets, { algorithm: "leave-one-out" })`
+
 ### Advanced API
 
 The lower-level API exposes the mutable range-based state machine for custom UIs and diagnostics.
 
 Session lifecycle:
 
-- `createCompatibilityTestState(targetCount)`: create a new session
+- `createCompatibilityTestState(targetCount, options?)`: create a new session
 - `getNextAnswerableCompatibilityTestStep(state)`: read the next actionable step and automatically skip cached steps
 - `getCurrentCompatibilityTestStep(state)`: read the current step, or `undefined` when complete
 - `applyCompatibilityTestAnswer(state, hasIssue)`: apply one answer and advance the session
@@ -161,9 +175,11 @@ Key types:
 - `CompatibilityTestState`: mutable session state
 - `CompatibilityTestStep`: current step to present to the caller
 - `CompatibilityTestDebugStep`: internal search state in range form
+- `CompatibilityTestAlgorithm`: built-in algorithm names
+- `CompatibilityTestOptions`: shared option bag for session and state creation
 - `TargetRange`: inclusive target index range
 
-For parameter details and behavior guarantees, see the inline JSDoc in [src/compatibility-test.ts](./src/compatibility-test.ts).
+For parameter details and behavior guarantees, see the inline JSDoc under [src/compatibility-test/](./src/compatibility-test).
 
 ## CLI
 
@@ -203,7 +219,20 @@ Legacy Simplified Chinese locale tags such as `zh-CN` and `zh-SG` are normalized
 Unsupported explicit values, including other Chinese variants such as `zh-TW` and `zh-Hant`, are rejected instead of being silently switched to English.
 Unsupported locale values from environment variables are ignored while the resolver continues through the priority list and finally falls back to `en`.
 
-Examples:
+### Algorithms
+
+Both CLI subcommands accept `--algorithm <name>` and `--algo <name>`.
+
+- `binary-split`: the default narrowing strategy
+- `leave-one-out`: test by excluding one target per round
+
+For example:
+
+```bash
+compat-finder interactive -c 5 --algo leave-one-out
+```
+
+Locale examples:
 
 ```bash
 compat-finder --locale zh-Hans --help
@@ -231,6 +260,10 @@ compat-finder interactive --count 4
 compat-finder i -c 4 -n "A,B,C,D"
 ```
 
+```bash
+compat-finder interactive -c 4 --algo leave-one-out
+```
+
 Supported input:
 
 - `y` / `yes` / `issue` / `1` / `true`: the issue reproduces
@@ -252,6 +285,10 @@ compat-finder n -c 3 -a "y,n"
 
 ```bash
 compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
+```
+
+```bash
+compat-finder next -c 4 --algo leave-one-out -a "issue,pass" -n "A,B,C,D"
 ```
 
 Returned fields:
@@ -356,6 +393,7 @@ The compat-finder skill covers:
 
 - How to choose between one-off CLI usage and library integration
 - CLI commands, options, locales, and supported answer formats
+- Built-in algorithm selection, including `binary-split` and `leave-one-out`
 - Guided and one-shot troubleshooting workflows
 - Help turning broad requests, such as testing a mods or plugins folder, into a concrete compat-finder workflow
 - The TypeScript session API and the lower-level state API

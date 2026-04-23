@@ -19,6 +19,7 @@ export interface CliCommandMessages {
 }
 
 export interface CliMessages {
+  algorithmOptionDescription: string;
   aliasesTitle: string;
   commandTitle: (command: string) => string;
   commands: {
@@ -30,7 +31,9 @@ export interface CliMessages {
   defaultTargetLabel: (index: number) => string;
   errorHelpHint: string;
   errors: {
+    invalidAlgorithm: string;
     invalidAnswers: string;
+    missingAlgorithm: string;
     invalidCount: string;
     missingAnswers: string;
     missingCount: string;

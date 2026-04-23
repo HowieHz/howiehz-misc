@@ -32,7 +32,7 @@ pnpm install
 
 ### compat-finder Package
 
-- Run the CLI directly: `pnpm cli:compat-finder`
+- Run the CLI directly: `pnpm compat-finder:cli`
 - Build the package: `pnpm compat-finder:build`
 - Start watch mode: `pnpm compat-finder:watch`
 - Run package tests: `pnpm compat-finder:test`

@@ -4,19 +4,19 @@ import { zhHansMessages } from "./zh-Hans.ts";
 
 export type { CliLocale, CliMessages } from "./types.ts";
 
-const CLI_MESSAGES: Record<CliLocale, CliMessages> = {
+const CLI_MESSAGES = {
   en: enMessages,
   "zh-Hans": zhHansMessages,
-};
+} satisfies Record<CliLocale, CliMessages>;
 
-const SUPPORTED_LOCALES = Object.keys(CLI_MESSAGES) as CliLocale[];
+const SUPPORTED_LOCALES = ["en", "zh-Hans"] as const satisfies readonly CliLocale[];
 
 export function getCliMessages(locale: CliLocale): CliMessages {
   return CLI_MESSAGES[locale];
 }
 
 export function isSupportedCliLocale(locale: string): locale is CliLocale {
-  return SUPPORTED_LOCALES.includes(locale as CliLocale);
+  return SUPPORTED_LOCALES.some((supportedLocale) => supportedLocale === locale);
 }
 
 export function normalizeCliLocale(locale: string | undefined): CliLocale | undefined {

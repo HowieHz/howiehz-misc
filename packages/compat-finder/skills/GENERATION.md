@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `2fd8a45247d130f216351ceca6040d3ff3c2ffd3`
-- **Date**: 2026-04-21
-- **Commit**: compat-finder: add extraAnswerCount, update text
+- **Commit SHA**: `f9c9600e20c7348ff7149a22afaaea2da574310e`
+- **Date**: 2026-04-23
+- **Commit**: feat(compat-finder): add leave-one-out algorithm
 
 **Source documentation:**
 
@@ -18,7 +18,7 @@ This document contains information about how these skills were generated and how
 - Tests: `/packages/compat-finder/__tests__`
 - Package manifest: `/packages/compat-finder/package.json`
 
-**Generation date**: 2026-04-21
+**Generation date**: 2026-04-23
 
 ## Structure
 
@@ -59,13 +59,13 @@ When compat-finder documentation or behavior changes:
 
 ```bash
 # Get changes in the package since generation
-git diff 2fd8a45..HEAD -- packages/compat-finder/
+git diff f9c9600..HEAD -- packages/compat-finder/
 
 # List changed package files
-git diff --name-only 2fd8a45..HEAD -- packages/compat-finder/
+git diff --name-only f9c9600..HEAD -- packages/compat-finder/
 
 # Get summary of package changes
-git log --oneline 2fd8a45..HEAD -- packages/compat-finder/
+git log --oneline f9c9600..HEAD -- packages/compat-finder/
 ```
 
 ### 2. Update Process
@@ -103,9 +103,10 @@ git log --oneline 2fd8a45..HEAD -- packages/compat-finder/
 
 Record which models were used to validate the current skill revision and what was exercised.
 
-| Date       | Models  | Coverage                                                                                                                                | Result | Notes                                                                                                                  |
-| ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-22 | gpt-5.4 | Manual spot-check of CLI next-target guidance, CLI extra-answer metadata handling, session integration, and persistence/resume guidance | Pass   | Matched expected routing and semantics on all 4 sampled prompts. Add more rows when Haiku/Sonnet/Opus coverage is run. |
+| Date       | Models  | Coverage                                                                                                                                | Result | Notes                                                                                                                     |
+| ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-23 | gpt-5   | Manual review of algorithm-selection docs, README/skill synchronization, and English/Chinese wording after `leave-one-out` was added    | Pass   | Verified the README, skill references, and CLI/help wording against the feature commit before the follow-up wording pass. |
+| 2026-04-22 | gpt-5.4 | Manual spot-check of CLI next-target guidance, CLI extra-answer metadata handling, session integration, and persistence/resume guidance | Pass   | Matched expected routing and semantics on all 4 sampled prompts. Add more rows when Haiku/Sonnet/Opus coverage is run.    |
 
 ## Style Guidelines
 
@@ -118,17 +119,19 @@ Record which models were used to validate the current skill revision and what wa
 
 ## Version History
 
-| Date       | SHA     | Changes                                                                                                 |
-| ---------- | ------- | ------------------------------------------------------------------------------------------------------- |
-| 2026-04-22 | 2fd8a45 | Return `extraAnswerCount`, add `getNextAnswerableCompatibilityTestStep`, and refresh skill/docs wording |
-| 2026-04-21 | e8f8251 | Tighten CLI answer validation, move legacy script, and refresh skill routing                            |
-| 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                                                    |
-| 2026-04-21 | 625f51e | Add createCompatibilitySession API                                                                      |
-| 2026-04-21 | 52df9f0 | Expand README examples and refresh the generated skill baseline                                         |
-| 2026-04-21 | 640710d | Update locale guidance to zh-Hans and align API behavior notes with JSDoc                               |
-| 2026-04-20 | 00366e2 | Initial compat-finder skill generation with CLI/API and package references                              |
+| Date       | SHA     | Changes                                                                                                  |
+| ---------- | ------- | -------------------------------------------------------------------------------------------------------- |
+| 2026-04-23 | f9c9600 | Add `leave-one-out`, refresh CLI/API/skill docs, and record the generated-skill baseline for the feature |
+| 2026-04-23 | 9a41b17 | Add algorithm selection, document `leave-one-out`, and refresh generated skill/docs                      |
+| 2026-04-22 | 2fd8a45 | Return `extraAnswerCount`, add `getNextAnswerableCompatibilityTestStep`, and refresh skill/docs wording  |
+| 2026-04-21 | e8f8251 | Tighten CLI answer validation, move legacy script, and refresh skill routing                             |
+| 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                                                     |
+| 2026-04-21 | 625f51e | Add createCompatibilitySession API                                                                       |
+| 2026-04-21 | 52df9f0 | Expand README examples and refresh the generated skill baseline                                          |
+| 2026-04-21 | 640710d | Update locale guidance to zh-Hans and align API behavior notes with JSDoc                                |
+| 2026-04-20 | 00366e2 | Initial compat-finder skill generation with CLI/API and package references                               |
 
 ---
 
-Last updated: 2026-04-22
-Current SHA: 2fd8a45
+Last updated: 2026-04-23
+Current SHA: f9c9600

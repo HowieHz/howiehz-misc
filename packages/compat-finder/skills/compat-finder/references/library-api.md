@@ -4,6 +4,7 @@
 
 - Install
 - Session API
+- Algorithm Selection
 - Lower-Level State API
 - Persistence Notes
 - Example Loops
@@ -70,10 +71,36 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 Use the high-level session API when the caller only needs to keep the in-memory session alive for the current process or browser tab.
 If the user explicitly needs to resume after refresh, restart, or in another process or worker, switch to the lower-level state API instead.
 
+## Algorithm Selection
+
+Session and state creation accept an optional algorithm:
+
+- `binary-split`:
+  default search strategy
+- `leave-one-out`:
+  exclude one target per round
+
+For example:
+
+```ts
+const session = createCompatibilitySession(targets, {
+  algorithm: "leave-one-out",
+});
+```
+
+```ts
+const state = createCompatibilityTestState(targets.length, {
+  algorithm: "leave-one-out",
+});
+```
+
+Use `leave-one-out` when the caller explicitly wants the sequential exclusion workflow.
+Keep `binary-split` as the default recommendation otherwise.
+
 ## Lower-Level State API
 
 These lower-level helpers are exported from the public `compat-finder` package entrypoint.
-The implementation currently lives in `src/compatibility-test.ts`, but integration code should import from `compat-finder`:
+The public helpers are implemented under `src/compatibility-test/`, but consumers should still import them from `compat-finder`:
 
 ```ts
 import {
@@ -86,7 +113,7 @@ import {
 
 Key lower-level helpers:
 
-- `createCompatibilityTestState(targetCount)`
+- `createCompatibilityTestState(targetCount, options?)`
 - `getNextAnswerableCompatibilityTestStep(state)`
 - `getCurrentCompatibilityTestStep(state)`
 - `applyCompatibilityTestAnswer(state, hasIssue)`
@@ -100,6 +127,8 @@ Important behavior:
 
 - `createCompatibilitySession(targets)` requires at least one target and throws `targets must contain at least one item` otherwise.
 - `createCompatibilityTestState(targetCount)` requires an integer greater than or equal to 1 and throws otherwise.
+- Supported algorithms are `binary-split` and `leave-one-out`.
+- Omitting the algorithm uses `binary-split`.
 - Single-target sessions are valid. The first testing step simply contains that one target.
 - Target indexes are 1-based.
 - `CompatibilityTestState` is mutable and owned by the caller.
@@ -118,7 +147,7 @@ Use the lower-level state API when the caller explicitly needs:
 
 ## Persistence Notes
 
-Persistence note:
+Persistence considerations:
 
 - `createCompatibilitySession(targets)` does not expose a restorable state object, so it is not the right default when the caller needs save/resume behavior.
 - `CompatibilityTestState.cachedResults` is a `Map<string, boolean>`, so a direct `JSON.stringify(state)` will not preserve it correctly.

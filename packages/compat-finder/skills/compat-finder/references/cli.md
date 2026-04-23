@@ -37,6 +37,21 @@ Supported commands:
 - `compat-finder i -c 4 -n "A,B,C,D"`
 - `compat-finder next -c 4 -a "y,n"`
 - `compat-finder n -c 4 -a "issue,pass,1,0" -n "A,B,C,D"`
+- `compat-finder next -c 4 --algorithm leave-one-out -a "issue,pass"`
+
+## Algorithms
+
+Built-in CLI algorithms:
+
+- `binary-split`:
+  default narrowing strategy
+- `leave-one-out`:
+  exclude one target at a time and treat a passing exclusion as evidence that the excluded target belongs in `definedTargets`
+
+Switch algorithms with `--algorithm <name>` or `--algo <name>`.
+
+Use `leave-one-out` when the user explicitly wants the sequential "remove target 1, then remove target 2" workflow.
+Keep `binary-split` as the default recommendation otherwise.
 
 ## Answers
 
@@ -65,7 +80,7 @@ Accepted answer values:
 
 ## Triage Modes
 
-Use this mode split before answering:
+Choose a mode before answering:
 
 - interactive guided triage:
   the user runs the real test manually after each round, and the agent should compute the next targets and ask for `issue` or `pass`.

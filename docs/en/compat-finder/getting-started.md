@@ -201,5 +201,5 @@ Expected JSON output:
 
 - Learn how to [Work with AI](./ai)
 - Try [compat-finder Online](./online-tool)
-- Or jump to [CLI](./cli)
+- View [CLI](./cli) for the full command list and options
 - View [API Reference](./api)

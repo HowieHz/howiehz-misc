@@ -12,7 +12,7 @@ compat-finder 是一个用于排查多个目标之间兼容性问题的库和命
 
 ## 为什么用 compat-finder
 
-- **零运行时依赖**：轻量，安全。
+- **零运行时依赖**：安装更轻量，也能降低供应链风险。
 - **高效排查算法**：默认算法采用二分法结合分治法的策略，通常只需较少测试轮次即可得出结果。
 - **不只简单二分**：排查结果目标可以是一个或多个。
 - **多种接入形式**：提供引导式 CLI、开箱即用的会话 API，以及适合自定义流程的高级 API。
@@ -41,7 +41,7 @@ import { createCompatibilitySession } from "compat-finder";
 const session = createCompatibilitySession(["A", "B"]);
 ```
 
-如果你只是想先试一下 CLI，也可以不安装直接运行：
+如果你只是想快速试用 CLI，也可以不安装直接运行：
 
 ```bash
 npx compat-finder --help
@@ -90,7 +90,7 @@ npx compat-finder interactive --count 4
 根据已有回答计算下一步要测试的目标：
 
 ```bash
-npx compat-finder next -c 3 -a "y,n"
+npx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
 ```
 
 预期会输出如下 JSON：
@@ -99,7 +99,7 @@ npx compat-finder next -c 3 -a "y,n"
 {
   "status": "testing",
   "targetCount": 3,
-  "targets": ["目标 2"]
+  "targets": ["Beta"]
 }
 ```
 

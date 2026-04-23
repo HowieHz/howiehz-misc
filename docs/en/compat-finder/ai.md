@@ -1,6 +1,6 @@
 # Work with AI
 
-If you want AI to help drive a `compat-finder` troubleshooting or integration flow, you can install the `compat-finder` [Agent Skill](https://agentskills.io/) into your AI agent.
+If you want AI to help with a `compat-finder` troubleshooting or integration flow, you can install the `compat-finder` [Agent Skill](https://agentskills.io/) into your AI agent.
 
 Once installed, the agent has better context for `compat-finder` CLI usage, library APIs, and common troubleshooting workflows.
 

@@ -12,7 +12,7 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 
 ## Why use compat-finder
 
-- **Zero runtime dependencies**: Keeps installs lightweight and predictable.
+- **Zero runtime dependencies**: Keeps installs lightweight and reduces supply-chain risk.
 - **Efficient troubleshooting algorithm**: The default strategy combines binary search with divide-and-conquer, usually requiring fewer test rounds to reach a result.
 - **More than simple binary search**: Results can include one or more incompatible targets.
 - **Multiple integration options**: Choose from a guided CLI, a ready-to-use session API, or an advanced API for custom integrations.
@@ -25,7 +25,7 @@ For full documentation, visit [howiehz.top/misc/en/compat-finder](https://howieh
 
 ## Try It Online
 
-No installation required. Open it in your browser: [Compatibility Issue Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
+No installation required. Open it in your browser: [Compatibility Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
 
 ## Install
 
@@ -41,7 +41,7 @@ import { createCompatibilitySession } from "compat-finder";
 const session = createCompatibilitySession(["A", "B"]);
 ```
 
-If you only want to try the CLI first, you can run it without installing:
+If you just want to try the CLI, you can run it without installing it first:
 
 ```bash
 npx compat-finder --help
@@ -81,7 +81,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 
 CLI examples:
 
-Start a guided troubleshooting session:
+Start a guided troubleshooting run:
 
 ```bash
 npx compat-finder interactive --count 4
@@ -107,7 +107,7 @@ For full command and API details, see the docs linked above.
 
 ## Work with AI
 
-If you want your AI agent to help continue a troubleshooting session or integrate `compat-finder` into your app, install the `compat-finder` Agent Skill:
+If you want your AI agent to help continue a troubleshooting run or integrate `compat-finder` into your app, install the `compat-finder` Agent Skill:
 
 ```bash
 npx skills add HowieHz/howiehz-misc --skill compat-finder
@@ -117,7 +117,7 @@ For prompts and more details, see [Work with AI](https://howiehz.top/misc/en/com
 
 ## Related Projects
 
-compat-finder is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
+compat-finder was refactored from [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
 
 ## License
 

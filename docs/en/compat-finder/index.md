@@ -13,7 +13,7 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 - **Works across runtimes**: ships ESM output and runs in browsers and other ESM-compatible runtimes.
 - **Localized CLI**: available in English and Simplified Chinese.
 
-## Compatibility
+## Supported Environments
 
 - Library: ships ESM output; runs in browsers and other ESM-compatible runtimes.
 - CLI: requires Node.js `^20 || ^22 || >=24`; supports English and Simplified Chinese.
@@ -29,4 +29,4 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 
 ## Related Projects
 
-`compat-finder` is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
+`compat-finder` was refactored from [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).

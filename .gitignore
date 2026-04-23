@@ -1,6 +1,7 @@
 .oxlintrc.json.bak
 build
 tmp
+output
 
 # Logs
 logs

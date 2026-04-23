@@ -67,46 +67,19 @@ function computeBinarySplitStats(maxTargetCount: number): BenchmarkStatsTable {
 
       for (let leftSubsetSize = leftSubsetSizeStart; leftSubsetSize <= leftSubsetSizeEnd; leftSubsetSize += 1) {
         const rightSubsetSize = subsetSize - leftSubsetSize;
-
-        if (leftSubsetSize === 0) {
-          const rightIssueKnownContribution = rightIssueKnownStats.bySubsetSize[rightSubsetSize];
-          if (!rightIssueKnownContribution) {
-            continue;
-          }
-
-          const offsetContribution = offsetExactQuestionStats(rightIssueKnownContribution, 2);
-          freshAggregate = mergeExactQuestionStats(freshAggregate, offsetContribution);
-          issueKnownAggregate = mergeExactQuestionStats(issueKnownAggregate, offsetContribution);
-          continue;
-        }
-
-        if (rightSubsetSize === 0) {
-          const leftIssueKnownContribution = leftIssueKnownStats.bySubsetSize[leftSubsetSize];
-          if (!leftIssueKnownContribution) {
-            continue;
-          }
-
-          const offsetContribution = offsetExactQuestionStats(leftIssueKnownContribution, 1);
-          freshAggregate = mergeExactQuestionStats(freshAggregate, offsetContribution);
-          issueKnownAggregate = mergeExactQuestionStats(issueKnownAggregate, offsetContribution);
-          continue;
-        }
-
-        const leftFreshContribution = leftFreshStats.bySubsetSize[leftSubsetSize];
-        const leftIssueKnownContribution = leftIssueKnownStats.bySubsetSize[leftSubsetSize];
-        const rightIssueKnownContribution = rightIssueKnownStats.bySubsetSize[rightSubsetSize];
-        if (!leftFreshContribution || !leftIssueKnownContribution || !rightIssueKnownContribution) {
-          continue;
-        }
-
-        freshAggregate = mergeExactQuestionStats(
-          freshAggregate,
-          combineSplitBranchStats(leftFreshContribution, rightIssueKnownContribution, 2),
+        const contribution = getBinarySplitAggregateContribution(
+          leftSubsetSize,
+          rightSubsetSize,
+          leftFreshStats,
+          leftIssueKnownStats,
+          rightIssueKnownStats,
         );
-        issueKnownAggregate = mergeExactQuestionStats(
-          issueKnownAggregate,
-          combineSplitBranchStats(leftIssueKnownContribution, rightIssueKnownContribution, 2),
-        );
+        if (!contribution) {
+          continue;
+        }
+
+        freshAggregate = mergeExactQuestionStats(freshAggregate, contribution.freshContribution);
+        issueKnownAggregate = mergeExactQuestionStats(issueKnownAggregate, contribution.issueKnownContribution);
       }
 
       if (!freshAggregate || !issueKnownAggregate) {
@@ -158,6 +131,87 @@ function computeLeaveOneOutStats(maxTargetCount: number): BenchmarkStatsTable {
   }
 
   return table;
+}
+
+interface BinarySplitAggregateContribution {
+  freshContribution: ExactQuestionStats;
+  issueKnownContribution: ExactQuestionStats;
+}
+
+function getBinarySplitAggregateContribution(
+  leftSubsetSize: number,
+  rightSubsetSize: number,
+  leftFreshStats: ExactTargetCountStats,
+  leftIssueKnownStats: ExactTargetCountStats,
+  rightIssueKnownStats: ExactTargetCountStats,
+): BinarySplitAggregateContribution | undefined {
+  if (leftSubsetSize === 0) {
+    return getRightOnlyAggregateContribution(rightIssueKnownStats, rightSubsetSize);
+  }
+
+  if (rightSubsetSize === 0) {
+    return getLeftOnlyAggregateContribution(leftIssueKnownStats, leftSubsetSize);
+  }
+
+  return getSplitAggregateContribution(
+    leftFreshStats,
+    leftIssueKnownStats,
+    rightIssueKnownStats,
+    leftSubsetSize,
+    rightSubsetSize,
+  );
+}
+
+function getRightOnlyAggregateContribution(
+  rightIssueKnownStats: ExactTargetCountStats,
+  rightSubsetSize: number,
+): BinarySplitAggregateContribution | undefined {
+  const rightIssueKnownContribution = rightIssueKnownStats.bySubsetSize[rightSubsetSize];
+  if (!rightIssueKnownContribution) {
+    return undefined;
+  }
+
+  const offsetContribution = offsetExactQuestionStats(rightIssueKnownContribution, 2);
+  return {
+    freshContribution: offsetContribution,
+    issueKnownContribution: offsetContribution,
+  };
+}
+
+function getLeftOnlyAggregateContribution(
+  leftIssueKnownStats: ExactTargetCountStats,
+  leftSubsetSize: number,
+): BinarySplitAggregateContribution | undefined {
+  const leftIssueKnownContribution = leftIssueKnownStats.bySubsetSize[leftSubsetSize];
+  if (!leftIssueKnownContribution) {
+    return undefined;
+  }
+
+  const offsetContribution = offsetExactQuestionStats(leftIssueKnownContribution, 1);
+  return {
+    freshContribution: offsetContribution,
+    issueKnownContribution: offsetContribution,
+  };
+}
+
+function getSplitAggregateContribution(
+  leftFreshStats: ExactTargetCountStats,
+  leftIssueKnownStats: ExactTargetCountStats,
+  rightIssueKnownStats: ExactTargetCountStats,
+  leftSubsetSize: number,
+  rightSubsetSize: number,
+): BinarySplitAggregateContribution | undefined {
+  const leftFreshContribution = leftFreshStats.bySubsetSize[leftSubsetSize];
+  const leftIssueKnownContribution = leftIssueKnownStats.bySubsetSize[leftSubsetSize];
+  const rightIssueKnownContribution = rightIssueKnownStats.bySubsetSize[rightSubsetSize];
+  if (!leftFreshContribution || !leftIssueKnownContribution || !rightIssueKnownContribution) {
+    return undefined;
+  }
+
+  return {
+    freshContribution: combineSplitBranchStats(leftFreshContribution, rightIssueKnownContribution, 2),
+    issueKnownContribution: combineSplitBranchStats(leftIssueKnownContribution, rightIssueKnownContribution, 2),
+  };
 }
 
 function collapseExactQuestionStats(statsList: (ExactQuestionStats | undefined)[]): ExactQuestionStats {

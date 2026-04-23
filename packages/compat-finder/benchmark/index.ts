@@ -83,26 +83,35 @@ async function computeStatsByAlgorithm(
   workerCount: number,
 ): Promise<ExactBenchmarkStatsByAlgorithm> {
   if (workerCount <= 1) {
-    return {
-      "binary-split": computeExactBenchmarkStatsForAlgorithm(maxTargetCount, "binary-split"),
-      "leave-one-out": computeExactBenchmarkStatsForAlgorithm(maxTargetCount, "leave-one-out"),
-    };
+    return computeStatsByAlgorithmLocally(maxTargetCount);
   }
 
-  const tasks: BenchmarkWorkerTask[] = COMPATIBILITY_TEST_ALGORITHMS.map((algorithm) => ({
+  const tasks = createComputeStatsTasks(maxTargetCount);
+  const results = await runWorkerTasks(tasks, workerCount);
+  return collectComputedStats(results);
+}
+
+function computeStatsByAlgorithmLocally(maxTargetCount: number): ExactBenchmarkStatsByAlgorithm {
+  return {
+    "binary-split": computeExactBenchmarkStatsForAlgorithm(maxTargetCount, "binary-split"),
+    "leave-one-out": computeExactBenchmarkStatsForAlgorithm(maxTargetCount, "leave-one-out"),
+  };
+}
+
+function createComputeStatsTasks(maxTargetCount: number): BenchmarkWorkerTask[] {
+  return COMPATIBILITY_TEST_ALGORITHMS.map((algorithm) => ({
     type: "compute-algorithm-stats",
     algorithm,
     maxTargetCount,
   }));
-  const results = await runWorkerTasks(tasks, workerCount);
+}
+
+function collectComputedStats(results: readonly BenchmarkWorkerResult[]): ExactBenchmarkStatsByAlgorithm {
   let binarySplitStats: ExactBenchmarkStatsByAlgorithm["binary-split"] | undefined;
   let leaveOneOutStats: ExactBenchmarkStatsByAlgorithm["leave-one-out"] | undefined;
 
   for (const result of results) {
-    if (result.type !== "compute-algorithm-stats") {
-      throw new Error(`Unexpected worker result type: ${result.type}`);
-    }
-
+    assertComputeStatsWorkerResult(result);
     if (result.algorithm === "binary-split") {
       binarySplitStats = result.stats;
       continue;
@@ -148,26 +157,11 @@ async function runWorkerTasks(tasks: BenchmarkWorkerTask[], workerCount: number)
   }
 
   const results: BenchmarkWorkerResult[] = new Array(tasks.length);
-  let nextTaskIndex = 0;
-  const laneCount = Math.min(workerCount, tasks.length);
-  const workerPool = Array.from({ length: laneCount }, () => createWorkerHandle());
+  const nextTaskIndex = createTaskIndexAllocator();
+  const workerPool = createWorkerPool(workerCount, tasks.length);
 
   try {
-    await Promise.all(
-      workerPool.map(async (workerHandle) => {
-        while (true) {
-          const taskIndex = nextTaskIndex;
-          nextTaskIndex += 1;
-
-          const task = tasks[taskIndex];
-          if (!task) {
-            return;
-          }
-
-          results[taskIndex] = await workerHandle.run(task);
-        }
-      }),
-    );
+    await Promise.all(workerPool.map((workerHandle) => runWorkerLane(workerHandle, tasks, results, nextTaskIndex)));
   } finally {
     await Promise.all(workerPool.map((workerHandle) => workerHandle.close()));
   }
@@ -178,6 +172,47 @@ async function runWorkerTasks(tasks: BenchmarkWorkerTask[], workerCount: number)
 interface WorkerHandle {
   close: () => Promise<void>;
   run: (task: BenchmarkWorkerTask) => Promise<BenchmarkWorkerResult>;
+}
+
+function createTaskIndexAllocator(): () => number {
+  let nextTaskIndex = 0;
+  return () => {
+    const taskIndex = nextTaskIndex;
+    nextTaskIndex += 1;
+    return taskIndex;
+  };
+}
+
+function createWorkerPool(workerCount: number, taskCount: number): WorkerHandle[] {
+  const laneCount = Math.min(workerCount, taskCount);
+  return Array.from({ length: laneCount }, () => createWorkerHandle());
+}
+
+async function runWorkerLane(
+  workerHandle: WorkerHandle,
+  tasks: readonly BenchmarkWorkerTask[],
+  results: BenchmarkWorkerResult[],
+  nextTaskIndex: () => number,
+): Promise<void> {
+  while (true) {
+    const taskIndex = nextTaskIndex();
+    const task = tasks[taskIndex];
+    if (!task) {
+      return;
+    }
+
+    results[taskIndex] = await workerHandle.run(task);
+  }
+}
+
+function assertComputeStatsWorkerResult(
+  result: BenchmarkWorkerResult,
+): asserts result is Extract<BenchmarkWorkerResult, { type: "compute-algorithm-stats" }> {
+  if (result.type === "compute-algorithm-stats") {
+    return;
+  }
+
+  throw new Error(`Unexpected worker result type: ${result.type}`);
 }
 
 function createWorkerHandle(): WorkerHandle {

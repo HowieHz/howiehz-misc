@@ -1,7 +1,5 @@
 # 在线体验
 
-无需安装，打开即可使用：
-
-[兼容性问题排查器](../tools/compatibility-test/)
+无需安装，打开即可使用：[兼容性问题排查器](../tools/compatibility-test/)
 
 页面源码位于 [tools/compatibility-test](https://github.com/HowieHz/howiehz-misc/tree/main/docs/tools/compatibility-test)。

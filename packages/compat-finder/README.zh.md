@@ -25,9 +25,7 @@ compat-finder 是一个用于排查多个目标之间兼容性问题的库和命
 
 ## 在线体验
 
-无需安装，打开即可使用：
-
-[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
+无需安装，打开即可使用：[兼容性问题排查器](https://howiehz.top/misc/tools/compatibility-test/)
 
 ## 安装
 

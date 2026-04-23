@@ -25,9 +25,7 @@ For full documentation, visit [howiehz.top/misc/en/compat-finder](https://howieh
 
 ## Try It Online
 
-No installation required. Open it in your browser:
-
-[Compatibility Issue Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
+No installation required. Open it in your browser: [Compatibility Issue Finder](https://howiehz.top/misc/en/tools/compatibility-test/)
 
 ## Install
 

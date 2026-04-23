@@ -15,7 +15,7 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 - **Zero runtime dependencies**: Keeps installs lightweight and predictable.
 - **Efficient troubleshooting algorithm**: The default strategy combines binary search with divide-and-conquer, usually requiring fewer test rounds to reach a result.
 - **More than simple binary search**: Results can include one or more incompatible targets.
-- **Multiple integration options**: Choose from a guided CLI, a ready-to-use session API, or an advanced API for custom flows.
+- **Multiple integration options**: Choose from a guided CLI, a ready-to-use session API, or an advanced API for custom integrations.
 - **Works across runtimes**: Ships ESM output and runs in browsers and other ESM-compatible runtimes.
 - **Localized CLI**: Available in English and Simplified Chinese.
 
@@ -81,7 +81,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 
 CLI examples:
 
-Start a guided troubleshooting flow:
+Start a guided troubleshooting session:
 
 ```bash
 npx compat-finder interactive --count 4
@@ -107,7 +107,7 @@ For full command and API details, see the docs linked above.
 
 ## Work with AI
 
-If you want your AI agent to help continue a troubleshooting flow or integrate `compat-finder` into your app, install the `compat-finder` Agent Skill:
+If you want your AI agent to help continue a troubleshooting session or integrate `compat-finder` into your app, install the `compat-finder` Agent Skill:
 
 ```bash
 npx skills add HowieHz/howiehz-misc --skill compat-finder

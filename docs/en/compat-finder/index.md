@@ -6,7 +6,7 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 
 ## Features
 
-- **Zero runtime dependencies**: keeps installs lightweight and predictable.
+- **Zero runtime dependencies**: keeps installs lightweight and reduces supply-chain risk.
 - **Efficient troubleshooting algorithm**: the default strategy combines binary search with divide-and-conquer, usually requiring fewer test rounds to reach a result.
 - **More than simple binary search**: results can include one or more incompatible targets.
 - **Multiple integration options**: choose from a guided CLI, a ready-to-use session API, or an advanced API for custom flows.

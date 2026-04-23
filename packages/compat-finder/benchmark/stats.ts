@@ -114,7 +114,7 @@ function computeLeaveOneOutStats(maxTargetCount: number): BenchmarkStatsTable {
 
     for (let subsetSize = 1; subsetSize <= targetCount; subsetSize += 1) {
       subsetCount = (subsetCount * BigInt(targetCount - subsetSize + 1)) / BigInt(subsetSize);
-      const questionCount = subsetSize === targetCount ? targetCount + 1 : targetCount;
+      const questionCount = getLeaveOneOutQuestionCount(targetCount, subsetSize);
       bySubsetSize[subsetSize] = createExactQuestionStats(
         subsetCount,
         subsetCount * BigInt(questionCount),
@@ -131,6 +131,14 @@ function computeLeaveOneOutStats(maxTargetCount: number): BenchmarkStatsTable {
   }
 
   return table;
+}
+
+function getLeaveOneOutQuestionCount(targetCount: number, subsetSize: number): number {
+  if (targetCount === 1) {
+    return 1;
+  }
+
+  return subsetSize === targetCount ? targetCount + 1 : targetCount;
 }
 
 interface BinarySplitAggregateContribution {

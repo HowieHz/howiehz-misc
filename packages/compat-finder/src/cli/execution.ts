@@ -43,42 +43,12 @@ export async function runInteractiveCli(
 
   try {
     while (true) {
-      const step = getNextAnswerableCompatibilityTestStep(state);
-
-      if (!step) {
-        printResult(targetNames, state, messages);
+      const nextState = await runInteractiveCliStep(targetCount, targetNames, history, state, algorithm, messages, rl);
+      if (!nextState) {
         return;
       }
 
-      printPrompt(step, targetNames, messages);
-      const answer = await rl.question("> ");
-      const normalizedAnswer = answer.trim().toLowerCase();
-
-      if (normalizedAnswer === "q" || normalizedAnswer === "quit") {
-        console.log(messages.interactive.exited);
-        return;
-      }
-
-      if (normalizedAnswer === "u" || normalizedAnswer === "undo") {
-        if (history.length === 0) {
-          console.log(messages.interactive.emptyUndoHistory);
-          continue;
-        }
-
-        history.pop();
-        state = rebuildStateFromAnswers(targetCount, history, algorithm).state;
-        console.log(messages.interactive.restoredPreviousStep);
-        continue;
-      }
-
-      const parsedAnswer = parseAnswer(normalizedAnswer);
-      if (parsedAnswer === undefined) {
-        console.log(messages.interactive.invalidInput);
-        continue;
-      }
-
-      history.push(parsedAnswer);
-      applyCompatibilityTestAnswer(state, parsedAnswer);
+      state = nextState;
     }
   } finally {
     rl.close();
@@ -124,6 +94,95 @@ function printPrompt(step: CompatibilityTestStep, targetNames: readonly string[]
   console.log("");
   console.log(messages.interactive.promptTargetCount(step.promptTargetCount));
   console.log(formatTargetNames(targetNames, targets, messages));
+}
+
+async function runInteractiveCliStep(
+  targetCount: number,
+  targetNames: readonly string[],
+  history: boolean[],
+  state: CompatibilityTestState,
+  algorithm: CompatibilityTestAlgorithm,
+  messages: CliMessages,
+  rl: readline.Interface,
+): Promise<CompatibilityTestState | undefined> {
+  const step = getNextAnswerableCompatibilityTestStep(state);
+  if (!step) {
+    printResult(targetNames, state, messages);
+    return undefined;
+  }
+
+  printPrompt(step, targetNames, messages);
+  const action = getInteractiveAction(await rl.question("> "));
+  return resolveInteractiveCliAction(action, targetCount, history, state, algorithm, messages);
+}
+
+function getInteractiveAction(answer: string): boolean | "quit" | "undo" | undefined {
+  const normalizedAnswer = answer.trim().toLowerCase();
+  if (normalizedAnswer === "q" || normalizedAnswer === "quit") {
+    return "quit";
+  }
+
+  if (normalizedAnswer === "u" || normalizedAnswer === "undo") {
+    return "undo";
+  }
+
+  return parseAnswer(normalizedAnswer);
+}
+
+function printInteractiveExit(messages: CliMessages): void {
+  console.log(messages.interactive.exited);
+}
+
+function printInteractiveInvalidInput(messages: CliMessages): void {
+  console.log(messages.interactive.invalidInput);
+}
+
+function resolveInteractiveCliAction(
+  action: boolean | "quit" | "undo" | undefined,
+  targetCount: number,
+  history: boolean[],
+  state: CompatibilityTestState,
+  algorithm: CompatibilityTestAlgorithm,
+  messages: CliMessages,
+): CompatibilityTestState | undefined {
+  if (action === "quit") {
+    printInteractiveExit(messages);
+    return undefined;
+  }
+
+  if (action === "undo") {
+    return tryRestorePreviousInteractiveStep(targetCount, history, state, algorithm, messages);
+  }
+
+  if (action === undefined) {
+    printInteractiveInvalidInput(messages);
+    return state;
+  }
+
+  applyInteractiveAnswer(state, history, action);
+  return state;
+}
+
+function tryRestorePreviousInteractiveStep(
+  targetCount: number,
+  history: boolean[],
+  state: CompatibilityTestState,
+  algorithm: CompatibilityTestAlgorithm,
+  messages: CliMessages,
+): CompatibilityTestState {
+  if (history.length === 0) {
+    console.log(messages.interactive.emptyUndoHistory);
+    return state;
+  }
+
+  history.pop();
+  console.log(messages.interactive.restoredPreviousStep);
+  return rebuildStateFromAnswers(targetCount, history, algorithm).state;
+}
+
+function applyInteractiveAnswer(state: CompatibilityTestState, history: boolean[], answer: boolean): void {
+  history.push(answer);
+  applyCompatibilityTestAnswer(state, answer);
 }
 
 function rebuildStateFromAnswers(

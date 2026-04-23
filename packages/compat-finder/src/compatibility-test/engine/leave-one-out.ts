@@ -30,6 +30,10 @@ export function getLeaveOneOutPromptTargetRanges(state: LeaveOneOutCompatibility
     return [{ start: 1, end: state.targetCount }];
   }
 
+  if (state.targetCount === 1) {
+    return [{ start: 1, end: 1 }];
+  }
+
   return subtractTargetRanges(
     [{ start: 1, end: state.targetCount }],
     [{ start: state.currentExcludedTarget, end: state.currentExcludedTarget }],
@@ -63,6 +67,11 @@ export function getLeaveOneOutCompatibilityTestDebugStep(
 export function advanceLeaveOneOutState(state: LeaveOneOutCompatibilityTestState, hasIssue: boolean): void {
   if (state.confirmingFullSet) {
     stopCompatibilityTest(state, state.definedTargets);
+    return;
+  }
+
+  if (state.targetCount === 1) {
+    stopCompatibilityTest(state, hasIssue ? [1] : []);
     return;
   }
 

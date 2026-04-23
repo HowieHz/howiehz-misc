@@ -46,6 +46,7 @@ describe("compatibility test cli", () => {
     expect(helpText).toContain("interactive (i)");
     expect(helpText).toContain("next (n)");
     expect(helpText).toContain("--algorithm, --algo <name>");
+    expect(helpText).toContain("默认：binary-split");
   });
 
   it("returns localized root help text", () => {
@@ -54,6 +55,7 @@ describe("compatibility test cli", () => {
     expect(helpText).toContain("compat-finder <subcommand> [options]");
     expect(helpText).toContain("interactive (i)");
     expect(helpText).toContain("next (n)");
+    expect(helpText).toContain("default: binary-split");
   });
 
   it("localizes next help output examples", () => {
@@ -225,6 +227,16 @@ describe("compatibility test cli", () => {
       status: "testing",
       targetCount: 4,
       targets: ["Alpha", "Beta", "Delta"],
+    });
+  });
+
+  it("keeps single-target leave-one-out next prompts non-empty", () => {
+    const result = getNextCommandResult(1, ["Only"], [], "en", "leave-one-out");
+
+    expect(result).toEqual({
+      status: "testing",
+      targetCount: 1,
+      targets: ["Only"],
     });
   });
 

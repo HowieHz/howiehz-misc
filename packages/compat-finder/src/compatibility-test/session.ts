@@ -3,6 +3,7 @@ import {
   type CompatibilitySession,
   type CompatibilitySessionStep,
   type CompatibilityTestOptions,
+  type CompatibilityTestStep,
 } from "./core.ts";
 import {
   applyCompatibilityTestAnswer,
@@ -35,20 +36,10 @@ export function createCompatibilitySession<Target>(
   const toSessionStep = (): CompatibilitySessionStep<Target> => {
     const step = getNextAnswerableCompatibilityTestStep(state);
     if (!step) {
-      const targetNumbers = [...state.resultTargets];
-      return {
-        status: "complete",
-        targetNumbers,
-        targets: getTargetsByNumber(targets, targetNumbers),
-      };
+      return createCompleteSessionStep(targets, state.resultTargets);
     }
 
-    const targetNumbers = takeTargetsFromRanges(step.promptTargetRanges, step.promptTargetCount);
-    return {
-      status: "testing",
-      targetNumbers,
-      targets: getTargetsByNumber(targets, targetNumbers),
-    };
+    return createTestingSessionStep(targets, step);
   };
 
   return {
@@ -64,16 +55,49 @@ export function createCompatibilitySession<Target>(
     current: toSessionStep,
     undo() {
       answers.pop();
-      state = createCompatibilityTestState(targets.length, { algorithm });
-
-      for (const answer of answers) {
-        applyCompatibilityTestAnswer(state, answer);
-        getNextAnswerableCompatibilityTestStep(state);
-      }
-
+      state = rebuildSessionState(targets.length, algorithm, answers);
       return toSessionStep();
     },
   };
+}
+
+function createCompleteSessionStep<Target>(
+  targets: readonly Target[],
+  resultTargets: readonly number[],
+): CompatibilitySessionStep<Target> {
+  const targetNumbers = [...resultTargets];
+  return {
+    status: "complete",
+    targetNumbers,
+    targets: getTargetsByNumber(targets, targetNumbers),
+  };
+}
+
+function createTestingSessionStep<Target>(
+  targets: readonly Target[],
+  step: CompatibilityTestStep,
+): CompatibilitySessionStep<Target> {
+  const targetNumbers = takeTargetsFromRanges(step.promptTargetRanges, step.promptTargetCount);
+  return {
+    status: "testing",
+    targetNumbers,
+    targets: getTargetsByNumber(targets, targetNumbers),
+  };
+}
+
+function rebuildSessionState(
+  targetCount: number,
+  algorithm: CompatibilityTestOptions["algorithm"],
+  answers: readonly boolean[],
+) {
+  const state = createCompatibilityTestState(targetCount, { algorithm });
+
+  for (const answer of answers) {
+    applyCompatibilityTestAnswer(state, answer);
+    getNextAnswerableCompatibilityTestStep(state);
+  }
+
+  return state;
 }
 
 function getTargetsByNumber<Target>(targets: readonly Target[], targetNumbers: readonly number[]): Target[] {

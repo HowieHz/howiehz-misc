@@ -232,49 +232,18 @@ function createWorkerHandle(): WorkerHandle {
       await worker.terminate();
     },
     async run(task: BenchmarkWorkerTask): Promise<BenchmarkWorkerResult> {
-      if (closed) {
-        throw new Error("Cannot schedule a task on a closed benchmark worker");
-      }
-
-      if (runningTask) {
-        throw new Error("Cannot schedule multiple benchmark tasks on the same worker concurrently");
-      }
-
+      assertWorkerCanRunTask(closed, runningTask);
       runningTask = true;
-      return await new Promise<BenchmarkWorkerResult>((resolve, reject) => {
-        const cleanup = () => {
-          worker.off("message", handleMessage);
-          worker.off("error", handleError);
-          worker.off("exit", handleExit);
+      return await runTaskOnWorker(
+        worker,
+        task,
+        () => {
           runningTask = false;
-        };
-
-        const handleMessage = (result: BenchmarkWorkerResult) => {
-          cleanup();
-          resolve(result);
-        };
-        const handleError = (error: Error) => {
-          cleanup();
+        },
+        () => {
           closed = true;
-          reject(error);
-        };
-        const handleExit = (code: number) => {
-          cleanup();
-          closed = true;
-          reject(
-            new Error(
-              code === 0
-                ? "Benchmark worker exited before completing the current task"
-                : `Benchmark worker exited with code ${code}`,
-            ),
-          );
-        };
-
-        worker.once("message", handleMessage);
-        worker.once("error", handleError);
-        worker.once("exit", handleExit);
-        worker.postMessage(task);
-      });
+        },
+      );
     },
   };
 }
@@ -283,6 +252,62 @@ function ensureStripTypesExecArgv(): string[] {
   return process.execArgv.includes("--experimental-strip-types")
     ? process.execArgv
     : [...process.execArgv, "--experimental-strip-types"];
+}
+
+function assertWorkerCanRunTask(closed: boolean, runningTask: boolean): void {
+  if (closed) {
+    throw new Error("Cannot schedule a task on a closed benchmark worker");
+  }
+
+  if (!runningTask) {
+    return;
+  }
+
+  throw new Error("Cannot schedule multiple benchmark tasks on the same worker concurrently");
+}
+
+async function runTaskOnWorker(
+  worker: Worker,
+  task: BenchmarkWorkerTask,
+  markTaskComplete: () => void,
+  markWorkerClosed: () => void,
+): Promise<BenchmarkWorkerResult> {
+  return await new Promise<BenchmarkWorkerResult>((resolve, reject) => {
+    const cleanup = () => {
+      worker.off("message", handleMessage);
+      worker.off("error", handleError);
+      worker.off("exit", handleExit);
+      markTaskComplete();
+    };
+
+    const handleMessage = (result: BenchmarkWorkerResult) => {
+      cleanup();
+      resolve(result);
+    };
+    const handleError = (error: Error) => {
+      cleanup();
+      markWorkerClosed();
+      reject(error);
+    };
+    const handleExit = (code: number) => {
+      cleanup();
+      markWorkerClosed();
+      reject(new Error(getUnexpectedWorkerExitMessage(code)));
+    };
+
+    worker.once("message", handleMessage);
+    worker.once("error", handleError);
+    worker.once("exit", handleExit);
+    worker.postMessage(task);
+  });
+}
+
+function getUnexpectedWorkerExitMessage(code: number): string {
+  if (code === 0) {
+    return "Benchmark worker exited before completing the current task";
+  }
+
+  return `Benchmark worker exited with code ${code}`;
 }
 
 await main();

@@ -181,31 +181,8 @@ export function subtractTargetRanges(
   let excludedIndex = 0;
 
   for (const sourceRange of source) {
-    let cursor = sourceRange.start;
-
-    while (excludedIndex < excluded.length && excluded[excludedIndex].end < cursor) {
-      excludedIndex += 1;
-    }
-
-    let scanIndex = excludedIndex;
-    while (scanIndex < excluded.length && excluded[scanIndex].start <= sourceRange.end) {
-      const excludedRange = excluded[scanIndex];
-
-      if (excludedRange.start > cursor) {
-        result.push({ start: cursor, end: Math.min(excludedRange.start - 1, sourceRange.end) });
-      }
-
-      cursor = Math.max(cursor, excludedRange.end + 1);
-      if (cursor > sourceRange.end) {
-        break;
-      }
-
-      scanIndex += 1;
-    }
-
-    if (cursor <= sourceRange.end) {
-      result.push({ start: cursor, end: sourceRange.end });
-    }
+    excludedIndex = skipExcludedRangesBeforeCursor(excluded, excludedIndex, sourceRange.start);
+    subtractSingleSourceRange(sourceRange, excluded, excludedIndex, result);
   }
 
   return result;
@@ -253,4 +230,48 @@ export function normalizeRanges(ranges: readonly TargetRange[]): TargetRange[] {
   }
 
   return normalizedRanges;
+}
+
+function skipExcludedRangesBeforeCursor(
+  excludedRanges: readonly TargetRange[],
+  startIndex: number,
+  cursor: number,
+): number {
+  let nextIndex = startIndex;
+  while (nextIndex < excludedRanges.length && excludedRanges[nextIndex].end < cursor) {
+    nextIndex += 1;
+  }
+
+  return nextIndex;
+}
+
+function subtractSingleSourceRange(
+  sourceRange: TargetRange,
+  excludedRanges: readonly TargetRange[],
+  startIndex: number,
+  result: TargetRange[],
+): void {
+  let cursor = sourceRange.start;
+  let scanIndex = startIndex;
+
+  while (scanIndex < excludedRanges.length && excludedRanges[scanIndex].start <= sourceRange.end) {
+    const excludedRange = excludedRanges[scanIndex];
+    pushUnexcludedSegment(result, cursor, excludedRange.start - 1, sourceRange.end);
+    cursor = Math.max(cursor, excludedRange.end + 1);
+    if (cursor > sourceRange.end) {
+      return;
+    }
+
+    scanIndex += 1;
+  }
+
+  pushUnexcludedSegment(result, cursor, sourceRange.end, sourceRange.end);
+}
+
+function pushUnexcludedSegment(result: TargetRange[], start: number, end: number, sourceRangeEnd: number): void {
+  if (start > end || start > sourceRangeEnd) {
+    return;
+  }
+
+  result.push({ start, end: Math.min(end, sourceRangeEnd) });
 }

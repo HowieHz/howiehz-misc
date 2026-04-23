@@ -1,7 +1,7 @@
 import type { CliMessages } from "./types.ts";
 
 export const enMessages: CliMessages = {
-  algorithmOptionDescription: "Algorithm to use: binary-split or leave-one-out",
+  algorithmOptionDescription: "Algorithm to use (default: binary-split): binary-split or leave-one-out",
   aliasesTitle: "Alias",
   commandTitle: (command) => `Compatibility Issue Finder: ${command}`,
   commands: {

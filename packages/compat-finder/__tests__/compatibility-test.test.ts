@@ -344,6 +344,36 @@ describe("compatibility test engine", () => {
     });
   });
 
+  it("keeps single-target leave-one-out sessions actionable", () => {
+    const session = createCompatibilitySession(["A"], {
+      algorithm: "leave-one-out",
+    });
+
+    expect(session.current()).toEqual({
+      status: "testing",
+      targetNumbers: [1],
+      targets: ["A"],
+    });
+
+    expect(session.answer(true)).toEqual({
+      status: "complete",
+      targetNumbers: [1],
+      targets: ["A"],
+    });
+  });
+
+  it("completes single-target leave-one-out sessions without issues", () => {
+    const session = createCompatibilitySession(["A"], {
+      algorithm: "leave-one-out",
+    });
+
+    expect(session.answer(false)).toEqual({
+      status: "complete",
+      targetNumbers: [],
+      targets: [],
+    });
+  });
+
   it("rebuilds leave-one-out sessions with undo", () => {
     const session = createCompatibilitySession(["A", "B", "C"], {
       algorithm: "leave-one-out",
@@ -442,6 +472,21 @@ describe("compatibility test engine", () => {
     applyCompatibilityTestAnswer(state, true);
 
     expect(state.resultTargets).toEqual([2]);
+  });
+
+  it("keeps single-target leave-one-out prompts non-empty in the low-level state API", () => {
+    const state = createCompatibilityTestState(1, { algorithm: "leave-one-out" });
+
+    expect(getCurrentCompatibilityTestStep(state)).toMatchObject({
+      promptTargetRanges: [range(1, 1)],
+      promptTargetCount: 1,
+      requiresAnswer: true,
+    });
+
+    applyCompatibilityTestAnswer(state, true);
+
+    expect(state.resultTargets).toEqual([1]);
+    expect(state.stopped).toBe(true);
   });
 
   it("keeps range-based debug steps for internal tracing", () => {

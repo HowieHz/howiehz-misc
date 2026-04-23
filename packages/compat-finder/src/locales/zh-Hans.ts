@@ -1,7 +1,7 @@
 import type { CliMessages } from "./types.ts";
 
 export const zhHansMessages: CliMessages = {
-  algorithmOptionDescription: "要使用的算法：binary-split 或 leave-one-out",
+  algorithmOptionDescription: "要使用的算法（默认：binary-split）：binary-split 或 leave-one-out",
   aliasesTitle: "别名",
   commandTitle: (command) => `兼容性问题排查器：${command}`,
   commands: {

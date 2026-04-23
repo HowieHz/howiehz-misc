@@ -51,7 +51,7 @@ Built-in CLI algorithms:
 Switch algorithms with `--algorithm <name>` or `--algo <name>`.
 
 Use `leave-one-out` when the user explicitly wants the sequential "remove target 1, then remove target 2" workflow.
-Keep `binary-split` as the default recommendation otherwise.
+Keep `binary-split` as the default recommendation when the user is unsure or expects only a small incompatible subset.
 
 ## Answers
 

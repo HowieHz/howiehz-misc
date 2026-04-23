@@ -30,8 +30,13 @@ features:
     link: /posts/
     linkText: 查看归档
   - icon: 🛠️
-    title: 实用工具
+    title: 在线工具
     details: 一些可以直接在页面里使用的小工具。
     link: /tools/
     linkText: 查看工具
+  - icon: 🧩
+    title: 兼容性问题排查器
+    details: 多目标兼容性问题排查库与命令行工具。
+    link: /compat-finder/
+    linkText: 查看文档
 ---

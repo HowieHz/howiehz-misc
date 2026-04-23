@@ -30,10 +30,10 @@ interface BenchmarkChartDefinition {
 const BENCHMARK_CHART_DEFINITIONS: readonly BenchmarkChartDefinition[] = [
   {
     id: "overall-non-empty-subsets",
-    title: "All Non-Empty Subsets",
-    description: "Exact min / max / average question counts across every non-empty failing subset.",
+    title: "All Non-Empty Failing Sets",
+    description: "Exact min / avg / max question counts across all non-empty failing sets.",
     xAxisMin: 1,
-    resolvePoint: (stats) => createChartPoint(stats.targetCount, null, "all non-empty subsets", stats.overall),
+    resolvePoint: (stats) => createChartPoint(stats.targetCount, null, "all non-empty failing sets", stats.overall),
   },
   createFloorFractionChartDefinition(1, 1),
   createFloorFractionChartDefinition(1, 5, FIFTH_BASELINE_TARGET_COUNT),
@@ -45,16 +45,15 @@ const BENCHMARK_CHART_DEFINITIONS: readonly BenchmarkChartDefinition[] = [
   createFloorFractionChartDefinition(1, 4, QUARTER_BASELINE_TARGET_COUNT),
   {
     id: "pick-all",
-    title: "Pick n",
-    description:
-      "Exact min / max / average question counts when every target is part of the failing subset. Displayed from n = 4.",
+    title: "Failing Set Size = n",
+    description: "Exact min / avg / max question counts when every target is in the failing set.",
     xAxisMin: QUARTER_BASELINE_TARGET_COUNT,
     resolvePoint: (stats) => {
       if (stats.targetCount < QUARTER_BASELINE_TARGET_COUNT) {
         return undefined;
       }
 
-      return createFixedSizeChartPoint(stats, stats.targetCount, "pick n");
+      return createFixedSizeChartPoint(stats, stats.targetCount, "failing set size = n");
     },
   },
 ];
@@ -75,15 +74,13 @@ export function buildBenchmarkResults(
 function createFloorBasisPointsChartDefinition(basisPoints: number, baselineTargetCount = 1): BenchmarkChartDefinition {
   const percentLabel = formatBasisPointsPercent(basisPoints);
   const id = `pick-${percentLabel.replace(".", "-")}-percent`;
-  const title = `Pick floor(${percentLabel}% n)`;
-  const subsetSizeLabel = `pick floor(${percentLabel}% n)`;
+  const title = `Failing Set Size = floor(${percentLabel}% of n)`;
+  const subsetSizeLabel = `failing set size = floor(${percentLabel}% of n)`;
 
   return {
     id,
     title,
-    description:
-      `Exact min / max / average question counts when the failing subset size is ` +
-      `floor(${percentLabel}% of n). Displayed from n = ${baselineTargetCount}.`,
+    description: `Exact min / avg / max question counts when the failing set size is floor(${percentLabel}% of n).`,
     xAxisMin: baselineTargetCount,
     resolvePoint: (stats) => {
       if (stats.targetCount < baselineTargetCount) {
@@ -107,7 +104,7 @@ function createBenchmarkChart(
     description: definition.description,
     xAxisMin: definition.xAxisMin,
     xAxisLabel: "Target count",
-    yAxisLabel: "Questions",
+    yAxisLabel: "Question count",
     series: COMPATIBILITY_TEST_ALGORITHMS.map((algorithm) => ({
       algorithm,
       points: statsByAlgorithm[algorithm]
@@ -124,12 +121,14 @@ function createFloorFractionChartDefinition(
   baselineTargetCount = 1,
 ): BenchmarkChartDefinition {
   const id = denominator === 1 ? `pick-${numerator}` : `pick-${ordinalName(denominator)}`;
-  const title = denominator === 1 ? `Pick ${numerator}` : `Pick floor(${numerator}n / ${denominator})`;
-  const subsetSizeLabel = denominator === 1 ? `pick ${numerator}` : `pick floor(${numerator}n / ${denominator})`;
+  const title =
+    denominator === 1 ? `Failing Set Size = ${numerator}` : `Failing Set Size = floor(${numerator}n / ${denominator})`;
+  const subsetSizeLabel =
+    denominator === 1 ? `failing set size = ${numerator}` : `failing set size = floor(${numerator}n / ${denominator})`;
   const description =
     denominator === 1
-      ? `Exact min / max / average question counts when the failing subset size is exactly ${numerator}.`
-      : `Exact min / max / average question counts when the failing subset size is floor(${numerator}n / ${denominator}). Displayed from n = ${baselineTargetCount}.`;
+      ? `Exact min / avg / max question counts when the failing set size is exactly ${numerator}.`
+      : `Exact min / avg / max question counts when the failing set size is floor(${numerator}n / ${denominator}).`;
 
   return {
     id,

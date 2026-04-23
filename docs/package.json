@@ -13,6 +13,7 @@
     "@nolebase/vitepress-plugin-highlight-targeted-heading": "^2.18.2",
     "compat-finder": "workspace:*",
     "lunar-javascript": "^1.7.7",
+    "vitepress-plugin-group-icons": "^1.7.5",
     "vue": "^3.5.32"
   },
   "devDependencies": {

@@ -4,6 +4,7 @@ import path from "node:path";
 import browserslist from "browserslist";
 import { browserslistToTargets } from "lightningcss";
 import { defineConfig, type DefaultTheme, type UserConfig } from "vitepress";
+import { groupIconMdPlugin, groupIconVitePlugin } from "vitepress-plugin-group-icons";
 import { chineseSearchOptimize, pagefindPlugin } from "vitepress-plugin-pagefind";
 import { RssPlugin, type RSSOptions } from "vitepress-plugin-rss";
 
@@ -51,6 +52,36 @@ const EN_TOOLS_SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
     text: "Tools",
     items: [{ text: "Tools Home", link: "/en/tools/" }, ...collectTools("en")],
+  },
+];
+
+const ROOT_COMPAT_FINDER_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  {
+    text: "compat-finder",
+    items: [
+      { text: "介绍", link: "/compat-finder/" },
+      { text: "快速上手", link: "/compat-finder/getting-started" },
+      { text: "与 AI 协作", link: "/compat-finder/ai" },
+      { text: "在线体验", link: "/compat-finder/online-tool" },
+      { text: "命令行工具", link: "/compat-finder/cli" },
+      { text: "API 参考", link: "/compat-finder/api" },
+      { text: "算法性能", link: "/compat-finder/algorithm-performance" },
+    ],
+  },
+];
+
+const EN_COMPAT_FINDER_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  {
+    text: "compat-finder",
+    items: [
+      { text: "Introduction", link: "/en/compat-finder/" },
+      { text: "Getting Started", link: "/en/compat-finder/getting-started" },
+      { text: "Work with AI", link: "/en/compat-finder/ai" },
+      { text: "Try It Online", link: "/en/compat-finder/online-tool" },
+      { text: "CLI", link: "/en/compat-finder/cli" },
+      { text: "API Reference", link: "/en/compat-finder/api" },
+      { text: "Algorithm Performance", link: "/en/compat-finder/algorithm-performance" },
+    ],
   },
 ];
 
@@ -195,6 +226,8 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
   srcExclude: ["**/README.md"],
   vite: {
     plugins: [
+      // Group icons plugin
+      groupIconVitePlugin(),
       // Pagefind search plugin
       pagefindPlugin({
         customSearchQuery: chineseSearchOptimize,
@@ -376,6 +409,9 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
     image: {
       lazyLoading: true,
     },
+    config(md) {
+      md.use(groupIconMdPlugin);
+    },
   },
 
   locales: {
@@ -391,9 +427,10 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
         socialLinks: [{ icon: "github", link: githubRepoUrl }],
         nav: [
           {
-            text: "文章分类",
-            items: [{ text: "过时/低质量文章归档", link: "/posts/junk/" }],
+            text: "NPM 包",
+            items: [{ text: "compat-finder", link: "/compat-finder/" }],
           },
+          { text: "文章归档", link: "/posts/" },
           { text: "工具", link: "/tools/" },
           {
             text: "关于",
@@ -407,6 +444,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
           },
         ],
         sidebar: {
+          "/compat-finder/": ROOT_COMPAT_FINDER_SIDEBAR,
           "/posts/": buildPostSidebar("root"),
           "/tools/": ROOT_TOOLS_SIDEBAR,
           "/maintenance/": ROOT_INFO_SIDEBAR,
@@ -463,9 +501,10 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
         socialLinks: [{ icon: "github", link: githubRepoUrl }],
         nav: [
           {
-            text: "Categories",
-            items: [{ text: "Junk", link: "/en/posts/junk/" }],
+            text: "NPM Packages",
+            items: [{ text: "compat-finder", link: "/en/compat-finder/" }],
           },
+          { text: "Archive", link: "/en/posts/" },
           { text: "Tools", link: "/en/tools/" },
           {
             text: "About",
@@ -479,6 +518,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
           },
         ],
         sidebar: {
+          "/en/compat-finder/": EN_COMPAT_FINDER_SIDEBAR,
           "/en/posts/": buildPostSidebar("en"),
           "/en/tools/": EN_TOOLS_SIDEBAR,
           "/en/maintenance/": EN_INFO_SIDEBAR,

@@ -7,6 +7,7 @@ import { h } from "vue";
 import GiscusComment from "./components/GiscusComment.vue";
 import PageFooterNotice from "./components/PageFooterNotice.vue";
 
+import "virtual:group-icons.css";
 import "./style.css";
 import PostMetadata from "./components/PostMetadata.vue";
 

@@ -24,8 +24,13 @@ features:
     link: /en/posts/junk/
     linkText: View junk
   - icon: 🛠️
-    title: Tools
+    title: Online Tools
     details: Small utilities you can use directly in the page.
     link: /en/tools/
     linkText: View tools
+  - icon: 🧩
+    title: Compatibility Finder
+    details: A library and CLI for narrowing down compatibility issues across many targets.
+    link: /en/compat-finder/
+    linkText: View docs
 ---

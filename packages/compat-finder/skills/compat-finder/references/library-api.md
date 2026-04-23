@@ -33,13 +33,19 @@ bun add compat-finder
 
 Use `createCompatibilitySession(targets)` for most integrations.
 
-Simple session API:
+High-level session API:
 
-- `session.current()` reads the current step or final result.
-- `session.answer(true)` means the issue appears with the current targets.
-- `session.answer(false)` means the issue does not appear with the current targets.
+- `session.current()` reads the current testing step or final result.
+- `session.answer(hasIssue: boolean)` submits the result for the current targets and advances the session.
 - `session.undo()` removes the latest answer and returns to the previous step.
 - Returned steps contain `status`, `targets`, and 1-based `targetNumbers`.
+
+Returned step shape:
+
+- when `status === "testing"`:
+  `targets` are the targets to test right now
+- when `status === "complete"`:
+  `targets` are the final incompatible targets
 
 Typical integration loop:
 
@@ -73,7 +79,7 @@ If the user explicitly needs to resume after refresh, restart, or in another pro
 
 ## Algorithm Selection
 
-Session and state creation accept an optional algorithm:
+Session and state creation accept an optional algorithm, but callers do not need to pass one unless they explicitly want to switch strategies:
 
 - `binary-split`:
   default search strategy
@@ -95,7 +101,7 @@ const state = createCompatibilityTestState(targets.length, {
 ```
 
 Use `leave-one-out` when the caller explicitly wants the sequential exclusion workflow.
-Keep `binary-split` as the default recommendation otherwise.
+Keep `binary-split` as the default recommendation when the caller is unsure or expects only a small incompatible subset.
 
 ## Lower-Level State API
 

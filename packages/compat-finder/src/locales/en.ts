@@ -3,7 +3,7 @@ import type { CliMessages } from "./types.ts";
 export const enMessages: CliMessages = {
   algorithmOptionDescription: "Algorithm to use (default: binary-split): binary-split or leave-one-out",
   aliasesTitle: "Alias",
-  commandTitle: (command) => `Compatibility Issue Finder: ${command}`,
+  commandTitle: (command) => `Compatibility Finder: ${command}`,
   commands: {
     interactive: {
       description: "Start an interactive compatibility check",
@@ -85,7 +85,7 @@ export const enMessages: CliMessages = {
     completeWithIssues: (count) => `Test complete. The following ${count} target(s) are incompatible:`,
     completeWithoutIssues: "Test complete. No incompatible targets found.",
   },
-  rootTitle: "Compatibility Issue Finder",
+  rootTitle: "Compatibility Finder",
   rootUsage: "compat-finder <subcommand> [options]",
   subcommandsTitle: "Subcommands",
   usageTitle: "Usage",

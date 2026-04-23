@@ -77,14 +77,26 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 
 命令行示例：
 
-```bash
-npx compat-finder next -c 4 -n "A,B,C,D" -a "issue,pass"
-```
-
-如果你想直接开始一轮引导式排查，可以执行：
+启动一轮引导式排查：
 
 ```bash
 npx compat-finder interactive --count 4
+```
+
+根据已有回答计算下一步要测试的目标：
+
+```bash
+npx compat-finder next -c 3 -a "y,n"
+```
+
+预期会输出如下 JSON：
+
+```json
+{
+  "status": "testing",
+  "targetCount": 3,
+  "targets": ["目标 2"]
+}
 ```
 
 如果你需要完整命令和 API 说明，可以继续阅读[完整文档](https://howiehz.top/misc/compat-finder/)。

@@ -9,7 +9,7 @@
 
 ## 安装
 
-使用你偏好的包管理器安装 `compat-finder`：
+使用你常用的包管理器安装 `compat-finder`：
 
 ::: code-group
 

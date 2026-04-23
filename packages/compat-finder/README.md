@@ -75,16 +75,28 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
-CLI example:
+CLI examples:
 
-```bash
-npx compat-finder next -c 4 -n "A,B,C,D" -a "issue,pass"
-```
-
-To start a guided troubleshooting flow, run:
+Start a guided troubleshooting flow:
 
 ```bash
 npx compat-finder interactive --count 4
+```
+
+Calculate the next targets to test from existing answers:
+
+```bash
+npx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```
+
+Expected JSON output:
+
+```json
+{
+  "status": "testing",
+  "targetCount": 3,
+  "targets": ["Beta"]
+}
 ```
 
 For full command and API details, see the docs linked above.

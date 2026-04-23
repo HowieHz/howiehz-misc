@@ -70,8 +70,7 @@ export function renderBenchmarkChartSvg(chart: BenchmarkChart): string {
   const yRange = Math.max(yMax, 1);
   const xTickValues = getFixedStepTicks(xMin, xMax, X_AXIS_TICK_STEP);
   const yTickValues = getLinearTicks(yMax, 6);
-  const legendStartX =
-    CHART_MARGIN.left + Math.max((plotWidth - LEGEND_COLUMNS * LEGEND_COLUMN_WIDTH) / 2, 0);
+  const legendStartX = CHART_MARGIN.left + Math.max((plotWidth - LEGEND_COLUMNS * LEGEND_COLUMN_WIDTH) / 2, 0);
   const legendStartY = CHART_MARGIN.top + plotHeight + 126;
 
   const gridLines = yTickValues

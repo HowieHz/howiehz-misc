@@ -200,6 +200,6 @@ Expected JSON output:
 ## Next
 
 - Learn how to [Work with AI](./ai)
-- Go to [Try It Online](./online-tool)
+- Try [compat-finder Online](./online-tool)
 - Or jump to [CLI](./cli)
 - View [API Reference](./api)

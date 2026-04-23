@@ -9,10 +9,10 @@ Here, "performance" mainly means how many test rounds the troubleshooting flow n
 - In almost all cases, `leave-one-out` uses exactly `n` questions; it becomes `n + 1` only when the final result covers all targets.
 - `binary-split` varies with the size and distribution of the final result set and usually falls between about `max(1, ceil(log2(n)))` and `2n - 1` questions.
 
-| Observation | Condition | Better Choice |
-| --- | --- | --- |
+| Observation            | Condition                                                                  | Better Choice   |
+| ---------------------- | -------------------------------------------------------------------------- | --------------- |
 | Average question count | Final incompatible set is about `22.84%` to `100%` of the total target set | `leave-one-out` |
-| Average question count | Final incompatible set is below `22.83%` | `binary-split` |
+| Average question count | Final incompatible set is below `22.83%`                                   | `binary-split`  |
 
 The crossover point is around `13.77%`; below that, in most cases, the worst case for `binary-split` is also better than `leave-one-out`.
 

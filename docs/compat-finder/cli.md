@@ -1,6 +1,6 @@
 # 命令行工具
 
-compat-finder 提供两个 CLI 子命令：`interactive` 用于引导式排查，`next` 用于根据已有回答做单步推导。
+`compat-finder` 提供两个 CLI 子命令：`interactive` 用于引导式排查，`next` 用于根据已有回答做单步推导。
 
 ## 帮助
 

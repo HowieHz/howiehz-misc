@@ -1,6 +1,6 @@
 # compat-finder
 
-compat-finder is a TypeScript library and CLI for troubleshooting compatibility issues across multiple targets.
+`compat-finder` is a TypeScript library and CLI for troubleshooting compatibility issues across multiple targets.
 
 It helps you find one or more incompatible targets with fewer rounds of testing.
 
@@ -29,4 +29,4 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 
 ## Related Projects
 
-compat-finder is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
+`compat-finder` is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).

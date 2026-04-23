@@ -2,7 +2,7 @@
 
 ## Library Example
 
-The example below shows the smallest useful compat-finder session:
+The example below shows the smallest useful `compat-finder` session:
 
 ```ts
 import { createCompatibilitySession } from "compat-finder";

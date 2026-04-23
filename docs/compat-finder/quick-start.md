@@ -2,7 +2,7 @@
 
 ## 库使用示例
 
-下面的示例展示了一个最小可用的 compat-finder 会话：
+下面的示例展示了一个最小可用的 `compat-finder` 会话：
 
 ```ts
 import { createCompatibilitySession } from "compat-finder";

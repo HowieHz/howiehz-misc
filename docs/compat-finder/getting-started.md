@@ -120,7 +120,7 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 默认算法 `binary-split` 采用二分法结合分治法的策略。  
 如果你想使用“每轮排除 1 个目标”的测试方式，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`。
 
-## CLI 示例
+## CLI 使用示例
 
 如果你更想直接从命令行开始，可以先试下面几个例子。
 

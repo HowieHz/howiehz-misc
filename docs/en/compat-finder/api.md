@@ -1,30 +1,59 @@
 # API Reference
 
-Most integrations should start with the simple session API.
+Most integrations should start with the [Simple Session API](#simple-session-api).
 
 ## Simple Session API
 
-- `createCompatibilitySession(targets, options?)`: create a compatibility session from your target list
-- `session.current()`: read the current step or final result
-- `session.answer(hasIssue)`: submit one result and move to the next step
-- `session.undo()`: remove the latest answer and return to the previous step
+- `createCompatibilitySession<Target>(targets: readonly Target[], options?: CompatibilityTestOptions): CompatibilitySession<Target>`: create a compatibility session from your target list
 
-### Session Steps
+### Returned Object: `CompatibilitySession<Target>`
 
-- `status`: `testing` means the current `targets` should be tested; `complete` means the final result is available
-- `targets`: target values from the original input list
-- `targetNumbers`: 1-based target numbers for display or logs
+- `current(): CompatibilitySessionStep<Target>`: read the current step or final result
+- `answer(hasIssue: boolean): CompatibilitySessionStep<Target>`: submit one result and move to the next step
+- `undo(): CompatibilitySessionStep<Target>`: remove the latest answer and return to the previous step
 
-`session.answer(true)` means the issue appears with the current targets.  
-`session.answer(false)` means the issue does not appear with the current targets.  
-`session.undo()` is useful when the latest answer was entered by mistake.  
-`createCompatibilitySession(targets)` requires at least one target.
+### Return Value of `current()` / `answer()` / `undo()`
+
+Shape:
+
+```js
+// status === "testing"
+{
+  status: "testing",
+  targets: ["B", "C"],
+  targetNumbers: [2, 3],
+}
+
+// status === "complete"
+{
+  status: "complete",
+  targets: ["C"],
+  targetNumbers: [3],
+}
+```
+
+- When `status: "testing"`:
+  `targets` is the list of target values to test in the current round
+  `targetNumbers` is the list of 1-based indexes for those targets in the original `targets` input list
+- When `status: "complete"`:
+  `targets` is the final list of incompatible target values
+  `targetNumbers` is the list of 1-based indexes for those targets in the original `targets` input list
+
+### Call Semantics
+
+- `answer(true)`: the issue appears with the current targets
+- `answer(false)`: the issue does not appear with the current targets
+- `undo()`: remove the latest answer
+- `createCompatibilitySession(targets)`: `targets` must contain at least one item
 
 ### Algorithm Selection
 
-- Default: `binary-split`
-- Alternative: `leave-one-out`
-- Example: `createCompatibilitySession(targets, { algorithm: "leave-one-out" })`
+Only pass `algorithm` when you want to switch strategies.
+
+- Omit `algorithm`: use the default `binary-split` strategy
+- Set `algorithm: "leave-one-out"`: switch to testing by excluding one target per round
+- Default usage: `createCompatibilitySession(targets)`
+- Switching example: `createCompatibilitySession(targets, { algorithm: "leave-one-out" })`
 
 ## Advanced API
 
@@ -32,20 +61,57 @@ The lower-level API exposes the mutable range-based state machine for custom UIs
 
 If you only need a higher-level flow that already manages the session for you, you usually do not need to start here.
 
-### Session Lifecycle
+### State Factory
 
-- `createCompatibilityTestState(targetCount, options?)`: create a new session
-- `getNextAnswerableCompatibilityTestStep(state)`: read the next actionable step and automatically skip cached steps
-- `getCurrentCompatibilityTestStep(state)`: read the current step, or `undefined` when complete
-- `applyCompatibilityTestAnswer(state, hasIssue)`: apply one answer and advance the session
-- `skipCachedCompatibilityTestSteps(state)`: fast-forward through cached steps
+- `createCompatibilityTestState(targetCount: number, options?: CompatibilityTestOptions): CompatibilityTestState`: create a new troubleshooting state
+
+### State Object: `CompatibilityTestState`
+
+- This is a mutable state object. The lower-level helpers below read from it and update it in place.
+
+### State Operations
+
+- `getNextAnswerableCompatibilityTestStep(state: CompatibilityTestState): CompatibilityTestStep | undefined`: read the next step that actually needs an answer, automatically skipping cached steps
+- `getCurrentCompatibilityTestStep(state: CompatibilityTestState): CompatibilityTestStep | undefined`: read the current step, or `undefined` when complete
+- `applyCompatibilityTestAnswer(state: CompatibilityTestState, hasIssue: boolean): CompatibilityTestStep | undefined`: apply one result and advance the state
+- `skipCachedCompatibilityTestSteps(state: CompatibilityTestState): CompatibilityTestStep | undefined`: fast-forward through cached steps
+
+### Step Return Value: `CompatibilityTestStep`
+
+- `promptTargetRanges`: target ranges to test in the current step
+- `promptTargetCount`: number of targets covered by the current step
+- `debug`: internal search state for diagnostics or custom UIs
+- `requiresAnswer`: whether the caller needs to provide a new result for this step
+
+Shape:
+
+```js
+{
+  promptTargetRanges: [{ start: 2, end: 3 }],
+  promptTargetCount: 2,
+  debug: {
+    activeTargetRange: { start: 1, end: 4 },
+    pendingTargetRanges: [],
+    confirmedTargetRanges: [],
+  },
+  requiresAnswer: true,
+}
+```
+
+### Call Semantics
+
+- `createCompatibilityTestState(targetCount)`: `targetCount` must be an integer greater than or equal to `1`
+- `applyCompatibilityTestAnswer(state, true)`: the issue appears with the current step
+- `applyCompatibilityTestAnswer(state, false)`: the issue does not appear with the current step
+- These lower-level helpers mutate the same `state` object in place
+- `undefined` return value: troubleshooting is complete
 
 ### Range Utilities
 
-- `takeTargetsFromRanges(ranges, limit)`: expand ranges into target indexes
-- `countTargetsInRanges(ranges)`: count targets covered by ranges
-- `intersectTargetRanges(leftRanges, rightRanges)`: intersect two range lists
-- `subtractTargetRanges(sourceRanges, excludedRanges)`: remove one range list from another
+- `takeTargetsFromRanges(ranges: readonly TargetRange[], limit: number): number[]`: expand ranges into target indexes
+- `countTargetsInRanges(ranges: readonly TargetRange[]): number`: count targets covered by ranges
+- `intersectTargetRanges(leftRanges: readonly TargetRange[], rightRanges: readonly TargetRange[]): TargetRange[]`: intersect two range lists
+- `subtractTargetRanges(sourceRanges: readonly TargetRange[], excludedRanges: readonly TargetRange[]): TargetRange[]`: remove one range list from another
 
 ### Key Types
 
@@ -56,4 +122,4 @@ If you only need a higher-level flow that already manages the session for you, y
 - `CompatibilityTestOptions`: shared option bag for session and state creation
 - `TargetRange`: inclusive target index range
 
-For parameter details and behavior guarantees, see the inline JSDoc under `src/compatibility-test/`.
+For parameter details and behavior guarantees, see the inline JSDoc under [src/compatibility-test](https://github.com/HowieHz/howiehz-misc/tree/main/packages/compat-finder/src/compatibility-test).

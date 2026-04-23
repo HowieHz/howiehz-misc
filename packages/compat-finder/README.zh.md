@@ -414,6 +414,10 @@ compat-finder 智能体技能涵盖以下内容：
 
 由 [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool) 重构而来。
 
+## 许可证
+
+本项目基于 [MIT License](https://raw.githubusercontent.com/howiehz/howiehz-misc/HEAD/packages/compat-finder/LICENSE) 发布。
+
 <!-- Badges -->
 
 [npmx-version-src]: https://npmx.dev/api/registry/badge/version/compat-finder

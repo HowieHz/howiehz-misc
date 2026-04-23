@@ -414,6 +414,10 @@ The online tool source is available at [compatibility-test](../../docs/en/tools/
 
 compat-finder is a TypeScript rewrite of [HowieHz/plugin-compatibility-checking-tool](https://github.com/HowieHz/plugin-compatibility-checking-tool).
 
+## Licenses
+
+This project is licensed under the [MIT License](https://raw.githubusercontent.com/howiehz/howiehz-misc/HEAD/packages/compat-finder/LICENSE).
+
 <!-- Badges -->
 
 [npmx-version-src]: https://npmx.dev/api/registry/badge/version/compat-finder

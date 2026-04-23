@@ -51,8 +51,6 @@ import { createCompatibilitySession } from "compat-finder";
 const session = createCompatibilitySession(["A", "B"]);
 ```
 
-## 使用 CLI
-
 如果你只是想快速试用 CLI，也可以不安装，直接运行：
 
 ::: code-group
@@ -201,7 +199,7 @@ vp exec compat-finder next -c 3 -a "y,n"
 
 ## 下一步
 
-- 继续阅读 [与 AI 协作](./ai)
-- 在线体验 [在线版](./online-tool)
+- 了解如何 [与 AI 协作](./ai)
+- 前往 [在线体验](./online-tool)
 - 查看 [命令行工具](./cli) 了解完整命令和参数
 - 继续阅读 [API 参考](./api)

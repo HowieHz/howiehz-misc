@@ -20,7 +20,7 @@ Install the `compat-finder` skill into your AI agent:
 npx skills add HowieHz/howiehz-misc --skill compat-finder
 ```
 
-The skill source is [skills/compat-finder](https://github.com/HowieHz/howiehz-misc/tree/main/packages/compat-finder/skills/compat-finder).
+The source code for the skill is [skills/compat-finder](https://github.com/HowieHz/howiehz-misc/tree/main/packages/compat-finder/skills/compat-finder).
 
 ## What to Include in Your Prompt
 

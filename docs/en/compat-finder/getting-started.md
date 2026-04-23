@@ -51,8 +51,6 @@ import { createCompatibilitySession } from "compat-finder";
 const session = createCompatibilitySession(["A", "B"]);
 ```
 
-## Using the CLI
-
 If you just want to try the CLI, you can run it without installing it first:
 
 ::: code-group
@@ -201,7 +199,7 @@ Expected JSON output:
 
 ## Next
 
-- Continue with [Work with AI](./ai)
-- Try the [Online Tool](./online-tool)
+- Learn how to [Work with AI](./ai)
+- Go to [Try It Online](./online-tool)
 - Or jump to [CLI](./cli)
 - Continue with [API Reference](./api)

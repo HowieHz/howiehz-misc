@@ -22,7 +22,7 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 
 - [Getting Started](./getting-started): complete one troubleshooting run first and learn the basics of the library and CLI
 - [Work with AI](./ai): use AI to organize targets, generate commands, or integrate the troubleshooting flow
-- [Online Tool](./online-tool): start a troubleshooting run in the browser without installing anything
+- [Try It Online](./online-tool): start a troubleshooting run in the browser without installing anything
 - [CLI](./cli): check the basic CLI workflow, common commands, and available options
 - [API Reference](./api): integrate `compat-finder` into your own project or tooling
 - [Algorithm Performance](./algorithm-performance): compare the two algorithms and decide when to switch

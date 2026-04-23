@@ -3,7 +3,7 @@ publish: false
 published: 2026-04-18T15:30:00+08:00
 ---
 
-# Compatibility Issue Finder
+# Compatibility Finder
 
 <!-- autocorrect-disable -->
 <script setup lang="ts">

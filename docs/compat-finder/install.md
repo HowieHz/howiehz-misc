@@ -5,25 +5,29 @@
 - 作为库使用：兼容 ESM 的运行时
 - 作为 CLI 使用：Node.js `^20 || ^22 || >=24`
 
-## 安装包
+## 安装
 
 使用你偏好的包管理器安装：
 
-```bash
+::: code-group
+
+```npm
 npm install compat-finder
+```
 
-# 或
-
+```pnpm
 pnpm add compat-finder
+```
 
-# 或
-
+```yarn
 yarn add compat-finder
+```
 
-# 或
-
+```bun
 bun add compat-finder
 ```
+
+:::
 
 安装后即可导入：
 
@@ -35,21 +39,25 @@ import { createCompatibilitySession } from "compat-finder";
 
 也可以不安装，直接临时运行命令行工具：
 
-```bash
+::: code-group
+
+```npm
 npx compat-finder --help
+```
 
-# 或
-
+```pnpm
 pnpm dlx compat-finder --help
+```
 
-# 或
-
+```yarn
 yarn dlx compat-finder --help
+```
 
-# 或
-
+```bun
 bunx compat-finder --help
 ```
+
+:::
 
 ## 下一步
 

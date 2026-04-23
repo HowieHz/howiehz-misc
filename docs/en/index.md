@@ -18,19 +18,19 @@ hero:
       link: /en/about/
 
 features:
-  - icon: 🧩
-    title: compat-finder
-    details: A library and CLI for narrowing down compatibility issues across many targets.
-    link: /en/compat-finder/
-    linkText: View docs
   - icon: 📦
     title: Junk
     details: Archived outdated or low-quality content, for reference only.
     link: /en/posts/junk/
     linkText: View junk
   - icon: 🛠️
-    title: Tools
+    title: Online Tools
     details: Small utilities you can use directly in the page.
     link: /en/tools/
     linkText: View tools
+  - icon: 🧩
+    title: Compatibility Finder
+    details: A library and CLI for narrowing down compatibility issues across many targets.
+    link: /en/compat-finder/
+    linkText: View docs
 ---

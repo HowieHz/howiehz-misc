@@ -1,4 +1,4 @@
-# Compatibility Issue Finder
+# Compatibility Finder
 
 English | [简体中文](../../../tools/compatibility-test/)
 

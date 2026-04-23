@@ -9,21 +9,25 @@
 
 Install with your preferred package manager:
 
-```bash
+::: code-group
+
+```npm
 npm install compat-finder
+```
 
-# or
-
+```pnpm
 pnpm add compat-finder
+```
 
-# or
-
+```yarn
 yarn add compat-finder
+```
 
-# or
-
+```bun
 bun add compat-finder
 ```
+
+:::
 
 Then import it:
 
@@ -35,21 +39,25 @@ import { createCompatibilitySession } from "compat-finder";
 
 You can also run the CLI ad hoc:
 
-```bash
+::: code-group
+
+```npm
 npx compat-finder --help
+```
 
-# or
-
+```pnpm
 pnpm dlx compat-finder --help
+```
 
-# or
-
+```yarn
 yarn dlx compat-finder --help
+```
 
-# or
-
+```bun
 bunx compat-finder --help
 ```
+
+:::
 
 ## Next
 

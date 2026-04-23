@@ -1,4 +1,4 @@
-# compat-finder
+# Compatibility Finder
 
 [![Open on npmx][npmx-version-src]][npmx-href]
 [![npm downloads][npmx-downloads-src]][npmx-href]

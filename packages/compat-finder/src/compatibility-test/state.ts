@@ -196,6 +196,8 @@ function createStateForAlgorithm(targetCount: number, algorithm: CompatibilityTe
       return getAlgorithmDefinition(algorithm).createState(targetCount);
     case "leave-one-out":
       return getAlgorithmDefinition(algorithm).createState(targetCount);
+    default:
+      throw new Error(`Unsupported compatibility test algorithm: ${algorithm}`);
   }
 }
 

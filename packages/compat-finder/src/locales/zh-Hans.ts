@@ -1,12 +1,17 @@
 import type { CliMessages } from "./types.ts";
 
 export const zhHansMessages: CliMessages = {
+  algorithmOptionDescription: "兼容性测试算法：binary-split 或 leave-one-out",
   aliasesTitle: "别名",
   commandTitle: (command) => `兼容性问题排查命令行工具：${command}`,
   commands: {
     interactive: {
       description: "启动交互式排查流程",
-      exampleLines: ["compat-finder interactive -c 4", 'compat-finder interactive -c 4 -n "A,B,C,D"'],
+      exampleLines: [
+        "compat-finder interactive -c 4",
+        'compat-finder interactive -c 4 -n "A,B,C,D"',
+        "compat-finder interactive -c 4 --algorithm leave-one-out",
+      ],
       extraSections: [
         {
           lines: [
@@ -21,7 +26,7 @@ export const zhHansMessages: CliMessages = {
         },
       ],
       namesOptionDescription: "目标名称列表，使用英文逗号分隔；可选",
-      usageSuffix: "--count <数量> [--names <名称列表>]",
+      usageSuffix: "--count <数量> [--names <名称列表>] [--algorithm <算法>]",
     },
     next: {
       answerHelpLines: [
@@ -30,7 +35,7 @@ export const zhHansMessages: CliMessages = {
       ],
       answerOptionDescription: "已有回答列表，使用英文逗号分隔；可选",
       description: "执行单步排查并输出结果",
-      exampleLines: ['--answers "issue,pass,1,0"'],
+      exampleLines: ['--answers "issue,pass,1,0"', '--algorithm "leave-one-out"'],
       extraSections: [],
       namesOptionDescription: "目标名称列表，使用英文逗号分隔；可选",
       outputExampleTitle: "单步模式输出示例（3 个目标）",
@@ -41,7 +46,7 @@ export const zhHansMessages: CliMessages = {
         "extraAnswerCount       可选。仅在结果为 complete 且有多余答案时返回",
       ],
       outputFieldTitle: "返回字段说明",
-      usageSuffix: "--count <数量> [--answers <回答列表>] [--names <名称列表>]",
+      usageSuffix: "--count <数量> [--answers <回答列表>] [--names <名称列表>] [--algorithm <算法>]",
     },
   },
   commonOptionsTitle: "通用参数",
@@ -49,8 +54,10 @@ export const zhHansMessages: CliMessages = {
   defaultTargetLabel: (index) => `目标 ${index}`,
   errorHelpHint: "使用 --help 查看帮助。",
   errors: {
+    invalidAlgorithm: "参数 --algorithm 仅支持 binary-split 和 leave-one-out。",
     invalidAnswers: "参数 --answers 仅支持 y/n、yes/no、issue/pass、1/0、true/false。",
     invalidCount: "参数 --count 必须是大于 0 的整数。",
+    missingAlgorithm: "参数 --algorithm 缺少值。",
     missingAnswers: "参数 --answers 缺少值。",
     missingCount: "缺少必填参数 --count。",
     missingCountValue: "参数 --count 缺少值。",

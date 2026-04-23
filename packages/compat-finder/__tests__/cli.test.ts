@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getCommandHelpText, getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli-main.ts";
+import { getCommandHelpText, getNextCommandResult, getRootHelpText, parseCliArgs } from "../src/cli/index.ts";
 import { normalizeCliLocale, resolveCliLocale } from "../src/locales/index.ts";
 
 const TARGET_NAMES = ["Alpha", "Beta", "Gamma", "Delta"] as const;
@@ -45,6 +45,7 @@ describe("compatibility test cli", () => {
     expect(helpText).toContain("compat-finder <子命令> [参数]");
     expect(helpText).toContain("interactive (i)");
     expect(helpText).toContain("next (n)");
+    expect(helpText).toContain("--algorithm, --algo <name>");
   });
 
   it("returns localized root help text", () => {
@@ -85,6 +86,36 @@ describe("compatibility test cli", () => {
         count: 4,
       },
     });
+  });
+
+  it("parses the algorithm option", () => {
+    const result = parseCliArgs(["next", "--count", "4", "--algorithm", "leave-one-out"], ZH_CN_ENV);
+
+    expect(result).toMatchObject({
+      options: {
+        algorithm: "leave-one-out",
+        command: "next",
+        count: 4,
+      },
+    });
+  });
+
+  it("parses the algorithm alias", () => {
+    const result = parseCliArgs(["next", "--count", "4", "--algo", "leave-one-out"], ZH_CN_ENV);
+
+    expect(result).toMatchObject({
+      options: {
+        algorithm: "leave-one-out",
+        command: "next",
+        count: 4,
+      },
+    });
+  });
+
+  it("rejects invalid algorithms", () => {
+    const result = parseCliArgs(["next", "--count", "4", "--algorithm", "linear"], ZH_CN_ENV);
+
+    expect(result.error).toBe("参数 --algorithm 仅支持 binary-split 和 leave-one-out。");
   });
 
   it("rejects invalid next answers", () => {
@@ -184,6 +215,16 @@ describe("compatibility test cli", () => {
       status: "testing",
       targetCount: 4,
       targets: ["Beta"],
+    });
+  });
+
+  it("returns leave-one-out prompts when requested", () => {
+    const result = getNextCommandResult(4, TARGET_NAMES, [true, false], "en", "leave-one-out");
+
+    expect(result).toEqual({
+      status: "testing",
+      targetCount: 4,
+      targets: ["Alpha", "Beta", "Delta"],
     });
   });
 

@@ -7,10 +7,12 @@ import {
   getCurrentCompatibilityTestStep,
   getNextAnswerableCompatibilityTestStep,
   skipCachedCompatibilityTestSteps,
+  type CompatibilityTestAlgorithm,
   type TargetRange,
-} from "../src/compatibility-test.ts";
+} from "../src/compatibility-test/index.ts";
 
 interface Scenario {
+  algorithm?: CompatibilityTestAlgorithm;
   targetCount: number;
   answers: boolean[];
   expectedPromptRanges: TargetRange[][];
@@ -312,6 +314,55 @@ describe("compatibility test engine", () => {
     expect(() => createCompatibilitySession([])).toThrow("targets must contain at least one item");
   });
 
+  it("supports switching the simple session API to leave-one-out", () => {
+    const session = createCompatibilitySession(["A", "B", "C"], {
+      algorithm: "leave-one-out",
+    });
+
+    expect(session.current()).toEqual({
+      status: "testing",
+      targetNumbers: [2, 3],
+      targets: ["B", "C"],
+    });
+
+    expect(session.answer(true)).toEqual({
+      status: "testing",
+      targetNumbers: [1, 3],
+      targets: ["A", "C"],
+    });
+
+    expect(session.answer(false)).toEqual({
+      status: "testing",
+      targetNumbers: [1, 2],
+      targets: ["A", "B"],
+    });
+
+    expect(session.answer(true)).toEqual({
+      status: "complete",
+      targetNumbers: [2],
+      targets: ["B"],
+    });
+  });
+
+  it("rebuilds leave-one-out sessions with undo", () => {
+    const session = createCompatibilitySession(["A", "B", "C"], {
+      algorithm: "leave-one-out",
+    });
+
+    session.answer(true);
+    expect(session.answer(false)).toEqual({
+      status: "testing",
+      targetNumbers: [1, 2],
+      targets: ["A", "B"],
+    });
+
+    expect(session.undo()).toEqual({
+      status: "testing",
+      targetNumbers: [1, 3],
+      targets: ["A", "C"],
+    });
+  });
+
   for (const [name, scenario] of Object.entries(scenarios)) {
     it(`matches sample ${name}`, () => {
       const result = runScenario(scenario);
@@ -365,6 +416,34 @@ describe("compatibility test engine", () => {
     });
   });
 
+  it("supports leave-one-out in the low-level state API", () => {
+    const state = createCompatibilityTestState(4, { algorithm: "leave-one-out" });
+
+    expect(getCurrentCompatibilityTestStep(state)).toMatchObject({
+      promptTargetRanges: [range(2, 4)],
+      requiresAnswer: true,
+    });
+
+    applyCompatibilityTestAnswer(state, true);
+
+    expect(getCurrentCompatibilityTestStep(state)).toMatchObject({
+      promptTargetRanges: [range(1, 1), range(3, 4)],
+      requiresAnswer: true,
+    });
+
+    applyCompatibilityTestAnswer(state, false);
+    applyCompatibilityTestAnswer(state, true);
+
+    expect(getCurrentCompatibilityTestStep(state)).toMatchObject({
+      promptTargetRanges: [range(1, 3)],
+      requiresAnswer: true,
+    });
+
+    applyCompatibilityTestAnswer(state, true);
+
+    expect(state.resultTargets).toEqual([2]);
+  });
+
   it("keeps range-based debug steps for internal tracing", () => {
     for (const scenario of Object.values(scenarios)) {
       if (!scenario.expectedDebugSteps) {
@@ -412,6 +491,26 @@ describe("compatibility test engine", () => {
     ]);
   });
 
+  it("confirms the full target set before accepting an all-pass leave-one-out result", () => {
+    const state = createCompatibilityTestState(3, { algorithm: "leave-one-out" });
+    const promptRanges: (readonly TargetRange[])[] = [];
+    let step = getCurrentCompatibilityTestStep(state);
+
+    while (step) {
+      if (!step.requiresAnswer) {
+        step = skipCachedCompatibilityTestSteps(state);
+        continue;
+      }
+
+      promptRanges.push(copyRanges(step.promptTargetRanges));
+      applyCompatibilityTestAnswer(state, false);
+      step = getCurrentCompatibilityTestStep(state);
+    }
+
+    expect(promptRanges).toEqual([[range(2, 3)], [range(1, 1), range(3, 3)], [range(1, 2)], [range(1, 3)]]);
+    expect(state.resultTargets).toEqual([]);
+  });
+
   it("represents very large tests as ranges", () => {
     const state = createCompatibilityTestState(9_999_999);
     const step = getCurrentCompatibilityTestStep(state);
@@ -430,7 +529,9 @@ describe("compatibility test engine", () => {
 });
 
 function runScenario(scenario: Scenario) {
-  const state = createCompatibilityTestState(scenario.targetCount);
+  const state = createCompatibilityTestState(scenario.targetCount, {
+    algorithm: scenario.algorithm,
+  });
   const promptRanges: (readonly TargetRange[])[] = [];
   const steps: StepTrace[] = [];
   const debugSteps: DebugStep[] = [];

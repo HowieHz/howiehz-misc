@@ -1,12 +1,17 @@
 import type { CliMessages } from "./types.ts";
 
 export const enMessages: CliMessages = {
+  algorithmOptionDescription: "Compatibility test algorithm: binary-split or leave-one-out",
   aliasesTitle: "Alias",
   commandTitle: (command) => `Compatibility Issue Finder CLI: ${command}`,
   commands: {
     interactive: {
       description: "Start an interactive compatibility check",
-      exampleLines: ["compat-finder interactive -c 4", 'compat-finder interactive -c 4 -n "A,B,C,D"'],
+      exampleLines: [
+        "compat-finder interactive -c 4",
+        'compat-finder interactive -c 4 -n "A,B,C,D"',
+        "compat-finder interactive -c 4 --algorithm leave-one-out",
+      ],
       extraSections: [
         {
           lines: [
@@ -21,7 +26,7 @@ export const enMessages: CliMessages = {
         },
       ],
       namesOptionDescription: "Target names, separated by commas; optional",
-      usageSuffix: "--count <count> [--names <names>]",
+      usageSuffix: "--count <count> [--names <names>] [--algorithm <algorithm>]",
     },
     next: {
       answerHelpLines: [
@@ -30,7 +35,7 @@ export const enMessages: CliMessages = {
       ],
       answerOptionDescription: "Existing answers, separated by commas; optional",
       description: "Run one step and print the result",
-      exampleLines: ['--answers "issue,pass,1,0"'],
+      exampleLines: ['--answers "issue,pass,1,0"', '--algorithm "leave-one-out"'],
       extraSections: [],
       namesOptionDescription: "Target names, separated by commas; optional",
       outputExampleTitle: "Single-step output example (3 targets)",
@@ -41,7 +46,7 @@ export const enMessages: CliMessages = {
         "extraAnswerCount       Optional. Returned only when status is complete and extra answers were provided",
       ],
       outputFieldTitle: "Output fields",
-      usageSuffix: "--count <count> [--answers <answers>] [--names <names>]",
+      usageSuffix: "--count <count> [--answers <answers>] [--names <names>] [--algorithm <algorithm>]",
     },
   },
   commonOptionsTitle: "Common options",
@@ -49,8 +54,10 @@ export const enMessages: CliMessages = {
   defaultTargetLabel: (index) => `Target ${index}`,
   errorHelpHint: "Use --help for usage.",
   errors: {
+    invalidAlgorithm: "Option --algorithm only supports binary-split and leave-one-out.",
     invalidAnswers: "Option --answers only supports y/n, yes/no, issue/pass, 1/0, and true/false.",
     invalidCount: "Option --count must be an integer greater than 0.",
+    missingAlgorithm: "Option --algorithm requires a value.",
     missingAnswers: "Option --answers requires a value.",
     missingCount: "Missing required option --count.",
     missingCountValue: "Option --count requires a value.",

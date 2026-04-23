@@ -6,9 +6,9 @@ This document contains information about how these skills were generated and how
 
 **Generated from package sources at:**
 
-- **Commit SHA**: `2fd8a45247d130f216351ceca6040d3ff3c2ffd3`
-- **Date**: 2026-04-21
-- **Commit**: compat-finder: add extraAnswerCount, update text
+- **Commit SHA**: `9a41b17380454b1d285881b1e83cc1cd6ec57067`
+- **Date**: 2026-04-23
+- **Commit**: chore(deps-dev): bump @typescript/native-preview from 7.0.0-dev.20260420.1 to 7.0.0-dev.20260421.2 (#86)
 
 **Source documentation:**
 
@@ -18,7 +18,7 @@ This document contains information about how these skills were generated and how
 - Tests: `/packages/compat-finder/__tests__`
 - Package manifest: `/packages/compat-finder/package.json`
 
-**Generation date**: 2026-04-21
+**Generation date**: 2026-04-23
 
 ## Structure
 
@@ -120,6 +120,7 @@ Record which models were used to validate the current skill revision and what wa
 
 | Date       | SHA     | Changes                                                                                                 |
 | ---------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| 2026-04-23 | 9a41b17 | Add algorithm selection, document `leave-one-out`, and refresh generated skill/docs                     |
 | 2026-04-22 | 2fd8a45 | Return `extraAnswerCount`, add `getNextAnswerableCompatibilityTestStep`, and refresh skill/docs wording |
 | 2026-04-21 | e8f8251 | Tighten CLI answer validation, move legacy script, and refresh skill routing                            |
 | 2026-04-21 | 2c4331f | Update generation metadata and agent-neutral wording                                                    |
@@ -130,5 +131,5 @@ Record which models were used to validate the current skill revision and what wa
 
 ---
 
-Last updated: 2026-04-22
-Current SHA: 2fd8a45
+Last updated: 2026-04-23
+Current SHA: 9a41b17

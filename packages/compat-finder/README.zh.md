@@ -87,6 +87,8 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
+如果你想按“每轮排除 1 个目标”的方式测试，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`；默认算法仍然是 `binary-split`。
+
 更多导出 API 见 [API 参考](#api-参考)。
 
 ### 命令行示例
@@ -101,6 +103,12 @@ compat-finder interactive --count 4
 
 ```bash
 compat-finder next -c 3 -a "y,n"
+```
+
+需要切换算法时：
+
+```bash
+compat-finder next -c 4 --algorithm leave-one-out -n "A,B,C,D" -a "issue,pass"
 ```
 
 预期输出为以下 JSON：
@@ -121,7 +129,7 @@ compat-finder next -c 3 -a "y,n"
 
 简单会话 API：
 
-- `createCompatibilitySession(targets)`：根据目标列表创建兼容性排查会话
+- `createCompatibilitySession(targets, options?)`：根据目标列表创建兼容性排查会话
 - `session.current()`：读取当前步骤或最终结果
 - `session.answer(hasIssue)`：提交一次测试结果，并进入下一步
 - `session.undo()`：撤销最新一次测试结果，并回到上一步
@@ -137,13 +145,19 @@ compat-finder next -c 3 -a "y,n"
 如果最新一次结果输入错误，可以调用 `session.undo()` 撤销。
 `createCompatibilitySession(targets)` 至少需要一个目标。
 
+算法选择：
+
+- 默认值：`binary-split`
+- 可选值：`leave-one-out`
+- 示例：`createCompatibilitySession(targets, { algorithm: "leave-one-out" })`
+
 ### 高级 API
 
 底层 API 暴露了基于范围的可变状态机，适用于自定义 UI 与诊断场景。
 
 会话流程：
 
-- `createCompatibilityTestState(targetCount)`：创建新的排查会话
+- `createCompatibilityTestState(targetCount, options?)`：创建新的排查会话
 - `getNextAnswerableCompatibilityTestStep(state)`：读取下一个真正需要回答的步骤，并自动跳过缓存步骤
 - `getCurrentCompatibilityTestStep(state)`：读取当前步骤；排查结束时返回 `undefined`
 - `applyCompatibilityTestAnswer(state, hasIssue)`：提交一个测试结果并推进会话
@@ -161,9 +175,11 @@ compat-finder next -c 3 -a "y,n"
 - `CompatibilityTestState`：可变的排查会话状态
 - `CompatibilityTestStep`：当前要展示给调用方的步骤
 - `CompatibilityTestDebugStep`：以范围形式表示的内部搜索状态
+- `CompatibilityTestAlgorithm`：内置算法名称
+- `CompatibilityTestOptions`：会话和状态创建共用的选项对象
 - `TargetRange`：闭区间目标编号范围
 
-参数细节和行为约束请直接参考 [src/compatibility-test.ts](./src/compatibility-test.ts) 中的内联 JSDoc 注释。
+参数细节和行为约束请直接参考 [src/compatibility-test/](./src/compatibility-test) 下的内联 JSDoc 注释。
 
 ## 命令行工具
 
@@ -203,6 +219,19 @@ CLI 文案可以通过命令行参数或环境变量设置输出语言。
 显式传入不支持的值时会报错，包括 `zh-TW`、`zh-Hant` 等其他中文变体，不会静默切换到英文。
 环境变量中的不支持值会被忽略，并继续按优先级查找；若最终没有匹配到支持语言，则回退到 `en`。
 
+### 算法
+
+两个 CLI 子命令都支持 `--algorithm <名称>` 和 `--algo <名称>`。
+
+- `binary-split`：默认缩小范围算法
+- `leave-one-out`：每轮排除 1 个目标进行测试
+
+示例：
+
+```bash
+compat-finder interactive -c 5 --algo leave-one-out
+```
+
 示例：
 
 ```bash
@@ -231,6 +260,10 @@ compat-finder interactive --count 4
 compat-finder i -c 4 -n "A,B,C,D"
 ```
 
+```bash
+compat-finder interactive -c 4 --algo leave-one-out
+```
+
 支持以下输入：
 
 - `y` / `yes` / `issue` / `1` / `true`：表示“有兼容性问题”
@@ -252,6 +285,10 @@ compat-finder n -c 3 -a "y,n"
 
 ```bash
 compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
+```
+
+```bash
+compat-finder next -c 4 --algo leave-one-out -a "issue,pass" -n "A,B,C,D"
 ```
 
 返回字段说明：
@@ -356,6 +393,7 @@ compat-finder 智能体技能涵盖以下内容：
 
 - 如何选择一次性使用 CLI，还是把它作为库集成
 - CLI 命令、参数、输出语言和可用的回答值
+- 内置算法切换，包括 `binary-split` 和 `leave-one-out`
 - 引导式与单步兼容性排查流程
 - 如何把 mods 文件夹、插件目录之类的笼统请求整理成具体的 compat-finder 排查流程
 - TypeScript 会话 API 与底层状态 API

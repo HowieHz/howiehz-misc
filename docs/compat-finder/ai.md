@@ -12,7 +12,7 @@
 npx skills add HowieHz/howiehz-misc --skill compat-finder
 ```
 
-智能体技能的源码位于 `packages/compat-finder/skills/compat-finder`。
+智能体技能源码位于 [skills/compat-finder](https://github.com/HowieHz/howiehz-misc/tree/main/packages/compat-finder/skills/compat-finder)。
 
 ## 示例提示词
 

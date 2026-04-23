@@ -117,9 +117,6 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
-The default `binary-split` strategy combines binary search with divide-and-conquer.  
-Pass `{ algorithm: "leave-one-out" }` as the second argument to use a leave-one-out workflow instead.
-
 ## CLI Example
 
 If you would rather start in the terminal, try these commands first.
@@ -204,5 +201,7 @@ Expected JSON output:
 
 ## Next
 
-- Continue with [API Reference](./api)
+- Continue with [Work with AI](./ai)
+- Try the [Online Tool](./online-tool)
 - Or jump to [CLI](./cli)
+- Continue with [API Reference](./api)

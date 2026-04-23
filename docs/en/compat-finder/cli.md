@@ -4,51 +4,17 @@
 
 ## Help
 
-::: code-group
-
-```sh [npm]
-npx compat-finder --help
-npx compat-finder --help interactive
-npx compat-finder --help next
+```sh
+compat-finder --help
 ```
 
-```sh [pnpm]
-pnpm dlx compat-finder --help
-pnpm dlx compat-finder --help interactive
-pnpm dlx compat-finder --help next
+```sh
+compat-finder --help interactive
 ```
 
-```sh [yarn]
-yarn dlx compat-finder --help
-yarn dlx compat-finder --help interactive
-yarn dlx compat-finder --help next
+```sh
+compat-finder --help next
 ```
-
-```sh [bun]
-bunx compat-finder --help
-bunx compat-finder --help interactive
-bunx compat-finder --help next
-```
-
-```sh [deno]
-deno run npm:compat-finder --help
-deno run npm:compat-finder --help interactive
-deno run npm:compat-finder --help next
-```
-
-```sh [vlt]
-vlx compat-finder --help
-vlx compat-finder --help interactive
-vlx compat-finder --help next
-```
-
-```sh [vp]
-vp exec compat-finder --help
-vp exec compat-finder --help interactive
-vp exec compat-finder --help next
-```
-
-:::
 
 ## Locale
 
@@ -85,44 +51,13 @@ Both CLI subcommands accept `--algorithm <name>` and `--algo <name>`.
 
 Start a full interactive troubleshooting flow:
 
-::: code-group
-
-```sh [npm]
-npx compat-finder interactive --count 4
-npx compat-finder i -c 4 -n "A,B,C,D"
+```sh
+compat-finder interactive --count 4
 ```
 
-```sh [pnpm]
-pnpm dlx compat-finder interactive --count 4
-pnpm dlx compat-finder i -c 4 -n "A,B,C,D"
+```sh
+compat-finder i -c 4 -n "A,B,C,D"
 ```
-
-```sh [yarn]
-yarn dlx compat-finder interactive --count 4
-yarn dlx compat-finder i -c 4 -n "A,B,C,D"
-```
-
-```sh [bun]
-bunx compat-finder interactive --count 4
-bunx compat-finder i -c 4 -n "A,B,C,D"
-```
-
-```sh [deno]
-deno run npm:compat-finder interactive --count 4
-deno run npm:compat-finder i -c 4 -n "A,B,C,D"
-```
-
-```sh [vlt]
-vlx compat-finder interactive --count 4
-vlx compat-finder i -c 4 -n "A,B,C,D"
-```
-
-```sh [vp]
-vp exec compat-finder interactive --count 4
-vp exec compat-finder i -c 4 -n "A,B,C,D"
-```
-
-:::
 
 Supported input:
 
@@ -135,51 +70,17 @@ Supported input:
 
 Calculate the next targets to test from existing answers, or return the final result:
 
-::: code-group
-
-```sh [npm]
-npx compat-finder next -c 3
-npx compat-finder n -c 3 -a "y,n"
-npx compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
+```sh
+compat-finder next -c 3
 ```
 
-```sh [pnpm]
-pnpm dlx compat-finder next -c 3
-pnpm dlx compat-finder n -c 3 -a "y,n"
-pnpm dlx compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
+```sh
+compat-finder n -c 3 -a "y,n"
 ```
 
-```sh [yarn]
-yarn dlx compat-finder next -c 3
-yarn dlx compat-finder n -c 3 -a "y,n"
-yarn dlx compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
+```sh
+compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
 ```
-
-```sh [bun]
-bunx compat-finder next -c 3
-bunx compat-finder n -c 3 -a "y,n"
-bunx compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
-```
-
-```sh [deno]
-deno run npm:compat-finder next -c 3
-deno run npm:compat-finder n -c 3 -a "y,n"
-deno run npm:compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
-```
-
-```sh [vlt]
-vlx compat-finder next -c 3
-vlx compat-finder n -c 3 -a "y,n"
-vlx compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
-```
-
-```sh [vp]
-vp exec compat-finder next -c 3
-vp exec compat-finder n -c 3 -a "y,n"
-vp exec compat-finder next -c 4 -a "issue,pass,1,0" -n "A,B,C,D"
-```
-
-:::
 
 Returned fields:
 
@@ -197,37 +98,9 @@ If `answers` includes extra values after the session is already complete, the CL
 
 Example 1:
 
-::: code-group
-
-```sh [npm]
-npx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y"
+```sh
+compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y"
 ```
-
-```sh [pnpm]
-pnpm dlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y"
-```
-
-```sh [yarn]
-yarn dlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y"
-```
-
-```sh [bun]
-bunx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y"
-```
-
-```sh [deno]
-deno run npm:compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y"
-```
-
-```sh [vlt]
-vlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y"
-```
-
-```sh [vp]
-vp exec compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y"
-```
-
-:::
 
 Expected JSON output:
 
@@ -241,37 +114,9 @@ Expected JSON output:
 
 Example 2:
 
-::: code-group
-
-```sh [npm]
-npx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
+```sh
+compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
 ```
-
-```sh [pnpm]
-pnpm dlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
-```
-
-```sh [yarn]
-yarn dlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
-```
-
-```sh [bun]
-bunx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
-```
-
-```sh [deno]
-deno run npm:compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
-```
-
-```sh [vlt]
-vlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
-```
-
-```sh [vp]
-vp exec compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n"
-```
-
-:::
 
 Expected JSON output:
 
@@ -285,37 +130,9 @@ Expected JSON output:
 
 Example 3:
 
-::: code-group
-
-```sh [npm]
-npx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n,n"
+```sh
+compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n,n"
 ```
-
-```sh [pnpm]
-pnpm dlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n,n"
-```
-
-```sh [yarn]
-yarn dlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n,n"
-```
-
-```sh [bun]
-bunx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n,n"
-```
-
-```sh [deno]
-deno run npm:compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n,n"
-```
-
-```sh [vlt]
-vlx compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n,n"
-```
-
-```sh [vp]
-vp exec compat-finder next -c 3 -n "Alpha,Beta,Gamma" -a "y,n,n"
-```
-
-:::
 
 Expected JSON output:
 

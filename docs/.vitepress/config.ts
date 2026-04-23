@@ -59,12 +59,12 @@ const ROOT_COMPAT_FINDER_SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
     text: "compat-finder",
     items: [
-      { text: "文档首页", link: "/compat-finder/" },
+      { text: "介绍", link: "/compat-finder/" },
       { text: "快速上手", link: "/compat-finder/getting-started" },
-      { text: "API 参考", link: "/compat-finder/api" },
-      { text: "命令行工具", link: "/compat-finder/cli" },
       { text: "与 AI 协作", link: "/compat-finder/ai" },
       { text: "在线版", link: "/compat-finder/online-tool" },
+      { text: "命令行工具", link: "/compat-finder/cli" },
+      { text: "API 参考", link: "/compat-finder/api" },
     ],
   },
 ];
@@ -73,12 +73,12 @@ const EN_COMPAT_FINDER_SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
     text: "compat-finder",
     items: [
-      { text: "Overview", link: "/en/compat-finder/" },
+      { text: "Introduction", link: "/en/compat-finder/" },
       { text: "Getting Started", link: "/en/compat-finder/getting-started" },
-      { text: "API Reference", link: "/en/compat-finder/api" },
-      { text: "CLI", link: "/en/compat-finder/cli" },
       { text: "Work with AI", link: "/en/compat-finder/ai" },
       { text: "Online Tool", link: "/en/compat-finder/online-tool" },
+      { text: "CLI", link: "/en/compat-finder/cli" },
+      { text: "API Reference", link: "/en/compat-finder/api" },
     ],
   },
 ];

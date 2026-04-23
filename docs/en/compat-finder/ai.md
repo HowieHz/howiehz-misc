@@ -1,8 +1,16 @@
 # Work with AI
 
-`compat-finder` provides an [Agent Skill](https://agentskills.io/) that helps AI agents understand the compatibility troubleshooting workflows, CLI usage, and TypeScript API for this package.
+If you want AI to help drive a `compat-finder` troubleshooting or integration flow, you can install the `compat-finder` [Agent Skill](https://agentskills.io/) into your AI agent.
 
-If you want an agent to drive the troubleshooting workflow with you, installing the skill first gives it the right context.
+Once installed, the agent has better context for `compat-finder` CLI usage, library APIs, and common troubleshooting workflows.
+
+## What AI Can Help With
+
+- Continue a compatibility troubleshooting flow from your target list and test results
+- Help you decide whether to start with the CLI or integrate `compat-finder` into your own project
+- Write or adjust `compat-finder` CLI commands
+- Integrate `compat-finder` into your app, script, or custom UI
+- Design save, resume, and persistence flows for troubleshooting sessions
 
 ## Installation
 
@@ -12,11 +20,20 @@ Install the `compat-finder` skill into your AI agent:
 npx skills add HowieHz/howiehz-misc --skill compat-finder
 ```
 
-The source code of the skills is [skills/compat-finder](https://github.com/HowieHz/howiehz-misc/tree/main/packages/compat-finder/skills/compat-finder).
+The skill source is [skills/compat-finder](https://github.com/HowieHz/howiehz-misc/tree/main/packages/compat-finder/skills/compat-finder).
+
+## What to Include in Your Prompt
+
+To get more actionable help, include:
+
+- Your target list, such as plugins, mods, versions, feature flags, or config options
+- How you decide whether a test result means "issue" or "pass"
+- The tests you have already run and the results you got
+- Whether you want to use the CLI directly or integrate `compat-finder` into your own app or script
 
 ## Example Prompts
 
-Once installed, you can ask agents to help with `compat-finder` tasks:
+Once installed, you can ask AI to help with tasks like these:
 
 ```text
 I need to track down a compatibility issue across Plugin 1, Plugin 2, Plugin 3, and Plugin 4. Walk me through the next tests and narrow it down from my results.
@@ -33,16 +50,3 @@ Build a compat-finder powered troubleshooting flow into my app so users can find
 ```text
 My compat-finder UI needs to save a troubleshooting session and resume it after a page refresh. Which API should I use, and what state should I persist?
 ```
-
-## What's Included
-
-The `compat-finder` skill covers:
-
-- How to choose between one-off CLI usage and library integration
-- CLI commands, options, locales, and supported answer formats
-- Built-in algorithm selection, including `binary-split` and `leave-one-out`
-- Guided and one-shot troubleshooting workflows
-- Help turning broad requests, such as testing a mods or plugins folder, into a concrete `compat-finder` workflow
-- The TypeScript session API and the lower-level state API
-- When advanced integrations should use the lower-level state API to persist or resume sessions
-- How to choose between guided triage, automatic triage, and app integration workflows

@@ -117,9 +117,6 @@ function askUser(targets: readonly string[]): "issue" | "pass" | "undo" {
 }
 ```
 
-默认算法 `binary-split` 采用二分法结合分治法的策略。  
-如果你想使用“每轮排除 1 个目标”的测试方式，可以把第二个参数传成 `{ algorithm: "leave-one-out" }`。
-
 ## CLI 使用示例
 
 如果你更想直接从命令行开始，可以先试下面几个例子。
@@ -204,5 +201,7 @@ vp exec compat-finder next -c 3 -a "y,n"
 
 ## 下一步
 
-- 继续阅读 [API 参考](./api)
+- 继续阅读 [与 AI 协作](./ai)
+- 在线体验 [在线版](./online-tool)
 - 查看 [命令行工具](./cli) 了解完整命令和参数
+- 继续阅读 [API 参考](./api)

@@ -10,12 +10,12 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 - **Efficient troubleshooting algorithm**: the default strategy combines binary search with divide-and-conquer, usually requiring fewer test rounds to reach a result.
 - **More than simple binary search**: results can include one or more incompatible targets.
 - **Multiple integration options**: choose from a guided CLI, a ready-to-use session API, or an advanced API for custom flows.
-- **Works across runtimes**: published as an ESM-only library, it runs in browsers and other ESM-compatible runtimes.
+- **Works across runtimes**: ships ESM output and runs in browsers and other ESM-compatible runtimes.
 - **Localized CLI**: available in English and Simplified Chinese.
 
 ## Compatibility
 
-- Library: published as an ESM-only library; runs in browsers and other ESM-compatible runtimes.
+- Library: ships ESM output; runs in browsers and other ESM-compatible runtimes.
 - CLI: requires Node.js `^20 || ^22 || >=24`; supports English and Simplified Chinese.
 
 ## Reading Guide

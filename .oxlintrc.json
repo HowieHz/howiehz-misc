@@ -231,16 +231,41 @@
       }
     },
     {
-      "files": ["**/*.js", "**/*.ts", "**/*.vue"],
+      "files": ["docs/.vitepress/theme/**/*.ts", "docs/.vitepress/**/*.vue"],
       "env": {
         "es2026": true,
         "browser": true
       }
     },
     {
-      "files": ["scripts/**/*.js", ".github/scripts/**/*.js"],
+      "files": [
+        "docs/.vitepress/config.ts",
+        "docs/.vitepress/data/**/*.ts",
+        "docs/.vitepress/utils/**/*.ts",
+        "docs/**/*.node.data.ts",
+        "packages/compat-finder/src/cli/**/*.ts",
+        "packages/compat-finder/src/locales/**/*.ts",
+        "packages/compat-finder/benchmark/**/*.ts",
+        "packages/compat-finder/tsdown.config.ts",
+        "packages/compat-finder/bin/**/*.mjs",
+        "packages/compat-finder/__tests__/**/*.ts",
+        "eslint.config.js",
+        "stylelint.config.js",
+        ".github/scripts/*.js"
+      ],
       "env": {
+        "es2026": true,
         "node": true
+      }
+    },
+    {
+      "files": [
+        "docs/.vitepress/types/**/*.d.ts",
+        "packages/compat-finder/src/index.ts",
+        "packages/compat-finder/src/compatibility-test/**/*.ts"
+      ],
+      "env": {
+        "es2026": true
       }
     }
   ]

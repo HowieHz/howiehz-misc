@@ -26,9 +26,11 @@
     "directory": "packages/compat-finder"
   },
   "bin": {
-    "compat-finder": "./dist/cli.mjs"
+    "compat-finder": "./bin/compat-finder.mjs"
   },
   "files": [
+    "bin",
+    "!dist/**/*.map",
     "dist"
   ],
   "type": "module",
@@ -43,7 +45,8 @@
     "benchmark": "node --experimental-strip-types benchmark/index.ts",
     "build": "tsdown",
     "build:release": "tsdown --minify",
-    "cli": "node --experimental-strip-types src/cli.ts",
+    "cli": "node ./bin/compat-finder.mjs",
+    "precli": "pnpm run build",
     "prepack": "pnpm run build:release",
     "test": "vitest run",
     "watch": "tsdown --watch"

@@ -31,7 +31,7 @@
     "docs:preview": "pnpm run compat-finder:build && pnpm --filter docs preview",
     "docs:watch": "pnpm --parallel --stream --filter compat-finder --filter docs watch",
     "fmt": "pnpm run \"/^fmt:/\"",
-    "fmt:oxfmt": "oxfmt \"**/*.{json,jsonc,yaml,md,css,js,ts,vue,html}\"",
+    "fmt:oxfmt": "oxfmt \"**/*.{json,jsonc,yaml,md,css,js,mjs,ts,vue,html}\"",
     "lint": "pnpm run \"/^lint:/\"",
     "lint:autocorrect": "autocorrect --fix",
     "lint:md": "markdownlint --fix \"**/*.md\" --ignore-path .gitignore",

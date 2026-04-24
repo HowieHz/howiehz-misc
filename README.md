@@ -15,7 +15,7 @@ A personal misc site for things that do not belong on the main site.
 
 ### Repobeats analytics
 
-![Alt](https://repobeats.axiom.co/api/embed/1446aaa764df368ab8901ec0d5548f19c5c6516d.svg "Repobeats analytics image")
+![Repobeats analytics](https://repobeats.axiom.co/api/embed/1446aaa764df368ab8901ec0d5548f19c5c6516d.svg "Repobeats analytics image")
 
 ### Star History
 

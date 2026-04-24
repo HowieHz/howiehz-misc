@@ -23,7 +23,7 @@ export default defineConfig(
   tseslint.configs.strict,
   tseslint.configs.stylistic,
   {
-    files: ["**/*.js", "**/*.ts"],
+    files: ["docs/.vitepress/theme/**/*.ts"],
 
     languageOptions: {
       ecmaVersion: "latest",
@@ -34,7 +34,7 @@ export default defineConfig(
     },
   },
   {
-    files: ["**/*.vue"],
+    files: ["docs/.vitepress/**/*.vue"],
 
     languageOptions: {
       ecmaVersion: "latest",
@@ -47,10 +47,8 @@ export default defineConfig(
         parser: {
           // Script parser for `<script>`
           js: "espree",
-
           // Script parser for `<script lang="ts">`
           ts: tsParser,
-
           // Script parser for vue directives (e.g. `v-if=` or `:attribute=`)
           // and vue interpolations (e.g. `{{variable}}`).
           // If not specified, the parser determined by `<script lang ="...">` is used.
@@ -60,12 +58,40 @@ export default defineConfig(
     },
   },
   {
-    files: ["scripts/**/*.js", ".github/scripts/**/*.js"],
+    files: [
+      "docs/.vitepress/config.ts",
+      "docs/.vitepress/data/**/*.ts",
+      "docs/.vitepress/utils/**/*.ts",
+      "docs/**/*.node.data.ts",
+      "packages/compat-finder/src/cli/**/*.ts",
+      "packages/compat-finder/src/locales/**/*.ts",
+      "packages/compat-finder/benchmark/**/*.ts",
+      "packages/compat-finder/tsdown.config.ts",
+      "packages/compat-finder/bin/**/*.mjs",
+      "packages/compat-finder/__tests__/**/*.ts",
+      "eslint.config.js",
+      "stylelint.config.js",
+      ".github/scripts/*.js",
+    ],
 
     languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
       globals: {
         ...globals.node,
       },
+    },
+  },
+  {
+    files: [
+      "docs/.vitepress/types/**/*.d.ts",
+      "packages/compat-finder/src/index.ts",
+      "packages/compat-finder/src/compatibility-test/**/*.ts",
+    ],
+
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
     },
   },
   ...oxlint.buildFromOxlintConfigFile("./.oxlintrc.json"),

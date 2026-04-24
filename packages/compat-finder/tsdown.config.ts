@@ -29,7 +29,7 @@ const tsdownConfig: UserConfigExport = defineConfig([
       sourcemap: !isReleaseBuild,
     },
     entry: {
-      cli: "src/cli.ts",
+      cli: "src/cli/index.ts",
     },
     platform: "node",
     sourcemap: !isReleaseBuild,

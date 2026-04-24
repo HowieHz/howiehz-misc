@@ -12,11 +12,10 @@ export type { ParsedArgsResult };
 /**
  * Runs the command-line entrypoint.
  *
- * @param argv Raw CLI arguments without the node executable or entry path.
  * @returns A promise that resolves when command execution completes.
  */
-export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
-  const { options, error } = parseCliArgs(argv);
+export async function main(): Promise<void> {
+  const { options, error } = parseCliArgs(process.argv.slice(2));
   const messages = getCliMessages(options.locale);
 
   if (error) {

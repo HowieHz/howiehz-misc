@@ -45,7 +45,8 @@
     "benchmark": "node --experimental-strip-types benchmark/index.ts",
     "build": "tsdown",
     "build:release": "tsdown --minify",
-    "cli": "node --experimental-strip-types src/cli/dev.ts",
+    "precli": "pnpm run build",
+    "cli": "node ./bin/compat-finder.mjs",
     "prepack": "pnpm run build:release",
     "test": "vitest run",
     "watch": "tsdown --watch"

@@ -1,5 +1,11 @@
 # compat-finder
 
+## 2.0.1
+
+### Patch Changes
+
+- [#98](https://github.com/HowieHz/howiehz-misc/pull/98) [`6628bf0`](https://github.com/HowieHz/howiehz-misc/commit/6628bf01ca5eb6a00d5bb83c8ad6deb33c21a983) Thanks [@HowieHz](https://github.com/HowieHz)! - Add a stable CLI wrapper so workspace installs no longer depend on prebuilt `dist` bin targets.
+
 ## 2.0.0
 
 ### Major Changes

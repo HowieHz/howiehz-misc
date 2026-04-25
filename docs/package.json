@@ -24,6 +24,6 @@
     "vitepress-plugin-rss": "^0.4.3"
   },
   "engines": {
-    "node": "^20 || ^22 || >=24"
+    "node": "^22 || >=24"
   }
 }

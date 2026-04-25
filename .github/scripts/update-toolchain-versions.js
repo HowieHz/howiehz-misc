@@ -6,6 +6,7 @@ const githubDirPath = ".github";
 const workflowsDirPath = path.join(githubDirPath, "workflows");
 const actionsDirPath = path.join(githubDirPath, "actions");
 const dryRun = process.argv.includes("--dry-run");
+const minimumSupportedNodeLtsMajor = 22;
 // Only promote a toolchain release after the current latest itself has aged for at least 24 hours.
 // We intentionally do not fall back to an older version when a newer latest is still within this holdback window.
 const latestReleaseMinAgeMs = 24 * 60 * 60 * 1000;
@@ -67,7 +68,25 @@ const parseNodeEngineSingleFloor = (value) => {
 };
 
 const parseNodeEngineLtsTracks = (value) => {
-  return typeof value === "string" && value.includes("||") ? { mode: "lts-tracks" } : null;
+  if (typeof value !== "string" || !value.includes("||")) {
+    return null;
+  }
+
+  const majors = value
+    .split("||")
+    .map((part) => {
+      const match = /^(?:\^|>=)(\d+)$/u.exec(part.trim());
+      return match ? Number(match[1]) : null;
+    });
+
+  if (majors.some((major) => major === null)) {
+    return null;
+  }
+
+  return {
+    mode: "lts-tracks",
+    majors: [...new Set(majors)].sort((left, right) => left - right),
+  };
 };
 
 const parseNodeEngineSpec = (value) => parseNodeEngineSingleFloor(value) ?? parseNodeEngineLtsTracks(value);
@@ -292,6 +311,18 @@ const fetchActiveNodeLtsMajors = async (now = Date.now()) => {
   return activeNodeLtsMajorsPromise;
 };
 
+const resolveSupportedNodeLtsMajors = (activeNodeLtsMajors) => {
+  const supportedNodeLtsMajors = [...new Set([minimumSupportedNodeLtsMajor, ...activeNodeLtsMajors])]
+    .filter((major) => major >= minimumSupportedNodeLtsMajor)
+    .sort((left, right) => left - right);
+
+  if (supportedNodeLtsMajors.length === 0) {
+    throw new Error("Unable to determine supported Node.js LTS majors");
+  }
+
+  return supportedNodeLtsMajors;
+};
+
 const formatNodeEngineTrackRange = (releases) =>
   releases
     .map((release, index) => `${index === releases.length - 1 ? ">=" : "^"}${release.parsedVersion.major}`)
@@ -320,17 +351,14 @@ const fetchLatestNodeEngineRange = async (currentNodeEngine, parsedNodeEngine) =
     const result = {
       nodeEngineRange: `>=${nodeMajor}`,
       nodeMajor,
+      supportedNodeMajors: [nodeMajor],
     };
 
     latestNodeEngineRangeCache.set(currentNodeEngine, result);
     return result;
   }
 
-  const activeLtsMajors = await fetchActiveNodeLtsMajors();
-
-  if (activeLtsMajors.length < 2) {
-    throw new Error("Unable to determine enough active Node.js LTS lines for track-based engine updates");
-  }
+  const activeLtsMajors = resolveSupportedNodeLtsMajors(await fetchActiveNodeLtsMajors());
 
   const releases = await fetchNodeReleaseIndex();
   const selectedReleases = activeLtsMajors.map((major) => resolveLatestLtsReleaseForMajor(releases, major));
@@ -346,6 +374,7 @@ const fetchLatestNodeEngineRange = async (currentNodeEngine, parsedNodeEngine) =
       const result = {
         nodeEngineRange: currentNodeEngine,
         nodeMajor: selectedReleases.at(-1).parsedVersion.major,
+        supportedNodeMajors: parsedNodeEngine.majors,
       };
 
       latestNodeEngineRangeCache.set(currentNodeEngine, result);
@@ -356,6 +385,7 @@ const fetchLatestNodeEngineRange = async (currentNodeEngine, parsedNodeEngine) =
   const result = {
     nodeEngineRange: formatNodeEngineTrackRange(selectedReleases),
     nodeMajor: selectedReleases.at(-1).parsedVersion.major,
+    supportedNodeMajors: activeLtsMajors,
   };
 
   latestNodeEngineRangeCache.set(currentNodeEngine, result);
@@ -454,7 +484,10 @@ const resolvePackageNodeEngineRange = async (
   if (currentNodeEngine === "") {
     return {
       nodeEngineRange: fallbackNodeEngineRange,
-      nodeMajor: fallbackParsedNodeEngine.major ?? null,
+      nodeMajor: fallbackParsedNodeEngine.major ?? fallbackParsedNodeEngine.majors?.at(-1) ?? null,
+      supportedNodeMajors: fallbackParsedNodeEngine.major
+        ? [fallbackParsedNodeEngine.major]
+        : (fallbackParsedNodeEngine.majors ?? []),
     };
   }
 
@@ -581,8 +614,34 @@ const replaceWorkflowStepInputValue = (content, actionPattern, inputName, nextVa
   };
 };
 
-const updateNodeVersionFile = async (filePath, nodeMajor) => {
+const replaceInlineArrayValue = (content, inputName, nextValues) => {
+  const lines = content.split(/\r?\n/u);
+  const inputPattern = new RegExp(`^(\\s*${escapeRegExp(inputName)}:\\s*)\\[[^\\]]*\\](\\s*(?:#.*)?)$`, "u");
+  const nextValue = `[${nextValues.join(", ")}]`;
+  let changed = false;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const match = line.match(inputPattern);
+
+    if (!match || line === `${match[1]}${nextValue}${match[2]}`) {
+      continue;
+    }
+
+    lines[index] = `${match[1]}${nextValue}${match[2]}`;
+    changed = true;
+  }
+
+  return {
+    changed,
+    nextContent: lines.join("\n"),
+  };
+};
+
+const updateNodeVersionFile = async (filePath, nodeMajor, supportedNodeMajors) => {
   const { content, lineEnding } = await readUtf8FileWithLineEnding(filePath);
+  const updates = [];
+  let nextContent = content;
 
   if (!content.includes("actions/setup-node@")) {
     return [];
@@ -590,22 +649,38 @@ const updateNodeVersionFile = async (filePath, nodeMajor) => {
 
   const nextNodeVersion = String(nodeMajor);
 
-  const { changed, nextContent } = replaceWorkflowStepInputValue(
-    content,
+  const setupNodeResult = replaceWorkflowStepInputValue(
+    nextContent,
     /uses:\s*actions\/setup-node@/u,
     "node-version",
     nextNodeVersion,
   );
 
-  if (!changed || nextContent === content) {
+  if (setupNodeResult.changed && setupNodeResult.nextContent !== nextContent) {
+    nextContent = setupNodeResult.nextContent;
+    updates.push(`node-version -> ${nextNodeVersion}`);
+  }
+
+  const matrixResult = replaceInlineArrayValue(
+    nextContent,
+    "node-version",
+    supportedNodeMajors.map((major) => String(major)),
+  );
+
+  if (matrixResult.changed && matrixResult.nextContent !== nextContent) {
+    nextContent = matrixResult.nextContent;
+    updates.push(`node-version matrix -> [${supportedNodeMajors.join(", ")}]`);
+  }
+
+  if (updates.length === 0 || nextContent === content) {
     return [];
   }
 
   await maybeWriteFile(filePath, nextContent.replace(/\n/gu, lineEnding));
-  return [`node-version -> ${nextNodeVersion}`];
+  return updates;
 };
 
-const updateNodeVersionFiles = async (nodeMajor) => {
+const updateNodeVersionFiles = async (nodeMajor, supportedNodeMajors) => {
   const workflowEntries = await fs.readdir(path.resolve(process.cwd(), workflowsDirPath), { withFileTypes: true });
   const workflowFiles = workflowEntries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".yml"))
@@ -616,7 +691,7 @@ const updateNodeVersionFiles = async (nodeMajor) => {
   const updateGroups = [];
 
   for (const filePath of targetFiles) {
-    const updates = await updateNodeVersionFile(filePath, nodeMajor);
+    const updates = await updateNodeVersionFile(filePath, nodeMajor, supportedNodeMajors);
 
     if (updates.length > 0) {
       updateGroups.push({ filePath, updates });
@@ -627,7 +702,7 @@ const updateNodeVersionFiles = async (nodeMajor) => {
 };
 
 const currentToolchainVersions = await readCurrentToolchainVersions();
-const { nodeEngineRange, nodeMajor } = await fetchLatestNodeEngineRange(
+const { nodeEngineRange, nodeMajor, supportedNodeMajors } = await fetchLatestNodeEngineRange(
   currentToolchainVersions.nodeEngine,
   currentToolchainVersions.parsedNodeEngine,
 );
@@ -636,7 +711,7 @@ const pnpmVersion = await fetchLatestPnpmVersion(currentToolchainVersions.pnpmVe
 console.log(`Resolved workflow Node.js LTS major: ${nodeMajor}`);
 console.log(`Resolved target pnpm version: ${pnpmVersion}`);
 
-const nodeVersionUpdateGroups = await updateNodeVersionFiles(nodeMajor);
+const nodeVersionUpdateGroups = await updateNodeVersionFiles(nodeMajor, supportedNodeMajors);
 const packageJsonUpdateGroups = await updatePackageJsonFiles(
   nodeEngineRange,
   currentToolchainVersions.parsedNodeEngine,

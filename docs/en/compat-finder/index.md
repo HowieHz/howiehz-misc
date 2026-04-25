@@ -16,7 +16,7 @@ It helps you find one or more incompatible targets with fewer rounds of testing.
 ## Supported Environments
 
 - Library: ships ESM output; runs in browsers and other ESM-compatible runtimes.
-- CLI: requires Node.js `^20 || ^22 || >=24`; supports English and Simplified Chinese.
+- CLI: requires Node.js `^22 || >=24`; supports English and Simplified Chinese.
 
 ## Reading Guide
 

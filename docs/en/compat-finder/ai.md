@@ -35,9 +35,13 @@ To get more actionable help, include:
 
 Once installed, you can ask AI to help with tasks like these:
 
+<!-- markdownlint-disable MD013 -->
+
 ```text
 I need to track down a compatibility issue across Plugin 1, Plugin 2, Plugin 3, and Plugin 4. Walk me through the next tests and narrow it down from my results.
 ```
+
+<!-- markdownlint-enable MD013 -->
 
 ```text
 Scan my game's mods folder with compat-finder and find which mods are breaking startup.
@@ -47,6 +51,10 @@ Scan my game's mods folder with compat-finder and find which mods are breaking s
 Build a compat-finder powered troubleshooting flow into my app so users can find plugin conflicts on their own.
 ```
 
+<!-- markdownlint-disable MD013 -->
+
 ```text
 My compat-finder UI needs to save a troubleshooting session and resume it after a page refresh. Which API should I use, and what state should I persist?
 ```
+
+<!-- markdownlint-enable MD013 -->

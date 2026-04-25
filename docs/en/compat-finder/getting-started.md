@@ -5,7 +5,7 @@ This page shows how to install `compat-finder` and start using it from the libra
 ## Requirements
 
 - Library usage: any ESM-compatible runtime
-- CLI usage: Node.js `^20 || ^22 || >=24`
+- CLI usage: Node.js `^22 || >=24`
 
 ## Installation
 

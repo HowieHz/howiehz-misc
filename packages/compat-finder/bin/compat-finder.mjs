@@ -9,8 +9,8 @@ const COMPATIBILITY_PAGE =
 // We don't use a version parser here because:
 //  1. this wrapper should stay tiny and dependency-free
 //  2. we want the error to happen before loading the built CLI bundle
-if (Number(major) < 20) {
-  console.error(`ERROR: compat-finder requires at least Node.js v20
+if (Number(major) < 22) {
+  console.error(`ERROR: compat-finder requires at least Node.js v22
 The current version of Node.js is ${process.version}
 ${COMPATIBILITY_PAGE}`);
   process.exit(1);

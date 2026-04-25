@@ -37,7 +37,7 @@ jobs:
           # ref: https://github.com/stefanzweifel/git-auto-commit-action/tree/v7/?tab=readme-ov-file#commits-made-by-this-action-do-not-trigger-new-workflow-runs
           token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
 
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # https://github.com/pnpm/action-setup/releases/tag/v5.0.0
+      - uses: pnpm/action-setup@903f9c1a6ebcba6cf41d87230be49611ac97822e # https://github.com/pnpm/action-setup/releases/tag/v6.0.3
         name: Install pnpm
         with:
           run_install: false
@@ -87,7 +87,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # https://github.com/actions/checkout/releases/tag/v6.0.2
 
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # https://github.com/pnpm/action-setup/releases/tag/v5.0.0
+      - uses: pnpm/action-setup@903f9c1a6ebcba6cf41d87230be49611ac97822e # https://github.com/pnpm/action-setup/releases/tag/v6.0.3
         name: Install pnpm
         with:
           run_install: false

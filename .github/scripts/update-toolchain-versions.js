@@ -72,12 +72,10 @@ const parseNodeEngineLtsTracks = (value) => {
     return null;
   }
 
-  const majors = value
-    .split("||")
-    .map((part) => {
-      const match = /^(?:\^|>=)(\d+)$/u.exec(part.trim());
-      return match ? Number(match[1]) : null;
-    });
+  const majors = value.split("||").map((part) => {
+    const match = /^(?:\^|>=)(\d+)$/u.exec(part.trim());
+    return match ? Number(match[1]) : null;
+  });
 
   if (majors.some((major) => major === null)) {
     return null;

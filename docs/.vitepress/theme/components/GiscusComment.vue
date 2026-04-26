@@ -1,5 +1,8 @@
 <template>
-  <div v-if="shouldShow" class="giscus-wrapper">
+  <div
+    v-if="shouldShow"
+    class="giscus-wrapper"
+  >
     <Giscus
       :repo="repo"
       :repo-id="repoId"

@@ -12,7 +12,6 @@ packageExtensions:
   "@nolebase/vitepress-plugin-highlight-targeted-heading":
     peerDependencies:
       vue: "^3.5.32"
-    dependencies:
       "@vueuse/core": "^14.2.1"
   "vitepress-plugin-pagefind":
     peerDependencies:

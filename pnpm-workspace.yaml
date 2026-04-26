@@ -5,14 +5,14 @@ packages:
 packageExtensions:
   "@nolebase/vitepress-plugin-highlight-targeted-heading":
     peerDependencies:
-      vue: "^3.5.32"
-      "@vueuse/core": "^14.2.1"
+      vue: "*"
+      "@vueuse/core": "*"
   "vitepress-plugin-pagefind":
     peerDependencies:
-      vue: "^3.5.32"
+      vue: "*"
   "vue-command-palette":
     peerDependencies:
-      vue: "^3.5.32"
+      vue: "*"
 trustPolicy: no-downgrade
 hoist: false
 engineStrict: true # engines.node will be strictly enforced when installing dependencies

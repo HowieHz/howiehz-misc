@@ -2,8 +2,7 @@ import process from "node:process";
 
 import { defineConfig, type UserConfigExport } from "tsdown";
 
-const lifecycleEvent = process.env.npm_lifecycle_event ?? "";
-const isReleaseBuild = lifecycleEvent === "build:release";
+const isReleaseBuild = process.env.NODE_ENV === "production";
 
 const tsdownConfig: UserConfigExport = defineConfig([
   {

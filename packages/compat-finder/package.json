@@ -44,7 +44,7 @@
   "scripts": {
     "benchmark": "node --experimental-strip-types benchmark/index.ts",
     "build": "tsdown",
-    "build:release": "tsdown --minify",
+    "build:release": "NODE_ENV=production tsdown --minify",
     "cli": "node ./bin/compat-finder.mjs",
     "precli": "pnpm run build",
     "prepack": "pnpm run build:release",

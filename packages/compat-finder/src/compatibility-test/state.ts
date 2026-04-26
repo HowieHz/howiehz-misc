@@ -125,7 +125,8 @@ export function applyCompatibilityTestAnswer(
  * Advances through cached steps until a new answer is required or the session completes.
  *
  * @param state The session state to advance.
- * @returns The next uncached step, or `undefined` when the session is already complete or becomes complete while skipping cached steps.
+ * @returns The next uncached step, or `undefined` when the session is already complete or becomes complete while
+ *   skipping cached steps.
  */
 export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState): CompatibilityTestStep | undefined {
   let step = getCurrentCompatibilityTestStep(state);
@@ -146,13 +147,12 @@ export function skipCachedCompatibilityTestSteps(state: CompatibilityTestState):
 /**
  * Returns the current answerable step, automatically skipping cached steps.
  *
- * This helper is the preferred low-level entrypoint for callers that want the
- * next actionable prompt without manually coordinating
- * `getCurrentCompatibilityTestStep` and `skipCachedCompatibilityTestSteps`.
+ * This helper is the preferred low-level entrypoint for callers that want the next actionable prompt without manually
+ * coordinating `getCurrentCompatibilityTestStep` and `skipCachedCompatibilityTestSteps`.
  *
  * @param state The session state to inspect and advance through cached steps.
- * @returns The next step that requires a new answer, or `undefined` when the
- * session is already complete or becomes complete while skipping cached steps.
+ * @returns The next step that requires a new answer, or `undefined` when the session is already complete or becomes
+ *   complete while skipping cached steps.
  */
 export function getNextAnswerableCompatibilityTestStep(
   state: CompatibilityTestState,

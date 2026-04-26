@@ -14,8 +14,8 @@ import {
 /**
  * Creates a high-level compatibility test session.
  *
- * Use this API for most integrations. It hides the range-based state machine
- * and returns the concrete target values to test at each step.
+ * Use this API for most integrations. It hides the range-based state machine and returns the concrete target values to
+ * test at each step.
  *
  * @param targets The targets to evaluate. Must contain at least one item.
  * @param options Optional engine configuration. Defaults to the existing `binary-split` algorithm.

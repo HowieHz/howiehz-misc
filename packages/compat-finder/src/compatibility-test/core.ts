@@ -1,6 +1,4 @@
-/**
- * Represents an inclusive range of 1-based target indexes.
- */
+/** Represents an inclusive range of 1-based target indexes. */
 export interface TargetRange {
   start: number;
   end: number;
@@ -16,9 +14,7 @@ export interface CompatibilityTestOptions {
   algorithm?: CompatibilityTestAlgorithm;
 }
 
-/**
- * Describes the next step to present to the caller.
- */
+/** Describes the next step to present to the caller. */
 export interface CompatibilityTestStep {
   /** Ranges of 1-based target indexes to test in the current step. */
   promptTargetRanges: readonly TargetRange[];
@@ -26,13 +22,14 @@ export interface CompatibilityTestStep {
   promptTargetCount: number;
   /** Internal range-based search state for diagnostics and advanced UIs. */
   debug: CompatibilityTestDebugStep;
-  /** Whether the caller needs to provide a new answer for this step. If false, call `getNextAnswerableCompatibilityTestStep` or `skipCachedCompatibilityTestSteps`. */
+  /**
+   * Whether the caller needs to provide a new answer for this step. If false, call
+   * `getNextAnswerableCompatibilityTestStep` or `skipCachedCompatibilityTestSteps`.
+   */
   requiresAnswer: boolean;
 }
 
-/**
- * Exposes the current internal search state in range form.
- */
+/** Exposes the current internal search state in range form. */
 export interface CompatibilityTestDebugStep {
   /** The currently active search range. */
   activeTargetRange: TargetRange;
@@ -83,8 +80,8 @@ export interface CompatibilitySession<Target> {
   /**
    * Applies one answer and returns the next step.
    *
-   * `true` means the issue appears with the current targets.
-   * `false` means the issue does not appear with the current targets.
+   * `true` means the issue appears with the current targets. `false` means the issue does not appear with the current
+   * targets.
    */
   answer: (hasIssue: boolean) => CompatibilitySessionStep<Target>;
   /** Removes the latest answer and returns the restored current step. */

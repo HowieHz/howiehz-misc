@@ -4,7 +4,7 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-packageExtensionsChecksum: sha256-/z7CG3+vD9siynu50JF541LQy+jQIVSsuenv3VZk8QA=
+packageExtensionsChecksum: sha256-lA2XICZUE9HSlwqfSzEV8a0lsO0WGz3631c4u0bOSRY=
 
 importers:
 
@@ -804,9 +804,9 @@ packages:
   '@nolebase/vitepress-plugin-highlight-targeted-heading@2.18.2':
     resolution: {integrity: sha512-RVrT7FgyjxrnFFR9twc1OJI/5B09+biVbSiO36Yiu2YC+kRMz1Mb553l2DyioLtWJgVNTJ7sj66ZJi40JpDh7g==}
     peerDependencies:
-      '@vueuse/core': ^14.2.1
+      '@vueuse/core': '*'
       vitepress: ^1.5.0 || ^2.0.0-alpha.1
-      vue: ^3.5.32
+      vue: '*'
 
   '@oxc-project/types@0.127.0':
     resolution: {integrity: sha512-aIYXQBo4lCbO4z0R3FHeucQHpF46l2LbMdxRvqvuRuW2OxdnSkcng5B8+K12spgLDj93rtN3+J2Vac/TIO+ciQ==}
@@ -3600,7 +3600,7 @@ packages:
     peerDependencies:
       pagefind: ^1.1.0
       vitepress: ^1 || ^2
-      vue: ^3.5.32
+      vue: '*'
 
   vitepress-plugin-rss@0.4.3:
     resolution: {integrity: sha512-/8DWX7HIhlzMZ0jdM6j5b7ghAbYf6BMuwXwzeR++UxGxe6NOdMV0NJT6u/H2XY2ZzrCpRbAyY99/t6yTf6Bzcg==}
@@ -3669,7 +3669,7 @@ packages:
   vue-command-palette@0.1.4:
     resolution: {integrity: sha512-v9wGV5RG/Qe/GLLP3dJGYEvBOHQAH1kTdfzv7/uDj4v51g9uB0J3dQSaREgsrAvAT7tSj/cSbVrGpaalr8z7tg==}
     peerDependencies:
-      vue: ^3.5.32
+      vue: '*'
 
   vue-eslint-parser@10.4.0:
     resolution: {integrity: sha512-Vxi9pJdbN3ZnVGLODVtZ7y4Y2kzAAE2Cm0CZ3ZDRvydVYxZ6VrnBhLikBsRS+dpwj4Jv4UCv21PTEwF5rQ9WXg==}

@@ -45,7 +45,7 @@ vp add compat-finder
 
 安装后即可导入并创建会话：
 
-```ts
+```ts twoslash
 import { createCompatibilitySession } from "compat-finder";
 
 const session = createCompatibilitySession(["A", "B"]);
@@ -89,7 +89,7 @@ vp exec compat-finder
 
 下面的示例展示了一个最小可用的 `compat-finder` 会话：
 
-```ts
+```ts twoslash
 import { createCompatibilitySession } from "compat-finder";
 
 const session = createCompatibilitySession(["A", "B", "C", "D"]);

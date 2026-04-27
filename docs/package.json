@@ -10,16 +10,17 @@
   },
   "dependencies": {
     "@giscus/vue": "^3.1.1",
-    "@nolebase/vitepress-plugin-highlight-targeted-heading": "^2.18.2",
     "compat-finder": "workspace:*",
     "lunar-javascript": "^1.7.7",
-    "vitepress-plugin-group-icons": "^1.7.5",
     "vue": "^3.5.33"
   },
   "devDependencies": {
+    "@nolebase/vitepress-plugin-highlight-targeted-heading": "^2.18.2",
+    "@shikijs/vitepress-twoslash": "^4.0.2",
     "lightningcss": "^1.32.0",
     "pagefind": "^1.5.2",
     "vitepress": "2.0.0-alpha.17",
+    "vitepress-plugin-group-icons": "^1.7.5",
     "vitepress-plugin-pagefind": "^0.4.20",
     "vitepress-plugin-rss": "^0.4.4"
   },

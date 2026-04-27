@@ -45,7 +45,7 @@ vp add compat-finder
 
 Then import it and create a session:
 
-```ts
+```ts twoslash
 import { createCompatibilitySession } from "compat-finder";
 
 const session = createCompatibilitySession(["A", "B"]);
@@ -89,7 +89,7 @@ vp exec compat-finder
 
 The example below shows the smallest useful `compat-finder` session:
 
-```ts
+```ts twoslash
 import { createCompatibilitySession } from "compat-finder";
 
 const session = createCompatibilitySession(["A", "B", "C", "D"]);

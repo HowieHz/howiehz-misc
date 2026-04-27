@@ -22,6 +22,9 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.2.1)
+      '@golar/vue':
+        specifier: ^0.1.5
+        version: 0.1.5
       '@types/node':
         specifier: ^22
         version: 22.19.17
@@ -55,6 +58,9 @@ importers:
       globals:
         specifier: ^17.5.0
         version: 17.5.0
+      golar:
+        specifier: ^0.1.5
+        version: 0.1.5
       markdownlint-cli:
         specifier: ^0.48.0
         version: 0.48.0
@@ -560,6 +566,64 @@ packages:
     resolution: {integrity: sha512-xgsc93MibRQ0d1glBxN1BrEREHTIf3BPYs/3R+UZHNqawFFoWBV6iJ7uVCXMqoEKZdE2c78B3aKt5gfGqo8I5A==}
     peerDependencies:
       vue: '>=3.2.0'
+
+  '@golar/darwin-arm64@0.1.5':
+    resolution: {integrity: sha512-mFwAG4lVEoCDY977fCIT9hC+I+TD0fc2QDUbxx/XJcLpDDG0W5V3MLPfRh2kdTuYTfCL0VpbocGYWLmHykhIGg==}
+    engines: {node: '>=22.12.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@golar/darwin-x64@0.1.5':
+    resolution: {integrity: sha512-LyLkntbcVklniE4My3tDZ+cu/yptv74DyLRn7mfpb4EnXcSCE/smBxxwaLGPIQ2ggKTCm7zYadsjv3v17Ubb2w==}
+    engines: {node: '>=22.12.0'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@golar/linux-arm64-musl@0.1.5':
+    resolution: {integrity: sha512-ClUDG0BqPdQDPBkVOhzgj9yshyEtr6nRR+l3z7Q1cpCY7joI4SJocE6f2wK7DZnipLe4F45jgkf8ZPx2TNiFRQ==}
+    engines: {node: '>=22.12.0'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@golar/linux-arm64@0.1.5':
+    resolution: {integrity: sha512-64UgxUzoHydQEZ9IaJ33XBAj7pvYpKMG7aXHDdrQHbSQSCuOIO8e2r5I5/xPUUuphupRj4WaybgRZXpPnZWEkA==}
+    engines: {node: '>=22.12.0'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@golar/linux-x64-musl@0.1.5':
+    resolution: {integrity: sha512-Ww7IXMuxAtuiMmvCl5ajLa2G6qkYZ0tUADMBTh9tNhPFMhgQtYIWphGH7svRuMjxF1H1MXuUdhpk/hckJDmrxA==}
+    engines: {node: '>=22.12.0'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@golar/linux-x64@0.1.5':
+    resolution: {integrity: sha512-BvOvMSTXeFTZy03or6jyVyoc3c7muk5z7zblQIp+OqR63U/wR/MJQM3q37D7UyjEpVO6gpUHk5Z8hmSQ1cnSvg==}
+    engines: {node: '>=22.12.0'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@golar/util@0.1.5':
+    resolution: {integrity: sha512-BGpTynvHbOeQrKFvkJKdDtflr9QRgE+yiYC6IQ4YLKIY5FvebbwCE+MZ9UG5+IvAq1l+bZGr9E4Te8cYwd8bVQ==}
+    engines: {node: '>=22.12.0'}
+
+  '@golar/volar@0.1.5':
+    resolution: {integrity: sha512-OFDcaQJy3pezPqRoT4d459LUFeDjjzmzwvMv63GEPkRj8jKWeu2Xb9jZu2AMu9Rx1Ke9FozjyOEnYcfWROZNoA==}
+    engines: {node: '>=22.12.0'}
+
+  '@golar/vue@0.1.5':
+    resolution: {integrity: sha512-SSph9+MnBcOdwP0fCIzJvvlJQeaqVxhtYZGLTjAG7tEDhq+lC5uUpkQ4hsvNb6PxHlJgCQbrtqSxWAdULchMkQ==}
+    engines: {node: '>=22.12.0'}
+
+  '@golar/win32-x64@0.1.5':
+    resolution: {integrity: sha512-d6Yyu4GSMafjD0CAuYoOv+bm4H9wcdKOYkyN8YebQJh6xSKamSRc9s5wXqm1o+r7LZU/sgEQCkpN6ovnXhAmoA==}
+    engines: {node: '>=22.12.0'}
+    cpu: [x64]
+    os: [win32]
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -1805,6 +1869,9 @@ packages:
   '@vue/devtools-shared@8.1.1':
     resolution: {integrity: sha512-+h4ttmJYl/txpxHKaoZcaKpC+pvckgLzIDiSQlaQ7kKthKh8KuwoLW2D8hPJEnqKzXOvu15UHEoGyngAXCz0EQ==}
 
+  '@vue/language-core@3.2.5':
+    resolution: {integrity: sha512-d3OIxN/+KRedeM5wQ6H6NIpwS3P5gC9nmyaHgBk+rO6dIsjY+tOh4UlPpiZbAh3YtLdCGEX4M16RmsBqPmJV+g==}
+
   '@vue/language-core@3.2.7':
     resolution: {integrity: sha512-Gn4q/tRxbpVGLEuARQ43p3YELlNAFgRUVCgW9U5Cr+5q4vfD2bWDWpl3ABbJMXUt5xlE1dF8dkigg2aUq7JYYw==}
 
@@ -2487,6 +2554,11 @@ packages:
 
   globjoin@0.1.4:
     resolution: {integrity: sha512-xYfnw62CKG8nLkZBfWbhWwDw02CHty86jfPcc2cr3ZfeuK9ysoVPPEUxf21bAD/rWAgk52SuBrLJlefNy8mvFg==}
+
+  golar@0.1.5:
+    resolution: {integrity: sha512-P3Sm8ZAd9p8Bhu2dUscWu66cP0KQtXFmcBeVx5VV/7O5nEu+hkKhHljTQkCyUdbcfGIMvdF4zC+/S4/nq/KMQA==}
+    engines: {node: '>=22.12.0'}
+    hasBin: true
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
@@ -4305,6 +4377,41 @@ snapshots:
       giscus: 1.6.0
       vue: 3.5.33(typescript@6.0.3)
 
+  '@golar/darwin-arm64@0.1.5':
+    optional: true
+
+  '@golar/darwin-x64@0.1.5':
+    optional: true
+
+  '@golar/linux-arm64-musl@0.1.5':
+    optional: true
+
+  '@golar/linux-arm64@0.1.5':
+    optional: true
+
+  '@golar/linux-x64-musl@0.1.5':
+    optional: true
+
+  '@golar/linux-x64@0.1.5':
+    optional: true
+
+  '@golar/util@0.1.5': {}
+
+  '@golar/volar@0.1.5':
+    dependencies:
+      '@volar/language-core': 2.4.28
+      golar: 0.1.5
+
+  '@golar/vue@0.1.5':
+    dependencies:
+      '@golar/util': 0.1.5
+      '@golar/volar': 0.1.5
+      '@vue/compiler-dom': 3.5.33
+      '@vue/language-core': 3.2.5
+
+  '@golar/win32-x64@0.1.5':
+    optional: true
+
   '@humanfs/core@0.19.2':
     dependencies:
       '@humanfs/types': 0.15.0
@@ -5286,6 +5393,16 @@ snapshots:
 
   '@vue/devtools-shared@8.1.1': {}
 
+  '@vue/language-core@3.2.5':
+    dependencies:
+      '@volar/language-core': 2.4.28
+      '@vue/compiler-dom': 3.5.33
+      '@vue/shared': 3.5.33
+      alien-signals: 3.1.2
+      muggle-string: 0.4.1
+      path-browserify: 1.0.1
+      picomatch: 4.0.4
+
   '@vue/language-core@3.2.7':
     dependencies:
       '@volar/language-core': 2.4.28
@@ -5911,6 +6028,19 @@ snapshots:
       unicorn-magic: 0.4.0
 
   globjoin@0.1.4: {}
+
+  golar@0.1.5:
+    dependencies:
+      '@golar/util': 0.1.5
+      detect-libc: 2.1.2
+    optionalDependencies:
+      '@golar/darwin-arm64': 0.1.5
+      '@golar/darwin-x64': 0.1.5
+      '@golar/linux-arm64': 0.1.5
+      '@golar/linux-arm64-musl': 0.1.5
+      '@golar/linux-x64': 0.1.5
+      '@golar/linux-x64-musl': 0.1.5
+      '@golar/win32-x64': 0.1.5
 
   graceful-fs@4.2.11: {}
 

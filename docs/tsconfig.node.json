@@ -1,9 +1,8 @@
 {
-  "extends": "../tsconfig.json",
+  "$schema": "https://www.schemastore.org/tsconfig",
+  "extends": "../tsconfig/tsconfig.node.json",
   "compilerOptions": {
-    "declarationDir": "../node_modules/.tmp/types/docs/node",
-    "lib": ["esnext"],
-    "types": ["node"]
+    "declarationDir": "../node_modules/.tmp/types/docs/node"
   },
   "include": [
     ".vitepress/config.ts",

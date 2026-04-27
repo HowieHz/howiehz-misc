@@ -1,14 +1,13 @@
 {
-  "extends": "../../tsconfig.json",
+  "$schema": "https://www.schemastore.org/tsconfig",
+  "extends": "../../tsconfig/tsconfig.node.json",
   "references": [
     {
       "path": "./tsconfig.neutral.json"
     }
   ],
   "compilerOptions": {
-    "declarationDir": "../../node_modules/.tmp/types/packages/compat-finder/node",
-    "lib": ["esnext"],
-    "types": ["node"]
+    "declarationDir": "../../node_modules/.tmp/types/packages/compat-finder/node"
   },
   "include": ["src/cli/**/*.ts", "src/locales/**/*.ts", "benchmark/**/*.ts", "tsdown.config.ts"]
 }

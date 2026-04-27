@@ -1,8 +1,8 @@
 {
-  "extends": "../../tsconfig.json",
+  "$schema": "https://www.schemastore.org/tsconfig",
+  "extends": "../../tsconfig/tsconfig.neutral.json",
   "compilerOptions": {
-    "declarationDir": "../../node_modules/.tmp/types/packages/compat-finder/shared",
-    "lib": ["esnext"]
+    "declarationDir": "../../node_modules/.tmp/types/packages/compat-finder/shared"
   },
   "include": ["src/index.ts", "src/compatibility-test/**/*.ts"]
 }

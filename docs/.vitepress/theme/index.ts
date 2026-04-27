@@ -1,6 +1,7 @@
 import { NolebaseHighlightTargetedHeading } from "@nolebase/vitepress-plugin-highlight-targeted-heading/client";
+import TwoslashFloatingVue from "@shikijs/vitepress-twoslash/client";
 // https://vitepress.dev/guide/custom-theme
-import type { Theme } from "vitepress";
+import type { Theme, EnhanceAppContext } from "vitepress";
 import DefaultTheme from "vitepress/theme";
 import { h } from "vue";
 
@@ -12,9 +13,15 @@ import "./style.css";
 import PostMetadata from "./components/PostMetadata.vue";
 
 import "@nolebase/vitepress-plugin-highlight-targeted-heading/client/style.css";
+import "@shikijs/vitepress-twoslash/style.css";
 
 const theme: Theme = {
   extends: DefaultTheme,
+
+  enhanceApp({ app }: EnhanceAppContext) {
+    app.use(TwoslashFloatingVue);
+  },
+
   Layout(): ReturnType<typeof h> {
     return h(DefaultTheme.Layout, null, {
       "doc-footer-before": () => [h(PostMetadata), h(PageFooterNotice)],

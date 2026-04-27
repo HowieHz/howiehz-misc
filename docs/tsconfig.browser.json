@@ -1,19 +1,25 @@
 {
-  "extends": "../tsconfig.json",
+  "$schema": "https://www.schemastore.org/tsconfig",
+  "extends": "../tsconfig/tsconfig.browser.json",
   "references": [
     {
       "path": "./tsconfig.node.json"
     }
   ],
   "compilerOptions": {
-    "lib": ["esnext", "dom", "dom.iterable"],
-    "noEmit": true,
+    "declarationDir": "../node_modules/.tmp/types/docs/browser",
     "isolatedDeclarations": false
   },
   "vueCompilerOptions": {
     "extensions": [".vue"],
     "vitePressExtensions": [".md"]
   },
-  "include": [".vitepress/theme/**/*.ts", ".vitepress/types/**/*.d.ts", "**/*.vue", "**/*.md", ".vitepress/**/*.vue"],
+  "include": [
+    ".vitepress/theme/**/*.ts",
+    ".vitepress/types/browser/*.d.ts",
+    "**/*.vue",
+    "**/*.md",
+    ".vitepress/**/*.vue"
+  ],
   "exclude": ["**/README.md"]
 }

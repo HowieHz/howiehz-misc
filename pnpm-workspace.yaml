@@ -14,6 +14,9 @@ packageExtensions:
     peerDependencies:
       vue: "*"
 trustPolicy: no-downgrade
+trustPolicyExclude:
+  - undici-types@6.21.0
+  - semver@5.7.2
 hoist: false
 engineStrict: true # engines.node will be strictly enforced when installing dependencies
 allowBuilds:

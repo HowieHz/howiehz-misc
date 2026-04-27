@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { transformerTwoslash } from "@shikijs/vitepress-twoslash";
+import { createFileSystemTypesCache } from "@shikijs/vitepress-twoslash/cache-fs";
 import browserslist from "browserslist";
 import { browserslistToTargets } from "lightningcss";
 import { defineConfig, type DefaultTheme, type UserConfig } from "vitepress";
@@ -8,7 +10,7 @@ import { groupIconMdPlugin, groupIconVitePlugin } from "vitepress-plugin-group-i
 import { chineseSearchOptimize, pagefindPlugin } from "vitepress-plugin-pagefind";
 import { RssPlugin, type RSSOptions } from "vitepress-plugin-rss";
 
-import pkg from "../../package.json";
+import pkg from "../../package.json" with { type: "json" };
 
 const baseUrl = "https://howiehz.top";
 const basePath = "/misc/";
@@ -409,6 +411,13 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
     image: {
       lazyLoading: true,
     },
+    codeTransformers: [
+      transformerTwoslash({
+        typesCache: createFileSystemTypesCache(),
+      }),
+    ],
+    // Explicitly load these languages for types highlighting
+    languages: ["js", "jsx", "ts", "tsx"],
     config(md) {
       md.use(groupIconMdPlugin);
     },

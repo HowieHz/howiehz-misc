@@ -9,7 +9,7 @@
     ".vitepress/config.ts",
     ".vitepress/data/**/*.ts",
     ".vitepress/utils/**/*.ts",
-    ".vitepress/types/**/*.d.ts",
+    ".vitepress/types/node/*.d.ts",
     "**/*.node.data.ts"
   ]
 }

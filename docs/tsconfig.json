@@ -4,7 +4,6 @@
     {
       "path": "./tsconfig.node.json"
     },
-    // 由 vue-tsc 再次检查
     {
       "path": "./tsconfig.browser.json"
     }

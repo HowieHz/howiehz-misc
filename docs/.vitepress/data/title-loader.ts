@@ -1,6 +1,6 @@
 import { createContentLoader, type ContentOptions } from "vitepress";
 
-import type { ContentLoader } from "./content-loader";
+import type { ContentLoader } from "./content-loader.ts";
 
 export interface TitleLinkItem {
   title: string;

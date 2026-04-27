@@ -10,7 +10,7 @@ import { groupIconMdPlugin, groupIconVitePlugin } from "vitepress-plugin-group-i
 import { chineseSearchOptimize, pagefindPlugin } from "vitepress-plugin-pagefind";
 import { RssPlugin, type RSSOptions } from "vitepress-plugin-rss";
 
-import pkg from "../../package.json";
+import pkg from "../../package.json" with { type: "json" };
 
 const baseUrl = "https://howiehz.top";
 const basePath = "/misc/";

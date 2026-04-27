@@ -629,7 +629,7 @@ function completeRound() {
             :id="target.id"
             :value="getTargetName(target.index)"
             autocomplete="off"
-            :placeholder="'目标 ' + target.index"
+            :placeholder="`目标 ${target.index}`"
             aria-describedby="compat-test-target-name-note"
             @input="handleTargetNameInput($event, target.index)"
           >
@@ -655,7 +655,7 @@ function completeRound() {
             v-if="!isEditingTargetListPage"
             type="button"
             class="compat-test-tool__page-status compat-test-tool__page-status-button"
-            :aria-label="'当前第 ' + targetListPage + ' 页，共 ' + targetListPageCount + ' 页。点击后可跳转页码'"
+            :aria-label="`当前第 ${targetListPage} 页，共 ${targetListPageCount} 页。点击后可跳转页码`"
             @click="startEditingTargetListPage"
           >
             {{ targetListPage }} / {{ targetListPageCount }}
@@ -668,7 +668,7 @@ function completeRound() {
             inputmode="numeric"
             autocomplete="off"
             class="compat-test-tool__page-status-input"
-            :aria-label="'输入要跳转的页码，当前共 ' + targetListPageCount + ' 页'"
+            :aria-label="`输入要跳转的页码，当前共 ${targetListPageCount} 页`"
             @input="handleTargetListPageInput"
             @blur="finishEditingTargetListPage"
             @keydown.enter.prevent="finishEditingTargetListPage"
@@ -781,7 +781,7 @@ function completeRound() {
           >
             <span
               v-for="target in getAllTargetsFromRanges(targetsUnchanged)"
-              :key="'unchanged-' + target"
+              :key="`unchanged-${target}`"
               class="compat-test-tool__chip"
               :class="{ 'compat-test-tool__chip--confirmed': confirmedTargetSet.has(target) }"
               :aria-label="confirmedTargetSet.has(target) ? getConfirmedTargetA11yLabel(target) : undefined"
@@ -815,7 +815,7 @@ function completeRound() {
           >
             <span
               v-for="target in getAllTargetsFromRanges(targetsToAdd)"
-              :key="'add-' + target"
+              :key="`add-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--add"
               role="listitem"
             >
@@ -847,7 +847,7 @@ function completeRound() {
           >
             <span
               v-for="target in getAllTargetsFromRanges(targetsToRemove)"
-              :key="'remove-' + target"
+              :key="`remove-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--remove"
               role="listitem"
             >
@@ -924,7 +924,7 @@ function completeRound() {
           >
             <span
               v-for="target in incompatibleTargets"
-              :key="'result-' + target"
+              :key="`result-${target}`"
               class="compat-test-tool__chip compat-test-tool__chip--confirmed"
               role="listitem"
             >

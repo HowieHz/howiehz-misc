@@ -905,7 +905,7 @@ async function copyText(text: string) {
         <div class="ganzhi-tool__year-stepper">
           <button
             type="button"
-            :aria-label="activeLunisolarLabel + '减一'"
+            :aria-label="`${activeLunisolarLabel}减一`"
             @click="stepYear(calendarMode, -1)"
           >
             -
@@ -921,7 +921,7 @@ async function copyText(text: string) {
           >
           <button
             type="button"
-            :aria-label="activeLunisolarLabel + '加一'"
+            :aria-label="`${activeLunisolarLabel}加一`"
             @click="stepYear(calendarMode, 1)"
           >
             +
@@ -1053,7 +1053,7 @@ async function copyText(text: string) {
       </div>
       <div class="ganzhi-tool__result-item">
         <span class="ganzhi-tool__result-label">生肖</span>
-        <strong class="ganzhi-tool__meta-value">{{ result.zodiac }}{{ result.zodiacEmoji ? " " + result.zodiacEmoji : "" }}</strong>
+        <strong class="ganzhi-tool__meta-value">{{ result.zodiac }}{{ result.zodiacEmoji ? ` ${result.zodiacEmoji}` : "" }}</strong>
       </div>
     </div>
   </div>

@@ -37,11 +37,11 @@
     "lint:md": "markdownlint --fix '**/*.md' --ignore-path .gitignore",
     "lint:oxlint+eslint": "oxlint --type-aware --fix && eslint --fix",
     "lint:style": "stylelint --fix '**/*.{css,vue}' 'docs/.vitepress/**/*.{css,vue}' --ignore-path .gitignore",
-    "lint:type-check:docs:vue-tsc": "vue-tsc -b docs/tsconfig.browser.json",
+    "lint:type-check:docs:golar": "golar tsc -b docs/tsconfig.browser.json",
     "lint:type-check:tsgo": "tsgo -b",
     "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm oxfmt -- --write .oxlintrc.json",
     "preinstall": "npx only-allow pnpm",
-    "prelint:type-check:docs:vue-tsc": "pnpm run compat-finder:build",
+    "prelint:type-check:docs:golar": "pnpm run compat-finder:build",
     "test": "pnpm run '/:test$/'"
   },
   "devDependencies": {
@@ -49,6 +49,7 @@
     "@changesets/cli": "^2.31.0",
     "@eslint/compat": "^2.1.0",
     "@eslint/js": "^10.0.1",
+    "@golar/vue": "^0.1.8",
     "@types/node": "^26.1.0",
     "@typescript-eslint/parser": "^8.62.1",
     "@typescript/native-preview": "7.0.0-dev.20260701.1",
@@ -60,6 +61,7 @@
     "eslint-plugin-oxlint": "^1.72.0",
     "eslint-plugin-vue": "^10.9.2",
     "globals": "^17.7.0",
+    "golar": "^0.1.8",
     "markdownlint-cli": "^0.49.0",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
@@ -72,8 +74,7 @@
     "stylelint-order": "^8.1.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.1",
-    "vue-eslint-parser": "^10.4.1",
-    "vue-tsc": "^3.3.6"
+    "vue-eslint-parser": "^10.4.1"
   },
   "browserslist": [
     "defaults",

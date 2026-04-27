@@ -629,7 +629,7 @@ Enter the target count and names, then follow the prompts to test each suggested
             :id="target.id"
             :value="getTargetName(target.index)"
             autocomplete="off"
-            :placeholder="`Target ${target.index}`"
+            :placeholder="'Target ' + target.index"
             aria-describedby="compat-test-target-name-note"
             @input="handleTargetNameInput($event, target.index)"
           >
@@ -655,7 +655,7 @@ Enter the target count and names, then follow the prompts to test each suggested
             v-if="!isEditingTargetListPage"
             type="button"
             class="compat-test-tool__page-status compat-test-tool__page-status-button"
-            :aria-label="`Current page ${targetListPage} of ${targetListPageCount}. Click to jump to a page.`"
+            :aria-label="'Current page ' + targetListPage + ' of ' + targetListPageCount + '. Click to jump to a page.'"
             @click="startEditingTargetListPage"
           >
             {{ targetListPage }} / {{ targetListPageCount }}
@@ -668,7 +668,7 @@ Enter the target count and names, then follow the prompts to test each suggested
             inputmode="numeric"
             autocomplete="off"
             class="compat-test-tool__page-status-input"
-            :aria-label="`Enter the page number to jump to. There are ${targetListPageCount} pages.`"
+            :aria-label="'Enter the page number to jump to. There are ' + targetListPageCount + ' pages.'"
             @input="handleTargetListPageInput"
             @blur="finishEditingTargetListPage"
             @keydown.enter.prevent="finishEditingTargetListPage"
@@ -781,7 +781,7 @@ Enter the target count and names, then follow the prompts to test each suggested
           >
             <span
               v-for="target in getAllTargetsFromRanges(targetsUnchanged)"
-              :key="`unchanged-${target}`"
+              :key="'unchanged-' + target"
               class="compat-test-tool__chip"
               :class="{ 'compat-test-tool__chip--confirmed': confirmedTargetSet.has(target) }"
               :aria-label="confirmedTargetSet.has(target) ? getConfirmedTargetA11yLabel(target) : undefined"
@@ -815,7 +815,7 @@ Enter the target count and names, then follow the prompts to test each suggested
           >
             <span
               v-for="target in getAllTargetsFromRanges(targetsToAdd)"
-              :key="`add-${target}`"
+              :key="'add-' + target"
               class="compat-test-tool__chip compat-test-tool__chip--add"
               role="listitem"
             >
@@ -847,7 +847,7 @@ Enter the target count and names, then follow the prompts to test each suggested
           >
             <span
               v-for="target in getAllTargetsFromRanges(targetsToRemove)"
-              :key="`remove-${target}`"
+              :key="'remove-' + target"
               class="compat-test-tool__chip compat-test-tool__chip--remove"
               role="listitem"
             >
@@ -924,7 +924,7 @@ Enter the target count and names, then follow the prompts to test each suggested
           >
             <span
               v-for="target in incompatibleTargets"
-              :key="`result-${target}`"
+              :key="'result-' + target"
               class="compat-test-tool__chip compat-test-tool__chip--confirmed"
               role="listitem"
             >

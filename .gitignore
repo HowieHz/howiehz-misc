@@ -2,6 +2,7 @@
 build
 tmp
 output
+release-animation
 
 # Logs
 logs

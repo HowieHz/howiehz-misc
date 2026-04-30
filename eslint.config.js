@@ -71,6 +71,7 @@ export default defineConfig(
       "packages/compat-finder/__tests__/**/*.ts",
       "eslint.config.js",
       "stylelint.config.js",
+      ".github/scripts/*.ts",
       ".github/scripts/*.js",
     ],
 

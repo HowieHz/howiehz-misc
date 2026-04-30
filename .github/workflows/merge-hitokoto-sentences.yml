@@ -1,0 +1,44 @@
+name: Merge Hitokoto Sentences
+
+on:
+  schedule:
+    # 21:00 UTC = 05:00 Asia/Shanghai on the next day.
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: merge-hitokoto-sentences
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # https://github.com/actions/checkout/releases/tag/v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # https://github.com/actions/setup-node/releases/tag/v6.4.0
+        with:
+          node-version: 24
+
+      - name: Fetch source repository
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/hitokoto-osc/sentences-bundle.git tmp/sentences-bundle
+          git -C tmp/sentences-bundle sparse-checkout set sentences
+
+      - name: Merge JSON files
+        id: merge
+        run: >
+          node --experimental-strip-types .github/scripts/merge-hitokoto-sentences.ts
+          --input tmp/sentences-bundle/sentences
+          --output tmp/hitokoto-sentences.json
+
+      - name: Upload merged artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+        with:
+          name: hitokoto-sentences
+          path: ${{ steps.merge.outputs.output_file }}
+          if-no-files-found: error
+          retention-days: 30

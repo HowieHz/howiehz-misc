@@ -136,11 +136,13 @@ jobs:
           }
 
           const requestBody = mergedSentences.map((sentence) => ({
-            apiVersion: "hitokotohub.puresky.top/v1alpha1",
-            kind: "Sentence",
+            // 这个 batch 接口实测不要求 apiVersion / kind / metadata.name，
+            // 因此这里保留最小可用结构即可。
+            // apiVersion: "hitokotohub.puresky.top/v1alpha1",
+            // kind: "Sentence",
             metadata: {
               generateName: "sentence-",
-              name: "",
+              // name: "",
             },
             spec: {
               // content 对应 hitokoto。

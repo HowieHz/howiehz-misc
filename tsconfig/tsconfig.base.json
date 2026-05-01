@@ -2,7 +2,7 @@
   "$schema": "https://www.schemastore.org/tsconfig",
   "compilerOptions": {
     "composite": true,
-    "declaration": true, // 生成 .d.ts 文件 (compostie 为 ture 时此处默认为 true，但保持明确声明)
+    "declaration": true, // 生成 .d.ts 文件 (composite 为 true 时此处默认为 true，但保持明确声明)
     "emitDeclarationOnly": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,

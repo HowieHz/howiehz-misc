@@ -1,6 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
-
 import { createContentLoader, type ContentOptions } from "vitepress";
 
 import { formatDateToYMD } from "../utils/formatDate.ts";
@@ -21,7 +18,7 @@ function normalizeUrl(url: string): string {
 }
 
 function getDefaultTitle(content: string): string {
-  const match = content.match(/^\s*#+\s+(.+?)(?:\n|$)/m);
+  const match = content.match(/^\s*#+\s+(.+?)(?:\r?\n|$)/m);
   return match?.[1]?.trim() || "";
 }
 
@@ -38,27 +35,18 @@ export function createCategoryLoader(
   options: LoaderOptions = {},
 ): ContentLoader<CategoryPostMeta[]> {
   return createContentLoader<CategoryPostMeta[]>(globPattern, {
+    includeSrc: true,
     excerpt: false,
     transform(items) {
       const posts: CategoryPostMeta[] = items
         .filter((item) => normalizeUrl(item.url) !== normalizeUrl(categoryIndexUrl))
         .map((item) => {
-          const { frontmatter = {}, url } = item;
+          const { frontmatter = {}, src, url } = item;
           let title = frontmatter.title;
 
-          // 如果 frontmatter 中没有 title，尝试从文件内容中提取
-          if (!title) {
-            try {
-              // 根据 url 推断文件路径
-              const docRoot = process.cwd();
-              const filePath = path.join(docRoot, "docs", url.replace(/\/$/, "") + ".md");
-              if (fs.existsSync(filePath)) {
-                const fileContent = fs.readFileSync(filePath, "utf-8");
-                title = getDefaultTitle(fileContent);
-              }
-            } catch {
-              // 文件读取失败，继续使用备选方案
-            }
+          // 如果 frontmatter 中没有 title，尝试从 Markdown 源内容中提取
+          if (!title && src) {
+            title = getDefaultTitle(src);
           }
 
           // 最后的备选方案：从 URL 推断

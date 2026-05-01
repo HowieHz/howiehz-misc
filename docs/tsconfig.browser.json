@@ -3,6 +3,7 @@
   "extends": "../tsconfig/tsconfig.browser.json",
   "references": [
     {
+      // Some Markdown files import VitePress *.data.ts modules, so this config references the Node tsconfig when generating their type declarations.
       "path": "./tsconfig.node.json"
     }
   ],

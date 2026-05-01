@@ -81,7 +81,7 @@ jobs:
           const response = await fetch(url, {
             method: "POST",
             headers: {
-              Authorization: `Basic ${process.env.HITOKOTO_PAT}`,
+              Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(requestBody),
@@ -159,7 +159,7 @@ jobs:
           const response = await fetch(url, {
             method: "POST",
             headers: {
-              Authorization: `Basic ${process.env.HITOKOTO_PAT}`,
+              Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(requestBody),
@@ -199,7 +199,7 @@ jobs:
           const listResponse = await fetch(listUrl, {
             method: "GET",
             headers: {
-              Authorization: `Basic ${process.env.HITOKOTO_PAT}`,
+              Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
             },
           });
 
@@ -220,7 +220,7 @@ jobs:
             const deleteResponse = await fetch(deleteUrl, {
               method: "DELETE",
               headers: {
-                Authorization: `Basic ${process.env.HITOKOTO_PAT}`,
+                Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
               },
             });
 

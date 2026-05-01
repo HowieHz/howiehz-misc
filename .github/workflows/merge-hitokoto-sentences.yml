@@ -42,3 +42,201 @@ jobs:
           path: ${{ steps.merge.outputs.output_file }}
           if-no-files-found: error
           retention-days: 30
+
+      # 第一步：创建新分类，后续批量上传会把所有句子写入这个新分类。
+      - name: Create new Hitokoto category
+        id: create_category
+        env:
+          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
+          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          node <<'EOF'
+          (async () => {
+          const fs = require("node:fs");
+
+          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "GITHUB_RUN_ID"];
+          for (const envName of requiredEnv) {
+            if (!process.env[envName]) {
+              throw new Error(`Missing required environment variable: ${envName}`);
+            }
+          }
+
+          const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
+          const url = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories`;
+
+          const requestBody = {
+            apiVersion: "hitokotohub.puresky.top/v1alpha1",
+            kind: "Category",
+            metadata: {
+              generateName: "category-",
+              name: "",
+            },
+            spec: {
+              // 按要求使用当前 workflow run id 作为分类展示名。
+              name: String(process.env.GITHUB_RUN_ID),
+            },
+          };
+
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              Authorization: `Basic ${process.env.HITOKOTO_PAT}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestBody),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to create category: ${response.status} ${response.statusText}\n${errorText}`);
+          }
+
+          const createdCategory = await response.json();
+          const createdCategoryName = createdCategory?.metadata?.name;
+
+          if (typeof createdCategoryName !== "string" || createdCategoryName.length === 0) {
+            throw new Error("Category creation response does not include metadata.name");
+          }
+
+          console.log(`Created category: ${createdCategoryName}`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `category_name=${createdCategoryName}\n`, "utf8");
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          EOF
+
+      # 第二步：把合并后的 JSON 转成批量接口需要的 Sentence 结构并上传到刚创建的新分类。
+      - name: Upload merged sentences to new category
+        env:
+          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
+          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
+          CATEGORY_NAME: ${{ steps.create_category.outputs.category_name }}
+          MERGED_JSON_FILE: ${{ steps.merge.outputs.output_file }}
+        run: |
+          node <<'EOF'
+          (async () => {
+          const fs = require("node:fs");
+
+          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME", "MERGED_JSON_FILE"];
+          for (const envName of requiredEnv) {
+            if (!process.env[envName]) {
+              throw new Error(`Missing required environment variable: ${envName}`);
+            }
+          }
+
+          const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
+          const url = `${siteEndpoint}/apis/console.api.hitokotohub.puresky.top/v1alpha1/sentence/batch`;
+          const mergedJsonText = fs.readFileSync(process.env.MERGED_JSON_FILE, "utf8");
+          const mergedSentences = JSON.parse(mergedJsonText);
+
+          if (!Array.isArray(mergedSentences)) {
+            throw new Error("Merged JSON file must contain an array");
+          }
+
+          const requestBody = mergedSentences.map((sentence) => ({
+            apiVersion: "hitokotohub.puresky.top/v1alpha1",
+            kind: "Sentence",
+            metadata: {
+              generateName: "sentence-",
+              name: "",
+            },
+            spec: {
+              // content 对应 hitokoto。
+              content: sentence.hitokoto,
+              categoryName: process.env.CATEGORY_NAME,
+              // author 对应 from_who；为空时按示例回退为“匿名”。
+              author:
+                typeof sentence.from_who === "string" && sentence.from_who.trim().length > 0
+                  ? sentence.from_who
+                  : "匿名",
+              // source 对应 from。
+              source: sentence.from,
+            },
+          }));
+
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              Authorization: `Basic ${process.env.HITOKOTO_PAT}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestBody),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to upload sentences: ${response.status} ${response.statusText}\n${errorText}`);
+          }
+
+          console.log(`Uploaded ${requestBody.length} sentences to ${process.env.CATEGORY_NAME}`);
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          EOF
+
+      # 第三步：获取现有分类列表，删除不是本次新建分类的旧分类。
+      - name: Delete old Hitokoto categories
+        env:
+          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
+          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
+          CATEGORY_NAME: ${{ steps.create_category.outputs.category_name }}
+        run: |
+          node <<'EOF'
+          (async () => {
+          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME"];
+          for (const envName of requiredEnv) {
+            if (!process.env[envName]) {
+              throw new Error(`Missing required environment variable: ${envName}`);
+            }
+          }
+
+          const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
+          const listUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories?page=1&size=100`;
+
+          const listResponse = await fetch(listUrl, {
+            method: "GET",
+            headers: {
+              Authorization: `Basic ${process.env.HITOKOTO_PAT}`,
+            },
+          });
+
+          if (!listResponse.ok) {
+            const errorText = await listResponse.text();
+            throw new Error(`Failed to list categories: ${listResponse.status} ${listResponse.statusText}\n${errorText}`);
+          }
+
+          const listPayload = await listResponse.json();
+          const categoryItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
+          const categoryNamesToDelete = categoryItems
+            .map((item) => item?.metadata?.name)
+            .filter((name) => typeof name === "string" && name.length > 0 && name !== process.env.CATEGORY_NAME);
+
+          for (const categoryName of categoryNamesToDelete) {
+            // 仅删除不是本次新建分类的旧分类。
+            const deleteUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories/${encodeURIComponent(categoryName)}`;
+            const deleteResponse = await fetch(deleteUrl, {
+              method: "DELETE",
+              headers: {
+                Authorization: `Basic ${process.env.HITOKOTO_PAT}`,
+              },
+            });
+
+            if (!deleteResponse.ok) {
+              const errorText = await deleteResponse.text();
+              throw new Error(`Failed to delete category ${categoryName}: ${deleteResponse.status} ${deleteResponse.statusText}\n${errorText}`);
+            }
+
+            console.log(`Deleted category: ${categoryName}`);
+          }
+
+          if (categoryNamesToDelete.length === 0) {
+            console.log("No old categories to delete");
+          }
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          EOF

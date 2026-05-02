@@ -127,7 +127,7 @@ jobs:
           }
 
           const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
-          const url = `${siteEndpoint}/apis/console.api.hitokotohub.puresky.top/v1alpha1/sentence/batch`;
+          const url = `${siteEndpoint}/apis/console.api.hitokotohub.puresky.top/v1alpha1/sentence/-/batch`;
           const mergedJsonText = fs.readFileSync(process.env.MERGED_JSON_FILE, "utf8");
           const mergedSentences = JSON.parse(mergedJsonText);
 

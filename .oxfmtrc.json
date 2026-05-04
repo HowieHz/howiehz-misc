@@ -9,6 +9,7 @@
       }
     }
   ],
+  "singleAttributePerLine": true,
   "sortImports": {},
   "sortPackageJson": {
     "sortScripts": true

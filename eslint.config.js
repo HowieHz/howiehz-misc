@@ -1,5 +1,4 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 import { includeIgnoreFile } from "@eslint/compat";
 import js from "@eslint/js";
@@ -11,9 +10,32 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 import vueParser from "vue-eslint-parser";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const gitignorePath = path.resolve(__dirname, ".gitignore");
+const gitignorePath = resolve(import.meta.dirname, ".gitignore");
+
+const browserLanguageOptions = {
+  ecmaVersion: "latest",
+  sourceType: "module",
+  globals: {
+    ...globals.browser,
+  },
+};
+
+const vueLanguageOptions = {
+  ...browserLanguageOptions,
+  parser: vueParser,
+  parserOptions: {
+    parser: {
+      // Script parser for `<script>`
+      js: "espree",
+      // Script parser for `<script lang="ts">`
+      ts: tsParser,
+      // Script parser for vue directives (e.g. `v-if=` or `:attribute=`)
+      // and vue interpolations (e.g. `{{variable}}`).
+      // If not specified, the parser determined by `<script lang ="...">` is used.
+      "<template>": "espree",
+    },
+  },
+};
 
 export default defineConfig(
   globalIgnores(["public/assets/lib/**/*"]),
@@ -23,41 +45,17 @@ export default defineConfig(
   tseslint.configs.strict,
   tseslint.configs.stylistic,
   {
+    // Browser-side TS used by the VitePress theme.
     files: ["docs/.vitepress/theme/**/*.ts"],
-
-    languageOptions: {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      globals: {
-        ...globals.browser,
-      },
-    },
+    languageOptions: browserLanguageOptions,
   },
   {
+    // Browser-side Vue SFCs used by the VitePress theme.
     files: ["docs/.vitepress/**/*.vue"],
-
-    languageOptions: {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      globals: {
-        ...globals.browser,
-      },
-      parser: vueParser,
-      parserOptions: {
-        parser: {
-          // Script parser for `<script>`
-          js: "espree",
-          // Script parser for `<script lang="ts">`
-          ts: tsParser,
-          // Script parser for vue directives (e.g. `v-if=` or `:attribute=`)
-          // and vue interpolations (e.g. `{{variable}}`).
-          // If not specified, the parser determined by `<script lang ="...">` is used.
-          "<template>": "espree",
-        },
-      },
-    },
+    languageOptions: vueLanguageOptions,
   },
   {
+    // Node-side config/build/tooling and package runtime code.
     files: [
       "docs/.vitepress/config.ts",
       "docs/.vitepress/data/**/*.ts",
@@ -76,7 +74,7 @@ export default defineConfig(
     ],
 
     languageOptions: {
-      ecmaVersion: "latest",
+      ecmaVersion: 2022,
       sourceType: "module",
       globals: {
         ...globals.node,
@@ -84,6 +82,7 @@ export default defineConfig(
     },
   },
   {
+    // Neutral ESM/typing entrypoints that do not need browser or Node globals.
     files: [
       "docs/.vitepress/types/**/*.d.ts",
       "packages/compat-finder/src/index.ts",

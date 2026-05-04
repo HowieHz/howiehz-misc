@@ -120,7 +120,8 @@ function buildReference(label: string, url: string, archives?: { type: string; u
           <span
             v-if="index < contributors.length - 1"
             aria-hidden="true"
-          >, </span>
+          >,
+          </span>
         </li>
       </ul>
     </div>
@@ -150,7 +151,8 @@ function buildReference(label: string, url: string, archives?: { type: string; u
           <span
             v-if="index < references.length - 1"
             aria-hidden="true"
-          >, </span>
+          >,
+          </span>
         </li>
       </ul>
     </div>

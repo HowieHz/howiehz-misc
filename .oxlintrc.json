@@ -256,7 +256,7 @@
         ".github/scripts/*.js"
       ],
       "env": {
-        "es2026": true,
+        "es2022": true,
         "node": true
       }
     },

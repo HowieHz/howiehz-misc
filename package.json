@@ -45,7 +45,7 @@
     "test": "pnpm run '/:test$/'"
   },
   "devDependencies": {
-    "@changesets/changelog-github": "^0.6.0",
+    "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
     "@eslint/compat": "^2.0.5",
     "@eslint/js": "^10.0.1",
@@ -73,7 +73,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.1",
     "vue-eslint-parser": "^10.4.0",
-    "vue-tsc": "^3.2.7"
+    "vue-tsc": "^3.2.8"
   },
   "browserslist": [
     "defaults",

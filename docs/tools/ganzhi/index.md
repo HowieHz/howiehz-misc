@@ -79,7 +79,6 @@ const LUNISOLAR_LIMITS = {
   foto: { label: "佛历日期", start: { year: 544, month: 11, day: 18 }, end: { year: 10543, month: 12, day: 2 }, yearOffset: 544 },
   tao: { label: "道历日期", start: { year: 2697, month: 11, day: 18 }, end: { year: 12696, month: 12, day: 2 }, yearOffset: 2697 },
 } as const satisfies Record<LunisolarMode, LunisolarLimit>;
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local labels are used inside template strings.
 const monthNames = ["正", "二", "三", "四", "五", "六", "七", "八", "九", "十", "冬", "腊"] as const;
 const dayNames = [
   "初一",
@@ -605,7 +604,6 @@ function isValidSolarDate(year: number, month: number, day: number) {
   }
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; parameters are used inside template string formatting.
 function formatSolarYmd(year: number, month: number, day: number) {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
@@ -742,9 +740,7 @@ function fromLunarYear(mode: LunisolarMode, lunarYear: number) {
 }
 
 function formatHourLabel(hourValue: number): string {
-  // @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local is used inside template string.
   const start = `${String(hourValue).padStart(2, "0")}:00`;
-  // @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local is used inside template string.
   const end = `${String(hourValue).padStart(2, "0")}:59`;
   if (hourValue === 0) {
     return `${start}-${end}（早子）`;
@@ -753,9 +749,7 @@ function formatHourLabel(hourValue: number): string {
     return `${start}-${end}（晚子）`;
   }
 
-  // @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local is used inside template string.
   const zhiLabels = ["丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"] as const;
-  // @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; local is used inside template string.
   const index = Math.floor((hourValue - 1) / 2);
   return `${start}-${end}（${zhiLabels[index]}时）`;
 }

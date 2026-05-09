@@ -390,7 +390,6 @@ async function startTest() {
     status.value = "idle";
     engineState.value = undefined;
     currentStep.value = undefined;
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; narrowed message is used when composing the announcement string.
     const message = error instanceof Error ? error.message : "The target count is too large for this page to initialize.";
     announcement.value = `Unable to start: ${message}`;
   }

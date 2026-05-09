@@ -24,3 +24,4 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 shellEmulator: true
+dedupePeers: true

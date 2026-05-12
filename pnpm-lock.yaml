@@ -145,11 +145,11 @@ importers:
         specifier: ^0.18.2
         version: 0.18.2
       publint:
-        specifier: ^0.3.18
-        version: 0.3.19
+        specifier: ^0.3.20
+        version: 0.3.20
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(@arethetypeswrong/core@0.18.2)(@typescript/native-preview@7.0.0-dev.20260509.2)(publint@0.3.19)(typescript@6.0.3)(vue-tsc@3.2.8)
+        version: 0.22.0(@arethetypeswrong/core@0.18.2)(@typescript/native-preview@7.0.0-dev.20260509.2)(publint@0.3.20)(typescript@6.0.3)(vue-tsc@3.2.8)
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.18)(vite@7.3.3)
@@ -3233,8 +3233,8 @@ packages:
   prr@1.0.1:
     resolution: {integrity: sha512-yPw4Sng1gWghHQWj0B3ZggWUm4qVbPwPFcRG8KyxiU7J2OHFSoEHKS+EZ3fv5l1t9CyCiop6l/ZYeWbrgoQejw==}
 
-  publint@0.3.19:
-    resolution: {integrity: sha512-J3p4GOocCRFyLLFRzGfIhAwWgk0Kkcdxj5iFspFvCYbyiJs5IhCM8gsIkcNeQL+tdpV671RtJQiTFSUKhl1Wjg==}
+  publint@0.3.20:
+    resolution: {integrity: sha512-UWqFYP7VBVCe9l/leEEGJrDs6Am4K4KapLmLi5qbt+9fA+Ny38ghdW+bw1nYfVqCK8/3kgsxjjhFjTYqYYRpyw==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -6791,7 +6791,7 @@ snapshots:
   prr@1.0.1:
     optional: true
 
-  publint@0.3.19:
+  publint@0.3.20:
     dependencies:
       '@publint/pack': 0.1.4
       package-manager-detector: 1.6.0
@@ -7186,7 +7186,7 @@ snapshots:
     dependencies:
       typescript: 6.0.3
 
-  tsdown@0.22.0(@arethetypeswrong/core@0.18.2)(@typescript/native-preview@7.0.0-dev.20260509.2)(publint@0.3.19)(typescript@6.0.3)(vue-tsc@3.2.8):
+  tsdown@0.22.0(@arethetypeswrong/core@0.18.2)(@typescript/native-preview@7.0.0-dev.20260509.2)(publint@0.3.20)(typescript@6.0.3)(vue-tsc@3.2.8):
     dependencies:
       ansis: 4.2.0
       cac: 7.0.0
@@ -7205,7 +7205,7 @@ snapshots:
       unconfig-core: 7.5.0
     optionalDependencies:
       '@arethetypeswrong/core': 0.18.2
-      publint: 0.3.19
+      publint: 0.3.20
       typescript: 6.0.3
     transitivePeerDependencies:
       - '@ts-macro/tsc'

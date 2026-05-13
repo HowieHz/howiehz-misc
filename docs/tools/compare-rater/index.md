@@ -1187,6 +1187,22 @@ async function copyText(text: string) {
                 class="anime-score-tool__arrowhead"
               />
             </marker>
+            <marker
+              id="anime-score-endpoint"
+              markerWidth="5"
+              markerHeight="5"
+              refX="2.5"
+              refY="2.5"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <circle
+                cx="2.5"
+                cy="2.5"
+                r="2"
+                class="anime-score-tool__endpoint"
+              />
+            </marker>
           </defs>
           <path
             v-for="edge in graphEdges"
@@ -1197,7 +1213,8 @@ async function copyText(text: string) {
               'anime-score-tool__edge--strong': edge.relationLevel === 'much-better' || edge.relationLevel === 'much-worse',
             }"
             :d="edge.path"
-            :marker-end="edge.hasArrow ? 'url(#anime-score-arrowhead)' : undefined"
+            marker-start="url(#anime-score-endpoint)"
+            :marker-end="edge.hasArrow ? 'url(#anime-score-arrowhead)' : 'url(#anime-score-endpoint)'"
           />
         </svg>
         <div
@@ -1673,6 +1690,10 @@ async function copyText(text: string) {
 }
 
 .anime-score-tool__arrowhead {
+  fill: context-stroke;
+}
+
+.anime-score-tool__endpoint {
   fill: context-stroke;
 }
 

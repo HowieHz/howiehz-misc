@@ -200,7 +200,7 @@ export function buildGraphEdges(
     edgeGroup
       .toSorted((left, right) => left.id - right.id)
       .map((edgeDraft, edgeIndex) =>
-        buildGraphEdge(edgeDraft, getParallelEdgeOffset(edgeIndex, edgeGroup.length), items),
+        buildGraphEdge(edgeDraft, getParallelEdgeOffset(edgeIndex, edgeGroup.length), items, records),
       ),
   );
 }
@@ -521,8 +521,13 @@ function getDirectedRelation(record: RelationRecord, scores: ReadonlyMap<string,
  *
  * 根据端点位置选择直线、同侧二次贝塞尔或异侧三次贝塞尔。
  */
-function buildGraphEdge(edgeDraft: GraphEdgeDraft, curveOffset: number, items: readonly AnimeItem[]): GraphEdge {
-  const effectiveCurveOffset = getEffectiveCurveOffset(edgeDraft, curveOffset, items);
+function buildGraphEdge(
+  edgeDraft: GraphEdgeDraft,
+  curveOffset: number,
+  items: readonly AnimeItem[],
+  records: readonly RelationRecord[],
+): GraphEdge {
+  const effectiveCurveOffset = getEffectiveCurveOffset(edgeDraft, curveOffset, items, records);
   const endpoints = trimEdgeLine(edgeDraft.fromX, edgeDraft.fromY, edgeDraft.toX, edgeDraft.toY, effectiveCurveOffset);
   const { x1, y1, x2, y2 } = endpoints;
   if (endpoints.fromSide === 0 && endpoints.toSide === 0) {
@@ -568,7 +573,12 @@ function buildGraphEdge(edgeDraft: GraphEdgeDraft, curveOffset: number, items: r
  *
  * 没有并行边偏移时，也给水平、近垂直和普通边提供少量默认弯曲，降低线条重叠和直线突兀感。
  */
-function getEffectiveCurveOffset(edgeDraft: GraphEdgeDraft, curveOffset: number, items: readonly AnimeItem[]) {
+function getEffectiveCurveOffset(
+  edgeDraft: GraphEdgeDraft,
+  curveOffset: number,
+  items: readonly AnimeItem[],
+  records: readonly RelationRecord[],
+) {
   if (curveOffset !== 0) {
     return curveOffset;
   }
@@ -576,7 +586,7 @@ function getEffectiveCurveOffset(edgeDraft: GraphEdgeDraft, curveOffset: number,
     return 4;
   }
   if (Math.abs(edgeDraft.fromX - edgeDraft.toX) < GRAPH_NODE_WIDTH * 1.25) {
-    return getVerticalEdgeSide(edgeDraft, items) * 7;
+    return getVerticalEdgeSide(edgeDraft, items, records) * 7;
   }
   return 3;
 }
@@ -586,9 +596,13 @@ function getEffectiveCurveOffset(edgeDraft: GraphEdgeDraft, curveOffset: number,
  *
  * 近垂直边固定走右侧会和右侧节点挤在一起；这里比较左右走廊的节点占用，选择更宽松的方向。
  */
-function getVerticalEdgeSide(edgeDraft: GraphEdgeDraft, items: readonly AnimeItem[]) {
-  const leftScore = getVerticalEdgeSideClearance(edgeDraft, items, -1);
-  const rightScore = getVerticalEdgeSideClearance(edgeDraft, items, 1);
+function getVerticalEdgeSide(
+  edgeDraft: GraphEdgeDraft,
+  items: readonly AnimeItem[],
+  records: readonly RelationRecord[],
+) {
+  const leftScore = getVerticalEdgeSideClearance(edgeDraft, items, records, -1);
+  const rightScore = getVerticalEdgeSideClearance(edgeDraft, items, records, 1);
   if (leftScore !== rightScore) {
     return leftScore > rightScore ? -1 : 1;
   }
@@ -596,17 +610,55 @@ function getVerticalEdgeSide(edgeDraft: GraphEdgeDraft, items: readonly AnimeIte
 }
 
 /** 计算近垂直边某一侧走廊的空旷程度，数值越大越宽松。 */
-function getVerticalEdgeSideClearance(edgeDraft: GraphEdgeDraft, items: readonly AnimeItem[], side: -1 | 1) {
+function getVerticalEdgeSideClearance(
+  edgeDraft: GraphEdgeDraft,
+  items: readonly AnimeItem[],
+  records: readonly RelationRecord[],
+  side: -1 | 1,
+) {
   const corridorX = (edgeDraft.fromX + edgeDraft.toX) / 2 + side * (GRAPH_EDGE_NODE_HALF_WIDTH + 7);
   const minY = Math.min(edgeDraft.fromY, edgeDraft.toY) - GRAPH_NODE_HEIGHT;
   const maxY = Math.max(edgeDraft.fromY, edgeDraft.toY) + GRAPH_NODE_HEIGHT;
   const blockingItems = items.filter(
     (item) => item.name !== edgeDraft.fromName && item.name !== edgeDraft.toName && item.y >= minY && item.y <= maxY,
   );
-  if (blockingItems.length === 0) {
-    return Number.POSITIVE_INFINITY;
+  const clearance =
+    blockingItems.length === 0 ? 100 : Math.min(...blockingItems.map((item) => Math.abs(item.x - corridorX)));
+  return clearance - getSameRowTopConnectionPenalty(edgeDraft, items, records, side);
+}
+
+/** 近垂直边避开端点已有的同层顶部连接，减少从节点侧边切到顶部线的情况。 */
+function getSameRowTopConnectionPenalty(
+  edgeDraft: GraphEdgeDraft,
+  items: readonly AnimeItem[],
+  records: readonly RelationRecord[],
+  side: -1 | 1,
+) {
+  const itemByName = new Map(items.map((item) => [item.name, item]));
+  const endpoints = [
+    { name: edgeDraft.fromName, x: edgeDraft.fromX, y: edgeDraft.fromY },
+    { name: edgeDraft.toName, x: edgeDraft.toX, y: edgeDraft.toY },
+  ];
+  let penalty = 0;
+
+  for (const endpoint of endpoints) {
+    for (const record of records) {
+      if (record.delta !== 0 || (record.baseName !== endpoint.name && record.targetName !== endpoint.name)) {
+        continue;
+      }
+
+      const neighborName = record.baseName === endpoint.name ? record.targetName : record.baseName;
+      const neighbor = itemByName.get(neighborName);
+      if (!neighbor || Math.abs(neighbor.y - endpoint.y) > GRAPH_EDGE_NODE_HALF_HEIGHT) {
+        continue;
+      }
+      if (Math.sign(neighbor.x - endpoint.x) === side) {
+        penalty += 40;
+      }
+    }
   }
-  return Math.min(...blockingItems.map((item) => Math.abs(item.x - corridorX)));
+
+  return penalty;
 }
 
 /** 计算近同高边的顶部二次贝塞尔控制点。 */

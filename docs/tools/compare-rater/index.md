@@ -1163,6 +1163,7 @@ async function copyText(text: string) {
       <div
         class="anime-score-tool__graph-scene"
         :style="graphSceneStyle"
+        aria-hidden="true"
       >
         <svg
           class="anime-score-tool__edges"

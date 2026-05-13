@@ -773,7 +773,7 @@ function trimEdgeLine(fromX: number, fromY: number, toX: number, toY: number, cu
     };
   }
 
-  if (Math.abs(deltaX) < GRAPH_NODE_WIDTH * 0.75) {
+  if (Math.abs(deltaX) < GRAPH_NODE_WIDTH * 1.25) {
     const side = (curveOffset === 0 ? (deltaY >= 0 ? 1 : -1) : Math.sign(curveOffset)) as -1 | 1;
     return {
       x1: fromX + side * halfNodeWidth,

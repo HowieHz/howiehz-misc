@@ -1,7 +1,7 @@
 /**
  * 用户可录入的相对关系等级。
  *
- * 正向等级表示 `baseName` 高于 `targetName`，负向等级表示反过来，“same” 表示相近。
+ * 正向等级表示 `baseName` 高于 `targetName`，负向等级表示反过来，“same”表示相近。
  */
 export type RelationLevel = "much-better" | "better" | "same" | "worse" | "much-worse";
 
@@ -80,8 +80,8 @@ interface GraphEdgeEndpoints {
   toSide: -1 | 0 | 1;
 }
 
-const GRAPH_NODE_WIDTH = 15;
-const GRAPH_NODE_HEIGHT = 10;
+const GRAPH_NODE_WIDTH = 13;
+const GRAPH_NODE_HEIGHT = 7;
 const GRAPH_EDGE_NODE_HALF_WIDTH = GRAPH_NODE_WIDTH / 2;
 const GRAPH_EDGE_NODE_HALF_HEIGHT = GRAPH_NODE_HEIGHT / 2;
 const GRAPH_VERTICAL_SPREAD = 84;
@@ -383,7 +383,8 @@ function getOffsetComponents(names: readonly string[], records: readonly Relatio
     const component: string[] = [];
     const queue = [name];
     visited.add(name);
-    for (let index = 0; index < queue.length; index += 1) {
+    let index = 0;
+    while (index < queue.length) {
       const current = queue[index];
       component.push(current);
       for (const neighbor of neighbors.get(current) ?? []) {
@@ -392,6 +393,7 @@ function getOffsetComponents(names: readonly string[], records: readonly Relatio
           queue.push(neighbor);
         }
       }
+      index += 1;
     }
     components.push(component);
   }
@@ -913,7 +915,8 @@ function optimizeGraphRowByAdjacentSwap(
   itemByName: ReadonlyMap<string, AnimeItem>,
 ) {
   const optimizedItems = rowItems.toSorted((left, right) => left.x - right.x).map((item) => ({ ...item }));
-  for (let pass = 0; pass < optimizedItems.length; pass += 1) {
+  let pass = 0;
+  while (pass < optimizedItems.length) {
     let changed = false;
     for (let index = 0; index < optimizedItems.length - 1; index += 1) {
       if (optimizedItems[index].name === lockedName || optimizedItems[index + 1].name === lockedName) {
@@ -932,6 +935,7 @@ function optimizeGraphRowByAdjacentSwap(
     if (!changed) {
       break;
     }
+    pass += 1;
   }
 
   return optimizedItems;

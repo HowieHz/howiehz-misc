@@ -352,13 +352,14 @@ function solveOffsets(records: readonly RelationRecord[]) {
     return offsets;
   }
 
+  const learningRate = getStableOffsetLearningRate(records);
   for (let iteration = 0; iteration < 180; iteration += 1) {
     const nextOffsets = new Map(offsets);
     for (const record of records) {
       const baseOffset = offsets.get(record.baseName) ?? 0;
       const targetOffset = offsets.get(record.targetName) ?? 0;
       const error = baseOffset - targetOffset - record.delta;
-      const correction = error * 0.18 * (record.weight ?? 1);
+      const correction = error * learningRate * (record.weight ?? 1);
       nextOffsets.set(record.baseName, (nextOffsets.get(record.baseName) ?? 0) - correction);
       nextOffsets.set(record.targetName, (nextOffsets.get(record.targetName) ?? 0) + correction);
     }
@@ -374,6 +375,18 @@ function solveOffsets(records: readonly RelationRecord[]) {
   }
 
   return offsets;
+}
+
+/** 按节点最大连接强度缩小迭代步长，避免高吸引/排斥强度让松弛求解发散。 */
+function getStableOffsetLearningRate(records: readonly RelationRecord[]) {
+  const strengths = new Map<string, number>();
+  for (const record of records) {
+    const strength = record.weight ?? 1;
+    strengths.set(record.baseName, (strengths.get(record.baseName) ?? 0) + strength);
+    strengths.set(record.targetName, (strengths.get(record.targetName) ?? 0) + strength);
+  }
+  const maxStrength = Math.max(...strengths.values(), 1);
+  return Math.min(0.18, 0.42 / maxStrength);
 }
 
 /**

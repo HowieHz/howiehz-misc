@@ -1203,6 +1203,7 @@ async function copyText(text: string) {
           :key="item.name"
           class="anime-score-tool__node"
           :style="{ left: `${item.x}%`, top: `${item.y}%` }"
+          :title="`${item.name} / 相对 ${formatOffset(item.offset)}`"
         >
           <strong>{{ item.name }}</strong>
           <span>相对 {{ formatOffset(item.offset) }}</span>
@@ -1678,9 +1679,13 @@ async function copyText(text: string) {
   z-index: 5;
   display: grid;
   gap: 2px;
-  max-width: 132px;
-  min-width: 88px;
-  padding: 6px 8px;
+  box-sizing: border-box;
+  width: 15%;
+  height: 10%;
+  min-width: 90px;
+  min-height: 44px;
+  padding: 5px 7px;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--vp-c-brand-1) 42%, var(--vp-c-divider));
   border-radius: 8px;
   background: color-mix(in srgb, var(--vp-c-bg) 92%, var(--vp-c-brand-soft));
@@ -1690,19 +1695,21 @@ async function copyText(text: string) {
 }
 
 .anime-score-tool__node strong {
-  font-size: 0.9rem;
-  line-height: 1.35;
+  font-size: 0.84rem;
+  line-height: 1.25;
 }
 
 .anime-score-tool__node strong,
 .anime-score-tool__node span {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .anime-score-tool__node span {
   color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
 }
 
 .anime-score-tool__score-table {
@@ -1797,11 +1804,6 @@ async function copyText(text: string) {
   .anime-score-tool__primary-button,
   .anime-score-tool__secondary-button {
     width: 100%;
-  }
-
-  .anime-score-tool__node {
-    max-width: 130px;
-    min-width: 96px;
   }
 
   .anime-score-tool__score-head,

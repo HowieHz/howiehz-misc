@@ -39,13 +39,15 @@ const copy = computed(() => {
         :href="copy.ccHref"
         target="_blank"
         rel="noreferrer"
-      >{{ copy.ccText }}</a>
+        >{{ copy.ccText }}</a
+      >
       {{ copy.connector }}
       <a
         :href="copy.sataHref"
         target="_blank"
         rel="noreferrer"
-      >{{ copy.sataText }}</a>
+        >{{ copy.sataText }}</a
+      >
       {{ copy.suffix }}
     </span>
   </div>

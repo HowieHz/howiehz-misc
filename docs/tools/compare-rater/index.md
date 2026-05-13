@@ -823,7 +823,7 @@ function normalizeScoreText(value: unknown) {
 
 function normalizeWeightText(value: unknown, fallback: number) {
   const weight = typeof value === "number" ? value : Number.parseFloat(String(value));
-  if (!Number.isFinite(weight) || weight < 0 || weight > 5 || Math.abs(weight * 10 - Math.round(weight * 10)) > 0.001) {
+  if (!Number.isFinite(weight) || weight < 0 || weight > 10 || Math.abs(weight * 10 - Math.round(weight * 10)) > 0.001) {
     return String(fallback);
   }
   return Number.isInteger(weight) ? String(weight) : weight.toFixed(1);
@@ -1071,7 +1071,7 @@ async function copyText(text: string) {
             v-model="sameWeight"
             type="range"
             min="0"
-            max="5"
+            max="10"
             step="0.1"
             aria-label="差不多吸引强度"
             @input="updateSameWeight"
@@ -1087,7 +1087,7 @@ async function copyText(text: string) {
             v-model="betterWeight"
             type="range"
             min="0"
-            max="5"
+            max="10"
             step="0.1"
             aria-label="好一点排斥强度"
             @input="updateBetterWeight"
@@ -1103,7 +1103,7 @@ async function copyText(text: string) {
             v-model="muchBetterWeight"
             type="range"
             min="0"
-            max="5"
+            max="10"
             step="0.1"
             aria-label="好很多排斥强度"
             @input="updateMuchBetterWeight"

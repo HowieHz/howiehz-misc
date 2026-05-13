@@ -1040,12 +1040,12 @@ async function copyText(text: string) {
     </p>
     <div class="anime-score-tool__label-row">
       <h3>绝对分值</h3>
-      <span>自动选择当前相对最高和最低</span>
+      <span>自动选择相对最佳和相对最差</span>
     </div>
     <div class="anime-score-tool__anchor-grid">
       <div class="anime-score-tool__anchor-card">
         <div class="anime-score-tool__anchor-head">
-          <h3>最好番</h3>
+          <h3>相对最佳</h3>
         </div>
         <p class="anime-score-tool__anchor-name">
           {{ bestAnchorName || "录入关系后自动选择" }}
@@ -1058,7 +1058,7 @@ async function copyText(text: string) {
             min="1"
             max="5"
             step="0.1"
-            aria-label="最好番评分"
+            aria-label="相对最佳评分"
             @input="updateBestAnchorScore"
           >
           <strong>{{ formatScoreOption(bestAnchorScore) }}</strong>
@@ -1066,7 +1066,7 @@ async function copyText(text: string) {
       </div>
       <div class="anime-score-tool__anchor-card">
         <div class="anime-score-tool__anchor-head">
-          <h3>最差番</h3>
+          <h3>相对最差</h3>
         </div>
         <p class="anime-score-tool__anchor-name">
           {{ worstAnchorName || "录入关系后自动选择" }}
@@ -1079,7 +1079,7 @@ async function copyText(text: string) {
             min="1"
             max="5"
             step="0.1"
-            aria-label="最差番评分"
+            aria-label="相对最差评分"
             @input="updateWorstAnchorScore"
           >
           <strong>{{ formatScoreOption(worstAnchorScore) }}</strong>

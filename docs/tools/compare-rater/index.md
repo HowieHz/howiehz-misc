@@ -28,6 +28,12 @@ import {
 type AnchorRole = "best" | "worst";
 type TransferStatus = "idle" | "success" | "error";
 
+interface RelationWeights {
+  same: number;
+  better: number;
+  muchBetter: number;
+}
+
 interface AnimatedAnimeItem extends AnimeItem {
   targetX: number;
   targetY: number;
@@ -51,6 +57,15 @@ const relationLevels = [
   { value: "worse", label: "差一点", symbol: "<", delta: -1 },
   { value: "much-worse", label: "差很多", symbol: "<<", delta: -2 },
 ] as const satisfies readonly { value: RelationLevel; label: string; symbol: string; delta: number }[];
+
+const COMPARE_RATER_SCHEMA = "compare-rater-form";
+const COMPARE_RATER_SCHEMA_VERSION = 1;
+const defaultRelationWeights = {
+  same: 1,
+  better: 1,
+  muchBetter: 2,
+} as const satisfies RelationWeights;
+const relationLevelMeta = new Map(relationLevels.map((level) => [level.value, level]));
 
 const scoreLabels = new Map([
   ["1", "1 极差"],
@@ -130,6 +145,9 @@ const aspectText = ref<(typeof aspectOptions)[number]["label"]>("剧情&叙事")
 const baseName = ref("");
 const compareName = ref("");
 const selectedLevel = ref<RelationLevel>("same");
+const sameWeight = ref(String(defaultRelationWeights.same));
+const betterWeight = ref(String(defaultRelationWeights.better));
+const muchBetterWeight = ref(String(defaultRelationWeights.muchBetter));
 const relationRecords = ref<RelationRecord[]>([]);
 const nextRelationId = ref(1);
 const bestAnchorName = ref("");
@@ -158,10 +176,21 @@ let graphAnimationFrame: number | undefined;
 const normalizedField = computed(() => normalizeName(fieldText.value) || "未命名领域");
 const normalizedAspect = computed(() => normalizeName(aspectText.value) || "未命名角度");
 const selectedAspectOption = computed(() => aspectOptions.find((option) => option.label === aspectText.value) ?? aspectOptions[0]);
-const selectedLevelMeta = computed(() => relationLevels.find((level) => level.value === selectedLevel.value) ?? relationLevels[2]);
+const selectedLevelMeta = computed(() => getRelationLevelMeta(selectedLevel.value));
 const hasRelations = computed(() => relationRecords.value.length > 0);
+const relationWeights = computed<RelationWeights>(() => ({
+  same: readWeightText(sameWeight.value, defaultRelationWeights.same),
+  better: readWeightText(betterWeight.value, defaultRelationWeights.better),
+  muchBetter: readWeightText(muchBetterWeight.value, defaultRelationWeights.muchBetter),
+}));
 
-const graphItems = computed<AnimeItem[]>(() => buildGraphItems(relationRecords.value));
+const weightedRelationRecords = computed(() => relationRecords.value.map((record) => ({
+  ...record,
+  delta: getRelationDelta(record.level),
+  weight: getRelationWeight(record.level),
+})));
+
+const graphItems = computed<AnimeItem[]>(() => buildGraphItems(weightedRelationRecords.value));
 
 const scoreAnchors = computed(() => ({
   best: bestAnchorName.value ? { name: bestAnchorName.value, score: Number(bestAnchorScore.value) } : undefined,
@@ -191,7 +220,7 @@ const scoredItems = computed<ScoredAnime[]>(() => {
     });
 });
 
-const graphEdges = computed<GraphEdge[]>(() => buildGraphEdges(relationRecords.value, animatedGraphItems.value, scoreByName.value));
+const graphEdges = computed<GraphEdge[]>(() => buildGraphEdges(weightedRelationRecords.value, animatedGraphItems.value, scoreByName.value));
 
 const bestCandidate = computed(() => findRelativeCandidate("best"));
 const worstCandidate = computed(() => findRelativeCandidate("worst"));
@@ -263,11 +292,35 @@ onBeforeUnmount(() => {
 });
 
 function relationLabel(level: RelationLevel) {
-  return relationLevels.find((item) => item.value === level)?.label ?? "差不多";
+  return getRelationLevelMeta(level).label;
 }
 
 function relationSymbol(level: RelationLevel) {
-  return relationLevels.find((item) => item.value === level)?.symbol ?? "≈";
+  return getRelationLevelMeta(level).symbol;
+}
+
+function getRelationLevelMeta(level: RelationLevel) {
+  return relationLevelMeta.get(level) ?? relationLevels[2];
+}
+
+function getRelationDelta(level: RelationLevel) {
+  if (level === "much-better") {
+    return relationWeights.value.muchBetter;
+  }
+  if (level === "better") {
+    return relationWeights.value.better;
+  }
+  if (level === "worse") {
+    return -relationWeights.value.better;
+  }
+  if (level === "much-worse") {
+    return -relationWeights.value.muchBetter;
+  }
+  return 0;
+}
+
+function getRelationWeight(level: RelationLevel) {
+  return level === "same" ? relationWeights.value.same : 1;
 }
 
 function relationSymbolClass(level: RelationLevel) {
@@ -420,6 +473,29 @@ function clearRelations() {
   announcement.value = "已清空关系。";
 }
 
+function updateSameWeight(event: Event) {
+  sameWeight.value = normalizeWeightText((event.target as HTMLInputElement).value, defaultRelationWeights.same);
+  resetGraphViewAfterRelationChange();
+}
+
+function updateBetterWeight(event: Event) {
+  const value = normalizeWeightText((event.target as HTMLInputElement).value, defaultRelationWeights.better);
+  betterWeight.value = value;
+  if (Number(value) > Number(muchBetterWeight.value)) {
+    muchBetterWeight.value = value;
+  }
+  resetGraphViewAfterRelationChange();
+}
+
+function updateMuchBetterWeight(event: Event) {
+  const value = normalizeWeightText((event.target as HTMLInputElement).value, defaultRelationWeights.muchBetter);
+  muchBetterWeight.value = value;
+  if (Number(value) < Number(betterWeight.value)) {
+    betterWeight.value = value;
+  }
+  resetGraphViewAfterRelationChange();
+}
+
 function syncAnchors() {
   bestAnchorName.value = bestCandidate.value?.name ?? "";
   worstAnchorName.value = worstCandidate.value?.name ?? "";
@@ -550,16 +626,17 @@ function updateWorstAnchorScore(event: Event) {
 
 function buildExportPayload() {
   return {
-    schema: "compare-rater-form",
-    schemaVersion: 1,
+    schema: COMPARE_RATER_SCHEMA,
+    schemaVersion: COMPARE_RATER_SCHEMA_VERSION,
     field: normalizedField.value,
     aspect: normalizedAspect.value,
     relations: relationRecords.value.map((record) => ({
       base: record.baseName,
       target: record.targetName,
       relation: record.level,
-      delta: record.delta,
+      delta: getRelationDelta(record.level),
     })),
+    weights: relationWeights.value,
     anchors: {
       best: bestAnchorName.value ? { name: bestAnchorName.value, score: Number(bestAnchorScore.value) } : undefined,
       worst: worstAnchorName.value ? { name: worstAnchorName.value, score: Number(worstAnchorScore.value) } : undefined,
@@ -624,8 +701,8 @@ function setImportStatus(status: TransferStatus) {
 function importPayload(payload: unknown) {
   if (
     !isRecord(payload)
-    || payload.schema !== "compare-rater-form"
-    || payload.schemaVersion !== 1
+    || payload.schema !== COMPARE_RATER_SCHEMA
+    || payload.schemaVersion !== COMPARE_RATER_SCHEMA_VERSION
     || typeof payload.field !== "string"
     || typeof payload.aspect !== "string"
     || !Array.isArray(payload.relations)
@@ -644,6 +721,7 @@ function importPayload(payload: unknown) {
     throw new Error("Invalid aspect");
   }
   aspectText.value = importedAspect.label;
+  importRelationWeights(payload.weights);
 
   const pairKeys = new Set<string>();
   const importedRelations: RelationRecord[] = [];
@@ -659,8 +737,8 @@ function importPayload(payload: unknown) {
       throw new Error("Invalid relation pair");
     }
 
-    const level = relationLevels.find((item) => item.value === relation.relation) ?? relationLevels[2];
-    if (relation.delta !== level.delta) {
+    const level = getRelationLevelMeta(relation.relation);
+    if (relation.delta !== getDeltaForWeights(level.value, relationWeights.value)) {
       throw new Error("Invalid relation delta");
     }
     pairKeys.add(pairKey);
@@ -669,7 +747,7 @@ function importPayload(payload: unknown) {
       baseName: normalizedBase,
       targetName: normalizedTarget,
       level: level.value,
-      delta: level.delta,
+      delta: getDeltaForWeights(level.value, relationWeights.value),
     });
   }
 
@@ -678,6 +756,24 @@ function importPayload(payload: unknown) {
   importAnchors(payload.anchors, new Set(importedRelations.flatMap((relation) => [relation.baseName, relation.targetName])));
   syncAnchors();
   return importedRelations.length;
+}
+
+function importRelationWeights(weights: unknown) {
+  if (weights === undefined) {
+    sameWeight.value = String(defaultRelationWeights.same);
+    betterWeight.value = String(defaultRelationWeights.better);
+    muchBetterWeight.value = String(defaultRelationWeights.muchBetter);
+    return;
+  }
+  if (!isRecord(weights)) {
+    throw new Error("Invalid weights");
+  }
+  sameWeight.value = normalizeWeightText(weights.same, defaultRelationWeights.same);
+  betterWeight.value = normalizeWeightText(weights.better, defaultRelationWeights.better);
+  muchBetterWeight.value = normalizeWeightText(weights.muchBetter, defaultRelationWeights.muchBetter);
+  if (Number(betterWeight.value) > Number(muchBetterWeight.value)) {
+    throw new Error("Invalid weights");
+  }
 }
 
 function importAnchors(anchors: unknown, names: ReadonlySet<string>) {
@@ -723,6 +819,34 @@ function normalizeScoreText(value: unknown) {
     return undefined;
   }
   return Number.isInteger(score) ? String(score) : score.toFixed(1);
+}
+
+function normalizeWeightText(value: unknown, fallback: number) {
+  const weight = typeof value === "number" ? value : Number.parseFloat(String(value));
+  if (!Number.isFinite(weight) || weight < 0 || weight > 5 || Math.abs(weight * 10 - Math.round(weight * 10)) > 0.001) {
+    return String(fallback);
+  }
+  return Number.isInteger(weight) ? String(weight) : weight.toFixed(1);
+}
+
+function readWeightText(value: string, fallback: number) {
+  return Number(normalizeWeightText(value, fallback));
+}
+
+function getDeltaForWeights(level: RelationLevel, weights: RelationWeights) {
+  if (level === "much-better") {
+    return weights.muchBetter;
+  }
+  if (level === "better") {
+    return weights.better;
+  }
+  if (level === "worse") {
+    return -weights.better;
+  }
+  if (level === "much-worse") {
+    return -weights.muchBetter;
+  }
+  return 0;
 }
 
 function syncAnchorScoreOrder() {
@@ -935,6 +1059,59 @@ async function copyText(text: string) {
     >
       清空关系
     </button>
+    <details class="anime-score-tool__advanced">
+      <summary>高级选项</summary>
+      <div class="anime-score-tool__weight-grid">
+        <label class="anime-score-tool__score-slider">
+          <span>
+            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--same">≈</strong>
+            吸引强度
+          </span>
+          <input
+            v-model="sameWeight"
+            type="range"
+            min="0"
+            max="5"
+            step="0.1"
+            aria-label="差不多吸引强度"
+            @input="updateSameWeight"
+          >
+          <strong>{{ sameWeight }}</strong>
+        </label>
+        <label class="anime-score-tool__score-slider">
+          <span>
+            <strong class="anime-score-tool__relation-symbol">&gt;</strong>
+            排斥强度
+          </span>
+          <input
+            v-model="betterWeight"
+            type="range"
+            min="0"
+            max="5"
+            step="0.1"
+            aria-label="好一点排斥强度"
+            @input="updateBetterWeight"
+          >
+          <strong>{{ betterWeight }}</strong>
+        </label>
+        <label class="anime-score-tool__score-slider">
+          <span>
+            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--strong">&gt;&gt;</strong>
+            排斥强度
+          </span>
+          <input
+            v-model="muchBetterWeight"
+            type="range"
+            min="0"
+            max="5"
+            step="0.1"
+            aria-label="好很多排斥强度"
+            @input="updateMuchBetterWeight"
+          >
+          <strong>{{ muchBetterWeight }}</strong>
+        </label>
+      </div>
+    </details>
   </section>
 
   <section
@@ -1323,6 +1500,25 @@ async function copyText(text: string) {
   padding: 2px 7px;
   color: var(--vp-c-danger-1);
   font-size: 0.84rem;
+}
+
+.anime-score-tool__advanced {
+  border-top: 1px solid var(--vp-c-divider);
+  padding-top: 6px;
+}
+
+.anime-score-tool__advanced summary {
+  width: fit-content;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.anime-score-tool__weight-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .anime-score-tool__empty {

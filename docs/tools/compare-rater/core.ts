@@ -27,6 +27,8 @@ export interface RelationRecord {
   level: RelationLevel;
   /** 目标相对差值，语义为 `baseName - targetName`。 */
   delta: number;
+  /** 求解时这条关系的影响强度，默认是 1。 */
+  weight?: number;
 }
 
 /** 用户给某个节点绑定的绝对评分。 */
@@ -81,7 +83,7 @@ interface GraphEdgeEndpoints {
 const GRAPH_NODE_WIDTH = 15;
 const GRAPH_NODE_HEIGHT = 10;
 const GRAPH_EDGE_NODE_HALF_WIDTH = 6.8;
-const GRAPH_EDGE_NODE_HALF_HEIGHT = 5.3;
+const GRAPH_EDGE_NODE_HALF_HEIGHT = 5;
 const GRAPH_VERTICAL_SPREAD = 84;
 const GRAPH_VIEWPORT_BASE_HEIGHT = 380;
 const GRAPH_VIEWPORT_OFFSET_HEIGHT = 48;
@@ -356,7 +358,7 @@ function solveOffsets(records: readonly RelationRecord[]) {
       const baseOffset = offsets.get(record.baseName) ?? 0;
       const targetOffset = offsets.get(record.targetName) ?? 0;
       const error = baseOffset - targetOffset - record.delta;
-      const correction = error * 0.18;
+      const correction = error * 0.18 * (record.weight ?? 1);
       nextOffsets.set(record.baseName, (nextOffsets.get(record.baseName) ?? 0) - correction);
       nextOffsets.set(record.targetName, (nextOffsets.get(record.targetName) ?? 0) + correction);
     }

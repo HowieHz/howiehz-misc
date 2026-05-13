@@ -72,15 +72,16 @@ interface GraphEdgeEndpoints {
   y1: number;
   x2: number;
   y2: number;
-  /** 起点所在侧边，`-1` 为左侧，`1` 为右侧。 */
-  fromSide: -1 | 1;
-  /** 终点所在侧边，`-1` 为左侧，`1` 为右侧。 */
-  toSide: -1 | 1;
+  /** 起点所在侧边，`-1` 为左侧，`0` 为顶部，`1` 为右侧。 */
+  fromSide: -1 | 0 | 1;
+  /** 终点所在侧边，`-1` 为左侧，`0` 为顶部，`1` 为右侧。 */
+  toSide: -1 | 0 | 1;
 }
 
 const GRAPH_NODE_WIDTH = 15;
 const GRAPH_NODE_HEIGHT = 10;
 const GRAPH_EDGE_NODE_HALF_WIDTH = 6.8;
+const GRAPH_EDGE_NODE_HALF_HEIGHT = 5.3;
 const GRAPH_VERTICAL_SPREAD = 84;
 const GRAPH_VIEWPORT_BASE_HEIGHT = 380;
 const GRAPH_VIEWPORT_OFFSET_HEIGHT = 48;
@@ -415,6 +416,16 @@ function buildGraphEdge(edgeDraft: GraphEdgeDraft, curveOffset: number, items: r
   const effectiveCurveOffset = getEffectiveCurveOffset(edgeDraft, curveOffset, items);
   const endpoints = trimEdgeLine(edgeDraft.fromX, edgeDraft.fromY, edgeDraft.toX, edgeDraft.toY, effectiveCurveOffset);
   const { x1, y1, x2, y2 } = endpoints;
+  if (endpoints.fromSide === 0 && endpoints.toSide === 0) {
+    const control = getTopSideEdgeControl(endpoints, effectiveCurveOffset);
+    return {
+      id: edgeDraft.id,
+      path: `M ${x1.toFixed(2)} ${y1.toFixed(2)} Q ${control.x.toFixed(2)} ${control.y.toFixed(2)} ${x2.toFixed(2)} ${y2.toFixed(2)}`,
+      hasArrow: edgeDraft.hasArrow,
+      relationLevel: edgeDraft.relationLevel,
+    };
+  }
+
   if (effectiveCurveOffset === 0) {
     return {
       id: edgeDraft.id,
@@ -487,6 +498,15 @@ function getVerticalEdgeSideClearance(edgeDraft: GraphEdgeDraft, items: readonly
     return Number.POSITIVE_INFINITY;
   }
   return Math.min(...blockingItems.map((item) => Math.abs(item.x - corridorX)));
+}
+
+/** 计算近同高边的顶部二次贝塞尔控制点。 */
+function getTopSideEdgeControl(endpoints: GraphEdgeEndpoints, curveOffset: number) {
+  const lift = Math.max(Math.abs(curveOffset), 5);
+  return {
+    x: (endpoints.x1 + endpoints.x2) / 2,
+    y: Math.min(endpoints.y1, endpoints.y2) - lift,
+  };
 }
 
 /** 计算同侧出发/到达边的二次贝塞尔控制点。 */
@@ -564,14 +584,25 @@ function getGraphEdgeLineKey(x1: number, y1: number, x2: number, y2: number) {
 }
 
 /**
- * 把边端点从节点中心裁剪到节点左右侧边附近。
+ * 把边端点从节点中心裁剪到节点边缘附近。
  *
- * 返回的 side 使用 `-1` 表示左侧，`1` 表示右侧，供贝塞尔控制点判断外扩方向。
+ * 近同高关系使用顶部中心互联；其它关系使用左右侧边，供贝塞尔控制点判断外扩方向。
  */
 function trimEdgeLine(fromX: number, fromY: number, toX: number, toY: number, curveOffset: number): GraphEdgeEndpoints {
   const deltaX = toX - fromX;
   const deltaY = toY - fromY;
   const halfNodeWidth = GRAPH_EDGE_NODE_HALF_WIDTH;
+  if (Math.abs(deltaY) <= GRAPH_EDGE_NODE_HALF_HEIGHT) {
+    return {
+      x1: fromX,
+      y1: fromY - GRAPH_EDGE_NODE_HALF_HEIGHT,
+      x2: toX,
+      y2: toY - GRAPH_EDGE_NODE_HALF_HEIGHT,
+      fromSide: 0,
+      toSide: 0,
+    };
+  }
+
   if (Math.abs(deltaX) < GRAPH_NODE_WIDTH * 0.75) {
     const side = (curveOffset === 0 ? (deltaY >= 0 ? 1 : -1) : Math.sign(curveOffset)) as -1 | 1;
     return {

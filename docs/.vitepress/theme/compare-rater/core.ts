@@ -84,6 +84,9 @@ const GRAPH_NODE_WIDTH = 13;
 const GRAPH_NODE_HEIGHT = 7;
 const GRAPH_EDGE_NODE_HALF_WIDTH = GRAPH_NODE_WIDTH / 2;
 const GRAPH_EDGE_NODE_HALF_HEIGHT = GRAPH_NODE_HEIGHT / 2;
+const GRAPH_VERTICAL_EDGE_ROUTE_WIDTH = GRAPH_NODE_WIDTH * 1.25;
+const GRAPH_SAME_SIDE_EDGE_ROUTE_WIDTH = GRAPH_NODE_WIDTH * 0.75;
+const GRAPH_SIDE_EDGE_REPULSION_GAP = 4;
 const GRAPH_VERTICAL_SPREAD = 84;
 const GRAPH_VIEWPORT_BASE_HEIGHT = 380;
 const GRAPH_VIEWPORT_OFFSET_HEIGHT = 48;
@@ -149,7 +152,7 @@ export function buildGraphItems(records: readonly RelationRecord[]) {
       y: 50 - (progress - 0.5) * GRAPH_VERTICAL_SPREAD,
     };
   });
-  return avoidGraphItemOverlap(layoutLeafItemsWithNeighbors(layoutGraphItems(items, records), records));
+  return avoidGraphItemOverlap(layoutLeafItemsWithNeighbors(layoutGraphItems(items, records), records), records);
 }
 
 /**
@@ -587,7 +590,7 @@ function getEffectiveCurveOffset(
   if (Math.abs(edgeDraft.fromY - edgeDraft.toY) < 1) {
     return 4;
   }
-  if (Math.abs(edgeDraft.fromX - edgeDraft.toX) < GRAPH_NODE_WIDTH * 1.25) {
+  if (Math.abs(edgeDraft.fromX - edgeDraft.toX) < GRAPH_VERTICAL_EDGE_ROUTE_WIDTH) {
     return getVerticalEdgeSide(edgeDraft, items, records) * 7;
   }
   return 3;
@@ -773,7 +776,7 @@ function trimEdgeLine(fromX: number, fromY: number, toX: number, toY: number, cu
     };
   }
 
-  if (Math.abs(deltaX) < GRAPH_NODE_WIDTH * 1.25) {
+  if (Math.abs(deltaX) < GRAPH_SAME_SIDE_EDGE_ROUTE_WIDTH) {
     const side = (curveOffset === 0 ? (deltaY >= 0 ? 1 : -1) : Math.sign(curveOffset)) as -1 | 1;
     return {
       x1: fromX + side * halfNodeWidth,
@@ -853,6 +856,11 @@ function optimizeGraphRowOrder(
 
   for (let iteration = 0; iteration < 2; iteration += 1) {
     for (const rowItems of rowGroups.values()) {
+      if (rowItems.length === 1) {
+        const item = itemByName.get(rowItems[0].name) ?? rowItems[0];
+        itemByName.set(item.name, getOptimizedSingleGraphRowItem(item, records, itemByName));
+        continue;
+      }
       if (rowItems.length < 3) {
         continue;
       }
@@ -866,6 +874,98 @@ function optimizeGraphRowOrder(
   }
 
   return items.map((item) => itemByName.get(item.name) ?? item);
+}
+
+/** 单节点层也尝试横向换位，避免无关的近层节点挤在同一条通道里。 */
+function getOptimizedSingleGraphRowItem(
+  item: AnimeItem,
+  records: readonly RelationRecord[],
+  itemByName: ReadonlyMap<string, AnimeItem>,
+) {
+  const candidates = getSingleRowItemCandidateXs(item, records, itemByName);
+  return candidates
+    .map((x) => ({ item: { ...item, x }, score: getSingleGraphRowItemScore({ ...item, x }, records, itemByName) }))
+    .toSorted((left, right) => {
+      if (left.score !== right.score) {
+        return left.score - right.score;
+      }
+      return Math.abs(left.item.x - item.x) - Math.abs(right.item.x - item.x);
+    })[0].item;
+}
+
+/** 给单节点层生成少量直觉候选位置：当前点、邻居附近、已有列附近。 */
+function getSingleRowItemCandidateXs(
+  item: AnimeItem,
+  records: readonly RelationRecord[],
+  itemByName: ReadonlyMap<string, AnimeItem>,
+) {
+  const candidates = new Set([item.x, 50]);
+  const neighborXs: number[] = [];
+  for (const record of records) {
+    const neighborName =
+      record.baseName === item.name ? record.targetName : record.targetName === item.name ? record.baseName : "";
+    const neighbor = itemByName.get(neighborName);
+    if (!neighbor) {
+      continue;
+    }
+    neighborXs.push(neighbor.x);
+    candidates.add(neighbor.x);
+  }
+  if (neighborXs.length > 0) {
+    candidates.add(neighborXs.reduce((total, x) => total + x, 0) / neighborXs.length);
+  }
+
+  return Array.from(candidates, (x) => clampNumber(x, 8, 92));
+}
+
+/** 单节点层的横向评分：连线别太长，也要远离没有直接关系的近层节点。 */
+function getSingleGraphRowItemScore(
+  item: AnimeItem,
+  records: readonly RelationRecord[],
+  itemByName: ReadonlyMap<string, AnimeItem>,
+) {
+  let directRelationScore = 0;
+  for (const record of records) {
+    const neighborName =
+      record.baseName === item.name ? record.targetName : record.targetName === item.name ? record.baseName : "";
+    const neighbor = itemByName.get(neighborName);
+    if (neighbor) {
+      directRelationScore += Math.abs(neighbor.x - item.x);
+      directRelationScore += getSideEdgeRepulsionScore(item, neighbor);
+    }
+  }
+
+  let proximityPenalty = 0;
+  for (const other of itemByName.values()) {
+    if (other.name === item.name || hasDirectRelation(item.name, other.name, records)) {
+      continue;
+    }
+
+    const verticalGap = Math.abs(other.y - item.y);
+    if (verticalGap > GRAPH_NODE_HEIGHT * 3) {
+      continue;
+    }
+
+    const horizontalGap = Math.abs(other.x - item.x);
+    proximityPenalty +=
+      Math.max(0, GRAPH_NODE_WIDTH * 2.2 - horizontalGap) * (1 - verticalGap / (GRAPH_NODE_HEIGHT * 3));
+  }
+  return directRelationScore + proximityPenalty * 0.35;
+}
+
+/** 侧边出入需要留出绘图空隙，避免边从两张卡片之间的窄缝硬挤过去。 */
+function getSideEdgeRepulsionScore(item: AnimeItem, neighbor: AnimeItem) {
+  if (Math.abs(item.y - neighbor.y) <= GRAPH_EDGE_NODE_HALF_HEIGHT) {
+    return 0;
+  }
+
+  const horizontalGap = Math.abs(item.x - neighbor.x);
+  if (horizontalGap <= GRAPH_SAME_SIDE_EDGE_ROUTE_WIDTH) {
+    return 0;
+  }
+
+  const sideEdgeGap = horizontalGap - GRAPH_NODE_WIDTH;
+  return Math.max(0, GRAPH_SIDE_EDGE_REPULSION_GAP - sideEdgeGap) * 8;
 }
 
 /** 穷举小行的槽位交换方案，选择线条代价最低的排布。 */
@@ -1149,6 +1249,15 @@ function getGraphNodeDegrees(records: readonly RelationRecord[]) {
   return degrees;
 }
 
+/** 判断两个节点之间是否存在直接关系。 */
+function hasDirectRelation(left: string, right: string, records: readonly RelationRecord[]) {
+  const pairKey = createRelationPairKey(left, right);
+  return (
+    pairKey !== undefined &&
+    records.some((record) => createRelationPairKey(record.baseName, record.targetName) === pairKey)
+  );
+}
+
 /** 收集每个节点直接相连的邻居名称。 */
 function getGraphNeighborNames(records: readonly RelationRecord[]) {
   const neighbors = new Map<string, Set<string>>();
@@ -1216,17 +1325,27 @@ function sortGraphItemsByName(items: readonly AnimeItem[]) {
 }
 
 /**
- * 对重叠节点做横向推开。
+ * 对重叠节点做推开。
  *
- * 只调整 x，不调整 y，避免破坏“上高下低”的相对分数语义。
+ * 优先调整 x；没有直接关系且高度相近的节点允许轻微调整 y，让无关的近层节点分散。
  */
-function avoidGraphItemOverlap(items: readonly AnimeItem[]) {
+function avoidGraphItemOverlap(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
   const relaxedItems = items.map((item) => ({ ...item }));
+  const relationPairKeys = new Set(
+    records.flatMap((record) => {
+      const pairKey = createRelationPairKey(record.baseName, record.targetName);
+      return pairKey === undefined ? [] : [pairKey];
+    }),
+  );
   for (let iteration = 0; iteration < 30; iteration += 1) {
+    const sidePortSides = getGraphSidePortSides(relaxedItems, records);
     for (let leftIndex = 0; leftIndex < relaxedItems.length; leftIndex += 1) {
       const left = relaxedItems[leftIndex];
       for (let rightIndex = leftIndex + 1; rightIndex < relaxedItems.length; rightIndex += 1) {
         const right = relaxedItems[rightIndex];
+        applySideEdgeRepulsion(left, right, relationPairKeys);
+        applySidePortRepulsion(left, right, sidePortSides);
+
         const deltaX = right.x - left.x;
         const deltaY = right.y - left.y;
         const overlapX = GRAPH_NODE_WIDTH - Math.abs(deltaX);
@@ -1238,10 +1357,110 @@ function avoidGraphItemOverlap(items: readonly AnimeItem[]) {
         const pushX = (overlapX / 2 + 0.35) * (deltaX >= 0 ? 1 : -1);
         left.x = clampNumber(left.x - pushX, 8, 92);
         right.x = clampNumber(right.x + pushX, 8, 92);
+
+        const pairKey = createRelationPairKey(left.name, right.name);
+        const canShiftY = pairKey !== undefined && !relationPairKeys.has(pairKey) && Math.abs(deltaY) > 0.01;
+        if (
+          canShiftY &&
+          (left.x === 8 || left.x === 92 || right.x === 8 || right.x === 92 || overlapX > GRAPH_NODE_WIDTH * 0.45)
+        ) {
+          const pushY = Math.min(overlapY / 2 + 0.2, GRAPH_NODE_HEIGHT * 0.35) * (deltaY >= 0 ? 1 : -1);
+          left.y = clampNumber(left.y - pushY, 8, 92);
+          right.y = clampNumber(right.y + pushY, 8, 92);
+        }
       }
     }
   }
   return relaxedItems;
+}
+
+/** 收集每个节点当前正在使用的左右侧出入口。 */
+function getGraphSidePortSides(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
+  const itemByName = new Map(items.map((item) => [item.name, item]));
+  const portSides = new Map<string, Set<-1 | 1>>();
+  const addPort = (name: string, side: -1 | 1) => {
+    portSides.set(name, (portSides.get(name) ?? new Set()).add(side));
+  };
+
+  for (const record of records) {
+    const baseItem = itemByName.get(record.baseName);
+    const targetItem = itemByName.get(record.targetName);
+    if (!baseItem || !targetItem || Math.abs(baseItem.y - targetItem.y) <= GRAPH_EDGE_NODE_HALF_HEIGHT) {
+      continue;
+    }
+
+    const deltaX = targetItem.x - baseItem.x;
+    if (Math.abs(deltaX) < GRAPH_SAME_SIDE_EDGE_ROUTE_WIDTH) {
+      continue;
+    }
+
+    const fromSide = (deltaX >= 0 ? 1 : -1) as -1 | 1;
+    addPort(baseItem.name, fromSide);
+    addPort(targetItem.name, -fromSide as -1 | 1);
+  }
+
+  return portSides;
+}
+
+/** 有侧边出入的关系要给边留空，避免两个卡片贴得太近。 */
+function applySideEdgeRepulsion(left: AnimeItem, right: AnimeItem, relationPairKeys: ReadonlySet<string>) {
+  const pairKey = createRelationPairKey(left.name, right.name);
+  if (pairKey === undefined || !relationPairKeys.has(pairKey)) {
+    return;
+  }
+  if (Math.abs(left.y - right.y) <= GRAPH_EDGE_NODE_HALF_HEIGHT) {
+    return;
+  }
+
+  const deltaX = right.x - left.x;
+  const horizontalGap = Math.abs(deltaX);
+  const targetGap = GRAPH_NODE_WIDTH + GRAPH_SIDE_EDGE_REPULSION_GAP;
+  if (horizontalGap <= GRAPH_SAME_SIDE_EDGE_ROUTE_WIDTH || horizontalGap >= targetGap) {
+    return;
+  }
+
+  const pushX = ((targetGap - horizontalGap) / 2 + 0.2) * (deltaX >= 0 ? 1 : -1);
+  left.x = clampNumber(left.x - pushX, 8, 92);
+  right.x = clampNumber(right.x + pushX, 8, 92);
+}
+
+/** 侧边端口会占用绘图通道；附近节点靠到这一侧时轻轻推开。 */
+function applySidePortRepulsion(
+  left: AnimeItem,
+  right: AnimeItem,
+  portSides: ReadonlyMap<string, ReadonlySet<-1 | 1>>,
+) {
+  for (const side of portSides.get(left.name) ?? []) {
+    repelFromSidePort(left, right, side);
+  }
+  for (const side of portSides.get(right.name) ?? []) {
+    repelFromSidePort(right, left, side);
+  }
+}
+
+/** 对单个侧边端口施加水平斥力。 */
+function repelFromSidePort(owner: AnimeItem, other: AnimeItem, side: -1 | 1) {
+  const deltaX = other.x - owner.x;
+  if (deltaX * side <= 0) {
+    return;
+  }
+
+  const verticalGap = Math.abs(other.y - owner.y);
+  const verticalRange = GRAPH_NODE_HEIGHT * 1.4;
+  if (verticalGap >= verticalRange) {
+    return;
+  }
+
+  const horizontalGap = Math.abs(deltaX);
+  const targetGap = GRAPH_NODE_WIDTH + GRAPH_SIDE_EDGE_REPULSION_GAP;
+  if (horizontalGap >= targetGap) {
+    return;
+  }
+
+  const falloff = 1 - verticalGap / verticalRange;
+  const pushX = (targetGap - horizontalGap + 0.15) * falloff * 0.16;
+  owner.x = clampNumber(owner.x - side * pushX * 0.35, 8, 92);
+  other.x = clampNumber(other.x + side * pushX * 0.65, 8, 92);
 }
 
 /** 在节点列表中查找有效的评分锚点。 */

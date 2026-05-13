@@ -634,9 +634,9 @@ function layoutGraphItems(items: readonly AnimeItem[], records: readonly Relatio
 }
 
 /**
- * 把单连接叶子节点挂到唯一邻居旁边。
+ * 把单连接叶子节点贴近唯一邻居。
  *
- * 叶子节点通常不应该占据主干中线；它只和一个节点有关，贴近这个邻居更符合关系图直觉。
+ * 叶子节点通常不应该占据主干中线；优先与唯一邻居上下对齐，有同层冲突时再挂到邻居左右侧。
  */
 function layoutLeafItemsWithNeighbors(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
   const neighborMap = getGraphNeighborNames(records);
@@ -659,8 +659,13 @@ function layoutLeafItemsWithNeighbors(items: readonly AnimeItem[], records: read
   });
 }
 
-/** 给叶子节点选择邻居左侧或右侧更空的位置。 */
+/** 给叶子节点选择相对唯一邻居最直觉的位置。 */
 function getLeafItemX(item: AnimeItem, neighbor: AnimeItem, items: readonly AnimeItem[]) {
+  const alignedClearance = getRowClearance(item, neighbor.x, items);
+  if (alignedClearance >= GRAPH_NODE_WIDTH + 2) {
+    return neighbor.x;
+  }
+
   const leafOffset = 18;
   const candidates = [clampNumber(neighbor.x - leafOffset, 8, 92), clampNumber(neighbor.x + leafOffset, 8, 92)];
   return candidates

@@ -1681,11 +1681,11 @@ async function copyText(text: string) {
   display: grid;
   gap: 2px;
   box-sizing: border-box;
-  width: 15%;
-  height: 10%;
-  min-width: 90px;
-  min-height: 44px;
-  padding: 5px 7px;
+  width: 13%;
+  height: 7%;
+  min-width: 78px;
+  min-height: 34px;
+  padding: 3px 4px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--vp-c-brand-1) 42%, var(--vp-c-divider));
   border-radius: 8px;
@@ -1696,8 +1696,8 @@ async function copyText(text: string) {
 }
 
 .anime-score-tool__node strong {
-  font-size: 0.84rem;
-  line-height: 1.25;
+  font-size: 0.78rem;
+  line-height: 1.15;
 }
 
 .anime-score-tool__node strong,
@@ -1710,7 +1710,7 @@ async function copyText(text: string) {
 
 .anime-score-tool__node span {
   color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
-  font-size: 0.72rem;
+  font-size: 0.66rem;
 }
 
 .anime-score-tool__score-table {

@@ -341,52 +341,146 @@ export function getGraphViewportHeight(items: readonly AnimeItem[]) {
 }
 
 /**
- * 用迭代松弛法求解每个番剧的一维相对位置。
+ * 用加权最小二乘求解每个番剧的一维相对位置。
  *
- * 每条关系提供一个目标差值 `base - target = delta`。冲突关系会被平均折中，最终整体均值归零。
+ * 每条关系提供一个目标差值 `base - target = delta`。求解目标是最小化 `sum(weight * (baseOffset - targetOffset - delta)^2)`；冲突关系会自然折中。
+ * 每个连通分量单独加上“均值为 0”的约束，避免整体平移导致无穷多解。
  */
 function solveOffsets(records: readonly RelationRecord[]) {
   const names = Array.from(new Set(records.flatMap((record) => [record.baseName, record.targetName])));
   const offsets = new Map(names.map((name) => [name, 0]));
-  if (names.length === 0) {
-    return offsets;
-  }
-
-  const learningRate = getStableOffsetLearningRate(records);
-  for (let iteration = 0; iteration < 180; iteration += 1) {
-    const nextOffsets = new Map(offsets);
-    for (const record of records) {
-      const baseOffset = offsets.get(record.baseName) ?? 0;
-      const targetOffset = offsets.get(record.targetName) ?? 0;
-      const error = baseOffset - targetOffset - record.delta;
-      const correction = error * learningRate * (record.weight ?? 1);
-      nextOffsets.set(record.baseName, (nextOffsets.get(record.baseName) ?? 0) - correction);
-      nextOffsets.set(record.targetName, (nextOffsets.get(record.targetName) ?? 0) + correction);
-    }
-
-    const average = Array.from(nextOffsets.values()).reduce((total, value) => total + value, 0) / names.length;
-    for (const name of names) {
-      nextOffsets.set(name, (nextOffsets.get(name) ?? 0) - average);
-    }
-    offsets.clear();
-    for (const [name, value] of nextOffsets) {
-      offsets.set(name, value);
+  const activeRecords = records.filter((record) => getRecordWeight(record) > 0);
+  for (const componentNames of getOffsetComponents(names, activeRecords)) {
+    const componentOffsets = solveOffsetComponent(componentNames, activeRecords);
+    for (const [name, offset] of componentOffsets) {
+      offsets.set(name, Math.abs(offset) < 1e-10 ? 0 : offset);
     }
   }
-
   return offsets;
 }
 
-/** 按节点最大连接强度缩小迭代步长，避免高吸引/排斥强度让松弛求解发散。 */
-function getStableOffsetLearningRate(records: readonly RelationRecord[]) {
-  const strengths = new Map<string, number>();
+/** 读取关系权重；无效或负数权重按 0 处理。 */
+function getRecordWeight(record: RelationRecord) {
+  const weight = record.weight ?? 1;
+  return Number.isFinite(weight) ? Math.max(weight, 0) : 0;
+}
+
+/** 按有效关系划分求解用连通分量；权重为 0 的关系不影响相对位置。 */
+function getOffsetComponents(names: readonly string[], records: readonly RelationRecord[]) {
+  const neighbors = new Map(names.map((name) => [name, new Set<string>()]));
   for (const record of records) {
-    const strength = record.weight ?? 1;
-    strengths.set(record.baseName, (strengths.get(record.baseName) ?? 0) + strength);
-    strengths.set(record.targetName, (strengths.get(record.targetName) ?? 0) + strength);
+    neighbors.get(record.baseName)?.add(record.targetName);
+    neighbors.get(record.targetName)?.add(record.baseName);
   }
-  const maxStrength = Math.max(...strengths.values(), 1);
-  return Math.min(0.18, 0.42 / maxStrength);
+
+  const components: string[][] = [];
+  const visited = new Set<string>();
+  for (const name of names) {
+    if (visited.has(name)) {
+      continue;
+    }
+
+    const component: string[] = [];
+    const queue = [name];
+    visited.add(name);
+    for (let index = 0; index < queue.length; index += 1) {
+      const current = queue[index];
+      component.push(current);
+      for (const neighbor of neighbors.get(current) ?? []) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push(neighbor);
+        }
+      }
+    }
+    components.push(component);
+  }
+  return components;
+}
+
+/** 为单个连通分量组装正规方程并解出相对位置。 */
+function solveOffsetComponent(names: readonly string[], records: readonly RelationRecord[]) {
+  const result = new Map(names.map((name) => [name, 0]));
+  if (names.length <= 1) {
+    return result;
+  }
+
+  const nameSet = new Set(names);
+  const nameIndexes = new Map(names.map((name, index) => [name, index]));
+  const equationSize = names.length + 1;
+  const matrix = Array.from({ length: equationSize }, () => Array(equationSize).fill(0));
+  const rhs = Array(equationSize).fill(0);
+
+  for (const record of records) {
+    if (!nameSet.has(record.baseName) || !nameSet.has(record.targetName)) {
+      continue;
+    }
+
+    const baseIndex = nameIndexes.get(record.baseName);
+    const targetIndex = nameIndexes.get(record.targetName);
+    const weight = getRecordWeight(record);
+    if (baseIndex === undefined || targetIndex === undefined || weight <= 0) {
+      continue;
+    }
+
+    matrix[baseIndex][baseIndex] += weight;
+    matrix[targetIndex][targetIndex] += weight;
+    matrix[baseIndex][targetIndex] -= weight;
+    matrix[targetIndex][baseIndex] -= weight;
+    rhs[baseIndex] += weight * record.delta;
+    rhs[targetIndex] -= weight * record.delta;
+  }
+
+  for (let index = 0; index < names.length; index += 1) {
+    matrix[index][names.length] = 1;
+    matrix[names.length][index] = 1;
+  }
+
+  const solvedValues = solveLinearSystem(matrix, rhs);
+  if (!solvedValues) {
+    return result;
+  }
+
+  for (const [name, index] of nameIndexes) {
+    result.set(name, solvedValues[index]);
+  }
+  return result;
+}
+
+/** 用高斯-约旦消元解小型线性方程组；矩阵奇异时返回 undefined。 */
+function solveLinearSystem(matrix: readonly (readonly number[])[], rhs: readonly number[]) {
+  const size = rhs.length;
+  const rows = matrix.map((row, index) => [...row, rhs[index]]);
+
+  for (let column = 0; column < size; column += 1) {
+    let pivotRow = column;
+    for (let row = column + 1; row < size; row += 1) {
+      if (Math.abs(rows[row][column]) > Math.abs(rows[pivotRow][column])) {
+        pivotRow = row;
+      }
+    }
+    if (Math.abs(rows[pivotRow][column]) < 1e-10) {
+      return undefined;
+    }
+
+    [rows[column], rows[pivotRow]] = [rows[pivotRow], rows[column]];
+    const pivot = rows[column][column];
+    for (let cell = column; cell <= size; cell += 1) {
+      rows[column][cell] /= pivot;
+    }
+
+    for (let row = 0; row < size; row += 1) {
+      if (row === column || Math.abs(rows[row][column]) < 1e-12) {
+        continue;
+      }
+      const factor = rows[row][column];
+      for (let cell = column; cell <= size; cell += 1) {
+        rows[row][cell] -= factor * rows[column][cell];
+      }
+    }
+  }
+
+  return rows.map((row) => row[size]);
 }
 
 /**

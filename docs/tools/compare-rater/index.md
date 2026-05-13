@@ -3,7 +3,7 @@ publish: false
 published: 2026-05-13T18:30:00+08:00
 ---
 
-# 番剧关系评分图
+# 番剧比较评分器
 
 <!-- autocorrect-disable -->
 <script setup lang="ts">
@@ -770,7 +770,7 @@ async function copyText(text: string) {
 </script>
 <!-- autocorrect-enable -->
 
-在同一细分领域、同一评价角度下录入相对比较，工具会按弹簧模型建立关系图，并把少量基准分映射成 1-5 分。
+通过相对比较，工具会按弹簧模型建立关系图，最后通过少量基准分将相对分值映射成绝对分值。
 
 <div class="anime-score-tool">
   <p

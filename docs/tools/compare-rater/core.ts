@@ -759,18 +759,166 @@ function layoutGraphItems(items: readonly AnimeItem[], records: readonly Relatio
     return getFirstGraphItemName(left).localeCompare(getFirstGraphItemName(right), "zh-Hans-CN");
   });
 
-  return components
-    .flatMap((component, componentIndex) => {
-      const centerX = getGraphComponentCenter(componentIndex, components.length);
-      const rows = new Map<string, AnimeItem[]>();
-      for (const item of component) {
-        const rowKey = item.y.toFixed(2);
-        rows.set(rowKey, [...(rows.get(rowKey) ?? []), item]);
-      }
+  const laidOutItems = components.flatMap((component, componentIndex) => {
+    const centerX = getGraphComponentCenter(componentIndex, components.length);
+    const rows = new Map<string, AnimeItem[]>();
+    for (const item of component) {
+      const rowKey = item.y.toFixed(2);
+      rows.set(rowKey, [...(rows.get(rowKey) ?? []), item]);
+    }
 
-      return Array.from(rows.values()).flatMap((rowItems) => layoutGraphRowItems(rowItems, nodeDegrees, centerX));
-    })
-    .sort((left, right) => left.id - right.id);
+    return Array.from(rows.values()).flatMap((rowItems) => layoutGraphRowItems(rowItems, nodeDegrees, centerX));
+  });
+
+  return optimizeGraphRowOrder(laidOutItems, records, nodeDegrees).sort((left, right) => left.id - right.id);
+}
+
+/**
+ * 在同一高度内交换横向位置，尽量让同层连线更短、跨层连线少交叉。
+ *
+ * 这里只复用已经算好的横向槽位，不改变节点高度，也不改变整体宽松度。
+ */
+function optimizeGraphRowOrder(
+  items: readonly AnimeItem[],
+  records: readonly RelationRecord[],
+  nodeDegrees: ReadonlyMap<string, number>,
+) {
+  const itemByName = new Map(items.map((item) => [item.name, { ...item }]));
+  const rowGroups = new Map<string, AnimeItem[]>();
+  for (const item of itemByName.values()) {
+    const rowKey = item.y.toFixed(2);
+    rowGroups.set(rowKey, [...(rowGroups.get(rowKey) ?? []), item]);
+  }
+
+  for (const rowItems of rowGroups.values()) {
+    if (rowItems.length < 3 || rowItems.length > 7) {
+      continue;
+    }
+
+    const optimizedRow = getOptimizedGraphRow(rowItems, records, nodeDegrees, itemByName);
+    for (const item of optimizedRow) {
+      itemByName.set(item.name, item);
+    }
+  }
+
+  return items.map((item) => itemByName.get(item.name) ?? item);
+}
+
+/** 穷举小行的槽位交换方案，选择线条代价最低的排布。 */
+function getOptimizedGraphRow(
+  rowItems: readonly AnimeItem[],
+  records: readonly RelationRecord[],
+  nodeDegrees: ReadonlyMap<string, number>,
+  itemByName: ReadonlyMap<string, AnimeItem>,
+) {
+  const lockedItem = findGraphRowCenterItem(rowItems, nodeDegrees);
+  const slots = rowItems.toSorted((left, right) => left.x - right.x).map((item) => item.x);
+  const lockedSlot = lockedItem
+    ? slots.reduce(
+        (best, slot) => (Math.abs(slot - lockedItem.x) < Math.abs(best - lockedItem.x) ? slot : best),
+        slots[0],
+      )
+    : undefined;
+  const freeSlots = lockedSlot === undefined ? slots : slots.filter((slot) => slot !== lockedSlot);
+  const freeItems = lockedItem ? rowItems.filter((item) => item.name !== lockedItem.name) : [...rowItems];
+
+  let bestRow = rowItems.map((item) => ({ ...item }));
+  let bestScore = getGraphRowOrderScore(bestRow, records, itemByName);
+  for (const permutation of getPermutations(freeItems)) {
+    const candidate = permutation.map((item, index) => ({ ...item, x: freeSlots[index] }));
+    if (lockedItem && lockedSlot !== undefined) {
+      candidate.push({ ...lockedItem, x: lockedSlot });
+    }
+
+    const score = getGraphRowOrderScore(candidate, records, itemByName);
+    if (score < bestScore - 0.001) {
+      bestScore = score;
+      bestRow = candidate;
+    }
+  }
+
+  return bestRow;
+}
+
+/** 计算同一行排布的线条代价，数值越小表示越少交叉、越少绕线。 */
+function getGraphRowOrderScore(
+  rowItems: readonly AnimeItem[],
+  records: readonly RelationRecord[],
+  itemByName: ReadonlyMap<string, AnimeItem>,
+) {
+  const rowItemByName = new Map(rowItems.map((item) => [item.name, item]));
+  const rowNames = new Set(rowItemByName.keys());
+  const externalEdges: { fromX: number; toX: number; side: number }[] = [];
+  let score = 0;
+
+  for (const record of records) {
+    const baseItem = rowItemByName.get(record.baseName) ?? itemByName.get(record.baseName);
+    const targetItem = rowItemByName.get(record.targetName) ?? itemByName.get(record.targetName);
+    if (!baseItem || !targetItem) {
+      continue;
+    }
+
+    const baseInRow = rowNames.has(record.baseName);
+    const targetInRow = rowNames.has(record.targetName);
+    if (baseInRow && targetInRow) {
+      score += Math.abs(baseItem.x - targetItem.x) * (record.delta === 0 ? 2 : 1);
+      continue;
+    }
+
+    if (baseInRow !== targetInRow) {
+      const rowItem = baseInRow ? baseItem : targetItem;
+      const outsideItem = baseInRow ? targetItem : baseItem;
+      score += Math.abs(rowItem.x - outsideItem.x) * 0.08;
+      externalEdges.push({
+        fromX: rowItem.x,
+        toX: outsideItem.x,
+        side: Math.sign(outsideItem.y - rowItem.y),
+      });
+    }
+  }
+
+  for (let leftIndex = 0; leftIndex < externalEdges.length; leftIndex += 1) {
+    const left = externalEdges[leftIndex];
+    for (let rightIndex = leftIndex + 1; rightIndex < externalEdges.length; rightIndex += 1) {
+      const right = externalEdges[rightIndex];
+      if (left.side !== right.side || left.side === 0) {
+        continue;
+      }
+      if ((left.fromX - right.fromX) * (left.toX - right.toX) < 0) {
+        score += 20;
+      }
+    }
+  }
+
+  return score;
+}
+
+/** 生成小数组的全排列；调用方只用于 7 个以内的同层节点。 */
+function getPermutations<T>(items: readonly T[]) {
+  const permutations: T[][] = [];
+  const used = Array(items.length).fill(false);
+  const current: T[] = [];
+
+  const visit = () => {
+    if (current.length === items.length) {
+      permutations.push([...current]);
+      return;
+    }
+
+    for (let index = 0; index < items.length; index += 1) {
+      if (used[index]) {
+        continue;
+      }
+      used[index] = true;
+      current.push(items[index]);
+      visit();
+      current.pop();
+      used[index] = false;
+    }
+  };
+
+  visit();
+  return permutations;
 }
 
 /**

@@ -24,7 +24,7 @@ import {
   type GraphEdge,
   type RelationLevel,
   type RelationRecord,
-} from "./core";
+} from "../../.vitepress/theme/compare-rater/core";
 
 type AnchorRole = "best" | "worst";
 type TransferStatus = "idle" | "success" | "error";

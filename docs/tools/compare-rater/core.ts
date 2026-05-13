@@ -624,11 +624,11 @@ function getVerticalEdgeSideClearance(
   );
   const clearance =
     blockingItems.length === 0 ? 100 : Math.min(...blockingItems.map((item) => Math.abs(item.x - corridorX)));
-  return clearance - getSameRowTopConnectionPenalty(edgeDraft, items, records, side);
+  return clearance - getEndpointSideUsagePenalty(edgeDraft, items, records, side);
 }
 
-/** 近垂直边避开端点已有的同层顶部连接，减少从节点侧边切到顶部线的情况。 */
-function getSameRowTopConnectionPenalty(
+/** 近垂直边避开端点这一侧已有的关系边，减少多条线挤在同一侧。 */
+function getEndpointSideUsagePenalty(
   edgeDraft: GraphEdgeDraft,
   items: readonly AnimeItem[],
   records: readonly RelationRecord[],
@@ -643,16 +643,23 @@ function getSameRowTopConnectionPenalty(
 
   for (const endpoint of endpoints) {
     for (const record of records) {
-      if (record.delta !== 0 || (record.baseName !== endpoint.name && record.targetName !== endpoint.name)) {
+      if (record.id === edgeDraft.id) {
+        continue;
+      }
+      if (record.baseName !== endpoint.name && record.targetName !== endpoint.name) {
         continue;
       }
 
       const neighborName = record.baseName === endpoint.name ? record.targetName : record.baseName;
       const neighbor = itemByName.get(neighborName);
-      if (!neighbor || Math.abs(neighbor.y - endpoint.y) > GRAPH_EDGE_NODE_HALF_HEIGHT) {
+      if (!neighbor) {
         continue;
       }
-      if (Math.sign(neighbor.x - endpoint.x) === side) {
+      const neighborSide =
+        Math.abs(neighbor.y - endpoint.y) <= GRAPH_EDGE_NODE_HALF_HEIGHT
+          ? Math.sign(neighbor.x - endpoint.x)
+          : Math.sign(neighbor.x - endpoint.x);
+      if (neighborSide === side) {
         penalty += 40;
       }
     }
@@ -842,14 +849,17 @@ function optimizeGraphRowOrder(
     rowGroups.set(rowKey, [...(rowGroups.get(rowKey) ?? []), item]);
   }
 
-  for (const rowItems of rowGroups.values()) {
-    if (rowItems.length < 3 || rowItems.length > 7) {
-      continue;
-    }
+  for (let iteration = 0; iteration < 2; iteration += 1) {
+    for (const rowItems of rowGroups.values()) {
+      if (rowItems.length < 3) {
+        continue;
+      }
 
-    const optimizedRow = getOptimizedGraphRow(rowItems, records, nodeDegrees, itemByName);
-    for (const item of optimizedRow) {
-      itemByName.set(item.name, item);
+      const currentRow = rowItems.map((item) => itemByName.get(item.name) ?? item);
+      const optimizedRow = getOptimizedGraphRow(currentRow, records, nodeDegrees, itemByName);
+      for (const item of optimizedRow) {
+        itemByName.set(item.name, item);
+      }
     }
   }
 
@@ -876,20 +886,55 @@ function getOptimizedGraphRow(
 
   let bestRow = rowItems.map((item) => ({ ...item }));
   let bestScore = getGraphRowOrderScore(bestRow, records, itemByName);
-  for (const permutation of getPermutations(freeItems)) {
-    const candidate = permutation.map((item, index) => ({ ...item, x: freeSlots[index] }));
-    if (lockedItem && lockedSlot !== undefined) {
-      candidate.push({ ...lockedItem, x: lockedSlot });
-    }
+  if (rowItems.length <= 7) {
+    for (const permutation of getPermutations(freeItems)) {
+      const candidate = permutation.map((item, index) => ({ ...item, x: freeSlots[index] }));
+      if (lockedItem && lockedSlot !== undefined) {
+        candidate.push({ ...lockedItem, x: lockedSlot });
+      }
 
-    const score = getGraphRowOrderScore(candidate, records, itemByName);
-    if (score < bestScore - 0.001) {
-      bestScore = score;
-      bestRow = candidate;
+      const score = getGraphRowOrderScore(candidate, records, itemByName);
+      if (score < bestScore - 0.001) {
+        bestScore = score;
+        bestRow = candidate;
+      }
+    }
+    return bestRow;
+  }
+
+  return optimizeGraphRowByAdjacentSwap(bestRow, lockedItem?.name, records, itemByName);
+}
+
+/** 大行只做相邻交换，避免全排列爆炸。 */
+function optimizeGraphRowByAdjacentSwap(
+  rowItems: readonly AnimeItem[],
+  lockedName: string | undefined,
+  records: readonly RelationRecord[],
+  itemByName: ReadonlyMap<string, AnimeItem>,
+) {
+  const optimizedItems = rowItems.toSorted((left, right) => left.x - right.x).map((item) => ({ ...item }));
+  for (let pass = 0; pass < optimizedItems.length; pass += 1) {
+    let changed = false;
+    for (let index = 0; index < optimizedItems.length - 1; index += 1) {
+      if (optimizedItems[index].name === lockedName || optimizedItems[index + 1].name === lockedName) {
+        continue;
+      }
+
+      const beforeScore = getGraphRowOrderScore(optimizedItems, records, itemByName);
+      [optimizedItems[index].x, optimizedItems[index + 1].x] = [optimizedItems[index + 1].x, optimizedItems[index].x];
+      const afterScore = getGraphRowOrderScore(optimizedItems, records, itemByName);
+      if (afterScore < beforeScore - 0.001) {
+        changed = true;
+      } else {
+        [optimizedItems[index].x, optimizedItems[index + 1].x] = [optimizedItems[index + 1].x, optimizedItems[index].x];
+      }
+    }
+    if (!changed) {
+      break;
     }
   }
 
-  return bestRow;
+  return optimizedItems;
 }
 
 /** 计算同一行排布的线条代价，数值越小表示越少交叉、越少绕线。 */

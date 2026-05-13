@@ -6,6 +6,7 @@ published: 2026-05-13T18:30:00+08:00
 # 番剧比较评分器
 
 <!-- autocorrect-disable -->
+<!-- markdownlint-disable MD011 -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import {
@@ -891,8 +892,8 @@ async function copyText(text: string) {
     throw new Error("Copy failed");
   }
 }
-
 </script>
+<!-- markdownlint-enable MD011 -->
 <!-- autocorrect-enable -->
 
 通过相对比较，工具会按弹簧模型建立关系图，最后通过少量基准分将相对分值映射成绝对分值。

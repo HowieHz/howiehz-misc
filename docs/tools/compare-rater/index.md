@@ -168,6 +168,7 @@ const scoreAnchors = computed(() => ({
   worst: worstAnchorName.value ? { name: worstAnchorName.value, score: Number(worstAnchorScore.value) } : undefined,
 }));
 const scoreByName = computed(() => mapScores(graphItems.value, scoreAnchors.value));
+const animeNameOptions = computed(() => graphItems.value.map((item) => item.name).toSorted((left, right) => left.localeCompare(right, "zh-Hans-CN")));
 
 const scoredItems = computed<ScoredAnime[]>(() => {
   const items = graphItems.value;
@@ -549,7 +550,7 @@ function updateWorstAnchorScore(event: Event) {
 
 function buildExportPayload() {
   return {
-    schema: "anime-score-graph-form",
+    schema: "compare-rater-form",
     schemaVersion: 1,
     field: normalizedField.value,
     aspect: normalizedAspect.value,
@@ -623,7 +624,7 @@ function setImportStatus(status: TransferStatus) {
 function importPayload(payload: unknown) {
   if (
     !isRecord(payload)
-    || payload.schema !== "anime-score-graph-form"
+    || payload.schema !== "compare-rater-form"
     || payload.schemaVersion !== 1
     || typeof payload.field !== "string"
     || typeof payload.aspect !== "string"
@@ -821,7 +822,7 @@ async function copyText(text: string) {
   </section>
 
   <section
-    class="anime-score-tool__panel"
+    class="anime-score-tool__panel anime-score-tool__relation-panel"
     aria-labelledby="anime-score-relation-title"
   >
     <div class="anime-score-tool__label-row">
@@ -838,6 +839,7 @@ async function copyText(text: string) {
           v-model="baseName"
           required
           autocomplete="off"
+          list="anime-name-options"
           placeholder="选择或输入基准番"
         >
       </label>
@@ -859,6 +861,7 @@ async function copyText(text: string) {
           v-model="compareName"
           required
           autocomplete="off"
+          list="anime-name-options"
           placeholder="选择或输入比较番"
         >
       </label>
@@ -870,6 +873,13 @@ async function copyText(text: string) {
         加入关系
       </button>
     </form>
+    <datalist id="anime-name-options">
+      <option
+        v-for="name in animeNameOptions"
+        :key="name"
+        :value="name"
+      />
+    </datalist>
     <p
       v-if="relationInputError"
       class="anime-score-tool__error"
@@ -929,10 +939,10 @@ async function copyText(text: string) {
 
   <section
     class="anime-score-tool__panel"
-    aria-labelledby="anime-score-graph-title"
+    aria-labelledby="compare-rater-graph-title"
   >
     <div class="anime-score-tool__label-row">
-      <h2 id="anime-score-graph-title">关系图</h2>
+      <h2 id="compare-rater-graph-title">关系图</h2>
       <div class="anime-score-tool__graph-actions">
         <span v-if="animatedGraphItems.length">{{ graphZoomText }}</span>
         <button
@@ -1126,6 +1136,10 @@ async function copyText(text: string) {
   background: var(--vp-c-bg-soft);
 }
 
+.anime-score-tool__relation-panel {
+  gap: 8px;
+}
+
 .anime-score-tool h2,
 .anime-score-tool h3 {
   margin: 0;
@@ -1222,8 +1236,25 @@ async function copyText(text: string) {
 .anime-score-tool__relation-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 170px minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 6px;
   align-items: end;
+}
+
+.anime-score-tool__relation-form label {
+  gap: 3px;
+  font-size: 0.9rem;
+}
+
+.anime-score-tool__relation-form input,
+.anime-score-tool__relation-form select {
+  min-height: 34px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-radius: 8px;
+}
+
+.anime-score-tool__relation-form button {
+  min-height: 34px;
 }
 
 .anime-score-tool__aspect-description {
@@ -1239,7 +1270,7 @@ async function copyText(text: string) {
 
 .anime-score-tool__primary-button,
 .anime-score-tool__secondary-button {
-  padding: 8px 14px;
+  padding: 7px 12px;
 }
 
 .anime-score-tool__primary-button {
@@ -1250,7 +1281,7 @@ async function copyText(text: string) {
 
 .anime-score-tool__relation-list {
   display: grid;
-  gap: 8px;
+  gap: 0px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1259,16 +1290,19 @@ async function copyText(text: string) {
 .anime-score-tool__relation-list li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 6px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 5px 8px;
   border: 1px solid color-mix(in srgb, var(--vp-c-divider) 90%, transparent);
-  border-radius: 10px;
+  border-radius: 6px;
   background: var(--vp-c-bg);
+  font-size: 0.92rem;
+  line-height: 1.35;
 }
 
 .anime-score-tool__relation-expression {
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
+  font-size: 0.92rem;
 }
 
 .anime-score-tool__relation-symbol {
@@ -1285,20 +1319,22 @@ async function copyText(text: string) {
 }
 
 .anime-score-tool__relation-list button {
-  min-height: 32px;
-  padding: 5px 10px;
+  min-height: 24px;
+  padding: 2px 7px;
   color: var(--vp-c-danger-1);
+  font-size: 0.84rem;
 }
 
 .anime-score-tool__empty {
   margin: 0;
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
+  font-size: 0.92rem;
 }
 
 .anime-score-tool__error {
-  margin: 0;
+  margin: 0 0 4px;
   color: var(--vp-c-danger-1);
-  font-size: 0.92rem;
+  font-size: 0.9rem;
 }
 
 .anime-score-tool__anchor-card {

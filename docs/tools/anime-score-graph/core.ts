@@ -53,8 +53,10 @@ export interface GraphEdge {
 /** 生成 SVG path 前的边草稿。 */
 interface GraphEdgeDraft {
   id: number;
+  fromName: string;
   fromX: number;
   fromY: number;
+  toName: string;
   toX: number;
   toY: number;
   /** 是否显示箭头；由关系方向和评分映射共同决定。 */
@@ -174,8 +176,10 @@ export function buildGraphEdges(
     return [
       {
         id: record.id,
+        fromName: direction.fromName,
         fromX: fromItem.x,
         fromY: fromItem.y,
+        toName: direction.toName,
         toX: toItem.x,
         toY: toItem.y,
         hasArrow: direction.hasArrow,
@@ -192,7 +196,9 @@ export function buildGraphEdges(
   return Array.from(edgeGroups.values()).flatMap((edgeGroup) =>
     edgeGroup
       .toSorted((left, right) => left.id - right.id)
-      .map((edgeDraft, edgeIndex) => buildGraphEdge(edgeDraft, getParallelEdgeOffset(edgeIndex, edgeGroup.length))),
+      .map((edgeDraft, edgeIndex) =>
+        buildGraphEdge(edgeDraft, getParallelEdgeOffset(edgeIndex, edgeGroup.length), items),
+      ),
   );
 }
 
@@ -405,8 +411,8 @@ function getDirectedRelation(record: RelationRecord, scores: ReadonlyMap<string,
  *
  * 根据端点位置选择直线、同侧二次贝塞尔或异侧三次贝塞尔。
  */
-function buildGraphEdge(edgeDraft: GraphEdgeDraft, curveOffset: number): GraphEdge {
-  const effectiveCurveOffset = getEffectiveCurveOffset(edgeDraft, curveOffset);
+function buildGraphEdge(edgeDraft: GraphEdgeDraft, curveOffset: number, items: readonly AnimeItem[]): GraphEdge {
+  const effectiveCurveOffset = getEffectiveCurveOffset(edgeDraft, curveOffset, items);
   const endpoints = trimEdgeLine(edgeDraft.fromX, edgeDraft.fromY, edgeDraft.toX, edgeDraft.toY, effectiveCurveOffset);
   const { x1, y1, x2, y2 } = endpoints;
   if (effectiveCurveOffset === 0) {
@@ -442,7 +448,7 @@ function buildGraphEdge(edgeDraft: GraphEdgeDraft, curveOffset: number): GraphEd
  *
  * 没有并行边偏移时，也给水平、近垂直和普通边提供少量默认弯曲，降低线条重叠和直线突兀感。
  */
-function getEffectiveCurveOffset(edgeDraft: GraphEdgeDraft, curveOffset: number) {
+function getEffectiveCurveOffset(edgeDraft: GraphEdgeDraft, curveOffset: number, items: readonly AnimeItem[]) {
   if (curveOffset !== 0) {
     return curveOffset;
   }
@@ -450,9 +456,37 @@ function getEffectiveCurveOffset(edgeDraft: GraphEdgeDraft, curveOffset: number)
     return 4;
   }
   if (Math.abs(edgeDraft.fromX - edgeDraft.toX) < GRAPH_NODE_WIDTH * 1.25) {
-    return 7;
+    return getVerticalEdgeSide(edgeDraft, items) * 7;
   }
   return 3;
+}
+
+/**
+ * 给近垂直边选择更空的一侧。
+ *
+ * 近垂直边固定走右侧会和右侧节点挤在一起；这里比较左右走廊的节点占用，选择更宽松的方向。
+ */
+function getVerticalEdgeSide(edgeDraft: GraphEdgeDraft, items: readonly AnimeItem[]) {
+  const leftScore = getVerticalEdgeSideClearance(edgeDraft, items, -1);
+  const rightScore = getVerticalEdgeSideClearance(edgeDraft, items, 1);
+  if (leftScore !== rightScore) {
+    return leftScore > rightScore ? -1 : 1;
+  }
+  return edgeDraft.toX >= edgeDraft.fromX ? 1 : -1;
+}
+
+/** 计算近垂直边某一侧走廊的空旷程度，数值越大越宽松。 */
+function getVerticalEdgeSideClearance(edgeDraft: GraphEdgeDraft, items: readonly AnimeItem[], side: -1 | 1) {
+  const corridorX = (edgeDraft.fromX + edgeDraft.toX) / 2 + side * (GRAPH_EDGE_NODE_HALF_WIDTH + 7);
+  const minY = Math.min(edgeDraft.fromY, edgeDraft.toY) - GRAPH_NODE_HEIGHT;
+  const maxY = Math.max(edgeDraft.fromY, edgeDraft.toY) + GRAPH_NODE_HEIGHT;
+  const blockingItems = items.filter(
+    (item) => item.name !== edgeDraft.fromName && item.name !== edgeDraft.toName && item.y >= minY && item.y <= maxY,
+  );
+  if (blockingItems.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.min(...blockingItems.map((item) => Math.abs(item.x - corridorX)));
 }
 
 /** 计算同侧出发/到达边的二次贝塞尔控制点。 */

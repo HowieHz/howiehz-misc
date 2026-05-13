@@ -144,7 +144,7 @@ export function buildGraphItems(records: readonly RelationRecord[]) {
       y: 50 - (progress - 0.5) * GRAPH_VERTICAL_SPREAD,
     };
   });
-  return avoidGraphItemOverlap(layoutGraphItems(items, records));
+  return avoidGraphItemOverlap(layoutLeafItemsWithNeighbors(layoutGraphItems(items, records), records));
 }
 
 /**
@@ -600,6 +600,61 @@ function layoutGraphItems(items: readonly AnimeItem[], records: readonly Relatio
 }
 
 /**
+ * 把单连接叶子节点挂到唯一邻居旁边。
+ *
+ * 叶子节点通常不应该占据主干中线；它只和一个节点有关，贴近这个邻居更符合关系图直觉。
+ */
+function layoutLeafItemsWithNeighbors(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
+  const neighborMap = getGraphNeighborNames(records);
+  const itemByName = new Map(items.map((item) => [item.name, item]));
+  return items.map((item) => {
+    const neighbors = neighborMap.get(item.name);
+    if (!neighbors || neighbors.size !== 1) {
+      return item;
+    }
+
+    const neighbor = itemByName.get(Array.from(neighbors)[0]);
+    if (!neighbor || Math.abs(neighbor.y - item.y) < 0.01) {
+      return item;
+    }
+
+    return {
+      ...item,
+      x: getLeafItemX(item, neighbor, items),
+    };
+  });
+}
+
+/** 给叶子节点选择邻居左侧或右侧更空的位置。 */
+function getLeafItemX(item: AnimeItem, neighbor: AnimeItem, items: readonly AnimeItem[]) {
+  const leafOffset = 18;
+  const candidates = [clampNumber(neighbor.x - leafOffset, 8, 92), clampNumber(neighbor.x + leafOffset, 8, 92)];
+  return candidates
+    .map((x) => ({
+      x,
+      clearance: getRowClearance(item, x, items),
+      centerPenalty: Math.abs(x - 50) * 0.01,
+    }))
+    .toSorted((left, right) => {
+      if (right.clearance !== left.clearance) {
+        return right.clearance - left.clearance;
+      }
+      return right.centerPenalty - left.centerPenalty;
+    })[0].x;
+}
+
+/** 计算候选横坐标与同一行其它节点的最近距离。 */
+function getRowClearance(item: AnimeItem, x: number, items: readonly AnimeItem[]) {
+  const sameRowItems = items.filter(
+    (candidate) => candidate.name !== item.name && Math.abs(candidate.y - item.y) < GRAPH_NODE_HEIGHT,
+  );
+  if (sameRowItems.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.min(...sameRowItems.map((candidate) => Math.abs(candidate.x - x)));
+}
+
+/**
  * 排布同一行的节点。
  *
  * 若存在度数明显最高的中心节点，则让它居中，其它节点左右交错；否则按名称均匀铺开。
@@ -664,6 +719,16 @@ function getGraphNodeDegrees(records: readonly RelationRecord[]) {
     degrees.set(record.targetName, (degrees.get(record.targetName) ?? 0) + 1);
   }
   return degrees;
+}
+
+/** 收集每个节点直接相连的邻居名称。 */
+function getGraphNeighborNames(records: readonly RelationRecord[]) {
+  const neighbors = new Map<string, Set<string>>();
+  for (const record of records) {
+    neighbors.set(record.baseName, (neighbors.get(record.baseName) ?? new Set()).add(record.targetName));
+    neighbors.set(record.targetName, (neighbors.get(record.targetName) ?? new Set()).add(record.baseName));
+  }
+  return neighbors;
 }
 
 /** 用并查集计算每个节点所在的连通分量。 */

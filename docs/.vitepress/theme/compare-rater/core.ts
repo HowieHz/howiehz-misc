@@ -660,10 +660,11 @@ function getEndpointSideUsagePenalty(
       if (!neighbor) {
         continue;
       }
-      const neighborSide =
-        Math.abs(neighbor.y - endpoint.y) <= GRAPH_EDGE_NODE_HALF_HEIGHT
-          ? Math.sign(neighbor.x - endpoint.x)
-          : Math.sign(neighbor.x - endpoint.x);
+      if (Math.abs(neighbor.y - endpoint.y) <= GRAPH_EDGE_NODE_HALF_HEIGHT) {
+        continue;
+      }
+
+      const neighborSide = Math.sign(neighbor.x - endpoint.x);
       if (neighborSide === side) {
         penalty += 40;
       }

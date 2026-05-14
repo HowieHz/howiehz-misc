@@ -1701,13 +1701,15 @@ async function copyText(text: string) {
   position: absolute;
   z-index: 5;
   display: grid;
-  gap: 2px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1px;
   box-sizing: border-box;
   width: 13%;
   height: 7%;
   min-width: 78px;
   min-height: 34px;
-  padding: 3px 4px;
+  padding: 2px 4px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--vp-c-brand-1) 42%, var(--vp-c-divider));
   border-radius: 8px;
@@ -1719,12 +1721,13 @@ async function copyText(text: string) {
 
 .anime-score-tool__node strong {
   font-size: 0.78rem;
-  line-height: 1.15;
+  line-height: 1;
 }
 
 .anime-score-tool__node strong,
 .anime-score-tool__node span {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1733,6 +1736,7 @@ async function copyText(text: string) {
 .anime-score-tool__node span {
   color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
   font-size: 0.66rem;
+  line-height: 1;
 }
 
 .anime-score-tool__score-table {

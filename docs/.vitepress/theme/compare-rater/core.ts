@@ -1319,9 +1319,8 @@ function getGraphComponentCenter(index: number, count: number) {
   if (count <= 1) {
     return 50;
   }
-  const minX = 8;
-  const maxX = 92;
-  return minX + (index / (count - 1)) * (maxX - minX);
+  const componentStep = Math.min(28, 84 / (count - 1));
+  return clampNumber(50 + (index - (count - 1) / 2) * componentStep, 8, 92);
 }
 
 /** 获取一组节点按名称排序后的第一个名称。 */

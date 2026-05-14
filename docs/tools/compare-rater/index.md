@@ -2149,18 +2149,21 @@ $$
   border-radius: 8px;
 }
 
-.compare-rater__checkbox-label {
-  display: flex;
+.compare-rater label.compare-rater__checkbox-label {
+  display: inline-flex;
   align-items: center;
+  align-self: end;
   min-height: 34px;
   gap: 6px;
   padding: 6px 0;
   white-space: nowrap;
 }
 
-.compare-rater__checkbox-label input {
+.compare-rater label.compare-rater__checkbox-label input {
   width: 16px;
+  min-width: 16px;
   min-height: 16px;
+  margin: 0;
 }
 
 .compare-rater__bangumi-results {

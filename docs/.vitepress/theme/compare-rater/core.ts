@@ -3,7 +3,7 @@
  *
  * 正向等级表示 `baseName` 高于 `targetName`，负向等级表示反过来，“same”表示相近。
  */
-export type RelationLevel = "much-better" | "better" | "same" | "worse" | "much-worse";
+export type RelationLevel = "much-better" | "quite-better" | "better" | "same" | "worse" | "quite-worse" | "much-worse";
 
 /** 评分锚点角色。 */
 export type AnchorRole = "best" | "worst";
@@ -91,6 +91,11 @@ const GRAPH_VERTICAL_SPREAD = 84;
 const GRAPH_VIEWPORT_BASE_HEIGHT = 380;
 const GRAPH_VIEWPORT_OFFSET_HEIGHT = 48;
 const GRAPH_VIEWPORT_MAX_HEIGHT = 620;
+const OFFSET_SOLVER_ITERATIONS = 2000;
+const OFFSET_SOLVER_STEP = 0.18;
+const OFFSET_SOLVER_SLACK_STEP = 0.005;
+const OFFSET_SOLVER_SIBLING_STEP = 0.08;
+const OFFSET_SOLVER_EPSILON = 1e-5;
 
 /**
  * 标准化番剧名或表单文本，去掉首尾空白并把连续空白折叠成单个空格。
@@ -344,10 +349,9 @@ export function getGraphViewportHeight(items: readonly AnimeItem[]) {
 }
 
 /**
- * 用加权最小二乘求解每个番剧的一维相对位置。
+ * 用一维约束松弛求解每个番剧的相对位置。
  *
- * 每条关系提供一个目标差值 `base - target = delta`。求解目标是最小化 `sum(weight * (baseOffset - targetOffset - delta)^2)`；冲突关系会自然折中。
- * 每个连通分量单独加上“均值为 0”的约束，避免整体平移导致无穷多解。
+ * “差不多”是等式吸引；其它关系先保证下限，满足后再用很弱的力贴近标称差距。 同一节点下同档关系的目标会轻微对齐，避免两个“好一点”被解成明显不同高度。 每个连通分量单独归零均值，避免整体平移影响展示。
  */
 function solveOffsets(records: readonly RelationRecord[]) {
   const names = Array.from(new Set(records.flatMap((record) => [record.baseName, record.targetName])));
@@ -403,7 +407,7 @@ function getOffsetComponents(names: readonly string[], records: readonly Relatio
   return components;
 }
 
-/** 为单个连通分量组装正规方程并解出相对位置。 */
+/** 为单个连通分量解出满足关系下限的相对位置。 */
 function solveOffsetComponent(names: readonly string[], records: readonly RelationRecord[]) {
   const result = new Map(names.map((name) => [name, 0]));
   if (names.length <= 1) {
@@ -411,81 +415,93 @@ function solveOffsetComponent(names: readonly string[], records: readonly Relati
   }
 
   const nameSet = new Set(names);
-  const nameIndexes = new Map(names.map((name, index) => [name, index]));
-  const equationSize = names.length + 1;
-  const matrix = Array.from({ length: equationSize }, () => Array(equationSize).fill(0));
-  const rhs = Array(equationSize).fill(0);
+  const componentRecords = records.filter((record) => nameSet.has(record.baseName) && nameSet.has(record.targetName));
+  const siblingGroups = getOffsetSiblingGroups(componentRecords);
+  const values = new Map(names.map((name) => [name, 0]));
 
-  for (const record of records) {
-    if (!nameSet.has(record.baseName) || !nameSet.has(record.targetName)) {
-      continue;
+  for (let iteration = 0; iteration < OFFSET_SOLVER_ITERATIONS; iteration += 1) {
+    let maxError = 0;
+    for (const record of componentRecords) {
+      const baseValue = values.get(record.baseName) ?? 0;
+      const targetValue = values.get(record.targetName) ?? 0;
+      const currentGap = baseValue - targetValue;
+      const error = getOffsetConstraintError(currentGap, record.delta);
+      if (Math.abs(error) <= OFFSET_SOLVER_EPSILON) {
+        continue;
+      }
+
+      const step = isOffsetConstraintViolated(currentGap, record.delta) ? OFFSET_SOLVER_STEP : OFFSET_SOLVER_SLACK_STEP;
+      const push = error * Math.min(getRecordWeight(record), 10) * step;
+      values.set(record.baseName, baseValue + push / 2);
+      values.set(record.targetName, targetValue - push / 2);
+      maxError = Math.max(maxError, Math.abs(error));
     }
 
-    const baseIndex = nameIndexes.get(record.baseName);
-    const targetIndex = nameIndexes.get(record.targetName);
-    const weight = getRecordWeight(record);
-    if (baseIndex === undefined || targetIndex === undefined || weight <= 0) {
-      continue;
+    applyOffsetSiblingAlignment(values, siblingGroups);
+    centerOffsetValues(values);
+    if (maxError <= OFFSET_SOLVER_EPSILON) {
+      break;
     }
-
-    matrix[baseIndex][baseIndex] += weight;
-    matrix[targetIndex][targetIndex] += weight;
-    matrix[baseIndex][targetIndex] -= weight;
-    matrix[targetIndex][baseIndex] -= weight;
-    rhs[baseIndex] += weight * record.delta;
-    rhs[targetIndex] -= weight * record.delta;
   }
 
-  for (let index = 0; index < names.length; index += 1) {
-    matrix[index][names.length] = 1;
-    matrix[names.length][index] = 1;
-  }
-
-  const solvedValues = solveLinearSystem(matrix, rhs);
-  if (!solvedValues) {
-    return result;
-  }
-
-  for (const [name, index] of nameIndexes) {
-    result.set(name, solvedValues[index]);
+  for (const name of names) {
+    result.set(name, values.get(name) ?? 0);
   }
   return result;
 }
 
-/** 用高斯-约旦消元解小型线性方程组；矩阵奇异时返回 undefined。 */
-function solveLinearSystem(matrix: readonly (readonly number[])[], rhs: readonly number[]) {
-  const size = rhs.length;
-  const rows = matrix.map((row, index) => [...row, rhs[index]]);
-
-  for (let column = 0; column < size; column += 1) {
-    let pivotRow = column;
-    for (let row = column + 1; row < size; row += 1) {
-      if (Math.abs(rows[row][column]) > Math.abs(rows[pivotRow][column])) {
-        pivotRow = row;
-      }
-    }
-    if (Math.abs(rows[pivotRow][column]) < 1e-10) {
-      return undefined;
+/** 收集同一个高分节点下、同一差值档位的目标节点。 */
+function getOffsetSiblingGroups(records: readonly RelationRecord[]) {
+  const groups = new Map<string, string[]>();
+  for (const record of records) {
+    if (record.delta === 0) {
+      continue;
     }
 
-    [rows[column], rows[pivotRow]] = [rows[pivotRow], rows[column]];
-    const pivot = rows[column][column];
-    for (let cell = column; cell <= size; cell += 1) {
-      rows[column][cell] /= pivot;
-    }
-
-    for (let row = 0; row < size; row += 1) {
-      if (row === column || Math.abs(rows[row][column]) < 1e-12) {
-        continue;
-      }
-      const factor = rows[row][column];
-      for (let cell = column; cell <= size; cell += 1) {
-        rows[row][cell] -= factor * rows[column][cell];
-      }
-    }
+    const parentName = record.delta > 0 ? record.baseName : record.targetName;
+    const childName = record.delta > 0 ? record.targetName : record.baseName;
+    const key = `${parentName}\u0000${Math.abs(record.delta)}`;
+    groups.set(key, [...(groups.get(key) ?? []), childName]);
   }
 
-  return rows.map((row) => row[size]);
+  return Array.from(groups.values())
+    .map((group) => Array.from(new Set(group)))
+    .filter((group) => group.length > 1);
+}
+
+/** 同源同档目标轻微对齐，保留其它关系造成的必要差异。 */
+function applyOffsetSiblingAlignment(values: Map<string, number>, groups: readonly (readonly string[])[]) {
+  for (const group of groups) {
+    const average = group.reduce((total, name) => total + (values.get(name) ?? 0), 0) / group.length;
+    for (const name of group) {
+      const value = values.get(name) ?? 0;
+      values.set(name, value + (average - value) * OFFSET_SOLVER_SIBLING_STEP);
+    }
+  }
+}
+
+/** 计算一条关系当前还差多少；正数表示需要拉大，负数表示需要拉近。 */
+function getOffsetConstraintError(currentGap: number, targetGap: number) {
+  if (targetGap === 0) {
+    return -currentGap;
+  }
+  return targetGap - currentGap;
+}
+
+/** 判断方向关系是否还没有满足下限。 */
+function isOffsetConstraintViolated(currentGap: number, targetGap: number) {
+  if (targetGap === 0) {
+    return true;
+  }
+  return targetGap > 0 ? currentGap < targetGap : currentGap > targetGap;
+}
+
+/** 把连通分量的相对位置均值归零。 */
+function centerOffsetValues(values: Map<string, number>) {
+  const mean = Array.from(values.values()).reduce((total, value) => total + value, 0) / values.size;
+  for (const [name, value] of values) {
+    values.set(name, value - mean);
+  }
 }
 
 /**
@@ -1319,6 +1335,7 @@ function getGraphComponentCenter(index: number, count: number) {
   if (count <= 1) {
     return 50;
   }
+  // 两三个独立分量先靠近中心；分量很多时再逐步用满横向空间。
   const componentStep = Math.min(28, 84 / (count - 1));
   return clampNumber(50 + (index - (count - 1) / 2) * componentStep, 8, 92);
 }
@@ -1336,7 +1353,7 @@ function sortGraphItemsByName(items: readonly AnimeItem[]) {
 /**
  * 对重叠节点做推开。
  *
- * 优先调整 x；没有直接关系且高度相近的节点允许轻微调整 y，让无关的近层节点分散。
+ * 只调整 x，避免破坏“相对位置相同则同高”的图形语义。
  */
 function avoidGraphItemOverlap(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
   const relaxedItems = items.map((item) => ({ ...item }));
@@ -1366,17 +1383,6 @@ function avoidGraphItemOverlap(items: readonly AnimeItem[], records: readonly Re
         const pushX = (overlapX / 2 + 0.35) * (deltaX >= 0 ? 1 : -1);
         left.x = clampNumber(left.x - pushX, 8, 92);
         right.x = clampNumber(right.x + pushX, 8, 92);
-
-        const pairKey = createRelationPairKey(left.name, right.name);
-        const canShiftY = pairKey !== undefined && !relationPairKeys.has(pairKey) && Math.abs(deltaY) > 0.01;
-        if (
-          canShiftY &&
-          (left.x === 8 || left.x === 92 || right.x === 8 || right.x === 92 || overlapX > GRAPH_NODE_WIDTH * 0.45)
-        ) {
-          const pushY = Math.min(overlapY / 2 + 0.2, GRAPH_NODE_HEIGHT * 0.35) * (deltaY >= 0 ? 1 : -1);
-          left.y = clampNumber(left.y - pushY, 8, 92);
-          right.y = clampNumber(right.y + pushY, 8, 92);
-        }
       }
     }
   }

@@ -32,6 +32,7 @@ type TransferStatus = "idle" | "success" | "error";
 interface RelationWeights {
   same: number;
   better: number;
+  quiteBetter: number;
   muchBetter: number;
 }
 
@@ -52,18 +53,21 @@ interface ScoredAnime extends AnimeItem {
 }
 
 const relationLevels = [
-  { value: "much-better", label: "好很多", symbol: ">>", delta: 2 },
-  { value: "better", label: "好一点", symbol: ">", delta: 1 },
+  { value: "much-better", label: "好很多", symbol: ">>>", delta: 2 },
+  { value: "quite-better", label: "好不少", symbol: ">>", delta: 1 },
+  { value: "better", label: "好一点", symbol: ">", delta: 0.5 },
   { value: "same", label: "差不多", symbol: "≈", delta: 0 },
-  { value: "worse", label: "差一点", symbol: "<", delta: -1 },
-  { value: "much-worse", label: "差很多", symbol: "<<", delta: -2 },
+  { value: "worse", label: "差一点", symbol: "<", delta: -0.5 },
+  { value: "quite-worse", label: "差不少", symbol: "<<", delta: -1 },
+  { value: "much-worse", label: "差很多", symbol: "<<<", delta: -2 },
 ] as const satisfies readonly { value: RelationLevel; label: string; symbol: string; delta: number }[];
 
 const COMPARE_RATER_SCHEMA = "compare-rater-form";
 const COMPARE_RATER_SCHEMA_VERSION = 1;
 const defaultRelationWeights = {
   same: 1,
-  better: 1,
+  better: 0.5,
+  quiteBetter: 1,
   muchBetter: 2,
 } as const satisfies RelationWeights;
 const relationLevelMeta = new Map(relationLevels.map((level) => [level.value, level]));
@@ -148,6 +152,7 @@ const compareName = ref("");
 const selectedLevel = ref<RelationLevel>("same");
 const sameWeight = ref(String(defaultRelationWeights.same));
 const betterWeight = ref(String(defaultRelationWeights.better));
+const quiteBetterWeight = ref(String(defaultRelationWeights.quiteBetter));
 const muchBetterWeight = ref(String(defaultRelationWeights.muchBetter));
 const relationRecords = ref<RelationRecord[]>([]);
 const nextRelationId = ref(1);
@@ -182,6 +187,7 @@ const hasRelations = computed(() => relationRecords.value.length > 0);
 const relationWeights = computed<RelationWeights>(() => ({
   same: readWeightText(sameWeight.value, defaultRelationWeights.same),
   better: readWeightText(betterWeight.value, defaultRelationWeights.better),
+  quiteBetter: readWeightText(quiteBetterWeight.value, defaultRelationWeights.quiteBetter),
   muchBetter: readWeightText(muchBetterWeight.value, defaultRelationWeights.muchBetter),
 }));
 
@@ -259,6 +265,7 @@ const duplicatedRelation = computed(() => {
   }
   return relationRecords.value.find((record) => createRelationPairKey(record.baseName, record.targetName) === pairKey);
 });
+const submitRelationButtonText = computed(() => (duplicatedRelation.value ? "修改关系" : "加入关系"));
 const relationInputError = computed(() => {
   const normalizedBase = normalizeName(baseName.value);
   const normalizedTarget = normalizeName(compareName.value);
@@ -268,12 +275,16 @@ const relationInputError = computed(() => {
   if (normalizedBase === normalizedTarget) {
     return "基准番和比较番不能相同。";
   }
-  if (duplicatedRelation.value) {
-    return `这两部番已经有关系：${formatRelationText(duplicatedRelation.value)}。`;
-  }
   return undefined;
 });
 const canAddRelation = computed(() => normalizeName(baseName.value) !== "" && normalizeName(compareName.value) !== "" && !relationInputError.value);
+
+watch([baseName, compareName, duplicatedRelation], ([base, target, record]) => {
+  if (!record) {
+    return;
+  }
+  selectedLevel.value = getRelationLevelInCurrentOrder(record, base, target);
+});
 
 watch(graphItems, (items) => {
   syncAnimatedGraphItems(items);
@@ -301,18 +312,24 @@ function relationSymbol(level: RelationLevel) {
 }
 
 function getRelationLevelMeta(level: RelationLevel) {
-  return relationLevelMeta.get(level) ?? relationLevels[2];
+  return relationLevelMeta.get(level) ?? relationLevels[3];
 }
 
 function getRelationDelta(level: RelationLevel) {
   if (level === "much-better") {
     return relationWeights.value.muchBetter;
   }
+  if (level === "quite-better") {
+    return relationWeights.value.quiteBetter;
+  }
   if (level === "better") {
     return relationWeights.value.better;
   }
   if (level === "worse") {
     return -relationWeights.value.better;
+  }
+  if (level === "quite-worse") {
+    return -relationWeights.value.quiteBetter;
   }
   if (level === "much-worse") {
     return -relationWeights.value.muchBetter;
@@ -324,10 +341,42 @@ function getRelationWeight(level: RelationLevel) {
   return level === "same" ? relationWeights.value.same : 1;
 }
 
+function invertRelationLevel(level: RelationLevel): RelationLevel {
+  if (level === "much-better") {
+    return "much-worse";
+  }
+  if (level === "quite-better") {
+    return "quite-worse";
+  }
+  if (level === "better") {
+    return "worse";
+  }
+  if (level === "worse") {
+    return "better";
+  }
+  if (level === "quite-worse") {
+    return "quite-better";
+  }
+  if (level === "much-worse") {
+    return "much-better";
+  }
+  return "same";
+}
+
+function getRelationLevelInCurrentOrder(record: RelationRecord, base: string, target: string) {
+  const normalizedBase = normalizeName(base);
+  const normalizedTarget = normalizeName(target);
+  return record.baseName === normalizedBase && record.targetName === normalizedTarget
+    ? record.level
+    : invertRelationLevel(record.level);
+}
+
 function relationSymbolClass(level: RelationLevel) {
   return {
     "anime-score-tool__relation-symbol--same": level === "same",
-    "anime-score-tool__relation-symbol--strong": level === "much-better" || level === "much-worse",
+    "anime-score-tool__relation-symbol--better": level === "better" || level === "worse",
+    "anime-score-tool__relation-symbol--quite": level === "quite-better" || level === "quite-worse",
+    "anime-score-tool__relation-symbol--much": level === "much-better" || level === "much-worse",
   };
 }
 
@@ -439,12 +488,25 @@ function addRelation() {
     return;
   }
 
-  if (duplicatedRelation.value) {
-    announcement.value = `不能重复添加同一对番剧的关系：${formatRelationText(duplicatedRelation.value)}。`;
+  const level = selectedLevelMeta.value;
+  const duplicatedRecord = duplicatedRelation.value;
+  if (duplicatedRecord) {
+    const updatedRecord = {
+      ...duplicatedRecord,
+      baseName: normalizedBase,
+      targetName: normalizedTarget,
+      level: level.value,
+      delta: level.delta,
+    } satisfies RelationRecord;
+    relationRecords.value = relationRecords.value.map((record) =>
+      record.id === duplicatedRecord.id ? updatedRecord : record,
+    );
+    syncAnchors();
+    resetGraphViewAfterRelationChange();
+    announcement.value = `已修改关系：${formatRelationText(updatedRecord)}。`;
     return;
   }
 
-  const level = selectedLevelMeta.value;
   const record = {
     id: nextRelationId.value,
     baseName: normalizedBase,
@@ -482,6 +544,21 @@ function updateSameWeight(event: Event) {
 function updateBetterWeight(event: Event) {
   const value = normalizeWeightText((event.target as HTMLInputElement).value, defaultRelationWeights.better);
   betterWeight.value = value;
+  if (Number(value) > Number(quiteBetterWeight.value)) {
+    quiteBetterWeight.value = value;
+  }
+  if (Number(value) > Number(muchBetterWeight.value)) {
+    muchBetterWeight.value = value;
+  }
+  resetGraphViewAfterRelationChange();
+}
+
+function updateQuiteBetterWeight(event: Event) {
+  const value = normalizeWeightText((event.target as HTMLInputElement).value, defaultRelationWeights.quiteBetter);
+  quiteBetterWeight.value = value;
+  if (Number(value) < Number(betterWeight.value)) {
+    betterWeight.value = value;
+  }
   if (Number(value) > Number(muchBetterWeight.value)) {
     muchBetterWeight.value = value;
   }
@@ -491,6 +568,9 @@ function updateBetterWeight(event: Event) {
 function updateMuchBetterWeight(event: Event) {
   const value = normalizeWeightText((event.target as HTMLInputElement).value, defaultRelationWeights.muchBetter);
   muchBetterWeight.value = value;
+  if (Number(value) < Number(quiteBetterWeight.value)) {
+    quiteBetterWeight.value = value;
+  }
   if (Number(value) < Number(betterWeight.value)) {
     betterWeight.value = value;
   }
@@ -763,6 +843,7 @@ function importRelationWeights(weights: unknown) {
   if (weights === undefined) {
     sameWeight.value = String(defaultRelationWeights.same);
     betterWeight.value = String(defaultRelationWeights.better);
+    quiteBetterWeight.value = String(defaultRelationWeights.quiteBetter);
     muchBetterWeight.value = String(defaultRelationWeights.muchBetter);
     return;
   }
@@ -771,8 +852,12 @@ function importRelationWeights(weights: unknown) {
   }
   sameWeight.value = normalizeWeightText(weights.same, defaultRelationWeights.same);
   betterWeight.value = normalizeWeightText(weights.better, defaultRelationWeights.better);
+  quiteBetterWeight.value = normalizeWeightText(weights.quiteBetter, defaultRelationWeights.quiteBetter);
   muchBetterWeight.value = normalizeWeightText(weights.muchBetter, defaultRelationWeights.muchBetter);
-  if (Number(betterWeight.value) > Number(muchBetterWeight.value)) {
+  if (
+    Number(betterWeight.value) > Number(quiteBetterWeight.value) ||
+    Number(quiteBetterWeight.value) > Number(muchBetterWeight.value)
+  ) {
     throw new Error("Invalid weights");
   }
 }
@@ -838,11 +923,17 @@ function getDeltaForWeights(level: RelationLevel, weights: RelationWeights) {
   if (level === "much-better") {
     return weights.muchBetter;
   }
+  if (level === "quite-better") {
+    return weights.quiteBetter;
+  }
   if (level === "better") {
     return weights.better;
   }
   if (level === "worse") {
     return -weights.better;
+  }
+  if (level === "quite-worse") {
+    return -weights.quiteBetter;
   }
   if (level === "much-worse") {
     return -weights.muchBetter;
@@ -995,7 +1086,7 @@ async function copyText(text: string) {
         class="anime-score-tool__primary-button"
         :disabled="!canAddRelation"
       >
-        加入关系
+        {{ submitRelationButtonText }}
       </button>
     </form>
     <datalist id="anime-name-options">
@@ -1081,7 +1172,7 @@ async function copyText(text: string) {
         </label>
         <label class="anime-score-tool__score-slider">
           <span>
-            <strong class="anime-score-tool__relation-symbol">&gt;</strong>
+            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--better">&gt;</strong>
             排斥强度
           </span>
           <input
@@ -1097,7 +1188,23 @@ async function copyText(text: string) {
         </label>
         <label class="anime-score-tool__score-slider">
           <span>
-            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--strong">&gt;&gt;</strong>
+            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--quite">&gt;&gt;</strong>
+            排斥强度
+          </span>
+          <input
+            v-model="quiteBetterWeight"
+            type="range"
+            min="0"
+            max="10"
+            step="0.1"
+            aria-label="好不少排斥强度"
+            @input="updateQuiteBetterWeight"
+          >
+          <strong>{{ quiteBetterWeight }}</strong>
+        </label>
+        <label class="anime-score-tool__score-slider">
+          <span>
+            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--much">&gt;&gt;&gt;</strong>
             排斥强度
           </span>
           <input
@@ -1210,7 +1317,9 @@ async function copyText(text: string) {
             class="anime-score-tool__edge"
             :class="{
               'anime-score-tool__edge--same': edge.relationLevel === 'same',
-              'anime-score-tool__edge--strong': edge.relationLevel === 'much-better' || edge.relationLevel === 'much-worse',
+              'anime-score-tool__edge--better': edge.relationLevel === 'better' || edge.relationLevel === 'worse',
+              'anime-score-tool__edge--quite': edge.relationLevel === 'quite-better' || edge.relationLevel === 'quite-worse',
+              'anime-score-tool__edge--much': edge.relationLevel === 'much-better' || edge.relationLevel === 'much-worse',
             }"
             :d="edge.path"
             marker-start="url(#anime-score-endpoint)"
@@ -1503,7 +1612,6 @@ async function copyText(text: string) {
 }
 
 .anime-score-tool__relation-symbol {
-  color: #ea580c;
   font-weight: 800;
 }
 
@@ -1511,7 +1619,15 @@ async function copyText(text: string) {
   color: #16a34a;
 }
 
-.anime-score-tool__relation-symbol--strong {
+.anime-score-tool__relation-symbol--better {
+  color: #ca8a04;
+}
+
+.anime-score-tool__relation-symbol--quite {
+  color: #ea580c;
+}
+
+.anime-score-tool__relation-symbol--much {
   color: #991b1b;
 }
 
@@ -1674,7 +1790,7 @@ async function copyText(text: string) {
 
 .anime-score-tool__edge {
   fill: none;
-  stroke: #ea580c;
+  stroke: #ca8a04;
   stroke-linecap: round;
   stroke-width: 0.8;
   vector-effect: non-scaling-stroke;
@@ -1684,7 +1800,16 @@ async function copyText(text: string) {
   stroke: #16a34a;
 }
 
-.anime-score-tool__edge--strong {
+.anime-score-tool__edge--better {
+  stroke: #ca8a04;
+}
+
+.anime-score-tool__edge--quite {
+  stroke: #ea580c;
+  stroke-width: 1.1;
+}
+
+.anime-score-tool__edge--much {
   stroke: #991b1b;
   stroke-width: 1.45;
 }

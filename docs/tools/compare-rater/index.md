@@ -8,7 +8,8 @@ published: 2026-05-14T10:30:00+08:00
 <!-- autocorrect-disable -->
 <!-- markdownlint-disable MD011 -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRouter, type Router } from "vitepress";
 import {
   buildGraphEdges,
   buildGraphItems,
@@ -25,6 +26,7 @@ import {
   type RelationLevel,
   type RelationRecord,
 } from "../../.vitepress/theme/compare-rater/core";
+import { compareRaterTestData } from "../../.vitepress/theme/compare-rater/test-data";
 
 type AnchorRole = "best" | "worst";
 type TransferStatus = "idle" | "success" | "error";
@@ -52,6 +54,19 @@ interface ScoredAnime extends AnimeItem {
   score: number;
 }
 
+interface BangumiSubject {
+  id: number;
+  name: string;
+  name_cn: string;
+  date?: string;
+  platform?: string;
+  rating?: {
+    score?: number;
+    rank?: number;
+    total?: number;
+  };
+}
+
 const relationLevels = [
   { value: "much-better", label: "好很多", symbol: ">>>", delta: 2 },
   { value: "quite-better", label: "好不少", symbol: ">>", delta: 1 },
@@ -71,14 +86,6 @@ const defaultRelationWeights = {
   muchBetter: 2,
 } as const satisfies RelationWeights;
 const relationLevelMeta = new Map(relationLevels.map((level) => [level.value, level]));
-
-const scoreLabels = new Map([
-  ["1", "1 极差"],
-  ["2", "2 差"],
-  ["3", "3 合格"],
-  ["4", "4 推荐"],
-  ["5", "5 神作"],
-]);
 
 const animeTypeOptions = [
   "无细分",
@@ -139,13 +146,31 @@ const aspectOptions = [
   },
 ] as const satisfies readonly AspectOption[];
 
+// 节点动画弹簧强度；0.13 让移动有弹性但不明显过冲。
 const GRAPH_SPRING_STIFFNESS = 0.13;
+// 阻尼低于 1 保留一点弹簧感，高于 0.7 可避免长时间震荡。
 const GRAPH_SPRING_DAMPING = 0.74;
+// 动画距离小于 0.025% 视为稳定，避免尾部微抖。
 const GRAPH_SETTLE_EPSILON = 0.025;
+// 最小缩放保留整体概览，同时不让文字小到不可辨认。
 const GRAPH_MIN_ZOOM = 0.65;
+// 最大缩放足够检查局部连线，继续放大只会增加拖拽成本。
 const GRAPH_MAX_ZOOM = 2.8;
+// 绝对评分扩展输出的滑条范围；最低保留 1，最高放宽到 10。
+const SCORE_MIN = 1;
+const SCORE_MAX = 10;
+// 0.05 允许细调锚点，但最终表格仍保留两位小数。
+const SCORE_STEP = 0.05;
+// 高级权重滑条范围；0 表示禁用该关系力，10 是当前允许的最高强度。
+const WEIGHT_MIN = 0;
+const WEIGHT_MAX = 10;
+const BANGUMI_API_BASE = "https://api.bgm.tv";
+const BANGUMI_ANIME_SUBJECT_TYPE = 2;
+const BANGUMI_SEARCH_DEBOUNCE_MS = 1000;
+const BANGUMI_RESULTS_PER_PAGE = 5;
+const RELATIONS_PER_PAGE = 5;
 
-const fieldText = ref<(typeof animeTypeOptions)[number]>("萌系");
+const fieldText = ref<(typeof animeTypeOptions)[number]>("无细分");
 const aspectText = ref<(typeof aspectOptions)[number]["label"]>("剧情&叙事");
 const baseName = ref("");
 const compareName = ref("");
@@ -155,12 +180,22 @@ const betterWeight = ref(String(defaultRelationWeights.better));
 const quiteBetterWeight = ref(String(defaultRelationWeights.quiteBetter));
 const muchBetterWeight = ref(String(defaultRelationWeights.muchBetter));
 const relationRecords = ref<RelationRecord[]>([]);
+const relationPage = ref(1);
+const relationPageInput = ref("1");
 const nextRelationId = ref(1);
 const bestAnchorName = ref("");
-const bestAnchorScore = ref("5");
+const bestAnchorScore = ref("10");
 const worstAnchorName = ref("");
 const worstAnchorScore = ref("1");
 const announcement = ref("");
+const bangumiAccessToken = ref("");
+const bangumiKeyword = ref("");
+const bangumiSearchResults = ref<BangumiSubject[]>([]);
+const bangumiSearchTotal = ref(0);
+const bangumiPage = ref(1);
+const bangumiPageInput = ref("1");
+const bangumiSearchStatus = ref<"idle" | "loading" | "success" | "error">("idle");
+const bangumiSearchMessage = ref("");
 const exportStatus = ref<TransferStatus>("idle");
 const importStatus = ref<TransferStatus>("idle");
 const animatedGraphItems = ref<AnimatedAnimeItem[]>([]);
@@ -177,7 +212,11 @@ const graphDragState = ref<{
 }>();
 let exportStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let importStatusTimer: ReturnType<typeof setTimeout> | undefined;
+let bangumiSearchTimer: ReturnType<typeof setTimeout> | undefined;
 let graphAnimationFrame: number | undefined;
+let restoreBeforeRouteChange: Router["onBeforeRouteChange"] | undefined;
+
+const router = useRouter();
 
 const normalizedField = computed(() => normalizeName(fieldText.value) || "未命名领域");
 const normalizedAspect = computed(() => normalizeName(aspectText.value) || "未命名角度");
@@ -232,6 +271,16 @@ const graphEdges = computed<GraphEdge[]>(() => buildGraphEdges(weightedRelationR
 const bestCandidate = computed(() => findRelativeCandidate("best"));
 const worstCandidate = computed(() => findRelativeCandidate("worst"));
 const relationSummary = computed(() => `${relationRecords.value.length} 条关系，${graphItems.value.length} 部番剧`);
+const relationPageCount = computed(() => Math.max(1, Math.ceil(relationRecords.value.length / RELATIONS_PER_PAGE)));
+const pagedRelationRecords = computed(() => {
+  const start = (relationPage.value - 1) * RELATIONS_PER_PAGE;
+  return relationRecords.value.slice(start, start + RELATIONS_PER_PAGE);
+});
+const relationPageText = computed(() => `第 ${relationPage.value} / ${relationPageCount.value} 页`);
+const canJumpRelationPage = computed(() => {
+  const page = Number.parseInt(relationPageInput.value, 10);
+  return Number.isFinite(page) && page >= 1 && page <= relationPageCount.value && page !== relationPage.value;
+});
 const graphSceneStyle = computed(() => ({
   transform: `translate(${graphPanX.value}px, ${graphPanY.value}px) scale(${graphZoom.value})`,
 }));
@@ -239,6 +288,15 @@ const graphViewportStyle = computed(() => ({
   minHeight: `${getGraphViewportHeight(graphItems.value)}px`,
 }));
 const graphZoomText = computed(() => `${Math.round(graphZoom.value * 100)}%`);
+const anchorScoreRangeStyle = computed(() => {
+  const worstScore = Number(worstAnchorScore.value);
+  const bestScore = Number(bestAnchorScore.value);
+  const scoreSpan = SCORE_MAX - SCORE_MIN;
+  return {
+    "--score-range-start": `${((worstScore - SCORE_MIN) / scoreSpan) * 100}%`,
+    "--score-range-end": `${((bestScore - SCORE_MIN) / scoreSpan) * 100}%`,
+  } as Record<string, string>;
+});
 const exportButtonText = computed(() => {
   if (exportStatus.value === "success") {
     return "已导出";
@@ -256,6 +314,25 @@ const importButtonText = computed(() => {
     return "导入失败";
   }
   return "从剪贴板导入";
+});
+const hasUnsavedInput = computed(() =>
+  relationRecords.value.length > 0 ||
+  normalizeName(baseName.value) !== "" ||
+  normalizeName(compareName.value) !== "" ||
+  fieldText.value !== "无细分" ||
+  aspectText.value !== "剧情&叙事" ||
+  sameWeight.value !== String(defaultRelationWeights.same) ||
+  betterWeight.value !== String(defaultRelationWeights.better) ||
+  quiteBetterWeight.value !== String(defaultRelationWeights.quiteBetter) ||
+  muchBetterWeight.value !== String(defaultRelationWeights.muchBetter) ||
+  bestAnchorScore.value !== "10" ||
+  worstAnchorScore.value !== "1",
+);
+const bangumiPageCount = computed(() => Math.max(1, Math.ceil(bangumiSearchTotal.value / BANGUMI_RESULTS_PER_PAGE)));
+const bangumiPageText = computed(() => `第 ${bangumiPage.value} / ${bangumiPageCount.value} 页`);
+const canJumpBangumiPage = computed(() => {
+  const page = Number.parseInt(bangumiPageInput.value, 10);
+  return Number.isFinite(page) && page >= 1 && page <= bangumiPageCount.value && page !== bangumiPage.value;
 });
 const currentRelationPairKey = computed(() => createRelationPairKey(baseName.value, compareName.value));
 const duplicatedRelation = computed(() => {
@@ -291,12 +368,48 @@ watch(graphItems, (items) => {
   syncAnchors();
 }, { immediate: true });
 
+watch(relationPageCount, (pageCount) => {
+  if (relationPage.value > pageCount) {
+    relationPage.value = pageCount;
+  }
+});
+
+watch(relationPage, (page) => {
+  relationPageInput.value = String(page);
+});
+
+watch([bangumiKeyword, fieldText], () => {
+  bangumiPage.value = 1;
+  bangumiPageInput.value = "1";
+  scheduleBangumiSearch();
+});
+
+watch(bangumiPage, (page) => {
+  bangumiPageInput.value = String(page);
+});
+
+onMounted(() => {
+  window.addEventListener("beforeunload", handleBeforeUnload);
+  restoreBeforeRouteChange = router.onBeforeRouteChange;
+  router.onBeforeRouteChange = (to) => {
+    if (hasUnsavedInput.value && !window.confirm("当前输入数据可能会丢失，确定要离开吗？")) {
+      return false;
+    }
+    return restoreBeforeRouteChange?.(to);
+  };
+});
+
 onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", handleBeforeUnload);
+  router.onBeforeRouteChange = restoreBeforeRouteChange;
   if (exportStatusTimer) {
     clearTimeout(exportStatusTimer);
   }
   if (importStatusTimer) {
     clearTimeout(importStatusTimer);
+  }
+  if (bangumiSearchTimer) {
+    clearTimeout(bangumiSearchTimer);
   }
   if (graphAnimationFrame !== undefined && typeof window !== "undefined") {
     window.cancelAnimationFrame(graphAnimationFrame);
@@ -475,6 +588,15 @@ function resetGraphViewAfterRelationChange() {
   });
 }
 
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!hasUnsavedInput.value) {
+    return;
+  }
+
+  event.preventDefault();
+  event.returnValue = "";
+}
+
 function addRelation() {
   const normalizedBase = normalizeName(baseName.value);
   const normalizedTarget = normalizeName(compareName.value);
@@ -516,6 +638,7 @@ function addRelation() {
   } satisfies RelationRecord;
   relationRecords.value.push(record);
   nextRelationId.value += 1;
+  relationPage.value = relationPageCount.value;
   compareName.value = "";
   syncAnchors();
   resetGraphViewAfterRelationChange();
@@ -530,10 +653,130 @@ function removeRelation(id: number) {
 }
 
 function clearRelations() {
+  if (!window.confirm("确定要清空已输入的所有关系吗？")) {
+    return;
+  }
+
   relationRecords.value = [];
   nextRelationId.value = 1;
+  relationPage.value = 1;
   resetGraphViewAfterRelationChange();
   announcement.value = "已清空关系。";
+}
+
+function goRelationPage(direction: -1 | 1) {
+  relationPage.value = clampNumber(relationPage.value + direction, 1, relationPageCount.value);
+}
+
+function goBangumiPage(direction: -1 | 1) {
+  bangumiPage.value = clampNumber(bangumiPage.value + direction, 1, bangumiPageCount.value);
+  void searchBangumiSubjects();
+}
+
+function jumpRelationPage() {
+  const page = Number.parseInt(relationPageInput.value, 10);
+  if (!Number.isFinite(page)) {
+    relationPageInput.value = String(relationPage.value);
+    return;
+  }
+
+  relationPage.value = clampNumber(page, 1, relationPageCount.value);
+  relationPageInput.value = String(relationPage.value);
+}
+
+function jumpBangumiPage() {
+  const page = Number.parseInt(bangumiPageInput.value, 10);
+  if (!Number.isFinite(page)) {
+    bangumiPageInput.value = String(bangumiPage.value);
+    return;
+  }
+
+  const nextPage = clampNumber(page, 1, bangumiPageCount.value);
+  bangumiPage.value = nextPage;
+  bangumiPageInput.value = String(nextPage);
+  void searchBangumiSubjects();
+}
+
+function scheduleBangumiSearch() {
+  if (bangumiSearchTimer) {
+    clearTimeout(bangumiSearchTimer);
+  }
+
+  if (!normalizeName(bangumiKeyword.value)) {
+    bangumiSearchStatus.value = "idle";
+    bangumiSearchMessage.value = "";
+    bangumiSearchResults.value = [];
+    bangumiSearchTotal.value = 0;
+    return;
+  }
+
+  bangumiSearchTimer = setTimeout(() => {
+    bangumiSearchTimer = undefined;
+    void searchBangumiSubjects();
+  }, BANGUMI_SEARCH_DEBOUNCE_MS);
+}
+
+async function searchBangumiSubjects() {
+  if (bangumiSearchTimer) {
+    clearTimeout(bangumiSearchTimer);
+    bangumiSearchTimer = undefined;
+  }
+
+  const keyword = normalizeName(bangumiKeyword.value);
+  if (!keyword) {
+    bangumiSearchMessage.value = "请先输入搜索关键词。";
+    return;
+  }
+
+  bangumiSearchStatus.value = "loading";
+  bangumiSearchMessage.value = "";
+  try {
+    const response = await fetch(`${BANGUMI_API_BASE}/v0/search/subjects?limit=${BANGUMI_RESULTS_PER_PAGE}&offset=${(bangumiPage.value - 1) * BANGUMI_RESULTS_PER_PAGE}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(normalizeName(bangumiAccessToken.value) ? { Authorization: `Bearer ${normalizeName(bangumiAccessToken.value)}` } : {}),
+      },
+      body: JSON.stringify({
+        keyword,
+        sort: "match",
+        filter: {
+          type: [BANGUMI_ANIME_SUBJECT_TYPE],
+          ...(fieldText.value === "无细分" ? {} : { tag: [fieldText.value] }),
+          nsfw: false,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Bangumi search failed: ${response.status}`);
+    }
+
+    const payload = await response.json() as unknown;
+    const results = readBangumiSubjects(payload);
+    bangumiSearchResults.value = results;
+    bangumiSearchTotal.value = readBangumiTotal(payload);
+    if (bangumiPage.value > bangumiPageCount.value) {
+      bangumiPage.value = bangumiPageCount.value;
+    }
+    bangumiSearchStatus.value = "success";
+    bangumiSearchMessage.value = bangumiSearchTotal.value ? `找到 ${bangumiSearchTotal.value} 个结果。` : "没有找到匹配的番剧。";
+  } catch {
+    bangumiSearchResults.value = [];
+    bangumiSearchTotal.value = 0;
+    bangumiSearchStatus.value = "error";
+    bangumiSearchMessage.value = "Bangumi 搜索失败，请检查 access-token 或稍后再试。";
+  }
+}
+
+function setBangumiSubjectName(role: "base" | "compare", subject: BangumiSubject) {
+  const name = formatBangumiSubjectName(subject);
+  if (role === "base") {
+    baseName.value = name;
+  } else {
+    compareName.value = name;
+  }
+  announcement.value = `已填入番剧：${name}。`;
 }
 
 function updateSameWeight(event: Event) {
@@ -678,7 +921,14 @@ function formatScore(value: number | undefined) {
 
 function formatScoreOption(value: string) {
   const normalizedScore = normalizeScoreText(value);
-  return normalizedScore ? (scoreLabels.get(normalizedScore) ?? normalizedScore) : value;
+  return normalizedScore ?? value;
+}
+
+function weightSliderStyle(value: string) {
+  const weight = readWeightText(value, 0);
+  return {
+    "--weight-value-pos": `${((weight - WEIGHT_MIN) / (WEIGHT_MAX - WEIGHT_MIN)) * 100}%`,
+  } as Record<string, string>;
 }
 
 function updateBestAnchorScore(event: Event) {
@@ -739,6 +989,10 @@ async function copyExportJson() {
 }
 
 async function importFromClipboard() {
+  if (hasRelations.value && !window.confirm("当前已有数据，从剪贴板导入会覆盖已有内容。是否继续？")) {
+    return;
+  }
+
   try {
     const text = await readClipboardText();
     const importedCount = importPayload(JSON.parse(text));
@@ -751,6 +1005,18 @@ async function importFromClipboard() {
     setImportStatus("error");
     announcement.value = "导入失败，请确认剪贴板里是本工具导出的 JSON。";
   }
+}
+
+function useTestData() {
+  if (hasRelations.value && !window.confirm("当前已有数据，使用测试数据会覆盖已有内容。是否继续？")) {
+    return;
+  }
+
+  const importedCount = importPayload(compareRaterTestData);
+  setExportStatus("idle");
+  setImportStatus("idle");
+  announcement.value = `已载入测试数据，共 ${importedCount} 条关系。`;
+  resetGraphViewAfterRelationChange();
 }
 
 function setExportStatus(status: TransferStatus) {
@@ -834,6 +1100,7 @@ function importPayload(payload: unknown) {
 
   relationRecords.value = importedRelations;
   nextRelationId.value = importedRelations.length + 1;
+  relationPage.value = 1;
   importAnchors(payload.anchors, new Set(importedRelations.flatMap((relation) => [relation.baseName, relation.targetName])));
   syncAnchors();
   return importedRelations.length;
@@ -901,10 +1168,21 @@ function readImportAnchor(anchor: unknown, names: ReadonlySet<string>) {
 
 function normalizeScoreText(value: unknown) {
   const score = typeof value === "number" ? value : Number.parseFloat(String(value));
-  if (!Number.isFinite(score) || score < 1 || score > 5 || Math.abs(score * 10 - Math.round(score * 10)) > 0.001) {
+  if (
+    !Number.isFinite(score) ||
+    score < SCORE_MIN ||
+    score > SCORE_MAX ||
+    Math.abs(score / SCORE_STEP - Math.round(score / SCORE_STEP)) > 0.001
+  ) {
     return undefined;
   }
-  return Number.isInteger(score) ? String(score) : score.toFixed(1);
+  if (Number.isInteger(score)) {
+    return String(score);
+  }
+  if (Math.abs(score * 10 - Math.round(score * 10)) < 0.001) {
+    return score.toFixed(1);
+  }
+  return score.toFixed(2);
 }
 
 function normalizeWeightText(value: unknown, fallback: number) {
@@ -955,6 +1233,54 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function readBangumiSubjects(payload: unknown) {
+  if (!isRecord(payload) || !Array.isArray(payload.data)) {
+    return [];
+  }
+
+  return payload.data.flatMap((item): BangumiSubject[] => {
+    if (!isRecord(item) || typeof item.id !== "number" || typeof item.name !== "string" || typeof item.name_cn !== "string") {
+      return [];
+    }
+
+    const rating = isRecord(item.rating)
+      ? {
+        score: typeof item.rating.score === "number" ? item.rating.score : undefined,
+        rank: typeof item.rating.rank === "number" ? item.rating.rank : undefined,
+        total: typeof item.rating.total === "number" ? item.rating.total : undefined,
+      }
+      : undefined;
+    return [{
+      id: item.id,
+      name: item.name,
+      name_cn: item.name_cn,
+      date: typeof item.date === "string" ? item.date : undefined,
+      platform: typeof item.platform === "string" ? item.platform : undefined,
+      rating,
+    }];
+  });
+}
+
+function readBangumiTotal(payload: unknown) {
+  if (!isRecord(payload) || typeof payload.total !== "number") {
+    return 0;
+  }
+  return payload.total;
+}
+
+function formatBangumiSubjectName(subject: BangumiSubject) {
+  return normalizeName(subject.name_cn) || normalizeName(subject.name) || `Bangumi#${subject.id}`;
+}
+
+function formatBangumiSubjectMeta(subject: BangumiSubject) {
+  return [
+    subject.date,
+    subject.platform,
+    subject.rating?.score ? `评分 ${subject.rating.score.toFixed(1)}` : undefined,
+    subject.rating?.rank ? `排名 #${subject.rating.rank}` : undefined,
+  ].filter(Boolean).join(" / ");
+}
+
 async function readClipboardText() {
   if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
     throw new Error("Clipboard API unavailable");
@@ -987,7 +1313,7 @@ async function copyText(text: string) {
 <!-- markdownlint-enable MD011 -->
 <!-- autocorrect-enable -->
 
-通过相对比较，工具会按弹簧模型建立关系图，最后通过少量基准分将相对分值映射成绝对分值。
+通过相对比较，工具会按模型建立关系图，最后可以通过基准分将相对分值映射成绝对分值。
 
 <div class="anime-score-tool">
   <p
@@ -1107,7 +1433,7 @@ async function copyText(text: string) {
       class="anime-score-tool__relation-list"
     >
       <li
-        v-for="record in relationRecords"
+        v-for="record in pagedRelationRecords"
         :key="record.id"
       >
         <span>
@@ -1137,20 +1463,89 @@ async function copyText(text: string) {
         </button>
       </li>
     </ol>
+    <div
+      v-if="relationPageCount > 1"
+      class="anime-score-tool__relation-pager"
+    >
+      <button
+        type="button"
+        class="anime-score-tool__secondary-button"
+        :disabled="relationPage <= 1"
+        @click="goRelationPage(-1)"
+      >
+        上一页
+      </button>
+      <form
+        class="anime-score-tool__relation-jump"
+        @submit.prevent="jumpRelationPage"
+      >
+        <span>跳转到</span>
+        <input
+          v-model="relationPageInput"
+          type="number"
+          min="1"
+          :max="relationPageCount"
+          step="1"
+          aria-label="跳转页码"
+          @blur="jumpRelationPage"
+        >
+        <span>页</span>
+        <button
+          type="submit"
+          class="anime-score-tool__secondary-button"
+          :disabled="!canJumpRelationPage"
+        >
+          跳转
+        </button>
+      </form>
+      <span>{{ relationPageText }}</span>
+      <button
+        type="button"
+        class="anime-score-tool__secondary-button"
+        :disabled="relationPage >= relationPageCount"
+        @click="goRelationPage(1)"
+      >
+        下一页
+      </button>
+    </div>
     <p
       v-else
       class="anime-score-tool__empty"
     >
-      先录入至少一条关系。
+      请先录入至少一条关系。
     </p>
-    <button
-      v-if="hasRelations"
-      type="button"
-      class="anime-score-tool__secondary-button"
-      @click="clearRelations"
-    >
-      清空关系
-    </button>
+    <div class="anime-score-tool__transfer-actions">
+      <button
+        type="button"
+        class="anime-score-tool__secondary-button"
+        @click="importFromClipboard"
+      >
+        {{ importButtonText }}
+      </button>
+      <button
+        type="button"
+        class="anime-score-tool__secondary-button"
+        :disabled="!scoredItems.length"
+        @click="copyExportJson"
+      >
+        {{ exportButtonText }}
+      </button>
+      <button
+        type="button"
+        class="anime-score-tool__secondary-button"
+        @click="useTestData"
+      >
+        使用测试数据
+      </button>
+      <button
+        v-if="hasRelations"
+        type="button"
+        class="anime-score-tool__secondary-button"
+        @click="clearRelations"
+      >
+        清空已输入的关系
+      </button>
+    </div>
     <details class="anime-score-tool__advanced">
       <summary>高级选项</summary>
       <div class="anime-score-tool__weight-grid">
@@ -1159,65 +1554,207 @@ async function copyText(text: string) {
             <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--same">≈</strong>
             吸引强度
           </span>
-          <input
-            v-model="sameWeight"
-            type="range"
-            min="0"
-            max="10"
-            step="0.1"
-            aria-label="差不多吸引强度"
-            @input="updateSameWeight"
+          <div
+            class="anime-score-tool__weight-slider-control"
+            :style="weightSliderStyle(sameWeight)"
           >
-          <strong>{{ sameWeight }}</strong>
+            <div class="anime-score-tool__weight-slider-labels">
+              <strong>{{ sameWeight }}</strong>
+            </div>
+            <input
+              v-model="sameWeight"
+              type="range"
+              :min="WEIGHT_MIN"
+              :max="WEIGHT_MAX"
+              step="0.1"
+              aria-label="差不多吸引强度"
+              @input="updateSameWeight"
+            >
+          </div>
         </label>
         <label class="anime-score-tool__score-slider">
           <span>
             <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--better">&gt;</strong>
             排斥强度
           </span>
-          <input
-            v-model="betterWeight"
-            type="range"
-            min="0"
-            max="10"
-            step="0.1"
-            aria-label="好一点排斥强度"
-            @input="updateBetterWeight"
+          <div
+            class="anime-score-tool__weight-slider-control"
+            :style="weightSliderStyle(betterWeight)"
           >
-          <strong>{{ betterWeight }}</strong>
+            <div class="anime-score-tool__weight-slider-labels">
+              <strong>{{ betterWeight }}</strong>
+            </div>
+            <input
+              v-model="betterWeight"
+              type="range"
+              :min="WEIGHT_MIN"
+              :max="WEIGHT_MAX"
+              step="0.1"
+              aria-label="好一点排斥强度"
+              @input="updateBetterWeight"
+            >
+          </div>
         </label>
         <label class="anime-score-tool__score-slider">
           <span>
             <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--quite">&gt;&gt;</strong>
             排斥强度
           </span>
-          <input
-            v-model="quiteBetterWeight"
-            type="range"
-            min="0"
-            max="10"
-            step="0.1"
-            aria-label="好不少排斥强度"
-            @input="updateQuiteBetterWeight"
+          <div
+            class="anime-score-tool__weight-slider-control"
+            :style="weightSliderStyle(quiteBetterWeight)"
           >
-          <strong>{{ quiteBetterWeight }}</strong>
+            <div class="anime-score-tool__weight-slider-labels">
+              <strong>{{ quiteBetterWeight }}</strong>
+            </div>
+            <input
+              v-model="quiteBetterWeight"
+              type="range"
+              :min="WEIGHT_MIN"
+              :max="WEIGHT_MAX"
+              step="0.1"
+              aria-label="好不少排斥强度"
+              @input="updateQuiteBetterWeight"
+            >
+          </div>
         </label>
         <label class="anime-score-tool__score-slider">
           <span>
             <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--much">&gt;&gt;&gt;</strong>
             排斥强度
           </span>
-          <input
-            v-model="muchBetterWeight"
-            type="range"
-            min="0"
-            max="10"
-            step="0.1"
-            aria-label="好很多排斥强度"
-            @input="updateMuchBetterWeight"
+          <div
+            class="anime-score-tool__weight-slider-control"
+            :style="weightSliderStyle(muchBetterWeight)"
           >
-          <strong>{{ muchBetterWeight }}</strong>
+            <div class="anime-score-tool__weight-slider-labels">
+              <strong>{{ muchBetterWeight }}</strong>
+            </div>
+            <input
+              v-model="muchBetterWeight"
+              type="range"
+              :min="WEIGHT_MIN"
+              :max="WEIGHT_MAX"
+              step="0.1"
+              aria-label="好很多排斥强度"
+              @input="updateMuchBetterWeight"
+            >
+          </div>
         </label>
+      </div>
+    </details>
+    <details class="anime-score-tool__advanced">
+      <summary>使用 Bangumi 搜索</summary>
+      <form
+        class="anime-score-tool__bangumi-search"
+        @submit.prevent
+      >
+        <label>
+          <span class="anime-score-tool__label-with-link">
+            Bangumi access-token
+            <a
+              href="https://next.bgm.tv/demo/access-token"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              创建
+            </a>
+          </span>
+          <input
+            v-model="bangumiAccessToken"
+            autocomplete="off"
+            type="password"
+            placeholder="仅在浏览器本地使用"
+          >
+        </label>
+        <label>
+          <span>快速搜索</span>
+          <input
+            v-model="bangumiKeyword"
+            autocomplete="off"
+            placeholder="输入番剧名自动搜索"
+          >
+        </label>
+      </form>
+      <p
+        v-if="bangumiSearchStatus === 'loading' || bangumiSearchMessage"
+        class="anime-score-tool__hint"
+      >
+        {{ bangumiSearchStatus === "loading" ? "搜索中……" : bangumiSearchMessage }}
+      </p>
+      <ol
+        v-if="bangumiSearchResults.length"
+        class="anime-score-tool__bangumi-results"
+      >
+        <li
+          v-for="subject in bangumiSearchResults"
+          :key="subject.id"
+        >
+          <div>
+            <strong>{{ formatBangumiSubjectName(subject) }}</strong>
+            <span>{{ subject.name }}</span>
+            <small>{{ formatBangumiSubjectMeta(subject) }}</small>
+          </div>
+          <button
+            type="button"
+            class="anime-score-tool__secondary-button"
+            @click="setBangumiSubjectName('base', subject)"
+          >
+            设为基准
+          </button>
+          <button
+            type="button"
+            class="anime-score-tool__secondary-button"
+            @click="setBangumiSubjectName('compare', subject)"
+          >
+            设为比较
+          </button>
+        </li>
+      </ol>
+      <div
+        v-if="bangumiPageCount > 1"
+        class="anime-score-tool__relation-pager"
+      >
+        <button
+          type="button"
+          class="anime-score-tool__secondary-button"
+          :disabled="bangumiPage <= 1 || bangumiSearchStatus === 'loading'"
+          @click="goBangumiPage(-1)"
+        >
+          上一页
+        </button>
+        <form
+          class="anime-score-tool__relation-jump"
+          @submit.prevent="jumpBangumiPage"
+        >
+          <span>跳转到</span>
+          <input
+            v-model="bangumiPageInput"
+            type="number"
+            min="1"
+            :max="bangumiPageCount"
+            step="1"
+            aria-label="跳转 Bangumi 搜索页码"
+            @blur="jumpBangumiPage"
+          >
+          <span>页</span>
+          <button
+            type="submit"
+            class="anime-score-tool__secondary-button"
+            :disabled="!canJumpBangumiPage || bangumiSearchStatus === 'loading'"
+          >
+            跳转
+          </button>
+        </form>
+        <span>{{ bangumiPageText }}</span>
+        <button
+          type="button"
+          class="anime-score-tool__secondary-button"
+          :disabled="bangumiPage >= bangumiPageCount || bangumiSearchStatus === 'loading'"
+          @click="goBangumiPage(1)"
+        >
+          下一页
+        </button>
       </div>
     </details>
   </section>
@@ -1228,30 +1765,17 @@ async function copyText(text: string) {
   >
     <div class="anime-score-tool__label-row">
       <h2 id="compare-rater-graph-title">关系图</h2>
-      <div class="anime-score-tool__graph-actions">
-        <span v-if="animatedGraphItems.length">{{ graphZoomText }}</span>
+      <div
+        v-if="animatedGraphItems.length"
+        class="anime-score-tool__graph-actions"
+      >
+        <span>{{ graphZoomText }}</span>
         <button
-          v-if="animatedGraphItems.length"
           type="button"
           class="anime-score-tool__secondary-button"
           @click="resetGraphView"
         >
           重置视图
-        </button>
-        <button
-          type="button"
-          class="anime-score-tool__secondary-button"
-          @click="importFromClipboard"
-        >
-          {{ importButtonText }}
-        </button>
-        <button
-          type="button"
-          class="anime-score-tool__secondary-button"
-          :disabled="!scoredItems.length"
-          @click="copyExportJson"
-        >
-          {{ exportButtonText }}
         </button>
       </div>
     </div>
@@ -1344,57 +1868,73 @@ async function copyText(text: string) {
     >
       关系图会在录入关系后生成。
     </p>
+  </section>
+
+  <section
+    class="anime-score-tool__panel"
+    aria-labelledby="compare-rater-score-title"
+  >
     <div class="anime-score-tool__label-row">
-      <h3>绝对分值</h3>
+      <h2 id="compare-rater-score-title">分值映射</h2>
       <span>自动选择相对最佳和相对最差</span>
     </div>
-    <div class="anime-score-tool__anchor-grid">
-      <div class="anime-score-tool__anchor-card">
-        <div class="anime-score-tool__anchor-head">
-          <h3>相对最佳</h3>
-        </div>
-        <p class="anime-score-tool__anchor-name">
-          {{ bestAnchorName || "录入关系后自动选择" }}
-        </p>
-        <label class="anime-score-tool__score-slider">
-          <span>评分</span>
-          <input
-            v-model="bestAnchorScore"
-            type="range"
-            min="1"
-            max="5"
-            step="0.1"
-            aria-label="相对最佳评分"
-            @input="updateBestAnchorScore"
-          >
-          <strong>{{ formatScoreOption(bestAnchorScore) }}</strong>
-        </label>
-      </div>
-      <div class="anime-score-tool__anchor-card">
-        <div class="anime-score-tool__anchor-head">
+    <h3 class="anime-score-tool__subheading">绝对分值</h3>
+    <div class="anime-score-tool__anchor-card anime-score-tool__anchor-card--range">
+      <div class="anime-score-tool__anchor-summary">
+        <div>
           <h3>相对最差</h3>
+          <p class="anime-score-tool__anchor-name">
+            {{ worstAnchorName || "录入关系后自动选择" }}
+          </p>
         </div>
-        <p class="anime-score-tool__anchor-name">
-          {{ worstAnchorName || "录入关系后自动选择" }}
-        </p>
-        <label class="anime-score-tool__score-slider">
-          <span>评分</span>
-          <input
-            v-model="worstAnchorScore"
-            type="range"
-            min="1"
-            max="5"
-            step="0.1"
-            aria-label="相对最差评分"
-            @input="updateWorstAnchorScore"
+        <div>
+          <h3>相对最佳</h3>
+          <p class="anime-score-tool__anchor-name">
+            {{ bestAnchorName || "录入关系后自动选择" }}
+          </p>
+        </div>
+      </div>
+      <div
+        class="anime-score-tool__score-range"
+        :style="anchorScoreRangeStyle"
+      >
+        <div class="anime-score-tool__score-range-labels">
+          <span
+            class="anime-score-tool__score-range-value anime-score-tool__score-range-value--worst"
+            aria-hidden="true"
           >
-          <strong>{{ formatScoreOption(worstAnchorScore) }}</strong>
-        </label>
+            {{ formatScoreOption(worstAnchorScore) }}
+          </span>
+          <span
+            class="anime-score-tool__score-range-value anime-score-tool__score-range-value--best"
+            aria-hidden="true"
+          >
+            {{ formatScoreOption(bestAnchorScore) }}
+          </span>
+        </div>
+        <input
+          v-model="worstAnchorScore"
+          type="range"
+          :min="SCORE_MIN"
+          :max="SCORE_MAX"
+          :step="SCORE_STEP"
+          aria-label="相对最差评分"
+          @input="updateWorstAnchorScore"
+        >
+        <input
+          v-model="bestAnchorScore"
+          type="range"
+          :min="SCORE_MIN"
+          :max="SCORE_MAX"
+          :step="SCORE_STEP"
+          aria-label="相对最佳评分"
+          @input="updateBestAnchorScore"
+        >
       </div>
     </div>
     <div
       v-if="scoredItems.length"
-      class="anime-score-tool__label-row"
+      class="anime-score-tool__label-row anime-score-tool__score-heading"
     >
       <h3>最终得分</h3>
       <span>由关系图和绝对分值映射得到</span>
@@ -1423,7 +1963,42 @@ async function copyText(text: string) {
 
 ## 说明
 
-- “导出到剪贴板”保存的是用户输入表单，不保存当前算法算出的相对位置和分数。后续接入服务器后，可以用新版算法重新计算并聚合结果。
+### v1 算法
+
+#### 相对位置求解
+
+工具先把第 $i$ 部番映射成一个一维相对位置 $x_i$，数值越大表示相对越好。
+
+- $A \approx B$ 是等式吸引，目标是 $x_A - x_B = 0$。
+- $A > B$、$A >> B$、$A >>> B$ 是方向约束，默认下限分别是 $0.5$、$1$、$2$：
+
+$$
+x_A - x_B \ge d
+$$
+
+- 如果差距不足，算法用较强的力把两点推开；如果差距已经满足，只用很弱的力把多余空隙拉回标称差距 $d$。这样“至少好很多”不会反向压缩已经被其它链条推出的更大差距。
+- 同一个节点下同档关系会轻微对齐。例如 $A > B$ 和 $A > C$ 会尽量让 $B$、$C$ 接近同一高度，但仍保留其它关系造成的必要差异。
+- 互相没有关系连接的节点组会分别求解；组与组之间没有可比较的相对高低，图上的横向摆放只用于展示。
+
+关系图只用于展示：纵向来自相对位置，越上方越高；横向用于减少重叠和交叉。箭头从高分指向低分，`≈` 使用无箭头的吸引线。
+
+#### 绝对评分映射
+
+相对位置是核心结果。绝对评分映射只是一个扩展输出，用来把相对结果放进用户设定的评分区间，方便阅读和提交。
+
+工具用“相对最佳”和“相对最差”的评分做线性映射。最终评分记为 $s_i$；其中 $x_{best}, s_{best}$ 表示相对最佳节点的相对位置和评分，$x_{worst}, s_{worst}$ 表示相对最差节点的相对位置和评分：
+
+$$
+s_i = s_{worst} + \frac{x_i - x_{worst}}{x_{best} - x_{worst}}(s_{best} - s_{worst})
+$$
+
+### 导出功能
+
+“导出到剪贴板”保存的是用户输入表单，不保存当前算法算出的相对位置和分数。后续即使调整算法，也可以用同一份表单重新计算。
+
+### 数据来源
+
+快速搜索功能使用 [Bangumi](https://bgm.tv/) 提供的 API，在此表示感谢。
 
 <style scoped>
 .anime-score-tool {
@@ -1461,11 +2036,31 @@ async function copyText(text: string) {
   font-size: 0.96rem;
 }
 
+.anime-score-tool__subheading {
+  color: color-mix(in srgb, var(--vp-c-text-1) 82%, var(--vp-c-text-2) 18%);
+}
+
+.anime-score-tool__score-heading {
+  margin-top: 4px;
+}
+
 .anime-score-tool label {
   display: grid;
   gap: 5px;
   min-width: 0;
   font-weight: 600;
+}
+
+.anime-score-tool__label-with-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.anime-score-tool__label-with-link a {
+  font-size: 0.86rem;
+  font-weight: 700;
 }
 
 .anime-score-tool input,
@@ -1532,8 +2127,76 @@ async function copyText(text: string) {
   font-variant-numeric: tabular-nums;
 }
 
-.anime-score-tool__scope-grid,
-.anime-score-tool__anchor-grid {
+.anime-score-tool__transfer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.anime-score-tool__bangumi-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  align-items: end;
+}
+
+.anime-score-tool__bangumi-search label {
+  gap: 3px;
+  font-size: 0.9rem;
+}
+
+.anime-score-tool__bangumi-search input {
+  min-height: 34px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-radius: 8px;
+}
+
+.anime-score-tool__bangumi-results {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.anime-score-tool__bangumi-results li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 90%, transparent);
+  border-radius: 8px;
+  background: var(--vp-c-bg);
+}
+
+.anime-score-tool__bangumi-results div {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.anime-score-tool__bangumi-results strong,
+.anime-score-tool__bangumi-results span,
+.anime-score-tool__bangumi-results small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.anime-score-tool__bangumi-results span,
+.anime-score-tool__bangumi-results small,
+.anime-score-tool__hint {
+  color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
+  font-size: 0.84rem;
+}
+
+.anime-score-tool__hint {
+  margin: 0;
+}
+
+.anime-score-tool__scope-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -1638,6 +2301,43 @@ async function copyText(text: string) {
   font-size: 0.84rem;
 }
 
+.anime-score-tool__relation-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.anime-score-tool__relation-pager > span {
+  color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.anime-score-tool__relation-pager button {
+  min-height: 30px;
+  padding: 4px 10px;
+}
+
+.anime-score-tool__relation-jump {
+  display: grid;
+  grid-template-columns: auto 64px auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.anime-score-tool__relation-jump > span {
+  color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
+  font-size: 0.86rem;
+}
+
+.anime-score-tool__relation-jump input {
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
 .anime-score-tool__advanced {
   border-top: 1px solid var(--vp-c-divider);
   padding-top: 6px;
@@ -1657,6 +2357,117 @@ async function copyText(text: string) {
   margin-top: 8px;
 }
 
+.anime-score-tool__score-slider {
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.anime-score-tool__score-slider > span {
+  padding-bottom: 7px;
+  color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
+  font-size: 0.9rem;
+}
+
+.anime-score-tool__weight-slider-control {
+  --weight-value-pos: 0%;
+  --weight-thumb-size: 16px;
+  --weight-track-inset: calc(var(--weight-thumb-size) / 2);
+  position: relative;
+  height: 38px;
+}
+
+.anime-score-tool__weight-slider-labels {
+  position: absolute;
+  top: 0;
+  right: var(--weight-track-inset);
+  left: var(--weight-track-inset);
+  height: 18px;
+  pointer-events: none;
+}
+
+.anime-score-tool__weight-slider-labels > strong {
+  position: absolute;
+  top: 0;
+  left: var(--weight-value-pos);
+  min-width: 28px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-1);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.anime-score-tool__weight-slider-control > input {
+  appearance: none;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--vp-c-brand-1);
+  cursor: pointer;
+}
+
+.anime-score-tool__weight-slider-control > input:focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+
+.anime-score-tool__weight-slider-control > input::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--vp-c-divider);
+}
+
+.anime-score-tool__weight-slider-control > input::-webkit-slider-thumb {
+  appearance: none;
+  width: var(--weight-thumb-size);
+  height: var(--weight-thumb-size);
+  margin-top: -5px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--vp-c-brand-1);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.18);
+}
+
+.anime-score-tool__weight-slider-control > input:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent),
+    0 2px 8px rgb(15 23 42 / 0.18);
+}
+
+.anime-score-tool__weight-slider-control > input::-moz-range-track {
+  height: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--vp-c-divider);
+}
+
+.anime-score-tool__weight-slider-control > input::-moz-range-thumb {
+  width: var(--weight-thumb-size);
+  height: var(--weight-thumb-size);
+  border: 0;
+  border-radius: 999px;
+  background: var(--vp-c-brand-1);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.18);
+}
+
+.anime-score-tool__weight-slider-control > input:focus-visible::-moz-range-thumb {
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent),
+    0 2px 8px rgb(15 23 42 / 0.18);
+}
+
 .anime-score-tool__empty {
   margin: 0;
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
@@ -1671,29 +2482,28 @@ async function copyText(text: string) {
 
 .anime-score-tool__anchor-card {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   padding: 12px;
   border: 1px solid var(--vp-c-divider);
   border-radius: 10px;
   background: var(--vp-c-bg);
 }
 
-.anime-score-tool__anchor-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.anime-score-tool__anchor-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.anime-score-tool__anchor-head button {
-  min-height: 32px;
-  padding: 5px 10px;
-  font-size: 0.86rem;
+.anime-score-tool__anchor-summary > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 
 .anime-score-tool__anchor-name {
   margin: 0;
-  min-height: 38px;
+  min-height: 34px;
   padding: 8px 10px;
   overflow-wrap: anywhere;
   border: 1px solid var(--vp-c-divider);
@@ -1704,32 +2514,131 @@ async function copyText(text: string) {
   line-height: 1.45;
 }
 
-.anime-score-tool__score-slider {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
+.anime-score-tool__score-range {
+  --score-range-start: 0%;
+  --score-range-end: 100%;
+  --score-thumb-size: 18px;
+  --score-track-inset: calc(var(--score-thumb-size) / 2);
+  --score-track-y: 27px;
+  position: relative;
+  height: 42px;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0,
+      transparent var(--score-range-start),
+      color-mix(in srgb, var(--vp-c-brand-1) 72%, var(--vp-c-brand-soft)) var(--score-range-start),
+      color-mix(in srgb, var(--vp-c-brand-1) 72%, var(--vp-c-brand-soft)) var(--score-range-end),
+      transparent var(--score-range-end),
+      transparent 100%
+    ),
+    linear-gradient(90deg, var(--vp-c-divider), var(--vp-c-divider));
+  /* 下方 30px 是实际滑条区域，底条中心与原生手柄中心对齐。 */
+  background-position: center var(--score-track-y);
+  background-repeat: no-repeat;
+  background-size: calc(100% - var(--score-thumb-size)) 8px;
 }
 
-.anime-score-tool__score-slider > span {
-  color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
-  font-size: 0.9rem;
+.anime-score-tool__score-range-labels {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: var(--score-track-inset);
+  left: var(--score-track-inset);
+  height: 20px;
+  pointer-events: none;
 }
 
-.anime-score-tool__score-slider > input {
-  width: 100%;
-  min-height: 28px;
-  padding: 0;
-  accent-color: var(--vp-c-brand-1);
-  cursor: pointer;
-}
-
-.anime-score-tool__score-slider > strong {
-  min-width: 58px;
+.anime-score-tool__score-range-value {
+  position: absolute;
+  top: 0;
+  min-width: 32px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--vp-c-bg-soft);
   color: var(--vp-c-text-1);
-  font-size: 0.92rem;
+  font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.anime-score-tool__score-range-value--worst {
+  left: var(--score-range-start);
+}
+
+.anime-score-tool__score-range-value--best {
+  left: var(--score-range-end);
+}
+
+.anime-score-tool__score-range > input {
+  appearance: none;
+  position: absolute;
+  top: 12px;
+  right: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+.anime-score-tool__score-range > input:focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+
+.anime-score-tool__score-range > input::-webkit-slider-runnable-track {
+  height: 8px;
+  background: transparent;
+}
+
+.anime-score-tool__score-range > input::-webkit-slider-thumb {
+  appearance: none;
+  width: var(--score-thumb-size);
+  height: var(--score-thumb-size);
+  margin-top: -5px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--vp-c-brand-1);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.2);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.anime-score-tool__score-range > input:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent),
+    0 2px 8px rgb(15 23 42 / 0.2);
+}
+
+.anime-score-tool__score-range > input::-moz-range-track {
+  height: 8px;
+  border: 0;
+  background: transparent;
+}
+
+.anime-score-tool__score-range > input::-moz-range-thumb {
+  width: var(--score-thumb-size);
+  height: var(--score-thumb-size);
+  border: 0;
+  border-radius: 999px;
+  background: var(--vp-c-brand-1);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.2);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.anime-score-tool__score-range > input:focus-visible::-moz-range-thumb {
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent),
+    0 2px 8px rgb(15 23 42 / 0.2);
 }
 
 .anime-score-tool__graph {
@@ -1920,7 +2829,7 @@ async function copyText(text: string) {
   color: var(--vp-c-white);
 }
 
-.anime-score-tool input:focus-visible,
+.anime-score-tool input:not([type="range"]):focus-visible,
 .anime-score-tool select:focus-visible,
 .anime-score-tool button:focus-visible {
   outline: none;
@@ -1931,7 +2840,7 @@ async function copyText(text: string) {
 @media (max-width: 760px) {
   .anime-score-tool__label-row,
   .anime-score-tool__scope-grid,
-  .anime-score-tool__anchor-grid,
+  .anime-score-tool__bangumi-search,
   .anime-score-tool__relation-form {
     grid-template-columns: 1fr;
   }
@@ -1947,6 +2856,24 @@ async function copyText(text: string) {
 
   .anime-score-tool__graph-actions {
     justify-content: stretch;
+  }
+
+  .anime-score-tool__bangumi-results li {
+    grid-template-columns: 1fr;
+  }
+
+  .anime-score-tool__relation-pager {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .anime-score-tool__relation-jump {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+  }
+
+  .anime-score-tool__transfer-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .anime-score-tool__graph-actions > span {

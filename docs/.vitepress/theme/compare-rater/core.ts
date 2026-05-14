@@ -37,7 +37,7 @@ export interface ScoreAnchor {
   score: number;
 }
 
-/** 用于把相对位置映射到 1-5 分的最高/最低评分锚点。 */
+/** 用于把相对位置映射到绝对分的相对最佳/相对最差评分锚点。 */
 export interface ScoreAnchors {
   best?: ScoreAnchor;
   worst?: ScoreAnchor;
@@ -80,21 +80,37 @@ interface GraphEdgeEndpoints {
   toSide: -1 | 0 | 1;
 }
 
+// 节点 CSS 尺寸也是 13% x 7%，这里用同一比例做碰撞和边端点裁剪。
 const GRAPH_NODE_WIDTH = 13;
 const GRAPH_NODE_HEIGHT = 7;
 const GRAPH_EDGE_NODE_HALF_WIDTH = GRAPH_NODE_WIDTH / 2;
 const GRAPH_EDGE_NODE_HALF_HEIGHT = GRAPH_NODE_HEIGHT / 2;
+// 横向距离小于约一个节点宽时，近垂直边优先从同侧绕出。
 const GRAPH_VERTICAL_EDGE_ROUTE_WIDTH = GRAPH_NODE_WIDTH * 1.25;
+// 横向距离小于半个多节点宽时，两端走同侧，避免左右侧切换产生 S 形硬弯。
 const GRAPH_SAME_SIDE_EDGE_ROUTE_WIDTH = GRAPH_NODE_WIDTH * 0.75;
+// 侧边端口额外留出的横向绘图空隙，单位是 SVG 百分比坐标。
 const GRAPH_SIDE_EDGE_REPULSION_GAP = 4;
+// 节点纵向使用 8%-92% 的主区域，给边框和“高/低”角标留出上下边距。
 const GRAPH_VERTICAL_SPREAD = 84;
+// 少量节点时的基础图高度；再小会挤压节点内两行文字。
 const GRAPH_VIEWPORT_BASE_HEIGHT = 380;
+// 每增加 1 个相对位置跨度，视口增加的像素高度。
 const GRAPH_VIEWPORT_OFFSET_HEIGHT = 48;
+// 限制关系图面板高度，避免极端输入把页面撑得过长。
 const GRAPH_VIEWPORT_MAX_HEIGHT = 620;
+// 绝对评分扩展输出的默认范围；相对位置求解本身不依赖这个范围。
+const SCORE_MIN = 1;
+const SCORE_MAX = 10;
+// 迭代次数给约束松弛足够收敛空间；图规模很小，2000 次仍然很轻。
 const OFFSET_SOLVER_ITERATIONS = 2000;
+// 下限未满足时的主推力，偏大一点让明显违反关系能快速拉开。
 const OFFSET_SOLVER_STEP = 0.18;
+// 下限满足后的弱回拉，只收掉多余空隙，不压坏链条推出的必要差距。
 const OFFSET_SOLVER_SLACK_STEP = 0.005;
+// 同源同档目标的对齐力，弱于主推力，避免覆盖其它关系。
 const OFFSET_SOLVER_SIBLING_STEP = 0.08;
+// 收敛容差；小于展示精度很多，避免可见抖动。
 const OFFSET_SOLVER_EPSILON = 1e-5;
 
 /**
@@ -214,12 +230,12 @@ export function buildGraphEdges(
 }
 
 /**
- * 把相对位置映射成 1-5 分。
+ * 把相对位置映射成绝对分。
  *
- * 若同时存在最高和最低锚点，会使用二者建立线性映射；若只有一个锚点，则按相对位置差值平移。
+ * 若同时存在相对最佳和相对最差锚点，会使用二者建立线性映射；若只有一个锚点，则按相对位置差值平移。
  *
  * @param items - 已计算相对位置的节点。
- * @param anchors - 用户给出的最高/最低评分锚点。
+ * @param anchors - 用户给出的相对最佳/相对最差评分锚点。
  * @returns 以番剧名索引的分数表，未能映射时值为 `undefined`。
  */
 export function mapScores(items: readonly AnimeItem[], anchors: ScoreAnchors) {
@@ -293,13 +309,13 @@ export function clampNumber(value: number, minValue: number, maxValue: number) {
 }
 
 /**
- * 把评分限制在工具允许的 1-5 分范围内。
+ * 把评分限制在工具允许的绝对评分范围内。
  *
  * @param value - 原始评分。
  * @returns 限制后的评分。
  */
 export function clampScore(value: number) {
-  return Math.min(Math.max(value, 1), 5);
+  return Math.min(Math.max(value, SCORE_MIN), SCORE_MAX);
 }
 
 /**
@@ -604,11 +620,14 @@ function getEffectiveCurveOffset(
     return curveOffset;
   }
   if (Math.abs(edgeDraft.fromY - edgeDraft.toY) < 1) {
+    // 同高顶部连线只需要轻微拱起，4% 足够看出曲线又不抢节点空间。
     return 4;
   }
   if (Math.abs(edgeDraft.fromX - edgeDraft.toX) < GRAPH_VERTICAL_EDGE_ROUTE_WIDTH) {
+    // 近垂直线绕到左右侧时需要比普通曲线更明显，7% 大约是半个节点宽。
     return getVerticalEdgeSide(edgeDraft, items, records) * 7;
   }
+  // 普通斜线给 3% 默认弯曲，避免大量直线显得生硬。
   return 3;
 }
 
@@ -637,6 +656,7 @@ function getVerticalEdgeSideClearance(
   records: readonly RelationRecord[],
   side: -1 | 1,
 ) {
+  // 走廊放在节点边缘外约 7%，用来估算这侧是否会撞到其它节点。
   const corridorX = (edgeDraft.fromX + edgeDraft.toX) / 2 + side * (GRAPH_EDGE_NODE_HALF_WIDTH + 7);
   const minY = Math.min(edgeDraft.fromY, edgeDraft.toY) - GRAPH_NODE_HEIGHT;
   const maxY = Math.max(edgeDraft.fromY, edgeDraft.toY) + GRAPH_NODE_HEIGHT;
@@ -682,6 +702,7 @@ function getEndpointSideUsagePenalty(
 
       const neighborSide = Math.sign(neighbor.x - endpoint.x);
       if (neighborSide === side) {
+        // 已有端口占用比普通节点遮挡更该避开，所以给一个足以翻转左右选择的惩罚。
         penalty += 40;
       }
     }
@@ -692,6 +713,7 @@ function getEndpointSideUsagePenalty(
 
 /** 计算近同高边的顶部二次贝塞尔控制点。 */
 function getTopSideEdgeControl(endpoints: GraphEdgeEndpoints, curveOffset: number) {
+  // 顶部线最少抬 5%，否则短边几乎看不出弧度。
   const lift = Math.max(Math.abs(curveOffset), 5);
   return {
     x: (endpoints.x1 + endpoints.x2) / 2,
@@ -727,7 +749,9 @@ function getOppositeSideEdgeControls(endpoints: GraphEdgeEndpoints, curveOffset:
     };
   }
 
+  // 水平手柄约占横距 42%，但最多 9%，防止远距离边过度外扩。
   const horizontalHandle = Math.max(absCurveOffset, Math.min(Math.abs(deltaX) * 0.42, 9));
+  // 垂直手柄随高度差增长，至少 1.2% 才不会退化成折线感。
   const verticalHandle = Math.min(Math.abs(deltaY) / 3, Math.max(1.2, Math.abs(deltaY) * 0.18));
   const verticalDirection = deltaY >= 0 ? 1 : -1;
   return {
@@ -745,6 +769,7 @@ function getParallelEdgeOffset(index: number, count: number) {
   }
   const distance = Math.floor(index / 2) + 1;
   const direction = index % 2 === 0 ? -1 : 1;
+  // 平行边每层错开 5%，足够区分，又不会绕出节点区域太远。
   return direction * distance * 5;
 }
 
@@ -768,7 +793,9 @@ function getGraphEdgeLineKey(x1: number, y1: number, x2: number, y2: number) {
     unitY *= -1;
   }
 
+  // 24 个角度桶约等于每 7.5 度一档，用来合并视觉上近似共线的边。
   const angleBucket = Math.round(Math.atan2(unitY, unitX) / (Math.PI / 24));
+  // 法向偏移每 3% 一档，避免几乎同线的边被分散到不同组。
   const offsetBucket = Math.round((x1 * unitY - y1 * unitX) / 3);
   return `${angleBucket}:${offsetBucket}`;
 }
@@ -968,14 +995,17 @@ function getSingleGraphRowItemScore(
     }
 
     const verticalGap = Math.abs(other.y - item.y);
+    // 只惩罚相邻几层的无关节点；超过三倍节点高度基本不会视觉互挡。
     if (verticalGap > GRAPH_NODE_HEIGHT * 3) {
       continue;
     }
 
     const horizontalGap = Math.abs(other.x - item.x);
+    // 两个多节点宽以内开始算拥挤，垂直越近惩罚越强。
     proximityPenalty +=
       Math.max(0, GRAPH_NODE_WIDTH * 2.2 - horizontalGap) * (1 - verticalGap / (GRAPH_NODE_HEIGHT * 3));
   }
+  // 无关近邻只是次要避让，权重压到 0.35 防止压过直接连线长度。
   return directRelationScore + proximityPenalty * 0.35;
 }
 
@@ -991,6 +1021,7 @@ function getSideEdgeRepulsionScore(item: AnimeItem, neighbor: AnimeItem) {
   }
 
   const sideEdgeGap = horizontalGap - GRAPH_NODE_WIDTH;
+  // 侧边线留白不足时给候选位置加重罚，避免边贴着卡片挤过去。
   return Math.max(0, GRAPH_SIDE_EDGE_REPULSION_GAP - sideEdgeGap) * 8;
 }
 
@@ -1177,16 +1208,19 @@ function layoutLeafItemsWithNeighbors(items: readonly AnimeItem[], records: read
 /** 给叶子节点选择相对唯一邻居最直觉的位置。 */
 function getLeafItemX(item: AnimeItem, neighbor: AnimeItem, items: readonly AnimeItem[]) {
   const alignedClearance = getRowClearance(item, neighbor.x, items);
+  // 同列至少留出一个节点宽再加 2% 呼吸空间，叶子才直接挂在邻居正上/下。
   if (alignedClearance >= GRAPH_NODE_WIDTH + 2) {
     return neighbor.x;
   }
 
+  // 同列不够时左右挂 18%，约一个半节点宽，通常能避开邻居列。
   const leafOffset = 18;
   const candidates = [clampNumber(neighbor.x - leafOffset, 8, 92), clampNumber(neighbor.x + leafOffset, 8, 92)];
   return candidates
     .map((x) => ({
       x,
       clearance: getRowClearance(item, x, items),
+      // 两侧都可用时略偏离中心，让主干区域优先留给高连接度节点。
       centerPenalty: Math.abs(x - 50) * 0.01,
     }))
     .toSorted((left, right) => {
@@ -1215,6 +1249,7 @@ function getRowClearance(item: AnimeItem, x: number, items: readonly AnimeItem[]
  */
 function layoutGraphRowItems(items: readonly AnimeItem[], nodeDegrees: ReadonlyMap<string, number>, centerX: number) {
   const centerItem = findGraphRowCenterItem(items, nodeDegrees);
+  // 同层最多每 27% 放一个节点；节点多时压到 81% 可用宽度内。
   const rowStep = Math.min(27, 81 / Math.max(items.length, 1));
 
   if (!centerItem) {
@@ -1363,6 +1398,7 @@ function avoidGraphItemOverlap(items: readonly AnimeItem[], records: readonly Re
       return pairKey === undefined ? [] : [pairKey];
     }),
   );
+  // 30 轮足够把小图里的重叠逐步推开，继续增加收益很低。
   for (let iteration = 0; iteration < 30; iteration += 1) {
     const sidePortSides = getGraphSidePortSides(relaxedItems, records);
     for (let leftIndex = 0; leftIndex < relaxedItems.length; leftIndex += 1) {
@@ -1380,6 +1416,7 @@ function avoidGraphItemOverlap(items: readonly AnimeItem[], records: readonly Re
           continue;
         }
 
+        // 每侧推开一半重叠，再加 0.35% 防止刚好贴边。
         const pushX = (overlapX / 2 + 0.35) * (deltaX >= 0 ? 1 : -1);
         left.x = clampNumber(left.x - pushX, 8, 92);
         right.x = clampNumber(right.x + pushX, 8, 92);
@@ -1434,6 +1471,7 @@ function applySideEdgeRepulsion(left: AnimeItem, right: AnimeItem, relationPairK
     return;
   }
 
+  // 关系两端太近时各退一半，再加 0.2% 防止线贴边。
   const pushX = ((targetGap - horizontalGap) / 2 + 0.2) * (deltaX >= 0 ? 1 : -1);
   left.x = clampNumber(left.x - pushX, 8, 92);
   right.x = clampNumber(right.x + pushX, 8, 92);
@@ -1461,6 +1499,7 @@ function repelFromSidePort(owner: AnimeItem, other: AnimeItem, side: -1 | 1) {
   }
 
   const verticalGap = Math.abs(other.y - owner.y);
+  // 端口斥力只影响相邻高度，1.4 倍节点高外基本不会视觉冲突。
   const verticalRange = GRAPH_NODE_HEIGHT * 1.4;
   if (verticalGap >= verticalRange) {
     return;
@@ -1473,6 +1512,7 @@ function repelFromSidePort(owner: AnimeItem, other: AnimeItem, side: -1 | 1) {
   }
 
   const falloff = 1 - verticalGap / verticalRange;
+  // 端口斥力比实体碰撞弱，0.16 只做视觉疏散；主要让靠近端口的节点移动。
   const pushX = (targetGap - horizontalGap + 0.15) * falloff * 0.16;
   owner.x = clampNumber(owner.x - side * pushX * 0.35, 8, 92);
   other.x = clampNumber(other.x + side * pushX * 0.65, 8, 92);

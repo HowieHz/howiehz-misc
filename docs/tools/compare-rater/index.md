@@ -32,7 +32,7 @@ import {
   workTypeOptions,
   type WorkType,
 } from "../../.vitepress/theme/compare-rater/presets";
-import { compareRaterTestData } from "../../.vitepress/theme/compare-rater/test-data";
+import { createCompareRaterTestData } from "../../.vitepress/theme/compare-rater/test-data";
 
 type AnchorRole = "best" | "worst";
 type TransferStatus = "idle" | "success" | "error";
@@ -971,7 +971,7 @@ function useTestData() {
     return;
   }
 
-  const importedCount = importPayload(compareRaterTestData);
+  const importedCount = importPayload(createCompareRaterTestData());
   setExportStatus("idle");
   setImportStatus("idle");
   announcement.value = `已载入测试数据，共 ${importedCount} 条关系。`;

@@ -1,6 +1,7 @@
 export const compareRaterTestData = {
   schema: "compare-rater-form",
   schemaVersion: 1,
+  workType: "动画",
   field: "科幻",
   aspect: "剧情&叙事",
   relations: [

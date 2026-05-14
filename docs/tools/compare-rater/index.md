@@ -3,7 +3,7 @@ publish: false
 published: 2026-05-14T10:30:00+08:00
 ---
 
-# 番剧比较评分器 v1
+# 相对评分器 v1
 
 <!-- autocorrect-disable -->
 <!-- markdownlint-disable MD011 -->
@@ -67,6 +67,8 @@ interface BangumiSubject {
   };
 }
 
+type WorkType = "动画" | "书籍" | "音乐" | "游戏";
+
 const relationLevels = [
   { value: "much-better", label: "好很多", symbol: ">>>", delta: 2 },
   { value: "quite-better", label: "好不少", symbol: ">>", delta: 1 },
@@ -87,7 +89,14 @@ const defaultRelationWeights = {
 } as const satisfies RelationWeights;
 const relationLevelMeta = new Map(relationLevels.map((level) => [level.value, level]));
 
-const animeTypeOptions = [
+const workTypeOptions = [
+  { label: "动画", bangumiSubjectType: 2 },
+  { label: "书籍", bangumiSubjectType: 1 },
+  { label: "音乐", bangumiSubjectType: 3 },
+  { label: "游戏", bangumiSubjectType: 4 },
+] as const satisfies readonly { label: WorkType; bangumiSubjectType: number }[];
+
+const fieldOptions = [
   "无细分",
   "科幻",
   "喜剧",
@@ -119,32 +128,121 @@ const animeTypeOptions = [
   "职场",
 ] as const;
 
-const aspectOptions = [
-  {
-    label: "剧情&叙事",
-    description: "作品的故事骨架。涵盖逻辑自洽、节奏把控、结构完整度、伏笔回收与信息密度。这是“讲什么”和“怎么讲”的核心。",
-  },
-  {
-    label: "角色&演绎",
-    description: "人物的灵魂与声音。涵盖角色塑造的立体度、成长弧光、行为合理性，以及声优的演技贴合度与情感爆发力。声优在此维度内，因为声音是让角色活起来的最后一环。",
-  },
-  {
-    label: "画面&美术",
-    description: "视觉的第一冲击力。涵盖作画稳定与流畅度、美术风格与光影氛围、角色道具设计感、摄影及特效与 CGI 的融合水准。",
-  },
-  {
-    label: "音乐&音效",
-    description: "听觉的沉浸网。涵盖背景音乐的情绪烘托、旋律记忆点、环境音效的真实感与爽感、主题曲与作品的契合度。",
-  },
-  {
-    label: "演出&导演",
-    description: "将剧本转化为影像的魔法。涵盖分镜构图的叙事效率、剪辑转场的节奏、氛围情绪的视觉营造、名场面的镜头冲击力。这是区别于漫画的动画独有维度。",
-  },
-  {
-    label: "思想&设定",
-    description: "作品的长尾余韵。涵盖世界观的独创性与自洽性、核心主题的探讨深度、人文关怀与现实映射，以及对观众留下的思考后劲。",
-  },
-] as const satisfies readonly AspectOption[];
+const commonAspectOption = {
+  label: "综合",
+  description: "整体体验的总判断。适合不想拆维度时使用，综合该类型作品的主要评价因素。",
+} as const satisfies AspectOption;
+
+const aspectOptionsByWorkType = {
+  动画: [
+    commonAspectOption,
+    {
+      label: "剧情&叙事",
+      description: "作品的故事骨架。涵盖逻辑自洽、节奏把控、结构完整度、伏笔回收与信息密度。这是“讲什么”和“怎么讲”的核心。",
+    },
+    {
+      label: "角色&演绎",
+      description: "人物的灵魂与声音。涵盖角色塑造的立体度、成长弧光、行为合理性，以及声优的演技贴合度与情感爆发力。声优在此维度内，因为声音是让角色活起来的最后一环。",
+    },
+    {
+      label: "画面&美术",
+      description: "视觉的第一冲击力。涵盖作画稳定与流畅度、美术风格与光影氛围、角色道具设计感、摄影及特效与 CGI 的融合水准。",
+    },
+    {
+      label: "音乐&音效",
+      description: "听觉的沉浸网。涵盖背景音乐的情绪烘托、旋律记忆点、环境音效的真实感与爽感、主题曲与作品的契合度。",
+    },
+    {
+      label: "演出&导演",
+      description: "将剧本转化为影像的魔法。涵盖分镜构图的叙事效率、剪辑转场的节奏、氛围情绪的视觉营造、名场面的镜头冲击力。这是区别于漫画的动画独有维度。",
+    },
+    {
+      label: "思想&设定",
+      description: "作品的长尾余韵。涵盖世界观的独创性与自洽性、核心主题的探讨深度、人文关怀与现实映射，以及对观众留下的思考后劲。",
+    },
+  ],
+  书籍: [
+    commonAspectOption,
+    {
+      label: "叙事&结构",
+      description: "故事的骨架。包括情节推进、节奏、叙事视角、时间线设计、章节布局与悬念设置。",
+    },
+    {
+      label: "角色&深度",
+      description: "人物的灵魂。涵盖角色塑造的立体度、心理真实感、成长弧光、行为动机，以及群像关系的张力。",
+    },
+    {
+      label: "文笔&风格",
+      description: "文字的质感。语言的诗性、准确性、节奏感、修辞水平，以及作者的个人风格辨识度。这是书籍独有的“画布”。",
+    },
+    {
+      label: "氛围&意象",
+      description: "无形的包裹感。涵盖文字营造的情绪气氛、画面感、象征与隐喻的运用，以及整体基调的统一性。",
+    },
+    {
+      label: "思想&洞见",
+      description: "作品的长尾余韵。涵盖核心议题的深刻性、哲学思辨、社会批判、人性洞察，以及留给读者的思考后劲。",
+    },
+    {
+      label: "完成度&格局",
+      description: "作品的最终答卷。涵盖整体结构的完整度、结尾的力度、长篇作品前后的一致性，以及作品的创新性、野心与影响。",
+    },
+  ],
+  音乐: [
+    commonAspectOption,
+    {
+      label: "旋律&和声",
+      description: "音乐的“叙事线”。旋律的记忆点、美感与情绪承载力；和声进行的丰富度、色彩与张力。这是最直观的“故事”。",
+    },
+    {
+      label: "节奏&律动",
+      description: "音乐的“骨架”。节拍的复杂与巧思、速度变化、不同节奏型的配合，以及是否有令人沉浸的律动感。",
+    },
+    {
+      label: "编曲&配器",
+      description: "音乐的听觉画面。涵盖不同乐器音色的选择与搭配、织体层次的丰满度、段落间的动态对比，以及整体声音空间的组织。",
+    },
+    {
+      label: "演绎&表达",
+      description: "音乐的“角色与声优”。人声或器乐演奏的技术水准、音色控制、情感投入与分寸感。是让乐谱活起来的核心。",
+    },
+    {
+      label: "制作&音质",
+      description: "音乐的“摄影与后期”。录音质量、混音的空间感与清晰度、母带的动态处理，以及整体的听感舒适度。这是纯粹的技术维度，却直接影响沉浸感。",
+    },
+    {
+      label: "创新&感染",
+      description: "音乐的长尾后劲。涵盖风格突破、流派边界探索、情感共鸣强度，以及作品整体传达出的艺术高度。",
+    },
+  ],
+  游戏: [
+    commonAspectOption,
+    {
+      label: "玩法&机制",
+      description: "游戏的核心骨架。规则的趣味性、操作手感、关卡与系统设计的深度与平衡性、正反馈循环的驱动力。",
+    },
+    {
+      label: "叙事&角色",
+      description: "游戏的故事灵魂。涵盖主支线剧情质量、叙事手法、角色塑造、玩家代入感，以及叙事与玩法的结合度。",
+    },
+    {
+      label: "世界&设计",
+      description: "游戏的舞台。涵盖世界观概念、场景与地图设计的引导性和探索感、物品设计，以及界面（UI）的清晰度与美感。",
+    },
+    {
+      label: "视觉&氛围",
+      description: "游戏的整体画面表现。涵盖技术层面的画质、美术风格与光影氛围、动画表现、特效质量，以及游玩过程中的视觉反馈。",
+    },
+    {
+      label: "音频&配乐",
+      description: "游戏的声音沉浸。涵盖音乐的情绪烘托与旋律记忆、环境音效的真实感、语音表现，以及操作音效反馈。",
+    },
+    {
+      label: "体验&完成度",
+      description: "游戏的整体打磨。涵盖技术稳定性、性能优化、交互界面的易用性、引导教学的舒适度，以及核心体验的完整性与创新性。",
+    },
+  ],
+} as const satisfies Record<WorkType, readonly AspectOption[]>;
 
 // 节点动画弹簧强度；0.13 让移动有弹性但不明显过冲。
 const GRAPH_SPRING_STIFFNESS = 0.13;
@@ -165,13 +263,13 @@ const SCORE_STEP = 0.05;
 const WEIGHT_MIN = 0;
 const WEIGHT_MAX = 10;
 const BANGUMI_API_BASE = "https://api.bgm.tv";
-const BANGUMI_ANIME_SUBJECT_TYPE = 2;
 const BANGUMI_SEARCH_DEBOUNCE_MS = 1000;
 const BANGUMI_RESULTS_PER_PAGE = 5;
 const RELATIONS_PER_PAGE = 5;
 
-const fieldText = ref<(typeof animeTypeOptions)[number]>("无细分");
-const aspectText = ref<(typeof aspectOptions)[number]["label"]>("剧情&叙事");
+const workType = ref<WorkType>("动画");
+const fieldText = ref<(typeof fieldOptions)[number]>("无细分");
+const aspectText = ref("综合");
 const baseName = ref("");
 const compareName = ref("");
 const selectedLevel = ref<RelationLevel>("same");
@@ -218,9 +316,11 @@ let restoreBeforeRouteChange: Router["onBeforeRouteChange"] | undefined;
 
 const router = useRouter();
 
+const selectedWorkTypeOption = computed(() => workTypeOptions.find((option) => option.label === workType.value) ?? workTypeOptions[0]);
+const selectedAspectOptions = computed(() => aspectOptionsByWorkType[workType.value]);
 const normalizedField = computed(() => normalizeName(fieldText.value) || "未命名领域");
 const normalizedAspect = computed(() => normalizeName(aspectText.value) || "未命名角度");
-const selectedAspectOption = computed(() => aspectOptions.find((option) => option.label === aspectText.value) ?? aspectOptions[0]);
+const selectedAspectOption = computed(() => selectedAspectOptions.value.find((option) => option.label === aspectText.value) ?? selectedAspectOptions.value[0]);
 const selectedLevelMeta = computed(() => getRelationLevelMeta(selectedLevel.value));
 const hasRelations = computed(() => relationRecords.value.length > 0);
 const relationWeights = computed<RelationWeights>(() => ({
@@ -270,7 +370,7 @@ const graphEdges = computed<GraphEdge[]>(() => buildGraphEdges(weightedRelationR
 
 const bestCandidate = computed(() => findRelativeCandidate("best"));
 const worstCandidate = computed(() => findRelativeCandidate("worst"));
-const relationSummary = computed(() => `${relationRecords.value.length} 条关系，${graphItems.value.length} 部番剧`);
+const relationSummary = computed(() => `${relationRecords.value.length} 条关系，${graphItems.value.length} 个作品`);
 const relationPageCount = computed(() => Math.max(1, Math.ceil(relationRecords.value.length / RELATIONS_PER_PAGE)));
 const pagedRelationRecords = computed(() => {
   const start = (relationPage.value - 1) * RELATIONS_PER_PAGE;
@@ -319,8 +419,9 @@ const hasUnsavedInput = computed(() =>
   relationRecords.value.length > 0 ||
   normalizeName(baseName.value) !== "" ||
   normalizeName(compareName.value) !== "" ||
+  workType.value !== "动画" ||
   fieldText.value !== "无细分" ||
-  aspectText.value !== "剧情&叙事" ||
+  aspectText.value !== "综合" ||
   sameWeight.value !== String(defaultRelationWeights.same) ||
   betterWeight.value !== String(defaultRelationWeights.better) ||
   quiteBetterWeight.value !== String(defaultRelationWeights.quiteBetter) ||
@@ -350,7 +451,7 @@ const relationInputError = computed(() => {
     return undefined;
   }
   if (normalizedBase === normalizedTarget) {
-    return "基准番和比较番不能相同。";
+    return "基准作品和比较作品不能相同。";
   }
   return undefined;
 });
@@ -361,6 +462,15 @@ watch([baseName, compareName, duplicatedRelation], ([base, target, record]) => {
     return;
   }
   selectedLevel.value = getRelationLevelInCurrentOrder(record, base, target);
+});
+
+watch(workType, () => {
+  if (!selectedAspectOptions.value.some((option) => option.label === aspectText.value)) {
+    aspectText.value = "综合";
+  }
+  bangumiPage.value = 1;
+  bangumiPageInput.value = "1";
+  scheduleBangumiSearch();
 });
 
 watch(graphItems, (items) => {
@@ -601,12 +711,12 @@ function addRelation() {
   const normalizedBase = normalizeName(baseName.value);
   const normalizedTarget = normalizeName(compareName.value);
   if (!normalizedBase || !normalizedTarget) {
-    announcement.value = "请先填写基准番和比较番。";
+    announcement.value = "请先填写基准作品和比较作品。";
     return;
   }
 
   if (normalizedBase === normalizedTarget) {
-    announcement.value = "基准番和比较番不能相同。";
+    announcement.value = "基准作品和比较作品不能相同。";
     return;
   }
 
@@ -741,7 +851,7 @@ async function searchBangumiSubjects() {
         keyword,
         sort: "match",
         filter: {
-          type: [BANGUMI_ANIME_SUBJECT_TYPE],
+          type: [selectedWorkTypeOption.value.bangumiSubjectType],
           ...(fieldText.value === "无细分" ? {} : { tag: [fieldText.value] }),
           nsfw: false,
         },
@@ -760,7 +870,7 @@ async function searchBangumiSubjects() {
       bangumiPage.value = bangumiPageCount.value;
     }
     bangumiSearchStatus.value = "success";
-    bangumiSearchMessage.value = bangumiSearchTotal.value ? `找到 ${bangumiSearchTotal.value} 个结果。` : "没有找到匹配的番剧。";
+    bangumiSearchMessage.value = bangumiSearchTotal.value ? `找到 ${bangumiSearchTotal.value} 个结果。` : "没有找到匹配的作品。";
   } catch {
     bangumiSearchResults.value = [];
     bangumiSearchTotal.value = 0;
@@ -776,7 +886,7 @@ function setBangumiSubjectName(role: "base" | "compare", subject: BangumiSubject
   } else {
     compareName.value = name;
   }
-  announcement.value = `已填入番剧：${name}。`;
+  announcement.value = `已填入作品：${name}。`;
 }
 
 function updateSameWeight(event: Event) {
@@ -959,6 +1069,7 @@ function buildExportPayload() {
   return {
     schema: COMPARE_RATER_SCHEMA,
     schemaVersion: COMPARE_RATER_SCHEMA_VERSION,
+    workType: workType.value,
     field: normalizedField.value,
     aspect: normalizedAspect.value,
     relations: relationRecords.value.map((record) => ({
@@ -1050,6 +1161,7 @@ function importPayload(payload: unknown) {
     !isRecord(payload)
     || payload.schema !== COMPARE_RATER_SCHEMA
     || payload.schemaVersion !== COMPARE_RATER_SCHEMA_VERSION
+    || !isWorkType(payload.workType)
     || typeof payload.field !== "string"
     || typeof payload.aspect !== "string"
     || !Array.isArray(payload.relations)
@@ -1058,12 +1170,13 @@ function importPayload(payload: unknown) {
     throw new Error("Unsupported payload");
   }
 
-  if (!animeTypeOptions.includes(payload.field as (typeof animeTypeOptions)[number])) {
+  if (!fieldOptions.includes(payload.field as (typeof fieldOptions)[number])) {
     throw new Error("Invalid field");
   }
-  fieldText.value = payload.field as (typeof animeTypeOptions)[number];
+  workType.value = payload.workType;
+  fieldText.value = payload.field as (typeof fieldOptions)[number];
 
-  const importedAspect = aspectOptions.find((option) => option.label === payload.aspect);
+  const importedAspect = aspectOptionsByWorkType[payload.workType].find((option) => option.label === payload.aspect);
   if (!importedAspect) {
     throw new Error("Invalid aspect");
   }
@@ -1107,13 +1220,6 @@ function importPayload(payload: unknown) {
 }
 
 function importRelationWeights(weights: unknown) {
-  if (weights === undefined) {
-    sameWeight.value = String(defaultRelationWeights.same);
-    betterWeight.value = String(defaultRelationWeights.better);
-    quiteBetterWeight.value = String(defaultRelationWeights.quiteBetter);
-    muchBetterWeight.value = String(defaultRelationWeights.muchBetter);
-    return;
-  }
   if (!isRecord(weights)) {
     throw new Error("Invalid weights");
   }
@@ -1225,6 +1331,10 @@ function syncAnchorScoreOrder() {
   }
 }
 
+function isWorkType(value: unknown): value is WorkType {
+  return typeof value === "string" && workTypeOptions.some((item) => item.label === value);
+}
+
 function isRelationLevel(value: unknown): value is RelationLevel {
   return typeof value === "string" && relationLevels.some((item) => item.value === value);
 }
@@ -1330,14 +1440,26 @@ async function copyText(text: string) {
   >
     <div class="anime-score-tool__label-row">
       <h2 id="anime-score-scope-title">评分范围</h2>
-      <span>{{ normalizedField }} / {{ normalizedAspect }}</span>
+      <span>{{ workType }} / {{ normalizedField }} / {{ normalizedAspect }}</span>
     </div>
     <div class="anime-score-tool__scope-grid">
+      <label>
+        <span>作品类型</span>
+        <select v-model="workType">
+          <option
+            v-for="option in workTypeOptions"
+            :key="option.label"
+            :value="option.label"
+          >
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
       <label>
         <span>细分领域</span>
         <select v-model="fieldText">
           <option
-            v-for="option in animeTypeOptions"
+            v-for="option in fieldOptions"
             :key="option"
             :value="option"
           >
@@ -1349,7 +1471,7 @@ async function copyText(text: string) {
         <span>评价角度</span>
         <select v-model="aspectText">
           <option
-            v-for="option in aspectOptions"
+            v-for="option in selectedAspectOptions"
             :key="option.label"
             :value="option.label"
           >
@@ -1376,13 +1498,13 @@ async function copyText(text: string) {
       @submit.prevent="addRelation"
     >
       <label>
-        <span>基准番</span>
+        <span>基准作品</span>
         <input
           v-model="baseName"
           required
           autocomplete="off"
           list="anime-name-options"
-          placeholder="选择或输入基准番"
+          placeholder="选择或输入基准作品"
         >
       </label>
       <label>
@@ -1398,13 +1520,13 @@ async function copyText(text: string) {
         </select>
       </label>
       <label>
-        <span>比较番</span>
+        <span>比较作品</span>
         <input
           v-model="compareName"
           required
           autocomplete="off"
           list="anime-name-options"
-          placeholder="选择或输入比较番"
+          placeholder="选择或输入比较作品"
         >
       </label>
       <button
@@ -1672,7 +1794,7 @@ async function copyText(text: string) {
           <input
             v-model="bangumiKeyword"
             autocomplete="off"
-            placeholder="输入番剧名自动搜索"
+            placeholder="输入作品名自动搜索"
           >
         </label>
       </form>
@@ -1785,7 +1907,7 @@ async function copyText(text: string) {
       class="anime-score-tool__graph"
       :style="graphViewportStyle"
       role="img"
-      :aria-label="`${normalizedField}中${normalizedAspect}角度的番剧关系图`"
+      :aria-label="`${workType} ${normalizedField}中${normalizedAspect}角度的作品关系图`"
       @wheel.prevent="handleGraphWheel"
       @pointerdown="startGraphDrag"
       @pointermove="moveGraphDrag"
@@ -1944,7 +2066,7 @@ async function copyText(text: string) {
       class="anime-score-tool__score-table"
     >
       <div class="anime-score-tool__score-head">
-        <span>番剧</span>
+        <span>作品</span>
         <span>相对位置</span>
         <span>得分</span>
       </div>
@@ -1967,7 +2089,7 @@ async function copyText(text: string) {
 
 #### 相对位置求解
 
-工具先把第 $i$ 部番映射成一个一维相对位置 $x_i$，数值越大表示相对越好。
+工具先把第 $i$ 个作品映射成一个一维相对位置 $x_i$，数值越大表示相对越好。
 
 - $A \approx B$ 是等式吸引，目标是 $x_A - x_B = 0$。
 - $A > B$、$A >> B$、$A >>> B$ 是方向约束，默认下限分别是 $0.5$、$1$、$2$：
@@ -2198,7 +2320,7 @@ $$
 
 .anime-score-tool__scope-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 150px minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
 }
 

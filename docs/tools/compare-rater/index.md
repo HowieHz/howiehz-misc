@@ -59,6 +59,7 @@ interface BangumiSubject {
   id: number;
   name: string;
   name_cn: string;
+  nsfw?: boolean;
   date?: string;
   platform?: string;
   rating?: {
@@ -132,6 +133,7 @@ const worstAnchorScore = ref("1");
 const announcement = ref("");
 const bangumiAccessToken = ref("");
 const bangumiKeyword = ref("");
+const bangumiAllowNsfw = ref(false);
 const bangumiSearchResults = ref<BangumiSubject[]>([]);
 const bangumiSearchTotal = ref(0);
 const bangumiPage = ref(1);
@@ -332,7 +334,7 @@ watch(relationPage, (page) => {
   relationPageInput.value = String(page);
 });
 
-watch([bangumiKeyword, fieldText], () => {
+watch([bangumiKeyword, fieldText, bangumiAllowNsfw], () => {
   bangumiPage.value = 1;
   bangumiPageInput.value = "1";
   scheduleBangumiSearch();
@@ -697,7 +699,7 @@ async function searchBangumiSubjects() {
         filter: {
           type: [selectedWorkTypeOption.value.bangumiSubjectType],
           ...(fieldText.value === "无细分" ? {} : { tag: [fieldText.value] }),
-          nsfw: false,
+          nsfw: bangumiAllowNsfw.value,
         },
       }),
     });
@@ -1208,6 +1210,7 @@ function readBangumiSubjects(payload: unknown) {
       id: item.id,
       name: item.name,
       name_cn: item.name_cn,
+      nsfw: typeof item.nsfw === "boolean" ? item.nsfw : undefined,
       date: typeof item.date === "string" ? item.date : undefined,
       platform: typeof item.platform === "string" ? item.platform : undefined,
       rating,
@@ -1224,6 +1227,10 @@ function readBangumiTotal(payload: unknown) {
 
 function formatBangumiSubjectName(subject: BangumiSubject) {
   return normalizeName(subject.name_cn) || normalizeName(subject.name) || `Bangumi#${subject.id}`;
+}
+
+function getBangumiSubjectUrl(subject: BangumiSubject) {
+  return `https://bgm.tv/subject/${subject.id}`;
 }
 
 function formatBangumiSubjectMeta(subject: BangumiSubject) {
@@ -1633,6 +1640,13 @@ async function copyText(text: string) {
             placeholder="仅在浏览器本地使用"
           >
         </label>
+        <label class="compare-rater__checkbox-label">
+          <input
+            v-model="bangumiAllowNsfw"
+            type="checkbox"
+          >
+          <span>包含 NSFW</span>
+        </label>
         <label>
           <span>快速搜索</span>
           <input
@@ -1657,7 +1671,20 @@ async function copyText(text: string) {
           :key="subject.id"
         >
           <div>
-            <strong>{{ formatBangumiSubjectName(subject) }}</strong>
+            <a
+              class="compare-rater__bangumi-title"
+              :href="getBangumiSubjectUrl(subject)"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <strong>{{ formatBangumiSubjectName(subject) }}</strong>
+            </a>
+            <span
+              v-if="subject.nsfw"
+              class="compare-rater__bangumi-badge"
+            >
+              NSFW
+            </span>
             <span>{{ subject.name }}</span>
             <small>{{ formatBangumiSubjectMeta(subject) }}</small>
           </div>
@@ -2101,9 +2128,13 @@ $$
 
 .compare-rater__bangumi-search {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
   align-items: end;
+}
+
+.compare-rater__bangumi-search label:last-child {
+  grid-column: 1 / -1;
 }
 
 .compare-rater__bangumi-search label {
@@ -2111,11 +2142,25 @@ $$
   font-size: 0.9rem;
 }
 
-.compare-rater__bangumi-search input {
+.compare-rater__bangumi-search input:not([type="checkbox"]) {
   min-height: 34px;
   padding-top: 6px;
   padding-bottom: 6px;
   border-radius: 8px;
+}
+
+.compare-rater__checkbox-label {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  gap: 6px;
+  padding: 6px 0;
+  white-space: nowrap;
+}
+
+.compare-rater__checkbox-label input {
+  width: 16px;
+  min-height: 16px;
 }
 
 .compare-rater__bangumi-results {
@@ -2143,12 +2188,33 @@ $$
   min-width: 0;
 }
 
+.compare-rater__bangumi-title {
+  display: block;
+  min-width: 0;
+  color: var(--vp-c-text-1);
+  font-weight: 700;
+}
+
 .compare-rater__bangumi-results strong,
 .compare-rater__bangumi-results span,
 .compare-rater__bangumi-results small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.compare-rater__bangumi-title strong {
+  min-width: 0;
+}
+
+.compare-rater__bangumi-badge {
+  width: fit-content;
+  border: 1px solid color-mix(in srgb, #dc2626 45%, var(--vp-c-divider));
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: #dc2626;
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 .compare-rater__bangumi-results span,

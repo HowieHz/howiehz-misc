@@ -60,6 +60,8 @@ interface BangumiSubject {
   name: string;
   name_cn: string;
   nsfw?: boolean;
+  image?: string;
+  tags: string[];
   date?: string;
   platform?: string;
   rating?: {
@@ -699,7 +701,7 @@ async function searchBangumiSubjects() {
         filter: {
           type: [selectedWorkTypeOption.value.bangumiSubjectType],
           ...(fieldText.value === "无细分" ? {} : { tag: [fieldText.value] }),
-          nsfw: bangumiAllowNsfw.value,
+          ...(bangumiAllowNsfw.value ? {} : { nsfw: false }),
         },
       }),
     });
@@ -1211,11 +1213,36 @@ function readBangumiSubjects(payload: unknown) {
       name: item.name,
       name_cn: item.name_cn,
       nsfw: typeof item.nsfw === "boolean" ? item.nsfw : undefined,
+      image: readBangumiSubjectImage(item.images),
+      tags: readBangumiSubjectTags(item.tags),
       date: typeof item.date === "string" ? item.date : undefined,
       platform: typeof item.platform === "string" ? item.platform : undefined,
       rating,
     }];
   });
+}
+
+function readBangumiSubjectImage(images: unknown) {
+  if (!isRecord(images)) {
+    return undefined;
+  }
+
+  const image = images.common ?? images.medium ?? images.small ?? images.grid;
+  return typeof image === "string" && image ? image : undefined;
+}
+
+function readBangumiSubjectTags(tags: unknown) {
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+
+  return Array.from(new Set(tags.flatMap((tag): string[] => {
+    if (!isRecord(tag) || typeof tag.name !== "string") {
+      return [];
+    }
+    const name = normalizeName(tag.name);
+    return name ? [name] : [];
+  }))).slice(0, 4);
 }
 
 function readBangumiTotal(payload: unknown) {
@@ -1670,7 +1697,14 @@ async function copyText(text: string) {
           v-for="subject in bangumiSearchResults"
           :key="subject.id"
         >
-          <div>
+          <img
+            v-if="subject.image"
+            class="compare-rater__bangumi-cover"
+            :src="subject.image"
+            :alt="`${formatBangumiSubjectName(subject)} 封面`"
+            loading="lazy"
+          >
+          <div class="compare-rater__bangumi-info">
             <a
               class="compare-rater__bangumi-title"
               :href="getBangumiSubjectUrl(subject)"
@@ -1687,6 +1721,18 @@ async function copyText(text: string) {
             </span>
             <span>{{ subject.name }}</span>
             <small>{{ formatBangumiSubjectMeta(subject) }}</small>
+            <span
+              v-if="subject.tags.length"
+              class="compare-rater__bangumi-tags"
+            >
+              <span
+                v-for="tag in subject.tags"
+                :key="`${subject.id}-${tag}`"
+                :title="tag"
+              >
+                {{ tag }}
+              </span>
+            </span>
           </div>
           <button
             type="button"
@@ -1869,20 +1915,25 @@ async function copyText(text: string) {
   >
     <div class="compare-rater__label-row">
       <h2 id="compare-rater-score-title">分值映射</h2>
-      <span>自动选择相对最佳和相对最差</span>
     </div>
-    <h3 class="compare-rater__subheading">绝对分值</h3>
+    <h3 class="compare-rater__subheading">基准分值设定</h3>
     <div class="compare-rater__anchor-card compare-rater__anchor-card--range">
       <div class="compare-rater__anchor-summary">
         <div>
           <h3>相对最差</h3>
-          <p class="compare-rater__anchor-name">
+          <p
+            class="compare-rater__anchor-name"
+            :class="{ 'compare-rater__anchor-name--empty': !worstAnchorName }"
+          >
             {{ worstAnchorName || "录入关系后自动选择" }}
           </p>
         </div>
         <div>
           <h3>相对最佳</h3>
-          <p class="compare-rater__anchor-name">
+          <p
+            class="compare-rater__anchor-name"
+            :class="{ 'compare-rater__anchor-name--empty': !bestAnchorName }"
+          >
             {{ bestAnchorName || "录入关系后自动选择" }}
           </p>
         </div>
@@ -2176,7 +2227,7 @@ $$
 
 .compare-rater__bangumi-results li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: 72px minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   padding: 7px 8px;
@@ -2185,9 +2236,21 @@ $$
   background: var(--vp-c-bg);
 }
 
-.compare-rater__bangumi-results div {
+.compare-rater__bangumi-cover {
+  width: 72px;
+  align-self: stretch;
+  height: auto;
+  min-height: 96px;
+  border-radius: 6px;
+  background: var(--vp-c-bg-soft);
+  object-fit: cover;
+}
+
+.compare-rater__bangumi-info {
   display: grid;
   gap: 1px;
+  align-content: center;
+  align-self: stretch;
   min-width: 0;
 }
 
@@ -2218,6 +2281,22 @@ $$
   color: #dc2626;
   font-size: 0.72rem;
   font-weight: 700;
+}
+
+.compare-rater__bangumi-tags {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+}
+
+.compare-rater__bangumi-tags > span {
+  flex: none;
+  max-width: 72px;
+  border: 1px solid color-mix(in srgb, var(--vp-c-brand-1) 24%, var(--vp-c-divider));
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--vp-c-brand-soft) 35%, var(--vp-c-bg));
+  color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
 }
 
 .compare-rater__bangumi-results span,
@@ -2547,6 +2626,11 @@ $$
   color: var(--vp-c-text-1);
   font-weight: 700;
   line-height: 1.45;
+}
+
+.compare-rater__anchor-name--empty {
+  color: color-mix(in srgb, var(--vp-c-text-1) 54%, var(--vp-c-text-2) 46%);
+  font-weight: 600;
 }
 
 .compare-rater__score-range {
@@ -2894,7 +2978,12 @@ $$
   }
 
   .compare-rater__bangumi-results li {
-    grid-template-columns: 1fr;
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+
+  .compare-rater__bangumi-cover {
+    width: 58px;
+    min-height: 82px;
   }
 
   .compare-rater__relation-pager {

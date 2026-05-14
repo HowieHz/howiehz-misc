@@ -1467,14 +1467,6 @@ async function copyText(text: string) {
       v-if="relationPageCount > 1"
       class="anime-score-tool__relation-pager"
     >
-      <button
-        type="button"
-        class="anime-score-tool__secondary-button"
-        :disabled="relationPage <= 1"
-        @click="goRelationPage(-1)"
-      >
-        上一页
-      </button>
       <form
         class="anime-score-tool__relation-jump"
         @submit.prevent="jumpRelationPage"
@@ -1498,6 +1490,14 @@ async function copyText(text: string) {
           跳转
         </button>
       </form>
+      <button
+        type="button"
+        class="anime-score-tool__secondary-button"
+        :disabled="relationPage <= 1"
+        @click="goRelationPage(-1)"
+      >
+        上一页
+      </button>
       <span>{{ relationPageText }}</span>
       <button
         type="button"
@@ -1657,7 +1657,7 @@ async function copyText(text: string) {
               target="_blank"
               rel="noopener noreferrer"
             >
-              创建
+              创建一个 token
             </a>
           </span>
           <input
@@ -1715,14 +1715,6 @@ async function copyText(text: string) {
         v-if="bangumiPageCount > 1"
         class="anime-score-tool__relation-pager"
       >
-        <button
-          type="button"
-          class="anime-score-tool__secondary-button"
-          :disabled="bangumiPage <= 1 || bangumiSearchStatus === 'loading'"
-          @click="goBangumiPage(-1)"
-        >
-          上一页
-        </button>
         <form
           class="anime-score-tool__relation-jump"
           @submit.prevent="jumpBangumiPage"
@@ -1746,6 +1738,14 @@ async function copyText(text: string) {
             跳转
           </button>
         </form>
+        <button
+          type="button"
+          class="anime-score-tool__secondary-button"
+          :disabled="bangumiPage <= 1 || bangumiSearchStatus === 'loading'"
+          @click="goBangumiPage(-1)"
+        >
+          上一页
+        </button>
         <span>{{ bangumiPageText }}</span>
         <button
           type="button"

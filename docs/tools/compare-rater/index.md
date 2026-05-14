@@ -21,7 +21,7 @@ import {
   mappedScore,
   normalizeName,
   roundOffsetForDisplay,
-  type AnimeItem,
+  type CompareItem,
   type GraphEdge,
   type RelationLevel,
   type RelationRecord,
@@ -44,14 +44,14 @@ interface RelationWeights {
   muchBetter: number;
 }
 
-interface AnimatedAnimeItem extends AnimeItem {
+interface AnimatedCompareItem extends CompareItem {
   targetX: number;
   targetY: number;
   velocityX: number;
   velocityY: number;
 }
 
-interface ScoredAnime extends AnimeItem {
+interface ScoredCompareItem extends CompareItem {
   score: number;
 }
 
@@ -140,7 +140,7 @@ const bangumiSearchStatus = ref<"idle" | "loading" | "success" | "error">("idle"
 const bangumiSearchMessage = ref("");
 const exportStatus = ref<TransferStatus>("idle");
 const importStatus = ref<TransferStatus>("idle");
-const animatedGraphItems = ref<AnimatedAnimeItem[]>([]);
+const animatedGraphItems = ref<AnimatedCompareItem[]>([]);
 const graphZoom = ref(1);
 const graphPanX = ref(0);
 const graphPanY = ref(0);
@@ -180,16 +180,16 @@ const weightedRelationRecords = computed(() => relationRecords.value.map((record
   weight: getRelationWeight(record.level),
 })));
 
-const graphItems = computed<AnimeItem[]>(() => buildGraphItems(weightedRelationRecords.value));
+const graphItems = computed<CompareItem[]>(() => buildGraphItems(weightedRelationRecords.value));
 
 const scoreAnchors = computed(() => ({
   best: bestAnchorName.value ? { name: bestAnchorName.value, score: Number(bestAnchorScore.value) } : undefined,
   worst: worstAnchorName.value ? { name: worstAnchorName.value, score: Number(worstAnchorScore.value) } : undefined,
 }));
 const scoreByName = computed(() => mapScores(graphItems.value, scoreAnchors.value));
-const animeNameOptions = computed(() => graphItems.value.map((item) => item.name).toSorted((left, right) => left.localeCompare(right, "zh-Hans-CN")));
+const itemNameOptions = computed(() => graphItems.value.map((item) => item.name).toSorted((left, right) => left.localeCompare(right, "zh-Hans-CN")));
 
-const scoredItems = computed<ScoredAnime[]>(() => {
+const scoredItems = computed<ScoredCompareItem[]>(() => {
   const items = graphItems.value;
   if (!items.length) {
     return [];
@@ -201,7 +201,7 @@ const scoredItems = computed<ScoredAnime[]>(() => {
       ...item,
       score: mappedScore(item.name, mapped),
     }))
-    .filter((item): item is ScoredAnime => item.score !== undefined)
+    .filter((item): item is ScoredCompareItem => item.score !== undefined)
     .sort((left, right) => {
       if (right.score !== left.score) {
         return right.score - left.score;
@@ -440,10 +440,10 @@ function getRelationLevelInCurrentOrder(record: RelationRecord, base: string, ta
 
 function relationSymbolClass(level: RelationLevel) {
   return {
-    "anime-score-tool__relation-symbol--same": level === "same",
-    "anime-score-tool__relation-symbol--better": level === "better" || level === "worse",
-    "anime-score-tool__relation-symbol--quite": level === "quite-better" || level === "quite-worse",
-    "anime-score-tool__relation-symbol--much": level === "much-better" || level === "much-worse",
+    "compare-rater__relation-symbol--same": level === "same",
+    "compare-rater__relation-symbol--better": level === "better" || level === "worse",
+    "compare-rater__relation-symbol--quite": level === "quite-better" || level === "quite-worse",
+    "compare-rater__relation-symbol--much": level === "much-better" || level === "much-worse",
   };
 }
 
@@ -791,7 +791,7 @@ function findRelativeCandidate(role: AnchorRole) {
   return role === "best" ? sortedItems.at(0) : sortedItems.at(-1);
 }
 
-function syncAnimatedGraphItems(items: readonly AnimeItem[]) {
+function syncAnimatedGraphItems(items: readonly CompareItem[]) {
   const existingItems = new Map(animatedGraphItems.value.map((item) => [item.name, item]));
   animatedGraphItems.value = items.map((item) => {
     const existingItem = existingItems.get(item.name);
@@ -1269,9 +1269,9 @@ async function copyText(text: string) {
 
 通过相对比较，工具会按模型建立关系图，最后可以通过基准分将相对分值映射成绝对分值。
 
-<div class="anime-score-tool">
+<div class="compare-rater">
   <p
-    class="anime-score-tool__sr-only"
+    class="compare-rater__sr-only"
     role="status"
     aria-live="polite"
     aria-atomic="true"
@@ -1279,14 +1279,14 @@ async function copyText(text: string) {
     {{ announcement }}
   </p>
   <section
-    class="anime-score-tool__panel"
-    aria-labelledby="anime-score-scope-title"
+    class="compare-rater__panel"
+    aria-labelledby="compare-rater-scope-title"
   >
-    <div class="anime-score-tool__label-row">
-      <h2 id="anime-score-scope-title">评分范围</h2>
+    <div class="compare-rater__label-row">
+      <h2 id="compare-rater-scope-title">评分范围</h2>
       <span>{{ workType }} / {{ normalizedField }} / {{ normalizedAspect }}</span>
     </div>
-    <div class="anime-score-tool__scope-grid">
+    <div class="compare-rater__scope-grid">
       <label>
         <span>作品类型</span>
         <select v-model="workType">
@@ -1324,21 +1324,21 @@ async function copyText(text: string) {
         </select>
       </label>
     </div>
-    <p class="anime-score-tool__aspect-description">
+    <p class="compare-rater__aspect-description">
       {{ selectedAspectOption.description }}
     </p>
   </section>
 
   <section
-    class="anime-score-tool__panel anime-score-tool__relation-panel"
-    aria-labelledby="anime-score-relation-title"
+    class="compare-rater__panel compare-rater__relation-panel"
+    aria-labelledby="compare-rater-relation-title"
   >
-    <div class="anime-score-tool__label-row">
-      <h2 id="anime-score-relation-title">录入关系</h2>
+    <div class="compare-rater__label-row">
+      <h2 id="compare-rater-relation-title">录入关系</h2>
       <span>{{ relationSummary }}</span>
     </div>
     <form
-      class="anime-score-tool__relation-form"
+      class="compare-rater__relation-form"
       @submit.prevent="addRelation"
     >
       <label>
@@ -1347,7 +1347,7 @@ async function copyText(text: string) {
           v-model="baseName"
           required
           autocomplete="off"
-          list="anime-name-options"
+          list="compare-name-options"
           placeholder="选择或输入基准作品"
         >
       </label>
@@ -1369,34 +1369,34 @@ async function copyText(text: string) {
           v-model="compareName"
           required
           autocomplete="off"
-          list="anime-name-options"
+          list="compare-name-options"
           placeholder="选择或输入比较作品"
         >
       </label>
       <button
         type="submit"
-        class="anime-score-tool__primary-button"
+        class="compare-rater__primary-button"
         :disabled="!canAddRelation"
       >
         {{ submitRelationButtonText }}
       </button>
     </form>
-    <datalist id="anime-name-options">
+    <datalist id="compare-name-options">
       <option
-        v-for="name in animeNameOptions"
+        v-for="name in itemNameOptions"
         :key="name"
         :value="name"
       />
     </datalist>
     <p
       v-if="relationInputError"
-      class="anime-score-tool__error"
+      class="compare-rater__error"
     >
       {{ relationInputError }}
     </p>
     <ol
       v-if="hasRelations"
-      class="anime-score-tool__relation-list"
+      class="compare-rater__relation-list"
     >
       <li
         v-for="record in pagedRelationRecords"
@@ -1409,10 +1409,10 @@ async function copyText(text: string) {
           <template v-else>
             {{ record.baseName }} 比 {{ record.targetName }} {{ relationLabel(record.level) }}
           </template>
-          <span class="anime-score-tool__relation-expression">
+          <span class="compare-rater__relation-expression">
             （{{ record.baseName }}
             <strong
-              class="anime-score-tool__relation-symbol"
+              class="compare-rater__relation-symbol"
               :class="relationSymbolClass(record.level)"
             >
               {{ relationSymbol(record.level) }}
@@ -1431,10 +1431,10 @@ async function copyText(text: string) {
     </ol>
     <div
       v-if="relationPageCount > 1"
-      class="anime-score-tool__relation-pager"
+      class="compare-rater__relation-pager"
     >
       <form
-        class="anime-score-tool__relation-jump"
+        class="compare-rater__relation-jump"
         @submit.prevent="jumpRelationPage"
       >
         <span>跳转到</span>
@@ -1450,7 +1450,7 @@ async function copyText(text: string) {
         <span>页</span>
         <button
           type="submit"
-          class="anime-score-tool__secondary-button"
+          class="compare-rater__secondary-button"
           :disabled="!canJumpRelationPage"
         >
           跳转
@@ -1458,7 +1458,7 @@ async function copyText(text: string) {
       </form>
       <button
         type="button"
-        class="anime-score-tool__secondary-button"
+        class="compare-rater__secondary-button"
         :disabled="relationPage <= 1"
         @click="goRelationPage(-1)"
       >
@@ -1467,7 +1467,7 @@ async function copyText(text: string) {
       <span>{{ relationPageText }}</span>
       <button
         type="button"
-        class="anime-score-tool__secondary-button"
+        class="compare-rater__secondary-button"
         :disabled="relationPage >= relationPageCount"
         @click="goRelationPage(1)"
       >
@@ -1476,21 +1476,21 @@ async function copyText(text: string) {
     </div>
     <p
       v-else
-      class="anime-score-tool__empty"
+      class="compare-rater__empty"
     >
       请先录入至少一条关系。
     </p>
-    <div class="anime-score-tool__transfer-actions">
+    <div class="compare-rater__transfer-actions">
       <button
         type="button"
-        class="anime-score-tool__secondary-button"
+        class="compare-rater__secondary-button"
         @click="importFromClipboard"
       >
         {{ importButtonText }}
       </button>
       <button
         type="button"
-        class="anime-score-tool__secondary-button"
+        class="compare-rater__secondary-button"
         :disabled="!scoredItems.length"
         @click="copyExportJson"
       >
@@ -1498,7 +1498,7 @@ async function copyText(text: string) {
       </button>
       <button
         type="button"
-        class="anime-score-tool__secondary-button"
+        class="compare-rater__secondary-button"
         @click="useTestData"
       >
         使用测试数据
@@ -1506,25 +1506,25 @@ async function copyText(text: string) {
       <button
         v-if="hasRelations"
         type="button"
-        class="anime-score-tool__secondary-button"
+        class="compare-rater__secondary-button"
         @click="clearRelations"
       >
         清空已输入的关系
       </button>
     </div>
-    <details class="anime-score-tool__advanced">
+    <details class="compare-rater__advanced">
       <summary>高级选项</summary>
-      <div class="anime-score-tool__weight-grid">
-        <label class="anime-score-tool__score-slider">
+      <div class="compare-rater__weight-grid">
+        <label class="compare-rater__score-slider">
           <span>
-            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--same">≈</strong>
+            <strong class="compare-rater__relation-symbol compare-rater__relation-symbol--same">≈</strong>
             吸引强度
           </span>
           <div
-            class="anime-score-tool__weight-slider-control"
+            class="compare-rater__weight-slider-control"
             :style="weightSliderStyle(sameWeight)"
           >
-            <div class="anime-score-tool__weight-slider-labels">
+            <div class="compare-rater__weight-slider-labels">
               <strong>{{ sameWeight }}</strong>
             </div>
             <input
@@ -1538,16 +1538,16 @@ async function copyText(text: string) {
             >
           </div>
         </label>
-        <label class="anime-score-tool__score-slider">
+        <label class="compare-rater__score-slider">
           <span>
-            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--better">&gt;</strong>
+            <strong class="compare-rater__relation-symbol compare-rater__relation-symbol--better">&gt;</strong>
             排斥强度
           </span>
           <div
-            class="anime-score-tool__weight-slider-control"
+            class="compare-rater__weight-slider-control"
             :style="weightSliderStyle(betterWeight)"
           >
-            <div class="anime-score-tool__weight-slider-labels">
+            <div class="compare-rater__weight-slider-labels">
               <strong>{{ betterWeight }}</strong>
             </div>
             <input
@@ -1561,16 +1561,16 @@ async function copyText(text: string) {
             >
           </div>
         </label>
-        <label class="anime-score-tool__score-slider">
+        <label class="compare-rater__score-slider">
           <span>
-            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--quite">&gt;&gt;</strong>
+            <strong class="compare-rater__relation-symbol compare-rater__relation-symbol--quite">&gt;&gt;</strong>
             排斥强度
           </span>
           <div
-            class="anime-score-tool__weight-slider-control"
+            class="compare-rater__weight-slider-control"
             :style="weightSliderStyle(quiteBetterWeight)"
           >
-            <div class="anime-score-tool__weight-slider-labels">
+            <div class="compare-rater__weight-slider-labels">
               <strong>{{ quiteBetterWeight }}</strong>
             </div>
             <input
@@ -1584,16 +1584,16 @@ async function copyText(text: string) {
             >
           </div>
         </label>
-        <label class="anime-score-tool__score-slider">
+        <label class="compare-rater__score-slider">
           <span>
-            <strong class="anime-score-tool__relation-symbol anime-score-tool__relation-symbol--much">&gt;&gt;&gt;</strong>
+            <strong class="compare-rater__relation-symbol compare-rater__relation-symbol--much">&gt;&gt;&gt;</strong>
             排斥强度
           </span>
           <div
-            class="anime-score-tool__weight-slider-control"
+            class="compare-rater__weight-slider-control"
             :style="weightSliderStyle(muchBetterWeight)"
           >
-            <div class="anime-score-tool__weight-slider-labels">
+            <div class="compare-rater__weight-slider-labels">
               <strong>{{ muchBetterWeight }}</strong>
             </div>
             <input
@@ -1609,14 +1609,14 @@ async function copyText(text: string) {
         </label>
       </div>
     </details>
-    <details class="anime-score-tool__advanced">
+    <details class="compare-rater__advanced">
       <summary>使用 Bangumi 搜索</summary>
       <form
-        class="anime-score-tool__bangumi-search"
+        class="compare-rater__bangumi-search"
         @submit.prevent
       >
         <label>
-          <span class="anime-score-tool__label-with-link">
+          <span class="compare-rater__label-with-link">
             Bangumi access-token
             <a
               href="https://next.bgm.tv/demo/access-token"
@@ -1644,13 +1644,13 @@ async function copyText(text: string) {
       </form>
       <p
         v-if="bangumiSearchStatus === 'loading' || bangumiSearchMessage"
-        class="anime-score-tool__hint"
+        class="compare-rater__hint"
       >
         {{ bangumiSearchStatus === "loading" ? "搜索中……" : bangumiSearchMessage }}
       </p>
       <ol
         v-if="bangumiSearchResults.length"
-        class="anime-score-tool__bangumi-results"
+        class="compare-rater__bangumi-results"
       >
         <li
           v-for="subject in bangumiSearchResults"
@@ -1663,14 +1663,14 @@ async function copyText(text: string) {
           </div>
           <button
             type="button"
-            class="anime-score-tool__secondary-button"
+            class="compare-rater__secondary-button"
             @click="setBangumiSubjectName('base', subject)"
           >
             设为基准
           </button>
           <button
             type="button"
-            class="anime-score-tool__secondary-button"
+            class="compare-rater__secondary-button"
             @click="setBangumiSubjectName('compare', subject)"
           >
             设为比较
@@ -1679,10 +1679,10 @@ async function copyText(text: string) {
       </ol>
       <div
         v-if="bangumiPageCount > 1"
-        class="anime-score-tool__relation-pager"
+        class="compare-rater__relation-pager"
       >
         <form
-          class="anime-score-tool__relation-jump"
+          class="compare-rater__relation-jump"
           @submit.prevent="jumpBangumiPage"
         >
           <span>跳转到</span>
@@ -1698,7 +1698,7 @@ async function copyText(text: string) {
           <span>页</span>
           <button
             type="submit"
-            class="anime-score-tool__secondary-button"
+            class="compare-rater__secondary-button"
             :disabled="!canJumpBangumiPage || bangumiSearchStatus === 'loading'"
           >
             跳转
@@ -1706,7 +1706,7 @@ async function copyText(text: string) {
         </form>
         <button
           type="button"
-          class="anime-score-tool__secondary-button"
+          class="compare-rater__secondary-button"
           :disabled="bangumiPage <= 1 || bangumiSearchStatus === 'loading'"
           @click="goBangumiPage(-1)"
         >
@@ -1715,7 +1715,7 @@ async function copyText(text: string) {
         <span>{{ bangumiPageText }}</span>
         <button
           type="button"
-          class="anime-score-tool__secondary-button"
+          class="compare-rater__secondary-button"
           :disabled="bangumiPage >= bangumiPageCount || bangumiSearchStatus === 'loading'"
           @click="goBangumiPage(1)"
         >
@@ -1726,19 +1726,19 @@ async function copyText(text: string) {
   </section>
 
   <section
-    class="anime-score-tool__panel"
+    class="compare-rater__panel"
     aria-labelledby="compare-rater-graph-title"
   >
-    <div class="anime-score-tool__label-row">
+    <div class="compare-rater__label-row">
       <h2 id="compare-rater-graph-title">关系图</h2>
       <div
         v-if="animatedGraphItems.length"
-        class="anime-score-tool__graph-actions"
+        class="compare-rater__graph-actions"
       >
         <span>{{ graphZoomText }}</span>
         <button
           type="button"
-          class="anime-score-tool__secondary-button"
+          class="compare-rater__secondary-button"
           @click="resetGraphView"
         >
           重置视图
@@ -1748,7 +1748,7 @@ async function copyText(text: string) {
     <div
       v-if="animatedGraphItems.length"
       ref="graphViewportRef"
-      class="anime-score-tool__graph"
+      class="compare-rater__graph"
       :style="graphViewportStyle"
       role="img"
       :aria-label="`${workType} ${normalizedField}中${normalizedAspect}角度的作品关系图`"
@@ -1759,19 +1759,19 @@ async function copyText(text: string) {
       @pointercancel="endGraphDrag"
     >
       <div
-        class="anime-score-tool__graph-scene"
+        class="compare-rater__graph-scene"
         :style="graphSceneStyle"
         aria-hidden="true"
       >
         <svg
-          class="anime-score-tool__edges"
+          class="compare-rater__edges"
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
           aria-hidden="true"
         >
           <defs>
             <marker
-              id="anime-score-arrowhead"
+              id="compare-rater-arrowhead"
               markerWidth="6"
               markerHeight="6"
               refX="5.2"
@@ -1781,11 +1781,11 @@ async function copyText(text: string) {
             >
               <path
                 d="M0,0 L6,3 L0,6 Z"
-                class="anime-score-tool__arrowhead"
+                class="compare-rater__arrowhead"
               />
             </marker>
             <marker
-              id="anime-score-endpoint"
+              id="compare-rater-endpoint"
               markerWidth="5"
               markerHeight="5"
               refX="2.5"
@@ -1797,29 +1797,29 @@ async function copyText(text: string) {
                 cx="2.5"
                 cy="2.5"
                 r="2"
-                class="anime-score-tool__endpoint"
+                class="compare-rater__endpoint"
               />
             </marker>
           </defs>
           <path
             v-for="edge in graphEdges"
             :key="`edge-${edge.id}`"
-            class="anime-score-tool__edge"
+            class="compare-rater__edge"
             :class="{
-              'anime-score-tool__edge--same': edge.relationLevel === 'same',
-              'anime-score-tool__edge--better': edge.relationLevel === 'better' || edge.relationLevel === 'worse',
-              'anime-score-tool__edge--quite': edge.relationLevel === 'quite-better' || edge.relationLevel === 'quite-worse',
-              'anime-score-tool__edge--much': edge.relationLevel === 'much-better' || edge.relationLevel === 'much-worse',
+              'compare-rater__edge--same': edge.relationLevel === 'same',
+              'compare-rater__edge--better': edge.relationLevel === 'better' || edge.relationLevel === 'worse',
+              'compare-rater__edge--quite': edge.relationLevel === 'quite-better' || edge.relationLevel === 'quite-worse',
+              'compare-rater__edge--much': edge.relationLevel === 'much-better' || edge.relationLevel === 'much-worse',
             }"
             :d="edge.path"
-            marker-start="url(#anime-score-endpoint)"
-            :marker-end="edge.hasArrow ? 'url(#anime-score-arrowhead)' : 'url(#anime-score-endpoint)'"
+            marker-start="url(#compare-rater-endpoint)"
+            :marker-end="edge.hasArrow ? 'url(#compare-rater-arrowhead)' : 'url(#compare-rater-endpoint)'"
           />
         </svg>
         <div
           v-for="item in animatedGraphItems"
           :key="item.name"
-          class="anime-score-tool__node"
+          class="compare-rater__node"
           :style="{ left: `${item.x}%`, top: `${item.y}%` }"
           :title="`${item.name} / 相对 ${formatOffset(item.offset)}`"
         >
@@ -1830,49 +1830,49 @@ async function copyText(text: string) {
     </div>
     <p
       v-else
-      class="anime-score-tool__empty"
+      class="compare-rater__empty"
     >
       关系图会在录入关系后生成。
     </p>
   </section>
 
   <section
-    class="anime-score-tool__panel"
+    class="compare-rater__panel"
     aria-labelledby="compare-rater-score-title"
   >
-    <div class="anime-score-tool__label-row">
+    <div class="compare-rater__label-row">
       <h2 id="compare-rater-score-title">分值映射</h2>
       <span>自动选择相对最佳和相对最差</span>
     </div>
-    <h3 class="anime-score-tool__subheading">绝对分值</h3>
-    <div class="anime-score-tool__anchor-card anime-score-tool__anchor-card--range">
-      <div class="anime-score-tool__anchor-summary">
+    <h3 class="compare-rater__subheading">绝对分值</h3>
+    <div class="compare-rater__anchor-card compare-rater__anchor-card--range">
+      <div class="compare-rater__anchor-summary">
         <div>
           <h3>相对最差</h3>
-          <p class="anime-score-tool__anchor-name">
+          <p class="compare-rater__anchor-name">
             {{ worstAnchorName || "录入关系后自动选择" }}
           </p>
         </div>
         <div>
           <h3>相对最佳</h3>
-          <p class="anime-score-tool__anchor-name">
+          <p class="compare-rater__anchor-name">
             {{ bestAnchorName || "录入关系后自动选择" }}
           </p>
         </div>
       </div>
       <div
-        class="anime-score-tool__score-range"
+        class="compare-rater__score-range"
         :style="anchorScoreRangeStyle"
       >
-        <div class="anime-score-tool__score-range-labels">
+        <div class="compare-rater__score-range-labels">
           <span
-            class="anime-score-tool__score-range-value anime-score-tool__score-range-value--worst"
+            class="compare-rater__score-range-value compare-rater__score-range-value--worst"
             aria-hidden="true"
           >
             {{ formatScoreOption(worstAnchorScore) }}
           </span>
           <span
-            class="anime-score-tool__score-range-value anime-score-tool__score-range-value--best"
+            class="compare-rater__score-range-value compare-rater__score-range-value--best"
             aria-hidden="true"
           >
             {{ formatScoreOption(bestAnchorScore) }}
@@ -1900,16 +1900,16 @@ async function copyText(text: string) {
     </div>
     <div
       v-if="scoredItems.length"
-      class="anime-score-tool__label-row anime-score-tool__score-heading"
+      class="compare-rater__label-row compare-rater__score-heading"
     >
       <h3>最终得分</h3>
       <span>由关系图和绝对分值映射得到</span>
     </div>
     <div
       v-if="scoredItems.length"
-      class="anime-score-tool__score-table"
+      class="compare-rater__score-table"
     >
-      <div class="anime-score-tool__score-head">
+      <div class="compare-rater__score-head">
         <span>作品</span>
         <span>相对位置</span>
         <span>得分</span>
@@ -1917,7 +1917,7 @@ async function copyText(text: string) {
       <div
         v-for="item in scoredItems"
         :key="`score-${item.name}`"
-        class="anime-score-tool__score-row"
+        class="compare-rater__score-row"
       >
         <span>{{ item.name }}</span>
         <span>{{ formatOffset(item.offset) }}</span>
@@ -1967,14 +1967,14 @@ $$
 快速搜索功能使用 [Bangumi](https://bgm.tv/) 提供的 API，在此表示感谢。
 
 <style scoped>
-.anime-score-tool {
+.compare-rater {
   display: grid;
   gap: 14px;
   max-width: 860px;
   margin: 16px 0 24px;
 }
 
-.anime-score-tool__panel {
+.compare-rater__panel {
   display: grid;
   gap: 12px;
   padding: 16px;
@@ -1983,54 +1983,54 @@ $$
   background: var(--vp-c-bg-soft);
 }
 
-.anime-score-tool__relation-panel {
+.compare-rater__relation-panel {
   gap: 8px;
 }
 
-.anime-score-tool h2,
-.anime-score-tool h3 {
+.compare-rater h2,
+.compare-rater h3 {
   margin: 0;
   border: 0;
   padding: 0;
 }
 
-.anime-score-tool h2 {
+.compare-rater h2 {
   font-size: 1rem;
 }
 
-.anime-score-tool h3 {
+.compare-rater h3 {
   font-size: 0.96rem;
 }
 
-.anime-score-tool__subheading {
+.compare-rater__subheading {
   color: color-mix(in srgb, var(--vp-c-text-1) 82%, var(--vp-c-text-2) 18%);
 }
 
-.anime-score-tool__score-heading {
+.compare-rater__score-heading {
   margin-top: 4px;
 }
 
-.anime-score-tool label {
+.compare-rater label {
   display: grid;
   gap: 5px;
   min-width: 0;
   font-weight: 600;
 }
 
-.anime-score-tool__label-with-link {
+.compare-rater__label-with-link {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.anime-score-tool__label-with-link a {
+.compare-rater__label-with-link a {
   font-size: 0.86rem;
   font-weight: 700;
 }
 
-.anime-score-tool input,
-.anime-score-tool select {
+.compare-rater input,
+.compare-rater select {
   width: 100%;
   min-width: 0;
   min-height: 40px;
@@ -2040,7 +2040,7 @@ $$
   background: var(--vp-c-bg);
 }
 
-.anime-score-tool select {
+.compare-rater select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 4.5L6 8L9.5 4.5' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-position: right 0.8rem center;
@@ -2050,7 +2050,7 @@ $$
   padding-right: 2.5rem;
 }
 
-.anime-score-tool button {
+.compare-rater button {
   min-height: 38px;
   border: 1px solid var(--vp-c-divider);
   border-radius: 999px;
@@ -2061,25 +2061,25 @@ $$
   transition: border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
-.anime-score-tool button:disabled {
+.compare-rater button:disabled {
   cursor: not-allowed;
   opacity: 0.56;
 }
 
-.anime-score-tool__label-row {
+.compare-rater__label-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
 }
 
-.anime-score-tool__label-row > span {
+.compare-rater__label-row > span {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
   font-size: 0.88rem;
   text-align: right;
 }
 
-.anime-score-tool__graph-actions {
+.compare-rater__graph-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -2087,38 +2087,38 @@ $$
   flex-wrap: wrap;
 }
 
-.anime-score-tool__graph-actions > span {
+.compare-rater__graph-actions > span {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
   font-size: 0.88rem;
   font-variant-numeric: tabular-nums;
 }
 
-.anime-score-tool__transfer-actions {
+.compare-rater__transfer-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.anime-score-tool__bangumi-search {
+.compare-rater__bangumi-search {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 6px;
   align-items: end;
 }
 
-.anime-score-tool__bangumi-search label {
+.compare-rater__bangumi-search label {
   gap: 3px;
   font-size: 0.9rem;
 }
 
-.anime-score-tool__bangumi-search input {
+.compare-rater__bangumi-search input {
   min-height: 34px;
   padding-top: 6px;
   padding-bottom: 6px;
   border-radius: 8px;
 }
 
-.anime-score-tool__bangumi-results {
+.compare-rater__bangumi-results {
   display: grid;
   gap: 6px;
   margin: 0;
@@ -2126,7 +2126,7 @@ $$
   list-style: none;
 }
 
-.anime-score-tool__bangumi-results li {
+.compare-rater__bangumi-results li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
@@ -2137,62 +2137,62 @@ $$
   background: var(--vp-c-bg);
 }
 
-.anime-score-tool__bangumi-results div {
+.compare-rater__bangumi-results div {
   display: grid;
   gap: 1px;
   min-width: 0;
 }
 
-.anime-score-tool__bangumi-results strong,
-.anime-score-tool__bangumi-results span,
-.anime-score-tool__bangumi-results small {
+.compare-rater__bangumi-results strong,
+.compare-rater__bangumi-results span,
+.compare-rater__bangumi-results small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.anime-score-tool__bangumi-results span,
-.anime-score-tool__bangumi-results small,
-.anime-score-tool__hint {
+.compare-rater__bangumi-results span,
+.compare-rater__bangumi-results small,
+.compare-rater__hint {
   color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
   font-size: 0.84rem;
 }
 
-.anime-score-tool__hint {
+.compare-rater__hint {
   margin: 0;
 }
 
-.anime-score-tool__scope-grid {
+.compare-rater__scope-grid {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
 }
 
-.anime-score-tool__relation-form {
+.compare-rater__relation-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 170px minmax(0, 1fr) auto;
   gap: 6px;
   align-items: end;
 }
 
-.anime-score-tool__relation-form label {
+.compare-rater__relation-form label {
   gap: 3px;
   font-size: 0.9rem;
 }
 
-.anime-score-tool__relation-form input,
-.anime-score-tool__relation-form select {
+.compare-rater__relation-form input,
+.compare-rater__relation-form select {
   min-height: 34px;
   padding-top: 6px;
   padding-bottom: 6px;
   border-radius: 8px;
 }
 
-.anime-score-tool__relation-form button {
+.compare-rater__relation-form button {
   min-height: 34px;
 }
 
-.anime-score-tool__aspect-description {
+.compare-rater__aspect-description {
   margin: 0;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--vp-c-brand-1) 28%, var(--vp-c-divider));
@@ -2203,18 +2203,18 @@ $$
   line-height: 1.65;
 }
 
-.anime-score-tool__primary-button,
-.anime-score-tool__secondary-button {
+.compare-rater__primary-button,
+.compare-rater__secondary-button {
   padding: 7px 12px;
 }
 
-.anime-score-tool__primary-button {
+.compare-rater__primary-button {
   border-color: var(--vp-c-brand-1);
   background: var(--vp-c-brand-1);
   color: var(--vp-c-white);
 }
 
-.anime-score-tool__relation-list {
+.compare-rater__relation-list {
   display: grid;
   gap: 0px;
   margin: 0;
@@ -2222,7 +2222,7 @@ $$
   list-style: none;
 }
 
-.anime-score-tool__relation-list li {
+.compare-rater__relation-list li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
@@ -2235,81 +2235,81 @@ $$
   line-height: 1.35;
 }
 
-.anime-score-tool__relation-expression {
+.compare-rater__relation-expression {
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
   font-size: 0.92rem;
 }
 
-.anime-score-tool__relation-symbol {
+.compare-rater__relation-symbol {
   font-weight: 800;
 }
 
-.anime-score-tool__relation-symbol--same {
+.compare-rater__relation-symbol--same {
   color: #16a34a;
 }
 
-.anime-score-tool__relation-symbol--better {
+.compare-rater__relation-symbol--better {
   color: #ca8a04;
 }
 
-.anime-score-tool__relation-symbol--quite {
+.compare-rater__relation-symbol--quite {
   color: #ea580c;
 }
 
-.anime-score-tool__relation-symbol--much {
+.compare-rater__relation-symbol--much {
   color: #991b1b;
 }
 
-.anime-score-tool__relation-list button {
+.compare-rater__relation-list button {
   min-height: 24px;
   padding: 2px 7px;
   color: var(--vp-c-danger-1);
   font-size: 0.84rem;
 }
 
-.anime-score-tool__relation-pager {
+.compare-rater__relation-pager {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.anime-score-tool__relation-pager > span {
+.compare-rater__relation-pager > span {
   color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
   font-size: 0.86rem;
   font-variant-numeric: tabular-nums;
 }
 
-.anime-score-tool__relation-pager button {
+.compare-rater__relation-pager button {
   min-height: 30px;
   padding: 4px 10px;
 }
 
-.anime-score-tool__relation-jump {
+.compare-rater__relation-jump {
   display: grid;
   grid-template-columns: auto 64px auto auto;
   align-items: center;
   gap: 6px;
 }
 
-.anime-score-tool__relation-jump > span {
+.compare-rater__relation-jump > span {
   color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
   font-size: 0.86rem;
 }
 
-.anime-score-tool__relation-jump input {
+.compare-rater__relation-jump input {
   min-height: 30px;
   padding: 4px 8px;
   border-radius: 8px;
   font-variant-numeric: tabular-nums;
 }
 
-.anime-score-tool__advanced {
+.compare-rater__advanced {
   border-top: 1px solid var(--vp-c-divider);
   padding-top: 6px;
 }
 
-.anime-score-tool__advanced summary {
+.compare-rater__advanced summary {
   width: fit-content;
   cursor: pointer;
   color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
@@ -2317,25 +2317,25 @@ $$
   font-weight: 700;
 }
 
-.anime-score-tool__weight-grid {
+.compare-rater__weight-grid {
   display: grid;
   gap: 8px;
   margin-top: 8px;
 }
 
-.anime-score-tool__score-slider {
+.compare-rater__score-slider {
   grid-template-columns: 96px minmax(0, 1fr);
   align-items: end;
   gap: 8px;
 }
 
-.anime-score-tool__score-slider > span {
+.compare-rater__score-slider > span {
   padding-bottom: 7px;
   color: color-mix(in srgb, var(--vp-c-text-1) 72%, var(--vp-c-text-2) 28%);
   font-size: 0.9rem;
 }
 
-.anime-score-tool__weight-slider-control {
+.compare-rater__weight-slider-control {
   --weight-value-pos: 0%;
   --weight-thumb-size: 16px;
   --weight-track-inset: calc(var(--weight-thumb-size) / 2);
@@ -2343,7 +2343,7 @@ $$
   height: 38px;
 }
 
-.anime-score-tool__weight-slider-labels {
+.compare-rater__weight-slider-labels {
   position: absolute;
   top: 0;
   right: var(--weight-track-inset);
@@ -2352,7 +2352,7 @@ $$
   pointer-events: none;
 }
 
-.anime-score-tool__weight-slider-labels > strong {
+.compare-rater__weight-slider-labels > strong {
   position: absolute;
   top: 0;
   left: var(--weight-value-pos);
@@ -2368,7 +2368,7 @@ $$
   transform: translateX(-50%);
 }
 
-.anime-score-tool__weight-slider-control > input {
+.compare-rater__weight-slider-control > input {
   appearance: none;
   position: absolute;
   right: 0;
@@ -2384,18 +2384,18 @@ $$
   cursor: pointer;
 }
 
-.anime-score-tool__weight-slider-control > input:focus-visible {
+.compare-rater__weight-slider-control > input:focus-visible {
   border: 0;
   box-shadow: none;
 }
 
-.anime-score-tool__weight-slider-control > input::-webkit-slider-runnable-track {
+.compare-rater__weight-slider-control > input::-webkit-slider-runnable-track {
   height: 6px;
   border-radius: 999px;
   background: var(--vp-c-divider);
 }
 
-.anime-score-tool__weight-slider-control > input::-webkit-slider-thumb {
+.compare-rater__weight-slider-control > input::-webkit-slider-thumb {
   appearance: none;
   width: var(--weight-thumb-size);
   height: var(--weight-thumb-size);
@@ -2406,20 +2406,20 @@ $$
   box-shadow: 0 2px 8px rgb(15 23 42 / 0.18);
 }
 
-.anime-score-tool__weight-slider-control > input:focus-visible::-webkit-slider-thumb {
+.compare-rater__weight-slider-control > input:focus-visible::-webkit-slider-thumb {
   box-shadow:
     0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent),
     0 2px 8px rgb(15 23 42 / 0.18);
 }
 
-.anime-score-tool__weight-slider-control > input::-moz-range-track {
+.compare-rater__weight-slider-control > input::-moz-range-track {
   height: 6px;
   border: 0;
   border-radius: 999px;
   background: var(--vp-c-divider);
 }
 
-.anime-score-tool__weight-slider-control > input::-moz-range-thumb {
+.compare-rater__weight-slider-control > input::-moz-range-thumb {
   width: var(--weight-thumb-size);
   height: var(--weight-thumb-size);
   border: 0;
@@ -2428,25 +2428,25 @@ $$
   box-shadow: 0 2px 8px rgb(15 23 42 / 0.18);
 }
 
-.anime-score-tool__weight-slider-control > input:focus-visible::-moz-range-thumb {
+.compare-rater__weight-slider-control > input:focus-visible::-moz-range-thumb {
   box-shadow:
     0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent),
     0 2px 8px rgb(15 23 42 / 0.18);
 }
 
-.anime-score-tool__empty {
+.compare-rater__empty {
   margin: 0;
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
   font-size: 0.92rem;
 }
 
-.anime-score-tool__error {
+.compare-rater__error {
   margin: 0 0 4px;
   color: var(--vp-c-danger-1);
   font-size: 0.9rem;
 }
 
-.anime-score-tool__anchor-card {
+.compare-rater__anchor-card {
   display: grid;
   gap: 12px;
   padding: 12px;
@@ -2455,19 +2455,19 @@ $$
   background: var(--vp-c-bg);
 }
 
-.anime-score-tool__anchor-summary {
+.compare-rater__anchor-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.anime-score-tool__anchor-summary > div {
+.compare-rater__anchor-summary > div {
   display: grid;
   gap: 6px;
   min-width: 0;
 }
 
-.anime-score-tool__anchor-name {
+.compare-rater__anchor-name {
   margin: 0;
   min-height: 34px;
   padding: 8px 10px;
@@ -2480,7 +2480,7 @@ $$
   line-height: 1.45;
 }
 
-.anime-score-tool__score-range {
+.compare-rater__score-range {
   --score-range-start: 0%;
   --score-range-end: 100%;
   --score-thumb-size: 18px;
@@ -2506,7 +2506,7 @@ $$
   background-size: calc(100% - var(--score-thumb-size)) 8px;
 }
 
-.anime-score-tool__score-range-labels {
+.compare-rater__score-range-labels {
   position: absolute;
   z-index: 1;
   top: 0;
@@ -2516,7 +2516,7 @@ $$
   pointer-events: none;
 }
 
-.anime-score-tool__score-range-value {
+.compare-rater__score-range-value {
   position: absolute;
   top: 0;
   min-width: 32px;
@@ -2532,15 +2532,15 @@ $$
   transform: translateX(-50%);
 }
 
-.anime-score-tool__score-range-value--worst {
+.compare-rater__score-range-value--worst {
   left: var(--score-range-start);
 }
 
-.anime-score-tool__score-range-value--best {
+.compare-rater__score-range-value--best {
   left: var(--score-range-end);
 }
 
-.anime-score-tool__score-range > input {
+.compare-rater__score-range > input {
   appearance: none;
   position: absolute;
   top: 12px;
@@ -2555,17 +2555,17 @@ $$
   pointer-events: none;
 }
 
-.anime-score-tool__score-range > input:focus-visible {
+.compare-rater__score-range > input:focus-visible {
   border: 0;
   box-shadow: none;
 }
 
-.anime-score-tool__score-range > input::-webkit-slider-runnable-track {
+.compare-rater__score-range > input::-webkit-slider-runnable-track {
   height: 8px;
   background: transparent;
 }
 
-.anime-score-tool__score-range > input::-webkit-slider-thumb {
+.compare-rater__score-range > input::-webkit-slider-thumb {
   appearance: none;
   width: var(--score-thumb-size);
   height: var(--score-thumb-size);
@@ -2578,19 +2578,19 @@ $$
   pointer-events: auto;
 }
 
-.anime-score-tool__score-range > input:focus-visible::-webkit-slider-thumb {
+.compare-rater__score-range > input:focus-visible::-webkit-slider-thumb {
   box-shadow:
     0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent),
     0 2px 8px rgb(15 23 42 / 0.2);
 }
 
-.anime-score-tool__score-range > input::-moz-range-track {
+.compare-rater__score-range > input::-moz-range-track {
   height: 8px;
   border: 0;
   background: transparent;
 }
 
-.anime-score-tool__score-range > input::-moz-range-thumb {
+.compare-rater__score-range > input::-moz-range-thumb {
   width: var(--score-thumb-size);
   height: var(--score-thumb-size);
   border: 0;
@@ -2601,13 +2601,13 @@ $$
   pointer-events: auto;
 }
 
-.anime-score-tool__score-range > input:focus-visible::-moz-range-thumb {
+.compare-rater__score-range > input:focus-visible::-moz-range-thumb {
   box-shadow:
     0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent),
     0 2px 8px rgb(15 23 42 / 0.2);
 }
 
-.anime-score-tool__graph {
+.compare-rater__graph {
   position: relative;
   overflow: hidden;
   cursor: grab;
@@ -2620,12 +2620,12 @@ $$
     repeating-linear-gradient(180deg, transparent 0, transparent calc(20% - 1px), color-mix(in srgb, var(--vp-c-divider) 58%, transparent) calc(20% - 1px), color-mix(in srgb, var(--vp-c-divider) 58%, transparent) 20%);
 }
 
-.anime-score-tool__graph:active {
+.compare-rater__graph:active {
   cursor: grabbing;
 }
 
-.anime-score-tool__graph::before,
-.anime-score-tool__graph::after {
+.compare-rater__graph::before,
+.compare-rater__graph::after {
   position: absolute;
   z-index: 4;
   top: 10px;
@@ -2634,26 +2634,26 @@ $$
   font-weight: 700;
 }
 
-.anime-score-tool__graph::before {
+.compare-rater__graph::before {
   left: 12px;
   content: "高";
 }
 
-.anime-score-tool__graph::after {
+.compare-rater__graph::after {
   right: 12px;
   bottom: 10px;
   top: auto;
   content: "低";
 }
 
-.anime-score-tool__graph-scene {
+.compare-rater__graph-scene {
   position: absolute;
   inset: 0;
   transform-origin: 0 0;
   will-change: transform;
 }
 
-.anime-score-tool__edges {
+.compare-rater__edges {
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -2663,7 +2663,7 @@ $$
   pointer-events: none;
 }
 
-.anime-score-tool__edge {
+.compare-rater__edge {
   fill: none;
   stroke: #ca8a04;
   stroke-linecap: round;
@@ -2671,33 +2671,33 @@ $$
   vector-effect: non-scaling-stroke;
 }
 
-.anime-score-tool__edge--same {
+.compare-rater__edge--same {
   stroke: #16a34a;
 }
 
-.anime-score-tool__edge--better {
+.compare-rater__edge--better {
   stroke: #ca8a04;
 }
 
-.anime-score-tool__edge--quite {
+.compare-rater__edge--quite {
   stroke: #ea580c;
   stroke-width: 1.1;
 }
 
-.anime-score-tool__edge--much {
+.compare-rater__edge--much {
   stroke: #991b1b;
   stroke-width: 1.45;
 }
 
-.anime-score-tool__arrowhead {
+.compare-rater__arrowhead {
   fill: context-stroke;
 }
 
-.anime-score-tool__endpoint {
+.compare-rater__endpoint {
   fill: context-stroke;
 }
 
-.anime-score-tool__node {
+.compare-rater__node {
   position: absolute;
   z-index: 5;
   display: grid;
@@ -2719,13 +2719,13 @@ $$
   transform: translate(-50%, -50%);
 }
 
-.anime-score-tool__node strong {
+.compare-rater__node strong {
   font-size: 0.78rem;
   line-height: 1;
 }
 
-.anime-score-tool__node strong,
-.anime-score-tool__node span {
+.compare-rater__node strong,
+.compare-rater__node span {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -2733,21 +2733,21 @@ $$
   white-space: nowrap;
 }
 
-.anime-score-tool__node span {
+.compare-rater__node span {
   color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
   font-size: 0.66rem;
   line-height: 1;
 }
 
-.anime-score-tool__score-table {
+.compare-rater__score-table {
   display: grid;
   overflow: hidden;
   border: 1px solid var(--vp-c-divider);
   border-radius: 10px;
 }
 
-.anime-score-tool__score-head,
-.anime-score-tool__score-row {
+.compare-rater__score-head,
+.compare-rater__score-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 110px 80px;
   gap: 10px;
@@ -2755,24 +2755,24 @@ $$
   padding: 9px 12px;
 }
 
-.anime-score-tool__score-head {
+.compare-rater__score-head {
   background: var(--vp-c-bg);
   color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
   font-size: 0.88rem;
   font-weight: 700;
 }
 
-.anime-score-tool__score-row {
+.compare-rater__score-row {
   border-top: 1px solid var(--vp-c-divider);
   background: color-mix(in srgb, var(--vp-c-bg) 72%, var(--vp-c-bg-soft));
 }
 
-.anime-score-tool__score-row > span:first-child {
+.compare-rater__score-row > span:first-child {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.anime-score-tool__sr-only {
+.compare-rater__sr-only {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -2784,75 +2784,75 @@ $$
   border: 0;
 }
 
-.anime-score-tool button:hover:not(:disabled) {
+.compare-rater button:hover:not(:disabled) {
   border-color: var(--vp-c-brand-1);
   box-shadow: 0 8px 20px rgb(15 23 42 / 0.06);
   color: var(--vp-c-brand-1);
   transform: translateY(-1px);
 }
 
-.anime-score-tool__primary-button:hover:not(:disabled) {
+.compare-rater__primary-button:hover:not(:disabled) {
   color: var(--vp-c-white);
 }
 
-.anime-score-tool input:not([type="range"]):focus-visible,
-.anime-score-tool select:focus-visible,
-.anime-score-tool button:focus-visible {
+.compare-rater input:not([type="range"]):focus-visible,
+.compare-rater select:focus-visible,
+.compare-rater button:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
 }
 
 @media (max-width: 760px) {
-  .anime-score-tool__label-row,
-  .anime-score-tool__scope-grid,
-  .anime-score-tool__bangumi-search,
-  .anime-score-tool__relation-form {
+  .compare-rater__label-row,
+  .compare-rater__scope-grid,
+  .compare-rater__bangumi-search,
+  .compare-rater__relation-form {
     grid-template-columns: 1fr;
   }
 
-  .anime-score-tool__label-row {
+  .compare-rater__label-row {
     display: grid;
     gap: 4px;
   }
 
-  .anime-score-tool__label-row > span {
+  .compare-rater__label-row > span {
     text-align: left;
   }
 
-  .anime-score-tool__graph-actions {
+  .compare-rater__graph-actions {
     justify-content: stretch;
   }
 
-  .anime-score-tool__bangumi-results li {
+  .compare-rater__bangumi-results li {
     grid-template-columns: 1fr;
   }
 
-  .anime-score-tool__relation-pager {
+  .compare-rater__relation-pager {
     display: grid;
     grid-template-columns: 1fr;
   }
 
-  .anime-score-tool__relation-jump {
+  .compare-rater__relation-jump {
     grid-template-columns: auto minmax(0, 1fr) auto auto;
   }
 
-  .anime-score-tool__transfer-actions {
+  .compare-rater__transfer-actions {
     display: grid;
     grid-template-columns: 1fr;
   }
 
-  .anime-score-tool__graph-actions > span {
+  .compare-rater__graph-actions > span {
     text-align: left;
   }
 
-  .anime-score-tool__primary-button,
-  .anime-score-tool__secondary-button {
+  .compare-rater__primary-button,
+  .compare-rater__secondary-button {
     width: 100%;
   }
 
-  .anime-score-tool__score-head,
-  .anime-score-tool__score-row {
+  .compare-rater__score-head,
+  .compare-rater__score-row {
     grid-template-columns: minmax(0, 1fr) 88px 64px;
     gap: 8px;
     padding: 8px 10px;

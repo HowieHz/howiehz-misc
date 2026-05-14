@@ -8,8 +8,8 @@ export type RelationLevel = "much-better" | "quite-better" | "better" | "same" |
 /** 评分锚点角色。 */
 export type AnchorRole = "best" | "worst";
 
-/** 关系图中的番剧节点。 */
-export interface AnimeItem {
+/** 关系图中的作品节点。 */
+export interface CompareItem {
   id: number;
   name: string;
   /** 一维相对位置；数值越大表示相对越好。 */
@@ -114,7 +114,7 @@ const OFFSET_SOLVER_SIBLING_STEP = 0.08;
 const OFFSET_SOLVER_EPSILON = 1e-5;
 
 /**
- * 标准化番剧名或表单文本，去掉首尾空白并把连续空白折叠成单个空格。
+ * 标准化作品名或表单文本，去掉首尾空白并把连续空白折叠成单个空格。
  *
  * @param value - 用户输入的原始文本。
  * @returns 可用于比较、存储和展示的文本。
@@ -126,10 +126,10 @@ export function normalizeName(value: string) {
 /**
  * 创建无方向的关系去重键。
  *
- * `A-B` 与 `B-A` 会得到同一个 key，用于禁止同一对番剧录入多条矛盾或重复关系。
+ * `A-B` 与 `B-A` 会得到同一个 key，用于禁止同一对作品录入多条矛盾或重复关系。
  *
- * @param left - 关系一侧的番剧名。
- * @param right - 关系另一侧的番剧名。
+ * @param left - 关系一侧的作品名。
+ * @param right - 关系另一侧的作品名。
  * @returns 可比较的 pair key；任一名称为空时返回 `undefined`。
  */
 export function createRelationPairKey(left: string, right: string) {
@@ -144,7 +144,7 @@ export function createRelationPairKey(left: string, right: string) {
 /**
  * 根据关系记录生成图节点。
  *
- * 先用关系 delta 求出每部番的相对位置，再把相对位置映射到纵向坐标，并按连通分量与同层节点做横向排布。
+ * 先用关系 delta 求出每个作品的相对位置，再把相对位置映射到纵向坐标，并按连通分量与同层节点做横向排布。
  *
  * @param records - 用户录入的相对关系。
  * @returns 可直接渲染或交给弹簧动画过渡的图节点。
@@ -188,7 +188,7 @@ export function buildGraphItems(records: readonly RelationRecord[]) {
  */
 export function buildGraphEdges(
   records: readonly RelationRecord[],
-  items: readonly AnimeItem[],
+  items: readonly CompareItem[],
   scores: ReadonlyMap<string, number | undefined>,
 ) {
   const itemByName = new Map(items.map((item) => [item.name, item]));
@@ -236,9 +236,9 @@ export function buildGraphEdges(
  *
  * @param items - 已计算相对位置的节点。
  * @param anchors - 用户给出的相对最佳/相对最差评分锚点。
- * @returns 以番剧名索引的分数表，未能映射时值为 `undefined`。
+ * @returns 以作品名索引的分数表，未能映射时值为 `undefined`。
  */
-export function mapScores(items: readonly AnimeItem[], anchors: ScoreAnchors) {
+export function mapScores(items: readonly CompareItem[], anchors: ScoreAnchors) {
   const scores = new Map<string, number | undefined>();
   const best = findAnchor(items, anchors.best);
   const worst = findAnchor(items, anchors.worst);
@@ -286,9 +286,9 @@ export function mapScores(items: readonly AnimeItem[], anchors: ScoreAnchors) {
 }
 
 /**
- * 从分数表中读取指定番剧的映射分数。
+ * 从分数表中读取指定作品的映射分数。
  *
- * @param name - 番剧名。
+ * @param name - 作品名。
  * @param scores - `mapScores` 生成的分数表。
  * @returns 映射分数；不存在时为 `undefined`。
  */
@@ -347,7 +347,7 @@ export function roundOffsetForDisplay(value: number) {
  * @param items - 当前图节点。
  * @returns 视口最小高度，单位为 px。
  */
-export function getGraphViewportHeight(items: readonly AnimeItem[]) {
+export function getGraphViewportHeight(items: readonly CompareItem[]) {
   if (items.length === 0) {
     return GRAPH_VIEWPORT_BASE_HEIGHT;
   }
@@ -365,7 +365,7 @@ export function getGraphViewportHeight(items: readonly AnimeItem[]) {
 }
 
 /**
- * 用一维约束松弛求解每个番剧的相对位置。
+ * 用一维约束松弛求解每个作品的相对位置。
  *
  * “差不多”是等式吸引；其它关系先保证下限，满足后再用很弱的力贴近标称差距。 同一节点下同档关系的目标会轻微对齐，避免两个“好一点”被解成明显不同高度。 每个连通分量单独归零均值，避免整体平移影响展示。
  */
@@ -561,7 +561,7 @@ function getDirectedRelation(record: RelationRecord, scores: ReadonlyMap<string,
 function buildGraphEdge(
   edgeDraft: GraphEdgeDraft,
   curveOffset: number,
-  items: readonly AnimeItem[],
+  items: readonly CompareItem[],
   records: readonly RelationRecord[],
 ): GraphEdge {
   const effectiveCurveOffset = getEffectiveCurveOffset(edgeDraft, curveOffset, items, records);
@@ -613,7 +613,7 @@ function buildGraphEdge(
 function getEffectiveCurveOffset(
   edgeDraft: GraphEdgeDraft,
   curveOffset: number,
-  items: readonly AnimeItem[],
+  items: readonly CompareItem[],
   records: readonly RelationRecord[],
 ) {
   if (curveOffset !== 0) {
@@ -638,7 +638,7 @@ function getEffectiveCurveOffset(
  */
 function getVerticalEdgeSide(
   edgeDraft: GraphEdgeDraft,
-  items: readonly AnimeItem[],
+  items: readonly CompareItem[],
   records: readonly RelationRecord[],
 ) {
   const leftScore = getVerticalEdgeSideClearance(edgeDraft, items, records, -1);
@@ -652,7 +652,7 @@ function getVerticalEdgeSide(
 /** 计算近垂直边某一侧走廊的空旷程度，数值越大越宽松。 */
 function getVerticalEdgeSideClearance(
   edgeDraft: GraphEdgeDraft,
-  items: readonly AnimeItem[],
+  items: readonly CompareItem[],
   records: readonly RelationRecord[],
   side: -1 | 1,
 ) {
@@ -671,7 +671,7 @@ function getVerticalEdgeSideClearance(
 /** 近垂直边避开端点这一侧已有的关系边，减少多条线挤在同一侧。 */
 function getEndpointSideUsagePenalty(
   edgeDraft: GraphEdgeDraft,
-  items: readonly AnimeItem[],
+  items: readonly CompareItem[],
   records: readonly RelationRecord[],
   side: -1 | 1,
 ) {
@@ -849,10 +849,10 @@ function trimEdgeLine(fromX: number, fromY: number, toX: number, toY: number, cu
  *
  * 先按连通分量分组，再把同一相对位置的节点排成横向行，最后保持原始 id 顺序返回。
  */
-function layoutGraphItems(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
+function layoutGraphItems(items: readonly CompareItem[], records: readonly RelationRecord[]) {
   const componentIds = getGraphComponentIds(items, records);
   const nodeDegrees = getGraphNodeDegrees(records);
-  const componentGroups = new Map<number, AnimeItem[]>();
+  const componentGroups = new Map<number, CompareItem[]>();
   for (const item of items) {
     const componentId = componentIds.get(item.name) ?? item.id;
     componentGroups.set(componentId, [...(componentGroups.get(componentId) ?? []), item]);
@@ -869,7 +869,7 @@ function layoutGraphItems(items: readonly AnimeItem[], records: readonly Relatio
 
   const laidOutItems = components.flatMap((component, componentIndex) => {
     const centerX = getGraphComponentCenter(componentIndex, components.length);
-    const rows = new Map<string, AnimeItem[]>();
+    const rows = new Map<string, CompareItem[]>();
     for (const item of component) {
       const rowKey = item.y.toFixed(2);
       rows.set(rowKey, [...(rows.get(rowKey) ?? []), item]);
@@ -887,12 +887,12 @@ function layoutGraphItems(items: readonly AnimeItem[], records: readonly Relatio
  * 这里只复用已经算好的横向槽位，不改变节点高度，也不改变整体宽松度。
  */
 function optimizeGraphRowOrder(
-  items: readonly AnimeItem[],
+  items: readonly CompareItem[],
   records: readonly RelationRecord[],
   nodeDegrees: ReadonlyMap<string, number>,
 ) {
   const itemByName = new Map(items.map((item) => [item.name, { ...item }]));
-  const rowGroups = new Map<string, AnimeItem[]>();
+  const rowGroups = new Map<string, CompareItem[]>();
   for (const item of itemByName.values()) {
     const rowKey = item.y.toFixed(2);
     rowGroups.set(rowKey, [...(rowGroups.get(rowKey) ?? []), item]);
@@ -922,9 +922,9 @@ function optimizeGraphRowOrder(
 
 /** 单节点层也尝试横向换位，避免无关的近层节点挤在同一条通道里。 */
 function getOptimizedSingleGraphRowItem(
-  item: AnimeItem,
+  item: CompareItem,
   records: readonly RelationRecord[],
-  itemByName: ReadonlyMap<string, AnimeItem>,
+  itemByName: ReadonlyMap<string, CompareItem>,
 ) {
   const candidates = getSingleRowItemCandidateXs(item, records, itemByName);
   return candidates
@@ -939,9 +939,9 @@ function getOptimizedSingleGraphRowItem(
 
 /** 给单节点层生成少量直觉候选位置：当前点、邻居附近、已有列附近。 */
 function getSingleRowItemCandidateXs(
-  item: AnimeItem,
+  item: CompareItem,
   records: readonly RelationRecord[],
-  itemByName: ReadonlyMap<string, AnimeItem>,
+  itemByName: ReadonlyMap<string, CompareItem>,
 ) {
   const candidates = new Set([item.x, 50]);
   const neighborXs: number[] = [];
@@ -974,9 +974,9 @@ function getRelationNeighborName(record: RelationRecord, name: string) {
 
 /** 单节点层的横向评分：连线别太长，也要远离没有直接关系的近层节点。 */
 function getSingleGraphRowItemScore(
-  item: AnimeItem,
+  item: CompareItem,
   records: readonly RelationRecord[],
-  itemByName: ReadonlyMap<string, AnimeItem>,
+  itemByName: ReadonlyMap<string, CompareItem>,
 ) {
   let directRelationScore = 0;
   for (const record of records) {
@@ -1010,7 +1010,7 @@ function getSingleGraphRowItemScore(
 }
 
 /** 侧边出入需要留出绘图空隙，避免边从两张卡片之间的窄缝硬挤过去。 */
-function getSideEdgeRepulsionScore(item: AnimeItem, neighbor: AnimeItem) {
+function getSideEdgeRepulsionScore(item: CompareItem, neighbor: CompareItem) {
   if (Math.abs(item.y - neighbor.y) <= GRAPH_EDGE_NODE_HALF_HEIGHT) {
     return 0;
   }
@@ -1027,10 +1027,10 @@ function getSideEdgeRepulsionScore(item: AnimeItem, neighbor: AnimeItem) {
 
 /** 穷举小行的槽位交换方案，选择线条代价最低的排布。 */
 function getOptimizedGraphRow(
-  rowItems: readonly AnimeItem[],
+  rowItems: readonly CompareItem[],
   records: readonly RelationRecord[],
   nodeDegrees: ReadonlyMap<string, number>,
-  itemByName: ReadonlyMap<string, AnimeItem>,
+  itemByName: ReadonlyMap<string, CompareItem>,
 ) {
   const lockedItem = findGraphRowCenterItem(rowItems, nodeDegrees);
   const slots = rowItems.toSorted((left, right) => left.x - right.x).map((item) => item.x);
@@ -1066,10 +1066,10 @@ function getOptimizedGraphRow(
 
 /** 大行只做相邻交换，避免全排列爆炸。 */
 function optimizeGraphRowByAdjacentSwap(
-  rowItems: readonly AnimeItem[],
+  rowItems: readonly CompareItem[],
   lockedName: string | undefined,
   records: readonly RelationRecord[],
-  itemByName: ReadonlyMap<string, AnimeItem>,
+  itemByName: ReadonlyMap<string, CompareItem>,
 ) {
   const optimizedItems = rowItems.toSorted((left, right) => left.x - right.x).map((item) => ({ ...item }));
   let pass = 0;
@@ -1100,9 +1100,9 @@ function optimizeGraphRowByAdjacentSwap(
 
 /** 计算同一行排布的线条代价，数值越小表示越少交叉、越少绕线。 */
 function getGraphRowOrderScore(
-  rowItems: readonly AnimeItem[],
+  rowItems: readonly CompareItem[],
   records: readonly RelationRecord[],
-  itemByName: ReadonlyMap<string, AnimeItem>,
+  itemByName: ReadonlyMap<string, CompareItem>,
 ) {
   const rowItemByName = new Map(rowItems.map((item) => [item.name, item]));
   const rowNames = new Set(rowItemByName.keys());
@@ -1184,7 +1184,7 @@ function getPermutations<T>(items: readonly T[]) {
  *
  * 叶子节点通常不应该占据主干中线；优先与唯一邻居上下对齐，有同层冲突时再挂到邻居左右侧。
  */
-function layoutLeafItemsWithNeighbors(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
+function layoutLeafItemsWithNeighbors(items: readonly CompareItem[], records: readonly RelationRecord[]) {
   const neighborMap = getGraphNeighborNames(records);
   const itemByName = new Map(items.map((item) => [item.name, item]));
   return items.map((item) => {
@@ -1206,7 +1206,7 @@ function layoutLeafItemsWithNeighbors(items: readonly AnimeItem[], records: read
 }
 
 /** 给叶子节点选择相对唯一邻居最直觉的位置。 */
-function getLeafItemX(item: AnimeItem, neighbor: AnimeItem, items: readonly AnimeItem[]) {
+function getLeafItemX(item: CompareItem, neighbor: CompareItem, items: readonly CompareItem[]) {
   const alignedClearance = getRowClearance(item, neighbor.x, items);
   // 同列至少留出一个节点宽再加 2% 呼吸空间，叶子才直接挂在邻居正上/下。
   if (alignedClearance >= GRAPH_NODE_WIDTH + 2) {
@@ -1232,7 +1232,7 @@ function getLeafItemX(item: AnimeItem, neighbor: AnimeItem, items: readonly Anim
 }
 
 /** 计算候选横坐标与同一行其它节点的最近距离。 */
-function getRowClearance(item: AnimeItem, x: number, items: readonly AnimeItem[]) {
+function getRowClearance(item: CompareItem, x: number, items: readonly CompareItem[]) {
   const sameRowItems = items.filter(
     (candidate) => candidate.name !== item.name && Math.abs(candidate.y - item.y) < GRAPH_NODE_HEIGHT,
   );
@@ -1247,7 +1247,7 @@ function getRowClearance(item: AnimeItem, x: number, items: readonly AnimeItem[]
  *
  * 若存在度数明显最高的中心节点，则让它居中，其它节点左右交错；否则按名称均匀铺开。
  */
-function layoutGraphRowItems(items: readonly AnimeItem[], nodeDegrees: ReadonlyMap<string, number>, centerX: number) {
+function layoutGraphRowItems(items: readonly CompareItem[], nodeDegrees: ReadonlyMap<string, number>, centerX: number) {
   const centerItem = findGraphRowCenterItem(items, nodeDegrees);
   // 同层最多每 27% 放一个节点；节点多时压到 81% 可用宽度内。
   const rowStep = Math.min(27, 81 / Math.max(items.length, 1));
@@ -1282,7 +1282,7 @@ function layoutGraphRowItems(items: readonly AnimeItem[], nodeDegrees: ReadonlyM
  *
  * 只有第一名度数严格高于第二名时才返回，避免无依据地偏置同层节点。
  */
-function findGraphRowCenterItem(items: readonly AnimeItem[], nodeDegrees: ReadonlyMap<string, number>) {
+function findGraphRowCenterItem(items: readonly CompareItem[], nodeDegrees: ReadonlyMap<string, number>) {
   if (items.length < 2) {
     return undefined;
   }
@@ -1330,7 +1330,7 @@ function getGraphNeighborNames(records: readonly RelationRecord[]) {
 }
 
 /** 用并查集计算每个节点所在的连通分量。 */
-function getGraphComponentIds(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
+function getGraphComponentIds(items: readonly CompareItem[], records: readonly RelationRecord[]) {
   const names = new Set(items.map((item) => item.name));
   const parents = new Map(Array.from(names, (name) => [name, name]));
 
@@ -1376,12 +1376,12 @@ function getGraphComponentCenter(index: number, count: number) {
 }
 
 /** 获取一组节点按名称排序后的第一个名称。 */
-function getFirstGraphItemName(items: readonly AnimeItem[]) {
+function getFirstGraphItemName(items: readonly CompareItem[]) {
   return sortGraphItemsByName(items).at(0)?.name ?? "";
 }
 
 /** 按中文环境名称排序节点。 */
-function sortGraphItemsByName(items: readonly AnimeItem[]) {
+function sortGraphItemsByName(items: readonly CompareItem[]) {
   return items.toSorted((left, right) => left.name.localeCompare(right.name, "zh-Hans-CN"));
 }
 
@@ -1390,7 +1390,7 @@ function sortGraphItemsByName(items: readonly AnimeItem[]) {
  *
  * 只调整 x，避免破坏“相对位置相同则同高”的图形语义。
  */
-function avoidGraphItemOverlap(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
+function avoidGraphItemOverlap(items: readonly CompareItem[], records: readonly RelationRecord[]) {
   const relaxedItems = items.map((item) => ({ ...item }));
   const relationPairKeys = new Set(
     records.flatMap((record) => {
@@ -1427,7 +1427,7 @@ function avoidGraphItemOverlap(items: readonly AnimeItem[], records: readonly Re
 }
 
 /** 收集每个节点当前正在使用的左右侧出入口。 */
-function getGraphSidePortSides(items: readonly AnimeItem[], records: readonly RelationRecord[]) {
+function getGraphSidePortSides(items: readonly CompareItem[], records: readonly RelationRecord[]) {
   const itemByName = new Map(items.map((item) => [item.name, item]));
   const portSides = new Map<string, Set<-1 | 1>>();
   const addPort = (name: string, side: -1 | 1) => {
@@ -1455,7 +1455,7 @@ function getGraphSidePortSides(items: readonly AnimeItem[], records: readonly Re
 }
 
 /** 有侧边出入的关系要给边留空，避免两个卡片贴得太近。 */
-function applySideEdgeRepulsion(left: AnimeItem, right: AnimeItem, relationPairKeys: ReadonlySet<string>) {
+function applySideEdgeRepulsion(left: CompareItem, right: CompareItem, relationPairKeys: ReadonlySet<string>) {
   const pairKey = createRelationPairKey(left.name, right.name);
   if (pairKey === undefined || !relationPairKeys.has(pairKey)) {
     return;
@@ -1479,8 +1479,8 @@ function applySideEdgeRepulsion(left: AnimeItem, right: AnimeItem, relationPairK
 
 /** 侧边端口会占用绘图通道；附近节点靠到这一侧时轻轻推开。 */
 function applySidePortRepulsion(
-  left: AnimeItem,
-  right: AnimeItem,
+  left: CompareItem,
+  right: CompareItem,
   portSides: ReadonlyMap<string, ReadonlySet<-1 | 1>>,
 ) {
   for (const side of portSides.get(left.name) ?? []) {
@@ -1492,7 +1492,7 @@ function applySidePortRepulsion(
 }
 
 /** 对单个侧边端口施加水平斥力。 */
-function repelFromSidePort(owner: AnimeItem, other: AnimeItem, side: -1 | 1) {
+function repelFromSidePort(owner: CompareItem, other: CompareItem, side: -1 | 1) {
   const deltaX = other.x - owner.x;
   if (deltaX * side <= 0) {
     return;
@@ -1519,7 +1519,7 @@ function repelFromSidePort(owner: AnimeItem, other: AnimeItem, side: -1 | 1) {
 }
 
 /** 在节点列表中查找有效的评分锚点。 */
-function findAnchor(items: readonly AnimeItem[], anchor: ScoreAnchor | undefined) {
+function findAnchor(items: readonly CompareItem[], anchor: ScoreAnchor | undefined) {
   if (!anchor || !Number.isFinite(anchor.score)) {
     return undefined;
   }

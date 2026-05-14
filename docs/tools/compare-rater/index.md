@@ -3,7 +3,7 @@ publish: false
 published: 2026-05-14T10:30:00+08:00
 ---
 
-# 番剧比较评分器
+# 番剧比较评分器 v1
 
 <!-- autocorrect-disable -->
 <!-- markdownlint-disable MD011 -->

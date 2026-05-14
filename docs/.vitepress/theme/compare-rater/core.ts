@@ -655,7 +655,7 @@ function getEndpointSideUsagePenalty(
         continue;
       }
 
-      const neighborName = record.baseName === endpoint.name ? record.targetName : record.baseName;
+      const neighborName = getRelationNeighborName(record, endpoint.name);
       const neighbor = itemByName.get(neighborName);
       if (!neighbor) {
         continue;
@@ -903,8 +903,7 @@ function getSingleRowItemCandidateXs(
   const candidates = new Set([item.x, 50]);
   const neighborXs: number[] = [];
   for (const record of records) {
-    const neighborName =
-      record.baseName === item.name ? record.targetName : record.targetName === item.name ? record.baseName : "";
+    const neighborName = getRelationNeighborName(record, item.name);
     const neighbor = itemByName.get(neighborName);
     if (!neighbor) {
       continue;
@@ -919,6 +918,17 @@ function getSingleRowItemCandidateXs(
   return Array.from(candidates, (x) => clampNumber(x, 8, 92));
 }
 
+/** 获取关系中与指定节点相连的另一端；不在关系内则返回空字符串。 */
+function getRelationNeighborName(record: RelationRecord, name: string) {
+  if (record.baseName === name) {
+    return record.targetName;
+  }
+  if (record.targetName === name) {
+    return record.baseName;
+  }
+  return "";
+}
+
 /** 单节点层的横向评分：连线别太长，也要远离没有直接关系的近层节点。 */
 function getSingleGraphRowItemScore(
   item: AnimeItem,
@@ -927,8 +937,7 @@ function getSingleGraphRowItemScore(
 ) {
   let directRelationScore = 0;
   for (const record of records) {
-    const neighborName =
-      record.baseName === item.name ? record.targetName : record.targetName === item.name ? record.baseName : "";
+    const neighborName = getRelationNeighborName(record, item.name);
     const neighbor = itemByName.get(neighborName);
     if (neighbor) {
       directRelationScore += Math.abs(neighbor.x - item.x);

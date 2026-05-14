@@ -32,10 +32,12 @@ const rankedLevels = [
   ["much-better", 2],
 ] as const satisfies readonly (readonly [RelationLevel, number])[];
 
+const extraRelationCountOptions = [4, 5, 6] as const;
+
 export function createCompareRaterTestData() {
   const suffix = randomInt(10, 99);
   const names = shuffle(testNamePool)
-    .slice(0, randomInt(7, 12))
+    .slice(0, 10)
     .map((name, index) => `${name}-${suffix + index}`);
   const relations = createRandomRelations(names);
 
@@ -68,27 +70,38 @@ export function createCompareRaterTestData() {
 function createRandomRelations(names: readonly string[]) {
   const relations: TestRelation[] = [];
   const pairKeys = new Set<string>();
-  const chainCount = randomInt(4, Math.min(names.length - 1, 8));
 
-  for (let index = 0; index < chainCount; index += 1) {
+  // 固定主链保证图有明确层级，后面的补边负责制造不同交叉和同层情况。
+  for (let index = 0; index < 6; index += 1) {
     addRelation(relations, pairKeys, names[index], names[index + 1], pick(rankedLevels));
   }
 
-  const targetCount = randomInt(Math.max(8, names.length), Math.max(10, names.length + 4));
-  while (relations.length < targetCount) {
-    const baseIndex = randomInt(0, names.length - 1);
-    const targetIndex = randomInt(0, names.length - 1);
-    if (baseIndex === targetIndex) {
-      continue;
-    }
-
-    const sameLayer = Math.random() < 0.22;
-    const [base, target] =
-      baseIndex < targetIndex ? [names[baseIndex], names[targetIndex]] : [names[targetIndex], names[baseIndex]];
-    addRelation(relations, pairKeys, base, target, sameLayer ? ["same", 0] : pick(rankedLevels));
+  for (const [baseIndex, targetIndex] of shuffle(getExtraRelationPairs()).slice(0, pick(extraRelationCountOptions))) {
+    addRelation(
+      relations,
+      pairKeys,
+      names[baseIndex],
+      names[targetIndex],
+      Math.abs(baseIndex - targetIndex) <= 2 && Math.random() < 0.35 ? ["same", 0] : pick(rankedLevels),
+    );
   }
 
   return relations;
+}
+
+function getExtraRelationPairs() {
+  return [
+    [0, 3],
+    [0, 5],
+    [1, 4],
+    [1, 8],
+    [2, 7],
+    [3, 5],
+    [3, 9],
+    [4, 8],
+    [6, 9],
+    [7, 9],
+  ] as const;
 }
 
 function addRelation(
@@ -116,5 +129,10 @@ function randomInt(min: number, max: number) {
 }
 
 function shuffle<T>(items: readonly T[]) {
-  return [...items].sort(() => Math.random() - 0.5);
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = randomInt(0, index);
+    [result[index], result[swapIndex]] = [result[swapIndex] as T, result[index] as T];
+  }
+  return result;
 }

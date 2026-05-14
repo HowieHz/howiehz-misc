@@ -1436,23 +1436,15 @@ async function copyText(text: string) {
         v-for="record in pagedRelationRecords"
         :key="record.id"
       >
-        <span>
-          <template v-if="record.level === 'same'">
-            {{ record.baseName }} 与 {{ record.targetName }} 差不多
-          </template>
-          <template v-else>
-            {{ record.baseName }} 比 {{ record.targetName }} {{ relationLabel(record.level) }}
-          </template>
-          <span class="compare-rater__relation-expression">
-            （{{ record.baseName }}
-            <strong
-              class="compare-rater__relation-symbol"
-              :class="relationSymbolClass(record.level)"
-            >
-              {{ relationSymbol(record.level) }}
-            </strong>
-            {{ record.targetName }}）
-          </span>
+        <span class="compare-rater__relation-expression">
+          {{ record.baseName }}
+          <strong
+            class="compare-rater__relation-symbol"
+            :class="relationSymbolClass(record.level)"
+          >
+            {{ relationSymbol(record.level) }}
+          </strong>
+          {{ record.targetName }}
         </span>
         <button
           type="button"

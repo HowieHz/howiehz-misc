@@ -1704,6 +1704,13 @@ async function copyText(text: string) {
             :alt="`${formatBangumiSubjectName(subject)} 封面`"
             loading="lazy"
           >
+          <span
+            v-else
+            class="compare-rater__bangumi-cover compare-rater__bangumi-cover--empty"
+            aria-hidden="true"
+          >
+            无封面
+          </span>
           <div class="compare-rater__bangumi-info">
             <a
               class="compare-rater__bangumi-title"
@@ -2237,6 +2244,7 @@ $$
 }
 
 .compare-rater__bangumi-cover {
+  display: block;
   width: 72px;
   align-self: stretch;
   height: auto;
@@ -2244,6 +2252,17 @@ $$
   border-radius: 6px;
   background: var(--vp-c-bg-soft);
   object-fit: cover;
+}
+
+.compare-rater__bangumi-cover--empty {
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--vp-c-divider);
+  color: color-mix(in srgb, var(--vp-c-text-1) 48%, var(--vp-c-text-2) 52%);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
 }
 
 .compare-rater__bangumi-info {

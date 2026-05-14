@@ -408,6 +408,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
   },
 
   markdown: {
+    math: true,
     image: {
       lazyLoading: true,
     },

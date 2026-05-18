@@ -41,7 +41,6 @@ const TARGET_PREVIEW_LIMIT = 8;
 
 const targetCountText = ref("5");
 const targetNames = ref<string[]>([]);
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; state is used by the Markdown template below.
 const inputMode = ref<InputMode>("list");
 const status = ref<TestStatus>("idle");
 const currentRoundCount = ref(0);
@@ -86,7 +85,6 @@ const visibleTargetRange = computed(() => {
     end: Math.min(start + TARGET_PREVIEW_COUNT - 1, count),
   };
 });
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const visibleTargetRows = computed<TargetRow[]>(() => {
   const { start, end } = visibleTargetRange.value;
   return Array.from({ length: Math.max(end - start + 1, 0) }, (_, index) => {
@@ -97,7 +95,6 @@ const visibleTargetRows = computed<TargetRow[]>(() => {
     };
   });
 });
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const bulkImportDescription = computed(() => {
   const count = targetCount.value ?? 0;
   return count > 0
@@ -122,9 +119,7 @@ const bulkInputValue = computed({
     }
   },
 });
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const isRoundActive = computed(() => status.value === "testing");
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const currentGroupSummary = computed(() => {
   const count = currentStep.value?.promptTargetCount ?? 0;
   if (count === 0) {
@@ -143,11 +138,9 @@ const currentAnnouncement = computed(() => {
     Number.MAX_SAFE_INTEGER,
   )}。`;
 });
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const latestHistory = computed(() => testHistory.value.toReversed());
 const canUndoLastTest = computed(() => testHistory.value.length > 0 && currentRoundCount.value > 0);
 const previousPromptRanges = computed(() => testHistory.value.at(-1)?.targetRanges ?? []);
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const targetsUnchanged = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
@@ -155,7 +148,6 @@ const targetsUnchanged = computed(() => {
 
   return intersectTargetRanges(currentStep.value.promptTargetRanges, previousPromptRanges.value);
 });
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const targetsToAdd = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
@@ -163,7 +155,6 @@ const targetsToAdd = computed(() => {
 
   return subtractTargetRanges(currentStep.value.promptTargetRanges, previousPromptRanges.value);
 });
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const targetsToRemove = computed(() => {
   if (!diffModeEnabled.value || !currentStep.value) {
     return [];
@@ -171,13 +162,11 @@ const targetsToRemove = computed(() => {
 
   return subtractTargetRanges(previousPromptRanges.value, currentStep.value.promptTargetRanges);
 });
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const confirmedTargetSet = computed(() => (
   new Set(
     currentStep.value ? getAllTargetsFromRanges(currentStep.value.debug.confirmedTargetRanges) : [],
   )
 ));
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const progressText = computed(() => {
   if (status.value === "idle") {
     return "尚未开始";
@@ -185,7 +174,6 @@ const progressText = computed(() => {
 
   return `已完成 ${testHistory.value.length} 次测试`;
 });
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; computed value is used by the Markdown template below.
 const resultLabel = computed(() => (
   incompatibleTargets.value.length > 0
     ? `下列 ${incompatibleTargets.value.length} 个目标有兼容性问题`
@@ -229,7 +217,6 @@ function parseTargetCount(value: string) {
   return count >= 1 ? count : undefined;
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 function handleTargetCountInput(event: Event) {
   const input = event.currentTarget;
   if (!(input instanceof HTMLInputElement)) {
@@ -248,13 +235,11 @@ function stepTargetCount(delta: number) {
   targetCountText.value = String(nextCount);
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 function stepTargetListPage(delta: number) {
   const nextPage = targetListPage.value + delta;
   targetListPage.value = Math.min(Math.max(nextPage, 1), targetListPageCount.value);
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 async function startEditingTargetListPage() {
   isEditingTargetListPage.value = true;
   targetListPageText.value = String(targetListPage.value);
@@ -263,7 +248,6 @@ async function startEditingTargetListPage() {
   targetListPageInputRef.value?.select();
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 function handleTargetListPageInput(event: Event) {
   const input = event.currentTarget;
   if (!(input instanceof HTMLInputElement)) {
@@ -274,8 +258,6 @@ function handleTargetListPageInput(event: Event) {
   input.value = normalizedValue;
   targetListPageText.value = normalizedValue;
 }
-
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 function finishEditingTargetListPage() {
   const parsedPage = Number.parseInt(targetListPageText.value, 10);
   if (Number.isNaN(parsedPage)) {
@@ -289,13 +271,10 @@ function finishEditingTargetListPage() {
   isEditingTargetListPage.value = false;
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 function cancelEditingTargetListPage() {
   targetListPageText.value = String(targetListPage.value);
   isEditingTargetListPage.value = false;
 }
-
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 function handleBulkImportInput(event: Event) {
   const input = event.currentTarget;
   if (!(input instanceof HTMLTextAreaElement)) {
@@ -305,7 +284,6 @@ function handleBulkImportInput(event: Event) {
   bulkInputValue.value = input.value;
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 function handleTargetNameInput(event: Event, index: number) {
   const input = event.currentTarget;
   if (!(input instanceof HTMLInputElement)) {
@@ -326,7 +304,6 @@ function getTargetLabel(index: number) {
   return name.length > 0 ? name : `目标 ${index}`;
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; parameter is used inside template string.
 function getConfirmedTargetA11yLabel(index: number) {
   return `${getTargetLabel(index)}（已确定）`;
 }
@@ -348,7 +325,6 @@ function getTargetRangeCount(ranges: readonly TargetRange[]) {
   return ranges.reduce((total, range) => total + Math.max(range.end - range.start + 1, 0), 0);
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; helper is used by the Markdown template below.
 function formatTargetRanges(ranges: readonly TargetRange[], limit = TARGET_PREVIEW_LIMIT) {
   const count = getTargetRangeCount(ranges);
   const previewTargets = takeTargetsFromRanges(ranges, limit);
@@ -394,8 +370,6 @@ async function startTest() {
     announcement.value = `无法开始测试：${message}`;
   }
 }
-
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 function answerCurrentTest(hasIssue: boolean) {
   if (status.value !== "testing" || !engineState.value || !currentStep.value) {
     return;
@@ -426,7 +400,6 @@ function rebuildEngineStateFromHistory() {
   return nextState;
 }
 
-// @ts-expect-error TS6133: vue-tsc false positive in VitePress Markdown; handler is used by the Markdown template below.
 async function undoLastTest() {
   if (!canUndoLastTest.value) {
     return;

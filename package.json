@@ -73,7 +73,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.3",
     "vue-eslint-parser": "^10.4.0",
-    "vue-tsc": "^3.2.9"
+    "vue-tsc": "^3.3.0"
   },
   "browserslist": [
     "defaults",

@@ -52,10 +52,10 @@
     "watch": "tsdown --watch"
   },
   "devDependencies": {
-    "@arethetypeswrong/core": "^0.18.2",
+    "@arethetypeswrong/core": "^0.18.3",
     "publint": "^0.3.21",
-    "tsdown": "^0.22.0",
-    "vitest": "^4.1.6"
+    "tsdown": "^0.22.1",
+    "vitest": "^4.1.7"
   },
   "engines": {
     "node": "^22 || >=24"

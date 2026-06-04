@@ -60,7 +60,7 @@ pnpm install
 - `pnpm lint`
 - `pnpm test`
 
-其中格式化与部分自动修正步骤会在本仓库分支的 PR 中自动提交修复结果；来自外部 Fork 的 PR 只运行检查，若产生修复变更，CI 会上传 `ci-autofix.patch`。贡献者可从 CI Job Summary 复制补丁链接，并在 PR 分支本地运行对应命令：
+其中格式化与部分自动修正步骤会在 PR 分支位于本仓库时自动提交修复结果；PR 分支位于 Fork 仓库时，CI 只运行检查，若产生修复变更，会上传 `ci-autofix.patch`。贡献者可从 CI Job Summary 复制补丁链接，并在 PR 分支本地运行对应命令：
 
 Linux / macOS：
 

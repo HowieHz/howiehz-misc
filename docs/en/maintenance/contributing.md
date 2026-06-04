@@ -60,7 +60,7 @@ pnpm install
 - `pnpm lint`
 - `pnpm test`
 
-Formatting and some auto-fix steps may commit corrections back automatically for PRs from branches in this repository. PRs from external forks run the checks only; if fixes are produced, CI uploads `ci-autofix.patch`. Contributors can copy the patch link from the CI job summary and run the matching commands locally on the PR branch.
+Formatting and some auto-fix steps may commit corrections back automatically when the PR branch is in this repository. When the PR branch is in a fork, CI runs checks only; if fixes are produced, CI uploads `ci-autofix.patch`. Contributors can copy the patch link from the CI job summary and run the matching commands locally on the PR branch.
 
 Linux / macOS:
 

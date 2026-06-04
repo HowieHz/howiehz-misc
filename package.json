@@ -72,7 +72,7 @@
     "stylelint-order": "^8.1.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.60.1",
-    "vue-eslint-parser": "^10.4.0",
+    "vue-eslint-parser": "^10.4.1",
     "vue-tsc": "^3.3.3"
   },
   "browserslist": [

@@ -60,7 +60,19 @@ pnpm install
 - `pnpm lint`
 - `pnpm test`
 
-其中格式化与部分自动修正步骤会在 PR 中自动提交修复结果。
+其中格式化与部分自动修正步骤会在本仓库分支的 PR 中自动提交修复结果；来自外部 Fork 的 PR 只运行检查，若产生修复变更，CI 会上传 `ci-autofix.patch`。贡献者可从 CI Job Summary 复制补丁链接，并在 PR 分支本地运行对应命令：
+
+Linux / macOS：
+
+```shell
+curl -L -o ci-autofix.patch "<ci-autofix.patch 链接>" && git apply ci-autofix.patch
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-WebRequest -Uri "<ci-autofix.patch 链接>" -OutFile ci-autofix.patch; git apply ci-autofix.patch
+```
 
 ### PR 构建检查
 

@@ -5,6 +5,12 @@ on:
     # 20:00 UTC = 04:00 Asia/Shanghai on the next day.
     - cron: "0 20 * * *"
   workflow_dispatch:
+    inputs:
+      initialize:
+        description: Create a new bundle category and upload the latest source snapshot as the initial dataset.
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: merge-hitokoto-sentences
@@ -32,8 +38,9 @@ jobs:
       - name: Fetch source repository
         id: fetch_source
         run: |
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/hitokoto-osc/sentences-bundle.git tmp/sentences-bundle
+          git clone --filter=blob:none --sparse https://github.com/hitokoto-osc/sentences-bundle.git tmp/sentences-bundle
           git -C tmp/sentences-bundle sparse-checkout set sentences
+          echo "source_commit=$(git -C tmp/sentences-bundle rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Merge JSON files
         id: merge
@@ -51,127 +58,161 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # 第一步：找到上一次定时运行产出的合并文件，用它作为“昨天凌晨 4 点”的比较基准。
-      - name: Find previous merged artifact
-        id: previous_artifact
+      # 第一步：复用固定分类 hitokoto-sentences-bundle；如果分类不存在，就创建一个。
+      - name: Find or create Hitokoto bundle category
+        id: bundle_category
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          WORKFLOW_FILE_NAME: merge-hitokoto-sentences.yml
-          ARTIFACT_NAME: hitokoto-sentences
+          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
+          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
+          BUNDLE_CATEGORY_DISPLAY_NAME: hitokoto-sentences-bundle
+          CURRENT_SOURCE_COMMIT: ${{ steps.fetch_source.outputs.source_commit }}
+          INITIALIZE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.initialize }}
         run: |
           node <<'EOF'
           (async () => {
           const fs = require("node:fs");
 
-          const requiredEnv = ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "WORKFLOW_FILE_NAME", "ARTIFACT_NAME"];
+          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "BUNDLE_CATEGORY_DISPLAY_NAME", "CURRENT_SOURCE_COMMIT", "INITIALIZE_MODE"];
           for (const envName of requiredEnv) {
             if (!process.env[envName]) {
               throw new Error(`Missing required environment variable: ${envName}`);
             }
           }
 
-          const githubApiBaseUrl = "https://api.github.com";
-          const currentRunId = Number(process.env.GITHUB_RUN_ID);
+          const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
+          const categoriesUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories`;
           const commonHeaders = {
-            Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-            Accept: "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
+            Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
+            Accept: "application/json",
           };
-
-          const fetchJson = async (url) => {
-            const response = await fetch(url, { headers: commonHeaders });
+          const fetchJson = async (url, errorMessage) => {
+            const response = await fetch(url, {
+              method: "GET",
+              headers: commonHeaders,
+            });
 
             if (!response.ok) {
               const errorText = await response.text();
-              throw new Error(`GitHub API request failed: ${response.status} ${response.statusText}\n${errorText}`);
+              throw new Error(`${errorMessage}: ${response.status} ${response.statusText}\n${errorText}`);
             }
 
             return response.json();
           };
 
-          const runsUrl = `${githubApiBaseUrl}/repos/${process.env.GITHUB_REPOSITORY}/actions/workflows/${encodeURIComponent(process.env.WORKFLOW_FILE_NAME)}/runs?status=success&event=schedule&per_page=10`;
-          const runsPayload = await fetchJson(runsUrl);
-          const runs = Array.isArray(runsPayload?.workflow_runs) ? runsPayload.workflow_runs : [];
+          let existingCategory = null;
+          const pageSize = 100;
 
-          for (const run of runs) {
-            if (!run || Number(run.id) === currentRunId) {
-              continue;
+          if (process.env.INITIALIZE_MODE !== "true") {
+            for (let page = 1; ; page += 1) {
+              const listPayload = await fetchJson(`${categoriesUrl}?page=${page}&size=${pageSize}`, "Failed to list categories");
+              const categoryItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
+              existingCategory = categoryItems.find((item) => {
+                const metadataName = item?.metadata?.name;
+                const specName = item?.spec?.name;
+
+                return metadataName === process.env.BUNDLE_CATEGORY_DISPLAY_NAME || specName === process.env.BUNDLE_CATEGORY_DISPLAY_NAME;
+              });
+
+              if (existingCategory || listPayload?.hasNext !== true) {
+                break;
+              }
+            }
+          }
+
+          if (existingCategory) {
+            const existingCategoryName = existingCategory?.metadata?.name;
+
+            if (typeof existingCategoryName !== "string" || existingCategoryName.length === 0) {
+              throw new Error("Existing category does not include metadata.name");
             }
 
-            const artifactsUrl = `${githubApiBaseUrl}/repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`;
-            const artifactsPayload = await fetchJson(artifactsUrl);
-            const artifacts = Array.isArray(artifactsPayload?.artifacts) ? artifactsPayload.artifacts : [];
-            const artifact = artifacts.find((item) => item?.name === process.env.ARTIFACT_NAME && !item?.expired);
-
-            if (!artifact?.archive_download_url) {
-              continue;
-            }
-
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `artifact_url=${artifact.archive_download_url}\n`, "utf8");
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `run_id=${run.id}\n`, "utf8");
-            console.log(`Found previous artifact from run ${run.id}`);
+            console.log(`Using existing category: ${existingCategoryName}`);
+            const categoryDetail = await fetchJson(`${categoriesUrl}/${encodeURIComponent(existingCategoryName)}`, `Failed to get category ${existingCategoryName}`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `category_name=${existingCategoryName}\n`, "utf8");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `category_description=${categoryDetail?.spec?.description ?? ""}\n`, "utf8");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "initialized=false\n", "utf8");
             return;
           }
 
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, "artifact_url=\n", "utf8");
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, "run_id=\n", "utf8");
-          console.log("No previous artifact was found; the previous sentence set will be rebuilt from source history");
+          const requestBody = {
+            apiVersion: "hitokotohub.puresky.top/v1alpha1",
+            kind: "Category",
+            metadata: {
+              generateName: "category-",
+              name: "",
+            },
+            spec: {
+              description: process.env.INITIALIZE_MODE === "true" ? "" : process.env.CURRENT_SOURCE_COMMIT,
+              name: process.env.BUNDLE_CATEGORY_DISPLAY_NAME,
+            },
+          };
+
+          const response = await fetch(categoriesUrl, {
+            method: "POST",
+            headers: {
+              ...commonHeaders,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestBody),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to create category: ${response.status} ${response.statusText}\n${errorText}`);
+          }
+
+          const createdCategory = await response.json();
+          const createdCategoryName = createdCategory?.metadata?.name;
+
+          if (typeof createdCategoryName !== "string" || createdCategoryName.length === 0) {
+            throw new Error("Category creation response does not include metadata.name");
+          }
+
+          console.log(`Created category: ${createdCategoryName}`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `category_name=${createdCategoryName}\n`, "utf8");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `category_description=${createdCategory?.spec?.description ?? ""}\n`, "utf8");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `initialized=${process.env.INITIALIZE_MODE === "true"}\n`, "utf8");
           })().catch((error) => {
             console.error(error);
             process.exit(1);
           });
           EOF
 
-      # 第二步：下载上一次的合并文件，用 artifact 精确保留昨天运行时的基准。
-      - name: Download previous merged artifact
-        id: download_previous
-        if: ${{ steps.previous_artifact.outputs.artifact_url != '' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PREVIOUS_ARTIFACT_URL: ${{ steps.previous_artifact.outputs.artifact_url }}
-        run: |
-          mkdir -p tmp/previous-hitokoto-sentences
-          curl -L \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "${PREVIOUS_ARTIFACT_URL}" \
-            -o tmp/previous-hitokoto-sentences.zip
-          unzip -q tmp/previous-hitokoto-sentences.zip -d tmp/previous-hitokoto-sentences
-          {
-            echo "baseline_source=artifact"
-            echo "baseline_artifact_run_id=${{ steps.previous_artifact.outputs.run_id }}"
-          } >> "${GITHUB_OUTPUT}"
-
-      # 第二步兜底：如果历史 artifact 不存在，就从源仓库 24 小时前的提交重新构建昨天的合并文件。
-      - name: Build previous merged file from source history
+      # 第二步：按分类描述里的 GitHub commit hash 构建旧版本；描述为空时以当前 commit 初始化基线。
+      - name: Build previous merged file from category description
         id: build_previous
-        if: ${{ steps.previous_artifact.outputs.artifact_url == '' }}
+        env:
+          PREVIOUS_SOURCE_COMMIT: ${{ steps.bundle_category.outputs.category_description }}
+          CURRENT_SOURCE_COMMIT: ${{ steps.fetch_source.outputs.source_commit }}
+          INITIALIZE_MODE: ${{ steps.bundle_category.outputs.initialized }}
         run: |
-          TARGET_TIME="$(date -u -d '24 hours ago' '+%Y-%m-%dT%H:%M:%SZ')"
-          git clone --filter=blob:none --sparse https://github.com/hitokoto-osc/sentences-bundle.git tmp/previous-sentences-bundle
-          git -C tmp/previous-sentences-bundle sparse-checkout set sentences
-          DEFAULT_BRANCH="$(git -C tmp/previous-sentences-bundle symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##')"
-          PREVIOUS_SOURCE_COMMIT="$(git -C tmp/previous-sentences-bundle rev-list -n 1 --before="${TARGET_TIME}" "origin/${DEFAULT_BRANCH}")"
+          DESCRIPTION_COMMIT="${PREVIOUS_SOURCE_COMMIT}"
 
-          if [ -z "${PREVIOUS_SOURCE_COMMIT}" ]; then
-            echo "No source commit was found before ${TARGET_TIME}" >&2
-            exit 1
+          if [ "${INITIALIZE_MODE}" = "true" ]; then
+            mkdir -p tmp/previous-hitokoto-sentences
+            printf '[]\n' > tmp/previous-hitokoto-sentences/hitokoto-sentences.json
+            DESCRIPTION_COMMIT="initialization-empty-baseline"
+          elif ! printf '%s' "${DESCRIPTION_COMMIT}" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+            DESCRIPTION_COMMIT="${CURRENT_SOURCE_COMMIT}"
+
+            git -C tmp/sentences-bundle checkout --detach "${DESCRIPTION_COMMIT}"
+            node --experimental-strip-types .github/scripts/merge-hitokoto-sentences.ts \
+              --input tmp/sentences-bundle/sentences \
+              --output tmp/previous-hitokoto-sentences/hitokoto-sentences.json
+            git -C tmp/sentences-bundle checkout --detach "${CURRENT_SOURCE_COMMIT}"
+          else
+            git -C tmp/sentences-bundle checkout --detach "${DESCRIPTION_COMMIT}"
+            node --experimental-strip-types .github/scripts/merge-hitokoto-sentences.ts \
+              --input tmp/sentences-bundle/sentences \
+              --output tmp/previous-hitokoto-sentences/hitokoto-sentences.json
+            git -C tmp/sentences-bundle checkout --detach "${CURRENT_SOURCE_COMMIT}"
           fi
-
-          git -C tmp/previous-sentences-bundle checkout --detach "${PREVIOUS_SOURCE_COMMIT}"
-          node --experimental-strip-types .github/scripts/merge-hitokoto-sentences.ts \
-            --input tmp/previous-sentences-bundle/sentences \
-            --output tmp/previous-hitokoto-sentences/hitokoto-sentences.json
           {
-            echo "baseline_source=rebuilt_from_source"
-            echo "target_time=${TARGET_TIME}"
-            echo "source_commit=${PREVIOUS_SOURCE_COMMIT}"
+            echo "baseline_source=category_description"
+            echo "source_commit=${DESCRIPTION_COMMIT}"
           } >> "${GITHUB_OUTPUT}"
 
-      # 第三步：按 hitokoto 文本比较昨天和今天的合并结果，分别输出新增和被移除的句子。
+      # 第三步：按 hitokoto 文本比较描述 hash 和最新 hash 的合并结果，分别输出新增和被移除的句子。
       - name: Find sentence changes
         id: diff
         env:
@@ -192,12 +233,8 @@ jobs:
             }
           }
 
-          const readSentenceArray = (filePath, fallbackToEmpty) => {
+          const readSentenceArray = (filePath) => {
             if (!fs.existsSync(filePath)) {
-              if (fallbackToEmpty) {
-                return [];
-              }
-
               throw new Error(`JSON file does not exist: ${filePath}`);
             }
 
@@ -210,8 +247,8 @@ jobs:
             return parsed;
           };
 
-          const currentSentences = readSentenceArray(process.env.CURRENT_JSON_FILE, false);
-          const previousSentences = readSentenceArray(process.env.PREVIOUS_JSON_FILE, false);
+          const currentSentences = readSentenceArray(process.env.CURRENT_JSON_FILE);
+          const previousSentences = readSentenceArray(process.env.PREVIOUS_JSON_FILE);
           const previousHitokotoValues = new Set(
             previousSentences
               .map((sentence) => sentence?.hitokoto)
@@ -252,114 +289,7 @@ jobs:
           });
           EOF
 
-      # 第四步：复用固定分类 hitokoto-sentences-bundle；如果分类不存在，就创建一个。
-      - name: Find or create Hitokoto bundle category
-        id: bundle_category
-        env:
-          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
-          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
-          BUNDLE_CATEGORY_DISPLAY_NAME: hitokoto-sentences-bundle
-        run: |
-          node <<'EOF'
-          (async () => {
-          const fs = require("node:fs");
-
-          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "BUNDLE_CATEGORY_DISPLAY_NAME"];
-          for (const envName of requiredEnv) {
-            if (!process.env[envName]) {
-              throw new Error(`Missing required environment variable: ${envName}`);
-            }
-          }
-
-          const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
-          const categoriesUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories`;
-          const commonHeaders = {
-            Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
-            Accept: "application/json",
-          };
-
-          let existingCategory = null;
-          const pageSize = 100;
-
-          for (let page = 1; ; page += 1) {
-            const listResponse = await fetch(`${categoriesUrl}?page=${page}&size=${pageSize}`, {
-              method: "GET",
-              headers: commonHeaders,
-            });
-
-            if (!listResponse.ok) {
-              const errorText = await listResponse.text();
-              throw new Error(`Failed to list categories: ${listResponse.status} ${listResponse.statusText}\n${errorText}`);
-            }
-
-            const listPayload = await listResponse.json();
-            const categoryItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
-            existingCategory = categoryItems.find((item) => {
-              const metadataName = item?.metadata?.name;
-              const specName = item?.spec?.name;
-
-              return metadataName === process.env.BUNDLE_CATEGORY_DISPLAY_NAME || specName === process.env.BUNDLE_CATEGORY_DISPLAY_NAME;
-            });
-
-            if (existingCategory || categoryItems.length < pageSize) {
-              break;
-            }
-          }
-
-          if (existingCategory) {
-            const existingCategoryName = existingCategory?.metadata?.name;
-
-            if (typeof existingCategoryName !== "string" || existingCategoryName.length === 0) {
-              throw new Error("Existing category does not include metadata.name");
-            }
-
-            console.log(`Using existing category: ${existingCategoryName}`);
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `category_name=${existingCategoryName}\n`, "utf8");
-            return;
-          }
-
-          const requestBody = {
-            apiVersion: "hitokotohub.puresky.top/v1alpha1",
-            kind: "Category",
-            metadata: {
-              generateName: "category-",
-              name: "",
-            },
-            spec: {
-              name: process.env.BUNDLE_CATEGORY_DISPLAY_NAME,
-            },
-          };
-
-          const response = await fetch(categoriesUrl, {
-            method: "POST",
-            headers: {
-              ...commonHeaders,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(requestBody),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to create category: ${response.status} ${response.statusText}\n${errorText}`);
-          }
-
-          const createdCategory = await response.json();
-          const createdCategoryName = createdCategory?.metadata?.name;
-
-          if (typeof createdCategoryName !== "string" || createdCategoryName.length === 0) {
-            throw new Error("Category creation response does not include metadata.name");
-          }
-
-          console.log(`Created category: ${createdCategoryName}`);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `category_name=${createdCategoryName}\n`, "utf8");
-          })().catch((error) => {
-            console.error(error);
-            process.exit(1);
-          });
-          EOF
-
-      # 第五步：对已经从源句库移除的句子，先在固定分类内搜索，再按精确 content 匹配删除。
+      # 第四步：对已经从源句库移除的句子，先在固定分类内搜索，再按精确 content 匹配删除。
       - name: Delete removed sentences from bundle category
         id: delete_removed
         env:
@@ -479,7 +409,7 @@ jobs:
           });
           EOF
 
-      # 第六步：把新增句子转成批量接口需要的 Sentence 结构并上传到固定分类。
+      # 第五步：把新增句子转成批量接口需要的 Sentence 结构；上传前先搜索，避免重复写入。
       - name: Upload new sentences to bundle category
         id: upload_new
         env:
@@ -509,6 +439,7 @@ jobs:
 
           const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
           const url = `${siteEndpoint}/apis/console.api.hitokotohub.puresky.top/v1alpha1/sentence/-/batch`;
+          const searchUrl = `${siteEndpoint}/apis/console.api.hitokotohub.puresky.top/v1alpha1/sentence/search`;
           const addedJsonText = fs.readFileSync(process.env.ADDED_JSON_FILE, "utf8");
           const addedSentences = JSON.parse(addedJsonText);
 
@@ -518,11 +449,67 @@ jobs:
 
           if (addedSentences.length === 0) {
             console.log(`No new sentences to upload to ${process.env.CATEGORY_NAME}`);
+            appendOutput("skipped_existing_sentence_count", "0");
             appendOutput("uploaded_sentence_count", "0");
             return;
           }
 
-          const requestBody = addedSentences.map((sentence) => ({
+          const commonHeaders = {
+            Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
+            Accept: "application/json",
+          };
+          let skippedExistingSentenceCount = 0;
+          const sentencesToUpload = [];
+
+          for (const sentence of addedSentences) {
+            const hitokoto = sentence?.hitokoto;
+
+            if (typeof hitokoto !== "string" || hitokoto.length === 0) {
+              continue;
+            }
+
+            const searchRequestUrl = new URL(searchUrl);
+            searchRequestUrl.searchParams.set("keyword", hitokoto);
+            searchRequestUrl.searchParams.set("categoryName", process.env.CATEGORY_NAME);
+
+            const searchResponse = await fetch(searchRequestUrl, {
+              method: "GET",
+              headers: commonHeaders,
+            });
+
+            if (!searchResponse.ok) {
+              const errorText = await searchResponse.text();
+              throw new Error(`Failed to search sentence before upload: ${searchResponse.status} ${searchResponse.statusText}\n${errorText}`);
+            }
+
+            const searchResult = await searchResponse.json();
+
+            if (!Array.isArray(searchResult)) {
+              throw new Error("Search sentence response must contain an array");
+            }
+
+            const alreadyExists = searchResult.some(
+              (existingSentence) =>
+                existingSentence?.spec?.content === hitokoto && existingSentence?.spec?.categoryName === process.env.CATEGORY_NAME,
+            );
+
+            if (alreadyExists) {
+              skippedExistingSentenceCount += 1;
+              continue;
+            }
+
+            sentencesToUpload.push(sentence);
+          }
+
+          appendOutput("skipped_existing_sentence_count", String(skippedExistingSentenceCount));
+
+          if (sentencesToUpload.length === 0) {
+            console.log(`No new non-duplicate sentences to upload to ${process.env.CATEGORY_NAME}`);
+            appendOutput("uploaded_sentence_count", "0");
+            return;
+          }
+
+          const requestBody = sentencesToUpload.map((sentence) => ({
             // 这个 batch 接口实测不要求 apiVersion / kind / metadata.name，
             // 因此这里保留最小可用结构即可。
             // apiVersion: "hitokotohub.puresky.top/v1alpha1",
@@ -548,7 +535,7 @@ jobs:
           const response = await fetch(url, {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
+              ...commonHeaders,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(requestBody),
@@ -569,6 +556,72 @@ jobs:
           });
           EOF
 
+      # 第六步：删除和上传都成功后，把分类描述更新为当前源仓库 commit hash，作为下次同步游标。
+      - name: Update bundle category cursor
+        id: update_category_cursor
+        env:
+          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
+          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
+          CATEGORY_NAME: ${{ steps.bundle_category.outputs.category_name }}
+          CURRENT_SOURCE_COMMIT: ${{ steps.fetch_source.outputs.source_commit }}
+        run: |
+          node <<'EOF'
+          (async () => {
+          const fs = require("node:fs");
+
+          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME", "CURRENT_SOURCE_COMMIT"];
+          for (const envName of requiredEnv) {
+            if (!process.env[envName]) {
+              throw new Error(`Missing required environment variable: ${envName}`);
+            }
+          }
+
+          const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
+          const categoryUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories/${encodeURIComponent(process.env.CATEGORY_NAME)}`;
+          const commonHeaders = {
+            Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
+            Accept: "application/json",
+          };
+          const getResponse = await fetch(categoryUrl, {
+            method: "GET",
+            headers: commonHeaders,
+          });
+
+          if (!getResponse.ok) {
+            const errorText = await getResponse.text();
+            throw new Error(`Failed to get category before cursor update: ${getResponse.status} ${getResponse.statusText}\n${errorText}`);
+          }
+
+          const category = await getResponse.json();
+          const patchOperation = Object.hasOwn(category?.spec ?? {}, "description") ? "replace" : "add";
+          const updateResponse = await fetch(categoryUrl, {
+            method: "PATCH",
+            headers: {
+              ...commonHeaders,
+              "Content-Type": "application/json-patch+json",
+            },
+            body: JSON.stringify([
+              {
+                op: patchOperation,
+                path: "/spec/description",
+                value: process.env.CURRENT_SOURCE_COMMIT,
+              },
+            ]),
+          });
+
+          if (!updateResponse.ok) {
+            const errorText = await updateResponse.text();
+            throw new Error(`Failed to update category cursor: ${updateResponse.status} ${updateResponse.statusText}\n${errorText}`);
+          }
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `updated_description=${process.env.CURRENT_SOURCE_COMMIT}\n`, "utf8");
+          console.log(`Updated category cursor to ${process.env.CURRENT_SOURCE_COMMIT}`);
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          EOF
+
       - name: Write sync summary
         if: ${{ always() }}
         env:
@@ -577,22 +630,24 @@ jobs:
           FETCH_SOURCE_OUTCOME: ${{ steps.fetch_source.outcome }}
           MERGE_OUTCOME: ${{ steps.merge.outcome }}
           UPLOAD_ARTIFACT_OUTCOME: ${{ steps.upload_artifact.outcome }}
-          FIND_ARTIFACT_OUTCOME: ${{ steps.previous_artifact.outcome }}
-          DOWNLOAD_PREVIOUS_OUTCOME: ${{ steps.download_previous.outcome }}
           BUILD_PREVIOUS_OUTCOME: ${{ steps.build_previous.outcome }}
           DIFF_OUTCOME: ${{ steps.diff.outcome }}
           CATEGORY_OUTCOME: ${{ steps.bundle_category.outcome }}
           DELETE_OUTCOME: ${{ steps.delete_removed.outcome }}
           UPLOAD_OUTCOME: ${{ steps.upload_new.outcome }}
-          PREVIOUS_ARTIFACT_RUN_ID: ${{ steps.previous_artifact.outputs.run_id }}
-          FALLBACK_TARGET_TIME: ${{ steps.build_previous.outputs.target_time }}
-          FALLBACK_SOURCE_COMMIT: ${{ steps.build_previous.outputs.source_commit }}
+          UPDATE_CURSOR_OUTCOME: ${{ steps.update_category_cursor.outcome }}
+          INITIALIZE_MODE: ${{ steps.bundle_category.outputs.initialized }}
+          CATEGORY_DESCRIPTION: ${{ steps.bundle_category.outputs.category_description }}
+          BASELINE_SOURCE_COMMIT: ${{ steps.build_previous.outputs.source_commit }}
+          CURRENT_SOURCE_COMMIT: ${{ steps.fetch_source.outputs.source_commit }}
+          UPDATED_CATEGORY_DESCRIPTION: ${{ steps.update_category_cursor.outputs.updated_description }}
           PREVIOUS_SENTENCE_COUNT: ${{ steps.diff.outputs.previous_sentence_count }}
           CURRENT_SENTENCE_COUNT: ${{ steps.diff.outputs.current_sentence_count }}
           ADDED_SENTENCE_COUNT: ${{ steps.diff.outputs.added_sentence_count }}
           REMOVED_SENTENCE_COUNT: ${{ steps.diff.outputs.removed_sentence_count }}
           UPLOADED_SENTENCE_COUNT: ${{ steps.upload_new.outputs.uploaded_sentence_count }}
           DELETED_SENTENCE_COUNT: ${{ steps.delete_removed.outputs.deleted_sentence_count }}
+          SKIPPED_EXISTING_SENTENCE_COUNT: ${{ steps.upload_new.outputs.skipped_existing_sentence_count }}
           ADDED_JSON_FILE: ${{ steps.diff.outputs.added_output_file }}
           REMOVED_JSON_FILE: ${{ steps.diff.outputs.removed_output_file }}
         run: |
@@ -664,17 +719,16 @@ jobs:
             return lines;
           };
 
-          let baselineSource = "Unavailable";
-          if (process.env.DOWNLOAD_PREVIOUS_OUTCOME === "success") {
-            baselineSource = `Downloaded previous artifact (run ${valueOrDash(process.env.PREVIOUS_ARTIFACT_RUN_ID)})`;
-          } else if (process.env.BUILD_PREVIOUS_OUTCOME === "success") {
-            baselineSource = `Rebuilt from source history (target ${valueOrDash(process.env.FALLBACK_TARGET_TIME)}, commit ${valueOrDash(process.env.FALLBACK_SOURCE_COMMIT)})`;
-          }
+          const baselineSource = `Category description commit ${valueOrDash(process.env.BASELINE_SOURCE_COMMIT)}`;
 
           const lines = [
             "## Hitokoto Sentences Sync Summary",
             "",
+            `Initialize mode: ${valueOrDash(process.env.INITIALIZE_MODE)}`,
             `Baseline source: ${baselineSource}`,
+            `Category description before sync: ${valueOrDash(process.env.CATEGORY_DESCRIPTION)}`,
+            `Current source commit: ${valueOrDash(process.env.CURRENT_SOURCE_COMMIT)}`,
+            `Category description after sync: ${valueOrDash(process.env.UPDATED_CATEGORY_DESCRIPTION)}`,
             "",
             "### Step Status",
             "",
@@ -685,13 +739,12 @@ jobs:
             `| Fetch source repository | ${stepOutcome(process.env.FETCH_SOURCE_OUTCOME)} |`,
             `| Merge JSON files | ${stepOutcome(process.env.MERGE_OUTCOME)} |`,
             `| Upload merged artifact | ${stepOutcome(process.env.UPLOAD_ARTIFACT_OUTCOME)} |`,
-            `| Find previous artifact | ${stepOutcome(process.env.FIND_ARTIFACT_OUTCOME)} |`,
-            `| Download previous artifact | ${stepOutcome(process.env.DOWNLOAD_PREVIOUS_OUTCOME)} |`,
-            `| Rebuild previous file | ${stepOutcome(process.env.BUILD_PREVIOUS_OUTCOME)} |`,
-            `| Diff sentences | ${stepOutcome(process.env.DIFF_OUTCOME)} |`,
             `| Find or create bundle category | ${stepOutcome(process.env.CATEGORY_OUTCOME)} |`,
+            `| Build previous file from category description | ${stepOutcome(process.env.BUILD_PREVIOUS_OUTCOME)} |`,
+            `| Diff sentences | ${stepOutcome(process.env.DIFF_OUTCOME)} |`,
             `| Delete removed sentences via API | ${stepOutcome(process.env.DELETE_OUTCOME)} |`,
             `| Upload new sentences via API | ${stepOutcome(process.env.UPLOAD_OUTCOME)} |`,
+            `| Update category cursor | ${stepOutcome(process.env.UPDATE_CURSOR_OUTCOME)} |`,
             "",
             "### Counts",
             "",
@@ -701,6 +754,7 @@ jobs:
             `- Removed sentences in diff: ${countValue(process.env.REMOVED_SENTENCE_COUNT)}`,
             `- API uploaded sentences: ${countValue(process.env.UPLOADED_SENTENCE_COUNT)}`,
             `- API deleted sentences: ${countValue(process.env.DELETED_SENTENCE_COUNT)}`,
+            `- Existing sentences skipped before upload: ${countValue(process.env.SKIPPED_EXISTING_SENTENCE_COUNT)}`,
             "",
             ...renderSentenceList("New Sentences", process.env.ADDED_JSON_FILE, process.env.ADDED_SENTENCE_COUNT),
             "",

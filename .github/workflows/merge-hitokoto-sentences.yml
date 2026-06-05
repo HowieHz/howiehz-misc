@@ -409,7 +409,7 @@ jobs:
           });
           EOF
 
-      # 第五步：把新增句子转成批量接口需要的 Sentence 结构；上传前先搜索，避免重复写入。
+      # 第五步：把新增句子转成批量接口需要的 Sentence 结构；普通同步上传前先搜索，初始化新分类时直接批量上传。
       - name: Upload new sentences to bundle category
         id: upload_new
         env:
@@ -417,6 +417,7 @@ jobs:
           SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
           CATEGORY_NAME: ${{ steps.bundle_category.outputs.category_name }}
           ADDED_JSON_FILE: ${{ steps.diff.outputs.added_output_file }}
+          INITIALIZE_MODE: ${{ steps.bundle_category.outputs.initialized }}
         run: |
           node <<'EOF'
           const fs = require("node:fs");
@@ -430,7 +431,7 @@ jobs:
 
           (async () => {
 
-          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME", "ADDED_JSON_FILE"];
+          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME", "ADDED_JSON_FILE", "INITIALIZE_MODE"];
           for (const envName of requiredEnv) {
             if (!process.env[envName]) {
               throw new Error(`Missing required environment variable: ${envName}`);
@@ -461,44 +462,48 @@ jobs:
           let skippedExistingSentenceCount = 0;
           const sentencesToUpload = [];
 
-          for (const sentence of addedSentences) {
-            const hitokoto = sentence?.hitokoto;
+          if (process.env.INITIALIZE_MODE === "true") {
+            sentencesToUpload.push(...addedSentences);
+          } else {
+            for (const sentence of addedSentences) {
+              const hitokoto = sentence?.hitokoto;
 
-            if (typeof hitokoto !== "string" || hitokoto.length === 0) {
-              continue;
+              if (typeof hitokoto !== "string" || hitokoto.length === 0) {
+                continue;
+              }
+
+              const searchRequestUrl = new URL(searchUrl);
+              searchRequestUrl.searchParams.set("keyword", hitokoto);
+              searchRequestUrl.searchParams.set("categoryName", process.env.CATEGORY_NAME);
+
+              const searchResponse = await fetch(searchRequestUrl, {
+                method: "GET",
+                headers: commonHeaders,
+              });
+
+              if (!searchResponse.ok) {
+                const errorText = await searchResponse.text();
+                throw new Error(`Failed to search sentence before upload: ${searchResponse.status} ${searchResponse.statusText}\n${errorText}`);
+              }
+
+              const searchResult = await searchResponse.json();
+
+              if (!Array.isArray(searchResult)) {
+                throw new Error("Search sentence response must contain an array");
+              }
+
+              const alreadyExists = searchResult.some(
+                (existingSentence) =>
+                  existingSentence?.spec?.content === hitokoto && existingSentence?.spec?.categoryName === process.env.CATEGORY_NAME,
+              );
+
+              if (alreadyExists) {
+                skippedExistingSentenceCount += 1;
+                continue;
+              }
+
+              sentencesToUpload.push(sentence);
             }
-
-            const searchRequestUrl = new URL(searchUrl);
-            searchRequestUrl.searchParams.set("keyword", hitokoto);
-            searchRequestUrl.searchParams.set("categoryName", process.env.CATEGORY_NAME);
-
-            const searchResponse = await fetch(searchRequestUrl, {
-              method: "GET",
-              headers: commonHeaders,
-            });
-
-            if (!searchResponse.ok) {
-              const errorText = await searchResponse.text();
-              throw new Error(`Failed to search sentence before upload: ${searchResponse.status} ${searchResponse.statusText}\n${errorText}`);
-            }
-
-            const searchResult = await searchResponse.json();
-
-            if (!Array.isArray(searchResult)) {
-              throw new Error("Search sentence response must contain an array");
-            }
-
-            const alreadyExists = searchResult.some(
-              (existingSentence) =>
-                existingSentence?.spec?.content === hitokoto && existingSentence?.spec?.categoryName === process.env.CATEGORY_NAME,
-            );
-
-            if (alreadyExists) {
-              skippedExistingSentenceCount += 1;
-              continue;
-            }
-
-            sentencesToUpload.push(sentence);
           }
 
           appendOutput("skipped_existing_sentence_count", String(skippedExistingSentenceCount));

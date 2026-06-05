@@ -104,6 +104,7 @@ jobs:
 
           if (process.env.INITIALIZE_MODE !== "true") {
             for (let page = 1; ; page += 1) {
+              console.log(`Scanning category page ${page}`);
               const listPayload = await fetchJson(`${categoriesUrl}?page=${page}&size=${pageSize}`, "Failed to list categories");
               const categoryItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
               existingCategory = categoryItems.find((item) => {
@@ -134,6 +135,7 @@ jobs:
             return;
           }
 
+          console.log("Creating bundle category");
           const requestBody = {
             apiVersion: "hitokotohub.puresky.top/v1alpha1",
             kind: "Category",
@@ -234,6 +236,7 @@ jobs:
           }
 
           const readSentenceArray = (filePath) => {
+            console.log(`Reading sentence file: ${filePath}`);
             if (!fs.existsSync(filePath)) {
               throw new Error(`JSON file does not exist: ${filePath}`);
             }
@@ -249,6 +252,7 @@ jobs:
 
           const currentSentences = readSentenceArray(process.env.CURRENT_JSON_FILE);
           const previousSentences = readSentenceArray(process.env.PREVIOUS_JSON_FILE);
+          console.log("Building hitokoto lookup sets");
           const previousHitokotoValues = new Set(
             previousSentences
               .map((sentence) => sentence?.hitokoto)
@@ -270,6 +274,7 @@ jobs:
             return typeof hitokoto === "string" && !currentHitokotoValues.has(hitokoto);
           });
 
+          console.log("Writing diff output files");
           fs.mkdirSync(path.dirname(process.env.ADDED_JSON_FILE), { recursive: true });
           fs.writeFileSync(process.env.ADDED_JSON_FILE, `${JSON.stringify(addedSentences)}\n`, "utf8");
           fs.writeFileSync(process.env.REMOVED_JSON_FILE, `${JSON.stringify(removedSentences)}\n`, "utf8");
@@ -338,8 +343,16 @@ jobs:
             Accept: "application/json",
           };
           const deletedSentenceNames = new Set();
+          const logProgress = (prefix, index, total) => {
+            if (index === 1 || index === total || index % 100 === 0) {
+              console.log(`${prefix}: ${index}/${total}`);
+            }
+          };
 
-          for (const removedSentence of removedSentences) {
+          console.log(`Searching removed sentences before deletion: ${removedSentences.length} candidates`);
+          for (let index = 0; index < removedSentences.length; index += 1) {
+            const removedSentence = removedSentences[index];
+            logProgress("Searching removed sentence", index + 1, removedSentences.length);
             const hitokoto = removedSentence?.hitokoto;
 
             if (typeof hitokoto !== "string" || hitokoto.length === 0) {
@@ -378,8 +391,10 @@ jobs:
               );
             });
 
-            for (const sentence of sentencesToDelete) {
+            for (let deleteIndex = 0; deleteIndex < sentencesToDelete.length; deleteIndex += 1) {
+              const sentence = sentencesToDelete[deleteIndex];
               const sentenceName = sentence.metadata.name;
+              console.log(`Deleting matched sentence ${deleteIndex + 1}/${sentencesToDelete.length} for removed candidate ${index + 1}/${removedSentences.length}: ${sentenceName}`);
               const deleteResponse = await fetch(`${sentencesUrl}/${encodeURIComponent(sentenceName)}`, {
                 method: "DELETE",
                 headers: commonHeaders,
@@ -461,11 +476,20 @@ jobs:
           };
           let skippedExistingSentenceCount = 0;
           const sentencesToUpload = [];
+          const logProgress = (prefix, index, total) => {
+            if (index === 1 || index === total || index % 100 === 0) {
+              console.log(`${prefix}: ${index}/${total}`);
+            }
+          };
 
           if (process.env.INITIALIZE_MODE === "true") {
+            console.log(`Initialize mode enabled; skipping duplicate search for ${addedSentences.length} sentences`);
             sentencesToUpload.push(...addedSentences);
           } else {
-            for (const sentence of addedSentences) {
+            console.log(`Searching existing sentences before upload: ${addedSentences.length} candidates`);
+            for (let index = 0; index < addedSentences.length; index += 1) {
+              const sentence = addedSentences[index];
+              logProgress("Searching upload candidate", index + 1, addedSentences.length);
               const hitokoto = sentence?.hitokoto;
 
               if (typeof hitokoto !== "string" || hitokoto.length === 0) {
@@ -514,6 +538,7 @@ jobs:
             return;
           }
 
+          console.log(`Preparing batch upload body for ${sentencesToUpload.length} sentences`);
           const requestBody = sentencesToUpload.map((sentence) => ({
             // 这个 batch 接口实测不要求 apiVersion / kind / metadata.name，
             // 因此这里保留最小可用结构即可。
@@ -537,6 +562,7 @@ jobs:
             },
           }));
 
+          console.log(`Uploading ${requestBody.length} sentences in one batch`);
           const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -599,6 +625,7 @@ jobs:
 
           const category = await getResponse.json();
           const patchOperation = Object.hasOwn(category?.spec ?? {}, "description") ? "replace" : "add";
+          console.log(`Updating category cursor with JSON Patch operation: ${patchOperation}`);
           const updateResponse = await fetch(categoryUrl, {
             method: "PATCH",
             headers: {

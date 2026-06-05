@@ -2,13 +2,17 @@ name: Merge Hitokoto Sentences
 
 on:
   schedule:
-    # 21:00 UTC = 05:00 Asia/Shanghai on the next day.
-    - cron: "0 21 * * *"
+    # 20:00 UTC = 04:00 Asia/Shanghai on the next day.
+    - cron: "0 20 * * *"
   workflow_dispatch:
 
 concurrency:
   group: merge-hitokoto-sentences
   cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
 
 jobs:
   merge:
@@ -16,14 +20,17 @@ jobs:
 
     steps:
       - name: Checkout
+        id: checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # https://github.com/actions/checkout/releases/tag/v6.0.3
 
       - name: Setup Node.js
+        id: setup_node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # https://github.com/actions/setup-node/releases/tag/v6.4.0
         with:
           node-version: 24
 
       - name: Fetch source repository
+        id: fetch_source
         run: |
           git clone --depth 1 --filter=blob:none --sparse https://github.com/hitokoto-osc/sentences-bundle.git tmp/sentences-bundle
           git -C tmp/sentences-bundle sparse-checkout set sentences
@@ -36,6 +43,7 @@ jobs:
           --output tmp/hitokoto-sentences.json
 
       - name: Upload merged artifact
+        id: upload_artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # https://github.com/actions/upload-artifact/releases/tag/v7.0.1
         with:
           name: hitokoto-sentences
@@ -43,19 +51,220 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # 第一步：创建新分类，后续批量上传会把所有句子写入这个新分类。
-      - name: Create new Hitokoto category
-        id: create_category
+      # 第一步：找到上一次定时运行产出的合并文件，用它作为“昨天凌晨 4 点”的比较基准。
+      - name: Find previous merged artifact
+        id: previous_artifact
         env:
-          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
-          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_FILE_NAME: merge-hitokoto-sentences.yml
+          ARTIFACT_NAME: hitokoto-sentences
         run: |
           node <<'EOF'
           (async () => {
           const fs = require("node:fs");
 
-          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "GITHUB_RUN_ID"];
+          const requiredEnv = ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "WORKFLOW_FILE_NAME", "ARTIFACT_NAME"];
+          for (const envName of requiredEnv) {
+            if (!process.env[envName]) {
+              throw new Error(`Missing required environment variable: ${envName}`);
+            }
+          }
+
+          const githubApiBaseUrl = "https://api.github.com";
+          const currentRunId = Number(process.env.GITHUB_RUN_ID);
+          const commonHeaders = {
+            Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+          };
+
+          const fetchJson = async (url) => {
+            const response = await fetch(url, { headers: commonHeaders });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(`GitHub API request failed: ${response.status} ${response.statusText}\n${errorText}`);
+            }
+
+            return response.json();
+          };
+
+          const runsUrl = `${githubApiBaseUrl}/repos/${process.env.GITHUB_REPOSITORY}/actions/workflows/${encodeURIComponent(process.env.WORKFLOW_FILE_NAME)}/runs?status=success&event=schedule&per_page=10`;
+          const runsPayload = await fetchJson(runsUrl);
+          const runs = Array.isArray(runsPayload?.workflow_runs) ? runsPayload.workflow_runs : [];
+
+          for (const run of runs) {
+            if (!run || Number(run.id) === currentRunId) {
+              continue;
+            }
+
+            const artifactsUrl = `${githubApiBaseUrl}/repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`;
+            const artifactsPayload = await fetchJson(artifactsUrl);
+            const artifacts = Array.isArray(artifactsPayload?.artifacts) ? artifactsPayload.artifacts : [];
+            const artifact = artifacts.find((item) => item?.name === process.env.ARTIFACT_NAME && !item?.expired);
+
+            if (!artifact?.archive_download_url) {
+              continue;
+            }
+
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `artifact_url=${artifact.archive_download_url}\n`, "utf8");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `run_id=${run.id}\n`, "utf8");
+            console.log(`Found previous artifact from run ${run.id}`);
+            return;
+          }
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, "artifact_url=\n", "utf8");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, "run_id=\n", "utf8");
+          console.log("No previous artifact was found; the previous sentence set will be rebuilt from source history");
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          EOF
+
+      # 第二步：下载上一次的合并文件，用 artifact 精确保留昨天运行时的基准。
+      - name: Download previous merged artifact
+        id: download_previous
+        if: ${{ steps.previous_artifact.outputs.artifact_url != '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREVIOUS_ARTIFACT_URL: ${{ steps.previous_artifact.outputs.artifact_url }}
+        run: |
+          mkdir -p tmp/previous-hitokoto-sentences
+          curl -L \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${PREVIOUS_ARTIFACT_URL}" \
+            -o tmp/previous-hitokoto-sentences.zip
+          unzip -q tmp/previous-hitokoto-sentences.zip -d tmp/previous-hitokoto-sentences
+          {
+            echo "baseline_source=artifact"
+            echo "baseline_artifact_run_id=${{ steps.previous_artifact.outputs.run_id }}"
+          } >> "${GITHUB_OUTPUT}"
+
+      # 第二步兜底：如果历史 artifact 不存在，就从源仓库 24 小时前的提交重新构建昨天的合并文件。
+      - name: Build previous merged file from source history
+        id: build_previous
+        if: ${{ steps.previous_artifact.outputs.artifact_url == '' }}
+        run: |
+          TARGET_TIME="$(date -u -d '24 hours ago' '+%Y-%m-%dT%H:%M:%SZ')"
+          git clone --filter=blob:none --sparse https://github.com/hitokoto-osc/sentences-bundle.git tmp/previous-sentences-bundle
+          git -C tmp/previous-sentences-bundle sparse-checkout set sentences
+          DEFAULT_BRANCH="$(git -C tmp/previous-sentences-bundle symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##')"
+          PREVIOUS_SOURCE_COMMIT="$(git -C tmp/previous-sentences-bundle rev-list -n 1 --before="${TARGET_TIME}" "origin/${DEFAULT_BRANCH}")"
+
+          if [ -z "${PREVIOUS_SOURCE_COMMIT}" ]; then
+            echo "No source commit was found before ${TARGET_TIME}" >&2
+            exit 1
+          fi
+
+          git -C tmp/previous-sentences-bundle checkout --detach "${PREVIOUS_SOURCE_COMMIT}"
+          node --experimental-strip-types .github/scripts/merge-hitokoto-sentences.ts \
+            --input tmp/previous-sentences-bundle/sentences \
+            --output tmp/previous-hitokoto-sentences/hitokoto-sentences.json
+          {
+            echo "baseline_source=rebuilt_from_source"
+            echo "target_time=${TARGET_TIME}"
+            echo "source_commit=${PREVIOUS_SOURCE_COMMIT}"
+          } >> "${GITHUB_OUTPUT}"
+
+      # 第三步：按 hitokoto 文本比较昨天和今天的合并结果，分别输出新增和被移除的句子。
+      - name: Find sentence changes
+        id: diff
+        env:
+          CURRENT_JSON_FILE: ${{ steps.merge.outputs.output_file }}
+          PREVIOUS_JSON_FILE: tmp/previous-hitokoto-sentences/hitokoto-sentences.json
+          ADDED_JSON_FILE: tmp/new-hitokoto-sentences.json
+          REMOVED_JSON_FILE: tmp/removed-hitokoto-sentences.json
+        run: |
+          node <<'EOF'
+          (async () => {
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const requiredEnv = ["CURRENT_JSON_FILE", "PREVIOUS_JSON_FILE", "ADDED_JSON_FILE", "REMOVED_JSON_FILE"];
+          for (const envName of requiredEnv) {
+            if (!process.env[envName]) {
+              throw new Error(`Missing required environment variable: ${envName}`);
+            }
+          }
+
+          const readSentenceArray = (filePath, fallbackToEmpty) => {
+            if (!fs.existsSync(filePath)) {
+              if (fallbackToEmpty) {
+                return [];
+              }
+
+              throw new Error(`JSON file does not exist: ${filePath}`);
+            }
+
+            const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+            if (!Array.isArray(parsed)) {
+              throw new Error(`JSON file must contain an array: ${filePath}`);
+            }
+
+            return parsed;
+          };
+
+          const currentSentences = readSentenceArray(process.env.CURRENT_JSON_FILE, false);
+          const previousSentences = readSentenceArray(process.env.PREVIOUS_JSON_FILE, false);
+          const previousHitokotoValues = new Set(
+            previousSentences
+              .map((sentence) => sentence?.hitokoto)
+              .filter((hitokoto) => typeof hitokoto === "string"),
+          );
+          const currentHitokotoValues = new Set(
+            currentSentences
+              .map((sentence) => sentence?.hitokoto)
+              .filter((hitokoto) => typeof hitokoto === "string"),
+          );
+          const addedSentences = currentSentences.filter((sentence) => {
+            const hitokoto = sentence?.hitokoto;
+
+            return typeof hitokoto === "string" && !previousHitokotoValues.has(hitokoto);
+          });
+          const removedSentences = previousSentences.filter((sentence) => {
+            const hitokoto = sentence?.hitokoto;
+
+            return typeof hitokoto === "string" && !currentHitokotoValues.has(hitokoto);
+          });
+
+          fs.mkdirSync(path.dirname(process.env.ADDED_JSON_FILE), { recursive: true });
+          fs.writeFileSync(process.env.ADDED_JSON_FILE, `${JSON.stringify(addedSentences)}\n`, "utf8");
+          fs.writeFileSync(process.env.REMOVED_JSON_FILE, `${JSON.stringify(removedSentences)}\n`, "utf8");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `added_output_file=${process.env.ADDED_JSON_FILE}\n`, "utf8");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `added_sentence_count=${addedSentences.length}\n`, "utf8");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `removed_output_file=${process.env.REMOVED_JSON_FILE}\n`, "utf8");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `removed_sentence_count=${removedSentences.length}\n`, "utf8");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `previous_sentence_count=${previousSentences.length}\n`, "utf8");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `current_sentence_count=${currentSentences.length}\n`, "utf8");
+          console.log(`Previous sentences: ${previousSentences.length}`);
+          console.log(`Current sentences: ${currentSentences.length}`);
+          console.log(`New sentences: ${addedSentences.length}`);
+          console.log(`Removed sentences: ${removedSentences.length}`);
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          EOF
+
+      # 第四步：复用固定分类 hitokoto-sentences-bundle；如果分类不存在，就创建一个。
+      - name: Find or create Hitokoto bundle category
+        id: bundle_category
+        env:
+          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
+          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
+          BUNDLE_CATEGORY_DISPLAY_NAME: hitokoto-sentences-bundle
+        run: |
+          node <<'EOF'
+          (async () => {
+          const fs = require("node:fs");
+
+          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "BUNDLE_CATEGORY_DISPLAY_NAME"];
           for (const envName of requiredEnv) {
             if (!process.env[envName]) {
               throw new Error(`Missing required environment variable: ${envName}`);
@@ -63,7 +272,51 @@ jobs:
           }
 
           const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
-          const url = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories`;
+          const categoriesUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories`;
+          const commonHeaders = {
+            Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
+            Accept: "application/json",
+          };
+
+          let existingCategory = null;
+          const pageSize = 100;
+
+          for (let page = 1; ; page += 1) {
+            const listResponse = await fetch(`${categoriesUrl}?page=${page}&size=${pageSize}`, {
+              method: "GET",
+              headers: commonHeaders,
+            });
+
+            if (!listResponse.ok) {
+              const errorText = await listResponse.text();
+              throw new Error(`Failed to list categories: ${listResponse.status} ${listResponse.statusText}\n${errorText}`);
+            }
+
+            const listPayload = await listResponse.json();
+            const categoryItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
+            existingCategory = categoryItems.find((item) => {
+              const metadataName = item?.metadata?.name;
+              const specName = item?.spec?.name;
+
+              return metadataName === process.env.BUNDLE_CATEGORY_DISPLAY_NAME || specName === process.env.BUNDLE_CATEGORY_DISPLAY_NAME;
+            });
+
+            if (existingCategory || categoryItems.length < pageSize) {
+              break;
+            }
+          }
+
+          if (existingCategory) {
+            const existingCategoryName = existingCategory?.metadata?.name;
+
+            if (typeof existingCategoryName !== "string" || existingCategoryName.length === 0) {
+              throw new Error("Existing category does not include metadata.name");
+            }
+
+            console.log(`Using existing category: ${existingCategoryName}`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `category_name=${existingCategoryName}\n`, "utf8");
+            return;
+          }
 
           const requestBody = {
             apiVersion: "hitokotohub.puresky.top/v1alpha1",
@@ -73,15 +326,14 @@ jobs:
               name: "",
             },
             spec: {
-              // 按要求使用当前 workflow run id 作为分类展示名。
-              name: String(process.env.GITHUB_RUN_ID),
+              name: process.env.BUNDLE_CATEGORY_DISPLAY_NAME,
             },
           };
 
-          const response = await fetch(url, {
+          const response = await fetch(categoriesUrl, {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
+              ...commonHeaders,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(requestBody),
@@ -107,19 +359,148 @@ jobs:
           });
           EOF
 
-      # 第二步：把合并后的 JSON 转成批量接口需要的 Sentence 结构并上传到刚创建的新分类。
-      - name: Upload merged sentences to new category
+      # 第五步：对已经从源句库移除的句子，先在固定分类内搜索，再按精确 content 匹配删除。
+      - name: Delete removed sentences from bundle category
+        id: delete_removed
         env:
           HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
           SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
-          CATEGORY_NAME: ${{ steps.create_category.outputs.category_name }}
-          MERGED_JSON_FILE: ${{ steps.merge.outputs.output_file }}
+          CATEGORY_NAME: ${{ steps.bundle_category.outputs.category_name }}
+          REMOVED_JSON_FILE: ${{ steps.diff.outputs.removed_output_file }}
         run: |
           node <<'EOF'
-          (async () => {
           const fs = require("node:fs");
+          let deletedSentenceCount = 0;
 
-          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME", "MERGED_JSON_FILE"];
+          const appendOutput = (name, value) => {
+            if (process.env.GITHUB_OUTPUT) {
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`, "utf8");
+            }
+          };
+
+          (async () => {
+
+          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME", "REMOVED_JSON_FILE"];
+          for (const envName of requiredEnv) {
+            if (!process.env[envName]) {
+              throw new Error(`Missing required environment variable: ${envName}`);
+            }
+          }
+
+          const removedJsonText = fs.readFileSync(process.env.REMOVED_JSON_FILE, "utf8");
+          const removedSentences = JSON.parse(removedJsonText);
+
+          if (!Array.isArray(removedSentences)) {
+            throw new Error("Removed sentences JSON file must contain an array");
+          }
+
+          if (removedSentences.length === 0) {
+            console.log(`No removed sentences to delete from ${process.env.CATEGORY_NAME}`);
+            appendOutput("deleted_sentence_count", "0");
+            return;
+          }
+
+          const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
+          const searchUrl = `${siteEndpoint}/apis/console.api.hitokotohub.puresky.top/v1alpha1/sentence/search`;
+          const sentencesUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/sentences`;
+          const commonHeaders = {
+            Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
+            Accept: "application/json",
+          };
+          const deletedSentenceNames = new Set();
+
+          for (const removedSentence of removedSentences) {
+            const hitokoto = removedSentence?.hitokoto;
+
+            if (typeof hitokoto !== "string" || hitokoto.length === 0) {
+              continue;
+            }
+
+            const url = new URL(searchUrl);
+            url.searchParams.set("keyword", hitokoto);
+            url.searchParams.set("categoryName", process.env.CATEGORY_NAME);
+
+            const searchResponse = await fetch(url, {
+              method: "GET",
+              headers: commonHeaders,
+            });
+
+            if (!searchResponse.ok) {
+              const errorText = await searchResponse.text();
+              throw new Error(`Failed to search sentence: ${searchResponse.status} ${searchResponse.statusText}\n${errorText}`);
+            }
+
+            const searchResult = await searchResponse.json();
+
+            if (!Array.isArray(searchResult)) {
+              throw new Error("Search sentence response must contain an array");
+            }
+
+            const sentencesToDelete = searchResult.filter((sentence) => {
+              const sentenceName = sentence?.metadata?.name;
+
+              return (
+                typeof sentenceName === "string" &&
+                sentenceName.length > 0 &&
+                sentence?.spec?.content === hitokoto &&
+                sentence?.spec?.categoryName === process.env.CATEGORY_NAME &&
+                !deletedSentenceNames.has(sentenceName)
+              );
+            });
+
+            for (const sentence of sentencesToDelete) {
+              const sentenceName = sentence.metadata.name;
+              const deleteResponse = await fetch(`${sentencesUrl}/${encodeURIComponent(sentenceName)}`, {
+                method: "DELETE",
+                headers: commonHeaders,
+              });
+
+              if (!deleteResponse.ok) {
+                const errorText = await deleteResponse.text();
+                throw new Error(`Failed to delete sentence ${sentenceName}: ${deleteResponse.status} ${deleteResponse.statusText}\n${errorText}`);
+              }
+
+              deletedSentenceNames.add(sentenceName);
+              deletedSentenceCount = deletedSentenceNames.size;
+              console.log(`Deleted sentence: ${sentenceName}`);
+            }
+
+            if (sentencesToDelete.length === 0) {
+              console.log(`No matching sentence found to delete: ${hitokoto}`);
+            }
+          }
+
+          console.log(`Deleted ${deletedSentenceNames.size} sentences from ${process.env.CATEGORY_NAME}`);
+          appendOutput("deleted_sentence_count", String(deletedSentenceNames.size));
+          })().catch((error) => {
+            appendOutput("deleted_sentence_count", String(deletedSentenceCount));
+            console.error(error);
+            process.exit(1);
+          });
+          EOF
+
+      # 第六步：把新增句子转成批量接口需要的 Sentence 结构并上传到固定分类。
+      - name: Upload new sentences to bundle category
+        id: upload_new
+        env:
+          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
+          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
+          CATEGORY_NAME: ${{ steps.bundle_category.outputs.category_name }}
+          ADDED_JSON_FILE: ${{ steps.diff.outputs.added_output_file }}
+        run: |
+          node <<'EOF'
+          const fs = require("node:fs");
+          let uploadedSentenceCount = 0;
+
+          const appendOutput = (name, value) => {
+            if (process.env.GITHUB_OUTPUT) {
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`, "utf8");
+            }
+          };
+
+          (async () => {
+
+          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME", "ADDED_JSON_FILE"];
           for (const envName of requiredEnv) {
             if (!process.env[envName]) {
               throw new Error(`Missing required environment variable: ${envName}`);
@@ -128,14 +509,20 @@ jobs:
 
           const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
           const url = `${siteEndpoint}/apis/console.api.hitokotohub.puresky.top/v1alpha1/sentence/-/batch`;
-          const mergedJsonText = fs.readFileSync(process.env.MERGED_JSON_FILE, "utf8");
-          const mergedSentences = JSON.parse(mergedJsonText);
+          const addedJsonText = fs.readFileSync(process.env.ADDED_JSON_FILE, "utf8");
+          const addedSentences = JSON.parse(addedJsonText);
 
-          if (!Array.isArray(mergedSentences)) {
-            throw new Error("Merged JSON file must contain an array");
+          if (!Array.isArray(addedSentences)) {
+            throw new Error("Added sentences JSON file must contain an array");
           }
 
-          const requestBody = mergedSentences.map((sentence) => ({
+          if (addedSentences.length === 0) {
+            console.log(`No new sentences to upload to ${process.env.CATEGORY_NAME}`);
+            appendOutput("uploaded_sentence_count", "0");
+            return;
+          }
+
+          const requestBody = addedSentences.map((sentence) => ({
             // 这个 batch 接口实测不要求 apiVersion / kind / metadata.name，
             // 因此这里保留最小可用结构即可。
             // apiVersion: "hitokotohub.puresky.top/v1alpha1",
@@ -172,73 +559,217 @@ jobs:
             throw new Error(`Failed to upload sentences: ${response.status} ${response.statusText}\n${errorText}`);
           }
 
+          uploadedSentenceCount = requestBody.length;
           console.log(`Uploaded ${requestBody.length} sentences to ${process.env.CATEGORY_NAME}`);
+          appendOutput("uploaded_sentence_count", String(uploadedSentenceCount));
           })().catch((error) => {
+            appendOutput("uploaded_sentence_count", String(uploadedSentenceCount));
             console.error(error);
             process.exit(1);
           });
           EOF
 
-      # 第三步：获取现有分类列表，删除不是本次新建分类的旧分类。
-      - name: Delete old Hitokoto categories
+      - name: Write sync summary
+        if: ${{ always() }}
         env:
-          HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
-          SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
-          CATEGORY_NAME: ${{ steps.create_category.outputs.category_name }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          SETUP_NODE_OUTCOME: ${{ steps.setup_node.outcome }}
+          FETCH_SOURCE_OUTCOME: ${{ steps.fetch_source.outcome }}
+          MERGE_OUTCOME: ${{ steps.merge.outcome }}
+          UPLOAD_ARTIFACT_OUTCOME: ${{ steps.upload_artifact.outcome }}
+          FIND_ARTIFACT_OUTCOME: ${{ steps.previous_artifact.outcome }}
+          DOWNLOAD_PREVIOUS_OUTCOME: ${{ steps.download_previous.outcome }}
+          BUILD_PREVIOUS_OUTCOME: ${{ steps.build_previous.outcome }}
+          DIFF_OUTCOME: ${{ steps.diff.outcome }}
+          CATEGORY_OUTCOME: ${{ steps.bundle_category.outcome }}
+          DELETE_OUTCOME: ${{ steps.delete_removed.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload_new.outcome }}
+          PREVIOUS_ARTIFACT_RUN_ID: ${{ steps.previous_artifact.outputs.run_id }}
+          FALLBACK_TARGET_TIME: ${{ steps.build_previous.outputs.target_time }}
+          FALLBACK_SOURCE_COMMIT: ${{ steps.build_previous.outputs.source_commit }}
+          PREVIOUS_SENTENCE_COUNT: ${{ steps.diff.outputs.previous_sentence_count }}
+          CURRENT_SENTENCE_COUNT: ${{ steps.diff.outputs.current_sentence_count }}
+          ADDED_SENTENCE_COUNT: ${{ steps.diff.outputs.added_sentence_count }}
+          REMOVED_SENTENCE_COUNT: ${{ steps.diff.outputs.removed_sentence_count }}
+          UPLOADED_SENTENCE_COUNT: ${{ steps.upload_new.outputs.uploaded_sentence_count }}
+          DELETED_SENTENCE_COUNT: ${{ steps.delete_removed.outputs.deleted_sentence_count }}
+          ADDED_JSON_FILE: ${{ steps.diff.outputs.added_output_file }}
+          REMOVED_JSON_FILE: ${{ steps.diff.outputs.removed_output_file }}
         run: |
           node <<'EOF'
-          (async () => {
-          const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME"];
-          for (const envName of requiredEnv) {
-            if (!process.env[envName]) {
-              throw new Error(`Missing required environment variable: ${envName}`);
-            }
+          const fs = require("node:fs");
+
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+
+          if (!summaryPath) {
+            throw new Error("Missing GITHUB_STEP_SUMMARY");
           }
 
-          const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
-          const listUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories?page=1&size=100`;
+          const valueOrDash = (value) => (typeof value === "string" && value.length > 0 ? value : "-");
+          const stepOutcome = (value) => valueOrDash(value);
+          const countValue = (value) => valueOrDash(value);
 
-          const listResponse = await fetch(listUrl, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
-            },
-          });
-
-          if (!listResponse.ok) {
-            const errorText = await listResponse.text();
-            throw new Error(`Failed to list categories: ${listResponse.status} ${listResponse.statusText}\n${errorText}`);
-          }
-
-          const listPayload = await listResponse.json();
-          const categoryItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
-          const categoryNamesToDelete = categoryItems
-            .map((item) => item?.metadata?.name)
-            .filter((name) => typeof name === "string" && name.length > 0 && name !== process.env.CATEGORY_NAME);
-
-          for (const categoryName of categoryNamesToDelete) {
-            // 仅删除不是本次新建分类的旧分类。
-            const deleteUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories/${encodeURIComponent(categoryName)}`;
-            const deleteResponse = await fetch(deleteUrl, {
-              method: "DELETE",
-              headers: {
-                Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
-              },
-            });
-
-            if (!deleteResponse.ok) {
-              const errorText = await deleteResponse.text();
-              throw new Error(`Failed to delete category ${categoryName}: ${deleteResponse.status} ${deleteResponse.statusText}\n${errorText}`);
+          const readSentenceArray = (filePath) => {
+            if (!filePath || !fs.existsSync(filePath)) {
+              return null;
             }
 
-            console.log(`Deleted category: ${categoryName}`);
+            const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+            if (!Array.isArray(parsed)) {
+              return null;
+            }
+
+            return parsed;
+          };
+
+          const formatSentence = (sentence) => {
+            const hitokoto = sentence?.hitokoto;
+            const text = typeof hitokoto === "string" ? hitokoto : JSON.stringify(sentence);
+
+            return String(text).replace(/\r?\n/g, " ").trim();
+          };
+
+          const renderSentenceList = (title, filePath, totalCount) => {
+            const sentences = readSentenceArray(filePath);
+            const lines = [`### ${title}`];
+
+            if (!sentences) {
+              lines.push("");
+              lines.push("No sentence list is available.");
+              return lines;
+            }
+
+            if (sentences.length === 0) {
+              lines.push("");
+              lines.push("No sentences.");
+              return lines;
+            }
+
+            lines.push("");
+            for (const sentence of sentences.slice(0, 10)) {
+              lines.push(`- ${formatSentence(sentence)}`);
+            }
+
+            const omittedCount = sentences.length - 10;
+            if (omittedCount > 0) {
+              lines.push(`- Omitted ${omittedCount} more sentences.`);
+            }
+
+            if (String(sentences.length) !== String(totalCount || sentences.length)) {
+              lines.push("");
+              lines.push(`List count: ${sentences.length}; reported count: ${valueOrDash(totalCount)}.`);
+            }
+
+            return lines;
+          };
+
+          let baselineSource = "Unavailable";
+          if (process.env.DOWNLOAD_PREVIOUS_OUTCOME === "success") {
+            baselineSource = `Downloaded previous artifact (run ${valueOrDash(process.env.PREVIOUS_ARTIFACT_RUN_ID)})`;
+          } else if (process.env.BUILD_PREVIOUS_OUTCOME === "success") {
+            baselineSource = `Rebuilt from source history (target ${valueOrDash(process.env.FALLBACK_TARGET_TIME)}, commit ${valueOrDash(process.env.FALLBACK_SOURCE_COMMIT)})`;
           }
 
-          if (categoryNamesToDelete.length === 0) {
-            console.log("No old categories to delete");
-          }
-          })().catch((error) => {
-            console.error(error);
-            process.exit(1);
-          });
+          const lines = [
+            "## Hitokoto Sentences Sync Summary",
+            "",
+            `Baseline source: ${baselineSource}`,
+            "",
+            "### Step Status",
+            "",
+            "| Step | Outcome |",
+            "| --- | --- |",
+            `| Checkout | ${stepOutcome(process.env.CHECKOUT_OUTCOME)} |`,
+            `| Setup Node.js | ${stepOutcome(process.env.SETUP_NODE_OUTCOME)} |`,
+            `| Fetch source repository | ${stepOutcome(process.env.FETCH_SOURCE_OUTCOME)} |`,
+            `| Merge JSON files | ${stepOutcome(process.env.MERGE_OUTCOME)} |`,
+            `| Upload merged artifact | ${stepOutcome(process.env.UPLOAD_ARTIFACT_OUTCOME)} |`,
+            `| Find previous artifact | ${stepOutcome(process.env.FIND_ARTIFACT_OUTCOME)} |`,
+            `| Download previous artifact | ${stepOutcome(process.env.DOWNLOAD_PREVIOUS_OUTCOME)} |`,
+            `| Rebuild previous file | ${stepOutcome(process.env.BUILD_PREVIOUS_OUTCOME)} |`,
+            `| Diff sentences | ${stepOutcome(process.env.DIFF_OUTCOME)} |`,
+            `| Find or create bundle category | ${stepOutcome(process.env.CATEGORY_OUTCOME)} |`,
+            `| Delete removed sentences via API | ${stepOutcome(process.env.DELETE_OUTCOME)} |`,
+            `| Upload new sentences via API | ${stepOutcome(process.env.UPLOAD_OUTCOME)} |`,
+            "",
+            "### Counts",
+            "",
+            `- Previous merged sentences: ${countValue(process.env.PREVIOUS_SENTENCE_COUNT)}`,
+            `- Current merged sentences: ${countValue(process.env.CURRENT_SENTENCE_COUNT)}`,
+            `- New sentences in diff: ${countValue(process.env.ADDED_SENTENCE_COUNT)}`,
+            `- Removed sentences in diff: ${countValue(process.env.REMOVED_SENTENCE_COUNT)}`,
+            `- API uploaded sentences: ${countValue(process.env.UPLOADED_SENTENCE_COUNT)}`,
+            `- API deleted sentences: ${countValue(process.env.DELETED_SENTENCE_COUNT)}`,
+            "",
+            ...renderSentenceList("New Sentences", process.env.ADDED_JSON_FILE, process.env.ADDED_SENTENCE_COUNT),
+            "",
+            ...renderSentenceList("Removed Sentences", process.env.REMOVED_JSON_FILE, process.env.REMOVED_SENTENCE_COUNT),
+            "",
+          ];
+
+          fs.appendFileSync(summaryPath, `${lines.join("\n")}\n`, "utf8");
           EOF
+
+      # 如未来需要恢复删除旧分类逻辑，可以参考下面这段旧流程。
+      # - name: Delete old Hitokoto categories
+      #   env:
+      #     HITOKOTO_PAT: ${{ secrets.HITOKOTO_PAT }}
+      #     SITE_ENDPOINT: ${{ secrets.SITE_ENDPOINT }}
+      #     CATEGORY_NAME: ${{ steps.bundle_category.outputs.category_name }}
+      #   run: |
+      #     node <<'EOF'
+      #     (async () => {
+      #     const requiredEnv = ["HITOKOTO_PAT", "SITE_ENDPOINT", "CATEGORY_NAME"];
+      #     for (const envName of requiredEnv) {
+      #       if (!process.env[envName]) {
+      #         throw new Error(`Missing required environment variable: ${envName}`);
+      #       }
+      #     }
+      #
+      #     const siteEndpoint = process.env.SITE_ENDPOINT.replace(/\/+$/, "");
+      #     const listUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories?page=1&size=100`;
+      #
+      #     const listResponse = await fetch(listUrl, {
+      #       method: "GET",
+      #       headers: {
+      #         Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
+      #       },
+      #     });
+      #
+      #     if (!listResponse.ok) {
+      #       const errorText = await listResponse.text();
+      #       throw new Error(`Failed to list categories: ${listResponse.status} ${listResponse.statusText}\n${errorText}`);
+      #     }
+      #
+      #     const listPayload = await listResponse.json();
+      #     const categoryItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
+      #     const categoryNamesToDelete = categoryItems
+      #       .map((item) => item?.metadata?.name)
+      #       .filter((name) => typeof name === "string" && name.length > 0 && name !== process.env.CATEGORY_NAME);
+      #
+      #     for (const categoryName of categoryNamesToDelete) {
+      #       const deleteUrl = `${siteEndpoint}/apis/hitokotohub.puresky.top/v1alpha1/categories/${encodeURIComponent(categoryName)}`;
+      #       const deleteResponse = await fetch(deleteUrl, {
+      #         method: "DELETE",
+      #         headers: {
+      #           Authorization: `Bearer ${process.env.HITOKOTO_PAT}`,
+      #         },
+      #       });
+      #
+      #       if (!deleteResponse.ok) {
+      #         const errorText = await deleteResponse.text();
+      #         throw new Error(`Failed to delete category ${categoryName}: ${deleteResponse.status} ${deleteResponse.statusText}\n${errorText}`);
+      #       }
+      #
+      #       console.log(`Deleted category: ${categoryName}`);
+      #     }
+      #
+      #     if (categoryNamesToDelete.length === 0) {
+      #       console.log("No old categories to delete");
+      #     }
+      #     })().catch((error) => {
+      #       console.error(error);
+      #       process.exit(1);
+      #     });
+      #     EOF

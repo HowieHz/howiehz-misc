@@ -63,6 +63,7 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      artifact-metadata: write
     uses: ./.github/workflows/reusable-build-packages.yml
     with:
       artifact-name: npm-package-artifacts

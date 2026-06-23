@@ -10,6 +10,7 @@ const ABS_CONNECTOR_MIN_WIDTH = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE;
 export const GRAPHWAR_TOOL_SIGN_EPSILON = graphwarToolDefaults.stepSignEpsilon;
 
 export interface FormulaEvaluationOptions {
+  coefficientDecimalPlaces?: number;
   onSignArgument?: (value: number) => void;
   signEpsilon?: number;
 }
@@ -37,9 +38,9 @@ export function buildFormula(
     algorithm === "abs"
       ? mode === "dy"
         ? formatAbsConnectorFirstDerivativeExpression(points, decimalPlaces, signEpsilon)
-        : formatAbsConnectorExpression(points, decimalPlaces)
+        : formatAbsConnectorExpression(points, decimalPlaces, 0)
       : mode === "y"
-        ? formatStepExpression(start.y, terms, steepness, decimalPlaces, signEpsilon)
+        ? formatStepExpression(0, terms, steepness, decimalPlaces, signEpsilon)
         : mode === "dy"
           ? formatStepFirstDerivativeExpression(terms, steepness, decimalPlaces)
           : formatStepSecondDerivativeExpression(terms, steepness, decimalPlaces, signEpsilon);
@@ -64,20 +65,26 @@ export function evaluateStepY(
 ) {
   let y = points[0]?.y ?? 0;
   for (let index = 1; index < points.length; index += 1) {
-    const deltaY = points[index].y - points[index - 1].y;
-    y += deltaY * evaluateStableStepSigmoid(steepness * (x - points[index].x), options);
+    const coefficient = normalizeFormulaCoefficient(points[index].y - points[index - 1].y, options);
+    y += coefficient * evaluateStableStepSigmoid(steepness * (x - points[index].x), options);
   }
   return y;
 }
 
 /** 计算 sigmoid 阶梯路径在指定 x 处的一阶斜率，用于 y'' 模式发射角提示。 */
-export function evaluateStepFirstDerivativeY(x: number, points: readonly GraphPoint[], steepness: number) {
+export function evaluateStepFirstDerivativeY(
+  x: number,
+  points: readonly GraphPoint[],
+  steepness: number,
+  options?: FormulaEvaluationOptions,
+) {
   let slope = 0;
   for (let index = 1; index < points.length; index += 1) {
     const deltaY = points[index].y - points[index - 1].y;
+    const coefficient = normalizeFormulaCoefficient(deltaY * steepness, options);
     const t = steepness * (x - points[index].x);
     const q = Math.exp(-Math.abs(t));
-    slope += (deltaY * steepness * q) / (1 + q) ** 2;
+    slope += (coefficient * q) / (1 + q) ** 2;
   }
   return slope;
 }
@@ -92,22 +99,23 @@ export function evaluateStepSecondDerivativeY(
   let acceleration = 0;
   for (let index = 1; index < points.length; index += 1) {
     const deltaY = points[index].y - points[index - 1].y;
+    const coefficient = normalizeFormulaCoefficient(deltaY * steepness * steepness, options);
     const t = steepness * (x - points[index].x);
     const q = Math.exp(-Math.abs(t));
     const sign = evaluateStableSignRatio(t, options);
-    acceleration += (-deltaY * steepness * steepness * sign * q * (1 - q)) / (1 + q) ** 3;
+    acceleration += (-coefficient * sign * q * (1 - q)) / (1 + q) ** 3;
   }
   return acceleration;
 }
 
 /** 计算双绝对值 y= 连接路径，用于 SVG 预览采样。 */
-export function evaluateAbsConnectorY(x: number, points: readonly GraphPoint[]) {
+export function evaluateAbsConnectorY(x: number, points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
   let y = points[0]?.y ?? 0;
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
-    y +=
-      (segment.deltaY * (Math.abs(x - segment.startX) - Math.abs(x - segment.endX) + segment.width)) /
-      (2 * segment.width);
+    const coefficient = normalizeFormulaCoefficient(segment.deltaY / (2 * segment.width), options);
+    const width = normalizeFormulaCoefficient(segment.width, options);
+    y += coefficient * (Math.abs(x - segment.startX) - Math.abs(x - segment.endX) + width);
   }
   return y;
 }
@@ -121,7 +129,7 @@ export function evaluateAbsConnectorFirstDerivativeY(
   let slope = 0;
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
-    const coefficient = segment.deltaY / (2 * segment.width);
+    const coefficient = normalizeFormulaCoefficient(segment.deltaY / (2 * segment.width), options);
     slope +=
       coefficient *
       (evaluateStableSignRatio(x - segment.startX, options) - evaluateStableSignRatio(x - segment.endX, options));
@@ -193,8 +201,12 @@ function formatStepSecondDerivativeExpression(
 }
 
 /** 格式化相邻点击点之间双绝对值连接函数的 y= 叠加式。 */
-function formatAbsConnectorExpression(points: readonly GraphPoint[], decimalPlaces?: number) {
-  const parts = [formatDecimal(points[0]?.y ?? 0, decimalPlaces)];
+function formatAbsConnectorExpression(
+  points: readonly GraphPoint[],
+  decimalPlaces?: number,
+  baseY = points[0]?.y ?? 0,
+) {
+  const parts = [formatDecimal(baseY, decimalPlaces)];
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
     const coefficient = segment.deltaY / (2 * segment.width);
@@ -278,6 +290,10 @@ function evaluateStableStepSigmoid(t: number, options?: FormulaEvaluationOptions
 function evaluateStableSignRatio(value: number, options?: FormulaEvaluationOptions) {
   options?.onSignArgument?.(value);
   return value / (Math.abs(value) + (options?.signEpsilon ?? GRAPHWAR_TOOL_SIGN_EPSILON));
+}
+
+function normalizeFormulaCoefficient(value: number, options?: FormulaEvaluationOptions) {
+  return normalizeZero(value, options?.coefficientDecimalPlaces);
 }
 
 /** 分母除零保护值不能跟随用户小数位，否则低精度输出会把它折成 0。 */

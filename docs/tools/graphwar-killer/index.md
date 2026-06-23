@@ -153,9 +153,15 @@ const graphwarFormulaPathPoints = computed<GraphPoint[]>(() => {
   }
 
   const steepness = parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1;
+  const coefficientDecimalPlaces = parsedPrecision.value.ok
+    ? parsedPrecision.value.decimalPlaces
+    : DEFAULT_FORMULA_DECIMAL_PLACES;
   return createGraphwarFormulaPathPoints({
     algorithm: algorithmMode.value,
     equation: equationMode.value,
+    formulaEvaluation: {
+      coefficientDecimalPlaces,
+    },
     points: mappedPathPoints.value,
     steepness,
   });
@@ -192,6 +198,7 @@ const formulaNeedsSignEpsilon = computed(() => {
     bounds: parsedBounds.value.bounds,
     equation: equationMode.value,
     formulaEvaluation: {
+      coefficientDecimalPlaces: formulaOutputDecimalPlaces.value,
       onSignArgument(value) {
         if (value === 0) {
           hasZeroSignArgument = true;
@@ -330,6 +337,9 @@ const secondOrderAngleHint = computed(() => {
     {
       algorithm: algorithmMode.value,
       equation: equationMode.value,
+      formulaEvaluation: {
+        coefficientDecimalPlaces: formulaOutputDecimalPlaces.value,
+      },
       points: formulaOutputPathPoints.value,
       steepness: formulaOutputSteepness.value,
     },
@@ -356,6 +366,7 @@ const trajectorySample = computed(() => {
     bounds: parsedBounds.value.bounds,
     equation: equationMode.value,
     formulaEvaluation: {
+      coefficientDecimalPlaces: formulaOutputDecimalPlaces.value,
       signEpsilon: formulaSignEpsilon.value,
     },
     points: formulaOutputPathPoints.value,

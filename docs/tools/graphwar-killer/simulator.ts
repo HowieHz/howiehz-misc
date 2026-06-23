@@ -165,7 +165,7 @@ function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: Graph
 /** 创建普通 y= 模式使用的函数值计算器。 */
 function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
   return options.algorithm === "abs"
-    ? (x: number) => evaluateAbsConnectorY(x, options.points)
+    ? (x: number) => evaluateAbsConnectorY(x, options.points, options.formulaEvaluation)
     : (x: number) => evaluateStepY(x, options.points, options.steepness, options.formulaEvaluation);
 }
 
@@ -173,7 +173,7 @@ function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
 function createFirstOrderEvaluator(options: CreateGraphwarFormulaPathOptions): FirstOrderEvaluator {
   return options.algorithm === "abs"
     ? (x) => evaluateAbsConnectorFirstDerivativeY(x, options.points, options.formulaEvaluation)
-    : (x) => evaluateStepFirstDerivativeY(x, options.points, options.steepness);
+    : (x) => evaluateStepFirstDerivativeY(x, options.points, options.steepness, options.formulaEvaluation);
 }
 
 /** 创建 y''= 模式使用的二阶导计算器。 */
@@ -217,12 +217,16 @@ function getFirstOrderStartAngle(center: GraphPoint, evaluateDY: FirstOrderEvalu
 
 /** Y'' 模式需要手调角度；按发射边缘点处的目标曲线斜率做固定点迭代。 */
 function getSecondOrderStartAngle(center: GraphPoint, options: CreateGraphwarFormulaPathOptions) {
-  let angle = Math.atan(evaluateStepFirstDerivativeY(center.x, options.points, options.steepness));
+  let angle = Math.atan(
+    evaluateStepFirstDerivativeY(center.x, options.points, options.steepness, options.formulaEvaluation),
+  );
   let error = Number.POSITIVE_INFINITY;
 
   for (let index = 0; error > GRAPHWAR_ANGLE_ERROR && index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
     const launchPoint = moveFromSoldierCenter(center, angle);
-    const nextAngle = Math.atan(evaluateStepFirstDerivativeY(launchPoint.x, options.points, options.steepness));
+    const nextAngle = Math.atan(
+      evaluateStepFirstDerivativeY(launchPoint.x, options.points, options.steepness, options.formulaEvaluation),
+    );
     error = Math.abs(nextAngle - angle);
     angle = nextAngle;
   }

@@ -17,7 +17,6 @@ import {
   isVerticalGraphDelta,
   normalizeBoundsRect,
   normalizePathPoint,
-  scaleBoundsRectToImageSize,
   xPlusGoesRight,
 } from "./geometry";
 import {
@@ -74,9 +73,6 @@ const imageRef = ref<HTMLImageElement>();
 const stageRef = ref<HTMLElement>();
 const stageDisplayWidth = ref(graphwarToolDefaults.canvasWidth);
 const stageDisplayHeight = ref(graphwarToolDefaults.canvasHeight);
-const preserveBoundsOnNextImageLoad = ref(false);
-const previousImageWidth = ref(graphwarToolDefaults.canvasWidth);
-const previousImageHeight = ref(graphwarToolDefaults.canvasHeight);
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
 const boundsFirstPoint = ref<PixelPoint>();
 const pointerPreviewPoint = ref<PixelPoint>();
@@ -591,11 +587,8 @@ function waitForVideoMetadata(video: HTMLVideoElement) {
   });
 }
 
-/** 应用已加载截图，并在替换旧图时保留当前标定边界。 */
+/** 应用已加载截图，并清空当前路径点；框选边界坐标保持不变。 */
 function applyLoadedImage(url: string, name: string) {
-  preserveBoundsOnNextImageLoad.value = Boolean(imageUrl.value);
-  previousImageWidth.value = imageWidth.value;
-  previousImageHeight.value = imageHeight.value;
   imageUrl.value = url;
   imageName.value = name;
   imageStatus.value = "";
@@ -605,7 +598,7 @@ function applyLoadedImage(url: string, name: string) {
   magnifierPoint.value = undefined;
 }
 
-/** 截图元素加载后更新图片尺寸，并设置默认或缩放后的边界。 */
+/** 截图元素加载后更新图片尺寸；框选边界保留当前坐标值。 */
 function handleImageLoad() {
   const image = imageRef.value;
   if (!image) {
@@ -614,23 +607,6 @@ function handleImageLoad() {
 
   imageWidth.value = image.naturalWidth || graphwarToolDefaults.canvasWidth;
   imageHeight.value = image.naturalHeight || graphwarToolDefaults.canvasHeight;
-  if (preserveBoundsOnNextImageLoad.value) {
-    boundsRect.value = scaleBoundsRectToImageSize(
-      boundsRect.value,
-      previousImageWidth.value,
-      previousImageHeight.value,
-      imageWidth.value,
-      imageHeight.value,
-    );
-  } else {
-    boundsRect.value = {
-      x: imageWidth.value * 0.08,
-      y: imageHeight.value * 0.08,
-      width: imageWidth.value * 0.84,
-      height: imageHeight.value * 0.84,
-    };
-  }
-  preserveBoundsOnNextImageLoad.value = false;
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
 }

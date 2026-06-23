@@ -91,10 +91,7 @@ export function sampleGraphwarTrajectory(options: SampleGraphwarTrajectoryOption
 }
 
 /** 计算 Graphwar 实际使用或需要手调的发射角。 */
-export function getGraphwarLaunchAngle(
-  options: CreateGraphwarFormulaPathOptions,
-  soldierCenter = options.points[0],
-) {
+export function getGraphwarLaunchAngle(options: CreateGraphwarFormulaPathOptions, soldierCenter = options.points[0]) {
   return soldierCenter ? getLaunchAngle(options, soldierCenter) : Number.NaN;
 }
 
@@ -218,7 +215,7 @@ function getFirstOrderStartAngle(center: GraphPoint, evaluateDY: FirstOrderEvalu
   return angle;
 }
 
-/** y'' 模式需要手调角度；按发射边缘点处的目标曲线斜率做固定点迭代。 */
+/** Y'' 模式需要手调角度；按发射边缘点处的目标曲线斜率做固定点迭代。 */
 function getSecondOrderStartAngle(center: GraphPoint, options: CreateGraphwarFormulaPathOptions) {
   let angle = Math.atan(evaluateStepFirstDerivativeY(center.x, options.points, options.steepness));
   let error = Number.POSITIVE_INFINITY;

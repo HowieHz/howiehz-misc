@@ -13,6 +13,12 @@ hero:
     - theme: brand
       text: Start Reading
       link: /en/posts/
+    - theme: brand
+      text: Open Tools
+      link: /en/tools/
+    - theme: alt
+      text: Back to Main Site
+      link: https://howiehz.top
     - theme: alt
       text: About this Site
       link: /en/about/

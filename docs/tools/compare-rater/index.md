@@ -25,14 +25,14 @@ import {
   type GraphEdge,
   type RelationLevel,
   type RelationRecord,
-} from "../../.vitepress/theme/compare-rater/core";
+} from "./core";
 import {
   aspectOptionsByWorkType,
   fieldOptions,
   workTypeOptions,
   type WorkType,
-} from "../../.vitepress/theme/compare-rater/presets";
-import { createCompareRaterTestData } from "../../.vitepress/theme/compare-rater/test-data";
+} from "./presets";
+import { createCompareRaterTestData } from "./test-data";
 
 type AnchorRole = "best" | "worst";
 type TransferStatus = "idle" | "success" | "error";

@@ -367,7 +367,7 @@ export function getGraphViewportHeight(items: readonly CompareItem[]) {
 /**
  * 用一维约束松弛求解每个作品的相对位置。
  *
- * “差不多”是等式吸引；其它关系先保证下限，满足后再用很弱的力贴近标称差距。 同一节点下同档关系的目标会轻微对齐，避免两个“好一点”被解成明显不同高度。 每个连通分量单独归零均值，避免整体平移影响展示。
+ * “差不多”是等式吸引；其它关系先保证下限，满足后再用很弱的力贴近标称差距。同一节点下同档关系的目标会轻微对齐，避免两个“好一点”被解成明显不同高度。每个连通分量单独归零均值，避免整体平移影响展示。
  */
 function solveOffsets(records: readonly RelationRecord[]) {
   const names = Array.from(new Set(records.flatMap((record) => [record.baseName, record.targetName])));

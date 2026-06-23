@@ -437,6 +437,10 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
         socialLinks: [{ icon: "github", link: githubRepoUrl }],
         nav: [
           {
+            text: "回到主站",
+            link: "https://howiehz.top",
+          },
+          {
             text: "NPM 包",
             items: [{ text: "compat-finder", link: "/compat-finder/" }],
           },
@@ -510,6 +514,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
       themeConfig: {
         socialLinks: [{ icon: "github", link: githubRepoUrl }],
         nav: [
+          { text: "Back to Main Site", link: "https://howiehz.top" },
           {
             text: "NPM Packages",
             items: [{ text: "compat-finder", link: "/en/compat-finder/" }],

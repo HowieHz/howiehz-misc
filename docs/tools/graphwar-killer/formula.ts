@@ -338,7 +338,8 @@ function formatAbsXOffset(centerX: number, decimalPlaces?: number) {
 
 /** 格式化 x+c，其中 c 用来把阶梯或连接中心移动到选中点。 */
 function formatXOffset(centerX: number, decimalPlaces?: number) {
-  return `x${formatSignedNumber(-centerX, decimalPlaces)}`;
+  const offset = normalizeZero(-centerX, decimalPlaces);
+  return offset === 0 ? "x" : `x${formatSignedNumber(offset, decimalPlaces)}`;
 }
 
 /** 格式化带符号的 k*body 项，并丢弃四舍五入后为 0 的系数。 */

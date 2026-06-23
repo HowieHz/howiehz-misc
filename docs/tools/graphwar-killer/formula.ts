@@ -1,5 +1,11 @@
 import { GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE } from "./graphwar";
-import { MAX_FORMULA_DECIMAL_PLACES, formatDecimal, formatSignedNumber, normalizeZero } from "./numbers";
+import {
+  MAX_FORMULA_DECIMAL_PLACES,
+  formatDecimal,
+  formatSignedNumber,
+  normalizeZero,
+  roundToDecimalPlaces,
+} from "./numbers";
 import { graphwarToolDefaults } from "./tool-defaults";
 import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "./types";
 
@@ -113,9 +119,11 @@ export function evaluateAbsConnectorY(x: number, points: readonly GraphPoint[], 
   let y = points[0]?.y ?? 0;
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
+    const startX = normalizeFormulaCoefficient(segment.startX, options);
+    const endX = normalizeFormulaCoefficient(segment.endX, options);
     const coefficient = normalizeFormulaCoefficient(segment.deltaY / (2 * segment.width), options);
     const width = normalizeFormulaCoefficient(segment.width, options);
-    y += coefficient * (Math.abs(x - segment.startX) - Math.abs(x - segment.endX) + width);
+    y += coefficient * (Math.abs(x - startX) - Math.abs(x - endX) + width);
   }
   return y;
 }
@@ -129,10 +137,10 @@ export function evaluateAbsConnectorFirstDerivativeY(
   let slope = 0;
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
+    const startX = normalizeFormulaCoefficient(segment.startX, options);
+    const endX = normalizeFormulaCoefficient(segment.endX, options);
     const coefficient = normalizeFormulaCoefficient(segment.deltaY / (2 * segment.width), options);
-    slope +=
-      coefficient *
-      (evaluateStableSignRatio(x - segment.startX, options) - evaluateStableSignRatio(x - segment.endX, options));
+    slope += coefficient * (evaluateStableSignRatio(x - startX, options) - evaluateStableSignRatio(x - endX, options));
   }
   return slope;
 }
@@ -209,6 +217,10 @@ function formatAbsConnectorExpression(
   const parts = [formatDecimal(baseY, decimalPlaces)];
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
+    if (isRoundedAbsConnectorZero(segment, decimalPlaces)) {
+      continue;
+    }
+
     const coefficient = segment.deltaY / (2 * segment.width);
     const body = `${formatAbsXOffset(segment.startX, decimalPlaces)}-${formatAbsXOffset(segment.endX, decimalPlaces)}+${formatDecimal(segment.width, decimalPlaces)}`;
     parts.push(formatSignedRawTerm(coefficient, `(${body})`, decimalPlaces));
@@ -225,6 +237,10 @@ function formatAbsConnectorFirstDerivativeExpression(
   const parts: string[] = [];
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
+    if (isRoundedAbsConnectorZero(segment, decimalPlaces)) {
+      continue;
+    }
+
     const coefficient = segment.deltaY / (2 * segment.width);
     const startText = formatXOffset(segment.startX, decimalPlaces);
     const endText = formatXOffset(segment.endX, decimalPlaces);
@@ -254,6 +270,13 @@ function createAbsConnectorSegment(start: GraphPoint, end: GraphPoint): AbsConne
     width: ABS_CONNECTOR_MIN_WIDTH,
     deltaY,
   };
+}
+
+function isRoundedAbsConnectorZero(segment: AbsConnectorSegment, decimalPlaces?: number) {
+  return (
+    roundToDecimalPlaces(segment.startX, decimalPlaces) === roundToDecimalPlaces(segment.endX, decimalPlaces) &&
+    roundToDecimalPlaces(segment.width, decimalPlaces) === 0
+  );
 }
 
 /** 格式化 a*(x+c)，即导数公式使用的带符号阶梯中心距离。 */
@@ -293,7 +316,7 @@ function evaluateStableSignRatio(value: number, options?: FormulaEvaluationOptio
 }
 
 function normalizeFormulaCoefficient(value: number, options?: FormulaEvaluationOptions) {
-  return normalizeZero(value, options?.coefficientDecimalPlaces);
+  return roundToDecimalPlaces(value, options?.coefficientDecimalPlaces);
 }
 
 /** 分母除零保护值不能跟随用户小数位，否则低精度输出会把它折成 0。 */

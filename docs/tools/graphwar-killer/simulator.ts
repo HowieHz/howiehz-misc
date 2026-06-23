@@ -104,10 +104,15 @@ function sampleNormalFunction(options: SampleGraphwarTrajectoryOptions) {
     return createTrajectorySample([], "invalid");
   }
 
-  return sampleByBisection(launchPoint, options.bounds, (previous, step) => {
-    const x = previous.x + step;
-    return createGraphPoint(x, evaluateY(x) + offset);
-  });
+  return sampleByBisection(
+    launchPoint,
+    options.bounds,
+    (previous, step) => {
+      const x = previous.x + step;
+      return createGraphPoint(x, evaluateY(x) + offset);
+    },
+    { stopAtMinStep: true },
+  );
 }
 
 /** 模拟 y'= 模式：先迭代发射角，再从士兵边缘开始做一阶 RK4。 */
@@ -118,8 +123,11 @@ function sampleFirstOrderEquation(options: SampleGraphwarTrajectoryOptions) {
     return createTrajectorySample([], "invalid");
   }
 
-  return sampleByBisection(launchPoint, options.bounds, (previous, step) =>
-    rk4FirstOrderStep(previous, step, evaluateDY),
+  return sampleByBisection(
+    launchPoint,
+    options.bounds,
+    (previous, step) => rk4FirstOrderStep(previous, step, evaluateDY),
+    { stopAtMinStep: false },
   );
 }
 
@@ -137,8 +145,11 @@ function sampleSecondOrderEquation(options: SampleGraphwarTrajectoryOptions) {
     return createTrajectorySample([], "invalid");
   }
 
-  return sampleByBisection(launchState, options.bounds, (previous, step) =>
-    rk4SecondOrderStep(previous, step, evaluateDDY),
+  return sampleByBisection(
+    launchState,
+    options.bounds,
+    (previous, step) => rk4SecondOrderStep(previous, step, evaluateDDY),
+    { stopAtMinStep: false },
   );
 }
 
@@ -247,12 +258,13 @@ function sampleByBisection<TPoint extends GraphPoint>(
   start: TPoint,
   bounds: GraphBounds,
   calculateNext: (previous: TPoint, step: number) => TPoint,
+  options: { stopAtMinStep: boolean },
 ) {
   const samples: GraphPoint[] = [createGraphPoint(start.x, start.y)];
   let previous = start;
 
   for (let index = 1; index < GRAPHWAR_FUNC_MAX_STEPS; index += 1) {
-    const next = findNextSample(previous, calculateNext);
+    const next = findNextSample(previous, calculateNext, options);
     if (!next.ok) {
       return createTrajectorySample(samples, next.stopReason);
     }
@@ -271,13 +283,16 @@ function sampleByBisection<TPoint extends GraphPoint>(
 function findNextSample<TPoint extends GraphPoint>(
   previous: TPoint,
   calculateNext: (previous: TPoint, step: number) => TPoint,
+  options: { stopAtMinStep: boolean },
 ) {
   let step = GRAPHWAR_STEP_SIZE;
   let next = calculateNext(previous, step);
 
   while (isFinitePoint(next) && distanceSquared(previous, next) > GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED) {
     if (next.x - previous.x <= GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
-      return { ok: false as const, stopReason: "too-steep" as const };
+      return options.stopAtMinStep
+        ? { ok: false as const, stopReason: "too-steep" as const }
+        : { ok: true as const, point: next };
     }
 
     step /= 2;

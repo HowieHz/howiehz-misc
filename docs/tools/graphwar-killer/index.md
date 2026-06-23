@@ -283,9 +283,6 @@ const calculationMessage = computed(() => {
   if (algorithmMode.value === "step" && !parsedSteepness.value.ok) {
     return parsedSteepness.value.message;
   }
-  if (!parsedPrecision.value.ok) {
-    return parsedPrecision.value.message;
-  }
   if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
     return "双绝对值函数不输出 y''；请选择 y= 或 y'=。";
   }
@@ -294,6 +291,8 @@ const calculationMessage = computed(() => {
   }
   return "";
 });
+
+const settingsMessage = computed(() => (!parsedPrecision.value.ok ? parsedPrecision.value.message : ""));
 
 const formulaResult = computed<FormulaResult | undefined>(() => {
   if (!parsedBounds.value.ok || formulaOutputPathPoints.value.length < 2) {
@@ -1160,6 +1159,12 @@ async function copyText(text: string) {
           </label>
         </div>
       </div>
+      <p
+        v-if="settingsMessage"
+        class="graphwar-killer__error graphwar-killer__settings-error"
+      >
+        {{ settingsMessage }}
+      </p>
     </section>
   </div>
   <section
@@ -1732,6 +1737,12 @@ async function copyText(text: string) {
 .graphwar-killer__error {
   margin: 0;
   color: var(--vp-c-danger-1);
+}
+
+.graphwar-killer__settings-error {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--vp-c-danger-1) 24%, transparent);
+  font-size: 0.9rem;
 }
 
 .graphwar-killer__hint {

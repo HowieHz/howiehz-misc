@@ -10,6 +10,7 @@
   - [compat-finder](packages/compat-finder/)：库、命令行工具和智能体技能
   - [在线版](docs/tools/compatibility-test/)
 - [天干地支计算器](docs/tools/ganzhi/)
+- [Graphwar 杀手](docs/tools/graphwar-killer/)：Graphwar 函数生成器
 
 ## 项目状态
 

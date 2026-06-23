@@ -287,9 +287,9 @@ function formatSignEpsilon(signEpsilon: number) {
 
 function formatStableSignRatio(argumentText: string, signEpsilon: number) {
   if (signEpsilon === 0) {
-    return `${argumentText}/abs(${argumentText})`;
+    return `(${argumentText})/abs(${argumentText})`;
   }
-  return `${argumentText}/(abs(${argumentText})+${formatSignEpsilon(signEpsilon)})`;
+  return `(${argumentText})/(abs(${argumentText})+${formatSignEpsilon(signEpsilon)})`;
 }
 
 /** 为双绝对值连接表达式格式化 abs(x+c)。 */

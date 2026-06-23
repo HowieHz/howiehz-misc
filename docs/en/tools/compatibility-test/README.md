@@ -1,6 +1,6 @@
 # Compatibility Finder
 
-English | [简体中文](../../../tools/compatibility-test/)
+**English** | [简体中文](../../../tools/compatibility-test/)
 
 This tool helps find compatibility issues across multiple targets.
 

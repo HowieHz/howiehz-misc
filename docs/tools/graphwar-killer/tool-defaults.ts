@@ -14,6 +14,7 @@ interface GraphwarToolDefaults {
   formulaLaunchPointIterations: number;
   formulaLaunchPointToleranceSquared: number;
   stepSignEpsilon: number;
+  obstacleMinArea: number;
 }
 
 /** 工具自己的默认值和容差；这些值不来自 Graphwar 源码 Constants.java。 */
@@ -33,4 +34,5 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
   formulaLaunchPointIterations: 8,
   formulaLaunchPointToleranceSquared: 1e-12,
   stepSignEpsilon: 0.000000000000001,
+  obstacleMinArea: 100,
 };

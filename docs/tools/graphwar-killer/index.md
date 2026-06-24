@@ -8,7 +8,7 @@ published: 2026-06-23T12:00:00+08:00
 
 <!-- autocorrect-disable -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { GRAPHWAR_TOOL_SIGN_EPSILON, buildFormula } from "./formula";
 import {
   clampPixelPointToCanvas,
@@ -22,6 +22,7 @@ import {
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
+  GRAPHWAR_PLANE_HEIGHT,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_SOLDIER_RADIUS,
   GRAPHWAR_VISIBLE_Y_LIMIT,
@@ -55,6 +56,7 @@ import type {
 type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: string };
 type ParsedSteepness = { ok: true; steepness: number } | { ok: false; message: string };
 type ParsedPrecision = { ok: true; decimalPlaces: number } | { ok: false; message: string };
+type ParsedObstacleThresholds = { ok: true; minArea: number } | { ok: false; message: string };
 interface PathLineSegment {
   x1: number;
   x2: number;
@@ -85,6 +87,14 @@ interface AxisTriplet {
   last: AxisGroup;
   score: number;
 }
+interface DetectedObstacleMap {
+  mask: Uint8Array;
+  count: number;
+}
+interface PlaneGridPoint {
+  x: number;
+  y: number;
+}
 
 const graphwarDefaultXLimitText = formatDecimal(GRAPHWAR_DEFAULT_X_LIMIT);
 const graphwarVisibleYLimitText = formatDecimal(GRAPHWAR_VISIBLE_Y_LIMIT);
@@ -112,14 +122,20 @@ const minYText = ref(`-${graphwarVisibleYLimitText}`);
 const maxYText = ref(graphwarVisibleYLimitText);
 const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
+const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
 const pathPixels = ref<PixelPoint[]>([]);
 const pathStatus = ref("");
+const draggingPathPointIndex = ref<number>();
 const detectionStatus = ref("");
+const detectionStatusIsError = ref(false);
 const detectedSoldiers = ref<DetectionBox[]>([]);
-const detectedSoldierSelectionEnabled = ref(false);
+const detectedObstacles = ref<DetectedObstacleMap>();
+const smartCursorEnabled = ref(false);
 const hoveredDetectedSoldierId = ref<string>();
+const trajectoryStrokeColor = ref("#ec4899");
 const copyStatus = ref<TransferStatus>("idle");
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
+let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
 const equationModes = [
   { value: "y", label: "y=", description: "输出阶梯函数" },
@@ -138,12 +154,12 @@ const parsedBounds = computed<ParsedBounds>(() => {
   const maxY = parseFiniteNumber(maxYText.value);
 
   if (minX === undefined || maxX === undefined || minY === undefined || maxY === undefined) {
-    return { ok: false as const, message: "边界坐标需要填写合法数字。" };
+    return { ok: false as const, message: "边界坐标需要填写合法数字" };
   }
 
   const bounds: GraphBounds = { minX, maxX, minY, maxY };
   if (nearlyEqual(bounds.minX, bounds.maxX) || nearlyEqual(bounds.minY, bounds.maxY)) {
-    return { ok: false as const, message: "边界的 x 或 y 范围不能为 0。" };
+    return { ok: false as const, message: "边界的 x 或 y 范围不能为 0" };
   }
 
   return { ok: true as const, bounds };
@@ -152,7 +168,7 @@ const parsedBounds = computed<ParsedBounds>(() => {
 const parsedSteepness = computed<ParsedSteepness>(() => {
   const steepness = parseFiniteNumber(steepnessText.value);
   if (steepness === undefined || steepness <= 0) {
-    return { ok: false as const, message: "阶梯陡峭度需要是大于 0 的数字。" };
+    return { ok: false as const, message: "阶梯陡峭度需要是大于 0 的数字" };
   }
   return { ok: true as const, steepness };
 });
@@ -160,12 +176,23 @@ const parsedSteepness = computed<ParsedSteepness>(() => {
 const parsedPrecision = computed<ParsedPrecision>(() => {
   const decimalPlaces = parseFiniteNumber(precisionText.value);
   if (decimalPlaces === undefined || !Number.isInteger(decimalPlaces)) {
-    return { ok: false as const, message: "保留小数位需要填写整数。" };
+    return { ok: false as const, message: "保留小数位需要填写整数" };
   }
   if (decimalPlaces < 0 || decimalPlaces > MAX_FORMULA_DECIMAL_PLACES) {
-    return { ok: false as const, message: `保留小数位需要在 0 到 ${MAX_FORMULA_DECIMAL_PLACES} 之间。` };
+    return { ok: false as const, message: `保留小数位需要在 0 到 ${MAX_FORMULA_DECIMAL_PLACES} 之间` };
   }
   return { ok: true as const, decimalPlaces };
+});
+
+const parsedObstacleThresholds = computed<ParsedObstacleThresholds>(() => {
+  const minArea = parseFiniteNumber(obstacleMinAreaText.value);
+  if (minArea === undefined || !Number.isInteger(minArea)) {
+    return { ok: false as const, message: "障碍最小面积需要填写整数" };
+  }
+  if (minArea < 1 || minArea > 50000) {
+    return { ok: false as const, message: "障碍最小面积需要在 1 到 50000 之间" };
+  }
+  return { ok: true as const, minArea };
 });
 
 const mappedPathPoints = computed<GraphPoint[]>(() => {
@@ -257,9 +284,7 @@ const activeEquationDescription = computed(() => (
 const activeToolHint = computed(() => (
   toolMode.value === "bounds"
     ? "左键点两角落定边界；右键取消已选点。"
-    : pathPixels.value.length === 0
-      ? "左键先点自己士兵中心；工具会自动换算发射边缘。右键撤回。"
-      : "继续点目标或路径中心；点到 x- 方向会变垂直。右键撤回。"
+    : "左键先点自己士兵中心；再点路径点中心；左键拖动路径点微调，右键点路径点删除，右键空白处撤回最近一个"
 ));
 const boundsPreviewRect = computed(() => (
   boundsFirstPoint.value && pointerPreviewPoint.value
@@ -267,7 +292,14 @@ const boundsPreviewRect = computed(() => (
     : undefined
 ));
 const visibleBoundsRect = computed(() => boundsPreviewRect.value ?? boundsRect.value);
-const detectionBoxes = computed<DetectionBox[]>(() => detectedSoldiers.value);
+const visibleObstacleEdgePath = computed(() => {
+  const obstacleMap = detectedObstacles.value;
+  if (!obstacleMap) {
+    return "";
+  }
+
+  return buildObstacleEdgePath(obstacleMap.mask, boundsRect.value);
+});
 const allowedTargetRect = computed<BoundsRect | undefined>(() => {
   if (toolMode.value !== "path" || !imageUrl.value || !parsedBounds.value.ok) {
     return undefined;
@@ -305,6 +337,14 @@ const allowedTargetRect = computed<BoundsRect | undefined>(() => {
     height: rect.height,
   };
 });
+const detectionBoxes = computed<DetectionBox[]>(() => {
+  const targetRect = allowedTargetRect.value;
+  if (!targetRect || pathPixels.value.length === 0) {
+    return detectedSoldiers.value;
+  }
+
+  return detectedSoldiers.value.filter((box) => detectionBoxOverlapsHorizontalRange(box, targetRect));
+});
 
 const calculationMessage = computed(() => {
   if (!parsedBounds.value.ok) {
@@ -322,7 +362,22 @@ const calculationMessage = computed(() => {
   return "";
 });
 
-const settingsMessage = computed(() => (!parsedPrecision.value.ok ? parsedPrecision.value.message : ""));
+const settingsMessage = computed(() => {
+  if (!parsedPrecision.value.ok) {
+    return parsedPrecision.value.message;
+  }
+  return "";
+});
+
+const detectionSettingsMessage = computed(() => {
+  if (!smartCursorEnabled.value) {
+    return "";
+  }
+  if (!parsedObstacleThresholds.value.ok) {
+    return parsedObstacleThresholds.value.message;
+  }
+  return "";
+});
 
 const formulaResult = computed<FormulaResult | undefined>(() => {
   if (!parsedBounds.value.ok || formulaOutputPathPoints.value.length < 2) {
@@ -405,6 +460,10 @@ const trajectorySample = computed(() => {
 });
 
 const trajectoryWarning = computed(() => {
+  if (trajectoryObstacleHitIndex.value >= 0) {
+    return "当前公式轨迹会撞到障碍物";
+  }
+
   const stopReason = trajectorySample.value?.stopReason;
   if (!stopReason || stopReason === "completed" || stopReason === "unsupported") {
     return "";
@@ -421,13 +480,34 @@ const trajectoryWarning = computed(() => {
   return "预览已中止：公式出现 NaN 或无穷值，实战中会提前爆炸。";
 });
 
+const trajectoryObstacleHitIndex = computed(() => {
+  const boundsResult = parsedBounds.value;
+  const sample = trajectorySample.value;
+  if (!smartCursorEnabled.value || !sample || !boundsResult.ok) {
+    return -1;
+  }
+
+  const obstacleMap = detectedObstacles.value;
+  if (!obstacleMap || obstacleMap.count === 0) {
+    return -1;
+  }
+
+  return sample.points.findIndex((point) =>
+    trajectoryPointHitsMask(point, boundsResult.bounds, obstacleMap.mask)
+  );
+});
+
 const plottedCurvePoints = computed(() => {
   if (!trajectorySample.value || !parsedBounds.value.ok) {
     return "";
   }
 
   const { bounds } = parsedBounds.value;
-  return trajectorySample.value.points.map((point) => {
+  const hitIndex = trajectoryObstacleHitIndex.value;
+  const points = hitIndex >= 0
+    ? trajectorySample.value.points.slice(0, hitIndex + 1)
+    : trajectorySample.value.points;
+  return points.map((point) => {
     const pixel = graphToImagePoint(point, bounds, boundsRect.value);
     return `${formatSvgNumber(pixel.x)},${formatSvgNumber(pixel.y)}`;
   }).join(" ");
@@ -492,9 +572,23 @@ const magnifierStyle = computed(() => {
     left: `${displayX}px`,
     top: `${displayY}px`,
     transform: `translate(${translateX}, ${translateY})`,
-    backgroundImage: `url("${imageUrl.value}")`,
-    backgroundSize: `${stageDisplayWidth.value * graphwarToolDefaults.magnifierZoom}px ${stageDisplayHeight.value * graphwarToolDefaults.magnifierZoom}px`,
-    backgroundPosition: `${graphwarToolDefaults.magnifierSize / 2 - displayX * graphwarToolDefaults.magnifierZoom}px ${graphwarToolDefaults.magnifierSize / 2 - displayY * graphwarToolDefaults.magnifierZoom}px`,
+  };
+});
+const magnifierContentStyle = computed(() => {
+  const point = magnifierPoint.value;
+  if (!magnifierEnabled.value || !imageUrl.value || !point) {
+    return {};
+  }
+
+  const displayX = point.x / imageWidth.value * stageDisplayWidth.value;
+  const displayY = point.y / imageHeight.value * stageDisplayHeight.value;
+  const size = graphwarToolDefaults.magnifierSize;
+  const zoom = graphwarToolDefaults.magnifierZoom;
+
+  return {
+    width: `${stageDisplayWidth.value}px`,
+    height: `${stageDisplayHeight.value}px`,
+    transform: `translate(${size / 2 - displayX * zoom}px, ${size / 2 - displayY * zoom}px) scale(${zoom})`,
   };
 });
 const copyButtonText = computed(() => {
@@ -525,6 +619,13 @@ onBeforeUnmount(() => {
   if (copyStatusTimer) {
     clearTimeout(copyStatusTimer);
   }
+  if (detectionRefreshTimer) {
+    clearTimeout(detectionRefreshTimer);
+  }
+});
+
+watch([obstacleMinAreaText], () => {
+  scheduleGraphwarObjectDetection();
 });
 
 /** 从隐藏文件输入框加载用户上传的截图。 */
@@ -633,6 +734,7 @@ function applyLoadedImage(url: string, name: string) {
   imageName.value = name;
   imageStatus.value = "";
   pathPixels.value = [];
+  trajectoryStrokeColor.value = "#ec4899";
   clearDetections();
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
@@ -656,28 +758,53 @@ function handleImageLoad() {
 /** 清除自动识别的士兵标记。 */
 function clearDetections() {
   detectionStatus.value = "";
+  detectionStatusIsError.value = false;
   detectedSoldiers.value = [];
+  detectedObstacles.value = undefined;
+  smartCursorEnabled.value = false;
   hoveredDetectedSoldierId.value = undefined;
+}
+
+function scheduleGraphwarObjectDetection() {
+  if (!imageUrl.value) {
+    return;
+  }
+  if (detectionRefreshTimer) {
+    clearTimeout(detectionRefreshTimer);
+  }
+  detectionRefreshTimer = setTimeout(() => {
+    detectionRefreshTimer = undefined;
+    detectGraphwarObjects();
+  }, 180);
 }
 
 /** 使用 Canvas 像素检测 Graphwar 棋盘边界和黄色士兵。 */
 function detectGraphwarObjects() {
   const image = imageRef.value;
   if (!image || !imageUrl.value) {
-    detectionStatus.value = "先上传或粘贴截图。";
+    detectionStatus.value = "先上传或粘贴截图";
+    detectionStatusIsError.value = true;
     return;
   }
 
   const imageData = getImageDataFromElement(image);
   if (!imageData) {
-    detectionStatus.value = "无法读取截图像素。";
+    detectionStatus.value = "无法读取截图像素";
+    detectionStatusIsError.value = true;
+    return;
+  }
+  const obstacleThresholds = parsedObstacleThresholds.value;
+  if (!obstacleThresholds.ok) {
+    detectionStatus.value = obstacleThresholds.message;
+    detectionStatusIsError.value = true;
     return;
   }
 
   const edgeRect = detectGraphwarPlayArea(imageData);
   if (!edgeRect) {
     clearDetections();
-    detectionStatus.value = "没有识别到 Graphwar 棋盘边界。";
+    detectionStatus.value = "没有识别到 Graphwar 棋盘边界";
+    detectionStatusIsError.value = true;
     return;
   }
 
@@ -685,8 +812,12 @@ function detectGraphwarObjects() {
   toolMode.value = "path";
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
-  detectedSoldiers.value = detectSoldiers(imageData, edgeRect);
-  detectionStatus.value = `已自动定位边界，识别到 ${detectedSoldiers.value.length} 个士兵。`;
+  const soldiers = detectSoldiers(imageData, edgeRect);
+  detectedSoldiers.value = soldiers;
+  detectedObstacles.value = detectObstacles(imageData, edgeRect, obstacleThresholds, soldiers);
+  detectionStatus.value =
+    `已自动标记边界，识别到 ${detectedSoldiers.value.length} 个士兵、${detectedObstacles.value.count} 个障碍`;
+  detectionStatusIsError.value = false;
 }
 
 function getImageDataFromElement(image: HTMLImageElement) {
@@ -895,6 +1026,266 @@ function detectSoldiers(imageData: ImageData, edgeRect: BoundsRect): DetectionBo
   return suppressOverlappingBoxes(soldierBoxes, 0.28);
 }
 
+function detectObstacles(
+  imageData: ImageData,
+  edgeRect: BoundsRect,
+  thresholds: Extract<ParsedObstacleThresholds, { ok: true }>,
+  soldiers: DetectionBox[],
+): DetectedObstacleMap {
+  const mask = buildObstacleMask(imageData, edgeRect);
+  removeGraphwarGuideLines(mask);
+  bridgeObstacleGapsAcrossGuideLines(mask);
+  removeSoldierAreasFromObstacleMask(mask, edgeRect, soldiers);
+  const componentMask = openObstacleMask(mask);
+
+  const filteredMask = new Uint8Array(mask.length);
+  let count = 0;
+  for (const component of collectComponents(componentMask, GRAPHWAR_PLANE_LENGTH)) {
+    if (component.area < thresholds.minArea) {
+      continue;
+    }
+
+    count += 1;
+    for (let y = component.y; y < component.y + component.height; y += 1) {
+      for (let x = component.x; x < component.x + component.width; x += 1) {
+        const index = y * GRAPHWAR_PLANE_LENGTH + x;
+        if (componentMask[index]) {
+          filteredMask[index] = 1;
+        }
+      }
+    }
+  }
+
+  return {
+    count,
+    mask: filteredMask,
+  };
+}
+
+function openObstacleMask(mask: Uint8Array) {
+  return dilateObstacleMask(erodeObstacleMask(mask));
+}
+
+function erodeObstacleMask(mask: Uint8Array) {
+  const eroded = new Uint8Array(mask.length);
+  for (let y = 1; y < GRAPHWAR_PLANE_HEIGHT - 1; y += 1) {
+    for (let x = 1; x < GRAPHWAR_PLANE_LENGTH - 1; x += 1) {
+      let isSolid = true;
+      for (let offsetY = -1; offsetY <= 1 && isSolid; offsetY += 1) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          if (!mask[(y + offsetY) * GRAPHWAR_PLANE_LENGTH + x + offsetX]) {
+            isSolid = false;
+            break;
+          }
+        }
+      }
+      if (isSolid) {
+        eroded[y * GRAPHWAR_PLANE_LENGTH + x] = 1;
+      }
+    }
+  }
+  return eroded;
+}
+
+function dilateObstacleMask(mask: Uint8Array) {
+  const dilated = new Uint8Array(mask.length);
+  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+    for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
+      if (!mask[y * GRAPHWAR_PLANE_LENGTH + x]) {
+        continue;
+      }
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          const nextX = x + offsetX;
+          const nextY = y + offsetY;
+          if (isInsidePlane(nextX, nextY)) {
+            dilated[nextY * GRAPHWAR_PLANE_LENGTH + nextX] = 1;
+          }
+        }
+      }
+    }
+  }
+  return dilated;
+}
+
+function removeSoldierAreasFromObstacleMask(mask: Uint8Array, edgeRect: BoundsRect, soldiers: DetectionBox[]) {
+  for (const soldier of soldiers) {
+    const center = imagePointToPlaneGridPoint(getDetectionBoxCenter(soldier), edgeRect);
+    const radiusX = (soldier.width / 2 / edgeRect.width) * GRAPHWAR_PLANE_LENGTH;
+    const radiusY = (soldier.height / 2 / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT;
+    clearMaskDisk(mask, center, Math.ceil(Math.max(radiusX, radiusY)) + 2);
+  }
+}
+
+function buildObstacleMask(imageData: ImageData, edgeRect: BoundsRect) {
+  const mask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+    for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
+      const source = samplePlaneImagePixel(imageData, edgeRect, x, y);
+      if (isObstacleDarkPixel(source.red, source.green, source.blue)) {
+        mask[y * GRAPHWAR_PLANE_LENGTH + x] = 1;
+      }
+    }
+  }
+  return mask;
+}
+
+function removeGraphwarGuideLines(mask: Uint8Array) {
+  const centerX = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
+  const centerY = Math.floor(GRAPHWAR_PLANE_HEIGHT / 2);
+  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+    for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
+      if (
+        x <= 1 ||
+        x >= GRAPHWAR_PLANE_LENGTH - 2 ||
+        y <= 1 ||
+        y >= GRAPHWAR_PLANE_HEIGHT - 2 ||
+        Math.abs(x - centerX) <= 1 ||
+        Math.abs(y - centerY) <= 1
+      ) {
+        mask[y * GRAPHWAR_PLANE_LENGTH + x] = 0;
+      }
+    }
+  }
+}
+
+function bridgeObstacleGapsAcrossGuideLines(mask: Uint8Array) {
+  const centerX = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
+  const centerY = Math.floor(GRAPHWAR_PLANE_HEIGHT / 2);
+  const bridged = new Uint8Array(mask);
+
+  for (let y = 2; y < GRAPHWAR_PLANE_HEIGHT - 2; y += 1) {
+    const hasLeftObstacle =
+      mask[y * GRAPHWAR_PLANE_LENGTH + centerX - 2] ||
+      mask[y * GRAPHWAR_PLANE_LENGTH + centerX - 3];
+    const hasRightObstacle =
+      mask[y * GRAPHWAR_PLANE_LENGTH + centerX + 2] ||
+      mask[y * GRAPHWAR_PLANE_LENGTH + centerX + 3];
+    if (!hasLeftObstacle || !hasRightObstacle) {
+      continue;
+    }
+
+    for (let x = centerX - 1; x <= centerX + 1; x += 1) {
+      bridged[y * GRAPHWAR_PLANE_LENGTH + x] = 1;
+    }
+  }
+
+  for (let x = 2; x < GRAPHWAR_PLANE_LENGTH - 2; x += 1) {
+    const hasTopObstacle =
+      mask[(centerY - 2) * GRAPHWAR_PLANE_LENGTH + x] ||
+      mask[(centerY - 3) * GRAPHWAR_PLANE_LENGTH + x];
+    const hasBottomObstacle =
+      mask[(centerY + 2) * GRAPHWAR_PLANE_LENGTH + x] ||
+      mask[(centerY + 3) * GRAPHWAR_PLANE_LENGTH + x];
+    if (!hasTopObstacle || !hasBottomObstacle) {
+      continue;
+    }
+
+    for (let y = centerY - 1; y <= centerY + 1; y += 1) {
+      bridged[y * GRAPHWAR_PLANE_LENGTH + x] = 1;
+    }
+  }
+
+  mask.set(bridged);
+}
+
+function samplePlaneImagePixel(imageData: ImageData, edgeRect: BoundsRect, planeX: number, planeY: number) {
+  const x = Math.round(edgeRect.x + ((planeX + 0.5) / GRAPHWAR_PLANE_LENGTH) * edgeRect.width);
+  const y = Math.round(edgeRect.y + ((planeY + 0.5) / GRAPHWAR_PLANE_HEIGHT) * edgeRect.height);
+  const clampedX = clampNumber(x, 0, imageData.width - 1);
+  const clampedY = clampNumber(y, 0, imageData.height - 1);
+  const index = (clampedY * imageData.width + clampedX) * 4;
+  return {
+    red: imageData.data[index],
+    green: imageData.data[index + 1],
+    blue: imageData.data[index + 2],
+  };
+}
+
+function buildObstacleEdgePath(mask: Uint8Array, edgeRect: BoundsRect) {
+  const commands: string[] = [];
+  const appendEdge = (x1: number, y1: number, x2: number, y2: number) => {
+    const start = planeToImagePoint({ x: x1, y: y1 }, edgeRect);
+    const end = planeToImagePoint({ x: x2, y: y2 }, edgeRect);
+    commands.push(`M${formatSvgNumber(start.x)} ${formatSvgNumber(start.y)}L${formatSvgNumber(end.x)} ${formatSvgNumber(end.y)}`);
+  };
+
+  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+    for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
+      if (!mask[y * GRAPHWAR_PLANE_LENGTH + x]) {
+        continue;
+      }
+
+      if (y === 0 || !mask[(y - 1) * GRAPHWAR_PLANE_LENGTH + x]) {
+        appendEdge(x, y, x + 1, y);
+      }
+      if (x === GRAPHWAR_PLANE_LENGTH - 1 || !mask[y * GRAPHWAR_PLANE_LENGTH + x + 1]) {
+        appendEdge(x + 1, y, x + 1, y + 1);
+      }
+      if (y === GRAPHWAR_PLANE_HEIGHT - 1 || !mask[(y + 1) * GRAPHWAR_PLANE_LENGTH + x]) {
+        appendEdge(x + 1, y + 1, x, y + 1);
+      }
+      if (x === 0 || !mask[y * GRAPHWAR_PLANE_LENGTH + x - 1]) {
+        appendEdge(x, y + 1, x, y);
+      }
+    }
+  }
+
+  return commands.join("");
+}
+
+function planeToImagePoint(point: PlaneGridPoint, edgeRect: BoundsRect) {
+  return createPixelPoint(
+    edgeRect.x + (point.x / GRAPHWAR_PLANE_LENGTH) * edgeRect.width,
+    edgeRect.y + (point.y / GRAPHWAR_PLANE_HEIGHT) * edgeRect.height,
+  );
+}
+
+function imagePointToPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRect): PlaneGridPoint {
+  return {
+    x: clampNumber(
+      Math.floor(((point.x - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH),
+      0,
+      GRAPHWAR_PLANE_LENGTH - 1,
+    ),
+    y: clampNumber(
+      Math.floor(((point.y - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT),
+      0,
+      GRAPHWAR_PLANE_HEIGHT - 1,
+    ),
+  };
+}
+
+function clearMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number) {
+  const radiusSquared = radius * radius;
+  for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
+    for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
+      if (offsetX * offsetX + offsetY * offsetY > radiusSquared) {
+        continue;
+      }
+
+      const x = center.x + offsetX;
+      const y = center.y + offsetY;
+      if (isInsidePlane(x, y)) {
+        mask[y * GRAPHWAR_PLANE_LENGTH + x] = 0;
+      }
+    }
+  }
+}
+
+function trajectoryPointHitsMask(point: GraphPoint, bounds: GraphBounds, mask: Uint8Array) {
+  const pixel = graphToImagePoint(point, bounds, boundsRect.value);
+  const plane = imagePointToPlaneGridPoint(pixel, boundsRect.value);
+  if (!isInsidePlane(plane.x, plane.y)) {
+    return true;
+  }
+  return Boolean(mask[plane.y * GRAPHWAR_PLANE_LENGTH + plane.x]);
+}
+
+function isInsidePlane(x: number, y: number) {
+  return x >= 0 && x < GRAPHWAR_PLANE_LENGTH && y >= 0 && y < GRAPHWAR_PLANE_HEIGHT;
+}
+
 function buildYellowMask(imageData: ImageData, rect: BoundsRect) {
   const mask = new Uint8Array(rect.width * rect.height);
   const { data, width } = imageData;
@@ -1078,6 +1469,25 @@ function isAxisBlackPixel(red: number, green: number, blue: number) {
   return red <= 42 && green <= 42 && blue <= 42;
 }
 
+function isObstacleDarkPixel(red: number, green: number, blue: number) {
+  return red <= 104 && green <= 104 && blue <= 104 && Math.max(red, green, blue) - Math.min(red, green, blue) <= 36;
+}
+
+function isPlayerColorPixel(red: number, green: number, blue: number) {
+  if (
+    isAxisBlackPixel(red, green, blue) ||
+    isSoldierYellowPixel(red, green, blue) ||
+    isPlaneWhitePixel(red, green, blue) ||
+    isPlaneGreenPixel(red, green, blue)
+  ) {
+    return false;
+  }
+
+  const maxChannel = Math.max(red, green, blue);
+  const minChannel = Math.min(red, green, blue);
+  return maxChannel - minChannel >= 34 && red + green + blue >= 72 && red + green + blue <= 700;
+}
+
 function isSoldierYellowPixel(red: number, green: number, blue: number) {
   return red >= 170 && green >= 160 && blue <= 130 && red + green - blue >= 260;
 }
@@ -1102,9 +1512,9 @@ function isPlaneGreenPixel(red: number, green: number, blue: number) {
   return green >= 155 && red >= 115 && red <= 195 && blue >= 110 && blue <= 195 && green - red >= 20 && green - blue >= 20;
 }
 
-function toggleDetectedSoldierSelection() {
-  detectedSoldierSelectionEnabled.value = !detectedSoldierSelectionEnabled.value;
-  if (!detectedSoldierSelectionEnabled.value) {
+function toggleSmartCursor() {
+  smartCursorEnabled.value = !smartCursorEnabled.value;
+  if (!smartCursorEnabled.value) {
     hoveredDetectedSoldierId.value = undefined;
   }
 }
@@ -1138,15 +1548,23 @@ function handleStagePointerDown(event: PointerEvent) {
     return;
   }
 
-  if (event.button === 0 && detectedSoldierSelectionEnabled.value) {
-    const selectedSoldier = getDetectedSoldierAtPoint(point);
-    if (selectedSoldier && appendPathPoint(getDetectionBoxCenter(selectedSoldier))) {
-      return;
-    }
-  }
-
   if (event.button !== 0 || !parsedBounds.value.ok) {
     return;
+  }
+
+  const pathPointIndex = getPathPointIndexAtPoint(point);
+  if (pathPointIndex !== undefined) {
+    draggingPathPointIndex.value = pathPointIndex;
+    stageRef.value?.setPointerCapture(event.pointerId);
+    return;
+  }
+
+  if (smartCursorEnabled.value) {
+    const selectedSoldier = getDetectedSoldierAtPoint(point);
+    if (selectedSoldier) {
+      appendDetectedSoldierPathPoint(selectedSoldier);
+      return;
+    }
   }
 
   appendPathPoint(point);
@@ -1171,6 +1589,63 @@ function appendPathPoint(point: PixelPoint) {
   return true;
 }
 
+function appendDetectedSoldierPathPoint(soldier: DetectionBox) {
+  if (pathPixels.value.length === 0) {
+    trajectoryStrokeColor.value = getDetectedSoldierColor(soldier) ?? "#ec4899";
+  }
+  return appendPathPoint(getDetectionBoxCenter(soldier));
+}
+
+function detectionBoxOverlapsHorizontalRange(box: BoundsRect, rect: BoundsRect) {
+  return box.x + box.width >= rect.x && box.x <= rect.x + rect.width;
+}
+
+function getPathPointIndexAtPoint(point: PixelPoint) {
+  const radius = Math.max(10, soldierMarkerRadius.value + 6);
+  for (let index = pathPixels.value.length - 1; index >= 0; index -= 1) {
+    const pathPoint = pathPixels.value[index];
+    if (Math.hypot(point.x - pathPoint.x, point.y - pathPoint.y) <= radius) {
+      return index;
+    }
+  }
+  return undefined;
+}
+
+function setPathPoint(index: number, point: PixelPoint) {
+  if (!parsedBounds.value.ok || index < 0 || index >= pathPixels.value.length) {
+    return false;
+  }
+
+  const previousPoint = index > 0 ? pathPixels.value[index - 1] : undefined;
+  const nextPoint = normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, previousPoint);
+  if (!nextPoint) {
+    return false;
+  }
+
+  const nextPath = [...pathPixels.value];
+  nextPath[index] = nextPoint;
+  if (!pathFollowsGraphRule(nextPath)) {
+    pathStatus.value = "只能走 x+；x- 会自动变垂直";
+    return false;
+  }
+
+  pathPixels.value = nextPath;
+  pathStatus.value = "";
+  return true;
+}
+
+function removePathPoint(index: number) {
+  if (index < 0 || index >= pathPixels.value.length) {
+    return false;
+  }
+  pathPixels.value = pathPixels.value.filter((_, pointIndex) => pointIndex !== index);
+  if (pathPixels.value.length === 0) {
+    trajectoryStrokeColor.value = "#ec4899";
+  }
+  pathStatus.value = "";
+  return true;
+}
+
 /** 跟踪指针位置，用于边界预览和放大镜。 */
 function handleStagePointerMove(event: PointerEvent) {
   const point = getImagePointFromEvent(event);
@@ -1181,9 +1656,14 @@ function handleStagePointerMove(event: PointerEvent) {
   if (magnifierEnabled.value) {
     magnifierPoint.value = point;
   }
-  hoveredDetectedSoldierId.value = detectedSoldierSelectionEnabled.value
+  if (draggingPathPointIndex.value !== undefined) {
+    setPathPoint(draggingPathPointIndex.value, point);
+    return;
+  }
+  const hoveredSoldier = smartCursorEnabled.value
     ? getDetectedSoldierAtPoint(point)?.id
     : undefined;
+  hoveredDetectedSoldierId.value = hoveredSoldier;
   if (toolMode.value !== "bounds") {
     return;
   }
@@ -1196,6 +1676,7 @@ function handleStagePointerLeave() {
   pointerPreviewPoint.value = undefined;
   magnifierPoint.value = undefined;
   hoveredDetectedSoldierId.value = undefined;
+  draggingPathPointIndex.value = undefined;
 }
 
 function getDetectedSoldierAtPoint(point: PixelPoint) {
@@ -1214,8 +1695,52 @@ function getDetectionBoxCenter(box: DetectionBox) {
   return createPixelPoint(box.x + box.width / 2, box.y + box.height / 2);
 }
 
+function getDetectedSoldierColor(box: DetectionBox) {
+  const image = imageRef.value;
+  if (!image) {
+    return undefined;
+  }
+
+  const imageData = getImageDataFromElement(image);
+  if (!imageData) {
+    return undefined;
+  }
+
+  let redSum = 0;
+  let greenSum = 0;
+  let blueSum = 0;
+  let count = 0;
+  const startX = clampNumber(Math.floor(box.x), 0, imageData.width - 1);
+  const endX = clampNumber(Math.ceil(box.x + box.width), 0, imageData.width - 1);
+  const startY = clampNumber(Math.floor(box.y), 0, imageData.height - 1);
+  const endY = clampNumber(Math.ceil(box.y + box.height), 0, imageData.height - 1);
+
+  for (let y = startY; y <= endY; y += 1) {
+    for (let x = startX; x <= endX; x += 1) {
+      const index = (y * imageData.width + x) * 4;
+      const red = imageData.data[index];
+      const green = imageData.data[index + 1];
+      const blue = imageData.data[index + 2];
+      if (!isPlayerColorPixel(red, green, blue)) {
+        continue;
+      }
+
+      redSum += red;
+      greenSum += green;
+      blueSum += blue;
+      count += 1;
+    }
+  }
+
+  if (count === 0) {
+    return undefined;
+  }
+
+  return `rgb(${Math.round(redSum / count)} ${Math.round(greenSum / count)} ${Math.round(blueSum / count)})`;
+}
+
 /** 使用右键取消边界点或撤回最新路径点。 */
-function handleStageContextMenu() {
+function handleStageContextMenu(event: MouseEvent) {
   if (toolMode.value === "bounds") {
     boundsFirstPoint.value = undefined;
     pointerPreviewPoint.value = undefined;
@@ -1226,7 +1751,23 @@ function handleStageContextMenu() {
     return;
   }
 
+  const point = getImagePointFromEvent(event);
+  const pathPointIndex = point ? getPathPointIndexAtPoint(point) : undefined;
+  if (pathPointIndex !== undefined && removePathPoint(pathPointIndex)) {
+    return;
+  }
+
   undoLastPoint();
+}
+
+function handleStagePointerUp(event: PointerEvent) {
+  if (draggingPathPointIndex.value === undefined) {
+    return;
+  }
+  draggingPathPointIndex.value = undefined;
+  if (stageRef.value?.hasPointerCapture(event.pointerId)) {
+    stageRef.value.releasePointerCapture(event.pointerId);
+  }
 }
 
 /** 切换边界/路径模式，并清理当前模式的临时状态。 */
@@ -1259,14 +1800,31 @@ function canAppendPathPoint(point: PixelPoint) {
     return true;
   }
 
-  pathStatus.value = "只能走 x+；x- 会自动变垂直。";
+  pathStatus.value = "只能走 x+；x- 会自动变垂直";
   return false;
+}
+
+function pathFollowsGraphRule(points: PixelPoint[]) {
+  if (!parsedBounds.value.ok || points.length < 2) {
+    return true;
+  }
+
+  for (let index = 1; index < points.length; index += 1) {
+    const previousPoint = imageToGraphPoint(points[index - 1], parsedBounds.value.bounds, boundsRect.value);
+    const nextPoint = imageToGraphPoint(points[index], parsedBounds.value.bounds, boundsRect.value);
+    const deltaX = nextPoint.x - previousPoint.x;
+    if (!isVerticalPathDelta(deltaX) && deltaX <= 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** 清除全部已选路径点，但不改变图片边界和设定。 */
 function clearPath() {
   pathPixels.value = [];
   pathStatus.value = "";
+  trajectoryStrokeColor.value = "#ec4899";
 }
 
 /** 删除最新选择的路径点。 */
@@ -1276,6 +1834,9 @@ function undoLastPoint() {
   }
 
   pathPixels.value = pathPixels.value.slice(0, -1);
+  if (pathPixels.value.length === 0) {
+    trajectoryStrokeColor.value = "#ec4899";
+  }
   pathStatus.value = "";
 }
 
@@ -1308,7 +1869,7 @@ function isVerticalPathDelta(deltaX: number) {
 }
 
 /** 将浏览器指针事件转换为截图像素坐标。 */
-function getImagePointFromEvent(event: PointerEvent): PixelPoint | undefined {
+function getImagePointFromEvent(event: MouseEvent): PixelPoint | undefined {
   const stage = stageRef.value;
   if (!stage) {
     return undefined;
@@ -1577,7 +2138,12 @@ async function copyText(text: string) {
   >
     <div class="graphwar-killer__label-row">
       <h2 id="graphwar-killer-detection-title">识别</h2>
-      <span v-if="detectionStatus">{{ detectionStatus }}</span>
+      <span
+        v-if="detectionStatus"
+        :class="{ 'graphwar-killer__label-status--error': detectionStatusIsError }"
+      >
+        {{ detectionStatus }}
+      </span>
     </div>
     <div class="graphwar-killer__image-actions">
       <button
@@ -1585,24 +2151,35 @@ async function copyText(text: string) {
         :disabled="!imageUrl"
         @click="detectGraphwarObjects"
       >
-        自动识别
+        自动标记边界
       </button>
       <button
         type="button"
-        :disabled="!imageUrl && detectionBoxes.length === 0"
-        @click="clearDetections"
+        :aria-pressed="smartCursorEnabled"
+        :class="{ 'graphwar-killer__toggle-button--active': smartCursorEnabled }"
+        @click="toggleSmartCursor"
       >
-        清除识别
+        智能光标
       </button>
-      <button
-        type="button"
-        :aria-pressed="detectedSoldierSelectionEnabled"
-        :class="{ 'graphwar-killer__toggle-button--active': detectedSoldierSelectionEnabled }"
-        @click="toggleDetectedSoldierSelection"
+      <label
+        v-if="smartCursorEnabled"
+        class="graphwar-killer__detection-setting-label"
       >
-        选择识别士兵
-      </button>
+        障碍最小面积
+        <input
+          v-model="obstacleMinAreaText"
+          inputmode="numeric"
+          aria-label="障碍最小面积，单位为 Graphwar 原始平面像素"
+        >
+        <span>px²</span>
+      </label>
     </div>
+    <p
+      v-if="detectionSettingsMessage"
+      class="graphwar-killer__error graphwar-killer__settings-error"
+    >
+      {{ detectionSettingsMessage }}
+    </p>
   </section>
   <section
     class="graphwar-killer__panel"
@@ -1628,6 +2205,8 @@ async function copyText(text: string) {
       @dragover.prevent
       @pointerdown="handleStagePointerDown"
       @pointermove="handleStagePointerMove"
+      @pointerup="handleStagePointerUp"
+      @pointercancel="handleStagePointerUp"
       @pointerleave="handleStagePointerLeave"
       @contextmenu.prevent="handleStageContextMenu"
     >
@@ -1680,7 +2259,12 @@ async function copyText(text: string) {
           :y1="visibleBoundsRect.y"
           :y2="visibleBoundsRect.y + visibleBoundsRect.height"
         />
-        <template v-if="detectedSoldierSelectionEnabled">
+        <path
+          v-if="smartCursorEnabled && visibleObstacleEdgePath"
+          class="graphwar-killer__obstacle-edge"
+          :d="visibleObstacleEdgePath"
+        />
+        <template v-if="smartCursorEnabled">
           <g
             v-for="box in detectionBoxes"
             :key="box.id"
@@ -1718,6 +2302,7 @@ async function copyText(text: string) {
           v-if="plottedCurvePoints"
           class="graphwar-killer__curve-line"
           :points="plottedCurvePoints"
+          :style="{ stroke: trajectoryStrokeColor }"
         />
         <g
           v-for="(point, index) in pathPixels"
@@ -1744,7 +2329,119 @@ async function copyText(text: string) {
         class="graphwar-killer__magnifier"
         :style="magnifierStyle"
         aria-hidden="true"
-      />
+      >
+        <div
+          class="graphwar-killer__magnifier-content"
+          :style="magnifierContentStyle"
+        >
+          <img
+            class="graphwar-killer__magnifier-image"
+            :src="imageUrl"
+            alt=""
+            draggable="false"
+          >
+          <svg
+            class="graphwar-killer__overlay"
+            :viewBox="`0 0 ${imageWidth} ${imageHeight}`"
+            aria-hidden="true"
+          >
+            <rect
+              class="graphwar-killer__bounds"
+              :class="{ 'graphwar-killer__bounds--preview': boundsPreviewRect }"
+              :x="visibleBoundsRect.x"
+              :y="visibleBoundsRect.y"
+              :width="visibleBoundsRect.width"
+              :height="visibleBoundsRect.height"
+            />
+            <rect
+              v-if="allowedTargetRect"
+              class="graphwar-killer__target-range"
+              :x="allowedTargetRect.x"
+              :y="allowedTargetRect.y"
+              :width="allowedTargetRect.width"
+              :height="allowedTargetRect.height"
+            />
+            <line
+              class="graphwar-killer__axis"
+              :x1="visibleBoundsRect.x"
+              :x2="visibleBoundsRect.x + visibleBoundsRect.width"
+              :y1="visibleBoundsRect.y + visibleBoundsRect.height / 2"
+              :y2="visibleBoundsRect.y + visibleBoundsRect.height / 2"
+            />
+            <line
+              class="graphwar-killer__axis"
+              :x1="visibleBoundsRect.x + visibleBoundsRect.width / 2"
+              :x2="visibleBoundsRect.x + visibleBoundsRect.width / 2"
+              :y1="visibleBoundsRect.y"
+              :y2="visibleBoundsRect.y + visibleBoundsRect.height"
+            />
+            <path
+              v-if="smartCursorEnabled && visibleObstacleEdgePath"
+              class="graphwar-killer__obstacle-edge"
+              :d="visibleObstacleEdgePath"
+            />
+            <template v-if="smartCursorEnabled">
+              <g
+                v-for="box in detectionBoxes"
+                :key="`magnifier-${box.id}`"
+                class="graphwar-killer__detection-group"
+              >
+                <circle
+                  class="graphwar-killer__detection"
+                  :class="[
+                    `graphwar-killer__detection--${box.kind}`,
+                    { 'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId },
+                  ]"
+                  :cx="box.x + box.width / 2"
+                  :cy="box.y + box.height / 2"
+                  :r="box.width / 2"
+                />
+              </g>
+            </template>
+            <circle
+              v-if="boundsFirstPoint"
+              class="graphwar-killer__bounds-point"
+              :cx="boundsFirstPoint.x"
+              :cy="boundsFirstPoint.y"
+              r="7"
+            />
+            <line
+              v-for="(segment, index) in pathLineSegments"
+              :key="`magnifier-path-line-${index}`"
+              class="graphwar-killer__path-line"
+              :x1="segment.x1"
+              :y1="segment.y1"
+              :x2="segment.x2"
+              :y2="segment.y2"
+            />
+            <polyline
+              v-if="plottedCurvePoints"
+              class="graphwar-killer__curve-line"
+              :points="plottedCurvePoints"
+              :style="{ stroke: trajectoryStrokeColor }"
+            />
+            <g
+              v-for="(point, index) in pathPixels"
+              :key="`magnifier-${index}-${point.x}-${point.y}`"
+            >
+              <circle
+                class="graphwar-killer__point"
+                :class="{ 'graphwar-killer__point--start': index === 0 }"
+                :cx="point.x"
+                :cy="point.y"
+                :r="soldierMarkerRadius"
+              />
+              <text
+                class="graphwar-killer__point-label"
+                :x="point.x + soldierMarkerRadius + 4"
+                :y="point.y - soldierMarkerRadius - 4"
+              >
+                {{ index === 0 ? "己" : index }}
+              </text>
+            </g>
+          </svg>
+        </div>
+      </div>
     </div>
   </section>
   <section
@@ -1817,7 +2514,8 @@ async function copyText(text: string) {
 - 上传图片、拖入图片，或在页面打开时直接粘贴截图。
 - 在“设定”里填坐标范围，选择算法、游戏模式。
 - 用“点选边界”左键点边界的两个角；右键取消当前点。
-- 切到“点选路径”，先点自己士兵中心，再点目标或路径点中心；右键撤回。
+- 切到“点选路径”，左键先点自己士兵中心；再点路径点中心，右键空白处撤回最近一个路径点。
+- 可使用左键拖动路径点微调，右键点路径点删除。
 - 点到 `-x` 一侧时，会自动变成垂直点。
 - 复制生成的函数到 Graphwar。
 
@@ -1904,6 +2602,10 @@ async function copyText(text: string) {
   text-align: right;
 }
 
+.graphwar-killer__label-row > .graphwar-killer__label-status--error {
+  color: #dc2626;
+}
+
 .graphwar-killer__label-row--image-status {
   justify-content: flex-start;
 }
@@ -1974,16 +2676,27 @@ async function copyText(text: string) {
   overflow: hidden;
   border: 2px solid var(--vp-c-brand-1);
   border-radius: 999px;
-  background-repeat: no-repeat;
+  background: var(--vp-c-bg);
   box-shadow: 0 12px 32px rgb(15 23 42 / 0.2);
   pointer-events: none;
+}
+
+.graphwar-killer__magnifier-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.graphwar-killer__magnifier-image {
+  z-index: 0;
 }
 
 .graphwar-killer__magnifier::before,
 .graphwar-killer__magnifier::after {
   content: "";
   position: absolute;
-  z-index: 1;
+  z-index: 2;
   background: #f97316;
   opacity: 0.86;
 }
@@ -2063,24 +2776,46 @@ async function copyText(text: string) {
   stroke: #dc2626;
 }
 
+.graphwar-killer__obstacle-edge {
+  fill: none;
+  stroke: #dc2626;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 .graphwar-killer__target-range {
   fill: color-mix(in srgb, #86efac 30%, transparent);
   pointer-events: none;
 }
 
 .graphwar-killer__path-line {
-  stroke: #f97316;
+  stroke: #38bdf8;
+  stroke-dasharray: 7 6;
   stroke-linecap: round;
-  stroke-width: 2;
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
 .graphwar-killer__curve-line {
   fill: none;
-  stroke: #06b6d4;
+  stroke: #ec4899;
   stroke-linecap: round;
-  stroke-width: 3;
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
+  animation: graphwar-killer-curve-blink 900ms ease-in-out infinite;
+}
+
+@keyframes graphwar-killer-curve-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.34;
+  }
 }
 
 .graphwar-killer__point {
@@ -2159,6 +2894,19 @@ async function copyText(text: string) {
   align-items: center;
   gap: 8px;
   font-weight: 600;
+}
+
+.graphwar-killer__detection-setting-label {
+  grid-template-columns: auto minmax(74px, 92px) auto;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.graphwar-killer__detection-setting-label span {
+  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
+  font-size: 0.88rem;
+  font-weight: 500;
 }
 
 .graphwar-killer__tool-toggle {

@@ -54,6 +54,15 @@ export function formatDecimal(value: number, decimalPlaces = DEFAULT_FORMULA_DEC
   return trimTrailingDecimalZeros(expandExponentialNotation(normalizedValue.toFixed(safeDecimalPlaces)));
 }
 
+/** 格式化输入框里的坐标边界，保留 JS double 的最短往返表示且不受公式输出精度影响。 */
+export function formatDoublePrecisionDecimal(value: number) {
+  if (Object.is(value, -0)) {
+    return "0";
+  }
+
+  return expandExponentialNotation(value.toString());
+}
+
 function trimTrailingDecimalZeros(value: string) {
   return value.includes(".") ? value.replace(/\.?0+$/, "") : value;
 }

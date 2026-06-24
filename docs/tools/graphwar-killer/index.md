@@ -32,6 +32,7 @@ import {
   clampNumber,
   formatAngleDegree,
   formatDecimal,
+  formatDoublePrecisionDecimal,
   formatSvgNumber,
   nearlyEqual,
   parseFiniteNumber,
@@ -94,9 +95,18 @@ interface PlaneGridPoint {
   x: number;
   y: number;
 }
+type PathPointCoordinateAxis = "x" | "y";
+interface PathPointCoordinateText {
+  x: string;
+  y: string;
+}
+interface EditingPathPointCoordinate {
+  axis: PathPointCoordinateAxis;
+  index: number;
+}
 
-const graphwarDefaultXLimitText = formatDecimal(GRAPHWAR_DEFAULT_X_LIMIT);
-const graphwarVisibleYLimitText = formatDecimal(GRAPHWAR_VISIBLE_Y_LIMIT);
+const graphwarDefaultXLimitText = formatDoublePrecisionDecimal(GRAPHWAR_DEFAULT_X_LIMIT);
+const graphwarVisibleYLimitText = formatDoublePrecisionDecimal(GRAPHWAR_VISIBLE_Y_LIMIT);
 
 const imageUrl = ref("");
 const imageName = ref("");
@@ -123,14 +133,17 @@ const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
 const pathPixels = ref<PixelPoint[]>([]);
+const pathPointCoordinateTexts = ref<PathPointCoordinateText[]>([]);
 const pathStatus = ref("");
 const draggingPathPointIndex = ref<number>();
+const hoveredPathPointIndex = ref<number>();
 const detectionStatus = ref("");
 const detectionStatusIsError = ref(false);
 const detectedSoldiers = ref<DetectionBox[]>([]);
 const detectedObstacles = ref<DetectedObstacleMap>();
 const smartCursorEnabled = ref(false);
 const hoveredDetectedSoldierId = ref<string>();
+const editingPathPointCoordinate = ref<EditingPathPointCoordinate>();
 const trajectoryStrokeColor = ref("#ec4899");
 const copyStatus = ref<TransferStatus>("idle");
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -352,11 +365,12 @@ const allowedTargetRect = computed<BoundsRect | undefined>(() => {
 });
 const detectionBoxes = computed<DetectionBox[]>(() => {
   const targetRect = allowedTargetRect.value;
+  const unselectedSoldiers = detectedSoldiers.value.filter((box) => !detectionBoxMatchesSelectedPathPoint(box));
   if (!targetRect || pathPixels.value.length === 0) {
-    return detectedSoldiers.value;
+    return unselectedSoldiers;
   }
 
-  return detectedSoldiers.value.filter((box) => detectionBoxOverlapsHorizontalRange(box, targetRect));
+  return unselectedSoldiers.filter((box) => detectionBoxOverlapsHorizontalRange(box, targetRect));
 });
 
 const calculationMessage = computed(() => {
@@ -419,6 +433,10 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
 const visibleDecimalPlaces = computed(() => (
   parsedPrecision.value.ok ? parsedPrecision.value.decimalPlaces : DEFAULT_FORMULA_DECIMAL_PLACES
 ));
+
+watch([mappedPathPoints, visibleDecimalPlaces], () => {
+  syncPathPointCoordinateTexts();
+}, { immediate: true });
 
 const secondOrderAngleHint = computed(() => {
   if (
@@ -1601,6 +1619,7 @@ function handleStagePointerDown(event: PointerEvent) {
   const pathPointIndex = getPathPointIndexAtPoint(point);
   if (pathPointIndex !== undefined) {
     draggingPathPointIndex.value = pathPointIndex;
+    hoveredPathPointIndex.value = pathPointIndex;
     stageRef.value?.setPointerCapture(event.pointerId);
     return;
   }
@@ -1652,6 +1671,36 @@ function detectionBoxOverlapsHorizontalRange(box: BoundsRect, rect: BoundsRect) 
   return box.x + box.width >= rect.x && box.x <= rect.x + rect.width;
 }
 
+function detectionBoxMatchesSelectedPathPoint(box: DetectionBox) {
+  if (!parsedBounds.value.ok || mappedPathPoints.value.length === 0) {
+    return false;
+  }
+
+  const selectedPoint = getRightmostMappedPathPoint();
+  if (!selectedPoint) {
+    return false;
+  }
+
+  const boxCenter = imageToGraphPoint(getDetectionBoxCenter(box), parsedBounds.value.bounds, boundsRect.value);
+  return graphPointsRoundToSameCoordinate(boxCenter, selectedPoint, formulaOutputDecimalPlaces.value);
+}
+
+function getRightmostMappedPathPoint() {
+  return mappedPathPoints.value.reduce<GraphPoint | undefined>((rightmostPoint, point) => {
+    if (!rightmostPoint || point.x > rightmostPoint.x) {
+      return point;
+    }
+    return rightmostPoint;
+  }, undefined);
+}
+
+function graphPointsRoundToSameCoordinate(left: GraphPoint, right: GraphPoint, decimalPlaces: number) {
+  return (
+    roundToDecimalPlaces(left.x, decimalPlaces) === roundToDecimalPlaces(right.x, decimalPlaces) &&
+    roundToDecimalPlaces(left.y, decimalPlaces) === roundToDecimalPlaces(right.y, decimalPlaces)
+  );
+}
+
 function getPathPointIndexAtPoint(point: PixelPoint) {
   const radius = Math.max(10, soldierMarkerRadius.value + 6);
   for (let index = pathPixels.value.length - 1; index >= 0; index -= 1) {
@@ -1693,6 +1742,75 @@ function setPathPoint(index: number, point: PixelPoint) {
   return true;
 }
 
+function getPathPointCoordinateText(index: number, axis: PathPointCoordinateAxis) {
+  return pathPointCoordinateTexts.value[index]?.[axis] ?? "";
+}
+
+function syncPathPointCoordinateTexts() {
+  const editing = editingPathPointCoordinate.value;
+  pathPointCoordinateTexts.value = mappedPathPoints.value.map((point, index) => {
+    const current = pathPointCoordinateTexts.value[index];
+    return {
+      x: editing?.index === index && editing.axis === "x"
+        ? current?.x ?? formatDecimal(point.x, visibleDecimalPlaces.value)
+        : formatDecimal(point.x, visibleDecimalPlaces.value),
+      y: editing?.index === index && editing.axis === "y"
+        ? current?.y ?? formatDecimal(point.y, visibleDecimalPlaces.value)
+        : formatDecimal(point.y, visibleDecimalPlaces.value),
+    };
+  });
+}
+
+function startPathPointCoordinateEdit(index: number, axis: PathPointCoordinateAxis) {
+  editingPathPointCoordinate.value = { index, axis };
+}
+
+function finishPathPointCoordinateEdit() {
+  editingPathPointCoordinate.value = undefined;
+  syncPathPointCoordinateTexts();
+  if (pathStatus.value === getPathPointCoordinateMessage()) {
+    pathStatus.value = "";
+  }
+}
+
+function handlePathPointCoordinateInput(index: number, axis: PathPointCoordinateAxis, event: Event) {
+  const input = event.currentTarget;
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const currentTexts = pathPointCoordinateTexts.value[index] ?? { x: "", y: "" };
+  pathPointCoordinateTexts.value[index] = { ...currentTexts, [axis]: input.value };
+  const coordinate = parseFiniteNumber(input.value);
+  if (coordinate === undefined) {
+    pathStatus.value = getPathPointCoordinateMessage();
+    return;
+  }
+
+  setPathPointFromGraphCoordinate(index, axis, coordinate);
+}
+
+function setPathPointFromGraphCoordinate(index: number, axis: PathPointCoordinateAxis, coordinate: number) {
+  if (!parsedBounds.value.ok) {
+    return false;
+  }
+
+  const currentPoint = mappedPathPoints.value[index];
+  if (!currentPoint) {
+    return false;
+  }
+
+  const nextGraphPoint = createGraphPoint(
+    axis === "x" ? coordinate : currentPoint.x,
+    axis === "y" ? coordinate : currentPoint.y,
+  );
+  return setPathPoint(index, graphToImagePoint(nextGraphPoint, parsedBounds.value.bounds, boundsRect.value));
+}
+
+function getPathPointCoordinateMessage() {
+  return "点坐标需要填写数字";
+}
+
 function normalizePathForMinimumXStep(points: readonly PixelPoint[]) {
   if (!parsedBounds.value.ok || points.length < 2) {
     return [...points];
@@ -1720,6 +1838,9 @@ function removePathPoint(index: number) {
     return false;
   }
   pathPixels.value = pathPixels.value.filter((_, pointIndex) => pointIndex !== index);
+  if (hoveredPathPointIndex.value !== undefined && hoveredPathPointIndex.value >= pathPixels.value.length) {
+    hoveredPathPointIndex.value = undefined;
+  }
   if (pathPixels.value.length === 0) {
     trajectoryStrokeColor.value = "#ec4899";
   }
@@ -1738,9 +1859,11 @@ function handleStagePointerMove(event: PointerEvent) {
     magnifierPoint.value = point;
   }
   if (draggingPathPointIndex.value !== undefined) {
+    hoveredPathPointIndex.value = draggingPathPointIndex.value;
     setPathPoint(draggingPathPointIndex.value, point);
     return;
   }
+  hoveredPathPointIndex.value = getPathPointIndexAtPoint(point);
   const hoveredSoldier = smartCursorEnabled.value
     ? getDetectedSoldierAtPoint(point)?.id
     : undefined;
@@ -1757,6 +1880,7 @@ function handleStagePointerLeave() {
   pointerPreviewPoint.value = undefined;
   magnifierPoint.value = undefined;
   hoveredDetectedSoldierId.value = undefined;
+  hoveredPathPointIndex.value = undefined;
   draggingPathPointIndex.value = undefined;
 }
 
@@ -1910,6 +2034,7 @@ function getForwardPathMessage() {
 function clearPath() {
   pathPixels.value = [];
   pathStatus.value = "";
+  hoveredPathPointIndex.value = undefined;
   trajectoryStrokeColor.value = "#ec4899";
 }
 
@@ -1920,6 +2045,9 @@ function undoLastPoint() {
   }
 
   pathPixels.value = pathPixels.value.slice(0, -1);
+  if (hoveredPathPointIndex.value !== undefined && hoveredPathPointIndex.value >= pathPixels.value.length) {
+    hoveredPathPointIndex.value = undefined;
+  }
   if (pathPixels.value.length === 0) {
     trajectoryStrokeColor.value = "#ec4899";
   }
@@ -2375,11 +2503,14 @@ async function copyText(text: string) {
         />
         <g
           v-for="(point, index) in pathPixels"
-          :key="`${index}-${point.x}-${point.y}`"
+          :key="`point-${index}`"
         >
           <circle
             class="graphwar-killer__point"
-            :class="{ 'graphwar-killer__point--start': index === 0 }"
+            :class="{
+              'graphwar-killer__point--start': index === 0,
+              'graphwar-killer__point--hovered': index === hoveredPathPointIndex,
+            }"
             :cx="point.x"
             :cy="point.y"
             :r="soldierMarkerRadius"
@@ -2491,11 +2622,14 @@ async function copyText(text: string) {
             />
             <g
               v-for="(point, index) in pathPixels"
-              :key="`magnifier-${index}-${point.x}-${point.y}`"
+              :key="`magnifier-point-${index}`"
             >
               <circle
                 class="graphwar-killer__point"
-                :class="{ 'graphwar-killer__point--start': index === 0 }"
+                :class="{
+                  'graphwar-killer__point--start': index === 0,
+                  'graphwar-killer__point--hovered': index === hoveredPathPointIndex,
+                }"
                 :cx="point.x"
                 :cy="point.y"
                 :r="soldierMarkerRadius"
@@ -2567,12 +2701,30 @@ async function copyText(text: string) {
         <span>y</span>
       </div>
       <div
-        v-for="(point, index) in mappedPathPoints"
-        :key="`row-${index}-${point.x}-${point.y}`"
+        v-for="pointNumber in mappedPathPoints.length"
+        :key="`row-${pointNumber - 1}`"
       >
-        <span>{{ index === 0 ? "己方" : `路径 ${index}` }}</span>
-        <span>{{ formatDecimal(point.x, visibleDecimalPlaces) }}</span>
-        <span>{{ formatDecimal(point.y, visibleDecimalPlaces) }}</span>
+        <span>{{ pointNumber === 1 ? "己方" : `路径 ${pointNumber - 1}` }}</span>
+        <input
+          class="graphwar-killer__point-coordinate-input"
+          :value="getPathPointCoordinateText(pointNumber - 1, 'x')"
+          :aria-label="`${pointNumber === 1 ? '己方' : `路径 ${pointNumber - 1}`} x 坐标`"
+          inputmode="decimal"
+          autocomplete="off"
+          @focus="startPathPointCoordinateEdit(pointNumber - 1, 'x')"
+          @blur="finishPathPointCoordinateEdit"
+          @input="handlePathPointCoordinateInput(pointNumber - 1, 'x', $event)"
+        >
+        <input
+          class="graphwar-killer__point-coordinate-input"
+          :value="getPathPointCoordinateText(pointNumber - 1, 'y')"
+          :aria-label="`${pointNumber === 1 ? '己方' : `路径 ${pointNumber - 1}`} y 坐标`"
+          inputmode="decimal"
+          autocomplete="off"
+          @focus="startPathPointCoordinateEdit(pointNumber - 1, 'y')"
+          @blur="finishPathPointCoordinateEdit"
+          @input="handlePathPointCoordinateInput(pointNumber - 1, 'y', $event)"
+        >
       </div>
     </div>
   </section>
@@ -2843,11 +2995,12 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer__detection--soldier {
-  stroke: #16a34a;
+  stroke: #2563eb;
 }
 
 .graphwar-killer__detection--hovered {
-  stroke: #dc2626;
+  stroke: #16a34a;
+  animation: graphwar-killer-curve-blink 900ms ease-in-out infinite;
 }
 
 .graphwar-killer__obstacle-edge {
@@ -2905,6 +3058,12 @@ async function copyText(text: string) {
   stroke: #16a34a;
 }
 
+.graphwar-killer__point--hovered {
+  fill: color-mix(in srgb, #16a34a 12%, transparent);
+  stroke: #16a34a;
+  animation: graphwar-killer-curve-blink 900ms ease-in-out infinite;
+}
+
 .graphwar-killer__point-label {
   fill: var(--vp-c-text-1);
   font-size: 16px;
@@ -2945,14 +3104,20 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer__setting-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
 .graphwar-killer__setting-label {
+  flex: 0 0 auto;
   font-weight: 600;
+}
+
+.graphwar-killer__setting-row > :not(.graphwar-killer__setting-label) {
+  flex: 1 1 320px;
+  min-width: 0;
 }
 
 .graphwar-killer__game-mode-controls {
@@ -3039,7 +3204,6 @@ async function copyText(text: string) {
   padding: 5px 8px;
   font-size: 0.82rem;
   line-height: 1.15;
-  white-space: normal;
 }
 
 .graphwar-killer__tool-toggle button {
@@ -3060,6 +3224,11 @@ async function copyText(text: string) {
 .graphwar-killer__tool-toggle button:hover {
   box-shadow: none;
   transform: none;
+}
+
+.graphwar-killer__algorithm-toggle button {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .graphwar-killer__tool-toggle-button--active {
@@ -3222,6 +3391,12 @@ async function copyText(text: string) {
   font-weight: 700;
 }
 
+.graphwar-killer__point-coordinate-input {
+  width: 130px;
+  min-height: 34px !important;
+  padding: 5px 8px !important;
+}
+
 .graphwar-killer__sr-only {
   position: absolute;
   width: 1px;
@@ -3295,6 +3470,7 @@ async function copyText(text: string) {
 
 @media (max-width: 520px) {
   .graphwar-killer__setting-row {
+    display: grid;
     grid-template-columns: 1fr;
   }
 }

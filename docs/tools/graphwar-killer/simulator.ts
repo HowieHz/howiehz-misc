@@ -35,6 +35,14 @@ interface SampleGraphwarTrajectoryOptions {
   steepness: number;
 }
 
+export interface SampleGraphwarExpressionTrajectoryOptions {
+  bounds: GraphBounds;
+  equation: EquationMode;
+  expression: string;
+  launchAngleRadians?: number;
+  soldierCenter: GraphPoint;
+}
+
 export interface CreateGraphwarFormulaPathOptions {
   algorithm: AlgorithmMode;
   equation: EquationMode;
@@ -95,6 +103,25 @@ export function sampleGraphwarTrajectory(options: SampleGraphwarTrajectoryOption
   return sampleSecondOrderEquation(options);
 }
 
+/** 使用用户输入的 Graphwar 表达式生成预览轨迹点。 */
+export function sampleGraphwarExpressionTrajectory(options: SampleGraphwarExpressionTrajectoryOptions) {
+  const evaluateExpression = createGraphwarExpressionEvaluator(options.expression);
+  if (!evaluateExpression) {
+    return createTrajectorySample([], "invalid");
+  }
+
+  if (options.equation === "y") {
+    return sampleNormalExpression(options, (x) => evaluateExpression(x, 0, 0));
+  }
+  if (options.equation === "dy") {
+    return sampleFirstOrderExpression(options, (x, y) => evaluateExpression(x, y, 0));
+  }
+  if (options.launchAngleRadians === undefined || !Number.isFinite(options.launchAngleRadians)) {
+    return createTrajectorySample([], "invalid");
+  }
+  return sampleSecondOrderExpression(options, (x, y, dy) => evaluateExpression(x, y, dy));
+}
+
 /** 计算 Graphwar 实际使用或需要手调的发射角。 */
 export function getGraphwarLaunchAngle(options: CreateGraphwarFormulaPathOptions, soldierCenter = options.points[0]) {
   return soldierCenter ? getLaunchAngle(options, soldierCenter) : Number.NaN;
@@ -145,6 +172,66 @@ function sampleSecondOrderEquation(options: SampleGraphwarTrajectoryOptions) {
   const evaluateDDY = createSecondOrderEvaluator(options);
   const angle = getLaunchAngle(options, options.soldierCenter);
   const launchPoint = getLaunchPoint(options, options.soldierCenter);
+  const launchState = createSecondOrderState(launchPoint.x, launchPoint.y, Math.tan(angle));
+  if (!isFinitePoint(launchState) || !Number.isFinite(launchState.dy)) {
+    return createTrajectorySample([], "invalid");
+  }
+
+  return sampleByBisection(
+    launchState,
+    options.bounds,
+    (previous, step) => rk4SecondOrderStep(previous, step, evaluateDDY),
+    { stopAtMinStep: false },
+  );
+}
+
+function sampleNormalExpression(options: SampleGraphwarExpressionTrajectoryOptions, evaluateY: (x: number) => number) {
+  const angle = getNormalStartAngle(options.soldierCenter.x, evaluateY);
+  const launchPoint = Number.isFinite(angle)
+    ? moveFromSoldierCenter(options.soldierCenter, angle)
+    : options.soldierCenter;
+  const offset = launchPoint.y - evaluateY(launchPoint.x);
+  if (!isFinitePoint(launchPoint) || !Number.isFinite(offset)) {
+    return createTrajectorySample([], "invalid");
+  }
+
+  return sampleByBisection(
+    launchPoint,
+    options.bounds,
+    (previous, step) => {
+      const x = previous.x + step;
+      return createGraphPoint(x, evaluateY(x) + offset);
+    },
+    { stopAtMinStep: true },
+  );
+}
+
+function sampleFirstOrderExpression(
+  options: SampleGraphwarExpressionTrajectoryOptions,
+  evaluateDY: FirstOrderEvaluator,
+) {
+  const angle = getFirstOrderStartAngle(options.soldierCenter, evaluateDY);
+  const launchPoint = Number.isFinite(angle)
+    ? moveFromSoldierCenter(options.soldierCenter, angle)
+    : options.soldierCenter;
+  if (!isFinitePoint(launchPoint)) {
+    return createTrajectorySample([], "invalid");
+  }
+
+  return sampleByBisection(
+    launchPoint,
+    options.bounds,
+    (previous, step) => rk4FirstOrderStep(previous, step, evaluateDY),
+    { stopAtMinStep: false },
+  );
+}
+
+function sampleSecondOrderExpression(
+  options: SampleGraphwarExpressionTrajectoryOptions,
+  evaluateDDY: SecondOrderEvaluator,
+) {
+  const angle = options.launchAngleRadians ?? Number.NaN;
+  const launchPoint = moveFromSoldierCenter(options.soldierCenter, angle);
   const launchState = createSecondOrderState(launchPoint.x, launchPoint.y, Math.tan(angle));
   if (!isFinitePoint(launchState) || !Number.isFinite(launchState.dy)) {
     return createTrajectorySample([], "invalid");
@@ -367,6 +454,71 @@ function createSecondOrderState(x: number, y: number, dy: number): SecondOrderSt
 
 function createTrajectorySample(points: GraphPoint[], stopReason: TrajectoryStopReason): GraphwarTrajectorySample {
   return { points, stopReason };
+}
+
+function createGraphwarExpressionEvaluator(expression: string) {
+  const trimmedExpression = expression.trim();
+  if (!trimmedExpression) {
+    return undefined;
+  }
+
+  try {
+    const evaluate = new Function(
+      "x",
+      "y",
+      "dy",
+      "abs",
+      "exp",
+      "sin",
+      "cos",
+      "tan",
+      "sqrt",
+      "log",
+      "pow",
+      "pi",
+      "e",
+      `"use strict"; return (${trimmedExpression});`,
+    ) as (
+      x: number,
+      y: number,
+      dy: number,
+      abs: typeof Math.abs,
+      exp: typeof Math.exp,
+      sin: typeof Math.sin,
+      cos: typeof Math.cos,
+      tan: typeof Math.tan,
+      sqrt: typeof Math.sqrt,
+      log: typeof Math.log,
+      pow: typeof Math.pow,
+      pi: number,
+      e: number,
+    ) => unknown;
+
+    return (x: number, y: number, dy: number) => {
+      try {
+        const value = evaluate(
+          x,
+          y,
+          dy,
+          Math.abs,
+          Math.exp,
+          Math.sin,
+          Math.cos,
+          Math.tan,
+          Math.sqrt,
+          Math.log,
+          Math.pow,
+          Math.PI,
+          Math.E,
+        );
+        return typeof value === "number" && Number.isFinite(value) ? value : Number.NaN;
+      } catch {
+        return Number.NaN;
+      }
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 /** 比较两个采样点的 Graphwar 游戏坐标距离平方。 */

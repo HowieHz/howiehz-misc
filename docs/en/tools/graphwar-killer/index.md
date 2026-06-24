@@ -38,7 +38,12 @@ import {
   parseFiniteNumber,
   roundToDecimalPlaces,
 } from "../../../tools/graphwar-killer/numbers";
-import { createGraphwarFormulaPathPoints, getGraphwarLaunchAngle, sampleGraphwarTrajectory } from "../../../tools/graphwar-killer/simulator";
+import {
+  createGraphwarFormulaPathPoints,
+  getGraphwarLaunchAngle,
+  sampleGraphwarExpressionTrajectory,
+  sampleGraphwarTrajectory,
+} from "../../../tools/graphwar-killer/simulator";
 import { graphwarToolDefaults } from "../../../tools/graphwar-killer/tool-defaults";
 import { createGraphPoint, createPixelPoint } from "../../../tools/graphwar-killer/types";
 import type {
@@ -57,6 +62,7 @@ type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: st
 type ParsedSteepness = { ok: true; steepness: number } | { ok: false; message: string };
 type ParsedPrecision = { ok: true; decimalPlaces: number } | { ok: false; message: string };
 type ParsedObstacleThresholds = { ok: true; minArea: number } | { ok: false; message: string };
+type ToolWorkflowMode = "solver" | "simulator";
 interface PathLineSegment {
   x1: number;
   x2: number;
@@ -123,7 +129,19 @@ const pointerPreviewPoint = ref<PixelPoint>();
 const magnifierEnabled = ref(true);
 const magnifierPoint = ref<PixelPoint>();
 const toolMode = ref<ToolMode>("bounds");
-const equationMode = ref<EquationMode>("y");
+const toolWorkflowMode = ref<ToolWorkflowMode>("solver");
+const solverEquationMode = ref<EquationMode>("y");
+const simulatorEquationMode = ref<EquationMode>("y");
+const equationMode = computed<EquationMode>({
+  get: () => (toolWorkflowMode.value === "simulator" ? simulatorEquationMode.value : solverEquationMode.value),
+  set: (mode) => {
+    if (toolWorkflowMode.value === "simulator") {
+      simulatorEquationMode.value = mode;
+    } else {
+      solverEquationMode.value = mode;
+    }
+  },
+});
 const algorithmMode = ref<AlgorithmMode>("abs");
 const minXText = ref(`-${graphwarDefaultXLimitText}`);
 const maxXText = ref(graphwarDefaultXLimitText);
@@ -132,9 +150,33 @@ const maxYText = ref(graphwarVisibleYLimitText);
 const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
-const pathPixels = ref<PixelPoint[]>([]);
+const simulatorFormulaText = ref("");
+const simulatorLaunchAngleText = ref("");
+const solverPathPixels = ref<PixelPoint[]>([]);
+const simulatorPathPixels = ref<PixelPoint[]>([]);
+const pathPixels = computed<PixelPoint[]>({
+  get: () => (toolWorkflowMode.value === "simulator" ? simulatorPathPixels.value : solverPathPixels.value),
+  set: (points) => {
+    if (toolWorkflowMode.value === "simulator") {
+      simulatorPathPixels.value = points;
+    } else {
+      solverPathPixels.value = points;
+    }
+  },
+});
 const pathPointCoordinateTexts = ref<PathPointCoordinateText[]>([]);
-const pathStatus = ref("");
+const solverPathStatus = ref("");
+const simulatorPathStatus = ref("");
+const pathStatus = computed<string>({
+  get: () => (toolWorkflowMode.value === "simulator" ? simulatorPathStatus.value : solverPathStatus.value),
+  set: (status) => {
+    if (toolWorkflowMode.value === "simulator") {
+      simulatorPathStatus.value = status;
+    } else {
+      solverPathStatus.value = status;
+    }
+  },
+});
 const draggingPathPointIndex = ref<number>();
 const hoveredPathPointIndex = ref<number>();
 const detectionStatus = ref("");
@@ -144,7 +186,22 @@ const detectedObstacles = ref<DetectedObstacleMap>();
 const smartCursorEnabled = ref(false);
 const hoveredDetectedSoldierId = ref<string>();
 const editingPathPointCoordinate = ref<EditingPathPointCoordinate>();
-const trajectoryStrokeColor = ref("#ec4899");
+const solverTrajectoryStrokeColor = ref("#ec4899");
+const simulatorTrajectoryStrokeColor = ref("#ec4899");
+const trajectoryStrokeColor = computed<string>({
+  get: () => (
+    toolWorkflowMode.value === "simulator"
+      ? simulatorTrajectoryStrokeColor.value
+      : solverTrajectoryStrokeColor.value
+  ),
+  set: (color) => {
+    if (toolWorkflowMode.value === "simulator") {
+      simulatorTrajectoryStrokeColor.value = color;
+    } else {
+      solverTrajectoryStrokeColor.value = color;
+    }
+  },
+});
 const copyStatus = ref<TransferStatus>("idle");
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -154,6 +211,10 @@ const equationModes = [
   { value: "dy", label: "y'=", description: "Output the first derivative of the step function" },
   { value: "ddy", label: "y''=", description: "Output the second derivative of the step function" },
 ] as const satisfies readonly { value: EquationMode; label: string; description: string }[];
+const toolWorkflowModes = [
+  { value: "solver", label: "Solver" },
+  { value: "simulator", label: "Simulator" },
+] as const satisfies readonly { value: ToolWorkflowMode; label: string }[];
 const algorithmModes = [
   { value: "abs", label: "Double absolute-value function" },
   { value: "step", label: "Step function" },
@@ -288,6 +349,9 @@ const formulaSignEpsilon = computed(() => (
 ));
 
 const activeEquationDescription = computed(() => {
+  if (toolWorkflowMode.value === "simulator") {
+    return "Enter a function and simulate the Graphwar trajectory in the current game mode";
+  }
   if (algorithmMode.value === "abs") {
     return equationMode.value === "dy"
       ? "Output the first derivative of the double absolute-value connector"
@@ -312,7 +376,9 @@ const activeEquationDescription = computed(() => {
 const activeToolHint = computed(() => (
   toolMode.value === "bounds"
     ? "Left-click two corners to set the bounds. Right-click to cancel the selected point."
-    : "Left-click your soldier's center first, then path point centers. Drag points to fine-tune, right-click a point to delete it, or right-click empty space to undo the latest point."
+    : toolWorkflowMode.value === "simulator"
+      ? "Left-click the initial firing soldier. Picking again replaces the current soldier."
+      : "Left-click your soldier's center first, then path point centers. Drag points to fine-tune, right-click a point to delete it, or right-click empty space to undo the latest point."
 ));
 const boundsPreviewRect = computed(() => (
   boundsFirstPoint.value && pointerPreviewPoint.value
@@ -368,6 +434,9 @@ const allowedTargetRect = computed<BoundsRect | undefined>(() => {
 const detectionBoxes = computed<DetectionBox[]>(() => {
   const targetRect = allowedTargetRect.value;
   const unselectedSoldiers = detectedSoldiers.value.filter((box) => !detectionBoxMatchesSelectedPathPoint(box));
+  if (toolWorkflowMode.value === "simulator") {
+    return unselectedSoldiers;
+  }
   if (!targetRect || pathPixels.value.length === 0) {
     return unselectedSoldiers;
   }
@@ -379,6 +448,18 @@ const calculationMessage = computed(() => {
   if (!parsedBounds.value.ok) {
     return parsedBounds.value.message;
   }
+  if (toolWorkflowMode.value === "simulator") {
+    if (pathPixels.value.length < 1) {
+      return "Select the initial firing soldier first";
+    }
+    if (!simulatorFormulaText.value.trim()) {
+      return "Enter a function";
+    }
+    if (equationMode.value === "ddy" && simulatorLaunchAngleRadians.value === undefined) {
+      return "Enter the launch angle";
+    }
+    return "";
+  }
   if (algorithmMode.value === "step" && !parsedSteepness.value.ok) {
     return parsedSteepness.value.message;
   }
@@ -389,6 +470,9 @@ const calculationMessage = computed(() => {
 });
 
 const settingsMessage = computed(() => {
+  if (toolWorkflowMode.value === "simulator") {
+    return "";
+  }
   if (!parsedPrecision.value.ok) {
     return parsedPrecision.value.message;
   }
@@ -406,6 +490,9 @@ const detectionSettingsMessage = computed(() => {
 });
 
 const formulaResult = computed<FormulaResult | undefined>(() => {
+  if (toolWorkflowMode.value !== "solver") {
+    return undefined;
+  }
   if (!parsedBounds.value.ok || formulaOutputPathPoints.value.length < 2) {
     return undefined;
   }
@@ -440,14 +527,15 @@ watch([mappedPathPoints, visibleDecimalPlaces], () => {
   syncPathPointCoordinateTexts();
 }, { immediate: true });
 
-const secondOrderAngleHint = computed(() => {
+const secondOrderLaunchAngleDegrees = computed(() => {
   if (
     equationMode.value !== "ddy" ||
+    toolWorkflowMode.value !== "solver" ||
     isEquationModeDisabled(equationMode.value) ||
     (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
     formulaOutputPathPoints.value.length < 2
   ) {
-    return "";
+    return undefined;
   }
 
   const angle = getGraphwarLaunchAngle(
@@ -462,13 +550,43 @@ const secondOrderAngleHint = computed(() => {
     },
     mappedPathPoints.value[0],
   ) * 180 / Math.PI;
-  if (!Number.isFinite(angle)) {
-    return "";
+  return Number.isFinite(angle) ? angle : undefined;
+});
+const secondOrderLaunchAngleText = computed(() => (
+  secondOrderLaunchAngleDegrees.value === undefined ? "" : formatAngleDegree(secondOrderLaunchAngleDegrees.value)
+));
+const secondOrderAngleHint = computed(() => (
+  secondOrderLaunchAngleText.value
+    ? `Use the Up/Down keys to set the launch angle to about ${secondOrderLaunchAngleText.value} deg.`
+    : ""
+));
+const simulatorLaunchAngleRadians = computed(() => {
+  if (equationMode.value !== "ddy") {
+    return undefined;
   }
-  return `Use the Up/Down keys to set the launch angle to about ${formatAngleDegree(angle)} deg.`;
+  const angle = parseFiniteNumber(simulatorLaunchAngleText.value);
+  return angle === undefined ? undefined : angle * Math.PI / 180;
 });
 
 const trajectorySample = computed(() => {
+  if (toolWorkflowMode.value === "simulator") {
+    if (
+      !parsedBounds.value.ok ||
+      mappedPathPoints.value.length < 1 ||
+      !simulatorFormulaText.value.trim()
+    ) {
+      return undefined;
+    }
+
+    return sampleGraphwarExpressionTrajectory({
+      bounds: parsedBounds.value.bounds,
+      equation: equationMode.value,
+      expression: simulatorFormulaText.value,
+      launchAngleRadians: simulatorLaunchAngleRadians.value,
+      soldierCenter: mappedPathPoints.value[0],
+    });
+  }
+
   if (
     !formulaResult.value ||
     !parsedBounds.value.ok ||
@@ -632,6 +750,12 @@ const copyButtonText = computed(() => {
   }
   return "Copy formula";
 });
+const canCopyFormula = computed(() => (
+  toolWorkflowMode.value === "solver" ? !!formulaResult.value : !!simulatorFormulaText.value.trim()
+));
+const canClearSimulatorInputs = computed(() => (
+  !!simulatorFormulaText.value || !!simulatorLaunchAngleText.value
+));
 const statusAnnouncement = computed(() => {
   if (copyStatus.value === "success") {
     return "Formula copied to the clipboard.";
@@ -678,14 +802,43 @@ watch([formulaOutputDecimalPlaces], () => {
   pathStatus.value = pathFollowsGraphRule(normalizedPath) ? "" : getForwardPathMessage();
 });
 
-watch([algorithmMode, equationMode], () => {
-  if (isEquationModeDisabled(equationMode.value)) {
-    equationMode.value = "y";
+watch([algorithmMode, solverEquationMode], () => {
+  if (algorithmMode.value === "abs" && solverEquationMode.value === "ddy") {
+    solverEquationMode.value = "y";
   }
 });
 
 function isEquationModeDisabled(mode: EquationMode) {
+  if (toolWorkflowMode.value === "simulator") {
+    return false;
+  }
   return algorithmMode.value === "abs" && mode === "ddy";
+}
+
+function setToolWorkflowMode(mode: ToolWorkflowMode) {
+  if (toolWorkflowMode.value === mode) {
+    return;
+  }
+
+  if (mode === "simulator") {
+    const solverResult = formulaResult.value;
+    if (!simulatorFormulaText.value.trim() && solverResult) {
+      simulatorEquationMode.value = solverEquationMode.value;
+      simulatorFormulaText.value = solverResult.expression;
+      simulatorLaunchAngleText.value = secondOrderLaunchAngleText.value;
+    }
+    if (simulatorPathPixels.value.length === 0 && solverPathPixels.value.length > 0) {
+      simulatorPathPixels.value = [solverPathPixels.value[0]];
+      simulatorTrajectoryStrokeColor.value = solverTrajectoryStrokeColor.value;
+    }
+  } else if (algorithmMode.value === "abs" && solverEquationMode.value === "ddy") {
+    solverEquationMode.value = "y";
+  }
+  toolWorkflowMode.value = mode;
+  hoveredPathPointIndex.value = undefined;
+  draggingPathPointIndex.value = undefined;
+  hoveredDetectedSoldierId.value = undefined;
+  editingPathPointCoordinate.value = undefined;
 }
 
 function setEquationMode(mode: EquationMode) {
@@ -795,13 +948,12 @@ function waitForVideoMetadata(video: HTMLVideoElement) {
   });
 }
 
-/** Apply a loaded screenshot and clear path points while keeping the current bounds values. */
+/** Apply a loaded screenshot and clear both mode path states while keeping the current bounds values. */
 function applyLoadedImage(url: string, name: string) {
   imageUrl.value = url;
   imageName.value = name;
   imageStatus.value = "";
-  pathPixels.value = [];
-  trajectoryStrokeColor.value = "#ec4899";
+  clearAllModePaths();
   clearDetections();
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
@@ -1642,6 +1794,20 @@ function appendPathPoint(point: PixelPoint) {
     return false;
   }
 
+  if (toolWorkflowMode.value === "simulator") {
+    pathPixels.value = [
+      normalizePathPoint(
+        point,
+        boundsRect.value,
+        parsedBounds.value.bounds,
+        undefined,
+        0,
+      ),
+    ];
+    pathStatus.value = "";
+    return true;
+  }
+
   const nextPoint = normalizePathPoint(
     point,
     boundsRect.value,
@@ -1663,7 +1829,7 @@ function appendPathPoint(point: PixelPoint) {
 }
 
 function appendDetectedSoldierPathPoint(soldier: DetectionBox) {
-  if (pathPixels.value.length === 0) {
+  if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {
     trajectoryStrokeColor.value = getDetectedSoldierColor(soldier) ?? "#ec4899";
   }
   return appendPathPoint(getDetectionBoxCenter(soldier));
@@ -2043,6 +2209,18 @@ function clearPath() {
   trajectoryStrokeColor.value = "#ec4899";
 }
 
+function clearAllModePaths() {
+  solverPathPixels.value = [];
+  simulatorPathPixels.value = [];
+  solverPathStatus.value = "";
+  simulatorPathStatus.value = "";
+  hoveredPathPointIndex.value = undefined;
+  draggingPathPointIndex.value = undefined;
+  editingPathPointCoordinate.value = undefined;
+  solverTrajectoryStrokeColor.value = "#ec4899";
+  simulatorTrajectoryStrokeColor.value = "#ec4899";
+}
+
 /** Remove the most recently selected path point. */
 function undoLastPoint() {
   if (pathPixels.value.length === 0) {
@@ -2061,16 +2239,25 @@ function undoLastPoint() {
 
 /** Copy the currently generated Graphwar expression. */
 async function copyFormula() {
-  if (!formulaResult.value) {
+  const text = toolWorkflowMode.value === "solver"
+    ? formulaResult.value?.expression
+    : simulatorFormulaText.value;
+  if (!canCopyFormula.value || !text) {
     return;
   }
 
   try {
-    await copyText(formulaResult.value.expression);
+    await copyText(text);
     setCopyStatus("success");
   } catch {
     setCopyStatus("error");
   }
+}
+
+function clearSimulatorInputs() {
+  simulatorFormulaText.value = "";
+  simulatorLaunchAngleText.value = "";
+  setCopyStatus("idle");
 }
 
 /** Convert a browser pointer event to screenshot pixel coordinates. */
@@ -2143,7 +2330,7 @@ async function copyText(text: string) {
 </script>
 <!-- autocorrect-enable -->
 
-Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screenshot, set the coordinate bounds, then mark your own position and target path points to generate a formula. All calculations happen locally.
+In Solver mode, calibrate a [Graphwar](https://graphwar.com/graphwar_1/index.html) screenshot and pick a path to generate a function expression. In Simulator mode, enter a function expression to simulate the result. All calculations happen locally.
 
 <div class="graphwar-killer">
   <p
@@ -2163,6 +2350,29 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
       <span>{{ activeEquationDescription }}</span>
     </div>
     <div class="graphwar-killer__setting-row">
+      <span class="graphwar-killer__setting-label">Mode</span>
+      <div
+        class="graphwar-killer__tool-toggle graphwar-killer__mode-toggle"
+        :class="{ 'graphwar-killer__tool-toggle--path': toolWorkflowMode === 'simulator' }"
+        role="group"
+        aria-label="Mode"
+      >
+        <button
+          v-for="mode in toolWorkflowModes"
+          :key="mode.value"
+          type="button"
+          :aria-pressed="toolWorkflowMode === mode.value"
+          :class="{ 'graphwar-killer__tool-toggle-button--active': toolWorkflowMode === mode.value }"
+          @click="setToolWorkflowMode(mode.value)"
+        >
+          {{ mode.label }}
+        </button>
+      </div>
+    </div>
+    <div
+      v-if="toolWorkflowMode !== 'simulator'"
+      class="graphwar-killer__setting-row"
+    >
       <span class="graphwar-killer__setting-label">Algorithm</span>
       <div
         class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle"
@@ -2183,7 +2393,7 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
       </div>
     </div>
     <label
-      v-if="algorithmMode === 'step'"
+      v-if="toolWorkflowMode !== 'simulator' && algorithmMode === 'step'"
       class="graphwar-killer__steepness-label"
     >
       Step steepness a
@@ -2251,7 +2461,10 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
             {{ mode.label }}
           </button>
         </div>
-        <label class="graphwar-killer__precision-label">
+        <label
+          v-if="toolWorkflowMode !== 'simulator'"
+          class="graphwar-killer__precision-label"
+        >
           Decimal places
           <input
             v-model="precisionText"
@@ -2279,28 +2492,6 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
       <span>{{ activeToolHint }}</span>
     </div>
     <div class="graphwar-killer__image-actions">
-      <button
-        type="button"
-        @click="captureScreenImage"
-      >
-        Capture screenshot
-      </button>
-      <label class="graphwar-killer__upload">
-        <input
-          type="file"
-          accept="image/*"
-          @change="handleImageUpload"
-        >
-        <span>Upload image</span>
-      </label>
-      <button
-        type="button"
-        :aria-pressed="magnifierEnabled"
-        :class="{ 'graphwar-killer__toggle-button--active': magnifierEnabled }"
-        @click="magnifierEnabled = !magnifierEnabled"
-      >
-        Magnifier
-      </button>
       <div
         class="graphwar-killer__tool-toggle"
         :class="{ 'graphwar-killer__tool-toggle--path': toolMode === 'path' }"
@@ -2335,6 +2526,14 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
         @click="undoLastPoint"
       >
         Undo point
+      </button>
+      <button
+        type="button"
+        :aria-pressed="magnifierEnabled"
+        :class="{ 'graphwar-killer__toggle-button--active': magnifierEnabled }"
+        @click="magnifierEnabled = !magnifierEnabled"
+      >
+        Magnifier
       </button>
     </div>
   </section>
@@ -2396,6 +2595,22 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
       <span :class="{ 'graphwar-killer__label-status--warning': pathStatus }">
         {{ screenshotStatusText }}
       </span>
+      <div class="graphwar-killer__screenshot-actions">
+        <button
+          type="button"
+          @click="captureScreenImage"
+        >
+          Capture screenshot
+        </button>
+        <label class="graphwar-killer__upload">
+          <input
+            type="file"
+            accept="image/*"
+            @change="handleImageUpload"
+          >
+          <span>Upload image</span>
+        </label>
+      </div>
     </div>
     <div
       ref="stageRef"
@@ -2658,17 +2873,28 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
   >
     <div class="graphwar-killer__label-row graphwar-killer__label-row--result">
       <h2 id="graphwar-killer-result-title">Formula</h2>
-      <button
-        type="button"
-        class="graphwar-killer__primary-button"
-        :disabled="!formulaResult"
-        @click="copyFormula"
-      >
-        {{ copyButtonText }}
-      </button>
+      <div class="graphwar-killer__result-actions">
+        <button
+          type="button"
+          class="graphwar-killer__primary-button"
+          :disabled="!canCopyFormula"
+          @click="copyFormula"
+        >
+          {{ copyButtonText }}
+        </button>
+        <button
+          v-if="toolWorkflowMode === 'simulator'"
+          type="button"
+          class="graphwar-killer__secondary-button"
+          :disabled="!canClearSimulatorInputs"
+          @click="clearSimulatorInputs"
+        >
+          Clear
+        </button>
+      </div>
     </div>
     <div
-      v-if="formulaResult"
+      v-if="toolWorkflowMode === 'solver' && formulaResult"
       class="graphwar-killer__formula-row"
     >
       <span class="graphwar-killer__formula-prefix">
@@ -2677,6 +2903,34 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
       <p class="graphwar-killer__formula">
         {{ formulaResult.expression }}
       </p>
+    </div>
+    <div
+      v-else-if="toolWorkflowMode === 'simulator'"
+      class="graphwar-killer__formula-row"
+    >
+      <span class="graphwar-killer__formula-prefix">
+        {{ equationModes.find((mode) => mode.value === equationMode)?.label }}
+      </span>
+      <input
+        v-model="simulatorFormulaText"
+        class="graphwar-killer__formula-input"
+        inputmode="text"
+        autocomplete="off"
+      >
+    </div>
+    <div
+      v-if="toolWorkflowMode === 'simulator' && equationMode === 'ddy'"
+      class="graphwar-killer__formula-row"
+    >
+      <span class="graphwar-killer__formula-prefix">
+        Launch angle
+      </span>
+      <input
+        v-model="simulatorLaunchAngleText"
+        class="graphwar-killer__formula-input graphwar-killer__formula-input--angle"
+        inputmode="decimal"
+        autocomplete="off"
+      >
     </div>
     <p
       v-if="secondOrderAngleHint"
@@ -2691,7 +2945,7 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
       {{ trajectoryWarning }}
     </p>
     <p
-      v-if="!formulaResult"
+      v-if="calculationMessage && (toolWorkflowMode === 'simulator' || !formulaResult)"
       class="graphwar-killer__error"
     >
       {{ calculationMessage }}
@@ -2842,11 +3096,19 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
 }
 
 .graphwar-killer__label-row--image-status > span {
+  flex: 1 1 240px;
   text-align: right;
 }
 
 .graphwar-killer__label-row--result {
   align-items: center;
+}
+
+.graphwar-killer__result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .graphwar-killer__upload {
@@ -3085,7 +3347,20 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
   align-items: center;
 }
 
+.graphwar-killer__screenshot-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .graphwar-killer__image-actions button {
+  min-height: 36px;
+  padding: 7px 12px;
+}
+
+.graphwar-killer__screenshot-actions button {
   min-height: 36px;
   padding: 7px 12px;
 }
@@ -3311,6 +3586,13 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
   white-space: nowrap;
 }
 
+.graphwar-killer__secondary-button {
+  min-width: 72px;
+  min-height: 36px;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+
 .graphwar-killer__toggle-button--active {
   border-color: var(--vp-c-brand-1) !important;
   background: var(--vp-c-brand-soft) !important;
@@ -3347,6 +3629,15 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
   font-size: 1rem;
   line-height: 1.6;
   white-space: nowrap;
+}
+
+.graphwar-killer__formula-input {
+  min-width: 0;
+  font-family: var(--vp-font-family-mono);
+}
+
+.graphwar-killer__formula-input--angle {
+  max-width: 160px;
 }
 
 .graphwar-killer__error {
@@ -3462,6 +3753,10 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
 
   .graphwar-killer__label-row > span {
     text-align: left;
+  }
+
+  .graphwar-killer__screenshot-actions {
+    justify-content: flex-start;
   }
 
   .graphwar-killer__primary-button {

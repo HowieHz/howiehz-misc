@@ -2,7 +2,7 @@
 
 **English** | [简体中文](../../../tools/graphwar-killer/)
 
-Graphwar Killer calibrates coordinates from a [Graphwar](https://graphwar.com/graphwar_1/index.html) screenshot, lets you pick a path, and generates a double-absolute-value or step-function expression that can be entered directly into Graphwar.
+Graphwar Killer calibrates a [Graphwar](https://graphwar.com/graphwar_1/index.html) screenshot and generates function expressions in Solver mode, then lets you enter a function expression and simulate the result in Simulator mode.
 
 ## Try it online
 

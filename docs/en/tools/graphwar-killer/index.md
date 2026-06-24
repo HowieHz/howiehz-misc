@@ -138,13 +138,13 @@ let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
 const equationModes = [
-  { value: "y", label: "y=", description: "输出阶梯函数" },
-  { value: "dy", label: "y'=", description: "输出阶梯函数的一阶导数" },
-  { value: "ddy", label: "y''=", description: "输出阶梯函数的二阶导数" },
+  { value: "y", label: "y=", description: "Output the step function" },
+  { value: "dy", label: "y'=", description: "Output the first derivative of the step function" },
+  { value: "ddy", label: "y''=", description: "Output the second derivative of the step function" },
 ] as const satisfies readonly { value: EquationMode; label: string; description: string }[];
 const algorithmModes = [
-  { value: "abs", label: "双绝对值函数" },
-  { value: "step", label: "阶梯函数" },
+  { value: "abs", label: "Double absolute-value function" },
+  { value: "step", label: "Step function" },
 ] as const satisfies readonly { value: AlgorithmMode; label: string }[];
 
 const parsedBounds = computed<ParsedBounds>(() => {
@@ -154,12 +154,12 @@ const parsedBounds = computed<ParsedBounds>(() => {
   const maxY = parseFiniteNumber(maxYText.value);
 
   if (minX === undefined || maxX === undefined || minY === undefined || maxY === undefined) {
-    return { ok: false as const, message: "边界坐标需要填写合法数字" };
+    return { ok: false as const, message: "Enter valid numbers for the bounds" };
   }
 
   const bounds: GraphBounds = { minX, maxX, minY, maxY };
   if (nearlyEqual(bounds.minX, bounds.maxX) || nearlyEqual(bounds.minY, bounds.maxY)) {
-    return { ok: false as const, message: "边界的 x 或 y 范围不能为 0" };
+    return { ok: false as const, message: "The x and y ranges cannot be zero" };
   }
 
   return { ok: true as const, bounds };
@@ -168,7 +168,7 @@ const parsedBounds = computed<ParsedBounds>(() => {
 const parsedSteepness = computed<ParsedSteepness>(() => {
   const steepness = parseFiniteNumber(steepnessText.value);
   if (steepness === undefined || steepness <= 0) {
-    return { ok: false as const, message: "阶梯陡峭度需要是大于 0 的数字" };
+    return { ok: false as const, message: "Step steepness must be greater than 0" };
   }
   return { ok: true as const, steepness };
 });
@@ -176,10 +176,10 @@ const parsedSteepness = computed<ParsedSteepness>(() => {
 const parsedPrecision = computed<ParsedPrecision>(() => {
   const decimalPlaces = parseFiniteNumber(precisionText.value);
   if (decimalPlaces === undefined || !Number.isInteger(decimalPlaces)) {
-    return { ok: false as const, message: "保留小数位需要填写整数" };
+    return { ok: false as const, message: "Decimal places must be an integer" };
   }
   if (decimalPlaces < 0 || decimalPlaces > MAX_FORMULA_DECIMAL_PLACES) {
-    return { ok: false as const, message: `保留小数位需要在 0 到 ${MAX_FORMULA_DECIMAL_PLACES} 之间` };
+    return { ok: false as const, message: `Decimal places must be between 0 and ${MAX_FORMULA_DECIMAL_PLACES}` };
   }
   return { ok: true as const, decimalPlaces };
 });
@@ -187,10 +187,10 @@ const parsedPrecision = computed<ParsedPrecision>(() => {
 const parsedObstacleThresholds = computed<ParsedObstacleThresholds>(() => {
   const minArea = parseFiniteNumber(obstacleMinAreaText.value);
   if (minArea === undefined || !Number.isInteger(minArea)) {
-    return { ok: false as const, message: "障碍最小面积需要填写整数" };
+    return { ok: false as const, message: "Minimum obstacle area must be an integer" };
   }
   if (minArea < 1 || minArea > 50000) {
-    return { ok: false as const, message: "障碍最小面积需要在 1 到 50000 之间" };
+    return { ok: false as const, message: "Minimum obstacle area must be between 1 and 50000" };
   }
   return { ok: true as const, minArea };
 });
@@ -275,16 +275,16 @@ const formulaSignEpsilon = computed(() => (
 const activeEquationDescription = computed(() => (
   algorithmMode.value === "abs"
     ? equationMode.value === "y"
-      ? "输出双绝对值连接函数"
+      ? "Output the double absolute-value connector"
       : equationMode.value === "dy"
-        ? "输出双绝对值连接函数的一阶导数"
-        : "双绝对值函数不输出 y''"
+        ? "Output the first derivative of the double absolute-value connector"
+        : "The double absolute-value function does not support y''"
     : equationModes.find((mode) => mode.value === equationMode.value)?.description ?? ""
 ));
 const activeToolHint = computed(() => (
   toolMode.value === "bounds"
-    ? "左键点两角落定边界；右键取消已选点。"
-    : "左键先点自己士兵中心；再点路径点中心；左键拖动路径点微调，右键点路径点删除，右键空白处撤回最近一个"
+    ? "Left-click two corners to set the bounds. Right-click to cancel the selected point."
+    : "Left-click your soldier's center first, then path point centers. Drag points to fine-tune, right-click a point to delete it, or right-click empty space to undo the latest point."
 ));
 const boundsPreviewRect = computed(() => (
   boundsFirstPoint.value && pointerPreviewPoint.value
@@ -354,10 +354,10 @@ const calculationMessage = computed(() => {
     return parsedSteepness.value.message;
   }
   if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
-    return "双绝对值函数不输出 y''；请选择 y= 或 y'=。";
+    return "The double absolute-value function does not support y''. Choose y= or y'=.";
   }
   if (pathPixels.value.length < 2) {
-    return "先点出自己的位置，再选择至少一个路径点";
+    return "Mark your own position first, then choose at least one path point";
   }
   return "";
 });
@@ -432,7 +432,7 @@ const secondOrderAngleHint = computed(() => {
   if (!Number.isFinite(angle)) {
     return "";
   }
-  return `需要用键盘上下键把发射角调到约 ${formatAngleDegree(angle)}°。`;
+  return `Use the Up/Down keys to set the launch angle to about ${formatAngleDegree(angle)} deg.`;
 });
 
 const trajectorySample = computed(() => {
@@ -461,7 +461,7 @@ const trajectorySample = computed(() => {
 
 const trajectoryWarning = computed(() => {
   if (trajectoryObstacleHitIndex.value >= 0) {
-    return "当前公式轨迹会撞到障碍物";
+    return "The current trajectory will hit an obstacle";
   }
 
   const stopReason = trajectorySample.value?.stopReason;
@@ -469,15 +469,15 @@ const trajectoryWarning = computed(() => {
     return "";
   }
   if (stopReason === "too-steep") {
-    return "预览已中止：局部太陡，Graphwar 步长缩到最小仍无法继续，实战中会在这里爆炸。";
+    return "Preview stopped: the curve is too steep locally, and Graphwar cannot continue even at its minimum step size. In game, it will explode here.";
   }
   if (stopReason === "max-steps") {
-    return "预览已中止：达到 Graphwar 最大采样步数，函数过长，实战中会在末端爆炸。";
+    return "Preview stopped: Graphwar's maximum sample count was reached. The function is too long and will explode near the end in game.";
   }
   if (stopReason === "out-of-bounds") {
-    return "预览已中止：轨迹越出 Graphwar 平面，实战中会在边界处提前爆炸。";
+    return "Preview stopped: the trajectory leaves the Graphwar plane and will explode early at the boundary in game.";
   }
-  return "预览已中止：公式出现 NaN 或无穷值，实战中会提前爆炸。";
+  return "Preview stopped: the formula produced NaN or infinity and will explode early in game.";
 });
 
 const trajectoryObstacleHitIndex = computed(() => {
@@ -593,19 +593,19 @@ const magnifierContentStyle = computed(() => {
 });
 const copyButtonText = computed(() => {
   if (copyStatus.value === "success") {
-    return "已复制";
+    return "Copied";
   }
   if (copyStatus.value === "error") {
-    return "复制失败";
+    return "Copy failed";
   }
-  return "复制函数";
+  return "Copy formula";
 });
 const statusAnnouncement = computed(() => {
   if (copyStatus.value === "success") {
-    return "函数已复制到剪贴板。";
+    return "Formula copied to the clipboard.";
   }
   if (copyStatus.value === "error") {
-    return "复制失败，请手动复制。";
+    return "Copy failed. Copy it manually.";
   }
   return "";
 });
@@ -628,7 +628,7 @@ watch([obstacleMinAreaText], () => {
   scheduleGraphwarObjectDetection();
 });
 
-/** 从隐藏文件输入框加载用户上传的截图。 */
+/** Load a screenshot selected from the hidden file input. */
 function handleImageUpload(event: Event) {
   const input = event.currentTarget;
   if (!(input instanceof HTMLInputElement) || !input.files?.[0]) {
@@ -639,7 +639,7 @@ function handleImageUpload(event: Event) {
   input.value = "";
 }
 
-/** 处理页面上的 Ctrl / Cmd + V 直接粘贴图片。 */
+/** Handle images pasted directly with Ctrl/Cmd+V. */
 function handlePaste(event: ClipboardEvent) {
   const items = Array.from(event.clipboardData?.items ?? []);
   const imageItem = items.find((item) => item.type.startsWith("image/"));
@@ -652,7 +652,7 @@ function handlePaste(event: ClipboardEvent) {
   loadImageFile(file);
 }
 
-/** 处理拖拽截图到舞台区域的加载逻辑。 */
+/** Load a screenshot dragged onto the stage. */
 function handleDrop(event: DragEvent) {
   const file = Array.from(event.dataTransfer?.files ?? []).find((item) => item.type.startsWith("image/"));
   if (file) {
@@ -660,7 +660,7 @@ function handleDrop(event: DragEvent) {
   }
 }
 
-/** 将图片文件读取为 data URL，并设置为当前截图。 */
+/** Read an image file as a data URL and apply it as the current screenshot. */
 function loadImageFile(file: File) {
   const reader = new FileReader();
   reader.addEventListener("load", () => {
@@ -668,15 +668,15 @@ function loadImageFile(file: File) {
       return;
     }
 
-    applyLoadedImage(reader.result, file.name || "粘贴的截图");
+    applyLoadedImage(reader.result, file.name || "Pasted screenshot");
   });
   reader.readAsDataURL(file);
 }
 
-/** 通过浏览器 Screen Capture API 截取屏幕图片。 */
+/** Capture a screenshot through the browser Screen Capture API. */
 async function captureScreenImage() {
   if (typeof navigator === "undefined" || typeof document === "undefined") {
-    imageStatus.value = "当前环境不支持截屏。";
+    imageStatus.value = "Screen capture is not available in this environment.";
     return;
   }
 
@@ -684,7 +684,7 @@ async function captureScreenImage() {
     getDisplayMedia?: (constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>;
   };
   if (!mediaDevices?.getDisplayMedia) {
-    imageStatus.value = "当前浏览器不支持 Screen Capture API。";
+    imageStatus.value = "This browser does not support the Screen Capture API.";
     return;
   }
 
@@ -710,9 +710,9 @@ async function captureScreenImage() {
     }
 
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    applyLoadedImage(canvas.toDataURL("image/png"), "屏幕截图");
+    applyLoadedImage(canvas.toDataURL("image/png"), "Screen capture");
   } catch {
-    imageStatus.value = "未完成截屏";
+    imageStatus.value = "Screen capture was canceled";
   } finally {
     for (const track of stream?.getTracks() ?? []) {
       track.stop();
@@ -720,7 +720,7 @@ async function captureScreenImage() {
   }
 }
 
-/** 等待截屏视频流拿到尺寸，以便绘制到 canvas。 */
+/** Wait until the captured video stream has dimensions so it can be drawn to canvas. */
 function waitForVideoMetadata(video: HTMLVideoElement) {
   return new Promise<void>((resolve, reject) => {
     video.addEventListener("loadedmetadata", () => resolve(), { once: true });
@@ -728,7 +728,7 @@ function waitForVideoMetadata(video: HTMLVideoElement) {
   });
 }
 
-/** 应用已加载截图，并清空当前路径点；框选边界坐标保持不变。 */
+/** Apply a loaded screenshot and clear path points while keeping the current bounds values. */
 function applyLoadedImage(url: string, name: string) {
   imageUrl.value = url;
   imageName.value = name;
@@ -741,7 +741,7 @@ function applyLoadedImage(url: string, name: string) {
   magnifierPoint.value = undefined;
 }
 
-/** 截图元素加载后更新图片尺寸；框选边界保留当前坐标值。 */
+/** Update image dimensions after the screenshot element loads while keeping the current bounds values. */
 function handleImageLoad() {
   const image = imageRef.value;
   if (!image) {
@@ -755,7 +755,7 @@ function handleImageLoad() {
   detectGraphwarObjects();
 }
 
-/** 清除自动识别的士兵标记。 */
+/** Clear automatically detected soldier markers. */
 function clearDetections() {
   detectionStatus.value = "";
   detectionStatusIsError.value = false;
@@ -778,18 +778,18 @@ function scheduleGraphwarObjectDetection() {
   }, 180);
 }
 
-/** 使用 Canvas 像素检测 Graphwar 棋盘边界和黄色士兵。 */
+/** Detect the Graphwar play area and yellow soldiers from canvas pixels. */
 function detectGraphwarObjects() {
   const image = imageRef.value;
   if (!image || !imageUrl.value) {
-    detectionStatus.value = "先上传或粘贴截图";
+    detectionStatus.value = "Upload or paste a screenshot first";
     detectionStatusIsError.value = true;
     return;
   }
 
   const imageData = getImageDataFromElement(image);
   if (!imageData) {
-    detectionStatus.value = "无法读取截图像素";
+    detectionStatus.value = "Could not read screenshot pixels";
     detectionStatusIsError.value = true;
     return;
   }
@@ -803,7 +803,7 @@ function detectGraphwarObjects() {
   const edgeRect = detectGraphwarPlayArea(imageData);
   if (!edgeRect) {
     clearDetections();
-    detectionStatus.value = "没有识别到 Graphwar 棋盘边界";
+    detectionStatus.value = "Could not detect the Graphwar play area";
     detectionStatusIsError.value = true;
     return;
   }
@@ -816,7 +816,7 @@ function detectGraphwarObjects() {
   detectedSoldiers.value = soldiers;
   detectedObstacles.value = detectObstacles(imageData, edgeRect, obstacleThresholds, soldiers);
   detectionStatus.value =
-    `已自动标记边界，识别到 ${detectedSoldiers.value.length} 个士兵、${detectedObstacles.value.count} 个障碍`;
+    `Auto-marked the bounds and found ${detectedSoldiers.value.length} soldiers and ${detectedObstacles.value.count} obstacles`;
   detectionStatusIsError.value = false;
 }
 
@@ -1519,7 +1519,7 @@ function toggleSmartCursor() {
   }
 }
 
-/** 根据当前模式将指针点击分发给边界点选或路径点选。 */
+/** Route pointer clicks to bounds picking or path picking based on the current mode. */
 function handleStagePointerDown(event: PointerEvent) {
   const point = getImagePointFromEvent(event);
   if (!point) {
@@ -1625,7 +1625,7 @@ function setPathPoint(index: number, point: PixelPoint) {
   const nextPath = [...pathPixels.value];
   nextPath[index] = nextPoint;
   if (!pathFollowsGraphRule(nextPath)) {
-    pathStatus.value = "只能走 x+；x- 会自动变垂直";
+    pathStatus.value = "Path points must move in +x. Moves toward -x are converted to vertical points.";
     return false;
   }
 
@@ -1646,7 +1646,7 @@ function removePathPoint(index: number) {
   return true;
 }
 
-/** 跟踪指针位置，用于边界预览和放大镜。 */
+/** Track pointer position for the bounds preview and magnifier. */
 function handleStagePointerMove(event: PointerEvent) {
   const point = getImagePointFromEvent(event);
   if (!point) {
@@ -1671,7 +1671,7 @@ function handleStagePointerMove(event: PointerEvent) {
   pointerPreviewPoint.value = clampPixelPointToCanvas(point, imageWidth.value, imageHeight.value);
 }
 
-/** 指针离开截图舞台时清理仅悬停期间存在的预览状态。 */
+/** Clear hover-only preview state when the pointer leaves the screenshot stage. */
 function handleStagePointerLeave() {
   pointerPreviewPoint.value = undefined;
   magnifierPoint.value = undefined;
@@ -1739,7 +1739,7 @@ function getDetectedSoldierColor(box: DetectionBox) {
   return `rgb(${Math.round(redSum / count)} ${Math.round(greenSum / count)} ${Math.round(blueSum / count)})`;
 }
 
-/** 使用右键取消边界点或撤回最新路径点。 */
+/** Use right-click to cancel a bounds point or undo the latest path point. */
 function handleStageContextMenu(event: MouseEvent) {
   if (toolMode.value === "bounds") {
     boundsFirstPoint.value = undefined;
@@ -1770,7 +1770,7 @@ function handleStagePointerUp(event: PointerEvent) {
   }
 }
 
-/** 切换边界/路径模式，并清理当前模式的临时状态。 */
+/** Switch between bounds and path modes and clear temporary state for the current mode. */
 function setToolMode(mode: ToolMode) {
   toolMode.value = mode;
   pointerPreviewPoint.value = undefined;
@@ -1779,7 +1779,7 @@ function setToolMode(mode: ToolMode) {
   }
 }
 
-/** 在候选点标准化后执行 Graphwar 的 x+ 路径规则。 */
+/** Enforce Graphwar's +x path rule after normalizing the candidate point. */
 function canAppendPathPoint(point: PixelPoint) {
   if (!parsedBounds.value.ok || pathPixels.value.length < 1) {
     return true;
@@ -1800,7 +1800,7 @@ function canAppendPathPoint(point: PixelPoint) {
     return true;
   }
 
-  pathStatus.value = "只能走 x+；x- 会自动变垂直";
+  pathStatus.value = "Path points must move in +x. Moves toward -x are converted to vertical points.";
   return false;
 }
 
@@ -1820,14 +1820,14 @@ function pathFollowsGraphRule(points: PixelPoint[]) {
   return true;
 }
 
-/** 清除全部已选路径点，但不改变图片边界和设定。 */
+/** Clear all selected path points without changing the image bounds or settings. */
 function clearPath() {
   pathPixels.value = [];
   pathStatus.value = "";
   trajectoryStrokeColor.value = "#ec4899";
 }
 
-/** 删除最新选择的路径点。 */
+/** Remove the most recently selected path point. */
 function undoLastPoint() {
   if (pathPixels.value.length === 0) {
     return;
@@ -1840,7 +1840,7 @@ function undoLastPoint() {
   pathStatus.value = "";
 }
 
-/** 复制当前生成的 Graphwar 表达式。 */
+/** Copy the currently generated Graphwar expression. */
 async function copyFormula() {
   if (!formulaResult.value) {
     return;
@@ -1854,7 +1854,7 @@ async function copyFormula() {
   }
 }
 
-/** 用当前页面状态包装图形坐标中的垂直容差判断。 */
+/** Wrap the graph-coordinate vertical tolerance check with the current page state. */
 function isVerticalPathDelta(deltaX: number) {
   if (!parsedBounds.value.ok) {
     return nearlyEqual(deltaX, 0);
@@ -1868,7 +1868,7 @@ function isVerticalPathDelta(deltaX: number) {
   );
 }
 
-/** 将浏览器指针事件转换为截图像素坐标。 */
+/** Convert a browser pointer event to screenshot pixel coordinates. */
 function getImagePointFromEvent(event: MouseEvent): PixelPoint | undefined {
   const stage = stageRef.value;
   if (!stage) {
@@ -1895,7 +1895,7 @@ function getImagePointFromEvent(event: MouseEvent): PixelPoint | undefined {
   );
 }
 
-/** 设置临时复制反馈文本，并在短时间后自动清除。 */
+/** Set temporary copy feedback text and clear it after a short delay. */
 function setCopyStatus(status: TransferStatus) {
   copyStatus.value = status;
   if (copyStatusTimer) {
@@ -1910,7 +1910,7 @@ function setCopyStatus(status: TransferStatus) {
   }
 }
 
-/** 使用 Clipboard API 复制文本，失败时回退到隐藏 textarea 命令。 */
+/** Copy text through the Clipboard API, falling back to a hidden textarea command if needed. */
 async function copyText(text: string) {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -1938,7 +1938,7 @@ async function copyText(text: string) {
 </script>
 <!-- autocorrect-enable -->
 
-上传或粘贴 [Graphwar](https://graphwar.com/graphwar_1/index.html) 截图，标定坐标边界后点出自己的位置和目标路径点，生成函数表达式。所有计算均在本地完成。
+Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screenshot, set the coordinate bounds, then mark your own position and target path points to generate a formula. All calculations happen locally.
 
 <div class="graphwar-killer">
   <p
@@ -1954,16 +1954,16 @@ async function copyText(text: string) {
     aria-labelledby="graphwar-killer-settings-title"
   >
     <div class="graphwar-killer__label-row">
-      <h2 id="graphwar-killer-settings-title">设定</h2>
+      <h2 id="graphwar-killer-settings-title">Settings</h2>
       <span>{{ activeEquationDescription }}</span>
     </div>
     <div class="graphwar-killer__setting-row">
-      <span class="graphwar-killer__setting-label">算法</span>
+      <span class="graphwar-killer__setting-label">Algorithm</span>
       <div
         class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle"
         :class="{ 'graphwar-killer__tool-toggle--path': algorithmMode === 'step' }"
         role="group"
-        aria-label="算法"
+        aria-label="Algorithm"
       >
         <button
           v-for="mode in algorithmModes"
@@ -1981,7 +1981,7 @@ async function copyText(text: string) {
       v-if="algorithmMode === 'step'"
       class="graphwar-killer__steepness-label"
     >
-      阶梯陡峭度 a
+      Step steepness a
       <input
         v-model="steepnessText"
         inputmode="decimal"
@@ -2023,7 +2023,7 @@ async function copyText(text: string) {
       </label>
     </div>
     <div class="graphwar-killer__setting-row graphwar-killer__game-mode-row">
-      <span class="graphwar-killer__setting-label">游戏模式</span>
+      <span class="graphwar-killer__setting-label">Game mode</span>
       <div class="graphwar-killer__game-mode-controls">
         <div
           class="graphwar-killer__equation-toggle"
@@ -2032,7 +2032,7 @@ async function copyText(text: string) {
             'graphwar-killer__equation-toggle--ddy': equationMode === 'ddy',
           }"
           role="group"
-          aria-label="Graphwar 游戏模式"
+          aria-label="Graphwar game mode"
         >
           <button
             v-for="mode in equationModes"
@@ -2046,7 +2046,7 @@ async function copyText(text: string) {
           </button>
         </div>
         <label class="graphwar-killer__precision-label">
-          保留小数位
+          Decimal places
           <input
             v-model="precisionText"
             inputmode="numeric"
@@ -2069,7 +2069,7 @@ async function copyText(text: string) {
     aria-labelledby="graphwar-killer-actions-title"
   >
     <div class="graphwar-killer__label-row">
-      <h2 id="graphwar-killer-actions-title">操作栏</h2>
+      <h2 id="graphwar-killer-actions-title">Controls</h2>
       <span>{{ activeToolHint }}</span>
     </div>
     <div class="graphwar-killer__image-actions">
@@ -2077,7 +2077,7 @@ async function copyText(text: string) {
         type="button"
         @click="captureScreenImage"
       >
-        截取图片
+        Capture screenshot
       </button>
       <label class="graphwar-killer__upload">
         <input
@@ -2085,7 +2085,7 @@ async function copyText(text: string) {
           accept="image/*"
           @change="handleImageUpload"
         >
-        <span>上传图片</span>
+        <span>Upload image</span>
       </label>
       <button
         type="button"
@@ -2093,13 +2093,13 @@ async function copyText(text: string) {
         :class="{ 'graphwar-killer__toggle-button--active': magnifierEnabled }"
         @click="magnifierEnabled = !magnifierEnabled"
       >
-        放大镜
+        Magnifier
       </button>
       <div
         class="graphwar-killer__tool-toggle"
         :class="{ 'graphwar-killer__tool-toggle--path': toolMode === 'path' }"
         role="group"
-        aria-label="操作模式"
+        aria-label="Tool mode"
       >
         <button
           type="button"
@@ -2107,7 +2107,7 @@ async function copyText(text: string) {
           :class="{ 'graphwar-killer__tool-toggle-button--active': toolMode === 'bounds' }"
           @click="setToolMode('bounds')"
         >
-          点选边界
+          Pick bounds
         </button>
         <button
           type="button"
@@ -2115,20 +2115,20 @@ async function copyText(text: string) {
           :class="{ 'graphwar-killer__tool-toggle-button--active': toolMode === 'path' }"
           @click="setToolMode('path')"
         >
-          点选路径
+          Pick path
         </button>
       </div>
       <button
         type="button"
         @click="clearPath"
       >
-        清除路径点
+        Clear path
       </button>
       <button
         type="button"
         @click="undoLastPoint"
       >
-        撤回路径点
+        Undo point
       </button>
     </div>
   </section>
@@ -2137,7 +2137,7 @@ async function copyText(text: string) {
     aria-labelledby="graphwar-killer-detection-title"
   >
     <div class="graphwar-killer__label-row">
-      <h2 id="graphwar-killer-detection-title">识别</h2>
+      <h2 id="graphwar-killer-detection-title">Detection</h2>
       <span
         v-if="detectionStatus"
         :class="{ 'graphwar-killer__label-status--error': detectionStatusIsError }"
@@ -2151,7 +2151,7 @@ async function copyText(text: string) {
         :disabled="!imageUrl"
         @click="detectGraphwarObjects"
       >
-        自动标记边界
+        Auto-mark bounds
       </button>
       <button
         type="button"
@@ -2159,17 +2159,17 @@ async function copyText(text: string) {
         :class="{ 'graphwar-killer__toggle-button--active': smartCursorEnabled }"
         @click="toggleSmartCursor"
       >
-        智能光标
+        Smart cursor
       </button>
       <label
         v-if="smartCursorEnabled"
         class="graphwar-killer__detection-setting-label"
       >
-        障碍最小面积
+        Minimum obstacle area
         <input
           v-model="obstacleMinAreaText"
           inputmode="numeric"
-          aria-label="障碍最小面积，单位为 Graphwar 原始平面像素"
+          aria-label="Minimum obstacle area in raw Graphwar plane pixels"
         >
         <span>px²</span>
       </label>
@@ -2186,8 +2186,8 @@ async function copyText(text: string) {
     aria-labelledby="graphwar-killer-screenshot-title"
   >
     <div class="graphwar-killer__label-row graphwar-killer__label-row--image-status">
-      <h2 id="graphwar-killer-screenshot-title">截图</h2>
-      <span>{{ imageStatus || imageName || "可以截屏、上传、拖入或直接 Ctrl / Cmd + V 粘贴截图" }}</span>
+      <h2 id="graphwar-killer-screenshot-title">Screenshot</h2>
+      <span>{{ imageStatus || imageName || "Capture, upload, drag in, or paste a screenshot with Ctrl/Cmd+V" }}</span>
     </div>
     <p
       v-if="pathStatus"
@@ -2222,7 +2222,7 @@ async function copyText(text: string) {
         v-else
         class="graphwar-killer__placeholder"
       >
-        上传、拖入或粘贴截图后开始标定
+        Upload, drag in, or paste a screenshot to start calibration
       </div>
       <svg
         class="graphwar-killer__overlay"
@@ -2320,7 +2320,7 @@ async function copyText(text: string) {
             :x="point.x + soldierMarkerRadius + 4"
             :y="point.y - soldierMarkerRadius - 4"
           >
-            {{ index === 0 ? "己" : index }}
+            {{ index === 0 ? "Me" : index }}
           </text>
         </g>
       </svg>
@@ -2436,7 +2436,7 @@ async function copyText(text: string) {
                 :x="point.x + soldierMarkerRadius + 4"
                 :y="point.y - soldierMarkerRadius - 4"
               >
-                {{ index === 0 ? "己" : index }}
+                {{ index === 0 ? "Me" : index }}
               </text>
             </g>
           </svg>
@@ -2449,7 +2449,7 @@ async function copyText(text: string) {
     aria-labelledby="graphwar-killer-result-title"
   >
     <div class="graphwar-killer__label-row graphwar-killer__label-row--result">
-      <h2 id="graphwar-killer-result-title">函数</h2>
+      <h2 id="graphwar-killer-result-title">Formula</h2>
       <button
         type="button"
         class="graphwar-killer__primary-button"
@@ -2493,7 +2493,7 @@ async function copyText(text: string) {
       class="graphwar-killer__point-table"
     >
       <div>
-        <span>点</span>
+        <span>Point</span>
         <span>x</span>
         <span>y</span>
       </div>
@@ -2501,7 +2501,7 @@ async function copyText(text: string) {
         v-for="(point, index) in mappedPathPoints"
         :key="`row-${index}-${point.x}-${point.y}`"
       >
-        <span>{{ index === 0 ? "己方" : `路径 ${index}` }}</span>
+        <span>{{ index === 0 ? "Self" : `Path ${index}` }}</span>
         <span>{{ formatDecimal(point.x, visibleDecimalPlaces) }}</span>
         <span>{{ formatDecimal(point.y, visibleDecimalPlaces) }}</span>
       </div>
@@ -2509,15 +2509,15 @@ async function copyText(text: string) {
   </section>
 </div>
 
-## 使用说明
+## How to Use
 
-- 上传图片、拖入图片，或在页面打开时直接粘贴截图。
-- 在“设定”里填坐标范围，选择算法、游戏模式。
-- 用“点选边界”左键点边界的两个角；右键取消当前点。
-- 切到“点选路径”，左键先点自己士兵中心；再点路径点中心，右键空白处撤回最近一个路径点。
-- 可使用左键拖动路径点微调，右键点路径点删除。
-- 点到 `-x` 一侧时，会自动变成垂直点。
-- 复制生成的函数到 Graphwar。
+- Upload an image, drag one in, or paste a screenshot directly into the page.
+- In Settings, enter the coordinate range and choose the algorithm and game mode.
+- Use Pick bounds and left-click two corners of the play area. Right-click to cancel the current point.
+- Switch to Pick path, left-click your soldier's center first, then click path point centers. Right-click empty space to undo the latest point.
+- Drag path points with the left mouse button to fine-tune them. Right-click a point to delete it.
+- If you click toward `-x`, the point is automatically converted into a vertical move.
+- Copy the generated formula into Graphwar.
 
 <style scoped>
 .graphwar-killer {

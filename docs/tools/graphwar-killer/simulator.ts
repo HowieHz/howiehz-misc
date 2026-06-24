@@ -172,7 +172,7 @@ function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: Graph
   if (options.equation === "dy") {
     return getFirstOrderStartAngle(center, createFirstOrderEvaluator(options));
   }
-  if (options.algorithm !== "step") {
+  if (options.algorithm === "abs") {
     return Number.NaN;
   }
   return getSecondOrderStartAngle(center, options);

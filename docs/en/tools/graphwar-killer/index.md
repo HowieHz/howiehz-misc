@@ -424,9 +424,9 @@ const visibleDecimalPlaces = computed(() => (
 
 const secondOrderAngleHint = computed(() => {
   if (
-    algorithmMode.value !== "step" ||
     equationMode.value !== "ddy" ||
-    !parsedSteepness.value.ok ||
+    isEquationModeDisabled(equationMode.value) ||
+    (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
     formulaOutputPathPoints.value.length < 2
   ) {
     return "";

@@ -2,7 +2,7 @@ declare const pixelPointBrand: unique symbol;
 declare const graphPointBrand: unique symbol;
 
 export type EquationMode = "y" | "dy" | "ddy";
-export type AlgorithmMode = "step" | "abs" | "lagrange";
+export type AlgorithmMode = "step" | "abs" | "pchip" | "akima";
 export type ToolMode = "bounds" | "path";
 export type TransferStatus = "idle" | "success" | "error";
 

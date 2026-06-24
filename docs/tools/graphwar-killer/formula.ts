@@ -12,6 +12,7 @@ import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm }
 
 /** 双绝对值连接遇到垂直或反向线段时，使用 Graphwar 源码里的函数最小 x 步长保持公式有限。 */
 const ABS_CONNECTOR_MIN_WIDTH = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE;
+const SOFT_INTERVAL_INDICATOR_POWER = 8;
 
 /** 稳定版 sigmoid 公式在符号项可去奇点处避免 0 / 0 的最小十进制保护值。 */
 export const GRAPHWAR_TOOL_SIGN_EPSILON = graphwarToolDefaults.stepSignEpsilon;
@@ -30,6 +31,16 @@ interface AbsConnectorSegment {
   deltaY: number;
 }
 
+interface CubicHermiteSegment {
+  startX: number;
+  endX: number;
+  width: number;
+  startY: number;
+  endY: number;
+  startSlope: number;
+  endSlope: number;
+}
+
 /** 根据当前算法生成可复制的 Graphwar 表达式和 y= 预览表达式。 */
 export function buildFormula(
   points: readonly GraphPoint[],
@@ -46,8 +57,14 @@ export function buildFormula(
       ? mode === "dy"
         ? formatAbsConnectorFirstDerivativeExpression(points, decimalPlaces, signEpsilon)
         : formatAbsConnectorExpression(points, decimalPlaces, 0)
-      : algorithm === "lagrange"
-        ? formatLagrangeExpression(points, decimalPlaces)
+      : isCubicInterpolationAlgorithm(algorithm)
+        ? formatSoftCubicInterpolationExpression(
+            points,
+            algorithm,
+            mode,
+            decimalPlaces,
+            mode === "y" ? -(points[0]?.y ?? 0) : 0,
+          )
         : mode === "y"
           ? formatStepExpression(0, terms, steepness, decimalPlaces, signEpsilon)
           : mode === "dy"
@@ -56,8 +73,8 @@ export function buildFormula(
   const previewExpression =
     algorithm === "abs"
       ? formatAbsConnectorExpression(points, decimalPlaces)
-      : algorithm === "lagrange"
-        ? formatLagrangeExpression(points, decimalPlaces)
+      : isCubicInterpolationAlgorithm(algorithm)
+        ? formatSoftCubicInterpolationExpression(points, algorithm, "y", decimalPlaces)
         : formatStepExpression(start.y, terms, steepness, decimalPlaces, signEpsilon);
 
   return {
@@ -150,33 +167,46 @@ export function evaluateAbsConnectorFirstDerivativeY(
   return slope;
 }
 
-/** 计算拉格朗日插值多项式，用于 y= 模式预览和发射角估计。 */
-export function evaluateLagrangeY(x: number, points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
-  const interpolationPoints = createUniqueLagrangePoints(points, (value) =>
-    normalizeFormulaCoefficient(value, options),
-  );
-  if (interpolationPoints.length === 0) {
-    return 0;
-  }
-  if (interpolationPoints.length === 1) {
-    return interpolationPoints[0].y;
-  }
+/** 计算 PCHIP 插值的归一化软分段三次路径。 */
+export function evaluatePchipY(x: number, points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
+  return evaluateSoftCubicInterpolationY(x, points, "pchip", "y", options);
+}
 
-  let y = 0;
-  for (let index = 0; index < interpolationPoints.length; index += 1) {
-    const point = interpolationPoints[index];
-    let basis = 1;
-    for (let otherIndex = 0; otherIndex < interpolationPoints.length; otherIndex += 1) {
-      if (otherIndex === index) {
-        continue;
-      }
+/** 计算 Akima 插值的归一化软分段三次路径。 */
+export function evaluateAkimaY(x: number, points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
+  return evaluateSoftCubicInterpolationY(x, points, "akima", "y", options);
+}
 
-      const otherPoint = interpolationPoints[otherIndex];
-      basis *= (x - otherPoint.x) / (point.x - otherPoint.x);
-    }
-    y += point.y * basis;
-  }
-  return y;
+export function evaluatePchipFirstDerivativeY(
+  x: number,
+  points: readonly GraphPoint[],
+  options?: FormulaEvaluationOptions,
+) {
+  return evaluateSoftCubicInterpolationY(x, points, "pchip", "dy", options);
+}
+
+export function evaluateAkimaFirstDerivativeY(
+  x: number,
+  points: readonly GraphPoint[],
+  options?: FormulaEvaluationOptions,
+) {
+  return evaluateSoftCubicInterpolationY(x, points, "akima", "dy", options);
+}
+
+export function evaluatePchipSecondDerivativeY(
+  x: number,
+  points: readonly GraphPoint[],
+  options?: FormulaEvaluationOptions,
+) {
+  return evaluateSoftCubicInterpolationY(x, points, "pchip", "ddy", options);
+}
+
+export function evaluateAkimaSecondDerivativeY(
+  x: number,
+  points: readonly GraphPoint[],
+  options?: FormulaEvaluationOptions,
+) {
+  return evaluateSoftCubicInterpolationY(x, points, "akima", "ddy", options);
 }
 
 /** 将点击路径点转换为阶梯中心点和纵向变化量。 */
@@ -189,6 +219,10 @@ function createStepTerms(points: readonly GraphPoint[]) {
     });
   }
   return terms;
+}
+
+function isCubicInterpolationAlgorithm(algorithm: AlgorithmMode): algorithm is "pchip" | "akima" {
+  return algorithm === "pchip" || algorithm === "akima";
 }
 
 /** 格式化用户可粘贴到 Graphwar 的基础 y= sigmoid 阶梯表达式。 */
@@ -284,34 +318,372 @@ function formatAbsConnectorFirstDerivativeExpression(
   return cleanupExpression(parts.join("")) || "0";
 }
 
-/** 格式化拉格朗日插值多项式；x 重复的点按同一个插值点处理。 */
-function formatLagrangeExpression(points: readonly GraphPoint[], decimalPlaces?: number) {
-  const interpolationPoints = createUniqueLagrangePoints(points, (value) => normalizeZero(value, decimalPlaces));
-  if (interpolationPoints.length === 0) {
+function formatSoftCubicInterpolationExpression(
+  points: readonly GraphPoint[],
+  algorithm: "pchip" | "akima",
+  mode: EquationMode,
+  decimalPlaces?: number,
+  yOffset = 0,
+) {
+  const segments = createCubicInterpolationSegments(points, algorithm, undefined, yOffset);
+  if (segments.length === 0) {
     return "0";
   }
-  if (interpolationPoints.length === 1) {
-    return formatDecimal(interpolationPoints[0].y, decimalPlaces);
+
+  const parts = createSoftCubicInterpolationFormulaParts(segments, decimalPlaces);
+  if (mode === "dy") {
+    return `((${parts.firstNumerator})*(${parts.denominator})-(${parts.numerator})*(${parts.firstDenominator}))/(${parts.denominator})^2`;
+  }
+  if (mode === "ddy") {
+    const quotientNumerator = `(${parts.firstNumerator})*(${parts.denominator})-(${parts.numerator})*(${parts.firstDenominator})`;
+    return `(((${parts.secondNumerator})*(${parts.denominator})-(${parts.numerator})*(${parts.secondDenominator}))*(${parts.denominator})-2*(${quotientNumerator})*(${parts.firstDenominator}))/(${parts.denominator})^3`;
   }
 
-  const parts: string[] = [];
-  for (let index = 0; index < interpolationPoints.length; index += 1) {
-    const point = interpolationPoints[index];
-    const factors: string[] = [];
-    for (let otherIndex = 0; otherIndex < interpolationPoints.length; otherIndex += 1) {
-      if (otherIndex === index) {
-        continue;
-      }
+  return `(${parts.numerator})/(${parts.denominator})`;
+}
 
-      const otherPoint = interpolationPoints[otherIndex];
-      factors.push(
-        `(${formatXOffset(otherPoint.x, decimalPlaces)})/${formatDecimal(point.x - otherPoint.x, decimalPlaces)}`,
-      );
+function createSoftCubicInterpolationFormulaParts(segments: readonly CubicHermiteSegment[], decimalPlaces?: number) {
+  const numeratorParts: string[] = [];
+  const denominatorParts: string[] = [];
+  const firstNumeratorParts: string[] = [];
+  const firstDenominatorParts: string[] = [];
+  const secondNumeratorParts: string[] = [];
+  const secondDenominatorParts: string[] = [];
+
+  for (const segment of segments) {
+    const weight = formatSoftIntervalIndicator(segment, decimalPlaces);
+    const firstWeight = formatSoftIntervalIndicatorDerivative(segment, decimalPlaces);
+    const secondWeight = formatSoftIntervalIndicatorSecondDerivative(segment, decimalPlaces);
+    const cubic = formatCubicHermiteSegmentExpression(segment, decimalPlaces);
+    const firstCubic = formatCubicHermiteSegmentDerivativeExpression(segment, decimalPlaces);
+    const secondCubic = formatCubicHermiteSegmentSecondDerivativeExpression(segment, decimalPlaces);
+
+    numeratorParts.push(`(${weight})*(${cubic})`);
+    denominatorParts.push(`(${weight})`);
+    firstNumeratorParts.push(`(${firstWeight})*(${cubic})+(${weight})*(${firstCubic})`);
+    firstDenominatorParts.push(`(${firstWeight})`);
+    secondNumeratorParts.push(
+      `(${secondWeight})*(${cubic})+2*(${firstWeight})*(${firstCubic})+(${weight})*(${secondCubic})`,
+    );
+    secondDenominatorParts.push(`(${secondWeight})`);
+  }
+
+  return {
+    denominator: denominatorParts.join("+"),
+    firstDenominator: firstDenominatorParts.join("+"),
+    firstNumerator: firstNumeratorParts.join("+"),
+    numerator: numeratorParts.join("+"),
+    secondDenominator: secondDenominatorParts.join("+"),
+    secondNumerator: secondNumeratorParts.join("+"),
+  };
+}
+
+function formatCubicHermiteSegmentExpression(segment: CubicHermiteSegment, decimalPlaces?: number) {
+  const t = `((${formatXOffset(segment.startX, decimalPlaces)})/${formatDecimal(segment.width, decimalPlaces)})`;
+  const parts = [
+    formatSignedRawTerm(segment.startY, `(2*${t}^3-3*${t}^2+1)`, decimalPlaces),
+    formatSignedRawTerm(segment.width * segment.startSlope, `(${t}^3-2*${t}^2+${t})`, decimalPlaces),
+    formatSignedRawTerm(segment.endY, `(-2*${t}^3+3*${t}^2)`, decimalPlaces),
+    formatSignedRawTerm(segment.width * segment.endSlope, `(${t}^3-${t}^2)`, decimalPlaces),
+  ];
+  return cleanupExpression(parts.join("")) || "0";
+}
+
+function formatCubicHermiteSegmentDerivativeExpression(segment: CubicHermiteSegment, decimalPlaces?: number) {
+  const t = `((${formatXOffset(segment.startX, decimalPlaces)})/${formatDecimal(segment.width, decimalPlaces)})`;
+  const parts = [
+    formatSignedRawTerm(segment.startY / segment.width, `(6*${t}^2-6*${t})`, decimalPlaces),
+    formatSignedRawTerm(segment.startSlope, `(3*${t}^2-4*${t}+1)`, decimalPlaces),
+    formatSignedRawTerm(segment.endY / segment.width, `(-6*${t}^2+6*${t})`, decimalPlaces),
+    formatSignedRawTerm(segment.endSlope, `(3*${t}^2-2*${t})`, decimalPlaces),
+  ];
+  return cleanupExpression(parts.join("")) || "0";
+}
+
+function formatCubicHermiteSegmentSecondDerivativeExpression(segment: CubicHermiteSegment, decimalPlaces?: number) {
+  const t = `((${formatXOffset(segment.startX, decimalPlaces)})/${formatDecimal(segment.width, decimalPlaces)})`;
+  const parts = [
+    formatSignedRawTerm(segment.startY / segment.width ** 2, `(12*${t}-6)`, decimalPlaces),
+    formatSignedRawTerm(segment.startSlope / segment.width, `(6*${t}-4)`, decimalPlaces),
+    formatSignedRawTerm(segment.endY / segment.width ** 2, `(-12*${t}+6)`, decimalPlaces),
+    formatSignedRawTerm(segment.endSlope / segment.width, `(6*${t}-2)`, decimalPlaces),
+  ];
+  return cleanupExpression(parts.join("")) || "0";
+}
+
+function formatSoftIntervalIndicator(segment: CubicHermiteSegment, decimalPlaces?: number) {
+  return `1/(${formatSoftIntervalBase(segment, decimalPlaces)})`;
+}
+
+function formatSoftIntervalIndicatorDerivative(segment: CubicHermiteSegment, decimalPlaces?: number) {
+  const firstPowerDerivative = formatSoftIntervalPowerDerivative(segment, 1, decimalPlaces);
+  return `-(${firstPowerDerivative})/(${formatSoftIntervalBase(segment, decimalPlaces)})^2`;
+}
+
+function formatSoftIntervalIndicatorSecondDerivative(segment: CubicHermiteSegment, decimalPlaces?: number) {
+  const firstPowerDerivative = formatSoftIntervalPowerDerivative(segment, 1, decimalPlaces);
+  const secondPowerDerivative = formatSoftIntervalPowerDerivative(segment, 2, decimalPlaces);
+  const base = formatSoftIntervalBase(segment, decimalPlaces);
+  return `-(${secondPowerDerivative})/(${base})^2+2*(${firstPowerDerivative})^2/(${base})^3`;
+}
+
+function formatSoftIntervalBase(segment: CubicHermiteSegment, decimalPlaces?: number) {
+  return `1+${formatSoftIntervalPower(segment, SOFT_INTERVAL_INDICATOR_POWER * 2, decimalPlaces)}`;
+}
+
+function formatSoftIntervalPower(segment: CubicHermiteSegment, power: number, decimalPlaces?: number) {
+  const center = (segment.startX + segment.endX) / 2;
+  const halfWidth = segment.width / 2;
+  return `((${formatXOffset(center, decimalPlaces)})/${formatDecimal(halfWidth, decimalPlaces)})^${power}`;
+}
+
+function formatSoftIntervalPowerDerivative(
+  segment: CubicHermiteSegment,
+  derivativeOrder: 1 | 2,
+  decimalPlaces?: number,
+) {
+  const power = SOFT_INTERVAL_INDICATOR_POWER * 2;
+  const center = (segment.startX + segment.endX) / 2;
+  const halfWidth = segment.width / 2;
+  const coefficient = derivativeOrder === 1 ? power / halfWidth : (power * (power - 1)) / halfWidth ** 2;
+  return `${formatDecimal(coefficient, decimalPlaces)}*((${formatXOffset(center, decimalPlaces)})/${formatDecimal(halfWidth, decimalPlaces)})^${power - derivativeOrder}`;
+}
+
+function evaluateSoftCubicInterpolationY(
+  x: number,
+  points: readonly GraphPoint[],
+  algorithm: "pchip" | "akima",
+  mode: EquationMode,
+  options?: FormulaEvaluationOptions,
+) {
+  const segments = createCubicInterpolationSegments(points, algorithm, options);
+  if (segments.length === 0) {
+    return points[0]?.y ?? 0;
+  }
+
+  let numerator = 0;
+  let denominator = 0;
+  let firstNumerator = 0;
+  let firstDenominator = 0;
+  let secondNumerator = 0;
+  let secondDenominator = 0;
+  for (const segment of segments) {
+    const weight = evaluateSoftIntervalIndicator(x, segment);
+    const firstWeight = evaluateSoftIntervalIndicatorDerivative(x, segment);
+    const secondWeight = evaluateSoftIntervalIndicatorSecondDerivative(x, segment);
+    const cubic = evaluateCubicHermiteSegmentY(x, segment);
+    const firstCubic = evaluateCubicHermiteSegmentDerivativeY(x, segment);
+    const secondCubic = evaluateCubicHermiteSegmentSecondDerivativeY(x, segment);
+    numerator += weight * cubic;
+    denominator += weight;
+    firstNumerator += firstWeight * cubic + weight * firstCubic;
+    firstDenominator += firstWeight;
+    secondNumerator += secondWeight * cubic + 2 * firstWeight * firstCubic + weight * secondCubic;
+    secondDenominator += secondWeight;
+  }
+  if (denominator === 0) {
+    return 0;
+  }
+  if (mode === "dy") {
+    return (firstNumerator * denominator - numerator * firstDenominator) / denominator ** 2;
+  }
+  if (mode === "ddy") {
+    const firstQuotientNumerator = firstNumerator * denominator - numerator * firstDenominator;
+    return (
+      ((secondNumerator * denominator - numerator * secondDenominator) * denominator -
+        2 * firstQuotientNumerator * firstDenominator) /
+      denominator ** 3
+    );
+  }
+  return numerator / denominator;
+}
+
+function evaluateCubicHermiteSegmentY(x: number, segment: CubicHermiteSegment) {
+  const t = (x - segment.startX) / segment.width;
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (
+    (2 * t3 - 3 * t2 + 1) * segment.startY +
+    (t3 - 2 * t2 + t) * segment.width * segment.startSlope +
+    (-2 * t3 + 3 * t2) * segment.endY +
+    (t3 - t2) * segment.width * segment.endSlope
+  );
+}
+
+function evaluateCubicHermiteSegmentDerivativeY(x: number, segment: CubicHermiteSegment) {
+  const t = (x - segment.startX) / segment.width;
+  const t2 = t * t;
+  return (
+    (segment.startY * (6 * t2 - 6 * t)) / segment.width +
+    segment.startSlope * (3 * t2 - 4 * t + 1) +
+    (segment.endY * (-6 * t2 + 6 * t)) / segment.width +
+    segment.endSlope * (3 * t2 - 2 * t)
+  );
+}
+
+function evaluateCubicHermiteSegmentSecondDerivativeY(x: number, segment: CubicHermiteSegment) {
+  const t = (x - segment.startX) / segment.width;
+  return (
+    (segment.startY * (12 * t - 6)) / segment.width ** 2 +
+    (segment.startSlope * (6 * t - 4)) / segment.width +
+    (segment.endY * (-12 * t + 6)) / segment.width ** 2 +
+    (segment.endSlope * (6 * t - 2)) / segment.width
+  );
+}
+
+function evaluateSoftIntervalIndicator(x: number, segment: CubicHermiteSegment) {
+  const center = (segment.startX + segment.endX) / 2;
+  const halfWidth = segment.width / 2;
+  return 1 / (1 + ((x - center) / halfWidth) ** (2 * SOFT_INTERVAL_INDICATOR_POWER));
+}
+
+function evaluateSoftIntervalIndicatorDerivative(x: number, segment: CubicHermiteSegment) {
+  const base = evaluateSoftIntervalBase(x, segment);
+  return -evaluateSoftIntervalPowerDerivative(x, segment, 1) / base ** 2;
+}
+
+function evaluateSoftIntervalIndicatorSecondDerivative(x: number, segment: CubicHermiteSegment) {
+  const base = evaluateSoftIntervalBase(x, segment);
+  const firstPowerDerivative = evaluateSoftIntervalPowerDerivative(x, segment, 1);
+  return -evaluateSoftIntervalPowerDerivative(x, segment, 2) / base ** 2 + (2 * firstPowerDerivative ** 2) / base ** 3;
+}
+
+function evaluateSoftIntervalBase(x: number, segment: CubicHermiteSegment) {
+  const center = (segment.startX + segment.endX) / 2;
+  const halfWidth = segment.width / 2;
+  return 1 + ((x - center) / halfWidth) ** (2 * SOFT_INTERVAL_INDICATOR_POWER);
+}
+
+function evaluateSoftIntervalPowerDerivative(x: number, segment: CubicHermiteSegment, derivativeOrder: 1 | 2) {
+  const power = SOFT_INTERVAL_INDICATOR_POWER * 2;
+  const center = (segment.startX + segment.endX) / 2;
+  const halfWidth = segment.width / 2;
+  const coefficient = derivativeOrder === 1 ? power / halfWidth : (power * (power - 1)) / halfWidth ** 2;
+  return coefficient * ((x - center) / halfWidth) ** (power - derivativeOrder);
+}
+
+function createCubicInterpolationSegments(
+  points: readonly GraphPoint[],
+  algorithm: "pchip" | "akima",
+  options?: FormulaEvaluationOptions,
+  yOffset = 0,
+) {
+  const interpolationPoints = normalizeInterpolationPoints(points, options);
+  if (interpolationPoints.length < 2) {
+    return [];
+  }
+
+  const slopes =
+    algorithm === "pchip" ? createPchipSlopes(interpolationPoints) : createAkimaSlopes(interpolationPoints);
+  const segments: CubicHermiteSegment[] = [];
+  for (let index = 0; index < interpolationPoints.length - 1; index += 1) {
+    const start = interpolationPoints[index];
+    const end = interpolationPoints[index + 1];
+    const width = Math.max(end.x - start.x, GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE);
+    segments.push({
+      startX: start.x,
+      endX: start.x + width,
+      width,
+      startY: start.y + yOffset,
+      endY: end.y + yOffset,
+      startSlope: slopes[index],
+      endSlope: slopes[index + 1],
+    });
+  }
+  return segments;
+}
+
+function normalizeInterpolationPoints(points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
+  return points.map((point) =>
+    createGraphPoint(normalizeFormulaCoefficient(point.x, options), normalizeFormulaCoefficient(point.y, options)),
+  );
+}
+
+function createPchipSlopes(points: readonly GraphPoint[]) {
+  const segmentSlopes = createSegmentSlopes(points);
+  if (segmentSlopes.length === 1) {
+    return [segmentSlopes[0], segmentSlopes[0]];
+  }
+
+  const widths = createSegmentWidths(points);
+  const slopes = Array.from({ length: points.length }, () => 0);
+  slopes[0] = createPchipEndpointSlope(widths[0], widths[1], segmentSlopes[0], segmentSlopes[1]);
+  slopes[slopes.length - 1] = createPchipEndpointSlope(
+    widths[widths.length - 1],
+    widths[widths.length - 2],
+    segmentSlopes[segmentSlopes.length - 1],
+    segmentSlopes[segmentSlopes.length - 2],
+  );
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previousSlope = segmentSlopes[index - 1];
+    const nextSlope = segmentSlopes[index];
+    if (previousSlope * nextSlope <= 0) {
+      slopes[index] = 0;
+      continue;
     }
 
-    parts.push(formatSignedRawTerm(point.y, factors.map((factor) => `(${factor})`).join("*"), decimalPlaces));
+    const previousWidth = widths[index - 1];
+    const nextWidth = widths[index];
+    const leftWeight = 2 * nextWidth + previousWidth;
+    const rightWeight = nextWidth + 2 * previousWidth;
+    slopes[index] = (leftWeight + rightWeight) / (leftWeight / previousSlope + rightWeight / nextSlope);
   }
-  return cleanupExpression(parts.join("")) || "0";
+
+  return slopes;
+}
+
+function createPchipEndpointSlope(width: number, nextWidth: number, slope: number, nextSlope: number) {
+  const endpointSlope = ((2 * width + nextWidth) * slope - width * nextSlope) / (width + nextWidth);
+  if (endpointSlope * slope <= 0) {
+    return 0;
+  }
+  if (slope * nextSlope < 0 && Math.abs(endpointSlope) > Math.abs(3 * slope)) {
+    return 3 * slope;
+  }
+  return endpointSlope;
+}
+
+function createAkimaSlopes(points: readonly GraphPoint[]) {
+  const segmentSlopes = createSegmentSlopes(points);
+  if (segmentSlopes.length === 1) {
+    return [segmentSlopes[0], segmentSlopes[0]];
+  }
+
+  const firstSlope = segmentSlopes[0];
+  const secondSlope = segmentSlopes[1];
+  const lastSlope = segmentSlopes[segmentSlopes.length - 1];
+  const penultimateSlope = segmentSlopes[segmentSlopes.length - 2];
+  const extendedSlopes = [
+    3 * firstSlope - 2 * secondSlope,
+    2 * firstSlope - secondSlope,
+    ...segmentSlopes,
+    2 * lastSlope - penultimateSlope,
+    3 * lastSlope - 2 * penultimateSlope,
+  ];
+
+  const slopes: number[] = [];
+  for (let index = 0; index < points.length; index += 1) {
+    const leftWeight = Math.abs(extendedSlopes[index + 3] - extendedSlopes[index + 2]);
+    const rightWeight = Math.abs(extendedSlopes[index + 1] - extendedSlopes[index]);
+    slopes.push(
+      leftWeight + rightWeight === 0
+        ? (extendedSlopes[index + 1] + extendedSlopes[index + 2]) / 2
+        : (leftWeight * extendedSlopes[index + 1] + rightWeight * extendedSlopes[index + 2]) /
+            (leftWeight + rightWeight),
+    );
+  }
+  return slopes;
+}
+
+function createSegmentWidths(points: readonly GraphPoint[]) {
+  return points
+    .slice(0, -1)
+    .map((point, index) => Math.max(points[index + 1].x - point.x, GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE));
+}
+
+function createSegmentSlopes(points: readonly GraphPoint[]) {
+  return createSegmentWidths(points).map((width, index) => (points[index + 1].y - points[index].y) / width);
 }
 
 /** 创建一个连接线段，并把垂直输入拓宽到足以保持公式有限。 */
@@ -341,18 +713,6 @@ function isRoundedAbsConnectorZero(segment: AbsConnectorSegment, decimalPlaces?:
     roundToDecimalPlaces(segment.startX, decimalPlaces) === roundToDecimalPlaces(segment.endX, decimalPlaces) &&
     roundToDecimalPlaces(segment.width, decimalPlaces) === 0
   );
-}
-
-function createUniqueLagrangePoints(points: readonly GraphPoint[], normalize: (value: number) => number) {
-  const uniquePoints: GraphPoint[] = [];
-  for (const point of points) {
-    const normalizedPoint = createGraphPoint(normalize(point.x), normalize(point.y));
-    if (uniquePoints.some((uniquePoint) => uniquePoint.x === normalizedPoint.x)) {
-      continue;
-    }
-    uniquePoints.push(normalizedPoint);
-  }
-  return uniquePoints;
 }
 
 /** 格式化 a*(x+c)，即导数公式使用的带符号阶梯中心距离。 */

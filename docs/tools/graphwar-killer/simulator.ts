@@ -1,7 +1,12 @@
 import {
   evaluateAbsConnectorFirstDerivativeY,
   evaluateAbsConnectorY,
-  evaluateLagrangeY,
+  evaluateAkimaFirstDerivativeY,
+  evaluateAkimaSecondDerivativeY,
+  evaluateAkimaY,
+  evaluatePchipFirstDerivativeY,
+  evaluatePchipSecondDerivativeY,
+  evaluatePchipY,
   evaluateStepFirstDerivativeY,
   evaluateStepSecondDerivativeY,
   evaluateStepY,
@@ -81,7 +86,6 @@ export function sampleGraphwarTrajectory(options: SampleGraphwarTrajectoryOption
   if (options.points.length < 2) {
     return createTrajectorySample([], "unsupported");
   }
-
   if (options.equation === "y") {
     return sampleNormalFunction(options);
   }
@@ -134,7 +138,7 @@ function sampleFirstOrderEquation(options: SampleGraphwarTrajectoryOptions) {
 
 /** 模拟 y''= 模式：使用建议发射角和 tan(angle) 作为初始 y'，再做二阶 RK4。 */
 function sampleSecondOrderEquation(options: SampleGraphwarTrajectoryOptions) {
-  if (options.algorithm !== "step") {
+  if (options.algorithm === "abs") {
     return createTrajectorySample([], "unsupported");
   }
 
@@ -176,24 +180,40 @@ function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: Graph
 
 /** 创建普通 y= 模式使用的函数值计算器。 */
 function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
-  return options.algorithm === "abs"
-    ? (x: number) => evaluateAbsConnectorY(x, options.points, options.formulaEvaluation)
-    : options.algorithm === "lagrange"
-      ? (x: number) => evaluateLagrangeY(x, options.points, options.formulaEvaluation)
-      : (x: number) => evaluateStepY(x, options.points, options.steepness, options.formulaEvaluation);
+  if (options.algorithm === "abs") {
+    return (x: number) => evaluateAbsConnectorY(x, options.points, options.formulaEvaluation);
+  }
+  if (options.algorithm === "pchip") {
+    return (x: number) => evaluatePchipY(x, options.points, options.formulaEvaluation);
+  }
+  if (options.algorithm === "akima") {
+    return (x: number) => evaluateAkimaY(x, options.points, options.formulaEvaluation);
+  }
+  return (x: number) => evaluateStepY(x, options.points, options.steepness, options.formulaEvaluation);
 }
 
 /** 创建 y'= 模式使用的一阶导计算器。 */
 function createFirstOrderEvaluator(options: CreateGraphwarFormulaPathOptions): FirstOrderEvaluator {
-  return options.algorithm === "abs"
-    ? (x) => evaluateAbsConnectorFirstDerivativeY(x, options.points, options.formulaEvaluation)
-    : options.algorithm === "lagrange"
-      ? () => Number.NaN
-      : (x) => evaluateStepFirstDerivativeY(x, options.points, options.steepness, options.formulaEvaluation);
+  if (options.algorithm === "abs") {
+    return (x) => evaluateAbsConnectorFirstDerivativeY(x, options.points, options.formulaEvaluation);
+  }
+  if (options.algorithm === "pchip") {
+    return (x) => evaluatePchipFirstDerivativeY(x, options.points, options.formulaEvaluation);
+  }
+  if (options.algorithm === "akima") {
+    return (x) => evaluateAkimaFirstDerivativeY(x, options.points, options.formulaEvaluation);
+  }
+  return (x) => evaluateStepFirstDerivativeY(x, options.points, options.steepness, options.formulaEvaluation);
 }
 
 /** 创建 y''= 模式使用的二阶导计算器。 */
 function createSecondOrderEvaluator(options: CreateGraphwarFormulaPathOptions): SecondOrderEvaluator {
+  if (options.algorithm === "pchip") {
+    return (x) => evaluatePchipSecondDerivativeY(x, options.points, options.formulaEvaluation);
+  }
+  if (options.algorithm === "akima") {
+    return (x) => evaluateAkimaSecondDerivativeY(x, options.points, options.formulaEvaluation);
+  }
   return (x) => evaluateStepSecondDerivativeY(x, options.points, options.steepness, options.formulaEvaluation);
 }
 
@@ -233,16 +253,13 @@ function getFirstOrderStartAngle(center: GraphPoint, evaluateDY: FirstOrderEvalu
 
 /** Y'' 模式需要手调角度；按发射边缘点处的目标曲线斜率做固定点迭代。 */
 function getSecondOrderStartAngle(center: GraphPoint, options: CreateGraphwarFormulaPathOptions) {
-  let angle = Math.atan(
-    evaluateStepFirstDerivativeY(center.x, options.points, options.steepness, options.formulaEvaluation),
-  );
+  const evaluateDY = createFirstOrderEvaluator(options);
+  let angle = Math.atan(evaluateDY(center.x, center.y));
   let error = Number.POSITIVE_INFINITY;
 
   for (let index = 0; error > GRAPHWAR_ANGLE_ERROR && index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
     const launchPoint = moveFromSoldierCenter(center, angle);
-    const nextAngle = Math.atan(
-      evaluateStepFirstDerivativeY(launchPoint.x, options.points, options.steepness, options.formulaEvaluation),
-    );
+    const nextAngle = Math.atan(evaluateDY(launchPoint.x, launchPoint.y));
     error = Math.abs(nextAngle - angle);
     angle = nextAngle;
   }

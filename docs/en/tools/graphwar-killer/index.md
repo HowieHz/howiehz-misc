@@ -144,7 +144,8 @@ const equationModes = [
 const algorithmModes = [
   { value: "abs", label: "Double absolute-value function" },
   { value: "step", label: "Step function" },
-  { value: "lagrange", label: "Lagrange interpolation" },
+  { value: "pchip", label: "PCHIP interpolation" },
+  { value: "akima", label: "Akima interpolation" },
 ] as const satisfies readonly { value: AlgorithmMode; label: string }[];
 
 const parsedBounds = computed<ParsedBounds>(() => {
@@ -243,7 +244,6 @@ const formulaOutputPathPoints = computed<GraphPoint[]>(() =>
 const formulaNeedsSignEpsilon = computed(() => {
   if (
     !parsedBounds.value.ok ||
-    algorithmMode.value === "lagrange" ||
     (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
     formulaOutputPathPoints.value.length < 2
   ) {
@@ -276,16 +276,23 @@ const formulaSignEpsilon = computed(() => (
 
 const activeEquationDescription = computed(() => {
   if (algorithmMode.value === "abs") {
-    return equationMode.value === "y"
-      ? "Output the double absolute-value connector"
-      : equationMode.value === "dy"
-        ? "Output the first derivative of the double absolute-value connector"
-        : "The double absolute-value function does not support y''";
+    return equationMode.value === "dy"
+      ? "Output the first derivative of the double absolute-value connector"
+      : "Output the double absolute-value connector";
   }
-  if (algorithmMode.value === "lagrange") {
+  if (algorithmMode.value === "pchip") {
     return equationMode.value === "y"
-      ? "Output the Lagrange interpolation polynomial"
-      : "Lagrange interpolation currently supports y= only";
+      ? "Output the soft piecewise expression for PCHIP monotone cubic interpolation"
+      : equationMode.value === "dy"
+        ? "Output the exact first derivative of the PCHIP soft piecewise expression"
+        : "Output the exact second derivative of the PCHIP soft piecewise expression";
+  }
+  if (algorithmMode.value === "akima") {
+    return equationMode.value === "y"
+      ? "Output the soft piecewise expression for Akima cubic interpolation"
+      : equationMode.value === "dy"
+        ? "Output the exact first derivative of the Akima soft piecewise expression"
+        : "Output the exact second derivative of the Akima soft piecewise expression";
   }
   return equationModes.find((mode) => mode.value === equationMode.value)?.description ?? "";
 });
@@ -361,12 +368,6 @@ const calculationMessage = computed(() => {
   if (algorithmMode.value === "step" && !parsedSteepness.value.ok) {
     return parsedSteepness.value.message;
   }
-  if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
-    return "The double absolute-value function does not support y''. Choose y= or y'=.";
-  }
-  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
-    return "Lagrange interpolation currently supports y= only.";
-  }
   if (pathPixels.value.length < 2) {
     return "Mark your own position first, then choose at least one path point";
   }
@@ -403,7 +404,7 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
   if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
     return undefined;
   }
-  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
+  if (isEquationModeDisabled(equationMode.value)) {
     return undefined;
   }
 
@@ -660,10 +661,21 @@ watch([formulaOutputDecimalPlaces], () => {
 });
 
 watch([algorithmMode, equationMode], () => {
-  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
+  if (isEquationModeDisabled(equationMode.value)) {
     equationMode.value = "y";
   }
 });
+
+function isEquationModeDisabled(mode: EquationMode) {
+  return algorithmMode.value === "abs" && mode === "ddy";
+}
+
+function setEquationMode(mode: EquationMode) {
+  if (isEquationModeDisabled(mode)) {
+    return;
+  }
+  equationMode.value = mode;
+}
 
 /** Load a screenshot selected from the hidden file input. */
 function handleImageUpload(event: Event) {
@@ -2106,7 +2118,8 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
             type="button"
             :aria-pressed="equationMode === mode.value"
             :class="{ 'graphwar-killer__equation-toggle-button--active': equationMode === mode.value }"
-            @click="equationMode = mode.value"
+            :disabled="isEquationModeDisabled(mode.value)"
+            @click="setEquationMode(mode.value)"
           >
             {{ mode.label }}
           </button>
@@ -3007,20 +3020,24 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
 }
 
 .graphwar-killer__algorithm-toggle {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   min-height: 44px;
 }
 
 .graphwar-killer__algorithm-toggle::before {
-  width: calc((100% - 6px) / 3);
+  width: calc((100% - 6px) / 4);
 }
 
 .graphwar-killer__algorithm-toggle--step::before {
   transform: translateX(100%);
 }
 
-.graphwar-killer__algorithm-toggle--lagrange::before {
+.graphwar-killer__algorithm-toggle--pchip::before {
   transform: translateX(200%);
+}
+
+.graphwar-killer__algorithm-toggle--akima::before {
+  transform: translateX(300%);
 }
 
 .graphwar-killer__algorithm-toggle button {

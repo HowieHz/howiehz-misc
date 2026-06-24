@@ -144,7 +144,8 @@ const equationModes = [
 const algorithmModes = [
   { value: "abs", label: "双绝对值函数" },
   { value: "step", label: "阶梯函数" },
-  { value: "lagrange", label: "拉格朗日插值法" },
+  { value: "pchip", label: "PCHIP 插值" },
+  { value: "akima", label: "Akima 插值" },
 ] as const satisfies readonly { value: AlgorithmMode; label: string }[];
 
 const parsedBounds = computed<ParsedBounds>(() => {
@@ -243,7 +244,6 @@ const formulaOutputPathPoints = computed<GraphPoint[]>(() =>
 const formulaNeedsSignEpsilon = computed(() => {
   if (
     !parsedBounds.value.ok ||
-    algorithmMode.value === "lagrange" ||
     (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
     formulaOutputPathPoints.value.length < 2
   ) {
@@ -276,14 +276,21 @@ const formulaSignEpsilon = computed(() => (
 
 const activeEquationDescription = computed(() => {
   if (algorithmMode.value === "abs") {
-    return equationMode.value === "y"
-      ? "输出双绝对值连接函数"
-      : equationMode.value === "dy"
-        ? "输出双绝对值连接函数的一阶导数"
-        : "双绝对值函数不输出 y''";
+    return equationMode.value === "dy" ? "输出双绝对值连接函数的一阶导数" : "输出双绝对值连接函数";
   }
-  if (algorithmMode.value === "lagrange") {
-    return equationMode.value === "y" ? "输出拉格朗日插值多项式" : "拉格朗日插值法暂只支持 y=";
+  if (algorithmMode.value === "pchip") {
+    return equationMode.value === "y"
+      ? "输出 PCHIP 单调三次插值的软分段表达式"
+      : equationMode.value === "dy"
+        ? "输出 PCHIP 软分段表达式的严格一阶导数"
+        : "输出 PCHIP 软分段表达式的严格二阶导数";
+  }
+  if (algorithmMode.value === "akima") {
+    return equationMode.value === "y"
+      ? "输出 Akima 三次插值的软分段表达式"
+      : equationMode.value === "dy"
+        ? "输出 Akima 软分段表达式的严格一阶导数"
+        : "输出 Akima 软分段表达式的严格二阶导数";
   }
   return equationModes.find((mode) => mode.value === equationMode.value)?.description ?? "";
 });
@@ -359,12 +366,6 @@ const calculationMessage = computed(() => {
   if (algorithmMode.value === "step" && !parsedSteepness.value.ok) {
     return parsedSteepness.value.message;
   }
-  if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
-    return "双绝对值函数不输出 y''；请选择 y= 或 y'=。";
-  }
-  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
-    return "拉格朗日插值法暂只支持 y=。";
-  }
   if (pathPixels.value.length < 2) {
     return "先点出自己的位置，再选择至少一个路径点";
   }
@@ -401,7 +402,7 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
   if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
     return undefined;
   }
-  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
+  if (isEquationModeDisabled(equationMode.value)) {
     return undefined;
   }
 
@@ -658,10 +659,21 @@ watch([formulaOutputDecimalPlaces], () => {
 });
 
 watch([algorithmMode, equationMode], () => {
-  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
+  if (isEquationModeDisabled(equationMode.value)) {
     equationMode.value = "y";
   }
 });
+
+function isEquationModeDisabled(mode: EquationMode) {
+  return algorithmMode.value === "abs" && mode === "ddy";
+}
+
+function setEquationMode(mode: EquationMode) {
+  if (isEquationModeDisabled(mode)) {
+    return;
+  }
+  equationMode.value = mode;
+}
 
 /** 从隐藏文件输入框加载用户上传的截图。 */
 function handleImageUpload(event: Event) {
@@ -2101,7 +2113,8 @@ async function copyText(text: string) {
             type="button"
             :aria-pressed="equationMode === mode.value"
             :class="{ 'graphwar-killer__equation-toggle-button--active': equationMode === mode.value }"
-            @click="equationMode = mode.value"
+            :disabled="isEquationModeDisabled(mode.value)"
+            @click="setEquationMode(mode.value)"
           >
             {{ mode.label }}
           </button>
@@ -3002,20 +3015,24 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer__algorithm-toggle {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   min-height: 44px;
 }
 
 .graphwar-killer__algorithm-toggle::before {
-  width: calc((100% - 6px) / 3);
+  width: calc((100% - 6px) / 4);
 }
 
 .graphwar-killer__algorithm-toggle--step::before {
   transform: translateX(100%);
 }
 
-.graphwar-killer__algorithm-toggle--lagrange::before {
+.graphwar-killer__algorithm-toggle--pchip::before {
   transform: translateX(200%);
+}
+
+.graphwar-killer__algorithm-toggle--akima::before {
+  transform: translateX(300%);
 }
 
 .graphwar-killer__algorithm-toggle button {

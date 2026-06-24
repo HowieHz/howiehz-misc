@@ -7,6 +7,7 @@ import {
   roundToDecimalPlaces,
 } from "./numbers";
 import { graphwarToolDefaults } from "./tool-defaults";
+import { createGraphPoint } from "./types";
 import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "./types";
 
 /** 双绝对值连接遇到垂直或反向线段时，使用 Graphwar 源码里的函数最小 x 步长保持公式有限。 */
@@ -45,15 +46,19 @@ export function buildFormula(
       ? mode === "dy"
         ? formatAbsConnectorFirstDerivativeExpression(points, decimalPlaces, signEpsilon)
         : formatAbsConnectorExpression(points, decimalPlaces, 0)
-      : mode === "y"
-        ? formatStepExpression(0, terms, steepness, decimalPlaces, signEpsilon)
-        : mode === "dy"
-          ? formatStepFirstDerivativeExpression(terms, steepness, decimalPlaces)
-          : formatStepSecondDerivativeExpression(terms, steepness, decimalPlaces, signEpsilon);
+      : algorithm === "lagrange"
+        ? formatLagrangeExpression(points, decimalPlaces)
+        : mode === "y"
+          ? formatStepExpression(0, terms, steepness, decimalPlaces, signEpsilon)
+          : mode === "dy"
+            ? formatStepFirstDerivativeExpression(terms, steepness, decimalPlaces)
+            : formatStepSecondDerivativeExpression(terms, steepness, decimalPlaces, signEpsilon);
   const previewExpression =
     algorithm === "abs"
       ? formatAbsConnectorExpression(points, decimalPlaces)
-      : formatStepExpression(start.y, terms, steepness, decimalPlaces, signEpsilon);
+      : algorithm === "lagrange"
+        ? formatLagrangeExpression(points, decimalPlaces)
+        : formatStepExpression(start.y, terms, steepness, decimalPlaces, signEpsilon);
 
   return {
     expression,
@@ -143,6 +148,35 @@ export function evaluateAbsConnectorFirstDerivativeY(
     slope += coefficient * (evaluateStableSignRatio(x - startX, options) - evaluateStableSignRatio(x - endX, options));
   }
   return slope;
+}
+
+/** 计算拉格朗日插值多项式，用于 y= 模式预览和发射角估计。 */
+export function evaluateLagrangeY(x: number, points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
+  const interpolationPoints = createUniqueLagrangePoints(points, (value) =>
+    normalizeFormulaCoefficient(value, options),
+  );
+  if (interpolationPoints.length === 0) {
+    return 0;
+  }
+  if (interpolationPoints.length === 1) {
+    return interpolationPoints[0].y;
+  }
+
+  let y = 0;
+  for (let index = 0; index < interpolationPoints.length; index += 1) {
+    const point = interpolationPoints[index];
+    let basis = 1;
+    for (let otherIndex = 0; otherIndex < interpolationPoints.length; otherIndex += 1) {
+      if (otherIndex === index) {
+        continue;
+      }
+
+      const otherPoint = interpolationPoints[otherIndex];
+      basis *= (x - otherPoint.x) / (point.x - otherPoint.x);
+    }
+    y += point.y * basis;
+  }
+  return y;
 }
 
 /** 将点击路径点转换为阶梯中心点和纵向变化量。 */
@@ -250,6 +284,36 @@ function formatAbsConnectorFirstDerivativeExpression(
   return cleanupExpression(parts.join("")) || "0";
 }
 
+/** 格式化拉格朗日插值多项式；x 重复的点按同一个插值点处理。 */
+function formatLagrangeExpression(points: readonly GraphPoint[], decimalPlaces?: number) {
+  const interpolationPoints = createUniqueLagrangePoints(points, (value) => normalizeZero(value, decimalPlaces));
+  if (interpolationPoints.length === 0) {
+    return "0";
+  }
+  if (interpolationPoints.length === 1) {
+    return formatDecimal(interpolationPoints[0].y, decimalPlaces);
+  }
+
+  const parts: string[] = [];
+  for (let index = 0; index < interpolationPoints.length; index += 1) {
+    const point = interpolationPoints[index];
+    const factors: string[] = [];
+    for (let otherIndex = 0; otherIndex < interpolationPoints.length; otherIndex += 1) {
+      if (otherIndex === index) {
+        continue;
+      }
+
+      const otherPoint = interpolationPoints[otherIndex];
+      factors.push(
+        `(${formatXOffset(otherPoint.x, decimalPlaces)})/${formatDecimal(point.x - otherPoint.x, decimalPlaces)}`,
+      );
+    }
+
+    parts.push(formatSignedRawTerm(point.y, factors.map((factor) => `(${factor})`).join("*"), decimalPlaces));
+  }
+  return cleanupExpression(parts.join("")) || "0";
+}
+
 /** 创建一个连接线段，并把垂直输入拓宽到足以保持公式有限。 */
 function createAbsConnectorSegment(start: GraphPoint, end: GraphPoint): AbsConnectorSegment {
   const deltaY = end.y - start.y;
@@ -277,6 +341,18 @@ function isRoundedAbsConnectorZero(segment: AbsConnectorSegment, decimalPlaces?:
     roundToDecimalPlaces(segment.startX, decimalPlaces) === roundToDecimalPlaces(segment.endX, decimalPlaces) &&
     roundToDecimalPlaces(segment.width, decimalPlaces) === 0
   );
+}
+
+function createUniqueLagrangePoints(points: readonly GraphPoint[], normalize: (value: number) => number) {
+  const uniquePoints: GraphPoint[] = [];
+  for (const point of points) {
+    const normalizedPoint = createGraphPoint(normalize(point.x), normalize(point.y));
+    if (uniquePoints.some((uniquePoint) => uniquePoint.x === normalizedPoint.x)) {
+      continue;
+    }
+    uniquePoints.push(normalizedPoint);
+  }
+  return uniquePoints;
 }
 
 /** 格式化 a*(x+c)，即导数公式使用的带符号阶梯中心距离。 */

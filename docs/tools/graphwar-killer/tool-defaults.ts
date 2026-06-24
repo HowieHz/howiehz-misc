@@ -7,7 +7,7 @@ interface GraphwarToolDefaults {
     width: number;
     height: number;
   };
-  pathVerticalPixelTolerance: number;
+  targetRangePixelTolerance: number;
   magnifierSize: number;
   magnifierZoom: number;
   steepness: number;
@@ -27,7 +27,7 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
     width: 770,
     height: 450.72,
   },
-  pathVerticalPixelTolerance: 1.5,
+  targetRangePixelTolerance: 1.5,
   magnifierSize: 132,
   magnifierZoom: 3,
   steepness: 67,

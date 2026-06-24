@@ -14,7 +14,6 @@ import {
   clampPixelPointToCanvas,
   graphToImagePoint,
   imageToGraphPoint,
-  isVerticalGraphDelta,
   normalizeBoundsRect,
   normalizePathPoint,
   xPlusGoesRight,
@@ -145,6 +144,7 @@ const equationModes = [
 const algorithmModes = [
   { value: "abs", label: "Double absolute-value function" },
   { value: "step", label: "Step function" },
+  { value: "lagrange", label: "Lagrange interpolation" },
 ] as const satisfies readonly { value: AlgorithmMode; label: string }[];
 
 const parsedBounds = computed<ParsedBounds>(() => {
@@ -226,6 +226,7 @@ const graphwarFormulaPathPoints = computed<GraphPoint[]>(() => {
 const formulaOutputDecimalPlaces = computed(() => (
   parsedPrecision.value.ok ? parsedPrecision.value.decimalPlaces : DEFAULT_FORMULA_DECIMAL_PLACES
 ));
+const minimumPathGraphXStep = computed(() => 10 ** -formulaOutputDecimalPlaces.value);
 const formulaOutputSteepness = computed(() => {
   const steepness = parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1;
   return roundToDecimalPlaces(steepness, formulaOutputDecimalPlaces.value);
@@ -242,6 +243,7 @@ const formulaOutputPathPoints = computed<GraphPoint[]>(() =>
 const formulaNeedsSignEpsilon = computed(() => {
   if (
     !parsedBounds.value.ok ||
+    algorithmMode.value === "lagrange" ||
     (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
     formulaOutputPathPoints.value.length < 2
   ) {
@@ -272,15 +274,21 @@ const formulaSignEpsilon = computed(() => (
   formulaNeedsSignEpsilon.value ? GRAPHWAR_TOOL_SIGN_EPSILON : 0
 ));
 
-const activeEquationDescription = computed(() => (
-  algorithmMode.value === "abs"
-    ? equationMode.value === "y"
+const activeEquationDescription = computed(() => {
+  if (algorithmMode.value === "abs") {
+    return equationMode.value === "y"
       ? "Output the double absolute-value connector"
       : equationMode.value === "dy"
         ? "Output the first derivative of the double absolute-value connector"
-        : "The double absolute-value function does not support y''"
-    : equationModes.find((mode) => mode.value === equationMode.value)?.description ?? ""
-));
+        : "The double absolute-value function does not support y''";
+  }
+  if (algorithmMode.value === "lagrange") {
+    return equationMode.value === "y"
+      ? "Output the Lagrange interpolation polynomial"
+      : "Lagrange interpolation currently supports y= only";
+  }
+  return equationModes.find((mode) => mode.value === equationMode.value)?.description ?? "";
+});
 const activeToolHint = computed(() => (
   toolMode.value === "bounds"
     ? "Left-click two corners to set the bounds. Right-click to cancel the selected point."
@@ -313,7 +321,7 @@ const allowedTargetRect = computed<BoundsRect | undefined>(() => {
 
   if (xPlusGoesRight(parsedBounds.value.bounds)) {
     const left = clampNumber(
-      lastPoint.x - graphwarToolDefaults.pathVerticalPixelTolerance,
+      lastPoint.x - graphwarToolDefaults.targetRangePixelTolerance,
       rect.x,
       rect.x + rect.width,
     );
@@ -326,7 +334,7 @@ const allowedTargetRect = computed<BoundsRect | undefined>(() => {
   }
 
   const right = clampNumber(
-    lastPoint.x + graphwarToolDefaults.pathVerticalPixelTolerance,
+    lastPoint.x + graphwarToolDefaults.targetRangePixelTolerance,
     rect.x,
     rect.x + rect.width,
   );
@@ -355,6 +363,9 @@ const calculationMessage = computed(() => {
   }
   if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
     return "The double absolute-value function does not support y''. Choose y= or y'=.";
+  }
+  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
+    return "Lagrange interpolation currently supports y= only.";
   }
   if (pathPixels.value.length < 2) {
     return "Mark your own position first, then choose at least one path point";
@@ -390,6 +401,9 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
     return undefined;
   }
   if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
+    return undefined;
+  }
+  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
     return undefined;
   }
 
@@ -608,6 +622,15 @@ const statusAnnouncement = computed(() => {
   }
   return "";
 });
+const screenshotStatusText = computed(() => {
+  const parts = [
+    imageStatus.value || imageName.value || "Capture, upload, drag in, or paste a screenshot with Ctrl/Cmd+V",
+  ];
+  if (pathStatus.value) {
+    parts.push(pathStatus.value);
+  }
+  return parts.join(" · ");
+});
 
 onMounted(() => {
   window.addEventListener("paste", handlePaste);
@@ -625,6 +648,21 @@ onBeforeUnmount(() => {
 
 watch([obstacleMinAreaText], () => {
   scheduleGraphwarObjectDetection();
+});
+
+watch([formulaOutputDecimalPlaces], () => {
+  if (!parsedPrecision.value.ok || pathPixels.value.length < 2) {
+    return;
+  }
+  const normalizedPath = normalizePathForMinimumXStep(pathPixels.value);
+  pathPixels.value = normalizedPath;
+  pathStatus.value = pathFollowsGraphRule(normalizedPath) ? "" : getForwardPathMessage();
+});
+
+watch([algorithmMode, equationMode], () => {
+  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
+    equationMode.value = "y";
+  }
 });
 
 /** Load a screenshot selected from the hidden file input. */
@@ -1574,7 +1612,13 @@ function appendPathPoint(point: PixelPoint) {
     return false;
   }
 
-  const nextPoint = normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, pathPixels.value.at(-1));
+  const nextPoint = normalizePathPoint(
+    point,
+    boundsRect.value,
+    parsedBounds.value.bounds,
+    pathPixels.value.at(-1),
+    minimumPathGraphXStep.value,
+  );
   if (!nextPoint) {
     return false;
   }
@@ -1583,7 +1627,7 @@ function appendPathPoint(point: PixelPoint) {
     return false;
   }
 
-  pathPixels.value = [...pathPixels.value, nextPoint];
+  pathPixels.value = normalizePathForMinimumXStep([...pathPixels.value, nextPoint]);
   pathStatus.value = "";
   return true;
 }
@@ -1616,21 +1660,50 @@ function setPathPoint(index: number, point: PixelPoint) {
   }
 
   const previousPoint = index > 0 ? pathPixels.value[index - 1] : undefined;
-  const nextPoint = normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, previousPoint);
+  const nextPoint = normalizePathPoint(
+    point,
+    boundsRect.value,
+    parsedBounds.value.bounds,
+    previousPoint,
+    minimumPathGraphXStep.value,
+  );
   if (!nextPoint) {
     return false;
   }
 
   const nextPath = [...pathPixels.value];
   nextPath[index] = nextPoint;
-  if (!pathFollowsGraphRule(nextPath)) {
-    pathStatus.value = "Path points must move in +x. Moves toward -x are converted to vertical points.";
+  const normalizedPath = normalizePathForMinimumXStep(nextPath);
+  if (!pathFollowsGraphRule(normalizedPath)) {
+    pathStatus.value = getForwardPathMessage();
     return false;
   }
 
-  pathPixels.value = nextPath;
+  pathPixels.value = normalizedPath;
   pathStatus.value = "";
   return true;
+}
+
+function normalizePathForMinimumXStep(points: readonly PixelPoint[]) {
+  if (!parsedBounds.value.ok || points.length < 2) {
+    return [...points];
+  }
+
+  // Walk by path index so every later point advances by at least one output-precision step.
+  const normalizedPoints = [points[0]];
+  for (let index = 1; index < points.length; index += 1) {
+    const previousPoint = normalizedPoints.at(-1);
+    normalizedPoints.push(
+      normalizePathPoint(
+        points[index],
+        boundsRect.value,
+        parsedBounds.value.bounds,
+        previousPoint,
+        minimumPathGraphXStep.value,
+      ),
+    );
+  }
+  return normalizedPoints;
 }
 
 function removePathPoint(index: number) {
@@ -1791,15 +1864,11 @@ function canAppendPathPoint(point: PixelPoint) {
   }
 
   const deltaX = nextPoint.x - previousPoint.x;
-  if (isVerticalPathDelta(deltaX)) {
+  if (pathAdvancesEnough(deltaX)) {
     return true;
   }
 
-  if (deltaX > 0) {
-    return true;
-  }
-
-  pathStatus.value = "Path points must move in +x. Moves toward -x are converted to vertical points.";
+  pathStatus.value = getForwardPathMessage();
   return false;
 }
 
@@ -1812,11 +1881,23 @@ function pathFollowsGraphRule(points: PixelPoint[]) {
     const previousPoint = imageToGraphPoint(points[index - 1], parsedBounds.value.bounds, boundsRect.value);
     const nextPoint = imageToGraphPoint(points[index], parsedBounds.value.bounds, boundsRect.value);
     const deltaX = nextPoint.x - previousPoint.x;
-    if (!isVerticalPathDelta(deltaX) && deltaX <= 0) {
+    if (!pathAdvancesEnough(deltaX)) {
       return false;
     }
   }
   return true;
+}
+
+function pathAdvancesEnough(deltaX: number) {
+  const tolerance = Math.max(Number.EPSILON, minimumPathGraphXStep.value * 1e-9);
+  return deltaX + tolerance >= minimumPathGraphXStep.value;
+}
+
+function getForwardPathMessage() {
+  return `Each point's x must advance by at least ${formatDecimal(
+    minimumPathGraphXStep.value,
+    formulaOutputDecimalPlaces.value,
+  )}, but that would go out of bounds.`;
 }
 
 /** Clear all selected path points without changing the image bounds or settings. */
@@ -1851,20 +1932,6 @@ async function copyFormula() {
   } catch {
     setCopyStatus("error");
   }
-}
-
-/** Wrap the graph-coordinate vertical tolerance check with the current page state. */
-function isVerticalPathDelta(deltaX: number) {
-  if (!parsedBounds.value.ok) {
-    return nearlyEqual(deltaX, 0);
-  }
-
-  return isVerticalGraphDelta(
-    deltaX,
-    parsedBounds.value.bounds,
-    boundsRect.value,
-    graphwarToolDefaults.pathVerticalPixelTolerance,
-  );
 }
 
 /** Convert a browser pointer event to screenshot pixel coordinates. */
@@ -1960,7 +2027,7 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
       <span class="graphwar-killer__setting-label">Algorithm</span>
       <div
         class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle"
-        :class="{ 'graphwar-killer__tool-toggle--path': algorithmMode === 'step' }"
+        :class="`graphwar-killer__algorithm-toggle--${algorithmMode}`"
         role="group"
         aria-label="Algorithm"
       >
@@ -2186,14 +2253,10 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
   >
     <div class="graphwar-killer__label-row graphwar-killer__label-row--image-status">
       <h2 id="graphwar-killer-screenshot-title">Screenshot</h2>
-      <span>{{ imageStatus || imageName || "Capture, upload, drag in, or paste a screenshot with Ctrl/Cmd+V" }}</span>
+      <span :class="{ 'graphwar-killer__label-status--warning': pathStatus }">
+        {{ screenshotStatusText }}
+      </span>
     </div>
-    <p
-      v-if="pathStatus"
-      class="graphwar-killer__hint graphwar-killer__hint--warning"
-    >
-      {{ pathStatus }}
-    </p>
     <div
       ref="stageRef"
       class="graphwar-killer__stage"
@@ -2515,7 +2578,7 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
 - Use Pick bounds and left-click two corners of the play area. Right-click to cancel the current point.
 - Switch to Pick path, left-click your soldier's center first, then click path point centers. Right-click empty space to undo the latest point.
 - Drag path points with the left mouse button to fine-tune them. Right-click a point to delete it.
-- If you click toward `-x`, the point is automatically converted into a vertical move.
+- If you click toward `-x` or too close to the previous point, x is advanced by at least one current decimal-place step toward `x+`.
 - Copy the generated formula into Graphwar.
 
 <style scoped>
@@ -2605,12 +2668,17 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
   color: #dc2626;
 }
 
+.graphwar-killer__label-row > .graphwar-killer__label-status--warning {
+  color: #b45309;
+  font-weight: 700;
+}
+
 .graphwar-killer__label-row--image-status {
-  justify-content: flex-start;
+  justify-content: space-between;
 }
 
 .graphwar-killer__label-row--image-status > span {
-  text-align: left;
+  text-align: right;
 }
 
 .graphwar-killer__label-row--result {
@@ -2936,6 +3004,31 @@ Upload or paste a [Graphwar](https://graphwar.com/graphwar_1/index.html) screens
 
 .graphwar-killer__tool-toggle--path::before {
   transform: translateX(100%);
+}
+
+.graphwar-killer__algorithm-toggle {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 44px;
+}
+
+.graphwar-killer__algorithm-toggle::before {
+  width: calc((100% - 6px) / 3);
+}
+
+.graphwar-killer__algorithm-toggle--step::before {
+  transform: translateX(100%);
+}
+
+.graphwar-killer__algorithm-toggle--lagrange::before {
+  transform: translateX(200%);
+}
+
+.graphwar-killer__algorithm-toggle button {
+  min-height: 36px;
+  padding: 5px 8px;
+  font-size: 0.82rem;
+  line-height: 1.15;
+  white-space: normal;
 }
 
 .graphwar-killer__tool-toggle button {

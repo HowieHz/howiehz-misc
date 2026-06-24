@@ -1,6 +1,7 @@
 import {
   evaluateAbsConnectorFirstDerivativeY,
   evaluateAbsConnectorY,
+  evaluateLagrangeY,
   evaluateStepFirstDerivativeY,
   evaluateStepSecondDerivativeY,
   evaluateStepY,
@@ -177,14 +178,18 @@ function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: Graph
 function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
   return options.algorithm === "abs"
     ? (x: number) => evaluateAbsConnectorY(x, options.points, options.formulaEvaluation)
-    : (x: number) => evaluateStepY(x, options.points, options.steepness, options.formulaEvaluation);
+    : options.algorithm === "lagrange"
+      ? (x: number) => evaluateLagrangeY(x, options.points, options.formulaEvaluation)
+      : (x: number) => evaluateStepY(x, options.points, options.steepness, options.formulaEvaluation);
 }
 
 /** 创建 y'= 模式使用的一阶导计算器。 */
 function createFirstOrderEvaluator(options: CreateGraphwarFormulaPathOptions): FirstOrderEvaluator {
   return options.algorithm === "abs"
     ? (x) => evaluateAbsConnectorFirstDerivativeY(x, options.points, options.formulaEvaluation)
-    : (x) => evaluateStepFirstDerivativeY(x, options.points, options.steepness, options.formulaEvaluation);
+    : options.algorithm === "lagrange"
+      ? () => Number.NaN
+      : (x) => evaluateStepFirstDerivativeY(x, options.points, options.steepness, options.formulaEvaluation);
 }
 
 /** 创建 y''= 模式使用的二阶导计算器。 */

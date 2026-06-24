@@ -14,7 +14,6 @@ import {
   clampPixelPointToCanvas,
   graphToImagePoint,
   imageToGraphPoint,
-  isVerticalGraphDelta,
   normalizeBoundsRect,
   normalizePathPoint,
   xPlusGoesRight,
@@ -145,6 +144,7 @@ const equationModes = [
 const algorithmModes = [
   { value: "abs", label: "双绝对值函数" },
   { value: "step", label: "阶梯函数" },
+  { value: "lagrange", label: "拉格朗日插值法" },
 ] as const satisfies readonly { value: AlgorithmMode; label: string }[];
 
 const parsedBounds = computed<ParsedBounds>(() => {
@@ -226,6 +226,7 @@ const graphwarFormulaPathPoints = computed<GraphPoint[]>(() => {
 const formulaOutputDecimalPlaces = computed(() => (
   parsedPrecision.value.ok ? parsedPrecision.value.decimalPlaces : DEFAULT_FORMULA_DECIMAL_PLACES
 ));
+const minimumPathGraphXStep = computed(() => 10 ** -formulaOutputDecimalPlaces.value);
 const formulaOutputSteepness = computed(() => {
   const steepness = parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1;
   return roundToDecimalPlaces(steepness, formulaOutputDecimalPlaces.value);
@@ -242,6 +243,7 @@ const formulaOutputPathPoints = computed<GraphPoint[]>(() =>
 const formulaNeedsSignEpsilon = computed(() => {
   if (
     !parsedBounds.value.ok ||
+    algorithmMode.value === "lagrange" ||
     (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
     formulaOutputPathPoints.value.length < 2
   ) {
@@ -272,15 +274,19 @@ const formulaSignEpsilon = computed(() => (
   formulaNeedsSignEpsilon.value ? GRAPHWAR_TOOL_SIGN_EPSILON : 0
 ));
 
-const activeEquationDescription = computed(() => (
-  algorithmMode.value === "abs"
-    ? equationMode.value === "y"
+const activeEquationDescription = computed(() => {
+  if (algorithmMode.value === "abs") {
+    return equationMode.value === "y"
       ? "输出双绝对值连接函数"
       : equationMode.value === "dy"
         ? "输出双绝对值连接函数的一阶导数"
-        : "双绝对值函数不输出 y''"
-    : equationModes.find((mode) => mode.value === equationMode.value)?.description ?? ""
-));
+        : "双绝对值函数不输出 y''";
+  }
+  if (algorithmMode.value === "lagrange") {
+    return equationMode.value === "y" ? "输出拉格朗日插值多项式" : "拉格朗日插值法暂只支持 y=";
+  }
+  return equationModes.find((mode) => mode.value === equationMode.value)?.description ?? "";
+});
 const activeToolHint = computed(() => (
   toolMode.value === "bounds"
     ? "左键点两角落定边界；右键取消已选点。"
@@ -313,7 +319,7 @@ const allowedTargetRect = computed<BoundsRect | undefined>(() => {
 
   if (xPlusGoesRight(parsedBounds.value.bounds)) {
     const left = clampNumber(
-      lastPoint.x - graphwarToolDefaults.pathVerticalPixelTolerance,
+      lastPoint.x - graphwarToolDefaults.targetRangePixelTolerance,
       rect.x,
       rect.x + rect.width,
     );
@@ -326,7 +332,7 @@ const allowedTargetRect = computed<BoundsRect | undefined>(() => {
   }
 
   const right = clampNumber(
-    lastPoint.x + graphwarToolDefaults.pathVerticalPixelTolerance,
+    lastPoint.x + graphwarToolDefaults.targetRangePixelTolerance,
     rect.x,
     rect.x + rect.width,
   );
@@ -355,6 +361,9 @@ const calculationMessage = computed(() => {
   }
   if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
     return "双绝对值函数不输出 y''；请选择 y= 或 y'=。";
+  }
+  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
+    return "拉格朗日插值法暂只支持 y=。";
   }
   if (pathPixels.value.length < 2) {
     return "先点出自己的位置，再选择至少一个路径点";
@@ -390,6 +399,9 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
     return undefined;
   }
   if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
+    return undefined;
+  }
+  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
     return undefined;
   }
 
@@ -608,6 +620,15 @@ const statusAnnouncement = computed(() => {
   }
   return "";
 });
+const screenshotStatusText = computed(() => {
+  const parts = [
+    imageStatus.value || imageName.value || "可以截屏、上传、拖入或直接 Ctrl / Cmd + V 粘贴截图",
+  ];
+  if (pathStatus.value) {
+    parts.push(pathStatus.value);
+  }
+  return parts.join(" · ");
+});
 
 onMounted(() => {
   window.addEventListener("paste", handlePaste);
@@ -625,6 +646,21 @@ onBeforeUnmount(() => {
 
 watch([obstacleMinAreaText], () => {
   scheduleGraphwarObjectDetection();
+});
+
+watch([formulaOutputDecimalPlaces], () => {
+  if (!parsedPrecision.value.ok || pathPixels.value.length < 2) {
+    return;
+  }
+  const normalizedPath = normalizePathForMinimumXStep(pathPixels.value);
+  pathPixels.value = normalizedPath;
+  pathStatus.value = pathFollowsGraphRule(normalizedPath) ? "" : getForwardPathMessage();
+});
+
+watch([algorithmMode, equationMode], () => {
+  if (algorithmMode.value === "lagrange" && equationMode.value !== "y") {
+    equationMode.value = "y";
+  }
 });
 
 /** 从隐藏文件输入框加载用户上传的截图。 */
@@ -1574,7 +1610,13 @@ function appendPathPoint(point: PixelPoint) {
     return false;
   }
 
-  const nextPoint = normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, pathPixels.value.at(-1));
+  const nextPoint = normalizePathPoint(
+    point,
+    boundsRect.value,
+    parsedBounds.value.bounds,
+    pathPixels.value.at(-1),
+    minimumPathGraphXStep.value,
+  );
   if (!nextPoint) {
     return false;
   }
@@ -1583,7 +1625,7 @@ function appendPathPoint(point: PixelPoint) {
     return false;
   }
 
-  pathPixels.value = [...pathPixels.value, nextPoint];
+  pathPixels.value = normalizePathForMinimumXStep([...pathPixels.value, nextPoint]);
   pathStatus.value = "";
   return true;
 }
@@ -1616,21 +1658,50 @@ function setPathPoint(index: number, point: PixelPoint) {
   }
 
   const previousPoint = index > 0 ? pathPixels.value[index - 1] : undefined;
-  const nextPoint = normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, previousPoint);
+  const nextPoint = normalizePathPoint(
+    point,
+    boundsRect.value,
+    parsedBounds.value.bounds,
+    previousPoint,
+    minimumPathGraphXStep.value,
+  );
   if (!nextPoint) {
     return false;
   }
 
   const nextPath = [...pathPixels.value];
   nextPath[index] = nextPoint;
-  if (!pathFollowsGraphRule(nextPath)) {
-    pathStatus.value = "只能走 x+；x- 会自动变垂直";
+  const normalizedPath = normalizePathForMinimumXStep(nextPath);
+  if (!pathFollowsGraphRule(normalizedPath)) {
+    pathStatus.value = getForwardPathMessage();
     return false;
   }
 
-  pathPixels.value = nextPath;
+  pathPixels.value = normalizedPath;
   pathStatus.value = "";
   return true;
+}
+
+function normalizePathForMinimumXStep(points: readonly PixelPoint[]) {
+  if (!parsedBounds.value.ok || points.length < 2) {
+    return [...points];
+  }
+
+  // 按路径序号从低到高推进，保证每个后续点至少比前一点前进一个输出精度步长。
+  const normalizedPoints = [points[0]];
+  for (let index = 1; index < points.length; index += 1) {
+    const previousPoint = normalizedPoints.at(-1);
+    normalizedPoints.push(
+      normalizePathPoint(
+        points[index],
+        boundsRect.value,
+        parsedBounds.value.bounds,
+        previousPoint,
+        minimumPathGraphXStep.value,
+      ),
+    );
+  }
+  return normalizedPoints;
 }
 
 function removePathPoint(index: number) {
@@ -1791,15 +1862,11 @@ function canAppendPathPoint(point: PixelPoint) {
   }
 
   const deltaX = nextPoint.x - previousPoint.x;
-  if (isVerticalPathDelta(deltaX)) {
+  if (pathAdvancesEnough(deltaX)) {
     return true;
   }
 
-  if (deltaX > 0) {
-    return true;
-  }
-
-  pathStatus.value = "只能走 x+；x- 会自动变垂直";
+  pathStatus.value = getForwardPathMessage();
   return false;
 }
 
@@ -1812,11 +1879,20 @@ function pathFollowsGraphRule(points: PixelPoint[]) {
     const previousPoint = imageToGraphPoint(points[index - 1], parsedBounds.value.bounds, boundsRect.value);
     const nextPoint = imageToGraphPoint(points[index], parsedBounds.value.bounds, boundsRect.value);
     const deltaX = nextPoint.x - previousPoint.x;
-    if (!isVerticalPathDelta(deltaX) && deltaX <= 0) {
+    if (!pathAdvancesEnough(deltaX)) {
       return false;
     }
   }
   return true;
+}
+
+function pathAdvancesEnough(deltaX: number) {
+  const tolerance = Math.max(Number.EPSILON, minimumPathGraphXStep.value * 1e-9);
+  return deltaX + tolerance >= minimumPathGraphXStep.value;
+}
+
+function getForwardPathMessage() {
+  return `每个点的 x 至少前进 ${formatDecimal(minimumPathGraphXStep.value, formulaOutputDecimalPlaces.value)}，但会超出边界`;
 }
 
 /** 清除全部已选路径点，但不改变图片边界和设定。 */
@@ -1851,20 +1927,6 @@ async function copyFormula() {
   } catch {
     setCopyStatus("error");
   }
-}
-
-/** 用当前页面状态包装图形坐标中的垂直容差判断。 */
-function isVerticalPathDelta(deltaX: number) {
-  if (!parsedBounds.value.ok) {
-    return nearlyEqual(deltaX, 0);
-  }
-
-  return isVerticalGraphDelta(
-    deltaX,
-    parsedBounds.value.bounds,
-    boundsRect.value,
-    graphwarToolDefaults.pathVerticalPixelTolerance,
-  );
 }
 
 /** 将浏览器指针事件转换为截图像素坐标。 */
@@ -1960,7 +2022,7 @@ async function copyText(text: string) {
       <span class="graphwar-killer__setting-label">算法</span>
       <div
         class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle"
-        :class="{ 'graphwar-killer__tool-toggle--path': algorithmMode === 'step' }"
+        :class="`graphwar-killer__algorithm-toggle--${algorithmMode}`"
         role="group"
         aria-label="算法"
       >
@@ -2186,14 +2248,10 @@ async function copyText(text: string) {
   >
     <div class="graphwar-killer__label-row graphwar-killer__label-row--image-status">
       <h2 id="graphwar-killer-screenshot-title">截图</h2>
-      <span>{{ imageStatus || imageName || "可以截屏、上传、拖入或直接 Ctrl / Cmd + V 粘贴截图" }}</span>
+      <span :class="{ 'graphwar-killer__label-status--warning': pathStatus }">
+        {{ screenshotStatusText }}
+      </span>
     </div>
-    <p
-      v-if="pathStatus"
-      class="graphwar-killer__hint graphwar-killer__hint--warning"
-    >
-      {{ pathStatus }}
-    </p>
     <div
       ref="stageRef"
       class="graphwar-killer__stage"
@@ -2515,7 +2573,7 @@ async function copyText(text: string) {
 - 用“点选边界”左键点边界的两个角；右键取消当前点。
 - 切到“点选路径”，左键先点自己士兵中心；再点路径点中心，右键空白处撤回最近一个路径点。
 - 可使用左键拖动路径点微调，右键点路径点删除。
-- 点到 `-x` 一侧时，会自动变成垂直点。
+- 点到 `-x` 一侧或离上一点太近时，x 会按当前保留小数位至少向 `x+` 前进一步。
 - 复制生成的函数到 Graphwar。
 
 <style scoped>
@@ -2605,12 +2663,17 @@ async function copyText(text: string) {
   color: #dc2626;
 }
 
+.graphwar-killer__label-row > .graphwar-killer__label-status--warning {
+  color: #b45309;
+  font-weight: 700;
+}
+
 .graphwar-killer__label-row--image-status {
-  justify-content: flex-start;
+  justify-content: space-between;
 }
 
 .graphwar-killer__label-row--image-status > span {
-  text-align: left;
+  text-align: right;
 }
 
 .graphwar-killer__label-row--result {
@@ -2936,6 +2999,31 @@ async function copyText(text: string) {
 
 .graphwar-killer__tool-toggle--path::before {
   transform: translateX(100%);
+}
+
+.graphwar-killer__algorithm-toggle {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 44px;
+}
+
+.graphwar-killer__algorithm-toggle::before {
+  width: calc((100% - 6px) / 3);
+}
+
+.graphwar-killer__algorithm-toggle--step::before {
+  transform: translateX(100%);
+}
+
+.graphwar-killer__algorithm-toggle--lagrange::before {
+  transform: translateX(200%);
+}
+
+.graphwar-killer__algorithm-toggle button {
+  min-height: 36px;
+  padding: 5px 8px;
+  font-size: 0.82rem;
+  line-height: 1.15;
+  white-space: normal;
 }
 
 .graphwar-killer__tool-toggle button {

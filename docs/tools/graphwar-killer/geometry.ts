@@ -1,4 +1,4 @@
-import { clampNumber, nearlyEqual } from "./numbers";
+import { clampNumber } from "./numbers";
 import { createGraphPoint, createPixelPoint } from "./types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "./types";
 
@@ -76,30 +76,27 @@ export function clampPixelPointToCanvas(point: PixelPoint, canvasWidth: number, 
   return createPixelPoint(clampNumber(point.x, 0, canvasWidth), clampNumber(point.y, 0, canvasHeight));
 }
 
-/** 将点击路径点限制在边界内，并把 x- 方向点击转为从上一点垂直移动。 */
+/** 将点击路径点限制在边界内，并把 x- 或过近点击推进到最小 x+ 步长。 */
 export function normalizePathPoint(
   point: PixelPoint,
   rect: BoundsRect,
   bounds: GraphBounds,
   lastPoint: PixelPoint | undefined,
+  minGraphXStep = 0,
 ): PixelPoint {
   let x = clampNumber(point.x, rect.x, rect.x + rect.width);
-  if (lastPoint) {
+  if (lastPoint && minGraphXStep > 0) {
     const xPlusIsRight = xPlusGoesRight(bounds);
-    if ((xPlusIsRight && point.x < lastPoint.x) || (!xPlusIsRight && point.x > lastPoint.x)) {
-      x = lastPoint.x;
+    const minPixelXStep = Math.abs(minGraphXStep / (bounds.maxX - bounds.minX)) * rect.width;
+    if (xPlusIsRight) {
+      x = Math.max(x, lastPoint.x + minPixelXStep);
+    } else {
+      x = Math.min(x, lastPoint.x - minPixelXStep);
     }
   }
 
-  return createPixelPoint(x, clampNumber(point.y, rect.y, rect.y + rect.height));
-}
-
-/** 判断图形坐标中的 x 变化量是否足够小，可以视为垂直移动。 */
-export function isVerticalGraphDelta(deltaX: number, bounds: GraphBounds, rect: BoundsRect, pixelTolerance: number) {
-  if (rect.width <= 0) {
-    return nearlyEqual(deltaX, 0);
-  }
-
-  const graphTolerance = (Math.abs(bounds.maxX - bounds.minX) / rect.width) * pixelTolerance;
-  return Math.abs(deltaX) <= graphTolerance;
+  return createPixelPoint(
+    clampNumber(x, rect.x, rect.x + rect.width),
+    clampNumber(point.y, rect.y, rect.y + rect.height),
+  );
 }

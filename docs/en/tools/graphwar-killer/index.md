@@ -810,7 +810,6 @@ function clearDetections() {
   detectionStatusIsError.value = false;
   detectedSoldiers.value = [];
   detectedObstacles.value = undefined;
-  smartCursorEnabled.value = false;
   hoveredDetectedSoldierId.value = undefined;
 }
 

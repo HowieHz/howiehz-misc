@@ -560,11 +560,10 @@ const magnifierStyle = computed(() => {
 
   const displayX = point.x / imageWidth.value * stageDisplayWidth.value;
   const displayY = point.y / imageHeight.value * stageDisplayHeight.value;
-  const moveLeft = displayX > stageDisplayWidth.value * 0.64;
+  const moveRight = displayX < stageDisplayWidth.value * 0.36;
   const moveUp = displayY > stageDisplayHeight.value * 0.68;
-  const moveDown = displayY < stageDisplayHeight.value * 0.28;
-  const translateX = moveLeft ? `calc(-100% - 18px)` : "18px";
-  const translateY = moveUp ? "calc(-100% + 12px)" : moveDown ? "-12px" : "-50%";
+  const translateX = moveRight ? "18px" : `calc(-100% - 18px)`;
+  const translateY = moveUp ? "calc(-100% - 18px)" : "18px";
 
   return {
     width: `${graphwarToolDefaults.magnifierSize}px`,

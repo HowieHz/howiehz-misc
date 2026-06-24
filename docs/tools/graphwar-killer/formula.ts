@@ -84,7 +84,7 @@ export function buildFormula(
   };
 }
 
-/** 计算 sigmoid 阶梯 y= 路径，用于 SVG 预览采样。 */
+/** 计算 sigmoid 阶跃 y= 路径，用于 SVG 预览采样。 */
 export function evaluateStepY(
   x: number,
   points: readonly GraphPoint[],
@@ -99,7 +99,7 @@ export function evaluateStepY(
   return y;
 }
 
-/** 计算 sigmoid 阶梯路径在指定 x 处的一阶斜率，用于 y'' 模式发射角提示。 */
+/** 计算 sigmoid 阶跃路径在指定 x 处的一阶斜率，用于 y'' 模式发射角提示。 */
 export function evaluateStepFirstDerivativeY(
   x: number,
   points: readonly GraphPoint[],
@@ -117,7 +117,7 @@ export function evaluateStepFirstDerivativeY(
   return slope;
 }
 
-/** 计算 sigmoid 阶梯路径在指定 x 处的二阶导，用于 y'' 模式 RK4 预览。 */
+/** 计算 sigmoid 阶跃路径在指定 x 处的二阶导，用于 y'' 模式 RK4 预览。 */
 export function evaluateStepSecondDerivativeY(
   x: number,
   points: readonly GraphPoint[],
@@ -209,7 +209,7 @@ export function evaluateAkimaSecondDerivativeY(
   return evaluateSoftCubicInterpolationY(x, points, "akima", "ddy", options);
 }
 
-/** 将点击路径点转换为阶梯中心点和纵向变化量。 */
+/** 将点击路径点转换为阶跃中心点和纵向变化量。 */
 function createStepTerms(points: readonly GraphPoint[]) {
   const terms: StepTerm[] = [];
   for (let index = 1; index < points.length; index += 1) {
@@ -225,7 +225,7 @@ function isCubicInterpolationAlgorithm(algorithm: AlgorithmMode): algorithm is "
   return algorithm === "pchip" || algorithm === "akima";
 }
 
-/** 格式化用户可粘贴到 Graphwar 的基础 y= sigmoid 阶梯表达式。 */
+/** 格式化用户可粘贴到 Graphwar 的基础 y= sigmoid 阶跃表达式。 */
 function formatStepExpression(
   baseY: number,
   terms: readonly StepTerm[],
@@ -246,7 +246,7 @@ function formatStepExpression(
   return cleanupExpression(parts.join(""));
 }
 
-/** 使用抗溢出的 exp 形式格式化 sigmoid 阶梯表达式的一阶导。 */
+/** 使用抗溢出的 exp 形式格式化 sigmoid 阶跃表达式的一阶导。 */
 function formatStepFirstDerivativeExpression(terms: readonly StepTerm[], steepness: number, decimalPlaces?: number) {
   const parts: string[] = [];
   for (const term of terms) {
@@ -257,7 +257,7 @@ function formatStepFirstDerivativeExpression(terms: readonly StepTerm[], steepne
   return cleanupExpression(parts.join("")) || "0";
 }
 
-/** 使用稳定的对称形式格式化 sigmoid 阶梯表达式的二阶导。 */
+/** 使用稳定的对称形式格式化 sigmoid 阶跃表达式的二阶导。 */
 function formatStepSecondDerivativeExpression(
   terms: readonly StepTerm[],
   steepness: number,
@@ -715,12 +715,12 @@ function isRoundedAbsConnectorZero(segment: AbsConnectorSegment, decimalPlaces?:
   );
 }
 
-/** 格式化 a*(x+c)，即导数公式使用的带符号阶梯中心距离。 */
+/** 格式化 a*(x+c)，即导数公式使用的带符号阶跃中心距离。 */
 function formatStepDerivativeArgument(steepness: number, centerX: number, decimalPlaces?: number) {
   return `${formatDecimal(steepness, decimalPlaces)}*(x${formatSignedNumber(-centerX, decimalPlaces)})`;
 }
 
-/** 格式化抗溢出的 sigmoid 阶梯本体。 */
+/** 格式化抗溢出的 sigmoid 阶跃本体。 */
 function formatStableStepSigmoid(
   steepness: number,
   centerX: number,
@@ -772,7 +772,7 @@ function formatAbsXOffset(centerX: number, decimalPlaces?: number) {
   return `abs(${formatXOffset(centerX, decimalPlaces)})`;
 }
 
-/** 格式化 x+c，其中 c 用来把阶梯或连接中心移动到选中点。 */
+/** 格式化 x+c，其中 c 用来把阶跃或连接中心移动到选中点。 */
 function formatXOffset(centerX: number, decimalPlaces?: number) {
   const offset = normalizeZero(-centerX, decimalPlaces);
   return offset === 0 ? "x" : `x${formatSignedNumber(offset, decimalPlaces)}`;

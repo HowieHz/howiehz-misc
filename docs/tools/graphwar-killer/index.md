@@ -137,13 +137,13 @@ let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
 const equationModes = [
-  { value: "y", label: "y=", description: "输出阶梯函数" },
-  { value: "dy", label: "y'=", description: "输出阶梯函数的一阶导数" },
-  { value: "ddy", label: "y''=", description: "输出阶梯函数的二阶导数" },
+  { value: "y", label: "y=", description: "输出阶跃函数" },
+  { value: "dy", label: "y'=", description: "输出阶跃函数的一阶导数" },
+  { value: "ddy", label: "y''=", description: "输出阶跃函数的二阶导数" },
 ] as const satisfies readonly { value: EquationMode; label: string; description: string }[];
 const algorithmModes = [
   { value: "abs", label: "双绝对值函数" },
-  { value: "step", label: "阶梯函数" },
+  { value: "step", label: "阶跃函数" },
   { value: "pchip", label: "PCHIP 插值" },
   { value: "akima", label: "Akima 插值" },
 ] as const satisfies readonly { value: AlgorithmMode; label: string }[];
@@ -169,7 +169,7 @@ const parsedBounds = computed<ParsedBounds>(() => {
 const parsedSteepness = computed<ParsedSteepness>(() => {
   const steepness = parseFiniteNumber(steepnessText.value);
   if (steepness === undefined || steepness <= 0) {
-    return { ok: false as const, message: "阶梯陡峭度需要是大于 0 的数字" };
+    return { ok: false as const, message: "阶跃陡峭度需要是大于 0 的数字" };
   }
   return { ok: true as const, steepness };
 });
@@ -2053,7 +2053,7 @@ async function copyText(text: string) {
       v-if="algorithmMode === 'step'"
       class="graphwar-killer__steepness-label"
     >
-      阶梯陡峭度 a
+      阶跃陡峭度 a
       <input
         v-model="steepnessText"
         inputmode="decimal"

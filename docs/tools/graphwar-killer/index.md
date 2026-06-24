@@ -22,6 +22,7 @@ import {
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
+  GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_SOLDIER_RADIUS,
   GRAPHWAR_VISIBLE_Y_LIMIT,
 } from "./graphwar";
@@ -60,6 +61,30 @@ interface PathLineSegment {
   y1: number;
   y2: number;
 }
+type DetectionKind = "soldier";
+interface DetectionBox extends BoundsRect {
+  id: string;
+  kind: DetectionKind;
+}
+interface ComponentBox extends BoundsRect {
+  area: number;
+  yellowArea: number;
+  centerX: number;
+  centerY: number;
+  outerCircleRadius: number;
+}
+interface AxisGroup {
+  start: number;
+  end: number;
+  coordinate: number;
+  score: number;
+}
+interface AxisTriplet {
+  first: AxisGroup;
+  middle: AxisGroup;
+  last: AxisGroup;
+  score: number;
+}
 
 const graphwarDefaultXLimitText = formatDecimal(GRAPHWAR_DEFAULT_X_LIMIT);
 const graphwarVisibleYLimitText = formatDecimal(GRAPHWAR_VISIBLE_Y_LIMIT);
@@ -89,6 +114,10 @@ const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const pathPixels = ref<PixelPoint[]>([]);
 const pathStatus = ref("");
+const detectionStatus = ref("");
+const detectedSoldiers = ref<DetectionBox[]>([]);
+const detectedSoldierSelectionEnabled = ref(false);
+const hoveredDetectedSoldierId = ref<string>();
 const copyStatus = ref<TransferStatus>("idle");
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -238,6 +267,7 @@ const boundsPreviewRect = computed(() => (
     : undefined
 ));
 const visibleBoundsRect = computed(() => boundsPreviewRect.value ?? boundsRect.value);
+const detectionBoxes = computed<DetectionBox[]>(() => detectedSoldiers.value);
 const allowedTargetRect = computed<BoundsRect | undefined>(() => {
   if (toolMode.value !== "path" || !imageUrl.value || !parsedBounds.value.ok) {
     return undefined;
@@ -603,6 +633,7 @@ function applyLoadedImage(url: string, name: string) {
   imageName.value = name;
   imageStatus.value = "";
   pathPixels.value = [];
+  clearDetections();
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
   magnifierPoint.value = undefined;
@@ -619,6 +650,463 @@ function handleImageLoad() {
   imageHeight.value = image.naturalHeight || graphwarToolDefaults.canvasHeight;
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
+  detectGraphwarObjects();
+}
+
+/** 清除自动识别的士兵标记。 */
+function clearDetections() {
+  detectionStatus.value = "";
+  detectedSoldiers.value = [];
+  hoveredDetectedSoldierId.value = undefined;
+}
+
+/** 使用 Canvas 像素检测 Graphwar 棋盘边界和黄色士兵。 */
+function detectGraphwarObjects() {
+  const image = imageRef.value;
+  if (!image || !imageUrl.value) {
+    detectionStatus.value = "先上传或粘贴截图。";
+    return;
+  }
+
+  const imageData = getImageDataFromElement(image);
+  if (!imageData) {
+    detectionStatus.value = "无法读取截图像素。";
+    return;
+  }
+
+  const edgeRect = detectGraphwarPlayArea(imageData);
+  if (!edgeRect) {
+    clearDetections();
+    detectionStatus.value = "没有识别到 Graphwar 棋盘边界。";
+    return;
+  }
+
+  boundsRect.value = edgeRect;
+  toolMode.value = "path";
+  boundsFirstPoint.value = undefined;
+  pointerPreviewPoint.value = undefined;
+  detectedSoldiers.value = detectSoldiers(imageData, edgeRect);
+  detectionStatus.value = `已自动定位边界，识别到 ${detectedSoldiers.value.length} 个士兵。`;
+}
+
+function getImageDataFromElement(image: HTMLImageElement) {
+  const width = image.naturalWidth;
+  const height = image.naturalHeight;
+  if (width <= 0 || height <= 0) {
+    return undefined;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    return undefined;
+  }
+
+  context.drawImage(image, 0, 0, width, height);
+  return context.getImageData(0, 0, width, height);
+}
+
+function detectGraphwarPlayArea(imageData: ImageData): BoundsRect | undefined {
+  const targetAspectRatio = 770 / 450;
+  const verticalTriplets = buildAxisTriplets(detectAxisGroups(imageData, "vertical"));
+  const horizontalTriplets = buildAxisTriplets(detectAxisGroups(imageData, "horizontal"));
+  let bestRect: BoundsRect | undefined;
+  let bestScore = 0;
+
+  for (const vertical of verticalTriplets) {
+    for (const horizontal of horizontalTriplets) {
+      const rect: BoundsRect = {
+        x: vertical.first.start,
+        y: horizontal.first.start,
+        width: vertical.last.end - vertical.first.start + 1,
+        height: horizontal.last.end - horizontal.first.start + 1,
+      };
+      if (rect.width <= 0 || rect.height <= 0) {
+        continue;
+      }
+
+      const aspectRatio = rect.width / rect.height;
+      if (aspectRatio < targetAspectRatio * 0.7 || aspectRatio > targetAspectRatio * 1.28) {
+        continue;
+      }
+
+      const expectedAxisX = rect.x + rect.width / 2;
+      const expectedAxisY = rect.y + rect.height / 2;
+      const axisOffset =
+        Math.abs(vertical.middle.coordinate - expectedAxisX) / rect.width +
+        Math.abs(horizontal.middle.coordinate - expectedAxisY) / rect.height;
+      if (axisOffset > 0.16) {
+        continue;
+      }
+
+      const aspectPenalty = Math.min(Math.abs(aspectRatio - targetAspectRatio) / targetAspectRatio, 0.5);
+      const score = rect.width * rect.height * vertical.score * horizontal.score * (1 - aspectPenalty) * (1 - axisOffset);
+      if (score > bestScore) {
+        bestScore = score;
+        bestRect = rect;
+      }
+    }
+  }
+
+  if (!bestRect) {
+    return undefined;
+  }
+
+  return bestRect;
+}
+
+function detectAxisGroups(imageData: ImageData, direction: "horizontal" | "vertical") {
+  const { width, height } = imageData;
+  const axisLength = direction === "vertical" ? height : width;
+  const scanLength = direction === "vertical" ? width : height;
+  const counts: number[] = [];
+
+  for (let coordinate = 0; coordinate < scanLength; coordinate += 1) {
+    let count = 0;
+    for (let position = 0; position < axisLength; position += 1) {
+      if (hasBlackPixelInAxisBand(imageData, direction, coordinate, position)) {
+        count += 1;
+      }
+    }
+    counts.push(count);
+  }
+
+  const minScore = axisLength * 0.25;
+  const ranked = counts
+    .map((score, coordinate) => ({ coordinate, score }))
+    .filter((item) => item.score >= minScore)
+    .sort((left, right) => right.score - left.score);
+  const groups: AxisGroup[] = [];
+
+  for (const item of ranked) {
+    if (groups.some((group) => item.coordinate >= group.start - 4 && item.coordinate <= group.end + 4)) {
+      continue;
+    }
+
+    const groupThreshold = item.score * 0.82;
+    let start = item.coordinate;
+    let end = item.coordinate;
+    while (start > 0 && counts[start - 1] >= groupThreshold) {
+      start -= 1;
+    }
+    while (end < scanLength - 1 && counts[end + 1] >= groupThreshold) {
+      end += 1;
+    }
+    groups.push({
+      start,
+      end,
+      coordinate: (start + end) / 2,
+      score: item.score,
+    });
+    if (groups.length >= 12) {
+      break;
+    }
+  }
+  return groups.sort((left, right) => left.coordinate - right.coordinate);
+}
+
+function hasBlackPixelInAxisBand(
+  imageData: ImageData,
+  direction: "horizontal" | "vertical",
+  coordinate: number,
+  position: number,
+) {
+  const { width, height, data } = imageData;
+  for (let offset = -1; offset <= 1; offset += 1) {
+    const x = direction === "vertical" ? coordinate + offset : position;
+    const y = direction === "vertical" ? position : coordinate + offset;
+    if (x < 0 || x >= width || y < 0 || y >= height) {
+      continue;
+    }
+
+    const index = (y * width + x) * 4;
+    if (isAxisBlackPixel(data[index], data[index + 1], data[index + 2])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function buildAxisTriplets(groups: AxisGroup[]) {
+  const triplets: AxisTriplet[] = [];
+  for (let firstIndex = 0; firstIndex < groups.length; firstIndex += 1) {
+    for (let middleIndex = firstIndex + 1; middleIndex < groups.length; middleIndex += 1) {
+      for (let lastIndex = middleIndex + 1; lastIndex < groups.length; lastIndex += 1) {
+        const first = groups[firstIndex];
+        const middle = groups[middleIndex];
+        const last = groups[lastIndex];
+        const span = last.coordinate - first.coordinate;
+        if (span <= 0) {
+          continue;
+        }
+
+        const middleOffset = Math.abs(middle.coordinate - (first.coordinate + last.coordinate) / 2) / span;
+        if (middleOffset > 0.18) {
+          continue;
+        }
+
+        triplets.push({
+          first,
+          middle,
+          last,
+          score: (first.score + middle.score + last.score) * (1 - middleOffset),
+        });
+      }
+    }
+  }
+  return triplets.sort((left, right) => right.score - left.score).slice(0, 16);
+}
+
+function detectSoldiers(imageData: ImageData, edgeRect: BoundsRect): DetectionBox[] {
+  const rect = insetRect(edgeRect, Math.max(4, Math.round(edgeRect.width / 260)));
+  const mask = buildYellowMask(imageData, rect);
+  const scale = rect.width / GRAPHWAR_PLANE_LENGTH;
+  const minArea = Math.max(6, Math.floor(9 * scale * scale));
+  const maxSize = Math.max(18, 34 * scale);
+  const minSize = Math.max(5, 4 * scale);
+  const yAxisX = edgeRect.x + edgeRect.width / 2;
+  const soldierBoxes = collectComponents(mask, rect.width)
+    .filter((component) =>
+      component.yellowArea >= minArea &&
+      component.width >= minSize &&
+      component.height >= minSize
+    )
+    .map((component) => expandSoldierComponent(imageData, rect, component, scale, yAxisX))
+    .filter((component) => component.width <= maxSize && component.height <= maxSize)
+    .map((component, index) => {
+      const radius = Math.min(component.outerCircleRadius, 10 * scale);
+      const centerX = component.centerX + rect.x;
+      const centerY = component.centerY + rect.y;
+      return {
+        id: `soldier-${index}-${component.x}-${component.y}`,
+        kind: "soldier" as const,
+        // Start from the yellow body and add only local helmet-color pixels, avoiding
+        // global color components that can connect to axes or the border. The sprite is
+        // 20x20 in Graphwar, so cap the visual circle at half of that size.
+        x: centerX - radius,
+        y: centerY - radius,
+        width: radius * 2,
+        height: radius * 2,
+      };
+    });
+
+  return suppressOverlappingBoxes(soldierBoxes, 0.28);
+}
+
+function buildYellowMask(imageData: ImageData, rect: BoundsRect) {
+  const mask = new Uint8Array(rect.width * rect.height);
+  const { data, width } = imageData;
+  for (let y = 0; y < rect.height; y += 1) {
+    for (let x = 0; x < rect.width; x += 1) {
+      const sourceIndex = ((rect.y + y) * width + rect.x + x) * 4;
+      if (isSoldierYellowPixel(data[sourceIndex], data[sourceIndex + 1], data[sourceIndex + 2])) {
+        mask[y * rect.width + x] = 1;
+      }
+    }
+  }
+  return mask;
+}
+
+function collectComponents(mask: Uint8Array, width: number): ComponentBox[] {
+  const visited = new Uint8Array(mask.length);
+  const components: ComponentBox[] = [];
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || visited[start]) {
+      continue;
+    }
+
+    const stack = [start];
+    visited[start] = 1;
+    let yellowArea = 0;
+    const pixels: number[] = [];
+
+    while (stack.length) {
+      const current = stack.pop() ?? 0;
+      const x = current % width;
+      if (mask[current] === 1) {
+        yellowArea += 1;
+      }
+      pixels.push(current);
+
+      const neighbors = [current - 1, current + 1, current - width, current + width];
+      for (const next of neighbors) {
+        if (
+          next < 0 ||
+          next >= mask.length ||
+          visited[next] ||
+          !mask[next] ||
+          (next === current - 1 && x === 0) ||
+          (next === current + 1 && x === width - 1)
+        ) {
+          continue;
+        }
+        visited[next] = 1;
+        stack.push(next);
+      }
+    }
+
+    components.push(createComponentBox(pixels, width, yellowArea));
+  }
+  return components;
+}
+
+function expandSoldierComponent(
+  imageData: ImageData,
+  rect: BoundsRect,
+  seed: ComponentBox,
+  scale: number,
+  yAxisX: number,
+) {
+  const { data, width } = imageData;
+  const helmetPadX = Math.max(1, Math.round(2.25 * scale));
+  const oppositePadX = Math.max(1, Math.round(0.75 * scale));
+  const padTop = Math.max(2, Math.round(3.5 * scale));
+  const padBottom = Math.max(1, Math.round(0.75 * scale));
+  const helmetBottom = seed.y + Math.round(seed.height * 0.62);
+  const seedEndX = seed.x + seed.width - 1;
+  const seedEndY = seed.y + seed.height - 1;
+  const helmetGoesLeft = rect.x + seed.centerX < yAxisX;
+  const startX = Math.max(0, seed.x - (helmetGoesLeft ? helmetPadX : oppositePadX));
+  const endX = Math.min(rect.width - 1, seedEndX + (helmetGoesLeft ? oppositePadX : helmetPadX));
+  const startY = Math.max(0, seed.y - padTop);
+  const endY = Math.min(rect.height - 1, seed.y + seed.height - 1 + padBottom);
+  const pixels: number[] = [];
+  let yellowArea = 0;
+
+  for (let y = startY; y <= endY; y += 1) {
+    for (let x = startX; x <= endX; x += 1) {
+      const sourceIndex = ((rect.y + y) * width + rect.x + x) * 4;
+      const red = data[sourceIndex];
+      const green = data[sourceIndex + 1];
+      const blue = data[sourceIndex + 2];
+      const isSeedYellow =
+        x >= seed.x &&
+        x <= seedEndX &&
+        y >= seed.y &&
+        y <= seedEndY &&
+        isSoldierYellowPixel(red, green, blue);
+      if (!isSeedYellow && (y > helmetBottom || !isSoldierHelmetPixel(red, green, blue))) {
+        continue;
+      }
+
+      if (isSeedYellow) {
+        yellowArea += 1;
+      }
+      pixels.push(y * rect.width + x);
+    }
+  }
+
+  return pixels.length ? createComponentBox(pixels, rect.width, yellowArea) : seed;
+}
+
+function createComponentBox(pixels: number[], width: number, yellowArea: number): ComponentBox {
+  let minX = width;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = 0;
+  let maxY = 0;
+  for (const pixel of pixels) {
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  const componentWidth = maxX - minX + 1;
+  const componentHeight = maxY - minY + 1;
+  const centerX = minX + componentWidth / 2;
+  const centerY = minY + componentHeight / 2;
+  let outerCircleRadius = 0;
+  for (const pixel of pixels) {
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    outerCircleRadius = Math.max(
+      outerCircleRadius,
+      Math.hypot(x + 0.5 - centerX, y + 0.5 - centerY) + Math.SQRT1_2,
+    );
+  }
+
+  return {
+    x: minX,
+    y: minY,
+    width: componentWidth,
+    height: componentHeight,
+    area: pixels.length,
+    yellowArea,
+    centerX,
+    centerY,
+    outerCircleRadius,
+  };
+}
+
+function suppressOverlappingBoxes(boxes: DetectionBox[], threshold: number) {
+  const sorted = [...boxes].sort((left, right) => right.width * right.height - left.width * left.height);
+  const kept: DetectionBox[] = [];
+  for (const box of sorted) {
+    if (kept.every((candidate) => calculateBoxIou(box, candidate) < threshold)) {
+      kept.push(box);
+    }
+  }
+  return kept;
+}
+
+function calculateBoxIou(left: BoundsRect, right: BoundsRect) {
+  const leftX2 = left.x + left.width;
+  const leftY2 = left.y + left.height;
+  const rightX2 = right.x + right.width;
+  const rightY2 = right.y + right.height;
+  const interWidth = Math.max(0, Math.min(leftX2, rightX2) - Math.max(left.x, right.x));
+  const interHeight = Math.max(0, Math.min(leftY2, rightY2) - Math.max(left.y, right.y));
+  const interArea = interWidth * interHeight;
+  const unionArea = left.width * left.height + right.width * right.height - interArea;
+  return unionArea > 0 ? interArea / unionArea : 0;
+}
+
+function insetRect(rect: BoundsRect, inset: number): BoundsRect {
+  return {
+    x: Math.round(rect.x + inset),
+    y: Math.round(rect.y + inset),
+    width: Math.max(1, Math.round(rect.width - inset * 2)),
+    height: Math.max(1, Math.round(rect.height - inset * 2)),
+  };
+}
+
+function isAxisBlackPixel(red: number, green: number, blue: number) {
+  return red <= 42 && green <= 42 && blue <= 42;
+}
+
+function isSoldierYellowPixel(red: number, green: number, blue: number) {
+  return red >= 170 && green >= 160 && blue <= 130 && red + green - blue >= 260;
+}
+
+function isSoldierHelmetPixel(red: number, green: number, blue: number) {
+  if (isAxisBlackPixel(red, green, blue) || isPlaneWhitePixel(red, green, blue) || isPlaneGreenPixel(red, green, blue)) {
+    return false;
+  }
+
+  const maxChannel = Math.max(red, green, blue);
+  const minChannel = Math.min(red, green, blue);
+  const chroma = maxChannel - minChannel;
+  const brightness = red + green + blue;
+  return chroma >= 22 && brightness >= 55 && brightness <= 690;
+}
+
+function isPlaneWhitePixel(red: number, green: number, blue: number) {
+  return red >= 225 && green >= 225 && blue >= 210 && Math.max(red, green, blue) - Math.min(red, green, blue) <= 35;
+}
+
+function isPlaneGreenPixel(red: number, green: number, blue: number) {
+  return green >= 155 && red >= 115 && red <= 195 && blue >= 110 && blue <= 195 && green - red >= 20 && green - blue >= 20;
+}
+
+function toggleDetectedSoldierSelection() {
+  detectedSoldierSelectionEnabled.value = !detectedSoldierSelectionEnabled.value;
+  if (!detectedSoldierSelectionEnabled.value) {
+    hoveredDetectedSoldierId.value = undefined;
+  }
 }
 
 /** 根据当前模式将指针点击分发给边界点选或路径点选。 */
@@ -650,21 +1138,37 @@ function handleStagePointerDown(event: PointerEvent) {
     return;
   }
 
+  if (event.button === 0 && detectedSoldierSelectionEnabled.value) {
+    const selectedSoldier = getDetectedSoldierAtPoint(point);
+    if (selectedSoldier && appendPathPoint(getDetectionBoxCenter(selectedSoldier))) {
+      return;
+    }
+  }
+
   if (event.button !== 0 || !parsedBounds.value.ok) {
     return;
   }
 
+  appendPathPoint(point);
+}
+
+function appendPathPoint(point: PixelPoint) {
+  if (!parsedBounds.value.ok) {
+    return false;
+  }
+
   const nextPoint = normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, pathPixels.value.at(-1));
   if (!nextPoint) {
-    return;
+    return false;
   }
 
   if (!canAppendPathPoint(nextPoint)) {
-    return;
+    return false;
   }
 
   pathPixels.value = [...pathPixels.value, nextPoint];
   pathStatus.value = "";
+  return true;
 }
 
 /** 跟踪指针位置，用于边界预览和放大镜。 */
@@ -677,6 +1181,9 @@ function handleStagePointerMove(event: PointerEvent) {
   if (magnifierEnabled.value) {
     magnifierPoint.value = point;
   }
+  hoveredDetectedSoldierId.value = detectedSoldierSelectionEnabled.value
+    ? getDetectedSoldierAtPoint(point)?.id
+    : undefined;
   if (toolMode.value !== "bounds") {
     return;
   }
@@ -688,6 +1195,23 @@ function handleStagePointerMove(event: PointerEvent) {
 function handleStagePointerLeave() {
   pointerPreviewPoint.value = undefined;
   magnifierPoint.value = undefined;
+  hoveredDetectedSoldierId.value = undefined;
+}
+
+function getDetectedSoldierAtPoint(point: PixelPoint) {
+  for (let index = detectionBoxes.value.length - 1; index >= 0; index -= 1) {
+    const box = detectionBoxes.value[index];
+    const center = getDetectionBoxCenter(box);
+    const radius = box.width / 2;
+    if (Math.hypot(point.x - center.x, point.y - center.y) <= radius) {
+      return box;
+    }
+  }
+  return undefined;
+}
+
+function getDetectionBoxCenter(box: DetectionBox) {
+  return createPixelPoint(box.x + box.width / 2, box.y + box.height / 2);
 }
 
 /** 使用右键取消边界点或撤回最新路径点。 */
@@ -866,17 +1390,133 @@ async function copyText(text: string) {
   </p>
   <section
     class="graphwar-killer__panel"
-    aria-label="截图"
+    aria-labelledby="graphwar-killer-settings-title"
   >
-    <div class="graphwar-killer__label-row graphwar-killer__label-row--image-status">
-      <span>{{ imageStatus || imageName || "可以截屏、上传、拖入或直接 Ctrl / Cmd + V 粘贴截图" }}</span>
+    <div class="graphwar-killer__label-row">
+      <h2 id="graphwar-killer-settings-title">设定</h2>
+      <span>{{ activeEquationDescription }}</span>
+    </div>
+    <div class="graphwar-killer__setting-row">
+      <span class="graphwar-killer__setting-label">算法</span>
+      <div
+        class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle"
+        :class="{ 'graphwar-killer__tool-toggle--path': algorithmMode === 'step' }"
+        role="group"
+        aria-label="算法"
+      >
+        <button
+          v-for="mode in algorithmModes"
+          :key="mode.value"
+          type="button"
+          :aria-pressed="algorithmMode === mode.value"
+          :class="{ 'graphwar-killer__tool-toggle-button--active': algorithmMode === mode.value }"
+          @click="algorithmMode = mode.value"
+        >
+          {{ mode.label }}
+        </button>
+      </div>
+    </div>
+    <label
+      v-if="algorithmMode === 'step'"
+      class="graphwar-killer__steepness-label"
+    >
+      阶梯陡峭度 a
+      <input
+        v-model="steepnessText"
+        inputmode="decimal"
+        autocomplete="off"
+      >
+    </label>
+    <div class="graphwar-killer__coordinate-grid">
+      <label>
+        -x
+        <input
+          v-model="minXText"
+          inputmode="decimal"
+          autocomplete="off"
+        >
+      </label>
+      <label>
+        +x
+        <input
+          v-model="maxXText"
+          inputmode="decimal"
+          autocomplete="off"
+        >
+      </label>
+      <label>
+        -y
+        <input
+          v-model="minYText"
+          inputmode="decimal"
+          autocomplete="off"
+        >
+      </label>
+      <label>
+        +y
+        <input
+          v-model="maxYText"
+          inputmode="decimal"
+          autocomplete="off"
+        >
+      </label>
+    </div>
+    <div class="graphwar-killer__setting-row graphwar-killer__game-mode-row">
+      <span class="graphwar-killer__setting-label">游戏模式</span>
+      <div class="graphwar-killer__game-mode-controls">
+        <div
+          class="graphwar-killer__equation-toggle"
+          :class="{
+            'graphwar-killer__equation-toggle--dy': equationMode === 'dy',
+            'graphwar-killer__equation-toggle--ddy': equationMode === 'ddy',
+          }"
+          role="group"
+          aria-label="Graphwar 游戏模式"
+        >
+          <button
+            v-for="mode in equationModes"
+            :key="mode.value"
+            type="button"
+            :aria-pressed="equationMode === mode.value"
+            :class="{ 'graphwar-killer__equation-toggle-button--active': equationMode === mode.value }"
+            @click="equationMode = mode.value"
+          >
+            {{ mode.label }}
+          </button>
+        </div>
+        <label class="graphwar-killer__precision-label">
+          保留小数位
+          <input
+            v-model="precisionText"
+            inputmode="numeric"
+            autocomplete="off"
+            min="0"
+            :max="MAX_FORMULA_DECIMAL_PLACES"
+          >
+        </label>
+      </div>
+    </div>
+    <p
+      v-if="settingsMessage"
+      class="graphwar-killer__error graphwar-killer__settings-error"
+    >
+      {{ settingsMessage }}
+    </p>
+  </section>
+  <section
+    class="graphwar-killer__panel"
+    aria-labelledby="graphwar-killer-actions-title"
+  >
+    <div class="graphwar-killer__label-row">
+      <h2 id="graphwar-killer-actions-title">操作栏</h2>
+      <span>{{ activeToolHint }}</span>
     </div>
     <div class="graphwar-killer__image-actions">
       <button
         type="button"
         @click="captureScreenImage"
       >
-        截取屏幕
+        截取图片
       </button>
       <label class="graphwar-killer__upload">
         <input
@@ -930,9 +1570,48 @@ async function copyText(text: string) {
         撤回路径点
       </button>
     </div>
-    <p class="graphwar-killer__hint">
-      {{ activeToolHint }}
-    </p>
+  </section>
+  <section
+    class="graphwar-killer__panel"
+    aria-labelledby="graphwar-killer-detection-title"
+  >
+    <div class="graphwar-killer__label-row">
+      <h2 id="graphwar-killer-detection-title">识别</h2>
+      <span v-if="detectionStatus">{{ detectionStatus }}</span>
+    </div>
+    <div class="graphwar-killer__image-actions">
+      <button
+        type="button"
+        :disabled="!imageUrl"
+        @click="detectGraphwarObjects"
+      >
+        自动识别
+      </button>
+      <button
+        type="button"
+        :disabled="!imageUrl && detectionBoxes.length === 0"
+        @click="clearDetections"
+      >
+        清除识别
+      </button>
+      <button
+        type="button"
+        :aria-pressed="detectedSoldierSelectionEnabled"
+        :class="{ 'graphwar-killer__toggle-button--active': detectedSoldierSelectionEnabled }"
+        @click="toggleDetectedSoldierSelection"
+      >
+        选择识别士兵
+      </button>
+    </div>
+  </section>
+  <section
+    class="graphwar-killer__panel"
+    aria-labelledby="graphwar-killer-screenshot-title"
+  >
+    <div class="graphwar-killer__label-row graphwar-killer__label-row--image-status">
+      <h2 id="graphwar-killer-screenshot-title">截图</h2>
+      <span>{{ imageStatus || imageName || "可以截屏、上传、拖入或直接 Ctrl / Cmd + V 粘贴截图" }}</span>
+    </div>
     <p
       v-if="pathStatus"
       class="graphwar-killer__hint graphwar-killer__hint--warning"
@@ -1001,6 +1680,24 @@ async function copyText(text: string) {
           :y1="visibleBoundsRect.y"
           :y2="visibleBoundsRect.y + visibleBoundsRect.height"
         />
+        <template v-if="detectedSoldierSelectionEnabled">
+          <g
+            v-for="box in detectionBoxes"
+            :key="box.id"
+            class="graphwar-killer__detection-group"
+          >
+            <circle
+              class="graphwar-killer__detection"
+              :class="[
+                `graphwar-killer__detection--${box.kind}`,
+                { 'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId },
+              ]"
+              :cx="box.x + box.width / 2"
+              :cy="box.y + box.height / 2"
+              :r="box.width / 2"
+            />
+          </g>
+        </template>
         <circle
           v-if="boundsFirstPoint"
           class="graphwar-killer__bounds-point"
@@ -1050,123 +1747,6 @@ async function copyText(text: string) {
       />
     </div>
   </section>
-  <div class="graphwar-killer__layout">
-    <section
-      class="graphwar-killer__panel"
-      aria-labelledby="graphwar-killer-settings-title"
-    >
-      <div class="graphwar-killer__label-row">
-        <h2 id="graphwar-killer-settings-title">设定</h2>
-        <span>{{ activeEquationDescription }}</span>
-      </div>
-      <div class="graphwar-killer__setting-row">
-        <span class="graphwar-killer__setting-label">算法</span>
-        <div
-          class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle"
-          :class="{ 'graphwar-killer__tool-toggle--path': algorithmMode === 'step' }"
-          role="group"
-          aria-label="算法"
-        >
-          <button
-            v-for="mode in algorithmModes"
-            :key="mode.value"
-            type="button"
-            :aria-pressed="algorithmMode === mode.value"
-            :class="{ 'graphwar-killer__tool-toggle-button--active': algorithmMode === mode.value }"
-            @click="algorithmMode = mode.value"
-          >
-            {{ mode.label }}
-          </button>
-        </div>
-      </div>
-      <label
-        v-if="algorithmMode === 'step'"
-        class="graphwar-killer__steepness-label"
-      >
-        阶梯陡峭度 a
-        <input
-          v-model="steepnessText"
-          inputmode="decimal"
-          autocomplete="off"
-        >
-      </label>
-      <div class="graphwar-killer__coordinate-grid">
-        <label>
-          -x
-          <input
-            v-model="minXText"
-            inputmode="decimal"
-            autocomplete="off"
-          >
-        </label>
-        <label>
-          +x
-          <input
-            v-model="maxXText"
-            inputmode="decimal"
-            autocomplete="off"
-          >
-        </label>
-        <label>
-          -y
-          <input
-            v-model="minYText"
-            inputmode="decimal"
-            autocomplete="off"
-          >
-        </label>
-        <label>
-          +y
-          <input
-            v-model="maxYText"
-            inputmode="decimal"
-            autocomplete="off"
-          >
-        </label>
-      </div>
-      <div class="graphwar-killer__setting-row graphwar-killer__game-mode-row">
-        <span class="graphwar-killer__setting-label">游戏模式</span>
-        <div class="graphwar-killer__game-mode-controls">
-          <div
-            class="graphwar-killer__equation-toggle"
-            :class="{
-              'graphwar-killer__equation-toggle--dy': equationMode === 'dy',
-              'graphwar-killer__equation-toggle--ddy': equationMode === 'ddy',
-            }"
-            role="group"
-            aria-label="Graphwar 游戏模式"
-          >
-            <button
-              v-for="mode in equationModes"
-              :key="mode.value"
-              type="button"
-              :aria-pressed="equationMode === mode.value"
-              :class="{ 'graphwar-killer__equation-toggle-button--active': equationMode === mode.value }"
-              @click="equationMode = mode.value"
-            >
-              {{ mode.label }}
-            </button>
-          </div>
-          <label class="graphwar-killer__precision-label">
-            保留小数位
-            <input
-              v-model="precisionText"
-              inputmode="numeric"
-              autocomplete="off"
-              min="0"
-              :max="MAX_FORMULA_DECIMAL_PLACES"
-            >
-          </label>
-        </div>
-      </div>
-      <p
-        v-if="settingsMessage"
-        class="graphwar-killer__error graphwar-killer__settings-error"
-      >
-        {{ settingsMessage }}
-      </p>
-    </section>
-  </div>
   <section
     class="graphwar-killer__panel"
     aria-labelledby="graphwar-killer-result-title"
@@ -1465,6 +2045,24 @@ async function copyText(text: string) {
   vector-effect: non-scaling-stroke;
 }
 
+.graphwar-killer__detection-group {
+  pointer-events: none;
+}
+
+.graphwar-killer__detection {
+  fill: none;
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.graphwar-killer__detection--soldier {
+  stroke: #16a34a;
+}
+
+.graphwar-killer__detection--hovered {
+  stroke: #dc2626;
+}
+
 .graphwar-killer__target-range {
   fill: color-mix(in srgb, #86efac 30%, transparent);
   pointer-events: none;
@@ -1505,13 +2103,6 @@ async function copyText(text: string) {
   paint-order: stroke;
   stroke: var(--vp-c-bg);
   stroke-width: 4;
-}
-
-.graphwar-killer__layout {
-  display: grid;
-  order: -1;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
 }
 
 .graphwar-killer__image-actions {
@@ -1833,10 +2424,6 @@ async function copyText(text: string) {
 }
 
 @media (max-width: 760px) {
-  .graphwar-killer__layout {
-    grid-template-columns: 1fr;
-  }
-
   .graphwar-killer__label-row {
     display: grid;
     gap: 4px;

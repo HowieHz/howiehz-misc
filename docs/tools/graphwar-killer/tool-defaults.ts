@@ -1,3 +1,4 @@
+/** 保存 Graphwar 杀手页面初始尺寸、坐标标定和识别阈值默认值。 */
 interface GraphwarToolDefaults {
   canvasWidth: number;
   canvasHeight: number;
@@ -12,8 +13,6 @@ interface GraphwarToolDefaults {
   magnifierZoom: number;
   steepness: number;
   formulaLaunchPointIterations: number;
-  formulaLaunchPointToleranceSquared: number;
-  stepSignEpsilon: number;
   obstacleMinArea: number;
 }
 
@@ -32,7 +31,5 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
   magnifierZoom: 3,
   steepness: 67,
   formulaLaunchPointIterations: 8,
-  formulaLaunchPointToleranceSquared: 1e-12,
-  stepSignEpsilon: 0.000000000000001,
-  obstacleMinArea: 100,
+  obstacleMinArea: 50,
 };

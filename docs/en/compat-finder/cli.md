@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # CLI
 
 `compat-finder` provides two CLI subcommands: `interactive` for guided troubleshooting, and `next` for one-step calculations from existing answers.

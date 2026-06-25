@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # 算法性能
 
 `compat-finder` 目前内置两种算法：`binary-split` 和 `leave-one-out`。

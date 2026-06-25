@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # 在线体验
 
 无需安装，打开即可使用：[兼容性问题排查器](../tools/compatibility-test/)

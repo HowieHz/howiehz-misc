@@ -1,9 +1,11 @@
+/** 集中保存来自 Graphwar 源码和工具推导出的游戏常量。 */
 /** 完全来自 Graphwar 源码 Constants.java 的数值。 */
 export const graphwarSourceConstants = {
   planeLength: 770,
   planeHeight: 450,
   planeGameLength: 50,
   soldierRadius: 7,
+  soldierSelectionRadius: 15,
   stepSize: 0.01,
   funcMaxSteps: 20000,
   funcMaxStepDistanceSquared: 0.001,
@@ -23,6 +25,15 @@ export const GRAPHWAR_PLANE_GAME_LENGTH = graphwarSourceConstants.planeGameLengt
 
 /** Graphwar 源码 Constants.java 里的士兵像素半径。 */
 export const GRAPHWAR_SOLDIER_RADIUS = graphwarSourceConstants.soldierRadius;
+
+/** Graphwar 源码 Constants.java 里的士兵选择/安全半径。 */
+export const GRAPHWAR_SOLDIER_SELECTION_RADIUS = graphwarSourceConstants.soldierSelectionRadius;
+
+/** Graphwar 原版士兵贴图透明画布尺寸，来自 rsc/soldiers/*.png 和 GraphPlane#addHelmet。 */
+export const GRAPHWAR_SOLDIER_SPRITE_SIZE = 20;
+
+/** Graphwar 默认士兵合成图的非透明像素外框尺寸，来自 addHelmet 后的 rsc/soldiers/*.png 量测。 */
+export const GRAPHWAR_SOLDIER_VISIBLE_SIZE = 17;
 
 /** Graphwar 源码 Constants.java 里的默认函数积分步长。 */
 export const GRAPHWAR_STEP_SIZE = graphwarSourceConstants.stepSize;

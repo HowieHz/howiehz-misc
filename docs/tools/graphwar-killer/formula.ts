@@ -1,3 +1,4 @@
+/** 编译用户输入的 Graphwar 表达式，并输出游戏可用的公式文本。 */
 import { GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE } from "./graphwar";
 import {
   MAX_FORMULA_DECIMAL_PLACES,
@@ -6,21 +7,47 @@ import {
   normalizeZero,
   roundToDecimalPlaces,
 } from "./numbers";
-import { graphwarToolDefaults } from "./tool-defaults";
 import { createGraphPoint } from "./types";
 import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "./types";
 
 /** 双绝对值连接遇到垂直或反向线段时，使用 Graphwar 源码里的函数最小 x 步长保持公式有限。 */
 const ABS_CONNECTOR_MIN_WIDTH = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE;
 const SOFT_INTERVAL_INDICATOR_POWER = 8;
+const JAVA_DOUBLE_MAX_EXP_ARGUMENT = Math.log(Number.MAX_VALUE);
 
-/** 稳定版 sigmoid 公式在符号项可去奇点处避免 0 / 0 的最小十进制保护值。 */
-export const GRAPHWAR_TOOL_SIGN_EPSILON = graphwarToolDefaults.stepSignEpsilon;
+/** 稳定版 sigmoid 公式在符号项可去奇点处避免 0 / 0 的 double 精度保护值。 */
+export const GRAPHWAR_TOOL_SIGN_EPSILON = Number.EPSILON;
 
+/** 编译和求值公式时的数值选项，让页面预览、worker 验证和最终输出共用同一套保护规则。 */
 export interface FormulaEvaluationOptions {
+  /** 系数格式化的小数位；省略时保留内部 double 精度。 */
   coefficientDecimalPlaces?: number;
+  /** 采样 step 符号项实参的钩子，用于判断是否必须启用 sign epsilon。 */
   onSignArgument?: (value: number) => void;
+  /** 稳定符号比值的除零保护值；0 表示保留 Graphwar 原始数值行为。 */
   signEpsilon?: number;
+  /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
+  stepOverflowProtectionRange?: StepOverflowProtectionRange;
+  /** 是否对 step 表达式使用抗溢出的等价格式。 */
+  stepOverflowProtection?: boolean;
+}
+
+/** 生成可复制公式文本时的选项；与求值选项分开，避免 UI 输出和内部采样互相污染。 */
+export interface BuildFormulaOptions {
+  /** 稳定符号比值的除零保护值；省略时使用工具默认值。 */
+  signEpsilon?: number;
+  /** 判断 step 项是否可能溢出的有效 x 范围。 */
+  stepOverflowProtectionRange?: StepOverflowProtectionRange;
+  /** 是否允许输出抗溢出的 step 表达式。 */
+  stepOverflowProtection?: boolean;
+}
+
+/** Step 指数项只需要覆盖实际轨迹会扫过的 x 范围，减少公式长度和数值偏差。 */
+export interface StepOverflowProtectionRange {
+  /** 轨迹采样区间右端 Graphwar x。 */
+  maxX: number;
+  /** 轨迹采样区间左端 Graphwar x。 */
+  minX: number;
 }
 
 /** A(abs(x+b)-abs(x+c)) 连接函数使用的标准化线段数据。 */
@@ -31,14 +58,58 @@ interface AbsConnectorSegment {
   deltaY: number;
 }
 
+/** 三次 Hermite 软分段的标准化段数据，同时支持 y、y' 和 y'' 公式生成。 */
 interface CubicHermiteSegment {
+  /** 分段右端 Graphwar x。 */
   startX: number;
+  /** 分段左端 Graphwar x。 */
   endX: number;
+  /** 分段宽度，用于归一化 t。 */
   width: number;
+  /** 左端 y。 */
   startY: number;
+  /** 右端 y。 */
   endY: number;
+  /** 左端斜率，来自 PCHIP 或 Akima。 */
   startSlope: number;
+  /** 右端斜率，来自 PCHIP 或 Akima。 */
   endSlope: number;
+}
+
+/** Abs 连接公式的预编译段，采样时只做代入，避免重复生成文本。 */
+interface CompiledAbsConnectorSegment {
+  /** Abs 差的系数。 */
+  coefficient: number;
+  /** 右端 Graphwar x。 */
+  endX: number;
+  /** 左端 Graphwar x。 */
+  startX: number;
+  /** 非零段宽，保护垂直线段不会产生无限系数。 */
+  width: number;
+}
+
+/** Step 公式的一项预编译数据，统一支持 y、y'、y'' 三种模式。 */
+interface CompiledStepTerm {
+  /** Sigmoid 中心点 Graphwar x。 */
+  centerX: number;
+  /** 一阶导前置系数。 */
+  firstDerivativeCoefficient: number;
+  /** 二阶导前置系数。 */
+  secondDerivativeCoefficient: number;
+  /** 当前项是否必须使用抗溢出的 exp 写法。 */
+  useOverflowProtection?: boolean;
+  /** Y= 模式累计高度系数。 */
+  yCoefficient: number;
+}
+
+/** 采样器使用的预编译公式求值器，避免在每个轨迹点重新解析表达式文本。 */
+export interface CompiledFormulaEvaluator {
+  /** 计算 y'，供 y'= 模式积分和发射角迭代使用。 */
+  evaluateFirstDerivativeY: (x: number) => number;
+  /** 计算 y''，供 y''= 模式 RK4 使用。 */
+  evaluateSecondDerivativeY: (x: number) => number;
+  /** 计算 y，供普通 y= 模式和预览使用。 */
+  evaluateY: (x: number) => number;
 }
 
 /** 根据当前算法生成可复制的 Graphwar 表达式和 y= 预览表达式。 */
@@ -48,8 +119,11 @@ export function buildFormula(
   mode: EquationMode,
   algorithm: AlgorithmMode,
   decimalPlaces?: number,
-  signEpsilon = GRAPHWAR_TOOL_SIGN_EPSILON,
+  options: BuildFormulaOptions = {},
 ): FormulaResult {
+  const signEpsilon = options.signEpsilon ?? GRAPHWAR_TOOL_SIGN_EPSILON;
+  const stepOverflowProtection = options.stepOverflowProtection ?? true;
+  const stepOverflowProtectionRange = options.stepOverflowProtectionRange;
   const start = points[0];
   const terms = createStepTerms(points);
   const expression =
@@ -66,16 +140,45 @@ export function buildFormula(
             mode === "y" ? -(points[0]?.y ?? 0) : 0,
           )
         : mode === "y"
-          ? formatStepExpression(0, terms, steepness, decimalPlaces, signEpsilon)
+          ? formatStepExpression(
+              0,
+              terms,
+              steepness,
+              decimalPlaces,
+              stepOverflowProtection,
+              signEpsilon,
+              stepOverflowProtectionRange,
+            )
           : mode === "dy"
-            ? formatStepFirstDerivativeExpression(terms, steepness, decimalPlaces)
-            : formatStepSecondDerivativeExpression(terms, steepness, decimalPlaces, signEpsilon);
+            ? formatStepFirstDerivativeExpression(
+                terms,
+                steepness,
+                decimalPlaces,
+                stepOverflowProtection,
+                stepOverflowProtectionRange,
+              )
+            : formatStepSecondDerivativeExpression(
+                terms,
+                steepness,
+                decimalPlaces,
+                stepOverflowProtection,
+                signEpsilon,
+                stepOverflowProtectionRange,
+              );
   const previewExpression =
     algorithm === "abs"
       ? formatAbsConnectorExpression(points, decimalPlaces)
       : isCubicInterpolationAlgorithm(algorithm)
         ? formatSoftCubicInterpolationExpression(points, algorithm, "y", decimalPlaces)
-        : formatStepExpression(start.y, terms, steepness, decimalPlaces, signEpsilon);
+        : formatStepExpression(
+            start.y,
+            terms,
+            steepness,
+            decimalPlaces,
+            stepOverflowProtection,
+            signEpsilon,
+            stepOverflowProtectionRange,
+          );
 
   return {
     expression,
@@ -84,129 +187,155 @@ export function buildFormula(
   };
 }
 
-/** 计算 sigmoid 阶跃 y= 路径，用于 SVG 预览采样。 */
-export function evaluateStepY(
-  x: number,
+/** 把不随采样 x 变化的公式材料预先整理好，供轨迹采样反复代入。 */
+export function compileFormulaEvaluator(
   points: readonly GraphPoint[],
   steepness: number,
+  algorithm: AlgorithmMode,
   options?: FormulaEvaluationOptions,
-) {
-  let y = points[0]?.y ?? 0;
-  for (let index = 1; index < points.length; index += 1) {
-    const coefficient = normalizeFormulaCoefficient(points[index].y - points[index - 1].y, options);
-    y += coefficient * evaluateStableStepSigmoid(steepness * (x - points[index].x), options);
+): CompiledFormulaEvaluator {
+  if (algorithm === "abs") {
+    return compileAbsConnectorEvaluator(points, options);
   }
-  return y;
+  if (algorithm === "pchip" || algorithm === "akima") {
+    return compileSoftCubicInterpolationEvaluator(points, algorithm, options);
+  }
+  return compileStepEvaluator(points, steepness, options);
 }
 
-/** 计算 sigmoid 阶跃路径在指定 x 处的一阶斜率，用于 y'' 模式发射角提示。 */
-export function evaluateStepFirstDerivativeY(
-  x: number,
+/** 预编译 sigmoid 阶跃公式，避免每个采样 x 重新归一化系数和判断固定抗溢出区间。 */
+function compileStepEvaluator(
   points: readonly GraphPoint[],
   steepness: number,
   options?: FormulaEvaluationOptions,
-) {
-  let slope = 0;
+): CompiledFormulaEvaluator {
+  const baseY = points[0]?.y ?? 0;
+  const terms: CompiledStepTerm[] = [];
   for (let index = 1; index < points.length; index += 1) {
+    const centerX = points[index].x;
     const deltaY = points[index].y - points[index - 1].y;
-    const coefficient = normalizeFormulaCoefficient(deltaY * steepness, options);
-    const t = steepness * (x - points[index].x);
-    const q = Math.exp(-Math.abs(t));
-    slope += (coefficient * q) / (1 + q) ** 2;
+    terms.push({
+      centerX,
+      firstDerivativeCoefficient: normalizeFormulaCoefficient(deltaY * steepness, options),
+      secondDerivativeCoefficient: normalizeFormulaCoefficient(deltaY * steepness * steepness, options),
+      // 有明确保护范围时，每个阶跃项是否需要抗溢出只取决于中心点，可在编译期固定。
+      useOverflowProtection: options?.stepOverflowProtectionRange
+        ? shouldUseStepOverflowProtection(steepness, centerX, 0, options)
+        : undefined,
+      yCoefficient: normalizeFormulaCoefficient(deltaY, options),
+    });
   }
-  return slope;
+
+  return {
+    evaluateFirstDerivativeY(x) {
+      let slope = 0;
+      for (const term of terms) {
+        const t = steepness * (x - term.centerX);
+        if (compiledStepTermUsesOverflowProtection(term, steepness, t, options)) {
+          const q = Math.exp(-Math.abs(t));
+          slope += (term.firstDerivativeCoefficient * q) / (1 + q) ** 2;
+        } else {
+          const exp = Math.exp(-t);
+          slope += (term.firstDerivativeCoefficient * exp) / (1 + exp) ** 2;
+        }
+      }
+      return slope;
+    },
+    evaluateSecondDerivativeY(x) {
+      let acceleration = 0;
+      for (const term of terms) {
+        const t = steepness * (x - term.centerX);
+        if (compiledStepTermUsesOverflowProtection(term, steepness, t, options)) {
+          const q = Math.exp(-Math.abs(t));
+          const sign = evaluateStableSignRatio(t, options);
+          acceleration += (-term.secondDerivativeCoefficient * sign * q * (1 - q)) / (1 + q) ** 3;
+        } else {
+          const exp = Math.exp(-t);
+          acceleration += (term.secondDerivativeCoefficient * exp * (exp - 1)) / (1 + exp) ** 3;
+        }
+      }
+      return acceleration;
+    },
+    evaluateY(x) {
+      let y = baseY;
+      for (const term of terms) {
+        const t = steepness * (x - term.centerX);
+        y +=
+          term.yCoefficient *
+          (compiledStepTermUsesOverflowProtection(term, steepness, t, options)
+            ? evaluateStableStepSigmoid(t, options)
+            : evaluateDirectStepSigmoid(t));
+      }
+      return y;
+    },
+  };
 }
 
-/** 计算 sigmoid 阶跃路径在指定 x 处的二阶导，用于 y'' 模式 RK4 预览。 */
-export function evaluateStepSecondDerivativeY(
-  x: number,
-  points: readonly GraphPoint[],
+/** 判断当前 step 项采样时是否走抗溢出分支；有编译期结论时直接复用。 */
+function compiledStepTermUsesOverflowProtection(
+  term: CompiledStepTerm,
   steepness: number,
+  currentArgument: number,
   options?: FormulaEvaluationOptions,
 ) {
-  let acceleration = 0;
-  for (let index = 1; index < points.length; index += 1) {
-    const deltaY = points[index].y - points[index - 1].y;
-    const coefficient = normalizeFormulaCoefficient(deltaY * steepness * steepness, options);
-    const t = steepness * (x - points[index].x);
-    const q = Math.exp(-Math.abs(t));
-    const sign = evaluateStableSignRatio(t, options);
-    acceleration += (-coefficient * sign * q * (1 - q)) / (1 + q) ** 3;
-  }
-  return acceleration;
+  return (
+    term.useOverflowProtection ?? shouldUseStepOverflowProtection(steepness, term.centerX, currentArgument, options)
+  );
 }
 
-/** 计算双绝对值 y= 连接路径，用于 SVG 预览采样。 */
-export function evaluateAbsConnectorY(x: number, points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
-  let y = points[0]?.y ?? 0;
+/** 预编译 abs 连接公式，把每段的端点和系数固定下来，采样时只做代入求值。 */
+function compileAbsConnectorEvaluator(
+  points: readonly GraphPoint[],
+  options?: FormulaEvaluationOptions,
+): CompiledFormulaEvaluator {
+  const baseY = points[0]?.y ?? 0;
+  const segments: CompiledAbsConnectorSegment[] = [];
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
-    const startX = normalizeFormulaCoefficient(segment.startX, options);
-    const endX = normalizeFormulaCoefficient(segment.endX, options);
-    const coefficient = normalizeFormulaCoefficient(segment.deltaY / (2 * segment.width), options);
-    const width = normalizeFormulaCoefficient(segment.width, options);
-    y += coefficient * (Math.abs(x - startX) - Math.abs(x - endX) + width);
+    segments.push({
+      coefficient: normalizeFormulaCoefficient(segment.deltaY / (2 * segment.width), options),
+      endX: normalizeFormulaCoefficient(segment.endX, options),
+      startX: normalizeFormulaCoefficient(segment.startX, options),
+      width: normalizeFormulaCoefficient(segment.width, options),
+    });
   }
-  return y;
+
+  return {
+    evaluateFirstDerivativeY(x) {
+      let slope = 0;
+      for (const segment of segments) {
+        slope +=
+          segment.coefficient *
+          (evaluateStableSignRatio(x - segment.startX, options) - evaluateStableSignRatio(x - segment.endX, options));
+      }
+      return slope;
+    },
+    evaluateSecondDerivativeY() {
+      return Number.NaN;
+    },
+    evaluateY(x) {
+      let y = baseY;
+      for (const segment of segments) {
+        y += segment.coefficient * (Math.abs(x - segment.startX) - Math.abs(x - segment.endX) + segment.width);
+      }
+      return y;
+    },
+  };
 }
 
-/** 计算双绝对值连接函数的一阶导，用于 y'= 模式 RK4 预览。 */
-export function evaluateAbsConnectorFirstDerivativeY(
-  x: number,
+/** 预编译 PCHIP/Akima 软分段三次插值，缓存 segments/slopes 供 y、dy、ddy 共用。 */
+function compileSoftCubicInterpolationEvaluator(
   points: readonly GraphPoint[],
+  algorithm: "pchip" | "akima",
   options?: FormulaEvaluationOptions,
-) {
-  let slope = 0;
-  for (let index = 1; index < points.length; index += 1) {
-    const segment = createAbsConnectorSegment(points[index - 1], points[index]);
-    const startX = normalizeFormulaCoefficient(segment.startX, options);
-    const endX = normalizeFormulaCoefficient(segment.endX, options);
-    const coefficient = normalizeFormulaCoefficient(segment.deltaY / (2 * segment.width), options);
-    slope += coefficient * (evaluateStableSignRatio(x - startX, options) - evaluateStableSignRatio(x - endX, options));
-  }
-  return slope;
-}
-
-/** 计算 PCHIP 插值的归一化软分段三次路径。 */
-export function evaluatePchipY(x: number, points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
-  return evaluateSoftCubicInterpolationY(x, points, "pchip", "y", options);
-}
-
-/** 计算 Akima 插值的归一化软分段三次路径。 */
-export function evaluateAkimaY(x: number, points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
-  return evaluateSoftCubicInterpolationY(x, points, "akima", "y", options);
-}
-
-export function evaluatePchipFirstDerivativeY(
-  x: number,
-  points: readonly GraphPoint[],
-  options?: FormulaEvaluationOptions,
-) {
-  return evaluateSoftCubicInterpolationY(x, points, "pchip", "dy", options);
-}
-
-export function evaluateAkimaFirstDerivativeY(
-  x: number,
-  points: readonly GraphPoint[],
-  options?: FormulaEvaluationOptions,
-) {
-  return evaluateSoftCubicInterpolationY(x, points, "akima", "dy", options);
-}
-
-export function evaluatePchipSecondDerivativeY(
-  x: number,
-  points: readonly GraphPoint[],
-  options?: FormulaEvaluationOptions,
-) {
-  return evaluateSoftCubicInterpolationY(x, points, "pchip", "ddy", options);
-}
-
-export function evaluateAkimaSecondDerivativeY(
-  x: number,
-  points: readonly GraphPoint[],
-  options?: FormulaEvaluationOptions,
-) {
-  return evaluateSoftCubicInterpolationY(x, points, "akima", "ddy", options);
+): CompiledFormulaEvaluator {
+  const segments = createCubicInterpolationSegments(points, algorithm, options);
+  const fallbackY = points[0]?.y ?? 0;
+  return {
+    evaluateFirstDerivativeY: (x) => evaluateSoftCubicInterpolationSegmentsY(x, segments, "dy", fallbackY),
+    evaluateSecondDerivativeY: (x) => evaluateSoftCubicInterpolationSegmentsY(x, segments, "ddy", fallbackY),
+    evaluateY: (x) => evaluateSoftCubicInterpolationSegmentsY(x, segments, "y", fallbackY),
+  };
 }
 
 /** 将点击路径点转换为阶跃中心点和纵向变化量。 */
@@ -221,6 +350,7 @@ function createStepTerms(points: readonly GraphPoint[]) {
   return terms;
 }
 
+/** 收窄三次插值算法类型，方便调用方进入 PCHIP/Akima 分支后获得精确类型。 */
 function isCubicInterpolationAlgorithm(algorithm: AlgorithmMode): algorithm is "pchip" | "akima" {
   return algorithm === "pchip" || algorithm === "akima";
 }
@@ -231,47 +361,83 @@ function formatStepExpression(
   terms: readonly StepTerm[],
   steepness: number,
   decimalPlaces: number | undefined,
+  stepOverflowProtection: boolean,
   signEpsilon: number,
+  stepOverflowProtectionRange: StepOverflowProtectionRange | undefined,
 ) {
   const parts = [formatDecimal(baseY, decimalPlaces)];
   for (const term of terms) {
-    parts.push(
-      formatSignedRawTerm(
-        term.deltaY,
-        `(${formatStableStepSigmoid(steepness, term.x, decimalPlaces, signEpsilon)})`,
-        decimalPlaces,
-      ),
-    );
+    if (
+      shouldFormatStepTermWithOverflowProtection(steepness, term.x, stepOverflowProtection, stepOverflowProtectionRange)
+    ) {
+      parts.push(
+        formatSignedRawTerm(
+          term.deltaY,
+          `(${formatStableStepSigmoid(steepness, term.x, decimalPlaces, signEpsilon)})`,
+          decimalPlaces,
+        ),
+      );
+    } else {
+      parts.push(
+        formatSignedFractionTerm(
+          term.deltaY,
+          `1+${formatDirectStepDerivativeExp(steepness, term.x, decimalPlaces)}`,
+          decimalPlaces,
+        ),
+      );
+    }
   }
   return cleanupExpression(parts.join(""));
 }
 
-/** 使用抗溢出的 exp 形式格式化 sigmoid 阶跃表达式的一阶导。 */
-function formatStepFirstDerivativeExpression(terms: readonly StepTerm[], steepness: number, decimalPlaces?: number) {
+/** 格式化 sigmoid 阶跃表达式的一阶导。 */
+function formatStepFirstDerivativeExpression(
+  terms: readonly StepTerm[],
+  steepness: number,
+  decimalPlaces: number | undefined,
+  stepOverflowProtection: boolean,
+  stepOverflowProtectionRange: StepOverflowProtectionRange | undefined,
+) {
   const parts: string[] = [];
   for (const term of terms) {
     const coefficient = term.deltaY * steepness;
-    const expText = formatStableStepDerivativeExp(steepness, term.x, decimalPlaces);
+    const expText = shouldFormatStepTermWithOverflowProtection(
+      steepness,
+      term.x,
+      stepOverflowProtection,
+      stepOverflowProtectionRange,
+    )
+      ? formatStableStepDerivativeExp(steepness, term.x, decimalPlaces)
+      : formatDirectStepDerivativeExp(steepness, term.x, decimalPlaces);
     parts.push(formatSignedRawTerm(coefficient, `${expText}/(1+${expText})^2`, decimalPlaces));
   }
   return cleanupExpression(parts.join("")) || "0";
 }
 
-/** 使用稳定的对称形式格式化 sigmoid 阶跃表达式的二阶导。 */
+/** 格式化 sigmoid 阶跃表达式的二阶导。 */
 function formatStepSecondDerivativeExpression(
   terms: readonly StepTerm[],
   steepness: number,
   decimalPlaces: number | undefined,
+  stepOverflowProtection: boolean,
   signEpsilon: number,
+  stepOverflowProtectionRange: StepOverflowProtectionRange | undefined,
 ) {
   const parts: string[] = [];
   for (const term of terms) {
     const coefficient = term.deltaY * steepness * steepness;
-    const argumentText = formatStepDerivativeArgument(steepness, term.x, decimalPlaces);
-    const expText = formatStableStepDerivativeExp(steepness, term.x, decimalPlaces);
-    const signText = formatStableSignRatio(argumentText, signEpsilon);
-    const body = `${signText}*${expText}*(1-${expText})/(1+${expText})^3`;
-    parts.push(formatSignedRawTerm(-coefficient, body, decimalPlaces));
+    if (
+      shouldFormatStepTermWithOverflowProtection(steepness, term.x, stepOverflowProtection, stepOverflowProtectionRange)
+    ) {
+      const argumentText = formatStepDerivativeArgument(steepness, term.x, decimalPlaces);
+      const expText = formatStableStepDerivativeExp(steepness, term.x, decimalPlaces);
+      const signText = formatStableSignRatio(argumentText, signEpsilon);
+      const body = `${signText}*${expText}*(1-${expText})/(1+${expText})^3`;
+      parts.push(formatSignedRawTerm(-coefficient, body, decimalPlaces));
+    } else {
+      const expText = formatDirectStepDerivativeExp(steepness, term.x, decimalPlaces);
+      parts.push(formatSignedRawTerm(coefficient, `${expText}*(${expText}-1)/(1+${expText})^3`, decimalPlaces));
+    }
   }
   return cleanupExpression(parts.join("")) || "0";
 }
@@ -318,6 +484,7 @@ function formatAbsConnectorFirstDerivativeExpression(
   return cleanupExpression(parts.join("")) || "0";
 }
 
+/** 把每段 Hermite 曲线用软权重拼成一个 Graphwar 可粘贴的全局表达式。 */
 function formatSoftCubicInterpolationExpression(
   points: readonly GraphPoint[],
   algorithm: "pchip" | "akima",
@@ -342,6 +509,7 @@ function formatSoftCubicInterpolationExpression(
   return `(${parts.numerator})/(${parts.denominator})`;
 }
 
+/** 预先构造软加权商函数的分子/分母及一二阶导组成部分。 */
 function createSoftCubicInterpolationFormulaParts(segments: readonly CubicHermiteSegment[], decimalPlaces?: number) {
   const numeratorParts: string[] = [];
   const denominatorParts: string[] = [];
@@ -378,6 +546,7 @@ function createSoftCubicInterpolationFormulaParts(segments: readonly CubicHermit
   };
 }
 
+/** 格式化单段 Hermite 三次曲线 y。 */
 function formatCubicHermiteSegmentExpression(segment: CubicHermiteSegment, decimalPlaces?: number) {
   const t = `((${formatXOffset(segment.startX, decimalPlaces)})/${formatDecimal(segment.width, decimalPlaces)})`;
   const parts = [
@@ -389,6 +558,7 @@ function formatCubicHermiteSegmentExpression(segment: CubicHermiteSegment, decim
   return cleanupExpression(parts.join("")) || "0";
 }
 
+/** 格式化单段 Hermite 三次曲线 y'。 */
 function formatCubicHermiteSegmentDerivativeExpression(segment: CubicHermiteSegment, decimalPlaces?: number) {
   const t = `((${formatXOffset(segment.startX, decimalPlaces)})/${formatDecimal(segment.width, decimalPlaces)})`;
   const parts = [
@@ -400,6 +570,7 @@ function formatCubicHermiteSegmentDerivativeExpression(segment: CubicHermiteSegm
   return cleanupExpression(parts.join("")) || "0";
 }
 
+/** 格式化单段 Hermite 三次曲线 y''。 */
 function formatCubicHermiteSegmentSecondDerivativeExpression(segment: CubicHermiteSegment, decimalPlaces?: number) {
   const t = `((${formatXOffset(segment.startX, decimalPlaces)})/${formatDecimal(segment.width, decimalPlaces)})`;
   const parts = [
@@ -411,15 +582,18 @@ function formatCubicHermiteSegmentSecondDerivativeExpression(segment: CubicHermi
   return cleanupExpression(parts.join("")) || "0";
 }
 
+/** 格式化软区间权重，权重在分段中心附近最大、远离后快速衰减。 */
 function formatSoftIntervalIndicator(segment: CubicHermiteSegment, decimalPlaces?: number) {
   return `1/(${formatSoftIntervalBase(segment, decimalPlaces)})`;
 }
 
+/** 格式化软区间权重的一阶导，供商函数求导使用。 */
 function formatSoftIntervalIndicatorDerivative(segment: CubicHermiteSegment, decimalPlaces?: number) {
   const firstPowerDerivative = formatSoftIntervalPowerDerivative(segment, 1, decimalPlaces);
   return `-(${firstPowerDerivative})/(${formatSoftIntervalBase(segment, decimalPlaces)})^2`;
 }
 
+/** 格式化软区间权重的二阶导，供 y'' 模式使用。 */
 function formatSoftIntervalIndicatorSecondDerivative(segment: CubicHermiteSegment, decimalPlaces?: number) {
   const firstPowerDerivative = formatSoftIntervalPowerDerivative(segment, 1, decimalPlaces);
   const secondPowerDerivative = formatSoftIntervalPowerDerivative(segment, 2, decimalPlaces);
@@ -427,16 +601,19 @@ function formatSoftIntervalIndicatorSecondDerivative(segment: CubicHermiteSegmen
   return `-(${secondPowerDerivative})/(${base})^2+2*(${firstPowerDerivative})^2/(${base})^3`;
 }
 
+/** 格式化软权重分母基础项 1+t^n。 */
 function formatSoftIntervalBase(segment: CubicHermiteSegment, decimalPlaces?: number) {
   return `1+${formatSoftIntervalPower(segment, SOFT_INTERVAL_INDICATOR_POWER * 2, decimalPlaces)}`;
 }
 
+/** 格式化以分段中心和半宽归一化后的幂项。 */
 function formatSoftIntervalPower(segment: CubicHermiteSegment, power: number, decimalPlaces?: number) {
   const center = (segment.startX + segment.endX) / 2;
   const halfWidth = segment.width / 2;
   return `((${formatXOffset(center, decimalPlaces)})/${formatDecimal(halfWidth, decimalPlaces)})^${power}`;
 }
 
+/** 格式化归一化幂项的一阶或二阶导。 */
 function formatSoftIntervalPowerDerivative(
   segment: CubicHermiteSegment,
   derivativeOrder: 1 | 2,
@@ -449,16 +626,15 @@ function formatSoftIntervalPowerDerivative(
   return `${formatDecimal(coefficient, decimalPlaces)}*((${formatXOffset(center, decimalPlaces)})/${formatDecimal(halfWidth, decimalPlaces)})^${power - derivativeOrder}`;
 }
 
-function evaluateSoftCubicInterpolationY(
+/** 直接求值软分段商函数，和格式化表达式保持同一套公式。 */
+function evaluateSoftCubicInterpolationSegmentsY(
   x: number,
-  points: readonly GraphPoint[],
-  algorithm: "pchip" | "akima",
+  segments: readonly CubicHermiteSegment[],
   mode: EquationMode,
-  options?: FormulaEvaluationOptions,
+  fallbackY: number,
 ) {
-  const segments = createCubicInterpolationSegments(points, algorithm, options);
   if (segments.length === 0) {
-    return points[0]?.y ?? 0;
+    return fallbackY;
   }
 
   let numerator = 0;
@@ -498,6 +674,7 @@ function evaluateSoftCubicInterpolationY(
   return numerator / denominator;
 }
 
+/** 求值单段 Hermite 曲线 y。 */
 function evaluateCubicHermiteSegmentY(x: number, segment: CubicHermiteSegment) {
   const t = (x - segment.startX) / segment.width;
   const t2 = t * t;
@@ -510,6 +687,7 @@ function evaluateCubicHermiteSegmentY(x: number, segment: CubicHermiteSegment) {
   );
 }
 
+/** 求值单段 Hermite 曲线 y'。 */
 function evaluateCubicHermiteSegmentDerivativeY(x: number, segment: CubicHermiteSegment) {
   const t = (x - segment.startX) / segment.width;
   const t2 = t * t;
@@ -521,6 +699,7 @@ function evaluateCubicHermiteSegmentDerivativeY(x: number, segment: CubicHermite
   );
 }
 
+/** 求值单段 Hermite 曲线 y''。 */
 function evaluateCubicHermiteSegmentSecondDerivativeY(x: number, segment: CubicHermiteSegment) {
   const t = (x - segment.startX) / segment.width;
   return (
@@ -531,29 +710,34 @@ function evaluateCubicHermiteSegmentSecondDerivativeY(x: number, segment: CubicH
   );
 }
 
+/** 求值软区间权重。 */
 function evaluateSoftIntervalIndicator(x: number, segment: CubicHermiteSegment) {
   const center = (segment.startX + segment.endX) / 2;
   const halfWidth = segment.width / 2;
   return 1 / (1 + ((x - center) / halfWidth) ** (2 * SOFT_INTERVAL_INDICATOR_POWER));
 }
 
+/** 求值软区间权重的一阶导。 */
 function evaluateSoftIntervalIndicatorDerivative(x: number, segment: CubicHermiteSegment) {
   const base = evaluateSoftIntervalBase(x, segment);
   return -evaluateSoftIntervalPowerDerivative(x, segment, 1) / base ** 2;
 }
 
+/** 求值软区间权重的二阶导。 */
 function evaluateSoftIntervalIndicatorSecondDerivative(x: number, segment: CubicHermiteSegment) {
   const base = evaluateSoftIntervalBase(x, segment);
   const firstPowerDerivative = evaluateSoftIntervalPowerDerivative(x, segment, 1);
   return -evaluateSoftIntervalPowerDerivative(x, segment, 2) / base ** 2 + (2 * firstPowerDerivative ** 2) / base ** 3;
 }
 
+/** 求值软权重分母基础项。 */
 function evaluateSoftIntervalBase(x: number, segment: CubicHermiteSegment) {
   const center = (segment.startX + segment.endX) / 2;
   const halfWidth = segment.width / 2;
   return 1 + ((x - center) / halfWidth) ** (2 * SOFT_INTERVAL_INDICATOR_POWER);
 }
 
+/** 求值归一化幂项的一阶或二阶导。 */
 function evaluateSoftIntervalPowerDerivative(x: number, segment: CubicHermiteSegment, derivativeOrder: 1 | 2) {
   const power = SOFT_INTERVAL_INDICATOR_POWER * 2;
   const center = (segment.startX + segment.endX) / 2;
@@ -562,6 +746,7 @@ function evaluateSoftIntervalPowerDerivative(x: number, segment: CubicHermiteSeg
   return coefficient * ((x - center) / halfWidth) ** (power - derivativeOrder);
 }
 
+/** 根据 PCHIP/Akima 斜率生成 Hermite 分段，并保护过窄区间。 */
 function createCubicInterpolationSegments(
   points: readonly GraphPoint[],
   algorithm: "pchip" | "akima",
@@ -593,12 +778,14 @@ function createCubicInterpolationSegments(
   return segments;
 }
 
+/** 将插值控制点按公式系数精度归一化，使采样和输出表达式一致。 */
 function normalizeInterpolationPoints(points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
   return points.map((point) =>
     createGraphPoint(normalizeFormulaCoefficient(point.x, options), normalizeFormulaCoefficient(point.y, options)),
   );
 }
 
+/** 计算 PCHIP 斜率，保持单调区间不产生过冲。 */
 function createPchipSlopes(points: readonly GraphPoint[]) {
   const segmentSlopes = createSegmentSlopes(points);
   if (segmentSlopes.length === 1) {
@@ -633,6 +820,7 @@ function createPchipSlopes(points: readonly GraphPoint[]) {
   return slopes;
 }
 
+/** 计算 PCHIP 端点斜率，并按算法规则限制反号和过大斜率。 */
 function createPchipEndpointSlope(width: number, nextWidth: number, slope: number, nextSlope: number) {
   const endpointSlope = ((2 * width + nextWidth) * slope - width * nextSlope) / (width + nextWidth);
   if (endpointSlope * slope <= 0) {
@@ -644,6 +832,7 @@ function createPchipEndpointSlope(width: number, nextWidth: number, slope: numbe
   return endpointSlope;
 }
 
+/** 计算 Akima 斜率，降低局部异常点对相邻段的影响。 */
 function createAkimaSlopes(points: readonly GraphPoint[]) {
   const segmentSlopes = createSegmentSlopes(points);
   if (segmentSlopes.length === 1) {
@@ -676,12 +865,14 @@ function createAkimaSlopes(points: readonly GraphPoint[]) {
   return slopes;
 }
 
+/** 创建分段宽度，并用 Graphwar 最小 x 步长保护零宽段。 */
 function createSegmentWidths(points: readonly GraphPoint[]) {
   return points
     .slice(0, -1)
     .map((point, index) => Math.max(points[index + 1].x - point.x, GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE));
 }
 
+/** 创建相邻控制点的割线斜率。 */
 function createSegmentSlopes(points: readonly GraphPoint[]) {
   return createSegmentWidths(points).map((width, index) => (points[index + 1].y - points[index].y) / width);
 }
@@ -708,6 +899,7 @@ function createAbsConnectorSegment(start: GraphPoint, end: GraphPoint): AbsConne
   };
 }
 
+/** 判断 abs 连接段在当前输出精度下是否会被四舍五入成零宽无效项。 */
 function isRoundedAbsConnectorZero(segment: AbsConnectorSegment, decimalPlaces?: number) {
   return (
     roundToDecimalPlaces(segment.startX, decimalPlaces) === roundToDecimalPlaces(segment.endX, decimalPlaces) &&
@@ -738,11 +930,21 @@ function formatStableStepDerivativeExp(steepness: number, centerX: number, decim
   return `exp(-abs(${formatStepDerivativeArgument(steepness, centerX, decimalPlaces)}))`;
 }
 
+/** 格式化朴素 exp(-a*(x+c))，与 Graphwar 实际表达式数值行为一致。 */
+function formatDirectStepDerivativeExp(steepness: number, centerX: number, decimalPlaces?: number) {
+  return `exp(-${formatStepDerivativeArgument(steepness, centerX, decimalPlaces)})`;
+}
+
 /** 计算与生成表达式一致的抗溢出 sigmoid 近似值。 */
 function evaluateStableStepSigmoid(t: number, options?: FormulaEvaluationOptions) {
   const q = Math.exp(-Math.abs(t));
   const sign = evaluateStableSignRatio(t, options);
   return 0.5 + (0.5 * sign * (1 - q)) / (1 + q);
+}
+
+/** 计算朴素 1/(1+exp(-t))，保留溢出后的实际 JS/Graphwar 数值行为。 */
+function evaluateDirectStepSigmoid(t: number) {
+  return 1 / (1 + Math.exp(-t));
 }
 
 /** 模拟输出表达式里的 z / (abs(z)+eps)，避免折点 0 / 0。 */
@@ -751,6 +953,41 @@ function evaluateStableSignRatio(value: number, options?: FormulaEvaluationOptio
   return value / (Math.abs(value) + (options?.signEpsilon ?? GRAPHWAR_TOOL_SIGN_EPSILON));
 }
 
+/** 运行时判断 step 项是否需要抗溢出，避免无风险项改变 Graphwar 原始行为。 */
+function shouldUseStepOverflowProtection(
+  steepness: number,
+  centerX: number,
+  currentArgument: number,
+  options?: FormulaEvaluationOptions,
+) {
+  if (!(options?.stepOverflowProtection ?? true)) {
+    return false;
+  }
+  const range = options?.stepOverflowProtectionRange;
+  if (range) {
+    return stepTermCanOverflowExp(steepness, centerX, range);
+  }
+  return -currentArgument > JAVA_DOUBLE_MAX_EXP_ARGUMENT;
+}
+
+/** 输出公式时判断 step 项是否需要抗溢出写法。 */
+function shouldFormatStepTermWithOverflowProtection(
+  steepness: number,
+  centerX: number,
+  stepOverflowProtection: boolean,
+  range: StepOverflowProtectionRange | undefined,
+) {
+  return stepOverflowProtection && (!range || stepTermCanOverflowExp(steepness, centerX, range));
+}
+
+/** 判断指定 x 范围内 exp(-steepness*(x-center)) 是否会超过 Java double 上限。 */
+function stepTermCanOverflowExp(steepness: number, centerX: number, range: StepOverflowProtectionRange) {
+  const minX = Math.min(range.minX, range.maxX);
+  const maxExpArgument = -steepness * (minX - centerX);
+  return maxExpArgument > JAVA_DOUBLE_MAX_EXP_ARGUMENT;
+}
+
+/** 按输出精度归一化公式系数，确保 evaluator 和文本公式使用相同数字。 */
 function normalizeFormulaCoefficient(value: number, options?: FormulaEvaluationOptions) {
   return roundToDecimalPlaces(value, options?.coefficientDecimalPlaces);
 }
@@ -760,6 +997,7 @@ function formatSignEpsilon(signEpsilon: number) {
   return formatDecimal(signEpsilon, MAX_FORMULA_DECIMAL_PLACES);
 }
 
+/** 格式化稳定符号比值；epsilon 为 0 时保留原始 abs 分母写法。 */
 function formatStableSignRatio(argumentText: string, signEpsilon: number) {
   if (signEpsilon === 0) {
     return `(${argumentText})/abs(${argumentText})`;
@@ -787,6 +1025,17 @@ function formatSignedRawTerm(coefficientValue: number, body: string, decimalPlac
 
   const sign = coefficient < 0 ? "-" : "+";
   return `${sign}${formatDecimal(Math.abs(coefficient), decimalPlaces)}*${body}`;
+}
+
+/** 格式化带符号的 k/(body) 项，并丢弃四舍五入后为 0 的系数。 */
+function formatSignedFractionTerm(coefficientValue: number, denominator: string, decimalPlaces?: number) {
+  const coefficient = normalizeZero(coefficientValue, decimalPlaces);
+  if (coefficient === 0) {
+    return "";
+  }
+
+  const sign = coefficient < 0 ? "-" : "+";
+  return `${sign}${formatDecimal(Math.abs(coefficient), decimalPlaces)}/(${denominator})`;
 }
 
 /** 去掉生成表达式开头无意义的符号。 */

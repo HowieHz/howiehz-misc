@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # Try It Online
 
 No installation required. Open it in your browser: [Compatibility Finder](../tools/compatibility-test/)

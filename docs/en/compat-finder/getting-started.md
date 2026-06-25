@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # Getting Started
 
 This page shows how to install `compat-finder` and start using it from the library or CLI as quickly as possible.

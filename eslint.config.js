@@ -54,8 +54,8 @@ export default defineConfig(
     languageOptions: browserLanguageOptions,
   },
   {
-    // Browser-side Vue SFCs used by the VitePress theme.
-    files: ["docs/.vitepress/**/*.vue"],
+    // Browser-side Vue SFCs used by the VitePress theme and tool pages.
+    files: ["docs/**/*.vue"],
     languageOptions: vueLanguageOptions,
   },
   {

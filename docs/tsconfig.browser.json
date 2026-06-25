@@ -19,9 +19,10 @@
     ".vitepress/theme/**/*.ts",
     ".vitepress/types/browser/*.d.ts",
     "tools/**/*.ts",
+    "en/tools/**/*.ts",
     "**/*.vue",
     "**/*.md",
     ".vitepress/**/*.vue"
   ],
-  "exclude": ["**/README.md"]
+  "exclude": ["**/README.md", "CHANGELOG.md"]
 }

@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # 兼容性问题排查器
 
 `compat-finder` 是一个用于排查多个目标之间兼容性问题的 TypeScript 库和命令行工具。

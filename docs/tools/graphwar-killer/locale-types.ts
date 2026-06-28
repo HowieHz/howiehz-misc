@@ -46,7 +46,6 @@ export interface GraphwarKillerLocale {
     pathfindingMinimumNumber: string;
     pathfindingMinimumPixelRange: (limit: number) => string;
     routeStepNumber: string;
-    searchStepNumber: string;
     simulationExpansionNumber: string;
     simulationExpansionPixelRange: (limit: number) => string;
     stepSteepnessNumber: string;
@@ -106,7 +105,6 @@ export interface GraphwarKillerLocale {
     };
     autoGraphPathfindingDisabled: string;
     pathPointCoordinateNumber: string;
-    pathfindingSearchStepTitle: string;
     secondOrderAngleHint: (angle: string) => string;
     stepPathfindingDisabled: string;
     trajectoryWarning: {
@@ -186,8 +184,6 @@ export interface GraphwarKillerLocale {
       pathMinimumTitle: string;
       searchAnimation: string;
       searchAnimationTitle: string;
-      searchStep: string;
-      searchStepAriaLabel: string;
       simulationExpansion: string;
       simulationExpansionAriaLabel: string;
       simulationExpansionTitle: string;

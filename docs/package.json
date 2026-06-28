@@ -12,7 +12,7 @@
     "@giscus/vue": "^3.1.1",
     "compat-finder": "workspace:*",
     "lunar-javascript": "^1.7.7",
-    "vue": "^3.5.38"
+    "vue": "^3.5.39"
   },
   "devDependencies": {
     "@nolebase/vitepress-plugin-highlight-targeted-heading": "^2.18.2",

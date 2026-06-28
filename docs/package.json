@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@nolebase/vitepress-plugin-highlight-targeted-heading": "^2.18.2",
-    "@shikijs/vitepress-twoslash": "^4.2.0",
+    "@shikijs/vitepress-twoslash": "^4.3.0",
     "lightningcss": "^1.32.0",
     "markdown-it-mathjax3": "^4.3.2",
     "pagefind": "^1.5.2",

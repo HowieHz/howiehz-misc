@@ -225,7 +225,7 @@ function extractH1Title(filePath: string): string | undefined {
 
 // https://vitepress.dev/reference/site-config
 const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
-  srcExclude: ["**/README.md"],
+  srcExclude: ["**/README.md", "CHANGELOG.md"],
   vite: {
     plugins: [
       // Group icons plugin
@@ -328,6 +328,9 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
     },
     build: {
       cssMinify: "lightningcss",
+    },
+    worker: {
+      format: "es",
     },
   },
 

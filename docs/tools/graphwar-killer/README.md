@@ -10,4 +10,7 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 
 ## 源码结构
 
-- [index.md](./index.md) 是工具页面与交互面板。
+- [index.md](./index.md) 是中文工具页面入口。
+- [GraphwarKillerPage.vue](./GraphwarKillerPage.vue) 是中英文共享工具页面实现。
+- [composables/](./composables/) 放页面侧工作流状态 Module，例如截图输入和路径编辑。
+- [locale.ts](./locale.ts) 提供中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。

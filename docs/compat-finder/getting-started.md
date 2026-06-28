@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # 快速上手
 
 本页展示如何安装 `compat-finder`，并用最短路径开始使用库或 CLI。

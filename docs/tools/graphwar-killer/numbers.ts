@@ -1,3 +1,4 @@
+/** 提供 Graphwar 杀手表单解析、数值格式化和浮点比较工具。 */
 /** 解析用户输入的数字文本，并拒绝空值、NaN 和无穷值。 */
 export function parseFiniteNumber(value: string) {
   const normalizedValue = value.trim();
@@ -14,13 +15,24 @@ export function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-/** 使用工具统一的容差比较两个浮点数是否近似相等。 */
+/** 按参与比较的数值尺度估算 double 舍入误差容差。 */
+export function doublePrecisionTolerance(...values: readonly number[]) {
+  const finiteScale = values.filter(Number.isFinite).reduce((scale, value) => Math.max(scale, Math.abs(value)), 1);
+  return Number.EPSILON * finiteScale;
+}
+
+/** 使用 double 精度容差比较两个浮点数是否近似相等。 */
 export function nearlyEqual(left: number, right: number) {
-  return Math.abs(left - right) < 1e-9;
+  return Math.abs(left - right) <= doublePrecisionTolerance(left, right);
+}
+
+/** 判断 Graphwar x 差是否达到当前公式输出精度要求的最小前进步长。 */
+export function graphXAdvancesEnough(deltaX: number, minimumGraphXStep: number, ...sourceValues: readonly number[]) {
+  return deltaX + doublePrecisionTolerance(deltaX, minimumGraphXStep, ...sourceValues) >= minimumGraphXStep;
 }
 
 export const MAX_FORMULA_DECIMAL_PLACES = 15;
-export const DEFAULT_FORMULA_DECIMAL_PLACES = 2;
+export const DEFAULT_FORMULA_DECIMAL_PLACES = 4;
 
 /** 将公式输出小数位限制在 Graphwar 可读且 double 有意义的范围内。 */
 export function clampDecimalPlaces(value: number) {
@@ -63,6 +75,7 @@ export function formatDoublePrecisionDecimal(value: number) {
   return expandExponentialNotation(value.toString());
 }
 
+/** 去掉固定小数输出的末尾 0，缩短 Graphwar 公式文本。 */
 function trimTrailingDecimalZeros(value: string) {
   return value.includes(".") ? value.replace(/\.?0+$/, "") : value;
 }

@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # 与 AI 协作
 
 如果你想让 AI 帮你推进 `compat-finder` 的排查或集成流程，可以为你的 AI 智能体安装 `compat-finder` [智能体技能（Agent Skill）](https://agentskills.io/)。

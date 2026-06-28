@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # compat-finder
 
 `compat-finder` is a TypeScript library and CLI for troubleshooting compatibility issues across multiple targets.

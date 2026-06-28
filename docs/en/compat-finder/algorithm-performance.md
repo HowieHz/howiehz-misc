@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # Algorithm Performance
 
 `compat-finder` currently ships with two built-in algorithms: `binary-split` and `leave-one-out`.

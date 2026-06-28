@@ -1,3 +1,7 @@
+---
+publish: false
+---
+
 # API Reference
 
 Most integrations should start with the [Simple Session API](#simple-session-api).

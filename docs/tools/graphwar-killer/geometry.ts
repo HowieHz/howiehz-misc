@@ -1,3 +1,4 @@
+/** 提供截图像素坐标、Graphwar 坐标和标定矩形之间的转换工具。 */
 import { clampNumber } from "./numbers";
 import { createGraphPoint, createPixelPoint } from "./types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "./types";

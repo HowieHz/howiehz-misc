@@ -49,7 +49,6 @@ export const graphwarKillerLocale = {
     pathfindingMinimumNumber: "寻路最小值需要填写数字",
     pathfindingMinimumPixelRange: (limit) => `寻路最小值需要在 -${limit}px 到 ${limit}px 之间`,
     routeStepNumber: "寻路时拓展步长需要填写大于 0 的数字",
-    searchStepNumber: "搜索步长需要填写大于 0 的数字",
     simulationExpansionNumber: "函数模拟值需要填写数字",
     simulationExpansionPixelRange: (limit) => `函数模拟值需要在 -${limit}px 到 ${limit}px 之间`,
     stepSteepnessNumber: "阶跃陡峭度需要是大于 0 的数字",
@@ -107,8 +106,6 @@ export const graphwarKillerLocale = {
     },
     autoGraphPathfindingDisabled: "一键清图正在重写，暂不可用",
     pathPointCoordinateNumber: "点坐标需要填写数字",
-    pathfindingSearchStepTitle:
-      "竖向安全区间 DP 的 x 方向搜索步长；越小越细，越慢。单位是 Graphwar 原始 770x450 平面像素。",
     secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到约 ${angle}°。`,
     stepPathfindingDisabled: "阶跃函数暂不支持智能寻路和一键清图",
     trajectoryWarning: {
@@ -203,8 +200,6 @@ export const graphwarKillerLocale = {
       pathMinimumTitle: "寻路从这个值开始外扩障碍。单位是 Graphwar 原始 770x450 平面像素。",
       searchAnimation: "搜索动画",
       searchAnimationTitle: "显示智能寻路、一键清图搜索过程和 DAG 预览；关闭后计算更安静。",
-      searchStep: "搜索步长",
-      searchStepAriaLabel: "搜索步长，单位为 Graphwar 原始 770x450 平面像素",
       simulationExpansion: "函数模拟值",
       simulationExpansionAriaLabel: "函数模拟障碍外扩值，单位为 Graphwar 原始 770x450 平面像素",
       simulationExpansionTitle:

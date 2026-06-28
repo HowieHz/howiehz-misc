@@ -86,7 +86,6 @@ export const graphwarKillerLocale = {
     pathfindingMinimumNumber: "Pathfinding minimum must be a number",
     pathfindingMinimumPixelRange: (limit) => `Pathfinding minimum must be between -${limit}px and ${limit}px`,
     routeStepNumber: "Expansion step must be a number greater than 0",
-    searchStepNumber: "Search step must be a number greater than 0",
     simulationExpansionNumber: "Simulation expansion must be a number",
     simulationExpansionPixelRange: (limit) => `Simulation expansion must be between -${limit}px and ${limit}px`,
     stepSteepnessNumber: "Step steepness must be a number greater than 0",
@@ -147,8 +146,6 @@ export const graphwarKillerLocale = {
     },
     autoGraphPathfindingDisabled: "One-Click Clear is being rebuilt and is unavailable for now",
     pathPointCoordinateNumber: "Point coordinates must be numbers",
-    pathfindingSearchStepTitle:
-      "X-axis search step for vertical safe-interval DP; smaller is more precise and slower. Unit: raw Graphwar 770x450 plane pixels.",
     secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to about ${angle} deg.`,
     stepPathfindingDisabled: "Step functions do not support Smart Pathfinding or One-Click Clear yet",
     trajectoryWarning: {
@@ -262,8 +259,6 @@ export const graphwarKillerLocale = {
       searchAnimation: "Search animation",
       searchAnimationTitle:
         "Show the Smart Pathfinding and One-Click Clear search process plus DAG previews; turn it off for quieter calculation.",
-      searchStep: "Search step",
-      searchStepAriaLabel: "Search step in raw Graphwar 770x450 plane pixels",
       simulationExpansion: "Simulation expansion",
       simulationExpansionAriaLabel: "Function-simulation obstacle expansion in raw Graphwar 770x450 plane pixels",
       simulationExpansionTitle:

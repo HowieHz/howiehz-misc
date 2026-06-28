@@ -36,9 +36,8 @@ import {
   createRouteMaskCacheKey,
   mirrorPlaneGridPoint,
   planeGridCellCenterToImagePoint,
-  planeToImagePoint,
 } from "./graphwar-pathfinding";
-import type { GraphwarPathfindingPreview, PlaneGridPoint, SafeInterval } from "./graphwar-pathfinding";
+import type { GraphwarPathfindingPreview, PlaneGridPoint } from "./graphwar-pathfinding";
 import { createHeaderStatus, getFirstHeaderStatus, getSmartPathfindingHeaderStatus } from "./header-status";
 import type { GraphwarKillerLocale } from "./locale-types";
 import {
@@ -95,7 +94,6 @@ type ParsedObstacleTolerances =
       routeMaxTolerancePlanePixels: number;
       routeMinTolerancePlanePixels: number;
       routeStepPlanePixels: number;
-      searchStepPlanePixels: number;
       simulationTolerancePlanePixels: number;
     }
   | { ok: false; message: string };
@@ -155,8 +153,6 @@ interface TrajectoryCollisionSettings {
 }
 /** 页面侧 route tolerance mask 缓存。 */
 interface RouteMaskCacheEntry {
-  /** 列安全区间缓存。 */
-  intervalCache: Map<string, SafeInterval[]>;
   /** 膨胀或腐蚀后的 mask。 */
   mask: Uint8Array;
 }
@@ -204,10 +200,9 @@ const simulatorSkipUnknownCharacters = ref(true);
 const simulatorParseDerivativeAsY = ref(true);
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
 const obstacleRouteMinToleranceText = ref("1");
-const obstacleRouteMaxToleranceText = ref("1");
+const obstacleRouteMaxToleranceText = ref("3");
 const obstacleRouteStepToleranceText = ref("1");
-const obstacleSimulationToleranceText = ref("0");
-const pathfindingSearchStepText = ref("1");
+const obstacleSimulationToleranceText = ref("1");
 const autoGraphWorkerCountText = ref("4");
 const pathfindingBoundaryExpansionText = ref("1");
 const simulatorFormulaText = ref("");
@@ -273,8 +268,8 @@ const smartPathfindingStatus = ref("");
 const smartPathfindingStatusKind = ref<SmartPathfindingStatusKind>("info");
 const smartPathfindingActiveRouteTolerance = ref<number>();
 const smartPathfindingPreviewConnection = ref<PathLineSegment>();
-const smartPathfindingPreviewColumn = ref<PathLineSegment>();
-const smartPathfindingPreviewSegments = ref<PathLineSegment[]>([]);
+const smartPathfindingPreviewAcceptedEdges = ref<PathLineSegment[]>([]);
+const smartPathfindingPreviewCurrentPoint = ref<PixelPoint>();
 const smartPathfindingPreviewPoints = ref<PixelPoint[]>([]);
 const smartPathfindingPreviewPath = ref<PixelPoint[]>([]);
 const pathfindingOptimizationPreviewPoint = ref<PixelPoint>();
@@ -378,11 +373,6 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     return { ok: false as const, message: locale.validation.simulationExpansionNumber };
   }
 
-  const searchStepPlanePixels = parseFiniteNumber(pathfindingSearchStepText.value);
-  if (searchStepPlanePixels === undefined || searchStepPlanePixels <= 0) {
-    return { ok: false as const, message: locale.validation.searchStepNumber };
-  }
-
   const boundaryExpansionPlanePixels = parseFiniteNumber(pathfindingBoundaryExpansionText.value);
   if (boundaryExpansionPlanePixels === undefined) {
     return { ok: false as const, message: locale.validation.boundaryExpansionNumber };
@@ -425,7 +415,6 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     routeMaxTolerancePlanePixels,
     routeMinTolerancePlanePixels,
     routeStepPlanePixels: Math.max(Number.EPSILON, Math.abs(routeStepPlanePixels)),
-    searchStepPlanePixels: Math.max(Number.EPSILON, Math.abs(searchStepPlanePixels)),
     simulationTolerancePlanePixels,
   };
 });
@@ -752,10 +741,6 @@ const smartPathfindingSettingsMessage = computed(() => {
   }
   return "";
 });
-const pathfindingSearchStepTitle = computed(() => {
-  return locale.status.pathfindingSearchStepTitle;
-});
-
 const formulaResult = computed<FormulaResult | undefined>(() => {
   if (toolWorkflowMode.value !== "solver") {
     return undefined;
@@ -1156,7 +1141,6 @@ watch(
     obstacleRouteMaxToleranceText,
     obstacleRouteStepToleranceText,
     pathfindingBoundaryExpansionText,
-    pathfindingSearchStepText,
     minXText,
     maxXText,
     minYText,
@@ -1739,11 +1723,11 @@ async function buildSmartPathfindingPath(target: PixelPoint | SmartPathfindingTa
       bounds: boundsResult.bounds,
       boundsRect: boundsRect.value,
       boundaryExpansion: tolerances.boundaryExpansionPlanePixels,
-      intervalCache: routeMaskEntry.intervalCache,
+      canAdvance: pathfindingPlaneSegmentAdvancesEnough,
       isCancelled: () => cancelToken !== smartPathfindingCancelToken,
       onPreview: searchAnimationEnabled.value ? setSmartPathfindingPreview : undefined,
       routeMask,
-      searchStepPlanePixels: tolerances.searchStepPlanePixels,
+      routeTolerancePlanePixels: routeTolerance,
       startPoint,
       targetPoint,
       yieldControl: waitForNextPathfindingSlice,
@@ -1763,46 +1747,33 @@ async function buildSmartPathfindingPath(target: PixelPoint | SmartPathfindingTa
     }
     setSmartPathfindingPhase("trajectory");
     if (pathTrajectoryReachesTargetBeforeSimulationObstacle(normalizedPath, hitTarget)) {
-      return optimizeSmartPathfindingPath(normalizedPath, sourcePath.length, cancelToken, hitTarget);
-    }
-
-    // 直线可见但轨迹碰撞时，强制列扫描给 DP 一次绕开弹道障碍的机会。
-    if (pathfindingPath.length <= 2) {
-      const fallbackPath = await buildSmartPathfindingPathForMask({
-        bounds: boundsResult.bounds,
-        boundsRect: boundsRect.value,
-        boundaryExpansion: tolerances.boundaryExpansionPlanePixels,
-        forceColumnSearch: true,
-        intervalCache: routeMaskEntry.intervalCache,
-        isCancelled: () => cancelToken !== smartPathfindingCancelToken,
-        onPreview: searchAnimationEnabled.value ? setSmartPathfindingPreview : undefined,
-        routeMask,
-        searchStepPlanePixels: tolerances.searchStepPlanePixels,
-        simplifyByLineOfSight: false,
-        startPoint,
-        targetPoint,
-        yieldControl: waitForNextPathfindingSlice,
-      });
-      if (!fallbackPath || fallbackPath.length < 2) {
-        continue;
-      }
-
-      const fallbackNormalizedPath = createNormalizedPathFromPlanePath(fallbackPath, targetPoint, sourcePath);
-      if (!pathFollowsGraphRule(fallbackNormalizedPath)) {
-        setSmartPathfindingStatus(getForwardPathMessage(), "error");
-        return undefined;
-      }
-
-      if (searchAnimationEnabled.value) {
-        setSmartPathfindingPreviewPath(getSmartPathfindingAppendedSegment(fallbackNormalizedPath, sourcePath.length));
-      }
-      setSmartPathfindingPhase("trajectory");
-      if (pathTrajectoryReachesTargetBeforeSimulationObstacle(fallbackNormalizedPath, hitTarget)) {
-        return optimizeSmartPathfindingPath(fallbackNormalizedPath, sourcePath.length, cancelToken, hitTarget);
-      }
+      return normalizedPath.length > 3
+        ? optimizeSmartPathfindingPath(normalizedPath, sourcePath.length, cancelToken, hitTarget)
+        : normalizedPath;
     }
   }
   return undefined;
+}
+
+/** 判断平面候选线段是否满足当前 Graphwar 输出精度下的 x+ 最小步长。 */
+function pathfindingPlaneSegmentAdvancesEnough(previous: PlaneGridPoint, next: PlaneGridPoint) {
+  if (!parsedBounds.value.ok) {
+    return false;
+  }
+
+  const previousGraphX = planeGridPointToGraphX(previous);
+  const nextGraphX = planeGridPointToGraphX(next);
+  return pathAdvancesEnough(nextGraphX - previousGraphX, previousGraphX, nextGraphX);
+}
+
+/** 将固定 770x450 平面 x 转换为当前 Graphwar 游戏 x。 */
+function planeGridPointToGraphX(point: PlaneGridPoint) {
+  const bounds = parsedBounds.value.ok ? parsedBounds.value.bounds : undefined;
+  if (!bounds) {
+    return Number.NaN;
+  }
+
+  return bounds.minX + ((point.x + 0.5) / GRAPHWAR_PLANE_LENGTH) * (bounds.maxX - bounds.minX);
 }
 
 /** 提取新增路径段并保留连接点，供搜索动画绘制。 */
@@ -1979,7 +1950,7 @@ function collectSmartPathfindingSoldierXTargets(startPoint: PixelPoint, box: Det
     return [];
   }
 
-  const pixelStep = getSmartPathfindingImageXStep();
+  const pixelStep = getSmartPathfindingTargetImageXStep();
   if (pixelStep <= 0) {
     return [];
   }
@@ -1990,7 +1961,8 @@ function collectSmartPathfindingSoldierXTargets(startPoint: PixelPoint, box: Det
   const direction = xPlusIsRight ? 1 : -1;
   const edgeX = center.x + direction * box.hitRadius;
   // 士兵目标只在命中圈中心水平线上搜索：先试规则选出的起点，
-  // 再按搜索步长推向 x+ 边缘，让寻路失败时换目标但不改变 y。
+  // 再按当前输出精度允许的最小 x 步长推向 x+ 边缘，
+  // 让寻路失败时换目标但不改变 y。
   const maxSteps = Math.ceil(Math.abs(edgeX - startPoint.x) / pixelStep) + 1;
   for (let step = 0; step <= maxSteps; step += 1) {
     const rawX = startPoint.x + direction * pixelStep * step;
@@ -2009,13 +1981,17 @@ function collectSmartPathfindingSoldierXTargets(startPoint: PixelPoint, box: Det
   return targets;
 }
 
-/** 将搜索步长从 Graphwar 原始平面像素换算为截图像素 x 步长。 */
-function getSmartPathfindingImageXStep() {
-  const tolerances = parsedObstacleTolerances.value;
-  if (!tolerances.ok) {
+/** 将当前 Graphwar 最小 x 精度换算为士兵命中圈目标枚举的截图像素步长。 */
+function getSmartPathfindingTargetImageXStep() {
+  if (!parsedBounds.value.ok) {
     return 0;
   }
-  return Math.max(1, (tolerances.searchStepPlanePixels / GRAPHWAR_PLANE_LENGTH) * boundsRect.value.width);
+
+  return Math.max(
+    1,
+    Math.abs(minimumPathGraphXStep.value / (parsedBounds.value.bounds.maxX - parsedBounds.value.bounds.minX)) *
+      boundsRect.value.width,
+  );
 }
 
 function createSoldierHitCircle(box: DetectionBox): HitCircle {
@@ -2025,7 +2001,7 @@ function createSoldierHitCircle(box: DetectionBox): HitCircle {
   };
 }
 
-/** 获取指定 route tolerance 的 mask 和列区间缓存。 */
+/** 获取指定 route tolerance 的寻路 mask。 */
 function getCachedRouteMask(mask: Uint8Array, routeTolerance: number): RouteMaskCacheEntry {
   const key = createRouteMaskCacheKey(routeTolerance);
   let entries = routeMaskCache.get(mask);
@@ -2040,7 +2016,6 @@ function getCachedRouteMask(mask: Uint8Array, routeTolerance: number): RouteMask
   }
 
   const entry = {
-    intervalCache: new Map<string, SafeInterval[]>(),
     mask: dilateObstacleMask(mask, routeTolerance),
   };
   entries.set(key, entry);
@@ -2102,10 +2077,10 @@ function setSmartPathfindingPreviewPath(points: readonly PixelPoint[]) {
   smartPathfindingPreviewPath.value = [...points];
 }
 
-/** 清理 DP 搜索过程中的列、区间和候选点预览。 */
+/** 清理图搜索过程中的候选点、当前点和可见边预览。 */
 function clearSmartPathfindingSearchPreview() {
-  smartPathfindingPreviewColumn.value = undefined;
-  smartPathfindingPreviewSegments.value = [];
+  smartPathfindingPreviewAcceptedEdges.value = [];
+  smartPathfindingPreviewCurrentPoint.value = undefined;
   smartPathfindingPreviewPoints.value = [];
 }
 
@@ -2132,30 +2107,25 @@ function createPathLineSegment(startPoint: PixelPoint, targetPoint: PixelPoint):
   };
 }
 
-/** 把共享寻路模块的列扫描快照投影回截图，用于搜索动画。 */
-function setSmartPathfindingPreview({ x, intervals, candidates, mirrored }: GraphwarPathfindingPreview) {
-  const columnX = mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - x : x;
-  const start = planeToImagePoint({ x: columnX + 0.5, y: 0 }, boundsRect.value);
-  const end = planeToImagePoint({ x: columnX + 0.5, y: GRAPHWAR_PLANE_HEIGHT }, boundsRect.value);
-  smartPathfindingPreviewColumn.value = {
-    x1: start.x,
-    y1: start.y,
-    x2: end.x,
-    y2: end.y,
-  };
-  smartPathfindingPreviewSegments.value = intervals.map((interval) => {
-    const intervalStart = planeToImagePoint({ x: columnX + 0.5, y: interval.start }, boundsRect.value);
-    const intervalEnd = planeToImagePoint({ x: columnX + 0.5, y: interval.end + 1 }, boundsRect.value);
-    return {
-      x1: intervalStart.x,
-      y1: intervalStart.y,
-      x2: intervalEnd.x,
-      y2: intervalEnd.y,
-    };
-  });
-  smartPathfindingPreviewPoints.value = candidates
-    .slice(0, 24)
-    .map((point) => planeGridCellCenterToImagePoint(mirrorPlaneGridPoint(point, mirrored), boundsRect.value));
+/** 把共享寻路模块的图搜索快照投影回截图，用于搜索动画。 */
+function setSmartPathfindingPreview({
+  acceptedEdges,
+  bestPath,
+  candidates,
+  current,
+  mirrored,
+}: GraphwarPathfindingPreview) {
+  smartPathfindingPreviewAcceptedEdges.value = acceptedEdges.map(([start, end]) =>
+    createPathLineSegment(previewPlanePointToImagePoint(start, mirrored), previewPlanePointToImagePoint(end, mirrored)),
+  );
+  smartPathfindingPreviewCurrentPoint.value = current ? previewPlanePointToImagePoint(current, mirrored) : undefined;
+  smartPathfindingPreviewPoints.value = candidates.map((point) => previewPlanePointToImagePoint(point, mirrored));
+  smartPathfindingPreviewPath.value = bestPath.map((point) => previewPlanePointToImagePoint(point, mirrored));
+}
+
+/** 将搜索坐标系里的平面点投影成截图像素点。 */
+function previewPlanePointToImagePoint(point: PlaneGridPoint, mirrored: boolean) {
+  return planeGridCellCenterToImagePoint(mirrorPlaneGridPoint(point, mirrored), boundsRect.value);
 }
 
 /** 清理智能寻路相关视觉状态。 */
@@ -3206,19 +3176,6 @@ async function copyText(text: string) {
             {{ locale.ui.pathfinding.searchAnimation }}
           </button>
           <label
-            class="graphwar-killer__detection-setting-label"
-            :title="pathfindingSearchStepTitle"
-          >
-            {{ locale.ui.pathfinding.searchStep }}
-            <input
-              v-model="pathfindingSearchStepText"
-              inputmode="decimal"
-              :aria-label="locale.ui.pathfinding.searchStepAriaLabel"
-              :title="pathfindingSearchStepTitle"
-            >
-            <span>{{ locale.ui.pathfinding.unit }}</span>
-          </label>
-          <label
             v-if="autoGraphPathfindingControlsVisible"
             class="graphwar-killer__detection-setting-label"
             :title="locale.ui.pathfinding.workerCountTitle"
@@ -3563,24 +3520,24 @@ async function copyText(text: string) {
             :r="soldierMarkerRadius + 4"
           />
           <g
-            v-if="smartPathfindingInProgress && smartPathfindingPreviewColumn"
+            v-if="smartPathfindingInProgress"
             class="graphwar-killer__pathfinding-preview"
           >
             <line
-              class="graphwar-killer__pathfinding-scan-line"
-              :x1="smartPathfindingPreviewColumn.x1"
-              :y1="smartPathfindingPreviewColumn.y1"
-              :x2="smartPathfindingPreviewColumn.x2"
-              :y2="smartPathfindingPreviewColumn.y2"
-            />
-            <line
-              v-for="(segment, index) in smartPathfindingPreviewSegments"
-              :key="`pathfinding-preview-segment-${index}`"
-              class="graphwar-killer__pathfinding-candidate-segment"
+              v-for="(segment, index) in smartPathfindingPreviewAcceptedEdges"
+              :key="`pathfinding-preview-edge-${index}`"
+              class="graphwar-killer__pathfinding-accepted-edge"
               :x1="segment.x1"
               :y1="segment.y1"
               :x2="segment.x2"
               :y2="segment.y2"
+            />
+            <circle
+              v-if="smartPathfindingPreviewCurrentPoint"
+              class="graphwar-killer__pathfinding-current"
+              :cx="smartPathfindingPreviewCurrentPoint.x"
+              :cy="smartPathfindingPreviewCurrentPoint.y"
+              r="4.2"
             />
             <circle
               v-for="(point, index) in smartPathfindingPreviewPoints"
@@ -3768,24 +3725,24 @@ async function copyText(text: string) {
                 :r="soldierMarkerRadius + 4"
               />
               <g
-                v-if="smartPathfindingInProgress && smartPathfindingPreviewColumn"
+                v-if="smartPathfindingInProgress"
                 class="graphwar-killer__pathfinding-preview"
               >
                 <line
-                  class="graphwar-killer__pathfinding-scan-line"
-                  :x1="smartPathfindingPreviewColumn.x1"
-                  :y1="smartPathfindingPreviewColumn.y1"
-                  :x2="smartPathfindingPreviewColumn.x2"
-                  :y2="smartPathfindingPreviewColumn.y2"
-                />
-                <line
-                  v-for="(segment, index) in smartPathfindingPreviewSegments"
-                  :key="`magnifier-pathfinding-preview-segment-${index}`"
-                  class="graphwar-killer__pathfinding-candidate-segment"
+                  v-for="(segment, index) in smartPathfindingPreviewAcceptedEdges"
+                  :key="`magnifier-pathfinding-preview-edge-${index}`"
+                  class="graphwar-killer__pathfinding-accepted-edge"
                   :x1="segment.x1"
                   :y1="segment.y1"
                   :x2="segment.x2"
                   :y2="segment.y2"
+                />
+                <circle
+                  v-if="smartPathfindingPreviewCurrentPoint"
+                  class="graphwar-killer__pathfinding-current"
+                  :cx="smartPathfindingPreviewCurrentPoint.x"
+                  :cy="smartPathfindingPreviewCurrentPoint.y"
+                  r="4.2"
                 />
                 <circle
                   v-for="(point, index) in smartPathfindingPreviewPoints"
@@ -4393,18 +4350,11 @@ async function copyText(text: string) {
   vector-effect: non-scaling-stroke;
 }
 
-.graphwar-killer__pathfinding-scan-line {
-  stroke: #f472b6;
-  stroke-dasharray: 4 5;
-  stroke-linecap: round;
-  stroke-width: 2;
-  vector-effect: non-scaling-stroke;
-}
-
-.graphwar-killer__pathfinding-candidate-segment {
+.graphwar-killer__pathfinding-accepted-edge {
   stroke: #22c55e;
+  stroke-dasharray: 5 5;
   stroke-linecap: round;
-  stroke-width: 5;
+  stroke-width: 1.4;
   vector-effect: non-scaling-stroke;
 }
 
@@ -4412,6 +4362,14 @@ async function copyText(text: string) {
   fill: #22c55e;
   stroke: var(--vp-c-bg);
   stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.graphwar-killer__pathfinding-current {
+  animation: graphwar-killer-curve-blink 450ms ease-in-out infinite;
+  fill: color-mix(in srgb, #facc15 22%, transparent);
+  stroke: #facc15;
+  stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 

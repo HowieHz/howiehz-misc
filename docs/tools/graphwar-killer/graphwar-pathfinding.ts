@@ -1,4 +1,4 @@
-/** Graphwar 固定平面上的几何寻路工具；页面和 worker 共用同一套 DP 实现。 */
+/** Graphwar 固定平面上的几何寻路工具；页面和 worker 共用同一套图搜索实现。 */
 import { xPlusGoesRight } from "./geometry";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
 import { clampNumber, doublePrecisionTolerance, nearlyEqual, roundToDecimalPlaces } from "./numbers";
@@ -13,22 +13,16 @@ export interface PlaneGridPoint {
   y: number;
 }
 
-/** 同一 x 列上连续可通行的 y 区间，用于压缩 DP 候选点。 */
-export interface SafeInterval {
-  /** 可通行区间起始 y。 */
-  start: number;
-  /** 可通行区间结束 y。 */
-  end: number;
-}
-
-/** 页面搜索动画需要的列扫描快照；worker 不传回调时不会产生该数据。 */
+/** 页面搜索动画需要的图搜索快照；worker 不传回调时不会产生该数据。 */
 export interface GraphwarPathfindingPreview {
-  /** 当前扫描列，位于镜像后的 x+ 搜索坐标系。 */
-  x: number;
-  /** 当前列的可通行区间。 */
-  intervals: readonly SafeInterval[];
-  /** 当前列实际参与 DP 的候选点。 */
-  candidates: PlaneGridPoint[];
+  /** 最近通过可见性检查的边。 */
+  acceptedEdges: readonly [PlaneGridPoint, PlaneGridPoint][];
+  /** 当前搜索中最有希望的回溯路径。 */
+  bestPath: readonly PlaneGridPoint[];
+  /** 当前预览显示的候选点。 */
+  candidates: readonly PlaneGridPoint[];
+  /** 当前扩展点。 */
+  current?: PlaneGridPoint;
   /** 是否把原始平面镜像到 x+ 搜索坐标系。 */
   mirrored: boolean;
 }
@@ -41,20 +35,16 @@ export interface GraphwarPathfindingOptions {
   boundsRect: BoundsRect;
   /** 障碍和收缩边界命中检测用的外扩像素。 */
   boundaryExpansion: number;
-  /** 强制逐列搜索，跳过直线可见性提前返回。 */
-  forceColumnSearch?: boolean;
-  /** 可选列安全区间缓存，同一 route mask 的多次搜索可以复用。 */
-  intervalCache?: Map<string, SafeInterval[]>;
+  /** 判断一条有向边是否满足 Graphwar x+ 规则；默认要求 next.x > previous.x。 */
+  canAdvance?: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
   /** 长循环取消检查；只由页面交互侧传入。 */
   isCancelled?: () => boolean;
-  /** 搜索列回调；页面用于动画，worker 保持为空。 */
+  /** 搜索回调；页面用于动画，worker 保持为空。 */
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   /** 已按 route tolerance 膨胀或腐蚀后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** 平面 x 方向列扫描步长。 */
-  searchStepPlanePixels: number;
-  /** 是否用直线可见性简化 DP 结果，默认开启。 */
-  simplifyByLineOfSight?: boolean;
+  /** 当前 route tolerance，供轮廓 RDP 简化计算 epsilon。 */
+  routeTolerancePlanePixels?: number;
   /** 路径起点，截图像素坐标。 */
   startPoint: PixelPoint;
   /** 路径终点，截图像素坐标。 */
@@ -73,14 +63,31 @@ export interface GraphwarRouteToleranceRange {
   routeStepPlanePixels: number;
 }
 
-/** 几何寻路的动态规划状态，previous 链用于回溯最终折线。 */
-interface PathfindingState {
-  /** 当前平面网格点。 */
-  point: PlaneGridPoint;
-  /** 从起点到当前点的累计代价。 */
-  cost: number;
-  /** 上一列选中的状态。 */
-  previous?: PathfindingState;
+interface RouteMaskComponent {
+  bounds: {
+    maxX: number;
+    maxY: number;
+    minX: number;
+    minY: number;
+  };
+  centroid: PlaneGridPoint;
+  cells: PlaneGridPoint[];
+  cellSet: Set<string>;
+}
+
+interface BoundaryContourPoint extends PlaneGridPoint {
+  sourceCell: PlaneGridPoint;
+}
+
+interface PathfindingCost {
+  length: number;
+  segments: number;
+}
+
+interface VisibilitySearchState {
+  candidateIndex: number;
+  cost: PathfindingCost;
+  previousIndex?: number;
 }
 
 /** 记录 mask cache 使用的是膨胀还是腐蚀，避免正负半径 key 冲突。 */
@@ -91,100 +98,80 @@ const enum RouteMaskOperation {
   Erode = "erode",
 }
 
-/** 在固定 Graphwar 平面上按 x 列做安全区间 DP，输出几何可行的绕障折线。 */
+const GRAPHWAR_PATHFINDING_CONTOUR_FREE_CELL_SEARCH_RADIUS = 3;
+const GRAPHWAR_PATHFINDING_PREVIEW_EDGE_LIMIT = 24;
+const GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT = 64;
+const GRAPHWAR_PATHFINDING_PREVIEW_EXPANSION_INTERVAL = 8;
+
+const EIGHT_CONNECTED_OFFSETS: readonly PlaneGridPoint[] = [
+  { x: -1, y: -1 },
+  { x: 0, y: -1 },
+  { x: 1, y: -1 },
+  { x: -1, y: 0 },
+  { x: 1, y: 0 },
+  { x: -1, y: 1 },
+  { x: 0, y: 1 },
+  { x: 1, y: 1 },
+];
+
+/** 在固定 Graphwar 平面上构造 x+ 单调有向 Lazy Visibility Graph，输出几何可行的绕障折线。 */
 export async function buildSmartPathfindingPathForMask(options: GraphwarPathfindingOptions) {
   // 统一镜像到 x+ 搜索坐标系，调用方始终拿到原始平面坐标系下的路径。
   const mirrored = !xPlusGoesRight(options.bounds);
   const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.startPoint, options.boundsRect), mirrored);
   const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.targetPoint, options.boundsRect), mirrored);
+  const canAdvance = options.canAdvance
+    ? (previous: PlaneGridPoint, next: PlaneGridPoint) =>
+        options.canAdvance?.(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored)) ?? false
+    : (previous: PlaneGridPoint, next: PlaneGridPoint) => next.x > previous.x;
   if (
-    lineHitsPlaneMask(start, start, options.routeMask, mirrored, options.boundaryExpansion) ||
-    lineHitsPlaneMask(target, target, options.routeMask, mirrored, options.boundaryExpansion)
+    pointHitsPlaneMask(start, options.routeMask, mirrored, options.boundaryExpansion) ||
+    pointHitsPlaneMask(target, options.routeMask, mirrored, options.boundaryExpansion)
   ) {
     return undefined;
   }
-  if (start.x === target.x) {
-    return lineHitsPlaneMask(start, target, options.routeMask, mirrored, options.boundaryExpansion)
-      ? undefined
-      : [start, target].map((point) => mirrorPlaneGridPoint(point, mirrored));
-  }
-  if (start.x > target.x) {
+
+  if (!canAdvance(start, target) && !pointsEqual(start, target)) {
     return undefined;
   }
 
   if (
-    !options.forceColumnSearch &&
+    canAdvance(start, target) &&
     !lineHitsPlaneMask(start, target, options.routeMask, mirrored, options.boundaryExpansion)
   ) {
-    return [start, target].map((point) => mirrorPlaneGridPoint(point, mirrored));
-  }
-
-  const searchColumns = collectSmartPathfindingSearchColumns(start.x, target.x, options.searchStepPlanePixels);
-  const anchorYs = collectSmartPathfindingAnchorYs(start.y, target.y);
-  let currentStates: PathfindingState[] = [{ point: start, cost: 0 }];
-  for (let columnIndex = 0; columnIndex < searchColumns.length; columnIndex += 1) {
-    const x = searchColumns[columnIndex];
-    const intervals = collectCachedSafeIntervals(
-      options.intervalCache,
-      options.routeMask,
-      x,
+    const directPath = [start, target];
+    options.onPreview?.({
+      acceptedEdges: [[start, target]],
+      bestPath: directPath,
+      candidates: directPath,
+      current: start,
       mirrored,
-      options.boundaryExpansion,
-    );
-    const candidates = collectColumnCandidatePoints(intervals, x, x === target.x ? target.y : undefined, anchorYs);
-    const progressResult = maybeReportPathfindingProgress(options, columnIndex, x, intervals, candidates, mirrored);
-    if (isPromiseLike(progressResult)) {
-      if (!(await progressResult)) {
-        return undefined;
-      }
-    } else if (!progressResult) {
-      return undefined;
-    }
-
-    if (candidates.length === 0) {
-      return undefined;
-    }
-
-    const nextStates: PathfindingState[] = [];
-    for (const candidate of candidates) {
-      let bestState: PathfindingState | undefined;
-      for (const state of currentStates) {
-        if (lineHitsPlaneMask(state.point, candidate, options.routeMask, mirrored, options.boundaryExpansion)) {
-          continue;
-        }
-
-        const cost = state.cost + planeGridPointDistance(state.point, candidate);
-        if (!bestState || cost < bestState.cost) {
-          bestState = { point: candidate, cost, previous: state };
-        }
-      }
-      if (bestState) {
-        nextStates.push(bestState);
-      }
-    }
-
-    if (nextStates.length === 0) {
-      return undefined;
-    }
-    currentStates = nextStates;
+    });
+    return directPath.map((point) => mirrorPlaneGridPoint(point, mirrored));
   }
 
-  const finalState = currentStates
-    .filter((state) => state.point.y === target.y)
-    .reduce<PathfindingState | undefined>(
-      (bestState, state) => (!bestState || state.cost < bestState.cost ? state : bestState),
-      undefined,
-    );
-  if (!finalState) {
-    return undefined;
-  }
-
-  const path = reconstructPathfindingPath(finalState);
-  return (
-    options.simplifyByLineOfSight === false
-      ? path
-      : simplifyPlanePathByLineOfSight(path, options.routeMask, mirrored, options.boundaryExpansion)
-  ).map((point) => mirrorPlaneGridPoint(point, mirrored));
+  const candidates = collectVisibilityGraphCandidates({
+    boundaryExpansion: options.boundaryExpansion,
+    canAdvance,
+    mirrored,
+    routeMask: options.routeMask,
+    routeTolerancePlanePixels: options.routeTolerancePlanePixels ?? 1,
+    start,
+    target,
+  });
+  const path = await findLazyVisibilityGraphPath({
+    boundaryExpansion: options.boundaryExpansion,
+    canAdvance,
+    candidates,
+    isCancelled: options.isCancelled,
+    mirrored,
+    onPreview: options.onPreview,
+    routeMask: options.routeMask,
+    startIndex: 0,
+    targetIndex: 1,
+    yieldControl: options.yieldControl,
+  });
+  return path?.map((point) => mirrorPlaneGridPoint(point, mirrored));
 }
 
 /** 枚举路线容差，优先尝试最小容差，失败后逐步放宽或收紧 mask。 */
@@ -216,51 +203,6 @@ export function createRouteMaskCacheKey(radius: number) {
   return normalizedRadius < 0
     ? `${RouteMaskOperation.Erode}:${roundToDecimalPlaces(Math.max(0, -normalizedRadius), 6)}`
     : `${RouteMaskOperation.Dilate}:${roundToDecimalPlaces(Math.max(0, normalizedRadius), 6)}`;
-}
-
-/** 读取或计算某列安全区间，减少 DP 重复扫描同一 mask 列。 */
-export function collectCachedSafeIntervals(
-  cache: Map<string, SafeInterval[]> | undefined,
-  mask: Uint8Array,
-  x: number,
-  mirrored: boolean,
-  boundaryExpansion: number,
-) {
-  if (!cache) {
-    return collectSafeIntervals(mask, x, mirrored, boundaryExpansion);
-  }
-
-  // Candidate sampling changes per target, but the safe vertical spans for a
-  // column only depend on mask orientation and boundary expansion.
-  const key = `${x};${mirrored ? 1 : 0};${Math.max(0, Math.floor(boundaryExpansion))}`;
-  const cached = cache.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  const intervals = collectSafeIntervals(mask, x, mirrored, boundaryExpansion);
-  cache.set(key, intervals);
-  return intervals;
-}
-
-/** 扫描单列可通行 y 区间，把连续空白格压缩成候选范围。 */
-export function collectSafeIntervals(mask: Uint8Array, x: number, mirrored: boolean, boundaryExpansion: number) {
-  const intervals: SafeInterval[] = [];
-  let startY: number | undefined;
-  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
-    const blocked = pointHitsPlaneMask({ x, y }, mask, mirrored, boundaryExpansion);
-    if (!blocked && startY === undefined) {
-      startY = y;
-    }
-    if ((blocked || y === GRAPHWAR_PLANE_HEIGHT - 1) && startY !== undefined) {
-      const endY = blocked ? y - 1 : y;
-      if (endY >= startY) {
-        intervals.push({ start: startY, end: endY });
-      }
-      startY = undefined;
-    }
-  }
-  return intervals;
 }
 
 /** 在平面网格上采样线段，判断两点之间是否被障碍或边界收缩阻断。 */
@@ -333,132 +275,794 @@ export function imagePointToPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRe
   };
 }
 
-/** 页面长循环每四列让出一次，worker 不传调度回调时保持同步扫描。 */
-function maybeReportPathfindingProgress(
-  options: GraphwarPathfindingOptions,
-  columnIndex: number,
-  x: number,
-  intervals: readonly SafeInterval[],
-  candidates: PlaneGridPoint[],
-  mirrored: boolean,
-): boolean | Promise<boolean> {
-  if (columnIndex % 4 !== 0) {
-    return true;
-  }
-  if (options.isCancelled?.()) {
-    return false;
-  }
-  options.onPreview?.({ x, intervals, candidates, mirrored });
-  const yielded = options.yieldControl?.();
-  if (!yielded) {
-    return !options.isCancelled?.();
-  }
-  return Promise.resolve(yielded).then(() => !options.isCancelled?.());
-}
+function collectVisibilityGraphCandidates({
+  boundaryExpansion,
+  canAdvance,
+  mirrored,
+  routeMask,
+  routeTolerancePlanePixels,
+  start,
+  target,
+}: {
+  boundaryExpansion: number;
+  canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
+  mirrored: boolean;
+  routeMask: Uint8Array;
+  routeTolerancePlanePixels: number;
+  start: PlaneGridPoint;
+  target: PlaneGridPoint;
+}) {
+  const candidateMap = new Map<string, PlaneGridPoint>();
+  const startKey = createPlaneGridPointKey(start);
+  const targetKey = createPlaneGridPointKey(target);
+  const minPathX = Math.min(start.x, target.x);
+  const maxPathX = Math.max(start.x, target.x);
+  const epsilon = clampNumber(Math.abs(routeTolerancePlanePixels) * 0.75, 1, 6);
 
-/** 只在调用方真的返回 Promise-like 时进入 await，避免 worker 列扫描被微任务切碎。 */
-function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
-  return typeof value === "object" && value !== null && "then" in value;
-}
+  for (const component of collectRouteMaskComponents(routeMask, mirrored)) {
+    for (const contour of collectComponentBoundaryContours(component)) {
+      const simplifiedContour = simplifyClosedBoundaryContour(contour, epsilon);
+      const area = calculateSignedArea(simplifiedContour);
+      for (let index = 0; index < simplifiedContour.length; index += 1) {
+        const previous = simplifiedContour[(index - 1 + simplifiedContour.length) % simplifiedContour.length];
+        const current = simplifiedContour[index];
+        const next = simplifiedContour[(index + 1) % simplifiedContour.length];
+        if (!current || !previous || !next) {
+          continue;
+        }
+        if (isNearCollinear(previous, current, next) || isClearlyConcave(previous, current, next, area)) {
+          continue;
+        }
 
-/** 收集 DP 扫描列，强制包含目标列避免步长不能整除时错过终点。 */
-function collectSmartPathfindingSearchColumns(startX: number, targetX: number, searchStepPlanePixels: number) {
-  const step = Math.max(1, Math.round(searchStepPlanePixels));
-  const columns: number[] = [];
-  for (let x = startX + step; x < targetX; x += step) {
-    columns.push(x);
-  }
-  columns.push(targetX);
-  return columns;
-}
+        const candidate = selectNearbyFreeCellCandidate({
+          boundaryExpansion,
+          boundaryPoint: current,
+          component,
+          maxPathX,
+          minPathX,
+          mirrored,
+          routeMask,
+        });
+        if (!candidate) {
+          continue;
+        }
+        if (!canAdvance(start, candidate) && !canAdvance(candidate, target)) {
+          continue;
+        }
 
-/** 生成起点到终点之间的 y 锚点，让 DP 候选更偏向平滑路径。 */
-function collectSmartPathfindingAnchorYs(startY: number, targetY: number) {
-  return [
-    startY,
-    Math.round(startY * 0.75 + targetY * 0.25),
-    Math.round((startY + targetY) / 2),
-    Math.round(startY * 0.25 + targetY * 0.75),
-    targetY,
-  ];
-}
-
-/** 从安全区间、目标 y 和锚点 y 生成当前列候选点。 */
-function collectColumnCandidatePoints(
-  intervals: SafeInterval[],
-  x: number,
-  requiredY?: number,
-  anchorYs: readonly number[] = [],
-) {
-  const yValues = new Set<number>();
-  for (const interval of intervals) {
-    for (const y of collectIntervalSampleYs(interval)) {
-      yValues.add(y);
-    }
-    for (const y of anchorYs) {
-      if (y >= interval.start && y <= interval.end) {
-        yValues.add(y);
+        const key = createPlaneGridPointKey(candidate);
+        if (key !== startKey && key !== targetKey && !candidateMap.has(key)) {
+          candidateMap.set(key, candidate);
+        }
       }
     }
   }
-  if (
-    requiredY !== undefined &&
-    intervals.some((interval) => requiredY >= interval.start && requiredY <= interval.end)
-  ) {
-    yValues.add(requiredY);
-  }
 
-  return [...yValues].sort((left, right) => left - right).map((y) => ({ x, y }));
+  return [start, target, ...[...candidateMap.values()].sort((left, right) => left.x - right.x || left.y - right.y)];
 }
 
-/** 对安全区间采样端点和四分位点，兼顾贴边绕障和居中穿行。 */
-function collectIntervalSampleYs(interval: SafeInterval) {
-  const span = interval.end - interval.start;
-  const samples = new Set<number>([interval.start, interval.end]);
-  if (span >= 2) {
-    samples.add(Math.round(interval.start + span * 0.25));
-    samples.add(Math.round(interval.start + span * 0.5));
-    samples.add(Math.round(interval.start + span * 0.75));
+function collectRouteMaskComponents(mask: Uint8Array, mirrored: boolean) {
+  const components: RouteMaskComponent[] = [];
+  const visited = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+    for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
+      const start = { x, y };
+      const startIndex = createPlaneGridPointIndex(start);
+      if (visited[startIndex] || !routeMaskCellIsBlocked(start, mask, mirrored)) {
+        continue;
+      }
+
+      const cells: PlaneGridPoint[] = [];
+      const cellSet = new Set<string>();
+      const queue: PlaneGridPoint[] = [start];
+      visited[startIndex] = 1;
+      let queueIndex = 0;
+      let minX = x;
+      let maxX = x;
+      let minY = y;
+      let maxY = y;
+      let sumX = 0;
+      let sumY = 0;
+
+      while (queueIndex < queue.length) {
+        const cell = queue[queueIndex];
+        queueIndex += 1;
+        if (!cell) {
+          continue;
+        }
+
+        cells.push(cell);
+        cellSet.add(createPlaneGridPointKey(cell));
+        minX = Math.min(minX, cell.x);
+        maxX = Math.max(maxX, cell.x);
+        minY = Math.min(minY, cell.y);
+        maxY = Math.max(maxY, cell.y);
+        sumX += cell.x;
+        sumY += cell.y;
+
+        for (const offset of EIGHT_CONNECTED_OFFSETS) {
+          const next = { x: cell.x + offset.x, y: cell.y + offset.y };
+          if (!isInsidePlane(next.x, next.y)) {
+            continue;
+          }
+          const nextIndex = createPlaneGridPointIndex(next);
+          if (visited[nextIndex] || !routeMaskCellIsBlocked(next, mask, mirrored)) {
+            continue;
+          }
+          visited[nextIndex] = 1;
+          queue.push(next);
+        }
+      }
+
+      components.push({
+        bounds: { maxX, maxY, minX, minY },
+        cells,
+        cellSet,
+        centroid: {
+          x: sumX / cells.length,
+          y: sumY / cells.length,
+        },
+      });
+    }
   }
-  return [...samples].filter((y) => y >= interval.start && y <= interval.end);
+  return components;
 }
 
-/** 沿 previous 链回溯 DP 终点状态。 */
-function reconstructPathfindingPath(state: PathfindingState) {
-  const points: PlaneGridPoint[] = [];
-  let currentState: PathfindingState | undefined = state;
-  while (currentState) {
-    points.push(currentState.point);
-    currentState = currentState.previous;
+function collectComponentBoundaryContours(component: RouteMaskComponent) {
+  const edges = collectComponentBoundaryEdges(component);
+  const contours: BoundaryContourPoint[][] = [];
+  const adjacency = new Map<string, number[]>();
+  for (let index = 0; index < edges.length; index += 1) {
+    const edge = edges[index];
+    if (!edge) {
+      continue;
+    }
+    const key = createPlaneGridPointKey(edge.start);
+    const outgoingEdges = adjacency.get(key);
+    if (outgoingEdges) {
+      outgoingEdges.push(index);
+    } else {
+      adjacency.set(key, [index]);
+    }
   }
-  return points.reverse();
+  for (const outgoingEdges of adjacency.values()) {
+    outgoingEdges.sort((leftIndex, rightIndex) => compareBoundaryEdges(edges[leftIndex], edges[rightIndex]));
+  }
+
+  const unusedEdgeIndexes = new Set(edges.map((_, index) => index));
+  while (unusedEdgeIndexes.size > 0) {
+    const firstEdgeIndex = unusedEdgeIndexes.values().next().value as number | undefined;
+    if (firstEdgeIndex === undefined) {
+      break;
+    }
+
+    const firstEdge = edges[firstEdgeIndex];
+    if (!firstEdge) {
+      unusedEdgeIndexes.delete(firstEdgeIndex);
+      continue;
+    }
+
+    const contour: BoundaryContourPoint[] = [];
+    const startKey = createPlaneGridPointKey(firstEdge.start);
+    let edgeIndex: number | undefined = firstEdgeIndex;
+    for (let step = 0; edgeIndex !== undefined && step <= edges.length; step += 1) {
+      const edge = edges[edgeIndex];
+      unusedEdgeIndexes.delete(edgeIndex);
+      if (!edge) {
+        break;
+      }
+
+      contour.push({ ...edge.start, sourceCell: edge.sourceCell });
+      const endKey = createPlaneGridPointKey(edge.end);
+      if (endKey === startKey) {
+        break;
+      }
+
+      const nextEdgeIndexes = adjacency.get(endKey)?.filter((index) => unusedEdgeIndexes.has(index)) ?? [];
+      edgeIndex = selectNextBoundaryEdgeIndex(edge, nextEdgeIndexes, edges);
+    }
+
+    if (contour.length >= 3) {
+      contours.push(contour);
+    }
+  }
+  return contours;
 }
 
-/** 用直线可见性删除中间 DP 点，缩短最终公式路径。 */
-function simplifyPlanePathByLineOfSight(
-  points: PlaneGridPoint[],
-  mask: Uint8Array,
-  mirrored: boolean,
-  boundaryExpansion: number,
-) {
+function collectComponentBoundaryEdges(component: RouteMaskComponent) {
+  const edges: {
+    end: PlaneGridPoint;
+    sourceCell: PlaneGridPoint;
+    start: PlaneGridPoint;
+  }[] = [];
+  for (const cell of component.cells) {
+    if (!component.cellSet.has(createPlaneGridPointKey({ x: cell.x, y: cell.y - 1 }))) {
+      edges.push({
+        end: { x: cell.x + 1, y: cell.y },
+        sourceCell: cell,
+        start: { x: cell.x, y: cell.y },
+      });
+    }
+    if (!component.cellSet.has(createPlaneGridPointKey({ x: cell.x + 1, y: cell.y }))) {
+      edges.push({
+        end: { x: cell.x + 1, y: cell.y + 1 },
+        sourceCell: cell,
+        start: { x: cell.x + 1, y: cell.y },
+      });
+    }
+    if (!component.cellSet.has(createPlaneGridPointKey({ x: cell.x, y: cell.y + 1 }))) {
+      edges.push({
+        end: { x: cell.x, y: cell.y + 1 },
+        sourceCell: cell,
+        start: { x: cell.x + 1, y: cell.y + 1 },
+      });
+    }
+    if (!component.cellSet.has(createPlaneGridPointKey({ x: cell.x - 1, y: cell.y }))) {
+      edges.push({
+        end: { x: cell.x, y: cell.y },
+        sourceCell: cell,
+        start: { x: cell.x, y: cell.y + 1 },
+      });
+    }
+  }
+  return edges;
+}
+
+function simplifyClosedBoundaryContour(contour: BoundaryContourPoint[], epsilon: number) {
+  if (contour.length <= 3) {
+    return contour;
+  }
+
+  const startIndex = contour.reduce(
+    (bestIndex, point, index) => (comparePlaneGridPoints(point, contour[bestIndex]) < 0 ? index : bestIndex),
+    0,
+  );
+  const start = contour[startIndex];
+  if (!start) {
+    return contour;
+  }
+
+  const endIndex = contour.reduce((bestIndex, point, index) => {
+    const best = contour[bestIndex];
+    if (!best) {
+      return index;
+    }
+    return planeGridPointDistanceSquared(start, point) > planeGridPointDistanceSquared(start, best) ? index : bestIndex;
+  }, startIndex);
+
+  if (endIndex === startIndex) {
+    return contour;
+  }
+
+  const firstChain = collectCircularContourChain(contour, startIndex, endIndex);
+  const secondChain = collectCircularContourChain(contour, endIndex, startIndex);
+  const firstSimplified = simplifyOpenBoundaryContour(firstChain, epsilon);
+  const secondSimplified = simplifyOpenBoundaryContour(secondChain, epsilon);
+  return [...firstSimplified.slice(0, -1), ...secondSimplified.slice(0, -1)];
+}
+
+function collectCircularContourChain(contour: BoundaryContourPoint[], startIndex: number, endIndex: number) {
+  const chain: BoundaryContourPoint[] = [];
+  for (let index = startIndex; index !== endIndex; index = (index + 1) % contour.length) {
+    const point = contour[index];
+    if (point) {
+      chain.push(point);
+    }
+  }
+  const end = contour[endIndex];
+  if (end) {
+    chain.push(end);
+  }
+  return chain;
+}
+
+function simplifyOpenBoundaryContour(points: BoundaryContourPoint[], epsilon: number): BoundaryContourPoint[] {
   if (points.length <= 2) {
     return points;
   }
 
-  const simplified = [points[0]];
-  let anchorIndex = 0;
-  while (anchorIndex < points.length - 1) {
-    let furthestVisibleIndex = anchorIndex + 1;
-    for (let index = anchorIndex + 2; index < points.length; index += 1) {
-      if (lineHitsPlaneMask(points[anchorIndex], points[index], mask, mirrored, boundaryExpansion)) {
-        break;
-      }
-      furthestVisibleIndex = index;
-    }
-    simplified.push(points[furthestVisibleIndex]);
-    anchorIndex = furthestVisibleIndex;
+  const start = points[0];
+  const end = points.at(-1);
+  if (!start || !end) {
+    return points;
   }
-  return simplified;
+
+  let maxDistance = -Infinity;
+  let splitIndex = 0;
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const point = points[index];
+    if (!point) {
+      continue;
+    }
+    const distance = distanceToLineSegment(point, start, end);
+    if (distance > maxDistance) {
+      maxDistance = distance;
+      splitIndex = index;
+    }
+  }
+
+  if (maxDistance <= epsilon) {
+    return [start, end];
+  }
+
+  const left = simplifyOpenBoundaryContour(points.slice(0, splitIndex + 1), epsilon);
+  const right = simplifyOpenBoundaryContour(points.slice(splitIndex), epsilon);
+  return [...left.slice(0, -1), ...right];
+}
+
+function selectNearbyFreeCellCandidate({
+  boundaryExpansion,
+  boundaryPoint,
+  component,
+  maxPathX,
+  minPathX,
+  mirrored,
+  routeMask,
+}: {
+  boundaryExpansion: number;
+  boundaryPoint: PlaneGridPoint;
+  component: RouteMaskComponent;
+  maxPathX: number;
+  minPathX: number;
+  mirrored: boolean;
+  routeMask: Uint8Array;
+}) {
+  let bestCandidate: PlaneGridPoint | undefined;
+  let bestDistanceToBoundary = Infinity;
+  let bestDistanceToCentroid = -Infinity;
+
+  for (let radius = 1; radius <= GRAPHWAR_PATHFINDING_CONTOUR_FREE_CELL_SEARCH_RADIUS; radius += 1) {
+    for (let yOffset = -radius; yOffset <= radius; yOffset += 1) {
+      for (let xOffset = -radius; xOffset <= radius; xOffset += 1) {
+        if (Math.max(Math.abs(xOffset), Math.abs(yOffset)) !== radius) {
+          continue;
+        }
+
+        const candidate = {
+          x: Math.round(boundaryPoint.x + xOffset),
+          y: Math.round(boundaryPoint.y + yOffset),
+        };
+        if (
+          candidate.x < minPathX ||
+          candidate.x > maxPathX ||
+          pointHitsPlaneMask(candidate, routeMask, mirrored, boundaryExpansion)
+        ) {
+          continue;
+        }
+
+        const distanceToBoundary = planeGridPointDistanceSquared(candidate, boundaryPoint);
+        const distanceToCentroid = planeGridPointDistanceSquared(candidate, component.centroid);
+        if (
+          distanceToBoundary < bestDistanceToBoundary ||
+          (distanceToBoundary === bestDistanceToBoundary && distanceToCentroid > bestDistanceToCentroid) ||
+          (distanceToBoundary === bestDistanceToBoundary &&
+            distanceToCentroid === bestDistanceToCentroid &&
+            (!bestCandidate || comparePlaneGridPoints(candidate, bestCandidate) < 0))
+        ) {
+          bestCandidate = candidate;
+          bestDistanceToBoundary = distanceToBoundary;
+          bestDistanceToCentroid = distanceToCentroid;
+        }
+      }
+    }
+
+    if (bestCandidate) {
+      return bestCandidate;
+    }
+  }
+  return undefined;
+}
+
+async function findLazyVisibilityGraphPath({
+  boundaryExpansion,
+  canAdvance,
+  candidates,
+  isCancelled,
+  mirrored,
+  onPreview,
+  routeMask,
+  startIndex,
+  targetIndex,
+  yieldControl,
+}: {
+  boundaryExpansion: number;
+  canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
+  candidates: readonly PlaneGridPoint[];
+  isCancelled?: () => boolean;
+  mirrored: boolean;
+  onPreview?: (preview: GraphwarPathfindingPreview) => void;
+  routeMask: Uint8Array;
+  startIndex: number;
+  targetIndex: number;
+  yieldControl?: () => Promise<void> | void;
+}) {
+  const states = new Map<number, VisibilitySearchState>([
+    [startIndex, { candidateIndex: startIndex, cost: { length: 0, segments: 0 } }],
+  ]);
+  const openIndexes = new Set<number>([startIndex]);
+  const closedIndexes = new Set<number>();
+  const acceptedEdges: [PlaneGridPoint, PlaneGridPoint][] = [];
+  let expansionCount = 0;
+
+  while (openIndexes.size > 0) {
+    if (isCancelled?.()) {
+      return undefined;
+    }
+
+    const currentIndex = selectBestOpenCandidateIndex(openIndexes, states, candidates, targetIndex);
+    if (currentIndex === undefined) {
+      return undefined;
+    }
+
+    openIndexes.delete(currentIndex);
+    const currentState = states.get(currentIndex);
+    const currentPoint = candidates[currentIndex];
+    if (!currentState || !currentPoint) {
+      continue;
+    }
+
+    if (currentIndex === targetIndex) {
+      const path = reconstructVisibilitySearchPath(targetIndex, states, candidates);
+      onPreview?.({
+        acceptedEdges,
+        bestPath: path,
+        candidates: limitPreviewCandidates(candidates, candidates[currentIndex] ?? candidates[startIndex]),
+        current: currentPoint,
+        mirrored,
+      });
+      return path;
+    }
+
+    closedIndexes.add(currentIndex);
+    for (let nextIndex = 0; nextIndex < candidates.length; nextIndex += 1) {
+      if (nextIndex === currentIndex || closedIndexes.has(nextIndex)) {
+        continue;
+      }
+
+      const nextPoint = candidates[nextIndex];
+      if (
+        !nextPoint ||
+        !canAdvance(currentPoint, nextPoint) ||
+        lineHitsPlaneMask(currentPoint, nextPoint, routeMask, mirrored, boundaryExpansion)
+      ) {
+        continue;
+      }
+
+      acceptedEdges.push([currentPoint, nextPoint]);
+      if (acceptedEdges.length > GRAPHWAR_PATHFINDING_PREVIEW_EDGE_LIMIT) {
+        acceptedEdges.splice(0, acceptedEdges.length - GRAPHWAR_PATHFINDING_PREVIEW_EDGE_LIMIT);
+      }
+
+      const nextCost = {
+        length: currentState.cost.length + planeGridPointDistance(currentPoint, nextPoint),
+        segments: currentState.cost.segments + 1,
+      };
+      const previousNextState = states.get(nextIndex);
+      if (previousNextState && comparePathfindingCosts(previousNextState.cost, nextCost) <= 0) {
+        continue;
+      }
+
+      states.set(nextIndex, {
+        candidateIndex: nextIndex,
+        cost: nextCost,
+        previousIndex: currentIndex,
+      });
+      openIndexes.add(nextIndex);
+    }
+
+    expansionCount += 1;
+    if (
+      expansionCount % GRAPHWAR_PATHFINDING_PREVIEW_EXPANSION_INTERVAL === 0 &&
+      !(await reportVisibilitySearchProgress({
+        acceptedEdges,
+        candidates,
+        currentIndex,
+        isCancelled,
+        mirrored,
+        onPreview,
+        openIndexes,
+        startIndex,
+        states,
+        targetIndex,
+        yieldControl,
+      }))
+    ) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+async function reportVisibilitySearchProgress({
+  acceptedEdges,
+  candidates,
+  currentIndex,
+  isCancelled,
+  mirrored,
+  onPreview,
+  openIndexes,
+  startIndex,
+  states,
+  targetIndex,
+  yieldControl,
+}: {
+  acceptedEdges: readonly [PlaneGridPoint, PlaneGridPoint][];
+  candidates: readonly PlaneGridPoint[];
+  currentIndex: number;
+  isCancelled?: () => boolean;
+  mirrored: boolean;
+  onPreview?: (preview: GraphwarPathfindingPreview) => void;
+  openIndexes: ReadonlySet<number>;
+  startIndex: number;
+  states: ReadonlyMap<number, VisibilitySearchState>;
+  targetIndex: number;
+  yieldControl?: () => Promise<void> | void;
+}) {
+  if (isCancelled?.()) {
+    return false;
+  }
+
+  const bestOpenIndex = selectBestOpenCandidateIndex(openIndexes, states, candidates, targetIndex) ?? currentIndex;
+  const current = candidates[currentIndex];
+  onPreview?.({
+    acceptedEdges,
+    bestPath: reconstructVisibilitySearchPath(bestOpenIndex, states, candidates),
+    candidates: limitPreviewCandidates(candidates, current ?? candidates[startIndex]),
+    current,
+    mirrored,
+  });
+
+  const yielded = yieldControl?.();
+  if (yielded) {
+    await yielded;
+  }
+  return !isCancelled?.();
+}
+
+function selectBestOpenCandidateIndex(
+  openIndexes: ReadonlySet<number>,
+  states: ReadonlyMap<number, VisibilitySearchState>,
+  candidates: readonly PlaneGridPoint[],
+  targetIndex: number,
+) {
+  let bestIndex: number | undefined;
+  for (const index of openIndexes) {
+    if (
+      bestIndex === undefined ||
+      compareSearchQueueCandidates(index, bestIndex, states, candidates, targetIndex) < 0
+    ) {
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
+}
+
+function compareSearchQueueCandidates(
+  leftIndex: number,
+  rightIndex: number,
+  states: ReadonlyMap<number, VisibilitySearchState>,
+  candidates: readonly PlaneGridPoint[],
+  targetIndex: number,
+) {
+  const leftState = states.get(leftIndex);
+  const rightState = states.get(rightIndex);
+  const leftPoint = candidates[leftIndex];
+  const rightPoint = candidates[rightIndex];
+  const target = candidates[targetIndex];
+  if (!leftState || !rightState || !leftPoint || !rightPoint || !target) {
+    return leftIndex - rightIndex;
+  }
+
+  const leftF = {
+    length: leftState.cost.length + planeGridPointDistance(leftPoint, target),
+    segments: leftState.cost.segments,
+  };
+  const rightF = {
+    length: rightState.cost.length + planeGridPointDistance(rightPoint, target),
+    segments: rightState.cost.segments,
+  };
+  return (
+    comparePathfindingCosts(leftF, rightF) ||
+    leftState.cost.length - rightState.cost.length ||
+    Math.abs(target.x - leftPoint.x) - Math.abs(target.x - rightPoint.x) ||
+    Math.abs(target.y - leftPoint.y) - Math.abs(target.y - rightPoint.y) ||
+    leftIndex - rightIndex
+  );
+}
+
+function reconstructVisibilitySearchPath(
+  targetIndex: number,
+  states: ReadonlyMap<number, VisibilitySearchState>,
+  candidates: readonly PlaneGridPoint[],
+) {
+  const path: PlaneGridPoint[] = [];
+  let currentIndex: number | undefined = targetIndex;
+  const seenIndexes = new Set<number>();
+  while (currentIndex !== undefined && !seenIndexes.has(currentIndex)) {
+    seenIndexes.add(currentIndex);
+    const point = candidates[currentIndex];
+    const state = states.get(currentIndex);
+    if (!point || !state) {
+      break;
+    }
+    path.push(point);
+    currentIndex = state.previousIndex;
+  }
+  return path.reverse();
+}
+
+function limitPreviewCandidates(candidates: readonly PlaneGridPoint[], current?: PlaneGridPoint) {
+  if (candidates.length <= GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT) {
+    return candidates;
+  }
+
+  const start = candidates[0];
+  const target = candidates[1];
+  if (!start || !target) {
+    return candidates.slice(0, GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT);
+  }
+  const anchor = current ?? start;
+  const selected = candidates
+    .slice(2)
+    .sort(
+      (left, right) =>
+        planeGridPointDistanceSquared(left, anchor) - planeGridPointDistanceSquared(right, anchor) ||
+        comparePlaneGridPoints(left, right),
+    )
+    .slice(0, GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT - 2);
+  return [start, target, ...selected];
+}
+
+function compareBoundaryEdges(
+  left:
+    | {
+        end: PlaneGridPoint;
+        start: PlaneGridPoint;
+      }
+    | undefined,
+  right:
+    | {
+        end: PlaneGridPoint;
+        start: PlaneGridPoint;
+      }
+    | undefined,
+) {
+  if (!left || !right) {
+    return left ? -1 : right ? 1 : 0;
+  }
+  return (
+    comparePlaneGridPoints(left.start, right.start) ||
+    comparePlaneGridPoints(left.end, right.end) ||
+    angleForBoundaryEdge(left) - angleForBoundaryEdge(right)
+  );
+}
+
+function selectNextBoundaryEdgeIndex(
+  previousEdge: {
+    end: PlaneGridPoint;
+    start: PlaneGridPoint;
+  },
+  edgeIndexes: readonly number[],
+  edges: readonly {
+    end: PlaneGridPoint;
+    start: PlaneGridPoint;
+  }[],
+) {
+  return edgeIndexes.reduce<number | undefined>((bestIndex, edgeIndex) => {
+    const edge = edges[edgeIndex];
+    if (!edge) {
+      return bestIndex;
+    }
+    if (bestIndex === undefined) {
+      return edgeIndex;
+    }
+    const bestEdge = edges[bestIndex];
+    if (!bestEdge) {
+      return edgeIndex;
+    }
+    const edgeTurn = normalizedTurnAngle(previousEdge, edge);
+    const bestTurn = normalizedTurnAngle(previousEdge, bestEdge);
+    return edgeTurn < bestTurn || (edgeTurn === bestTurn && compareBoundaryEdges(edge, bestEdge) < 0)
+      ? edgeIndex
+      : bestIndex;
+  }, undefined);
+}
+
+function normalizedTurnAngle(
+  previousEdge: {
+    end: PlaneGridPoint;
+    start: PlaneGridPoint;
+  },
+  nextEdge: {
+    end: PlaneGridPoint;
+    start: PlaneGridPoint;
+  },
+) {
+  const previousAngle = angleForBoundaryEdge(previousEdge);
+  const nextAngle = angleForBoundaryEdge(nextEdge);
+  return (nextAngle - previousAngle + Math.PI * 2) % (Math.PI * 2);
+}
+
+function angleForBoundaryEdge(edge: { end: PlaneGridPoint; start: PlaneGridPoint }) {
+  return Math.atan2(edge.end.y - edge.start.y, edge.end.x - edge.start.x);
+}
+
+function calculateSignedArea(points: readonly PlaneGridPoint[]) {
+  let doubledArea = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    if (!current || !next) {
+      continue;
+    }
+    doubledArea += current.x * next.y - next.x * current.y;
+  }
+  return doubledArea / 2;
+}
+
+function isNearCollinear(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint) {
+  return distanceToLineSegment(current, previous, next) <= 0.75;
+}
+
+function isClearlyConcave(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint, signedArea: number) {
+  const crossProduct = cross(previous, current, next);
+  if (Math.abs(crossProduct) <= 1) {
+    return false;
+  }
+  return signedArea * crossProduct < 0;
+}
+
+function distanceToLineSegment(point: PlaneGridPoint, start: PlaneGridPoint, end: PlaneGridPoint) {
+  const lengthSquared = planeGridPointDistanceSquared(start, end);
+  if (lengthSquared === 0) {
+    return planeGridPointDistance(point, start);
+  }
+
+  const ratio = clampNumber(
+    ((point.x - start.x) * (end.x - start.x) + (point.y - start.y) * (end.y - start.y)) / lengthSquared,
+    0,
+    1,
+  );
+  return planeGridPointDistance(point, {
+    x: start.x + (end.x - start.x) * ratio,
+    y: start.y + (end.y - start.y) * ratio,
+  });
+}
+
+function cross(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint) {
+  return (current.x - previous.x) * (next.y - current.y) - (current.y - previous.y) * (next.x - current.x);
+}
+
+function routeMaskCellIsBlocked(point: PlaneGridPoint, mask: Uint8Array, mirrored: boolean) {
+  if (!isInsidePlane(point.x, point.y)) {
+    return false;
+  }
+  const x = mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - point.x : point.x;
+  return Boolean(mask[point.y * GRAPHWAR_PLANE_LENGTH + x]);
+}
+
+function comparePathfindingCosts(left: PathfindingCost, right: PathfindingCost) {
+  return left.segments - right.segments || (nearlyEqual(left.length, right.length) ? 0 : left.length - right.length);
+}
+
+function comparePlaneGridPoints(left: PlaneGridPoint, right: PlaneGridPoint) {
+  return left.x - right.x || left.y - right.y;
+}
+
+function pointsEqual(left: PlaneGridPoint, right: PlaneGridPoint) {
+  return left.x === right.x && left.y === right.y;
+}
+
+function createPlaneGridPointKey(point: PlaneGridPoint) {
+  return `${point.x};${point.y}`;
+}
+
+function createPlaneGridPointIndex(point: PlaneGridPoint) {
+  return point.y * GRAPHWAR_PLANE_LENGTH + point.x;
+}
+
+function isInsidePlane(x: number, y: number) {
+  return x >= 0 && x < GRAPHWAR_PLANE_LENGTH && y >= 0 && y < GRAPHWAR_PLANE_HEIGHT;
 }
 
 /** 判断点是否在收缩后的 Graphwar 平面内部，贴边视为障碍。 */
@@ -472,6 +1076,10 @@ function isInsidePlaneWithBoundaryExpansion(x: number, y: number, boundaryExpans
 /** DP 转移代价使用欧氏距离，偏好更短更平滑的折线。 */
 function planeGridPointDistance(left: PlaneGridPoint, right: PlaneGridPoint) {
   return Math.hypot(right.x - left.x, right.y - left.y);
+}
+
+function planeGridPointDistanceSquared(left: PlaneGridPoint, right: PlaneGridPoint) {
+  return (right.x - left.x) ** 2 + (right.y - left.y) ** 2;
 }
 
 /** 将截图像素点映射到未裁剪的平面网格坐标，供裁剪入口复用。 */

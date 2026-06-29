@@ -183,7 +183,7 @@ const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
-const detectionCandidateAnimationMs = 1600;
+const detectionFlashAnimationMs = 1600;
 const smartPathfindingBlockedPointFlashMs = 1800;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
@@ -281,6 +281,7 @@ const baselineDetectedObstacles = ref<DetectedObstacleMap>();
 const autoDetectionEnabled = ref(true);
 const detectionAnimationEnabled = ref(true);
 const detectionCandidatePoints = ref<GraphwarSoldierCandidatePoint[]>([]);
+const detectionSoldierFlashActive = ref(false);
 const smartCursorEnabled = ref(true);
 const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
@@ -316,8 +317,11 @@ const copyStatus = ref<TransferStatus>("idle");
 let boundsFlashFrame: number | undefined;
 let boundsFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
+let detectionCandidateFrame: number | undefined;
 let detectionCandidateTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let detectionSoldierFlashFrame: number | undefined;
+let detectionSoldierFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let obstacleEditRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let smartPathfindingBlockedPointTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRunId = 0;
@@ -1236,6 +1240,7 @@ onBeforeUnmount(() => {
   if (detectionRefreshTimer) {
     clearTimeout(detectionRefreshTimer);
   }
+  clearDetectionSoldierFlash();
   if (obstacleEditRefreshTimer) {
     clearTimeout(obstacleEditRefreshTimer);
   }
@@ -1377,6 +1382,7 @@ function clearDetectedGraphwarObjects() {
   detectedObstacles.value = undefined;
   baselineDetectedObstacles.value = undefined;
   clearDetectionCandidateAnimation();
+  clearDetectionSoldierFlash();
   obstacleEditsDirty.value = false;
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
@@ -1506,12 +1512,12 @@ async function detectGraphwarObjects() {
       detectionInput.obstacleThresholds,
       "auto",
       runId,
+      true,
     );
     if (!isActiveDetectionRun(runId)) {
       return;
     }
     toolMode.value = "path";
-    flashBoundsRect();
   } finally {
     finishDetectionRun(runId);
   }
@@ -1548,6 +1554,7 @@ async function detectGraphwarObjectsInBounds(
   obstacleThresholds: Extract<ParsedObstacleThresholds, { ok: true }>,
   source: "auto" | "current",
   runId: number,
+  flashBounds = false,
 ) {
   clearSmartPathfindingStatus();
   if (!(await showDetectionStage(runId, locale.status.detection.detectingObjects))) {
@@ -1562,6 +1569,10 @@ async function detectGraphwarObjectsInBounds(
   }
   detectedSoldiers.value = result.soldiers;
   showDetectionCandidateAnimation(result.soldierCandidates);
+  flashDetectedSoldiers();
+  if (flashBounds) {
+    flashBoundsRect();
+  }
   detectedObstacles.value = result.obstacles;
   baselineDetectedObstacles.value = cloneDetectedObstacleMap(result.obstacles);
   obstacleEditsDirty.value = false;
@@ -1577,6 +1588,10 @@ async function detectGraphwarObjectsInBounds(
 
 function clearDetectionCandidateAnimation() {
   detectionCandidatePoints.value = [];
+  if (detectionCandidateFrame !== undefined) {
+    cancelAnimationFrame(detectionCandidateFrame);
+    detectionCandidateFrame = undefined;
+  }
   if (detectionCandidateTimer) {
     clearTimeout(detectionCandidateTimer);
     detectionCandidateTimer = undefined;
@@ -1589,11 +1604,42 @@ function showDetectionCandidateAnimation(candidates: readonly GraphwarSoldierCan
     return;
   }
 
-  detectionCandidatePoints.value = [...candidates];
-  detectionCandidateTimer = setTimeout(() => {
-    detectionCandidatePoints.value = [];
-    detectionCandidateTimer = undefined;
-  }, detectionCandidateAnimationMs);
+  detectionCandidateFrame = requestAnimationFrame(() => {
+    detectionCandidateFrame = undefined;
+    detectionCandidatePoints.value = [...candidates];
+    detectionCandidateTimer = setTimeout(() => {
+      detectionCandidatePoints.value = [];
+      detectionCandidateTimer = undefined;
+    }, detectionFlashAnimationMs);
+  });
+}
+
+function clearDetectionSoldierFlash() {
+  detectionSoldierFlashActive.value = false;
+  if (detectionSoldierFlashFrame !== undefined) {
+    cancelAnimationFrame(detectionSoldierFlashFrame);
+    detectionSoldierFlashFrame = undefined;
+  }
+  if (detectionSoldierFlashTimer) {
+    clearTimeout(detectionSoldierFlashTimer);
+    detectionSoldierFlashTimer = undefined;
+  }
+}
+
+function flashDetectedSoldiers() {
+  clearDetectionSoldierFlash();
+  if (detectedSoldiers.value.length === 0) {
+    return;
+  }
+
+  detectionSoldierFlashFrame = requestAnimationFrame(() => {
+    detectionSoldierFlashFrame = undefined;
+    detectionSoldierFlashActive.value = true;
+    detectionSoldierFlashTimer = setTimeout(() => {
+      detectionSoldierFlashActive.value = false;
+      detectionSoldierFlashTimer = undefined;
+    }, detectionFlashAnimationMs);
+  });
 }
 
 function cloneDetectedObstacleMap(obstacles: DetectedObstacleMap): DetectedObstacleMap {
@@ -1628,7 +1674,7 @@ function flashBoundsRect() {
     boundsFlashTimer = setTimeout(() => {
       boundsFlashActive.value = false;
       boundsFlashTimer = undefined;
-    }, 900);
+    }, detectionFlashAnimationMs);
   });
 }
 
@@ -3996,7 +4042,9 @@ async function copyText(text: string) {
                 class="graphwar-killer__detection"
                 :class="[
                   `graphwar-killer__detection--${box.kind}`,
-                  { 'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId },
+                  {
+                    'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId,
+                  },
                 ]"
                 :cx="box.visualCenterX"
                 :cy="box.visualCenterY"
@@ -4004,6 +4052,19 @@ async function copyText(text: string) {
               />
             </g>
           </template>
+          <g
+            v-if="detectionSoldierFlashActive"
+            class="graphwar-killer__detection-flash-group"
+          >
+            <circle
+              v-for="box in detectedSoldiers"
+              :key="`detection-flash-${box.id}`"
+              class="graphwar-killer__detection-flash-circle"
+              :cx="box.visualCenterX"
+              :cy="box.visualCenterY"
+              :r="box.visualRadius"
+            />
+          </g>
           <g
             v-if="detectionCandidatePoints.length"
             class="graphwar-killer__detection-candidates"
@@ -4256,7 +4317,9 @@ async function copyText(text: string) {
                     class="graphwar-killer__detection"
                     :class="[
                       `graphwar-killer__detection--${box.kind}`,
-                      { 'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId },
+                      {
+                        'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId,
+                      },
                     ]"
                     :cx="box.visualCenterX"
                     :cy="box.visualCenterY"
@@ -4264,6 +4327,19 @@ async function copyText(text: string) {
                   />
                 </g>
               </template>
+              <g
+                v-if="detectionSoldierFlashActive"
+                class="graphwar-killer__detection-flash-group"
+              >
+                <circle
+                  v-for="box in detectedSoldiers"
+                  :key="`magnifier-detection-flash-${box.id}`"
+                  class="graphwar-killer__detection-flash-circle"
+                  :cx="box.visualCenterX"
+                  :cy="box.visualCenterY"
+                  :r="box.visualRadius"
+                />
+              </g>
               <g
                 v-if="detectionCandidatePoints.length"
                 class="graphwar-killer__detection-candidates"
@@ -4899,7 +4975,7 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer__bounds--flash {
-  animation: graphwar-killer-bounds-flash 900ms ease-out;
+  animation: graphwar-killer-bounds-flash 1600ms ease-out;
 }
 
 .graphwar-killer__boundary-expansion {
@@ -4937,6 +5013,18 @@ async function copyText(text: string) {
   stroke: #2563eb;
 }
 
+.graphwar-killer__detection-flash-group {
+  pointer-events: none;
+}
+
+.graphwar-killer__detection-flash-circle {
+  animation: graphwar-killer-detection-soldier-flash 1600ms ease-out;
+  fill: none;
+  stroke: #2563eb;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
 .graphwar-killer__detection--hovered {
   animation: graphwar-killer-curve-blink 900ms ease-in-out infinite;
   stroke: #16a34a;
@@ -4948,8 +5036,8 @@ async function copyText(text: string) {
 
 .graphwar-killer__detection-candidate {
   animation: graphwar-killer-detection-candidate 1600ms ease-out forwards;
-  fill: #facc15;
-  stroke: #7c2d12;
+  fill: #a855f7;
+  stroke: #581c87;
   stroke-width: 1.2;
   transform-box: fill-box;
   transform-origin: center;
@@ -5137,6 +5225,23 @@ async function copyText(text: string) {
   100% {
     opacity: 0%;
     transform: scale(0.72);
+  }
+}
+
+@keyframes graphwar-killer-detection-soldier-flash {
+  0% {
+    opacity: 28%;
+    stroke-width: 1.5;
+  }
+
+  32% {
+    opacity: 100%;
+    stroke-width: 4;
+  }
+
+  100% {
+    opacity: 100%;
+    stroke-width: 2;
   }
 }
 

@@ -136,13 +136,10 @@ const graphwarSoldierTemplateNames = [
 ] as const;
 const graphwarSoldierTemplateMinimumScore = 0.635;
 const graphwarSoldierTemplateMinimumFixedScore = 0.58;
-const graphwarSoldierTemplateMinimumForegroundScore = 0.62;
+const graphwarSoldierTemplateMinimumForegroundScore = 0.6;
 const graphwarSoldierTemplateCandidateDedupeDistance = 4;
-/**
- * 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。本地截图样本最低通过 cap：20 人局 96/160/64，40 人局 160/224/224；256 给满员 JPG、边缘士兵和噪声留 32+
- * 候选余量。
- */
-const graphwarSoldierTemplateCandidateLimit = 256;
+/** 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。 */
+const graphwarSoldierTemplateCandidateLimit = 1024;
 const graphwarSoldierAnimationSignatureCoordinates = [
   [13, 6],
   [14, 6],

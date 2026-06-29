@@ -5020,7 +5020,7 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer__detection-flash-circle {
-  animation: graphwar-killer-detection-soldier-flash 1600ms ease-out;
+  animation: graphwar-killer-detection-soldier-flash 1600ms ease-out forwards;
   fill: none;
   stroke: #2563eb;
   stroke-width: 2;
@@ -5237,17 +5237,23 @@ async function copyText(text: string) {
 
 @keyframes graphwar-killer-detection-soldier-flash {
   0% {
-    opacity: 28%;
+    opacity: 0%;
     stroke-width: 1.5;
   }
 
-  32% {
+  16%,
+  62% {
     opacity: 100%;
     stroke-width: 4;
   }
 
+  38% {
+    opacity: 52%;
+    stroke-width: 4;
+  }
+
   100% {
-    opacity: 100%;
+    opacity: 0%;
     stroke-width: 2;
   }
 }

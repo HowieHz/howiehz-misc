@@ -1589,8 +1589,8 @@ async function detectGraphwarObjectsInBounds(
   const elapsed = formatElapsedDuration(nowMs() - startedAt);
   setDetectionStatus(
     source === "auto"
-      ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, result.obstacles.count, elapsed)
-      : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, result.obstacles.count, elapsed),
+      ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, elapsed)
+      : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, elapsed),
     "success",
   );
 }

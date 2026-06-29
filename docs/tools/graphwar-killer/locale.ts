@@ -144,7 +144,8 @@ export const graphwarKillerLocale = {
       clearObstacleEdits: "清除障碍修改",
       clearObstacleEditsTitle: "恢复到本次自动识别得到的原始障碍范围。",
       drawObstacle: "绘制障碍",
-      drawObstacleTitle: "进入障碍绘制模式：用圆形笔刷修正当前识别出的障碍范围。",
+      drawObstacleTitle:
+        "进入障碍绘制模式：用圆形笔刷修正当前识别出的障碍范围；需要先识别到障碍，并开启智能光标或智能寻路。",
       eraseObstacle: "擦除模式",
       eraseObstacleTitle: "开启后，笔刷会从当前识别障碍中擦除区域。",
       magnifier: "放大镜",
@@ -170,7 +171,7 @@ export const graphwarKillerLocale = {
       minObstacleAreaAriaLabel: "障碍最小面积，单位为 Graphwar 原始平面像素",
       minObstacleAreaTitle: "过滤小噪点的面积阈值；小于该值的障碍区域会被忽略，单位是 Graphwar 原始 770x450 平面像素。",
       smartCursor: "智能光标",
-      smartCursorTitle: "点选路径时自动吸附到识别出的士兵中心，减少手动瞄准误差。",
+      smartCursorTitle: "点选路径时自动吸附到识别出的士兵中心，并开启障碍和边界碰撞模拟。",
       startDetection: "开始识别",
       startDetectionTitle: "从当前截图自动识别 Graphwar 棋盘边界、士兵和障碍。",
       title: "识别",

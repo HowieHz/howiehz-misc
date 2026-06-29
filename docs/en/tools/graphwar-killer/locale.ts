@@ -192,7 +192,8 @@ export const graphwarKillerLocale = {
       clearObstacleEdits: "Clear obstacle edits",
       clearObstacleEditsTitle: "Restore the original obstacle area from this detection run.",
       drawObstacle: "Draw obstacle",
-      drawObstacleTitle: "Enter obstacle-drawing mode: use a circular brush to correct the current detected obstacles.",
+      drawObstacleTitle:
+        "Enter obstacle-drawing mode: use a circular brush to correct the current detected obstacles. Requires detected obstacles and either Smart Cursor or Smart Pathfinding.",
       eraseObstacle: "Erase mode",
       eraseObstacleTitle: "When enabled, the brush removes area from the current detected obstacles.",
       magnifier: "Magnifier",
@@ -221,7 +222,8 @@ export const graphwarKillerLocale = {
       minObstacleAreaTitle:
         "Area threshold for filtering tiny noise; obstacle regions smaller than this are ignored, in raw Graphwar 770x450 plane pixels.",
       smartCursor: "Smart cursor",
-      smartCursorTitle: "Snap path picking to detected soldier centers to reduce manual aiming error.",
+      smartCursorTitle:
+        "Snap path picking to detected soldier centers and enable obstacle and boundary collision simulation.",
       startDetection: "Start detection",
       startDetectionTitle:
         "Automatically detect the Graphwar board bounds, soldiers, and obstacles from the current screenshot.",

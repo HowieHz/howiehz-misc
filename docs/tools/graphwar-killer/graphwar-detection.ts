@@ -697,6 +697,40 @@ export function imagePointToPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRe
   };
 }
 
+/** 统计障碍 mask 里当前的 4 邻域连通域数量。 */
+export function countObstacleMaskComponents(mask: Uint8Array) {
+  return collectComponents(mask, GRAPHWAR_PLANE_LENGTH).length;
+}
+
+/** 用圆形笔刷直接修改当前障碍 mask；直径单位为 Graphwar 原始平面像素。 */
+export function paintObstacleMaskDisk(mask: Uint8Array, center: PlaneGridPoint, diameter: number, value: 0 | 1) {
+  const nextMask = new Uint8Array(mask);
+  const radius = Math.max(0.5, diameter / 2);
+  const offsetLimit = Math.ceil(radius);
+  const radiusSquared = radius * radius;
+  let changed = false;
+
+  for (let offsetY = -offsetLimit; offsetY <= offsetLimit; offsetY += 1) {
+    for (let offsetX = -offsetLimit; offsetX <= offsetLimit; offsetX += 1) {
+      if (!offsetIsInsideRadius(offsetX, offsetY, radiusSquared)) {
+        continue;
+      }
+
+      const x = center.x + offsetX;
+      const y = center.y + offsetY;
+      if (isInsidePlane(x, y)) {
+        const index = y * GRAPHWAR_PLANE_LENGTH + x;
+        if (nextMask[index] !== value) {
+          nextMask[index] = value;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  return changed ? nextMask : mask;
+}
+
 /** 判断像素是否属于玩家/士兵主体颜色，而非棋盘和障碍。 */
 export function isPlayerColorPixel(red: number, green: number, blue: number) {
   if (

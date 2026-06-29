@@ -6,8 +6,8 @@ declare const graphPointBrand: unique symbol;
 export type EquationMode = "y" | "dy" | "ddy";
 /** 生成可复制公式的曲线拼接策略；每种策略对应不同的稳定性和长度取舍。 */
 export type AlgorithmMode = "step" | "abs" | "pchip" | "akima";
-/** 页面舞台当前点击语义，避免边界标定点和攻击路径点共享同一状态入口。 */
-export type ToolMode = "bounds" | "path";
+/** 页面舞台当前点击语义，避免边界标定、攻击路径和障碍修正共享同一状态入口。 */
+export type ToolMode = "bounds" | "path" | "obstacle";
 /** 页面主工作流：生成 Graphwar 公式，或模拟用户手写表达式。 */
 export type ToolWorkflowMode = "solver" | "simulator";
 /** 复制/导入等短反馈状态，统一用有限集合驱动 UI 文案和样式。 */

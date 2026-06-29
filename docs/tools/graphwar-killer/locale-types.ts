@@ -40,6 +40,8 @@ export interface GraphwarKillerLocale {
     maxYGreaterThanMinY: string;
     obstacleMinAreaInteger: string;
     obstacleMinAreaRange: (max: number) => string;
+    obstacleBrushDiameterInteger: string;
+    obstacleBrushDiameterRange: (min: number, max: number) => string;
     pathfindingMaximumNumber: string;
     pathfindingMaximumPixelRange: (limit: number) => string;
     pathfindingMinimumGreaterThanMaximum: string;
@@ -66,6 +68,7 @@ export interface GraphwarKillerLocale {
     };
     activeToolHint: {
       bounds: string;
+      obstacle: string;
       simulatorPath: string;
       solverPath: string;
     };
@@ -88,6 +91,9 @@ export interface GraphwarKillerLocale {
       detectingObjects: string;
       detectedCurrentBounds: (soldiers: number, obstacles: number) => string;
       detectedWithAutoBounds: (soldiers: number, obstacles: number) => string;
+      obstacleEditsApplied: (obstacles: number) => string;
+      obstacleEditsCleared: (obstacles: number) => string;
+      updatingObstacleEdits: string;
       noBounds: string;
       noPixels: string;
       preparingPixels: string;
@@ -128,8 +134,17 @@ export interface GraphwarKillerLocale {
     actions: {
       clearPath: string;
       clearPathTitle: string;
+      clearObstacleEdits: string;
+      clearObstacleEditsTitle: string;
+      drawObstacle: string;
+      drawObstacleTitle: string;
+      eraseObstacle: string;
+      eraseObstacleTitle: string;
       magnifier: string;
       magnifierTitle: string;
+      obstacleBrushDiameter: string;
+      obstacleBrushDiameterAriaLabel: string;
+      obstacleBrushDiameterTitle: string;
       pickBounds: string;
       pickBoundsTitle: string;
       pickPath: string;

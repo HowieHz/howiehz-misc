@@ -78,6 +78,8 @@ export const graphwarKillerLocale = {
     decimalPlacesRange: (max) => `Decimal places must be between 0 and ${max}`,
     maxXGreaterThanMinX: "-x must be less than +x",
     maxYGreaterThanMinY: "-y must be less than +y",
+    obstacleBrushDiameterInteger: "Brush size must be an integer",
+    obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
     pathfindingMaximumNumber: "Pathfinding maximum must be a number",
@@ -104,6 +106,7 @@ export const graphwarKillerLocale = {
     },
     activeToolHint: {
       bounds: "Left-click two corners to set bounds; right-click to cancel the selected point.",
+      obstacle: "Hold left-click to draw or erase detected obstacles; hover to preview the brush footprint.",
       simulatorPath: "Left-click the initial firing soldier; click another soldier to replace it.",
       solverPath:
         "Left-click your soldier's center first, then path-point centers. Drag path points to fine-tune them, right-click a point to delete it, or right-click empty space to undo the latest point.",
@@ -129,6 +132,9 @@ export const graphwarKillerLocale = {
         `Detected ${soldiers} soldiers and ${obstacles} obstacles from the current bounds`,
       detectedWithAutoBounds: (soldiers, obstacles) =>
         `Auto-marked the bounds and found ${soldiers} soldiers and ${obstacles} obstacles`,
+      obstacleEditsApplied: (obstacles) => `Updated obstacle boundaries; currently ${obstacles} obstacles`,
+      obstacleEditsCleared: (obstacles) => `Cleared obstacle edits; restored ${obstacles} obstacles`,
+      updatingObstacleEdits: "Applying obstacle edits",
       noBounds: "Could not detect the Graphwar play-area bounds",
       noPixels: "Could not read screenshot pixels",
       preparingPixels: "Reading screenshot pixels",
@@ -183,9 +189,18 @@ export const graphwarKillerLocale = {
       clearPath: "Clear path",
       clearPathTitle:
         "Clear the selected soldier and path points for the current mode without changing screenshot bounds or settings.",
+      clearObstacleEdits: "Clear obstacle edits",
+      clearObstacleEditsTitle: "Restore the original obstacle area from this detection run.",
+      drawObstacle: "Draw obstacle",
+      drawObstacleTitle: "Enter obstacle-drawing mode: use a circular brush to correct the current detected obstacles.",
+      eraseObstacle: "Erase mode",
+      eraseObstacleTitle: "When enabled, the brush removes area from the current detected obstacles.",
       magnifier: "Magnifier",
       magnifierTitle:
         "Show a zoomed preview next to the screenshot for more precise soldier, bounds, and path picking.",
+      obstacleBrushDiameter: "Brush size",
+      obstacleBrushDiameterAriaLabel: "Obstacle brush diameter in raw Graphwar 770x450 plane pixels",
+      obstacleBrushDiameterTitle: "Circular obstacle brush diameter, in raw Graphwar 770x450 plane pixels.",
       pickBounds: "Pick bounds",
       pickBoundsTitle: "Enter bounds-picking mode: left-click two board corners to calibrate the screenshot bounds.",
       pickPath: "Pick path",

@@ -24,10 +24,13 @@ import {
 import {
   addSoldierAreasToObstacleMask,
   buildObstacleEdgePath,
+  countObstacleMaskComponents,
   detectGraphwarObjectsInBounds as detectGraphwarObjectsFromImage,
   detectGraphwarPlayArea,
   dilateObstacleMask,
+  imagePointToPlaneGridPoint,
   isPlayerColorPixel,
+  paintObstacleMaskDisk,
 } from "./graphwar-detection";
 import type { DetectedObstacleMap, GraphwarDetectionBox } from "./graphwar-detection";
 import {
@@ -86,6 +89,8 @@ type ParsedSteepness = { ok: true; steepness: number } | { ok: false; message: s
 type ParsedPrecision = { ok: true; decimalPlaces: number } | { ok: false; message: string };
 /** 障碍识别阈值解析结果，失败时阻止重新识别。 */
 type ParsedObstacleThresholds = { ok: true; minArea: number } | { ok: false; message: string };
+/** 障碍笔刷直径解析结果，单位为 Graphwar 原始 770x450 平面像素。 */
+type ParsedObstacleBrushDiameter = { ok: true; diameter: number } | { ok: false; message: string };
 /** 寻路容差解析结果；所有距离都使用 Graphwar 原始 770x450 平面像素。 */
 type ParsedObstacleTolerances =
   | {
@@ -166,6 +171,11 @@ const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
 const graphwarBoundaryExpansionLimit = Math.floor((Math.min(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) - 1) / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const autoGraphWorkerCountLimit = 1024;
+const obstacleBrushMinimumDiameter = 1;
+const obstacleBrushMaximumDiameter = 200;
+const obstacleBrushEditRefreshDelayMs = 250;
+const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
+const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
 const boundsFirstPoint = ref<PixelPoint>();
@@ -256,10 +266,16 @@ const detectionStatusIsError = ref(false);
 const detectionInProgress = ref(false);
 const detectedSoldiers = ref<DetectionBox[]>([]);
 const detectedObstacles = ref<DetectedObstacleMap>();
+const baselineDetectedObstacles = ref<DetectedObstacleMap>();
 const autoDetectionEnabled = ref(true);
 const smartCursorEnabled = ref(true);
 const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
+const obstacleBrushDiameterText = ref("30");
+const obstacleBrushEraseEnabled = ref(false);
+const obstacleBrushPointerPoint = ref<PixelPoint>();
+const obstacleBrushDragging = ref(false);
+const obstacleEditsDirty = ref(false);
 const searchAnimationEnabled = ref(true);
 const autoGraphFastModeEnabled = ref(true);
 const smartPathfindingInProgress = ref(false);
@@ -287,6 +303,7 @@ let boundsFlashFrame: number | undefined;
 let boundsFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let obstacleEditRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRunId = 0;
 let smartPathfindingCancelToken = 0;
 
@@ -343,6 +360,20 @@ const parsedObstacleThresholds = computed<ParsedObstacleThresholds>(() => {
     return { ok: false as const, message: locale.validation.obstacleMinAreaRange(graphwarObstacleMaxArea) };
   }
   return { ok: true as const, minArea };
+});
+
+const parsedObstacleBrushDiameter = computed<ParsedObstacleBrushDiameter>(() => {
+  const diameter = parseFiniteNumber(obstacleBrushDiameterText.value);
+  if (diameter === undefined || !Number.isInteger(diameter)) {
+    return { ok: false as const, message: locale.validation.obstacleBrushDiameterInteger };
+  }
+  if (diameter < obstacleBrushMinimumDiameter || diameter > obstacleBrushMaximumDiameter) {
+    return {
+      ok: false as const,
+      message: locale.validation.obstacleBrushDiameterRange(obstacleBrushMinimumDiameter, obstacleBrushMaximumDiameter),
+    };
+  }
+  return { ok: true as const, diameter };
 });
 
 const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
@@ -510,9 +541,11 @@ const settingsHeaderStatusIsError = computed(() => settingsHeaderStatusResult.va
 const activeToolHint = computed(() =>
   toolMode.value === "bounds"
     ? locale.status.activeToolHint.bounds
-    : toolWorkflowMode.value === "simulator"
-      ? locale.status.activeToolHint.simulatorPath
-      : locale.status.activeToolHint.solverPath,
+    : toolMode.value === "obstacle"
+      ? locale.status.activeToolHint.obstacle
+      : toolWorkflowMode.value === "simulator"
+        ? locale.status.activeToolHint.simulatorPath
+        : locale.status.activeToolHint.solverPath,
 );
 const boundsPreviewRect = computed(() =>
   boundsFirstPoint.value && pointerPreviewPoint.value
@@ -731,6 +764,26 @@ const detectionSettingsMessage = computed(() => {
 });
 const detectionHeaderStatus = computed(() => detectionSettingsMessage.value || detectionStatus.value);
 const detectionHeaderStatusIsError = computed(() => !!detectionSettingsMessage.value || detectionStatusIsError.value);
+
+const obstacleBrushAvailable = computed(
+  () => Boolean(detectedObstacles.value) && (smartCursorEnabled.value || smartPathfindingEnabled.value),
+);
+const obstacleBrushControlsVisible = computed(() => toolMode.value === "obstacle");
+const obstacleBrushPreview = computed(() => {
+  const point = obstacleBrushPointerPoint.value;
+  if (toolMode.value !== "obstacle" || !point || !parsedObstacleBrushDiameter.value.ok) {
+    return undefined;
+  }
+
+  const diameter = parsedObstacleBrushDiameter.value.diameter;
+  const width = (diameter / GRAPHWAR_PLANE_LENGTH) * boundsRect.value.width;
+  const height = (diameter / GRAPHWAR_PLANE_HEIGHT) * boundsRect.value.height;
+  return {
+    center: point,
+    radiusX: width / 2,
+    radiusY: height / 2,
+  };
+});
 
 const smartPathfindingSettingsMessage = computed(() => {
   if (toolWorkflowMode.value === "simulator") {
@@ -1098,6 +1151,9 @@ onBeforeUnmount(() => {
   if (detectionRefreshTimer) {
     clearTimeout(detectionRefreshTimer);
   }
+  if (obstacleEditRefreshTimer) {
+    clearTimeout(obstacleEditRefreshTimer);
+  }
 });
 
 watch([obstacleMinAreaText], () => {
@@ -1133,6 +1189,12 @@ watch([stepOverflowProtectionEnabled], () => {
 
 watch([obstacleSimulationToleranceText, steepnessText], () => {
   clearSmartPathfindingStatus();
+});
+
+watch([smartCursorEnabled, smartPathfindingEnabled, detectedObstacles], () => {
+  if (toolMode.value === "obstacle" && !obstacleBrushAvailable.value) {
+    setToolMode("path");
+  }
 });
 
 watch(
@@ -1226,8 +1288,13 @@ function clearDetections() {
 function clearDetectedGraphwarObjects() {
   detectedSoldiers.value = [];
   detectedObstacles.value = undefined;
+  baselineDetectedObstacles.value = undefined;
+  obstacleEditsDirty.value = false;
+  obstacleBrushPointerPoint.value = undefined;
+  obstacleBrushDragging.value = false;
   hoveredDetectedSoldierId.value = undefined;
   clearSmartPathfindingStatus();
+  clearObstacleEditRefreshTimer();
 }
 
 function beginDetectionRun() {
@@ -1405,11 +1472,31 @@ async function detectGraphwarObjectsInBounds(
   }
   detectedSoldiers.value = result.soldiers;
   detectedObstacles.value = result.obstacles;
+  baselineDetectedObstacles.value = cloneDetectedObstacleMap(result.obstacles);
+  obstacleEditsDirty.value = false;
+  obstacleBrushPointerPoint.value = undefined;
+  obstacleBrushDragging.value = false;
   detectionStatus.value =
     source === "auto"
       ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, detectedObstacles.value.count)
       : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, detectedObstacles.value.count);
   detectionStatusIsError.value = false;
+}
+
+function cloneDetectedObstacleMap(obstacles: DetectedObstacleMap): DetectedObstacleMap {
+  return {
+    count: obstacles.count,
+    mask: new Uint8Array(obstacles.mask),
+  };
+}
+
+function clearObstacleEditRefreshTimer() {
+  if (!obstacleEditRefreshTimer) {
+    return;
+  }
+
+  clearTimeout(obstacleEditRefreshTimer);
+  obstacleEditRefreshTimer = undefined;
 }
 
 /** 触发一次短暂边界高亮，帮助用户确认自动识别或手动框选结果。 */
@@ -1457,6 +1544,92 @@ function setPathfindingMode(mode: PathfindingMode) {
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
   smartPathfindingEnabled.value = mode === "smart";
+}
+
+function setObstacleBrushDiameterText(value: string) {
+  obstacleBrushDiameterText.value = value;
+}
+
+function handleObstacleBrushDiameterRangeInput(event: Event) {
+  const input = event.target;
+  if (input instanceof HTMLInputElement) {
+    setObstacleBrushDiameterText(input.value);
+  }
+}
+
+function toggleObstacleBrushErase() {
+  obstacleBrushEraseEnabled.value = !obstacleBrushEraseEnabled.value;
+}
+
+function resetObstacleEdits() {
+  const baseline = baselineDetectedObstacles.value;
+  if (!baseline) {
+    return;
+  }
+
+  cancelSmartPathfinding(false);
+  clearSmartPathfindingStatus();
+  clearObstacleEditRefreshTimer();
+  detectedObstacles.value = cloneDetectedObstacleMap(baseline);
+  obstacleEditsDirty.value = false;
+  detectionStatus.value = locale.status.detection.obstacleEditsCleared(baseline.count);
+  detectionStatusIsError.value = false;
+}
+
+function updateObstacleBrushPreview(point: PixelPoint) {
+  obstacleBrushPointerPoint.value = pointIsInsideBoundsRect(point, boundsRect.value)
+    ? planeGridCellCenterToImagePoint(imagePointToPlaneGridPoint(point, boundsRect.value), boundsRect.value)
+    : undefined;
+}
+
+function paintObstacleBrushAtPoint(point: PixelPoint) {
+  const obstacleMap = detectedObstacles.value;
+  const brushDiameter = parsedObstacleBrushDiameter.value;
+  if (!obstacleMap || !brushDiameter.ok || !pointIsInsideBoundsRect(point, boundsRect.value)) {
+    return false;
+  }
+
+  cancelSmartPathfinding(false);
+  clearSmartPathfindingStatus();
+  const center = imagePointToPlaneGridPoint(point, boundsRect.value);
+  obstacleBrushPointerPoint.value = planeGridCellCenterToImagePoint(center, boundsRect.value);
+  const nextMask = paintObstacleMaskDisk(
+    obstacleMap.mask,
+    center,
+    brushDiameter.diameter,
+    obstacleBrushEraseEnabled.value ? 0 : 1,
+  );
+  if (nextMask === obstacleMap.mask) {
+    return false;
+  }
+
+  detectedObstacles.value = {
+    count: obstacleMap.count,
+    mask: nextMask,
+  };
+  obstacleEditsDirty.value = true;
+  scheduleObstacleEditRefresh();
+  return true;
+}
+
+function scheduleObstacleEditRefresh() {
+  clearObstacleEditRefreshTimer();
+  detectionStatus.value = locale.status.detection.updatingObstacleEdits;
+  detectionStatusIsError.value = false;
+  obstacleEditRefreshTimer = setTimeout(() => {
+    obstacleEditRefreshTimer = undefined;
+    const obstacles = detectedObstacles.value;
+    if (!obstacles) {
+      return;
+    }
+    const count = countObstacleMaskComponents(obstacles.mask);
+    detectedObstacles.value = {
+      count,
+      mask: obstacles.mask,
+    };
+    detectionStatus.value = locale.status.detection.obstacleEditsApplied(count);
+    detectionStatusIsError.value = false;
+  }, obstacleBrushEditRefreshDelayMs);
 }
 
 /** Step 公式不支持智能/一键清图，因为弹道和路径点语义不稳定。 */
@@ -1522,6 +1695,21 @@ function handleStagePointerDown(event: PointerEvent) {
     }
     boundsFirstPoint.value = undefined;
     pointerPreviewPoint.value = undefined;
+    return;
+  }
+
+  if (toolMode.value === "obstacle") {
+    if (event.button !== 0) {
+      return;
+    }
+
+    if (!obstacleBrushAvailable.value || !parsedObstacleBrushDiameter.value.ok) {
+      return;
+    }
+
+    obstacleBrushDragging.value = true;
+    stageRef.value?.setPointerCapture(event.pointerId);
+    paintObstacleBrushAtPoint(point);
     return;
   }
 
@@ -2163,9 +2351,12 @@ function createBoundsRectWithBoundaryExpansion(rect: BoundsRect, boundaryExpansi
 /** 判断点是否在考虑边界外扩后的可用目标区域内。 */
 function pointIsInsideTargetBounds(point: PixelPoint) {
   const rect = targetBoundsRect.value;
-  return Boolean(
-    rect && point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height,
-  );
+  return Boolean(rect && pointIsInsideBoundsRect(point, rect));
+}
+
+/** 判断点是否在指定截图矩形内，边界视为有效。 */
+function pointIsInsideBoundsRect(point: PixelPoint, rect: BoundsRect) {
+  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
 /** 返回当前起点向 x+ 前进最小步长后的 Graphwar x，最小步长严格由当前输出小数位决定。 */
@@ -2471,6 +2662,15 @@ function handleStagePointerMove(event: PointerEvent) {
   if (magnifierEnabled.value) {
     magnifierPoint.value = point;
   }
+  if (toolMode.value === "obstacle") {
+    updateObstacleBrushPreview(point);
+    if (obstacleBrushDragging.value) {
+      paintObstacleBrushAtPoint(point);
+    }
+    hoveredPathPointIndex.value = undefined;
+    hoveredDetectedSoldierId.value = undefined;
+    return;
+  }
   if (draggingPathPointIndex.value !== undefined) {
     hoveredPathPointIndex.value = draggingPathPointIndex.value;
     setPathPoint(draggingPathPointIndex.value, point);
@@ -2493,6 +2693,8 @@ function handleStagePointerLeave() {
   hoveredDetectedSoldierId.value = undefined;
   hoveredPathPointIndex.value = undefined;
   draggingPathPointIndex.value = undefined;
+  obstacleBrushPointerPoint.value = undefined;
+  obstacleBrushDragging.value = false;
 }
 
 /** 返回当前可见目标中被指针命中的士兵。 */
@@ -2579,6 +2781,10 @@ function handleStageContextMenu(event: MouseEvent) {
     return;
   }
 
+  if (toolMode.value === "obstacle") {
+    return;
+  }
+
   if (toolMode.value !== "path") {
     return;
   }
@@ -2594,6 +2800,14 @@ function handleStageContextMenu(event: MouseEvent) {
 
 /** 结束路径点拖拽，释放 pointer capture。 */
 function handleStagePointerUp(event: PointerEvent) {
+  if (obstacleBrushDragging.value) {
+    obstacleBrushDragging.value = false;
+    if (stageRef.value?.hasPointerCapture(event.pointerId)) {
+      stageRef.value.releasePointerCapture(event.pointerId);
+    }
+    return;
+  }
+
   if (draggingPathPointIndex.value === undefined) {
     return;
   }
@@ -2605,9 +2819,17 @@ function handleStagePointerUp(event: PointerEvent) {
 
 /** 切换边界/路径模式，并清理当前模式的临时状态。 */
 function setToolMode(mode: ToolMode) {
+  if (mode === "obstacle" && !obstacleBrushAvailable.value) {
+    return;
+  }
+
   toolMode.value = mode;
   pointerPreviewPoint.value = undefined;
-  if (mode === "path") {
+  obstacleBrushPointerPoint.value = undefined;
+  obstacleBrushDragging.value = false;
+  hoveredDetectedSoldierId.value = undefined;
+  hoveredPathPointIndex.value = undefined;
+  if (mode !== "bounds") {
     boundsFirstPoint.value = undefined;
   }
 }
@@ -3285,7 +3507,10 @@ async function copyText(text: string) {
       <div class="graphwar-killer__image-actions">
         <div
           class="graphwar-killer__tool-toggle"
-          :class="{ 'graphwar-killer__tool-toggle--path': toolMode === 'path' }"
+          :class="{
+            'graphwar-killer__tool-toggle--path': toolMode === 'path',
+            'graphwar-killer__tool-toggle--obstacle': toolMode === 'obstacle',
+          }"
           role="group"
           :aria-label="locale.ui.actions.toolModeAriaLabel"
           :title="locale.ui.actions.toolModeTitle"
@@ -3307,6 +3532,16 @@ async function copyText(text: string) {
             @click="setToolMode('path')"
           >
             {{ locale.ui.actions.pickPath }}
+          </button>
+          <button
+            type="button"
+            :aria-pressed="toolMode === 'obstacle'"
+            :class="{ 'graphwar-killer__tool-toggle-button--active': toolMode === 'obstacle' }"
+            :disabled="!obstacleBrushAvailable"
+            :title="locale.ui.actions.drawObstacleTitle"
+            @click="setToolMode('obstacle')"
+          >
+            {{ locale.ui.actions.drawObstacle }}
           </button>
         </div>
         <button
@@ -3331,6 +3566,53 @@ async function copyText(text: string) {
           @click="magnifierEnabled = !magnifierEnabled"
         >
           {{ locale.ui.actions.magnifier }}
+        </button>
+      </div>
+      <div
+        v-if="obstacleBrushControlsVisible"
+        class="graphwar-killer__obstacle-brush-actions"
+      >
+        <label
+          class="graphwar-killer__obstacle-brush-label"
+          :title="locale.ui.actions.obstacleBrushDiameterTitle"
+        >
+          {{ locale.ui.actions.obstacleBrushDiameter }}
+          <input
+            type="range"
+            :value="obstacleBrushDiameterText"
+            :min="obstacleBrushMinimumDiameter"
+            :max="obstacleBrushMaximumDiameter"
+            step="1"
+            :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
+            :title="locale.ui.actions.obstacleBrushDiameterTitle"
+            @input="handleObstacleBrushDiameterRangeInput"
+          >
+          <input
+            v-model="obstacleBrushDiameterText"
+            inputmode="numeric"
+            :min="obstacleBrushMinimumDiameter"
+            :max="obstacleBrushMaximumDiameter"
+            :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
+            :title="locale.ui.actions.obstacleBrushDiameterTitle"
+          >
+          <span>{{ locale.ui.pathfinding.unit }}</span>
+        </label>
+        <button
+          type="button"
+          :aria-pressed="obstacleBrushEraseEnabled"
+          :class="{ 'graphwar-killer__toggle-button--active': obstacleBrushEraseEnabled }"
+          :title="locale.ui.actions.eraseObstacleTitle"
+          @click="toggleObstacleBrushErase"
+        >
+          {{ locale.ui.actions.eraseObstacle }}
+        </button>
+        <button
+          type="button"
+          :disabled="!obstacleEditsDirty"
+          :title="locale.ui.actions.clearObstacleEditsTitle"
+          @click="resetObstacleEdits"
+        >
+          {{ locale.ui.actions.clearObstacleEdits }}
         </button>
       </div>
     </section>
@@ -3407,6 +3689,16 @@ async function copyText(text: string) {
           :viewBox="`0 0 ${imageWidth} ${imageHeight}`"
           aria-hidden="true"
         >
+          <defs>
+            <clipPath :id="mainObstacleBrushClipPathId">
+              <rect
+                :x="boundsRect.x"
+                :y="boundsRect.y"
+                :width="boundsRect.width"
+                :height="boundsRect.height"
+              />
+            </clipPath>
+          </defs>
           <rect
             class="graphwar-killer__bounds"
             :class="{
@@ -3483,6 +3775,16 @@ async function copyText(text: string) {
               />
             </g>
           </template>
+          <ellipse
+            v-if="obstacleBrushPreview"
+            class="graphwar-killer__obstacle-brush-preview"
+            :class="{ 'graphwar-killer__obstacle-brush-preview--erase': obstacleBrushEraseEnabled }"
+            :clip-path="`url(#${mainObstacleBrushClipPathId})`"
+            :cx="obstacleBrushPreview.center.x"
+            :cy="obstacleBrushPreview.center.y"
+            :rx="obstacleBrushPreview.radiusX"
+            :ry="obstacleBrushPreview.radiusY"
+          />
           <circle
             v-if="boundsFirstPoint"
             class="graphwar-killer__bounds-point"
@@ -3612,6 +3914,16 @@ async function copyText(text: string) {
               :viewBox="`0 0 ${imageWidth} ${imageHeight}`"
               aria-hidden="true"
             >
+              <defs>
+                <clipPath :id="magnifierObstacleBrushClipPathId">
+                  <rect
+                    :x="boundsRect.x"
+                    :y="boundsRect.y"
+                    :width="boundsRect.width"
+                    :height="boundsRect.height"
+                  />
+                </clipPath>
+              </defs>
               <rect
                 class="graphwar-killer__bounds"
                 :class="{
@@ -3688,6 +4000,16 @@ async function copyText(text: string) {
                   />
                 </g>
               </template>
+              <ellipse
+                v-if="obstacleBrushPreview"
+                class="graphwar-killer__obstacle-brush-preview"
+                :class="{ 'graphwar-killer__obstacle-brush-preview--erase': obstacleBrushEraseEnabled }"
+                :clip-path="`url(#${magnifierObstacleBrushClipPathId})`"
+                :cx="obstacleBrushPreview.center.x"
+                :cy="obstacleBrushPreview.center.y"
+                :rx="obstacleBrushPreview.radiusX"
+                :ry="obstacleBrushPreview.radiusY"
+              />
               <circle
                 v-if="boundsFirstPoint"
                 class="graphwar-killer__bounds-point"
@@ -3992,6 +4314,11 @@ async function copyText(text: string) {
     border-color 0.2s ease,
     box-shadow 0.2s ease,
     background-color 0.2s ease;
+  width: 100%;
+}
+
+.graphwar-killer input[type="range"] {
+  accent-color: var(--vp-c-brand-1);
   width: 100%;
 }
 
@@ -4301,6 +4628,16 @@ async function copyText(text: string) {
   stroke: #dc2626;
 }
 
+.graphwar-killer__obstacle-brush-preview {
+  animation: graphwar-killer-obstacle-brush-blink 1200ms ease-in-out infinite;
+  fill: rgb(220 38 38 / 34%);
+  pointer-events: none;
+}
+
+.graphwar-killer__obstacle-brush-preview--erase {
+  fill: rgb(34 197 94 / 34%);
+}
+
 .graphwar-killer__target-range {
   fill: color-mix(in srgb, #86efac 14%, transparent);
   pointer-events: none;
@@ -4425,6 +4762,17 @@ async function copyText(text: string) {
   }
 }
 
+@keyframes graphwar-killer-obstacle-brush-blink {
+  0%,
+  100% {
+    opacity: 86%;
+  }
+
+  50% {
+    opacity: 32%;
+  }
+}
+
 .graphwar-killer__point {
   fill: color-mix(in srgb, #f97316 10%, transparent);
   stroke: #f97316;
@@ -4462,6 +4810,34 @@ async function copyText(text: string) {
 .graphwar-killer__image-actions button {
   min-height: 34px;
   padding: 6px 10px;
+}
+
+.graphwar-killer__obstacle-brush-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.graphwar-killer__obstacle-brush-actions button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.graphwar-killer__obstacle-brush-label {
+  align-items: center;
+  flex: 1 1 340px;
+  font-weight: 600;
+  gap: 6px;
+  grid-template-columns: auto minmax(120px, 1fr) minmax(58px, 74px) auto;
+  min-width: min(100%, 320px);
+}
+
+.graphwar-killer__obstacle-brush-label span {
+  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
+  font-size: 0.88rem;
+  font-weight: 500;
 }
 
 .graphwar-killer__pathfinding-settings {
@@ -4608,7 +4984,7 @@ async function copyText(text: string) {
   border-radius: 999px;
   display: grid;
   gap: 0;
-  grid-template-columns: repeat(2, minmax(92px, 1fr));
+  grid-template-columns: repeat(3, minmax(92px, 1fr));
   min-height: 34px;
   overflow: hidden;
   padding: 2px;
@@ -4625,11 +5001,15 @@ async function copyText(text: string) {
   position: absolute;
   top: 2px;
   transition: transform 0.2s ease;
-  width: calc(50% - 2px);
+  width: calc((100% - 4px) / 3);
 }
 
 .graphwar-killer__tool-toggle--path::before {
   transform: translateX(100%);
+}
+
+.graphwar-killer__tool-toggle--obstacle::before {
+  transform: translateX(200%);
 }
 
 .graphwar-killer__algorithm-toggle {

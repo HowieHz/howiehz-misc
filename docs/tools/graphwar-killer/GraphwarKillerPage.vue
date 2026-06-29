@@ -91,6 +91,8 @@ type ParsedSteepness = { ok: true; steepness: number } | { ok: false; message: s
 type ParsedPrecision = { ok: true; decimalPlaces: number } | { ok: false; message: string };
 /** 障碍识别阈值解析结果，失败时阻止重新识别。 */
 type ParsedObstacleThresholds = { ok: true; minArea: number } | { ok: false; message: string };
+/** 放大镜倍率解析结果；允许输入框超过滑条快速范围。 */
+type ParsedMagnifierZoom = { ok: true; zoom: number } | { ok: false; message: string };
 /** 障碍笔刷直径解析结果，单位为 Graphwar 原始 770x450 平面像素。 */
 type ParsedObstacleBrushDiameter = { ok: true; diameter: number } | { ok: false; message: string };
 /** 寻路容差解析结果；所有距离都使用 Graphwar 原始 770x450 平面像素。 */
@@ -174,6 +176,9 @@ const graphwarVisibleYLimitText = formatDoublePrecisionDecimal(GRAPHWAR_VISIBLE_
 const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
 const graphwarBoundaryExpansionLimit = Math.floor((Math.min(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) - 1) / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
+const magnifierMinimumZoom = 1;
+const magnifierSliderMaximumZoom = 5;
+const magnifierInputMaximumZoom = 100;
 const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
@@ -186,6 +191,7 @@ const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
 const boundsFirstPoint = ref<PixelPoint>();
 const pointerPreviewPoint = ref<PixelPoint>();
 const magnifierEnabled = ref(true);
+const magnifierZoomText = ref(String(graphwarToolDefaults.magnifierZoom));
 const magnifierPoint = ref<PixelPoint>();
 const boundsFlashActive = ref(false);
 const toolMode = ref<ToolMode>("bounds");
@@ -365,6 +371,20 @@ const parsedObstacleThresholds = computed<ParsedObstacleThresholds>(() => {
     return { ok: false as const, message: locale.validation.obstacleMinAreaRange(graphwarObstacleMaxArea) };
   }
   return { ok: true as const, minArea };
+});
+
+const parsedMagnifierZoom = computed<ParsedMagnifierZoom>(() => {
+  const zoom = parseFiniteNumber(magnifierZoomText.value);
+  if (zoom === undefined) {
+    return { ok: false as const, message: locale.validation.magnifierZoomNumber };
+  }
+  if (zoom < magnifierMinimumZoom || zoom > magnifierInputMaximumZoom) {
+    return {
+      ok: false as const,
+      message: locale.validation.magnifierZoomRange(magnifierMinimumZoom, magnifierInputMaximumZoom),
+    };
+  }
+  return { ok: true as const, zoom };
 });
 
 const parsedObstacleBrushDiameter = computed<ParsedObstacleBrushDiameter>(() => {
@@ -797,6 +817,19 @@ const detectionSettingsMessage = computed(() => {
 const detectionHeaderStatus = computed(() => detectionSettingsMessage.value || detectionStatus.value);
 const detectionHeaderStatusIsError = computed(() => !!detectionSettingsMessage.value || detectionStatusIsError.value);
 
+const magnifierZoom = computed(() =>
+  parsedMagnifierZoom.value.ok ? parsedMagnifierZoom.value.zoom : graphwarToolDefaults.magnifierZoom,
+);
+const magnifierSliderZoom = computed(() =>
+  clampNumber(magnifierZoom.value, magnifierMinimumZoom, magnifierSliderMaximumZoom),
+);
+const magnifierZoomRangeStyle = computed(() => {
+  const range = magnifierSliderMaximumZoom - magnifierMinimumZoom;
+  const progress = range > 0 ? ((magnifierSliderZoom.value - magnifierMinimumZoom) / range) * 100 : 0;
+  return {
+    "--graphwar-killer-range-progress": `${formatDecimal(progress, 4)}%`,
+  };
+});
 const obstacleBrushAvailable = computed(
   () => Boolean(detectedObstacles.value) && (smartCursorEnabled.value || smartPathfindingEnabled.value),
 );
@@ -1145,7 +1178,7 @@ const magnifierContentStyle = computed(() => {
   const displayX = (point.x / imageWidth.value) * stageDisplayWidth.value;
   const displayY = (point.y / imageHeight.value) * stageDisplayHeight.value;
   const size = graphwarToolDefaults.magnifierSize;
-  const zoom = graphwarToolDefaults.magnifierZoom;
+  const zoom = magnifierZoom.value;
 
   return {
     width: `${stageDisplayWidth.value}px`,
@@ -1602,6 +1635,17 @@ function handleObstacleBrushDiameterInput(event: Event) {
   const input = event.target;
   if (input instanceof HTMLInputElement) {
     setObstacleBrushDiameterText(input.value);
+  }
+}
+
+function setMagnifierZoomText(value: string) {
+  magnifierZoomText.value = value;
+}
+
+function handleMagnifierZoomInput(event: Event) {
+  const input = event.target;
+  if (input instanceof HTMLInputElement) {
+    setMagnifierZoomText(input.value);
   }
 }
 
@@ -3664,6 +3708,36 @@ async function copyText(text: string) {
         >
           {{ locale.ui.actions.magnifier }}
         </button>
+        <label
+          v-if="magnifierEnabled"
+          class="graphwar-killer__magnifier-zoom-label"
+          :title="locale.ui.actions.magnifierZoomTitle"
+        >
+          {{ locale.ui.actions.magnifierZoom }}
+          <input
+            type="range"
+            :value="magnifierSliderZoom"
+            :style="magnifierZoomRangeStyle"
+            :min="magnifierMinimumZoom"
+            :max="magnifierSliderMaximumZoom"
+            step="0.1"
+            :aria-label="locale.ui.actions.magnifierZoomAriaLabel"
+            :title="locale.ui.actions.magnifierZoomTitle"
+            @input="handleMagnifierZoomInput"
+          >
+          <input
+            type="number"
+            :value="magnifierZoomText"
+            inputmode="decimal"
+            :min="magnifierMinimumZoom"
+            :max="magnifierInputMaximumZoom"
+            step="0.1"
+            :aria-label="locale.ui.actions.magnifierZoomAriaLabel"
+            :title="locale.ui.actions.magnifierZoomTitle"
+            @input="handleMagnifierZoomInput"
+          >
+          <span>x</span>
+        </label>
       </div>
       <div
         v-if="obstacleBrushControlsVisible"
@@ -5025,6 +5099,21 @@ async function copyText(text: string) {
 .graphwar-killer__image-actions button {
   min-height: 34px;
   padding: 6px 10px;
+}
+
+.graphwar-killer__magnifier-zoom-label {
+  align-items: center;
+  flex: 1 1 280px;
+  font-weight: 600;
+  gap: 6px;
+  grid-template-columns: auto minmax(96px, 1fr) minmax(54px, 72px) auto;
+  min-width: min(100%, 260px);
+}
+
+.graphwar-killer__magnifier-zoom-label span {
+  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
+  font-size: 0.88rem;
+  font-weight: 500;
 }
 
 .graphwar-killer__obstacle-brush-actions {

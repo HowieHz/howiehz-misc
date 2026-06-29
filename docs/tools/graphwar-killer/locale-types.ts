@@ -38,6 +38,8 @@ export interface GraphwarKillerLocale {
     boundsInvalidNumber: string;
     maxXGreaterThanMinX: string;
     maxYGreaterThanMinY: string;
+    magnifierZoomNumber: string;
+    magnifierZoomRange: (min: number, max: number) => string;
     obstacleMinAreaInteger: string;
     obstacleMinAreaRange: (max: number) => string;
     obstacleBrushDiameterInteger: string;
@@ -143,6 +145,9 @@ export interface GraphwarKillerLocale {
       eraseObstacleTitle: string;
       magnifier: string;
       magnifierTitle: string;
+      magnifierZoom: string;
+      magnifierZoomAriaLabel: string;
+      magnifierZoomTitle: string;
       obstacleBrushDiameter: string;
       obstacleBrushDiameterAriaLabel: string;
       obstacleBrushDiameterTitle: string;

@@ -123,6 +123,7 @@ const graphwarSoldierTemplateNames = [
 const graphwarSoldierTemplateMinimumScore = 0.64;
 const graphwarSoldierTemplateMinimumFixedScore = 0.58;
 const graphwarSoldierTemplateMinimumForegroundScore = 0.62;
+const graphwarSoldierTemplateCandidateDedupeDistance = 4;
 /**
  * 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。本地截图样本最低通过 cap：20 人局 96/160/64，40 人局 160/224/224；256 给满员 JPG、边缘士兵和噪声留 32+
  * 候选余量。
@@ -530,6 +531,15 @@ interface SoldierMatchCandidate {
   playerScore: number;
   /** 固定动画差异像素分数。 */
   signatureScore: number;
+}
+
+interface SoldierTemplateCenterCandidate {
+  /** 截图像素 x。 */
+  x: number;
+  /** 截图像素 y。 */
+  y: number;
+  /** 固定黄色种子反投票数。 */
+  votes: number;
 }
 
 const graphwarSoldierTemplates = createGraphwarSoldierTemplates();
@@ -1082,15 +1092,29 @@ function createSoldierTemplateCenterCandidates(
   }
 
   const minVotes = Math.max(2, Math.floor(scale));
-  return [...votes.values()]
+  const rankedCandidates = [...votes.values()]
     .filter((vote) => vote.count >= minVotes)
     .map((vote) => ({
       x: vote.x,
       y: vote.y,
       votes: vote.count,
     }))
-    .sort((left, right) => right.votes - left.votes)
-    .slice(0, candidateLimit);
+    .sort((left, right) => right.votes - left.votes);
+
+  return dedupeSoldierTemplateCenterCandidates(
+    rankedCandidates,
+    graphwarSoldierTemplateCandidateDedupeDistance * scale,
+  ).slice(0, candidateLimit);
+}
+
+function dedupeSoldierTemplateCenterCandidates(candidates: SoldierTemplateCenterCandidate[], minimumDistance: number) {
+  const kept: SoldierTemplateCenterCandidate[] = [];
+  for (const candidate of candidates) {
+    if (kept.every((existing) => Math.hypot(candidate.x - existing.x, candidate.y - existing.y) > minimumDistance)) {
+      kept.push(candidate);
+    }
+  }
+  return kept;
 }
 
 /** 对同一个源码中心尝试所有正常/镜像源码模板，返回分数最高者。 */

@@ -41,6 +41,8 @@ export const graphwarKillerLocale = {
     decimalPlacesRange: (max) => `保留小数位需要在 0 到 ${max} 之间`,
     maxXGreaterThanMinX: "-x 要小于 +x",
     maxYGreaterThanMinY: "-y 要小于 +y",
+    magnifierZoomNumber: "放大倍率需要填写数字",
+    magnifierZoomRange: (min, max) => `放大倍率需要在 ${min}x 到 ${max}x 之间`,
     obstacleBrushDiameterInteger: "笔刷大小需要填写整数",
     obstacleBrushDiameterRange: (min, max) => `笔刷大小需要在 ${min}px 到 ${max}px 之间`,
     obstacleMinAreaInteger: "障碍最小面积需要填写整数",
@@ -151,6 +153,9 @@ export const graphwarKillerLocale = {
       eraseObstacleTitle: "开启后，笔刷会从当前识别障碍中擦除区域。",
       magnifier: "放大镜",
       magnifierTitle: "在截图旁显示放大预览，方便精确点选士兵、边界和路径点。",
+      magnifierZoom: "放大倍率",
+      magnifierZoomAriaLabel: "放大镜倍率",
+      magnifierZoomTitle: "调整放大镜倍率；滑条可快速调整 1x 到 5x，输入框支持 1x 到 100x。",
       obstacleBrushDiameter: "笔刷大小",
       obstacleBrushDiameterAriaLabel: "障碍笔刷直径，单位为 Graphwar 原始 770x450 平面像素",
       obstacleBrushDiameterTitle:

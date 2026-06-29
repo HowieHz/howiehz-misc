@@ -78,6 +78,8 @@ export const graphwarKillerLocale = {
     decimalPlacesRange: (max) => `Decimal places must be between 0 and ${max}`,
     maxXGreaterThanMinX: "-x must be less than +x",
     maxYGreaterThanMinY: "-y must be less than +y",
+    magnifierZoomNumber: "Magnifier zoom must be a number",
+    magnifierZoomRange: (min, max) => `Magnifier zoom must be between ${min}x and ${max}x`,
     obstacleBrushDiameterInteger: "Brush size must be an integer",
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
@@ -200,6 +202,10 @@ export const graphwarKillerLocale = {
       magnifier: "Magnifier",
       magnifierTitle:
         "Show a zoomed preview next to the screenshot for more precise soldier, bounds, and path picking.",
+      magnifierZoom: "Zoom",
+      magnifierZoomAriaLabel: "Magnifier zoom",
+      magnifierZoomTitle:
+        "Adjust magnifier zoom; the slider quickly adjusts 1x to 5x, and the input accepts 1x to 100x.",
       obstacleBrushDiameter: "Brush size",
       obstacleBrushDiameterAriaLabel: "Obstacle brush diameter in raw Graphwar 770x450 plane pixels",
       obstacleBrushDiameterTitle:

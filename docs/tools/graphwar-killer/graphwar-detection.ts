@@ -680,6 +680,37 @@ export function buildObstacleEdgePath(mask: Uint8Array, edgeRect: BoundsRect) {
   return commands.join("");
 }
 
+/** 将障碍 mask 的内部转成按行合并的 SVG path，供页面显示淡色遮罩。 */
+export function buildObstacleFillPath(mask: Uint8Array, edgeRect: BoundsRect) {
+  const commands: string[] = [];
+  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+    let x = 0;
+    while (x < GRAPHWAR_PLANE_LENGTH) {
+      while (x < GRAPHWAR_PLANE_LENGTH && !mask[y * GRAPHWAR_PLANE_LENGTH + x]) {
+        x += 1;
+      }
+
+      if (x >= GRAPHWAR_PLANE_LENGTH) {
+        break;
+      }
+
+      const startX = x;
+      while (x < GRAPHWAR_PLANE_LENGTH && mask[y * GRAPHWAR_PLANE_LENGTH + x]) {
+        x += 1;
+      }
+
+      commands.push(createPlaneRectPathCommand(startX, y, x - startX, 1, edgeRect));
+    }
+  }
+  return commands.join("");
+}
+
+function createPlaneRectPathCommand(x: number, y: number, width: number, height: number, edgeRect: BoundsRect) {
+  const topLeft = planeToImagePoint({ x, y }, edgeRect);
+  const bottomRight = planeToImagePoint({ x: x + width, y: y + height }, edgeRect);
+  return `M${formatSvgNumber(topLeft.x)} ${formatSvgNumber(topLeft.y)}H${formatSvgNumber(bottomRight.x)}V${formatSvgNumber(bottomRight.y)}H${formatSvgNumber(topLeft.x)}Z`;
+}
+
 /** 将 Graphwar 原始平面坐标映射到截图像素。 */
 export function planeToImagePoint(point: PlaneGridPoint, edgeRect: BoundsRect) {
   return createPixelPoint(

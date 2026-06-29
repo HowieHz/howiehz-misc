@@ -24,6 +24,7 @@ import {
 import {
   addSoldierAreasToObstacleMask,
   buildObstacleEdgePath,
+  buildObstacleFillPath,
   countObstacleMaskComponents,
   detectGraphwarObjectsInBounds as detectGraphwarObjectsFromImage,
   detectGraphwarPlayArea,
@@ -568,6 +569,14 @@ const visibleObstacleEdgePath = computed(() => {
 
   return buildObstacleEdgePath(obstacleMap.mask, boundsRect.value);
 });
+const visibleObstacleFillPath = computed(() => {
+  const obstacleMap = detectedObstacles.value;
+  if (!obstacleMap || pathfindingObstacleEdgesActive.value) {
+    return "";
+  }
+
+  return buildObstacleFillPath(obstacleMap.mask, boundsRect.value);
+});
 const smartPathfindingBaseObstacleMask = computed(() => {
   const obstacleMap = detectedObstacles.value;
   if (!obstacleMap || !blocksFriendlyFireTargets.value || !parsedBounds.value.ok) {
@@ -609,6 +618,17 @@ const smartPathfindingObstacleRouteEdgePath = computed(() => {
     boundsRect.value,
   );
 });
+const smartPathfindingObstacleRouteFillPath = computed(() => {
+  const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
+  if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
+    return "";
+  }
+
+  return buildObstacleFillPath(
+    getCachedRouteMask(obstacleMask, smartPathfindingVisibleRouteTolerance.value).mask,
+    boundsRect.value,
+  );
+});
 const smartPathfindingObstacleSimulationEdgePath = computed(() => {
   const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
   if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
@@ -616,6 +636,17 @@ const smartPathfindingObstacleSimulationEdgePath = computed(() => {
   }
 
   return buildObstacleEdgePath(
+    getCachedRouteMask(obstacleMask, parsedObstacleTolerances.value.simulationTolerancePlanePixels).mask,
+    boundsRect.value,
+  );
+});
+const smartPathfindingObstacleSimulationFillPath = computed(() => {
+  const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
+  if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
+    return "";
+  }
+
+  return buildObstacleFillPath(
     getCachedRouteMask(obstacleMask, parsedObstacleTolerances.value.simulationTolerancePlanePixels).mask,
     boundsRect.value,
   );
@@ -3812,11 +3843,26 @@ async function copyText(text: string) {
             :y2="visibleBoundsRect.y + visibleBoundsRect.height"
           />
           <path
+            v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleFillPath"
+            class="graphwar-killer__obstacle-fill"
+            :d="visibleObstacleFillPath"
+          />
+          <path
             v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleEdgePath"
             class="graphwar-killer__obstacle-edge"
             :d="visibleObstacleEdgePath"
           />
           <template v-if="pathfindingObstacleEdgesActive">
+            <path
+              v-if="smartPathfindingObstacleRouteFillPath"
+              class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--route"
+              :d="smartPathfindingObstacleRouteFillPath"
+            />
+            <path
+              v-if="smartPathfindingObstacleSimulationFillPath"
+              class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--simulation"
+              :d="smartPathfindingObstacleSimulationFillPath"
+            />
             <path
               v-if="smartPathfindingObstacleRouteEdgePath"
               class="graphwar-killer__obstacle-edge graphwar-killer__obstacle-edge--route"
@@ -4044,11 +4090,26 @@ async function copyText(text: string) {
                 :y2="visibleBoundsRect.y + visibleBoundsRect.height"
               />
               <path
+                v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleFillPath"
+                class="graphwar-killer__obstacle-fill"
+                :d="visibleObstacleFillPath"
+              />
+              <path
                 v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleEdgePath"
                 class="graphwar-killer__obstacle-edge"
                 :d="visibleObstacleEdgePath"
               />
               <template v-if="pathfindingObstacleEdgesActive">
+                <path
+                  v-if="smartPathfindingObstacleRouteFillPath"
+                  class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--route"
+                  :d="smartPathfindingObstacleRouteFillPath"
+                />
+                <path
+                  v-if="smartPathfindingObstacleSimulationFillPath"
+                  class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--simulation"
+                  :d="smartPathfindingObstacleSimulationFillPath"
+                />
                 <path
                   v-if="smartPathfindingObstacleRouteEdgePath"
                   class="graphwar-killer__obstacle-edge graphwar-killer__obstacle-edge--route"
@@ -4749,6 +4810,19 @@ async function copyText(text: string) {
   stroke-linecap: square;
   stroke-linejoin: miter;
   stroke-width: 1;
+}
+
+.graphwar-killer__obstacle-fill {
+  fill: rgb(220 38 38 / 10%);
+  pointer-events: none;
+}
+
+.graphwar-killer__obstacle-fill--route {
+  fill: rgb(244 114 182 / 7%);
+}
+
+.graphwar-killer__obstacle-fill--simulation {
+  fill: rgb(220 38 38 / 7%);
 }
 
 .graphwar-killer__obstacle-edge--route {

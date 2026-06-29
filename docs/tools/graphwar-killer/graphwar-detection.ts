@@ -139,7 +139,8 @@ const graphwarSoldierTemplateMinimumFixedScore = 0.58;
 const graphwarSoldierTemplateMinimumForegroundScore = 0.6;
 const graphwarSoldierTemplateCandidateDedupeDistance = 4;
 /** 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。 */
-const graphwarSoldierTemplateCandidateLimit = 1024;
+const graphwarSoldierTemplateCandidateLimit = 400;
+const graphwarMaximumSoldierCount = 40;
 const graphwarSoldierAnimationSignatureCoordinates = [
   [13, 6],
   [14, 6],
@@ -1530,6 +1531,9 @@ function suppressOverlappingSoldierMatches(matches: SoldierMatchCandidate[], sca
       )
     ) {
       kept.push(match);
+      if (kept.length >= graphwarMaximumSoldierCount) {
+        break;
+      }
     }
   }
   return kept;

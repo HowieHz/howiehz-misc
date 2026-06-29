@@ -92,8 +92,10 @@ export const graphwarKillerLocale = {
       cancelled: "已中止识别",
       detectingBounds: "正在检测棋盘边界",
       detectingObjects: "正在识别士兵和障碍",
-      detectedCurrentBounds: (soldiers, obstacles) => `已按当前边界识别到 ${soldiers} 个士兵、${obstacles} 个障碍`,
-      detectedWithAutoBounds: (soldiers, obstacles) => `已自动标记边界，识别到 ${soldiers} 个士兵、${obstacles} 个障碍`,
+      detectedCurrentBounds: (soldiers, obstacles, elapsed) =>
+        `已按当前边界标记边界和障碍，识别出 ${soldiers} 个士兵、${obstacles} 个障碍，耗时 ${elapsed}`,
+      detectedWithAutoBounds: (soldiers, obstacles, elapsed) =>
+        `已标记边界和障碍，识别出 ${soldiers} 个士兵、${obstacles} 个障碍，耗时 ${elapsed}`,
       obstacleEditsApplied: (obstacles) => `已更新障碍边界，当前 ${obstacles} 个障碍`,
       obstacleEditsCleared: (obstacles) => `已清除障碍修改，恢复为 ${obstacles} 个障碍`,
       updatingObstacleEdits: "正在应用障碍修改",
@@ -174,8 +176,6 @@ export const graphwarKillerLocale = {
       autoDetection: "自动识别",
       autoDetectionTitle: "开启后，加载截图或修改识别设置时自动运行识别。",
       busyOverlay: "识别中，右键中止",
-      detectionAnimation: "识别动画",
-      detectionAnimationTitle: "识别完成时在截图上短暂显示士兵模板候选中心。",
       minObstacleArea: "障碍最小面积",
       minObstacleAreaAriaLabel: "障碍最小面积，单位为 Graphwar 原始平面像素",
       minObstacleAreaTitle: "过滤小噪点的面积阈值；小于该值的障碍区域会被忽略，单位是 Graphwar 原始 770x450 平面像素。",

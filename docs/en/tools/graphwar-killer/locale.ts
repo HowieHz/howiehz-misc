@@ -130,10 +130,10 @@ export const graphwarKillerLocale = {
       cancelled: "Detection cancelled",
       detectingBounds: "Detecting play-area bounds",
       detectingObjects: "Detecting soldiers and obstacles",
-      detectedCurrentBounds: (soldiers, obstacles) =>
-        `Detected ${soldiers} soldiers and ${obstacles} obstacles from the current bounds`,
-      detectedWithAutoBounds: (soldiers, obstacles) =>
-        `Auto-marked the bounds and found ${soldiers} soldiers and ${obstacles} obstacles`,
+      detectedCurrentBounds: (soldiers, obstacles, elapsed) =>
+        `Marked bounds and obstacles from the current bounds, detected ${soldiers} soldiers and ${obstacles} obstacles in ${elapsed}`,
+      detectedWithAutoBounds: (soldiers, obstacles, elapsed) =>
+        `Marked bounds and obstacles, detected ${soldiers} soldiers and ${obstacles} obstacles in ${elapsed}`,
       obstacleEditsApplied: (obstacles) => `Updated obstacle boundaries; currently ${obstacles} obstacles`,
       obstacleEditsCleared: (obstacles) => `Cleared obstacle edits; restored ${obstacles} obstacles`,
       updatingObstacleEdits: "Applying obstacle edits",
@@ -225,9 +225,6 @@ export const graphwarKillerLocale = {
       autoDetection: "Auto detect",
       autoDetectionTitle: "Automatically run detection when a screenshot loads or detection settings change.",
       busyOverlay: "Detecting, right-click to cancel",
-      detectionAnimation: "Detection animation",
-      detectionAnimationTitle:
-        "Briefly show soldier-template candidate centers on the screenshot after detection finishes.",
       minObstacleArea: "Minimum obstacle area",
       minObstacleAreaAriaLabel: "Minimum obstacle area in raw Graphwar plane pixels",
       minObstacleAreaTitle:

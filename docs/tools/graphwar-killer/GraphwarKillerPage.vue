@@ -34,7 +34,7 @@ import {
   paintObstacleMaskDisk,
   paintObstacleMaskStroke,
 } from "./graphwar-detection";
-import type { DetectedObstacleMap, GraphwarDetectionBox, GraphwarSoldierCandidatePoint } from "./graphwar-detection";
+import type { DetectedObstacleMap, GraphwarDetectionBox } from "./graphwar-detection";
 import {
   buildSmartPathfindingPathForMask,
   collectSmartPathfindingRouteTolerances,
@@ -108,6 +108,8 @@ type ParsedObstacleTolerances =
   | { ok: false; message: string };
 /** 寻路模式；auto-graph 保留为待重写的禁用入口。 */
 type PathfindingMode = "off" | "smart" | "auto-graph";
+/** 识别状态等级，与面板标题和智能寻路状态样式对齐。 */
+type DetectionStatusKind = "info" | "success" | "warning" | "error";
 /** 智能寻路状态等级，与面板标题和状态条样式对齐。 */
 type SmartPathfindingStatusKind = "info" | "success" | "warning" | "error";
 /** 智能寻路内部阶段，用于状态文案和搜索动画。 */
@@ -273,14 +275,12 @@ const {
   onImageLoaded: handleLoadedScreenshot,
 });
 const detectionStatus = ref("");
-const detectionStatusIsError = ref(false);
+const detectionStatusKind = ref<DetectionStatusKind>("info");
 const detectionInProgress = ref(false);
 const detectedSoldiers = ref<DetectionBox[]>([]);
 const detectedObstacles = ref<DetectedObstacleMap>();
 const baselineDetectedObstacles = ref<DetectedObstacleMap>();
 const autoDetectionEnabled = ref(true);
-const detectionAnimationEnabled = ref(true);
-const detectionCandidatePoints = ref<GraphwarSoldierCandidatePoint[]>([]);
 const detectionSoldierFlashActive = ref(false);
 const smartCursorEnabled = ref(true);
 const smartPathfindingEnabled = ref(false);
@@ -317,8 +317,6 @@ const copyStatus = ref<TransferStatus>("idle");
 let boundsFlashFrame: number | undefined;
 let boundsFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
-let detectionCandidateFrame: number | undefined;
-let detectionCandidateTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionSoldierFlashFrame: number | undefined;
 let detectionSoldierFlashTimer: ReturnType<typeof setTimeout> | undefined;
@@ -823,7 +821,12 @@ const detectionSettingsMessage = computed(() => {
   return "";
 });
 const detectionHeaderStatus = computed(() => detectionSettingsMessage.value || detectionStatus.value);
-const detectionHeaderStatusIsError = computed(() => !!detectionSettingsMessage.value || detectionStatusIsError.value);
+const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
+  detectionSettingsMessage.value ? "error" : detectionStatusKind.value,
+);
+const detectionHeaderStatusIsError = computed(() => detectionHeaderStatusKind.value === "error");
+const detectionHeaderStatusIsWarning = computed(() => detectionHeaderStatusKind.value === "warning");
+const detectionHeaderStatusIsSuccess = computed(() => detectionHeaderStatusKind.value === "success");
 
 const magnifierZoom = computed(() =>
   parsedMagnifierZoom.value.ok ? parsedMagnifierZoom.value.zoom : graphwarToolDefaults.magnifierZoom,
@@ -1220,6 +1223,10 @@ const screenshotImageStatusText = computed(
   () => imageStatus.value || imageName.value || locale.status.image.defaultStatus,
 );
 
+function nowMs() {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
 onMounted(() => {
   window.addEventListener("paste", handlePaste);
 });
@@ -1236,7 +1243,6 @@ onBeforeUnmount(() => {
   if (copyStatusTimer) {
     clearTimeout(copyStatusTimer);
   }
-  clearDetectionCandidateAnimation();
   if (detectionRefreshTimer) {
     clearTimeout(detectionRefreshTimer);
   }
@@ -1371,8 +1377,7 @@ function handleLoadedScreenshot() {
 function clearDetections() {
   detectionRunId += 1;
   detectionInProgress.value = false;
-  detectionStatus.value = "";
-  detectionStatusIsError.value = false;
+  setDetectionStatus("", "info");
   clearDetectedGraphwarObjects();
 }
 
@@ -1381,7 +1386,6 @@ function clearDetectedGraphwarObjects() {
   detectedSoldiers.value = [];
   detectedObstacles.value = undefined;
   baselineDetectedObstacles.value = undefined;
-  clearDetectionCandidateAnimation();
   clearDetectionSoldierFlash();
   obstacleEditsDirty.value = false;
   obstacleBrushPointerPoint.value = undefined;
@@ -1395,7 +1399,6 @@ function clearDetectedGraphwarObjects() {
 function beginDetectionRun() {
   detectionRunId += 1;
   detectionInProgress.value = true;
-  clearDetectionCandidateAnimation();
   return detectionRunId;
 }
 
@@ -1417,10 +1420,14 @@ function cancelDetection(showStatus: boolean) {
   detectionRunId += 1;
   detectionInProgress.value = false;
   if (showStatus) {
-    detectionStatus.value = locale.status.detection.cancelled;
-    detectionStatusIsError.value = false;
+    setDetectionStatus(locale.status.detection.cancelled, "warning");
   }
   return true;
+}
+
+function setDetectionStatus(message: string, kind: DetectionStatusKind) {
+  detectionStatus.value = message;
+  detectionStatusKind.value = kind;
 }
 
 function waitForDetectionStatusPaint() {
@@ -1433,8 +1440,7 @@ async function showDetectionStage(runId: number, message: string) {
   if (!isActiveDetectionRun(runId)) {
     return false;
   }
-  detectionStatus.value = `${message}${locale.status.detection.stopSuffix}`;
-  detectionStatusIsError.value = false;
+  setDetectionStatus(`${message}${locale.status.detection.stopSuffix}`, "warning");
   await nextTick();
   await waitForDetectionStatusPaint();
   return isActiveDetectionRun(runId);
@@ -1457,21 +1463,18 @@ function scheduleGraphwarObjectDetection() {
 /** 收敛截图读取、像素读取和阈值校验；后续检测入口只处理识别策略。 */
 function getGraphwarDetectionInput() {
   if (!imageRef.value || !imageUrl.value) {
-    detectionStatus.value = locale.status.detection.uploadFirst;
-    detectionStatusIsError.value = true;
+    setDetectionStatus(locale.status.detection.uploadFirst, "error");
     return undefined;
   }
 
   const imageData = getImageDataFromCurrentImage();
   if (!imageData) {
-    detectionStatus.value = locale.status.detection.noPixels;
-    detectionStatusIsError.value = true;
+    setDetectionStatus(locale.status.detection.noPixels, "error");
     return undefined;
   }
   const obstacleThresholds = parsedObstacleThresholds.value;
   if (!obstacleThresholds.ok) {
-    detectionStatus.value = obstacleThresholds.message;
-    detectionStatusIsError.value = true;
+    setDetectionStatus(obstacleThresholds.message, "error");
     return undefined;
   }
   return { imageData, obstacleThresholds };
@@ -1480,6 +1483,7 @@ function getGraphwarDetectionInput() {
 /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
 async function detectGraphwarObjects() {
   const runId = beginDetectionRun();
+  const startedAt = nowMs();
   try {
     if (!(await showDetectionStage(runId, locale.status.detection.preparingPixels))) {
       return;
@@ -1498,8 +1502,7 @@ async function detectGraphwarObjects() {
     }
     if (!edgeRect) {
       clearDetectedGraphwarObjects();
-      detectionStatus.value = locale.status.detection.noBounds;
-      detectionStatusIsError.value = true;
+      setDetectionStatus(locale.status.detection.noBounds, "error");
       return;
     }
 
@@ -1513,6 +1516,7 @@ async function detectGraphwarObjects() {
       "auto",
       runId,
       true,
+      startedAt,
     );
     if (!isActiveDetectionRun(runId)) {
       return;
@@ -1526,6 +1530,7 @@ async function detectGraphwarObjects() {
 /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
 async function detectGraphwarObjectsInCurrentBounds() {
   const runId = beginDetectionRun();
+  const startedAt = nowMs();
   try {
     if (!(await showDetectionStage(runId, locale.status.detection.preparingPixels))) {
       return;
@@ -1541,6 +1546,8 @@ async function detectGraphwarObjectsInCurrentBounds() {
       detectionInput.obstacleThresholds,
       "current",
       runId,
+      false,
+      startedAt,
     );
   } finally {
     finishDetectionRun(runId);
@@ -1555,6 +1562,7 @@ async function detectGraphwarObjectsInBounds(
   source: "auto" | "current",
   runId: number,
   flashBounds = false,
+  startedAt = nowMs(),
 ) {
   clearSmartPathfindingStatus();
   if (!(await showDetectionStage(runId, locale.status.detection.detectingObjects))) {
@@ -1568,7 +1576,6 @@ async function detectGraphwarObjectsInBounds(
     return;
   }
   detectedSoldiers.value = result.soldiers;
-  showDetectionCandidateAnimation(result.soldierCandidates);
   flashDetectedSoldiers();
   if (flashBounds) {
     flashBoundsRect();
@@ -1579,39 +1586,13 @@ async function detectGraphwarObjectsInBounds(
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
   obstacleBrushLastPlanePoint.value = undefined;
-  detectionStatus.value =
+  const elapsed = formatElapsedDuration(nowMs() - startedAt);
+  setDetectionStatus(
     source === "auto"
-      ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, detectedObstacles.value.count)
-      : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, detectedObstacles.value.count);
-  detectionStatusIsError.value = false;
-}
-
-function clearDetectionCandidateAnimation() {
-  detectionCandidatePoints.value = [];
-  if (detectionCandidateFrame !== undefined) {
-    cancelAnimationFrame(detectionCandidateFrame);
-    detectionCandidateFrame = undefined;
-  }
-  if (detectionCandidateTimer) {
-    clearTimeout(detectionCandidateTimer);
-    detectionCandidateTimer = undefined;
-  }
-}
-
-function showDetectionCandidateAnimation(candidates: readonly GraphwarSoldierCandidatePoint[]) {
-  clearDetectionCandidateAnimation();
-  if (!detectionAnimationEnabled.value) {
-    return;
-  }
-
-  detectionCandidateFrame = requestAnimationFrame(() => {
-    detectionCandidateFrame = undefined;
-    detectionCandidatePoints.value = [...candidates];
-    detectionCandidateTimer = setTimeout(() => {
-      detectionCandidatePoints.value = [];
-      detectionCandidateTimer = undefined;
-    }, detectionFlashAnimationMs);
-  });
+      ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, result.obstacles.count, elapsed)
+      : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, result.obstacles.count, elapsed),
+    "success",
+  );
 }
 
 function clearDetectionSoldierFlash() {
@@ -1739,8 +1720,7 @@ function resetObstacleEdits() {
   clearObstacleEditRefreshTimer();
   detectedObstacles.value = cloneDetectedObstacleMap(baseline);
   obstacleEditsDirty.value = false;
-  detectionStatus.value = locale.status.detection.obstacleEditsCleared(baseline.count);
-  detectionStatusIsError.value = false;
+  setDetectionStatus(locale.status.detection.obstacleEditsCleared(baseline.count), "success");
 }
 
 function updateObstacleBrushPreview(point: PixelPoint) {
@@ -1782,8 +1762,7 @@ function paintObstacleBrushAtPoint(point: PixelPoint, connectFromLastPoint = fal
 
 function scheduleObstacleEditRefresh() {
   clearObstacleEditRefreshTimer();
-  detectionStatus.value = locale.status.detection.updatingObstacleEdits;
-  detectionStatusIsError.value = false;
+  setDetectionStatus(locale.status.detection.updatingObstacleEdits, "warning");
   obstacleEditRefreshTimer = setTimeout(() => {
     obstacleEditRefreshTimer = undefined;
     const obstacles = detectedObstacles.value;
@@ -1795,8 +1774,7 @@ function scheduleObstacleEditRefresh() {
       count,
       mask: obstacles.mask,
     };
-    detectionStatus.value = locale.status.detection.obstacleEditsApplied(count);
-    detectionStatusIsError.value = false;
+    setDetectionStatus(locale.status.detection.obstacleEditsApplied(count), "success");
   }, obstacleBrushEditRefreshDelayMs);
 }
 
@@ -3512,7 +3490,11 @@ async function copyText(text: string) {
             v-if="detectionHeaderStatus"
             role="status"
             aria-live="polite"
-            :class="{ 'graphwar-killer__label-status--error': detectionHeaderStatusIsError }"
+            :class="{
+              'graphwar-killer__label-status--error': detectionHeaderStatusIsError,
+              'graphwar-killer__label-status--warning': detectionHeaderStatusIsWarning,
+              'graphwar-killer__label-status--success': detectionHeaderStatusIsSuccess,
+            }"
           >
             {{ detectionHeaderStatus }}
           </span>
@@ -3534,15 +3516,6 @@ async function copyText(text: string) {
             @click="toggleAutoDetection"
           >
             {{ locale.ui.detection.autoDetection }}
-          </button>
-          <button
-            type="button"
-            :aria-pressed="detectionAnimationEnabled"
-            :class="{ 'graphwar-killer__toggle-button--active': detectionAnimationEnabled }"
-            :title="locale.ui.detection.detectionAnimationTitle"
-            @click="detectionAnimationEnabled = !detectionAnimationEnabled"
-          >
-            {{ locale.ui.detection.detectionAnimation }}
           </button>
           <button
             type="button"
@@ -4065,20 +4038,6 @@ async function copyText(text: string) {
               :r="box.visualRadius"
             />
           </g>
-          <g
-            v-if="detectionCandidatePoints.length"
-            class="graphwar-killer__detection-candidates"
-          >
-            <circle
-              v-for="(candidate, index) in detectionCandidatePoints"
-              :key="`detection-candidate-${index}`"
-              class="graphwar-killer__detection-candidate"
-              :class="{ 'graphwar-killer__detection-candidate--selected': candidate.selected }"
-              :cx="candidate.x"
-              :cy="candidate.y"
-              r="2.4"
-            />
-          </g>
           <ellipse
             v-if="obstacleBrushPreview"
             class="graphwar-killer__obstacle-brush-preview"
@@ -4339,20 +4298,6 @@ async function copyText(text: string) {
                   :cx="box.visualCenterX"
                   :cy="box.visualCenterY"
                   :r="box.visualRadius"
-                />
-              </g>
-              <g
-                v-if="detectionCandidatePoints.length"
-                class="graphwar-killer__detection-candidates"
-              >
-                <circle
-                  v-for="(candidate, index) in detectionCandidatePoints"
-                  :key="`magnifier-detection-candidate-${index}`"
-                  class="graphwar-killer__detection-candidate"
-                  :class="{ 'graphwar-killer__detection-candidate--selected': candidate.selected }"
-                  :cx="candidate.x"
-                  :cy="candidate.y"
-                  r="2.4"
                 />
               </g>
               <ellipse
@@ -5032,25 +4977,6 @@ async function copyText(text: string) {
   stroke: #16a34a;
 }
 
-.graphwar-killer__detection-candidates {
-  pointer-events: none;
-}
-
-.graphwar-killer__detection-candidate {
-  animation: graphwar-killer-detection-candidate 1600ms ease-out forwards;
-  fill: #a855f7;
-  stroke: #581c87;
-  stroke-width: 1.2;
-  transform-box: fill-box;
-  transform-origin: center;
-  vector-effect: non-scaling-stroke;
-}
-
-.graphwar-killer__detection-candidate--selected {
-  fill: #14b8a6;
-  stroke: #064e3b;
-}
-
 .graphwar-killer__obstacle-edge {
   fill: none;
   stroke: #dc2626;
@@ -5210,28 +5136,6 @@ async function copyText(text: string) {
     opacity: 52%;
     stroke: #f97316;
     stroke-width: 5;
-  }
-}
-
-@keyframes graphwar-killer-detection-candidate {
-  0% {
-    opacity: 0%;
-    transform: scale(0.5);
-  }
-
-  18% {
-    opacity: 92%;
-    transform: scale(1.35);
-  }
-
-  62% {
-    opacity: 76%;
-    transform: scale(1);
-  }
-
-  100% {
-    opacity: 0%;
-    transform: scale(0.72);
   }
 }
 

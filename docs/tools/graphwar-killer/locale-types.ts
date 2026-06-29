@@ -91,8 +91,8 @@ export interface GraphwarKillerLocale {
       cancelled: string;
       detectingBounds: string;
       detectingObjects: string;
-      detectedCurrentBounds: (soldiers: number, obstacles: number) => string;
-      detectedWithAutoBounds: (soldiers: number, obstacles: number) => string;
+      detectedCurrentBounds: (soldiers: number, obstacles: number, elapsed: string) => string;
+      detectedWithAutoBounds: (soldiers: number, obstacles: number, elapsed: string) => string;
       obstacleEditsApplied: (obstacles: number) => string;
       obstacleEditsCleared: (obstacles: number) => string;
       updatingObstacleEdits: string;
@@ -165,8 +165,6 @@ export interface GraphwarKillerLocale {
       autoDetection: string;
       autoDetectionTitle: string;
       busyOverlay: string;
-      detectionAnimation: string;
-      detectionAnimationTitle: string;
       minObstacleArea: string;
       minObstacleAreaAriaLabel: string;
       minObstacleAreaTitle: string;

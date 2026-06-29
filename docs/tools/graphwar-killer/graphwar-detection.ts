@@ -54,24 +54,10 @@ export interface DetectedObstacleMap {
   count: number;
 }
 
-/** 士兵模板候选中心，用于识别动画可视化。 */
-export interface GraphwarSoldierCandidatePoint {
-  /** 是否落在最终识别出的士兵中心附近，用于把候选动画分成命中/未命中两类。 */
-  selected: boolean;
-  /** 截图像素 x。 */
-  x: number;
-  /** 截图像素 y。 */
-  y: number;
-  /** 固定黄色种子反投票数。 */
-  votes: number;
-}
-
 /** 指定棋盘边界内的一次完整对象识别结果。 */
 export interface GraphwarObjectsDetectionResult {
   /** 识别出的士兵检测框。 */
   soldiers: GraphwarDetectionBox[];
-  /** 去重后、送入模板评分前的士兵候选中心。 */
-  soldierCandidates: GraphwarSoldierCandidatePoint[];
   /** 过滤后的障碍 mask。 */
   obstacles: DetectedObstacleMap;
 }
@@ -140,6 +126,8 @@ const graphwarSoldierTemplateMinimumPlayerScore = 0.55;
 const graphwarSoldierTemplateMinimumSignatureScore = 0.65;
 /** 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。 */
 const graphwarSoldierTemplateCandidateLimit = 400;
+/** 模板评分前只保留 votes 排名前 5% 的中心候选，再与固定上限取小。 */
+const graphwarSoldierTemplateCandidateTopRatio = 0.05;
 const graphwarMaximumSoldierCount = 40;
 const graphwarSoldierGenerationMinimumAxisGap = 20;
 const graphwarSoldierAnimationSignatureCoordinates = [
@@ -546,7 +534,7 @@ interface SoldierMatchCandidate {
   signatureScore: number;
 }
 
-interface SoldierTemplateCenterCandidate extends GraphwarSoldierCandidatePoint {
+interface SoldierTemplateCenterCandidate {
   /** 截图像素 x。 */
   x: number;
   /** 截图像素 y。 */
@@ -567,7 +555,6 @@ export function detectGraphwarObjectsInBounds(
   const soldiers = createSoldierDetectionBoxes(soldierMatches.matches, edgeRect);
   return {
     soldiers,
-    soldierCandidates: soldierMatches.candidates,
     obstacles: detectObstacles(imageData, edgeRect, thresholds, soldiers),
   };
 }
@@ -973,7 +960,7 @@ function detectSoldierMatches(imageData: ImageData, edgeRect: BoundsRect) {
     matchSoldierTemplates(imageData, edgeRect, scale, candidates),
     scale,
   );
-  return { candidates: markSelectedSoldierTemplateCenterCandidates(candidates, matches, scale), matches };
+  return { matches };
 }
 
 function createSoldierDetectionBoxes(matches: SoldierMatchCandidate[], edgeRect: BoundsRect) {
@@ -1125,14 +1112,14 @@ function createSoldierTemplateCenterCandidates(
   const rankedCandidates = [...votes.values()]
     .filter((vote) => vote.count >= minVotes)
     .map((vote) => ({
-      selected: false,
       x: vote.x,
       y: vote.y,
       votes: vote.count,
     }))
     .sort((left, right) => right.votes - left.votes);
 
-  return rankedCandidates.slice(0, candidateLimit);
+  const percentileLimit = Math.ceil(rankedCandidates.length * graphwarSoldierTemplateCandidateTopRatio);
+  return rankedCandidates.slice(0, Math.min(candidateLimit, percentileLimit));
 }
 
 /** 对同一个源码中心尝试所有正常/镜像源码模板，返回分数最高者。 */
@@ -1551,20 +1538,6 @@ function suppressOverlappingSoldierMatches(matches: SoldierMatchCandidate[], sca
     }
   }
   return kept;
-}
-
-function markSelectedSoldierTemplateCenterCandidates(
-  candidates: SoldierTemplateCenterCandidate[],
-  matches: SoldierMatchCandidate[],
-  scale: number,
-) {
-  const selectedDistance = GRAPHWAR_SOLDIER_VISIBLE_SIZE * scale * 0.55;
-  return candidates.map((candidate) => ({
-    ...candidate,
-    selected: matches.some(
-      (match) => Math.hypot(candidate.x - match.sourceCenterX, candidate.y - match.sourceCenterY) <= selectedDistance,
-    ),
-  }));
 }
 
 /** 从开运算后的种子组件回填原始 mask 连通块，避免细节被形态学过滤永久丢失。 */

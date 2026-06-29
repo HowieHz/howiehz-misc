@@ -202,6 +202,8 @@ export interface GraphwarKillerLocale {
       simulationExpansion: string;
       simulationExpansionAriaLabel: string;
       simulationExpansionTitle: string;
+      autoGraph: string;
+      smartPathfinding: string;
       title: string;
       unit: string;
       workerCount: string;

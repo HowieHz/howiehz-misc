@@ -220,6 +220,8 @@ export const graphwarKillerLocale = {
       simulationExpansionAriaLabel: "函数模拟障碍外扩值，单位为 Graphwar 原始 770x450 平面像素",
       simulationExpansionTitle:
         "函数模拟和碰撞检查时按这个值外扩障碍；不影响寻路怎么选路。单位是 Graphwar 原始 770x450 平面像素。",
+      autoGraph: "一键清图",
+      smartPathfinding: "智能寻路",
       title: "寻路",
       unit: "px",
       workerCount: "并行数",

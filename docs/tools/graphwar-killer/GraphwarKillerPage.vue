@@ -170,7 +170,6 @@ const graphwarVisibleYLimitText = formatDoublePrecisionDecimal(GRAPHWAR_VISIBLE_
 const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
 const graphwarBoundaryExpansionLimit = Math.floor((Math.min(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) - 1) / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
-const autoGraphWorkerCountLimit = 1024;
 const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushMaximumDiameter = 200;
 const obstacleBrushEditRefreshDelayMs = 250;
@@ -213,7 +212,6 @@ const obstacleRouteMinToleranceText = ref("1");
 const obstacleRouteMaxToleranceText = ref("3");
 const obstacleRouteStepToleranceText = ref("1");
 const obstacleSimulationToleranceText = ref("1");
-const autoGraphWorkerCountText = ref("4");
 const pathfindingBoundaryExpansionText = ref("1");
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
@@ -277,7 +275,6 @@ const obstacleBrushPointerPoint = ref<PixelPoint>();
 const obstacleBrushDragging = ref(false);
 const obstacleEditsDirty = ref(false);
 const searchAnimationEnabled = ref(true);
-const autoGraphFastModeEnabled = ref(true);
 const smartPathfindingInProgress = ref(false);
 const activeSmartPathfindingPhase = ref<SmartPathfindingPhase>("search");
 const smartPathfindingStatus = ref("");
@@ -309,7 +306,6 @@ let smartPathfindingCancelToken = 0;
 
 const equationModes = computed(() => locale.equationModes);
 const toolWorkflowModes = computed(() => locale.toolWorkflowModes);
-const pathfindingModes = computed(() => locale.pathfindingModes);
 const algorithmModes = computed(() => locale.algorithmModes);
 
 const parsedBounds = computed<ParsedBounds>(() => {
@@ -725,13 +721,7 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
   return visibleSoldiers.filter((box) => Boolean(createSearchStartSoldierAimPoint(lastPoint, box)));
 });
 const pathfindingMode = computed<PathfindingMode>(() => (smartPathfindingEnabled.value ? "smart" : "off"));
-const activePathfindingControlsVisible = computed(
-  () => pathfindingMode.value === "smart" || pathfindingMode.value === "auto-graph",
-);
 const autoGraphPathfindingDisabledMessage = computed(() => locale.status.autoGraphPathfindingDisabled);
-const autoGraphPathfindingControlsVisible = computed(
-  () => pathfindingMode.value === "auto-graph" && !isPathfindingModeDisabled("auto-graph"),
-);
 const stepPathfindingDisabledMessage = computed(() => locale.status.stepPathfindingDisabled);
 
 const calculationMessage = computed(() => {
@@ -1176,7 +1166,8 @@ watch([formulaOutputDecimalPlaces], () => {
 watch([algorithmMode, solverEquationMode], () => {
   clearSmartPathfindingStatus();
   if (algorithmMode.value === "step" && pathfindingMode.value !== "off") {
-    setPathfindingMode("off");
+    cancelSmartPathfinding(false);
+    smartPathfindingEnabled.value = false;
   }
   if (algorithmMode.value === "abs" && solverEquationMode.value === "ddy") {
     solverEquationMode.value = "y";
@@ -1531,19 +1522,16 @@ function toggleSmartCursor() {
   }
 }
 
-/** 切换寻路模式，并取消当前异步寻路/清图任务。 */
-function setPathfindingMode(mode: PathfindingMode) {
-  if (isPathfindingModeDisabled(mode)) {
-    setSmartPathfindingStatus(getPathfindingModeDisabledMessage(mode), "warning");
-    return;
-  }
-  if (pathfindingMode.value === mode) {
+/** 切换智能寻路，并取消当前异步寻路任务。 */
+function toggleSmartPathfinding() {
+  if (isSmartPathfindingDisabled()) {
+    setSmartPathfindingStatus(getSmartPathfindingDisabledMessage(), "warning");
     return;
   }
 
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
-  smartPathfindingEnabled.value = mode === "smart";
+  smartPathfindingEnabled.value = !smartPathfindingEnabled.value;
 }
 
 function setObstacleBrushDiameterText(value: string) {
@@ -1633,23 +1621,20 @@ function scheduleObstacleEditRefresh() {
 }
 
 /** Step 公式不支持智能/一键清图，因为弹道和路径点语义不稳定。 */
-function isPathfindingModeDisabled(mode: PathfindingMode) {
-  if (mode === "auto-graph") {
-    return true;
-  }
-  return algorithmMode.value === "step" && mode !== "off";
+function isSmartPathfindingDisabled() {
+  return algorithmMode.value === "step";
 }
 
-/** 返回寻路模式被禁用的具体原因。 */
-function getPathfindingModeDisabledMessage(mode: PathfindingMode) {
-  return mode === "auto-graph" ? autoGraphPathfindingDisabledMessage.value : stepPathfindingDisabledMessage.value;
+/** 返回智能寻路被禁用的具体原因。 */
+function getSmartPathfindingDisabledMessage() {
+  return stepPathfindingDisabledMessage.value;
 }
 
-/** 返回寻路模式按钮 title，禁用时优先解释原因。 */
-function getPathfindingModeTitle(mode: PathfindingMode) {
-  return isPathfindingModeDisabled(mode)
-    ? getPathfindingModeDisabledMessage(mode)
-    : (pathfindingModes.value.find((entry) => entry.value === mode)?.title ?? "");
+/** 返回智能寻路按钮 title，禁用时优先解释原因。 */
+function getSmartPathfindingToggleTitle() {
+  return isSmartPathfindingDisabled()
+    ? getSmartPathfindingDisabledMessage()
+    : (locale.pathfindingModes.find((entry) => entry.value === "smart")?.title ?? "");
 }
 
 /** 切换友伤设置；该设置会改变士兵是否写入障碍 mask，因此需要重建路线。 */
@@ -3354,31 +3339,18 @@ async function copyText(text: string) {
           </span>
         </div>
         <div class="graphwar-killer__image-actions">
-          <div
-            class="graphwar-killer__tool-toggle graphwar-killer__pathfinding-mode-toggle"
-            :class="{
-              'graphwar-killer__pathfinding-mode-toggle--smart': pathfindingMode === 'smart',
-              'graphwar-killer__pathfinding-mode-toggle--auto-graph': pathfindingMode === 'auto-graph',
-            }"
-            role="group"
-            :aria-label="locale.ui.pathfinding.modeAriaLabel"
-            :title="locale.ui.pathfinding.modeTitle"
-          >
-            <button
-              v-for="mode in pathfindingModes"
-              :key="mode.value"
-              type="button"
-              :aria-pressed="pathfindingMode === mode.value"
-              :class="{ 'graphwar-killer__tool-toggle-button--active': pathfindingMode === mode.value }"
-              :disabled="isPathfindingModeDisabled(mode.value)"
-              :title="getPathfindingModeTitle(mode.value)"
-              @click="setPathfindingMode(mode.value)"
-            >
-              {{ mode.label }}
-            </button>
-          </div>
           <button
-            v-if="activePathfindingControlsVisible"
+            type="button"
+            :aria-pressed="smartPathfindingEnabled"
+            :class="{ 'graphwar-killer__toggle-button--active': smartPathfindingEnabled }"
+            :disabled="isSmartPathfindingDisabled()"
+            :title="getSmartPathfindingToggleTitle()"
+            @click="toggleSmartPathfinding"
+          >
+            {{ locale.ui.pathfinding.smartPathfinding }}
+          </button>
+          <button
+            v-if="smartPathfindingEnabled"
             type="button"
             :aria-pressed="friendlyFireEnabled"
             :class="{ 'graphwar-killer__toggle-button--active': friendlyFireEnabled }"
@@ -3388,7 +3360,7 @@ async function copyText(text: string) {
             {{ locale.ui.pathfinding.allowFriendlyFire }}
           </button>
           <button
-            v-if="activePathfindingControlsVisible"
+            v-if="smartPathfindingEnabled"
             type="button"
             :aria-pressed="searchAnimationEnabled"
             :class="{ 'graphwar-killer__toggle-button--active': searchAnimationEnabled }"
@@ -3397,36 +3369,19 @@ async function copyText(text: string) {
           >
             {{ locale.ui.pathfinding.searchAnimation }}
           </button>
-          <label
-            v-if="autoGraphPathfindingControlsVisible"
-            class="graphwar-killer__detection-setting-label"
-            :title="locale.ui.pathfinding.workerCountTitle"
-          >
-            {{ locale.ui.pathfinding.workerCount }}
-            <input
-              v-model="autoGraphWorkerCountText"
-              disabled
-              inputmode="numeric"
-              autocomplete="off"
-              min="1"
-              :max="autoGraphWorkerCountLimit"
-              :aria-label="locale.ui.pathfinding.workerCountAriaLabel"
-              :title="locale.ui.pathfinding.workerCountTitle"
-            >
-          </label>
           <button
-            v-if="autoGraphPathfindingControlsVisible"
             type="button"
             disabled
-            :aria-label="locale.ui.pathfinding.fastModeAriaLabel"
-            :aria-pressed="autoGraphFastModeEnabled"
-            :class="{ 'graphwar-killer__toggle-button--active': autoGraphFastModeEnabled }"
-            :title="locale.ui.pathfinding.fastModeTitle"
+            aria-pressed="false"
+            :title="autoGraphPathfindingDisabledMessage"
           >
-            {{ locale.ui.pathfinding.fastMode }}
+            {{ locale.ui.pathfinding.autoGraph }}
           </button>
         </div>
-        <div class="graphwar-killer__pathfinding-settings">
+        <div
+          v-if="smartPathfindingEnabled"
+          class="graphwar-killer__pathfinding-settings"
+        >
           <details class="graphwar-killer__subpanel graphwar-killer__details">
             <summary
               id="graphwar-killer-obstacle-expansion-title"
@@ -5015,22 +4970,6 @@ async function copyText(text: string) {
 .graphwar-killer__algorithm-toggle {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   min-height: 38px;
-}
-
-.graphwar-killer__pathfinding-mode-toggle {
-  grid-template-columns: repeat(3, minmax(72px, 1fr));
-}
-
-.graphwar-killer__pathfinding-mode-toggle::before {
-  width: calc((100% - 4px) / 3);
-}
-
-.graphwar-killer__pathfinding-mode-toggle--smart::before {
-  transform: translateX(100%);
-}
-
-.graphwar-killer__pathfinding-mode-toggle--auto-graph::before {
-  transform: translateX(200%);
 }
 
 .graphwar-killer__algorithm-toggle::before {

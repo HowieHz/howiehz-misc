@@ -280,6 +280,8 @@ export const graphwarKillerLocale = {
       simulationExpansionAriaLabel: "Function-simulation obstacle expansion in raw Graphwar 770x450 plane pixels",
       simulationExpansionTitle:
         "Expands obstacles by this amount during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
+      autoGraph: "One-Click Clear",
+      smartPathfinding: "Smart Pathfinding",
       title: "Pathfinding",
       unit: "px",
       workerCount: "Workers",

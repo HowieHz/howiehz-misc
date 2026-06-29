@@ -3480,6 +3480,7 @@ async function copyText(text: string) {
             {{ locale.ui.pathfinding.searchAnimation }}
           </button>
           <button
+            v-if="smartPathfindingEnabled"
             type="button"
             disabled
             aria-pressed="false"

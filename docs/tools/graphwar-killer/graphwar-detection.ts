@@ -132,7 +132,7 @@ const graphwarSoldierTemplateNames = [
   "soldier8.png",
   "soldier9.png",
 ] as const;
-const graphwarSoldierTemplateMinimumScore = 0.64;
+const graphwarSoldierTemplateMinimumScore = 0.635;
 const graphwarSoldierTemplateMinimumFixedScore = 0.58;
 const graphwarSoldierTemplateMinimumForegroundScore = 0.62;
 const graphwarSoldierTemplateCandidateDedupeDistance = 4;

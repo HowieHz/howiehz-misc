@@ -56,6 +56,8 @@ export interface DetectedObstacleMap {
 
 /** 士兵模板候选中心，用于识别动画可视化。 */
 export interface GraphwarSoldierCandidatePoint {
+  /** 是否落在最终识别出的士兵中心附近，用于把候选动画分成命中/未命中两类。 */
+  selected: boolean;
   /** 截图像素 x。 */
   x: number;
   /** 截图像素 y。 */
@@ -972,7 +974,7 @@ function detectSoldierMatches(imageData: ImageData, edgeRect: BoundsRect) {
     matchSoldierTemplates(imageData, edgeRect, scale, candidates),
     scale,
   );
-  return { candidates, matches };
+  return { candidates: markSelectedSoldierTemplateCenterCandidates(candidates, matches, scale), matches };
 }
 
 function createSoldierDetectionBoxes(matches: SoldierMatchCandidate[], edgeRect: BoundsRect) {
@@ -1123,6 +1125,7 @@ function createSoldierTemplateCenterCandidates(
   const rankedCandidates = [...votes.values()]
     .filter((vote) => vote.count >= minVotes)
     .map((vote) => ({
+      selected: false,
       x: vote.x,
       y: vote.y,
       votes: vote.count,
@@ -1533,6 +1536,20 @@ function suppressOverlappingSoldierMatches(matches: SoldierMatchCandidate[], sca
     }
   }
   return kept;
+}
+
+function markSelectedSoldierTemplateCenterCandidates(
+  candidates: SoldierTemplateCenterCandidate[],
+  matches: SoldierMatchCandidate[],
+  scale: number,
+) {
+  const selectedDistance = GRAPHWAR_SOLDIER_VISIBLE_SIZE * scale * 0.55;
+  return candidates.map((candidate) => ({
+    ...candidate,
+    selected: matches.some(
+      (match) => Math.hypot(candidate.x - match.sourceCenterX, candidate.y - match.sourceCenterY) <= selectedDistance,
+    ),
+  }));
 }
 
 /** 从开运算后的种子组件回填原始 mask 连通块，避免细节被形态学过滤永久丢失。 */

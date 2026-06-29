@@ -4073,6 +4073,7 @@ async function copyText(text: string) {
               v-for="(candidate, index) in detectionCandidatePoints"
               :key="`detection-candidate-${index}`"
               class="graphwar-killer__detection-candidate"
+              :class="{ 'graphwar-killer__detection-candidate--selected': candidate.selected }"
               :cx="candidate.x"
               :cy="candidate.y"
               r="2.4"
@@ -4348,6 +4349,7 @@ async function copyText(text: string) {
                   v-for="(candidate, index) in detectionCandidatePoints"
                   :key="`magnifier-detection-candidate-${index}`"
                   class="graphwar-killer__detection-candidate"
+                  :class="{ 'graphwar-killer__detection-candidate--selected': candidate.selected }"
                   :cx="candidate.x"
                   :cy="candidate.y"
                   r="2.4"
@@ -5042,6 +5044,11 @@ async function copyText(text: string) {
   transform-box: fill-box;
   transform-origin: center;
   vector-effect: non-scaling-stroke;
+}
+
+.graphwar-killer__detection-candidate--selected {
+  fill: #14b8a6;
+  stroke: #064e3b;
 }
 
 .graphwar-killer__obstacle-edge {

@@ -137,10 +137,10 @@ const graphwarSoldierTemplateNames = [
 const graphwarSoldierTemplateMinimumScore = 0.635;
 const graphwarSoldierTemplateMinimumFixedScore = 0.58;
 const graphwarSoldierTemplateMinimumForegroundScore = 0.6;
-const graphwarSoldierTemplateCandidateDedupeDistance = 4;
 /** 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。 */
 const graphwarSoldierTemplateCandidateLimit = 400;
 const graphwarMaximumSoldierCount = 40;
+const graphwarSoldierGenerationMinimumAxisGap = 20;
 const graphwarSoldierAnimationSignatureCoordinates = [
   [13, 6],
   [14, 6],
@@ -1130,20 +1130,7 @@ function createSoldierTemplateCenterCandidates(
     }))
     .sort((left, right) => right.votes - left.votes);
 
-  return dedupeSoldierTemplateCenterCandidates(
-    rankedCandidates,
-    graphwarSoldierTemplateCandidateDedupeDistance * scale,
-  ).slice(0, candidateLimit);
-}
-
-function dedupeSoldierTemplateCenterCandidates(candidates: SoldierTemplateCenterCandidate[], minimumDistance: number) {
-  const kept: SoldierTemplateCenterCandidate[] = [];
-  for (const candidate of candidates) {
-    if (kept.every((existing) => Math.hypot(candidate.x - existing.x, candidate.y - existing.y) > minimumDistance)) {
-      kept.push(candidate);
-    }
-  }
-  return kept;
+  return rankedCandidates.slice(0, candidateLimit);
 }
 
 /** 对同一个源码中心尝试所有正常/镜像源码模板，返回分数最高者。 */
@@ -1521,13 +1508,13 @@ function createSoldierTemplateSignaturePixels(name: (typeof graphwarSoldierTempl
 
 function suppressOverlappingSoldierMatches(matches: SoldierMatchCandidate[], scale: number) {
   const kept: SoldierMatchCandidate[] = [];
-  const minDistance = GRAPHWAR_SOLDIER_VISIBLE_SIZE * scale * 0.55;
+  const minimumAxisGap = graphwarSoldierGenerationMinimumAxisGap * scale;
   for (const match of matches) {
     if (
       kept.every(
         (candidate) =>
-          Math.hypot(match.sourceCenterX - candidate.sourceCenterX, match.sourceCenterY - candidate.sourceCenterY) >
-          minDistance,
+          Math.abs(match.sourceCenterX - candidate.sourceCenterX) >= minimumAxisGap ||
+          Math.abs(match.sourceCenterY - candidate.sourceCenterY) >= minimumAxisGap,
       )
     ) {
       kept.push(match);

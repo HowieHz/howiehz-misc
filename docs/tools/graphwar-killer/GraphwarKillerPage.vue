@@ -3156,6 +3156,10 @@ function formatElapsedDuration(elapsedMs: number) {
 
 /** 清除全部已选路径点，但不改变图片边界和设定。 */
 function clearPath() {
+  if (toolMode.value !== "path") {
+    return;
+  }
+
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
   clearSmartPathfindingBlockedPoint();
@@ -3172,6 +3176,10 @@ function clearAllModePaths() {
 
 /** 删除最新选择的路径点。 */
 function undoLastPoint() {
+  if (toolMode.value !== "path") {
+    return;
+  }
+
   if (pathPixels.value.length === 0) {
     return;
   }
@@ -3279,7 +3287,7 @@ async function copyText(text: string) {
         <span class="graphwar-killer__setting-label">{{ locale.ui.settings.mode }}</span>
         <div
           class="graphwar-killer__tool-toggle graphwar-killer__mode-toggle"
-          :class="{ 'graphwar-killer__tool-toggle--path': toolWorkflowMode === 'simulator' }"
+          :class="{ 'graphwar-killer__mode-toggle--simulator': toolWorkflowMode === 'simulator' }"
           role="group"
           :aria-label="locale.ui.settings.modeAriaLabel"
           :title="locale.ui.settings.modeTitle"
@@ -3744,20 +3752,6 @@ async function copyText(text: string) {
         </div>
         <button
           type="button"
-          :title="locale.ui.actions.clearPathTitle"
-          @click="clearPath"
-        >
-          {{ locale.ui.actions.clearPath }}
-        </button>
-        <button
-          type="button"
-          :title="locale.ui.actions.undoPointTitle"
-          @click="undoLastPoint"
-        >
-          {{ locale.ui.actions.undoPoint }}
-        </button>
-        <button
-          type="button"
           :aria-pressed="magnifierEnabled"
           :class="{ 'graphwar-killer__toggle-button--active': magnifierEnabled }"
           :title="locale.ui.actions.magnifierTitle"
@@ -3795,6 +3789,25 @@ async function copyText(text: string) {
           >
           <span>x</span>
         </label>
+      </div>
+      <div
+        v-if="toolMode === 'path'"
+        class="graphwar-killer__path-actions"
+      >
+        <button
+          type="button"
+          :title="locale.ui.actions.clearPathTitle"
+          @click="clearPath"
+        >
+          {{ locale.ui.actions.clearPath }}
+        </button>
+        <button
+          type="button"
+          :title="locale.ui.actions.undoPointTitle"
+          @click="undoLastPoint"
+        >
+          {{ locale.ui.actions.undoPoint }}
+        </button>
       </div>
       <div
         v-if="obstacleBrushControlsVisible"
@@ -5223,12 +5236,25 @@ async function copyText(text: string) {
   padding: 6px 10px;
 }
 
+.graphwar-killer__path-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graphwar-killer__path-actions button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
 .graphwar-killer__magnifier-zoom-label {
   align-items: center;
   flex: 1 1 280px;
   font-weight: 600;
   gap: 6px;
   grid-template-columns: auto minmax(96px, 1fr) minmax(54px, 72px) auto;
+  max-width: min(100%, 460px);
   min-width: min(100%, 260px);
 }
 
@@ -5257,6 +5283,7 @@ async function copyText(text: string) {
   font-weight: 600;
   gap: 6px;
   grid-template-columns: auto minmax(120px, 1fr) minmax(58px, 74px) auto;
+  max-width: min(100%, 520px);
   min-width: min(100%, 320px);
 }
 
@@ -5410,8 +5437,9 @@ async function copyText(text: string) {
   border-radius: 999px;
   display: grid;
   gap: 0;
-  grid-template-columns: repeat(3, minmax(92px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   min-height: 34px;
+  min-width: 0;
   overflow: hidden;
   padding: 2px;
   position: relative;
@@ -5438,6 +5466,18 @@ async function copyText(text: string) {
   transform: translateX(200%);
 }
 
+.graphwar-killer__mode-toggle {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.graphwar-killer__mode-toggle::before {
+  width: calc((100% - 4px) / 2);
+}
+
+.graphwar-killer__mode-toggle--simulator::before {
+  transform: translateX(100%);
+}
+
 .graphwar-killer__algorithm-toggle {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   min-height: 38px;
@@ -5459,13 +5499,11 @@ async function copyText(text: string) {
   transform: translateX(300%);
 }
 
-.graphwar-killer__algorithm-toggle button {
+.graphwar-killer__tool-toggle.graphwar-killer__algorithm-toggle button {
   font-size: 0.82rem;
   line-height: 1.15;
   min-height: 32px;
-  overflow-wrap: anywhere;
   padding: 4px 7px;
-  white-space: normal;
 }
 
 .graphwar-killer__tool-toggle button {
@@ -5475,11 +5513,15 @@ async function copyText(text: string) {
   box-shadow: none;
   color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
   font-size: 0.9rem;
+  line-height: 1.15;
   min-height: 28px;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 4px 10px;
   position: relative;
+  text-align: center;
   transform: none;
-  white-space: nowrap;
+  white-space: normal;
   z-index: 1;
 }
 

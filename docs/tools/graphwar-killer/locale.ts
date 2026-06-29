@@ -143,7 +143,7 @@ export const graphwarKillerLocale = {
   ui: {
     actions: {
       clearPath: "清除路径点",
-      clearPathTitle: "清除当前模式下已选的己方和路径点；不会改变截图边界和设置。",
+      clearPathTitle: "清除全部路径点",
       clearObstacleEdits: "清除障碍修改",
       clearObstacleEditsTitle: "恢复到本次自动识别得到的原始障碍范围。",
       drawObstacle: "绘制障碍",
@@ -168,7 +168,7 @@ export const graphwarKillerLocale = {
       toolModeAriaLabel: "操作模式",
       toolModeTitle: "选择是在截图上点选棋盘边界，还是点选己方和目标路径点。",
       undoPoint: "撤回路径点",
-      undoPointTitle: "撤回最近添加的路径点；边界点选模式下会取消当前边界点。",
+      undoPointTitle: "撤回最近添加的路径点",
     },
     detection: {
       autoDetection: "自动识别",

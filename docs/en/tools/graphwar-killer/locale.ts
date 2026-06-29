@@ -189,8 +189,7 @@ export const graphwarKillerLocale = {
   ui: {
     actions: {
       clearPath: "Clear path",
-      clearPathTitle:
-        "Clear the selected soldier and path points for the current mode without changing screenshot bounds or settings.",
+      clearPathTitle: "Clear all path points",
       clearObstacleEdits: "Clear obstacle edits",
       clearObstacleEditsTitle: "Restore the original obstacle area from this detection run.",
       drawObstacle: "Draw obstacle",
@@ -217,8 +216,7 @@ export const graphwarKillerLocale = {
       toolModeAriaLabel: "Tool mode",
       toolModeTitle: "Choose whether clicks on the screenshot pick board bounds or pick your soldier and path points.",
       undoPoint: "Undo point",
-      undoPointTitle:
-        "Undo the most recently added path point; in bounds-picking mode, cancel the current bounds point.",
+      undoPointTitle: "Undo the most recently added path point",
     },
     detection: {
       autoDetection: "Auto detect",

@@ -134,9 +134,10 @@ const graphwarSoldierTemplateNames = [
   "soldier8.png",
   "soldier9.png",
 ] as const;
-const graphwarSoldierTemplateMinimumScore = 0.635;
-const graphwarSoldierTemplateMinimumFixedScore = 0.58;
-const graphwarSoldierTemplateMinimumForegroundScore = 0.6;
+const graphwarSoldierTemplateMinimumFixedScore = 0.75;
+const graphwarSoldierTemplateMinimumForegroundScore = 0.65;
+const graphwarSoldierTemplateMinimumPlayerScore = 0.55;
+const graphwarSoldierTemplateMinimumSignatureScore = 0.65;
 /** 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。 */
 const graphwarSoldierTemplateCandidateLimit = 400;
 const graphwarMaximumSoldierCount = 40;
@@ -1066,9 +1067,10 @@ function filterAcceptedSoldierMatches(matches: SoldierMatchCandidate[]) {
   return matches
     .filter(
       (match) =>
-        match.score >= graphwarSoldierTemplateMinimumScore &&
         match.fixedScore >= graphwarSoldierTemplateMinimumFixedScore &&
-        match.foregroundScore >= graphwarSoldierTemplateMinimumForegroundScore,
+        match.foregroundScore >= graphwarSoldierTemplateMinimumForegroundScore &&
+        match.playerScore >= graphwarSoldierTemplateMinimumPlayerScore &&
+        match.signatureScore >= graphwarSoldierTemplateMinimumSignatureScore,
     )
     .sort((left, right) => right.score - left.score);
 }
@@ -1215,13 +1217,38 @@ function scoreSoldierTemplateAt(
     fixedScore,
     foregroundScore,
     playerScore,
-    score: clampNumber(
-      0.31 * fixedScore + 0.35 * foregroundScore + 0.24 * playerScore + 0.1 * signatureScore - backgroundPenalty,
-      0,
-      1,
+    score: scoreSoldierTemplateThresholdExcess(
+      fixedScore,
+      foregroundScore,
+      playerScore,
+      signatureScore,
+      backgroundPenalty,
     ),
     signatureScore,
   };
+}
+
+function scoreSoldierTemplateThresholdExcess(
+  fixedScore: number,
+  foregroundScore: number,
+  playerScore: number,
+  signatureScore: number,
+  backgroundPenalty: number,
+) {
+  return clampNumber(
+    (normalizeScoreAboveThreshold(fixedScore, graphwarSoldierTemplateMinimumFixedScore) +
+      normalizeScoreAboveThreshold(foregroundScore, graphwarSoldierTemplateMinimumForegroundScore) +
+      normalizeScoreAboveThreshold(playerScore, graphwarSoldierTemplateMinimumPlayerScore) +
+      normalizeScoreAboveThreshold(signatureScore, graphwarSoldierTemplateMinimumSignatureScore)) /
+      4 -
+      backgroundPenalty,
+    0,
+    1,
+  );
+}
+
+function normalizeScoreAboveThreshold(score: number, threshold: number) {
+  return clampNumber((score - threshold) / (1 - threshold), 0, 1);
 }
 
 function scoreTemplatePixelGroup(

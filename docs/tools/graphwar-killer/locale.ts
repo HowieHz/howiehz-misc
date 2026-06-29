@@ -174,6 +174,8 @@ export const graphwarKillerLocale = {
       autoDetection: "自动识别",
       autoDetectionTitle: "开启后，加载截图或修改识别设置时自动运行识别。",
       busyOverlay: "识别中，右键中止",
+      detectionAnimation: "识别动画",
+      detectionAnimationTitle: "识别完成时在截图上短暂显示士兵模板候选中心。",
       minObstacleArea: "障碍最小面积",
       minObstacleAreaAriaLabel: "障碍最小面积，单位为 Graphwar 原始平面像素",
       minObstacleAreaTitle: "过滤小噪点的面积阈值；小于该值的障碍区域会被忽略，单位是 Graphwar 原始 770x450 平面像素。",

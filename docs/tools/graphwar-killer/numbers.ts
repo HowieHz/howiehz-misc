@@ -32,7 +32,7 @@ export function graphXAdvancesEnough(deltaX: number, minimumGraphXStep: number, 
 }
 
 export const MAX_FORMULA_DECIMAL_PLACES = 15;
-export const DEFAULT_FORMULA_DECIMAL_PLACES = 4;
+export const DEFAULT_FORMULA_DECIMAL_PLACES = 5;
 
 /** 将公式输出小数位限制在 Graphwar 可读且 double 有意义的范围内。 */
 export function clampDecimalPlaces(value: number) {

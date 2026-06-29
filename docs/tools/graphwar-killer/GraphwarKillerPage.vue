@@ -34,7 +34,7 @@ import {
   paintObstacleMaskDisk,
   paintObstacleMaskStroke,
 } from "./graphwar-detection";
-import type { DetectedObstacleMap, GraphwarDetectionBox } from "./graphwar-detection";
+import type { DetectedObstacleMap, GraphwarDetectionBox, GraphwarSoldierCandidatePoint } from "./graphwar-detection";
 import {
   buildSmartPathfindingPathForMask,
   collectSmartPathfindingRouteTolerances,
@@ -183,6 +183,7 @@ const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
+const detectionCandidateAnimationMs = 1600;
 const smartPathfindingBlockedPointFlashMs = 1800;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
@@ -278,6 +279,8 @@ const detectedSoldiers = ref<DetectionBox[]>([]);
 const detectedObstacles = ref<DetectedObstacleMap>();
 const baselineDetectedObstacles = ref<DetectedObstacleMap>();
 const autoDetectionEnabled = ref(true);
+const detectionAnimationEnabled = ref(true);
+const detectionCandidatePoints = ref<GraphwarSoldierCandidatePoint[]>([]);
 const smartCursorEnabled = ref(true);
 const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
@@ -313,6 +316,7 @@ const copyStatus = ref<TransferStatus>("idle");
 let boundsFlashFrame: number | undefined;
 let boundsFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
+let detectionCandidateTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let obstacleEditRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let smartPathfindingBlockedPointTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1228,6 +1232,7 @@ onBeforeUnmount(() => {
   if (copyStatusTimer) {
     clearTimeout(copyStatusTimer);
   }
+  clearDetectionCandidateAnimation();
   if (detectionRefreshTimer) {
     clearTimeout(detectionRefreshTimer);
   }
@@ -1371,6 +1376,7 @@ function clearDetectedGraphwarObjects() {
   detectedSoldiers.value = [];
   detectedObstacles.value = undefined;
   baselineDetectedObstacles.value = undefined;
+  clearDetectionCandidateAnimation();
   obstacleEditsDirty.value = false;
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
@@ -1383,6 +1389,7 @@ function clearDetectedGraphwarObjects() {
 function beginDetectionRun() {
   detectionRunId += 1;
   detectionInProgress.value = true;
+  clearDetectionCandidateAnimation();
   return detectionRunId;
 }
 
@@ -1554,6 +1561,7 @@ async function detectGraphwarObjectsInBounds(
     return;
   }
   detectedSoldiers.value = result.soldiers;
+  showDetectionCandidateAnimation(result.soldierCandidates);
   detectedObstacles.value = result.obstacles;
   baselineDetectedObstacles.value = cloneDetectedObstacleMap(result.obstacles);
   obstacleEditsDirty.value = false;
@@ -1565,6 +1573,27 @@ async function detectGraphwarObjectsInBounds(
       ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, detectedObstacles.value.count)
       : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, detectedObstacles.value.count);
   detectionStatusIsError.value = false;
+}
+
+function clearDetectionCandidateAnimation() {
+  detectionCandidatePoints.value = [];
+  if (detectionCandidateTimer) {
+    clearTimeout(detectionCandidateTimer);
+    detectionCandidateTimer = undefined;
+  }
+}
+
+function showDetectionCandidateAnimation(candidates: readonly GraphwarSoldierCandidatePoint[]) {
+  clearDetectionCandidateAnimation();
+  if (!detectionAnimationEnabled.value) {
+    return;
+  }
+
+  detectionCandidatePoints.value = [...candidates];
+  detectionCandidateTimer = setTimeout(() => {
+    detectionCandidatePoints.value = [];
+    detectionCandidateTimer = undefined;
+  }, detectionCandidateAnimationMs);
 }
 
 function cloneDetectedObstacleMap(obstacles: DetectedObstacleMap): DetectedObstacleMap {
@@ -3462,6 +3491,15 @@ async function copyText(text: string) {
           </button>
           <button
             type="button"
+            :aria-pressed="detectionAnimationEnabled"
+            :class="{ 'graphwar-killer__toggle-button--active': detectionAnimationEnabled }"
+            :title="locale.ui.detection.detectionAnimationTitle"
+            @click="detectionAnimationEnabled = !detectionAnimationEnabled"
+          >
+            {{ locale.ui.detection.detectionAnimation }}
+          </button>
+          <button
+            type="button"
             :aria-pressed="smartCursorEnabled"
             :class="{ 'graphwar-killer__toggle-button--active': smartCursorEnabled }"
             :title="locale.ui.detection.smartCursorTitle"
@@ -3966,6 +4004,19 @@ async function copyText(text: string) {
               />
             </g>
           </template>
+          <g
+            v-if="detectionCandidatePoints.length"
+            class="graphwar-killer__detection-candidates"
+          >
+            <circle
+              v-for="(candidate, index) in detectionCandidatePoints"
+              :key="`detection-candidate-${index}`"
+              class="graphwar-killer__detection-candidate"
+              :cx="candidate.x"
+              :cy="candidate.y"
+              r="2.4"
+            />
+          </g>
           <ellipse
             v-if="obstacleBrushPreview"
             class="graphwar-killer__obstacle-brush-preview"
@@ -4213,6 +4264,19 @@ async function copyText(text: string) {
                   />
                 </g>
               </template>
+              <g
+                v-if="detectionCandidatePoints.length"
+                class="graphwar-killer__detection-candidates"
+              >
+                <circle
+                  v-for="(candidate, index) in detectionCandidatePoints"
+                  :key="`magnifier-detection-candidate-${index}`"
+                  class="graphwar-killer__detection-candidate"
+                  :cx="candidate.x"
+                  :cy="candidate.y"
+                  r="2.4"
+                />
+              </g>
               <ellipse
                 v-if="obstacleBrushPreview"
                 class="graphwar-killer__obstacle-brush-preview"
@@ -4878,6 +4942,20 @@ async function copyText(text: string) {
   stroke: #16a34a;
 }
 
+.graphwar-killer__detection-candidates {
+  pointer-events: none;
+}
+
+.graphwar-killer__detection-candidate {
+  animation: graphwar-killer-detection-candidate 1600ms ease-out forwards;
+  fill: #facc15;
+  stroke: #7c2d12;
+  stroke-width: 1.2;
+  transform-box: fill-box;
+  transform-origin: center;
+  vector-effect: non-scaling-stroke;
+}
+
 .graphwar-killer__obstacle-edge {
   fill: none;
   stroke: #dc2626;
@@ -5037,6 +5115,28 @@ async function copyText(text: string) {
     opacity: 52%;
     stroke: #f97316;
     stroke-width: 5;
+  }
+}
+
+@keyframes graphwar-killer-detection-candidate {
+  0% {
+    opacity: 0%;
+    transform: scale(0.5);
+  }
+
+  18% {
+    opacity: 92%;
+    transform: scale(1.35);
+  }
+
+  62% {
+    opacity: 76%;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0%;
+    transform: scale(0.72);
   }
 }
 

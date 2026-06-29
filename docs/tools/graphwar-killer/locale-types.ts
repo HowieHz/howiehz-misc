@@ -165,6 +165,8 @@ export interface GraphwarKillerLocale {
       autoDetection: string;
       autoDetectionTitle: string;
       busyOverlay: string;
+      detectionAnimation: string;
+      detectionAnimationTitle: string;
       minObstacleArea: string;
       minObstacleAreaAriaLabel: string;
       minObstacleAreaTitle: string;

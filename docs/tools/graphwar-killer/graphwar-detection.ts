@@ -54,10 +54,22 @@ export interface DetectedObstacleMap {
   count: number;
 }
 
+/** 士兵模板候选中心，用于识别动画可视化。 */
+export interface GraphwarSoldierCandidatePoint {
+  /** 截图像素 x。 */
+  x: number;
+  /** 截图像素 y。 */
+  y: number;
+  /** 固定黄色种子反投票数。 */
+  votes: number;
+}
+
 /** 指定棋盘边界内的一次完整对象识别结果。 */
 export interface GraphwarObjectsDetectionResult {
   /** 识别出的士兵检测框。 */
   soldiers: GraphwarDetectionBox[];
+  /** 去重后、送入模板评分前的士兵候选中心。 */
+  soldierCandidates: GraphwarSoldierCandidatePoint[];
   /** 过滤后的障碍 mask。 */
   obstacles: DetectedObstacleMap;
 }
@@ -533,7 +545,7 @@ interface SoldierMatchCandidate {
   signatureScore: number;
 }
 
-interface SoldierTemplateCenterCandidate {
+interface SoldierTemplateCenterCandidate extends GraphwarSoldierCandidatePoint {
   /** 截图像素 x。 */
   x: number;
   /** 截图像素 y。 */
@@ -550,9 +562,11 @@ export function detectGraphwarObjectsInBounds(
   edgeRect: BoundsRect,
   thresholds: GraphwarObstacleDetectionThresholds,
 ): GraphwarObjectsDetectionResult {
-  const soldiers = detectSoldiers(imageData, edgeRect);
+  const soldierMatches = detectSoldierMatches(imageData, edgeRect);
+  const soldiers = createSoldierDetectionBoxes(soldierMatches.matches, edgeRect);
   return {
     soldiers,
+    soldierCandidates: soldierMatches.candidates,
     obstacles: detectObstacles(imageData, edgeRect, thresholds, soldiers),
   };
 }
@@ -946,16 +960,26 @@ function buildAxisTriplets(groups: AxisGroup[]) {
 }
 
 /** 使用 Graphwar 20x20 源码士兵模板识别 Soldier.x/y。 */
-function detectSoldiers(imageData: ImageData, edgeRect: BoundsRect): GraphwarDetectionBox[] {
+function detectSoldierMatches(imageData: ImageData, edgeRect: BoundsRect) {
+  const scale = edgeRect.width / GRAPHWAR_PLANE_LENGTH;
+  const candidates = createSoldierTemplateCenterCandidates(
+    imageData,
+    edgeRect,
+    scale,
+    graphwarSoldierTemplateCandidateLimit,
+  );
+  const matches = suppressOverlappingSoldierMatches(
+    matchSoldierTemplates(imageData, edgeRect, scale, candidates),
+    scale,
+  );
+  return { candidates, matches };
+}
+
+function createSoldierDetectionBoxes(matches: SoldierMatchCandidate[], edgeRect: BoundsRect) {
   const scale = edgeRect.width / GRAPHWAR_PLANE_LENGTH;
   const hitRadius = GRAPHWAR_SOLDIER_RADIUS * scale;
   const visualRadius = (GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2) * scale;
   const visualSize = visualRadius * 2;
-  const matches = suppressOverlappingSoldierMatches(
-    matchSoldierTemplates(imageData, edgeRect, scale, graphwarSoldierTemplateCandidateLimit),
-    scale,
-  );
-
   return matches.map((match, index) => {
     const sourceCenter = createPixelPoint(match.sourceCenterX, match.sourceCenterY);
     const visualCenter = getGraphwarSoldierVisualCenter(sourceCenter, match.template.mirrored, scale);
@@ -1020,9 +1044,13 @@ function detectObstacles(
   };
 }
 
-/** 从高置信固定像素投票出候选源码中心，再用完整 20x20 模板评分。 */
-function matchSoldierTemplates(imageData: ImageData, edgeRect: BoundsRect, scale: number, candidateLimit: number) {
-  const candidates = createSoldierTemplateCenterCandidates(imageData, edgeRect, scale, candidateLimit);
+/** 按候选源码中心尝试完整 20x20 模板评分。 */
+function matchSoldierTemplates(
+  imageData: ImageData,
+  edgeRect: BoundsRect,
+  scale: number,
+  candidates: readonly SoldierTemplateCenterCandidate[],
+) {
   const matches: SoldierMatchCandidate[] = [];
   for (const candidate of candidates) {
     const snapped = findBestSoldierTemplateMatch(imageData, edgeRect, scale, candidate.x, candidate.y);

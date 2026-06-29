@@ -225,6 +225,9 @@ export const graphwarKillerLocale = {
       autoDetection: "Auto detect",
       autoDetectionTitle: "Automatically run detection when a screenshot loads or detection settings change.",
       busyOverlay: "Detecting, right-click to cancel",
+      detectionAnimation: "Detection animation",
+      detectionAnimationTitle:
+        "Briefly show soldier-template candidate centers on the screenshot after detection finishes.",
       minObstacleArea: "Minimum obstacle area",
       minObstacleAreaAriaLabel: "Minimum obstacle area in raw Graphwar plane pixels",
       minObstacleAreaTitle:

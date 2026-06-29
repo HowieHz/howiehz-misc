@@ -169,6 +169,7 @@ export const graphwarKillerLocale = {
   },
   smartPathfinding: {
     cancelled: "Pathfinding canceled",
+    currentPathBlocked: "The simulation did not reach the current last path point, so pathfinding cannot start",
     failure: (elapsed) =>
       elapsed === undefined
         ? "Smart Pathfinding failed: no valid path found"
@@ -201,7 +202,8 @@ export const graphwarKillerLocale = {
         "Show a zoomed preview next to the screenshot for more precise soldier, bounds, and path picking.",
       obstacleBrushDiameter: "Brush size",
       obstacleBrushDiameterAriaLabel: "Obstacle brush diameter in raw Graphwar 770x450 plane pixels",
-      obstacleBrushDiameterTitle: "Circular obstacle brush diameter, in raw Graphwar 770x450 plane pixels.",
+      obstacleBrushDiameterTitle:
+        "Circular obstacle brush diameter, in raw Graphwar 770x450 plane pixels; the slider quickly adjusts 1px to 200px, and the input accepts 1px to 1000px.",
       pickBounds: "Pick bounds",
       pickBoundsTitle: "Enter bounds-picking mode: left-click two board corners to calibrate the screenshot bounds.",
       pickPath: "Pick path",

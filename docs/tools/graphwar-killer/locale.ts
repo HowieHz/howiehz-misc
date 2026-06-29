@@ -126,6 +126,7 @@ export const graphwarKillerLocale = {
   },
   smartPathfinding: {
     cancelled: "已中断寻路",
+    currentPathBlocked: "模拟结果未到达当前最后路径点，无法开始寻路任务",
     failure: (elapsed) =>
       elapsed === undefined ? "智能寻路失败：未找到可行路径" : `智能寻路失败：未找到可行路径，耗时 ${elapsed}`,
     forwardPath: (minimumStep) => `每个点的 x 需要至少前进 ${minimumStep}，但没有空间了`,
@@ -152,7 +153,8 @@ export const graphwarKillerLocale = {
       magnifierTitle: "在截图旁显示放大预览，方便精确点选士兵、边界和路径点。",
       obstacleBrushDiameter: "笔刷大小",
       obstacleBrushDiameterAriaLabel: "障碍笔刷直径，单位为 Graphwar 原始 770x450 平面像素",
-      obstacleBrushDiameterTitle: "圆形障碍笔刷直径，单位是 Graphwar 原始 770x450 平面像素。",
+      obstacleBrushDiameterTitle:
+        "圆形障碍笔刷直径，单位是 Graphwar 原始 770x450 平面像素；滑条可快速调整 1px 到 200px，输入框支持 1px 到 1000px。",
       pickBounds: "点选边界",
       pickBoundsTitle: "进入边界点选模式：左键点两个棋盘角落来校准截图边界。",
       pickPath: "点选路径",

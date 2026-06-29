@@ -120,6 +120,7 @@ export interface GraphwarKillerLocale {
   };
   smartPathfinding: {
     cancelled: string;
+    currentPathBlocked: string;
     failure: (elapsed?: string) => string;
     forwardPath: (minimumStep: string) => string;
     inProgress: {

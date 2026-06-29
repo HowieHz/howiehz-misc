@@ -144,6 +144,8 @@ interface SoldierAimCheckResult {
 }
 /** 单目标弹道验证结果。 */
 interface PathTrajectoryResult {
+  /** 未命中目标前碰到障碍或边界的位置。 */
+  blockedPoint?: PixelPoint;
   /** 是否先命中目标再碰障碍。 */
   reachesTargetBeforeObstacle: boolean;
   /** 可绘制轨迹。 */
@@ -171,8 +173,10 @@ const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
 const graphwarBoundaryExpansionLimit = Math.floor((Math.min(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) - 1) / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const obstacleBrushMinimumDiameter = 1;
-const obstacleBrushMaximumDiameter = 200;
+const obstacleBrushSliderMaximumDiameter = 200;
+const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
+const smartPathfindingBlockedPointFlashMs = 1800;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 
@@ -286,6 +290,7 @@ const smartPathfindingPreviewCurrentPoint = ref<PixelPoint>();
 const smartPathfindingPreviewPoints = ref<PixelPoint[]>([]);
 const smartPathfindingPreviewPath = ref<PixelPoint[]>([]);
 const pathfindingOptimizationPreviewPoint = ref<PixelPoint>();
+const smartPathfindingBlockedPoint = ref<PixelPoint>();
 const routeMaskCache = new WeakMap<Uint8Array, Map<string, RouteMaskCacheEntry>>();
 const effectiveSmartPathfindingEnabled = computed(
   () => toolWorkflowMode.value !== "simulator" && algorithmMode.value !== "step" && smartPathfindingEnabled.value,
@@ -301,6 +306,7 @@ let boundsFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let obstacleEditRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let smartPathfindingBlockedPointTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRunId = 0;
 let smartPathfindingCancelToken = 0;
 
@@ -363,10 +369,13 @@ const parsedObstacleBrushDiameter = computed<ParsedObstacleBrushDiameter>(() => 
   if (diameter === undefined || !Number.isInteger(diameter)) {
     return { ok: false as const, message: locale.validation.obstacleBrushDiameterInteger };
   }
-  if (diameter < obstacleBrushMinimumDiameter || diameter > obstacleBrushMaximumDiameter) {
+  if (diameter < obstacleBrushMinimumDiameter || diameter > obstacleBrushInputMaximumDiameter) {
     return {
       ok: false as const,
-      message: locale.validation.obstacleBrushDiameterRange(obstacleBrushMinimumDiameter, obstacleBrushMaximumDiameter),
+      message: locale.validation.obstacleBrushDiameterRange(
+        obstacleBrushMinimumDiameter,
+        obstacleBrushInputMaximumDiameter,
+      ),
     };
   }
   return { ok: true as const, diameter };
@@ -759,6 +768,21 @@ const obstacleBrushAvailable = computed(
   () => Boolean(detectedObstacles.value) && (smartCursorEnabled.value || smartPathfindingEnabled.value),
 );
 const obstacleBrushControlsVisible = computed(() => toolMode.value === "obstacle");
+const obstacleBrushSliderDiameter = computed(() => {
+  const diameter = parseFiniteNumber(obstacleBrushDiameterText.value);
+  return clampNumber(
+    diameter ?? obstacleBrushMinimumDiameter,
+    obstacleBrushMinimumDiameter,
+    obstacleBrushSliderMaximumDiameter,
+  );
+});
+const obstacleBrushRangeStyle = computed(() => {
+  const range = obstacleBrushSliderMaximumDiameter - obstacleBrushMinimumDiameter;
+  const progress = range > 0 ? ((obstacleBrushSliderDiameter.value - obstacleBrushMinimumDiameter) / range) * 100 : 0;
+  return {
+    "--graphwar-killer-range-progress": `${formatDecimal(progress, 4)}%`,
+  };
+});
 const obstacleBrushPreview = computed(() => {
   const point = obstacleBrushPointerPoint.value;
   if (toolMode.value !== "obstacle" || !point || !parsedObstacleBrushDiameter.value.ok) {
@@ -1144,6 +1168,7 @@ onBeforeUnmount(() => {
   if (obstacleEditRefreshTimer) {
     clearTimeout(obstacleEditRefreshTimer);
   }
+  clearSmartPathfindingBlockedPoint();
 });
 
 watch([obstacleMinAreaText], () => {
@@ -1538,7 +1563,7 @@ function setObstacleBrushDiameterText(value: string) {
   obstacleBrushDiameterText.value = value;
 }
 
-function handleObstacleBrushDiameterRangeInput(event: Event) {
+function handleObstacleBrushDiameterInput(event: Event) {
   const input = event.target;
   if (input instanceof HTMLInputElement) {
     setObstacleBrushDiameterText(input.value);
@@ -1731,6 +1756,7 @@ async function appendPathPoint(point: PixelPoint) {
   }
 
   if (toolWorkflowMode.value === "simulator") {
+    clearSmartPathfindingBlockedPoint();
     pathPixels.value = [normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, undefined, 0)];
     pathStatus.value = "";
     return true;
@@ -1751,6 +1777,7 @@ async function appendPathPoint(point: PixelPoint) {
   }
 
   if (pathPixels.value.length === 0) {
+    clearSmartPathfindingBlockedPoint();
     pathPixels.value = [nextPoint];
     pathStatus.value = "";
     clearSmartPathfindingStatus();
@@ -1758,6 +1785,10 @@ async function appendPathPoint(point: PixelPoint) {
   }
 
   if (effectiveSmartPathfindingEnabled.value) {
+    if (!ensureCurrentPathReachesLastPointBeforeSmartPathfinding()) {
+      return false;
+    }
+
     const pathfindingToken = startSmartPathfinding();
     const startedAt = performance.now();
     let normalizedPath: PixelPoint[] | undefined;
@@ -1818,6 +1849,10 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
     return false;
   }
 
+  if (!ensureCurrentPathReachesLastPointBeforeSmartPathfinding()) {
+    return false;
+  }
+
   const targets = createSmartPathfindingSoldierTargets(startPoint, soldier);
   if (targets.length === 0) {
     setSmartPathfindingStatus(getSmartPathfindingFailureMessage(), "error");
@@ -1856,6 +1891,7 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
 
 /** 路径变更后同步落地并清空旧状态。 */
 function setPathPixels(points: PixelPoint[]) {
+  clearSmartPathfindingBlockedPoint();
   pathPixels.value = points;
   pathStatus.value = "";
 }
@@ -1976,6 +2012,38 @@ function pathTrajectoryReachesTargetBeforeSimulationObstacle(
   return createPathTrajectoryResult(points, hitTarget).reachesTargetBeforeObstacle;
 }
 
+/** 启动新寻路前先确认当前公式轨迹已经能到达当前最后路径点。 */
+function ensureCurrentPathReachesLastPointBeforeSmartPathfinding() {
+  if (pathPixels.value.length < 2) {
+    return true;
+  }
+
+  const currentTarget = createCurrentLastPathHitTarget();
+  if (!currentTarget) {
+    return true;
+  }
+
+  const result = createPathTrajectoryResult([...pathPixels.value], currentTarget);
+  if (result.reachesTargetBeforeObstacle) {
+    return true;
+  }
+
+  setSmartPathfindingStatus(getSmartPathfindingCurrentPathBlockedMessage(), "error");
+  flashSmartPathfindingBlockedPoint(result.blockedPoint ?? pathPixels.value.at(-1));
+  return false;
+}
+
+/** 当前最后路径点若对应识别士兵，则用真实士兵命中圈作为预检查目标。 */
+function createCurrentLastPathHitTarget() {
+  const lastPoint = pathPixels.value.at(-1);
+  if (!lastPoint) {
+    return undefined;
+  }
+
+  const soldier = detectedSoldiers.value.find((box) => detectionBoxContainsHitCircle(box, lastPoint));
+  return soldier ? createSoldierHitCircle(soldier) : lastPoint;
+}
+
 /** 几何路径通常点数偏多，逐点尝试删除并用真实轨迹验证，缩短最终公式。 */
 async function optimizeSmartPathfindingPath(
   points: PixelPoint[],
@@ -2048,6 +2116,7 @@ function createPathTrajectoryResult(points: PixelPoint[], hitTarget?: PixelPoint
     soldierMarkerRadius: hitTargetRadius,
   });
   return {
+    blockedPoint: result.earlyStopReason === "obstacle" ? result.visiblePixels.at(-1) : undefined,
     reachesTargetBeforeObstacle: result.reachesTargetBeforeObstacle,
     visiblePixels: result.visiblePixels,
   };
@@ -2262,6 +2331,29 @@ function setPathfindingOptimizationPreviewPoint(point: PixelPoint | undefined) {
   pathfindingOptimizationPreviewPoint.value = point;
 }
 
+/** 短暂标记阻止启动智能寻路的当前轨迹撞击位置。 */
+function flashSmartPathfindingBlockedPoint(point: PixelPoint | undefined) {
+  clearSmartPathfindingBlockedPoint();
+  if (!point) {
+    return;
+  }
+
+  smartPathfindingBlockedPoint.value = point;
+  smartPathfindingBlockedPointTimer = setTimeout(() => {
+    smartPathfindingBlockedPoint.value = undefined;
+    smartPathfindingBlockedPointTimer = undefined;
+  }, smartPathfindingBlockedPointFlashMs);
+}
+
+/** 清理当前路径预检的撞击点标记。 */
+function clearSmartPathfindingBlockedPoint() {
+  if (smartPathfindingBlockedPointTimer) {
+    clearTimeout(smartPathfindingBlockedPointTimer);
+    smartPathfindingBlockedPointTimer = undefined;
+  }
+  smartPathfindingBlockedPoint.value = undefined;
+}
+
 /** 设置寻路起点到目标的直线连接预览。 */
 function setSmartPathfindingPreviewConnection(startPoint: PixelPoint, targetPoint: PixelPoint) {
   smartPathfindingActiveRouteTolerance.value = parsedObstacleTolerances.value.ok
@@ -2308,6 +2400,7 @@ function clearSmartPathfindingPreview() {
   clearSmartPathfindingSearchPreview();
   smartPathfindingPreviewPath.value = [];
   pathfindingOptimizationPreviewPoint.value = undefined;
+  clearSmartPathfindingBlockedPoint();
 }
 
 /** 让长循环让出事件循环，保证搜索动画和取消操作能及时响应。 */
@@ -2887,6 +2980,11 @@ function getSmartPathfindingFailureMessage(elapsedMs?: number) {
   return locale.smartPathfinding.failure(elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs));
 }
 
+/** 返回当前路径尚未到达最后路径点时的寻路拦截文案。 */
+function getSmartPathfindingCurrentPathBlockedMessage() {
+  return locale.smartPathfinding.currentPathBlocked;
+}
+
 /** 返回智能寻路成功文案，可附带耗时。 */
 function getSmartPathfindingSuccessMessage(elapsedMs?: number) {
   return locale.smartPathfinding.success(elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs));
@@ -2923,6 +3021,7 @@ function formatElapsedDuration(elapsedMs: number) {
 function clearPath() {
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
+  clearSmartPathfindingBlockedPoint();
   clearActivePathState();
 }
 
@@ -2930,6 +3029,7 @@ function clearPath() {
 function clearAllModePaths() {
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
+  clearSmartPathfindingBlockedPoint();
   clearAllPathState();
 }
 
@@ -2941,6 +3041,7 @@ function undoLastPoint() {
 
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
+  clearSmartPathfindingBlockedPoint();
   undoActivePathPoint();
 }
 
@@ -3534,21 +3635,26 @@ async function copyText(text: string) {
           {{ locale.ui.actions.obstacleBrushDiameter }}
           <input
             type="range"
-            :value="obstacleBrushDiameterText"
+            :value="obstacleBrushSliderDiameter"
+            class="graphwar-killer__obstacle-brush-range"
+            :style="obstacleBrushRangeStyle"
             :min="obstacleBrushMinimumDiameter"
-            :max="obstacleBrushMaximumDiameter"
+            :max="obstacleBrushSliderMaximumDiameter"
             step="1"
             :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
             :title="locale.ui.actions.obstacleBrushDiameterTitle"
-            @input="handleObstacleBrushDiameterRangeInput"
+            @input="handleObstacleBrushDiameterInput"
           >
           <input
-            v-model="obstacleBrushDiameterText"
+            type="number"
+            :value="obstacleBrushDiameterText"
             inputmode="numeric"
             :min="obstacleBrushMinimumDiameter"
-            :max="obstacleBrushMaximumDiameter"
+            :max="obstacleBrushInputMaximumDiameter"
+            step="1"
             :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
             :title="locale.ui.actions.obstacleBrushDiameterTitle"
+            @input="handleObstacleBrushDiameterInput"
           >
           <span>{{ locale.ui.pathfinding.unit }}</span>
         </label>
@@ -3811,6 +3917,13 @@ async function copyText(text: string) {
             :points="plottedCurvePoints"
             :style="{ stroke: trajectoryStrokeColor }"
           />
+          <circle
+            v-if="smartPathfindingBlockedPoint"
+            class="graphwar-killer__pathfinding-blocked-point"
+            :cx="smartPathfindingBlockedPoint.x"
+            :cy="smartPathfindingBlockedPoint.y"
+            :r="soldierSelectionRadius"
+          />
           <g
             v-for="(point, index) in pathPixels"
             :key="`point-${index}`"
@@ -4035,6 +4148,13 @@ async function copyText(text: string) {
                 class="graphwar-killer__curve-line"
                 :points="plottedCurvePoints"
                 :style="{ stroke: trajectoryStrokeColor }"
+              />
+              <circle
+                v-if="smartPathfindingBlockedPoint"
+                class="graphwar-killer__pathfinding-blocked-point"
+                :cx="smartPathfindingBlockedPoint.x"
+                :cy="smartPathfindingBlockedPoint.y"
+                :r="soldierSelectionRadius"
               />
               <g
                 v-for="(point, index) in pathPixels"
@@ -4273,8 +4393,54 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer input[type="range"] {
-  accent-color: var(--vp-c-brand-1);
+  appearance: none;
+  background: linear-gradient(
+    to right,
+    var(--vp-c-brand-1) 0 var(--graphwar-killer-range-progress, 0%),
+    var(--vp-c-divider) var(--graphwar-killer-range-progress, 0%) 100%
+  );
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  height: 8px;
+  padding: 0;
   width: 100%;
+}
+
+.graphwar-killer input[type="range"]::-webkit-slider-runnable-track {
+  background: transparent;
+  border: 0;
+  height: 8px;
+}
+
+.graphwar-killer input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  background: var(--vp-c-brand-1);
+  border: 2px solid var(--vp-c-bg);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
+  height: 18px;
+  margin-top: -5px;
+  width: 18px;
+}
+
+.graphwar-killer input[type="range"]::-moz-range-track {
+  background: transparent;
+  border: 0;
+  height: 8px;
+}
+
+.graphwar-killer input[type="range"]::-moz-range-progress {
+  background: transparent;
+}
+
+.graphwar-killer input[type="range"]::-moz-range-thumb {
+  background: var(--vp-c-brand-1);
+  border: 2px solid var(--vp-c-bg);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
+  height: 18px;
+  width: 18px;
 }
 
 .graphwar-killer button,
@@ -4662,6 +4828,16 @@ async function copyText(text: string) {
   fill: color-mix(in srgb, #facc15 22%, transparent);
   stroke: #facc15;
   stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.graphwar-killer__pathfinding-blocked-point {
+  animation: graphwar-killer-curve-blink 450ms ease-in-out infinite;
+  fill: color-mix(in srgb, #dc2626 18%, transparent);
+  pointer-events: none;
+  stroke: #dc2626;
+  stroke-dasharray: 5 4;
+  stroke-width: 3;
   vector-effect: non-scaling-stroke;
 }
 

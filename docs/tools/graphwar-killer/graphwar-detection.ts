@@ -731,6 +731,44 @@ export function paintObstacleMaskDisk(mask: Uint8Array, center: PlaneGridPoint, 
   return changed ? nextMask : mask;
 }
 
+/** 用圆形笔刷沿线段连续修改当前障碍 mask；直径单位为 Graphwar 原始平面像素。 */
+export function paintObstacleMaskStroke(
+  mask: Uint8Array,
+  start: PlaneGridPoint,
+  end: PlaneGridPoint,
+  diameter: number,
+  value: 0 | 1,
+) {
+  const nextMask = new Uint8Array(mask);
+  const radius = Math.max(0.5, diameter / 2);
+  const offsetLimit = Math.ceil(radius);
+  const radiusSquared = radius * radius;
+  const minX = Math.max(0, Math.min(start.x, end.x) - offsetLimit);
+  const maxX = Math.min(GRAPHWAR_PLANE_LENGTH - 1, Math.max(start.x, end.x) + offsetLimit);
+  const minY = Math.max(0, Math.min(start.y, end.y) - offsetLimit);
+  const maxY = Math.min(GRAPHWAR_PLANE_HEIGHT - 1, Math.max(start.y, end.y) + offsetLimit);
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  let changed = false;
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      if (!pointIsInsideStrokeRadius(x, y, start, deltaX, deltaY, lengthSquared, radiusSquared)) {
+        continue;
+      }
+
+      const index = y * GRAPHWAR_PLANE_LENGTH + x;
+      if (nextMask[index] !== value) {
+        nextMask[index] = value;
+        changed = true;
+      }
+    }
+  }
+
+  return changed ? nextMask : mask;
+}
+
 /** 判断像素是否属于玩家/士兵主体颜色，而非棋盘和障碍。 */
 export function isPlayerColorPixel(red: number, green: number, blue: number) {
   if (
@@ -1747,6 +1785,27 @@ function setMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number, v
 
 function offsetIsInsideRadius(offsetX: number, offsetY: number, radiusSquared: number) {
   return offsetX * offsetX + offsetY * offsetY <= radiusSquared;
+}
+
+function pointIsInsideStrokeRadius(
+  x: number,
+  y: number,
+  start: PlaneGridPoint,
+  deltaX: number,
+  deltaY: number,
+  lengthSquared: number,
+  radiusSquared: number,
+) {
+  if (lengthSquared === 0) {
+    return offsetIsInsideRadius(x - start.x, y - start.y, radiusSquared);
+  }
+
+  const projection = clampNumber(((x - start.x) * deltaX + (y - start.y) * deltaY) / lengthSquared, 0, 1);
+  const closestX = start.x + deltaX * projection;
+  const closestY = start.y + deltaY * projection;
+  const distanceX = x - closestX;
+  const distanceY = y - closestY;
+  return distanceX * distanceX + distanceY * distanceY <= radiusSquared;
 }
 
 /** 判断平面网格点是否位于 Graphwar 原始平面内。 */

@@ -31,6 +31,7 @@ import {
   imagePointToPlaneGridPoint,
   isPlayerColorPixel,
   paintObstacleMaskDisk,
+  paintObstacleMaskStroke,
 } from "./graphwar-detection";
 import type { DetectedObstacleMap, GraphwarDetectionBox } from "./graphwar-detection";
 import {
@@ -277,6 +278,7 @@ const obstacleBrushDiameterText = ref("30");
 const obstacleBrushEraseEnabled = ref(false);
 const obstacleBrushPointerPoint = ref<PixelPoint>();
 const obstacleBrushDragging = ref(false);
+const obstacleBrushLastPlanePoint = ref<PlaneGridPoint>();
 const obstacleEditsDirty = ref(false);
 const searchAnimationEnabled = ref(true);
 const smartPathfindingInProgress = ref(false);
@@ -1308,6 +1310,7 @@ function clearDetectedGraphwarObjects() {
   obstacleEditsDirty.value = false;
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
+  obstacleBrushLastPlanePoint.value = undefined;
   hoveredDetectedSoldierId.value = undefined;
   clearSmartPathfindingStatus();
   clearObstacleEditRefreshTimer();
@@ -1492,6 +1495,7 @@ async function detectGraphwarObjectsInBounds(
   obstacleEditsDirty.value = false;
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
+  obstacleBrushLastPlanePoint.value = undefined;
   detectionStatus.value =
     source === "auto"
       ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, detectedObstacles.value.count)
@@ -1595,10 +1599,11 @@ function updateObstacleBrushPreview(point: PixelPoint) {
     : undefined;
 }
 
-function paintObstacleBrushAtPoint(point: PixelPoint) {
+function paintObstacleBrushAtPoint(point: PixelPoint, connectFromLastPoint = false) {
   const obstacleMap = detectedObstacles.value;
   const brushDiameter = parsedObstacleBrushDiameter.value;
   if (!obstacleMap || !brushDiameter.ok || !pointIsInsideBoundsRect(point, boundsRect.value)) {
+    obstacleBrushLastPlanePoint.value = undefined;
     return false;
   }
 
@@ -1606,12 +1611,12 @@ function paintObstacleBrushAtPoint(point: PixelPoint) {
   clearSmartPathfindingStatus();
   const center = imagePointToPlaneGridPoint(point, boundsRect.value);
   obstacleBrushPointerPoint.value = planeGridCellCenterToImagePoint(center, boundsRect.value);
-  const nextMask = paintObstacleMaskDisk(
-    obstacleMap.mask,
-    center,
-    brushDiameter.diameter,
-    obstacleBrushEraseEnabled.value ? 0 : 1,
-  );
+  const brushValue = obstacleBrushEraseEnabled.value ? 0 : 1;
+  const previousCenter = connectFromLastPoint ? obstacleBrushLastPlanePoint.value : undefined;
+  const nextMask = previousCenter
+    ? paintObstacleMaskStroke(obstacleMap.mask, previousCenter, center, brushDiameter.diameter, brushValue)
+    : paintObstacleMaskDisk(obstacleMap.mask, center, brushDiameter.diameter, brushValue);
+  obstacleBrushLastPlanePoint.value = center;
   if (nextMask === obstacleMap.mask) {
     return false;
   }
@@ -1718,6 +1723,7 @@ function handleStagePointerDown(event: PointerEvent) {
     }
 
     obstacleBrushDragging.value = true;
+    obstacleBrushLastPlanePoint.value = undefined;
     stageRef.value?.setPointerCapture(event.pointerId);
     paintObstacleBrushAtPoint(point);
     return;
@@ -2743,7 +2749,7 @@ function handleStagePointerMove(event: PointerEvent) {
   if (toolMode.value === "obstacle") {
     updateObstacleBrushPreview(point);
     if (obstacleBrushDragging.value) {
-      paintObstacleBrushAtPoint(point);
+      paintObstacleBrushAtPoint(point, true);
     }
     hoveredPathPointIndex.value = undefined;
     hoveredDetectedSoldierId.value = undefined;
@@ -2773,6 +2779,7 @@ function handleStagePointerLeave() {
   draggingPathPointIndex.value = undefined;
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
+  obstacleBrushLastPlanePoint.value = undefined;
 }
 
 /** 返回当前可见目标中被指针命中的士兵。 */
@@ -2880,6 +2887,7 @@ function handleStageContextMenu(event: MouseEvent) {
 function handleStagePointerUp(event: PointerEvent) {
   if (obstacleBrushDragging.value) {
     obstacleBrushDragging.value = false;
+    obstacleBrushLastPlanePoint.value = undefined;
     if (stageRef.value?.hasPointerCapture(event.pointerId)) {
       stageRef.value.releasePointerCapture(event.pointerId);
     }
@@ -2905,6 +2913,7 @@ function setToolMode(mode: ToolMode) {
   pointerPreviewPoint.value = undefined;
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
+  obstacleBrushLastPlanePoint.value = undefined;
   hoveredDetectedSoldierId.value = undefined;
   hoveredPathPointIndex.value = undefined;
   if (mode !== "bounds") {

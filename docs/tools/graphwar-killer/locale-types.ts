@@ -38,8 +38,12 @@ export interface GraphwarKillerLocale {
     boundsInvalidNumber: string;
     maxXGreaterThanMinX: string;
     maxYGreaterThanMinY: string;
+    magnifierZoomNumber: string;
+    magnifierZoomRange: (min: number, max: number) => string;
     obstacleMinAreaInteger: string;
     obstacleMinAreaRange: (max: number) => string;
+    obstacleBrushDiameterInteger: string;
+    obstacleBrushDiameterRange: (min: number, max: number) => string;
     pathfindingMaximumNumber: string;
     pathfindingMaximumPixelRange: (limit: number) => string;
     pathfindingMinimumGreaterThanMaximum: string;
@@ -66,6 +70,7 @@ export interface GraphwarKillerLocale {
     };
     activeToolHint: {
       bounds: string;
+      obstacle: string;
       simulatorPath: string;
       solverPath: string;
     };
@@ -86,8 +91,11 @@ export interface GraphwarKillerLocale {
       cancelled: string;
       detectingBounds: string;
       detectingObjects: string;
-      detectedCurrentBounds: (soldiers: number, obstacles: number) => string;
-      detectedWithAutoBounds: (soldiers: number, obstacles: number) => string;
+      detectedCurrentBounds: (soldiers: number, elapsed: string) => string;
+      detectedWithAutoBounds: (soldiers: number, elapsed: string) => string;
+      obstacleEditsApplied: (obstacles: number) => string;
+      obstacleEditsCleared: (obstacles: number) => string;
+      updatingObstacleEdits: string;
       noBounds: string;
       noPixels: string;
       preparingPixels: string;
@@ -114,6 +122,7 @@ export interface GraphwarKillerLocale {
   };
   smartPathfinding: {
     cancelled: string;
+    currentPathBlocked: string;
     failure: (elapsed?: string) => string;
     forwardPath: (minimumStep: string) => string;
     inProgress: {
@@ -128,8 +137,20 @@ export interface GraphwarKillerLocale {
     actions: {
       clearPath: string;
       clearPathTitle: string;
+      clearObstacleEdits: string;
+      clearObstacleEditsTitle: string;
+      drawObstacle: string;
+      drawObstacleTitle: string;
+      eraseObstacle: string;
+      eraseObstacleTitle: string;
       magnifier: string;
       magnifierTitle: string;
+      magnifierZoom: string;
+      magnifierZoomAriaLabel: string;
+      magnifierZoomTitle: string;
+      obstacleBrushDiameter: string;
+      obstacleBrushDiameterAriaLabel: string;
+      obstacleBrushDiameterTitle: string;
       pickBounds: string;
       pickBoundsTitle: string;
       pickPath: string;
@@ -187,6 +208,8 @@ export interface GraphwarKillerLocale {
       simulationExpansion: string;
       simulationExpansionAriaLabel: string;
       simulationExpansionTitle: string;
+      autoGraph: string;
+      smartPathfinding: string;
       title: string;
       unit: string;
       workerCount: string;

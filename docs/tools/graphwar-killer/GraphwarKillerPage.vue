@@ -24,10 +24,15 @@ import {
 import {
   addSoldierAreasToObstacleMask,
   buildObstacleEdgePath,
+  buildObstacleFillPath,
+  countObstacleMaskComponents,
   detectGraphwarObjectsInBounds as detectGraphwarObjectsFromImage,
   detectGraphwarPlayArea,
   dilateObstacleMask,
+  imagePointToPlaneGridPoint,
   isPlayerColorPixel,
+  paintObstacleMaskDisk,
+  paintObstacleMaskStroke,
 } from "./graphwar-detection";
 import type { DetectedObstacleMap, GraphwarDetectionBox } from "./graphwar-detection";
 import {
@@ -86,6 +91,10 @@ type ParsedSteepness = { ok: true; steepness: number } | { ok: false; message: s
 type ParsedPrecision = { ok: true; decimalPlaces: number } | { ok: false; message: string };
 /** 障碍识别阈值解析结果，失败时阻止重新识别。 */
 type ParsedObstacleThresholds = { ok: true; minArea: number } | { ok: false; message: string };
+/** 放大镜倍率解析结果；允许输入框超过滑条快速范围。 */
+type ParsedMagnifierZoom = { ok: true; zoom: number } | { ok: false; message: string };
+/** 障碍笔刷直径解析结果，单位为 Graphwar 原始 770x450 平面像素。 */
+type ParsedObstacleBrushDiameter = { ok: true; diameter: number } | { ok: false; message: string };
 /** 寻路容差解析结果；所有距离都使用 Graphwar 原始 770x450 平面像素。 */
 type ParsedObstacleTolerances =
   | {
@@ -99,6 +108,8 @@ type ParsedObstacleTolerances =
   | { ok: false; message: string };
 /** 寻路模式；auto-graph 保留为待重写的禁用入口。 */
 type PathfindingMode = "off" | "smart" | "auto-graph";
+/** 识别状态等级，与面板标题和智能寻路状态样式对齐。 */
+type DetectionStatusKind = "info" | "success" | "warning" | "error";
 /** 智能寻路状态等级，与面板标题和状态条样式对齐。 */
 type SmartPathfindingStatusKind = "info" | "success" | "warning" | "error";
 /** 智能寻路内部阶段，用于状态文案和搜索动画。 */
@@ -139,6 +150,8 @@ interface SoldierAimCheckResult {
 }
 /** 单目标弹道验证结果。 */
 interface PathTrajectoryResult {
+  /** 未命中目标前碰到障碍或边界的位置。 */
+  blockedPoint?: PixelPoint;
   /** 是否先命中目标再碰障碍。 */
   reachesTargetBeforeObstacle: boolean;
   /** 可绘制轨迹。 */
@@ -165,12 +178,23 @@ const graphwarVisibleYLimitText = formatDoublePrecisionDecimal(GRAPHWAR_VISIBLE_
 const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
 const graphwarBoundaryExpansionLimit = Math.floor((Math.min(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) - 1) / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
-const autoGraphWorkerCountLimit = 1024;
+const magnifierMinimumZoom = 1;
+const magnifierSliderMaximumZoom = 5;
+const magnifierInputMaximumZoom = 100;
+const obstacleBrushMinimumDiameter = 1;
+const obstacleBrushSliderMaximumDiameter = 200;
+const obstacleBrushInputMaximumDiameter = 1000;
+const obstacleBrushEditRefreshDelayMs = 250;
+const detectionFlashAnimationMs = 1600;
+const smartPathfindingBlockedPointFlashMs = 1800;
+const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
+const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
 const boundsFirstPoint = ref<PixelPoint>();
 const pointerPreviewPoint = ref<PixelPoint>();
 const magnifierEnabled = ref(true);
+const magnifierZoomText = ref(String(graphwarToolDefaults.magnifierZoom));
 const magnifierPoint = ref<PixelPoint>();
 const boundsFlashActive = ref(false);
 const toolMode = ref<ToolMode>("bounds");
@@ -203,7 +227,6 @@ const obstacleRouteMinToleranceText = ref("1");
 const obstacleRouteMaxToleranceText = ref("3");
 const obstacleRouteStepToleranceText = ref("1");
 const obstacleSimulationToleranceText = ref("1");
-const autoGraphWorkerCountText = ref("4");
 const pathfindingBoundaryExpansionText = ref("1");
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
@@ -252,16 +275,23 @@ const {
   onImageLoaded: handleLoadedScreenshot,
 });
 const detectionStatus = ref("");
-const detectionStatusIsError = ref(false);
+const detectionStatusKind = ref<DetectionStatusKind>("info");
 const detectionInProgress = ref(false);
 const detectedSoldiers = ref<DetectionBox[]>([]);
 const detectedObstacles = ref<DetectedObstacleMap>();
+const baselineDetectedObstacles = ref<DetectedObstacleMap>();
 const autoDetectionEnabled = ref(true);
+const detectionSoldierFlashActive = ref(false);
 const smartCursorEnabled = ref(true);
 const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
+const obstacleBrushDiameterText = ref("30");
+const obstacleBrushEraseEnabled = ref(false);
+const obstacleBrushPointerPoint = ref<PixelPoint>();
+const obstacleBrushDragging = ref(false);
+const obstacleBrushLastPlanePoint = ref<PlaneGridPoint>();
+const obstacleEditsDirty = ref(false);
 const searchAnimationEnabled = ref(true);
-const autoGraphFastModeEnabled = ref(true);
 const smartPathfindingInProgress = ref(false);
 const activeSmartPathfindingPhase = ref<SmartPathfindingPhase>("search");
 const smartPathfindingStatus = ref("");
@@ -273,6 +303,7 @@ const smartPathfindingPreviewCurrentPoint = ref<PixelPoint>();
 const smartPathfindingPreviewPoints = ref<PixelPoint[]>([]);
 const smartPathfindingPreviewPath = ref<PixelPoint[]>([]);
 const pathfindingOptimizationPreviewPoint = ref<PixelPoint>();
+const smartPathfindingBlockedPoint = ref<PixelPoint>();
 const routeMaskCache = new WeakMap<Uint8Array, Map<string, RouteMaskCacheEntry>>();
 const effectiveSmartPathfindingEnabled = computed(
   () => toolWorkflowMode.value !== "simulator" && algorithmMode.value !== "step" && smartPathfindingEnabled.value,
@@ -287,12 +318,15 @@ let boundsFlashFrame: number | undefined;
 let boundsFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let detectionSoldierFlashFrame: number | undefined;
+let detectionSoldierFlashTimer: ReturnType<typeof setTimeout> | undefined;
+let obstacleEditRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let smartPathfindingBlockedPointTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRunId = 0;
 let smartPathfindingCancelToken = 0;
 
 const equationModes = computed(() => locale.equationModes);
 const toolWorkflowModes = computed(() => locale.toolWorkflowModes);
-const pathfindingModes = computed(() => locale.pathfindingModes);
 const algorithmModes = computed(() => locale.algorithmModes);
 
 const parsedBounds = computed<ParsedBounds>(() => {
@@ -343,6 +377,37 @@ const parsedObstacleThresholds = computed<ParsedObstacleThresholds>(() => {
     return { ok: false as const, message: locale.validation.obstacleMinAreaRange(graphwarObstacleMaxArea) };
   }
   return { ok: true as const, minArea };
+});
+
+const parsedMagnifierZoom = computed<ParsedMagnifierZoom>(() => {
+  const zoom = parseFiniteNumber(magnifierZoomText.value);
+  if (zoom === undefined) {
+    return { ok: false as const, message: locale.validation.magnifierZoomNumber };
+  }
+  if (zoom < magnifierMinimumZoom || zoom > magnifierInputMaximumZoom) {
+    return {
+      ok: false as const,
+      message: locale.validation.magnifierZoomRange(magnifierMinimumZoom, magnifierInputMaximumZoom),
+    };
+  }
+  return { ok: true as const, zoom };
+});
+
+const parsedObstacleBrushDiameter = computed<ParsedObstacleBrushDiameter>(() => {
+  const diameter = parseFiniteNumber(obstacleBrushDiameterText.value);
+  if (diameter === undefined || !Number.isInteger(diameter)) {
+    return { ok: false as const, message: locale.validation.obstacleBrushDiameterInteger };
+  }
+  if (diameter < obstacleBrushMinimumDiameter || diameter > obstacleBrushInputMaximumDiameter) {
+    return {
+      ok: false as const,
+      message: locale.validation.obstacleBrushDiameterRange(
+        obstacleBrushMinimumDiameter,
+        obstacleBrushInputMaximumDiameter,
+      ),
+    };
+  }
+  return { ok: true as const, diameter };
 });
 
 const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
@@ -510,9 +575,11 @@ const settingsHeaderStatusIsError = computed(() => settingsHeaderStatusResult.va
 const activeToolHint = computed(() =>
   toolMode.value === "bounds"
     ? locale.status.activeToolHint.bounds
-    : toolWorkflowMode.value === "simulator"
-      ? locale.status.activeToolHint.simulatorPath
-      : locale.status.activeToolHint.solverPath,
+    : toolMode.value === "obstacle"
+      ? locale.status.activeToolHint.obstacle
+      : toolWorkflowMode.value === "simulator"
+        ? locale.status.activeToolHint.simulatorPath
+        : locale.status.activeToolHint.solverPath,
 );
 const boundsPreviewRect = computed(() =>
   boundsFirstPoint.value && pointerPreviewPoint.value
@@ -527,6 +594,14 @@ const visibleObstacleEdgePath = computed(() => {
   }
 
   return buildObstacleEdgePath(obstacleMap.mask, boundsRect.value);
+});
+const visibleObstacleFillPath = computed(() => {
+  const obstacleMap = detectedObstacles.value;
+  if (!obstacleMap || pathfindingObstacleEdgesActive.value) {
+    return "";
+  }
+
+  return buildObstacleFillPath(obstacleMap.mask, boundsRect.value);
 });
 const smartPathfindingBaseObstacleMask = computed(() => {
   const obstacleMap = detectedObstacles.value;
@@ -569,6 +644,17 @@ const smartPathfindingObstacleRouteEdgePath = computed(() => {
     boundsRect.value,
   );
 });
+const smartPathfindingObstacleRouteFillPath = computed(() => {
+  const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
+  if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
+    return "";
+  }
+
+  return buildObstacleFillPath(
+    getCachedRouteMask(obstacleMask, smartPathfindingVisibleRouteTolerance.value).mask,
+    boundsRect.value,
+  );
+});
 const smartPathfindingObstacleSimulationEdgePath = computed(() => {
   const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
   if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
@@ -576,6 +662,17 @@ const smartPathfindingObstacleSimulationEdgePath = computed(() => {
   }
 
   return buildObstacleEdgePath(
+    getCachedRouteMask(obstacleMask, parsedObstacleTolerances.value.simulationTolerancePlanePixels).mask,
+    boundsRect.value,
+  );
+});
+const smartPathfindingObstacleSimulationFillPath = computed(() => {
+  const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
+  if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
+    return "";
+  }
+
+  return buildObstacleFillPath(
     getCachedRouteMask(obstacleMask, parsedObstacleTolerances.value.simulationTolerancePlanePixels).mask,
     boundsRect.value,
   );
@@ -692,13 +789,7 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
   return visibleSoldiers.filter((box) => Boolean(createSearchStartSoldierAimPoint(lastPoint, box)));
 });
 const pathfindingMode = computed<PathfindingMode>(() => (smartPathfindingEnabled.value ? "smart" : "off"));
-const activePathfindingControlsVisible = computed(
-  () => pathfindingMode.value === "smart" || pathfindingMode.value === "auto-graph",
-);
 const autoGraphPathfindingDisabledMessage = computed(() => locale.status.autoGraphPathfindingDisabled);
-const autoGraphPathfindingControlsVisible = computed(
-  () => pathfindingMode.value === "auto-graph" && !isPathfindingModeDisabled("auto-graph"),
-);
 const stepPathfindingDisabledMessage = computed(() => locale.status.stepPathfindingDisabled);
 
 const calculationMessage = computed(() => {
@@ -730,7 +821,60 @@ const detectionSettingsMessage = computed(() => {
   return "";
 });
 const detectionHeaderStatus = computed(() => detectionSettingsMessage.value || detectionStatus.value);
-const detectionHeaderStatusIsError = computed(() => !!detectionSettingsMessage.value || detectionStatusIsError.value);
+const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
+  detectionSettingsMessage.value ? "error" : detectionStatusKind.value,
+);
+const detectionHeaderStatusIsError = computed(() => detectionHeaderStatusKind.value === "error");
+const detectionHeaderStatusIsWarning = computed(() => detectionHeaderStatusKind.value === "warning");
+const detectionHeaderStatusIsSuccess = computed(() => detectionHeaderStatusKind.value === "success");
+
+const magnifierZoom = computed(() =>
+  parsedMagnifierZoom.value.ok ? parsedMagnifierZoom.value.zoom : graphwarToolDefaults.magnifierZoom,
+);
+const magnifierSliderZoom = computed(() =>
+  clampNumber(magnifierZoom.value, magnifierMinimumZoom, magnifierSliderMaximumZoom),
+);
+const magnifierZoomRangeStyle = computed(() => {
+  const range = magnifierSliderMaximumZoom - magnifierMinimumZoom;
+  const progress = range > 0 ? ((magnifierSliderZoom.value - magnifierMinimumZoom) / range) * 100 : 0;
+  return {
+    "--graphwar-killer-range-progress": `${formatDecimal(progress, 4)}%`,
+  };
+});
+const obstacleBrushAvailable = computed(
+  () => Boolean(detectedObstacles.value) && (smartCursorEnabled.value || smartPathfindingEnabled.value),
+);
+const obstacleBrushControlsVisible = computed(() => toolMode.value === "obstacle");
+const obstacleBrushSliderDiameter = computed(() => {
+  const diameter = parseFiniteNumber(obstacleBrushDiameterText.value);
+  return clampNumber(
+    diameter ?? obstacleBrushMinimumDiameter,
+    obstacleBrushMinimumDiameter,
+    obstacleBrushSliderMaximumDiameter,
+  );
+});
+const obstacleBrushRangeStyle = computed(() => {
+  const range = obstacleBrushSliderMaximumDiameter - obstacleBrushMinimumDiameter;
+  const progress = range > 0 ? ((obstacleBrushSliderDiameter.value - obstacleBrushMinimumDiameter) / range) * 100 : 0;
+  return {
+    "--graphwar-killer-range-progress": `${formatDecimal(progress, 4)}%`,
+  };
+});
+const obstacleBrushPreview = computed(() => {
+  const point = obstacleBrushPointerPoint.value;
+  if (toolMode.value !== "obstacle" || !point || !parsedObstacleBrushDiameter.value.ok) {
+    return undefined;
+  }
+
+  const diameter = parsedObstacleBrushDiameter.value.diameter;
+  const width = (diameter / GRAPHWAR_PLANE_LENGTH) * boundsRect.value.width;
+  const height = (diameter / GRAPHWAR_PLANE_HEIGHT) * boundsRect.value.height;
+  return {
+    center: point,
+    radiusX: width / 2,
+    radiusY: height / 2,
+  };
+});
 
 const smartPathfindingSettingsMessage = computed(() => {
   if (toolWorkflowMode.value === "simulator") {
@@ -1045,7 +1189,7 @@ const magnifierContentStyle = computed(() => {
   const displayX = (point.x / imageWidth.value) * stageDisplayWidth.value;
   const displayY = (point.y / imageHeight.value) * stageDisplayHeight.value;
   const size = graphwarToolDefaults.magnifierSize;
-  const zoom = graphwarToolDefaults.magnifierZoom;
+  const zoom = magnifierZoom.value;
 
   return {
     width: `${stageDisplayWidth.value}px`,
@@ -1079,6 +1223,10 @@ const screenshotImageStatusText = computed(
   () => imageStatus.value || imageName.value || locale.status.image.defaultStatus,
 );
 
+function nowMs() {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
 onMounted(() => {
   window.addEventListener("paste", handlePaste);
 });
@@ -1098,6 +1246,11 @@ onBeforeUnmount(() => {
   if (detectionRefreshTimer) {
     clearTimeout(detectionRefreshTimer);
   }
+  clearDetectionSoldierFlash();
+  if (obstacleEditRefreshTimer) {
+    clearTimeout(obstacleEditRefreshTimer);
+  }
+  clearSmartPathfindingBlockedPoint();
 });
 
 watch([obstacleMinAreaText], () => {
@@ -1120,7 +1273,8 @@ watch([formulaOutputDecimalPlaces], () => {
 watch([algorithmMode, solverEquationMode], () => {
   clearSmartPathfindingStatus();
   if (algorithmMode.value === "step" && pathfindingMode.value !== "off") {
-    setPathfindingMode("off");
+    cancelSmartPathfinding(false);
+    smartPathfindingEnabled.value = false;
   }
   if (algorithmMode.value === "abs" && solverEquationMode.value === "ddy") {
     solverEquationMode.value = "y";
@@ -1133,6 +1287,12 @@ watch([stepOverflowProtectionEnabled], () => {
 
 watch([obstacleSimulationToleranceText, steepnessText], () => {
   clearSmartPathfindingStatus();
+});
+
+watch([smartCursorEnabled, smartPathfindingEnabled, detectedObstacles], () => {
+  if (toolMode.value === "obstacle" && !obstacleBrushAvailable.value) {
+    setToolMode("path");
+  }
 });
 
 watch(
@@ -1217,8 +1377,7 @@ function handleLoadedScreenshot() {
 function clearDetections() {
   detectionRunId += 1;
   detectionInProgress.value = false;
-  detectionStatus.value = "";
-  detectionStatusIsError.value = false;
+  setDetectionStatus("", "info");
   clearDetectedGraphwarObjects();
 }
 
@@ -1226,8 +1385,15 @@ function clearDetections() {
 function clearDetectedGraphwarObjects() {
   detectedSoldiers.value = [];
   detectedObstacles.value = undefined;
+  baselineDetectedObstacles.value = undefined;
+  clearDetectionSoldierFlash();
+  obstacleEditsDirty.value = false;
+  obstacleBrushPointerPoint.value = undefined;
+  obstacleBrushDragging.value = false;
+  obstacleBrushLastPlanePoint.value = undefined;
   hoveredDetectedSoldierId.value = undefined;
   clearSmartPathfindingStatus();
+  clearObstacleEditRefreshTimer();
 }
 
 function beginDetectionRun() {
@@ -1254,10 +1420,14 @@ function cancelDetection(showStatus: boolean) {
   detectionRunId += 1;
   detectionInProgress.value = false;
   if (showStatus) {
-    detectionStatus.value = locale.status.detection.cancelled;
-    detectionStatusIsError.value = false;
+    setDetectionStatus(locale.status.detection.cancelled, "warning");
   }
   return true;
+}
+
+function setDetectionStatus(message: string, kind: DetectionStatusKind) {
+  detectionStatus.value = message;
+  detectionStatusKind.value = kind;
 }
 
 function waitForDetectionStatusPaint() {
@@ -1270,8 +1440,7 @@ async function showDetectionStage(runId: number, message: string) {
   if (!isActiveDetectionRun(runId)) {
     return false;
   }
-  detectionStatus.value = `${message}${locale.status.detection.stopSuffix}`;
-  detectionStatusIsError.value = false;
+  setDetectionStatus(`${message}${locale.status.detection.stopSuffix}`, "warning");
   await nextTick();
   await waitForDetectionStatusPaint();
   return isActiveDetectionRun(runId);
@@ -1294,21 +1463,18 @@ function scheduleGraphwarObjectDetection() {
 /** 收敛截图读取、像素读取和阈值校验；后续检测入口只处理识别策略。 */
 function getGraphwarDetectionInput() {
   if (!imageRef.value || !imageUrl.value) {
-    detectionStatus.value = locale.status.detection.uploadFirst;
-    detectionStatusIsError.value = true;
+    setDetectionStatus(locale.status.detection.uploadFirst, "error");
     return undefined;
   }
 
   const imageData = getImageDataFromCurrentImage();
   if (!imageData) {
-    detectionStatus.value = locale.status.detection.noPixels;
-    detectionStatusIsError.value = true;
+    setDetectionStatus(locale.status.detection.noPixels, "error");
     return undefined;
   }
   const obstacleThresholds = parsedObstacleThresholds.value;
   if (!obstacleThresholds.ok) {
-    detectionStatus.value = obstacleThresholds.message;
-    detectionStatusIsError.value = true;
+    setDetectionStatus(obstacleThresholds.message, "error");
     return undefined;
   }
   return { imageData, obstacleThresholds };
@@ -1317,6 +1483,7 @@ function getGraphwarDetectionInput() {
 /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
 async function detectGraphwarObjects() {
   const runId = beginDetectionRun();
+  const startedAt = nowMs();
   try {
     if (!(await showDetectionStage(runId, locale.status.detection.preparingPixels))) {
       return;
@@ -1335,8 +1502,7 @@ async function detectGraphwarObjects() {
     }
     if (!edgeRect) {
       clearDetectedGraphwarObjects();
-      detectionStatus.value = locale.status.detection.noBounds;
-      detectionStatusIsError.value = true;
+      setDetectionStatus(locale.status.detection.noBounds, "error");
       return;
     }
 
@@ -1349,12 +1515,13 @@ async function detectGraphwarObjects() {
       detectionInput.obstacleThresholds,
       "auto",
       runId,
+      true,
+      startedAt,
     );
     if (!isActiveDetectionRun(runId)) {
       return;
     }
     toolMode.value = "path";
-    flashBoundsRect();
   } finally {
     finishDetectionRun(runId);
   }
@@ -1363,6 +1530,7 @@ async function detectGraphwarObjects() {
 /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
 async function detectGraphwarObjectsInCurrentBounds() {
   const runId = beginDetectionRun();
+  const startedAt = nowMs();
   try {
     if (!(await showDetectionStage(runId, locale.status.detection.preparingPixels))) {
       return;
@@ -1378,6 +1546,8 @@ async function detectGraphwarObjectsInCurrentBounds() {
       detectionInput.obstacleThresholds,
       "current",
       runId,
+      false,
+      startedAt,
     );
   } finally {
     finishDetectionRun(runId);
@@ -1391,6 +1561,8 @@ async function detectGraphwarObjectsInBounds(
   obstacleThresholds: Extract<ParsedObstacleThresholds, { ok: true }>,
   source: "auto" | "current",
   runId: number,
+  flashBounds = false,
+  startedAt = nowMs(),
 ) {
   clearSmartPathfindingStatus();
   if (!(await showDetectionStage(runId, locale.status.detection.detectingObjects))) {
@@ -1404,12 +1576,67 @@ async function detectGraphwarObjectsInBounds(
     return;
   }
   detectedSoldiers.value = result.soldiers;
+  flashDetectedSoldiers();
+  if (flashBounds) {
+    flashBoundsRect();
+  }
   detectedObstacles.value = result.obstacles;
-  detectionStatus.value =
+  baselineDetectedObstacles.value = cloneDetectedObstacleMap(result.obstacles);
+  obstacleEditsDirty.value = false;
+  obstacleBrushPointerPoint.value = undefined;
+  obstacleBrushDragging.value = false;
+  obstacleBrushLastPlanePoint.value = undefined;
+  const elapsed = formatElapsedDuration(nowMs() - startedAt);
+  setDetectionStatus(
     source === "auto"
-      ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, detectedObstacles.value.count)
-      : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, detectedObstacles.value.count);
-  detectionStatusIsError.value = false;
+      ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, elapsed)
+      : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, elapsed),
+    "success",
+  );
+}
+
+function clearDetectionSoldierFlash() {
+  detectionSoldierFlashActive.value = false;
+  if (detectionSoldierFlashFrame !== undefined) {
+    cancelAnimationFrame(detectionSoldierFlashFrame);
+    detectionSoldierFlashFrame = undefined;
+  }
+  if (detectionSoldierFlashTimer) {
+    clearTimeout(detectionSoldierFlashTimer);
+    detectionSoldierFlashTimer = undefined;
+  }
+}
+
+function flashDetectedSoldiers() {
+  clearDetectionSoldierFlash();
+  if (detectedSoldiers.value.length === 0) {
+    return;
+  }
+
+  detectionSoldierFlashFrame = requestAnimationFrame(() => {
+    detectionSoldierFlashFrame = undefined;
+    detectionSoldierFlashActive.value = true;
+    detectionSoldierFlashTimer = setTimeout(() => {
+      detectionSoldierFlashActive.value = false;
+      detectionSoldierFlashTimer = undefined;
+    }, detectionFlashAnimationMs);
+  });
+}
+
+function cloneDetectedObstacleMap(obstacles: DetectedObstacleMap): DetectedObstacleMap {
+  return {
+    count: obstacles.count,
+    mask: new Uint8Array(obstacles.mask),
+  };
+}
+
+function clearObstacleEditRefreshTimer() {
+  if (!obstacleEditRefreshTimer) {
+    return;
+  }
+
+  clearTimeout(obstacleEditRefreshTimer);
+  obstacleEditRefreshTimer = undefined;
 }
 
 /** 触发一次短暂边界高亮，帮助用户确认自动识别或手动框选结果。 */
@@ -1428,7 +1655,7 @@ function flashBoundsRect() {
     boundsFlashTimer = setTimeout(() => {
       boundsFlashActive.value = false;
       boundsFlashTimer = undefined;
-    }, 900);
+    }, detectionFlashAnimationMs);
   });
 }
 
@@ -1444,39 +1671,128 @@ function toggleSmartCursor() {
   }
 }
 
-/** 切换寻路模式，并取消当前异步寻路/清图任务。 */
-function setPathfindingMode(mode: PathfindingMode) {
-  if (isPathfindingModeDisabled(mode)) {
-    setSmartPathfindingStatus(getPathfindingModeDisabledMessage(mode), "warning");
-    return;
-  }
-  if (pathfindingMode.value === mode) {
+/** 切换智能寻路，并取消当前异步寻路任务。 */
+function toggleSmartPathfinding() {
+  if (isSmartPathfindingDisabled()) {
+    setSmartPathfindingStatus(getSmartPathfindingDisabledMessage(), "warning");
     return;
   }
 
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
-  smartPathfindingEnabled.value = mode === "smart";
+  smartPathfindingEnabled.value = !smartPathfindingEnabled.value;
+}
+
+function setObstacleBrushDiameterText(value: string) {
+  obstacleBrushDiameterText.value = value;
+}
+
+function handleObstacleBrushDiameterInput(event: Event) {
+  const input = event.target;
+  if (input instanceof HTMLInputElement) {
+    setObstacleBrushDiameterText(input.value);
+  }
+}
+
+function setMagnifierZoomText(value: string) {
+  magnifierZoomText.value = value;
+}
+
+function handleMagnifierZoomInput(event: Event) {
+  const input = event.target;
+  if (input instanceof HTMLInputElement) {
+    setMagnifierZoomText(input.value);
+  }
+}
+
+function toggleObstacleBrushErase() {
+  obstacleBrushEraseEnabled.value = !obstacleBrushEraseEnabled.value;
+}
+
+function resetObstacleEdits() {
+  const baseline = baselineDetectedObstacles.value;
+  if (!baseline) {
+    return;
+  }
+
+  cancelSmartPathfinding(false);
+  clearSmartPathfindingStatus();
+  clearObstacleEditRefreshTimer();
+  detectedObstacles.value = cloneDetectedObstacleMap(baseline);
+  obstacleEditsDirty.value = false;
+  setDetectionStatus(locale.status.detection.obstacleEditsCleared(baseline.count), "success");
+}
+
+function updateObstacleBrushPreview(point: PixelPoint) {
+  obstacleBrushPointerPoint.value = pointIsInsideBoundsRect(point, boundsRect.value)
+    ? planeGridCellCenterToImagePoint(imagePointToPlaneGridPoint(point, boundsRect.value), boundsRect.value)
+    : undefined;
+}
+
+function paintObstacleBrushAtPoint(point: PixelPoint, connectFromLastPoint = false) {
+  const obstacleMap = detectedObstacles.value;
+  const brushDiameter = parsedObstacleBrushDiameter.value;
+  if (!obstacleMap || !brushDiameter.ok || !pointIsInsideBoundsRect(point, boundsRect.value)) {
+    obstacleBrushLastPlanePoint.value = undefined;
+    return false;
+  }
+
+  cancelSmartPathfinding(false);
+  clearSmartPathfindingStatus();
+  const center = imagePointToPlaneGridPoint(point, boundsRect.value);
+  obstacleBrushPointerPoint.value = planeGridCellCenterToImagePoint(center, boundsRect.value);
+  const brushValue = obstacleBrushEraseEnabled.value ? 0 : 1;
+  const previousCenter = connectFromLastPoint ? obstacleBrushLastPlanePoint.value : undefined;
+  const nextMask = previousCenter
+    ? paintObstacleMaskStroke(obstacleMap.mask, previousCenter, center, brushDiameter.diameter, brushValue)
+    : paintObstacleMaskDisk(obstacleMap.mask, center, brushDiameter.diameter, brushValue);
+  obstacleBrushLastPlanePoint.value = center;
+  if (nextMask === obstacleMap.mask) {
+    return false;
+  }
+
+  detectedObstacles.value = {
+    count: obstacleMap.count,
+    mask: nextMask,
+  };
+  obstacleEditsDirty.value = true;
+  scheduleObstacleEditRefresh();
+  return true;
+}
+
+function scheduleObstacleEditRefresh() {
+  clearObstacleEditRefreshTimer();
+  setDetectionStatus(locale.status.detection.updatingObstacleEdits, "warning");
+  obstacleEditRefreshTimer = setTimeout(() => {
+    obstacleEditRefreshTimer = undefined;
+    const obstacles = detectedObstacles.value;
+    if (!obstacles) {
+      return;
+    }
+    const count = countObstacleMaskComponents(obstacles.mask);
+    detectedObstacles.value = {
+      count,
+      mask: obstacles.mask,
+    };
+    setDetectionStatus(locale.status.detection.obstacleEditsApplied(count), "success");
+  }, obstacleBrushEditRefreshDelayMs);
 }
 
 /** Step 公式不支持智能/一键清图，因为弹道和路径点语义不稳定。 */
-function isPathfindingModeDisabled(mode: PathfindingMode) {
-  if (mode === "auto-graph") {
-    return true;
-  }
-  return algorithmMode.value === "step" && mode !== "off";
+function isSmartPathfindingDisabled() {
+  return algorithmMode.value === "step";
 }
 
-/** 返回寻路模式被禁用的具体原因。 */
-function getPathfindingModeDisabledMessage(mode: PathfindingMode) {
-  return mode === "auto-graph" ? autoGraphPathfindingDisabledMessage.value : stepPathfindingDisabledMessage.value;
+/** 返回智能寻路被禁用的具体原因。 */
+function getSmartPathfindingDisabledMessage() {
+  return stepPathfindingDisabledMessage.value;
 }
 
-/** 返回寻路模式按钮 title，禁用时优先解释原因。 */
-function getPathfindingModeTitle(mode: PathfindingMode) {
-  return isPathfindingModeDisabled(mode)
-    ? getPathfindingModeDisabledMessage(mode)
-    : (pathfindingModes.value.find((entry) => entry.value === mode)?.title ?? "");
+/** 返回智能寻路按钮 title，禁用时优先解释原因。 */
+function getSmartPathfindingToggleTitle() {
+  return isSmartPathfindingDisabled()
+    ? getSmartPathfindingDisabledMessage()
+    : (locale.pathfindingModes.find((entry) => entry.value === "smart")?.title ?? "");
 }
 
 /** 切换友伤设置；该设置会改变士兵是否写入障碍 mask，因此需要重建路线。 */
@@ -1525,6 +1841,22 @@ function handleStagePointerDown(event: PointerEvent) {
     return;
   }
 
+  if (toolMode.value === "obstacle") {
+    if (event.button !== 0) {
+      return;
+    }
+
+    if (!obstacleBrushAvailable.value || !parsedObstacleBrushDiameter.value.ok) {
+      return;
+    }
+
+    obstacleBrushDragging.value = true;
+    obstacleBrushLastPlanePoint.value = undefined;
+    stageRef.value?.setPointerCapture(event.pointerId);
+    paintObstacleBrushAtPoint(point);
+    return;
+  }
+
   if (event.button !== 0 || !parsedBounds.value.ok) {
     return;
   }
@@ -1558,6 +1890,7 @@ async function appendPathPoint(point: PixelPoint) {
   }
 
   if (toolWorkflowMode.value === "simulator") {
+    clearSmartPathfindingBlockedPoint();
     pathPixels.value = [normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, undefined, 0)];
     pathStatus.value = "";
     return true;
@@ -1578,6 +1911,7 @@ async function appendPathPoint(point: PixelPoint) {
   }
 
   if (pathPixels.value.length === 0) {
+    clearSmartPathfindingBlockedPoint();
     pathPixels.value = [nextPoint];
     pathStatus.value = "";
     clearSmartPathfindingStatus();
@@ -1585,6 +1919,10 @@ async function appendPathPoint(point: PixelPoint) {
   }
 
   if (effectiveSmartPathfindingEnabled.value) {
+    if (!ensureCurrentPathReachesLastPointBeforeSmartPathfinding()) {
+      return false;
+    }
+
     const pathfindingToken = startSmartPathfinding();
     const startedAt = performance.now();
     let normalizedPath: PixelPoint[] | undefined;
@@ -1645,6 +1983,10 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
     return false;
   }
 
+  if (!ensureCurrentPathReachesLastPointBeforeSmartPathfinding()) {
+    return false;
+  }
+
   const targets = createSmartPathfindingSoldierTargets(startPoint, soldier);
   if (targets.length === 0) {
     setSmartPathfindingStatus(getSmartPathfindingFailureMessage(), "error");
@@ -1683,6 +2025,7 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
 
 /** 路径变更后同步落地并清空旧状态。 */
 function setPathPixels(points: PixelPoint[]) {
+  clearSmartPathfindingBlockedPoint();
   pathPixels.value = points;
   pathStatus.value = "";
 }
@@ -1803,6 +2146,38 @@ function pathTrajectoryReachesTargetBeforeSimulationObstacle(
   return createPathTrajectoryResult(points, hitTarget).reachesTargetBeforeObstacle;
 }
 
+/** 启动新寻路前先确认当前公式轨迹已经能到达当前最后路径点。 */
+function ensureCurrentPathReachesLastPointBeforeSmartPathfinding() {
+  if (pathPixels.value.length < 2) {
+    return true;
+  }
+
+  const currentTarget = createCurrentLastPathHitTarget();
+  if (!currentTarget) {
+    return true;
+  }
+
+  const result = createPathTrajectoryResult([...pathPixels.value], currentTarget);
+  if (result.reachesTargetBeforeObstacle) {
+    return true;
+  }
+
+  setSmartPathfindingStatus(getSmartPathfindingCurrentPathBlockedMessage(), "error");
+  flashSmartPathfindingBlockedPoint(result.blockedPoint ?? pathPixels.value.at(-1));
+  return false;
+}
+
+/** 当前最后路径点若对应识别士兵，则用真实士兵命中圈作为预检查目标。 */
+function createCurrentLastPathHitTarget() {
+  const lastPoint = pathPixels.value.at(-1);
+  if (!lastPoint) {
+    return undefined;
+  }
+
+  const soldier = detectedSoldiers.value.find((box) => detectionBoxContainsHitCircle(box, lastPoint));
+  return soldier ? createSoldierHitCircle(soldier) : lastPoint;
+}
+
 /** 几何路径通常点数偏多，逐点尝试删除并用真实轨迹验证，缩短最终公式。 */
 async function optimizeSmartPathfindingPath(
   points: PixelPoint[],
@@ -1875,6 +2250,7 @@ function createPathTrajectoryResult(points: PixelPoint[], hitTarget?: PixelPoint
     soldierMarkerRadius: hitTargetRadius,
   });
   return {
+    blockedPoint: result.earlyStopReason === "obstacle" ? result.visiblePixels.at(-1) : undefined,
     reachesTargetBeforeObstacle: result.reachesTargetBeforeObstacle,
     visiblePixels: result.visiblePixels,
   };
@@ -2089,6 +2465,29 @@ function setPathfindingOptimizationPreviewPoint(point: PixelPoint | undefined) {
   pathfindingOptimizationPreviewPoint.value = point;
 }
 
+/** 短暂标记阻止启动智能寻路的当前轨迹撞击位置。 */
+function flashSmartPathfindingBlockedPoint(point: PixelPoint | undefined) {
+  clearSmartPathfindingBlockedPoint();
+  if (!point) {
+    return;
+  }
+
+  smartPathfindingBlockedPoint.value = point;
+  smartPathfindingBlockedPointTimer = setTimeout(() => {
+    smartPathfindingBlockedPoint.value = undefined;
+    smartPathfindingBlockedPointTimer = undefined;
+  }, smartPathfindingBlockedPointFlashMs);
+}
+
+/** 清理当前路径预检的撞击点标记。 */
+function clearSmartPathfindingBlockedPoint() {
+  if (smartPathfindingBlockedPointTimer) {
+    clearTimeout(smartPathfindingBlockedPointTimer);
+    smartPathfindingBlockedPointTimer = undefined;
+  }
+  smartPathfindingBlockedPoint.value = undefined;
+}
+
 /** 设置寻路起点到目标的直线连接预览。 */
 function setSmartPathfindingPreviewConnection(startPoint: PixelPoint, targetPoint: PixelPoint) {
   smartPathfindingActiveRouteTolerance.value = parsedObstacleTolerances.value.ok
@@ -2135,6 +2534,7 @@ function clearSmartPathfindingPreview() {
   clearSmartPathfindingSearchPreview();
   smartPathfindingPreviewPath.value = [];
   pathfindingOptimizationPreviewPoint.value = undefined;
+  clearSmartPathfindingBlockedPoint();
 }
 
 /** 让长循环让出事件循环，保证搜索动画和取消操作能及时响应。 */
@@ -2163,9 +2563,12 @@ function createBoundsRectWithBoundaryExpansion(rect: BoundsRect, boundaryExpansi
 /** 判断点是否在考虑边界外扩后的可用目标区域内。 */
 function pointIsInsideTargetBounds(point: PixelPoint) {
   const rect = targetBoundsRect.value;
-  return Boolean(
-    rect && point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height,
-  );
+  return Boolean(rect && pointIsInsideBoundsRect(point, rect));
+}
+
+/** 判断点是否在指定截图矩形内，边界视为有效。 */
+function pointIsInsideBoundsRect(point: PixelPoint, rect: BoundsRect) {
+  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
 /** 返回当前起点向 x+ 前进最小步长后的 Graphwar x，最小步长严格由当前输出小数位决定。 */
@@ -2471,6 +2874,15 @@ function handleStagePointerMove(event: PointerEvent) {
   if (magnifierEnabled.value) {
     magnifierPoint.value = point;
   }
+  if (toolMode.value === "obstacle") {
+    updateObstacleBrushPreview(point);
+    if (obstacleBrushDragging.value) {
+      paintObstacleBrushAtPoint(point, true);
+    }
+    hoveredPathPointIndex.value = undefined;
+    hoveredDetectedSoldierId.value = undefined;
+    return;
+  }
   if (draggingPathPointIndex.value !== undefined) {
     hoveredPathPointIndex.value = draggingPathPointIndex.value;
     setPathPoint(draggingPathPointIndex.value, point);
@@ -2493,6 +2905,9 @@ function handleStagePointerLeave() {
   hoveredDetectedSoldierId.value = undefined;
   hoveredPathPointIndex.value = undefined;
   draggingPathPointIndex.value = undefined;
+  obstacleBrushPointerPoint.value = undefined;
+  obstacleBrushDragging.value = false;
+  obstacleBrushLastPlanePoint.value = undefined;
 }
 
 /** 返回当前可见目标中被指针命中的士兵。 */
@@ -2579,6 +2994,10 @@ function handleStageContextMenu(event: MouseEvent) {
     return;
   }
 
+  if (toolMode.value === "obstacle") {
+    return;
+  }
+
   if (toolMode.value !== "path") {
     return;
   }
@@ -2594,6 +3013,15 @@ function handleStageContextMenu(event: MouseEvent) {
 
 /** 结束路径点拖拽，释放 pointer capture。 */
 function handleStagePointerUp(event: PointerEvent) {
+  if (obstacleBrushDragging.value) {
+    obstacleBrushDragging.value = false;
+    obstacleBrushLastPlanePoint.value = undefined;
+    if (stageRef.value?.hasPointerCapture(event.pointerId)) {
+      stageRef.value.releasePointerCapture(event.pointerId);
+    }
+    return;
+  }
+
   if (draggingPathPointIndex.value === undefined) {
     return;
   }
@@ -2605,9 +3033,18 @@ function handleStagePointerUp(event: PointerEvent) {
 
 /** 切换边界/路径模式，并清理当前模式的临时状态。 */
 function setToolMode(mode: ToolMode) {
+  if (mode === "obstacle" && !obstacleBrushAvailable.value) {
+    return;
+  }
+
   toolMode.value = mode;
   pointerPreviewPoint.value = undefined;
-  if (mode === "path") {
+  obstacleBrushPointerPoint.value = undefined;
+  obstacleBrushDragging.value = false;
+  obstacleBrushLastPlanePoint.value = undefined;
+  hoveredDetectedSoldierId.value = undefined;
+  hoveredPathPointIndex.value = undefined;
+  if (mode !== "bounds") {
     boundsFirstPoint.value = undefined;
   }
 }
@@ -2680,6 +3117,11 @@ function getSmartPathfindingFailureMessage(elapsedMs?: number) {
   return locale.smartPathfinding.failure(elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs));
 }
 
+/** 返回当前路径尚未到达最后路径点时的寻路拦截文案。 */
+function getSmartPathfindingCurrentPathBlockedMessage() {
+  return locale.smartPathfinding.currentPathBlocked;
+}
+
 /** 返回智能寻路成功文案，可附带耗时。 */
 function getSmartPathfindingSuccessMessage(elapsedMs?: number) {
   return locale.smartPathfinding.success(elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs));
@@ -2716,6 +3158,7 @@ function formatElapsedDuration(elapsedMs: number) {
 function clearPath() {
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
+  clearSmartPathfindingBlockedPoint();
   clearActivePathState();
 }
 
@@ -2723,6 +3166,7 @@ function clearPath() {
 function clearAllModePaths() {
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
+  clearSmartPathfindingBlockedPoint();
   clearAllPathState();
 }
 
@@ -2734,6 +3178,7 @@ function undoLastPoint() {
 
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
+  clearSmartPathfindingBlockedPoint();
   undoActivePathPoint();
 }
 
@@ -3045,7 +3490,11 @@ async function copyText(text: string) {
             v-if="detectionHeaderStatus"
             role="status"
             aria-live="polite"
-            :class="{ 'graphwar-killer__label-status--error': detectionHeaderStatusIsError }"
+            :class="{
+              'graphwar-killer__label-status--error': detectionHeaderStatusIsError,
+              'graphwar-killer__label-status--warning': detectionHeaderStatusIsWarning,
+              'graphwar-killer__label-status--success': detectionHeaderStatusIsSuccess,
+            }"
           >
             {{ detectionHeaderStatus }}
           </span>
@@ -3132,31 +3581,18 @@ async function copyText(text: string) {
           </span>
         </div>
         <div class="graphwar-killer__image-actions">
-          <div
-            class="graphwar-killer__tool-toggle graphwar-killer__pathfinding-mode-toggle"
-            :class="{
-              'graphwar-killer__pathfinding-mode-toggle--smart': pathfindingMode === 'smart',
-              'graphwar-killer__pathfinding-mode-toggle--auto-graph': pathfindingMode === 'auto-graph',
-            }"
-            role="group"
-            :aria-label="locale.ui.pathfinding.modeAriaLabel"
-            :title="locale.ui.pathfinding.modeTitle"
-          >
-            <button
-              v-for="mode in pathfindingModes"
-              :key="mode.value"
-              type="button"
-              :aria-pressed="pathfindingMode === mode.value"
-              :class="{ 'graphwar-killer__tool-toggle-button--active': pathfindingMode === mode.value }"
-              :disabled="isPathfindingModeDisabled(mode.value)"
-              :title="getPathfindingModeTitle(mode.value)"
-              @click="setPathfindingMode(mode.value)"
-            >
-              {{ mode.label }}
-            </button>
-          </div>
           <button
-            v-if="activePathfindingControlsVisible"
+            type="button"
+            :aria-pressed="smartPathfindingEnabled"
+            :class="{ 'graphwar-killer__toggle-button--active': smartPathfindingEnabled }"
+            :disabled="isSmartPathfindingDisabled()"
+            :title="getSmartPathfindingToggleTitle()"
+            @click="toggleSmartPathfinding"
+          >
+            {{ locale.ui.pathfinding.smartPathfinding }}
+          </button>
+          <button
+            v-if="smartPathfindingEnabled"
             type="button"
             :aria-pressed="friendlyFireEnabled"
             :class="{ 'graphwar-killer__toggle-button--active': friendlyFireEnabled }"
@@ -3166,7 +3602,7 @@ async function copyText(text: string) {
             {{ locale.ui.pathfinding.allowFriendlyFire }}
           </button>
           <button
-            v-if="activePathfindingControlsVisible"
+            v-if="smartPathfindingEnabled"
             type="button"
             :aria-pressed="searchAnimationEnabled"
             :class="{ 'graphwar-killer__toggle-button--active': searchAnimationEnabled }"
@@ -3175,36 +3611,20 @@ async function copyText(text: string) {
           >
             {{ locale.ui.pathfinding.searchAnimation }}
           </button>
-          <label
-            v-if="autoGraphPathfindingControlsVisible"
-            class="graphwar-killer__detection-setting-label"
-            :title="locale.ui.pathfinding.workerCountTitle"
-          >
-            {{ locale.ui.pathfinding.workerCount }}
-            <input
-              v-model="autoGraphWorkerCountText"
-              disabled
-              inputmode="numeric"
-              autocomplete="off"
-              min="1"
-              :max="autoGraphWorkerCountLimit"
-              :aria-label="locale.ui.pathfinding.workerCountAriaLabel"
-              :title="locale.ui.pathfinding.workerCountTitle"
-            >
-          </label>
           <button
-            v-if="autoGraphPathfindingControlsVisible"
+            v-if="smartPathfindingEnabled"
             type="button"
             disabled
-            :aria-label="locale.ui.pathfinding.fastModeAriaLabel"
-            :aria-pressed="autoGraphFastModeEnabled"
-            :class="{ 'graphwar-killer__toggle-button--active': autoGraphFastModeEnabled }"
-            :title="locale.ui.pathfinding.fastModeTitle"
+            aria-pressed="false"
+            :title="autoGraphPathfindingDisabledMessage"
           >
-            {{ locale.ui.pathfinding.fastMode }}
+            {{ locale.ui.pathfinding.autoGraph }}
           </button>
         </div>
-        <div class="graphwar-killer__pathfinding-settings">
+        <div
+          v-if="smartPathfindingEnabled"
+          class="graphwar-killer__pathfinding-settings"
+        >
           <details class="graphwar-killer__subpanel graphwar-killer__details">
             <summary
               id="graphwar-killer-obstacle-expansion-title"
@@ -3285,7 +3705,10 @@ async function copyText(text: string) {
       <div class="graphwar-killer__image-actions">
         <div
           class="graphwar-killer__tool-toggle"
-          :class="{ 'graphwar-killer__tool-toggle--path': toolMode === 'path' }"
+          :class="{
+            'graphwar-killer__tool-toggle--path': toolMode === 'path',
+            'graphwar-killer__tool-toggle--obstacle': toolMode === 'obstacle',
+          }"
           role="group"
           :aria-label="locale.ui.actions.toolModeAriaLabel"
           :title="locale.ui.actions.toolModeTitle"
@@ -3307,6 +3730,16 @@ async function copyText(text: string) {
             @click="setToolMode('path')"
           >
             {{ locale.ui.actions.pickPath }}
+          </button>
+          <button
+            type="button"
+            :aria-pressed="toolMode === 'obstacle'"
+            :class="{ 'graphwar-killer__tool-toggle-button--active': toolMode === 'obstacle' }"
+            :disabled="!obstacleBrushAvailable"
+            :title="locale.ui.actions.drawObstacleTitle"
+            @click="setToolMode('obstacle')"
+          >
+            {{ locale.ui.actions.drawObstacle }}
           </button>
         </div>
         <button
@@ -3331,6 +3764,88 @@ async function copyText(text: string) {
           @click="magnifierEnabled = !magnifierEnabled"
         >
           {{ locale.ui.actions.magnifier }}
+        </button>
+        <label
+          v-if="magnifierEnabled"
+          class="graphwar-killer__magnifier-zoom-label"
+          :title="locale.ui.actions.magnifierZoomTitle"
+        >
+          {{ locale.ui.actions.magnifierZoom }}
+          <input
+            type="range"
+            :value="magnifierSliderZoom"
+            :style="magnifierZoomRangeStyle"
+            :min="magnifierMinimumZoom"
+            :max="magnifierSliderMaximumZoom"
+            step="0.1"
+            :aria-label="locale.ui.actions.magnifierZoomAriaLabel"
+            :title="locale.ui.actions.magnifierZoomTitle"
+            @input="handleMagnifierZoomInput"
+          >
+          <input
+            type="number"
+            :value="magnifierZoomText"
+            inputmode="decimal"
+            :min="magnifierMinimumZoom"
+            :max="magnifierInputMaximumZoom"
+            step="0.1"
+            :aria-label="locale.ui.actions.magnifierZoomAriaLabel"
+            :title="locale.ui.actions.magnifierZoomTitle"
+            @input="handleMagnifierZoomInput"
+          >
+          <span>x</span>
+        </label>
+      </div>
+      <div
+        v-if="obstacleBrushControlsVisible"
+        class="graphwar-killer__obstacle-brush-actions"
+      >
+        <label
+          class="graphwar-killer__obstacle-brush-label"
+          :title="locale.ui.actions.obstacleBrushDiameterTitle"
+        >
+          {{ locale.ui.actions.obstacleBrushDiameter }}
+          <input
+            type="range"
+            :value="obstacleBrushSliderDiameter"
+            class="graphwar-killer__obstacle-brush-range"
+            :style="obstacleBrushRangeStyle"
+            :min="obstacleBrushMinimumDiameter"
+            :max="obstacleBrushSliderMaximumDiameter"
+            step="1"
+            :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
+            :title="locale.ui.actions.obstacleBrushDiameterTitle"
+            @input="handleObstacleBrushDiameterInput"
+          >
+          <input
+            type="number"
+            :value="obstacleBrushDiameterText"
+            inputmode="numeric"
+            :min="obstacleBrushMinimumDiameter"
+            :max="obstacleBrushInputMaximumDiameter"
+            step="1"
+            :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
+            :title="locale.ui.actions.obstacleBrushDiameterTitle"
+            @input="handleObstacleBrushDiameterInput"
+          >
+          <span>{{ locale.ui.pathfinding.unit }}</span>
+        </label>
+        <button
+          type="button"
+          :aria-pressed="obstacleBrushEraseEnabled"
+          :class="{ 'graphwar-killer__toggle-button--active': obstacleBrushEraseEnabled }"
+          :title="locale.ui.actions.eraseObstacleTitle"
+          @click="toggleObstacleBrushErase"
+        >
+          {{ locale.ui.actions.eraseObstacle }}
+        </button>
+        <button
+          type="button"
+          :disabled="!obstacleEditsDirty"
+          :title="locale.ui.actions.clearObstacleEditsTitle"
+          @click="resetObstacleEdits"
+        >
+          {{ locale.ui.actions.clearObstacleEdits }}
         </button>
       </div>
     </section>
@@ -3407,6 +3922,16 @@ async function copyText(text: string) {
           :viewBox="`0 0 ${imageWidth} ${imageHeight}`"
           aria-hidden="true"
         >
+          <defs>
+            <clipPath :id="mainObstacleBrushClipPathId">
+              <rect
+                :x="boundsRect.x"
+                :y="boundsRect.y"
+                :width="boundsRect.width"
+                :height="boundsRect.height"
+              />
+            </clipPath>
+          </defs>
           <rect
             class="graphwar-killer__bounds"
             :class="{
@@ -3449,11 +3974,26 @@ async function copyText(text: string) {
             :y2="visibleBoundsRect.y + visibleBoundsRect.height"
           />
           <path
+            v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleFillPath"
+            class="graphwar-killer__obstacle-fill"
+            :d="visibleObstacleFillPath"
+          />
+          <path
             v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleEdgePath"
             class="graphwar-killer__obstacle-edge"
             :d="visibleObstacleEdgePath"
           />
           <template v-if="pathfindingObstacleEdgesActive">
+            <path
+              v-if="smartPathfindingObstacleRouteFillPath"
+              class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--route"
+              :d="smartPathfindingObstacleRouteFillPath"
+            />
+            <path
+              v-if="smartPathfindingObstacleSimulationFillPath"
+              class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--simulation"
+              :d="smartPathfindingObstacleSimulationFillPath"
+            />
             <path
               v-if="smartPathfindingObstacleRouteEdgePath"
               class="graphwar-killer__obstacle-edge graphwar-killer__obstacle-edge--route"
@@ -3475,7 +4015,9 @@ async function copyText(text: string) {
                 class="graphwar-killer__detection"
                 :class="[
                   `graphwar-killer__detection--${box.kind}`,
-                  { 'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId },
+                  {
+                    'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId,
+                  },
                 ]"
                 :cx="box.visualCenterX"
                 :cy="box.visualCenterY"
@@ -3483,6 +4025,29 @@ async function copyText(text: string) {
               />
             </g>
           </template>
+          <g
+            v-if="detectionSoldierFlashActive"
+            class="graphwar-killer__detection-flash-group"
+          >
+            <circle
+              v-for="box in detectedSoldiers"
+              :key="`detection-flash-${box.id}`"
+              class="graphwar-killer__detection-flash-circle"
+              :cx="box.visualCenterX"
+              :cy="box.visualCenterY"
+              :r="box.visualRadius"
+            />
+          </g>
+          <ellipse
+            v-if="obstacleBrushPreview"
+            class="graphwar-killer__obstacle-brush-preview"
+            :class="{ 'graphwar-killer__obstacle-brush-preview--erase': obstacleBrushEraseEnabled }"
+            :clip-path="`url(#${mainObstacleBrushClipPathId})`"
+            :cx="obstacleBrushPreview.center.x"
+            :cy="obstacleBrushPreview.center.y"
+            :rx="obstacleBrushPreview.radiusX"
+            :ry="obstacleBrushPreview.radiusY"
+          />
           <circle
             v-if="boundsFirstPoint"
             class="graphwar-killer__bounds-point"
@@ -3554,6 +4119,13 @@ async function copyText(text: string) {
             :points="plottedCurvePoints"
             :style="{ stroke: trajectoryStrokeColor }"
           />
+          <circle
+            v-if="smartPathfindingBlockedPoint"
+            class="graphwar-killer__pathfinding-blocked-point"
+            :cx="smartPathfindingBlockedPoint.x"
+            :cy="smartPathfindingBlockedPoint.y"
+            :r="soldierSelectionRadius"
+          />
           <g
             v-for="(point, index) in pathPixels"
             :key="`point-${index}`"
@@ -3612,6 +4184,16 @@ async function copyText(text: string) {
               :viewBox="`0 0 ${imageWidth} ${imageHeight}`"
               aria-hidden="true"
             >
+              <defs>
+                <clipPath :id="magnifierObstacleBrushClipPathId">
+                  <rect
+                    :x="boundsRect.x"
+                    :y="boundsRect.y"
+                    :width="boundsRect.width"
+                    :height="boundsRect.height"
+                  />
+                </clipPath>
+              </defs>
               <rect
                 class="graphwar-killer__bounds"
                 :class="{
@@ -3654,11 +4236,26 @@ async function copyText(text: string) {
                 :y2="visibleBoundsRect.y + visibleBoundsRect.height"
               />
               <path
+                v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleFillPath"
+                class="graphwar-killer__obstacle-fill"
+                :d="visibleObstacleFillPath"
+              />
+              <path
                 v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleEdgePath"
                 class="graphwar-killer__obstacle-edge"
                 :d="visibleObstacleEdgePath"
               />
               <template v-if="pathfindingObstacleEdgesActive">
+                <path
+                  v-if="smartPathfindingObstacleRouteFillPath"
+                  class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--route"
+                  :d="smartPathfindingObstacleRouteFillPath"
+                />
+                <path
+                  v-if="smartPathfindingObstacleSimulationFillPath"
+                  class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--simulation"
+                  :d="smartPathfindingObstacleSimulationFillPath"
+                />
                 <path
                   v-if="smartPathfindingObstacleRouteEdgePath"
                   class="graphwar-killer__obstacle-edge graphwar-killer__obstacle-edge--route"
@@ -3680,7 +4277,9 @@ async function copyText(text: string) {
                     class="graphwar-killer__detection"
                     :class="[
                       `graphwar-killer__detection--${box.kind}`,
-                      { 'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId },
+                      {
+                        'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId,
+                      },
                     ]"
                     :cx="box.visualCenterX"
                     :cy="box.visualCenterY"
@@ -3688,6 +4287,29 @@ async function copyText(text: string) {
                   />
                 </g>
               </template>
+              <g
+                v-if="detectionSoldierFlashActive"
+                class="graphwar-killer__detection-flash-group"
+              >
+                <circle
+                  v-for="box in detectedSoldiers"
+                  :key="`magnifier-detection-flash-${box.id}`"
+                  class="graphwar-killer__detection-flash-circle"
+                  :cx="box.visualCenterX"
+                  :cy="box.visualCenterY"
+                  :r="box.visualRadius"
+                />
+              </g>
+              <ellipse
+                v-if="obstacleBrushPreview"
+                class="graphwar-killer__obstacle-brush-preview"
+                :class="{ 'graphwar-killer__obstacle-brush-preview--erase': obstacleBrushEraseEnabled }"
+                :clip-path="`url(#${magnifierObstacleBrushClipPathId})`"
+                :cx="obstacleBrushPreview.center.x"
+                :cy="obstacleBrushPreview.center.y"
+                :rx="obstacleBrushPreview.radiusX"
+                :ry="obstacleBrushPreview.radiusY"
+              />
               <circle
                 v-if="boundsFirstPoint"
                 class="graphwar-killer__bounds-point"
@@ -3758,6 +4380,13 @@ async function copyText(text: string) {
                 class="graphwar-killer__curve-line"
                 :points="plottedCurvePoints"
                 :style="{ stroke: trajectoryStrokeColor }"
+              />
+              <circle
+                v-if="smartPathfindingBlockedPoint"
+                class="graphwar-killer__pathfinding-blocked-point"
+                :cx="smartPathfindingBlockedPoint.x"
+                :cy="smartPathfindingBlockedPoint.y"
+                :r="soldierSelectionRadius"
               />
               <g
                 v-for="(point, index) in pathPixels"
@@ -3993,6 +4622,57 @@ async function copyText(text: string) {
     box-shadow 0.2s ease,
     background-color 0.2s ease;
   width: 100%;
+}
+
+.graphwar-killer input[type="range"] {
+  appearance: none;
+  background: linear-gradient(
+    to right,
+    var(--vp-c-brand-1) 0 var(--graphwar-killer-range-progress, 0%),
+    var(--vp-c-divider) var(--graphwar-killer-range-progress, 0%) 100%
+  );
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  height: 8px;
+  padding: 0;
+  width: 100%;
+}
+
+.graphwar-killer input[type="range"]::-webkit-slider-runnable-track {
+  background: transparent;
+  border: 0;
+  height: 8px;
+}
+
+.graphwar-killer input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  background: var(--vp-c-brand-1);
+  border: 2px solid var(--vp-c-bg);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
+  height: 18px;
+  margin-top: -5px;
+  width: 18px;
+}
+
+.graphwar-killer input[type="range"]::-moz-range-track {
+  background: transparent;
+  border: 0;
+  height: 8px;
+}
+
+.graphwar-killer input[type="range"]::-moz-range-progress {
+  background: transparent;
+}
+
+.graphwar-killer input[type="range"]::-moz-range-thumb {
+  background: var(--vp-c-brand-1);
+  border: 2px solid var(--vp-c-bg);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
+  height: 18px;
+  width: 18px;
 }
 
 .graphwar-killer button,
@@ -4242,7 +4922,7 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer__bounds--flash {
-  animation: graphwar-killer-bounds-flash 900ms ease-out;
+  animation: graphwar-killer-bounds-flash 1600ms ease-out;
 }
 
 .graphwar-killer__boundary-expansion {
@@ -4280,6 +4960,18 @@ async function copyText(text: string) {
   stroke: #2563eb;
 }
 
+.graphwar-killer__detection-flash-group {
+  pointer-events: none;
+}
+
+.graphwar-killer__detection-flash-circle {
+  animation: graphwar-killer-detection-soldier-flash 1600ms ease-out forwards;
+  fill: none;
+  stroke: #2563eb;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
 .graphwar-killer__detection--hovered {
   animation: graphwar-killer-curve-blink 900ms ease-in-out infinite;
   stroke: #16a34a;
@@ -4293,12 +4985,35 @@ async function copyText(text: string) {
   stroke-width: 1;
 }
 
+.graphwar-killer__obstacle-fill {
+  fill: rgb(220 38 38 / 10%);
+  pointer-events: none;
+}
+
+.graphwar-killer__obstacle-fill--route {
+  fill: rgb(244 114 182 / 7%);
+}
+
+.graphwar-killer__obstacle-fill--simulation {
+  fill: rgb(220 38 38 / 7%);
+}
+
 .graphwar-killer__obstacle-edge--route {
   stroke: #f472b6;
 }
 
 .graphwar-killer__obstacle-edge--simulation {
   stroke: #dc2626;
+}
+
+.graphwar-killer__obstacle-brush-preview {
+  animation: graphwar-killer-obstacle-brush-blink 1200ms ease-in-out infinite;
+  fill: rgb(220 38 38 / 34%);
+  pointer-events: none;
+}
+
+.graphwar-killer__obstacle-brush-preview--erase {
+  fill: rgb(34 197 94 / 34%);
 }
 
 .graphwar-killer__target-range {
@@ -4373,6 +5088,16 @@ async function copyText(text: string) {
   vector-effect: non-scaling-stroke;
 }
 
+.graphwar-killer__pathfinding-blocked-point {
+  animation: graphwar-killer-curve-blink 450ms ease-in-out infinite;
+  fill: color-mix(in srgb, #dc2626 18%, transparent);
+  pointer-events: none;
+  stroke: #dc2626;
+  stroke-dasharray: 5 4;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
 .graphwar-killer__curve-line {
   animation: graphwar-killer-trajectory-blink 900ms ease-in-out infinite;
   fill: none;
@@ -4414,6 +5139,29 @@ async function copyText(text: string) {
   }
 }
 
+@keyframes graphwar-killer-detection-soldier-flash {
+  0% {
+    opacity: 0%;
+    stroke-width: 1.5;
+  }
+
+  16%,
+  62% {
+    opacity: 100%;
+    stroke-width: 4;
+  }
+
+  38% {
+    opacity: 52%;
+    stroke-width: 4;
+  }
+
+  100% {
+    opacity: 0%;
+    stroke-width: 2;
+  }
+}
+
 @keyframes graphwar-killer-curve-blink {
   0%,
   100% {
@@ -4422,6 +5170,17 @@ async function copyText(text: string) {
 
   50% {
     opacity: 34%;
+  }
+}
+
+@keyframes graphwar-killer-obstacle-brush-blink {
+  0%,
+  100% {
+    opacity: 86%;
+  }
+
+  50% {
+    opacity: 32%;
   }
 }
 
@@ -4462,6 +5221,49 @@ async function copyText(text: string) {
 .graphwar-killer__image-actions button {
   min-height: 34px;
   padding: 6px 10px;
+}
+
+.graphwar-killer__magnifier-zoom-label {
+  align-items: center;
+  flex: 1 1 280px;
+  font-weight: 600;
+  gap: 6px;
+  grid-template-columns: auto minmax(96px, 1fr) minmax(54px, 72px) auto;
+  min-width: min(100%, 260px);
+}
+
+.graphwar-killer__magnifier-zoom-label span {
+  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.graphwar-killer__obstacle-brush-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.graphwar-killer__obstacle-brush-actions button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.graphwar-killer__obstacle-brush-label {
+  align-items: center;
+  flex: 1 1 340px;
+  font-weight: 600;
+  gap: 6px;
+  grid-template-columns: auto minmax(120px, 1fr) minmax(58px, 74px) auto;
+  min-width: min(100%, 320px);
+}
+
+.graphwar-killer__obstacle-brush-label span {
+  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
+  font-size: 0.88rem;
+  font-weight: 500;
 }
 
 .graphwar-killer__pathfinding-settings {
@@ -4608,7 +5410,7 @@ async function copyText(text: string) {
   border-radius: 999px;
   display: grid;
   gap: 0;
-  grid-template-columns: repeat(2, minmax(92px, 1fr));
+  grid-template-columns: repeat(3, minmax(92px, 1fr));
   min-height: 34px;
   overflow: hidden;
   padding: 2px;
@@ -4625,32 +5427,20 @@ async function copyText(text: string) {
   position: absolute;
   top: 2px;
   transition: transform 0.2s ease;
-  width: calc(50% - 2px);
+  width: calc((100% - 4px) / 3);
 }
 
 .graphwar-killer__tool-toggle--path::before {
   transform: translateX(100%);
 }
 
+.graphwar-killer__tool-toggle--obstacle::before {
+  transform: translateX(200%);
+}
+
 .graphwar-killer__algorithm-toggle {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   min-height: 38px;
-}
-
-.graphwar-killer__pathfinding-mode-toggle {
-  grid-template-columns: repeat(3, minmax(72px, 1fr));
-}
-
-.graphwar-killer__pathfinding-mode-toggle::before {
-  width: calc((100% - 4px) / 3);
-}
-
-.graphwar-killer__pathfinding-mode-toggle--smart::before {
-  transform: translateX(100%);
-}
-
-.graphwar-killer__pathfinding-mode-toggle--auto-graph::before {
-  transform: translateX(200%);
 }
 
 .graphwar-killer__algorithm-toggle::before {

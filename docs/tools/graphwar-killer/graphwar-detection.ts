@@ -120,14 +120,16 @@ const graphwarSoldierTemplateNames = [
   "soldier8.png",
   "soldier9.png",
 ] as const;
-const graphwarSoldierTemplateMinimumScore = 0.64;
-const graphwarSoldierTemplateMinimumFixedScore = 0.58;
-const graphwarSoldierTemplateMinimumForegroundScore = 0.62;
-/**
- * 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。本地截图样本最低通过 cap：20 人局 96/160/64，40 人局 160/224/224；256 给满员 JPG、边缘士兵和噪声留 32+
- * 候选余量。
- */
-const graphwarSoldierTemplateCandidateLimit = 256;
+const graphwarSoldierTemplateMinimumFixedScore = 0.75;
+const graphwarSoldierTemplateMinimumForegroundScore = 0.65;
+const graphwarSoldierTemplateMinimumPlayerScore = 0.55;
+const graphwarSoldierTemplateMinimumSignatureScore = 0.65;
+/** 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。 */
+const graphwarSoldierTemplateCandidateLimit = 400;
+/** 模板评分前只保留 votes 排名前 5% 的中心候选，再与固定上限取小。 */
+const graphwarSoldierTemplateCandidateTopRatio = 0.05;
+const graphwarMaximumSoldierCount = 40;
+const graphwarSoldierGenerationMinimumAxisGap = 20;
 const graphwarSoldierAnimationSignatureCoordinates = [
   [13, 6],
   [14, 6],
@@ -532,6 +534,15 @@ interface SoldierMatchCandidate {
   signatureScore: number;
 }
 
+interface SoldierTemplateCenterCandidate {
+  /** 截图像素 x。 */
+  x: number;
+  /** 截图像素 y。 */
+  y: number;
+  /** 固定黄色种子反投票数。 */
+  votes: number;
+}
+
 const graphwarSoldierTemplates = createGraphwarSoldierTemplates();
 
 /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
@@ -540,7 +551,8 @@ export function detectGraphwarObjectsInBounds(
   edgeRect: BoundsRect,
   thresholds: GraphwarObstacleDetectionThresholds,
 ): GraphwarObjectsDetectionResult {
-  const soldiers = detectSoldiers(imageData, edgeRect);
+  const soldierMatches = detectSoldierMatches(imageData, edgeRect);
+  const soldiers = createSoldierDetectionBoxes(soldierMatches.matches, edgeRect);
   return {
     soldiers,
     obstacles: detectObstacles(imageData, edgeRect, thresholds, soldiers),
@@ -680,6 +692,37 @@ export function buildObstacleEdgePath(mask: Uint8Array, edgeRect: BoundsRect) {
   return commands.join("");
 }
 
+/** 将障碍 mask 的内部转成按行合并的 SVG path，供页面显示淡色遮罩。 */
+export function buildObstacleFillPath(mask: Uint8Array, edgeRect: BoundsRect) {
+  const commands: string[] = [];
+  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+    let x = 0;
+    while (x < GRAPHWAR_PLANE_LENGTH) {
+      while (x < GRAPHWAR_PLANE_LENGTH && !mask[y * GRAPHWAR_PLANE_LENGTH + x]) {
+        x += 1;
+      }
+
+      if (x >= GRAPHWAR_PLANE_LENGTH) {
+        break;
+      }
+
+      const startX = x;
+      while (x < GRAPHWAR_PLANE_LENGTH && mask[y * GRAPHWAR_PLANE_LENGTH + x]) {
+        x += 1;
+      }
+
+      commands.push(createPlaneRectPathCommand(startX, y, x - startX, 1, edgeRect));
+    }
+  }
+  return commands.join("");
+}
+
+function createPlaneRectPathCommand(x: number, y: number, width: number, height: number, edgeRect: BoundsRect) {
+  const topLeft = planeToImagePoint({ x, y }, edgeRect);
+  const bottomRight = planeToImagePoint({ x: x + width, y: y + height }, edgeRect);
+  return `M${formatSvgNumber(topLeft.x)} ${formatSvgNumber(topLeft.y)}H${formatSvgNumber(bottomRight.x)}V${formatSvgNumber(bottomRight.y)}H${formatSvgNumber(topLeft.x)}Z`;
+}
+
 /** 将 Graphwar 原始平面坐标映射到截图像素。 */
 export function planeToImagePoint(point: PlaneGridPoint, edgeRect: BoundsRect) {
   return createPixelPoint(
@@ -695,6 +738,78 @@ export function imagePointToPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRe
     x: clampNumber(rawPoint.x, 0, GRAPHWAR_PLANE_LENGTH - 1),
     y: clampNumber(rawPoint.y, 0, GRAPHWAR_PLANE_HEIGHT - 1),
   };
+}
+
+/** 统计障碍 mask 里当前的 4 邻域连通域数量。 */
+export function countObstacleMaskComponents(mask: Uint8Array) {
+  return collectComponents(mask, GRAPHWAR_PLANE_LENGTH).length;
+}
+
+/** 用圆形笔刷直接修改当前障碍 mask；直径单位为 Graphwar 原始平面像素。 */
+export function paintObstacleMaskDisk(mask: Uint8Array, center: PlaneGridPoint, diameter: number, value: 0 | 1) {
+  const nextMask = new Uint8Array(mask);
+  const radius = Math.max(0.5, diameter / 2);
+  const offsetLimit = Math.ceil(radius);
+  const radiusSquared = radius * radius;
+  let changed = false;
+
+  for (let offsetY = -offsetLimit; offsetY <= offsetLimit; offsetY += 1) {
+    for (let offsetX = -offsetLimit; offsetX <= offsetLimit; offsetX += 1) {
+      if (!offsetIsInsideRadius(offsetX, offsetY, radiusSquared)) {
+        continue;
+      }
+
+      const x = center.x + offsetX;
+      const y = center.y + offsetY;
+      if (isInsidePlane(x, y)) {
+        const index = y * GRAPHWAR_PLANE_LENGTH + x;
+        if (nextMask[index] !== value) {
+          nextMask[index] = value;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  return changed ? nextMask : mask;
+}
+
+/** 用圆形笔刷沿线段连续修改当前障碍 mask；直径单位为 Graphwar 原始平面像素。 */
+export function paintObstacleMaskStroke(
+  mask: Uint8Array,
+  start: PlaneGridPoint,
+  end: PlaneGridPoint,
+  diameter: number,
+  value: 0 | 1,
+) {
+  const nextMask = new Uint8Array(mask);
+  const radius = Math.max(0.5, diameter / 2);
+  const offsetLimit = Math.ceil(radius);
+  const radiusSquared = radius * radius;
+  const minX = Math.max(0, Math.min(start.x, end.x) - offsetLimit);
+  const maxX = Math.min(GRAPHWAR_PLANE_LENGTH - 1, Math.max(start.x, end.x) + offsetLimit);
+  const minY = Math.max(0, Math.min(start.y, end.y) - offsetLimit);
+  const maxY = Math.min(GRAPHWAR_PLANE_HEIGHT - 1, Math.max(start.y, end.y) + offsetLimit);
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  let changed = false;
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      if (!pointIsInsideStrokeRadius(x, y, start, deltaX, deltaY, lengthSquared, radiusSquared)) {
+        continue;
+      }
+
+      const index = y * GRAPHWAR_PLANE_LENGTH + x;
+      if (nextMask[index] !== value) {
+        nextMask[index] = value;
+        changed = true;
+      }
+    }
+  }
+
+  return changed ? nextMask : mask;
 }
 
 /** 判断像素是否属于玩家/士兵主体颜色，而非棋盘和障碍。 */
@@ -833,16 +948,26 @@ function buildAxisTriplets(groups: AxisGroup[]) {
 }
 
 /** 使用 Graphwar 20x20 源码士兵模板识别 Soldier.x/y。 */
-function detectSoldiers(imageData: ImageData, edgeRect: BoundsRect): GraphwarDetectionBox[] {
+function detectSoldierMatches(imageData: ImageData, edgeRect: BoundsRect) {
+  const scale = edgeRect.width / GRAPHWAR_PLANE_LENGTH;
+  const candidates = createSoldierTemplateCenterCandidates(
+    imageData,
+    edgeRect,
+    scale,
+    graphwarSoldierTemplateCandidateLimit,
+  );
+  const matches = suppressOverlappingSoldierMatches(
+    matchSoldierTemplates(imageData, edgeRect, scale, candidates),
+    scale,
+  );
+  return { matches };
+}
+
+function createSoldierDetectionBoxes(matches: SoldierMatchCandidate[], edgeRect: BoundsRect) {
   const scale = edgeRect.width / GRAPHWAR_PLANE_LENGTH;
   const hitRadius = GRAPHWAR_SOLDIER_RADIUS * scale;
   const visualRadius = (GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2) * scale;
   const visualSize = visualRadius * 2;
-  const matches = suppressOverlappingSoldierMatches(
-    matchSoldierTemplates(imageData, edgeRect, scale, graphwarSoldierTemplateCandidateLimit),
-    scale,
-  );
-
   return matches.map((match, index) => {
     const sourceCenter = createPixelPoint(match.sourceCenterX, match.sourceCenterY);
     const visualCenter = getGraphwarSoldierVisualCenter(sourceCenter, match.template.mirrored, scale);
@@ -907,9 +1032,13 @@ function detectObstacles(
   };
 }
 
-/** 从高置信固定像素投票出候选源码中心，再用完整 20x20 模板评分。 */
-function matchSoldierTemplates(imageData: ImageData, edgeRect: BoundsRect, scale: number, candidateLimit: number) {
-  const candidates = createSoldierTemplateCenterCandidates(imageData, edgeRect, scale, candidateLimit);
+/** 按候选源码中心尝试完整 20x20 模板评分。 */
+function matchSoldierTemplates(
+  imageData: ImageData,
+  edgeRect: BoundsRect,
+  scale: number,
+  candidates: readonly SoldierTemplateCenterCandidate[],
+) {
   const matches: SoldierMatchCandidate[] = [];
   for (const candidate of candidates) {
     const snapped = findBestSoldierTemplateMatch(imageData, edgeRect, scale, candidate.x, candidate.y);
@@ -925,9 +1054,10 @@ function filterAcceptedSoldierMatches(matches: SoldierMatchCandidate[]) {
   return matches
     .filter(
       (match) =>
-        match.score >= graphwarSoldierTemplateMinimumScore &&
         match.fixedScore >= graphwarSoldierTemplateMinimumFixedScore &&
-        match.foregroundScore >= graphwarSoldierTemplateMinimumForegroundScore,
+        match.foregroundScore >= graphwarSoldierTemplateMinimumForegroundScore &&
+        match.playerScore >= graphwarSoldierTemplateMinimumPlayerScore &&
+        match.signatureScore >= graphwarSoldierTemplateMinimumSignatureScore,
     )
     .sort((left, right) => right.score - left.score);
 }
@@ -979,15 +1109,17 @@ function createSoldierTemplateCenterCandidates(
   }
 
   const minVotes = Math.max(2, Math.floor(scale));
-  return [...votes.values()]
+  const rankedCandidates = [...votes.values()]
     .filter((vote) => vote.count >= minVotes)
     .map((vote) => ({
       x: vote.x,
       y: vote.y,
       votes: vote.count,
     }))
-    .sort((left, right) => right.votes - left.votes)
-    .slice(0, candidateLimit);
+    .sort((left, right) => right.votes - left.votes);
+
+  const percentileLimit = Math.ceil(rankedCandidates.length * graphwarSoldierTemplateCandidateTopRatio);
+  return rankedCandidates.slice(0, Math.min(candidateLimit, percentileLimit));
 }
 
 /** 对同一个源码中心尝试所有正常/镜像源码模板，返回分数最高者。 */
@@ -1072,13 +1204,38 @@ function scoreSoldierTemplateAt(
     fixedScore,
     foregroundScore,
     playerScore,
-    score: clampNumber(
-      0.31 * fixedScore + 0.35 * foregroundScore + 0.24 * playerScore + 0.1 * signatureScore - backgroundPenalty,
-      0,
-      1,
+    score: scoreSoldierTemplateThresholdExcess(
+      fixedScore,
+      foregroundScore,
+      playerScore,
+      signatureScore,
+      backgroundPenalty,
     ),
     signatureScore,
   };
+}
+
+function scoreSoldierTemplateThresholdExcess(
+  fixedScore: number,
+  foregroundScore: number,
+  playerScore: number,
+  signatureScore: number,
+  backgroundPenalty: number,
+) {
+  return clampNumber(
+    (normalizeScoreAboveThreshold(fixedScore, graphwarSoldierTemplateMinimumFixedScore) +
+      normalizeScoreAboveThreshold(foregroundScore, graphwarSoldierTemplateMinimumForegroundScore) +
+      normalizeScoreAboveThreshold(playerScore, graphwarSoldierTemplateMinimumPlayerScore) +
+      normalizeScoreAboveThreshold(signatureScore, graphwarSoldierTemplateMinimumSignatureScore)) /
+      4 -
+      backgroundPenalty,
+    0,
+    1,
+  );
+}
+
+function normalizeScoreAboveThreshold(score: number, threshold: number) {
+  return clampNumber((score - threshold) / (1 - threshold), 0, 1);
 }
 
 function scoreTemplatePixelGroup(
@@ -1365,16 +1522,19 @@ function createSoldierTemplateSignaturePixels(name: (typeof graphwarSoldierTempl
 
 function suppressOverlappingSoldierMatches(matches: SoldierMatchCandidate[], scale: number) {
   const kept: SoldierMatchCandidate[] = [];
-  const minDistance = GRAPHWAR_SOLDIER_VISIBLE_SIZE * scale * 0.55;
+  const minimumAxisGap = graphwarSoldierGenerationMinimumAxisGap * scale;
   for (const match of matches) {
     if (
       kept.every(
         (candidate) =>
-          Math.hypot(match.sourceCenterX - candidate.sourceCenterX, match.sourceCenterY - candidate.sourceCenterY) >
-          minDistance,
+          Math.abs(match.sourceCenterX - candidate.sourceCenterX) >= minimumAxisGap ||
+          Math.abs(match.sourceCenterY - candidate.sourceCenterY) >= minimumAxisGap,
       )
     ) {
       kept.push(match);
+      if (kept.length >= graphwarMaximumSoldierCount) {
+        break;
+      }
     }
   }
   return kept;
@@ -1713,6 +1873,27 @@ function setMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number, v
 
 function offsetIsInsideRadius(offsetX: number, offsetY: number, radiusSquared: number) {
   return offsetX * offsetX + offsetY * offsetY <= radiusSquared;
+}
+
+function pointIsInsideStrokeRadius(
+  x: number,
+  y: number,
+  start: PlaneGridPoint,
+  deltaX: number,
+  deltaY: number,
+  lengthSquared: number,
+  radiusSquared: number,
+) {
+  if (lengthSquared === 0) {
+    return offsetIsInsideRadius(x - start.x, y - start.y, radiusSquared);
+  }
+
+  const projection = clampNumber(((x - start.x) * deltaX + (y - start.y) * deltaY) / lengthSquared, 0, 1);
+  const closestX = start.x + deltaX * projection;
+  const closestY = start.y + deltaY * projection;
+  const distanceX = x - closestX;
+  const distanceY = y - closestY;
+  return distanceX * distanceX + distanceY * distanceY <= radiusSquared;
 }
 
 /** 判断平面网格点是否位于 Graphwar 原始平面内。 */

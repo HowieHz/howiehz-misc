@@ -78,6 +78,10 @@ export const graphwarKillerLocale = {
     decimalPlacesRange: (max) => `Decimal places must be between 0 and ${max}`,
     maxXGreaterThanMinX: "-x must be less than +x",
     maxYGreaterThanMinY: "-y must be less than +y",
+    magnifierZoomNumber: "Magnifier zoom must be a number",
+    magnifierZoomRange: (min, max) => `Magnifier zoom must be between ${min}x and ${max}x`,
+    obstacleBrushDiameterInteger: "Brush size must be an integer",
+    obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
     pathfindingMaximumNumber: "Pathfinding maximum must be a number",
@@ -104,6 +108,7 @@ export const graphwarKillerLocale = {
     },
     activeToolHint: {
       bounds: "Left-click two corners to set bounds; right-click to cancel the selected point.",
+      obstacle: "Hold left-click to draw or erase detected obstacles; hover to preview the brush footprint.",
       simulatorPath: "Left-click the initial firing soldier; click another soldier to replace it.",
       solverPath:
         "Left-click your soldier's center first, then path-point centers. Drag path points to fine-tune them, right-click a point to delete it, or right-click empty space to undo the latest point.",
@@ -125,10 +130,12 @@ export const graphwarKillerLocale = {
       cancelled: "Detection cancelled",
       detectingBounds: "Detecting play-area bounds",
       detectingObjects: "Detecting soldiers and obstacles",
-      detectedCurrentBounds: (soldiers, obstacles) =>
-        `Detected ${soldiers} soldiers and ${obstacles} obstacles from the current bounds`,
-      detectedWithAutoBounds: (soldiers, obstacles) =>
-        `Auto-marked the bounds and found ${soldiers} soldiers and ${obstacles} obstacles`,
+      detectedCurrentBounds: (soldiers, elapsed) => `Marked obstacles, detected ${soldiers} soldiers in ${elapsed}`,
+      detectedWithAutoBounds: (soldiers, elapsed) =>
+        `Marked bounds and obstacles, detected ${soldiers} soldiers in ${elapsed}`,
+      obstacleEditsApplied: (obstacles) => `Updated obstacle boundaries; currently ${obstacles} obstacles`,
+      obstacleEditsCleared: (obstacles) => `Cleared obstacle edits; restored ${obstacles} obstacles`,
+      updatingObstacleEdits: "Applying obstacle edits",
       noBounds: "Could not detect the Graphwar play-area bounds",
       noPixels: "Could not read screenshot pixels",
       preparingPixels: "Reading screenshot pixels",
@@ -163,6 +170,7 @@ export const graphwarKillerLocale = {
   },
   smartPathfinding: {
     cancelled: "Pathfinding canceled",
+    currentPathBlocked: "The simulation did not reach the current last path point, so pathfinding cannot start",
     failure: (elapsed) =>
       elapsed === undefined
         ? "Smart Pathfinding failed: no valid path found"
@@ -183,9 +191,24 @@ export const graphwarKillerLocale = {
       clearPath: "Clear path",
       clearPathTitle:
         "Clear the selected soldier and path points for the current mode without changing screenshot bounds or settings.",
+      clearObstacleEdits: "Clear obstacle edits",
+      clearObstacleEditsTitle: "Restore the original obstacle area from this detection run.",
+      drawObstacle: "Draw obstacle",
+      drawObstacleTitle:
+        "Enter obstacle-drawing mode: use a circular brush to correct the current detected obstacles. Requires detected obstacles and either Smart Cursor or Smart Pathfinding.",
+      eraseObstacle: "Erase mode",
+      eraseObstacleTitle: "When enabled, the brush removes area from the current detected obstacles.",
       magnifier: "Magnifier",
       magnifierTitle:
         "Show a zoomed preview next to the screenshot for more precise soldier, bounds, and path picking.",
+      magnifierZoom: "Zoom",
+      magnifierZoomAriaLabel: "Magnifier zoom",
+      magnifierZoomTitle:
+        "Adjust magnifier zoom; the slider quickly adjusts 1x to 5x, and the input accepts 1x to 100x.",
+      obstacleBrushDiameter: "Brush size",
+      obstacleBrushDiameterAriaLabel: "Obstacle brush diameter in raw Graphwar 770x450 plane pixels",
+      obstacleBrushDiameterTitle:
+        "Circular obstacle brush diameter, in raw Graphwar 770x450 plane pixels; the slider quickly adjusts 1px to 200px, and the input accepts 1px to 1000px.",
       pickBounds: "Pick bounds",
       pickBoundsTitle: "Enter bounds-picking mode: left-click two board corners to calibrate the screenshot bounds.",
       pickPath: "Pick path",
@@ -206,7 +229,8 @@ export const graphwarKillerLocale = {
       minObstacleAreaTitle:
         "Area threshold for filtering tiny noise; obstacle regions smaller than this are ignored, in raw Graphwar 770x450 plane pixels.",
       smartCursor: "Smart cursor",
-      smartCursorTitle: "Snap path picking to detected soldier centers to reduce manual aiming error.",
+      smartCursorTitle:
+        "Snap path picking to detected soldier centers and enable obstacle and boundary collision simulation.",
       startDetection: "Start detection",
       startDetectionTitle:
         "Automatically detect the Graphwar board bounds, soldiers, and obstacles from the current screenshot.",
@@ -263,6 +287,8 @@ export const graphwarKillerLocale = {
       simulationExpansionAriaLabel: "Function-simulation obstacle expansion in raw Graphwar 770x450 plane pixels",
       simulationExpansionTitle:
         "Expands obstacles by this amount during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
+      autoGraph: "One-Click Clear",
+      smartPathfinding: "Smart Pathfinding",
       title: "Pathfinding",
       unit: "px",
       workerCount: "Workers",

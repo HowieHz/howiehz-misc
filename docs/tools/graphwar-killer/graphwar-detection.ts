@@ -69,6 +69,7 @@ export type GraphwarObjectDetectionStage =
   | "filtering-obstacle-components"
   | "matching-soldier-templates";
 
+/** 对象识别阶段计时钩子；runner 和 worker 用它收集同一套耗时指标。 */
 export interface GraphwarObjectDetectionInstrumentation {
   /** 调用方提供阶段计时器；识别算法本身不依赖具体时钟实现。 */
   measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) => TResult;
@@ -116,10 +117,15 @@ interface AxisTriplet {
   score: number;
 }
 
+/** Graphwar 士兵贴图源码画布是 20x20，Soldier.x/y 位于画布中心。 */
 const graphwarSoldierCanvasCenter = 10;
+/** 非镜像士兵 alpha 外框在 20x20 画布里的视觉中心 x。 */
 const graphwarSoldierVisibleCenterX = 9.5;
+/** 士兵 alpha 外框在 20x20 画布里的视觉中心 y。 */
 const graphwarSoldierVisibleCenterY = 9.5;
+/** 镜像士兵 alpha 外框在 20x20 画布里的视觉中心 x。 */
 const graphwarSoldierMirrorVisibleCenterX = 10.5;
+/** Graphwar 原版 10 帧士兵动画资源名。 */
 const graphwarSoldierTemplateNames = [
   "soldierNormal.png",
   "soldier1.png",
@@ -132,14 +138,18 @@ const graphwarSoldierTemplateNames = [
   "soldier8.png",
   "soldier9.png",
 ] as const;
+/** 基准值来自测试素材中无限制候选最终匹配点的四项全局最低分；-0.05 是经验余量，用于容忍截图压缩、缩放和抗锯齿带来的轻微分数下探。 */
 const graphwarSoldierTemplateMinimumFixedScore = 0.80524047124047127 - 0.05;
 const graphwarSoldierTemplateMinimumForegroundScore = 0.69445266272189365 - 0.05;
 const graphwarSoldierTemplateMinimumPlayerScore = 0.60552198292591419 - 0.05;
 const graphwarSoldierTemplateMinimumSignatureScore = 0.71937830687830706 - 0.05;
-/** 模板评分前只保留 votes 排名前 10% 的中心候选。 */
+/** 测试素材里无限制候选最终匹配点都在 votes 前 10%，因此模板评分前只保留前 10%。 */
 const graphwarSoldierTemplateCandidateTopRatio = 0.1;
+/** Graphwar 游戏设定最多 40 个士兵；用于重叠抑制后的最终检测数量上限。 */
 const graphwarMaximumSoldierCount = 40;
+/** 同一士兵附近会产生多个高分中心候选；低于这个源码像素间距的匹配视为同一士兵。 */
 const graphwarSoldierGenerationMinimumAxisGap = 20;
+/** 从 10 帧士兵动画里挑出的差异像素坐标，用于区分 soldierNormal/soldier1..9。 */
 const graphwarSoldierAnimationSignatureCoordinates = [
   [13, 6],
   [14, 6],
@@ -163,6 +173,7 @@ const graphwarSoldierAnimationSignatureCoordinates = [
   [14, 10],
   [15, 10],
 ] as const;
+/** 上面签名坐标在各动画帧中的固定颜色，来自 GraphPlane#addHelmet 合成后的士兵贴图量测。 */
 const graphwarSoldierAnimationSignatureColorsByName = {
   "soldierNormal.png": [
     "ffffff",
@@ -492,6 +503,7 @@ const graphwarSoldierFixedSeedGrid = [
   "....................",
 ] as const;
 
+/** 士兵模板中的一个画布像素坐标。 */
 interface SoldierTemplatePixel {
   /** 模板画布内 x 坐标。 */
   x: number;
@@ -499,11 +511,13 @@ interface SoldierTemplatePixel {
   y: number;
 }
 
+/** 士兵模板中需要同时匹配固定颜色的像素。 */
 interface SoldierTemplateColorPixel extends SoldierTemplatePixel {
   /** GraphPlane#addHelmet 合成后的固定 RGB 颜色。 */
   color: string;
 }
 
+/** 单个动画帧和朝向展开后的士兵模板。 */
 interface SoldierTemplate {
   /** Graphwar 源码资源名。 */
   name: string;
@@ -525,6 +539,7 @@ interface SoldierTemplate {
   visualCenterY: number;
 }
 
+/** 同一朝向下所有动画帧共享的模板像素集合。 */
 interface SoldierTemplateBase {
   /** 是否按 GraphPlane#drawSoldiers 镜像绘制。 */
   mirrored: boolean;
@@ -546,6 +561,7 @@ interface SoldierTemplateBase {
   visualCenterY: number;
 }
 
+/** 候选源码中心完成模板评分后的最佳匹配结果。 */
 interface SoldierMatchCandidate {
   /** 源码 Soldier.x 对应的截图像素 x。 */
   sourceCenterX: number;
@@ -567,6 +583,7 @@ interface SoldierMatchCandidate {
   votes: number;
 }
 
+/** 从黄色/白色固定种子反推出来的源码中心候选。 */
 interface SoldierTemplateCenterCandidate {
   /** 该候选源码中心对应的士兵绘制方向。 */
   mirrored: boolean;
@@ -578,13 +595,19 @@ interface SoldierTemplateCenterCandidate {
   votes: number;
 }
 
+/** 与具体动画帧无关、同一朝向可复用的模板评分。 */
 interface SoldierTemplateBaseScore {
+  /** 周围背景像素疑似仍属于士兵时扣除的惩罚。 */
   backgroundPenalty: number;
+  /** 固定颜色像素匹配分数。 */
   fixedScore: number;
+  /** Alpha 前景形状匹配分数。 */
   foregroundScore: number;
+  /** 玩家随机颜色一致性分数。 */
   playerScore: number;
 }
 
+/** 按朝向预构建的士兵模板基础数据，避免每次识别重复展开网格。 */
 const graphwarSoldierTemplateBases = createGraphwarSoldierTemplateBases();
 
 /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */

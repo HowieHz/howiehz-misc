@@ -63,30 +63,43 @@ export interface GraphwarRouteToleranceRange {
   routeStepPlanePixels: number;
 }
 
+/** RouteMask 中一个 4 邻域障碍连通域，后续会从其边界生成可见性图候选点。 */
 interface RouteMaskComponent {
+  /** 连通域外框，用于限制边界扫描范围。 */
   bounds: {
     maxX: number;
     maxY: number;
     minX: number;
     minY: number;
   };
+  /** 连通域几何中心，用于候选点排序和 fallback 选点。 */
   centroid: PlaneGridPoint;
+  /** 连通域内全部阻挡网格。 */
   cells: PlaneGridPoint[];
+  /** 连通域网格 key 集合，用于快速判断点是否属于该组件。 */
   cellSet: Set<string>;
 }
 
+/** 连通域边界轮廓点，并保留它来自哪个阻挡 cell。 */
 interface BoundaryContourPoint extends PlaneGridPoint {
   sourceCell: PlaneGridPoint;
 }
 
+/** Lazy visibility search 的排序代价：先短路径，再少折线段。 */
 interface PathfindingCost {
+  /** 当前路径累计欧氏长度平方近似。 */
   length: number;
+  /** 当前路径折线段数量。 */
   segments: number;
 }
 
+/** 可见性图搜索中一个候选点的最优已知状态。 */
 interface VisibilitySearchState {
+  /** 对应 candidates 数组下标。 */
   candidateIndex: number;
+  /** 从起点到该候选点的当前最优代价。 */
   cost: PathfindingCost;
+  /** 回溯路径时使用的上一个候选点下标。 */
   previousIndex?: number;
 }
 
@@ -98,11 +111,16 @@ const enum RouteMaskOperation {
   Erode = "erode",
 }
 
+/** 边界点落在障碍上时，向外搜索可站立候选点的最大半径。 */
 const GRAPHWAR_PATHFINDING_CONTOUR_FREE_CELL_SEARCH_RADIUS = 3;
+/** 页面动画每帧最多显示的可见边数量，避免 SVG 预览过重。 */
 const GRAPHWAR_PATHFINDING_PREVIEW_EDGE_LIMIT = 24;
+/** 页面动画每帧最多显示的候选点数量。 */
 const GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT = 64;
+/** 图搜索每扩展若干候选点后发送一次预览，平衡可视反馈和性能。 */
 const GRAPHWAR_PATHFINDING_PREVIEW_EXPANSION_INTERVAL = 8;
 
+/** 8 邻域偏移，用于从 mask cell 追踪连通边界。 */
 const EIGHT_CONNECTED_OFFSETS: readonly PlaneGridPoint[] = [
   { x: -1, y: -1 },
   { x: 0, y: -1 },

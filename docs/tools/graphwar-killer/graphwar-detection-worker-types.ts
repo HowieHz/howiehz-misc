@@ -41,6 +41,7 @@ export interface GraphwarAutoDetectionResult {
   objects?: GraphwarObjectsDetectionResult;
 }
 
+/** Worker 可执行的两类识别任务：自动找边界，或使用已有边界只识别对象。 */
 export type GraphwarDetectionWorkerTask =
   | ({
       type: "detect-auto";
@@ -49,6 +50,7 @@ export type GraphwarDetectionWorkerTask =
       type: "detect-bounds";
     } & GraphwarBoundsDetectionInput);
 
+/** 主线程发给 Worker 的一次识别请求。 */
 export interface GraphwarDetectionWorkerRequest {
   /** 单调递增请求 id，用于忽略过期 Worker 响应。 */
   id: number;
@@ -56,6 +58,7 @@ export interface GraphwarDetectionWorkerRequest {
   task: GraphwarDetectionWorkerTask;
 }
 
+/** Worker 完成识别后的成功响应；结果类型由 taskType 区分。 */
 export type GraphwarDetectionWorkerSuccessResponse =
   | {
       id: number;
@@ -72,6 +75,7 @@ export type GraphwarDetectionWorkerSuccessResponse =
       type: "success";
     };
 
+/** Worker 发回主线程的完整响应集合，包含阶段通知、成功和错误。 */
 export type GraphwarDetectionWorkerResponse =
   | GraphwarDetectionWorkerSuccessResponse
   | {

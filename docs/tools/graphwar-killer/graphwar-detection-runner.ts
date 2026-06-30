@@ -27,10 +27,12 @@ export class GraphwarDetectionCancelledError extends Error {
   }
 }
 
+/** 判断错误是否只是检测任务被取消，页面不应当展示为失败。 */
 export function isGraphwarDetectionCancelledError(error: unknown) {
   return error instanceof GraphwarDetectionCancelledError;
 }
 
+/** 单次检测运行时的页面回调。 */
 export interface GraphwarDetectionRunOptions {
   /** Worker 进入耗时阶段时通知页面更新状态。 */
   onStage?: (stage: GraphwarDetectionWorkerStage) => void;
@@ -38,11 +40,17 @@ export interface GraphwarDetectionRunOptions {
   onTimings?: (timings: readonly GraphwarDetectionWorkerTimingEntry[]) => void;
 }
 
+/** 当前等待 Worker 响应的主线程任务，用 request id 防止旧响应覆盖新结果。 */
 interface PendingWorkerTask {
+  /** 发送给 Worker 的请求 id。 */
   id: number;
+  /** Worker 阶段通知回调。 */
   onStage?: (stage: GraphwarDetectionWorkerStage) => void;
+  /** Worker 完成后的阶段耗时回调。 */
   onTimings?: (timings: readonly GraphwarDetectionWorkerTimingEntry[]) => void;
+  /** Promise 失败回调。 */
   reject: (reason?: unknown) => void;
+  /** Promise 成功回调。 */
   resolve: (value: GraphwarDetectionWorkerSuccessResponse["result"]) => void;
 }
 

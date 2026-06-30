@@ -1142,47 +1142,41 @@ function createSoldierTemplateCenterCandidates(
         continue;
       }
 
-      let remainingTemplateFrameVotes = graphwarSoldierTemplateNames.length;
-      while (remainingTemplateFrameVotes > 0) {
-        for (const templateBase of graphwarSoldierTemplateBases) {
-          for (const templatePixel of templateBase.seedPixels) {
-            const centerX = edgeRect.x + x - getSoldierTemplatePixelOffset(templatePixel.x, scale);
-            const centerY = edgeRect.y + y - getSoldierTemplatePixelOffset(templatePixel.y, scale);
-            if (!soldierTemplateCenterFitsRect(centerX, centerY, edgeRect)) {
-              continue;
-            }
+      for (const templateBase of graphwarSoldierTemplateBases) {
+        for (const templatePixel of templateBase.seedPixels) {
+          const centerX = edgeRect.x + x - getSoldierTemplatePixelOffset(templatePixel.x, scale);
+          const centerY = edgeRect.y + y - getSoldierTemplatePixelOffset(templatePixel.y, scale);
+          if (!soldierTemplateCenterFitsRect(centerX, centerY, edgeRect)) {
+            continue;
+          }
 
-            const planeX = Math.round(((centerX - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH);
-            const planeY = Math.round(((centerY - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT);
-            if (!isInsidePlane(planeX, planeY)) {
-              continue;
-            }
-            const mirrored = expectedSoldierTemplateMirroredForPlaneX(planeX);
-            if (templateBase.mirrored !== mirrored) {
-              continue;
-            }
+          const planeX = Math.round(((centerX - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH);
+          const planeY = Math.round(((centerY - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT);
+          if (!isInsidePlane(planeX, planeY)) {
+            continue;
+          }
+          const mirrored = expectedSoldierTemplateMirroredForPlaneX(planeX);
+          if (templateBase.mirrored !== mirrored) {
+            continue;
+          }
 
-            const sourceCenter = planeToImagePoint({ x: planeX, y: planeY }, edgeRect);
-            const key = `${planeX}:${planeY}`;
-            const existing = votes.get(key);
-            if (existing) {
-              existing.count += 1;
-              existing.mirrored = mirrored;
-              existing.x = sourceCenter.x;
-              existing.y = sourceCenter.y;
-            } else {
-              votes.set(key, { count: 1, mirrored, x: sourceCenter.x, y: sourceCenter.y });
-            }
+          const sourceCenter = planeToImagePoint({ x: planeX, y: planeY }, edgeRect);
+          const key = `${planeX}:${planeY}`;
+          const existing = votes.get(key);
+          if (existing) {
+            existing.count += 1;
+            existing.mirrored = mirrored;
+            existing.x = sourceCenter.x;
+            existing.y = sourceCenter.y;
+          } else {
+            votes.set(key, { count: 1, mirrored, x: sourceCenter.x, y: sourceCenter.y });
           }
         }
-        remainingTemplateFrameVotes -= 1;
       }
     }
   }
 
-  const minVotes = Math.max(2, Math.floor(scale));
   const rankedCandidates = [...votes.values()]
-    .filter((vote) => vote.count >= minVotes)
     .map((vote) => ({
       mirrored: vote.mirrored,
       x: vote.x,

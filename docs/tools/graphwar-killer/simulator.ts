@@ -777,65 +777,107 @@ function evaluateGraphwarPolishExpression(
   let stackSize = 0;
   for (let index = tokens.length - 1; index >= 0; index -= 1) {
     const token = tokens[index];
-    const paramCount = getGraphwarExpressionTokenParamCount(token.type);
-    if (stackSize < paramCount) {
-      return Number.NaN;
-    }
 
-    const first = paramCount > 0 ? stack[--stackSize] : 0;
-    const second = paramCount > 1 ? stack[--stackSize] : 0;
-    stack[stackSize] = evaluateGraphwarExpressionToken(token, first, second, x, y, dy);
-    stackSize += 1;
+    switch (token.type) {
+      case GRAPHWAR_EXPR_ADD:
+        if (stackSize < 2) {
+          return Number.NaN;
+        }
+        stack[stackSize - 2] += stack[stackSize - 1];
+        stackSize -= 1;
+        break;
+      case GRAPHWAR_EXPR_SUBTRACT:
+        if (stackSize < 1) {
+          return Number.NaN;
+        }
+        stack[stackSize - 1] = -stack[stackSize - 1];
+        break;
+      case GRAPHWAR_EXPR_MULTIPLY:
+        if (stackSize < 2) {
+          return Number.NaN;
+        }
+        stack[stackSize - 2] *= stack[stackSize - 1];
+        stackSize -= 1;
+        break;
+      case GRAPHWAR_EXPR_DIVIDE:
+        if (stackSize < 2) {
+          return Number.NaN;
+        }
+        stack[stackSize - 2] = stack[stackSize - 1] / stack[stackSize - 2];
+        stackSize -= 1;
+        break;
+      case GRAPHWAR_EXPR_POW:
+        if (stackSize < 2) {
+          return Number.NaN;
+        }
+        stack[stackSize - 2] = Math.pow(stack[stackSize - 1], stack[stackSize - 2]);
+        stackSize -= 1;
+        break;
+      case GRAPHWAR_EXPR_SQRT:
+        if (stackSize < 1) {
+          return Number.NaN;
+        }
+        stack[stackSize - 1] = Math.sqrt(stack[stackSize - 1]);
+        break;
+      case GRAPHWAR_EXPR_LOG:
+        if (stackSize < 1) {
+          return Number.NaN;
+        }
+        stack[stackSize - 1] = Math.log10(stack[stackSize - 1]);
+        break;
+      case GRAPHWAR_EXPR_ABS:
+        if (stackSize < 1) {
+          return Number.NaN;
+        }
+        stack[stackSize - 1] = Math.abs(stack[stackSize - 1]);
+        break;
+      case GRAPHWAR_EXPR_SIN:
+        if (stackSize < 1) {
+          return Number.NaN;
+        }
+        stack[stackSize - 1] = Math.sin(stack[stackSize - 1]);
+        break;
+      case GRAPHWAR_EXPR_COS:
+        if (stackSize < 1) {
+          return Number.NaN;
+        }
+        stack[stackSize - 1] = Math.cos(stack[stackSize - 1]);
+        break;
+      case GRAPHWAR_EXPR_TAN:
+        if (stackSize < 1) {
+          return Number.NaN;
+        }
+        stack[stackSize - 1] = Math.tan(stack[stackSize - 1]);
+        break;
+      case GRAPHWAR_EXPR_LN:
+        if (stackSize < 1) {
+          return Number.NaN;
+        }
+        stack[stackSize - 1] = Math.log(stack[stackSize - 1]);
+        break;
+      case GRAPHWAR_EXPR_X:
+        stack[stackSize] = x;
+        stackSize += 1;
+        break;
+      case GRAPHWAR_EXPR_Y:
+        stack[stackSize] = y;
+        stackSize += 1;
+        break;
+      case GRAPHWAR_EXPR_DY:
+        stack[stackSize] = dy;
+        stackSize += 1;
+        break;
+      case GRAPHWAR_EXPR_VALUE:
+        stack[stackSize] = token.value ?? Number.NaN;
+        stackSize += 1;
+        break;
+      default:
+        return Number.NaN;
+    }
   }
 
   const value = stackSize === 1 ? stack[0] : Number.NaN;
   return Number.isFinite(value) ? value : Number.NaN;
-}
-
-function evaluateGraphwarExpressionToken(
-  token: GraphwarExpressionToken,
-  first: number,
-  second: number,
-  x: number,
-  y: number,
-  dy: number,
-) {
-  switch (token.type) {
-    case GRAPHWAR_EXPR_ADD:
-      return first + second;
-    case GRAPHWAR_EXPR_SUBTRACT:
-      return -first;
-    case GRAPHWAR_EXPR_MULTIPLY:
-      return first * second;
-    case GRAPHWAR_EXPR_DIVIDE:
-      return first / second;
-    case GRAPHWAR_EXPR_POW:
-      return Math.pow(first, second);
-    case GRAPHWAR_EXPR_SQRT:
-      return Math.sqrt(first);
-    case GRAPHWAR_EXPR_LOG:
-      return Math.log10(first);
-    case GRAPHWAR_EXPR_ABS:
-      return Math.abs(first);
-    case GRAPHWAR_EXPR_SIN:
-      return Math.sin(first);
-    case GRAPHWAR_EXPR_COS:
-      return Math.cos(first);
-    case GRAPHWAR_EXPR_TAN:
-      return Math.tan(first);
-    case GRAPHWAR_EXPR_LN:
-      return Math.log(first);
-    case GRAPHWAR_EXPR_X:
-      return x;
-    case GRAPHWAR_EXPR_Y:
-      return y;
-    case GRAPHWAR_EXPR_DY:
-      return dy;
-    case GRAPHWAR_EXPR_VALUE:
-      return token.value ?? Number.NaN;
-    default:
-      return Number.NaN;
-  }
 }
 
 function graphwarExpressionTokenIsOperation(type: number) {

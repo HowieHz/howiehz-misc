@@ -34,19 +34,6 @@ export const graphwarKillerLocale = {
       title: "Enter a function and preview its Graphwar trajectory on the screenshot.",
     },
   ],
-  pathfindingModes: [
-    { value: "off", label: "Off", title: "Pick path points manually without automatic obstacle avoidance." },
-    {
-      value: "smart",
-      label: "Smart Pathfinding",
-      title: "After you pick a target soldier, automatically find a route around detected obstacles.",
-    },
-    {
-      value: "auto-graph",
-      label: "One-Click Clear",
-      title: "Starting from your current soldier, automatically calculate routes to hittable x+ soldiers.",
-    },
-  ],
   algorithmModes: [
     {
       value: "abs",
@@ -401,16 +388,10 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
-      fastMode: "Fast mode",
-      fastModeAriaLabel: "One-Click Clear fast mode",
-      fastModeTitle:
-        "Fast mode is usually faster and uses less memory for many targets, but may omit alternative routes with different paths and the same maximum kill count. Turn it off to keep those tied best routes for more complete results, at the cost of lower speed and higher memory use.",
       expansionStep: "Expansion step",
       expansionStepAriaLabel: "Pathfinding expansion step in raw Graphwar 770x450 plane pixels",
       expansionStepTitle:
         "Step size used when pathfinding increases obstacle expansion from the minimum to the maximum. Unit: raw Graphwar 770x450 plane pixels.",
-      modeAriaLabel: "Pathfinding mode",
-      modeTitle: "Choose whether to calculate obstacle-avoiding paths automatically or try One-Click Clear.",
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
         "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
@@ -430,12 +411,9 @@ export const graphwarKillerLocale = {
         "Expands obstacles by this amount during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
       autoGraph: "One-Click Clear",
       smartPathfinding: "Smart Pathfinding",
+      smartPathfindingTitle: "After you pick a target soldier, automatically find a route around detected obstacles.",
       title: "Pathfinding",
       unit: "px",
-      workerCount: "Workers",
-      workerCountAriaLabel: "Number of One-Click Clear workers",
-      workerCountTitle:
-        "Number of One-Click Clear workers to run at once. It will not exceed the number of soldiers to try.",
     },
     point: {
       coordinateAriaLabel: (label, axis) => `${label} ${axis} coordinate`,

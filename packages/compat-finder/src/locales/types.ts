@@ -45,7 +45,6 @@ export interface CliMessages {
     unsupportedLocale: (locale: string) => string;
   };
   examplesTitle: string;
-  generalOptionsTitle: string;
   helpOptionDescription: string;
   interactive: {
     emptyUndoHistory: string;

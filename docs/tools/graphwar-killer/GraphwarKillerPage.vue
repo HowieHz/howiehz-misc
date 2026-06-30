@@ -2234,7 +2234,7 @@ function getSmartPathfindingDisabledMessage() {
 function getSmartPathfindingToggleTitle() {
   return isSmartPathfindingDisabled()
     ? getSmartPathfindingDisabledMessage()
-    : (locale.pathfindingModes.find((entry) => entry.value === "smart")?.title ?? "");
+    : locale.ui.pathfinding.smartPathfindingTitle;
 }
 
 /** 切换友伤设置；该设置会改变士兵是否写入障碍 mask，因此需要重建路线。 */

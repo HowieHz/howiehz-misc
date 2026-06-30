@@ -68,7 +68,6 @@ export const enMessages: CliMessages = {
     unsupportedLocale: (locale) => `Unsupported locale: ${locale}`,
   },
   examplesTitle: "Examples",
-  generalOptionsTitle: "General options",
   helpOptionDescription: "Show help",
   interactive: {
     emptyUndoHistory: "There is no step to undo.",

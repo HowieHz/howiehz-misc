@@ -51,11 +51,6 @@ export interface GraphwarKillerLocale {
     label: string;
     title: string;
   }[];
-  pathfindingModes: readonly {
-    value: "off" | "smart" | "auto-graph";
-    label: string;
-    title: string;
-  }[];
   validation: {
     boundaryExpansionNegative: string;
     boundaryExpansionNumber: string;
@@ -252,14 +247,9 @@ export interface GraphwarKillerLocale {
         GraphwarKillerDebugStageText
       >;
       debugSummary: string;
-      fastMode: string;
-      fastModeAriaLabel: string;
-      fastModeTitle: string;
       expansionStep: string;
       expansionStepAriaLabel: string;
       expansionStepTitle: string;
-      modeAriaLabel: string;
-      modeTitle: string;
       obstacleExpansion: string;
       obstacleExpansionTitle: string;
       pathMaximum: string;
@@ -275,11 +265,9 @@ export interface GraphwarKillerLocale {
       simulationExpansionTitle: string;
       autoGraph: string;
       smartPathfinding: string;
+      smartPathfindingTitle: string;
       title: string;
       unit: string;
-      workerCount: string;
-      workerCountAriaLabel: string;
-      workerCountTitle: string;
     };
     point: {
       coordinateAriaLabel: (label: string, axis: "x" | "y") => string;

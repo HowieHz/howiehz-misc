@@ -68,7 +68,6 @@ export const zhHansMessages: CliMessages = {
     unsupportedLocale: (locale) => `不支持的语言：${locale}`,
   },
   examplesTitle: "示例",
-  generalOptionsTitle: "通用参数",
   helpOptionDescription: "显示帮助",
   interactive: {
     emptyUndoHistory: "当前没有可撤回的步骤。",

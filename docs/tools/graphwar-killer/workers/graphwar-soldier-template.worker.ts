@@ -5,11 +5,14 @@ import type {
   GraphwarSoldierTemplateWorkerResponse,
 } from "./graphwar-soldier-template-worker-types";
 
+/** 当前子 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarSoldierTemplateWorkerScope {
+  /** 接收主 Worker 分配的候选切片。 */
   addEventListener: (
     type: "message",
     listener: (event: MessageEvent<GraphwarSoldierTemplateWorkerRequest>) => void,
   ) => void;
+  /** 返回当前切片的模板匹配结果。 */
   postMessage: (message: GraphwarSoldierTemplateWorkerResponse) => void;
 }
 
@@ -35,6 +38,7 @@ workerScope.addEventListener("message", (event) => {
   }
 });
 
+/** 获取高精度时间戳，兼容没有 performance 的 Worker 环境。 */
 function nowMs() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }

@@ -6,25 +6,39 @@ import type { AlgorithmMode, EquationMode } from "./types";
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
 export type GraphwarKillerStopReason = "invalid" | "max-steps" | "out-of-bounds" | "too-steep";
 
+/** 调试面板中一个阶段或明细条目的短标签和说明标题。 */
 interface GraphwarKillerDebugStageText {
+  /** 面板中展示的短标签。 */
   label: string;
+  /** Hover/title 使用的阶段说明。 */
   title: string;
 }
 
+/** 模板匹配细分 timing 的本地化文案。 */
 interface GraphwarKillerDetectionDebugDetailText {
+  /** 分发候选给子 Worker 的耗时文案。 */
   "template-matching-dispatch": GraphwarKillerDebugStageText;
+  /** 子 Worker 失败后串行 fallback 的耗时文案。 */
   "template-matching-fallback-serial": GraphwarKillerDebugStageText;
+  /** 合并模板匹配结果的耗时文案。 */
   "template-matching-merge": GraphwarKillerDebugStageText;
+  /** 当前模板匹配执行模式的文案。 */
   "template-matching-mode": {
+    /** 根据串行/并行/fallback 模式和 Worker 数生成标签。 */
     label: (
       mode: Extract<GraphwarDetectionWorkerTimingDetail, { type: "template-matching-mode" }>["mode"],
       workerCount: number,
     ) => string;
+    /** 模式说明标题。 */
     title: string;
   };
+  /** 主 Worker 串行模板匹配的耗时文案。 */
   "template-matching-serial": GraphwarKillerDebugStageText;
+  /** 单个子 Worker 模板匹配的耗时文案。 */
   "template-matching-worker": {
+    /** 根据子 Worker 序号生成标签。 */
     label: (workerIndex: number) => string;
+    /** 子 Worker 耗时说明标题。 */
     title: string;
   };
 }
@@ -35,22 +49,26 @@ interface GraphwarKillerDetectionDebugDetailText {
  * 数组项保留 value 字段，是为了让 UI 控件直接用同一份本地化数据渲染 label/title，同时保持内部模式类型仍由 `AlgorithmMode`、`EquationMode` 等联合类型约束。
  */
 export interface GraphwarKillerLocale {
+  /** 公式生成算法切换项。 */
   algorithmModes: readonly {
     value: AlgorithmMode;
     label: string;
     title: string;
   }[];
+  /** Graphwar 方程解释模式切换项。 */
   equationModes: readonly {
     value: EquationMode;
     label: string;
     description: string;
     title: string;
   }[];
+  /** 解算器和模拟器工作流切换项。 */
   toolWorkflowModes: readonly {
     value: "solver" | "simulator";
     label: string;
     title: string;
   }[];
+  /** 输入校验错误文案。 */
   validation: {
     boundaryExpansionNegative: string;
     boundaryExpansionNumber: string;
@@ -82,6 +100,7 @@ export interface GraphwarKillerLocale {
     decimalPlacesInteger: string;
     decimalPlacesRange: (max: number) => string;
   };
+  /** 页面状态栏、按钮状态和计算警告文案。 */
   status: {
     activeEquation: {
       abs: string;
@@ -149,6 +168,7 @@ export interface GraphwarKillerLocale {
       stopped: Record<GraphwarKillerStopReason, string>;
     };
   };
+  /** 智能寻路流程状态文案。 */
   smartPathfinding: {
     cancelled: string;
     currentPathBlocked: string;
@@ -162,6 +182,7 @@ export interface GraphwarKillerLocale {
     };
     success: (elapsed?: string) => string;
   };
+  /** 页面控件、面板标题和可访问性标签文案。 */
   ui: {
     actions: {
       clearPath: string;

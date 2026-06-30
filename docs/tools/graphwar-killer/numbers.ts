@@ -31,7 +31,9 @@ export function graphXAdvancesEnough(deltaX: number, minimumGraphXStep: number, 
   return deltaX + doublePrecisionTolerance(deltaX, minimumGraphXStep, ...sourceValues) >= minimumGraphXStep;
 }
 
+/** Graphwar 公式输出最多保留 double 有意义的十进制位数。 */
 export const MAX_FORMULA_DECIMAL_PLACES = 15;
+/** 默认公式精度在可读性和命中稳定性之间折中。 */
 export const DEFAULT_FORMULA_DECIMAL_PLACES = 5;
 
 /** 将公式输出小数位限制在 Graphwar 可读且 double 有意义的范围内。 */

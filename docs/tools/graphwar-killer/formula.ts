@@ -12,7 +12,9 @@ import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm }
 
 /** 双绝对值连接遇到垂直或反向线段时，使用 Graphwar 源码里的函数最小 x 步长保持公式有限。 */
 const ABS_CONNECTOR_MIN_WIDTH = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE;
+/** 软分段权重使用高偶次幂，让相邻 Hermite 段平滑过渡但保持局部主导。 */
 const SOFT_INTERVAL_INDICATOR_POWER = 8;
+/** Java/Graphwar double 的 exp 上限，用于判断 step 公式是否必须改写成抗溢出形式。 */
 const JAVA_DOUBLE_MAX_EXP_ARGUMENT = Math.log(Number.MAX_VALUE);
 
 /** 稳定版 sigmoid 公式在符号项可去奇点处避免 0 / 0 的 double 精度保护值。 */
@@ -52,9 +54,13 @@ export interface StepOverflowProtectionRange {
 
 /** A(abs(x+b)-abs(x+c)) 连接函数使用的标准化线段数据。 */
 interface AbsConnectorSegment {
+  /** 线段左端 Graphwar x，必要时会被最小宽度保护重算。 */
   startX: number;
+  /** 线段右端 Graphwar x，必要时会被最小宽度保护重算。 */
   endX: number;
+  /** 受 Graphwar 最小 x 步长保护后的非零宽度。 */
   width: number;
+  /** 线段两端的 Graphwar y 差值。 */
   deltaY: number;
 }
 

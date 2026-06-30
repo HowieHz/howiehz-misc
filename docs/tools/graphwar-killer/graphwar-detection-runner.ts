@@ -62,6 +62,7 @@ export function createGraphwarDetectionRunner() {
   let nextRequestId = 1;
   let pendingTask: PendingWorkerTask | undefined;
 
+  /** 懒创建检测 Worker；不支持 Worker 的环境会走同步 fallback。 */
   function ensureWorker() {
     if (typeof Worker === "undefined") {
       return undefined;
@@ -80,6 +81,7 @@ export function createGraphwarDetectionRunner() {
     return worker;
   }
 
+  /** 执行自动检测流程，先识别棋盘边界，再在边界内识别对象。 */
   function detectAuto(input: GraphwarAutoDetectionInput, options?: GraphwarDetectionRunOptions) {
     cancel();
     const activeWorker = ensureWorker();
@@ -101,6 +103,7 @@ export function createGraphwarDetectionRunner() {
     );
   }
 
+  /** 执行已知边界内的对象识别，复用自动检测的 Worker 管线。 */
   function detectObjectsInBounds(input: GraphwarBoundsDetectionInput, options?: GraphwarDetectionRunOptions) {
     cancel();
     const activeWorker = ensureWorker();
@@ -123,6 +126,7 @@ export function createGraphwarDetectionRunner() {
     );
   }
 
+  /** 发送单个 Worker 请求，并记录当前等待响应的任务。 */
   function runWorkerTask<TResult>(
     activeWorker: Worker,
     request: GraphwarDetectionWorkerRequest,
@@ -146,6 +150,7 @@ export function createGraphwarDetectionRunner() {
     });
   }
 
+  /** 取消当前检测并重建 Worker，避免旧任务继续占用资源或回写状态。 */
   function cancel() {
     if (!pendingTask) {
       return;
@@ -156,6 +161,7 @@ export function createGraphwarDetectionRunner() {
     resetWorker();
   }
 
+  /** 关闭 runner 时释放 Worker，并让挂起任务按取消处理。 */
   function close() {
     if (pendingTask) {
       pendingTask.reject(new GraphwarDetectionCancelledError());
@@ -164,6 +170,7 @@ export function createGraphwarDetectionRunner() {
     resetWorker();
   }
 
+  /** 只接收当前请求 id 对应的 Worker 消息，丢弃过期响应。 */
   function handleWorkerMessage(event: MessageEvent<GraphwarDetectionWorkerResponse>) {
     const response = event.data;
     if (!pendingTask || response.id !== pendingTask.id) {
@@ -184,14 +191,17 @@ export function createGraphwarDetectionRunner() {
     completedTask.resolve(response.result);
   }
 
+  /** 把 Worker 消息反序列化失败转换成当前任务失败。 */
   function handleWorkerMessageError() {
     rejectPendingTask(new Error("Graphwar detection worker message could not be deserialized"));
   }
 
+  /** 把 Worker 运行时错误转换成当前任务失败。 */
   function handleWorkerError(event: ErrorEvent) {
     rejectPendingTask(event.error instanceof Error ? event.error : new Error(event.message));
   }
 
+  /** 统一拒绝挂起任务并丢弃当前 Worker。 */
   function rejectPendingTask(error: Error) {
     if (!pendingTask) {
       return;
@@ -201,6 +211,7 @@ export function createGraphwarDetectionRunner() {
     resetWorker();
   }
 
+  /** 终止当前 Worker；下一次检测会重新懒创建。 */
   function resetWorker() {
     if (!worker) {
       return;
@@ -217,6 +228,7 @@ export function createGraphwarDetectionRunner() {
   };
 }
 
+/** 在无 Worker 环境中同步执行完整自动检测，并保留阶段耗时回调。 */
 function detectAutoSynchronously(
   input: GraphwarAutoDetectionInput,
   options?: GraphwarDetectionRunOptions,
@@ -244,6 +256,7 @@ function detectAutoSynchronously(
   };
 }
 
+/** 在无 Worker 环境中同步执行边界内对象检测。 */
 function detectObjectsInBoundsSynchronously(
   input: GraphwarBoundsDetectionInput,
   options?: GraphwarDetectionRunOptions,
@@ -261,11 +274,13 @@ function detectObjectsInBoundsSynchronously(
   return objects;
 }
 
+/** 收集可转移的 ImageData buffer，避免主线程和 Worker 间复制大图。 */
 function collectRequestTransferList(request: GraphwarDetectionWorkerRequest) {
   const buffer = request.task.imageData.data.buffer;
   return buffer instanceof ArrayBuffer ? [buffer] : [];
 }
 
+/** 包装检测阶段计时，让同步 fallback 的调试数据和 Worker 结果一致。 */
 function measureDetectionStage<TResult>(
   timings: GraphwarDetectionWorkerTimingEntry[],
   stage: GraphwarDetectionWorkerStage,
@@ -282,6 +297,7 @@ function measureDetectionStage<TResult>(
   }
 }
 
+/** 将对象识别内部阶段计时接入 worker timing 列表。 */
 function createObjectDetectionInstrumentation(
   timings: GraphwarDetectionWorkerTimingEntry[],
 ): GraphwarObjectDetectionInstrumentation {
@@ -291,6 +307,7 @@ function createObjectDetectionInstrumentation(
   };
 }
 
+/** 获取高精度时间戳，兼容没有 performance 的运行环境。 */
 function nowMs() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }

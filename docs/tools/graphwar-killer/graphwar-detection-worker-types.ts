@@ -25,6 +25,7 @@ export interface GraphwarDetectionWorkerTimingEntry {
   detail?: GraphwarDetectionWorkerTimingDetail;
 }
 
+/** 模板匹配阶段的细分耗时和执行模式，供调试面板解释并行/fallback 行为。 */
 export type GraphwarDetectionWorkerTimingDetail =
   | { type: "template-matching-mode"; mode: "serial"; workerCount: number }
   | { type: "template-matching-mode"; mode: "parallel"; workerCount: number }

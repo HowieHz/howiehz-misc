@@ -1359,6 +1359,7 @@ const screenshotImageStatusText = computed(
   () => imageStatus.value || imageName.value || locale.status.image.defaultStatus,
 );
 
+/** 获取高精度时间戳，用于前端阶段计时和长按判定。 */
 function nowMs() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }
@@ -1535,22 +1536,26 @@ function clearDetectedGraphwarObjects() {
   clearObstacleEditRefreshTimer();
 }
 
+/** 开始一次新的检测运行，并让旧异步响应自动失效。 */
 function beginDetectionRun() {
   detectionRunId += 1;
   detectionInProgress.value = true;
   return detectionRunId;
 }
 
+/** 判断异步检测回调是否仍属于当前运行。 */
 function isActiveDetectionRun(runId: number) {
   return runId === detectionRunId;
 }
 
+/** 只结束当前检测运行，避免旧任务覆盖新任务状态。 */
 function finishDetectionRun(runId: number) {
   if (isActiveDetectionRun(runId)) {
     detectionInProgress.value = false;
   }
 }
 
+/** 取消当前检测任务，并按调用场景决定是否显示取消提示。 */
 function cancelDetection(showStatus: boolean) {
   if (!detectionInProgress.value) {
     return false;
@@ -1565,10 +1570,12 @@ function cancelDetection(showStatus: boolean) {
   return true;
 }
 
+/** 展开或折叠高级设置面板。 */
 function toggleAdvancedSettings() {
   advancedSettingsVisible.value = !advancedSettingsVisible.value;
 }
 
+/** 通过长按高级设置入口启用调试信息，避免普通用户误触。 */
 function startDebugActivationHold(event: PointerEvent) {
   if (event.button !== 0) {
     return;
@@ -1592,6 +1599,7 @@ function startDebugActivationHold(event: PointerEvent) {
   }, debugActivationHoldMs);
 }
 
+/** 结束调试入口长按；未触发调试时保留普通点击展开设置。 */
 function finishDebugActivationHold() {
   const shouldToggleAdvancedSettings =
     !debugInfoEnabled.value && !debugActivationTriggered && debugActivationStartedAt !== undefined;
@@ -1602,11 +1610,13 @@ function finishDebugActivationHold() {
   debugActivationTriggered = false;
 }
 
+/** 鼠标移出或取消时终止调试长按流程。 */
 function cancelDebugActivationHold() {
   clearDebugActivationHold();
   debugActivationTriggered = false;
 }
 
+/** 清理调试长按的定时器和倒计时状态。 */
 function clearDebugActivationHold() {
   if (debugActivationTimer) {
     clearTimeout(debugActivationTimer);
@@ -1620,6 +1630,7 @@ function clearDebugActivationHold() {
   debugActivationRemainingMs.value = undefined;
 }
 
+/** 更新调试长按倒计时，只在长按超过提示阈值后显示。 */
 function updateDebugActivationCountdown() {
   if (debugActivationStartedAt === undefined) {
     return;
@@ -1630,6 +1641,7 @@ function updateDebugActivationCountdown() {
     elapsedMs < debugActivationCountdownVisibleAfterMs ? undefined : Math.max(0, debugActivationHoldMs - elapsedMs);
 }
 
+/** 短暂显示调试模式已启用的成功反馈。 */
 function flashDebugActivationSuccess() {
   debugActivationSuccessVisible.value = true;
   if (debugActivationSuccessTimer) {
@@ -1641,6 +1653,7 @@ function flashDebugActivationSuccess() {
   }, debugActivationSuccessFlashMs);
 }
 
+/** 清理调试启用成功闪烁，防止卸载或重新长按后残留。 */
 function clearDebugActivationSuccessFlash() {
   debugActivationSuccessVisible.value = false;
   if (!debugActivationSuccessTimer) {
@@ -1651,6 +1664,7 @@ function clearDebugActivationSuccessFlash() {
   debugActivationSuccessTimer = undefined;
 }
 
+/** 设置检测状态主文案，并清掉上一轮警告详情。 */
 function setDetectionStatus(message: string, kind: DetectionStatusKind) {
   detectionStatus.value = message;
   detectionStatusKind.value = kind;
@@ -1658,6 +1672,7 @@ function setDetectionStatus(message: string, kind: DetectionStatusKind) {
   detectionStatusWarningTitle.value = "";
 }
 
+/** 将 Worker fallback 等非致命警告附加到检测状态上。 */
 function setDetectionStatusWarnings(warnings: NonNullable<GraphwarObjectsDetectionResult["warnings"]> | undefined) {
   if (!warnings?.length) {
     return;
@@ -1669,12 +1684,14 @@ function setDetectionStatusWarnings(warnings: NonNullable<GraphwarObjectsDetecti
     .join("\n");
 }
 
+/** 等待检测状态渲染到页面，让长耗时阶段前用户能看到进度。 */
 function waitForDetectionStatusPaint() {
   return new Promise<void>((resolve) => {
     requestAnimationFrame(() => resolve());
   });
 }
 
+/** 展示检测阶段状态，并在绘制后确认任务仍然有效。 */
 async function showDetectionStage(runId: number, message: string) {
   if (!isActiveDetectionRun(runId)) {
     return false;
@@ -1875,12 +1892,14 @@ async function applyGraphwarObjectDetectionResult(
   finishDetectionDebugTimings(runId, startedAt, timings, completedAt);
 }
 
+/** 将 Worker 阶段枚举映射成用户可读的检测进度。 */
 async function showDetectionWorkerStage(runId: number, stage: GraphwarDetectionWorkerStage) {
   const message =
     stage === "detecting-bounds" ? locale.status.detection.detectingBounds : locale.status.detection.detectingObjects;
   await showDetectionStage(runId, message);
 }
 
+/** 汇总检测调试 timing，并补齐阶段外耗时和总耗时。 */
 function finishDetectionDebugTimings(
   runId: number,
   startedAt: number,
@@ -1906,6 +1925,7 @@ function finishDetectionDebugTimings(
   ];
 }
 
+/** 将 Worker 返回的 timing 格式转换成页面统一调试条目。 */
 function createDetectionDebugTimingEntriesFromWorker(
   timings: readonly GraphwarDetectionWorkerTimingEntry[],
 ): DetectionDebugTimingEntry[] {
@@ -1916,6 +1936,7 @@ function createDetectionDebugTimingEntriesFromWorker(
   }));
 }
 
+/** 包装页面侧检测阶段计时，用于调试面板拆分耗时。 */
 function measureDetectionDebugStage<TResult>(
   timings: DetectionDebugTimingEntry[],
   stage: DetectionDebugStage,
@@ -1932,24 +1953,29 @@ function measureDetectionDebugStage<TResult>(
   }
 }
 
+/** 获取检测调试阶段的短标签。 */
 function getDetectionDebugStageLabel(stage: DetectionDebugStage) {
   return locale.ui.detection.debugStages[stage].label;
 }
 
+/** 获取检测调试条目的展示标签，细分条目优先使用 detail 标签。 */
 function getDetectionDebugTimingLabel(entry: DetectionDebugTimingEntry) {
   return entry.detail ? getDetectionDebugTimingDetailLabel(entry.detail) : getDetectionDebugStageLabel(entry.stage);
 }
 
+/** 获取检测调试条目的 title，说明该阶段意图。 */
 function getDetectionDebugTimingTitle(entry: DetectionDebugTimingEntry) {
   return entry.detail
     ? locale.ui.detection.debugDetails[entry.detail.type].title
     : locale.ui.detection.debugStages[entry.stage].title;
 }
 
+/** 模板匹配模式条目只解释模式，不展示 0ms 耗时。 */
 function shouldShowDetectionDebugElapsed(entry: DetectionDebugTimingEntry) {
   return entry.detail?.type !== "template-matching-mode";
 }
 
+/** 为不同模板匹配 detail 拼出带 worker 编号或模式的标签。 */
 function getDetectionDebugTimingDetailLabel(detail: GraphwarDetectionWorkerTimingDetail) {
   switch (detail.type) {
     case "template-matching-mode":
@@ -1961,6 +1987,7 @@ function getDetectionDebugTimingDetailLabel(detail: GraphwarDetectionWorkerTimin
   }
 }
 
+/** 汇总智能寻路 timing，并补齐阶段外耗时和总耗时。 */
 function finishSmartPathfindingDebugTimings(
   startedAt: number,
   timings: readonly SmartPathfindingDebugTimingEntry[],
@@ -1985,6 +2012,7 @@ function finishSmartPathfindingDebugTimings(
   ];
 }
 
+/** 包装同步智能寻路阶段计时；未启用调试时不产生额外开销。 */
 function measureSmartPathfindingDebugStage<TResult>(
   timings: SmartPathfindingDebugTimingEntry[] | undefined,
   stage: SmartPathfindingDebugStage,
@@ -2005,6 +2033,7 @@ function measureSmartPathfindingDebugStage<TResult>(
   }
 }
 
+/** 包装异步智能寻路阶段计时，覆盖 worker 和动画让出控制权场景。 */
 async function measureSmartPathfindingDebugStageAsync<TResult>(
   timings: SmartPathfindingDebugTimingEntry[] | undefined,
   stage: SmartPathfindingDebugStage,
@@ -2025,10 +2054,12 @@ async function measureSmartPathfindingDebugStageAsync<TResult>(
   }
 }
 
+/** 获取智能寻路调试阶段的短标签。 */
 function getSmartPathfindingDebugStageLabel(stage: SmartPathfindingDebugStage) {
   return locale.ui.pathfinding.debugStages[stage].label;
 }
 
+/** 只展示当前检测运行的真实错误，忽略取消造成的预期异常。 */
 function handleGraphwarDetectionError(error: unknown, runId: number) {
   if (!isActiveDetectionRun(runId) || isGraphwarDetectionCancelledError(error)) {
     return;
@@ -2037,6 +2068,7 @@ function handleGraphwarDetectionError(error: unknown, runId: number) {
   setDetectionStatus(locale.status.detection.failed(error instanceof Error ? error.message : String(error)), "error");
 }
 
+/** 清理士兵识别闪烁动画，避免下一次检测继承旧动画状态。 */
 function clearDetectionSoldierFlash() {
   detectionSoldierFlashActive.value = false;
   if (detectionSoldierFlashFrame !== undefined) {
@@ -2049,6 +2081,7 @@ function clearDetectionSoldierFlash() {
   }
 }
 
+/** 在检测完成后触发一次士兵标记闪烁，帮助用户定位识别结果。 */
 function flashDetectedSoldiers() {
   clearDetectionSoldierFlash();
   if (detectedSoldiers.value.length === 0) {
@@ -2065,6 +2098,7 @@ function flashDetectedSoldiers() {
   });
 }
 
+/** 深拷贝障碍 mask，作为用户编辑前的恢复基线。 */
 function cloneDetectedObstacleMap(obstacles: DetectedObstacleMap): DetectedObstacleMap {
   return {
     count: obstacles.count,
@@ -2072,6 +2106,7 @@ function cloneDetectedObstacleMap(obstacles: DetectedObstacleMap): DetectedObsta
   };
 }
 
+/** 清理障碍编辑后的延迟统计刷新。 */
 function clearObstacleEditRefreshTimer() {
   if (!obstacleEditRefreshTimer) {
     return;
@@ -2101,6 +2136,7 @@ function flashBoundsRect() {
   });
 }
 
+/** 切换自动识别；关闭后保留当前识别结果供用户继续编辑。 */
 function toggleAutoDetection() {
   autoDetectionEnabled.value = !autoDetectionEnabled.value;
 }
@@ -2125,10 +2161,12 @@ function toggleSmartPathfinding() {
   smartPathfindingEnabled.value = !smartPathfindingEnabled.value;
 }
 
+/** 同步障碍笔刷直径文本，保留非法输入供校验提示展示。 */
 function setObstacleBrushDiameterText(value: string) {
   obstacleBrushDiameterText.value = value;
 }
 
+/** 从输入框事件提取障碍笔刷直径文本。 */
 function handleObstacleBrushDiameterInput(event: Event) {
   const input = event.target;
   if (input instanceof HTMLInputElement) {
@@ -2136,10 +2174,12 @@ function handleObstacleBrushDiameterInput(event: Event) {
   }
 }
 
+/** 同步放大镜缩放文本，保留非法输入供校验提示展示。 */
 function setMagnifierZoomText(value: string) {
   magnifierZoomText.value = value;
 }
 
+/** 从输入框事件提取放大镜缩放文本。 */
 function handleMagnifierZoomInput(event: Event) {
   const input = event.target;
   if (input instanceof HTMLInputElement) {
@@ -2147,10 +2187,12 @@ function handleMagnifierZoomInput(event: Event) {
   }
 }
 
+/** 切换障碍笔刷添加/擦除模式。 */
 function toggleObstacleBrushErase() {
   obstacleBrushEraseEnabled.value = !obstacleBrushEraseEnabled.value;
 }
 
+/** 将障碍 mask 恢复到自动识别后的基线状态。 */
 function resetObstacleEdits() {
   const baseline = baselineDetectedObstacles.value;
   if (!baseline) {
@@ -2165,12 +2207,14 @@ function resetObstacleEdits() {
   setDetectionStatus(locale.status.detection.obstacleEditsCleared(baseline.count), "success");
 }
 
+/** 将鼠标位置吸附到 Graphwar 平面 cell 中心，作为笔刷预览点。 */
 function updateObstacleBrushPreview(point: PixelPoint) {
   obstacleBrushPointerPoint.value = pointIsInsideBoundsRect(point, boundsRect.value)
     ? planeGridCellCenterToImagePoint(imagePointToPlaneGridPoint(point, boundsRect.value), boundsRect.value)
     : undefined;
 }
 
+/** 在障碍 mask 上绘制或擦除笔刷，并可连接上一点形成连续笔画。 */
 function paintObstacleBrushAtPoint(point: PixelPoint, connectFromLastPoint = false) {
   const obstacleMap = detectedObstacles.value;
   const brushDiameter = parsedObstacleBrushDiameter.value;
@@ -2202,6 +2246,7 @@ function paintObstacleBrushAtPoint(point: PixelPoint, connectFromLastPoint = fal
   return true;
 }
 
+/** 延迟刷新障碍连通域数量，合并连续笔刷操作。 */
 function scheduleObstacleEditRefresh() {
   clearObstacleEditRefreshTimer();
   setDetectionStatus(locale.status.detection.updatingObstacleEdits, "warning");
@@ -2872,6 +2917,7 @@ function getSmartPathfindingTargetImageXStep() {
   );
 }
 
+/** 从检测框创建命中圆，统一士兵目标和弹道命中判定。 */
 function createSoldierHitCircle(box: DetectionBox): HitCircle {
   return {
     center: getDetectionBoxCenter(box),

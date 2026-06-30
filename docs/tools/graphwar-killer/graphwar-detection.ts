@@ -158,10 +158,13 @@ const graphwarSoldierTemplateNames = [
   "soldier8.png",
   "soldier9.png",
 ] as const;
-/** 基准值来自测试素材中无限制候选最终匹配点的四项全局最低分；-0.05 是经验余量，用于容忍截图压缩、缩放和抗锯齿带来的轻微分数下探。 */
+/** 固定像素分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
 const graphwarSoldierTemplateMinimumFixedScore = 0.80524047124047127 - 0.05;
+/** 前景形状分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
 const graphwarSoldierTemplateMinimumForegroundScore = 0.69445266272189365 - 0.05;
+/** 玩家色分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
 const graphwarSoldierTemplateMinimumPlayerScore = 0.60552198292591419 - 0.05;
+/** 动画签名分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
 const graphwarSoldierTemplateMinimumSignatureScore = 0.71937830687830706 - 0.05;
 /** 测试素材里无限制候选最终匹配点都在 votes 前 10%，因此模板评分前默认只保留前 10%。 */
 const defaultGraphwarSoldierTemplateCandidateTopRatio = 0.1;
@@ -808,6 +811,7 @@ export function buildObstacleFillPath(mask: Uint8Array, edgeRect: BoundsRect) {
   return commands.join("");
 }
 
+/** 将单个平面网格矩形转换成 SVG path 命令。 */
 function createPlaneRectPathCommand(x: number, y: number, width: number, height: number, edgeRect: BoundsRect) {
   const topLeft = planeToImagePoint({ x, y }, edgeRect);
   const bottomRight = planeToImagePoint({ x: x + width, y: y + height }, edgeRect);
@@ -1060,6 +1064,7 @@ function detectSoldierMatches(
   return { matches };
 }
 
+/** 归一化士兵识别设置，避免 UI 输入越界影响模板匹配。 */
 function resolveGraphwarSoldierDetectionSettings(
   settings?: GraphwarSoldierDetectionSettings,
 ): GraphwarSoldierDetectionSettings {
@@ -1079,6 +1084,7 @@ function resolveGraphwarSoldierDetectionSettings(
   };
 }
 
+/** 通过 instrumentation 包装对象识别阶段，未启用调试时直接执行。 */
 function measureObjectDetectionStage<TResult>(
   instrumentation: GraphwarObjectDetectionInstrumentation | undefined,
   stage: GraphwarObjectDetectionStage,
@@ -1087,6 +1093,7 @@ function measureObjectDetectionStage<TResult>(
   return instrumentation ? instrumentation.measureStage(stage, task) : task();
 }
 
+/** 将源码中心匹配结果转换成页面使用的士兵检测框。 */
 export function createSoldierDetectionBoxes(matches: SoldierMatchCandidate[], edgeRect: BoundsRect) {
   const scale = edgeRect.width / GRAPHWAR_PLANE_LENGTH;
   const hitRadius = GRAPHWAR_SOLDIER_RADIUS * scale;
@@ -1161,6 +1168,7 @@ export function detectGraphwarObstaclesInBounds(
   });
 }
 
+/** 收集可传给模板 worker 的士兵源码中心候选点。 */
 export function collectSoldierTemplateCenterCandidatesForMatching(
   imageData: ImageData,
   edgeRect: BoundsRect,
@@ -1175,10 +1183,12 @@ export function collectSoldierTemplateCenterCandidatesForMatching(
   );
 }
 
+/** 暴露统一归一化后的士兵识别设置，供 worker 复用。 */
 export function getGraphwarSoldierDetectionSettings(settings?: GraphwarSoldierDetectionSettings) {
   return resolveGraphwarSoldierDetectionSettings(settings);
 }
 
+/** 根据棋盘宽度计算 Graphwar 原始平面到截图像素的缩放比例。 */
 export function getGraphwarDetectionScale(edgeRect: BoundsRect) {
   return edgeRect.width / GRAPHWAR_PLANE_LENGTH;
 }
@@ -1209,6 +1219,7 @@ export function matchSoldierTemplates(
   return matches;
 }
 
+/** 过滤低分士兵匹配并按重叠关系保留最可信结果。 */
 export function finalizeSoldierTemplateMatches(
   matches: SoldierMatchCandidate[],
   scale: number,
@@ -1217,6 +1228,7 @@ export function finalizeSoldierTemplateMatches(
   return suppressOverlappingSoldierMatches(filterAcceptedSoldierMatches(matches), scale, settings.maximumSoldierCount);
 }
 
+/** 应用各子分数阈值，并按综合分和投票数排序候选。 */
 function filterAcceptedSoldierMatches(matches: SoldierMatchCandidate[]) {
   return matches
     .filter(
@@ -1346,6 +1358,7 @@ function findBestSoldierTemplateMatch(
   return best;
 }
 
+/** Graphwar 原版士兵在右半平面使用镜像模板。 */
 function expectedSoldierTemplateMirroredForPlaneX(planeX: number) {
   return planeX >= GRAPHWAR_PLANE_LENGTH / 2;
 }
@@ -1408,6 +1421,7 @@ function scoreSoldierTemplateBaseAt(
   };
 }
 
+/** 把各子分数超过阈值的余量合成为最终置信度。 */
 function scoreSoldierTemplateThresholdExcess(
   fixedScore: number,
   foregroundScore: number,
@@ -1427,10 +1441,12 @@ function scoreSoldierTemplateThresholdExcess(
   );
 }
 
+/** 将阈值以上的得分压缩到 0..1，低于阈值视为无贡献。 */
 function normalizeScoreAboveThreshold(score: number, threshold: number) {
   return clampNumber((score - threshold) / (1 - threshold), 0, 1);
 }
 
+/** 对模板像素组做双线性采样评分，只统计仍在棋盘矩形内的像素。 */
 function scoreTemplatePixelGroup(
   imageData: ImageData,
   rect: BoundsRect,
@@ -1458,6 +1474,7 @@ function scoreTemplatePixelGroup(
   return visiblePixels > 0 ? score / visiblePixels : 0;
 }
 
+/** 从模板玩家色区域估计当前士兵颜色，降低不同玩家配色的影响。 */
 function estimateTemplatePlayerColor(
   imageData: ImageData,
   rect: BoundsRect,
@@ -1490,6 +1507,7 @@ function estimateTemplatePlayerColor(
   return weight > 0 ? { red: red / weight, green: green / weight, blue: blue / weight } : { red: 0, green: 0, blue: 0 };
 }
 
+/** 对动画签名像素评分，用于区分不同士兵帧。 */
 function scoreTemplateSignaturePixels(
   imageData: ImageData,
   rect: BoundsRect,
@@ -1516,6 +1534,7 @@ function scoreTemplateSignaturePixels(
   return visiblePixels > 0 ? score / visiblePixels : 0;
 }
 
+/** 按 RGB 曼哈顿距离评分单个动画签名像素。 */
 function scoreSoldierSignaturePixel(pixel: { red: number; green: number; blue: number }, color: string) {
   const expectedRed = Number.parseInt(color.slice(0, 2), 16);
   const expectedGreen = Number.parseInt(color.slice(2, 4), 16);
@@ -1525,6 +1544,7 @@ function scoreSoldierSignaturePixel(pixel: { red: number; green: number; blue: n
   return clampNumber(1 - distance / 360, 0, 1);
 }
 
+/** 检查士兵外圈是否仍像士兵颜色，抑制贴近真实士兵边缘的误匹配。 */
 function scoreTemplateBackgroundPenalty(
   imageData: ImageData,
   rect: BoundsRect,
@@ -1568,6 +1588,7 @@ function scoreTemplateBackgroundPenalty(
   return Math.min(0.06, suspicious * 0.01);
 }
 
+/** 对固定黄色、高光和深色轮廓像素评分。 */
 function scoreSoldierFixedPixel(pixel: { red: number; green: number; blue: number }) {
   if (isSoldierTemplateSeedPixel(pixel.red, pixel.green, pixel.blue)) {
     return 1;
@@ -1581,6 +1602,7 @@ function scoreSoldierFixedPixel(pixel: { red: number; green: number; blue: numbe
   return scoreSoldierForegroundPixel(pixel) * 0.48;
 }
 
+/** 对士兵前景形状评分，排除棋盘底色并弱化坐标轴干扰。 */
 function scoreSoldierForegroundPixel(pixel: { red: number; green: number; blue: number }) {
   if (isPlaneWhitePixel(pixel.red, pixel.green, pixel.blue) || isPlaneGreenPixel(pixel.red, pixel.green, pixel.blue)) {
     return 0;
@@ -1596,6 +1618,7 @@ function scoreSoldierForegroundPixel(pixel: { red: number; green: number; blue: 
   return clampNumber(0.5 + chroma / 260, 0, 1);
 }
 
+/** 对玩家颜色像素评分，兼顾与估计颜色的距离和色度。 */
 function scoreSoldierPlayerColorPixel(
   pixel: { red: number; green: number; blue: number },
   playerColor: { red: number; green: number; blue: number },
@@ -1612,14 +1635,17 @@ function scoreSoldierPlayerColorPixel(
   return clampNumber(1 - distance / 420 + chroma / 900, 0, 1);
 }
 
+/** 判断模板源码中心是否仍落在棋盘截图矩形内。 */
 function soldierTemplateCenterFitsRect(centerX: number, centerY: number, rect: BoundsRect) {
   return centerX >= rect.x && centerX <= rect.x + rect.width && centerY >= rect.y && centerY <= rect.y + rect.height;
 }
 
+/** 判断截图像素点是否在棋盘矩形内。 */
 function pointIsInsideRect(x: number, y: number, rect: BoundsRect) {
   return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }
 
+/** 读取最近邻像素，并把越界采样裁剪到图像范围内。 */
 function getImagePixel(imageData: ImageData, x: number, y: number) {
   const clampedX = clampNumber(Math.round(x), 0, imageData.width - 1);
   const clampedY = clampNumber(Math.round(y), 0, imageData.height - 1);
@@ -1631,6 +1657,7 @@ function getImagePixel(imageData: ImageData, x: number, y: number) {
   };
 }
 
+/** 对非整数截图坐标做双线性采样，适配缩放后的模板像素。 */
 function sampleImagePixelBilinear(imageData: ImageData, x: number, y: number) {
   const left = clampNumber(Math.floor(x), 0, imageData.width - 1);
   const top = clampNumber(Math.floor(y), 0, imageData.height - 1);
@@ -1649,6 +1676,7 @@ function sampleImagePixelBilinear(imageData: ImageData, x: number, y: number) {
   };
 }
 
+/** 执行单通道双线性插值。 */
 function interpolateBilinear(
   topLeft: number,
   topRight: number,
@@ -1662,14 +1690,17 @@ function interpolateBilinear(
   return top + (bottom - top) * ty;
 }
 
+/** 将 20x20 士兵模板像素坐标转换成相对源码中心的截图偏移。 */
 function getSoldierTemplatePixelOffset(pixelCoordinate: number, scale: number) {
   return (pixelCoordinate + 0.5 - graphwarSoldierCanvasCenter) * scale;
 }
 
+/** 创建正常和镜像两套士兵模板基础数据。 */
 function createGraphwarSoldierTemplateBases(): SoldierTemplateBase[] {
   return [createGraphwarSoldierTemplateBase(false), createGraphwarSoldierTemplateBase(true)];
 }
 
+/** 从模板网格构造一套固定像素、玩家色像素和动画签名模板。 */
 function createGraphwarSoldierTemplateBase(mirrored: boolean): SoldierTemplateBase {
   const fixedPixels = createTemplatePixelsFromGrid(graphwarSoldierFixedColorGrid, mirrored);
   const foregroundPixels = createTemplatePixelsFromGrid(graphwarSoldierSolidGrid, mirrored);
@@ -1702,6 +1733,7 @@ function createGraphwarSoldierTemplateBase(mirrored: boolean): SoldierTemplateBa
   };
 }
 
+/** 将基础像素组和某个动画帧签名组合成完整士兵模板。 */
 function createGraphwarSoldierTemplate(options: {
   fixedPixels: SoldierTemplatePixel[];
   foregroundPixels: SoldierTemplatePixel[];
@@ -1725,6 +1757,7 @@ function createGraphwarSoldierTemplate(options: {
   };
 }
 
+/** 去掉签名像素完全相同的动画帧，避免重复评分同一模板。 */
 function collectUniqueSoldierSignatureTemplates(templates: SoldierTemplate[]) {
   const seenSignatures = new Set<string>();
   const uniqueTemplates: SoldierTemplate[] = [];
@@ -1739,10 +1772,12 @@ function collectUniqueSoldierSignatureTemplates(templates: SoldierTemplate[]) {
   return uniqueTemplates;
 }
 
+/** 为动画签名像素创建去重 key。 */
 function createSoldierTemplateSignatureKey(signaturePixels: readonly SoldierTemplateColorPixel[]) {
   return signaturePixels.map((pixel) => pixel.color).join(";");
 }
 
+/** 将字符串网格中的模板像素提取成坐标列表，并按需镜像 x。 */
 function createTemplatePixelsFromGrid(grid: readonly string[], mirrored: boolean) {
   const pixels: SoldierTemplatePixel[] = [];
   for (let y = 0; y < grid.length; y += 1) {
@@ -1758,6 +1793,7 @@ function createTemplatePixelsFromGrid(grid: readonly string[], mirrored: boolean
   return pixels;
 }
 
+/** 创建指定动画帧的签名颜色像素，镜像模板需要同步镜像 x。 */
 function createSoldierTemplateSignaturePixels(name: (typeof graphwarSoldierTemplateNames)[number], mirrored: boolean) {
   return graphwarSoldierAnimationSignatureCoordinates.map(([x, y], index) => ({
     color: graphwarSoldierAnimationSignatureColorsByName[name][index] ?? "000000",
@@ -1766,6 +1802,7 @@ function createSoldierTemplateSignaturePixels(name: (typeof graphwarSoldierTempl
   }));
 }
 
+/** 按源码中心间距抑制同一士兵的重叠匹配，只保留高分候选。 */
 function suppressOverlappingSoldierMatches(
   matches: SoldierMatchCandidate[],
   scale: number,
@@ -2121,10 +2158,12 @@ function setMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number, v
   }
 }
 
+/** 判断圆形笔刷偏移是否落在半径内。 */
 function offsetIsInsideRadius(offsetX: number, offsetY: number, radiusSquared: number) {
   return offsetX * offsetX + offsetY * offsetY <= radiusSquared;
 }
 
+/** 判断平面网格点是否落在圆形笔刷扫过线段的半径内。 */
 function pointIsInsideStrokeRadius(
   x: number,
   y: number,
@@ -2255,6 +2294,7 @@ function isObstacleAntialiasEdgePixel(red: number, green: number, blue: number) 
   );
 }
 
+/** 计算颜色通道跨度，用于区分灰阶和玩家高色度像素。 */
 function getColorChroma(red: number, green: number, blue: number) {
   return Math.max(red, green, blue) - Math.min(red, green, blue);
 }

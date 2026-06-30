@@ -39,7 +39,9 @@ interface SampleGraphwarTrajectoryOptions {
 const STEP_CENTER_MARGIN = GRAPHWAR_PLANE_GAME_LENGTH / GRAPHWAR_PLANE_LENGTH;
 const STEP_TARGET_VERTICAL_TOLERANCE =
   (graphwarToolDefaults.targetRangePixelTolerance * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH;
+/** 发射点迭代收敛阈值取 Graphwar 最小 x 步长的 1/10，避免无意义抖动。 */
 const FORMULA_LAUNCH_POINT_TOLERANCE = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE / 10;
+/** 发射点收敛比较使用距离平方，避免每轮开方。 */
 const FORMULA_LAUNCH_POINT_TOLERANCE_SQUARED = FORMULA_LAUNCH_POINT_TOLERANCE ** 2;
 
 /** 采样用户直接输入表达式的输入；表达式模式不经过路径点编译。 */
@@ -111,28 +113,49 @@ type FirstOrderEvaluator = (x: number, y: number) => number;
 /** Y''=f(x,y,y') 模式使用的二阶导求值器。 */
 type SecondOrderEvaluator = (x: number, y: number, dy: number) => number;
 
+/** Graphwar 原版 PolishNotationFunction 使用的简单数值 token。 */
 interface GraphwarExpressionToken {
+  /** Token 类型编号；顺序参与原版优先级重排。 */
   type: number;
+  /** 常量 token 的数值。 */
   value?: number;
 }
 
+/** Graphwar 表达式 token 编号；数值顺序会影响 reorderGraphwarExpressionTokens 的原版兼容优先级。 */
 const GRAPHWAR_EXPR_ADD = 1;
+/** 减号 token；Graphwar 原版把它作为一元负号处理。 */
 const GRAPHWAR_EXPR_SUBTRACT = 2;
+/** 乘法 token。 */
 const GRAPHWAR_EXPR_MULTIPLY = 3;
+/** 除法 token。 */
 const GRAPHWAR_EXPR_DIVIDE = 4;
+/** 幂运算 token。 */
 const GRAPHWAR_EXPR_POW = 5;
+/** Sqrt 函数 token。 */
 const GRAPHWAR_EXPR_SQRT = 6;
+/** Log10 函数 token。 */
 const GRAPHWAR_EXPR_LOG = 7;
+/** Abs 函数 token。 */
 const GRAPHWAR_EXPR_ABS = 8;
+/** Sin/sen 函数 token。 */
 const GRAPHWAR_EXPR_SIN = 9;
+/** Cos 函数 token。 */
 const GRAPHWAR_EXPR_COS = 10;
+/** Tan/tg 函数 token。 */
 const GRAPHWAR_EXPR_TAN = 11;
+/** Ln 函数 token。 */
 const GRAPHWAR_EXPR_LN = 12;
+/** X 变量 token。 */
 const GRAPHWAR_EXPR_X = 13;
+/** Y 变量 token。 */
 const GRAPHWAR_EXPR_Y = 14;
+/** Y' 变量 token。 */
 const GRAPHWAR_EXPR_DY = 15;
+/** 数字常量 token。 */
 const GRAPHWAR_EXPR_VALUE = 16;
+/** 左括号 token，只参与重排时的嵌套层级计算。 */
 const GRAPHWAR_EXPR_LEFT_BRACKET = 17;
+/** 右括号 token，只参与重排时的嵌套层级计算。 */
 const GRAPHWAR_EXPR_RIGHT_BRACKET = 18;
 
 /** 把用户点选的士兵中心转换为 Graphwar 实际发射边缘点，供公式生成使用。 */
@@ -628,6 +651,7 @@ function tokenizeGraphwarExpression(
   return insertGraphwarImplicitMultiplications(tokens);
 }
 
+/** 读取当前位置的 Graphwar 表达式 token，保留原版函数名和 y' 解析差异开关。 */
 function readGraphwarExpressionToken(
   rest: string,
   parserOptions: GraphwarExpressionParserOptions,
@@ -669,6 +693,7 @@ function readGraphwarExpressionToken(
   return charTokens[rest[0]] ? { length: 1, token: charTokens[rest[0]] } : undefined;
 }
 
+/** 在相邻值 token 之间插入 Graphwar 支持的隐式乘法。 */
 function insertGraphwarImplicitMultiplications(tokens: GraphwarExpressionToken[]) {
   const result: GraphwarExpressionToken[] = [];
   for (const token of tokens) {
@@ -681,6 +706,7 @@ function insertGraphwarImplicitMultiplications(tokens: GraphwarExpressionToken[]
   return result;
 }
 
+/** 判断两个相邻 token 是否需要补乘号，模拟 Graphwar 输入容错。 */
 function graphwarTokensAreImplicitMultiplication(previousType: number, nextType: number) {
   return (
     graphwarExpressionTokenIsValueLike(previousType) &&
@@ -690,12 +716,14 @@ function graphwarTokensAreImplicitMultiplication(previousType: number, nextType:
   );
 }
 
+/** 判断 token 是否可以作为值表达式的起点。 */
 function graphwarExpressionTokenCanStartValue(type: number) {
   return (
     type === GRAPHWAR_EXPR_VALUE || type === GRAPHWAR_EXPR_X || type === GRAPHWAR_EXPR_Y || type === GRAPHWAR_EXPR_DY
   );
 }
 
+/** 判断 token 是否能作为隐式乘法左侧的值表达式。 */
 function graphwarExpressionTokenIsValueLike(type: number) {
   return (
     type === GRAPHWAR_EXPR_VALUE ||
@@ -706,6 +734,7 @@ function graphwarExpressionTokenIsValueLike(type: number) {
   );
 }
 
+/** 按 Graphwar 原版优先级规则把普通 token 区间重排为前缀 Polish token。 */
 function reorderGraphwarExpressionTokens(
   output: GraphwarExpressionToken[],
   input: GraphwarExpressionToken[],
@@ -749,6 +778,7 @@ function reorderGraphwarExpressionTokens(
   return true;
 }
 
+/** 校验 Polish token 序列是否刚好消费一个表达式值。 */
 function graphwarPolishValuesNeeded(tokens: readonly GraphwarExpressionToken[]) {
   let valuesNeeded = 1;
   for (let index = 0; index < tokens.length; index += 1) {
@@ -762,11 +792,13 @@ function graphwarPolishValuesNeeded(tokens: readonly GraphwarExpressionToken[]) 
   return valuesNeeded;
 }
 
+/** 为编译后的 Polish 表达式创建可复用栈，避免每个采样点重新分配。 */
 function createGraphwarPolishExpressionEvaluator(tokens: readonly GraphwarExpressionToken[]) {
   const stack = new Array<number>(tokens.length);
   return (x: number, y: number, dy: number) => evaluateGraphwarPolishExpression(tokens, stack, x, y, dy);
 }
 
+/** 从后向前求值 Graphwar 前缀 Polish 表达式。 */
 function evaluateGraphwarPolishExpression(
   tokens: readonly GraphwarExpressionToken[],
   stack: number[],
@@ -880,10 +912,12 @@ function evaluateGraphwarPolishExpression(
   return Number.isFinite(value) ? value : Number.NaN;
 }
 
+/** 判断 token 是否为 Graphwar 表达式运算符。 */
 function graphwarExpressionTokenIsOperation(type: number) {
   return type >= GRAPHWAR_EXPR_ADD && type <= GRAPHWAR_EXPR_LN;
 }
 
+/** 返回 Graphwar 运算符需要的参数个数。 */
 function getGraphwarExpressionTokenParamCount(type: number) {
   if (type === GRAPHWAR_EXPR_SUBTRACT) {
     return 1;

@@ -1,21 +1,37 @@
 /** 保存 Graphwar 杀手页面初始尺寸、坐标标定和识别阈值默认值。 */
 interface GraphwarToolDefaults {
+  /** 默认工作区画布宽度，匹配示例截图比例。 */
   canvasWidth: number;
+  /** 默认工作区画布高度，匹配示例截图比例。 */
   canvasHeight: number;
+  /** 默认 Graphwar 平面在示例截图中的像素边界。 */
   boundsRect: {
+    /** 默认平面左上角 x。 */
     x: number;
+    /** 默认平面左上角 y。 */
     y: number;
+    /** 默认平面宽度。 */
     width: number;
+    /** 默认平面高度。 */
     height: number;
   };
+  /** 弹道命中目标圆时允许的额外像素误差。 */
   targetRangePixelTolerance: number;
+  /** 放大镜预览窗口尺寸。 */
   magnifierSize: number;
+  /** 放大镜默认缩放倍数。 */
   magnifierZoom: number;
+  /** Step 算法默认陡峭度，兼顾函数长度和接近垂直阶跃的效果。 */
   steepness: number;
+  /** 发射点固定点迭代次数上限，避免公式点调整陷入长循环。 */
   formulaLaunchPointIterations: number;
+  /** 自动障碍识别保留连通域的默认最小面积。 */
   obstacleMinArea: number;
+  /** 士兵模板候选投票排序后参与完整匹配的默认比例。 */
   soldierTemplateCandidateTopRatio: number;
+  /** 士兵模板匹配默认子 Worker 数量。 */
   templateMatchingWorkerCount: number;
+  /** 默认最多保留的士兵识别数量，防止噪点生成过多目标。 */
   maximumSoldierCount: number;
 }
 

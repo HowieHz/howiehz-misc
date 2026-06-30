@@ -130,9 +130,8 @@ export const graphwarKillerLocale = {
       cancelled: "Detection cancelled",
       detectingBounds: "Detecting play-area bounds",
       detectingObjects: "Detecting soldiers and obstacles",
-      detectedCurrentBounds: (soldiers, elapsed) => `Marked obstacles, detected ${soldiers} soldiers in ${elapsed}`,
-      detectedWithAutoBounds: (soldiers, elapsed) =>
-        `Marked bounds and obstacles, detected ${soldiers} soldiers in ${elapsed}`,
+      detectedCurrentBounds: (soldiers, elapsed) => `Marked obstacles and ${soldiers} soldiers in ${elapsed}`,
+      detectedWithAutoBounds: (soldiers, elapsed) => `Marked bounds, obstacles, and ${soldiers} soldiers in ${elapsed}`,
       failed: (message) => `Detection failed: ${message}`,
       obstacleEditsApplied: (obstacles) => `Updated obstacle boundaries; currently ${obstacles} obstacles`,
       obstacleEditsCleared: (obstacles) => `Cleared obstacle edits; restored ${obstacles} obstacles`,

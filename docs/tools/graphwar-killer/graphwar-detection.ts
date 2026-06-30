@@ -136,10 +136,8 @@ const graphwarSoldierTemplateMinimumFixedScore = 0.75;
 const graphwarSoldierTemplateMinimumForegroundScore = 0.65;
 const graphwarSoldierTemplateMinimumPlayerScore = 0.55;
 const graphwarSoldierTemplateMinimumSignatureScore = 0.65;
-/** 模板评分前保留的中心候选上限；Graphwar 最多 40 个士兵，这不是士兵数量上限。 */
-const graphwarSoldierTemplateCandidateLimit = 400;
-/** 模板评分前只保留 votes 排名前 5% 的中心候选，再与固定上限取小。 */
-const graphwarSoldierTemplateCandidateTopRatio = 0.05;
+/** 模板评分前只保留 votes 排名前 10% 的中心候选。 */
+const graphwarSoldierTemplateCandidateTopRatio = 0.1;
 const graphwarMaximumSoldierCount = 40;
 const graphwarSoldierGenerationMinimumAxisGap = 20;
 const graphwarSoldierAnimationSignatureCoordinates = [
@@ -998,7 +996,7 @@ function detectSoldierMatches(
 ) {
   const scale = edgeRect.width / GRAPHWAR_PLANE_LENGTH;
   const candidates = measureObjectDetectionStage(instrumentation, "collecting-soldier-candidates", () =>
-    createSoldierTemplateCenterCandidates(imageData, edgeRect, scale, graphwarSoldierTemplateCandidateLimit),
+    createSoldierTemplateCenterCandidates(imageData, edgeRect, scale),
   );
   const matches = measureObjectDetectionStage(instrumentation, "matching-soldier-templates", () =>
     suppressOverlappingSoldierMatches(matchSoldierTemplates(imageData, edgeRect, scale, candidates), scale),
@@ -1126,12 +1124,7 @@ function filterAcceptedSoldierMatches(matches: SoldierMatchCandidate[]) {
 }
 
 /** 固定黄色/白色像素在所有模板坐标上反投票，避免连通域 bbox 成为真值。 */
-function createSoldierTemplateCenterCandidates(
-  imageData: ImageData,
-  edgeRect: BoundsRect,
-  scale: number,
-  candidateLimit: number,
-) {
+function createSoldierTemplateCenterCandidates(imageData: ImageData, edgeRect: BoundsRect, scale: number) {
   const votes = new Map<string, { count: number; mirrored: boolean; x: number; y: number }>();
   const stride = Math.max(1, Math.floor(scale / 2));
 
@@ -1186,7 +1179,7 @@ function createSoldierTemplateCenterCandidates(
     .sort((left, right) => right.votes - left.votes);
 
   const percentileLimit = Math.ceil(rankedCandidates.length * graphwarSoldierTemplateCandidateTopRatio);
-  return rankedCandidates.slice(0, Math.min(candidateLimit, percentileLimit));
+  return rankedCandidates.slice(0, percentileLimit);
 }
 
 /** 对同一个源码中心尝试所有正常/镜像源码模板，返回分数最高者。 */

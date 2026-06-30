@@ -3983,7 +3983,7 @@ async function copyText(text: string) {
       <h3 class="graphwar-killer__settings-subheading">
         {{ locale.ui.settings.recognition.heading }}
       </h3>
-      <div class="graphwar-killer__image-actions">
+      <div class="graphwar-killer__recognition-setting-row">
         <label
           class="graphwar-killer__detection-setting-label"
           :title="locale.ui.settings.recognition.maximumSoldierCountTitle"
@@ -4014,8 +4014,6 @@ async function copyText(text: string) {
             :title="locale.ui.settings.recognition.candidateTopRatioTitle"
           >
         </label>
-      </div>
-      <div class="graphwar-killer__pathfinding-range-row">
         <label
           class="graphwar-killer__detection-setting-label"
           :title="locale.ui.detection.minObstacleAreaTitle"
@@ -4056,7 +4054,7 @@ async function copyText(text: string) {
         >
           {{ locale.ui.pathfinding.obstacleExpansion }}
         </summary>
-        <div class="graphwar-killer__pathfinding-setting-grid">
+        <div class="graphwar-killer__pathfinding-setting-grid graphwar-killer__obstacle-expansion-settings">
           <div class="graphwar-killer__pathfinding-range-row">
             <label
               class="graphwar-killer__detection-setting-label"
@@ -5943,6 +5941,30 @@ async function copyText(text: string) {
   min-width: 0;
 }
 
+.graphwar-killer__obstacle-expansion-settings {
+  justify-items: start;
+}
+
+.graphwar-killer__obstacle-expansion-settings .graphwar-killer__pathfinding-range-row {
+  grid-template-columns: repeat(2, max-content);
+}
+
+.graphwar-killer__obstacle-expansion-settings .graphwar-killer__detection-setting-label {
+  grid-template-columns: max-content minmax(74px, 92px) auto;
+}
+
+.graphwar-killer__recognition-setting-row {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.graphwar-killer__recognition-setting-row .graphwar-killer__detection-setting-label {
+  grid-template-columns: minmax(0, max-content) minmax(54px, 72px) auto;
+  min-width: 0;
+}
+
 .graphwar-killer__coordinate-grid {
   display: grid;
   gap: 8px;
@@ -6387,6 +6409,10 @@ async function copyText(text: string) {
 @media (width <= 520px) {
   .graphwar-killer__setting-row {
     display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .graphwar-killer__recognition-setting-row {
     grid-template-columns: 1fr;
   }
 }

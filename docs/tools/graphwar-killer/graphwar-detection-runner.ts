@@ -90,6 +90,7 @@ export function createGraphwarDetectionRunner() {
         id: nextRequestId,
         task: {
           imageData: input.imageData,
+          soldierSettings: input.soldierSettings,
           thresholds: input.thresholds,
           type: "detect-auto",
         },
@@ -111,6 +112,7 @@ export function createGraphwarDetectionRunner() {
         task: {
           edgeRect: input.edgeRect,
           imageData: input.imageData,
+          soldierSettings: input.soldierSettings,
           thresholds: input.thresholds,
           type: "detect-bounds",
         },
@@ -230,6 +232,7 @@ function detectAutoSynchronously(
     input.imageData,
     edgeRect,
     input.thresholds,
+    input.soldierSettings,
     createObjectDetectionInstrumentation(timings),
   );
   options?.onTimings?.(timings);
@@ -249,6 +252,7 @@ function detectObjectsInBoundsSynchronously(
     input.imageData,
     input.edgeRect,
     input.thresholds,
+    input.soldierSettings,
     createObjectDetectionInstrumentation(timings),
   );
   options?.onTimings?.(timings);

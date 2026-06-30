@@ -45,6 +45,8 @@ export interface GraphwarKillerLocale {
     maxYGreaterThanMinY: string;
     magnifierZoomNumber: string;
     magnifierZoomRange: (min: number, max: number) => string;
+    maximumSoldierCountInteger: string;
+    maximumSoldierCountPositive: string;
     obstacleMinAreaInteger: string;
     obstacleMinAreaRange: (max: number) => string;
     obstacleBrushDiameterInteger: string;
@@ -57,6 +59,8 @@ export interface GraphwarKillerLocale {
     routeStepNumber: string;
     simulationExpansionNumber: string;
     simulationExpansionPixelRange: (limit: number) => string;
+    soldierTemplateCandidateTopRatioNumber: string;
+    soldierTemplateCandidateTopRatioRange: string;
     stepSteepnessNumber: string;
     decimalPlacesInteger: string;
     decimalPlacesRange: (max: number) => string;
@@ -311,6 +315,18 @@ export interface GraphwarKillerLocale {
       overflowProtectionTitle: string;
       parseDerivativeAsY: string;
       parseDerivativeAsYTitle: string;
+      pathfinding: {
+        heading: string;
+      };
+      recognition: {
+        candidateTopRatio: string;
+        candidateTopRatioAriaLabel: string;
+        candidateTopRatioTitle: string;
+        heading: string;
+        maximumSoldierCount: string;
+        maximumSoldierCountAriaLabel: string;
+        maximumSoldierCountTitle: string;
+      };
       simulator: string;
       skipUnknownCharacters: string;
       skipUnknownCharactersTitle: string;

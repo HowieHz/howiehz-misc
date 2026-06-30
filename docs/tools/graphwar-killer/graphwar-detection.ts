@@ -46,6 +46,14 @@ export interface GraphwarObstacleDetectionThresholds {
   minArea: number;
 }
 
+/** 士兵识别设定；页面负责解析输入，识别 Module 只消费数值。 */
+export interface GraphwarSoldierDetectionSettings {
+  /** 最终保留的士兵数量上限。 */
+  maximumSoldierCount: number;
+  /** 模板评分前只保留投票排名靠前的候选比例，取值 0 到 1。 */
+  candidateTopRatio: number;
+}
+
 /** 障碍识别结果，mask 使用 Graphwar 原始 770x450 平面。 */
 export interface DetectedObstacleMap {
   /** 障碍 mask，1 表示障碍。 */
@@ -143,10 +151,10 @@ const graphwarSoldierTemplateMinimumFixedScore = 0.80524047124047127 - 0.05;
 const graphwarSoldierTemplateMinimumForegroundScore = 0.69445266272189365 - 0.05;
 const graphwarSoldierTemplateMinimumPlayerScore = 0.60552198292591419 - 0.05;
 const graphwarSoldierTemplateMinimumSignatureScore = 0.71937830687830706 - 0.05;
-/** 测试素材里无限制候选最终匹配点都在 votes 前 10%，因此模板评分前只保留前 10%。 */
-const graphwarSoldierTemplateCandidateTopRatio = 0.1;
-/** Graphwar 游戏设定最多 40 个士兵；用于重叠抑制后的最终检测数量上限。 */
-const graphwarMaximumSoldierCount = 40;
+/** 测试素材里无限制候选最终匹配点都在 votes 前 10%，因此模板评分前默认只保留前 10%。 */
+const defaultGraphwarSoldierTemplateCandidateTopRatio = 0.1;
+/** Graphwar 游戏设定默认最多 40 个士兵；用于重叠抑制后的最终检测数量上限。 */
+const defaultGraphwarMaximumSoldierCount = 40;
 /** 同一士兵附近会产生多个高分中心候选；低于这个源码像素间距的匹配视为同一士兵。 */
 const graphwarSoldierGenerationMinimumAxisGap = 20;
 /** 从 10 帧士兵动画里挑出的差异像素坐标，用于区分 soldierNormal/soldier1..9。 */
@@ -615,9 +623,10 @@ export function detectGraphwarObjectsInBounds(
   imageData: ImageData,
   edgeRect: BoundsRect,
   thresholds: GraphwarObstacleDetectionThresholds,
+  soldierSettings?: GraphwarSoldierDetectionSettings,
   instrumentation?: GraphwarObjectDetectionInstrumentation,
 ): GraphwarObjectsDetectionResult {
-  const soldierMatches = detectSoldierMatches(imageData, edgeRect, instrumentation);
+  const soldierMatches = detectSoldierMatches(imageData, edgeRect, soldierSettings, instrumentation);
   const soldiers = createSoldierDetectionBoxes(soldierMatches.matches, edgeRect);
   return {
     soldiers,
@@ -1017,16 +1026,37 @@ function buildAxisTriplets(groups: AxisGroup[]) {
 function detectSoldierMatches(
   imageData: ImageData,
   edgeRect: BoundsRect,
+  settings: GraphwarSoldierDetectionSettings | undefined,
   instrumentation?: GraphwarObjectDetectionInstrumentation,
 ) {
   const scale = edgeRect.width / GRAPHWAR_PLANE_LENGTH;
+  const resolvedSettings = resolveGraphwarSoldierDetectionSettings(settings);
   const candidates = measureObjectDetectionStage(instrumentation, "collecting-soldier-candidates", () =>
-    createSoldierTemplateCenterCandidates(imageData, edgeRect, scale),
+    createSoldierTemplateCenterCandidates(imageData, edgeRect, scale, resolvedSettings.candidateTopRatio),
   );
   const matches = measureObjectDetectionStage(instrumentation, "matching-soldier-templates", () =>
-    suppressOverlappingSoldierMatches(matchSoldierTemplates(imageData, edgeRect, scale, candidates), scale),
+    suppressOverlappingSoldierMatches(
+      matchSoldierTemplates(imageData, edgeRect, scale, candidates),
+      scale,
+      resolvedSettings.maximumSoldierCount,
+    ),
   );
   return { matches };
+}
+
+function resolveGraphwarSoldierDetectionSettings(
+  settings?: GraphwarSoldierDetectionSettings,
+): GraphwarSoldierDetectionSettings {
+  return {
+    candidateTopRatio:
+      settings?.candidateTopRatio && Number.isFinite(settings.candidateTopRatio)
+        ? clampNumber(settings.candidateTopRatio, Number.EPSILON, 1)
+        : defaultGraphwarSoldierTemplateCandidateTopRatio,
+    maximumSoldierCount:
+      settings?.maximumSoldierCount && Number.isFinite(settings.maximumSoldierCount)
+        ? Math.max(1, Math.floor(settings.maximumSoldierCount))
+        : defaultGraphwarMaximumSoldierCount,
+  };
 }
 
 function measureObjectDetectionStage<TResult>(
@@ -1150,7 +1180,12 @@ function filterAcceptedSoldierMatches(matches: SoldierMatchCandidate[]) {
 }
 
 /** 固定黄色/白色像素在所有模板坐标上反投票，避免连通域 bbox 成为真值。 */
-function createSoldierTemplateCenterCandidates(imageData: ImageData, edgeRect: BoundsRect, scale: number) {
+function createSoldierTemplateCenterCandidates(
+  imageData: ImageData,
+  edgeRect: BoundsRect,
+  scale: number,
+  candidateTopRatio: number,
+) {
   const votes = new Map<string, { count: number; mirrored: boolean; x: number; y: number }>();
   const stride = Math.max(1, Math.floor(scale / 2));
 
@@ -1204,7 +1239,7 @@ function createSoldierTemplateCenterCandidates(imageData: ImageData, edgeRect: B
     }))
     .sort((left, right) => right.votes - left.votes);
 
-  const percentileLimit = Math.ceil(rankedCandidates.length * graphwarSoldierTemplateCandidateTopRatio);
+  const percentileLimit = Math.ceil(rankedCandidates.length * candidateTopRatio);
   return rankedCandidates.slice(0, percentileLimit);
 }
 
@@ -1680,7 +1715,11 @@ function createSoldierTemplateSignaturePixels(name: (typeof graphwarSoldierTempl
   }));
 }
 
-function suppressOverlappingSoldierMatches(matches: SoldierMatchCandidate[], scale: number) {
+function suppressOverlappingSoldierMatches(
+  matches: SoldierMatchCandidate[],
+  scale: number,
+  maximumSoldierCount: number,
+) {
   const kept: SoldierMatchCandidate[] = [];
   const minimumAxisGap = graphwarSoldierGenerationMinimumAxisGap * scale;
   for (const match of matches) {
@@ -1692,7 +1731,7 @@ function suppressOverlappingSoldierMatches(matches: SoldierMatchCandidate[], sca
       )
     ) {
       kept.push(match);
-      if (kept.length >= graphwarMaximumSoldierCount) {
+      if (kept.length >= maximumSoldierCount) {
         break;
       }
     }

@@ -89,8 +89,15 @@ type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: st
 type ParsedSteepness = { ok: true; steepness: number } | { ok: false; message: string };
 /** 公式输出小数位解析结果，控制公式文本和内部归一化精度。 */
 type ParsedPrecision = { ok: true; decimalPlaces: number } | { ok: false; message: string };
-/** 障碍识别阈值解析结果，失败时阻止重新识别。 */
-type ParsedObstacleThresholds = { ok: true; minArea: number } | { ok: false; message: string };
+/** 识别设定解析结果，失败时阻止重新识别。 */
+type ParsedDetectionSettings =
+  | {
+      ok: true;
+      candidateTopRatio: number;
+      maximumSoldierCount: number;
+      minArea: number;
+    }
+  | { ok: false; message: string };
 /** 放大镜倍率解析结果；允许输入框超过滑条快速范围。 */
 type ParsedMagnifierZoom = { ok: true; zoom: number } | { ok: false; message: string };
 /** 障碍笔刷直径解析结果，单位为 Graphwar 原始 770x450 平面像素。 */
@@ -280,6 +287,8 @@ const smartPathfindingDebugTimingEntries = ref<SmartPathfindingDebugTimingEntry[
 const simulatorSkipUnknownCharacters = ref(true);
 const simulatorParseDerivativeAsY = ref(true);
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
+const maximumSoldierCountText = ref(String(graphwarToolDefaults.maximumSoldierCount));
+const soldierTemplateCandidateTopRatioText = ref(String(graphwarToolDefaults.soldierTemplateCandidateTopRatio));
 const obstacleRouteMinToleranceText = ref("1");
 const obstacleRouteMaxToleranceText = ref("3");
 const obstacleRouteStepToleranceText = ref("1");
@@ -432,7 +441,23 @@ const parsedPrecision = computed<ParsedPrecision>(() => {
   return { ok: true as const, decimalPlaces };
 });
 
-const parsedObstacleThresholds = computed<ParsedObstacleThresholds>(() => {
+const parsedDetectionSettings = computed<ParsedDetectionSettings>(() => {
+  const maximumSoldierCount = parseFiniteNumber(maximumSoldierCountText.value);
+  if (maximumSoldierCount === undefined || !Number.isInteger(maximumSoldierCount)) {
+    return { ok: false as const, message: locale.validation.maximumSoldierCountInteger };
+  }
+  if (maximumSoldierCount < 1) {
+    return { ok: false as const, message: locale.validation.maximumSoldierCountPositive };
+  }
+
+  const candidateTopRatio = parseFiniteNumber(soldierTemplateCandidateTopRatioText.value);
+  if (candidateTopRatio === undefined) {
+    return { ok: false as const, message: locale.validation.soldierTemplateCandidateTopRatioNumber };
+  }
+  if (candidateTopRatio <= 0 || candidateTopRatio > 1) {
+    return { ok: false as const, message: locale.validation.soldierTemplateCandidateTopRatioRange };
+  }
+
   const minArea = parseFiniteNumber(obstacleMinAreaText.value);
   if (minArea === undefined || !Number.isInteger(minArea)) {
     return { ok: false as const, message: locale.validation.obstacleMinAreaInteger };
@@ -440,7 +465,8 @@ const parsedObstacleThresholds = computed<ParsedObstacleThresholds>(() => {
   if (minArea < 0 || minArea > graphwarObstacleMaxArea) {
     return { ok: false as const, message: locale.validation.obstacleMinAreaRange(graphwarObstacleMaxArea) };
   }
-  return { ok: true as const, minArea };
+
+  return { ok: true as const, candidateTopRatio, maximumSoldierCount, minArea };
 });
 
 const parsedMagnifierZoom = computed<ParsedMagnifierZoom>(() => {
@@ -889,8 +915,8 @@ const calculationMessage = computed(() => {
 });
 
 const detectionSettingsMessage = computed(() => {
-  if (!parsedObstacleThresholds.value.ok) {
-    return parsedObstacleThresholds.value.message;
+  if (!parsedDetectionSettings.value.ok) {
+    return parsedDetectionSettings.value.message;
   }
   return "";
 });
@@ -1343,7 +1369,7 @@ onBeforeUnmount(() => {
   clearSmartPathfindingBlockedPoint();
 });
 
-watch([obstacleMinAreaText], () => {
+watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTopRatioText], () => {
   clearSmartPathfindingStatus();
   scheduleGraphwarObjectDetection();
 });
@@ -1649,12 +1675,21 @@ function getGraphwarDetectionInput(timings: DetectionDebugTimingEntry[]) {
     setDetectionStatus(locale.status.detection.noPixels, "error");
     return undefined;
   }
-  const obstacleThresholds = parsedObstacleThresholds.value;
-  if (!obstacleThresholds.ok) {
-    setDetectionStatus(obstacleThresholds.message, "error");
+  const detectionSettings = parsedDetectionSettings.value;
+  if (!detectionSettings.ok) {
+    setDetectionStatus(detectionSettings.message, "error");
     return undefined;
   }
-  return { imageData, obstacleThresholds };
+  return {
+    imageData,
+    soldierSettings: {
+      candidateTopRatio: detectionSettings.candidateTopRatio,
+      maximumSoldierCount: detectionSettings.maximumSoldierCount,
+    },
+    thresholds: {
+      minArea: detectionSettings.minArea,
+    },
+  };
 }
 
 /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
@@ -1675,7 +1710,8 @@ async function detectGraphwarObjects() {
     const result = await graphwarDetectionRunner.detectAuto(
       {
         imageData: detectionInput.imageData,
-        thresholds: detectionInput.obstacleThresholds,
+        soldierSettings: detectionInput.soldierSettings,
+        thresholds: detectionInput.thresholds,
       },
       {
         onStage: (stage) => {
@@ -1733,7 +1769,8 @@ async function detectGraphwarObjectsInCurrentBounds() {
       {
         edgeRect: boundsRect.value,
         imageData: detectionInput.imageData,
-        thresholds: detectionInput.obstacleThresholds,
+        soldierSettings: detectionInput.soldierSettings,
+        thresholds: detectionInput.thresholds,
       },
       {
         onStage: (stage) => {
@@ -3943,6 +3980,139 @@ async function copyText(text: string) {
           >
         </label>
       </div>
+      <h3 class="graphwar-killer__settings-subheading">
+        {{ locale.ui.settings.recognition.heading }}
+      </h3>
+      <div class="graphwar-killer__image-actions">
+        <label
+          class="graphwar-killer__detection-setting-label"
+          :title="locale.ui.settings.recognition.maximumSoldierCountTitle"
+        >
+          {{ locale.ui.settings.recognition.maximumSoldierCount }}
+          <input
+            v-model="maximumSoldierCountText"
+            inputmode="numeric"
+            min="1"
+            autocomplete="off"
+            :aria-label="locale.ui.settings.recognition.maximumSoldierCountAriaLabel"
+            :title="locale.ui.settings.recognition.maximumSoldierCountTitle"
+          >
+        </label>
+        <label
+          class="graphwar-killer__detection-setting-label"
+          :title="locale.ui.settings.recognition.candidateTopRatioTitle"
+        >
+          {{ locale.ui.settings.recognition.candidateTopRatio }}
+          <input
+            v-model="soldierTemplateCandidateTopRatioText"
+            inputmode="decimal"
+            min="0.000001"
+            max="1"
+            step="0.01"
+            autocomplete="off"
+            :aria-label="locale.ui.settings.recognition.candidateTopRatioAriaLabel"
+            :title="locale.ui.settings.recognition.candidateTopRatioTitle"
+          >
+        </label>
+      </div>
+      <div class="graphwar-killer__pathfinding-range-row">
+        <label
+          class="graphwar-killer__detection-setting-label"
+          :title="locale.ui.detection.minObstacleAreaTitle"
+        >
+          {{ locale.ui.detection.minObstacleArea }}
+          <input
+            v-model="obstacleMinAreaText"
+            inputmode="numeric"
+            min="0"
+            :max="graphwarObstacleMaxArea"
+            :aria-label="locale.ui.detection.minObstacleAreaAriaLabel"
+            :title="locale.ui.detection.minObstacleAreaTitle"
+          >
+          <span>px²</span>
+        </label>
+        <label
+          class="graphwar-killer__detection-setting-label"
+          :title="locale.ui.pathfinding.boundaryExpansionTitle"
+        >
+          {{ locale.ui.pathfinding.boundaryExpansion }}
+          <input
+            v-model="pathfindingBoundaryExpansionText"
+            inputmode="decimal"
+            min="0"
+            :aria-label="locale.ui.pathfinding.boundaryExpansionAriaLabel"
+            :title="locale.ui.pathfinding.boundaryExpansionTitle"
+          >
+          <span>{{ locale.ui.pathfinding.unit }}</span>
+        </label>
+      </div>
+      <h3 class="graphwar-killer__settings-subheading">
+        {{ locale.ui.settings.pathfinding.heading }}
+      </h3>
+      <details class="graphwar-killer__subpanel graphwar-killer__details">
+        <summary
+          id="graphwar-killer-obstacle-expansion-title"
+          :title="locale.ui.pathfinding.obstacleExpansionTitle"
+        >
+          {{ locale.ui.pathfinding.obstacleExpansion }}
+        </summary>
+        <div class="graphwar-killer__pathfinding-setting-grid">
+          <div class="graphwar-killer__pathfinding-range-row">
+            <label
+              class="graphwar-killer__detection-setting-label"
+              :title="locale.ui.pathfinding.pathMinimumTitle"
+            >
+              {{ locale.ui.pathfinding.pathMinimum }}
+              <input
+                v-model="obstacleRouteMinToleranceText"
+                inputmode="decimal"
+                :aria-label="locale.ui.pathfinding.pathMinimumAriaLabel"
+                :title="locale.ui.pathfinding.pathMinimumTitle"
+              >
+              <span>{{ locale.ui.pathfinding.unit }}</span>
+            </label>
+            <label
+              class="graphwar-killer__detection-setting-label"
+              :title="locale.ui.pathfinding.pathMaximumTitle"
+            >
+              {{ locale.ui.pathfinding.pathMaximum }}
+              <input
+                v-model="obstacleRouteMaxToleranceText"
+                inputmode="decimal"
+                :aria-label="locale.ui.pathfinding.pathMaximumAriaLabel"
+                :title="locale.ui.pathfinding.pathMaximumTitle"
+              >
+              <span>{{ locale.ui.pathfinding.unit }}</span>
+            </label>
+          </div>
+          <label
+            class="graphwar-killer__detection-setting-label"
+            :title="locale.ui.pathfinding.expansionStepTitle"
+          >
+            {{ locale.ui.pathfinding.expansionStep }}
+            <input
+              v-model="obstacleRouteStepToleranceText"
+              inputmode="decimal"
+              :aria-label="locale.ui.pathfinding.expansionStepAriaLabel"
+              :title="locale.ui.pathfinding.expansionStepTitle"
+            >
+            <span>{{ locale.ui.pathfinding.unit }}</span>
+          </label>
+          <label
+            class="graphwar-killer__detection-setting-label"
+            :title="locale.ui.pathfinding.simulationExpansionTitle"
+          >
+            {{ locale.ui.pathfinding.simulationExpansion }}
+            <input
+              v-model="obstacleSimulationToleranceText"
+              inputmode="decimal"
+              :aria-label="locale.ui.pathfinding.simulationExpansionAriaLabel"
+              :title="locale.ui.pathfinding.simulationExpansionTitle"
+            >
+            <span>{{ locale.ui.pathfinding.unit }}</span>
+          </label>
+        </div>
+      </details>
     </section>
     <div class="graphwar-killer__detection-pathfinding-row">
       <section
@@ -3993,37 +4163,6 @@ async function copyText(text: string) {
           >
             {{ locale.ui.detection.smartCursor }}
           </button>
-        </div>
-        <div class="graphwar-killer__image-actions">
-          <label
-            class="graphwar-killer__detection-setting-label"
-            :title="locale.ui.detection.minObstacleAreaTitle"
-          >
-            {{ locale.ui.detection.minObstacleArea }}
-            <input
-              v-model="obstacleMinAreaText"
-              inputmode="numeric"
-              min="0"
-              :max="graphwarObstacleMaxArea"
-              :aria-label="locale.ui.detection.minObstacleAreaAriaLabel"
-              :title="locale.ui.detection.minObstacleAreaTitle"
-            >
-            <span>px²</span>
-          </label>
-          <label
-            class="graphwar-killer__detection-setting-label"
-            :title="locale.ui.pathfinding.boundaryExpansionTitle"
-          >
-            {{ locale.ui.pathfinding.boundaryExpansion }}
-            <input
-              v-model="pathfindingBoundaryExpansionText"
-              inputmode="decimal"
-              min="0"
-              :aria-label="locale.ui.pathfinding.boundaryExpansionAriaLabel"
-              :title="locale.ui.pathfinding.boundaryExpansionTitle"
-            >
-            <span>{{ locale.ui.pathfinding.unit }}</span>
-          </label>
         </div>
         <details
           v-if="debugInfoEnabled"
@@ -4110,70 +4249,6 @@ async function copyText(text: string) {
           v-if="smartPathfindingEnabled"
           class="graphwar-killer__pathfinding-settings"
         >
-          <details class="graphwar-killer__subpanel graphwar-killer__details">
-            <summary
-              id="graphwar-killer-obstacle-expansion-title"
-              :title="locale.ui.pathfinding.obstacleExpansionTitle"
-            >
-              {{ locale.ui.pathfinding.obstacleExpansion }}
-            </summary>
-            <div class="graphwar-killer__pathfinding-setting-grid">
-              <div class="graphwar-killer__pathfinding-range-row">
-                <label
-                  class="graphwar-killer__detection-setting-label"
-                  :title="locale.ui.pathfinding.pathMinimumTitle"
-                >
-                  {{ locale.ui.pathfinding.pathMinimum }}
-                  <input
-                    v-model="obstacleRouteMinToleranceText"
-                    inputmode="decimal"
-                    :aria-label="locale.ui.pathfinding.pathMinimumAriaLabel"
-                    :title="locale.ui.pathfinding.pathMinimumTitle"
-                  >
-                  <span>{{ locale.ui.pathfinding.unit }}</span>
-                </label>
-                <label
-                  class="graphwar-killer__detection-setting-label"
-                  :title="locale.ui.pathfinding.pathMaximumTitle"
-                >
-                  {{ locale.ui.pathfinding.pathMaximum }}
-                  <input
-                    v-model="obstacleRouteMaxToleranceText"
-                    inputmode="decimal"
-                    :aria-label="locale.ui.pathfinding.pathMaximumAriaLabel"
-                    :title="locale.ui.pathfinding.pathMaximumTitle"
-                  >
-                  <span>{{ locale.ui.pathfinding.unit }}</span>
-                </label>
-              </div>
-              <label
-                class="graphwar-killer__detection-setting-label"
-                :title="locale.ui.pathfinding.expansionStepTitle"
-              >
-                {{ locale.ui.pathfinding.expansionStep }}
-                <input
-                  v-model="obstacleRouteStepToleranceText"
-                  inputmode="decimal"
-                  :aria-label="locale.ui.pathfinding.expansionStepAriaLabel"
-                  :title="locale.ui.pathfinding.expansionStepTitle"
-                >
-                <span>{{ locale.ui.pathfinding.unit }}</span>
-              </label>
-              <label
-                class="graphwar-killer__detection-setting-label"
-                :title="locale.ui.pathfinding.simulationExpansionTitle"
-              >
-                {{ locale.ui.pathfinding.simulationExpansion }}
-                <input
-                  v-model="obstacleSimulationToleranceText"
-                  inputmode="decimal"
-                  :aria-label="locale.ui.pathfinding.simulationExpansionAriaLabel"
-                  :title="locale.ui.pathfinding.simulationExpansionTitle"
-                >
-                <span>{{ locale.ui.pathfinding.unit }}</span>
-              </label>
-            </div>
-          </details>
           <details
             v-if="debugInfoEnabled"
             class="graphwar-killer__subpanel graphwar-killer__details"

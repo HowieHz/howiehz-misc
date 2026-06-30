@@ -14,6 +14,8 @@ interface GraphwarToolDefaults {
   steepness: number;
   formulaLaunchPointIterations: number;
   obstacleMinArea: number;
+  soldierTemplateCandidateTopRatio: number;
+  maximumSoldierCount: number;
 }
 
 /** 工具自己的默认值和容差；这些值不来自 Graphwar 源码 Constants.java。 */
@@ -32,4 +34,6 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
   steepness: 67,
   formulaLaunchPointIterations: 8,
   obstacleMinArea: 50,
+  soldierTemplateCandidateTopRatio: 0.1,
+  maximumSoldierCount: 40,
 };

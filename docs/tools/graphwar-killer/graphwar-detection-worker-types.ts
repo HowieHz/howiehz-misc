@@ -1,5 +1,9 @@
 /** Web Worker 和主线程之间传递 Graphwar 截图识别任务的协议类型。 */
-import type { GraphwarObjectsDetectionResult, GraphwarObstacleDetectionThresholds } from "./graphwar-detection";
+import type {
+  GraphwarObjectsDetectionResult,
+  GraphwarObstacleDetectionThresholds,
+  GraphwarSoldierDetectionSettings,
+} from "./graphwar-detection";
 import type { BoundsRect } from "./types";
 
 /** Worker 内部识别阶段；主线程负责映射成本地化状态文本。 */
@@ -25,6 +29,8 @@ export interface GraphwarAutoDetectionInput {
   imageData: ImageData;
   /** 障碍识别阈值。 */
   thresholds: GraphwarObstacleDetectionThresholds;
+  /** 士兵识别设定。 */
+  soldierSettings?: GraphwarSoldierDetectionSettings;
 }
 
 /** 在指定棋盘边界内识别对象。 */

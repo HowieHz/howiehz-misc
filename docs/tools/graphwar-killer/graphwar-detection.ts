@@ -566,6 +566,8 @@ interface SoldierMatchCandidate {
 }
 
 interface SoldierTemplateCenterCandidate {
+  /** 该候选源码中心对应的士兵绘制方向。 */
+  mirrored: boolean;
   /** 截图像素 x。 */
   x: number;
   /** 截图像素 y。 */
@@ -1093,7 +1095,14 @@ function matchSoldierTemplates(
 ) {
   const matches: SoldierMatchCandidate[] = [];
   for (const candidate of candidates) {
-    const snapped = findBestSoldierTemplateMatch(imageData, edgeRect, scale, candidate.x, candidate.y);
+    const snapped = findBestSoldierTemplateMatch(
+      imageData,
+      edgeRect,
+      scale,
+      candidate.x,
+      candidate.y,
+      candidate.mirrored,
+    );
     if (!snapped) {
       continue;
     }
@@ -1121,7 +1130,7 @@ function createSoldierTemplateCenterCandidates(
   scale: number,
   candidateLimit: number,
 ) {
-  const votes = new Map<string, { count: number; x: number; y: number }>();
+  const votes = new Map<string, { count: number; mirrored: boolean; x: number; y: number }>();
   const stride = Math.max(1, Math.floor(scale / 2));
 
   for (let y = 0; y < edgeRect.height; y += stride) {
@@ -1146,7 +1155,8 @@ function createSoldierTemplateCenterCandidates(
             if (!isInsidePlane(planeX, planeY)) {
               continue;
             }
-            if (templateBase.mirrored !== expectedSoldierTemplateMirroredForPlaneX(planeX)) {
+            const mirrored = expectedSoldierTemplateMirroredForPlaneX(planeX);
+            if (templateBase.mirrored !== mirrored) {
               continue;
             }
 
@@ -1155,10 +1165,11 @@ function createSoldierTemplateCenterCandidates(
             const existing = votes.get(key);
             if (existing) {
               existing.count += 1;
+              existing.mirrored = mirrored;
               existing.x = sourceCenter.x;
               existing.y = sourceCenter.y;
             } else {
-              votes.set(key, { count: 1, x: sourceCenter.x, y: sourceCenter.y });
+              votes.set(key, { count: 1, mirrored, x: sourceCenter.x, y: sourceCenter.y });
             }
           }
         }
@@ -1171,6 +1182,7 @@ function createSoldierTemplateCenterCandidates(
   const rankedCandidates = [...votes.values()]
     .filter((vote) => vote.count >= minVotes)
     .map((vote) => ({
+      mirrored: vote.mirrored,
       x: vote.x,
       y: vote.y,
       votes: vote.count,
@@ -1188,10 +1200,9 @@ function findBestSoldierTemplateMatch(
   scale: number,
   sourceCenterX: number,
   sourceCenterY: number,
+  expectedMirrored: boolean,
 ) {
   let best: SoldierMatchCandidate | undefined;
-  const planeX = Math.round(((sourceCenterX - rect.x) / rect.width) * GRAPHWAR_PLANE_LENGTH);
-  const expectedMirrored = expectedSoldierTemplateMirroredForPlaneX(planeX);
   const baseScores = graphwarSoldierTemplateBases
     .filter((templateBase) => templateBase.mirrored === expectedMirrored)
     .map((templateBase) => ({

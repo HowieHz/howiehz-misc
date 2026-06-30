@@ -540,6 +540,8 @@ interface SoldierTemplateBase {
   seedPixels: SoldierTemplatePixel[];
   /** 同一朝向下的 10 帧动画模板。 */
   templates: SoldierTemplate[];
+  /** 签名像素完全相同的动画帧只保留首个模板，避免重复评分。 */
+  uniqueSignatureTemplates: SoldierTemplate[];
   /** 可见 alpha 外框中心在 20x20 画布内的 x。 */
   visualCenterX: number;
   /** 可见 alpha 外框中心在 20x20 画布内的 y。 */
@@ -1209,9 +1211,8 @@ function findBestSoldierTemplateMatch(
       score: scoreSoldierTemplateBaseAt(imageData, rect, scale, sourceCenterX, sourceCenterY, templateBase),
       templateBase,
     }));
-  for (let templateIndex = 0; templateIndex < graphwarSoldierTemplateNames.length; templateIndex += 1) {
-    for (const { score: baseScore, templateBase } of baseScores) {
-      const template = templateBase.templates[templateIndex];
+  for (const { score: baseScore, templateBase } of baseScores) {
+    for (const template of templateBase.uniqueSignatureTemplates) {
       const signatureScore = scoreTemplateSignaturePixels(
         imageData,
         rect,
@@ -1575,24 +1576,26 @@ function createGraphwarSoldierTemplateBase(mirrored: boolean): SoldierTemplateBa
   const seedPixels = createTemplatePixelsFromGrid(graphwarSoldierFixedSeedGrid, mirrored);
   const visualCenterX = mirrored ? graphwarSoldierMirrorVisibleCenterX : graphwarSoldierVisibleCenterX;
   const visualCenterY = graphwarSoldierVisibleCenterY;
+  const templates = graphwarSoldierTemplateNames.map((name) =>
+    createGraphwarSoldierTemplate({
+      fixedPixels,
+      foregroundPixels,
+      mirrored,
+      name,
+      playerPixels,
+      seedPixels,
+      visualCenterX,
+      visualCenterY,
+    }),
+  );
   return {
     fixedPixels,
     foregroundPixels,
     mirrored,
     playerPixels,
     seedPixels,
-    templates: graphwarSoldierTemplateNames.map((name) =>
-      createGraphwarSoldierTemplate({
-        fixedPixels,
-        foregroundPixels,
-        mirrored,
-        name,
-        playerPixels,
-        seedPixels,
-        visualCenterX,
-        visualCenterY,
-      }),
-    ),
+    templates,
+    uniqueSignatureTemplates: collectUniqueSoldierSignatureTemplates(templates),
     visualCenterX,
     visualCenterY,
   };
@@ -1619,6 +1622,24 @@ function createGraphwarSoldierTemplate(options: {
     visualCenterX: options.visualCenterX,
     visualCenterY: options.visualCenterY,
   };
+}
+
+function collectUniqueSoldierSignatureTemplates(templates: SoldierTemplate[]) {
+  const seenSignatures = new Set<string>();
+  const uniqueTemplates: SoldierTemplate[] = [];
+  for (const template of templates) {
+    const key = createSoldierTemplateSignatureKey(template.signaturePixels);
+    if (seenSignatures.has(key)) {
+      continue;
+    }
+    seenSignatures.add(key);
+    uniqueTemplates.push(template);
+  }
+  return uniqueTemplates;
+}
+
+function createSoldierTemplateSignatureKey(signaturePixels: readonly SoldierTemplateColorPixel[]) {
+  return signaturePixels.map((pixel) => pixel.color).join(";");
 }
 
 function createTemplatePixelsFromGrid(grid: readonly string[], mirrored: boolean) {

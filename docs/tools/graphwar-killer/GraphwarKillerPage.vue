@@ -4256,13 +4256,10 @@ async function copyText(text: string) {
           </button>
         </div>
         <div
-          v-if="smartPathfindingEnabled"
+          v-if="smartPathfindingEnabled && debugInfoEnabled"
           class="graphwar-killer__pathfinding-settings"
         >
-          <details
-            v-if="debugInfoEnabled"
-            class="graphwar-killer__subpanel graphwar-killer__details"
-          >
+          <details class="graphwar-killer__subpanel graphwar-killer__details">
             <summary>{{ locale.ui.pathfinding.debugSummary }}</summary>
             <div class="graphwar-killer__debug-timing">
               <span v-if="!smartPathfindingDebugTimingRows.length">{{ locale.ui.pathfinding.debugNoTiming }}</span>

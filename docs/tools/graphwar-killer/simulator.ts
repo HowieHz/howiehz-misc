@@ -684,9 +684,15 @@ function insertGraphwarImplicitMultiplications(tokens: GraphwarExpressionToken[]
 function graphwarTokensAreImplicitMultiplication(previousType: number, nextType: number) {
   return (
     graphwarExpressionTokenIsValueLike(previousType) &&
-    (graphwarExpressionTokenIsValueLike(nextType) ||
+    (graphwarExpressionTokenCanStartValue(nextType) ||
       nextType === GRAPHWAR_EXPR_LEFT_BRACKET ||
       getGraphwarExpressionTokenParamCount(nextType) === 1)
+  );
+}
+
+function graphwarExpressionTokenCanStartValue(type: number) {
+  return (
+    type === GRAPHWAR_EXPR_VALUE || type === GRAPHWAR_EXPR_X || type === GRAPHWAR_EXPR_Y || type === GRAPHWAR_EXPR_DY
   );
 }
 

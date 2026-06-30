@@ -328,6 +328,7 @@ export const graphwarKillerLocale = {
       algorithmAriaLabel: "Algorithm",
       algorithmTitle: "Choose how path points are converted into a Graphwar function.",
       bounds: {
+        heading: "Bounds",
         maxXAriaLabel: "Graphwar board right-edge x coordinate",
         maxXTitle: "X coordinate for the right edge of the Graphwar board.",
         maxYAriaLabel: "Graphwar board top-edge y coordinate",
@@ -354,6 +355,7 @@ export const graphwarKillerLocale = {
         "Clamp the step function's exponential terms to reduce overflow risk after pasting into Graphwar.",
       parseDerivativeAsY: "y' -> y",
       parseDerivativeAsYTitle: "Graphwar has a bug: because of the regular expression order, y' is parsed as y.",
+      simulator: "Simulator",
       skipUnknownCharacters: "Skip unknown characters",
       skipUnknownCharactersTitle: "Graphwar skips unknown characters.",
       stepSteepness: "Step steepness a",

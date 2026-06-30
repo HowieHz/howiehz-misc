@@ -268,6 +268,7 @@ export const graphwarKillerLocale = {
       algorithmAriaLabel: "算法",
       algorithmTitle: "选择把路径点转换成 Graphwar 函数的算法。",
       bounds: {
+        heading: "边界值设定",
         maxXAriaLabel: "Graphwar 棋盘右边界 x 坐标",
         maxXTitle: "Graphwar 棋盘右边界对应的 x 坐标。",
         maxYAriaLabel: "Graphwar 棋盘上边界 y 坐标",
@@ -291,6 +292,7 @@ export const graphwarKillerLocale = {
       overflowProtectionTitle: "限制阶跃函数指数项范围，降低复制到 Graphwar 后溢出的概率。",
       parseDerivativeAsY: "y' -> y",
       parseDerivativeAsYTitle: "Graphwar 有 Bug，由于正则表达式顺序，会将 y' 解析为 y。",
+      simulator: "模拟器设定",
       skipUnknownCharacters: "跳过未知字符",
       skipUnknownCharactersTitle: "Graphwar 会跳过未知字符。",
       stepSteepness: "阶跃陡峭度 a",

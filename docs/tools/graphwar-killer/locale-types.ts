@@ -249,6 +249,7 @@ export interface GraphwarKillerLocale {
       algorithmAriaLabel: string;
       algorithmTitle: string;
       bounds: {
+        heading: string;
         maxXAriaLabel: string;
         maxXTitle: string;
         maxYAriaLabel: string;
@@ -272,6 +273,7 @@ export interface GraphwarKillerLocale {
       overflowProtectionTitle: string;
       parseDerivativeAsY: string;
       parseDerivativeAsYTitle: string;
+      simulator: string;
       skipUnknownCharacters: string;
       skipUnknownCharactersTitle: string;
       stepSteepness: string;

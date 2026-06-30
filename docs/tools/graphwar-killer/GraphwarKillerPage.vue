@@ -3423,6 +3423,9 @@ async function copyText(text: string) {
           {{ locale.ui.settings.advancedSettings }}
         </h2>
       </div>
+      <h3 class="graphwar-killer__settings-subheading">
+        {{ locale.ui.settings.bounds.heading }}
+      </h3>
       <div class="graphwar-killer__coordinate-grid">
         <label :title="locale.ui.settings.bounds.minXTitle">
           -x
@@ -3465,6 +3468,9 @@ async function copyText(text: string) {
           >
         </label>
       </div>
+      <h3 class="graphwar-killer__settings-subheading">
+        {{ locale.ui.settings.simulator }}
+      </h3>
       <div class="graphwar-killer__image-actions">
         <button
           type="button"
@@ -5397,6 +5403,13 @@ async function copyText(text: string) {
 .graphwar-killer__setting-label {
   flex: 0 0 auto;
   font-weight: 600;
+}
+
+.graphwar-killer__settings-subheading {
+  color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 2px 0 0;
 }
 
 .graphwar-killer__setting-row > :not(.graphwar-killer__setting-label) {

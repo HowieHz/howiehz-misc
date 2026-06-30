@@ -25,12 +25,12 @@ export const graphwarKillerLocale = {
   toolWorkflowModes: [
     {
       value: "solver",
-      label: "Solver",
+      label: "Generate Formula",
       title: "Generate a function from the screenshot and path points for pasting into Graphwar.",
     },
     {
       value: "simulator",
-      label: "Simulator",
+      label: "Simulate Trajectory",
       title: "Enter a function and preview its Graphwar trajectory on the screenshot.",
     },
   ],
@@ -346,10 +346,9 @@ export const graphwarKillerLocale = {
       gameMode: "Game mode",
       gameModeAriaLabel: "Graphwar game mode",
       gameModeTitle: "Choose the Graphwar input mode: y=, y'=, or y''=.",
-      mode: "Mode",
-      modeAriaLabel: "Mode",
-      modeTitle:
-        "Choose the solver to generate a function, or switch to the simulator to preview an existing function.",
+      mode: "Workflow",
+      modeAriaLabel: "Workflow",
+      modeTitle: "Choose whether to generate a copyable function or simulate an existing function's trajectory.",
       overflowProtection: "Overflow protection",
       overflowProtectionTitle:
         "Clamp the step function's exponential terms to reduce overflow risk after pasting into Graphwar.",

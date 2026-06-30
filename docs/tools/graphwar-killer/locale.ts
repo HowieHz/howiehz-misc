@@ -18,8 +18,8 @@ export const graphwarKillerLocale = {
     },
   ],
   toolWorkflowModes: [
-    { value: "solver", label: "解算器", title: "从截图和路径点生成可复制到 Graphwar 的函数。" },
-    { value: "simulator", label: "模拟器", title: "输入函数并在截图上预览 Graphwar 轨迹。" },
+    { value: "solver", label: "生成公式", title: "从截图和路径点生成可复制到 Graphwar 的函数。" },
+    { value: "simulator", label: "模拟轨迹", title: "输入函数并在截图上预览 Graphwar 轨迹。" },
   ],
   pathfindingModes: [
     { value: "off", label: "关", title: "手动点选路径点，不自动绕开障碍。" },
@@ -285,9 +285,9 @@ export const graphwarKillerLocale = {
       gameMode: "游戏模式",
       gameModeAriaLabel: "Graphwar 游戏模式",
       gameModeTitle: "选择 Graphwar 输入框的游戏模式：y=、y'= 或 y''=。",
-      mode: "模式",
-      modeAriaLabel: "模式",
-      modeTitle: "选择生成函数的解算器，或切到模拟器直接预览已有函数。",
+      mode: "工作流",
+      modeAriaLabel: "工作流",
+      modeTitle: "选择生成可复制函数，或输入已有函数模拟轨迹。",
       overflowProtection: "防溢出",
       overflowProtectionTitle: "限制阶跃函数指数项范围，降低复制到 Graphwar 后溢出的概率。",
       parseDerivativeAsY: "y' -> y",

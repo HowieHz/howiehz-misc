@@ -133,6 +133,7 @@ export const graphwarKillerLocale = {
       detectedCurrentBounds: (soldiers, elapsed) => `Marked obstacles, detected ${soldiers} soldiers in ${elapsed}`,
       detectedWithAutoBounds: (soldiers, elapsed) =>
         `Marked bounds and obstacles, detected ${soldiers} soldiers in ${elapsed}`,
+      failed: (message) => `Detection failed: ${message}`,
       obstacleEditsApplied: (obstacles) => `Updated obstacle boundaries; currently ${obstacles} obstacles`,
       obstacleEditsCleared: (obstacles) => `Cleared obstacle edits; restored ${obstacles} obstacles`,
       updatingObstacleEdits: "Applying obstacle edits",

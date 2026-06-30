@@ -26,8 +26,6 @@ import {
   buildObstacleEdgePath,
   buildObstacleFillPath,
   countObstacleMaskComponents,
-  detectGraphwarObjectsInBounds as detectGraphwarObjectsFromImage,
-  detectGraphwarPlayArea,
   dilateObstacleMask,
   imagePointToPlaneGridPoint,
   isPlayerColorPixel,
@@ -35,6 +33,8 @@ import {
   paintObstacleMaskStroke,
 } from "./graphwar-detection";
 import type { DetectedObstacleMap, GraphwarDetectionBox } from "./graphwar-detection";
+import { createGraphwarDetectionRunner, isGraphwarDetectionCancelledError } from "./graphwar-detection-runner";
+import type { GraphwarDetectionWorkerStage } from "./graphwar-detection-runner";
 import {
   buildSmartPathfindingPathForMask,
   collectSmartPathfindingRouteTolerances,
@@ -274,6 +274,7 @@ const {
   onImageApplied: handleAppliedScreenshot,
   onImageLoaded: handleLoadedScreenshot,
 });
+const graphwarDetectionRunner = createGraphwarDetectionRunner();
 const detectionStatus = ref("");
 const detectionStatusKind = ref<DetectionStatusKind>("info");
 const detectionInProgress = ref(false);
@@ -1234,6 +1235,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("paste", handlePaste);
+  graphwarDetectionRunner.close();
   cancelSmartPathfinding(false);
   if (boundsFlashFrame !== undefined) {
     cancelAnimationFrame(boundsFlashFrame);
@@ -1419,6 +1421,7 @@ function cancelDetection(showStatus: boolean) {
   }
 
   detectionRunId += 1;
+  graphwarDetectionRunner.cancel();
   detectionInProgress.value = false;
   if (showStatus) {
     setDetectionStatus(locale.status.detection.cancelled, "warning");
@@ -1494,35 +1497,36 @@ async function detectGraphwarObjects() {
       return;
     }
 
-    if (!(await showDetectionStage(runId, locale.status.detection.detectingBounds))) {
-      return;
-    }
-    const edgeRect = detectGraphwarPlayArea(detectionInput.imageData);
+    const result = await graphwarDetectionRunner.detectAuto(
+      {
+        imageData: detectionInput.imageData,
+        thresholds: detectionInput.obstacleThresholds,
+      },
+      {
+        onStage: (stage) => {
+          void showDetectionWorkerStage(runId, stage);
+        },
+      },
+    );
     if (!isActiveDetectionRun(runId)) {
       return;
     }
-    if (!edgeRect) {
+    if (!result.edgeRect || !result.objects) {
       clearDetectedGraphwarObjects();
       setDetectionStatus(locale.status.detection.noBounds, "error");
       return;
     }
 
-    boundsRect.value = edgeRect;
+    boundsRect.value = result.edgeRect;
     boundsFirstPoint.value = undefined;
     pointerPreviewPoint.value = undefined;
-    await detectGraphwarObjectsInBounds(
-      detectionInput.imageData,
-      edgeRect,
-      detectionInput.obstacleThresholds,
-      "auto",
-      runId,
-      true,
-      startedAt,
-    );
+    await applyGraphwarObjectDetectionResult(result.objects, "auto", runId, true, startedAt);
     if (!isActiveDetectionRun(runId)) {
       return;
     }
     toolMode.value = "path";
+  } catch (error) {
+    handleGraphwarDetectionError(error, runId);
   } finally {
     finishDetectionRun(runId);
   }
@@ -1541,35 +1545,38 @@ async function detectGraphwarObjectsInCurrentBounds() {
       return;
     }
 
-    await detectGraphwarObjectsInBounds(
-      detectionInput.imageData,
-      boundsRect.value,
-      detectionInput.obstacleThresholds,
-      "current",
-      runId,
-      false,
-      startedAt,
+    const result = await graphwarDetectionRunner.detectObjectsInBounds(
+      {
+        edgeRect: boundsRect.value,
+        imageData: detectionInput.imageData,
+        thresholds: detectionInput.obstacleThresholds,
+      },
+      {
+        onStage: (stage) => {
+          void showDetectionWorkerStage(runId, stage);
+        },
+      },
     );
+    await applyGraphwarObjectDetectionResult(result, "current", runId, false, startedAt);
+  } catch (error) {
+    handleGraphwarDetectionError(error, runId);
   } finally {
     finishDetectionRun(runId);
   }
 }
 
-/** 在指定棋盘矩形内更新士兵/障碍状态。 */
-async function detectGraphwarObjectsInBounds(
-  imageData: ImageData,
-  edgeRect: BoundsRect,
-  obstacleThresholds: Extract<ParsedObstacleThresholds, { ok: true }>,
+/** 将 Worker 返回的士兵/障碍识别结果写回页面状态。 */
+async function applyGraphwarObjectDetectionResult(
+  result: {
+    obstacles: DetectedObstacleMap;
+    soldiers: GraphwarDetectionBox[];
+  },
   source: "auto" | "current",
   runId: number,
   flashBounds = false,
   startedAt = nowMs(),
 ) {
   clearSmartPathfindingStatus();
-  if (!(await showDetectionStage(runId, locale.status.detection.detectingObjects))) {
-    return;
-  }
-  const result = detectGraphwarObjectsFromImage(imageData, edgeRect, obstacleThresholds);
   if (!isActiveDetectionRun(runId)) {
     return;
   }
@@ -1594,6 +1601,20 @@ async function detectGraphwarObjectsInBounds(
       : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, elapsed),
     "success",
   );
+}
+
+async function showDetectionWorkerStage(runId: number, stage: GraphwarDetectionWorkerStage) {
+  const message =
+    stage === "detecting-bounds" ? locale.status.detection.detectingBounds : locale.status.detection.detectingObjects;
+  await showDetectionStage(runId, message);
+}
+
+function handleGraphwarDetectionError(error: unknown, runId: number) {
+  if (!isActiveDetectionRun(runId) || isGraphwarDetectionCancelledError(error)) {
+    return;
+  }
+
+  setDetectionStatus(locale.status.detection.failed(error instanceof Error ? error.message : String(error)), "error");
 }
 
 function clearDetectionSoldierFlash() {

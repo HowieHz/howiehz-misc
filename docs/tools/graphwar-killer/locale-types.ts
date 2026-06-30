@@ -93,6 +93,7 @@ export interface GraphwarKillerLocale {
       detectingObjects: string;
       detectedCurrentBounds: (soldiers: number, elapsed: string) => string;
       detectedWithAutoBounds: (soldiers: number, elapsed: string) => string;
+      failed: (message: string) => string;
       obstacleEditsApplied: (obstacles: number) => string;
       obstacleEditsCleared: (obstacles: number) => string;
       updatingObstacleEdits: string;

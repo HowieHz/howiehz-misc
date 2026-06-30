@@ -94,6 +94,7 @@ export const graphwarKillerLocale = {
       detectingObjects: "正在识别士兵和障碍",
       detectedCurrentBounds: (soldiers, elapsed) => `已标记障碍，识别出 ${soldiers} 个士兵，耗时 ${elapsed}`,
       detectedWithAutoBounds: (soldiers, elapsed) => `已标记边界和障碍，识别出 ${soldiers} 个士兵，耗时 ${elapsed}`,
+      failed: (message) => `识别失败：${message}`,
       obstacleEditsApplied: (obstacles) => `已更新障碍边界，当前 ${obstacles} 个障碍`,
       obstacleEditsCleared: (obstacles) => `已清除障碍修改，恢复为 ${obstacles} 个障碍`,
       updatingObstacleEdits: "正在应用障碍修改",

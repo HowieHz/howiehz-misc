@@ -132,10 +132,10 @@ const graphwarSoldierTemplateNames = [
   "soldier8.png",
   "soldier9.png",
 ] as const;
-const graphwarSoldierTemplateMinimumFixedScore = 0.75;
-const graphwarSoldierTemplateMinimumForegroundScore = 0.65;
-const graphwarSoldierTemplateMinimumPlayerScore = 0.55;
-const graphwarSoldierTemplateMinimumSignatureScore = 0.65;
+const graphwarSoldierTemplateMinimumFixedScore = 0.80524047124047127 - 0.05;
+const graphwarSoldierTemplateMinimumForegroundScore = 0.69445266272189365 - 0.05;
+const graphwarSoldierTemplateMinimumPlayerScore = 0.60552198292591419 - 0.05;
+const graphwarSoldierTemplateMinimumSignatureScore = 0.71937830687830706 - 0.05;
 /** 模板评分前只保留 votes 排名前 10% 的中心候选。 */
 const graphwarSoldierTemplateCandidateTopRatio = 0.1;
 const graphwarMaximumSoldierCount = 40;

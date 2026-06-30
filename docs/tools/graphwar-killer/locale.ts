@@ -115,7 +115,7 @@ export const graphwarKillerLocale = {
     autoGraphPathfindingDisabled: "一键清图正在重写，暂不可用",
     pathPointCoordinateNumber: "点坐标需要填写数字",
     secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到约 ${angle}°。`,
-    stepPathfindingDisabled: "阶跃函数暂不支持智能寻路和一键清图",
+    stepPathfindingDisabled: "阶跃函数暂不支持智能寻路",
     trajectoryWarning: {
       obstacle: "当前公式轨迹会撞到障碍物或边界",
       stopped: {

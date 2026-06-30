@@ -154,7 +154,7 @@ export const graphwarKillerLocale = {
     autoGraphPathfindingDisabled: "One-Click Clear is being rebuilt and is unavailable for now",
     pathPointCoordinateNumber: "Point coordinates must be numbers",
     secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to about ${angle} deg.`,
-    stepPathfindingDisabled: "Step functions do not support Smart Pathfinding or One-Click Clear yet",
+    stepPathfindingDisabled: "Step functions do not support Smart Pathfinding yet",
     trajectoryWarning: {
       obstacle: "The current function trajectory hits an obstacle or boundary",
       stopped: {

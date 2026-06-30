@@ -1063,6 +1063,7 @@ const smartPathfindingHeaderStatusResult = computed(() =>
 const pathfindingHeaderStatusResult = computed(() =>
   getFirstHeaderStatus(
     createHeaderStatus(smartPathfindingSettingsMessage.value, "error"),
+    createHeaderStatus(isSmartPathfindingDisabled() ? getSmartPathfindingDisabledMessage() : "", "warning"),
     smartPathfindingHeaderStatusResult.value,
   ),
 );

@@ -176,16 +176,35 @@ export const graphwarKillerLocale = {
       autoDetectionTitle: "开启后，加载截图或修改识别设置时自动运行识别。",
       busyOverlay: "识别中，右键中止",
       debugNoTiming: "暂无识别耗时记录",
-      debugOutsideStagesTitle:
-        "流程总耗时减去已记录阶段耗时；包含状态绘制等待、Worker 消息传递、async 调度和未单独计量的连接代码。",
       debugStages: {
-        "detecting-bounds": "检测棋盘边界",
-        "detecting-objects": "识别士兵和障碍",
-        "outside-stages": "阶段外耗时",
-        "preparing-pixels": "读取截图像素",
-        "setting-status": "设置状态栏",
-        total: "流程总耗时",
-        "updating-results": "更新识别结果",
+        "detecting-bounds": {
+          label: "检测棋盘边界",
+          title: "在截图像素中寻找 Graphwar 棋盘的可用边界；自动识别边界时才会出现。",
+        },
+        "detecting-objects": {
+          label: "识别士兵和障碍",
+          title: "在已确定的棋盘区域内识别士兵、障碍区域和命中圈。",
+        },
+        "outside-stages": {
+          label: "阶段外耗时",
+          title: "流程总耗时减去已记录阶段耗时；包含状态绘制等待、Worker 消息传递、async 调度和未单独计量的连接代码。",
+        },
+        "preparing-pixels": {
+          label: "读取截图像素",
+          title: "从当前截图 canvas 读取 ImageData，并准备发送给识别流程。",
+        },
+        "setting-status": {
+          label: "设置状态栏",
+          title: "生成识别完成或失败文案，并写入识别标题右侧状态。",
+        },
+        total: {
+          label: "流程总耗时",
+          title: "本次识别从开始到最终状态落地的墙钟耗时。",
+        },
+        "updating-results": {
+          label: "更新识别结果",
+          title: "把识别出的士兵、障碍和棋盘边界写回页面状态，并刷新相关缓存和高亮。",
+        },
       },
       debugSummary: "调试信息",
       minObstacleArea: "障碍最小面积",
@@ -219,18 +238,44 @@ export const graphwarKillerLocale = {
       boundaryExpansionAriaLabel: "边界外扩，单位为 Graphwar 原始 770x450 平面像素",
       boundaryExpansionTitle: "把棋盘四周边界向内扩成碰撞区。单位是 Graphwar 原始 770x450 平面像素。",
       debugNoTiming: "暂无寻路耗时记录",
-      debugOutsideStagesTitle:
-        "流程总耗时减去已记录阶段耗时；包含阶段切换、路线容差尝试前的绘制等待、async 调度和未单独计量的连接代码。",
       debugStages: {
-        "apply-result": "写回路径结果",
-        "collect-targets": "生成候选目标",
-        "optimize-path": "优化路径节点",
-        "outside-stages": "阶段外耗时",
-        preflight: "预检查当前路径",
-        "search-route": "搜索绕障路线",
-        "setting-status": "设置状态栏",
-        total: "流程总耗时",
-        "validate-trajectory": "验证函数轨迹",
+        "apply-result": {
+          label: "写回路径结果",
+          title: "把最终智能寻路路径写入当前路径状态，并清理旧的路径错误提示。",
+        },
+        "collect-targets": {
+          label: "生成候选目标",
+          title: "点击士兵时，在命中圈内按当前 x+ 最小步长枚举可尝试的瞄准点。",
+        },
+        "optimize-path": {
+          label: "优化路径节点",
+          title: "逐个尝试删除几何路线中的中间点，并用函数轨迹验证删除后是否仍可命中目标。",
+        },
+        "outside-stages": {
+          label: "阶段外耗时",
+          title:
+            "流程总耗时减去已记录阶段耗时；包含阶段切换、路线容差尝试前的绘制等待、async 调度和未单独计量的连接代码。",
+        },
+        preflight: {
+          label: "预检查当前路径",
+          title: "检查当前已有路径的函数轨迹是否能先到达最后路径点，避免在已被障碍截断的路径后继续寻路。",
+        },
+        "search-route": {
+          label: "搜索绕障路线",
+          title: "在当前障碍 mask 和路线外扩值下搜索从当前路径终点到目标点的几何避障路线。",
+        },
+        "setting-status": {
+          label: "设置状态栏",
+          title: "生成智能寻路成功或失败文案，并写入寻路标题右侧状态。",
+        },
+        total: {
+          label: "流程总耗时",
+          title: "本次智能寻路从开始到最终状态落地的墙钟耗时。",
+        },
+        "validate-trajectory": {
+          label: "验证函数轨迹",
+          title: "把候选几何路径转换为 Graphwar 函数轨迹，检查它是否先命中目标再碰到障碍或边界。",
+        },
       },
       debugSummary: "调试信息",
       fastMode: "快速模式",
@@ -251,7 +296,7 @@ export const graphwarKillerLocale = {
       pathMinimumAriaLabel: "寻路最小障碍外扩值，单位为 Graphwar 原始 770x450 平面像素",
       pathMinimumTitle: "寻路从这个值开始外扩障碍。单位是 Graphwar 原始 770x450 平面像素。",
       searchAnimation: "搜索动画",
-      searchAnimationTitle: "显示智能寻路、一键清图搜索过程和 DAG 预览；关闭后计算更安静。",
+      searchAnimationTitle: "显示智能寻路的候选点、已探索边、尝试路径和优化点预览；关闭后只保留最终路径结果。",
       simulationExpansion: "函数模拟值",
       simulationExpansionAriaLabel: "函数模拟障碍外扩值，单位为 Graphwar 原始 770x450 平面像素",
       simulationExpansionTitle:

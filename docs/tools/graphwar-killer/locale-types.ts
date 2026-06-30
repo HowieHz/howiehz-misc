@@ -4,6 +4,11 @@ import type { AlgorithmMode, EquationMode } from "./types";
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
 export type GraphwarKillerStopReason = "invalid" | "max-steps" | "out-of-bounds" | "too-steep";
 
+interface GraphwarKillerDebugStageText {
+  label: string;
+  title: string;
+}
+
 /**
  * Graphwar 杀手页面的完整文案协议。
  *
@@ -167,7 +172,6 @@ export interface GraphwarKillerLocale {
       autoDetectionTitle: string;
       busyOverlay: string;
       debugNoTiming: string;
-      debugOutsideStagesTitle: string;
       debugStages: Record<
         | "preparing-pixels"
         | "detecting-bounds"
@@ -176,7 +180,7 @@ export interface GraphwarKillerLocale {
         | "setting-status"
         | "outside-stages"
         | "total",
-        string
+        GraphwarKillerDebugStageText
       >;
       debugSummary: string;
       minObstacleArea: string;
@@ -202,7 +206,6 @@ export interface GraphwarKillerLocale {
       boundaryExpansionAriaLabel: string;
       boundaryExpansionTitle: string;
       debugNoTiming: string;
-      debugOutsideStagesTitle: string;
       debugStages: Record<
         | "preflight"
         | "collect-targets"
@@ -213,7 +216,7 @@ export interface GraphwarKillerLocale {
         | "setting-status"
         | "outside-stages"
         | "total",
-        string
+        GraphwarKillerDebugStageText
       >;
       debugSummary: string;
       fastMode: string;

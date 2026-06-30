@@ -899,13 +899,13 @@ const detectionHeaderStatusIsSuccess = computed(() => detectionHeaderStatusKind.
 const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
   detectionDebugTimingEntries.value.map((entry) => ({
     ...entry,
-    title: entry.stage === "outside-stages" ? locale.ui.detection.debugOutsideStagesTitle : undefined,
+    title: locale.ui.detection.debugStages[entry.stage].title,
   })),
 );
 const smartPathfindingDebugTimingRows = computed<SmartPathfindingDebugTimingRow[]>(() =>
   smartPathfindingDebugTimingEntries.value.map((entry) => ({
     ...entry,
-    title: entry.stage === "outside-stages" ? locale.ui.pathfinding.debugOutsideStagesTitle : undefined,
+    title: locale.ui.pathfinding.debugStages[entry.stage].title,
   })),
 );
 
@@ -1855,7 +1855,7 @@ function measureDetectionDebugStage<TResult>(
 }
 
 function getDetectionDebugStageLabel(stage: DetectionDebugStage) {
-  return locale.ui.detection.debugStages[stage];
+  return locale.ui.detection.debugStages[stage].label;
 }
 
 function finishSmartPathfindingDebugTimings(
@@ -1923,7 +1923,7 @@ async function measureSmartPathfindingDebugStageAsync<TResult>(
 }
 
 function getSmartPathfindingDebugStageLabel(stage: SmartPathfindingDebugStage) {
-  return locale.ui.pathfinding.debugStages[stage];
+  return locale.ui.pathfinding.debugStages[stage].label;
 }
 
 function handleGraphwarDetectionError(error: unknown, runId: number) {

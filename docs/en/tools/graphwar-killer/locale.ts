@@ -224,16 +224,38 @@ export const graphwarKillerLocale = {
       autoDetectionTitle: "Automatically run detection when a screenshot loads or detection settings change.",
       busyOverlay: "Detecting, right-click to cancel",
       debugNoTiming: "No detection timing recorded yet",
-      debugOutsideStagesTitle:
-        "Total wall-clock time minus recorded stages; includes status paint waits, Worker message transfer, async scheduling, and glue code that is not measured separately.",
       debugStages: {
-        "detecting-bounds": "Detect play-area bounds",
-        "detecting-objects": "Detect soldiers and obstacles",
-        "outside-stages": "Outside recorded stages",
-        "preparing-pixels": "Read screenshot pixels",
-        "setting-status": "Set status text",
-        total: "Flow total",
-        "updating-results": "Update detection results",
+        "detecting-bounds": {
+          label: "Detect play-area bounds",
+          title:
+            "Find the usable Graphwar play-area bounds in the screenshot pixels; only appears during automatic bounds detection.",
+        },
+        "detecting-objects": {
+          label: "Detect soldiers and obstacles",
+          title: "Detect soldiers, obstacle regions, and hit circles inside the resolved play area.",
+        },
+        "outside-stages": {
+          label: "Outside recorded stages",
+          title:
+            "Total wall-clock time minus recorded stages; includes status paint waits, Worker message transfer, async scheduling, and glue code that is not measured separately.",
+        },
+        "preparing-pixels": {
+          label: "Read screenshot pixels",
+          title: "Read ImageData from the current screenshot canvas and prepare it for the detection flow.",
+        },
+        "setting-status": {
+          label: "Set status text",
+          title: "Build the detection completion or failure message and write it to the detection header status.",
+        },
+        total: {
+          label: "Flow total",
+          title: "Wall-clock time from the start of this detection run until the final status is applied.",
+        },
+        "updating-results": {
+          label: "Update detection results",
+          title:
+            "Write detected soldiers, obstacles, and play-area bounds back to page state, then refresh related cache and highlights.",
+        },
       },
       debugSummary: "Debug info",
       minObstacleArea: "Minimum obstacle area",
@@ -273,18 +295,50 @@ export const graphwarKillerLocale = {
       boundaryExpansionTitle:
         "Treat the play-area boundary as expanded inward into the collision area. Unit: raw Graphwar 770x450 plane pixels.",
       debugNoTiming: "No pathfinding timing recorded yet",
-      debugOutsideStagesTitle:
-        "Total wall-clock time minus recorded stages; includes phase switches, paint waits before route-tolerance attempts, async scheduling, and glue code that is not measured separately.",
       debugStages: {
-        "apply-result": "Apply path result",
-        "collect-targets": "Collect candidate targets",
-        "optimize-path": "Optimize path nodes",
-        "outside-stages": "Outside recorded stages",
-        preflight: "Preflight current path",
-        "search-route": "Search obstacle route",
-        "setting-status": "Set status text",
-        total: "Flow total",
-        "validate-trajectory": "Validate function trajectory",
+        "apply-result": {
+          label: "Apply path result",
+          title: "Write the final Smart Pathfinding path to the current path state and clear stale path errors.",
+        },
+        "collect-targets": {
+          label: "Collect candidate targets",
+          title:
+            "When a soldier is clicked, enumerate aim points inside its hit circle using the current minimum x+ step.",
+        },
+        "optimize-path": {
+          label: "Optimize path nodes",
+          title:
+            "Try removing intermediate geometry-route points one by one, validating each shorter path with the function trajectory.",
+        },
+        "outside-stages": {
+          label: "Outside recorded stages",
+          title:
+            "Total wall-clock time minus recorded stages; includes phase switches, paint waits before route-tolerance attempts, async scheduling, and glue code that is not measured separately.",
+        },
+        preflight: {
+          label: "Preflight current path",
+          title:
+            "Check whether the current function trajectory reaches the last path point before any obstacle, so pathfinding does not continue from an already blocked path.",
+        },
+        "search-route": {
+          label: "Search obstacle route",
+          title:
+            "Search a geometry route from the current path end to the target point using the current obstacle mask and route expansion.",
+        },
+        "setting-status": {
+          label: "Set status text",
+          title:
+            "Build the Smart Pathfinding success or failure message and write it to the pathfinding header status.",
+        },
+        total: {
+          label: "Flow total",
+          title: "Wall-clock time from the start of this Smart Pathfinding run until the final status is applied.",
+        },
+        "validate-trajectory": {
+          label: "Validate function trajectory",
+          title:
+            "Convert the candidate geometry path into a Graphwar function trajectory and check that it hits the target before obstacles or bounds.",
+        },
       },
       debugSummary: "Debug info",
       fastMode: "Fast mode",
@@ -309,7 +363,7 @@ export const graphwarKillerLocale = {
         "Pathfinding starts by expanding obstacles by this amount. Unit: raw Graphwar 770x450 plane pixels.",
       searchAnimation: "Search animation",
       searchAnimationTitle:
-        "Show the Smart Pathfinding and One-Click Clear search process plus DAG previews; turn it off for quieter calculation.",
+        "Show Smart Pathfinding candidate points, explored edges, trial paths, and optimization points; turn it off to keep only the final path result.",
       simulationExpansion: "Simulation expansion",
       simulationExpansionAriaLabel: "Function-simulation obstacle expansion in raw Graphwar 770x450 plane pixels",
       simulationExpansionTitle:

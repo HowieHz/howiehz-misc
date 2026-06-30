@@ -568,7 +568,7 @@ function createGraphwarExpressionEvaluator(expression: string, parserOptions?: G
     return undefined;
   }
 
-  return (x: number, y: number, dy: number) => evaluateGraphwarPolishExpression(polishTokens, x, y, dy);
+  return createGraphwarPolishExpressionEvaluator(polishTokens);
 }
 
 /** 按 Graphwar PolishNotationFunction 的 token 规则解析用户表达式。 */
@@ -756,28 +756,34 @@ function graphwarPolishValuesNeeded(tokens: readonly GraphwarExpressionToken[]) 
   return valuesNeeded;
 }
 
+function createGraphwarPolishExpressionEvaluator(tokens: readonly GraphwarExpressionToken[]) {
+  const stack = new Array<number>(tokens.length);
+  return (x: number, y: number, dy: number) => evaluateGraphwarPolishExpression(tokens, stack, x, y, dy);
+}
+
 function evaluateGraphwarPolishExpression(
   tokens: readonly GraphwarExpressionToken[],
+  stack: number[],
   x: number,
   y: number,
   dy: number,
 ) {
-  let readIndex = 0;
-  const evaluateNext = (): number => {
-    const token = tokens[readIndex];
-    readIndex += 1;
-    if (!token) {
+  let stackSize = 0;
+  for (let index = tokens.length - 1; index >= 0; index -= 1) {
+    const token = tokens[index];
+    const paramCount = getGraphwarExpressionTokenParamCount(token.type);
+    if (stackSize < paramCount) {
       return Number.NaN;
     }
 
-    const paramCount = getGraphwarExpressionTokenParamCount(token.type);
-    const first = paramCount > 0 ? evaluateNext() : 0;
-    const second = paramCount > 1 ? evaluateNext() : 0;
-    return evaluateGraphwarExpressionToken(token, first, second, x, y, dy);
-  };
+    const first = paramCount > 0 ? stack[--stackSize] : 0;
+    const second = paramCount > 1 ? stack[--stackSize] : 0;
+    stack[stackSize] = evaluateGraphwarExpressionToken(token, first, second, x, y, dy);
+    stackSize += 1;
+  }
 
-  const value = evaluateNext();
-  return Number.isFinite(value) && readIndex === tokens.length ? value : Number.NaN;
+  const value = stackSize === 1 ? stack[0] : Number.NaN;
+  return Number.isFinite(value) ? value : Number.NaN;
 }
 
 function evaluateGraphwarExpressionToken(

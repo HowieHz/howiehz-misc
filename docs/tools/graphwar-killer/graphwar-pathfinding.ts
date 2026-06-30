@@ -82,7 +82,16 @@ interface RouteMaskComponent {
 
 /** 连通域边界轮廓点，并保留它来自哪个阻挡 cell。 */
 interface BoundaryContourPoint extends PlaneGridPoint {
+  /** 产生该边界点的阻挡 cell。 */
   sourceCell: PlaneGridPoint;
+}
+
+/** RDP 轮廓简化待处理或已简化的开区间端点下标。 */
+interface BoundaryContourRange {
+  /** 区间终点在原始轮廓数组中的下标。 */
+  endIndex: number;
+  /** 区间起点在原始轮廓数组中的下标。 */
+  startIndex: number;
 }
 
 /** Lazy visibility search 的排序代价：先短路径，再少折线段。 */
@@ -293,6 +302,7 @@ export function imagePointToPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRe
   };
 }
 
+/** 从障碍连通域轮廓提取可见性图候选点，并加入起点和终点。 */
 function collectVisibilityGraphCandidates({
   boundaryExpansion,
   canAdvance,
@@ -359,6 +369,7 @@ function collectVisibilityGraphCandidates({
   return [start, target, ...[...candidateMap.values()].sort((left, right) => left.x - right.x || left.y - right.y)];
 }
 
+/** 用 BFS 收集 route mask 中的 8 邻域阻挡连通域。 */
 function collectRouteMaskComponents(mask: Uint8Array, mirrored: boolean) {
   const components: RouteMaskComponent[] = [];
   const visited = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
@@ -426,6 +437,7 @@ function collectRouteMaskComponents(mask: Uint8Array, mirrored: boolean) {
   return components;
 }
 
+/** 将连通域边界边按方向串成闭合轮廓。 */
 function collectComponentBoundaryContours(component: RouteMaskComponent) {
   const edges = collectComponentBoundaryEdges(component);
   const contours: BoundaryContourPoint[][] = [];
@@ -487,6 +499,7 @@ function collectComponentBoundaryContours(component: RouteMaskComponent) {
   return contours;
 }
 
+/** 枚举连通域外露的 cell 边界边。 */
 function collectComponentBoundaryEdges(component: RouteMaskComponent) {
   const edges: {
     end: PlaneGridPoint;
@@ -526,6 +539,7 @@ function collectComponentBoundaryEdges(component: RouteMaskComponent) {
   return edges;
 }
 
+/** 将闭合轮廓拆成两条开链后执行 RDP 简化。 */
 function simplifyClosedBoundaryContour(contour: BoundaryContourPoint[], epsilon: number) {
   if (contour.length <= 3) {
     return contour;
@@ -559,6 +573,7 @@ function simplifyClosedBoundaryContour(contour: BoundaryContourPoint[], epsilon:
   return [...firstSimplified.slice(0, -1), ...secondSimplified.slice(0, -1)];
 }
 
+/** 按环形索引提取从起点到终点的轮廓链，包含两端。 */
 function collectCircularContourChain(contour: BoundaryContourPoint[], startIndex: number, endIndex: number) {
   const chain: BoundaryContourPoint[] = [];
   for (let index = startIndex; index !== endIndex; index = (index + 1) % contour.length) {
@@ -574,40 +589,72 @@ function collectCircularContourChain(contour: BoundaryContourPoint[], startIndex
   return chain;
 }
 
+/** 用显式栈执行 RDP 开轮廓简化，避免复杂障碍边界触发深递归。 */
 function simplifyOpenBoundaryContour(points: BoundaryContourPoint[], epsilon: number): BoundaryContourPoint[] {
   if (points.length <= 2) {
     return points;
   }
 
-  const start = points[0];
-  const end = points.at(-1);
-  if (!start || !end) {
+  if (!points[0] || !points.at(-1)) {
     return points;
   }
 
-  let maxDistance = -Infinity;
-  let splitIndex = 0;
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const point = points[index];
-    if (!point) {
+  const pendingRanges: BoundaryContourRange[] = [{ startIndex: 0, endIndex: points.length - 1 }];
+  const simplifiedRanges: BoundaryContourRange[] = [];
+  while (pendingRanges.length > 0) {
+    const range = pendingRanges.pop();
+    if (!range) {
       continue;
     }
-    const distance = distanceToLineSegment(point, start, end);
-    if (distance > maxDistance) {
-      maxDistance = distance;
-      splitIndex = index;
+
+    const start = points[range.startIndex];
+    const end = points[range.endIndex];
+    if (!start || !end || range.endIndex - range.startIndex <= 1) {
+      simplifiedRanges.push(range);
+      continue;
+    }
+
+    let maxDistance = -Infinity;
+    let splitIndex = range.startIndex;
+    for (let index = range.startIndex + 1; index < range.endIndex; index += 1) {
+      const point = points[index];
+      if (!point) {
+        continue;
+      }
+      const distance = distanceToLineSegment(point, start, end);
+      if (distance > maxDistance) {
+        maxDistance = distance;
+        splitIndex = index;
+      }
+    }
+
+    if (maxDistance <= epsilon) {
+      simplifiedRanges.push(range);
+      continue;
+    }
+
+    pendingRanges.push({ startIndex: splitIndex, endIndex: range.endIndex });
+    pendingRanges.push({ startIndex: range.startIndex, endIndex: splitIndex });
+  }
+
+  const simplified: BoundaryContourPoint[] = [];
+  for (const range of simplifiedRanges) {
+    const start = points[range.startIndex];
+    const end = points[range.endIndex];
+    if (!start || !end) {
+      continue;
+    }
+    if (simplified.at(-1) !== start) {
+      simplified.push(start);
+    }
+    if (simplified.at(-1) !== end) {
+      simplified.push(end);
     }
   }
-
-  if (maxDistance <= epsilon) {
-    return [start, end];
-  }
-
-  const left = simplifyOpenBoundaryContour(points.slice(0, splitIndex + 1), epsilon);
-  const right = simplifyOpenBoundaryContour(points.slice(splitIndex), epsilon);
-  return [...left.slice(0, -1), ...right];
+  return simplified.length > 0 ? simplified : points;
 }
 
+/** 在边界点周围寻找离障碍最近且偏外侧的可通行候选点。 */
 function selectNearbyFreeCellCandidate({
   boundaryExpansion,
   boundaryPoint,
@@ -671,6 +718,7 @@ function selectNearbyFreeCellCandidate({
   return undefined;
 }
 
+/** 在候选点之间惰性检查可见边，用 A* 风格代价搜索路径。 */
 async function findLazyVisibilityGraphPath({
   boundaryExpansion,
   canAdvance,
@@ -791,6 +839,7 @@ async function findLazyVisibilityGraphPath({
   return undefined;
 }
 
+/** 上报一次可见性搜索预览，并按需让出主线程控制权。 */
 async function reportVisibilitySearchProgress({
   acceptedEdges,
   candidates,
@@ -837,6 +886,7 @@ async function reportVisibilitySearchProgress({
   return !isCancelled?.();
 }
 
+/** 从 open 集合中选择估计总代价最小的候选点。 */
 function selectBestOpenCandidateIndex(
   openIndexes: ReadonlySet<number>,
   states: ReadonlyMap<number, VisibilitySearchState>,
@@ -855,6 +905,7 @@ function selectBestOpenCandidateIndex(
   return bestIndex;
 }
 
+/** 比较两个搜索候选点的 A* 排序优先级。 */
 function compareSearchQueueCandidates(
   leftIndex: number,
   rightIndex: number,
@@ -888,6 +939,7 @@ function compareSearchQueueCandidates(
   );
 }
 
+/** 沿 previousIndex 回溯可见性搜索路径。 */
 function reconstructVisibilitySearchPath(
   targetIndex: number,
   states: ReadonlyMap<number, VisibilitySearchState>,
@@ -909,6 +961,7 @@ function reconstructVisibilitySearchPath(
   return path.reverse();
 }
 
+/** 限制页面预览候选点数量，优先显示当前点附近的候选点。 */
 function limitPreviewCandidates(candidates: readonly PlaneGridPoint[], current?: PlaneGridPoint) {
   if (candidates.length <= GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT) {
     return candidates;
@@ -931,6 +984,7 @@ function limitPreviewCandidates(candidates: readonly PlaneGridPoint[], current?:
   return [start, target, ...selected];
 }
 
+/** 按起终点和方向角稳定排序边界边。 */
 function compareBoundaryEdges(
   left:
     | {
@@ -955,6 +1009,7 @@ function compareBoundaryEdges(
   );
 }
 
+/** 从可选出边中选择相对上一条边转角最小的下一条边。 */
 function selectNextBoundaryEdgeIndex(
   previousEdge: {
     end: PlaneGridPoint;
@@ -986,6 +1041,7 @@ function selectNextBoundaryEdgeIndex(
   }, undefined);
 }
 
+/** 计算从上一条边转向下一条边的归一化逆时针角度。 */
 function normalizedTurnAngle(
   previousEdge: {
     end: PlaneGridPoint;
@@ -1001,10 +1057,12 @@ function normalizedTurnAngle(
   return (nextAngle - previousAngle + Math.PI * 2) % (Math.PI * 2);
 }
 
+/** 计算边界有向边的方向角。 */
 function angleForBoundaryEdge(edge: { end: PlaneGridPoint; start: PlaneGridPoint }) {
   return Math.atan2(edge.end.y - edge.start.y, edge.end.x - edge.start.x);
 }
 
+/** 计算多边形有符号面积，用于判断轮廓朝向。 */
 function calculateSignedArea(points: readonly PlaneGridPoint[]) {
   let doubledArea = 0;
   for (let index = 0; index < points.length; index += 1) {
@@ -1018,10 +1076,12 @@ function calculateSignedArea(points: readonly PlaneGridPoint[]) {
   return doubledArea / 2;
 }
 
+/** 判断三点是否近似共线，避免保留不必要的候选拐点。 */
 function isNearCollinear(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint) {
   return distanceToLineSegment(current, previous, next) <= 0.75;
 }
 
+/** 判断当前拐点是否明显为凹角，凹角不适合作为绕障候选点。 */
 function isClearlyConcave(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint, signedArea: number) {
   const crossProduct = cross(previous, current, next);
   if (Math.abs(crossProduct) <= 1) {
@@ -1030,6 +1090,7 @@ function isClearlyConcave(previous: PlaneGridPoint, current: PlaneGridPoint, nex
   return signedArea * crossProduct < 0;
 }
 
+/** 计算点到线段的最短欧氏距离。 */
 function distanceToLineSegment(point: PlaneGridPoint, start: PlaneGridPoint, end: PlaneGridPoint) {
   const lengthSquared = planeGridPointDistanceSquared(start, end);
   if (lengthSquared === 0) {
@@ -1047,10 +1108,12 @@ function distanceToLineSegment(point: PlaneGridPoint, start: PlaneGridPoint, end
   });
 }
 
+/** 计算三点组成的二维叉积。 */
 function cross(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint) {
   return (current.x - previous.x) * (next.y - current.y) - (current.y - previous.y) * (next.x - current.x);
 }
 
+/** 判断指定平面 cell 在 route mask 中是否阻挡。 */
 function routeMaskCellIsBlocked(point: PlaneGridPoint, mask: Uint8Array, mirrored: boolean) {
   if (!isInsidePlane(point.x, point.y)) {
     return false;
@@ -1059,26 +1122,32 @@ function routeMaskCellIsBlocked(point: PlaneGridPoint, mask: Uint8Array, mirrore
   return Boolean(mask[point.y * GRAPHWAR_PLANE_LENGTH + x]);
 }
 
+/** 比较路径搜索代价，先少折线段，再短路径长度。 */
 function comparePathfindingCosts(left: PathfindingCost, right: PathfindingCost) {
   return left.segments - right.segments || (nearlyEqual(left.length, right.length) ? 0 : left.length - right.length);
 }
 
+/** 按平面坐标稳定比较两个网格点。 */
 function comparePlaneGridPoints(left: PlaneGridPoint, right: PlaneGridPoint) {
   return left.x - right.x || left.y - right.y;
 }
 
+/** 判断两个平面网格点坐标是否相同。 */
 function pointsEqual(left: PlaneGridPoint, right: PlaneGridPoint) {
   return left.x === right.x && left.y === right.y;
 }
 
+/** 创建平面网格点的字符串 key。 */
 function createPlaneGridPointKey(point: PlaneGridPoint) {
   return `${point.x};${point.y}`;
 }
 
+/** 创建平面网格点在 770x450 mask 中的一维下标。 */
 function createPlaneGridPointIndex(point: PlaneGridPoint) {
   return point.y * GRAPHWAR_PLANE_LENGTH + point.x;
 }
 
+/** 判断坐标是否位于固定 Graphwar 平面内。 */
 function isInsidePlane(x: number, y: number) {
   return x >= 0 && x < GRAPHWAR_PLANE_LENGTH && y >= 0 && y < GRAPHWAR_PLANE_HEIGHT;
 }
@@ -1096,6 +1165,7 @@ function planeGridPointDistance(left: PlaneGridPoint, right: PlaneGridPoint) {
   return Math.hypot(right.x - left.x, right.y - left.y);
 }
 
+/** 计算两个平面网格点的欧氏距离平方，避免无谓开方。 */
 function planeGridPointDistanceSquared(left: PlaneGridPoint, right: PlaneGridPoint) {
   return (right.x - left.x) ** 2 + (right.y - left.y) ** 2;
 }

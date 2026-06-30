@@ -14,7 +14,7 @@ export const graphwarKillerLocale = {
       value: "ddy",
       label: "y''=",
       description: "输出阶跃函数的二阶导数",
-      title: "按 Graphwar 的 y''= 模式输出或模拟二阶导数函数；解算时部分算法可能不可用。",
+      title: "按 Graphwar 的 y''= 模式输出或模拟二阶导数函数；不支持部分算法。",
     },
   ],
   toolWorkflowModes: [

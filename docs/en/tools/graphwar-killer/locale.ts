@@ -19,7 +19,7 @@ export const graphwarKillerLocale = {
       label: "y''=",
       description: "Output the step function's second derivative",
       title:
-        "Output or simulate a second-derivative function for Graphwar's y''= mode; some solver algorithms may be unavailable.",
+        "Output or simulate a second-derivative function for Graphwar's y''= mode; some algorithms are unsupported.",
     },
   ],
   toolWorkflowModes: [

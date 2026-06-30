@@ -15,6 +15,7 @@ interface GraphwarToolDefaults {
   formulaLaunchPointIterations: number;
   obstacleMinArea: number;
   soldierTemplateCandidateTopRatio: number;
+  templateMatchingWorkerCount: number;
   maximumSoldierCount: number;
 }
 
@@ -35,5 +36,6 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
   formulaLaunchPointIterations: 8,
   obstacleMinArea: 50,
   soldierTemplateCandidateTopRatio: 0.1,
+  templateMatchingWorkerCount: 4,
   maximumSoldierCount: 40,
 };

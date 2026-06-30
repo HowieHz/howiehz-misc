@@ -96,6 +96,8 @@ export const graphwarKillerLocale = {
     simulationExpansionPixelRange: (limit) => `Simulation expansion must be between -${limit}px and ${limit}px`,
     soldierTemplateCandidateTopRatioNumber: "Candidate trim must be a number",
     soldierTemplateCandidateTopRatioRange: "Candidate trim must be greater than 0 and no greater than 1",
+    templateMatchingWorkerCountInteger: "Template matching workers must be an integer",
+    templateMatchingWorkerCountRange: "Template matching workers must be between 1 and 128",
     stepSteepnessNumber: "Step steepness must be a number greater than 0",
   },
   status: {
@@ -142,10 +144,15 @@ export const graphwarKillerLocale = {
       updatingObstacleEdits: "Applying obstacle edits",
       noBounds: "Could not detect the Graphwar play-area bounds",
       noPixels: "Could not read screenshot pixels",
+      partialWarning: "⚠ partial issue",
       preparingPixels: "Reading screenshot pixels",
       stopSuffix: ", right-click the screenshot to cancel...",
       updatingResults: "Updating detection results",
       uploadFirst: "Upload or paste a screenshot first",
+      warningTitle: (warning) =>
+        warning.code === "template-matching-worker-fallback"
+          ? `Parallel matching failed; fell back to serial: ${warning.message}`
+          : warning.message,
     },
     image: {
       defaultStatus: "Capture, upload, drag in, or press Ctrl/Cmd+V to paste a screenshot",
@@ -227,6 +234,37 @@ export const graphwarKillerLocale = {
       autoDetectionTitle: "Automatically run detection when a screenshot loads or detection settings change.",
       busyOverlay: "Detecting, right-click to cancel",
       debugNoTiming: "No detection timing recorded yet",
+      debugDetails: {
+        "template-matching-dispatch": {
+          label: "- Dispatch template tasks",
+          title: "Split candidates, copy screenshot pixels, and send template matching tasks to child Workers.",
+        },
+        "template-matching-fallback-serial": {
+          label: "- Fallback serial template scoring",
+          title: "After parallel template matching fails, rescore all candidates serially inside the detection Worker.",
+        },
+        "template-matching-merge": {
+          label: "- Merge template results",
+          title: "Merge template scoring results, sort globally, apply thresholds, and suppress overlapping matches.",
+        },
+        "template-matching-mode": {
+          label: (mode, workerCount) =>
+            mode === "parallel"
+              ? `- Template matching mode: parallel, ${workerCount} worker`
+              : mode === "parallel-fallback"
+                ? `- Template matching mode: parallel failed then serial, ${workerCount} worker -> 1 worker`
+                : "- Template matching mode: serial, 1 worker",
+          title: "The scheduling mode actually used by this soldier template matching run.",
+        },
+        "template-matching-serial": {
+          label: "- Serial template scoring",
+          title: "Score all soldier candidates serially inside the detection Worker.",
+        },
+        "template-matching-worker": {
+          label: (workerIndex) => `- Worker ${workerIndex} template scoring`,
+          title: "Scoring time for one template matching child Worker's candidate slice.",
+        },
+      },
       debugStages: {
         "building-obstacle-mask": {
           label: "Build obstacle mask",
@@ -473,6 +511,10 @@ export const graphwarKillerLocale = {
         maximumSoldierCount: "Detected soldier limit",
         maximumSoldierCountAriaLabel: "Detected soldier count limit",
         maximumSoldierCountTitle: "Maximum number of soldiers kept in detection results; default 40.",
+        templateMatchingWorkerCount: "Template matching workers",
+        templateMatchingWorkerCountAriaLabel: "Number of soldier template matching Workers",
+        templateMatchingWorkerCountTitle:
+          "Number of Workers to run during soldier template matching; default 4, range 1 to 128, and it will not exceed the candidate count.",
       },
       simulator: "Simulator",
       skipUnknownCharacters: "Skip unknown characters",
@@ -482,13 +524,6 @@ export const graphwarKillerLocale = {
       stepSteepnessTitle:
         "Steepness parameter a for the step function; higher values make turns sharper but increase overflow risk.",
       title: "Settings",
-      webWorker: {
-        heading: "Web Worker",
-        workerCount: "Workers",
-        workerCountAriaLabel: "Web Worker concurrency",
-        workerCountTitle:
-          "Reserved Web Worker concurrency setting; it is saved in the UI for now and will be used when parallel calculation is wired in.",
-      },
     },
   },
 } as const satisfies GraphwarKillerLocale;

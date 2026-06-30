@@ -21,7 +21,19 @@ export interface GraphwarDetectionWorkerTimingEntry {
   stage: GraphwarDetectionWorkerStage;
   /** 阶段耗时，单位毫秒。 */
   elapsedMs: number;
+  /** 细分耗时展示文案 key；存在时页面会显示为主阶段下的子项。 */
+  detail?: GraphwarDetectionWorkerTimingDetail;
 }
+
+export type GraphwarDetectionWorkerTimingDetail =
+  | { type: "template-matching-mode"; mode: "serial"; workerCount: number }
+  | { type: "template-matching-mode"; mode: "parallel"; workerCount: number }
+  | { type: "template-matching-mode"; mode: "parallel-fallback"; workerCount: number }
+  | { type: "template-matching-dispatch" }
+  | { type: "template-matching-worker"; workerIndex: number }
+  | { type: "template-matching-serial" }
+  | { type: "template-matching-fallback-serial" }
+  | { type: "template-matching-merge" };
 
 /** 自动识别棋盘边界并识别对象。 */
 export interface GraphwarAutoDetectionInput {

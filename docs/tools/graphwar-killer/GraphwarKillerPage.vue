@@ -32,9 +32,13 @@ import {
   paintObstacleMaskDisk,
   paintObstacleMaskStroke,
 } from "./graphwar-detection";
-import type { DetectedObstacleMap, GraphwarDetectionBox } from "./graphwar-detection";
+import type { DetectedObstacleMap, GraphwarDetectionBox, GraphwarObjectsDetectionResult } from "./graphwar-detection";
 import { createGraphwarDetectionRunner, isGraphwarDetectionCancelledError } from "./graphwar-detection-runner";
-import type { GraphwarDetectionWorkerStage, GraphwarDetectionWorkerTimingEntry } from "./graphwar-detection-runner";
+import type {
+  GraphwarDetectionWorkerStage,
+  GraphwarDetectionWorkerTimingDetail,
+  GraphwarDetectionWorkerTimingEntry,
+} from "./graphwar-detection-runner";
 import {
   buildSmartPathfindingPathForMask,
   collectSmartPathfindingRouteTolerances,
@@ -96,6 +100,7 @@ type ParsedDetectionSettings =
       candidateTopRatio: number;
       maximumSoldierCount: number;
       minArea: number;
+      templateMatchingWorkerCount: number;
     }
   | { ok: false; message: string };
 /** 放大镜倍率解析结果；允许输入框超过滑条快速范围。 */
@@ -162,11 +167,15 @@ interface DetectionDebugTimingEntry {
   stage: DetectionDebugStage;
   /** 阶段耗时，单位毫秒。 */
   elapsedMs: number;
+  /** Worker 返回的阶段细分信息；存在时按子项展示。 */
+  detail?: GraphwarDetectionWorkerTimingDetail;
 }
 /** 识别调试耗时展示行。 */
 interface DetectionDebugTimingRow extends DetectionDebugTimingEntry {
   /** 鼠标悬停说明；用于解释不直接对应某个函数块的阶段。 */
   title?: string;
+  /** 展示标签，子项会以 "- " 开头。 */
+  label: string;
 }
 /** 单次智能寻路调试耗时记录。 */
 interface SmartPathfindingDebugTimingEntry {
@@ -283,18 +292,20 @@ const debugInfoEnabled = ref(false);
 const debugActivationRemainingMs = ref<number>();
 const debugActivationSuccessVisible = ref(false);
 const detectionDebugTimingEntries = ref<DetectionDebugTimingEntry[]>([]);
+const detectionStatusWarning = ref("");
+const detectionStatusWarningTitle = ref("");
 const smartPathfindingDebugTimingEntries = ref<SmartPathfindingDebugTimingEntry[]>([]);
 const simulatorSkipUnknownCharacters = ref(true);
 const simulatorParseDerivativeAsY = ref(true);
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
 const maximumSoldierCountText = ref(String(graphwarToolDefaults.maximumSoldierCount));
 const soldierTemplateCandidateTopRatioText = ref(String(graphwarToolDefaults.soldierTemplateCandidateTopRatio));
+const templateMatchingWorkerCountText = ref(String(graphwarToolDefaults.templateMatchingWorkerCount));
 const obstacleRouteMinToleranceText = ref("1");
 const obstacleRouteMaxToleranceText = ref("3");
 const obstacleRouteStepToleranceText = ref("1");
 const obstacleSimulationToleranceText = ref("1");
 const pathfindingBoundaryExpansionText = ref("1");
-const workerCountText = ref("4");
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
 const {
@@ -458,6 +469,14 @@ const parsedDetectionSettings = computed<ParsedDetectionSettings>(() => {
     return { ok: false as const, message: locale.validation.soldierTemplateCandidateTopRatioRange };
   }
 
+  const templateMatchingWorkerCount = parseFiniteNumber(templateMatchingWorkerCountText.value);
+  if (templateMatchingWorkerCount === undefined || !Number.isInteger(templateMatchingWorkerCount)) {
+    return { ok: false as const, message: locale.validation.templateMatchingWorkerCountInteger };
+  }
+  if (templateMatchingWorkerCount < 1 || templateMatchingWorkerCount > 128) {
+    return { ok: false as const, message: locale.validation.templateMatchingWorkerCountRange };
+  }
+
   const minArea = parseFiniteNumber(obstacleMinAreaText.value);
   if (minArea === undefined || !Number.isInteger(minArea)) {
     return { ok: false as const, message: locale.validation.obstacleMinAreaInteger };
@@ -466,7 +485,7 @@ const parsedDetectionSettings = computed<ParsedDetectionSettings>(() => {
     return { ok: false as const, message: locale.validation.obstacleMinAreaRange(graphwarObstacleMaxArea) };
   }
 
-  return { ok: true as const, candidateTopRatio, maximumSoldierCount, minArea };
+  return { ok: true as const, candidateTopRatio, maximumSoldierCount, minArea, templateMatchingWorkerCount };
 });
 
 const parsedMagnifierZoom = computed<ParsedMagnifierZoom>(() => {
@@ -930,7 +949,8 @@ const detectionHeaderStatusIsSuccess = computed(() => detectionHeaderStatusKind.
 const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
   detectionDebugTimingEntries.value.map((entry) => ({
     ...entry,
-    title: locale.ui.detection.debugStages[entry.stage].title,
+    label: getDetectionDebugTimingLabel(entry),
+    title: getDetectionDebugTimingTitle(entry),
   })),
 );
 const smartPathfindingDebugTimingRows = computed<SmartPathfindingDebugTimingRow[]>(() =>
@@ -1631,6 +1651,19 @@ function clearDebugActivationSuccessFlash() {
 function setDetectionStatus(message: string, kind: DetectionStatusKind) {
   detectionStatus.value = message;
   detectionStatusKind.value = kind;
+  detectionStatusWarning.value = "";
+  detectionStatusWarningTitle.value = "";
+}
+
+function setDetectionStatusWarnings(warnings: NonNullable<GraphwarObjectsDetectionResult["warnings"]> | undefined) {
+  if (!warnings?.length) {
+    return;
+  }
+
+  detectionStatusWarning.value = locale.status.detection.partialWarning;
+  detectionStatusWarningTitle.value = warnings
+    .map((warning) => locale.status.detection.warningTitle(warning))
+    .join("\n");
 }
 
 function waitForDetectionStatusPaint() {
@@ -1685,6 +1718,7 @@ function getGraphwarDetectionInput(timings: DetectionDebugTimingEntry[]) {
     soldierSettings: {
       candidateTopRatio: detectionSettings.candidateTopRatio,
       maximumSoldierCount: detectionSettings.maximumSoldierCount,
+      templateMatchingWorkerCount: detectionSettings.templateMatchingWorkerCount,
     },
     thresholds: {
       minArea: detectionSettings.minArea,
@@ -1795,10 +1829,7 @@ async function detectGraphwarObjectsInCurrentBounds() {
 
 /** 将 Worker 返回的士兵/障碍识别结果写回页面状态。 */
 async function applyGraphwarObjectDetectionResult(
-  result: {
-    obstacles: DetectedObstacleMap;
-    soldiers: GraphwarDetectionBox[];
-  },
+  result: GraphwarObjectsDetectionResult,
   source: "auto" | "current",
   runId: number,
   flashBounds = false,
@@ -1835,6 +1866,7 @@ async function applyGraphwarObjectDetectionResult(
         : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, elapsed()),
       "success",
     );
+    setDetectionStatusWarnings(result.warnings);
     completedAt = nowMs();
   });
   finishDetectionDebugTimings(runId, startedAt, timings, completedAt);
@@ -1857,7 +1889,7 @@ function finishDetectionDebugTimings(
   }
 
   const totalElapsedMs = completedAt - startedAt;
-  const measuredStageElapsedMs = timings.reduce((total, timing) => total + timing.elapsedMs, 0);
+  const measuredStageElapsedMs = timings.reduce((total, timing) => total + (timing.detail ? 0 : timing.elapsedMs), 0);
   detectionDebugTimingEntries.value = [
     ...timings,
     {
@@ -1875,6 +1907,7 @@ function createDetectionDebugTimingEntriesFromWorker(
   timings: readonly GraphwarDetectionWorkerTimingEntry[],
 ): DetectionDebugTimingEntry[] {
   return timings.map((timing) => ({
+    detail: timing.detail,
     elapsedMs: timing.elapsedMs,
     stage: timing.stage,
   }));
@@ -1898,6 +1931,27 @@ function measureDetectionDebugStage<TResult>(
 
 function getDetectionDebugStageLabel(stage: DetectionDebugStage) {
   return locale.ui.detection.debugStages[stage].label;
+}
+
+function getDetectionDebugTimingLabel(entry: DetectionDebugTimingEntry) {
+  return entry.detail ? getDetectionDebugTimingDetailLabel(entry.detail) : getDetectionDebugStageLabel(entry.stage);
+}
+
+function getDetectionDebugTimingTitle(entry: DetectionDebugTimingEntry) {
+  return entry.detail
+    ? locale.ui.detection.debugDetails[entry.detail.type].title
+    : locale.ui.detection.debugStages[entry.stage].title;
+}
+
+function getDetectionDebugTimingDetailLabel(detail: GraphwarDetectionWorkerTimingDetail) {
+  switch (detail.type) {
+    case "template-matching-mode":
+      return locale.ui.detection.debugDetails[detail.type].label(detail.mode, detail.workerCount);
+    case "template-matching-worker":
+      return locale.ui.detection.debugDetails[detail.type].label(detail.workerIndex);
+    default:
+      return locale.ui.detection.debugDetails[detail.type].label;
+  }
 }
 
 function finishSmartPathfindingDebugTimings(
@@ -3968,27 +4022,6 @@ async function copyText(text: string) {
         </div>
         <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
           <h3>
-            {{ locale.ui.settings.webWorker.heading }}
-          </h3>
-          <div class="graphwar-killer__image-actions">
-            <label
-              class="graphwar-killer__detection-setting-label"
-              :title="locale.ui.settings.webWorker.workerCountTitle"
-            >
-              {{ locale.ui.settings.webWorker.workerCount }}
-              <input
-                v-model="workerCountText"
-                inputmode="numeric"
-                min="1"
-                autocomplete="off"
-                :aria-label="locale.ui.settings.webWorker.workerCountAriaLabel"
-                :title="locale.ui.settings.webWorker.workerCountTitle"
-              >
-            </label>
-          </div>
-        </div>
-        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-          <h3>
             {{ locale.ui.settings.recognition.heading }}
           </h3>
           <div class="graphwar-killer__recognition-setting-row">
@@ -4020,6 +4053,21 @@ async function copyText(text: string) {
                 autocomplete="off"
                 :aria-label="locale.ui.settings.recognition.candidateTopRatioAriaLabel"
                 :title="locale.ui.settings.recognition.candidateTopRatioTitle"
+              >
+            </label>
+            <label
+              class="graphwar-killer__detection-setting-label"
+              :title="locale.ui.settings.recognition.templateMatchingWorkerCountTitle"
+            >
+              {{ locale.ui.settings.recognition.templateMatchingWorkerCount }}
+              <input
+                v-model="templateMatchingWorkerCountText"
+                inputmode="numeric"
+                min="1"
+                max="128"
+                autocomplete="off"
+                :aria-label="locale.ui.settings.recognition.templateMatchingWorkerCountAriaLabel"
+                :title="locale.ui.settings.recognition.templateMatchingWorkerCountTitle"
               >
             </label>
             <label
@@ -4145,6 +4193,13 @@ async function copyText(text: string) {
           >
             {{ detectionHeaderStatus }}
           </span>
+          <span
+            v-if="detectionStatusWarning"
+            class="graphwar-killer__label-status graphwar-killer__label-status--warning"
+            :title="detectionStatusWarningTitle"
+          >
+            {{ detectionStatusWarning }}
+          </span>
         </div>
         <div class="graphwar-killer__image-actions">
           <button
@@ -4187,7 +4242,7 @@ async function copyText(text: string) {
                 :key="`${entry.stage}-${index}`"
                 :title="entry.title"
               >
-                {{ getDetectionDebugStageLabel(entry.stage) }}: {{ formatDebugElapsedDuration(entry.elapsedMs) }}
+                {{ entry.label }}: {{ formatDebugElapsedDuration(entry.elapsedMs) }}
               </span>
             </template>
           </div>

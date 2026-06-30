@@ -13,10 +13,12 @@ import type {
   GraphwarDetectionWorkerResponse,
   GraphwarDetectionWorkerStage,
   GraphwarDetectionWorkerSuccessResponse,
+  GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
 } from "./graphwar-detection-worker-types";
 
 export type { GraphwarDetectionWorkerStage };
+export type { GraphwarDetectionWorkerTimingDetail };
 export type { GraphwarDetectionWorkerTimingEntry };
 
 /** 检测任务被用户取消或新任务替代。 */
@@ -68,7 +70,7 @@ export function createGraphwarDetectionRunner() {
       return worker;
     }
 
-    worker = new Worker(new URL("./graphwar-detection.worker.ts", import.meta.url), {
+    worker = new Worker(new URL("./workers/graphwar-detection.worker.ts", import.meta.url), {
       name: "graphwar-detection",
       type: "module",
     });

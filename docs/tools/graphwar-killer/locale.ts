@@ -59,6 +59,8 @@ export const graphwarKillerLocale = {
     simulationExpansionPixelRange: (limit) => `函数模拟值需要在 -${limit}px 到 ${limit}px 之间`,
     soldierTemplateCandidateTopRatioNumber: "候选裁剪需要填写数字",
     soldierTemplateCandidateTopRatioRange: "候选裁剪需要大于 0 且不大于 1",
+    templateMatchingWorkerCountInteger: "模板匹配并行数需要填写整数",
+    templateMatchingWorkerCountRange: "模板匹配并行数需要在 1 到 128 之间",
     stepSteepnessNumber: "阶跃陡峭度需要是大于 0 的数字",
   },
   status: {
@@ -104,10 +106,15 @@ export const graphwarKillerLocale = {
       updatingObstacleEdits: "正在应用障碍修改",
       noBounds: "没有识别到 Graphwar 棋盘边界",
       noPixels: "无法读取截图像素",
+      partialWarning: "⚠ 但有部分异常",
       preparingPixels: "正在读取截图像素",
       stopSuffix: "，在截图中右键中止…",
       updatingResults: "正在更新识别结果",
       uploadFirst: "先上传或粘贴截图",
+      warningTitle: (warning) =>
+        warning.code === "template-matching-worker-fallback"
+          ? `并行失败，回退到串行：${warning.message}`
+          : warning.message,
     },
     image: {
       defaultStatus: "可以截屏、上传、拖入或直接 Ctrl / Cmd + V 粘贴截图",
@@ -180,6 +187,37 @@ export const graphwarKillerLocale = {
       autoDetectionTitle: "开启后，加载截图或修改识别设置时自动运行识别。",
       busyOverlay: "识别中，右键中止",
       debugNoTiming: "暂无识别耗时记录",
+      debugDetails: {
+        "template-matching-dispatch": {
+          label: "- 分发模板任务",
+          title: "切分候选、复制截图像素并把模板匹配任务发送给子 Worker。",
+        },
+        "template-matching-fallback-serial": {
+          label: "- 回退串行模板评分",
+          title: "并行模板匹配失败后，在检测 Worker 内用串行路径重新评分全部候选。",
+        },
+        "template-matching-merge": {
+          label: "- 合并模板结果",
+          title: "合并模板评分结果，统一排序、过滤阈值并抑制重叠匹配。",
+        },
+        "template-matching-mode": {
+          label: (mode, workerCount) =>
+            mode === "parallel"
+              ? `- 模板匹配模式：并行，${workerCount} worker`
+              : mode === "parallel-fallback"
+                ? `- 模板匹配模式：并行失败后串行，${workerCount} worker -> 1 worker`
+                : "- 模板匹配模式：串行，1 worker",
+          title: "本次士兵模板匹配实际使用的调度模式。",
+        },
+        "template-matching-serial": {
+          label: "- 串行模板评分",
+          title: "在检测 Worker 内串行评分全部士兵候选。",
+        },
+        "template-matching-worker": {
+          label: (workerIndex) => `- Worker ${workerIndex} 模板评分`,
+          title: "单个模板匹配子 Worker 对自己候选切片的评分耗时。",
+        },
+      },
       debugStages: {
         "building-obstacle-mask": {
           label: "构建障碍 mask",
@@ -399,6 +437,10 @@ export const graphwarKillerLocale = {
         maximumSoldierCount: "识别士兵上限",
         maximumSoldierCountAriaLabel: "识别士兵数量上限",
         maximumSoldierCountTitle: "识别结果最多保留的士兵数量；默认 40。",
+        templateMatchingWorkerCount: "模板匹配并行数",
+        templateMatchingWorkerCountAriaLabel: "士兵模板匹配并行 Worker 数量",
+        templateMatchingWorkerCountTitle:
+          "士兵模板匹配阶段同时运行的 Worker 数量；默认 4，取值 1 到 128，实际不会超过候选数量。",
       },
       simulator: "模拟器设定",
       skipUnknownCharacters: "跳过未知字符",
@@ -407,12 +449,6 @@ export const graphwarKillerLocale = {
       stepSteepnessAriaLabel: "阶跃函数陡峭度 a",
       stepSteepnessTitle: "阶跃函数的陡峭度参数 a；数值越大，拐点越陡，但越容易出现数值溢出。",
       title: "设定",
-      webWorker: {
-        heading: "Web Worker 设定",
-        workerCount: "并行数",
-        workerCountAriaLabel: "Web Worker 并行数",
-        workerCountTitle: "预留的 Web Worker 并行数量；当前仅保存设定，后续接入并行计算时使用。",
-      },
     },
   },
 } as const satisfies GraphwarKillerLocale;

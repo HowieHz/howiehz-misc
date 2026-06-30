@@ -1,4 +1,6 @@
 /** 定义 Graphwar 杀手本地化文案结构，供中英文页面共享。 */
+import type { GraphwarDetectionWarning } from "./graphwar-detection";
+import type { GraphwarDetectionWorkerTimingDetail } from "./graphwar-detection-worker-types";
 import type { AlgorithmMode, EquationMode } from "./types";
 
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
@@ -7,6 +9,24 @@ export type GraphwarKillerStopReason = "invalid" | "max-steps" | "out-of-bounds"
 interface GraphwarKillerDebugStageText {
   label: string;
   title: string;
+}
+
+interface GraphwarKillerDetectionDebugDetailText {
+  "template-matching-dispatch": GraphwarKillerDebugStageText;
+  "template-matching-fallback-serial": GraphwarKillerDebugStageText;
+  "template-matching-merge": GraphwarKillerDebugStageText;
+  "template-matching-mode": {
+    label: (
+      mode: Extract<GraphwarDetectionWorkerTimingDetail, { type: "template-matching-mode" }>["mode"],
+      workerCount: number,
+    ) => string;
+    title: string;
+  };
+  "template-matching-serial": GraphwarKillerDebugStageText;
+  "template-matching-worker": {
+    label: (workerIndex: number) => string;
+    title: string;
+  };
 }
 
 /**
@@ -61,6 +81,8 @@ export interface GraphwarKillerLocale {
     simulationExpansionPixelRange: (limit: number) => string;
     soldierTemplateCandidateTopRatioNumber: string;
     soldierTemplateCandidateTopRatioRange: string;
+    templateMatchingWorkerCountInteger: string;
+    templateMatchingWorkerCountRange: string;
     stepSteepnessNumber: string;
     decimalPlacesInteger: string;
     decimalPlacesRange: (max: number) => string;
@@ -108,10 +130,12 @@ export interface GraphwarKillerLocale {
       updatingObstacleEdits: string;
       noBounds: string;
       noPixels: string;
+      partialWarning: string;
       preparingPixels: string;
       stopSuffix: string;
       updatingResults: string;
       uploadFirst: string;
+      warningTitle: (warning: GraphwarDetectionWarning) => string;
     };
     image: {
       defaultStatus: string;
@@ -176,6 +200,7 @@ export interface GraphwarKillerLocale {
       autoDetectionTitle: string;
       busyOverlay: string;
       debugNoTiming: string;
+      debugDetails: GraphwarKillerDetectionDebugDetailText;
       debugStages: Record<
         | "building-obstacle-mask"
         | "collecting-soldier-candidates"
@@ -326,6 +351,9 @@ export interface GraphwarKillerLocale {
         maximumSoldierCount: string;
         maximumSoldierCountAriaLabel: string;
         maximumSoldierCountTitle: string;
+        templateMatchingWorkerCount: string;
+        templateMatchingWorkerCountAriaLabel: string;
+        templateMatchingWorkerCountTitle: string;
       };
       simulator: string;
       skipUnknownCharacters: string;
@@ -334,12 +362,6 @@ export interface GraphwarKillerLocale {
       stepSteepnessAriaLabel: string;
       stepSteepnessTitle: string;
       title: string;
-      webWorker: {
-        heading: string;
-        workerCount: string;
-        workerCountAriaLabel: string;
-        workerCountTitle: string;
-      };
     };
   };
 }

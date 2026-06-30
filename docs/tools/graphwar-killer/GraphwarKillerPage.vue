@@ -34,7 +34,7 @@ import {
 } from "./graphwar-detection";
 import type { DetectedObstacleMap, GraphwarDetectionBox } from "./graphwar-detection";
 import { createGraphwarDetectionRunner, isGraphwarDetectionCancelledError } from "./graphwar-detection-runner";
-import type { GraphwarDetectionWorkerStage } from "./graphwar-detection-runner";
+import type { GraphwarDetectionWorkerStage, GraphwarDetectionWorkerTimingEntry } from "./graphwar-detection-runner";
 import {
   buildSmartPathfindingPathForMask,
   collectSmartPathfindingRouteTolerances,
@@ -110,6 +110,15 @@ type ParsedObstacleTolerances =
 type PathfindingMode = "off" | "smart" | "auto-graph";
 /** 识别状态等级，与面板标题和智能寻路状态样式对齐。 */
 type DetectionStatusKind = "info" | "success" | "warning" | "error";
+/** 识别调试耗时阶段。 */
+type DetectionDebugStage =
+  | "preparing-pixels"
+  | "detecting-bounds"
+  | "detecting-objects"
+  | "updating-results"
+  | "setting-status"
+  | "outside-stages"
+  | "total";
 /** 智能寻路状态等级，与面板标题和状态条样式对齐。 */
 type SmartPathfindingStatusKind = "info" | "success" | "warning" | "error";
 /** 智能寻路内部阶段，用于状态文案和搜索动画。 */
@@ -124,6 +133,18 @@ interface PathLineSegment {
   y1: number;
   /** 终点 y。 */
   y2: number;
+}
+/** 单次识别调试耗时记录。 */
+interface DetectionDebugTimingEntry {
+  /** 被测量的识别阶段。 */
+  stage: DetectionDebugStage;
+  /** 阶段耗时，单位毫秒。 */
+  elapsedMs: number;
+}
+/** 识别调试耗时展示行。 */
+interface DetectionDebugTimingRow extends DetectionDebugTimingEntry {
+  /** 鼠标悬停说明；用于解释不直接对应某个函数块的阶段。 */
+  title?: string;
 }
 /** 截图上的检测框，坐标均为图片像素。 */
 type DetectionBox = GraphwarDetectionBox;
@@ -186,6 +207,10 @@ const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
 const detectionFlashAnimationMs = 1600;
+const debugActivationHoldMs = 3000;
+const debugActivationCountdownStepMs = 100;
+const debugActivationCountdownVisibleAfterMs = 1000;
+const debugActivationSuccessFlashMs = 2000;
 const smartPathfindingBlockedPointFlashMs = 1800;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
@@ -220,6 +245,10 @@ const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const advancedSettingsVisible = ref(false);
+const debugInfoEnabled = ref(false);
+const debugActivationRemainingMs = ref<number>();
+const debugActivationSuccessVisible = ref(false);
+const detectionDebugTimingEntries = ref<DetectionDebugTimingEntry[]>([]);
 const simulatorSkipUnknownCharacters = ref(true);
 const simulatorParseDerivativeAsY = ref(true);
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
@@ -321,6 +350,11 @@ let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionSoldierFlashFrame: number | undefined;
 let detectionSoldierFlashTimer: ReturnType<typeof setTimeout> | undefined;
+let debugActivationCountdownTimer: ReturnType<typeof setInterval> | undefined;
+let debugActivationStartedAt: number | undefined;
+let debugActivationSuccessTimer: ReturnType<typeof setTimeout> | undefined;
+let debugActivationTimer: ReturnType<typeof setTimeout> | undefined;
+let debugActivationTriggered = false;
 let obstacleEditRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let smartPathfindingBlockedPointTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRunId = 0;
@@ -565,14 +599,24 @@ const settingsMessage = computed(() => {
   }
   return "";
 });
+const debugActivationCountdownMessage = computed(() => {
+  const remainingMs = debugActivationRemainingMs.value;
+  return remainingMs === undefined
+    ? ""
+    : locale.ui.settings.debugActivationCountdown(formatDebugActivationRemainingSeconds(remainingMs));
+});
 const settingsHeaderStatusResult = computed(() =>
   getFirstHeaderStatus(
     createHeaderStatus(settingsMessage.value, "error"),
+    createHeaderStatus(debugActivationCountdownMessage.value, "warning"),
+    createHeaderStatus(debugActivationSuccessVisible.value ? locale.ui.settings.debugInfoEnabled : "", "success"),
     createHeaderStatus(activeEquationDescription.value),
   ),
 );
 const settingsHeaderStatus = computed(() => settingsHeaderStatusResult.value.message);
 const settingsHeaderStatusIsError = computed(() => settingsHeaderStatusResult.value.kind === "error");
+const settingsHeaderStatusIsWarning = computed(() => settingsHeaderStatusResult.value.kind === "warning");
+const settingsHeaderStatusIsSuccess = computed(() => settingsHeaderStatusResult.value.kind === "success");
 const activeToolHint = computed(() =>
   toolMode.value === "bounds"
     ? locale.status.activeToolHint.bounds
@@ -828,6 +872,12 @@ const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
 const detectionHeaderStatusIsError = computed(() => detectionHeaderStatusKind.value === "error");
 const detectionHeaderStatusIsWarning = computed(() => detectionHeaderStatusKind.value === "warning");
 const detectionHeaderStatusIsSuccess = computed(() => detectionHeaderStatusKind.value === "success");
+const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
+  detectionDebugTimingEntries.value.map((entry) => ({
+    ...entry,
+    title: entry.stage === "outside-stages" ? locale.ui.detection.debugOutsideStagesTitle : undefined,
+  })),
+);
 
 const magnifierZoom = computed(() =>
   parsedMagnifierZoom.value.ok ? parsedMagnifierZoom.value.zoom : graphwarToolDefaults.magnifierZoom,
@@ -1249,6 +1299,8 @@ onBeforeUnmount(() => {
   if (detectionRefreshTimer) {
     clearTimeout(detectionRefreshTimer);
   }
+  clearDebugActivationHold();
+  clearDebugActivationSuccessFlash();
   clearDetectionSoldierFlash();
   if (obstacleEditRefreshTimer) {
     clearTimeout(obstacleEditRefreshTimer);
@@ -1429,6 +1481,92 @@ function cancelDetection(showStatus: boolean) {
   return true;
 }
 
+function toggleAdvancedSettings() {
+  advancedSettingsVisible.value = !advancedSettingsVisible.value;
+}
+
+function startDebugActivationHold(event: PointerEvent) {
+  if (event.button !== 0) {
+    return;
+  }
+  if (debugInfoEnabled.value) {
+    toggleAdvancedSettings();
+    return;
+  }
+
+  clearDebugActivationHold();
+  clearDebugActivationSuccessFlash();
+  debugActivationTriggered = false;
+  debugActivationStartedAt = nowMs();
+  updateDebugActivationCountdown();
+  debugActivationCountdownTimer = setInterval(updateDebugActivationCountdown, debugActivationCountdownStepMs);
+  debugActivationTimer = setTimeout(() => {
+    debugActivationTriggered = true;
+    debugInfoEnabled.value = true;
+    clearDebugActivationHold();
+    flashDebugActivationSuccess();
+  }, debugActivationHoldMs);
+}
+
+function finishDebugActivationHold() {
+  const shouldToggleAdvancedSettings =
+    !debugInfoEnabled.value && !debugActivationTriggered && debugActivationStartedAt !== undefined;
+  clearDebugActivationHold();
+  if (shouldToggleAdvancedSettings) {
+    toggleAdvancedSettings();
+  }
+  debugActivationTriggered = false;
+}
+
+function cancelDebugActivationHold() {
+  clearDebugActivationHold();
+  debugActivationTriggered = false;
+}
+
+function clearDebugActivationHold() {
+  if (debugActivationTimer) {
+    clearTimeout(debugActivationTimer);
+    debugActivationTimer = undefined;
+  }
+  if (debugActivationCountdownTimer) {
+    clearInterval(debugActivationCountdownTimer);
+    debugActivationCountdownTimer = undefined;
+  }
+  debugActivationStartedAt = undefined;
+  debugActivationRemainingMs.value = undefined;
+}
+
+function updateDebugActivationCountdown() {
+  if (debugActivationStartedAt === undefined) {
+    return;
+  }
+
+  const elapsedMs = nowMs() - debugActivationStartedAt;
+  debugActivationRemainingMs.value =
+    elapsedMs < debugActivationCountdownVisibleAfterMs ? undefined : Math.max(0, debugActivationHoldMs - elapsedMs);
+}
+
+function flashDebugActivationSuccess() {
+  debugActivationSuccessVisible.value = true;
+  if (debugActivationSuccessTimer) {
+    clearTimeout(debugActivationSuccessTimer);
+  }
+  debugActivationSuccessTimer = setTimeout(() => {
+    debugActivationSuccessVisible.value = false;
+    debugActivationSuccessTimer = undefined;
+  }, debugActivationSuccessFlashMs);
+}
+
+function clearDebugActivationSuccessFlash() {
+  debugActivationSuccessVisible.value = false;
+  if (!debugActivationSuccessTimer) {
+    return;
+  }
+
+  clearTimeout(debugActivationSuccessTimer);
+  debugActivationSuccessTimer = undefined;
+}
+
 function setDetectionStatus(message: string, kind: DetectionStatusKind) {
   detectionStatus.value = message;
   detectionStatusKind.value = kind;
@@ -1465,13 +1603,13 @@ function scheduleGraphwarObjectDetection() {
 }
 
 /** 收敛截图读取、像素读取和阈值校验；后续检测入口只处理识别策略。 */
-function getGraphwarDetectionInput() {
+function getGraphwarDetectionInput(timings: DetectionDebugTimingEntry[]) {
   if (!imageRef.value || !imageUrl.value) {
     setDetectionStatus(locale.status.detection.uploadFirst, "error");
     return undefined;
   }
 
-  const imageData = getImageDataFromCurrentImage();
+  const imageData = measureDetectionDebugStage(timings, "preparing-pixels", () => getImageDataFromCurrentImage());
   if (!imageData) {
     setDetectionStatus(locale.status.detection.noPixels, "error");
     return undefined;
@@ -1488,11 +1626,13 @@ function getGraphwarDetectionInput() {
 async function detectGraphwarObjects() {
   const runId = beginDetectionRun();
   const startedAt = nowMs();
+  const timings: DetectionDebugTimingEntry[] = [];
+  let debugTimingsFinalized = false;
   try {
     if (!(await showDetectionStage(runId, locale.status.detection.preparingPixels))) {
       return;
     }
-    const detectionInput = getGraphwarDetectionInput();
+    const detectionInput = getGraphwarDetectionInput(timings);
     if (!detectionInput || !isActiveDetectionRun(runId)) {
       return;
     }
@@ -1505,6 +1645,9 @@ async function detectGraphwarObjects() {
       {
         onStage: (stage) => {
           void showDetectionWorkerStage(runId, stage);
+        },
+        onTimings: (workerTimings) => {
+          timings.push(...createDetectionDebugTimingEntriesFromWorker(workerTimings));
         },
       },
     );
@@ -1520,7 +1663,8 @@ async function detectGraphwarObjects() {
     boundsRect.value = result.edgeRect;
     boundsFirstPoint.value = undefined;
     pointerPreviewPoint.value = undefined;
-    await applyGraphwarObjectDetectionResult(result.objects, "auto", runId, true, startedAt);
+    await applyGraphwarObjectDetectionResult(result.objects, "auto", runId, true, startedAt, timings);
+    debugTimingsFinalized = true;
     if (!isActiveDetectionRun(runId)) {
       return;
     }
@@ -1528,6 +1672,9 @@ async function detectGraphwarObjects() {
   } catch (error) {
     handleGraphwarDetectionError(error, runId);
   } finally {
+    if (!debugTimingsFinalized) {
+      finishDetectionDebugTimings(runId, startedAt, timings);
+    }
     finishDetectionRun(runId);
   }
 }
@@ -1536,11 +1683,13 @@ async function detectGraphwarObjects() {
 async function detectGraphwarObjectsInCurrentBounds() {
   const runId = beginDetectionRun();
   const startedAt = nowMs();
+  const timings: DetectionDebugTimingEntry[] = [];
+  let debugTimingsFinalized = false;
   try {
     if (!(await showDetectionStage(runId, locale.status.detection.preparingPixels))) {
       return;
     }
-    const detectionInput = getGraphwarDetectionInput();
+    const detectionInput = getGraphwarDetectionInput(timings);
     if (!detectionInput || !isActiveDetectionRun(runId)) {
       return;
     }
@@ -1555,12 +1704,19 @@ async function detectGraphwarObjectsInCurrentBounds() {
         onStage: (stage) => {
           void showDetectionWorkerStage(runId, stage);
         },
+        onTimings: (workerTimings) => {
+          timings.push(...createDetectionDebugTimingEntriesFromWorker(workerTimings));
+        },
       },
     );
-    await applyGraphwarObjectDetectionResult(result, "current", runId, false, startedAt);
+    await applyGraphwarObjectDetectionResult(result, "current", runId, false, startedAt, timings);
+    debugTimingsFinalized = true;
   } catch (error) {
     handleGraphwarDetectionError(error, runId);
   } finally {
+    if (!debugTimingsFinalized) {
+      finishDetectionDebugTimings(runId, startedAt, timings);
+    }
     finishDetectionRun(runId);
   }
 }
@@ -1575,6 +1731,7 @@ async function applyGraphwarObjectDetectionResult(
   runId: number,
   flashBounds = false,
   startedAt = nowMs(),
+  timings: DetectionDebugTimingEntry[] = [],
 ) {
   clearSmartPathfindingStatus();
   if (!isActiveDetectionRun(runId)) {
@@ -1583,30 +1740,92 @@ async function applyGraphwarObjectDetectionResult(
   if (!(await showDetectionStage(runId, locale.status.detection.updatingResults))) {
     return;
   }
-  detectedSoldiers.value = result.soldiers;
-  flashDetectedSoldiers();
-  if (flashBounds) {
-    flashBoundsRect();
-  }
-  detectedObstacles.value = result.obstacles;
-  baselineDetectedObstacles.value = cloneDetectedObstacleMap(result.obstacles);
-  obstacleEditsDirty.value = false;
-  obstacleBrushPointerPoint.value = undefined;
-  obstacleBrushDragging.value = false;
-  obstacleBrushLastPlanePoint.value = undefined;
-  const elapsed = formatElapsedDuration(nowMs() - startedAt);
-  setDetectionStatus(
-    source === "auto"
-      ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, elapsed)
-      : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, elapsed),
-    "success",
-  );
+  measureDetectionDebugStage(timings, "updating-results", () => {
+    detectedSoldiers.value = result.soldiers;
+    flashDetectedSoldiers();
+    if (flashBounds) {
+      flashBoundsRect();
+    }
+    detectedObstacles.value = result.obstacles;
+    baselineDetectedObstacles.value = cloneDetectedObstacleMap(result.obstacles);
+    obstacleEditsDirty.value = false;
+    obstacleBrushPointerPoint.value = undefined;
+    obstacleBrushDragging.value = false;
+    obstacleBrushLastPlanePoint.value = undefined;
+  });
+  let completedAt = nowMs();
+  const elapsed = () => formatElapsedDuration(completedAt - startedAt);
+  measureDetectionDebugStage(timings, "setting-status", () => {
+    completedAt = nowMs();
+    setDetectionStatus(
+      source === "auto"
+        ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, elapsed())
+        : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, elapsed()),
+      "success",
+    );
+    completedAt = nowMs();
+  });
+  finishDetectionDebugTimings(runId, startedAt, timings, completedAt);
 }
 
 async function showDetectionWorkerStage(runId: number, stage: GraphwarDetectionWorkerStage) {
   const message =
     stage === "detecting-bounds" ? locale.status.detection.detectingBounds : locale.status.detection.detectingObjects;
   await showDetectionStage(runId, message);
+}
+
+function finishDetectionDebugTimings(
+  runId: number,
+  startedAt: number,
+  timings: readonly DetectionDebugTimingEntry[],
+  completedAt = nowMs(),
+) {
+  if (!isActiveDetectionRun(runId) || timings.length === 0) {
+    return;
+  }
+
+  const totalElapsedMs = completedAt - startedAt;
+  const measuredStageElapsedMs = timings.reduce((total, timing) => total + timing.elapsedMs, 0);
+  detectionDebugTimingEntries.value = [
+    ...timings,
+    {
+      elapsedMs: Math.max(0, totalElapsedMs - measuredStageElapsedMs),
+      stage: "outside-stages",
+    },
+    {
+      elapsedMs: totalElapsedMs,
+      stage: "total",
+    },
+  ];
+}
+
+function createDetectionDebugTimingEntriesFromWorker(
+  timings: readonly GraphwarDetectionWorkerTimingEntry[],
+): DetectionDebugTimingEntry[] {
+  return timings.map((timing) => ({
+    elapsedMs: timing.elapsedMs,
+    stage: timing.stage,
+  }));
+}
+
+function measureDetectionDebugStage<TResult>(
+  timings: DetectionDebugTimingEntry[],
+  stage: DetectionDebugStage,
+  task: () => TResult,
+) {
+  const startedAt = nowMs();
+  try {
+    return task();
+  } finally {
+    timings.push({
+      elapsedMs: nowMs() - startedAt,
+      stage,
+    });
+  }
+}
+
+function getDetectionDebugStageLabel(stage: DetectionDebugStage) {
+  return locale.ui.detection.debugStages[stage];
 }
 
 function handleGraphwarDetectionError(error: unknown, runId: number) {
@@ -3176,6 +3395,25 @@ function formatElapsedDuration(elapsedMs: number) {
   return `${formatDecimal(elapsedMs / 1000, elapsedMs < 10000 ? 2 : 1)} s`;
 }
 
+/** 将调试耗时格式化为保留小数的毫秒文本，避免短阶段被状态栏格式化规则吞掉精度。 */
+function formatDebugElapsedDuration(elapsedMs: number) {
+  if (elapsedMs <= 0) {
+    return "0 ms";
+  }
+  if (elapsedMs < 10) {
+    return `${formatDecimal(elapsedMs, 2)} ms`;
+  }
+  if (elapsedMs < 1000) {
+    return `${formatDecimal(elapsedMs, 1)} ms`;
+  }
+  return `${formatDecimal(elapsedMs / 1000, 3)} s`;
+}
+
+/** 长按倒计时需要固定 0.1s 精度，不能像公式数字一样裁掉末尾 0。 */
+function formatDebugActivationRemainingSeconds(remainingMs: number) {
+  return Math.max(0.1, remainingMs / 1000).toFixed(1);
+}
+
 /** 清除全部已选路径点，但不改变图片边界和设定。 */
 function clearPath() {
   if (toolMode.value !== "path") {
@@ -3301,7 +3539,13 @@ async function copyText(text: string) {
         <h2 id="graphwar-killer-settings-title">
           {{ locale.ui.settings.title }}
         </h2>
-        <span :class="{ 'graphwar-killer__label-status--error': settingsHeaderStatusIsError }">
+        <span
+          :class="{
+            'graphwar-killer__label-status--error': settingsHeaderStatusIsError,
+            'graphwar-killer__label-status--warning': settingsHeaderStatusIsWarning,
+            'graphwar-killer__label-status--success': settingsHeaderStatusIsSuccess,
+          }"
+        >
           {{ settingsHeaderStatus }}
         </span>
       </div>
@@ -3427,7 +3671,12 @@ async function copyText(text: string) {
             :aria-expanded="advancedSettingsVisible"
             :aria-pressed="advancedSettingsVisible"
             :class="{ 'graphwar-killer__toggle-button--active': advancedSettingsVisible }"
-            @click="advancedSettingsVisible = !advancedSettingsVisible"
+            @keydown.enter.prevent="toggleAdvancedSettings"
+            @keydown.space.prevent="toggleAdvancedSettings"
+            @pointercancel="cancelDebugActivationHold"
+            @pointerdown.prevent="startDebugActivationHold"
+            @pointerleave="cancelDebugActivationHold"
+            @pointerup.prevent="finishDebugActivationHold"
           >
             {{ locale.ui.settings.advancedSettings }}
           </button>
@@ -3594,6 +3843,24 @@ async function copyText(text: string) {
             <span>{{ locale.ui.pathfinding.unit }}</span>
           </label>
         </div>
+        <details
+          v-if="debugInfoEnabled"
+          class="graphwar-killer__subpanel graphwar-killer__details"
+        >
+          <summary>{{ locale.ui.detection.debugSummary }}</summary>
+          <div class="graphwar-killer__debug-timing">
+            <span v-if="!detectionDebugTimingRows.length">{{ locale.ui.detection.debugNoTiming }}</span>
+            <template v-else>
+              <span
+                v-for="entry in detectionDebugTimingRows"
+                :key="entry.stage"
+                :title="entry.title"
+              >
+                {{ getDetectionDebugStageLabel(entry.stage) }}: {{ formatDebugElapsedDuration(entry.elapsedMs) }}
+              </span>
+            </template>
+          </div>
+        </details>
       </section>
       <section
         v-if="toolWorkflowMode !== 'simulator'"
@@ -5367,6 +5634,24 @@ async function copyText(text: string) {
 
 .graphwar-killer__details[open] > summary {
   margin-bottom: 6px;
+}
+
+.graphwar-killer__debug-timing {
+  background: var(--vp-c-bg-soft);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  color: var(--vp-c-text-1);
+  display: grid;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  margin: 0;
+  overflow-x: auto;
+  padding: 8px;
+  white-space: nowrap;
+}
+
+.graphwar-killer__debug-timing > span {
+  min-width: max-content;
 }
 
 .graphwar-killer__pathfinding-setting-grid {

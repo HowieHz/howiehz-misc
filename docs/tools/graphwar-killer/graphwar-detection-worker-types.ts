@@ -5,6 +5,14 @@ import type { BoundsRect } from "./types";
 /** Worker 内部识别阶段；主线程负责映射成本地化状态文本。 */
 export type GraphwarDetectionWorkerStage = "detecting-bounds" | "detecting-objects";
 
+/** Worker 内部精确测量的识别阶段耗时。 */
+export interface GraphwarDetectionWorkerTimingEntry {
+  /** 被测量的识别阶段。 */
+  stage: GraphwarDetectionWorkerStage;
+  /** 阶段耗时，单位毫秒。 */
+  elapsedMs: number;
+}
+
 /** 自动识别棋盘边界并识别对象。 */
 export interface GraphwarAutoDetectionInput {
   /** 当前截图像素。 */
@@ -47,12 +55,14 @@ export type GraphwarDetectionWorkerSuccessResponse =
       id: number;
       result: GraphwarAutoDetectionResult;
       taskType: "detect-auto";
+      timings: readonly GraphwarDetectionWorkerTimingEntry[];
       type: "success";
     }
   | {
       id: number;
       result: GraphwarObjectsDetectionResult;
       taskType: "detect-bounds";
+      timings: readonly GraphwarDetectionWorkerTimingEntry[];
       type: "success";
     };
 

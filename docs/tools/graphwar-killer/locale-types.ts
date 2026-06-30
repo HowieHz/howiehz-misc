@@ -166,6 +166,19 @@ export interface GraphwarKillerLocale {
       autoDetection: string;
       autoDetectionTitle: string;
       busyOverlay: string;
+      debugNoTiming: string;
+      debugOutsideStagesTitle: string;
+      debugStages: Record<
+        | "preparing-pixels"
+        | "detecting-bounds"
+        | "detecting-objects"
+        | "updating-results"
+        | "setting-status"
+        | "outside-stages"
+        | "total",
+        string
+      >;
+      debugSummary: string;
       minObstacleArea: string;
       minObstacleAreaAriaLabel: string;
       minObstacleAreaTitle: string;
@@ -261,9 +274,11 @@ export interface GraphwarKillerLocale {
         minYTitle: string;
       };
       advancedSettings: string;
+      debugActivationCountdown: (remainingSeconds: string) => string;
       decimalPlaces: string;
       decimalPlacesAriaLabel: string;
       decimalPlacesTitle: string;
+      debugInfoEnabled: string;
       gameMode: string;
       gameModeAriaLabel: string;
       gameModeTitle: string;

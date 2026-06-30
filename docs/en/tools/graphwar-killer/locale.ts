@@ -223,6 +223,19 @@ export const graphwarKillerLocale = {
       autoDetection: "Auto detect",
       autoDetectionTitle: "Automatically run detection when a screenshot loads or detection settings change.",
       busyOverlay: "Detecting, right-click to cancel",
+      debugNoTiming: "No detection timing recorded yet",
+      debugOutsideStagesTitle:
+        "Total wall-clock time minus recorded stages; includes status paint waits, Worker message transfer, async scheduling, and glue code that is not measured separately.",
+      debugStages: {
+        "detecting-bounds": "Detect play-area bounds",
+        "detecting-objects": "Detect soldiers and obstacles",
+        "outside-stages": "Outside recorded stages",
+        "preparing-pixels": "Read screenshot pixels",
+        "setting-status": "Set status text",
+        total: "Flow total",
+        "updating-results": "Update detection results",
+      },
+      debugSummary: "Debug info",
       minObstacleArea: "Minimum obstacle area",
       minObstacleAreaAriaLabel: "Minimum obstacle area in raw Graphwar plane pixels",
       minObstacleAreaTitle:
@@ -340,10 +353,12 @@ export const graphwarKillerLocale = {
         minYTitle: "Y coordinate for the bottom edge of the Graphwar board.",
       },
       advancedSettings: "Advanced",
+      debugActivationCountdown: (remainingSeconds) => `Hold ${remainingSeconds}s more to enable debug info`,
       decimalPlaces: "Decimal places",
       decimalPlacesAriaLabel: "Generated function decimal places",
       decimalPlacesTitle:
         "Number of decimal places kept in generated function coefficients; more digits are more precise but make the function longer.",
+      debugInfoEnabled: "Debug info enabled",
       gameMode: "Game mode",
       gameModeAriaLabel: "Graphwar game mode",
       gameModeTitle: "Choose the Graphwar input mode: y=, y'=, or y''=.",

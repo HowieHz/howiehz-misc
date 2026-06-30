@@ -9,9 +9,11 @@ import type {
   GraphwarDetectionWorkerResponse,
   GraphwarDetectionWorkerStage,
   GraphwarDetectionWorkerSuccessResponse,
+  GraphwarDetectionWorkerTimingEntry,
 } from "./graphwar-detection-worker-types";
 
 export type { GraphwarDetectionWorkerStage };
+export type { GraphwarDetectionWorkerTimingEntry };
 
 /** 检测任务被用户取消或新任务替代。 */
 export class GraphwarDetectionCancelledError extends Error {
@@ -28,11 +30,14 @@ export function isGraphwarDetectionCancelledError(error: unknown) {
 export interface GraphwarDetectionRunOptions {
   /** Worker 进入耗时阶段时通知页面更新状态。 */
   onStage?: (stage: GraphwarDetectionWorkerStage) => void;
+  /** Worker 或同步 fallback 完成后返回各识别阶段的准确耗时。 */
+  onTimings?: (timings: readonly GraphwarDetectionWorkerTimingEntry[]) => void;
 }
 
 interface PendingWorkerTask {
   id: number;
   onStage?: (stage: GraphwarDetectionWorkerStage) => void;
+  onTimings?: (timings: readonly GraphwarDetectionWorkerTimingEntry[]) => void;
   reject: (reason?: unknown) => void;
   resolve: (value: GraphwarDetectionWorkerSuccessResponse["result"]) => void;
 }
@@ -112,6 +117,7 @@ export function createGraphwarDetectionRunner() {
       pendingTask = {
         id: request.id,
         onStage: options?.onStage,
+        onTimings: options?.onTimings,
         reject,
         resolve: resolve as PendingWorkerTask["resolve"],
       };
@@ -158,6 +164,7 @@ export function createGraphwarDetectionRunner() {
       completedTask.reject(new Error(response.message));
       return;
     }
+    completedTask.onTimings?.(response.timings);
     completedTask.resolve(response.result);
   }
 
@@ -199,15 +206,21 @@ function detectAutoSynchronously(
   options?: GraphwarDetectionRunOptions,
 ): GraphwarAutoDetectionResult {
   options?.onStage?.("detecting-bounds");
-  const edgeRect = detectGraphwarPlayArea(input.imageData);
+  const timings: GraphwarDetectionWorkerTimingEntry[] = [];
+  const edgeRect = measureDetectionStage(timings, "detecting-bounds", () => detectGraphwarPlayArea(input.imageData));
   if (!edgeRect) {
+    options?.onTimings?.(timings);
     return { edgeRect: undefined };
   }
 
   options?.onStage?.("detecting-objects");
+  const objects = measureDetectionStage(timings, "detecting-objects", () =>
+    detectGraphwarObjectsInBounds(input.imageData, edgeRect, input.thresholds),
+  );
+  options?.onTimings?.(timings);
   return {
     edgeRect,
-    objects: detectGraphwarObjectsInBounds(input.imageData, edgeRect, input.thresholds),
+    objects,
   };
 }
 
@@ -216,10 +229,35 @@ function detectObjectsInBoundsSynchronously(
   options?: GraphwarDetectionRunOptions,
 ) {
   options?.onStage?.("detecting-objects");
-  return detectGraphwarObjectsInBounds(input.imageData, input.edgeRect, input.thresholds);
+  const timings: GraphwarDetectionWorkerTimingEntry[] = [];
+  const objects = measureDetectionStage(timings, "detecting-objects", () =>
+    detectGraphwarObjectsInBounds(input.imageData, input.edgeRect, input.thresholds),
+  );
+  options?.onTimings?.(timings);
+  return objects;
 }
 
 function collectRequestTransferList(request: GraphwarDetectionWorkerRequest) {
   const buffer = request.task.imageData.data.buffer;
   return buffer instanceof ArrayBuffer ? [buffer] : [];
+}
+
+function measureDetectionStage<TResult>(
+  timings: GraphwarDetectionWorkerTimingEntry[],
+  stage: GraphwarDetectionWorkerStage,
+  task: () => TResult,
+) {
+  const startedAt = nowMs();
+  try {
+    return task();
+  } finally {
+    timings.push({
+      elapsedMs: nowMs() - startedAt,
+      stage,
+    });
+  }
+}
+
+function nowMs() {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
 }

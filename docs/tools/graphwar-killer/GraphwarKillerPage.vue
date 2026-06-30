@@ -5976,9 +5976,9 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer__recognition-setting-row {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   min-width: 0;
 }
 
@@ -6435,6 +6435,7 @@ async function copyText(text: string) {
   }
 
   .graphwar-killer__recognition-setting-row {
+    display: grid;
     grid-template-columns: 1fr;
   }
 }

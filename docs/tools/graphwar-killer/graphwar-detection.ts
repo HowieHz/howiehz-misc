@@ -563,6 +563,8 @@ interface SoldierMatchCandidate {
   playerScore: number;
   /** 固定动画差异像素分数。 */
   signatureScore: number;
+  /** 固定黄色种子反投票数，用于同分时优先保留更可信的源码中心。 */
+  votes: number;
 }
 
 interface SoldierTemplateCenterCandidate {
@@ -1102,6 +1104,7 @@ function matchSoldierTemplates(
       candidate.x,
       candidate.y,
       candidate.mirrored,
+      candidate.votes,
     );
     if (!snapped) {
       continue;
@@ -1120,7 +1123,7 @@ function filterAcceptedSoldierMatches(matches: SoldierMatchCandidate[]) {
         match.playerScore >= graphwarSoldierTemplateMinimumPlayerScore &&
         match.signatureScore >= graphwarSoldierTemplateMinimumSignatureScore,
     )
-    .sort((left, right) => right.score - left.score);
+    .sort((left, right) => right.score - left.score || right.votes - left.votes);
 }
 
 /** 固定黄色/白色像素在所有模板坐标上反投票，避免连通域 bbox 成为真值。 */
@@ -1190,6 +1193,7 @@ function findBestSoldierTemplateMatch(
   sourceCenterX: number,
   sourceCenterY: number,
   expectedMirrored: boolean,
+  votes: number,
 ) {
   let best: SoldierMatchCandidate | undefined;
   const baseScores = graphwarSoldierTemplateBases
@@ -1225,6 +1229,7 @@ function findBestSoldierTemplateMatch(
           sourceCenterX,
           sourceCenterY,
           template,
+          votes,
         };
       }
     }

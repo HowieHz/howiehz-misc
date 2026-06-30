@@ -62,6 +62,18 @@ export interface GraphwarObjectsDetectionResult {
   obstacles: DetectedObstacleMap;
 }
 
+/** 对象识别内部阶段，用于调试耗时拆分。 */
+export type GraphwarObjectDetectionStage =
+  | "building-obstacle-mask"
+  | "collecting-soldier-candidates"
+  | "filtering-obstacle-components"
+  | "matching-soldier-templates";
+
+export interface GraphwarObjectDetectionInstrumentation {
+  /** 调用方提供阶段计时器；识别算法本身不依赖具体时钟实现。 */
+  measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) => TResult;
+}
+
 /** Graphwar 原始平面网格点。 */
 export interface PlaneGridPoint {
   /** 平面 x。 */
@@ -515,6 +527,25 @@ interface SoldierTemplate {
   visualCenterY: number;
 }
 
+interface SoldierTemplateBase {
+  /** 是否按 GraphPlane#drawSoldiers 镜像绘制。 */
+  mirrored: boolean;
+  /** Alpha>=128 的合成前景像素。 */
+  foregroundPixels: SoldierTemplatePixel[];
+  /** 受玩家随机颜色影响的前景像素。 */
+  playerPixels: SoldierTemplatePixel[];
+  /** 不受玩家随机颜色影响的固定前景像素。 */
+  fixedPixels: SoldierTemplatePixel[];
+  /** 用于从固定颜色种子反推源码中心的像素。 */
+  seedPixels: SoldierTemplatePixel[];
+  /** 同一朝向下的 10 帧动画模板。 */
+  templates: SoldierTemplate[];
+  /** 可见 alpha 外框中心在 20x20 画布内的 x。 */
+  visualCenterX: number;
+  /** 可见 alpha 外框中心在 20x20 画布内的 y。 */
+  visualCenterY: number;
+}
+
 interface SoldierMatchCandidate {
   /** 源码 Soldier.x 对应的截图像素 x。 */
   sourceCenterX: number;
@@ -543,19 +574,27 @@ interface SoldierTemplateCenterCandidate {
   votes: number;
 }
 
-const graphwarSoldierTemplates = createGraphwarSoldierTemplates();
+interface SoldierTemplateBaseScore {
+  backgroundPenalty: number;
+  fixedScore: number;
+  foregroundScore: number;
+  playerScore: number;
+}
+
+const graphwarSoldierTemplateBases = createGraphwarSoldierTemplateBases();
 
 /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
 export function detectGraphwarObjectsInBounds(
   imageData: ImageData,
   edgeRect: BoundsRect,
   thresholds: GraphwarObstacleDetectionThresholds,
+  instrumentation?: GraphwarObjectDetectionInstrumentation,
 ): GraphwarObjectsDetectionResult {
-  const soldierMatches = detectSoldierMatches(imageData, edgeRect);
+  const soldierMatches = detectSoldierMatches(imageData, edgeRect, instrumentation);
   const soldiers = createSoldierDetectionBoxes(soldierMatches.matches, edgeRect);
   return {
     soldiers,
-    obstacles: detectObstacles(imageData, edgeRect, thresholds, soldiers),
+    obstacles: detectObstacles(imageData, edgeRect, thresholds, soldiers, instrumentation),
   };
 }
 
@@ -948,19 +987,27 @@ function buildAxisTriplets(groups: AxisGroup[]) {
 }
 
 /** 使用 Graphwar 20x20 源码士兵模板识别 Soldier.x/y。 */
-function detectSoldierMatches(imageData: ImageData, edgeRect: BoundsRect) {
+function detectSoldierMatches(
+  imageData: ImageData,
+  edgeRect: BoundsRect,
+  instrumentation?: GraphwarObjectDetectionInstrumentation,
+) {
   const scale = edgeRect.width / GRAPHWAR_PLANE_LENGTH;
-  const candidates = createSoldierTemplateCenterCandidates(
-    imageData,
-    edgeRect,
-    scale,
-    graphwarSoldierTemplateCandidateLimit,
+  const candidates = measureObjectDetectionStage(instrumentation, "collecting-soldier-candidates", () =>
+    createSoldierTemplateCenterCandidates(imageData, edgeRect, scale, graphwarSoldierTemplateCandidateLimit),
   );
-  const matches = suppressOverlappingSoldierMatches(
-    matchSoldierTemplates(imageData, edgeRect, scale, candidates),
-    scale,
+  const matches = measureObjectDetectionStage(instrumentation, "matching-soldier-templates", () =>
+    suppressOverlappingSoldierMatches(matchSoldierTemplates(imageData, edgeRect, scale, candidates), scale),
   );
   return { matches };
+}
+
+function measureObjectDetectionStage<TResult>(
+  instrumentation: GraphwarObjectDetectionInstrumentation | undefined,
+  stage: GraphwarObjectDetectionStage,
+  task: () => TResult,
+) {
+  return instrumentation ? instrumentation.measureStage(stage, task) : task();
 }
 
 function createSoldierDetectionBoxes(matches: SoldierMatchCandidate[], edgeRect: BoundsRect) {
@@ -1000,36 +1047,41 @@ function detectObstacles(
   edgeRect: BoundsRect,
   thresholds: GraphwarObstacleDetectionThresholds,
   soldiers: readonly GraphwarDetectionBox[],
+  instrumentation?: GraphwarObjectDetectionInstrumentation,
 ): DetectedObstacleMap {
-  const sourceMask = buildObstacleMask(imageData, edgeRect, thresholds.minArea);
-  const detectionMask = new Uint8Array(sourceMask);
-  removeGraphwarGuideLines(detectionMask);
-  bridgeObstacleGapsAcrossGuideLines(detectionMask);
-  removeSoldierAreasFromObstacleMask(detectionMask, edgeRect, soldiers);
+  const sourceMask = measureObjectDetectionStage(instrumentation, "building-obstacle-mask", () =>
+    buildObstacleMask(imageData, edgeRect, thresholds.minArea),
+  );
+  return measureObjectDetectionStage(instrumentation, "filtering-obstacle-components", () => {
+    const detectionMask = new Uint8Array(sourceMask);
+    removeGraphwarGuideLines(detectionMask);
+    bridgeObstacleGapsAcrossGuideLines(detectionMask);
+    removeSoldierAreasFromObstacleMask(detectionMask, edgeRect, soldiers);
 
-  const restoreMask = new Uint8Array(sourceMask);
-  removeGraphwarCenterGuideLines(restoreMask);
-  bridgeObstacleGapsAcrossGuideLines(restoreMask);
-  removeSoldierAreasFromObstacleMask(restoreMask, edgeRect, soldiers);
+    const restoreMask = new Uint8Array(sourceMask);
+    removeGraphwarCenterGuideLines(restoreMask);
+    bridgeObstacleGapsAcrossGuideLines(restoreMask);
+    removeSoldierAreasFromObstacleMask(restoreMask, edgeRect, soldiers);
 
-  const componentMask = openObstacleMask(detectionMask);
+    const componentMask = openObstacleMask(detectionMask);
 
-  const filteredMask = new Uint8Array(sourceMask.length);
-  let count = 0;
-  for (const component of collectComponents(componentMask, GRAPHWAR_PLANE_LENGTH)) {
-    if (component.area < thresholds.minArea) {
-      continue;
+    const filteredMask = new Uint8Array(sourceMask.length);
+    let count = 0;
+    for (const component of collectComponents(componentMask, GRAPHWAR_PLANE_LENGTH)) {
+      if (component.area < thresholds.minArea) {
+        continue;
+      }
+
+      if (addConnectedSourceComponentsFromComponent(filteredMask, restoreMask, componentMask, component)) {
+        count += 1;
+      }
     }
 
-    if (addConnectedSourceComponentsFromComponent(filteredMask, restoreMask, componentMask, component)) {
-      count += 1;
-    }
-  }
-
-  return {
-    count,
-    mask: filteredMask,
-  };
+    return {
+      count,
+      mask: filteredMask,
+    };
+  });
 }
 
 /** 按候选源码中心尝试完整 20x20 模板评分。 */
@@ -1079,31 +1131,38 @@ function createSoldierTemplateCenterCandidates(
         continue;
       }
 
-      for (const template of graphwarSoldierTemplates) {
-        for (const templatePixel of template.seedPixels) {
-          const centerX = edgeRect.x + x - getSoldierTemplatePixelOffset(templatePixel.x, scale);
-          const centerY = edgeRect.y + y - getSoldierTemplatePixelOffset(templatePixel.y, scale);
-          if (!soldierTemplateCenterFitsRect(centerX, centerY, edgeRect)) {
-            continue;
-          }
+      let remainingTemplateFrameVotes = graphwarSoldierTemplateNames.length;
+      while (remainingTemplateFrameVotes > 0) {
+        for (const templateBase of graphwarSoldierTemplateBases) {
+          for (const templatePixel of templateBase.seedPixels) {
+            const centerX = edgeRect.x + x - getSoldierTemplatePixelOffset(templatePixel.x, scale);
+            const centerY = edgeRect.y + y - getSoldierTemplatePixelOffset(templatePixel.y, scale);
+            if (!soldierTemplateCenterFitsRect(centerX, centerY, edgeRect)) {
+              continue;
+            }
 
-          const planeX = Math.round(((centerX - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH);
-          const planeY = Math.round(((centerY - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT);
-          if (!isInsidePlane(planeX, planeY)) {
-            continue;
-          }
+            const planeX = Math.round(((centerX - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH);
+            const planeY = Math.round(((centerY - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT);
+            if (!isInsidePlane(planeX, planeY)) {
+              continue;
+            }
+            if (templateBase.mirrored !== expectedSoldierTemplateMirroredForPlaneX(planeX)) {
+              continue;
+            }
 
-          const sourceCenter = planeToImagePoint({ x: planeX, y: planeY }, edgeRect);
-          const key = `${planeX}:${planeY}`;
-          const existing = votes.get(key);
-          if (existing) {
-            existing.count += 1;
-            existing.x = sourceCenter.x;
-            existing.y = sourceCenter.y;
-          } else {
-            votes.set(key, { count: 1, x: sourceCenter.x, y: sourceCenter.y });
+            const sourceCenter = planeToImagePoint({ x: planeX, y: planeY }, edgeRect);
+            const key = `${planeX}:${planeY}`;
+            const existing = votes.get(key);
+            if (existing) {
+              existing.count += 1;
+              existing.x = sourceCenter.x;
+              existing.y = sourceCenter.y;
+            } else {
+              votes.set(key, { count: 1, x: sourceCenter.x, y: sourceCenter.y });
+            }
           }
         }
+        remainingTemplateFrameVotes -= 1;
       }
     }
   }
@@ -1131,29 +1190,62 @@ function findBestSoldierTemplateMatch(
   sourceCenterY: number,
 ) {
   let best: SoldierMatchCandidate | undefined;
-  for (const template of graphwarSoldierTemplates) {
-    const score = scoreSoldierTemplateAt(imageData, rect, scale, sourceCenterX, sourceCenterY, template);
-    if (!best || score.score > best.score) {
-      best = {
-        ...score,
+  const planeX = Math.round(((sourceCenterX - rect.x) / rect.width) * GRAPHWAR_PLANE_LENGTH);
+  const expectedMirrored = expectedSoldierTemplateMirroredForPlaneX(planeX);
+  const baseScores = graphwarSoldierTemplateBases
+    .filter((templateBase) => templateBase.mirrored === expectedMirrored)
+    .map((templateBase) => ({
+      score: scoreSoldierTemplateBaseAt(imageData, rect, scale, sourceCenterX, sourceCenterY, templateBase),
+      templateBase,
+    }));
+  for (let templateIndex = 0; templateIndex < graphwarSoldierTemplateNames.length; templateIndex += 1) {
+    for (const { score: baseScore, templateBase } of baseScores) {
+      const template = templateBase.templates[templateIndex];
+      const signatureScore = scoreTemplateSignaturePixels(
+        imageData,
+        rect,
+        scale,
         sourceCenterX,
         sourceCenterY,
-        template,
-      };
+        template.signaturePixels,
+      );
+      const score = scoreSoldierTemplateThresholdExcess(
+        baseScore.fixedScore,
+        baseScore.foregroundScore,
+        baseScore.playerScore,
+        signatureScore,
+        baseScore.backgroundPenalty,
+      );
+      if (!best || score > best.score) {
+        best = {
+          fixedScore: baseScore.fixedScore,
+          foregroundScore: baseScore.foregroundScore,
+          playerScore: baseScore.playerScore,
+          score,
+          signatureScore,
+          sourceCenterX,
+          sourceCenterY,
+          template,
+        };
+      }
     }
   }
   return best;
 }
 
+function expectedSoldierTemplateMirroredForPlaneX(planeX: number) {
+  return planeX >= GRAPHWAR_PLANE_LENGTH / 2;
+}
+
 /** 模板评分分离固定像素、随机玩家色像素和前景形状，避免把任一颜色当唯一真值。 */
-function scoreSoldierTemplateAt(
+function scoreSoldierTemplateBaseAt(
   imageData: ImageData,
   rect: BoundsRect,
   scale: number,
   sourceCenterX: number,
   sourceCenterY: number,
-  template: SoldierTemplate,
-) {
+  template: SoldierTemplateBase,
+): SoldierTemplateBaseScore {
   const fixedScore = scoreTemplatePixelGroup(
     imageData,
     rect,
@@ -1165,6 +1257,7 @@ function scoreSoldierTemplateAt(
       scorer: scoreSoldierFixedPixel,
     },
   );
+
   const foregroundScore = scoreTemplatePixelGroup(
     imageData,
     rect,
@@ -1174,6 +1267,7 @@ function scoreSoldierTemplateAt(
     template.foregroundPixels,
     { scorer: scoreSoldierForegroundPixel },
   );
+
   const playerColor = estimateTemplatePlayerColor(imageData, rect, scale, sourceCenterX, sourceCenterY, template);
   const playerScore = scoreTemplatePixelGroup(
     imageData,
@@ -1184,14 +1278,7 @@ function scoreSoldierTemplateAt(
     template.playerPixels,
     { scorer: (pixel) => scoreSoldierPlayerColorPixel(pixel, playerColor) },
   );
-  const signatureScore = scoreTemplateSignaturePixels(
-    imageData,
-    rect,
-    scale,
-    sourceCenterX,
-    sourceCenterY,
-    template.signaturePixels,
-  );
+
   const backgroundPenalty = scoreTemplateBackgroundPenalty(
     imageData,
     rect,
@@ -1201,17 +1288,10 @@ function scoreSoldierTemplateAt(
     template,
   );
   return {
+    backgroundPenalty,
     fixedScore,
     foregroundScore,
     playerScore,
-    score: scoreSoldierTemplateThresholdExcess(
-      fixedScore,
-      foregroundScore,
-      playerScore,
-      signatureScore,
-      backgroundPenalty,
-    ),
-    signatureScore,
   };
 }
 
@@ -1271,7 +1351,7 @@ function estimateTemplatePlayerColor(
   scale: number,
   sourceCenterX: number,
   sourceCenterY: number,
-  template: SoldierTemplate,
+  template: { playerPixels: readonly SoldierTemplatePixel[] },
 ) {
   let red = 0;
   let green = 0;
@@ -1338,7 +1418,7 @@ function scoreTemplateBackgroundPenalty(
   scale: number,
   sourceCenterX: number,
   sourceCenterY: number,
-  template: SoldierTemplate,
+  template: { mirrored: boolean },
 ) {
   const visualCenter = getGraphwarSoldierVisualCenter(
     createPixelPoint(sourceCenterX, sourceCenterY),
@@ -1473,27 +1553,60 @@ function getSoldierTemplatePixelOffset(pixelCoordinate: number, scale: number) {
   return (pixelCoordinate + 0.5 - graphwarSoldierCanvasCenter) * scale;
 }
 
-function createGraphwarSoldierTemplates(): SoldierTemplate[] {
-  return graphwarSoldierTemplateNames.flatMap((name) => [
-    createGraphwarSoldierTemplate(name, false),
-    createGraphwarSoldierTemplate(name, true),
-  ]);
+function createGraphwarSoldierTemplateBases(): SoldierTemplateBase[] {
+  return [createGraphwarSoldierTemplateBase(false), createGraphwarSoldierTemplateBase(true)];
 }
 
-function createGraphwarSoldierTemplate(
-  name: (typeof graphwarSoldierTemplateNames)[number],
-  mirrored: boolean,
-): SoldierTemplate {
+function createGraphwarSoldierTemplateBase(mirrored: boolean): SoldierTemplateBase {
+  const fixedPixels = createTemplatePixelsFromGrid(graphwarSoldierFixedColorGrid, mirrored);
+  const foregroundPixels = createTemplatePixelsFromGrid(graphwarSoldierSolidGrid, mirrored);
+  const playerPixels = createTemplatePixelsFromGrid(graphwarSoldierPlayerColorGrid, mirrored);
+  const seedPixels = createTemplatePixelsFromGrid(graphwarSoldierFixedSeedGrid, mirrored);
+  const visualCenterX = mirrored ? graphwarSoldierMirrorVisibleCenterX : graphwarSoldierVisibleCenterX;
+  const visualCenterY = graphwarSoldierVisibleCenterY;
   return {
-    fixedPixels: createTemplatePixelsFromGrid(graphwarSoldierFixedColorGrid, mirrored),
-    foregroundPixels: createTemplatePixelsFromGrid(graphwarSoldierSolidGrid, mirrored),
+    fixedPixels,
+    foregroundPixels,
     mirrored,
-    name,
-    playerPixels: createTemplatePixelsFromGrid(graphwarSoldierPlayerColorGrid, mirrored),
-    seedPixels: createTemplatePixelsFromGrid(graphwarSoldierFixedSeedGrid, mirrored),
-    signaturePixels: createSoldierTemplateSignaturePixels(name, mirrored),
-    visualCenterX: mirrored ? graphwarSoldierMirrorVisibleCenterX : graphwarSoldierVisibleCenterX,
-    visualCenterY: graphwarSoldierVisibleCenterY,
+    playerPixels,
+    seedPixels,
+    templates: graphwarSoldierTemplateNames.map((name) =>
+      createGraphwarSoldierTemplate({
+        fixedPixels,
+        foregroundPixels,
+        mirrored,
+        name,
+        playerPixels,
+        seedPixels,
+        visualCenterX,
+        visualCenterY,
+      }),
+    ),
+    visualCenterX,
+    visualCenterY,
+  };
+}
+
+function createGraphwarSoldierTemplate(options: {
+  fixedPixels: SoldierTemplatePixel[];
+  foregroundPixels: SoldierTemplatePixel[];
+  name: (typeof graphwarSoldierTemplateNames)[number];
+  mirrored: boolean;
+  playerPixels: SoldierTemplatePixel[];
+  seedPixels: SoldierTemplatePixel[];
+  visualCenterX: number;
+  visualCenterY: number;
+}): SoldierTemplate {
+  return {
+    fixedPixels: options.fixedPixels,
+    foregroundPixels: options.foregroundPixels,
+    mirrored: options.mirrored,
+    name: options.name,
+    playerPixels: options.playerPixels,
+    seedPixels: options.seedPixels,
+    signaturePixels: createSoldierTemplateSignaturePixels(options.name, options.mirrored),
+    visualCenterX: options.visualCenterX,
+    visualCenterY: options.visualCenterY,
   };
 }
 

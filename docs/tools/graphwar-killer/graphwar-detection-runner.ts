@@ -1,6 +1,10 @@
 /** 主线程侧 Graphwar 截图识别 runner，集中管理 Worker 生命周期、取消和同步 fallback。 */
 import { detectGraphwarObjectsInBounds, detectGraphwarPlayArea } from "./graphwar-detection";
-import type { GraphwarObjectsDetectionResult } from "./graphwar-detection";
+import type {
+  GraphwarObjectDetectionInstrumentation,
+  GraphwarObjectDetectionStage,
+  GraphwarObjectsDetectionResult,
+} from "./graphwar-detection";
 import type {
   GraphwarAutoDetectionInput,
   GraphwarAutoDetectionResult,
@@ -214,8 +218,11 @@ function detectAutoSynchronously(
   }
 
   options?.onStage?.("detecting-objects");
-  const objects = measureDetectionStage(timings, "detecting-objects", () =>
-    detectGraphwarObjectsInBounds(input.imageData, edgeRect, input.thresholds),
+  const objects = detectGraphwarObjectsInBounds(
+    input.imageData,
+    edgeRect,
+    input.thresholds,
+    createObjectDetectionInstrumentation(timings),
   );
   options?.onTimings?.(timings);
   return {
@@ -230,8 +237,11 @@ function detectObjectsInBoundsSynchronously(
 ) {
   options?.onStage?.("detecting-objects");
   const timings: GraphwarDetectionWorkerTimingEntry[] = [];
-  const objects = measureDetectionStage(timings, "detecting-objects", () =>
-    detectGraphwarObjectsInBounds(input.imageData, input.edgeRect, input.thresholds),
+  const objects = detectGraphwarObjectsInBounds(
+    input.imageData,
+    input.edgeRect,
+    input.thresholds,
+    createObjectDetectionInstrumentation(timings),
   );
   options?.onTimings?.(timings);
   return objects;
@@ -256,6 +266,15 @@ function measureDetectionStage<TResult>(
       stage,
     });
   }
+}
+
+function createObjectDetectionInstrumentation(
+  timings: GraphwarDetectionWorkerTimingEntry[],
+): GraphwarObjectDetectionInstrumentation {
+  return {
+    measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) =>
+      measureDetectionStage(timings, stage, task),
+  };
 }
 
 function nowMs() {

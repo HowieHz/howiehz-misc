@@ -112,9 +112,13 @@ type PathfindingMode = "off" | "smart" | "auto-graph";
 type DetectionStatusKind = "info" | "success" | "warning" | "error";
 /** 识别调试耗时阶段。 */
 type DetectionDebugStage =
+  | "building-obstacle-mask"
+  | "collecting-soldier-candidates"
   | "preparing-pixels"
   | "detecting-bounds"
   | "detecting-objects"
+  | "filtering-obstacle-components"
+  | "matching-soldier-templates"
   | "updating-results"
   | "setting-status"
   | "outside-stages"
@@ -281,6 +285,7 @@ const obstacleRouteMaxToleranceText = ref("3");
 const obstacleRouteStepToleranceText = ref("1");
 const obstacleSimulationToleranceText = ref("1");
 const pathfindingBoundaryExpansionText = ref("1");
+const workerCountText = ref("4");
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
 const {
@@ -3918,6 +3923,25 @@ async function copyText(text: string) {
         >
           {{ locale.ui.settings.parseDerivativeAsY }}
         </button>
+      </div>
+      <h3 class="graphwar-killer__settings-subheading">
+        {{ locale.ui.settings.webWorker.heading }}
+      </h3>
+      <div class="graphwar-killer__image-actions">
+        <label
+          class="graphwar-killer__detection-setting-label"
+          :title="locale.ui.settings.webWorker.workerCountTitle"
+        >
+          {{ locale.ui.settings.webWorker.workerCount }}
+          <input
+            v-model="workerCountText"
+            inputmode="numeric"
+            min="1"
+            autocomplete="off"
+            :aria-label="locale.ui.settings.webWorker.workerCountAriaLabel"
+            :title="locale.ui.settings.webWorker.workerCountTitle"
+          >
+        </label>
       </div>
     </section>
     <div class="graphwar-killer__detection-pathfinding-row">

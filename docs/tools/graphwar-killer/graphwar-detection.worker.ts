@@ -1,5 +1,6 @@
 /** 在 Web Worker 中执行耗时的 Graphwar 截图识别，避免阻塞页面主线程。 */
 import { detectGraphwarObjectsInBounds, detectGraphwarPlayArea } from "./graphwar-detection";
+import type { GraphwarObjectDetectionInstrumentation, GraphwarObjectDetectionStage } from "./graphwar-detection";
 import type {
   GraphwarAutoDetectionResult,
   GraphwarDetectionWorkerTask,
@@ -30,8 +31,11 @@ workerScope.addEventListener("message", (event) => {
     postSuccess(
       request.id,
       "detect-bounds",
-      measureDetectionStage(timings, "detecting-objects", () =>
-        detectGraphwarObjectsInBounds(task.imageData, task.edgeRect, task.thresholds),
+      detectGraphwarObjectsInBounds(
+        task.imageData,
+        task.edgeRect,
+        task.thresholds,
+        createObjectDetectionInstrumentation(timings),
       ),
       timings,
     );
@@ -58,8 +62,11 @@ function runAutoDetectionTask(
     "detect-auto",
     {
       edgeRect,
-      objects: measureDetectionStage(timings, "detecting-objects", () =>
-        detectGraphwarObjectsInBounds(task.imageData, edgeRect, task.thresholds),
+      objects: detectGraphwarObjectsInBounds(
+        task.imageData,
+        edgeRect,
+        task.thresholds,
+        createObjectDetectionInstrumentation(timings),
       ),
     },
     timings,
@@ -129,6 +136,15 @@ function measureDetectionStage<TResult>(
       stage,
     });
   }
+}
+
+function createObjectDetectionInstrumentation(
+  timings: GraphwarDetectionWorkerTimingEntry[],
+): GraphwarObjectDetectionInstrumentation {
+  return {
+    measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) =>
+      measureDetectionStage(timings, stage, task),
+  };
 }
 
 function nowMs() {

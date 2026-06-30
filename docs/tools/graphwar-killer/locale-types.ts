@@ -173,9 +173,13 @@ export interface GraphwarKillerLocale {
       busyOverlay: string;
       debugNoTiming: string;
       debugStages: Record<
+        | "building-obstacle-mask"
+        | "collecting-soldier-candidates"
         | "preparing-pixels"
         | "detecting-bounds"
         | "detecting-objects"
+        | "filtering-obstacle-components"
+        | "matching-soldier-templates"
         | "updating-results"
         | "setting-status"
         | "outside-stages"
@@ -314,6 +318,12 @@ export interface GraphwarKillerLocale {
       stepSteepnessAriaLabel: string;
       stepSteepnessTitle: string;
       title: string;
+      webWorker: {
+        heading: string;
+        workerCount: string;
+        workerCountAriaLabel: string;
+        workerCountTitle: string;
+      };
     };
   };
 }

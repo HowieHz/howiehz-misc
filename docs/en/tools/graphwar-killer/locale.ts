@@ -225,6 +225,15 @@ export const graphwarKillerLocale = {
       busyOverlay: "Detecting, right-click to cancel",
       debugNoTiming: "No detection timing recorded yet",
       debugStages: {
+        "building-obstacle-mask": {
+          label: "Build obstacle mask",
+          title:
+            "Resample the screenshot into Graphwar's raw 770x450 plane and detect dark terrain bodies plus antialiasing edges.",
+        },
+        "collecting-soldier-candidates": {
+          label: "Collect soldier candidates",
+          title: "Scan soldier yellow/white seed pixels and reverse-vote possible source centers for soldiers.",
+        },
         "detecting-bounds": {
           label: "Detect play-area bounds",
           title:
@@ -233,6 +242,16 @@ export const graphwarKillerLocale = {
         "detecting-objects": {
           label: "Detect soldiers and obstacles",
           title: "Detect soldiers, obstacle regions, and hit circles inside the resolved play area.",
+        },
+        "filtering-obstacle-components": {
+          label: "Filter obstacle components",
+          title:
+            "Remove axes, boundary guide lines, soldier areas, and small noise, then restore accepted real obstacle components.",
+        },
+        "matching-soldier-templates": {
+          label: "Match soldier templates",
+          title:
+            "Score candidate centers against Graphwar soldier animation templates and mirrored templates, then suppress overlapping matches.",
         },
         "outside-stages": {
           label: "Outside recorded stages",
@@ -447,6 +466,13 @@ export const graphwarKillerLocale = {
       stepSteepnessTitle:
         "Steepness parameter a for the step function; higher values make turns sharper but increase overflow risk.",
       title: "Settings",
+      webWorker: {
+        heading: "Web Worker",
+        workerCount: "Workers",
+        workerCountAriaLabel: "Web Worker concurrency",
+        workerCountTitle:
+          "Reserved Web Worker concurrency setting; it is saved in the UI for now and will be used when parallel calculation is wired in.",
+      },
     },
   },
 } as const satisfies GraphwarKillerLocale;

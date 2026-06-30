@@ -3,7 +3,13 @@ import type { GraphwarObjectsDetectionResult, GraphwarObstacleDetectionThreshold
 import type { BoundsRect } from "./types";
 
 /** Worker 内部识别阶段；主线程负责映射成本地化状态文本。 */
-export type GraphwarDetectionWorkerStage = "detecting-bounds" | "detecting-objects";
+export type GraphwarDetectionWorkerStage =
+  | "building-obstacle-mask"
+  | "collecting-soldier-candidates"
+  | "detecting-bounds"
+  | "detecting-objects"
+  | "filtering-obstacle-components"
+  | "matching-soldier-templates";
 
 /** Worker 内部精确测量的识别阶段耗时。 */
 export interface GraphwarDetectionWorkerTimingEntry {

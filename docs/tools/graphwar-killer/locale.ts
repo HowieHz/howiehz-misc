@@ -177,6 +177,14 @@ export const graphwarKillerLocale = {
       busyOverlay: "识别中，右键中止",
       debugNoTiming: "暂无识别耗时记录",
       debugStages: {
+        "building-obstacle-mask": {
+          label: "构建障碍 mask",
+          title: "把截图重采样到 Graphwar 原始 770x450 平面，识别深色地形主体和抗锯齿边缘。",
+        },
+        "collecting-soldier-candidates": {
+          label: "生成士兵候选",
+          title: "扫描士兵黄色/白色种子像素，并反投票生成可能的士兵源码中心。",
+        },
         "detecting-bounds": {
           label: "检测棋盘边界",
           title: "在截图像素中寻找 Graphwar 棋盘的可用边界；自动识别边界时才会出现。",
@@ -184,6 +192,14 @@ export const graphwarKillerLocale = {
         "detecting-objects": {
           label: "识别士兵和障碍",
           title: "在已确定的棋盘区域内识别士兵、障碍区域和命中圈。",
+        },
+        "filtering-obstacle-components": {
+          label: "过滤障碍连通域",
+          title: "移除坐标轴、边界辅助线、士兵区域和小噪点，并回填通过筛选的真实障碍连通块。",
+        },
+        "matching-soldier-templates": {
+          label: "匹配士兵模板",
+          title: "对候选中心尝试 Graphwar 士兵动画模板和镜像模板，并筛选重叠匹配。",
         },
         "outside-stages": {
           label: "阶段外耗时",
@@ -375,6 +391,12 @@ export const graphwarKillerLocale = {
       stepSteepnessAriaLabel: "阶跃函数陡峭度 a",
       stepSteepnessTitle: "阶跃函数的陡峭度参数 a；数值越大，拐点越陡，但越容易出现数值溢出。",
       title: "设定",
+      webWorker: {
+        heading: "Web Worker 设定",
+        workerCount: "并行数",
+        workerCountAriaLabel: "Web Worker 并行数",
+        workerCountTitle: "预留的 Web Worker 并行数量；当前仅保存设定，后续接入并行计算时使用。",
+      },
     },
   },
 } as const satisfies GraphwarKillerLocale;

@@ -415,13 +415,16 @@ async function measureDetectionStageAsync<TResult>(
   task: () => Promise<TResult>,
 ) {
   const startedAt = nowMs();
+  const innerTimingStartIndex = timings.length;
   try {
     return await task();
   } finally {
+    const innerTimings = timings.splice(innerTimingStartIndex);
     timings.push({
       elapsedMs: nowMs() - startedAt,
       stage,
     });
+    timings.push(...innerTimings);
   }
 }
 

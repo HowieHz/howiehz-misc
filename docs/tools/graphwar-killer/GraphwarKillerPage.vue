@@ -176,6 +176,8 @@ interface DetectionDebugTimingRow extends DetectionDebugTimingEntry {
   title?: string;
   /** 展示标签，子项会以 "- " 开头。 */
   label: string;
+  /** 是否展示耗时；有些子项只记录调度元信息。 */
+  elapsedVisible: boolean;
 }
 /** 单次智能寻路调试耗时记录。 */
 interface SmartPathfindingDebugTimingEntry {
@@ -949,6 +951,7 @@ const detectionHeaderStatusIsSuccess = computed(() => detectionHeaderStatusKind.
 const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
   detectionDebugTimingEntries.value.map((entry) => ({
     ...entry,
+    elapsedVisible: shouldShowDetectionDebugElapsed(entry),
     label: getDetectionDebugTimingLabel(entry),
     title: getDetectionDebugTimingTitle(entry),
   })),
@@ -1941,6 +1944,10 @@ function getDetectionDebugTimingTitle(entry: DetectionDebugTimingEntry) {
   return entry.detail
     ? locale.ui.detection.debugDetails[entry.detail.type].title
     : locale.ui.detection.debugStages[entry.stage].title;
+}
+
+function shouldShowDetectionDebugElapsed(entry: DetectionDebugTimingEntry) {
+  return entry.detail?.type !== "template-matching-mode";
 }
 
 function getDetectionDebugTimingDetailLabel(detail: GraphwarDetectionWorkerTimingDetail) {
@@ -4242,7 +4249,10 @@ async function copyText(text: string) {
                 :key="`${entry.stage}-${index}`"
                 :title="entry.title"
               >
-                {{ entry.label }}: {{ formatDebugElapsedDuration(entry.elapsedMs) }}
+                <template v-if="entry.elapsedVisible">
+                  {{ entry.label }}: {{ formatDebugElapsedDuration(entry.elapsedMs) }}
+                </template>
+                <template v-else>{{ entry.label }}</template>
               </span>
             </template>
           </div>

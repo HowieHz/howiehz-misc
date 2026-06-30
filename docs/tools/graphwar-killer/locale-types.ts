@@ -201,6 +201,21 @@ export interface GraphwarKillerLocale {
       boundaryExpansion: string;
       boundaryExpansionAriaLabel: string;
       boundaryExpansionTitle: string;
+      debugNoTiming: string;
+      debugOutsideStagesTitle: string;
+      debugStages: Record<
+        | "preflight"
+        | "collect-targets"
+        | "search-route"
+        | "validate-trajectory"
+        | "optimize-path"
+        | "apply-result"
+        | "setting-status"
+        | "outside-stages"
+        | "total",
+        string
+      >;
+      debugSummary: string;
       fastMode: string;
       fastModeAriaLabel: string;
       fastModeTitle: string;

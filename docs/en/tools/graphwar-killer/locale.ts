@@ -272,6 +272,21 @@ export const graphwarKillerLocale = {
       boundaryExpansionAriaLabel: "Boundary expansion in raw Graphwar 770x450 plane pixels",
       boundaryExpansionTitle:
         "Treat the play-area boundary as expanded inward into the collision area. Unit: raw Graphwar 770x450 plane pixels.",
+      debugNoTiming: "No pathfinding timing recorded yet",
+      debugOutsideStagesTitle:
+        "Total wall-clock time minus recorded stages; includes phase switches, paint waits before route-tolerance attempts, async scheduling, and glue code that is not measured separately.",
+      debugStages: {
+        "apply-result": "Apply path result",
+        "collect-targets": "Collect candidate targets",
+        "optimize-path": "Optimize path nodes",
+        "outside-stages": "Outside recorded stages",
+        preflight: "Preflight current path",
+        "search-route": "Search obstacle route",
+        "setting-status": "Set status text",
+        total: "Flow total",
+        "validate-trajectory": "Validate function trajectory",
+      },
+      debugSummary: "Debug info",
       fastMode: "Fast mode",
       fastModeAriaLabel: "One-Click Clear fast mode",
       fastModeTitle:

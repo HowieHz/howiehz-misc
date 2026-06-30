@@ -218,6 +218,21 @@ export const graphwarKillerLocale = {
       boundaryExpansion: "边界外扩",
       boundaryExpansionAriaLabel: "边界外扩，单位为 Graphwar 原始 770x450 平面像素",
       boundaryExpansionTitle: "把棋盘四周边界向内扩成碰撞区。单位是 Graphwar 原始 770x450 平面像素。",
+      debugNoTiming: "暂无寻路耗时记录",
+      debugOutsideStagesTitle:
+        "流程总耗时减去已记录阶段耗时；包含阶段切换、路线容差尝试前的绘制等待、async 调度和未单独计量的连接代码。",
+      debugStages: {
+        "apply-result": "写回路径结果",
+        "collect-targets": "生成候选目标",
+        "optimize-path": "优化路径节点",
+        "outside-stages": "阶段外耗时",
+        preflight: "预检查当前路径",
+        "search-route": "搜索绕障路线",
+        "setting-status": "设置状态栏",
+        total: "流程总耗时",
+        "validate-trajectory": "验证函数轨迹",
+      },
+      debugSummary: "调试信息",
       fastMode: "快速模式",
       fastModeAriaLabel: "一键清图快速模式",
       fastModeTitle:

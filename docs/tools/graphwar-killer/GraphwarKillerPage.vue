@@ -123,6 +123,17 @@ type DetectionDebugStage =
 type SmartPathfindingStatusKind = "info" | "success" | "warning" | "error";
 /** 智能寻路内部阶段，用于状态文案和搜索动画。 */
 type SmartPathfindingPhase = "optimize" | "search" | "trajectory";
+/** 智能寻路调试耗时阶段。 */
+type SmartPathfindingDebugStage =
+  | "preflight"
+  | "collect-targets"
+  | "search-route"
+  | "validate-trajectory"
+  | "optimize-path"
+  | "apply-result"
+  | "setting-status"
+  | "outside-stages"
+  | "total";
 /** SVG 线段 DTO，避免模板里重复计算 x1/y1/x2/y2。 */
 interface PathLineSegment {
   /** 起点 x。 */
@@ -143,6 +154,18 @@ interface DetectionDebugTimingEntry {
 }
 /** 识别调试耗时展示行。 */
 interface DetectionDebugTimingRow extends DetectionDebugTimingEntry {
+  /** 鼠标悬停说明；用于解释不直接对应某个函数块的阶段。 */
+  title?: string;
+}
+/** 单次智能寻路调试耗时记录。 */
+interface SmartPathfindingDebugTimingEntry {
+  /** 被测量的智能寻路阶段。 */
+  stage: SmartPathfindingDebugStage;
+  /** 阶段耗时，单位毫秒。 */
+  elapsedMs: number;
+}
+/** 智能寻路调试耗时展示行。 */
+interface SmartPathfindingDebugTimingRow extends SmartPathfindingDebugTimingEntry {
   /** 鼠标悬停说明；用于解释不直接对应某个函数块的阶段。 */
   title?: string;
 }
@@ -249,6 +272,7 @@ const debugInfoEnabled = ref(false);
 const debugActivationRemainingMs = ref<number>();
 const debugActivationSuccessVisible = ref(false);
 const detectionDebugTimingEntries = ref<DetectionDebugTimingEntry[]>([]);
+const smartPathfindingDebugTimingEntries = ref<SmartPathfindingDebugTimingEntry[]>([]);
 const simulatorSkipUnknownCharacters = ref(true);
 const simulatorParseDerivativeAsY = ref(true);
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
@@ -876,6 +900,12 @@ const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
   detectionDebugTimingEntries.value.map((entry) => ({
     ...entry,
     title: entry.stage === "outside-stages" ? locale.ui.detection.debugOutsideStagesTitle : undefined,
+  })),
+);
+const smartPathfindingDebugTimingRows = computed<SmartPathfindingDebugTimingRow[]>(() =>
+  smartPathfindingDebugTimingEntries.value.map((entry) => ({
+    ...entry,
+    title: entry.stage === "outside-stages" ? locale.ui.pathfinding.debugOutsideStagesTitle : undefined,
   })),
 );
 
@@ -1828,6 +1858,74 @@ function getDetectionDebugStageLabel(stage: DetectionDebugStage) {
   return locale.ui.detection.debugStages[stage];
 }
 
+function finishSmartPathfindingDebugTimings(
+  startedAt: number,
+  timings: readonly SmartPathfindingDebugTimingEntry[],
+  completedAt = nowMs(),
+) {
+  if (timings.length === 0) {
+    return;
+  }
+
+  const totalElapsedMs = completedAt - startedAt;
+  const measuredStageElapsedMs = timings.reduce((total, timing) => total + timing.elapsedMs, 0);
+  smartPathfindingDebugTimingEntries.value = [
+    ...timings,
+    {
+      elapsedMs: Math.max(0, totalElapsedMs - measuredStageElapsedMs),
+      stage: "outside-stages",
+    },
+    {
+      elapsedMs: totalElapsedMs,
+      stage: "total",
+    },
+  ];
+}
+
+function measureSmartPathfindingDebugStage<TResult>(
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
+  stage: SmartPathfindingDebugStage,
+  task: () => TResult,
+) {
+  if (!timings) {
+    return task();
+  }
+
+  const startedAt = nowMs();
+  try {
+    return task();
+  } finally {
+    timings.push({
+      elapsedMs: nowMs() - startedAt,
+      stage,
+    });
+  }
+}
+
+async function measureSmartPathfindingDebugStageAsync<TResult>(
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
+  stage: SmartPathfindingDebugStage,
+  task: () => Promise<TResult>,
+) {
+  if (!timings) {
+    return task();
+  }
+
+  const startedAt = nowMs();
+  try {
+    return await task();
+  } finally {
+    timings.push({
+      elapsedMs: nowMs() - startedAt,
+      stage,
+    });
+  }
+}
+
+function getSmartPathfindingDebugStageLabel(stage: SmartPathfindingDebugStage) {
+  return locale.ui.pathfinding.debugStages[stage];
+}
+
 function handleGraphwarDetectionError(error: unknown, runId: number) {
   if (!isActiveDetectionRun(runId) || isGraphwarDetectionCancelledError(error)) {
     return;
@@ -2160,15 +2258,20 @@ async function appendPathPoint(point: PixelPoint) {
   }
 
   if (effectiveSmartPathfindingEnabled.value) {
-    if (!ensureCurrentPathReachesLastPointBeforeSmartPathfinding()) {
+    const startedAt = nowMs();
+    const timings: SmartPathfindingDebugTimingEntry[] = [];
+    const preflightPassed = measureSmartPathfindingDebugStage(timings, "preflight", () =>
+      ensureCurrentPathReachesLastPointBeforeSmartPathfinding(),
+    );
+    if (!preflightPassed) {
+      finishSmartPathfindingDebugTimings(startedAt, timings);
       return false;
     }
 
     const pathfindingToken = startSmartPathfinding();
-    const startedAt = performance.now();
     let normalizedPath: PixelPoint[] | undefined;
     try {
-      normalizedPath = await buildSmartPathfindingPath(nextPoint, pathfindingToken);
+      normalizedPath = await buildSmartPathfindingPath(nextPoint, pathfindingToken, timings);
       if (pathfindingToken !== smartPathfindingCancelToken) {
         return false;
       }
@@ -2180,12 +2283,25 @@ async function appendPathPoint(point: PixelPoint) {
     }
 
     if (!normalizedPath) {
-      setSmartPathfindingStatus(getSmartPathfindingFailureMessage(performance.now() - startedAt), "error");
+      let completedAt = nowMs();
+      measureSmartPathfindingDebugStage(timings, "setting-status", () => {
+        completedAt = nowMs();
+        setSmartPathfindingStatus(getSmartPathfindingFailureMessage(completedAt - startedAt), "error");
+        completedAt = nowMs();
+      });
+      finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
       return false;
     }
 
-    setPathPixels(normalizedPath);
-    setSmartPathfindingStatus(getSmartPathfindingSuccessMessage(performance.now() - startedAt), "success");
+    const finalPath = normalizedPath;
+    measureSmartPathfindingDebugStage(timings, "apply-result", () => setPathPixels(finalPath));
+    let completedAt = nowMs();
+    measureSmartPathfindingDebugStage(timings, "setting-status", () => {
+      completedAt = nowMs();
+      setSmartPathfindingStatus(getSmartPathfindingSuccessMessage(completedAt - startedAt), "success");
+      completedAt = nowMs();
+    });
+    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
     return true;
   }
 
@@ -2218,28 +2334,41 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
     return false;
   }
 
+  const startedAt = nowMs();
+  const timings: SmartPathfindingDebugTimingEntry[] = [];
   const sourcePath = [...pathPixels.value];
   const startPoint = sourcePath.at(-1);
   if (!startPoint) {
     return false;
   }
 
-  if (!ensureCurrentPathReachesLastPointBeforeSmartPathfinding()) {
+  const preflightPassed = measureSmartPathfindingDebugStage(timings, "preflight", () =>
+    ensureCurrentPathReachesLastPointBeforeSmartPathfinding(),
+  );
+  if (!preflightPassed) {
+    finishSmartPathfindingDebugTimings(startedAt, timings);
     return false;
   }
 
-  const targets = createSmartPathfindingSoldierTargets(startPoint, soldier);
+  const targets = measureSmartPathfindingDebugStage(timings, "collect-targets", () =>
+    createSmartPathfindingSoldierTargets(startPoint, soldier),
+  );
   if (targets.length === 0) {
-    setSmartPathfindingStatus(getSmartPathfindingFailureMessage(), "error");
+    let completedAt = nowMs();
+    measureSmartPathfindingDebugStage(timings, "setting-status", () => {
+      completedAt = nowMs();
+      setSmartPathfindingStatus(getSmartPathfindingFailureMessage(completedAt - startedAt), "error");
+      completedAt = nowMs();
+    });
+    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
     return false;
   }
 
   const pathfindingToken = startSmartPathfinding();
-  const startedAt = performance.now();
   let normalizedPath: PixelPoint[] | undefined;
   try {
     for (const target of targets) {
-      normalizedPath = await buildSmartPathfindingPath(target, pathfindingToken);
+      normalizedPath = await buildSmartPathfindingPath(target, pathfindingToken, timings);
       if (pathfindingToken !== smartPathfindingCancelToken) {
         return false;
       }
@@ -2255,12 +2384,25 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
   }
 
   if (!normalizedPath) {
-    setSmartPathfindingStatus(getSmartPathfindingFailureMessage(performance.now() - startedAt), "error");
+    let completedAt = nowMs();
+    measureSmartPathfindingDebugStage(timings, "setting-status", () => {
+      completedAt = nowMs();
+      setSmartPathfindingStatus(getSmartPathfindingFailureMessage(completedAt - startedAt), "error");
+      completedAt = nowMs();
+    });
+    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
     return false;
   }
 
-  setPathPixels(normalizedPath);
-  setSmartPathfindingStatus(getSmartPathfindingSuccessMessage(performance.now() - startedAt), "success");
+  const finalPath = normalizedPath;
+  measureSmartPathfindingDebugStage(timings, "apply-result", () => setPathPixels(finalPath));
+  let completedAt = nowMs();
+  measureSmartPathfindingDebugStage(timings, "setting-status", () => {
+    completedAt = nowMs();
+    setSmartPathfindingStatus(getSmartPathfindingSuccessMessage(completedAt - startedAt), "success");
+    completedAt = nowMs();
+  });
+  finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
   return true;
 }
 
@@ -2272,7 +2414,11 @@ function setPathPixels(points: PixelPoint[]) {
 }
 
 /** 在当前障碍 mask 上为目标构造几何路径，并用真实弹道验证后返回可用路径。 */
-async function buildSmartPathfindingPath(target: PixelPoint | SmartPathfindingTarget, cancelToken: number) {
+async function buildSmartPathfindingPath(
+  target: PixelPoint | SmartPathfindingTarget,
+  cancelToken: number,
+  timings?: SmartPathfindingDebugTimingEntry[],
+) {
   const boundsResult = parsedBounds.value;
   if (!boundsResult.ok) {
     return undefined;
@@ -2303,25 +2449,36 @@ async function buildSmartPathfindingPath(target: PixelPoint | SmartPathfindingTa
 
     const routeMaskEntry = getCachedRouteMask(obstacleMask, routeTolerance);
     const routeMask = routeMaskEntry.mask;
-    const pathfindingPath = await buildSmartPathfindingPathForMask({
-      bounds: boundsResult.bounds,
-      boundsRect: boundsRect.value,
-      boundaryExpansion: tolerances.boundaryExpansionPlanePixels,
-      canAdvance: pathfindingPlaneSegmentAdvancesEnough,
-      isCancelled: () => cancelToken !== smartPathfindingCancelToken,
-      onPreview: searchAnimationEnabled.value ? setSmartPathfindingPreview : undefined,
-      routeMask,
-      routeTolerancePlanePixels: routeTolerance,
-      startPoint,
-      targetPoint,
-      yieldControl: waitForNextPathfindingSlice,
-    });
+    const pathfindingPath = await measureSmartPathfindingDebugStageAsync(timings, "search-route", () =>
+      buildSmartPathfindingPathForMask({
+        bounds: boundsResult.bounds,
+        boundsRect: boundsRect.value,
+        boundaryExpansion: tolerances.boundaryExpansionPlanePixels,
+        canAdvance: pathfindingPlaneSegmentAdvancesEnough,
+        isCancelled: () => cancelToken !== smartPathfindingCancelToken,
+        onPreview: searchAnimationEnabled.value ? setSmartPathfindingPreview : undefined,
+        routeMask,
+        routeTolerancePlanePixels: routeTolerance,
+        startPoint,
+        targetPoint,
+        yieldControl: waitForNextPathfindingSlice,
+      }),
+    );
     if (!pathfindingPath || pathfindingPath.length < 2) {
       continue;
     }
 
     const normalizedPath = createNormalizedPathFromPlanePath(pathfindingPath, targetPoint, sourcePath);
-    if (!pathFollowsGraphRule(normalizedPath)) {
+    setSmartPathfindingPhase("trajectory");
+    const validationResult = measureSmartPathfindingDebugStage(timings, "validate-trajectory", () => {
+      const followsGraphRule = pathFollowsGraphRule(normalizedPath);
+      return {
+        followsGraphRule,
+        reachesTargetBeforeObstacle:
+          followsGraphRule && pathTrajectoryReachesTargetBeforeSimulationObstacle(normalizedPath, hitTarget),
+      };
+    });
+    if (!validationResult.followsGraphRule) {
       setSmartPathfindingStatus(getForwardPathMessage(), "error");
       return undefined;
     }
@@ -2329,10 +2486,11 @@ async function buildSmartPathfindingPath(target: PixelPoint | SmartPathfindingTa
     if (searchAnimationEnabled.value) {
       setSmartPathfindingPreviewPath(getSmartPathfindingAppendedSegment(normalizedPath, sourcePath.length));
     }
-    setSmartPathfindingPhase("trajectory");
-    if (pathTrajectoryReachesTargetBeforeSimulationObstacle(normalizedPath, hitTarget)) {
+    if (validationResult.reachesTargetBeforeObstacle) {
       return normalizedPath.length > 3
-        ? optimizeSmartPathfindingPath(normalizedPath, sourcePath.length, cancelToken, hitTarget)
+        ? measureSmartPathfindingDebugStageAsync(timings, "optimize-path", () =>
+            optimizeSmartPathfindingPath(normalizedPath, sourcePath.length, cancelToken, hitTarget),
+          )
         : normalizedPath;
     }
   }
@@ -3852,8 +4010,8 @@ async function copyText(text: string) {
             <span v-if="!detectionDebugTimingRows.length">{{ locale.ui.detection.debugNoTiming }}</span>
             <template v-else>
               <span
-                v-for="entry in detectionDebugTimingRows"
-                :key="entry.stage"
+                v-for="(entry, index) in detectionDebugTimingRows"
+                :key="`${entry.stage}-${index}`"
                 :title="entry.title"
               >
                 {{ getDetectionDebugStageLabel(entry.stage) }}: {{ formatDebugElapsedDuration(entry.elapsedMs) }}
@@ -3990,6 +4148,25 @@ async function copyText(text: string) {
                 >
                 <span>{{ locale.ui.pathfinding.unit }}</span>
               </label>
+            </div>
+          </details>
+          <details
+            v-if="debugInfoEnabled"
+            class="graphwar-killer__subpanel graphwar-killer__details"
+          >
+            <summary>{{ locale.ui.pathfinding.debugSummary }}</summary>
+            <div class="graphwar-killer__debug-timing">
+              <span v-if="!smartPathfindingDebugTimingRows.length">{{ locale.ui.pathfinding.debugNoTiming }}</span>
+              <template v-else>
+                <span
+                  v-for="(entry, index) in smartPathfindingDebugTimingRows"
+                  :key="`${entry.stage}-${index}`"
+                  :title="entry.title"
+                >
+                  {{ getSmartPathfindingDebugStageLabel(entry.stage) }}:
+                  {{ formatDebugElapsedDuration(entry.elapsedMs) }}
+                </span>
+              </template>
             </div>
           </details>
         </div>

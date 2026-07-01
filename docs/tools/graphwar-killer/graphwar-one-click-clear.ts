@@ -241,6 +241,7 @@ export async function buildGraphwarOneClickClearPath(
     workUnits += validation.validationCount;
     const validatedRoute = validation.route;
     if (validatedRoute) {
+      const plannedTargets = [...validatedRoute.targetSequence];
       const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
         optimizeOneClickClearPath(context, validatedRoute, workUnits),
       );
@@ -257,8 +258,8 @@ export async function buildGraphwarOneClickClearPath(
         elapsedMs: Math.max(0, nowMs() - startedAt),
         expandedStates: workUnits,
         pathPoints: optimized.route.pathPoints,
-        targetIds: optimized.route.targetSequence.map((target) => target.id),
-        targetSequence: optimized.route.targetSequence.map((target) => target.centerTarget),
+        targetIds: plannedTargets.map((target) => target.id),
+        targetSequence: plannedTargets.map((target) => target.centerTarget),
         type: "success",
       };
     }

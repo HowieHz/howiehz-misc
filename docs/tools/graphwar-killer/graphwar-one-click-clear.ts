@@ -12,7 +12,6 @@ import {
   sampleGraphwarPathTargetSequence,
 } from "./trajectory-sampling";
 import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectoryTargetCircle } from "./trajectory-sampling";
-import { createPixelPoint } from "./types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "./types";
 
 /** 一键清图可选择和验证的士兵目标。 */
@@ -106,10 +105,18 @@ export type GraphwarOneClickClearResult =
 interface OneClickClearTarget extends GraphwarOneClickClearCandidate {
   /** 几何寻路优先瞄准点。 */
   aimPoint: PixelPoint;
+  /** 命中圈最早可打到的 Graphwar x，用于按 x 从低到高清图。 */
+  minHitGraphX: number;
+  /** 命中圈中心 Graphwar x，用于稳定排序。 */
+  centerGraphX: number;
+  /** 命中圈最晚可打到的 Graphwar x，用于判断当前状态能否继续打它。 */
+  maxHitGraphX: number;
   /** 命中圈参与最终顺序验证。 */
   hitCircle: GraphwarTrajectoryTargetCircle;
   /** 按当前起点排序后的位置，用于稳定 tie-break。 */
   orderIndex: number;
+  /** 输入候选序号；只用于相同 x 时保持稳定。 */
+  sourceIndex: number;
 }
 
 interface OneClickClearState {
@@ -119,6 +126,8 @@ interface OneClickClearState {
   killedIds: Set<string>;
   /** 当前路径最后点。 */
   lastPoint: PixelPoint;
+  /** 已命中目标中最大的 x 排序序号；后续扩展只能选择更靠后的目标。 */
+  lastTargetOrderIndex: number;
   /** 已明确命中的目标。 */
   targetSequence: OneClickClearTarget[];
   /** 终点处缓存的采样前缀状态，下一次扩展从这里继续。 */
@@ -171,6 +180,7 @@ export async function buildGraphwarOneClickClearPath(
   const initialState: OneClickClearState = {
     killedIds: new Set(),
     lastPoint: options.pathPoints.at(-1) ?? options.pathPoints[0],
+    lastTargetOrderIndex: -1,
     pathPoints: [...options.pathPoints],
     targetSequence: [],
     trajectoryState: prefixState,
@@ -196,7 +206,7 @@ export async function buildGraphwarOneClickClearPath(
 
       expandedStates += 1;
       for (const target of targets) {
-        if (state.killedIds.has(target.id)) {
+        if (target.orderIndex <= state.lastTargetOrderIndex || state.killedIds.has(target.id)) {
           continue;
         }
 
@@ -219,7 +229,7 @@ export async function buildGraphwarOneClickClearPath(
       break;
     }
     beam = nextBeam
-      .sort((left, right) => compareOneClickClearStates(left, right, options))
+      .sort((left, right) => compareOneClickClearBeamStates(left, right, options))
       .slice(0, context.budget.beamWidth);
     const yielded = options.yieldControl?.();
     if (yielded) {
@@ -273,7 +283,7 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
   return result.reachesTargetSequenceBeforeObstacle ? result.sample.endState : undefined;
 }
 
-/** 收集从当前路径末端 x+ 侧可选的士兵目标，并按 x+ 方向稳定排序。 */
+/** 收集从当前路径末端 x+ 侧可选的士兵目标，并按 Graphwar x 从低到高稳定排序。 */
 function collectReachableOneClickClearTargets(options: GraphwarOneClickClearOptions): OneClickClearTarget[] {
   const startPoint = options.pathPoints.at(-1);
   if (!startPoint) {
@@ -281,73 +291,94 @@ function collectReachableOneClickClearTargets(options: GraphwarOneClickClearOpti
   }
 
   const targets: OneClickClearTarget[] = [];
-  for (const candidate of options.candidates) {
-    const aimPoint = createOneClickClearAimPoint(options, startPoint, candidate);
-    if (!aimPoint) {
+  for (let sourceIndex = 0; sourceIndex < options.candidates.length; sourceIndex += 1) {
+    const candidate = options.candidates[sourceIndex];
+    if (!candidate) {
       continue;
     }
-    targets.push({
-      ...candidate,
-      aimPoint,
-      hitCircle: {
-        center: candidate.hitCenter,
-        radius: candidate.hitRadius,
-      },
-      orderIndex: targets.length,
-    });
+
+    const target = createOneClickClearTarget(options, startPoint, candidate, sourceIndex);
+    if (target) {
+      targets.push(target);
+    }
   }
-  return targets.sort((left, right) => compareTargetDiscoveryOrder(options, startPoint, left, right));
+  return targets.sort(compareOneClickClearTargetOrder).map((target, orderIndex) => ({ ...target, orderIndex }));
 }
 
-/** 优先瞄准士兵中心；中心不够 x+ 时使用最小前进线和命中圆交点。 */
-function createOneClickClearAimPoint(
+/** 构造清图目标；aim point 刻意取命中圈里最靠低 x 的可用点，给后续目标留出更多 x 空间。 */
+function createOneClickClearTarget(
   options: GraphwarOneClickClearOptions,
   startPoint: PixelPoint,
   candidate: GraphwarOneClickClearCandidate,
+  sourceIndex: number,
 ) {
-  if (targetCanAdvanceFromPoint(options, startPoint, candidate.hitCenter)) {
-    return candidate.hitCenter;
-  }
+  const centerGraph = imageToGraphPoint(candidate.hitCenter, options.bounds, options.boundsRect);
+  const graphRadiusX =
+    (candidate.hitRadius / options.boundsRect.width) * Math.abs(options.bounds.maxX - options.bounds.minX);
+  const target: OneClickClearTarget = {
+    ...candidate,
+    aimPoint: candidate.hitCenter,
+    centerGraphX: centerGraph.x,
+    hitCircle: {
+      center: candidate.hitCenter,
+      radius: candidate.hitRadius,
+    },
+    maxHitGraphX: centerGraph.x + graphRadiusX,
+    minHitGraphX: centerGraph.x - graphRadiusX,
+    orderIndex: 0,
+    sourceIndex,
+  };
+  const aimPoint = createOneClickClearAimPoint(options, startPoint, target);
+  return aimPoint ? { ...target, aimPoint } : undefined;
+}
 
+/** 按命中圈最早可打到的 x 排序；同 x 时用中心和输入序号保持稳定。 */
+function compareOneClickClearTargetOrder(left: OneClickClearTarget, right: OneClickClearTarget) {
+  return (
+    left.minHitGraphX - right.minHitGraphX ||
+    left.centerGraphX - right.centerGraphX ||
+    left.hitCenter.y - right.hitCenter.y ||
+    left.sourceIndex - right.sourceIndex
+  );
+}
+
+/** 瞄准命中圈里满足最小 x+ 步长的最小 Graphwar x。 */
+function createOneClickClearAimPoint(
+  options: GraphwarOneClickClearOptions,
+  startPoint: PixelPoint,
+  target: OneClickClearTarget,
+) {
   const minimumGraphX = getMinimumForwardGraphX(options, startPoint);
   if (minimumGraphX === undefined) {
     return undefined;
   }
 
-  const edgePoint = createOneClickClearXPlusEdgePoint(options, candidate);
-  const edgeGraph = imageToGraphPoint(edgePoint, options.bounds, options.boundsRect);
-  if (!graphXReachesMinimumForward(edgeGraph.x, minimumGraphX, options)) {
+  if (!graphXReachesMinimumForward(target.maxHitGraphX, minimumGraphX, options)) {
     return undefined;
   }
 
+  const aimGraphX = Math.max(target.minHitGraphX, minimumGraphX);
+  const centerGraph = imageToGraphPoint(target.hitCenter, options.bounds, options.boundsRect);
   const minimumPoint = graphToImagePoint(
-    { ...imageToGraphPoint(candidate.hitCenter, options.bounds, options.boundsRect), x: minimumGraphX } as GraphPoint,
+    { ...centerGraph, x: aimGraphX } as GraphPoint,
     options.bounds,
     options.boundsRect,
   );
-  return pointHitsTargetCircle(minimumPoint, candidate.hitCenter, candidate.hitRadius) ? minimumPoint : undefined;
+  return pointHitsTargetCircle(minimumPoint, target.hitCenter, target.hitRadius) ? minimumPoint : undefined;
 }
 
-/** 每个搜索状态都要按当前 lastPoint 重新选择命中圈里的可用瞄点。 */
+/** 每个搜索状态都要按当前 lastPoint 重新选择命中圈里最靠低 x 的可用瞄点。 */
 function createStateOneClickClearTarget(
   options: GraphwarOneClickClearOptions,
   state: OneClickClearState,
   target: OneClickClearTarget,
 ) {
+  if (target.orderIndex <= state.lastTargetOrderIndex) {
+    return undefined;
+  }
+
   const aimPoint = createOneClickClearAimPoint(options, state.lastPoint, target);
   return aimPoint ? { ...target, aimPoint } : undefined;
-}
-
-/** 构造目标命中圈在 x+ 方向上的边缘点。 */
-function createOneClickClearXPlusEdgePoint(
-  options: GraphwarOneClickClearOptions,
-  candidate: GraphwarOneClickClearCandidate,
-) {
-  const center = candidate.hitCenter;
-  return createPixelPoint(
-    center.x + (xPlusGoesRightInBounds(options.bounds) ? candidate.hitRadius : -candidate.hitRadius),
-    center.y,
-  );
 }
 
 /** 扩展一个目标：几何路线缓存命中后仍必须跑增量轨迹验证。 */
@@ -492,6 +523,7 @@ function validateOneClickClearExtension(
   return {
     killedIds,
     lastPoint: nextPath.at(-1) ?? state.lastPoint,
+    lastTargetOrderIndex: target.orderIndex,
     pathPoints: nextPath,
     targetSequence: [...state.targetSequence, target],
     trajectoryState: result.sample.endState,
@@ -526,6 +558,7 @@ function validateOneClickClearFullExtension(
   return {
     killedIds,
     lastPoint: nextPath.at(-1) ?? state.lastPoint,
+    lastTargetOrderIndex: target.orderIndex,
     pathPoints: nextPath,
     targetSequence: [...state.targetSequence, target],
     trajectoryState: result.sample.endState,
@@ -620,7 +653,22 @@ function compareOneClickClearStates(
     countEnemyTargets(right) - countEnemyTargets(left) ||
     left.pathPoints.length - right.pathPoints.length ||
     estimateFormulaTextLength(left, options) - estimateFormulaTextLength(right, options) ||
-    compareTargetSequencesByDiscovery(left.targetSequence, right.targetSequence)
+    compareTargetSequencesByXOrder(left.targetSequence, right.targetSequence)
+  );
+}
+
+/** Beam 保留策略偏向低 x 序列，避免早期可扩展路线被较短的远处路线挤掉。 */
+function compareOneClickClearBeamStates(
+  left: OneClickClearState,
+  right: OneClickClearState,
+  options: GraphwarOneClickClearOptions,
+) {
+  return (
+    right.targetSequence.length - left.targetSequence.length ||
+    compareTargetSequencesByXOrder(left.targetSequence, right.targetSequence) ||
+    countEnemyTargets(right) - countEnemyTargets(left) ||
+    left.pathPoints.length - right.pathPoints.length ||
+    estimateFormulaTextLength(left, options) - estimateFormulaTextLength(right, options)
   );
 }
 
@@ -650,10 +698,7 @@ function estimateFormulaTextLength(state: OneClickClearState, options: GraphwarO
   ).expression.length;
 }
 
-function compareTargetSequencesByDiscovery(
-  left: readonly OneClickClearTarget[],
-  right: readonly OneClickClearTarget[],
-) {
+function compareTargetSequencesByXOrder(left: readonly OneClickClearTarget[], right: readonly OneClickClearTarget[]) {
   const length = Math.min(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
     const diff = (left[index]?.orderIndex ?? 0) - (right[index]?.orderIndex ?? 0);
@@ -665,20 +710,8 @@ function compareTargetSequencesByDiscovery(
 }
 
 function stateCanBeatBest(state: OneClickClearState, best: OneClickClearState, totalCandidateCount: number) {
-  return state.targetSequence.length + (totalCandidateCount - state.killedIds.size) >= best.targetSequence.length;
-}
-
-function targetCanAdvanceFromPoint(
-  options: GraphwarOneClickClearOptions,
-  startPoint: PixelPoint,
-  targetPoint: PixelPoint,
-) {
-  const minimumGraphX = getMinimumForwardGraphX(options, startPoint);
-  if (minimumGraphX === undefined) {
-    return false;
-  }
-  const targetGraph = imageToGraphPoint(targetPoint, options.bounds, options.boundsRect);
-  return graphXReachesMinimumForward(targetGraph.x, minimumGraphX, options);
+  const remainingOrderedTargets = Math.max(0, totalCandidateCount - state.lastTargetOrderIndex - 1);
+  return state.targetSequence.length + remainingOrderedTargets >= best.targetSequence.length;
 }
 
 function getMinimumForwardGraphX(options: GraphwarOneClickClearOptions, startPoint: PixelPoint) {
@@ -761,20 +794,6 @@ function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions
   return true;
 }
 
-function compareTargetDiscoveryOrder(
-  options: GraphwarOneClickClearOptions,
-  startPoint: PixelPoint,
-  left: OneClickClearTarget,
-  right: OneClickClearTarget,
-) {
-  const startGraph = imageToGraphPoint(startPoint, options.bounds, options.boundsRect);
-  const leftGraph = imageToGraphPoint(left.aimPoint, options.bounds, options.boundsRect);
-  const rightGraph = imageToGraphPoint(right.aimPoint, options.bounds, options.boundsRect);
-  return (
-    Math.abs(leftGraph.x - startGraph.x) - Math.abs(rightGraph.x - startGraph.x) || left.orderIndex - right.orderIndex
-  );
-}
-
 function pointHitsTargetCircle(point: PixelPoint, center: PixelPoint, radius: number) {
   return Math.hypot(point.x - center.x, point.y - center.y) <= radius;
 }
@@ -812,10 +831,6 @@ function formatBoundsRectKey(rect: BoundsRect) {
 
 function pointsNearlyEqual(left: PixelPoint, right: PixelPoint) {
   return Math.abs(left.x - right.x) <= 0.001 && Math.abs(left.y - right.y) <= 0.001;
-}
-
-function xPlusGoesRightInBounds(bounds: GraphBounds) {
-  return bounds.maxX > bounds.minX;
 }
 
 function nowMs() {

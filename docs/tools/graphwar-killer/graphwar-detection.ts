@@ -726,7 +726,7 @@ export function dilateObstacleMask(mask: Uint8Array, radius: number) {
   }
 
   const dilated = new Uint8Array(mask.length);
-  const dilationRadius = Math.max(0, normalizedRadius);
+  const dilationRadius = normalizedRadius;
   const dilationOffsetLimit = Math.ceil(dilationRadius);
   const dilationRadiusSquared = dilationRadius * dilationRadius;
   for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {

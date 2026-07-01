@@ -1989,6 +1989,11 @@ function finishSmartPathfindingDebugTimings(
   ];
 }
 
+/** 新一次寻路/清图开始时先清旧日志；若本次提前取消，也不会展示上一轮结果。 */
+function clearSmartPathfindingDebugTimings() {
+  smartPathfindingDebugTimingEntries.value = [];
+}
+
 /** 包装同步智能寻路阶段计时；未启用调试时不产生额外开销。 */
 function measureSmartPathfindingDebugStage<TResult>(
   timings: SmartPathfindingDebugTimingEntry[] | undefined,
@@ -2538,6 +2543,7 @@ async function appendPathPoint(point: PixelPoint) {
   }
 
   if (effectiveSmartPathfindingEnabled.value) {
+    clearSmartPathfindingDebugTimings();
     const startedAt = nowMs();
     const timings: SmartPathfindingDebugTimingEntry[] = [];
     const preflightPassed = measureSmartPathfindingDebugStage(timings, "preflight", () =>
@@ -2614,6 +2620,7 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
     return false;
   }
 
+  clearSmartPathfindingDebugTimings();
   const startedAt = nowMs();
   const timings: SmartPathfindingDebugTimingEntry[] = [];
   const sourcePath = [...pathPixels.value];
@@ -2688,6 +2695,7 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
 
 /** 一键清图：从当前路径尾部出发，完整遍历 x 单调可达状态并追加当前模型下击杀最多的路径。 */
 async function runOneClickClear() {
+  clearSmartPathfindingDebugTimings();
   const startedAt = nowMs();
   const timings: SmartPathfindingDebugTimingEntry[] = [];
   const preflightResult = measureSmartPathfindingDebugStage(timings, "one-click-clear-preflight", () => {
@@ -2784,10 +2792,8 @@ async function runOneClickClear() {
         candidates,
         hitCandidates,
         isCancelled: () => pathfindingToken !== smartPathfindingCancelToken,
-        onDebugTiming: debugInfoEnabled.value
-          ? (timing) =>
-              addOneClickClearSearchDebugTiming(oneClickClearSearchDetailTimings, timing.stage, timing.elapsedMs)
-          : undefined,
+        onDebugTiming: (timing) =>
+          addOneClickClearSearchDebugTiming(oneClickClearSearchDetailTimings, timing.stage, timing.elapsedMs),
         pathPoints: [...pathPixels.value],
         prefixTarget: preflightResult.prefixTarget,
         routeMask,
@@ -2797,7 +2803,7 @@ async function runOneClickClear() {
         yieldControl: waitForNextPathfindingSlice,
       }),
     );
-    if (debugInfoEnabled.value && !oneClickClearVisibilityCacheUsed) {
+    if (!oneClickClearVisibilityCacheUsed) {
       addOneClickClearSearchDebugTiming(oneClickClearSearchDetailTimings, "visibility-cache-skipped", 0);
     }
     timings.push(...oneClickClearSearchDetailTimings);
@@ -3416,15 +3422,13 @@ function getOneClickClearVisibilityGraphObstacleData(
   bounds: GraphBounds,
   routeTolerance: number,
 ) {
-  const startedAt = debugInfoEnabled.value ? nowMs() : 0;
+  const startedAt = nowMs();
   const lookup = getCachedRouteMaskVisibilityGraphObstacleDataWithStatus(entry, bounds, routeTolerance);
-  if (debugInfoEnabled.value) {
-    addOneClickClearSearchDebugTiming(
-      timings,
-      lookup.cacheHit ? "visibility-cache-hit" : "visibility-cache-miss",
-      nowMs() - startedAt,
-    );
-  }
+  addOneClickClearSearchDebugTiming(
+    timings,
+    lookup.cacheHit ? "visibility-cache-hit" : "visibility-cache-miss",
+    nowMs() - startedAt,
+  );
   return lookup.data;
 }
 

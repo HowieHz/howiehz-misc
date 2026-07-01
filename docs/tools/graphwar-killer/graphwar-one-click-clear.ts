@@ -69,6 +69,8 @@ export interface GraphwarOneClickClearOptions {
   boundsRect: BoundsRect;
   /** 候选士兵；友伤开关过滤由调用方负责。 */
   candidates: readonly GraphwarOneClickClearCandidate[];
+  /** 用于统计整条弹道击杀数的士兵；不受 DAG 起点右侧过滤影响。 */
+  hitCandidates: readonly GraphwarOneClickClearCandidate[];
   /** 长循环取消检查。 */
   isCancelled?: () => boolean;
   /** 内部调试耗时回调；调用方负责聚合同类阶段，避免刷屏。 */
@@ -169,6 +171,11 @@ interface OneClickClearValidatedRoute {
   targetSequence: OneClickClearTarget[];
 }
 
+interface OneClickClearHitTarget extends GraphwarOneClickClearCandidate {
+  /** 首次命中该目标时的采样点数量，用于按弹道顺序稳定显示结果。 */
+  hitSamplePointCount: number;
+}
+
 interface OneClickClearRouteValidationResult {
   /** 失败的边；存在时调用方应删除该边并重新跑 DP。 */
   failedEdge?: OneClickClearDagEdge;
@@ -241,7 +248,6 @@ export async function buildGraphwarOneClickClearPath(
     workUnits += validation.validationCount;
     const validatedRoute = validation.route;
     if (validatedRoute) {
-      const plannedTargets = [...validatedRoute.targetSequence];
       const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
         optimizeOneClickClearPath(context, validatedRoute, workUnits),
       );
@@ -253,13 +259,14 @@ export async function buildGraphwarOneClickClearPath(
       if (!finalValidation) {
         return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
       }
+      const hitTargets = collectOneClickClearHitTargets(options, optimized.route.pathPoints);
 
       return {
         elapsedMs: Math.max(0, nowMs() - startedAt),
         expandedStates: workUnits,
         pathPoints: optimized.route.pathPoints,
-        targetIds: plannedTargets.map((target) => target.id),
-        targetSequence: plannedTargets.map((target) => target.centerTarget),
+        targetIds: hitTargets.map((target) => target.id),
+        targetSequence: hitTargets.map((target) => createOneClickClearTargetCircle(target)),
         type: "success",
       };
     }
@@ -634,7 +641,7 @@ function validateOneClickClearRouteSegment(
   return result.reachedTargetCount >= targetSequence.length;
 }
 
-/** 最终整路验证按显式中心点序列重采样，作为增量验证后的安全网。 */
+/** 最终整路验证按显式目标命中圈序列重采样，作为增量验证后的安全网。 */
 function validateOneClickClearTargetSequence(
   options: GraphwarOneClickClearOptions,
   route: Pick<OneClickClearValidatedRoute, "pathPoints" | "targetSequence">,
@@ -651,6 +658,35 @@ function validateOneClickClearTargetSequence(
     targetPoints: route.targetSequence.map((target) => target.hitCenter),
   });
   return result.reachesTargetSequenceBeforeObstacle;
+}
+
+/** 最终统计当前完整弹道实际命中的候选士兵，包含非 DAG 节点的顺路命中。 */
+function collectOneClickClearHitTargets(
+  options: GraphwarOneClickClearOptions,
+  pathPoints: readonly PixelPoint[],
+): OneClickClearHitTarget[] {
+  return options.hitCandidates
+    .flatMap<OneClickClearHitTarget>((candidate) => {
+      const samplePointCount = sampleOneClickClearTargetHit(options, pathPoints, candidate);
+      return samplePointCount === undefined ? [] : [{ ...candidate, hitSamplePointCount: samplePointCount }];
+    })
+    .sort(compareOneClickClearHitTargets);
+}
+
+function compareOneClickClearHitTargets(left: OneClickClearHitTarget, right: OneClickClearHitTarget) {
+  return (
+    left.hitSamplePointCount - right.hitSamplePointCount ||
+    left.hitCenter.x - right.hitCenter.x ||
+    left.hitCenter.y - right.hitCenter.y ||
+    left.id.localeCompare(right.id)
+  );
+}
+
+function createOneClickClearTargetCircle(target: Pick<GraphwarOneClickClearCandidate, "hitCenter" | "hitRadius">) {
+  return {
+    center: target.hitCenter,
+    radius: target.hitRadius,
+  };
 }
 
 /** 全局删点只删除生成的中间 route 点，不碰原 prefix 和显式目标中心。 */
@@ -686,6 +722,25 @@ async function optimizeOneClickClearPath(
     }
   }
   return { route: optimized, workUnits };
+}
+
+function sampleOneClickClearTargetHit(
+  options: GraphwarOneClickClearOptions,
+  pathPoints: readonly PixelPoint[],
+  target: GraphwarOneClickClearCandidate,
+) {
+  const result = sampleGraphwarPathTargetSequence({
+    boundaryExpansion: options.simulationBoundaryExpansion,
+    bounds: options.bounds,
+    boundsRect: options.boundsRect,
+    obstacleMask: options.simulationMask,
+    points: pathPoints,
+    settings: options.settings,
+    soldierMarkerRadius: target.hitRadius,
+    targetCircles: [createOneClickClearTargetCircle(target)],
+    targetPoints: [target.hitCenter],
+  });
+  return result.reachesTargetSequenceBeforeObstacle ? result.samplePointCount : undefined;
 }
 
 /** 保护原 prefix 和显式目标中心；删除后索引会漂移，所以每次按当前路径重新判断。 */

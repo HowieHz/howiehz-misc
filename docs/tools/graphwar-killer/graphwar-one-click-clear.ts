@@ -1,12 +1,5 @@
 /** 在当前 Graphwar 路径后追加中心点 DAG 清图路线。 */
 import { imageToGraphPoint } from "./geometry";
-import { GRAPHWAR_PLANE_LENGTH } from "./graphwar";
-import {
-  buildSmartPathfindingPathForMask,
-  createGraphwarVisibilityGraphObstacleData,
-  planeGridCellCenterToImagePoint,
-} from "./graphwar-pathfinding";
-import type { GraphwarVisibilityGraphObstacleData, PlaneGridPoint } from "./graphwar-pathfinding";
 import { graphXAdvancesStrictly } from "./numbers";
 import {
   createGraphwarTrajectoryFormulaContext,
@@ -35,8 +28,6 @@ export interface GraphwarOneClickClearCandidate {
 export interface GraphwarOneClickClearRouteMask {
   /** 已按当前一键清图 route tolerance 处理后的 mask。 */
   mask: Uint8Array;
-  /** 页面侧按需复用可视图障碍数据；无缓存调用方留空时在本次 DAG 内现建现用。 */
-  getVisibilityGraphObstacleData?: () => GraphwarVisibilityGraphObstacleData;
   /** 与 mask 对应的路线容差，参与底层可视图简化。 */
   routeTolerancePlanePixels: number;
 }
@@ -151,11 +142,11 @@ export interface GraphwarOneClickClearOptions {
   isCancelled?: () => boolean;
   /** 内部调试耗时回调；调用方负责聚合同类阶段，避免刷屏。 */
   onDebugTiming?: (timing: GraphwarOneClickClearDebugTiming) => void;
-  /** 可选批量 DAG 建边入口；页面用它把大量独立边交给 Worker pool。 */
-  buildDagEdges?: (
+  /** 批量 DAG 建边入口；即使串行也交给 master Worker，避免在主线程跑几何搜索。 */
+  buildDagEdges: (
     request: GraphwarOneClickClearDagEdgeBuildRequest,
   ) => Promise<GraphwarOneClickClearDagEdgeBuildResult>;
-  /** DAG 建边最大并行数；外部 builder 失败回退串行时只用于调试说明。 */
+  /** DAG 建边最大并行数；1 表示让 master Worker 串行建边。 */
   dagEdgeWorkerCount?: number;
   /** 一键清图删点局部保护半径；调用方已限制到当前士兵命中圈内，最终整路验证仍使用真实命中圈。 */
   deleteCheckRadiusPixels: number;
@@ -179,6 +170,7 @@ export interface GraphwarOneClickClearOptions {
 export type GraphwarOneClickClearFailureReason =
   | "no-candidate"
   | "no-usable-target"
+  | "pathfinding-worker-failed"
   | "preflight-blocked"
   | "unsupported";
 
@@ -301,9 +293,18 @@ export async function buildGraphwarOneClickClearPath(
   }
 
   const context: OneClickClearSearchContext = { options };
-  const dag = await measureOneClickClearDebugTimingAsync(options, "build-dag-edges", () =>
-    buildOneClickClearDag(context, targets),
-  );
+  let dag: OneClickClearDag;
+  try {
+    dag = await measureOneClickClearDebugTimingAsync(options, "build-dag-edges", () =>
+      buildOneClickClearDag(context, targets),
+    );
+  } catch {
+    return createOneClickClearFailure(
+      options.isCancelled?.() ? "no-usable-target" : "pathfinding-worker-failed",
+      startedAt,
+      0,
+    );
+  }
   let workUnits = dag.edges.length;
   if (dag.edges.length === 0) {
     return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
@@ -500,17 +501,14 @@ async function buildOneClickClearDagEdgeRoutes(
 ): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
   const options = context.options;
   const request = createOneClickClearDagEdgeBuildRequest(options, jobs);
-  if (options.buildDagEdges && jobs.length > 1 && (options.dagEdgeWorkerCount ?? 1) > 1) {
-    try {
-      return await options.buildDagEdges(request);
-    } catch {
-      if (options.isCancelled?.()) {
-        return { routes: [], timings: [] };
-      }
-      return buildOneClickClearDagEdgeRoutesSerial(context, jobs, "parallel-fallback", request.workerCount);
+  try {
+    return await options.buildDagEdges(request);
+  } catch {
+    if (options.isCancelled?.()) {
+      return { routes: [], timings: [] };
     }
+    throw new Error("One-Click Clear pathfinding worker failed");
   }
-  return buildOneClickClearDagEdgeRoutesSerial(context, jobs, "serial", 1);
 }
 
 function createOneClickClearDagEdgeBuildRequest(
@@ -526,52 +524,6 @@ function createOneClickClearDagEdgeBuildRequest(
     routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
     workerCount: options.dagEdgeWorkerCount ?? 1,
   };
-}
-
-async function buildOneClickClearDagEdgeRoutesSerial(
-  context: OneClickClearSearchContext,
-  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
-  mode: "serial" | "parallel-fallback",
-  workerCount: number,
-): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
-  const options = context.options;
-  const visibilityGraphObstacleData =
-    options.routeMask.getVisibilityGraphObstacleData?.() ??
-    createGraphwarVisibilityGraphObstacleData({
-      bounds: options.bounds,
-      routeMask: options.routeMask.mask,
-      routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
-    });
-  const routes: GraphwarOneClickClearDagEdgeRoute[] = [];
-  for (const job of jobs) {
-    const route = await buildOneClickClearEdgeRoute(
-      context,
-      job.startPoint,
-      job.targetPoint,
-      visibilityGraphObstacleData,
-    );
-    routes.push(createOneClickClearDagEdgeRoute(job.id, route));
-    await yieldOneClickClearControl(options);
-  }
-
-  return {
-    routes,
-    timings: [
-      {
-        detail: {
-          mode,
-          type: "dag-edge-mode",
-          workerCount,
-        },
-        elapsedMs: 0,
-        stage: "build-dag-edges",
-      },
-    ],
-  };
-}
-
-function createOneClickClearDagEdgeRoute(jobId: number, route: PixelPoint[] | undefined) {
-  return route ? { jobId, route } : { jobId };
 }
 
 function addOneClickClearDagEdge(
@@ -598,41 +550,6 @@ function addOneClickClearDagEdge(
   } else {
     outgoingEdges.set(fromKey, [edge]);
   }
-}
-
-/** 中心点到中心点寻路；首尾替换为精确中心，避免 cell-center 映射漂移。 */
-async function buildOneClickClearEdgeRoute(
-  context: OneClickClearSearchContext,
-  startPoint: PixelPoint,
-  targetPoint: PixelPoint,
-  visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData,
-) {
-  const route = await measureOneClickClearDebugTimingAsync(context.options, "route-pathfinding", () =>
-    buildSmartPathfindingPathForMask({
-      bounds: context.options.bounds,
-      boundsRect: context.options.boundsRect,
-      boundaryExpansion: context.options.boundaryExpansion,
-      canAdvance: (previous, next) => pathfindingPlaneSegmentAdvancesEnough(context.options, previous, next),
-      isCancelled: context.options.isCancelled,
-      routeMask: context.options.routeMask.mask,
-      routeTolerancePlanePixels: context.options.routeMask.routeTolerancePlanePixels,
-      startPoint,
-      targetPoint,
-      visibilityGraphObstacleData,
-      yieldControl: context.options.yieldControl,
-    }),
-  );
-  const pixelRoute = measureOneClickClearDebugTiming(context.options, "route-map-pixels", () =>
-    route?.map((point) => planeGridCellCenterToImagePoint(point, context.options.boundsRect)),
-  );
-  if (!pixelRoute || pixelRoute.length < 2) {
-    return undefined;
-  }
-
-  const exactRoute = [...pixelRoute];
-  exactRoute[0] = startPoint;
-  exactRoute[exactRoute.length - 1] = targetPoint;
-  return exactRoute;
 }
 
 /** 在中心点有序 DAG 上做最长路 DP；同分时选几何点更少、终点更靠前。 */
@@ -933,17 +850,6 @@ function graphXAdvancesFromX(fromGraphX: number, toGraphX: number) {
   return graphXAdvancesStrictly(fromGraphX, toGraphX);
 }
 
-function pathfindingPlaneSegmentAdvancesEnough(
-  options: GraphwarOneClickClearOptions,
-  previous: PlaneGridPoint,
-  next: PlaneGridPoint,
-) {
-  return graphXAdvancesStrictly(
-    planeGridPointToGraphX(options.bounds, previous),
-    planeGridPointToGraphX(options.bounds, next),
-  );
-}
-
 function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions, points: readonly PixelPoint[]) {
   for (let index = 1; index < points.length; index += 1) {
     const previous = imageToGraphPoint(points[index - 1], options.bounds, options.boundsRect);
@@ -1021,10 +927,6 @@ function pixelSegmentHitsCircle(start: PixelPoint, end: PixelPoint, center: Pixe
   const closestDx = center.x - closestX;
   const closestDy = center.y - closestY;
   return closestDx * closestDx + closestDy * closestDy < radiusSquared;
-}
-
-function planeGridPointToGraphX(bounds: GraphBounds, point: PlaneGridPoint) {
-  return bounds.minX + ((point.x + 0.5) / GRAPHWAR_PLANE_LENGTH) * (bounds.maxX - bounds.minX);
 }
 
 async function yieldOneClickClearControl(options: GraphwarOneClickClearOptions) {

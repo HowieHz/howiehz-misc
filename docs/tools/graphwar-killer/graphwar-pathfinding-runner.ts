@@ -48,8 +48,9 @@ export function createGraphwarPathfindingRunner() {
   let worker: Worker | undefined;
   let nextRequestId = 1;
   let pendingTask: PendingPathfindingWorkerTask | undefined;
+  let resetWorkerAfterCurrentTask = false;
 
-  /** 懒创建 master Worker；不支持 Worker 的环境由调用方走同步 fallback。 */
+  /** 懒创建 master Worker；不支持 Worker 的环境由调用方按寻路失败处理。 */
   function ensureWorker() {
     if (typeof Worker === "undefined") {
       return undefined;
@@ -138,6 +139,15 @@ export function createGraphwarPathfindingRunner() {
     resetWorker();
   }
 
+  /** 让 master Worker 内部 cache 失效；忙碌时等当前任务收尾后重建。 */
+  function clearCache() {
+    if (pendingTask) {
+      resetWorkerAfterCurrentTask = true;
+      return;
+    }
+    resetWorker();
+  }
+
   /** 关闭 runner 时释放 Worker，并让挂起任务按取消处理。 */
   function close() {
     if (pendingTask) {
@@ -162,9 +172,11 @@ export function createGraphwarPathfindingRunner() {
     pendingTask = undefined;
     if (response.type === "error") {
       completedTask.reject(new Error(response.message));
+      resetWorkerIfCacheInvalidated();
       return;
     }
     completedTask.resolve(response.result);
+    resetWorkerIfCacheInvalidated();
   }
 
   /** 把 Worker 消息反序列化失败转换成当前任务失败。 */
@@ -187,8 +199,17 @@ export function createGraphwarPathfindingRunner() {
     resetWorker();
   }
 
+  /** 若任务运行期间有配置换代，成功/失败响应发回页面后立即释放旧 Worker cache。 */
+  function resetWorkerIfCacheInvalidated() {
+    if (!resetWorkerAfterCurrentTask) {
+      return;
+    }
+    resetWorker();
+  }
+
   /** 终止当前 Worker；下一次寻路会重新懒创建。 */
   function resetWorker() {
+    resetWorkerAfterCurrentTask = false;
     if (!worker) {
       return;
     }
@@ -199,6 +220,7 @@ export function createGraphwarPathfindingRunner() {
   return {
     buildOneClickClearDagEdges,
     cancel,
+    clearCache,
     close,
     findRoute,
   };

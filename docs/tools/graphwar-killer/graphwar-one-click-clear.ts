@@ -16,8 +16,8 @@ import {
 import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectoryTargetCircle } from "./trajectory-sampling";
 import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
 
-/** 一键清图默认只用单个 1px 几何 route tolerance，避免旧版 min/max/step 扫描。 */
-export const GRAPHWAR_ONE_CLICK_CLEAR_DEFAULT_ROUTE_TOLERANCE_PLANE_PIXELS = 1;
+/** 路线规划默认使用单个 1px 几何 route tolerance，普通寻路和一键清图保持一致。 */
+export const GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS = 1;
 
 /** 一键清图可选择和验证的士兵目标。 */
 export interface GraphwarOneClickClearCandidate {

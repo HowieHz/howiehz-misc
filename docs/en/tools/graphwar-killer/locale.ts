@@ -73,17 +73,10 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
-    oneClickClearRouteToleranceNumber: "One-Click Clear route tolerance must be a number",
-    oneClickClearRouteTolerancePixelRange: (limit) =>
-      `One-Click Clear route tolerance must be between -${limit}px and ${limit}px`,
-    pathfindingMaximumNumber: "Pathfinding maximum must be a number",
-    pathfindingMaximumPixelRange: (limit) => `Pathfinding maximum must be between -${limit}px and ${limit}px`,
-    pathfindingMinimumGreaterThanMaximum: "Pathfinding minimum cannot be greater than the maximum",
-    pathfindingMinimumNumber: "Pathfinding minimum must be a number",
-    pathfindingMinimumPixelRange: (limit) => `Pathfinding minimum must be between -${limit}px and ${limit}px`,
-    routeStepNumber: "Expansion step must be a number greater than 0",
-    simulationExpansionNumber: "Simulation expansion must be a number",
-    simulationExpansionPixelRange: (limit) => `Simulation expansion must be between -${limit}px and ${limit}px`,
+    routePlanningToleranceNumber: "Route planning tolerance must be a number",
+    routePlanningTolerancePixelRange: (limit) => `Route planning tolerance must be between -${limit}px and ${limit}px`,
+    simulationToleranceNumber: "Simulation tolerance must be a number",
+    simulationTolerancePixelRange: (limit) => `Simulation tolerance must be between -${limit}px and ${limit}px`,
     soldierTemplateCandidateTopRatioNumber: "Candidate trim must be a number",
     soldierTemplateCandidateTopRatioRange: "Candidate trim must be greater than 0 and no greater than 1",
     templateMatchingWorkerCountInteger: "Template matching workers must be an integer",
@@ -441,7 +434,7 @@ export const graphwarKillerLocale = {
         "one-click-clear-build-route-mask": {
           label: "Build clear route mask",
           title:
-            "Build the geometry route mask for One-Click Clear from the current obstacle mask and clear route tolerance.",
+            "Build the geometry route mask for One-Click Clear from the current obstacle mask and route planning tolerance.",
         },
         "one-click-clear-collect-targets": {
           label: "Collect clear targets",
@@ -494,33 +487,22 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
-      expansionStep: "Expansion step",
-      expansionStepAriaLabel: "Pathfinding expansion step in raw Graphwar 770x450 plane pixels",
-      expansionStepTitle:
-        "Step size used when pathfinding increases obstacle expansion from the minimum to the maximum. Unit: raw Graphwar 770x450 plane pixels.",
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
         "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
-      oneClickClearRouteTolerance: "Clear route tolerance",
-      oneClickClearRouteToleranceAriaLabel: "One-Click Clear route tolerance in raw Graphwar 770x450 plane pixels",
-      oneClickClearRouteToleranceTitle:
-        "Single geometry route tolerance used while One-Click Clear builds DAG edges. Defaults to 1px and does not use the min/max/step scan above.",
       oneClickClearTitle:
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
-      pathMaximum: "Path maximum",
-      pathMaximumAriaLabel: "Maximum pathfinding obstacle expansion in raw Graphwar 770x450 plane pixels",
-      pathMaximumTitle: "Pathfinding expands obstacles up to this amount. Unit: raw Graphwar 770x450 plane pixels.",
-      pathMinimum: "Path minimum",
-      pathMinimumAriaLabel: "Minimum pathfinding obstacle expansion in raw Graphwar 770x450 plane pixels",
-      pathMinimumTitle:
-        "Pathfinding starts by expanding obstacles by this amount. Unit: raw Graphwar 770x450 plane pixels.",
+      routePlanningTolerance: "Route planning tolerance",
+      routePlanningToleranceAriaLabel: "Route planning tolerance in raw Graphwar 770x450 plane pixels",
+      routePlanningToleranceTitle:
+        "Single route tolerance used when Smart Pathfinding and One-Click Clear build geometry routes. Unit: raw Graphwar 770x450 plane pixels.",
       searchAnimation: "Search animation",
       searchAnimationTitle:
         "Show Smart Pathfinding candidate points, explored edges, trial paths, and optimization points; turn it off to keep only the final path result.",
-      simulationExpansion: "Simulation expansion",
-      simulationExpansionAriaLabel: "Function-simulation obstacle expansion in raw Graphwar 770x450 plane pixels",
-      simulationExpansionTitle:
-        "Expands obstacles by this amount during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
+      simulationTolerance: "Simulation tolerance",
+      simulationToleranceAriaLabel: "Function-simulation tolerance in raw Graphwar 770x450 plane pixels",
+      simulationToleranceTitle:
+        "Obstacle tolerance used during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
       autoGraph: "One-Click Clear",
       smartPathfinding: "Smart Pathfinding",
       smartPathfindingTitle: "After you pick a target soldier, automatically find a route around detected obstacles.",

@@ -190,6 +190,8 @@ export const graphwarKillerLocale = {
       needCurrentPath: "One-Click Clear needs an existing path start first",
       noCandidate: "One-Click Clear failed: no selectable target exists on the x+ side of the current path",
       noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found in ${elapsed}`,
+      pathfindingWorkerFailed: (elapsed) =>
+        `One-Click Clear failed: the pathfinding Worker is unavailable or failed in ${elapsed}`,
       success: (killCount, elapsed) =>
         `One-Click Clear completed, the full trajectory killed ${killCount} soldier(s) in ${elapsed}`,
       unsupported: "The first One-Click Clear version only supports double absolute-value y= and y'= modes",

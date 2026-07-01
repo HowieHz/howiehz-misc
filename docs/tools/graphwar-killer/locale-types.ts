@@ -212,6 +212,7 @@ export interface GraphwarKillerLocale {
       needCurrentPath: string;
       noCandidate: string;
       noUsableTarget: (elapsed: string) => string;
+      pathfindingWorkerFailed: (elapsed: string) => string;
       success: (killCount: number, elapsed: string) => string;
       unsupported: string;
     };

@@ -190,7 +190,7 @@ function runOneClickClearDagEdgeWorkerPool(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
   laneCount: number,
 ): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const handles: EdgeWorkerHandle[] = [];
     const completedJobIds = new Set<number>();
     const routes: GraphwarOneClickClearDagEdgeRoute[] = [];
@@ -267,16 +267,20 @@ function runOneClickClearDagEdgeWorkerPool(
       }
 
       const remainingJobs = input.jobs.filter((job) => !completedJobIds.has(job.id));
-      void buildOneClickClearDagEdgesSerial(input, remainingJobs, "parallel-fallback", laneCount).then((serial) => {
-        resolve({
-          routes: [...routes, ...serial.routes],
-          timings: [
-            ...timings,
-            ...serial.timings.filter((timing) => timing.detail?.type !== "dag-edge-mode"),
-            ...createRouteTimingEntries(totals),
-          ],
+      void buildOneClickClearDagEdgesSerial(input, remainingJobs, "parallel-fallback", laneCount)
+        .then((serial) => {
+          resolve({
+            routes: [...routes, ...serial.routes],
+            timings: [
+              ...timings,
+              ...serial.timings.filter((timing) => timing.detail?.type !== "dag-edge-mode"),
+              ...createRouteTimingEntries(totals),
+            ],
+          });
+        })
+        .catch((error: unknown) => {
+          reject(error instanceof Error ? error : new Error(String(error)));
         });
-      });
     };
 
     const assignNextJob = (handle: EdgeWorkerHandle) => {
@@ -292,12 +296,17 @@ function runOneClickClearDagEdgeWorkerPool(
       }
 
       handle.activeJob = job;
-      handle.worker.postMessage({
-        job,
-        requestId: nextRequestId,
-        type: "job",
-      } satisfies GraphwarOneClickClearEdgeWorkerRequest);
-      nextRequestId += 1;
+      try {
+        handle.worker.postMessage({
+          job,
+          requestId: nextRequestId,
+          type: "job",
+        } satisfies GraphwarOneClickClearEdgeWorkerRequest);
+        nextRequestId += 1;
+      } catch {
+        handle.activeJob = undefined;
+        fallbackWithRemainingJobs(handle);
+      }
     };
 
     try {

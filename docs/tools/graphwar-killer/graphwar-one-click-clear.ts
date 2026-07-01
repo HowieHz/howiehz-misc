@@ -84,7 +84,7 @@ export interface GraphwarOneClickClearOptions {
   isCancelled?: () => boolean;
   /** 内部调试耗时回调；调用方负责聚合同类阶段，避免刷屏。 */
   onDebugTiming?: (timing: GraphwarOneClickClearDebugTiming) => void;
-  /** 一键清图删点局部保护半径；最终整路命中验证仍使用士兵真实命中圈。 */
+  /** 一键清图删点局部保护半径；调用方已限制到当前士兵命中圈内，最终整路验证仍使用真实命中圈。 */
   deleteCheckRadiusPixels: number;
   /** 当前路径已有像素点。 */
   pathPoints: readonly PixelPoint[];
@@ -809,10 +809,8 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
   }
 
   // abs 删除一个控制点时，只会把 previous->deleted->next 替换成 previous->next；先证明局部士兵命中不丢。
+  const checkRadius = options.deleteCheckRadiusPixels;
   for (const target of options.hitCandidates) {
-    // 设置已在页面层校验为正数；这里仅按单个士兵真实命中圈收紧上限，避免额外函数调用。
-    const checkRadius =
-      options.deleteCheckRadiusPixels < target.hitRadius ? options.deleteCheckRadiusPixels : target.hitRadius;
     const oldLocalPathHitsTarget =
       pixelSegmentHitsCircle(previousPoint, deletedPoint, target.hitCenter, checkRadius) ||
       (nextPoint ? pixelSegmentHitsCircle(deletedPoint, nextPoint, target.hitCenter, checkRadius) : false);

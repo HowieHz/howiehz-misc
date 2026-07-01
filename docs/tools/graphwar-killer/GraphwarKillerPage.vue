@@ -382,6 +382,8 @@ const detectedObstacles = ref<DetectedObstacleMap>();
 const baselineDetectedObstacles = ref<DetectedObstacleMap>();
 const autoDetectionEnabled = ref(true);
 const detectionSoldierFlashActive = ref(false);
+const oneClickClearHitFlashSoldiers = ref<DetectionBox[]>([]);
+const oneClickClearHitFlashActive = ref(false);
 const smartCursorEnabled = ref(true);
 const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
@@ -420,6 +422,8 @@ let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionSoldierFlashFrame: number | undefined;
 let detectionSoldierFlashTimer: ReturnType<typeof setTimeout> | undefined;
+let oneClickClearHitFlashFrame: number | undefined;
+let oneClickClearHitFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let debugActivationCountdownTimer: ReturnType<typeof setInterval> | undefined;
 let debugActivationStartedAt: number | undefined;
 let debugActivationSuccessTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1560,6 +1564,7 @@ function clearDetectedGraphwarObjects() {
   detectedObstacles.value = undefined;
   baselineDetectedObstacles.value = undefined;
   clearDetectionSoldierFlash();
+  clearOneClickClearHitFlash();
   obstacleEditsDirty.value = false;
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
@@ -2162,6 +2167,39 @@ function flashDetectedSoldiers() {
   });
 }
 
+/** 清理一键清图命中闪烁，避免旧结果在下一次操作后继续提示。 */
+function clearOneClickClearHitFlash() {
+  oneClickClearHitFlashActive.value = false;
+  oneClickClearHitFlashSoldiers.value = [];
+  if (oneClickClearHitFlashFrame !== undefined) {
+    cancelAnimationFrame(oneClickClearHitFlashFrame);
+    oneClickClearHitFlashFrame = undefined;
+  }
+  if (oneClickClearHitFlashTimer) {
+    clearTimeout(oneClickClearHitFlashTimer);
+    oneClickClearHitFlashTimer = undefined;
+  }
+}
+
+/** 一键清图完成后只高亮本次结果里的命中士兵，和全量识别闪烁区分开。 */
+function flashOneClickClearHitSoldiers(targetIds: readonly string[]) {
+  clearOneClickClearHitFlash();
+  const targetIdSet = new Set(targetIds);
+  oneClickClearHitFlashSoldiers.value = detectedSoldiers.value.filter((soldier) => targetIdSet.has(soldier.id));
+  if (oneClickClearHitFlashSoldiers.value.length === 0) {
+    return;
+  }
+
+  oneClickClearHitFlashFrame = requestAnimationFrame(() => {
+    oneClickClearHitFlashFrame = undefined;
+    oneClickClearHitFlashActive.value = true;
+    oneClickClearHitFlashTimer = setTimeout(() => {
+      oneClickClearHitFlashActive.value = false;
+      oneClickClearHitFlashTimer = undefined;
+    }, detectionFlashAnimationMs);
+  });
+}
+
 /** 深拷贝障碍 mask，作为用户编辑前的恢复基线。 */
 function cloneDetectedObstacleMap(obstacles: DetectedObstacleMap): DetectedObstacleMap {
   return {
@@ -2689,6 +2727,7 @@ async function runOneClickClear() {
     const candidates = measureSmartPathfindingDebugStage(timings, "one-click-clear-collect-targets", () =>
       createOneClickClearCandidates(),
     );
+    const hitCandidates = createOneClickClearHitCandidates();
     const routeMask = measureSmartPathfindingDebugStage(timings, "one-click-clear-build-route-mask", () => ({
       mask: getCachedRouteMask(
         preflightResult.obstacleMask,
@@ -2703,6 +2742,7 @@ async function runOneClickClear() {
         bounds: preflightResult.bounds,
         boundsRect: boundsRect.value,
         candidates,
+        hitCandidates,
         isCancelled: () => pathfindingToken !== smartPathfindingCancelToken,
         minimumGraphXStep: minimumPathGraphXStep.value,
         onDebugTiming: debugInfoEnabled.value
@@ -2729,6 +2769,7 @@ async function runOneClickClear() {
       measureSmartPathfindingDebugStage(timings, "one-click-clear-apply-result", () =>
         setPathPixels(result.pathPoints),
       );
+      flashOneClickClearHitSoldiers(result.targetIds);
       let completedAt = nowMs();
       measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
         completedAt = nowMs();
@@ -2790,7 +2831,7 @@ function createOneClickClearCandidates(): GraphwarOneClickClearCandidate[] {
     }
 
     const center = getDetectionBoxCenter(soldier);
-    if (!soldierAimXReachesMinimumForward(createSoldierHitCircleXPlusEdgePoint(soldier), startPoint)) {
+    if (!oneClickClearSoldierReachesForward(soldier, startPoint)) {
       return [];
     }
 
@@ -2803,6 +2844,37 @@ function createOneClickClearCandidates(): GraphwarOneClickClearCandidate[] {
       },
     ];
   });
+}
+
+/** 统计整条弹道命中数：只排除发射士兵，不能按当前路径尾点右侧过滤。 */
+function createOneClickClearHitCandidates(): GraphwarOneClickClearCandidate[] {
+  return detectedSoldiers.value.flatMap((soldier) => {
+    if (detectionBoxMatchesFirstPathPoint(soldier)) {
+      return [];
+    }
+    const friendly = isDetectedFriendlySoldierObstacle(soldier);
+    if (friendly && !friendlyFireEnabled.value) {
+      return [];
+    }
+
+    return [
+      {
+        enemy: !friendly,
+        hitCenter: getDetectionBoxCenter(soldier),
+        hitRadius: soldier.hitRadius,
+        id: soldier.id,
+      },
+    ];
+  });
+}
+
+/** 一键清图候选只用截图平面精度；输出保留小数位只在最终公式验证阶段生效。 */
+function oneClickClearSoldierReachesForward(soldier: DetectionBox, startPoint: PixelPoint) {
+  return imagePointToPlaneX(createSoldierHitCircleXPlusEdgePoint(soldier)) - imagePointToPlaneX(startPoint) >= 1;
+}
+
+function imagePointToPlaneX(point: PixelPoint) {
+  return ((point.x - boundsRect.value.x) / boundsRect.value.width) * GRAPHWAR_PLANE_LENGTH;
 }
 
 /** 一键清图失败原因用独立文案，避免和单目标智能寻路失败混在一起。 */
@@ -5017,6 +5089,19 @@ async function copyText(text: string) {
               :r="box.visualRadius"
             />
           </g>
+          <g
+            v-if="oneClickClearHitFlashActive"
+            class="graphwar-killer__detection-flash-group"
+          >
+            <circle
+              v-for="box in oneClickClearHitFlashSoldiers"
+              :key="`one-click-clear-hit-flash-${box.id}`"
+              class="graphwar-killer__detection-flash-circle graphwar-killer__detection-flash-circle--hit"
+              :cx="box.visualCenterX"
+              :cy="box.visualCenterY"
+              :r="box.visualRadius"
+            />
+          </g>
           <ellipse
             v-if="obstacleBrushPreview"
             class="graphwar-killer__obstacle-brush-preview"
@@ -5274,6 +5359,19 @@ async function copyText(text: string) {
                   v-for="box in detectedSoldiers"
                   :key="`magnifier-detection-flash-${box.id}`"
                   class="graphwar-killer__detection-flash-circle"
+                  :cx="box.visualCenterX"
+                  :cy="box.visualCenterY"
+                  :r="box.visualRadius"
+                />
+              </g>
+              <g
+                v-if="oneClickClearHitFlashActive"
+                class="graphwar-killer__detection-flash-group"
+              >
+                <circle
+                  v-for="box in oneClickClearHitFlashSoldiers"
+                  :key="`magnifier-one-click-clear-hit-flash-${box.id}`"
+                  class="graphwar-killer__detection-flash-circle graphwar-killer__detection-flash-circle--hit"
                   :cx="box.visualCenterX"
                   :cy="box.visualCenterY"
                   :r="box.visualRadius"
@@ -5949,6 +6047,10 @@ async function copyText(text: string) {
   stroke: #2563eb;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
+}
+
+.graphwar-killer__detection-flash-circle--hit {
+  stroke: #16a34a;
 }
 
 .graphwar-killer__detection--hovered {

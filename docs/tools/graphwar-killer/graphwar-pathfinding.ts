@@ -45,12 +45,36 @@ export interface GraphwarPathfindingOptions {
   routeMask: Uint8Array;
   /** 当前 route tolerance，供轮廓 RDP 简化计算 epsilon。 */
   routeTolerancePlanePixels?: number;
+  /** 同一个固定 mask 上复用的可见图障碍轮廓，避免批量寻路时反复扫描障碍。 */
+  visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
   /** 路径起点，截图像素坐标。 */
   startPoint: PixelPoint;
   /** 路径终点，截图像素坐标。 */
   targetPoint: PixelPoint;
   /** 页面动画用的调度钩子；worker 不传时算法保持同步执行。 */
   yieldControl?: () => Promise<void> | void;
+}
+
+/** 预构建可见图障碍数据的输入；调用方需要在使用期间保持 routeMask 不变。 */
+export interface GraphwarVisibilityGraphObstacleDataOptions {
+  /** 当前 Graphwar 坐标边界，用于判断是否需要镜像到 x+ 搜索坐标系。 */
+  bounds: GraphBounds;
+  /** 已按 route tolerance 膨胀或腐蚀后的障碍 mask。 */
+  routeMask: Uint8Array;
+  /** 当前 route tolerance，供轮廓 RDP 简化计算 epsilon。 */
+  routeTolerancePlanePixels?: number;
+}
+
+/** 与固定 mask、x+ 方向和 route tolerance 绑定的可见图障碍轮廓缓存。 */
+export interface GraphwarVisibilityGraphObstacleData {
+  /** 已按 mirror/tolerance 简化过的障碍轮廓。 */
+  readonly contours: readonly VisibilityGraphObstacleContour[];
+  /** 是否把原始平面镜像到 x+ 搜索坐标系。 */
+  readonly mirrored: boolean;
+  /** 缓存所属 mask；用引用相等防止跨友伤模式或跨容差误用。 */
+  readonly routeMask: Uint8Array;
+  /** 缓存所属 route tolerance。 */
+  readonly routeTolerancePlanePixels: number;
 }
 
 /** Route tolerance 枚举输入；页面解析和 worker 请求只需满足这三个字段。 */
@@ -92,6 +116,16 @@ interface BoundaryContourRange {
   endIndex: number;
   /** 区间起点在原始轮廓数组中的下标。 */
   startIndex: number;
+}
+
+/** 一个已经简化、可被多条路径候选过滤复用的障碍边界轮廓。 */
+interface VisibilityGraphObstacleContour {
+  /** 轮廓所属连通域；选自由候选点时仍需要中心和 cell 集合。 */
+  component: RouteMaskComponent;
+  /** 已按 route tolerance 简化的闭合轮廓点。 */
+  points: BoundaryContourPoint[];
+  /** 简化轮廓有符号面积，用于过滤明显凹角。 */
+  signedArea: number;
 }
 
 /** Lazy visibility search 的排序代价：先短路径，再少折线段。 */
@@ -185,6 +219,7 @@ export async function buildSmartPathfindingPathForMask(options: GraphwarPathfind
     routeTolerancePlanePixels: options.routeTolerancePlanePixels ?? 1,
     start,
     target,
+    visibilityGraphObstacleData: options.visibilityGraphObstacleData,
   });
   const path = await findLazyVisibilityGraphPath({
     boundaryExpansion: options.boundaryExpansion,
@@ -199,6 +234,18 @@ export async function buildSmartPathfindingPathForMask(options: GraphwarPathfind
     yieldControl: options.yieldControl,
   });
   return path?.map((point) => mirrorPlaneGridPoint(point, mirrored));
+}
+
+/** 为固定 route mask 预构建障碍连通域和简化轮廓，供同一批路径搜索复用。 */
+export function createGraphwarVisibilityGraphObstacleData(
+  options: GraphwarVisibilityGraphObstacleDataOptions,
+): GraphwarVisibilityGraphObstacleData {
+  const mirrored = !xPlusGoesRight(options.bounds);
+  return createVisibilityGraphObstacleDataForMirroredMask({
+    mirrored,
+    routeMask: options.routeMask,
+    routeTolerancePlanePixels: options.routeTolerancePlanePixels ?? 1,
+  });
 }
 
 /** 枚举路线容差，优先尝试最小容差，失败后逐步放宽或收紧 mask。 */
@@ -311,6 +358,7 @@ function collectVisibilityGraphCandidates({
   routeTolerancePlanePixels,
   start,
   target,
+  visibilityGraphObstacleData,
 }: {
   boundaryExpansion: number;
   canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
@@ -319,54 +367,113 @@ function collectVisibilityGraphCandidates({
   routeTolerancePlanePixels: number;
   start: PlaneGridPoint;
   target: PlaneGridPoint;
+  visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
 }) {
   const candidateMap = new Map<string, PlaneGridPoint>();
   const startKey = createPlaneGridPointKey(start);
   const targetKey = createPlaneGridPointKey(target);
   const minPathX = Math.min(start.x, target.x);
   const maxPathX = Math.max(start.x, target.x);
-  const epsilon = clampNumber(Math.abs(routeTolerancePlanePixels) * 0.75, 1, 6);
+  const obstacleData = getCompatibleVisibilityGraphObstacleData({
+    mirrored,
+    routeMask,
+    routeTolerancePlanePixels,
+    visibilityGraphObstacleData,
+  });
 
-  for (const component of collectRouteMaskComponents(routeMask, mirrored)) {
-    for (const contour of collectComponentBoundaryContours(component)) {
-      const simplifiedContour = simplifyClosedBoundaryContour(contour, epsilon);
-      const area = calculateSignedArea(simplifiedContour);
-      for (let index = 0; index < simplifiedContour.length; index += 1) {
-        const previous = simplifiedContour[(index - 1 + simplifiedContour.length) % simplifiedContour.length];
-        const current = simplifiedContour[index];
-        const next = simplifiedContour[(index + 1) % simplifiedContour.length];
-        if (!current || !previous || !next) {
-          continue;
-        }
-        if (isNearCollinear(previous, current, next) || isClearlyConcave(previous, current, next, area)) {
-          continue;
-        }
+  for (const contour of obstacleData.contours) {
+    const simplifiedContour = contour.points;
+    for (let index = 0; index < simplifiedContour.length; index += 1) {
+      const previous = simplifiedContour[(index - 1 + simplifiedContour.length) % simplifiedContour.length];
+      const current = simplifiedContour[index];
+      const next = simplifiedContour[(index + 1) % simplifiedContour.length];
+      if (!current || !previous || !next) {
+        continue;
+      }
+      if (isNearCollinear(previous, current, next) || isClearlyConcave(previous, current, next, contour.signedArea)) {
+        continue;
+      }
 
-        const candidate = selectNearbyFreeCellCandidate({
-          boundaryExpansion,
-          boundaryPoint: current,
-          component,
-          maxPathX,
-          minPathX,
-          mirrored,
-          routeMask,
-        });
-        if (!candidate) {
-          continue;
-        }
-        if (!canAdvance(start, candidate) && !canAdvance(candidate, target)) {
-          continue;
-        }
+      const candidate = selectNearbyFreeCellCandidate({
+        boundaryExpansion,
+        boundaryPoint: current,
+        component: contour.component,
+        maxPathX,
+        minPathX,
+        mirrored,
+        routeMask,
+      });
+      if (!candidate) {
+        continue;
+      }
+      if (!canAdvance(start, candidate) && !canAdvance(candidate, target)) {
+        continue;
+      }
 
-        const key = createPlaneGridPointKey(candidate);
-        if (key !== startKey && key !== targetKey && !candidateMap.has(key)) {
-          candidateMap.set(key, candidate);
-        }
+      const key = createPlaneGridPointKey(candidate);
+      if (key !== startKey && key !== targetKey && !candidateMap.has(key)) {
+        candidateMap.set(key, candidate);
       }
     }
   }
 
   return [start, target, ...[...candidateMap.values()].sort((left, right) => left.x - right.x || left.y - right.y)];
+}
+
+function getCompatibleVisibilityGraphObstacleData({
+  mirrored,
+  routeMask,
+  routeTolerancePlanePixels,
+  visibilityGraphObstacleData,
+}: {
+  mirrored: boolean;
+  routeMask: Uint8Array;
+  routeTolerancePlanePixels: number;
+  visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
+}) {
+  // 友伤模式、镜像方向和 route tolerance 都会改变轮廓；不匹配时宁可重建，避免复用错误候选。
+  if (
+    visibilityGraphObstacleData &&
+    visibilityGraphObstacleData.mirrored === mirrored &&
+    visibilityGraphObstacleData.routeMask === routeMask &&
+    nearlyEqual(visibilityGraphObstacleData.routeTolerancePlanePixels, routeTolerancePlanePixels)
+  ) {
+    return visibilityGraphObstacleData;
+  }
+  return createVisibilityGraphObstacleDataForMirroredMask({
+    mirrored,
+    routeMask,
+    routeTolerancePlanePixels,
+  });
+}
+
+function createVisibilityGraphObstacleDataForMirroredMask({
+  mirrored,
+  routeMask,
+  routeTolerancePlanePixels,
+}: {
+  mirrored: boolean;
+  routeMask: Uint8Array;
+  routeTolerancePlanePixels: number;
+}): GraphwarVisibilityGraphObstacleData {
+  const epsilon = clampNumber(Math.abs(routeTolerancePlanePixels) * 0.75, 1, 6);
+  const contours: VisibilityGraphObstacleContour[] = [];
+  for (const component of collectRouteMaskComponents(routeMask, mirrored)) {
+    for (const contour of collectComponentBoundaryContours(component)) {
+      const points = simplifyClosedBoundaryContour(contour, epsilon);
+      contours.push({
+        component,
+        points,
+        signedArea: calculateSignedArea(points),
+      });
+    }
+  }
+  return {
+    contours,
+    mirrored,
+    routeMask,
+    routeTolerancePlanePixels,
+  };
 }
 
 /** 用 BFS 收集 route mask 中的 8 邻域阻挡连通域。 */

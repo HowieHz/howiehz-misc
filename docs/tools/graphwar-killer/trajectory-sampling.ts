@@ -478,6 +478,8 @@ function createGraphwarTrajectoryStopTracker(options: {
       options.targetSequencePoints ?? (options.targetPoint ? [options.targetPoint] : []),
       options.soldierMarkerRadius,
     );
+  // 采样点循环会高频判障碍；边界收缩在这里归一化一次，避免每个采样点重复处理。
+  const collisionBoundaryExpansion = normalizeBoundaryExpansion(options.collision?.boundaryExpansion ?? 0);
   const visiblePixels: PixelPoint[] = [];
   let earlyStopReason: GraphwarTrajectoryEarlyStopReason | undefined;
   let obstacleHitIndex = -1;
@@ -511,12 +513,7 @@ function createGraphwarTrajectoryStopTracker(options: {
       // 障碍 mask 的边界扩张在像素转平面格点后判断，和自动寻路的模拟障碍保持一致。
       if (
         options.collision?.mask &&
-        graphwarPixelPointHitsMask(
-          pixel,
-          options.boundsRect,
-          options.collision.mask,
-          options.collision.boundaryExpansion,
-        )
+        graphwarPixelPointHitsMask(pixel, options.boundsRect, options.collision.mask, collisionBoundaryExpansion)
       ) {
         obstacleHitIndex = index;
         earlyStopReason = "obstacle";
@@ -600,10 +597,17 @@ function pointHitsPlaneMask(point: PlaneGridPoint, mask: Uint8Array, boundaryExp
 
 /** 判断平面点是否在收缩后的可模拟区域内。 */
 function isInsidePlaneWithBoundaryExpansion(x: number, y: number, boundaryExpansion: number) {
-  const expansion = Math.max(0, Math.floor(boundaryExpansion));
   return (
-    x >= expansion && x < GRAPHWAR_PLANE_LENGTH - expansion && y >= expansion && y < GRAPHWAR_PLANE_HEIGHT - expansion
+    x >= boundaryExpansion &&
+    x < GRAPHWAR_PLANE_LENGTH - boundaryExpansion &&
+    y >= boundaryExpansion &&
+    y < GRAPHWAR_PLANE_HEIGHT - boundaryExpansion
   );
+}
+
+/** 边界收缩允许小数输入；进入采样点碰撞热路径前统一折成非负整数。 */
+function normalizeBoundaryExpansion(boundaryExpansion: number) {
+  return boundaryExpansion > 0 ? Math.floor(boundaryExpansion) : 0;
 }
 
 /** 创建缺少路径点或目标时的空路径验证结果。 */

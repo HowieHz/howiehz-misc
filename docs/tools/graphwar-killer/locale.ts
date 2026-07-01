@@ -151,7 +151,7 @@ export const graphwarKillerLocale = {
       needCurrentPath: "一键清图需要先选择当前路径起点",
       noCandidate: "一键清图失败：当前路径右侧没有可选目标",
       noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,
-      success: (kills, elapsed) => `一键清图完成，追加 ${kills} 个目标，耗时 ${elapsed}`,
+      success: (killCount, elapsed) => `一键清图完成，击杀 ${killCount} 个士兵，耗时 ${elapsed}`,
       unsupported: "一键清图首版只支持双绝对值函数的 y= 和 y'= 模式",
     },
   },

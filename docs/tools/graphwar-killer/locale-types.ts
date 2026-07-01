@@ -186,7 +186,7 @@ export interface GraphwarKillerLocale {
       needCurrentPath: string;
       noCandidate: string;
       noUsableTarget: (elapsed: string) => string;
-      success: (kills: number, elapsed: string) => string;
+      success: (killCount: number, elapsed: string) => string;
       unsupported: string;
     };
   };

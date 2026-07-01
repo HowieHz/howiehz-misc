@@ -205,6 +205,8 @@ interface SmartPathfindingDebugTimingEntry {
 interface SmartPathfindingDebugTimingRow extends SmartPathfindingDebugTimingEntry {
   /** 鼠标悬停说明；用于解释不直接对应某个函数块的阶段。 */
   title?: string;
+  /** 展示缩进层级；一键清图内部阶段有父子 inclusive 耗时，缩进避免误读为同级相加。 */
+  indentLevel: number;
   /** 展示标签，子项会以 "- " 开头。 */
   label: string;
 }
@@ -989,11 +991,7 @@ const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
   })),
 );
 const smartPathfindingDebugTimingRows = computed<SmartPathfindingDebugTimingRow[]>(() =>
-  smartPathfindingDebugTimingEntries.value.map((entry) => ({
-    ...entry,
-    label: getSmartPathfindingDebugTimingLabel(entry),
-    title: getSmartPathfindingDebugTimingTitle(entry),
-  })),
+  createSmartPathfindingDebugTimingRows(smartPathfindingDebugTimingEntries.value),
 );
 
 const magnifierZoom = computed(() =>
@@ -2074,6 +2072,94 @@ function addOneClickClearSearchDebugTiming(
     elapsedMs,
     stage: "one-click-clear-search",
   });
+}
+
+const ONE_CLICK_CLEAR_SEARCH_DEBUG_DETAIL_ORDER: readonly GraphwarOneClickClearDebugStage[] = [
+  "validate-prefix",
+  "build-dag-targets",
+  "build-dag-edges",
+  "route-pathfinding",
+  "route-map-pixels",
+  "dag-longest-path",
+  "validate-route",
+  "segment-graph-rule",
+  "segment-build-formula",
+  "segment-sample-trajectory",
+  "remove-failed-edge",
+  "optimize-path",
+  "validate-final",
+];
+
+const ONE_CLICK_CLEAR_NESTED_DEBUG_DETAILS = new Set<GraphwarOneClickClearDebugStage>([
+  "route-pathfinding",
+  "route-map-pixels",
+  "segment-graph-rule",
+  "segment-build-formula",
+  "segment-sample-trajectory",
+]);
+
+function createSmartPathfindingDebugTimingRows(
+  entries: readonly SmartPathfindingDebugTimingEntry[],
+): SmartPathfindingDebugTimingRow[] {
+  const rows: SmartPathfindingDebugTimingRow[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry) {
+      continue;
+    }
+    if (entry.stage !== "one-click-clear-search" || entry.detail) {
+      rows.push(createSmartPathfindingDebugTimingRow(entry));
+      continue;
+    }
+
+    rows.push(createSmartPathfindingDebugTimingRow(entry));
+    const detailEntries: SmartPathfindingDebugTimingEntry[] = [];
+    for (index += 1; index < entries.length; index += 1) {
+      const detailEntry = entries[index];
+      if (detailEntry?.stage !== "one-click-clear-search" || !detailEntry.detail) {
+        index -= 1;
+        break;
+      }
+      detailEntries.push(detailEntry);
+    }
+    rows.push(...sortOneClickClearSearchDebugDetails(detailEntries).map(createSmartPathfindingDebugTimingRow));
+  }
+  return rows;
+}
+
+function createSmartPathfindingDebugTimingRow(entry: SmartPathfindingDebugTimingEntry): SmartPathfindingDebugTimingRow {
+  return {
+    ...entry,
+    indentLevel: getSmartPathfindingDebugTimingIndentLevel(entry),
+    label: getSmartPathfindingDebugTimingLabel(entry),
+    title: getSmartPathfindingDebugTimingTitle(entry),
+  };
+}
+
+function sortOneClickClearSearchDebugDetails(
+  entries: readonly SmartPathfindingDebugTimingEntry[],
+): SmartPathfindingDebugTimingEntry[] {
+  const remaining = [...entries];
+  const sorted: SmartPathfindingDebugTimingEntry[] = [];
+  for (const detail of ONE_CLICK_CLEAR_SEARCH_DEBUG_DETAIL_ORDER) {
+    const index = remaining.findIndex((entry) => entry.detail === detail);
+    if (index < 0) {
+      continue;
+    }
+
+    const [entry] = remaining.splice(index, 1);
+    if (entry) {
+      sorted.push(entry);
+    }
+  }
+  return [...sorted, ...remaining];
+}
+
+function getSmartPathfindingDebugTimingIndentLevel(entry: SmartPathfindingDebugTimingEntry) {
+  if (!entry.detail) {
+    return 0;
+  }
+  return ONE_CLICK_CLEAR_NESTED_DEBUG_DETAILS.has(entry.detail) ? 2 : 1;
 }
 
 function getSmartPathfindingDebugTimingLabel(entry: SmartPathfindingDebugTimingEntry) {
@@ -4725,6 +4811,8 @@ async function copyText(text: string) {
                 <span
                   v-for="(entry, index) in smartPathfindingDebugTimingRows"
                   :key="`${entry.stage}-${index}`"
+                  class="graphwar-killer__debug-timing-row"
+                  :style="{ '--graphwar-killer-debug-indent-level': entry.indentLevel }"
                   :title="entry.title"
                 >
                   {{ entry.label }}:
@@ -6433,6 +6521,10 @@ async function copyText(text: string) {
 
 .graphwar-killer__debug-timing > span {
   min-width: max-content;
+}
+
+.graphwar-killer__debug-timing-row {
+  padding-inline-start: calc(var(--graphwar-killer-debug-indent-level, 0) * 1rem);
 }
 
 .graphwar-killer__pathfinding-setting-grid {

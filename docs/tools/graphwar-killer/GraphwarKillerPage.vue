@@ -122,6 +122,7 @@ type ParsedObstacleTolerances =
   | {
       ok: true;
       boundaryExpansionPlanePixels: number;
+      oneClickClearDeleteCheckRadiusPixels: number;
       routePlanningTolerancePlanePixels: number;
       simulationTolerancePlanePixels: number;
     }
@@ -282,6 +283,8 @@ const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const magnifierMinimumZoom = 1;
 const magnifierSliderMaximumZoom = 5;
 const magnifierInputMaximumZoom = 100;
+const oneClickClearDeleteCheckRadiusMinimumPixels = 1;
+const oneClickClearDeleteCheckRadiusDefaultPixels = 3.5;
 const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
@@ -343,6 +346,7 @@ const templateMatchingWorkerCountText = ref(String(graphwarToolDefaults.template
 const routePlanningToleranceText = ref(String(GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS));
 const obstacleSimulationToleranceText = ref("1");
 const pathfindingBoundaryExpansionText = ref("1");
+const oneClickClearDeleteCheckRadiusText = ref(String(oneClickClearDeleteCheckRadiusDefaultPixels));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
 const {
@@ -583,6 +587,11 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     return { ok: false as const, message: locale.validation.boundaryExpansionNegative };
   }
 
+  const oneClickClearDeleteCheckRadiusPixels = parseFiniteNumber(oneClickClearDeleteCheckRadiusText.value);
+  if (oneClickClearDeleteCheckRadiusPixels === undefined) {
+    return { ok: false as const, message: locale.validation.oneClickClearDeleteCheckRadiusNumber };
+  }
+
   if (Math.abs(routePlanningTolerancePlanePixels) > graphwarObstacleToleranceLimit) {
     return {
       ok: false as const,
@@ -604,9 +613,23 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     };
   }
 
+  if (
+    oneClickClearDeleteCheckRadiusPixels < oneClickClearDeleteCheckRadiusMinimumPixels ||
+    oneClickClearDeleteCheckRadiusPixels > soldierMarkerRadius.value
+  ) {
+    return {
+      ok: false as const,
+      message: locale.validation.oneClickClearDeleteCheckRadiusRange(
+        oneClickClearDeleteCheckRadiusMinimumPixels,
+        soldierMarkerRadius.value,
+      ),
+    };
+  }
+
   return {
     ok: true as const,
     boundaryExpansionPlanePixels,
+    oneClickClearDeleteCheckRadiusPixels,
     routePlanningTolerancePlanePixels,
     simulationTolerancePlanePixels,
   };
@@ -1427,9 +1450,20 @@ watch([smartCursorEnabled, smartPathfindingEnabled, detectedObstacles], () => {
   }
 });
 
-watch([routePlanningToleranceText, pathfindingBoundaryExpansionText, minXText, maxXText, minYText, maxYText], () => {
-  clearSmartPathfindingStatus();
-});
+watch(
+  [
+    routePlanningToleranceText,
+    pathfindingBoundaryExpansionText,
+    oneClickClearDeleteCheckRadiusText,
+    minXText,
+    maxXText,
+    minYText,
+    maxYText,
+  ],
+  () => {
+    clearSmartPathfindingStatus();
+  },
+);
 
 /** 根据当前算法限制 Graphwar 不支持或工具无法稳定生成的公式模式。 */
 function isEquationModeDisabled(mode: EquationMode) {
@@ -2794,6 +2828,7 @@ async function runOneClickClear() {
         bounds: preflightResult.bounds,
         boundsRect: boundsRect.value,
         candidates,
+        deleteCheckRadiusPixels: preflightResult.tolerances.oneClickClearDeleteCheckRadiusPixels,
         hitCandidates,
         isCancelled: () => pathfindingToken !== smartPathfindingCancelToken,
         onDebugTiming: (timing) =>
@@ -4740,6 +4775,22 @@ async function copyText(text: string) {
               </label>
             </div>
           </details>
+          <label
+            class="graphwar-killer__detection-setting-label"
+            :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
+          >
+            {{ locale.ui.pathfinding.oneClickClearDeleteCheckRadius }}
+            <input
+              v-model="oneClickClearDeleteCheckRadiusText"
+              inputmode="decimal"
+              :min="oneClickClearDeleteCheckRadiusMinimumPixels"
+              :max="soldierMarkerRadius"
+              step="0.1"
+              :aria-label="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusAriaLabel"
+              :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
+            >
+            <span>{{ locale.ui.pathfinding.unit }}</span>
+          </label>
         </div>
       </div>
     </section>

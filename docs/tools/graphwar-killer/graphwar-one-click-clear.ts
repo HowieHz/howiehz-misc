@@ -734,7 +734,7 @@ async function optimizeOneClickClearPath(
   }
   if (localDeleteProofIsEnough && optimized !== route) {
     workUnits += 1;
-    // y= abs 的删点判断可由局部折线命中证明；这里保留一次整体验证，防止障碍/边界等非士兵因素漏判。
+    // y=/y'= abs 的删点可由局部折线命中证明；这里保留一次整体验证，防止障碍/边界等非士兵因素漏判。
     if (!validateOneClickClearTargetSequence(context.options, optimized)) {
       return { route, workUnits };
     }
@@ -799,7 +799,7 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
     return false;
   }
 
-  // y= abs 删除一个控制点时，只会把 previous->deleted->next 替换成 previous->next；先证明局部士兵命中不丢。
+  // abs 删除一个控制点时，只会把 previous->deleted->next 替换成 previous->next；先证明局部士兵命中不丢。
   for (const target of options.hitCandidates) {
     const oldLocalPathHitsTarget =
       pixelSegmentHitsCircle(previousPoint, deletedPoint, target.hitCenter, target.hitRadius) ||
@@ -819,7 +819,7 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
 }
 
 function oneClickClearLocalDeleteProofIsEnough(options: GraphwarOneClickClearOptions) {
-  return options.settings.algorithm === "abs" && options.settings.equation === "y";
+  return options.settings.algorithm === "abs" && options.settings.equation !== "ddy";
 }
 
 function pixelPointHitsCircle(point: PixelPoint, center: PixelPoint, radius: number) {

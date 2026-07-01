@@ -350,6 +350,59 @@ export const graphwarKillerLocale = {
       boundaryExpansionTitle:
         "Treat the play-area boundary as expanded inward into the collision area. Unit: raw Graphwar 770x450 plane pixels.",
       debugNoTiming: "No pathfinding timing recorded yet",
+      debugDetails: {
+        "build-targets": {
+          label: "- Build clear target order",
+          title: "Convert selectable soldiers into the One-Click Clear target order sorted by increasing Graphwar x.",
+        },
+        "optimize-path": {
+          label: "- Optimize clear path",
+          title:
+            "Conservatively delete points from the best clear path and verify each deletion still hits targets in order.",
+        },
+        "route-cache-lookup": {
+          label: "- Check clear route cache",
+          title:
+            "Build the geometry route cache key and check whether the current state, target point, and route mask already have a cached result.",
+        },
+        "route-map-pixels": {
+          label: "- Map clear route pixels",
+          title:
+            "Convert Graphwar plane grid cells returned by geometry pathfinding into screenshot pixel path points.",
+        },
+        "route-pathfinding": {
+          label: "- Run clear geometry search",
+          title:
+            "When the cache misses, search for an obstacle-avoiding geometry route from the current clear state to the candidate hit point.",
+        },
+        "segment-build-formula": {
+          label: "- Build clear segment formula",
+          title: "Convert the candidate segment path into a Graphwar formula sampling context.",
+        },
+        "segment-collect-hits": {
+          label: "- Scan incidental clear hits",
+          title:
+            "Scan visible pixels on the segment trajectory and add soldiers incidentally hit before the explicit target to the kill sequence.",
+        },
+        "segment-graph-rule": {
+          label: "- Check clear segment x+",
+          title:
+            "Check whether adjacent points in the candidate segment satisfy the minimum x+ step for the current output precision.",
+        },
+        "segment-sample-trajectory": {
+          label: "- Sample clear segment trajectory",
+          title:
+            "Sample the candidate segment's real Graphwar trajectory and confirm it reaches the explicit target without hitting an obstacle first.",
+        },
+        "validate-final": {
+          label: "- Validate final clear",
+          title: "Resample the optimized full clear path and confirm it still hits every recorded target in order.",
+        },
+        "validate-prefix": {
+          label: "- Validate clear prefix",
+          title: "Validate the existing path reaches its last point and save the reusable trajectory sampling state.",
+        },
+      },
       debugStages: {
         "apply-result": {
           label: "Apply path result",

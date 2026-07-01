@@ -1,6 +1,7 @@
 /** 定义 Graphwar 杀手本地化文案结构，供中英文页面共享。 */
 import type { GraphwarDetectionWarning } from "./graphwar-detection";
 import type { GraphwarDetectionWorkerTimingDetail } from "./graphwar-detection-worker-types";
+import type { GraphwarOneClickClearDebugStage } from "./graphwar-one-click-clear";
 import type { AlgorithmMode, EquationMode } from "./types";
 
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
@@ -262,6 +263,7 @@ export interface GraphwarKillerLocale {
       boundaryExpansion: string;
       boundaryExpansionAriaLabel: string;
       boundaryExpansionTitle: string;
+      debugDetails: Record<GraphwarOneClickClearDebugStage, GraphwarKillerDebugStageText>;
       debugNoTiming: string;
       debugStages: Record<
         | "preflight"

@@ -600,7 +600,7 @@ function simplifyOpenBoundaryContour(points: BoundaryContourPoint[], epsilon: nu
   }
 
   const pendingRanges: BoundaryContourRange[] = [{ startIndex: 0, endIndex: points.length - 1 }];
-  const simplifiedRanges: BoundaryContourRange[] = [];
+  const keptRanges: BoundaryContourRange[] = [];
   while (pendingRanges.length > 0) {
     const range = pendingRanges.pop();
     if (!range) {
@@ -610,7 +610,7 @@ function simplifyOpenBoundaryContour(points: BoundaryContourPoint[], epsilon: nu
     const start = points[range.startIndex];
     const end = points[range.endIndex];
     if (!start || !end || range.endIndex - range.startIndex <= 1) {
-      simplifiedRanges.push(range);
+      keptRanges.push(range);
       continue;
     }
 
@@ -629,16 +629,18 @@ function simplifyOpenBoundaryContour(points: BoundaryContourPoint[], epsilon: nu
     }
 
     if (maxDistance <= epsilon) {
-      simplifiedRanges.push(range);
+      keptRanges.push(range);
       continue;
     }
 
+    // 先压右半段再压左半段，让 pop() 优先处理左侧，叶区间自然保持轮廓顺序。
     pendingRanges.push({ startIndex: splitIndex, endIndex: range.endIndex });
     pendingRanges.push({ startIndex: range.startIndex, endIndex: splitIndex });
   }
 
+  // keptRanges 通常远少于原始点；直接拼叶区间端点，避免再分配标记数组并全量扫描 points。
   const simplified: BoundaryContourPoint[] = [];
-  for (const range of simplifiedRanges) {
+  for (const range of keptRanges) {
     const start = points[range.startIndex];
     const end = points[range.endIndex];
     if (!start || !end) {

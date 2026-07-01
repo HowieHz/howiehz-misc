@@ -48,11 +48,16 @@ import {
 } from "./graphwar-one-click-clear";
 import {
   buildSmartPathfindingPathForMask,
+  createGraphwarVisibilityGraphObstacleData,
   createRouteMaskCacheKey,
   mirrorPlaneGridPoint,
   planeGridCellCenterToImagePoint,
 } from "./graphwar-pathfinding";
-import type { GraphwarPathfindingPreview, PlaneGridPoint } from "./graphwar-pathfinding";
+import type {
+  GraphwarPathfindingPreview,
+  GraphwarVisibilityGraphObstacleData,
+  PlaneGridPoint,
+} from "./graphwar-pathfinding";
 import { createHeaderStatus, getFirstHeaderStatus, getSmartPathfindingHeaderStatus } from "./header-status";
 import type { GraphwarKillerLocale } from "./locale-types";
 import {
@@ -249,6 +254,8 @@ interface TrajectoryCollisionSettings {
 interface RouteMaskCacheEntry {
   /** 膨胀或腐蚀后的 mask。 */
   mask: Uint8Array;
+  /** 同一 mask/tolerance/direction 下复用的可见图障碍数据。 */
+  visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
 }
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
@@ -2942,6 +2949,11 @@ async function buildSmartPathfindingPath(
   const routeTolerance = tolerances.routePlanningTolerancePlanePixels;
   const routeMaskEntry = getCachedRouteMask(obstacleMask, routeTolerance);
   const routeMask = routeMaskEntry.mask;
+  const visibilityGraphObstacleData = getCachedRouteMaskVisibilityGraphObstacleData(
+    routeMaskEntry,
+    boundsResult.bounds,
+    routeTolerance,
+  );
   const pathfindingPath = await measureSmartPathfindingDebugStageAsync(timings, "search-route", () =>
     buildSmartPathfindingPathForMask({
       bounds: boundsResult.bounds,
@@ -2954,6 +2966,7 @@ async function buildSmartPathfindingPath(
       routeTolerancePlanePixels: routeTolerance,
       startPoint,
       targetPoint,
+      visibilityGraphObstacleData,
       yieldControl: waitForNextPathfindingSlice,
     }),
   );
@@ -3278,6 +3291,32 @@ function getCachedRouteMask(mask: Uint8Array, routeTolerance: number): RouteMask
   };
   entries.set(key, entry);
   return entry;
+}
+
+function getCachedRouteMaskVisibilityGraphObstacleData(
+  entry: RouteMaskCacheEntry,
+  bounds: GraphBounds,
+  routeTolerance: number,
+) {
+  const mirrored = !xPlusGoesRight(bounds);
+  const cached = entry.visibilityGraphObstacleData;
+  if (
+    cached &&
+    cached.routeMask === entry.mask &&
+    cached.mirrored === mirrored &&
+    nearlyEqual(cached.routeTolerancePlanePixels, routeTolerance)
+  ) {
+    return cached;
+  }
+
+  // 普通寻路跨点击复用 route mask 上的轮廓数据；mask、方向或 tolerance 任一变化都会重建。
+  const next = createGraphwarVisibilityGraphObstacleData({
+    bounds,
+    routeMask: entry.mask,
+    routeTolerancePlanePixels: routeTolerance,
+  });
+  entry.visibilityGraphObstacleData = next;
+  return next;
 }
 
 /** 开始一次异步寻路/清图任务并返回取消 token。 */

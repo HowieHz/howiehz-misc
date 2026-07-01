@@ -73,6 +73,9 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
+    oneClickClearDeleteCheckRadiusNumber: "One-Click Clear delete-check radius must be a number",
+    oneClickClearDeleteCheckRadiusRange: (min, max) =>
+      `One-Click Clear delete-check radius must be between ${min}px and ${max}px`,
     routePlanningToleranceNumber: "Route planning tolerance must be a number",
     routePlanningTolerancePixelRange: (limit) => `Route planning tolerance must be between -${limit}px and ${limit}px`,
     simulationToleranceNumber: "Simulation tolerance must be a number",
@@ -531,6 +534,11 @@ export const graphwarKillerLocale = {
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
         "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
+      oneClickClearDeleteCheckRadius: "Clear delete-check radius",
+      oneClickClearDeleteCheckRadiusAriaLabel:
+        "One-Click Clear local hit check radius for delete optimization, in screenshot pixels",
+      oneClickClearDeleteCheckRadiusTitle:
+        "Local hit-preservation radius used by One-Click Clear delete optimization. Range: 1px to the current soldier hit-circle radius. Final full-route validation still uses the real hit circle.",
       oneClickClearTitle:
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
       routePlanningTolerance: "Route planning tolerance",

@@ -85,6 +85,8 @@ export interface GraphwarKillerLocale {
     obstacleMinAreaRange: (max: number) => string;
     obstacleBrushDiameterInteger: string;
     obstacleBrushDiameterRange: (min: number, max: number) => string;
+    oneClickClearDeleteCheckRadiusNumber: string;
+    oneClickClearDeleteCheckRadiusRange: (min: number, max: number) => string;
     routePlanningToleranceNumber: string;
     routePlanningTolerancePixelRange: (limit: number) => string;
     simulationToleranceNumber: string;
@@ -289,6 +291,9 @@ export interface GraphwarKillerLocale {
       debugSummary: string;
       obstacleExpansion: string;
       obstacleExpansionTitle: string;
+      oneClickClearDeleteCheckRadius: string;
+      oneClickClearDeleteCheckRadiusAriaLabel: string;
+      oneClickClearDeleteCheckRadiusTitle: string;
       oneClickClearTitle: string;
       routePlanningTolerance: string;
       routePlanningToleranceAriaLabel: string;

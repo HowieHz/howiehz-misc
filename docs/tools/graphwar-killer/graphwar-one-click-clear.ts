@@ -84,6 +84,8 @@ export interface GraphwarOneClickClearOptions {
   isCancelled?: () => boolean;
   /** 内部调试耗时回调；调用方负责聚合同类阶段，避免刷屏。 */
   onDebugTiming?: (timing: GraphwarOneClickClearDebugTiming) => void;
+  /** 一键清图删点局部保护半径；最终整路命中验证仍使用士兵真实命中圈。 */
+  deleteCheckRadiusPixels: number;
   /** 当前路径已有像素点。 */
   pathPoints: readonly PixelPoint[];
   /** 当前最后路径点的验证目标；传入士兵命中圈时可复用现有路径预检语义。 */
@@ -808,16 +810,19 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
 
   // abs 删除一个控制点时，只会把 previous->deleted->next 替换成 previous->next；先证明局部士兵命中不丢。
   for (const target of options.hitCandidates) {
+    // 设置已在页面层校验为正数；这里仅按单个士兵真实命中圈收紧上限，避免额外函数调用。
+    const checkRadius =
+      options.deleteCheckRadiusPixels < target.hitRadius ? options.deleteCheckRadiusPixels : target.hitRadius;
     const oldLocalPathHitsTarget =
-      pixelSegmentHitsCircle(previousPoint, deletedPoint, target.hitCenter, target.hitRadius) ||
-      (nextPoint ? pixelSegmentHitsCircle(deletedPoint, nextPoint, target.hitCenter, target.hitRadius) : false);
+      pixelSegmentHitsCircle(previousPoint, deletedPoint, target.hitCenter, checkRadius) ||
+      (nextPoint ? pixelSegmentHitsCircle(deletedPoint, nextPoint, target.hitCenter, checkRadius) : false);
     if (!oldLocalPathHitsTarget) {
       continue;
     }
 
     const newLocalPathHitsTarget = nextPoint
-      ? pixelSegmentHitsCircle(previousPoint, nextPoint, target.hitCenter, target.hitRadius)
-      : pixelPointHitsCircle(previousPoint, target.hitCenter, target.hitRadius);
+      ? pixelSegmentHitsCircle(previousPoint, nextPoint, target.hitCenter, checkRadius)
+      : pixelPointHitsCircle(previousPoint, target.hitCenter, checkRadius);
     if (!newLocalPathHitsTarget) {
       return false;
     }
@@ -838,23 +843,29 @@ function pixelSegmentHitsCircle(start: PixelPoint, end: PixelPoint, center: Pixe
     return false;
   }
 
-  const segmentLengthSquared = pixelPointDistanceSquared(start, end);
+  const radiusSquared = radius * radius;
+  const segmentX = end.x - start.x;
+  const segmentY = end.y - start.y;
+  const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
   if (segmentLengthSquared === 0) {
-    return pixelPointHitsCircle(start, center, radius);
+    const pointDx = center.x - start.x;
+    const pointDy = center.y - start.y;
+    return pointDx * pointDx + pointDy * pointDy < radiusSquared;
   }
 
-  const ratio = Math.min(
-    1,
-    Math.max(
-      0,
-      ((center.x - start.x) * (end.x - start.x) + (center.y - start.y) * (end.y - start.y)) / segmentLengthSquared,
-    ),
-  );
-  const closestPoint = {
-    x: start.x + (end.x - start.x) * ratio,
-    y: start.y + (end.y - start.y) * ratio,
-  };
-  return pixelPointDistanceSquared(closestPoint, center) < radius * radius;
+  // 删点优化会反复调用这里；展开 clamp、最近点和距离计算，避免短命对象和额外函数层级。
+  let ratio = ((center.x - start.x) * segmentX + (center.y - start.y) * segmentY) / segmentLengthSquared;
+  if (ratio < 0) {
+    ratio = 0;
+  } else if (ratio > 1) {
+    ratio = 1;
+  }
+
+  const closestX = start.x + segmentX * ratio;
+  const closestY = start.y + segmentY * ratio;
+  const closestDx = center.x - closestX;
+  const closestDy = center.y - closestY;
+  return closestDx * closestDx + closestDy * closestDy < radiusSquared;
 }
 
 function pixelPointDistanceSquared(left: Pick<PixelPoint, "x" | "y">, right: Pick<PixelPoint, "x" | "y">) {

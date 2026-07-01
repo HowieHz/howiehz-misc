@@ -4746,9 +4746,9 @@ async function copyText(text: string) {
             >
               {{ locale.ui.pathfinding.obstacleExpansion }}
             </summary>
-            <div class="graphwar-killer__pathfinding-setting-grid graphwar-killer__obstacle-expansion-settings">
+            <div class="graphwar-killer__pathfinding-setting-grid">
               <label
-                class="graphwar-killer__detection-setting-label"
+                class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
                 :title="locale.ui.pathfinding.routePlanningToleranceTitle"
               >
                 {{ locale.ui.pathfinding.routePlanningTolerance }}
@@ -4761,7 +4761,7 @@ async function copyText(text: string) {
                 <span>{{ locale.ui.pathfinding.unit }}</span>
               </label>
               <label
-                class="graphwar-killer__detection-setting-label"
+                class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
                 :title="locale.ui.pathfinding.simulationToleranceTitle"
               >
                 {{ locale.ui.pathfinding.simulationTolerance }}
@@ -4776,7 +4776,7 @@ async function copyText(text: string) {
             </div>
           </details>
           <label
-            class="graphwar-killer__detection-setting-label"
+            class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
             :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
           >
             {{ locale.ui.pathfinding.oneClickClearDeleteCheckRadius }}
@@ -6670,12 +6670,10 @@ async function copyText(text: string) {
   min-width: 0;
 }
 
-.graphwar-killer__obstacle-expansion-settings {
-  justify-items: start;
-}
-
-.graphwar-killer__obstacle-expansion-settings .graphwar-killer__detection-setting-label {
+/* 寻路数值项有的在 details 内、有的直接在分组内；统一收紧宽度，避免父 grid 拉伸后把输入框推右。 */
+.graphwar-killer__pathfinding-setting-label {
   grid-template-columns: max-content minmax(74px, 92px) auto;
+  justify-self: start;
 }
 
 .graphwar-killer__recognition-setting-row {

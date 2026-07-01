@@ -1183,8 +1183,6 @@ const smartPathfindingHeaderStatusResult = computed(() =>
   getSmartPathfindingHeaderStatus({
     smartPathfindingEnabled: effectiveSmartPathfindingEnabled.value,
     smartPathfindingSettingsMessage: smartPathfindingSettingsMessage.value,
-    trajectoryWarningMessage: trajectoryWarning.value,
-    trajectoryWarningKind: "warning",
     smartPathfindingStatusMessage: smartPathfindingStatus.value,
     smartPathfindingStatusKind: smartPathfindingStatusKind.value,
     enableHintMessage: "",

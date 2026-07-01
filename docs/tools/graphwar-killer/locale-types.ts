@@ -176,6 +176,7 @@ export interface GraphwarKillerLocale {
     cancelled: string;
     currentPathBlocked: string;
     failure: (elapsed?: string) => string;
+    forwardMinimumDouble: string;
     forwardPath: (minimumStep: string) => string;
     inProgress: {
       optimize: string;

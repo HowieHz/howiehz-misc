@@ -750,8 +750,53 @@ function reorderGraphwarExpressionTokens(
   start: number,
   end: number,
 ): boolean {
+  type ReorderStep =
+    | { kind: "range"; end: number; required: boolean; start: number }
+    | { kind: "token"; token: GraphwarExpressionToken };
+
+  const steps: ReorderStep[] = [{ kind: "range", start, end, required: true }];
+  while (steps.length > 0) {
+    const step = steps.pop();
+    if (!step) {
+      continue;
+    }
+
+    if (step.kind === "token") {
+      output.push(step.token);
+      continue;
+    }
+
+    const next = findGraphwarExpressionReorderToken(input, step.start, step.end);
+    if (next === -1) {
+      if (step.required) {
+        return false;
+      }
+      continue;
+    }
+
+    const token = input[next];
+    const paramCount = getGraphwarExpressionTokenParamCount(token.type);
+    output.push(token);
+    if (paramCount === 1) {
+      steps.push({ kind: "range", start: next + 1, end: step.end, required: false });
+    } else if (paramCount === 2) {
+      steps.push({ kind: "range", start: next + 1, end: step.end, required: false });
+      if (
+        token.type === GraphwarExpressionTokenType.Add &&
+        findGraphwarExpressionReorderToken(input, step.start, next - 1) === -1
+      ) {
+        steps.push({ kind: "token", token: { type: GraphwarExpressionTokenType.Value, value: 0 } });
+      } else {
+        steps.push({ kind: "range", start: step.start, end: next - 1, required: false });
+      }
+    }
+  }
+  return true;
+}
+
+function findGraphwarExpressionReorderToken(input: GraphwarExpressionToken[], start: number, end: number) {
   if (start > end || start >= input.length) {
-    return false;
+    return -1;
   }
 
   let next = -1;
@@ -768,23 +813,7 @@ function reorderGraphwarExpressionTokens(
       nextNest = nest;
     }
   }
-  if (next === -1) {
-    return false;
-  }
-
-  const token = input[next];
-  const paramCount = getGraphwarExpressionTokenParamCount(token.type);
-  output.push(token);
-  if (paramCount === 1) {
-    reorderGraphwarExpressionTokens(output, input, next + 1, end);
-  } else if (paramCount === 2) {
-    const leftExists = reorderGraphwarExpressionTokens(output, input, start, next - 1);
-    if (token.type === GraphwarExpressionTokenType.Add && !leftExists) {
-      output.push({ type: GraphwarExpressionTokenType.Value, value: 0 });
-    }
-    reorderGraphwarExpressionTokens(output, input, next + 1, end);
-  }
-  return true;
+  return next;
 }
 
 /** 校验 Polish token 序列是否刚好消费一个表达式值。 */

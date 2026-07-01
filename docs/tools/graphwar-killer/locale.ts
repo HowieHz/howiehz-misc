@@ -345,6 +345,18 @@ export const graphwarKillerLocale = {
           label: "- 清图最终验证",
           title: "对优化后的完整清图路径重新采样，确认仍按 DAG 序列命中全部目标命中圈。",
         },
+        "visibility-cache-hit": {
+          label: "- 清图可视图缓存命中",
+          title: "建立清图 DAG 边前，复用当前路线 mask、方向和路线容差对应的障碍轮廓数据。",
+        },
+        "visibility-cache-miss": {
+          label: "- 清图可视图缓存未命中",
+          title: "建立清图 DAG 边前，没有可复用障碍轮廓数据，需要先建立；本次 DAG 的所有边会复用这份数据。",
+        },
+        "visibility-cache-skipped": {
+          label: "- 清图可视图缓存未使用",
+          title: "本次一键清图没有进入 DAG 建边阶段，因此没有访问可视图缓存。",
+        },
         "validate-prefix": {
           label: "- 清图前缀验证",
           title: "验证当前已有路径能命中最后路径点，并保存可复用的轨迹采样状态。",
@@ -359,6 +371,26 @@ export const graphwarKillerLocale = {
           label: "生成候选目标",
           title: "点击士兵时，在命中圈内用 1 个原始平面像素作为扫描步长枚举可尝试的 x+ 瞄准点。",
         },
+        "route-mask-cache-hit": {
+          label: "路线 mask 缓存命中",
+          title: "当前障碍 mask 和路线容差已有膨胀/腐蚀后的路线 mask，可直接复用。",
+        },
+        "route-mask-cache-miss": {
+          label: "路线 mask 缓存未命中",
+          title: "当前障碍 mask 或路线容差没有可复用路线 mask，需要重建。",
+        },
+        "visibility-cache-hit": {
+          label: "可视图缓存命中",
+          title: "绕障搜索需要可视图，并复用了当前路线 mask、方向和路线容差对应的障碍轮廓数据。",
+        },
+        "visibility-cache-miss": {
+          label: "可视图缓存未命中",
+          title: "绕障搜索需要可视图，但当前路线 mask、方向或路线容差没有可复用障碍轮廓数据，需要重建。",
+        },
+        "visibility-cache-skipped": {
+          label: "可视图缓存未使用",
+          title: "本次普通寻路直连成功或提前失败，没有进入绕障可视图搜索。",
+        },
         "optimize-path": {
           label: "优化路径节点",
           title: "逐个尝试删除几何路线中的中间点，并用函数轨迹验证删除后是否仍可命中目标。",
@@ -367,10 +399,6 @@ export const graphwarKillerLocale = {
           label: "清图写回路径",
           title: "把一键清图找到的最佳路径写入当前路径状态；没有新增击杀时不会改动原路径。",
         },
-        "one-click-clear-build-route-mask": {
-          label: "清图建立路线 mask",
-          title: "用当前障碍 mask 和路线规划容差建立几何寻路 mask。",
-        },
         "one-click-clear-collect-targets": {
           label: "清图收集目标",
           title: "按当前友伤设置和严格 x+ 规则筛选一键清图可尝试的士兵中心点候选。",
@@ -378,6 +406,14 @@ export const graphwarKillerLocale = {
         "one-click-clear-preflight": {
           label: "清图预检查",
           title: "检查一键清图设置、当前模式、当前路径和障碍 mask，并准备前缀命中目标。",
+        },
+        "one-click-clear-route-mask-cache-hit": {
+          label: "清图路线 mask 缓存命中",
+          title: "当前障碍 mask 和路线容差已有清图可用的路线 mask，可直接复用。",
+        },
+        "one-click-clear-route-mask-cache-miss": {
+          label: "清图路线 mask 缓存未命中",
+          title: "当前障碍 mask 或路线容差没有清图可用的路线 mask，需要重建。",
         },
         "one-click-clear-search": {
           label: "清图搜索验证",

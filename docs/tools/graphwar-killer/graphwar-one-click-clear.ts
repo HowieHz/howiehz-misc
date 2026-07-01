@@ -35,6 +35,8 @@ export interface GraphwarOneClickClearCandidate {
 export interface GraphwarOneClickClearRouteMask {
   /** 已按当前一键清图 route tolerance 处理后的 mask。 */
   mask: Uint8Array;
+  /** 页面侧按需复用可视图障碍数据；无缓存调用方留空时在本次 DAG 内现建现用。 */
+  getVisibilityGraphObstacleData?: () => GraphwarVisibilityGraphObstacleData;
   /** 与 mask 对应的路线容差，参与底层可视图简化。 */
   routeTolerancePlanePixels: number;
 }
@@ -52,6 +54,9 @@ export type GraphwarOneClickClearDebugStage =
   | "segment-graph-rule"
   | "segment-sample-trajectory"
   | "validate-final"
+  | "visibility-cache-hit"
+  | "visibility-cache-miss"
+  | "visibility-cache-skipped"
   | "validate-prefix"
   | "validate-route";
 
@@ -357,11 +362,13 @@ async function buildOneClickClearDag(
   const startPoint = options.pathPoints.at(-1) ?? options.pathPoints[0];
   const edges: OneClickClearDagEdge[] = [];
   const outgoingEdges = new Map<number, OneClickClearDagEdge[]>();
-  const visibilityGraphObstacleData = createGraphwarVisibilityGraphObstacleData({
-    bounds: options.bounds,
-    routeMask: options.routeMask.mask,
-    routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
-  });
+  const visibilityGraphObstacleData =
+    options.routeMask.getVisibilityGraphObstacleData?.() ??
+    createGraphwarVisibilityGraphObstacleData({
+      bounds: options.bounds,
+      routeMask: options.routeMask.mask,
+      routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
+    });
 
   for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
     const target = targets[targetIndex];

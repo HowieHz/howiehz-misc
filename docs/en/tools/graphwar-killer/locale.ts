@@ -406,6 +406,20 @@ export const graphwarKillerLocale = {
           title:
             "Resample the optimized full clear path and confirm it still hits every DAG target hit circle in order.",
         },
+        "visibility-cache-hit": {
+          label: "- Clear visibility cache hit",
+          title:
+            "Before building clear DAG edges, reuse obstacle contour data for the current route mask, direction, and route tolerance.",
+        },
+        "visibility-cache-miss": {
+          label: "- Clear visibility cache miss",
+          title:
+            "Before building clear DAG edges, no reusable obstacle contour data exists, so it is built once and reused by all edges in this DAG.",
+        },
+        "visibility-cache-skipped": {
+          label: "- Clear visibility cache unused",
+          title: "This One-Click Clear run did not enter DAG edge building, so the visibility cache was not accessed.",
+        },
         "validate-prefix": {
           label: "- Validate clear prefix",
           title: "Validate the existing path reaches its last point before appending a clear route.",
@@ -421,6 +435,29 @@ export const graphwarKillerLocale = {
           title:
             "When a soldier is clicked, enumerate x+ aim points inside its hit circle using a 1 raw-plane-pixel scan step.",
         },
+        "route-mask-cache-hit": {
+          label: "Route mask cache hit",
+          title: "The dilated or eroded route mask already exists for the current obstacle mask and route tolerance.",
+        },
+        "route-mask-cache-miss": {
+          label: "Route mask cache miss",
+          title: "No reusable route mask exists for the current obstacle mask or route tolerance, so it is rebuilt.",
+        },
+        "visibility-cache-hit": {
+          label: "Visibility cache hit",
+          title:
+            "Obstacle-route search needed a visibility graph and reused obstacle contour data for the current route mask, direction, and route tolerance.",
+        },
+        "visibility-cache-miss": {
+          label: "Visibility cache miss",
+          title:
+            "Obstacle-route search needed a visibility graph, but no reusable obstacle contour data exists for the current route mask, direction, or route tolerance.",
+        },
+        "visibility-cache-skipped": {
+          label: "Visibility cache unused",
+          title:
+            "This Smart Pathfinding run either used a direct route or failed before obstacle-route search, so no visibility graph was needed.",
+        },
         "optimize-path": {
           label: "Optimize path nodes",
           title:
@@ -431,11 +468,6 @@ export const graphwarKillerLocale = {
           title:
             "Write the best path found by One-Click Clear to the current path state; keep the original path when no new kill is found.",
         },
-        "one-click-clear-build-route-mask": {
-          label: "Build clear route mask",
-          title:
-            "Build the geometry route mask for One-Click Clear from the current obstacle mask and route planning tolerance.",
-        },
         "one-click-clear-collect-targets": {
           label: "Collect clear targets",
           title:
@@ -445,6 +477,15 @@ export const graphwarKillerLocale = {
           label: "Preflight clear run",
           title:
             "Check One-Click Clear settings, current mode, current path, and obstacle mask, then prepare the prefix hit target.",
+        },
+        "one-click-clear-route-mask-cache-hit": {
+          label: "Clear route mask cache hit",
+          title: "The route mask for One-Click Clear already exists for the current obstacle mask and route tolerance.",
+        },
+        "one-click-clear-route-mask-cache-miss": {
+          label: "Clear route mask cache miss",
+          title:
+            "No route mask for One-Click Clear exists for the current obstacle mask or route tolerance, so it is rebuilt.",
         },
         "one-click-clear-search": {
           label: "Search and validate clear",

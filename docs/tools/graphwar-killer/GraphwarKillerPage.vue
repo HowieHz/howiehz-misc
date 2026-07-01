@@ -151,13 +151,19 @@ type SmartPathfindingPhase = "optimize" | "search" | "trajectory";
 type SmartPathfindingDebugStage =
   | "preflight"
   | "collect-targets"
+  | "route-mask-cache-hit"
+  | "route-mask-cache-miss"
   | "search-route"
+  | "visibility-cache-hit"
+  | "visibility-cache-miss"
+  | "visibility-cache-skipped"
   | "validate-trajectory"
   | "optimize-path"
   | "apply-result"
   | "one-click-clear-preflight"
   | "one-click-clear-collect-targets"
-  | "one-click-clear-build-route-mask"
+  | "one-click-clear-route-mask-cache-hit"
+  | "one-click-clear-route-mask-cache-miss"
   | "one-click-clear-search"
   | "one-click-clear-apply-result"
   | "one-click-clear-setting-status"
@@ -2026,6 +2032,9 @@ function addOneClickClearSearchDebugTiming(
 const ONE_CLICK_CLEAR_SEARCH_DEBUG_DETAIL_ORDER: readonly GraphwarOneClickClearDebugStage[] = [
   "validate-prefix",
   "build-dag-targets",
+  "visibility-cache-hit",
+  "visibility-cache-miss",
+  "visibility-cache-skipped",
   "build-dag-edges",
   "route-pathfinding",
   "route-map-pixels",
@@ -2749,14 +2758,24 @@ async function runOneClickClear() {
       createOneClickClearCandidates(),
     );
     const hitCandidates = createOneClickClearHitCandidates();
-    const routeMask = measureSmartPathfindingDebugStage(timings, "one-click-clear-build-route-mask", () => ({
-      mask: getCachedRouteMask(
-        preflightResult.obstacleMask,
-        preflightResult.tolerances.routePlanningTolerancePlanePixels,
-      ).mask,
-      routeTolerancePlanePixels: preflightResult.tolerances.routePlanningTolerancePlanePixels,
-    }));
     const oneClickClearSearchDetailTimings: SmartPathfindingDebugTimingEntry[] = [];
+    let oneClickClearVisibilityCacheUsed = false;
+    const routeTolerance = preflightResult.tolerances.routePlanningTolerancePlanePixels;
+    const routeMaskEntry = getOneClickClearRouteMaskCacheData(timings, preflightResult.obstacleMask, routeTolerance);
+    const routeMask = {
+      // 一键清图只有在 DAG 有目标并开始建边时才需要可视图；这里保持按需取用，避免无目标时白建缓存。
+      getVisibilityGraphObstacleData: () => {
+        oneClickClearVisibilityCacheUsed = true;
+        return getOneClickClearVisibilityGraphObstacleData(
+          oneClickClearSearchDetailTimings,
+          routeMaskEntry,
+          preflightResult.bounds,
+          routeTolerance,
+        );
+      },
+      mask: routeMaskEntry.mask,
+      routeTolerancePlanePixels: routeTolerance,
+    };
     const result = await measureSmartPathfindingDebugStageAsync(timings, "one-click-clear-search", () =>
       buildGraphwarOneClickClearPath({
         boundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
@@ -2778,6 +2797,9 @@ async function runOneClickClear() {
         yieldControl: waitForNextPathfindingSlice,
       }),
     );
+    if (debugInfoEnabled.value && !oneClickClearVisibilityCacheUsed) {
+      addOneClickClearSearchDebugTiming(oneClickClearSearchDetailTimings, "visibility-cache-skipped", 0);
+    }
     timings.push(...oneClickClearSearchDetailTimings);
     if (pathfindingToken !== smartPathfindingCancelToken) {
       return false;
@@ -2947,29 +2969,54 @@ async function buildSmartPathfindingPath(
   }
 
   const routeTolerance = tolerances.routePlanningTolerancePlanePixels;
-  const routeMaskEntry = getCachedRouteMask(obstacleMask, routeTolerance);
+  const routeMaskEntry = getSmartPathfindingRouteMaskCacheData(timings, obstacleMask, routeTolerance);
   const routeMask = routeMaskEntry.mask;
-  const visibilityGraphObstacleData = getCachedRouteMaskVisibilityGraphObstacleData(
-    routeMaskEntry,
-    boundsResult.bounds,
-    routeTolerance,
-  );
-  const pathfindingPath = await measureSmartPathfindingDebugStageAsync(timings, "search-route", () =>
-    buildSmartPathfindingPathForMask({
-      bounds: boundsResult.bounds,
-      boundsRect: boundsRect.value,
-      boundaryExpansion: tolerances.boundaryExpansionPlanePixels,
-      canAdvance: pathfindingPlaneSegmentAdvancesEnough,
-      isCancelled: () => cancelToken !== smartPathfindingCancelToken,
-      onPreview: searchAnimationEnabled.value ? setSmartPathfindingPreview : undefined,
-      routeMask,
-      routeTolerancePlanePixels: routeTolerance,
-      startPoint,
-      targetPoint,
-      visibilityGraphObstacleData,
-      yieldControl: waitForNextPathfindingSlice,
-    }),
-  );
+  let visibilityCacheElapsedMs = 0;
+  let visibilityCacheUsed = false;
+  const searchStartedAt = nowMs();
+  const pathfindingPath = await buildSmartPathfindingPathForMask({
+    bounds: boundsResult.bounds,
+    boundsRect: boundsRect.value,
+    boundaryExpansion: tolerances.boundaryExpansionPlanePixels,
+    canAdvance: pathfindingPlaneSegmentAdvancesEnough,
+    getVisibilityGraphObstacleData: () => {
+      visibilityCacheUsed = true;
+      const startedAt = timings ? nowMs() : 0;
+      const lookup = getCachedRouteMaskVisibilityGraphObstacleDataWithStatus(
+        routeMaskEntry,
+        boundsResult.bounds,
+        routeTolerance,
+      );
+      if (timings) {
+        const elapsedMs = nowMs() - startedAt;
+        visibilityCacheElapsedMs += elapsedMs;
+        timings.push({
+          elapsedMs,
+          stage: lookup.cacheHit ? "visibility-cache-hit" : "visibility-cache-miss",
+        });
+      }
+      return lookup.data;
+    },
+    isCancelled: () => cancelToken !== smartPathfindingCancelToken,
+    onPreview: searchAnimationEnabled.value ? setSmartPathfindingPreview : undefined,
+    routeMask,
+    routeTolerancePlanePixels: routeTolerance,
+    startPoint,
+    targetPoint,
+    yieldControl: waitForNextPathfindingSlice,
+  });
+  if (timings) {
+    if (!visibilityCacheUsed) {
+      timings.push({
+        elapsedMs: 0,
+        stage: "visibility-cache-skipped",
+      });
+    }
+    timings.push({
+      elapsedMs: Math.max(0, nowMs() - searchStartedAt - visibilityCacheElapsedMs),
+      stage: "search-route",
+    });
+  }
   if (!pathfindingPath || pathfindingPath.length < 2) {
     return undefined;
   }
@@ -3274,6 +3321,10 @@ function createSoldierHitCircle(box: DetectionBox): HitCircle {
 
 /** 获取指定 route tolerance 的寻路 mask。 */
 function getCachedRouteMask(mask: Uint8Array, routeTolerance: number): RouteMaskCacheEntry {
+  return getCachedRouteMaskWithStatus(mask, routeTolerance).entry;
+}
+
+function getCachedRouteMaskWithStatus(mask: Uint8Array, routeTolerance: number) {
   const key = createRouteMaskCacheKey(routeTolerance);
   let entries = routeMaskCache.get(mask);
   if (!entries) {
@@ -3283,17 +3334,51 @@ function getCachedRouteMask(mask: Uint8Array, routeTolerance: number): RouteMask
 
   const cached = entries.get(key);
   if (cached) {
-    return cached;
+    return {
+      cacheHit: true,
+      entry: cached,
+    };
   }
 
-  const entry = {
+  const entry: RouteMaskCacheEntry = {
     mask: dilateObstacleMask(mask, routeTolerance),
   };
   entries.set(key, entry);
-  return entry;
+  return {
+    cacheHit: false,
+    entry,
+  };
 }
 
-function getCachedRouteMaskVisibilityGraphObstacleData(
+function getSmartPathfindingRouteMaskCacheData(
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
+  obstacleMask: Uint8Array,
+  routeTolerance: number,
+) {
+  const startedAt = timings ? nowMs() : 0;
+  const routeMaskLookup = getCachedRouteMaskWithStatus(obstacleMask, routeTolerance);
+  timings?.push({
+    elapsedMs: nowMs() - startedAt,
+    stage: routeMaskLookup.cacheHit ? "route-mask-cache-hit" : "route-mask-cache-miss",
+  });
+  return routeMaskLookup.entry;
+}
+
+function getOneClickClearRouteMaskCacheData(
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
+  obstacleMask: Uint8Array,
+  routeTolerance: number,
+) {
+  const startedAt = timings ? nowMs() : 0;
+  const routeMaskLookup = getCachedRouteMaskWithStatus(obstacleMask, routeTolerance);
+  timings?.push({
+    elapsedMs: nowMs() - startedAt,
+    stage: routeMaskLookup.cacheHit ? "one-click-clear-route-mask-cache-hit" : "one-click-clear-route-mask-cache-miss",
+  });
+  return routeMaskLookup.entry;
+}
+
+function getCachedRouteMaskVisibilityGraphObstacleDataWithStatus(
   entry: RouteMaskCacheEntry,
   bounds: GraphBounds,
   routeTolerance: number,
@@ -3306,7 +3391,10 @@ function getCachedRouteMaskVisibilityGraphObstacleData(
     cached.mirrored === mirrored &&
     nearlyEqual(cached.routeTolerancePlanePixels, routeTolerance)
   ) {
-    return cached;
+    return {
+      cacheHit: true,
+      data: cached,
+    };
   }
 
   // 普通寻路跨点击复用 route mask 上的轮廓数据；mask、方向或 tolerance 任一变化都会重建。
@@ -3316,7 +3404,28 @@ function getCachedRouteMaskVisibilityGraphObstacleData(
     routeTolerancePlanePixels: routeTolerance,
   });
   entry.visibilityGraphObstacleData = next;
-  return next;
+  return {
+    cacheHit: false,
+    data: next,
+  };
+}
+
+function getOneClickClearVisibilityGraphObstacleData(
+  timings: SmartPathfindingDebugTimingEntry[],
+  entry: RouteMaskCacheEntry,
+  bounds: GraphBounds,
+  routeTolerance: number,
+) {
+  const startedAt = debugInfoEnabled.value ? nowMs() : 0;
+  const lookup = getCachedRouteMaskVisibilityGraphObstacleDataWithStatus(entry, bounds, routeTolerance);
+  if (debugInfoEnabled.value) {
+    addOneClickClearSearchDebugTiming(
+      timings,
+      lookup.cacheHit ? "visibility-cache-hit" : "visibility-cache-miss",
+      nowMs() - startedAt,
+    );
+  }
+  return lookup.data;
 }
 
 /** 开始一次异步寻路/清图任务并返回取消 token。 */

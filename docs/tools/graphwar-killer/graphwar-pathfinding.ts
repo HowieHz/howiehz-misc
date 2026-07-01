@@ -1,7 +1,7 @@
 /** Graphwar 固定平面上的几何寻路工具；页面和 worker 共用同一套图搜索实现。 */
 import { xPlusGoesRight } from "./geometry";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
-import { clampNumber, doublePrecisionTolerance, nearlyEqual, roundToDecimalPlaces } from "./numbers";
+import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "./numbers";
 import { createPixelPoint } from "./types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
 
@@ -75,16 +75,6 @@ export interface GraphwarVisibilityGraphObstacleData {
   readonly routeMask: Uint8Array;
   /** 缓存所属 route tolerance。 */
   readonly routeTolerancePlanePixels: number;
-}
-
-/** Route tolerance 枚举输入；页面解析和 worker 请求只需满足这三个字段。 */
-export interface GraphwarRouteToleranceRange {
-  /** 最大路线容差，单位为固定平面像素。 */
-  routeMaxTolerancePlanePixels: number;
-  /** 最小路线容差，单位为固定平面像素。 */
-  routeMinTolerancePlanePixels: number;
-  /** 容差扫描步长，单位为固定平面像素。 */
-  routeStepPlanePixels: number;
 }
 
 /** RouteMask 中一个 4 邻域障碍连通域，后续会从其边界生成可见性图候选点。 */
@@ -246,27 +236,6 @@ export function createGraphwarVisibilityGraphObstacleData(
     routeMask: options.routeMask,
     routeTolerancePlanePixels: options.routeTolerancePlanePixels ?? 1,
   });
-}
-
-/** 枚举路线容差，优先尝试最小容差，失败后逐步放宽或收紧 mask。 */
-export function collectSmartPathfindingRouteTolerances(tolerances: GraphwarRouteToleranceRange) {
-  const values: number[] = [];
-  const min = tolerances.routeMinTolerancePlanePixels;
-  const max = tolerances.routeMaxTolerancePlanePixels;
-  const step = tolerances.routeStepPlanePixels;
-  for (let value = min; value <= max + createRouteToleranceStepBoundaryTolerance(min, max, step); value += step) {
-    values.push(Math.min(value, max));
-  }
-  const lastValue = values.at(-1);
-  if (lastValue === undefined || !nearlyEqual(lastValue, max)) {
-    values.push(max);
-  }
-  return [...new Set(values.map((value) => roundToDecimalPlaces(value, 6)))];
-}
-
-/** 给 route tolerance 累加枚举留出 double 舍入余量，避免跳过理论上等于 max 的最后一步。 */
-function createRouteToleranceStepBoundaryTolerance(min: number, max: number, step: number) {
-  return doublePrecisionTolerance(min, max, step);
 }
 
 /** 按有效圆形半径和形态学方向生成 route mask cache key。 */

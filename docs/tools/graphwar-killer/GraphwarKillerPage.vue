@@ -40,7 +40,7 @@ import type {
   GraphwarDetectionWorkerTimingEntry,
 } from "./graphwar-detection-runner";
 import {
-  GRAPHWAR_ONE_CLICK_CLEAR_DEFAULT_ROUTE_TOLERANCE_PLANE_PIXELS,
+  GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS,
   buildGraphwarOneClickClearPath,
   type GraphwarOneClickClearCandidate,
   type GraphwarOneClickClearDebugStage,
@@ -48,7 +48,6 @@ import {
 } from "./graphwar-one-click-clear";
 import {
   buildSmartPathfindingPathForMask,
-  collectSmartPathfindingRouteTolerances,
   createRouteMaskCacheKey,
   mirrorPlaneGridPoint,
   planeGridCellCenterToImagePoint,
@@ -118,10 +117,7 @@ type ParsedObstacleTolerances =
   | {
       ok: true;
       boundaryExpansionPlanePixels: number;
-      oneClickClearRouteTolerancePlanePixels: number;
-      routeMaxTolerancePlanePixels: number;
-      routeMinTolerancePlanePixels: number;
-      routeStepPlanePixels: number;
+      routePlanningTolerancePlanePixels: number;
       simulationTolerancePlanePixels: number;
     }
   | { ok: false; message: string };
@@ -324,10 +320,7 @@ const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
 const maximumSoldierCountText = ref(String(graphwarToolDefaults.maximumSoldierCount));
 const soldierTemplateCandidateTopRatioText = ref(String(graphwarToolDefaults.soldierTemplateCandidateTopRatio));
 const templateMatchingWorkerCountText = ref(String(graphwarToolDefaults.templateMatchingWorkerCount));
-const obstacleRouteMinToleranceText = ref("1");
-const obstacleRouteMaxToleranceText = ref("3");
-const obstacleRouteStepToleranceText = ref("1");
-const oneClickClearRouteToleranceText = ref(String(GRAPHWAR_ONE_CLICK_CLEAR_DEFAULT_ROUTE_TOLERANCE_PLANE_PIXELS));
+const routePlanningToleranceText = ref(String(GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS));
 const obstacleSimulationToleranceText = ref("1");
 const pathfindingBoundaryExpansionText = ref("1");
 const simulatorFormulaText = ref("");
@@ -401,7 +394,6 @@ const smartPathfindingInProgress = ref(false);
 const activeSmartPathfindingPhase = ref<SmartPathfindingPhase>("search");
 const smartPathfindingStatus = ref("");
 const smartPathfindingStatusKind = ref<SmartPathfindingStatusKind>("info");
-const smartPathfindingActiveRouteTolerance = ref<number>();
 const smartPathfindingPreviewConnection = ref<PathLineSegment>();
 const smartPathfindingPreviewAcceptedEdges = ref<PathLineSegment[]>([]);
 const smartPathfindingPreviewCurrentPoint = ref<PixelPoint>();
@@ -552,32 +544,14 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     return { ok: false as const, message: parsedBounds.value.message };
   }
 
-  const routeMinTolerancePlanePixels = parseFiniteNumber(obstacleRouteMinToleranceText.value);
-  if (routeMinTolerancePlanePixels === undefined) {
-    return { ok: false as const, message: locale.validation.pathfindingMinimumNumber };
-  }
-
-  const routeMaxTolerancePlanePixels = parseFiniteNumber(obstacleRouteMaxToleranceText.value);
-  if (routeMaxTolerancePlanePixels === undefined) {
-    return { ok: false as const, message: locale.validation.pathfindingMaximumNumber };
-  }
-  if (routeMinTolerancePlanePixels > routeMaxTolerancePlanePixels) {
-    return { ok: false as const, message: locale.validation.pathfindingMinimumGreaterThanMaximum };
-  }
-
-  const routeStepPlanePixels = parseFiniteNumber(obstacleRouteStepToleranceText.value);
-  if (routeStepPlanePixels === undefined || routeStepPlanePixels <= 0) {
-    return { ok: false as const, message: locale.validation.routeStepNumber };
+  const routePlanningTolerancePlanePixels = parseFiniteNumber(routePlanningToleranceText.value);
+  if (routePlanningTolerancePlanePixels === undefined) {
+    return { ok: false as const, message: locale.validation.routePlanningToleranceNumber };
   }
 
   const simulationTolerancePlanePixels = parseFiniteNumber(obstacleSimulationToleranceText.value);
   if (simulationTolerancePlanePixels === undefined) {
-    return { ok: false as const, message: locale.validation.simulationExpansionNumber };
-  }
-
-  const oneClickClearRouteTolerancePlanePixels = parseFiniteNumber(oneClickClearRouteToleranceText.value);
-  if (oneClickClearRouteTolerancePlanePixels === undefined) {
-    return { ok: false as const, message: locale.validation.oneClickClearRouteToleranceNumber };
+    return { ok: false as const, message: locale.validation.simulationToleranceNumber };
   }
 
   const boundaryExpansionPlanePixels = parseFiniteNumber(pathfindingBoundaryExpansionText.value);
@@ -588,31 +562,17 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     return { ok: false as const, message: locale.validation.boundaryExpansionNegative };
   }
 
-  if (Math.abs(routeMinTolerancePlanePixels) > graphwarObstacleToleranceLimit) {
+  if (Math.abs(routePlanningTolerancePlanePixels) > graphwarObstacleToleranceLimit) {
     return {
       ok: false as const,
-      message: locale.validation.pathfindingMinimumPixelRange(graphwarObstacleToleranceLimit),
-    };
-  }
-
-  if (Math.abs(routeMaxTolerancePlanePixels) > graphwarObstacleToleranceLimit) {
-    return {
-      ok: false as const,
-      message: locale.validation.pathfindingMaximumPixelRange(graphwarObstacleToleranceLimit),
+      message: locale.validation.routePlanningTolerancePixelRange(graphwarObstacleToleranceLimit),
     };
   }
 
   if (Math.abs(simulationTolerancePlanePixels) > graphwarObstacleToleranceLimit) {
     return {
       ok: false as const,
-      message: locale.validation.simulationExpansionPixelRange(graphwarObstacleToleranceLimit),
-    };
-  }
-
-  if (Math.abs(oneClickClearRouteTolerancePlanePixels) > graphwarObstacleToleranceLimit) {
-    return {
-      ok: false as const,
-      message: locale.validation.oneClickClearRouteTolerancePixelRange(graphwarObstacleToleranceLimit),
+      message: locale.validation.simulationTolerancePixelRange(graphwarObstacleToleranceLimit),
     };
   }
 
@@ -626,10 +586,7 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
   return {
     ok: true as const,
     boundaryExpansionPlanePixels,
-    oneClickClearRouteTolerancePlanePixels,
-    routeMaxTolerancePlanePixels,
-    routeMinTolerancePlanePixels,
-    routeStepPlanePixels: Math.max(Number.EPSILON, Math.abs(routeStepPlanePixels)),
+    routePlanningTolerancePlanePixels,
     simulationTolerancePlanePixels,
   };
 });
@@ -785,9 +742,7 @@ const smartPathfindingVisibleRouteTolerance = computed(() => {
   if (!tolerances.ok) {
     return 0;
   }
-  return smartPathfindingInProgress.value
-    ? (smartPathfindingActiveRouteTolerance.value ?? tolerances.routeMinTolerancePlanePixels)
-    : tolerances.routeMinTolerancePlanePixels;
+  return tolerances.routePlanningTolerancePlanePixels;
 });
 const smartPathfindingObstacleRouteEdgePath = computed(() => {
   const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
@@ -1455,22 +1410,9 @@ watch([smartCursorEnabled, smartPathfindingEnabled, detectedObstacles], () => {
   }
 });
 
-watch(
-  [
-    obstacleRouteMinToleranceText,
-    obstacleRouteMaxToleranceText,
-    obstacleRouteStepToleranceText,
-    oneClickClearRouteToleranceText,
-    pathfindingBoundaryExpansionText,
-    minXText,
-    maxXText,
-    minYText,
-    maxYText,
-  ],
-  () => {
-    clearSmartPathfindingStatus();
-  },
-);
+watch([routePlanningToleranceText, pathfindingBoundaryExpansionText, minXText, maxXText, minYText, maxYText], () => {
+  clearSmartPathfindingStatus();
+});
 
 /** 根据当前算法限制 Graphwar 不支持或工具无法稳定生成的公式模式。 */
 function isEquationModeDisabled(mode: EquationMode) {
@@ -2803,9 +2745,9 @@ async function runOneClickClear() {
     const routeMask = measureSmartPathfindingDebugStage(timings, "one-click-clear-build-route-mask", () => ({
       mask: getCachedRouteMask(
         preflightResult.obstacleMask,
-        preflightResult.tolerances.oneClickClearRouteTolerancePlanePixels,
+        preflightResult.tolerances.routePlanningTolerancePlanePixels,
       ).mask,
-      routeTolerancePlanePixels: preflightResult.tolerances.oneClickClearRouteTolerancePlanePixels,
+      routeTolerancePlanePixels: preflightResult.tolerances.routePlanningTolerancePlanePixels,
     }));
     const oneClickClearSearchDetailTimings: SmartPathfindingDebugTimingEntry[] = [];
     const result = await measureSmartPathfindingDebugStageAsync(timings, "one-click-clear-search", () =>
@@ -2991,61 +2933,58 @@ async function buildSmartPathfindingPath(
     setSmartPathfindingPreviewConnection(startPoint, targetPoint);
   }
 
-  // 从最小外扩到最大外扩逐级尝试：优先保守贴近目标，失败再给障碍更多安全距离。
-  for (const routeTolerance of collectSmartPathfindingRouteTolerances(tolerances)) {
-    setSmartPathfindingPhase("search");
-    smartPathfindingActiveRouteTolerance.value = routeTolerance;
-    await waitForNextPathfindingSlice();
-    if (cancelToken !== smartPathfindingCancelToken) {
-      return undefined;
-    }
+  setSmartPathfindingPhase("search");
+  await waitForNextPathfindingSlice();
+  if (cancelToken !== smartPathfindingCancelToken) {
+    return undefined;
+  }
 
-    const routeMaskEntry = getCachedRouteMask(obstacleMask, routeTolerance);
-    const routeMask = routeMaskEntry.mask;
-    const pathfindingPath = await measureSmartPathfindingDebugStageAsync(timings, "search-route", () =>
-      buildSmartPathfindingPathForMask({
-        bounds: boundsResult.bounds,
-        boundsRect: boundsRect.value,
-        boundaryExpansion: tolerances.boundaryExpansionPlanePixels,
-        canAdvance: pathfindingPlaneSegmentAdvancesEnough,
-        isCancelled: () => cancelToken !== smartPathfindingCancelToken,
-        onPreview: searchAnimationEnabled.value ? setSmartPathfindingPreview : undefined,
-        routeMask,
-        routeTolerancePlanePixels: routeTolerance,
-        startPoint,
-        targetPoint,
-        yieldControl: waitForNextPathfindingSlice,
-      }),
-    );
-    if (!pathfindingPath || pathfindingPath.length < 2) {
-      continue;
-    }
+  const routeTolerance = tolerances.routePlanningTolerancePlanePixels;
+  const routeMaskEntry = getCachedRouteMask(obstacleMask, routeTolerance);
+  const routeMask = routeMaskEntry.mask;
+  const pathfindingPath = await measureSmartPathfindingDebugStageAsync(timings, "search-route", () =>
+    buildSmartPathfindingPathForMask({
+      bounds: boundsResult.bounds,
+      boundsRect: boundsRect.value,
+      boundaryExpansion: tolerances.boundaryExpansionPlanePixels,
+      canAdvance: pathfindingPlaneSegmentAdvancesEnough,
+      isCancelled: () => cancelToken !== smartPathfindingCancelToken,
+      onPreview: searchAnimationEnabled.value ? setSmartPathfindingPreview : undefined,
+      routeMask,
+      routeTolerancePlanePixels: routeTolerance,
+      startPoint,
+      targetPoint,
+      yieldControl: waitForNextPathfindingSlice,
+    }),
+  );
+  if (!pathfindingPath || pathfindingPath.length < 2) {
+    return undefined;
+  }
 
-    const normalizedPath = createNormalizedPathFromPlanePath(pathfindingPath, targetPoint, sourcePath);
-    setSmartPathfindingPhase("trajectory");
-    const validationResult = measureSmartPathfindingDebugStage(timings, "validate-trajectory", () => {
-      const followsGraphRule = pathFollowsGraphRule(normalizedPath);
-      return {
-        followsGraphRule,
-        reachesTargetBeforeObstacle:
-          followsGraphRule && pathTrajectoryReachesTargetBeforeSimulationObstacle(normalizedPath, hitTarget),
-      };
-    });
-    if (!validationResult.followsGraphRule) {
-      setSmartPathfindingStatus(getForwardPathMessage(), "error");
-      return undefined;
-    }
+  const normalizedPath = createNormalizedPathFromPlanePath(pathfindingPath, targetPoint, sourcePath);
+  setSmartPathfindingPhase("trajectory");
+  const validationResult = measureSmartPathfindingDebugStage(timings, "validate-trajectory", () => {
+    const followsGraphRule = pathFollowsGraphRule(normalizedPath);
+    return {
+      followsGraphRule,
+      reachesTargetBeforeObstacle:
+        followsGraphRule && pathTrajectoryReachesTargetBeforeSimulationObstacle(normalizedPath, hitTarget),
+    };
+  });
+  if (!validationResult.followsGraphRule) {
+    setSmartPathfindingStatus(getForwardPathMessage(), "error");
+    return undefined;
+  }
 
-    if (searchAnimationEnabled.value) {
-      setSmartPathfindingPreviewPath(getSmartPathfindingAppendedSegment(normalizedPath, sourcePath.length));
-    }
-    if (validationResult.reachesTargetBeforeObstacle) {
-      return normalizedPath.length > 3
-        ? measureSmartPathfindingDebugStageAsync(timings, "optimize-path", () =>
-            optimizeSmartPathfindingPath(normalizedPath, sourcePath.length, cancelToken, hitTarget),
-          )
-        : normalizedPath;
-    }
+  if (searchAnimationEnabled.value) {
+    setSmartPathfindingPreviewPath(getSmartPathfindingAppendedSegment(normalizedPath, sourcePath.length));
+  }
+  if (validationResult.reachesTargetBeforeObstacle) {
+    return normalizedPath.length > 3
+      ? measureSmartPathfindingDebugStageAsync(timings, "optimize-path", () =>
+          optimizeSmartPathfindingPath(normalizedPath, sourcePath.length, cancelToken, hitTarget),
+        )
+      : normalizedPath;
   }
   return undefined;
 }
@@ -3433,9 +3372,6 @@ function clearSmartPathfindingBlockedPoint() {
 
 /** 设置寻路起点到目标的直线连接预览。 */
 function setSmartPathfindingPreviewConnection(startPoint: PixelPoint, targetPoint: PixelPoint) {
-  smartPathfindingActiveRouteTolerance.value = parsedObstacleTolerances.value.ok
-    ? parsedObstacleTolerances.value.routeMinTolerancePlanePixels
-    : undefined;
   smartPathfindingPreviewConnection.value = createPathLineSegment(startPoint, targetPoint);
 }
 
@@ -3472,7 +3408,6 @@ function previewPlanePointToImagePoint(point: PlaneGridPoint, mirrored: boolean)
 
 /** 清理智能寻路相关视觉状态。 */
 function clearSmartPathfindingPreview() {
-  smartPathfindingActiveRouteTolerance.value = undefined;
   smartPathfindingPreviewConnection.value = undefined;
   clearSmartPathfindingSearchPreview();
   smartPathfindingPreviewPath.value = [];
@@ -4585,70 +4520,29 @@ async function copyText(text: string) {
               {{ locale.ui.pathfinding.obstacleExpansion }}
             </summary>
             <div class="graphwar-killer__pathfinding-setting-grid graphwar-killer__obstacle-expansion-settings">
-              <div class="graphwar-killer__pathfinding-range-row">
-                <label
-                  class="graphwar-killer__detection-setting-label"
-                  :title="locale.ui.pathfinding.pathMinimumTitle"
-                >
-                  {{ locale.ui.pathfinding.pathMinimum }}
-                  <input
-                    v-model="obstacleRouteMinToleranceText"
-                    inputmode="decimal"
-                    :aria-label="locale.ui.pathfinding.pathMinimumAriaLabel"
-                    :title="locale.ui.pathfinding.pathMinimumTitle"
-                  >
-                  <span>{{ locale.ui.pathfinding.unit }}</span>
-                </label>
-                <label
-                  class="graphwar-killer__detection-setting-label"
-                  :title="locale.ui.pathfinding.pathMaximumTitle"
-                >
-                  {{ locale.ui.pathfinding.pathMaximum }}
-                  <input
-                    v-model="obstacleRouteMaxToleranceText"
-                    inputmode="decimal"
-                    :aria-label="locale.ui.pathfinding.pathMaximumAriaLabel"
-                    :title="locale.ui.pathfinding.pathMaximumTitle"
-                  >
-                  <span>{{ locale.ui.pathfinding.unit }}</span>
-                </label>
-              </div>
               <label
                 class="graphwar-killer__detection-setting-label"
-                :title="locale.ui.pathfinding.expansionStepTitle"
+                :title="locale.ui.pathfinding.routePlanningToleranceTitle"
               >
-                {{ locale.ui.pathfinding.expansionStep }}
+                {{ locale.ui.pathfinding.routePlanningTolerance }}
                 <input
-                  v-model="obstacleRouteStepToleranceText"
+                  v-model="routePlanningToleranceText"
                   inputmode="decimal"
-                  :aria-label="locale.ui.pathfinding.expansionStepAriaLabel"
-                  :title="locale.ui.pathfinding.expansionStepTitle"
+                  :aria-label="locale.ui.pathfinding.routePlanningToleranceAriaLabel"
+                  :title="locale.ui.pathfinding.routePlanningToleranceTitle"
                 >
                 <span>{{ locale.ui.pathfinding.unit }}</span>
               </label>
               <label
                 class="graphwar-killer__detection-setting-label"
-                :title="locale.ui.pathfinding.oneClickClearRouteToleranceTitle"
+                :title="locale.ui.pathfinding.simulationToleranceTitle"
               >
-                {{ locale.ui.pathfinding.oneClickClearRouteTolerance }}
-                <input
-                  v-model="oneClickClearRouteToleranceText"
-                  inputmode="decimal"
-                  :aria-label="locale.ui.pathfinding.oneClickClearRouteToleranceAriaLabel"
-                  :title="locale.ui.pathfinding.oneClickClearRouteToleranceTitle"
-                >
-                <span>{{ locale.ui.pathfinding.unit }}</span>
-              </label>
-              <label
-                class="graphwar-killer__detection-setting-label"
-                :title="locale.ui.pathfinding.simulationExpansionTitle"
-              >
-                {{ locale.ui.pathfinding.simulationExpansion }}
+                {{ locale.ui.pathfinding.simulationTolerance }}
                 <input
                   v-model="obstacleSimulationToleranceText"
                   inputmode="decimal"
-                  :aria-label="locale.ui.pathfinding.simulationExpansionAriaLabel"
-                  :title="locale.ui.pathfinding.simulationExpansionTitle"
+                  :aria-label="locale.ui.pathfinding.simulationToleranceAriaLabel"
+                  :title="locale.ui.pathfinding.simulationToleranceTitle"
                 >
                 <span>{{ locale.ui.pathfinding.unit }}</span>
               </label>
@@ -6533,19 +6427,8 @@ async function copyText(text: string) {
   min-width: 0;
 }
 
-.graphwar-killer__pathfinding-range-row {
-  display: grid;
-  gap: 6px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  min-width: 0;
-}
-
 .graphwar-killer__obstacle-expansion-settings {
   justify-items: start;
-}
-
-.graphwar-killer__obstacle-expansion-settings .graphwar-killer__pathfinding-range-row {
-  grid-template-columns: repeat(2, max-content);
 }
 
 .graphwar-killer__obstacle-expansion-settings .graphwar-killer__detection-setting-label {

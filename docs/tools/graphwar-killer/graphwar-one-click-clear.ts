@@ -697,7 +697,7 @@ function createOneClickClearTargetCircle(target: Pick<GraphwarOneClickClearCandi
   };
 }
 
-/** 全局删点只保护原 prefix；显式目标中心可删，由命中圈序列验证兜底。 */
+/** 全局删点只保护原 prefix；新增序列一直到末尾都可尝试删除。 */
 async function optimizeOneClickClearPath(
   context: OneClickClearSearchContext,
   route: OneClickClearValidatedRoute,
@@ -705,6 +705,7 @@ async function optimizeOneClickClearPath(
 ) {
   let optimized = route;
   const firstGeneratedIndex = context.options.pathPoints.length;
+  const localDeleteProofIsEnough = oneClickClearLocalDeleteProofIsEnough(context.options);
   for (let pass = 0; pass < MAX_GLOBAL_DELETE_PASSES; pass += 1) {
     for (let index = firstGeneratedIndex; index < optimized.pathPoints.length; ) {
       if (context.options.isCancelled?.()) {
@@ -719,13 +720,23 @@ async function optimizeOneClickClearPath(
       }
 
       const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
-      if (validateOneClickClearTargetSequence(context.options, { ...optimized, pathPoints: candidatePath })) {
+      if (
+        localDeleteProofIsEnough ||
+        validateOneClickClearTargetSequence(context.options, { ...optimized, pathPoints: candidatePath })
+      ) {
         optimized = { ...optimized, pathPoints: candidatePath };
         continue;
       }
       index += 1;
 
       await yieldOneClickClearControl(context.options);
+    }
+  }
+  if (localDeleteProofIsEnough && optimized !== route) {
+    workUnits += 1;
+    // y= abs 的删点判断可由局部折线命中证明；这里保留一次整体验证，防止障碍/边界等非士兵因素漏判。
+    if (!validateOneClickClearTargetSequence(context.options, optimized)) {
+      return { route, workUnits };
     }
   }
   return { route: optimized, workUnits };
@@ -788,7 +799,7 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
     return false;
   }
 
-  // 局部预筛只拒绝明确会丢掉几何路线上士兵命中的删点；完整弹道验证仍负责公式重建后的正确性。
+  // y= abs 删除一个控制点时，只会把 previous->deleted->next 替换成 previous->next；先证明局部士兵命中不丢。
   for (const target of options.hitCandidates) {
     const oldLocalPathHitsTarget =
       pixelSegmentHitsCircle(previousPoint, deletedPoint, target.hitCenter, target.hitRadius) ||
@@ -805,6 +816,10 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
     }
   }
   return true;
+}
+
+function oneClickClearLocalDeleteProofIsEnough(options: GraphwarOneClickClearOptions) {
+  return options.settings.algorithm === "abs" && options.settings.equation === "y";
 }
 
 function pixelPointHitsCircle(point: PixelPoint, center: PixelPoint, radius: number) {

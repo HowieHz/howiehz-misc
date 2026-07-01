@@ -37,10 +37,6 @@ export interface SmartPathfindingHeaderStatusInput {
   smartPathfindingEnabled: boolean;
   /** 智能寻路参数校验错误。 */
   smartPathfindingSettingsMessage: string;
-  /** 当前轨迹风险提示。 */
-  trajectoryWarningMessage: string;
-  /** 当前轨迹风险提示等级。 */
-  trajectoryWarningKind: HeaderStatusKind;
   /** 智能寻路运行状态文案。 */
   smartPathfindingStatusMessage: string;
   /** 智能寻路运行状态等级。 */
@@ -51,7 +47,7 @@ export interface SmartPathfindingHeaderStatusInput {
   hintMessage: string;
 }
 
-/** 按校验错误、运行状态、轨迹警告和提示的顺序选择智能寻路标题状态。 */
+/** 按校验错误、运行状态和提示的顺序选择智能寻路标题状态。 */
 export function getSmartPathfindingHeaderStatus(input: SmartPathfindingHeaderStatusInput): HeaderStatus {
   if (!input.smartPathfindingEnabled) {
     return createHeaderStatus(input.enableHintMessage);
@@ -63,7 +59,6 @@ export function getSmartPathfindingHeaderStatus(input: SmartPathfindingHeaderSta
   return getFirstHeaderStatus(
     createHeaderStatus(input.smartPathfindingSettingsMessage, "error"),
     smartPathfindingStatus.kind === "success" ? emptyHeaderStatus : smartPathfindingStatus,
-    createHeaderStatus(input.trajectoryWarningMessage, input.trajectoryWarningKind),
     smartPathfindingStatus,
     createHeaderStatus(input.hintMessage),
   );

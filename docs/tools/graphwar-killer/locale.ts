@@ -340,15 +340,15 @@ export const graphwarKillerLocale = {
         },
         "segment-sample-trajectory": {
           label: "- 清图分段轨迹采样",
-          title: "按当前完整路径重采样已接受目标序列，确认新增目标中心点会在碰撞障碍前被命中。",
+          title: "按当前完整路径重采样已接受目标序列，确认新增目标命中圈会在碰撞障碍前被命中。",
         },
         "validate-route": {
           label: "- 清图验证 DAG 路线",
-          title: "按最长路选出的 DAG 边逐段追加路线，验证每个目标中心点；失败时返回具体失败边。",
+          title: "按最长路选出的 DAG 边逐段追加路线，验证每个目标命中圈；失败时返回具体失败边。",
         },
         "validate-final": {
           label: "- 清图最终验证",
-          title: "对优化后的完整清图路径重新采样，确认仍按 DAG 序列命中全部目标中心点。",
+          title: "对优化后的完整清图路径重新采样，确认仍按 DAG 序列命中全部目标命中圈。",
         },
         "validate-prefix": {
           label: "- 清图前缀验证",

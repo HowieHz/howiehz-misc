@@ -399,20 +399,21 @@ export const graphwarKillerLocale = {
         "segment-sample-trajectory": {
           label: "- Sample clear segment trajectory",
           title:
-            "Re-sample the accepted target sequence with the current full path and confirm the new target center is reached before obstacles.",
+            "Re-sample the accepted target sequence with the current full path and confirm the new target hit circle is reached before obstacles.",
         },
         "validate-route": {
           label: "- Validate clear DAG route",
           title:
-            "Append the DAG edges selected by longest-path DP one by one, validate each target center, and return the exact failed edge when one fails.",
+            "Append the DAG edges selected by longest-path DP one by one, validate each target hit circle, and return the exact failed edge when one fails.",
         },
         "validate-final": {
           label: "- Validate final clear",
-          title: "Resample the optimized full clear path and confirm it still hits every DAG target center in order.",
+          title:
+            "Resample the optimized full clear path and confirm it still hits every DAG target hit circle in order.",
         },
         "validate-prefix": {
           label: "- Validate clear prefix",
-          title: "Validate the existing path reaches its last point and save the reusable trajectory sampling state.",
+          title: "Validate the existing path reaches its last point before appending a clear route.",
         },
       },
       debugStages: {

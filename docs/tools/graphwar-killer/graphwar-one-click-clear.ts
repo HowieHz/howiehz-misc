@@ -119,7 +119,7 @@ export type GraphwarOneClickClearResult =
 interface OneClickClearTarget extends GraphwarOneClickClearCandidate {
   /** 中心点 Graphwar x；DAG 稳定排序使用，x+ 可达性在平面像素层判断。 */
   centerGraphX: number;
-  /** 中心点验证目标；半径固定 1px，避免重新引入命中圈左右策略。 */
+  /** 目标仍瞄准中心点，但验证使用士兵真实命中圈。 */
   centerTarget: GraphwarTrajectoryTargetCircle;
   /** 按中心 x 排序后的位置，用于稳定 tie-break。 */
   orderIndex: number;
@@ -184,7 +184,7 @@ interface OneClickClearSearchContext {
 
 const START_NODE_INDEX = -1;
 const MAX_GLOBAL_DELETE_PASSES = 1;
-const CENTER_TARGET_RADIUS_PIXELS = 1;
+const FALLBACK_TARGET_RADIUS_PIXELS = 1;
 const MINIMUM_GEOMETRY_ADVANCE_PLANE_PIXELS = 1;
 
 /** 用中心点 DAG 找到当前模型下显式击杀最多的追加路径。 */
@@ -282,7 +282,7 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
 
   const target = options.prefixTarget ?? {
     center: options.pathPoints.at(-1) ?? options.pathPoints[0],
-    radius: CENTER_TARGET_RADIUS_PIXELS,
+    radius: FALLBACK_TARGET_RADIUS_PIXELS,
   };
   const result = sampleGraphwarPathTargetSequence({
     boundaryExpansion: options.simulationBoundaryExpansion,
@@ -323,7 +323,7 @@ function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): 
       centerGraphX,
       centerTarget: {
         center: candidate.hitCenter,
-        radius: CENTER_TARGET_RADIUS_PIXELS,
+        radius: candidate.hitRadius,
       },
       orderIndex: 0,
       sourceIndex,
@@ -646,7 +646,7 @@ function validateOneClickClearTargetSequence(
     obstacleMask: options.simulationMask,
     points: route.pathPoints,
     settings: options.settings,
-    soldierMarkerRadius: CENTER_TARGET_RADIUS_PIXELS,
+    soldierMarkerRadius: FALLBACK_TARGET_RADIUS_PIXELS,
     targetCircles: route.targetSequence.map((target) => target.centerTarget),
     targetPoints: route.targetSequence.map((target) => target.hitCenter),
   });

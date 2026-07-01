@@ -26,16 +26,6 @@ export interface GraphwarOneClickClearCandidate {
   hitRadius: number;
 }
 
-/** 一键清图的预算设置。 */
-export interface GraphwarOneClickClearBudget {
-  /** Beam search 每层保留的状态数。 */
-  beamWidth: number;
-  /** 单次最多扩展状态数。 */
-  maxExpandedStates: number;
-  /** 单次最多运行时间，单位毫秒。 */
-  maxElapsedMs: number;
-}
-
 /** 传给一键清图的 route mask。 */
 export interface GraphwarOneClickClearRouteMask {
   /** 已按 tolerance 膨胀或腐蚀后的 mask。 */
@@ -52,8 +42,6 @@ export interface GraphwarOneClickClearOptions {
   bounds: GraphBounds;
   /** 截图内 Graphwar 棋盘矩形。 */
   boundsRect: BoundsRect;
-  /** 搜索预算。 */
-  budget: GraphwarOneClickClearBudget;
   /** 候选士兵。 */
   candidates: readonly GraphwarOneClickClearCandidate[];
   /** 长循环取消检查。 */
@@ -78,7 +66,6 @@ export interface GraphwarOneClickClearOptions {
 
 /** 一键清图失败分类，页面用它给出可解释状态。 */
 export type GraphwarOneClickClearFailureReason =
-  | "budget-exhausted"
   | "no-candidate"
   | "no-usable-target"
   | "preflight-blocked"
@@ -105,11 +92,11 @@ export type GraphwarOneClickClearResult =
 interface OneClickClearTarget extends GraphwarOneClickClearCandidate {
   /** 几何寻路优先瞄准点。 */
   aimPoint: PixelPoint;
-  /** 命中圈最早可打到的 Graphwar x，用于按 x 从低到高清图。 */
+  /** 命中圈最早稳定可瞄准的 Graphwar x，用于按 x 从低到高清图。 */
   minHitGraphX: number;
   /** 命中圈中心 Graphwar x，用于稳定排序。 */
   centerGraphX: number;
-  /** 命中圈最晚可打到的 Graphwar x，用于判断当前状态能否继续打它。 */
+  /** 命中圈最晚稳定可瞄准的 Graphwar x，用于判断当前状态能否继续打它。 */
   maxHitGraphX: number;
   /** 命中圈参与最终顺序验证。 */
   hitCircle: GraphwarTrajectoryTargetCircle;
@@ -135,7 +122,6 @@ interface OneClickClearState {
 }
 
 interface OneClickClearSearchContext {
-  budget: GraphwarOneClickClearBudget;
   candidates: readonly OneClickClearTarget[];
   options: GraphwarOneClickClearOptions;
   routeCache: Map<string, PixelPoint[] | undefined>;
@@ -145,8 +131,10 @@ interface OneClickClearSearchContext {
 }
 
 const MAX_GLOBAL_DELETE_PASSES = 2;
+/** 命中判断是严格小于半径，瞄边缘会丢命中；向圈内收一点保持稳定。 */
+const ONE_CLICK_CLEAR_AIM_EDGE_INSET_PIXELS = 0.75;
 
-/** 运行预算 beam search，返回能击杀最多目标的追加路径。 */
+/** 完整遍历 x 单调可达状态，返回当前搜索模型下击杀最多的追加路径。 */
 export async function buildGraphwarOneClickClearPath(
   options: GraphwarOneClickClearOptions,
 ): Promise<GraphwarOneClickClearResult> {
@@ -169,7 +157,6 @@ export async function buildGraphwarOneClickClearPath(
   }
 
   const context: OneClickClearSearchContext = {
-    budget: options.budget,
     candidates: targets,
     options,
     routeCache: new Map(),
@@ -186,22 +173,14 @@ export async function buildGraphwarOneClickClearPath(
     trajectoryState: prefixState,
   };
 
-  let beam: OneClickClearState[] = [initialState];
+  let frontier: OneClickClearState[] = [initialState];
   let best = initialState;
   let expandedStates = 0;
-  let exhausted = false;
-  while (beam.length > 0) {
-    const nextBeam: OneClickClearState[] = [];
-    for (const state of beam) {
+  while (frontier.length > 0) {
+    const nextFrontier: OneClickClearState[] = [];
+    for (const state of frontier) {
       if (options.isCancelled?.()) {
-        return createOneClickClearFailure("budget-exhausted", startedAt, expandedStates);
-      }
-      if (oneClickClearBudgetExceeded(context, expandedStates)) {
-        exhausted = true;
-        break;
-      }
-      if (!stateCanBeatBest(state, best, targets.length)) {
-        continue;
+        return createOneClickClearFailure("no-usable-target", startedAt, expandedStates);
       }
 
       expandedStates += 1;
@@ -219,18 +198,13 @@ export async function buildGraphwarOneClickClearPath(
         if (!nextState) {
           continue;
         }
-        nextBeam.push(nextState);
+        nextFrontier.push(nextState);
         if (compareOneClickClearStates(nextState, best, options) < 0) {
           best = nextState;
         }
       }
     }
-    if (exhausted) {
-      break;
-    }
-    beam = nextBeam
-      .sort((left, right) => compareOneClickClearBeamStates(left, right, options))
-      .slice(0, context.budget.beamWidth);
+    frontier = nextFrontier.sort((left, right) => compareOneClickClearStates(left, right, options));
     const yielded = options.yieldControl?.();
     if (yielded) {
       await yielded;
@@ -238,7 +212,7 @@ export async function buildGraphwarOneClickClearPath(
   }
 
   if (best.targetSequence.length === 0) {
-    return createOneClickClearFailure(exhausted ? "budget-exhausted" : "no-usable-target", startedAt, expandedStates);
+    return createOneClickClearFailure("no-usable-target", startedAt, expandedStates);
   }
 
   const optimized = await optimizeOneClickClearPath(context, best, expandedStates);
@@ -246,7 +220,7 @@ export async function buildGraphwarOneClickClearPath(
   expandedStates = optimized.expandedStates;
   const finalValidation = validateOneClickClearTargetSequence(options, finalState);
   if (!finalValidation) {
-    return createOneClickClearFailure(exhausted ? "budget-exhausted" : "no-usable-target", startedAt, expandedStates);
+    return createOneClickClearFailure("no-usable-target", startedAt, expandedStates);
   }
 
   return {
@@ -313,8 +287,8 @@ function createOneClickClearTarget(
   sourceIndex: number,
 ) {
   const centerGraph = imageToGraphPoint(candidate.hitCenter, options.bounds, options.boundsRect);
-  const graphRadiusX =
-    (candidate.hitRadius / options.boundsRect.width) * Math.abs(options.bounds.maxX - options.bounds.minX);
+  const aimRadius = Math.max(0, candidate.hitRadius - ONE_CLICK_CLEAR_AIM_EDGE_INSET_PIXELS);
+  const graphRadiusX = (aimRadius / options.boundsRect.width) * Math.abs(options.bounds.maxX - options.bounds.minX);
   const target: OneClickClearTarget = {
     ...candidate,
     aimPoint: candidate.hitCenter,
@@ -394,7 +368,7 @@ async function expandOneClickClearState(
     }
 
     const nextPath = appendOneClickClearRoute(context.options, state.pathPoints, route, target.aimPoint);
-    const nextState = validateOneClickClearExtension(context.options, state, target, nextPath);
+    const nextState = validateOneClickClearExtension(context, state, target, nextPath);
     if (nextState) {
       return nextState;
     }
@@ -477,28 +451,25 @@ function appendOneClickClearRoute(
 
 /** 增量验证下一段路线，并把采样 endState 缓存到搜索状态里。 */
 function validateOneClickClearExtension(
-  options: GraphwarOneClickClearOptions,
+  searchContext: OneClickClearSearchContext,
   state: OneClickClearState,
   target: OneClickClearTarget,
   nextPath: PixelPoint[],
 ) {
+  const options = searchContext.options;
   if (!oneClickClearPathFollowsGraphRule(options, nextPath)) {
     return undefined;
   }
 
   const mappedPoints = nextPath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
-  const context = createGraphwarTrajectoryFormulaContext({
+  const formulaContext = createGraphwarTrajectoryFormulaContext({
     bounds: options.bounds,
     points: mappedPoints,
     settings: options.settings,
     soldierCenter: mappedPoints[0],
   });
-  if (context.formulaPoints.length < 2) {
+  if (formulaContext.formulaPoints.length < 2) {
     return undefined;
-  }
-
-  if (!state.trajectoryState) {
-    return validateOneClickClearFullExtension(options, state, target, nextPath);
   }
 
   const result = sampleGraphwarFormulaTrajectory({
@@ -508,61 +479,66 @@ function validateOneClickClearExtension(
       boundaryExpansion: options.simulationBoundaryExpansion,
       mask: options.simulationMask,
     },
-    context,
-    initialReachedTargetCount: state.targetSequence.length,
+    collectVisiblePixels: true,
+    context: formulaContext,
     initialState: state.trajectoryState,
-    skipInitialStop: true,
-    targetSequence: [...state.targetSequence.map((item) => item.hitCircle), target.hitCircle],
+    skipInitialStop: Boolean(state.trajectoryState),
+    targetSequence: [target.hitCircle],
   });
-  if (result.reachedTargetCount < state.targetSequence.length + 1 || !result.sample.endState) {
+  if (result.reachedTargetCount < 1 || !result.sample.endState) {
+    return undefined;
+  }
+
+  const hitTargets = collectOneClickClearSegmentHits(searchContext, state, target, result.visiblePixels);
+  if (!hitTargets.some((hitTarget) => hitTarget.id === target.id)) {
     return undefined;
   }
 
   const killedIds = new Set(state.killedIds);
-  killedIds.add(target.id);
+  for (const hitTarget of hitTargets) {
+    killedIds.add(hitTarget.id);
+  }
+  const lastHitTarget = hitTargets.at(-1) ?? target;
   return {
     killedIds,
     lastPoint: nextPath.at(-1) ?? state.lastPoint,
-    lastTargetOrderIndex: target.orderIndex,
+    lastTargetOrderIndex: lastHitTarget.orderIndex,
     pathPoints: nextPath,
-    targetSequence: [...state.targetSequence, target],
+    targetSequence: [...state.targetSequence, ...hitTargets],
     trajectoryState: result.sample.endState,
   };
 }
 
-/** 没有可恢复前缀时完整验证当前序列，通常只发生在路径只有起点的第一次扩展。 */
-function validateOneClickClearFullExtension(
-  options: GraphwarOneClickClearOptions,
+/** 扫描这一段真实轨迹，把显式目标前顺手命中的候选也计入击杀序列。 */
+function collectOneClickClearSegmentHits(
+  context: OneClickClearSearchContext,
   state: OneClickClearState,
   target: OneClickClearTarget,
-  nextPath: PixelPoint[],
+  visiblePixels: readonly PixelPoint[],
 ) {
-  const targetSequence = [...state.targetSequence.map((item) => item.hitCircle), target.hitCircle];
-  const result = sampleGraphwarPathTargetSequence({
-    boundaryExpansion: options.simulationBoundaryExpansion,
-    bounds: options.bounds,
-    boundsRect: options.boundsRect,
-    obstacleMask: options.simulationMask,
-    points: nextPath,
-    settings: options.settings,
-    soldierMarkerRadius: 1,
-    targetCircles: targetSequence,
-    targetPoints: targetSequence.map((item) => item.center),
-  });
-  if (result.reachedTargetCount < state.targetSequence.length + 1 || !result.sample.endState) {
-    return undefined;
+  const hitTargets: OneClickClearTarget[] = [];
+  const segmentKilledIds = new Set(state.killedIds);
+  let lastOrderIndex = state.lastTargetOrderIndex;
+
+  for (const pixel of visiblePixels) {
+    for (const candidate of context.candidates) {
+      if (
+        candidate.orderIndex <= lastOrderIndex ||
+        candidate.orderIndex > target.orderIndex ||
+        segmentKilledIds.has(candidate.id) ||
+        !pointHitsTargetCircle(pixel, candidate.hitCenter, candidate.hitRadius)
+      ) {
+        continue;
+      }
+
+      const hitTarget = candidate.id === target.id ? target : candidate;
+      hitTargets.push(hitTarget);
+      segmentKilledIds.add(hitTarget.id);
+      lastOrderIndex = hitTarget.orderIndex;
+    }
   }
 
-  const killedIds = new Set(state.killedIds);
-  killedIds.add(target.id);
-  return {
-    killedIds,
-    lastPoint: nextPath.at(-1) ?? state.lastPoint,
-    lastTargetOrderIndex: target.orderIndex,
-    pathPoints: nextPath,
-    targetSequence: [...state.targetSequence, target],
-    trajectoryState: result.sample.endState,
-  };
+  return hitTargets;
 }
 
 /** 最终整路验证必须重采样完整路径，不能只信增量状态。 */
@@ -593,7 +569,7 @@ async function optimizeOneClickClearPath(
   for (let pass = 0; pass < MAX_GLOBAL_DELETE_PASSES; pass += 1) {
     let changed = false;
     for (let index = firstGeneratedIndex; index < optimized.pathPoints.length - 1; index += 1) {
-      if (oneClickClearBudgetExceeded(context, expandedStates) || context.options.isCancelled?.()) {
+      if (context.options.isCancelled?.()) {
         return { expandedStates, state: optimized };
       }
       if (oneClickClearDeleteIndexIsProtected(context.options, optimized, index)) {
@@ -657,21 +633,6 @@ function compareOneClickClearStates(
   );
 }
 
-/** Beam 保留策略偏向低 x 序列，避免早期可扩展路线被较短的远处路线挤掉。 */
-function compareOneClickClearBeamStates(
-  left: OneClickClearState,
-  right: OneClickClearState,
-  options: GraphwarOneClickClearOptions,
-) {
-  return (
-    right.targetSequence.length - left.targetSequence.length ||
-    compareTargetSequencesByXOrder(left.targetSequence, right.targetSequence) ||
-    countEnemyTargets(right) - countEnemyTargets(left) ||
-    left.pathPoints.length - right.pathPoints.length ||
-    estimateFormulaTextLength(left, options) - estimateFormulaTextLength(right, options)
-  );
-}
-
 function countEnemyTargets(state: OneClickClearState) {
   return state.targetSequence.filter((target) => target.enemy).length;
 }
@@ -707,11 +668,6 @@ function compareTargetSequencesByXOrder(left: readonly OneClickClearTarget[], ri
     }
   }
   return left.length - right.length;
-}
-
-function stateCanBeatBest(state: OneClickClearState, best: OneClickClearState, totalCandidateCount: number) {
-  const remainingOrderedTargets = Math.max(0, totalCandidateCount - state.lastTargetOrderIndex - 1);
-  return state.targetSequence.length + remainingOrderedTargets >= best.targetSequence.length;
 }
 
 function getMinimumForwardGraphX(options: GraphwarOneClickClearOptions, startPoint: PixelPoint) {
@@ -795,13 +751,7 @@ function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions
 }
 
 function pointHitsTargetCircle(point: PixelPoint, center: PixelPoint, radius: number) {
-  return Math.hypot(point.x - center.x, point.y - center.y) <= radius;
-}
-
-function oneClickClearBudgetExceeded(context: OneClickClearSearchContext, expandedStates: number) {
-  return (
-    expandedStates >= context.budget.maxExpandedStates || nowMs() - context.startedAt >= context.budget.maxElapsedMs
-  );
+  return Math.hypot(point.x - center.x, point.y - center.y) < radius;
 }
 
 function createOneClickClearFailure(

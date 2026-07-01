@@ -123,15 +123,6 @@ type ParsedObstacleTolerances =
       simulationTolerancePlanePixels: number;
     }
   | { ok: false; message: string };
-/** 一键清图预算解析结果；预算必须小而明确，避免页面长时间阻塞。 */
-type ParsedOneClickClearSettings =
-  | {
-      ok: true;
-      beamWidth: number;
-      maxElapsedMs: number;
-      maxExpandedStates: number;
-    }
-  | { ok: false; message: string };
 /** 寻路模式；auto-graph 保留为待重写的禁用入口。 */
 type PathfindingMode = "off" | "smart" | "auto-graph";
 /** 识别状态等级，与面板标题和智能寻路状态样式对齐。 */
@@ -327,9 +318,6 @@ const obstacleRouteMaxToleranceText = ref("3");
 const obstacleRouteStepToleranceText = ref("1");
 const obstacleSimulationToleranceText = ref("1");
 const pathfindingBoundaryExpansionText = ref("1");
-const oneClickClearBeamWidthText = ref(String(graphwarToolDefaults.oneClickClearBeamWidth));
-const oneClickClearMaxExpandedStatesText = ref(String(graphwarToolDefaults.oneClickClearMaxExpandedStates));
-const oneClickClearMaxElapsedMsText = ref(String(graphwarToolDefaults.oneClickClearMaxElapsedMs));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
 const {
@@ -614,35 +602,6 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     routeMinTolerancePlanePixels,
     routeStepPlanePixels: Math.max(Number.EPSILON, Math.abs(routeStepPlanePixels)),
     simulationTolerancePlanePixels,
-  };
-});
-
-const parsedOneClickClearSettings = computed<ParsedOneClickClearSettings>(() => {
-  const beamWidth = parseFiniteNumber(oneClickClearBeamWidthText.value);
-  if (beamWidth === undefined || !Number.isInteger(beamWidth) || beamWidth < 1 || beamWidth > 64) {
-    return { ok: false as const, message: locale.validation.oneClickClearBeamWidthRange };
-  }
-
-  const maxExpandedStates = parseFiniteNumber(oneClickClearMaxExpandedStatesText.value);
-  if (
-    maxExpandedStates === undefined ||
-    !Number.isInteger(maxExpandedStates) ||
-    maxExpandedStates < 1 ||
-    maxExpandedStates > 20000
-  ) {
-    return { ok: false as const, message: locale.validation.oneClickClearMaxExpandedStatesRange };
-  }
-
-  const maxElapsedMs = parseFiniteNumber(oneClickClearMaxElapsedMsText.value);
-  if (maxElapsedMs === undefined || !Number.isInteger(maxElapsedMs) || maxElapsedMs < 100 || maxElapsedMs > 30000) {
-    return { ok: false as const, message: locale.validation.oneClickClearMaxElapsedMsRange };
-  }
-
-  return {
-    ok: true as const,
-    beamWidth,
-    maxElapsedMs,
-    maxExpandedStates,
   };
 });
 
@@ -1067,9 +1026,6 @@ const smartPathfindingSettingsMessage = computed(() => {
   }
   if (!parsedObstacleTolerances.value.ok) {
     return parsedObstacleTolerances.value.message;
-  }
-  if (!parsedOneClickClearSettings.value.ok) {
-    return parsedOneClickClearSettings.value.message;
   }
   return "";
 });
@@ -2607,15 +2563,14 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
   return true;
 }
 
-/** 一键清图：从当前路径尾部出发，预算内搜索能追加击杀最多士兵的路径。 */
+/** 一键清图：从当前路径尾部出发，完整遍历 x 单调可达状态并追加当前模型下击杀最多的路径。 */
 async function runOneClickClear() {
   const startedAt = nowMs();
   const timings: SmartPathfindingDebugTimingEntry[] = [];
   const preflightResult = measureSmartPathfindingDebugStage(timings, "one-click-clear-preflight", () => {
     const boundsResult = parsedBounds.value;
     const tolerances = parsedObstacleTolerances.value;
-    const settings = parsedOneClickClearSettings.value;
-    if (!boundsResult.ok || !tolerances.ok || !settings.ok) {
+    if (!boundsResult.ok || !tolerances.ok) {
       return {
         kind: "error" as const,
         message: smartPathfindingSettingsMessage.value || getSmartPathfindingDisabledMessage(),
@@ -2648,7 +2603,6 @@ async function runOneClickClear() {
 
     return {
       bounds: boundsResult.bounds,
-      budget: settings,
       ok: true as const,
       prefixTarget: createOneClickClearPrefixTarget(),
       routeMasks: collectSmartPathfindingRouteTolerances(tolerances).map((routeTolerance) => ({
@@ -2688,7 +2642,6 @@ async function runOneClickClear() {
         boundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
         bounds: preflightResult.bounds,
         boundsRect: boundsRect.value,
-        budget: preflightResult.budget,
         candidates,
         isCancelled: () => pathfindingToken !== smartPathfindingCancelToken,
         minimumGraphXStep: minimumPathGraphXStep.value,
@@ -2792,9 +2745,6 @@ function getOneClickClearFailureMessage(reason: GraphwarOneClickClearFailureReas
   const elapsed = formatElapsedDuration(elapsedMs);
   if (reason === "no-candidate") {
     return locale.smartPathfinding.oneClickClear.noCandidate;
-  }
-  if (reason === "budget-exhausted") {
-    return locale.smartPathfinding.oneClickClear.budgetExhausted(elapsed);
   }
   if (reason === "preflight-blocked") {
     return getSmartPathfindingCurrentPathBlockedMessage();
@@ -4473,56 +4423,6 @@ async function copyText(text: string) {
               </label>
             </div>
           </details>
-          <details class="graphwar-killer__details">
-            <summary :title="locale.ui.pathfinding.oneClickClearTitle">
-              {{ locale.ui.pathfinding.autoGraph }}
-            </summary>
-            <div class="graphwar-killer__pathfinding-setting-grid">
-              <label
-                class="graphwar-killer__detection-setting-label"
-                :title="locale.ui.pathfinding.oneClickClearBeamWidthTitle"
-              >
-                {{ locale.ui.pathfinding.oneClickClearBeamWidth }}
-                <input
-                  v-model="oneClickClearBeamWidthText"
-                  inputmode="numeric"
-                  min="1"
-                  max="64"
-                  :aria-label="locale.ui.pathfinding.oneClickClearBeamWidthAriaLabel"
-                  :title="locale.ui.pathfinding.oneClickClearBeamWidthTitle"
-                >
-              </label>
-              <label
-                class="graphwar-killer__detection-setting-label"
-                :title="locale.ui.pathfinding.oneClickClearMaxExpandedStatesTitle"
-              >
-                {{ locale.ui.pathfinding.oneClickClearMaxExpandedStates }}
-                <input
-                  v-model="oneClickClearMaxExpandedStatesText"
-                  inputmode="numeric"
-                  min="1"
-                  max="20000"
-                  :aria-label="locale.ui.pathfinding.oneClickClearMaxExpandedStatesAriaLabel"
-                  :title="locale.ui.pathfinding.oneClickClearMaxExpandedStatesTitle"
-                >
-              </label>
-              <label
-                class="graphwar-killer__detection-setting-label"
-                :title="locale.ui.pathfinding.oneClickClearMaxElapsedMsTitle"
-              >
-                {{ locale.ui.pathfinding.oneClickClearMaxElapsedMs }}
-                <input
-                  v-model="oneClickClearMaxElapsedMsText"
-                  inputmode="numeric"
-                  min="100"
-                  max="30000"
-                  :aria-label="locale.ui.pathfinding.oneClickClearMaxElapsedMsAriaLabel"
-                  :title="locale.ui.pathfinding.oneClickClearMaxElapsedMsTitle"
-                >
-                <span>ms</span>
-              </label>
-            </div>
-          </details>
         </div>
       </div>
     </section>
@@ -4661,7 +4561,7 @@ async function copyText(text: string) {
             v-if="smartPathfindingEnabled"
             type="button"
             aria-pressed="false"
-            :disabled="smartPathfindingInProgress || !parsedOneClickClearSettings.ok"
+            :disabled="smartPathfindingInProgress"
             :title="locale.ui.pathfinding.oneClickClearTitle"
             @click="void runOneClickClear()"
           >

@@ -73,9 +73,6 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
-    oneClickClearBeamWidthRange: "One-Click Clear beam width must be an integer from 1 to 64",
-    oneClickClearMaxElapsedMsRange: "One-Click Clear max elapsed time must be an integer from 100 to 30000 ms",
-    oneClickClearMaxExpandedStatesRange: "One-Click Clear max expanded states must be an integer from 1 to 20000",
     pathfindingMaximumNumber: "Pathfinding maximum must be a number",
     pathfindingMaximumPixelRange: (limit) => `Pathfinding maximum must be between -${limit}px and ${limit}px`,
     pathfindingMinimumGreaterThanMaximum: "Pathfinding minimum cannot be greater than the maximum",
@@ -187,7 +184,6 @@ export const graphwarKillerLocale = {
     success: (elapsed) =>
       elapsed === undefined ? "Smart Pathfinding completed" : `Smart Pathfinding completed in ${elapsed}`,
     oneClickClear: {
-      budgetExhausted: (elapsed) => `One-Click Clear exhausted its budget without a usable kill in ${elapsed}`,
       inProgress: "Running One-Click Clear; right-click the screenshot to stop",
       needCurrentPath: "One-Click Clear needs an existing path start first",
       noCandidate: "One-Click Clear failed: no selectable target exists on the x+ side of the current path",
@@ -387,7 +383,7 @@ export const graphwarKillerLocale = {
         "one-click-clear-search": {
           label: "Search and validate clear",
           title:
-            "Run budgeted beam search, route caching, incremental trajectory validation, final full-path validation, and conservative point deletion.",
+            "Fully traverse x-monotone reachable states with route caching, incremental trajectory validation, final full-path validation, and conservative point deletion.",
         },
         "one-click-clear-setting-status": {
           label: "Set clear status",
@@ -432,18 +428,6 @@ export const graphwarKillerLocale = {
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
         "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
-      oneClickClearBeamWidth: "Beam width",
-      oneClickClearBeamWidthAriaLabel: "One-Click Clear beam width",
-      oneClickClearBeamWidthTitle:
-        "Number of candidate routes kept at each depth; larger values can find more kills but search more slowly. Range: 1 to 64.",
-      oneClickClearMaxElapsedMs: "Max elapsed",
-      oneClickClearMaxElapsedMsAriaLabel: "One-Click Clear max elapsed time in milliseconds",
-      oneClickClearMaxElapsedMsTitle:
-        "Maximum runtime for one One-Click Clear search; longer runs can find better routes. Range: 100 to 30000 ms.",
-      oneClickClearMaxExpandedStates: "Max expanded states",
-      oneClickClearMaxExpandedStatesAriaLabel: "One-Click Clear max expanded states",
-      oneClickClearMaxExpandedStatesTitle:
-        "Maximum number of search states One-Click Clear may expand; larger values can find more kills but keep the page busier. Range: 1 to 20000.",
       oneClickClearTitle:
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
       pathMaximum: "Path maximum",

@@ -4,7 +4,6 @@ import { GRAPHWAR_PLANE_LENGTH } from "./graphwar";
 import { buildSmartPathfindingPathForMask, planeGridCellCenterToImagePoint } from "./graphwar-pathfinding";
 import type { PlaneGridPoint } from "./graphwar-pathfinding";
 import { graphXAdvancesEnough, roundToDecimalPlaces } from "./numbers";
-import type { GraphwarTrajectorySamplingState } from "./simulator";
 import {
   createGraphwarTrajectoryFormulaContext,
   sampleGraphwarFormulaTrajectory,
@@ -13,8 +12,8 @@ import {
 import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectoryTargetCircle } from "./trajectory-sampling";
 import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
 
-/** 一键清图固定只用 1px 几何 route tolerance，避免旧版 min/max/step 扫描。 */
-export const GRAPHWAR_ONE_CLICK_CLEAR_ROUTE_TOLERANCE_PLANE_PIXELS = 1;
+/** 一键清图默认只用单个 1px 几何 route tolerance，避免旧版 min/max/step 扫描。 */
+export const GRAPHWAR_ONE_CLICK_CLEAR_DEFAULT_ROUTE_TOLERANCE_PLANE_PIXELS = 1;
 
 /** 一键清图可选择和验证的士兵目标。 */
 export interface GraphwarOneClickClearCandidate {
@@ -28,9 +27,9 @@ export interface GraphwarOneClickClearCandidate {
   hitRadius: number;
 }
 
-/** 传给一键清图的固定 route mask。 */
+/** 传给一键清图的单值 route mask。 */
 export interface GraphwarOneClickClearRouteMask {
-  /** 已按固定 1px tolerance 处理后的 mask。 */
+  /** 已按当前一键清图 route tolerance 处理后的 mask。 */
   mask: Uint8Array;
   /** 与 mask 对应的路线容差，参与底层可视图简化。 */
   routeTolerancePlanePixels: number;
@@ -80,7 +79,7 @@ export interface GraphwarOneClickClearOptions {
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 当前输出小数位对应的最小 Graphwar x 前进步长。 */
   minimumGraphXStep: number;
-  /** 一键清图固定 1px 几何路线 mask。 */
+  /** 一键清图单值几何路线 mask。 */
   routeMask: GraphwarOneClickClearRouteMask;
   /** 函数模拟用障碍 mask。 */
   simulationMask?: Uint8Array;
@@ -199,11 +198,11 @@ export async function buildGraphwarOneClickClearPath(
     return createOneClickClearFailure("preflight-blocked", startedAt, 0);
   }
 
-  const prefixState =
+  const prefixValid =
     options.pathPoints.length >= 2
       ? measureOneClickClearDebugTiming(options, "validate-prefix", () => validateOneClickClearPrefix(options))
-      : undefined;
-  if (options.pathPoints.length >= 2 && !prefixState) {
+      : true;
+  if (!prefixValid) {
     return createOneClickClearFailure("preflight-blocked", startedAt, 0);
   }
 
@@ -236,7 +235,7 @@ export async function buildGraphwarOneClickClearPath(
     }
 
     const validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
-      validateOneClickClearDagRoute(context, dag, selectedEdges, prefixState),
+      validateOneClickClearDagRoute(context, dag, selectedEdges),
     );
     workUnits += validation.validationCount;
     const validatedRoute = validation.route;
@@ -273,10 +272,10 @@ export async function buildGraphwarOneClickClearPath(
   }
 }
 
-/** 当前 prefix 已经命中当前最后路径点后，后续扩展才能复用其采样状态。 */
+/** 当前已有路径必须能先命中尾点；追加清图路线前先挡住已经无效的前缀。 */
 function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
   if (options.pathPoints.length < 2) {
-    return undefined;
+    return true;
   }
 
   const target = options.prefixTarget ?? {
@@ -294,7 +293,7 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
     targetCircles: [target],
     targetPoints: [target.center],
   });
-  return result.reachesTargetSequenceBeforeObstacle ? result.sample.endState : undefined;
+  return result.reachesTargetSequenceBeforeObstacle;
 }
 
 /** 收集从当前路径末端中心 x+ 侧可选的士兵，并按中心 x 稳定排序。 */
@@ -552,10 +551,8 @@ function validateOneClickClearDagRoute(
   context: OneClickClearSearchContext,
   dag: OneClickClearDag,
   edges: readonly OneClickClearDagEdge[],
-  prefixState: GraphwarTrajectorySamplingState | undefined,
 ): OneClickClearRouteValidationResult {
   let pathPoints = [...context.options.pathPoints];
-  let trajectoryState = prefixState;
   const targetSequence: OneClickClearTarget[] = [];
   const protectedPoints: PixelPoint[] = [];
   let validationCount = 0;
@@ -567,16 +564,15 @@ function validateOneClickClearDagRoute(
     }
 
     const nextPath = appendOneClickClearEdgeRoute(pathPoints, edge.route);
+    const nextTargetSequence = [...targetSequence, target];
     validationCount += 1;
-    const nextState = validateOneClickClearRouteSegment(context, nextPath, trajectoryState, target);
-    if (!nextState) {
+    if (!validateOneClickClearRouteSegment(context, nextPath, nextTargetSequence)) {
       return { failedEdge: edge, validationCount };
     }
 
     pathPoints = nextPath;
     protectedPoints.push(target.hitCenter);
     targetSequence.push(target);
-    trajectoryState = nextState;
   }
 
   return {
@@ -594,12 +590,11 @@ function appendOneClickClearEdgeRoute(sourcePath: readonly PixelPoint[], route: 
   return [...sourcePath, ...route.slice(1)];
 }
 
-/** 用完整当前路径建公式，但从已验证前缀状态继续采样到下一个中心点。 */
+/** 用当前完整路径重采样已接受目标序列，避免复用旧公式状态导致逐段验证和最终验证不一致。 */
 function validateOneClickClearRouteSegment(
   context: OneClickClearSearchContext,
   nextPath: readonly PixelPoint[],
-  trajectoryState: GraphwarTrajectorySamplingState | undefined,
-  target: OneClickClearTarget,
+  targetSequence: readonly OneClickClearTarget[],
 ) {
   const options = context.options;
   const followsGraphRule = measureOneClickClearDebugTiming(options, "segment-graph-rule", () =>
@@ -631,15 +626,10 @@ function validateOneClickClearRouteSegment(
         mask: options.simulationMask,
       },
       context: formulaContext,
-      initialState: trajectoryState,
-      skipInitialStop: Boolean(trajectoryState),
-      targetSequence: [target.centerTarget],
+      targetSequence: targetSequence.map((target) => target.centerTarget),
     }),
   );
-  if (result.reachedTargetCount < 1 || !result.sample.endState || result.earlyStopReason === "obstacle") {
-    return undefined;
-  }
-  return result.sample.endState;
+  return result.reachedTargetCount >= targetSequence.length;
 }
 
 /** 最终整路验证按显式中心点序列重采样，作为增量验证后的安全网。 */

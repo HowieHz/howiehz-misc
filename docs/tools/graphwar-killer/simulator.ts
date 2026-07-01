@@ -750,70 +750,68 @@ function reorderGraphwarExpressionTokens(
   start: number,
   end: number,
 ): boolean {
-  type ReorderStep =
-    | { kind: "range"; end: number; required: boolean; start: number }
-    | { kind: "token"; token: GraphwarExpressionToken };
-
-  const steps: ReorderStep[] = [{ kind: "range", start, end, required: true }];
-  while (steps.length > 0) {
-    const step = steps.pop();
-    if (!step) {
+  const pendingRanges: { end: number; mustContainToken: boolean; start: number }[] = [
+    { start, end, mustContainToken: true },
+  ];
+  while (pendingRanges.length > 0) {
+    const currentRange = pendingRanges.pop();
+    if (!currentRange) {
       continue;
     }
 
-    if (step.kind === "token") {
-      output.push(step.token);
-      continue;
-    }
-
-    const next = findGraphwarExpressionReorderToken(input, step.start, step.end);
-    if (next === -1) {
-      if (step.required) {
+    const rootIndex = findGraphwarExpressionRootTokenIndex(input, currentRange.start, currentRange.end);
+    if (rootIndex === -1) {
+      if (currentRange.mustContainToken) {
         return false;
       }
       continue;
     }
 
-    const token = input[next];
+    const token = input[rootIndex];
     const paramCount = getGraphwarExpressionTokenParamCount(token.type);
     output.push(token);
     if (paramCount === 1) {
-      steps.push({ kind: "range", start: next + 1, end: step.end, required: false });
+      pendingRanges.push({ start: rootIndex + 1, end: currentRange.end, mustContainToken: false });
     } else if (paramCount === 2) {
-      steps.push({ kind: "range", start: next + 1, end: step.end, required: false });
+      // 栈后进先出：先压右区间，才能保持旧递归的 left-before-right 输出顺序。
+      pendingRanges.push({ start: rootIndex + 1, end: currentRange.end, mustContainToken: false });
       if (
         token.type === GraphwarExpressionTokenType.Add &&
-        findGraphwarExpressionReorderToken(input, step.start, next - 1) === -1
+        findGraphwarExpressionRootTokenIndex(input, currentRange.start, rootIndex - 1) === -1
       ) {
-        steps.push({ kind: "token", token: { type: GraphwarExpressionTokenType.Value, value: 0 } });
+        output.push({ type: GraphwarExpressionTokenType.Value, value: 0 });
       } else {
-        steps.push({ kind: "range", start: step.start, end: next - 1, required: false });
+        pendingRanges.push({ start: currentRange.start, end: rootIndex - 1, mustContainToken: false });
       }
     }
   }
   return true;
 }
 
-function findGraphwarExpressionReorderToken(input: GraphwarExpressionToken[], start: number, end: number) {
+/** 找到当前区间的重排根 token：更外层优先，同层按 Graphwar 原版 token 编号优先。 */
+function findGraphwarExpressionRootTokenIndex(input: GraphwarExpressionToken[], start: number, end: number) {
   if (start > end || start >= input.length) {
     return -1;
   }
 
-  let next = -1;
-  let nextNest = Number.POSITIVE_INFINITY;
-  let nest = 0;
+  let rootIndex = -1;
+  let rootNestDepth = Number.POSITIVE_INFINITY;
+  let nestDepth = 0;
   for (let index = start; index <= end; index += 1) {
     const type = input[index].type;
     if (type === GraphwarExpressionTokenType.LeftBracket) {
-      nest += 1;
+      nestDepth += 1;
     } else if (type === GraphwarExpressionTokenType.RightBracket) {
-      nest -= 1;
-    } else if (nest < nextNest || (nest === nextNest && (next === -1 || type < input[next].type))) {
-      next = index;
-      nextNest = nest;
+      nestDepth -= 1;
+    } else if (
+      nestDepth < rootNestDepth ||
+      (nestDepth === rootNestDepth && (rootIndex === -1 || type < input[rootIndex].type))
+    ) {
+      rootIndex = index;
+      rootNestDepth = nestDepth;
     }
   }
-  return next;
+  return rootIndex;
 }
 
 /** 校验 Polish token 序列是否刚好消费一个表达式值。 */

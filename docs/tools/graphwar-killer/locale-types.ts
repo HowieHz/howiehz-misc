@@ -1,7 +1,7 @@
 /** 定义 Graphwar 杀手本地化文案结构，供中英文页面共享。 */
 import type { GraphwarDetectionWarning } from "./graphwar-detection";
 import type { GraphwarDetectionWorkerTimingDetail } from "./graphwar-detection-worker-types";
-import type { GraphwarOneClickClearDebugStage } from "./graphwar-one-click-clear";
+import type { GraphwarOneClickClearDebugDetail, GraphwarOneClickClearDebugStage } from "./graphwar-one-click-clear";
 import type { AlgorithmMode, EquationMode } from "./types";
 
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
@@ -43,6 +43,30 @@ interface GraphwarKillerDetectionDebugDetailText {
     title: string;
   };
 }
+
+/** 一键清图搜索细分 timing 的本地化文案。 */
+type GraphwarKillerPathfindingDebugDetailText = Record<
+  GraphwarOneClickClearDebugStage,
+  GraphwarKillerDebugStageText
+> & {
+  /** DAG 建边实际调度模式的文案。 */
+  "dag-edge-mode": {
+    /** 根据串行/并行/fallback 模式和 Worker 数生成标签。 */
+    label: (
+      mode: Extract<GraphwarOneClickClearDebugDetail, { type: "dag-edge-mode" }>["mode"],
+      workerCount: number,
+    ) => string;
+    /** 模式说明标题。 */
+    title: string;
+  };
+  /** 单个 DAG 建边子 Worker 的耗时文案。 */
+  "dag-edge-worker": {
+    /** 根据子 Worker 序号生成标签。 */
+    label: (workerIndex: number) => string;
+    /** 子 Worker 耗时说明标题。 */
+    title: string;
+  };
+};
 
 /**
  * Graphwar 杀手页面的完整文案协议。
@@ -87,6 +111,8 @@ export interface GraphwarKillerLocale {
     obstacleBrushDiameterRange: (min: number, max: number) => string;
     oneClickClearDeleteCheckRadiusNumber: string;
     oneClickClearDeleteCheckRadiusRange: (min: number, max: number) => string;
+    pathfindingWorkerCountInteger: string;
+    pathfindingWorkerCountRange: string;
     routePlanningToleranceNumber: string;
     routePlanningTolerancePixelRange: (limit: number) => string;
     simulationToleranceNumber: string;
@@ -262,7 +288,7 @@ export interface GraphwarKillerLocale {
       boundaryExpansion: string;
       boundaryExpansionAriaLabel: string;
       boundaryExpansionTitle: string;
-      debugDetails: Record<GraphwarOneClickClearDebugStage, GraphwarKillerDebugStageText>;
+      debugDetails: GraphwarKillerPathfindingDebugDetailText;
       debugNoTiming: string;
       debugStages: Record<
         | "preflight"
@@ -370,6 +396,9 @@ export interface GraphwarKillerLocale {
       parseDerivativeAsYTitle: string;
       pathfinding: {
         heading: string;
+        workerCount: string;
+        workerCountAriaLabel: string;
+        workerCountTitle: string;
       };
       recognition: {
         candidateTopRatio: string;

@@ -31,6 +31,8 @@ interface GraphwarToolDefaults {
   soldierTemplateCandidateTopRatio: number;
   /** 士兵模板匹配默认子 Worker 数量。 */
   templateMatchingWorkerCount: number;
+  /** 几何寻路默认 Worker 数量。 */
+  pathfindingWorkerCount: number;
   /** 默认最多保留的士兵识别数量，防止噪点生成过多目标。 */
   maximumSoldierCount: number;
 }
@@ -53,5 +55,6 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
   obstacleMinArea: 50,
   soldierTemplateCandidateTopRatio: 0.1,
   templateMatchingWorkerCount: 4,
+  pathfindingWorkerCount: 4,
   maximumSoldierCount: 40,
 };

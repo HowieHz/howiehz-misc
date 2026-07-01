@@ -711,12 +711,15 @@ async function optimizeOneClickClearPath(
         return { route: optimized, workUnits };
       }
 
-      const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
       workUnits += 1;
-      if (
-        oneClickClearPathFollowsGraphRule(context.options, candidatePath) &&
-        validateOneClickClearTargetSequence(context.options, { ...optimized, pathPoints: candidatePath })
-      ) {
+      if (!oneClickClearPointDeleteKeepsLocalSoldierHits(context.options, optimized.pathPoints, index)) {
+        index += 1;
+        await yieldOneClickClearControl(context.options);
+        continue;
+      }
+
+      const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
+      if (validateOneClickClearTargetSequence(context.options, { ...optimized, pathPoints: candidatePath })) {
         optimized = { ...optimized, pathPoints: candidatePath };
         continue;
       }
@@ -771,6 +774,69 @@ function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions
     }
   }
   return true;
+}
+
+function oneClickClearPointDeleteKeepsLocalSoldierHits(
+  options: GraphwarOneClickClearOptions,
+  points: readonly PixelPoint[],
+  deletedIndex: number,
+) {
+  const previousPoint = points[deletedIndex - 1];
+  const deletedPoint = points[deletedIndex];
+  const nextPoint = points[deletedIndex + 1];
+  if (!previousPoint || !deletedPoint) {
+    return false;
+  }
+
+  // 局部预筛只拒绝明确会丢掉几何路线上士兵命中的删点；完整弹道验证仍负责公式重建后的正确性。
+  for (const target of options.hitCandidates) {
+    const oldLocalPathHitsTarget =
+      pixelSegmentHitsCircle(previousPoint, deletedPoint, target.hitCenter, target.hitRadius) ||
+      (nextPoint ? pixelSegmentHitsCircle(deletedPoint, nextPoint, target.hitCenter, target.hitRadius) : false);
+    if (!oldLocalPathHitsTarget) {
+      continue;
+    }
+
+    const newLocalPathHitsTarget = nextPoint
+      ? pixelSegmentHitsCircle(previousPoint, nextPoint, target.hitCenter, target.hitRadius)
+      : pixelPointHitsCircle(previousPoint, target.hitCenter, target.hitRadius);
+    if (!newLocalPathHitsTarget) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function pixelPointHitsCircle(point: PixelPoint, center: PixelPoint, radius: number) {
+  return radius > 0 && pixelPointDistanceSquared(point, center) < radius * radius;
+}
+
+function pixelSegmentHitsCircle(start: PixelPoint, end: PixelPoint, center: PixelPoint, radius: number) {
+  if (radius <= 0) {
+    return false;
+  }
+
+  const segmentLengthSquared = pixelPointDistanceSquared(start, end);
+  if (segmentLengthSquared === 0) {
+    return pixelPointHitsCircle(start, center, radius);
+  }
+
+  const ratio = Math.min(
+    1,
+    Math.max(
+      0,
+      ((center.x - start.x) * (end.x - start.x) + (center.y - start.y) * (end.y - start.y)) / segmentLengthSquared,
+    ),
+  );
+  const closestPoint = {
+    x: start.x + (end.x - start.x) * ratio,
+    y: start.y + (end.y - start.y) * ratio,
+  };
+  return pixelPointDistanceSquared(closestPoint, center) < radius * radius;
+}
+
+function pixelPointDistanceSquared(left: Pick<PixelPoint, "x" | "y">, right: Pick<PixelPoint, "x" | "y">) {
+  return (right.x - left.x) ** 2 + (right.y - left.y) ** 2;
 }
 
 function planeGridPointToGraphX(bounds: GraphBounds, point: PlaneGridPoint) {

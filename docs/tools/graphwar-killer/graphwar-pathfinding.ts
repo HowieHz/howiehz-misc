@@ -243,9 +243,8 @@ export function createGraphwarVisibilityGraphObstacleData(
 
 /** 按有效圆形半径和形态学方向生成 route mask cache key。 */
 export function createRouteMaskCacheKey(radius: number) {
-  const normalizedRadius = Number.isFinite(radius) ? radius : 0;
-  const operation = normalizedRadius < 0 ? RouteMaskOperation.Erode : RouteMaskOperation.Dilate;
-  const operationRadius = normalizedRadius < 0 ? -normalizedRadius : normalizedRadius;
+  const operation = radius < 0 ? RouteMaskOperation.Erode : RouteMaskOperation.Dilate;
+  const operationRadius = radius < 0 ? -radius : radius;
   // Dilation/erosion uses a circular radius. Keep enough precision in the key so
   // radius values on different lattice-distance thresholds do not share a mask.
   return `${operation}:${roundToDecimalPlaces(operationRadius, 6)}`;
@@ -1270,9 +1269,9 @@ function isInsidePlaneWithBoundaryExpansion(x: number, y: number, boundaryExpans
   );
 }
 
-/** 边界收缩允许用户输入小数；进入点/线碰撞热路径前统一折成非负整数。 */
+/** 边界收缩允许小数；调用方已限制非负，进入点/线碰撞热路径前统一折成整数。 */
 function normalizeBoundaryExpansion(boundaryExpansion: number) {
-  return boundaryExpansion > 0 ? Math.floor(boundaryExpansion) : 0;
+  return Math.floor(boundaryExpansion);
 }
 
 /** DP 转移代价使用欧氏距离，偏好更短更平滑的折线。 */

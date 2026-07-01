@@ -720,13 +720,12 @@ export function addSoldierAreasToObstacleMask(
 
 /** 正半径用于安全外扩；负半径复用同一入口做内缩，供容差扫描使用。 */
 export function dilateObstacleMask(mask: Uint8Array, radius: number) {
-  const normalizedRadius = Number.isFinite(radius) ? radius : 0;
-  if (normalizedRadius < 0) {
-    return erodeObstacleMaskByRadius(mask, -normalizedRadius);
+  if (radius < 0) {
+    return erodeObstacleMaskByRadius(mask, -radius);
   }
 
   const dilated = new Uint8Array(mask.length);
-  const dilationRadius = normalizedRadius;
+  const dilationRadius = radius;
   const dilationOffsetLimit = Math.ceil(dilationRadius);
   const dilationRadiusSquared = dilationRadius * dilationRadius;
   for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
@@ -843,7 +842,7 @@ export function countObstacleMaskComponents(mask: Uint8Array) {
 /** 用圆形笔刷直接修改当前障碍 mask；直径单位为 Graphwar 原始平面像素。 */
 export function paintObstacleMaskDisk(mask: Uint8Array, center: PlaneGridPoint, diameter: number, value: 0 | 1) {
   const nextMask = new Uint8Array(mask);
-  const radius = Math.max(0.5, diameter / 2);
+  const radius = diameter / 2;
   const offsetLimit = Math.ceil(radius);
   const radiusSquared = radius * radius;
   let changed = false;
@@ -877,22 +876,37 @@ export function paintObstacleMaskStroke(
   diameter: number,
   value: 0 | 1,
 ) {
+  const radius = diameter / 2;
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared === 0) {
+    return paintObstacleMaskDisk(mask, start, diameter, value);
+  }
+
   const nextMask = new Uint8Array(mask);
-  const radius = Math.max(0.5, diameter / 2);
   const offsetLimit = Math.ceil(radius);
   const radiusSquared = radius * radius;
   const minX = Math.max(0, Math.min(start.x, end.x) - offsetLimit);
   const maxX = Math.min(GRAPHWAR_PLANE_LENGTH - 1, Math.max(start.x, end.x) + offsetLimit);
   const minY = Math.max(0, Math.min(start.y, end.y) - offsetLimit);
   const maxY = Math.min(GRAPHWAR_PLANE_HEIGHT - 1, Math.max(start.y, end.y) + offsetLimit);
-  const deltaX = end.x - start.x;
-  const deltaY = end.y - start.y;
-  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
   let changed = false;
 
+  // 线段笔刷会扫过包围盒内大量格点；内联投影和 clamp，避免每格调用 helper。
   for (let y = minY; y <= maxY; y += 1) {
     for (let x = minX; x <= maxX; x += 1) {
-      if (!pointIsInsideStrokeRadius(x, y, start, deltaX, deltaY, lengthSquared, radiusSquared)) {
+      let projection = ((x - start.x) * deltaX + (y - start.y) * deltaY) / lengthSquared;
+      if (projection < 0) {
+        projection = 0;
+      } else if (projection > 1) {
+        projection = 1;
+      }
+      const closestX = start.x + deltaX * projection;
+      const closestY = start.y + deltaY * projection;
+      const distanceX = x - closestX;
+      const distanceY = y - closestY;
+      if (distanceX * distanceX + distanceY * distanceY > radiusSquared) {
         continue;
       }
 
@@ -1064,23 +1078,14 @@ function detectSoldierMatches(
   return { matches };
 }
 
-/** 归一化士兵识别设置，避免 UI 输入越界影响模板匹配。 */
+/** 合并士兵识别设置默认值；页面输入层负责类型和范围校验。 */
 function resolveGraphwarSoldierDetectionSettings(
   settings?: GraphwarSoldierDetectionSettings,
 ): GraphwarSoldierDetectionSettings {
   return {
-    candidateTopRatio:
-      settings?.candidateTopRatio && Number.isFinite(settings.candidateTopRatio)
-        ? clampNumber(settings.candidateTopRatio, Number.EPSILON, 1)
-        : defaultGraphwarSoldierTemplateCandidateTopRatio,
-    maximumSoldierCount:
-      settings?.maximumSoldierCount && Number.isFinite(settings.maximumSoldierCount)
-        ? Math.max(1, Math.floor(settings.maximumSoldierCount))
-        : defaultGraphwarMaximumSoldierCount,
-    templateMatchingWorkerCount:
-      settings?.templateMatchingWorkerCount && Number.isFinite(settings.templateMatchingWorkerCount)
-        ? Math.max(1, Math.floor(settings.templateMatchingWorkerCount))
-        : defaultGraphwarTemplateMatchingWorkerCount,
+    candidateTopRatio: settings?.candidateTopRatio ?? defaultGraphwarSoldierTemplateCandidateTopRatio,
+    maximumSoldierCount: settings?.maximumSoldierCount ?? defaultGraphwarMaximumSoldierCount,
+    templateMatchingWorkerCount: settings?.templateMatchingWorkerCount ?? defaultGraphwarTemplateMatchingWorkerCount,
   };
 }
 
@@ -1910,7 +1915,7 @@ function erodeObstacleMask(mask: Uint8Array) {
 /** 按指定半径腐蚀障碍 mask，供负 route tolerance 使用。 */
 function erodeObstacleMaskByRadius(mask: Uint8Array, radius: number) {
   const eroded = new Uint8Array(mask.length);
-  const erosionRadius = Math.max(0, radius);
+  const erosionRadius = radius;
   const erosionOffsetLimit = Math.ceil(erosionRadius);
   const erosionRadiusSquared = erosionRadius * erosionRadius;
   for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
@@ -2161,28 +2166,6 @@ function setMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number, v
 /** 判断圆形笔刷偏移是否落在半径内。 */
 function offsetIsInsideRadius(offsetX: number, offsetY: number, radiusSquared: number) {
   return offsetX * offsetX + offsetY * offsetY <= radiusSquared;
-}
-
-/** 判断平面网格点是否落在圆形笔刷扫过线段的半径内。 */
-function pointIsInsideStrokeRadius(
-  x: number,
-  y: number,
-  start: PlaneGridPoint,
-  deltaX: number,
-  deltaY: number,
-  lengthSquared: number,
-  radiusSquared: number,
-) {
-  if (lengthSquared === 0) {
-    return offsetIsInsideRadius(x - start.x, y - start.y, radiusSquared);
-  }
-
-  const projection = clampNumber(((x - start.x) * deltaX + (y - start.y) * deltaY) / lengthSquared, 0, 1);
-  const closestX = start.x + deltaX * projection;
-  const closestY = start.y + deltaY * projection;
-  const distanceX = x - closestX;
-  const distanceY = y - closestY;
-  return distanceX * distanceX + distanceY * distanceY <= radiusSquared;
 }
 
 /** 判断平面网格点是否位于 Graphwar 原始平面内。 */

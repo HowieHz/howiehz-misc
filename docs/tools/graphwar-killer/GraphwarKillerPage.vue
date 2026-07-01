@@ -60,12 +60,13 @@ import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
   clampNumber,
-  doublePrecisionTolerance,
   formatAngleDegree,
   formatDecimal,
   formatDoublePrecisionDecimal,
   formatSvgNumber,
+  graphXAdvancesStrictly,
   nearlyEqual,
+  nextUpDouble,
   parseFiniteNumber,
 } from "./numbers";
 import { graphwarToolDefaults } from "./tool-defaults";
@@ -273,8 +274,8 @@ const debugActivationCountdownStepMs = 100;
 const debugActivationCountdownVisibleAfterMs = 1000;
 const debugActivationSuccessFlashMs = 2000;
 const smartPathfindingBlockedPointFlashMs = 1800;
-/** Graphwar 轨迹只能向 x+ 推进；路径点至少按原始平面 1px 前进，和公式输出小数位无关。 */
-const minimumForwardPlanePixels = 1;
+/** 士兵命中圈内换目标点的扫描步长；只影响候选枚举，不是 x+ 合法性的最小前进量。 */
+const soldierAimScanPlanePixels = 1;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 
@@ -1082,12 +1083,8 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
   );
 });
 
-const visibleDecimalPlaces = computed(() =>
-  parsedPrecision.value.ok ? parsedPrecision.value.decimalPlaces : DEFAULT_FORMULA_DECIMAL_PLACES,
-);
-
 watch(
-  [mappedPathPoints, visibleDecimalPlaces],
+  [mappedPathPoints],
   () => {
     syncPathPointCoordinateTexts();
   },
@@ -2856,14 +2853,7 @@ function createOneClickClearHitCandidates(): GraphwarOneClickClearCandidate[] {
 
 /** 一键清图候选只用截图平面精度；输出保留小数位只影响最终公式文本。 */
 function oneClickClearSoldierReachesForward(soldier: DetectionBox, startPoint: PixelPoint) {
-  return (
-    imagePointToPlaneX(createSoldierHitCircleXPlusEdgePoint(soldier)) - imagePointToPlaneX(startPoint) >=
-    minimumForwardPlanePixels
-  );
-}
-
-function imagePointToPlaneX(point: PixelPoint) {
-  return ((point.x - boundsRect.value.x) / boundsRect.value.width) * GRAPHWAR_PLANE_LENGTH;
+  return pointGraphXAdvances(startPoint, getDetectionBoxCenter(soldier));
 }
 
 /** 一键清图失败原因用独立文案，避免和单目标智能寻路失败混在一起。 */
@@ -2972,7 +2962,7 @@ async function buildSmartPathfindingPath(
   return undefined;
 }
 
-/** 判断平面候选线段是否满足 Graphwar 原始平面 1px 的 x+ 最小前进量。 */
+/** 判断平面候选线段是否严格沿 Graphwar x+ 前进；同 x 不允许。 */
 function pathfindingPlaneSegmentAdvancesEnough(previous: PlaneGridPoint, next: PlaneGridPoint) {
   if (!parsedBounds.value.ok) {
     return false;
@@ -2980,7 +2970,7 @@ function pathfindingPlaneSegmentAdvancesEnough(previous: PlaneGridPoint, next: P
 
   const previousGraphX = planeGridPointToGraphX(previous);
   const nextGraphX = planeGridPointToGraphX(next);
-  return pathAdvancesEnough(nextGraphX - previousGraphX, previousGraphX, nextGraphX);
+  return pathAdvancesEnough(previousGraphX, nextGraphX);
 }
 
 /** 将固定 770x450 平面 x 转换为当前 Graphwar 游戏 x。 */
@@ -3150,7 +3140,7 @@ function createSoldierAimCheckResult(
   }
 
   // 第二检查只把命中圈 x+ 边缘当作“是否可选中”的资格线；
-  // 真正落点固定为 lastX + 原始平面 1px，y 保持命中圈中心，避免点击偏移改变目标。
+  // 真正落点固定为 lastX 的下一个可表示 double，y 保持命中圈中心，避免点击偏移改变目标。
   if (!soldierAimXReachesMinimumForward(createSoldierHitCircleXPlusEdgePoint(box), startPoint)) {
     return undefined;
   }
@@ -3159,19 +3149,14 @@ function createSoldierAimCheckResult(
   return minimumForwardPoint ? { kind: "edge", point: minimumForwardPoint } : undefined;
 }
 
-/** 判断一个士兵候选点是否至少前进 1 个 Graphwar 原始平面像素，并且没有越出收缩边界。 */
+/** 判断一个士兵候选点是否严格沿 Graphwar x+ 前进，并且没有越出收缩边界。 */
 function soldierAimPointPassesMinimumForwardCheck(point: PixelPoint, startPoint: PixelPoint) {
   return pointIsInsideTargetBounds(point) && soldierAimXReachesMinimumForward(point, startPoint);
 }
 
-/** 判断一个士兵候选点的 x 是否至少前进 1 个 Graphwar 原始平面像素。 */
+/** 判断一个士兵候选点的 Graphwar x 是否严格大于起点 x。 */
 function soldierAimXReachesMinimumForward(point: PixelPoint, startPoint: PixelPoint) {
-  if (!parsedBounds.value.ok) {
-    return false;
-  }
-
-  const pointGraph = imageToGraphPoint(point, parsedBounds.value.bounds, boundsRect.value);
-  return graphXReachesMinimumForward(pointGraph.x, startPoint);
+  return pointGraphXAdvances(startPoint, point);
 }
 
 /** 返回士兵命中圈在 x+ 方向上的边缘点，y 固定为命中圈中心。 */
@@ -3211,7 +3196,7 @@ function collectSmartPathfindingSoldierXTargets(startPoint: PixelPoint, box: Det
   const direction = xPlusIsRight ? 1 : -1;
   const edgeX = center.x + direction * box.hitRadius;
   // 士兵目标只在命中圈中心水平线上搜索：先试规则选出的起点，
-  // 再按原始平面 1px 推向 x+ 边缘，让寻路失败时换目标但不改变 y。
+  // 再用 1 个原始平面像素作为枚举步长推向 x+ 边缘，让寻路失败时换目标但不改变 y。
   const maxSteps = Math.ceil(Math.abs(edgeX - startPoint.x) / pixelStep) + 1;
   for (let step = 0; step <= maxSteps; step += 1) {
     const rawX = startPoint.x + direction * pixelStep * step;
@@ -3230,13 +3215,13 @@ function collectSmartPathfindingSoldierXTargets(startPoint: PixelPoint, box: Det
   return targets;
 }
 
-/** 将 Graphwar 原始平面 1px 换算为士兵命中圈目标枚举的截图像素步长。 */
+/** 将士兵命中圈候选枚举步长换算为截图像素；这不是路径 x+ 合法性的最小前进量。 */
 function getSmartPathfindingTargetImageXStep() {
   if (!parsedBounds.value.ok) {
     return 0;
   }
 
-  return Math.max(Number.EPSILON, (minimumForwardPlanePixels / GRAPHWAR_PLANE_LENGTH) * boundsRect.value.width);
+  return Math.max(Number.EPSILON, (soldierAimScanPlanePixels / GRAPHWAR_PLANE_LENGTH) * boundsRect.value.width);
 }
 
 /** 从检测框创建命中圆，统一士兵目标和弹道命中判定。 */
@@ -3441,50 +3426,76 @@ function pointIsInsideBoundsRect(point: PixelPoint, rect: BoundsRect) {
   return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
-/** 返回当前起点向 x+ 前进 1 个 Graphwar 原始平面像素后的 Graphwar x。 */
+/** 返回当前起点之后的下一个可表示 Graphwar x。 */
 function getMinimumForwardGraphX(startPoint: PixelPoint) {
   if (!parsedBounds.value.ok) {
     return undefined;
   }
 
   const startGraph = imageToGraphPoint(startPoint, parsedBounds.value.bounds, boundsRect.value);
-  return startGraph.x + getMinimumForwardGraphXStep();
+  return nextUpDouble(startGraph.x);
 }
 
-/** 判断 Graphwar x 是否已经到达“最后一个路径点 + 原始平面 1px”这条线。 */
+/** 判断 Graphwar x 是否严格大于起点 x；同一个 double x 不允许。 */
 function graphXReachesMinimumForward(graphX: number, startPoint: PixelPoint) {
-  const minimumGraphX = getMinimumForwardGraphX(startPoint);
-  if (minimumGraphX === undefined) {
+  if (!parsedBounds.value.ok) {
     return false;
   }
 
-  return graphX + doublePrecisionTolerance(graphX, minimumGraphX) >= minimumGraphX;
+  const startGraph = imageToGraphPoint(startPoint, parsedBounds.value.bounds, boundsRect.value);
+  return graphXAdvancesStrictly(startGraph.x, graphX);
 }
 
-/** 将 Graphwar 原始平面像素前进量换算成当前 Graphwar x 轴的坐标步长。 */
-function getMinimumForwardGraphXStep() {
+/** 判断两个截图点映射到 Graphwar 后是否严格 x+。 */
+function pointGraphXAdvances(startPoint: PixelPoint, point: PixelPoint) {
   if (!parsedBounds.value.ok) {
-    return 0;
+    return false;
   }
 
-  const bounds = parsedBounds.value.bounds;
-  return (Math.abs(bounds.maxX - bounds.minX) / GRAPHWAR_PLANE_LENGTH) * minimumForwardPlanePixels;
+  const startGraph = imageToGraphPoint(startPoint, parsedBounds.value.bounds, boundsRect.value);
+  const pointGraph = imageToGraphPoint(point, parsedBounds.value.bounds, boundsRect.value);
+  return graphXAdvancesStrictly(startGraph.x, pointGraph.x);
 }
 
-/** 返回当前起点向 x+ 前进最小步长后的截图 x；超出边界时仍返回理论 x，调用方负责边界判断。 */
+/** 返回当前起点之后最小 double x+ 对应的截图 x，用于绘制可点区域预览。 */
 function getMinimumForwardPixelX(startPoint: PixelPoint) {
   if (!parsedBounds.value.ok) {
     return undefined;
   }
 
-  const minimumGraphX = getMinimumForwardGraphX(startPoint);
-  if (minimumGraphX === undefined) {
-    return undefined;
-  }
-  return graphToImagePoint(createGraphPoint(minimumGraphX, 0), parsedBounds.value.bounds, boundsRect.value).x;
+  const startGraph = imageToGraphPoint(startPoint, parsedBounds.value.bounds, boundsRect.value);
+  return createMinimumForwardPointAtGraphY(startPoint, startGraph.y)?.x;
 }
 
-/** 按指定起点把 x 不够的目标改为同 y 的最小 x+ 步长点；无剩余空间时返回 undefined。 */
+/** 在指定 Graphwar y 上创建 startX 之后的最小可表示 x+ 点。 */
+function createMinimumForwardPointAtGraphY(startPoint: PixelPoint, graphY: number) {
+  if (!parsedBounds.value.ok) {
+    return undefined;
+  }
+
+  let graphX = getMinimumForwardGraphX(startPoint);
+  if (graphX === undefined) {
+    return undefined;
+  }
+
+  // PixelPoint 存的是截图坐标，极小 Graphwar x 变化可能在往返映射时被舍入掉；
+  // 向后试少量 ULP，直到映射回 Graphwar 后确实严格 x+。
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const point = graphToImagePoint(createGraphPoint(graphX, graphY), parsedBounds.value.bounds, boundsRect.value);
+    if (pointGraphXAdvances(startPoint, point)) {
+      return point;
+    }
+
+    const nextGraphX = nextUpDouble(graphX);
+    if (nextGraphX === graphX) {
+      break;
+    }
+    graphX = nextGraphX;
+  }
+  return undefined;
+}
+
+/** 按指定起点把 x 不够的目标改为同 y 的最小 double x+ 点；无剩余空间时返回 undefined。 */
 function createMinimumForwardTargetPoint(point: PixelPoint, startPoint = pathPixels.value.at(-1)) {
   if (!parsedBounds.value.ok) {
     return undefined;
@@ -3501,28 +3512,31 @@ function createMinimumForwardTargetPoint(point: PixelPoint, startPoint = pathPix
 
   const bounds = parsedBounds.value.bounds;
   const targetGraph = imageToGraphPoint(point, bounds, boundsRect.value);
-  const minForwardPixelX = getMinimumForwardPixelX(startPoint);
-  if (minForwardPixelX === undefined) {
-    return undefined;
-  }
 
   // 设计意图：非士兵点击如果落在 x+ 打击范围左侧，只把目标移到
-  // “最后一个路径点 + 原始平面 1px”，y 保持点击值；这里不做障碍、
-  // 寻路或额外命中判断，只检查最终 xy 是否仍在可用边界内。
-  const pixelX = graphXReachesMinimumForward(targetGraph.x, startPoint) ? point.x : minForwardPixelX;
-  const targetPoint = createPixelPoint(pixelX, point.y);
+  // “最后一个路径点之后的下一个可表示 double x”，y 保持点击值；这里不做
+  // 障碍、寻路或额外命中判断，只检查最终 xy 是否仍在可用边界内。
+  const targetPoint = graphXReachesMinimumForward(targetGraph.x, startPoint)
+    ? point
+    : createMinimumForwardPointAtGraphY(startPoint, targetGraph.y);
+  if (!targetPoint) {
+    return undefined;
+  }
   return pointIsInsideTargetBounds(targetPoint) ? targetPoint : undefined;
 }
 
-/** 生成 x+ 最小步长处、且 y 保持士兵命中圈中心的目标点。 */
+/** 生成最小 double x+ 处、且 y 保持士兵命中圈中心的目标点。 */
 function createMinimumForwardSoldierTargetPoint(startPoint: PixelPoint, box: DetectionBox) {
-  const minForwardPixelX = getMinimumForwardPixelX(startPoint);
-  if (minForwardPixelX === undefined) {
+  if (!parsedBounds.value.ok) {
     return undefined;
   }
 
   const center = getDetectionBoxCenter(box);
-  const targetPoint = createPixelPoint(minForwardPixelX, center.y);
+  const centerGraph = imageToGraphPoint(center, parsedBounds.value.bounds, boundsRect.value);
+  const targetPoint = createMinimumForwardPointAtGraphY(startPoint, centerGraph.y);
+  if (!targetPoint) {
+    return undefined;
+  }
   return pointIsInsideTargetBounds(targetPoint) && detectionBoxContainsHitCircle(box, targetPoint)
     ? targetPoint
     : undefined;
@@ -3609,13 +3623,7 @@ function setPathPoint(index: number, point: PixelPoint) {
   }
 
   const previousPoint = index > 0 ? pathPixels.value[index - 1] : undefined;
-  const nextPoint = normalizePathPoint(
-    point,
-    boundsRect.value,
-    parsedBounds.value.bounds,
-    previousPoint,
-    getMinimumForwardGraphXStep(),
-  );
+  const nextPoint = normalizePathPointForStrictForward(point, previousPoint);
   if (!nextPoint) {
     return false;
   }
@@ -3641,8 +3649,7 @@ function getPathPointCoordinateText(index: number, axis: PathPointCoordinateAxis
 /** 同步坐标输入框文本；正在编辑的单元格保留原输入。 */
 function syncPathPointCoordinateTexts() {
   syncPathPointCoordinateTextState({
-    decimalPlaces: visibleDecimalPlaces.value,
-    formatCoordinate: formatDecimal,
+    formatCoordinate: formatDoublePrecisionDecimal,
     points: mappedPathPoints.value,
   });
 }
@@ -3655,8 +3662,7 @@ function startPathPointCoordinateEdit(index: number, axis: PathPointCoordinateAx
 /** 结束路径点坐标编辑并恢复格式化文本。 */
 function finishPathPointCoordinateEdit() {
   finishPathPointCoordinateEditState({
-    decimalPlaces: visibleDecimalPlaces.value,
-    formatCoordinate: formatDecimal,
+    formatCoordinate: formatDoublePrecisionDecimal,
     points: mappedPathPoints.value,
   });
   if (pathStatus.value === getPathPointCoordinateMessage()) {
@@ -3704,27 +3710,41 @@ function getPathPointCoordinateMessage() {
   return locale.status.pathPointCoordinateNumber;
 }
 
-/** 按原始平面 1px x+ 规则把整条路径推进到 Graphwar 可采样的最小前进步长。 */
+/** 按严格 x+ 规则把整条路径推进到下一个可表示 double。 */
 function normalizePathForMinimumForwardStep(points: readonly PixelPoint[]) {
   if (!parsedBounds.value.ok || points.length < 2) {
     return [...points];
   }
 
-  // 按路径序号从低到高推进，保证每个后续点至少比前一点前进 1 个原始平面像素。
+  // 按路径序号从低到高推进，保证每个后续点的 Graphwar x 都严格大于前一点。
   const normalizedPoints = [points[0]];
   for (let index = 1; index < points.length; index += 1) {
     const previousPoint = normalizedPoints.at(-1);
-    normalizedPoints.push(
-      normalizePathPoint(
-        points[index],
-        boundsRect.value,
-        parsedBounds.value.bounds,
-        previousPoint,
-        getMinimumForwardGraphXStep(),
-      ),
-    );
+    normalizedPoints.push(normalizePathPointForStrictForward(points[index], previousPoint));
   }
   return normalizedPoints;
+}
+
+/** 先按边界收缩点，再只在必要时把 Graphwar x 推到上一个点后的下一个 double。 */
+function normalizePathPointForStrictForward(point: PixelPoint, previousPoint?: PixelPoint) {
+  if (!parsedBounds.value.ok) {
+    return point;
+  }
+
+  const normalizedPoint = normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, undefined, 0);
+  if (!previousPoint) {
+    return normalizedPoint;
+  }
+
+  const normalizedGraph = imageToGraphPoint(normalizedPoint, parsedBounds.value.bounds, boundsRect.value);
+  if (graphXReachesMinimumForward(normalizedGraph.x, previousPoint)) {
+    return normalizedPoint;
+  }
+
+  const minimumForwardPoint = createMinimumForwardPointAtGraphY(previousPoint, normalizedGraph.y);
+  return minimumForwardPoint
+    ? normalizePathPoint(minimumForwardPoint, boundsRect.value, parsedBounds.value.bounds, undefined, 0)
+    : normalizedPoint;
 }
 
 /** 删除路径点。 */
@@ -3937,8 +3957,7 @@ function canAppendPathPoint(point: PixelPoint) {
     return true;
   }
 
-  const deltaX = nextPoint.x - previousPoint.x;
-  if (pathAdvancesEnough(deltaX, previousPoint.x, nextPoint.x)) {
+  if (pathAdvancesEnough(previousPoint.x, nextPoint.x)) {
     return true;
   }
 
@@ -3955,26 +3974,21 @@ function pathFollowsGraphRule(points: PixelPoint[]) {
   for (let index = 1; index < points.length; index += 1) {
     const previousPoint = imageToGraphPoint(points[index - 1], parsedBounds.value.bounds, boundsRect.value);
     const nextPoint = imageToGraphPoint(points[index], parsedBounds.value.bounds, boundsRect.value);
-    const deltaX = nextPoint.x - previousPoint.x;
-    if (!pathAdvancesEnough(deltaX, previousPoint.x, nextPoint.x)) {
+    if (!pathAdvancesEnough(previousPoint.x, nextPoint.x)) {
       return false;
     }
   }
   return true;
 }
 
-/** 判断相邻两个 Graphwar x 差是否达到原始平面 1px 对应的最小前进步长。 */
-function pathAdvancesEnough(deltaX: number, previousX?: number, nextX?: number) {
-  const minimumForwardGraphXStep = getMinimumForwardGraphXStep();
-  return (
-    deltaX + doublePrecisionTolerance(deltaX, minimumForwardGraphXStep, previousX ?? deltaX, nextX ?? deltaX) >=
-    minimumForwardGraphXStep
-  );
+/** 判断相邻两个 Graphwar x 是否严格 x+；同一个 double x 不允许。 */
+function pathAdvancesEnough(previousX: number, nextX: number) {
+  return graphXAdvancesStrictly(previousX, nextX);
 }
 
 /** 返回路径必须向 x+ 前进的本地化提示。 */
 function getForwardPathMessage() {
-  return locale.smartPathfinding.forwardPath(`${minimumForwardPlanePixels}px`);
+  return locale.smartPathfinding.forwardPath(locale.smartPathfinding.forwardMinimumDouble);
 }
 
 /** 返回智能寻路失败文案，可附带耗时。 */

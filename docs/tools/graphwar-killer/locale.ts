@@ -140,7 +140,8 @@ export const graphwarKillerLocale = {
     currentPathBlocked: "模拟结果未到达当前最后路径点，无法开始寻路任务",
     failure: (elapsed) =>
       elapsed === undefined ? "智能寻路失败：未找到可行路径" : `智能寻路失败：未找到可行路径，耗时 ${elapsed}`,
-    forwardPath: (minimumStep) => `每个点需要沿 x+ 至少前进 ${minimumStep}（Graphwar 原始平面），但没有空间了`,
+    forwardMinimumDouble: "一个可表示 double",
+    forwardPath: (minimumStep) => `每个点的 Graphwar x 需要严格大于上一个点，至少前进 ${minimumStep}`,
     inProgress: {
       optimize: "优化路径节点",
       search: "搜索绕障路线",
@@ -336,7 +337,7 @@ export const graphwarKillerLocale = {
         },
         "segment-graph-rule": {
           label: "- 清图分段 x+ 检查",
-          title: "检查候选分段路径中相邻点是否满足原始平面 1px 的最小 x+ 前进步长。",
+          title: "检查候选分段路径中相邻点的 Graphwar x 是否严格递增；同 x 不允许。",
         },
         "segment-sample-trajectory": {
           label: "- 清图分段轨迹采样",
@@ -362,7 +363,7 @@ export const graphwarKillerLocale = {
         },
         "collect-targets": {
           label: "生成候选目标",
-          title: "点击士兵时，在命中圈内按原始平面 1px 枚举可尝试的 x+ 瞄准点。",
+          title: "点击士兵时，在命中圈内用 1 个原始平面像素作为扫描步长枚举可尝试的 x+ 瞄准点。",
         },
         "optimize-path": {
           label: "优化路径节点",
@@ -378,7 +379,7 @@ export const graphwarKillerLocale = {
         },
         "one-click-clear-collect-targets": {
           label: "清图收集目标",
-          title: "按当前友伤设置和原始平面 1px x+ 规则筛选一键清图可尝试的士兵候选。",
+          title: "按当前友伤设置和严格 x+ 规则筛选一键清图可尝试的士兵中心点候选。",
         },
         "one-click-clear-preflight": {
           label: "清图预检查",

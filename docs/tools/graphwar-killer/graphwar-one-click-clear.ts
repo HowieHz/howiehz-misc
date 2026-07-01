@@ -3,7 +3,7 @@ import { imageToGraphPoint } from "./geometry";
 import { GRAPHWAR_PLANE_LENGTH } from "./graphwar";
 import { buildSmartPathfindingPathForMask, planeGridCellCenterToImagePoint } from "./graphwar-pathfinding";
 import type { PlaneGridPoint } from "./graphwar-pathfinding";
-import { graphXAdvancesEnough } from "./numbers";
+import { graphXAdvancesStrictly } from "./numbers";
 import {
   createGraphwarTrajectoryFormulaContext,
   sampleGraphwarFormulaTrajectory,
@@ -190,7 +190,6 @@ interface OneClickClearSearchContext {
 const START_NODE_INDEX = -1;
 const MAX_GLOBAL_DELETE_PASSES = 1;
 const FALLBACK_TARGET_RADIUS_PIXELS = 1;
-const MINIMUM_GEOMETRY_ADVANCE_PLANE_PIXELS = 1;
 
 /** 用中心点 DAG 找到当前模型下显式击杀最多的追加路径。 */
 export async function buildGraphwarOneClickClearPath(
@@ -310,7 +309,7 @@ function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): 
     return [];
   }
 
-  const startPlaneX = imagePointToPlaneX(startPoint, options.boundsRect);
+  const startGraphX = imageToGraphPoint(startPoint, options.bounds, options.boundsRect).x;
   const targets: OneClickClearTarget[] = [];
   for (let sourceIndex = 0; sourceIndex < options.candidates.length; sourceIndex += 1) {
     const candidate = options.candidates[sourceIndex];
@@ -319,7 +318,7 @@ function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): 
     }
 
     const centerGraphX = imageToGraphPoint(candidate.hitCenter, options.bounds, options.boundsRect).x;
-    if (!planeXAdvancesEnough(startPlaneX, imagePointToPlaneX(candidate.hitCenter, options.boundsRect))) {
+    if (!graphXAdvancesStrictly(startGraphX, centerGraphX)) {
       continue;
     }
 
@@ -376,7 +375,7 @@ async function buildOneClickClearDag(
     }
     for (let toIndex = fromIndex + 1; toIndex < targets.length; toIndex += 1) {
       const to = targets[toIndex];
-      if (!to || !imagePointAdvancesEnough(from.hitCenter, to.hitCenter, options.boundsRect)) {
+      if (!to || !graphXAdvancesStrictly(from.centerGraphX, to.centerGraphX)) {
         continue;
       }
 
@@ -432,7 +431,7 @@ async function buildOneClickClearEdgeRoute(
       bounds: context.options.bounds,
       boundsRect: context.options.boundsRect,
       boundaryExpansion: context.options.boundaryExpansion,
-      canAdvance: pathfindingPlaneSegmentAdvancesEnough,
+      canAdvance: (previous, next) => pathfindingPlaneSegmentAdvancesEnough(context.options, previous, next),
       isCancelled: context.options.isCancelled,
       routeMask: context.options.routeMask.mask,
       routeTolerancePlanePixels: context.options.routeMask.routeTolerancePlanePixels,
@@ -755,44 +754,34 @@ function oneClickClearDeleteIndexIsProtected(
   return Boolean(point && route.protectedPoints.some((protectedPoint) => pointsNearlyEqual(point, protectedPoint)));
 }
 
-function graphXAdvancesFromX(options: GraphwarOneClickClearOptions, fromGraphX: number, toGraphX: number) {
-  return graphXAdvancesEnough(
-    toGraphX - fromGraphX,
-    getMinimumGeometryAdvanceGraphX(options.bounds),
-    fromGraphX,
-    toGraphX,
+function graphXAdvancesFromX(fromGraphX: number, toGraphX: number) {
+  return graphXAdvancesStrictly(fromGraphX, toGraphX);
+}
+
+function pathfindingPlaneSegmentAdvancesEnough(
+  options: GraphwarOneClickClearOptions,
+  previous: PlaneGridPoint,
+  next: PlaneGridPoint,
+) {
+  return graphXAdvancesStrictly(
+    planeGridPointToGraphX(options.bounds, previous),
+    planeGridPointToGraphX(options.bounds, next),
   );
-}
-
-function getMinimumGeometryAdvanceGraphX(bounds: GraphBounds) {
-  return (Math.abs(bounds.maxX - bounds.minX) / GRAPHWAR_PLANE_LENGTH) * MINIMUM_GEOMETRY_ADVANCE_PLANE_PIXELS;
-}
-
-function pathfindingPlaneSegmentAdvancesEnough(previous: PlaneGridPoint, next: PlaneGridPoint) {
-  return planeXAdvancesEnough(previous.x, next.x);
 }
 
 function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions, points: readonly PixelPoint[]) {
   for (let index = 1; index < points.length; index += 1) {
     const previous = imageToGraphPoint(points[index - 1], options.bounds, options.boundsRect);
     const next = imageToGraphPoint(points[index], options.bounds, options.boundsRect);
-    if (!graphXAdvancesFromX(options, previous.x, next.x)) {
+    if (!graphXAdvancesFromX(previous.x, next.x)) {
       return false;
     }
   }
   return true;
 }
 
-function imagePointAdvancesEnough(from: PixelPoint, to: PixelPoint, boundsRect: BoundsRect) {
-  return planeXAdvancesEnough(imagePointToPlaneX(from, boundsRect), imagePointToPlaneX(to, boundsRect));
-}
-
-function imagePointToPlaneX(point: PixelPoint, boundsRect: BoundsRect) {
-  return ((point.x - boundsRect.x) / boundsRect.width) * GRAPHWAR_PLANE_LENGTH;
-}
-
-function planeXAdvancesEnough(fromPlaneX: number, toPlaneX: number) {
-  return toPlaneX - fromPlaneX >= MINIMUM_GEOMETRY_ADVANCE_PLANE_PIXELS;
+function planeGridPointToGraphX(bounds: GraphBounds, point: PlaneGridPoint) {
+  return bounds.minX + ((point.x + 0.5) / GRAPHWAR_PLANE_LENGTH) * (bounds.maxX - bounds.minX);
 }
 
 async function yieldOneClickClearControl(options: GraphwarOneClickClearOptions) {

@@ -176,8 +176,9 @@ export const graphwarKillerLocale = {
       elapsed === undefined
         ? "Smart Pathfinding failed: no valid path found"
         : `Smart Pathfinding failed: no valid path found in ${elapsed}`,
+    forwardMinimumDouble: "one representable double",
     forwardPath: (minimumStep) =>
-      `Each point must advance on x+ by at least ${minimumStep} in the raw Graphwar plane, but there is no remaining space`,
+      `Each point's Graphwar x must be strictly greater than the previous point by at least ${minimumStep}`,
     inProgress: {
       optimize: "Optimize path nodes",
       search: "Search obstacle route",
@@ -394,7 +395,8 @@ export const graphwarKillerLocale = {
         },
         "segment-graph-rule": {
           label: "- Check clear segment x+",
-          title: "Check whether adjacent points in the candidate segment satisfy the raw-plane 1px minimum x+ advance.",
+          title:
+            "Check whether adjacent points in the candidate segment have strictly increasing Graphwar x; equal x is not allowed.",
         },
         "segment-sample-trajectory": {
           label: "- Sample clear segment trajectory",
@@ -423,7 +425,8 @@ export const graphwarKillerLocale = {
         },
         "collect-targets": {
           label: "Collect candidate targets",
-          title: "When a soldier is clicked, enumerate x+ aim points inside its hit circle using raw-plane 1px steps.",
+          title:
+            "When a soldier is clicked, enumerate x+ aim points inside its hit circle using a 1 raw-plane-pixel scan step.",
         },
         "optimize-path": {
           label: "Optimize path nodes",
@@ -443,7 +446,7 @@ export const graphwarKillerLocale = {
         "one-click-clear-collect-targets": {
           label: "Collect clear targets",
           title:
-            "Filter selectable soldier candidates for One-Click Clear using the current friendly-fire setting and raw-plane 1px x+ rule.",
+            "Filter selectable soldier-center candidates for One-Click Clear using the current friendly-fire setting and strict x+ rule.",
         },
         "one-click-clear-preflight": {
           label: "Preflight clear run",

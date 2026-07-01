@@ -28,10 +28,8 @@ interface EditingPathPointCoordinate {
 interface PathPointCoordinateSyncOptions {
   /** 当前路径点的 Graphwar 坐标。 */
   points: readonly GraphPoint[];
-  /** 输出小数位，和公式显示保持一致。 */
-  decimalPlaces: number;
-  /** 页面统一的数字格式化函数。 */
-  formatCoordinate: (value: number, decimalPlaces: number) => string;
+  /** 页面统一的坐标格式化函数；只格式化输入框文本，不反写内部路径点。 */
+  formatCoordinate: (value: number) => string;
 }
 
 /** 页面使用的路径状态 Interface；隐藏双模式切换的内部实现。 */
@@ -188,12 +186,12 @@ export function useGraphwarPathState(workflowMode: Ref<ToolWorkflowMode>): Graph
       return {
         x:
           editing?.index === index && editing.axis === "x"
-            ? (current?.x ?? options.formatCoordinate(point.x, options.decimalPlaces))
-            : options.formatCoordinate(point.x, options.decimalPlaces),
+            ? (current?.x ?? options.formatCoordinate(point.x))
+            : options.formatCoordinate(point.x),
         y:
           editing?.index === index && editing.axis === "y"
-            ? (current?.y ?? options.formatCoordinate(point.y, options.decimalPlaces))
-            : options.formatCoordinate(point.y, options.decimalPlaces),
+            ? (current?.y ?? options.formatCoordinate(point.y))
+            : options.formatCoordinate(point.y),
       };
     });
   }

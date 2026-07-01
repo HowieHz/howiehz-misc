@@ -1,5 +1,4 @@
 /** 在当前 Graphwar 路径后追加最佳努力清图路线。 */
-import { buildFormula } from "./formula";
 import { graphToImagePoint, imageToGraphPoint } from "./geometry";
 import { GRAPHWAR_PLANE_LENGTH } from "./graphwar";
 import { buildSmartPathfindingPathForMask, planeGridCellCenterToImagePoint } from "./graphwar-pathfinding";
@@ -109,8 +108,6 @@ interface OneClickClearTarget extends GraphwarOneClickClearCandidate {
 interface OneClickClearState {
   /** 已扩展出的完整像素路径。 */
   pathPoints: PixelPoint[];
-  /** 已击杀士兵 id。 */
-  killedIds: Set<string>;
   /** 当前路径最后点。 */
   lastPoint: PixelPoint;
   /** 已命中目标中最大的 x 排序序号；后续扩展只能选择更靠后的目标。 */
@@ -127,7 +124,6 @@ interface OneClickClearSearchContext {
   routeCache: Map<string, PixelPoint[] | undefined>;
   routeMaskIdCount: number;
   routeMaskIds: WeakMap<Uint8Array, number>;
-  startedAt: number;
 }
 
 const MAX_GLOBAL_DELETE_PASSES = 2;
@@ -162,10 +158,8 @@ export async function buildGraphwarOneClickClearPath(
     routeCache: new Map(),
     routeMaskIdCount: 0,
     routeMaskIds: new WeakMap(),
-    startedAt,
   };
   const initialState: OneClickClearState = {
-    killedIds: new Set(),
     lastPoint: options.pathPoints.at(-1) ?? options.pathPoints[0],
     lastTargetOrderIndex: -1,
     pathPoints: [...options.pathPoints],
@@ -173,38 +167,38 @@ export async function buildGraphwarOneClickClearPath(
     trajectoryState: prefixState,
   };
 
-  let frontier: OneClickClearState[] = [initialState];
+  const pendingStates: OneClickClearState[] = [initialState];
   let best = initialState;
   let expandedStates = 0;
-  while (frontier.length > 0) {
-    const nextFrontier: OneClickClearState[] = [];
-    for (const state of frontier) {
-      if (options.isCancelled?.()) {
-        return createOneClickClearFailure("no-usable-target", startedAt, expandedStates);
+  while (pendingStates.length > 0) {
+    const state = pendingStates.pop();
+    if (!state) {
+      continue;
+    }
+    if (options.isCancelled?.()) {
+      return createOneClickClearFailure("no-usable-target", startedAt, expandedStates);
+    }
+
+    expandedStates += 1;
+    for (const target of targets) {
+      if (target.orderIndex <= state.lastTargetOrderIndex) {
+        continue;
       }
 
-      expandedStates += 1;
-      for (const target of targets) {
-        if (target.orderIndex <= state.lastTargetOrderIndex || state.killedIds.has(target.id)) {
-          continue;
-        }
+      const stateTarget = createStateOneClickClearTarget(options, state, target);
+      if (!stateTarget) {
+        continue;
+      }
 
-        const stateTarget = createStateOneClickClearTarget(options, state, target);
-        if (!stateTarget) {
-          continue;
-        }
-
-        const nextState = await expandOneClickClearState(context, state, stateTarget);
-        if (!nextState) {
-          continue;
-        }
-        nextFrontier.push(nextState);
-        if (compareOneClickClearStates(nextState, best, options) < 0) {
-          best = nextState;
-        }
+      const nextState = await expandOneClickClearState(context, state, stateTarget);
+      if (!nextState) {
+        continue;
+      }
+      pendingStates.push(nextState);
+      if (compareOneClickClearStates(nextState, best) < 0) {
+        best = nextState;
       }
     }
-    frontier = nextFrontier.sort((left, right) => compareOneClickClearStates(left, right, options));
     const yielded = options.yieldControl?.();
     if (yielded) {
       await yielded;
@@ -494,13 +488,8 @@ function validateOneClickClearExtension(
     return undefined;
   }
 
-  const killedIds = new Set(state.killedIds);
-  for (const hitTarget of hitTargets) {
-    killedIds.add(hitTarget.id);
-  }
   const lastHitTarget = hitTargets.at(-1) ?? target;
   return {
-    killedIds,
     lastPoint: nextPath.at(-1) ?? state.lastPoint,
     lastTargetOrderIndex: lastHitTarget.orderIndex,
     pathPoints: nextPath,
@@ -517,7 +506,6 @@ function collectOneClickClearSegmentHits(
   visiblePixels: readonly PixelPoint[],
 ) {
   const hitTargets: OneClickClearTarget[] = [];
-  const segmentKilledIds = new Set(state.killedIds);
   let lastOrderIndex = state.lastTargetOrderIndex;
 
   for (const pixel of visiblePixels) {
@@ -525,7 +513,6 @@ function collectOneClickClearSegmentHits(
       if (
         candidate.orderIndex <= lastOrderIndex ||
         candidate.orderIndex > target.orderIndex ||
-        segmentKilledIds.has(candidate.id) ||
         !pointHitsTargetCircle(pixel, candidate.hitCenter, candidate.hitRadius)
       ) {
         continue;
@@ -533,7 +520,6 @@ function collectOneClickClearSegmentHits(
 
       const hitTarget = candidate.id === target.id ? target : candidate;
       hitTargets.push(hitTarget);
-      segmentKilledIds.add(hitTarget.id);
       lastOrderIndex = hitTarget.orderIndex;
     }
   }
@@ -618,56 +604,18 @@ function oneClickClearDeleteIndexIsProtected(
   return Boolean(point && state.targetSequence.some((target) => pointsNearlyEqual(point, target.aimPoint)));
 }
 
-/** 按计划的得分顺序比较搜索状态。 */
-function compareOneClickClearStates(
-  left: OneClickClearState,
-  right: OneClickClearState,
-  options: GraphwarOneClickClearOptions,
-) {
+/** 搜索完整遍历，比较器只决定最终相同击杀数时选哪条更短、更靠左的路线。 */
+function compareOneClickClearStates(left: OneClickClearState, right: OneClickClearState) {
   return (
     right.targetSequence.length - left.targetSequence.length ||
     countEnemyTargets(right) - countEnemyTargets(left) ||
     left.pathPoints.length - right.pathPoints.length ||
-    estimateFormulaTextLength(left, options) - estimateFormulaTextLength(right, options) ||
-    compareTargetSequencesByXOrder(left.targetSequence, right.targetSequence)
+    left.lastTargetOrderIndex - right.lastTargetOrderIndex
   );
 }
 
 function countEnemyTargets(state: OneClickClearState) {
   return state.targetSequence.filter((target) => target.enemy).length;
-}
-
-/** 只用表达式长度作 tie-break；上下文校验失败时退化到点数。 */
-function estimateFormulaTextLength(state: OneClickClearState, options: GraphwarOneClickClearOptions) {
-  const mappedPoints = state.pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
-  const context = createGraphwarTrajectoryFormulaContext({
-    bounds: options.bounds,
-    points: mappedPoints,
-    settings: options.settings,
-    soldierCenter: mappedPoints[0],
-  });
-  if (context.formulaPoints.length < 2) {
-    return state.pathPoints.length;
-  }
-  return buildFormula(
-    context.formulaPoints,
-    options.settings.steepness,
-    options.settings.equation,
-    options.settings.algorithm,
-    options.settings.decimalPlaces,
-    context.formulaEvaluation,
-  ).expression.length;
-}
-
-function compareTargetSequencesByXOrder(left: readonly OneClickClearTarget[], right: readonly OneClickClearTarget[]) {
-  const length = Math.min(left.length, right.length);
-  for (let index = 0; index < length; index += 1) {
-    const diff = (left[index]?.orderIndex ?? 0) - (right[index]?.orderIndex ?? 0);
-    if (diff !== 0) {
-      return diff;
-    }
-  }
-  return left.length - right.length;
 }
 
 function getMinimumForwardGraphX(options: GraphwarOneClickClearOptions, startPoint: PixelPoint) {

@@ -320,6 +320,10 @@ export const graphwarKillerLocale = {
           label: "- 清图真实几何寻路",
           title: "缓存未命中时，搜索从当前清图状态到候选命中点的绕障几何路线。",
         },
+        "search-state-overhead": {
+          label: "- 清图状态扩展开销",
+          title: "累计搜索循环里的目标过滤、命中圈控制点重算、状态入栈和最佳状态比较等开销。",
+        },
         "segment-build-formula": {
           label: "- 清图分段建公式",
           title: "把候选分段路径转换成 Graphwar 公式采样上下文。",

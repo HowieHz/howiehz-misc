@@ -1,8 +1,12 @@
 /** 在当前 Graphwar 路径后追加中心点 DAG 清图路线。 */
 import { imageToGraphPoint } from "./geometry";
 import { GRAPHWAR_PLANE_LENGTH } from "./graphwar";
-import { buildSmartPathfindingPathForMask, planeGridCellCenterToImagePoint } from "./graphwar-pathfinding";
-import type { PlaneGridPoint } from "./graphwar-pathfinding";
+import {
+  buildSmartPathfindingPathForMask,
+  createGraphwarVisibilityGraphObstacleData,
+  planeGridCellCenterToImagePoint,
+} from "./graphwar-pathfinding";
+import type { GraphwarVisibilityGraphObstacleData, PlaneGridPoint } from "./graphwar-pathfinding";
 import { graphXAdvancesStrictly } from "./numbers";
 import {
   createGraphwarTrajectoryFormulaContext,
@@ -353,13 +357,18 @@ async function buildOneClickClearDag(
   const startPoint = options.pathPoints.at(-1) ?? options.pathPoints[0];
   const edges: OneClickClearDagEdge[] = [];
   const outgoingEdges = new Map<number, OneClickClearDagEdge[]>();
+  const visibilityGraphObstacleData = createGraphwarVisibilityGraphObstacleData({
+    bounds: options.bounds,
+    routeMask: options.routeMask.mask,
+    routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
+  });
 
   for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
     const target = targets[targetIndex];
     if (!target) {
       continue;
     }
-    const route = await buildOneClickClearEdgeRoute(context, startPoint, target.hitCenter);
+    const route = await buildOneClickClearEdgeRoute(context, startPoint, target.hitCenter, visibilityGraphObstacleData);
     if (route) {
       addOneClickClearDagEdge(edges, outgoingEdges, undefined, targetIndex, route);
     }
@@ -377,7 +386,12 @@ async function buildOneClickClearDag(
         continue;
       }
 
-      const route = await buildOneClickClearEdgeRoute(context, from.hitCenter, to.hitCenter);
+      const route = await buildOneClickClearEdgeRoute(
+        context,
+        from.hitCenter,
+        to.hitCenter,
+        visibilityGraphObstacleData,
+      );
       if (route) {
         addOneClickClearDagEdge(edges, outgoingEdges, fromIndex, toIndex, route);
       }
@@ -423,6 +437,7 @@ async function buildOneClickClearEdgeRoute(
   context: OneClickClearSearchContext,
   startPoint: PixelPoint,
   targetPoint: PixelPoint,
+  visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData,
 ) {
   const route = await measureOneClickClearDebugTimingAsync(context.options, "route-pathfinding", () =>
     buildSmartPathfindingPathForMask({
@@ -435,6 +450,7 @@ async function buildOneClickClearEdgeRoute(
       routeTolerancePlanePixels: context.options.routeMask.routeTolerancePlanePixels,
       startPoint,
       targetPoint,
+      visibilityGraphObstacleData,
       yieldControl: context.options.yieldControl,
     }),
   );

@@ -116,47 +116,50 @@ type SecondOrderEvaluator = (x: number, y: number, dy: number) => number;
 /** Graphwar 原版 PolishNotationFunction 使用的简单数值 token。 */
 interface GraphwarExpressionToken {
   /** Token 类型编号；顺序参与原版优先级重排。 */
-  type: number;
+  type: GraphwarExpressionTokenType;
   /** 常量 token 的数值。 */
   value?: number;
 }
 
 /** Graphwar 表达式 token 编号；数值顺序会影响 reorderGraphwarExpressionTokens 的原版兼容优先级。 */
-const GRAPHWAR_EXPR_ADD = 1;
-/** 减号 token；Graphwar 原版把它作为一元负号处理。 */
-const GRAPHWAR_EXPR_SUBTRACT = 2;
-/** 乘法 token。 */
-const GRAPHWAR_EXPR_MULTIPLY = 3;
-/** 除法 token。 */
-const GRAPHWAR_EXPR_DIVIDE = 4;
-/** 幂运算 token。 */
-const GRAPHWAR_EXPR_POW = 5;
-/** Sqrt 函数 token。 */
-const GRAPHWAR_EXPR_SQRT = 6;
-/** Log10 函数 token。 */
-const GRAPHWAR_EXPR_LOG = 7;
-/** Abs 函数 token。 */
-const GRAPHWAR_EXPR_ABS = 8;
-/** Sin/sen 函数 token。 */
-const GRAPHWAR_EXPR_SIN = 9;
-/** Cos 函数 token。 */
-const GRAPHWAR_EXPR_COS = 10;
-/** Tan/tg 函数 token。 */
-const GRAPHWAR_EXPR_TAN = 11;
-/** Ln 函数 token。 */
-const GRAPHWAR_EXPR_LN = 12;
-/** X 变量 token。 */
-const GRAPHWAR_EXPR_X = 13;
-/** Y 变量 token。 */
-const GRAPHWAR_EXPR_Y = 14;
-/** Y' 变量 token。 */
-const GRAPHWAR_EXPR_DY = 15;
-/** 数字常量 token。 */
-const GRAPHWAR_EXPR_VALUE = 16;
-/** 左括号 token，只参与重排时的嵌套层级计算。 */
-const GRAPHWAR_EXPR_LEFT_BRACKET = 17;
-/** 右括号 token，只参与重排时的嵌套层级计算。 */
-const GRAPHWAR_EXPR_RIGHT_BRACKET = 18;
+const enum GraphwarExpressionTokenType {
+  /** 加法 token。 */
+  Add = 1,
+  /** 减号 token；Graphwar 原版把它作为一元负号处理。 */
+  Subtract = 2,
+  /** 乘法 token。 */
+  Multiply = 3,
+  /** 除法 token。 */
+  Divide = 4,
+  /** 幂运算 token。 */
+  Pow = 5,
+  /** Sqrt 函数 token。 */
+  Sqrt = 6,
+  /** Log10 函数 token。 */
+  Log = 7,
+  /** Abs 函数 token。 */
+  Abs = 8,
+  /** Sin/sen 函数 token。 */
+  Sin = 9,
+  /** Cos 函数 token。 */
+  Cos = 10,
+  /** Tan/tg 函数 token。 */
+  Tan = 11,
+  /** Ln 函数 token。 */
+  Ln = 12,
+  /** X 变量 token。 */
+  X = 13,
+  /** Y 变量 token。 */
+  Y = 14,
+  /** Y' 变量 token。 */
+  DY = 15,
+  /** 数字常量 token。 */
+  Value = 16,
+  /** 左括号 token，只参与重排时的嵌套层级计算。 */
+  LeftBracket = 17,
+  /** 右括号 token，只参与重排时的嵌套层级计算。 */
+  RightBracket = 18,
+}
 
 /** 把用户点选的士兵中心转换为 Graphwar 实际发射边缘点，供公式生成使用。 */
 export function createGraphwarFormulaPathPoints(options: CreateGraphwarFormulaPathOptions): GraphPoint[] {
@@ -631,7 +634,7 @@ function tokenizeGraphwarExpression(
     const rest = source.slice(index);
     const numberMatch = rest.match(/^[0-9]*\.?[0-9]+/);
     if (numberMatch) {
-      tokens.push({ type: GRAPHWAR_EXPR_VALUE, value: Number(numberMatch[0]) });
+      tokens.push({ type: GraphwarExpressionTokenType.Value, value: Number(numberMatch[0]) });
       index += numberMatch[0].length;
       continue;
     }
@@ -657,20 +660,20 @@ function readGraphwarExpressionToken(
   parserOptions: GraphwarExpressionParserOptions,
 ): { length: number; token: GraphwarExpressionToken } | undefined {
   if (!parserOptions.parseDerivativeAsY && rest.startsWith("y'")) {
-    return { length: 2, token: { type: GRAPHWAR_EXPR_DY } };
+    return { length: 2, token: { type: GraphwarExpressionTokenType.DY } };
   }
 
-  const namedTokens: [string, number, number?][] = [
-    ["sqrt", GRAPHWAR_EXPR_SQRT],
-    ["log", GRAPHWAR_EXPR_LOG],
-    ["abs", GRAPHWAR_EXPR_ABS],
-    ["sen", GRAPHWAR_EXPR_SIN],
-    ["sin", GRAPHWAR_EXPR_SIN],
-    ["cos", GRAPHWAR_EXPR_COS],
-    ["tan", GRAPHWAR_EXPR_TAN],
-    ["tg", GRAPHWAR_EXPR_TAN],
-    ["ln", GRAPHWAR_EXPR_LN],
-    ["pi", GRAPHWAR_EXPR_VALUE, Math.PI],
+  const namedTokens: [string, GraphwarExpressionTokenType, number?][] = [
+    ["sqrt", GraphwarExpressionTokenType.Sqrt],
+    ["log", GraphwarExpressionTokenType.Log],
+    ["abs", GraphwarExpressionTokenType.Abs],
+    ["sen", GraphwarExpressionTokenType.Sin],
+    ["sin", GraphwarExpressionTokenType.Sin],
+    ["cos", GraphwarExpressionTokenType.Cos],
+    ["tan", GraphwarExpressionTokenType.Tan],
+    ["tg", GraphwarExpressionTokenType.Tan],
+    ["ln", GraphwarExpressionTokenType.Ln],
+    ["pi", GraphwarExpressionTokenType.Value, Math.PI],
   ];
   for (const [text, type, value] of namedTokens) {
     if (rest.startsWith(text)) {
@@ -679,16 +682,16 @@ function readGraphwarExpressionToken(
   }
 
   const charTokens: Record<string, GraphwarExpressionToken> = {
-    "(": { type: GRAPHWAR_EXPR_LEFT_BRACKET },
-    ")": { type: GRAPHWAR_EXPR_RIGHT_BRACKET },
-    "+": { type: GRAPHWAR_EXPR_ADD },
-    "-": { type: GRAPHWAR_EXPR_SUBTRACT },
-    "*": { type: GRAPHWAR_EXPR_MULTIPLY },
-    "/": { type: GRAPHWAR_EXPR_DIVIDE },
-    "^": { type: GRAPHWAR_EXPR_POW },
-    e: { type: GRAPHWAR_EXPR_VALUE, value: Math.E },
-    x: { type: GRAPHWAR_EXPR_X },
-    y: { type: GRAPHWAR_EXPR_Y },
+    "(": { type: GraphwarExpressionTokenType.LeftBracket },
+    ")": { type: GraphwarExpressionTokenType.RightBracket },
+    "+": { type: GraphwarExpressionTokenType.Add },
+    "-": { type: GraphwarExpressionTokenType.Subtract },
+    "*": { type: GraphwarExpressionTokenType.Multiply },
+    "/": { type: GraphwarExpressionTokenType.Divide },
+    "^": { type: GraphwarExpressionTokenType.Pow },
+    e: { type: GraphwarExpressionTokenType.Value, value: Math.E },
+    x: { type: GraphwarExpressionTokenType.X },
+    y: { type: GraphwarExpressionTokenType.Y },
   };
   return charTokens[rest[0]] ? { length: 1, token: charTokens[rest[0]] } : undefined;
 }
@@ -699,7 +702,7 @@ function insertGraphwarImplicitMultiplications(tokens: GraphwarExpressionToken[]
   for (const token of tokens) {
     const previous = result.at(-1);
     if (previous && graphwarTokensAreImplicitMultiplication(previous.type, token.type)) {
-      result.push({ type: GRAPHWAR_EXPR_MULTIPLY });
+      result.push({ type: GraphwarExpressionTokenType.Multiply });
     }
     result.push(token);
   }
@@ -707,30 +710,36 @@ function insertGraphwarImplicitMultiplications(tokens: GraphwarExpressionToken[]
 }
 
 /** 判断两个相邻 token 是否需要补乘号，模拟 Graphwar 输入容错。 */
-function graphwarTokensAreImplicitMultiplication(previousType: number, nextType: number) {
+function graphwarTokensAreImplicitMultiplication(
+  previousType: GraphwarExpressionTokenType,
+  nextType: GraphwarExpressionTokenType,
+) {
   return (
     graphwarExpressionTokenIsValueLike(previousType) &&
     (graphwarExpressionTokenCanStartValue(nextType) ||
-      nextType === GRAPHWAR_EXPR_LEFT_BRACKET ||
+      nextType === GraphwarExpressionTokenType.LeftBracket ||
       getGraphwarExpressionTokenParamCount(nextType) === 1)
   );
 }
 
 /** 判断 token 是否可以作为值表达式的起点。 */
-function graphwarExpressionTokenCanStartValue(type: number) {
+function graphwarExpressionTokenCanStartValue(type: GraphwarExpressionTokenType) {
   return (
-    type === GRAPHWAR_EXPR_VALUE || type === GRAPHWAR_EXPR_X || type === GRAPHWAR_EXPR_Y || type === GRAPHWAR_EXPR_DY
+    type === GraphwarExpressionTokenType.Value ||
+    type === GraphwarExpressionTokenType.X ||
+    type === GraphwarExpressionTokenType.Y ||
+    type === GraphwarExpressionTokenType.DY
   );
 }
 
 /** 判断 token 是否能作为隐式乘法左侧的值表达式。 */
-function graphwarExpressionTokenIsValueLike(type: number) {
+function graphwarExpressionTokenIsValueLike(type: GraphwarExpressionTokenType) {
   return (
-    type === GRAPHWAR_EXPR_VALUE ||
-    type === GRAPHWAR_EXPR_X ||
-    type === GRAPHWAR_EXPR_Y ||
-    type === GRAPHWAR_EXPR_DY ||
-    type === GRAPHWAR_EXPR_RIGHT_BRACKET
+    type === GraphwarExpressionTokenType.Value ||
+    type === GraphwarExpressionTokenType.X ||
+    type === GraphwarExpressionTokenType.Y ||
+    type === GraphwarExpressionTokenType.DY ||
+    type === GraphwarExpressionTokenType.RightBracket
   );
 }
 
@@ -750,9 +759,9 @@ function reorderGraphwarExpressionTokens(
   let nest = 0;
   for (let index = start; index <= end; index += 1) {
     const type = input[index].type;
-    if (type === GRAPHWAR_EXPR_LEFT_BRACKET) {
+    if (type === GraphwarExpressionTokenType.LeftBracket) {
       nest += 1;
-    } else if (type === GRAPHWAR_EXPR_RIGHT_BRACKET) {
+    } else if (type === GraphwarExpressionTokenType.RightBracket) {
       nest -= 1;
     } else if (nest < nextNest || (nest === nextNest && (next === -1 || type < input[next].type))) {
       next = index;
@@ -770,8 +779,8 @@ function reorderGraphwarExpressionTokens(
     reorderGraphwarExpressionTokens(output, input, next + 1, end);
   } else if (paramCount === 2) {
     const leftExists = reorderGraphwarExpressionTokens(output, input, start, next - 1);
-    if (token.type === GRAPHWAR_EXPR_ADD && !leftExists) {
-      output.push({ type: GRAPHWAR_EXPR_VALUE, value: 0 });
+    if (token.type === GraphwarExpressionTokenType.Add && !leftExists) {
+      output.push({ type: GraphwarExpressionTokenType.Value, value: 0 });
     }
     reorderGraphwarExpressionTokens(output, input, next + 1, end);
   }
@@ -811,95 +820,95 @@ function evaluateGraphwarPolishExpression(
     const token = tokens[index];
 
     switch (token.type) {
-      case GRAPHWAR_EXPR_ADD:
+      case GraphwarExpressionTokenType.Add:
         if (stackSize < 2) {
           return Number.NaN;
         }
         stack[stackSize - 2] += stack[stackSize - 1];
         stackSize -= 1;
         break;
-      case GRAPHWAR_EXPR_SUBTRACT:
+      case GraphwarExpressionTokenType.Subtract:
         if (stackSize < 1) {
           return Number.NaN;
         }
         stack[stackSize - 1] = -stack[stackSize - 1];
         break;
-      case GRAPHWAR_EXPR_MULTIPLY:
+      case GraphwarExpressionTokenType.Multiply:
         if (stackSize < 2) {
           return Number.NaN;
         }
         stack[stackSize - 2] *= stack[stackSize - 1];
         stackSize -= 1;
         break;
-      case GRAPHWAR_EXPR_DIVIDE:
+      case GraphwarExpressionTokenType.Divide:
         if (stackSize < 2) {
           return Number.NaN;
         }
         stack[stackSize - 2] = stack[stackSize - 1] / stack[stackSize - 2];
         stackSize -= 1;
         break;
-      case GRAPHWAR_EXPR_POW:
+      case GraphwarExpressionTokenType.Pow:
         if (stackSize < 2) {
           return Number.NaN;
         }
         stack[stackSize - 2] = Math.pow(stack[stackSize - 1], stack[stackSize - 2]);
         stackSize -= 1;
         break;
-      case GRAPHWAR_EXPR_SQRT:
+      case GraphwarExpressionTokenType.Sqrt:
         if (stackSize < 1) {
           return Number.NaN;
         }
         stack[stackSize - 1] = Math.sqrt(stack[stackSize - 1]);
         break;
-      case GRAPHWAR_EXPR_LOG:
+      case GraphwarExpressionTokenType.Log:
         if (stackSize < 1) {
           return Number.NaN;
         }
         stack[stackSize - 1] = Math.log10(stack[stackSize - 1]);
         break;
-      case GRAPHWAR_EXPR_ABS:
+      case GraphwarExpressionTokenType.Abs:
         if (stackSize < 1) {
           return Number.NaN;
         }
         stack[stackSize - 1] = Math.abs(stack[stackSize - 1]);
         break;
-      case GRAPHWAR_EXPR_SIN:
+      case GraphwarExpressionTokenType.Sin:
         if (stackSize < 1) {
           return Number.NaN;
         }
         stack[stackSize - 1] = Math.sin(stack[stackSize - 1]);
         break;
-      case GRAPHWAR_EXPR_COS:
+      case GraphwarExpressionTokenType.Cos:
         if (stackSize < 1) {
           return Number.NaN;
         }
         stack[stackSize - 1] = Math.cos(stack[stackSize - 1]);
         break;
-      case GRAPHWAR_EXPR_TAN:
+      case GraphwarExpressionTokenType.Tan:
         if (stackSize < 1) {
           return Number.NaN;
         }
         stack[stackSize - 1] = Math.tan(stack[stackSize - 1]);
         break;
-      case GRAPHWAR_EXPR_LN:
+      case GraphwarExpressionTokenType.Ln:
         if (stackSize < 1) {
           return Number.NaN;
         }
         stack[stackSize - 1] = Math.log(stack[stackSize - 1]);
         break;
-      case GRAPHWAR_EXPR_X:
+      case GraphwarExpressionTokenType.X:
         stack[stackSize] = x;
         stackSize += 1;
         break;
-      case GRAPHWAR_EXPR_Y:
+      case GraphwarExpressionTokenType.Y:
         stack[stackSize] = y;
         stackSize += 1;
         break;
-      case GRAPHWAR_EXPR_DY:
+      case GraphwarExpressionTokenType.DY:
         stack[stackSize] = dy;
         stackSize += 1;
         break;
-      case GRAPHWAR_EXPR_VALUE:
+      case GraphwarExpressionTokenType.Value:
         stack[stackSize] = token.value ?? Number.NaN;
         stackSize += 1;
         break;
@@ -913,19 +922,19 @@ function evaluateGraphwarPolishExpression(
 }
 
 /** 判断 token 是否为 Graphwar 表达式运算符。 */
-function graphwarExpressionTokenIsOperation(type: number) {
-  return type >= GRAPHWAR_EXPR_ADD && type <= GRAPHWAR_EXPR_LN;
+function graphwarExpressionTokenIsOperation(type: GraphwarExpressionTokenType) {
+  return type >= GraphwarExpressionTokenType.Add && type <= GraphwarExpressionTokenType.Ln;
 }
 
 /** 返回 Graphwar 运算符需要的参数个数。 */
-function getGraphwarExpressionTokenParamCount(type: number) {
-  if (type === GRAPHWAR_EXPR_SUBTRACT) {
+function getGraphwarExpressionTokenParamCount(type: GraphwarExpressionTokenType) {
+  if (type === GraphwarExpressionTokenType.Subtract) {
     return 1;
   }
-  if (type >= GRAPHWAR_EXPR_ADD && type <= GRAPHWAR_EXPR_POW) {
+  if (type >= GraphwarExpressionTokenType.Add && type <= GraphwarExpressionTokenType.Pow) {
     return 2;
   }
-  if (type >= GRAPHWAR_EXPR_SQRT && type <= GRAPHWAR_EXPR_LN) {
+  if (type >= GraphwarExpressionTokenType.Sqrt && type <= GraphwarExpressionTokenType.Ln) {
     return 1;
   }
   return 0;

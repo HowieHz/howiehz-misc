@@ -317,7 +317,7 @@ export const graphwarKillerLocale = {
         },
         "optimize-path": {
           label: "- 清图删点优化",
-          title: "对验证通过的清图路径做保守删点，并用中心点序列验证每次删除后仍能按序命中。",
+          title: "对验证通过的清图路径做保守删点，并用目标命中圈序列验证每次删除后仍能按序命中。",
         },
         "remove-failed-edge": {
           label: "- 清图删除失败边",

@@ -163,8 +163,6 @@ interface OneClickClearBestEntry {
 interface OneClickClearValidatedRoute {
   /** 当前清图结果的完整路径。 */
   pathPoints: PixelPoint[];
-  /** 删除优化时不能碰的显式目标中心。 */
-  protectedPoints: PixelPoint[];
   /** 已按 DAG 序列验证命中的目标。 */
   targetSequence: OneClickClearTarget[];
 }
@@ -560,7 +558,6 @@ function validateOneClickClearDagRoute(
 ): OneClickClearRouteValidationResult {
   let pathPoints = [...context.options.pathPoints];
   const targetSequence: OneClickClearTarget[] = [];
-  const protectedPoints: PixelPoint[] = [];
   let validationCount = 0;
 
   for (const edge of edges) {
@@ -577,14 +574,12 @@ function validateOneClickClearDagRoute(
     }
 
     pathPoints = nextPath;
-    protectedPoints.push(target.hitCenter);
     targetSequence.push(target);
   }
 
   return {
     route: {
       pathPoints,
-      protectedPoints,
       targetSequence,
     },
     validationCount,
@@ -686,7 +681,7 @@ function createOneClickClearTargetCircle(target: Pick<GraphwarOneClickClearCandi
   };
 }
 
-/** 全局删点只删除生成的中间 route 点，不碰原 prefix 和显式目标中心。 */
+/** 全局删点只保护原 prefix；显式目标中心可删，由命中圈序列验证兜底。 */
 async function optimizeOneClickClearPath(
   context: OneClickClearSearchContext,
   route: OneClickClearValidatedRoute,
@@ -698,10 +693,6 @@ async function optimizeOneClickClearPath(
     for (let index = firstGeneratedIndex; index < optimized.pathPoints.length; ) {
       if (context.options.isCancelled?.()) {
         return { route: optimized, workUnits };
-      }
-      if (oneClickClearDeleteIndexIsProtected(context.options, optimized, index)) {
-        index += 1;
-        continue;
       }
 
       const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
@@ -738,20 +729,6 @@ function sampleOneClickClearTargetHit(
     targetPoints: [target.hitCenter],
   });
   return result.reachesTargetSequenceBeforeObstacle ? result.samplePointCount : undefined;
-}
-
-/** 保护原 prefix 和显式目标中心；删除后索引会漂移，所以每次按当前路径重新判断。 */
-function oneClickClearDeleteIndexIsProtected(
-  options: GraphwarOneClickClearOptions,
-  route: OneClickClearValidatedRoute,
-  index: number,
-) {
-  if (index < options.pathPoints.length) {
-    return true;
-  }
-
-  const point = route.pathPoints[index];
-  return Boolean(point && route.protectedPoints.some((protectedPoint) => pointsNearlyEqual(point, protectedPoint)));
 }
 
 function graphXAdvancesFromX(fromGraphX: number, toGraphX: number) {
@@ -842,10 +819,6 @@ async function measureOneClickClearDebugTimingAsync<TResult>(
       stage,
     });
   }
-}
-
-function pointsNearlyEqual(left: PixelPoint, right: PixelPoint) {
-  return Math.abs(left.x - right.x) <= 0.001 && Math.abs(left.y - right.y) <= 0.001;
 }
 
 function nowMs() {

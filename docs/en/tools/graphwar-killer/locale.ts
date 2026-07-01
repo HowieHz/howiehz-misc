@@ -372,7 +372,7 @@ export const graphwarKillerLocale = {
         "optimize-path": {
           label: "- Optimize clear path",
           title:
-            "Conservatively delete points from the validated clear path and verify each deletion still hits the center sequence in order.",
+            "Conservatively delete points from the validated clear path and verify each deletion still hits the target hit-circle sequence in order.",
         },
         "remove-failed-edge": {
           label: "- Remove failed clear edge",

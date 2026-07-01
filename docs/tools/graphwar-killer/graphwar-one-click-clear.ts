@@ -809,18 +809,25 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
   }
 
   // abs 删除一个控制点时，只会把 previous->deleted->next 替换成 previous->next；先证明局部士兵命中不丢。
-  const checkRadius = options.deleteCheckRadiusPixels;
+  // 页面已保证删点检验半径为正数；热点循环只传半径平方，避免每段重复乘法和点命中 helper。
+  const checkRadiusSquared = options.deleteCheckRadiusPixels * options.deleteCheckRadiusPixels;
   for (const target of options.hitCandidates) {
+    const targetCenter = target.hitCenter;
     const oldLocalPathHitsTarget =
-      pixelSegmentHitsCircle(previousPoint, deletedPoint, target.hitCenter, checkRadius) ||
-      (nextPoint ? pixelSegmentHitsCircle(deletedPoint, nextPoint, target.hitCenter, checkRadius) : false);
+      pixelSegmentHitsCircle(previousPoint, deletedPoint, targetCenter, checkRadiusSquared) ||
+      (nextPoint ? pixelSegmentHitsCircle(deletedPoint, nextPoint, targetCenter, checkRadiusSquared) : false);
     if (!oldLocalPathHitsTarget) {
       continue;
     }
 
-    const newLocalPathHitsTarget = nextPoint
-      ? pixelSegmentHitsCircle(previousPoint, nextPoint, target.hitCenter, checkRadius)
-      : pixelPointHitsCircle(previousPoint, target.hitCenter, checkRadius);
+    let newLocalPathHitsTarget: boolean;
+    if (nextPoint) {
+      newLocalPathHitsTarget = pixelSegmentHitsCircle(previousPoint, nextPoint, targetCenter, checkRadiusSquared);
+    } else {
+      const pointDx = targetCenter.x - previousPoint.x;
+      const pointDy = targetCenter.y - previousPoint.y;
+      newLocalPathHitsTarget = pointDx * pointDx + pointDy * pointDy < checkRadiusSquared;
+    }
     if (!newLocalPathHitsTarget) {
       return false;
     }
@@ -832,16 +839,7 @@ function oneClickClearLocalDeleteProofIsEnough(options: GraphwarOneClickClearOpt
   return options.settings.algorithm === "abs" && options.settings.equation !== "ddy";
 }
 
-function pixelPointHitsCircle(point: PixelPoint, center: PixelPoint, radius: number) {
-  return radius > 0 && pixelPointDistanceSquared(point, center) < radius * radius;
-}
-
-function pixelSegmentHitsCircle(start: PixelPoint, end: PixelPoint, center: PixelPoint, radius: number) {
-  if (radius <= 0) {
-    return false;
-  }
-
-  const radiusSquared = radius * radius;
+function pixelSegmentHitsCircle(start: PixelPoint, end: PixelPoint, center: PixelPoint, radiusSquared: number) {
   const segmentX = end.x - start.x;
   const segmentY = end.y - start.y;
   const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
@@ -864,10 +862,6 @@ function pixelSegmentHitsCircle(start: PixelPoint, end: PixelPoint, center: Pixe
   const closestDx = center.x - closestX;
   const closestDy = center.y - closestY;
   return closestDx * closestDx + closestDy * closestDy < radiusSquared;
-}
-
-function pixelPointDistanceSquared(left: Pick<PixelPoint, "x" | "y">, right: Pick<PixelPoint, "x" | "y">) {
-  return (right.x - left.x) ** 2 + (right.y - left.y) ** 2;
 }
 
 function planeGridPointToGraphX(bounds: GraphBounds, point: PlaneGridPoint) {

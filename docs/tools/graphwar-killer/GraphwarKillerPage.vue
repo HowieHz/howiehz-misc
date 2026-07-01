@@ -3651,8 +3651,8 @@ function waitForNextPathfindingSlice() {
 
 /** 按当前边界外扩把棋盘内部收缩成可选目标区域。 */
 function createBoundsRectWithBoundaryExpansion(rect: BoundsRect, boundaryExpansion: number) {
-  const horizontalInset = (Math.max(0, boundaryExpansion) / GRAPHWAR_PLANE_LENGTH) * rect.width;
-  const verticalInset = (Math.max(0, boundaryExpansion) / GRAPHWAR_PLANE_HEIGHT) * rect.height;
+  const horizontalInset = (boundaryExpansion / GRAPHWAR_PLANE_LENGTH) * rect.width;
+  const verticalInset = (boundaryExpansion / GRAPHWAR_PLANE_HEIGHT) * rect.height;
   if (horizontalInset * 2 >= rect.width || verticalInset * 2 >= rect.height) {
     return undefined;
   }

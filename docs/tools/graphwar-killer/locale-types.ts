@@ -274,6 +274,7 @@ export interface GraphwarKillerLocale {
         | "apply-result"
         | "one-click-clear-preflight"
         | "one-click-clear-collect-targets"
+        | "one-click-clear-build-route-mask"
         | "one-click-clear-search"
         | "one-click-clear-apply-result"
         | "one-click-clear-setting-status"

@@ -40,6 +40,7 @@ import type {
   GraphwarDetectionWorkerTimingEntry,
 } from "./graphwar-detection-runner";
 import {
+  GRAPHWAR_ONE_CLICK_CLEAR_ROUTE_TOLERANCE_PLANE_PIXELS,
   buildGraphwarOneClickClearPath,
   type GraphwarOneClickClearCandidate,
   type GraphwarOneClickClearDebugStage,
@@ -155,6 +156,7 @@ type SmartPathfindingDebugStage =
   | "apply-result"
   | "one-click-clear-preflight"
   | "one-click-clear-collect-targets"
+  | "one-click-clear-build-route-mask"
   | "one-click-clear-search"
   | "one-click-clear-apply-result"
   | "one-click-clear-setting-status"
@@ -2640,12 +2642,9 @@ async function runOneClickClear() {
 
     return {
       bounds: boundsResult.bounds,
+      obstacleMask,
       ok: true as const,
       prefixTarget: createOneClickClearPrefixTarget(),
-      routeMasks: collectSmartPathfindingRouteTolerances(tolerances).map((routeTolerance) => ({
-        mask: getCachedRouteMask(obstacleMask, routeTolerance).mask,
-        routeTolerancePlanePixels: routeTolerance,
-      })),
       tolerances,
     };
   });
@@ -2674,6 +2673,11 @@ async function runOneClickClear() {
     const candidates = measureSmartPathfindingDebugStage(timings, "one-click-clear-collect-targets", () =>
       createOneClickClearCandidates(),
     );
+    const routeMask = measureSmartPathfindingDebugStage(timings, "one-click-clear-build-route-mask", () => ({
+      mask: getCachedRouteMask(preflightResult.obstacleMask, GRAPHWAR_ONE_CLICK_CLEAR_ROUTE_TOLERANCE_PLANE_PIXELS)
+        .mask,
+      routeTolerancePlanePixels: GRAPHWAR_ONE_CLICK_CLEAR_ROUTE_TOLERANCE_PLANE_PIXELS,
+    }));
     const oneClickClearSearchDetailTimings: SmartPathfindingDebugTimingEntry[] = [];
     const result = await measureSmartPathfindingDebugStageAsync(timings, "one-click-clear-search", () =>
       buildGraphwarOneClickClearPath({
@@ -2689,7 +2693,7 @@ async function runOneClickClear() {
           : undefined,
         pathPoints: [...pathPixels.value],
         prefixTarget: preflightResult.prefixTarget,
-        routeMasks: preflightResult.routeMasks,
+        routeMask,
         settings: createPathTrajectoryFormulaSettings(),
         simulationBoundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
         simulationMask: simulationObstacleMask.value,
@@ -2759,7 +2763,7 @@ function createOneClickClearCandidates(): GraphwarOneClickClearCandidate[] {
   }
 
   return detectedSoldiers.value.flatMap((soldier) => {
-    if (detectionBoxMatchesAnySelectedPathPoint(soldier)) {
+    if (detectionBoxMatchesFirstPathPoint(soldier)) {
       return [];
     }
     const friendly = isDetectedFriendlySoldierObstacle(soldier);
@@ -3455,18 +3459,15 @@ function detectionBoxMatchesSelectedPathPoint(box: DetectionBox) {
   return detectionBoxContainsPathPoint(box, selectedPoint);
 }
 
-/** 判断检测框是否包含任一路径点。 */
-function detectionBoxMatchesAnySelectedPathPoint(box: DetectionBox) {
-  if (pathPixels.value.length === 0) {
-    return false;
-  }
-
-  return pathPixels.value.some((point) => detectionBoxContainsPathPoint(box, point));
+/** 一键清图只把第一个路径点当作发射士兵，后续路径点都是普通控制点。 */
+function detectionBoxMatchesFirstPathPoint(box: DetectionBox) {
+  const firstPoint = pathPixels.value[0];
+  return Boolean(firstPoint && detectionBoxContainsPathPoint(box, firstPoint));
 }
 
 /** 当前规则下 x<0 的未选士兵视为友方障碍。 */
 function isDetectedFriendlySoldierObstacle(box: DetectionBox) {
-  if (!parsedBounds.value.ok || detectionBoxMatchesAnySelectedPathPoint(box)) {
+  if (!parsedBounds.value.ok || detectionBoxMatchesFirstPathPoint(box)) {
     return false;
   }
 

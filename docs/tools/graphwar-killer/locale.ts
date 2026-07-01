@@ -300,37 +300,37 @@ export const graphwarKillerLocale = {
       boundaryExpansionTitle: "把棋盘四周边界向内扩成碰撞区。单位是 Graphwar 原始 770x450 平面像素。",
       debugNoTiming: "暂无寻路耗时记录",
       debugDetails: {
-        "build-targets": {
-          label: "- 清图建立目标序",
-          title: "把可选士兵转换为按 Graphwar x 从低到高的清图目标序列。",
+        "build-dag-edges": {
+          label: "- 清图建立 DAG 边",
+          title: "用固定 1px 路线 mask 尝试士兵中心点之间的 x+ 几何寻路，并记录可用边。",
+        },
+        "build-dag-targets": {
+          label: "- 清图收集 DAG 目标",
+          title: "把可选士兵转换为按 Graphwar 中心 x 从低到高排序的 DAG 节点。",
+        },
+        "dag-longest-path": {
+          label: "- 清图 DAG 最长路",
+          title: "在已建好的中心点 DAG 上运行最长路 DP，选择显式击杀数量最多的路线。",
         },
         "optimize-path": {
           label: "- 清图删点优化",
-          title: "对最佳清图路径做保守删点，并用整路轨迹验证每次删除后仍能按序命中。",
+          title: "对验证通过的清图路径做保守删点，并用中心点序列验证每次删除后仍能按序命中。",
         },
-        "route-cache-lookup": {
-          label: "- 清图路线缓存检查",
-          title: "生成几何路线缓存 key，并判断当前状态、目标点和 route mask 是否已有缓存结果。",
+        "remove-failed-edge": {
+          label: "- 清图删除失败边",
+          title: "当函数验证发现某条 DAG 边不可用时，将该边标记为不可用并准备重新运行最长路 DP。",
         },
         "route-map-pixels": {
           label: "- 清图路线映射像素",
-          title: "把几何寻路返回的 Graphwar 平面格点转换成截图像素路径。",
+          title: "把几何寻路返回的 Graphwar 平面格点转换成截图像素路径，并保留精确中心点首尾。",
         },
         "route-pathfinding": {
           label: "- 清图真实几何寻路",
-          title: "缓存未命中时，搜索从当前清图状态到候选命中点的绕障几何路线。",
-        },
-        "search-state-overhead": {
-          label: "- 清图状态扩展开销",
-          title: "累计搜索循环里的目标过滤、命中圈控制点重算、状态入栈和最佳状态比较等开销。",
+          title: "搜索两个中心点之间满足 x+ 规则的绕障几何路线。",
         },
         "segment-build-formula": {
           label: "- 清图分段建公式",
-          title: "把候选分段路径转换成 Graphwar 公式采样上下文。",
-        },
-        "segment-collect-hits": {
-          label: "- 清图扫描顺路命中",
-          title: "扫描分段轨迹上的可见像素，把显式目标前顺路命中的士兵加入击杀序列。",
+          title: "把当前验证前缀加新边后的完整路径转换成 Graphwar 公式采样上下文。",
         },
         "segment-graph-rule": {
           label: "- 清图分段 x+ 检查",
@@ -338,11 +338,15 @@ export const graphwarKillerLocale = {
         },
         "segment-sample-trajectory": {
           label: "- 清图分段轨迹采样",
-          title: "采样候选分段的 Graphwar 真实轨迹，确认命中显式目标且不会提前碰撞障碍。",
+          title: "从已验证前缀状态继续采样，确认下一目标中心点会在碰撞障碍前被命中。",
+        },
+        "validate-route": {
+          label: "- 清图验证 DAG 路线",
+          title: "按最长路选出的 DAG 边逐段追加路线，验证每个目标中心点；失败时返回具体失败边。",
         },
         "validate-final": {
           label: "- 清图最终验证",
-          title: "对优化后的完整清图路径重新采样，确认仍按记录顺序命中全部目标。",
+          title: "对优化后的完整清图路径重新采样，确认仍按 DAG 序列命中全部目标中心点。",
         },
         "validate-prefix": {
           label: "- 清图前缀验证",
@@ -366,17 +370,21 @@ export const graphwarKillerLocale = {
           label: "清图写回路径",
           title: "把一键清图找到的最佳路径写入当前路径状态；没有新增击杀时不会改动原路径。",
         },
+        "one-click-clear-build-route-mask": {
+          label: "清图建立固定路线 mask",
+          title: "用当前障碍 mask 建立一键清图固定 1px 几何寻路 mask。",
+        },
         "one-click-clear-collect-targets": {
           label: "清图收集目标",
           title: "按当前友伤设置和 x+ 最小步长筛选一键清图可尝试的士兵候选。",
         },
         "one-click-clear-preflight": {
           label: "清图预检查",
-          title: "检查一键清图设置、当前模式、当前路径、障碍 mask，并准备 route mask 与前缀命中目标。",
+          title: "检查一键清图设置、当前模式、当前路径、障碍 mask，并准备固定 1px route mask 与前缀命中目标。",
         },
         "one-click-clear-search": {
           label: "清图搜索验证",
-          title: "完整遍历 x 单调可达状态，使用 route cache、增量轨迹验证、最终整路验证和保守删点优化。",
+          title: "建立中心点 DAG，运行最长路 DP，验证失败时删除具体 DAG 边，直到得到可用清图路线或无路可用。",
         },
         "one-click-clear-setting-status": {
           label: "清图设置状态栏",
@@ -384,8 +392,7 @@ export const graphwarKillerLocale = {
         },
         "outside-stages": {
           label: "阶段外耗时",
-          title:
-            "流程总耗时减去已记录阶段耗时；包含阶段切换、路线容差尝试前的绘制等待、async 调度和未单独计量的连接代码。",
+          title: "流程总耗时减去已记录阶段耗时；包含阶段切换、绘制等待、async 调度和未单独计量的连接代码。",
         },
         preflight: {
           label: "预检查当前路径",

@@ -351,43 +351,42 @@ export const graphwarKillerLocale = {
         "Treat the play-area boundary as expanded inward into the collision area. Unit: raw Graphwar 770x450 plane pixels.",
       debugNoTiming: "No pathfinding timing recorded yet",
       debugDetails: {
-        "build-targets": {
-          label: "- Build clear target order",
-          title: "Convert selectable soldiers into the One-Click Clear target order sorted by increasing Graphwar x.",
+        "build-dag-edges": {
+          label: "- Build clear DAG edges",
+          title:
+            "Try x+ geometry routes between soldier centers with the fixed 1px route mask, then record usable edges.",
+        },
+        "build-dag-targets": {
+          label: "- Collect clear DAG targets",
+          title: "Convert selectable soldiers into DAG nodes sorted by increasing Graphwar center x.",
+        },
+        "dag-longest-path": {
+          label: "- Run clear DAG longest path",
+          title: "Run longest-path DP on the built center-point DAG and choose the route with the most explicit hits.",
         },
         "optimize-path": {
           label: "- Optimize clear path",
           title:
-            "Conservatively delete points from the best clear path and verify each deletion still hits targets in order.",
+            "Conservatively delete points from the validated clear path and verify each deletion still hits the center sequence in order.",
         },
-        "route-cache-lookup": {
-          label: "- Check clear route cache",
+        "remove-failed-edge": {
+          label: "- Remove failed clear edge",
           title:
-            "Build the geometry route cache key and check whether the current state, target point, and route mask already have a cached result.",
+            "When function validation rejects a DAG edge, mark that edge inactive before running longest-path DP again.",
         },
         "route-map-pixels": {
           label: "- Map clear route pixels",
           title:
-            "Convert Graphwar plane grid cells returned by geometry pathfinding into screenshot pixel path points.",
+            "Convert Graphwar plane grid cells returned by geometry pathfinding into screenshot pixel path points while preserving exact center endpoints.",
         },
         "route-pathfinding": {
           label: "- Run clear geometry search",
-          title:
-            "When the cache misses, search for an obstacle-avoiding geometry route from the current clear state to the candidate hit point.",
-        },
-        "search-state-overhead": {
-          label: "- Expand clear search states",
-          title:
-            "Accumulated search-loop overhead for target filtering, hit-circle control point recomputation, state pushes, and best-state comparisons.",
+          title: "Search for an obstacle-avoiding geometry route between two center points that satisfies x+ rules.",
         },
         "segment-build-formula": {
           label: "- Build clear segment formula",
-          title: "Convert the candidate segment path into a Graphwar formula sampling context.",
-        },
-        "segment-collect-hits": {
-          label: "- Scan incidental clear hits",
           title:
-            "Scan visible pixels on the segment trajectory and add soldiers incidentally hit before the explicit target to the kill sequence.",
+            "Convert the full current path, including the validated prefix and new edge, into a Graphwar formula sampling context.",
         },
         "segment-graph-rule": {
           label: "- Check clear segment x+",
@@ -397,11 +396,16 @@ export const graphwarKillerLocale = {
         "segment-sample-trajectory": {
           label: "- Sample clear segment trajectory",
           title:
-            "Sample the candidate segment's real Graphwar trajectory and confirm it reaches the explicit target without hitting an obstacle first.",
+            "Resume sampling from the validated prefix state and confirm the next target center is reached before obstacles.",
+        },
+        "validate-route": {
+          label: "- Validate clear DAG route",
+          title:
+            "Append the DAG edges selected by longest-path DP one by one, validate each target center, and return the exact failed edge when one fails.",
         },
         "validate-final": {
           label: "- Validate final clear",
-          title: "Resample the optimized full clear path and confirm it still hits every recorded target in order.",
+          title: "Resample the optimized full clear path and confirm it still hits every DAG target center in order.",
         },
         "validate-prefix": {
           label: "- Validate clear prefix",
@@ -428,6 +432,10 @@ export const graphwarKillerLocale = {
           title:
             "Write the best path found by One-Click Clear to the current path state; keep the original path when no new kill is found.",
         },
+        "one-click-clear-build-route-mask": {
+          label: "Build fixed clear route mask",
+          title: "Build the fixed 1px geometry route mask for One-Click Clear from the current obstacle mask.",
+        },
         "one-click-clear-collect-targets": {
           label: "Collect clear targets",
           title:
@@ -436,12 +444,12 @@ export const graphwarKillerLocale = {
         "one-click-clear-preflight": {
           label: "Preflight clear run",
           title:
-            "Check One-Click Clear settings, current mode, current path, and obstacle mask, then prepare route masks and the prefix hit target.",
+            "Check One-Click Clear settings, current mode, current path, and obstacle mask, then prepare the fixed 1px route mask and prefix hit target.",
         },
         "one-click-clear-search": {
           label: "Search and validate clear",
           title:
-            "Fully traverse x-monotone reachable states with route caching, incremental trajectory validation, final full-path validation, and conservative point deletion.",
+            "Build the center-point DAG, run longest-path DP, delete failed DAG edges during validation, and stop with a usable clear route or no active route.",
         },
         "one-click-clear-setting-status": {
           label: "Set clear status",
@@ -451,7 +459,7 @@ export const graphwarKillerLocale = {
         "outside-stages": {
           label: "Outside recorded stages",
           title:
-            "Total wall-clock time minus recorded stages; includes phase switches, paint waits before route-tolerance attempts, async scheduling, and glue code that is not measured separately.",
+            "Total wall-clock time minus recorded stages; includes phase switches, paint waits, async scheduling, and glue code that is not measured separately.",
         },
         preflight: {
           label: "Preflight current path",

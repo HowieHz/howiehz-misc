@@ -263,6 +263,13 @@ interface RouteMaskCacheEntry {
   /** 同一 mask/tolerance/direction 下复用的可见图障碍数据。 */
   visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
 }
+/** 关闭友伤时，把友方士兵写入原始障碍 mask 后得到的派生 mask。 */
+interface FriendlyObstacleMaskCacheEntry {
+  /** 派生 mask 输入摘要；同一个原始 mask 在不同士兵/边界设置下不能混用。 */
+  key: string;
+  /** 已写入友方士兵区域的障碍 mask。 */
+  mask: Uint8Array;
+}
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
 }>();
@@ -415,6 +422,7 @@ const smartPathfindingPreviewPath = ref<PixelPoint[]>([]);
 const pathfindingOptimizationPreviewPoint = ref<PixelPoint>();
 const smartPathfindingBlockedPoint = ref<PixelPoint>();
 const routeMaskCache = new WeakMap<Uint8Array, Map<string, RouteMaskCacheEntry>>();
+const friendlyObstacleMaskCache = new WeakMap<Uint8Array, FriendlyObstacleMaskCacheEntry>();
 const effectiveSmartPathfindingEnabled = computed(
   () => toolWorkflowMode.value !== "simulator" && algorithmMode.value !== "step" && smartPathfindingEnabled.value,
 );
@@ -740,9 +748,7 @@ const smartPathfindingBaseObstacleMask = computed(() => {
     return obstacleMap.mask;
   }
 
-  const mask = new Uint8Array(obstacleMap.mask);
-  addSoldierAreasToObstacleMask(mask, boundsRect.value, friendlySoldiers, soldierMarkerRadius.value);
-  return mask;
+  return getCachedFriendlyObstacleMask(obstacleMap.mask, boundsRect.value, friendlySoldiers, soldierMarkerRadius.value);
 });
 const activePathfindingBaseObstacleMask = computed(() => {
   if (pathfindingObstacleEdgesActive.value) {
@@ -3321,6 +3327,42 @@ function createSoldierHitCircle(box: DetectionBox): HitCircle {
     center: getDetectionBoxCenter(box),
     radius: box.hitRadius,
   };
+}
+
+/** 复用友方士兵写入后的 base mask，避免路径写回后仅因 computed 重跑而丢失可视图缓存。 */
+function getCachedFriendlyObstacleMask(
+  sourceMask: Uint8Array,
+  edgeRect: BoundsRect,
+  friendlySoldiers: readonly DetectionBox[],
+  markerRadius: number,
+) {
+  const key = createFriendlyObstacleMaskCacheKey(edgeRect, friendlySoldiers, markerRadius);
+  const cached = friendlyObstacleMaskCache.get(sourceMask);
+  if (cached?.key === key) {
+    return cached.mask;
+  }
+
+  const mask = new Uint8Array(sourceMask);
+  addSoldierAreasToObstacleMask(mask, edgeRect, friendlySoldiers, markerRadius);
+  friendlyObstacleMaskCache.set(sourceMask, {
+    key,
+    mask,
+  });
+  return mask;
+}
+
+/** 输入相同才复用派生 mask；士兵写入顺序不影响结果，因此按稳定 key 排序。 */
+function createFriendlyObstacleMaskCacheKey(
+  edgeRect: BoundsRect,
+  friendlySoldiers: readonly DetectionBox[],
+  markerRadius: number,
+) {
+  const soldierKeys = friendlySoldiers.map(createFriendlySoldierObstacleMaskCacheKey).sort();
+  return [edgeRect.x, edgeRect.y, edgeRect.width, edgeRect.height, markerRadius, ...soldierKeys].join("|");
+}
+
+function createFriendlySoldierObstacleMaskCacheKey(soldier: DetectionBox) {
+  return [soldier.id, soldier.sourceCenterX, soldier.sourceCenterY, soldier.hitRadius].join(":");
 }
 
 /** 获取指定 route tolerance 的寻路 mask。 */

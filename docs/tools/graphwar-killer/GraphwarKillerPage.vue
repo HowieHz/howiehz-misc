@@ -65,10 +65,8 @@ import {
   formatDecimal,
   formatDoublePrecisionDecimal,
   formatSvgNumber,
-  graphXAdvancesEnough,
   nearlyEqual,
   parseFiniteNumber,
-  roundToDecimalPlaces,
 } from "./numbers";
 import { graphwarToolDefaults } from "./tool-defaults";
 import {
@@ -98,7 +96,7 @@ import type {
 type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: string };
 /** Step 陡峭度解析结果；只有 step 算法会消费成功值。 */
 type ParsedSteepness = { ok: true; steepness: number } | { ok: false; message: string };
-/** 公式输出小数位解析结果，控制公式文本和内部归一化精度。 */
+/** 公式输出小数位解析结果；只控制生成公式文本，不约分内部路径点或发射点。 */
 type ParsedPrecision = { ok: true; decimalPlaces: number } | { ok: false; message: string };
 /** 识别设定解析结果，失败时阻止重新识别。 */
 type ParsedDetectionSettings =
@@ -275,6 +273,8 @@ const debugActivationCountdownStepMs = 100;
 const debugActivationCountdownVisibleAfterMs = 1000;
 const debugActivationSuccessFlashMs = 2000;
 const smartPathfindingBlockedPointFlashMs = 1800;
+/** Graphwar 轨迹只能向 x+ 推进；路径点至少按原始平面 1px 前进，和公式输出小数位无关。 */
+const minimumForwardPlanePixels = 1;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 
@@ -642,17 +642,12 @@ const mappedPathPoints = computed<GraphPoint[]>(() => {
 const formulaOutputDecimalPlaces = computed(() =>
   parsedPrecision.value.ok ? parsedPrecision.value.decimalPlaces : DEFAULT_FORMULA_DECIMAL_PLACES,
 );
-const minimumPathGraphXStep = computed(() => 10 ** -formulaOutputDecimalPlaces.value);
-const formulaOutputSteepness = computed(() => {
-  const steepness = parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1;
-  return roundToDecimalPlaces(steepness, formulaOutputDecimalPlaces.value);
-});
+const formulaSteepness = computed(() => (parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1));
 const graphwarTrajectoryFormulaSettings = computed<GraphwarTrajectoryFormulaSettings>(() => ({
   algorithm: algorithmMode.value,
-  decimalPlaces: formulaOutputDecimalPlaces.value,
   equation: equationMode.value,
-  formulaPathSteepness: parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1,
-  steepness: formulaOutputSteepness.value,
+  formulaPathSteepness: formulaSteepness.value,
+  steepness: formulaSteepness.value,
   stepOverflowProtection: stepOverflowProtectionEnabled.value,
 }));
 
@@ -1079,7 +1074,7 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
 
   return buildFormula(
     context.formulaPoints,
-    formulaOutputSteepness.value,
+    formulaSteepness.value,
     equationMode.value,
     algorithmMode.value,
     parsedPrecision.value.decimalPlaces,
@@ -1436,14 +1431,6 @@ watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTop
 
 watch([formulaOutputDecimalPlaces], () => {
   clearSmartPathfindingStatus();
-  if (!parsedPrecision.value.ok) {
-    return;
-  }
-  if (pathPixels.value.length >= 2) {
-    const normalizedPath = normalizePathForMinimumXStep(pathPixels.value);
-    pathPixels.value = normalizedPath;
-    pathStatus.value = pathFollowsGraphRule(normalizedPath) ? "" : getForwardPathMessage();
-  }
 });
 
 watch([algorithmMode, solverEquationMode], () => {
@@ -2744,7 +2731,6 @@ async function runOneClickClear() {
         candidates,
         hitCandidates,
         isCancelled: () => pathfindingToken !== smartPathfindingCancelToken,
-        minimumGraphXStep: minimumPathGraphXStep.value,
         onDebugTiming: debugInfoEnabled.value
           ? (timing) =>
               addOneClickClearSearchDebugTiming(oneClickClearSearchDetailTimings, timing.stage, timing.elapsedMs)
@@ -2868,9 +2854,12 @@ function createOneClickClearHitCandidates(): GraphwarOneClickClearCandidate[] {
   });
 }
 
-/** 一键清图候选只用截图平面精度；输出保留小数位只在最终公式验证阶段生效。 */
+/** 一键清图候选只用截图平面精度；输出保留小数位只影响最终公式文本。 */
 function oneClickClearSoldierReachesForward(soldier: DetectionBox, startPoint: PixelPoint) {
-  return imagePointToPlaneX(createSoldierHitCircleXPlusEdgePoint(soldier)) - imagePointToPlaneX(startPoint) >= 1;
+  return (
+    imagePointToPlaneX(createSoldierHitCircleXPlusEdgePoint(soldier)) - imagePointToPlaneX(startPoint) >=
+    minimumForwardPlanePixels
+  );
 }
 
 function imagePointToPlaneX(point: PixelPoint) {
@@ -2983,7 +2972,7 @@ async function buildSmartPathfindingPath(
   return undefined;
 }
 
-/** 判断平面候选线段是否满足当前 Graphwar 输出精度下的 x+ 最小步长。 */
+/** 判断平面候选线段是否满足 Graphwar 原始平面 1px 的 x+ 最小前进量。 */
 function pathfindingPlaneSegmentAdvancesEnough(previous: PlaneGridPoint, next: PlaneGridPoint) {
   if (!parsedBounds.value.ok) {
     return false;
@@ -3020,7 +3009,7 @@ function createNormalizedPathFromPlanePath(
     .map((pathPoint, index, points) =>
       index === points.length - 1 ? targetPoint : planeGridCellCenterToImagePoint(pathPoint, boundsRect.value),
     );
-  return normalizePathForMinimumXStep([...sourcePath, ...appendPoints]);
+  return normalizePathForMinimumForwardStep([...sourcePath, ...appendPoints]);
 }
 
 /** 判断路径生成的 Graphwar 轨迹是否在撞模拟障碍前命中目标。 */
@@ -3161,7 +3150,7 @@ function createSoldierAimCheckResult(
   }
 
   // 第二检查只把命中圈 x+ 边缘当作“是否可选中”的资格线；
-  // 真正落点固定为 lastX + 最小精度，y 保持命中圈中心，避免点击偏移改变目标。
+  // 真正落点固定为 lastX + 原始平面 1px，y 保持命中圈中心，避免点击偏移改变目标。
   if (!soldierAimXReachesMinimumForward(createSoldierHitCircleXPlusEdgePoint(box), startPoint)) {
     return undefined;
   }
@@ -3170,12 +3159,12 @@ function createSoldierAimCheckResult(
   return minimumForwardPoint ? { kind: "edge", point: minimumForwardPoint } : undefined;
 }
 
-/** 判断一个士兵候选点是否至少达到 lastX + 最小精度，并且没有越出收缩边界。 */
+/** 判断一个士兵候选点是否至少前进 1 个 Graphwar 原始平面像素，并且没有越出收缩边界。 */
 function soldierAimPointPassesMinimumForwardCheck(point: PixelPoint, startPoint: PixelPoint) {
   return pointIsInsideTargetBounds(point) && soldierAimXReachesMinimumForward(point, startPoint);
 }
 
-/** 判断一个士兵候选点的 x 是否至少达到 lastX + 最小精度。 */
+/** 判断一个士兵候选点的 x 是否至少前进 1 个 Graphwar 原始平面像素。 */
 function soldierAimXReachesMinimumForward(point: PixelPoint, startPoint: PixelPoint) {
   if (!parsedBounds.value.ok) {
     return false;
@@ -3222,8 +3211,7 @@ function collectSmartPathfindingSoldierXTargets(startPoint: PixelPoint, box: Det
   const direction = xPlusIsRight ? 1 : -1;
   const edgeX = center.x + direction * box.hitRadius;
   // 士兵目标只在命中圈中心水平线上搜索：先试规则选出的起点，
-  // 再按当前输出精度允许的最小 x 步长推向 x+ 边缘，
-  // 让寻路失败时换目标但不改变 y。
+  // 再按原始平面 1px 推向 x+ 边缘，让寻路失败时换目标但不改变 y。
   const maxSteps = Math.ceil(Math.abs(edgeX - startPoint.x) / pixelStep) + 1;
   for (let step = 0; step <= maxSteps; step += 1) {
     const rawX = startPoint.x + direction * pixelStep * step;
@@ -3242,17 +3230,13 @@ function collectSmartPathfindingSoldierXTargets(startPoint: PixelPoint, box: Det
   return targets;
 }
 
-/** 将当前 Graphwar 最小 x 精度换算为士兵命中圈目标枚举的截图像素步长。 */
+/** 将 Graphwar 原始平面 1px 换算为士兵命中圈目标枚举的截图像素步长。 */
 function getSmartPathfindingTargetImageXStep() {
   if (!parsedBounds.value.ok) {
     return 0;
   }
 
-  return Math.max(
-    1,
-    Math.abs(minimumPathGraphXStep.value / (parsedBounds.value.bounds.maxX - parsedBounds.value.bounds.minX)) *
-      boundsRect.value.width,
-  );
+  return Math.max(Number.EPSILON, (minimumForwardPlanePixels / GRAPHWAR_PLANE_LENGTH) * boundsRect.value.width);
 }
 
 /** 从检测框创建命中圆，统一士兵目标和弹道命中判定。 */
@@ -3457,18 +3441,17 @@ function pointIsInsideBoundsRect(point: PixelPoint, rect: BoundsRect) {
   return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
-/** 返回当前起点向 x+ 前进最小步长后的 Graphwar x，最小步长严格由当前输出小数位决定。 */
+/** 返回当前起点向 x+ 前进 1 个 Graphwar 原始平面像素后的 Graphwar x。 */
 function getMinimumForwardGraphX(startPoint: PixelPoint) {
   if (!parsedBounds.value.ok) {
     return undefined;
   }
 
   const startGraph = imageToGraphPoint(startPoint, parsedBounds.value.bounds, boundsRect.value);
-  const roundedStartX = roundToDecimalPlaces(startGraph.x, formulaOutputDecimalPlaces.value);
-  return roundToDecimalPlaces(roundedStartX + minimumPathGraphXStep.value, formulaOutputDecimalPlaces.value);
+  return startGraph.x + getMinimumForwardGraphXStep();
 }
 
-/** 判断 Graphwar x 是否已经到达“最后一个输出 x + 当前小数位最小精度”这条线。 */
+/** 判断 Graphwar x 是否已经到达“最后一个路径点 + 原始平面 1px”这条线。 */
 function graphXReachesMinimumForward(graphX: number, startPoint: PixelPoint) {
   const minimumGraphX = getMinimumForwardGraphX(startPoint);
   if (minimumGraphX === undefined) {
@@ -3476,6 +3459,16 @@ function graphXReachesMinimumForward(graphX: number, startPoint: PixelPoint) {
   }
 
   return graphX + doublePrecisionTolerance(graphX, minimumGraphX) >= minimumGraphX;
+}
+
+/** 将 Graphwar 原始平面像素前进量换算成当前 Graphwar x 轴的坐标步长。 */
+function getMinimumForwardGraphXStep() {
+  if (!parsedBounds.value.ok) {
+    return 0;
+  }
+
+  const bounds = parsedBounds.value.bounds;
+  return (Math.abs(bounds.maxX - bounds.minX) / GRAPHWAR_PLANE_LENGTH) * minimumForwardPlanePixels;
 }
 
 /** 返回当前起点向 x+ 前进最小步长后的截图 x；超出边界时仍返回理论 x，调用方负责边界判断。 */
@@ -3514,8 +3507,8 @@ function createMinimumForwardTargetPoint(point: PixelPoint, startPoint = pathPix
   }
 
   // 设计意图：非士兵点击如果落在 x+ 打击范围左侧，只把目标移到
-  // “最后一个路径点的输出 x + 当前小数位最小精度”，y 保持点击值；
-  // 这里不做障碍、寻路或额外命中判断，只检查最终 xy 是否仍在可用边界内。
+  // “最后一个路径点 + 原始平面 1px”，y 保持点击值；这里不做障碍、
+  // 寻路或额外命中判断，只检查最终 xy 是否仍在可用边界内。
   const pixelX = graphXReachesMinimumForward(targetGraph.x, startPoint) ? point.x : minForwardPixelX;
   const targetPoint = createPixelPoint(pixelX, point.y);
   return pointIsInsideTargetBounds(targetPoint) ? targetPoint : undefined;
@@ -3621,7 +3614,7 @@ function setPathPoint(index: number, point: PixelPoint) {
     boundsRect.value,
     parsedBounds.value.bounds,
     previousPoint,
-    minimumPathGraphXStep.value,
+    getMinimumForwardGraphXStep(),
   );
   if (!nextPoint) {
     return false;
@@ -3629,7 +3622,7 @@ function setPathPoint(index: number, point: PixelPoint) {
 
   const nextPath = [...pathPixels.value];
   nextPath[index] = nextPoint;
-  const normalizedPath = normalizePathForMinimumXStep(nextPath);
+  const normalizedPath = normalizePathForMinimumForwardStep(nextPath);
   if (!pathFollowsGraphRule(normalizedPath)) {
     pathStatus.value = getForwardPathMessage();
     return false;
@@ -3711,13 +3704,13 @@ function getPathPointCoordinateMessage() {
   return locale.status.pathPointCoordinateNumber;
 }
 
-/** 按当前输出精度把整条路径推进到 Graphwar 可采样的最小 x 步长。 */
-function normalizePathForMinimumXStep(points: readonly PixelPoint[]) {
+/** 按原始平面 1px x+ 规则把整条路径推进到 Graphwar 可采样的最小前进步长。 */
+function normalizePathForMinimumForwardStep(points: readonly PixelPoint[]) {
   if (!parsedBounds.value.ok || points.length < 2) {
     return [...points];
   }
 
-  // 按路径序号从低到高推进，保证每个后续点至少比前一点前进一个输出精度步长。
+  // 按路径序号从低到高推进，保证每个后续点至少比前一点前进 1 个原始平面像素。
   const normalizedPoints = [points[0]];
   for (let index = 1; index < points.length; index += 1) {
     const previousPoint = normalizedPoints.at(-1);
@@ -3727,7 +3720,7 @@ function normalizePathForMinimumXStep(points: readonly PixelPoint[]) {
         boundsRect.value,
         parsedBounds.value.bounds,
         previousPoint,
-        minimumPathGraphXStep.value,
+        getMinimumForwardGraphXStep(),
       ),
     );
   }
@@ -3970,29 +3963,18 @@ function pathFollowsGraphRule(points: PixelPoint[]) {
   return true;
 }
 
-/** 判断相邻两个 Graphwar x 差是否达到当前输出精度的最小步长。 */
+/** 判断相邻两个 Graphwar x 差是否达到原始平面 1px 对应的最小前进步长。 */
 function pathAdvancesEnough(deltaX: number, previousX?: number, nextX?: number) {
-  if (previousX !== undefined && nextX !== undefined) {
-    const roundedPreviousX = roundToDecimalPlaces(previousX, formulaOutputDecimalPlaces.value);
-    const roundedNextX = roundToDecimalPlaces(nextX, formulaOutputDecimalPlaces.value);
-    // 设计意图：Graphwar 最终只看到按“保留小数位”输出的路径点；
-    // 因此最小精度比较也必须基于这些输出坐标，而不是截图换算出的原始 double。
-    return graphXAdvancesEnough(
-      roundedNextX - roundedPreviousX,
-      minimumPathGraphXStep.value,
-      roundedPreviousX,
-      roundedNextX,
-    );
-  }
-
-  return graphXAdvancesEnough(deltaX, minimumPathGraphXStep.value, deltaX);
+  const minimumForwardGraphXStep = getMinimumForwardGraphXStep();
+  return (
+    deltaX + doublePrecisionTolerance(deltaX, minimumForwardGraphXStep, previousX ?? deltaX, nextX ?? deltaX) >=
+    minimumForwardGraphXStep
+  );
 }
 
 /** 返回路径必须向 x+ 前进的本地化提示。 */
 function getForwardPathMessage() {
-  return locale.smartPathfinding.forwardPath(
-    formatDecimal(minimumPathGraphXStep.value, formulaOutputDecimalPlaces.value),
-  );
+  return locale.smartPathfinding.forwardPath(`${minimumForwardPlanePixels}px`);
 }
 
 /** 返回智能寻路失败文案，可附带耗时。 */

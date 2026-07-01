@@ -3,7 +3,7 @@ import { imageToGraphPoint } from "./geometry";
 import { GRAPHWAR_PLANE_LENGTH } from "./graphwar";
 import { buildSmartPathfindingPathForMask, planeGridCellCenterToImagePoint } from "./graphwar-pathfinding";
 import type { PlaneGridPoint } from "./graphwar-pathfinding";
-import { graphXAdvancesEnough, roundToDecimalPlaces } from "./numbers";
+import { graphXAdvancesEnough } from "./numbers";
 import {
   createGraphwarTrajectoryFormulaContext,
   sampleGraphwarFormulaTrajectory,
@@ -79,8 +79,6 @@ export interface GraphwarOneClickClearOptions {
   pathPoints: readonly PixelPoint[];
   /** 当前最后路径点的验证目标；传入士兵命中圈时可复用现有路径预检语义。 */
   prefixTarget?: GraphwarTrajectoryTargetCircle;
-  /** 当前输出小数位对应的最小 Graphwar x 前进步长。 */
-  minimumGraphXStep: number;
   /** 一键清图单值几何路线 mask。 */
   routeMask: GraphwarOneClickClearRouteMask;
   /** 函数模拟用障碍 mask。 */
@@ -759,12 +757,15 @@ function oneClickClearDeleteIndexIsProtected(
 
 function graphXAdvancesFromX(options: GraphwarOneClickClearOptions, fromGraphX: number, toGraphX: number) {
   return graphXAdvancesEnough(
-    roundToDecimalPlaces(toGraphX, options.settings.decimalPlaces) -
-      roundToDecimalPlaces(fromGraphX, options.settings.decimalPlaces),
-    options.minimumGraphXStep,
+    toGraphX - fromGraphX,
+    getMinimumGeometryAdvanceGraphX(options.bounds),
     fromGraphX,
     toGraphX,
   );
+}
+
+function getMinimumGeometryAdvanceGraphX(bounds: GraphBounds) {
+  return (Math.abs(bounds.maxX - bounds.minX) / GRAPHWAR_PLANE_LENGTH) * MINIMUM_GEOMETRY_ADVANCE_PLANE_PIXELS;
 }
 
 function pathfindingPlaneSegmentAdvancesEnough(previous: PlaneGridPoint, next: PlaneGridPoint) {

@@ -26,9 +26,9 @@ export function nearlyEqual(left: number, right: number) {
   return Math.abs(left - right) <= doublePrecisionTolerance(left, right);
 }
 
-/** 判断 Graphwar x 差是否达到当前公式输出精度要求的最小前进步长。 */
-export function graphXAdvancesEnough(deltaX: number, minimumGraphXStep: number, ...sourceValues: readonly number[]) {
-  return deltaX + doublePrecisionTolerance(deltaX, minimumGraphXStep, ...sourceValues) >= minimumGraphXStep;
+/** 判断 Graphwar x 差是否达到调用方指定的最小前进步长。 */
+export function graphXAdvancesEnough(deltaX: number, minimumStep: number, ...sourceValues: readonly number[]) {
+  return deltaX + doublePrecisionTolerance(deltaX, minimumStep, ...sourceValues) >= minimumStep;
 }
 
 /** Graphwar 公式输出最多保留 double 有意义的十进制位数。 */

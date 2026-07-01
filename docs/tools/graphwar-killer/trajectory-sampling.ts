@@ -3,7 +3,6 @@ import { GRAPHWAR_TOOL_SIGN_EPSILON } from "./formula";
 import type { FormulaEvaluationOptions } from "./formula";
 import { graphToImagePoint, imageToGraphPoint } from "./geometry";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
-import { roundToDecimalPlaces } from "./numbers";
 import {
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
@@ -15,7 +14,6 @@ import type {
   GraphwarTrajectorySample,
   GraphwarTrajectorySamplingState,
 } from "./simulator";
-import { createGraphPoint } from "./types";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "./types";
 
 /** Graphwar 原始 770x450 平面上的网格点，用于把像素轨迹映射到障碍 mask。 */
@@ -33,8 +31,6 @@ export type GraphwarTrajectoryEarlyStopReason = "obstacle" | "target";
 export interface GraphwarTrajectoryFormulaSettings {
   /** 路径点转公式的算法。 */
   algorithm: AlgorithmMode;
-  /** 输出和内部归一化使用的小数位。 */
-  decimalPlaces: number;
   /** Graphwar 对公式文本的解释模式。 */
   equation: EquationMode;
   /** 路径生成公式时的 steepness；省略时使用 steepness。 */
@@ -49,7 +45,7 @@ export interface GraphwarTrajectoryFormulaSettings {
 export interface GraphwarTrajectoryFormulaContext {
   /** 传给公式 evaluator 的数值保护选项。 */
   formulaEvaluation: FormulaEvaluationOptions;
-  /** 已按输出精度、发射点和 step 中心调整过的 Graphwar 路径点。 */
+  /** 已按发射点和 step 中心调整过的 Graphwar 路径点，保留 double 精度。 */
   formulaPoints: GraphPoint[];
   /** 原始公式采样设置，随上下文一起传递以保证求值模式一致。 */
   settings: GraphwarTrajectoryFormulaSettings;
@@ -121,14 +117,14 @@ export interface GraphwarPathTargetSequenceResult {
   visiblePixels: PixelPoint[];
 }
 
-/** 把路径点、输出精度和 Graphwar 数值保护规则整理成一次采样可复用的公式上下文。 */
+/** 把路径点和 Graphwar 数值保护规则整理成一次采样可复用的公式上下文。 */
 export function createGraphwarTrajectoryFormulaContext(options: {
   bounds: GraphBounds;
   points: readonly GraphPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
   soldierCenter?: GraphPoint;
 }): GraphwarTrajectoryFormulaContext {
-  const formulaPoints = createRoundedFormulaPathPoints(options.points, options.settings);
+  const formulaPoints = createFormulaPathPoints(options.points, options.settings);
   // 先用零 epsilon 干跑一次，只有轨迹真正会踩到符号折点时才让输出公式带保护值。
   const signEpsilon = formulaPathNeedsSignEpsilon({
     bounds: options.bounds,
@@ -375,28 +371,19 @@ export function findGraphwarTrajectoryTargetHitIndex(options: {
   return -1;
 }
 
-/** 生成 Graphwar 实际公式点，并按用户输出精度四舍五入，让公式、预览和 worker 使用同一组点。 */
-function createRoundedFormulaPathPoints(points: readonly GraphPoint[], settings: GraphwarTrajectoryFormulaSettings) {
-  const formulaPathPoints =
-    points.length < 2
-      ? [...points]
-      : createGraphwarFormulaPathPoints({
-          algorithm: settings.algorithm,
-          equation: settings.equation,
-          formulaEvaluation: {
-            coefficientDecimalPlaces: settings.decimalPlaces,
-            stepOverflowProtection: settings.stepOverflowProtection,
-          },
-          points,
-          steepness: settings.formulaPathSteepness ?? settings.steepness,
-        });
-
-  return formulaPathPoints.map((point) =>
-    createGraphPoint(
-      roundToDecimalPlaces(point.x, settings.decimalPlaces),
-      roundToDecimalPlaces(point.y, settings.decimalPlaces),
-    ),
-  );
+/** 生成 Graphwar 实际公式点；路径点和发射点保持 double 精度，只有最终表达式文本会按小数位格式化。 */
+function createFormulaPathPoints(points: readonly GraphPoint[], settings: GraphwarTrajectoryFormulaSettings) {
+  return points.length < 2
+    ? [...points]
+    : createGraphwarFormulaPathPoints({
+        algorithm: settings.algorithm,
+        equation: settings.equation,
+        formulaEvaluation: {
+          stepOverflowProtection: settings.stepOverflowProtection,
+        },
+        points,
+        steepness: settings.formulaPathSteepness ?? settings.steepness,
+      });
 }
 
 /** 创建预编译 evaluator 需要的数值选项，把 overflow range 和 sign epsilon 固定在上下文里。 */
@@ -407,7 +394,6 @@ function createGraphwarFormulaEvaluationOptions(
   signEpsilon: number,
 ): FormulaEvaluationOptions {
   return {
-    coefficientDecimalPlaces: settings.decimalPlaces,
     stepOverflowProtectionRange: createStepOverflowProtectionRange(bounds, points),
     stepOverflowProtection: settings.stepOverflowProtection,
     signEpsilon,
@@ -444,7 +430,6 @@ function formulaPathNeedsSignEpsilon(options: {
     bounds: options.bounds,
     equation: options.settings.equation,
     formulaEvaluation: {
-      coefficientDecimalPlaces: options.settings.decimalPlaces,
       stepOverflowProtectionRange: createStepOverflowProtectionRange(options.bounds, options.formulaPoints),
       stepOverflowProtection: options.settings.stepOverflowProtection,
       onSignArgument(value) {

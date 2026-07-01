@@ -7,7 +7,6 @@ import {
   normalizeZero,
   roundToDecimalPlaces,
 } from "./numbers";
-import { createGraphPoint } from "./types";
 import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "./types";
 
 /** 双绝对值连接遇到垂直或反向线段时，使用 Graphwar 源码里的函数最小 x 步长保持公式有限。 */
@@ -22,8 +21,6 @@ export const GRAPHWAR_TOOL_SIGN_EPSILON = Number.EPSILON;
 
 /** 编译和求值公式时的数值选项，让页面预览、worker 验证和最终输出共用同一套保护规则。 */
 export interface FormulaEvaluationOptions {
-  /** 系数格式化的小数位；省略时保留内部 double 精度。 */
-  coefficientDecimalPlaces?: number;
   /** 采样 step 符号项实参的钩子，用于判断是否必须启用 sign epsilon。 */
   onSignArgument?: (value: number) => void;
   /** 稳定符号比值的除零保护值；0 表示保留 Graphwar 原始数值行为。 */
@@ -204,7 +201,7 @@ export function compileFormulaEvaluator(
     return compileAbsConnectorEvaluator(points, options);
   }
   if (algorithm === "pchip" || algorithm === "akima") {
-    return compileSoftCubicInterpolationEvaluator(points, algorithm, options);
+    return compileSoftCubicInterpolationEvaluator(points, algorithm);
   }
   return compileStepEvaluator(points, steepness, options);
 }
@@ -222,13 +219,13 @@ function compileStepEvaluator(
     const deltaY = points[index].y - points[index - 1].y;
     terms.push({
       centerX,
-      firstDerivativeCoefficient: normalizeFormulaCoefficient(deltaY * steepness, options),
-      secondDerivativeCoefficient: normalizeFormulaCoefficient(deltaY * steepness * steepness, options),
+      firstDerivativeCoefficient: deltaY * steepness,
+      secondDerivativeCoefficient: deltaY * steepness * steepness,
       // 有明确保护范围时，每个阶跃项是否需要抗溢出只取决于中心点，可在编译期固定。
       useOverflowProtection: options?.stepOverflowProtectionRange
         ? shouldUseStepOverflowProtection(steepness, centerX, 0, options)
         : undefined,
-      yCoefficient: normalizeFormulaCoefficient(deltaY, options),
+      yCoefficient: deltaY,
     });
   }
 
@@ -299,10 +296,10 @@ function compileAbsConnectorEvaluator(
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
     segments.push({
-      coefficient: normalizeFormulaCoefficient(segment.deltaY / (2 * segment.width), options),
-      endX: normalizeFormulaCoefficient(segment.endX, options),
-      startX: normalizeFormulaCoefficient(segment.startX, options),
-      width: normalizeFormulaCoefficient(segment.width, options),
+      coefficient: segment.deltaY / (2 * segment.width),
+      endX: segment.endX,
+      startX: segment.startX,
+      width: segment.width,
     });
   }
 
@@ -333,9 +330,8 @@ function compileAbsConnectorEvaluator(
 function compileSoftCubicInterpolationEvaluator(
   points: readonly GraphPoint[],
   algorithm: "pchip" | "akima",
-  options?: FormulaEvaluationOptions,
 ): CompiledFormulaEvaluator {
-  const segments = createCubicInterpolationSegments(points, algorithm, options);
+  const segments = createCubicInterpolationSegments(points, algorithm);
   const fallbackY = points[0]?.y ?? 0;
   return {
     evaluateFirstDerivativeY: (x) => evaluateSoftCubicInterpolationSegmentsY(x, segments, "dy", fallbackY),
@@ -498,7 +494,7 @@ function formatSoftCubicInterpolationExpression(
   decimalPlaces?: number,
   yOffset = 0,
 ) {
-  const segments = createCubicInterpolationSegments(points, algorithm, undefined, yOffset);
+  const segments = createCubicInterpolationSegments(points, algorithm, yOffset);
   if (segments.length === 0) {
     return "0";
   }
@@ -753,13 +749,8 @@ function evaluateSoftIntervalPowerDerivative(x: number, segment: CubicHermiteSeg
 }
 
 /** 根据 PCHIP/Akima 斜率生成 Hermite 分段，并保护过窄区间。 */
-function createCubicInterpolationSegments(
-  points: readonly GraphPoint[],
-  algorithm: "pchip" | "akima",
-  options?: FormulaEvaluationOptions,
-  yOffset = 0,
-) {
-  const interpolationPoints = normalizeInterpolationPoints(points, options);
+function createCubicInterpolationSegments(points: readonly GraphPoint[], algorithm: "pchip" | "akima", yOffset = 0) {
+  const interpolationPoints = [...points];
   if (interpolationPoints.length < 2) {
     return [];
   }
@@ -782,13 +773,6 @@ function createCubicInterpolationSegments(
     });
   }
   return segments;
-}
-
-/** 将插值控制点按公式系数精度归一化，使采样和输出表达式一致。 */
-function normalizeInterpolationPoints(points: readonly GraphPoint[], options?: FormulaEvaluationOptions) {
-  return points.map((point) =>
-    createGraphPoint(normalizeFormulaCoefficient(point.x, options), normalizeFormulaCoefficient(point.y, options)),
-  );
 }
 
 /** 计算 PCHIP 斜率，保持单调区间不产生过冲。 */
@@ -991,11 +975,6 @@ function stepTermCanOverflowExp(steepness: number, centerX: number, range: StepO
   const minX = Math.min(range.minX, range.maxX);
   const maxExpArgument = -steepness * (minX - centerX);
   return maxExpArgument > JAVA_DOUBLE_MAX_EXP_ARGUMENT;
-}
-
-/** 按输出精度归一化公式系数，确保 evaluator 和文本公式使用相同数字。 */
-function normalizeFormulaCoefficient(value: number, options?: FormulaEvaluationOptions) {
-  return roundToDecimalPlaces(value, options?.coefficientDecimalPlaces);
 }
 
 /** 分母除零保护值不能跟随用户小数位，否则低精度输出会把它折成 0。 */

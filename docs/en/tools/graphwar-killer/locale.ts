@@ -177,7 +177,7 @@ export const graphwarKillerLocale = {
         ? "Smart Pathfinding failed: no valid path found"
         : `Smart Pathfinding failed: no valid path found in ${elapsed}`,
     forwardPath: (minimumStep) =>
-      `Each point's x must advance by at least ${minimumStep}, but there is no remaining space`,
+      `Each point must advance on x+ by at least ${minimumStep} in the raw Graphwar plane, but there is no remaining space`,
     inProgress: {
       optimize: "Optimize path nodes",
       search: "Search obstacle route",
@@ -394,8 +394,7 @@ export const graphwarKillerLocale = {
         },
         "segment-graph-rule": {
           label: "- Check clear segment x+",
-          title:
-            "Check whether adjacent points in the candidate segment satisfy the minimum x+ step for the current output precision.",
+          title: "Check whether adjacent points in the candidate segment satisfy the raw-plane 1px minimum x+ advance.",
         },
         "segment-sample-trajectory": {
           label: "- Sample clear segment trajectory",
@@ -424,8 +423,7 @@ export const graphwarKillerLocale = {
         },
         "collect-targets": {
           label: "Collect candidate targets",
-          title:
-            "When a soldier is clicked, enumerate aim points inside its hit circle using the current minimum x+ step.",
+          title: "When a soldier is clicked, enumerate x+ aim points inside its hit circle using raw-plane 1px steps.",
         },
         "optimize-path": {
           label: "Optimize path nodes",
@@ -445,7 +443,7 @@ export const graphwarKillerLocale = {
         "one-click-clear-collect-targets": {
           label: "Collect clear targets",
           title:
-            "Filter selectable soldier candidates for One-Click Clear using the current friendly-fire setting and minimum x+ step.",
+            "Filter selectable soldier candidates for One-Click Clear using the current friendly-fire setting and raw-plane 1px x+ rule.",
         },
         "one-click-clear-preflight": {
           label: "Preflight clear run",
@@ -575,7 +573,7 @@ export const graphwarKillerLocale = {
       decimalPlaces: "Decimal places",
       decimalPlacesAriaLabel: "Generated function decimal places",
       decimalPlacesTitle:
-        "Number of decimal places kept in generated function coefficients; more digits are more precise but make the function longer.",
+        "Number of decimal places kept in generated function text; more digits are more precise but make the function longer.",
       debugInfoEnabled: "Debug info enabled",
       gameMode: "Game mode",
       gameModeAriaLabel: "Graphwar game mode",

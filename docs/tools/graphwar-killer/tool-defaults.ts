@@ -33,12 +33,6 @@ interface GraphwarToolDefaults {
   templateMatchingWorkerCount: number;
   /** 默认最多保留的士兵识别数量，防止噪点生成过多目标。 */
   maximumSoldierCount: number;
-  /** 一键清图 beam search 每层保留的状态数。 */
-  oneClickClearBeamWidth: number;
-  /** 一键清图单次最多扩展的搜索状态数。 */
-  oneClickClearMaxExpandedStates: number;
-  /** 一键清图单次最多运行时间，单位毫秒。 */
-  oneClickClearMaxElapsedMs: number;
 }
 
 /** 工具自己的默认值和容差；这些值不来自 Graphwar 源码 Constants.java。 */
@@ -60,7 +54,4 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
   soldierTemplateCandidateTopRatio: 0.1,
   templateMatchingWorkerCount: 4,
   maximumSoldierCount: 40,
-  oneClickClearBeamWidth: 12,
-  oneClickClearMaxExpandedStates: 1500,
-  oneClickClearMaxElapsedMs: 3000,
 };

@@ -84,9 +84,6 @@ export interface GraphwarKillerLocale {
     obstacleMinAreaRange: (max: number) => string;
     obstacleBrushDiameterInteger: string;
     obstacleBrushDiameterRange: (min: number, max: number) => string;
-    oneClickClearBeamWidthRange: string;
-    oneClickClearMaxElapsedMsRange: string;
-    oneClickClearMaxExpandedStatesRange: string;
     pathfindingMaximumNumber: string;
     pathfindingMaximumPixelRange: (limit: number) => string;
     pathfindingMinimumGreaterThanMaximum: string;
@@ -185,7 +182,6 @@ export interface GraphwarKillerLocale {
     };
     success: (elapsed?: string) => string;
     oneClickClear: {
-      budgetExhausted: (elapsed: string) => string;
       inProgress: string;
       needCurrentPath: string;
       noCandidate: string;
@@ -290,15 +286,6 @@ export interface GraphwarKillerLocale {
       expansionStepTitle: string;
       obstacleExpansion: string;
       obstacleExpansionTitle: string;
-      oneClickClearBeamWidth: string;
-      oneClickClearBeamWidthAriaLabel: string;
-      oneClickClearBeamWidthTitle: string;
-      oneClickClearMaxElapsedMs: string;
-      oneClickClearMaxElapsedMsAriaLabel: string;
-      oneClickClearMaxElapsedMsTitle: string;
-      oneClickClearMaxExpandedStates: string;
-      oneClickClearMaxExpandedStatesAriaLabel: string;
-      oneClickClearMaxExpandedStatesTitle: string;
       oneClickClearTitle: string;
       pathMaximum: string;
       pathMaximumAriaLabel: string;

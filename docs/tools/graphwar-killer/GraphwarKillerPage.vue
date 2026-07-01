@@ -646,6 +646,7 @@ const formulaOutputDecimalPlaces = computed(() =>
 const formulaSteepness = computed(() => (parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1));
 const graphwarTrajectoryFormulaSettings = computed<GraphwarTrajectoryFormulaSettings>(() => ({
   algorithm: algorithmMode.value,
+  decimalPlaces: formulaOutputDecimalPlaces.value,
   equation: equationMode.value,
   formulaPathSteepness: formulaSteepness.value,
   steepness: formulaSteepness.value,
@@ -1073,7 +1074,7 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
     return undefined;
   }
 
-  return buildFormula(
+  const result = buildFormula(
     context.formulaPoints,
     formulaSteepness.value,
     equationMode.value,
@@ -1081,6 +1082,7 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
     parsedPrecision.value.decimalPlaces,
     context.formulaEvaluation,
   );
+  return { ...result, expression: context.expression };
 });
 
 watch(

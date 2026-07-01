@@ -84,6 +84,9 @@ export interface GraphwarKillerLocale {
     obstacleMinAreaRange: (max: number) => string;
     obstacleBrushDiameterInteger: string;
     obstacleBrushDiameterRange: (min: number, max: number) => string;
+    oneClickClearBeamWidthRange: string;
+    oneClickClearMaxElapsedMsRange: string;
+    oneClickClearMaxExpandedStatesRange: string;
     pathfindingMaximumNumber: string;
     pathfindingMaximumPixelRange: (limit: number) => string;
     pathfindingMinimumGreaterThanMaximum: string;
@@ -181,6 +184,15 @@ export interface GraphwarKillerLocale {
       stopSuffix: string;
     };
     success: (elapsed?: string) => string;
+    oneClickClear: {
+      budgetExhausted: (elapsed: string) => string;
+      inProgress: string;
+      needCurrentPath: string;
+      noCandidate: string;
+      noUsableTarget: (elapsed: string) => string;
+      success: (kills: number, elapsed: string) => string;
+      unsupported: string;
+    };
   };
   /** 页面控件、面板标题和可访问性标签文案。 */
   ui: {
@@ -262,6 +274,11 @@ export interface GraphwarKillerLocale {
         | "validate-trajectory"
         | "optimize-path"
         | "apply-result"
+        | "one-click-clear-preflight"
+        | "one-click-clear-collect-targets"
+        | "one-click-clear-search"
+        | "one-click-clear-apply-result"
+        | "one-click-clear-setting-status"
         | "setting-status"
         | "outside-stages"
         | "total",
@@ -273,6 +290,16 @@ export interface GraphwarKillerLocale {
       expansionStepTitle: string;
       obstacleExpansion: string;
       obstacleExpansionTitle: string;
+      oneClickClearBeamWidth: string;
+      oneClickClearBeamWidthAriaLabel: string;
+      oneClickClearBeamWidthTitle: string;
+      oneClickClearMaxElapsedMs: string;
+      oneClickClearMaxElapsedMsAriaLabel: string;
+      oneClickClearMaxElapsedMsTitle: string;
+      oneClickClearMaxExpandedStates: string;
+      oneClickClearMaxExpandedStatesAriaLabel: string;
+      oneClickClearMaxExpandedStatesTitle: string;
+      oneClickClearTitle: string;
       pathMaximum: string;
       pathMaximumAriaLabel: string;
       pathMaximumTitle: string;

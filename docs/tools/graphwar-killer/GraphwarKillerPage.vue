@@ -40,6 +40,11 @@ import type {
   GraphwarDetectionWorkerTimingEntry,
 } from "./graphwar-detection-runner";
 import {
+  buildGraphwarOneClickClearPath,
+  type GraphwarOneClickClearCandidate,
+  type GraphwarOneClickClearFailureReason,
+} from "./graphwar-one-click-clear";
+import {
   buildSmartPathfindingPathForMask,
   collectSmartPathfindingRouteTolerances,
   createRouteMaskCacheKey,
@@ -118,6 +123,15 @@ type ParsedObstacleTolerances =
       simulationTolerancePlanePixels: number;
     }
   | { ok: false; message: string };
+/** 一键清图预算解析结果；预算必须小而明确，避免页面长时间阻塞。 */
+type ParsedOneClickClearSettings =
+  | {
+      ok: true;
+      beamWidth: number;
+      maxElapsedMs: number;
+      maxExpandedStates: number;
+    }
+  | { ok: false; message: string };
 /** 寻路模式；auto-graph 保留为待重写的禁用入口。 */
 type PathfindingMode = "off" | "smart" | "auto-graph";
 /** 识别状态等级，与面板标题和智能寻路状态样式对齐。 */
@@ -147,6 +161,11 @@ type SmartPathfindingDebugStage =
   | "validate-trajectory"
   | "optimize-path"
   | "apply-result"
+  | "one-click-clear-preflight"
+  | "one-click-clear-collect-targets"
+  | "one-click-clear-search"
+  | "one-click-clear-apply-result"
+  | "one-click-clear-setting-status"
   | "setting-status"
   | "outside-stages"
   | "total";
@@ -308,6 +327,9 @@ const obstacleRouteMaxToleranceText = ref("3");
 const obstacleRouteStepToleranceText = ref("1");
 const obstacleSimulationToleranceText = ref("1");
 const pathfindingBoundaryExpansionText = ref("1");
+const oneClickClearBeamWidthText = ref(String(graphwarToolDefaults.oneClickClearBeamWidth));
+const oneClickClearMaxExpandedStatesText = ref(String(graphwarToolDefaults.oneClickClearMaxExpandedStates));
+const oneClickClearMaxElapsedMsText = ref(String(graphwarToolDefaults.oneClickClearMaxElapsedMs));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
 const {
@@ -592,6 +614,35 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     routeMinTolerancePlanePixels,
     routeStepPlanePixels: Math.max(Number.EPSILON, Math.abs(routeStepPlanePixels)),
     simulationTolerancePlanePixels,
+  };
+});
+
+const parsedOneClickClearSettings = computed<ParsedOneClickClearSettings>(() => {
+  const beamWidth = parseFiniteNumber(oneClickClearBeamWidthText.value);
+  if (beamWidth === undefined || !Number.isInteger(beamWidth) || beamWidth < 1 || beamWidth > 64) {
+    return { ok: false as const, message: locale.validation.oneClickClearBeamWidthRange };
+  }
+
+  const maxExpandedStates = parseFiniteNumber(oneClickClearMaxExpandedStatesText.value);
+  if (
+    maxExpandedStates === undefined ||
+    !Number.isInteger(maxExpandedStates) ||
+    maxExpandedStates < 1 ||
+    maxExpandedStates > 20000
+  ) {
+    return { ok: false as const, message: locale.validation.oneClickClearMaxExpandedStatesRange };
+  }
+
+  const maxElapsedMs = parseFiniteNumber(oneClickClearMaxElapsedMsText.value);
+  if (maxElapsedMs === undefined || !Number.isInteger(maxElapsedMs) || maxElapsedMs < 100 || maxElapsedMs > 30000) {
+    return { ok: false as const, message: locale.validation.oneClickClearMaxElapsedMsRange };
+  }
+
+  return {
+    ok: true as const,
+    beamWidth,
+    maxElapsedMs,
+    maxExpandedStates,
   };
 });
 
@@ -910,7 +961,6 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
   return visibleSoldiers.filter((box) => Boolean(createSearchStartSoldierAimPoint(lastPoint, box)));
 });
 const pathfindingMode = computed<PathfindingMode>(() => (smartPathfindingEnabled.value ? "smart" : "off"));
-const autoGraphPathfindingDisabledMessage = computed(() => locale.status.autoGraphPathfindingDisabled);
 const stepPathfindingDisabledMessage = computed(() => locale.status.stepPathfindingDisabled);
 
 const calculationMessage = computed(() => {
@@ -1017,6 +1067,9 @@ const smartPathfindingSettingsMessage = computed(() => {
   }
   if (!parsedObstacleTolerances.value.ok) {
     return parsedObstacleTolerances.value.message;
+  }
+  if (!parsedOneClickClearSettings.value.ok) {
+    return parsedOneClickClearSettings.value.message;
   }
   return "";
 });
@@ -2552,6 +2605,204 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
   });
   finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
   return true;
+}
+
+/** 一键清图：从当前路径尾部出发，预算内搜索能追加击杀最多士兵的路径。 */
+async function runOneClickClear() {
+  const startedAt = nowMs();
+  const timings: SmartPathfindingDebugTimingEntry[] = [];
+  const preflightResult = measureSmartPathfindingDebugStage(timings, "one-click-clear-preflight", () => {
+    const boundsResult = parsedBounds.value;
+    const tolerances = parsedObstacleTolerances.value;
+    const settings = parsedOneClickClearSettings.value;
+    if (!boundsResult.ok || !tolerances.ok || !settings.ok) {
+      return {
+        kind: "error" as const,
+        message: smartPathfindingSettingsMessage.value || getSmartPathfindingDisabledMessage(),
+        ok: false as const,
+      };
+    }
+    if (isSmartPathfindingDisabled() || algorithmMode.value !== "abs" || equationMode.value === "ddy") {
+      return {
+        kind: "warning" as const,
+        message: locale.smartPathfinding.oneClickClear.unsupported,
+        ok: false as const,
+      };
+    }
+    if (pathPixels.value.length === 0) {
+      return {
+        kind: "warning" as const,
+        message: locale.smartPathfinding.oneClickClear.needCurrentPath,
+        ok: false as const,
+      };
+    }
+
+    const obstacleMask = smartPathfindingBaseObstacleMask.value;
+    if (!obstacleMask) {
+      return {
+        kind: "error" as const,
+        message: getSmartPathfindingFailureMessage(),
+        ok: false as const,
+      };
+    }
+
+    return {
+      bounds: boundsResult.bounds,
+      budget: settings,
+      ok: true as const,
+      prefixTarget: createOneClickClearPrefixTarget(),
+      routeMasks: collectSmartPathfindingRouteTolerances(tolerances).map((routeTolerance) => ({
+        mask: getCachedRouteMask(obstacleMask, routeTolerance).mask,
+        routeTolerancePlanePixels: routeTolerance,
+      })),
+      tolerances,
+    };
+  });
+  if (!preflightResult.ok) {
+    let completedAt = nowMs();
+    measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
+      completedAt = nowMs();
+      setSmartPathfindingStatus(preflightResult.message, preflightResult.kind);
+      completedAt = nowMs();
+    });
+    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
+    return false;
+  }
+
+  const pathfindingToken = startSmartPathfinding(locale.smartPathfinding.oneClickClear.inProgress);
+  let debugTimingsFinished = false;
+  const finishOneClickClearDebugTimings = (completedAt = nowMs()) => {
+    debugTimingsFinished = true;
+    if (pathfindingToken !== smartPathfindingCancelToken) {
+      return;
+    }
+    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
+  };
+
+  try {
+    const candidates = measureSmartPathfindingDebugStage(timings, "one-click-clear-collect-targets", () =>
+      createOneClickClearCandidates(),
+    );
+    const result = await measureSmartPathfindingDebugStageAsync(timings, "one-click-clear-search", () =>
+      buildGraphwarOneClickClearPath({
+        boundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
+        bounds: preflightResult.bounds,
+        boundsRect: boundsRect.value,
+        budget: preflightResult.budget,
+        candidates,
+        isCancelled: () => pathfindingToken !== smartPathfindingCancelToken,
+        minimumGraphXStep: minimumPathGraphXStep.value,
+        pathPoints: [...pathPixels.value],
+        prefixTarget: preflightResult.prefixTarget,
+        routeMasks: preflightResult.routeMasks,
+        settings: createPathTrajectoryFormulaSettings(),
+        simulationBoundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
+        simulationMask: simulationObstacleMask.value,
+        yieldControl: waitForNextPathfindingSlice,
+      }),
+    );
+    if (pathfindingToken !== smartPathfindingCancelToken) {
+      return false;
+    }
+
+    smartPathfindingInProgress.value = false;
+    clearSmartPathfindingPreview();
+    if (result.type === "success") {
+      measureSmartPathfindingDebugStage(timings, "one-click-clear-apply-result", () =>
+        setPathPixels(result.pathPoints),
+      );
+      let completedAt = nowMs();
+      measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
+        completedAt = nowMs();
+        setSmartPathfindingStatus(
+          locale.smartPathfinding.oneClickClear.success(
+            result.targetIds.length,
+            formatElapsedDuration(result.elapsedMs),
+          ),
+          "success",
+        );
+        completedAt = nowMs();
+      });
+      finishOneClickClearDebugTimings(completedAt);
+      return true;
+    }
+
+    let completedAt = nowMs();
+    measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
+      completedAt = nowMs();
+      setSmartPathfindingStatus(getOneClickClearFailureMessage(result.reason, result.elapsedMs), "error");
+      completedAt = nowMs();
+    });
+    finishOneClickClearDebugTimings(completedAt);
+    return false;
+  } finally {
+    if (pathfindingToken === smartPathfindingCancelToken) {
+      smartPathfindingInProgress.value = false;
+      clearSmartPathfindingPreview();
+      if (!debugTimingsFinished) {
+        finishOneClickClearDebugTimings();
+      }
+    }
+  }
+}
+
+/** 一键清图前缀预检复用当前路径最后点；若最后点在士兵命中圈内则使用真实命中半径。 */
+function createOneClickClearPrefixTarget() {
+  const target = createCurrentLastPathHitTarget();
+  if (!target) {
+    return undefined;
+  }
+  return "center" in target ? { center: target.center, radius: target.radius } : { center: target, radius: 1 };
+}
+
+/** 把当前识别士兵折叠成清图搜索候选；友伤关闭时友方不作为候选。 */
+function createOneClickClearCandidates(): GraphwarOneClickClearCandidate[] {
+  const startPoint = pathPixels.value.at(-1);
+  if (!startPoint) {
+    return [];
+  }
+
+  return detectedSoldiers.value.flatMap((soldier) => {
+    if (detectionBoxMatchesAnySelectedPathPoint(soldier)) {
+      return [];
+    }
+    const friendly = isDetectedFriendlySoldierObstacle(soldier);
+    if (friendly && !friendlyFireEnabled.value) {
+      return [];
+    }
+
+    const center = getDetectionBoxCenter(soldier);
+    if (!soldierAimXReachesMinimumForward(createSoldierHitCircleXPlusEdgePoint(soldier), startPoint)) {
+      return [];
+    }
+
+    return [
+      {
+        enemy: !friendly,
+        hitCenter: center,
+        hitRadius: soldier.hitRadius,
+        id: soldier.id,
+      },
+    ];
+  });
+}
+
+/** 一键清图失败原因用独立文案，避免和单目标智能寻路失败混在一起。 */
+function getOneClickClearFailureMessage(reason: GraphwarOneClickClearFailureReason, elapsedMs: number) {
+  const elapsed = formatElapsedDuration(elapsedMs);
+  if (reason === "no-candidate") {
+    return locale.smartPathfinding.oneClickClear.noCandidate;
+  }
+  if (reason === "budget-exhausted") {
+    return locale.smartPathfinding.oneClickClear.budgetExhausted(elapsed);
+  }
+  if (reason === "preflight-blocked") {
+    return getSmartPathfindingCurrentPathBlockedMessage();
+  }
+  if (reason === "unsupported") {
+    return locale.smartPathfinding.oneClickClear.unsupported;
+  }
+  return locale.smartPathfinding.oneClickClear.noUsableTarget(elapsed);
 }
 
 /** 路径变更后同步落地并清空旧状态。 */
@@ -4222,6 +4473,56 @@ async function copyText(text: string) {
               </label>
             </div>
           </details>
+          <details class="graphwar-killer__details">
+            <summary :title="locale.ui.pathfinding.oneClickClearTitle">
+              {{ locale.ui.pathfinding.autoGraph }}
+            </summary>
+            <div class="graphwar-killer__pathfinding-setting-grid">
+              <label
+                class="graphwar-killer__detection-setting-label"
+                :title="locale.ui.pathfinding.oneClickClearBeamWidthTitle"
+              >
+                {{ locale.ui.pathfinding.oneClickClearBeamWidth }}
+                <input
+                  v-model="oneClickClearBeamWidthText"
+                  inputmode="numeric"
+                  min="1"
+                  max="64"
+                  :aria-label="locale.ui.pathfinding.oneClickClearBeamWidthAriaLabel"
+                  :title="locale.ui.pathfinding.oneClickClearBeamWidthTitle"
+                >
+              </label>
+              <label
+                class="graphwar-killer__detection-setting-label"
+                :title="locale.ui.pathfinding.oneClickClearMaxExpandedStatesTitle"
+              >
+                {{ locale.ui.pathfinding.oneClickClearMaxExpandedStates }}
+                <input
+                  v-model="oneClickClearMaxExpandedStatesText"
+                  inputmode="numeric"
+                  min="1"
+                  max="20000"
+                  :aria-label="locale.ui.pathfinding.oneClickClearMaxExpandedStatesAriaLabel"
+                  :title="locale.ui.pathfinding.oneClickClearMaxExpandedStatesTitle"
+                >
+              </label>
+              <label
+                class="graphwar-killer__detection-setting-label"
+                :title="locale.ui.pathfinding.oneClickClearMaxElapsedMsTitle"
+              >
+                {{ locale.ui.pathfinding.oneClickClearMaxElapsedMs }}
+                <input
+                  v-model="oneClickClearMaxElapsedMsText"
+                  inputmode="numeric"
+                  min="100"
+                  max="30000"
+                  :aria-label="locale.ui.pathfinding.oneClickClearMaxElapsedMsAriaLabel"
+                  :title="locale.ui.pathfinding.oneClickClearMaxElapsedMsTitle"
+                >
+                <span>ms</span>
+              </label>
+            </div>
+          </details>
         </div>
       </div>
     </section>
@@ -4359,9 +4660,10 @@ async function copyText(text: string) {
           <button
             v-if="smartPathfindingEnabled"
             type="button"
-            disabled
             aria-pressed="false"
-            :title="autoGraphPathfindingDisabledMessage"
+            :disabled="smartPathfindingInProgress || !parsedOneClickClearSettings.ok"
+            :title="locale.ui.pathfinding.oneClickClearTitle"
+            @click="void runOneClickClear()"
           >
             {{ locale.ui.pathfinding.autoGraph }}
           </button>

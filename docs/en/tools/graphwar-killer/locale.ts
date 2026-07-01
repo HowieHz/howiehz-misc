@@ -73,6 +73,9 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
+    oneClickClearBeamWidthRange: "One-Click Clear beam width must be an integer from 1 to 64",
+    oneClickClearMaxElapsedMsRange: "One-Click Clear max elapsed time must be an integer from 100 to 30000 ms",
+    oneClickClearMaxExpandedStatesRange: "One-Click Clear max expanded states must be an integer from 1 to 20000",
     pathfindingMaximumNumber: "Pathfinding maximum must be a number",
     pathfindingMaximumPixelRange: (limit) => `Pathfinding maximum must be between -${limit}px and ${limit}px`,
     pathfindingMinimumGreaterThanMaximum: "Pathfinding minimum cannot be greater than the maximum",
@@ -183,6 +186,15 @@ export const graphwarKillerLocale = {
     },
     success: (elapsed) =>
       elapsed === undefined ? "Smart Pathfinding completed" : `Smart Pathfinding completed in ${elapsed}`,
+    oneClickClear: {
+      budgetExhausted: (elapsed) => `One-Click Clear exhausted its budget without a usable kill in ${elapsed}`,
+      inProgress: "Running One-Click Clear; right-click the screenshot to stop",
+      needCurrentPath: "One-Click Clear needs an existing path start first",
+      noCandidate: "One-Click Clear failed: no selectable target exists on the x+ side of the current path",
+      noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found in ${elapsed}`,
+      success: (kills, elapsed) => `One-Click Clear completed, appended ${kills} target(s) in ${elapsed}`,
+      unsupported: "The first One-Click Clear version only supports double absolute-value y= and y'= modes",
+    },
   },
   ui: {
     actions: {
@@ -357,6 +369,31 @@ export const graphwarKillerLocale = {
           title:
             "Try removing intermediate geometry-route points one by one, validating each shorter path with the function trajectory.",
         },
+        "one-click-clear-apply-result": {
+          label: "Apply clear path",
+          title:
+            "Write the best path found by One-Click Clear to the current path state; keep the original path when no new kill is found.",
+        },
+        "one-click-clear-collect-targets": {
+          label: "Collect clear targets",
+          title:
+            "Filter selectable soldier candidates for One-Click Clear using the current friendly-fire setting and minimum x+ step.",
+        },
+        "one-click-clear-preflight": {
+          label: "Preflight clear run",
+          title:
+            "Check One-Click Clear settings, current mode, current path, and obstacle mask, then prepare route masks and the prefix hit target.",
+        },
+        "one-click-clear-search": {
+          label: "Search and validate clear",
+          title:
+            "Run budgeted beam search, route caching, incremental trajectory validation, final full-path validation, and conservative point deletion.",
+        },
+        "one-click-clear-setting-status": {
+          label: "Set clear status",
+          title:
+            "Build the One-Click Clear success, failure, or unavailable reason and write it to the pathfinding header status.",
+        },
         "outside-stages": {
           label: "Outside recorded stages",
           title:
@@ -395,6 +432,20 @@ export const graphwarKillerLocale = {
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
         "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
+      oneClickClearBeamWidth: "Beam width",
+      oneClickClearBeamWidthAriaLabel: "One-Click Clear beam width",
+      oneClickClearBeamWidthTitle:
+        "Number of candidate routes kept at each depth; larger values can find more kills but search more slowly. Range: 1 to 64.",
+      oneClickClearMaxElapsedMs: "Max elapsed",
+      oneClickClearMaxElapsedMsAriaLabel: "One-Click Clear max elapsed time in milliseconds",
+      oneClickClearMaxElapsedMsTitle:
+        "Maximum runtime for one One-Click Clear search; longer runs can find better routes. Range: 100 to 30000 ms.",
+      oneClickClearMaxExpandedStates: "Max expanded states",
+      oneClickClearMaxExpandedStatesAriaLabel: "One-Click Clear max expanded states",
+      oneClickClearMaxExpandedStatesTitle:
+        "Maximum number of search states One-Click Clear may expand; larger values can find more kills but keep the page busier. Range: 1 to 20000.",
+      oneClickClearTitle:
+        "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
       pathMaximum: "Path maximum",
       pathMaximumAriaLabel: "Maximum pathfinding obstacle expansion in raw Graphwar 770x450 plane pixels",
       pathMaximumTitle: "Pathfinding expands obstacles up to this amount. Unit: raw Graphwar 770x450 plane pixels.",

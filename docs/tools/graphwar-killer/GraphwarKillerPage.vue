@@ -40,7 +40,7 @@ import type {
   GraphwarDetectionWorkerTimingEntry,
 } from "./graphwar-detection-runner";
 import {
-  GRAPHWAR_ONE_CLICK_CLEAR_ROUTE_TOLERANCE_PLANE_PIXELS,
+  GRAPHWAR_ONE_CLICK_CLEAR_DEFAULT_ROUTE_TOLERANCE_PLANE_PIXELS,
   buildGraphwarOneClickClearPath,
   type GraphwarOneClickClearCandidate,
   type GraphwarOneClickClearDebugStage,
@@ -119,6 +119,7 @@ type ParsedObstacleTolerances =
   | {
       ok: true;
       boundaryExpansionPlanePixels: number;
+      oneClickClearRouteTolerancePlanePixels: number;
       routeMaxTolerancePlanePixels: number;
       routeMinTolerancePlanePixels: number;
       routeStepPlanePixels: number;
@@ -323,6 +324,7 @@ const templateMatchingWorkerCountText = ref(String(graphwarToolDefaults.template
 const obstacleRouteMinToleranceText = ref("1");
 const obstacleRouteMaxToleranceText = ref("3");
 const obstacleRouteStepToleranceText = ref("1");
+const oneClickClearRouteToleranceText = ref(String(GRAPHWAR_ONE_CLICK_CLEAR_DEFAULT_ROUTE_TOLERANCE_PLANE_PIXELS));
 const obstacleSimulationToleranceText = ref("1");
 const pathfindingBoundaryExpansionText = ref("1");
 const simulatorFormulaText = ref("");
@@ -566,6 +568,11 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     return { ok: false as const, message: locale.validation.simulationExpansionNumber };
   }
 
+  const oneClickClearRouteTolerancePlanePixels = parseFiniteNumber(oneClickClearRouteToleranceText.value);
+  if (oneClickClearRouteTolerancePlanePixels === undefined) {
+    return { ok: false as const, message: locale.validation.oneClickClearRouteToleranceNumber };
+  }
+
   const boundaryExpansionPlanePixels = parseFiniteNumber(pathfindingBoundaryExpansionText.value);
   if (boundaryExpansionPlanePixels === undefined) {
     return { ok: false as const, message: locale.validation.boundaryExpansionNumber };
@@ -595,6 +602,13 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
     };
   }
 
+  if (Math.abs(oneClickClearRouteTolerancePlanePixels) > graphwarObstacleToleranceLimit) {
+    return {
+      ok: false as const,
+      message: locale.validation.oneClickClearRouteTolerancePixelRange(graphwarObstacleToleranceLimit),
+    };
+  }
+
   if (boundaryExpansionPlanePixels > graphwarBoundaryExpansionLimit) {
     return {
       ok: false as const,
@@ -605,6 +619,7 @@ const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
   return {
     ok: true as const,
     boundaryExpansionPlanePixels,
+    oneClickClearRouteTolerancePlanePixels,
     routeMaxTolerancePlanePixels,
     routeMinTolerancePlanePixels,
     routeStepPlanePixels: Math.max(Number.EPSILON, Math.abs(routeStepPlanePixels)),
@@ -1457,6 +1472,7 @@ watch(
     obstacleRouteMinToleranceText,
     obstacleRouteMaxToleranceText,
     obstacleRouteStepToleranceText,
+    oneClickClearRouteToleranceText,
     pathfindingBoundaryExpansionText,
     minXText,
     maxXText,
@@ -2674,9 +2690,11 @@ async function runOneClickClear() {
       createOneClickClearCandidates(),
     );
     const routeMask = measureSmartPathfindingDebugStage(timings, "one-click-clear-build-route-mask", () => ({
-      mask: getCachedRouteMask(preflightResult.obstacleMask, GRAPHWAR_ONE_CLICK_CLEAR_ROUTE_TOLERANCE_PLANE_PIXELS)
-        .mask,
-      routeTolerancePlanePixels: GRAPHWAR_ONE_CLICK_CLEAR_ROUTE_TOLERANCE_PLANE_PIXELS,
+      mask: getCachedRouteMask(
+        preflightResult.obstacleMask,
+        preflightResult.tolerances.oneClickClearRouteTolerancePlanePixels,
+      ).mask,
+      routeTolerancePlanePixels: preflightResult.tolerances.oneClickClearRouteTolerancePlanePixels,
     }));
     const oneClickClearSearchDetailTimings: SmartPathfindingDebugTimingEntry[] = [];
     const result = await measureSmartPathfindingDebugStageAsync(timings, "one-click-clear-search", () =>
@@ -4449,6 +4467,19 @@ async function copyText(text: string) {
                   inputmode="decimal"
                   :aria-label="locale.ui.pathfinding.expansionStepAriaLabel"
                   :title="locale.ui.pathfinding.expansionStepTitle"
+                >
+                <span>{{ locale.ui.pathfinding.unit }}</span>
+              </label>
+              <label
+                class="graphwar-killer__detection-setting-label"
+                :title="locale.ui.pathfinding.oneClickClearRouteToleranceTitle"
+              >
+                {{ locale.ui.pathfinding.oneClickClearRouteTolerance }}
+                <input
+                  v-model="oneClickClearRouteToleranceText"
+                  inputmode="decimal"
+                  :aria-label="locale.ui.pathfinding.oneClickClearRouteToleranceAriaLabel"
+                  :title="locale.ui.pathfinding.oneClickClearRouteToleranceTitle"
                 >
                 <span>{{ locale.ui.pathfinding.unit }}</span>
               </label>

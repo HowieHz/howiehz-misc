@@ -44,6 +44,8 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `笔刷大小需要在 ${min}px 到 ${max}px 之间`,
     obstacleMinAreaInteger: "障碍最小面积需要填写整数",
     obstacleMinAreaRange: (max) => `障碍最小面积需要在 0 到 ${max} 之间`,
+    oneClickClearRouteToleranceNumber: "一键清图路线容差需要填写数字",
+    oneClickClearRouteTolerancePixelRange: (limit) => `一键清图路线容差需要在 -${limit}px 到 ${limit}px 之间`,
     pathfindingMaximumNumber: "寻路最大值需要填写数字",
     pathfindingMaximumPixelRange: (limit) => `寻路最大值需要在 -${limit}px 到 ${limit}px 之间`,
     pathfindingMinimumGreaterThanMaximum: "寻路最小值不能大于最大值",
@@ -302,7 +304,7 @@ export const graphwarKillerLocale = {
       debugDetails: {
         "build-dag-edges": {
           label: "- 清图建立 DAG 边",
-          title: "用固定 1px 路线 mask 尝试士兵中心点之间的 x+ 几何寻路，并记录可用边。",
+          title: "用当前一键清图路线 mask 尝试士兵中心点之间的 x+ 几何寻路，并记录可用边。",
         },
         "build-dag-targets": {
           label: "- 清图收集 DAG 目标",
@@ -338,7 +340,7 @@ export const graphwarKillerLocale = {
         },
         "segment-sample-trajectory": {
           label: "- 清图分段轨迹采样",
-          title: "从已验证前缀状态继续采样，确认下一目标中心点会在碰撞障碍前被命中。",
+          title: "按当前完整路径重采样已接受目标序列，确认新增目标中心点会在碰撞障碍前被命中。",
         },
         "validate-route": {
           label: "- 清图验证 DAG 路线",
@@ -371,8 +373,8 @@ export const graphwarKillerLocale = {
           title: "把一键清图找到的最佳路径写入当前路径状态；没有新增击杀时不会改动原路径。",
         },
         "one-click-clear-build-route-mask": {
-          label: "清图建立固定路线 mask",
-          title: "用当前障碍 mask 建立一键清图固定 1px 几何寻路 mask。",
+          label: "清图建立路线 mask",
+          title: "用当前障碍 mask 和一键清图路线容差建立几何寻路 mask。",
         },
         "one-click-clear-collect-targets": {
           label: "清图收集目标",
@@ -380,7 +382,7 @@ export const graphwarKillerLocale = {
         },
         "one-click-clear-preflight": {
           label: "清图预检查",
-          title: "检查一键清图设置、当前模式、当前路径、障碍 mask，并准备固定 1px route mask 与前缀命中目标。",
+          title: "检查一键清图设置、当前模式、当前路径和障碍 mask，并准备前缀命中目标。",
         },
         "one-click-clear-search": {
           label: "清图搜索验证",
@@ -421,6 +423,10 @@ export const graphwarKillerLocale = {
       expansionStepTitle: "寻路外扩从最小值推进到最大值时每次增加的步长。单位是 Graphwar 原始 770x450 平面像素。",
       obstacleExpansion: "障碍外扩",
       obstacleExpansionTitle: "调整识别出的障碍和边界在寻路、模拟碰撞时的安全距离。",
+      oneClickClearRouteTolerance: "清图路线容差",
+      oneClickClearRouteToleranceAriaLabel: "一键清图路线容差，单位为 Graphwar 原始 770x450 平面像素",
+      oneClickClearRouteToleranceTitle:
+        "一键清图建立 DAG 边时使用的单个几何路线容差；默认 1px，不参与上面的最小/最大/步长扫描。",
       oneClickClearTitle: "从当前路径尾部开始，自动追加路线并尽量按顺序击杀右侧可用士兵。",
       pathMaximum: "寻路最大值",
       pathMaximumAriaLabel: "寻路最大障碍外扩值，单位为 Graphwar 原始 770x450 平面像素",

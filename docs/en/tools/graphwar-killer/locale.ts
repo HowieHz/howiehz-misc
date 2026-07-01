@@ -73,6 +73,9 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
+    oneClickClearRouteToleranceNumber: "One-Click Clear route tolerance must be a number",
+    oneClickClearRouteTolerancePixelRange: (limit) =>
+      `One-Click Clear route tolerance must be between -${limit}px and ${limit}px`,
     pathfindingMaximumNumber: "Pathfinding maximum must be a number",
     pathfindingMaximumPixelRange: (limit) => `Pathfinding maximum must be between -${limit}px and ${limit}px`,
     pathfindingMinimumGreaterThanMaximum: "Pathfinding minimum cannot be greater than the maximum",
@@ -354,7 +357,7 @@ export const graphwarKillerLocale = {
         "build-dag-edges": {
           label: "- Build clear DAG edges",
           title:
-            "Try x+ geometry routes between soldier centers with the fixed 1px route mask, then record usable edges.",
+            "Try x+ geometry routes between soldier centers with the current clear route mask, then record usable edges.",
         },
         "build-dag-targets": {
           label: "- Collect clear DAG targets",
@@ -396,7 +399,7 @@ export const graphwarKillerLocale = {
         "segment-sample-trajectory": {
           label: "- Sample clear segment trajectory",
           title:
-            "Resume sampling from the validated prefix state and confirm the next target center is reached before obstacles.",
+            "Re-sample the accepted target sequence with the current full path and confirm the new target center is reached before obstacles.",
         },
         "validate-route": {
           label: "- Validate clear DAG route",
@@ -433,8 +436,9 @@ export const graphwarKillerLocale = {
             "Write the best path found by One-Click Clear to the current path state; keep the original path when no new kill is found.",
         },
         "one-click-clear-build-route-mask": {
-          label: "Build fixed clear route mask",
-          title: "Build the fixed 1px geometry route mask for One-Click Clear from the current obstacle mask.",
+          label: "Build clear route mask",
+          title:
+            "Build the geometry route mask for One-Click Clear from the current obstacle mask and clear route tolerance.",
         },
         "one-click-clear-collect-targets": {
           label: "Collect clear targets",
@@ -444,7 +448,7 @@ export const graphwarKillerLocale = {
         "one-click-clear-preflight": {
           label: "Preflight clear run",
           title:
-            "Check One-Click Clear settings, current mode, current path, and obstacle mask, then prepare the fixed 1px route mask and prefix hit target.",
+            "Check One-Click Clear settings, current mode, current path, and obstacle mask, then prepare the prefix hit target.",
         },
         "one-click-clear-search": {
           label: "Search and validate clear",
@@ -494,6 +498,10 @@ export const graphwarKillerLocale = {
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
         "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
+      oneClickClearRouteTolerance: "Clear route tolerance",
+      oneClickClearRouteToleranceAriaLabel: "One-Click Clear route tolerance in raw Graphwar 770x450 plane pixels",
+      oneClickClearRouteToleranceTitle:
+        "Single geometry route tolerance used while One-Click Clear builds DAG edges. Defaults to 1px and does not use the min/max/step scan above.",
       oneClickClearTitle:
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
       pathMaximum: "Path maximum",

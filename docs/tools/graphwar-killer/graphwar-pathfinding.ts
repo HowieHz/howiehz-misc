@@ -41,6 +41,8 @@ export interface GraphwarPathfindingOptions {
   isCancelled?: () => boolean;
   /** 搜索回调；页面用于动画，worker 保持为空。 */
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
+  /** 按需获取可见图障碍数据；直连成功或提前失败时不会触发。 */
+  getVisibilityGraphObstacleData?: () => GraphwarVisibilityGraphObstacleData;
   /** 已按 route tolerance 膨胀或腐蚀后的障碍 mask。 */
   routeMask: Uint8Array;
   /** 当前 route tolerance，供轮廓 RDP 简化计算 epsilon。 */
@@ -209,7 +211,7 @@ export async function buildSmartPathfindingPathForMask(options: GraphwarPathfind
     routeTolerancePlanePixels: options.routeTolerancePlanePixels ?? 1,
     start,
     target,
-    visibilityGraphObstacleData: options.visibilityGraphObstacleData,
+    visibilityGraphObstacleData: options.visibilityGraphObstacleData ?? options.getVisibilityGraphObstacleData?.(),
   });
   const path = await findLazyVisibilityGraphPath({
     boundaryExpansion: options.boundaryExpansion,

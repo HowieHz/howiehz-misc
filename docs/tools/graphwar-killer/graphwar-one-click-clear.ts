@@ -60,12 +60,79 @@ export type GraphwarOneClickClearDebugStage =
   | "validate-prefix"
   | "validate-route";
 
+/** 一键清图内部调试细分信息；动态标签用对象承载，避免为每个 worker 造固定 stage。 */
+export type GraphwarOneClickClearDebugDetail =
+  | {
+      /** DAG 建边实际调度模式。 */
+      mode: "serial" | "parallel" | "parallel-fallback";
+      /** 实际使用或尝试使用的 worker 数量。 */
+      workerCount: number;
+      /** 明细类型标记。 */
+      type: "dag-edge-mode";
+    }
+  | {
+      /** 明细类型标记。 */
+      type: "dag-edge-worker";
+      /** 子 Worker 序号。 */
+      workerIndex: number;
+    };
+
 /** 一键清图内部调试耗时记录。 */
 export interface GraphwarOneClickClearDebugTiming {
   /** 被测量的一键清图内部阶段。 */
   stage: GraphwarOneClickClearDebugStage;
   /** 阶段耗时，单位毫秒。 */
   elapsedMs: number;
+  /** 阶段内动态明细；存在时页面按类型生成标签。 */
+  detail?: GraphwarOneClickClearDebugDetail;
+}
+
+/** 一键清图 DAG 边批量建路 job；按生成顺序合并结果，保证 edge id 稳定。 */
+export interface GraphwarOneClickClearDagEdgeBuildJob {
+  /** 稳定 job id。 */
+  id: number;
+  /** From 为空表示 START -> target。 */
+  from?: number;
+  /** 本边起点，截图像素坐标。 */
+  startPoint: PixelPoint;
+  /** 本边终点，截图像素坐标。 */
+  targetPoint: PixelPoint;
+  /** 目标士兵下标。 */
+  to: number;
+}
+
+/** 一键清图 DAG 边批量建路请求。 */
+export interface GraphwarOneClickClearDagEdgeBuildRequest {
+  /** 当前 Graphwar 坐标边界。 */
+  bounds: GraphBounds;
+  /** 截图内 Graphwar 棋盘矩形。 */
+  boundsRect: BoundsRect;
+  /** 障碍和棋盘边界命中检测的内收像素。 */
+  boundaryExpansion: number;
+  /** 待尝试的 DAG 边，已按稳定顺序生成。 */
+  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[];
+  /** 已按 route tolerance 处理后的障碍 mask。 */
+  routeMask: Uint8Array;
+  /** 当前 route tolerance，供可视图轮廓简化使用。 */
+  routeTolerancePlanePixels: number;
+  /** 用户配置的最大并行消费者数量。 */
+  workerCount: number;
+}
+
+/** 一键清图 DAG 边批量建路结果。 */
+export interface GraphwarOneClickClearDagEdgeBuildResult {
+  /** 每个 job 的可用路线；route 为空表示该边不可达。 */
+  routes: readonly GraphwarOneClickClearDagEdgeRoute[];
+  /** 批量 builder 内部测得的调试耗时。 */
+  timings: readonly GraphwarOneClickClearDebugTiming[];
+}
+
+/** 一键清图 DAG 边 job 的路线结果。 */
+export interface GraphwarOneClickClearDagEdgeRoute {
+  /** 对应 job id。 */
+  jobId: number;
+  /** 已按截图像素映射且首尾替换为精确控制点的几何路径。 */
+  route?: PixelPoint[];
 }
 
 /** 运行一键清图所需的纯数据。 */
@@ -84,6 +151,12 @@ export interface GraphwarOneClickClearOptions {
   isCancelled?: () => boolean;
   /** 内部调试耗时回调；调用方负责聚合同类阶段，避免刷屏。 */
   onDebugTiming?: (timing: GraphwarOneClickClearDebugTiming) => void;
+  /** 可选批量 DAG 建边入口；页面用它把大量独立边交给 Worker pool。 */
+  buildDagEdges?: (
+    request: GraphwarOneClickClearDagEdgeBuildRequest,
+  ) => Promise<GraphwarOneClickClearDagEdgeBuildResult>;
+  /** DAG 建边最大并行数；外部 builder 失败回退串行时只用于调试说明。 */
+  dagEdgeWorkerCount?: number;
   /** 一键清图删点局部保护半径；调用方已限制到当前士兵命中圈内，最终整路验证仍使用真实命中圈。 */
   deleteCheckRadiusPixels: number;
   /** 当前路径已有像素点。 */
@@ -364,24 +437,38 @@ async function buildOneClickClearDag(
   const startPoint = options.pathPoints.at(-1) ?? options.pathPoints[0];
   const edges: OneClickClearDagEdge[] = [];
   const outgoingEdges = new Map<number, OneClickClearDagEdge[]>();
-  const visibilityGraphObstacleData =
-    options.routeMask.getVisibilityGraphObstacleData?.() ??
-    createGraphwarVisibilityGraphObstacleData({
-      bounds: options.bounds,
-      routeMask: options.routeMask.mask,
-      routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
-    });
+  const jobs = collectOneClickClearDagEdgeBuildJobs(startPoint, targets);
+  const result = await buildOneClickClearDagEdgeRoutes(context, jobs);
+  emitOneClickClearDebugTimings(options, result.timings);
 
+  const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route.route]));
+  for (const job of jobs) {
+    const route = routesByJobId.get(job.id);
+    if (route) {
+      addOneClickClearDagEdge(edges, outgoingEdges, job.from, job.to, route);
+    }
+  }
+
+  return {
+    edges,
+    outgoingEdges,
+    targets: [...targets],
+  };
+}
+
+function collectOneClickClearDagEdgeBuildJobs(startPoint: PixelPoint, targets: readonly OneClickClearTarget[]) {
+  const jobs: GraphwarOneClickClearDagEdgeBuildJob[] = [];
   for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
     const target = targets[targetIndex];
     if (!target) {
       continue;
     }
-    const route = await buildOneClickClearEdgeRoute(context, startPoint, target.hitCenter, visibilityGraphObstacleData);
-    if (route) {
-      addOneClickClearDagEdge(edges, outgoingEdges, undefined, targetIndex, route);
-    }
-    await yieldOneClickClearControl(options);
+    jobs.push({
+      id: jobs.length,
+      startPoint,
+      targetPoint: target.hitCenter,
+      to: targetIndex,
+    });
   }
 
   for (let fromIndex = 0; fromIndex < targets.length; fromIndex += 1) {
@@ -395,24 +482,96 @@ async function buildOneClickClearDag(
         continue;
       }
 
-      const route = await buildOneClickClearEdgeRoute(
-        context,
-        from.hitCenter,
-        to.hitCenter,
-        visibilityGraphObstacleData,
-      );
-      if (route) {
-        addOneClickClearDagEdge(edges, outgoingEdges, fromIndex, toIndex, route);
-      }
-      await yieldOneClickClearControl(options);
+      jobs.push({
+        from: fromIndex,
+        id: jobs.length,
+        startPoint: from.hitCenter,
+        targetPoint: to.hitCenter,
+        to: toIndex,
+      });
     }
+  }
+  return jobs;
+}
+
+async function buildOneClickClearDagEdgeRoutes(
+  context: OneClickClearSearchContext,
+  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
+): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
+  const options = context.options;
+  const request = createOneClickClearDagEdgeBuildRequest(options, jobs);
+  if (options.buildDagEdges && jobs.length > 1 && (options.dagEdgeWorkerCount ?? 1) > 1) {
+    try {
+      return await options.buildDagEdges(request);
+    } catch {
+      if (options.isCancelled?.()) {
+        return { routes: [], timings: [] };
+      }
+      return buildOneClickClearDagEdgeRoutesSerial(context, jobs, "parallel-fallback", request.workerCount);
+    }
+  }
+  return buildOneClickClearDagEdgeRoutesSerial(context, jobs, "serial", 1);
+}
+
+function createOneClickClearDagEdgeBuildRequest(
+  options: GraphwarOneClickClearOptions,
+  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
+): GraphwarOneClickClearDagEdgeBuildRequest {
+  return {
+    boundaryExpansion: options.boundaryExpansion,
+    bounds: options.bounds,
+    boundsRect: options.boundsRect,
+    jobs,
+    routeMask: options.routeMask.mask,
+    routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
+    workerCount: options.dagEdgeWorkerCount ?? 1,
+  };
+}
+
+async function buildOneClickClearDagEdgeRoutesSerial(
+  context: OneClickClearSearchContext,
+  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
+  mode: "serial" | "parallel-fallback",
+  workerCount: number,
+): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
+  const options = context.options;
+  const visibilityGraphObstacleData =
+    options.routeMask.getVisibilityGraphObstacleData?.() ??
+    createGraphwarVisibilityGraphObstacleData({
+      bounds: options.bounds,
+      routeMask: options.routeMask.mask,
+      routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
+    });
+  const routes: GraphwarOneClickClearDagEdgeRoute[] = [];
+  for (const job of jobs) {
+    const route = await buildOneClickClearEdgeRoute(
+      context,
+      job.startPoint,
+      job.targetPoint,
+      visibilityGraphObstacleData,
+    );
+    routes.push(createOneClickClearDagEdgeRoute(job.id, route));
+    await yieldOneClickClearControl(options);
   }
 
   return {
-    edges,
-    outgoingEdges,
-    targets: [...targets],
+    routes,
+    timings: [
+      {
+        detail: {
+          mode,
+          type: "dag-edge-mode",
+          workerCount,
+        },
+        elapsedMs: 0,
+        stage: "build-dag-edges",
+      },
+    ],
   };
+}
+
+function createOneClickClearDagEdgeRoute(jobId: number, route: PixelPoint[] | undefined) {
+  return route ? { jobId, route } : { jobId };
 }
 
 function addOneClickClearDagEdge(
@@ -901,7 +1060,7 @@ function measureOneClickClearDebugTiming<TResult>(
   try {
     return task();
   } finally {
-    options.onDebugTiming({
+    emitOneClickClearDebugTiming(options, {
       elapsedMs: nowMs() - startedAt,
       stage,
     });
@@ -921,11 +1080,24 @@ async function measureOneClickClearDebugTimingAsync<TResult>(
   try {
     return await task();
   } finally {
-    options.onDebugTiming({
+    emitOneClickClearDebugTiming(options, {
       elapsedMs: nowMs() - startedAt,
       stage,
     });
   }
+}
+
+function emitOneClickClearDebugTimings(
+  options: GraphwarOneClickClearOptions,
+  timings: readonly GraphwarOneClickClearDebugTiming[],
+) {
+  for (const timing of timings) {
+    emitOneClickClearDebugTiming(options, timing);
+  }
+}
+
+function emitOneClickClearDebugTiming(options: GraphwarOneClickClearOptions, timing: GraphwarOneClickClearDebugTiming) {
+  options.onDebugTiming?.(timing);
 }
 
 function nowMs() {

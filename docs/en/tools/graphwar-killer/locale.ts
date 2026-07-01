@@ -76,6 +76,8 @@ export const graphwarKillerLocale = {
     oneClickClearDeleteCheckRadiusNumber: "One-Click Clear delete-check radius must be a number",
     oneClickClearDeleteCheckRadiusRange: (min, max) =>
       `One-Click Clear delete-check radius must be between ${min}px and ${max}px`,
+    pathfindingWorkerCountInteger: "Pathfinding parallelism must be an integer",
+    pathfindingWorkerCountRange: "Pathfinding parallelism must be between 1 and 128",
     routePlanningToleranceNumber: "Route planning tolerance must be a number",
     routePlanningTolerancePixelRange: (limit) => `Route planning tolerance must be between -${limit}px and ${limit}px`,
     simulationToleranceNumber: "Simulation tolerance must be a number",
@@ -357,6 +359,20 @@ export const graphwarKillerLocale = {
           title:
             "Try x+ geometry routes between soldier centers with the current clear route mask, then record usable edges.",
         },
+        "dag-edge-mode": {
+          label: (mode, workerCount) =>
+            mode === "parallel"
+              ? `- Clear DAG edge mode: parallel, ${workerCount} worker`
+              : mode === "parallel-fallback"
+                ? `- Clear DAG edge mode: parallel failed then serial, ${workerCount} worker -> 1 worker`
+                : "- Clear DAG edge mode: serial, 1 worker",
+          title: "The scheduling mode actually used by this One-Click Clear DAG edge build.",
+        },
+        "dag-edge-worker": {
+          label: (workerIndex) => `- Clear DAG edge Worker ${workerIndex}`,
+          title:
+            "Total time for one DAG edge child Worker; jobs are claimed dynamically, so this is not a fixed edge slice.",
+        },
         "build-dag-targets": {
           label: "- Collect clear DAG targets",
           title: "Convert selectable soldiers into DAG nodes sorted by increasing Graphwar center x.",
@@ -622,6 +638,10 @@ export const graphwarKillerLocale = {
       parseDerivativeAsYTitle: "Graphwar has a bug: because of the regular expression order, y' is parsed as y.",
       pathfinding: {
         heading: "Pathfinding",
+        workerCount: "Pathfinding parallelism",
+        workerCountAriaLabel: "Number of geometry pathfinding Workers",
+        workerCountTitle:
+          "Regular route geometry search runs in a Worker; One-Click Clear DAG edge building may run up to this many edge-search Workers. Default 4, range 1 to 128; 1 means serial.",
       },
       recognition: {
         candidateTopRatio: "Candidate keep ratio",

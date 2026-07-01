@@ -46,6 +46,8 @@ export const graphwarKillerLocale = {
     obstacleMinAreaRange: (max) => `障碍最小面积需要在 0 到 ${max} 之间`,
     oneClickClearDeleteCheckRadiusNumber: "一键清图删点检验半径需要填写数字",
     oneClickClearDeleteCheckRadiusRange: (min, max) => `一键清图删点检验半径需要在 ${min}px 到 ${max}px 之间`,
+    pathfindingWorkerCountInteger: "寻路并行数需要填写整数",
+    pathfindingWorkerCountRange: "寻路并行数需要在 1 到 128 之间",
     routePlanningToleranceNumber: "路线规划容差需要填写数字",
     routePlanningTolerancePixelRange: (limit) => `路线规划容差需要在 -${limit}px 到 ${limit}px 之间`,
     simulationToleranceNumber: "函数模拟容差需要填写数字",
@@ -303,6 +305,19 @@ export const graphwarKillerLocale = {
           label: "- 清图建立 DAG 边",
           title: "用当前一键清图路线 mask 尝试士兵中心点之间的 x+ 几何寻路，并记录可用边。",
         },
+        "dag-edge-mode": {
+          label: (mode, workerCount) =>
+            mode === "parallel"
+              ? `- 清图 DAG 建边模式：并行，${workerCount} worker`
+              : mode === "parallel-fallback"
+                ? `- 清图 DAG 建边模式：并行失败后补串行，${workerCount} worker -> 1 worker`
+                : "- 清图 DAG 建边模式：串行，1 worker",
+          title: "本次一键清图 DAG 建边实际使用的调度模式。",
+        },
+        "dag-edge-worker": {
+          label: (workerIndex) => `- 清图 DAG 建边 Worker ${workerIndex}`,
+          title: "单个 DAG 建边子 Worker 的总耗时；任务由 Worker 动态领取，耗时不代表固定边切片。",
+        },
         "build-dag-targets": {
           label: "- 清图收集 DAG 目标",
           title: "把可选士兵转换为按 Graphwar 中心 x 从低到高排序的 DAG 节点。",
@@ -535,6 +550,10 @@ export const graphwarKillerLocale = {
       parseDerivativeAsYTitle: "Graphwar 有 Bug，由于正则表达式顺序，会将 y' 解析为 y。",
       pathfinding: {
         heading: "寻路设定",
+        workerCount: "寻路并行数",
+        workerCountAriaLabel: "几何寻路并行 Worker 数量",
+        workerCountTitle:
+          "普通寻路几何搜索会放到 Worker；一键清图 DAG 建边最多同时运行这些边搜索 Worker。默认 4，取值 1 到 128；1 表示串行。",
       },
       recognition: {
         candidateTopRatio: "候选保留比例",

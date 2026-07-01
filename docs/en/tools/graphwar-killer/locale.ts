@@ -375,6 +375,11 @@ export const graphwarKillerLocale = {
           title:
             "When the cache misses, search for an obstacle-avoiding geometry route from the current clear state to the candidate hit point.",
         },
+        "search-state-overhead": {
+          label: "- Expand clear search states",
+          title:
+            "Accumulated search-loop overhead for target filtering, hit-circle control point recomputation, state pushes, and best-state comparisons.",
+        },
         "segment-build-formula": {
           label: "- Build clear segment formula",
           title: "Convert the candidate segment path into a Graphwar formula sampling context.",

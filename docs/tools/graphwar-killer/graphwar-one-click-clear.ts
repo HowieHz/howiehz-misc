@@ -40,6 +40,7 @@ export type GraphwarOneClickClearDebugStage =
   | "route-cache-lookup"
   | "route-map-pixels"
   | "route-pathfinding"
+  | "search-state-overhead"
   | "segment-build-formula"
   | "segment-collect-hits"
   | "segment-graph-rule"
@@ -212,11 +213,11 @@ export async function buildGraphwarOneClickClearPath(
 
     expandedStates += 1;
     for (const target of targets) {
-      if (target.orderIndex <= state.lastTargetOrderIndex) {
-        continue;
-      }
-
-      const stateTarget = createStateOneClickClearTarget(options, state, target);
+      const stateTarget = measureOneClickClearDebugTiming(options, "search-state-overhead", () =>
+        target.orderIndex <= state.lastTargetOrderIndex
+          ? undefined
+          : createStateOneClickClearTarget(options, state, target),
+      );
       if (!stateTarget) {
         continue;
       }
@@ -225,10 +226,10 @@ export async function buildGraphwarOneClickClearPath(
       if (!nextState) {
         continue;
       }
-      pendingStates.push(nextState);
-      if (compareOneClickClearStates(nextState, best) < 0) {
-        best = nextState;
-      }
+      best = measureOneClickClearDebugTiming(options, "search-state-overhead", () => {
+        pendingStates.push(nextState);
+        return compareOneClickClearStates(nextState, best) < 0 ? nextState : best;
+      });
     }
     const yielded = options.yieldControl?.();
     if (yielded) {

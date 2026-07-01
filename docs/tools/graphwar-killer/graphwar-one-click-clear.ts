@@ -117,7 +117,7 @@ export type GraphwarOneClickClearResult =
     };
 
 interface OneClickClearTarget extends GraphwarOneClickClearCandidate {
-  /** 中心点 Graphwar x；DAG 排序和 x+ 判定都只看中心点。 */
+  /** 中心点 Graphwar x；DAG 稳定排序使用，x+ 可达性在平面像素层判断。 */
   centerGraphX: number;
   /** 中心点验证目标；半径固定 1px，避免重新引入命中圈左右策略。 */
   centerTarget: GraphwarTrajectoryTargetCircle;
@@ -185,6 +185,7 @@ interface OneClickClearSearchContext {
 const START_NODE_INDEX = -1;
 const MAX_GLOBAL_DELETE_PASSES = 1;
 const CENTER_TARGET_RADIUS_PIXELS = 1;
+const MINIMUM_GEOMETRY_ADVANCE_PLANE_PIXELS = 1;
 
 /** 用中心点 DAG 找到当前模型下显式击杀最多的追加路径。 */
 export async function buildGraphwarOneClickClearPath(
@@ -303,7 +304,7 @@ function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): 
     return [];
   }
 
-  const startGraphX = imageToGraphPoint(startPoint, options.bounds, options.boundsRect).x;
+  const startPlaneX = imagePointToPlaneX(startPoint, options.boundsRect);
   const targets: OneClickClearTarget[] = [];
   for (let sourceIndex = 0; sourceIndex < options.candidates.length; sourceIndex += 1) {
     const candidate = options.candidates[sourceIndex];
@@ -312,7 +313,7 @@ function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): 
     }
 
     const centerGraphX = imageToGraphPoint(candidate.hitCenter, options.bounds, options.boundsRect).x;
-    if (!graphXAdvancesFromX(options, startGraphX, centerGraphX)) {
+    if (!planeXAdvancesEnough(startPlaneX, imagePointToPlaneX(candidate.hitCenter, options.boundsRect))) {
       continue;
     }
 
@@ -369,7 +370,7 @@ async function buildOneClickClearDag(
     }
     for (let toIndex = fromIndex + 1; toIndex < targets.length; toIndex += 1) {
       const to = targets[toIndex];
-      if (!to || !graphXAdvancesFromX(options, from.centerGraphX, to.centerGraphX)) {
+      if (!to || !imagePointAdvancesEnough(from.hitCenter, to.hitCenter, options.boundsRect)) {
         continue;
       }
 
@@ -425,7 +426,7 @@ async function buildOneClickClearEdgeRoute(
       bounds: context.options.bounds,
       boundsRect: context.options.boundsRect,
       boundaryExpansion: context.options.boundaryExpansion,
-      canAdvance: (previous, next) => pathfindingPlaneSegmentAdvancesEnough(context.options, previous, next),
+      canAdvance: pathfindingPlaneSegmentAdvancesEnough,
       isCancelled: context.options.isCancelled,
       routeMask: context.options.routeMask.mask,
       routeTolerancePlanePixels: context.options.routeMask.routeTolerancePlanePixels,
@@ -710,16 +711,8 @@ function graphXAdvancesFromX(options: GraphwarOneClickClearOptions, fromGraphX: 
   );
 }
 
-function pathfindingPlaneSegmentAdvancesEnough(
-  options: GraphwarOneClickClearOptions,
-  previous: PlaneGridPoint,
-  next: PlaneGridPoint,
-) {
-  return graphXAdvancesFromX(options, planeGridPointToGraphX(options, previous), planeGridPointToGraphX(options, next));
-}
-
-function planeGridPointToGraphX(options: GraphwarOneClickClearOptions, point: PlaneGridPoint) {
-  return options.bounds.minX + ((point.x + 0.5) / GRAPHWAR_PLANE_LENGTH) * (options.bounds.maxX - options.bounds.minX);
+function pathfindingPlaneSegmentAdvancesEnough(previous: PlaneGridPoint, next: PlaneGridPoint) {
+  return planeXAdvancesEnough(previous.x, next.x);
 }
 
 function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions, points: readonly PixelPoint[]) {
@@ -731,6 +724,18 @@ function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions
     }
   }
   return true;
+}
+
+function imagePointAdvancesEnough(from: PixelPoint, to: PixelPoint, boundsRect: BoundsRect) {
+  return planeXAdvancesEnough(imagePointToPlaneX(from, boundsRect), imagePointToPlaneX(to, boundsRect));
+}
+
+function imagePointToPlaneX(point: PixelPoint, boundsRect: BoundsRect) {
+  return ((point.x - boundsRect.x) / boundsRect.width) * GRAPHWAR_PLANE_LENGTH;
+}
+
+function planeXAdvancesEnough(fromPlaneX: number, toPlaneX: number) {
+  return toPlaneX - fromPlaneX >= MINIMUM_GEOMETRY_ADVANCE_PLANE_PIXELS;
 }
 
 async function yieldOneClickClearControl(options: GraphwarOneClickClearOptions) {

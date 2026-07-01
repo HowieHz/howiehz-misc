@@ -299,6 +299,52 @@ export const graphwarKillerLocale = {
       boundaryExpansionAriaLabel: "边界外扩，单位为 Graphwar 原始 770x450 平面像素",
       boundaryExpansionTitle: "把棋盘四周边界向内扩成碰撞区。单位是 Graphwar 原始 770x450 平面像素。",
       debugNoTiming: "暂无寻路耗时记录",
+      debugDetails: {
+        "build-targets": {
+          label: "- 清图建立目标序",
+          title: "把可选士兵转换为按 Graphwar x 从低到高的清图目标序列。",
+        },
+        "optimize-path": {
+          label: "- 清图删点优化",
+          title: "对最佳清图路径做保守删点，并用整路轨迹验证每次删除后仍能按序命中。",
+        },
+        "route-cache-lookup": {
+          label: "- 清图路线缓存检查",
+          title: "生成几何路线缓存 key，并判断当前状态、目标点和 route mask 是否已有缓存结果。",
+        },
+        "route-map-pixels": {
+          label: "- 清图路线映射像素",
+          title: "把几何寻路返回的 Graphwar 平面格点转换成截图像素路径。",
+        },
+        "route-pathfinding": {
+          label: "- 清图真实几何寻路",
+          title: "缓存未命中时，搜索从当前清图状态到候选命中点的绕障几何路线。",
+        },
+        "segment-build-formula": {
+          label: "- 清图分段建公式",
+          title: "把候选分段路径转换成 Graphwar 公式采样上下文。",
+        },
+        "segment-collect-hits": {
+          label: "- 清图扫描顺路命中",
+          title: "扫描分段轨迹上的可见像素，把显式目标前顺路命中的士兵加入击杀序列。",
+        },
+        "segment-graph-rule": {
+          label: "- 清图分段 x+ 检查",
+          title: "检查候选分段路径中相邻点是否满足当前输出精度下的最小 x+ 前进步长。",
+        },
+        "segment-sample-trajectory": {
+          label: "- 清图分段轨迹采样",
+          title: "采样候选分段的 Graphwar 真实轨迹，确认命中显式目标且不会提前碰撞障碍。",
+        },
+        "validate-final": {
+          label: "- 清图最终验证",
+          title: "对优化后的完整清图路径重新采样，确认仍按记录顺序命中全部目标。",
+        },
+        "validate-prefix": {
+          label: "- 清图前缀验证",
+          title: "验证当前已有路径能命中最后路径点，并保存可复用的轨迹采样状态。",
+        },
+      },
       debugStages: {
         "apply-result": {
           label: "写回路径结果",

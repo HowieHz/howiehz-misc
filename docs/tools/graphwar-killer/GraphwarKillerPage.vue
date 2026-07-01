@@ -42,6 +42,7 @@ import type {
 import {
   buildGraphwarOneClickClearPath,
   type GraphwarOneClickClearCandidate,
+  type GraphwarOneClickClearDebugStage,
   type GraphwarOneClickClearFailureReason,
 } from "./graphwar-one-click-clear";
 import {
@@ -195,11 +196,15 @@ interface SmartPathfindingDebugTimingEntry {
   stage: SmartPathfindingDebugStage;
   /** 阶段耗时，单位毫秒。 */
   elapsedMs: number;
+  /** 阶段内细分耗时；存在时展示为父阶段下的子项。 */
+  detail?: GraphwarOneClickClearDebugStage;
 }
 /** 智能寻路调试耗时展示行。 */
 interface SmartPathfindingDebugTimingRow extends SmartPathfindingDebugTimingEntry {
   /** 鼠标悬停说明；用于解释不直接对应某个函数块的阶段。 */
   title?: string;
+  /** 展示标签，子项会以 "- " 开头。 */
+  label: string;
 }
 /** 截图上的检测框，坐标均为图片像素。 */
 type DetectionBox = GraphwarDetectionBox;
@@ -968,7 +973,8 @@ const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
 const smartPathfindingDebugTimingRows = computed<SmartPathfindingDebugTimingRow[]>(() =>
   smartPathfindingDebugTimingEntries.value.map((entry) => ({
     ...entry,
-    title: locale.ui.pathfinding.debugStages[entry.stage].title,
+    label: getSmartPathfindingDebugTimingLabel(entry),
+    title: getSmartPathfindingDebugTimingTitle(entry),
   })),
 );
 
@@ -2007,7 +2013,7 @@ function finishSmartPathfindingDebugTimings(
   }
 
   const totalElapsedMs = completedAt - startedAt;
-  const measuredStageElapsedMs = timings.reduce((total, timing) => total + timing.elapsedMs, 0);
+  const measuredStageElapsedMs = timings.reduce((total, timing) => total + (timing.detail ? 0 : timing.elapsedMs), 0);
   smartPathfindingDebugTimingEntries.value = [
     ...timings,
     {
@@ -2040,6 +2046,37 @@ function measureSmartPathfindingDebugStage<TResult>(
       stage,
     });
   }
+}
+
+/** 一键清图内部阶段会在搜索循环里重复发生；调试面板只展示聚合后的耗时。 */
+function addOneClickClearSearchDebugTiming(
+  timings: SmartPathfindingDebugTimingEntry[],
+  stage: GraphwarOneClickClearDebugStage,
+  elapsedMs: number,
+) {
+  const existing = timings.find((timing) => timing.stage === "one-click-clear-search" && timing.detail === stage);
+  if (existing) {
+    existing.elapsedMs += elapsedMs;
+    return;
+  }
+
+  timings.push({
+    detail: stage,
+    elapsedMs,
+    stage: "one-click-clear-search",
+  });
+}
+
+function getSmartPathfindingDebugTimingLabel(entry: SmartPathfindingDebugTimingEntry) {
+  return entry.detail
+    ? locale.ui.pathfinding.debugDetails[entry.detail].label
+    : getSmartPathfindingDebugStageLabel(entry.stage);
+}
+
+function getSmartPathfindingDebugTimingTitle(entry: SmartPathfindingDebugTimingEntry) {
+  return entry.detail
+    ? locale.ui.pathfinding.debugDetails[entry.detail].title
+    : locale.ui.pathfinding.debugStages[entry.stage].title;
 }
 
 /** 包装异步智能寻路阶段计时，覆盖 worker 和动画让出控制权场景。 */
@@ -2637,6 +2674,7 @@ async function runOneClickClear() {
     const candidates = measureSmartPathfindingDebugStage(timings, "one-click-clear-collect-targets", () =>
       createOneClickClearCandidates(),
     );
+    const oneClickClearSearchDetailTimings: SmartPathfindingDebugTimingEntry[] = [];
     const result = await measureSmartPathfindingDebugStageAsync(timings, "one-click-clear-search", () =>
       buildGraphwarOneClickClearPath({
         boundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
@@ -2645,6 +2683,10 @@ async function runOneClickClear() {
         candidates,
         isCancelled: () => pathfindingToken !== smartPathfindingCancelToken,
         minimumGraphXStep: minimumPathGraphXStep.value,
+        onDebugTiming: debugInfoEnabled.value
+          ? (timing) =>
+              addOneClickClearSearchDebugTiming(oneClickClearSearchDetailTimings, timing.stage, timing.elapsedMs)
+          : undefined,
         pathPoints: [...pathPixels.value],
         prefixTarget: preflightResult.prefixTarget,
         routeMasks: preflightResult.routeMasks,
@@ -2654,6 +2696,7 @@ async function runOneClickClear() {
         yieldControl: waitForNextPathfindingSlice,
       }),
     );
+    timings.push(...oneClickClearSearchDetailTimings);
     if (pathfindingToken !== smartPathfindingCancelToken) {
       return false;
     }
@@ -4582,7 +4625,7 @@ async function copyText(text: string) {
                   :key="`${entry.stage}-${index}`"
                   :title="entry.title"
                 >
-                  {{ getSmartPathfindingDebugStageLabel(entry.stage) }}:
+                  {{ entry.label }}:
                   {{ formatDebugElapsedDuration(entry.elapsedMs) }}
                 </span>
               </template>

@@ -180,6 +180,10 @@ export function sampleGraphwarFormulaTrajectory(options: {
   context: GraphwarTrajectoryFormulaContext;
   initialReachedTargetCount?: number;
   initialState?: GraphwarTrajectorySamplingState;
+  /** 完成目标序列后继续采样到该 Graphwar x；用于把清图增量状态推进到目标右侧离开点。 */
+  continueAfterTargetSequenceUntilGraphX?: number;
+  /** 默认完成目标序列时立刻停；传 false 时继续采样，通常配合 continueAfterTargetSequenceUntilGraphX。 */
+  stopOnTargetSequenceComplete?: boolean;
   soldierMarkerRadius?: number;
   skipInitialStop?: boolean;
   targetPoint?: PixelPoint;
@@ -464,6 +468,8 @@ function createGraphwarTrajectoryStopTracker(options: {
   collision?: GraphwarTrajectoryCollisionSettings;
   collectVisiblePixels?: boolean;
   initialReachedTargetCount?: number;
+  continueAfterTargetSequenceUntilGraphX?: number;
+  stopOnTargetSequenceComplete?: boolean;
   soldierMarkerRadius?: number;
   targetPoint?: PixelPoint;
   targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
@@ -496,8 +502,11 @@ function createGraphwarTrajectoryStopTracker(options: {
         }
         reachedTargetCount += 1;
       }
-      if (targetSequence.length > 0 && reachedTargetCount >= targetSequence.length) {
+      const targetSequenceReached = targetSequence.length > 0 && reachedTargetCount >= targetSequence.length;
+      if (targetSequenceReached && targetHitIndex < 0) {
         targetHitIndex = index;
+      }
+      if (options.stopOnTargetSequenceComplete !== false && targetSequenceReached) {
         earlyStopReason = "target";
         return true;
       }
@@ -514,6 +523,13 @@ function createGraphwarTrajectoryStopTracker(options: {
       ) {
         obstacleHitIndex = index;
         earlyStopReason = "obstacle";
+        return true;
+      }
+      if (
+        targetSequenceReached &&
+        options.continueAfterTargetSequenceUntilGraphX !== undefined &&
+        point.x >= options.continueAfterTargetSequenceUntilGraphX
+      ) {
         return true;
       }
       return false;

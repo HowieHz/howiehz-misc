@@ -44,6 +44,9 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `笔刷大小需要在 ${min}px 到 ${max}px 之间`,
     obstacleMinAreaInteger: "障碍最小面积需要填写整数",
     obstacleMinAreaRange: (max) => `障碍最小面积需要在 0 到 ${max} 之间`,
+    oneClickClearBeamWidthRange: "一键清图 Beam 宽度需要是 1 到 64 的整数",
+    oneClickClearMaxElapsedMsRange: "一键清图最长耗时需要是 100 到 30000 的整数毫秒",
+    oneClickClearMaxExpandedStatesRange: "一键清图最大扩展状态需要是 1 到 20000 的整数",
     pathfindingMaximumNumber: "寻路最大值需要填写数字",
     pathfindingMaximumPixelRange: (limit) => `寻路最大值需要在 -${limit}px 到 ${limit}px 之间`,
     pathfindingMinimumGreaterThanMaximum: "寻路最小值不能大于最大值",
@@ -146,6 +149,15 @@ export const graphwarKillerLocale = {
       trajectory: "验证函数轨迹",
     },
     success: (elapsed) => (elapsed === undefined ? "智能寻路完成" : `智能寻路完成，耗时 ${elapsed}`),
+    oneClickClear: {
+      budgetExhausted: (elapsed) => `一键清图已用尽预算，未找到可用击杀，耗时 ${elapsed}`,
+      inProgress: "正在一键清图，在截图中右键停止",
+      needCurrentPath: "一键清图需要先选择当前路径起点",
+      noCandidate: "一键清图失败：当前路径右侧没有可选目标",
+      noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,
+      success: (kills, elapsed) => `一键清图完成，追加 ${kills} 个目标，耗时 ${elapsed}`,
+      unsupported: "一键清图首版只支持双绝对值函数的 y= 和 y'= 模式",
+    },
   },
   ui: {
     actions: {
@@ -304,6 +316,26 @@ export const graphwarKillerLocale = {
           label: "优化路径节点",
           title: "逐个尝试删除几何路线中的中间点，并用函数轨迹验证删除后是否仍可命中目标。",
         },
+        "one-click-clear-apply-result": {
+          label: "清图写回路径",
+          title: "把一键清图找到的最佳路径写入当前路径状态；没有新增击杀时不会改动原路径。",
+        },
+        "one-click-clear-collect-targets": {
+          label: "清图收集目标",
+          title: "按当前友伤设置和 x+ 最小步长筛选一键清图可尝试的士兵候选。",
+        },
+        "one-click-clear-preflight": {
+          label: "清图预检查",
+          title: "检查一键清图设置、当前模式、当前路径、障碍 mask，并准备 route mask 与前缀命中目标。",
+        },
+        "one-click-clear-search": {
+          label: "清图搜索验证",
+          title: "在预算内运行 Beam 搜索、route cache、增量轨迹验证、最终整路验证和保守删点优化。",
+        },
+        "one-click-clear-setting-status": {
+          label: "清图设置状态栏",
+          title: "根据一键清图结果生成成功、失败或不可用原因，并写入寻路标题右侧状态。",
+        },
         "outside-stages": {
           label: "阶段外耗时",
           title:
@@ -336,6 +368,17 @@ export const graphwarKillerLocale = {
       expansionStepTitle: "寻路外扩从最小值推进到最大值时每次增加的步长。单位是 Graphwar 原始 770x450 平面像素。",
       obstacleExpansion: "障碍外扩",
       obstacleExpansionTitle: "调整识别出的障碍和边界在寻路、模拟碰撞时的安全距离。",
+      oneClickClearBeamWidth: "Beam 宽度",
+      oneClickClearBeamWidthAriaLabel: "一键清图 Beam 宽度",
+      oneClickClearBeamWidthTitle: "每一层保留的候选路线数量；越大越可能找到更多击杀，但搜索更慢。取值 1 到 64。",
+      oneClickClearMaxElapsedMs: "最长耗时",
+      oneClickClearMaxElapsedMsAriaLabel: "一键清图最长耗时，单位毫秒",
+      oneClickClearMaxElapsedMsTitle: "一键清图单次最多运行时间；越长越可能找到更好路线。取值 100 到 30000 毫秒。",
+      oneClickClearMaxExpandedStates: "最大扩展状态",
+      oneClickClearMaxExpandedStatesAriaLabel: "一键清图最大扩展状态数",
+      oneClickClearMaxExpandedStatesTitle:
+        "一键清图最多尝试扩展的搜索状态；越大越可能找到更多击杀，但页面会更忙。取值 1 到 20000。",
+      oneClickClearTitle: "从当前路径尾部开始，自动追加路线并尽量按顺序击杀右侧可用士兵。",
       pathMaximum: "寻路最大值",
       pathMaximumAriaLabel: "寻路最大障碍外扩值，单位为 Graphwar 原始 770x450 平面像素",
       pathMaximumTitle: "寻路逐步外扩障碍直到这个值。单位是 Graphwar 原始 770x450 平面像素。",

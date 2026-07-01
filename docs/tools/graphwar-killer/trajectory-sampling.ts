@@ -10,7 +10,11 @@ import {
   sampleGraphwarExpressionTrajectory,
   sampleGraphwarTrajectory,
 } from "./simulator";
-import type { GraphwarExpressionParserOptions, GraphwarTrajectorySample } from "./simulator";
+import type {
+  GraphwarExpressionParserOptions,
+  GraphwarTrajectorySample,
+  GraphwarTrajectorySamplingState,
+} from "./simulator";
 import { createGraphPoint } from "./types";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "./types";
 
@@ -61,6 +65,14 @@ export interface GraphwarTrajectoryCollisionSettings {
   boundaryExpansion?: number;
   /** Graphwar 原始 770x450 平面上的障碍 mask。 */
   mask?: Uint8Array;
+}
+
+/** 弹道需要按顺序命中的目标圆；一键清图用它区分不同士兵的真实命中半径。 */
+export interface GraphwarTrajectoryTargetCircle {
+  /** 目标圆心，截图像素坐标。 */
+  center: PixelPoint;
+  /** 目标命中半径，截图像素。 */
+  radius: number;
 }
 
 /** 低层采样结果，保留可见像素、命中序列和早停位置供不同调用方二次包装。 */
@@ -166,8 +178,12 @@ export function sampleGraphwarFormulaTrajectory(options: {
   collision?: GraphwarTrajectoryCollisionSettings;
   collectVisiblePixels?: boolean;
   context: GraphwarTrajectoryFormulaContext;
+  initialReachedTargetCount?: number;
+  initialState?: GraphwarTrajectorySamplingState;
   soldierMarkerRadius?: number;
+  skipInitialStop?: boolean;
   targetPoint?: PixelPoint;
+  targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   targetSequencePoints?: readonly PixelPoint[];
 }): GraphwarTrajectorySampleResult {
   const stopTracker = createGraphwarTrajectoryStopTracker(options);
@@ -176,8 +192,10 @@ export function sampleGraphwarFormulaTrajectory(options: {
     bounds: options.bounds,
     equation: options.context.settings.equation,
     formulaEvaluation: options.context.formulaEvaluation,
+    initialState: options.initialState,
     points: options.context.formulaPoints,
     shouldStop: stopTracker.shouldStop,
+    skipInitialStop: options.skipInitialStop,
     soldierCenter: options.context.soldierCenter ?? options.context.formulaPoints[0],
     steepness: options.context.settings.steepness,
   });
@@ -267,9 +285,16 @@ export function sampleGraphwarPathTargetSequence(options: {
   points: readonly PixelPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
   soldierMarkerRadius: number;
+  targetCircles?: readonly GraphwarTrajectoryTargetCircle[];
   targetPoints: readonly PixelPoint[];
 }): GraphwarPathTargetSequenceResult {
-  if (options.targetPoints.length === 0) {
+  const targetSequence =
+    options.targetCircles ??
+    options.targetPoints.map((center) => ({
+      center,
+      radius: options.soldierMarkerRadius,
+    }));
+  if (targetSequence.length === 0) {
     return {
       reachedTargetCount: 0,
       reachesTargetSequenceBeforeObstacle: true,
@@ -307,12 +332,12 @@ export function sampleGraphwarPathTargetSequence(options: {
     collectVisiblePixels: options.collectVisiblePixels,
     context,
     soldierMarkerRadius: options.soldierMarkerRadius,
-    targetSequencePoints: options.targetPoints,
+    targetSequence,
   });
   return {
     earlyStopReason: result.earlyStopReason,
     reachedTargetCount: result.reachedTargetCount,
-    reachesTargetSequenceBeforeObstacle: result.reachedTargetCount >= options.targetPoints.length,
+    reachesTargetSequenceBeforeObstacle: result.reachedTargetCount >= targetSequence.length,
     sample: result.sample,
     samplePointCount: result.sample.points.length,
     visiblePixels: result.visiblePixels,
@@ -438,16 +463,23 @@ function createGraphwarTrajectoryStopTracker(options: {
   boundsRect: BoundsRect;
   collision?: GraphwarTrajectoryCollisionSettings;
   collectVisiblePixels?: boolean;
+  initialReachedTargetCount?: number;
   soldierMarkerRadius?: number;
   targetPoint?: PixelPoint;
+  targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   targetSequencePoints?: readonly PixelPoint[];
 }) {
-  const targetSequencePoints = options.targetSequencePoints ?? (options.targetPoint ? [options.targetPoint] : []);
+  const targetSequence =
+    options.targetSequence ??
+    createTrajectoryTargetSequenceFromPoints(
+      options.targetSequencePoints ?? (options.targetPoint ? [options.targetPoint] : []),
+      options.soldierMarkerRadius,
+    );
   const visiblePixels: PixelPoint[] = [];
   let earlyStopReason: GraphwarTrajectoryEarlyStopReason | undefined;
   let obstacleHitIndex = -1;
   let targetHitIndex = -1;
-  let reachedTargetCount = 0;
+  let reachedTargetCount = Math.min(options.initialReachedTargetCount ?? 0, targetSequence.length);
 
   return {
     shouldStop(point: GraphPoint, _previousPoint: GraphPoint | undefined, index: number) {
@@ -457,18 +489,14 @@ function createGraphwarTrajectoryStopTracker(options: {
       }
 
       // Graphwar 从第 1 个采样点开始判士兵命中，起点不参与命中检测。
-      while (
-        index > 0 &&
-        reachedTargetCount < targetSequencePoints.length &&
-        options.soldierMarkerRadius !== undefined
-      ) {
-        const targetPoint = targetSequencePoints[reachedTargetCount];
-        if (!graphwarPixelPointHitsTarget(pixel, targetPoint, options.soldierMarkerRadius)) {
+      while (index > 0 && reachedTargetCount < targetSequence.length) {
+        const target = targetSequence[reachedTargetCount];
+        if (!target || !graphwarPixelPointHitsTarget(pixel, target.center, target.radius)) {
           break;
         }
         reachedTargetCount += 1;
       }
-      if (targetSequencePoints.length > 0 && reachedTargetCount >= targetSequencePoints.length) {
+      if (targetSequence.length > 0 && reachedTargetCount >= targetSequence.length) {
         targetHitIndex = index;
         earlyStopReason = "target";
         return true;
@@ -501,6 +529,17 @@ function createGraphwarTrajectoryStopTracker(options: {
       };
     },
   };
+}
+
+/** 没有半径时不创建目标序列，避免把未配置的目标误判为 0 半径命中。 */
+function createTrajectoryTargetSequenceFromPoints(
+  points: readonly PixelPoint[],
+  soldierMarkerRadius: number | undefined,
+): GraphwarTrajectoryTargetCircle[] {
+  if (soldierMarkerRadius === undefined) {
+    return [];
+  }
+  return points.map((center) => ({ center, radius: soldierMarkerRadius }));
 }
 
 /** 判断单个 Graphwar 采样点映射到截图后是否落入目标圆。 */

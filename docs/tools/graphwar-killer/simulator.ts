@@ -17,7 +17,7 @@ import { createGraphPoint } from "./types";
 import type { AlgorithmMode, EquationMode, GraphBounds, GraphPoint } from "./types";
 
 /** 采样由路径点生成的公式时的完整输入，保持与 Graphwar 原版步进参数隔离。 */
-interface SampleGraphwarTrajectoryOptions {
+export interface SampleGraphwarTrajectoryOptions {
   /** 路径点转公式的算法。 */
   algorithm: AlgorithmMode;
   /** 当前 Graphwar 坐标边界，用于出界判断。 */
@@ -30,8 +30,12 @@ interface SampleGraphwarTrajectoryOptions {
   points: readonly GraphPoint[];
   /** 每个采样点后的早停钩子，用于目标/障碍验证。 */
   shouldStop?: (point: GraphPoint, previousPoint: GraphPoint | undefined, index: number) => boolean;
+  /** 已验证前缀的采样状态；传入后从该点继续推进，而不是重新从发射点采样。 */
+  initialState?: GraphwarTrajectorySamplingState;
   /** 士兵中心；Graphwar 实际发射点会从这里沿角度偏移半径。 */
   soldierCenter: GraphPoint;
+  /** 从 initialState 继续时避免重复检查已经接受的前缀命中点。 */
+  skipInitialStop?: boolean;
   /** Step 算法陡峭度。 */
   steepness: number;
 }
@@ -84,14 +88,8 @@ export interface CreateGraphwarFormulaPathOptions {
   steepness: number;
 }
 
-/** 二阶 RK4 积分状态；dy 需要随 y 一起推进。 */
-type SecondOrderState = GraphPoint & {
-  /** 当前 y'。 */
-  dy: number;
-};
-
 /** 模拟器停止原因，直接映射 Graphwar 原版采样限制和工具早停。 */
-type TrajectoryStopReason =
+export type TrajectoryStopReason =
   | "completed"
   | "invalid"
   | "max-steps"
@@ -100,12 +98,55 @@ type TrajectoryStopReason =
   | "too-steep"
   | "unsupported";
 
+/** 可恢复采样状态；dy 只在 y''= 模式需要，普通 y= 和 y'= 模式保持为空。 */
+export interface GraphwarTrajectorySamplingState {
+  /** 当前 Graphwar 采样点。 */
+  currentPoint: GraphPoint;
+  /** 当前采样点的上一个点；早停逻辑需要它判断穿越关系时可复用。 */
+  previousPoint?: GraphPoint;
+  /** 当前点在 Graphwar 采样序列里的下标。 */
+  sampleIndex: number;
+  /** Y''= 模式的当前 y'；其他模式不设置。 */
+  dy?: number;
+}
+
 /** Graphwar 规则采样的轨迹结果。 */
 export interface GraphwarTrajectorySample {
+  /** 最后一个采样点对应的可恢复状态。 */
+  endState?: GraphwarTrajectorySamplingState;
   /** 按 Graphwar 游戏坐标记录的轨迹点。 */
   points: GraphPoint[];
   /** 采样停止原因，用于 UI 提示和 worker 调试统计。 */
   stopReason: TrajectoryStopReason;
+}
+
+/** 二阶 RK4 积分状态；dy 需要随 y 一起推进。 */
+type SecondOrderState = GraphPoint & {
+  /** 当前 y'。 */
+  dy: number;
+};
+
+/** 内部 stepper 单步结果；调用方只看到 Graphwar 点和可缓存状态。 */
+type GraphwarTrajectoryStepperResult =
+  | {
+      ok: true;
+      point: GraphPoint;
+      previousPoint: GraphPoint;
+      sampleIndex: number;
+      state: GraphwarTrajectorySamplingState;
+    }
+  | {
+      ok: false;
+      state: GraphwarTrajectorySamplingState;
+      stopReason: TrajectoryStopReason;
+    };
+
+/** 可恢复采样器封装了当前模式的 evaluator、offset 和二分步长规则。 */
+interface GraphwarTrajectoryStepper {
+  /** 当前可缓存状态。 */
+  state: GraphwarTrajectorySamplingState;
+  /** 推进一个 Graphwar 采样点。 */
+  step: () => GraphwarTrajectoryStepperResult;
 }
 
 /** Y'=f(x,y) 模式使用的一阶导求值器。 */
@@ -227,16 +268,26 @@ function calculateStepCenterX(previousTarget: GraphPoint, target: GraphPoint, st
 
 /** 使用 Graphwar 的采样、步长二分和 RK4 规则生成预览轨迹点。 */
 export function sampleGraphwarTrajectory(options: SampleGraphwarTrajectoryOptions) {
+  const stepperResult = createGraphwarTrajectoryStepper(options);
+  if (!stepperResult.ok) {
+    return createTrajectorySample([], stepperResult.stopReason);
+  }
+
+  return sampleWithTrajectoryStepper(stepperResult.stepper, options);
+}
+
+/** 创建可恢复的 Graphwar 轨迹采样器，供完整采样和增量前缀验证共用。 */
+export function createGraphwarTrajectoryStepper(options: SampleGraphwarTrajectoryOptions) {
   if (options.points.length < 2) {
-    return createTrajectorySample([], "unsupported");
+    return { ok: false as const, stopReason: "unsupported" as const };
   }
   if (options.equation === "y") {
-    return sampleNormalFunction(options);
+    return createNormalFunctionStepper(options);
   }
   if (options.equation === "dy") {
-    return sampleFirstOrderEquation(options);
+    return createFirstOrderEquationStepper(options);
   }
-  return sampleSecondOrderEquation(options);
+  return createSecondOrderEquationStepper(options);
 }
 
 /** 使用用户输入的 Graphwar 表达式生成预览轨迹点。 */
@@ -264,45 +315,45 @@ export function getGraphwarLaunchAngle(options: CreateGraphwarFormulaPathOptions
 }
 
 /** 模拟普通 y= 模式：从士兵边缘出发，并让 Graphwar 自动给函数加常数平移。 */
-function sampleNormalFunction(options: SampleGraphwarTrajectoryOptions) {
+function createNormalFunctionStepper(options: SampleGraphwarTrajectoryOptions) {
   const evaluateY = createYEvaluator(options);
   const launchPoint = getLaunchPoint(options, options.soldierCenter);
   const offset = launchPoint.y - evaluateY(launchPoint.x);
   if (!isFinitePoint(launchPoint) || !Number.isFinite(offset)) {
-    return createTrajectorySample([], "invalid");
+    return { ok: false as const, stopReason: "invalid" as const };
   }
 
-  return sampleByBisection(
-    launchPoint,
+  return createBisectionTrajectoryStepper(
+    createInitialStepperPoint(options.initialState, launchPoint),
     options.bounds,
     (previous, step) => {
       const x = previous.x + step;
       return createGraphPoint(x, evaluateY(x) + offset);
     },
-    { shouldStop: options.shouldStop, stopAtMinStep: true },
+    { initialState: options.initialState, stopAtMinStep: true },
   );
 }
 
 /** 模拟 y'= 模式：先迭代发射角，再从士兵边缘开始做一阶 RK4。 */
-function sampleFirstOrderEquation(options: SampleGraphwarTrajectoryOptions) {
+function createFirstOrderEquationStepper(options: SampleGraphwarTrajectoryOptions) {
   const evaluateDY = createFirstOrderEvaluator(options);
   const launchPoint = getLaunchPoint(options, options.soldierCenter);
   if (!isFinitePoint(launchPoint)) {
-    return createTrajectorySample([], "invalid");
+    return { ok: false as const, stopReason: "invalid" as const };
   }
 
-  return sampleByBisection(
-    launchPoint,
+  return createBisectionTrajectoryStepper(
+    createInitialStepperPoint(options.initialState, launchPoint),
     options.bounds,
     (previous, step) => rk4FirstOrderStep(previous, step, evaluateDY),
-    { shouldStop: options.shouldStop, stopAtMinStep: false },
+    { initialState: options.initialState, stopAtMinStep: false },
   );
 }
 
 /** 模拟 y''= 模式：使用建议发射角和 tan(angle) 作为初始 y'，再做二阶 RK4。 */
-function sampleSecondOrderEquation(options: SampleGraphwarTrajectoryOptions) {
+function createSecondOrderEquationStepper(options: SampleGraphwarTrajectoryOptions) {
   if (options.algorithm === "abs") {
-    return createTrajectorySample([], "unsupported");
+    return { ok: false as const, stopReason: "unsupported" as const };
   }
 
   const evaluateDDY = createSecondOrderEvaluator(options);
@@ -310,14 +361,14 @@ function sampleSecondOrderEquation(options: SampleGraphwarTrajectoryOptions) {
   const launchPoint = getLaunchPoint(options, options.soldierCenter);
   const launchState = createSecondOrderState(launchPoint.x, launchPoint.y, Math.tan(angle));
   if (!isFinitePoint(launchState) || !Number.isFinite(launchState.dy)) {
-    return createTrajectorySample([], "invalid");
+    return { ok: false as const, stopReason: "invalid" as const };
   }
 
-  return sampleByBisection(
-    launchState,
+  return createBisectionTrajectoryStepper(
+    createInitialSecondOrderStepperPoint(options.initialState, launchState),
     options.bounds,
     (previous, step) => rk4SecondOrderStep(previous, step, evaluateDDY),
-    { shouldStop: options.shouldStop, stopAtMinStep: false },
+    { initialState: options.initialState, stopAtMinStep: false },
   );
 }
 
@@ -481,6 +532,32 @@ function moveFromSoldierCenter(center: GraphPoint, angle: number): GraphPoint {
   );
 }
 
+/** 用可恢复 stepper 执行完整采样；早停回调仍只在这里集中调用。 */
+function sampleWithTrajectoryStepper(
+  stepper: GraphwarTrajectoryStepper,
+  options: Pick<SampleGraphwarTrajectoryOptions, "shouldStop" | "skipInitialStop">,
+) {
+  const samples: GraphPoint[] = [stepper.state.currentPoint];
+  if (
+    !options.skipInitialStop &&
+    options.shouldStop?.(stepper.state.currentPoint, stepper.state.previousPoint, stepper.state.sampleIndex)
+  ) {
+    return createTrajectorySample(samples, "stopped", stepper.state);
+  }
+
+  while (true) {
+    const next = stepper.step();
+    if (!next.ok) {
+      return createTrajectorySample(samples, next.stopReason, next.state);
+    }
+
+    samples.push(next.point);
+    if (options.shouldStop?.(next.point, next.previousPoint, next.sampleIndex)) {
+      return createTrajectorySample(samples, "stopped", next.state);
+    }
+  }
+}
+
 /** 用 Graphwar 的相邻点距离阈值和最小 x 步长执行采样；距离过大时对步长二分。 */
 function sampleByBisection<TPoint extends GraphPoint>(
   start: TPoint,
@@ -491,30 +568,94 @@ function sampleByBisection<TPoint extends GraphPoint>(
     stopAtMinStep: boolean;
   },
 ) {
-  const samples: GraphPoint[] = [createGraphPoint(start.x, start.y)];
+  const stepperResult = createBisectionTrajectoryStepper(start, bounds, calculateNext, {
+    stopAtMinStep: options.stopAtMinStep,
+  });
+  return sampleWithTrajectoryStepper(stepperResult.stepper, options);
+}
+
+/** 创建只负责物理推进的二分步进器；命中/障碍早停由外层统一处理。 */
+function createBisectionTrajectoryStepper<TPoint extends GraphPoint>(
+  start: TPoint,
+  bounds: GraphBounds,
+  calculateNext: (previous: TPoint, step: number) => TPoint,
+  options: { initialState?: GraphwarTrajectorySamplingState; stopAtMinStep: boolean },
+) {
   let previous = start;
-  if (options.shouldStop?.(start, undefined, 0)) {
-    return createTrajectorySample(samples, "stopped");
+  let state = createTrajectorySamplingState(
+    start,
+    options.initialState?.previousPoint,
+    options.initialState?.sampleIndex ?? 0,
+  );
+  const stepper: GraphwarTrajectoryStepper = {
+    get state() {
+      return state;
+    },
+    step() {
+      if (state.sampleIndex >= GRAPHWAR_FUNC_MAX_STEPS - 1) {
+        return { ok: false as const, state, stopReason: "max-steps" as const };
+      }
+
+      const next = findNextSample(previous, calculateNext, options);
+      if (!next.ok) {
+        return { ok: false as const, state, stopReason: next.stopReason };
+      }
+
+      const previousPoint = createGraphPoint(previous.x, previous.y);
+      previous = next.point;
+      state = createTrajectorySamplingState(next.point, previousPoint, state.sampleIndex + 1);
+      if (isOutsideGraphBounds(next.point, bounds)) {
+        return { ok: false as const, state, stopReason: "out-of-bounds" as const };
+      }
+
+      return {
+        ok: true as const,
+        point: state.currentPoint,
+        previousPoint,
+        sampleIndex: state.sampleIndex,
+        state,
+      };
+    },
+  };
+  return { ok: true as const, stepper };
+}
+
+/** 优先使用缓存前缀；没有前缀时从当前模式计算出的发射点开始。 */
+function createInitialStepperPoint(initialState: GraphwarTrajectorySamplingState | undefined, launchState: GraphPoint) {
+  if (!initialState) {
+    return launchState;
   }
+  return createGraphPoint(initialState.currentPoint.x, initialState.currentPoint.y);
+}
 
-  for (let index = 1; index < GRAPHWAR_FUNC_MAX_STEPS; index += 1) {
-    const next = findNextSample(previous, calculateNext, options);
-    if (!next.ok) {
-      return createTrajectorySample(samples, next.stopReason);
-    }
-
-    samples.push(createGraphPoint(next.point.x, next.point.y));
-    const previousPoint = previous;
-    previous = next.point;
-    if (options.shouldStop?.(next.point, previousPoint, index)) {
-      return createTrajectorySample(samples, "stopped");
-    }
-    if (isOutsideGraphBounds(next.point, bounds)) {
-      return createTrajectorySample(samples, "out-of-bounds");
-    }
+/** 二阶积分恢复时必须同时恢复 y'。 */
+function createInitialSecondOrderStepperPoint(
+  initialState: GraphwarTrajectorySamplingState | undefined,
+  launchState: SecondOrderState,
+) {
+  if (!initialState) {
+    return launchState;
   }
+  return createSecondOrderState(initialState.currentPoint.x, initialState.currentPoint.y, initialState.dy ?? 0);
+}
 
-  return createTrajectorySample(samples, "max-steps");
+/** 把内部点状态复制成可安全缓存的 Graphwar 采样状态。 */
+function createTrajectorySamplingState<TPoint extends GraphPoint>(
+  current: TPoint,
+  previousPoint: GraphPoint | undefined,
+  sampleIndex: number,
+): GraphwarTrajectorySamplingState {
+  return {
+    currentPoint: createGraphPoint(current.x, current.y),
+    dy: isSecondOrderState(current) ? current.dy : undefined,
+    previousPoint,
+    sampleIndex,
+  };
+}
+
+/** 收窄二阶积分状态，避免普通 GraphPoint 的品牌字段影响 dy 类型推断。 */
+function isSecondOrderState(point: GraphPoint): point is SecondOrderState {
+  return "dy" in point && typeof point.dy === "number";
 }
 
 /** 计算下一采样点；若相邻点距离过大则反复把 x 步长减半。 */
@@ -583,8 +724,12 @@ function createSecondOrderState(x: number, y: number, dy: number): SecondOrderSt
 }
 
 /** 创建轨迹采样结果，统一 stopReason 结构。 */
-function createTrajectorySample(points: GraphPoint[], stopReason: TrajectoryStopReason): GraphwarTrajectorySample {
-  return { points, stopReason };
+function createTrajectorySample(
+  points: GraphPoint[],
+  stopReason: TrajectoryStopReason,
+  endState?: GraphwarTrajectorySamplingState,
+): GraphwarTrajectorySample {
+  return { endState, points, stopReason };
 }
 
 /** 编译用户输入表达式，只暴露 Graphwar 支持的一小组数学函数。 */

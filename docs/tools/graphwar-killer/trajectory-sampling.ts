@@ -1,5 +1,5 @@
 /** 负责按 Graphwar 公式规则采样轨迹，并判断路径与目标/障碍的交互。 */
-import { GRAPHWAR_TOOL_SIGN_EPSILON } from "./formula";
+import { GRAPHWAR_TOOL_SIGN_EPSILON, buildFormula } from "./formula";
 import type { FormulaEvaluationOptions } from "./formula";
 import { graphToImagePoint, imageToGraphPoint } from "./geometry";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
@@ -31,6 +31,8 @@ export type GraphwarTrajectoryEarlyStopReason = "obstacle" | "target";
 export interface GraphwarTrajectoryFormulaSettings {
   /** 路径点转公式的算法。 */
   algorithm: AlgorithmMode;
+  /** 最终公式文本的小数位；只限制表达式参数，不约分路径点或发射点。 */
+  decimalPlaces: number;
   /** Graphwar 对公式文本的解释模式。 */
   equation: EquationMode;
   /** 路径生成公式时的 steepness；省略时使用 steepness。 */
@@ -43,6 +45,8 @@ export interface GraphwarTrajectoryFormulaSettings {
 
 /** 一次轨迹采样可复用的公式上下文，避免多个验证入口重复整理路径点和保护参数。 */
 export interface GraphwarTrajectoryFormulaContext {
+  /** 按当前小数位生成的最终 Graphwar 表达式；验证时按 Graphwar parser 重新解析成 double。 */
+  expression: string;
   /** 传给公式 evaluator 的数值保护选项。 */
   formulaEvaluation: FormulaEvaluationOptions;
   /** 已按发射点和 step 中心调整过的 Graphwar 路径点，保留 double 精度。 */
@@ -134,13 +138,22 @@ export function createGraphwarTrajectoryFormulaContext(options: {
   })
     ? GRAPHWAR_TOOL_SIGN_EPSILON
     : 0;
+  const formulaEvaluation = createGraphwarFormulaEvaluationOptions(
+    options.bounds,
+    formulaPoints,
+    options.settings,
+    signEpsilon,
+  );
   return {
-    formulaEvaluation: createGraphwarFormulaEvaluationOptions(
-      options.bounds,
+    expression: buildFormula(
       formulaPoints,
-      options.settings,
-      signEpsilon,
-    ),
+      options.settings.steepness,
+      options.settings.equation,
+      options.settings.algorithm,
+      options.settings.decimalPlaces,
+      formulaEvaluation,
+    ).expression,
+    formulaEvaluation,
     formulaPoints,
     settings: options.settings,
     signEpsilon,
@@ -187,17 +200,16 @@ export function sampleGraphwarFormulaTrajectory(options: {
   targetSequencePoints?: readonly PixelPoint[];
 }): GraphwarTrajectorySampleResult {
   const stopTracker = createGraphwarTrajectoryStopTracker(options);
-  const sample = sampleGraphwarTrajectory({
-    algorithm: options.context.settings.algorithm,
+  const sample = sampleGraphwarExpressionTrajectory({
     bounds: options.bounds,
     equation: options.context.settings.equation,
-    formulaEvaluation: options.context.formulaEvaluation,
+    expression: options.context.expression,
     initialState: options.initialState,
-    points: options.context.formulaPoints,
+    launchAngleRadians:
+      options.context.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(options.context) : undefined,
     shouldStop: stopTracker.shouldStop,
     skipInitialStop: options.skipInitialStop,
     soldierCenter: options.context.soldierCenter ?? options.context.formulaPoints[0],
-    steepness: options.context.settings.steepness,
   });
   return stopTracker.createResult(sample);
 }

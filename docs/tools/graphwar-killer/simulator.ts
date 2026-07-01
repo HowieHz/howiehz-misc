@@ -62,8 +62,12 @@ export interface SampleGraphwarExpressionTrajectoryOptions {
   parser?: GraphwarExpressionParserOptions;
   /** 每个采样点后的早停钩子，用于目标/障碍验证。 */
   shouldStop?: (point: GraphPoint, previousPoint: GraphPoint | undefined, index: number) => boolean;
+  /** 已验证前缀的采样状态；传入后从该点继续推进。 */
+  initialState?: GraphwarTrajectorySamplingState;
   /** 士兵中心；Graphwar 实际发射点会从这里沿角度偏移半径。 */
   soldierCenter: GraphPoint;
+  /** 从 initialState 继续时避免重复检查已经接受的前缀命中点。 */
+  skipInitialStop?: boolean;
 }
 
 /** 用户输入表达式的 Graphwar 源码兼容解析选项。 */
@@ -390,7 +394,12 @@ function sampleNormalExpression(options: SampleGraphwarExpressionTrajectoryOptio
       const x = previous.x + step;
       return createGraphPoint(x, evaluateY(x) + offset);
     },
-    { shouldStop: options.shouldStop, stopAtMinStep: true },
+    {
+      initialState: options.initialState,
+      shouldStop: options.shouldStop,
+      skipInitialStop: options.skipInitialStop,
+      stopAtMinStep: true,
+    },
   );
 }
 
@@ -409,7 +418,12 @@ function sampleFirstOrderExpression(
     launchPoint,
     options.bounds,
     (previous, step) => rk4FirstOrderStep(previous, step, evaluateDY),
-    { shouldStop: options.shouldStop, stopAtMinStep: false },
+    {
+      initialState: options.initialState,
+      shouldStop: options.shouldStop,
+      skipInitialStop: options.skipInitialStop,
+      stopAtMinStep: false,
+    },
   );
 }
 
@@ -429,7 +443,12 @@ function sampleSecondOrderExpression(
     launchState,
     options.bounds,
     (previous, step) => rk4SecondOrderStep(previous, step, evaluateDDY),
-    { shouldStop: options.shouldStop, stopAtMinStep: false },
+    {
+      initialState: options.initialState,
+      shouldStop: options.shouldStop,
+      skipInitialStop: options.skipInitialStop,
+      stopAtMinStep: false,
+    },
   );
 }
 
@@ -564,11 +583,14 @@ function sampleByBisection<TPoint extends GraphPoint>(
   bounds: GraphBounds,
   calculateNext: (previous: TPoint, step: number) => TPoint,
   options: {
+    initialState?: GraphwarTrajectorySamplingState;
     shouldStop?: (point: GraphPoint, previousPoint: GraphPoint | undefined, index: number) => boolean;
+    skipInitialStop?: boolean;
     stopAtMinStep: boolean;
   },
 ) {
   const stepperResult = createBisectionTrajectoryStepper(start, bounds, calculateNext, {
+    initialState: options.initialState,
     stopAtMinStep: options.stopAtMinStep,
   });
   return sampleWithTrajectoryStepper(stepperResult.stepper, options);

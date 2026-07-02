@@ -73,14 +73,15 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
-    pathfindingMaximumNumber: "Pathfinding maximum must be a number",
-    pathfindingMaximumPixelRange: (limit) => `Pathfinding maximum must be between -${limit}px and ${limit}px`,
-    pathfindingMinimumGreaterThanMaximum: "Pathfinding minimum cannot be greater than the maximum",
-    pathfindingMinimumNumber: "Pathfinding minimum must be a number",
-    pathfindingMinimumPixelRange: (limit) => `Pathfinding minimum must be between -${limit}px and ${limit}px`,
-    routeStepNumber: "Expansion step must be a number greater than 0",
-    simulationExpansionNumber: "Simulation expansion must be a number",
-    simulationExpansionPixelRange: (limit) => `Simulation expansion must be between -${limit}px and ${limit}px`,
+    oneClickClearDeleteCheckRadiusNumber: "One-Click Clear delete-check radius must be a number",
+    oneClickClearDeleteCheckRadiusRange: (min, max) =>
+      `One-Click Clear delete-check radius must be between ${min}px and ${max}px`,
+    pathfindingWorkerCountInteger: "Pathfinding parallelism must be an integer",
+    pathfindingWorkerCountRange: "Pathfinding parallelism must be between 1 and 128",
+    routePlanningToleranceNumber: "Route planning tolerance must be a number",
+    routePlanningTolerancePixelRange: (limit) => `Route planning tolerance must be between -${limit}px and ${limit}px`,
+    simulationToleranceNumber: "Simulation tolerance must be a number",
+    simulationTolerancePixelRange: (limit) => `Simulation tolerance must be between -${limit}px and ${limit}px`,
     soldierTemplateCandidateTopRatioNumber: "Candidate trim must be a number",
     soldierTemplateCandidateTopRatioRange: "Candidate trim must be greater than 0 and no greater than 1",
     templateMatchingWorkerCountInteger: "Template matching workers must be an integer",
@@ -173,16 +174,34 @@ export const graphwarKillerLocale = {
       elapsed === undefined
         ? "Smart Pathfinding failed: no valid path found"
         : `Smart Pathfinding failed: no valid path found in ${elapsed}`,
+    forwardMinimumDouble: "one representable double",
     forwardPath: (minimumStep) =>
-      `Each point's x must advance by at least ${minimumStep}, but there is no remaining space`,
+      `Each point's Graphwar x must be strictly greater than the previous point by at least ${minimumStep}`,
     inProgress: {
       optimize: "Optimize path nodes",
       search: "Search obstacle route",
       stopSuffix: ", right-click the screenshot to stop",
       trajectory: "Validate function trajectory",
     },
-    success: (elapsed) =>
-      elapsed === undefined ? "Smart Pathfinding completed" : `Smart Pathfinding completed in ${elapsed}`,
+    success: (elapsed, resultCacheHit) => {
+      const cacheText = resultCacheHit ? " (using result cache)" : "";
+      return elapsed === undefined
+        ? `Smart Pathfinding completed${cacheText}`
+        : `Smart Pathfinding completed${cacheText} in ${elapsed}`;
+    },
+    oneClickClear: {
+      inProgress: "Running One-Click Clear; right-click the screenshot to stop",
+      needCurrentPath: "One-Click Clear needs an existing path start first",
+      noCandidate: "One-Click Clear failed: no selectable target exists on the x+ side of the current path",
+      noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found in ${elapsed}`,
+      pathfindingWorkerFailed: (elapsed) =>
+        `One-Click Clear failed: the pathfinding Worker is unavailable or failed in ${elapsed}`,
+      success: (killCount, elapsed, resultCacheHit) => {
+        const cacheText = resultCacheHit ? " (using result cache)" : "";
+        return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} soldier(s) in ${elapsed}`;
+      },
+      unsupported: "The first One-Click Clear version only supports double absolute-value y= and y'= modes",
+    },
   },
   ui: {
     actions: {
@@ -342,25 +361,201 @@ export const graphwarKillerLocale = {
       boundaryExpansionTitle:
         "Treat the play-area boundary as expanded inward into the collision area. Unit: raw Graphwar 770x450 plane pixels.",
       debugNoTiming: "No pathfinding timing recorded yet",
+      debugDetails: {
+        "build-dag-edges": {
+          label: "- Build clear DAG edges",
+          title:
+            "Try x+ geometry routes between soldier centers with the current clear route mask, then record usable edges.",
+        },
+        "dag-edge-mode": {
+          label: (mode, workerCount) =>
+            mode === "parallel"
+              ? `- Clear DAG edge mode: parallel, ${workerCount} worker`
+              : mode === "parallel-fallback"
+                ? `- Clear DAG edge mode: parallel failed then serial, ${workerCount} worker -> 1 worker`
+                : "- Clear DAG edge mode: serial, 1 worker",
+          title: "The scheduling mode actually used by this One-Click Clear DAG edge build.",
+        },
+        "dag-edge-worker": {
+          label: (workerIndex) => `- Clear DAG edge Worker ${workerIndex}`,
+          title:
+            "Total time for one DAG edge child Worker; jobs are claimed dynamically, so this is not a fixed edge slice.",
+        },
+        "build-dag-targets": {
+          label: "- Collect clear DAG targets",
+          title: "Convert selectable soldiers into DAG nodes sorted by increasing Graphwar center x.",
+        },
+        "dag-longest-path": {
+          label: "- Run clear DAG longest path",
+          title: "Run longest-path DP on the built center-point DAG and choose the route with the most explicit hits.",
+        },
+        "optimize-path": {
+          label: "- Optimize clear path",
+          title:
+            "Conservatively delete points from the validated clear path and verify each deletion still hits the target hit-circle sequence in order.",
+        },
+        "remove-failed-edge": {
+          label: "- Remove failed clear edge",
+          title:
+            "When function validation rejects a DAG edge, mark that edge inactive before running longest-path DP again.",
+        },
+        "route-mask-cache-hit": {
+          label: "- Clear route mask cache hit",
+          title: "The Worker reused the clear route mask for the current obstacle mask and route tolerance.",
+        },
+        "route-mask-cache-miss": {
+          label: "- Clear route mask cache miss",
+          title: "The Worker rebuilt the clear route mask for the current obstacle mask and route tolerance.",
+        },
+        "route-map-pixels": {
+          label: "- Map clear route pixels",
+          title:
+            "Convert Graphwar plane grid cells returned by geometry pathfinding into screenshot pixel path points while preserving exact center endpoints.",
+        },
+        "route-pathfinding": {
+          label: "- Run clear geometry search",
+          title: "Search for an obstacle-avoiding geometry route between two center points that satisfies x+ rules.",
+        },
+        "segment-build-formula": {
+          label: "- Build clear segment formula",
+          title:
+            "Convert the full current path, including the validated prefix and new edge, into a Graphwar formula sampling context.",
+        },
+        "segment-graph-rule": {
+          label: "- Check clear segment x+",
+          title:
+            "Check whether adjacent points in the candidate segment have strictly increasing Graphwar x; equal x is not allowed.",
+        },
+        "segment-sample-trajectory": {
+          label: "- Sample clear segment trajectory",
+          title:
+            "Re-sample the accepted target sequence with the current full path and confirm the new target hit circle is reached before obstacles.",
+        },
+        "validate-route": {
+          label: "- Validate clear DAG route",
+          title:
+            "Append the DAG edges selected by longest-path DP one by one, validate each target hit circle, and return the exact failed edge when one fails.",
+        },
+        "validate-final": {
+          label: "- Validate final clear",
+          title:
+            "Resample the optimized full clear path and confirm it still hits every DAG target hit circle in order.",
+        },
+        "visibility-cache-hit": {
+          label: "- Clear visibility cache hit",
+          title:
+            "Before building clear DAG edges, reuse obstacle contour data for the current route mask, direction, and route tolerance.",
+        },
+        "visibility-cache-miss": {
+          label: "- Clear visibility cache miss",
+          title:
+            "Before building clear DAG edges, no reusable obstacle contour data exists, so it is built once and reused by all edges in this DAG.",
+        },
+        "visibility-cache-skipped": {
+          label: "- Clear visibility cache unused",
+          title: "This One-Click Clear run did not enter DAG edge building, so the visibility cache was not accessed.",
+        },
+        "validate-prefix": {
+          label: "- Validate clear prefix",
+          title: "Validate the existing path reaches its last point before appending a clear route.",
+        },
+      },
       debugStages: {
         "apply-result": {
           label: "Apply path result",
           title: "Write the final Smart Pathfinding path to the current path state and clear stale path errors.",
         },
         "collect-targets": {
-          label: "Collect candidate targets",
+          label: "Create target",
           title:
-            "When a soldier is clicked, enumerate aim points inside its hit circle using the current minimum x+ step.",
+            "When a soldier is clicked, use its center first; if that fails the x+ rule, move the geometry target to the minimum x+ point inside the hit circle while trajectory validation still uses the original hit circle.",
+        },
+        "result-cache-hit": {
+          label: "Result cache hit",
+          title:
+            "The current path, target, obstacle mask, tolerances, and formula settings match a cached Smart Pathfinding result, so the full result is reused.",
+        },
+        "result-cache-miss": {
+          label: "Result cache miss",
+          title:
+            "No full Smart Pathfinding result can be reused for the current input, so the pathfinding Worker must search and validate again.",
+        },
+        "route-mask-cache-hit": {
+          label: "Route mask cache hit",
+          title: "The dilated or eroded route mask already exists for the current obstacle mask and route tolerance.",
+        },
+        "route-mask-cache-miss": {
+          label: "Route mask cache miss",
+          title: "No reusable route mask exists for the current obstacle mask or route tolerance, so it is rebuilt.",
+        },
+        "visibility-cache-hit": {
+          label: "Visibility cache hit",
+          title:
+            "Obstacle-route search needed a visibility graph and reused obstacle contour data for the current route mask, direction, and route tolerance.",
+        },
+        "visibility-cache-miss": {
+          label: "Visibility cache miss",
+          title:
+            "Obstacle-route search needed a visibility graph, but no reusable obstacle contour data exists for the current route mask, direction, or route tolerance.",
+        },
+        "visibility-cache-skipped": {
+          label: "Visibility cache unused",
+          title:
+            "This Smart Pathfinding run either used a direct route or failed before obstacle-route search, so no visibility graph was needed.",
         },
         "optimize-path": {
           label: "Optimize path nodes",
           title:
             "Try removing intermediate geometry-route points one by one, validating each shorter path with the function trajectory.",
         },
+        "one-click-clear-apply-result": {
+          label: "Apply clear path",
+          title:
+            "Write the best path found by One-Click Clear to the current path state; keep the original path when no new kill is found.",
+        },
+        "one-click-clear-collect-targets": {
+          label: "Collect clear targets",
+          title:
+            "Filter selectable soldier-center candidates for One-Click Clear using the current friendly-fire setting and strict x+ rule.",
+        },
+        "one-click-clear-result-cache-hit": {
+          label: "Clear result cache hit",
+          title:
+            "The current path, candidate targets, obstacle mask, tolerances, and formula settings match a cached One-Click Clear result, so the full result is reused.",
+        },
+        "one-click-clear-result-cache-miss": {
+          label: "Clear result cache miss",
+          title:
+            "No full One-Click Clear result can be reused for the current input, so the pathfinding Worker must search and validate again.",
+        },
+        "one-click-clear-preflight": {
+          label: "Preflight clear run",
+          title:
+            "Check One-Click Clear settings, current mode, current path, and obstacle mask, then prepare the prefix hit target.",
+        },
+        "one-click-clear-route-mask-cache-hit": {
+          label: "Clear route mask cache hit",
+          title: "The route mask for One-Click Clear already exists for the current obstacle mask and route tolerance.",
+        },
+        "one-click-clear-route-mask-cache-miss": {
+          label: "Clear route mask cache miss",
+          title:
+            "No route mask for One-Click Clear exists for the current obstacle mask or route tolerance, so it is rebuilt.",
+        },
+        "one-click-clear-search": {
+          label: "Search and validate clear",
+          title:
+            "Build the center-point DAG, run longest-path DP, delete failed DAG edges during validation, and stop with a usable clear route or no active route.",
+        },
+        "one-click-clear-setting-status": {
+          label: "Set clear status",
+          title:
+            "Build the One-Click Clear success, failure, or unavailable reason and write it to the pathfinding header status.",
+        },
         "outside-stages": {
           label: "Outside recorded stages",
           title:
-            "Total wall-clock time minus recorded stages; includes phase switches, paint waits before route-tolerance attempts, async scheduling, and glue code that is not measured separately.",
+            "Total wall-clock time minus recorded stages; includes phase switches, paint waits, async scheduling, and glue code that is not measured separately.",
         },
         preflight: {
           label: "Preflight current path",
@@ -388,27 +583,27 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
-      expansionStep: "Expansion step",
-      expansionStepAriaLabel: "Pathfinding expansion step in raw Graphwar 770x450 plane pixels",
-      expansionStepTitle:
-        "Step size used when pathfinding increases obstacle expansion from the minimum to the maximum. Unit: raw Graphwar 770x450 plane pixels.",
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
         "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
-      pathMaximum: "Path maximum",
-      pathMaximumAriaLabel: "Maximum pathfinding obstacle expansion in raw Graphwar 770x450 plane pixels",
-      pathMaximumTitle: "Pathfinding expands obstacles up to this amount. Unit: raw Graphwar 770x450 plane pixels.",
-      pathMinimum: "Path minimum",
-      pathMinimumAriaLabel: "Minimum pathfinding obstacle expansion in raw Graphwar 770x450 plane pixels",
-      pathMinimumTitle:
-        "Pathfinding starts by expanding obstacles by this amount. Unit: raw Graphwar 770x450 plane pixels.",
+      oneClickClearDeleteCheckRadius: "Clear delete-check radius",
+      oneClickClearDeleteCheckRadiusAriaLabel:
+        "One-Click Clear local hit check radius for delete optimization, in screenshot pixels",
+      oneClickClearDeleteCheckRadiusTitle:
+        "Local hit-preservation radius used by One-Click Clear delete optimization. Range: 1px to the current soldier hit-circle radius. Final full-route validation still uses the real hit circle.",
+      oneClickClearTitle:
+        "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
+      routePlanningTolerance: "Route planning tolerance",
+      routePlanningToleranceAriaLabel: "Route planning tolerance in raw Graphwar 770x450 plane pixels",
+      routePlanningToleranceTitle:
+        "Single route tolerance used when Smart Pathfinding and One-Click Clear build geometry routes. Unit: raw Graphwar 770x450 plane pixels.",
       searchAnimation: "Search animation",
       searchAnimationTitle:
         "Show Smart Pathfinding candidate points, explored edges, trial paths, and optimization points; turn it off to keep only the final path result.",
-      simulationExpansion: "Simulation expansion",
-      simulationExpansionAriaLabel: "Function-simulation obstacle expansion in raw Graphwar 770x450 plane pixels",
-      simulationExpansionTitle:
-        "Expands obstacles by this amount during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
+      simulationTolerance: "Simulation tolerance",
+      simulationToleranceAriaLabel: "Function-simulation tolerance in raw Graphwar 770x450 plane pixels",
+      simulationToleranceTitle:
+        "Obstacle tolerance used during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
       autoGraph: "One-Click Clear",
       smartPathfinding: "Smart Pathfinding",
       smartPathfindingTitle: "After you pick a target soldier, automatically find a route around detected obstacles.",
@@ -464,7 +659,7 @@ export const graphwarKillerLocale = {
       decimalPlaces: "Decimal places",
       decimalPlacesAriaLabel: "Generated function decimal places",
       decimalPlacesTitle:
-        "Number of decimal places kept in generated function coefficients; more digits are more precise but make the function longer.",
+        "Number of decimal places kept in generated function text; more digits are more precise but make the function longer.",
       debugInfoEnabled: "Debug info enabled",
       gameMode: "Game mode",
       gameModeAriaLabel: "Graphwar game mode",
@@ -479,6 +674,10 @@ export const graphwarKillerLocale = {
       parseDerivativeAsYTitle: "Graphwar has a bug: because of the regular expression order, y' is parsed as y.",
       pathfinding: {
         heading: "Pathfinding",
+        workerCount: "Pathfinding parallelism",
+        workerCountAriaLabel: "Number of geometry pathfinding Workers",
+        workerCountTitle:
+          "Regular route geometry search runs in a Worker; One-Click Clear DAG edge building may run up to this many edge-search Workers. Default 4, range 1 to 128; 1 means serial.",
       },
       recognition: {
         candidateTopRatio: "Candidate keep ratio",

@@ -44,14 +44,14 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `笔刷大小需要在 ${min}px 到 ${max}px 之间`,
     obstacleMinAreaInteger: "障碍最小面积需要填写整数",
     obstacleMinAreaRange: (max) => `障碍最小面积需要在 0 到 ${max} 之间`,
-    pathfindingMaximumNumber: "寻路最大值需要填写数字",
-    pathfindingMaximumPixelRange: (limit) => `寻路最大值需要在 -${limit}px 到 ${limit}px 之间`,
-    pathfindingMinimumGreaterThanMaximum: "寻路最小值不能大于最大值",
-    pathfindingMinimumNumber: "寻路最小值需要填写数字",
-    pathfindingMinimumPixelRange: (limit) => `寻路最小值需要在 -${limit}px 到 ${limit}px 之间`,
-    routeStepNumber: "寻路时拓展步长需要填写大于 0 的数字",
-    simulationExpansionNumber: "函数模拟值需要填写数字",
-    simulationExpansionPixelRange: (limit) => `函数模拟值需要在 -${limit}px 到 ${limit}px 之间`,
+    oneClickClearDeleteCheckRadiusNumber: "一键清图删点检验半径需要填写数字",
+    oneClickClearDeleteCheckRadiusRange: (min, max) => `一键清图删点检验半径需要在 ${min}px 到 ${max}px 之间`,
+    pathfindingWorkerCountInteger: "寻路并行数需要填写整数",
+    pathfindingWorkerCountRange: "寻路并行数需要在 1 到 128 之间",
+    routePlanningToleranceNumber: "路线规划容差需要填写数字",
+    routePlanningTolerancePixelRange: (limit) => `路线规划容差需要在 -${limit}px 到 ${limit}px 之间`,
+    simulationToleranceNumber: "函数模拟容差需要填写数字",
+    simulationTolerancePixelRange: (limit) => `函数模拟容差需要在 -${limit}px 到 ${limit}px 之间`,
     soldierTemplateCandidateTopRatioNumber: "候选裁剪需要填写数字",
     soldierTemplateCandidateTopRatioRange: "候选裁剪需要大于 0 且不大于 1",
     templateMatchingWorkerCountInteger: "模板匹配并行数需要填写整数",
@@ -138,14 +138,30 @@ export const graphwarKillerLocale = {
     currentPathBlocked: "模拟结果未到达当前最后路径点，无法开始寻路任务",
     failure: (elapsed) =>
       elapsed === undefined ? "智能寻路失败：未找到可行路径" : `智能寻路失败：未找到可行路径，耗时 ${elapsed}`,
-    forwardPath: (minimumStep) => `每个点的 x 需要至少前进 ${minimumStep}，但没有空间了`,
+    forwardMinimumDouble: "一个可表示 double",
+    forwardPath: (minimumStep) => `每个点的 Graphwar x 需要严格大于上一个点，至少前进 ${minimumStep}`,
     inProgress: {
       optimize: "优化路径节点",
       search: "搜索绕障路线",
       stopSuffix: "，在截图中右键停止",
       trajectory: "验证函数轨迹",
     },
-    success: (elapsed) => (elapsed === undefined ? "智能寻路完成" : `智能寻路完成，耗时 ${elapsed}`),
+    success: (elapsed, resultCacheHit) => {
+      const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
+      return elapsed === undefined ? `智能寻路完成${cacheText}` : `智能寻路完成${cacheText}，耗时 ${elapsed}`;
+    },
+    oneClickClear: {
+      inProgress: "正在一键清图，在截图中右键停止",
+      needCurrentPath: "一键清图需要先选择当前路径起点",
+      noCandidate: "一键清图失败：当前路径右侧没有可选目标",
+      noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,
+      pathfindingWorkerFailed: (elapsed) => `一键清图失败：寻路 Worker 不可用或运行失败，耗时 ${elapsed}`,
+      success: (killCount, elapsed, resultCacheHit) => {
+        const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
+        return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
+      },
+      unsupported: "一键清图首版只支持双绝对值函数的 y= 和 y'= 模式",
+    },
   },
   ui: {
     actions: {
@@ -291,23 +307,174 @@ export const graphwarKillerLocale = {
       boundaryExpansionAriaLabel: "边界外扩，单位为 Graphwar 原始 770x450 平面像素",
       boundaryExpansionTitle: "把棋盘四周边界向内扩成碰撞区。单位是 Graphwar 原始 770x450 平面像素。",
       debugNoTiming: "暂无寻路耗时记录",
+      debugDetails: {
+        "build-dag-edges": {
+          label: "- 清图建立 DAG 边",
+          title: "用当前一键清图路线 mask 尝试士兵中心点之间的 x+ 几何寻路，并记录可用边。",
+        },
+        "dag-edge-mode": {
+          label: (mode, workerCount) =>
+            mode === "parallel"
+              ? `- 清图 DAG 建边模式：并行，${workerCount} worker`
+              : mode === "parallel-fallback"
+                ? `- 清图 DAG 建边模式：并行失败后补串行，${workerCount} worker -> 1 worker`
+                : "- 清图 DAG 建边模式：串行，1 worker",
+          title: "本次一键清图 DAG 建边实际使用的调度模式。",
+        },
+        "dag-edge-worker": {
+          label: (workerIndex) => `- 清图 DAG 建边 Worker ${workerIndex}`,
+          title: "单个 DAG 建边子 Worker 的总耗时；任务由 Worker 动态领取，耗时不代表固定边切片。",
+        },
+        "build-dag-targets": {
+          label: "- 清图收集 DAG 目标",
+          title: "把可选士兵转换为按 Graphwar 中心 x 从低到高排序的 DAG 节点。",
+        },
+        "dag-longest-path": {
+          label: "- 清图 DAG 最长路",
+          title: "在已建好的中心点 DAG 上运行最长路 DP，选择显式击杀数量最多的路线。",
+        },
+        "optimize-path": {
+          label: "- 清图删点优化",
+          title: "对验证通过的清图路径做保守删点，并用目标命中圈序列验证每次删除后仍能按序命中。",
+        },
+        "remove-failed-edge": {
+          label: "- 清图删除失败边",
+          title: "当函数验证发现某条 DAG 边不可用时，将该边标记为不可用并准备重新运行最长路 DP。",
+        },
+        "route-mask-cache-hit": {
+          label: "- 清图路线 mask 缓存命中",
+          title: "Worker 已复用当前障碍 mask 和路线容差对应的清图路线 mask。",
+        },
+        "route-mask-cache-miss": {
+          label: "- 清图路线 mask 缓存未命中",
+          title: "Worker 需要按当前障碍 mask 和路线容差重建清图路线 mask。",
+        },
+        "route-map-pixels": {
+          label: "- 清图路线映射像素",
+          title: "把几何寻路返回的 Graphwar 平面格点转换成截图像素路径，并保留精确中心点首尾。",
+        },
+        "route-pathfinding": {
+          label: "- 清图真实几何寻路",
+          title: "搜索两个中心点之间满足 x+ 规则的绕障几何路线。",
+        },
+        "segment-build-formula": {
+          label: "- 清图分段建公式",
+          title: "把当前验证前缀加新边后的完整路径转换成 Graphwar 公式采样上下文。",
+        },
+        "segment-graph-rule": {
+          label: "- 清图分段 x+ 检查",
+          title: "检查候选分段路径中相邻点的 Graphwar x 是否严格递增；同 x 不允许。",
+        },
+        "segment-sample-trajectory": {
+          label: "- 清图分段轨迹采样",
+          title: "按当前完整路径重采样已接受目标序列，确认新增目标命中圈会在碰撞障碍前被命中。",
+        },
+        "validate-route": {
+          label: "- 清图验证 DAG 路线",
+          title: "按最长路选出的 DAG 边逐段追加路线，验证每个目标命中圈；失败时返回具体失败边。",
+        },
+        "validate-final": {
+          label: "- 清图最终验证",
+          title: "对优化后的完整清图路径重新采样，确认仍按 DAG 序列命中全部目标命中圈。",
+        },
+        "visibility-cache-hit": {
+          label: "- 清图可视图缓存命中",
+          title: "建立清图 DAG 边前，复用当前路线 mask、方向和路线容差对应的障碍轮廓数据。",
+        },
+        "visibility-cache-miss": {
+          label: "- 清图可视图缓存未命中",
+          title: "建立清图 DAG 边前，没有可复用障碍轮廓数据，需要先建立；本次 DAG 的所有边会复用这份数据。",
+        },
+        "visibility-cache-skipped": {
+          label: "- 清图可视图缓存未使用",
+          title: "本次一键清图没有进入 DAG 建边阶段，因此没有访问可视图缓存。",
+        },
+        "validate-prefix": {
+          label: "- 清图前缀验证",
+          title: "验证当前已有路径能命中最后路径点，并保存可复用的轨迹采样状态。",
+        },
+      },
       debugStages: {
         "apply-result": {
           label: "写回路径结果",
           title: "把最终智能寻路路径写入当前路径状态，并清理旧的路径错误提示。",
         },
         "collect-targets": {
-          label: "生成候选目标",
-          title: "点击士兵时，在命中圈内按当前 x+ 最小步长枚举可尝试的瞄准点。",
+          label: "生成目标",
+          title:
+            "点击士兵时，优先使用士兵中心；中心不满足 x+ 时把几何目标推到命中圈内的最小 x+ 点，弹道仍校验原命中圈。",
+        },
+        "result-cache-hit": {
+          label: "结果缓存命中",
+          title: "当前路径、目标、障碍 mask、容差和公式设置与已缓存的普通寻路结果一致，直接复用完整结果。",
+        },
+        "result-cache-miss": {
+          label: "结果缓存未命中",
+          title: "当前普通寻路输入没有可复用的完整结果，需要交给寻路 Worker 重新搜索和验证。",
+        },
+        "route-mask-cache-hit": {
+          label: "路线 mask 缓存命中",
+          title: "当前障碍 mask 和路线容差已有膨胀/腐蚀后的路线 mask，可直接复用。",
+        },
+        "route-mask-cache-miss": {
+          label: "路线 mask 缓存未命中",
+          title: "当前障碍 mask 或路线容差没有可复用路线 mask，需要重建。",
+        },
+        "visibility-cache-hit": {
+          label: "可视图缓存命中",
+          title: "绕障搜索需要可视图，并复用了当前路线 mask、方向和路线容差对应的障碍轮廓数据。",
+        },
+        "visibility-cache-miss": {
+          label: "可视图缓存未命中",
+          title: "绕障搜索需要可视图，但当前路线 mask、方向或路线容差没有可复用障碍轮廓数据，需要重建。",
+        },
+        "visibility-cache-skipped": {
+          label: "可视图缓存未使用",
+          title: "本次普通寻路直连成功或提前失败，没有进入绕障可视图搜索。",
         },
         "optimize-path": {
           label: "优化路径节点",
           title: "逐个尝试删除几何路线中的中间点，并用函数轨迹验证删除后是否仍可命中目标。",
         },
+        "one-click-clear-apply-result": {
+          label: "清图写回路径",
+          title: "把一键清图找到的最佳路径写入当前路径状态；没有新增击杀时不会改动原路径。",
+        },
+        "one-click-clear-collect-targets": {
+          label: "清图收集目标",
+          title: "按当前友伤设置和严格 x+ 规则筛选一键清图可尝试的士兵中心点候选。",
+        },
+        "one-click-clear-result-cache-hit": {
+          label: "清图结果缓存命中",
+          title: "当前路径、候选目标、障碍 mask、容差和公式设置与已缓存的一键清图结果一致，直接复用完整结果。",
+        },
+        "one-click-clear-result-cache-miss": {
+          label: "清图结果缓存未命中",
+          title: "当前一键清图输入没有可复用的完整结果，需要交给寻路 Worker 重新搜索和验证。",
+        },
+        "one-click-clear-preflight": {
+          label: "清图预检查",
+          title: "检查一键清图设置、当前模式、当前路径和障碍 mask，并准备前缀命中目标。",
+        },
+        "one-click-clear-route-mask-cache-hit": {
+          label: "清图路线 mask 缓存命中",
+          title: "当前障碍 mask 和路线容差已有清图可用的路线 mask，可直接复用。",
+        },
+        "one-click-clear-route-mask-cache-miss": {
+          label: "清图路线 mask 缓存未命中",
+          title: "当前障碍 mask 或路线容差没有清图可用的路线 mask，需要重建。",
+        },
+        "one-click-clear-search": {
+          label: "清图搜索验证",
+          title: "建立中心点 DAG，运行最长路 DP，验证失败时删除具体 DAG 边，直到得到可用清图路线或无路可用。",
+        },
+        "one-click-clear-setting-status": {
+          label: "清图设置状态栏",
+          title: "根据一键清图结果生成成功、失败或不可用原因，并写入寻路标题右侧状态。",
+        },
         "outside-stages": {
           label: "阶段外耗时",
-          title:
-            "流程总耗时减去已记录阶段耗时；包含阶段切换、路线容差尝试前的绘制等待、async 调度和未单独计量的连接代码。",
+          title: "流程总耗时减去已记录阶段耗时；包含阶段切换、绘制等待、async 调度和未单独计量的连接代码。",
         },
         preflight: {
           label: "预检查当前路径",
@@ -331,23 +498,23 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "调试信息",
-      expansionStep: "寻路时拓展步长",
-      expansionStepAriaLabel: "寻路时拓展步长，单位为 Graphwar 原始 770x450 平面像素",
-      expansionStepTitle: "寻路外扩从最小值推进到最大值时每次增加的步长。单位是 Graphwar 原始 770x450 平面像素。",
       obstacleExpansion: "障碍外扩",
       obstacleExpansionTitle: "调整识别出的障碍和边界在寻路、模拟碰撞时的安全距离。",
-      pathMaximum: "寻路最大值",
-      pathMaximumAriaLabel: "寻路最大障碍外扩值，单位为 Graphwar 原始 770x450 平面像素",
-      pathMaximumTitle: "寻路逐步外扩障碍直到这个值。单位是 Graphwar 原始 770x450 平面像素。",
-      pathMinimum: "寻路最小值",
-      pathMinimumAriaLabel: "寻路最小障碍外扩值，单位为 Graphwar 原始 770x450 平面像素",
-      pathMinimumTitle: "寻路从这个值开始外扩障碍。单位是 Graphwar 原始 770x450 平面像素。",
+      oneClickClearDeleteCheckRadius: "清图删点检验半径",
+      oneClickClearDeleteCheckRadiusAriaLabel: "一键清图删点优化局部命中检验半径，单位为截图像素",
+      oneClickClearDeleteCheckRadiusTitle:
+        "一键清图删点优化的局部命中保护半径；范围是 1px 到当前士兵命中圈半径。最终整路验证仍使用真实命中圈。",
+      oneClickClearTitle: "从当前路径尾部开始，自动追加路线并尽量按顺序击杀右侧可用士兵。",
+      routePlanningTolerance: "路线规划容差",
+      routePlanningToleranceAriaLabel: "路线规划容差，单位为 Graphwar 原始 770x450 平面像素",
+      routePlanningToleranceTitle:
+        "普通智能寻路和一键清图建立几何路线时使用的单个路线容差。单位是 Graphwar 原始 770x450 平面像素。",
       searchAnimation: "搜索动画",
       searchAnimationTitle: "显示智能寻路的候选点、已探索边、尝试路径和优化点预览；关闭后只保留最终路径结果。",
-      simulationExpansion: "函数模拟值",
-      simulationExpansionAriaLabel: "函数模拟障碍外扩值，单位为 Graphwar 原始 770x450 平面像素",
-      simulationExpansionTitle:
-        "函数模拟和碰撞检查时按这个值外扩障碍；不影响寻路怎么选路。单位是 Graphwar 原始 770x450 平面像素。",
+      simulationTolerance: "函数模拟容差",
+      simulationToleranceAriaLabel: "函数模拟容差，单位为 Graphwar 原始 770x450 平面像素",
+      simulationToleranceTitle:
+        "函数模拟和碰撞检查时使用的障碍容差；不影响寻路怎么选路。单位是 Graphwar 原始 770x450 平面像素。",
       autoGraph: "一键清图",
       smartPathfinding: "智能寻路",
       smartPathfindingTitle: "点选目标士兵后自动寻找绕开识别障碍的路径。",
@@ -401,7 +568,7 @@ export const graphwarKillerLocale = {
       debugActivationCountdown: (remainingSeconds) => `再长按 ${remainingSeconds}s 开启调试信息`,
       decimalPlaces: "保留小数位",
       decimalPlacesAriaLabel: "生成函数保留小数位数",
-      decimalPlacesTitle: "生成函数中系数保留的小数位数；位数越多越精确，函数越长。",
+      decimalPlacesTitle: "生成函数文本中数字保留的小数位数；位数越多越精确，函数越长。",
       debugInfoEnabled: "已启用调试信息",
       gameMode: "游戏模式",
       gameModeAriaLabel: "Graphwar 游戏模式",
@@ -415,6 +582,10 @@ export const graphwarKillerLocale = {
       parseDerivativeAsYTitle: "Graphwar 有 Bug，由于正则表达式顺序，会将 y' 解析为 y。",
       pathfinding: {
         heading: "寻路设定",
+        workerCount: "寻路并行数",
+        workerCountAriaLabel: "几何寻路并行 Worker 数量",
+        workerCountTitle:
+          "普通寻路几何搜索会放到 Worker；一键清图 DAG 建边最多同时运行这些边搜索 Worker。默认 4，取值 1 到 128；1 表示串行。",
       },
       recognition: {
         candidateTopRatio: "候选保留比例",

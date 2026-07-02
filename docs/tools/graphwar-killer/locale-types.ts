@@ -1,6 +1,7 @@
 /** 定义 Graphwar 杀手本地化文案结构，供中英文页面共享。 */
 import type { GraphwarDetectionWarning } from "./graphwar-detection";
 import type { GraphwarDetectionWorkerTimingDetail } from "./graphwar-detection-worker-types";
+import type { GraphwarOneClickClearDebugDetail, GraphwarOneClickClearDebugStage } from "./graphwar-one-click-clear";
 import type { AlgorithmMode, EquationMode } from "./types";
 
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
@@ -43,6 +44,30 @@ interface GraphwarKillerDetectionDebugDetailText {
   };
 }
 
+/** 一键清图搜索细分 timing 的本地化文案。 */
+type GraphwarKillerPathfindingDebugDetailText = Record<
+  GraphwarOneClickClearDebugStage,
+  GraphwarKillerDebugStageText
+> & {
+  /** DAG 建边实际调度模式的文案。 */
+  "dag-edge-mode": {
+    /** 根据串行/并行/fallback 模式和 Worker 数生成标签。 */
+    label: (
+      mode: Extract<GraphwarOneClickClearDebugDetail, { type: "dag-edge-mode" }>["mode"],
+      workerCount: number,
+    ) => string;
+    /** 模式说明标题。 */
+    title: string;
+  };
+  /** 单个 DAG 建边子 Worker 的耗时文案。 */
+  "dag-edge-worker": {
+    /** 根据子 Worker 序号生成标签。 */
+    label: (workerIndex: number) => string;
+    /** 子 Worker 耗时说明标题。 */
+    title: string;
+  };
+};
+
 /**
  * Graphwar 杀手页面的完整文案协议。
  *
@@ -84,14 +109,14 @@ export interface GraphwarKillerLocale {
     obstacleMinAreaRange: (max: number) => string;
     obstacleBrushDiameterInteger: string;
     obstacleBrushDiameterRange: (min: number, max: number) => string;
-    pathfindingMaximumNumber: string;
-    pathfindingMaximumPixelRange: (limit: number) => string;
-    pathfindingMinimumGreaterThanMaximum: string;
-    pathfindingMinimumNumber: string;
-    pathfindingMinimumPixelRange: (limit: number) => string;
-    routeStepNumber: string;
-    simulationExpansionNumber: string;
-    simulationExpansionPixelRange: (limit: number) => string;
+    oneClickClearDeleteCheckRadiusNumber: string;
+    oneClickClearDeleteCheckRadiusRange: (min: number, max: number) => string;
+    pathfindingWorkerCountInteger: string;
+    pathfindingWorkerCountRange: string;
+    routePlanningToleranceNumber: string;
+    routePlanningTolerancePixelRange: (limit: number) => string;
+    simulationToleranceNumber: string;
+    simulationTolerancePixelRange: (limit: number) => string;
     soldierTemplateCandidateTopRatioNumber: string;
     soldierTemplateCandidateTopRatioRange: string;
     templateMatchingWorkerCountInteger: string;
@@ -173,6 +198,7 @@ export interface GraphwarKillerLocale {
     cancelled: string;
     currentPathBlocked: string;
     failure: (elapsed?: string) => string;
+    forwardMinimumDouble: string;
     forwardPath: (minimumStep: string) => string;
     inProgress: {
       optimize: string;
@@ -180,7 +206,16 @@ export interface GraphwarKillerLocale {
       trajectory: string;
       stopSuffix: string;
     };
-    success: (elapsed?: string) => string;
+    success: (elapsed?: string, resultCacheHit?: boolean) => string;
+    oneClickClear: {
+      inProgress: string;
+      needCurrentPath: string;
+      noCandidate: string;
+      noUsableTarget: (elapsed: string) => string;
+      pathfindingWorkerFailed: (elapsed: string) => string;
+      success: (killCount: number, elapsed: string, resultCacheHit?: boolean) => string;
+      unsupported: string;
+    };
   };
   /** 页面控件、面板标题和可访问性标签文案。 */
   ui: {
@@ -254,36 +289,51 @@ export interface GraphwarKillerLocale {
       boundaryExpansion: string;
       boundaryExpansionAriaLabel: string;
       boundaryExpansionTitle: string;
+      debugDetails: GraphwarKillerPathfindingDebugDetailText;
       debugNoTiming: string;
       debugStages: Record<
         | "preflight"
         | "collect-targets"
+        | "result-cache-hit"
+        | "result-cache-miss"
+        | "route-mask-cache-hit"
+        | "route-mask-cache-miss"
         | "search-route"
+        | "visibility-cache-hit"
+        | "visibility-cache-miss"
+        | "visibility-cache-skipped"
         | "validate-trajectory"
         | "optimize-path"
         | "apply-result"
+        | "one-click-clear-preflight"
+        | "one-click-clear-collect-targets"
+        | "one-click-clear-result-cache-hit"
+        | "one-click-clear-result-cache-miss"
+        | "one-click-clear-route-mask-cache-hit"
+        | "one-click-clear-route-mask-cache-miss"
+        | "one-click-clear-search"
+        | "one-click-clear-apply-result"
+        | "one-click-clear-setting-status"
         | "setting-status"
         | "outside-stages"
         | "total",
         GraphwarKillerDebugStageText
       >;
       debugSummary: string;
-      expansionStep: string;
-      expansionStepAriaLabel: string;
-      expansionStepTitle: string;
       obstacleExpansion: string;
       obstacleExpansionTitle: string;
-      pathMaximum: string;
-      pathMaximumAriaLabel: string;
-      pathMaximumTitle: string;
-      pathMinimum: string;
-      pathMinimumAriaLabel: string;
-      pathMinimumTitle: string;
+      oneClickClearDeleteCheckRadius: string;
+      oneClickClearDeleteCheckRadiusAriaLabel: string;
+      oneClickClearDeleteCheckRadiusTitle: string;
+      oneClickClearTitle: string;
+      routePlanningTolerance: string;
+      routePlanningToleranceAriaLabel: string;
+      routePlanningToleranceTitle: string;
       searchAnimation: string;
       searchAnimationTitle: string;
-      simulationExpansion: string;
-      simulationExpansionAriaLabel: string;
-      simulationExpansionTitle: string;
+      simulationTolerance: string;
+      simulationToleranceAriaLabel: string;
+      simulationToleranceTitle: string;
       autoGraph: string;
       smartPathfinding: string;
       smartPathfindingTitle: string;
@@ -351,6 +401,9 @@ export interface GraphwarKillerLocale {
       parseDerivativeAsYTitle: string;
       pathfinding: {
         heading: string;
+        workerCount: string;
+        workerCountAriaLabel: string;
+        workerCountTitle: string;
       };
       recognition: {
         candidateTopRatio: string;

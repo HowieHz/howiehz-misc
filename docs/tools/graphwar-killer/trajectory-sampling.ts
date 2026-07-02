@@ -1,26 +1,20 @@
 /** 负责按 Graphwar 公式规则采样轨迹，并判断路径与目标/障碍的交互。 */
-import { GRAPHWAR_TOOL_SIGN_EPSILON } from "./formula";
+import { GRAPHWAR_TOOL_SIGN_EPSILON, buildFormula } from "./formula";
 import type { FormulaEvaluationOptions } from "./formula";
 import { graphToImagePoint, imageToGraphPoint } from "./geometry";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
-import { roundToDecimalPlaces } from "./numbers";
 import {
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
   sampleGraphwarExpressionTrajectory,
   sampleGraphwarTrajectory,
 } from "./simulator";
-import type { GraphwarExpressionParserOptions, GraphwarTrajectorySample } from "./simulator";
-import { createGraphPoint } from "./types";
+import type {
+  GraphwarExpressionParserOptions,
+  GraphwarTrajectorySample,
+  GraphwarTrajectorySamplingState,
+} from "./simulator";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "./types";
-
-/** Graphwar 原始 770x450 平面上的网格点，用于把像素轨迹映射到障碍 mask。 */
-interface PlaneGridPoint {
-  /** 平面网格 x。 */
-  x: number;
-  /** 平面网格 y。 */
-  y: number;
-}
 
 /** 轨迹采样主动提前停止的原因；只记录与目标/障碍判定有关的短路。 */
 export type GraphwarTrajectoryEarlyStopReason = "obstacle" | "target";
@@ -29,7 +23,7 @@ export type GraphwarTrajectoryEarlyStopReason = "obstacle" | "target";
 export interface GraphwarTrajectoryFormulaSettings {
   /** 路径点转公式的算法。 */
   algorithm: AlgorithmMode;
-  /** 输出和内部归一化使用的小数位。 */
+  /** 最终公式文本的小数位；只限制表达式参数，不约分路径点或发射点。 */
   decimalPlaces: number;
   /** Graphwar 对公式文本的解释模式。 */
   equation: EquationMode;
@@ -43,9 +37,11 @@ export interface GraphwarTrajectoryFormulaSettings {
 
 /** 一次轨迹采样可复用的公式上下文，避免多个验证入口重复整理路径点和保护参数。 */
 export interface GraphwarTrajectoryFormulaContext {
+  /** 按当前小数位生成的最终 Graphwar 表达式；验证时按 Graphwar parser 重新解析成 double。 */
+  expression: string;
   /** 传给公式 evaluator 的数值保护选项。 */
   formulaEvaluation: FormulaEvaluationOptions;
-  /** 已按输出精度、发射点和 step 中心调整过的 Graphwar 路径点。 */
+  /** 已按发射点和 step 中心调整过的 Graphwar 路径点，保留 double 精度。 */
   formulaPoints: GraphPoint[];
   /** 原始公式采样设置，随上下文一起传递以保证求值模式一致。 */
   settings: GraphwarTrajectoryFormulaSettings;
@@ -61,6 +57,14 @@ export interface GraphwarTrajectoryCollisionSettings {
   boundaryExpansion?: number;
   /** Graphwar 原始 770x450 平面上的障碍 mask。 */
   mask?: Uint8Array;
+}
+
+/** 弹道需要按顺序命中的目标圆；一键清图用它区分不同士兵的真实命中半径。 */
+export interface GraphwarTrajectoryTargetCircle {
+  /** 目标圆心，截图像素坐标。 */
+  center: PixelPoint;
+  /** 目标命中半径，截图像素。 */
+  radius: number;
 }
 
 /** 低层采样结果，保留可见像素、命中序列和早停位置供不同调用方二次包装。 */
@@ -109,14 +113,14 @@ export interface GraphwarPathTargetSequenceResult {
   visiblePixels: PixelPoint[];
 }
 
-/** 把路径点、输出精度和 Graphwar 数值保护规则整理成一次采样可复用的公式上下文。 */
+/** 把路径点和 Graphwar 数值保护规则整理成一次采样可复用的公式上下文。 */
 export function createGraphwarTrajectoryFormulaContext(options: {
   bounds: GraphBounds;
   points: readonly GraphPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
   soldierCenter?: GraphPoint;
 }): GraphwarTrajectoryFormulaContext {
-  const formulaPoints = createRoundedFormulaPathPoints(options.points, options.settings);
+  const formulaPoints = createFormulaPathPoints(options.points, options.settings);
   // 先用零 epsilon 干跑一次，只有轨迹真正会踩到符号折点时才让输出公式带保护值。
   const signEpsilon = formulaPathNeedsSignEpsilon({
     bounds: options.bounds,
@@ -126,13 +130,22 @@ export function createGraphwarTrajectoryFormulaContext(options: {
   })
     ? GRAPHWAR_TOOL_SIGN_EPSILON
     : 0;
+  const formulaEvaluation = createGraphwarFormulaEvaluationOptions(
+    options.bounds,
+    formulaPoints,
+    options.settings,
+    signEpsilon,
+  );
   return {
-    formulaEvaluation: createGraphwarFormulaEvaluationOptions(
-      options.bounds,
+    expression: buildFormula(
       formulaPoints,
-      options.settings,
-      signEpsilon,
-    ),
+      options.settings.steepness,
+      options.settings.equation,
+      options.settings.algorithm,
+      options.settings.decimalPlaces,
+      formulaEvaluation,
+    ).expression,
+    formulaEvaluation,
     formulaPoints,
     settings: options.settings,
     signEpsilon,
@@ -166,20 +179,29 @@ export function sampleGraphwarFormulaTrajectory(options: {
   collision?: GraphwarTrajectoryCollisionSettings;
   collectVisiblePixels?: boolean;
   context: GraphwarTrajectoryFormulaContext;
+  initialReachedTargetCount?: number;
+  initialState?: GraphwarTrajectorySamplingState;
+  /** 完成目标序列后继续采样到该 Graphwar x；用于把清图增量状态推进到目标右侧离开点。 */
+  continueAfterTargetSequenceUntilGraphX?: number;
+  /** 默认完成目标序列时立刻停；传 false 时继续采样，通常配合 continueAfterTargetSequenceUntilGraphX。 */
+  stopOnTargetSequenceComplete?: boolean;
   soldierMarkerRadius?: number;
+  skipInitialStop?: boolean;
   targetPoint?: PixelPoint;
+  targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   targetSequencePoints?: readonly PixelPoint[];
 }): GraphwarTrajectorySampleResult {
   const stopTracker = createGraphwarTrajectoryStopTracker(options);
-  const sample = sampleGraphwarTrajectory({
-    algorithm: options.context.settings.algorithm,
+  const sample = sampleGraphwarExpressionTrajectory({
     bounds: options.bounds,
     equation: options.context.settings.equation,
-    formulaEvaluation: options.context.formulaEvaluation,
-    points: options.context.formulaPoints,
+    expression: options.context.expression,
+    initialState: options.initialState,
+    launchAngleRadians:
+      options.context.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(options.context) : undefined,
     shouldStop: stopTracker.shouldStop,
+    skipInitialStop: options.skipInitialStop,
     soldierCenter: options.context.soldierCenter ?? options.context.formulaPoints[0],
-    steepness: options.context.settings.steepness,
   });
   return stopTracker.createResult(sample);
 }
@@ -267,9 +289,16 @@ export function sampleGraphwarPathTargetSequence(options: {
   points: readonly PixelPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
   soldierMarkerRadius: number;
+  targetCircles?: readonly GraphwarTrajectoryTargetCircle[];
   targetPoints: readonly PixelPoint[];
 }): GraphwarPathTargetSequenceResult {
-  if (options.targetPoints.length === 0) {
+  const targetSequence =
+    options.targetCircles ??
+    options.targetPoints.map((center) => ({
+      center,
+      radius: options.soldierMarkerRadius,
+    }));
+  if (targetSequence.length === 0) {
     return {
       reachedTargetCount: 0,
       reachesTargetSequenceBeforeObstacle: true,
@@ -307,12 +336,12 @@ export function sampleGraphwarPathTargetSequence(options: {
     collectVisiblePixels: options.collectVisiblePixels,
     context,
     soldierMarkerRadius: options.soldierMarkerRadius,
-    targetSequencePoints: options.targetPoints,
+    targetSequence,
   });
   return {
     earlyStopReason: result.earlyStopReason,
     reachedTargetCount: result.reachedTargetCount,
-    reachesTargetSequenceBeforeObstacle: result.reachedTargetCount >= options.targetPoints.length,
+    reachesTargetSequenceBeforeObstacle: result.reachedTargetCount >= targetSequence.length,
     sample: result.sample,
     samplePointCount: result.sample.points.length,
     visiblePixels: result.visiblePixels,
@@ -330,44 +359,32 @@ export function findGraphwarTrajectoryTargetHitIndex(options: {
   if (options.points.length === 0) {
     return -1;
   }
+  // 预览目标半径固定，提前平方后用距离平方比较，避免每个采样点 Math.hypot 开方。
+  const targetRadiusSquared = options.soldierMarkerRadius * options.soldierMarkerRadius;
   for (let index = 1; index < options.points.length; index += 1) {
-    if (
-      graphwarTrajectoryPointHitsTarget(
-        options.points[index],
-        options.bounds,
-        options.boundsRect,
-        options.targetPoint,
-        options.soldierMarkerRadius,
-      )
-    ) {
+    const pixel = graphToImagePoint(options.points[index], options.bounds, options.boundsRect);
+    const targetDx = pixel.x - options.targetPoint.x;
+    const targetDy = pixel.y - options.targetPoint.y;
+    if (targetDx * targetDx + targetDy * targetDy < targetRadiusSquared) {
       return index;
     }
   }
   return -1;
 }
 
-/** 生成 Graphwar 实际公式点，并按用户输出精度四舍五入，让公式、预览和 worker 使用同一组点。 */
-function createRoundedFormulaPathPoints(points: readonly GraphPoint[], settings: GraphwarTrajectoryFormulaSettings) {
-  const formulaPathPoints =
-    points.length < 2
-      ? [...points]
-      : createGraphwarFormulaPathPoints({
-          algorithm: settings.algorithm,
-          equation: settings.equation,
-          formulaEvaluation: {
-            coefficientDecimalPlaces: settings.decimalPlaces,
-            stepOverflowProtection: settings.stepOverflowProtection,
-          },
-          points,
-          steepness: settings.formulaPathSteepness ?? settings.steepness,
-        });
-
-  return formulaPathPoints.map((point) =>
-    createGraphPoint(
-      roundToDecimalPlaces(point.x, settings.decimalPlaces),
-      roundToDecimalPlaces(point.y, settings.decimalPlaces),
-    ),
-  );
+/** 生成 Graphwar 实际公式点；路径点和发射点保持 double 精度，只有最终表达式文本会按小数位格式化。 */
+function createFormulaPathPoints(points: readonly GraphPoint[], settings: GraphwarTrajectoryFormulaSettings) {
+  return points.length < 2
+    ? [...points]
+    : createGraphwarFormulaPathPoints({
+        algorithm: settings.algorithm,
+        equation: settings.equation,
+        formulaEvaluation: {
+          stepOverflowProtection: settings.stepOverflowProtection,
+        },
+        points,
+        steepness: settings.formulaPathSteepness ?? settings.steepness,
+      });
 }
 
 /** 创建预编译 evaluator 需要的数值选项，把 overflow range 和 sign epsilon 固定在上下文里。 */
@@ -378,7 +395,6 @@ function createGraphwarFormulaEvaluationOptions(
   signEpsilon: number,
 ): FormulaEvaluationOptions {
   return {
-    coefficientDecimalPlaces: settings.decimalPlaces,
     stepOverflowProtectionRange: createStepOverflowProtectionRange(bounds, points),
     stepOverflowProtection: settings.stepOverflowProtection,
     signEpsilon,
@@ -415,7 +431,6 @@ function formulaPathNeedsSignEpsilon(options: {
     bounds: options.bounds,
     equation: options.settings.equation,
     formulaEvaluation: {
-      coefficientDecimalPlaces: options.settings.decimalPlaces,
       stepOverflowProtectionRange: createStepOverflowProtectionRange(options.bounds, options.formulaPoints),
       stepOverflowProtection: options.settings.stepOverflowProtection,
       onSignArgument(value) {
@@ -438,54 +453,79 @@ function createGraphwarTrajectoryStopTracker(options: {
   boundsRect: BoundsRect;
   collision?: GraphwarTrajectoryCollisionSettings;
   collectVisiblePixels?: boolean;
+  initialReachedTargetCount?: number;
+  continueAfterTargetSequenceUntilGraphX?: number;
+  stopOnTargetSequenceComplete?: boolean;
   soldierMarkerRadius?: number;
   targetPoint?: PixelPoint;
+  targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   targetSequencePoints?: readonly PixelPoint[];
 }) {
-  const targetSequencePoints = options.targetSequencePoints ?? (options.targetPoint ? [options.targetPoint] : []);
+  const targetSequence =
+    options.targetSequence ??
+    createTrajectoryTargetSequenceFromPoints(
+      options.targetSequencePoints ?? (options.targetPoint ? [options.targetPoint] : []),
+      options.soldierMarkerRadius,
+    );
+  const boundsRect = options.boundsRect;
+  const collisionMask = options.collision?.mask;
+  // 采样点循环会高频判障碍；这里预先归一化边界和比例，循环内只做乘法与整数化。
+  const collisionBoundaryExpansion = Math.floor(options.collision?.boundaryExpansion ?? 0);
+  const collisionPlaneScaleX = GRAPHWAR_PLANE_LENGTH / boundsRect.width;
+  const collisionPlaneScaleY = GRAPHWAR_PLANE_HEIGHT / boundsRect.height;
   const visiblePixels: PixelPoint[] = [];
   let earlyStopReason: GraphwarTrajectoryEarlyStopReason | undefined;
   let obstacleHitIndex = -1;
   let targetHitIndex = -1;
-  let reachedTargetCount = 0;
+  let reachedTargetCount = Math.min(options.initialReachedTargetCount ?? 0, targetSequence.length);
 
   return {
     shouldStop(point: GraphPoint, _previousPoint: GraphPoint | undefined, index: number) {
-      const pixel = graphToImagePoint(point, options.bounds, options.boundsRect);
+      const pixel = graphToImagePoint(point, options.bounds, boundsRect);
       if (options.collectVisiblePixels) {
         visiblePixels.push(pixel);
       }
 
       // Graphwar 从第 1 个采样点开始判士兵命中，起点不参与命中检测。
-      while (
-        index > 0 &&
-        reachedTargetCount < targetSequencePoints.length &&
-        options.soldierMarkerRadius !== undefined
-      ) {
-        const targetPoint = targetSequencePoints[reachedTargetCount];
-        if (!graphwarPixelPointHitsTarget(pixel, targetPoint, options.soldierMarkerRadius)) {
+      while (index > 0 && reachedTargetCount < targetSequence.length) {
+        const target = targetSequence[reachedTargetCount];
+        if (!target) {
+          break;
+        }
+        const targetDx = pixel.x - target.center.x;
+        const targetDy = pixel.y - target.center.y;
+        if (targetDx * targetDx + targetDy * targetDy >= target.radius * target.radius) {
           break;
         }
         reachedTargetCount += 1;
       }
-      if (targetSequencePoints.length > 0 && reachedTargetCount >= targetSequencePoints.length) {
+      const targetSequenceReached = targetSequence.length > 0 && reachedTargetCount >= targetSequence.length;
+      if (targetSequenceReached && targetHitIndex < 0) {
         targetHitIndex = index;
+      }
+      if (options.stopOnTargetSequenceComplete !== false && targetSequenceReached) {
         earlyStopReason = "target";
         return true;
       }
 
-      // 障碍 mask 的边界扩张在像素转平面格点后判断，和自动寻路的模拟障碍保持一致。
+      if (collisionMask) {
+        const planeX = Math.floor((pixel.x - boundsRect.x) * collisionPlaneScaleX);
+        const planeY = Math.floor((pixel.y - boundsRect.y) * collisionPlaneScaleY);
+        // 障碍 mask 的边界收缩在像素转平面格点后判断；展开热路径，避免每个采样点创建临时对象。
+        if (
+          !isInsidePlaneWithBoundaryExpansion(planeX, planeY, collisionBoundaryExpansion) ||
+          Boolean(collisionMask[planeY * GRAPHWAR_PLANE_LENGTH + planeX])
+        ) {
+          obstacleHitIndex = index;
+          earlyStopReason = "obstacle";
+          return true;
+        }
+      }
       if (
-        options.collision?.mask &&
-        graphwarPixelPointHitsMask(
-          pixel,
-          options.boundsRect,
-          options.collision.mask,
-          options.collision.boundaryExpansion,
-        )
+        targetSequenceReached &&
+        options.continueAfterTargetSequenceUntilGraphX !== undefined &&
+        point.x >= options.continueAfterTargetSequenceUntilGraphX
       ) {
-        obstacleHitIndex = index;
-        earlyStopReason = "obstacle";
         return true;
       }
       return false;
@@ -503,54 +543,24 @@ function createGraphwarTrajectoryStopTracker(options: {
   };
 }
 
-/** 判断单个 Graphwar 采样点映射到截图后是否落入目标圆。 */
-function graphwarTrajectoryPointHitsTarget(
-  point: GraphPoint,
-  bounds: GraphBounds,
-  boundsRect: BoundsRect,
-  targetPoint: PixelPoint,
-  soldierMarkerRadius: number,
-) {
-  const pixel = graphToImagePoint(point, bounds, boundsRect);
-  return graphwarPixelPointHitsTarget(pixel, targetPoint, soldierMarkerRadius);
-}
-
-/** 像素点到目标中心距离小于士兵半径即视为命中。 */
-function graphwarPixelPointHitsTarget(point: PixelPoint, targetPoint: PixelPoint, soldierMarkerRadius: number) {
-  return Math.hypot(point.x - targetPoint.x, point.y - targetPoint.y) < soldierMarkerRadius;
-}
-
-/** 判断像素点映射到 Graphwar 原始平面后是否碰到模拟障碍 mask。 */
-function graphwarPixelPointHitsMask(
-  point: PixelPoint,
-  boundsRect: BoundsRect,
-  mask: Uint8Array,
-  boundaryExpansion = 0,
-) {
-  return pointHitsPlaneMask(imagePointToRawPlaneGridPoint(point, boundsRect), mask, boundaryExpansion);
-}
-
-/** 将截图像素映射到未裁剪的 Graphwar 原始平面网格。 */
-function imagePointToRawPlaneGridPoint(point: PixelPoint, boundsRect: BoundsRect): PlaneGridPoint {
-  return {
-    x: Math.floor(((point.x - boundsRect.x) / boundsRect.width) * GRAPHWAR_PLANE_LENGTH),
-    y: Math.floor(((point.y - boundsRect.y) / boundsRect.height) * GRAPHWAR_PLANE_HEIGHT),
-  };
-}
-
-/** 越过收缩边界或命中 mask 都视为障碍。 */
-function pointHitsPlaneMask(point: PlaneGridPoint, mask: Uint8Array, boundaryExpansion: number) {
-  if (!isInsidePlaneWithBoundaryExpansion(point.x, point.y, boundaryExpansion)) {
-    return true;
+/** 没有半径时不创建目标序列，避免把未配置的目标误判为 0 半径命中。 */
+function createTrajectoryTargetSequenceFromPoints(
+  points: readonly PixelPoint[],
+  soldierMarkerRadius: number | undefined,
+): GraphwarTrajectoryTargetCircle[] {
+  if (soldierMarkerRadius === undefined) {
+    return [];
   }
-  return Boolean(mask[point.y * GRAPHWAR_PLANE_LENGTH + point.x]);
+  return points.map((center) => ({ center, radius: soldierMarkerRadius }));
 }
 
 /** 判断平面点是否在收缩后的可模拟区域内。 */
 function isInsidePlaneWithBoundaryExpansion(x: number, y: number, boundaryExpansion: number) {
-  const expansion = Math.max(0, Math.floor(boundaryExpansion));
   return (
-    x >= expansion && x < GRAPHWAR_PLANE_LENGTH - expansion && y >= expansion && y < GRAPHWAR_PLANE_HEIGHT - expansion
+    x >= boundaryExpansion &&
+    x < GRAPHWAR_PLANE_LENGTH - boundaryExpansion &&
+    y >= boundaryExpansion &&
+    y < GRAPHWAR_PLANE_HEIGHT - boundaryExpansion
   );
 }
 

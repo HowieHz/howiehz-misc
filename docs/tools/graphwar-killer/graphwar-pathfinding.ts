@@ -1,7 +1,7 @@
 /** Graphwar 固定平面上的几何寻路工具；页面和 worker 共用同一套图搜索实现。 */
 import { xPlusGoesRight } from "./geometry";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
-import { clampNumber, doublePrecisionTolerance, nearlyEqual, roundToDecimalPlaces } from "./numbers";
+import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "./numbers";
 import { createPixelPoint } from "./types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
 
@@ -41,10 +41,14 @@ export interface GraphwarPathfindingOptions {
   isCancelled?: () => boolean;
   /** 搜索回调；页面用于动画，worker 保持为空。 */
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
+  /** 按需获取可见图障碍数据；直连成功或提前失败时不会触发。 */
+  getVisibilityGraphObstacleData?: () => GraphwarVisibilityGraphObstacleData;
   /** 已按 route tolerance 膨胀或腐蚀后的障碍 mask。 */
   routeMask: Uint8Array;
   /** 当前 route tolerance，供轮廓 RDP 简化计算 epsilon。 */
   routeTolerancePlanePixels?: number;
+  /** 同一个固定 mask 上复用的可见图障碍轮廓，避免批量寻路时反复扫描障碍。 */
+  visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
   /** 路径起点，截图像素坐标。 */
   startPoint: PixelPoint;
   /** 路径终点，截图像素坐标。 */
@@ -53,14 +57,26 @@ export interface GraphwarPathfindingOptions {
   yieldControl?: () => Promise<void> | void;
 }
 
-/** Route tolerance 枚举输入；页面解析和 worker 请求只需满足这三个字段。 */
-export interface GraphwarRouteToleranceRange {
-  /** 最大路线容差，单位为固定平面像素。 */
-  routeMaxTolerancePlanePixels: number;
-  /** 最小路线容差，单位为固定平面像素。 */
-  routeMinTolerancePlanePixels: number;
-  /** 容差扫描步长，单位为固定平面像素。 */
-  routeStepPlanePixels: number;
+/** 预构建可见图障碍数据的输入；调用方需要在使用期间保持 routeMask 不变。 */
+export interface GraphwarVisibilityGraphObstacleDataOptions {
+  /** 当前 Graphwar 坐标边界，用于判断是否需要镜像到 x+ 搜索坐标系。 */
+  bounds: GraphBounds;
+  /** 已按 route tolerance 膨胀或腐蚀后的障碍 mask。 */
+  routeMask: Uint8Array;
+  /** 当前 route tolerance，供轮廓 RDP 简化计算 epsilon。 */
+  routeTolerancePlanePixels?: number;
+}
+
+/** 与固定 mask、x+ 方向和 route tolerance 绑定的可见图障碍轮廓缓存。 */
+export interface GraphwarVisibilityGraphObstacleData {
+  /** 已按 mirror/tolerance 简化过的障碍轮廓。 */
+  readonly contours: readonly VisibilityGraphObstacleContour[];
+  /** 是否把原始平面镜像到 x+ 搜索坐标系。 */
+  readonly mirrored: boolean;
+  /** 缓存所属 mask；用引用相等防止跨友伤模式或跨容差误用。 */
+  readonly routeMask: Uint8Array;
+  /** 缓存所属 route tolerance。 */
+  readonly routeTolerancePlanePixels: number;
 }
 
 /** RouteMask 中一个 4 邻域障碍连通域，后续会从其边界生成可见性图候选点。 */
@@ -92,6 +108,16 @@ interface BoundaryContourRange {
   endIndex: number;
   /** 区间起点在原始轮廓数组中的下标。 */
   startIndex: number;
+}
+
+/** 一个已经简化、可被多条路径候选过滤复用的障碍边界轮廓。 */
+interface VisibilityGraphObstacleContour {
+  /** 轮廓所属连通域；选自由候选点时仍需要中心和 cell 集合。 */
+  component: RouteMaskComponent;
+  /** 已按 route tolerance 简化的闭合轮廓点。 */
+  points: BoundaryContourPoint[];
+  /** 简化轮廓有符号面积，用于过滤明显凹角。 */
+  signedArea: number;
 }
 
 /** Lazy visibility search 的排序代价：先短路径，再少折线段。 */
@@ -145,6 +171,7 @@ const EIGHT_CONNECTED_OFFSETS: readonly PlaneGridPoint[] = [
 export async function buildSmartPathfindingPathForMask(options: GraphwarPathfindingOptions) {
   // 统一镜像到 x+ 搜索坐标系，调用方始终拿到原始平面坐标系下的路径。
   const mirrored = !xPlusGoesRight(options.bounds);
+  const boundaryExpansion = normalizeBoundaryExpansion(options.boundaryExpansion);
   const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.startPoint, options.boundsRect), mirrored);
   const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.targetPoint, options.boundsRect), mirrored);
   const canAdvance = options.canAdvance
@@ -152,8 +179,8 @@ export async function buildSmartPathfindingPathForMask(options: GraphwarPathfind
         options.canAdvance?.(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored)) ?? false
     : (previous: PlaneGridPoint, next: PlaneGridPoint) => next.x > previous.x;
   if (
-    pointHitsPlaneMask(start, options.routeMask, mirrored, options.boundaryExpansion) ||
-    pointHitsPlaneMask(target, options.routeMask, mirrored, options.boundaryExpansion)
+    pointHitsPlaneMaskWithBoundaryExpansion(start, options.routeMask, mirrored, boundaryExpansion) ||
+    pointHitsPlaneMaskWithBoundaryExpansion(target, options.routeMask, mirrored, boundaryExpansion)
   ) {
     return undefined;
   }
@@ -164,7 +191,7 @@ export async function buildSmartPathfindingPathForMask(options: GraphwarPathfind
 
   if (
     canAdvance(start, target) &&
-    !lineHitsPlaneMask(start, target, options.routeMask, mirrored, options.boundaryExpansion)
+    !lineHitsPlaneMaskWithBoundaryExpansion(start, target, options.routeMask, mirrored, boundaryExpansion)
   ) {
     const directPath = [start, target];
     options.onPreview?.({
@@ -178,16 +205,17 @@ export async function buildSmartPathfindingPathForMask(options: GraphwarPathfind
   }
 
   const candidates = collectVisibilityGraphCandidates({
-    boundaryExpansion: options.boundaryExpansion,
+    boundaryExpansion,
     canAdvance,
     mirrored,
     routeMask: options.routeMask,
     routeTolerancePlanePixels: options.routeTolerancePlanePixels ?? 1,
     start,
     target,
+    visibilityGraphObstacleData: options.visibilityGraphObstacleData ?? options.getVisibilityGraphObstacleData?.(),
   });
   const path = await findLazyVisibilityGraphPath({
-    boundaryExpansion: options.boundaryExpansion,
+    boundaryExpansion,
     canAdvance,
     candidates,
     isCancelled: options.isCancelled,
@@ -201,35 +229,25 @@ export async function buildSmartPathfindingPathForMask(options: GraphwarPathfind
   return path?.map((point) => mirrorPlaneGridPoint(point, mirrored));
 }
 
-/** 枚举路线容差，优先尝试最小容差，失败后逐步放宽或收紧 mask。 */
-export function collectSmartPathfindingRouteTolerances(tolerances: GraphwarRouteToleranceRange) {
-  const values: number[] = [];
-  const min = tolerances.routeMinTolerancePlanePixels;
-  const max = tolerances.routeMaxTolerancePlanePixels;
-  const step = tolerances.routeStepPlanePixels;
-  for (let value = min; value <= max + createRouteToleranceStepBoundaryTolerance(min, max, step); value += step) {
-    values.push(Math.min(value, max));
-  }
-  const lastValue = values.at(-1);
-  if (lastValue === undefined || !nearlyEqual(lastValue, max)) {
-    values.push(max);
-  }
-  return [...new Set(values.map((value) => roundToDecimalPlaces(value, 6)))];
-}
-
-/** 给 route tolerance 累加枚举留出 double 舍入余量，避免跳过理论上等于 max 的最后一步。 */
-function createRouteToleranceStepBoundaryTolerance(min: number, max: number, step: number) {
-  return doublePrecisionTolerance(min, max, step);
+/** 为固定 route mask 预构建障碍连通域和简化轮廓，供同一批路径搜索复用。 */
+export function createGraphwarVisibilityGraphObstacleData(
+  options: GraphwarVisibilityGraphObstacleDataOptions,
+): GraphwarVisibilityGraphObstacleData {
+  const mirrored = !xPlusGoesRight(options.bounds);
+  return createVisibilityGraphObstacleDataForMirroredMask({
+    mirrored,
+    routeMask: options.routeMask,
+    routeTolerancePlanePixels: options.routeTolerancePlanePixels ?? 1,
+  });
 }
 
 /** 按有效圆形半径和形态学方向生成 route mask cache key。 */
 export function createRouteMaskCacheKey(radius: number) {
-  const normalizedRadius = Number.isFinite(radius) ? radius : 0;
+  const operation = radius < 0 ? RouteMaskOperation.Erode : RouteMaskOperation.Dilate;
+  const operationRadius = radius < 0 ? -radius : radius;
   // Dilation/erosion uses a circular radius. Keep enough precision in the key so
   // radius values on different lattice-distance thresholds do not share a mask.
-  return normalizedRadius < 0
-    ? `${RouteMaskOperation.Erode}:${roundToDecimalPlaces(Math.max(0, -normalizedRadius), 6)}`
-    : `${RouteMaskOperation.Dilate}:${roundToDecimalPlaces(Math.max(0, normalizedRadius), 6)}`;
+  return `${operation}:${roundToDecimalPlaces(operationRadius, 6)}`;
 }
 
 /** 在平面网格上采样线段，判断两点之间是否被障碍或边界收缩阻断。 */
@@ -240,9 +258,26 @@ export function lineHitsPlaneMask(
   mirrored: boolean,
   boundaryExpansion: number,
 ) {
+  return lineHitsPlaneMaskWithBoundaryExpansion(
+    start,
+    end,
+    mask,
+    mirrored,
+    normalizeBoundaryExpansion(boundaryExpansion),
+  );
+}
+
+/** 已归一化边界收缩后的线段碰撞检查；热路径避免每个采样点重复 floor/clamp。 */
+function lineHitsPlaneMaskWithBoundaryExpansion(
+  start: PlaneGridPoint,
+  end: PlaneGridPoint,
+  mask: Uint8Array,
+  mirrored: boolean,
+  boundaryExpansion: number,
+) {
   const steps = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
   if (steps === 0) {
-    return pointHitsPlaneMask(start, mask, mirrored, boundaryExpansion);
+    return pointHitsPlaneMaskWithBoundaryExpansion(start, mask, mirrored, boundaryExpansion);
   }
 
   for (let step = 0; step <= steps; step += 1) {
@@ -251,7 +286,7 @@ export function lineHitsPlaneMask(
       x: Math.round(start.x + (end.x - start.x) * ratio),
       y: Math.round(start.y + (end.y - start.y) * ratio),
     };
-    if (pointHitsPlaneMask(point, mask, mirrored, boundaryExpansion)) {
+    if (pointHitsPlaneMaskWithBoundaryExpansion(point, mask, mirrored, boundaryExpansion)) {
       return true;
     }
   }
@@ -260,6 +295,16 @@ export function lineHitsPlaneMask(
 
 /** 判断平面点是否碰到障碍；mirrored 让 x- 地图复用同一套 x+ DP。 */
 export function pointHitsPlaneMask(
+  point: PlaneGridPoint,
+  mask: Uint8Array,
+  mirrored: boolean,
+  boundaryExpansion: number,
+) {
+  return pointHitsPlaneMaskWithBoundaryExpansion(point, mask, mirrored, normalizeBoundaryExpansion(boundaryExpansion));
+}
+
+/** 已归一化边界收缩后的单点碰撞检查；调用者负责只传整数非负 expansion。 */
+function pointHitsPlaneMaskWithBoundaryExpansion(
   point: PlaneGridPoint,
   mask: Uint8Array,
   mirrored: boolean,
@@ -311,6 +356,7 @@ function collectVisibilityGraphCandidates({
   routeTolerancePlanePixels,
   start,
   target,
+  visibilityGraphObstacleData,
 }: {
   boundaryExpansion: number;
   canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
@@ -319,54 +365,113 @@ function collectVisibilityGraphCandidates({
   routeTolerancePlanePixels: number;
   start: PlaneGridPoint;
   target: PlaneGridPoint;
+  visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
 }) {
   const candidateMap = new Map<string, PlaneGridPoint>();
   const startKey = createPlaneGridPointKey(start);
   const targetKey = createPlaneGridPointKey(target);
   const minPathX = Math.min(start.x, target.x);
   const maxPathX = Math.max(start.x, target.x);
-  const epsilon = clampNumber(Math.abs(routeTolerancePlanePixels) * 0.75, 1, 6);
+  const obstacleData = getCompatibleVisibilityGraphObstacleData({
+    mirrored,
+    routeMask,
+    routeTolerancePlanePixels,
+    visibilityGraphObstacleData,
+  });
 
-  for (const component of collectRouteMaskComponents(routeMask, mirrored)) {
-    for (const contour of collectComponentBoundaryContours(component)) {
-      const simplifiedContour = simplifyClosedBoundaryContour(contour, epsilon);
-      const area = calculateSignedArea(simplifiedContour);
-      for (let index = 0; index < simplifiedContour.length; index += 1) {
-        const previous = simplifiedContour[(index - 1 + simplifiedContour.length) % simplifiedContour.length];
-        const current = simplifiedContour[index];
-        const next = simplifiedContour[(index + 1) % simplifiedContour.length];
-        if (!current || !previous || !next) {
-          continue;
-        }
-        if (isNearCollinear(previous, current, next) || isClearlyConcave(previous, current, next, area)) {
-          continue;
-        }
+  for (const contour of obstacleData.contours) {
+    const simplifiedContour = contour.points;
+    for (let index = 0; index < simplifiedContour.length; index += 1) {
+      const previous = simplifiedContour[(index - 1 + simplifiedContour.length) % simplifiedContour.length];
+      const current = simplifiedContour[index];
+      const next = simplifiedContour[(index + 1) % simplifiedContour.length];
+      if (!current || !previous || !next) {
+        continue;
+      }
+      if (isNearCollinear(previous, current, next) || isClearlyConcave(previous, current, next, contour.signedArea)) {
+        continue;
+      }
 
-        const candidate = selectNearbyFreeCellCandidate({
-          boundaryExpansion,
-          boundaryPoint: current,
-          component,
-          maxPathX,
-          minPathX,
-          mirrored,
-          routeMask,
-        });
-        if (!candidate) {
-          continue;
-        }
-        if (!canAdvance(start, candidate) && !canAdvance(candidate, target)) {
-          continue;
-        }
+      const candidate = selectNearbyFreeCellCandidate({
+        boundaryExpansion,
+        boundaryPoint: current,
+        component: contour.component,
+        maxPathX,
+        minPathX,
+        mirrored,
+        routeMask,
+      });
+      if (!candidate) {
+        continue;
+      }
+      if (!canAdvance(start, candidate) && !canAdvance(candidate, target)) {
+        continue;
+      }
 
-        const key = createPlaneGridPointKey(candidate);
-        if (key !== startKey && key !== targetKey && !candidateMap.has(key)) {
-          candidateMap.set(key, candidate);
-        }
+      const key = createPlaneGridPointKey(candidate);
+      if (key !== startKey && key !== targetKey && !candidateMap.has(key)) {
+        candidateMap.set(key, candidate);
       }
     }
   }
 
   return [start, target, ...[...candidateMap.values()].sort((left, right) => left.x - right.x || left.y - right.y)];
+}
+
+function getCompatibleVisibilityGraphObstacleData({
+  mirrored,
+  routeMask,
+  routeTolerancePlanePixels,
+  visibilityGraphObstacleData,
+}: {
+  mirrored: boolean;
+  routeMask: Uint8Array;
+  routeTolerancePlanePixels: number;
+  visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
+}) {
+  // 友伤模式、镜像方向和 route tolerance 都会改变轮廓；不匹配时宁可重建，避免复用错误候选。
+  if (
+    visibilityGraphObstacleData &&
+    visibilityGraphObstacleData.mirrored === mirrored &&
+    visibilityGraphObstacleData.routeMask === routeMask &&
+    nearlyEqual(visibilityGraphObstacleData.routeTolerancePlanePixels, routeTolerancePlanePixels)
+  ) {
+    return visibilityGraphObstacleData;
+  }
+  return createVisibilityGraphObstacleDataForMirroredMask({
+    mirrored,
+    routeMask,
+    routeTolerancePlanePixels,
+  });
+}
+
+function createVisibilityGraphObstacleDataForMirroredMask({
+  mirrored,
+  routeMask,
+  routeTolerancePlanePixels,
+}: {
+  mirrored: boolean;
+  routeMask: Uint8Array;
+  routeTolerancePlanePixels: number;
+}): GraphwarVisibilityGraphObstacleData {
+  const epsilon = clampNumber(Math.abs(routeTolerancePlanePixels) * 0.75, 1, 6);
+  const contours: VisibilityGraphObstacleContour[] = [];
+  for (const component of collectRouteMaskComponents(routeMask, mirrored)) {
+    for (const contour of collectComponentBoundaryContours(component)) {
+      const points = simplifyClosedBoundaryContour(contour, epsilon);
+      contours.push({
+        component,
+        points,
+        signedArea: calculateSignedArea(points),
+      });
+    }
+  }
+  return {
+    contours,
+    mirrored,
+    routeMask,
+    routeTolerancePlanePixels,
+  };
 }
 
 /** 用 BFS 收集 route mask 中的 8 邻域阻挡连通域。 */
@@ -692,7 +797,7 @@ function selectNearbyFreeCellCandidate({
         if (
           candidate.x < minPathX ||
           candidate.x > maxPathX ||
-          pointHitsPlaneMask(candidate, routeMask, mirrored, boundaryExpansion)
+          pointHitsPlaneMaskWithBoundaryExpansion(candidate, routeMask, mirrored, boundaryExpansion)
         ) {
           continue;
         }
@@ -791,7 +896,7 @@ async function findLazyVisibilityGraphPath({
       if (
         !nextPoint ||
         !canAdvance(currentPoint, nextPoint) ||
-        lineHitsPlaneMask(currentPoint, nextPoint, routeMask, mirrored, boundaryExpansion)
+        lineHitsPlaneMaskWithBoundaryExpansion(currentPoint, nextPoint, routeMask, mirrored, boundaryExpansion)
       ) {
         continue;
       }
@@ -1156,10 +1261,17 @@ function isInsidePlane(x: number, y: number) {
 
 /** 判断点是否在收缩后的 Graphwar 平面内部，贴边视为障碍。 */
 function isInsidePlaneWithBoundaryExpansion(x: number, y: number, boundaryExpansion: number) {
-  const expansion = Math.max(0, Math.floor(boundaryExpansion));
   return (
-    x >= expansion && x < GRAPHWAR_PLANE_LENGTH - expansion && y >= expansion && y < GRAPHWAR_PLANE_HEIGHT - expansion
+    x >= boundaryExpansion &&
+    x < GRAPHWAR_PLANE_LENGTH - boundaryExpansion &&
+    y >= boundaryExpansion &&
+    y < GRAPHWAR_PLANE_HEIGHT - boundaryExpansion
   );
+}
+
+/** 边界收缩允许小数；调用方已限制非负，进入点/线碰撞热路径前统一折成整数。 */
+function normalizeBoundaryExpansion(boundaryExpansion: number) {
+  return Math.floor(boundaryExpansion);
 }
 
 /** DP 转移代价使用欧氏距离，偏好更短更平滑的折线。 */

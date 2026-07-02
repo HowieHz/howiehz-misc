@@ -26,9 +26,27 @@ export function nearlyEqual(left: number, right: number) {
   return Math.abs(left - right) <= doublePrecisionTolerance(left, right);
 }
 
-/** 判断 Graphwar x 差是否达到当前公式输出精度要求的最小前进步长。 */
-export function graphXAdvancesEnough(deltaX: number, minimumGraphXStep: number, ...sourceValues: readonly number[]) {
-  return deltaX + doublePrecisionTolerance(deltaX, minimumGraphXStep, ...sourceValues) >= minimumGraphXStep;
+const nextDoubleBuffer = new ArrayBuffer(8);
+const nextDoubleView = new DataView(nextDoubleBuffer);
+
+/** 返回大于 value 的最小 JavaScript/Java double；用于表达 Graphwar x 只需严格前进。 */
+export function nextUpDouble(value: number) {
+  if (Number.isNaN(value) || value === Number.POSITIVE_INFINITY) {
+    return value;
+  }
+  if (Object.is(value, -0) || value === 0) {
+    return Number.MIN_VALUE;
+  }
+
+  nextDoubleView.setFloat64(0, value);
+  const bits = nextDoubleView.getBigUint64(0);
+  nextDoubleView.setBigUint64(0, value > 0 ? bits + 1n : bits - 1n);
+  return nextDoubleView.getFloat64(0);
+}
+
+/** 判断 Graphwar x 是否至少前进到下一个可表示 double，而不是强制像素级间距。 */
+export function graphXAdvancesStrictly(fromX: number, toX: number) {
+  return Number.isFinite(fromX) && Number.isFinite(toX) && toX >= nextUpDouble(fromX);
 }
 
 /** Graphwar 公式输出最多保留 double 有意义的十进制位数。 */

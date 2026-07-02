@@ -1503,7 +1503,7 @@ watch(
     maxYText,
   ],
   () => {
-    invalidatePathfindingWorkerCache();
+    invalidatePathfindingCaches();
     clearSmartPathfindingStatus();
   },
 );
@@ -1580,7 +1580,7 @@ function clearDetections() {
 
 /** 清除识别对象和依赖缓存；不改变检测状态文字。 */
 function clearDetectedGraphwarObjects() {
-  invalidatePathfindingWorkerCache();
+  invalidatePathfindingCaches();
   detectedSoldiers.value = [];
   detectedObstacles.value = undefined;
   baselineDetectedObstacles.value = undefined;
@@ -1923,7 +1923,7 @@ async function applyGraphwarObjectDetectionResult(
     return;
   }
   measureDetectionDebugStage(timings, "updating-results", () => {
-    invalidatePathfindingWorkerCache();
+    invalidatePathfindingCaches();
     detectedSoldiers.value = result.soldiers;
     flashDetectedSoldiers();
     if (flashBounds) {
@@ -2542,7 +2542,7 @@ function resetObstacleEdits() {
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
   clearObstacleEditRefreshTimer();
-  invalidatePathfindingWorkerCache();
+  invalidatePathfindingCaches();
   detectedObstacles.value = cloneDetectedObstacleMap(baseline);
   obstacleEditsDirty.value = false;
   setDetectionStatus(locale.status.detection.obstacleEditsCleared(baseline.count), "success");
@@ -2578,7 +2578,7 @@ function paintObstacleBrushAtPoint(point: PixelPoint, connectFromLastPoint = fal
     return false;
   }
 
-  invalidatePathfindingWorkerCache();
+  invalidatePathfindingCaches();
   detectedObstacles.value = {
     count: obstacleMap.count,
     mask: nextMask,
@@ -2629,7 +2629,7 @@ function toggleFriendlyFire() {
   if (smartPathfindingInProgress.value) {
     cancelSmartPathfinding(false);
   }
-  invalidatePathfindingWorkerCache();
+  invalidatePathfindingCaches();
   clearSmartPathfindingStatus();
   friendlyFireEnabled.value = !friendlyFireEnabled.value;
 }
@@ -3795,11 +3795,21 @@ function clearSmartPathfindingStatus() {
   setSmartPathfindingStatus("", "info");
 }
 
-/** 让 master Worker 丢弃绑定旧截图、障碍 mask 或寻路配置的可视图 cache。 */
-function invalidatePathfindingWorkerCache() {
+/** 清空页面侧完整结果缓存；用于输入语义换代，不用于普通路径清空。 */
+function invalidatePathfindingResultCache() {
   smartPathfindingResultCache.clear();
   oneClickClearResultCache.clear();
+}
+
+/** 让 master Worker 丢弃绑定旧截图、障碍 mask 或寻路配置的可视图 cache。 */
+function invalidatePathfindingWorkerCache() {
   graphwarPathfindingRunner.clearCache();
+}
+
+/** 同时清理 worker 内部派生 cache 和页面侧完整结果 cache。 */
+function invalidatePathfindingCaches() {
+  invalidatePathfindingResultCache();
+  invalidatePathfindingWorkerCache();
 }
 
 /** 设置智能寻路路径预览点。 */

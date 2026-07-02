@@ -1,5 +1,5 @@
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
-import { graphToImagePoint, imageToGraphPoint, normalizePathPoint } from "../geometry";
+import { graphToImagePoint, imageToGraphPoint, normalizePathPoint, xPlusGoesRight } from "../geometry";
 import { dilateObstacleMask } from "../graphwar-detection";
 import type {
   GraphwarOneClickClearDagEdgeBuildJob,
@@ -30,9 +30,9 @@ import type {
   GraphwarSmartPathfindingPathResult,
   GraphwarSmartPathfindingWorkerTiming,
 } from "../graphwar-pathfinding-worker-types";
-import { graphXAdvancesStrictly, nextUpDouble } from "../numbers";
+import { doublePrecisionTolerance, graphXAdvancesStrictly, nextDownDouble, nextUpDouble } from "../numbers";
 import { sampleGraphwarPathTrajectory } from "../trajectory-sampling";
-import { createGraphPoint } from "../types";
+import { createGraphPoint, createPixelPoint } from "../types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../types";
 
 /** 当前 master Worker 暴露给 TypeScript 的最小消息接口。 */
@@ -460,22 +460,19 @@ function createMinimumForwardPointAtGraphY(
   bounds: GraphBounds,
   boundsRect: BoundsRect,
 ) {
-  let graphX = nextUpDouble(imageToGraphPoint(startPoint, bounds, boundsRect).x);
+  const minimumGraphX = nextUpDouble(imageToGraphPoint(startPoint, bounds, boundsRect).x);
+  const minimumGraphPoint = graphToImagePoint(createGraphPoint(minimumGraphX, graphY), bounds, boundsRect);
+  const pixelRoundTripPadding = doublePrecisionTolerance(startPoint.x, minimumGraphPoint.x) * 2;
+  const xPlusIsRight = xPlusGoesRight(bounds);
+  const pixelX = xPlusIsRight
+    ? nextUpDouble(Math.max(minimumGraphPoint.x, startPoint.x) + pixelRoundTripPadding)
+    : nextDownDouble(Math.min(minimumGraphPoint.x, startPoint.x) - pixelRoundTripPadding);
+  const point = createPixelPoint(pixelX, minimumGraphPoint.y);
 
-  // 截图像素和 Graphwar 坐标往返会舍入；少量推进 ULP，直到映射后仍严格 x+。
-  for (let attempt = 0; attempt < 16; attempt += 1) {
-    const point = graphToImagePoint(createGraphPoint(graphX, graphY), bounds, boundsRect);
-    if (graphXAdvancesFromPoint(startPoint, imageToGraphPoint(point, bounds, boundsRect).x, bounds, boundsRect)) {
-      return point;
-    }
-
-    const nextGraphX = nextUpDouble(graphX);
-    if (nextGraphX === graphX) {
-      break;
-    }
-    graphX = nextGraphX;
-  }
-  return undefined;
+  // Worker 返回的路径点也以截图坐标保存；给理论最小点补一个 round-trip padding，避免 Graph ULP 往返丢失。
+  return graphXAdvancesFromPoint(startPoint, imageToGraphPoint(point, bounds, boundsRect).x, bounds, boundsRect)
+    ? point
+    : undefined;
 }
 
 function pathFollowsGraphRule(points: readonly PixelPoint[], bounds: GraphBounds, boundsRect: BoundsRect) {

@@ -4425,6 +4425,7 @@ async function copyText(text: string) {
           {{ locale.ui.settings.title }}
         </h2>
         <span
+          :title="settingsHeaderStatus"
           :class="{
             'graphwar-killer__label-status--error': settingsHeaderStatusIsError,
             'graphwar-killer__label-status--warning': settingsHeaderStatusIsWarning,
@@ -4819,6 +4820,7 @@ async function copyText(text: string) {
             v-if="detectionHeaderStatus"
             role="status"
             aria-live="polite"
+            :title="detectionHeaderStatus"
             :class="{
               'graphwar-killer__label-status--error': detectionHeaderStatusIsError,
               'graphwar-killer__label-status--warning': detectionHeaderStatusIsWarning,
@@ -4984,7 +4986,7 @@ async function copyText(text: string) {
         <h2 id="graphwar-killer-actions-title">
           {{ locale.ui.actions.title }}
         </h2>
-        <span>{{ activeToolHint }}</span>
+        <span :title="activeToolHint">{{ activeToolHint }}</span>
       </div>
       <div class="graphwar-killer__image-actions">
         <div
@@ -5146,7 +5148,10 @@ async function copyText(text: string) {
         <h2 id="graphwar-killer-screenshot-title">
           {{ locale.ui.screenshot.title }}
         </h2>
-        <span class="graphwar-killer__image-status-text">
+        <span
+          class="graphwar-killer__image-status-text"
+          :title="screenshotImageStatusText"
+        >
           {{ screenshotImageStatusText }}
         </span>
         <span
@@ -6044,7 +6049,11 @@ async function copyText(text: string) {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
   font-size: 0.88rem;
   line-height: 1.4;
+  min-width: 0;
+  overflow: hidden;
   text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .graphwar-killer__label-row > .graphwar-killer__label-status--error {
@@ -6063,10 +6072,6 @@ async function copyText(text: string) {
 
 .graphwar-killer__pathfinding-header-status {
   max-width: min(100%, 24rem);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .graphwar-killer__label-row--image-status {
@@ -6086,10 +6091,7 @@ async function copyText(text: string) {
 .graphwar-killer__path-status-text {
   flex: 0 1 auto;
   max-width: min(100%, 44rem);
-  overflow: hidden;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .graphwar-killer__label-row--result {

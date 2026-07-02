@@ -3099,7 +3099,16 @@ function createOneClickClearPrefixTarget() {
   return "center" in target ? { center: target.center, radius: target.radius } : { center: target, radius: 1 };
 }
 
-/** 把当前识别士兵折叠成清图搜索候选；友伤关闭时友方不作为候选。 */
+/**
+ * 把当前识别士兵折叠成清图搜索候选；友伤关闭时友方不作为候选。
+ *
+ * 已知改进点：这里仍按命中圆中心做 x+（严格向右推进）过滤。
+ *
+ * 后续对齐普通点士兵的边缘可达规则时，需要保留两套语义：
+ *
+ * - `routePoint`（几何寻路目标点）。
+ * - `hitCenter`（命中圆中心）/命中圆：弹道验证目标。
+ */
 function createOneClickClearCandidates(): GraphwarOneClickClearCandidate[] {
   const startPoint = pathPixels.value.at(-1);
   if (!startPoint) {
@@ -3153,7 +3162,7 @@ function createOneClickClearHitCandidates(): GraphwarOneClickClearCandidate[] {
   });
 }
 
-/** 一键清图候选只用截图平面精度；输出保留小数位只影响最终公式文本。 */
+/** 一键清图候选当前只检查命中圆中心是否 x+（严格向右推进）；边缘可达目标见 `createOneClickClearCandidates`（折叠当前识别士兵为一键清图候选）的已知改进点。 */
 function oneClickClearSoldierReachesForward(soldier: DetectionBox, startPoint: PixelPoint) {
   return pointGraphXAdvances(startPoint, getDetectionBoxCenter(soldier));
 }

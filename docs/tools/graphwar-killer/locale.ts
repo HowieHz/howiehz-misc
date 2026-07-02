@@ -335,6 +335,14 @@ export const graphwarKillerLocale = {
           label: "- 清图删除失败边",
           title: "当函数验证发现某条 DAG 边不可用时，将该边标记为不可用并准备重新运行最长路 DP。",
         },
+        "route-mask-cache-hit": {
+          label: "- 清图路线 mask 缓存命中",
+          title: "Worker 已复用当前障碍 mask 和路线容差对应的清图路线 mask。",
+        },
+        "route-mask-cache-miss": {
+          label: "- 清图路线 mask 缓存未命中",
+          title: "Worker 需要按当前障碍 mask 和路线容差重建清图路线 mask。",
+        },
         "route-map-pixels": {
           label: "- 清图路线映射像素",
           title: "把几何寻路返回的 Graphwar 平面格点转换成截图像素路径，并保留精确中心点首尾。",

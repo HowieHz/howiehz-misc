@@ -44,6 +44,8 @@ export type GraphwarOneClickClearDebugStage =
   | "dag-longest-path"
   | "optimize-path"
   | "remove-failed-edge"
+  | "route-mask-cache-hit"
+  | "route-mask-cache-miss"
   | "route-map-pixels"
   | "route-pathfinding"
   | "segment-build-formula"
@@ -174,8 +176,15 @@ export interface GraphwarOneClickClearOptions {
 /** Worker 边界只能传纯数据；回调在 worker 内部重新挂接。 */
 export type GraphwarOneClickClearSearchInput = Omit<
   GraphwarOneClickClearOptions,
-  "buildDagEdges" | "isCancelled" | "onDebugTiming" | "yieldControl"
->;
+  "buildDagEdges" | "isCancelled" | "onDebugTiming" | "routeMask" | "yieldControl"
+> & {
+  /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
+  routeObstacleMask: Uint8Array;
+  /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
+  routeMaskCacheId: number;
+  /** 当前 route tolerance，供 worker 派生可视图 route mask。 */
+  routeTolerancePlanePixels: number;
+};
 
 /** 一键清图失败分类，页面用它给出可解释状态。 */
 export type GraphwarOneClickClearFailureReason =

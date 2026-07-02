@@ -160,7 +160,7 @@ export const graphwarKillerLocale = {
         const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
         return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
       },
-      unsupported: "一键清图首版只支持双绝对值函数的 y= 和 y'= 模式",
+      unsupported: "一键清图目前只支持双绝对值函数的 y= 和 y'= 模式",
     },
   },
   ui: {

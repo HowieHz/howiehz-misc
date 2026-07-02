@@ -2623,6 +2623,18 @@ function getSmartPathfindingToggleTitle() {
     : locale.ui.pathfinding.smartPathfindingTitle;
 }
 
+/** 一键清图目前只支持双绝对值 y/y'，按钮状态和运行前校验共用同一条件。 */
+function isOneClickClearModeUnsupported() {
+  return isSmartPathfindingDisabled() || algorithmMode.value !== "abs" || equationMode.value === "ddy";
+}
+
+/** 返回一键清图按钮 title，不支持当前模式时直接解释禁用原因。 */
+function getOneClickClearButtonTitle() {
+  return isOneClickClearModeUnsupported()
+    ? locale.smartPathfinding.oneClickClear.unsupported
+    : locale.ui.pathfinding.oneClickClearTitle;
+}
+
 /** 切换友伤设置；该设置会改变士兵是否写入障碍 mask，因此需要重建路线。 */
 function toggleFriendlyFire() {
   if (smartPathfindingInProgress.value) {
@@ -2911,7 +2923,7 @@ async function runOneClickClear() {
         ok: false as const,
       };
     }
-    if (isSmartPathfindingDisabled() || algorithmMode.value !== "abs" || equationMode.value === "ddy") {
+    if (isOneClickClearModeUnsupported()) {
       return {
         kind: "warning" as const,
         message: locale.smartPathfinding.oneClickClear.unsupported,
@@ -5161,8 +5173,8 @@ async function copyText(text: string) {
             v-if="smartPathfindingEnabled"
             type="button"
             aria-pressed="false"
-            :disabled="smartPathfindingInProgress"
-            :title="locale.ui.pathfinding.oneClickClearTitle"
+            :disabled="smartPathfindingInProgress || isOneClickClearModeUnsupported()"
+            :title="getOneClickClearButtonTitle()"
             @click="void runOneClickClear()"
           >
             {{ locale.ui.pathfinding.autoGraph }}

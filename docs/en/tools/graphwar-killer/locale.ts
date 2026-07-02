@@ -200,7 +200,7 @@ export const graphwarKillerLocale = {
         const cacheText = resultCacheHit ? " (using result cache)" : "";
         return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} soldier(s) in ${elapsed}`;
       },
-      unsupported: "The first One-Click Clear version only supports double absolute-value y= and y'= modes",
+      unsupported: "One-Click Clear currently only supports double absolute-value y= and y'= modes",
     },
   },
   ui: {

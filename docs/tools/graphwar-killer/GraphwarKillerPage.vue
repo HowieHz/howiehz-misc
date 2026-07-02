@@ -1253,7 +1253,7 @@ const smartPathfindingHeaderStatusResult = computed(() =>
     smartPathfindingSettingsMessage: smartPathfindingSettingsMessage.value,
     smartPathfindingStatusMessage: smartPathfindingStatus.value,
     smartPathfindingStatusKind: smartPathfindingStatusKind.value,
-    enableHintMessage: locale.ui.pathfinding.smartPathfindingTitle,
+    enableHintMessage: "",
     hintMessage: locale.ui.pathfinding.smartPathfindingTitle,
   }),
 );

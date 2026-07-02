@@ -14,8 +14,8 @@ import type {
 } from "./trajectory-sampling";
 import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
 
-/** 路线规划默认使用单个 1px 几何 route tolerance，普通寻路和一键清图保持一致。 */
-export const GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS = 1;
+/** 路线规划默认使用单个 2px 几何 route tolerance，普通寻路和一键清图保持一致。 */
+export const GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS = 2;
 
 /** 一键清图可选择和验证的士兵目标。 */
 export interface GraphwarOneClickClearCandidate {

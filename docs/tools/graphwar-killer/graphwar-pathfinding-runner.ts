@@ -5,6 +5,8 @@ import type {
 } from "./graphwar-one-click-clear";
 import type { GraphwarPathfindingPreview } from "./graphwar-pathfinding";
 import type {
+  GraphwarOneClickClearPathWorkerInput,
+  GraphwarOneClickClearPathWorkerResult,
   GraphwarPathfindingRouteInput,
   GraphwarPathfindingRouteResult,
   GraphwarPathfindingWorkerRequest,
@@ -102,6 +104,22 @@ export function createGraphwarPathfindingRunner() {
       task: {
         input,
         type: "build-one-click-clear-dag-edges",
+      },
+    });
+  }
+
+  /** 在 master Worker 中执行完整一键清图搜索，避免主线程同步采样卡顿。 */
+  function buildOneClickClearPath(input: GraphwarOneClickClearPathWorkerInput) {
+    cancel();
+    const activeWorker = ensureWorker();
+    if (!activeWorker) {
+      return Promise.reject(new Error("Graphwar pathfinding worker is unavailable"));
+    }
+    return runWorkerTask<GraphwarOneClickClearPathWorkerResult>(activeWorker, {
+      id: nextRequestId,
+      task: {
+        input,
+        type: "build-one-click-clear-path",
       },
     });
   }
@@ -220,6 +238,7 @@ export function createGraphwarPathfindingRunner() {
 
   return {
     buildOneClickClearDagEdges,
+    buildOneClickClearPath,
     cancel,
     clearCache,
     close,
@@ -240,12 +259,21 @@ function cloneGraphwarPathfindingWorkerRequest(
       },
     };
   }
+  if (request.task.type === "build-one-click-clear-dag-edges") {
+    return {
+      id: request.id,
+      task: {
+        input: cloneGraphwarOneClickClearDagEdgeBuildRequest(request.task.input),
+        type: "build-one-click-clear-dag-edges",
+      },
+    };
+  }
 
   return {
     id: request.id,
     task: {
-      input: cloneGraphwarOneClickClearDagEdgeBuildRequest(request.task.input),
-      type: "build-one-click-clear-dag-edges",
+      input: cloneGraphwarOneClickClearPathWorkerInput(request.task.input),
+      type: "build-one-click-clear-path",
     },
   };
 }
@@ -281,6 +309,56 @@ function cloneGraphwarOneClickClearDagEdgeBuildRequest(
     routeMask: input.routeMask,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     workerCount: input.workerCount,
+  };
+}
+
+function cloneGraphwarOneClickClearPathWorkerInput(
+  input: GraphwarOneClickClearPathWorkerInput,
+): GraphwarOneClickClearPathWorkerInput {
+  return {
+    boundaryExpansion: input.boundaryExpansion,
+    bounds: cloneGraphBounds(input.bounds),
+    boundsRect: cloneBoundsRect(input.boundsRect),
+    candidates: input.candidates.map(cloneGraphwarOneClickClearCandidate),
+    dagEdgeWorkerCount: input.dagEdgeWorkerCount,
+    deleteCheckRadiusPixels: input.deleteCheckRadiusPixels,
+    hitCandidates: input.hitCandidates.map(cloneGraphwarOneClickClearCandidate),
+    pathPoints: input.pathPoints.map(clonePixelPoint),
+    ...(input.prefixTarget ? { prefixTarget: cloneGraphwarTrajectoryTargetCircle(input.prefixTarget) } : {}),
+    routeMask: {
+      mask: input.routeMask.mask,
+      routeTolerancePlanePixels: input.routeMask.routeTolerancePlanePixels,
+    },
+    settings: {
+      algorithm: input.settings.algorithm,
+      decimalPlaces: input.settings.decimalPlaces,
+      equation: input.settings.equation,
+      ...(input.settings.formulaPathSteepness === undefined
+        ? {}
+        : { formulaPathSteepness: input.settings.formulaPathSteepness }),
+      steepness: input.settings.steepness,
+      stepOverflowProtection: input.settings.stepOverflowProtection,
+    },
+    simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+    ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
+  };
+}
+
+function cloneGraphwarOneClickClearCandidate(candidate: GraphwarOneClickClearPathWorkerInput["candidates"][number]) {
+  return {
+    enemy: candidate.enemy,
+    hitCenter: clonePixelPoint(candidate.hitCenter),
+    hitRadius: candidate.hitRadius,
+    id: candidate.id,
+  };
+}
+
+function cloneGraphwarTrajectoryTargetCircle(
+  target: NonNullable<GraphwarOneClickClearPathWorkerInput["prefixTarget"]>,
+) {
+  return {
+    center: clonePixelPoint(target.center),
+    radius: target.radius,
   };
 }
 

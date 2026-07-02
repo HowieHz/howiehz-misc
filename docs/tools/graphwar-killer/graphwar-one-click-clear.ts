@@ -1,12 +1,17 @@
 /** 在当前 Graphwar 路径后追加中心点 DAG 清图路线。 */
 import { imageToGraphPoint } from "./geometry";
 import { graphXAdvancesStrictly } from "./numbers";
+import type { GraphwarTrajectorySamplingState } from "./simulator";
 import {
   createGraphwarTrajectoryFormulaContext,
   sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTargetSequence,
 } from "./trajectory-sampling";
-import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectoryTargetCircle } from "./trajectory-sampling";
+import type {
+  GraphwarTrajectoryFormulaSettings,
+  GraphwarTrajectorySampleResult,
+  GraphwarTrajectoryTargetCircle,
+} from "./trajectory-sampling";
 import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
 
 /** 路线规划默认使用单个 1px 几何 route tolerance，普通寻路和一键清图保持一致。 */
@@ -166,6 +171,12 @@ export interface GraphwarOneClickClearOptions {
   yieldControl?: () => Promise<void> | void;
 }
 
+/** Worker 边界只能传纯数据；回调在 worker 内部重新挂接。 */
+export type GraphwarOneClickClearSearchInput = Omit<
+  GraphwarOneClickClearOptions,
+  "buildDagEdges" | "isCancelled" | "onDebugTiming" | "yieldControl"
+>;
+
 /** 一键清图失败分类，页面用它给出可解释状态。 */
 export type GraphwarOneClickClearFailureReason =
   | "no-candidate"
@@ -259,6 +270,13 @@ interface OneClickClearRouteValidationResult {
 
 interface OneClickClearSearchContext {
   options: GraphwarOneClickClearOptions;
+}
+
+interface OneClickClearRouteSegmentValidationState {
+  /** 已经由上一个增量采样段确认命中的目标数。 */
+  initialReachedTargetCount: number;
+  /** 上一个增量采样段结束时可恢复的物理状态。 */
+  initialState?: GraphwarTrajectorySamplingState;
 }
 
 const START_NODE_INDEX = -1;
@@ -658,6 +676,7 @@ function validateOneClickClearDagRoute(
   edges: readonly OneClickClearDagEdge[],
 ): OneClickClearRouteValidationResult {
   let pathPoints = [...context.options.pathPoints];
+  let segmentState: OneClickClearRouteSegmentValidationState = { initialReachedTargetCount: 0 };
   const targetSequence: OneClickClearTarget[] = [];
   let validationCount = 0;
 
@@ -670,11 +689,16 @@ function validateOneClickClearDagRoute(
     const nextPath = appendOneClickClearEdgeRoute(pathPoints, edge.route);
     const nextTargetSequence = [...targetSequence, target];
     validationCount += 1;
-    if (!validateOneClickClearRouteSegment(context, nextPath, nextTargetSequence)) {
+    const validation = validateOneClickClearRouteSegment(context, nextPath, nextTargetSequence, segmentState);
+    if (!validation) {
       return { failedEdge: edge, validationCount };
     }
 
     pathPoints = nextPath;
+    segmentState = {
+      initialReachedTargetCount: validation.reachedTargetCount,
+      ...(validation.sample.endState ? { initialState: validation.sample.endState } : {}),
+    };
     targetSequence.push(target);
   }
 
@@ -692,12 +716,13 @@ function appendOneClickClearEdgeRoute(sourcePath: readonly PixelPoint[], route: 
   return [...sourcePath, ...route.slice(1)];
 }
 
-/** 用当前完整路径重采样已接受目标序列，避免复用旧公式状态导致逐段验证和最终验证不一致。 */
+/** 只续采样新增段；最终整路验证仍会重采样一次，防止增量状态掩盖全局变化。 */
 function validateOneClickClearRouteSegment(
   context: OneClickClearSearchContext,
   nextPath: readonly PixelPoint[],
   targetSequence: readonly OneClickClearTarget[],
-) {
+  state: OneClickClearRouteSegmentValidationState,
+): GraphwarTrajectorySampleResult | undefined {
   const options = context.options;
   const followsGraphRule = measureOneClickClearDebugTiming(options, "segment-graph-rule", () =>
     oneClickClearPathFollowsGraphRule(options, nextPath),
@@ -728,10 +753,13 @@ function validateOneClickClearRouteSegment(
         mask: options.simulationMask,
       },
       context: formulaContext,
+      initialReachedTargetCount: state.initialReachedTargetCount,
+      initialState: state.initialState,
+      skipInitialStop: state.initialState !== undefined,
       targetSequence: targetSequence.map((target) => target.centerTarget),
     }),
   );
-  return result.reachedTargetCount >= targetSequence.length;
+  return result.reachedTargetCount >= targetSequence.length ? result : undefined;
 }
 
 /** 最终整路验证按显式目标命中圈序列重采样，作为增量验证后的安全网。 */

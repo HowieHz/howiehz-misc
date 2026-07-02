@@ -606,7 +606,7 @@ export const graphwarKillerLocale = {
         "Obstacle tolerance used during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
       autoGraph: "One-Click Clear",
       smartPathfinding: "Smart Pathfinding",
-      smartPathfindingTitle: "After you pick a target soldier, automatically find a route around detected obstacles.",
+      smartPathfindingTitle: "After you pick a target point, automatically find a route around detected obstacles.",
       title: "Pathfinding",
       unit: "px",
     },

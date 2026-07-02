@@ -517,7 +517,7 @@ export const graphwarKillerLocale = {
         "函数模拟和碰撞检查时使用的障碍容差；不影响寻路怎么选路。单位是 Graphwar 原始 770x450 平面像素。",
       autoGraph: "一键清图",
       smartPathfinding: "智能寻路",
-      smartPathfindingTitle: "点选目标士兵后自动寻找绕开识别障碍的路径。",
+      smartPathfindingTitle: "点选目标点后自动寻找绕开识别障碍的路径。",
       title: "寻路",
       unit: "px",
     },

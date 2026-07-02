@@ -361,10 +361,18 @@ export async function buildGraphwarOneClickClearPath(
       workUnits = optimized.workUnits;
 
       const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
-        validateOneClickClearTargetSequence(options, optimized.route),
+        sampleOneClickClearTargetSequence(options, optimized.route),
       );
-      if (!finalValidation) {
-        return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+      if (!finalValidation.reachesTargetSequenceBeforeObstacle) {
+        // 整路公式会受后续控制点影响；复验失败时删掉第一个未命中目标对应的边，再让 DAG 回退搜索。
+        const failedEdge = selectedEdges[finalValidation.reachedTargetCount] ?? selectedEdges.at(-1);
+        if (!failedEdge) {
+          return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+        }
+        measureOneClickClearDebugTiming(options, "remove-failed-edge", () => {
+          failedEdge.active = false;
+        });
+        continue;
       }
       const hitTargets = collectOneClickClearHitTargets(options, optimized.route.pathPoints);
 
@@ -776,6 +784,14 @@ function validateOneClickClearTargetSequence(
   options: GraphwarOneClickClearOptions,
   route: Pick<OneClickClearValidatedRoute, "pathPoints" | "targetSequence">,
 ) {
+  return sampleOneClickClearTargetSequence(options, route).reachesTargetSequenceBeforeObstacle;
+}
+
+/** 返回整条弹道复验结果；失败时 reachedTargetCount 可定位第一个未命中的 DAG 边。 */
+function sampleOneClickClearTargetSequence(
+  options: GraphwarOneClickClearOptions,
+  route: Pick<OneClickClearValidatedRoute, "pathPoints" | "targetSequence">,
+) {
   const result = sampleGraphwarPathTargetSequence({
     boundaryExpansion: options.simulationBoundaryExpansion,
     bounds: options.bounds,
@@ -787,7 +803,7 @@ function validateOneClickClearTargetSequence(
     targetCircles: route.targetSequence.map((target) => target.centerTarget),
     targetPoints: route.targetSequence.map((target) => target.hitCenter),
   });
-  return result.reachesTargetSequenceBeforeObstacle;
+  return result;
 }
 
 /** 最终统计当前完整弹道实际命中的候选士兵，包含非 DAG 节点的顺路命中。 */

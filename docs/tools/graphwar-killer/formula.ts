@@ -127,7 +127,7 @@ export function buildFormula(
   const signEpsilon = options.signEpsilon ?? GRAPHWAR_TOOL_SIGN_EPSILON;
   const stepOverflowProtection = options.stepOverflowProtection ?? true;
   const stepOverflowProtectionRange = options.stepOverflowProtectionRange;
-  const start = points[0];
+  const startY = points[0]?.y ?? 0;
   const terms = createStepTerms(points);
   const expression =
     algorithm === "abs"
@@ -174,7 +174,7 @@ export function buildFormula(
       : isCubicInterpolationAlgorithm(algorithm)
         ? formatSoftCubicInterpolationExpression(points, algorithm, "y", decimalPlaces)
         : formatStepExpression(
-            start.y,
+            startY,
             terms,
             steepness,
             decimalPlaces,

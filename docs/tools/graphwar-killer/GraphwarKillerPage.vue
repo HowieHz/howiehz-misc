@@ -692,7 +692,6 @@ const graphwarTrajectoryFormulaContext = computed(() => {
   if (!boundsResult.ok) {
     return undefined;
   }
-
   return createGraphwarTrajectoryFormulaContext({
     bounds: boundsResult.bounds,
     points: mappedPathPoints.value,

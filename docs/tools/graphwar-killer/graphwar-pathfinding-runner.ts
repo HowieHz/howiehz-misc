@@ -11,6 +11,7 @@ import type {
   GraphwarPathfindingWorkerResponse,
   GraphwarPathfindingWorkerSuccessResponse,
 } from "./graphwar-pathfinding-worker-types";
+import { createPixelPoint } from "./types";
 
 /** 几何寻路任务被用户取消或新任务替代。 */
 export class GraphwarPathfindingCancelledError extends Error {
@@ -120,7 +121,7 @@ export function createGraphwarPathfindingRunner() {
         resolve: resolve as PendingPathfindingWorkerTask["resolve"],
       };
       try {
-        activeWorker.postMessage(request);
+        activeWorker.postMessage(cloneGraphwarPathfindingWorkerRequest(request));
       } catch (error) {
         pendingTask = undefined;
         reject(error);
@@ -224,4 +225,83 @@ export function createGraphwarPathfindingRunner() {
     close,
     findRoute,
   };
+}
+
+/** PostMessage 不能克隆 Vue reactive proxy；runner 边界统一复制成纯数据。 */
+function cloneGraphwarPathfindingWorkerRequest(
+  request: GraphwarPathfindingWorkerRequest,
+): GraphwarPathfindingWorkerRequest {
+  if (request.task.type === "find-route") {
+    return {
+      id: request.id,
+      task: {
+        input: cloneGraphwarPathfindingRouteInput(request.task.input),
+        type: "find-route",
+      },
+    };
+  }
+
+  return {
+    id: request.id,
+    task: {
+      input: cloneGraphwarOneClickClearDagEdgeBuildRequest(request.task.input),
+      type: "build-one-click-clear-dag-edges",
+    },
+  };
+}
+
+function cloneGraphwarPathfindingRouteInput(input: GraphwarPathfindingRouteInput): GraphwarPathfindingRouteInput {
+  return {
+    boundaryExpansion: input.boundaryExpansion,
+    bounds: cloneGraphBounds(input.bounds),
+    boundsRect: cloneBoundsRect(input.boundsRect),
+    previewEnabled: input.previewEnabled,
+    routeMask: input.routeMask,
+    routeMaskCacheId: input.routeMaskCacheId,
+    routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    startPoint: clonePixelPoint(input.startPoint),
+    targetPoint: clonePixelPoint(input.targetPoint),
+  };
+}
+
+function cloneGraphwarOneClickClearDagEdgeBuildRequest(
+  input: GraphwarOneClickClearDagEdgeBuildRequest,
+): GraphwarOneClickClearDagEdgeBuildRequest {
+  return {
+    boundaryExpansion: input.boundaryExpansion,
+    bounds: cloneGraphBounds(input.bounds),
+    boundsRect: cloneBoundsRect(input.boundsRect),
+    jobs: input.jobs.map((job) => ({
+      ...(job.from === undefined ? {} : { from: job.from }),
+      id: job.id,
+      startPoint: clonePixelPoint(job.startPoint),
+      targetPoint: clonePixelPoint(job.targetPoint),
+      to: job.to,
+    })),
+    routeMask: input.routeMask,
+    routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    workerCount: input.workerCount,
+  };
+}
+
+function cloneGraphBounds(bounds: GraphwarPathfindingRouteInput["bounds"]) {
+  return {
+    maxX: bounds.maxX,
+    maxY: bounds.maxY,
+    minX: bounds.minX,
+    minY: bounds.minY,
+  };
+}
+
+function cloneBoundsRect(boundsRect: GraphwarPathfindingRouteInput["boundsRect"]) {
+  return {
+    height: boundsRect.height,
+    width: boundsRect.width,
+    x: boundsRect.x,
+    y: boundsRect.y,
+  };
+}
+
+function clonePixelPoint(point: GraphwarPathfindingRouteInput["startPoint"]) {
+  return createPixelPoint(point.x, point.y);
 }

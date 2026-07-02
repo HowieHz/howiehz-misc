@@ -328,7 +328,7 @@ function createNormalFunctionStepper(options: SampleGraphwarTrajectoryOptions) {
   }
 
   return createBisectionTrajectoryStepper(
-    createInitialStepperPoint(options.initialState, launchPoint),
+    launchPoint,
     options.bounds,
     (previous, step) => {
       const x = previous.x + step;
@@ -347,7 +347,7 @@ function createFirstOrderEquationStepper(options: SampleGraphwarTrajectoryOption
   }
 
   return createBisectionTrajectoryStepper(
-    createInitialStepperPoint(options.initialState, launchPoint),
+    launchPoint,
     options.bounds,
     (previous, step) => rk4FirstOrderStep(previous, step, evaluateDY),
     { initialState: options.initialState, stopAtMinStep: false },
@@ -369,7 +369,7 @@ function createSecondOrderEquationStepper(options: SampleGraphwarTrajectoryOptio
   }
 
   return createBisectionTrajectoryStepper(
-    createInitialSecondOrderStepperPoint(options.initialState, launchState),
+    launchState,
     options.bounds,
     (previous, step) => rk4SecondOrderStep(previous, step, evaluateDDY),
     { initialState: options.initialState, stopAtMinStep: false },
@@ -603,9 +603,10 @@ function createBisectionTrajectoryStepper<TPoint extends GraphPoint>(
   calculateNext: (previous: TPoint, step: number) => TPoint,
   options: { initialState?: GraphwarTrajectorySamplingState; stopAtMinStep: boolean },
 ) {
-  let previous = start;
+  const initialPoint = createInitialBisectionPoint(start, options.initialState);
+  let previous = initialPoint;
   let state = createTrajectorySamplingState(
-    start,
+    initialPoint,
     options.initialState?.previousPoint,
     options.initialState?.sampleIndex ?? 0,
   );
@@ -642,23 +643,22 @@ function createBisectionTrajectoryStepper<TPoint extends GraphPoint>(
   return { ok: true as const, stepper };
 }
 
-/** 优先使用缓存前缀；没有前缀时从当前模式计算出的发射点开始。 */
-function createInitialStepperPoint(initialState: GraphwarTrajectorySamplingState | undefined, launchState: GraphPoint) {
-  if (!initialState) {
-    return launchState;
-  }
-  return createGraphPoint(initialState.currentPoint.x, initialState.currentPoint.y);
-}
-
-/** 二阶积分恢复时必须同时恢复 y'。 */
-function createInitialSecondOrderStepperPoint(
+/** 优先使用缓存前缀的当前物理点，避免只恢复 sampleIndex 而从发射点重新推进。 */
+function createInitialBisectionPoint<TPoint extends GraphPoint>(
+  start: TPoint,
   initialState: GraphwarTrajectorySamplingState | undefined,
-  launchState: SecondOrderState,
-) {
+): TPoint {
   if (!initialState) {
-    return launchState;
+    return start;
   }
-  return createSecondOrderState(initialState.currentPoint.x, initialState.currentPoint.y, initialState.dy ?? 0);
+  if (isSecondOrderState(start)) {
+    return createSecondOrderState(
+      initialState.currentPoint.x,
+      initialState.currentPoint.y,
+      initialState.dy ?? 0,
+    ) as unknown as TPoint;
+  }
+  return createGraphPoint(initialState.currentPoint.x, initialState.currentPoint.y) as TPoint;
 }
 
 /** 把内部点状态复制成可安全缓存的 Graphwar 采样状态。 */

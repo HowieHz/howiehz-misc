@@ -3,6 +3,9 @@ import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildResult,
+  GraphwarOneClickClearDebugTiming,
+  GraphwarOneClickClearResult,
+  GraphwarOneClickClearSearchInput,
 } from "./graphwar-one-click-clear";
 import type { GraphwarPathfindingPreview, PlaneGridPoint } from "./graphwar-pathfinding";
 import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
@@ -44,6 +47,17 @@ export interface GraphwarPathfindingRouteResult {
 /** 一键清图 DAG 建边请求。 */
 export type GraphwarOneClickClearDagEdgesWorkerInput = GraphwarOneClickClearDagEdgeBuildRequest;
 
+/** 一键清图完整搜索请求；回调在 master worker 内部补齐。 */
+export type GraphwarOneClickClearPathWorkerInput = GraphwarOneClickClearSearchInput;
+
+/** 一键清图完整搜索结果，携带 worker 内部聚合的调试耗时。 */
+export interface GraphwarOneClickClearPathWorkerResult {
+  /** 一键清图搜索成功或失败结果。 */
+  result: GraphwarOneClickClearResult;
+  /** Worker 内部收集到的细分耗时。 */
+  timings: GraphwarOneClickClearDebugTiming[];
+}
+
 /** Pathfinding master Worker 可执行的任务。 */
 export type GraphwarPathfindingWorkerTask =
   | {
@@ -53,6 +67,10 @@ export type GraphwarPathfindingWorkerTask =
   | {
       input: GraphwarOneClickClearDagEdgesWorkerInput;
       type: "build-one-click-clear-dag-edges";
+    }
+  | {
+      input: GraphwarOneClickClearPathWorkerInput;
+      type: "build-one-click-clear-path";
     };
 
 /** 主线程发给 pathfinding master Worker 的请求。 */
@@ -75,6 +93,12 @@ export type GraphwarPathfindingWorkerSuccessResponse =
       id: number;
       result: GraphwarOneClickClearDagEdgeBuildResult;
       taskType: "build-one-click-clear-dag-edges";
+      type: "success";
+    }
+  | {
+      id: number;
+      result: GraphwarOneClickClearPathWorkerResult;
+      taskType: "build-one-click-clear-path";
       type: "success";
     };
 

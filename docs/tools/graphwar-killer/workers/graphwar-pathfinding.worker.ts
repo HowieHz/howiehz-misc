@@ -5,6 +5,7 @@ import type {
   GraphwarOneClickClearDebugTiming,
 } from "../graphwar-one-click-clear";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
+import { buildGraphwarOneClickClearPath } from "../graphwar-one-click-clear";
 import {
   buildSmartPathfindingPathForMask,
   createGraphwarVisibilityGraphObstacleData,
@@ -16,6 +17,8 @@ import type {
   GraphwarOneClickClearEdgeWorkerRequest,
   GraphwarOneClickClearEdgeWorkerResponse,
   GraphwarOneClickClearEdgeWorkerJobResult,
+  GraphwarOneClickClearPathWorkerInput,
+  GraphwarOneClickClearPathWorkerResult,
   GraphwarPathfindingRouteInput,
   GraphwarPathfindingRouteResult,
   GraphwarPathfindingWorkerRequest,
@@ -84,11 +87,22 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
       return;
     }
 
-    const result = await buildOneClickClearDagEdges(request.task.input);
+    if (request.task.type === "build-one-click-clear-dag-edges") {
+      const result = await buildOneClickClearDagEdges(request.task.input);
+      postResponse({
+        id: request.id,
+        result,
+        taskType: "build-one-click-clear-dag-edges",
+        type: "success",
+      });
+      return;
+    }
+
+    const result = await buildOneClickClearPath(request.task.input);
     postResponse({
       id: request.id,
       result,
-      taskType: "build-one-click-clear-dag-edges",
+      taskType: "build-one-click-clear-path",
       type: "success",
     });
   } catch (error) {
@@ -174,6 +188,19 @@ function createMasterVisibilityGraphCacheKey(input: GraphwarPathfindingRouteInpu
     input.bounds.maxX > input.bounds.minX ? "x-right" : "x-left",
     input.routeTolerancePlanePixels,
   ].join("|");
+}
+
+async function buildOneClickClearPath(
+  input: GraphwarOneClickClearPathWorkerInput,
+): Promise<GraphwarOneClickClearPathWorkerResult> {
+  const timings: GraphwarOneClickClearDebugTiming[] = [];
+  const result = await buildGraphwarOneClickClearPath({
+    ...input,
+    buildDagEdges: (request) => buildOneClickClearDagEdges(request),
+    isCancelled: () => false,
+    onDebugTiming: (timing) => timings.push(timing),
+  });
+  return { result, timings };
 }
 
 async function buildOneClickClearDagEdges(

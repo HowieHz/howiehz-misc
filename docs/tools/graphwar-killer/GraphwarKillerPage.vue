@@ -41,9 +41,7 @@ import type {
 } from "./graphwar-detection-runner";
 import {
   GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS,
-  buildGraphwarOneClickClearPath,
   type GraphwarOneClickClearCandidate,
-  type GraphwarOneClickClearDagEdgeBuildRequest,
   type GraphwarOneClickClearDebugDetail,
   type GraphwarOneClickClearDebugStage,
   type GraphwarOneClickClearDebugTiming,
@@ -2880,33 +2878,32 @@ async function runOneClickClear() {
       mask: routeMaskEntry.mask,
       routeTolerancePlanePixels: routeTolerance,
     };
-    const result = await measureSmartPathfindingDebugStageAsync(timings, "one-click-clear-search", () =>
-      buildGraphwarOneClickClearPath({
+    const search = await measureSmartPathfindingDebugStageAsync(timings, "one-click-clear-search", () =>
+      graphwarPathfindingRunner.buildOneClickClearPath({
         boundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
         bounds: preflightResult.bounds,
         boundsRect: boundsRect.value,
-        buildDagEdges: (request: GraphwarOneClickClearDagEdgeBuildRequest) =>
-          graphwarPathfindingRunner.buildOneClickClearDagEdges(request),
         candidates,
         dagEdgeWorkerCount: pathfindingWorkerCount.value,
         deleteCheckRadiusPixels: preflightResult.tolerances.oneClickClearDeleteCheckRadiusPixels,
         hitCandidates,
-        isCancelled: () => pathfindingToken !== smartPathfindingCancelToken,
-        onDebugTiming: (timing) => addOneClickClearSearchDebugTiming(oneClickClearSearchDetailTimings, timing),
         pathPoints: [...pathPixels.value],
         prefixTarget: preflightResult.prefixTarget,
         routeMask,
         settings: createPathTrajectoryFormulaSettings(),
         simulationBoundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
         simulationMask: simulationObstacleMask.value,
-        yieldControl: waitForNextPathfindingSlice,
       }),
     );
+    for (const timing of search.timings) {
+      addOneClickClearSearchDebugTiming(oneClickClearSearchDetailTimings, timing);
+    }
     timings.push(...oneClickClearSearchDetailTimings);
     if (pathfindingToken !== smartPathfindingCancelToken) {
       return false;
     }
 
+    const result = search.result;
     smartPathfindingInProgress.value = false;
     clearSmartPathfindingPreview();
     if (result.type === "success") {
@@ -2934,6 +2931,21 @@ async function runOneClickClear() {
     measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
       completedAt = nowMs();
       setSmartPathfindingStatus(getOneClickClearFailureMessage(result.reason, result.elapsedMs), "error");
+      completedAt = nowMs();
+    });
+    finishOneClickClearDebugTimings(completedAt);
+    return false;
+  } catch (error) {
+    if (pathfindingToken !== smartPathfindingCancelToken || isGraphwarPathfindingCancelledError(error)) {
+      return false;
+    }
+    let completedAt = nowMs();
+    measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
+      completedAt = nowMs();
+      setSmartPathfindingStatus(
+        getOneClickClearFailureMessage("pathfinding-worker-failed", completedAt - startedAt),
+        "error",
+      );
       completedAt = nowMs();
     });
     finishOneClickClearDebugTimings(completedAt);

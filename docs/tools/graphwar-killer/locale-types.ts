@@ -206,14 +206,14 @@ export interface GraphwarKillerLocale {
       trajectory: string;
       stopSuffix: string;
     };
-    success: (elapsed?: string) => string;
+    success: (elapsed?: string, resultCacheHit?: boolean) => string;
     oneClickClear: {
       inProgress: string;
       needCurrentPath: string;
       noCandidate: string;
       noUsableTarget: (elapsed: string) => string;
       pathfindingWorkerFailed: (elapsed: string) => string;
-      success: (killCount: number, elapsed: string) => string;
+      success: (killCount: number, elapsed: string, resultCacheHit?: boolean) => string;
       unsupported: string;
     };
   };
@@ -294,6 +294,8 @@ export interface GraphwarKillerLocale {
       debugStages: Record<
         | "preflight"
         | "collect-targets"
+        | "result-cache-hit"
+        | "result-cache-miss"
         | "route-mask-cache-hit"
         | "route-mask-cache-miss"
         | "search-route"
@@ -305,6 +307,8 @@ export interface GraphwarKillerLocale {
         | "apply-result"
         | "one-click-clear-preflight"
         | "one-click-clear-collect-targets"
+        | "one-click-clear-result-cache-hit"
+        | "one-click-clear-result-cache-miss"
         | "one-click-clear-route-mask-cache-hit"
         | "one-click-clear-route-mask-cache-miss"
         | "one-click-clear-search"

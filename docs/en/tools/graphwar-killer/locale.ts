@@ -183,8 +183,12 @@ export const graphwarKillerLocale = {
       stopSuffix: ", right-click the screenshot to stop",
       trajectory: "Validate function trajectory",
     },
-    success: (elapsed) =>
-      elapsed === undefined ? "Smart Pathfinding completed" : `Smart Pathfinding completed in ${elapsed}`,
+    success: (elapsed, resultCacheHit) => {
+      const cacheText = resultCacheHit ? " (using result cache)" : "";
+      return elapsed === undefined
+        ? `Smart Pathfinding completed${cacheText}`
+        : `Smart Pathfinding completed${cacheText} in ${elapsed}`;
+    },
     oneClickClear: {
       inProgress: "Running One-Click Clear; right-click the screenshot to stop",
       needCurrentPath: "One-Click Clear needs an existing path start first",
@@ -192,8 +196,10 @@ export const graphwarKillerLocale = {
       noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found in ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) =>
         `One-Click Clear failed: the pathfinding Worker is unavailable or failed in ${elapsed}`,
-      success: (killCount, elapsed) =>
-        `One-Click Clear completed, the full trajectory killed ${killCount} soldier(s) in ${elapsed}`,
+      success: (killCount, elapsed, resultCacheHit) => {
+        const cacheText = resultCacheHit ? " (using result cache)" : "";
+        return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} soldier(s) in ${elapsed}`;
+      },
       unsupported: "The first One-Click Clear version only supports double absolute-value y= and y'= modes",
     },
   },
@@ -464,6 +470,16 @@ export const graphwarKillerLocale = {
           title:
             "When a soldier is clicked, enumerate x+ aim points inside its hit circle using a 1 raw-plane-pixel scan step.",
         },
+        "result-cache-hit": {
+          label: "Result cache hit",
+          title:
+            "The current path, target, obstacle mask, tolerances, and formula settings match a cached Smart Pathfinding result, so the full result is reused.",
+        },
+        "result-cache-miss": {
+          label: "Result cache miss",
+          title:
+            "No full Smart Pathfinding result can be reused for the current input, so the pathfinding Worker must search and validate again.",
+        },
         "route-mask-cache-hit": {
           label: "Route mask cache hit",
           title: "The dilated or eroded route mask already exists for the current obstacle mask and route tolerance.",
@@ -501,6 +517,16 @@ export const graphwarKillerLocale = {
           label: "Collect clear targets",
           title:
             "Filter selectable soldier-center candidates for One-Click Clear using the current friendly-fire setting and strict x+ rule.",
+        },
+        "one-click-clear-result-cache-hit": {
+          label: "Clear result cache hit",
+          title:
+            "The current path, candidate targets, obstacle mask, tolerances, and formula settings match a cached One-Click Clear result, so the full result is reused.",
+        },
+        "one-click-clear-result-cache-miss": {
+          label: "Clear result cache miss",
+          title:
+            "No full One-Click Clear result can be reused for the current input, so the pathfinding Worker must search and validate again.",
         },
         "one-click-clear-preflight": {
           label: "Preflight clear run",

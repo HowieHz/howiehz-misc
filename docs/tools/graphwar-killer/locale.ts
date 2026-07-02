@@ -146,14 +146,20 @@ export const graphwarKillerLocale = {
       stopSuffix: "，在截图中右键停止",
       trajectory: "验证函数轨迹",
     },
-    success: (elapsed) => (elapsed === undefined ? "智能寻路完成" : `智能寻路完成，耗时 ${elapsed}`),
+    success: (elapsed, resultCacheHit) => {
+      const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
+      return elapsed === undefined ? `智能寻路完成${cacheText}` : `智能寻路完成${cacheText}，耗时 ${elapsed}`;
+    },
     oneClickClear: {
       inProgress: "正在一键清图，在截图中右键停止",
       needCurrentPath: "一键清图需要先选择当前路径起点",
       noCandidate: "一键清图失败：当前路径右侧没有可选目标",
       noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) => `一键清图失败：寻路 Worker 不可用或运行失败，耗时 ${elapsed}`,
-      success: (killCount, elapsed) => `一键清图完成，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`,
+      success: (killCount, elapsed, resultCacheHit) => {
+        const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
+        return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
+      },
       unsupported: "一键清图首版只支持双绝对值函数的 y= 和 y'= 模式",
     },
   },
@@ -397,6 +403,14 @@ export const graphwarKillerLocale = {
           label: "生成候选目标",
           title: "点击士兵时，在命中圈内用 1 个原始平面像素作为扫描步长枚举可尝试的 x+ 瞄准点。",
         },
+        "result-cache-hit": {
+          label: "结果缓存命中",
+          title: "当前路径、目标、障碍 mask、容差和公式设置与已缓存的普通寻路结果一致，直接复用完整结果。",
+        },
+        "result-cache-miss": {
+          label: "结果缓存未命中",
+          title: "当前普通寻路输入没有可复用的完整结果，需要交给寻路 Worker 重新搜索和验证。",
+        },
         "route-mask-cache-hit": {
           label: "路线 mask 缓存命中",
           title: "当前障碍 mask 和路线容差已有膨胀/腐蚀后的路线 mask，可直接复用。",
@@ -428,6 +442,14 @@ export const graphwarKillerLocale = {
         "one-click-clear-collect-targets": {
           label: "清图收集目标",
           title: "按当前友伤设置和严格 x+ 规则筛选一键清图可尝试的士兵中心点候选。",
+        },
+        "one-click-clear-result-cache-hit": {
+          label: "清图结果缓存命中",
+          title: "当前路径、候选目标、障碍 mask、容差和公式设置与已缓存的一键清图结果一致，直接复用完整结果。",
+        },
+        "one-click-clear-result-cache-miss": {
+          label: "清图结果缓存未命中",
+          title: "当前一键清图输入没有可复用的完整结果，需要交给寻路 Worker 重新搜索和验证。",
         },
         "one-click-clear-preflight": {
           label: "清图预检查",

@@ -4896,6 +4896,7 @@ async function copyText(text: string) {
           </h2>
           <span
             v-if="pathfindingHeaderStatus"
+            class="graphwar-killer__pathfinding-header-status"
             :title="pathfindingHeaderStatusTitle"
             :class="{
               'graphwar-killer__label-status--error': pathfindingHeaderStatusIsError,
@@ -5151,6 +5152,7 @@ async function copyText(text: string) {
         <span
           v-if="pathStatus"
           class="graphwar-killer__path-status-text graphwar-killer__label-status--warning"
+          :title="pathStatus"
         >
           {{ pathStatus }}
         </span>
@@ -6059,10 +6061,17 @@ async function copyText(text: string) {
   font-weight: 700;
 }
 
+.graphwar-killer__pathfinding-header-status {
+  max-width: min(100%, 24rem);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .graphwar-killer__label-row--image-status {
   align-items: baseline;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  display: flex;
 }
 
 .graphwar-killer__label-row--image-status > span {
@@ -6070,11 +6079,17 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer__image-status-text {
+  flex: 1 1 auto;
   text-align: left !important;
 }
 
 .graphwar-killer__path-status-text {
+  flex: 0 1 auto;
+  max-width: min(100%, 44rem);
+  overflow: hidden;
   text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .graphwar-killer__label-row--result {

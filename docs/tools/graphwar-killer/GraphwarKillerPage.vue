@@ -62,12 +62,14 @@ import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
   clampNumber,
+  doublePrecisionTolerance,
   formatAngleDegree,
   formatDecimal,
   formatDoublePrecisionDecimal,
   formatSvgNumber,
   graphXAdvancesStrictly,
   nearlyEqual,
+  nextDownDouble,
   nextUpDouble,
   parseFiniteNumber,
 } from "./numbers";
@@ -3097,7 +3099,16 @@ function createOneClickClearPrefixTarget() {
   return "center" in target ? { center: target.center, radius: target.radius } : { center: target, radius: 1 };
 }
 
-/** 把当前识别士兵折叠成清图搜索候选；友伤关闭时友方不作为候选。 */
+/**
+ * 把当前识别士兵折叠成清图搜索候选；友伤关闭时友方不作为候选。
+ *
+ * 已知改进点：这里仍按命中圆中心做 x+（严格向右推进）过滤。
+ *
+ * 后续对齐普通点士兵的边缘可达规则时，需要保留两套语义：
+ *
+ * - `routePoint`（几何寻路目标点）。
+ * - `hitCenter`（命中圆中心）/命中圆：弹道验证目标。
+ */
 function createOneClickClearCandidates(): GraphwarOneClickClearCandidate[] {
   const startPoint = pathPixels.value.at(-1);
   if (!startPoint) {
@@ -3151,7 +3162,7 @@ function createOneClickClearHitCandidates(): GraphwarOneClickClearCandidate[] {
   });
 }
 
-/** 一键清图候选只用截图平面精度；输出保留小数位只影响最终公式文本。 */
+/** 一键清图候选当前只检查命中圆中心是否 x+（严格向右推进）；边缘可达目标见 `createOneClickClearCandidates`（折叠当前识别士兵为一键清图候选）的已知改进点。 */
 function oneClickClearSoldierReachesForward(soldier: DetectionBox, startPoint: PixelPoint) {
   return pointGraphXAdvances(startPoint, getDetectionBoxCenter(soldier));
 }
@@ -3937,26 +3948,22 @@ function createMinimumForwardPointAtGraphY(startPoint: PixelPoint, graphY: numbe
     return undefined;
   }
 
-  let graphX = getMinimumForwardGraphX(startPoint);
-  if (graphX === undefined) {
+  const bounds = parsedBounds.value.bounds;
+  const minimumGraphX = getMinimumForwardGraphX(startPoint);
+  if (minimumGraphX === undefined) {
     return undefined;
   }
 
-  // PixelPoint 存的是截图坐标，极小 Graphwar x 变化可能在往返映射时被舍入掉；
-  // 向后试少量 ULP，直到映射回 Graphwar 后确实严格 x+。
-  for (let attempt = 0; attempt < 16; attempt += 1) {
-    const point = graphToImagePoint(createGraphPoint(graphX, graphY), parsedBounds.value.bounds, boundsRect.value);
-    if (pointGraphXAdvances(startPoint, point)) {
-      return point;
-    }
+  const minimumGraphPoint = graphToImagePoint(createGraphPoint(minimumGraphX, graphY), bounds, boundsRect.value);
+  const pixelRoundTripPadding = doublePrecisionTolerance(startPoint.x, minimumGraphPoint.x) * 2;
+  const xPlusIsRight = xPlusGoesRight(bounds);
+  const pixelX = xPlusIsRight
+    ? nextUpDouble(Math.max(minimumGraphPoint.x, startPoint.x) + pixelRoundTripPadding)
+    : nextDownDouble(Math.min(minimumGraphPoint.x, startPoint.x) - pixelRoundTripPadding);
+  const point = createPixelPoint(pixelX, minimumGraphPoint.y);
 
-    const nextGraphX = nextUpDouble(graphX);
-    if (nextGraphX === graphX) {
-      break;
-    }
-    graphX = nextGraphX;
-  }
-  return undefined;
+  // PixelPoint 是截图坐标；给理论最小点补一个 round-trip padding，避免 Graph ULP 往返丢失。
+  return pointGraphXAdvances(startPoint, point) ? point : undefined;
 }
 
 /** 按指定起点把 x 不够的目标改为同 y 的最小 double x+ 点；无剩余空间时返回 undefined。 */

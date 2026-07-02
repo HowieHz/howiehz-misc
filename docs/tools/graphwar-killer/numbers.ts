@@ -44,6 +44,11 @@ export function nextUpDouble(value: number) {
   return nextDoubleView.getFloat64(0);
 }
 
+/** 返回小于 value 的最大 JavaScript/Java double；用于像素坐标反向对应 Graphwar x+。 */
+export function nextDownDouble(value: number) {
+  return -nextUpDouble(-value);
+}
+
 /** 判断 Graphwar x 是否至少前进到下一个可表示 double，而不是强制像素级间距。 */
 export function graphXAdvancesStrictly(fromX: number, toX: number) {
   return Number.isFinite(fromX) && Number.isFinite(toX) && toX >= nextUpDouble(fromX);

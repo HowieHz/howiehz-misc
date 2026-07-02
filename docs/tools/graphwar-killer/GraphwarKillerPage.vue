@@ -971,7 +971,7 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
 
   return visibleSoldiers.filter((box) => Boolean(createSearchStartSoldierAimPoint(lastPoint, box)));
 });
-const pathfindingMode = computed<PathfindingMode>(() => (smartPathfindingEnabled.value ? "smart" : "off"));
+const pathfindingMode = computed<PathfindingMode>(() => (effectiveSmartPathfindingEnabled.value ? "smart" : "off"));
 const stepPathfindingDisabledMessage = computed(() => locale.status.stepPathfindingDisabled);
 
 const calculationMessage = computed(() => {
@@ -1466,8 +1466,8 @@ watch([formulaOutputDecimalPlaces], () => {
 
 watch([algorithmMode, solverEquationMode], () => {
   clearSmartPathfindingStatus();
-  if (algorithmMode.value === "step" && pathfindingMode.value !== "off") {
-    cancelSmartPathfinding(false);
+  cancelSmartPathfinding(false);
+  if (algorithmMode.value === "step" && smartPathfindingEnabled.value) {
     smartPathfindingEnabled.value = false;
   }
   if (algorithmMode.value === "abs" && solverEquationMode.value === "ddy") {

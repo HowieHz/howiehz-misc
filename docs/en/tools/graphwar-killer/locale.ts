@@ -393,6 +393,14 @@ export const graphwarKillerLocale = {
           title:
             "When function validation rejects a DAG edge, mark that edge inactive before running longest-path DP again.",
         },
+        "route-mask-cache-hit": {
+          label: "- Clear route mask cache hit",
+          title: "The Worker reused the clear route mask for the current obstacle mask and route tolerance.",
+        },
+        "route-mask-cache-miss": {
+          label: "- Clear route mask cache miss",
+          title: "The Worker rebuilt the clear route mask for the current obstacle mask and route tolerance.",
+        },
         "route-map-pixels": {
           label: "- Map clear route pixels",
           title:

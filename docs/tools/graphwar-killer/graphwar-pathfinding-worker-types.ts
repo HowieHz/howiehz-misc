@@ -8,6 +8,7 @@ import type {
   GraphwarOneClickClearSearchInput,
 } from "./graphwar-one-click-clear";
 import type { GraphwarPathfindingPreview, PlaneGridPoint } from "./graphwar-pathfinding";
+import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectoryTargetCircle } from "./trajectory-sampling";
 import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
 
 /** 普通智能寻路的一条几何搜索请求。 */
@@ -44,6 +45,67 @@ export interface GraphwarPathfindingRouteResult {
   searchElapsedMs: number;
 }
 
+/** 智能寻路 worker 内部耗时阶段；主线程只负责展示。 */
+export type GraphwarSmartPathfindingWorkerTimingStage =
+  | "optimize-path"
+  | "route-mask-cache-hit"
+  | "route-mask-cache-miss"
+  | "search-route"
+  | "validate-trajectory"
+  | "visibility-cache-hit"
+  | "visibility-cache-miss"
+  | "visibility-cache-skipped";
+
+/** 智能寻路 worker 内部耗时记录。 */
+export interface GraphwarSmartPathfindingWorkerTiming {
+  /** 被测量的智能寻路阶段。 */
+  stage: GraphwarSmartPathfindingWorkerTimingStage;
+  /** 阶段耗时，单位毫秒。 */
+  elapsedMs: number;
+}
+
+/** 智能寻路完整路径请求；worker 内完成几何搜索、轨迹验证和删点优化。 */
+export interface GraphwarSmartPathfindingPathInput {
+  /** 当前 Graphwar 坐标边界。 */
+  bounds: GraphBounds;
+  /** 截图内 Graphwar 棋盘矩形。 */
+  boundsRect: BoundsRect;
+  /** 障碍和棋盘边界命中检测的内收像素。 */
+  boundaryExpansion: number;
+  /** 命中目标圆；普通点击使用士兵默认半径。 */
+  hitTarget: GraphwarTrajectoryTargetCircle;
+  /** 是否需要把搜索动画快照发回主线程。 */
+  previewEnabled: boolean;
+  /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
+  routeObstacleMask: Uint8Array;
+  /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
+  routeMaskCacheId: number;
+  /** 当前 route tolerance，供可视图轮廓简化使用。 */
+  routeTolerancePlanePixels: number;
+  /** 函数模拟边界收缩值，单位为 Graphwar 原始平面像素。 */
+  simulationBoundaryExpansion: number;
+  /** 函数模拟用障碍 mask。 */
+  simulationMask?: Uint8Array;
+  /** 当前公式采样设置。 */
+  settings: GraphwarTrajectoryFormulaSettings;
+  /** 当前已有路径，最后一点是几何搜索起点。 */
+  sourcePath: readonly PixelPoint[];
+  /** 路径终点，截图像素坐标。 */
+  targetPoint: PixelPoint;
+}
+
+/** 智能寻路完整路径结果。 */
+export interface GraphwarSmartPathfindingPathResult {
+  /** 轨迹验证失败时最后一个可解释阻挡点。 */
+  blockedPoint?: PixelPoint;
+  /** 无可用路径时的失败阶段，页面用它保留原来的状态语义。 */
+  failureReason?: "graph-rule" | "route" | "trajectory";
+  /** 可写回页面的完整像素路径；undefined 表示没有可用路径。 */
+  path?: PixelPoint[];
+  /** Worker 内部细分耗时。 */
+  timings: GraphwarSmartPathfindingWorkerTiming[];
+}
+
 /** 一键清图 DAG 建边请求。 */
 export type GraphwarOneClickClearDagEdgesWorkerInput = GraphwarOneClickClearDagEdgeBuildRequest;
 
@@ -63,6 +125,10 @@ export type GraphwarPathfindingWorkerTask =
   | {
       input: GraphwarPathfindingRouteInput;
       type: "find-route";
+    }
+  | {
+      input: GraphwarSmartPathfindingPathInput;
+      type: "find-smart-path";
     }
   | {
       input: GraphwarOneClickClearDagEdgesWorkerInput;
@@ -87,6 +153,12 @@ export type GraphwarPathfindingWorkerSuccessResponse =
       id: number;
       result: GraphwarPathfindingRouteResult;
       taskType: "find-route";
+      type: "success";
+    }
+  | {
+      id: number;
+      result: GraphwarSmartPathfindingPathResult;
+      taskType: "find-smart-path";
       type: "success";
     }
   | {

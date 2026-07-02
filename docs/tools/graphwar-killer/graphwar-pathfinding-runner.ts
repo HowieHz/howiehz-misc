@@ -12,6 +12,8 @@ import type {
   GraphwarPathfindingWorkerRequest,
   GraphwarPathfindingWorkerResponse,
   GraphwarPathfindingWorkerSuccessResponse,
+  GraphwarSmartPathfindingPathInput,
+  GraphwarSmartPathfindingPathResult,
 } from "./graphwar-pathfinding-worker-types";
 import { createPixelPoint } from "./types";
 
@@ -86,6 +88,26 @@ export function createGraphwarPathfindingRunner() {
         task: {
           input,
           type: "find-route",
+        },
+      },
+      options,
+    );
+  }
+
+  /** 在 master Worker 中执行完整智能寻路，主线程只负责写回结果。 */
+  function findSmartPath(input: GraphwarSmartPathfindingPathInput, options?: GraphwarPathfindingRunOptions) {
+    cancel();
+    const activeWorker = ensureWorker();
+    if (!activeWorker) {
+      return Promise.reject(new Error("Graphwar pathfinding worker is unavailable"));
+    }
+    return runWorkerTask<GraphwarSmartPathfindingPathResult>(
+      activeWorker,
+      {
+        id: nextRequestId,
+        task: {
+          input,
+          type: "find-smart-path",
         },
       },
       options,
@@ -242,6 +264,7 @@ export function createGraphwarPathfindingRunner() {
     cancel,
     clearCache,
     close,
+    findSmartPath,
     findRoute,
   };
 }
@@ -256,6 +279,15 @@ function cloneGraphwarPathfindingWorkerRequest(
       task: {
         input: cloneGraphwarPathfindingRouteInput(request.task.input),
         type: "find-route",
+      },
+    };
+  }
+  if (request.task.type === "find-smart-path") {
+    return {
+      id: request.id,
+      task: {
+        input: cloneGraphwarSmartPathfindingPathInput(request.task.input),
+        type: "find-smart-path",
       },
     };
   }
@@ -288,6 +320,26 @@ function cloneGraphwarPathfindingRouteInput(input: GraphwarPathfindingRouteInput
     routeMaskCacheId: input.routeMaskCacheId,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     startPoint: clonePixelPoint(input.startPoint),
+    targetPoint: clonePixelPoint(input.targetPoint),
+  };
+}
+
+function cloneGraphwarSmartPathfindingPathInput(
+  input: GraphwarSmartPathfindingPathInput,
+): GraphwarSmartPathfindingPathInput {
+  return {
+    boundaryExpansion: input.boundaryExpansion,
+    bounds: cloneGraphBounds(input.bounds),
+    boundsRect: cloneBoundsRect(input.boundsRect),
+    hitTarget: cloneGraphwarTrajectoryTargetCircle(input.hitTarget),
+    previewEnabled: input.previewEnabled,
+    routeMaskCacheId: input.routeMaskCacheId,
+    routeObstacleMask: input.routeObstacleMask,
+    routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    settings: cloneGraphwarTrajectoryFormulaSettings(input.settings),
+    simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+    ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
+    sourcePath: input.sourcePath.map(clonePixelPoint),
     targetPoint: clonePixelPoint(input.targetPoint),
   };
 }
@@ -325,20 +377,10 @@ function cloneGraphwarOneClickClearPathWorkerInput(
     hitCandidates: input.hitCandidates.map(cloneGraphwarOneClickClearCandidate),
     pathPoints: input.pathPoints.map(clonePixelPoint),
     ...(input.prefixTarget ? { prefixTarget: cloneGraphwarTrajectoryTargetCircle(input.prefixTarget) } : {}),
-    routeMask: {
-      mask: input.routeMask.mask,
-      routeTolerancePlanePixels: input.routeMask.routeTolerancePlanePixels,
-    },
-    settings: {
-      algorithm: input.settings.algorithm,
-      decimalPlaces: input.settings.decimalPlaces,
-      equation: input.settings.equation,
-      ...(input.settings.formulaPathSteepness === undefined
-        ? {}
-        : { formulaPathSteepness: input.settings.formulaPathSteepness }),
-      steepness: input.settings.steepness,
-      stepOverflowProtection: input.settings.stepOverflowProtection,
-    },
+    routeMaskCacheId: input.routeMaskCacheId,
+    routeObstacleMask: input.routeObstacleMask,
+    routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    settings: cloneGraphwarTrajectoryFormulaSettings(input.settings),
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
   };
@@ -354,11 +396,26 @@ function cloneGraphwarOneClickClearCandidate(candidate: GraphwarOneClickClearPat
 }
 
 function cloneGraphwarTrajectoryTargetCircle(
-  target: NonNullable<GraphwarOneClickClearPathWorkerInput["prefixTarget"]>,
+  target:
+    | GraphwarSmartPathfindingPathInput["hitTarget"]
+    | NonNullable<GraphwarOneClickClearPathWorkerInput["prefixTarget"]>,
 ) {
   return {
     center: clonePixelPoint(target.center),
     radius: target.radius,
+  };
+}
+
+function cloneGraphwarTrajectoryFormulaSettings(
+  settings: GraphwarSmartPathfindingPathInput["settings"] | GraphwarOneClickClearPathWorkerInput["settings"],
+) {
+  return {
+    algorithm: settings.algorithm,
+    decimalPlaces: settings.decimalPlaces,
+    equation: settings.equation,
+    ...(settings.formulaPathSteepness === undefined ? {} : { formulaPathSteepness: settings.formulaPathSteepness }),
+    steepness: settings.steepness,
+    stepOverflowProtection: settings.stepOverflowProtection,
   };
 }
 

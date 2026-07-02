@@ -1266,7 +1266,7 @@ const pathfindingHeaderStatusResult = computed(() =>
   ),
 );
 const pathfindingHeaderStatus = computed(() => pathfindingHeaderStatusResult.value.message);
-const pathfindingHeaderStatusTitle = computed(() => undefined);
+const pathfindingHeaderStatusTitle = computed(() => pathfindingHeaderStatus.value);
 const pathfindingHeaderStatusIsError = computed(() => pathfindingHeaderStatusResult.value.kind === "error");
 const pathfindingHeaderStatusIsWarning = computed(() => pathfindingHeaderStatusResult.value.kind === "warning");
 const pathfindingHeaderStatusIsSuccess = computed(() => pathfindingHeaderStatusResult.value.kind === "success");

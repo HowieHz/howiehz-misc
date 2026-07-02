@@ -400,8 +400,9 @@ export const graphwarKillerLocale = {
           title: "把最终智能寻路路径写入当前路径状态，并清理旧的路径错误提示。",
         },
         "collect-targets": {
-          label: "生成候选目标",
-          title: "点击士兵时，在命中圈内用 1 个原始平面像素作为扫描步长枚举可尝试的 x+ 瞄准点。",
+          label: "生成目标",
+          title:
+            "点击士兵时，优先使用士兵中心；中心不满足 x+ 时把几何目标推到命中圈内的最小 x+ 点，弹道仍校验原命中圈。",
         },
         "result-cache-hit": {
           label: "结果缓存命中",

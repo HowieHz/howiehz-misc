@@ -466,9 +466,9 @@ export const graphwarKillerLocale = {
           title: "Write the final Smart Pathfinding path to the current path state and clear stale path errors.",
         },
         "collect-targets": {
-          label: "Collect candidate targets",
+          label: "Create target",
           title:
-            "When a soldier is clicked, enumerate x+ aim points inside its hit circle using a 1 raw-plane-pixel scan step.",
+            "When a soldier is clicked, use its center first; if that fails the x+ rule, move the geometry target to the minimum x+ point inside the hit circle while trajectory validation still uses the original hit circle.",
         },
         "result-cache-hit": {
           label: "Result cache hit",

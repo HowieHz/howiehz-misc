@@ -310,8 +310,6 @@ const debugActivationSuccessFlashMs = 2000;
 const smartPathfindingBlockedPointFlashMs = 1800;
 const smartPathfindingResultCacheLimit = 64;
 const oneClickClearResultCacheLimit = 16;
-/** 士兵命中圈内换目标点的扫描步长；只影响候选枚举，不是 x+ 合法性的最小前进量。 */
-const soldierAimScanPlanePixels = 1;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 
@@ -1845,6 +1843,7 @@ async function detectGraphwarObjects() {
     }
 
     boundsRect.value = result.edgeRect;
+    invalidatePathfindingCaches();
     boundsFirstPoint.value = undefined;
     pointerPreviewPoint.value = undefined;
     await applyGraphwarObjectDetectionResult(result.objects, "auto", runId, true, startedAt, timings);
@@ -2663,6 +2662,7 @@ function handleStagePointerDown(event: PointerEvent) {
     const nextRect = normalizeBoundsRect(boundsFirstPoint.value, nextPoint);
     if (nextRect.width >= 4 && nextRect.height >= 4) {
       boundsRect.value = nextRect;
+      invalidatePathfindingCaches();
       toolMode.value = "path";
       void detectGraphwarObjectsInCurrentBounds();
     }
@@ -2819,7 +2819,7 @@ async function appendDetectedSoldierPathPoint(soldier: DetectionBox) {
   return targetPoint ? appendPathPoint(targetPoint) : false;
 }
 
-/** 针对士兵目标尝试多个可命中点，避免只瞄中心时被障碍或最小 x 步长卡住。 */
+/** 针对士兵目标绕障；几何目标可被 x+ 推进，弹道仍校验士兵原命中圈。 */
 async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox) {
   if (!parsedBounds.value.ok) {
     return false;
@@ -2842,10 +2842,10 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
     return false;
   }
 
-  const targets = measureSmartPathfindingDebugStage(timings, "collect-targets", () =>
-    createSmartPathfindingSoldierTargets(startPoint, soldier),
+  const target = measureSmartPathfindingDebugStage(timings, "collect-targets", () =>
+    createSmartPathfindingSoldierTarget(startPoint, soldier),
   );
-  if (targets.length === 0) {
+  if (!target) {
     let completedAt = nowMs();
     measureSmartPathfindingDebugStage(timings, "setting-status", () => {
       completedAt = nowMs();
@@ -2859,14 +2859,9 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
   const pathfindingToken = startSmartPathfinding();
   let pathfindingResult: SmartPathfindingPathBuildResult | undefined;
   try {
-    for (const target of targets) {
-      pathfindingResult = await buildSmartPathfindingPath(target, pathfindingToken, timings);
-      if (pathfindingToken !== smartPathfindingCancelToken) {
-        return false;
-      }
-      if (pathfindingResult) {
-        break;
-      }
+    pathfindingResult = await buildSmartPathfindingPath(target, pathfindingToken, timings);
+    if (pathfindingToken !== smartPathfindingCancelToken) {
+      return false;
     }
   } finally {
     if (pathfindingToken === smartPathfindingCancelToken) {
@@ -3597,62 +3592,20 @@ function createSoldierHitCircleXPlusEdgePoint(box: DetectionBox) {
   return createPixelPoint(center.x + (xPlusIsRight ? box.hitRadius : -box.hitRadius), center.y);
 }
 
-/** 构造可击中士兵的候选目标点：按通过的检查结果从起始 x 扫到命中圈 x+ 右端。 */
-function createSmartPathfindingSoldierTargets(startPoint: PixelPoint, box: DetectionBox) {
-  const firstCheck = createSoldierAimCheckResult(startPoint, box);
-  if (!firstCheck) {
-    return [];
+/** 构造普通智能寻路的士兵目标：路径连到可用瞄点，弹道仍必须打中原命中圈。 */
+function createSmartPathfindingSoldierTarget(
+  startPoint: PixelPoint,
+  box: DetectionBox,
+): SmartPathfindingTarget | undefined {
+  const targetPoint = createSearchStartSoldierAimPoint(startPoint, box);
+  if (!targetPoint) {
+    return undefined;
   }
 
-  const hitCircle = createSoldierHitCircle(box);
-  return collectSmartPathfindingSoldierXTargets(firstCheck.point, box, hitCircle);
-}
-
-/** 从首个可瞄点沿 x+ 方向搜索到命中圈右端，给智能寻路逐点尝试。 */
-function collectSmartPathfindingSoldierXTargets(startPoint: PixelPoint, box: DetectionBox, hitCircle: HitCircle) {
-  const boundsResult = parsedBounds.value;
-  const tolerances = parsedObstacleTolerances.value;
-  if (!boundsResult.ok || !tolerances.ok) {
-    return [];
-  }
-
-  const pixelStep = getSmartPathfindingTargetImageXStep();
-  if (pixelStep <= 0) {
-    return [];
-  }
-
-  const targets: SmartPathfindingTarget[] = [];
-  const center = getDetectionBoxCenter(box);
-  const xPlusIsRight = xPlusGoesRight(boundsResult.bounds);
-  const direction = xPlusIsRight ? 1 : -1;
-  const edgeX = center.x + direction * box.hitRadius;
-  // 士兵目标只在命中圈中心水平线上搜索：先试规则选出的起点，
-  // 再用 1 个原始平面像素作为枚举步长推向 x+ 边缘，让寻路失败时换目标但不改变 y。
-  const maxSteps = Math.ceil(Math.abs(edgeX - startPoint.x) / pixelStep) + 1;
-  for (let step = 0; step <= maxSteps; step += 1) {
-    const rawX = startPoint.x + direction * pixelStep * step;
-    const targetX = xPlusIsRight ? Math.min(rawX, edgeX) : Math.max(rawX, edgeX);
-    const targetPoint = createPixelPoint(targetX, center.y);
-    if (!pointIsInsideTargetBounds(targetPoint) || !detectionBoxContainsHitCircle(box, targetPoint)) {
-      break;
-    }
-
-    targets.push({ hitCircle, targetPoint });
-
-    if (targetX === edgeX) {
-      break;
-    }
-  }
-  return targets;
-}
-
-/** 将士兵命中圈候选枚举步长换算为截图像素；这不是路径 x+ 合法性的最小前进量。 */
-function getSmartPathfindingTargetImageXStep() {
-  if (!parsedBounds.value.ok) {
-    return 0;
-  }
-
-  return Math.max(Number.EPSILON, (soldierAimScanPlanePixels / GRAPHWAR_PLANE_LENGTH) * boundsRect.value.width);
+  return {
+    hitCircle: createSoldierHitCircle(box),
+    targetPoint,
+  };
 }
 
 /** 从检测框创建命中圆，统一士兵目标和弹道命中判定。 */

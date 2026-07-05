@@ -8,6 +8,7 @@ import type {
   GraphwarOneClickClearDebugTiming,
 } from "../graphwar-one-click-clear";
 import { buildGraphwarOneClickClearPath } from "../graphwar-one-click-clear";
+import { buildOneClickClearDagEdgeRoute } from "../graphwar-one-click-clear-edge-route";
 import {
   buildSmartPathfindingPathForMask,
   createRouteMaskCacheKey,
@@ -457,6 +458,7 @@ async function buildOneClickClearPath(
 async function buildOneClickClearDagEdges(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
 ): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
+  // 单 lane、单 job 或缺少 Worker API 时没有调度收益，直接走串行建边。
   if (input.workerCount <= 1 || input.jobs.length <= 1 || typeof Worker === "undefined") {
     return buildOneClickClearDagEdgesSerial(input, input.jobs, "serial", 1);
   }
@@ -464,6 +466,7 @@ async function buildOneClickClearDagEdges(
   return runOneClickClearDagEdgeWorkerPool(input, Math.min(input.workerCount, input.jobs.length));
 }
 
+/** 并行调度 DAG 单边 job；任一子 worker 出错时，未完成边交给串行路径补跑。 */
 function runOneClickClearDagEdgeWorkerPool(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
   laneCount: number,
@@ -605,7 +608,7 @@ function runOneClickClearDagEdgeWorkerPool(
       completedJobIds.add(result.jobId);
       totals.routePathfindingElapsedMs += result.routePathfindingElapsedMs;
       totals.routeMapPixelsElapsedMs += result.routeMapPixelsElapsedMs;
-      routes.push(createOneClickClearDagEdgeRoute(result.jobId, result.route));
+      routes.push(createOneClickClearDagEdgeRoute(result));
       handle.activeJob = undefined;
       assignNextJob(handle);
       resolveWithParallelResult();
@@ -673,6 +676,7 @@ function runOneClickClearDagEdgeWorkerPool(
   });
 }
 
+/** 按顺序构建 DAG 边；用于小任务串行模式，也用于并行 worker 失败后的剩余 job 补跑。 */
 async function buildOneClickClearDagEdgesSerial(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
   jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
@@ -700,12 +704,21 @@ async function buildOneClickClearDagEdgesSerial(
     routeMask: input.routeMask,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
   });
+  // 串行和 fallback 路径按批次复用同一个 visibilityGraphObstacleData，避免每条 DAG 边重复建轮廓。
+  const routeBuildContext = {
+    boundaryExpansion: input.boundaryExpansion,
+    bounds: input.bounds,
+    boundsRect: input.boundsRect,
+    routeMask: input.routeMask,
+    routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    visibilityGraphObstacleData,
+  };
 
   for (const job of jobs) {
-    const result = await buildOneClickClearDagEdgeSerial(input, job, visibilityGraphObstacleData);
+    const result = await buildOneClickClearDagEdgeRoute(routeBuildContext, job);
     totals.routePathfindingElapsedMs += result.routePathfindingElapsedMs;
     totals.routeMapPixelsElapsedMs += result.routeMapPixelsElapsedMs;
-    routes.push(createOneClickClearDagEdgeRoute(result.jobId, result.route));
+    routes.push(createOneClickClearDagEdgeRoute(result));
   }
 
   return {
@@ -714,38 +727,11 @@ async function buildOneClickClearDagEdgesSerial(
   };
 }
 
-async function buildOneClickClearDagEdgeSerial(
-  input: GraphwarOneClickClearDagEdgesWorkerInput,
-  job: GraphwarOneClickClearDagEdgeBuildJob,
-  visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData,
-): Promise<GraphwarOneClickClearEdgeWorkerJobResult> {
-  const pathfindingStartedAt = nowMs();
-  const route = await buildSmartPathfindingPathForMask({
-    bounds: input.bounds,
-    boundsRect: input.boundsRect,
-    boundaryExpansion: input.boundaryExpansion,
-    routeMask: input.routeMask,
-    routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-    startPoint: job.startPoint,
-    targetPoint: job.targetPoint,
-    visibilityGraphObstacleData,
-  });
-  const routePathfindingElapsedMs = nowMs() - pathfindingStartedAt;
-
-  const mapStartedAt = nowMs();
-  const pixelRoute = route?.map((point) => planeGridCellCenterToImagePoint(point, input.boundsRect));
-  const routeMapPixelsElapsedMs = nowMs() - mapStartedAt;
-  const exactRoute = normalizeEdgeRoute(pixelRoute, job.startPoint, job.targetPoint);
-  return {
-    jobId: job.id,
-    ...(exactRoute ? { route: exactRoute } : {}),
-    routeMapPixelsElapsedMs,
-    routePathfindingElapsedMs,
-  };
-}
-
-function createOneClickClearDagEdgeRoute(jobId: number, route: PixelPoint[] | undefined) {
-  return route ? { jobId, route } : { jobId };
+/** 把单边 worker 结果合并回 DAG 边结果；默认没有 route 表示不可达边，jobId 仍用于稳定匹配边。 */
+function createOneClickClearDagEdgeRoute(
+  result: Pick<GraphwarOneClickClearEdgeWorkerJobResult, "jobId" | "route">,
+): GraphwarOneClickClearDagEdgeRoute {
+  return result.route ? { jobId: result.jobId, route: result.route } : { jobId: result.jobId };
 }
 
 function createRouteTimingEntries(totals: EdgeRouteTimingTotals): GraphwarOneClickClearDebugTiming[] {
@@ -759,17 +745,6 @@ function createRouteTimingEntries(totals: EdgeRouteTimingTotals): GraphwarOneCli
       stage: "route-map-pixels",
     },
   ];
-}
-
-function normalizeEdgeRoute(route: PixelPoint[] | undefined, startPoint: PixelPoint, targetPoint: PixelPoint) {
-  if (!route || route.length < 2) {
-    return undefined;
-  }
-
-  const exactRoute = [...route];
-  exactRoute[0] = startPoint;
-  exactRoute[exactRoute.length - 1] = targetPoint;
-  return exactRoute;
 }
 
 function postResponse(response: GraphwarPathfindingWorkerResponse) {

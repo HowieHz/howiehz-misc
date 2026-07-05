@@ -1,6 +1,5 @@
 /** 负责按 Graphwar 公式规则采样轨迹，并判断路径与目标/障碍的交互。 */
-import { GRAPHWAR_TOOL_SIGN_EPSILON, buildFormula } from "./formula";
-import type { FormulaEvaluationOptions } from "./formula";
+import { buildFormula } from "./formula";
 import { graphToImagePoint, imageToGraphPoint } from "./geometry";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
 import {
@@ -14,6 +13,12 @@ import type {
   GraphwarTrajectorySample,
   GraphwarTrajectorySamplingState,
 } from "./simulator";
+import {
+  GRAPHWAR_TOOL_SIGN_EPSILON,
+  createStepOverflowProtectionRange,
+  probeSignEpsilonRequirement,
+} from "./step-numeric-strategy";
+import type { FormulaEvaluationOptions } from "./step-numeric-strategy";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "./types";
 
 /** 轨迹采样主动提前停止的原因；只记录与目标/障碍判定有关的短路。 */
@@ -121,21 +126,35 @@ export function createGraphwarTrajectoryFormulaContext(options: {
   soldierCenter?: GraphPoint;
 }): GraphwarTrajectoryFormulaContext {
   const formulaPoints = createFormulaPathPoints(options.points, options.settings);
-  // sign epsilon 会轻微改变折点附近曲线；先用 0 干跑，只有真实轨迹踩到 0/0 折点时才写入保护。
-  const signEpsilon = formulaPathNeedsSignEpsilon({
-    bounds: options.bounds,
-    formulaPoints,
-    settings: options.settings,
-    soldierCenter: options.soldierCenter,
-  })
-    ? GRAPHWAR_TOOL_SIGN_EPSILON
-    : 0;
-  const formulaEvaluation = createGraphwarFormulaEvaluationOptions(
-    options.bounds,
-    formulaPoints,
-    options.settings,
+  const soldierCenter = options.soldierCenter;
+  const stepOverflowProtectionRange = createStepOverflowProtectionRange(options.bounds, formulaPoints);
+  const signEpsilon =
+    soldierCenter && formulaPoints.length >= 2
+      ? probeSignEpsilonRequirement((onSignArgument) => {
+          // 这里不看公式形状本身，只看 Graphwar 采样点是否真的落在 sign(t) 的 t=0 折点上。
+          sampleGraphwarTrajectory({
+            algorithm: options.settings.algorithm,
+            bounds: options.bounds,
+            equation: options.settings.equation,
+            formulaEvaluation: {
+              stepOverflowProtectionRange,
+              stepOverflowProtection: options.settings.stepOverflowProtection,
+              onSignArgument,
+              signEpsilon: 0,
+            },
+            points: formulaPoints,
+            soldierCenter,
+            steepness: options.settings.steepness,
+          });
+        })
+        ? GRAPHWAR_TOOL_SIGN_EPSILON
+        : 0
+      : 0;
+  const formulaEvaluation: FormulaEvaluationOptions = {
+    stepOverflowProtectionRange,
+    stepOverflowProtection: options.settings.stepOverflowProtection,
     signEpsilon,
-  );
+  };
   return {
     // 先生成最终公式文本并保存；后续验证必须回放这份文本，而不是直接调用内存里的 evaluator。
     playbackExpression: buildFormula(
@@ -150,7 +169,7 @@ export function createGraphwarTrajectoryFormulaContext(options: {
     formulaPoints,
     settings: options.settings,
     signEpsilon,
-    soldierCenter: options.soldierCenter,
+    soldierCenter,
   };
 }
 
@@ -387,67 +406,6 @@ function createFormulaPathPoints(points: readonly GraphPoint[], settings: Graphw
         points,
         steepness: settings.formulaPathSteepness ?? settings.steepness,
       });
-}
-
-/** 创建预编译 evaluator 需要的数值选项，把 overflow range 和 sign epsilon 固定在上下文里。 */
-function createGraphwarFormulaEvaluationOptions(
-  bounds: GraphBounds,
-  points: readonly GraphPoint[],
-  settings: GraphwarTrajectoryFormulaSettings,
-  signEpsilon: number,
-): FormulaEvaluationOptions {
-  return {
-    stepOverflowProtectionRange: createStepOverflowProtectionRange(bounds, points),
-    stepOverflowProtection: settings.stepOverflowProtection,
-    signEpsilon,
-  };
-}
-
-/** Graphwar 只会沿 x+ 方向采样；抗溢出判断只需要覆盖从发射点到右侧边界的 x 区间。 */
-function createStepOverflowProtectionRange(bounds: GraphBounds, points: readonly GraphPoint[]) {
-  const startPoint = points[0];
-  if (!startPoint) {
-    return undefined;
-  }
-
-  return {
-    minX: startPoint.x,
-    maxX: Math.max(bounds.minX, bounds.maxX),
-  };
-}
-
-/** 判断稳定符号近似是否必须启用 epsilon，避免无需要时改变 Graphwar 原始数值行为。 */
-function formulaPathNeedsSignEpsilon(options: {
-  bounds: GraphBounds;
-  formulaPoints: readonly GraphPoint[];
-  settings: GraphwarTrajectoryFormulaSettings;
-  soldierCenter?: GraphPoint;
-}) {
-  if (!options.soldierCenter || options.formulaPoints.length < 2) {
-    return false;
-  }
-
-  let hasZeroSignArgument = false;
-  // 这里不看公式形状本身，只看 Graphwar 采样点是否真的落在 sign(t) 的 t=0 折点上。
-  sampleGraphwarTrajectory({
-    algorithm: options.settings.algorithm,
-    bounds: options.bounds,
-    equation: options.settings.equation,
-    formulaEvaluation: {
-      stepOverflowProtectionRange: createStepOverflowProtectionRange(options.bounds, options.formulaPoints),
-      stepOverflowProtection: options.settings.stepOverflowProtection,
-      onSignArgument(value) {
-        if (value === 0) {
-          hasZeroSignArgument = true;
-        }
-      },
-      signEpsilon: 0,
-    },
-    points: options.formulaPoints,
-    soldierCenter: options.soldierCenter,
-    steepness: options.settings.steepness,
-  });
-  return hasZeroSignArgument;
 }
 
 /** 创建 sampleGraphwarTrajectory 的早停回调，并把命中、障碍和可见像素指标集中记录。 */

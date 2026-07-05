@@ -1,4 +1,4 @@
-/** 在当前 Graphwar 路径后追加中心点 DAG 清图路线。 */
+/** 在当前 Graphwar 路径后追加 DAG 清图路线；几何建路点和弹道命中圈分开建模。 */
 import { imageToGraphPoint } from "./geometry";
 import { graphXAdvancesStrictly } from "./numbers";
 import type { GraphwarTrajectorySamplingState } from "./simulator";
@@ -93,7 +93,7 @@ export interface GraphwarOneClickClearDagEdgeBuildJob {
   from?: number;
   /** 本边起点，截图像素坐标。 */
   startPoint: PixelPoint;
-  /** 本边终点，截图像素坐标。 */
+  /** 本边几何建路终点，截图像素坐标。 */
   targetPoint: PixelPoint;
   /** 目标士兵下标。 */
   to: number;
@@ -213,11 +213,13 @@ export type GraphwarOneClickClearResult =
     };
 
 interface OneClickClearTarget extends GraphwarOneClickClearCandidate {
-  /** 中心点 Graphwar x；DAG 稳定排序使用，x+ 可达性在平面像素层判断。 */
-  centerGraphX: number;
-  /** 目标仍瞄准中心点，但验证使用士兵真实命中圈。 */
-  centerTarget: GraphwarTrajectoryTargetCircle;
-  /** 按中心 x 排序后的位置，用于稳定 tie-break。 */
+  /** 几何 DAG 建路目标点，使用士兵命中圆中心。 */
+  routePoint: PixelPoint;
+  /** 弹道验证命中圆；和几何建路目标点是两个概念。 */
+  hitCircle: GraphwarTrajectoryTargetCircle;
+  /** 建路目标点的 Graphwar x；DAG 稳定排序使用，x+ 可达性在平面像素层判断。 */
+  sortGraphX: number;
+  /** 按建路目标 x 排序后的位置，用于稳定 tie-break。 */
   orderIndex: number;
   /** 输入候选序号；只用于相同 x 时保持稳定。 */
   sourceIndex: number;
@@ -243,7 +245,7 @@ interface OneClickClearDag {
   edges: OneClickClearDagEdge[];
   /** START 和每个目标的出边表。 */
   outgoingEdges: Map<number, OneClickClearDagEdge[]>;
-  /** 按中心 x 排序后的目标。 */
+  /** 按建路目标 x 排序后的目标。 */
   targets: OneClickClearTarget[];
 }
 
@@ -292,7 +294,7 @@ const START_NODE_INDEX = -1;
 const MAX_GLOBAL_DELETE_PASSES = 1;
 const FALLBACK_TARGET_RADIUS_PIXELS = 1;
 
-/** 用中心点 DAG 找到当前模型下显式击杀最多的追加路径。 */
+/** 用建路目标点 DAG 找到显式击杀最多的追加路径。 */
 export async function buildGraphwarOneClickClearPath(
   options: GraphwarOneClickClearOptions,
 ): Promise<GraphwarOneClickClearResult> {
@@ -421,7 +423,7 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
 }
 
 /**
- * 收集从当前路径末端中心 x+ 侧可选的士兵，并按中心 x 稳定排序。
+ * 收集从当前路径末端建路点 x+ 侧可选的士兵，并按建路点 x 稳定排序。
  *
  * 几何 DAG 使用士兵中心作为建路点；弹道验证使用同一中心加士兵半径组成的命中圆。
  */
@@ -439,36 +441,47 @@ function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): 
       continue;
     }
 
-    const centerGraphX = imageToGraphPoint(candidate.hitCenter, options.bounds, options.boundsRect).x;
-    if (!graphXAdvancesStrictly(startGraphX, centerGraphX)) {
+    const target = createOneClickClearTarget(candidate, sourceIndex, options);
+    // DAG 只允许从当前路径尾点继续 x+；判断使用建路目标的 Graphwar x。
+    if (!graphXAdvancesStrictly(startGraphX, target.sortGraphX)) {
       continue;
     }
 
-    targets.push({
-      ...candidate,
-      centerGraphX,
-      centerTarget: {
-        center: candidate.hitCenter,
-        radius: candidate.hitRadius,
-      },
-      orderIndex: 0,
-      sourceIndex,
-    });
+    targets.push(target);
   }
 
   return targets.sort(compareOneClickClearTargetOrder).map((target, orderIndex) => ({ ...target, orderIndex }));
 }
 
-/** 按中心点排序；同 x 不建边，但排序仍需稳定。 */
+/** 集中构造一键清图内部目标，避免调用点混用“建路点”和“命中圈”。 */
+function createOneClickClearTarget(
+  candidate: GraphwarOneClickClearCandidate,
+  sourceIndex: number,
+  options: Pick<GraphwarOneClickClearOptions, "bounds" | "boundsRect">,
+): OneClickClearTarget {
+  // 建路点使用命中圆中心；命中验证由 hitCircle 保存中心和半径。
+  const routePoint = candidate.hitCenter;
+  return {
+    ...candidate,
+    hitCircle: {
+      center: candidate.hitCenter,
+      radius: candidate.hitRadius,
+    },
+    orderIndex: 0,
+    routePoint,
+    sortGraphX: imageToGraphPoint(routePoint, options.bounds, options.boundsRect).x,
+    sourceIndex,
+  };
+}
+
+/** 按建路目标点排序；同 x 不建边，但排序仍需稳定，y 和输入序号只负责 tie-break。 */
 function compareOneClickClearTargetOrder(left: OneClickClearTarget, right: OneClickClearTarget) {
   return (
-    left.centerGraphX - right.centerGraphX ||
-    left.hitCenter.y - right.hitCenter.y ||
-    left.sourceIndex - right.sourceIndex
+    left.sortGraphX - right.sortGraphX || left.routePoint.y - right.routePoint.y || left.sourceIndex - right.sourceIndex
   );
 }
 
-/** 建立 START 和士兵中心点之间的几何 DAG；这里只做寻路，不做公式模拟。 */
+/** 建立 START 和士兵建路点之间的几何 DAG；这里只做寻路，不做公式模拟。 */
 async function buildOneClickClearDag(
   context: OneClickClearSearchContext,
   targets: readonly OneClickClearTarget[],
@@ -496,6 +509,7 @@ async function buildOneClickClearDag(
   };
 }
 
+/** 枚举 START 和目标之间的候选几何边；建边只看 routePoint，不做公式模拟。 */
 function collectOneClickClearDagEdgeBuildJobs(startPoint: PixelPoint, targets: readonly OneClickClearTarget[]) {
   const jobs: GraphwarOneClickClearDagEdgeBuildJob[] = [];
   for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
@@ -503,10 +517,11 @@ function collectOneClickClearDagEdgeBuildJobs(startPoint: PixelPoint, targets: r
     if (!target) {
       continue;
     }
+    // START 可以尝试直达每个 x+ 侧目标，后续由几何寻路和公式验证过滤不可用边。
     jobs.push({
       id: jobs.length,
       startPoint,
-      targetPoint: target.hitCenter,
+      targetPoint: target.routePoint,
       to: targetIndex,
     });
   }
@@ -518,15 +533,16 @@ function collectOneClickClearDagEdgeBuildJobs(startPoint: PixelPoint, targets: r
     }
     for (let toIndex = fromIndex + 1; toIndex < targets.length; toIndex += 1) {
       const to = targets[toIndex];
-      if (!to || !graphXAdvancesStrictly(from.centerGraphX, to.centerGraphX)) {
+      // 目标已按 sortGraphX 排序；同 x 不能构成 Graphwar x+ 边。
+      if (!to || !graphXAdvancesStrictly(from.sortGraphX, to.sortGraphX)) {
         continue;
       }
 
       jobs.push({
         from: fromIndex,
         id: jobs.length,
-        startPoint: from.hitCenter,
-        targetPoint: to.hitCenter,
+        startPoint: from.routePoint,
+        targetPoint: to.routePoint,
         to: toIndex,
       });
     }
@@ -591,7 +607,7 @@ function addOneClickClearDagEdge(
   }
 }
 
-/** 在中心点有序 DAG 上做最长路 DP；同分时选几何点更少、终点更靠前。 */
+/** 在建路目标点有序 DAG 上做最长路 DP；同分时选几何点更少、终点更靠前。 */
 function findOneClickClearLongestPath(dag: OneClickClearDag) {
   const bestEntries: (OneClickClearBestEntry | undefined)[] = Array.from({ length: dag.targets.length });
 
@@ -737,7 +753,7 @@ function appendOneClickClearEdgeRoute(sourcePath: readonly PixelPoint[], route: 
   return [...sourcePath, ...route.slice(1)];
 }
 
-/** 只续采样新增段；最终整路验证仍会重采样一次，防止增量状态掩盖全局变化。 */
+/** 只续采样新增段；目标命中验证使用 hitCircle，最终整路验证仍会重采样一次。 */
 function validateOneClickClearRouteSegment(
   context: OneClickClearSearchContext,
   nextPath: readonly PixelPoint[],
@@ -777,7 +793,7 @@ function validateOneClickClearRouteSegment(
       initialReachedTargetCount: state.initialReachedTargetCount,
       initialState: state.initialState,
       skipInitialStop: state.initialState !== undefined,
-      targetSequence: targetSequence.map((target) => target.centerTarget),
+      targetSequence: targetSequence.map((target) => target.hitCircle),
     }),
   );
   return result.reachedTargetCount >= targetSequence.length ? result : undefined;
@@ -791,7 +807,7 @@ function validateOneClickClearTargetSequence(
   return sampleOneClickClearTargetSequence(options, route).reachesTargetSequenceBeforeObstacle;
 }
 
-/** 返回整条弹道复验结果；失败时 reachedTargetCount 可定位第一个未命中的 DAG 边。 */
+/** 返回整条弹道复验结果；routePoint 提供目标采样点，hitCircle 提供真实命中半径。 */
 function sampleOneClickClearTargetSequence(
   options: GraphwarOneClickClearOptions,
   route: Pick<OneClickClearValidatedRoute, "pathPoints" | "targetSequence">,
@@ -804,8 +820,8 @@ function sampleOneClickClearTargetSequence(
     points: route.pathPoints,
     settings: options.settings,
     soldierMarkerRadius: FALLBACK_TARGET_RADIUS_PIXELS,
-    targetCircles: route.targetSequence.map((target) => target.centerTarget),
-    targetPoints: route.targetSequence.map((target) => target.hitCenter),
+    targetCircles: route.targetSequence.map((target) => target.hitCircle),
+    targetPoints: route.targetSequence.map((target) => target.routePoint),
   });
   return result;
 }

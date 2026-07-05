@@ -83,12 +83,10 @@ export interface StepTerm {
   deltaY: number;
 }
 
-/** 公式生成结果；复制给游戏和页面预览使用同一次编译产物。 */
+/** 公式生成结果；只包含可复制到 Graphwar 的表达式材料。 */
 export interface FormulaResult {
   /** 可复制到 Graphwar 的最终公式文本。 */
   expression: string;
-  /** 页面按 y= 方式预览时使用的等价曲线文本。 */
-  previewExpression: string;
   /** Step 模式下的中间项，供调试和后续采样复用。 */
   terms: StepTerm[];
 }

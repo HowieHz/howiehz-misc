@@ -239,7 +239,7 @@ interface OneClickClearDagEdge {
 }
 
 interface OneClickClearDag {
-  /** 全部建好的几何边；失败验证只把 active 置 false。 */
+  /** 全部建好的几何边；失败验证通过 active=false 禁用边。 */
   edges: OneClickClearDagEdge[];
   /** START 和每个目标的出边表。 */
   outgoingEdges: Map<number, OneClickClearDagEdge[]>;
@@ -423,12 +423,7 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
 /**
  * 收集从当前路径末端中心 x+ 侧可选的士兵，并按中心 x 稳定排序。
  *
- * 已知改进点：页面普通点士兵允许命中圆边缘可达；这里仍以 `hitCenter`（命中圆中心）作为 DAG（有向无环图）目标。
- *
- * 若要对齐两者，`OneClickClearTarget`（一键清图内部目标）需要保留两套语义：
- *
- * - `routePoint`（几何寻路目标点）。
- * - `hitCenter`（命中圆中心）/`centerTarget`（带命中圆半径的弹道验证目标）。
+ * 几何 DAG 使用士兵中心作为建路点；弹道验证使用同一中心加士兵半径组成的命中圆。
  */
 function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): OneClickClearTarget[] {
   const startPoint = options.pathPoints.at(-1);

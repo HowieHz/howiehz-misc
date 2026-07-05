@@ -1402,9 +1402,10 @@ const liveClickPreviewTrajectorySampleResult = computed<GraphwarTrajectorySample
     return undefined;
   }
 
-  const previewPathPoints = [...pathPixels.value, previewPoint].map((point) =>
-    imageToGraphPoint(point, boundsResult.bounds, boundsRect.value),
-  );
+  const previewPathPoints = [
+    ...mappedPathPoints.value,
+    imageToGraphPoint(previewPoint, boundsResult.bounds, boundsRect.value),
+  ];
   const context = createGraphwarTrajectoryFormulaContext({
     bounds: boundsResult.bounds,
     points: previewPathPoints,

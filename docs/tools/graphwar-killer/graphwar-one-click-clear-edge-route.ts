@@ -48,18 +48,18 @@ export async function buildOneClickClearDagEdgeRoute(
   });
   const routePathfindingElapsedMs = performance.now() - pathfindingStartedAt;
 
-  const mapStartedAt = performance.now();
-  const pixelRoute = route?.map((point) => planeGridCellCenterToImagePoint(point, context.boundsRect));
-  const routeMapPixelsElapsedMs = performance.now() - mapStartedAt;
-
-  // 无几何路线或只有单点时，这条 DAG 边不可用；省略 route 字段，方便调用方只按 jobId 合并失败边。
-  if (!pixelRoute || pixelRoute.length < 2) {
+  // 没有至少一段可画路线时不做像素映射；route-map-pixels 只统计实际映射工作。
+  if (!route || route.length < 2) {
     return {
       jobId: job.id,
-      routeMapPixelsElapsedMs,
+      routeMapPixelsElapsedMs: 0,
       routePathfindingElapsedMs,
     };
   }
+
+  const mapStartedAt = performance.now();
+  const pixelRoute = route.map((point) => planeGridCellCenterToImagePoint(point, context.boundsRect));
+  const routeMapPixelsElapsedMs = performance.now() - mapStartedAt;
 
   // 首尾必须回到原始截图控制点；中间点才来自平面格点中心映射。
   pixelRoute[0] = job.startPoint;

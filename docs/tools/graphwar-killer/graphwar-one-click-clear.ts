@@ -279,12 +279,13 @@ interface OneClickClearRouteValidationResult {
   validationCount: number;
 }
 
+/** 一次清图搜索尝试的控制流：失败直接结束，retry 禁边后重跑 DP，validated 进入成功落地。 */
 type OneClickClearSearchAttemptResult =
   | {
       /** 当前 DAG 没有可继续使用的路线。 */
       reason: GraphwarOneClickClearFailureReason;
       type: "failure";
-      /** 已累计的建边和验证工作量。 */
+      /** 已累计的建边、验证和优化工作量。 */
       workUnits: number;
     }
   | {
@@ -380,13 +381,14 @@ export async function buildGraphwarOneClickClearPath(
     }
 
     const failedEdge = attempt.failedEdge;
+    // 验证失败只禁用定位到的边；下一轮最长路 DP 会在剩余 DAG 中重新选择全局最优路线。
     measureOneClickClearDebugTiming(options, "remove-failed-edge", () => {
       failedEdge.active = false;
     });
   }
 }
 
-/** 执行一次 DAG 最长路选择、增量验证、删点优化和最终复验；失败边由外层统一禁用后重试。 */
+/** 执行一次候选路线生命周期：DAG 选路、增量验证、删点优化、最终复验。 */
 async function runOneClickClearSearchAttempt(
   context: OneClickClearSearchContext,
   dag: OneClickClearDag,
@@ -418,6 +420,7 @@ async function runOneClickClearSearchAttempt(
   const nextWorkUnits = workUnits + validation.validationCount;
   const validatedRoute = validation.route;
   if (!validatedRoute) {
+    // 增量验证失败时优先返回精确失败边；没有失败边代表 DAG 已无法提供可用路线。
     return validation.failedEdge
       ? {
           failedEdge: validation.failedEdge,
@@ -431,6 +434,7 @@ async function runOneClickClearSearchAttempt(
         };
   }
 
+  // 删点优化可能改变后续弹道形状，优化后必须对完整目标序列做一次整路复验。
   const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
     optimizeOneClickClearPath(context, validatedRoute, nextWorkUnits),
   );

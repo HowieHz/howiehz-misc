@@ -4403,16 +4403,18 @@ function handleStagePointerMove(event: PointerEvent) {
     hoveredDetectedSoldierId.value = undefined;
     return;
   }
+  if (draggingPathPointIndex.value !== undefined) {
+    clearLiveClickPreviewPointerPoint();
+    hoveredPathPointIndex.value = draggingPathPointIndex.value;
+    setPathPoint(draggingPathPointIndex.value, point);
+    return;
+  }
+
   const pathPointIndex = getPathPointIndexAtPoint(point);
   if (toolMode.value === "path") {
     scheduleLiveClickPreviewPointerPoint(point, pathPointIndex);
   } else {
     clearLiveClickPreviewPointerPoint();
-  }
-  if (draggingPathPointIndex.value !== undefined) {
-    hoveredPathPointIndex.value = draggingPathPointIndex.value;
-    setPathPoint(draggingPathPointIndex.value, point);
-    return;
   }
   hoveredPathPointIndex.value = pathPointIndex;
   const hoveredSoldier = smartCursorEnabled.value ? getDetectedSoldierAtPoint(point)?.id : undefined;

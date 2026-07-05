@@ -1120,7 +1120,8 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
     parsedPrecision.value.decimalPlaces,
     context.formulaEvaluation,
   );
-  return { ...result, expression: context.expression };
+  // 页面展示和复制的公式文本必须与采样验证回放的文本一致。
+  return { ...result, expression: context.playbackExpression };
 });
 
 watch(

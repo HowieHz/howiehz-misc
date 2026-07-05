@@ -146,14 +146,27 @@ const enum RouteMaskOperation {
   Erode = "erode",
 }
 
-/** 边界点落在障碍上时，向外搜索可站立候选点的最大半径；过大容易把候选推离真实轮廓。 */
-const GRAPHWAR_PATHFINDING_CONTOUR_FREE_CELL_SEARCH_RADIUS = 3;
-/** 页面动画每帧最多显示的可见边数量，避免 SVG 预览过重。 */
-const GRAPHWAR_PATHFINDING_PREVIEW_EDGE_LIMIT = 24;
-/** 页面动画每帧最多显示的候选点数量。 */
-const GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT = 64;
-/** 图搜索每扩展若干候选点后发送一次预览，平衡可视反馈和性能。 */
-const GRAPHWAR_PATHFINDING_PREVIEW_EXPANSION_INTERVAL = 8;
+/** 可见图启发式参数集中在一处；这些值只调候选质量和预览成本，不改变 Graphwar 规则本身。 */
+const VISIBILITY_GRAPH_HEURISTICS = {
+  /** 单格面积内的 cross 可能只是边界追踪噪声，不按凹角删除。 */
+  concaveCrossTolerance: 1,
+  /** 近共线阈值，容忍栅格化锯齿，但仍保留肉眼可见的折线拐点。 */
+  collinearDistanceTolerance: 0.75,
+  /** 边界点落在障碍上时，向外搜索可站立候选点的最大半径；过大容易把候选推离真实轮廓。 */
+  contourFreeCellSearchRadius: 3,
+  /** Route tolerance 到 RDP epsilon 的折算系数；容差越大，轮廓本身越平滑。 */
+  rdpEpsilonRouteToleranceRatio: 0.75,
+  /** RDP epsilon 上限，避免大 route tolerance 抹掉窄障碍拐点。 */
+  rdpMaxEpsilon: 6,
+  /** RDP epsilon 下限，避免原始像素锯齿产生过密候选点。 */
+  rdpMinEpsilon: 1,
+  /** 页面动画每帧最多显示的候选点数量。 */
+  previewCandidateLimit: 64,
+  /** 页面动画每帧最多显示的可见边数量，避免 SVG 预览过重。 */
+  previewEdgeLimit: 24,
+  /** 图搜索每扩展若干候选点后发送一次预览，平衡可视反馈和性能。 */
+  previewExpansionInterval: 8,
+} as const;
 
 /** 8 邻域偏移，用于从 mask cell 追踪连通边界。 */
 const EIGHT_CONNECTED_OFFSETS: readonly PlaneGridPoint[] = [
@@ -454,8 +467,11 @@ function createVisibilityGraphObstacleDataForMirroredMask({
   routeMask: Uint8Array;
   routeTolerancePlanePixels: number;
 }): GraphwarVisibilityGraphObstacleData {
-  // route tolerance 越大，轮廓已经越平滑；RDP epsilon 随之增大，但限制到 1..6 保留窄障碍拐点。
-  const epsilon = clampNumber(Math.abs(routeTolerancePlanePixels) * 0.75, 1, 6);
+  const epsilon = clampNumber(
+    Math.abs(routeTolerancePlanePixels) * VISIBILITY_GRAPH_HEURISTICS.rdpEpsilonRouteToleranceRatio,
+    VISIBILITY_GRAPH_HEURISTICS.rdpMinEpsilon,
+    VISIBILITY_GRAPH_HEURISTICS.rdpMaxEpsilon,
+  );
   const contours: VisibilityGraphObstacleContour[] = [];
   for (const component of collectRouteMaskComponents(routeMask, mirrored)) {
     for (const contour of collectComponentBoundaryContours(component)) {
@@ -784,7 +800,7 @@ function selectNearbyFreeCellCandidate({
   let bestDistanceToBoundary = Infinity;
   let bestDistanceToCentroid = -Infinity;
 
-  for (let radius = 1; radius <= GRAPHWAR_PATHFINDING_CONTOUR_FREE_CELL_SEARCH_RADIUS; radius += 1) {
+  for (let radius = 1; radius <= VISIBILITY_GRAPH_HEURISTICS.contourFreeCellSearchRadius; radius += 1) {
     // 按 Chebyshev 环逐圈找最近自由格，优先让候选贴近原始轮廓。
     for (let yOffset = -radius; yOffset <= radius; yOffset += 1) {
       for (let xOffset = -radius; xOffset <= radius; xOffset += 1) {
@@ -904,8 +920,8 @@ async function findLazyVisibilityGraphPath({
       }
 
       acceptedEdges.push([currentPoint, nextPoint]);
-      if (acceptedEdges.length > GRAPHWAR_PATHFINDING_PREVIEW_EDGE_LIMIT) {
-        acceptedEdges.splice(0, acceptedEdges.length - GRAPHWAR_PATHFINDING_PREVIEW_EDGE_LIMIT);
+      if (acceptedEdges.length > VISIBILITY_GRAPH_HEURISTICS.previewEdgeLimit) {
+        acceptedEdges.splice(0, acceptedEdges.length - VISIBILITY_GRAPH_HEURISTICS.previewEdgeLimit);
       }
 
       const nextCost = {
@@ -927,7 +943,7 @@ async function findLazyVisibilityGraphPath({
 
     expansionCount += 1;
     if (
-      expansionCount % GRAPHWAR_PATHFINDING_PREVIEW_EXPANSION_INTERVAL === 0 &&
+      expansionCount % VISIBILITY_GRAPH_HEURISTICS.previewExpansionInterval === 0 &&
       !(await reportVisibilitySearchProgress({
         acceptedEdges,
         candidates,
@@ -1072,14 +1088,14 @@ function reconstructVisibilitySearchPath(
 
 /** 限制页面预览候选点数量，优先显示当前点附近的候选点。 */
 function limitPreviewCandidates(candidates: readonly PlaneGridPoint[], current?: PlaneGridPoint) {
-  if (candidates.length <= GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT) {
+  if (candidates.length <= VISIBILITY_GRAPH_HEURISTICS.previewCandidateLimit) {
     return candidates;
   }
 
   const start = candidates[0];
   const target = candidates[1];
   if (!start || !target) {
-    return candidates.slice(0, GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT);
+    return candidates.slice(0, VISIBILITY_GRAPH_HEURISTICS.previewCandidateLimit);
   }
   const anchor = current ?? start;
   const selected = candidates
@@ -1089,7 +1105,7 @@ function limitPreviewCandidates(candidates: readonly PlaneGridPoint[], current?:
         planeGridPointDistanceSquared(left, anchor) - planeGridPointDistanceSquared(right, anchor) ||
         comparePlaneGridPoints(left, right),
     )
-    .slice(0, GRAPHWAR_PATHFINDING_PREVIEW_CANDIDATE_LIMIT - 2);
+    .slice(0, VISIBILITY_GRAPH_HEURISTICS.previewCandidateLimit - 2);
   return [start, target, ...selected];
 }
 
@@ -1185,16 +1201,15 @@ function calculateSignedArea(points: readonly PlaneGridPoint[]) {
   return doubledArea / 2;
 }
 
-/** 判断三点是否近似共线；0.75 cell 容忍栅格化锯齿，但仍保留肉眼可见的折线拐点。 */
+/** 判断三点是否近似共线，过滤不值得作为绕障候选的轻微边界锯齿。 */
 function isNearCollinear(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint) {
-  return distanceToLineSegment(current, previous, next) <= 0.75;
+  return distanceToLineSegment(current, previous, next) <= VISIBILITY_GRAPH_HEURISTICS.collinearDistanceTolerance;
 }
 
 /** 判断当前拐点是否明显为凹角，凹角不适合作为绕障候选点。 */
 function isClearlyConcave(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint, signedArea: number) {
   const crossProduct = cross(previous, current, next);
-  // 单格面积内的 cross 可能只是边界追踪噪声，不按凹角删除。
-  if (Math.abs(crossProduct) <= 1) {
+  if (Math.abs(crossProduct) <= VISIBILITY_GRAPH_HEURISTICS.concaveCrossTolerance) {
     return false;
   }
   return signedArea * crossProduct < 0;

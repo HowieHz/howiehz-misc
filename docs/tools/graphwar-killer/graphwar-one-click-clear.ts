@@ -279,6 +279,28 @@ interface OneClickClearRouteValidationResult {
   validationCount: number;
 }
 
+type OneClickClearSearchAttemptResult =
+  | {
+      /** 当前 DAG 没有可继续使用的路线。 */
+      reason: GraphwarOneClickClearFailureReason;
+      type: "failure";
+      /** 已累计的建边和验证工作量。 */
+      workUnits: number;
+    }
+  | {
+      /** 验证失败的边；外层负责禁用后重跑 DAG DP。 */
+      failedEdge: OneClickClearDagEdge;
+      type: "retry";
+      /** 已累计的建边、验证和优化工作量。 */
+      workUnits: number;
+    }
+  | {
+      /** 已通过增量验证、删点优化和最终整路复验的路线。 */
+      route: OneClickClearValidatedRoute;
+      type: "validated";
+      /** 已累计的建边、验证和优化工作量。 */
+      workUnits: number;
+    };
 interface OneClickClearSearchContext {
   options: GraphwarOneClickClearOptions;
 }
@@ -340,62 +362,102 @@ export async function buildGraphwarOneClickClearPath(
   }
 
   while (true) {
-    if (options.isCancelled?.()) {
-      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+    const attempt = await runOneClickClearSearchAttempt(context, dag, workUnits);
+    workUnits = attempt.workUnits;
+    if (attempt.type === "failure") {
+      return createOneClickClearFailure(attempt.reason, startedAt, workUnits);
     }
-
-    const selectedEdges = measureOneClickClearDebugTiming(options, "dag-longest-path", () =>
-      findOneClickClearLongestPath(dag),
-    );
-    if (selectedEdges.length === 0) {
-      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
-    }
-
-    const validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
-      validateOneClickClearDagRoute(context, dag, selectedEdges),
-    );
-    workUnits += validation.validationCount;
-    const validatedRoute = validation.route;
-    if (validatedRoute) {
-      const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
-        optimizeOneClickClearPath(context, validatedRoute, workUnits),
-      );
-      workUnits = optimized.workUnits;
-
-      const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
-        sampleOneClickClearTargetSequence(options, optimized.route),
-      );
-      if (!finalValidation.reachesTargetSequenceBeforeObstacle) {
-        // 整路公式会受后续控制点影响；复验失败时删掉第一个未命中目标对应的边，再让 DAG 回退搜索。
-        const failedEdge = selectedEdges[finalValidation.reachedTargetCount] ?? selectedEdges.at(-1);
-        if (!failedEdge) {
-          return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
-        }
-        measureOneClickClearDebugTiming(options, "remove-failed-edge", () => {
-          failedEdge.active = false;
-        });
-        continue;
-      }
-      const hitTargets = collectOneClickClearHitTargets(options, optimized.route.pathPoints);
-
+    if (attempt.type === "validated") {
+      const hitTargets = collectOneClickClearHitTargets(options, attempt.route.pathPoints);
       return {
         elapsedMs: Math.max(0, nowMs() - startedAt),
         expandedStates: workUnits,
-        pathPoints: optimized.route.pathPoints,
+        pathPoints: attempt.route.pathPoints,
         targetIds: hitTargets.map((target) => target.id),
         targetSequence: hitTargets.map((target) => createOneClickClearTargetCircle(target)),
         type: "success",
       };
     }
 
-    const failedEdge = validation.failedEdge;
-    if (!failedEdge) {
-      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
-    }
+    const failedEdge = attempt.failedEdge;
     measureOneClickClearDebugTiming(options, "remove-failed-edge", () => {
       failedEdge.active = false;
     });
   }
+}
+
+/** 执行一次 DAG 最长路选择、增量验证、删点优化和最终复验；失败边由外层统一禁用后重试。 */
+async function runOneClickClearSearchAttempt(
+  context: OneClickClearSearchContext,
+  dag: OneClickClearDag,
+  workUnits: number,
+): Promise<OneClickClearSearchAttemptResult> {
+  const options = context.options;
+  if (options.isCancelled?.()) {
+    return {
+      reason: "no-usable-target",
+      type: "failure",
+      workUnits,
+    };
+  }
+
+  const selectedEdges = measureOneClickClearDebugTiming(options, "dag-longest-path", () =>
+    findOneClickClearLongestPath(dag),
+  );
+  if (selectedEdges.length === 0) {
+    return {
+      reason: "no-usable-target",
+      type: "failure",
+      workUnits,
+    };
+  }
+
+  const validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
+    validateOneClickClearDagRoute(context, dag, selectedEdges),
+  );
+  const nextWorkUnits = workUnits + validation.validationCount;
+  const validatedRoute = validation.route;
+  if (!validatedRoute) {
+    return validation.failedEdge
+      ? {
+          failedEdge: validation.failedEdge,
+          type: "retry",
+          workUnits: nextWorkUnits,
+        }
+      : {
+          reason: "no-usable-target",
+          type: "failure",
+          workUnits: nextWorkUnits,
+        };
+  }
+
+  const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
+    optimizeOneClickClearPath(context, validatedRoute, nextWorkUnits),
+  );
+  const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
+    sampleOneClickClearTargetSequence(options, optimized.route),
+  );
+  if (finalValidation.reachesTargetSequenceBeforeObstacle) {
+    return {
+      route: optimized.route,
+      type: "validated",
+      workUnits: optimized.workUnits,
+    };
+  }
+
+  // 整路公式会受后续控制点影响；复验失败时删掉第一个未命中目标对应的边，再让 DAG 回退搜索。
+  const failedEdge = selectedEdges[finalValidation.reachedTargetCount] ?? selectedEdges.at(-1);
+  return failedEdge
+    ? {
+        failedEdge,
+        type: "retry",
+        workUnits: optimized.workUnits,
+      }
+    : {
+        reason: "no-usable-target",
+        type: "failure",
+        workUnits: optimized.workUnits,
+      };
 }
 
 /** 当前已有路径必须能先命中尾点；追加清图路线前先挡住已经无效的前缀。 */

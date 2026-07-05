@@ -1187,6 +1187,7 @@ const trajectorySampleResult = computed(() => {
       bounds: parsedBounds.value.bounds,
       boundsRect: boundsRect.value,
       collision: trajectoryCollisionSettings.value,
+      collectVisiblePixels: true,
       equation: equationMode.value,
       expression: simulatorFormulaText.value,
       launchAngleRadians: simulatorLaunchAngleRadians.value,
@@ -1213,6 +1214,7 @@ const trajectorySampleResult = computed(() => {
     bounds: parsedBounds.value.bounds,
     boundsRect: boundsRect.value,
     collision: trajectoryCollisionSettings.value,
+    collectVisiblePixels: true,
     context,
   });
 });
@@ -1292,25 +1294,14 @@ const trajectoryObstacleHitIndex = computed(() => {
 });
 
 const plottedCurvePoints = computed(() => {
-  const sample = trajectorySample.value;
-  return sample ? formatSampledTrajectoryPoints(sample.points, trajectoryObstacleHitIndex.value) : "";
+  const result = trajectorySampleResult.value;
+  return result ? formatVisibleTrajectoryPoints(result.visiblePixels, trajectoryObstacleHitIndex.value) : "";
 });
 
-/** 将 Graphwar 采样点映射为 SVG polyline；hitIndex 指定命中目标或障碍时的截断位置。 */
-function formatSampledTrajectoryPoints(points: readonly GraphPoint[], hitIndex: number) {
-  const boundsResult = parsedBounds.value;
-  if (!boundsResult.ok) {
-    return "";
-  }
-
-  const { bounds } = boundsResult;
+/** 将已映射到截图坐标的轨迹点格式化为 SVG polyline；hitIndex 指定目标或障碍截断位置。 */
+function formatVisibleTrajectoryPoints(points: readonly PixelPoint[], hitIndex: number) {
   const sampledPoints = hitIndex >= 0 ? points.slice(0, hitIndex + 1) : points;
-  return sampledPoints
-    .map((point) => {
-      const pixel = graphToImagePoint(point, bounds, boundsRect.value);
-      return `${formatSvgNumber(pixel.x)},${formatSvgNumber(pixel.y)}`;
-    })
-    .join(" ");
+  return sampledPoints.map((point) => `${formatSvgNumber(point.x)},${formatSvgNumber(point.y)}`).join(" ");
 }
 
 /** 将像素点数组格式化为 SVG polyline points 字符串。 */
@@ -1387,6 +1378,7 @@ const liveClickPreviewTrajectorySampleResult = computed<GraphwarTrajectorySample
       bounds: boundsResult.bounds,
       boundsRect: boundsRect.value,
       collision: trajectoryCollisionSettings.value,
+      collectVisiblePixels: true,
       equation: equationMode.value,
       expression: simulatorFormulaText.value,
       launchAngleRadians: simulatorLaunchAngleRadians.value,
@@ -1425,12 +1417,13 @@ const liveClickPreviewTrajectorySampleResult = computed<GraphwarTrajectorySample
     bounds: boundsResult.bounds,
     boundsRect: boundsRect.value,
     collision: trajectoryCollisionSettings.value,
+    collectVisiblePixels: true,
     context,
   });
 });
 const liveClickPreviewCurvePoints = computed(() => {
   const result = liveClickPreviewTrajectorySampleResult.value;
-  return result ? formatSampledTrajectoryPoints(result.sample.points, result.obstacleHitIndex) : "";
+  return result ? formatVisibleTrajectoryPoints(result.visiblePixels, result.obstacleHitIndex) : "";
 });
 const liveClickPreviewLabel = computed(() => {
   if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {

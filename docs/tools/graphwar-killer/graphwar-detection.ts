@@ -9,7 +9,7 @@ import { clampNumber, formatSvgNumber } from "./numbers";
 import { createPixelPoint } from "./types";
 import type { BoundsRect, PixelPoint } from "./types";
 
-/** 当前识别系统只把士兵作为可点击/可击杀目标。 */
+/** 识别系统把士兵作为可点击/可击杀目标。 */
 export type GraphwarDetectionKind = "soldier";
 
 /** 截图上的检测框，坐标均为图片像素。 */

@@ -35,10 +35,10 @@ export interface GraphwarTrajectoryFormulaSettings {
   stepOverflowProtection: boolean;
 }
 
-/** 一次轨迹采样可复用的公式上下文，避免多个验证入口重复整理路径点和保护参数。 */
+/** 一次轨迹采样可复用的公式上下文，避免多个验证入口重复整理路径点、输出文本和保护参数。 */
 export interface GraphwarTrajectoryFormulaContext {
-  /** 按当前小数位生成的最终 Graphwar 表达式；验证时按 Graphwar parser 重新解析成 double。 */
-  expression: string;
+  /** 按当前小数位生成的最终 Graphwar 表达式；UI 展示、复制和验证回放都应使用这同一份文本。 */
+  playbackExpression: string;
   /** 传给公式 evaluator 的数值保护选项。 */
   formulaEvaluation: FormulaEvaluationOptions;
   /** 已按发射点和 step 中心调整过的 Graphwar 路径点，保留 double 精度。 */
@@ -137,7 +137,8 @@ export function createGraphwarTrajectoryFormulaContext(options: {
     signEpsilon,
   );
   return {
-    expression: buildFormula(
+    // 先生成最终公式文本并保存；后续验证必须回放这份文本，而不是直接调用内存里的 evaluator。
+    playbackExpression: buildFormula(
       formulaPoints,
       options.settings.steepness,
       options.settings.equation,
@@ -192,10 +193,11 @@ export function sampleGraphwarFormulaTrajectory(options: {
   targetSequencePoints?: readonly PixelPoint[];
 }): GraphwarTrajectorySampleResult {
   const stopTracker = createGraphwarTrajectoryStopTracker(options);
+  // 必须按最终公式文本重新解析回放：小数位和 Graphwar parser 行为都是验证对象的一部分。
   const sample = sampleGraphwarExpressionTrajectory({
     bounds: options.bounds,
     equation: options.context.settings.equation,
-    expression: options.context.expression,
+    expression: options.context.playbackExpression,
     initialState: options.initialState,
     launchAngleRadians:
       options.context.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(options.context) : undefined,

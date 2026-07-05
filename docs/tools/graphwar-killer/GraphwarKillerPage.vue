@@ -1116,7 +1116,8 @@ const formulaResult = computed<FormulaResult | undefined>(() => {
     parsedPrecision.value.decimalPlaces,
     context.formulaEvaluation,
   );
-  return { ...result, expression: context.expression };
+  // 页面展示和复制的公式文本必须与采样验证回放的文本一致。
+  return { ...result, expression: context.playbackExpression };
 });
 
 watch(
@@ -1577,7 +1578,7 @@ function clearDetections() {
   clearDetectedGraphwarObjects();
 }
 
-/** 清除识别对象和依赖缓存；不改变检测状态文字。 */
+/** 清除识别对象和依赖缓存，并保留检测状态文字。 */
 function clearDetectedGraphwarObjects() {
   invalidatePathfindingCaches();
   detectedSoldiers.value = [];
@@ -2072,7 +2073,7 @@ function finishSmartPathfindingDebugTimings(
   ];
 }
 
-/** 新一次寻路/清图开始时先清旧日志；若本次提前取消，也不会展示上一轮结果。 */
+/** 寻路/清图启动时先清旧日志；预检阶段取消时也不会展示上一轮结果。 */
 function clearSmartPathfindingDebugTimings() {
   smartPathfindingDebugTimingEntries.value = [];
 }
@@ -2419,7 +2420,7 @@ function clearOneClickClearHitFlash() {
   }
 }
 
-/** 一键清图完成后只高亮本次结果里的命中士兵，和全量识别闪烁区分开。 */
+/** 一键清图完成后只高亮结果里的命中士兵，和全量识别闪烁区分开。 */
 function flashOneClickClearHitSoldiers(targetIds: readonly string[]) {
   clearOneClickClearHitFlash();
   const targetIdSet = new Set(targetIds);
@@ -3102,12 +3103,7 @@ function createOneClickClearPrefixTarget() {
 /**
  * 把当前识别士兵折叠成清图搜索候选；友伤关闭时友方不作为候选。
  *
- * 已知改进点：这里仍按命中圆中心做 x+（严格向右推进）过滤。
- *
- * 后续对齐普通点士兵的边缘可达规则时，需要保留两套语义：
- *
- * - `routePoint`（几何寻路目标点）。
- * - `hitCenter`（命中圆中心）/命中圆：弹道验证目标。
+ * 候选入口按命中圆中心做 x+ 过滤；建路目标点和弹道命中圆在一键清图内部保持独立语义。
  */
 function createOneClickClearCandidates(): GraphwarOneClickClearCandidate[] {
   const startPoint = pathPixels.value.at(-1);
@@ -3162,7 +3158,7 @@ function createOneClickClearHitCandidates(): GraphwarOneClickClearCandidate[] {
   });
 }
 
-/** 一键清图候选当前只检查命中圆中心是否 x+（严格向右推进）；边缘可达目标见 `createOneClickClearCandidates`（折叠当前识别士兵为一键清图候选）的已知改进点。 */
+/** 检查士兵中心是否位于起点 x+ 侧；命中圆边缘不参与候选过滤。 */
 function oneClickClearSoldierReachesForward(soldier: DetectionBox, startPoint: PixelPoint) {
   return pointGraphXAdvances(startPoint, getDetectionBoxCenter(soldier));
 }
@@ -3329,7 +3325,7 @@ function getCachedOneClickClearResult(cacheKey: string, timings: SmartPathfindin
   return cached ? cloneOneClickClearPathWorkerResult(cached) : undefined;
 }
 
-/** 保存一键清图完整结果；只缓存业务结果，debug timing 留给本次缓存命中阶段重新记录。 */
+/** 保存一键清图完整结果；只缓存业务结果，debug timing 由缓存命中阶段重新记录。 */
 function cacheOneClickClearResult(cacheKey: string, result: GraphwarOneClickClearPathWorkerResult) {
   setBoundedResultCacheEntry(
     oneClickClearResultCache,
@@ -3587,7 +3583,7 @@ function createSoldierAimCheckResult(
     return { kind: "center", point: center };
   }
 
-  // 第二检查只把命中圈 x+ 边缘当作“是否可选中”的资格线；
+  // 第二检查仅把命中圈 x+ 边缘作为“是否可选中”的资格线；
   // 真正落点固定为 lastX 的下一个可表示 double，y 保持命中圈中心，避免点击偏移改变目标。
   if (!soldierAimXReachesMinimumForward(createSoldierHitCircleXPlusEdgePoint(box), startPoint)) {
     return undefined;
@@ -3984,7 +3980,7 @@ function createMinimumForwardTargetPoint(point: PixelPoint, startPoint = pathPix
   const bounds = parsedBounds.value.bounds;
   const targetGraph = imageToGraphPoint(point, bounds, boundsRect.value);
 
-  // 设计意图：非士兵点击如果落在 x+ 打击范围左侧，只把目标移到
+  // 设计意图：非士兵点击如果落在 x+ 打击范围左侧，目标会移到
   // “最后一个路径点之后的下一个可表示 double x”，y 保持点击值；这里不做
   // 障碍、寻路或额外命中判断，只检查最终 xy 是否仍在可用边界内。
   const targetPoint = graphXReachesMinimumForward(targetGraph.x, startPoint)
@@ -4027,7 +4023,7 @@ function detectionBoxMatchesSelectedPathPoint(box: DetectionBox) {
   return detectionBoxContainsPathPoint(box, selectedPoint);
 }
 
-/** 一键清图只把第一个路径点当作发射士兵，后续路径点都是普通控制点。 */
+/** 一键清图以第一个路径点作为发射士兵，后续路径点都是普通控制点。 */
 function detectionBoxMatchesFirstPathPoint(box: DetectionBox) {
   const firstPoint = pathPixels.value[0];
   return Boolean(firstPoint && detectionBoxContainsPathPoint(box, firstPoint));
@@ -4528,7 +4524,7 @@ function formatDebugActivationRemainingSeconds(remainingMs: number) {
   return Math.max(0.1, remainingMs / 1000).toFixed(1);
 }
 
-/** 清除全部已选路径点，但不改变图片边界和设定。 */
+/** 清除全部已选路径点，并保留图片边界和设定。 */
 function clearPath() {
   if (toolMode.value !== "path") {
     return;

@@ -1,6 +1,6 @@
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
-import { graphToImagePoint, imageToGraphPoint, normalizePathPoint, xPlusGoesRight } from "../geometry";
 import { dilateObstacleMask } from "../graphwar-detection";
+import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../graphwar-forward-rule";
 import type {
   GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildResult,
@@ -30,10 +30,8 @@ import type {
   GraphwarSmartPathfindingPathResult,
   GraphwarSmartPathfindingWorkerTiming,
 } from "../graphwar-pathfinding-worker-types";
-import { doublePrecisionTolerance, graphXAdvancesStrictly, nextDownDouble, nextUpDouble } from "../numbers";
 import { sampleGraphwarPathTrajectory } from "../trajectory-sampling";
-import { createGraphPoint, createPixelPoint } from "../types";
-import type { BoundsRect, GraphBounds, PixelPoint } from "../types";
+import type { GraphBounds, PixelPoint } from "../types";
 
 /** 当前 master Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarPathfindingWorkerScope {
@@ -56,7 +54,7 @@ interface MasterVisibilityGraphCacheEntry {
 }
 
 interface MasterRouteMaskLookup {
-  /** 本次 worker 查询是否复用了已按 tolerance 派生的 route mask。 */
+  /** Worker 查询是否复用了已按 tolerance 派生的 route mask。 */
   cacheHit: boolean;
   /** 查询或构建耗时。 */
   elapsedMs: number;
@@ -405,95 +403,6 @@ function optimizeSmartPathfindingPath(input: GraphwarSmartPathfindingPathInput, 
     }
   }
   return optimized;
-}
-
-function normalizePathForMinimumForwardStep(
-  points: readonly PixelPoint[],
-  bounds: GraphBounds,
-  boundsRect: BoundsRect,
-) {
-  if (points.length < 2) {
-    return [...points];
-  }
-
-  const firstPoint = points[0];
-  if (!firstPoint) {
-    return [];
-  }
-
-  const normalizedPoints: PixelPoint[] = [firstPoint];
-  for (let index = 1; index < points.length; index += 1) {
-    const previousPoint = normalizedPoints.at(-1);
-    const point = points[index];
-    if (point) {
-      normalizedPoints.push(normalizePathPointForStrictForward(point, previousPoint, bounds, boundsRect));
-    }
-  }
-  return normalizedPoints;
-}
-
-function normalizePathPointForStrictForward(
-  point: PixelPoint,
-  previousPoint: PixelPoint | undefined,
-  bounds: GraphBounds,
-  boundsRect: BoundsRect,
-) {
-  const normalizedPoint = normalizePathPoint(point, boundsRect, bounds, undefined, 0);
-  if (!previousPoint) {
-    return normalizedPoint;
-  }
-
-  const normalizedGraph = imageToGraphPoint(normalizedPoint, bounds, boundsRect);
-  if (graphXAdvancesFromPoint(previousPoint, normalizedGraph.x, bounds, boundsRect)) {
-    return normalizedPoint;
-  }
-
-  const minimumForwardPoint = createMinimumForwardPointAtGraphY(previousPoint, normalizedGraph.y, bounds, boundsRect);
-  return minimumForwardPoint
-    ? normalizePathPoint(minimumForwardPoint, boundsRect, bounds, undefined, 0)
-    : normalizedPoint;
-}
-
-function createMinimumForwardPointAtGraphY(
-  startPoint: PixelPoint,
-  graphY: number,
-  bounds: GraphBounds,
-  boundsRect: BoundsRect,
-) {
-  const minimumGraphX = nextUpDouble(imageToGraphPoint(startPoint, bounds, boundsRect).x);
-  const minimumGraphPoint = graphToImagePoint(createGraphPoint(minimumGraphX, graphY), bounds, boundsRect);
-  const pixelRoundTripPadding = doublePrecisionTolerance(startPoint.x, minimumGraphPoint.x) * 2;
-  const xPlusIsRight = xPlusGoesRight(bounds);
-  const pixelX = xPlusIsRight
-    ? nextUpDouble(Math.max(minimumGraphPoint.x, startPoint.x) + pixelRoundTripPadding)
-    : nextDownDouble(Math.min(minimumGraphPoint.x, startPoint.x) - pixelRoundTripPadding);
-  const point = createPixelPoint(pixelX, minimumGraphPoint.y);
-
-  // Worker 返回的路径点也以截图坐标保存；给理论最小点补一个 round-trip padding，避免 Graph ULP 往返丢失。
-  return graphXAdvancesFromPoint(startPoint, imageToGraphPoint(point, bounds, boundsRect).x, bounds, boundsRect)
-    ? point
-    : undefined;
-}
-
-function pathFollowsGraphRule(points: readonly PixelPoint[], bounds: GraphBounds, boundsRect: BoundsRect) {
-  for (let index = 1; index < points.length; index += 1) {
-    const previousPoint = points[index - 1];
-    const nextPoint = points[index];
-    if (!previousPoint || !nextPoint) {
-      continue;
-    }
-    const previousGraph = imageToGraphPoint(previousPoint, bounds, boundsRect);
-    const nextGraph = imageToGraphPoint(nextPoint, bounds, boundsRect);
-    if (!graphXAdvancesStrictly(previousGraph.x, nextGraph.x)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function graphXAdvancesFromPoint(startPoint: PixelPoint, graphX: number, bounds: GraphBounds, boundsRect: BoundsRect) {
-  const startGraph = imageToGraphPoint(startPoint, bounds, boundsRect);
-  return graphXAdvancesStrictly(startGraph.x, graphX);
 }
 
 function measureSmartPathfindingWorkerTiming<TResult>(

@@ -56,7 +56,7 @@ interface MasterVisibilityGraphCacheEntry {
 }
 
 interface MasterRouteMaskLookup {
-  /** 本次 worker 查询是否复用了已按 tolerance 派生的 route mask。 */
+  /** Worker 查询是否复用了已按 tolerance 派生的 route mask。 */
   cacheHit: boolean;
   /** 查询或构建耗时。 */
   elapsedMs: number;

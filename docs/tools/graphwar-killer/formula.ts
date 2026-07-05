@@ -7,30 +7,20 @@ import {
   normalizeZero,
   roundToDecimalPlaces,
 } from "./numbers";
+import {
+  GRAPHWAR_TOOL_SIGN_EPSILON,
+  shouldFormatStepTermWithOverflowProtection,
+  shouldUseStepOverflowProtection,
+} from "./step-numeric-strategy";
+import type { FormulaEvaluationOptions, StepOverflowProtectionRange } from "./step-numeric-strategy";
 import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "./types";
+export { GRAPHWAR_TOOL_SIGN_EPSILON } from "./step-numeric-strategy";
+export type { FormulaEvaluationOptions, StepOverflowProtectionRange } from "./step-numeric-strategy";
 
 /** 双绝对值连接遇到垂直或反向线段时，使用 Graphwar 源码里的函数最小 x 步长保持公式有限。 */
 const ABS_CONNECTOR_MIN_WIDTH = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE;
 /** 软分段权重使用高偶次幂，让相邻 Hermite 段平滑过渡但保持局部主导。 */
 const SOFT_INTERVAL_INDICATOR_POWER = 8;
-/** Java/Graphwar double 的 exp 上限，用于判断 step 公式是否必须改写成抗溢出形式。 */
-const JAVA_DOUBLE_MAX_EXP_ARGUMENT = Math.log(Number.MAX_VALUE);
-
-/** 稳定版 sigmoid 公式在符号项可去奇点处避免 0 / 0 的 double 精度保护值。 */
-export const GRAPHWAR_TOOL_SIGN_EPSILON = Number.EPSILON;
-
-/** 编译和输出共用的 step 数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
-export interface FormulaEvaluationOptions {
-  /** 采样 step 符号项实参的钩子，用于判断是否必须启用 sign epsilon。 */
-  onSignArgument?: (value: number) => void;
-  /** 稳定符号比值的除零保护值；0 表示保留 Graphwar 原始数值行为。 */
-  signEpsilon?: number;
-  /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
-  stepOverflowProtectionRange?: StepOverflowProtectionRange;
-  /** 是否对 step 表达式使用抗溢出的等价格式。 */
-  stepOverflowProtection?: boolean;
-}
-
 /** 生成可复制公式文本时的选项；与求值选项分开，避免 UI 输出和内部采样互相污染。 */
 export interface BuildFormulaOptions {
   /** 稳定符号比值的除零保护值；默认使用工具保护值，传 0 则输出 Graphwar 原始写法。 */
@@ -39,14 +29,6 @@ export interface BuildFormulaOptions {
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否允许输出抗溢出的 step 表达式。 */
   stepOverflowProtection?: boolean;
-}
-
-/** Step 指数项只需要覆盖实际轨迹会扫过的 x 范围，减少公式长度和数值偏差。 */
-export interface StepOverflowProtectionRange {
-  /** 轨迹采样区间右端 Graphwar x。 */
-  maxX: number;
-  /** 轨迹采样区间左端 Graphwar x。 */
-  minX: number;
 }
 
 /** A(abs(x+b)-abs(x+c)) 连接函数使用的标准化线段数据。 */
@@ -946,42 +928,6 @@ function evaluateDirectStepSigmoid(t: number) {
 function evaluateStableSignRatio(value: number, options?: FormulaEvaluationOptions) {
   options?.onSignArgument?.(value);
   return value / (Math.abs(value) + (options?.signEpsilon ?? GRAPHWAR_TOOL_SIGN_EPSILON));
-}
-
-/** 运行时判断 step 项是否需要抗溢出，避免无风险项改变 Graphwar 原始行为。 */
-function shouldUseStepOverflowProtection(
-  steepness: number,
-  centerX: number,
-  currentArgument: number,
-  options?: FormulaEvaluationOptions,
-) {
-  if (!(options?.stepOverflowProtection ?? true)) {
-    return false;
-  }
-  const range = options?.stepOverflowProtectionRange;
-  if (range) {
-    // 有轨迹范围时按整条可能采样区间做编译期结论，采样热路径可直接复用。
-    return stepTermCanOverflowExp(steepness, centerX, range);
-  }
-  // 没有范围时退回到当前 t 值，保持旧的逐点判断语义。
-  return -currentArgument > JAVA_DOUBLE_MAX_EXP_ARGUMENT;
-}
-
-/** 输出公式时判断 step 项是否需要抗溢出写法；没有范围时保守保护所有 step 项。 */
-function shouldFormatStepTermWithOverflowProtection(
-  steepness: number,
-  centerX: number,
-  stepOverflowProtection: boolean,
-  range: StepOverflowProtectionRange | undefined,
-) {
-  return stepOverflowProtection && (!range || stepTermCanOverflowExp(steepness, centerX, range));
-}
-
-/** 判断指定 x 范围内 exp(-steepness*(x-center)) 是否会超过 Java double 上限。 */
-function stepTermCanOverflowExp(steepness: number, centerX: number, range: StepOverflowProtectionRange) {
-  const minX = Math.min(range.minX, range.maxX);
-  const maxExpArgument = -steepness * (minX - centerX);
-  return maxExpArgument > JAVA_DOUBLE_MAX_EXP_ARGUMENT;
 }
 
 /** 分母除零保护值不能跟随用户小数位，否则低精度输出会把它折成 0。 */

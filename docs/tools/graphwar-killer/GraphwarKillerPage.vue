@@ -328,6 +328,7 @@ const magnifierZoomText = ref(String(graphwarToolDefaults.magnifierZoom));
 const magnifierPoint = ref<PixelPoint>();
 const liveClickPreviewEnabled = ref(false);
 const liveClickPreviewPointerPoint = ref<PixelPoint>();
+const liveClickPreviewPointerPathPointIndex = ref<number>();
 const boundsFlashActive = ref(false);
 const toolMode = ref<ToolMode>("bounds");
 const toolWorkflowMode = ref<ToolWorkflowMode>("solver");
@@ -476,6 +477,7 @@ let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionSoldierFlashFrame: number | undefined;
 let detectionSoldierFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let liveClickPreviewPointerFrame: number | undefined;
+let liveClickPreviewPendingPathPointIndex: number | undefined;
 let liveClickPreviewPendingPointerPoint: PixelPoint | undefined;
 let oneClickClearHitFlashFrame: number | undefined;
 let oneClickClearHitFlashTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1351,7 +1353,7 @@ const liveClickPreviewPoint = computed(() => {
   if (!liveClickPreviewEnabled.value || toolMode.value !== "path" || smartPathfindingInProgress.value || !point) {
     return undefined;
   }
-  if (draggingPathPointIndex.value !== undefined || getPathPointIndexAtPoint(point) !== undefined) {
+  if (draggingPathPointIndex.value !== undefined || liveClickPreviewPointerPathPointIndex.value !== undefined) {
     return undefined;
   }
   return createLiveClickPreviewPoint(point);
@@ -1562,28 +1564,46 @@ onBeforeUnmount(() => {
 });
 
 /** 高频 pointermove 只保留最新落点，每个浏览器绘制帧最多触发一次轨迹预览重算。 */
-function scheduleLiveClickPreviewPointerPoint(point: PixelPoint | undefined) {
+function scheduleLiveClickPreviewPointerPoint(point: PixelPoint, pathPointIndex: number | undefined) {
   liveClickPreviewPendingPointerPoint = point;
+  liveClickPreviewPendingPathPointIndex = pathPointIndex;
   if (liveClickPreviewPointerFrame !== undefined) {
     return;
   }
 
   liveClickPreviewPointerFrame = requestAnimationFrame(() => {
     const point = liveClickPreviewPendingPointerPoint;
+    const pathPointIndex = liveClickPreviewPendingPathPointIndex;
     liveClickPreviewPointerFrame = undefined;
     liveClickPreviewPendingPointerPoint = undefined;
+    liveClickPreviewPendingPathPointIndex = undefined;
     liveClickPreviewPointerPoint.value = point;
+    liveClickPreviewPointerPathPointIndex.value = pathPointIndex;
   });
 }
 
 /** 清理悬停预览时取消待执行帧，避免离开舞台或切模式后旧落点回写。 */
 function clearLiveClickPreviewPointerPoint() {
   liveClickPreviewPendingPointerPoint = undefined;
+  liveClickPreviewPendingPathPointIndex = undefined;
   liveClickPreviewPointerPoint.value = undefined;
+  liveClickPreviewPointerPathPointIndex.value = undefined;
   if (liveClickPreviewPointerFrame !== undefined) {
     cancelAnimationFrame(liveClickPreviewPointerFrame);
     liveClickPreviewPointerFrame = undefined;
   }
+}
+
+/** 路径点或点半径变化时刷新命中缓存，保持悬停预览和当前路径状态一致。 */
+function refreshLiveClickPreviewPointerPathPointIndex() {
+  liveClickPreviewPendingPathPointIndex =
+    liveClickPreviewPendingPointerPoint === undefined
+      ? undefined
+      : getPathPointIndexAtPoint(liveClickPreviewPendingPointerPoint);
+  liveClickPreviewPointerPathPointIndex.value =
+    liveClickPreviewPointerPoint.value === undefined
+      ? undefined
+      : getPathPointIndexAtPoint(liveClickPreviewPointerPoint.value);
 }
 
 watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTopRatioText], () => {
@@ -2836,13 +2856,16 @@ function handleStagePointerDown(event: PointerEvent) {
   }
 
   clearLiveClickPreviewPointerPoint();
-  liveClickPreviewPointerPoint.value = point;
   if (smartPathfindingInProgress.value) {
+    liveClickPreviewPointerPoint.value = point;
+    liveClickPreviewPointerPathPointIndex.value = getPathPointIndexAtPoint(point);
     updateSmartPathfindingInProgressStatus();
     return;
   }
 
   const pathPointIndex = getPathPointIndexAtPoint(point);
+  liveClickPreviewPointerPoint.value = point;
+  liveClickPreviewPointerPathPointIndex.value = pathPointIndex;
   if (pathPointIndex !== undefined) {
     draggingPathPointIndex.value = pathPointIndex;
     hoveredPathPointIndex.value = pathPointIndex;
@@ -4229,6 +4252,10 @@ function getPathPointIndexAtPoint(point: PixelPoint) {
   return undefined;
 }
 
+watch([pathPixels, soldierSelectionRadius], () => {
+  refreshLiveClickPreviewPointerPathPointIndex();
+});
+
 /** 更新路径点并重新规范化后续路径。 */
 function setPathPoint(index: number, point: PixelPoint) {
   if (!parsedBounds.value.ok || index < 0 || index >= pathPixels.value.length) {
@@ -4376,8 +4403,9 @@ function handleStagePointerMove(event: PointerEvent) {
     hoveredDetectedSoldierId.value = undefined;
     return;
   }
+  const pathPointIndex = getPathPointIndexAtPoint(point);
   if (toolMode.value === "path") {
-    scheduleLiveClickPreviewPointerPoint(point);
+    scheduleLiveClickPreviewPointerPoint(point, pathPointIndex);
   } else {
     clearLiveClickPreviewPointerPoint();
   }
@@ -4386,7 +4414,7 @@ function handleStagePointerMove(event: PointerEvent) {
     setPathPoint(draggingPathPointIndex.value, point);
     return;
   }
-  hoveredPathPointIndex.value = getPathPointIndexAtPoint(point);
+  hoveredPathPointIndex.value = pathPointIndex;
   const hoveredSoldier = smartCursorEnabled.value ? getDetectedSoldierAtPoint(point)?.id : undefined;
   hoveredDetectedSoldierId.value = hoveredSoldier;
   if (toolMode.value !== "bounds") {

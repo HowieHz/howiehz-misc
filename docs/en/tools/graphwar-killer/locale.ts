@@ -225,6 +225,9 @@ export const graphwarKillerLocale = {
       obstacleBrushDiameterAriaLabel: "Obstacle brush diameter in raw Graphwar 770x450 plane pixels",
       obstacleBrushDiameterTitle:
         "Circular obstacle brush diameter, in raw Graphwar 770x450 plane pixels; the slider quickly adjusts 1px to 200px, and the input accepts 1px to 1000px.",
+      liveClickPreview: "Live click preview",
+      liveClickPreviewTitle:
+        "Preview the path point and new path line that a left-click at the current pointer would place.",
       pickBounds: "Pick bounds",
       pickBoundsTitle: "Enter bounds-picking mode: left-click two board corners to calibrate the screenshot bounds.",
       pickPath: "Pick path",

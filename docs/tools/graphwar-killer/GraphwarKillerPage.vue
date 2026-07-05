@@ -326,6 +326,8 @@ const pointerPreviewPoint = ref<PixelPoint>();
 const magnifierEnabled = ref(false);
 const magnifierZoomText = ref(String(graphwarToolDefaults.magnifierZoom));
 const magnifierPoint = ref<PixelPoint>();
+const liveClickPreviewEnabled = ref(false);
+const liveClickPreviewPointerPoint = ref<PixelPoint>();
 const boundsFlashActive = ref(false);
 const toolMode = ref<ToolMode>("bounds");
 const toolWorkflowMode = ref<ToolWorkflowMode>("solver");
@@ -1344,12 +1346,39 @@ const soldierSelectionRadius = computed(() => {
     48,
   );
 });
-const pathLineSegments = computed<PathLineSegment[]>(() => {
+const pathLineSegments = computed<PathLineSegment[]>(() => createPathLineSegments(pathPixels.value));
+const liveClickPreviewPoint = computed(() => {
+  const point = liveClickPreviewPointerPoint.value;
+  if (!liveClickPreviewEnabled.value || toolMode.value !== "path" || smartPathfindingInProgress.value || !point) {
+    return undefined;
+  }
+  if (draggingPathPointIndex.value !== undefined || getPathPointIndexAtPoint(point) !== undefined) {
+    return undefined;
+  }
+  return createLiveClickPreviewPoint(point);
+});
+const liveClickPreviewLineSegments = computed(() => {
+  const point = liveClickPreviewPoint.value;
+  const start = toolWorkflowMode.value === "simulator" ? undefined : pathPixels.value.at(-1);
+  if (!point || !start) {
+    return [];
+  }
+  return createPathLineSegments([start, point]);
+});
+const liveClickPreviewLabel = computed(() => {
+  if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {
+    return locale.ui.point.svgSelfLabel;
+  }
+  return String(pathPixels.value.length);
+});
+
+/** 按路径点圆半径截短线段，避免线条穿过点心。 */
+function createPathLineSegments(points: readonly PixelPoint[]) {
   const radius = soldierSelectionRadius.value;
   const segments: PathLineSegment[] = [];
-  for (let index = 1; index < pathPixels.value.length; index += 1) {
-    const start = pathPixels.value[index - 1];
-    const end = pathPixels.value[index];
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
     const deltaX = end.x - start.x;
     const deltaY = end.y - start.y;
     const distance = Math.hypot(deltaX, deltaY);
@@ -1367,7 +1396,7 @@ const pathLineSegments = computed<PathLineSegment[]>(() => {
     });
   }
   return segments;
-});
+}
 const smartPathfindingPreviewPathPoints = computed(() => formatSvgPathPoints(smartPathfindingPreviewPath.value));
 const magnifierStyle = computed(() => {
   const point = magnifierPoint.value;
@@ -2717,6 +2746,7 @@ function handleStagePointerDown(event: PointerEvent) {
     return;
   }
 
+  liveClickPreviewPointerPoint.value = point;
   if (smartPathfindingInProgress.value) {
     updateSmartPathfindingInProgressStatus();
     return;
@@ -2920,6 +2950,48 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
   });
   finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
   return true;
+}
+
+/** 计算实时点击预览的落位点；只模拟左键点击会选择的目标，不触发寻路或状态写入。 */
+function createLiveClickPreviewPoint(point: PixelPoint) {
+  if (!parsedBounds.value.ok) {
+    return undefined;
+  }
+
+  const selectedSoldier = smartCursorEnabled.value ? getDetectedSoldierAtPoint(point) : undefined;
+  if (!selectedSoldier) {
+    return createLiveManualClickPreviewPoint(point);
+  }
+  if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {
+    return createLiveManualClickPreviewPoint(getDetectionBoxCenter(selectedSoldier));
+  }
+
+  const startPoint = pathPixels.value.at(-1);
+  if (!startPoint) {
+    return undefined;
+  }
+  const targetPoint = effectiveSmartPathfindingEnabled.value
+    ? createSmartPathfindingSoldierTarget(startPoint, selectedSoldier)?.targetPoint
+    : createSearchStartSoldierAimPoint(startPoint, selectedSoldier);
+  return targetPoint ? createLiveManualClickPreviewPoint(targetPoint) : undefined;
+}
+
+/** 复刻 appendPathPoint 的同步落位规则，避免实时预览改动真实路径和提示状态。 */
+function createLiveManualClickPreviewPoint(point: PixelPoint) {
+  if (!parsedBounds.value.ok) {
+    return undefined;
+  }
+  if (toolWorkflowMode.value === "simulator") {
+    return normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, undefined, 0);
+  }
+
+  const targetPoint = pathPixels.value.length > 0 ? createMinimumForwardTargetPoint(point) : point;
+  if (!targetPoint) {
+    return undefined;
+  }
+  return pathPixels.value.length > 0
+    ? targetPoint
+    : normalizePathPoint(targetPoint, boundsRect.value, parsedBounds.value.bounds, undefined, 0);
 }
 
 /** 一键清图：从当前路径尾部出发，完整遍历 x 单调可达状态并追加当前模型下击杀最多的路径。 */
@@ -4205,6 +4277,7 @@ function handleStagePointerMove(event: PointerEvent) {
     magnifierPoint.value = point;
   }
   if (toolMode.value === "obstacle") {
+    liveClickPreviewPointerPoint.value = undefined;
     updateObstacleBrushPreview(point);
     if (obstacleBrushDragging.value) {
       paintObstacleBrushAtPoint(point, true);
@@ -4213,6 +4286,7 @@ function handleStagePointerMove(event: PointerEvent) {
     hoveredDetectedSoldierId.value = undefined;
     return;
   }
+  liveClickPreviewPointerPoint.value = toolMode.value === "path" ? point : undefined;
   if (draggingPathPointIndex.value !== undefined) {
     hoveredPathPointIndex.value = draggingPathPointIndex.value;
     setPathPoint(draggingPathPointIndex.value, point);
@@ -4232,6 +4306,7 @@ function handleStagePointerMove(event: PointerEvent) {
 function handleStagePointerLeave() {
   pointerPreviewPoint.value = undefined;
   magnifierPoint.value = undefined;
+  liveClickPreviewPointerPoint.value = undefined;
   hoveredDetectedSoldierId.value = undefined;
   hoveredPathPointIndex.value = undefined;
   draggingPathPointIndex.value = undefined;
@@ -4369,6 +4444,7 @@ function setToolMode(mode: ToolMode) {
 
   toolMode.value = mode;
   pointerPreviewPoint.value = undefined;
+  liveClickPreviewPointerPoint.value = undefined;
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
   obstacleBrushLastPlanePoint.value = undefined;
@@ -5275,6 +5351,15 @@ async function copyText(text: string) {
         >
           {{ locale.ui.actions.undoPoint }}
         </button>
+        <button
+          type="button"
+          :aria-pressed="liveClickPreviewEnabled"
+          :class="{ 'graphwar-killer__toggle-button--active': liveClickPreviewEnabled }"
+          :title="locale.ui.actions.liveClickPreviewTitle"
+          @click="liveClickPreviewEnabled = !liveClickPreviewEnabled"
+        >
+          {{ locale.ui.actions.liveClickPreview }}
+        </button>
       </div>
       <div
         v-if="obstacleBrushControlsVisible"
@@ -5562,6 +5647,15 @@ async function copyText(text: string) {
             :y2="segment.y2"
           />
           <line
+            v-for="(segment, index) in liveClickPreviewLineSegments"
+            :key="`live-click-preview-line-${index}`"
+            class="graphwar-killer__path-line graphwar-killer__path-line--live-click-preview"
+            :x1="segment.x1"
+            :y1="segment.y1"
+            :x2="segment.x2"
+            :y2="segment.y2"
+          />
+          <line
             v-if="smartPathfindingInProgress && smartPathfindingPreviewConnection"
             class="graphwar-killer__pathfinding-connection"
             :x1="smartPathfindingPreviewConnection.x1"
@@ -5643,6 +5737,21 @@ async function copyText(text: string) {
               :y="point.y - soldierSelectionRadius - 4"
             >
               {{ index === 0 ? locale.ui.point.svgSelfLabel : index }}
+            </text>
+          </g>
+          <g v-if="liveClickPreviewPoint">
+            <circle
+              class="graphwar-killer__point graphwar-killer__point--live-click-preview"
+              :cx="liveClickPreviewPoint.x"
+              :cy="liveClickPreviewPoint.y"
+              :r="soldierSelectionRadius"
+            />
+            <text
+              class="graphwar-killer__point-label graphwar-killer__point-label--live-click-preview"
+              :x="liveClickPreviewPoint.x + soldierSelectionRadius + 4"
+              :y="liveClickPreviewPoint.y - soldierSelectionRadius - 4"
+            >
+              {{ liveClickPreviewLabel }}
             </text>
           </g>
         </svg>
@@ -5837,6 +5946,15 @@ async function copyText(text: string) {
                 :y2="segment.y2"
               />
               <line
+                v-for="(segment, index) in liveClickPreviewLineSegments"
+                :key="`magnifier-live-click-preview-line-${index}`"
+                class="graphwar-killer__path-line graphwar-killer__path-line--live-click-preview"
+                :x1="segment.x1"
+                :y1="segment.y1"
+                :x2="segment.x2"
+                :y2="segment.y2"
+              />
+              <line
                 v-if="smartPathfindingInProgress && smartPathfindingPreviewConnection"
                 class="graphwar-killer__pathfinding-connection"
                 :x1="smartPathfindingPreviewConnection.x1"
@@ -5918,6 +6036,21 @@ async function copyText(text: string) {
                   :y="point.y - soldierSelectionRadius - 4"
                 >
                   {{ index === 0 ? locale.ui.point.svgSelfLabel : index }}
+                </text>
+              </g>
+              <g v-if="liveClickPreviewPoint">
+                <circle
+                  class="graphwar-killer__point graphwar-killer__point--live-click-preview"
+                  :cx="liveClickPreviewPoint.x"
+                  :cy="liveClickPreviewPoint.y"
+                  :r="soldierSelectionRadius"
+                />
+                <text
+                  class="graphwar-killer__point-label graphwar-killer__point-label--live-click-preview"
+                  :x="liveClickPreviewPoint.x + soldierSelectionRadius + 4"
+                  :y="liveClickPreviewPoint.y - soldierSelectionRadius - 4"
+                >
+                  {{ liveClickPreviewLabel }}
                 </text>
               </g>
             </svg>
@@ -6554,6 +6687,13 @@ async function copyText(text: string) {
   vector-effect: non-scaling-stroke;
 }
 
+.graphwar-killer__path-line--live-click-preview {
+  opacity: 78%;
+  stroke: #f59e0b;
+  stroke-dasharray: 3 5;
+  stroke-width: 1.5;
+}
+
 .graphwar-killer__pathfinding-preview {
   pointer-events: none;
 }
@@ -6726,6 +6866,14 @@ async function copyText(text: string) {
   stroke: #16a34a;
 }
 
+.graphwar-killer__point--live-click-preview {
+  fill: color-mix(in srgb, #f59e0b 20%, transparent);
+  pointer-events: none;
+  stroke: #f59e0b;
+  stroke-dasharray: 3 3;
+  stroke-width: 2;
+}
+
 .graphwar-killer__point-label {
   fill: var(--vp-c-text-1);
   font-size: 16px;
@@ -6733,6 +6881,10 @@ async function copyText(text: string) {
   paint-order: stroke;
   stroke: var(--vp-c-bg);
   stroke-width: 4;
+}
+
+.graphwar-killer__point-label--live-click-preview {
+  fill: #b45309;
 }
 
 .graphwar-killer__image-actions {

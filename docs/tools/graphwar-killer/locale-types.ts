@@ -236,6 +236,8 @@ export interface GraphwarKillerLocale {
       obstacleBrushDiameter: string;
       obstacleBrushDiameterAriaLabel: string;
       obstacleBrushDiameterTitle: string;
+      liveClickPreview: string;
+      liveClickPreviewTitle: string;
       pickBounds: string;
       pickBoundsTitle: string;
       pickPath: string;

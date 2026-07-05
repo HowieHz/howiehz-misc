@@ -1,18 +1,12 @@
-import type { GraphwarOneClickClearDagEdgeBuildJob } from "../graphwar-one-click-clear";
 /** 一键清图 DAG 边消费者 worker：初始化一次私有可视图 cache，然后按需处理单条边。 */
-import {
-  buildSmartPathfindingPathForMask,
-  createGraphwarVisibilityGraphObstacleData,
-  planeGridCellCenterToImagePoint,
-} from "../graphwar-pathfinding";
+import { buildOneClickClearDagEdgeRoute } from "../graphwar-one-click-clear-edge-route";
+import { createGraphwarVisibilityGraphObstacleData } from "../graphwar-pathfinding";
 import type { GraphwarVisibilityGraphObstacleData } from "../graphwar-pathfinding";
 import type {
   GraphwarOneClickClearEdgeWorkerInit,
   GraphwarOneClickClearEdgeWorkerRequest,
   GraphwarOneClickClearEdgeWorkerResponse,
-  GraphwarOneClickClearEdgeWorkerJobResult,
 } from "../graphwar-pathfinding-worker-types";
-import type { PixelPoint } from "../types";
 
 /** 当前 edge Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarOneClickClearEdgeWorkerScope {
@@ -38,10 +32,22 @@ workerScope.addEventListener("message", (event: MessageEvent<GraphwarOneClickCle
   void handleRequest(event.data);
 });
 
+/** 处理 edge Worker 消息：init 建立本 worker 的 routeMask 绑定 cache，job 复用共享单边建路规则。 */
 async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
   try {
     if (request.type === "init") {
-      context = createEdgeWorkerContext(request.context);
+      /*
+       * Edge Worker 不能复用主线程可视图 cache：cache 用 routeMask 引用相等判断兼容性。
+       * 在本 worker 内创建，才能保证 visibilityGraphObstacleData 绑定本 worker 收到的 routeMask。
+       */
+      context = {
+        ...request.context,
+        visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
+          bounds: request.context.bounds,
+          routeMask: request.context.routeMask,
+          routeTolerancePlanePixels: request.context.routeTolerancePlanePixels,
+        }),
+      };
       postResponse({
         type: "ready",
         workerIndex: request.context.workerIndex,
@@ -53,7 +59,7 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
     if (!activeContext) {
       throw new Error("Edge worker was not initialized");
     }
-    const result = await buildEdgeRoute(activeContext, request.job);
+    const result = await buildOneClickClearDagEdgeRoute(activeContext, request.job);
     postResponse({
       requestId: request.requestId,
       result,
@@ -69,67 +75,6 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
   }
 }
 
-function createEdgeWorkerContext(source: GraphwarOneClickClearEdgeWorkerInit): EdgeWorkerContext {
-  /*
-   * Do not clone the main-thread visibility cache into edge workers.
-   * The cache validates compatibility with routeMask by reference equality; building it here keeps
-   * cache.routeMask === routeMask inside this worker and avoids cloning the large contour object graph.
-   */
-  const visibilityGraphObstacleData = createGraphwarVisibilityGraphObstacleData({
-    bounds: source.bounds,
-    routeMask: source.routeMask,
-    routeTolerancePlanePixels: source.routeTolerancePlanePixels,
-  });
-  return {
-    ...source,
-    visibilityGraphObstacleData,
-  };
-}
-
-async function buildEdgeRoute(
-  activeContext: EdgeWorkerContext,
-  job: GraphwarOneClickClearDagEdgeBuildJob,
-): Promise<GraphwarOneClickClearEdgeWorkerJobResult> {
-  const pathfindingStartedAt = nowMs();
-  const route = await buildSmartPathfindingPathForMask({
-    bounds: activeContext.bounds,
-    boundsRect: activeContext.boundsRect,
-    boundaryExpansion: activeContext.boundaryExpansion,
-    routeMask: activeContext.routeMask,
-    routeTolerancePlanePixels: activeContext.routeTolerancePlanePixels,
-    startPoint: job.startPoint,
-    targetPoint: job.targetPoint,
-    visibilityGraphObstacleData: activeContext.visibilityGraphObstacleData,
-  });
-  const routePathfindingElapsedMs = nowMs() - pathfindingStartedAt;
-
-  const mapStartedAt = nowMs();
-  const pixelRoute = route?.map((point) => planeGridCellCenterToImagePoint(point, activeContext.boundsRect));
-  const routeMapPixelsElapsedMs = nowMs() - mapStartedAt;
-  const exactRoute = normalizeEdgeRoute(pixelRoute, job.startPoint, job.targetPoint);
-  return {
-    jobId: job.id,
-    ...(exactRoute ? { route: exactRoute } : {}),
-    routeMapPixelsElapsedMs,
-    routePathfindingElapsedMs,
-  };
-}
-
-function normalizeEdgeRoute(route: PixelPoint[] | undefined, startPoint: PixelPoint, targetPoint: PixelPoint) {
-  if (!route || route.length < 2) {
-    return undefined;
-  }
-
-  const exactRoute = [...route];
-  exactRoute[0] = startPoint;
-  exactRoute[exactRoute.length - 1] = targetPoint;
-  return exactRoute;
-}
-
 function postResponse(response: GraphwarOneClickClearEdgeWorkerResponse) {
   workerScope.postMessage(response);
-}
-
-function nowMs() {
-  return performance.now();
 }

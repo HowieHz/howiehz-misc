@@ -319,6 +319,7 @@ const oneClickClearResultCacheLimit = 16;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 
+// 页面状态按未来可抽工作流分区维护：基础舞台、公式设置、截图、识别、障碍编辑、寻路。
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
 const boundsFirstPoint = ref<PixelPoint>();
 const pointerPreviewPoint = ref<PixelPoint>();
@@ -369,6 +370,7 @@ const pathfindingBoundaryExpansionText = ref("1");
 const oneClickClearDeleteCheckRadiusText = ref(String(oneClickClearDeleteCheckRadiusDefaultPixels));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
+// 路径状态已独立在 composable 中；页面只负责把当前工作流模式和交互事件接进去。
 const {
   clearActivePath: clearActivePathState,
   clearAllModePaths: clearAllPathState,
@@ -390,6 +392,7 @@ const {
   trajectoryStrokeColor,
   undoActivePathPoint,
 } = useGraphwarPathState(toolWorkflowMode);
+// 截图工作流拥有文件输入、粘贴、截屏和舞台坐标换算；识别流程只消费落地后的 ImageData。
 const {
   captureScreenImage,
   getImageDataFromCurrentImage,
@@ -415,6 +418,7 @@ const {
 });
 const graphwarDetectionRunner = createGraphwarDetectionRunner();
 const graphwarPathfindingRunner = createGraphwarPathfindingRunner();
+// 识别状态保留 baseline，用于障碍编辑后仍能恢复自动识别出的原始 mask。
 const detectionStatus = ref("");
 const detectionStatusKind = ref<DetectionStatusKind>("info");
 const detectionInProgress = ref(false);
@@ -428,6 +432,7 @@ const oneClickClearHitFlashActive = ref(false);
 const smartCursorEnabled = ref(true);
 const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
+// 障碍笔刷状态只描述页面编辑手势；真正参与寻路的是编辑落地后的 detectedObstacles.mask。
 const obstacleBrushDiameterText = ref("30");
 const obstacleBrushEraseEnabled = ref(false);
 const obstacleBrushPointerPoint = ref<PixelPoint>();
@@ -435,6 +440,7 @@ const obstacleBrushDragging = ref(false);
 const obstacleBrushLastPlanePoint = ref<PlaneGridPoint>();
 const obstacleEditsDirty = ref(false);
 const searchAnimationEnabled = ref(true);
+// 智能寻路和一键清图共用同一组运行状态、预览层和取消 token，避免两个异步任务同时回写页面。
 const smartPathfindingInProgress = ref(false);
 const activeSmartPathfindingPhase = ref<SmartPathfindingPhase>("search");
 const smartPathfindingStatus = ref("");
@@ -446,6 +452,7 @@ const smartPathfindingPreviewPoints = ref<PixelPoint[]>([]);
 const smartPathfindingPreviewPath = ref<PixelPoint[]>([]);
 const pathfindingOptimizationPreviewPoint = ref<PixelPoint>();
 const smartPathfindingBlockedPoint = ref<PixelPoint>();
+// route mask cache 绑定原始 mask 对象；完整结果 cache 额外绑定路径、目标和公式设置。
 const routeObstacleMaskIds = new WeakMap<Uint8Array, number>();
 const routeMaskCache = new WeakMap<Uint8Array, Map<string, RouteMaskCacheEntry>>();
 const friendlyObstacleMaskCache = new WeakMap<Uint8Array, FriendlyObstacleMaskCacheEntry>();
@@ -1507,6 +1514,7 @@ watch(
     maxYText,
   ],
   () => {
+    // 这些输入会改变几何搜索、worker 并行或公式边界语义，页面 cache 和 worker cache 必须一起失效。
     invalidatePathfindingCaches();
     clearSmartPathfindingStatus();
   },

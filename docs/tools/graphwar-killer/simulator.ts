@@ -166,7 +166,7 @@ interface GraphwarExpressionToken {
   value?: number;
 }
 
-/** Graphwar 表达式 token 编号；数值顺序会影响 reorderGraphwarExpressionTokens 的原版兼容优先级。 */
+/** Graphwar 表达式 token 编号；数值顺序就是原版重排优先级，不能按可读性随意调整。 */
 const enum GraphwarExpressionTokenType {
   /** 加法 token。 */
   Add = 1,
@@ -769,6 +769,7 @@ function parseGraphwarExpression(
   expression: string,
   parserOptions?: GraphwarExpressionParserOptions,
 ): GraphwarExpressionToken[] | undefined {
+  // 流程刻意保持为 token 化 -> 前缀 Polish 重排 -> 栈求值，便于对齐 Graphwar 原版解析差异。
   const regularTokens = tokenizeGraphwarExpression(expression, parserOptions);
   if (!regularTokens || regularTokens.length === 0) {
     return undefined;
@@ -938,6 +939,7 @@ function reorderGraphwarExpressionTokens(
     const paramCount = getGraphwarExpressionTokenParamCount(token.type);
     output.push(token);
     if (paramCount === 1) {
+      // 函数和一元负号只消费右侧表达式，左侧空区间由调用方判定是否合法。
       pendingRanges.push({ start: rootIndex + 1, end: currentRange.end, mustContainToken: false });
     } else if (paramCount === 2) {
       // 栈后进先出：先压右区间，才能保持旧递归的 left-before-right 输出顺序。
@@ -974,6 +976,7 @@ function findGraphwarExpressionRootTokenIndex(input: GraphwarExpressionToken[], 
       nestDepth < rootNestDepth ||
       (nestDepth === rootNestDepth && (rootIndex === -1 || type < input[rootIndex].type))
     ) {
+      // 同层选择编号更小的 token；编号顺序承担 Graphwar 原版的优先级 contract。
       rootIndex = index;
       rootNestDepth = nestDepth;
     }

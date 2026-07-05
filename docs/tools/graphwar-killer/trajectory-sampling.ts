@@ -121,7 +121,7 @@ export function createGraphwarTrajectoryFormulaContext(options: {
   soldierCenter?: GraphPoint;
 }): GraphwarTrajectoryFormulaContext {
   const formulaPoints = createFormulaPathPoints(options.points, options.settings);
-  // 先用零 epsilon 干跑一次，只有轨迹真正会踩到符号折点时才让输出公式带保护值。
+  // sign epsilon 会轻微改变折点附近曲线；先用 0 干跑，只有真实轨迹踩到 0/0 折点时才写入保护。
   const signEpsilon = formulaPathNeedsSignEpsilon({
     bounds: options.bounds,
     formulaPoints,
@@ -428,6 +428,7 @@ function formulaPathNeedsSignEpsilon(options: {
   }
 
   let hasZeroSignArgument = false;
+  // 这里不看公式形状本身，只看 Graphwar 采样点是否真的落在 sign(t) 的 t=0 折点上。
   sampleGraphwarTrajectory({
     algorithm: options.settings.algorithm,
     bounds: options.bounds,

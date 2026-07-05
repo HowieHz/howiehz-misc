@@ -19,7 +19,7 @@ const JAVA_DOUBLE_MAX_EXP_ARGUMENT = Math.log(Number.MAX_VALUE);
 /** 稳定版 sigmoid 公式在符号项可去奇点处避免 0 / 0 的 double 精度保护值。 */
 export const GRAPHWAR_TOOL_SIGN_EPSILON = Number.EPSILON;
 
-/** 编译和求值公式时的数值选项，让页面预览、worker 验证和最终输出共用同一套保护规则。 */
+/** 编译和输出共用的 step 数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
 export interface FormulaEvaluationOptions {
   /** 采样 step 符号项实参的钩子，用于判断是否必须启用 sign epsilon。 */
   onSignArgument?: (value: number) => void;
@@ -33,7 +33,7 @@ export interface FormulaEvaluationOptions {
 
 /** 生成可复制公式文本时的选项；与求值选项分开，避免 UI 输出和内部采样互相污染。 */
 export interface BuildFormulaOptions {
-  /** 稳定符号比值的除零保护值；省略时使用工具默认值。 */
+  /** 稳定符号比值的除零保护值；默认使用工具保护值，传 0 则输出 Graphwar 原始写法。 */
   signEpsilon?: number;
   /** 判断 step 项是否可能溢出的有效 x 范围。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
@@ -375,6 +375,7 @@ function formatStepExpression(
 ) {
   const parts: string[] = [];
   for (const term of terms) {
+    // 只有可能触发 exp 溢出的项才改用稳定 sigmoid，避免无风险区间偏离 Graphwar 原始公式。
     if (
       shouldFormatStepTermWithOverflowProtection(steepness, term.x, stepOverflowProtection, stepOverflowProtectionRange)
     ) {
@@ -409,6 +410,7 @@ function formatStepFirstDerivativeExpression(
   const parts: string[] = [];
   for (const term of terms) {
     const coefficient = term.deltaY * steepness;
+    // 一阶导可直接替换 exp 文本；稳定版和直写版的代数结构相同。
     const expText = shouldFormatStepTermWithOverflowProtection(
       steepness,
       term.x,
@@ -434,6 +436,7 @@ function formatStepSecondDerivativeExpression(
   const parts: string[] = [];
   for (const term of terms) {
     const coefficient = term.deltaY * steepness * steepness;
+    // 二阶导稳定写法需要额外的 sign(t)，用于还原 exp(-abs(t)) 两侧的方向。
     if (
       shouldFormatStepTermWithOverflowProtection(steepness, term.x, stepOverflowProtection, stepOverflowProtectionRange)
     ) {
@@ -957,12 +960,14 @@ function shouldUseStepOverflowProtection(
   }
   const range = options?.stepOverflowProtectionRange;
   if (range) {
+    // 有轨迹范围时按整条可能采样区间做编译期结论，采样热路径可直接复用。
     return stepTermCanOverflowExp(steepness, centerX, range);
   }
+  // 没有范围时退回到当前 t 值，保持旧的逐点判断语义。
   return -currentArgument > JAVA_DOUBLE_MAX_EXP_ARGUMENT;
 }
 
-/** 输出公式时判断 step 项是否需要抗溢出写法。 */
+/** 输出公式时判断 step 项是否需要抗溢出写法；没有范围时保守保护所有 step 项。 */
 function shouldFormatStepTermWithOverflowProtection(
   steepness: number,
   centerX: number,

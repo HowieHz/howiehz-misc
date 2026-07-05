@@ -146,7 +146,7 @@ const enum RouteMaskOperation {
   Erode = "erode",
 }
 
-/** 边界点落在障碍上时，向外搜索可站立候选点的最大半径。 */
+/** 边界点落在障碍上时，向外搜索可站立候选点的最大半径；过大容易把候选推离真实轮廓。 */
 const GRAPHWAR_PATHFINDING_CONTOUR_FREE_CELL_SEARCH_RADIUS = 3;
 /** 页面动画每帧最多显示的可见边数量，避免 SVG 预览过重。 */
 const GRAPHWAR_PATHFINDING_PREVIEW_EDGE_LIMIT = 24;
@@ -454,6 +454,7 @@ function createVisibilityGraphObstacleDataForMirroredMask({
   routeMask: Uint8Array;
   routeTolerancePlanePixels: number;
 }): GraphwarVisibilityGraphObstacleData {
+  // route tolerance 越大，轮廓已经越平滑；RDP epsilon 随之增大，但限制到 1..6 保留窄障碍拐点。
   const epsilon = clampNumber(Math.abs(routeTolerancePlanePixels) * 0.75, 1, 6);
   const contours: VisibilityGraphObstacleContour[] = [];
   for (const component of collectRouteMaskComponents(routeMask, mirrored)) {
@@ -784,6 +785,7 @@ function selectNearbyFreeCellCandidate({
   let bestDistanceToCentroid = -Infinity;
 
   for (let radius = 1; radius <= GRAPHWAR_PATHFINDING_CONTOUR_FREE_CELL_SEARCH_RADIUS; radius += 1) {
+    // 按 Chebyshev 环逐圈找最近自由格，优先让候选贴近原始轮廓。
     for (let yOffset = -radius; yOffset <= radius; yOffset += 1) {
       for (let xOffset = -radius; xOffset <= radius; xOffset += 1) {
         if (Math.max(Math.abs(xOffset), Math.abs(yOffset)) !== radius) {
@@ -1183,7 +1185,7 @@ function calculateSignedArea(points: readonly PlaneGridPoint[]) {
   return doubledArea / 2;
 }
 
-/** 判断三点是否近似共线，避免保留不必要的候选拐点。 */
+/** 判断三点是否近似共线；0.75 cell 容忍栅格化锯齿，但仍保留肉眼可见的折线拐点。 */
 function isNearCollinear(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint) {
   return distanceToLineSegment(current, previous, next) <= 0.75;
 }
@@ -1191,6 +1193,7 @@ function isNearCollinear(previous: PlaneGridPoint, current: PlaneGridPoint, next
 /** 判断当前拐点是否明显为凹角，凹角不适合作为绕障候选点。 */
 function isClearlyConcave(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint, signedArea: number) {
   const crossProduct = cross(previous, current, next);
+  // 单格面积内的 cross 可能只是边界追踪噪声，不按凹角删除。
   if (Math.abs(crossProduct) <= 1) {
     return false;
   }

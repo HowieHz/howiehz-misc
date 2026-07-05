@@ -158,6 +158,7 @@ const graphwarSoldierTemplateNames = [
   "soldier8.png",
   "soldier9.png",
 ] as const;
+/** 士兵模板阈值是经验边界：先按子分数保守过滤，再用综合分排序和重叠抑制收敛结果。 */
 /** 固定像素分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
 const graphwarSoldierTemplateMinimumFixedScore = 0.80524047124047127 - 0.05;
 /** 前景形状分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
@@ -968,6 +969,7 @@ function detectAxisGroups(imageData: ImageData, direction: "horizontal" | "verti
     counts.push(count);
   }
 
+  // 坐标轴会横跨棋盘大部分宽/高；低于 25% 的黑像素密度通常是文字、士兵或障碍噪声。
   const minScore = axisLength * 0.25;
   const ranked = counts
     .map((score, coordinate) => ({ coordinate, score }))
@@ -980,6 +982,7 @@ function detectAxisGroups(imageData: ImageData, direction: "horizontal" | "verti
       continue;
     }
 
+    // 同一条轴线的抗锯齿边缘会比中心弱，按峰值 82% 向两侧扩展出完整轴线宽度。
     const groupThreshold = item.score * 0.82;
     let start = item.coordinate;
     let end = item.coordinate;
@@ -1040,6 +1043,7 @@ function buildAxisTriplets(groups: AxisGroup[]) {
         }
 
         const middleOffset = Math.abs(middle.coordinate - (first.coordinate + last.coordinate) / 2) / span;
+        // 三条线应对应左/中/右或上/中/下，中线偏离过大时更可能是误检组合。
         if (middleOffset > 0.18) {
           continue;
         }
@@ -1142,6 +1146,7 @@ export function detectGraphwarObstaclesInBounds(
     buildObstacleMask(imageData, edgeRect, thresholds.minArea),
   );
   return measureObjectDetectionStage(instrumentation, "filtering-obstacle-components", () => {
+    // detectionMask 用于找到足够干净的种子组件；restoreMask 保留原始细节供回填。
     const detectionMask = new Uint8Array(sourceMask);
     removeGraphwarGuideLines(detectionMask);
     bridgeObstacleGapsAcrossGuideLines(detectionMask);
@@ -1157,6 +1162,7 @@ export function detectGraphwarObstaclesInBounds(
     const filteredMask = new Uint8Array(sourceMask.length);
     let count = 0;
     for (const component of collectComponents(componentMask, GRAPHWAR_PLANE_LENGTH)) {
+      // minArea 只作用在去噪后的种子组件上，真实障碍细节随后从 restoreMask 连通回填。
       if (component.area < thresholds.minArea) {
         continue;
       }
@@ -1434,6 +1440,7 @@ function scoreSoldierTemplateThresholdExcess(
   signatureScore: number,
   backgroundPenalty: number,
 ) {
+  // 背景惩罚单独扣除，避免非士兵区域靠少量高分模板像素通过最终排序。
   return clampNumber(
     (normalizeScoreAboveThreshold(fixedScore, graphwarSoldierTemplateMinimumFixedScore) +
       normalizeScoreAboveThreshold(foregroundScore, graphwarSoldierTemplateMinimumForegroundScore) +
@@ -2083,6 +2090,7 @@ function bridgeObstacleGapsAcrossGuideLines(mask: Uint8Array) {
   const bridged = new Uint8Array(mask);
 
   for (let y = 2; y < GRAPHWAR_PLANE_HEIGHT - 2; y += 1) {
+    // 中心线两侧 2..3px 内都有障碍时，认为这是同一障碍被辅助线切开。
     const hasLeftObstacle =
       mask[y * GRAPHWAR_PLANE_LENGTH + centerX - 2] || mask[y * GRAPHWAR_PLANE_LENGTH + centerX - 3];
     const hasRightObstacle =
@@ -2097,6 +2105,7 @@ function bridgeObstacleGapsAcrossGuideLines(mask: Uint8Array) {
   }
 
   for (let x = 2; x < GRAPHWAR_PLANE_LENGTH - 2; x += 1) {
+    // 横轴同理，只桥接紧贴中心线两侧的障碍，避免连接远处无关组件。
     const hasTopObstacle =
       mask[(centerY - 2) * GRAPHWAR_PLANE_LENGTH + x] || mask[(centerY - 3) * GRAPHWAR_PLANE_LENGTH + x];
     const hasBottomObstacle =

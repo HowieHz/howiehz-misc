@@ -86,7 +86,7 @@ import {
   sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTrajectory,
 } from "./trajectory-sampling";
-import type { GraphwarTrajectoryFormulaSettings } from "./trajectory-sampling";
+import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectorySampleResult } from "./trajectory-sampling";
 import { createGraphPoint, createPixelPoint } from "./types";
 import type {
   AlgorithmMode,
@@ -1287,25 +1287,31 @@ const pathfindingHeaderStatusIsSuccess = computed(() => pathfindingHeaderStatusR
 const trajectoryObstacleHitIndex = computed(() => {
   const obstacleHitIndex = trajectorySampleResult.value?.obstacleHitIndex ?? -1;
   const targetHitIndex = trajectoryTargetHitIndex.value;
-  // 目标之后才撞障碍不影响“当前路径命中目标”的提示，保持旧预览语义。
+  // 目标之后才撞障碍不影响“当前路径命中目标”的提示。
   return targetHitIndex >= 0 && obstacleHitIndex >= targetHitIndex ? -1 : obstacleHitIndex;
 });
 
 const plottedCurvePoints = computed(() => {
-  if (!trajectorySample.value || !parsedBounds.value.ok) {
+  const sample = trajectorySample.value;
+  return sample ? formatSampledTrajectoryPoints(sample.points, trajectoryObstacleHitIndex.value) : "";
+});
+
+/** 将 Graphwar 采样点映射为 SVG polyline；hitIndex 指定命中目标或障碍时的截断位置。 */
+function formatSampledTrajectoryPoints(points: readonly GraphPoint[], hitIndex: number) {
+  const boundsResult = parsedBounds.value;
+  if (!boundsResult.ok) {
     return "";
   }
 
-  const { bounds } = parsedBounds.value;
-  const hitIndex = trajectoryObstacleHitIndex.value;
-  const points = hitIndex >= 0 ? trajectorySample.value.points.slice(0, hitIndex + 1) : trajectorySample.value.points;
-  return points
+  const { bounds } = boundsResult;
+  const sampledPoints = hitIndex >= 0 ? points.slice(0, hitIndex + 1) : points;
+  return sampledPoints
     .map((point) => {
       const pixel = graphToImagePoint(point, bounds, boundsRect.value);
       return `${formatSvgNumber(pixel.x)},${formatSvgNumber(pixel.y)}`;
     })
     .join(" ");
-});
+}
 
 /** 将像素点数组格式化为 SVG polyline points 字符串。 */
 function formatSvgPathPoints(points: readonly PixelPoint[]) {
@@ -1360,10 +1366,71 @@ const liveClickPreviewPoint = computed(() => {
 const liveClickPreviewLineSegments = computed(() => {
   const point = liveClickPreviewPoint.value;
   const start = toolWorkflowMode.value === "simulator" ? undefined : pathPixels.value.at(-1);
-  if (!point || !start) {
+  if (!effectiveSmartPathfindingEnabled.value || !point || !start) {
     return [];
   }
   return createPathLineSegments([start, point]);
+});
+const liveClickPreviewTrajectorySampleResult = computed<GraphwarTrajectorySampleResult | undefined>(() => {
+  const previewPoint = liveClickPreviewPoint.value;
+  const boundsResult = parsedBounds.value;
+  if (!previewPoint || !boundsResult.ok || effectiveSmartPathfindingEnabled.value) {
+    return undefined;
+  }
+
+  if (toolWorkflowMode.value === "simulator") {
+    if (!simulatorFormulaText.value.trim()) {
+      return undefined;
+    }
+
+    return sampleGraphwarExpressionTrajectoryWithStops({
+      bounds: boundsResult.bounds,
+      boundsRect: boundsRect.value,
+      collision: trajectoryCollisionSettings.value,
+      equation: equationMode.value,
+      expression: simulatorFormulaText.value,
+      launchAngleRadians: simulatorLaunchAngleRadians.value,
+      parser: {
+        parseDerivativeAsY: simulatorParseDerivativeAsY.value,
+        skipUnknownCharacters: simulatorSkipUnknownCharacters.value,
+      },
+      soldierCenter: imageToGraphPoint(previewPoint, boundsResult.bounds, boundsRect.value),
+    });
+  }
+
+  if (
+    pathPixels.value.length === 0 ||
+    !parsedPrecision.value.ok ||
+    (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
+    (algorithmMode.value === "abs" && equationMode.value === "ddy") ||
+    isEquationModeDisabled(equationMode.value)
+  ) {
+    return undefined;
+  }
+
+  const previewPathPoints = [...pathPixels.value, previewPoint].map((point) =>
+    imageToGraphPoint(point, boundsResult.bounds, boundsRect.value),
+  );
+  const context = createGraphwarTrajectoryFormulaContext({
+    bounds: boundsResult.bounds,
+    points: previewPathPoints,
+    settings: graphwarTrajectoryFormulaSettings.value,
+    soldierCenter: previewPathPoints[0],
+  });
+  if (context.formulaPoints.length < 2) {
+    return undefined;
+  }
+
+  return sampleGraphwarFormulaTrajectory({
+    bounds: boundsResult.bounds,
+    boundsRect: boundsRect.value,
+    collision: trajectoryCollisionSettings.value,
+    context,
+  });
+});
+const liveClickPreviewCurvePoints = computed(() => {
+  const result = liveClickPreviewTrajectorySampleResult.value;
+  return result ? formatSampledTrajectoryPoints(result.sample.points, result.obstacleHitIndex) : "";
 });
 const liveClickPreviewLabel = computed(() => {
   if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {
@@ -5710,6 +5777,11 @@ async function copyText(text: string) {
             :points="plottedCurvePoints"
             :style="{ stroke: trajectoryStrokeColor }"
           />
+          <polyline
+            v-if="liveClickPreviewCurvePoints"
+            class="graphwar-killer__curve-line graphwar-killer__curve-line--live-click-preview"
+            :points="liveClickPreviewCurvePoints"
+          />
           <circle
             v-if="smartPathfindingBlockedPoint"
             class="graphwar-killer__pathfinding-blocked-point"
@@ -6008,6 +6080,11 @@ async function copyText(text: string) {
                 class="graphwar-killer__curve-line"
                 :points="plottedCurvePoints"
                 :style="{ stroke: trajectoryStrokeColor }"
+              />
+              <polyline
+                v-if="liveClickPreviewCurvePoints"
+                class="graphwar-killer__curve-line graphwar-killer__curve-line--live-click-preview"
+                :points="liveClickPreviewCurvePoints"
               />
               <circle
                 v-if="smartPathfindingBlockedPoint"
@@ -6769,6 +6846,12 @@ async function copyText(text: string) {
   stroke-linecap: round;
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
+}
+
+.graphwar-killer__curve-line--live-click-preview {
+  stroke: #f59e0b;
+  stroke-dasharray: 9 5;
+  stroke-width: 1.5;
 }
 
 @keyframes graphwar-killer-trajectory-blink {

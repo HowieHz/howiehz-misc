@@ -475,6 +475,8 @@ let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionSoldierFlashFrame: number | undefined;
 let detectionSoldierFlashTimer: ReturnType<typeof setTimeout> | undefined;
+let liveClickPreviewPointerFrame: number | undefined;
+let liveClickPreviewPendingPointerPoint: PixelPoint | undefined;
 let oneClickClearHitFlashFrame: number | undefined;
 let oneClickClearHitFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let debugActivationCountdownTimer: ReturnType<typeof setInterval> | undefined;
@@ -1548,6 +1550,7 @@ onBeforeUnmount(() => {
   if (detectionRefreshTimer) {
     clearTimeout(detectionRefreshTimer);
   }
+  clearLiveClickPreviewPointerPoint();
   clearDebugActivationHold();
   clearDebugActivationSuccessFlash();
   clearDetectionSoldierFlash();
@@ -1556,6 +1559,31 @@ onBeforeUnmount(() => {
   }
   clearSmartPathfindingBlockedPoint();
 });
+
+/** 高频 pointermove 只保留最新落点，每个浏览器绘制帧最多触发一次轨迹预览重算。 */
+function scheduleLiveClickPreviewPointerPoint(point: PixelPoint | undefined) {
+  liveClickPreviewPendingPointerPoint = point;
+  if (liveClickPreviewPointerFrame !== undefined) {
+    return;
+  }
+
+  liveClickPreviewPointerFrame = requestAnimationFrame(() => {
+    const point = liveClickPreviewPendingPointerPoint;
+    liveClickPreviewPointerFrame = undefined;
+    liveClickPreviewPendingPointerPoint = undefined;
+    liveClickPreviewPointerPoint.value = point;
+  });
+}
+
+/** 清理悬停预览时取消待执行帧，避免离开舞台或切模式后旧落点回写。 */
+function clearLiveClickPreviewPointerPoint() {
+  liveClickPreviewPendingPointerPoint = undefined;
+  liveClickPreviewPointerPoint.value = undefined;
+  if (liveClickPreviewPointerFrame !== undefined) {
+    cancelAnimationFrame(liveClickPreviewPointerFrame);
+    liveClickPreviewPointerFrame = undefined;
+  }
+}
 
 watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTopRatioText], () => {
   clearSmartPathfindingStatus();
@@ -2806,6 +2834,7 @@ function handleStagePointerDown(event: PointerEvent) {
     return;
   }
 
+  clearLiveClickPreviewPointerPoint();
   liveClickPreviewPointerPoint.value = point;
   if (smartPathfindingInProgress.value) {
     updateSmartPathfindingInProgressStatus();
@@ -4326,7 +4355,7 @@ function removePathPoint(index: number) {
   return true;
 }
 
-/** 跟踪指针位置，用于边界预览和放大镜。 */
+/** 跟踪指针位置；高频路径预览在这里合并到浏览器绘制帧。 */
 function handleStagePointerMove(event: PointerEvent) {
   const point = getImagePointFromEvent(event);
   if (!point) {
@@ -4337,7 +4366,7 @@ function handleStagePointerMove(event: PointerEvent) {
     magnifierPoint.value = point;
   }
   if (toolMode.value === "obstacle") {
-    liveClickPreviewPointerPoint.value = undefined;
+    clearLiveClickPreviewPointerPoint();
     updateObstacleBrushPreview(point);
     if (obstacleBrushDragging.value) {
       paintObstacleBrushAtPoint(point, true);
@@ -4346,7 +4375,11 @@ function handleStagePointerMove(event: PointerEvent) {
     hoveredDetectedSoldierId.value = undefined;
     return;
   }
-  liveClickPreviewPointerPoint.value = toolMode.value === "path" ? point : undefined;
+  if (toolMode.value === "path") {
+    scheduleLiveClickPreviewPointerPoint(point);
+  } else {
+    clearLiveClickPreviewPointerPoint();
+  }
   if (draggingPathPointIndex.value !== undefined) {
     hoveredPathPointIndex.value = draggingPathPointIndex.value;
     setPathPoint(draggingPathPointIndex.value, point);
@@ -4366,7 +4399,7 @@ function handleStagePointerMove(event: PointerEvent) {
 function handleStagePointerLeave() {
   pointerPreviewPoint.value = undefined;
   magnifierPoint.value = undefined;
-  liveClickPreviewPointerPoint.value = undefined;
+  clearLiveClickPreviewPointerPoint();
   hoveredDetectedSoldierId.value = undefined;
   hoveredPathPointIndex.value = undefined;
   draggingPathPointIndex.value = undefined;
@@ -4504,7 +4537,7 @@ function setToolMode(mode: ToolMode) {
 
   toolMode.value = mode;
   pointerPreviewPoint.value = undefined;
-  liveClickPreviewPointerPoint.value = undefined;
+  clearLiveClickPreviewPointerPoint();
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
   obstacleBrushLastPlanePoint.value = undefined;

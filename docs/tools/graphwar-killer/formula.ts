@@ -115,7 +115,7 @@ export interface CompiledFormulaEvaluator {
   evaluateY: (x: number) => number;
 }
 
-/** 根据当前算法生成可复制的 Graphwar 表达式和 y= 预览表达式。 */
+/** 根据当前算法生成可复制的 Graphwar 表达式。 */
 export function buildFormula(
   points: readonly GraphPoint[],
   steepness: number,
@@ -127,65 +127,72 @@ export function buildFormula(
   const signEpsilon = options.signEpsilon ?? GRAPHWAR_TOOL_SIGN_EPSILON;
   const stepOverflowProtection = options.stepOverflowProtection ?? true;
   const stepOverflowProtectionRange = options.stepOverflowProtectionRange;
-  const startY = points[0]?.y ?? 0;
   const terms = createStepTerms(points);
-  const expression =
-    algorithm === "abs"
-      ? mode === "dy"
-        ? formatAbsConnectorFirstDerivativeExpression(points, decimalPlaces, signEpsilon)
-        : formatAbsConnectorExpression(points, decimalPlaces, 0)
-      : isCubicInterpolationAlgorithm(algorithm)
-        ? formatSoftCubicInterpolationExpression(
-            points,
-            algorithm,
-            mode,
-            decimalPlaces,
-            mode === "y" ? -(points[0]?.y ?? 0) : 0,
-          )
-        : mode === "y"
-          ? formatStepExpression(
-              0,
-              terms,
-              steepness,
-              decimalPlaces,
-              stepOverflowProtection,
-              signEpsilon,
-              stepOverflowProtectionRange,
-            )
-          : mode === "dy"
-            ? formatStepFirstDerivativeExpression(
-                terms,
-                steepness,
-                decimalPlaces,
-                stepOverflowProtection,
-                stepOverflowProtectionRange,
-              )
-            : formatStepSecondDerivativeExpression(
-                terms,
-                steepness,
-                decimalPlaces,
-                stepOverflowProtection,
-                signEpsilon,
-                stepOverflowProtectionRange,
-              );
-  const previewExpression =
-    algorithm === "abs"
-      ? formatAbsConnectorExpression(points, decimalPlaces)
-      : isCubicInterpolationAlgorithm(algorithm)
-        ? formatSoftCubicInterpolationExpression(points, algorithm, "y", decimalPlaces)
-        : formatStepExpression(
-            startY,
-            terms,
-            steepness,
-            decimalPlaces,
-            stepOverflowProtection,
-            signEpsilon,
-            stepOverflowProtectionRange,
-          );
+
+  if (algorithm === "abs") {
+    if (mode === "dy") {
+      return {
+        // y'= 模式需要输入斜率；abs 连接函数的导数是两个 sign 项的差。
+        expression: formatAbsConnectorFirstDerivativeExpression(points, decimalPlaces, signEpsilon),
+        terms,
+      };
+    }
+
+    return {
+      // y= 模式输入相对形状即可，Graphwar 会按发射点补回绝对 y。abs + y''= 由页面禁用，不在这里生成。
+      expression: formatAbsConnectorExpression(points, decimalPlaces),
+      terms,
+    };
+  }
+
+  if (isCubicInterpolationAlgorithm(algorithm)) {
+    return {
+      // pchip/akima 共用同一段 Hermite 表达式，再按模式取 y、y' 或 y''。
+      // 先减掉首点 y：y= 交给 Graphwar 按发射点平移；y'/y''= 则避免输出会代数抵消的 baseY。
+      expression: formatSoftCubicInterpolationExpression(points, algorithm, mode, decimalPlaces, -(points[0]?.y ?? 0)),
+      terms,
+    };
+  }
+
+  if (mode === "y") {
+    return {
+      // step 的 y= 表达式只输出阶跃累计变化量，绝对高度同样由 Graphwar 的发射点 offset 决定。
+      expression: formatStepExpression(
+        terms,
+        steepness,
+        decimalPlaces,
+        stepOverflowProtection,
+        signEpsilon,
+        stepOverflowProtectionRange,
+      ),
+      terms,
+    };
+  }
+
+  if (mode === "dy") {
+    return {
+      // y'= 模式输入 sigmoid 阶跃的一阶导。
+      expression: formatStepFirstDerivativeExpression(
+        terms,
+        steepness,
+        decimalPlaces,
+        stepOverflowProtection,
+        stepOverflowProtectionRange,
+      ),
+      terms,
+    };
+  }
 
   return {
-    expression,
-    previewExpression,
+    // y''= 模式输入 sigmoid 阶跃的二阶导。
+    expression: formatStepSecondDerivativeExpression(
+      terms,
+      steepness,
+      decimalPlaces,
+      stepOverflowProtection,
+      signEpsilon,
+      stepOverflowProtectionRange,
+    ),
     terms,
   };
 }
@@ -359,7 +366,6 @@ function isCubicInterpolationAlgorithm(algorithm: AlgorithmMode): algorithm is "
 
 /** 格式化用户可粘贴到 Graphwar 的基础 y= sigmoid 阶跃表达式。 */
 function formatStepExpression(
-  baseY: number,
   terms: readonly StepTerm[],
   steepness: number,
   decimalPlaces: number | undefined,
@@ -367,7 +373,7 @@ function formatStepExpression(
   signEpsilon: number,
   stepOverflowProtectionRange: StepOverflowProtectionRange | undefined,
 ) {
-  const parts = [formatDecimal(baseY, decimalPlaces)];
+  const parts: string[] = [];
   for (const term of terms) {
     if (
       shouldFormatStepTermWithOverflowProtection(steepness, term.x, stepOverflowProtection, stepOverflowProtectionRange)
@@ -389,7 +395,7 @@ function formatStepExpression(
       );
     }
   }
-  return cleanupExpression(parts.join(""));
+  return cleanupExpression(parts.join("")) || "0";
 }
 
 /** 格式化 sigmoid 阶跃表达式的一阶导。 */
@@ -445,12 +451,8 @@ function formatStepSecondDerivativeExpression(
 }
 
 /** 格式化相邻点击点之间双绝对值连接函数的 y= 叠加式。 */
-function formatAbsConnectorExpression(
-  points: readonly GraphPoint[],
-  decimalPlaces?: number,
-  baseY = points[0]?.y ?? 0,
-) {
-  const parts = [formatDecimal(baseY, decimalPlaces)];
+function formatAbsConnectorExpression(points: readonly GraphPoint[], decimalPlaces?: number) {
+  const parts: string[] = [];
   for (let index = 1; index < points.length; index += 1) {
     const segment = createAbsConnectorSegment(points[index - 1], points[index]);
     if (isRoundedAbsConnectorZero(segment, decimalPlaces)) {

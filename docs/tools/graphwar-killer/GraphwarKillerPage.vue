@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import GraphwarActionPanel from "./components/GraphwarActionPanel.vue";
+import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./components/GraphwarDetectionPanel.vue";
 import GraphwarResultPanel from "./components/GraphwarResultPanel.vue";
 import GraphwarStageOverlay from "./components/GraphwarStageOverlay.vue";
 import { useGraphwarPathState, type PathPointCoordinateAxis } from "./composables/use-graphwar-path-state";
@@ -1024,9 +1025,6 @@ const detectionHeaderStatus = computed(() => detectionSettingsMessage.value || d
 const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
   detectionSettingsMessage.value ? "error" : detectionStatusKind.value,
 );
-const detectionHeaderStatusIsError = computed(() => detectionHeaderStatusKind.value === "error");
-const detectionHeaderStatusIsWarning = computed(() => detectionHeaderStatusKind.value === "warning");
-const detectionHeaderStatusIsSuccess = computed(() => detectionHeaderStatusKind.value === "success");
 const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
   detectionDebugTimingEntries.value.map((entry) => ({
     ...entry,
@@ -1035,6 +1033,26 @@ const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
     title: getDetectionDebugTimingTitle(entry),
   })),
 );
+// 识别面板只应消费展示 DTO；识别运行、状态优先级和耗时格式化仍由页面侧保持原语义。
+const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
+  autoDetectionEnabled: autoDetectionEnabled.value,
+  canStartDetection: Boolean(imageUrl.value),
+  debugTimingRows: detectionDebugTimingRows.value.map((entry, index) => ({
+    key: `${entry.stage}-${index}`,
+    text: entry.elapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
+    title: entry.title,
+  })),
+  debugTimingVisible: debugInfoEnabled.value,
+  headerStatus: {
+    kind: detectionHeaderStatusKind.value,
+    message: detectionHeaderStatus.value,
+  },
+  smartCursorEnabled: smartCursorEnabled.value,
+  statusWarning: {
+    message: detectionStatusWarning.value,
+    title: detectionStatusWarningTitle.value,
+  },
+}));
 const smartPathfindingDebugTimingRows = computed<SmartPathfindingDebugTimingRow[]>(() =>
   createSmartPathfindingDebugTimingRows(smartPathfindingDebugTimingEntries.value),
 );
@@ -4986,85 +5004,13 @@ async function copyText(text: string) {
       </div>
     </section>
     <div class="graphwar-killer__detection-pathfinding-row">
-      <section
-        class="graphwar-killer__panel"
-        aria-labelledby="graphwar-killer-detection-title"
-      >
-        <div class="graphwar-killer__label-row">
-          <h2 id="graphwar-killer-detection-title">
-            {{ locale.ui.detection.title }}
-          </h2>
-          <span
-            v-if="detectionHeaderStatus"
-            role="status"
-            aria-live="polite"
-            :title="detectionHeaderStatus"
-            :class="{
-              'graphwar-killer__label-status--error': detectionHeaderStatusIsError,
-              'graphwar-killer__label-status--warning': detectionHeaderStatusIsWarning,
-              'graphwar-killer__label-status--success': detectionHeaderStatusIsSuccess,
-            }"
-          >
-            {{ detectionHeaderStatus }}
-          </span>
-          <span
-            v-if="detectionStatusWarning"
-            class="graphwar-killer__label-status graphwar-killer__label-status--warning"
-            :title="detectionStatusWarningTitle"
-          >
-            {{ detectionStatusWarning }}
-          </span>
-        </div>
-        <div class="graphwar-killer__image-actions">
-          <button
-            type="button"
-            :disabled="!imageUrl"
-            :title="locale.ui.detection.startDetectionTitle"
-            @click="void detectGraphwarObjects()"
-          >
-            {{ locale.ui.detection.startDetection }}
-          </button>
-          <button
-            type="button"
-            :aria-pressed="autoDetectionEnabled"
-            :class="{ 'graphwar-killer__toggle-button--active': autoDetectionEnabled }"
-            :title="locale.ui.detection.autoDetectionTitle"
-            @click="toggleAutoDetection"
-          >
-            {{ locale.ui.detection.autoDetection }}
-          </button>
-          <button
-            type="button"
-            :aria-pressed="smartCursorEnabled"
-            :class="{ 'graphwar-killer__toggle-button--active': smartCursorEnabled }"
-            :title="locale.ui.detection.smartCursorTitle"
-            @click="toggleSmartCursor"
-          >
-            {{ locale.ui.detection.smartCursor }}
-          </button>
-        </div>
-        <details
-          v-if="debugInfoEnabled"
-          class="graphwar-killer__subpanel graphwar-killer__details"
-        >
-          <summary>{{ locale.ui.detection.debugSummary }}</summary>
-          <div class="graphwar-killer__debug-timing">
-            <span v-if="!detectionDebugTimingRows.length">{{ locale.ui.detection.debugNoTiming }}</span>
-            <template v-else>
-              <span
-                v-for="(entry, index) in detectionDebugTimingRows"
-                :key="`${entry.stage}-${index}`"
-                :title="entry.title"
-              >
-                <template v-if="entry.elapsedVisible">
-                  {{ entry.label }}: {{ formatDebugElapsedDuration(entry.elapsedMs) }}
-                </template>
-                <template v-else>{{ entry.label }}</template>
-              </span>
-            </template>
-          </div>
-        </details>
-      </section>
+      <GraphwarDetectionPanel
+        :locale="locale"
+        :panel="detectionPanel"
+        @start-detection="void detectGraphwarObjects()"
+        @toggle-auto-detection="toggleAutoDetection"
+        @toggle-smart-cursor="toggleSmartCursor"
+      />
       <section
         v-if="toolWorkflowMode !== 'simulator'"
         class="graphwar-killer__panel"

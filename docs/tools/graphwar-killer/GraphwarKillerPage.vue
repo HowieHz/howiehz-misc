@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+import GraphwarActionPanel from "./components/GraphwarActionPanel.vue";
 import GraphwarResultPanel from "./components/GraphwarResultPanel.vue";
 import GraphwarStageOverlay from "./components/GraphwarStageOverlay.vue";
 import { useGraphwarPathState, type PathPointCoordinateAxis } from "./composables/use-graphwar-path-state";
@@ -1075,6 +1076,33 @@ const obstacleBrushRangeStyle = computed(() => {
     "--graphwar-killer-range-progress": `${formatDecimal(progress, 4)}%`,
   };
 });
+// 操作面板只应消费展示 DTO；工具切换和输入校验仍由页面侧维持原交互语义。
+const actionPanel = computed(() => ({
+  activeToolHint: activeToolHint.value,
+  liveClickPreviewEnabled: liveClickPreviewEnabled.value,
+  magnifierEnabled: magnifierEnabled.value,
+  magnifierZoom: {
+    inputMaximum: magnifierInputMaximumZoom,
+    minimum: magnifierMinimumZoom,
+    rangeStyle: magnifierZoomRangeStyle.value,
+    sliderMaximum: magnifierSliderMaximumZoom,
+    sliderValue: magnifierSliderZoom.value,
+    text: magnifierZoomText.value,
+  },
+  obstacleBrushAvailable: obstacleBrushAvailable.value,
+  obstacleBrushControlsVisible: obstacleBrushControlsVisible.value,
+  obstacleBrushDiameter: {
+    inputMaximum: obstacleBrushInputMaximumDiameter,
+    minimum: obstacleBrushMinimumDiameter,
+    rangeStyle: obstacleBrushRangeStyle.value,
+    sliderMaximum: obstacleBrushSliderMaximumDiameter,
+    sliderValue: obstacleBrushSliderDiameter.value,
+    text: obstacleBrushDiameterText.value,
+  },
+  obstacleBrushEraseEnabled: obstacleBrushEraseEnabled.value,
+  obstacleEditsDirty: obstacleEditsDirty.value,
+  toolMode: toolMode.value,
+}));
 const obstacleBrushPreview = computed(() => {
   const point = obstacleBrushPointerPoint.value;
   if (toolMode.value !== "obstacle" || !point || !parsedObstacleBrushDiameter.value.ok) {
@@ -2764,25 +2792,9 @@ function setObstacleBrushDiameterText(value: string) {
   obstacleBrushDiameterText.value = value;
 }
 
-/** 从输入框事件提取障碍笔刷直径文本。 */
-function handleObstacleBrushDiameterInput(event: Event) {
-  const input = event.target;
-  if (input instanceof HTMLInputElement) {
-    setObstacleBrushDiameterText(input.value);
-  }
-}
-
 /** 同步放大镜缩放文本，保留非法输入供校验提示展示。 */
 function setMagnifierZoomText(value: string) {
   magnifierZoomText.value = value;
-}
-
-/** 从输入框事件提取放大镜缩放文本。 */
-function handleMagnifierZoomInput(event: Event) {
-  const input = event.target;
-  if (input instanceof HTMLInputElement) {
-    setMagnifierZoomText(input.value);
-  }
 }
 
 /** 切换障碍笔刷添加/擦除模式。 */
@@ -5144,177 +5156,19 @@ async function copyText(text: string) {
         </div>
       </section>
     </div>
-    <section
-      class="graphwar-killer__panel"
-      aria-labelledby="graphwar-killer-actions-title"
-    >
-      <div class="graphwar-killer__label-row">
-        <h2 id="graphwar-killer-actions-title">
-          {{ locale.ui.actions.title }}
-        </h2>
-        <span :title="activeToolHint">{{ activeToolHint }}</span>
-      </div>
-      <div class="graphwar-killer__image-actions">
-        <div
-          class="graphwar-killer__tool-toggle"
-          :class="{
-            'graphwar-killer__tool-toggle--path': toolMode === 'path',
-            'graphwar-killer__tool-toggle--obstacle': toolMode === 'obstacle',
-          }"
-          role="group"
-          :aria-label="locale.ui.actions.toolModeAriaLabel"
-          :title="locale.ui.actions.toolModeTitle"
-        >
-          <button
-            type="button"
-            :aria-pressed="toolMode === 'bounds'"
-            :class="{ 'graphwar-killer__tool-toggle-button--active': toolMode === 'bounds' }"
-            :title="locale.ui.actions.pickBoundsTitle"
-            @click="setToolMode('bounds')"
-          >
-            {{ locale.ui.actions.pickBounds }}
-          </button>
-          <button
-            type="button"
-            :aria-pressed="toolMode === 'path'"
-            :class="{ 'graphwar-killer__tool-toggle-button--active': toolMode === 'path' }"
-            :title="locale.ui.actions.pickPathTitle"
-            @click="setToolMode('path')"
-          >
-            {{ locale.ui.actions.pickPath }}
-          </button>
-          <button
-            type="button"
-            :aria-pressed="toolMode === 'obstacle'"
-            :class="{ 'graphwar-killer__tool-toggle-button--active': toolMode === 'obstacle' }"
-            :disabled="!obstacleBrushAvailable"
-            :title="locale.ui.actions.drawObstacleTitle"
-            @click="setToolMode('obstacle')"
-          >
-            {{ locale.ui.actions.drawObstacle }}
-          </button>
-        </div>
-        <button
-          type="button"
-          :aria-pressed="magnifierEnabled"
-          :class="{ 'graphwar-killer__toggle-button--active': magnifierEnabled }"
-          :title="locale.ui.actions.magnifierTitle"
-          @click="magnifierEnabled = !magnifierEnabled"
-        >
-          {{ locale.ui.actions.magnifier }}
-        </button>
-        <label
-          v-if="magnifierEnabled"
-          class="graphwar-killer__magnifier-zoom-label"
-          :title="locale.ui.actions.magnifierZoomTitle"
-        >
-          {{ locale.ui.actions.magnifierZoom }}
-          <input
-            type="range"
-            :value="magnifierSliderZoom"
-            :style="magnifierZoomRangeStyle"
-            :min="magnifierMinimumZoom"
-            :max="magnifierSliderMaximumZoom"
-            step="0.1"
-            :aria-label="locale.ui.actions.magnifierZoomAriaLabel"
-            :title="locale.ui.actions.magnifierZoomTitle"
-            @input="handleMagnifierZoomInput"
-          >
-          <input
-            type="number"
-            :value="magnifierZoomText"
-            inputmode="decimal"
-            :min="magnifierMinimumZoom"
-            :max="magnifierInputMaximumZoom"
-            step="0.1"
-            :aria-label="locale.ui.actions.magnifierZoomAriaLabel"
-            :title="locale.ui.actions.magnifierZoomTitle"
-            @input="handleMagnifierZoomInput"
-          >
-          <span>x</span>
-        </label>
-      </div>
-      <div
-        v-if="toolMode === 'path'"
-        class="graphwar-killer__path-actions"
-      >
-        <button
-          type="button"
-          :title="locale.ui.actions.clearPathTitle"
-          @click="clearPath"
-        >
-          {{ locale.ui.actions.clearPath }}
-        </button>
-        <button
-          type="button"
-          :title="locale.ui.actions.undoPointTitle"
-          @click="undoLastPoint"
-        >
-          {{ locale.ui.actions.undoPoint }}
-        </button>
-        <button
-          type="button"
-          :aria-pressed="liveClickPreviewEnabled"
-          :class="{ 'graphwar-killer__toggle-button--active': liveClickPreviewEnabled }"
-          :title="locale.ui.actions.liveClickPreviewTitle"
-          @click="liveClickPreviewEnabled = !liveClickPreviewEnabled"
-        >
-          {{ locale.ui.actions.liveClickPreview }}
-        </button>
-      </div>
-      <div
-        v-if="obstacleBrushControlsVisible"
-        class="graphwar-killer__obstacle-brush-actions"
-      >
-        <label
-          class="graphwar-killer__obstacle-brush-label"
-          :title="locale.ui.actions.obstacleBrushDiameterTitle"
-        >
-          {{ locale.ui.actions.obstacleBrushDiameter }}
-          <input
-            type="range"
-            :value="obstacleBrushSliderDiameter"
-            class="graphwar-killer__obstacle-brush-range"
-            :style="obstacleBrushRangeStyle"
-            :min="obstacleBrushMinimumDiameter"
-            :max="obstacleBrushSliderMaximumDiameter"
-            step="1"
-            :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
-            :title="locale.ui.actions.obstacleBrushDiameterTitle"
-            @input="handleObstacleBrushDiameterInput"
-          >
-          <input
-            type="number"
-            :value="obstacleBrushDiameterText"
-            inputmode="numeric"
-            :min="obstacleBrushMinimumDiameter"
-            :max="obstacleBrushInputMaximumDiameter"
-            step="1"
-            :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
-            :title="locale.ui.actions.obstacleBrushDiameterTitle"
-            @input="handleObstacleBrushDiameterInput"
-          >
-          <span>{{ locale.ui.pathfinding.unit }}</span>
-        </label>
-        <button
-          type="button"
-          :aria-pressed="obstacleBrushEraseEnabled"
-          :class="{ 'graphwar-killer__toggle-button--active': obstacleBrushEraseEnabled }"
-          :title="locale.ui.actions.eraseObstacleTitle"
-          @click="toggleObstacleBrushErase"
-        >
-          {{ locale.ui.actions.eraseObstacle }}
-        </button>
-        <button
-          type="button"
-          :disabled="!obstacleEditsDirty"
-          :title="locale.ui.actions.clearObstacleEditsTitle"
-          @click="resetObstacleEdits"
-        >
-          {{ locale.ui.actions.clearObstacleEdits }}
-        </button>
-      </div>
-    </section>
+    <GraphwarActionPanel
+      :locale="locale"
+      :panel="actionPanel"
+      @clear-obstacle-edits="resetObstacleEdits"
+      @clear-path="clearPath"
+      @set-tool-mode="setToolMode"
+      @toggle-live-click-preview="liveClickPreviewEnabled = !liveClickPreviewEnabled"
+      @toggle-magnifier="magnifierEnabled = !magnifierEnabled"
+      @toggle-obstacle-brush-erase="toggleObstacleBrushErase"
+      @undo-point="undoLastPoint"
+      @update-magnifier-zoom="setMagnifierZoomText"
+      @update-obstacle-brush-diameter="setObstacleBrushDiameterText"
+    />
     <section
       class="graphwar-killer__panel"
       aria-labelledby="graphwar-killer-screenshot-title"
@@ -5790,63 +5644,6 @@ async function copyText(text: string) {
   padding: 6px 10px;
 }
 
-.graphwar-killer__path-actions {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.graphwar-killer__path-actions button {
-  min-height: 34px;
-  padding: 6px 10px;
-}
-
-.graphwar-killer__magnifier-zoom-label {
-  align-items: center;
-  flex: 1 1 280px;
-  font-weight: 600;
-  gap: 6px;
-  grid-template-columns: auto minmax(96px, 1fr) minmax(54px, 72px) auto;
-  max-width: min(100%, 460px);
-  min-width: min(100%, 260px);
-}
-
-.graphwar-killer__magnifier-zoom-label span {
-  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
-  font-size: 0.88rem;
-  font-weight: 500;
-}
-
-.graphwar-killer__obstacle-brush-actions {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-
-.graphwar-killer__obstacle-brush-actions button {
-  min-height: 34px;
-  padding: 6px 10px;
-}
-
-.graphwar-killer__obstacle-brush-label {
-  align-items: center;
-  flex: 1 1 340px;
-  font-weight: 600;
-  gap: 6px;
-  grid-template-columns: auto minmax(120px, 1fr) minmax(58px, 74px) auto;
-  max-width: min(100%, 520px);
-  min-width: min(100%, 320px);
-}
-
-.graphwar-killer__obstacle-brush-label span {
-  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
-  font-size: 0.88rem;
-  font-weight: 500;
-}
-
 .graphwar-killer__pathfinding-settings {
   display: grid;
   gap: 8px;
@@ -6060,14 +5857,6 @@ async function copyText(text: string) {
   top: 2px;
   transition: transform 0.2s ease;
   width: calc((100% - 4px) / 3);
-}
-
-.graphwar-killer__tool-toggle--path::before {
-  transform: translateX(100%);
-}
-
-.graphwar-killer__tool-toggle--obstacle::before {
-  transform: translateX(200%);
 }
 
 .graphwar-killer__mode-toggle {

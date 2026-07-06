@@ -74,9 +74,12 @@ import type { GraphwarTrajectoryCollisionSettings } from "./formula/trajectory-s
 import type { GraphwarKillerLocale } from "./locale-types";
 import {
   GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS,
-  type GraphwarOneClickClearCandidate,
   type GraphwarOneClickClearFailureReason,
 } from "./pathfinding/graphwar-one-click-clear";
+import {
+  createGraphwarOneClickClearCandidates,
+  createGraphwarOneClickClearHitCandidates,
+} from "./pathfinding/graphwar-one-click-clear-targets";
 import { mirrorPlaneGridPoint, planeGridCellCenterToImagePoint } from "./pathfinding/graphwar-pathfinding";
 import type { GraphwarPathfindingPreview, PlaneGridPoint } from "./pathfinding/graphwar-pathfinding";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/graphwar-pathfinding-cache";
@@ -99,7 +102,6 @@ import {
   getRightmostPathPoint as getRightmostTargetingPathPoint,
   graphwarSoldierContainsHitPoint,
   graphwarSoldierIsOnNegativeGraphX,
-  graphwarSoldierReachesForward,
   type GraphwarHitCircle as HitCircle,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
   type GraphwarTargetingArea,
@@ -2176,68 +2178,24 @@ function createOneClickClearPrefixTarget() {
   return "center" in target ? { center: target.center, radius: target.radius } : { center: target, radius: 1 };
 }
 
-/**
- * 把当前识别士兵折叠成清图搜索候选；友伤关闭时友方不作为候选。
- *
- * 候选入口按命中圆中心做 x+ 过滤；建路目标点和弹道命中圆在一键清图内部保持独立语义。
- */
-function createOneClickClearCandidates(): GraphwarOneClickClearCandidate[] {
-  const startPoint = pathPixels.value.at(-1);
-  if (!startPoint) {
-    return [];
-  }
-
-  return detectedSoldiers.value.flatMap((soldier) => {
-    if (detectionBoxMatchesFirstPathPoint(soldier)) {
-      return [];
-    }
-    const friendly = isDetectedFriendlySoldierObstacle(soldier);
-    if (friendly && !friendlyFireEnabled.value) {
-      return [];
-    }
-
-    const center = getDetectionBoxCenter(soldier);
-    if (!oneClickClearSoldierReachesForward(soldier, startPoint)) {
-      return [];
-    }
-
-    return [
-      {
-        enemy: !friendly,
-        hitCenter: center,
-        hitRadius: soldier.hitRadius,
-        id: soldier.id,
-      },
-    ];
+/** 把当前识别士兵折叠成清图搜索候选；页面只注入当前状态，过滤规则由目标收集 Module 持有。 */
+function createOneClickClearCandidates() {
+  return createGraphwarOneClickClearCandidates({
+    friendlyFireEnabled: friendlyFireEnabled.value,
+    geometry: createTargetingGeometry(),
+    pathPoints: pathPixels.value,
+    soldiers: detectedSoldiers.value,
   });
 }
 
 /** 统计整条弹道命中数：只排除发射士兵，不能按当前路径尾点右侧过滤。 */
-function createOneClickClearHitCandidates(): GraphwarOneClickClearCandidate[] {
-  return detectedSoldiers.value.flatMap((soldier) => {
-    if (detectionBoxMatchesFirstPathPoint(soldier)) {
-      return [];
-    }
-    const friendly = isDetectedFriendlySoldierObstacle(soldier);
-    if (friendly && !friendlyFireEnabled.value) {
-      return [];
-    }
-
-    return [
-      {
-        enemy: !friendly,
-        hitCenter: getDetectionBoxCenter(soldier),
-        hitRadius: soldier.hitRadius,
-        id: soldier.id,
-      },
-    ];
+function createOneClickClearHitCandidates() {
+  return createGraphwarOneClickClearHitCandidates({
+    friendlyFireEnabled: friendlyFireEnabled.value,
+    geometry: createTargetingGeometry(),
+    pathPoints: pathPixels.value,
+    soldiers: detectedSoldiers.value,
   });
-}
-
-/** 检查士兵中心是否位于起点 x+ 侧；命中圆边缘不参与候选过滤。 */
-function oneClickClearSoldierReachesForward(soldier: DetectionBox, startPoint: PixelPoint) {
-  const geometry = createTargetingGeometry();
-  return Boolean(geometry && graphwarSoldierReachesForward(soldier, startPoint, geometry));
 }
 
 /** 一键清图失败原因用独立文案，避免和单目标智能寻路失败混在一起。 */

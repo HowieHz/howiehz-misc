@@ -5849,6 +5849,14 @@ async function copyText(text: string) {
           <g
             v-for="(point, index) in pathPixels"
             :key="`point-${index}`"
+            v-memo="[
+              point.x,
+              point.y,
+              soldierSelectionRadius,
+              index === 0,
+              index === hoveredPathPointIndex,
+              locale.ui.point.svgSelfLabel,
+            ]"
           >
             <circle
               class="graphwar-killer__point"
@@ -6153,6 +6161,14 @@ async function copyText(text: string) {
               <g
                 v-for="(point, index) in pathPixels"
                 :key="`magnifier-point-${index}`"
+                v-memo="[
+                  point.x,
+                  point.y,
+                  soldierSelectionRadius,
+                  index === 0,
+                  index === hoveredPathPointIndex,
+                  locale.ui.point.svgSelfLabel,
+                ]"
               >
                 <circle
                   class="graphwar-killer__point"

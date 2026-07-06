@@ -31,6 +31,7 @@ import {
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
 import { useGraphwarStageFeedback } from "./composables/use-graphwar-stage-feedback";
+import { useGraphwarTargetingContext } from "./composables/use-graphwar-targeting-context";
 import { useGraphwarTrajectoryResult } from "./composables/use-graphwar-trajectory-result";
 import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint } from "./core/geometry";
 import {
@@ -98,19 +99,10 @@ import {
   getGraphwarSmartPathfindingAppendedSegment,
 } from "./pathfinding/graphwar-smart-pathfinding-trajectory";
 import {
-  createAllowedTargetRect,
   createBoundsRectWithBoundaryExpansion,
-  createGraphwarSoldierHitCircle,
-  createMinimumForwardTargetPoint as createTargetingMinimumForwardTargetPoint,
-  createSearchStartSoldierAimPoint as createTargetingSearchStartSoldierAimPoint,
-  createSmartPathfindingSoldierTarget as createTargetingSmartPathfindingSoldierTarget,
   getGraphwarSoldierCenter,
-  getRightmostPathPoint as getRightmostTargetingPathPoint,
   graphwarSoldierContainsHitPoint,
-  graphwarSoldierIsOnNegativeGraphX,
-  type GraphwarHitCircle as HitCircle,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
-  type GraphwarTargetingArea,
 } from "./pathfinding/graphwar-targeting";
 import {
   createHeaderStatus,
@@ -834,6 +826,31 @@ const visibleObstacleFillPath = computed(() => {
 
   return buildObstacleFillPath(obstacleMap.mask, boundsRect.value);
 });
+const activeBoundaryExpansion = computed(() =>
+  (smartCursorEnabled.value || pathfindingObstacleEdgesActive.value) && parsedObstacleTolerances.value.ok
+    ? parsedObstacleTolerances.value.boundaryExpansionPlanePixels
+    : 0,
+);
+const targetBoundsRect = computed(() =>
+  createBoundsRectWithBoundaryExpansion(boundsRect.value, activeBoundaryExpansion.value),
+);
+// 目标选择上下文应集中 bounds/path 到 Graphwar 目标规则的适配，避免页面散落坐标组合逻辑。
+const {
+  createAllowedTargetRect,
+  createGeometry: createTargetingGeometry,
+  createMinimumForwardTargetPoint,
+  createSearchStartSoldierAimPoint,
+  createSmartPathfindingSoldierTarget,
+  createSoldierHitCircle,
+  getRightmostPathPoint,
+  isFriendlyObstacleSoldier: isDetectedFriendlySoldierObstacle,
+  isSoldierOnNegativeGraphX: isDetectionBoxOnNegativeGraphX,
+} = useGraphwarTargetingContext<DetectionBox>({
+  boundsRect,
+  getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
+  getTargetBoundsRect: () => targetBoundsRect.value,
+  pathPixels,
+});
 const smartPathfindingBaseObstacleMask = computed(() => {
   const obstacleMap = detectedObstacles.value;
   if (!obstacleMap || !blocksFriendlyFireTargets.value || !parsedBounds.value.ok) {
@@ -929,14 +946,6 @@ const simulationObstacleMask = computed(() => {
         .mask
     : undefined;
 });
-const activeBoundaryExpansion = computed(() =>
-  (smartCursorEnabled.value || pathfindingObstacleEdgesActive.value) && parsedObstacleTolerances.value.ok
-    ? parsedObstacleTolerances.value.boundaryExpansionPlanePixels
-    : 0,
-);
-const targetBoundsRect = computed(() =>
-  createBoundsRectWithBoundaryExpansion(boundsRect.value, activeBoundaryExpansion.value),
-);
 const trajectoryCollisionSettings = computed<GraphwarTrajectoryCollisionSettings | undefined>(() => {
   if (!smartCursorEnabled.value && !pathfindingObstacleEdgesActive.value && toolWorkflowMode.value !== "simulator") {
     return undefined;
@@ -1028,8 +1037,7 @@ const allowedTargetRect = computed<BoundsRect | undefined>(() => {
     return undefined;
   }
 
-  const area = createTargetingArea();
-  return area ? createAllowedTargetRect(area, pathPixels.value.at(-1)) : undefined;
+  return createAllowedTargetRect();
 });
 const detectionBoxes = computed<DetectionBox[]>(() => {
   let visibleSoldiers = detectedSoldiers.value.filter((box) => !detectionBoxMatchesSelectedPathPoint(box));
@@ -2325,46 +2333,6 @@ function createCurrentLastPathHitTarget() {
   return soldier ? createSoldierHitCircle(soldier) : lastPoint;
 }
 
-/** 创建当前目标规则的坐标映射输入；无效 bounds 应保持原来的失败语义。 */
-function createTargetingGeometry() {
-  const boundsResult = parsedBounds.value;
-  if (!boundsResult.ok) {
-    return undefined;
-  }
-
-  return {
-    bounds: boundsResult.bounds,
-    boundsRect: boundsRect.value,
-  };
-}
-
-/** 创建当前目标规则的可点击区域输入；目标区域无效时应阻止目标选择。 */
-function createTargetingArea(): GraphwarTargetingArea | undefined {
-  const geometry = createTargetingGeometry();
-  const targetRect = targetBoundsRect.value;
-  return geometry && targetRect ? { ...geometry, targetBoundsRect: targetRect } : undefined;
-}
-
-/** 为士兵生成第一瞄点：中心可达用中心，否则用最小 x 步长推进到圆内。 */
-function createSearchStartSoldierAimPoint(startPoint: PixelPoint | undefined, box: DetectionBox) {
-  const area = createTargetingArea();
-  return area ? createTargetingSearchStartSoldierAimPoint(startPoint, box, area) : undefined;
-}
-
-/** 构造普通智能寻路的士兵目标：路径连到可用瞄点，弹道仍必须打中原命中圈。 */
-function createSmartPathfindingSoldierTarget(
-  startPoint: PixelPoint,
-  box: DetectionBox,
-): SmartPathfindingTarget | undefined {
-  const area = createTargetingArea();
-  return area ? createTargetingSmartPathfindingSoldierTarget(startPoint, box, area) : undefined;
-}
-
-/** 从检测框创建命中圆，统一士兵目标和弹道命中判定。 */
-function createSoldierHitCircle(box: DetectionBox): HitCircle {
-  return createGraphwarSoldierHitCircle(box);
-}
-
 /** 开始一次异步寻路/清图任务并返回取消 token。 */
 function startSmartPathfinding(message?: string) {
   return smartPathfindingSession.start(message);
@@ -2489,12 +2457,6 @@ function waitForNextPathfindingSlice() {
   });
 }
 
-/** 按指定起点把 x 不够的目标改为同 y 的最小 double x+ 点；无剩余空间时返回 undefined。 */
-function createMinimumForwardTargetPoint(point: PixelPoint, startPoint = pathPixels.value.at(-1)) {
-  const area = createTargetingArea();
-  return area ? createTargetingMinimumForwardTargetPoint(point, area, startPoint) : undefined;
-}
-
 /** 判断检测框是否包含当前最右侧路径点，避免把已选士兵再次作为目标。 */
 function detectionBoxMatchesSelectedPathPoint(box: DetectionBox) {
   if (pathPixels.value.length === 0) {
@@ -2507,41 +2469,6 @@ function detectionBoxMatchesSelectedPathPoint(box: DetectionBox) {
   }
 
   return detectionBoxContainsPathPoint(box, selectedPoint);
-}
-
-/** 一键清图以第一个路径点作为发射士兵，后续路径点都是普通控制点。 */
-function detectionBoxMatchesFirstPathPoint(box: DetectionBox) {
-  const firstPoint = pathPixels.value[0];
-  return Boolean(firstPoint && detectionBoxContainsPathPoint(box, firstPoint));
-}
-
-/** 当前规则下 x<0 的未选士兵视为友方障碍。 */
-function isDetectedFriendlySoldierObstacle(box: DetectionBox) {
-  if (!createTargetingGeometry() || detectionBoxMatchesFirstPathPoint(box)) {
-    return false;
-  }
-
-  return isDetectionBoxOnNegativeGraphX(box);
-}
-
-/** 智能光标初始选点只标记 x- 士兵，避免还没选起点时提示敌方目标。 */
-function isDetectionBoxOnNegativeGraphX(box: DetectionBox) {
-  const geometry = createTargetingGeometry();
-  if (!geometry) {
-    return false;
-  }
-
-  return graphwarSoldierIsOnNegativeGraphX(box, geometry);
-}
-
-/** 获取 Graphwar x 最大的已选路径点，用于过滤当前目标。 */
-function getRightmostPathPoint() {
-  const geometry = createTargetingGeometry();
-  if (!geometry || pathPixels.value.length === 0) {
-    return undefined;
-  }
-
-  return getRightmostTargetingPathPoint(pathPixels.value, geometry);
 }
 
 /** 用士兵圆形范围判断检测框是否包含路径点。 */

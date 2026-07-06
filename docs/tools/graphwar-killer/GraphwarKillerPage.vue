@@ -31,6 +31,10 @@ import {
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
 import { useGraphwarStageFeedback } from "./composables/use-graphwar-stage-feedback";
+import {
+  useGraphwarStageHitTesting,
+  type GraphwarStageHitTestingController,
+} from "./composables/use-graphwar-stage-hit-testing";
 import { useGraphwarTargetingContext } from "./composables/use-graphwar-targeting-context";
 import { useGraphwarTrajectoryResult } from "./composables/use-graphwar-trajectory-result";
 import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint } from "./core/geometry";
@@ -68,7 +72,7 @@ import type {
   ToolWorkflowMode,
   TransferStatus,
 } from "./core/types";
-import { buildObstacleEdgePath, buildObstacleFillPath, isPlayerColorPixel } from "./detection/graphwar-detection";
+import { buildObstacleEdgePath, buildObstacleFillPath } from "./detection/graphwar-detection";
 import type { GraphwarDetectionBox } from "./detection/graphwar-detection";
 import type { GraphwarTrajectoryCollisionSettings } from "./formula/trajectory-sampling";
 import type { GraphwarKillerLocale } from "./locale-types";
@@ -100,8 +104,6 @@ import {
 } from "./pathfinding/graphwar-smart-pathfinding-trajectory";
 import {
   createBoundsRectWithBoundaryExpansion,
-  getGraphwarSoldierCenter,
-  graphwarSoldierContainsHitPoint,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
 } from "./pathfinding/graphwar-targeting";
 import {
@@ -851,6 +853,21 @@ const {
   getTargetBoundsRect: () => targetBoundsRect.value,
   pathPixels,
 });
+// 舞台命中测试应集中路径点选择圈、士兵可视选择圈和真实命中圈，避免交互层混用半径语义。
+const stageHitTesting: GraphwarStageHitTestingController<DetectionBox> = useGraphwarStageHitTesting<DetectionBox>({
+  getDetectionBoxes: (): readonly DetectionBox[] => detectionBoxes.value,
+  getImageData: getImageDataFromCurrentImage,
+  getPathPixels: (): readonly PixelPoint[] => pathPixels.value,
+  getPathPointSelectionRadius: (): number => soldierSelectionRadius.value,
+});
+const {
+  detectionBoxContainsHitCircle,
+  detectionBoxContainsPathPoint,
+  getDetectedSoldierAtPoint,
+  getDetectionBoxCenter,
+  getDetectedSoldierColor,
+  getPathPointIndexAtPoint,
+} = stageHitTesting;
 const smartPathfindingBaseObstacleMask = computed(() => {
   const obstacleMap = detectedObstacles.value;
   if (!obstacleMap || !blocksFriendlyFireTargets.value || !parsedBounds.value.ok) {
@@ -2458,7 +2475,7 @@ function waitForNextPathfindingSlice() {
 }
 
 /** 判断检测框是否包含当前最右侧路径点，避免把已选士兵再次作为目标。 */
-function detectionBoxMatchesSelectedPathPoint(box: DetectionBox) {
+function detectionBoxMatchesSelectedPathPoint(box: DetectionBox): boolean {
   if (pathPixels.value.length === 0) {
     return false;
   }
@@ -2469,23 +2486,6 @@ function detectionBoxMatchesSelectedPathPoint(box: DetectionBox) {
   }
 
   return detectionBoxContainsPathPoint(box, selectedPoint);
-}
-
-/** 用士兵圆形范围判断检测框是否包含路径点。 */
-function detectionBoxContainsPathPoint(box: DetectionBox, point: PixelPoint) {
-  return detectionBoxContainsHitCircle(box, point);
-}
-
-/** 命中最近的路径点索引，逆序让后绘制的点优先。 */
-function getPathPointIndexAtPoint(point: PixelPoint) {
-  const radius = Math.max(10, soldierSelectionRadius.value);
-  for (let index = pathPixels.value.length - 1; index >= 0; index -= 1) {
-    const pathPoint = pathPixels.value[index];
-    if (Math.hypot(point.x - pathPoint.x, point.y - pathPoint.y) <= radius) {
-      return index;
-    }
-  }
-  return undefined;
 }
 
 watch([pathPixels, soldierSelectionRadius], () => {
@@ -2544,73 +2544,6 @@ function handleStagePointerLeave() {
   hoveredPathPointIndex.value = undefined;
   draggingPathPointIndex.value = undefined;
   clearObstacleBrushInteractionState();
-}
-
-/** 返回当前可见目标中被指针命中的士兵。 */
-function getDetectedSoldierAtPoint(point: PixelPoint) {
-  const boxes = detectionBoxes.value;
-  for (let index = boxes.length - 1; index >= 0; index -= 1) {
-    const box = boxes[index];
-    if (detectionBoxContainsSelectionCircle(box, point)) {
-      return box;
-    }
-  }
-  return undefined;
-}
-
-/** 返回 Graphwar 士兵源码中心；命中、发射和路径点都使用这个点。 */
-function getDetectionBoxCenter(box: DetectionBox) {
-  return getGraphwarSoldierCenter(box);
-}
-
-/** 判断指针是否落在 Graphwar 士兵可视选择圈内。 */
-function detectionBoxContainsSelectionCircle(box: DetectionBox, point: PixelPoint) {
-  return Math.hypot(point.x - box.visualCenterX, point.y - box.visualCenterY) <= box.visualRadius;
-}
-
-/** 判断指针或路径点是否落在 Graphwar 士兵实际命中圈内。 */
-function detectionBoxContainsHitCircle(box: DetectionBox, point: PixelPoint) {
-  return graphwarSoldierContainsHitPoint(box, point);
-}
-
-/** 从士兵检测框内采样玩家颜色，供模拟器轨迹线匹配当前士兵。 */
-function getDetectedSoldierColor(box: DetectionBox) {
-  const imageData = getImageDataFromCurrentImage();
-  if (!imageData) {
-    return undefined;
-  }
-
-  let redSum = 0;
-  let greenSum = 0;
-  let blueSum = 0;
-  let count = 0;
-  const startX = clampNumber(Math.floor(box.x), 0, imageData.width - 1);
-  const endX = clampNumber(Math.ceil(box.x + box.width), 0, imageData.width - 1);
-  const startY = clampNumber(Math.floor(box.y), 0, imageData.height - 1);
-  const endY = clampNumber(Math.ceil(box.y + box.height), 0, imageData.height - 1);
-
-  for (let y = startY; y <= endY; y += 1) {
-    for (let x = startX; x <= endX; x += 1) {
-      const index = (y * imageData.width + x) * 4;
-      const red = imageData.data[index];
-      const green = imageData.data[index + 1];
-      const blue = imageData.data[index + 2];
-      if (!isPlayerColorPixel(red, green, blue)) {
-        continue;
-      }
-
-      redSum += red;
-      greenSum += green;
-      blueSum += blue;
-      count += 1;
-    }
-  }
-
-  if (count === 0) {
-    return undefined;
-  }
-
-  return `rgb(${Math.round(redSum / count)} ${Math.round(greenSum / count)} ${Math.round(blueSum / count)})`;
 }
 
 /** 使用右键取消边界点或撤回最新路径点。 */

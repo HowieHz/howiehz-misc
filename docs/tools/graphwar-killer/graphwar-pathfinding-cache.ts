@@ -1,0 +1,364 @@
+import { addSoldierAreasToObstacleMask, dilateObstacleMask, type GraphwarDetectionBox } from "./graphwar-detection";
+import type { GraphwarOneClickClearCandidate } from "./graphwar-one-click-clear";
+import { createRouteMaskCacheKey } from "./graphwar-pathfinding";
+import type {
+  GraphwarOneClickClearPathWorkerInput,
+  GraphwarOneClickClearPathWorkerResult,
+  GraphwarSmartPathfindingPathInput,
+  GraphwarSmartPathfindingPathResult,
+} from "./graphwar-pathfinding-worker-types";
+import type { GraphwarTrajectoryFormulaSettings } from "./trajectory-sampling";
+import { createPixelPoint, type BoundsRect, type GraphBounds, type PixelPoint } from "./types";
+
+const smartPathfindingResultCacheLimit = 64;
+const oneClickClearResultCacheLimit = 16;
+
+/** 页面侧 route tolerance 派生 mask 缓存项。 */
+export interface GraphwarRouteMaskCacheEntry {
+  /** 页面内基础障碍 mask 稳定 id；Worker 用它识别同一个 base mask。 */
+  id: number;
+  /** 膨胀或腐蚀后的 mask。 */
+  mask: Uint8Array;
+}
+
+/** 结果缓存命中/未命中的调试耗时，调用方负责并入页面调试列表。 */
+export interface GraphwarPathfindingResultCacheTimingEntry {
+  /** 缓存查询耗时，单位毫秒。 */
+  elapsedMs: number;
+  /** 被测量的页面侧结果缓存阶段。 */
+  stage:
+    | "one-click-clear-result-cache-hit"
+    | "one-click-clear-result-cache-miss"
+    | "result-cache-hit"
+    | "result-cache-miss";
+}
+
+interface FriendlyObstacleMaskCacheEntry {
+  /** 派生 mask 输入摘要；同一个原始 mask 在不同士兵/边界设置下不能混用。 */
+  key: string;
+  /** 已写入友方士兵区域的障碍 mask。 */
+  mask: Uint8Array;
+}
+
+/** 集中维护智能寻路页面侧缓存，避免页面脚本知道每个缓存的失效和 clone 细节。 */
+export function createGraphwarPathfindingCacheController() {
+  const routeObstacleMaskIds = new WeakMap<Uint8Array, number>();
+  const routeMaskCache = new WeakMap<Uint8Array, Map<string, GraphwarRouteMaskCacheEntry>>();
+  const friendlyObstacleMaskCache = new WeakMap<Uint8Array, FriendlyObstacleMaskCacheEntry>();
+  const smartPathfindingResultCache = new Map<string, GraphwarSmartPathfindingPathResult>();
+  const oneClickClearResultCache = new Map<string, GraphwarOneClickClearPathWorkerResult>();
+  let nextRouteMaskCacheId = 1;
+
+  function getCachedSmartPathfindingResult(
+    cacheKey: string,
+    onTiming?: (timing: GraphwarPathfindingResultCacheTimingEntry) => void,
+  ) {
+    const startedAt = nowMs();
+    const cached = smartPathfindingResultCache.get(cacheKey);
+    onTiming?.({
+      elapsedMs: nowMs() - startedAt,
+      stage: cached ? "result-cache-hit" : "result-cache-miss",
+    });
+    return cached ? cloneSmartPathfindingPathResult(cached) : undefined;
+  }
+
+  function cacheSmartPathfindingResult(cacheKey: string, result: GraphwarSmartPathfindingPathResult) {
+    setBoundedResultCacheEntry(
+      smartPathfindingResultCache,
+      cacheKey,
+      cloneSmartPathfindingPathResultWithoutTimings(result),
+      smartPathfindingResultCacheLimit,
+    );
+  }
+
+  function getCachedOneClickClearResult(
+    cacheKey: string,
+    onTiming?: (timing: GraphwarPathfindingResultCacheTimingEntry) => void,
+  ) {
+    const startedAt = nowMs();
+    const cached = oneClickClearResultCache.get(cacheKey);
+    onTiming?.({
+      elapsedMs: nowMs() - startedAt,
+      stage: cached ? "one-click-clear-result-cache-hit" : "one-click-clear-result-cache-miss",
+    });
+    return cached ? cloneOneClickClearPathWorkerResult(cached) : undefined;
+  }
+
+  function cacheOneClickClearResult(cacheKey: string, result: GraphwarOneClickClearPathWorkerResult) {
+    setBoundedResultCacheEntry(
+      oneClickClearResultCache,
+      cacheKey,
+      cloneOneClickClearPathWorkerResultWithoutTimings(result),
+      oneClickClearResultCacheLimit,
+    );
+  }
+
+  function getOptionalMaskCacheId(mask: Uint8Array | undefined) {
+    return mask ? getRouteObstacleMaskCacheId(mask) : 0;
+  }
+
+  function createSmartPathfindingResultCacheKey(input: GraphwarSmartPathfindingPathInput) {
+    return JSON.stringify([
+      "smart-path-result-v1",
+      createGraphBoundsCacheKey(input.bounds),
+      createBoundsRectCacheKey(input.boundsRect),
+      input.boundaryExpansion,
+      input.routeMaskCacheId,
+      input.routeTolerancePlanePixels,
+      input.simulationBoundaryExpansion,
+      getOptionalMaskCacheId(input.simulationMask),
+      createTrajectorySettingsCacheKey(input.settings),
+      createPointArrayCacheKey(input.sourcePath),
+      createPointCacheKey(input.targetPoint),
+      createTargetCircleCacheKey(input.hitTarget),
+    ]);
+  }
+
+  function createOneClickClearResultCacheKey(input: GraphwarOneClickClearPathWorkerInput) {
+    return JSON.stringify([
+      "one-click-clear-result-v1",
+      createGraphBoundsCacheKey(input.bounds),
+      createBoundsRectCacheKey(input.boundsRect),
+      input.boundaryExpansion,
+      input.deleteCheckRadiusPixels,
+      input.routeMaskCacheId,
+      input.routeTolerancePlanePixels,
+      input.simulationBoundaryExpansion,
+      getOptionalMaskCacheId(input.simulationMask),
+      createTrajectorySettingsCacheKey(input.settings),
+      createPointArrayCacheKey(input.pathPoints),
+      input.prefixTarget ? createTargetCircleCacheKey(input.prefixTarget) : undefined,
+      input.candidates.map(createOneClickClearCandidateCacheKey),
+      input.hitCandidates.map(createOneClickClearCandidateCacheKey),
+    ]);
+  }
+
+  function getCachedFriendlyObstacleMask(
+    sourceMask: Uint8Array,
+    edgeRect: BoundsRect,
+    friendlySoldiers: readonly GraphwarDetectionBox[],
+    markerRadius: number,
+  ) {
+    const key = createFriendlyObstacleMaskCacheKey(edgeRect, friendlySoldiers, markerRadius);
+    const cached = friendlyObstacleMaskCache.get(sourceMask);
+    if (cached?.key === key) {
+      return cached.mask;
+    }
+
+    const mask = new Uint8Array(sourceMask);
+    addSoldierAreasToObstacleMask(mask, edgeRect, friendlySoldiers, markerRadius);
+    friendlyObstacleMaskCache.set(sourceMask, {
+      key,
+      mask,
+    });
+    return mask;
+  }
+
+  function getCachedRouteMask(mask: Uint8Array, routeTolerance: number): GraphwarRouteMaskCacheEntry {
+    return getCachedRouteMaskWithStatus(mask, routeTolerance).entry;
+  }
+
+  function getRouteObstacleMaskCacheId(mask: Uint8Array) {
+    const cached = routeObstacleMaskIds.get(mask);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const id = nextRouteMaskCacheId;
+    nextRouteMaskCacheId += 1;
+    routeObstacleMaskIds.set(mask, id);
+    return id;
+  }
+
+  function getCachedRouteMaskWithStatus(mask: Uint8Array, routeTolerance: number) {
+    const key = createRouteMaskCacheKey(routeTolerance);
+    let entries = routeMaskCache.get(mask);
+    if (!entries) {
+      entries = new Map<string, GraphwarRouteMaskCacheEntry>();
+      routeMaskCache.set(mask, entries);
+    }
+
+    const cached = entries.get(key);
+    if (cached) {
+      return {
+        cacheHit: true,
+        entry: cached,
+      };
+    }
+
+    const entry: GraphwarRouteMaskCacheEntry = {
+      id: getRouteObstacleMaskCacheId(mask),
+      mask: dilateObstacleMask(mask, routeTolerance),
+    };
+    entries.set(key, entry);
+    return {
+      cacheHit: false,
+      entry,
+    };
+  }
+
+  function invalidateResultCache() {
+    smartPathfindingResultCache.clear();
+    oneClickClearResultCache.clear();
+  }
+
+  return {
+    cacheOneClickClearResult,
+    cacheSmartPathfindingResult,
+    createOneClickClearResultCacheKey,
+    createSmartPathfindingResultCacheKey,
+    getCachedFriendlyObstacleMask,
+    getCachedOneClickClearResult,
+    getCachedRouteMask,
+    getCachedRouteMaskWithStatus,
+    getCachedSmartPathfindingResult,
+    getRouteObstacleMaskCacheId,
+    invalidateResultCache,
+  };
+}
+
+/** 结果缓存按 FIFO 做小容量上限，避免连续尝试大量目标时长期持有大路径数组。 */
+function setBoundedResultCacheEntry<TResult>(
+  cache: Map<string, TResult>,
+  cacheKey: string,
+  result: TResult,
+  limit: number,
+) {
+  if (cache.has(cacheKey)) {
+    cache.delete(cacheKey);
+  }
+  cache.set(cacheKey, result);
+  while (cache.size > limit) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      return;
+    }
+    cache.delete(oldestKey);
+  }
+}
+
+function createGraphBoundsCacheKey(bounds: GraphBounds) {
+  return [bounds.minX, bounds.maxX, bounds.minY, bounds.maxY];
+}
+
+function createBoundsRectCacheKey(rect: BoundsRect) {
+  return [rect.x, rect.y, rect.width, rect.height];
+}
+
+function createPointCacheKey(point: PixelPoint) {
+  return [point.x, point.y];
+}
+
+function createPointArrayCacheKey(points: readonly PixelPoint[]) {
+  return points.map(createPointCacheKey);
+}
+
+function createTargetCircleCacheKey(target: { center: PixelPoint; radius: number }) {
+  return [createPointCacheKey(target.center), target.radius];
+}
+
+function createTrajectorySettingsCacheKey(settings: GraphwarTrajectoryFormulaSettings) {
+  return [
+    settings.algorithm,
+    settings.decimalPlaces,
+    settings.equation,
+    settings.formulaPathSteepness,
+    settings.steepness,
+    settings.stepOverflowProtection,
+  ];
+}
+
+function createOneClickClearCandidateCacheKey(candidate: GraphwarOneClickClearCandidate) {
+  return [candidate.id, candidate.enemy, createPointCacheKey(candidate.hitCenter), candidate.hitRadius];
+}
+
+function cloneSmartPathfindingPathResultWithoutTimings(result: GraphwarSmartPathfindingPathResult) {
+  return {
+    ...cloneSmartPathfindingPathResult(result),
+    timings: [],
+  };
+}
+
+function cloneSmartPathfindingPathResult(
+  result: GraphwarSmartPathfindingPathResult,
+): GraphwarSmartPathfindingPathResult {
+  return {
+    ...(result.blockedPoint ? { blockedPoint: clonePixelPoint(result.blockedPoint) } : {}),
+    ...(result.failureReason ? { failureReason: result.failureReason } : {}),
+    ...(result.path ? { path: result.path.map(clonePixelPoint) } : {}),
+    timings: result.timings.map((timing) => ({
+      elapsedMs: timing.elapsedMs,
+      stage: timing.stage,
+    })),
+  };
+}
+
+function cloneOneClickClearPathWorkerResultWithoutTimings(result: GraphwarOneClickClearPathWorkerResult) {
+  return {
+    result: cloneOneClickClearResult(result.result),
+    timings: [],
+  };
+}
+
+function cloneOneClickClearPathWorkerResult(
+  result: GraphwarOneClickClearPathWorkerResult,
+): GraphwarOneClickClearPathWorkerResult {
+  return {
+    result: cloneOneClickClearResult(result.result),
+    timings: result.timings.map((timing) => ({
+      detail: timing.detail,
+      elapsedMs: timing.elapsedMs,
+      stage: timing.stage,
+    })),
+  };
+}
+
+function cloneOneClickClearResult(result: GraphwarOneClickClearPathWorkerResult["result"]) {
+  if (result.type === "success") {
+    return {
+      elapsedMs: result.elapsedMs,
+      expandedStates: result.expandedStates,
+      pathPoints: result.pathPoints.map(clonePixelPoint),
+      targetIds: [...result.targetIds],
+      targetSequence: result.targetSequence.map(cloneTargetCircle),
+      type: result.type,
+    };
+  }
+
+  return {
+    elapsedMs: result.elapsedMs,
+    expandedStates: result.expandedStates,
+    reason: result.reason,
+    type: result.type,
+  };
+}
+
+function cloneTargetCircle(target: { center: PixelPoint; radius: number }) {
+  return {
+    center: clonePixelPoint(target.center),
+    radius: target.radius,
+  };
+}
+
+function clonePixelPoint(point: PixelPoint) {
+  return createPixelPoint(point.x, point.y);
+}
+
+/** 获取高精度时间戳，用于保留原页面缓存计时语义。 */
+function nowMs() {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+/** 输入相同才复用派生 mask；士兵写入顺序不影响结果，因此按稳定 key 排序。 */
+function createFriendlyObstacleMaskCacheKey(
+  edgeRect: BoundsRect,
+  friendlySoldiers: readonly GraphwarDetectionBox[],
+  markerRadius: number,
+) {
+  const soldierKeys = friendlySoldiers.map(createFriendlySoldierObstacleMaskCacheKey).sort();
+  return [edgeRect.x, edgeRect.y, edgeRect.width, edgeRect.height, markerRadius, ...soldierKeys].join("|");
+}
+
+function createFriendlySoldierObstacleMaskCacheKey(soldier: GraphwarDetectionBox) {
+  return [soldier.id, soldier.sourceCenterX, soldier.sourceCenterY, soldier.hitRadius].join(":");
+}

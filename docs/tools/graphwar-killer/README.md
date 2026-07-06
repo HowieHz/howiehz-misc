@@ -12,7 +12,8 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 
 - [index.md](./index.md) 是中文工具页面入口。
 - [GraphwarKillerPage.vue](./GraphwarKillerPage.vue) 是中英文共享工具页面实现。
-- [composables/](./composables/) 放页面侧工作流状态 Module，例如截图输入和路径编辑。
+- [composables/](./composables/) 放页面侧工作流状态 Module，例如截图输入、路径编辑和智能寻路会话。
+- [graphwar-pathfinding-cache.ts](./graphwar-pathfinding-cache.ts) 集中维护智能寻路页面侧缓存，避免页面实现直接管理缓存失效和克隆细节。
 - [locale.ts](./locale.ts) 提供中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。
 
 ## 已知改进点

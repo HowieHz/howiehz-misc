@@ -1,7 +1,7 @@
 /** 管理路径编辑的双工作流状态，页面只负责 Graphwar 规则和重建副作用。 */
 import { computed, ref, type Ref, type WritableComputedRef } from "vue";
 
-import type { GraphPoint, PixelPoint, ToolWorkflowMode } from "../types";
+import type { GraphPoint, PixelPoint, ToolWorkflowMode } from "../core/types";
 
 const defaultTrajectoryStrokeColor = "#ec4899";
 

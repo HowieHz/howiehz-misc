@@ -71,7 +71,7 @@ export function createGraphwarDetectionRunner() {
       return worker;
     }
 
-    worker = new Worker(new URL("./workers/graphwar-detection.worker.ts", import.meta.url), {
+    worker = new Worker(new URL("../workers/graphwar-detection.worker.ts", import.meta.url), {
       name: "graphwar-detection",
       type: "module",
     });

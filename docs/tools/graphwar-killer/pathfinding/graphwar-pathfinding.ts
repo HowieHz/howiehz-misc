@@ -1,9 +1,9 @@
 /** Graphwar 固定平面上的几何寻路工具；页面和 worker 共用同一套图搜索实现。 */
-import { xPlusGoesRight } from "./geometry";
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
-import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "./numbers";
-import { createPixelPoint } from "./types";
-import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
+import { xPlusGoesRight } from "../core/geometry";
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../core/graphwar";
+import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "../core/numbers";
+import { createPixelPoint } from "../core/types";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
 
 /** Graphwar 原始 770x450 平面网格点，所有几何寻路都在这个固定网格上运行。 */
 export interface PlaneGridPoint {

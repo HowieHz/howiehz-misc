@@ -1,4 +1,10 @@
-import { addSoldierAreasToObstacleMask, dilateObstacleMask, type GraphwarDetectionBox } from "./graphwar-detection";
+import { createPixelPoint, type BoundsRect, type GraphBounds, type PixelPoint } from "../core/types";
+import {
+  addSoldierAreasToObstacleMask,
+  dilateObstacleMask,
+  type GraphwarDetectionBox,
+} from "../detection/graphwar-detection";
+import type { GraphwarTrajectoryFormulaSettings } from "../formula/trajectory-sampling";
 import type { GraphwarOneClickClearCandidate } from "./graphwar-one-click-clear";
 import { createRouteMaskCacheKey } from "./graphwar-pathfinding";
 import type {
@@ -7,8 +13,6 @@ import type {
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
 } from "./graphwar-pathfinding-worker-types";
-import type { GraphwarTrajectoryFormulaSettings } from "./trajectory-sampling";
-import { createPixelPoint, type BoundsRect, type GraphBounds, type PixelPoint } from "./types";
 
 const smartPathfindingResultCacheLimit = 64;
 const oneClickClearResultCacheLimit = 16;

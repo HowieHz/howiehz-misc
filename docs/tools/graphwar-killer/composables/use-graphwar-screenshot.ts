@@ -1,11 +1,11 @@
 /** 管理截图输入和舞台像素坐标，避免页面直接承载浏览器 I/O 细节。 */
 import { ref, type Ref } from "vue";
 
-import { clampPixelPointToCanvas } from "../geometry";
+import { clampPixelPointToCanvas } from "../core/geometry";
+import { clampNumber } from "../core/numbers";
+import { graphwarToolDefaults } from "../core/tool-defaults";
+import { createPixelPoint, type PixelPoint } from "../core/types";
 import type { GraphwarKillerLocale } from "../locale-types";
-import { clampNumber } from "../numbers";
-import { graphwarToolDefaults } from "../tool-defaults";
-import { createPixelPoint, type PixelPoint } from "../types";
 
 /** 页面把业务清理挂在这些回调上，截图 Module 本身只负责图片状态落地。 */
 interface GraphwarScreenshotWorkflowOptions {

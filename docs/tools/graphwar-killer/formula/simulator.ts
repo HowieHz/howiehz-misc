@@ -1,6 +1,3 @@
-/** 封装 Graphwar 公式模拟器，按游戏步进规则计算轨迹和停止原因。 */
-import { compileFormulaEvaluator } from "./formula";
-import type { FormulaEvaluationOptions } from "./formula";
 import {
   GRAPHWAR_ANGLE_ERROR,
   GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
@@ -11,12 +8,15 @@ import {
   GRAPHWAR_PLANE_GAME_LENGTH,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
-} from "./graphwar";
+} from "../core/graphwar";
+import { graphwarToolDefaults } from "../core/tool-defaults";
+import { createGraphPoint } from "../core/types";
+import type { AlgorithmMode, EquationMode, GraphBounds, GraphPoint } from "../core/types";
+/** 封装 Graphwar 公式模拟器，按游戏步进规则计算轨迹和停止原因。 */
+import { compileFormulaEvaluator } from "./formula";
+import type { FormulaEvaluationOptions } from "./formula";
 import { createGraphwarExpressionEvaluator } from "./graphwar-expression";
 import type { GraphwarExpressionParserOptions } from "./graphwar-expression";
-import { graphwarToolDefaults } from "./tool-defaults";
-import { createGraphPoint } from "./types";
-import type { AlgorithmMode, EquationMode, GraphBounds, GraphPoint } from "./types";
 export type { GraphwarExpressionParserOptions } from "./graphwar-expression";
 
 /** 采样由路径点生成的公式时的完整输入，保持与 Graphwar 原版步进参数隔离。 */

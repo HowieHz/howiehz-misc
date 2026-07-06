@@ -1,8 +1,11 @@
+import type { AlgorithmMode, EquationMode } from "./core/types";
 /** 定义 Graphwar 杀手本地化文案结构，供中英文页面共享。 */
-import type { GraphwarDetectionWarning } from "./graphwar-detection";
-import type { GraphwarDetectionWorkerTimingDetail } from "./graphwar-detection-worker-types";
-import type { GraphwarOneClickClearDebugDetail, GraphwarOneClickClearDebugStage } from "./graphwar-one-click-clear";
-import type { AlgorithmMode, EquationMode } from "./types";
+import type { GraphwarDetectionWarning } from "./detection/graphwar-detection";
+import type { GraphwarDetectionWorkerTimingDetail } from "./detection/graphwar-detection-worker-types";
+import type {
+  GraphwarOneClickClearDebugDetail,
+  GraphwarOneClickClearDebugStage,
+} from "./pathfinding/graphwar-one-click-clear";
 
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
 export type GraphwarKillerStopReason = "invalid" | "max-steps" | "out-of-bounds" | "too-steep";

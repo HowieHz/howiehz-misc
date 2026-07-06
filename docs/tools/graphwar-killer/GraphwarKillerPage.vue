@@ -9,14 +9,13 @@ import {
   type SmartPathfindingPhase,
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
-import { buildFormula } from "./formula";
 import {
   graphToImagePoint,
   imageToGraphPoint,
   normalizeBoundsRect,
   normalizePathPoint,
   xPlusGoesRight,
-} from "./geometry";
+} from "./core/geometry";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
@@ -26,49 +25,14 @@ import {
   GRAPHWAR_SOLDIER_RADIUS,
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
   GRAPHWAR_VISIBLE_Y_LIMIT,
-} from "./graphwar";
-import {
-  buildObstacleEdgePath,
-  buildObstacleFillPath,
-  countObstacleMaskComponents,
-  imagePointToPlaneGridPoint,
-  isPlayerColorPixel,
-  paintObstacleMaskDisk,
-  paintObstacleMaskStroke,
-} from "./graphwar-detection";
-import type { DetectedObstacleMap, GraphwarDetectionBox, GraphwarObjectsDetectionResult } from "./graphwar-detection";
-import { createGraphwarDetectionRunner, isGraphwarDetectionCancelledError } from "./graphwar-detection-runner";
-import type {
-  GraphwarDetectionWorkerStage,
-  GraphwarDetectionWorkerTimingDetail,
-  GraphwarDetectionWorkerTimingEntry,
-} from "./graphwar-detection-runner";
+} from "./core/graphwar";
 import {
   createMinimumForwardPointAtGraphY,
   graphXAdvancesFromPoint,
   normalizePathForMinimumForwardStep,
   normalizePathPointForStrictForward,
   pathFollowsGraphRule,
-} from "./graphwar-forward-rule";
-import {
-  GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS,
-  type GraphwarOneClickClearCandidate,
-  type GraphwarOneClickClearDebugDetail,
-  type GraphwarOneClickClearDebugStage,
-  type GraphwarOneClickClearDebugTiming,
-  type GraphwarOneClickClearFailureReason,
-} from "./graphwar-one-click-clear";
-import { mirrorPlaneGridPoint, planeGridCellCenterToImagePoint } from "./graphwar-pathfinding";
-import type { GraphwarPathfindingPreview, PlaneGridPoint } from "./graphwar-pathfinding";
-import { createGraphwarPathfindingCacheController } from "./graphwar-pathfinding-cache";
-import { createGraphwarPathfindingRunner, isGraphwarPathfindingCancelledError } from "./graphwar-pathfinding-runner";
-import type {
-  GraphwarOneClickClearPathWorkerInput,
-  GraphwarSmartPathfindingPathInput,
-  GraphwarSmartPathfindingPathResult,
-} from "./graphwar-pathfinding-worker-types";
-import { createHeaderStatus, getFirstHeaderStatus, getSmartPathfindingHeaderStatus } from "./header-status";
-import type { GraphwarKillerLocale } from "./locale-types";
+} from "./core/graphwar-forward-rule";
 import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
@@ -80,18 +44,9 @@ import {
   graphXAdvancesStrictly,
   nearlyEqual,
   parseFiniteNumber,
-} from "./numbers";
-import { graphwarToolDefaults } from "./tool-defaults";
-import {
-  createGraphwarTrajectoryFormulaContext,
-  findGraphwarTrajectoryTargetHitIndex,
-  getGraphwarTrajectoryLaunchAngle,
-  sampleGraphwarExpressionTrajectoryWithStops,
-  sampleGraphwarFormulaTrajectory,
-  sampleGraphwarPathTrajectory,
-} from "./trajectory-sampling";
-import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectorySampleResult } from "./trajectory-sampling";
-import { createGraphPoint, createPixelPoint } from "./types";
+} from "./core/numbers";
+import { graphwarToolDefaults } from "./core/tool-defaults";
+import { createGraphPoint, createPixelPoint } from "./core/types";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -103,7 +58,66 @@ import type {
   ToolMode,
   ToolWorkflowMode,
   TransferStatus,
-} from "./types";
+} from "./core/types";
+import {
+  buildObstacleEdgePath,
+  buildObstacleFillPath,
+  countObstacleMaskComponents,
+  imagePointToPlaneGridPoint,
+  isPlayerColorPixel,
+  paintObstacleMaskDisk,
+  paintObstacleMaskStroke,
+} from "./detection/graphwar-detection";
+import type {
+  DetectedObstacleMap,
+  GraphwarDetectionBox,
+  GraphwarObjectsDetectionResult,
+} from "./detection/graphwar-detection";
+import {
+  createGraphwarDetectionRunner,
+  isGraphwarDetectionCancelledError,
+} from "./detection/graphwar-detection-runner";
+import type {
+  GraphwarDetectionWorkerStage,
+  GraphwarDetectionWorkerTimingDetail,
+  GraphwarDetectionWorkerTimingEntry,
+} from "./detection/graphwar-detection-runner";
+import { buildFormula } from "./formula/formula";
+import {
+  createGraphwarTrajectoryFormulaContext,
+  findGraphwarTrajectoryTargetHitIndex,
+  getGraphwarTrajectoryLaunchAngle,
+  sampleGraphwarExpressionTrajectoryWithStops,
+  sampleGraphwarFormulaTrajectory,
+  sampleGraphwarPathTrajectory,
+} from "./formula/trajectory-sampling";
+import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectorySampleResult } from "./formula/trajectory-sampling";
+import type { GraphwarKillerLocale } from "./locale-types";
+import {
+  GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS,
+  type GraphwarOneClickClearCandidate,
+  type GraphwarOneClickClearDebugDetail,
+  type GraphwarOneClickClearDebugStage,
+  type GraphwarOneClickClearDebugTiming,
+  type GraphwarOneClickClearFailureReason,
+} from "./pathfinding/graphwar-one-click-clear";
+import { mirrorPlaneGridPoint, planeGridCellCenterToImagePoint } from "./pathfinding/graphwar-pathfinding";
+import type { GraphwarPathfindingPreview, PlaneGridPoint } from "./pathfinding/graphwar-pathfinding";
+import { createGraphwarPathfindingCacheController } from "./pathfinding/graphwar-pathfinding-cache";
+import {
+  createGraphwarPathfindingRunner,
+  isGraphwarPathfindingCancelledError,
+} from "./pathfinding/graphwar-pathfinding-runner";
+import type {
+  GraphwarOneClickClearPathWorkerInput,
+  GraphwarSmartPathfindingPathInput,
+  GraphwarSmartPathfindingPathResult,
+} from "./pathfinding/graphwar-pathfinding-worker-types";
+import {
+  createHeaderStatus,
+  getFirstHeaderStatus,
+  getSmartPathfindingHeaderStatus,
+} from "./presentation/header-status";
 
 /** 坐标边界解析结果；失败分支直接携带本地化校验文案。 */
 type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: string };

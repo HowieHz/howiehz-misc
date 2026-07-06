@@ -1,6 +1,6 @@
 import { ref, type Ref } from "vue";
 
-import type { PixelPoint } from "../types";
+import type { PixelPoint } from "../core/types";
 
 export type SmartPathfindingStatusKind = "info" | "success" | "warning" | "error";
 export type SmartPathfindingPhase = "optimize" | "search" | "trajectory";

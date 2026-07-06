@@ -1,7 +1,8 @@
+import { graphToImagePoint, imageToGraphPoint } from "../core/geometry";
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../core/graphwar";
+import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "../core/types";
 /** 负责按 Graphwar 公式规则采样轨迹，并判断路径与目标/障碍的交互。 */
 import { buildFormula } from "./formula";
-import { graphToImagePoint, imageToGraphPoint } from "./geometry";
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
 import {
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
@@ -19,7 +20,6 @@ import {
   probeSignEpsilonRequirement,
 } from "./step-numeric-strategy";
 import type { FormulaEvaluationOptions } from "./step-numeric-strategy";
-import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "./types";
 
 /** 轨迹采样主动提前停止的原因；只记录与目标/障碍判定有关的短路。 */
 export type GraphwarTrajectoryEarlyStopReason = "obstacle" | "target";

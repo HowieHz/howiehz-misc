@@ -4,10 +4,10 @@ import {
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_SOLDIER_RADIUS,
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
-} from "./graphwar";
-import { clampNumber, formatSvgNumber } from "./numbers";
-import { createPixelPoint } from "./types";
-import type { BoundsRect, PixelPoint } from "./types";
+} from "../core/graphwar";
+import { clampNumber, formatSvgNumber } from "../core/numbers";
+import { createPixelPoint } from "../core/types";
+import type { BoundsRect, PixelPoint } from "../core/types";
 
 /** 识别系统把士兵作为可点击/可击杀目标。 */
 export type GraphwarDetectionKind = "soldier";

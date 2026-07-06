@@ -1,4 +1,5 @@
 /** 主线程侧 Graphwar 几何寻路 runner，集中管理 Worker 生命周期和取消。 */
+import { createPixelPoint } from "../core/types";
 import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearDagEdgeBuildResult,
@@ -15,7 +16,6 @@ import type {
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
 } from "./graphwar-pathfinding-worker-types";
-import { createPixelPoint } from "./types";
 
 /** 几何寻路任务被用户取消或新任务替代。 */
 export class GraphwarPathfindingCancelledError extends Error {
@@ -64,7 +64,7 @@ export function createGraphwarPathfindingRunner() {
       return worker;
     }
 
-    worker = new Worker(new URL("./workers/graphwar-pathfinding.worker.ts", import.meta.url), {
+    worker = new Worker(new URL("../workers/graphwar-pathfinding.worker.ts", import.meta.url), {
       name: "graphwar-pathfinding",
       type: "module",
     });

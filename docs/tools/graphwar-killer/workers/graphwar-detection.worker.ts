@@ -1,4 +1,5 @@
 /** 在 Web Worker 中执行耗时的 Graphwar 截图识别，避免阻塞页面主线程。 */
+import type { BoundsRect } from "../core/types";
 import {
   collectSoldierTemplateCenterCandidatesForMatching,
   createSoldierDetectionBoxes,
@@ -9,7 +10,7 @@ import {
   getGraphwarDetectionScale,
   getGraphwarSoldierDetectionSettings,
   matchSoldierTemplates,
-} from "../graphwar-detection";
+} from "../detection/graphwar-detection";
 import type {
   GraphwarDetectionWarning,
   GraphwarObjectDetectionInstrumentation,
@@ -19,7 +20,7 @@ import type {
   GraphwarSoldierDetectionSettings,
   SoldierMatchCandidate,
   SoldierTemplateCenterCandidate,
-} from "../graphwar-detection";
+} from "../detection/graphwar-detection";
 import type {
   GraphwarAutoDetectionResult,
   GraphwarDetectionWorkerTask,
@@ -28,12 +29,11 @@ import type {
   GraphwarDetectionWorkerStage,
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
-} from "../graphwar-detection-worker-types";
-import type { BoundsRect } from "../types";
+} from "../detection/graphwar-detection-worker-types";
 import type {
   GraphwarSoldierTemplateWorkerRequest,
   GraphwarSoldierTemplateWorkerResponse,
-} from "./graphwar-soldier-template-worker-types";
+} from "../detection/graphwar-soldier-template-worker-types";
 
 /** 当前 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarDetectionWorkerScope {

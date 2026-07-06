@@ -10,11 +10,16 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 
 ## 源码结构
 
-- [index.md](./index.md) 是中文工具页面入口。
-- [GraphwarKillerPage.vue](./GraphwarKillerPage.vue) 是中英文共享工具页面实现。
-- [composables/](./composables/) 放页面侧工作流状态 Module，例如截图输入、路径编辑和智能寻路会话。
-- [graphwar-pathfinding-cache.ts](./graphwar-pathfinding-cache.ts) 集中维护智能寻路页面侧缓存，避免页面实现直接管理缓存失效和克隆细节。
-- [locale.ts](./locale.ts) 提供中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。
+- [index.md](./index.md)：中文工具页面入口。
+- [GraphwarKillerPage.vue](./GraphwarKillerPage.vue)：中英文共享的工具页面。
+- [core/](./core/)：Graphwar 常量、坐标换算、数值工具、基础类型和前进规则。
+- [formula/](./formula/)：表达式解析、公式生成、轨迹采样和模拟器逻辑。
+- [detection/](./detection/)：截图识别、障碍 mask、士兵模板匹配和识别 worker 消息类型。
+- [pathfinding/](./pathfinding/)：智能寻路、一键清图、寻路缓存、runner 和 worker 消息类型。
+- [composables/](./composables/)：截图输入、路径编辑、智能寻路会话等页面状态。
+- [presentation/](./presentation/)：页面展示 DTO 和状态聚合。
+- [workers/](./workers/)：Web Worker 入口文件。
+- [locale.ts](./locale.ts)：中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。
 
 ## 已知改进点
 

@@ -86,7 +86,7 @@ import {
   sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTrajectory,
 } from "./trajectory-sampling";
-import type { GraphwarTrajectoryFormulaSettings } from "./trajectory-sampling";
+import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectorySampleResult } from "./trajectory-sampling";
 import { createGraphPoint, createPixelPoint } from "./types";
 import type {
   AlgorithmMode,
@@ -326,6 +326,9 @@ const pointerPreviewPoint = ref<PixelPoint>();
 const magnifierEnabled = ref(false);
 const magnifierZoomText = ref(String(graphwarToolDefaults.magnifierZoom));
 const magnifierPoint = ref<PixelPoint>();
+const liveClickPreviewEnabled = ref(false);
+const liveClickPreviewPointerPoint = ref<PixelPoint>();
+const liveClickPreviewPointerPathPointIndex = ref<number>();
 const boundsFlashActive = ref(false);
 const toolMode = ref<ToolMode>("bounds");
 const toolWorkflowMode = ref<ToolWorkflowMode>("solver");
@@ -473,6 +476,9 @@ let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionSoldierFlashFrame: number | undefined;
 let detectionSoldierFlashTimer: ReturnType<typeof setTimeout> | undefined;
+let liveClickPreviewPointerFrame: number | undefined;
+let liveClickPreviewPendingPathPointIndex: number | undefined;
+let liveClickPreviewPendingPointerPoint: PixelPoint | undefined;
 let oneClickClearHitFlashFrame: number | undefined;
 let oneClickClearHitFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let debugActivationCountdownTimer: ReturnType<typeof setInterval> | undefined;
@@ -1185,6 +1191,7 @@ const trajectorySampleResult = computed(() => {
       bounds: parsedBounds.value.bounds,
       boundsRect: boundsRect.value,
       collision: trajectoryCollisionSettings.value,
+      collectVisiblePixels: true,
       equation: equationMode.value,
       expression: simulatorFormulaText.value,
       launchAngleRadians: simulatorLaunchAngleRadians.value,
@@ -1211,6 +1218,7 @@ const trajectorySampleResult = computed(() => {
     bounds: parsedBounds.value.bounds,
     boundsRect: boundsRect.value,
     collision: trajectoryCollisionSettings.value,
+    collectVisiblePixels: true,
     context,
   });
 });
@@ -1285,25 +1293,20 @@ const pathfindingHeaderStatusIsSuccess = computed(() => pathfindingHeaderStatusR
 const trajectoryObstacleHitIndex = computed(() => {
   const obstacleHitIndex = trajectorySampleResult.value?.obstacleHitIndex ?? -1;
   const targetHitIndex = trajectoryTargetHitIndex.value;
-  // 目标之后才撞障碍不影响“当前路径命中目标”的提示，保持旧预览语义。
+  // 目标之后才撞障碍不影响“当前路径命中目标”的提示。
   return targetHitIndex >= 0 && obstacleHitIndex >= targetHitIndex ? -1 : obstacleHitIndex;
 });
 
 const plottedCurvePoints = computed(() => {
-  if (!trajectorySample.value || !parsedBounds.value.ok) {
-    return "";
-  }
-
-  const { bounds } = parsedBounds.value;
-  const hitIndex = trajectoryObstacleHitIndex.value;
-  const points = hitIndex >= 0 ? trajectorySample.value.points.slice(0, hitIndex + 1) : trajectorySample.value.points;
-  return points
-    .map((point) => {
-      const pixel = graphToImagePoint(point, bounds, boundsRect.value);
-      return `${formatSvgNumber(pixel.x)},${formatSvgNumber(pixel.y)}`;
-    })
-    .join(" ");
+  const result = trajectorySampleResult.value;
+  return result ? formatVisibleTrajectoryPoints(result.visiblePixels, trajectoryObstacleHitIndex.value) : "";
 });
+
+/** 将已映射到截图坐标的轨迹点格式化为 SVG polyline；hitIndex 指定目标或障碍截断位置。 */
+function formatVisibleTrajectoryPoints(points: readonly PixelPoint[], hitIndex: number) {
+  const sampledPoints = hitIndex >= 0 ? points.slice(0, hitIndex + 1) : points;
+  return sampledPoints.map((point) => `${formatSvgNumber(point.x)},${formatSvgNumber(point.y)}`).join(" ");
+}
 
 /** 将像素点数组格式化为 SVG polyline points 字符串。 */
 function formatSvgPathPoints(points: readonly PixelPoint[]) {
@@ -1344,12 +1347,103 @@ const soldierSelectionRadius = computed(() => {
     48,
   );
 });
-const pathLineSegments = computed<PathLineSegment[]>(() => {
+const pathLineSegments = computed<PathLineSegment[]>(() => createPathLineSegments(pathPixels.value));
+const liveClickPreviewPoint = computed(() => {
+  const point = liveClickPreviewPointerPoint.value;
+  if (!liveClickPreviewEnabled.value || toolMode.value !== "path" || smartPathfindingInProgress.value || !point) {
+    return undefined;
+  }
+  if (draggingPathPointIndex.value !== undefined || liveClickPreviewPointerPathPointIndex.value !== undefined) {
+    return undefined;
+  }
+  return createLiveClickPreviewPoint(point);
+});
+const liveClickPreviewLineSegments = computed(() => {
+  const point = liveClickPreviewPoint.value;
+  const start = toolWorkflowMode.value === "simulator" ? undefined : pathPixels.value.at(-1);
+  if (!effectiveSmartPathfindingEnabled.value || !point || !start) {
+    return [];
+  }
+  return createPathLineSegments([start, point]);
+});
+const liveClickPreviewTrajectorySampleResult = computed<GraphwarTrajectorySampleResult | undefined>(() => {
+  const previewPoint = liveClickPreviewPoint.value;
+  const boundsResult = parsedBounds.value;
+  if (!previewPoint || !boundsResult.ok || effectiveSmartPathfindingEnabled.value) {
+    return undefined;
+  }
+
+  if (toolWorkflowMode.value === "simulator") {
+    if (!simulatorFormulaText.value.trim()) {
+      return undefined;
+    }
+
+    return sampleGraphwarExpressionTrajectoryWithStops({
+      bounds: boundsResult.bounds,
+      boundsRect: boundsRect.value,
+      collision: trajectoryCollisionSettings.value,
+      collectVisiblePixels: true,
+      equation: equationMode.value,
+      expression: simulatorFormulaText.value,
+      launchAngleRadians: simulatorLaunchAngleRadians.value,
+      parser: {
+        parseDerivativeAsY: simulatorParseDerivativeAsY.value,
+        skipUnknownCharacters: simulatorSkipUnknownCharacters.value,
+      },
+      soldierCenter: imageToGraphPoint(previewPoint, boundsResult.bounds, boundsRect.value),
+    });
+  }
+
+  if (
+    pathPixels.value.length === 0 ||
+    !parsedPrecision.value.ok ||
+    (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
+    (algorithmMode.value === "abs" && equationMode.value === "ddy") ||
+    isEquationModeDisabled(equationMode.value)
+  ) {
+    return undefined;
+  }
+
+  const previewPathPoints = [
+    ...mappedPathPoints.value,
+    imageToGraphPoint(previewPoint, boundsResult.bounds, boundsRect.value),
+  ];
+  const context = createGraphwarTrajectoryFormulaContext({
+    bounds: boundsResult.bounds,
+    points: previewPathPoints,
+    settings: graphwarTrajectoryFormulaSettings.value,
+    soldierCenter: previewPathPoints[0],
+  });
+  if (context.formulaPoints.length < 2) {
+    return undefined;
+  }
+
+  return sampleGraphwarFormulaTrajectory({
+    bounds: boundsResult.bounds,
+    boundsRect: boundsRect.value,
+    collision: trajectoryCollisionSettings.value,
+    collectVisiblePixels: true,
+    context,
+  });
+});
+const liveClickPreviewCurvePoints = computed(() => {
+  const result = liveClickPreviewTrajectorySampleResult.value;
+  return result ? formatVisibleTrajectoryPoints(result.visiblePixels, result.obstacleHitIndex) : "";
+});
+const liveClickPreviewLabel = computed(() => {
+  if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {
+    return locale.ui.point.svgSelfLabel;
+  }
+  return String(pathPixels.value.length);
+});
+
+/** 按路径点圆半径截短线段，避免线条穿过点心。 */
+function createPathLineSegments(points: readonly PixelPoint[]) {
   const radius = soldierSelectionRadius.value;
   const segments: PathLineSegment[] = [];
-  for (let index = 1; index < pathPixels.value.length; index += 1) {
-    const start = pathPixels.value[index - 1];
-    const end = pathPixels.value[index];
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
     const deltaX = end.x - start.x;
     const deltaY = end.y - start.y;
     const distance = Math.hypot(deltaX, deltaY);
@@ -1367,7 +1461,7 @@ const pathLineSegments = computed<PathLineSegment[]>(() => {
     });
   }
   return segments;
-});
+}
 const smartPathfindingPreviewPathPoints = computed(() => formatSvgPathPoints(smartPathfindingPreviewPath.value));
 const magnifierStyle = computed(() => {
   const point = magnifierPoint.value;
@@ -1459,6 +1553,7 @@ onBeforeUnmount(() => {
   if (detectionRefreshTimer) {
     clearTimeout(detectionRefreshTimer);
   }
+  clearLiveClickPreviewPointerPoint();
   clearDebugActivationHold();
   clearDebugActivationSuccessFlash();
   clearDetectionSoldierFlash();
@@ -1467,6 +1562,49 @@ onBeforeUnmount(() => {
   }
   clearSmartPathfindingBlockedPoint();
 });
+
+/** 高频 pointermove 只保留最新落点，每个浏览器绘制帧最多触发一次轨迹预览重算。 */
+function scheduleLiveClickPreviewPointerPoint(point: PixelPoint, pathPointIndex: number | undefined) {
+  liveClickPreviewPendingPointerPoint = point;
+  liveClickPreviewPendingPathPointIndex = pathPointIndex;
+  if (liveClickPreviewPointerFrame !== undefined) {
+    return;
+  }
+
+  liveClickPreviewPointerFrame = requestAnimationFrame(() => {
+    const point = liveClickPreviewPendingPointerPoint;
+    const pathPointIndex = liveClickPreviewPendingPathPointIndex;
+    liveClickPreviewPointerFrame = undefined;
+    liveClickPreviewPendingPointerPoint = undefined;
+    liveClickPreviewPendingPathPointIndex = undefined;
+    liveClickPreviewPointerPoint.value = point;
+    liveClickPreviewPointerPathPointIndex.value = pathPointIndex;
+  });
+}
+
+/** 清理悬停预览时取消待执行帧，避免离开舞台或切模式后旧落点回写。 */
+function clearLiveClickPreviewPointerPoint() {
+  liveClickPreviewPendingPointerPoint = undefined;
+  liveClickPreviewPendingPathPointIndex = undefined;
+  liveClickPreviewPointerPoint.value = undefined;
+  liveClickPreviewPointerPathPointIndex.value = undefined;
+  if (liveClickPreviewPointerFrame !== undefined) {
+    cancelAnimationFrame(liveClickPreviewPointerFrame);
+    liveClickPreviewPointerFrame = undefined;
+  }
+}
+
+/** 路径点或点半径变化时刷新命中缓存，保持悬停预览和当前路径状态一致。 */
+function refreshLiveClickPreviewPointerPathPointIndex() {
+  liveClickPreviewPendingPathPointIndex =
+    liveClickPreviewPendingPointerPoint === undefined
+      ? undefined
+      : getPathPointIndexAtPoint(liveClickPreviewPendingPointerPoint);
+  liveClickPreviewPointerPathPointIndex.value =
+    liveClickPreviewPointerPoint.value === undefined
+      ? undefined
+      : getPathPointIndexAtPoint(liveClickPreviewPointerPoint.value);
+}
 
 watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTopRatioText], () => {
   clearSmartPathfindingStatus();
@@ -2717,12 +2855,17 @@ function handleStagePointerDown(event: PointerEvent) {
     return;
   }
 
+  clearLiveClickPreviewPointerPoint();
   if (smartPathfindingInProgress.value) {
+    liveClickPreviewPointerPoint.value = point;
+    liveClickPreviewPointerPathPointIndex.value = getPathPointIndexAtPoint(point);
     updateSmartPathfindingInProgressStatus();
     return;
   }
 
   const pathPointIndex = getPathPointIndexAtPoint(point);
+  liveClickPreviewPointerPoint.value = point;
+  liveClickPreviewPointerPathPointIndex.value = pathPointIndex;
   if (pathPointIndex !== undefined) {
     draggingPathPointIndex.value = pathPointIndex;
     hoveredPathPointIndex.value = pathPointIndex;
@@ -2920,6 +3063,48 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
   });
   finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
   return true;
+}
+
+/** 计算实时点击预览的落位点；只模拟左键点击会选择的目标，不触发寻路或状态写入。 */
+function createLiveClickPreviewPoint(point: PixelPoint) {
+  if (!parsedBounds.value.ok) {
+    return undefined;
+  }
+
+  const selectedSoldier = smartCursorEnabled.value ? getDetectedSoldierAtPoint(point) : undefined;
+  if (!selectedSoldier) {
+    return createLiveManualClickPreviewPoint(point);
+  }
+  if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {
+    return createLiveManualClickPreviewPoint(getDetectionBoxCenter(selectedSoldier));
+  }
+
+  const startPoint = pathPixels.value.at(-1);
+  if (!startPoint) {
+    return undefined;
+  }
+  const targetPoint = effectiveSmartPathfindingEnabled.value
+    ? createSmartPathfindingSoldierTarget(startPoint, selectedSoldier)?.targetPoint
+    : createSearchStartSoldierAimPoint(startPoint, selectedSoldier);
+  return targetPoint ? createLiveManualClickPreviewPoint(targetPoint) : undefined;
+}
+
+/** 复刻 appendPathPoint 的同步落位规则，避免实时预览改动真实路径和提示状态。 */
+function createLiveManualClickPreviewPoint(point: PixelPoint) {
+  if (!parsedBounds.value.ok) {
+    return undefined;
+  }
+  if (toolWorkflowMode.value === "simulator") {
+    return normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, undefined, 0);
+  }
+
+  const targetPoint = pathPixels.value.length > 0 ? createMinimumForwardTargetPoint(point) : point;
+  if (!targetPoint) {
+    return undefined;
+  }
+  return pathPixels.value.length > 0
+    ? targetPoint
+    : normalizePathPoint(targetPoint, boundsRect.value, parsedBounds.value.bounds, undefined, 0);
 }
 
 /** 一键清图：从当前路径尾部出发，完整遍历 x 单调可达状态并追加当前模型下击杀最多的路径。 */
@@ -4067,6 +4252,10 @@ function getPathPointIndexAtPoint(point: PixelPoint) {
   return undefined;
 }
 
+watch([pathPixels, soldierSelectionRadius], () => {
+  refreshLiveClickPreviewPointerPathPointIndex();
+});
+
 /** 更新路径点并重新规范化后续路径。 */
 function setPathPoint(index: number, point: PixelPoint) {
   if (!parsedBounds.value.ok || index < 0 || index >= pathPixels.value.length) {
@@ -4194,7 +4383,7 @@ function removePathPoint(index: number) {
   return true;
 }
 
-/** 跟踪指针位置，用于边界预览和放大镜。 */
+/** 跟踪指针位置；高频路径预览在这里合并到浏览器绘制帧。 */
 function handleStagePointerMove(event: PointerEvent) {
   const point = getImagePointFromEvent(event);
   if (!point) {
@@ -4205,6 +4394,7 @@ function handleStagePointerMove(event: PointerEvent) {
     magnifierPoint.value = point;
   }
   if (toolMode.value === "obstacle") {
+    clearLiveClickPreviewPointerPoint();
     updateObstacleBrushPreview(point);
     if (obstacleBrushDragging.value) {
       paintObstacleBrushAtPoint(point, true);
@@ -4214,11 +4404,19 @@ function handleStagePointerMove(event: PointerEvent) {
     return;
   }
   if (draggingPathPointIndex.value !== undefined) {
+    clearLiveClickPreviewPointerPoint();
     hoveredPathPointIndex.value = draggingPathPointIndex.value;
     setPathPoint(draggingPathPointIndex.value, point);
     return;
   }
-  hoveredPathPointIndex.value = getPathPointIndexAtPoint(point);
+
+  const pathPointIndex = getPathPointIndexAtPoint(point);
+  if (toolMode.value === "path") {
+    scheduleLiveClickPreviewPointerPoint(point, pathPointIndex);
+  } else {
+    clearLiveClickPreviewPointerPoint();
+  }
+  hoveredPathPointIndex.value = pathPointIndex;
   const hoveredSoldier = smartCursorEnabled.value ? getDetectedSoldierAtPoint(point)?.id : undefined;
   hoveredDetectedSoldierId.value = hoveredSoldier;
   if (toolMode.value !== "bounds") {
@@ -4232,6 +4430,7 @@ function handleStagePointerMove(event: PointerEvent) {
 function handleStagePointerLeave() {
   pointerPreviewPoint.value = undefined;
   magnifierPoint.value = undefined;
+  clearLiveClickPreviewPointerPoint();
   hoveredDetectedSoldierId.value = undefined;
   hoveredPathPointIndex.value = undefined;
   draggingPathPointIndex.value = undefined;
@@ -4369,6 +4568,7 @@ function setToolMode(mode: ToolMode) {
 
   toolMode.value = mode;
   pointerPreviewPoint.value = undefined;
+  clearLiveClickPreviewPointerPoint();
   obstacleBrushPointerPoint.value = undefined;
   obstacleBrushDragging.value = false;
   obstacleBrushLastPlanePoint.value = undefined;
@@ -5275,6 +5475,15 @@ async function copyText(text: string) {
         >
           {{ locale.ui.actions.undoPoint }}
         </button>
+        <button
+          type="button"
+          :aria-pressed="liveClickPreviewEnabled"
+          :class="{ 'graphwar-killer__toggle-button--active': liveClickPreviewEnabled }"
+          :title="locale.ui.actions.liveClickPreviewTitle"
+          @click="liveClickPreviewEnabled = !liveClickPreviewEnabled"
+        >
+          {{ locale.ui.actions.liveClickPreview }}
+        </button>
       </div>
       <div
         v-if="obstacleBrushControlsVisible"
@@ -5562,6 +5771,15 @@ async function copyText(text: string) {
             :y2="segment.y2"
           />
           <line
+            v-for="(segment, index) in liveClickPreviewLineSegments"
+            :key="`live-click-preview-line-${index}`"
+            class="graphwar-killer__path-line graphwar-killer__path-line--live-click-preview"
+            :x1="segment.x1"
+            :y1="segment.y1"
+            :x2="segment.x2"
+            :y2="segment.y2"
+          />
+          <line
             v-if="smartPathfindingInProgress && smartPathfindingPreviewConnection"
             class="graphwar-killer__pathfinding-connection"
             :x1="smartPathfindingPreviewConnection.x1"
@@ -5616,6 +5834,11 @@ async function copyText(text: string) {
             :points="plottedCurvePoints"
             :style="{ stroke: trajectoryStrokeColor }"
           />
+          <polyline
+            v-if="liveClickPreviewCurvePoints"
+            class="graphwar-killer__curve-line graphwar-killer__curve-line--live-click-preview"
+            :points="liveClickPreviewCurvePoints"
+          />
           <circle
             v-if="smartPathfindingBlockedPoint"
             class="graphwar-killer__pathfinding-blocked-point"
@@ -5626,6 +5849,14 @@ async function copyText(text: string) {
           <g
             v-for="(point, index) in pathPixels"
             :key="`point-${index}`"
+            v-memo="[
+              point.x,
+              point.y,
+              soldierSelectionRadius,
+              index === 0,
+              index === hoveredPathPointIndex,
+              locale.ui.point.svgSelfLabel,
+            ]"
           >
             <circle
               class="graphwar-killer__point"
@@ -5643,6 +5874,21 @@ async function copyText(text: string) {
               :y="point.y - soldierSelectionRadius - 4"
             >
               {{ index === 0 ? locale.ui.point.svgSelfLabel : index }}
+            </text>
+          </g>
+          <g v-if="liveClickPreviewPoint">
+            <circle
+              class="graphwar-killer__point graphwar-killer__point--live-click-preview"
+              :cx="liveClickPreviewPoint.x"
+              :cy="liveClickPreviewPoint.y"
+              :r="soldierSelectionRadius"
+            />
+            <text
+              class="graphwar-killer__point-label graphwar-killer__point-label--live-click-preview"
+              :x="liveClickPreviewPoint.x + soldierSelectionRadius + 4"
+              :y="liveClickPreviewPoint.y - soldierSelectionRadius - 4"
+            >
+              {{ liveClickPreviewLabel }}
             </text>
           </g>
         </svg>
@@ -5837,6 +6083,15 @@ async function copyText(text: string) {
                 :y2="segment.y2"
               />
               <line
+                v-for="(segment, index) in liveClickPreviewLineSegments"
+                :key="`magnifier-live-click-preview-line-${index}`"
+                class="graphwar-killer__path-line graphwar-killer__path-line--live-click-preview"
+                :x1="segment.x1"
+                :y1="segment.y1"
+                :x2="segment.x2"
+                :y2="segment.y2"
+              />
+              <line
                 v-if="smartPathfindingInProgress && smartPathfindingPreviewConnection"
                 class="graphwar-killer__pathfinding-connection"
                 :x1="smartPathfindingPreviewConnection.x1"
@@ -5891,6 +6146,11 @@ async function copyText(text: string) {
                 :points="plottedCurvePoints"
                 :style="{ stroke: trajectoryStrokeColor }"
               />
+              <polyline
+                v-if="liveClickPreviewCurvePoints"
+                class="graphwar-killer__curve-line graphwar-killer__curve-line--live-click-preview"
+                :points="liveClickPreviewCurvePoints"
+              />
               <circle
                 v-if="smartPathfindingBlockedPoint"
                 class="graphwar-killer__pathfinding-blocked-point"
@@ -5901,6 +6161,14 @@ async function copyText(text: string) {
               <g
                 v-for="(point, index) in pathPixels"
                 :key="`magnifier-point-${index}`"
+                v-memo="[
+                  point.x,
+                  point.y,
+                  soldierSelectionRadius,
+                  index === 0,
+                  index === hoveredPathPointIndex,
+                  locale.ui.point.svgSelfLabel,
+                ]"
               >
                 <circle
                   class="graphwar-killer__point"
@@ -5918,6 +6186,21 @@ async function copyText(text: string) {
                   :y="point.y - soldierSelectionRadius - 4"
                 >
                   {{ index === 0 ? locale.ui.point.svgSelfLabel : index }}
+                </text>
+              </g>
+              <g v-if="liveClickPreviewPoint">
+                <circle
+                  class="graphwar-killer__point graphwar-killer__point--live-click-preview"
+                  :cx="liveClickPreviewPoint.x"
+                  :cy="liveClickPreviewPoint.y"
+                  :r="soldierSelectionRadius"
+                />
+                <text
+                  class="graphwar-killer__point-label graphwar-killer__point-label--live-click-preview"
+                  :x="liveClickPreviewPoint.x + soldierSelectionRadius + 4"
+                  :y="liveClickPreviewPoint.y - soldierSelectionRadius - 4"
+                >
+                  {{ liveClickPreviewLabel }}
                 </text>
               </g>
             </svg>
@@ -6554,6 +6837,13 @@ async function copyText(text: string) {
   vector-effect: non-scaling-stroke;
 }
 
+.graphwar-killer__path-line--live-click-preview {
+  opacity: 78%;
+  stroke: #f59e0b;
+  stroke-dasharray: 3 5;
+  stroke-width: 1.5;
+}
+
 .graphwar-killer__pathfinding-preview {
   pointer-events: none;
 }
@@ -6629,6 +6919,12 @@ async function copyText(text: string) {
   stroke-linecap: round;
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
+}
+
+.graphwar-killer__curve-line--live-click-preview {
+  stroke: #f59e0b;
+  stroke-dasharray: 9 5;
+  stroke-width: 1.5;
 }
 
 @keyframes graphwar-killer-trajectory-blink {
@@ -6726,6 +7022,14 @@ async function copyText(text: string) {
   stroke: #16a34a;
 }
 
+.graphwar-killer__point--live-click-preview {
+  fill: color-mix(in srgb, #f59e0b 20%, transparent);
+  pointer-events: none;
+  stroke: #f59e0b;
+  stroke-dasharray: 3 3;
+  stroke-width: 2;
+}
+
 .graphwar-killer__point-label {
   fill: var(--vp-c-text-1);
   font-size: 16px;
@@ -6733,6 +7037,10 @@ async function copyText(text: string) {
   paint-order: stroke;
   stroke: var(--vp-c-bg);
   stroke-width: 4;
+}
+
+.graphwar-killer__point-label--live-click-preview {
+  fill: #b45309;
 }
 
 .graphwar-killer__image-actions {

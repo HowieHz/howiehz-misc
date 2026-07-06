@@ -5,6 +5,7 @@ import GraphwarActionPanel from "./components/GraphwarActionPanel.vue";
 import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./components/GraphwarDetectionPanel.vue";
 import GraphwarResultPanel from "./components/GraphwarResultPanel.vue";
 import GraphwarScreenshotPanel, { type GraphwarScreenshotPanelModel } from "./components/GraphwarScreenshotPanel.vue";
+import GraphwarSettingsPanel, { type GraphwarSettingsPanelModel } from "./components/GraphwarSettingsPanel.vue";
 import GraphwarSmartPathfindingPanel, {
   type GraphwarSmartPathfindingPanelModel,
 } from "./components/GraphwarSmartPathfindingPanel.vue";
@@ -769,10 +770,32 @@ const settingsHeaderStatusResult = computed(() =>
     createHeaderStatus(activeEquationDescription.value),
   ),
 );
-const settingsHeaderStatus = computed(() => settingsHeaderStatusResult.value.message);
-const settingsHeaderStatusIsError = computed(() => settingsHeaderStatusResult.value.kind === "error");
-const settingsHeaderStatusIsWarning = computed(() => settingsHeaderStatusResult.value.kind === "warning");
-const settingsHeaderStatusIsSuccess = computed(() => settingsHeaderStatusResult.value.kind === "success");
+// 基础设置面板只应消费展示 DTO；模式切换、校验和调试长按流程仍由页面侧保持原语义。
+const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
+  const headerStatus = settingsHeaderStatusResult.value;
+  return {
+    advancedSettingsVisible: advancedSettingsVisible.value,
+    algorithmMode: algorithmMode.value,
+    algorithmModes: algorithmModes.value,
+    equationMode: equationMode.value,
+    equationModes: equationModes.value.map((mode) => ({
+      ...mode,
+      disabled: isEquationModeDisabled(mode.value),
+    })),
+    headerStatus: {
+      kind: headerStatus.kind,
+      message: headerStatus.message,
+    },
+    precision: {
+      maximum: MAX_FORMULA_DECIMAL_PLACES,
+      text: precisionText.value,
+    },
+    stepOverflowProtectionEnabled: stepOverflowProtectionEnabled.value,
+    steepnessText: steepnessText.value,
+    toolWorkflowMode: toolWorkflowMode.value,
+    toolWorkflowModes: toolWorkflowModes.value,
+  };
+});
 const activeToolHint = computed(() =>
   toolMode.value === "bounds"
     ? locale.status.activeToolHint.bounds
@@ -4662,159 +4685,20 @@ async function copyText(text: string) {
     >
       {{ statusAnnouncement }}
     </p>
-    <section
-      class="graphwar-killer__panel"
-      aria-labelledby="graphwar-killer-settings-title"
-    >
-      <div class="graphwar-killer__label-row">
-        <h2 id="graphwar-killer-settings-title">
-          {{ locale.ui.settings.title }}
-        </h2>
-        <span
-          :title="settingsHeaderStatus"
-          :class="{
-            'graphwar-killer__label-status--error': settingsHeaderStatusIsError,
-            'graphwar-killer__label-status--warning': settingsHeaderStatusIsWarning,
-            'graphwar-killer__label-status--success': settingsHeaderStatusIsSuccess,
-          }"
-        >
-          {{ settingsHeaderStatus }}
-        </span>
-      </div>
-      <div class="graphwar-killer__setting-row">
-        <span class="graphwar-killer__setting-label">{{ locale.ui.settings.mode }}</span>
-        <div
-          class="graphwar-killer__tool-toggle graphwar-killer__mode-toggle"
-          :class="{ 'graphwar-killer__mode-toggle--simulator': toolWorkflowMode === 'simulator' }"
-          role="group"
-          :aria-label="locale.ui.settings.modeAriaLabel"
-          :title="locale.ui.settings.modeTitle"
-        >
-          <button
-            v-for="mode in toolWorkflowModes"
-            :key="mode.value"
-            type="button"
-            :aria-pressed="toolWorkflowMode === mode.value"
-            :class="{ 'graphwar-killer__tool-toggle-button--active': toolWorkflowMode === mode.value }"
-            :title="mode.title"
-            @click="setToolWorkflowMode(mode.value)"
-          >
-            {{ mode.label }}
-          </button>
-        </div>
-      </div>
-      <div
-        v-if="toolWorkflowMode !== 'simulator'"
-        class="graphwar-killer__setting-row"
-      >
-        <span class="graphwar-killer__setting-label">{{ locale.ui.settings.algorithm }}</span>
-        <div
-          class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle"
-          :class="`graphwar-killer__algorithm-toggle--${algorithmMode}`"
-          role="group"
-          :aria-label="locale.ui.settings.algorithmAriaLabel"
-          :title="locale.ui.settings.algorithmTitle"
-        >
-          <button
-            v-for="mode in algorithmModes"
-            :key="mode.value"
-            type="button"
-            :aria-pressed="algorithmMode === mode.value"
-            :class="{ 'graphwar-killer__tool-toggle-button--active': algorithmMode === mode.value }"
-            :title="mode.title"
-            @click="algorithmMode = mode.value"
-          >
-            {{ mode.label }}
-          </button>
-        </div>
-      </div>
-      <div
-        v-if="toolWorkflowMode !== 'simulator' && algorithmMode === 'step'"
-        class="graphwar-killer__step-settings"
-      >
-        <label
-          class="graphwar-killer__steepness-label"
-          :title="locale.ui.settings.stepSteepnessTitle"
-        >
-          {{ locale.ui.settings.stepSteepness }}
-          <input
-            v-model="steepnessText"
-            inputmode="decimal"
-            autocomplete="off"
-            :aria-label="locale.ui.settings.stepSteepnessAriaLabel"
-            :title="locale.ui.settings.stepSteepnessTitle"
-          >
-        </label>
-        <button
-          type="button"
-          :aria-pressed="stepOverflowProtectionEnabled"
-          :class="{ 'graphwar-killer__toggle-button--active': stepOverflowProtectionEnabled }"
-          :title="locale.ui.settings.overflowProtectionTitle"
-          @click="stepOverflowProtectionEnabled = !stepOverflowProtectionEnabled"
-        >
-          {{ locale.ui.settings.overflowProtection }}
-        </button>
-      </div>
-      <div class="graphwar-killer__setting-row graphwar-killer__game-mode-row">
-        <span class="graphwar-killer__setting-label">{{ locale.ui.settings.gameMode }}</span>
-        <div class="graphwar-killer__game-mode-controls">
-          <div
-            class="graphwar-killer__equation-toggle"
-            :class="{
-              'graphwar-killer__equation-toggle--dy': equationMode === 'dy',
-              'graphwar-killer__equation-toggle--ddy': equationMode === 'ddy',
-            }"
-            role="group"
-            :aria-label="locale.ui.settings.gameModeAriaLabel"
-            :title="locale.ui.settings.gameModeTitle"
-          >
-            <button
-              v-for="mode in equationModes"
-              :key="mode.value"
-              type="button"
-              :aria-pressed="equationMode === mode.value"
-              :class="{ 'graphwar-killer__equation-toggle-button--active': equationMode === mode.value }"
-              :disabled="isEquationModeDisabled(mode.value)"
-              :title="mode.title"
-              @click="setEquationMode(mode.value)"
-            >
-              {{ mode.label }}
-            </button>
-          </div>
-          <label
-            v-if="toolWorkflowMode !== 'simulator'"
-            class="graphwar-killer__precision-label"
-            :title="locale.ui.settings.decimalPlacesTitle"
-          >
-            {{ locale.ui.settings.decimalPlaces }}
-            <input
-              v-model="precisionText"
-              inputmode="numeric"
-              autocomplete="off"
-              min="0"
-              :max="MAX_FORMULA_DECIMAL_PLACES"
-              :aria-label="locale.ui.settings.decimalPlacesAriaLabel"
-              :title="locale.ui.settings.decimalPlacesTitle"
-            >
-          </label>
-          <button
-            type="button"
-            class="graphwar-killer__secondary-button"
-            :aria-expanded="advancedSettingsVisible"
-            :aria-pressed="advancedSettingsVisible"
-            :class="{ 'graphwar-killer__toggle-button--active': advancedSettingsVisible }"
-            @keydown.enter.prevent="toggleAdvancedSettings"
-            @keydown.space.prevent="toggleAdvancedSettings"
-            @pointercancel="cancelDebugActivationHold"
-            @pointerdown.prevent="startDebugActivationHold"
-            @pointerleave="cancelDebugActivationHold"
-            @pointerup.prevent="finishDebugActivationHold"
-          >
-            {{ locale.ui.settings.advancedSettings }}
-          </button>
-        </div>
-      </div>
-    </section>
+    <GraphwarSettingsPanel
+      :locale="locale"
+      :panel="settingsPanel"
+      @cancel-debug-activation-hold="cancelDebugActivationHold"
+      @finish-debug-activation-hold="finishDebugActivationHold"
+      @set-algorithm-mode="algorithmMode = $event"
+      @set-equation-mode="setEquationMode"
+      @set-tool-workflow-mode="setToolWorkflowMode"
+      @start-debug-activation-hold="startDebugActivationHold"
+      @toggle-advanced-settings="toggleAdvancedSettings"
+      @toggle-step-overflow-protection="stepOverflowProtectionEnabled = !stepOverflowProtectionEnabled"
+      @update-precision-text="precisionText = $event"
+      @update-steepness-text="steepnessText = $event"
+    />
     <section
       v-if="advancedSettingsVisible"
       class="graphwar-killer__panel"
@@ -5426,65 +5310,6 @@ async function copyText(text: string) {
   grid-template-columns: auto minmax(0, 1fr);
 }
 
-.graphwar-killer__step-settings {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.graphwar-killer__step-settings button {
-  min-height: 34px;
-  padding: 6px 10px;
-}
-
-.graphwar-killer__steepness-label {
-  align-items: center;
-  flex: 1 1 220px;
-  gap: 6px;
-  grid-template-columns: auto minmax(0, 1fr);
-  min-width: min(100%, 220px);
-}
-
-.graphwar-killer__setting-row {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.graphwar-killer__setting-label {
-  flex: 0 0 auto;
-  font-weight: 600;
-}
-
-.graphwar-killer__settings-subheading {
-  color: color-mix(in srgb, var(--vp-c-text-1) 70%, var(--vp-c-text-2) 30%);
-  font-size: 0.9rem;
-  font-weight: 700;
-  margin: 2px 0 0;
-}
-
-.graphwar-killer__setting-row > :not(.graphwar-killer__setting-label) {
-  flex: 1 1 320px;
-  min-width: 0;
-}
-
-.graphwar-killer__game-mode-controls {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-
-.graphwar-killer__precision-label {
-  align-items: center;
-  font-weight: 600;
-  gap: 6px;
-  grid-template-columns: auto minmax(74px, 92px);
-}
-
 .graphwar-killer__detection-setting-label {
   align-items: center;
   font-weight: 600;
@@ -5496,170 +5321,6 @@ async function copyText(text: string) {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
   font-size: 0.88rem;
   font-weight: 500;
-}
-
-.graphwar-killer__tool-toggle {
-  background: color-mix(in srgb, var(--vp-c-bg-soft) 68%, var(--vp-c-bg));
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  display: grid;
-  gap: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-height: 34px;
-  min-width: 0;
-  overflow: hidden;
-  padding: 2px;
-  position: relative;
-}
-
-.graphwar-killer__tool-toggle::before {
-  background: var(--vp-c-brand-1);
-  border-radius: 999px;
-  bottom: 2px;
-  box-shadow: 0 6px 14px rgb(15 23 42 / 12%);
-  content: "";
-  left: 2px;
-  position: absolute;
-  top: 2px;
-  transition: transform 0.2s ease;
-  width: calc((100% - 4px) / 3);
-}
-
-.graphwar-killer__mode-toggle {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.graphwar-killer__mode-toggle::before {
-  width: calc((100% - 4px) / 2);
-}
-
-.graphwar-killer__mode-toggle--simulator::before {
-  transform: translateX(100%);
-}
-
-.graphwar-killer__algorithm-toggle {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  min-height: 38px;
-}
-
-.graphwar-killer__algorithm-toggle::before {
-  width: calc((100% - 4px) / 4);
-}
-
-.graphwar-killer__algorithm-toggle--step::before {
-  transform: translateX(100%);
-}
-
-.graphwar-killer__algorithm-toggle--pchip::before {
-  transform: translateX(200%);
-}
-
-.graphwar-killer__algorithm-toggle--akima::before {
-  transform: translateX(300%);
-}
-
-.graphwar-killer__tool-toggle.graphwar-killer__algorithm-toggle button {
-  font-size: 0.82rem;
-  line-height: 1.15;
-  min-height: 32px;
-  padding: 4px 7px;
-}
-
-.graphwar-killer__tool-toggle button {
-  background: transparent;
-  border: 0;
-  border-radius: 999px;
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  font-size: 0.9rem;
-  line-height: 1.15;
-  min-height: 28px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  padding: 4px 10px;
-  position: relative;
-  text-align: center;
-  transform: none;
-  white-space: normal;
-  z-index: 1;
-}
-
-.graphwar-killer__tool-toggle button:hover {
-  box-shadow: none;
-  transform: none;
-}
-
-.graphwar-killer__tool-toggle-button--active {
-  color: var(--vp-c-white) !important;
-}
-
-.graphwar-killer__equation-toggle {
-  background: color-mix(in srgb, var(--vp-c-bg-soft) 68%, var(--vp-c-bg));
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  display: grid;
-  flex: 0 1 230px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-height: 34px;
-  overflow: hidden;
-  padding: 2px;
-  position: relative;
-  width: min(100%, 230px);
-}
-
-.graphwar-killer__equation-toggle::before {
-  background: var(--vp-c-brand-1);
-  border-radius: 999px;
-  bottom: 2px;
-  box-shadow: 0 6px 14px rgb(15 23 42 / 12%);
-  content: "";
-  left: 2px;
-  position: absolute;
-  top: 2px;
-  transition: transform 0.2s ease;
-  width: calc((100% - 4px) / 3);
-}
-
-.graphwar-killer__equation-toggle--dy::before {
-  transform: translateX(100%);
-}
-
-.graphwar-killer__equation-toggle--ddy::before {
-  transform: translateX(200%);
-}
-
-.graphwar-killer__equation-toggle button {
-  background: transparent;
-  border: 0;
-  border-radius: 999px;
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  font-family: inherit;
-  font-size: 0.9rem;
-  line-height: 1.2;
-  min-height: 28px;
-  min-width: 0;
-  padding: 4px 7px;
-  position: relative;
-  transform: none;
-  white-space: nowrap;
-  z-index: 1;
-}
-
-.graphwar-killer__equation-toggle button:hover {
-  box-shadow: none;
-  transform: none;
-}
-
-.graphwar-killer__equation-toggle-button--active {
-  color: var(--vp-c-white) !important;
-}
-
-.graphwar-killer__secondary-button {
-  min-height: 34px;
-  min-width: 72px;
-  padding: 6px 10px;
-  white-space: nowrap;
 }
 
 .graphwar-killer__toggle-button--active {
@@ -5687,26 +5348,6 @@ async function copyText(text: string) {
   transform: translateY(-1px);
 }
 
-.graphwar-killer .graphwar-killer__tool-toggle button:hover:not(:disabled) {
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  transform: none;
-}
-
-.graphwar-killer .graphwar-killer__tool-toggle-button--active:hover:not(:disabled) {
-  color: var(--vp-c-white);
-}
-
-.graphwar-killer .graphwar-killer__equation-toggle button:hover:not(:disabled) {
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  transform: none;
-}
-
-.graphwar-killer .graphwar-killer__equation-toggle-button--active:hover:not(:disabled) {
-  color: var(--vp-c-white);
-}
-
 .graphwar-killer input:focus-visible,
 .graphwar-killer button:focus-visible {
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
@@ -5726,11 +5367,6 @@ async function copyText(text: string) {
 }
 
 @media (width <= 520px) {
-  .graphwar-killer__setting-row {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
   .graphwar-killer__recognition-setting-row {
     display: grid;
     grid-template-columns: 1fr;

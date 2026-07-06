@@ -29,6 +29,10 @@ import {
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
 import { useGraphwarStageFeedback } from "./composables/use-graphwar-stage-feedback";
+import {
+  formatVisibleTrajectoryPoints,
+  useGraphwarTrajectoryResult,
+} from "./composables/use-graphwar-trajectory-result";
 import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint } from "./core/geometry";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
@@ -57,7 +61,6 @@ import type {
   AlgorithmMode,
   BoundsRect,
   EquationMode,
-  FormulaResult,
   GraphBounds,
   GraphPoint,
   PixelPoint,
@@ -72,16 +75,16 @@ import {
   isGraphwarDetectionCancelledError,
 } from "./detection/graphwar-detection-runner";
 import type { GraphwarDetectionWorkerStage } from "./detection/graphwar-detection-runner";
-import { buildFormula } from "./formula/formula";
 import {
   createGraphwarTrajectoryFormulaContext,
-  findGraphwarTrajectoryTargetHitIndex,
-  getGraphwarTrajectoryLaunchAngle,
   sampleGraphwarExpressionTrajectoryWithStops,
   sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTrajectory,
 } from "./formula/trajectory-sampling";
-import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectorySampleResult } from "./formula/trajectory-sampling";
+import type {
+  GraphwarTrajectoryCollisionSettings,
+  GraphwarTrajectorySampleResult,
+} from "./formula/trajectory-sampling";
 import type { GraphwarKillerLocale } from "./locale-types";
 import {
   GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS,
@@ -174,13 +177,6 @@ interface PathTrajectoryResult {
   reachesTargetBeforeObstacle: boolean;
   /** 可绘制轨迹。 */
   visiblePixels: PixelPoint[];
-}
-/** 页面轨迹碰撞设置，模拟器和公式预览共享。 */
-interface TrajectoryCollisionSettings {
-  /** 边界收缩像素。 */
-  boundaryExpansion: number;
-  /** 模拟障碍 mask。 */
-  mask: Uint8Array;
 }
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
@@ -354,7 +350,7 @@ const {
   getLocale: () => locale,
   isDetectionRunActive: isActiveDetectionRun,
 });
-// 舞台反馈只应持有短暂高亮状态和清理逻辑；页面继续决定触发时机。
+// 舞台反馈只应持有短暂高亮状态和清理逻辑；页面应决定触发时机。
 const {
   boundsFlashActive,
   clearDetectionSoldierFlash,
@@ -662,37 +658,52 @@ const {
   setPathPixels,
 });
 
-const formulaOutputDecimalPlaces = computed(() =>
+const formulaInputDecimalPlaces = computed(() =>
   parsedPrecision.value.ok ? parsedPrecision.value.decimalPlaces : DEFAULT_FORMULA_DECIMAL_PLACES,
 );
-const formulaSteepness = computed(() => (parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1));
-const graphwarTrajectoryFormulaSettings = computed<GraphwarTrajectoryFormulaSettings>(() => ({
-  algorithm: algorithmMode.value,
-  decimalPlaces: formulaOutputDecimalPlaces.value,
-  equation: equationMode.value,
-  formulaPathSteepness: formulaSteepness.value,
-  steepness: formulaSteepness.value,
-  stepOverflowProtection: stepOverflowProtectionEnabled.value,
-}));
-
-/** 统一公式点、采样 evaluator 和数值保护设置，页面后续只消费这个轨迹采样上下文。 */
-const graphwarTrajectoryFormulaContext = computed(() => {
-  const boundsResult = parsedBounds.value;
-  if (!boundsResult.ok) {
-    return undefined;
-  }
-  return createGraphwarTrajectoryFormulaContext({
-    bounds: boundsResult.bounds,
-    points: mappedPathPoints.value,
-    settings: graphwarTrajectoryFormulaSettings.value,
-    soldierCenter: mappedPathPoints.value[0],
-  });
+const formulaInputSteepness = computed(() => (parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1));
+const formulaInputPrecisionValid = computed(() => parsedPrecision.value.ok);
+const formulaInputSteepnessValid = computed(() => parsedSteepness.value.ok);
+// 轨迹结果 Module 应集中公式上下文、主采样、命中索引和绘制曲线；页面保留输入校验与文案映射。
+const {
+  createPathTrajectoryFormulaSettings,
+  formulaOutputDecimalPlaces,
+  formulaResult,
+  graphwarTrajectoryFormulaSettings,
+  plottedCurvePoints,
+  secondOrderLaunchAngleDegrees,
+  simulatorLaunchAngleRadians,
+  trajectoryWarningReason,
+} = useGraphwarTrajectoryResult({
+  geometry: {
+    boundsRect,
+    getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
+  },
+  getCollisionSettings: () => trajectoryCollisionSettings.value,
+  getSoldierMarkerRadius: () => soldierMarkerRadius.value,
+  path: {
+    mappedPathPoints,
+    pathPixels,
+  },
+  settings: {
+    algorithmMode,
+    equationMode,
+    isEquationModeDisabled,
+    precisionDecimalPlaces: formulaInputDecimalPlaces,
+    precisionValid: formulaInputPrecisionValid,
+    steepness: formulaInputSteepness,
+    steepnessValid: formulaInputSteepnessValid,
+    stepOverflowProtectionEnabled,
+    toolWorkflowMode,
+  },
+  simulator: {
+    formulaText: simulatorFormulaText,
+    launchAngleText: simulatorLaunchAngleText,
+    parseDerivativeAsY: simulatorParseDerivativeAsY,
+    parseNumber: parseFiniteNumber,
+    skipUnknownCharacters: simulatorSkipUnknownCharacters,
+  },
 });
-
-/** 给像素路径验证入口提供当前公式配置，避免智能寻路和一键清图各自重建采样规则。 */
-function createPathTrajectoryFormulaSettings(): GraphwarTrajectoryFormulaSettings {
-  return graphwarTrajectoryFormulaSettings.value;
-}
 
 const activeEquationDescription = computed(() => {
   if (toolWorkflowMode.value === "simulator") {
@@ -903,7 +914,7 @@ const activeBoundaryExpansion = computed(() =>
 const targetBoundsRect = computed(() =>
   createBoundsRectWithBoundaryExpansion(boundsRect.value, activeBoundaryExpansion.value),
 );
-const trajectoryCollisionSettings = computed<TrajectoryCollisionSettings | undefined>(() => {
+const trajectoryCollisionSettings = computed<GraphwarTrajectoryCollisionSettings | undefined>(() => {
   if (!smartCursorEnabled.value && !pathfindingObstacleEdgesActive.value && toolWorkflowMode.value !== "simulator") {
     return undefined;
   }
@@ -1109,38 +1120,6 @@ const smartPathfindingSettingsMessage = computed(() => {
   }
   return "";
 });
-const formulaResult = computed<FormulaResult | undefined>(() => {
-  if (toolWorkflowMode.value !== "solver") {
-    return undefined;
-  }
-  const context = graphwarTrajectoryFormulaContext.value;
-  if (!parsedBounds.value.ok || !context || context.formulaPoints.length < 2) {
-    return undefined;
-  }
-  if (algorithmMode.value === "step" && !parsedSteepness.value.ok) {
-    return undefined;
-  }
-  if (!parsedPrecision.value.ok) {
-    return undefined;
-  }
-  if (algorithmMode.value === "abs" && equationMode.value === "ddy") {
-    return undefined;
-  }
-  if (isEquationModeDisabled(equationMode.value)) {
-    return undefined;
-  }
-
-  const result = buildFormula(
-    context.formulaPoints,
-    formulaSteepness.value,
-    equationMode.value,
-    algorithmMode.value,
-    parsedPrecision.value.decimalPlaces,
-    context.formulaEvaluation,
-  );
-  // 页面展示和复制的公式文本必须与采样验证回放的文本一致。
-  return { ...result, expression: context.playbackExpression };
-});
 
 watch(
   [mappedPathPoints],
@@ -1150,125 +1129,29 @@ watch(
   { immediate: true },
 );
 
-const secondOrderLaunchAngleDegrees = computed(() => {
-  const context = graphwarTrajectoryFormulaContext.value;
-  if (
-    equationMode.value !== "ddy" ||
-    toolWorkflowMode.value !== "solver" ||
-    isEquationModeDisabled(equationMode.value) ||
-    (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
-    !context ||
-    context.formulaPoints.length < 2
-  ) {
-    return undefined;
-  }
-
-  const angle = (getGraphwarTrajectoryLaunchAngle(context, mappedPathPoints.value[0]) * 180) / Math.PI;
-  return Number.isFinite(angle) ? angle : undefined;
-});
 const secondOrderLaunchAngleText = computed(() =>
   secondOrderLaunchAngleDegrees.value === undefined ? "" : formatAngleDegree(secondOrderLaunchAngleDegrees.value),
 );
 const secondOrderAngleHint = computed(() =>
   secondOrderLaunchAngleText.value ? locale.status.secondOrderAngleHint(secondOrderLaunchAngleText.value) : "",
 );
-const simulatorLaunchAngleRadians = computed(() => {
-  if (equationMode.value !== "ddy") {
-    return undefined;
-  }
-  const angle = parseFiniteNumber(simulatorLaunchAngleText.value);
-  return angle === undefined ? undefined : (angle * Math.PI) / 180;
-});
 
-/** 公式生成模式下用最后一个路径点作为目标验证点，模拟器模式不强制目标。 */
-function getTrajectoryValidationTargetPoint() {
-  return toolWorkflowMode.value === "solver" && pathPixels.value.length >= 2 ? pathPixels.value.at(-1) : undefined;
-}
-
-/** 页面预览统一走共享采样 Module；这里仅决定当前工作流要采样公式还是用户输入表达式。 */
-const trajectorySampleResult = computed(() => {
-  if (toolWorkflowMode.value === "simulator") {
-    if (!parsedBounds.value.ok || mappedPathPoints.value.length < 1 || !simulatorFormulaText.value.trim()) {
-      return undefined;
-    }
-
-    return sampleGraphwarExpressionTrajectoryWithStops({
-      bounds: parsedBounds.value.bounds,
-      boundsRect: boundsRect.value,
-      collision: trajectoryCollisionSettings.value,
-      collectVisiblePixels: true,
-      equation: equationMode.value,
-      expression: simulatorFormulaText.value,
-      launchAngleRadians: simulatorLaunchAngleRadians.value,
-      parser: {
-        parseDerivativeAsY: simulatorParseDerivativeAsY.value,
-        skipUnknownCharacters: simulatorSkipUnknownCharacters.value,
-      },
-      soldierCenter: mappedPathPoints.value[0],
-    });
-  }
-
-  const context = graphwarTrajectoryFormulaContext.value;
-  if (
-    !formulaResult.value ||
-    !parsedBounds.value.ok ||
-    (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
-    !context ||
-    context.formulaPoints.length < 2
-  ) {
-    return undefined;
-  }
-
-  return sampleGraphwarFormulaTrajectory({
-    bounds: parsedBounds.value.bounds,
-    boundsRect: boundsRect.value,
-    collision: trajectoryCollisionSettings.value,
-    collectVisiblePixels: true,
-    context,
-  });
-});
-const trajectorySample = computed(() => trajectorySampleResult.value?.sample);
-
-const trajectoryValidationTargetPoint = computed(() => getTrajectoryValidationTargetPoint());
-const trajectoryTargetHitIndex = computed(() => {
-  const boundsResult = parsedBounds.value;
-  const sample = trajectorySample.value;
-  const targetPoint = trajectoryValidationTargetPoint.value;
-  if (!sample || !boundsResult.ok || !targetPoint) {
-    return -1;
-  }
-
-  return findGraphwarTrajectoryTargetHitIndex({
-    bounds: boundsResult.bounds,
-    boundsRect: boundsRect.value,
-    points: sample.points,
-    soldierMarkerRadius: soldierMarkerRadius.value,
-    targetPoint,
-  });
-});
 const trajectoryWarning = computed(() => {
-  if (trajectoryObstacleHitIndex.value >= 0) {
+  const reason = trajectoryWarningReason.value;
+  if (!reason) {
+    return "";
+  }
+  if (reason === "obstacle") {
     return locale.status.trajectoryWarning.obstacle;
   }
-  if (trajectoryTargetHitIndex.value >= 0) {
-    return "";
-  }
-
-  const stopReason = trajectorySample.value?.stopReason;
-  if (!stopReason || stopReason === "completed" || stopReason === "unsupported") {
-    return "";
-  }
-  if (stopReason === "too-steep") {
+  if (reason === "too-steep") {
     return locale.status.trajectoryWarning.stopped["too-steep"];
   }
-  if (stopReason === "max-steps") {
+  if (reason === "max-steps") {
     return locale.status.trajectoryWarning.stopped["max-steps"];
   }
-  if (stopReason === "out-of-bounds") {
+  if (reason === "out-of-bounds") {
     return locale.status.trajectoryWarning.stopped["out-of-bounds"];
-  }
-  if (stopReason === "stopped") {
-    return "";
   }
   return locale.status.trajectoryWarning.stopped.invalid;
 });
@@ -1314,24 +1197,6 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
     smartPathfindingToggleTitle: getSmartPathfindingToggleTitle(),
   };
 });
-
-const trajectoryObstacleHitIndex = computed(() => {
-  const obstacleHitIndex = trajectorySampleResult.value?.obstacleHitIndex ?? -1;
-  const targetHitIndex = trajectoryTargetHitIndex.value;
-  // 目标之后才撞障碍不影响“当前路径命中目标”的提示。
-  return targetHitIndex >= 0 && obstacleHitIndex >= targetHitIndex ? -1 : obstacleHitIndex;
-});
-
-const plottedCurvePoints = computed(() => {
-  const result = trajectorySampleResult.value;
-  return result ? formatVisibleTrajectoryPoints(result.visiblePixels, trajectoryObstacleHitIndex.value) : "";
-});
-
-/** 将已映射到截图坐标的轨迹点格式化为 SVG polyline；hitIndex 指定目标或障碍截断位置。 */
-function formatVisibleTrajectoryPoints(points: readonly PixelPoint[], hitIndex: number) {
-  const sampledPoints = hitIndex >= 0 ? points.slice(0, hitIndex + 1) : points;
-  return sampledPoints.map((point) => `${formatSvgNumber(point.x)},${formatSvgNumber(point.y)}`).join(" ");
-}
 
 /** 将像素点数组格式化为 SVG polyline points 字符串。 */
 function formatSvgPathPoints(points: readonly PixelPoint[]) {

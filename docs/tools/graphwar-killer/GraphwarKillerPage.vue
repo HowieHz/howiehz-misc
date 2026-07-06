@@ -4,10 +4,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import GraphwarActionPanel from "./components/GraphwarActionPanel.vue";
 import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./components/GraphwarDetectionPanel.vue";
 import GraphwarResultPanel from "./components/GraphwarResultPanel.vue";
+import GraphwarScreenshotPanel, { type GraphwarScreenshotPanelModel } from "./components/GraphwarScreenshotPanel.vue";
 import GraphwarSmartPathfindingPanel, {
   type GraphwarSmartPathfindingPanelModel,
 } from "./components/GraphwarSmartPathfindingPanel.vue";
-import GraphwarStageOverlay from "./components/GraphwarStageOverlay.vue";
 import { useGraphwarPathState, type PathPointCoordinateAxis } from "./composables/use-graphwar-path-state";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
 import {
@@ -1681,6 +1681,33 @@ const statusAnnouncement = computed(() => {
 const screenshotImageStatusText = computed(
   () => imageStatus.value || imageName.value || locale.status.image.defaultStatus,
 );
+// 截图面板只应消费展示 DTO；DOM refs 和舞台交互语义仍由页面侧工作流持有。
+const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
+  busyOverlayVisible: detectionInProgress.value,
+  imageStatusText: screenshotImageStatusText.value,
+  imageUrl: imageUrl.value,
+  magnifier: {
+    contentStyle: magnifierContentStyle.value,
+    style: magnifierStyle.value,
+    visible: magnifierEnabled.value && Boolean(imageUrl.value) && Boolean(magnifierPoint.value),
+  },
+  pathStatus: pathStatus.value,
+  stage: {
+    empty: !imageUrl.value,
+    magnifierClipPathId: magnifierObstacleBrushClipPathId,
+    mainClipPathId: mainObstacleBrushClipPathId,
+    overlay: stageOverlay.value,
+    style: stageStyle.value,
+  },
+}));
+
+function setScreenshotStageElement(element: HTMLElement | undefined) {
+  stageRef.value = element;
+}
+
+function setScreenshotImageElement(element: HTMLImageElement | undefined) {
+  imageRef.value = element;
+}
 
 function createResultPanelPointRows() {
   return mappedPathPoints.value.map((_, index) => {
@@ -5057,121 +5084,22 @@ async function copyText(text: string) {
       @update-magnifier-zoom="setMagnifierZoomText"
       @update-obstacle-brush-diameter="setObstacleBrushDiameterText"
     />
-    <section
-      class="graphwar-killer__panel"
-      aria-labelledby="graphwar-killer-screenshot-title"
-    >
-      <div class="graphwar-killer__label-row graphwar-killer__label-row--image-status">
-        <h2 id="graphwar-killer-screenshot-title">
-          {{ locale.ui.screenshot.title }}
-        </h2>
-        <span
-          class="graphwar-killer__image-status-text"
-          :title="screenshotImageStatusText"
-        >
-          {{ screenshotImageStatusText }}
-        </span>
-        <span
-          v-if="pathStatus"
-          class="graphwar-killer__path-status-text graphwar-killer__label-status--warning"
-          :title="pathStatus"
-        >
-          {{ pathStatus }}
-        </span>
-      </div>
-      <div class="graphwar-killer__image-actions">
-        <button
-          type="button"
-          :title="locale.ui.screenshot.captureTitle"
-          @click="captureScreenImage"
-        >
-          {{ locale.ui.screenshot.capture }}
-        </button>
-        <label
-          class="graphwar-killer__upload"
-          :title="locale.ui.screenshot.uploadTitle"
-        >
-          <input
-            type="file"
-            accept="image/*"
-            :title="locale.ui.screenshot.uploadInputTitle"
-            @change="handleImageUpload"
-          >
-          <span>{{ locale.ui.screenshot.upload }}</span>
-        </label>
-      </div>
-      <div
-        ref="stageRef"
-        class="graphwar-killer__stage"
-        :class="{ 'graphwar-killer__stage--empty': !imageUrl }"
-        :style="stageStyle"
-        tabindex="0"
-        @drop.prevent="handleDrop"
-        @dragover.prevent
-        @pointerdown="handleStagePointerDown"
-        @pointermove="handleStagePointerMove"
-        @pointerup="handleStagePointerUp"
-        @pointercancel="handleStagePointerUp"
-        @pointerleave="handleStagePointerLeave"
-        @contextmenu.prevent="handleStageContextMenu"
-      >
-        <img
-          v-if="imageUrl"
-          ref="imageRef"
-          :src="imageUrl"
-          alt=""
-          draggable="false"
-          @load="handleImageLoad"
-        >
-        <div
-          v-else
-          class="graphwar-killer__placeholder"
-        >
-          {{ locale.ui.screenshot.placeholder }}
-        </div>
-        <GraphwarStageOverlay
-          :clip-path-id="mainObstacleBrushClipPathId"
-          :overlay="stageOverlay"
-        />
-        <div
-          v-if="detectionInProgress"
-          class="graphwar-killer__detection-busy-overlay"
-          :aria-label="locale.ui.detection.busyOverlay"
-          @pointerdown.stop.prevent
-          @pointermove.stop.prevent
-          @pointerup.stop.prevent
-          @pointercancel.stop.prevent
-          @dragover.stop.prevent
-          @drop.stop.prevent
-          @contextmenu.stop.prevent="cancelDetection(true)"
-        >
-          <span>{{ locale.ui.detection.busyOverlay }}</span>
-        </div>
-        <div
-          v-if="magnifierEnabled && imageUrl && magnifierPoint"
-          class="graphwar-killer__magnifier"
-          :style="magnifierStyle"
-          aria-hidden="true"
-        >
-          <div
-            class="graphwar-killer__magnifier-content"
-            :style="magnifierContentStyle"
-          >
-            <img
-              class="graphwar-killer__magnifier-image"
-              :src="imageUrl"
-              alt=""
-              draggable="false"
-            >
-            <GraphwarStageOverlay
-              key-prefix="magnifier-"
-              :clip-path-id="magnifierObstacleBrushClipPathId"
-              :overlay="stageOverlay"
-            />
-          </div>
-        </div>
-      </div>
-    </section>
+    <GraphwarScreenshotPanel
+      :locale="locale"
+      :panel="screenshotPanel"
+      @cancel-detection="cancelDetection(true)"
+      @capture-image="captureScreenImage"
+      @drop-image="handleDrop"
+      @image-load="handleImageLoad"
+      @set-image-element="setScreenshotImageElement"
+      @set-stage-element="setScreenshotStageElement"
+      @stage-context-menu="handleStageContextMenu"
+      @stage-pointer-down="handleStagePointerDown"
+      @stage-pointer-leave="handleStagePointerLeave"
+      @stage-pointer-move="handleStagePointerMove"
+      @stage-pointer-up="handleStagePointerUp"
+      @upload-image="handleImageUpload"
+    />
     <GraphwarResultPanel
       :locale="locale"
       :result="resultPanel"
@@ -5293,8 +5221,7 @@ async function copyText(text: string) {
   width: 18px;
 }
 
-.graphwar-killer button,
-.graphwar-killer__upload span {
+.graphwar-killer button {
   background: var(--vp-c-bg);
   border: 1px solid var(--vp-c-divider);
   border-radius: 999px;
@@ -5369,155 +5296,6 @@ async function copyText(text: string) {
 
 .graphwar-killer__pathfinding-header-status {
   max-width: min(100%, 24rem);
-}
-
-.graphwar-killer__label-row--image-status {
-  align-items: baseline;
-  display: flex;
-}
-
-.graphwar-killer__label-row--image-status > span {
-  min-width: 0;
-}
-
-.graphwar-killer__image-status-text {
-  flex: 1 1 auto;
-  text-align: left !important;
-}
-
-.graphwar-killer__path-status-text {
-  flex: 0 1 auto;
-  max-width: min(100%, 44rem);
-  text-align: right;
-}
-
-.graphwar-killer__upload {
-  width: fit-content;
-}
-
-.graphwar-killer__upload input {
-  height: 1px;
-  opacity: 0%;
-  pointer-events: none;
-  position: absolute;
-  width: 1px;
-}
-
-.graphwar-killer__upload span {
-  align-items: center;
-  display: inline-flex;
-  min-height: 34px;
-  padding: 6px 10px;
-}
-
-.graphwar-killer__stage {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--vp-c-divider) 42%, transparent) 1px, transparent 1px),
-    linear-gradient(color-mix(in srgb, var(--vp-c-divider) 42%, transparent) 1px, transparent 1px), var(--vp-c-bg-soft);
-  background-size: 40px 40px;
-  border: 1px solid var(--vp-c-divider);
-  overflow: hidden;
-  position: relative;
-  touch-action: none;
-  user-select: none;
-  width: 100%;
-}
-
-.graphwar-killer__stage img {
-  border-radius: 0;
-  display: block;
-  height: 100%;
-  inset: 0;
-  margin: 0;
-  max-width: none;
-  object-fit: fill;
-  object-position: 0 0;
-  pointer-events: none;
-  position: absolute;
-  vertical-align: top;
-  width: 100%;
-}
-
-.graphwar-killer__stage--empty {
-  min-height: 280px;
-}
-
-.graphwar-killer__magnifier {
-  background: var(--vp-c-bg);
-  border: 2px solid var(--vp-c-brand-1);
-  border-radius: 999px;
-  box-shadow: 0 12px 32px rgb(15 23 42 / 20%);
-  overflow: hidden;
-  pointer-events: none;
-  position: absolute;
-  z-index: 3;
-}
-
-.graphwar-killer__magnifier-content {
-  left: 0;
-  position: absolute;
-  top: 0;
-  transform-origin: 0 0;
-}
-
-.graphwar-killer__magnifier-image {
-  z-index: 0;
-}
-
-.graphwar-killer__magnifier::before,
-.graphwar-killer__magnifier::after {
-  background: #f97316;
-  content: "";
-  opacity: 86%;
-  position: absolute;
-  z-index: 2;
-}
-
-.graphwar-killer__magnifier::before {
-  height: 1px;
-  left: 38%;
-  top: 50%;
-  width: 24%;
-}
-
-.graphwar-killer__magnifier::after {
-  height: 24%;
-  left: 50%;
-  top: 38%;
-  width: 1px;
-}
-
-.graphwar-killer__placeholder {
-  color: color-mix(in srgb, var(--vp-c-text-1) 62%, var(--vp-c-text-2) 38%);
-  display: grid;
-  font-weight: 700;
-  inset: 0;
-  place-items: center;
-  position: absolute;
-  text-align: center;
-}
-
-.graphwar-killer__detection-busy-overlay {
-  align-items: center;
-  background: rgb(15 23 42 / 34%);
-  color: var(--vp-c-white);
-  cursor: progress;
-  display: flex;
-  font-size: 0.95rem;
-  font-weight: 700;
-  inset: 0;
-  justify-content: center;
-  position: absolute;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 30%);
-  touch-action: none;
-  z-index: 5;
-}
-
-.graphwar-killer__detection-busy-overlay span {
-  background: rgb(15 23 42 / 54%);
-  border: 1px solid rgb(255 255 255 / 32%);
-  border-radius: 8px;
-  padding: 6px 10px;
 }
 
 .graphwar-killer__image-actions {
@@ -5902,8 +5680,7 @@ async function copyText(text: string) {
   width: 1px;
 }
 
-.graphwar-killer button:hover:not(:disabled),
-.graphwar-killer__upload:hover span {
+.graphwar-killer button:hover:not(:disabled) {
   border-color: var(--vp-c-brand-1);
   box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
   color: var(--vp-c-brand-1);
@@ -5931,8 +5708,7 @@ async function copyText(text: string) {
 }
 
 .graphwar-killer input:focus-visible,
-.graphwar-killer button:focus-visible,
-.graphwar-killer__stage:focus-visible {
+.graphwar-killer button:focus-visible {
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
   outline: none;
@@ -5942,10 +5718,6 @@ async function copyText(text: string) {
   .graphwar-killer__label-row {
     display: grid;
     gap: 4px;
-  }
-
-  .graphwar-killer__label-row--image-status {
-    grid-template-columns: 1fr;
   }
 
   .graphwar-killer__label-row > span {

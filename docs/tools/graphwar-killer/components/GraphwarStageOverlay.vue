@@ -160,7 +160,7 @@ interface GraphwarStageOverlayViewport {
 }
 
 /** 舞台 SVG overlay 的完整展示模型；父页面负责把业务状态投影成该 DTO。 */
-interface GraphwarStageOverlayModel {
+export interface GraphwarStageOverlayModel {
   /** 边界、坐标轴和可点击范围图层。 */
   bounds: GraphwarStageOverlayBoundsLayer;
   /** 检测框和检测闪烁图层。 */

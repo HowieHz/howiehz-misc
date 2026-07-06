@@ -17,7 +17,7 @@ Graphwar Killer calibrates a [Graphwar](https://graphwar.com/graphwar_1/index.ht
 - [detection/](../../../tools/graphwar-killer/detection/) contains screenshot detection, obstacle masks, soldier template matching, and detection worker protocols.
 - [pathfinding/](../../../tools/graphwar-killer/pathfinding/) contains smart pathfinding, one-click clear, pathfinding caches, runners, and worker protocols.
 - [composables/](../../../tools/graphwar-killer/composables/) contains page workflow state modules, such as screenshot input, path editing, and the smart pathfinding session.
-- [components/](../../../tools/graphwar-killer/components/) contains page view components, currently the screenshot stage SVG overlay.
+- [components/](../../../tools/graphwar-killer/components/) contains extracted page view components, including the settings/action/result panels and the screenshot stage SVG overlay.
 - [presentation/](../../../tools/graphwar-killer/presentation/) contains page presentation DTOs and status aggregation.
 - [workers/](../../../tools/graphwar-killer/workers/) contains Web Worker entry files.
 - [locale.ts](./locale.ts) provides the English page text; the Chinese page text lives in the Chinese page directory's [locale.ts](../../../tools/graphwar-killer/locale.ts).

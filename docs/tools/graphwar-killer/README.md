@@ -17,7 +17,7 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 - [detection/](./detection/)：截图识别、障碍 mask、士兵模板匹配和识别 worker 消息类型。
 - [pathfinding/](./pathfinding/)：智能寻路、一键清图、寻路缓存、runner 和 worker 消息类型。
 - [composables/](./composables/)：截图输入、路径编辑、智能寻路会话等页面状态。
-- [components/](./components/)：页面展示组件，目前包含截图舞台 SVG 图层。
+- [components/](./components/)：抽出的页面展示组件，包括各设置/操作/结果面板和截图舞台 SVG 图层。
 - [presentation/](./presentation/)：页面展示 DTO 和状态聚合。
 - [workers/](./workers/)：Web Worker 入口文件。
 - [locale.ts](./locale.ts)：中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。

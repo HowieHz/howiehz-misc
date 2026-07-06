@@ -19,7 +19,8 @@ import {
   type SmartPathfindingDebugTimingEntry,
 } from "./composables/use-graphwar-debug-timings";
 import { useGraphwarObstacleEditor } from "./composables/use-graphwar-obstacle-editor";
-import { useGraphwarPathState, type PathPointCoordinateAxis } from "./composables/use-graphwar-path-state";
+import { useGraphwarPathPointEditing } from "./composables/use-graphwar-path-point-editing";
+import { useGraphwarPathState } from "./composables/use-graphwar-path-state";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
 import {
   useGraphwarSmartPathfindingSession,
@@ -28,13 +29,7 @@ import {
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
 import { useGraphwarStageFeedback } from "./composables/use-graphwar-stage-feedback";
-import {
-  graphToImagePoint,
-  imageToGraphPoint,
-  normalizeBoundsRect,
-  normalizePathPoint,
-  xPlusGoesRight,
-} from "./core/geometry";
+import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint, xPlusGoesRight } from "./core/geometry";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
@@ -48,8 +43,6 @@ import {
 import {
   createMinimumForwardPointAtGraphY,
   graphXAdvancesFromPoint,
-  normalizePathForMinimumForwardStep,
-  normalizePathPointForStrictForward,
   pathFollowsGraphRule,
 } from "./core/graphwar-forward-rule";
 import {
@@ -65,7 +58,7 @@ import {
   parseFiniteNumber,
 } from "./core/numbers";
 import { graphwarToolDefaults } from "./core/tool-defaults";
-import { createGraphPoint, createPixelPoint } from "./core/types";
+import { createPixelPoint } from "./core/types";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -644,6 +637,40 @@ const mappedPathPoints = computed<GraphPoint[]>(() => {
     return [];
   }
   return pathPixels.value.map((point) => imageToGraphPoint(point, boundsResult.bounds, boundsRect.value));
+});
+// 路径点编辑应集中坐标输入、拖拽落点和删除规则；页面应提供全局副作用入口。
+const {
+  finishPathPointCoordinateEdit,
+  getPathPointCoordinateText,
+  handlePathPointCoordinateInput,
+  removePathPoint,
+  setPathPoint,
+  startPathPointCoordinateEdit,
+  syncPathPointCoordinateTexts,
+} = useGraphwarPathPointEditing({
+  boundsRect,
+  coordinateState: {
+    finishPathPointCoordinateEdit: finishPathPointCoordinateEditState,
+    getPathPointCoordinateText: getPathPointCoordinateTextState,
+    removeActivePathPoint,
+    setPathPointCoordinateText,
+    startPathPointCoordinateEdit: startPathPointCoordinateEditState,
+    syncPathPointCoordinateTexts: syncPathPointCoordinateTextState,
+  },
+  formatCoordinate: formatDoublePrecisionDecimal,
+  getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
+  getCoordinateErrorMessage: () => locale.status.pathPointCoordinateNumber,
+  getForwardPathMessage,
+  getMappedPathPoints: () => mappedPathPoints.value,
+  invalidatePathStartCaches: invalidatePathfindingWorkerCache,
+  parseCoordinate: parseFiniteNumber,
+  pathPixels,
+  pathStatus,
+  preparePathPointRemoval: () => {
+    cancelSmartPathfinding(false);
+    clearSmartPathfindingStatus();
+  },
+  setPathPixels,
 });
 
 const formulaOutputDecimalPlaces = computed(() =>
@@ -3418,128 +3445,6 @@ watch([pathPixels, soldierSelectionRadius], () => {
   refreshLiveClickPreviewPointerPathPointIndex();
 });
 
-/** 更新路径点并重新规范化后续路径。 */
-function setPathPoint(index: number, point: PixelPoint) {
-  if (!parsedBounds.value.ok || index < 0 || index >= pathPixels.value.length) {
-    return false;
-  }
-
-  const previousPoint = index > 0 ? pathPixels.value[index - 1] : undefined;
-  const nextPoint = normalizePathPointForStrictForwardForCurrentBounds(point, previousPoint);
-  if (!nextPoint) {
-    return false;
-  }
-
-  const nextPath = [...pathPixels.value];
-  nextPath[index] = nextPoint;
-  const normalizedPath = normalizePathForMinimumForwardStepForCurrentBounds(nextPath);
-  if (!pathFollowsGraphRuleForCurrentBounds(normalizedPath)) {
-    pathStatus.value = getForwardPathMessage();
-    return false;
-  }
-
-  setPathPixels(normalizedPath);
-  return true;
-}
-
-/** 读取路径点坐标输入框文本。 */
-function getPathPointCoordinateText(index: number, axis: PathPointCoordinateAxis) {
-  return getPathPointCoordinateTextState(index, axis);
-}
-
-/** 同步坐标输入框文本；正在编辑的单元格保留原输入。 */
-function syncPathPointCoordinateTexts() {
-  syncPathPointCoordinateTextState({
-    formatCoordinate: formatDoublePrecisionDecimal,
-    points: mappedPathPoints.value,
-  });
-}
-
-/** 记录当前编辑的路径点坐标单元格。 */
-function startPathPointCoordinateEdit(index: number, axis: PathPointCoordinateAxis) {
-  startPathPointCoordinateEditState(index, axis);
-}
-
-/** 结束路径点坐标编辑并恢复格式化文本。 */
-function finishPathPointCoordinateEdit() {
-  finishPathPointCoordinateEditState({
-    formatCoordinate: formatDoublePrecisionDecimal,
-    points: mappedPathPoints.value,
-  });
-  if (pathStatus.value === getPathPointCoordinateMessage()) {
-    pathStatus.value = "";
-  }
-}
-
-/** 处理坐标输入框文本变更，合法数字会立即映射回截图像素更新路径。 */
-function handlePathPointCoordinateInput(index: number, axis: PathPointCoordinateAxis, value: string) {
-  setPathPointCoordinateText(index, axis, value);
-  const coordinate = parseFiniteNumber(value);
-  if (coordinate === undefined) {
-    pathStatus.value = getPathPointCoordinateMessage();
-    return;
-  }
-
-  setPathPointFromGraphCoordinate(index, axis, coordinate);
-}
-
-/** 用 Graphwar 坐标更新单个路径点，其他轴保持原值。 */
-function setPathPointFromGraphCoordinate(index: number, axis: PathPointCoordinateAxis, coordinate: number) {
-  if (!parsedBounds.value.ok) {
-    return false;
-  }
-
-  const currentPoint = mappedPathPoints.value[index];
-  if (!currentPoint) {
-    return false;
-  }
-
-  const nextGraphPoint = createGraphPoint(
-    axis === "x" ? coordinate : currentPoint.x,
-    axis === "y" ? coordinate : currentPoint.y,
-  );
-  return setPathPoint(index, graphToImagePoint(nextGraphPoint, parsedBounds.value.bounds, boundsRect.value));
-}
-
-/** 返回坐标输入错误文案。 */
-function getPathPointCoordinateMessage() {
-  return locale.status.pathPointCoordinateNumber;
-}
-
-/** 按严格 x+ 规则把整条路径推进到下一个可表示 double。 */
-function normalizePathForMinimumForwardStepForCurrentBounds(points: readonly PixelPoint[]) {
-  if (!parsedBounds.value.ok || points.length < 2) {
-    return [...points];
-  }
-
-  return normalizePathForMinimumForwardStep(points, parsedBounds.value.bounds, boundsRect.value);
-}
-
-/** 先按边界收缩点，再只在必要时把 Graphwar x 推到上一个点后的下一个 double。 */
-function normalizePathPointForStrictForwardForCurrentBounds(point: PixelPoint, previousPoint?: PixelPoint) {
-  if (!parsedBounds.value.ok) {
-    return point;
-  }
-
-  return normalizePathPointForStrictForward(point, previousPoint, parsedBounds.value.bounds, boundsRect.value);
-}
-
-/** 删除路径点。 */
-function removePathPoint(index: number) {
-  if (index < 0 || index >= pathPixels.value.length) {
-    return false;
-  }
-  cancelSmartPathfinding(false);
-  clearSmartPathfindingStatus();
-  if (!removeActivePathPoint(index)) {
-    return false;
-  }
-  if (index === 0) {
-    invalidatePathfindingWorkerCache();
-  }
-  return true;
-}
-
 /** 跟踪指针位置；高频路径预览在这里合并到浏览器绘制帧。 */
 function handleStagePointerMove(event: PointerEvent) {
   const point = getImagePointFromEvent(event);
@@ -3748,15 +3653,6 @@ function canAppendPathPoint(point: PixelPoint) {
 
   pathStatus.value = getForwardPathMessage();
   return false;
-}
-
-/** 验证整条路径是否始终满足 Graphwar 最小 x+ 步长。 */
-function pathFollowsGraphRuleForCurrentBounds(points: PixelPoint[]) {
-  if (!parsedBounds.value.ok || points.length < 2) {
-    return true;
-  }
-
-  return pathFollowsGraphRule(points, parsedBounds.value.bounds, boundsRect.value);
 }
 
 /** 判断相邻两个 Graphwar x 是否严格 x+；同一个 double x 不允许。 */

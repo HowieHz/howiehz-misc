@@ -1,4 +1,5 @@
 /** 主线程侧 Graphwar 截图识别 runner，集中管理 Worker 生命周期、取消和同步 fallback。 */
+import type { BoundsRect } from "../core/types";
 import { detectGraphwarObjectsInBounds, detectGraphwarPlayArea } from "./graphwar-detection";
 import type {
   GraphwarObjectDetectionInstrumentation,
@@ -142,7 +143,8 @@ export function createGraphwarDetectionRunner() {
         resolve: resolve as PendingWorkerTask["resolve"],
       };
       try {
-        activeWorker.postMessage(request, collectRequestTransferList(request));
+        const cloneableRequest = cloneGraphwarDetectionWorkerRequest(request);
+        activeWorker.postMessage(cloneableRequest, collectRequestTransferList(cloneableRequest));
       } catch (error) {
         pendingTask = undefined;
         reject(error);
@@ -278,6 +280,65 @@ function detectObjectsInBoundsSynchronously(
 function collectRequestTransferList(request: GraphwarDetectionWorkerRequest) {
   const buffer = request.task.imageData.data.buffer;
   return buffer instanceof ArrayBuffer ? [buffer] : [];
+}
+
+/** PostMessage 不能克隆 Vue reactive proxy；Worker 边界应统一复制成纯数据。 */
+function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerRequest): GraphwarDetectionWorkerRequest {
+  const cloneableInput = {
+    imageData: request.task.imageData,
+    soldierSettings: cloneGraphwarSoldierDetectionSettings(request.task.soldierSettings),
+    thresholds: cloneGraphwarObstacleDetectionThresholds(request.task.thresholds),
+  };
+
+  if (request.task.type === "detect-auto") {
+    return {
+      id: request.id,
+      task: {
+        ...cloneableInput,
+        type: "detect-auto",
+      },
+    };
+  }
+
+  return {
+    id: request.id,
+    task: {
+      ...cloneableInput,
+      edgeRect: cloneBoundsRect(request.task.edgeRect),
+      type: "detect-bounds",
+    },
+  };
+}
+
+function cloneGraphwarObstacleDetectionThresholds(
+  thresholds: GraphwarAutoDetectionInput["thresholds"],
+): GraphwarAutoDetectionInput["thresholds"] {
+  return {
+    minArea: thresholds.minArea,
+  };
+}
+
+function cloneGraphwarSoldierDetectionSettings(
+  settings: GraphwarAutoDetectionInput["soldierSettings"],
+): GraphwarAutoDetectionInput["soldierSettings"] {
+  if (!settings) {
+    return undefined;
+  }
+
+  return {
+    candidateTopRatio: settings.candidateTopRatio,
+    maximumSoldierCount: settings.maximumSoldierCount,
+    templateMatchingWorkerCount: settings.templateMatchingWorkerCount,
+  };
+}
+
+function cloneBoundsRect(rect: BoundsRect): BoundsRect {
+  return {
+    height: rect.height,
+    width: rect.width,
+    x: rect.x,
+    y: rect.y,
+  };
 }
 
 /** 包装检测阶段计时，让同步 fallback 的调试数据和 Worker 结果一致。 */

@@ -29,7 +29,7 @@ import {
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
 import { useGraphwarStageFeedback } from "./composables/use-graphwar-stage-feedback";
-import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint, xPlusGoesRight } from "./core/geometry";
+import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint } from "./core/geometry";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
@@ -40,11 +40,6 @@ import {
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
   GRAPHWAR_VISIBLE_Y_LIMIT,
 } from "./core/graphwar";
-import {
-  createMinimumForwardPointAtGraphY,
-  graphXAdvancesFromPoint,
-  pathFollowsGraphRule,
-} from "./core/graphwar-forward-rule";
 import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
@@ -58,7 +53,6 @@ import {
   parseFiniteNumber,
 } from "./core/numbers";
 import { graphwarToolDefaults } from "./core/tool-defaults";
-import { createPixelPoint } from "./core/types";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -106,6 +100,22 @@ import type {
   GraphwarSmartPathfindingPathInput,
 } from "./pathfinding/graphwar-pathfinding-worker-types";
 import {
+  createAllowedTargetRect,
+  createBoundsRectWithBoundaryExpansion,
+  createGraphwarSoldierHitCircle,
+  createMinimumForwardTargetPoint as createTargetingMinimumForwardTargetPoint,
+  createSearchStartSoldierAimPoint as createTargetingSearchStartSoldierAimPoint,
+  createSmartPathfindingSoldierTarget as createTargetingSmartPathfindingSoldierTarget,
+  getGraphwarSoldierCenter,
+  getRightmostPathPoint as getRightmostTargetingPathPoint,
+  graphwarSoldierContainsHitPoint,
+  graphwarSoldierIsOnNegativeGraphX,
+  graphwarSoldierReachesForward,
+  type GraphwarHitCircle as HitCircle,
+  type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
+  type GraphwarTargetingArea,
+} from "./pathfinding/graphwar-targeting";
+import {
   createHeaderStatus,
   getFirstHeaderStatus,
   getSmartPathfindingHeaderStatus,
@@ -149,33 +159,12 @@ type PathfindingMode = "off" | "smart" | "auto-graph";
 type DetectionStatusKind = "info" | "success" | "warning" | "error";
 /** 截图上的检测框，坐标均为图片像素。 */
 type DetectionBox = GraphwarDetectionBox;
-/** 命中圈判定：中心是 Graphwar 士兵源码中心，半径是源码 hitRadius。 */
-interface HitCircle {
-  /** 命中圈中心。 */
-  center: PixelPoint;
-  /** 命中圈半径。 */
-  radius: number;
-}
-/** 智能寻路目标；targetPoint 用于几何绕障，hitCircle 用于弹道验证。 */
-interface SmartPathfindingTarget {
-  /** 弹道必须命中的目标圈。 */
-  hitCircle: HitCircle;
-  /** 几何路径要连接到的点。 */
-  targetPoint: PixelPoint;
-}
 /** 智能寻路构建结果；cacheHit 只表示完整结果缓存，不混淆 route mask/可视图 cache。 */
 interface SmartPathfindingPathBuildResult {
   /** 完整路径结果是否来自页面侧结果缓存。 */
   cacheHit: boolean;
   /** 可直接写回页面的完整像素路径。 */
   path: PixelPoint[];
-}
-/** 士兵命中圈的 x+ 检查结果：center 优先，edge 表示只能瞄准最小前进线。 */
-interface SoldierAimCheckResult {
-  /** 通过哪一级检查。 */
-  kind: "center" | "edge";
-  /** 点击该士兵时首选追加或寻路的点。 */
-  point: PixelPoint;
 }
 /** 单目标弹道验证结果。 */
 interface PathTrajectoryResult {
@@ -378,7 +367,7 @@ const {
   oneClickClearHitFlashActive,
   oneClickClearHitFlashSoldiers,
 } = useGraphwarStageFeedback(detectedSoldiers);
-// 障碍编辑只应管理 mask、baseline、笔刷手势和延迟统计；页面继续负责模式分派和寻路语义。
+// 障碍编辑只应管理 mask、baseline、笔刷手势和延迟统计；页面应维护模式分派和寻路语义。
 const {
   applyDetectedObstacles,
   brushDragging: obstacleBrushDragging,
@@ -948,36 +937,8 @@ const allowedTargetRect = computed<BoundsRect | undefined>(() => {
     return undefined;
   }
 
-  const rect = targetBoundsRect.value;
-  if (!rect) {
-    return undefined;
-  }
-
-  const lastPoint = pathPixels.value.at(-1);
-  if (!lastPoint) {
-    return rect;
-  }
-
-  const minForwardPixelX = getMinimumForwardPixelX(lastPoint);
-  if (minForwardPixelX === undefined || minForwardPixelX < rect.x || minForwardPixelX > rect.x + rect.width) {
-    return undefined;
-  }
-
-  if (xPlusGoesRight(parsedBounds.value.bounds)) {
-    return {
-      x: minForwardPixelX,
-      y: rect.y,
-      width: rect.x + rect.width - minForwardPixelX,
-      height: rect.height,
-    };
-  }
-
-  return {
-    x: rect.x,
-    y: rect.y,
-    width: minForwardPixelX - rect.x,
-    height: rect.height,
-  };
+  const area = createTargetingArea();
+  return area ? createAllowedTargetRect(area, pathPixels.value.at(-1)) : undefined;
 });
 const detectionBoxes = computed<DetectionBox[]>(() => {
   let visibleSoldiers = detectedSoldiers.value.filter((box) => !detectionBoxMatchesSelectedPathPoint(box));
@@ -2867,7 +2828,8 @@ function createOneClickClearHitCandidates(): GraphwarOneClickClearCandidate[] {
 
 /** 检查士兵中心是否位于起点 x+ 侧；命中圆边缘不参与候选过滤。 */
 function oneClickClearSoldierReachesForward(soldier: DetectionBox, startPoint: PixelPoint) {
-  return pointGraphXAdvances(startPoint, getDetectionBoxCenter(soldier));
+  const geometry = createTargetingGeometry();
+  return Boolean(geometry && graphwarSoldierReachesForward(soldier, startPoint, geometry));
 }
 
 /** 一键清图失败原因用独立文案，避免和单目标智能寻路失败混在一起。 */
@@ -3062,50 +3024,30 @@ function createPathTrajectoryResult(points: PixelPoint[], hitTarget?: PixelPoint
   };
 }
 
-/** 为士兵生成第一瞄点：中心可达用中心，否则用最小 x 步长推进到圆内。 */
-function createSearchStartSoldierAimPoint(startPoint: PixelPoint | undefined, box: DetectionBox) {
-  return createSoldierAimCheckResult(startPoint, box)?.point;
-}
-
-/** 检查士兵中心点和 x+ 边缘点是否满足最小前进规则，保留首个可用结果。 */
-function createSoldierAimCheckResult(
-  startPoint: PixelPoint | undefined,
-  box: DetectionBox,
-): SoldierAimCheckResult | undefined {
-  const center = getDetectionBoxCenter(box);
-  if (!startPoint) {
-    return pointIsInsideTargetBounds(center) ? { kind: "center", point: center } : undefined;
-  }
-
-  if (soldierAimPointPassesMinimumForwardCheck(center, startPoint)) {
-    return { kind: "center", point: center };
-  }
-
-  // 第二检查仅把命中圈 x+ 边缘作为“是否可选中”的资格线；
-  // 真正落点固定为 lastX 的下一个可表示 double，y 保持命中圈中心，避免点击偏移改变目标。
-  if (!soldierAimXReachesMinimumForward(createSoldierHitCircleXPlusEdgePoint(box), startPoint)) {
+/** 创建当前目标规则的坐标映射输入；无效 bounds 应保持原来的失败语义。 */
+function createTargetingGeometry() {
+  const boundsResult = parsedBounds.value;
+  if (!boundsResult.ok) {
     return undefined;
   }
 
-  const minimumForwardPoint = createMinimumForwardSoldierTargetPoint(startPoint, box);
-  return minimumForwardPoint ? { kind: "edge", point: minimumForwardPoint } : undefined;
+  return {
+    bounds: boundsResult.bounds,
+    boundsRect: boundsRect.value,
+  };
 }
 
-/** 判断一个士兵候选点是否严格沿 Graphwar x+ 前进，并且没有越出收缩边界。 */
-function soldierAimPointPassesMinimumForwardCheck(point: PixelPoint, startPoint: PixelPoint) {
-  return pointIsInsideTargetBounds(point) && soldierAimXReachesMinimumForward(point, startPoint);
+/** 创建当前目标规则的可点击区域输入；目标区域无效时应阻止目标选择。 */
+function createTargetingArea(): GraphwarTargetingArea | undefined {
+  const geometry = createTargetingGeometry();
+  const targetRect = targetBoundsRect.value;
+  return geometry && targetRect ? { ...geometry, targetBoundsRect: targetRect } : undefined;
 }
 
-/** 判断一个士兵候选点的 Graphwar x 是否严格大于起点 x。 */
-function soldierAimXReachesMinimumForward(point: PixelPoint, startPoint: PixelPoint) {
-  return pointGraphXAdvances(startPoint, point);
-}
-
-/** 返回士兵命中圈在 x+ 方向上的边缘点，y 固定为命中圈中心。 */
-function createSoldierHitCircleXPlusEdgePoint(box: DetectionBox) {
-  const center = getDetectionBoxCenter(box);
-  const xPlusIsRight = parsedBounds.value.ok ? xPlusGoesRight(parsedBounds.value.bounds) : true;
-  return createPixelPoint(center.x + (xPlusIsRight ? box.hitRadius : -box.hitRadius), center.y);
+/** 为士兵生成第一瞄点：中心可达用中心，否则用最小 x 步长推进到圆内。 */
+function createSearchStartSoldierAimPoint(startPoint: PixelPoint | undefined, box: DetectionBox) {
+  const area = createTargetingArea();
+  return area ? createTargetingSearchStartSoldierAimPoint(startPoint, box, area) : undefined;
 }
 
 /** 构造普通智能寻路的士兵目标：路径连到可用瞄点，弹道仍必须打中原命中圈。 */
@@ -3113,23 +3055,13 @@ function createSmartPathfindingSoldierTarget(
   startPoint: PixelPoint,
   box: DetectionBox,
 ): SmartPathfindingTarget | undefined {
-  const targetPoint = createSearchStartSoldierAimPoint(startPoint, box);
-  if (!targetPoint) {
-    return undefined;
-  }
-
-  return {
-    hitCircle: createSoldierHitCircle(box),
-    targetPoint,
-  };
+  const area = createTargetingArea();
+  return area ? createTargetingSmartPathfindingSoldierTarget(startPoint, box, area) : undefined;
 }
 
 /** 从检测框创建命中圆，统一士兵目标和弹道命中判定。 */
 function createSoldierHitCircle(box: DetectionBox): HitCircle {
-  return {
-    center: getDetectionBoxCenter(box),
-    radius: box.hitRadius,
-  };
+  return createGraphwarSoldierHitCircle(box);
 }
 
 /** 开始一次异步寻路/清图任务并返回取消 token。 */
@@ -3256,115 +3188,10 @@ function waitForNextPathfindingSlice() {
   });
 }
 
-/** 按当前边界外扩把棋盘内部收缩成可选目标区域。 */
-function createBoundsRectWithBoundaryExpansion(rect: BoundsRect, boundaryExpansion: number) {
-  const horizontalInset = (boundaryExpansion / GRAPHWAR_PLANE_LENGTH) * rect.width;
-  const verticalInset = (boundaryExpansion / GRAPHWAR_PLANE_HEIGHT) * rect.height;
-  if (horizontalInset * 2 >= rect.width || verticalInset * 2 >= rect.height) {
-    return undefined;
-  }
-
-  return {
-    x: rect.x + horizontalInset,
-    y: rect.y + verticalInset,
-    width: rect.width - horizontalInset * 2,
-    height: rect.height - verticalInset * 2,
-  };
-}
-
-/** 判断点是否在考虑边界外扩后的可用目标区域内。 */
-function pointIsInsideTargetBounds(point: PixelPoint) {
-  const rect = targetBoundsRect.value;
-  return Boolean(rect && pointIsInsideBoundsRect(point, rect));
-}
-
-/** 判断点是否在指定截图矩形内，边界视为有效。 */
-function pointIsInsideBoundsRect(point: PixelPoint, rect: BoundsRect) {
-  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
-}
-
-/** 判断 Graphwar x 是否严格大于起点 x；同一个 double x 不允许。 */
-function graphXReachesMinimumForward(graphX: number, startPoint: PixelPoint) {
-  if (!parsedBounds.value.ok) {
-    return false;
-  }
-
-  return graphXAdvancesFromPoint(startPoint, graphX, parsedBounds.value.bounds, boundsRect.value);
-}
-
-/** 判断两个截图点映射到 Graphwar 后是否严格 x+。 */
-function pointGraphXAdvances(startPoint: PixelPoint, point: PixelPoint) {
-  if (!parsedBounds.value.ok) {
-    return false;
-  }
-
-  return pathFollowsGraphRule([startPoint, point], parsedBounds.value.bounds, boundsRect.value);
-}
-
-/** 返回当前起点之后最小 double x+ 对应的截图 x，用于绘制可点区域预览。 */
-function getMinimumForwardPixelX(startPoint: PixelPoint) {
-  if (!parsedBounds.value.ok) {
-    return undefined;
-  }
-
-  const startGraph = imageToGraphPoint(startPoint, parsedBounds.value.bounds, boundsRect.value);
-  return createMinimumForwardPointAtGraphYForCurrentBounds(startPoint, startGraph.y)?.x;
-}
-
-/** 在指定 Graphwar y 上创建 startX 之后的最小可表示 x+ 点。 */
-function createMinimumForwardPointAtGraphYForCurrentBounds(startPoint: PixelPoint, graphY: number) {
-  if (!parsedBounds.value.ok) {
-    return undefined;
-  }
-
-  return createMinimumForwardPointAtGraphY(startPoint, graphY, parsedBounds.value.bounds, boundsRect.value);
-}
-
 /** 按指定起点把 x 不够的目标改为同 y 的最小 double x+ 点；无剩余空间时返回 undefined。 */
 function createMinimumForwardTargetPoint(point: PixelPoint, startPoint = pathPixels.value.at(-1)) {
-  if (!parsedBounds.value.ok) {
-    return undefined;
-  }
-
-  if (!startPoint) {
-    return pointIsInsideTargetBounds(point) ? point : undefined;
-  }
-
-  const targetRect = targetBoundsRect.value;
-  if (!targetRect || point.y < targetRect.y || point.y > targetRect.y + targetRect.height) {
-    return undefined;
-  }
-
-  const bounds = parsedBounds.value.bounds;
-  const targetGraph = imageToGraphPoint(point, bounds, boundsRect.value);
-
-  // 设计意图：非士兵点击如果落在 x+ 打击范围左侧，目标会移到
-  // “最后一个路径点之后的下一个可表示 double x”，y 保持点击值；这里不做
-  // 障碍、寻路或额外命中判断，只检查最终 xy 是否仍在可用边界内。
-  const targetPoint = graphXReachesMinimumForward(targetGraph.x, startPoint)
-    ? point
-    : createMinimumForwardPointAtGraphYForCurrentBounds(startPoint, targetGraph.y);
-  if (!targetPoint) {
-    return undefined;
-  }
-  return pointIsInsideTargetBounds(targetPoint) ? targetPoint : undefined;
-}
-
-/** 生成最小 double x+ 处、且 y 保持士兵命中圈中心的目标点。 */
-function createMinimumForwardSoldierTargetPoint(startPoint: PixelPoint, box: DetectionBox) {
-  if (!parsedBounds.value.ok) {
-    return undefined;
-  }
-
-  const center = getDetectionBoxCenter(box);
-  const centerGraph = imageToGraphPoint(center, parsedBounds.value.bounds, boundsRect.value);
-  const targetPoint = createMinimumForwardPointAtGraphYForCurrentBounds(startPoint, centerGraph.y);
-  if (!targetPoint) {
-    return undefined;
-  }
-  return pointIsInsideTargetBounds(targetPoint) && detectionBoxContainsHitCircle(box, targetPoint)
-    ? targetPoint
-    : undefined;
+  const area = createTargetingArea();
+  return area ? createTargetingMinimumForwardTargetPoint(point, area, startPoint) : undefined;
 }
 
 /** 判断检测框是否包含当前最右侧路径点，避免把已选士兵再次作为目标。 */
@@ -3389,7 +3216,7 @@ function detectionBoxMatchesFirstPathPoint(box: DetectionBox) {
 
 /** 当前规则下 x<0 的未选士兵视为友方障碍。 */
 function isDetectedFriendlySoldierObstacle(box: DetectionBox) {
-  if (!parsedBounds.value.ok || detectionBoxMatchesFirstPathPoint(box)) {
+  if (!createTargetingGeometry() || detectionBoxMatchesFirstPathPoint(box)) {
     return false;
   }
 
@@ -3398,30 +3225,22 @@ function isDetectedFriendlySoldierObstacle(box: DetectionBox) {
 
 /** 智能光标初始选点只标记 x- 士兵，避免还没选起点时提示敌方目标。 */
 function isDetectionBoxOnNegativeGraphX(box: DetectionBox) {
-  if (!parsedBounds.value.ok) {
+  const geometry = createTargetingGeometry();
+  if (!geometry) {
     return false;
   }
 
-  const center = imageToGraphPoint(getDetectionBoxCenter(box), parsedBounds.value.bounds, boundsRect.value);
-  return center.x < 0;
+  return graphwarSoldierIsOnNegativeGraphX(box, geometry);
 }
 
 /** 获取 Graphwar x 最大的已选路径点，用于过滤当前目标。 */
 function getRightmostPathPoint() {
-  const boundsResult = parsedBounds.value;
-  if (!boundsResult.ok || pathPixels.value.length === 0) {
+  const geometry = createTargetingGeometry();
+  if (!geometry || pathPixels.value.length === 0) {
     return undefined;
   }
 
-  return pathPixels.value.reduce<PixelPoint | undefined>((rightmostPoint, point) => {
-    if (!rightmostPoint) {
-      return point;
-    }
-
-    const graphPoint = imageToGraphPoint(point, boundsResult.bounds, boundsRect.value);
-    const rightmostGraphPoint = imageToGraphPoint(rightmostPoint, boundsResult.bounds, boundsRect.value);
-    return graphPoint.x > rightmostGraphPoint.x ? point : rightmostPoint;
-  }, undefined);
+  return getRightmostTargetingPathPoint(pathPixels.value, geometry);
 }
 
 /** 用士兵圆形范围判断检测框是否包含路径点。 */
@@ -3513,7 +3332,7 @@ function getDetectedSoldierAtPoint(point: PixelPoint) {
 
 /** 返回 Graphwar 士兵源码中心；命中、发射和路径点都使用这个点。 */
 function getDetectionBoxCenter(box: DetectionBox) {
-  return createPixelPoint(box.sourceCenterX, box.sourceCenterY);
+  return getGraphwarSoldierCenter(box);
 }
 
 /** 判断指针是否落在 Graphwar 士兵可视选择圈内。 */
@@ -3523,8 +3342,7 @@ function detectionBoxContainsSelectionCircle(box: DetectionBox, point: PixelPoin
 
 /** 判断指针或路径点是否落在 Graphwar 士兵实际命中圈内。 */
 function detectionBoxContainsHitCircle(box: DetectionBox, point: PixelPoint) {
-  const center = getDetectionBoxCenter(box);
-  return Math.hypot(point.x - center.x, point.y - center.y) <= box.hitRadius;
+  return graphwarSoldierContainsHitPoint(box, point);
 }
 
 /** 从士兵检测框内采样玩家颜色，供模拟器轨迹线匹配当前士兵。 */

@@ -21,6 +21,7 @@ import {
   type SmartPathfindingPhase,
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
+import { useGraphwarStageFeedback } from "./composables/use-graphwar-stage-feedback";
 import {
   graphToImagePoint,
   imageToGraphPoint,
@@ -309,7 +310,6 @@ const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
-const detectionFlashAnimationMs = 1600;
 const smartPathfindingBlockedPointFlashMs = 1800;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
@@ -324,7 +324,6 @@ const magnifierPoint = ref<PixelPoint>();
 const liveClickPreviewEnabled = ref(false);
 const liveClickPreviewPointerPoint = ref<PixelPoint>();
 const liveClickPreviewPointerPathPointIndex = ref<number>();
-const boundsFlashActive = ref(false);
 const toolMode = ref<ToolMode>("bounds");
 const toolWorkflowMode = ref<ToolWorkflowMode>("solver");
 const solverEquationMode = ref<EquationMode>("y");
@@ -421,9 +420,6 @@ const detectedSoldiers = ref<DetectionBox[]>([]);
 const detectedObstacles = ref<DetectedObstacleMap>();
 const baselineDetectedObstacles = ref<DetectedObstacleMap>();
 const autoDetectionEnabled = ref(true);
-const detectionSoldierFlashActive = ref(false);
-const oneClickClearHitFlashSoldiers = ref<DetectionBox[]>([]);
-const oneClickClearHitFlashActive = ref(false);
 const smartCursorEnabled = ref(true);
 const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
@@ -457,6 +453,19 @@ const {
   status: smartPathfindingStatus,
   statusKind: smartPathfindingStatusKind,
 } = smartPathfindingSession;
+// 舞台反馈只应持有短暂高亮状态和清理逻辑；页面继续决定触发时机。
+const {
+  boundsFlashActive,
+  clearDetectionSoldierFlash,
+  clearOneClickClearHitFlash,
+  detectionSoldierFlashActive,
+  dispose: disposeStageFeedback,
+  flashBoundsRect,
+  flashDetectedSoldiers,
+  flashOneClickClearHitSoldiers,
+  oneClickClearHitFlashActive,
+  oneClickClearHitFlashSoldiers,
+} = useGraphwarStageFeedback(detectedSoldiers);
 // 调试启用流程只应管理长按状态和定时器；高级设置展开状态仍由页面持有。
 const {
   cancelHold: cancelDebugActivationHold,
@@ -479,17 +488,11 @@ const blocksFriendlyFireTargets = computed(
 );
 const hoveredDetectedSoldierId = ref<string>();
 const copyStatus = ref<TransferStatus>("idle");
-let boundsFlashFrame: number | undefined;
-let boundsFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-let detectionSoldierFlashFrame: number | undefined;
-let detectionSoldierFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let liveClickPreviewPointerFrame: number | undefined;
 let liveClickPreviewPendingPathPointIndex: number | undefined;
 let liveClickPreviewPendingPointerPoint: PixelPoint | undefined;
-let oneClickClearHitFlashFrame: number | undefined;
-let oneClickClearHitFlashTimer: ReturnType<typeof setTimeout> | undefined;
 let obstacleEditRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRunId = 0;
 
@@ -1800,12 +1803,6 @@ onBeforeUnmount(() => {
   graphwarDetectionRunner.close();
   graphwarPathfindingRunner.close();
   cancelSmartPathfinding(false);
-  if (boundsFlashFrame !== undefined) {
-    cancelAnimationFrame(boundsFlashFrame);
-  }
-  if (boundsFlashTimer) {
-    clearTimeout(boundsFlashTimer);
-  }
   if (copyStatusTimer) {
     clearTimeout(copyStatusTimer);
   }
@@ -1814,7 +1811,7 @@ onBeforeUnmount(() => {
   }
   clearLiveClickPreviewPointerPoint();
   disposeDebugActivation();
-  clearDetectionSoldierFlash();
+  disposeStageFeedback();
   if (obstacleEditRefreshTimer) {
     clearTimeout(obstacleEditRefreshTimer);
   }
@@ -2695,69 +2692,6 @@ function handleGraphwarDetectionError(error: unknown, runId: number) {
   setDetectionStatus(locale.status.detection.failed(error instanceof Error ? error.message : String(error)), "error");
 }
 
-/** 清理士兵识别闪烁动画，避免下一次检测继承旧动画状态。 */
-function clearDetectionSoldierFlash() {
-  detectionSoldierFlashActive.value = false;
-  if (detectionSoldierFlashFrame !== undefined) {
-    cancelAnimationFrame(detectionSoldierFlashFrame);
-    detectionSoldierFlashFrame = undefined;
-  }
-  if (detectionSoldierFlashTimer) {
-    clearTimeout(detectionSoldierFlashTimer);
-    detectionSoldierFlashTimer = undefined;
-  }
-}
-
-/** 在检测完成后触发一次士兵标记闪烁，帮助用户定位识别结果。 */
-function flashDetectedSoldiers() {
-  clearDetectionSoldierFlash();
-  if (detectedSoldiers.value.length === 0) {
-    return;
-  }
-
-  detectionSoldierFlashFrame = requestAnimationFrame(() => {
-    detectionSoldierFlashFrame = undefined;
-    detectionSoldierFlashActive.value = true;
-    detectionSoldierFlashTimer = setTimeout(() => {
-      detectionSoldierFlashActive.value = false;
-      detectionSoldierFlashTimer = undefined;
-    }, detectionFlashAnimationMs);
-  });
-}
-
-/** 清理一键清图命中闪烁，避免旧结果在下一次操作后继续提示。 */
-function clearOneClickClearHitFlash() {
-  oneClickClearHitFlashActive.value = false;
-  oneClickClearHitFlashSoldiers.value = [];
-  if (oneClickClearHitFlashFrame !== undefined) {
-    cancelAnimationFrame(oneClickClearHitFlashFrame);
-    oneClickClearHitFlashFrame = undefined;
-  }
-  if (oneClickClearHitFlashTimer) {
-    clearTimeout(oneClickClearHitFlashTimer);
-    oneClickClearHitFlashTimer = undefined;
-  }
-}
-
-/** 一键清图完成后只高亮结果里的命中士兵，和全量识别闪烁区分开。 */
-function flashOneClickClearHitSoldiers(targetIds: readonly string[]) {
-  clearOneClickClearHitFlash();
-  const targetIdSet = new Set(targetIds);
-  oneClickClearHitFlashSoldiers.value = detectedSoldiers.value.filter((soldier) => targetIdSet.has(soldier.id));
-  if (oneClickClearHitFlashSoldiers.value.length === 0) {
-    return;
-  }
-
-  oneClickClearHitFlashFrame = requestAnimationFrame(() => {
-    oneClickClearHitFlashFrame = undefined;
-    oneClickClearHitFlashActive.value = true;
-    oneClickClearHitFlashTimer = setTimeout(() => {
-      oneClickClearHitFlashActive.value = false;
-      oneClickClearHitFlashTimer = undefined;
-    }, detectionFlashAnimationMs);
-  });
-}
-
 /** 深拷贝障碍 mask，作为用户编辑前的恢复基线。 */
 function cloneDetectedObstacleMap(obstacles: DetectedObstacleMap): DetectedObstacleMap {
   return {
@@ -2774,26 +2708,6 @@ function clearObstacleEditRefreshTimer() {
 
   clearTimeout(obstacleEditRefreshTimer);
   obstacleEditRefreshTimer = undefined;
-}
-
-/** 触发一次短暂边界高亮，帮助用户确认自动识别或手动框选结果。 */
-function flashBoundsRect() {
-  boundsFlashActive.value = false;
-  if (boundsFlashFrame !== undefined) {
-    cancelAnimationFrame(boundsFlashFrame);
-  }
-  if (boundsFlashTimer) {
-    clearTimeout(boundsFlashTimer);
-  }
-
-  boundsFlashFrame = requestAnimationFrame(() => {
-    boundsFlashFrame = undefined;
-    boundsFlashActive.value = true;
-    boundsFlashTimer = setTimeout(() => {
-      boundsFlashActive.value = false;
-      boundsFlashTimer = undefined;
-    }, detectionFlashAnimationMs);
-  });
 }
 
 /** 切换自动识别；关闭后保留当前识别结果供用户继续编辑。 */

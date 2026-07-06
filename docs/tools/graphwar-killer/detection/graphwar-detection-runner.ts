@@ -282,9 +282,9 @@ function collectRequestTransferList(request: GraphwarDetectionWorkerRequest) {
   return buffer instanceof ArrayBuffer ? [buffer] : [];
 }
 
-/** PostMessage 不能克隆 Vue reactive proxy；Worker 边界应统一复制成纯数据。 */
+/** 复制 Worker 请求外壳；ImageData 应保留原对象，以便继续转移原始 buffer。 */
 function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerRequest): GraphwarDetectionWorkerRequest {
-  const cloneableInput = {
+  const cloneableSharedInput = {
     imageData: request.task.imageData,
     soldierSettings: cloneGraphwarSoldierDetectionSettings(request.task.soldierSettings),
     thresholds: cloneGraphwarObstacleDetectionThresholds(request.task.thresholds),
@@ -294,7 +294,7 @@ function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerReq
     return {
       id: request.id,
       task: {
-        ...cloneableInput,
+        ...cloneableSharedInput,
         type: "detect-auto",
       },
     };
@@ -303,13 +303,14 @@ function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerReq
   return {
     id: request.id,
     task: {
-      ...cloneableInput,
+      ...cloneableSharedInput,
       edgeRect: cloneBoundsRect(request.task.edgeRect),
       type: "detect-bounds",
     },
   };
 }
 
+/** 障碍阈值应以纯对象跨 Worker 边界，避免 Vue reactive proxy 触发结构化克隆失败。 */
 function cloneGraphwarObstacleDetectionThresholds(
   thresholds: GraphwarAutoDetectionInput["thresholds"],
 ): GraphwarAutoDetectionInput["thresholds"] {
@@ -318,6 +319,7 @@ function cloneGraphwarObstacleDetectionThresholds(
   };
 }
 
+/** 士兵识别设置应复制成纯对象；undefined 应继续表示使用检测模块默认设置。 */
 function cloneGraphwarSoldierDetectionSettings(
   settings: GraphwarAutoDetectionInput["soldierSettings"],
 ): GraphwarAutoDetectionInput["soldierSettings"] {
@@ -332,6 +334,7 @@ function cloneGraphwarSoldierDetectionSettings(
   };
 }
 
+/** 棋盘边界应复制成纯矩形数据，页面侧 ref/proxy 不应越过 Worker 消息边界。 */
 function cloneBoundsRect(rect: BoundsRect): BoundsRect {
   return {
     height: rect.height,

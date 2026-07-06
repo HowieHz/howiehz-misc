@@ -4,6 +4,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import GraphwarActionPanel from "./components/GraphwarActionPanel.vue";
 import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./components/GraphwarDetectionPanel.vue";
 import GraphwarResultPanel from "./components/GraphwarResultPanel.vue";
+import GraphwarSmartPathfindingPanel, {
+  type GraphwarSmartPathfindingPanelModel,
+} from "./components/GraphwarSmartPathfindingPanel.vue";
 import GraphwarStageOverlay from "./components/GraphwarStageOverlay.vue";
 import { useGraphwarPathState, type PathPointCoordinateAxis } from "./composables/use-graphwar-path-state";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
@@ -1329,11 +1332,31 @@ const pathfindingHeaderStatusResult = computed(() =>
     smartPathfindingHeaderStatusResult.value,
   ),
 );
-const pathfindingHeaderStatus = computed(() => pathfindingHeaderStatusResult.value.message);
-const pathfindingHeaderStatusTitle = computed(() => pathfindingHeaderStatus.value);
-const pathfindingHeaderStatusIsError = computed(() => pathfindingHeaderStatusResult.value.kind === "error");
-const pathfindingHeaderStatusIsWarning = computed(() => pathfindingHeaderStatusResult.value.kind === "warning");
-const pathfindingHeaderStatusIsSuccess = computed(() => pathfindingHeaderStatusResult.value.kind === "success");
+// 智能寻路面板只应消费展示 DTO；按钮 guard、运行状态和调试耗时仍由页面侧保持原语义。
+const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() => {
+  const headerStatus = pathfindingHeaderStatusResult.value;
+  return {
+    debugTimingRows: smartPathfindingDebugTimingRows.value.map((entry, index) => ({
+      indentLevel: entry.indentLevel,
+      key: `${entry.stage}-${index}`,
+      text: entry.elapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
+      title: entry.title,
+    })),
+    debugTimingVisible: smartPathfindingEnabled.value && debugInfoEnabled.value,
+    friendlyFireEnabled: friendlyFireEnabled.value,
+    headerStatus: {
+      kind: headerStatus.kind,
+      message: headerStatus.message,
+      title: headerStatus.message,
+    },
+    oneClickClearDisabled: smartPathfindingInProgress.value || isOneClickClearModeUnsupported(),
+    oneClickClearTitle: getOneClickClearButtonTitle(),
+    searchAnimationEnabled: searchAnimationEnabled.value,
+    smartPathfindingEnabled: smartPathfindingEnabled.value,
+    smartPathfindingToggleDisabled: isSmartPathfindingDisabled(),
+    smartPathfindingToggleTitle: getSmartPathfindingToggleTitle(),
+  };
+});
 
 const trajectoryObstacleHitIndex = computed(() => {
   const obstacleHitIndex = trajectorySampleResult.value?.obstacleHitIndex ?? -1;
@@ -5011,96 +5034,15 @@ async function copyText(text: string) {
         @toggle-auto-detection="toggleAutoDetection"
         @toggle-smart-cursor="toggleSmartCursor"
       />
-      <section
+      <GraphwarSmartPathfindingPanel
         v-if="toolWorkflowMode !== 'simulator'"
-        class="graphwar-killer__panel"
-        aria-labelledby="graphwar-killer-smart-pathfinding-title"
-      >
-        <div class="graphwar-killer__label-row">
-          <h2 id="graphwar-killer-smart-pathfinding-title">
-            {{ locale.ui.pathfinding.title }}
-          </h2>
-          <span
-            v-if="pathfindingHeaderStatus"
-            class="graphwar-killer__pathfinding-header-status"
-            :title="pathfindingHeaderStatusTitle"
-            :class="{
-              'graphwar-killer__label-status--error': pathfindingHeaderStatusIsError,
-              'graphwar-killer__label-status--warning': pathfindingHeaderStatusIsWarning,
-              'graphwar-killer__label-status--success': pathfindingHeaderStatusIsSuccess,
-            }"
-          >
-            {{ pathfindingHeaderStatus }}
-          </span>
-        </div>
-        <div class="graphwar-killer__image-actions">
-          <button
-            type="button"
-            :aria-pressed="smartPathfindingEnabled"
-            :class="{ 'graphwar-killer__toggle-button--active': smartPathfindingEnabled }"
-            :disabled="isSmartPathfindingDisabled()"
-            :title="getSmartPathfindingToggleTitle()"
-            @click="toggleSmartPathfinding"
-          >
-            {{ locale.ui.pathfinding.smartPathfinding }}
-          </button>
-          <button
-            v-if="smartPathfindingEnabled"
-            type="button"
-            :aria-pressed="friendlyFireEnabled"
-            :class="{ 'graphwar-killer__toggle-button--active': friendlyFireEnabled }"
-            :title="locale.ui.pathfinding.allowFriendlyFireTitle"
-            @click="toggleFriendlyFire"
-          >
-            {{ locale.ui.pathfinding.allowFriendlyFire }}
-          </button>
-          <button
-            v-if="smartPathfindingEnabled"
-            type="button"
-            :aria-pressed="searchAnimationEnabled"
-            :class="{ 'graphwar-killer__toggle-button--active': searchAnimationEnabled }"
-            :title="locale.ui.pathfinding.searchAnimationTitle"
-            @click="toggleSearchAnimation"
-          >
-            {{ locale.ui.pathfinding.searchAnimation }}
-          </button>
-          <button
-            v-if="smartPathfindingEnabled"
-            type="button"
-            aria-pressed="false"
-            :disabled="smartPathfindingInProgress || isOneClickClearModeUnsupported()"
-            :title="getOneClickClearButtonTitle()"
-            @click="void runOneClickClear()"
-          >
-            {{ locale.ui.pathfinding.autoGraph }}
-          </button>
-        </div>
-        <div
-          v-if="smartPathfindingEnabled && debugInfoEnabled"
-          class="graphwar-killer__pathfinding-settings"
-        >
-          <details class="graphwar-killer__subpanel graphwar-killer__details">
-            <summary>{{ locale.ui.pathfinding.debugSummary }}</summary>
-            <div class="graphwar-killer__debug-timing">
-              <span v-if="!smartPathfindingDebugTimingRows.length">{{ locale.ui.pathfinding.debugNoTiming }}</span>
-              <template v-else>
-                <span
-                  v-for="(entry, index) in smartPathfindingDebugTimingRows"
-                  :key="`${entry.stage}-${index}`"
-                  class="graphwar-killer__debug-timing-row"
-                  :style="{ '--graphwar-killer-debug-indent-level': entry.indentLevel }"
-                  :title="entry.title"
-                >
-                  <template v-if="entry.elapsedVisible">
-                    {{ entry.label }}: {{ formatDebugElapsedDuration(entry.elapsedMs) }}
-                  </template>
-                  <template v-else>{{ entry.label }}</template>
-                </span>
-              </template>
-            </div>
-          </details>
-        </div>
-      </section>
+        :locale="locale"
+        :panel="smartPathfindingPanel"
+        @run-one-click-clear="void runOneClickClear()"
+        @toggle-friendly-fire="toggleFriendlyFire"
+        @toggle-search-animation="toggleSearchAnimation"
+        @toggle-smart-pathfinding="toggleSmartPathfinding"
+      />
     </div>
     <GraphwarActionPanel
       :locale="locale"

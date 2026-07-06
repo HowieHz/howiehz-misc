@@ -12,6 +12,7 @@ import GraphwarSettingsPanel, { type GraphwarSettingsPanelModel } from "./compon
 import GraphwarSmartPathfindingPanel, {
   type GraphwarSmartPathfindingPanelModel,
 } from "./components/GraphwarSmartPathfindingPanel.vue";
+import { useGraphwarDebugActivation } from "./composables/use-graphwar-debug-activation";
 import { useGraphwarPathState, type PathPointCoordinateAxis } from "./composables/use-graphwar-path-state";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
 import {
@@ -309,10 +310,6 @@ const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
 const detectionFlashAnimationMs = 1600;
-const debugActivationHoldMs = 3000;
-const debugActivationCountdownStepMs = 100;
-const debugActivationCountdownVisibleAfterMs = 1000;
-const debugActivationSuccessFlashMs = 2000;
 const smartPathfindingBlockedPointFlashMs = 1800;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
@@ -351,9 +348,6 @@ const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const advancedSettingsVisible = ref(false);
-const debugInfoEnabled = ref(false);
-const debugActivationRemainingMs = ref<number>();
-const debugActivationSuccessVisible = ref(false);
 const detectionDebugTimingEntries = ref<DetectionDebugTimingEntry[]>([]);
 const detectionStatusWarning = ref("");
 const detectionStatusWarningTitle = ref("");
@@ -463,6 +457,18 @@ const {
   status: smartPathfindingStatus,
   statusKind: smartPathfindingStatusKind,
 } = smartPathfindingSession;
+// 调试启用流程只应管理长按状态和定时器；高级设置展开状态仍由页面持有。
+const {
+  cancelHold: cancelDebugActivationHold,
+  debugInfoEnabled,
+  dispose: disposeDebugActivation,
+  finishHold: finishDebugActivationHold,
+  remainingMs: debugActivationRemainingMs,
+  startHold: startDebugActivationHold,
+  successVisible: debugActivationSuccessVisible,
+} = useGraphwarDebugActivation({
+  toggleAdvancedSettings,
+});
 const pathfindingCache = createGraphwarPathfindingCacheController();
 const effectiveSmartPathfindingEnabled = computed(
   () => toolWorkflowMode.value !== "simulator" && algorithmMode.value !== "step" && smartPathfindingEnabled.value,
@@ -484,11 +490,6 @@ let liveClickPreviewPendingPathPointIndex: number | undefined;
 let liveClickPreviewPendingPointerPoint: PixelPoint | undefined;
 let oneClickClearHitFlashFrame: number | undefined;
 let oneClickClearHitFlashTimer: ReturnType<typeof setTimeout> | undefined;
-let debugActivationCountdownTimer: ReturnType<typeof setInterval> | undefined;
-let debugActivationStartedAt: number | undefined;
-let debugActivationSuccessTimer: ReturnType<typeof setTimeout> | undefined;
-let debugActivationTimer: ReturnType<typeof setTimeout> | undefined;
-let debugActivationTriggered = false;
 let obstacleEditRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRunId = 0;
 
@@ -1785,7 +1786,7 @@ function createResultPanelPointRows() {
   });
 }
 
-/** 获取高精度时间戳，用于前端阶段计时和长按判定。 */
+/** 获取高精度时间戳，用于前端阶段计时。 */
 function nowMs() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }
@@ -1812,8 +1813,7 @@ onBeforeUnmount(() => {
     clearTimeout(detectionRefreshTimer);
   }
   clearLiveClickPreviewPointerPoint();
-  clearDebugActivationHold();
-  clearDebugActivationSuccessFlash();
+  disposeDebugActivation();
   clearDetectionSoldierFlash();
   if (obstacleEditRefreshTimer) {
     clearTimeout(obstacleEditRefreshTimer);
@@ -2040,95 +2040,6 @@ function cancelDetection(showStatus: boolean) {
 /** 展开或折叠高级设置面板。 */
 function toggleAdvancedSettings() {
   advancedSettingsVisible.value = !advancedSettingsVisible.value;
-}
-
-/** 通过长按高级设置入口启用调试信息，避免普通用户误触。 */
-function startDebugActivationHold(event: PointerEvent) {
-  if (event.button !== 0) {
-    return;
-  }
-  if (debugInfoEnabled.value) {
-    toggleAdvancedSettings();
-    return;
-  }
-
-  clearDebugActivationHold();
-  clearDebugActivationSuccessFlash();
-  debugActivationTriggered = false;
-  debugActivationStartedAt = nowMs();
-  updateDebugActivationCountdown();
-  debugActivationCountdownTimer = setInterval(updateDebugActivationCountdown, debugActivationCountdownStepMs);
-  debugActivationTimer = setTimeout(() => {
-    debugActivationTriggered = true;
-    debugInfoEnabled.value = true;
-    clearDebugActivationHold();
-    flashDebugActivationSuccess();
-  }, debugActivationHoldMs);
-}
-
-/** 结束调试入口长按；未触发调试时保留普通点击展开设置。 */
-function finishDebugActivationHold() {
-  const shouldToggleAdvancedSettings =
-    !debugInfoEnabled.value && !debugActivationTriggered && debugActivationStartedAt !== undefined;
-  clearDebugActivationHold();
-  if (shouldToggleAdvancedSettings) {
-    toggleAdvancedSettings();
-  }
-  debugActivationTriggered = false;
-}
-
-/** 鼠标移出或取消时终止调试长按流程。 */
-function cancelDebugActivationHold() {
-  clearDebugActivationHold();
-  debugActivationTriggered = false;
-}
-
-/** 清理调试长按的定时器和倒计时状态。 */
-function clearDebugActivationHold() {
-  if (debugActivationTimer) {
-    clearTimeout(debugActivationTimer);
-    debugActivationTimer = undefined;
-  }
-  if (debugActivationCountdownTimer) {
-    clearInterval(debugActivationCountdownTimer);
-    debugActivationCountdownTimer = undefined;
-  }
-  debugActivationStartedAt = undefined;
-  debugActivationRemainingMs.value = undefined;
-}
-
-/** 更新调试长按倒计时，只在长按超过提示阈值后显示。 */
-function updateDebugActivationCountdown() {
-  if (debugActivationStartedAt === undefined) {
-    return;
-  }
-
-  const elapsedMs = nowMs() - debugActivationStartedAt;
-  debugActivationRemainingMs.value =
-    elapsedMs < debugActivationCountdownVisibleAfterMs ? undefined : Math.max(0, debugActivationHoldMs - elapsedMs);
-}
-
-/** 短暂显示调试模式已启用的成功反馈。 */
-function flashDebugActivationSuccess() {
-  debugActivationSuccessVisible.value = true;
-  if (debugActivationSuccessTimer) {
-    clearTimeout(debugActivationSuccessTimer);
-  }
-  debugActivationSuccessTimer = setTimeout(() => {
-    debugActivationSuccessVisible.value = false;
-    debugActivationSuccessTimer = undefined;
-  }, debugActivationSuccessFlashMs);
-}
-
-/** 清理调试启用成功闪烁，防止卸载或重新长按后残留。 */
-function clearDebugActivationSuccessFlash() {
-  debugActivationSuccessVisible.value = false;
-  if (!debugActivationSuccessTimer) {
-    return;
-  }
-
-  clearTimeout(debugActivationSuccessTimer);
-  debugActivationSuccessTimer = undefined;
 }
 
 /** 设置检测状态主文案，并清掉上一轮警告详情。 */

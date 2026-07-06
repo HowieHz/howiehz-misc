@@ -1461,6 +1461,71 @@ function createPathLineSegments(points: readonly PixelPoint[]) {
   return segments;
 }
 const smartPathfindingPreviewPathPoints = computed(() => formatSvgPathPoints(smartPathfindingPreviewPath.value));
+// 舞台 overlay 只应消费展示 DTO；业务规则和半径公式应由页面侧投影，避免子 Module 反向理解工作流。
+const stageOverlay = computed(() => ({
+  bounds: {
+    allowedTargetRect: allowedTargetRect.value,
+    clipBoundsRect: boundsRect.value,
+    flashActive: boundsFlashActive.value,
+    firstPoint: boundsFirstPoint.value,
+    previewRect: boundsPreviewRect.value,
+    visibleBoundaryExpansionRect: visibleBoundaryExpansionRect.value,
+    visibleRect: visibleBoundsRect.value,
+  },
+  detection: {
+    boxes: detectionBoxes.value,
+    hoveredSoldierId: hoveredDetectedSoldierId.value,
+    oneClickClearHitFlashActive: oneClickClearHitFlashActive.value,
+    oneClickClearHitFlashBoxes: oneClickClearHitFlashSoldiers.value,
+    soldierFlashActive: detectionSoldierFlashActive.value,
+    soldierFlashBoxes: detectedSoldiers.value,
+  },
+  liveClickPreview: {
+    curvePoints: liveClickPreviewCurvePoints.value,
+    label: liveClickPreviewLabel.value,
+    lineSegments: liveClickPreviewLineSegments.value,
+    point: liveClickPreviewPoint.value,
+  },
+  obstacles: {
+    brushEraseEnabled: obstacleBrushEraseEnabled.value,
+    brushPreview: obstacleBrushPreview.value,
+    pathfindingEdgesActive: pathfindingObstacleEdgesActive.value,
+    routeEdgePath: smartPathfindingObstacleRouteEdgePath.value,
+    routeFillPath: smartPathfindingObstacleRouteFillPath.value,
+    simulationEdgePath: smartPathfindingObstacleSimulationEdgePath.value,
+    simulationFillPath: smartPathfindingObstacleSimulationFillPath.value,
+    smartCursorEnabled: smartCursorEnabled.value,
+    visibleEdgePath: visibleObstacleEdgePath.value,
+    visibleFillPath: visibleObstacleFillPath.value,
+  },
+  path: {
+    hoveredPointIndex: hoveredPathPointIndex.value,
+    lineSegments: pathLineSegments.value,
+    points: pathPixels.value,
+    selfLabel: locale.ui.point.svgSelfLabel,
+    selectionRadius: soldierSelectionRadius.value,
+  },
+  pathfinding: {
+    blockedPoint: smartPathfindingBlockedPoint.value,
+    inProgress: smartPathfindingInProgress.value,
+    optimizationPreviewPoint: pathfindingOptimizationPreviewPoint.value,
+    // 旧实现使用 soldierMarkerRadius + 4；这里显式保留，避免和 selectionRadius 混淆。
+    optimizationPreviewRadius: soldierMarkerRadius.value + 4,
+    previewAcceptedEdges: smartPathfindingPreviewAcceptedEdges.value,
+    previewConnection: smartPathfindingPreviewConnection.value,
+    previewCurrentPoint: smartPathfindingPreviewCurrentPoint.value,
+    previewPathPoints: smartPathfindingPreviewPathPoints.value,
+    previewPoints: smartPathfindingPreviewPoints.value,
+  },
+  trajectory: {
+    curvePoints: plottedCurvePoints.value,
+    strokeColor: trajectoryStrokeColor.value,
+  },
+  viewport: {
+    imageHeight: imageHeight.value,
+    imageWidth: imageWidth.value,
+  },
+}));
 const magnifierStyle = computed(() => {
   const point = magnifierPoint.value;
   if (!magnifierEnabled.value || !imageUrl.value || !point) {
@@ -5284,52 +5349,8 @@ async function copyText(text: string) {
           {{ locale.ui.screenshot.placeholder }}
         </div>
         <GraphwarStageOverlay
-          :allowed-target-rect="allowedTargetRect"
-          :bounds-flash-active="boundsFlashActive"
-          :bounds-first-point="boundsFirstPoint"
-          :bounds-preview-rect="boundsPreviewRect"
-          :clip-bounds-rect="boundsRect"
           :clip-path-id="mainObstacleBrushClipPathId"
-          :detected-soldiers="detectedSoldiers"
-          :detection-boxes="detectionBoxes"
-          :detection-soldier-flash-active="detectionSoldierFlashActive"
-          :hovered-detected-soldier-id="hoveredDetectedSoldierId"
-          :hovered-path-point-index="hoveredPathPointIndex"
-          :image-height="imageHeight"
-          :image-width="imageWidth"
-          :live-click-preview-curve-points="liveClickPreviewCurvePoints"
-          :live-click-preview-label="liveClickPreviewLabel"
-          :live-click-preview-line-segments="liveClickPreviewLineSegments"
-          :live-click-preview-point="liveClickPreviewPoint"
-          :obstacle-brush-erase-enabled="obstacleBrushEraseEnabled"
-          :obstacle-brush-preview="obstacleBrushPreview"
-          :one-click-clear-hit-flash-active="oneClickClearHitFlashActive"
-          :one-click-clear-hit-flash-soldiers="oneClickClearHitFlashSoldiers"
-          :path-line-segments="pathLineSegments"
-          :path-pixels="pathPixels"
-          :pathfinding-obstacle-edges-active="pathfindingObstacleEdgesActive"
-          :pathfinding-optimization-preview-point="pathfindingOptimizationPreviewPoint"
-          :plotted-curve-points="plottedCurvePoints"
-          :self-label="locale.ui.point.svgSelfLabel"
-          :smart-cursor-enabled="smartCursorEnabled"
-          :smart-pathfinding-blocked-point="smartPathfindingBlockedPoint"
-          :smart-pathfinding-in-progress="smartPathfindingInProgress"
-          :smart-pathfinding-obstacle-route-edge-path="smartPathfindingObstacleRouteEdgePath"
-          :smart-pathfinding-obstacle-route-fill-path="smartPathfindingObstacleRouteFillPath"
-          :smart-pathfinding-obstacle-simulation-edge-path="smartPathfindingObstacleSimulationEdgePath"
-          :smart-pathfinding-obstacle-simulation-fill-path="smartPathfindingObstacleSimulationFillPath"
-          :smart-pathfinding-preview-accepted-edges="smartPathfindingPreviewAcceptedEdges"
-          :smart-pathfinding-preview-connection="smartPathfindingPreviewConnection"
-          :smart-pathfinding-preview-current-point="smartPathfindingPreviewCurrentPoint"
-          :smart-pathfinding-preview-path-points="smartPathfindingPreviewPathPoints"
-          :smart-pathfinding-preview-points="smartPathfindingPreviewPoints"
-          :soldier-marker-radius="soldierMarkerRadius"
-          :soldier-selection-radius="soldierSelectionRadius"
-          :trajectory-stroke-color="trajectoryStrokeColor"
-          :visible-boundary-expansion-rect="visibleBoundaryExpansionRect"
-          :visible-bounds-rect="visibleBoundsRect"
-          :visible-obstacle-edge-path="visibleObstacleEdgePath"
-          :visible-obstacle-fill-path="visibleObstacleFillPath"
+          :overlay="stageOverlay"
         />
         <div
           v-if="detectionInProgress"
@@ -5363,52 +5384,8 @@ async function copyText(text: string) {
             >
             <GraphwarStageOverlay
               key-prefix="magnifier-"
-              :allowed-target-rect="allowedTargetRect"
-              :bounds-flash-active="boundsFlashActive"
-              :bounds-first-point="boundsFirstPoint"
-              :bounds-preview-rect="boundsPreviewRect"
-              :clip-bounds-rect="boundsRect"
               :clip-path-id="magnifierObstacleBrushClipPathId"
-              :detected-soldiers="detectedSoldiers"
-              :detection-boxes="detectionBoxes"
-              :detection-soldier-flash-active="detectionSoldierFlashActive"
-              :hovered-detected-soldier-id="hoveredDetectedSoldierId"
-              :hovered-path-point-index="hoveredPathPointIndex"
-              :image-height="imageHeight"
-              :image-width="imageWidth"
-              :live-click-preview-curve-points="liveClickPreviewCurvePoints"
-              :live-click-preview-label="liveClickPreviewLabel"
-              :live-click-preview-line-segments="liveClickPreviewLineSegments"
-              :live-click-preview-point="liveClickPreviewPoint"
-              :obstacle-brush-erase-enabled="obstacleBrushEraseEnabled"
-              :obstacle-brush-preview="obstacleBrushPreview"
-              :one-click-clear-hit-flash-active="oneClickClearHitFlashActive"
-              :one-click-clear-hit-flash-soldiers="oneClickClearHitFlashSoldiers"
-              :path-line-segments="pathLineSegments"
-              :path-pixels="pathPixels"
-              :pathfinding-obstacle-edges-active="pathfindingObstacleEdgesActive"
-              :pathfinding-optimization-preview-point="pathfindingOptimizationPreviewPoint"
-              :plotted-curve-points="plottedCurvePoints"
-              :self-label="locale.ui.point.svgSelfLabel"
-              :smart-cursor-enabled="smartCursorEnabled"
-              :smart-pathfinding-blocked-point="smartPathfindingBlockedPoint"
-              :smart-pathfinding-in-progress="smartPathfindingInProgress"
-              :smart-pathfinding-obstacle-route-edge-path="smartPathfindingObstacleRouteEdgePath"
-              :smart-pathfinding-obstacle-route-fill-path="smartPathfindingObstacleRouteFillPath"
-              :smart-pathfinding-obstacle-simulation-edge-path="smartPathfindingObstacleSimulationEdgePath"
-              :smart-pathfinding-obstacle-simulation-fill-path="smartPathfindingObstacleSimulationFillPath"
-              :smart-pathfinding-preview-accepted-edges="smartPathfindingPreviewAcceptedEdges"
-              :smart-pathfinding-preview-connection="smartPathfindingPreviewConnection"
-              :smart-pathfinding-preview-current-point="smartPathfindingPreviewCurrentPoint"
-              :smart-pathfinding-preview-path-points="smartPathfindingPreviewPathPoints"
-              :smart-pathfinding-preview-points="smartPathfindingPreviewPoints"
-              :soldier-marker-radius="soldierMarkerRadius"
-              :soldier-selection-radius="soldierSelectionRadius"
-              :trajectory-stroke-color="trajectoryStrokeColor"
-              :visible-boundary-expansion-rect="visibleBoundaryExpansionRect"
-              :visible-bounds-rect="visibleBoundsRect"
-              :visible-obstacle-edge-path="visibleObstacleEdgePath"
-              :visible-obstacle-fill-path="visibleObstacleFillPath"
+              :overlay="stageOverlay"
             />
           </div>
         </div>

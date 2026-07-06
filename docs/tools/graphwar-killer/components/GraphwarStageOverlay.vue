@@ -37,117 +37,159 @@ interface GraphwarStageOverlayObstacleBrushPreview {
   radiusY: number;
 }
 
+/** 边界、坐标轴和可点击范围图层。 */
+interface GraphwarStageOverlayBoundsLayer {
+  /** 当前允许点击的目标范围。 */
+  allowedTargetRect?: BoundsRect;
+  /** 障碍笔刷裁剪使用已落地边界，不能跟随手动框选预览。 */
+  clipBoundsRect: BoundsRect;
+  /** 边界自动识别成功后的高亮状态。 */
+  flashActive: boolean;
+  /** 正在手动框选边界时的第一个点。 */
+  firstPoint?: PixelPoint;
+  /** 正在手动框选边界时的预览矩形。 */
+  previewRect?: BoundsRect;
+  /** 当前用于弹道验证的障碍边界矩形。 */
+  visibleBoundaryExpansionRect?: BoundsRect;
+  /** 当前边界矩形；可能是手动框选预览。 */
+  visibleRect: BoundsRect;
+}
+
+/** 障碍 mask 和笔刷预览图层。 */
+interface GraphwarStageOverlayObstacleLayer {
+  /** 障碍笔刷是否处于擦除模式。 */
+  brushEraseEnabled: boolean;
+  /** 障碍笔刷预览。 */
+  brushPreview?: GraphwarStageOverlayObstacleBrushPreview;
+  /** 当前是否显示寻路膨胀后的障碍边界。 */
+  pathfindingEdgesActive: boolean;
+  /** 寻路几何障碍边界 path。 */
+  routeEdgePath: string;
+  /** 寻路几何障碍填充 path。 */
+  routeFillPath: string;
+  /** 是否显示智能光标识别层。 */
+  smartCursorEnabled: boolean;
+  /** 弹道模拟障碍边界 path。 */
+  simulationEdgePath: string;
+  /** 弹道模拟障碍填充 path。 */
+  simulationFillPath: string;
+  /** 普通障碍边界 path。 */
+  visibleEdgePath: string;
+  /** 普通障碍填充 path。 */
+  visibleFillPath: string;
+}
+
+/** 检测框和检测闪烁图层。 */
+interface GraphwarStageOverlayDetectionLayer {
+  /** 已识别对象的可视圆。 */
+  boxes: readonly GraphwarStageOverlayDetectionBox[];
+  /** 当前悬停的士兵 id。 */
+  hoveredSoldierId?: string;
+  /** 一键清图命中后的闪烁状态。 */
+  oneClickClearHitFlashActive: boolean;
+  /** 一键清图命中的士兵。 */
+  oneClickClearHitFlashBoxes: readonly GraphwarStageOverlayDetectionBox[];
+  /** 是否播放士兵识别闪烁。 */
+  soldierFlashActive: boolean;
+  /** 士兵识别完成后的闪烁对象。 */
+  soldierFlashBoxes: readonly GraphwarStageOverlayDetectionBox[];
+}
+
+/** 已选路径点和路径线图层。 */
+interface GraphwarStageOverlayPathLayer {
+  /** 当前悬停路径点索引。 */
+  hoveredPointIndex?: number;
+  /** 已选路径点之间的可视连接线。 */
+  lineSegments: readonly GraphwarStageOverlayLineSegment[];
+  /** 当前路径点。 */
+  points: readonly PixelPoint[];
+  /** 士兵标签中的 self 文案。 */
+  selfLabel: string;
+  /** 用于绘制路径点和阻塞点的选择半径。 */
+  selectionRadius: number;
+}
+
+/** 实时点击预览图层。 */
+interface GraphwarStageOverlayLiveClickPreviewLayer {
+  /** 实时点击预览轨迹。 */
+  curvePoints: string;
+  /** 实时点击预览点标签。 */
+  label: string;
+  /** 实时点击预览连接线。 */
+  lineSegments: readonly GraphwarStageOverlayLineSegment[];
+  /** 实时点击预览点。 */
+  point?: PixelPoint;
+}
+
+/** 智能寻路搜索动画和阻塞提示图层。 */
+interface GraphwarStageOverlayPathfindingLayer {
+  /** 被当前轨迹预检拦截的位置。 */
+  blockedPoint?: PixelPoint;
+  /** 当前是否有智能寻路运行中。 */
+  inProgress: boolean;
+  /** 寻路优化阶段当前尝试点。 */
+  optimizationPreviewPoint?: PixelPoint;
+  /** 寻路优化阶段当前尝试点半径，父页面负责沿用原公式。 */
+  optimizationPreviewRadius: number;
+  /** 寻路预览里的已接受边。 */
+  previewAcceptedEdges: readonly GraphwarStageOverlayLineSegment[];
+  /** 寻路起点到目标点的预览连接线。 */
+  previewConnection?: GraphwarStageOverlayLineSegment;
+  /** 寻路预览当前点。 */
+  previewCurrentPoint?: PixelPoint;
+  /** 寻路尝试路径的 polyline points。 */
+  previewPathPoints: string;
+  /** 寻路预览候选点。 */
+  previewPoints: readonly PixelPoint[];
+}
+
+/** 当前公式或模拟器轨迹图层。 */
+interface GraphwarStageOverlayTrajectoryLayer {
+  /** 当前公式或模拟器轨迹。 */
+  curvePoints: string;
+  /** 当前轨迹颜色。 */
+  strokeColor: string;
+}
+
+/** SVG 视口尺寸。 */
+interface GraphwarStageOverlayViewport {
+  /** SVG viewBox 高度。 */
+  imageHeight: number;
+  /** SVG viewBox 宽度。 */
+  imageWidth: number;
+}
+
+/** 舞台 SVG overlay 的完整展示模型；父页面负责把业务状态投影成该 DTO。 */
+interface GraphwarStageOverlayModel {
+  /** 边界、坐标轴和可点击范围图层。 */
+  bounds: GraphwarStageOverlayBoundsLayer;
+  /** 检测框和检测闪烁图层。 */
+  detection: GraphwarStageOverlayDetectionLayer;
+  /** 实时点击预览图层。 */
+  liveClickPreview: GraphwarStageOverlayLiveClickPreviewLayer;
+  /** 障碍 mask 和笔刷预览图层。 */
+  obstacles: GraphwarStageOverlayObstacleLayer;
+  /** 已选路径点和路径线图层。 */
+  path: GraphwarStageOverlayPathLayer;
+  /** 智能寻路搜索动画和阻塞提示图层。 */
+  pathfinding: GraphwarStageOverlayPathfindingLayer;
+  /** 当前公式或模拟器轨迹图层。 */
+  trajectory: GraphwarStageOverlayTrajectoryLayer;
+  /** SVG 视口尺寸。 */
+  viewport: GraphwarStageOverlayViewport;
+}
+
 withDefaults(
   defineProps<{
-    /** 当前允许点击的目标范围。 */
-    allowedTargetRect?: BoundsRect;
-    /** 边界自动识别成功后的高亮状态。 */
-    boundsFlashActive: boolean;
-    /** 正在手动框选边界时的第一个点。 */
-    boundsFirstPoint?: PixelPoint;
-    /** 正在手动框选边界时的预览矩形。 */
-    boundsPreviewRect?: BoundsRect;
     /** 当前实例使用的障碍笔刷裁剪 id，主舞台和放大镜必须不同。 */
     clipPathId: string;
-    /** 障碍笔刷裁剪使用已落地边界，不能跟随手动框选预览。 */
-    clipBoundsRect: BoundsRect;
-    /** 已识别对象的可视圆。 */
-    detectionBoxes: readonly GraphwarStageOverlayDetectionBox[];
-    /** 士兵识别完成后的闪烁对象。 */
-    detectedSoldiers: readonly GraphwarStageOverlayDetectionBox[];
-    /** 是否播放士兵识别闪烁。 */
-    detectionSoldierFlashActive: boolean;
-    /** SVG viewBox 高度。 */
-    imageHeight: number;
-    /** SVG viewBox 宽度。 */
-    imageWidth: number;
-    /** 当前悬停的士兵 id。 */
-    hoveredDetectedSoldierId?: string;
-    /** 当前悬停路径点索引。 */
-    hoveredPathPointIndex?: number;
     /** 当前实例的 key 前缀；放大镜实例用它避免复用主舞台 key 语义。 */
     keyPrefix?: string;
-    /** 实时点击预览轨迹。 */
-    liveClickPreviewCurvePoints: string;
-    /** 实时点击预览点标签。 */
-    liveClickPreviewLabel: string;
-    /** 实时点击预览连接线。 */
-    liveClickPreviewLineSegments: readonly GraphwarStageOverlayLineSegment[];
-    /** 实时点击预览点。 */
-    liveClickPreviewPoint?: PixelPoint;
-    /** 障碍笔刷是否处于擦除模式。 */
-    obstacleBrushEraseEnabled: boolean;
-    /** 障碍笔刷预览。 */
-    obstacleBrushPreview?: GraphwarStageOverlayObstacleBrushPreview;
-    /** 一键清图命中后的闪烁状态。 */
-    oneClickClearHitFlashActive: boolean;
-    /** 一键清图命中的士兵。 */
-    oneClickClearHitFlashSoldiers: readonly GraphwarStageOverlayDetectionBox[];
-    /** 已选路径点之间的可视连接线。 */
-    pathLineSegments: readonly GraphwarStageOverlayLineSegment[];
-    /** 当前路径点。 */
-    pathPixels: readonly PixelPoint[];
-    /** 当前是否显示寻路膨胀后的障碍边界。 */
-    pathfindingObstacleEdgesActive: boolean;
-    /** 寻路优化阶段当前尝试点。 */
-    pathfindingOptimizationPreviewPoint?: PixelPoint;
-    /** 当前公式或模拟器轨迹。 */
-    plottedCurvePoints: string;
-    /** 当前轨迹颜色。 */
-    trajectoryStrokeColor: string;
-    /** 用于绘制路径点和阻塞点的选择半径。 */
-    soldierSelectionRadius: number;
-    /** 用于绘制智能寻路优化预览点的士兵标记半径。 */
-    soldierMarkerRadius: number;
-    /** 士兵标签中的 self 文案。 */
-    selfLabel: string;
-    /** 是否显示智能光标识别层。 */
-    smartCursorEnabled: boolean;
-    /** 当前是否有智能寻路运行中。 */
-    smartPathfindingInProgress: boolean;
-    /** 寻路预览里的已接受边。 */
-    smartPathfindingPreviewAcceptedEdges: readonly GraphwarStageOverlayLineSegment[];
-    /** 寻路起点到目标点的预览连接线。 */
-    smartPathfindingPreviewConnection?: GraphwarStageOverlayLineSegment;
-    /** 寻路预览当前点。 */
-    smartPathfindingPreviewCurrentPoint?: PixelPoint;
-    /** 寻路尝试路径的 polyline points。 */
-    smartPathfindingPreviewPathPoints: string;
-    /** 寻路预览候选点。 */
-    smartPathfindingPreviewPoints: readonly PixelPoint[];
-    /** 被当前轨迹预检拦截的位置。 */
-    smartPathfindingBlockedPoint?: PixelPoint;
-    /** 当前用于弹道验证的障碍边界矩形。 */
-    visibleBoundaryExpansionRect?: BoundsRect;
-    /** 当前边界矩形；可能是手动框选预览。 */
-    visibleBoundsRect: BoundsRect;
-    /** 普通障碍边界 path。 */
-    visibleObstacleEdgePath: string;
-    /** 普通障碍填充 path。 */
-    visibleObstacleFillPath: string;
-    /** 寻路几何障碍边界 path。 */
-    smartPathfindingObstacleRouteEdgePath: string;
-    /** 寻路几何障碍填充 path。 */
-    smartPathfindingObstacleRouteFillPath: string;
-    /** 弹道模拟障碍边界 path。 */
-    smartPathfindingObstacleSimulationEdgePath: string;
-    /** 弹道模拟障碍填充 path。 */
-    smartPathfindingObstacleSimulationFillPath: string;
+    /** 已按图层分组的 overlay 展示模型。 */
+    overlay: GraphwarStageOverlayModel;
   }>(),
   {
-    allowedTargetRect: undefined,
-    boundsFirstPoint: undefined,
-    boundsPreviewRect: undefined,
-    hoveredDetectedSoldierId: undefined,
-    hoveredPathPointIndex: undefined,
     keyPrefix: "",
-    liveClickPreviewPoint: undefined,
-    obstacleBrushPreview: undefined,
-    pathfindingOptimizationPreviewPoint: undefined,
-    smartPathfindingBlockedPoint: undefined,
-    smartPathfindingPreviewConnection: undefined,
-    smartPathfindingPreviewCurrentPoint: undefined,
-    visibleBoundaryExpansionRect: undefined,
   },
 );
 </script>
@@ -155,95 +197,103 @@ withDefaults(
 <template>
   <svg
     class="graphwar-killer__overlay"
-    :viewBox="`0 0 ${imageWidth} ${imageHeight}`"
+    :viewBox="`0 0 ${overlay.viewport.imageWidth} ${overlay.viewport.imageHeight}`"
     aria-hidden="true"
   >
     <defs>
       <clipPath :id="clipPathId">
         <rect
-          :x="clipBoundsRect.x"
-          :y="clipBoundsRect.y"
-          :width="clipBoundsRect.width"
-          :height="clipBoundsRect.height"
+          :x="overlay.bounds.clipBoundsRect.x"
+          :y="overlay.bounds.clipBoundsRect.y"
+          :width="overlay.bounds.clipBoundsRect.width"
+          :height="overlay.bounds.clipBoundsRect.height"
         />
       </clipPath>
     </defs>
     <rect
       class="graphwar-killer__bounds"
       :class="{
-        'graphwar-killer__bounds--preview': boundsPreviewRect,
-        'graphwar-killer__bounds--flash': boundsFlashActive && !boundsPreviewRect,
+        'graphwar-killer__bounds--preview': overlay.bounds.previewRect,
+        'graphwar-killer__bounds--flash': overlay.bounds.flashActive && !overlay.bounds.previewRect,
       }"
-      :x="visibleBoundsRect.x"
-      :y="visibleBoundsRect.y"
-      :width="visibleBoundsRect.width"
-      :height="visibleBoundsRect.height"
+      :x="overlay.bounds.visibleRect.x"
+      :y="overlay.bounds.visibleRect.y"
+      :width="overlay.bounds.visibleRect.width"
+      :height="overlay.bounds.visibleRect.height"
     />
     <rect
-      v-if="allowedTargetRect"
+      v-if="overlay.bounds.allowedTargetRect"
       class="graphwar-killer__target-range"
-      :x="allowedTargetRect.x"
-      :y="allowedTargetRect.y"
-      :width="allowedTargetRect.width"
-      :height="allowedTargetRect.height"
+      :x="overlay.bounds.allowedTargetRect.x"
+      :y="overlay.bounds.allowedTargetRect.y"
+      :width="overlay.bounds.allowedTargetRect.width"
+      :height="overlay.bounds.allowedTargetRect.height"
     />
     <rect
-      v-if="visibleBoundaryExpansionRect"
+      v-if="overlay.bounds.visibleBoundaryExpansionRect"
       class="graphwar-killer__boundary-expansion"
-      :x="visibleBoundaryExpansionRect.x"
-      :y="visibleBoundaryExpansionRect.y"
-      :width="visibleBoundaryExpansionRect.width"
-      :height="visibleBoundaryExpansionRect.height"
+      :x="overlay.bounds.visibleBoundaryExpansionRect.x"
+      :y="overlay.bounds.visibleBoundaryExpansionRect.y"
+      :width="overlay.bounds.visibleBoundaryExpansionRect.width"
+      :height="overlay.bounds.visibleBoundaryExpansionRect.height"
     />
     <line
       class="graphwar-killer__axis"
-      :x1="visibleBoundsRect.x"
-      :x2="visibleBoundsRect.x + visibleBoundsRect.width"
-      :y1="visibleBoundsRect.y + visibleBoundsRect.height / 2"
-      :y2="visibleBoundsRect.y + visibleBoundsRect.height / 2"
+      :x1="overlay.bounds.visibleRect.x"
+      :x2="overlay.bounds.visibleRect.x + overlay.bounds.visibleRect.width"
+      :y1="overlay.bounds.visibleRect.y + overlay.bounds.visibleRect.height / 2"
+      :y2="overlay.bounds.visibleRect.y + overlay.bounds.visibleRect.height / 2"
     />
     <line
       class="graphwar-killer__axis"
-      :x1="visibleBoundsRect.x + visibleBoundsRect.width / 2"
-      :x2="visibleBoundsRect.x + visibleBoundsRect.width / 2"
-      :y1="visibleBoundsRect.y"
-      :y2="visibleBoundsRect.y + visibleBoundsRect.height"
+      :x1="overlay.bounds.visibleRect.x + overlay.bounds.visibleRect.width / 2"
+      :x2="overlay.bounds.visibleRect.x + overlay.bounds.visibleRect.width / 2"
+      :y1="overlay.bounds.visibleRect.y"
+      :y2="overlay.bounds.visibleRect.y + overlay.bounds.visibleRect.height"
     />
     <path
-      v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleFillPath"
+      v-if="
+        overlay.obstacles.smartCursorEnabled &&
+          !overlay.obstacles.pathfindingEdgesActive &&
+          overlay.obstacles.visibleFillPath
+      "
       class="graphwar-killer__obstacle-fill"
-      :d="visibleObstacleFillPath"
+      :d="overlay.obstacles.visibleFillPath"
     />
     <path
-      v-if="smartCursorEnabled && !pathfindingObstacleEdgesActive && visibleObstacleEdgePath"
+      v-if="
+        overlay.obstacles.smartCursorEnabled &&
+          !overlay.obstacles.pathfindingEdgesActive &&
+          overlay.obstacles.visibleEdgePath
+      "
       class="graphwar-killer__obstacle-edge"
-      :d="visibleObstacleEdgePath"
+      :d="overlay.obstacles.visibleEdgePath"
     />
-    <template v-if="pathfindingObstacleEdgesActive">
+    <template v-if="overlay.obstacles.pathfindingEdgesActive">
       <path
-        v-if="smartPathfindingObstacleRouteFillPath"
+        v-if="overlay.obstacles.routeFillPath"
         class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--route"
-        :d="smartPathfindingObstacleRouteFillPath"
+        :d="overlay.obstacles.routeFillPath"
       />
       <path
-        v-if="smartPathfindingObstacleSimulationFillPath"
+        v-if="overlay.obstacles.simulationFillPath"
         class="graphwar-killer__obstacle-fill graphwar-killer__obstacle-fill--simulation"
-        :d="smartPathfindingObstacleSimulationFillPath"
+        :d="overlay.obstacles.simulationFillPath"
       />
       <path
-        v-if="smartPathfindingObstacleRouteEdgePath"
+        v-if="overlay.obstacles.routeEdgePath"
         class="graphwar-killer__obstacle-edge graphwar-killer__obstacle-edge--route"
-        :d="smartPathfindingObstacleRouteEdgePath"
+        :d="overlay.obstacles.routeEdgePath"
       />
       <path
-        v-if="smartPathfindingObstacleSimulationEdgePath"
+        v-if="overlay.obstacles.simulationEdgePath"
         class="graphwar-killer__obstacle-edge graphwar-killer__obstacle-edge--simulation"
-        :d="smartPathfindingObstacleSimulationEdgePath"
+        :d="overlay.obstacles.simulationEdgePath"
       />
     </template>
-    <template v-if="smartCursorEnabled">
+    <template v-if="overlay.obstacles.smartCursorEnabled">
       <g
-        v-for="box in detectionBoxes"
+        v-for="box in overlay.detection.boxes"
         :key="`${keyPrefix}${box.id}`"
         class="graphwar-killer__detection-group"
       >
@@ -252,7 +302,7 @@ withDefaults(
           :class="[
             `graphwar-killer__detection--${box.kind}`,
             {
-              'graphwar-killer__detection--hovered': box.id === hoveredDetectedSoldierId,
+              'graphwar-killer__detection--hovered': box.id === overlay.detection.hoveredSoldierId,
             },
           ]"
           :cx="box.visualCenterX"
@@ -262,11 +312,11 @@ withDefaults(
       </g>
     </template>
     <g
-      v-if="detectionSoldierFlashActive"
+      v-if="overlay.detection.soldierFlashActive"
       class="graphwar-killer__detection-flash-group"
     >
       <circle
-        v-for="box in detectedSoldiers"
+        v-for="box in overlay.detection.soldierFlashBoxes"
         :key="`${keyPrefix}detection-flash-${box.id}`"
         class="graphwar-killer__detection-flash-circle"
         :cx="box.visualCenterX"
@@ -275,11 +325,11 @@ withDefaults(
       />
     </g>
     <g
-      v-if="oneClickClearHitFlashActive"
+      v-if="overlay.detection.oneClickClearHitFlashActive"
       class="graphwar-killer__detection-flash-group"
     >
       <circle
-        v-for="box in oneClickClearHitFlashSoldiers"
+        v-for="box in overlay.detection.oneClickClearHitFlashBoxes"
         :key="`${keyPrefix}one-click-clear-hit-flash-${box.id}`"
         class="graphwar-killer__detection-flash-circle graphwar-killer__detection-flash-circle--hit"
         :cx="box.visualCenterX"
@@ -288,24 +338,24 @@ withDefaults(
       />
     </g>
     <ellipse
-      v-if="obstacleBrushPreview"
+      v-if="overlay.obstacles.brushPreview"
       class="graphwar-killer__obstacle-brush-preview"
-      :class="{ 'graphwar-killer__obstacle-brush-preview--erase': obstacleBrushEraseEnabled }"
+      :class="{ 'graphwar-killer__obstacle-brush-preview--erase': overlay.obstacles.brushEraseEnabled }"
       :clip-path="`url(#${clipPathId})`"
-      :cx="obstacleBrushPreview.center.x"
-      :cy="obstacleBrushPreview.center.y"
-      :rx="obstacleBrushPreview.radiusX"
-      :ry="obstacleBrushPreview.radiusY"
+      :cx="overlay.obstacles.brushPreview.center.x"
+      :cy="overlay.obstacles.brushPreview.center.y"
+      :rx="overlay.obstacles.brushPreview.radiusX"
+      :ry="overlay.obstacles.brushPreview.radiusY"
     />
     <circle
-      v-if="boundsFirstPoint"
+      v-if="overlay.bounds.firstPoint"
       class="graphwar-killer__bounds-point"
-      :cx="boundsFirstPoint.x"
-      :cy="boundsFirstPoint.y"
+      :cx="overlay.bounds.firstPoint.x"
+      :cy="overlay.bounds.firstPoint.y"
       r="7"
     />
     <line
-      v-for="(segment, index) in pathLineSegments"
+      v-for="(segment, index) in overlay.path.lineSegments"
       :key="`${keyPrefix}path-line-${index}`"
       class="graphwar-killer__path-line"
       :x1="segment.x1"
@@ -314,7 +364,7 @@ withDefaults(
       :y2="segment.y2"
     />
     <line
-      v-for="(segment, index) in liveClickPreviewLineSegments"
+      v-for="(segment, index) in overlay.liveClickPreview.lineSegments"
       :key="`${keyPrefix}live-click-preview-line-${index}`"
       class="graphwar-killer__path-line graphwar-killer__path-line--live-click-preview"
       :x1="segment.x1"
@@ -323,31 +373,31 @@ withDefaults(
       :y2="segment.y2"
     />
     <line
-      v-if="smartPathfindingInProgress && smartPathfindingPreviewConnection"
+      v-if="overlay.pathfinding.inProgress && overlay.pathfinding.previewConnection"
       class="graphwar-killer__pathfinding-connection"
-      :x1="smartPathfindingPreviewConnection.x1"
-      :y1="smartPathfindingPreviewConnection.y1"
-      :x2="smartPathfindingPreviewConnection.x2"
-      :y2="smartPathfindingPreviewConnection.y2"
+      :x1="overlay.pathfinding.previewConnection.x1"
+      :y1="overlay.pathfinding.previewConnection.y1"
+      :x2="overlay.pathfinding.previewConnection.x2"
+      :y2="overlay.pathfinding.previewConnection.y2"
     />
     <polyline
-      v-if="smartPathfindingInProgress && smartPathfindingPreviewPathPoints"
+      v-if="overlay.pathfinding.inProgress && overlay.pathfinding.previewPathPoints"
       class="graphwar-killer__pathfinding-try-path"
-      :points="smartPathfindingPreviewPathPoints"
+      :points="overlay.pathfinding.previewPathPoints"
     />
     <circle
-      v-if="smartPathfindingInProgress && pathfindingOptimizationPreviewPoint"
+      v-if="overlay.pathfinding.inProgress && overlay.pathfinding.optimizationPreviewPoint"
       class="graphwar-killer__pathfinding-optimization-point"
-      :cx="pathfindingOptimizationPreviewPoint.x"
-      :cy="pathfindingOptimizationPreviewPoint.y"
-      :r="soldierMarkerRadius + 4"
+      :cx="overlay.pathfinding.optimizationPreviewPoint.x"
+      :cy="overlay.pathfinding.optimizationPreviewPoint.y"
+      :r="overlay.pathfinding.optimizationPreviewRadius"
     />
     <g
-      v-if="smartPathfindingInProgress"
+      v-if="overlay.pathfinding.inProgress"
       class="graphwar-killer__pathfinding-preview"
     >
       <line
-        v-for="(segment, index) in smartPathfindingPreviewAcceptedEdges"
+        v-for="(segment, index) in overlay.pathfinding.previewAcceptedEdges"
         :key="`${keyPrefix}pathfinding-preview-edge-${index}`"
         class="graphwar-killer__pathfinding-accepted-edge"
         :x1="segment.x1"
@@ -356,14 +406,14 @@ withDefaults(
         :y2="segment.y2"
       />
       <circle
-        v-if="smartPathfindingPreviewCurrentPoint"
+        v-if="overlay.pathfinding.previewCurrentPoint"
         class="graphwar-killer__pathfinding-current"
-        :cx="smartPathfindingPreviewCurrentPoint.x"
-        :cy="smartPathfindingPreviewCurrentPoint.y"
+        :cx="overlay.pathfinding.previewCurrentPoint.x"
+        :cy="overlay.pathfinding.previewCurrentPoint.y"
         r="4.2"
       />
       <circle
-        v-for="(point, index) in smartPathfindingPreviewPoints"
+        v-for="(point, index) in overlay.pathfinding.previewPoints"
         :key="`${keyPrefix}pathfinding-preview-${index}`"
         class="graphwar-killer__pathfinding-candidate"
         :cx="point.x"
@@ -372,58 +422,58 @@ withDefaults(
       />
     </g>
     <polyline
-      v-if="plottedCurvePoints"
+      v-if="overlay.trajectory.curvePoints"
       class="graphwar-killer__curve-line"
-      :points="plottedCurvePoints"
-      :style="{ stroke: trajectoryStrokeColor }"
+      :points="overlay.trajectory.curvePoints"
+      :style="{ stroke: overlay.trajectory.strokeColor }"
     />
     <polyline
-      v-if="liveClickPreviewCurvePoints"
+      v-if="overlay.liveClickPreview.curvePoints"
       class="graphwar-killer__curve-line graphwar-killer__curve-line--live-click-preview"
-      :points="liveClickPreviewCurvePoints"
+      :points="overlay.liveClickPreview.curvePoints"
     />
     <circle
-      v-if="smartPathfindingBlockedPoint"
+      v-if="overlay.pathfinding.blockedPoint"
       class="graphwar-killer__pathfinding-blocked-point"
-      :cx="smartPathfindingBlockedPoint.x"
-      :cy="smartPathfindingBlockedPoint.y"
-      :r="soldierSelectionRadius"
+      :cx="overlay.pathfinding.blockedPoint.x"
+      :cy="overlay.pathfinding.blockedPoint.y"
+      :r="overlay.path.selectionRadius"
     />
     <g
-      v-for="(point, index) in pathPixels"
+      v-for="(point, index) in overlay.path.points"
       :key="`${keyPrefix}point-${index}`"
     >
       <circle
         class="graphwar-killer__point"
         :class="{
           'graphwar-killer__point--start': index === 0,
-          'graphwar-killer__point--hovered': index === hoveredPathPointIndex,
+          'graphwar-killer__point--hovered': index === overlay.path.hoveredPointIndex,
         }"
         :cx="point.x"
         :cy="point.y"
-        :r="soldierSelectionRadius"
+        :r="overlay.path.selectionRadius"
       />
       <text
         class="graphwar-killer__point-label"
-        :x="point.x + soldierSelectionRadius + 4"
-        :y="point.y - soldierSelectionRadius - 4"
+        :x="point.x + overlay.path.selectionRadius + 4"
+        :y="point.y - overlay.path.selectionRadius - 4"
       >
-        {{ index === 0 ? selfLabel : index }}
+        {{ index === 0 ? overlay.path.selfLabel : index }}
       </text>
     </g>
-    <g v-if="liveClickPreviewPoint">
+    <g v-if="overlay.liveClickPreview.point">
       <circle
         class="graphwar-killer__point graphwar-killer__point--live-click-preview"
-        :cx="liveClickPreviewPoint.x"
-        :cy="liveClickPreviewPoint.y"
-        :r="soldierSelectionRadius"
+        :cx="overlay.liveClickPreview.point.x"
+        :cy="overlay.liveClickPreview.point.y"
+        :r="overlay.path.selectionRadius"
       />
       <text
         class="graphwar-killer__point-label"
-        :x="liveClickPreviewPoint.x + soldierSelectionRadius + 4"
-        :y="liveClickPreviewPoint.y - soldierSelectionRadius - 4"
+        :x="overlay.liveClickPreview.point.x + overlay.path.selectionRadius + 4"
+        :y="overlay.liveClickPreview.point.y - overlay.path.selectionRadius - 4"
       >
-        {{ liveClickPreviewLabel }}
+        {{ overlay.liveClickPreview.label }}
       </text>
     </g>
   </svg>

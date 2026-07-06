@@ -20,8 +20,8 @@ import {
   type GraphwarTrajectoryFormulaSettings,
   type GraphwarTrajectorySampleResult,
 } from "../formula/trajectory-sampling";
+import type { GraphwarPathfindingLineSegment } from "../pathfinding/graphwar-pathfinding-preview";
 import type { GraphwarSmartPathfindingSoldierTarget } from "../pathfinding/graphwar-targeting";
-import type { GraphwarPathfindingLineSegment } from "./use-graphwar-smart-pathfinding-session";
 import { formatVisibleTrajectoryPoints } from "./use-graphwar-trajectory-result";
 
 interface ReadonlyRef<T> {

@@ -26,7 +26,6 @@ import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screen
 import { useGraphwarSmartPathfindingRunWorkflow } from "./composables/use-graphwar-smart-pathfinding-run-workflow";
 import {
   useGraphwarSmartPathfindingSession,
-  type GraphwarPathfindingLineSegment,
   type SmartPathfindingPhase,
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
@@ -89,9 +88,13 @@ import {
   createGraphwarOneClickClearCandidates,
   createGraphwarOneClickClearHitCandidates,
 } from "./pathfinding/graphwar-one-click-clear-targets";
-import { mirrorPlaneGridPoint, planeGridCellCenterToImagePoint } from "./pathfinding/graphwar-pathfinding";
-import type { GraphwarPathfindingPreview, PlaneGridPoint } from "./pathfinding/graphwar-pathfinding";
+import type { GraphwarPathfindingPreview } from "./pathfinding/graphwar-pathfinding";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/graphwar-pathfinding-cache";
+import {
+  createGraphwarPathfindingPreviewSnapshot,
+  createGraphwarPathLineSegments,
+  type GraphwarPathfindingLineSegment,
+} from "./pathfinding/graphwar-pathfinding-preview";
 import {
   createGraphwarPathfindingRunner,
   isGraphwarPathfindingCancelledError,
@@ -1369,28 +1372,7 @@ const pathLineSegments = computed<GraphwarPathfindingLineSegment[]>(() => create
 
 /** 按路径点圆半径截短线段，避免线条穿过点心。 */
 function createPathLineSegments(points: readonly PixelPoint[]) {
-  const radius = soldierSelectionRadius.value;
-  const segments: GraphwarPathfindingLineSegment[] = [];
-  for (let index = 1; index < points.length; index += 1) {
-    const start = points[index - 1];
-    const end = points[index];
-    const deltaX = end.x - start.x;
-    const deltaY = end.y - start.y;
-    const distance = Math.hypot(deltaX, deltaY);
-    if (distance <= radius * 2) {
-      continue;
-    }
-
-    const offsetX = (deltaX / distance) * radius;
-    const offsetY = (deltaY / distance) * radius;
-    segments.push({
-      x1: start.x + offsetX,
-      y1: start.y + offsetY,
-      x2: end.x - offsetX,
-      y2: end.y - offsetY,
-    });
-  }
-  return segments;
+  return createGraphwarPathLineSegments(points, soldierSelectionRadius.value);
 }
 const smartPathfindingPreviewPathPoints = computed(() => formatSvgPathPoints(smartPathfindingPreviewPath.value));
 // 舞台 overlay 只应消费展示 DTO；业务规则和半径公式应由页面侧投影，避免子 Module 反向理解工作流。
@@ -2426,40 +2408,9 @@ function setSmartPathfindingPreviewConnection(startPoint: PixelPoint, targetPoin
   smartPathfindingSession.setPreviewConnection(startPoint, targetPoint);
 }
 
-/** 把共享寻路模块的图搜索快照投影回截图，用于搜索动画。 */
-function setSmartPathfindingPreview({
-  acceptedEdges,
-  bestPath,
-  candidates,
-  current,
-  mirrored,
-}: GraphwarPathfindingPreview) {
-  smartPathfindingSession.setSearchPreview({
-    acceptedEdges: acceptedEdges.map(([start, end]) =>
-      createPathLineSegment(
-        previewPlanePointToImagePoint(start, mirrored),
-        previewPlanePointToImagePoint(end, mirrored),
-      ),
-    ),
-    current: current ? previewPlanePointToImagePoint(current, mirrored) : undefined,
-    path: bestPath.map((point) => previewPlanePointToImagePoint(point, mirrored)),
-    points: candidates.map((point) => previewPlanePointToImagePoint(point, mirrored)),
-  });
-}
-
-/** 创建 SVG 线段 DTO。 */
-function createPathLineSegment(startPoint: PixelPoint, targetPoint: PixelPoint): GraphwarPathfindingLineSegment {
-  return {
-    x1: startPoint.x,
-    y1: startPoint.y,
-    x2: targetPoint.x,
-    y2: targetPoint.y,
-  };
-}
-
-/** 将搜索坐标系里的平面点投影成截图像素点。 */
-function previewPlanePointToImagePoint(point: PlaneGridPoint, mirrored: boolean) {
-  return planeGridCellCenterToImagePoint(mirrorPlaneGridPoint(point, mirrored), boundsRect.value);
+/** 搜索动画快照应统一投影到截图坐标后再交给 session 存储。 */
+function setSmartPathfindingPreview(preview: GraphwarPathfindingPreview) {
+  smartPathfindingSession.setSearchPreview(createGraphwarPathfindingPreviewSnapshot(preview, boundsRect.value));
 }
 
 /** 清理智能寻路相关视觉状态。 */

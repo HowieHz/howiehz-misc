@@ -1,21 +1,14 @@
 import { ref, type Ref } from "vue";
 
 import type { PixelPoint } from "../core/types";
+import {
+  createGraphwarPathfindingLineSegment,
+  type GraphwarPathfindingLineSegment,
+  type GraphwarPathfindingPreviewSnapshot,
+} from "../pathfinding/graphwar-pathfinding-preview";
 
 export type SmartPathfindingStatusKind = "info" | "success" | "warning" | "error";
 export type SmartPathfindingPhase = "optimize" | "search" | "trajectory";
-
-/** SVG 线段 DTO，避免模板里重复计算 x1/y1/x2/y2。 */
-export interface GraphwarPathfindingLineSegment {
-  /** 起点 x。 */
-  x1: number;
-  /** 终点 x。 */
-  x2: number;
-  /** 起点 y。 */
-  y1: number;
-  /** 终点 y。 */
-  y2: number;
-}
 
 interface GraphwarPathfindingRunnerCancellationAdapter {
   cancel(): void;
@@ -34,13 +27,6 @@ export interface GraphwarSmartPathfindingSessionOptions {
   getCancelledMessage: () => string;
   /** 进行中文案。 */
   getInProgressMessage: () => string;
-}
-
-export interface GraphwarSmartPathfindingPreviewSnapshot {
-  acceptedEdges: readonly GraphwarPathfindingLineSegment[];
-  current?: PixelPoint;
-  path: readonly PixelPoint[];
-  points: readonly PixelPoint[];
 }
 
 export interface GraphwarSmartPathfindingSessionController {
@@ -65,7 +51,7 @@ export interface GraphwarSmartPathfindingSessionController {
   setPhase: (phase: SmartPathfindingPhase) => void;
   setPreviewConnection: (startPoint: PixelPoint, targetPoint: PixelPoint) => void;
   setPreviewPath: (points: readonly PixelPoint[]) => void;
-  setSearchPreview: (snapshot: GraphwarSmartPathfindingPreviewSnapshot) => void;
+  setSearchPreview: (snapshot: GraphwarPathfindingPreviewSnapshot) => void;
   setStatus: (message: string, kind: SmartPathfindingStatusKind) => void;
   start: (message?: string) => number;
   status: Ref<string>;
@@ -183,10 +169,10 @@ export function useGraphwarSmartPathfindingSession(
   }
 
   function setPreviewConnection(startPoint: PixelPoint, targetPoint: PixelPoint) {
-    previewConnection.value = createPathLineSegment(startPoint, targetPoint);
+    previewConnection.value = createGraphwarPathfindingLineSegment(startPoint, targetPoint);
   }
 
-  function setSearchPreview(snapshot: GraphwarSmartPathfindingPreviewSnapshot) {
+  function setSearchPreview(snapshot: GraphwarPathfindingPreviewSnapshot) {
     previewAcceptedEdges.value = [...snapshot.acceptedEdges];
     previewCurrentPoint.value = snapshot.current;
     previewPoints.value = [...snapshot.points];
@@ -233,15 +219,5 @@ export function useGraphwarSmartPathfindingSession(
     status,
     statusKind,
     updateInProgressStatus,
-  };
-}
-
-/** 创建 SVG 线段 DTO。 */
-function createPathLineSegment(startPoint: PixelPoint, targetPoint: PixelPoint): GraphwarPathfindingLineSegment {
-  return {
-    x1: startPoint.x,
-    y1: startPoint.y,
-    x2: targetPoint.x,
-    y2: targetPoint.y,
   };
 }

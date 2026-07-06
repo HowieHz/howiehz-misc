@@ -13,6 +13,7 @@ import GraphwarSmartPathfindingPanel, {
   type GraphwarSmartPathfindingPanelModel,
 } from "./components/GraphwarSmartPathfindingPanel.vue";
 import { useGraphwarDebugActivation } from "./composables/use-graphwar-debug-activation";
+import { useGraphwarObstacleEditor } from "./composables/use-graphwar-obstacle-editor";
 import { useGraphwarPathState, type PathPointCoordinateAxis } from "./composables/use-graphwar-path-state";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
 import {
@@ -72,20 +73,8 @@ import type {
   ToolWorkflowMode,
   TransferStatus,
 } from "./core/types";
-import {
-  buildObstacleEdgePath,
-  buildObstacleFillPath,
-  countObstacleMaskComponents,
-  imagePointToPlaneGridPoint,
-  isPlayerColorPixel,
-  paintObstacleMaskDisk,
-  paintObstacleMaskStroke,
-} from "./detection/graphwar-detection";
-import type {
-  DetectedObstacleMap,
-  GraphwarDetectionBox,
-  GraphwarObjectsDetectionResult,
-} from "./detection/graphwar-detection";
+import { buildObstacleEdgePath, buildObstacleFillPath, isPlayerColorPixel } from "./detection/graphwar-detection";
+import type { GraphwarDetectionBox, GraphwarObjectsDetectionResult } from "./detection/graphwar-detection";
 import {
   createGraphwarDetectionRunner,
   isGraphwarDetectionCancelledError,
@@ -417,19 +406,11 @@ const detectionStatus = ref("");
 const detectionStatusKind = ref<DetectionStatusKind>("info");
 const detectionInProgress = ref(false);
 const detectedSoldiers = ref<DetectionBox[]>([]);
-const detectedObstacles = ref<DetectedObstacleMap>();
-const baselineDetectedObstacles = ref<DetectedObstacleMap>();
 const autoDetectionEnabled = ref(true);
 const smartCursorEnabled = ref(true);
 const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
-// 障碍笔刷状态只描述页面编辑手势；真正参与寻路的是编辑落地后的 detectedObstacles.mask。
 const obstacleBrushDiameterText = ref("30");
-const obstacleBrushEraseEnabled = ref(false);
-const obstacleBrushPointerPoint = ref<PixelPoint>();
-const obstacleBrushDragging = ref(false);
-const obstacleBrushLastPlanePoint = ref<PlaneGridPoint>();
-const obstacleEditsDirty = ref(false);
 const searchAnimationEnabled = ref(true);
 // 智能寻路和一键清图共用同一组运行状态、预览层和取消 token，避免两个异步任务同时回写页面。
 const smartPathfindingSession = useGraphwarSmartPathfindingSession({
@@ -466,6 +447,38 @@ const {
   oneClickClearHitFlashActive,
   oneClickClearHitFlashSoldiers,
 } = useGraphwarStageFeedback(detectedSoldiers);
+// 障碍编辑只应管理 mask、baseline、笔刷手势和延迟统计；页面继续负责模式分派和寻路语义。
+const {
+  applyDetectedObstacles,
+  brushDragging: obstacleBrushDragging,
+  brushEraseEnabled: obstacleBrushEraseEnabled,
+  brushPointerPoint: obstacleBrushPointerPoint,
+  clear: clearObstacleEditor,
+  clearInteractionState: clearObstacleBrushInteractionState,
+  dispose: disposeObstacleEditor,
+  editsDirty: obstacleEditsDirty,
+  finishBrushDrag: finishObstacleBrushDrag,
+  obstacles: detectedObstacles,
+  paintBrushAtPoint: paintObstacleBrushAtPoint,
+  resetEdits: resetObstacleEdits,
+  startBrushDrag: startObstacleBrushDrag,
+  toggleBrushErase: toggleObstacleBrushErase,
+  updateBrushPreview: updateObstacleBrushPreview,
+} = useGraphwarObstacleEditor({
+  boundsRect,
+  editRefreshDelayMs: obstacleBrushEditRefreshDelayMs,
+  getBrushDiameter: () =>
+    parsedObstacleBrushDiameter.value.ok ? parsedObstacleBrushDiameter.value.diameter : undefined,
+  getEditsAppliedMessage: (count) => locale.status.detection.obstacleEditsApplied(count),
+  getEditsClearedMessage: (count) => locale.status.detection.obstacleEditsCleared(count),
+  getUpdatingEditsMessage: () => locale.status.detection.updatingObstacleEdits,
+  invalidateObstacleCaches: invalidatePathfindingCaches,
+  prepareObstacleEdit: () => {
+    cancelSmartPathfinding(false);
+    clearSmartPathfindingStatus();
+  },
+  setStatus: setDetectionStatus,
+});
 // 调试启用流程只应管理长按状态和定时器；高级设置展开状态仍由页面持有。
 const {
   cancelHold: cancelDebugActivationHold,
@@ -493,7 +506,6 @@ let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let liveClickPreviewPointerFrame: number | undefined;
 let liveClickPreviewPendingPathPointIndex: number | undefined;
 let liveClickPreviewPendingPointerPoint: PixelPoint | undefined;
-let obstacleEditRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRunId = 0;
 
 const equationModes = computed(() => locale.equationModes);
@@ -1812,9 +1824,7 @@ onBeforeUnmount(() => {
   clearLiveClickPreviewPointerPoint();
   disposeDebugActivation();
   disposeStageFeedback();
-  if (obstacleEditRefreshTimer) {
-    clearTimeout(obstacleEditRefreshTimer);
-  }
+  disposeObstacleEditor();
   clearSmartPathfindingBlockedPoint();
 });
 
@@ -1987,17 +1997,11 @@ function clearDetections() {
 function clearDetectedGraphwarObjects() {
   invalidatePathfindingCaches();
   detectedSoldiers.value = [];
-  detectedObstacles.value = undefined;
-  baselineDetectedObstacles.value = undefined;
   clearDetectionSoldierFlash();
   clearOneClickClearHitFlash();
-  obstacleEditsDirty.value = false;
-  obstacleBrushPointerPoint.value = undefined;
-  obstacleBrushDragging.value = false;
-  obstacleBrushLastPlanePoint.value = undefined;
+  clearObstacleEditor();
   hoveredDetectedSoldierId.value = undefined;
   clearSmartPathfindingStatus();
-  clearObstacleEditRefreshTimer();
 }
 
 /** 开始一次新的检测运行，并让旧异步响应自动失效。 */
@@ -2246,12 +2250,7 @@ async function applyGraphwarObjectDetectionResult(
     if (flashBounds) {
       flashBoundsRect();
     }
-    detectedObstacles.value = result.obstacles;
-    baselineDetectedObstacles.value = cloneDetectedObstacleMap(result.obstacles);
-    obstacleEditsDirty.value = false;
-    obstacleBrushPointerPoint.value = undefined;
-    obstacleBrushDragging.value = false;
-    obstacleBrushLastPlanePoint.value = undefined;
+    applyDetectedObstacles(result.obstacles);
   });
   let completedAt = nowMs();
   const elapsed = () => formatElapsedDuration(completedAt - startedAt);
@@ -2692,24 +2691,6 @@ function handleGraphwarDetectionError(error: unknown, runId: number) {
   setDetectionStatus(locale.status.detection.failed(error instanceof Error ? error.message : String(error)), "error");
 }
 
-/** 深拷贝障碍 mask，作为用户编辑前的恢复基线。 */
-function cloneDetectedObstacleMap(obstacles: DetectedObstacleMap): DetectedObstacleMap {
-  return {
-    count: obstacles.count,
-    mask: new Uint8Array(obstacles.mask),
-  };
-}
-
-/** 清理障碍编辑后的延迟统计刷新。 */
-function clearObstacleEditRefreshTimer() {
-  if (!obstacleEditRefreshTimer) {
-    return;
-  }
-
-  clearTimeout(obstacleEditRefreshTimer);
-  obstacleEditRefreshTimer = undefined;
-}
-
 /** 切换自动识别；关闭后保留当前识别结果供用户继续编辑。 */
 function toggleAutoDetection() {
   autoDetectionEnabled.value = !autoDetectionEnabled.value;
@@ -2743,86 +2724,6 @@ function setObstacleBrushDiameterText(value: string) {
 /** 同步放大镜缩放文本，保留非法输入供校验提示展示。 */
 function setMagnifierZoomText(value: string) {
   magnifierZoomText.value = value;
-}
-
-/** 切换障碍笔刷添加/擦除模式。 */
-function toggleObstacleBrushErase() {
-  obstacleBrushEraseEnabled.value = !obstacleBrushEraseEnabled.value;
-}
-
-/** 将障碍 mask 恢复到自动识别后的基线状态。 */
-function resetObstacleEdits() {
-  const baseline = baselineDetectedObstacles.value;
-  if (!baseline) {
-    return;
-  }
-
-  cancelSmartPathfinding(false);
-  clearSmartPathfindingStatus();
-  clearObstacleEditRefreshTimer();
-  invalidatePathfindingCaches();
-  detectedObstacles.value = cloneDetectedObstacleMap(baseline);
-  obstacleEditsDirty.value = false;
-  setDetectionStatus(locale.status.detection.obstacleEditsCleared(baseline.count), "success");
-}
-
-/** 将鼠标位置吸附到 Graphwar 平面 cell 中心，作为笔刷预览点。 */
-function updateObstacleBrushPreview(point: PixelPoint) {
-  obstacleBrushPointerPoint.value = pointIsInsideBoundsRect(point, boundsRect.value)
-    ? planeGridCellCenterToImagePoint(imagePointToPlaneGridPoint(point, boundsRect.value), boundsRect.value)
-    : undefined;
-}
-
-/** 在障碍 mask 上绘制或擦除笔刷，并可连接上一点形成连续笔画。 */
-function paintObstacleBrushAtPoint(point: PixelPoint, connectFromLastPoint = false) {
-  const obstacleMap = detectedObstacles.value;
-  const brushDiameter = parsedObstacleBrushDiameter.value;
-  if (!obstacleMap || !brushDiameter.ok || !pointIsInsideBoundsRect(point, boundsRect.value)) {
-    obstacleBrushLastPlanePoint.value = undefined;
-    return false;
-  }
-
-  cancelSmartPathfinding(false);
-  clearSmartPathfindingStatus();
-  const center = imagePointToPlaneGridPoint(point, boundsRect.value);
-  obstacleBrushPointerPoint.value = planeGridCellCenterToImagePoint(center, boundsRect.value);
-  const brushValue = obstacleBrushEraseEnabled.value ? 0 : 1;
-  const previousCenter = connectFromLastPoint ? obstacleBrushLastPlanePoint.value : undefined;
-  const nextMask = previousCenter
-    ? paintObstacleMaskStroke(obstacleMap.mask, previousCenter, center, brushDiameter.diameter, brushValue)
-    : paintObstacleMaskDisk(obstacleMap.mask, center, brushDiameter.diameter, brushValue);
-  obstacleBrushLastPlanePoint.value = center;
-  if (nextMask === obstacleMap.mask) {
-    return false;
-  }
-
-  invalidatePathfindingCaches();
-  detectedObstacles.value = {
-    count: obstacleMap.count,
-    mask: nextMask,
-  };
-  obstacleEditsDirty.value = true;
-  scheduleObstacleEditRefresh();
-  return true;
-}
-
-/** 延迟刷新障碍连通域数量，合并连续笔刷操作。 */
-function scheduleObstacleEditRefresh() {
-  clearObstacleEditRefreshTimer();
-  setDetectionStatus(locale.status.detection.updatingObstacleEdits, "warning");
-  obstacleEditRefreshTimer = setTimeout(() => {
-    obstacleEditRefreshTimer = undefined;
-    const obstacles = detectedObstacles.value;
-    if (!obstacles) {
-      return;
-    }
-    const count = countObstacleMaskComponents(obstacles.mask);
-    detectedObstacles.value = {
-      count,
-      mask: obstacles.mask,
-    };
-    setDetectionStatus(locale.status.detection.obstacleEditsApplied(count), "success");
-  }, obstacleBrushEditRefreshDelayMs);
 }
 
 /** Step 公式不支持智能/一键清图，因为弹道和路径点语义不稳定。 */
@@ -2911,8 +2812,7 @@ function handleStagePointerDown(event: PointerEvent) {
       return;
     }
 
-    obstacleBrushDragging.value = true;
-    obstacleBrushLastPlanePoint.value = undefined;
+    startObstacleBrushDrag();
     stageRef.value?.setPointerCapture(event.pointerId);
     paintObstacleBrushAtPoint(point);
     return;
@@ -4171,9 +4071,7 @@ function handleStagePointerLeave() {
   hoveredDetectedSoldierId.value = undefined;
   hoveredPathPointIndex.value = undefined;
   draggingPathPointIndex.value = undefined;
-  obstacleBrushPointerPoint.value = undefined;
-  obstacleBrushDragging.value = false;
-  obstacleBrushLastPlanePoint.value = undefined;
+  clearObstacleBrushInteractionState();
 }
 
 /** 返回当前可见目标中被指针命中的士兵。 */
@@ -4279,9 +4177,7 @@ function handleStageContextMenu(event: MouseEvent) {
 
 /** 结束路径点拖拽，释放 pointer capture。 */
 function handleStagePointerUp(event: PointerEvent) {
-  if (obstacleBrushDragging.value) {
-    obstacleBrushDragging.value = false;
-    obstacleBrushLastPlanePoint.value = undefined;
+  if (finishObstacleBrushDrag()) {
     if (stageRef.value?.hasPointerCapture(event.pointerId)) {
       stageRef.value.releasePointerCapture(event.pointerId);
     }
@@ -4306,9 +4202,7 @@ function setToolMode(mode: ToolMode) {
   toolMode.value = mode;
   pointerPreviewPoint.value = undefined;
   clearLiveClickPreviewPointerPoint();
-  obstacleBrushPointerPoint.value = undefined;
-  obstacleBrushDragging.value = false;
-  obstacleBrushLastPlanePoint.value = undefined;
+  clearObstacleBrushInteractionState();
   hoveredDetectedSoldierId.value = undefined;
   hoveredPathPointIndex.value = undefined;
   if (mode !== "bounds") {

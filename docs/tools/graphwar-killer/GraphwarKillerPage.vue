@@ -18,6 +18,7 @@ import {
   type DetectionDebugTimingEntry,
   type SmartPathfindingDebugTimingEntry,
 } from "./composables/use-graphwar-debug-timings";
+import { useGraphwarLiveClickPreview } from "./composables/use-graphwar-live-click-preview";
 import { useGraphwarObstacleEditor } from "./composables/use-graphwar-obstacle-editor";
 import { useGraphwarPathPointEditing } from "./composables/use-graphwar-path-point-editing";
 import { useGraphwarPathState } from "./composables/use-graphwar-path-state";
@@ -29,10 +30,7 @@ import {
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
 import { useGraphwarStageFeedback } from "./composables/use-graphwar-stage-feedback";
-import {
-  formatVisibleTrajectoryPoints,
-  useGraphwarTrajectoryResult,
-} from "./composables/use-graphwar-trajectory-result";
+import { useGraphwarTrajectoryResult } from "./composables/use-graphwar-trajectory-result";
 import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint } from "./core/geometry";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
@@ -75,16 +73,8 @@ import {
   isGraphwarDetectionCancelledError,
 } from "./detection/graphwar-detection-runner";
 import type { GraphwarDetectionWorkerStage } from "./detection/graphwar-detection-runner";
-import {
-  createGraphwarTrajectoryFormulaContext,
-  sampleGraphwarExpressionTrajectoryWithStops,
-  sampleGraphwarFormulaTrajectory,
-  sampleGraphwarPathTrajectory,
-} from "./formula/trajectory-sampling";
-import type {
-  GraphwarTrajectoryCollisionSettings,
-  GraphwarTrajectorySampleResult,
-} from "./formula/trajectory-sampling";
+import { sampleGraphwarPathTrajectory } from "./formula/trajectory-sampling";
+import type { GraphwarTrajectoryCollisionSettings } from "./formula/trajectory-sampling";
 import type { GraphwarKillerLocale } from "./locale-types";
 import {
   GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS,
@@ -207,9 +197,6 @@ const pointerPreviewPoint = ref<PixelPoint>();
 const magnifierEnabled = ref(false);
 const magnifierZoomText = ref(String(graphwarToolDefaults.magnifierZoom));
 const magnifierPoint = ref<PixelPoint>();
-const liveClickPreviewEnabled = ref(false);
-const liveClickPreviewPointerPoint = ref<PixelPoint>();
-const liveClickPreviewPointerPathPointIndex = ref<number>();
 const toolMode = ref<ToolMode>("bounds");
 const toolWorkflowMode = ref<ToolWorkflowMode>("solver");
 const solverEquationMode = ref<EquationMode>("y");
@@ -419,9 +406,6 @@ const hoveredDetectedSoldierId = ref<string>();
 const copyStatus = ref<TransferStatus>("idle");
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-let liveClickPreviewPointerFrame: number | undefined;
-let liveClickPreviewPendingPathPointIndex: number | undefined;
-let liveClickPreviewPendingPointerPoint: PixelPoint | undefined;
 let detectionRunId = 0;
 
 const equationModes = computed(() => locale.equationModes);
@@ -929,6 +913,63 @@ const trajectoryCollisionSettings = computed<GraphwarTrajectoryCollisionSettings
     mask: obstacleMask,
   };
 });
+// 实时点击预览应集中悬停帧、点击落位模拟和临时轨迹采样；页面只提供当前规则入口。
+const {
+  clearPointerPoint: clearLiveClickPreviewPointerPoint,
+  curvePoints: liveClickPreviewCurvePoints,
+  dispose: disposeLiveClickPreview,
+  enabled: liveClickPreviewEnabled,
+  label: liveClickPreviewLabel,
+  lineSegments: liveClickPreviewLineSegments,
+  point: liveClickPreviewPoint,
+  refreshPointerPathPointIndex: refreshLiveClickPreviewPointerPathPointIndex,
+  schedulePointerPoint: scheduleLiveClickPreviewPointerPoint,
+  setPointerPoint: setLiveClickPreviewPointerPoint,
+} = useGraphwarLiveClickPreview({
+  geometry: {
+    boundsRect,
+    getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
+  },
+  getSelfLabel: () => locale.ui.point.svgSelfLabel,
+  interaction: {
+    draggingPathPointIndex,
+    getPathPointIndexAtPoint,
+    smartPathfindingInProgress,
+    toolMode,
+  },
+  path: {
+    createLineSegments: createPathLineSegments,
+    mappedPathPoints,
+    pathPixels,
+  },
+  settings: {
+    algorithmMode,
+    effectiveSmartPathfindingEnabled,
+    equationMode,
+    isEquationModeDisabled,
+    precisionValid: formulaInputPrecisionValid,
+    steepnessValid: formulaInputSteepnessValid,
+    toolWorkflowMode,
+  },
+  simulator: {
+    formulaText: simulatorFormulaText,
+    launchAngleRadians: simulatorLaunchAngleRadians,
+    parseDerivativeAsY: simulatorParseDerivativeAsY,
+    skipUnknownCharacters: simulatorSkipUnknownCharacters,
+  },
+  target: {
+    createMinimumForwardTargetPoint,
+    createSearchStartSoldierAimPoint,
+    createSmartPathfindingSoldierTarget,
+    getDetectedSoldierAtPoint,
+    getDetectionBoxCenter,
+    smartCursorEnabled,
+  },
+  trajectory: {
+    formulaSettings: graphwarTrajectoryFormulaSettings,
+    getCollisionSettings: () => trajectoryCollisionSettings.value,
+  },
+});
 const visibleBoundaryExpansionRect = computed<BoundsRect | undefined>(() => {
   if (
     (!smartCursorEnabled.value && !pathfindingObstacleEdgesActive.value) ||
@@ -1267,94 +1308,6 @@ const soldierSelectionRadius = computed(() => {
   );
 });
 const pathLineSegments = computed<GraphwarPathfindingLineSegment[]>(() => createPathLineSegments(pathPixels.value));
-const liveClickPreviewPoint = computed(() => {
-  const point = liveClickPreviewPointerPoint.value;
-  if (!liveClickPreviewEnabled.value || toolMode.value !== "path" || smartPathfindingInProgress.value || !point) {
-    return undefined;
-  }
-  if (draggingPathPointIndex.value !== undefined || liveClickPreviewPointerPathPointIndex.value !== undefined) {
-    return undefined;
-  }
-  return createLiveClickPreviewPoint(point);
-});
-const liveClickPreviewLineSegments = computed(() => {
-  const point = liveClickPreviewPoint.value;
-  const start = toolWorkflowMode.value === "simulator" ? undefined : pathPixels.value.at(-1);
-  if (!effectiveSmartPathfindingEnabled.value || !point || !start) {
-    return [];
-  }
-  return createPathLineSegments([start, point]);
-});
-const liveClickPreviewTrajectorySampleResult = computed<GraphwarTrajectorySampleResult | undefined>(() => {
-  const previewPoint = liveClickPreviewPoint.value;
-  const boundsResult = parsedBounds.value;
-  if (!previewPoint || !boundsResult.ok || effectiveSmartPathfindingEnabled.value) {
-    return undefined;
-  }
-
-  if (toolWorkflowMode.value === "simulator") {
-    if (!simulatorFormulaText.value.trim()) {
-      return undefined;
-    }
-
-    return sampleGraphwarExpressionTrajectoryWithStops({
-      bounds: boundsResult.bounds,
-      boundsRect: boundsRect.value,
-      collision: trajectoryCollisionSettings.value,
-      collectVisiblePixels: true,
-      equation: equationMode.value,
-      expression: simulatorFormulaText.value,
-      launchAngleRadians: simulatorLaunchAngleRadians.value,
-      parser: {
-        parseDerivativeAsY: simulatorParseDerivativeAsY.value,
-        skipUnknownCharacters: simulatorSkipUnknownCharacters.value,
-      },
-      soldierCenter: imageToGraphPoint(previewPoint, boundsResult.bounds, boundsRect.value),
-    });
-  }
-
-  if (
-    pathPixels.value.length === 0 ||
-    !parsedPrecision.value.ok ||
-    (algorithmMode.value === "step" && !parsedSteepness.value.ok) ||
-    (algorithmMode.value === "abs" && equationMode.value === "ddy") ||
-    isEquationModeDisabled(equationMode.value)
-  ) {
-    return undefined;
-  }
-
-  const previewPathPoints = [
-    ...mappedPathPoints.value,
-    imageToGraphPoint(previewPoint, boundsResult.bounds, boundsRect.value),
-  ];
-  const context = createGraphwarTrajectoryFormulaContext({
-    bounds: boundsResult.bounds,
-    points: previewPathPoints,
-    settings: graphwarTrajectoryFormulaSettings.value,
-    soldierCenter: previewPathPoints[0],
-  });
-  if (context.formulaPoints.length < 2) {
-    return undefined;
-  }
-
-  return sampleGraphwarFormulaTrajectory({
-    bounds: boundsResult.bounds,
-    boundsRect: boundsRect.value,
-    collision: trajectoryCollisionSettings.value,
-    collectVisiblePixels: true,
-    context,
-  });
-});
-const liveClickPreviewCurvePoints = computed(() => {
-  const result = liveClickPreviewTrajectorySampleResult.value;
-  return result ? formatVisibleTrajectoryPoints(result.visiblePixels, result.obstacleHitIndex) : "";
-});
-const liveClickPreviewLabel = computed(() => {
-  if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {
-    return locale.ui.point.svgSelfLabel;
-  }
-  return String(pathPixels.value.length);
-});
 
 /** 按路径点圆半径截短线段，避免线条穿过点心。 */
 function createPathLineSegments(points: readonly PixelPoint[]) {
@@ -1601,55 +1554,12 @@ onBeforeUnmount(() => {
   if (detectionRefreshTimer) {
     clearTimeout(detectionRefreshTimer);
   }
-  clearLiveClickPreviewPointerPoint();
+  disposeLiveClickPreview();
   disposeDebugActivation();
   disposeStageFeedback();
   disposeObstacleEditor();
   clearSmartPathfindingBlockedPoint();
 });
-
-/** 高频 pointermove 只保留最新落点，每个浏览器绘制帧最多触发一次轨迹预览重算。 */
-function scheduleLiveClickPreviewPointerPoint(point: PixelPoint, pathPointIndex: number | undefined) {
-  liveClickPreviewPendingPointerPoint = point;
-  liveClickPreviewPendingPathPointIndex = pathPointIndex;
-  if (liveClickPreviewPointerFrame !== undefined) {
-    return;
-  }
-
-  liveClickPreviewPointerFrame = requestAnimationFrame(() => {
-    const point = liveClickPreviewPendingPointerPoint;
-    const pathPointIndex = liveClickPreviewPendingPathPointIndex;
-    liveClickPreviewPointerFrame = undefined;
-    liveClickPreviewPendingPointerPoint = undefined;
-    liveClickPreviewPendingPathPointIndex = undefined;
-    liveClickPreviewPointerPoint.value = point;
-    liveClickPreviewPointerPathPointIndex.value = pathPointIndex;
-  });
-}
-
-/** 清理悬停预览时取消待执行帧，避免离开舞台或切模式后旧落点回写。 */
-function clearLiveClickPreviewPointerPoint() {
-  liveClickPreviewPendingPointerPoint = undefined;
-  liveClickPreviewPendingPathPointIndex = undefined;
-  liveClickPreviewPointerPoint.value = undefined;
-  liveClickPreviewPointerPathPointIndex.value = undefined;
-  if (liveClickPreviewPointerFrame !== undefined) {
-    cancelAnimationFrame(liveClickPreviewPointerFrame);
-    liveClickPreviewPointerFrame = undefined;
-  }
-}
-
-/** 路径点或点半径变化时刷新命中缓存，保持悬停预览和当前路径状态一致。 */
-function refreshLiveClickPreviewPointerPathPointIndex() {
-  liveClickPreviewPendingPathPointIndex =
-    liveClickPreviewPendingPointerPoint === undefined
-      ? undefined
-      : getPathPointIndexAtPoint(liveClickPreviewPendingPointerPoint);
-  liveClickPreviewPointerPathPointIndex.value =
-    liveClickPreviewPointerPoint.value === undefined
-      ? undefined
-      : getPathPointIndexAtPoint(liveClickPreviewPointerPoint.value);
-}
 
 watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTopRatioText], () => {
   clearSmartPathfindingStatus();
@@ -2197,15 +2107,13 @@ function handleStagePointerDown(event: PointerEvent) {
 
   clearLiveClickPreviewPointerPoint();
   if (smartPathfindingInProgress.value) {
-    liveClickPreviewPointerPoint.value = point;
-    liveClickPreviewPointerPathPointIndex.value = getPathPointIndexAtPoint(point);
+    setLiveClickPreviewPointerPoint(point, getPathPointIndexAtPoint(point));
     updateSmartPathfindingInProgressStatus();
     return;
   }
 
   const pathPointIndex = getPathPointIndexAtPoint(point);
-  liveClickPreviewPointerPoint.value = point;
-  liveClickPreviewPointerPathPointIndex.value = pathPointIndex;
+  setLiveClickPreviewPointerPoint(point, pathPointIndex);
   if (pathPointIndex !== undefined) {
     draggingPathPointIndex.value = pathPointIndex;
     hoveredPathPointIndex.value = pathPointIndex;
@@ -2401,48 +2309,6 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
   });
   finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
   return true;
-}
-
-/** 计算实时点击预览的落位点；只模拟左键点击会选择的目标，不触发寻路或状态写入。 */
-function createLiveClickPreviewPoint(point: PixelPoint) {
-  if (!parsedBounds.value.ok) {
-    return undefined;
-  }
-
-  const selectedSoldier = smartCursorEnabled.value ? getDetectedSoldierAtPoint(point) : undefined;
-  if (!selectedSoldier) {
-    return createLiveManualClickPreviewPoint(point);
-  }
-  if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {
-    return createLiveManualClickPreviewPoint(getDetectionBoxCenter(selectedSoldier));
-  }
-
-  const startPoint = pathPixels.value.at(-1);
-  if (!startPoint) {
-    return undefined;
-  }
-  const targetPoint = effectiveSmartPathfindingEnabled.value
-    ? createSmartPathfindingSoldierTarget(startPoint, selectedSoldier)?.targetPoint
-    : createSearchStartSoldierAimPoint(startPoint, selectedSoldier);
-  return targetPoint ? createLiveManualClickPreviewPoint(targetPoint) : undefined;
-}
-
-/** 复刻 appendPathPoint 的同步落位规则，避免实时预览改动真实路径和提示状态。 */
-function createLiveManualClickPreviewPoint(point: PixelPoint) {
-  if (!parsedBounds.value.ok) {
-    return undefined;
-  }
-  if (toolWorkflowMode.value === "simulator") {
-    return normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, undefined, 0);
-  }
-
-  const targetPoint = pathPixels.value.length > 0 ? createMinimumForwardTargetPoint(point) : point;
-  if (!targetPoint) {
-    return undefined;
-  }
-  return pathPixels.value.length > 0
-    ? targetPoint
-    : normalizePathPoint(targetPoint, boundsRect.value, parsedBounds.value.bounds, undefined, 0);
 }
 
 /** 一键清图：从当前路径尾部出发，完整遍历 x 单调可达状态并追加当前模型下击杀最多的路径。 */

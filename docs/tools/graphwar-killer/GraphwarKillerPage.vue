@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import GraphwarActionPanel from "./components/GraphwarActionPanel.vue";
 import GraphwarAdvancedSettingsPanel, {
@@ -15,9 +15,9 @@ import GraphwarSmartPathfindingPanel, {
 import { useGraphwarDebugActivation } from "./composables/use-graphwar-debug-activation";
 import {
   useGraphwarDebugTimings,
-  type DetectionDebugTimingEntry,
   type SmartPathfindingDebugTimingEntry,
 } from "./composables/use-graphwar-debug-timings";
+import { useGraphwarDetectionWorkflow, type DetectionStatusKind } from "./composables/use-graphwar-detection-workflow";
 import { useGraphwarLiveClickPreview } from "./composables/use-graphwar-live-click-preview";
 import { useGraphwarObstacleEditor } from "./composables/use-graphwar-obstacle-editor";
 import { useGraphwarPathPointEditing } from "./composables/use-graphwar-path-point-editing";
@@ -67,12 +67,7 @@ import type {
   TransferStatus,
 } from "./core/types";
 import { buildObstacleEdgePath, buildObstacleFillPath, isPlayerColorPixel } from "./detection/graphwar-detection";
-import type { GraphwarDetectionBox, GraphwarObjectsDetectionResult } from "./detection/graphwar-detection";
-import {
-  createGraphwarDetectionRunner,
-  isGraphwarDetectionCancelledError,
-} from "./detection/graphwar-detection-runner";
-import type { GraphwarDetectionWorkerStage } from "./detection/graphwar-detection-runner";
+import type { GraphwarDetectionBox } from "./detection/graphwar-detection";
 import { sampleGraphwarPathTrajectory } from "./formula/trajectory-sampling";
 import type { GraphwarTrajectoryCollisionSettings } from "./formula/trajectory-sampling";
 import type { GraphwarKillerLocale } from "./locale-types";
@@ -148,8 +143,6 @@ type ParsedObstacleTolerances =
   | { ok: false; message: string };
 /** 寻路模式；auto-graph 保留为待重写的禁用入口。 */
 type PathfindingMode = "off" | "smart" | "auto-graph";
-/** 识别状态等级，与面板标题和智能寻路状态样式对齐。 */
-type DetectionStatusKind = "info" | "success" | "warning" | "error";
 /** 截图上的检测框，坐标均为图片像素。 */
 type DetectionBox = GraphwarDetectionBox;
 /** 智能寻路构建结果；cacheHit 只表示完整结果缓存，不混淆 route mask/可视图 cache。 */
@@ -220,8 +213,6 @@ const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const advancedSettingsVisible = ref(false);
-const detectionStatusWarning = ref("");
-const detectionStatusWarningTitle = ref("");
 const simulatorSkipUnknownCharacters = ref(true);
 const simulatorParseDerivativeAsY = ref(true);
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
@@ -281,15 +272,10 @@ const {
   onImageApplied: handleAppliedScreenshot,
   onImageLoaded: handleLoadedScreenshot,
 });
-const graphwarDetectionRunner = createGraphwarDetectionRunner();
 const graphwarPathfindingRunner = createGraphwarPathfindingRunner();
-// 识别状态保留 baseline，用于障碍编辑后仍能恢复自动识别出的原始 mask。
-const detectionStatus = ref("");
-const detectionStatusKind = ref<DetectionStatusKind>("info");
-const detectionInProgress = ref(false);
+// 识别结果应由页面持有，供舞台投影、目标过滤、友方障碍和一键清图共享。
 const detectedSoldiers = ref<DetectionBox[]>([]);
-const autoDetectionEnabled = ref(true);
-const smartCursorEnabled = ref(true);
+const hoveredDetectedSoldierId = ref<string>();
 const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
 const obstacleBrushDiameterText = ref("30");
@@ -382,6 +368,58 @@ const {
   },
   setStatus: setDetectionStatus,
 });
+// 检测 workflow 应持有异步运行、状态绘制、debounce 和 worker 生命周期；跨 workflow 副作用由页面注入。
+const detectionWorkflow = useGraphwarDetectionWorkflow({
+  boundsRect,
+  debug: {
+    createTimingEntriesFromWorker: createDetectionDebugTimingEntriesFromWorker,
+    finishTimings: finishDetectionDebugTimings,
+    measureStage: measureDetectionDebugStage,
+  },
+  detectedSoldiers,
+  effects: {
+    applyDetectedObstacles,
+    clearDetectedObjectSideEffects: () => {
+      clearDetectionSoldierFlash();
+      clearOneClickClearHitFlash();
+      clearObstacleEditor();
+      hoveredDetectedSoldierId.value = undefined;
+    },
+    clearSmartPathfindingStatus,
+    flashBoundsRect,
+    flashDetectedSoldiers,
+    invalidatePathfindingCaches,
+    onAutoBoundsDetected: (edgeRect) => {
+      boundsRect.value = edgeRect;
+      invalidatePathfindingCaches();
+      boundsFirstPoint.value = undefined;
+      pointerPreviewPoint.value = undefined;
+    },
+    onSmartCursorDisabled: () => {
+      hoveredDetectedSoldierId.value = undefined;
+    },
+    setToolModeToPath: () => {
+      toolMode.value = "path";
+    },
+  },
+  formatElapsedDuration,
+  getLocale: () => locale,
+  getSettings: () => parsedDetectionSettings.value,
+  image: {
+    canSchedule: () => Boolean(imageUrl.value),
+    getImageData: getImageDataFromCurrentImage,
+    isReady: () => Boolean(imageRef.value && imageUrl.value),
+  },
+});
+const {
+  autoDetectionEnabled,
+  inProgress: detectionInProgress,
+  smartCursorEnabled,
+  status: detectionStatus,
+  statusKind: detectionStatusKind,
+  statusWarning: detectionStatusWarning,
+  statusWarningTitle: detectionStatusWarningTitle,
+} = detectionWorkflow;
 // 调试启用流程只应管理长按状态和定时器；高级设置展开状态仍由页面持有。
 const {
   cancelHold: cancelDebugActivationHold,
@@ -402,11 +440,8 @@ const pathfindingObstacleEdgesActive = computed(() => effectiveSmartPathfindingE
 const blocksFriendlyFireTargets = computed(
   () => pathfindingObstacleEdgesActive.value && !friendlyFireEnabled.value && pathPixels.value.length > 0,
 );
-const hoveredDetectedSoldierId = ref<string>();
 const copyStatus = ref<TransferStatus>("idle");
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
-let detectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-let detectionRunId = 0;
 
 const equationModes = computed(() => locale.equationModes);
 const toolWorkflowModes = computed(() => locale.toolWorkflowModes);
@@ -1545,14 +1580,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("paste", handlePaste);
-  graphwarDetectionRunner.close();
+  detectionWorkflow.dispose();
   graphwarPathfindingRunner.close();
   cancelSmartPathfinding(false);
   if (copyStatusTimer) {
     clearTimeout(copyStatusTimer);
-  }
-  if (detectionRefreshTimer) {
-    clearTimeout(detectionRefreshTimer);
   }
   disposeLiveClickPreview();
   disposeDebugActivation();
@@ -1677,55 +1709,17 @@ function handleLoadedScreenshot() {
 
 /** 清除自动识别的士兵标记。 */
 function clearDetections() {
-  detectionRunId += 1;
-  detectionInProgress.value = false;
-  setDetectionStatus("", "info");
-  clearDetectedGraphwarObjects();
-}
-
-/** 清除识别对象和依赖缓存，并保留检测状态文字。 */
-function clearDetectedGraphwarObjects() {
-  invalidatePathfindingCaches();
-  detectedSoldiers.value = [];
-  clearDetectionSoldierFlash();
-  clearOneClickClearHitFlash();
-  clearObstacleEditor();
-  hoveredDetectedSoldierId.value = undefined;
-  clearSmartPathfindingStatus();
-}
-
-/** 开始一次新的检测运行，并让旧异步响应自动失效。 */
-function beginDetectionRun() {
-  detectionRunId += 1;
-  detectionInProgress.value = true;
-  return detectionRunId;
+  detectionWorkflow.clear();
 }
 
 /** 判断异步检测回调是否仍属于当前运行。 */
 function isActiveDetectionRun(runId: number) {
-  return runId === detectionRunId;
-}
-
-/** 只结束当前检测运行，避免旧任务覆盖新任务状态。 */
-function finishDetectionRun(runId: number) {
-  if (isActiveDetectionRun(runId)) {
-    detectionInProgress.value = false;
-  }
+  return detectionWorkflow.isActiveRun(runId);
 }
 
 /** 取消当前检测任务，并按调用场景决定是否显示取消提示。 */
 function cancelDetection(showStatus: boolean) {
-  if (!detectionInProgress.value) {
-    return false;
-  }
-
-  detectionRunId += 1;
-  graphwarDetectionRunner.cancel();
-  detectionInProgress.value = false;
-  if (showStatus) {
-    setDetectionStatus(locale.status.detection.cancelled, "warning");
-  }
-  return true;
+  return detectionWorkflow.cancel(showStatus);
 }
 
 /** 展开或折叠高级设置面板。 */
@@ -1735,256 +1729,32 @@ function toggleAdvancedSettings() {
 
 /** 设置检测状态主文案，并清掉上一轮警告详情。 */
 function setDetectionStatus(message: string, kind: DetectionStatusKind) {
-  detectionStatus.value = message;
-  detectionStatusKind.value = kind;
-  detectionStatusWarning.value = "";
-  detectionStatusWarningTitle.value = "";
-}
-
-/** 将 Worker fallback 等非致命警告附加到检测状态上。 */
-function setDetectionStatusWarnings(warnings: NonNullable<GraphwarObjectsDetectionResult["warnings"]> | undefined) {
-  if (!warnings?.length) {
-    return;
-  }
-
-  detectionStatusWarning.value = locale.status.detection.partialWarning;
-  detectionStatusWarningTitle.value = warnings
-    .map((warning) => locale.status.detection.warningTitle(warning))
-    .join("\n");
-}
-
-/** 等待检测状态渲染到页面，让长耗时阶段前用户能看到进度。 */
-function waitForDetectionStatusPaint() {
-  return new Promise<void>((resolve) => {
-    requestAnimationFrame(() => resolve());
-  });
-}
-
-/** 展示检测阶段状态，并在绘制后确认任务仍然有效。 */
-async function showDetectionStage(runId: number, message: string) {
-  if (!isActiveDetectionRun(runId)) {
-    return false;
-  }
-  setDetectionStatus(`${message}${locale.status.detection.stopSuffix}`, "warning");
-  await nextTick();
-  await waitForDetectionStatusPaint();
-  return isActiveDetectionRun(runId);
+  detectionWorkflow.setStatus(message, kind);
 }
 
 /** 延迟重新识别，合并连续设置变化，避免每次输入都立即读像素。 */
 function scheduleGraphwarObjectDetection() {
-  if (!imageUrl.value || !autoDetectionEnabled.value) {
-    return;
-  }
-  if (detectionRefreshTimer) {
-    clearTimeout(detectionRefreshTimer);
-  }
-  detectionRefreshTimer = setTimeout(() => {
-    detectionRefreshTimer = undefined;
-    void detectGraphwarObjectsInCurrentBounds();
-  }, 180);
-}
-
-/** 收敛截图读取、像素读取和阈值校验；后续检测入口只处理识别策略。 */
-function getGraphwarDetectionInput(timings: DetectionDebugTimingEntry[]) {
-  if (!imageRef.value || !imageUrl.value) {
-    setDetectionStatus(locale.status.detection.uploadFirst, "error");
-    return undefined;
-  }
-
-  const imageData = measureDetectionDebugStage(timings, "preparing-pixels", () => getImageDataFromCurrentImage());
-  if (!imageData) {
-    setDetectionStatus(locale.status.detection.noPixels, "error");
-    return undefined;
-  }
-  const detectionSettings = parsedDetectionSettings.value;
-  if (!detectionSettings.ok) {
-    setDetectionStatus(detectionSettings.message, "error");
-    return undefined;
-  }
-  return {
-    imageData,
-    soldierSettings: {
-      candidateTopRatio: detectionSettings.candidateTopRatio,
-      maximumSoldierCount: detectionSettings.maximumSoldierCount,
-      templateMatchingWorkerCount: detectionSettings.templateMatchingWorkerCount,
-    },
-    thresholds: {
-      minArea: detectionSettings.minArea,
-    },
-  };
+  detectionWorkflow.schedule();
 }
 
 /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
 async function detectGraphwarObjects() {
-  const runId = beginDetectionRun();
-  const startedAt = nowMs();
-  const timings: DetectionDebugTimingEntry[] = [];
-  let debugTimingsFinalized = false;
-  try {
-    if (!(await showDetectionStage(runId, locale.status.detection.preparingPixels))) {
-      return;
-    }
-    const detectionInput = getGraphwarDetectionInput(timings);
-    if (!detectionInput || !isActiveDetectionRun(runId)) {
-      return;
-    }
-
-    const result = await graphwarDetectionRunner.detectAuto(
-      {
-        imageData: detectionInput.imageData,
-        soldierSettings: detectionInput.soldierSettings,
-        thresholds: detectionInput.thresholds,
-      },
-      {
-        onStage: (stage) => {
-          void showDetectionWorkerStage(runId, stage);
-        },
-        onTimings: (workerTimings) => {
-          timings.push(...createDetectionDebugTimingEntriesFromWorker(workerTimings));
-        },
-      },
-    );
-    if (!isActiveDetectionRun(runId)) {
-      return;
-    }
-    if (!result.edgeRect || !result.objects) {
-      clearDetectedGraphwarObjects();
-      setDetectionStatus(locale.status.detection.noBounds, "error");
-      return;
-    }
-
-    boundsRect.value = result.edgeRect;
-    invalidatePathfindingCaches();
-    boundsFirstPoint.value = undefined;
-    pointerPreviewPoint.value = undefined;
-    await applyGraphwarObjectDetectionResult(result.objects, "auto", runId, true, startedAt, timings);
-    debugTimingsFinalized = true;
-    if (!isActiveDetectionRun(runId)) {
-      return;
-    }
-    toolMode.value = "path";
-  } catch (error) {
-    handleGraphwarDetectionError(error, runId);
-  } finally {
-    if (!debugTimingsFinalized) {
-      finishDetectionDebugTimings(runId, startedAt, timings);
-    }
-    finishDetectionRun(runId);
-  }
+  await detectionWorkflow.detect();
 }
 
 /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
 async function detectGraphwarObjectsInCurrentBounds() {
-  const runId = beginDetectionRun();
-  const startedAt = nowMs();
-  const timings: DetectionDebugTimingEntry[] = [];
-  let debugTimingsFinalized = false;
-  try {
-    if (!(await showDetectionStage(runId, locale.status.detection.preparingPixels))) {
-      return;
-    }
-    const detectionInput = getGraphwarDetectionInput(timings);
-    if (!detectionInput || !isActiveDetectionRun(runId)) {
-      return;
-    }
-
-    const result = await graphwarDetectionRunner.detectObjectsInBounds(
-      {
-        edgeRect: boundsRect.value,
-        imageData: detectionInput.imageData,
-        soldierSettings: detectionInput.soldierSettings,
-        thresholds: detectionInput.thresholds,
-      },
-      {
-        onStage: (stage) => {
-          void showDetectionWorkerStage(runId, stage);
-        },
-        onTimings: (workerTimings) => {
-          timings.push(...createDetectionDebugTimingEntriesFromWorker(workerTimings));
-        },
-      },
-    );
-    await applyGraphwarObjectDetectionResult(result, "current", runId, false, startedAt, timings);
-    debugTimingsFinalized = true;
-  } catch (error) {
-    handleGraphwarDetectionError(error, runId);
-  } finally {
-    if (!debugTimingsFinalized) {
-      finishDetectionDebugTimings(runId, startedAt, timings);
-    }
-    finishDetectionRun(runId);
-  }
-}
-
-/** 将 Worker 返回的士兵/障碍识别结果写回页面状态。 */
-async function applyGraphwarObjectDetectionResult(
-  result: GraphwarObjectsDetectionResult,
-  source: "auto" | "current",
-  runId: number,
-  flashBounds = false,
-  startedAt = nowMs(),
-  timings: DetectionDebugTimingEntry[] = [],
-) {
-  clearSmartPathfindingStatus();
-  if (!isActiveDetectionRun(runId)) {
-    return;
-  }
-  if (!(await showDetectionStage(runId, locale.status.detection.updatingResults))) {
-    return;
-  }
-  measureDetectionDebugStage(timings, "updating-results", () => {
-    invalidatePathfindingCaches();
-    detectedSoldiers.value = result.soldiers;
-    flashDetectedSoldiers();
-    if (flashBounds) {
-      flashBoundsRect();
-    }
-    applyDetectedObstacles(result.obstacles);
-  });
-  let completedAt = nowMs();
-  const elapsed = () => formatElapsedDuration(completedAt - startedAt);
-  measureDetectionDebugStage(timings, "setting-status", () => {
-    completedAt = nowMs();
-    setDetectionStatus(
-      source === "auto"
-        ? locale.status.detection.detectedWithAutoBounds(detectedSoldiers.value.length, elapsed())
-        : locale.status.detection.detectedCurrentBounds(detectedSoldiers.value.length, elapsed()),
-      "success",
-    );
-    setDetectionStatusWarnings(result.warnings);
-    completedAt = nowMs();
-  });
-  finishDetectionDebugTimings(runId, startedAt, timings, completedAt);
-}
-
-/** 将 Worker 阶段枚举映射成用户可读的检测进度。 */
-async function showDetectionWorkerStage(runId: number, stage: GraphwarDetectionWorkerStage) {
-  const message =
-    stage === "detecting-bounds" ? locale.status.detection.detectingBounds : locale.status.detection.detectingObjects;
-  await showDetectionStage(runId, message);
-}
-
-/** 只展示当前检测运行的真实错误，忽略取消造成的预期异常。 */
-function handleGraphwarDetectionError(error: unknown, runId: number) {
-  if (!isActiveDetectionRun(runId) || isGraphwarDetectionCancelledError(error)) {
-    return;
-  }
-
-  setDetectionStatus(locale.status.detection.failed(error instanceof Error ? error.message : String(error)), "error");
+  await detectionWorkflow.detectInCurrentBounds();
 }
 
 /** 切换自动识别；关闭后保留当前识别结果供用户继续编辑。 */
 function toggleAutoDetection() {
-  autoDetectionEnabled.value = !autoDetectionEnabled.value;
+  detectionWorkflow.toggleAutoDetection();
 }
 
 /** 切换智能光标；关闭时清掉士兵悬停，避免残留高亮。 */
 function toggleSmartCursor() {
-  smartCursorEnabled.value = !smartCursorEnabled.value;
-  if (!smartCursorEnabled.value) {
-    hoveredDetectedSoldierId.value = undefined;
-  }
+  detectionWorkflow.toggleSmartCursor();
 }
 
 /** 切换智能寻路，并取消当前异步寻路任务。 */

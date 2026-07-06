@@ -104,16 +104,11 @@ interface GraphwarDebugTimingsOptions {
 }
 
 export interface GraphwarDebugTimingsController {
-  /** 聚合一键清图搜索内部重复阶段耗时。 */
-  addOneClickClearSearchDebugTiming: (
+  /** 追加并整理一键清图 Worker 返回的搜索内部耗时。 */
+  appendOneClickClearSearchWorkerTimings: (
     timings: SmartPathfindingDebugTimingEntry[],
-    timing: GraphwarOneClickClearDebugTiming,
+    workerTimings: readonly GraphwarOneClickClearDebugTiming[],
   ) => void;
-  /** 将一键清图 route mask cache 耗时映射到页面阶段。 */
-  addOneClickClearRouteMaskDebugTiming: (
-    timings: SmartPathfindingDebugTimingEntry[],
-    timing: GraphwarOneClickClearDebugTiming,
-  ) => boolean;
   /** 追加智能寻路 worker 返回的阶段耗时。 */
   addSmartPathfindingWorkerTimings: (
     timings: SmartPathfindingDebugTimingEntry[] | undefined,
@@ -140,12 +135,6 @@ export interface GraphwarDebugTimingsController {
     timings: readonly SmartPathfindingDebugTimingEntry[],
     completedAt?: number,
   ) => void;
-  /** 在指定阶段前插入调试耗时。 */
-  insertDebugTimingsBeforeLastStage: (
-    timings: SmartPathfindingDebugTimingEntry[],
-    stage: SmartPathfindingDebugStage,
-    insertedTimings: readonly SmartPathfindingDebugTimingEntry[],
-  ) => void;
   /** 包装页面侧检测阶段计时。 */
   measureDetectionDebugStage: <TResult>(
     timings: DetectionDebugTimingEntry[],
@@ -166,14 +155,6 @@ export interface GraphwarDebugTimingsController {
   ) => Promise<TResult>;
   /** 智能寻路调试耗时展示行。 */
   smartPathfindingDebugTimingRows: ComputedRef<SmartPathfindingDebugTimingRow[]>;
-  /** 从最近指定阶段扣除耗时。 */
-  subtractLastDebugStageElapsed: (
-    timings: SmartPathfindingDebugTimingEntry[],
-    stage: SmartPathfindingDebugStage,
-    elapsedMs: number,
-  ) => void;
-  /** 统计调试耗时总和。 */
-  sumDebugTimingElapsed: (timings: readonly SmartPathfindingDebugTimingEntry[]) => number;
 }
 
 /** 管理 Graphwar Killer 调试耗时的计时、聚合和展示行规则。 */
@@ -220,21 +201,17 @@ export function useGraphwarDebugTimings(options: GraphwarDebugTimingsOptions): G
   }
 
   return {
-    addOneClickClearRouteMaskDebugTiming,
-    addOneClickClearSearchDebugTiming,
     addSmartPathfindingWorkerTimings,
+    appendOneClickClearSearchWorkerTimings,
     clearSmartPathfindingDebugTimings,
     createDetectionDebugTimingEntriesFromWorker,
     detectionDebugTimingRows,
     finishDetectionDebugTimings,
     finishSmartPathfindingDebugTimings,
-    insertDebugTimingsBeforeLastStage,
     measureDetectionDebugStage,
     measureSmartPathfindingDebugStage,
     measureSmartPathfindingDebugStageAsync,
     smartPathfindingDebugTimingRows,
-    subtractLastDebugStageElapsed,
-    sumDebugTimingElapsed,
   };
 }
 
@@ -309,6 +286,25 @@ async function measureSmartPathfindingDebugStageAsync<TResult>(
 }
 
 /** 一键清图内部阶段会在搜索循环里重复发生；调试面板只展示聚合后的耗时。 */
+function appendOneClickClearSearchWorkerTimings(
+  timings: SmartPathfindingDebugTimingEntry[],
+  workerTimings: readonly GraphwarOneClickClearDebugTiming[],
+) {
+  const routeMaskTimings: SmartPathfindingDebugTimingEntry[] = [];
+  const searchDetailTimings: SmartPathfindingDebugTimingEntry[] = [];
+  for (const timing of workerTimings) {
+    if (addOneClickClearRouteMaskDebugTiming(routeMaskTimings, timing)) {
+      continue;
+    }
+    addOneClickClearSearchDebugTiming(searchDetailTimings, timing);
+  }
+
+  // Worker 的 search 阶段是 inclusive 耗时；route mask cache 作为页面同级阶段展示时应从 search 中扣出。
+  subtractLastDebugStageElapsed(timings, "one-click-clear-search", sumDebugTimingElapsed(routeMaskTimings));
+  insertDebugTimingsBeforeLastStage(timings, "one-click-clear-search", routeMaskTimings);
+  timings.push(...searchDetailTimings);
+}
+
 function addOneClickClearSearchDebugTiming(
   timings: SmartPathfindingDebugTimingEntry[],
   timing: GraphwarOneClickClearDebugTiming,

@@ -300,21 +300,17 @@ const {
 } = smartPathfindingSession;
 // 调试耗时应只管理阶段计时、聚合和展示行规则；业务流程计时点应由页面决定。
 const {
-  addOneClickClearRouteMaskDebugTiming,
-  addOneClickClearSearchDebugTiming,
   addSmartPathfindingWorkerTimings,
+  appendOneClickClearSearchWorkerTimings,
   clearSmartPathfindingDebugTimings,
   createDetectionDebugTimingEntriesFromWorker,
   detectionDebugTimingRows,
   finishDetectionDebugTimings,
   finishSmartPathfindingDebugTimings,
-  insertDebugTimingsBeforeLastStage,
   measureDetectionDebugStage,
   measureSmartPathfindingDebugStage,
   measureSmartPathfindingDebugStageAsync,
   smartPathfindingDebugTimingRows,
-  subtractLastDebugStageElapsed,
-  sumDebugTimingElapsed,
 } = useGraphwarDebugTimings({
   getLocale: () => locale,
   isDetectionRunActive: isActiveDetectionRun,
@@ -2063,8 +2059,6 @@ async function runOneClickClear() {
       createOneClickClearCandidates(),
     );
     const hitCandidates = createOneClickClearHitCandidates();
-    const oneClickClearRouteMaskTimings: SmartPathfindingDebugTimingEntry[] = [];
-    const oneClickClearSearchDetailTimings: SmartPathfindingDebugTimingEntry[] = [];
     const routeTolerance = preflightResult.tolerances.routePlanningTolerancePlanePixels;
     const searchInput: GraphwarOneClickClearPathWorkerInput = {
       boundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
@@ -2092,19 +2086,7 @@ async function runOneClickClear() {
       );
       pathfindingCache.cacheOneClickClearResult(searchCacheKey, search);
     }
-    for (const timing of search.timings) {
-      if (addOneClickClearRouteMaskDebugTiming(oneClickClearRouteMaskTimings, timing)) {
-        continue;
-      }
-      addOneClickClearSearchDebugTiming(oneClickClearSearchDetailTimings, timing);
-    }
-    subtractLastDebugStageElapsed(
-      timings,
-      "one-click-clear-search",
-      sumDebugTimingElapsed(oneClickClearRouteMaskTimings),
-    );
-    insertDebugTimingsBeforeLastStage(timings, "one-click-clear-search", oneClickClearRouteMaskTimings);
-    timings.push(...oneClickClearSearchDetailTimings);
+    appendOneClickClearSearchWorkerTimings(timings, search.timings);
     if (!isSmartPathfindingRunCurrent(pathfindingToken)) {
       return false;
     }

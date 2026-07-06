@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+import GraphwarResultPanel from "./components/GraphwarResultPanel.vue";
 import GraphwarStageOverlay from "./components/GraphwarStageOverlay.vue";
 import { useGraphwarPathState, type PathPointCoordinateAxis } from "./composables/use-graphwar-path-state";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
@@ -1577,6 +1578,28 @@ const canCopyFormula = computed(() =>
   toolWorkflowMode.value === "solver" ? !!formulaResult.value : !!simulatorFormulaText.value.trim(),
 );
 const canClearSimulatorInputs = computed(() => !!simulatorFormulaText.value || !!simulatorLaunchAngleText.value);
+// 结果面板只应消费展示 DTO；公式生成、复制和坐标写回应由页面侧保持原工作流语义。
+const resultPanel = computed(() => {
+  const solverResult = formulaResult.value;
+  return {
+    canClearSimulatorInputs: canClearSimulatorInputs.value,
+    canCopyFormula: canCopyFormula.value,
+    calculationMessage: calculationMessage.value,
+    calculationMessageVisible:
+      Boolean(calculationMessage.value) && (toolWorkflowMode.value === "simulator" || !solverResult),
+    copyButtonText: copyButtonText.value,
+    equationLabel: equationModes.value.find((mode) => mode.value === equationMode.value)?.label ?? "",
+    pointRows: createResultPanelPointRows(),
+    secondOrderAngleHint: secondOrderAngleHint.value,
+    showSimulatorLaunchAngleInput: toolWorkflowMode.value === "simulator" && equationMode.value === "ddy",
+    simulatorFormulaText: simulatorFormulaText.value,
+    simulatorLaunchAngleText: simulatorLaunchAngleText.value,
+    solverExpression: solverResult?.expression ?? "",
+    solverResultVisible: toolWorkflowMode.value === "solver" && !!solverResult,
+    trajectoryWarning: trajectoryWarning.value,
+    workflowMode: toolWorkflowMode.value,
+  };
+});
 const statusAnnouncement = computed(() => {
   if (copyStatus.value === "success") {
     return locale.status.copy.success;
@@ -1589,6 +1612,27 @@ const statusAnnouncement = computed(() => {
 const screenshotImageStatusText = computed(
   () => imageStatus.value || imageName.value || locale.status.image.defaultStatus,
 );
+
+function createResultPanelPointRows() {
+  return mappedPathPoints.value.map((_, index) => {
+    const pointNumber = index + 1;
+    const label = pointNumber === 1 ? locale.ui.point.selfLabel : locale.ui.point.pathLabel(index);
+    return {
+      index,
+      label,
+      x: {
+        ariaLabel: locale.ui.point.coordinateAriaLabel(label, "x"),
+        text: getPathPointCoordinateText(index, "x"),
+        title: locale.ui.point.coordinateTitle(label, "x"),
+      },
+      y: {
+        ariaLabel: locale.ui.point.coordinateAriaLabel(label, "y"),
+        text: getPathPointCoordinateText(index, "y"),
+        title: locale.ui.point.coordinateTitle(label, "y"),
+      },
+    };
+  });
+}
 
 /** 获取高精度时间戳，用于前端阶段计时和长按判定。 */
 function nowMs() {
@@ -4047,15 +4091,10 @@ function finishPathPointCoordinateEdit() {
   }
 }
 
-/** 处理坐标输入框变更，合法数字会立即映射回截图像素更新路径。 */
-function handlePathPointCoordinateInput(index: number, axis: PathPointCoordinateAxis, event: Event) {
-  const input = event.currentTarget;
-  if (!(input instanceof HTMLInputElement)) {
-    return;
-  }
-
-  setPathPointCoordinateText(index, axis, input.value);
-  const coordinate = parseFiniteNumber(input.value);
+/** 处理坐标输入框文本变更，合法数字会立即映射回截图像素更新路径。 */
+function handlePathPointCoordinateInput(index: number, axis: PathPointCoordinateAxis, value: string) {
+  setPathPointCoordinateText(index, axis, value);
+  const coordinate = parseFiniteNumber(value);
   if (coordinate === undefined) {
     pathStatus.value = getPathPointCoordinateMessage();
     return;
@@ -5391,156 +5430,17 @@ async function copyText(text: string) {
         </div>
       </div>
     </section>
-    <section
-      class="graphwar-killer__panel"
-      aria-labelledby="graphwar-killer-result-title"
-    >
-      <div class="graphwar-killer__label-row graphwar-killer__label-row--result">
-        <h2 id="graphwar-killer-result-title">
-          {{ locale.ui.result.title }}
-        </h2>
-        <div class="graphwar-killer__result-actions">
-          <button
-            type="button"
-            class="graphwar-killer__primary-button"
-            :disabled="!canCopyFormula"
-            :title="locale.ui.result.copyTitle"
-            @click="copyFormula"
-          >
-            {{ copyButtonText }}
-          </button>
-          <button
-            v-if="toolWorkflowMode === 'simulator'"
-            type="button"
-            class="graphwar-killer__secondary-button"
-            :disabled="!canClearSimulatorInputs"
-            :title="locale.ui.result.clearSimulatorTitle"
-            @click="clearSimulatorInputs"
-          >
-            {{ locale.ui.result.clearSimulator }}
-          </button>
-        </div>
-      </div>
-      <div
-        v-if="toolWorkflowMode === 'solver' && formulaResult"
-        class="graphwar-killer__formula-row"
-      >
-        <span class="graphwar-killer__formula-prefix">
-          {{ equationModes.find((mode) => mode.value === equationMode)?.label }}
-        </span>
-        <p class="graphwar-killer__formula">
-          {{ formulaResult.expression }}
-        </p>
-      </div>
-      <div
-        v-else-if="toolWorkflowMode === 'simulator'"
-        class="graphwar-killer__formula-row"
-      >
-        <span class="graphwar-killer__formula-prefix">
-          {{ equationModes.find((mode) => mode.value === equationMode)?.label }}
-        </span>
-        <input
-          v-model="simulatorFormulaText"
-          class="graphwar-killer__formula-input"
-          inputmode="text"
-          autocomplete="off"
-          :aria-label="locale.ui.result.formulaInputAriaLabel"
-          :title="locale.ui.result.formulaInputTitle"
-        >
-      </div>
-      <div
-        v-if="toolWorkflowMode === 'simulator' && equationMode === 'ddy'"
-        class="graphwar-killer__formula-row"
-      >
-        <span class="graphwar-killer__formula-prefix">
-          {{ locale.ui.result.launchAngle }}
-        </span>
-        <input
-          v-model="simulatorLaunchAngleText"
-          class="graphwar-killer__formula-input graphwar-killer__formula-input--angle"
-          inputmode="decimal"
-          autocomplete="off"
-          :aria-label="locale.ui.result.launchAngleAriaLabel"
-          :title="locale.ui.result.launchAngleTitle"
-        >
-      </div>
-      <p
-        v-if="secondOrderAngleHint"
-        class="graphwar-killer__hint graphwar-killer__hint--warning"
-      >
-        {{ secondOrderAngleHint }}
-      </p>
-      <p
-        v-if="trajectoryWarning"
-        class="graphwar-killer__hint graphwar-killer__hint--warning"
-      >
-        {{ trajectoryWarning }}
-      </p>
-      <p
-        v-if="calculationMessage && (toolWorkflowMode === 'simulator' || !formulaResult)"
-        class="graphwar-killer__error"
-      >
-        {{ calculationMessage }}
-      </p>
-      <div
-        v-if="mappedPathPoints.length"
-        class="graphwar-killer__point-table"
-      >
-        <div>
-          <span>{{ locale.ui.point.header }}</span>
-          <span>x</span>
-          <span>y</span>
-        </div>
-        <div
-          v-for="pointNumber in mappedPathPoints.length"
-          :key="`row-${pointNumber - 1}`"
-        >
-          <span>{{ pointNumber === 1 ? locale.ui.point.selfLabel : locale.ui.point.pathLabel(pointNumber - 1) }}</span>
-          <input
-            class="graphwar-killer__point-coordinate-input"
-            :value="getPathPointCoordinateText(pointNumber - 1, 'x')"
-            :aria-label="
-              locale.ui.point.coordinateAriaLabel(
-                pointNumber === 1 ? locale.ui.point.selfLabel : locale.ui.point.pathLabel(pointNumber - 1),
-                'x',
-              )
-            "
-            :title="
-              locale.ui.point.coordinateTitle(
-                pointNumber === 1 ? locale.ui.point.selfLabel : locale.ui.point.pathLabel(pointNumber - 1),
-                'x',
-              )
-            "
-            inputmode="decimal"
-            autocomplete="off"
-            @focus="startPathPointCoordinateEdit(pointNumber - 1, 'x')"
-            @blur="finishPathPointCoordinateEdit"
-            @input="handlePathPointCoordinateInput(pointNumber - 1, 'x', $event)"
-          >
-          <input
-            class="graphwar-killer__point-coordinate-input"
-            :value="getPathPointCoordinateText(pointNumber - 1, 'y')"
-            :aria-label="
-              locale.ui.point.coordinateAriaLabel(
-                pointNumber === 1 ? locale.ui.point.selfLabel : locale.ui.point.pathLabel(pointNumber - 1),
-                'y',
-              )
-            "
-            :title="
-              locale.ui.point.coordinateTitle(
-                pointNumber === 1 ? locale.ui.point.selfLabel : locale.ui.point.pathLabel(pointNumber - 1),
-                'y',
-              )
-            "
-            inputmode="decimal"
-            autocomplete="off"
-            @focus="startPathPointCoordinateEdit(pointNumber - 1, 'y')"
-            @blur="finishPathPointCoordinateEdit"
-            @input="handlePathPointCoordinateInput(pointNumber - 1, 'y', $event)"
-          >
-        </div>
-      </div>
-    </section>
+    <GraphwarResultPanel
+      :locale="locale"
+      :result="resultPanel"
+      @clear-simulator="clearSimulatorInputs"
+      @copy-formula="copyFormula"
+      @finish-point-coordinate-edit="finishPathPointCoordinateEdit"
+      @start-point-coordinate-edit="startPathPointCoordinateEdit"
+      @update-point-coordinate="handlePathPointCoordinateInput"
+      @update-simulator-formula-text="simulatorFormulaText = $event"
+      @update-simulator-launch-angle-text="simulatorLaunchAngleText = $event"
+    />
   </div>
 
   <section class="graphwar-killer__instructions">
@@ -5747,17 +5647,6 @@ async function copyText(text: string) {
   flex: 0 1 auto;
   max-width: min(100%, 44rem);
   text-align: right;
-}
-
-.graphwar-killer__label-row--result {
-  align-items: center;
-}
-
-.graphwar-killer__result-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
 }
 
 .graphwar-killer__upload {
@@ -6311,15 +6200,6 @@ async function copyText(text: string) {
   color: var(--vp-c-white) !important;
 }
 
-.graphwar-killer__primary-button {
-  background: var(--vp-c-brand-1);
-  border-color: var(--vp-c-brand-1);
-  color: var(--vp-c-white);
-  min-height: 34px;
-  padding: 6px 12px;
-  white-space: nowrap;
-}
-
 .graphwar-killer__secondary-button {
   min-height: 34px;
   min-width: 72px;
@@ -6331,101 +6211,6 @@ async function copyText(text: string) {
   background: var(--vp-c-brand-soft) !important;
   border-color: var(--vp-c-brand-1) !important;
   color: var(--vp-c-brand-1) !important;
-}
-
-.graphwar-killer__formula-row {
-  align-items: start;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.graphwar-killer__formula-prefix {
-  background: var(--vp-c-bg-soft);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 10px;
-  font-family: var(--vp-font-family-mono);
-  font-weight: 800;
-  min-height: 44px;
-  padding: 10px;
-  user-select: none;
-  white-space: nowrap;
-}
-
-.graphwar-killer__formula {
-  background: color-mix(in srgb, var(--vp-c-brand-soft) 54%, var(--vp-c-bg));
-  border: 1px solid color-mix(in srgb, var(--vp-c-brand-1) 28%, var(--vp-c-divider));
-  border-radius: 10px;
-  font-family: var(--vp-font-family-mono);
-  font-size: 1rem;
-  line-height: 1.6;
-  margin: 0;
-  overflow-x: auto;
-  padding: 10px;
-  white-space: nowrap;
-}
-
-.graphwar-killer__formula-input {
-  font-family: var(--vp-font-family-mono);
-  min-width: 0;
-}
-
-.graphwar-killer__formula-input--angle {
-  max-width: 160px;
-}
-
-.graphwar-killer__error {
-  color: var(--vp-c-danger-1);
-  margin: 0;
-}
-
-.graphwar-killer__hint {
-  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
-  font-size: 0.9rem;
-  line-height: 1.5;
-  margin: 0;
-}
-
-.graphwar-killer__hint--warning {
-  color: #b45309;
-  font-weight: 700;
-}
-
-.graphwar-killer__point-table {
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 10px;
-  display: grid;
-  overflow-x: auto;
-}
-
-.graphwar-killer__point-table > div {
-  border-top: 1px solid var(--vp-c-divider);
-  display: grid;
-  font-variant-numeric: tabular-nums;
-  gap: 6px;
-  grid-template-columns: minmax(90px, 1fr) minmax(130px, max-content) minmax(130px, max-content);
-  min-width: 100%;
-  padding: 6px 8px;
-  width: max-content;
-}
-
-.graphwar-killer__point-table > div:first-child {
-  background: var(--vp-c-bg-soft);
-  border-top: 0;
-  font-weight: 700;
-}
-
-.graphwar-killer__point-table--compact > div {
-  font-size: 0.88rem;
-  grid-template-columns: minmax(110px, 1fr) minmax(110px, max-content) minmax(74px, max-content);
-}
-
-.graphwar-killer__point-coordinate-input {
-  height: 28px !important;
-  line-height: 1.1 !important;
-  min-height: 0 !important;
-  padding: 3px 7px !important;
-  width: 130px;
 }
 
 .graphwar-killer__sr-only {
@@ -6468,10 +6253,6 @@ async function copyText(text: string) {
   color: var(--vp-c-white);
 }
 
-.graphwar-killer__primary-button:hover:not(:disabled) {
-  color: var(--vp-c-white);
-}
-
 .graphwar-killer input:focus-visible,
 .graphwar-killer button:focus-visible,
 .graphwar-killer__stage:focus-visible {
@@ -6492,14 +6273,6 @@ async function copyText(text: string) {
 
   .graphwar-killer__label-row > span {
     text-align: left;
-  }
-
-  .graphwar-killer__primary-button {
-    width: 100%;
-  }
-
-  .graphwar-killer__point-table > div {
-    grid-template-columns: minmax(90px, 1fr) minmax(130px, max-content) minmax(130px, max-content);
   }
 }
 

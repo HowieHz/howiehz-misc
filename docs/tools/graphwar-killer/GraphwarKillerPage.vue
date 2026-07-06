@@ -77,6 +77,11 @@ import {
   type GraphwarOneClickClearFailureReason,
 } from "./pathfinding/graphwar-one-click-clear";
 import {
+  createGraphwarOneClickClearSearchInput,
+  createGraphwarOneClickClearSearchPreflight,
+  type GraphwarOneClickClearSearchPreflightFailureReason,
+} from "./pathfinding/graphwar-one-click-clear-search-input";
+import {
   createGraphwarOneClickClearCandidates,
   createGraphwarOneClickClearHitCandidates,
 } from "./pathfinding/graphwar-one-click-clear-targets";
@@ -87,10 +92,7 @@ import {
   createGraphwarPathfindingRunner,
   isGraphwarPathfindingCancelledError,
 } from "./pathfinding/graphwar-pathfinding-runner";
-import type {
-  GraphwarOneClickClearPathWorkerInput,
-  GraphwarSmartPathfindingPathInput,
-} from "./pathfinding/graphwar-pathfinding-worker-types";
+import type { GraphwarSmartPathfindingPathInput } from "./pathfinding/graphwar-pathfinding-worker-types";
 import {
   createAllowedTargetRect,
   createBoundsRectWithBoundaryExpansion,
@@ -1110,12 +1112,6 @@ const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
     title: detectionStatusWarningTitle.value,
   },
 }));
-const pathfindingWorkerCount = computed(() =>
-  parsedPathfindingWorkerCount.value.ok
-    ? parsedPathfindingWorkerCount.value.workerCount
-    : graphwarToolDefaults.pathfindingWorkerCount,
-);
-
 const magnifierZoom = computed(() =>
   parsedMagnifierZoom.value.ok ? parsedMagnifierZoom.value.zoom : graphwarToolDefaults.magnifierZoom,
 );
@@ -1993,45 +1989,18 @@ async function runOneClickClear() {
   const timings: SmartPathfindingDebugTimingEntry[] = [];
   const preflightResult = measureSmartPathfindingDebugStage(timings, "one-click-clear-preflight", () => {
     const boundsResult = parsedBounds.value;
+    const workerCountResult = parsedPathfindingWorkerCount.value;
     const tolerances = parsedObstacleTolerances.value;
-    if (!boundsResult.ok || !tolerances.ok || !parsedPathfindingWorkerCount.value.ok) {
-      return {
-        kind: "error" as const,
-        message: smartPathfindingSettingsMessage.value || getSmartPathfindingDisabledMessage(),
-        ok: false as const,
-      };
-    }
-    if (isOneClickClearModeUnsupported()) {
-      return {
-        kind: "warning" as const,
-        message: locale.smartPathfinding.oneClickClear.unsupported,
-        ok: false as const,
-      };
-    }
-    if (pathPixels.value.length === 0) {
-      return {
-        kind: "warning" as const,
-        message: locale.smartPathfinding.oneClickClear.needCurrentPath,
-        ok: false as const,
-      };
-    }
-
-    const obstacleMask = smartPathfindingBaseObstacleMask.value;
-    if (!obstacleMask) {
-      return {
-        kind: "error" as const,
-        message: getSmartPathfindingFailureMessage(),
-        ok: false as const,
-      };
-    }
-
-    return {
-      bounds: boundsResult.bounds,
-      obstacleMask,
-      ok: true as const,
-      prefixTarget: createOneClickClearPrefixTarget(),
-      tolerances,
-    };
+    const result = createGraphwarOneClickClearSearchPreflight({
+      bounds: boundsResult.ok ? boundsResult.bounds : undefined,
+      createPrefixTarget: createOneClickClearPrefixTarget,
+      getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
+      pathfindingWorkerCount: workerCountResult.ok ? workerCountResult.workerCount : undefined,
+      pathPointCount: pathPixels.value.length,
+      tolerances: tolerances.ok ? tolerances : undefined,
+      unsupportedMode: isOneClickClearModeUnsupported,
+    });
+    return result.ok ? result : { ...result, ...getOneClickClearPreflightFailureStatus(result.reason) };
   });
   if (!preflightResult.ok) {
     let completedAt = nowMs();
@@ -2059,24 +2028,20 @@ async function runOneClickClear() {
       createOneClickClearCandidates(),
     );
     const hitCandidates = createOneClickClearHitCandidates();
-    const routeTolerance = preflightResult.tolerances.routePlanningTolerancePlanePixels;
-    const searchInput: GraphwarOneClickClearPathWorkerInput = {
-      boundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
+    const searchInput = createGraphwarOneClickClearSearchInput({
       bounds: preflightResult.bounds,
       boundsRect: boundsRect.value,
       candidates,
-      dagEdgeWorkerCount: pathfindingWorkerCount.value,
-      deleteCheckRadiusPixels: preflightResult.tolerances.oneClickClearDeleteCheckRadiusPixels,
+      dagEdgeWorkerCount: preflightResult.dagEdgeWorkerCount,
       hitCandidates,
-      pathPoints: [...pathPixels.value],
+      pathPoints: pathPixels.value,
       prefixTarget: preflightResult.prefixTarget,
       routeMaskCacheId: pathfindingCache.getRouteObstacleMaskCacheId(preflightResult.obstacleMask),
       routeObstacleMask: preflightResult.obstacleMask,
-      routeTolerancePlanePixels: routeTolerance,
       settings: createPathTrajectoryFormulaSettings(),
-      simulationBoundaryExpansion: preflightResult.tolerances.boundaryExpansionPlanePixels,
       simulationMask: simulationObstacleMask.value,
-    };
+      tolerances: preflightResult.tolerances,
+    });
     const searchCacheKey = pathfindingCache.createOneClickClearResultCacheKey(searchInput);
     let search = pathfindingCache.getCachedOneClickClearResult(searchCacheKey, (timing) => timings.push(timing));
     const searchCacheHit = search !== undefined;
@@ -2178,6 +2143,32 @@ function createOneClickClearHitCandidates() {
     pathPoints: pathPixels.value,
     soldiers: detectedSoldiers.value,
   });
+}
+
+/** 一键清图预检 reason 应在页面映射成用户状态，避免 pathfinding Module 依赖 locale。 */
+function getOneClickClearPreflightFailureStatus(reason: GraphwarOneClickClearSearchPreflightFailureReason) {
+  if (reason === "invalid-settings") {
+    return {
+      kind: "error" as const,
+      message: smartPathfindingSettingsMessage.value || getSmartPathfindingDisabledMessage(),
+    };
+  }
+  if (reason === "unsupported-mode") {
+    return {
+      kind: "warning" as const,
+      message: locale.smartPathfinding.oneClickClear.unsupported,
+    };
+  }
+  if (reason === "missing-current-path") {
+    return {
+      kind: "warning" as const,
+      message: locale.smartPathfinding.oneClickClear.needCurrentPath,
+    };
+  }
+  return {
+    kind: "error" as const,
+    message: getSmartPathfindingFailureMessage(),
+  };
 }
 
 /** 一键清图失败原因用独立文案，避免和单目标智能寻路失败混在一起。 */

@@ -2,6 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import GraphwarActionPanel from "./components/GraphwarActionPanel.vue";
+import GraphwarAdvancedSettingsPanel, {
+  type GraphwarAdvancedSettingsPanelModel,
+} from "./components/GraphwarAdvancedSettingsPanel.vue";
 import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./components/GraphwarDetectionPanel.vue";
 import GraphwarResultPanel from "./components/GraphwarResultPanel.vue";
 import GraphwarScreenshotPanel, { type GraphwarScreenshotPanelModel } from "./components/GraphwarScreenshotPanel.vue";
@@ -1421,6 +1424,35 @@ const soldierMarkerRadius = computed(() => {
 
   return clampNumber((GRAPHWAR_GAME_SOLDIER_RADIUS / graphWidth) * boundsRect.value.width, 3, 32);
 });
+// 高级设置面板只应消费展示 DTO；输入校验、缓存失效和检测/寻路副作用仍由页面侧维护。
+const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() => ({
+  bounds: {
+    maxXText: maxXText.value,
+    maxYText: maxYText.value,
+    minXText: minXText.value,
+    minYText: minYText.value,
+  },
+  pathfinding: {
+    obstacleSimulationToleranceText: obstacleSimulationToleranceText.value,
+    oneClickClearDeleteCheckRadiusMinimumPixels,
+    oneClickClearDeleteCheckRadiusText: oneClickClearDeleteCheckRadiusText.value,
+    routePlanningToleranceText: routePlanningToleranceText.value,
+    soldierMarkerRadius: soldierMarkerRadius.value,
+    workerCountText: pathfindingWorkerCountText.value,
+  },
+  recognition: {
+    candidateTopRatioText: soldierTemplateCandidateTopRatioText.value,
+    maximumSoldierCountText: maximumSoldierCountText.value,
+    obstacleMaximumArea: graphwarObstacleMaxArea,
+    obstacleMinAreaText: obstacleMinAreaText.value,
+    pathfindingBoundaryExpansionText: pathfindingBoundaryExpansionText.value,
+    templateMatchingWorkerCountText: templateMatchingWorkerCountText.value,
+  },
+  simulator: {
+    parseDerivativeAsY: simulatorParseDerivativeAsY.value,
+    skipUnknownCharacters: simulatorSkipUnknownCharacters.value,
+  },
+}));
 const soldierSelectionRadius = computed(() => {
   const sourceRadius = GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2;
   if (!parsedBounds.value.ok) {
@@ -4699,244 +4731,26 @@ async function copyText(text: string) {
       @update-precision-text="precisionText = $event"
       @update-steepness-text="steepnessText = $event"
     />
-    <section
+    <GraphwarAdvancedSettingsPanel
       v-if="advancedSettingsVisible"
-      class="graphwar-killer__panel"
-      aria-labelledby="graphwar-killer-advanced-settings-title"
-    >
-      <div class="graphwar-killer__label-row">
-        <h2 id="graphwar-killer-advanced-settings-title">
-          {{ locale.ui.settings.advancedSettings }}
-        </h2>
-      </div>
-      <div class="graphwar-killer__advanced-settings-grid">
-        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-          <h3>
-            {{ locale.ui.settings.bounds.heading }}
-          </h3>
-          <div class="graphwar-killer__coordinate-grid">
-            <label :title="locale.ui.settings.bounds.minXTitle">
-              -x
-              <input
-                v-model="minXText"
-                inputmode="decimal"
-                autocomplete="off"
-                :aria-label="locale.ui.settings.bounds.minXAriaLabel"
-                :title="locale.ui.settings.bounds.minXTitle"
-              >
-            </label>
-            <label :title="locale.ui.settings.bounds.maxXTitle">
-              +x
-              <input
-                v-model="maxXText"
-                inputmode="decimal"
-                autocomplete="off"
-                :aria-label="locale.ui.settings.bounds.maxXAriaLabel"
-                :title="locale.ui.settings.bounds.maxXTitle"
-              >
-            </label>
-            <label :title="locale.ui.settings.bounds.minYTitle">
-              -y
-              <input
-                v-model="minYText"
-                inputmode="decimal"
-                autocomplete="off"
-                :aria-label="locale.ui.settings.bounds.minYAriaLabel"
-                :title="locale.ui.settings.bounds.minYTitle"
-              >
-            </label>
-            <label :title="locale.ui.settings.bounds.maxYTitle">
-              +y
-              <input
-                v-model="maxYText"
-                inputmode="decimal"
-                autocomplete="off"
-                :aria-label="locale.ui.settings.bounds.maxYAriaLabel"
-                :title="locale.ui.settings.bounds.maxYTitle"
-              >
-            </label>
-          </div>
-        </div>
-        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-          <h3>
-            {{ locale.ui.settings.simulator }}
-          </h3>
-          <div class="graphwar-killer__image-actions">
-            <button
-              type="button"
-              :aria-pressed="simulatorSkipUnknownCharacters"
-              :class="{ 'graphwar-killer__toggle-button--active': simulatorSkipUnknownCharacters }"
-              :title="locale.ui.settings.skipUnknownCharactersTitle"
-              @click="simulatorSkipUnknownCharacters = !simulatorSkipUnknownCharacters"
-            >
-              {{ locale.ui.settings.skipUnknownCharacters }}
-            </button>
-            <button
-              type="button"
-              :aria-pressed="simulatorParseDerivativeAsY"
-              :class="{ 'graphwar-killer__toggle-button--active': simulatorParseDerivativeAsY }"
-              :title="locale.ui.settings.parseDerivativeAsYTitle"
-              @click="simulatorParseDerivativeAsY = !simulatorParseDerivativeAsY"
-            >
-              {{ locale.ui.settings.parseDerivativeAsY }}
-            </button>
-          </div>
-        </div>
-        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-          <h3>
-            {{ locale.ui.settings.recognition.heading }}
-          </h3>
-          <div class="graphwar-killer__recognition-setting-row">
-            <label
-              class="graphwar-killer__detection-setting-label"
-              :title="locale.ui.settings.recognition.maximumSoldierCountTitle"
-            >
-              {{ locale.ui.settings.recognition.maximumSoldierCount }}
-              <input
-                v-model="maximumSoldierCountText"
-                inputmode="numeric"
-                min="1"
-                autocomplete="off"
-                :aria-label="locale.ui.settings.recognition.maximumSoldierCountAriaLabel"
-                :title="locale.ui.settings.recognition.maximumSoldierCountTitle"
-              >
-            </label>
-            <label
-              class="graphwar-killer__detection-setting-label"
-              :title="locale.ui.settings.recognition.candidateTopRatioTitle"
-            >
-              {{ locale.ui.settings.recognition.candidateTopRatio }}
-              <input
-                v-model="soldierTemplateCandidateTopRatioText"
-                inputmode="decimal"
-                min="0.000001"
-                max="1"
-                step="0.01"
-                autocomplete="off"
-                :aria-label="locale.ui.settings.recognition.candidateTopRatioAriaLabel"
-                :title="locale.ui.settings.recognition.candidateTopRatioTitle"
-              >
-            </label>
-            <label
-              class="graphwar-killer__detection-setting-label"
-              :title="locale.ui.settings.recognition.templateMatchingWorkerCountTitle"
-            >
-              {{ locale.ui.settings.recognition.templateMatchingWorkerCount }}
-              <input
-                v-model="templateMatchingWorkerCountText"
-                inputmode="numeric"
-                min="1"
-                max="128"
-                autocomplete="off"
-                :aria-label="locale.ui.settings.recognition.templateMatchingWorkerCountAriaLabel"
-                :title="locale.ui.settings.recognition.templateMatchingWorkerCountTitle"
-              >
-            </label>
-            <label
-              class="graphwar-killer__detection-setting-label"
-              :title="locale.ui.detection.minObstacleAreaTitle"
-            >
-              {{ locale.ui.detection.minObstacleArea }}
-              <input
-                v-model="obstacleMinAreaText"
-                inputmode="numeric"
-                min="0"
-                :max="graphwarObstacleMaxArea"
-                :aria-label="locale.ui.detection.minObstacleAreaAriaLabel"
-                :title="locale.ui.detection.minObstacleAreaTitle"
-              >
-              <span>px²</span>
-            </label>
-            <label
-              class="graphwar-killer__detection-setting-label"
-              :title="locale.ui.pathfinding.boundaryExpansionTitle"
-            >
-              {{ locale.ui.pathfinding.boundaryExpansion }}
-              <input
-                v-model="pathfindingBoundaryExpansionText"
-                inputmode="decimal"
-                min="0"
-                :aria-label="locale.ui.pathfinding.boundaryExpansionAriaLabel"
-                :title="locale.ui.pathfinding.boundaryExpansionTitle"
-              >
-              <span>{{ locale.ui.pathfinding.unit }}</span>
-            </label>
-          </div>
-        </div>
-        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-          <h3>
-            {{ locale.ui.settings.pathfinding.heading }}
-          </h3>
-          <details class="graphwar-killer__details">
-            <summary
-              id="graphwar-killer-obstacle-expansion-title"
-              :title="locale.ui.pathfinding.obstacleExpansionTitle"
-            >
-              {{ locale.ui.pathfinding.obstacleExpansion }}
-            </summary>
-            <div class="graphwar-killer__pathfinding-setting-grid">
-              <label
-                class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-                :title="locale.ui.pathfinding.routePlanningToleranceTitle"
-              >
-                {{ locale.ui.pathfinding.routePlanningTolerance }}
-                <input
-                  v-model="routePlanningToleranceText"
-                  inputmode="decimal"
-                  :aria-label="locale.ui.pathfinding.routePlanningToleranceAriaLabel"
-                  :title="locale.ui.pathfinding.routePlanningToleranceTitle"
-                >
-                <span>{{ locale.ui.pathfinding.unit }}</span>
-              </label>
-              <label
-                class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-                :title="locale.ui.pathfinding.simulationToleranceTitle"
-              >
-                {{ locale.ui.pathfinding.simulationTolerance }}
-                <input
-                  v-model="obstacleSimulationToleranceText"
-                  inputmode="decimal"
-                  :aria-label="locale.ui.pathfinding.simulationToleranceAriaLabel"
-                  :title="locale.ui.pathfinding.simulationToleranceTitle"
-                >
-                <span>{{ locale.ui.pathfinding.unit }}</span>
-              </label>
-            </div>
-          </details>
-          <label
-            class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-            :title="locale.ui.settings.pathfinding.workerCountTitle"
-          >
-            {{ locale.ui.settings.pathfinding.workerCount }}
-            <input
-              v-model="pathfindingWorkerCountText"
-              inputmode="numeric"
-              min="1"
-              max="128"
-              autocomplete="off"
-              :aria-label="locale.ui.settings.pathfinding.workerCountAriaLabel"
-              :title="locale.ui.settings.pathfinding.workerCountTitle"
-            >
-          </label>
-          <label
-            class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-            :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
-          >
-            {{ locale.ui.pathfinding.oneClickClearDeleteCheckRadius }}
-            <input
-              v-model="oneClickClearDeleteCheckRadiusText"
-              inputmode="decimal"
-              :min="oneClickClearDeleteCheckRadiusMinimumPixels"
-              :max="soldierMarkerRadius"
-              step="0.1"
-              :aria-label="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusAriaLabel"
-              :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
-            >
-            <span>{{ locale.ui.pathfinding.unit }}</span>
-          </label>
-        </div>
-      </div>
-    </section>
+      :locale="locale"
+      :panel="advancedSettingsPanel"
+      @toggle-simulator-parse-derivative-as-y="simulatorParseDerivativeAsY = !simulatorParseDerivativeAsY"
+      @toggle-simulator-skip-unknown-characters="simulatorSkipUnknownCharacters = !simulatorSkipUnknownCharacters"
+      @update-candidate-top-ratio-text="soldierTemplateCandidateTopRatioText = $event"
+      @update-max-x-text="maxXText = $event"
+      @update-max-y-text="maxYText = $event"
+      @update-maximum-soldier-count-text="maximumSoldierCountText = $event"
+      @update-min-x-text="minXText = $event"
+      @update-min-y-text="minYText = $event"
+      @update-obstacle-min-area-text="obstacleMinAreaText = $event"
+      @update-obstacle-simulation-tolerance-text="obstacleSimulationToleranceText = $event"
+      @update-one-click-clear-delete-check-radius-text="oneClickClearDeleteCheckRadiusText = $event"
+      @update-pathfinding-boundary-expansion-text="pathfindingBoundaryExpansionText = $event"
+      @update-pathfinding-worker-count-text="pathfindingWorkerCountText = $event"
+      @update-route-planning-tolerance-text="routePlanningToleranceText = $event"
+      @update-template-matching-worker-count-text="templateMatchingWorkerCountText = $event"
+    />
     <div class="graphwar-killer__detection-pathfinding-row">
       <GraphwarDetectionPanel
         :locale="locale"
@@ -5023,310 +4837,11 @@ async function copyText(text: string) {
   width: 100%;
 }
 
-.graphwar-killer h2 {
-  border: 0;
-  font-size: 1rem;
-  margin: 0;
-  padding: 0;
-}
-
-.graphwar-killer label {
-  display: grid;
-  font-weight: 600;
-  gap: 3px;
-  min-width: 0;
-}
-
-.graphwar-killer input:not([type="file"]) {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 8px;
-  box-sizing: border-box;
-  font-variant-numeric: tabular-nums;
-  height: 30px;
-  line-height: 1.15;
-  min-height: 0;
-  padding: 4px 8px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
-  width: 100%;
-}
-
-.graphwar-killer input[type="range"] {
-  appearance: none;
-  background: linear-gradient(
-    to right,
-    var(--vp-c-brand-1) 0 var(--graphwar-killer-range-progress, 0%),
-    var(--vp-c-divider) var(--graphwar-killer-range-progress, 0%) 100%
-  );
-  border: 0;
-  border-radius: 999px;
-  cursor: pointer;
-  height: 8px;
-  padding: 0;
-  width: 100%;
-}
-
-.graphwar-killer input[type="range"]::-webkit-slider-runnable-track {
-  background: transparent;
-  border: 0;
-  height: 8px;
-}
-
-.graphwar-killer input[type="range"]::-webkit-slider-thumb {
-  appearance: none;
-  background: var(--vp-c-brand-1);
-  border: 2px solid var(--vp-c-bg);
-  border-radius: 50%;
-  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
-  height: 18px;
-  margin-top: -5px;
-  width: 18px;
-}
-
-.graphwar-killer input[type="range"]::-moz-range-track {
-  background: transparent;
-  border: 0;
-  height: 8px;
-}
-
-.graphwar-killer input[type="range"]::-moz-range-progress {
-  background: transparent;
-}
-
-.graphwar-killer input[type="range"]::-moz-range-thumb {
-  background: var(--vp-c-brand-1);
-  border: 2px solid var(--vp-c-bg);
-  border-radius: 50%;
-  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
-  height: 18px;
-  width: 18px;
-}
-
-.graphwar-killer button {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  color: var(--vp-c-text-1);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1.2;
-  transition:
-    transform 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    color 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.graphwar-killer button:disabled {
-  cursor: not-allowed;
-  opacity: 58%;
-}
-
-.graphwar-killer__panel {
-  align-content: start;
-  background: var(--vp-c-bg);
-  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 88%, transparent);
-  border-radius: 12px;
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  padding: 10px;
-}
-
 .graphwar-killer__detection-pathfinding-row {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
   min-width: 0;
-}
-
-.graphwar-killer__label-row {
-  align-items: baseline;
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-}
-
-.graphwar-killer__label-row > span {
-  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
-  font-size: 0.88rem;
-  line-height: 1.4;
-  min-width: 0;
-  overflow: hidden;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.graphwar-killer__label-row > .graphwar-killer__label-status--error {
-  color: #dc2626;
-}
-
-.graphwar-killer__label-row > .graphwar-killer__label-status--warning {
-  color: #b45309;
-  font-weight: 700;
-}
-
-.graphwar-killer__label-row > .graphwar-killer__label-status--success {
-  color: #15803d;
-  font-weight: 700;
-}
-
-.graphwar-killer__pathfinding-header-status {
-  max-width: min(100%, 24rem);
-}
-
-.graphwar-killer__image-actions {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.graphwar-killer__image-actions button {
-  min-height: 34px;
-  padding: 6px 10px;
-}
-
-.graphwar-killer__pathfinding-settings {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.graphwar-killer__subpanel {
-  background: var(--vp-c-bg-soft);
-  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 82%, transparent);
-  border-radius: 8px;
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  padding: 8px;
-}
-
-.graphwar-killer__subpanel h3 {
-  font-size: 0.92rem;
-  line-height: 1.4;
-  margin: 0;
-}
-
-.graphwar-killer__advanced-settings-grid {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.graphwar-killer__advanced-settings-group {
-  align-content: start;
-}
-
-.graphwar-killer__details {
-  gap: 0;
-}
-
-.graphwar-killer__details[open] {
-  gap: 8px;
-}
-
-.graphwar-killer__details > summary {
-  cursor: pointer;
-  font-size: 0.92rem;
-  font-weight: 700;
-  line-height: 1.4;
-  margin: -2px 0;
-}
-
-.graphwar-killer__details > summary:focus-visible {
-  border-radius: 4px;
-  outline: 2px solid var(--vp-c-brand-1);
-  outline-offset: 2px;
-}
-
-.graphwar-killer__details[open] > summary {
-  margin-bottom: 6px;
-}
-
-.graphwar-killer__debug-timing {
-  background: var(--vp-c-bg-soft);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 8px;
-  color: var(--vp-c-text-1);
-  display: grid;
-  font-size: 0.86rem;
-  line-height: 1.6;
-  margin: 0;
-  overflow-x: auto;
-  padding: 8px;
-  white-space: nowrap;
-}
-
-.graphwar-killer__debug-timing > span {
-  min-width: max-content;
-}
-
-.graphwar-killer__debug-timing-row {
-  padding-inline-start: calc(var(--graphwar-killer-debug-indent-level, 0) * 1rem);
-}
-
-.graphwar-killer__pathfinding-setting-grid {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-/* 寻路数值项有的在 details 内、有的直接在分组内；统一收紧宽度，避免父 grid 拉伸后把输入框推右。 */
-.graphwar-killer__pathfinding-setting-label {
-  grid-template-columns: max-content minmax(74px, 92px) auto;
-  justify-self: start;
-}
-
-.graphwar-killer__recognition-setting-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-
-.graphwar-killer__recognition-setting-row .graphwar-killer__detection-setting-label {
-  grid-template-columns: max-content minmax(74px, 92px) auto;
-  min-width: 0;
-}
-
-.graphwar-killer__coordinate-grid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-}
-
-.graphwar-killer__coordinate-grid label {
-  align-items: center;
-  gap: 6px;
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.graphwar-killer__detection-setting-label {
-  align-items: center;
-  font-weight: 600;
-  gap: 6px;
-  grid-template-columns: auto minmax(74px, 92px) auto;
-}
-
-.graphwar-killer__detection-setting-label span {
-  color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
-  font-size: 0.88rem;
-  font-weight: 500;
-}
-
-.graphwar-killer__toggle-button--active {
-  background: var(--vp-c-brand-soft) !important;
-  border-color: var(--vp-c-brand-1) !important;
-  color: var(--vp-c-brand-1) !important;
 }
 
 .graphwar-killer__sr-only {
@@ -5339,37 +4854,5 @@ async function copyText(text: string) {
   position: absolute;
   white-space: nowrap;
   width: 1px;
-}
-
-.graphwar-killer button:hover:not(:disabled) {
-  border-color: var(--vp-c-brand-1);
-  box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
-  color: var(--vp-c-brand-1);
-  transform: translateY(-1px);
-}
-
-.graphwar-killer input:focus-visible,
-.graphwar-killer button:focus-visible {
-  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
-  outline: none;
-}
-
-@media (width <= 760px) {
-  .graphwar-killer__label-row {
-    display: grid;
-    gap: 4px;
-  }
-
-  .graphwar-killer__label-row > span {
-    text-align: left;
-  }
-}
-
-@media (width <= 520px) {
-  .graphwar-killer__recognition-setting-row {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
 }
 </style>

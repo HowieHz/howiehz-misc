@@ -92,7 +92,7 @@ import {
   createGraphwarPathfindingRunner,
   isGraphwarPathfindingCancelledError,
 } from "./pathfinding/graphwar-pathfinding-runner";
-import type { GraphwarSmartPathfindingPathInput } from "./pathfinding/graphwar-pathfinding-worker-types";
+import { createGraphwarSmartPathfindingSearchInput } from "./pathfinding/graphwar-smart-pathfinding-search-input";
 import {
   createAllowedTargetRect,
   createBoundsRectWithBoundaryExpansion,
@@ -2243,22 +2243,19 @@ async function buildSmartPathfindingPath(
     return undefined;
   }
 
-  const routeTolerance = tolerances.routePlanningTolerancePlanePixels;
-  const input: GraphwarSmartPathfindingPathInput = {
-    boundaryExpansion: tolerances.boundaryExpansionPlanePixels,
+  const input = createGraphwarSmartPathfindingSearchInput({
     bounds: boundsResult.bounds,
     boundsRect: boundsRect.value,
     hitTarget: createSmartPathfindingHitTarget(hitTarget),
     previewEnabled: searchAnimationEnabled.value,
     routeMaskCacheId: pathfindingCache.getRouteObstacleMaskCacheId(obstacleMask),
     routeObstacleMask: obstacleMask,
-    routeTolerancePlanePixels: routeTolerance,
     settings: createPathTrajectoryFormulaSettings(),
-    simulationBoundaryExpansion: tolerances.boundaryExpansionPlanePixels,
     simulationMask: simulationObstacleMask.value,
     sourcePath,
     targetPoint,
-  };
+    tolerances,
+  });
   const resultCacheKey = pathfindingCache.createSmartPathfindingResultCacheKey(input);
   let result = pathfindingCache.getCachedSmartPathfindingResult(resultCacheKey, (timing) => timings?.push(timing));
   const resultCacheHit = result !== undefined;

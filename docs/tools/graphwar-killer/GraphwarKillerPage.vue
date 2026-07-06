@@ -69,7 +69,6 @@ import type {
 } from "./core/types";
 import { buildObstacleEdgePath, buildObstacleFillPath, isPlayerColorPixel } from "./detection/graphwar-detection";
 import type { GraphwarDetectionBox } from "./detection/graphwar-detection";
-import { sampleGraphwarPathTrajectory } from "./formula/trajectory-sampling";
 import type { GraphwarTrajectoryCollisionSettings } from "./formula/trajectory-sampling";
 import type { GraphwarKillerLocale } from "./locale-types";
 import {
@@ -93,6 +92,11 @@ import {
   isGraphwarPathfindingCancelledError,
 } from "./pathfinding/graphwar-pathfinding-runner";
 import { createGraphwarSmartPathfindingSearchInput } from "./pathfinding/graphwar-smart-pathfinding-search-input";
+import {
+  createGraphwarSmartPathfindingHitTarget,
+  createGraphwarSmartPathfindingTrajectoryResult,
+  getGraphwarSmartPathfindingAppendedSegment,
+} from "./pathfinding/graphwar-smart-pathfinding-trajectory";
 import {
   createAllowedTargetRect,
   createBoundsRectWithBoundaryExpansion,
@@ -150,15 +154,6 @@ type ParsedObstacleTolerances =
 type PathfindingMode = "off" | "smart" | "auto-graph";
 /** 截图上的检测框，坐标均为图片像素。 */
 type DetectionBox = GraphwarDetectionBox;
-/** 单目标弹道验证结果。 */
-interface PathTrajectoryResult {
-  /** 未命中目标前碰到障碍或边界的位置。 */
-  blockedPoint?: PixelPoint;
-  /** 是否先命中目标再碰障碍。 */
-  reachesTargetBeforeObstacle: boolean;
-  /** 可绘制轨迹。 */
-  visiblePixels: PixelPoint[];
-}
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
 }>();
@@ -2246,7 +2241,7 @@ async function buildSmartPathfindingPath(
   const input = createGraphwarSmartPathfindingSearchInput({
     bounds: boundsResult.bounds,
     boundsRect: boundsRect.value,
-    hitTarget: createSmartPathfindingHitTarget(hitTarget),
+    hitTarget: createGraphwarSmartPathfindingHitTarget(hitTarget, soldierMarkerRadius.value),
     previewEnabled: searchAnimationEnabled.value,
     routeMaskCacheId: pathfindingCache.getRouteObstacleMaskCacheId(obstacleMask),
     routeObstacleMask: obstacleMask,
@@ -2282,20 +2277,9 @@ async function buildSmartPathfindingPath(
     flashSmartPathfindingBlockedPoint(result.blockedPoint);
   }
   if (result.path && searchAnimationEnabled.value) {
-    setSmartPathfindingPreviewPath(getSmartPathfindingAppendedSegment(result.path, sourcePath.length));
+    setSmartPathfindingPreviewPath(getGraphwarSmartPathfindingAppendedSegment(result.path, sourcePath.length));
   }
   return result.path ? { cacheHit: resultCacheHit, path: result.path } : undefined;
-}
-
-/** 提取新增路径段并保留连接点，供搜索动画绘制。 */
-function getSmartPathfindingAppendedSegment(points: readonly PixelPoint[], sourcePathLength: number) {
-  return points.slice(Math.max(0, sourcePathLength - 1));
-}
-
-function createSmartPathfindingHitTarget(hitTarget: PixelPoint | HitCircle): HitCircle {
-  return "center" in hitTarget
-    ? { center: hitTarget.center, radius: hitTarget.radius }
-    : { center: hitTarget, radius: soldierMarkerRadius.value };
 }
 
 /** 启动新寻路前先确认当前公式轨迹已经能到达当前最后路径点。 */
@@ -2309,7 +2293,18 @@ function ensureCurrentPathReachesLastPointBeforeSmartPathfinding() {
     return true;
   }
 
-  const result = createPathTrajectoryResult([...pathPixels.value], currentTarget);
+  const result = createGraphwarSmartPathfindingTrajectoryResult({
+    boundaryExpansion: parsedObstacleTolerances.value.ok
+      ? parsedObstacleTolerances.value.boundaryExpansionPlanePixels
+      : 0,
+    bounds: parsedBounds.value.ok ? parsedBounds.value.bounds : undefined,
+    boundsRect: boundsRect.value,
+    hitTarget: currentTarget,
+    obstacleMask: simulationObstacleMask.value,
+    points: [...pathPixels.value],
+    settings: createPathTrajectoryFormulaSettings(),
+    targetPointRadius: soldierMarkerRadius.value,
+  });
   if (result.reachesTargetBeforeObstacle) {
     return true;
   }
@@ -2328,36 +2323,6 @@ function createCurrentLastPathHitTarget() {
 
   const soldier = detectedSoldiers.value.find((box) => detectionBoxContainsHitCircle(box, lastPoint));
   return soldier ? createSoldierHitCircle(soldier) : lastPoint;
-}
-
-/** 使用共享采样模块验证像素路径的弹道命中结果。 */
-function createPathTrajectoryResult(points: PixelPoint[], hitTarget?: PixelPoint | HitCircle): PathTrajectoryResult {
-  const boundsResult = parsedBounds.value;
-  if (!boundsResult.ok) {
-    return { reachesTargetBeforeObstacle: false, visiblePixels: [] };
-  }
-
-  const hitTargetPoint = hitTarget && "center" in hitTarget ? hitTarget.center : hitTarget;
-  const hitTargetRadius = hitTarget && "center" in hitTarget ? hitTarget.radius : soldierMarkerRadius.value;
-
-  // 智能寻路候选路径在这里统一转换为“目标前无障碍”的轨迹判定和可视化像素点。
-  const result = sampleGraphwarPathTrajectory({
-    boundaryExpansion: parsedObstacleTolerances.value.ok
-      ? parsedObstacleTolerances.value.boundaryExpansionPlanePixels
-      : 0,
-    bounds: boundsResult.bounds,
-    boundsRect: boundsRect.value,
-    hitTargetPoint,
-    obstacleMask: simulationObstacleMask.value,
-    points,
-    settings: createPathTrajectoryFormulaSettings(),
-    soldierMarkerRadius: hitTargetRadius,
-  });
-  return {
-    blockedPoint: result.earlyStopReason === "obstacle" ? result.visiblePixels.at(-1) : undefined,
-    reachesTargetBeforeObstacle: result.reachesTargetBeforeObstacle,
-    visiblePixels: result.visiblePixels,
-  };
 }
 
 /** 创建当前目标规则的坐标映射输入；无效 bounds 应保持原来的失败语义。 */

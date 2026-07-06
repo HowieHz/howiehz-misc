@@ -5876,7 +5876,7 @@ async function copyText(text: string) {
               :r="soldierSelectionRadius"
             />
             <text
-              class="graphwar-killer__point-label graphwar-killer__point-label--live-click-preview"
+              class="graphwar-killer__point-label"
               :x="liveClickPreviewPoint.x + soldierSelectionRadius + 4"
               :y="liveClickPreviewPoint.y - soldierSelectionRadius - 4"
             >
@@ -6180,7 +6180,7 @@ async function copyText(text: string) {
                   :r="soldierSelectionRadius"
                 />
                 <text
-                  class="graphwar-killer__point-label graphwar-killer__point-label--live-click-preview"
+                  class="graphwar-killer__point-label"
                   :x="liveClickPreviewPoint.x + soldierSelectionRadius + 4"
                   :y="liveClickPreviewPoint.y - soldierSelectionRadius - 4"
                 >
@@ -7021,10 +7021,6 @@ async function copyText(text: string) {
   paint-order: stroke;
   stroke: var(--vp-c-bg);
   stroke-width: 4;
-}
-
-.graphwar-killer__point-label--live-click-preview {
-  fill: #b45309;
 }
 
 .graphwar-killer__image-actions {

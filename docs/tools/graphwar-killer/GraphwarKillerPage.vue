@@ -23,6 +23,7 @@ import { useGraphwarObstacleEditor } from "./composables/use-graphwar-obstacle-e
 import { useGraphwarPathPointEditing } from "./composables/use-graphwar-path-point-editing";
 import { useGraphwarPathState } from "./composables/use-graphwar-path-state";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
+import { useGraphwarSmartPathfindingRunWorkflow } from "./composables/use-graphwar-smart-pathfinding-run-workflow";
 import {
   useGraphwarSmartPathfindingSession,
   type GraphwarPathfindingLineSegment,
@@ -145,13 +146,6 @@ type ParsedObstacleTolerances =
 type PathfindingMode = "off" | "smart" | "auto-graph";
 /** 截图上的检测框，坐标均为图片像素。 */
 type DetectionBox = GraphwarDetectionBox;
-/** 智能寻路构建结果；cacheHit 只表示完整结果缓存，不混淆 route mask/可视图 cache。 */
-interface SmartPathfindingPathBuildResult {
-  /** 完整路径结果是否来自页面侧结果缓存。 */
-  cacheHit: boolean;
-  /** 可直接写回页面的完整像素路径。 */
-  path: PixelPoint[];
-}
 /** 单目标弹道验证结果。 */
 interface PathTrajectoryResult {
   /** 未命中目标前碰到障碍或边界的位置。 */
@@ -322,6 +316,21 @@ const {
 } = useGraphwarDebugTimings({
   getLocale: () => locale,
   isDetectionRunActive: isActiveDetectionRun,
+});
+// 单目标寻路 workflow 应集中维护 token、状态和调试耗时顺序；目标规则和 worker 输入仍由页面负责。
+const smartPathfindingRunWorkflow = useGraphwarSmartPathfindingRunWorkflow<PixelPoint | SmartPathfindingTarget>({
+  applyPath: setPathPixels,
+  buildPath: buildSmartPathfindingPath,
+  clearDebugTimings: clearSmartPathfindingDebugTimings,
+  finishDebugTimings: finishSmartPathfindingDebugTimings,
+  finishRun: finishSmartPathfindingRun,
+  getFailureMessage: getSmartPathfindingFailureMessage,
+  getSuccessMessage: getSmartPathfindingSuccessMessage,
+  isRunCurrent: isSmartPathfindingRunCurrent,
+  measureStage: measureSmartPathfindingDebugStage,
+  now: nowMs,
+  setStatus: setSmartPathfindingStatus,
+  startRun: startSmartPathfinding,
 });
 // 舞台反馈只应持有短暂高亮状态和清理逻辑；页面应决定触发时机。
 const {
@@ -1932,54 +1941,10 @@ async function appendPathPoint(point: PixelPoint) {
   }
 
   if (effectiveSmartPathfindingEnabled.value) {
-    clearSmartPathfindingDebugTimings();
-    const startedAt = nowMs();
-    const timings: SmartPathfindingDebugTimingEntry[] = [];
-    const preflightPassed = measureSmartPathfindingDebugStage(timings, "preflight", () =>
-      ensureCurrentPathReachesLastPointBeforeSmartPathfinding(),
-    );
-    if (!preflightPassed) {
-      finishSmartPathfindingDebugTimings(startedAt, timings);
-      return false;
-    }
-
-    const pathfindingToken = startSmartPathfinding();
-    let pathfindingResult: SmartPathfindingPathBuildResult | undefined;
-    try {
-      pathfindingResult = await buildSmartPathfindingPath(nextPoint, pathfindingToken, timings);
-      if (!isSmartPathfindingRunCurrent(pathfindingToken)) {
-        return false;
-      }
-    } finally {
-      if (isSmartPathfindingRunCurrent(pathfindingToken)) {
-        finishSmartPathfindingRun(pathfindingToken);
-      }
-    }
-
-    if (!pathfindingResult) {
-      let completedAt = nowMs();
-      measureSmartPathfindingDebugStage(timings, "setting-status", () => {
-        completedAt = nowMs();
-        setSmartPathfindingStatus(getSmartPathfindingFailureMessage(completedAt - startedAt), "error");
-        completedAt = nowMs();
-      });
-      finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
-      return false;
-    }
-
-    const finalPath = pathfindingResult.path;
-    measureSmartPathfindingDebugStage(timings, "apply-result", () => setPathPixels(finalPath));
-    let completedAt = nowMs();
-    measureSmartPathfindingDebugStage(timings, "setting-status", () => {
-      completedAt = nowMs();
-      setSmartPathfindingStatus(
-        getSmartPathfindingSuccessMessage(completedAt - startedAt, pathfindingResult.cacheHit),
-        "success",
-      );
-      completedAt = nowMs();
+    return smartPathfindingRunWorkflow.run({
+      collectTarget: () => nextPoint,
+      preflight: ensureCurrentPathReachesLastPointBeforeSmartPathfinding,
     });
-    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
-    return true;
   }
 
   if (!canAppendPathPoint(nextPoint)) {
@@ -2011,74 +1976,16 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
     return false;
   }
 
-  clearSmartPathfindingDebugTimings();
-  const startedAt = nowMs();
-  const timings: SmartPathfindingDebugTimingEntry[] = [];
-  const sourcePath = [...pathPixels.value];
-  const startPoint = sourcePath.at(-1);
-  if (!startPoint) {
-    return false;
-  }
-
-  const preflightPassed = measureSmartPathfindingDebugStage(timings, "preflight", () =>
-    ensureCurrentPathReachesLastPointBeforeSmartPathfinding(),
-  );
-  if (!preflightPassed) {
-    finishSmartPathfindingDebugTimings(startedAt, timings);
-    return false;
-  }
-
-  const target = measureSmartPathfindingDebugStage(timings, "collect-targets", () =>
-    createSmartPathfindingSoldierTarget(startPoint, soldier),
-  );
-  if (!target) {
-    let completedAt = nowMs();
-    measureSmartPathfindingDebugStage(timings, "setting-status", () => {
-      completedAt = nowMs();
-      setSmartPathfindingStatus(getSmartPathfindingFailureMessage(completedAt - startedAt), "error");
-      completedAt = nowMs();
-    });
-    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
-    return false;
-  }
-
-  const pathfindingToken = startSmartPathfinding();
-  let pathfindingResult: SmartPathfindingPathBuildResult | undefined;
-  try {
-    pathfindingResult = await buildSmartPathfindingPath(target, pathfindingToken, timings);
-    if (!isSmartPathfindingRunCurrent(pathfindingToken)) {
-      return false;
-    }
-  } finally {
-    if (isSmartPathfindingRunCurrent(pathfindingToken)) {
-      finishSmartPathfindingRun(pathfindingToken);
-    }
-  }
-
-  if (!pathfindingResult) {
-    let completedAt = nowMs();
-    measureSmartPathfindingDebugStage(timings, "setting-status", () => {
-      completedAt = nowMs();
-      setSmartPathfindingStatus(getSmartPathfindingFailureMessage(completedAt - startedAt), "error");
-      completedAt = nowMs();
-    });
-    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
-    return false;
-  }
-
-  const finalPath = pathfindingResult.path;
-  measureSmartPathfindingDebugStage(timings, "apply-result", () => setPathPixels(finalPath));
-  let completedAt = nowMs();
-  measureSmartPathfindingDebugStage(timings, "setting-status", () => {
-    completedAt = nowMs();
-    setSmartPathfindingStatus(
-      getSmartPathfindingSuccessMessage(completedAt - startedAt, pathfindingResult.cacheHit),
-      "success",
-    );
-    completedAt = nowMs();
+  let startPoint: PixelPoint | undefined;
+  return smartPathfindingRunWorkflow.run({
+    collectTarget: () => (startPoint ? createSmartPathfindingSoldierTarget(startPoint, soldier) : undefined),
+    collectTargetStage: "collect-targets",
+    prepare: () => {
+      startPoint = [...pathPixels.value].at(-1);
+      return startPoint !== undefined;
+    },
+    preflight: ensureCurrentPathReachesLastPointBeforeSmartPathfinding,
   });
-  finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
-  return true;
 }
 
 /** 一键清图：从当前路径尾部出发，完整遍历 x 单调可达状态并追加当前模型下击杀最多的路径。 */

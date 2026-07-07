@@ -73,11 +73,7 @@ import { buildObstacleEdgePath, buildObstacleFillPath } from "./detection/graphw
 import type { GraphwarDetectionBox } from "./detection/graphwar-detection";
 import type { GraphwarTrajectoryCollisionSettings } from "./formula/trajectory-sampling";
 import type { GraphwarKillerLocale } from "./locale-types";
-import {
-  GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS,
-  type GraphwarOneClickClearFailureReason,
-} from "./pathfinding/graphwar-one-click-clear";
-import type { GraphwarOneClickClearSearchPreflightFailureReason } from "./pathfinding/graphwar-one-click-clear-search-input";
+import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/graphwar-one-click-clear";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/graphwar-pathfinding-cache";
 import {
   createGraphwarPathLineSegments,
@@ -89,11 +85,22 @@ import {
   createBoundsRectWithBoundaryExpansion,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
 } from "./pathfinding/graphwar-targeting";
+import { formatElapsedDuration } from "./presentation/duration-format";
 import {
   createHeaderStatus,
   getFirstHeaderStatus,
   getSmartPathfindingHeaderStatus,
 } from "./presentation/header-status";
+import {
+  createOneClickClearFailureMessage,
+  createOneClickClearPreflightFailureStatus,
+  createOneClickClearSuccessMessage,
+  createSmartPathfindingCancelledMessage,
+  createSmartPathfindingCurrentPathBlockedMessage,
+  createSmartPathfindingFailureMessage,
+  createSmartPathfindingInProgressMessage,
+  createSmartPathfindingSuccessMessage,
+} from "./presentation/pathfinding-status";
 
 /** 坐标边界解析结果；失败分支直接携带本地化校验文案。 */
 type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: string };
@@ -254,7 +261,7 @@ const searchAnimationEnabled = ref(true);
 // 智能寻路和一键清图共用同一组运行状态、预览层和取消 token，避免两个异步任务同时回写页面。
 const smartPathfindingSession = useGraphwarSmartPathfindingSession({
   blockedPointFlashMs: smartPathfindingBlockedPointFlashMs,
-  getCancelledMessage: () => getSmartPathfindingCancelledMessage(),
+  getCancelledMessage: () => createSmartPathfindingCancelledMessage(locale),
   getInProgressMessage: () => getSmartPathfindingInProgressMessage(),
   isPathfindingModeActive: () => pathfindingMode.value === "smart",
   pathStatus,
@@ -332,8 +339,9 @@ const smartPathfindingRunWorkflow = useGraphwarSmartPathfindingRunWorkflow<Pixel
   clearDebugTimings: clearSmartPathfindingDebugTimings,
   finishDebugTimings: finishSmartPathfindingDebugTimings,
   finishRun: finishSmartPathfindingRun,
-  getFailureMessage: getSmartPathfindingFailureMessage,
-  getSuccessMessage: getSmartPathfindingSuccessMessage,
+  getFailureMessage: (elapsedMs) => createSmartPathfindingFailureMessage(locale, elapsedMs),
+  getSuccessMessage: (elapsedMs, resultCacheHit) =>
+    createSmartPathfindingSuccessMessage(locale, elapsedMs, resultCacheHit),
   isRunCurrent: isSmartPathfindingRunCurrent,
   measureStage: measureSmartPathfindingDebugStage,
   now: nowMs,
@@ -912,11 +920,17 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
     isUnsupportedMode: isOneClickClearModeUnsupported,
   },
   messages: {
-    getFailureMessage: getOneClickClearFailureMessage,
+    getFailureMessage: (reason, elapsedMs) => createOneClickClearFailureMessage({ elapsedMs, locale, reason }),
     getInProgressMessage: () => locale.smartPathfinding.oneClickClear.inProgress,
-    getPreflightFailureStatus: getOneClickClearPreflightFailureStatus,
+    getPreflightFailureStatus: (reason) =>
+      createOneClickClearPreflightFailureStatus({
+        getDisabledMessage: getSmartPathfindingDisabledMessage,
+        locale,
+        reason,
+        settingsMessage: smartPathfindingSettingsMessage.value,
+      }),
     getSuccessMessage: (targetCount, elapsedMs, resultCacheHit) =>
-      locale.smartPathfinding.oneClickClear.success(targetCount, formatElapsedDuration(elapsedMs), resultCacheHit),
+      createOneClickClearSuccessMessage({ elapsedMs, locale, resultCacheHit, targetCount }),
   },
   pathfinding: {
     cache: pathfindingCache,
@@ -2046,50 +2060,6 @@ async function runOneClickClear() {
   return oneClickClearRunWorkflow.run();
 }
 
-/** 一键清图预检 reason 应在页面映射成用户状态，避免 pathfinding Module 依赖 locale。 */
-function getOneClickClearPreflightFailureStatus(reason: GraphwarOneClickClearSearchPreflightFailureReason) {
-  if (reason === "invalid-settings") {
-    return {
-      kind: "error" as const,
-      message: smartPathfindingSettingsMessage.value || getSmartPathfindingDisabledMessage(),
-    };
-  }
-  if (reason === "unsupported-mode") {
-    return {
-      kind: "warning" as const,
-      message: locale.smartPathfinding.oneClickClear.unsupported,
-    };
-  }
-  if (reason === "missing-current-path") {
-    return {
-      kind: "warning" as const,
-      message: locale.smartPathfinding.oneClickClear.needCurrentPath,
-    };
-  }
-  return {
-    kind: "error" as const,
-    message: getSmartPathfindingFailureMessage(),
-  };
-}
-
-/** 一键清图失败原因用独立文案，避免和单目标智能寻路失败混在一起。 */
-function getOneClickClearFailureMessage(reason: GraphwarOneClickClearFailureReason, elapsedMs: number) {
-  const elapsed = formatElapsedDuration(elapsedMs);
-  if (reason === "no-candidate") {
-    return locale.smartPathfinding.oneClickClear.noCandidate;
-  }
-  if (reason === "preflight-blocked") {
-    return getSmartPathfindingCurrentPathBlockedMessage();
-  }
-  if (reason === "unsupported") {
-    return locale.smartPathfinding.oneClickClear.unsupported;
-  }
-  if (reason === "pathfinding-worker-failed") {
-    return locale.smartPathfinding.oneClickClear.pathfindingWorkerFailed(elapsed);
-  }
-  return locale.smartPathfinding.oneClickClear.noUsableTarget(elapsed);
-}
-
 /** 路径变更后同步落地并清空旧状态。 */
 function setPathPixels(points: PixelPoint[]) {
   if (pathStartChanges(points)) {
@@ -2137,7 +2107,7 @@ function ensureCurrentPathReachesLastPointBeforeSmartPathfinding() {
     return true;
   }
 
-  setSmartPathfindingStatus(getSmartPathfindingCurrentPathBlockedMessage(), "error");
+  setSmartPathfindingStatus(createSmartPathfindingCurrentPathBlockedMessage(locale), "error");
   flashSmartPathfindingBlockedPoint(result.blockedPoint ?? pathPixels.value.at(-1));
   return false;
 }
@@ -2389,49 +2359,9 @@ function getForwardPathMessage() {
   return locale.smartPathfinding.forwardPath(locale.smartPathfinding.forwardMinimumDouble);
 }
 
-/** 返回智能寻路失败文案，可附带耗时。 */
-function getSmartPathfindingFailureMessage(elapsedMs?: number) {
-  return locale.smartPathfinding.failure(elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs));
-}
-
-/** 返回当前路径尚未到达最后路径点时的寻路拦截文案。 */
-function getSmartPathfindingCurrentPathBlockedMessage() {
-  return locale.smartPathfinding.currentPathBlocked;
-}
-
-/** 返回智能寻路成功文案，可附带耗时。 */
-function getSmartPathfindingSuccessMessage(elapsedMs?: number, resultCacheHit = false) {
-  return locale.smartPathfinding.success(
-    elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs),
-    resultCacheHit,
-  );
-}
-
 /** 根据当前阶段生成智能寻路进行中文案。 */
 function getSmartPathfindingInProgressMessage() {
-  const phaseText =
-    activeSmartPathfindingPhase.value === "search"
-      ? locale.smartPathfinding.inProgress.search
-      : activeSmartPathfindingPhase.value === "trajectory"
-        ? locale.smartPathfinding.inProgress.trajectory
-        : locale.smartPathfinding.inProgress.optimize;
-  return `${phaseText}${locale.smartPathfinding.inProgress.stopSuffix}`;
-}
-
-/** 返回智能寻路取消文案。 */
-function getSmartPathfindingCancelledMessage() {
-  return locale.smartPathfinding.cancelled;
-}
-
-/** 将毫秒耗时格式化成调试和状态栏使用的短文本。 */
-function formatElapsedDuration(elapsedMs: number) {
-  if (elapsedMs <= 0) {
-    return "0 ms";
-  }
-  if (elapsedMs < 1000) {
-    return `${Math.max(1, Math.round(elapsedMs))} ms`;
-  }
-  return `${formatDecimal(elapsedMs / 1000, elapsedMs < 10000 ? 2 : 1)} s`;
+  return createSmartPathfindingInProgressMessage(locale, activeSmartPathfindingPhase.value);
 }
 
 /** 将调试耗时格式化为保留小数的毫秒文本，避免短阶段被状态栏格式化规则吞掉精度。 */

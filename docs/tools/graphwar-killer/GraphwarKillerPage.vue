@@ -67,25 +67,23 @@ import {
   createBoundsRectWithBoundaryExpansion,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
 } from "./pathfinding/targeting";
-import GraphwarActionPanel from "./presentation/action/ActionPanel.vue";
-import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./presentation/detection/DetectionPanel.vue";
+import GraphwarActionPanel from "./presentation/action/MainPanel.vue";
+import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./presentation/detection/MainPanel.vue";
 import GraphwarSmartPathfindingPanel, {
   type GraphwarSmartPathfindingPanelModel,
-} from "./presentation/pathfinding/SmartPathfindingPanel.vue";
-import GraphwarResultPanel from "./presentation/result/ResultPanel.vue";
-import GraphwarScreenshotPanel, {
-  type GraphwarScreenshotPanelModel,
-} from "./presentation/screenshot/ScreenshotPanel.vue";
+} from "./presentation/pathfinding/MainPanel.vue";
+import GraphwarResultPanel from "./presentation/result/MainPanel.vue";
+import GraphwarScreenshotPanel, { type GraphwarScreenshotPanelModel } from "./presentation/screenshot/MainPanel.vue";
 import GraphwarAdvancedSettingsPanel, {
   type GraphwarAdvancedSettingsPanelModel,
-} from "./presentation/settings/AdvancedSettingsPanel.vue";
-import GraphwarSettingsPanel, { type GraphwarSettingsPanelModel } from "./presentation/settings/SettingsPanel.vue";
-import { formatElapsedDuration } from "./presentation/status/duration-format";
+} from "./presentation/settings/AdvancedPanel.vue";
+import GraphwarSettingsPanel, { type GraphwarSettingsPanelModel } from "./presentation/settings/MainPanel.vue";
+import { formatElapsedDuration } from "./presentation/status/duration";
 import {
   createHeaderStatus,
   getFirstHeaderStatus,
   getSmartPathfindingHeaderStatus,
-} from "./presentation/status/header-status";
+} from "./presentation/status/header";
 import {
   createOneClickClearFailureMessage,
   createOneClickClearPreflightFailureStatus,
@@ -95,7 +93,7 @@ import {
   createSmartPathfindingFailureMessage,
   createSmartPathfindingInProgressMessage,
   createSmartPathfindingSuccessMessage,
-} from "./presentation/status/pathfinding-status";
+} from "./presentation/status/pathfinding";
 
 /** 寻路模式；auto-graph 保留为待重写的禁用入口。 */
 type PathfindingMode = "off" | "smart" | "auto-graph";

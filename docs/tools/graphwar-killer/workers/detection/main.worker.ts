@@ -1,5 +1,5 @@
 /** 在 Web Worker 中执行耗时的 Graphwar 截图识别，避免阻塞页面主线程。 */
-import type { BoundsRect } from "../core/types";
+import type { BoundsRect } from "../../core/types";
 import {
   collectSoldierTemplateCenterCandidatesForMatching,
   createSoldierDetectionBoxes,
@@ -10,7 +10,7 @@ import {
   getGraphwarDetectionScale,
   getGraphwarSoldierDetectionSettings,
   matchSoldierTemplates,
-} from "../detection/objects";
+} from "../../detection/objects";
 import type {
   GraphwarDetectionWarning,
   GraphwarObjectDetectionInstrumentation,
@@ -20,7 +20,7 @@ import type {
   GraphwarSoldierDetectionSettings,
   SoldierMatchCandidate,
   SoldierTemplateCenterCandidate,
-} from "../detection/objects";
+} from "../../detection/objects";
 import type {
   GraphwarAutoDetectionResult,
   GraphwarDetectionWorkerTask,
@@ -29,11 +29,11 @@ import type {
   GraphwarDetectionWorkerStage,
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
-} from "../detection/runtime/worker-types";
+} from "../../detection/runtime/worker-types";
 import type {
   GraphwarSoldierTemplateWorkerRequest,
   GraphwarSoldierTemplateWorkerResponse,
-} from "../detection/template/worker-types";
+} from "../../detection/template/worker-types";
 
 /** 当前 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarDetectionWorkerScope {
@@ -304,7 +304,7 @@ function createSoldierTemplateWorkerHandle(
   edgeRect: BoundsRect,
   scale: number,
 ): SoldierTemplateWorkerHandle {
-  const worker = new Worker(new URL("./graphwar-soldier-template.worker.ts", import.meta.url), {
+  const worker = new Worker(new URL("./soldier-template.worker.ts", import.meta.url), {
     name: `graphwar-soldier-template-${task.workerIndex}`,
     type: "module",
   });

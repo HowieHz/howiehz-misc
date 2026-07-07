@@ -1,9 +1,9 @@
 /** 士兵模板匹配子 worker：只负责候选切片评分，不做全局排序和重叠抑制。 */
-import { matchSoldierTemplates } from "../detection/objects";
+import { matchSoldierTemplates } from "../../detection/objects";
 import type {
   GraphwarSoldierTemplateWorkerRequest,
   GraphwarSoldierTemplateWorkerResponse,
-} from "../detection/template/worker-types";
+} from "../../detection/template/worker-types";
 
 /** 当前子 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarSoldierTemplateWorkerScope {

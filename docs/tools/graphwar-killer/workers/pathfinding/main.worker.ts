@@ -1,23 +1,23 @@
-import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../core/graphwar-forward-rule";
-import { planeGridCellCenterToImagePoint } from "../core/plane-grid";
-import type { GraphBounds, PixelPoint } from "../core/types";
+import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../../core/graphwar-forward-rule";
+import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
+import type { GraphBounds, PixelPoint } from "../../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
-import { dilateObstacleMask } from "../detection/objects";
-import { sampleGraphwarPathTrajectory } from "../formula/trajectory-sampling";
-import { buildOneClickClearDagEdgeRoute } from "../pathfinding/one-click-clear/edge-route";
+import { dilateObstacleMask } from "../../detection/objects";
+import { sampleGraphwarPathTrajectory } from "../../formula/trajectory-sampling";
+import { buildOneClickClearDagEdgeRoute } from "../../pathfinding/one-click-clear/edge-route";
 import type {
   GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildResult,
   GraphwarOneClickClearDagEdgeRoute,
   GraphwarOneClickClearDebugTiming,
-} from "../pathfinding/one-click-clear/search";
-import { buildGraphwarOneClickClearPath } from "../pathfinding/one-click-clear/search";
+} from "../../pathfinding/one-click-clear/search";
+import { buildGraphwarOneClickClearPath } from "../../pathfinding/one-click-clear/search";
 import {
   buildGraphwarVisibilityGraphPathForMask,
   createRouteMaskCacheKey,
   createGraphwarVisibilityGraphObstacleData,
-} from "../pathfinding/routing/visibility-graph";
-import type { GraphwarVisibilityGraphObstacleData } from "../pathfinding/routing/visibility-graph";
+} from "../../pathfinding/routing/visibility-graph";
+import type { GraphwarVisibilityGraphObstacleData } from "../../pathfinding/routing/visibility-graph";
 import type {
   GraphwarOneClickClearDagEdgesWorkerInput,
   GraphwarOneClickClearEdgeWorkerRequest,
@@ -32,7 +32,7 @@ import type {
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
   GraphwarSmartPathfindingWorkerTiming,
-} from "../pathfinding/runtime/worker-types";
+} from "../../pathfinding/runtime/worker-types";
 
 /** 当前 master Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarPathfindingWorkerScope {
@@ -620,7 +620,7 @@ function runOneClickClearDagEdgeWorkerPool(
       onReady: (handle: EdgeWorkerHandle) => void,
       onFailed: (handle: EdgeWorkerHandle) => void,
     ): EdgeWorkerHandle {
-      const worker = new Worker(new URL("./graphwar-one-click-clear-edge.worker.ts", import.meta.url), {
+      const worker = new Worker(new URL("./one-click-clear-edge.worker.ts", import.meta.url), {
         name: `graphwar-one-click-clear-edge-${workerIndex}`,
         type: "module",
       });

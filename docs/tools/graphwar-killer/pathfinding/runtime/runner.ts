@@ -64,7 +64,7 @@ export function createGraphwarPathfindingRunner() {
       return worker;
     }
 
-    worker = new Worker(new URL("../../workers/graphwar-pathfinding.worker.ts", import.meta.url), {
+    worker = new Worker(new URL("../../workers/pathfinding/main.worker.ts", import.meta.url), {
       name: "graphwar-pathfinding",
       type: "module",
     });

@@ -270,7 +270,6 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
   },
   effects: {
     flashBlockedPoint: smartPathfindingSession.flashBlockedPoint,
-    setGraphRuleFailureStatus: () => setSmartPathfindingStatus(getForwardPathMessage(), "error"),
   },
   input: {
     boundsRect,
@@ -305,7 +304,7 @@ const smartPathfindingRunWorkflow = useGraphwarSmartPathfindingRunWorkflow<Pixel
   clearDebugTimings: clearSmartPathfindingDebugTimings,
   finishDebugTimings: finishSmartPathfindingDebugTimings,
   finishRun: finishSmartPathfindingRun,
-  getFailureMessage: (elapsedMs) => createSmartPathfindingFailureMessage(locale, elapsedMs),
+  getFailureMessage: (elapsedMs, reason) => createSmartPathfindingFailureMessage(locale, elapsedMs, reason),
   getSuccessMessage: (elapsedMs, resultCacheHit) =>
     createSmartPathfindingSuccessMessage(locale, elapsedMs, resultCacheHit),
   isRunCurrent: isSmartPathfindingRunCurrent,

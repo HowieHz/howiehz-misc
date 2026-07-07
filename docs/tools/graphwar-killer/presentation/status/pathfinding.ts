@@ -3,6 +3,8 @@ import type { GraphwarOneClickClearSearchPreflightFailureReason } from "../../pa
 import type { GraphwarOneClickClearFailureReason } from "../../pathfinding/one-click-clear/search";
 import { formatElapsedDuration } from "./duration";
 
+export type GraphwarSmartPathfindingFailureReason = "graph-rule" | "missing-obstacle-mask";
+
 export type GraphwarPathfindingPhase = "optimize" | "search" | "trajectory";
 
 export interface GraphwarPathfindingStatusMessage {
@@ -65,6 +67,12 @@ export function createOneClickClearPreflightFailureStatus(
       message: input.locale.smartPathfinding.oneClickClear.needCurrentPath,
     };
   }
+  if (input.reason === "missing-obstacle-mask") {
+    return {
+      kind: "error",
+      message: input.locale.smartPathfinding.oneClickClear.needDetection,
+    };
+  }
   return {
     kind: "error",
     message: createSmartPathfindingFailureMessage(input.locale),
@@ -99,7 +107,17 @@ export function createOneClickClearSuccessMessage(input: GraphwarOneClickClearSu
 }
 
 /** 返回智能寻路失败文案，可附带耗时。 */
-export function createSmartPathfindingFailureMessage(locale: GraphwarKillerLocale, elapsedMs?: number) {
+export function createSmartPathfindingFailureMessage(
+  locale: GraphwarKillerLocale,
+  elapsedMs?: number,
+  reason?: GraphwarSmartPathfindingFailureReason,
+) {
+  if (reason === "missing-obstacle-mask") {
+    return locale.smartPathfinding.needDetection;
+  }
+  if (reason === "graph-rule") {
+    return locale.smartPathfinding.forwardPath(locale.smartPathfinding.forwardMinimumDouble);
+  }
   return locale.smartPathfinding.failure(elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs));
 }
 

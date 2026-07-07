@@ -203,6 +203,7 @@ export interface GraphwarKillerLocale {
     failure: (elapsed?: string) => string;
     forwardMinimumDouble: string;
     forwardPath: (minimumStep: string) => string;
+    needDetection: string;
     inProgress: {
       optimize: string;
       search: string;
@@ -212,6 +213,7 @@ export interface GraphwarKillerLocale {
     success: (elapsed?: string, resultCacheHit?: boolean) => string;
     oneClickClear: {
       inProgress: string;
+      needDetection: string;
       needCurrentPath: string;
       noCandidate: string;
       noUsableTarget: (elapsed: string) => string;

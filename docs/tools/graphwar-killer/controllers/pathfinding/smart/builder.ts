@@ -58,8 +58,6 @@ interface GraphwarSmartPathfindingBuilderOptions {
   effects: {
     /** 短暂标记真实弹道被阻挡的位置。 */
     flashBlockedPoint: (point: PixelPoint | undefined) => void;
-    /** 当前路径违反 x+ 规则时由页面写入本地化状态。 */
-    setGraphRuleFailureStatus: () => void;
   };
   /** 构造 worker 输入时应读取调用时的最新页面状态。 */
   input: {
@@ -127,7 +125,7 @@ export function useGraphwarSmartPathfindingBuilder(
     target: GraphwarSmartPathfindingBuildTarget,
     cancelToken: number,
     timings?: SmartPathfindingDebugTimingEntry[],
-  ) {
+  ): Promise<GraphwarSmartPathfindingRunBuildResult | undefined> {
     const bounds = options.input.getBounds();
     if (!bounds) {
       return undefined;
@@ -138,12 +136,16 @@ export function useGraphwarSmartPathfindingBuilder(
 
     const targetPoint = "targetPoint" in target ? target.targetPoint : target;
     const hitTarget = "targetPoint" in target ? target.hitCircle : target;
-    const obstacleMask = options.input.getObstacleMask();
     const tolerances = options.input.getTolerances();
     const sourcePath = [...options.input.getPathPixels()];
     const startPoint = sourcePath.at(-1);
-    if (!obstacleMask || !tolerances || !startPoint) {
+    if (!tolerances || !startPoint) {
       return undefined;
+    }
+
+    const obstacleMask = options.input.getObstacleMask();
+    if (!obstacleMask) {
+      return { reason: "missing-obstacle-mask", type: "failure" };
     }
 
     if (options.preview.isSearchAnimationEnabled()) {
@@ -198,8 +200,7 @@ export function useGraphwarSmartPathfindingBuilder(
 
     options.debug.addWorkerTimings(timings, result.timings);
     if (result.failureReason === "graph-rule") {
-      options.effects.setGraphRuleFailureStatus();
-      return undefined;
+      return { reason: "graph-rule", type: "failure" };
     }
     if (result.blockedPoint) {
       options.effects.flashBlockedPoint(result.blockedPoint);
@@ -207,7 +208,7 @@ export function useGraphwarSmartPathfindingBuilder(
     if (result.path && options.preview.isSearchAnimationEnabled()) {
       options.preview.setPath(getGraphwarSmartPathfindingAppendedSegment(result.path, sourcePath.length));
     }
-    return result.path ? { cacheHit: resultCacheHit, path: result.path } : undefined;
+    return result.path ? { cacheHit: resultCacheHit, path: result.path, type: "success" } : undefined;
   }
 
   function setSearchPreview(preview: GraphwarPathfindingPreview) {

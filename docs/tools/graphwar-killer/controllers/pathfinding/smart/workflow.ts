@@ -1,13 +1,22 @@
 import type { PixelPoint } from "../../../core/types";
 import type { SmartPathfindingDebugStage, SmartPathfindingDebugTimingEntry } from "../../debug/timings";
 
+export type GraphwarSmartPathfindingRunBuildFailureReason = "graph-rule" | "missing-obstacle-mask";
+
 /** 单目标智能寻路返回值；cacheHit 只表示完整结果缓存命中。 */
-export interface GraphwarSmartPathfindingRunBuildResult {
-  /** 寻路是否命中页面侧完整结果缓存。 */
-  cacheHit: boolean;
-  /** 已通过弹道验证、可直接写回页面的完整路径。 */
-  path: PixelPoint[];
-}
+export type GraphwarSmartPathfindingRunBuildResult =
+  | {
+      /** 寻路是否命中页面侧完整结果缓存。 */
+      cacheHit: boolean;
+      /** 已通过弹道验证、可直接写回页面的完整路径。 */
+      path: PixelPoint[];
+      type: "success";
+    }
+  | {
+      /** 失败原因只覆盖可明确解释的前置状态；其他失败继续走通用无路径文案。 */
+      reason: GraphwarSmartPathfindingRunBuildFailureReason;
+      type: "failure";
+    };
 
 interface GraphwarSmartPathfindingRunWorkflowOptions<TTarget> {
   /** 路径落地应走页面统一入口，以保留缓存失效、状态清理和坐标同步语义。 */
@@ -28,8 +37,8 @@ interface GraphwarSmartPathfindingRunWorkflowOptions<TTarget> {
   ) => void;
   /** 结束当前 token 对应的运行态。 */
   finishRun: (token: number) => boolean;
-  /** 失败文案应由页面按当前 locale 和耗时生成。 */
-  getFailureMessage: (elapsedMs?: number) => string;
+  /** 失败文案应由页面按当前 locale、耗时和可解释原因生成。 */
+  getFailureMessage: (elapsedMs?: number, reason?: GraphwarSmartPathfindingRunBuildFailureReason) => string;
   /** 成功文案应由页面按当前 locale、耗时和缓存状态生成。 */
   getSuccessMessage: (elapsedMs?: number, resultCacheHit?: boolean) => string;
   /** 判断异步结果是否仍属于当前寻路运行。 */
@@ -106,6 +115,10 @@ export function useGraphwarSmartPathfindingRunWorkflow<TTarget>(
       finishWithFailure(startedAt, timings);
       return false;
     }
+    if (pathfindingResult.type === "failure") {
+      finishWithFailure(startedAt, timings, pathfindingResult.reason);
+      return false;
+    }
 
     options.measureStage(timings, "apply-result", () => options.applyPath(pathfindingResult.path));
     finishWithSuccess(startedAt, timings, pathfindingResult.cacheHit);
@@ -121,11 +134,15 @@ export function useGraphwarSmartPathfindingRunWorkflow<TTarget>(
       : request.collectTarget();
   }
 
-  function finishWithFailure(startedAt: number, timings: SmartPathfindingDebugTimingEntry[]) {
+  function finishWithFailure(
+    startedAt: number,
+    timings: SmartPathfindingDebugTimingEntry[],
+    reason?: GraphwarSmartPathfindingRunBuildFailureReason,
+  ) {
     let completedAt = options.now();
     options.measureStage(timings, "setting-status", () => {
       completedAt = options.now();
-      options.setStatus(options.getFailureMessage(completedAt - startedAt), "error");
+      options.setStatus(options.getFailureMessage(completedAt - startedAt, reason), "error");
       completedAt = options.now();
     });
     options.finishDebugTimings(startedAt, timings, completedAt);

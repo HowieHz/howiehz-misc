@@ -1,3 +1,4 @@
+import type { PlaneGridPoint } from "../core/plane-grid";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
 import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectoryTargetCircle } from "../formula/trajectory-sampling";
 /** Web Worker 和主线程之间传递 Graphwar 几何寻路任务的协议类型。 */
@@ -9,7 +10,7 @@ import type {
   GraphwarOneClickClearResult,
   GraphwarOneClickClearSearchInput,
 } from "./graphwar-one-click-clear";
-import type { GraphwarPathfindingPreview, PlaneGridPoint } from "./graphwar-pathfinding";
+import type { GraphwarPathfindingPreview } from "./graphwar-pathfinding";
 
 /** 普通智能寻路的一条几何搜索请求。 */
 export interface GraphwarPathfindingRouteInput {

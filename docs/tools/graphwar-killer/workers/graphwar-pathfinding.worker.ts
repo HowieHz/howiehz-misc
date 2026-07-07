@@ -1,4 +1,5 @@
 import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../core/graphwar-forward-rule";
+import { planeGridCellCenterToImagePoint } from "../core/plane-grid";
 import type { GraphBounds, PixelPoint } from "../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../detection/graphwar-detection";
@@ -15,7 +16,6 @@ import {
   buildSmartPathfindingPathForMask,
   createRouteMaskCacheKey,
   createGraphwarVisibilityGraphObstacleData,
-  planeGridCellCenterToImagePoint,
 } from "../pathfinding/graphwar-pathfinding";
 import type { GraphwarVisibilityGraphObstacleData } from "../pathfinding/graphwar-pathfinding";
 import type {

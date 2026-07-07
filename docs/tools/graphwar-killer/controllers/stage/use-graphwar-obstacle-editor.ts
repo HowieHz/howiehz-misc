@@ -1,15 +1,17 @@
 import { ref, type Ref } from "vue";
 
+import {
+  imagePointToPlaneGridPoint,
+  planeGridCellCenterToImagePoint,
+  type PlaneGridPoint,
+} from "../../core/plane-grid";
 import type { BoundsRect, PixelPoint } from "../../core/types";
 import {
   countObstacleMaskComponents,
-  imagePointToPlaneGridPoint,
   paintObstacleMaskDisk,
   paintObstacleMaskStroke,
   type DetectedObstacleMap,
-  type PlaneGridPoint,
 } from "../../detection/graphwar-detection";
-import { planeGridCellCenterToImagePoint } from "../../pathfinding/graphwar-pathfinding";
 
 type GraphwarObstacleEditorStatusKind = "success" | "warning";
 

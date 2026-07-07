@@ -2,16 +2,8 @@
 import { xPlusGoesRight } from "../core/geometry";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../core/graphwar";
 import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "../core/numbers";
-import { createPixelPoint } from "../core/types";
+import { imagePointToPlaneGridPoint, mirrorPlaneGridPoint, type PlaneGridPoint } from "../core/plane-grid";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
-
-/** Graphwar 原始 770x450 平面网格点，所有几何寻路都在这个固定网格上运行。 */
-export interface PlaneGridPoint {
-  /** 平面网格 x。 */
-  x: number;
-  /** 平面网格 y。 */
-  y: number;
-}
 
 /** 页面搜索动画需要的图搜索快照；worker 不传回调时不会产生该数据。 */
 export interface GraphwarPathfindingPreview {
@@ -328,36 +320,6 @@ function pointHitsPlaneMaskWithBoundaryExpansion(
     return true;
   }
   return Boolean(mask[point.y * GRAPHWAR_PLANE_LENGTH + x]);
-}
-
-/** 将实际平面点镜像到 x+ 搜索坐标系。 */
-export function mirrorPlaneGridPoint(point: PlaneGridPoint, mirrored: boolean): PlaneGridPoint {
-  return {
-    x: mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - point.x : point.x,
-    y: point.y,
-  };
-}
-
-/** 将平面 cell 中心映射回截图像素，避免路径贴 cell 边缘。 */
-export function planeGridCellCenterToImagePoint(point: PlaneGridPoint, edgeRect: BoundsRect) {
-  return planeToImagePoint({ x: point.x + 0.5, y: point.y + 0.5 }, edgeRect);
-}
-
-/** 将 Graphwar 原始平面坐标映射到截图像素。 */
-export function planeToImagePoint(point: PlaneGridPoint, edgeRect: BoundsRect) {
-  return createPixelPoint(
-    edgeRect.x + (point.x / GRAPHWAR_PLANE_LENGTH) * edgeRect.width,
-    edgeRect.y + (point.y / GRAPHWAR_PLANE_HEIGHT) * edgeRect.height,
-  );
-}
-
-/** 将截图像素映射到平面网格，并裁剪到 770x450 内。 */
-export function imagePointToPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRect): PlaneGridPoint {
-  const rawPoint = imagePointToRawPlaneGridPoint(point, edgeRect);
-  return {
-    x: clampNumber(rawPoint.x, 0, GRAPHWAR_PLANE_LENGTH - 1),
-    y: clampNumber(rawPoint.y, 0, GRAPHWAR_PLANE_HEIGHT - 1),
-  };
 }
 
 /** 从障碍连通域轮廓提取可见性图候选点，并加入起点和终点。 */
@@ -1300,12 +1262,4 @@ function planeGridPointDistance(left: PlaneGridPoint, right: PlaneGridPoint) {
 /** 计算两个平面网格点的欧氏距离平方，避免无谓开方。 */
 function planeGridPointDistanceSquared(left: PlaneGridPoint, right: PlaneGridPoint) {
   return (right.x - left.x) ** 2 + (right.y - left.y) ** 2;
-}
-
-/** 将截图像素点映射到未裁剪的平面网格坐标，供裁剪入口复用。 */
-function imagePointToRawPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRect): PlaneGridPoint {
-  return {
-    x: Math.floor(((point.x - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH),
-    y: Math.floor(((point.y - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT),
-  };
 }

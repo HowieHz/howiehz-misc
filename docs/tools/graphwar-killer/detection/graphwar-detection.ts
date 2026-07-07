@@ -6,6 +6,7 @@ import {
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
 } from "../core/graphwar";
 import { clampNumber, formatSvgNumber } from "../core/numbers";
+import { imagePointToPlaneGridPoint, planeToImagePoint, type PlaneGridPoint } from "../core/plane-grid";
 import { createPixelPoint } from "../core/types";
 import type { BoundsRect, PixelPoint } from "../core/types";
 import {
@@ -107,14 +108,6 @@ export type GraphwarObjectDetectionStage =
 export interface GraphwarObjectDetectionInstrumentation {
   /** 调用方提供阶段计时器；识别算法本身不依赖具体时钟实现。 */
   measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) => TResult;
-}
-
-/** Graphwar 原始平面网格点。 */
-export interface PlaneGridPoint {
-  /** 平面 x。 */
-  x: number;
-  /** 平面 y。 */
-  y: number;
 }
 
 /** 连通域框，识别士兵和障碍时会附带面积和中心点。 */
@@ -805,23 +798,6 @@ function createPlaneRectPathCommand(x: number, y: number, width: number, height:
   const topLeft = planeToImagePoint({ x, y }, edgeRect);
   const bottomRight = planeToImagePoint({ x: x + width, y: y + height }, edgeRect);
   return `M${formatSvgNumber(topLeft.x)} ${formatSvgNumber(topLeft.y)}H${formatSvgNumber(bottomRight.x)}V${formatSvgNumber(bottomRight.y)}H${formatSvgNumber(topLeft.x)}Z`;
-}
-
-/** 将 Graphwar 原始平面坐标映射到截图像素。 */
-export function planeToImagePoint(point: PlaneGridPoint, edgeRect: BoundsRect) {
-  return createPixelPoint(
-    edgeRect.x + (point.x / GRAPHWAR_PLANE_LENGTH) * edgeRect.width,
-    edgeRect.y + (point.y / GRAPHWAR_PLANE_HEIGHT) * edgeRect.height,
-  );
-}
-
-/** 将截图像素映射到平面网格，并裁剪到 770x450 内。 */
-export function imagePointToPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRect): PlaneGridPoint {
-  const rawPoint = imagePointToRawPlaneGridPoint(point, edgeRect);
-  return {
-    x: clampNumber(rawPoint.x, 0, GRAPHWAR_PLANE_LENGTH - 1),
-    y: clampNumber(rawPoint.y, 0, GRAPHWAR_PLANE_HEIGHT - 1),
-  };
 }
 
 /** 统计障碍 mask 里当前的 4 邻域连通域数量。 */
@@ -2122,14 +2098,6 @@ function samplePlaneImagePixel(imageData: ImageData, edgeRect: BoundsRect, plane
     red: imageData.data[index],
     green: imageData.data[index + 1],
     blue: imageData.data[index + 2],
-  };
-}
-
-/** 将截图像素映射到未裁剪的平面网格。 */
-function imagePointToRawPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRect): PlaneGridPoint {
-  return {
-    x: Math.floor(((point.x - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH),
-    y: Math.floor(((point.y - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT),
   };
 }
 

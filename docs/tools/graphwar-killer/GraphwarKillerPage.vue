@@ -20,6 +20,7 @@ import { useGraphwarObstacleEditor } from "./composables/use-graphwar-obstacle-e
 import { useGraphwarOneClickClearRunWorkflow } from "./composables/use-graphwar-one-click-clear-run-workflow";
 import { useGraphwarPathPointEditing } from "./composables/use-graphwar-path-point-editing";
 import { useGraphwarPathState } from "./composables/use-graphwar-path-state";
+import { useGraphwarResultActions } from "./composables/use-graphwar-result-actions";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
 import { useGraphwarSmartPathfindingBuilder } from "./composables/use-graphwar-smart-pathfinding-builder";
 import { useGraphwarSmartPathfindingRunWorkflow } from "./composables/use-graphwar-smart-pathfinding-run-workflow";
@@ -67,7 +68,6 @@ import type {
   PixelPoint,
   ToolMode,
   ToolWorkflowMode,
-  TransferStatus,
 } from "./core/types";
 import { buildObstacleEdgePath, buildObstacleFillPath } from "./detection/graphwar-detection";
 import type { GraphwarDetectionBox } from "./detection/graphwar-detection";
@@ -456,8 +456,6 @@ const pathfindingObstacleEdgesActive = computed(() => effectiveSmartPathfindingE
 const blocksFriendlyFireTargets = computed(
   () => pathfindingObstacleEdgesActive.value && !friendlyFireEnabled.value && pathPixels.value.length > 0,
 );
-const copyStatus = ref<TransferStatus>("idle");
-let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 
 const equationModes = computed(() => locale.equationModes);
 const toolWorkflowModes = computed(() => locale.toolWorkflowModes);
@@ -738,6 +736,22 @@ const {
     parseNumber: parseFiniteNumber,
     skipUnknownCharacters: simulatorSkipUnknownCharacters,
   },
+});
+// 结果操作 Module 应集中复制反馈、clipboard fallback 和模拟器清空；页面只提供当前结果来源。
+const {
+  canClearSimulatorInputs,
+  canCopyFormula,
+  clearSimulatorInputs,
+  copyButtonText,
+  copyFormula,
+  dispose: disposeResultActions,
+  statusAnnouncement,
+} = useGraphwarResultActions({
+  formulaResult,
+  getCopyMessages: () => locale.status.copy,
+  simulatorFormulaText,
+  simulatorLaunchAngleText,
+  toolWorkflowMode,
 });
 
 const activeEquationDescription = computed(() => {
@@ -1545,19 +1559,6 @@ const magnifierContentStyle = computed(() => {
     transform: `translate(${size / 2 - displayX * zoom}px, ${size / 2 - displayY * zoom}px) scale(${zoom})`,
   };
 });
-const copyButtonText = computed(() => {
-  if (copyStatus.value === "success") {
-    return locale.status.copy.buttonSuccess;
-  }
-  if (copyStatus.value === "error") {
-    return locale.status.copy.buttonError;
-  }
-  return locale.status.copy.buttonDefault;
-});
-const canCopyFormula = computed(() =>
-  toolWorkflowMode.value === "solver" ? !!formulaResult.value : !!simulatorFormulaText.value.trim(),
-);
-const canClearSimulatorInputs = computed(() => !!simulatorFormulaText.value || !!simulatorLaunchAngleText.value);
 // 结果面板只应消费展示 DTO；公式生成、复制和坐标写回应由页面侧保持原工作流语义。
 const resultPanel = computed(() => {
   const solverResult = formulaResult.value;
@@ -1579,15 +1580,6 @@ const resultPanel = computed(() => {
     trajectoryWarning: trajectoryWarning.value,
     workflowMode: toolWorkflowMode.value,
   };
-});
-const statusAnnouncement = computed(() => {
-  if (copyStatus.value === "success") {
-    return locale.status.copy.success;
-  }
-  if (copyStatus.value === "error") {
-    return locale.status.copy.error;
-  }
-  return "";
 });
 const screenshotImageStatusText = computed(
   () => imageStatus.value || imageName.value || locale.status.image.defaultStatus,
@@ -1655,9 +1647,7 @@ onBeforeUnmount(() => {
   detectionWorkflow.dispose();
   graphwarPathfindingRunner.close();
   cancelSmartPathfinding(false);
-  if (copyStatusTimer) {
-    clearTimeout(copyStatusTimer);
-  }
+  disposeResultActions();
   disposeLiveClickPreview();
   disposeDebugActivation();
   disposeStageFeedback();
@@ -2502,69 +2492,6 @@ function undoLastPoint() {
   undoActivePathPoint();
   if (removesPathStart) {
     invalidatePathfindingWorkerCache();
-  }
-}
-
-/** 复制当前生成的 Graphwar 表达式。 */
-async function copyFormula() {
-  const text = toolWorkflowMode.value === "solver" ? formulaResult.value?.expression : simulatorFormulaText.value;
-  if (!canCopyFormula.value || !text) {
-    return;
-  }
-
-  try {
-    await copyText(text);
-    setCopyStatus("success");
-  } catch {
-    setCopyStatus("error");
-  }
-}
-
-/** 清除模拟器表达式和发射角输入。 */
-function clearSimulatorInputs() {
-  simulatorFormulaText.value = "";
-  simulatorLaunchAngleText.value = "";
-  setCopyStatus("idle");
-}
-
-/** 设置临时复制反馈文本，并在短时间后自动清除。 */
-function setCopyStatus(status: TransferStatus) {
-  copyStatus.value = status;
-  if (copyStatusTimer) {
-    clearTimeout(copyStatusTimer);
-  }
-
-  if (status !== "idle") {
-    copyStatusTimer = setTimeout(() => {
-      copyStatus.value = "idle";
-      copyStatusTimer = undefined;
-    }, 2000);
-  }
-}
-
-/** 使用 Clipboard API 复制文本，失败时回退到隐藏 textarea 命令。 */
-async function copyText(text: string) {
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-
-  if (typeof document === "undefined") {
-    throw new Error("Clipboard API unavailable");
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.append(textarea);
-  textarea.select();
-
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) {
-    throw new Error("Copy failed");
   }
 }
 </script>

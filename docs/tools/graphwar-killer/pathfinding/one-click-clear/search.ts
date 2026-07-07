@@ -155,7 +155,7 @@ export interface GraphwarOneClickClearOptions {
   ) => Promise<GraphwarOneClickClearDagEdgeBuildResult>;
   /** DAG 建边最大并行数；1 表示让 master Worker 串行建边。 */
   dagEdgeWorkerCount?: number;
-  /** 一键清图删点局部保护半径，单位为截图像素；最终整路验证仍使用真实命中圈。 */
+  /** 一键清图删点局部保护半径，单位为截图像素；0 表示每次候选删点都走整路验证。 */
   deleteCheckRadiusPixels: number;
   /** 当前路径已有像素点。 */
   pathPoints: readonly PixelPoint[];
@@ -1013,8 +1013,13 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
     return false;
   }
 
+  // 0 关闭局部近似保护；调用方随后会对这个候选删点做整路验证。
+  if (options.deleteCheckRadiusPixels <= 0) {
+    return true;
+  }
+
   // abs 删除一个控制点时，只会把 previous->deleted->next 替换成 previous->next；先证明局部士兵命中不丢。
-  // 页面应先把 Graphwar 原始平面半径换成截图像素；0 表示只依赖最终整路验证。
+  // 页面应先把 Graphwar 原始平面半径换成截图像素。
   const checkRadiusSquared = options.deleteCheckRadiusPixels * options.deleteCheckRadiusPixels;
   for (const target of options.hitCandidates) {
     const targetCenter = target.hitCenter;
@@ -1041,7 +1046,9 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
 }
 
 function oneClickClearLocalDeleteProofIsEnough(options: GraphwarOneClickClearOptions) {
-  return options.settings.algorithm === "abs" && options.settings.equation !== "ddy";
+  return (
+    options.deleteCheckRadiusPixels > 0 && options.settings.algorithm === "abs" && options.settings.equation !== "ddy"
+  );
 }
 
 function pixelSegmentHitsCircle(start: PixelPoint, end: PixelPoint, center: PixelPoint, radiusSquared: number) {

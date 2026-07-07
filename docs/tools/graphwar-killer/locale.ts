@@ -506,7 +506,7 @@ export const graphwarKillerLocale = {
       oneClickClearDeleteCheckRadiusAriaLabel:
         "一键清图删点优化局部命中检验半径，单位为 Graphwar 原始 770x450 平面像素",
       oneClickClearDeleteCheckRadiusTitle:
-        "一键清图删点优化的局部命中保护半径，单位是 Graphwar 原始 770x450 平面像素；0 表示跳过局部保护，仅依赖最终整路验证。",
+        "一键清图删点优化的局部命中保护半径，单位是 Graphwar 原始 770x450 平面像素；0 表示关闭局部保护，每次候选删点都改用整路验证。",
       oneClickClearTitle: "从当前路径尾部开始，自动追加路线并尽量按顺序击杀右侧可用士兵。",
       routePlanningTolerance: "路线规划容差",
       routePlanningToleranceAriaLabel: "路线规划容差，单位为 Graphwar 原始 770x450 平面像素",

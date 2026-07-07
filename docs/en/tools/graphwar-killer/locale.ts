@@ -592,7 +592,7 @@ export const graphwarKillerLocale = {
       oneClickClearDeleteCheckRadiusAriaLabel:
         "One-Click Clear local hit check radius for delete optimization, in raw Graphwar 770x450 plane pixels",
       oneClickClearDeleteCheckRadiusTitle:
-        "Local hit-preservation radius used by One-Click Clear delete optimization, in raw Graphwar 770x450 plane pixels. Use 0 to skip the local guard and rely only on final full-route validation.",
+        "Local hit-preservation radius used by One-Click Clear delete optimization, in raw Graphwar 770x450 plane pixels. Use 0 to disable the local guard and full-route validate each candidate deletion.",
       oneClickClearTitle:
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
       routePlanningTolerance: "Route planning tolerance",

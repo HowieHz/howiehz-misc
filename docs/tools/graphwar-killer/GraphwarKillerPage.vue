@@ -1,15 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import { useGraphwarDebugActivation } from "./controllers/debug/use-graphwar-debug-activation";
-import { useGraphwarDebugTimings } from "./controllers/debug/use-graphwar-debug-timings";
-import {
-  useGraphwarDetectionWorkflow,
-  type DetectionStatusKind,
-} from "./controllers/detection/use-graphwar-detection-workflow";
-import { useGraphwarPathPointEditing } from "./controllers/path/use-graphwar-path-point-editing";
-import { useGraphwarPathState } from "./controllers/path/use-graphwar-path-state";
-import { useGraphwarTrajectoryResult } from "./controllers/path/use-graphwar-trajectory-result";
+import { useGraphwarDebugActivation } from "./controllers/debug/activation";
+import { useGraphwarDebugTimings } from "./controllers/debug/timings";
+import { useGraphwarDetectionWorkflow, type DetectionStatusKind } from "./controllers/detection/workflow";
+import { useGraphwarPathPointEditing } from "./controllers/path/point-editing";
+import { useGraphwarPathState } from "./controllers/path/state";
+import { useGraphwarTrajectoryResult } from "./controllers/path/trajectory-result";
 import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/one-click-clear/run-workflow";
 import { useGraphwarSmartPathfindingBuilder } from "./controllers/pathfinding/smart/builder";
 import { useGraphwarSmartPathfindingRunWorkflow } from "./controllers/pathfinding/smart/run-workflow";
@@ -18,16 +15,13 @@ import {
   type SmartPathfindingStatusKind,
 } from "./controllers/pathfinding/smart/session";
 import { useGraphwarTargetingContext } from "./controllers/pathfinding/targeting/context";
-import { useGraphwarSettingsValidation } from "./controllers/settings/use-graphwar-settings-validation";
-import { useGraphwarLiveClickPreview } from "./controllers/stage/use-graphwar-live-click-preview";
-import { useGraphwarObstacleEditor } from "./controllers/stage/use-graphwar-obstacle-editor";
-import { useGraphwarStageFeedback } from "./controllers/stage/use-graphwar-stage-feedback";
-import {
-  useGraphwarStageHitTesting,
-  type GraphwarStageHitTestingController,
-} from "./controllers/stage/use-graphwar-stage-hit-testing";
-import { useGraphwarResultActions } from "./controllers/ui/use-graphwar-result-actions";
-import { useGraphwarScreenshotWorkflow } from "./controllers/ui/use-graphwar-screenshot";
+import { useGraphwarResultActions } from "./controllers/result/actions";
+import { useGraphwarScreenshotWorkflow } from "./controllers/screenshot/workflow";
+import { useGraphwarSettingsValidation } from "./controllers/settings/validation";
+import { useGraphwarStageFeedback } from "./controllers/stage/feedback";
+import { useGraphwarStageHitTesting, type GraphwarStageHitTestingController } from "./controllers/stage/hit-testing";
+import { useGraphwarLiveClickPreview } from "./controllers/stage/live-click-preview";
+import { useGraphwarObstacleEditor } from "./controllers/stage/obstacle-editor";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
   GRAPHWAR_GAME_SOLDIER_RADIUS,

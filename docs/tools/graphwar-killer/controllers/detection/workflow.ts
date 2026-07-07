@@ -9,7 +9,7 @@ import {
   type GraphwarDetectionWorkerTimingEntry,
 } from "../../detection/runtime/runner";
 import type { GraphwarKillerLocale } from "../../locale-types";
-import type { DetectionDebugTimingEntry } from "../debug/use-graphwar-debug-timings";
+import type { DetectionDebugTimingEntry } from "../debug/timings";
 
 const graphwarDetectionRefreshDelayMs = 180;
 

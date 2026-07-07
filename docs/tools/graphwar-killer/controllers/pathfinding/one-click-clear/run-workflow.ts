@@ -25,10 +25,7 @@ import type {
   GraphwarOneClickClearPathWorkerResult,
 } from "../../../pathfinding/runtime/worker-types";
 import type { GraphwarTargetingGeometry } from "../../../pathfinding/targeting";
-import type {
-  SmartPathfindingDebugStage,
-  SmartPathfindingDebugTimingEntry,
-} from "../../debug/use-graphwar-debug-timings";
+import type { SmartPathfindingDebugStage, SmartPathfindingDebugTimingEntry } from "../../debug/timings";
 
 type GraphwarOneClickClearStatusKind = "error" | "success" | "warning";
 type GraphwarOneClickClearPrefixTarget = PixelPoint | GraphwarTrajectoryTargetCircle;

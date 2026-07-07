@@ -16,7 +16,7 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 - [formula/](./formula/)：公式相关模块；`generation/` 放公式生成和 step 数值策略，`expression/` 放表达式 evaluator，`simulation/` 放 Graphwar 轨迹模拟器，`trajectory/` 放路径/目标/障碍采样封装。
 - [detection/](./detection/)：截图识别相关模块；`objects.ts` 放棋盘、障碍和士兵识别，`profile/` 放识别经验阈值，`runtime/` 放 runner 和 worker 消息类型，`template/` 放模板匹配子任务协议。
 - [pathfinding/](./pathfinding/)：路径规划相关模块；`routing/` 放共享几何寻路算法，`smart/` 放普通智能寻路，`one-click-clear/` 放一键清图，`runtime/` 放缓存、runner 和 worker 消息类型，`targeting.ts` 放共享目标选择规则。
-- [controllers/](./controllers/)：页面控制器，负责截图输入、路径编辑、检测流程、舞台交互和寻路会话等状态编排。
+- [controllers/](./controllers/)：页面控制器；`debug/` 放调试入口与耗时，`screenshot/` 放截图输入，`settings/` 放输入校验，`detection/` 放识别流程，`path/` 放路径状态与编辑，`pathfinding/` 放寻路会话，`stage/` 放舞台交互，`result/` 放结果操作。
 - [presentation/](./presentation/)：展示层模块；页面面板按 `settings/`、`detection/`、`pathfinding/`、`action/`、`screenshot/`、`result/` 分组，`stage/` 放截图舞台 SVG 覆盖层，`status/` 放状态文案聚合与耗时格式化。
 - [workers/](./workers/)：Web Worker 入口文件；`detection/` 放截图识别主 worker 和士兵模板子 worker，`pathfinding/` 放寻路主 worker 和一键清图边 worker。
 - [locale.ts](./locale.ts)：中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。

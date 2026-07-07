@@ -24,7 +24,7 @@ import {
   getGraphwarSmartPathfindingAppendedSegment,
 } from "../../../pathfinding/smart/trajectory";
 import type { GraphwarSmartPathfindingSoldierTarget } from "../../../pathfinding/targeting";
-import type { SmartPathfindingDebugTimingEntry } from "../../debug/use-graphwar-debug-timings";
+import type { SmartPathfindingDebugTimingEntry } from "../../debug/timings";
 import type { GraphwarSmartPathfindingRunBuildResult } from "./run-workflow";
 
 type GraphwarSmartPathfindingBuildTarget = PixelPoint | GraphwarSmartPathfindingSoldierTarget;

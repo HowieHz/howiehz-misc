@@ -13,7 +13,7 @@ import {
   type GraphPoint,
   type PixelPoint,
 } from "../../core/types";
-import type { GraphwarPathStateController, PathPointCoordinateAxis } from "./use-graphwar-path-state";
+import type { GraphwarPathStateController, PathPointCoordinateAxis } from "./state";
 
 type PathPointCoordinateState = Pick<
   GraphwarPathStateController,

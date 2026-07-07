@@ -22,7 +22,7 @@ import {
 } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingLineSegment } from "../../pathfinding/smart/preview";
 import type { GraphwarSmartPathfindingSoldierTarget } from "../../pathfinding/targeting";
-import { formatVisibleTrajectoryPoints } from "../path/use-graphwar-trajectory-result";
+import { formatVisibleTrajectoryPoints } from "../path/trajectory-result";
 
 interface ReadonlyRef<T> {
   readonly value: T;

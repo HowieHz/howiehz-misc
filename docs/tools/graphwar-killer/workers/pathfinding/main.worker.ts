@@ -620,7 +620,7 @@ function runOneClickClearDagEdgeWorkerPool(
       onReady: (handle: EdgeWorkerHandle) => void,
       onFailed: (handle: EdgeWorkerHandle) => void,
     ): EdgeWorkerHandle {
-      const worker = new Worker(new URL("./one-click-clear-edge.worker.ts", import.meta.url), {
+      const worker = new Worker(new URL("./one-click-clear/edge.worker.ts", import.meta.url), {
         name: `graphwar-one-click-clear-edge-${workerIndex}`,
         type: "module",
       });

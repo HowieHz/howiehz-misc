@@ -1,12 +1,12 @@
 /** 一键清图 DAG 边消费者 worker：初始化一次私有可视图 cache，然后按需处理单条边。 */
-import { buildOneClickClearDagEdgeRoute } from "../../pathfinding/one-click-clear/edge-route";
-import { createGraphwarVisibilityGraphObstacleData } from "../../pathfinding/routing/visibility-graph";
-import type { GraphwarVisibilityGraphObstacleData } from "../../pathfinding/routing/visibility-graph";
+import { buildOneClickClearDagEdgeRoute } from "../../../pathfinding/one-click-clear/edge-route";
+import { createGraphwarVisibilityGraphObstacleData } from "../../../pathfinding/routing/visibility-graph";
+import type { GraphwarVisibilityGraphObstacleData } from "../../../pathfinding/routing/visibility-graph";
 import type {
   GraphwarOneClickClearEdgeWorkerInit,
   GraphwarOneClickClearEdgeWorkerRequest,
   GraphwarOneClickClearEdgeWorkerResponse,
-} from "../../pathfinding/runtime/worker-types";
+} from "../../../pathfinding/runtime/worker-types";
 
 /** 当前 edge Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarOneClickClearEdgeWorkerScope {

@@ -304,7 +304,7 @@ function createSoldierTemplateWorkerHandle(
   edgeRect: BoundsRect,
   scale: number,
 ): SoldierTemplateWorkerHandle {
-  const worker = new Worker(new URL("./soldier-template.worker.ts", import.meta.url), {
+  const worker = new Worker(new URL("./template.worker.ts", import.meta.url), {
     name: `graphwar-soldier-template-${task.workerIndex}`,
     type: "module",
   });

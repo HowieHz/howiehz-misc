@@ -18,7 +18,7 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 - [pathfinding/](./pathfinding/)：路径规划相关模块；`routing/` 放共享几何寻路算法，`smart/` 放普通智能寻路，`one-click-clear/` 放一键清图，`runtime/` 放缓存、runner 和 worker 消息类型，`targeting.ts` 放共享目标选择规则。
 - [controllers/](./controllers/)：页面控制器；`debug/` 放调试入口与耗时，`screenshot/` 放截图输入，`settings/` 放输入校验，`detection/` 放识别流程，`path/` 放路径状态与编辑，`pathfinding/` 放寻路会话，`stage/` 放舞台交互，`result/` 放结果操作。
 - [presentation/](./presentation/)：展示层模块；页面面板按 `settings/`、`detection/`、`pathfinding/`、`action/`、`screenshot/`、`result/` 分组，目录内用 `MainPanel.vue`/`AdvancedPanel.vue` 表达主面板；`stage/` 放截图舞台 SVG 覆盖层，`status/` 放状态文案聚合与耗时格式化。
-- [workers/](./workers/)：Web Worker 入口文件；`detection/` 放截图识别主 worker 和士兵模板子 worker，`pathfinding/` 放寻路主 worker 和一键清图边 worker。
+- [workers/](./workers/)：Web Worker 入口文件；`detection/` 放截图识别主 worker 和模板匹配子 worker，`pathfinding/` 放寻路主 worker，`pathfinding/one-click-clear/` 放一键清图边 worker。
 - [locale.ts](./locale.ts)：中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。
 
 ## 已知改进点

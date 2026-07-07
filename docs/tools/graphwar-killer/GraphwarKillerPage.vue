@@ -7,13 +7,13 @@ import { useGraphwarDetectionWorkflow, type DetectionStatusKind } from "./contro
 import { useGraphwarPathPointEditing } from "./controllers/path/point-editing";
 import { useGraphwarPathState } from "./controllers/path/state";
 import { useGraphwarTrajectoryResult } from "./controllers/path/trajectory-result";
-import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/one-click-clear/run-workflow";
+import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/one-click-clear/workflow";
 import { useGraphwarSmartPathfindingBuilder } from "./controllers/pathfinding/smart/builder";
-import { useGraphwarSmartPathfindingRunWorkflow } from "./controllers/pathfinding/smart/run-workflow";
 import {
   useGraphwarSmartPathfindingSession,
   type SmartPathfindingStatusKind,
 } from "./controllers/pathfinding/smart/session";
+import { useGraphwarSmartPathfindingRunWorkflow } from "./controllers/pathfinding/smart/workflow";
 import { useGraphwarTargetingContext } from "./controllers/pathfinding/targeting/context";
 import { useGraphwarResultActions } from "./controllers/result/actions";
 import { useGraphwarScreenshotWorkflow } from "./controllers/screenshot/workflow";

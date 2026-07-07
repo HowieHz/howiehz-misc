@@ -25,7 +25,7 @@ import {
 } from "../../../pathfinding/smart/trajectory";
 import type { GraphwarSmartPathfindingSoldierTarget } from "../../../pathfinding/targeting";
 import type { SmartPathfindingDebugTimingEntry } from "../../debug/timings";
-import type { GraphwarSmartPathfindingRunBuildResult } from "./run-workflow";
+import type { GraphwarSmartPathfindingRunBuildResult } from "./workflow";
 
 type GraphwarSmartPathfindingBuildTarget = PixelPoint | GraphwarSmartPathfindingSoldierTarget;
 

@@ -8,6 +8,20 @@ import {
 import { clampNumber, formatSvgNumber } from "../core/numbers";
 import { createPixelPoint } from "../core/types";
 import type { BoundsRect, PixelPoint } from "../core/types";
+import {
+  defaultGraphwarMaximumSoldierCount,
+  defaultGraphwarSoldierTemplateCandidateTopRatio,
+  defaultGraphwarTemplateMatchingWorkerCount,
+  graphwarSoldierCanvasCenter,
+  graphwarSoldierGenerationMinimumAxisGap,
+  graphwarSoldierMirrorVisibleCenterX,
+  graphwarSoldierTemplateMinimumFixedScore,
+  graphwarSoldierTemplateMinimumForegroundScore,
+  graphwarSoldierTemplateMinimumPlayerScore,
+  graphwarSoldierTemplateMinimumSignatureScore,
+  graphwarSoldierVisibleCenterX,
+  graphwarSoldierVisibleCenterY,
+} from "./graphwar-detection-profile";
 
 /** 识别系统把士兵作为可点击/可击杀目标。 */
 export type GraphwarDetectionKind = "soldier";
@@ -137,14 +151,6 @@ interface AxisTriplet {
   score: number;
 }
 
-/** Graphwar 士兵贴图源码画布是 20x20，Soldier.x/y 位于画布中心。 */
-const graphwarSoldierCanvasCenter = 10;
-/** 非镜像士兵 alpha 外框在 20x20 画布里的视觉中心 x。 */
-const graphwarSoldierVisibleCenterX = 9.5;
-/** 士兵 alpha 外框在 20x20 画布里的视觉中心 y。 */
-const graphwarSoldierVisibleCenterY = 9.5;
-/** 镜像士兵 alpha 外框在 20x20 画布里的视觉中心 x。 */
-const graphwarSoldierMirrorVisibleCenterX = 10.5;
 /** Graphwar 原版 10 帧士兵动画资源名。 */
 const graphwarSoldierTemplateNames = [
   "soldierNormal.png",
@@ -158,23 +164,6 @@ const graphwarSoldierTemplateNames = [
   "soldier8.png",
   "soldier9.png",
 ] as const;
-/** 士兵模板阈值是经验边界：先按子分数保守过滤，再用综合分排序和重叠抑制收敛结果。 */
-/** 固定像素分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
-const graphwarSoldierTemplateMinimumFixedScore = 0.80524047124047127 - 0.05;
-/** 前景形状分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
-const graphwarSoldierTemplateMinimumForegroundScore = 0.69445266272189365 - 0.05;
-/** 玩家色分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
-const graphwarSoldierTemplateMinimumPlayerScore = 0.60552198292591419 - 0.05;
-/** 动画签名分数阈值来自测试素材最终匹配点全局最低分；-0.05 容忍压缩、缩放和抗锯齿。 */
-const graphwarSoldierTemplateMinimumSignatureScore = 0.71937830687830706 - 0.05;
-/** 测试素材里无限制候选最终匹配点都在 votes 前 10%，因此模板评分前默认只保留前 10%。 */
-const defaultGraphwarSoldierTemplateCandidateTopRatio = 0.1;
-/** Graphwar 游戏设定默认最多 40 个士兵；用于重叠抑制后的最终检测数量上限。 */
-const defaultGraphwarMaximumSoldierCount = 40;
-/** 模板匹配默认并行 worker 数；页面会限制用户输入范围。 */
-const defaultGraphwarTemplateMatchingWorkerCount = 4;
-/** 同一士兵附近会产生多个高分中心候选；低于这个源码像素间距的匹配视为同一士兵。 */
-const graphwarSoldierGenerationMinimumAxisGap = 20;
 /** 从 10 帧士兵动画里挑出的差异像素坐标，用于区分 soldierNormal/soldier1..9。 */
 const graphwarSoldierAnimationSignatureCoordinates = [
   [13, 6],

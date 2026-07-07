@@ -4,7 +4,7 @@ import {
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_SOLDIER_RADIUS,
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
-} from "../core/graphwar";
+} from "../core/game/constants";
 import { clampNumber, formatSvgNumber } from "../core/numbers";
 import { imagePointToPlaneGridPoint, planeToImagePoint, type PlaneGridPoint } from "../core/plane-grid";
 import { createPixelPoint } from "../core/types";

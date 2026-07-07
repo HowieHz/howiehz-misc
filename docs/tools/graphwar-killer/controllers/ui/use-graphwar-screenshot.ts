@@ -3,7 +3,7 @@ import { ref, type Ref } from "vue";
 
 import { clampPixelPointToCanvas } from "../../core/geometry";
 import { clampNumber } from "../../core/numbers";
-import { graphwarToolDefaults } from "../../core/tool-defaults";
+import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createPixelPoint, type PixelPoint } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
 

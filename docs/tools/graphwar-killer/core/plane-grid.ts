@@ -1,5 +1,5 @@
 /** 提供 Graphwar 原始 770x450 平面网格与截图像素之间的纯坐标换算。 */
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./graphwar";
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./game/constants";
 import { clampNumber } from "./numbers";
 import { createPixelPoint } from "./types";
 import type { BoundsRect, PixelPoint } from "./types";

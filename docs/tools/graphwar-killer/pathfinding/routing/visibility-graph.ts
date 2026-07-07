@@ -1,6 +1,6 @@
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 /** Graphwar 固定平面上的几何寻路工具；页面和 worker 共用同一套图搜索实现。 */
 import { xPlusGoesRight } from "../../core/geometry";
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/graphwar";
 import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "../../core/numbers";
 import { imagePointToPlaneGridPoint, mirrorPlaneGridPoint, type PlaneGridPoint } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";

@@ -28,7 +28,6 @@ import {
 } from "./controllers/stage/use-graphwar-stage-hit-testing";
 import { useGraphwarResultActions } from "./controllers/ui/use-graphwar-result-actions";
 import { useGraphwarScreenshotWorkflow } from "./controllers/ui/use-graphwar-screenshot";
-import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint } from "./core/geometry";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
@@ -38,7 +37,8 @@ import {
   GRAPHWAR_SOLDIER_RADIUS,
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
   GRAPHWAR_VISIBLE_Y_LIMIT,
-} from "./core/graphwar";
+} from "./core/game/constants";
+import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint } from "./core/geometry";
 import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
@@ -50,7 +50,7 @@ import {
   graphXAdvancesStrictly,
   parseFiniteNumber,
 } from "./core/numbers";
-import { graphwarToolDefaults } from "./core/tool-defaults";
+import { graphwarToolDefaults } from "./core/tool/defaults";
 import type {
   AlgorithmMode,
   BoundsRect,

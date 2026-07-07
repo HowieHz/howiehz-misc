@@ -8,8 +8,8 @@ import {
   GRAPHWAR_PLANE_GAME_LENGTH,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
-} from "../../core/graphwar";
-import { graphwarToolDefaults } from "../../core/tool-defaults";
+} from "../../core/game/constants";
+import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint } from "../../core/types";
 import type { AlgorithmMode, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
 import { createGraphwarExpressionEvaluator } from "../expression/evaluator";

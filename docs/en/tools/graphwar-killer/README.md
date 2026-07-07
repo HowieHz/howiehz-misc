@@ -12,7 +12,7 @@ Graphwar Killer calibrates a [Graphwar](https://graphwar.com/graphwar_1/index.ht
 
 - [index.md](./index.md) is the English tool page entry.
 - [GraphwarKillerPage.vue](../../../tools/graphwar-killer/GraphwarKillerPage.vue) is the shared Chinese/English tool page implementation.
-- [core/](../../../tools/graphwar-killer/core/) contains Graphwar constants, coordinates/numbers, shared types, and forward rules.
+- [core/](../../../tools/graphwar-killer/core/) contains shared types, coordinate conversion, and numeric helpers; `game/` holds Graphwar game constants and forward rules, and `tool/` holds tool defaults.
 - [formula/](../../../tools/graphwar-killer/formula/) contains formula modules: `generation/` for formula generation and step numeric strategy, `expression/` for the expression evaluator, `simulation/` for the Graphwar trajectory simulator, and `trajectory/` for path, target, and obstacle sampling wrappers.
 - [detection/](../../../tools/graphwar-killer/detection/) contains screenshot detection modules: `objects.ts` for play-area, obstacle, and soldier detection, `profile/` for detection thresholds, `runtime/` for the runner and worker protocols, and `template/` for template-matching subtask protocols.
 - [pathfinding/](../../../tools/graphwar-killer/pathfinding/) contains path planning modules: `routing/` for shared geometric routing, `smart/` for regular smart pathfinding, `one-click-clear/` for one-click clear, `runtime/` for caches, runners, and worker protocols, and `targeting.ts` for shared targeting rules.

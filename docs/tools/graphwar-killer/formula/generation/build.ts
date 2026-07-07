@@ -1,5 +1,5 @@
 /** 编译用户输入的 Graphwar 表达式，并输出游戏可用的公式文本。 */
-import { GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE } from "../../core/graphwar";
+import { GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE } from "../../core/game/constants";
 import {
   MAX_FORMULA_DECIMAL_PLACES,
   formatDecimal,

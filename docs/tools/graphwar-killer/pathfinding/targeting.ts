@@ -1,11 +1,11 @@
-/** Graphwar 目标选择规则；页面和寻路流程应复用同一套 x+ 与命中圈语义。 */
-import { imageToGraphPoint, xPlusGoesRight } from "../core/geometry";
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../core/graphwar";
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../core/game/constants";
 import {
   createMinimumForwardPointAtGraphY,
   graphXAdvancesFromPoint,
   pathFollowsGraphRule,
-} from "../core/graphwar-forward-rule";
+} from "../core/game/forward-rule";
+/** Graphwar 目标选择规则；页面和寻路流程应复用同一套 x+ 与命中圈语义。 */
+import { imageToGraphPoint, xPlusGoesRight } from "../core/geometry";
 import { createPixelPoint } from "../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
 

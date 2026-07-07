@@ -1,8 +1,8 @@
 /** Graphwar x+ 前进规则；页面和寻路 Worker 共用，避免两边的数值边界慢慢漂移。 */
-import { graphToImagePoint, imageToGraphPoint, normalizePathPoint, xPlusGoesRight } from "./geometry";
-import { doublePrecisionTolerance, graphXAdvancesStrictly, nextDownDouble, nextUpDouble } from "./numbers";
-import { createGraphPoint, createPixelPoint } from "./types";
-import type { BoundsRect, GraphBounds, PixelPoint } from "./types";
+import { graphToImagePoint, imageToGraphPoint, normalizePathPoint, xPlusGoesRight } from "../geometry";
+import { doublePrecisionTolerance, graphXAdvancesStrictly, nextDownDouble, nextUpDouble } from "../numbers";
+import { createGraphPoint, createPixelPoint } from "../types";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../types";
 
 /**
  * 按 Graphwar 规则判断路径是否始终沿 x+ 推进。

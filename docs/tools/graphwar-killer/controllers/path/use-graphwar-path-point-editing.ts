@@ -1,11 +1,11 @@
 import type { Ref } from "vue";
 
-import { graphToImagePoint } from "../../core/geometry";
 import {
   normalizePathForMinimumForwardStep,
   normalizePathPointForStrictForward,
   pathFollowsGraphRule,
-} from "../../core/graphwar-forward-rule";
+} from "../../core/game/forward-rule";
+import { graphToImagePoint } from "../../core/geometry";
 import {
   createGraphPoint,
   type BoundsRect,

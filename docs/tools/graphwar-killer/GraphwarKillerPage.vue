@@ -1,32 +1,32 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import { useGraphwarDebugActivation } from "./composables/debug/use-graphwar-debug-activation";
-import { useGraphwarDebugTimings } from "./composables/debug/use-graphwar-debug-timings";
+import { useGraphwarDebugActivation } from "./controllers/debug/use-graphwar-debug-activation";
+import { useGraphwarDebugTimings } from "./controllers/debug/use-graphwar-debug-timings";
 import {
   useGraphwarDetectionWorkflow,
   type DetectionStatusKind,
-} from "./composables/detection/use-graphwar-detection-workflow";
-import { useGraphwarPathPointEditing } from "./composables/path/use-graphwar-path-point-editing";
-import { useGraphwarPathState } from "./composables/path/use-graphwar-path-state";
-import { useGraphwarTrajectoryResult } from "./composables/path/use-graphwar-trajectory-result";
-import { useGraphwarOneClickClearRunWorkflow } from "./composables/pathfinding/use-graphwar-one-click-clear-run-workflow";
-import { useGraphwarSmartPathfindingBuilder } from "./composables/pathfinding/use-graphwar-smart-pathfinding-builder";
-import { useGraphwarSmartPathfindingRunWorkflow } from "./composables/pathfinding/use-graphwar-smart-pathfinding-run-workflow";
+} from "./controllers/detection/use-graphwar-detection-workflow";
+import { useGraphwarPathPointEditing } from "./controllers/path/use-graphwar-path-point-editing";
+import { useGraphwarPathState } from "./controllers/path/use-graphwar-path-state";
+import { useGraphwarTrajectoryResult } from "./controllers/path/use-graphwar-trajectory-result";
+import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/use-graphwar-one-click-clear-run-workflow";
+import { useGraphwarSmartPathfindingBuilder } from "./controllers/pathfinding/use-graphwar-smart-pathfinding-builder";
+import { useGraphwarSmartPathfindingRunWorkflow } from "./controllers/pathfinding/use-graphwar-smart-pathfinding-run-workflow";
 import {
   useGraphwarSmartPathfindingSession,
   type SmartPathfindingStatusKind,
-} from "./composables/pathfinding/use-graphwar-smart-pathfinding-session";
-import { useGraphwarTargetingContext } from "./composables/pathfinding/use-graphwar-targeting-context";
-import { useGraphwarLiveClickPreview } from "./composables/stage/use-graphwar-live-click-preview";
-import { useGraphwarObstacleEditor } from "./composables/stage/use-graphwar-obstacle-editor";
-import { useGraphwarStageFeedback } from "./composables/stage/use-graphwar-stage-feedback";
+} from "./controllers/pathfinding/use-graphwar-smart-pathfinding-session";
+import { useGraphwarTargetingContext } from "./controllers/pathfinding/use-graphwar-targeting-context";
+import { useGraphwarLiveClickPreview } from "./controllers/stage/use-graphwar-live-click-preview";
+import { useGraphwarObstacleEditor } from "./controllers/stage/use-graphwar-obstacle-editor";
+import { useGraphwarStageFeedback } from "./controllers/stage/use-graphwar-stage-feedback";
 import {
   useGraphwarStageHitTesting,
   type GraphwarStageHitTestingController,
-} from "./composables/stage/use-graphwar-stage-hit-testing";
-import { useGraphwarResultActions } from "./composables/ui/use-graphwar-result-actions";
-import { useGraphwarScreenshotWorkflow } from "./composables/ui/use-graphwar-screenshot";
+} from "./controllers/stage/use-graphwar-stage-hit-testing";
+import { useGraphwarResultActions } from "./controllers/ui/use-graphwar-result-actions";
+import { useGraphwarScreenshotWorkflow } from "./controllers/ui/use-graphwar-screenshot";
 import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint } from "./core/geometry";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,

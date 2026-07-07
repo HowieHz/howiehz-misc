@@ -60,8 +60,8 @@ import type {
   ToolMode,
   ToolWorkflowMode,
 } from "./core/types";
-import { buildObstacleEdgePath, buildObstacleFillPath } from "./detection/graphwar-detection";
-import type { GraphwarDetectionBox } from "./detection/graphwar-detection";
+import { buildObstacleEdgePath, buildObstacleFillPath } from "./detection/objects";
+import type { GraphwarDetectionBox } from "./detection/objects";
 import type { GraphwarTrajectoryCollisionSettings } from "./formula/trajectory-sampling";
 import type { GraphwarKillerLocale } from "./locale-types";
 import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";

@@ -11,7 +11,7 @@ import type {
   ToolMode,
   ToolWorkflowMode,
 } from "../../core/types";
-import type { GraphwarDetectionBox } from "../../detection/graphwar-detection";
+import type { GraphwarDetectionBox } from "../../detection/objects";
 import {
   createGraphwarTrajectoryFormulaContext,
   sampleGraphwarExpressionTrajectoryWithStops,

@@ -14,7 +14,7 @@ Graphwar Killer calibrates a [Graphwar](https://graphwar.com/graphwar_1/index.ht
 - [GraphwarKillerPage.vue](../../../tools/graphwar-killer/GraphwarKillerPage.vue) is the shared Chinese/English tool page implementation.
 - [core/](../../../tools/graphwar-killer/core/) contains Graphwar constants, coordinates/numbers, shared types, and forward rules.
 - [formula/](../../../tools/graphwar-killer/formula/) contains expression parsing, formula generation, trajectory sampling, and simulator logic.
-- [detection/](../../../tools/graphwar-killer/detection/) contains screenshot detection, obstacle masks, soldier template matching, and detection worker protocols.
+- [detection/](../../../tools/graphwar-killer/detection/) contains screenshot detection modules: `objects.ts` for play-area, obstacle, and soldier detection, `profile/` for detection thresholds, `runtime/` for the runner and worker protocols, and `template/` for template-matching subtask protocols.
 - [pathfinding/](../../../tools/graphwar-killer/pathfinding/) contains path planning modules: `routing/` for shared geometric routing, `smart/` for regular smart pathfinding, `one-click-clear/` for one-click clear, `runtime/` for caches, runners, and worker protocols, and `targeting.ts` for shared targeting rules.
 - [controllers/](../../../tools/graphwar-killer/controllers/) contains page controllers for screenshot input, path editing, detection workflows, stage interactions, and pathfinding sessions.
 - [presentation/](../../../tools/graphwar-killer/presentation/) contains presentation-layer modules, including page panels, the screenshot stage SVG overlay, status aggregation, and duration formatting.

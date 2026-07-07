@@ -22,7 +22,7 @@ import {
   graphwarSoldierTemplateMinimumSignatureScore,
   graphwarSoldierVisibleCenterX,
   graphwarSoldierVisibleCenterY,
-} from "./graphwar-detection-profile";
+} from "./profile/soldier-template";
 
 /** 识别系统把士兵作为可点击/可击杀目标。 */
 export type GraphwarDetectionKind = "soldier";

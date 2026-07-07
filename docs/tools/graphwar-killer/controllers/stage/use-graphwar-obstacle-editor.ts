@@ -11,7 +11,7 @@ import {
   paintObstacleMaskDisk,
   paintObstacleMaskStroke,
   type DetectedObstacleMap,
-} from "../../detection/graphwar-detection";
+} from "../../detection/objects";
 
 type GraphwarObstacleEditorStatusKind = "success" | "warning";
 

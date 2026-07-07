@@ -2,7 +2,7 @@ import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../cor
 import { planeGridCellCenterToImagePoint } from "../core/plane-grid";
 import type { GraphBounds, PixelPoint } from "../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
-import { dilateObstacleMask } from "../detection/graphwar-detection";
+import { dilateObstacleMask } from "../detection/objects";
 import { sampleGraphwarPathTrajectory } from "../formula/trajectory-sampling";
 import { buildOneClickClearDagEdgeRoute } from "../pathfinding/one-click-clear/edge-route";
 import type {

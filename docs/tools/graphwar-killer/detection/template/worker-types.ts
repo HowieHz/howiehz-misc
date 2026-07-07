@@ -1,5 +1,5 @@
-import type { BoundsRect } from "../core/types";
-import type { SoldierMatchCandidate, SoldierTemplateCenterCandidate } from "./graphwar-detection";
+import type { BoundsRect } from "../../core/types";
+import type { SoldierMatchCandidate, SoldierTemplateCenterCandidate } from "../objects";
 
 /** 主 Worker 发给士兵模板匹配子 Worker 的评分请求。 */
 export interface GraphwarSoldierTemplateWorkerRequest {

@@ -10,7 +10,7 @@ import {
   getGraphwarDetectionScale,
   getGraphwarSoldierDetectionSettings,
   matchSoldierTemplates,
-} from "../detection/graphwar-detection";
+} from "../detection/objects";
 import type {
   GraphwarDetectionWarning,
   GraphwarObjectDetectionInstrumentation,
@@ -20,7 +20,7 @@ import type {
   GraphwarSoldierDetectionSettings,
   SoldierMatchCandidate,
   SoldierTemplateCenterCandidate,
-} from "../detection/graphwar-detection";
+} from "../detection/objects";
 import type {
   GraphwarAutoDetectionResult,
   GraphwarDetectionWorkerTask,
@@ -29,11 +29,11 @@ import type {
   GraphwarDetectionWorkerStage,
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
-} from "../detection/graphwar-detection-worker-types";
+} from "../detection/runtime/worker-types";
 import type {
   GraphwarSoldierTemplateWorkerRequest,
   GraphwarSoldierTemplateWorkerResponse,
-} from "../detection/graphwar-soldier-template-worker-types";
+} from "../detection/template/worker-types";
 
 /** 当前 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarDetectionWorkerScope {

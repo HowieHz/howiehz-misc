@@ -1,6 +1,6 @@
 import { clampNumber } from "../../core/numbers";
 import type { PixelPoint } from "../../core/types";
-import { isPlayerColorPixel, type GraphwarDetectionBox } from "../../detection/graphwar-detection";
+import { isPlayerColorPixel, type GraphwarDetectionBox } from "../../detection/objects";
 import { getGraphwarSoldierCenter, graphwarSoldierContainsHitPoint } from "../../pathfinding/targeting";
 
 interface GraphwarStageHitTestingOptions<TSoldier extends GraphwarDetectionBox> {

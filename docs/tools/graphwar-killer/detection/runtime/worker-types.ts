@@ -1,10 +1,10 @@
-import type { BoundsRect } from "../core/types";
+import type { BoundsRect } from "../../core/types";
 /** Web Worker 和主线程之间传递 Graphwar 截图识别任务的协议类型。 */
 import type {
   GraphwarObjectsDetectionResult,
   GraphwarObstacleDetectionThresholds,
   GraphwarSoldierDetectionSettings,
-} from "./graphwar-detection";
+} from "../objects";
 
 /** Worker 内部识别阶段；主线程负责映射成本地化状态文本。 */
 export type GraphwarDetectionWorkerStage =

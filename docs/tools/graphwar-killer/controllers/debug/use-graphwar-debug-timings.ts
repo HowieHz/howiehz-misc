@@ -3,7 +3,7 @@ import { computed, ref, type ComputedRef } from "vue";
 import type {
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
-} from "../../detection/graphwar-detection-runner";
+} from "../../detection/runtime/runner";
 import type { GraphwarKillerLocale } from "../../locale-types";
 import type {
   GraphwarOneClickClearDebugDetail,

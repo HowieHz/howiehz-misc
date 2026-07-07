@@ -1,11 +1,11 @@
 /** 主线程侧 Graphwar 截图识别 runner，集中管理 Worker 生命周期、取消和同步 fallback。 */
-import type { BoundsRect } from "../core/types";
-import { detectGraphwarObjectsInBounds, detectGraphwarPlayArea } from "./graphwar-detection";
+import type { BoundsRect } from "../../core/types";
+import { detectGraphwarObjectsInBounds, detectGraphwarPlayArea } from "../objects";
 import type {
   GraphwarObjectDetectionInstrumentation,
   GraphwarObjectDetectionStage,
   GraphwarObjectsDetectionResult,
-} from "./graphwar-detection";
+} from "../objects";
 import type {
   GraphwarAutoDetectionInput,
   GraphwarAutoDetectionResult,
@@ -16,7 +16,7 @@ import type {
   GraphwarDetectionWorkerSuccessResponse,
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
-} from "./graphwar-detection-worker-types";
+} from "./worker-types";
 
 export type { GraphwarDetectionWorkerStage };
 export type { GraphwarDetectionWorkerTimingDetail };
@@ -72,7 +72,7 @@ export function createGraphwarDetectionRunner() {
       return worker;
     }
 
-    worker = new Worker(new URL("../workers/graphwar-detection.worker.ts", import.meta.url), {
+    worker = new Worker(new URL("../../workers/graphwar-detection.worker.ts", import.meta.url), {
       name: "graphwar-detection",
       type: "module",
     });

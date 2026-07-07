@@ -3,7 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { useGraphwarDebugActivation } from "./controllers/debug/activation";
 import { useGraphwarDebugTimings } from "./controllers/debug/timings";
-import { useGraphwarDetectionWorkflow, type DetectionStatusKind } from "./controllers/detection/workflow";
+import {
+  useGraphwarDetectionWorkflow,
+  type DetectionStatusKind,
+  type GraphwarDetectionRunTrigger,
+} from "./controllers/detection/workflow";
 import { useGraphwarPathAppendWorkflow } from "./controllers/path/append-workflow";
 import { useGraphwarPathPointEditing } from "./controllers/path/point-editing";
 import { useGraphwarPathState } from "./controllers/path/state";
@@ -1575,7 +1579,7 @@ function handleLoadedScreenshot() {
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
   if (autoDetectionEnabled.value) {
-    void detectGraphwarObjects();
+    void detectGraphwarObjects("auto");
   }
 }
 
@@ -1610,13 +1614,13 @@ function scheduleGraphwarObjectDetection() {
 }
 
 /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
-async function detectGraphwarObjects() {
-  await detectionWorkflow.detect();
+async function detectGraphwarObjects(trigger: GraphwarDetectionRunTrigger = "manual") {
+  await detectionWorkflow.detect(trigger);
 }
 
 /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
-async function detectGraphwarObjectsInCurrentBounds() {
-  await detectionWorkflow.detectInCurrentBounds();
+async function detectGraphwarObjectsInCurrentBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
+  await detectionWorkflow.detectInCurrentBounds(trigger);
 }
 
 /** 切换自动识别；关闭后保留当前识别结果供用户继续编辑。 */
@@ -1721,7 +1725,10 @@ function handleStagePointerDown(event: PointerEvent) {
       boundsRect.value = nextRect;
       invalidatePathfindingCaches();
       toolMode.value = "path";
-      void detectGraphwarObjectsInCurrentBounds();
+      if (autoDetectionEnabled.value) {
+        // 手动框选只负责更新边界；对象识别仍应遵守自动识别开关。
+        void detectGraphwarObjectsInCurrentBounds("auto");
+      }
     }
     boundsFirstPoint.value = undefined;
     pointerPreviewPoint.value = undefined;

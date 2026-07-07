@@ -15,6 +15,8 @@ const graphwarDetectionRefreshDelayMs = 180;
 
 /** 识别状态等级，与面板标题和智能寻路状态样式对齐。 */
 export type DetectionStatusKind = "info" | "success" | "warning" | "error";
+/** 检测运行来源；自动识别开关只应控制 auto 来源，不应取消用户手动点击的识别。 */
+export type GraphwarDetectionRunTrigger = "auto" | "manual";
 
 type GraphwarDetectionSettingsResult =
   | {
@@ -85,9 +87,9 @@ export interface GraphwarDetectionWorkflowController {
   /** 页面卸载时释放检测 Worker 和延迟任务。 */
   dispose: () => void;
   /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
-  detect: () => Promise<void>;
+  detect: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
   /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
-  detectInCurrentBounds: () => Promise<void>;
+  detectInCurrentBounds: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
   /** 检测任务是否正在运行。 */
   inProgress: Ref<boolean>;
   /** 判断异步检测回调是否仍属于当前运行。 */
@@ -125,12 +127,26 @@ export function useGraphwarDetectionWorkflow(
   const autoDetectionEnabled = ref(true);
   const smartCursorEnabled = ref(true);
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let activeRunTrigger: GraphwarDetectionRunTrigger | undefined;
   let runId = 0;
+
+  /** 取消尚未开始的自动重识别，避免关闭开关后仍执行晚到任务。 */
+  function clearScheduledDetection() {
+    if (!refreshTimer) {
+      return;
+    }
+
+    clearTimeout(refreshTimer);
+    refreshTimer = undefined;
+  }
 
   /** 清除检测运行、状态和识别对象。 */
   function clear() {
-    runId += 1;
-    inProgress.value = false;
+    clearScheduledDetection();
+    if (!stopActiveRun()) {
+      runId += 1;
+      activeRunTrigger = undefined;
+    }
     setStatus("", "info");
     clearDetectedObjects();
   }
@@ -144,8 +160,10 @@ export function useGraphwarDetectionWorkflow(
   }
 
   /** 开始一次新的检测运行，并让旧异步响应自动失效。 */
-  function beginRun() {
+  function beginRun(trigger: GraphwarDetectionRunTrigger) {
+    clearScheduledDetection();
     runId += 1;
+    activeRunTrigger = trigger;
     inProgress.value = true;
     return runId;
   }
@@ -159,11 +177,12 @@ export function useGraphwarDetectionWorkflow(
   function finishRun(activeRunId: number) {
     if (isActiveRun(activeRunId)) {
       inProgress.value = false;
+      activeRunTrigger = undefined;
     }
   }
 
-  /** 取消当前检测任务，并按调用场景决定是否显示取消提示。 */
-  function cancel(showStatus: boolean) {
+  /** 终止已经开始的检测任务；调用方决定是否展示取消文案。 */
+  function stopActiveRun() {
     if (!inProgress.value) {
       return false;
     }
@@ -171,6 +190,17 @@ export function useGraphwarDetectionWorkflow(
     runId += 1;
     detectionRunner.cancel();
     inProgress.value = false;
+    activeRunTrigger = undefined;
+    return true;
+  }
+
+  /** 取消当前检测任务，并按调用场景决定是否显示取消提示。 */
+  function cancel(showStatus: boolean) {
+    clearScheduledDetection();
+    if (!stopActiveRun()) {
+      return false;
+    }
+
     if (showStatus) {
       setStatus(options.getLocale().status.detection.cancelled, "warning");
     }
@@ -217,14 +247,17 @@ export function useGraphwarDetectionWorkflow(
   /** 延迟重新识别，合并连续设置变化，避免每次输入都立即读像素。 */
   function schedule() {
     if (!options.image.canSchedule() || !autoDetectionEnabled.value) {
+      clearScheduledDetection();
       return;
     }
-    if (refreshTimer) {
-      clearTimeout(refreshTimer);
-    }
+    clearScheduledDetection();
     refreshTimer = setTimeout(() => {
       refreshTimer = undefined;
-      void detectInCurrentBounds();
+      if (!options.image.canSchedule() || !autoDetectionEnabled.value) {
+        return;
+      }
+
+      void detectInCurrentBounds("auto");
     }, graphwarDetectionRefreshDelayMs);
   }
 
@@ -260,8 +293,8 @@ export function useGraphwarDetectionWorkflow(
   }
 
   /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
-  async function detect() {
-    const activeRunId = beginRun();
+  async function detect(trigger: GraphwarDetectionRunTrigger = "manual") {
+    const activeRunId = beginRun(trigger);
     const startedAt = nowMs();
     const timings: DetectionDebugTimingEntry[] = [];
     let debugTimingsFinalized = false;
@@ -316,8 +349,8 @@ export function useGraphwarDetectionWorkflow(
   }
 
   /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
-  async function detectInCurrentBounds() {
-    const activeRunId = beginRun();
+  async function detectInCurrentBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
+    const activeRunId = beginRun(trigger);
     const startedAt = nowMs();
     const timings: DetectionDebugTimingEntry[] = [];
     let debugTimingsFinalized = false;
@@ -421,6 +454,12 @@ export function useGraphwarDetectionWorkflow(
   /** 切换自动识别；关闭后保留当前识别结果供用户继续编辑。 */
   function toggleAutoDetection() {
     autoDetectionEnabled.value = !autoDetectionEnabled.value;
+    if (!autoDetectionEnabled.value) {
+      clearScheduledDetection();
+      if (activeRunTrigger === "auto") {
+        stopActiveRun();
+      }
+    }
   }
 
   /** 切换智能光标；关闭时清掉士兵悬停，避免残留高亮。 */
@@ -434,10 +473,7 @@ export function useGraphwarDetectionWorkflow(
   /** 页面卸载时释放检测 Worker 和延迟任务。 */
   function dispose() {
     detectionRunner.close();
-    if (refreshTimer) {
-      clearTimeout(refreshTimer);
-      refreshTimer = undefined;
-    }
+    clearScheduledDetection();
   }
 
   return {

@@ -30,16 +30,23 @@ export type ParsedMagnifierZoom = { ok: true; zoom: number } | { ok: false; mess
 export type ParsedObstacleBrushDiameter = { ok: true; diameter: number } | { ok: false; message: string };
 /** 寻路并行数解析结果；1 表示一键清图 DAG 建边在 master worker 内串行执行。 */
 export type ParsedPathfindingWorkerCount = { ok: true; workerCount: number } | { ok: false; message: string };
-/** 寻路容差解析结果；所有距离都使用 Graphwar 原始 770x450 平面像素。 */
+/** 普通智能寻路容差解析结果；所有距离都使用 Graphwar 原始 770x450 平面像素。 */
 export type ParsedObstacleTolerances =
   | {
       ok: true;
       boundaryExpansionPlanePixels: number;
-      oneClickClearDeleteCheckRadiusPixels: number;
       routePlanningTolerancePlanePixels: number;
       simulationTolerancePlanePixels: number;
     }
   | { ok: false; message: string };
+/** 一键清图容差解析结果；在普通寻路容差之上追加删点局部校验半径。 */
+export type ParsedOneClickClearTolerances =
+  | (Extract<ParsedObstacleTolerances, { ok: true }> & {
+      oneClickClearDeleteCheckRadiusPixels: number;
+    })
+  | { ok: false; message: string };
+interface ParsedSettingsFailure { ok: false; message: string }
+type ParsedObstacleToleranceValues = Extract<ParsedObstacleTolerances, { ok: true }>;
 
 interface GraphwarSettingsValidationInputs {
   /** 边界输入应由页面持有，因为它们同时驱动面板展示、手动标定和路径坐标换算。 */
@@ -113,6 +120,7 @@ export interface GraphwarSettingsValidationController {
   parsedDetectionSettings: ComputedRef<ParsedDetectionSettings>;
   parsedMagnifierZoom: ComputedRef<ParsedMagnifierZoom>;
   parsedObstacleBrushDiameter: ComputedRef<ParsedObstacleBrushDiameter>;
+  parsedOneClickClearTolerances: ComputedRef<ParsedOneClickClearTolerances>;
   parsedObstacleTolerances: ComputedRef<ParsedObstacleTolerances>;
   parsedPathfindingWorkerCount: ComputedRef<ParsedPathfindingWorkerCount>;
   parsedPrecision: ComputedRef<ParsedPrecision>;
@@ -257,6 +265,57 @@ export function useGraphwarSettingsValidation(
   });
 
   const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
+    const toleranceValues = parseObstacleToleranceInputValues();
+    if (!toleranceValues.ok) {
+      return toleranceValues;
+    }
+    const rangeResult = validateObstacleToleranceRanges(toleranceValues);
+    if (!rangeResult.ok) {
+      return rangeResult;
+    }
+    return toleranceValues;
+  });
+
+  const parsedOneClickClearTolerances = computed<ParsedOneClickClearTolerances>(() => {
+    const toleranceValues = parseObstacleToleranceInputValues();
+    if (!toleranceValues.ok) {
+      return toleranceValues;
+    }
+
+    const validation = options.getLocale().validation;
+    const oneClickClearDeleteCheckRadiusPixels = parseFiniteNumber(
+      options.inputs.pathfinding.oneClickClearDeleteCheckRadiusText.value,
+    );
+    if (oneClickClearDeleteCheckRadiusPixels === undefined) {
+      return { ok: false as const, message: validation.oneClickClearDeleteCheckRadiusNumber };
+    }
+
+    const rangeResult = validateObstacleToleranceRanges(toleranceValues);
+    if (!rangeResult.ok) {
+      return rangeResult;
+    }
+
+    const deleteCheckRadiusMaximumPixels = options.inputs.pathfinding.getSoldierMarkerRadius();
+    if (
+      oneClickClearDeleteCheckRadiusPixels < options.limits.pathfinding.deleteCheckRadiusMinimumPixels ||
+      oneClickClearDeleteCheckRadiusPixels > deleteCheckRadiusMaximumPixels
+    ) {
+      return {
+        ok: false as const,
+        message: validation.oneClickClearDeleteCheckRadiusRange(
+          options.limits.pathfinding.deleteCheckRadiusMinimumPixels,
+          deleteCheckRadiusMaximumPixels,
+        ),
+      };
+    }
+
+    return {
+      ...toleranceValues,
+      oneClickClearDeleteCheckRadiusPixels,
+    };
+  });
+
+  function parseObstacleToleranceInputValues(): ParsedObstacleToleranceValues | ParsedSettingsFailure {
     const boundsResult = parsedBounds.value;
     if (!boundsResult.ok) {
       return { ok: false as const, message: boundsResult.message };
@@ -283,62 +342,50 @@ export function useGraphwarSettingsValidation(
       return { ok: false as const, message: validation.boundaryExpansionNegative };
     }
 
-    const oneClickClearDeleteCheckRadiusPixels = parseFiniteNumber(
-      options.inputs.pathfinding.oneClickClearDeleteCheckRadiusText.value,
-    );
-    if (oneClickClearDeleteCheckRadiusPixels === undefined) {
-      return { ok: false as const, message: validation.oneClickClearDeleteCheckRadiusNumber };
-    }
+    return {
+      ok: true as const,
+      boundaryExpansionPlanePixels,
+      routePlanningTolerancePlanePixels,
+      simulationTolerancePlanePixels,
+    };
+  }
 
-    if (Math.abs(routePlanningTolerancePlanePixels) > options.limits.pathfinding.obstacleToleranceLimit) {
+  function validateObstacleToleranceRanges(
+    toleranceValues: ParsedObstacleToleranceValues,
+  ): { ok: true } | ParsedSettingsFailure {
+    const validation = options.getLocale().validation;
+    if (
+      Math.abs(toleranceValues.routePlanningTolerancePlanePixels) > options.limits.pathfinding.obstacleToleranceLimit
+    ) {
       return {
         ok: false as const,
         message: validation.routePlanningTolerancePixelRange(options.limits.pathfinding.obstacleToleranceLimit),
       };
     }
 
-    if (Math.abs(simulationTolerancePlanePixels) > options.limits.pathfinding.obstacleToleranceLimit) {
+    if (Math.abs(toleranceValues.simulationTolerancePlanePixels) > options.limits.pathfinding.obstacleToleranceLimit) {
       return {
         ok: false as const,
         message: validation.simulationTolerancePixelRange(options.limits.pathfinding.obstacleToleranceLimit),
       };
     }
 
-    if (boundaryExpansionPlanePixels > options.limits.pathfinding.boundaryExpansionLimit) {
+    if (toleranceValues.boundaryExpansionPlanePixels > options.limits.pathfinding.boundaryExpansionLimit) {
       return {
         ok: false as const,
         message: validation.boundaryExpansionPixelRange(options.limits.pathfinding.boundaryExpansionLimit),
       };
     }
 
-    const deleteCheckRadiusMaximumPixels = options.inputs.pathfinding.getSoldierMarkerRadius();
-    if (
-      oneClickClearDeleteCheckRadiusPixels < options.limits.pathfinding.deleteCheckRadiusMinimumPixels ||
-      oneClickClearDeleteCheckRadiusPixels > deleteCheckRadiusMaximumPixels
-    ) {
-      return {
-        ok: false as const,
-        message: validation.oneClickClearDeleteCheckRadiusRange(
-          options.limits.pathfinding.deleteCheckRadiusMinimumPixels,
-          deleteCheckRadiusMaximumPixels,
-        ),
-      };
-    }
-
-    return {
-      ok: true as const,
-      boundaryExpansionPlanePixels,
-      oneClickClearDeleteCheckRadiusPixels,
-      routePlanningTolerancePlanePixels,
-      simulationTolerancePlanePixels,
-    };
-  });
+    return { ok: true };
+  }
 
   return {
     parsedBounds,
     parsedDetectionSettings,
     parsedMagnifierZoom,
     parsedObstacleBrushDiameter,
+    parsedOneClickClearTolerances,
     parsedObstacleTolerances,
     parsedPathfindingWorkerCount,
     parsedPrecision,

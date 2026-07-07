@@ -441,6 +441,7 @@ const {
   parsedDetectionSettings,
   parsedMagnifierZoom,
   parsedObstacleBrushDiameter,
+  parsedOneClickClearTolerances,
   parsedObstacleTolerances,
   parsedPathfindingWorkerCount,
   parsedPrecision,
@@ -852,7 +853,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
       parsedPathfindingWorkerCount.value.ok ? parsedPathfindingWorkerCount.value.workerCount : undefined,
     getPathPoints: () => pathPixels.value,
     getSimulationMask: () => simulationObstacleMask.value,
-    getTolerances: () => (parsedObstacleTolerances.value.ok ? parsedObstacleTolerances.value : undefined),
+    getTolerances: () => (parsedOneClickClearTolerances.value.ok ? parsedOneClickClearTolerances.value : undefined),
     isUnsupportedMode: isOneClickClearModeUnsupported,
   },
   messages: {
@@ -863,7 +864,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
         getDisabledMessage: getSmartPathfindingDisabledMessage,
         locale,
         reason,
-        settingsMessage: smartPathfindingSettingsMessage.value,
+        settingsMessage: oneClickClearSettingsMessage.value,
       }),
     getSuccessMessage: (targetCount, elapsedMs, resultCacheHit) =>
       createOneClickClearSuccessMessage({ elapsedMs, locale, resultCacheHit, targetCount }),
@@ -1125,6 +1126,19 @@ const smartPathfindingSettingsMessage = computed(() => {
   }
   if (!parsedObstacleTolerances.value.ok) {
     return parsedObstacleTolerances.value.message;
+  }
+  return "";
+});
+// 一键清图应保留原预检顺序，并在普通寻路容差上追加自身专属的删点半径校验。
+const oneClickClearSettingsMessage = computed(() => {
+  if (toolWorkflowMode.value === "simulator") {
+    return "";
+  }
+  if (!parsedPathfindingWorkerCount.value.ok) {
+    return parsedPathfindingWorkerCount.value.message;
+  }
+  if (!parsedOneClickClearTolerances.value.ok) {
+    return parsedOneClickClearTolerances.value.message;
   }
   return "";
 });

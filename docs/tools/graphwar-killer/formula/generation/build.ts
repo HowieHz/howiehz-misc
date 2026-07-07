@@ -207,8 +207,13 @@ function compileStepEvaluator(
   for (let index = 1; index < points.length; index += 1) {
     const formulaCenterX = createCompiledStepFormulaCenterX(points[index].x, options);
     const deltaY = points[index].y - points[index - 1].y;
+    const yCoefficient = createCompiledStepFormulaCoefficient(deltaY, options);
     const firstDerivativeCoefficient = createCompiledStepFormulaCoefficient(deltaY * steepness, options);
     const secondDerivativeCoefficient = createCompiledStepFormulaCoefficient(deltaY * steepness * steepness, options);
+    if (yCoefficient === 0 && firstDerivativeCoefficient === 0 && secondDerivativeCoefficient === 0) {
+      continue;
+    }
+
     terms.push({
       formulaCenterX,
       derivativeUsesOverflowProtection: createCompiledStepDerivativeOverflowProtection(
@@ -218,7 +223,7 @@ function compileStepEvaluator(
       ),
       firstDerivativeCoefficient,
       secondDerivativeCoefficient,
-      yCoefficient: createCompiledStepFormulaCoefficient(deltaY, options),
+      yCoefficient,
     });
   }
 
@@ -227,6 +232,11 @@ function compileStepEvaluator(
       let slope = 0;
       for (let index = terms.length - 1; index >= 0; index -= 1) {
         const term = terms[index];
+        if (term.firstDerivativeCoefficient === 0) {
+          // 最终公式会省略 0 系数项；编译路径也不应求值其 body，避免 0 * NaN 偏离文本回放。
+          continue;
+        }
+
         const t = formulaSteepness * (x - term.formulaCenterX);
         if (term.derivativeUsesOverflowProtection) {
           // Stable 文本同样由首个 * 作为 Graphwar Polish 根节点，应先折叠右侧分式再乘系数。
@@ -242,6 +252,11 @@ function compileStepEvaluator(
       let acceleration = 0;
       for (let index = terms.length - 1; index >= 0; index -= 1) {
         const term = terms[index];
+        if (term.secondDerivativeCoefficient === 0) {
+          // 省略项没有 sign(t) 子表达式；跳过才能让 sign epsilon 探测与最终文本一致。
+          continue;
+        }
+
         const t = formulaSteepness * (x - term.formulaCenterX);
         if (term.derivativeUsesOverflowProtection) {
           const sign = evaluateStableSignRatio(t, options);
@@ -261,6 +276,10 @@ function compileStepEvaluator(
       let yOffset = 0;
       for (let index = terms.length - 1; index >= 0; index -= 1) {
         const term = terms[index];
+        if (term.yCoefficient === 0) {
+          continue;
+        }
+
         const t = formulaSteepness * (x - term.formulaCenterX);
         yOffset = term.yCoefficient / (1 + evaluateCompiledStepExp(-t)) + yOffset;
       }
@@ -274,27 +293,32 @@ function evaluateCompiledStepExp(argument: number) {
   return Math.pow(Math.E, argument);
 }
 
-/** 回放一阶导 direct 文本里的 exp/(1+exp)^2，重复 exp 调用保持与公式文本一致。 */
+/** 回放一阶导 direct 文本里的 exp/(1+exp)^2；同参 pow 是纯函数，可以在单项内缓存。 */
 function evaluateCompiledStepDirectFirstDerivativeBody(t: number) {
-  return evaluateCompiledStepExp(-t) / (1 + evaluateCompiledStepExp(-t)) ** 2;
+  const exp = evaluateCompiledStepExp(-t);
+  const denominator = 1 + exp;
+  return exp / denominator ** 2;
 }
 
-/** 回放一阶导 stable 文本里的 q/(1+q)^2，重复 q 调用保持与公式文本一致。 */
+/** 回放一阶导 stable 文本里的 q/(1+q)^2，并保持 Graphwar 的 pow 语义。 */
 function evaluateCompiledStepStableFirstDerivativeBody(t: number) {
-  return evaluateCompiledStepExp(-Math.abs(t)) / (1 + evaluateCompiledStepExp(-Math.abs(t))) ** 2;
+  const q = evaluateCompiledStepExp(-Math.abs(t));
+  const denominator = 1 + q;
+  return q / denominator ** 2;
 }
 
 /** 回放二阶导 direct 文本里的 exp*((exp-1)/(1+exp)^3)。 */
 function evaluateCompiledStepDirectSecondDerivativeBody(t: number) {
-  return evaluateCompiledStepExp(-t) * ((evaluateCompiledStepExp(-t) - 1) / (1 + evaluateCompiledStepExp(-t)) ** 3);
+  const exp = evaluateCompiledStepExp(-t);
+  const denominator = 1 + exp;
+  return exp * ((exp - 1) / denominator ** 3);
 }
 
 /** 回放二阶导 stable 文本中位于 sign 右侧的 q*((1-q)/(1+q)^3)。 */
 function evaluateCompiledStepStableSecondDerivativeBody(t: number) {
-  return (
-    evaluateCompiledStepExp(-Math.abs(t)) *
-    ((1 - evaluateCompiledStepExp(-Math.abs(t))) / (1 + evaluateCompiledStepExp(-Math.abs(t))) ** 3)
-  );
+  const q = evaluateCompiledStepExp(-Math.abs(t));
+  const denominator = 1 + q;
+  return q * ((1 - q) / denominator ** 3);
 }
 
 /** 内部 step 采样应使用最终公式文本中的陡峭度，确保 y/dy/ddy 回放一致。 */

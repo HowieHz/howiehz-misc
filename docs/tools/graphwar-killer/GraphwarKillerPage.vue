@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useGraphwarDebugActivation } from "./controllers/debug/activation";
 import { useGraphwarDebugTimings } from "./controllers/debug/timings";
 import { useGraphwarDetectionWorkflow, type DetectionStatusKind } from "./controllers/detection/workflow";
+import { useGraphwarPathAppendWorkflow } from "./controllers/path/append-workflow";
 import { useGraphwarPathPointEditing } from "./controllers/path/point-editing";
 import { useGraphwarPathState } from "./controllers/path/state";
 import { useGraphwarTrajectoryResult } from "./controllers/path/trajectory-result";
@@ -36,7 +37,7 @@ import {
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
   GRAPHWAR_VISIBLE_Y_LIMIT,
 } from "./core/game/constants";
-import { imageToGraphPoint, normalizeBoundsRect, normalizePathPoint } from "./core/geometry";
+import { imageToGraphPoint, normalizeBoundsRect } from "./core/geometry";
 import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
@@ -45,7 +46,6 @@ import {
   formatDecimal,
   formatDoublePrecisionDecimal,
   formatSvgNumber,
-  graphXAdvancesStrictly,
   parseFiniteNumber,
 } from "./core/numbers";
 import { graphwarToolDefaults } from "./core/tool/defaults";
@@ -64,7 +64,6 @@ import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfi
 import { createGraphwarPathfindingCacheController } from "./pathfinding/runtime/cache";
 import { createGraphwarPathfindingRunner } from "./pathfinding/runtime/runner";
 import { createGraphwarPathLineSegments, type GraphwarPathfindingLineSegment } from "./pathfinding/smart/preview";
-import { createGraphwarSmartPathfindingTrajectoryResult } from "./pathfinding/smart/trajectory";
 import {
   createBoundsRectWithBoundaryExpansion,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
@@ -766,6 +765,66 @@ const {
     parsedObstacleTolerances,
   },
 });
+// 舞台命中测试应集中路径点选择圈、士兵可视选择圈和真实命中圈，避免交互层混用半径语义。
+const stageHitTesting: GraphwarStageHitTestingController<DetectionBox> = useGraphwarStageHitTesting<DetectionBox>({
+  getDetectionBoxes: (): readonly DetectionBox[] => detectionBoxes.value,
+  getImageData: getImageDataFromCurrentImage,
+  getPathPixels: (): readonly PixelPoint[] => pathPixels.value,
+  getPathPointSelectionRadius: (): number => soldierSelectionRadius.value,
+});
+const {
+  detectionBoxContainsHitCircle,
+  detectionBoxContainsPathPoint,
+  getDetectedSoldierAtPoint,
+  getDetectionBoxCenter,
+  getDetectedSoldierColor,
+  getPathPointIndexAtPoint,
+} = stageHitTesting;
+// 路径追加 workflow 应集中普通点、士兵目标和智能寻路前预检；页面只负责 pointer 分发。
+const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHitTarget } =
+  useGraphwarPathAppendWorkflow<DetectionBox, SmartPathfindingTarget>({
+    geometry: {
+      boundsRect,
+      getMappedPathPoints: () => mappedPathPoints.value,
+      parsedBounds,
+    },
+    messages: {
+      getForwardPathMessage,
+      getSmartPathfindingCurrentPathBlockedMessage: () => createSmartPathfindingCurrentPathBlockedMessage(locale),
+    },
+    modes: {
+      isSmartPathfindingEnabled: () => effectiveSmartPathfindingEnabled.value,
+      toolWorkflowMode,
+    },
+    path: {
+      pathPixels,
+      pathStatus,
+      setPathPixels,
+      trajectoryStrokeColor,
+    },
+    smartPathfinding: {
+      clearStatus: clearSmartPathfindingStatus,
+      flashBlockedPoint: flashSmartPathfindingBlockedPoint,
+      runWorkflow: smartPathfindingRunWorkflow,
+      setStatus: setSmartPathfindingStatus,
+    },
+    targets: {
+      createMinimumForwardTargetPoint,
+      createSearchStartSoldierAimPoint,
+      createSmartPathfindingSoldierTarget,
+      createSoldierHitCircle,
+      getDetectedSoldierColor,
+      getDetectionBoxCenter,
+      getSoldiers: () => detectedSoldiers.value,
+      soldierContainsHitCircle: detectionBoxContainsHitCircle,
+    },
+    trajectory: {
+      getFormulaSettings: createPathTrajectoryFormulaSettings,
+      getSimulationObstacleMask: () => simulationObstacleMask.value,
+      getTargetPointRadius: () => soldierMarkerRadius.value,
+      parsedObstacleTolerances,
+    },
+  });
 // 一键清图 workflow 应集中预检、候选收集、worker 输入、cache 和结果落地；页面只保留当前状态入口。
 const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBox>({
   debug: {
@@ -824,21 +883,6 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
     now: nowMs,
   },
 });
-// 舞台命中测试应集中路径点选择圈、士兵可视选择圈和真实命中圈，避免交互层混用半径语义。
-const stageHitTesting: GraphwarStageHitTestingController<DetectionBox> = useGraphwarStageHitTesting<DetectionBox>({
-  getDetectionBoxes: (): readonly DetectionBox[] => detectionBoxes.value,
-  getImageData: getImageDataFromCurrentImage,
-  getPathPixels: (): readonly PixelPoint[] => pathPixels.value,
-  getPathPointSelectionRadius: (): number => soldierSelectionRadius.value,
-});
-const {
-  detectionBoxContainsHitCircle,
-  detectionBoxContainsPathPoint,
-  getDetectedSoldierAtPoint,
-  getDetectionBoxCenter,
-  getDetectedSoldierColor,
-  getPathPointIndexAtPoint,
-} = stageHitTesting;
 // 实时点击预览应集中悬停帧、点击落位模拟和临时轨迹采样；页面只提供当前规则入口。
 const {
   clearPointerPoint: clearLiveClickPreviewPointerPoint,
@@ -1728,85 +1772,6 @@ function handleStagePointerDown(event: PointerEvent) {
   void appendPathPoint(point);
 }
 
-/** 统一处理手动点、智能寻路点和一键清图重建，保证路径状态只有这一处落地。 */
-async function appendPathPoint(point: PixelPoint) {
-  if (!parsedBounds.value.ok) {
-    return false;
-  }
-
-  if (toolWorkflowMode.value === "simulator") {
-    setPathPixels([normalizePathPoint(point, boundsRect.value, parsedBounds.value.bounds, undefined, 0)]);
-    return true;
-  }
-
-  const targetPoint = pathPixels.value.length > 0 ? createMinimumForwardTargetPoint(point) : point;
-  if (!targetPoint) {
-    pathStatus.value = getForwardPathMessage();
-    return false;
-  }
-
-  const nextPoint =
-    pathPixels.value.length > 0
-      ? targetPoint
-      : normalizePathPoint(targetPoint, boundsRect.value, parsedBounds.value.bounds, undefined, 0);
-  if (!nextPoint) {
-    return false;
-  }
-
-  if (pathPixels.value.length === 0) {
-    setPathPixels([nextPoint]);
-    clearSmartPathfindingStatus();
-    return true;
-  }
-
-  if (effectiveSmartPathfindingEnabled.value) {
-    return smartPathfindingRunWorkflow.run({
-      collectTarget: () => nextPoint,
-      preflight: ensureCurrentPathReachesLastPointBeforeSmartPathfinding,
-    });
-  }
-
-  if (!canAppendPathPoint(nextPoint)) {
-    return false;
-  }
-
-  setPathPixels([...pathPixels.value, nextPoint]);
-  return true;
-}
-
-/** 点士兵时优先命中士兵中心；已有路径时根据当前模式决定直连或绕障。 */
-async function appendDetectedSoldierPathPoint(soldier: DetectionBox) {
-  if (toolWorkflowMode.value === "simulator" || pathPixels.value.length === 0) {
-    trajectoryStrokeColor.value = getDetectedSoldierColor(soldier) ?? "#ec4899";
-    return appendPathPoint(getDetectionBoxCenter(soldier));
-  }
-
-  if (effectiveSmartPathfindingEnabled.value) {
-    return appendDetectedSoldierSmartPathfindingPoint(soldier);
-  }
-
-  const targetPoint = createSearchStartSoldierAimPoint(pathPixels.value.at(-1), soldier);
-  return targetPoint ? appendPathPoint(targetPoint) : false;
-}
-
-/** 针对士兵目标绕障；几何目标可被 x+ 推进，弹道仍校验士兵原命中圈。 */
-async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox) {
-  if (!parsedBounds.value.ok) {
-    return false;
-  }
-
-  let startPoint: PixelPoint | undefined;
-  return smartPathfindingRunWorkflow.run({
-    collectTarget: () => (startPoint ? createSmartPathfindingSoldierTarget(startPoint, soldier) : undefined),
-    collectTargetStage: "collect-targets",
-    prepare: () => {
-      startPoint = [...pathPixels.value].at(-1);
-      return startPoint !== undefined;
-    },
-    preflight: ensureCurrentPathReachesLastPointBeforeSmartPathfinding,
-  });
-}
-
 /** 一键清图：从当前路径尾部出发，完整遍历 x 单调可达状态并追加当前模型下击杀最多的路径。 */
 async function runOneClickClear() {
   return oneClickClearRunWorkflow.run();
@@ -1830,49 +1795,6 @@ function pathStartChanges(nextPath: readonly PixelPoint[]) {
     return previousStart !== nextStart;
   }
   return previousStart.x !== nextStart.x || previousStart.y !== nextStart.y;
-}
-
-/** 启动新寻路前先确认当前公式轨迹已经能到达当前最后路径点。 */
-function ensureCurrentPathReachesLastPointBeforeSmartPathfinding() {
-  if (pathPixels.value.length < 2) {
-    return true;
-  }
-
-  const currentTarget = createCurrentLastPathHitTarget();
-  if (!currentTarget) {
-    return true;
-  }
-
-  const result = createGraphwarSmartPathfindingTrajectoryResult({
-    boundaryExpansion: parsedObstacleTolerances.value.ok
-      ? parsedObstacleTolerances.value.boundaryExpansionPlanePixels
-      : 0,
-    bounds: parsedBounds.value.ok ? parsedBounds.value.bounds : undefined,
-    boundsRect: boundsRect.value,
-    hitTarget: currentTarget,
-    obstacleMask: simulationObstacleMask.value,
-    points: [...pathPixels.value],
-    settings: createPathTrajectoryFormulaSettings(),
-    targetPointRadius: soldierMarkerRadius.value,
-  });
-  if (result.reachesTargetBeforeObstacle) {
-    return true;
-  }
-
-  setSmartPathfindingStatus(createSmartPathfindingCurrentPathBlockedMessage(locale), "error");
-  flashSmartPathfindingBlockedPoint(result.blockedPoint ?? pathPixels.value.at(-1));
-  return false;
-}
-
-/** 当前最后路径点若对应识别士兵，则用真实士兵命中圈作为预检查目标。 */
-function createCurrentLastPathHitTarget() {
-  const lastPoint = pathPixels.value.at(-1);
-  if (!lastPoint) {
-    return undefined;
-  }
-
-  const soldier = detectedSoldiers.value.find((box) => detectionBoxContainsHitCircle(box, lastPoint));
-  return soldier ? createSoldierHitCircle(soldier) : lastPoint;
 }
 
 /** 开始一次异步寻路/清图任务并返回取消 token。 */
@@ -2079,31 +2001,6 @@ function setToolMode(mode: ToolMode) {
   if (mode !== "bounds") {
     boundsFirstPoint.value = undefined;
   }
-}
-
-/** 在候选点标准化后执行 Graphwar 的 x+ 路径规则。 */
-function canAppendPathPoint(point: PixelPoint) {
-  if (!parsedBounds.value.ok || pathPixels.value.length < 1) {
-    return true;
-  }
-
-  const nextPoint = imageToGraphPoint(point, parsedBounds.value.bounds, boundsRect.value);
-  const previousPoint = mappedPathPoints.value.at(-1);
-  if (!previousPoint) {
-    return true;
-  }
-
-  if (pathAdvancesEnough(previousPoint.x, nextPoint.x)) {
-    return true;
-  }
-
-  pathStatus.value = getForwardPathMessage();
-  return false;
-}
-
-/** 判断相邻两个 Graphwar x 是否严格 x+；同一个 double x 不允许。 */
-function pathAdvancesEnough(previousX: number, nextX: number) {
-  return graphXAdvancesStrictly(previousX, nextX);
 }
 
 /** 返回路径必须向 x+ 前进的本地化提示。 */

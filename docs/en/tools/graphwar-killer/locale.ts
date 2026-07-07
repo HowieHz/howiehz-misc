@@ -124,12 +124,14 @@ export const graphwarKillerLocale = {
       cancelled: "Detection cancelled",
       detectingBounds: "Detecting play-area bounds",
       detectingObjects: "Detecting soldiers and obstacles",
+      detectedBounds: (elapsed) => `Marked bounds in ${elapsed}`,
       detectedCurrentBounds: (soldiers, elapsed) => `Marked obstacles and ${soldiers} soldiers in ${elapsed}`,
       detectedWithAutoBounds: (soldiers, elapsed) => `Marked bounds, obstacles, and ${soldiers} soldiers in ${elapsed}`,
       failed: (message) => `Detection failed: ${message}`,
       obstacleEditsApplied: (obstacles) => `Updated obstacle boundaries; currently ${obstacles} obstacles`,
       obstacleEditsCleared: (obstacles) => `Cleared obstacle edits; restored ${obstacles} obstacles`,
       updatingObstacleEdits: "Applying obstacle edits",
+      needBounds: "Detect or draw the Graphwar play-area bounds first",
       noBounds: "Could not detect the Graphwar play-area bounds",
       noPixels: "Could not read screenshot pixels",
       partialWarning: "⚠ partial issue",
@@ -177,7 +179,10 @@ export const graphwarKillerLocale = {
     forwardMinimumDouble: "one representable double",
     forwardPath: (minimumStep) =>
       `Each point's Graphwar x must be strictly greater than the previous point by at least ${minimumStep}`,
-    needDetection: "Run Start Detection in the Detection panel first; Smart Pathfinding needs detected obstacles",
+    needBounds:
+      "Click Detect Bounds in the Detection panel or draw the bounds manually first; Smart Pathfinding needs marked play-area bounds",
+    needDetection:
+      "Click Detect Objects in the Detection panel first; Smart Pathfinding needs detected soldiers and obstacles",
     inProgress: {
       optimize: "Optimize path nodes",
       search: "Search obstacle route",
@@ -193,7 +198,7 @@ export const graphwarKillerLocale = {
     oneClickClear: {
       inProgress: "Running One-Click Clear; right-click the screenshot to stop",
       needDetection:
-        "Run Start Detection in the Detection panel first; One-Click Clear needs detected soldiers and obstacles",
+        "Click Detect Objects in the Detection panel first; One-Click Clear needs detected soldiers and obstacles",
       needCurrentPath: "One-Click Clear needs an existing path start first",
       noCandidate: "One-Click Clear failed: no selectable target exists on the x+ side of the current path",
       noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found in ${elapsed}`,
@@ -243,7 +248,8 @@ export const graphwarKillerLocale = {
     },
     detection: {
       autoDetection: "Auto detect",
-      autoDetectionTitle: "Automatically run detection when a screenshot loads or detection settings change.",
+      autoDetectionTitle:
+        "When a screenshot loads, detect bounds and objects automatically; when detection settings change, redetect objects inside the current bounds.",
       busyOverlay: "Detecting, right-click to cancel",
       debugNoTiming: "No detection timing recorded yet",
       debugDetails: {
@@ -337,15 +343,17 @@ export const graphwarKillerLocale = {
       smartCursor: "Smart cursor",
       smartCursorTitle:
         "Snap path picking to detected soldier centers and enable obstacle and boundary collision simulation.",
-      startDetection: "Start detection",
-      startDetectionTitle:
-        "Automatically detect the Graphwar board bounds, soldiers, and obstacles from the current screenshot.",
+      detectBounds: "Detect bounds",
+      detectBoundsTitle: "Detect and mark the Graphwar play-area bounds from the current screenshot.",
+      detectObjects: "Detect objects",
+      detectObjectsNeedBoundsTitle: "Detect or draw the Graphwar play-area bounds first.",
+      detectObjectsTitle: "Detect soldiers and obstacles inside the current confirmed bounds.",
       title: "Detection",
     },
     instructions: {
       items: [
         "Add a Graphwar screenshot by uploading, dragging, or pasting it.",
-        "Enter the coordinate range and game mode, or use Start detection to detect bounds, soldiers, and obstacles.",
+        "Enter the coordinate range and game mode, or click Detect Bounds, then Detect Objects to mark soldiers and obstacles.",
         "Solver mode: in Pick path, click your soldier first, then the target path points; copy the generated function into Graphwar.",
         "Simulator mode: select the initial firing soldier and enter a function. y'' mode also needs a launch angle.",
         "Turn on Smart Cursor for assisted picking; choose Smart Pathfinding when the route should avoid detected obstacles.",

@@ -27,12 +27,16 @@ interface GraphwarDetectionPanelDebugRow {
 }
 
 export interface GraphwarDetectionPanelModel {
-  /** 是否允许手动开始识别。 */
-  canStartDetection: boolean;
+  /** 是否允许从截图中识别边界。 */
+  canDetectBounds: boolean;
+  /** 是否允许在当前已确认边界内识别士兵和障碍。 */
+  canDetectObjects: boolean;
   /** 自动识别是否开启。 */
   autoDetectionEnabled: boolean;
   /** 智能光标是否开启。 */
   smartCursorEnabled: boolean;
+  /** 识别物体按钮 hover 说明；禁用时应说明缺少的前置边界。 */
+  detectObjectsTitle: string;
   /** 标题右侧状态展示模型。 */
   headerStatus: GraphwarDetectionPanelHeaderStatus;
   /** 识别警告展示模型。 */
@@ -51,7 +55,8 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  startDetection: [];
+  detectBounds: [];
+  detectObjects: [];
   toggleAutoDetection: [];
   toggleSmartCursor: [];
 }>();
@@ -90,11 +95,19 @@ const emit = defineEmits<{
     <div class="graphwar-killer__image-actions">
       <button
         type="button"
-        :disabled="!panel.canStartDetection"
-        :title="locale.ui.detection.startDetectionTitle"
-        @click="emit('startDetection')"
+        :disabled="!panel.canDetectBounds"
+        :title="locale.ui.detection.detectBoundsTitle"
+        @click="emit('detectBounds')"
       >
-        {{ locale.ui.detection.startDetection }}
+        {{ locale.ui.detection.detectBounds }}
+      </button>
+      <button
+        type="button"
+        :disabled="!panel.canDetectObjects"
+        :title="panel.detectObjectsTitle"
+        @click="emit('detectObjects')"
+      >
+        {{ locale.ui.detection.detectObjects }}
       </button>
       <button
         type="button"

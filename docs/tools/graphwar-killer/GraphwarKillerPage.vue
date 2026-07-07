@@ -112,6 +112,7 @@ const graphwarVisibleYLimitText = formatDoublePrecisionDecimal(GRAPHWAR_VISIBLE_
 const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
 const graphwarBoundaryExpansionLimit = Math.floor((Math.min(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) - 1) / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
+const graphwarBoundsMinimumSizePixels = 4;
 const magnifierMinimumZoom = 1;
 const magnifierSliderMaximumZoom = 5;
 const magnifierInputMaximumZoom = 100;
@@ -128,6 +129,9 @@ const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-bru
 
 // 页面状态按未来可抽工作流分区维护：基础舞台、公式设置、截图、识别、障碍编辑、寻路。
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
+// boundsRect 会保留上一次矩形数值；boundsReady 表示该矩形已在当前截图上被用户或识别流程确认。
+const boundsReady = ref(false);
+const activeBoundsReady = computed(() => boundsReady.value && isUsableBoundsRect(boundsRect.value));
 const boundsFirstPoint = ref<PixelPoint>();
 const pointerPreviewPoint = ref<PixelPoint>();
 const magnifierEnabled = ref(false);
@@ -358,6 +362,7 @@ const {
   },
   setStatus: setDetectionStatus,
 });
+const objectDetectionReady = computed(() => activeBoundsReady.value && Boolean(detectedObstacles.value));
 // 检测 workflow 应持有异步运行、状态绘制、debounce 和 worker 生命周期；跨 workflow 副作用由页面注入。
 const detectionWorkflow = useGraphwarDetectionWorkflow({
   boundsRect,
@@ -379,12 +384,7 @@ const detectionWorkflow = useGraphwarDetectionWorkflow({
     flashBoundsRect,
     flashDetectedSoldiers,
     invalidatePathfindingCaches,
-    onAutoBoundsDetected: (edgeRect) => {
-      boundsRect.value = edgeRect;
-      invalidatePathfindingCaches();
-      boundsFirstPoint.value = undefined;
-      pointerPreviewPoint.value = undefined;
-    },
+    applyDetectedBounds,
     onSmartCursorDisabled: () => {
       hoveredDetectedSoldierId.value = undefined;
     },
@@ -395,6 +395,7 @@ const detectionWorkflow = useGraphwarDetectionWorkflow({
   formatElapsedDuration,
   getLocale: () => locale,
   getSettings: () => parsedDetectionSettings.value,
+  hasActiveBounds: () => activeBoundsReady.value,
   image: {
     canSchedule: () => Boolean(imageUrl.value),
     getImageData: getImageDataFromCurrentImage,
@@ -423,7 +424,11 @@ const {
   toggleAdvancedSettings,
 });
 const effectiveSmartPathfindingEnabled = computed(
-  () => toolWorkflowMode.value !== "simulator" && algorithmMode.value !== "step" && smartPathfindingEnabled.value,
+  () =>
+    toolWorkflowMode.value !== "simulator" &&
+    algorithmMode.value !== "step" &&
+    smartPathfindingEnabled.value &&
+    objectDetectionReady.value,
 );
 const pathfindingObstacleEdgesActive = computed(() => effectiveSmartPathfindingEnabled.value);
 const blocksFriendlyFireTargets = computed(
@@ -1016,20 +1021,26 @@ const detectionSettingsMessage = computed(() => {
   }
   return "";
 });
-const detectionHeaderStatus = computed(() => detectionSettingsMessage.value || detectionStatus.value);
+const detectionHeaderStatus = computed(() => detectionStatus.value || detectionSettingsMessage.value);
 const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
-  detectionSettingsMessage.value ? "error" : detectionStatusKind.value,
+  detectionStatus.value
+    ? detectionStatusKind.value
+    : detectionSettingsMessage.value
+      ? "error"
+      : detectionStatusKind.value,
 );
 // 识别面板只应消费展示 DTO；识别运行、状态优先级和耗时格式化仍由页面侧保持原语义。
 const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
   autoDetectionEnabled: autoDetectionEnabled.value,
-  canStartDetection: Boolean(imageUrl.value),
+  canDetectBounds: Boolean(imageUrl.value) && !detectionInProgress.value,
+  canDetectObjects: Boolean(imageUrl.value) && activeBoundsReady.value && !detectionInProgress.value,
   debugTimingRows: detectionDebugTimingRows.value.map((entry, index) => ({
     key: `${entry.stage}-${index}`,
     text: entry.elapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
     title: entry.title,
   })),
   debugTimingVisible: debugInfoEnabled.value,
+  detectObjectsTitle: getDetectObjectsTitle(),
   headerStatus: {
     kind: detectionHeaderStatusKind.value,
     message: detectionHeaderStatus.value,
@@ -1140,6 +1151,18 @@ const oneClickClearSettingsMessage = computed(() => {
   }
   return "";
 });
+const smartPathfindingPrerequisiteMessage = computed(() => {
+  if (!imageUrl.value) {
+    return locale.status.detection.uploadFirst;
+  }
+  if (!activeBoundsReady.value) {
+    return locale.smartPathfinding.needBounds;
+  }
+  if (!detectedObstacles.value) {
+    return locale.smartPathfinding.needDetection;
+  }
+  return "";
+});
 
 watch(
   [mappedPathPoints],
@@ -1209,7 +1232,8 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
       message: headerStatus.message,
       title: headerStatus.message,
     },
-    oneClickClearDisabled: smartPathfindingInProgress.value || isOneClickClearModeUnsupported(),
+    oneClickClearDisabled:
+      smartPathfindingInProgress.value || isOneClickClearModeUnsupported() || !objectDetectionReady.value,
     oneClickClearTitle: getOneClickClearButtonTitle(),
     searchAnimationEnabled: searchAnimationEnabled.value,
     smartPathfindingEnabled: smartPathfindingEnabled.value,
@@ -1504,6 +1528,16 @@ watch([smartCursorEnabled, smartPathfindingEnabled, detectedObstacles], () => {
   }
 });
 
+watch([objectDetectionReady, smartPathfindingEnabled], () => {
+  if (!smartPathfindingEnabled.value || objectDetectionReady.value) {
+    return;
+  }
+
+  cancelSmartPathfinding(false);
+  clearSmartPathfindingStatus();
+  smartPathfindingEnabled.value = false;
+});
+
 watch(
   [
     pathfindingWorkerCountText,
@@ -1566,10 +1600,11 @@ function setEquationMode(mode: EquationMode) {
   equationMode.value = mode;
 }
 
-/** 新截图应用后清理依赖旧图片的业务状态；边界坐标保持不变。 */
+/** 新截图应用后清理依赖旧图片的业务状态；旧边界矩形只保留为参考，需要重新确认后才可用于识别。 */
 function handleAppliedScreenshot() {
   clearAllModePaths();
   clearDetections();
+  clearActiveBounds();
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
   magnifierPoint.value = undefined;
@@ -1587,6 +1622,11 @@ function handleLoadedScreenshot() {
 /** 清除自动识别的士兵标记。 */
 function clearDetections() {
   detectionWorkflow.clear();
+}
+
+/** 清除当前截图的有效边界标记；boundsRect 数值保留给舞台显示和用户参考。 */
+function clearActiveBounds() {
+  boundsReady.value = false;
 }
 
 /** 判断异步检测回调是否仍属于当前运行。 */
@@ -1609,6 +1649,30 @@ function setDetectionStatus(message: string, kind: DetectionStatusKind) {
   detectionWorkflow.setStatus(message, kind);
 }
 
+/** 写入已确认的截图边界；边界变化会让所有基于旧矩形的寻路缓存失效。 */
+function applyDetectedBounds(edgeRect: BoundsRect) {
+  boundsRect.value = edgeRect;
+  boundsReady.value = true;
+  invalidatePathfindingCaches();
+  boundsFirstPoint.value = undefined;
+  pointerPreviewPoint.value = undefined;
+}
+
+/** 返回“识别物体”按钮说明；禁用时说明缺少的前置边界。 */
+function getDetectObjectsTitle() {
+  if (!imageUrl.value) {
+    return locale.status.detection.uploadFirst;
+  }
+  return activeBoundsReady.value
+    ? locale.ui.detection.detectObjectsTitle
+    : locale.ui.detection.detectObjectsNeedBoundsTitle;
+}
+
+/** 有效截图边界至少需要能形成可见区域，和手动画框提交阈值保持一致。 */
+function isUsableBoundsRect(rect: BoundsRect) {
+  return rect.width >= graphwarBoundsMinimumSizePixels && rect.height >= graphwarBoundsMinimumSizePixels;
+}
+
 /** 延迟重新识别，合并连续设置变化，避免每次输入都立即读像素。 */
 function scheduleGraphwarObjectDetection() {
   detectionWorkflow.schedule();
@@ -1617,6 +1681,11 @@ function scheduleGraphwarObjectDetection() {
 /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
 async function detectGraphwarObjects(trigger: GraphwarDetectionRunTrigger = "manual") {
   await detectionWorkflow.detect(trigger);
+}
+
+/** 只识别 Graphwar 棋盘边界，并清除旧边界下的士兵和障碍结果。 */
+async function detectGraphwarBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
+  await detectionWorkflow.detectBounds(trigger);
 }
 
 /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
@@ -1658,12 +1727,14 @@ function setMagnifierZoomText(value: string) {
 
 /** Step 公式不支持智能/一键清图，因为弹道和路径点语义不稳定。 */
 function isSmartPathfindingDisabled() {
-  return algorithmMode.value === "step";
+  return algorithmMode.value === "step" || Boolean(smartPathfindingPrerequisiteMessage.value);
 }
 
 /** 返回智能寻路被禁用的具体原因。 */
 function getSmartPathfindingDisabledMessage() {
-  return stepPathfindingDisabledMessage.value;
+  return algorithmMode.value === "step"
+    ? stepPathfindingDisabledMessage.value
+    : smartPathfindingPrerequisiteMessage.value;
 }
 
 /** 返回智能寻路按钮 title，禁用时优先解释原因。 */
@@ -1675,11 +1746,14 @@ function getSmartPathfindingToggleTitle() {
 
 /** 一键清图目前只支持双绝对值 y/y'，按钮状态和运行前校验共用同一条件。 */
 function isOneClickClearModeUnsupported() {
-  return isSmartPathfindingDisabled() || algorithmMode.value !== "abs" || equationMode.value === "ddy";
+  return algorithmMode.value !== "abs" || equationMode.value === "ddy";
 }
 
 /** 返回一键清图按钮 title，不支持当前模式时直接解释禁用原因。 */
 function getOneClickClearButtonTitle() {
+  if (!objectDetectionReady.value) {
+    return smartPathfindingPrerequisiteMessage.value;
+  }
   return isOneClickClearModeUnsupported()
     ? locale.smartPathfinding.oneClickClear.unsupported
     : locale.ui.pathfinding.oneClickClearTitle;
@@ -1716,15 +1790,15 @@ function handleStagePointerDown(event: PointerEvent) {
     const nextPoint = normalizeBoundsPickerPoint(point);
     if (!boundsFirstPoint.value) {
       clearDetections();
+      clearActiveBounds();
       boundsFirstPoint.value = nextPoint;
       pointerPreviewPoint.value = nextPoint;
       return;
     }
 
     const nextRect = normalizeBoundsRect(boundsFirstPoint.value, nextPoint);
-    if (nextRect.width >= 4 && nextRect.height >= 4) {
-      boundsRect.value = nextRect;
-      invalidatePathfindingCaches();
+    if (isUsableBoundsRect(nextRect)) {
+      applyDetectedBounds(nextRect);
       toolMode.value = "path";
       if (autoDetectionEnabled.value) {
         // 手动框选只负责更新边界；对象识别仍应遵守自动识别开关。
@@ -2138,7 +2212,8 @@ function undoLastPoint() {
       <GraphwarDetectionPanel
         :locale="locale"
         :panel="detectionPanel"
-        @start-detection="void detectGraphwarObjects()"
+        @detect-bounds="void detectGraphwarBounds()"
+        @detect-objects="void detectGraphwarObjectsInCurrentBounds()"
         @toggle-auto-detection="toggleAutoDetection"
         @toggle-smart-cursor="toggleSmartCursor"
       />

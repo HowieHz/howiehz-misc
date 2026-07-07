@@ -23,6 +23,7 @@ import type {
 } from "../../detection/objects";
 import type {
   GraphwarAutoDetectionResult,
+  GraphwarBoundsOnlyDetectionResult,
   GraphwarDetectionWorkerTask,
   GraphwarDetectionWorkerRequest,
   GraphwarDetectionWorkerResponse,
@@ -79,6 +80,10 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
       await runAutoDetectionTask(request.id, request.task, timings);
       return;
     }
+    if (request.task.type === "detect-bounds-only") {
+      runBoundsOnlyDetectionTask(request.id, request.task, timings);
+      return;
+    }
 
     const task = request.task;
     postStage(request.id, "detecting-objects");
@@ -97,6 +102,21 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
   } catch (error) {
     postError(request.id, error);
   }
+}
+
+/** 只检测棋盘边界，避免手动边界按钮启动士兵和障碍识别。 */
+function runBoundsOnlyDetectionTask(
+  id: number,
+  task: Extract<GraphwarDetectionWorkerTask, { type: "detect-bounds-only" }>,
+  timings: GraphwarDetectionWorkerTimingEntry[],
+) {
+  postStage(id, "detecting-bounds");
+  postSuccess(
+    id,
+    "detect-bounds-only",
+    { edgeRect: measureDetectionStage(timings, "detecting-bounds", () => detectGraphwarPlayArea(task.imageData)) },
+    timings,
+  );
 }
 
 /** 执行自动检测任务，只有识别到平面边界后才继续对象检测。 */
@@ -377,6 +397,13 @@ function postSuccess(
   result: GraphwarAutoDetectionResult,
   timings: readonly GraphwarDetectionWorkerTimingEntry[],
 ): void;
+/** 发送纯边界检测成功响应。 */
+function postSuccess(
+  id: number,
+  taskType: "detect-bounds-only",
+  result: GraphwarBoundsOnlyDetectionResult,
+  timings: readonly GraphwarDetectionWorkerTimingEntry[],
+): void;
 /** 发送边界内检测成功响应，并转移可复用的大型 buffer。 */
 function postSuccess(
   id: number,
@@ -387,20 +414,31 @@ function postSuccess(
 /** 统一构造成功响应，保持主线程按 taskType 精确收窄结果类型。 */
 function postSuccess(
   id: number,
-  taskType: "detect-auto" | "detect-bounds",
-  result: GraphwarAutoDetectionResult | ReturnType<typeof detectGraphwarObjectsInBounds>,
+  taskType: "detect-auto" | "detect-bounds-only" | "detect-bounds",
+  result:
+    | GraphwarAutoDetectionResult
+    | GraphwarBoundsOnlyDetectionResult
+    | ReturnType<typeof detectGraphwarObjectsInBounds>,
   timings: readonly GraphwarDetectionWorkerTimingEntry[],
 ) {
   const response =
     taskType === "detect-auto"
       ? { id, result: result as GraphwarAutoDetectionResult, taskType, timings, type: "success" as const }
-      : {
-          id,
-          result: result as ReturnType<typeof detectGraphwarObjectsInBounds>,
-          taskType,
-          timings,
-          type: "success" as const,
-        };
+      : taskType === "detect-bounds-only"
+        ? {
+            id,
+            result: result as GraphwarBoundsOnlyDetectionResult,
+            taskType,
+            timings,
+            type: "success" as const,
+          }
+        : {
+            id,
+            result: result as ReturnType<typeof detectGraphwarObjectsInBounds>,
+            taskType,
+            timings,
+            type: "success" as const,
+          };
   workerScope.postMessage(response, collectTransferList(result));
 }
 
@@ -414,8 +452,14 @@ function postError(id: number, error: unknown) {
 }
 
 /** 收集检测结果中可转移的 mask buffer，减少跨线程复制。 */
-function collectTransferList(result: GraphwarAutoDetectionResult | ReturnType<typeof detectGraphwarObjectsInBounds>) {
-  const mask = "obstacles" in result ? result.obstacles.mask : result.objects?.obstacles.mask;
+function collectTransferList(
+  result:
+    | GraphwarAutoDetectionResult
+    | GraphwarBoundsOnlyDetectionResult
+    | ReturnType<typeof detectGraphwarObjectsInBounds>,
+) {
+  const mask =
+    "obstacles" in result ? result.obstacles.mask : "objects" in result ? result.objects?.obstacles.mask : undefined;
   const buffer = mask?.buffer;
   return buffer instanceof ArrayBuffer ? [buffer] : [];
 }

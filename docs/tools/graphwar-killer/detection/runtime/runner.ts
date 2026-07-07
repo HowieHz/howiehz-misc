@@ -10,6 +10,8 @@ import type {
   GraphwarAutoDetectionInput,
   GraphwarAutoDetectionResult,
   GraphwarBoundsDetectionInput,
+  GraphwarBoundsOnlyDetectionInput,
+  GraphwarBoundsOnlyDetectionResult,
   GraphwarDetectionWorkerRequest,
   GraphwarDetectionWorkerResponse,
   GraphwarDetectionWorkerStage,
@@ -98,6 +100,26 @@ export function createGraphwarDetectionRunner() {
           soldierSettings: input.soldierSettings,
           thresholds: input.thresholds,
           type: "detect-auto",
+        },
+      },
+      options,
+    );
+  }
+
+  /** 只识别棋盘边界，供手动“识别边界”按钮使用。 */
+  function detectBounds(input: GraphwarBoundsOnlyDetectionInput, options?: GraphwarDetectionRunOptions) {
+    cancel();
+    const activeWorker = ensureWorker();
+    if (!activeWorker) {
+      return Promise.resolve(detectBoundsSynchronously(input, options));
+    }
+    return runWorkerTask<GraphwarBoundsOnlyDetectionResult>(
+      activeWorker,
+      {
+        id: nextRequestId,
+        task: {
+          imageData: input.imageData,
+          type: "detect-bounds-only",
         },
       },
       options,
@@ -226,6 +248,7 @@ export function createGraphwarDetectionRunner() {
     cancel,
     close,
     detectAuto,
+    detectBounds,
     detectObjectsInBounds,
   };
 }
@@ -258,6 +281,18 @@ function detectAutoSynchronously(
   };
 }
 
+/** 在无 Worker 环境中同步执行边界识别。 */
+function detectBoundsSynchronously(
+  input: GraphwarBoundsOnlyDetectionInput,
+  options?: GraphwarDetectionRunOptions,
+): GraphwarBoundsOnlyDetectionResult {
+  options?.onStage?.("detecting-bounds");
+  const timings: GraphwarDetectionWorkerTimingEntry[] = [];
+  const edgeRect = measureDetectionStage(timings, "detecting-bounds", () => detectGraphwarPlayArea(input.imageData));
+  options?.onTimings?.(timings);
+  return { edgeRect };
+}
+
 /** 在无 Worker 环境中同步执行边界内对象检测。 */
 function detectObjectsInBoundsSynchronously(
   input: GraphwarBoundsDetectionInput,
@@ -284,6 +319,16 @@ function collectRequestTransferList(request: GraphwarDetectionWorkerRequest) {
 
 /** 复制 Worker 请求外壳；ImageData 应保留原对象，以便继续转移原始 buffer。 */
 function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerRequest): GraphwarDetectionWorkerRequest {
+  if (request.task.type === "detect-bounds-only") {
+    return {
+      id: request.id,
+      task: {
+        imageData: request.task.imageData,
+        type: "detect-bounds-only",
+      },
+    };
+  }
+
   const cloneableSharedInput = {
     imageData: request.task.imageData,
     soldierSettings: cloneGraphwarSoldierDetectionSettings(request.task.soldierSettings),

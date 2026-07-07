@@ -54,7 +54,7 @@ interface GraphwarDetectionWorkflowOptions {
     flashBoundsRect: () => void;
     flashDetectedSoldiers: () => void;
     invalidatePathfindingCaches: () => void;
-    onAutoBoundsDetected: (bounds: BoundsRect) => void;
+    applyDetectedBounds: (bounds: BoundsRect) => void;
     onSmartCursorDisabled: () => void;
     setToolModeToPath: () => void;
   };
@@ -71,6 +71,8 @@ interface GraphwarDetectionWorkflowOptions {
   getLocale: () => GraphwarKillerLocale;
   /** 当前检测输入设置；无效输入应阻止 worker 运行并展示原校验文案。 */
   getSettings: () => GraphwarDetectionSettingsResult;
+  /** 当前截图边界是否已经由用户框选或识别确认。 */
+  hasActiveBounds: () => boolean;
   /** 手动或自动边界内对象识别应使用页面当前标定矩形。 */
   boundsRect: Ref<BoundsRect>;
   /** 识别结果仍由页面持有，供舞台、寻路和目标过滤共享。 */
@@ -88,6 +90,8 @@ export interface GraphwarDetectionWorkflowController {
   dispose: () => void;
   /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
   detect: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
+  /** 使用 Canvas 像素只识别 Graphwar 棋盘边界，并清除旧对象结果。 */
+  detectBounds: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
   /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
   detectInCurrentBounds: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
   /** 检测任务是否正在运行。 */
@@ -246,14 +250,14 @@ export function useGraphwarDetectionWorkflow(
 
   /** 延迟重新识别，合并连续设置变化，避免每次输入都立即读像素。 */
   function schedule() {
-    if (!options.image.canSchedule() || !autoDetectionEnabled.value) {
+    if (!options.image.canSchedule() || !autoDetectionEnabled.value || !options.hasActiveBounds()) {
       clearScheduledDetection();
       return;
     }
     clearScheduledDetection();
     refreshTimer = setTimeout(() => {
       refreshTimer = undefined;
-      if (!options.image.canSchedule() || !autoDetectionEnabled.value) {
+      if (!options.image.canSchedule() || !autoDetectionEnabled.value || !options.hasActiveBounds()) {
         return;
       }
 
@@ -261,8 +265,8 @@ export function useGraphwarDetectionWorkflow(
     }, graphwarDetectionRefreshDelayMs);
   }
 
-  /** 收敛截图读取、像素读取和阈值校验；后续检测入口只处理识别策略。 */
-  function getDetectionInput(timings: DetectionDebugTimingEntry[]) {
+  /** 收敛截图读取和像素读取；边界识别不应被对象识别设置阻塞。 */
+  function getBoundsDetectionInput(timings: DetectionDebugTimingEntry[]) {
     const locale = options.getLocale();
     if (!options.image.isReady()) {
       setStatus(locale.status.detection.uploadFirst, "error");
@@ -274,13 +278,23 @@ export function useGraphwarDetectionWorkflow(
       setStatus(locale.status.detection.noPixels, "error");
       return undefined;
     }
+    return { imageData };
+  }
+
+  /** 收敛对象识别设置校验；后续检测入口只处理识别策略。 */
+  function getDetectionInput(timings: DetectionDebugTimingEntry[]) {
+    const boundsInput = getBoundsDetectionInput(timings);
+    if (!boundsInput) {
+      return undefined;
+    }
+
     const detectionSettings = options.getSettings();
     if (!detectionSettings.ok) {
       setStatus(detectionSettings.message, "error");
       return undefined;
     }
     return {
-      imageData,
+      imageData: boundsInput.imageData,
       soldierSettings: {
         candidateTopRatio: detectionSettings.candidateTopRatio,
         maximumSoldierCount: detectionSettings.maximumSoldierCount,
@@ -290,6 +304,57 @@ export function useGraphwarDetectionWorkflow(
         minArea: detectionSettings.minArea,
       },
     };
+  }
+
+  /** 使用 Canvas 像素只识别 Graphwar 棋盘边界。 */
+  async function detectBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
+    const activeRunId = beginRun(trigger);
+    const startedAt = nowMs();
+    const timings: DetectionDebugTimingEntry[] = [];
+    let debugTimingsFinalized = false;
+    try {
+      if (!(await showStage(activeRunId, options.getLocale().status.detection.preparingPixels))) {
+        return;
+      }
+      const detectionInput = getBoundsDetectionInput(timings);
+      if (!detectionInput || !isActiveRun(activeRunId)) {
+        return;
+      }
+
+      const result = await detectionRunner.detectBounds(
+        { imageData: detectionInput.imageData },
+        {
+          onStage: (stage) => {
+            void showWorkerStage(activeRunId, stage);
+          },
+          onTimings: (workerTimings) => {
+            timings.push(...options.debug.createTimingEntriesFromWorker(workerTimings));
+          },
+        },
+      );
+      if (!isActiveRun(activeRunId)) {
+        return;
+      }
+      if (!result.edgeRect) {
+        clearDetectedObjects();
+        setStatus(options.getLocale().status.detection.noBounds, "error");
+        return;
+      }
+
+      await applyBoundsResult(result.edgeRect, activeRunId, startedAt, timings);
+      debugTimingsFinalized = true;
+      if (!isActiveRun(activeRunId)) {
+        return;
+      }
+      options.effects.setToolModeToPath();
+    } catch (error) {
+      handleError(error, activeRunId);
+    } finally {
+      if (!debugTimingsFinalized) {
+        options.debug.finishTimings(activeRunId, startedAt, timings);
+      }
+      finishRun(activeRunId);
+    }
   }
 
   /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
@@ -331,7 +396,7 @@ export function useGraphwarDetectionWorkflow(
         return;
       }
 
-      options.effects.onAutoBoundsDetected(result.edgeRect);
+      options.effects.applyDetectedBounds(result.edgeRect);
       await applyResult(result.objects, "auto", activeRunId, true, startedAt, timings);
       debugTimingsFinalized = true;
       if (!isActiveRun(activeRunId)) {
@@ -350,6 +415,13 @@ export function useGraphwarDetectionWorkflow(
 
   /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
   async function detectInCurrentBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
+    if (!options.hasActiveBounds()) {
+      if (trigger === "manual") {
+        setStatus(options.getLocale().status.detection.needBounds, "error");
+      }
+      return;
+    }
+
     const activeRunId = beginRun(trigger);
     const startedAt = nowMs();
     const timings: DetectionDebugTimingEntry[] = [];
@@ -389,6 +461,34 @@ export function useGraphwarDetectionWorkflow(
       }
       finishRun(activeRunId);
     }
+  }
+
+  /** 将边界识别结果写回页面，并清掉依赖旧边界的对象结果。 */
+  async function applyBoundsResult(
+    edgeRect: BoundsRect,
+    activeRunId: number,
+    startedAt = nowMs(),
+    timings: DetectionDebugTimingEntry[] = [],
+  ) {
+    if (!isActiveRun(activeRunId)) {
+      return;
+    }
+    if (!(await showStage(activeRunId, options.getLocale().status.detection.updatingResults))) {
+      return;
+    }
+    options.debug.measureStage(timings, "updating-results", () => {
+      options.effects.applyDetectedBounds(edgeRect);
+      clearDetectedObjects();
+      options.effects.flashBoundsRect();
+    });
+    let completedAt = nowMs();
+    const elapsed = () => options.formatElapsedDuration(completedAt - startedAt);
+    options.debug.measureStage(timings, "setting-status", () => {
+      completedAt = nowMs();
+      setStatus(options.getLocale().status.detection.detectedBounds(elapsed()), "success");
+      completedAt = nowMs();
+    });
+    options.debug.finishTimings(activeRunId, startedAt, timings, completedAt);
   }
 
   /** 将 Worker 返回的士兵/障碍识别结果写回页面状态。 */
@@ -481,6 +581,7 @@ export function useGraphwarDetectionWorkflow(
     cancel,
     clear,
     detect,
+    detectBounds,
     detectInCurrentBounds,
     dispose,
     inProgress,

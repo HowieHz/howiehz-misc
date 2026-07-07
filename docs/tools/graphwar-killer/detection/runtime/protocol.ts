@@ -46,6 +46,12 @@ export interface GraphwarAutoDetectionInput {
   soldierSettings?: GraphwarSoldierDetectionSettings;
 }
 
+/** 只识别棋盘边界；不读取士兵和障碍设置，避免边界按钮被对象识别参数阻塞。 */
+export interface GraphwarBoundsOnlyDetectionInput {
+  /** 当前截图像素。 */
+  imageData: ImageData;
+}
+
 /** 在指定棋盘边界内识别对象。 */
 export interface GraphwarBoundsDetectionInput extends GraphwarAutoDetectionInput {
   /** 已确定的棋盘边界。 */
@@ -60,11 +66,20 @@ export interface GraphwarAutoDetectionResult {
   objects?: GraphwarObjectsDetectionResult;
 }
 
-/** Worker 可执行的两类识别任务：自动找边界，或使用已有边界只识别对象。 */
+/** 只识别棋盘边界的结果；undefined 表示未识别到棋盘。 */
+export interface GraphwarBoundsOnlyDetectionResult {
+  /** 自动推断出的棋盘边界；undefined 表示未识别到棋盘。 */
+  edgeRect?: BoundsRect;
+}
+
+/** Worker 可执行的识别任务：完整自动识别、仅识别边界，或在已有边界内识别对象。 */
 export type GraphwarDetectionWorkerTask =
   | ({
       type: "detect-auto";
     } & GraphwarAutoDetectionInput)
+  | ({
+      type: "detect-bounds-only";
+    } & GraphwarBoundsOnlyDetectionInput)
   | ({
       type: "detect-bounds";
     } & GraphwarBoundsDetectionInput);
@@ -83,6 +98,13 @@ export type GraphwarDetectionWorkerSuccessResponse =
       id: number;
       result: GraphwarAutoDetectionResult;
       taskType: "detect-auto";
+      timings: readonly GraphwarDetectionWorkerTimingEntry[];
+      type: "success";
+    }
+  | {
+      id: number;
+      result: GraphwarBoundsOnlyDetectionResult;
+      taskType: "detect-bounds-only";
       timings: readonly GraphwarDetectionWorkerTimingEntry[];
       type: "success";
     }

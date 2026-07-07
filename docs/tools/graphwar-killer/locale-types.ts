@@ -164,12 +164,14 @@ export interface GraphwarKillerLocale {
       cancelled: string;
       detectingBounds: string;
       detectingObjects: string;
+      detectedBounds: (elapsed: string) => string;
       detectedCurrentBounds: (soldiers: number, elapsed: string) => string;
       detectedWithAutoBounds: (soldiers: number, elapsed: string) => string;
       failed: (message: string) => string;
       obstacleEditsApplied: (obstacles: number) => string;
       obstacleEditsCleared: (obstacles: number) => string;
       updatingObstacleEdits: string;
+      needBounds: string;
       noBounds: string;
       noPixels: string;
       partialWarning: string;
@@ -203,6 +205,7 @@ export interface GraphwarKillerLocale {
     failure: (elapsed?: string) => string;
     forwardMinimumDouble: string;
     forwardPath: (minimumStep: string) => string;
+    needBounds: string;
     needDetection: string;
     inProgress: {
       optimize: string;
@@ -279,8 +282,11 @@ export interface GraphwarKillerLocale {
       minObstacleAreaTitle: string;
       smartCursor: string;
       smartCursorTitle: string;
-      startDetection: string;
-      startDetectionTitle: string;
+      detectBounds: string;
+      detectBoundsTitle: string;
+      detectObjects: string;
+      detectObjectsNeedBoundsTitle: string;
+      detectObjectsTitle: string;
       title: string;
     };
     instructions: {

@@ -1918,16 +1918,16 @@ function erodeObstacleMaskByRadius(mask: Uint8Array, radius: number) {
   return eroded;
 }
 
-/** 按检测出的士兵半径清掉身体区域，避免寻路把目标/己方士兵当作地形。 */
+/** 清掉截图里的士兵贴图区域，避免可见身体边缘被障碍细节回填带回；真实命中仍使用 hitRadius。 */
 function removeSoldierAreasFromObstacleMask(
   mask: Uint8Array,
   edgeRect: BoundsRect,
   soldiers: readonly GraphwarDetectionBox[],
 ) {
   for (const soldier of soldiers) {
-    const center = imagePointToPlaneGridPoint(getDetectionBoxCenter(soldier), edgeRect);
-    const radiusX = (soldier.hitRadius / edgeRect.width) * GRAPHWAR_PLANE_LENGTH;
-    const radiusY = (soldier.hitRadius / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT;
+    const center = imagePointToPlaneGridPoint(createPixelPoint(soldier.visualCenterX, soldier.visualCenterY), edgeRect);
+    const radiusX = (soldier.visualRadius / edgeRect.width) * GRAPHWAR_PLANE_LENGTH;
+    const radiusY = (soldier.visualRadius / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT;
     clearMaskDisk(mask, center, Math.ceil(Math.max(radiusX, radiusY)));
   }
 }

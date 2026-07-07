@@ -7,6 +7,10 @@ import { useGraphwarDetectionWorkflow, type DetectionStatusKind } from "./contro
 import { useGraphwarPathPointEditing } from "./controllers/path/point-editing";
 import { useGraphwarPathState } from "./controllers/path/state";
 import { useGraphwarTrajectoryResult } from "./controllers/path/trajectory-result";
+import {
+  useGraphwarPathfindingBoundaryExpansion,
+  useGraphwarPathfindingObstacleProjection,
+} from "./controllers/pathfinding/obstacles";
 import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/one-click-clear/workflow";
 import { useGraphwarSmartPathfindingBuilder } from "./controllers/pathfinding/smart/builder";
 import {
@@ -54,9 +58,7 @@ import type {
   ToolMode,
   ToolWorkflowMode,
 } from "./core/types";
-import { buildObstacleEdgePath, buildObstacleFillPath } from "./detection/objects";
 import type { GraphwarDetectionBox } from "./detection/objects";
-import type { GraphwarTrajectoryCollisionSettings } from "./formula/trajectory/sampling";
 import type { GraphwarKillerLocale } from "./locale-types";
 import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/runtime/cache";
@@ -702,27 +704,15 @@ const boundsPreviewRect = computed(() =>
     : undefined,
 );
 const visibleBoundsRect = computed(() => boundsPreviewRect.value ?? boundsRect.value);
-const visibleObstacleEdgePath = computed(() => {
-  const obstacleMap = detectedObstacles.value;
-  if (!obstacleMap || pathfindingObstacleEdgesActive.value) {
-    return "";
-  }
-
-  return buildObstacleEdgePath(obstacleMap.mask, boundsRect.value);
+const activeBoundaryExpansion = useGraphwarPathfindingBoundaryExpansion({
+  modes: {
+    pathfindingObstacleEdgesActive,
+    smartCursorEnabled,
+  },
+  settings: {
+    parsedObstacleTolerances,
+  },
 });
-const visibleObstacleFillPath = computed(() => {
-  const obstacleMap = detectedObstacles.value;
-  if (!obstacleMap || pathfindingObstacleEdgesActive.value) {
-    return "";
-  }
-
-  return buildObstacleFillPath(obstacleMap.mask, boundsRect.value);
-});
-const activeBoundaryExpansion = computed(() =>
-  (smartCursorEnabled.value || pathfindingObstacleEdgesActive.value) && parsedObstacleTolerances.value.ok
-    ? parsedObstacleTolerances.value.boundaryExpansionPlanePixels
-    : 0,
-);
 const targetBoundsRect = computed(() =>
   createBoundsRectWithBoundaryExpansion(boundsRect.value, activeBoundaryExpansion.value),
 );
@@ -742,6 +732,39 @@ const {
   getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
   getTargetBoundsRect: () => targetBoundsRect.value,
   pathPixels,
+});
+// 障碍投影应集中 friendly mask、route/simulation mask、SVG path 和轨迹碰撞设置，页面只保留状态来源。
+const {
+  simulationObstacleMask,
+  smartPathfindingBaseObstacleMask,
+  smartPathfindingObstacleRouteEdgePath,
+  smartPathfindingObstacleRouteFillPath,
+  smartPathfindingObstacleSimulationEdgePath,
+  smartPathfindingObstacleSimulationFillPath,
+  trajectoryCollisionSettings,
+  visibleObstacleEdgePath,
+  visibleObstacleFillPath,
+} = useGraphwarPathfindingObstacleProjection({
+  boundsRect,
+  cache: pathfindingCache,
+  detection: {
+    isFriendlyObstacleSoldier: isDetectedFriendlySoldierObstacle,
+    obstacles: detectedObstacles,
+    soldiers: detectedSoldiers,
+  },
+  modes: {
+    blocksFriendlyFireTargets,
+    effectiveSmartPathfindingEnabled,
+    pathfindingObstacleEdgesActive,
+    smartCursorEnabled,
+    toolWorkflowMode,
+  },
+  settings: {
+    activeBoundaryExpansion,
+    getSoldierMarkerRadius: () => soldierMarkerRadius.value,
+    parsedBounds,
+    parsedObstacleTolerances,
+  },
 });
 // 一键清图 workflow 应集中预检、候选收集、worker 输入、cache 和结果落地；页面只保留当前状态入口。
 const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBox>({
@@ -816,116 +839,6 @@ const {
   getDetectedSoldierColor,
   getPathPointIndexAtPoint,
 } = stageHitTesting;
-const smartPathfindingBaseObstacleMask = computed(() => {
-  const obstacleMap = detectedObstacles.value;
-  if (!obstacleMap || !blocksFriendlyFireTargets.value || !parsedBounds.value.ok) {
-    return obstacleMap?.mask;
-  }
-
-  const friendlySoldiers = detectedSoldiers.value.filter((soldier) => isDetectedFriendlySoldierObstacle(soldier));
-  if (friendlySoldiers.length === 0) {
-    return obstacleMap.mask;
-  }
-
-  return pathfindingCache.getCachedFriendlyObstacleMask(
-    obstacleMap.mask,
-    boundsRect.value,
-    friendlySoldiers,
-    soldierMarkerRadius.value,
-  );
-});
-const activePathfindingBaseObstacleMask = computed(() => {
-  if (pathfindingObstacleEdgesActive.value) {
-    return smartPathfindingBaseObstacleMask.value;
-  }
-  return detectedObstacles.value?.mask;
-});
-const smartPathfindingVisibleRouteTolerance = computed(() => {
-  const tolerances = parsedObstacleTolerances.value;
-  if (!tolerances.ok) {
-    return 0;
-  }
-  return tolerances.routePlanningTolerancePlanePixels;
-});
-const smartPathfindingObstacleRouteEdgePath = computed(() => {
-  const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
-  if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
-    return "";
-  }
-
-  return buildObstacleEdgePath(
-    pathfindingCache.getCachedRouteMask(obstacleMask, smartPathfindingVisibleRouteTolerance.value).mask,
-    boundsRect.value,
-  );
-});
-const smartPathfindingObstacleRouteFillPath = computed(() => {
-  const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
-  if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
-    return "";
-  }
-
-  return buildObstacleFillPath(
-    pathfindingCache.getCachedRouteMask(obstacleMask, smartPathfindingVisibleRouteTolerance.value).mask,
-    boundsRect.value,
-  );
-});
-const smartPathfindingObstacleSimulationEdgePath = computed(() => {
-  const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
-  if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
-    return "";
-  }
-
-  return buildObstacleEdgePath(
-    pathfindingCache.getCachedRouteMask(obstacleMask, parsedObstacleTolerances.value.simulationTolerancePlanePixels)
-      .mask,
-    boundsRect.value,
-  );
-});
-const smartPathfindingObstacleSimulationFillPath = computed(() => {
-  const obstacleMask = pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
-  if (!obstacleMask || !parsedObstacleTolerances.value.ok) {
-    return "";
-  }
-
-  return buildObstacleFillPath(
-    pathfindingCache.getCachedRouteMask(obstacleMask, parsedObstacleTolerances.value.simulationTolerancePlanePixels)
-      .mask,
-    boundsRect.value,
-  );
-});
-const simulationObstacleMask = computed(() => {
-  const obstacleMap = detectedObstacles.value;
-  if (!obstacleMap) {
-    return undefined;
-  }
-  if (!effectiveSmartPathfindingEnabled.value) {
-    return obstacleMap.mask;
-  }
-  if (!parsedObstacleTolerances.value.ok) {
-    return undefined;
-  }
-
-  const obstacleMask = smartPathfindingBaseObstacleMask.value;
-  return obstacleMask
-    ? pathfindingCache.getCachedRouteMask(obstacleMask, parsedObstacleTolerances.value.simulationTolerancePlanePixels)
-        .mask
-    : undefined;
-});
-const trajectoryCollisionSettings = computed<GraphwarTrajectoryCollisionSettings | undefined>(() => {
-  if (!smartCursorEnabled.value && !pathfindingObstacleEdgesActive.value && toolWorkflowMode.value !== "simulator") {
-    return undefined;
-  }
-
-  const obstacleMask = simulationObstacleMask.value;
-  if (!obstacleMask) {
-    return undefined;
-  }
-
-  return {
-    boundaryExpansion: activeBoundaryExpansion.value,
-    mask: obstacleMask,
-  };
-});
 // 实时点击预览应集中悬停帧、点击落位模拟和临时轨迹采样；页面只提供当前规则入口。
 const {
   clearPointerPoint: clearLiveClickPreviewPointerPoint,

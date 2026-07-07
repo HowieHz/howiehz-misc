@@ -75,8 +75,8 @@ interface GraphwarSmartPathfindingBuilderOptions {
     getPathPixels: () => readonly PixelPoint[];
     /** 函数模拟用障碍 mask。 */
     getSimulationMask: () => Uint8Array | undefined;
-    /** 普通点击目标点使用的默认命中半径。 */
-    getTargetPointRadius: () => number;
+    /** 普通点击目标点使用的默认真实命中半径；无有效 bounds 时不可用。 */
+    getTargetHitRadiusPixels: () => number | undefined;
     /** 当前寻路容差；无效时保持原来的早退语义。 */
     getTolerances: () => GraphwarSmartPathfindingSearchTolerances | undefined;
     /** 寻路并行数无效时应沿用页面原来的早退语义。 */
@@ -156,10 +156,18 @@ export function useGraphwarSmartPathfindingBuilder(
       return undefined;
     }
 
+    const targetHitCircle = createGraphwarSmartPathfindingHitTarget(
+      hitTarget,
+      options.input.getTargetHitRadiusPixels(),
+    );
+    if (!targetHitCircle) {
+      return undefined;
+    }
+
     const input = createGraphwarSmartPathfindingSearchInput({
       bounds,
       boundsRect: options.input.boundsRect.value,
-      hitTarget: createGraphwarSmartPathfindingHitTarget(hitTarget, options.input.getTargetPointRadius()),
+      hitTarget: targetHitCircle,
       previewEnabled: options.preview.isSearchAnimationEnabled(),
       routeMaskCacheId: options.pathfinding.cache.getRouteObstacleMaskCacheId(obstacleMask),
       routeObstacleMask: obstacleMask,

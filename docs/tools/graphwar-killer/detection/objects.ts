@@ -692,9 +692,9 @@ export function addSoldierAreasToObstacleMask(
   mask: Uint8Array,
   edgeRect: BoundsRect,
   soldiers: readonly GraphwarDetectionBox[],
-  soldierMarkerRadius: number,
+  soldierHitRadiusPixels: number,
 ) {
-  const radius = Math.ceil((soldierMarkerRadius / edgeRect.width) * GRAPHWAR_PLANE_LENGTH) + 2;
+  const radius = Math.ceil((soldierHitRadiusPixels / edgeRect.width) * GRAPHWAR_PLANE_LENGTH) + 2;
   for (const soldier of soldiers) {
     const center = imagePointToPlaneGridPoint(getDetectionBoxCenter(soldier), edgeRect);
     fillMaskDisk(mask, center, radius);

@@ -84,8 +84,8 @@ interface GraphwarPathAppendWorkflowOptions<TSoldier, TSmartTarget> {
     getFormulaSettings: () => GraphwarTrajectoryFormulaSettings;
     /** 当前公式模拟障碍 mask。 */
     getSimulationObstacleMask: () => Uint8Array | undefined;
-    /** 普通点命中的默认半径。 */
-    getTargetPointRadius: () => number;
+    /** 普通点命中的默认真实半径；无有效 bounds 时不可用。 */
+    getTargetHitRadiusPixels: () => number | undefined;
   };
 }
 
@@ -184,7 +184,7 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
       obstacleMask: options.trajectory.getSimulationObstacleMask(),
       points: [...options.path.pathPixels.value],
       settings: options.trajectory.getFormulaSettings(),
-      targetPointRadius: options.trajectory.getTargetPointRadius(),
+      targetHitRadiusPixels: options.trajectory.getTargetHitRadiusPixels(),
     });
     if (result.reachesTargetBeforeObstacle) {
       return true;

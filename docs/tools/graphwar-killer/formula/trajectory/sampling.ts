@@ -207,7 +207,8 @@ export function sampleGraphwarFormulaTrajectory(options: {
   continueAfterTargetSequenceUntilGraphX?: number;
   /** 默认完成目标序列时立刻停；传 false 时继续采样，通常配合 continueAfterTargetSequenceUntilGraphX。 */
   stopOnTargetSequenceComplete?: boolean;
-  soldierMarkerRadius?: number;
+  /** 目标命中圆半径，单位为截图像素；显式 targetSequence 会覆盖该默认半径。 */
+  targetHitRadiusPixels?: number;
   skipInitialStop?: boolean;
   targetPoint?: PixelPoint;
   targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
@@ -263,7 +264,7 @@ export function sampleGraphwarPathTrajectory(options: {
   obstacleMask?: Uint8Array;
   points: readonly PixelPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
-  soldierMarkerRadius: number;
+  targetHitRadiusPixels: number;
 }): GraphwarPathTrajectoryResult {
   if (!options.hitTargetPoint) {
     return createEmptyPathTrajectoryResult();
@@ -290,7 +291,7 @@ export function sampleGraphwarPathTrajectory(options: {
     },
     collectVisiblePixels: true,
     context,
-    soldierMarkerRadius: options.soldierMarkerRadius,
+    targetHitRadiusPixels: options.targetHitRadiusPixels,
     targetPoint: options.hitTargetPoint,
   });
   return {
@@ -311,7 +312,7 @@ export function sampleGraphwarPathTargetSequence(options: {
   obstacleMask?: Uint8Array;
   points: readonly PixelPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
-  soldierMarkerRadius: number;
+  targetHitRadiusPixels: number;
   targetCircles?: readonly GraphwarTrajectoryTargetCircle[];
   targetPoints: readonly PixelPoint[];
 }): GraphwarPathTargetSequenceResult {
@@ -319,7 +320,7 @@ export function sampleGraphwarPathTargetSequence(options: {
     options.targetCircles ??
     options.targetPoints.map((center) => ({
       center,
-      radius: options.soldierMarkerRadius,
+      radius: options.targetHitRadiusPixels,
     }));
   if (targetSequence.length === 0) {
     return {
@@ -358,7 +359,7 @@ export function sampleGraphwarPathTargetSequence(options: {
     },
     collectVisiblePixels: options.collectVisiblePixels,
     context,
-    soldierMarkerRadius: options.soldierMarkerRadius,
+    targetHitRadiusPixels: options.targetHitRadiusPixels,
     targetSequence,
   });
   return {
@@ -376,14 +377,14 @@ export function findGraphwarTrajectoryTargetHitIndex(options: {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
   points: readonly GraphPoint[];
-  soldierMarkerRadius: number;
+  targetHitRadiusPixels: number;
   targetPoint: PixelPoint;
 }) {
   if (options.points.length === 0) {
     return -1;
   }
   // 预览目标半径固定，提前平方后用距离平方比较，避免每个采样点 Math.hypot 开方。
-  const targetRadiusSquared = options.soldierMarkerRadius * options.soldierMarkerRadius;
+  const targetRadiusSquared = options.targetHitRadiusPixels * options.targetHitRadiusPixels;
   for (let index = 1; index < options.points.length; index += 1) {
     const pixel = graphToImagePoint(options.points[index], options.bounds, options.boundsRect);
     const targetDx = pixel.x - options.targetPoint.x;
@@ -420,7 +421,7 @@ function createGraphwarTrajectoryStopTracker(options: {
   initialReachedTargetCount?: number;
   continueAfterTargetSequenceUntilGraphX?: number;
   stopOnTargetSequenceComplete?: boolean;
-  soldierMarkerRadius?: number;
+  targetHitRadiusPixels?: number;
   targetPoint?: PixelPoint;
   targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   targetSequencePoints?: readonly PixelPoint[];
@@ -429,7 +430,7 @@ function createGraphwarTrajectoryStopTracker(options: {
     options.targetSequence ??
     createTrajectoryTargetSequenceFromPoints(
       options.targetSequencePoints ?? (options.targetPoint ? [options.targetPoint] : []),
-      options.soldierMarkerRadius,
+      options.targetHitRadiusPixels,
     );
   const boundsRect = options.boundsRect;
   const collisionMask = options.collision?.mask;
@@ -510,12 +511,12 @@ function createGraphwarTrajectoryStopTracker(options: {
 /** 没有半径时不创建目标序列，避免把未配置的目标误判为 0 半径命中。 */
 function createTrajectoryTargetSequenceFromPoints(
   points: readonly PixelPoint[],
-  soldierMarkerRadius: number | undefined,
+  targetHitRadiusPixels: number | undefined,
 ): GraphwarTrajectoryTargetCircle[] {
-  if (soldierMarkerRadius === undefined) {
+  if (targetHitRadiusPixels === undefined) {
     return [];
   }
-  return points.map((center) => ({ center, radius: soldierMarkerRadius }));
+  return points.map((center) => ({ center, radius: targetHitRadiusPixels }));
 }
 
 /** 判断平面点是否在收缩后的可模拟区域内。 */

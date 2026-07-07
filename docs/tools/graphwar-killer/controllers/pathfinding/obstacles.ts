@@ -58,8 +58,8 @@ interface GraphwarPathfindingObstacleProjectionOptions {
   settings: {
     /** 寻路碰撞边界收缩值由本 Module 的边界派生入口提供。 */
     activeBoundaryExpansion: ComputedRef<number>;
-    /** 轨迹碰撞和友方士兵写入都应读取当前士兵视觉半径。 */
-    getSoldierMarkerRadius: () => number;
+    /** 友方士兵障碍应使用真实命中半径；无有效 bounds 时不可构造。 */
+    getSoldierHitRadiusPixels: () => number | undefined;
     /** 边界和容差校验结果应由 settings controller 保持原错误优先级。 */
     parsedBounds: ComputedRef<ParsedBounds>;
     parsedObstacleTolerances: ComputedRef<ParsedObstacleTolerances>;
@@ -132,11 +132,16 @@ export function useGraphwarPathfindingObstacleProjection(
       return obstacleMap.mask;
     }
 
+    const soldierHitRadiusPixels = options.settings.getSoldierHitRadiusPixels();
+    if (soldierHitRadiusPixels === undefined) {
+      return obstacleMap.mask;
+    }
+
     return options.cache.getCachedFriendlyObstacleMask(
       obstacleMap.mask,
       options.boundsRect.value,
       friendlySoldiers,
-      options.settings.getSoldierMarkerRadius(),
+      soldierHitRadiusPixels,
     );
   });
 

@@ -80,8 +80,8 @@ interface GraphwarTrajectoryResultOptions {
     /** 当前路径的截图像素坐标。 */
     pathPixels: ReadonlyRef<readonly PixelPoint[]>;
   };
-  /** 目标命中判定使用的士兵半径，单位为截图像素。 */
-  getSoldierMarkerRadius: () => number;
+  /** 默认目标命中半径，单位为截图像素；无有效 bounds 时不可用。 */
+  getTargetHitRadiusPixels: () => number | undefined;
 }
 
 export interface GraphwarTrajectoryResultController {
@@ -247,7 +247,8 @@ export function useGraphwarTrajectoryResult(
     const bounds = options.geometry.getBounds();
     const sample = trajectorySample.value;
     const targetPoint = trajectoryValidationTargetPoint.value;
-    if (!sample || !bounds || !targetPoint) {
+    const targetHitRadiusPixels = options.getTargetHitRadiusPixels();
+    if (!sample || !bounds || !targetPoint || targetHitRadiusPixels === undefined) {
       return -1;
     }
 
@@ -255,7 +256,7 @@ export function useGraphwarTrajectoryResult(
       bounds,
       boundsRect: options.geometry.boundsRect.value,
       points: sample.points,
-      soldierMarkerRadius: options.getSoldierMarkerRadius(),
+      targetHitRadiusPixels,
       targetPoint,
     });
   });

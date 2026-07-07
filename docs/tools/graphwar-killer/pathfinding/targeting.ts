@@ -37,7 +37,7 @@ export interface GraphwarTargetingArea extends GraphwarTargetingGeometry {
 export interface GraphwarHitCircle {
   /** 命中圈中心。 */
   center: PixelPoint;
-  /** 命中圈半径。 */
+  /** 命中圈半径，单位为截图像素。 */
   radius: number;
 }
 

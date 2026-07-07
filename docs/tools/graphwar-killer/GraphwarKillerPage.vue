@@ -33,7 +33,6 @@ import { useGraphwarLiveClickPreview } from "./controllers/stage/live-click-prev
 import { useGraphwarObstacleEditor } from "./controllers/stage/obstacle-editor";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
-  GRAPHWAR_GAME_SOLDIER_RADIUS,
   GRAPHWAR_PLANE_GAME_LENGTH,
   GRAPHWAR_PLANE_HEIGHT,
   GRAPHWAR_PLANE_LENGTH,
@@ -280,7 +279,7 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
     getPathPixels: () => pathPixels.value,
     getSimulationMask: () => simulationObstacleMask.value,
-    getTargetPointRadius: () => soldierMarkerRadius.value,
+    getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
     getTolerances: () => (parsedObstacleTolerances.value.ok ? parsedObstacleTolerances.value : undefined),
     isPathfindingWorkerCountValid: () => parsedPathfindingWorkerCount.value.ok,
   },
@@ -500,17 +499,17 @@ const {
   },
 });
 
-function getSoldierMarkerRadius() {
+function getGraphwarPlaneRadiusPixels(sourceRadius: number) {
   if (!parsedBounds.value.ok) {
-    return GRAPHWAR_SOLDIER_RADIUS;
+    return undefined;
   }
 
   const graphWidth = Math.abs(parsedBounds.value.bounds.maxX - parsedBounds.value.bounds.minX);
   if (graphWidth <= 0) {
-    return GRAPHWAR_SOLDIER_RADIUS;
+    return undefined;
   }
 
-  return clampNumber((GRAPHWAR_GAME_SOLDIER_RADIUS / graphWidth) * boundsRect.value.width, 3, 32);
+  return ((sourceRadius * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH / graphWidth) * boundsRect.value.width;
 }
 
 const mappedPathPoints = computed<GraphPoint[]>(() => {
@@ -577,7 +576,7 @@ const {
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
   },
   getCollisionSettings: () => trajectoryCollisionSettings.value,
-  getSoldierMarkerRadius: () => soldierMarkerRadius.value,
+  getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
   path: {
     mappedPathPoints,
     pathPixels,
@@ -765,7 +764,7 @@ const {
   },
   settings: {
     activeBoundaryExpansion,
-    getSoldierMarkerRadius: () => soldierMarkerRadius.value,
+    getSoldierHitRadiusPixels: () => soldierHitRadiusPixels.value,
     parsedBounds,
     parsedObstacleTolerances,
   },
@@ -775,7 +774,7 @@ const stageHitTesting: GraphwarStageHitTestingController<DetectionBox> = useGrap
   getDetectionBoxes: (): readonly DetectionBox[] => detectionBoxes.value,
   getImageData: getImageDataFromCurrentImage,
   getPathPixels: (): readonly PixelPoint[] => pathPixels.value,
-  getPathPointSelectionRadius: (): number => soldierSelectionRadius.value,
+  getPathPointSelectionRadius: (): number => displayedSoldierVisibleRadiusPixels.value,
 });
 const {
   detectionBoxContainsHitCircle,
@@ -826,7 +825,7 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
     trajectory: {
       getFormulaSettings: createPathTrajectoryFormulaSettings,
       getSimulationObstacleMask: () => simulationObstacleMask.value,
-      getTargetPointRadius: () => soldierMarkerRadius.value,
+      getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
       parsedObstacleTolerances,
     },
   });
@@ -1230,7 +1229,7 @@ function formatSvgPathPoints(points: readonly PixelPoint[]) {
 const stageStyle = computed(() => ({
   aspectRatio: `${imageWidth.value} / ${imageHeight.value}`,
 }));
-const soldierMarkerRadius = computed(getSoldierMarkerRadius);
+const soldierHitRadiusPixels = computed(() => getGraphwarPlaneRadiusPixels(GRAPHWAR_SOLDIER_RADIUS));
 // 高级设置面板只应消费展示 DTO；输入校验、缓存失效和检测/寻路副作用仍由页面侧维护。
 const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() => ({
   bounds: {
@@ -1259,28 +1258,16 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     skipUnknownCharacters: simulatorSkipUnknownCharacters.value,
   },
 }));
-const soldierSelectionRadius = computed(() => {
-  const sourceRadius = GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2;
-  if (!parsedBounds.value.ok) {
-    return sourceRadius;
-  }
-
-  const graphWidth = Math.abs(parsedBounds.value.bounds.maxX - parsedBounds.value.bounds.minX);
-  if (graphWidth <= 0) {
-    return sourceRadius;
-  }
-
-  return clampNumber(
-    ((sourceRadius * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH / graphWidth) * boundsRect.value.width,
-    3,
-    48,
-  );
-});
+const soldierVisibleRadiusPixels = computed(() => getGraphwarPlaneRadiusPixels(GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2));
+// bounds 无效时没有真实换算比例；舞台仍用源码可视半径作为仅用于绘制的占位值。
+const displayedSoldierVisibleRadiusPixels = computed(
+  () => soldierVisibleRadiusPixels.value ?? GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2,
+);
 const pathLineSegments = computed<GraphwarPathfindingLineSegment[]>(() => createPathLineSegments(pathPixels.value));
 
 /** 按路径点圆半径截短线段，避免线条穿过点心。 */
 function createPathLineSegments(points: readonly PixelPoint[]) {
-  return createGraphwarPathLineSegments(points, soldierSelectionRadius.value);
+  return createGraphwarPathLineSegments(points, displayedSoldierVisibleRadiusPixels.value);
 }
 const smartPathfindingPreviewPathPoints = computed(() => formatSvgPathPoints(smartPathfindingPreviewPath.value));
 // 舞台 overlay 只应消费展示 DTO；业务规则和半径公式应由页面侧投影，避免子 Module 反向理解工作流。
@@ -1325,14 +1312,14 @@ const stageOverlay = computed(() => ({
     lineSegments: pathLineSegments.value,
     points: pathPixels.value,
     selfLabel: locale.ui.point.svgSelfLabel,
-    selectionRadius: soldierSelectionRadius.value,
+    selectionRadius: displayedSoldierVisibleRadiusPixels.value,
   },
   pathfinding: {
     blockedPoint: smartPathfindingBlockedPoint.value,
     inProgress: smartPathfindingInProgress.value,
     optimizationPreviewPoint: pathfindingOptimizationPreviewPoint.value,
-    // 旧实现使用 soldierMarkerRadius + 4；这里显式保留，避免和 selectionRadius 混淆。
-    optimizationPreviewRadius: soldierMarkerRadius.value + 4,
+    // 搜索动画半径只用于绘制；真实命中半径不可用时用可视半径占位。
+    optimizationPreviewRadius: (soldierHitRadiusPixels.value ?? displayedSoldierVisibleRadiusPixels.value) + 4,
     previewAcceptedEdges: smartPathfindingPreviewAcceptedEdges.value,
     previewConnection: smartPathfindingPreviewConnection.value,
     previewCurrentPoint: smartPathfindingPreviewCurrentPoint.value,
@@ -1897,7 +1884,7 @@ function detectionBoxMatchesSelectedPathPoint(box: DetectionBox): boolean {
   return detectionBoxContainsPathPoint(box, selectedPoint);
 }
 
-watch([pathPixels, soldierSelectionRadius], () => {
+watch([pathPixels, displayedSoldierVisibleRadiusPixels], () => {
   refreshLiveClickPreviewPointerPathPointIndex();
 });
 

@@ -481,7 +481,7 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
     obstacleMask: options.simulationMask,
     points: options.pathPoints,
     settings: options.settings,
-    soldierMarkerRadius: target.radius,
+    targetHitRadiusPixels: target.radius,
     targetCircles: [target],
     targetPoints: [target.center],
   });
@@ -885,7 +885,7 @@ function sampleOneClickClearTargetSequence(
     obstacleMask: options.simulationMask,
     points: route.pathPoints,
     settings: options.settings,
-    soldierMarkerRadius: FALLBACK_TARGET_RADIUS_PIXELS,
+    targetHitRadiusPixels: FALLBACK_TARGET_RADIUS_PIXELS,
     targetCircles: route.targetSequence.map((target) => target.hitCircle),
     targetPoints: route.targetSequence.map((target) => target.routePoint),
   });
@@ -978,7 +978,7 @@ function sampleOneClickClearTargetHit(
     obstacleMask: options.simulationMask,
     points: pathPoints,
     settings: options.settings,
-    soldierMarkerRadius: target.hitRadius,
+    targetHitRadiusPixels: target.hitRadius,
     targetCircles: [createOneClickClearTargetCircle(target)],
     targetPoints: [target.hitCenter],
   });

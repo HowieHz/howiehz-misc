@@ -378,7 +378,7 @@ function validateSmartPathfindingTrajectory(input: GraphwarSmartPathfindingPathI
     obstacleMask: input.simulationMask,
     points,
     settings: input.settings,
-    soldierMarkerRadius: input.hitTarget.radius,
+    targetHitRadiusPixels: input.hitTarget.radius,
   });
   return {
     blockedPoint: result.earlyStopReason === "obstacle" ? result.visiblePixels.at(-1) : undefined,

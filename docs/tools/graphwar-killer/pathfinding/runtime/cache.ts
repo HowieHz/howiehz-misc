@@ -137,16 +137,16 @@ export function createGraphwarPathfindingCacheController() {
     sourceMask: Uint8Array,
     edgeRect: BoundsRect,
     friendlySoldiers: readonly GraphwarDetectionBox[],
-    markerRadius: number,
+    soldierHitRadiusPixels: number,
   ) {
-    const key = createFriendlyObstacleMaskCacheKey(edgeRect, friendlySoldiers, markerRadius);
+    const key = createFriendlyObstacleMaskCacheKey(edgeRect, friendlySoldiers, soldierHitRadiusPixels);
     const cached = friendlyObstacleMaskCache.get(sourceMask);
     if (cached?.key === key) {
       return cached.mask;
     }
 
     const mask = new Uint8Array(sourceMask);
-    addSoldierAreasToObstacleMask(mask, edgeRect, friendlySoldiers, markerRadius);
+    addSoldierAreasToObstacleMask(mask, edgeRect, friendlySoldiers, soldierHitRadiusPixels);
     friendlyObstacleMaskCache.set(sourceMask, {
       key,
       mask,
@@ -353,10 +353,10 @@ function nowMs() {
 function createFriendlyObstacleMaskCacheKey(
   edgeRect: BoundsRect,
   friendlySoldiers: readonly GraphwarDetectionBox[],
-  markerRadius: number,
+  soldierHitRadiusPixels: number,
 ) {
   const soldierKeys = friendlySoldiers.map(createFriendlySoldierObstacleMaskCacheKey).sort();
-  return [edgeRect.x, edgeRect.y, edgeRect.width, edgeRect.height, markerRadius, ...soldierKeys].join("|");
+  return [edgeRect.x, edgeRect.y, edgeRect.width, edgeRect.height, soldierHitRadiusPixels, ...soldierKeys].join("|");
 }
 
 function createFriendlySoldierObstacleMaskCacheKey(soldier: GraphwarDetectionBox) {

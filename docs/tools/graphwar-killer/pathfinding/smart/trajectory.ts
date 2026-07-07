@@ -32,8 +32,8 @@ interface GraphwarSmartPathfindingTrajectoryOptions {
   points: readonly PixelPoint[];
   /** 当前公式采样设置。 */
   settings: GraphwarTrajectoryFormulaSettings;
-  /** 普通点击目标点使用的默认命中半径。 */
-  targetPointRadius: number;
+  /** 普通点击目标点使用的默认真实命中半径；无有效 bounds 时不可用。 */
+  targetHitRadiusPixels: number | undefined;
 }
 
 /** 提取新增路径段并保留连接点，供搜索动画绘制。 */
@@ -44,11 +44,12 @@ export function getGraphwarSmartPathfindingAppendedSegment(points: readonly Pixe
 /** 普通点击应使用默认半径；士兵目标应保留真实命中圈。 */
 export function createGraphwarSmartPathfindingHitTarget(
   hitTarget: GraphwarSmartPathfindingHitTarget,
-  targetPointRadius: number,
-): GraphwarTrajectoryTargetCircle {
-  return "center" in hitTarget
-    ? { center: hitTarget.center, radius: hitTarget.radius }
-    : { center: hitTarget, radius: targetPointRadius };
+  targetHitRadiusPixels: number | undefined,
+): GraphwarTrajectoryTargetCircle | undefined {
+  if ("center" in hitTarget) {
+    return { center: hitTarget.center, radius: hitTarget.radius };
+  }
+  return targetHitRadiusPixels === undefined ? undefined : { center: hitTarget, radius: targetHitRadiusPixels };
 }
 
 /** 使用共享采样模块验证像素路径的弹道命中结果。 */
@@ -60,8 +61,11 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
   }
 
   const target = options.hitTarget
-    ? createGraphwarSmartPathfindingHitTarget(options.hitTarget, options.targetPointRadius)
+    ? createGraphwarSmartPathfindingHitTarget(options.hitTarget, options.targetHitRadiusPixels)
     : undefined;
+  if (!target) {
+    return { reachesTargetBeforeObstacle: false, visiblePixels: [] };
+  }
 
   // 智能寻路候选路径和当前路径预检应共用同一套“目标前无障碍”判定。
   const result = sampleGraphwarPathTrajectory({
@@ -72,7 +76,7 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
     obstacleMask: options.obstacleMask,
     points: options.points,
     settings: options.settings,
-    soldierMarkerRadius: target?.radius ?? options.targetPointRadius,
+    targetHitRadiusPixels: target.radius,
   });
   return {
     blockedPoint: result.earlyStopReason === "obstacle" ? result.visiblePixels.at(-1) : undefined,

@@ -122,8 +122,8 @@ const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
-// 搜索优化预览圈比路径点可视圈略大，便于在动画里看清当前尝试点；不参与命中判断。
-const pathfindingOptimizationPreviewRadiusExtraPixels = 4;
+// 截图/SVG 坐标像素：搜索优化预览圈比路径点可视圈略大；不参与命中判断。
+const pathfindingOptimizationPreviewRadiusExtraImagePixels = 4;
 const smartPathfindingBlockedPointFlashMs = 1800;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
@@ -1231,6 +1231,7 @@ function formatSvgPathPoints(points: readonly PixelPoint[]) {
 const stageStyle = computed(() => ({
   aspectRatio: `${imageWidth.value} / ${imageHeight.value}`,
 }));
+// 截图/SVG 坐标像素：由 Graphwar 原始平面半径按当前 bounds 横向比例换算。
 const soldierHitRadiusPixels = computed(() => getGraphwarPlaneRadiusPixels(GRAPHWAR_SOLDIER_RADIUS));
 // 高级设置面板只应消费展示 DTO；输入校验、缓存失效和检测/寻路副作用仍由页面侧维护。
 const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() => ({
@@ -1260,6 +1261,7 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     skipUnknownCharacters: simulatorSkipUnknownCharacters.value,
   },
 }));
+// 截图/SVG 坐标像素：只描述 Graphwar 源码可视圈，不参与真实命中。
 const soldierVisibleRadiusPixels = computed(() => getGraphwarPlaneRadiusPixels(GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2));
 // bounds 无效时没有真实换算比例；舞台仍用源码可视半径作为仅用于绘制的占位值。
 const displayedSoldierVisibleRadiusPixels = computed(
@@ -1322,7 +1324,7 @@ const stageOverlay = computed(() => ({
     optimizationPreviewPoint: pathfindingOptimizationPreviewPoint.value,
     // 搜索动画只应表达“正在优化这个点”，半径按可视士兵圈派生，不参与真实命中。
     optimizationPreviewRadius:
-      displayedSoldierVisibleRadiusPixels.value + pathfindingOptimizationPreviewRadiusExtraPixels,
+      displayedSoldierVisibleRadiusPixels.value + pathfindingOptimizationPreviewRadiusExtraImagePixels,
     previewAcceptedEdges: smartPathfindingPreviewAcceptedEdges.value,
     previewConnection: smartPathfindingPreviewConnection.value,
     previewCurrentPoint: smartPathfindingPreviewCurrentPoint.value,

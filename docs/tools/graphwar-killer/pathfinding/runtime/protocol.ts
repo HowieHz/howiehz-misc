@@ -21,13 +21,13 @@ export interface GraphwarPathfindingRouteInput {
   bounds: GraphBounds;
   /** 截图内 Graphwar 棋盘矩形。 */
   boundsRect: BoundsRect;
-  /** 障碍和棋盘边界命中检测的内收像素。 */
+  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 页面 route mask 缓存项的稳定 id，供 master Worker 复用私有可视图 cache。 */
   routeMaskCacheId: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** 当前 route tolerance，供可视图轮廓简化使用。 */
+  /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
   /** 路径起点，截图像素坐标。 */
   startPoint: PixelPoint;
@@ -74,7 +74,7 @@ export interface GraphwarSmartPathfindingPathInput {
   bounds: GraphBounds;
   /** 截图内 Graphwar 棋盘矩形。 */
   boundsRect: BoundsRect;
-  /** 障碍和棋盘边界命中检测的内收像素。 */
+  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 命中目标圆；普通点击使用士兵默认半径。 */
   hitTarget: GraphwarTrajectoryTargetCircle;
@@ -84,7 +84,7 @@ export interface GraphwarSmartPathfindingPathInput {
   routeObstacleMask: Uint8Array;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
   routeMaskCacheId: number;
-  /** 当前 route tolerance，供可视图轮廓简化使用。 */
+  /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
   /** 函数模拟边界收缩值，单位为 Graphwar 原始平面像素。 */
   simulationBoundaryExpansion: number;
@@ -198,11 +198,11 @@ export interface GraphwarOneClickClearEdgeWorkerInit {
   bounds: GraphBounds;
   /** 截图内 Graphwar 棋盘矩形。 */
   boundsRect: BoundsRect;
-  /** 障碍和棋盘边界命中检测的内收像素。 */
+  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** 当前 route tolerance，供可视图轮廓简化使用。 */
+  /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
   /** 子 Worker 序号，仅用于调试错误信息。 */
   workerIndex: number;

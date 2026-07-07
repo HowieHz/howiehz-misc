@@ -7,7 +7,7 @@ import type { GraphwarSmartPathfindingPathInput } from "../runtime/protocol";
 
 /** 智能寻路搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
 export interface GraphwarSmartPathfindingSearchTolerances {
-  /** 障碍和棋盘边界命中检测的内收像素。 */
+  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansionPlanePixels: number;
   /** 几何路线规划容差，单位为 Graphwar 原始平面像素。 */
   routePlanningTolerancePlanePixels: number;

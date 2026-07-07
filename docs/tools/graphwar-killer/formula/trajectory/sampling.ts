@@ -58,7 +58,7 @@ export interface GraphwarTrajectoryFormulaContext {
 
 /** 轨迹碰撞判定配置，单独建模是为了让目标命中和障碍命中共用同一采样管线。 */
 export interface GraphwarTrajectoryCollisionSettings {
-  /** 边界内缩像素，防止弹道贴边时被当作可通行。 */
+  /** 边界内缩值，单位为 Graphwar 原始平面像素，防止弹道贴边时被当作可通行。 */
   boundaryExpansion?: number;
   /** Graphwar 原始 770x450 平面上的障碍 mask。 */
   mask?: Uint8Array;
@@ -264,6 +264,7 @@ export function sampleGraphwarPathTrajectory(options: {
   obstacleMask?: Uint8Array;
   points: readonly PixelPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
+  /** 目标命中圆半径，单位为截图像素。 */
   targetHitRadiusPixels: number;
 }): GraphwarPathTrajectoryResult {
   if (!options.hitTargetPoint) {
@@ -312,6 +313,7 @@ export function sampleGraphwarPathTargetSequence(options: {
   obstacleMask?: Uint8Array;
   points: readonly PixelPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
+  /** 默认目标命中圆半径，单位为截图像素；显式 targetCircles 会覆盖。 */
   targetHitRadiusPixels: number;
   targetCircles?: readonly GraphwarTrajectoryTargetCircle[];
   targetPoints: readonly PixelPoint[];
@@ -377,6 +379,7 @@ export function findGraphwarTrajectoryTargetHitIndex(options: {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
   points: readonly GraphPoint[];
+  /** 目标命中圆半径，单位为截图像素。 */
   targetHitRadiusPixels: number;
   targetPoint: PixelPoint;
 }) {
@@ -421,6 +424,7 @@ function createGraphwarTrajectoryStopTracker(options: {
   initialReachedTargetCount?: number;
   continueAfterTargetSequenceUntilGraphX?: number;
   stopOnTargetSequenceComplete?: boolean;
+  /** 默认目标命中圆半径，单位为截图像素；显式 targetSequence 会覆盖。 */
   targetHitRadiusPixels?: number;
   targetPoint?: PixelPoint;
   targetSequence?: readonly GraphwarTrajectoryTargetCircle[];

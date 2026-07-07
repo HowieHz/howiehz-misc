@@ -105,13 +105,13 @@ export interface GraphwarOneClickClearDagEdgeBuildRequest {
   bounds: GraphBounds;
   /** 截图内 Graphwar 棋盘矩形。 */
   boundsRect: BoundsRect;
-  /** 障碍和棋盘边界命中检测的内收像素。 */
+  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 待尝试的 DAG 边，已按稳定顺序生成。 */
   jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[];
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** 当前 route tolerance，供可视图轮廓简化使用。 */
+  /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
   /** 用户配置的最大并行消费者数量。 */
   workerCount: number;
@@ -182,7 +182,7 @@ export type GraphwarOneClickClearSearchInput = Omit<
   routeObstacleMask: Uint8Array;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
   routeMaskCacheId: number;
-  /** 当前 route tolerance，供 worker 派生可视图 route mask。 */
+  /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供 worker 派生可视图 route mask。 */
   routeTolerancePlanePixels: number;
 };
 
@@ -315,7 +315,8 @@ interface OneClickClearRouteSegmentValidationState {
 
 const START_NODE_INDEX = -1;
 const MAX_GLOBAL_DELETE_PASSES = 1;
-const FALLBACK_TARGET_RADIUS_PIXELS = 1;
+// 截图像素：缺省 prefixTarget 和目标序列默认半径都会用它；显式 targetCircles 会覆盖。
+const FALLBACK_TARGET_RADIUS_IMAGE_PIXELS = 1;
 
 /** 用建路目标点 DAG 找到显式击杀最多的追加路径。 */
 export async function buildGraphwarOneClickClearPath(
@@ -472,7 +473,7 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
 
   const target = options.prefixTarget ?? {
     center: options.pathPoints.at(-1) ?? options.pathPoints[0],
-    radius: FALLBACK_TARGET_RADIUS_PIXELS,
+    radius: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS,
   };
   const result = sampleGraphwarPathTargetSequence({
     boundaryExpansion: options.simulationBoundaryExpansion,
@@ -885,7 +886,7 @@ function sampleOneClickClearTargetSequence(
     obstacleMask: options.simulationMask,
     points: route.pathPoints,
     settings: options.settings,
-    targetHitRadiusPixels: FALLBACK_TARGET_RADIUS_PIXELS,
+    targetHitRadiusPixels: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS,
     targetCircles: route.targetSequence.map((target) => target.hitCircle),
     targetPoints: route.targetSequence.map((target) => target.routePoint),
   });

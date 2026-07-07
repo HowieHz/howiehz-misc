@@ -25,7 +25,7 @@ export interface GraphwarPathfindingOptions {
   bounds: GraphBounds;
   /** 截图内的 Graphwar 平面矩形，用于像素点和平面点互转。 */
   boundsRect: BoundsRect;
-  /** 障碍和收缩边界命中检测用的外扩像素。 */
+  /** 障碍和收缩边界命中检测用的外扩值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 判断一条有向边是否满足 Graphwar x+ 规则；默认要求 next.x > previous.x。 */
   canAdvance?: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
@@ -37,7 +37,7 @@ export interface GraphwarPathfindingOptions {
   getVisibilityGraphObstacleData?: () => GraphwarVisibilityGraphObstacleData;
   /** 已按 route tolerance 膨胀或腐蚀后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** 当前 route tolerance，供轮廓 RDP 简化计算 epsilon。 */
+  /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供轮廓 RDP 简化计算 epsilon。 */
   routeTolerancePlanePixels?: number;
   /** 同一个固定 mask 上复用的可见图障碍轮廓，避免批量寻路时反复扫描障碍。 */
   visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
@@ -55,7 +55,7 @@ export interface GraphwarVisibilityGraphObstacleDataOptions {
   bounds: GraphBounds;
   /** 已按 route tolerance 膨胀或腐蚀后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** 当前 route tolerance，供轮廓 RDP 简化计算 epsilon。 */
+  /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供轮廓 RDP 简化计算 epsilon。 */
   routeTolerancePlanePixels?: number;
 }
 

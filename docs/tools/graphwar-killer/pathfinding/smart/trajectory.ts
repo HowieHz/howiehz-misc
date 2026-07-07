@@ -18,7 +18,7 @@ export interface GraphwarSmartPathfindingTrajectoryResult {
 }
 
 interface GraphwarSmartPathfindingTrajectoryOptions {
-  /** 障碍和棋盘边界命中检测的内收像素。 */
+  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 当前 Graphwar 坐标边界；缺失时应沿用页面原来的预检失败语义。 */
   bounds: GraphBounds | undefined;
@@ -32,7 +32,7 @@ interface GraphwarSmartPathfindingTrajectoryOptions {
   points: readonly PixelPoint[];
   /** 当前公式采样设置。 */
   settings: GraphwarTrajectoryFormulaSettings;
-  /** 普通点击目标点使用的默认真实命中半径；无有效 bounds 时不可用。 */
+  /** 普通点击目标点使用的默认真实命中半径，单位为截图像素；无有效 bounds 时不可用。 */
   targetHitRadiusPixels: number | undefined;
 }
 
@@ -44,6 +44,7 @@ export function getGraphwarSmartPathfindingAppendedSegment(points: readonly Pixe
 /** 普通点击应使用默认半径；士兵目标应保留真实命中圈。 */
 export function createGraphwarSmartPathfindingHitTarget(
   hitTarget: GraphwarSmartPathfindingHitTarget,
+  /** 普通点击目标点使用的默认真实命中半径，单位为截图像素。 */
   targetHitRadiusPixels: number | undefined,
 ): GraphwarTrajectoryTargetCircle | undefined {
   if ("center" in hitTarget) {

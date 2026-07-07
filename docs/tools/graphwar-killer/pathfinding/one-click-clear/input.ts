@@ -9,7 +9,7 @@ import type { GraphwarOneClickClearCandidate } from "./search";
 
 /** 一键清图搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
 export interface GraphwarOneClickClearSearchTolerances {
-  /** 障碍和棋盘边界命中检测的内收像素。 */
+  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansionPlanePixels: number;
   /** 一键清图删点局部保护半径，单位为 Graphwar 原始平面像素。 */
   oneClickClearDeleteCheckRadiusPlanePixels: number;
@@ -122,6 +122,7 @@ export function createGraphwarOneClickClearSearchInput(
     boundsRect: options.boundsRect,
     candidates: options.candidates,
     dagEdgeWorkerCount: options.dagEdgeWorkerCount,
+    // Worker 内删点校验在截图坐标里量距离，因此在协议边界从 Graphwar 平面像素换算为截图像素。
     deleteCheckRadiusPixels:
       options.tolerances.oneClickClearDeleteCheckRadiusPlanePixels * (options.boundsRect.width / GRAPHWAR_PLANE_LENGTH),
     hitCandidates: options.hitCandidates,

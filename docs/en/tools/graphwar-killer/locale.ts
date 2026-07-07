@@ -179,10 +179,8 @@ export const graphwarKillerLocale = {
     forwardMinimumDouble: "one representable double",
     forwardPath: (minimumStep) =>
       `Each point's Graphwar x must be strictly greater than the previous point by at least ${minimumStep}`,
-    needBounds:
-      "Click Detect Bounds in the Detection panel or draw the bounds manually first; Smart Pathfinding needs marked play-area bounds",
-    needDetection:
-      "Click Detect Objects in the Detection panel first; Smart Pathfinding needs detected soldiers and obstacles",
+    needBounds: "Detect or draw bounds before using Smart Pathfinding",
+    needDetection: "Detect soldiers and obstacles before using Smart Pathfinding",
     inProgress: {
       optimize: "Optimize path nodes",
       search: "Search obstacle route",
@@ -197,8 +195,7 @@ export const graphwarKillerLocale = {
     },
     oneClickClear: {
       inProgress: "Running One-Click Clear; right-click the screenshot to stop",
-      needDetection:
-        "Click Detect Objects in the Detection panel first; One-Click Clear needs detected soldiers and obstacles",
+      needDetection: "Detect soldiers and obstacles before using One-Click Clear",
       needCurrentPath: "One-Click Clear needs an existing path start first",
       noCandidate: "One-Click Clear failed: no selectable target exists on the x+ side of the current path",
       noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found in ${elapsed}`,

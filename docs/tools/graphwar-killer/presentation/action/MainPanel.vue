@@ -379,19 +379,21 @@ function handleObstacleBrushDiameterInput(event: Event) {
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .graphwar-killer__label-row > span {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
-  flex: 1 1 14rem;
+  display: block;
+  flex: 1 1 0;
   font-size: 0.88rem;
   line-height: 1.4;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  overflow-wrap: anywhere;
   text-align: right;
   text-overflow: ellipsis;
-  white-space: normal;
+  white-space: nowrap;
 }
 
 .graphwar-killer__image-actions,

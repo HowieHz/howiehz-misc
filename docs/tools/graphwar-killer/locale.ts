@@ -142,8 +142,8 @@ export const graphwarKillerLocale = {
       elapsed === undefined ? "智能寻路失败：未找到可行路径" : `智能寻路失败：未找到可行路径，耗时 ${elapsed}`,
     forwardMinimumDouble: "一个可表示 double",
     forwardPath: (minimumStep) => `每个点的 Graphwar x 需要严格大于上一个点，至少前进 ${minimumStep}`,
-    needBounds: "需要先在“识别”面板点击“识别边界”或手动画框，标记棋盘边界后才能使用智能寻路",
-    needDetection: "需要先在“识别”面板点击“识别物体”，识别出士兵和障碍后才能使用智能寻路",
+    needBounds: "先识别或框选棋盘边界后才能使用智能寻路",
+    needDetection: "先识别士兵和障碍后才能使用智能寻路",
     inProgress: {
       optimize: "优化路径节点",
       search: "搜索绕障路线",
@@ -156,7 +156,7 @@ export const graphwarKillerLocale = {
     },
     oneClickClear: {
       inProgress: "正在一键清图，在截图中右键停止",
-      needDetection: "需要先在“识别”面板点击“识别物体”，识别出士兵和障碍后才能使用一键清图",
+      needDetection: "先识别士兵和障碍后才能使用一键清图",
       needCurrentPath: "一键清图需要先选择当前路径起点",
       noCandidate: "一键清图失败：当前路径右侧没有可选目标",
       noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,

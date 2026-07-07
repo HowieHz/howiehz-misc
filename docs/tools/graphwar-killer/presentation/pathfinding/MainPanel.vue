@@ -197,12 +197,15 @@ const emit = defineEmits<{
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .graphwar-killer__label-row > span {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
+  display: block;
   font-size: 0.88rem;
   line-height: 1.4;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-align: right;
@@ -225,10 +228,8 @@ const emit = defineEmits<{
 }
 
 .graphwar-killer__pathfinding-header-status {
-  flex: 1 1 14rem;
+  flex: 1 1 0;
   max-width: min(100%, 24rem);
-  overflow-wrap: anywhere;
-  white-space: normal;
 }
 
 .graphwar-killer__image-actions {

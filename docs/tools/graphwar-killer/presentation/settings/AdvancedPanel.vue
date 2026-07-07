@@ -461,6 +461,7 @@ const oneClickClearDeleteCheckRadiusText = computed({
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .graphwar-killer__image-actions {

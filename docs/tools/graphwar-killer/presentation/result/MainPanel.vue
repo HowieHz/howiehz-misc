@@ -296,6 +296,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .graphwar-killer__label-row--result {

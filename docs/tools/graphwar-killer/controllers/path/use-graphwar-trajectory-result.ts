@@ -11,7 +11,7 @@ import type {
   PixelPoint,
   ToolWorkflowMode,
 } from "../../core/types";
-import { buildFormula } from "../../formula/formula";
+import { buildFormula } from "../../formula/generation/build";
 import {
   createGraphwarTrajectoryFormulaContext,
   findGraphwarTrajectoryTargetHitIndex,
@@ -20,7 +20,7 @@ import {
   sampleGraphwarFormulaTrajectory,
   type GraphwarTrajectoryCollisionSettings,
   type GraphwarTrajectoryFormulaSettings,
-} from "../../formula/trajectory-sampling";
+} from "../../formula/trajectory/sampling";
 
 interface ReadonlyRef<T> {
   readonly value: T;

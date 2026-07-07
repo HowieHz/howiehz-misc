@@ -1,5 +1,5 @@
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../../core/types";
-import type { GraphwarTrajectoryFormulaSettings } from "../../../formula/trajectory-sampling";
+import type { GraphwarTrajectoryFormulaSettings } from "../../../formula/trajectory/sampling";
 import type { GraphwarPathfindingPreview } from "../../../pathfinding/routing/visibility-graph";
 import type { GraphwarPathfindingResultCacheTimingEntry } from "../../../pathfinding/runtime/cache";
 import {

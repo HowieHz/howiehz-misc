@@ -2,17 +2,17 @@
 import { imageToGraphPoint } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
-import type { GraphwarTrajectorySamplingState } from "../../formula/simulator";
+import type { GraphwarTrajectorySamplingState } from "../../formula/simulation/simulator";
 import {
   createGraphwarTrajectoryFormulaContext,
   sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTargetSequence,
-} from "../../formula/trajectory-sampling";
+} from "../../formula/trajectory/sampling";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
-} from "../../formula/trajectory-sampling";
+} from "../../formula/trajectory/sampling";
 
 /** 路线规划默认使用单个 2px 几何 route tolerance，普通寻路和一键清图保持一致。 */
 export const GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS = 2;

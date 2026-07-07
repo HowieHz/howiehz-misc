@@ -1,9 +1,9 @@
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
-import { sampleGraphwarPathTrajectory } from "../../formula/trajectory-sampling";
+import { sampleGraphwarPathTrajectory } from "../../formula/trajectory/sampling";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
-} from "../../formula/trajectory-sampling";
+} from "../../formula/trajectory/sampling";
 
 export type GraphwarSmartPathfindingHitTarget = PixelPoint | GraphwarTrajectoryTargetCircle;
 

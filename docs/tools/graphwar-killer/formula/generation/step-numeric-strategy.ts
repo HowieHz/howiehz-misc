@@ -1,5 +1,5 @@
 /** Step 公式的数值保护策略；公式输出和轨迹采样必须共用同一套判断。 */
-import type { GraphBounds, GraphPoint } from "../core/types";
+import type { GraphBounds, GraphPoint } from "../../core/types";
 
 /** Java/Graphwar double 的 exp 上限，用于判断 step 公式是否必须改写成抗溢出形式。 */
 const JAVA_DOUBLE_MAX_EXP_ARGUMENT = Math.log(Number.MAX_VALUE);

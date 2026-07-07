@@ -1,6 +1,6 @@
 import { createPixelPoint, type BoundsRect, type GraphBounds, type PixelPoint } from "../../core/types";
 import { addSoldierAreasToObstacleMask, dilateObstacleMask, type GraphwarDetectionBox } from "../../detection/objects";
-import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory-sampling";
+import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
 import type { GraphwarOneClickClearCandidate } from "../one-click-clear/search";
 import { createRouteMaskCacheKey } from "../routing/visibility-graph";
 import type {

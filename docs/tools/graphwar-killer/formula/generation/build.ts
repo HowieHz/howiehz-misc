@@ -1,13 +1,13 @@
 /** 编译用户输入的 Graphwar 表达式，并输出游戏可用的公式文本。 */
-import { GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE } from "../core/graphwar";
+import { GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE } from "../../core/graphwar";
 import {
   MAX_FORMULA_DECIMAL_PLACES,
   formatDecimal,
   formatSignedNumber,
   normalizeZero,
   roundToDecimalPlaces,
-} from "../core/numbers";
-import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "../core/types";
+} from "../../core/numbers";
+import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "../../core/types";
 import {
   GRAPHWAR_TOOL_SIGN_EPSILON,
   shouldFormatStepTermWithOverflowProtection,

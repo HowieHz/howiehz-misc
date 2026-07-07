@@ -3,7 +3,7 @@ import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
-} from "../../formula/trajectory-sampling";
+} from "../../formula/trajectory/sampling";
 /** Web Worker 和主线程之间传递 Graphwar 几何寻路任务的协议类型。 */
 import type {
   GraphwarOneClickClearDagEdgeBuildRequest,

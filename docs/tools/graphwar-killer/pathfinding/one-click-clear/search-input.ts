@@ -2,7 +2,7 @@ import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
-} from "../../formula/trajectory-sampling";
+} from "../../formula/trajectory/sampling";
 import type { GraphwarOneClickClearPathWorkerInput } from "../runtime/worker-types";
 import type { GraphwarOneClickClearCandidate } from "./search";
 

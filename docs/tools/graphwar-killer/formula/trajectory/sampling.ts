@@ -1,25 +1,25 @@
-import { graphToImagePoint, imageToGraphPoint } from "../core/geometry";
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../core/graphwar";
-import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "../core/types";
+import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/graphwar";
+import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 /** 负责按 Graphwar 公式规则采样轨迹，并判断路径与目标/障碍的交互。 */
-import { buildFormula } from "./formula";
+import { buildFormula } from "../generation/build";
+import {
+  GRAPHWAR_TOOL_SIGN_EPSILON,
+  createStepOverflowProtectionRange,
+  probeSignEpsilonRequirement,
+} from "../generation/step-numeric-strategy";
+import type { FormulaEvaluationOptions } from "../generation/step-numeric-strategy";
 import {
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
   sampleGraphwarExpressionTrajectory,
   sampleGraphwarTrajectory,
-} from "./simulator";
+} from "../simulation/simulator";
 import type {
   GraphwarExpressionParserOptions,
   GraphwarTrajectorySample,
   GraphwarTrajectorySamplingState,
-} from "./simulator";
-import {
-  GRAPHWAR_TOOL_SIGN_EPSILON,
-  createStepOverflowProtectionRange,
-  probeSignEpsilonRequirement,
-} from "./step-numeric-strategy";
-import type { FormulaEvaluationOptions } from "./step-numeric-strategy";
+} from "../simulation/simulator";
 
 /** 轨迹采样主动提前停止的原因；只记录与目标/障碍判定有关的短路。 */
 export type GraphwarTrajectoryEarlyStopReason = "obstacle" | "target";

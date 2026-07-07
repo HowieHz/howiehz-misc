@@ -8,16 +8,16 @@ import {
   GRAPHWAR_PLANE_GAME_LENGTH,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
-} from "../core/graphwar";
-import { graphwarToolDefaults } from "../core/tool-defaults";
-import { createGraphPoint } from "../core/types";
-import type { AlgorithmMode, EquationMode, GraphBounds, GraphPoint } from "../core/types";
+} from "../../core/graphwar";
+import { graphwarToolDefaults } from "../../core/tool-defaults";
+import { createGraphPoint } from "../../core/types";
+import type { AlgorithmMode, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
+import { createGraphwarExpressionEvaluator } from "../expression/evaluator";
+import type { GraphwarExpressionParserOptions } from "../expression/evaluator";
 /** 封装 Graphwar 公式模拟器，按游戏步进规则计算轨迹和停止原因。 */
-import { compileFormulaEvaluator } from "./formula";
-import type { FormulaEvaluationOptions } from "./formula";
-import { createGraphwarExpressionEvaluator } from "./graphwar-expression";
-import type { GraphwarExpressionParserOptions } from "./graphwar-expression";
-export type { GraphwarExpressionParserOptions } from "./graphwar-expression";
+import { compileFormulaEvaluator } from "../generation/build";
+import type { FormulaEvaluationOptions } from "../generation/build";
+export type { GraphwarExpressionParserOptions } from "../expression/evaluator";
 
 /** 采样由路径点生成的公式时的完整输入，保持与 Graphwar 原版步进参数隔离。 */
 export interface SampleGraphwarTrajectoryOptions {

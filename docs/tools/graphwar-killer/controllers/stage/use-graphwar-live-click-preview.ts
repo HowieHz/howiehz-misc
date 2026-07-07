@@ -19,7 +19,7 @@ import {
   type GraphwarTrajectoryCollisionSettings,
   type GraphwarTrajectoryFormulaSettings,
   type GraphwarTrajectorySampleResult,
-} from "../../formula/trajectory-sampling";
+} from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingLineSegment } from "../../pathfinding/smart/preview";
 import type { GraphwarSmartPathfindingSoldierTarget } from "../../pathfinding/targeting";
 import { formatVisibleTrajectoryPoints } from "../path/use-graphwar-trajectory-result";

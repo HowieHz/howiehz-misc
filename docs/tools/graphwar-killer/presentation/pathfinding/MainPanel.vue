@@ -225,7 +225,10 @@ const emit = defineEmits<{
 }
 
 .graphwar-killer__pathfinding-header-status {
+  flex: 1 1 14rem;
   max-width: min(100%, 24rem);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .graphwar-killer__image-actions {

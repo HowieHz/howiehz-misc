@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import type { GraphwarKillerLocale } from "../locale-types";
+import type { GraphwarKillerLocale } from "../../locale-types";
 
 interface GraphwarAdvancedSettingsBounds {
   /** X 轴最小值输入框文本；非法输入应原样交回父页面校验。 */

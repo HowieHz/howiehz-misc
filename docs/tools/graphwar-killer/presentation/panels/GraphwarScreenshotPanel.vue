@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { ComponentPublicInstance, CSSProperties } from "vue";
 
-import type { GraphwarKillerLocale } from "../locale-types";
-import GraphwarStageOverlay, { type GraphwarStageOverlayModel } from "./GraphwarStageOverlay.vue";
+import type { GraphwarKillerLocale } from "../../locale-types";
+import GraphwarStageOverlay, { type GraphwarStageOverlayModel } from "../stage/GraphwarStageOverlay.vue";
 
 interface GraphwarScreenshotPanelStageModel {
   /** 舞台是否没有截图；父页面应沿用原 imageUrl 判定。 */

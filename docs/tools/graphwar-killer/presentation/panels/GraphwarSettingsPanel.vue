@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import type { AlgorithmMode, EquationMode, ToolWorkflowMode } from "../core/types";
-import type { GraphwarKillerLocale } from "../locale-types";
+import type { AlgorithmMode, EquationMode, ToolWorkflowMode } from "../../core/types";
+import type { GraphwarKillerLocale } from "../../locale-types";
 
 type GraphwarSettingsPanelStatusKind = "info" | "success" | "warning" | "error";
 

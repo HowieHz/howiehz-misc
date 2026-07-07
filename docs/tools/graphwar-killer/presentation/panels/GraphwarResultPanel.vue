@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import type { ToolWorkflowMode } from "../core/types";
-import type { GraphwarKillerLocale } from "../locale-types";
+import type { ToolWorkflowMode } from "../../core/types";
+import type { GraphwarKillerLocale } from "../../locale-types";
 
 type GraphwarResultPanelCoordinateAxis = "x" | "y";
 

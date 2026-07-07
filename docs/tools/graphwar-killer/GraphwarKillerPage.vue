@@ -1,17 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import GraphwarActionPanel from "./components/GraphwarActionPanel.vue";
-import GraphwarAdvancedSettingsPanel, {
-  type GraphwarAdvancedSettingsPanelModel,
-} from "./components/GraphwarAdvancedSettingsPanel.vue";
-import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./components/GraphwarDetectionPanel.vue";
-import GraphwarResultPanel from "./components/GraphwarResultPanel.vue";
-import GraphwarScreenshotPanel, { type GraphwarScreenshotPanelModel } from "./components/GraphwarScreenshotPanel.vue";
-import GraphwarSettingsPanel, { type GraphwarSettingsPanelModel } from "./components/GraphwarSettingsPanel.vue";
-import GraphwarSmartPathfindingPanel, {
-  type GraphwarSmartPathfindingPanelModel,
-} from "./components/GraphwarSmartPathfindingPanel.vue";
 import { useGraphwarDebugActivation } from "./composables/debug/use-graphwar-debug-activation";
 import { useGraphwarDebugTimings } from "./composables/debug/use-graphwar-debug-timings";
 import {
@@ -88,12 +77,29 @@ import {
   createBoundsRectWithBoundaryExpansion,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
 } from "./pathfinding/graphwar-targeting";
-import { formatElapsedDuration } from "./presentation/duration-format";
+import GraphwarActionPanel from "./presentation/panels/GraphwarActionPanel.vue";
+import GraphwarAdvancedSettingsPanel, {
+  type GraphwarAdvancedSettingsPanelModel,
+} from "./presentation/panels/GraphwarAdvancedSettingsPanel.vue";
+import GraphwarDetectionPanel, {
+  type GraphwarDetectionPanelModel,
+} from "./presentation/panels/GraphwarDetectionPanel.vue";
+import GraphwarResultPanel from "./presentation/panels/GraphwarResultPanel.vue";
+import GraphwarScreenshotPanel, {
+  type GraphwarScreenshotPanelModel,
+} from "./presentation/panels/GraphwarScreenshotPanel.vue";
+import GraphwarSettingsPanel, {
+  type GraphwarSettingsPanelModel,
+} from "./presentation/panels/GraphwarSettingsPanel.vue";
+import GraphwarSmartPathfindingPanel, {
+  type GraphwarSmartPathfindingPanelModel,
+} from "./presentation/panels/GraphwarSmartPathfindingPanel.vue";
+import { formatElapsedDuration } from "./presentation/status/duration-format";
 import {
   createHeaderStatus,
   getFirstHeaderStatus,
   getSmartPathfindingHeaderStatus,
-} from "./presentation/header-status";
+} from "./presentation/status/header-status";
 import {
   createOneClickClearFailureMessage,
   createOneClickClearPreflightFailureStatus,
@@ -103,7 +109,7 @@ import {
   createSmartPathfindingFailureMessage,
   createSmartPathfindingInProgressMessage,
   createSmartPathfindingSuccessMessage,
-} from "./presentation/pathfinding-status";
+} from "./presentation/status/pathfinding-status";
 
 /** 坐标边界解析结果；失败分支直接携带本地化校验文案。 */
 type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: string };

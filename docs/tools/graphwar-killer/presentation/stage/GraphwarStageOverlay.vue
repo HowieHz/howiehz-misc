@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BoundsRect, PixelPoint } from "../core/types";
+import type { BoundsRect, PixelPoint } from "../../core/types";
 
 /** SVG 线段 DTO；overlay 只消费已计算好的端点，不负责路径规则。 */
 interface GraphwarStageOverlayLineSegment {

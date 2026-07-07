@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { CSSProperties } from "vue";
 
-import type { ToolMode } from "../core/types";
-import type { GraphwarKillerLocale } from "../locale-types";
+import type { ToolMode } from "../../core/types";
+import type { GraphwarKillerLocale } from "../../locale-types";
 
 interface GraphwarActionPanelSlider {
   /** 输入框允许的最大值。 */

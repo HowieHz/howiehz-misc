@@ -1,4 +1,4 @@
-import { formatDecimal } from "../core/numbers";
+import { formatDecimal } from "../../core/numbers";
 
 /** 将毫秒耗时格式化成检测、寻路和状态栏使用的短文本。 */
 export function formatElapsedDuration(elapsedMs: number) {

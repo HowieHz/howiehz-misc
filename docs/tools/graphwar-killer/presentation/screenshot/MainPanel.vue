@@ -253,9 +253,10 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
   line-height: 1.4;
   min-width: 0;
   overflow: hidden;
+  overflow-wrap: anywhere;
   text-align: right;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .graphwar-killer__label-row > .graphwar-killer__label-status--warning {

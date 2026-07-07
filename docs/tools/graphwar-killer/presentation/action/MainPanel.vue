@@ -383,13 +383,15 @@ function handleObstacleBrushDiameterInput(event: Event) {
 
 .graphwar-killer__label-row > span {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
+  flex: 1 1 14rem;
   font-size: 0.88rem;
   line-height: 1.4;
   min-width: 0;
   overflow: hidden;
+  overflow-wrap: anywhere;
   text-align: right;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .graphwar-killer__image-actions,

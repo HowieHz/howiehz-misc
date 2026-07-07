@@ -55,7 +55,7 @@
     "@arethetypeswrong/core": "^0.18.4",
     "publint": "^0.3.21",
     "tsdown": "^0.22.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": "^22 || >=24"

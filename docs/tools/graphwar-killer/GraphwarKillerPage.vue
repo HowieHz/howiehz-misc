@@ -122,6 +122,8 @@ const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
+// 搜索优化预览圈比路径点可视圈略大，便于在动画里看清当前尝试点；不参与命中判断。
+const pathfindingOptimizationPreviewRadiusExtraPixels = 4;
 const smartPathfindingBlockedPointFlashMs = 1800;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
@@ -1318,8 +1320,9 @@ const stageOverlay = computed(() => ({
     blockedPoint: smartPathfindingBlockedPoint.value,
     inProgress: smartPathfindingInProgress.value,
     optimizationPreviewPoint: pathfindingOptimizationPreviewPoint.value,
-    // 搜索动画半径只用于绘制；真实命中半径不可用时用可视半径占位。
-    optimizationPreviewRadius: (soldierHitRadiusPixels.value ?? displayedSoldierVisibleRadiusPixels.value) + 4,
+    // 搜索动画只应表达“正在优化这个点”，半径按可视士兵圈派生，不参与真实命中。
+    optimizationPreviewRadius:
+      displayedSoldierVisibleRadiusPixels.value + pathfindingOptimizationPreviewRadiusExtraPixels,
     previewAcceptedEdges: smartPathfindingPreviewAcceptedEdges.value,
     previewConnection: smartPathfindingPreviewConnection.value,
     previewCurrentPoint: smartPathfindingPreviewCurrentPoint.value,

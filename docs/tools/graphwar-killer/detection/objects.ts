@@ -687,6 +687,9 @@ export function getDetectionBoxCenter(box: GraphwarDetectionBox) {
   return createPixelPoint(box.sourceCenterX, box.sourceCenterY);
 }
 
+// 士兵写入/移出平面 mask 时应覆盖重采样和圆形格点离散误差；真实命中半径本身不加这个余量。
+const soldierObstacleMaskPaddingPlanePixels = 2;
+
 /** 将友方士兵写入障碍 mask，关闭友伤时避免路径穿过友方。 */
 export function addSoldierAreasToObstacleMask(
   mask: Uint8Array,
@@ -694,7 +697,9 @@ export function addSoldierAreasToObstacleMask(
   soldiers: readonly GraphwarDetectionBox[],
   soldierHitRadiusPixels: number,
 ) {
-  const radius = Math.ceil((soldierHitRadiusPixels / edgeRect.width) * GRAPHWAR_PLANE_LENGTH) + 2;
+  const radius =
+    Math.ceil((soldierHitRadiusPixels / edgeRect.width) * GRAPHWAR_PLANE_LENGTH) +
+    soldierObstacleMaskPaddingPlanePixels;
   for (const soldier of soldiers) {
     const center = imagePointToPlaneGridPoint(getDetectionBoxCenter(soldier), edgeRect);
     fillMaskDisk(mask, center, radius);
@@ -1928,7 +1933,7 @@ function removeSoldierAreasFromObstacleMask(
     const center = imagePointToPlaneGridPoint(getDetectionBoxCenter(soldier), edgeRect);
     const radiusX = (soldier.hitRadius / edgeRect.width) * GRAPHWAR_PLANE_LENGTH;
     const radiusY = (soldier.hitRadius / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT;
-    clearMaskDisk(mask, center, Math.ceil(Math.max(radiusX, radiusY)) + 2);
+    clearMaskDisk(mask, center, Math.ceil(Math.max(radiusX, radiusY)) + soldierObstacleMaskPaddingPlanePixels);
   }
 }
 

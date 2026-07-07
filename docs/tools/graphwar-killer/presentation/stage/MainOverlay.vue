@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { BoundsRect, PixelPoint } from "../../core/types";
 
+// 点标签从可视圆边缘再外移一点，避免文字贴住路径点。
+const pathPointLabelGapPixels = 4;
+
 /** SVG 线段 DTO；overlay 只消费已计算好的端点，不负责路径规则。 */
 interface GraphwarStageOverlayLineSegment {
   /** 起点 x。 */
@@ -455,8 +458,8 @@ withDefaults(
       />
       <text
         class="graphwar-killer__point-label"
-        :x="point.x + overlay.path.selectionRadius + 4"
-        :y="point.y - overlay.path.selectionRadius - 4"
+        :x="point.x + overlay.path.selectionRadius + pathPointLabelGapPixels"
+        :y="point.y - overlay.path.selectionRadius - pathPointLabelGapPixels"
       >
         {{ index === 0 ? overlay.path.selfLabel : index }}
       </text>
@@ -470,8 +473,8 @@ withDefaults(
       />
       <text
         class="graphwar-killer__point-label"
-        :x="overlay.liveClickPreview.point.x + overlay.path.selectionRadius + 4"
-        :y="overlay.liveClickPreview.point.y - overlay.path.selectionRadius - 4"
+        :x="overlay.liveClickPreview.point.x + overlay.path.selectionRadius + pathPointLabelGapPixels"
+        :y="overlay.liveClickPreview.point.y - overlay.path.selectionRadius - pathPointLabelGapPixels"
       >
         {{ overlay.liveClickPreview.label }}
       </text>

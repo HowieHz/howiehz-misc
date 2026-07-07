@@ -3,6 +3,9 @@ import type { PixelPoint } from "../../core/types";
 import { isPlayerColorPixel, type GraphwarDetectionBox } from "../../detection/objects";
 import { getGraphwarSoldierCenter, graphwarSoldierContainsHitPoint } from "../../pathfinding/targeting";
 
+// 路径点太小时仍保留可点中的拖拽热区；这不是 Graphwar 士兵命中半径。
+const minimumPathPointSelectionRadiusPixels = 10;
+
 interface GraphwarStageHitTestingOptions<TSoldier extends GraphwarDetectionBox> {
   /** 当前可见士兵列表；应由页面先应用工作流过滤，命中测试只负责逆序选中。 */
   getDetectionBoxes: () => readonly TSoldier[];
@@ -10,7 +13,7 @@ interface GraphwarStageHitTestingOptions<TSoldier extends GraphwarDetectionBox> 
   getImageData: () => ImageData | undefined;
   /** 当前路径；路径点命中应按后绘制点优先。 */
   getPathPixels: () => readonly PixelPoint[];
-  /** 当前士兵 UI 半径；路径点最小选中半径应保留 10px 下限。 */
+  /** 当前路径点 UI 半径；命中测试会额外保留最小拖拽热区。 */
   getPathPointSelectionRadius: () => number;
 }
 
@@ -35,7 +38,7 @@ export function useGraphwarStageHitTesting<TSoldier extends GraphwarDetectionBox
 ): GraphwarStageHitTestingController<TSoldier> {
   /** 命中最近的路径点索引，逆序让后绘制的点优先。 */
   function getPathPointIndexAtPoint(point: PixelPoint) {
-    const radius = Math.max(10, options.getPathPointSelectionRadius());
+    const radius = Math.max(minimumPathPointSelectionRadiusPixels, options.getPathPointSelectionRadius());
     const pathPixels = options.getPathPixels();
     for (let index = pathPixels.length - 1; index >= 0; index -= 1) {
       const pathPoint = pathPixels[index];

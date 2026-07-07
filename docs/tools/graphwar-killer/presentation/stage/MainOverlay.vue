@@ -132,7 +132,7 @@ interface GraphwarStageOverlayPathfindingLayer {
   inProgress: boolean;
   /** 寻路优化阶段当前尝试点。 */
   optimizationPreviewPoint?: PixelPoint;
-  /** 寻路优化阶段当前尝试点半径，父页面负责沿用原公式。 */
+  /** 寻路优化阶段当前尝试点半径，单位为截图/SVG 坐标像素。 */
   optimizationPreviewRadius: number;
   /** 寻路预览里的已接受边。 */
   previewAcceptedEdges: readonly GraphwarStageOverlayLineSegment[];

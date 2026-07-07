@@ -6,25 +6,25 @@ import type {
 import type {
   GraphwarOneClickClearDebugTiming,
   GraphwarOneClickClearFailureReason,
-} from "../../pathfinding/graphwar-one-click-clear";
+} from "../../pathfinding/one-click-clear/search";
 import {
   createGraphwarOneClickClearSearchInput,
   createGraphwarOneClickClearSearchPreflight,
   type GraphwarOneClickClearSearchPreflightFailureReason,
   type GraphwarOneClickClearSearchTolerances,
-} from "../../pathfinding/graphwar-one-click-clear-search-input";
+} from "../../pathfinding/one-click-clear/search-input";
 import {
   createGraphwarOneClickClearCandidates,
   createGraphwarOneClickClearHitCandidates,
   type GraphwarOneClickClearTargetSoldier,
-} from "../../pathfinding/graphwar-one-click-clear-targets";
-import type { GraphwarPathfindingResultCacheTimingEntry } from "../../pathfinding/graphwar-pathfinding-cache";
-import { isGraphwarPathfindingCancelledError } from "../../pathfinding/graphwar-pathfinding-runner";
+} from "../../pathfinding/one-click-clear/targets";
+import type { GraphwarPathfindingResultCacheTimingEntry } from "../../pathfinding/runtime/cache";
+import { isGraphwarPathfindingCancelledError } from "../../pathfinding/runtime/runner";
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
-} from "../../pathfinding/graphwar-pathfinding-worker-types";
-import type { GraphwarTargetingGeometry } from "../../pathfinding/graphwar-targeting";
+} from "../../pathfinding/runtime/worker-types";
+import type { GraphwarTargetingGeometry } from "../../pathfinding/targeting";
 import type { SmartPathfindingDebugStage, SmartPathfindingDebugTimingEntry } from "../debug/use-graphwar-debug-timings";
 
 type GraphwarOneClickClearStatusKind = "error" | "success" | "warning";

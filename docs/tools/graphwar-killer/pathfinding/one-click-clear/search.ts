@@ -1,18 +1,18 @@
 /** 在当前 Graphwar 路径后追加 DAG 清图路线；几何建路点和弹道命中圈分开建模。 */
-import { imageToGraphPoint } from "../core/geometry";
-import { graphXAdvancesStrictly } from "../core/numbers";
-import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
-import type { GraphwarTrajectorySamplingState } from "../formula/simulator";
+import { imageToGraphPoint } from "../../core/geometry";
+import { graphXAdvancesStrictly } from "../../core/numbers";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type { GraphwarTrajectorySamplingState } from "../../formula/simulator";
 import {
   createGraphwarTrajectoryFormulaContext,
   sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTargetSequence,
-} from "../formula/trajectory-sampling";
+} from "../../formula/trajectory-sampling";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
-} from "../formula/trajectory-sampling";
+} from "../../formula/trajectory-sampling";
 
 /** 路线规划默认使用单个 2px 几何 route tolerance，普通寻路和一键清图保持一致。 */
 export const GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS = 2;

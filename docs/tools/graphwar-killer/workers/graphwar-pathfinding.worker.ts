@@ -4,20 +4,20 @@ import type { GraphBounds, PixelPoint } from "../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../detection/graphwar-detection";
 import { sampleGraphwarPathTrajectory } from "../formula/trajectory-sampling";
+import { buildOneClickClearDagEdgeRoute } from "../pathfinding/one-click-clear/edge-route";
 import type {
   GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildResult,
   GraphwarOneClickClearDagEdgeRoute,
   GraphwarOneClickClearDebugTiming,
-} from "../pathfinding/graphwar-one-click-clear";
-import { buildGraphwarOneClickClearPath } from "../pathfinding/graphwar-one-click-clear";
-import { buildOneClickClearDagEdgeRoute } from "../pathfinding/graphwar-one-click-clear-edge-route";
+} from "../pathfinding/one-click-clear/search";
+import { buildGraphwarOneClickClearPath } from "../pathfinding/one-click-clear/search";
 import {
-  buildSmartPathfindingPathForMask,
+  buildGraphwarVisibilityGraphPathForMask,
   createRouteMaskCacheKey,
   createGraphwarVisibilityGraphObstacleData,
-} from "../pathfinding/graphwar-pathfinding";
-import type { GraphwarVisibilityGraphObstacleData } from "../pathfinding/graphwar-pathfinding";
+} from "../pathfinding/routing/visibility-graph";
+import type { GraphwarVisibilityGraphObstacleData } from "../pathfinding/routing/visibility-graph";
 import type {
   GraphwarOneClickClearDagEdgesWorkerInput,
   GraphwarOneClickClearEdgeWorkerRequest,
@@ -32,7 +32,7 @@ import type {
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
   GraphwarSmartPathfindingWorkerTiming,
-} from "../pathfinding/graphwar-pathfinding-worker-types";
+} from "../pathfinding/runtime/worker-types";
 
 /** 当前 master Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarPathfindingWorkerScope {
@@ -167,7 +167,7 @@ async function findRouteForMask(
   let visibilityCache: GraphwarPathfindingRouteResult["visibilityCache"] = "skipped";
   let visibilityCacheElapsedMs = 0;
   const searchStartedAt = nowMs();
-  const path = await buildSmartPathfindingPathForMask({
+  const path = await buildGraphwarVisibilityGraphPathForMask({
     bounds: input.bounds,
     boundsRect: input.boundsRect,
     boundaryExpansion: input.boundaryExpansion,

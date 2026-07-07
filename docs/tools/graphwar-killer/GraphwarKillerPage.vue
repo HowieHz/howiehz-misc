@@ -64,18 +64,15 @@ import { buildObstacleEdgePath, buildObstacleFillPath } from "./detection/graphw
 import type { GraphwarDetectionBox } from "./detection/graphwar-detection";
 import type { GraphwarTrajectoryCollisionSettings } from "./formula/trajectory-sampling";
 import type { GraphwarKillerLocale } from "./locale-types";
-import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/graphwar-one-click-clear";
-import { createGraphwarPathfindingCacheController } from "./pathfinding/graphwar-pathfinding-cache";
-import {
-  createGraphwarPathLineSegments,
-  type GraphwarPathfindingLineSegment,
-} from "./pathfinding/graphwar-pathfinding-preview";
-import { createGraphwarPathfindingRunner } from "./pathfinding/graphwar-pathfinding-runner";
-import { createGraphwarSmartPathfindingTrajectoryResult } from "./pathfinding/graphwar-smart-pathfinding-trajectory";
+import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";
+import { createGraphwarPathfindingCacheController } from "./pathfinding/runtime/cache";
+import { createGraphwarPathfindingRunner } from "./pathfinding/runtime/runner";
+import { createGraphwarPathLineSegments, type GraphwarPathfindingLineSegment } from "./pathfinding/smart/preview";
+import { createGraphwarSmartPathfindingTrajectoryResult } from "./pathfinding/smart/trajectory";
 import {
   createBoundsRectWithBoundaryExpansion,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
-} from "./pathfinding/graphwar-targeting";
+} from "./pathfinding/targeting";
 import GraphwarActionPanel from "./presentation/panels/GraphwarActionPanel.vue";
 import GraphwarAdvancedSettingsPanel, {
   type GraphwarAdvancedSettingsPanelModel,

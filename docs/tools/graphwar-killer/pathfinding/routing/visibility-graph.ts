@@ -1,9 +1,9 @@
 /** Graphwar 固定平面上的几何寻路工具；页面和 worker 共用同一套图搜索实现。 */
-import { xPlusGoesRight } from "../core/geometry";
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../core/graphwar";
-import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "../core/numbers";
-import { imagePointToPlaneGridPoint, mirrorPlaneGridPoint, type PlaneGridPoint } from "../core/plane-grid";
-import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
+import { xPlusGoesRight } from "../../core/geometry";
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/graphwar";
+import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "../../core/numbers";
+import { imagePointToPlaneGridPoint, mirrorPlaneGridPoint, type PlaneGridPoint } from "../../core/plane-grid";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 
 /** 页面搜索动画需要的图搜索快照；worker 不传回调时不会产生该数据。 */
 export interface GraphwarPathfindingPreview {
@@ -173,7 +173,7 @@ const EIGHT_CONNECTED_OFFSETS: readonly PlaneGridPoint[] = [
 ];
 
 /** 在固定 Graphwar 平面上构造 x+ 单调有向 Lazy Visibility Graph，输出几何可行的绕障折线。 */
-export async function buildSmartPathfindingPathForMask(options: GraphwarPathfindingOptions) {
+export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarPathfindingOptions) {
   // 统一镜像到 x+ 搜索坐标系，调用方始终拿到原始平面坐标系下的路径。
   const mirrored = !xPlusGoesRight(options.bounds);
   const boundaryExpansion = normalizeBoundaryExpansion(options.boundaryExpansion);

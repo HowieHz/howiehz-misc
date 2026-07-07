@@ -9,8 +9,8 @@ import type {
   GraphwarOneClickClearDebugDetail,
   GraphwarOneClickClearDebugStage,
   GraphwarOneClickClearDebugTiming,
-} from "../../pathfinding/graphwar-one-click-clear";
-import type { GraphwarSmartPathfindingWorkerTiming } from "../../pathfinding/graphwar-pathfinding-worker-types";
+} from "../../pathfinding/one-click-clear/search";
+import type { GraphwarSmartPathfindingWorkerTiming } from "../../pathfinding/runtime/worker-types";
 
 /** 识别调试耗时阶段。 */
 export type DetectionDebugStage =

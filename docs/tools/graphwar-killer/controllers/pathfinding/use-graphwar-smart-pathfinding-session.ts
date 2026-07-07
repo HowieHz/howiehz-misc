@@ -5,7 +5,7 @@ import {
   createGraphwarPathfindingLineSegment,
   type GraphwarPathfindingLineSegment,
   type GraphwarPathfindingPreviewSnapshot,
-} from "../../pathfinding/graphwar-pathfinding-preview";
+} from "../../pathfinding/smart/preview";
 
 export type SmartPathfindingStatusKind = "info" | "success" | "warning" | "error";
 export type SmartPathfindingPhase = "optimize" | "search" | "trajectory";

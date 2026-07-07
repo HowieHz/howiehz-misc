@@ -1,7 +1,7 @@
 import { clampNumber } from "../../core/numbers";
 import type { PixelPoint } from "../../core/types";
 import { isPlayerColorPixel, type GraphwarDetectionBox } from "../../detection/graphwar-detection";
-import { getGraphwarSoldierCenter, graphwarSoldierContainsHitPoint } from "../../pathfinding/graphwar-targeting";
+import { getGraphwarSoldierCenter, graphwarSoldierContainsHitPoint } from "../../pathfinding/targeting";
 
 interface GraphwarStageHitTestingOptions<TSoldier extends GraphwarDetectionBox> {
   /** 当前可见士兵列表；应由页面先应用工作流过滤，命中测试只负责逆序选中。 */

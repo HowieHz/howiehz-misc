@@ -12,7 +12,7 @@ import {
   type GraphwarSmartPathfindingSoldierTarget,
   type GraphwarTargetingGeometry,
   type GraphwarTargetingSoldier,
-} from "../../pathfinding/graphwar-targeting";
+} from "../../pathfinding/targeting";
 
 interface ReadonlyRef<T> {
   readonly value: T;

@@ -1,6 +1,9 @@
-import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
-import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectoryTargetCircle } from "../formula/trajectory-sampling";
-import type { GraphwarSmartPathfindingPathInput } from "./graphwar-pathfinding-worker-types";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type {
+  GraphwarTrajectoryFormulaSettings,
+  GraphwarTrajectoryTargetCircle,
+} from "../../formula/trajectory-sampling";
+import type { GraphwarSmartPathfindingPathInput } from "../runtime/worker-types";
 
 /** 智能寻路搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
 export interface GraphwarSmartPathfindingSearchTolerances {

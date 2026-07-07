@@ -15,7 +15,7 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 - [core/](./core/)：Graphwar 常量、坐标换算、数值工具、基础类型和前进规则。
 - [formula/](./formula/)：表达式解析、公式生成、轨迹采样和模拟器逻辑。
 - [detection/](./detection/)：截图识别、障碍 mask、士兵模板匹配和识别 worker 消息类型。
-- [pathfinding/](./pathfinding/)：智能寻路、一键清图、寻路缓存、runner 和 worker 消息类型。
+- [pathfinding/](./pathfinding/)：路径规划相关模块；`routing/` 放共享几何寻路算法，`smart/` 放普通智能寻路，`one-click-clear/` 放一键清图，`runtime/` 放缓存、runner 和 worker 消息类型，`targeting.ts` 放共享目标选择规则。
 - [controllers/](./controllers/)：页面控制器，负责截图输入、路径编辑、检测流程、舞台交互和寻路会话等状态编排。
 - [presentation/](./presentation/)：展示层模块，包含页面面板、截图舞台 SVG 覆盖层、状态文案聚合与耗时格式化。
 - [workers/](./workers/)：Web Worker 入口文件。

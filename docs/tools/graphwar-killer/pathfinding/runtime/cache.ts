@@ -1,18 +1,18 @@
-import { createPixelPoint, type BoundsRect, type GraphBounds, type PixelPoint } from "../core/types";
+import { createPixelPoint, type BoundsRect, type GraphBounds, type PixelPoint } from "../../core/types";
 import {
   addSoldierAreasToObstacleMask,
   dilateObstacleMask,
   type GraphwarDetectionBox,
-} from "../detection/graphwar-detection";
-import type { GraphwarTrajectoryFormulaSettings } from "../formula/trajectory-sampling";
-import type { GraphwarOneClickClearCandidate } from "./graphwar-one-click-clear";
-import { createRouteMaskCacheKey } from "./graphwar-pathfinding";
+} from "../../detection/graphwar-detection";
+import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory-sampling";
+import type { GraphwarOneClickClearCandidate } from "../one-click-clear/search";
+import { createRouteMaskCacheKey } from "../routing/visibility-graph";
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
-} from "./graphwar-pathfinding-worker-types";
+} from "./worker-types";
 
 const smartPathfindingResultCacheLimit = 64;
 const oneClickClearResultCacheLimit = 16;

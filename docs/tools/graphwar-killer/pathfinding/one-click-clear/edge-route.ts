@@ -1,9 +1,12 @@
-import { planeGridCellCenterToImagePoint } from "../core/plane-grid";
-import type { BoundsRect, GraphBounds } from "../core/types";
+import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
+import type { BoundsRect, GraphBounds } from "../../core/types";
+import {
+  buildGraphwarVisibilityGraphPathForMask,
+  type GraphwarVisibilityGraphObstacleData,
+} from "../routing/visibility-graph";
+import type { GraphwarOneClickClearEdgeWorkerJobResult } from "../runtime/worker-types";
 /** 一键清图 DAG 单边建路；master 串行 fallback 和 edge Worker 并行消费者共用同一条路线规则。 */
-import type { GraphwarOneClickClearDagEdgeBuildJob } from "./graphwar-one-click-clear";
-import { buildSmartPathfindingPathForMask, type GraphwarVisibilityGraphObstacleData } from "./graphwar-pathfinding";
-import type { GraphwarOneClickClearEdgeWorkerJobResult } from "./graphwar-pathfinding-worker-types";
+import type { GraphwarOneClickClearDagEdgeBuildJob } from "./search";
 
 /** 单边建路所需的共享上下文；visibilityGraphObstacleData 的生命周期由调用方控制。 */
 export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
@@ -33,7 +36,7 @@ export async function buildOneClickClearDagEdgeRoute(
   job: GraphwarOneClickClearDagEdgeBuildJob,
 ): Promise<GraphwarOneClickClearEdgeWorkerJobResult> {
   const pathfindingStartedAt = performance.now();
-  const route = await buildSmartPathfindingPathForMask({
+  const route = await buildGraphwarVisibilityGraphPathForMask({
     bounds: context.bounds,
     boundsRect: context.boundsRect,
     boundaryExpansion: context.boundaryExpansion,

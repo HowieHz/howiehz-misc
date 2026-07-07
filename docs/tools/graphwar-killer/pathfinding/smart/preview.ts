@@ -1,6 +1,6 @@
-import { mirrorPlaneGridPoint, planeGridCellCenterToImagePoint, type PlaneGridPoint } from "../core/plane-grid";
-import type { BoundsRect, PixelPoint } from "../core/types";
-import type { GraphwarPathfindingPreview } from "./graphwar-pathfinding";
+import { mirrorPlaneGridPoint, planeGridCellCenterToImagePoint, type PlaneGridPoint } from "../../core/plane-grid";
+import type { BoundsRect, PixelPoint } from "../../core/types";
+import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
 
 /** SVG 线段 DTO，避免模板里重复计算 x1/y1/x2/y2。 */
 export interface GraphwarPathfindingLineSegment {

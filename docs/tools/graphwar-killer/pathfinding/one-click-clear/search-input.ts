@@ -1,7 +1,10 @@
-import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
-import type { GraphwarTrajectoryFormulaSettings, GraphwarTrajectoryTargetCircle } from "../formula/trajectory-sampling";
-import type { GraphwarOneClickClearCandidate } from "./graphwar-one-click-clear";
-import type { GraphwarOneClickClearPathWorkerInput } from "./graphwar-pathfinding-worker-types";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type {
+  GraphwarTrajectoryFormulaSettings,
+  GraphwarTrajectoryTargetCircle,
+} from "../../formula/trajectory-sampling";
+import type { GraphwarOneClickClearPathWorkerInput } from "../runtime/worker-types";
+import type { GraphwarOneClickClearCandidate } from "./search";
 
 /** 一键清图搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
 export interface GraphwarOneClickClearSearchTolerances {

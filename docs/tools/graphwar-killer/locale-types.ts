@@ -5,7 +5,7 @@ import type { GraphwarDetectionWorkerTimingDetail } from "./detection/graphwar-d
 import type {
   GraphwarOneClickClearDebugDetail,
   GraphwarOneClickClearDebugStage,
-} from "./pathfinding/graphwar-one-click-clear";
+} from "./pathfinding/one-click-clear/search";
 
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
 export type GraphwarKillerStopReason = "invalid" | "max-steps" | "out-of-bounds" | "too-steep";

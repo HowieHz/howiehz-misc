@@ -1,5 +1,4 @@
-import type { PixelPoint } from "../core/types";
-import type { GraphwarOneClickClearCandidate } from "./graphwar-one-click-clear";
+import type { PixelPoint } from "../../core/types";
 import {
   getGraphwarSoldierCenter,
   graphwarSoldierContainsHitPoint,
@@ -7,7 +6,8 @@ import {
   graphwarSoldierReachesForward,
   type GraphwarTargetingGeometry,
   type GraphwarTargetingSoldier,
-} from "./graphwar-targeting";
+} from "../targeting";
+import type { GraphwarOneClickClearCandidate } from "./search";
 
 /** 一键清图目标收集只需要稳定 id、命中圈和 Graphwar 源码中心。 */
 export interface GraphwarOneClickClearTargetSoldier extends GraphwarTargetingSoldier {

@@ -1,12 +1,18 @@
 import type { Ref } from "vue";
 
-import { graphToImagePoint } from "../core/geometry";
+import { graphToImagePoint } from "../../core/geometry";
 import {
   normalizePathForMinimumForwardStep,
   normalizePathPointForStrictForward,
   pathFollowsGraphRule,
-} from "../core/graphwar-forward-rule";
-import { createGraphPoint, type BoundsRect, type GraphBounds, type GraphPoint, type PixelPoint } from "../core/types";
+} from "../../core/graphwar-forward-rule";
+import {
+  createGraphPoint,
+  type BoundsRect,
+  type GraphBounds,
+  type GraphPoint,
+  type PixelPoint,
+} from "../../core/types";
 import type { GraphwarPathStateController, PathPointCoordinateAxis } from "./use-graphwar-path-state";
 
 type PathPointCoordinateState = Pick<

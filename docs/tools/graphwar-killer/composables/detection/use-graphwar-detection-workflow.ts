@@ -1,15 +1,15 @@
 import { nextTick, ref, type Ref } from "vue";
 
-import type { BoundsRect } from "../core/types";
-import type { GraphwarDetectionBox, GraphwarObjectsDetectionResult } from "../detection/graphwar-detection";
+import type { BoundsRect } from "../../core/types";
+import type { GraphwarDetectionBox, GraphwarObjectsDetectionResult } from "../../detection/graphwar-detection";
 import {
   createGraphwarDetectionRunner,
   isGraphwarDetectionCancelledError,
   type GraphwarDetectionWorkerStage,
   type GraphwarDetectionWorkerTimingEntry,
-} from "../detection/graphwar-detection-runner";
-import type { GraphwarKillerLocale } from "../locale-types";
-import type { DetectionDebugTimingEntry } from "./use-graphwar-debug-timings";
+} from "../../detection/graphwar-detection-runner";
+import type { GraphwarKillerLocale } from "../../locale-types";
+import type { DetectionDebugTimingEntry } from "../debug/use-graphwar-debug-timings";
 
 const graphwarDetectionRefreshDelayMs = 180;
 

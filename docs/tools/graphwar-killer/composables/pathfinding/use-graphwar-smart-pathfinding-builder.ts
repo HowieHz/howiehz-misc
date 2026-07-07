@@ -1,30 +1,30 @@
-import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
-import type { GraphwarTrajectoryFormulaSettings } from "../formula/trajectory-sampling";
-import type { GraphwarPathfindingPreview } from "../pathfinding/graphwar-pathfinding";
-import type { GraphwarPathfindingResultCacheTimingEntry } from "../pathfinding/graphwar-pathfinding-cache";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory-sampling";
+import type { GraphwarPathfindingPreview } from "../../pathfinding/graphwar-pathfinding";
+import type { GraphwarPathfindingResultCacheTimingEntry } from "../../pathfinding/graphwar-pathfinding-cache";
 import {
   createGraphwarPathfindingPreviewSnapshot,
   type GraphwarPathfindingPreviewSnapshot,
-} from "../pathfinding/graphwar-pathfinding-preview";
+} from "../../pathfinding/graphwar-pathfinding-preview";
 import {
   isGraphwarPathfindingCancelledError,
   type GraphwarPathfindingRunOptions,
-} from "../pathfinding/graphwar-pathfinding-runner";
+} from "../../pathfinding/graphwar-pathfinding-runner";
 import type {
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
   GraphwarSmartPathfindingWorkerTiming,
-} from "../pathfinding/graphwar-pathfinding-worker-types";
+} from "../../pathfinding/graphwar-pathfinding-worker-types";
 import {
   createGraphwarSmartPathfindingSearchInput,
   type GraphwarSmartPathfindingSearchTolerances,
-} from "../pathfinding/graphwar-smart-pathfinding-search-input";
+} from "../../pathfinding/graphwar-smart-pathfinding-search-input";
 import {
   createGraphwarSmartPathfindingHitTarget,
   getGraphwarSmartPathfindingAppendedSegment,
-} from "../pathfinding/graphwar-smart-pathfinding-trajectory";
-import type { GraphwarSmartPathfindingSoldierTarget } from "../pathfinding/graphwar-targeting";
-import type { SmartPathfindingDebugTimingEntry } from "./use-graphwar-debug-timings";
+} from "../../pathfinding/graphwar-smart-pathfinding-trajectory";
+import type { GraphwarSmartPathfindingSoldierTarget } from "../../pathfinding/graphwar-targeting";
+import type { SmartPathfindingDebugTimingEntry } from "../debug/use-graphwar-debug-timings";
 import type { GraphwarSmartPathfindingRunBuildResult } from "./use-graphwar-smart-pathfinding-run-workflow";
 
 type GraphwarSmartPathfindingBuildTarget = PixelPoint | GraphwarSmartPathfindingSoldierTarget;

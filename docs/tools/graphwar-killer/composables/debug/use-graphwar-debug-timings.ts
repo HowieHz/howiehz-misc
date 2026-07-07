@@ -3,14 +3,14 @@ import { computed, ref, type ComputedRef } from "vue";
 import type {
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
-} from "../detection/graphwar-detection-runner";
-import type { GraphwarKillerLocale } from "../locale-types";
+} from "../../detection/graphwar-detection-runner";
+import type { GraphwarKillerLocale } from "../../locale-types";
 import type {
   GraphwarOneClickClearDebugDetail,
   GraphwarOneClickClearDebugStage,
   GraphwarOneClickClearDebugTiming,
-} from "../pathfinding/graphwar-one-click-clear";
-import type { GraphwarSmartPathfindingWorkerTiming } from "../pathfinding/graphwar-pathfinding-worker-types";
+} from "../../pathfinding/graphwar-one-click-clear";
+import type { GraphwarSmartPathfindingWorkerTiming } from "../../pathfinding/graphwar-pathfinding-worker-types";
 
 /** 识别调试耗时阶段。 */
 export type DetectionDebugStage =

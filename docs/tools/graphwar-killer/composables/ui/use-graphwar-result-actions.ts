@@ -1,6 +1,6 @@
 import { computed, ref, type Ref } from "vue";
 
-import type { FormulaResult, ToolWorkflowMode, TransferStatus } from "../core/types";
+import type { FormulaResult, ToolWorkflowMode, TransferStatus } from "../../core/types";
 
 const graphwarCopyStatusFlashMs = 2000;
 

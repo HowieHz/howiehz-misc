@@ -1,6 +1,6 @@
 import { ref, type Ref } from "vue";
 
-import type { GraphwarDetectionBox } from "../detection/graphwar-detection";
+import type { GraphwarDetectionBox } from "../../detection/graphwar-detection";
 
 const graphwarStageFeedbackFlashMs = 1600;
 

@@ -1,11 +1,11 @@
 import { ref, type Ref } from "vue";
 
-import type { PixelPoint } from "../core/types";
+import type { PixelPoint } from "../../core/types";
 import {
   createGraphwarPathfindingLineSegment,
   type GraphwarPathfindingLineSegment,
   type GraphwarPathfindingPreviewSnapshot,
-} from "../pathfinding/graphwar-pathfinding-preview";
+} from "../../pathfinding/graphwar-pathfinding-preview";
 
 export type SmartPathfindingStatusKind = "info" | "success" | "warning" | "error";
 export type SmartPathfindingPhase = "optimize" | "search" | "trajectory";

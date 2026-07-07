@@ -1,6 +1,6 @@
 import { computed, ref, type Ref } from "vue";
 
-import { imageToGraphPoint, normalizePathPoint } from "../core/geometry";
+import { imageToGraphPoint, normalizePathPoint } from "../../core/geometry";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -10,8 +10,8 @@ import type {
   PixelPoint,
   ToolMode,
   ToolWorkflowMode,
-} from "../core/types";
-import type { GraphwarDetectionBox } from "../detection/graphwar-detection";
+} from "../../core/types";
+import type { GraphwarDetectionBox } from "../../detection/graphwar-detection";
 import {
   createGraphwarTrajectoryFormulaContext,
   sampleGraphwarExpressionTrajectoryWithStops,
@@ -19,10 +19,10 @@ import {
   type GraphwarTrajectoryCollisionSettings,
   type GraphwarTrajectoryFormulaSettings,
   type GraphwarTrajectorySampleResult,
-} from "../formula/trajectory-sampling";
-import type { GraphwarPathfindingLineSegment } from "../pathfinding/graphwar-pathfinding-preview";
-import type { GraphwarSmartPathfindingSoldierTarget } from "../pathfinding/graphwar-targeting";
-import { formatVisibleTrajectoryPoints } from "./use-graphwar-trajectory-result";
+} from "../../formula/trajectory-sampling";
+import type { GraphwarPathfindingLineSegment } from "../../pathfinding/graphwar-pathfinding-preview";
+import type { GraphwarSmartPathfindingSoldierTarget } from "../../pathfinding/graphwar-targeting";
+import { formatVisibleTrajectoryPoints } from "../path/use-graphwar-trajectory-result";
 
 interface ReadonlyRef<T> {
   readonly value: T;

@@ -1,6 +1,6 @@
 import { computed } from "vue";
 
-import { formatSvgNumber } from "../core/numbers";
+import { formatSvgNumber } from "../../core/numbers";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -10,8 +10,8 @@ import type {
   GraphPoint,
   PixelPoint,
   ToolWorkflowMode,
-} from "../core/types";
-import { buildFormula } from "../formula/formula";
+} from "../../core/types";
+import { buildFormula } from "../../formula/formula";
 import {
   createGraphwarTrajectoryFormulaContext,
   findGraphwarTrajectoryTargetHitIndex,
@@ -20,7 +20,7 @@ import {
   sampleGraphwarFormulaTrajectory,
   type GraphwarTrajectoryCollisionSettings,
   type GraphwarTrajectoryFormulaSettings,
-} from "../formula/trajectory-sampling";
+} from "../../formula/trajectory-sampling";
 
 interface ReadonlyRef<T> {
   readonly value: T;

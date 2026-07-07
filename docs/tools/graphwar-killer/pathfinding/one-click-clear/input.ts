@@ -1,3 +1,4 @@
+import { GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type {
   GraphwarTrajectoryFormulaSettings,
@@ -10,8 +11,8 @@ import type { GraphwarOneClickClearCandidate } from "./search";
 export interface GraphwarOneClickClearSearchTolerances {
   /** 障碍和棋盘边界命中检测的内收像素。 */
   boundaryExpansionPlanePixels: number;
-  /** 一键清图删点局部保护半径，单位为截图像素。 */
-  oneClickClearDeleteCheckRadiusPixels: number;
+  /** 一键清图删点局部保护半径，单位为 Graphwar 原始平面像素。 */
+  oneClickClearDeleteCheckRadiusPlanePixels: number;
   /** 几何路线规划容差，单位为 Graphwar 原始平面像素。 */
   routePlanningTolerancePlanePixels: number;
 }
@@ -121,7 +122,8 @@ export function createGraphwarOneClickClearSearchInput(
     boundsRect: options.boundsRect,
     candidates: options.candidates,
     dagEdgeWorkerCount: options.dagEdgeWorkerCount,
-    deleteCheckRadiusPixels: options.tolerances.oneClickClearDeleteCheckRadiusPixels,
+    deleteCheckRadiusPixels:
+      options.tolerances.oneClickClearDeleteCheckRadiusPlanePixels * (options.boundsRect.width / GRAPHWAR_PLANE_LENGTH),
     hitCandidates: options.hitCandidates,
     pathPoints: [...options.pathPoints],
     prefixTarget: options.prefixTarget,

@@ -74,8 +74,7 @@ export const graphwarKillerLocale = {
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
     oneClickClearDeleteCheckRadiusNumber: "One-Click Clear delete-check radius must be a number",
-    oneClickClearDeleteCheckRadiusRange: (min, max) =>
-      `One-Click Clear delete-check radius must be between ${min}px and ${max}px`,
+    oneClickClearDeleteCheckRadiusRange: (min) => `One-Click Clear delete-check radius must be at least ${min}px`,
     pathfindingWorkerCountInteger: "Pathfinding parallelism must be an integer",
     pathfindingWorkerCountRange: "Pathfinding parallelism must be between 1 and 128",
     routePlanningToleranceNumber: "Route planning tolerance must be a number",
@@ -591,9 +590,9 @@ export const graphwarKillerLocale = {
         "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
       oneClickClearDeleteCheckRadius: "Clear delete-check radius",
       oneClickClearDeleteCheckRadiusAriaLabel:
-        "One-Click Clear local hit check radius for delete optimization, in screenshot pixels",
+        "One-Click Clear local hit check radius for delete optimization, in raw Graphwar 770x450 plane pixels",
       oneClickClearDeleteCheckRadiusTitle:
-        "Local hit-preservation radius used by One-Click Clear delete optimization. Range: 1px to the current soldier hit-circle radius. Final full-route validation still uses the real hit circle.",
+        "Local hit-preservation radius used by One-Click Clear delete optimization, in raw Graphwar 770x450 plane pixels. Use 0 to skip the local guard and rely only on final full-route validation.",
       oneClickClearTitle:
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
       routePlanningTolerance: "Route planning tolerance",

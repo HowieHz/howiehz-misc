@@ -116,8 +116,9 @@ const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const magnifierMinimumZoom = 1;
 const magnifierSliderMaximumZoom = 5;
 const magnifierInputMaximumZoom = 100;
-const oneClickClearDeleteCheckRadiusMinimumPixels = 1;
-const oneClickClearDeleteCheckRadiusDefaultPixels = 3.5;
+const oneClickClearDeleteCheckRadiusMinimumPlanePixels = 0;
+// 默认值应对应 Graphwar 原版士兵命中半径 7px 的一半；搜索前再按截图横向比例换算。
+const oneClickClearDeleteCheckRadiusDefaultPlanePixels = GRAPHWAR_SOLDIER_RADIUS / 2;
 const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
@@ -166,7 +167,7 @@ const pathfindingWorkerCountText = ref(String(graphwarToolDefaults.pathfindingWo
 const routePlanningToleranceText = ref(String(GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS));
 const obstacleSimulationToleranceText = ref("1");
 const pathfindingBoundaryExpansionText = ref("1");
-const oneClickClearDeleteCheckRadiusText = ref(String(oneClickClearDeleteCheckRadiusDefaultPixels));
+const oneClickClearDeleteCheckRadiusText = ref(String(oneClickClearDeleteCheckRadiusDefaultPlanePixels));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
 // 路径状态已独立在 composable 中；页面只负责把当前工作流模式和交互事件接进去。
@@ -473,7 +474,6 @@ const {
     },
     pathfinding: {
       boundaryExpansionText: pathfindingBoundaryExpansionText,
-      getSoldierMarkerRadius,
       oneClickClearDeleteCheckRadiusText,
       routePlanningToleranceText,
       simulationToleranceText: obstacleSimulationToleranceText,
@@ -494,7 +494,7 @@ const {
     },
     pathfinding: {
       boundaryExpansionLimit: graphwarBoundaryExpansionLimit,
-      deleteCheckRadiusMinimumPixels: oneClickClearDeleteCheckRadiusMinimumPixels,
+      deleteCheckRadiusMinimumPlanePixels: oneClickClearDeleteCheckRadiusMinimumPlanePixels,
       obstacleToleranceLimit: graphwarObstacleToleranceLimit,
     },
   },
@@ -1241,10 +1241,9 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
   },
   pathfinding: {
     obstacleSimulationToleranceText: obstacleSimulationToleranceText.value,
-    oneClickClearDeleteCheckRadiusMinimumPixels,
+    oneClickClearDeleteCheckRadiusMinimumPlanePixels,
     oneClickClearDeleteCheckRadiusText: oneClickClearDeleteCheckRadiusText.value,
     routePlanningToleranceText: routePlanningToleranceText.value,
-    soldierMarkerRadius: soldierMarkerRadius.value,
     workerCountText: pathfindingWorkerCountText.value,
   },
   recognition: {

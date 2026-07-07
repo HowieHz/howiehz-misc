@@ -42,10 +42,13 @@ export type ParsedObstacleTolerances =
 /** 一键清图容差解析结果；在普通寻路容差之上追加删点局部校验半径。 */
 export type ParsedOneClickClearTolerances =
   | (Extract<ParsedObstacleTolerances, { ok: true }> & {
-      oneClickClearDeleteCheckRadiusPixels: number;
+      oneClickClearDeleteCheckRadiusPlanePixels: number;
     })
   | { ok: false; message: string };
-interface ParsedSettingsFailure { ok: false; message: string }
+interface ParsedSettingsFailure {
+  ok: false;
+  message: string;
+}
 type ParsedObstacleToleranceValues = Extract<ParsedObstacleTolerances, { ok: true }>;
 
 interface GraphwarSettingsValidationInputs {
@@ -76,10 +79,9 @@ interface GraphwarSettingsValidationInputs {
   obstacleBrush: {
     diameterText: GraphwarReadonlyRef<string>;
   };
-  /** 寻路校验依赖当前士兵标记半径，半径应在消费时读取最新页面状态。 */
+  /** 寻路校验只解析用户输入；截图像素换算应留给具体消费方。 */
   pathfinding: {
     boundaryExpansionText: GraphwarReadonlyRef<string>;
-    getSoldierMarkerRadius: () => number;
     oneClickClearDeleteCheckRadiusText: GraphwarReadonlyRef<string>;
     routePlanningToleranceText: GraphwarReadonlyRef<string>;
     simulationToleranceText: GraphwarReadonlyRef<string>;
@@ -101,7 +103,7 @@ interface GraphwarSettingsValidationLimits {
   };
   pathfinding: {
     boundaryExpansionLimit: number;
-    deleteCheckRadiusMinimumPixels: number;
+    deleteCheckRadiusMinimumPlanePixels: number;
     obstacleToleranceLimit: number;
   };
 }
@@ -283,10 +285,10 @@ export function useGraphwarSettingsValidation(
     }
 
     const validation = options.getLocale().validation;
-    const oneClickClearDeleteCheckRadiusPixels = parseFiniteNumber(
+    const oneClickClearDeleteCheckRadiusPlanePixels = parseFiniteNumber(
       options.inputs.pathfinding.oneClickClearDeleteCheckRadiusText.value,
     );
-    if (oneClickClearDeleteCheckRadiusPixels === undefined) {
+    if (oneClickClearDeleteCheckRadiusPlanePixels === undefined) {
       return { ok: false as const, message: validation.oneClickClearDeleteCheckRadiusNumber };
     }
 
@@ -295,23 +297,18 @@ export function useGraphwarSettingsValidation(
       return rangeResult;
     }
 
-    const deleteCheckRadiusMaximumPixels = options.inputs.pathfinding.getSoldierMarkerRadius();
-    if (
-      oneClickClearDeleteCheckRadiusPixels < options.limits.pathfinding.deleteCheckRadiusMinimumPixels ||
-      oneClickClearDeleteCheckRadiusPixels > deleteCheckRadiusMaximumPixels
-    ) {
+    if (oneClickClearDeleteCheckRadiusPlanePixels < options.limits.pathfinding.deleteCheckRadiusMinimumPlanePixels) {
       return {
         ok: false as const,
         message: validation.oneClickClearDeleteCheckRadiusRange(
-          options.limits.pathfinding.deleteCheckRadiusMinimumPixels,
-          deleteCheckRadiusMaximumPixels,
+          options.limits.pathfinding.deleteCheckRadiusMinimumPlanePixels,
         ),
       };
     }
 
     return {
       ...toleranceValues,
-      oneClickClearDeleteCheckRadiusPixels,
+      oneClickClearDeleteCheckRadiusPlanePixels,
     };
   });
 

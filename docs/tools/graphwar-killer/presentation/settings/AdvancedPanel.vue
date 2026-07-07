@@ -45,10 +45,8 @@ interface GraphwarAdvancedSettingsPathfinding {
   workerCountText: string;
   /** 一键清图删除检测半径输入框文本。 */
   oneClickClearDeleteCheckRadiusText: string;
-  /** 一键清图删除检测半径最小值。 */
-  oneClickClearDeleteCheckRadiusMinimumPixels: number;
-  /** 当前士兵命中半径；父页面应按当前坐标边界计算。 */
-  soldierMarkerRadius: number;
+  /** 一键清图删除检测半径最小值，单位为 Graphwar 原始平面像素。 */
+  oneClickClearDeleteCheckRadiusMinimumPlanePixels: number;
 }
 
 export interface GraphwarAdvancedSettingsPanelModel {
@@ -380,8 +378,7 @@ const oneClickClearDeleteCheckRadiusText = computed({
           <input
             v-model="oneClickClearDeleteCheckRadiusText"
             inputmode="decimal"
-            :min="panel.pathfinding.oneClickClearDeleteCheckRadiusMinimumPixels"
-            :max="panel.pathfinding.soldierMarkerRadius"
+            :min="panel.pathfinding.oneClickClearDeleteCheckRadiusMinimumPlanePixels"
             step="0.1"
             :aria-label="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusAriaLabel"
             :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"

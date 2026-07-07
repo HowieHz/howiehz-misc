@@ -45,7 +45,7 @@ export const graphwarKillerLocale = {
     obstacleMinAreaInteger: "障碍最小面积需要填写整数",
     obstacleMinAreaRange: (max) => `障碍最小面积需要在 0 到 ${max} 之间`,
     oneClickClearDeleteCheckRadiusNumber: "一键清图删点检验半径需要填写数字",
-    oneClickClearDeleteCheckRadiusRange: (min, max) => `一键清图删点检验半径需要在 ${min}px 到 ${max}px 之间`,
+    oneClickClearDeleteCheckRadiusRange: (min) => `一键清图删点检验半径不能小于 ${min}px`,
     pathfindingWorkerCountInteger: "寻路并行数需要填写整数",
     pathfindingWorkerCountRange: "寻路并行数需要在 1 到 128 之间",
     routePlanningToleranceNumber: "路线规划容差需要填写数字",
@@ -503,9 +503,10 @@ export const graphwarKillerLocale = {
       obstacleExpansion: "障碍外扩",
       obstacleExpansionTitle: "调整识别出的障碍和边界在寻路、模拟碰撞时的安全距离。",
       oneClickClearDeleteCheckRadius: "清图删点检验半径",
-      oneClickClearDeleteCheckRadiusAriaLabel: "一键清图删点优化局部命中检验半径，单位为截图像素",
+      oneClickClearDeleteCheckRadiusAriaLabel:
+        "一键清图删点优化局部命中检验半径，单位为 Graphwar 原始 770x450 平面像素",
       oneClickClearDeleteCheckRadiusTitle:
-        "一键清图删点优化的局部命中保护半径；范围是 1px 到当前士兵命中圈半径。最终整路验证仍使用真实命中圈。",
+        "一键清图删点优化的局部命中保护半径，单位是 Graphwar 原始 770x450 平面像素；0 表示跳过局部保护，仅依赖最终整路验证。",
       oneClickClearTitle: "从当前路径尾部开始，自动追加路线并尽量按顺序击杀右侧可用士兵。",
       routePlanningTolerance: "路线规划容差",
       routePlanningToleranceAriaLabel: "路线规划容差，单位为 Graphwar 原始 770x450 平面像素",

@@ -113,7 +113,7 @@ export interface GraphwarKillerLocale {
     obstacleBrushDiameterInteger: string;
     obstacleBrushDiameterRange: (min: number, max: number) => string;
     oneClickClearDeleteCheckRadiusNumber: string;
-    oneClickClearDeleteCheckRadiusRange: (min: number, max: number) => string;
+    oneClickClearDeleteCheckRadiusRange: (min: number) => string;
     pathfindingWorkerCountInteger: string;
     pathfindingWorkerCountRange: string;
     routePlanningToleranceNumber: string;

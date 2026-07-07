@@ -18,6 +18,7 @@ import {
   type SmartPathfindingStatusKind,
 } from "./controllers/pathfinding/use-graphwar-smart-pathfinding-session";
 import { useGraphwarTargetingContext } from "./controllers/pathfinding/use-graphwar-targeting-context";
+import { useGraphwarSettingsValidation } from "./controllers/settings/use-graphwar-settings-validation";
 import { useGraphwarLiveClickPreview } from "./controllers/stage/use-graphwar-live-click-preview";
 import { useGraphwarObstacleEditor } from "./controllers/stage/use-graphwar-obstacle-editor";
 import { useGraphwarStageFeedback } from "./controllers/stage/use-graphwar-stage-feedback";
@@ -47,7 +48,6 @@ import {
   formatDoublePrecisionDecimal,
   formatSvgNumber,
   graphXAdvancesStrictly,
-  nearlyEqual,
   parseFiniteNumber,
 } from "./core/numbers";
 import { graphwarToolDefaults } from "./core/tool-defaults";
@@ -55,7 +55,6 @@ import type {
   AlgorithmMode,
   BoundsRect,
   EquationMode,
-  GraphBounds,
   GraphPoint,
   PixelPoint,
   ToolMode,
@@ -111,38 +110,6 @@ import {
   createSmartPathfindingSuccessMessage,
 } from "./presentation/status/pathfinding-status";
 
-/** 坐标边界解析结果；失败分支直接携带本地化校验文案。 */
-type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: string };
-/** Step 陡峭度解析结果；只有 step 算法会消费成功值。 */
-type ParsedSteepness = { ok: true; steepness: number } | { ok: false; message: string };
-/** 公式输出小数位解析结果；只控制生成公式文本，不约分内部路径点或发射点。 */
-type ParsedPrecision = { ok: true; decimalPlaces: number } | { ok: false; message: string };
-/** 识别设定解析结果，失败时阻止重新识别。 */
-type ParsedDetectionSettings =
-  | {
-      ok: true;
-      candidateTopRatio: number;
-      maximumSoldierCount: number;
-      minArea: number;
-      templateMatchingWorkerCount: number;
-    }
-  | { ok: false; message: string };
-/** 放大镜倍率解析结果；允许输入框超过滑条快速范围。 */
-type ParsedMagnifierZoom = { ok: true; zoom: number } | { ok: false; message: string };
-/** 障碍笔刷直径解析结果，单位为 Graphwar 原始 770x450 平面像素。 */
-type ParsedObstacleBrushDiameter = { ok: true; diameter: number } | { ok: false; message: string };
-/** 寻路并行数解析结果；1 表示一键清图 DAG 建边在 master worker 内串行执行。 */
-type ParsedPathfindingWorkerCount = { ok: true; workerCount: number } | { ok: false; message: string };
-/** 寻路容差解析结果；所有距离都使用 Graphwar 原始 770x450 平面像素。 */
-type ParsedObstacleTolerances =
-  | {
-      ok: true;
-      boundaryExpansionPlanePixels: number;
-      oneClickClearDeleteCheckRadiusPixels: number;
-      routePlanningTolerancePlanePixels: number;
-      simulationTolerancePlanePixels: number;
-    }
-  | { ok: false; message: string };
 /** 寻路模式；auto-graph 保留为待重写的禁用入口。 */
 type PathfindingMode = "off" | "smart" | "auto-graph";
 /** 截图上的检测框，坐标均为图片像素。 */
@@ -478,193 +445,82 @@ const equationModes = computed(() => locale.equationModes);
 const toolWorkflowModes = computed(() => locale.toolWorkflowModes);
 const algorithmModes = computed(() => locale.algorithmModes);
 
-const parsedBounds = computed<ParsedBounds>(() => {
-  const minX = parseFiniteNumber(minXText.value);
-  const maxX = parseFiniteNumber(maxXText.value);
-  const minY = parseFiniteNumber(minYText.value);
-  const maxY = parseFiniteNumber(maxYText.value);
-
-  if (minX === undefined || maxX === undefined || minY === undefined || maxY === undefined) {
-    return { ok: false as const, message: locale.validation.boundsInvalidNumber };
-  }
-
-  if (minX >= maxX || nearlyEqual(minX, maxX)) {
-    return { ok: false as const, message: locale.validation.maxXGreaterThanMinX };
-  }
-  if (minY >= maxY || nearlyEqual(minY, maxY)) {
-    return { ok: false as const, message: locale.validation.maxYGreaterThanMinY };
-  }
-
-  return { ok: true as const, bounds: { minX, maxX, minY, maxY } };
+// 设置校验应集中维护输入解析、错误优先级和上限约束；页面应只消费解析结果。
+const {
+  parsedBounds,
+  parsedDetectionSettings,
+  parsedMagnifierZoom,
+  parsedObstacleBrushDiameter,
+  parsedObstacleTolerances,
+  parsedPathfindingWorkerCount,
+  parsedPrecision,
+  parsedSteepness,
+} = useGraphwarSettingsValidation({
+  getLocale: () => locale,
+  inputs: {
+    bounds: {
+      maxXText,
+      maxYText,
+      minXText,
+      minYText,
+    },
+    detection: {
+      maximumSoldierCountText,
+      obstacleMinAreaText,
+      soldierTemplateCandidateTopRatioText,
+      templateMatchingWorkerCountText,
+    },
+    formula: {
+      precisionText,
+      steepnessText,
+    },
+    magnifier: {
+      zoomText: magnifierZoomText,
+    },
+    obstacleBrush: {
+      diameterText: obstacleBrushDiameterText,
+    },
+    pathfinding: {
+      boundaryExpansionText: pathfindingBoundaryExpansionText,
+      getSoldierMarkerRadius,
+      oneClickClearDeleteCheckRadiusText,
+      routePlanningToleranceText,
+      simulationToleranceText: obstacleSimulationToleranceText,
+      workerCountText: pathfindingWorkerCountText,
+    },
+  },
+  limits: {
+    detection: {
+      obstacleMaximumArea: graphwarObstacleMaxArea,
+    },
+    magnifier: {
+      inputMaximumZoom: magnifierInputMaximumZoom,
+      minimumZoom: magnifierMinimumZoom,
+    },
+    obstacleBrush: {
+      inputMaximumDiameter: obstacleBrushInputMaximumDiameter,
+      minimumDiameter: obstacleBrushMinimumDiameter,
+    },
+    pathfinding: {
+      boundaryExpansionLimit: graphwarBoundaryExpansionLimit,
+      deleteCheckRadiusMinimumPixels: oneClickClearDeleteCheckRadiusMinimumPixels,
+      obstacleToleranceLimit: graphwarObstacleToleranceLimit,
+    },
+  },
 });
 
-const parsedSteepness = computed<ParsedSteepness>(() => {
-  const steepness = parseFiniteNumber(steepnessText.value);
-  if (steepness === undefined || steepness <= 0) {
-    return { ok: false as const, message: locale.validation.stepSteepnessNumber };
-  }
-  return { ok: true as const, steepness };
-});
-
-const parsedPrecision = computed<ParsedPrecision>(() => {
-  const decimalPlaces = parseFiniteNumber(precisionText.value);
-  if (decimalPlaces === undefined || !Number.isInteger(decimalPlaces)) {
-    return { ok: false as const, message: locale.validation.decimalPlacesInteger };
-  }
-  if (decimalPlaces < 0 || decimalPlaces > MAX_FORMULA_DECIMAL_PLACES) {
-    return { ok: false as const, message: locale.validation.decimalPlacesRange(MAX_FORMULA_DECIMAL_PLACES) };
-  }
-  return { ok: true as const, decimalPlaces };
-});
-
-const parsedDetectionSettings = computed<ParsedDetectionSettings>(() => {
-  const maximumSoldierCount = parseFiniteNumber(maximumSoldierCountText.value);
-  if (maximumSoldierCount === undefined || !Number.isInteger(maximumSoldierCount)) {
-    return { ok: false as const, message: locale.validation.maximumSoldierCountInteger };
-  }
-  if (maximumSoldierCount < 1) {
-    return { ok: false as const, message: locale.validation.maximumSoldierCountPositive };
-  }
-
-  const candidateTopRatio = parseFiniteNumber(soldierTemplateCandidateTopRatioText.value);
-  if (candidateTopRatio === undefined) {
-    return { ok: false as const, message: locale.validation.soldierTemplateCandidateTopRatioNumber };
-  }
-  if (candidateTopRatio <= 0 || candidateTopRatio > 1) {
-    return { ok: false as const, message: locale.validation.soldierTemplateCandidateTopRatioRange };
-  }
-
-  const templateMatchingWorkerCount = parseFiniteNumber(templateMatchingWorkerCountText.value);
-  if (templateMatchingWorkerCount === undefined || !Number.isInteger(templateMatchingWorkerCount)) {
-    return { ok: false as const, message: locale.validation.templateMatchingWorkerCountInteger };
-  }
-  if (templateMatchingWorkerCount < 1 || templateMatchingWorkerCount > 128) {
-    return { ok: false as const, message: locale.validation.templateMatchingWorkerCountRange };
-  }
-
-  const minArea = parseFiniteNumber(obstacleMinAreaText.value);
-  if (minArea === undefined || !Number.isInteger(minArea)) {
-    return { ok: false as const, message: locale.validation.obstacleMinAreaInteger };
-  }
-  if (minArea < 0 || minArea > graphwarObstacleMaxArea) {
-    return { ok: false as const, message: locale.validation.obstacleMinAreaRange(graphwarObstacleMaxArea) };
-  }
-
-  return { ok: true as const, candidateTopRatio, maximumSoldierCount, minArea, templateMatchingWorkerCount };
-});
-
-const parsedMagnifierZoom = computed<ParsedMagnifierZoom>(() => {
-  const zoom = parseFiniteNumber(magnifierZoomText.value);
-  if (zoom === undefined) {
-    return { ok: false as const, message: locale.validation.magnifierZoomNumber };
-  }
-  if (zoom < magnifierMinimumZoom || zoom > magnifierInputMaximumZoom) {
-    return {
-      ok: false as const,
-      message: locale.validation.magnifierZoomRange(magnifierMinimumZoom, magnifierInputMaximumZoom),
-    };
-  }
-  return { ok: true as const, zoom };
-});
-
-const parsedObstacleBrushDiameter = computed<ParsedObstacleBrushDiameter>(() => {
-  const diameter = parseFiniteNumber(obstacleBrushDiameterText.value);
-  if (diameter === undefined || !Number.isInteger(diameter)) {
-    return { ok: false as const, message: locale.validation.obstacleBrushDiameterInteger };
-  }
-  if (diameter < obstacleBrushMinimumDiameter || diameter > obstacleBrushInputMaximumDiameter) {
-    return {
-      ok: false as const,
-      message: locale.validation.obstacleBrushDiameterRange(
-        obstacleBrushMinimumDiameter,
-        obstacleBrushInputMaximumDiameter,
-      ),
-    };
-  }
-  return { ok: true as const, diameter };
-});
-
-const parsedPathfindingWorkerCount = computed<ParsedPathfindingWorkerCount>(() => {
-  const workerCount = parseFiniteNumber(pathfindingWorkerCountText.value);
-  if (workerCount === undefined || !Number.isInteger(workerCount)) {
-    return { ok: false as const, message: locale.validation.pathfindingWorkerCountInteger };
-  }
-  if (workerCount < 1 || workerCount > 128) {
-    return { ok: false as const, message: locale.validation.pathfindingWorkerCountRange };
-  }
-  return { ok: true as const, workerCount };
-});
-
-const parsedObstacleTolerances = computed<ParsedObstacleTolerances>(() => {
+function getSoldierMarkerRadius() {
   if (!parsedBounds.value.ok) {
-    return { ok: false as const, message: parsedBounds.value.message };
+    return GRAPHWAR_SOLDIER_RADIUS;
   }
 
-  const routePlanningTolerancePlanePixels = parseFiniteNumber(routePlanningToleranceText.value);
-  if (routePlanningTolerancePlanePixels === undefined) {
-    return { ok: false as const, message: locale.validation.routePlanningToleranceNumber };
+  const graphWidth = Math.abs(parsedBounds.value.bounds.maxX - parsedBounds.value.bounds.minX);
+  if (graphWidth <= 0) {
+    return GRAPHWAR_SOLDIER_RADIUS;
   }
 
-  const simulationTolerancePlanePixels = parseFiniteNumber(obstacleSimulationToleranceText.value);
-  if (simulationTolerancePlanePixels === undefined) {
-    return { ok: false as const, message: locale.validation.simulationToleranceNumber };
-  }
-
-  const boundaryExpansionPlanePixels = parseFiniteNumber(pathfindingBoundaryExpansionText.value);
-  if (boundaryExpansionPlanePixels === undefined) {
-    return { ok: false as const, message: locale.validation.boundaryExpansionNumber };
-  }
-  if (boundaryExpansionPlanePixels < 0) {
-    return { ok: false as const, message: locale.validation.boundaryExpansionNegative };
-  }
-
-  const oneClickClearDeleteCheckRadiusPixels = parseFiniteNumber(oneClickClearDeleteCheckRadiusText.value);
-  if (oneClickClearDeleteCheckRadiusPixels === undefined) {
-    return { ok: false as const, message: locale.validation.oneClickClearDeleteCheckRadiusNumber };
-  }
-
-  if (Math.abs(routePlanningTolerancePlanePixels) > graphwarObstacleToleranceLimit) {
-    return {
-      ok: false as const,
-      message: locale.validation.routePlanningTolerancePixelRange(graphwarObstacleToleranceLimit),
-    };
-  }
-
-  if (Math.abs(simulationTolerancePlanePixels) > graphwarObstacleToleranceLimit) {
-    return {
-      ok: false as const,
-      message: locale.validation.simulationTolerancePixelRange(graphwarObstacleToleranceLimit),
-    };
-  }
-
-  if (boundaryExpansionPlanePixels > graphwarBoundaryExpansionLimit) {
-    return {
-      ok: false as const,
-      message: locale.validation.boundaryExpansionPixelRange(graphwarBoundaryExpansionLimit),
-    };
-  }
-
-  if (
-    oneClickClearDeleteCheckRadiusPixels < oneClickClearDeleteCheckRadiusMinimumPixels ||
-    oneClickClearDeleteCheckRadiusPixels > soldierMarkerRadius.value
-  ) {
-    return {
-      ok: false as const,
-      message: locale.validation.oneClickClearDeleteCheckRadiusRange(
-        oneClickClearDeleteCheckRadiusMinimumPixels,
-        soldierMarkerRadius.value,
-      ),
-    };
-  }
-
-  return {
-    ok: true as const,
-    boundaryExpansionPlanePixels,
-    oneClickClearDeleteCheckRadiusPixels,
-    routePlanningTolerancePlanePixels,
-    simulationTolerancePlanePixels,
-  };
-});
+  return clampNumber((GRAPHWAR_GAME_SOLDIER_RADIUS / graphWidth) * boundsRect.value.width, 3, 32);
+}
 
 const mappedPathPoints = computed<GraphPoint[]>(() => {
   const boundsResult = parsedBounds.value;
@@ -1414,18 +1270,7 @@ function formatSvgPathPoints(points: readonly PixelPoint[]) {
 const stageStyle = computed(() => ({
   aspectRatio: `${imageWidth.value} / ${imageHeight.value}`,
 }));
-const soldierMarkerRadius = computed(() => {
-  if (!parsedBounds.value.ok) {
-    return GRAPHWAR_SOLDIER_RADIUS;
-  }
-
-  const graphWidth = Math.abs(parsedBounds.value.bounds.maxX - parsedBounds.value.bounds.minX);
-  if (graphWidth <= 0) {
-    return GRAPHWAR_SOLDIER_RADIUS;
-  }
-
-  return clampNumber((GRAPHWAR_GAME_SOLDIER_RADIUS / graphWidth) * boundsRect.value.width, 3, 32);
-});
+const soldierMarkerRadius = computed(getSoldierMarkerRadius);
 // 高级设置面板只应消费展示 DTO；输入校验、缓存失效和检测/寻路副作用仍由页面侧维护。
 const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() => ({
   bounds: {

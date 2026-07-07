@@ -1175,7 +1175,7 @@ const smartPathfindingHeaderStatusResult = computed(() =>
 );
 const pathfindingHeaderStatusResult = computed(() =>
   getFirstHeaderStatus(
-    createHeaderStatus(smartPathfindingSettingsMessage.value, "error"),
+    // 参数错误只应在智能寻路有效启用时展示；关闭状态会隐藏一键清图入口，不应泄漏其校验错误。
     createHeaderStatus(isSmartPathfindingDisabled() ? getSmartPathfindingDisabledMessage() : "", "warning"),
     smartPathfindingHeaderStatusResult.value,
   ),

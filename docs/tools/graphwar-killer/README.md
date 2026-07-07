@@ -17,7 +17,7 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 - [detection/](./detection/)：截图识别相关模块；`objects.ts` 放棋盘、障碍和士兵识别，`profile/` 放识别经验阈值，`runtime/` 放 runner 和 worker 消息类型，`template/` 放模板匹配子任务协议。
 - [pathfinding/](./pathfinding/)：路径规划相关模块；`routing/` 放共享几何寻路算法，`smart/` 放普通智能寻路，`one-click-clear/` 放一键清图，`runtime/` 放缓存、runner 和 worker 消息类型，`targeting.ts` 放共享目标选择规则。
 - [controllers/](./controllers/)：页面控制器，负责截图输入、路径编辑、检测流程、舞台交互和寻路会话等状态编排。
-- [presentation/](./presentation/)：展示层模块，包含页面面板、截图舞台 SVG 覆盖层、状态文案聚合与耗时格式化。
+- [presentation/](./presentation/)：展示层模块；页面面板按 `settings/`、`detection/`、`pathfinding/`、`action/`、`screenshot/`、`result/` 分组，`stage/` 放截图舞台 SVG 覆盖层，`status/` 放状态文案聚合与耗时格式化。
 - [workers/](./workers/)：Web Worker 入口文件。
 - [locale.ts](./locale.ts)：中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。
 

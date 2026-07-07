@@ -73,23 +73,19 @@ import {
   createBoundsRectWithBoundaryExpansion,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
 } from "./pathfinding/targeting";
-import GraphwarActionPanel from "./presentation/panels/GraphwarActionPanel.vue";
-import GraphwarAdvancedSettingsPanel, {
-  type GraphwarAdvancedSettingsPanelModel,
-} from "./presentation/panels/GraphwarAdvancedSettingsPanel.vue";
-import GraphwarDetectionPanel, {
-  type GraphwarDetectionPanelModel,
-} from "./presentation/panels/GraphwarDetectionPanel.vue";
-import GraphwarResultPanel from "./presentation/panels/GraphwarResultPanel.vue";
-import GraphwarScreenshotPanel, {
-  type GraphwarScreenshotPanelModel,
-} from "./presentation/panels/GraphwarScreenshotPanel.vue";
-import GraphwarSettingsPanel, {
-  type GraphwarSettingsPanelModel,
-} from "./presentation/panels/GraphwarSettingsPanel.vue";
+import GraphwarActionPanel from "./presentation/action/ActionPanel.vue";
+import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./presentation/detection/DetectionPanel.vue";
 import GraphwarSmartPathfindingPanel, {
   type GraphwarSmartPathfindingPanelModel,
-} from "./presentation/panels/GraphwarSmartPathfindingPanel.vue";
+} from "./presentation/pathfinding/SmartPathfindingPanel.vue";
+import GraphwarResultPanel from "./presentation/result/ResultPanel.vue";
+import GraphwarScreenshotPanel, {
+  type GraphwarScreenshotPanelModel,
+} from "./presentation/screenshot/ScreenshotPanel.vue";
+import GraphwarAdvancedSettingsPanel, {
+  type GraphwarAdvancedSettingsPanelModel,
+} from "./presentation/settings/AdvancedSettingsPanel.vue";
+import GraphwarSettingsPanel, { type GraphwarSettingsPanelModel } from "./presentation/settings/SettingsPanel.vue";
 import { formatElapsedDuration } from "./presentation/status/duration-format";
 import {
   createHeaderStatus,

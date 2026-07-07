@@ -13,13 +13,11 @@ import GraphwarSmartPathfindingPanel, {
   type GraphwarSmartPathfindingPanelModel,
 } from "./components/GraphwarSmartPathfindingPanel.vue";
 import { useGraphwarDebugActivation } from "./composables/use-graphwar-debug-activation";
-import {
-  useGraphwarDebugTimings,
-  type SmartPathfindingDebugTimingEntry,
-} from "./composables/use-graphwar-debug-timings";
+import { useGraphwarDebugTimings } from "./composables/use-graphwar-debug-timings";
 import { useGraphwarDetectionWorkflow, type DetectionStatusKind } from "./composables/use-graphwar-detection-workflow";
 import { useGraphwarLiveClickPreview } from "./composables/use-graphwar-live-click-preview";
 import { useGraphwarObstacleEditor } from "./composables/use-graphwar-obstacle-editor";
+import { useGraphwarOneClickClearRunWorkflow } from "./composables/use-graphwar-one-click-clear-run-workflow";
 import { useGraphwarPathPointEditing } from "./composables/use-graphwar-path-point-editing";
 import { useGraphwarPathState } from "./composables/use-graphwar-path-state";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
@@ -79,24 +77,13 @@ import {
   GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS,
   type GraphwarOneClickClearFailureReason,
 } from "./pathfinding/graphwar-one-click-clear";
-import {
-  createGraphwarOneClickClearSearchInput,
-  createGraphwarOneClickClearSearchPreflight,
-  type GraphwarOneClickClearSearchPreflightFailureReason,
-} from "./pathfinding/graphwar-one-click-clear-search-input";
-import {
-  createGraphwarOneClickClearCandidates,
-  createGraphwarOneClickClearHitCandidates,
-} from "./pathfinding/graphwar-one-click-clear-targets";
+import type { GraphwarOneClickClearSearchPreflightFailureReason } from "./pathfinding/graphwar-one-click-clear-search-input";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/graphwar-pathfinding-cache";
 import {
   createGraphwarPathLineSegments,
   type GraphwarPathfindingLineSegment,
 } from "./pathfinding/graphwar-pathfinding-preview";
-import {
-  createGraphwarPathfindingRunner,
-  isGraphwarPathfindingCancelledError,
-} from "./pathfinding/graphwar-pathfinding-runner";
+import { createGraphwarPathfindingRunner } from "./pathfinding/graphwar-pathfinding-runner";
 import { createGraphwarSmartPathfindingTrajectoryResult } from "./pathfinding/graphwar-smart-pathfinding-trajectory";
 import {
   createBoundsRectWithBoundaryExpansion,
@@ -883,6 +870,58 @@ const {
   getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
   getTargetBoundsRect: () => targetBoundsRect.value,
   pathPixels,
+});
+// 一键清图 workflow 应集中预检、候选收集、worker 输入、cache 和结果落地；页面只保留当前状态入口。
+const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBox>({
+  debug: {
+    appendSearchWorkerTimings: appendOneClickClearSearchWorkerTimings,
+    clearTimings: clearSmartPathfindingDebugTimings,
+    finishTimings: finishSmartPathfindingDebugTimings,
+    measureStage: measureSmartPathfindingDebugStage,
+    measureStageAsync: measureSmartPathfindingDebugStageAsync,
+  },
+  effects: {
+    applyPath: setPathPixels,
+    flashHitSoldiers: flashOneClickClearHitSoldiers,
+    setStatus: setSmartPathfindingStatus,
+  },
+  input: {
+    boundsRect,
+    getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
+    getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
+    getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
+    getPathfindingWorkerCount: () =>
+      parsedPathfindingWorkerCount.value.ok ? parsedPathfindingWorkerCount.value.workerCount : undefined,
+    getPathPoints: () => pathPixels.value,
+    getSimulationMask: () => simulationObstacleMask.value,
+    getTolerances: () => (parsedObstacleTolerances.value.ok ? parsedObstacleTolerances.value : undefined),
+    isUnsupportedMode: isOneClickClearModeUnsupported,
+  },
+  messages: {
+    getFailureMessage: getOneClickClearFailureMessage,
+    getInProgressMessage: () => locale.smartPathfinding.oneClickClear.inProgress,
+    getPreflightFailureStatus: getOneClickClearPreflightFailureStatus,
+    getSuccessMessage: (targetCount, elapsedMs, resultCacheHit) =>
+      locale.smartPathfinding.oneClickClear.success(targetCount, formatElapsedDuration(elapsedMs), resultCacheHit),
+  },
+  pathfinding: {
+    cache: pathfindingCache,
+    runner: graphwarPathfindingRunner,
+  },
+  run: {
+    finish: finishSmartPathfindingRun,
+    isCurrent: isSmartPathfindingRunCurrent,
+    start: startSmartPathfinding,
+  },
+  targets: {
+    createGeometry: createTargetingGeometry,
+    getFriendlyFireEnabled: () => friendlyFireEnabled.value,
+    getPrefixTarget: createCurrentLastPathHitTarget,
+    getSoldiers: () => detectedSoldiers.value,
+  },
+  time: {
+    now: nowMs,
+  },
 });
 // 舞台命中测试应集中路径点选择圈、士兵可视选择圈和真实命中圈，避免交互层混用半径语义。
 const stageHitTesting: GraphwarStageHitTestingController<DetectionBox> = useGraphwarStageHitTesting<DetectionBox>({
@@ -2014,165 +2053,7 @@ async function appendDetectedSoldierSmartPathfindingPoint(soldier: DetectionBox)
 
 /** 一键清图：从当前路径尾部出发，完整遍历 x 单调可达状态并追加当前模型下击杀最多的路径。 */
 async function runOneClickClear() {
-  clearSmartPathfindingDebugTimings();
-  const startedAt = nowMs();
-  const timings: SmartPathfindingDebugTimingEntry[] = [];
-  const preflightResult = measureSmartPathfindingDebugStage(timings, "one-click-clear-preflight", () => {
-    const boundsResult = parsedBounds.value;
-    const workerCountResult = parsedPathfindingWorkerCount.value;
-    const tolerances = parsedObstacleTolerances.value;
-    const result = createGraphwarOneClickClearSearchPreflight({
-      bounds: boundsResult.ok ? boundsResult.bounds : undefined,
-      createPrefixTarget: createOneClickClearPrefixTarget,
-      getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
-      pathfindingWorkerCount: workerCountResult.ok ? workerCountResult.workerCount : undefined,
-      pathPointCount: pathPixels.value.length,
-      tolerances: tolerances.ok ? tolerances : undefined,
-      unsupportedMode: isOneClickClearModeUnsupported,
-    });
-    return result.ok ? result : { ...result, ...getOneClickClearPreflightFailureStatus(result.reason) };
-  });
-  if (!preflightResult.ok) {
-    let completedAt = nowMs();
-    measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
-      completedAt = nowMs();
-      setSmartPathfindingStatus(preflightResult.message, preflightResult.kind);
-      completedAt = nowMs();
-    });
-    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
-    return false;
-  }
-
-  const pathfindingToken = startSmartPathfinding(locale.smartPathfinding.oneClickClear.inProgress);
-  let debugTimingsFinished = false;
-  const finishOneClickClearDebugTimings = (completedAt = nowMs()) => {
-    debugTimingsFinished = true;
-    if (!isSmartPathfindingRunCurrent(pathfindingToken)) {
-      return;
-    }
-    finishSmartPathfindingDebugTimings(startedAt, timings, completedAt);
-  };
-
-  try {
-    const candidates = measureSmartPathfindingDebugStage(timings, "one-click-clear-collect-targets", () =>
-      createOneClickClearCandidates(),
-    );
-    const hitCandidates = createOneClickClearHitCandidates();
-    const searchInput = createGraphwarOneClickClearSearchInput({
-      bounds: preflightResult.bounds,
-      boundsRect: boundsRect.value,
-      candidates,
-      dagEdgeWorkerCount: preflightResult.dagEdgeWorkerCount,
-      hitCandidates,
-      pathPoints: pathPixels.value,
-      prefixTarget: preflightResult.prefixTarget,
-      routeMaskCacheId: pathfindingCache.getRouteObstacleMaskCacheId(preflightResult.obstacleMask),
-      routeObstacleMask: preflightResult.obstacleMask,
-      settings: createPathTrajectoryFormulaSettings(),
-      simulationMask: simulationObstacleMask.value,
-      tolerances: preflightResult.tolerances,
-    });
-    const searchCacheKey = pathfindingCache.createOneClickClearResultCacheKey(searchInput);
-    let search = pathfindingCache.getCachedOneClickClearResult(searchCacheKey, (timing) => timings.push(timing));
-    const searchCacheHit = search !== undefined;
-    if (!search) {
-      search = await measureSmartPathfindingDebugStageAsync(timings, "one-click-clear-search", () =>
-        graphwarPathfindingRunner.buildOneClickClearPath(searchInput),
-      );
-      pathfindingCache.cacheOneClickClearResult(searchCacheKey, search);
-    }
-    appendOneClickClearSearchWorkerTimings(timings, search.timings);
-    if (!isSmartPathfindingRunCurrent(pathfindingToken)) {
-      return false;
-    }
-
-    const result = search.result;
-    finishSmartPathfindingRun(pathfindingToken);
-    if (result.type === "success") {
-      measureSmartPathfindingDebugStage(timings, "one-click-clear-apply-result", () =>
-        setPathPixels(result.pathPoints),
-      );
-      flashOneClickClearHitSoldiers(result.targetIds);
-      let completedAt = nowMs();
-      measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
-        completedAt = nowMs();
-        setSmartPathfindingStatus(
-          locale.smartPathfinding.oneClickClear.success(
-            result.targetIds.length,
-            formatElapsedDuration(searchCacheHit ? completedAt - startedAt : result.elapsedMs),
-            searchCacheHit,
-          ),
-          "success",
-        );
-        completedAt = nowMs();
-      });
-      finishOneClickClearDebugTimings(completedAt);
-      return true;
-    }
-
-    let completedAt = nowMs();
-    measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
-      completedAt = nowMs();
-      setSmartPathfindingStatus(
-        getOneClickClearFailureMessage(result.reason, searchCacheHit ? completedAt - startedAt : result.elapsedMs),
-        "error",
-      );
-      completedAt = nowMs();
-    });
-    finishOneClickClearDebugTimings(completedAt);
-    return false;
-  } catch (error) {
-    if (!isSmartPathfindingRunCurrent(pathfindingToken) || isGraphwarPathfindingCancelledError(error)) {
-      return false;
-    }
-    let completedAt = nowMs();
-    measureSmartPathfindingDebugStage(timings, "one-click-clear-setting-status", () => {
-      completedAt = nowMs();
-      setSmartPathfindingStatus(
-        getOneClickClearFailureMessage("pathfinding-worker-failed", completedAt - startedAt),
-        "error",
-      );
-      completedAt = nowMs();
-    });
-    finishOneClickClearDebugTimings(completedAt);
-    return false;
-  } finally {
-    if (isSmartPathfindingRunCurrent(pathfindingToken)) {
-      finishSmartPathfindingRun(pathfindingToken);
-      if (!debugTimingsFinished) {
-        finishOneClickClearDebugTimings();
-      }
-    }
-  }
-}
-
-/** 一键清图前缀预检复用当前路径最后点；若最后点在士兵命中圈内则使用真实命中半径。 */
-function createOneClickClearPrefixTarget() {
-  const target = createCurrentLastPathHitTarget();
-  if (!target) {
-    return undefined;
-  }
-  return "center" in target ? { center: target.center, radius: target.radius } : { center: target, radius: 1 };
-}
-
-/** 把当前识别士兵折叠成清图搜索候选；页面只注入当前状态，过滤规则由目标收集 Module 持有。 */
-function createOneClickClearCandidates() {
-  return createGraphwarOneClickClearCandidates({
-    friendlyFireEnabled: friendlyFireEnabled.value,
-    geometry: createTargetingGeometry(),
-    pathPoints: pathPixels.value,
-    soldiers: detectedSoldiers.value,
-  });
-}
-
-/** 统计整条弹道命中数：只排除发射士兵，不能按当前路径尾点右侧过滤。 */
-function createOneClickClearHitCandidates() {
-  return createGraphwarOneClickClearHitCandidates({
-    friendlyFireEnabled: friendlyFireEnabled.value,
-    geometry: createTargetingGeometry(),
-    pathPoints: pathPixels.value,
-    soldiers: detectedSoldiers.value,
-  });
+  return oneClickClearRunWorkflow.run();
 }
 
 /** 一键清图预检 reason 应在页面映射成用户状态，避免 pathfinding Module 依赖 locale。 */

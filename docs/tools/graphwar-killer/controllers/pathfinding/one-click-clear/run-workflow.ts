@@ -1,31 +1,34 @@
-import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../../../core/types";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
-} from "../../formula/trajectory-sampling";
+} from "../../../formula/trajectory-sampling";
 import type {
   GraphwarOneClickClearDebugTiming,
   GraphwarOneClickClearFailureReason,
-} from "../../pathfinding/one-click-clear/search";
+} from "../../../pathfinding/one-click-clear/search";
 import {
   createGraphwarOneClickClearSearchInput,
   createGraphwarOneClickClearSearchPreflight,
   type GraphwarOneClickClearSearchPreflightFailureReason,
   type GraphwarOneClickClearSearchTolerances,
-} from "../../pathfinding/one-click-clear/search-input";
+} from "../../../pathfinding/one-click-clear/search-input";
 import {
   createGraphwarOneClickClearCandidates,
   createGraphwarOneClickClearHitCandidates,
   type GraphwarOneClickClearTargetSoldier,
-} from "../../pathfinding/one-click-clear/targets";
-import type { GraphwarPathfindingResultCacheTimingEntry } from "../../pathfinding/runtime/cache";
-import { isGraphwarPathfindingCancelledError } from "../../pathfinding/runtime/runner";
+} from "../../../pathfinding/one-click-clear/targets";
+import type { GraphwarPathfindingResultCacheTimingEntry } from "../../../pathfinding/runtime/cache";
+import { isGraphwarPathfindingCancelledError } from "../../../pathfinding/runtime/runner";
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
-} from "../../pathfinding/runtime/worker-types";
-import type { GraphwarTargetingGeometry } from "../../pathfinding/targeting";
-import type { SmartPathfindingDebugStage, SmartPathfindingDebugTimingEntry } from "../debug/use-graphwar-debug-timings";
+} from "../../../pathfinding/runtime/worker-types";
+import type { GraphwarTargetingGeometry } from "../../../pathfinding/targeting";
+import type {
+  SmartPathfindingDebugStage,
+  SmartPathfindingDebugTimingEntry,
+} from "../../debug/use-graphwar-debug-timings";
 
 type GraphwarOneClickClearStatusKind = "error" | "success" | "warning";
 type GraphwarOneClickClearPrefixTarget = PixelPoint | GraphwarTrajectoryTargetCircle;

@@ -10,14 +10,14 @@ import {
 import { useGraphwarPathPointEditing } from "./controllers/path/use-graphwar-path-point-editing";
 import { useGraphwarPathState } from "./controllers/path/use-graphwar-path-state";
 import { useGraphwarTrajectoryResult } from "./controllers/path/use-graphwar-trajectory-result";
-import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/use-graphwar-one-click-clear-run-workflow";
-import { useGraphwarSmartPathfindingBuilder } from "./controllers/pathfinding/use-graphwar-smart-pathfinding-builder";
-import { useGraphwarSmartPathfindingRunWorkflow } from "./controllers/pathfinding/use-graphwar-smart-pathfinding-run-workflow";
+import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/one-click-clear/run-workflow";
+import { useGraphwarSmartPathfindingBuilder } from "./controllers/pathfinding/smart/builder";
+import { useGraphwarSmartPathfindingRunWorkflow } from "./controllers/pathfinding/smart/run-workflow";
 import {
   useGraphwarSmartPathfindingSession,
   type SmartPathfindingStatusKind,
-} from "./controllers/pathfinding/use-graphwar-smart-pathfinding-session";
-import { useGraphwarTargetingContext } from "./controllers/pathfinding/use-graphwar-targeting-context";
+} from "./controllers/pathfinding/smart/session";
+import { useGraphwarTargetingContext } from "./controllers/pathfinding/targeting/context";
 import { useGraphwarSettingsValidation } from "./controllers/settings/use-graphwar-settings-validation";
 import { useGraphwarLiveClickPreview } from "./controllers/stage/use-graphwar-live-click-preview";
 import { useGraphwarObstacleEditor } from "./controllers/stage/use-graphwar-obstacle-editor";

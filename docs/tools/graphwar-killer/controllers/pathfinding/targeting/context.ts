@@ -1,4 +1,4 @@
-import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../../../core/types";
 import {
   createAllowedTargetRect as createGraphwarAllowedTargetRect,
   createGraphwarSoldierHitCircle,
@@ -12,7 +12,7 @@ import {
   type GraphwarSmartPathfindingSoldierTarget,
   type GraphwarTargetingGeometry,
   type GraphwarTargetingSoldier,
-} from "../../pathfinding/targeting";
+} from "../../../pathfinding/targeting";
 
 interface ReadonlyRef<T> {
   readonly value: T;

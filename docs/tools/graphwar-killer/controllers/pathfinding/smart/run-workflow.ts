@@ -1,5 +1,8 @@
-import type { PixelPoint } from "../../core/types";
-import type { SmartPathfindingDebugStage, SmartPathfindingDebugTimingEntry } from "../debug/use-graphwar-debug-timings";
+import type { PixelPoint } from "../../../core/types";
+import type {
+  SmartPathfindingDebugStage,
+  SmartPathfindingDebugTimingEntry,
+} from "../../debug/use-graphwar-debug-timings";
 
 /** 单目标智能寻路返回值；cacheHit 只表示完整结果缓存命中。 */
 export interface GraphwarSmartPathfindingRunBuildResult {

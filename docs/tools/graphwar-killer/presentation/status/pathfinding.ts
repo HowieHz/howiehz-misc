@@ -1,6 +1,6 @@
 import type { GraphwarKillerLocale } from "../../locale-types";
+import type { GraphwarOneClickClearSearchPreflightFailureReason } from "../../pathfinding/one-click-clear/input";
 import type { GraphwarOneClickClearFailureReason } from "../../pathfinding/one-click-clear/search";
-import type { GraphwarOneClickClearSearchPreflightFailureReason } from "../../pathfinding/one-click-clear/search-input";
 import { formatElapsedDuration } from "./duration";
 
 export type GraphwarPathfindingPhase = "optimize" | "search" | "trajectory";

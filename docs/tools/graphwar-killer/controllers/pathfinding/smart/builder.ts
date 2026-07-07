@@ -12,13 +12,13 @@ import type {
   GraphwarSmartPathfindingWorkerTiming,
 } from "../../../pathfinding/runtime/worker-types";
 import {
+  createGraphwarSmartPathfindingSearchInput,
+  type GraphwarSmartPathfindingSearchTolerances,
+} from "../../../pathfinding/smart/input";
+import {
   createGraphwarPathfindingPreviewSnapshot,
   type GraphwarPathfindingPreviewSnapshot,
 } from "../../../pathfinding/smart/preview";
-import {
-  createGraphwarSmartPathfindingSearchInput,
-  type GraphwarSmartPathfindingSearchTolerances,
-} from "../../../pathfinding/smart/search-input";
 import {
   createGraphwarSmartPathfindingHitTarget,
   getGraphwarSmartPathfindingAppendedSegment,

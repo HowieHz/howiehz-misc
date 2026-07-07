@@ -3,16 +3,16 @@ import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../../formula/trajectory/sampling";
-import type {
-  GraphwarOneClickClearDebugTiming,
-  GraphwarOneClickClearFailureReason,
-} from "../../../pathfinding/one-click-clear/search";
 import {
   createGraphwarOneClickClearSearchInput,
   createGraphwarOneClickClearSearchPreflight,
   type GraphwarOneClickClearSearchPreflightFailureReason,
   type GraphwarOneClickClearSearchTolerances,
-} from "../../../pathfinding/one-click-clear/search-input";
+} from "../../../pathfinding/one-click-clear/input";
+import type {
+  GraphwarOneClickClearDebugTiming,
+  GraphwarOneClickClearFailureReason,
+} from "../../../pathfinding/one-click-clear/search";
 import {
   createGraphwarOneClickClearCandidates,
   createGraphwarOneClickClearHitCandidates,

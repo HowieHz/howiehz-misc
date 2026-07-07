@@ -4,7 +4,7 @@ import {
   buildGraphwarVisibilityGraphPathForMask,
   type GraphwarVisibilityGraphObstacleData,
 } from "../routing/visibility-graph";
-import type { GraphwarOneClickClearEdgeWorkerJobResult } from "../runtime/worker-types";
+import type { GraphwarOneClickClearEdgeWorkerJobResult } from "../runtime/protocol";
 /** 一键清图 DAG 单边建路；master 串行 fallback 和 edge Worker 并行消费者共用同一条路线规则。 */
 import type { GraphwarOneClickClearDagEdgeBuildJob } from "./search";
 

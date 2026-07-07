@@ -19,11 +19,11 @@ import {
   type GraphwarOneClickClearTargetSoldier,
 } from "../../../pathfinding/one-click-clear/targets";
 import type { GraphwarPathfindingResultCacheTimingEntry } from "../../../pathfinding/runtime/cache";
-import { isGraphwarPathfindingCancelledError } from "../../../pathfinding/runtime/runner";
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
-} from "../../../pathfinding/runtime/worker-types";
+} from "../../../pathfinding/runtime/protocol";
+import { isGraphwarPathfindingCancelledError } from "../../../pathfinding/runtime/runner";
 import type { GraphwarTargetingGeometry } from "../../../pathfinding/targeting";
 import type { SmartPathfindingDebugStage, SmartPathfindingDebugTimingEntry } from "../../debug/timings";
 

@@ -16,7 +16,7 @@ import type {
   GraphwarDetectionWorkerSuccessResponse,
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
-} from "./worker-types";
+} from "./protocol";
 
 export type { GraphwarDetectionWorkerStage };
 export type { GraphwarDetectionWorkerTimingDetail };

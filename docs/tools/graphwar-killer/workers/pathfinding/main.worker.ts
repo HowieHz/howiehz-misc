@@ -32,7 +32,7 @@ import type {
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
   GraphwarSmartPathfindingWorkerTiming,
-} from "../../pathfinding/runtime/worker-types";
+} from "../../pathfinding/runtime/protocol";
 
 /** 当前 master Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarPathfindingWorkerScope {

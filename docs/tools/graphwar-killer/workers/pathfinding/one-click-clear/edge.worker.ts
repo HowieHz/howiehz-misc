@@ -6,7 +6,7 @@ import type {
   GraphwarOneClickClearEdgeWorkerInit,
   GraphwarOneClickClearEdgeWorkerRequest,
   GraphwarOneClickClearEdgeWorkerResponse,
-} from "../../../pathfinding/runtime/worker-types";
+} from "../../../pathfinding/runtime/protocol";
 
 /** 当前 edge Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarOneClickClearEdgeWorkerScope {

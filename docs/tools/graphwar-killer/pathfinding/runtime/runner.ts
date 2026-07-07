@@ -15,7 +15,7 @@ import type {
   GraphwarPathfindingWorkerSuccessResponse,
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
-} from "./worker-types";
+} from "./protocol";
 
 /** 几何寻路任务被用户取消或新任务替代。 */
 export class GraphwarPathfindingCancelledError extends Error {

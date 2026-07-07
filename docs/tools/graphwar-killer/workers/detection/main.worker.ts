@@ -29,11 +29,11 @@ import type {
   GraphwarDetectionWorkerStage,
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
-} from "../../detection/runtime/worker-types";
+} from "../../detection/runtime/protocol";
 import type {
   GraphwarSoldierTemplateWorkerRequest,
   GraphwarSoldierTemplateWorkerResponse,
-} from "../../detection/template/worker-types";
+} from "../../detection/template/protocol";
 
 /** 当前 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarDetectionWorkerScope {

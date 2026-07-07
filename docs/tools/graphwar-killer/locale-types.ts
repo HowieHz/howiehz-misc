@@ -1,7 +1,7 @@
 import type { AlgorithmMode, EquationMode } from "./core/types";
 /** 定义 Graphwar 杀手本地化文案结构，供中英文页面共享。 */
 import type { GraphwarDetectionWarning } from "./detection/objects";
-import type { GraphwarDetectionWorkerTimingDetail } from "./detection/runtime/worker-types";
+import type { GraphwarDetectionWorkerTimingDetail } from "./detection/runtime/protocol";
 import type {
   GraphwarOneClickClearDebugDetail,
   GraphwarOneClickClearDebugStage,

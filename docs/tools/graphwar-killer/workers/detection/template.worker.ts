@@ -3,7 +3,7 @@ import { matchSoldierTemplates } from "../../detection/objects";
 import type {
   GraphwarSoldierTemplateWorkerRequest,
   GraphwarSoldierTemplateWorkerResponse,
-} from "../../detection/template/worker-types";
+} from "../../detection/template/protocol";
 
 /** 当前子 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarSoldierTemplateWorkerScope {

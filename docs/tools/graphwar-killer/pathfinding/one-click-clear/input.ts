@@ -3,7 +3,7 @@ import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
-import type { GraphwarOneClickClearPathWorkerInput } from "../runtime/worker-types";
+import type { GraphwarOneClickClearPathWorkerInput } from "../runtime/protocol";
 import type { GraphwarOneClickClearCandidate } from "./search";
 
 /** 一键清图搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */

@@ -8,7 +8,7 @@ import type {
   GraphwarOneClickClearPathWorkerResult,
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
-} from "./worker-types";
+} from "./protocol";
 
 const smartPathfindingResultCacheLimit = 64;
 const oneClickClearResultCacheLimit = 16;

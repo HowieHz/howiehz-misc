@@ -2,15 +2,15 @@ import type { BoundsRect, GraphBounds, PixelPoint } from "../../../core/types";
 import type { GraphwarTrajectoryFormulaSettings } from "../../../formula/trajectory/sampling";
 import type { GraphwarPathfindingPreview } from "../../../pathfinding/routing/visibility-graph";
 import type { GraphwarPathfindingResultCacheTimingEntry } from "../../../pathfinding/runtime/cache";
-import {
-  isGraphwarPathfindingCancelledError,
-  type GraphwarPathfindingRunOptions,
-} from "../../../pathfinding/runtime/runner";
 import type {
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
   GraphwarSmartPathfindingWorkerTiming,
-} from "../../../pathfinding/runtime/worker-types";
+} from "../../../pathfinding/runtime/protocol";
+import {
+  isGraphwarPathfindingCancelledError,
+  type GraphwarPathfindingRunOptions,
+} from "../../../pathfinding/runtime/runner";
 import {
   createGraphwarSmartPathfindingSearchInput,
   type GraphwarSmartPathfindingSearchTolerances,

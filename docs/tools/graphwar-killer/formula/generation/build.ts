@@ -1,8 +1,8 @@
 /** 编译用户输入的 Graphwar 表达式，并输出游戏可用的公式文本。 */
 import { GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE } from "../../core/game/constants";
 import {
-  MAX_FORMULA_DECIMAL_PLACES,
   formatDecimal,
+  formatDoublePrecisionDecimal,
   formatSignedNumber,
   normalizeZero,
   roundToDecimalPlaces,
@@ -10,8 +10,8 @@ import {
 import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "../../core/types";
 import {
   GRAPHWAR_TOOL_SIGN_EPSILON,
-  shouldFormatStepTermWithOverflowProtection,
-  shouldUseStepOverflowProtection,
+  shouldFormatStepDerivativeWithOverflowProtection,
+  shouldUseStepDerivativeOverflowProtection,
 } from "./step-numeric-strategy";
 import type { FormulaEvaluationOptions, StepOverflowProtectionRange } from "./step-numeric-strategy";
 export { GRAPHWAR_TOOL_SIGN_EPSILON } from "./step-numeric-strategy";
@@ -75,16 +75,23 @@ interface CompiledAbsConnectorSegment {
 
 /** Step 公式的一项预编译数据，统一支持 y、y'、y'' 三种模式。 */
 interface CompiledStepTerm {
-  /** Sigmoid 中心点 Graphwar x。 */
-  centerX: number;
+  /** 最终公式里的 Sigmoid 中心点。 */
+  formulaCenterX: number;
   /** 一阶导前置系数。 */
   firstDerivativeCoefficient: number;
   /** 二阶导前置系数。 */
   secondDerivativeCoefficient: number;
-  /** 当前项是否必须使用抗溢出的 exp 写法。 */
-  useOverflowProtection?: boolean;
+  /** 导数项是否必须使用抗溢出的 exp 写法。 */
+  derivativeUsesOverflowProtection: boolean;
   /** Y= 模式累计高度系数。 */
   yCoefficient: number;
+}
+
+interface FormattedStepDerivativeTerm {
+  /** 输出公式中实际出现的阶跃中心点。 */
+  centerX: number;
+  /** 输出公式中实际出现的陡峭度。 */
+  steepness: number;
 }
 
 /** 采样器使用的预编译公式求值器，避免在每个轨迹点重新解析表达式文本。 */
@@ -139,14 +146,7 @@ export function buildFormula(
   if (mode === "y") {
     return {
       // step 的 y= 表达式只输出阶跃累计变化量，绝对高度同样由 Graphwar 的发射点 offset 决定。
-      expression: formatStepExpression(
-        terms,
-        steepness,
-        decimalPlaces,
-        stepOverflowProtection,
-        signEpsilon,
-        stepOverflowProtectionRange,
-      ),
+      expression: formatStepExpression(terms, steepness, decimalPlaces),
       terms,
     };
   }
@@ -202,77 +202,141 @@ function compileStepEvaluator(
   options?: FormulaEvaluationOptions,
 ): CompiledFormulaEvaluator {
   const baseY = points[0]?.y ?? 0;
+  const formulaSteepness = createCompiledStepFormulaSteepness(steepness, options);
   const terms: CompiledStepTerm[] = [];
   for (let index = 1; index < points.length; index += 1) {
-    const centerX = points[index].x;
+    const formulaCenterX = createCompiledStepFormulaCenterX(points[index].x, options);
     const deltaY = points[index].y - points[index - 1].y;
+    const firstDerivativeCoefficient = createCompiledStepFormulaCoefficient(deltaY * steepness, options);
+    const secondDerivativeCoefficient = createCompiledStepFormulaCoefficient(deltaY * steepness * steepness, options);
     terms.push({
-      centerX,
-      firstDerivativeCoefficient: deltaY * steepness,
-      secondDerivativeCoefficient: deltaY * steepness * steepness,
-      // 有明确保护范围时，每个阶跃项是否需要抗溢出只取决于中心点，可在编译期固定。
-      useOverflowProtection: options?.stepOverflowProtectionRange
-        ? shouldUseStepOverflowProtection(steepness, centerX, 0, options)
-        : undefined,
-      yCoefficient: deltaY,
+      formulaCenterX,
+      derivativeUsesOverflowProtection: createCompiledStepDerivativeOverflowProtection(
+        formulaSteepness,
+        formulaCenterX,
+        options,
+      ),
+      firstDerivativeCoefficient,
+      secondDerivativeCoefficient,
+      yCoefficient: createCompiledStepFormulaCoefficient(deltaY, options),
     });
   }
 
   return {
     evaluateFirstDerivativeY(x) {
       let slope = 0;
-      for (const term of terms) {
-        const t = steepness * (x - term.centerX);
-        if (compiledStepTermUsesOverflowProtection(term, steepness, t, options)) {
-          const q = Math.exp(-Math.abs(t));
-          slope += (term.firstDerivativeCoefficient * q) / (1 + q) ** 2;
+      for (let index = terms.length - 1; index >= 0; index -= 1) {
+        const term = terms[index];
+        const t = formulaSteepness * (x - term.formulaCenterX);
+        if (term.derivativeUsesOverflowProtection) {
+          // Stable 文本同样由首个 * 作为 Graphwar Polish 根节点，应先折叠右侧分式再乘系数。
+          slope = term.firstDerivativeCoefficient * evaluateCompiledStepStableFirstDerivativeBody(t) + slope;
         } else {
-          const exp = Math.exp(-t);
-          slope += (term.firstDerivativeCoefficient * exp) / (1 + exp) ** 2;
+          // Graphwar 输出公式应先算 exp/(1+exp)^2，再乘系数；预编译路径保持同一求值顺序。
+          slope = term.firstDerivativeCoefficient * evaluateCompiledStepDirectFirstDerivativeBody(t) + slope;
         }
       }
       return slope;
     },
     evaluateSecondDerivativeY(x) {
       let acceleration = 0;
-      for (const term of terms) {
-        const t = steepness * (x - term.centerX);
-        if (compiledStepTermUsesOverflowProtection(term, steepness, t, options)) {
-          const q = Math.exp(-Math.abs(t));
+      for (let index = terms.length - 1; index >= 0; index -= 1) {
+        const term = terms[index];
+        const t = formulaSteepness * (x - term.formulaCenterX);
+        if (term.derivativeUsesOverflowProtection) {
           const sign = evaluateStableSignRatio(t, options);
-          acceleration += (-term.secondDerivativeCoefficient * sign * q * (1 - q)) / (1 + q) ** 3;
+          // Stable 二阶导文本是 k*sign*q*(1-q)/denom；Graphwar 会逐层把左侧 * 作为根节点。
+          acceleration =
+            -term.secondDerivativeCoefficient * (sign * evaluateCompiledStepStableSecondDerivativeBody(t)) +
+            acceleration;
         } else {
-          const exp = Math.exp(-t);
-          acceleration += (term.secondDerivativeCoefficient * exp * (exp - 1)) / (1 + exp) ** 3;
+          // Graphwar 的 Polish 重排会让 exp*((exp-1)/(1+exp)^3) 先结合，避免系数乘法提前溢出。
+          acceleration =
+            term.secondDerivativeCoefficient * evaluateCompiledStepDirectSecondDerivativeBody(t) + acceleration;
         }
       }
       return acceleration;
     },
     evaluateY(x) {
-      let y = baseY;
-      for (const term of terms) {
-        const t = steepness * (x - term.centerX);
-        y +=
-          term.yCoefficient *
-          (compiledStepTermUsesOverflowProtection(term, steepness, t, options)
-            ? evaluateStableStepSigmoid(t, options)
-            : evaluateDirectStepSigmoid(t));
+      let yOffset = 0;
+      for (let index = terms.length - 1; index >= 0; index -= 1) {
+        const term = terms[index];
+        const t = formulaSteepness * (x - term.formulaCenterX);
+        yOffset = term.yCoefficient / (1 + evaluateCompiledStepExp(-t)) + yOffset;
       }
-      return y;
+      return baseY + yOffset;
     },
   };
 }
 
-/** 判断当前 step 项采样时是否走抗溢出分支；有编译期结论时直接复用。 */
-function compiledStepTermUsesOverflowProtection(
-  term: CompiledStepTerm,
+/** Graphwar 会把 exp(z) 改写成 e^z；内部回放也应走同一种 pow 语义。 */
+function evaluateCompiledStepExp(argument: number) {
+  return Math.pow(Math.E, argument);
+}
+
+/** 回放一阶导 direct 文本里的 exp/(1+exp)^2，重复 exp 调用保持与公式文本一致。 */
+function evaluateCompiledStepDirectFirstDerivativeBody(t: number) {
+  return evaluateCompiledStepExp(-t) / (1 + evaluateCompiledStepExp(-t)) ** 2;
+}
+
+/** 回放一阶导 stable 文本里的 q/(1+q)^2，重复 q 调用保持与公式文本一致。 */
+function evaluateCompiledStepStableFirstDerivativeBody(t: number) {
+  return evaluateCompiledStepExp(-Math.abs(t)) / (1 + evaluateCompiledStepExp(-Math.abs(t))) ** 2;
+}
+
+/** 回放二阶导 direct 文本里的 exp*((exp-1)/(1+exp)^3)。 */
+function evaluateCompiledStepDirectSecondDerivativeBody(t: number) {
+  return evaluateCompiledStepExp(-t) * ((evaluateCompiledStepExp(-t) - 1) / (1 + evaluateCompiledStepExp(-t)) ** 3);
+}
+
+/** 回放二阶导 stable 文本中位于 sign 右侧的 q*((1-q)/(1+q)^3)。 */
+function evaluateCompiledStepStableSecondDerivativeBody(t: number) {
+  return (
+    evaluateCompiledStepExp(-Math.abs(t)) *
+    ((1 - evaluateCompiledStepExp(-Math.abs(t))) / (1 + evaluateCompiledStepExp(-Math.abs(t))) ** 3)
+  );
+}
+
+/** 内部 step 采样应使用最终公式文本中的陡峭度，确保 y/dy/ddy 回放一致。 */
+function createCompiledStepFormulaSteepness(steepness: number, options?: FormulaEvaluationOptions) {
+  return options?.stepFormulaDecimalPlaces === undefined
+    ? steepness
+    : roundToDecimalPlaces(steepness, options.stepFormulaDecimalPlaces);
+}
+
+/** 内部 step 采样应使用最终公式文本中的中心点，避免小数位边界偏移。 */
+function createCompiledStepFormulaCenterX(centerX: number, options?: FormulaEvaluationOptions) {
+  return options?.stepFormulaDecimalPlaces === undefined
+    ? centerX
+    : -roundToDecimalPlaces(-centerX, options.stepFormulaDecimalPlaces);
+}
+
+/** 无采样范围时，编译路径应与公式输出一样保守使用 stable 导数形式。 */
+function createCompiledStepDerivativeOverflowProtection(
   steepness: number,
-  currentArgument: number,
+  centerX: number,
   options?: FormulaEvaluationOptions,
 ) {
-  return (
-    term.useOverflowProtection ?? shouldUseStepOverflowProtection(steepness, term.centerX, currentArgument, options)
-  );
+  return options?.stepOverflowProtectionRange
+    ? shouldUseStepDerivativeOverflowProtection(steepness, centerX, options)
+    : (options?.stepOverflowProtection ?? true);
+}
+
+/** 内部 step 采样应使用最终公式文本中的系数，省略项和低精度系数才不会影响轨迹。 */
+function createCompiledStepFormulaCoefficient(coefficientValue: number, options?: FormulaEvaluationOptions) {
+  const decimalPlaces = options?.stepFormulaDecimalPlaces;
+  if (decimalPlaces === undefined) {
+    return coefficientValue;
+  }
+
+  // formatSignedRawTerm 先按原符号决定 +/-，再格式化绝对值；这里按同一规则生成可求值数字。
+  const normalizedCoefficient = normalizeZero(coefficientValue, decimalPlaces);
+  if (normalizedCoefficient === 0) {
+    return 0;
+  }
+
+  const magnitude = roundToDecimalPlaces(Math.abs(normalizedCoefficient), decimalPlaces);
+  return normalizedCoefficient < 0 ? -magnitude : magnitude;
 }
 
 /** 预编译 abs 连接公式，把每段的端点和系数固定下来，采样时只做代入求值。 */
@@ -347,36 +411,17 @@ function isCubicInterpolationAlgorithm(algorithm: AlgorithmMode): algorithm is "
 }
 
 /** 格式化用户可粘贴到 Graphwar 的基础 y= sigmoid 阶跃表达式。 */
-function formatStepExpression(
-  terms: readonly StepTerm[],
-  steepness: number,
-  decimalPlaces: number | undefined,
-  stepOverflowProtection: boolean,
-  signEpsilon: number,
-  stepOverflowProtectionRange: StepOverflowProtectionRange | undefined,
-) {
+function formatStepExpression(terms: readonly StepTerm[], steepness: number, decimalPlaces: number | undefined) {
   const parts: string[] = [];
   for (const term of terms) {
-    // 只有可能触发 exp 溢出的项才改用稳定 sigmoid，避免无风险区间偏离 Graphwar 原始公式。
-    if (
-      shouldFormatStepTermWithOverflowProtection(steepness, term.x, stepOverflowProtection, stepOverflowProtectionRange)
-    ) {
-      parts.push(
-        formatSignedRawTerm(
-          term.deltaY,
-          `(${formatStableStepSigmoid(steepness, term.x, decimalPlaces, signEpsilon)})`,
-          decimalPlaces,
-        ),
-      );
-    } else {
-      parts.push(
-        formatSignedFractionTerm(
-          term.deltaY,
-          `1+${formatDirectStepDerivativeExp(steepness, term.x, decimalPlaces)}`,
-          decimalPlaces,
-        ),
-      );
-    }
+    // y= 直写 sigmoid 在 Graphwar 中即使 exp 溢出也会自然趋近 0/1，应避免改写引入 sign 折点。
+    parts.push(
+      formatSignedFractionTerm(
+        term.deltaY,
+        `1+${formatDirectStepDerivativeExp(steepness, term.x, decimalPlaces)}`,
+        decimalPlaces,
+      ),
+    );
   }
   return cleanupExpression(parts.join("")) || "0";
 }
@@ -392,10 +437,11 @@ function formatStepFirstDerivativeExpression(
   const parts: string[] = [];
   for (const term of terms) {
     const coefficient = term.deltaY * steepness;
+    const formattedTerm = createFormattedStepDerivativeTerm(steepness, term.x, decimalPlaces);
     // 一阶导可直接替换 exp 文本；稳定版和直写版的代数结构相同。
-    const expText = shouldFormatStepTermWithOverflowProtection(
-      steepness,
-      term.x,
+    const expText = shouldFormatStepDerivativeWithOverflowProtection(
+      formattedTerm.steepness,
+      formattedTerm.centerX,
       stepOverflowProtection,
       stepOverflowProtectionRange,
     )
@@ -418,9 +464,15 @@ function formatStepSecondDerivativeExpression(
   const parts: string[] = [];
   for (const term of terms) {
     const coefficient = term.deltaY * steepness * steepness;
+    const formattedTerm = createFormattedStepDerivativeTerm(steepness, term.x, decimalPlaces);
     // 二阶导稳定写法需要额外的 sign(t)，用于还原 exp(-abs(t)) 两侧的方向。
     if (
-      shouldFormatStepTermWithOverflowProtection(steepness, term.x, stepOverflowProtection, stepOverflowProtectionRange)
+      shouldFormatStepDerivativeWithOverflowProtection(
+        formattedTerm.steepness,
+        formattedTerm.centerX,
+        stepOverflowProtection,
+        stepOverflowProtectionRange,
+      )
     ) {
       const argumentText = formatStepDerivativeArgument(steepness, term.x, decimalPlaces);
       const expText = formatStableStepDerivativeExp(steepness, term.x, decimalPlaces);
@@ -433,6 +485,18 @@ function formatStepSecondDerivativeExpression(
     }
   }
   return cleanupExpression(parts.join("")) || "0";
+}
+
+/** 溢出判断必须使用最终公式文本里的数字，避免小数位四舍五入把边界项推过 Java 上限。 */
+function createFormattedStepDerivativeTerm(
+  steepness: number,
+  centerX: number,
+  decimalPlaces: number | undefined,
+): FormattedStepDerivativeTerm {
+  return {
+    centerX: -roundToDecimalPlaces(-centerX, decimalPlaces),
+    steepness: roundToDecimalPlaces(steepness, decimalPlaces),
+  };
 }
 
 /** 格式化相邻点击点之间双绝对值连接函数的 y= 叠加式。 */
@@ -889,19 +953,6 @@ function formatStepDerivativeArgument(steepness: number, centerX: number, decima
   return `${formatDecimal(steepness, decimalPlaces)}*(x${formatSignedNumber(-centerX, decimalPlaces)})`;
 }
 
-/** 格式化抗溢出的 sigmoid 阶跃本体。 */
-function formatStableStepSigmoid(
-  steepness: number,
-  centerX: number,
-  decimalPlaces: number | undefined,
-  signEpsilon: number,
-) {
-  const argumentText = formatStepDerivativeArgument(steepness, centerX, decimalPlaces);
-  const expText = formatStableStepDerivativeExp(steepness, centerX, decimalPlaces);
-  const signText = formatStableSignRatio(argumentText, signEpsilon);
-  return `0.5+0.5*${signText}*(1-${expText})/(1+${expText})`;
-}
-
 /** 格式化 exp(-abs(a*(x+c)))，避免导数项产生巨大的 exp(...) 中间值。 */
 function formatStableStepDerivativeExp(steepness: number, centerX: number, decimalPlaces?: number) {
   return `exp(-abs(${formatStepDerivativeArgument(steepness, centerX, decimalPlaces)}))`;
@@ -912,18 +963,6 @@ function formatDirectStepDerivativeExp(steepness: number, centerX: number, decim
   return `exp(-${formatStepDerivativeArgument(steepness, centerX, decimalPlaces)})`;
 }
 
-/** 计算与生成表达式一致的抗溢出 sigmoid 近似值。 */
-function evaluateStableStepSigmoid(t: number, options?: FormulaEvaluationOptions) {
-  const q = Math.exp(-Math.abs(t));
-  const sign = evaluateStableSignRatio(t, options);
-  return 0.5 + (0.5 * sign * (1 - q)) / (1 + q);
-}
-
-/** 计算朴素 1/(1+exp(-t))，保留溢出后的实际 JS/Graphwar 数值行为。 */
-function evaluateDirectStepSigmoid(t: number) {
-  return 1 / (1 + Math.exp(-t));
-}
-
 /** 模拟输出表达式里的 z / (abs(z)+eps)，避免折点 0 / 0。 */
 function evaluateStableSignRatio(value: number, options?: FormulaEvaluationOptions) {
   options?.onSignArgument?.(value);
@@ -932,7 +971,7 @@ function evaluateStableSignRatio(value: number, options?: FormulaEvaluationOptio
 
 /** 分母除零保护值不能跟随用户小数位，否则低精度输出会把它折成 0。 */
 function formatSignEpsilon(signEpsilon: number) {
-  return formatDecimal(signEpsilon, MAX_FORMULA_DECIMAL_PLACES);
+  return formatDoublePrecisionDecimal(signEpsilon);
 }
 
 /** 格式化稳定符号比值；epsilon 为 0 时保留原始 abs 分母写法。 */

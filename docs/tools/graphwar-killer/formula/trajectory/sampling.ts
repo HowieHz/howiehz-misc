@@ -139,6 +139,7 @@ export function createGraphwarTrajectoryFormulaContext(options: {
             formulaEvaluation: {
               stepOverflowProtectionRange,
               stepOverflowProtection: options.settings.stepOverflowProtection,
+              stepFormulaDecimalPlaces: options.settings.decimalPlaces,
               onSignArgument,
               signEpsilon: 0,
             },
@@ -153,6 +154,7 @@ export function createGraphwarTrajectoryFormulaContext(options: {
   const formulaEvaluation: FormulaEvaluationOptions = {
     stepOverflowProtectionRange,
     stepOverflowProtection: options.settings.stepOverflowProtection,
+    stepFormulaDecimalPlaces: options.settings.decimalPlaces,
     signEpsilon,
   };
   return {
@@ -402,6 +404,7 @@ function createFormulaPathPoints(points: readonly GraphPoint[], settings: Graphw
         equation: settings.equation,
         formulaEvaluation: {
           stepOverflowProtection: settings.stepOverflowProtection,
+          stepFormulaDecimalPlaces: settings.decimalPlaces,
         },
         points,
         steepness: settings.formulaPathSteepness ?? settings.steepness,

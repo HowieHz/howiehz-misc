@@ -1,7 +1,7 @@
 /** Step 公式的数值保护策略；公式输出和轨迹采样必须共用同一套判断。 */
 import type { GraphBounds, GraphPoint } from "../../core/types";
 
-/** Java/Graphwar double 的 exp 上限，用于判断 step 公式是否必须改写成抗溢出形式。 */
+/** Java/Graphwar double 的指数上限；Graphwar 会把 exp(z) 解析成 Math.pow(Math.E, z)。 */
 const JAVA_DOUBLE_MAX_EXP_ARGUMENT = Math.log(Number.MAX_VALUE);
 
 /** 稳定版 sigmoid 公式在符号项可去奇点处避免 0 / 0 的 double 精度保护值。 */
@@ -21,6 +21,8 @@ export interface FormulaEvaluationOptions {
   onSignArgument?: (value: number) => void;
   /** 稳定符号比值的除零保护值；0 表示保留 Graphwar 原始数值行为。 */
   signEpsilon?: number;
+  /** Step 采样应按最终公式小数位判断参数、系数、exp 溢出和 sign 折点。 */
+  stepFormulaDecimalPlaces?: number;
   /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否对 step 表达式使用抗溢出的等价格式。 */
@@ -55,11 +57,10 @@ export function probeSignEpsilonRequirement(probeSignArguments: (onSignArgument:
   return hasZeroSignArgument;
 }
 
-/** 运行时判断 step 项是否需要抗溢出，避免无风险项改变 Graphwar 原始行为。 */
-export function shouldUseStepOverflowProtection(
+/** 运行时判断 step 导数项是否需要抗溢出，避免无风险项改变 Graphwar 原始行为。 */
+export function shouldUseStepDerivativeOverflowProtection(
   steepness: number,
   centerX: number,
-  currentArgument: number,
   options?: FormulaEvaluationOptions,
 ) {
   if (!(options?.stepOverflowProtection ?? true)) {
@@ -68,25 +69,30 @@ export function shouldUseStepOverflowProtection(
   const range = options?.stepOverflowProtectionRange;
   if (range) {
     // 有轨迹范围时按整条可能采样区间做编译期结论，采样热路径可直接复用。
-    return stepTermCanOverflowExp(steepness, centerX, range);
+    return stepDerivativeTermNeedsOverflowProtection(steepness, centerX, range);
   }
-  // 没有范围时退回到当前 t 值，保持旧的逐点判断语义。
-  return -currentArgument > JAVA_DOUBLE_MAX_EXP_ARGUMENT;
+  // 没有范围时无法证明直写式安全；应与公式输出一样保守使用 stable 导数形式。
+  return true;
 }
 
-/** 输出公式时判断 step 项是否需要抗溢出写法；没有范围时保守保护所有 step 项。 */
-export function shouldFormatStepTermWithOverflowProtection(
+/** 输出导数公式时判断 step 项是否需要抗溢出写法；没有范围时保守保护导数项。 */
+export function shouldFormatStepDerivativeWithOverflowProtection(
   steepness: number,
   centerX: number,
   stepOverflowProtection: boolean,
   range: StepOverflowProtectionRange | undefined,
 ) {
-  return stepOverflowProtection && (!range || stepTermCanOverflowExp(steepness, centerX, range));
+  return stepOverflowProtection && (!range || stepDerivativeTermNeedsOverflowProtection(steepness, centerX, range));
 }
 
-/** 判断指定 x 范围内 exp(-steepness*(x-center)) 是否会超过 Java double 上限。 */
-function stepTermCanOverflowExp(steepness: number, centerX: number, range: StepOverflowProtectionRange) {
+/** 判断指定 x 范围内 step 导数直写式是否会因 exp 本身溢出而产生 NaN。 */
+function stepDerivativeTermNeedsOverflowProtection(
+  steepness: number,
+  centerX: number,
+  range: StepOverflowProtectionRange,
+) {
   const minX = Math.min(range.minX, range.maxX);
   const maxExpArgument = -steepness * (minX - centerX);
+  // Graphwar 会先算 exp/(1+exp)^n 这一侧；分母溢出只会得到 0，exp 本身溢出才会变成 NaN。
   return maxExpArgument > JAVA_DOUBLE_MAX_EXP_ARGUMENT;
 }

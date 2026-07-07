@@ -373,7 +373,7 @@ function cloneGraphwarOneClickClearPathWorkerInput(
     boundsRect: cloneBoundsRect(input.boundsRect),
     candidates: input.candidates.map(cloneGraphwarOneClickClearCandidate),
     dagEdgeWorkerCount: input.dagEdgeWorkerCount,
-    deleteCheckRadiusPixels: input.deleteCheckRadiusPixels,
+    deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
     hitCandidates: input.hitCandidates.map(cloneGraphwarOneClickClearCandidate),
     pathPoints: input.pathPoints.map(clonePixelPoint),
     ...(input.prefixTarget ? { prefixTarget: cloneGraphwarTrajectoryTargetCircle(input.prefixTarget) } : {}),

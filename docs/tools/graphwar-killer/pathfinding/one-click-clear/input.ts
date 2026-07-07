@@ -11,7 +11,7 @@ import type { GraphwarOneClickClearCandidate } from "./search";
 export interface GraphwarOneClickClearSearchTolerances {
   /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansionPlanePixels: number;
-  /** 一键清图删点局部保护半径，单位为 Graphwar 原始平面像素。 */
+  /** 一键清图删点局部命中检查半径，单位为 Graphwar 原始平面像素。 */
   oneClickClearDeleteCheckRadiusPlanePixels: number;
   /** 几何路线规划容差，单位为 Graphwar 原始平面像素。 */
   routePlanningTolerancePlanePixels: number;
@@ -122,8 +122,8 @@ export function createGraphwarOneClickClearSearchInput(
     boundsRect: options.boundsRect,
     candidates: options.candidates,
     dagEdgeWorkerCount: options.dagEdgeWorkerCount,
-    // Worker 内删点校验在截图坐标里量距离，因此在协议边界从 Graphwar 平面像素换算为截图像素。
-    deleteCheckRadiusPixels:
+    // Worker 内删点命中检查在截图坐标里量距离，因此在协议边界从 Graphwar 平面像素换算为截图像素。
+    deleteHitCheckRadiusPixels:
       options.tolerances.oneClickClearDeleteCheckRadiusPlanePixels * (options.boundsRect.width / GRAPHWAR_PLANE_LENGTH),
     hitCandidates: options.hitCandidates,
     pathPoints: [...options.pathPoints],

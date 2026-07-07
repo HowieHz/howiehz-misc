@@ -438,7 +438,7 @@ async function buildOneClickClearPath(
     boundsRect: input.boundsRect,
     candidates: input.candidates,
     dagEdgeWorkerCount: input.dagEdgeWorkerCount,
-    deleteCheckRadiusPixels: input.deleteCheckRadiusPixels,
+    deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
     hitCandidates: input.hitCandidates,
     isCancelled: () => false,
     onDebugTiming: (timing) => timings.push(timing),

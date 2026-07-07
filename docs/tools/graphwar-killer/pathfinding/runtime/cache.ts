@@ -120,7 +120,7 @@ export function createGraphwarPathfindingCacheController() {
       createGraphBoundsCacheKey(input.bounds),
       createBoundsRectCacheKey(input.boundsRect),
       input.boundaryExpansion,
-      input.deleteCheckRadiusPixels,
+      input.deleteHitCheckRadiusPixels,
       input.routeMaskCacheId,
       input.routeTolerancePlanePixels,
       input.simulationBoundaryExpansion,

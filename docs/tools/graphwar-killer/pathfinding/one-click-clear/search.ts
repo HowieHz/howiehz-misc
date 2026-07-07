@@ -155,8 +155,8 @@ export interface GraphwarOneClickClearOptions {
   ) => Promise<GraphwarOneClickClearDagEdgeBuildResult>;
   /** DAG 建边最大并行数；1 表示让 master Worker 串行建边。 */
   dagEdgeWorkerCount?: number;
-  /** 一键清图删点局部保护半径，单位为截图像素；0 表示每次候选删点都走整路验证。 */
-  deleteCheckRadiusPixels: number;
+  /** 一键清图删点局部命中检查半径，单位为截图像素；0 表示每次候选删点都走整路验证。 */
+  deleteHitCheckRadiusPixels: number;
   /** 当前路径已有像素点。 */
   pathPoints: readonly PixelPoint[];
   /** 当前最后路径点的验证目标；传入士兵命中圈时可复用现有路径预检语义。 */
@@ -930,7 +930,7 @@ async function optimizeOneClickClearPath(
 ) {
   let optimized = route;
   const firstGeneratedIndex = context.options.pathPoints.length;
-  const localDeleteProofIsEnough = oneClickClearLocalDeleteProofIsEnough(context.options);
+  const localHitCheckCanSkipFullValidation = oneClickClearLocalHitCheckCanSkipFullValidation(context.options);
   for (let pass = 0; pass < MAX_GLOBAL_DELETE_PASSES; pass += 1) {
     for (let index = firstGeneratedIndex; index < optimized.pathPoints.length; ) {
       if (context.options.isCancelled?.()) {
@@ -946,7 +946,7 @@ async function optimizeOneClickClearPath(
 
       const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
       if (
-        localDeleteProofIsEnough ||
+        localHitCheckCanSkipFullValidation ||
         validateOneClickClearTargetSequence(context.options, { ...optimized, pathPoints: candidatePath })
       ) {
         optimized = { ...optimized, pathPoints: candidatePath };
@@ -957,9 +957,9 @@ async function optimizeOneClickClearPath(
       await yieldOneClickClearControl(context.options);
     }
   }
-  if (localDeleteProofIsEnough && optimized !== route) {
+  if (localHitCheckCanSkipFullValidation && optimized !== route) {
     workUnits += 1;
-    // y=/y'= abs 的删点可由局部折线命中证明；这里保留一次整体验证，防止障碍/边界等非士兵因素漏判。
+    // y=/y'= abs 的局部命中检查能证明删点不漏打士兵；这里复验整路，补上障碍/边界等非士兵因素。
     if (!validateOneClickClearTargetSequence(context.options, optimized)) {
       return { route, workUnits };
     }
@@ -1013,14 +1013,14 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
     return false;
   }
 
-  // 0 关闭局部近似保护；调用方随后会对这个候选删点做整路验证。
-  if (options.deleteCheckRadiusPixels <= 0) {
+  // 0 跳过删点局部命中检查；调用方随后会对这个候选删点做整路验证。
+  if (options.deleteHitCheckRadiusPixels <= 0) {
     return true;
   }
 
   // abs 删除一个控制点时，只会把 previous->deleted->next 替换成 previous->next；先证明局部士兵命中不丢。
   // 页面应先把 Graphwar 原始平面半径换成截图像素。
-  const checkRadiusSquared = options.deleteCheckRadiusPixels * options.deleteCheckRadiusPixels;
+  const checkRadiusSquared = options.deleteHitCheckRadiusPixels * options.deleteHitCheckRadiusPixels;
   for (const target of options.hitCandidates) {
     const targetCenter = target.hitCenter;
     const oldLocalPathHitsTarget =
@@ -1045,9 +1045,11 @@ function oneClickClearPointDeleteKeepsLocalSoldierHits(
   return true;
 }
 
-function oneClickClearLocalDeleteProofIsEnough(options: GraphwarOneClickClearOptions) {
+function oneClickClearLocalHitCheckCanSkipFullValidation(options: GraphwarOneClickClearOptions) {
   return (
-    options.deleteCheckRadiusPixels > 0 && options.settings.algorithm === "abs" && options.settings.equation !== "ddy"
+    options.deleteHitCheckRadiusPixels > 0 &&
+    options.settings.algorithm === "abs" &&
+    options.settings.equation !== "ddy"
   );
 }
 

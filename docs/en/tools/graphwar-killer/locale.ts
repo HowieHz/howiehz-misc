@@ -73,8 +73,9 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
-    oneClickClearDeleteCheckRadiusNumber: "One-Click Clear delete-check radius must be a number",
-    oneClickClearDeleteCheckRadiusRange: (min) => `One-Click Clear delete-check radius must be at least ${min}px`,
+    oneClickClearDeleteCheckRadiusNumber: "One-Click Clear point-delete hit check radius must be a number",
+    oneClickClearDeleteCheckRadiusRange: (min) =>
+      `One-Click Clear point-delete hit check radius must be at least ${min}px`,
     pathfindingWorkerCountInteger: "Pathfinding parallelism must be an integer",
     pathfindingWorkerCountRange: "Pathfinding parallelism must be between 1 and 128",
     routePlanningToleranceNumber: "Route planning tolerance must be a number",
@@ -588,11 +589,11 @@ export const graphwarKillerLocale = {
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
         "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
-      oneClickClearDeleteCheckRadius: "Clear delete-check radius",
+      oneClickClearDeleteCheckRadius: "Point-delete hit check radius",
       oneClickClearDeleteCheckRadiusAriaLabel:
-        "One-Click Clear local hit check radius for delete optimization, in raw Graphwar 770x450 plane pixels",
+        "One-Click Clear point-delete hit check radius, in raw Graphwar 770x450 plane pixels",
       oneClickClearDeleteCheckRadiusTitle:
-        "Local hit-preservation radius used by One-Click Clear delete optimization, in raw Graphwar 770x450 plane pixels. Use 0 to disable the local guard and full-route validate each candidate deletion.",
+        "When One-Click Clear tries to delete a path point, this radius checks whether the small path section before and after deletion still passes through the same soldiers. Unit: raw Graphwar 770x450 plane pixels. Use 0 to skip this fast local hit check and full-route validate each candidate deletion.",
       oneClickClearTitle:
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
       routePlanningTolerance: "Route planning tolerance",

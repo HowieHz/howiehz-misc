@@ -23,10 +23,10 @@ import { useGraphwarObstacleEditor } from "./composables/use-graphwar-obstacle-e
 import { useGraphwarPathPointEditing } from "./composables/use-graphwar-path-point-editing";
 import { useGraphwarPathState } from "./composables/use-graphwar-path-state";
 import { useGraphwarScreenshotWorkflow } from "./composables/use-graphwar-screenshot";
+import { useGraphwarSmartPathfindingBuilder } from "./composables/use-graphwar-smart-pathfinding-builder";
 import { useGraphwarSmartPathfindingRunWorkflow } from "./composables/use-graphwar-smart-pathfinding-run-workflow";
 import {
   useGraphwarSmartPathfindingSession,
-  type SmartPathfindingPhase,
   type SmartPathfindingStatusKind,
 } from "./composables/use-graphwar-smart-pathfinding-session";
 import { useGraphwarStageFeedback } from "./composables/use-graphwar-stage-feedback";
@@ -88,10 +88,8 @@ import {
   createGraphwarOneClickClearCandidates,
   createGraphwarOneClickClearHitCandidates,
 } from "./pathfinding/graphwar-one-click-clear-targets";
-import type { GraphwarPathfindingPreview } from "./pathfinding/graphwar-pathfinding";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/graphwar-pathfinding-cache";
 import {
-  createGraphwarPathfindingPreviewSnapshot,
   createGraphwarPathLineSegments,
   type GraphwarPathfindingLineSegment,
 } from "./pathfinding/graphwar-pathfinding-preview";
@@ -99,12 +97,7 @@ import {
   createGraphwarPathfindingRunner,
   isGraphwarPathfindingCancelledError,
 } from "./pathfinding/graphwar-pathfinding-runner";
-import { createGraphwarSmartPathfindingSearchInput } from "./pathfinding/graphwar-smart-pathfinding-search-input";
-import {
-  createGraphwarSmartPathfindingHitTarget,
-  createGraphwarSmartPathfindingTrajectoryResult,
-  getGraphwarSmartPathfindingAppendedSegment,
-} from "./pathfinding/graphwar-smart-pathfinding-trajectory";
+import { createGraphwarSmartPathfindingTrajectoryResult } from "./pathfinding/graphwar-smart-pathfinding-trajectory";
 import {
   createBoundsRectWithBoundaryExpansion,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
@@ -263,6 +256,7 @@ const {
   onImageLoaded: handleLoadedScreenshot,
 });
 const graphwarPathfindingRunner = createGraphwarPathfindingRunner();
+const pathfindingCache = createGraphwarPathfindingCacheController();
 // 识别结果应由页面持有，供舞台投影、目标过滤、友方障碍和一键清图共享。
 const detectedSoldiers = ref<DetectionBox[]>([]);
 const hoveredDetectedSoldierId = ref<string>();
@@ -309,10 +303,45 @@ const {
   getLocale: () => locale,
   isDetectionRunActive: isActiveDetectionRun,
 });
-// 单目标寻路 workflow 应集中维护 token、状态和调试耗时顺序；目标规则和 worker 输入仍由页面负责。
+// 单目标寻路 builder 应集中 worker 输入、cache 和预览映射；页面只按职责注入当前状态入口。
+const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
+  debug: {
+    addWorkerTimings: addSmartPathfindingWorkerTimings,
+  },
+  effects: {
+    flashBlockedPoint: smartPathfindingSession.flashBlockedPoint,
+    setGraphRuleFailureStatus: () => setSmartPathfindingStatus(getForwardPathMessage(), "error"),
+  },
+  input: {
+    boundsRect,
+    getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
+    getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
+    getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
+    getPathPixels: () => pathPixels.value,
+    getSimulationMask: () => simulationObstacleMask.value,
+    getTargetPointRadius: () => soldierMarkerRadius.value,
+    getTolerances: () => (parsedObstacleTolerances.value.ok ? parsedObstacleTolerances.value : undefined),
+    isPathfindingWorkerCountValid: () => parsedPathfindingWorkerCount.value.ok,
+  },
+  pathfinding: {
+    cache: pathfindingCache,
+    runner: graphwarPathfindingRunner,
+  },
+  preview: {
+    isSearchAnimationEnabled: () => searchAnimationEnabled.value,
+    setConnection: smartPathfindingSession.setPreviewConnection,
+    setPath: smartPathfindingSession.setPreviewPath,
+    setSearch: smartPathfindingSession.setSearchPreview,
+  },
+  run: {
+    enterSearchPhase: () => smartPathfindingSession.setPhase("search"),
+    isCurrent: isSmartPathfindingRunCurrent,
+  },
+});
+// 单目标寻路 workflow 应集中维护 token、状态和调试耗时顺序；worker 细节由 builder 持有。
 const smartPathfindingRunWorkflow = useGraphwarSmartPathfindingRunWorkflow<PixelPoint | SmartPathfindingTarget>({
   applyPath: setPathPixels,
-  buildPath: buildSmartPathfindingPath,
+  buildPath: smartPathfindingBuilder.buildPath,
   clearDebugTimings: clearSmartPathfindingDebugTimings,
   finishDebugTimings: finishSmartPathfindingDebugTimings,
   finishRun: finishSmartPathfindingRun,
@@ -433,7 +462,6 @@ const {
 } = useGraphwarDebugActivation({
   toggleAdvancedSettings,
 });
-const pathfindingCache = createGraphwarPathfindingCacheController();
 const effectiveSmartPathfindingEnabled = computed(
   () => toolWorkflowMode.value !== "simulator" && algorithmMode.value !== "step" && smartPathfindingEnabled.value,
 );
@@ -2211,84 +2239,6 @@ function pathStartChanges(nextPath: readonly PixelPoint[]) {
   return previousStart.x !== nextStart.x || previousStart.y !== nextStart.y;
 }
 
-/** 在当前障碍 mask 上为目标构造几何路径，并用真实弹道验证后返回可用路径。 */
-async function buildSmartPathfindingPath(
-  target: PixelPoint | SmartPathfindingTarget,
-  cancelToken: number,
-  timings?: SmartPathfindingDebugTimingEntry[],
-) {
-  const boundsResult = parsedBounds.value;
-  if (!boundsResult.ok) {
-    return undefined;
-  }
-  if (!parsedPathfindingWorkerCount.value.ok) {
-    return undefined;
-  }
-
-  const targetPoint = "targetPoint" in target ? target.targetPoint : target;
-  const hitTarget = "targetPoint" in target ? target.hitCircle : target;
-  const obstacleMask = smartPathfindingBaseObstacleMask.value;
-  const tolerances = parsedObstacleTolerances.value;
-  const sourcePath = [...pathPixels.value];
-  const startPoint = sourcePath.at(-1);
-  if (!obstacleMask || !tolerances.ok || !startPoint) {
-    return undefined;
-  }
-
-  if (searchAnimationEnabled.value) {
-    setSmartPathfindingPreviewConnection(startPoint, targetPoint);
-  }
-
-  setSmartPathfindingPhase("search");
-  await waitForNextPathfindingSlice();
-  if (!isSmartPathfindingRunCurrent(cancelToken)) {
-    return undefined;
-  }
-
-  const input = createGraphwarSmartPathfindingSearchInput({
-    bounds: boundsResult.bounds,
-    boundsRect: boundsRect.value,
-    hitTarget: createGraphwarSmartPathfindingHitTarget(hitTarget, soldierMarkerRadius.value),
-    previewEnabled: searchAnimationEnabled.value,
-    routeMaskCacheId: pathfindingCache.getRouteObstacleMaskCacheId(obstacleMask),
-    routeObstacleMask: obstacleMask,
-    settings: createPathTrajectoryFormulaSettings(),
-    simulationMask: simulationObstacleMask.value,
-    sourcePath,
-    targetPoint,
-    tolerances,
-  });
-  const resultCacheKey = pathfindingCache.createSmartPathfindingResultCacheKey(input);
-  let result = pathfindingCache.getCachedSmartPathfindingResult(resultCacheKey, (timing) => timings?.push(timing));
-  const resultCacheHit = result !== undefined;
-  try {
-    if (!result) {
-      result = await graphwarPathfindingRunner.findSmartPath(input, {
-        onPreview: searchAnimationEnabled.value ? setSmartPathfindingPreview : undefined,
-      });
-      pathfindingCache.cacheSmartPathfindingResult(resultCacheKey, result);
-    }
-  } catch (error) {
-    if (!isSmartPathfindingRunCurrent(cancelToken) || isGraphwarPathfindingCancelledError(error)) {
-      return undefined;
-    }
-    return undefined;
-  }
-
-  addSmartPathfindingWorkerTimings(timings, result.timings);
-  if (result.failureReason === "graph-rule") {
-    setSmartPathfindingStatus(getForwardPathMessage(), "error");
-    return undefined;
-  }
-  if (result.blockedPoint) {
-    flashSmartPathfindingBlockedPoint(result.blockedPoint);
-  }
-  if (result.path && searchAnimationEnabled.value) {
-    setSmartPathfindingPreviewPath(getGraphwarSmartPathfindingAppendedSegment(result.path, sourcePath.length));
-  }
-  return result.path ? { cacheHit: resultCacheHit, path: result.path } : undefined;
-}
-
 /** 启动新寻路前先确认当前公式轨迹已经能到达当前最后路径点。 */
 function ensureCurrentPathReachesLastPointBeforeSmartPathfinding() {
   if (pathPixels.value.length < 2) {
@@ -2357,11 +2307,6 @@ function setSmartPathfindingStatus(message: string, kind: SmartPathfindingStatus
   smartPathfindingSession.setStatus(message, kind);
 }
 
-/** 更新智能寻路阶段，并同步刷新进行中文案。 */
-function setSmartPathfindingPhase(phase: SmartPathfindingPhase) {
-  smartPathfindingSession.setPhase(phase);
-}
-
 /** 在智能寻路进行中刷新阶段文案。 */
 function updateSmartPathfindingInProgressStatus() {
   smartPathfindingSession.updateInProgressStatus();
@@ -2388,11 +2333,6 @@ function invalidatePathfindingCaches() {
   invalidatePathfindingWorkerCache();
 }
 
-/** 设置智能寻路路径预览点。 */
-function setSmartPathfindingPreviewPath(points: readonly PixelPoint[]) {
-  smartPathfindingSession.setPreviewPath(points);
-}
-
 /** 短暂标记阻止启动智能寻路的当前轨迹撞击位置。 */
 function flashSmartPathfindingBlockedPoint(point: PixelPoint | undefined) {
   smartPathfindingSession.flashBlockedPoint(point);
@@ -2403,26 +2343,9 @@ function clearSmartPathfindingBlockedPoint() {
   smartPathfindingSession.clearBlockedPoint();
 }
 
-/** 设置寻路起点到目标的直线连接预览。 */
-function setSmartPathfindingPreviewConnection(startPoint: PixelPoint, targetPoint: PixelPoint) {
-  smartPathfindingSession.setPreviewConnection(startPoint, targetPoint);
-}
-
-/** 搜索动画快照应统一投影到截图坐标后再交给 session 存储。 */
-function setSmartPathfindingPreview(preview: GraphwarPathfindingPreview) {
-  smartPathfindingSession.setSearchPreview(createGraphwarPathfindingPreviewSnapshot(preview, boundsRect.value));
-}
-
 /** 清理智能寻路相关视觉状态。 */
 function clearSmartPathfindingPreview() {
   smartPathfindingSession.clearPreview();
-}
-
-/** 让长循环让出事件循环，保证搜索动画和取消操作能及时响应。 */
-function waitForNextPathfindingSlice() {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, 0);
-  });
 }
 
 /** 判断检测框是否包含当前最右侧路径点，避免把已选士兵再次作为目标。 */

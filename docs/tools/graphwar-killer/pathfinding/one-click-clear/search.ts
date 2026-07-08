@@ -932,7 +932,7 @@ async function optimizeOneClickClearPath(
   const firstGeneratedIndex = context.options.pathPoints.length;
   const localHitCheckCanSkipFullValidation = oneClickClearLocalHitCheckCanSkipFullValidation(context.options);
   for (let pass = 0; pass < MAX_GLOBAL_DELETE_PASSES; pass += 1) {
-    for (let index = firstGeneratedIndex; index < optimized.pathPoints.length; ) {
+    for (let index = firstGeneratedIndex; index < optimized.pathPoints.length;) {
       if (context.options.isCancelled?.()) {
         return { route: optimized, workUnits };
       }

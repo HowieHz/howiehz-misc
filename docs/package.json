@@ -22,7 +22,7 @@
     "pagefind": "^1.5.2",
     "vitepress": "2.0.0-alpha.18",
     "vitepress-plugin-group-icons": "^1.7.5",
-    "vitepress-plugin-pagefind": "^0.4.20",
+    "vitepress-plugin-pagefind": "^0.4.22",
     "vitepress-plugin-rss": "^0.4.4"
   },
   "engines": {

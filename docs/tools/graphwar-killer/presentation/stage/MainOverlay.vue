@@ -116,7 +116,7 @@ interface GraphwarStageOverlayPathLayer {
 interface GraphwarStageOverlayLiveClickPreviewLayer {
   /** 实时点击预览轨迹。 */
   curvePoints: string;
-  /** 实时点击预览轨迹的主轨迹基色；样式层会反相显示预览线。 */
+  /** 实时点击预览轨迹颜色，应跟随当前主轨迹颜色。 */
   curveStrokeColor: string;
   /** 实时点击预览点标签。 */
   label: string;
@@ -699,17 +699,17 @@ withDefaults(
 }
 
 .graphwar-killer__curve-line--live-click-preview {
-  filter: invert(100%);
+  stroke-dasharray: 7 5;
 }
 
 @keyframes graphwar-killer-live-click-path-line-blink {
   0%,
   100% {
-    opacity: 42%;
+    opacity: 24%;
   }
 
   50% {
-    opacity: 78%;
+    opacity: 96%;
   }
 }
 

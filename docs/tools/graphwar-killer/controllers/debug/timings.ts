@@ -456,7 +456,7 @@ function sortOneClickClearSearchDebugDetails(
   const remaining = [...entries];
   const sorted: SmartPathfindingDebugTimingEntry[] = [];
   for (const detail of oneClickClearSearchDebugDetailOrder) {
-    for (let index = 0; index < remaining.length; ) {
+    for (let index = 0; index < remaining.length;) {
       const entry = remaining[index];
       if (entry?.detail && getOneClickClearDebugDetailOrderKey(entry.detail) === detail) {
         const [matched] = remaining.splice(index, 1);

@@ -92,7 +92,7 @@ export interface GraphwarDetectionWorkflowController {
   detect: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
   /** 使用 Canvas 像素只识别 Graphwar 坐标系边界，并清除旧对象结果。 */
   detectBounds: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
-  /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
+  /** 在当前手动/自动边界内重新识别对象，不重新推断坐标系区域。 */
   detectInCurrentBounds: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
   /** 检测任务是否正在运行。 */
   inProgress: Ref<boolean>;
@@ -413,7 +413,7 @@ export function useGraphwarDetectionWorkflow(
     }
   }
 
-  /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
+  /** 在当前手动/自动边界内重新识别对象，不重新推断坐标系区域。 */
   async function detectInCurrentBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
     if (!options.hasActiveBounds()) {
       if (trigger === "manual") {

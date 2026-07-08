@@ -1687,7 +1687,7 @@ async function detectGraphwarBounds(trigger: GraphwarDetectionRunTrigger = "manu
   await detectionWorkflow.detectBounds(trigger);
 }
 
-/** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
+/** 在当前手动/自动边界内重新识别对象，不重新推断坐标系区域。 */
 async function detectGraphwarObjectsInCurrentBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
   await detectionWorkflow.detectInCurrentBounds(trigger);
 }

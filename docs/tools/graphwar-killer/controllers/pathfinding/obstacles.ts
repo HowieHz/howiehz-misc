@@ -31,7 +31,7 @@ interface GraphwarPathfindingBoundaryExpansionOptions {
 }
 
 interface GraphwarPathfindingObstacleProjectionOptions {
-  /** 当前截图棋盘矩形；SVG path 和友方士兵 mask 应使用同一份页面标定。 */
+  /** 当前截图坐标系矩形；SVG path 和友方士兵 mask 应使用同一份页面标定。 */
   boundsRect: ReadonlyRef<BoundsRect>;
   /** 寻路 mask 派生应复用页面 cache，避免 route/simulation mask 重复膨胀。 */
   cache: GraphwarPathfindingCacheController;

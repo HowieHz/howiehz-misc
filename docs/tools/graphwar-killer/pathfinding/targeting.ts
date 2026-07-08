@@ -57,7 +57,7 @@ export interface GraphwarSmartPathfindingSoldierTarget {
   targetPoint: PixelPoint;
 }
 
-/** 按当前边界外扩把棋盘内部收缩成可选目标区域。 */
+/** 按当前边界外扩把坐标系内部收缩成可选目标区域。 */
 export function createBoundsRectWithBoundaryExpansion(rect: BoundsRect, boundaryExpansion: number) {
   const horizontalInset = (boundaryExpansion / GRAPHWAR_PLANE_LENGTH) * rect.width;
   const verticalInset = (boundaryExpansion / GRAPHWAR_PLANE_HEIGHT) * rect.height;

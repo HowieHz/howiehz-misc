@@ -61,7 +61,7 @@ interface GraphwarSmartPathfindingBuilderOptions {
   };
   /** 构造 worker 输入时应读取调用时的最新页面状态。 */
   input: {
-    /** 当前截图棋盘矩形；worker 输入和搜索预览都应使用调用时的最新值。 */
+    /** 当前截图坐标系矩形；worker 输入和搜索预览都应使用调用时的最新值。 */
     boundsRect: { readonly value: BoundsRect };
     /** 当前 Graphwar 坐标范围；无效时保持原来的早退语义。 */
     getBounds: () => GraphBounds | undefined;

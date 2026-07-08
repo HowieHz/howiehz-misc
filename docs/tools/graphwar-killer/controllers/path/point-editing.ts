@@ -26,7 +26,7 @@ type PathPointCoordinateState = Pick<
 >;
 
 interface GraphwarPathPointEditingOptions {
-  /** 当前截图棋盘矩形；路径点编辑应始终使用页面当前标定。 */
+  /** 当前截图坐标系矩形；路径点编辑应始终使用页面当前标定。 */
   boundsRect: Ref<BoundsRect>;
   /** 坐标输入框状态应由路径状态 Module 持有。 */
   coordinateState: PathPointCoordinateState;

@@ -58,7 +58,7 @@ export interface GraphwarBoundsDetectionInput extends GraphwarAutoDetectionInput
   edgeRect: BoundsRect;
 }
 
-/** 自动识别任务结果；找不到棋盘时只返回空 edgeRect。 */
+/** 自动识别任务结果；找不到坐标系边界时只返回空 edgeRect。 */
 export interface GraphwarAutoDetectionResult {
   /** 自动推断出的坐标系边界；undefined 表示未识别到坐标系边界。 */
   edgeRect?: BoundsRect;

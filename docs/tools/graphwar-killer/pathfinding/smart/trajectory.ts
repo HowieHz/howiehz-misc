@@ -22,7 +22,7 @@ interface GraphwarSmartPathfindingTrajectoryOptions {
   boundaryExpansion: number;
   /** 当前 Graphwar 坐标边界；缺失时应沿用页面原来的预检失败语义。 */
   bounds: GraphBounds | undefined;
-  /** 截图内 Graphwar 棋盘矩形。 */
+  /** 截图内 Graphwar 坐标系矩形。 */
   boundsRect: BoundsRect;
   /** 普通点击目标点或士兵真实命中圈。 */
   hitTarget: GraphwarSmartPathfindingHitTarget | undefined;

@@ -1,4 +1,4 @@
-/** 从 Graphwar 截图像素中识别棋盘、士兵和障碍 mask。 */
+/** 从 Graphwar 截图像素中识别坐标系边界、士兵和障碍 mask。 */
 import {
   GRAPHWAR_PLANE_HEIGHT,
   GRAPHWAR_PLANE_LENGTH,
@@ -132,7 +132,7 @@ interface AxisGroup {
   score: number;
 }
 
-/** 由左/中/右或上/中/下三条轴线组成的棋盘候选。 */
+/** 由左/中/右或上/中/下三条轴线组成的坐标系候选。 */
 interface AxisTriplet {
   /** 第一条边界轴。 */
   first: AxisGroup;
@@ -636,7 +636,7 @@ export function detectGraphwarObjectsInBounds(
   };
 }
 
-/** 通过 Graphwar 的黑色坐标轴三线结构推断棋盘区域。 */
+/** 通过 Graphwar 的黑色坐标轴三线结构推断坐标系区域。 */
 export function detectGraphwarPlayArea(imageData: ImageData): BoundsRect | undefined {
   const targetAspectRatio = 770 / 450;
   const verticalTriplets = buildAxisTriplets(detectAxisGroups(imageData, "vertical"));
@@ -887,7 +887,7 @@ export function paintObstacleMaskStroke(
   return changed ? nextMask : mask;
 }
 
-/** 判断像素是否属于玩家/士兵主体颜色，而非棋盘和障碍。 */
+/** 判断像素是否属于玩家/士兵主体颜色，而非坐标系背景和障碍。 */
 export function isPlayerColorPixel(red: number, green: number, blue: number) {
   if (
     isAxisBlackPixel(red, green, blue) ||
@@ -903,7 +903,7 @@ export function isPlayerColorPixel(red: number, green: number, blue: number) {
   return maxChannel - minChannel >= 34 && red + green + blue >= 72 && red + green + blue <= 700;
 }
 
-/** 由轴线 triplet 的外侧边界生成棋盘矩形。 */
+/** 由轴线 triplet 的外侧边界生成坐标系矩形。 */
 function createGraphwarPlaneRect(vertical: AxisTriplet, horizontal: AxisTriplet): BoundsRect {
   const left = vertical.first.end;
   const right = vertical.last.start + 1;
@@ -934,7 +934,7 @@ function detectAxisGroups(imageData: ImageData, direction: "horizontal" | "verti
     counts.push(count);
   }
 
-  // 坐标轴会横跨棋盘大部分宽/高；低于 25% 的黑像素密度通常是文字、士兵或障碍噪声。
+  // 坐标轴会横跨坐标系区域大部分宽/高；低于 25% 的黑像素密度通常是文字、士兵或障碍噪声。
   const minScore = axisLength * 0.25;
   const ranked = counts
     .map((score, coordinate) => ({ coordinate, score }))
@@ -993,7 +993,7 @@ function hasBlackPixelInAxisBand(
   return false;
 }
 
-/** 组合“左/中/右”或“上/中/下”三条轴线，用中轴居中程度给棋盘候选排序。 */
+/** 组合“左/中/右”或“上/中/下”三条轴线，用中轴居中程度给坐标系候选排序。 */
 function buildAxisTriplets(groups: AxisGroup[]) {
   const triplets: AxisTriplet[] = [];
   for (let firstIndex = 0; firstIndex < groups.length; firstIndex += 1) {
@@ -1164,7 +1164,7 @@ export function getGraphwarSoldierDetectionSettings(settings?: GraphwarSoldierDe
   return resolveGraphwarSoldierDetectionSettings(settings);
 }
 
-/** 根据棋盘宽度计算 Graphwar 原始平面到截图像素的缩放比例。 */
+/** 根据坐标系边界宽度计算 Graphwar 原始平面到截图像素的缩放比例。 */
 export function getGraphwarDetectionScale(edgeRect: BoundsRect) {
   return edgeRect.width / GRAPHWAR_PLANE_LENGTH;
 }
@@ -1423,7 +1423,7 @@ function normalizeScoreAboveThreshold(score: number, threshold: number) {
   return clampNumber((score - threshold) / (1 - threshold), 0, 1);
 }
 
-/** 对模板像素组做双线性采样评分，只统计仍在棋盘矩形内的像素。 */
+/** 对模板像素组做双线性采样评分，只统计仍在坐标系矩形内的像素。 */
 function scoreTemplatePixelGroup(
   imageData: ImageData,
   rect: BoundsRect,
@@ -1579,7 +1579,7 @@ function scoreSoldierFixedPixel(pixel: { red: number; green: number; blue: numbe
   return scoreSoldierForegroundPixel(pixel) * 0.48;
 }
 
-/** 对士兵前景形状评分，排除棋盘底色并弱化坐标轴干扰。 */
+/** 对士兵前景形状评分，排除坐标系底色并弱化坐标轴干扰。 */
 function scoreSoldierForegroundPixel(pixel: { red: number; green: number; blue: number }) {
   if (isPlaneWhitePixel(pixel.red, pixel.green, pixel.blue) || isPlaneGreenPixel(pixel.red, pixel.green, pixel.blue)) {
     return 0;
@@ -1612,12 +1612,12 @@ function scoreSoldierPlayerColorPixel(
   return clampNumber(1 - distance / 420 + chroma / 900, 0, 1);
 }
 
-/** 判断模板源码中心是否仍落在棋盘截图矩形内。 */
+/** 判断模板源码中心是否仍落在坐标系截图矩形内。 */
 function soldierTemplateCenterFitsRect(centerX: number, centerY: number, rect: BoundsRect) {
   return centerX >= rect.x && centerX <= rect.x + rect.width && centerY >= rect.y && centerY <= rect.y + rect.height;
 }
 
-/** 判断截图像素点是否在棋盘矩形内。 */
+/** 判断截图像素点是否在坐标系矩形内。 */
 function pointIsInsideRect(x: number, y: number, rect: BoundsRect) {
   return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }
@@ -2037,7 +2037,7 @@ function removeGraphwarCenterGuideLines(mask: Uint8Array) {
   }
 }
 
-/** 移除棋盘边框辅助线。 */
+/** 移除坐标系边框辅助线。 */
 function removeGraphwarPlaneBoundaryGuideLines(mask: Uint8Array) {
   for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
     for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
@@ -2268,12 +2268,12 @@ function isSoldierDarkOutlinePixel(red: number, green: number, blue: number) {
   return red <= 145 && green <= 145 && blue <= 145 && Math.max(red, green, blue) - Math.min(red, green, blue) <= 48;
 }
 
-/** 判断像素是否属于棋盘白色背景。 */
+/** 判断像素是否属于坐标系白色背景。 */
 function isPlaneWhitePixel(red: number, green: number, blue: number) {
   return red >= 225 && green >= 225 && blue >= 210 && Math.max(red, green, blue) - Math.min(red, green, blue) <= 35;
 }
 
-/** 判断像素是否属于 Graphwar 绿色棋盘背景。 */
+/** 判断像素是否属于 Graphwar 绿色坐标系背景。 */
 function isPlaneGreenPixel(red: number, green: number, blue: number) {
   return (
     green >= 155 && red >= 115 && red <= 195 && blue >= 110 && blue <= 195 && green - red >= 20 && green - blue >= 20

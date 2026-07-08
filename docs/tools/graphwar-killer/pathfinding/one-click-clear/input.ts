@@ -59,7 +59,7 @@ export type GraphwarOneClickClearSearchPreflightResult =
 interface GraphwarOneClickClearSearchInputOptions {
   /** 成功预检后的 Graphwar 坐标边界。 */
   bounds: GraphBounds;
-  /** 截图内 Graphwar 棋盘矩形。 */
+  /** 截图内 Graphwar 坐标系矩形。 */
   boundsRect: BoundsRect;
   /** 一键清图 DAG 入口候选，顺序应保持目标收集 Module 输出。 */
   candidates: readonly GraphwarOneClickClearCandidate[];

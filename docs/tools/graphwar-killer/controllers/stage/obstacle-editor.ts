@@ -16,7 +16,7 @@ import {
 type GraphwarObstacleEditorStatusKind = "success" | "warning";
 
 export interface GraphwarObstacleEditorOptions {
-  /** 截图中的 Graphwar 棋盘矩形；笔刷坐标应以当前矩形换算到原始平面。 */
+  /** 截图中的 Graphwar 坐标系矩形；笔刷坐标应以当前矩形换算到原始平面。 */
   boundsRect: Ref<BoundsRect>;
   /** 连续笔刷操作后的障碍统计刷新延迟。 */
   editRefreshDelayMs: number;

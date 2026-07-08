@@ -20,7 +20,7 @@ interface ReadonlyRef<T> {
 
 interface GraphwarPathAppendWorkflowOptions<TSoldier, TSmartTarget> {
   geometry: {
-    /** 当前截图棋盘矩形；点规范化和 Graphwar 坐标映射应使用同一份页面标定。 */
+    /** 当前截图坐标系矩形；点规范化和 Graphwar 坐标映射应使用同一份页面标定。 */
     boundsRect: ReadonlyRef<BoundsRect>;
     /** 当前路径的 Graphwar 坐标应由页面统一投影，避免这里重复维护 computed。 */
     getMappedPathPoints: () => readonly GraphPoint[];

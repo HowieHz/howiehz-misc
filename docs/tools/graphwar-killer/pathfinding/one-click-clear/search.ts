@@ -103,7 +103,7 @@ export interface GraphwarOneClickClearDagEdgeBuildJob {
 export interface GraphwarOneClickClearDagEdgeBuildRequest {
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;
-  /** 截图内 Graphwar 棋盘矩形。 */
+  /** 截图内 Graphwar 坐标系矩形。 */
   boundsRect: BoundsRect;
   /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
@@ -139,7 +139,7 @@ export interface GraphwarOneClickClearOptions {
   boundaryExpansion: number;
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;
-  /** 截图内 Graphwar 棋盘矩形。 */
+  /** 截图内 Graphwar 坐标系矩形。 */
   boundsRect: BoundsRect;
   /** 候选士兵；友伤开关过滤由调用方负责。 */
   candidates: readonly GraphwarOneClickClearCandidate[];

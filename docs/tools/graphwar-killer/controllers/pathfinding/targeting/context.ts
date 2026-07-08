@@ -19,7 +19,7 @@ interface ReadonlyRef<T> {
 }
 
 interface GraphwarTargetingContextOptions {
-  /** 当前截图棋盘矩形；目标规则应始终使用页面当前标定。 */
+  /** 当前截图坐标系矩形；目标规则应始终使用页面当前标定。 */
   boundsRect: ReadonlyRef<BoundsRect>;
   /** 当前 Graphwar 坐标范围；无效时目标选择应保持原失败语义。 */
   getBounds: () => GraphBounds | undefined;

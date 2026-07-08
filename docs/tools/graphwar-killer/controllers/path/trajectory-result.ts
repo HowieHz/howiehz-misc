@@ -33,7 +33,7 @@ interface GraphwarTrajectoryResultOptions {
   getCollisionSettings: () => GraphwarTrajectoryCollisionSettings | undefined;
   /** 坐标映射由页面统一提供，避免轨迹 Module 自行读取输入框文本。 */
   geometry: {
-    /** 当前截图棋盘矩形。 */
+    /** 当前截图坐标系矩形。 */
     boundsRect: ReadonlyRef<BoundsRect>;
     /** 当前有效 Graphwar 坐标范围；无效时应保持原来的空结果语义。 */
     getBounds: () => GraphBounds | undefined;

@@ -73,9 +73,9 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
-    oneClickClearDeleteCheckRadiusNumber: "One-Click Clear delete-check radius must be a number",
-    oneClickClearDeleteCheckRadiusRange: (min, max) =>
-      `One-Click Clear delete-check radius must be between ${min}px and ${max}px`,
+    oneClickClearDeleteCheckRadiusNumber: "One-Click Clear point-delete hit check radius must be a number",
+    oneClickClearDeleteCheckRadiusRange: (min) =>
+      `One-Click Clear point-delete hit check radius must be at least ${min}px`,
     pathfindingWorkerCountInteger: "Pathfinding parallelism must be an integer",
     pathfindingWorkerCountRange: "Pathfinding parallelism must be between 1 and 128",
     routePlanningToleranceNumber: "Route planning tolerance must be a number",
@@ -122,15 +122,17 @@ export const graphwarKillerLocale = {
     },
     detection: {
       cancelled: "Detection cancelled",
-      detectingBounds: "Detecting play-area bounds",
+      detectingBounds: "Detecting coordinate-system bounds",
       detectingObjects: "Detecting soldiers and obstacles",
+      detectedBounds: (elapsed) => `Marked bounds in ${elapsed}`,
       detectedCurrentBounds: (soldiers, elapsed) => `Marked obstacles and ${soldiers} soldiers in ${elapsed}`,
       detectedWithAutoBounds: (soldiers, elapsed) => `Marked bounds, obstacles, and ${soldiers} soldiers in ${elapsed}`,
       failed: (message) => `Detection failed: ${message}`,
       obstacleEditsApplied: (obstacles) => `Updated obstacle boundaries; currently ${obstacles} obstacles`,
       obstacleEditsCleared: (obstacles) => `Cleared obstacle edits; restored ${obstacles} obstacles`,
       updatingObstacleEdits: "Applying obstacle edits",
-      noBounds: "Could not detect the Graphwar play-area bounds",
+      needBounds: "Detect or draw the Graphwar coordinate-system bounds first",
+      noBounds: "Could not detect the Graphwar coordinate-system bounds",
       noPixels: "Could not read screenshot pixels",
       partialWarning: "⚠ partial issue",
       preparingPixels: "Reading screenshot pixels",
@@ -177,6 +179,8 @@ export const graphwarKillerLocale = {
     forwardMinimumDouble: "one representable double",
     forwardPath: (minimumStep) =>
       `Each point's Graphwar x must be strictly greater than the previous point by at least ${minimumStep}`,
+    needBounds: "Detect or draw coordinate-system bounds before using Smart Pathfinding",
+    needDetection: "Detect soldiers and obstacles before using Smart Pathfinding",
     inProgress: {
       optimize: "Optimize path nodes",
       search: "Search obstacle route",
@@ -191,6 +195,7 @@ export const graphwarKillerLocale = {
     },
     oneClickClear: {
       inProgress: "Running One-Click Clear; right-click the screenshot to stop",
+      needDetection: "Detect soldiers and obstacles before using One-Click Clear",
       needCurrentPath: "One-Click Clear needs an existing path start first",
       noCandidate: "One-Click Clear failed: no selectable target exists on the x+ side of the current path",
       noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found in ${elapsed}`,
@@ -229,18 +234,21 @@ export const graphwarKillerLocale = {
       liveClickPreviewTitle:
         "Preview the path point and new path line that a left-click at the current pointer would place.",
       pickBounds: "Pick bounds",
-      pickBoundsTitle: "Enter bounds-picking mode: left-click two board corners to calibrate the screenshot bounds.",
+      pickBoundsTitle:
+        "Enter bounds-picking mode: left-click two coordinate-system corners to calibrate the screenshot bounds.",
       pickPath: "Pick path",
       pickPathTitle: "Enter path-picking mode: click your soldier first, then target path points or target soldiers.",
       title: "Controls",
       toolModeAriaLabel: "Tool mode",
-      toolModeTitle: "Choose whether clicks on the screenshot pick board bounds or pick your soldier and path points.",
+      toolModeTitle:
+        "Choose whether clicks on the screenshot pick coordinate-system bounds or pick your soldier and path points.",
       undoPoint: "Undo point",
       undoPointTitle: "Undo the most recently added path point",
     },
     detection: {
       autoDetection: "Auto detect",
-      autoDetectionTitle: "Automatically run detection when a screenshot loads or detection settings change.",
+      autoDetectionTitle:
+        "When a screenshot loads, detect bounds, soldiers, and obstacles automatically; when detection settings change, redetect soldiers and obstacles inside the current bounds.",
       busyOverlay: "Detecting, right-click to cancel",
       debugNoTiming: "No detection timing recorded yet",
       debugDetails: {
@@ -285,13 +293,13 @@ export const graphwarKillerLocale = {
           title: "Scan soldier yellow/white seed pixels and reverse-vote possible source centers for soldiers.",
         },
         "detecting-bounds": {
-          label: "Detect play-area bounds",
+          label: "Detect coordinate-system bounds",
           title:
-            "Find the usable Graphwar play-area bounds in the screenshot pixels; only appears during automatic bounds detection.",
+            "Find the Graphwar coordinate-system bounds in the screenshot pixels; only appears during automatic bounds detection.",
         },
         "detecting-objects": {
           label: "Detect soldiers and obstacles",
-          title: "Detect soldiers, obstacle regions, and hit circles inside the resolved play area.",
+          title: "Detect soldiers, obstacle regions, and hit circles inside the resolved coordinate-system bounds.",
         },
         "filtering-obstacle-components": {
           label: "Filter obstacle components",
@@ -323,7 +331,7 @@ export const graphwarKillerLocale = {
         "updating-results": {
           label: "Update detection results",
           title:
-            "Write detected soldiers, obstacles, and play-area bounds back to page state, then refresh related cache and highlights.",
+            "Write detected soldiers, obstacles, and coordinate-system bounds back to page state, then refresh related cache and highlights.",
         },
       },
       debugSummary: "Debug info",
@@ -334,20 +342,27 @@ export const graphwarKillerLocale = {
       smartCursor: "Smart cursor",
       smartCursorTitle:
         "Snap path picking to detected soldier centers and enable obstacle and boundary collision simulation.",
-      startDetection: "Start detection",
-      startDetectionTitle:
-        "Automatically detect the Graphwar board bounds, soldiers, and obstacles from the current screenshot.",
+      detectBounds: "Detect bounds",
+      detectBoundsTitle: "Detect and mark the Graphwar coordinate-system bounds from the current screenshot.",
+      detectObjects: "Detect soldiers/obstacles",
+      detectObjectsNeedBoundsTitle: "Detect or draw the Graphwar coordinate-system bounds first.",
+      detectObjectsTitle: "Detect soldiers and obstacles inside the current confirmed bounds.",
       title: "Detection",
     },
     instructions: {
       items: [
         "Add a Graphwar screenshot by uploading, dragging, or pasting it.",
-        "Enter the coordinate range and game mode, or use Start detection to detect bounds, soldiers, and obstacles.",
+        "Enter the coordinate range and game mode, or click Detect Bounds, then Detect Soldiers/Obstacles to mark soldiers and obstacles.",
         "Solver mode: in Pick path, click your soldier first, then the target path points; copy the generated function into Graphwar.",
         "Simulator mode: select the initial firing soldier and enter a function. y'' mode also needs a launch angle.",
         "Turn on Smart Cursor for assisted picking; choose Smart Pathfinding when the route should avoid detected obstacles.",
         "During Smart Pathfinding, right-click the screenshot to cancel.",
-        "Graphwar is known to skip unknown characters and parse y' as y; these can be changed in Advanced.",
+        // The footer tutorial should list Graphwar's original input tokens, not the full JavaScript/Math syntax.
+        "Allowed variables: x, y, and y'. With the default Graphwar-compatible setting, y' is parsed as y; turn this off in Advanced.",
+        "Allowed operators: +, -, /, *, and ^. Parentheses and implicit multiplication such as 2x or 2sin(x) are also supported.",
+        "Allowed functions: sqrt(), log(), ln(), abs(), sin() (alias sen()), cos(), tan() (alias tg()), and exp(). log is base 10; ln is the natural logarithm.",
+        "Allowed constants: e and pi.",
+        "Graphwar is known to skip unknown characters; turn this off in Advanced.",
       ],
       title: "How to Use",
     },
@@ -362,7 +377,7 @@ export const graphwarKillerLocale = {
       boundaryExpansion: "Boundary expansion",
       boundaryExpansionAriaLabel: "Boundary expansion in raw Graphwar 770x450 plane pixels",
       boundaryExpansionTitle:
-        "Treat the play-area boundary as expanded inward into the collision area. Unit: raw Graphwar 770x450 plane pixels.",
+        "Treat the coordinate-system boundary as expanded inward into the collision area. Unit: raw Graphwar 770x450 plane pixels.",
       debugNoTiming: "No pathfinding timing recorded yet",
       debugDetails: {
         "build-dag-edges": {
@@ -588,12 +603,12 @@ export const graphwarKillerLocale = {
       debugSummary: "Debug info",
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
-        "Adjust the safety margin around detected obstacles and board bounds for pathfinding and collision checks.",
-      oneClickClearDeleteCheckRadius: "Clear delete-check radius",
+        "Adjust the safety margin around detected obstacles and coordinate-system bounds for pathfinding and collision checks.",
+      oneClickClearDeleteCheckRadius: "Point-delete hit check radius",
       oneClickClearDeleteCheckRadiusAriaLabel:
-        "One-Click Clear local hit check radius for delete optimization, in screenshot pixels",
+        "One-Click Clear point-delete hit check radius, in raw Graphwar 770x450 plane pixels",
       oneClickClearDeleteCheckRadiusTitle:
-        "Local hit-preservation radius used by One-Click Clear delete optimization. Range: 1px to the current soldier hit-circle radius. Final full-route validation still uses the real hit circle.",
+        "When One-Click Clear tries to delete a path point, this radius checks whether the small path section before and after deletion still passes through the same soldiers. Unit: raw Graphwar 770x450 plane pixels. Use 0 to skip this fast local hit check and full-route validate each candidate deletion.",
       oneClickClearTitle:
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
       routePlanningTolerance: "Route planning tolerance",
@@ -648,14 +663,14 @@ export const graphwarKillerLocale = {
       algorithmTitle: "Choose how path points are converted into a Graphwar function.",
       bounds: {
         heading: "Bounds",
-        maxXAriaLabel: "Graphwar board right-edge x coordinate",
-        maxXTitle: "X coordinate for the right edge of the Graphwar board.",
-        maxYAriaLabel: "Graphwar board top-edge y coordinate",
-        maxYTitle: "Y coordinate for the top edge of the Graphwar board.",
-        minXAriaLabel: "Graphwar board left-edge x coordinate",
-        minXTitle: "X coordinate for the left edge of the Graphwar board.",
-        minYAriaLabel: "Graphwar board bottom-edge y coordinate",
-        minYTitle: "Y coordinate for the bottom edge of the Graphwar board.",
+        maxXAriaLabel: "Graphwar coordinate-system right-edge x coordinate",
+        maxXTitle: "X coordinate for the right edge of the Graphwar coordinate system.",
+        maxYAriaLabel: "Graphwar coordinate-system top-edge y coordinate",
+        maxYTitle: "Y coordinate for the top edge of the Graphwar coordinate system.",
+        minXAriaLabel: "Graphwar coordinate-system left-edge x coordinate",
+        minXTitle: "X coordinate for the left edge of the Graphwar coordinate system.",
+        minYAriaLabel: "Graphwar coordinate-system bottom-edge y coordinate",
+        minYTitle: "Y coordinate for the bottom edge of the Graphwar coordinate system.",
       },
       advancedSettings: "Advanced",
       debugActivationCountdown: (remainingSeconds) => `Hold ${remainingSeconds}s more to enable debug info`,

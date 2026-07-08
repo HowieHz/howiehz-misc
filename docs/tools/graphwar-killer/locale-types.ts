@@ -1,8 +1,11 @@
+import type { AlgorithmMode, EquationMode } from "./core/types";
 /** 定义 Graphwar 杀手本地化文案结构，供中英文页面共享。 */
-import type { GraphwarDetectionWarning } from "./graphwar-detection";
-import type { GraphwarDetectionWorkerTimingDetail } from "./graphwar-detection-worker-types";
-import type { GraphwarOneClickClearDebugDetail, GraphwarOneClickClearDebugStage } from "./graphwar-one-click-clear";
-import type { AlgorithmMode, EquationMode } from "./types";
+import type { GraphwarDetectionWarning } from "./detection/objects";
+import type { GraphwarDetectionWorkerTimingDetail } from "./detection/runtime/protocol";
+import type {
+  GraphwarOneClickClearDebugDetail,
+  GraphwarOneClickClearDebugStage,
+} from "./pathfinding/one-click-clear/search";
 
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
 export type GraphwarKillerStopReason = "invalid" | "max-steps" | "out-of-bounds" | "too-steep";
@@ -110,7 +113,7 @@ export interface GraphwarKillerLocale {
     obstacleBrushDiameterInteger: string;
     obstacleBrushDiameterRange: (min: number, max: number) => string;
     oneClickClearDeleteCheckRadiusNumber: string;
-    oneClickClearDeleteCheckRadiusRange: (min: number, max: number) => string;
+    oneClickClearDeleteCheckRadiusRange: (min: number) => string;
     pathfindingWorkerCountInteger: string;
     pathfindingWorkerCountRange: string;
     routePlanningToleranceNumber: string;
@@ -161,12 +164,14 @@ export interface GraphwarKillerLocale {
       cancelled: string;
       detectingBounds: string;
       detectingObjects: string;
+      detectedBounds: (elapsed: string) => string;
       detectedCurrentBounds: (soldiers: number, elapsed: string) => string;
       detectedWithAutoBounds: (soldiers: number, elapsed: string) => string;
       failed: (message: string) => string;
       obstacleEditsApplied: (obstacles: number) => string;
       obstacleEditsCleared: (obstacles: number) => string;
       updatingObstacleEdits: string;
+      needBounds: string;
       noBounds: string;
       noPixels: string;
       partialWarning: string;
@@ -200,6 +205,8 @@ export interface GraphwarKillerLocale {
     failure: (elapsed?: string) => string;
     forwardMinimumDouble: string;
     forwardPath: (minimumStep: string) => string;
+    needBounds: string;
+    needDetection: string;
     inProgress: {
       optimize: string;
       search: string;
@@ -209,6 +216,7 @@ export interface GraphwarKillerLocale {
     success: (elapsed?: string, resultCacheHit?: boolean) => string;
     oneClickClear: {
       inProgress: string;
+      needDetection: string;
       needCurrentPath: string;
       noCandidate: string;
       noUsableTarget: (elapsed: string) => string;
@@ -274,8 +282,11 @@ export interface GraphwarKillerLocale {
       minObstacleAreaTitle: string;
       smartCursor: string;
       smartCursorTitle: string;
-      startDetection: string;
-      startDetectionTitle: string;
+      detectBounds: string;
+      detectBoundsTitle: string;
+      detectObjects: string;
+      detectObjectsNeedBoundsTitle: string;
+      detectObjectsTitle: string;
       title: string;
     };
     instructions: {

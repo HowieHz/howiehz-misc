@@ -93,6 +93,9 @@ const GRAPH_SAME_SIDE_EDGE_ROUTE_WIDTH = GRAPH_NODE_WIDTH * 0.75;
 const GRAPH_SIDE_EDGE_REPULSION_GAP = 4;
 // 节点纵向使用 8%-92% 的主区域，给边框和“高/低”角标留出上下边距。
 const GRAPH_VERTICAL_SPREAD = 84;
+// 节点横向只在 8%-92% 安全区内排布，给边框、曲线和箭头留出绘图空间。
+const GRAPH_LAYOUT_MIN_X = 8;
+const GRAPH_LAYOUT_MAX_X = 92;
 // 少量节点时的基础图高度；再小会挤压节点内两行文字。
 const GRAPH_VIEWPORT_BASE_HEIGHT = 380;
 // 每增加 1 个相对位置跨度，视口增加的像素高度。
@@ -958,7 +961,7 @@ function getSingleRowItemCandidateXs(
     candidates.add(neighborXs.reduce((total, x) => total + x, 0) / neighborXs.length);
   }
 
-  return Array.from(candidates, (x) => clampNumber(x, 8, 92));
+  return Array.from(candidates, (x) => clampNumber(x, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X));
 }
 
 /** 获取关系中与指定节点相连的另一端；不在关系内则返回空字符串。 */
@@ -1215,7 +1218,10 @@ function getLeafItemX(item: CompareItem, neighbor: CompareItem, items: readonly 
 
   // 同列不够时左右挂 18%，约一个半节点宽，通常能避开邻居列。
   const leafOffset = 18;
-  const candidates = [clampNumber(neighbor.x - leafOffset, 8, 92), clampNumber(neighbor.x + leafOffset, 8, 92)];
+  const candidates = [
+    clampNumber(neighbor.x - leafOffset, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X),
+    clampNumber(neighbor.x + leafOffset, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X),
+  ];
   return candidates
     .map((x) => ({
       x,
@@ -1256,7 +1262,11 @@ function layoutGraphRowItems(items: readonly CompareItem[], nodeDegrees: Readonl
     const sortedItems = sortGraphItemsByName(items);
     return sortedItems.map((item, rowIndex) => ({
       ...item,
-      x: clampNumber(centerX + (rowIndex - (sortedItems.length - 1) / 2) * rowStep, 8, 92),
+      x: clampNumber(
+        centerX + (rowIndex - (sortedItems.length - 1) / 2) * rowStep,
+        GRAPH_LAYOUT_MIN_X,
+        GRAPH_LAYOUT_MAX_X,
+      ),
     }));
   }
 
@@ -1271,7 +1281,7 @@ function layoutGraphRowItems(items: readonly CompareItem[], nodeDegrees: Readonl
       const direction = sideIndex % 2 === 0 ? -1 : 1;
       return {
         ...item,
-        x: clampNumber(centerX + direction * distance * rowStep, 8, 92),
+        x: clampNumber(centerX + direction * distance * rowStep, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X),
       };
     }),
   ];
@@ -1372,7 +1382,7 @@ function getGraphComponentCenter(index: number, count: number) {
   }
   // 两三个独立分量先靠近中心；分量很多时再逐步用满横向空间。
   const componentStep = Math.min(28, 84 / (count - 1));
-  return clampNumber(50 + (index - (count - 1) / 2) * componentStep, 8, 92);
+  return clampNumber(50 + (index - (count - 1) / 2) * componentStep, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X);
 }
 
 /** 获取一组节点按名称排序后的第一个名称。 */
@@ -1418,8 +1428,8 @@ function avoidGraphItemOverlap(items: readonly CompareItem[], records: readonly 
 
         // 每侧推开一半重叠，再加 0.35% 防止刚好贴边。
         const pushX = (overlapX / 2 + 0.35) * (deltaX >= 0 ? 1 : -1);
-        left.x = clampNumber(left.x - pushX, 8, 92);
-        right.x = clampNumber(right.x + pushX, 8, 92);
+        left.x = clampNumber(left.x - pushX, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X);
+        right.x = clampNumber(right.x + pushX, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X);
       }
     }
   }
@@ -1473,8 +1483,8 @@ function applySideEdgeRepulsion(left: CompareItem, right: CompareItem, relationP
 
   // 关系两端太近时各退一半，再加 0.2% 防止线贴边。
   const pushX = ((targetGap - horizontalGap) / 2 + 0.2) * (deltaX >= 0 ? 1 : -1);
-  left.x = clampNumber(left.x - pushX, 8, 92);
-  right.x = clampNumber(right.x + pushX, 8, 92);
+  left.x = clampNumber(left.x - pushX, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X);
+  right.x = clampNumber(right.x + pushX, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X);
 }
 
 /** 侧边端口会占用绘图通道；附近节点靠到这一侧时轻轻推开。 */
@@ -1514,8 +1524,8 @@ function repelFromSidePort(owner: CompareItem, other: CompareItem, side: -1 | 1)
   const falloff = 1 - verticalGap / verticalRange;
   // 端口斥力比实体碰撞弱，0.16 只做视觉疏散；主要让靠近端口的节点移动。
   const pushX = (targetGap - horizontalGap + 0.15) * falloff * 0.16;
-  owner.x = clampNumber(owner.x - side * pushX * 0.35, 8, 92);
-  other.x = clampNumber(other.x + side * pushX * 0.65, 8, 92);
+  owner.x = clampNumber(owner.x - side * pushX * 0.35, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X);
+  other.x = clampNumber(other.x + side * pushX * 0.65, GRAPH_LAYOUT_MIN_X, GRAPH_LAYOUT_MAX_X);
 }
 
 /** 在节点列表中查找有效的评分锚点。 */

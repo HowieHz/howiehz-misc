@@ -1021,13 +1021,10 @@ const detectionSettingsMessage = computed(() => {
   }
   return "";
 });
-const detectionHeaderStatus = computed(() => detectionStatus.value || detectionSettingsMessage.value);
+// 当前输入错误应优先于上一轮识别状态，避免旧成功文案盖住即时校验失败。
+const detectionHeaderStatus = computed(() => detectionSettingsMessage.value || detectionStatus.value);
 const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
-  detectionStatus.value
-    ? detectionStatusKind.value
-    : detectionSettingsMessage.value
-      ? "error"
-      : detectionStatusKind.value,
+  detectionSettingsMessage.value ? "error" : detectionStatusKind.value,
 );
 // 识别面板只应消费展示 DTO；识别运行、状态优先级和耗时格式化仍由页面侧保持原语义。
 const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
@@ -1046,9 +1043,10 @@ const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
     message: detectionHeaderStatus.value,
   },
   smartCursorEnabled: smartCursorEnabled.value,
+  // 当前设置错误展示时，旧识别警告也应隐藏，避免混入上一轮结果元数据。
   statusWarning: {
-    message: detectionStatusWarning.value,
-    title: detectionStatusWarningTitle.value,
+    message: detectionSettingsMessage.value ? "" : detectionStatusWarning.value,
+    title: detectionSettingsMessage.value ? "" : detectionStatusWarningTitle.value,
   },
 }));
 const magnifierZoom = computed(() =>

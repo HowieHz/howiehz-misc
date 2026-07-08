@@ -699,7 +699,8 @@ withDefaults(
 }
 
 .graphwar-killer__curve-line--live-click-preview {
-  stroke-dasharray: 7 5;
+  /* 实时预览应弱于主轨迹，避免覆盖已生成轨迹的视觉层级。 */
+  stroke-opacity: 62%;
 }
 
 @keyframes graphwar-killer-live-click-path-line-blink {
@@ -809,7 +810,7 @@ withDefaults(
 }
 
 .graphwar-killer__point--live-click-preview {
-  animation: graphwar-killer-live-click-point-spin 900ms linear infinite;
+  animation: graphwar-killer-live-click-point-spin 4500ms linear infinite;
   pointer-events: none;
   transform-box: fill-box;
   transform-origin: center;

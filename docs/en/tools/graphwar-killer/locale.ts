@@ -360,8 +360,8 @@ export const graphwarKillerLocale = {
         // The footer tutorial should list Graphwar's original input tokens, not the full JavaScript/Math syntax.
         "Allowed variables: x, y, and y'. With the default Graphwar-compatible setting, y' is parsed as y; turn this off in Advanced.",
         "Allowed operators: +, -, /, *, and ^. Parentheses and implicit multiplication such as 2x or 2sin(x) are also supported.",
-        "Allowed functions: sqrt(), log(), ln(), abs(), sin(), cos(), tan(), and exp(). log is base 10; ln is the natural logarithm.",
-        "The original source also accepts constants e and pi, plus sen/tg as aliases for sin/tan.",
+        "Allowed functions: sqrt(), log(), ln(), abs(), sin() (alias sen()), cos(), tan() (alias tg()), and exp(). log is base 10; ln is the natural logarithm.",
+        "Allowed constants: e and pi.",
         "Graphwar is known to skip unknown characters; turn this off in Advanced.",
       ],
       title: "How to Use",

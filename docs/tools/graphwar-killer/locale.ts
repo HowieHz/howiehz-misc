@@ -306,8 +306,8 @@ export const graphwarKillerLocale = {
         // 底部教程应列出 Graphwar 原版输入框支持的语法，避免用户误按 JavaScript/Math 表达式输入。
         "表达式可用变量：x、y、y'；默认兼容 Graphwar 原版时，y' 会被解析为 y，可在“高级设定”里关闭。",
         "表达式可用运算符：+、-、/、*、^，并支持括号和 2x、2sin(x) 这样的隐式乘法。",
-        "表达式可用函数：sqrt()、log()、ln()、abs()、sin()、cos()、tan()、exp()；log 是 10 底，ln 是自然对数。",
-        "源码还兼容常量 e、pi，以及 sin/tan 的别名 sen/tg。",
+        "表达式可用函数：sqrt()、log()、ln()、abs()、sin()（别名 sen()）、cos()、tan()（别名 tg()）、exp()；log 是 10 底，ln 是自然对数。",
+        "表达式可用常量：e、pi。",
         "Graphwar 原版会跳过未知字符；可在“高级设定”里关闭。",
       ],
       title: "使用说明",

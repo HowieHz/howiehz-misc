@@ -140,8 +140,8 @@ export const graphwarKillerLocale = {
     currentPathBlocked: "模拟结果未到达当前最后路径点，无法开始寻路任务",
     failure: (elapsed) =>
       elapsed === undefined ? "智能寻路失败：未找到可行路径" : `智能寻路失败：未找到可行路径，耗时 ${elapsed}`,
-    forwardMinimumDouble: "一个可表示 double",
-    forwardPath: (minimumStep) => `每个点的 Graphwar x 需要严格大于上一个点，至少前进 ${minimumStep}`,
+    forwardMinimumDouble: "下一个可表示的双精度浮点数",
+    forwardPath: (minimumStep) => `每个点的 Graphwar x 都必须严格大于上一个点，至少移动到${minimumStep}`,
     needBounds: "先识别或框选坐标系边界后才能使用智能寻路",
     needDetection: "先识别士兵和障碍后才能使用智能寻路",
     inProgress: {

@@ -176,9 +176,9 @@ export const graphwarKillerLocale = {
       elapsed === undefined
         ? "Smart Pathfinding failed: no valid path found"
         : `Smart Pathfinding failed: no valid path found in ${elapsed}`,
-    forwardMinimumDouble: "one representable double",
+    forwardMinimumDouble: "the next representable double-precision floating-point value",
     forwardPath: (minimumStep) =>
-      `Each point's Graphwar x must be strictly greater than the previous point by at least ${minimumStep}`,
+      `Each point's Graphwar x must be strictly greater than the previous point, moving at least to ${minimumStep}`,
     needBounds: "Detect or draw coordinate-system bounds before using Smart Pathfinding",
     needDetection: "Detect soldiers and obstacles before using Smart Pathfinding",
     inProgress: {

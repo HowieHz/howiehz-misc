@@ -248,7 +248,7 @@ export const graphwarKillerLocale = {
     detection: {
       autoDetection: "Auto detect",
       autoDetectionTitle:
-        "When a screenshot loads, detect bounds and objects automatically; when detection settings change, redetect objects inside the current bounds.",
+        "When a screenshot loads, detect bounds, soldiers, and obstacles automatically; when detection settings change, redetect soldiers and obstacles inside the current bounds.",
       busyOverlay: "Detecting, right-click to cancel",
       debugNoTiming: "No detection timing recorded yet",
       debugDetails: {

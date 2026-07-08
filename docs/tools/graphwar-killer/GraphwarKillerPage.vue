@@ -1316,6 +1316,7 @@ const stageOverlay = computed(() => ({
   },
   liveClickPreview: {
     curvePoints: liveClickPreviewCurvePoints.value,
+    curveStrokeColor: trajectoryStrokeColor.value,
     label: liveClickPreviewLabel.value,
     lineSegments: liveClickPreviewLineSegments.value,
     point: liveClickPreviewPoint.value,

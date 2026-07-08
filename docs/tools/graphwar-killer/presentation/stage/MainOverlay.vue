@@ -116,6 +116,8 @@ interface GraphwarStageOverlayPathLayer {
 interface GraphwarStageOverlayLiveClickPreviewLayer {
   /** 实时点击预览轨迹。 */
   curvePoints: string;
+  /** 实时点击预览轨迹的主轨迹基色；样式层会反相显示预览线。 */
+  curveStrokeColor: string;
   /** 实时点击预览点标签。 */
   label: string;
   /** 实时点击预览连接线。 */
@@ -434,6 +436,7 @@ withDefaults(
       v-if="overlay.liveClickPreview.curvePoints"
       class="graphwar-killer__curve-line graphwar-killer__curve-line--live-click-preview"
       :points="overlay.liveClickPreview.curvePoints"
+      :style="{ stroke: overlay.liveClickPreview.curveStrokeColor }"
     />
     <circle
       v-if="overlay.pathfinding.blockedPoint"
@@ -615,10 +618,7 @@ withDefaults(
 }
 
 .graphwar-killer__path-line--live-click-preview {
-  opacity: 78%;
-  stroke: #f59e0b;
-  stroke-dasharray: 3 5;
-  stroke-width: 1.5;
+  animation: graphwar-killer-live-click-path-line-blink 900ms ease-in-out infinite;
 }
 
 .graphwar-killer__pathfinding-preview {
@@ -699,9 +699,18 @@ withDefaults(
 }
 
 .graphwar-killer__curve-line--live-click-preview {
-  stroke: #f59e0b;
-  stroke-dasharray: 9 5;
-  stroke-width: 1.5;
+  filter: invert(100%);
+}
+
+@keyframes graphwar-killer-live-click-path-line-blink {
+  0%,
+  100% {
+    opacity: 42%;
+  }
+
+  50% {
+    opacity: 78%;
+  }
 }
 
 @keyframes graphwar-killer-trajectory-blink {

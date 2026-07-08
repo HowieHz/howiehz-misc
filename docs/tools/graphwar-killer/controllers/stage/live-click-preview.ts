@@ -95,7 +95,7 @@ export interface GraphwarLiveClickPreviewController {
   curvePoints: ReadonlyRef<string>;
   /** 当前预览点标签。 */
   label: ReadonlyRef<string>;
-  /** 智能寻路模式下从路径尾点到预览点的提示线段。 */
+  /** 从路径尾点到预览点的提示线段；只表达追加关系，不表达实际函数轨迹。 */
   lineSegments: ReadonlyRef<GraphwarPathfindingLineSegment[]>;
   /** 当前左键点击会追加或落位的预览点。 */
   point: ReadonlyRef<PixelPoint | undefined>;
@@ -142,7 +142,7 @@ export function useGraphwarLiveClickPreview(
     const previewPoint = point.value;
     const start =
       options.settings.toolWorkflowMode.value === "simulator" ? undefined : options.path.pathPixels.value.at(-1);
-    if (!options.settings.effectiveSmartPathfindingEnabled.value || !previewPoint || !start) {
+    if (!previewPoint || !start) {
       return [];
     }
     return options.path.createLineSegments([start, previewPoint]);

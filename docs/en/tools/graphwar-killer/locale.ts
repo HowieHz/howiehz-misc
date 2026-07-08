@@ -357,7 +357,12 @@ export const graphwarKillerLocale = {
         "Simulator mode: select the initial firing soldier and enter a function. y'' mode also needs a launch angle.",
         "Turn on Smart Cursor for assisted picking; choose Smart Pathfinding when the route should avoid detected obstacles.",
         "During Smart Pathfinding, right-click the screenshot to cancel.",
-        "Graphwar is known to skip unknown characters and parse y' as y; these can be changed in Advanced.",
+        // The footer tutorial should list Graphwar's original input tokens, not the full JavaScript/Math syntax.
+        "Allowed variables: x, y, and y'. With the default Graphwar-compatible setting, y' is parsed as y; turn this off in Advanced.",
+        "Allowed operators: +, -, /, *, and ^. Parentheses and implicit multiplication such as 2x or 2sin(x) are also supported.",
+        "Allowed functions: sqrt(), log(), ln(), abs(), sin(), cos(), tan(), and exp(). log is base 10; ln is the natural logarithm.",
+        "The original source also accepts constants e and pi, plus sen/tg as aliases for sin/tan.",
+        "Graphwar is known to skip unknown characters; turn this off in Advanced.",
       ],
       title: "How to Use",
     },

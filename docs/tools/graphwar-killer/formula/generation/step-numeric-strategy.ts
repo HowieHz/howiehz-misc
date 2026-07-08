@@ -15,14 +15,14 @@ export interface StepOverflowProtectionRange {
   minX: number;
 }
 
-/** 编译和输出共用的 step 数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
+/** 编译和输出共用的公式数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
 export interface FormulaEvaluationOptions {
-  /** 采样 step 符号项实参的钩子，用于判断是否必须启用 sign epsilon。 */
+  /** 采样应按最终公式小数位判断参数、系数、溢出和 sign 折点。 */
+  formulaDecimalPlaces?: number;
+  /** 采样符号项实参的钩子，用于判断是否必须启用 sign epsilon。 */
   onSignArgument?: (value: number) => void;
   /** 稳定符号比值的除零保护值；0 表示保留 Graphwar 原始数值行为。 */
   signEpsilon?: number;
-  /** Step 采样应按最终公式小数位判断参数、系数、exp 溢出和 sign 折点。 */
-  stepFormulaDecimalPlaces?: number;
   /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否对 step 表达式使用抗溢出的等价格式。 */

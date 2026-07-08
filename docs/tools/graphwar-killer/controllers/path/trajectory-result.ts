@@ -11,7 +11,6 @@ import type {
   PixelPoint,
   ToolWorkflowMode,
 } from "../../core/types";
-import { buildFormula } from "../../formula/generation/build";
 import {
   createGraphwarTrajectoryFormulaContext,
   findGraphwarTrajectoryTargetHitIndex,
@@ -156,16 +155,8 @@ export function useGraphwarTrajectoryResult(
       return undefined;
     }
 
-    const result = buildFormula(
-      context.formulaPoints,
-      formulaSteepness.value,
-      options.settings.equationMode.value,
-      options.settings.algorithmMode.value,
-      options.settings.precisionDecimalPlaces.value,
-      context.formulaEvaluation,
-    );
-    // UI 展示和复制的公式文本必须与采样验证回放的文本一致。
-    return { ...result, expression: context.playbackExpression };
+    // UI 展示和复制应直接复用采样上下文里的最终文本，避免同一热路径重复格式化公式材料。
+    return context.formulaResult;
   });
 
   const secondOrderLaunchAngleDegrees = computed(() => {

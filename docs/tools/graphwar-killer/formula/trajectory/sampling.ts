@@ -1,8 +1,17 @@
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
-import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
+import type {
+  AlgorithmMode,
+  BoundsRect,
+  EquationMode,
+  FormulaResult,
+  GraphBounds,
+  GraphPoint,
+  PixelPoint,
+} from "../../core/types";
 /** 负责按 Graphwar 公式规则采样轨迹，并判断路径与目标/障碍的交互。 */
-import { buildFormula } from "../generation/build";
+import { buildFormula, compileGraphwarFormulaMaterials, formulaUsesStableSignRatio } from "../generation/build";
+import type { CompiledGraphwarFormulaMaterials } from "../generation/build";
 import {
   GRAPHWAR_TOOL_SIGN_EPSILON,
   createStepOverflowProtectionRange,
@@ -42,6 +51,10 @@ export interface GraphwarTrajectoryFormulaSettings {
 
 /** 一次轨迹采样可复用的公式上下文，避免多个验证入口重复整理路径点、输出文本和保护参数。 */
 export interface GraphwarTrajectoryFormulaContext {
+  /** 最终文本等价的公式材料；文本生成、sign 探测和内部采样应复用同一份结构。 */
+  compiledMaterials: CompiledGraphwarFormulaMaterials;
+  /** 公式生成结果；expression 与 playbackExpression 必须保持同一份最终文本。 */
+  formulaResult: FormulaResult;
   /** 按当前小数位生成的最终 Graphwar 表达式；UI 展示、复制和验证回放都应使用这同一份文本。 */
   playbackExpression: string;
   /** 传给公式 evaluator 的数值保护选项。 */
@@ -125,54 +138,172 @@ export function createGraphwarTrajectoryFormulaContext(options: {
   settings: GraphwarTrajectoryFormulaSettings;
   soldierCenter?: GraphPoint;
 }): GraphwarTrajectoryFormulaContext {
-  const formulaPoints = createFormulaPathPoints(options.points, options.settings);
-  const soldierCenter = options.soldierCenter;
-  const stepOverflowProtectionRange = createStepOverflowProtectionRange(options.bounds, formulaPoints);
-  const signEpsilon =
-    soldierCenter && formulaPoints.length >= 2
-      ? probeSignEpsilonRequirement((onSignArgument) => {
-          // 这里不看公式形状本身，只看 Graphwar 采样点是否真的落在 sign(t) 的 t=0 折点上。
-          sampleGraphwarTrajectory({
-            algorithm: options.settings.algorithm,
-            bounds: options.bounds,
-            equation: options.settings.equation,
-            formulaEvaluation: {
-              stepOverflowProtectionRange,
-              stepOverflowProtection: options.settings.stepOverflowProtection,
-              stepFormulaDecimalPlaces: options.settings.decimalPlaces,
-              onSignArgument,
-              signEpsilon: 0,
-            },
-            points: formulaPoints,
-            soldierCenter,
-            steepness: options.settings.steepness,
-          });
-        })
-        ? GRAPHWAR_TOOL_SIGN_EPSILON
-        : 0
-      : 0;
-  const formulaEvaluation: FormulaEvaluationOptions = {
-    stepOverflowProtectionRange,
-    stepOverflowProtection: options.settings.stepOverflowProtection,
-    stepFormulaDecimalPlaces: options.settings.decimalPlaces,
-    signEpsilon,
-  };
+  const state = createResolvedTrajectoryFormulaState(options);
+  const formulaResult = buildFormula(
+    state.formulaPoints,
+    options.settings.steepness,
+    options.settings.equation,
+    options.settings.algorithm,
+    options.settings.decimalPlaces,
+    {
+      compiledMaterials: state.compiledMaterials,
+      signEpsilon: state.signEpsilon,
+      stepOverflowProtection: state.formulaEvaluation.stepOverflowProtection,
+      stepOverflowProtectionRange: state.formulaEvaluation.stepOverflowProtectionRange,
+    },
+  );
   return {
     // 先生成最终公式文本并保存；后续验证必须回放这份文本，而不是直接调用内存里的 evaluator。
-    playbackExpression: buildFormula(
+    compiledMaterials: state.compiledMaterials,
+    playbackExpression: formulaResult.expression,
+    formulaResult,
+    formulaEvaluation: state.formulaEvaluation,
+    formulaPoints: state.formulaPoints,
+    settings: options.settings,
+    signEpsilon: state.signEpsilon,
+    soldierCenter: options.soldierCenter,
+  };
+}
+
+interface TrajectoryFormulaState {
+  compiledMaterials: CompiledGraphwarFormulaMaterials;
+  formulaEvaluation: FormulaEvaluationOptions;
+  formulaPoints: GraphPoint[];
+  signEpsilon: number;
+}
+
+function createResolvedTrajectoryFormulaState(options: {
+  bounds: GraphBounds;
+  points: readonly GraphPoint[];
+  settings: GraphwarTrajectoryFormulaSettings;
+  soldierCenter?: GraphPoint;
+}): TrajectoryFormulaState {
+  const plainState = createTrajectoryFormulaState(options, 0);
+  if (resolveSignEpsilonRequirement(options, plainState) === 0) {
+    return plainState;
+  }
+
+  // 无保护状态已经踩中 sign 折点时，应保留 epsilon 并用同一 sign 重新生成公式点。
+  return createTrajectoryFormulaState(options, GRAPHWAR_TOOL_SIGN_EPSILON);
+}
+
+function createTrajectoryFormulaState(
+  options: {
+    bounds: GraphBounds;
+    points: readonly GraphPoint[];
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+  signEpsilon: number,
+): TrajectoryFormulaState {
+  const formulaPoints = createResolvedFormulaPathPoints(options, signEpsilon);
+  const formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon);
+  return {
+    compiledMaterials: compileGraphwarFormulaMaterials(
       formulaPoints,
+      options.settings.steepness,
+      options.settings.algorithm,
+      formulaEvaluation,
+    ),
+    formulaEvaluation,
+    formulaPoints,
+    signEpsilon,
+  };
+}
+
+function createTrajectoryFormulaEvaluation(
+  options: {
+    bounds: GraphBounds;
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+  formulaPoints: readonly GraphPoint[],
+  signEpsilon: number,
+): FormulaEvaluationOptions {
+  return {
+    formulaDecimalPlaces: options.settings.decimalPlaces,
+    signEpsilon,
+    stepOverflowProtection: options.settings.stepOverflowProtection,
+    stepOverflowProtectionRange: createStepOverflowProtectionRange(options.bounds, formulaPoints),
+  };
+}
+
+const FORMULA_PATH_RANGE_RESOLUTION_PASSES = 3;
+
+function createResolvedFormulaPathPoints(
+  options: {
+    bounds: GraphBounds;
+    points: readonly GraphPoint[];
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+  signEpsilon: number,
+) {
+  let formulaEvaluation: FormulaEvaluationOptions = {
+    formulaDecimalPlaces: options.settings.decimalPlaces,
+    signEpsilon,
+    stepOverflowProtection: options.settings.stepOverflowProtection,
+  };
+  let formulaPoints = createFormulaPathPoints(options.points, options.settings, formulaEvaluation);
+  if (!formulaPathNeedsRangeResolution(options.settings)) {
+    return formulaPoints;
+  }
+
+  for (let pass = 0; pass < FORMULA_PATH_RANGE_RESOLUTION_PASSES; pass += 1) {
+    formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon);
+    const nextFormulaPoints = createFormulaPathPoints(options.points, options.settings, formulaEvaluation);
+    if (sameGraphPoints(formulaPoints, nextFormulaPoints)) {
+      return formulaPoints;
+    }
+    formulaPoints = nextFormulaPoints;
+  }
+  return formulaPoints;
+}
+
+/** 只有 step 导数模式的 exp 抗溢出判断依赖采样范围；其他算法不应额外重跑发射点迭代。 */
+function formulaPathNeedsRangeResolution(settings: GraphwarTrajectoryFormulaSettings) {
+  return settings.algorithm === "step" && settings.equation !== "y" && settings.stepOverflowProtection;
+}
+
+function resolveSignEpsilonRequirement(
+  options: {
+    bounds: GraphBounds;
+    settings: GraphwarTrajectoryFormulaSettings;
+    soldierCenter?: GraphPoint;
+  },
+  state: TrajectoryFormulaState,
+) {
+  const soldierCenter = options.soldierCenter;
+  if (
+    !soldierCenter ||
+    state.formulaPoints.length < 2 ||
+    !formulaUsesStableSignRatio(
+      state.formulaPoints,
       options.settings.steepness,
       options.settings.equation,
       options.settings.algorithm,
-      options.settings.decimalPlaces,
-      formulaEvaluation,
-    ).expression,
-    formulaEvaluation,
-    formulaPoints,
-    settings: options.settings,
-    signEpsilon,
-    soldierCenter,
-  };
+      state.formulaEvaluation,
+      state.compiledMaterials,
+    )
+  ) {
+    return 0;
+  }
+
+  return probeSignEpsilonRequirement((onSignArgument) => {
+    // 应先确认最终文本里确实存在 sign 子表达式，再按同一份公式材料探测采样点是否踩中折点。
+    sampleGraphwarTrajectory({
+      algorithm: options.settings.algorithm,
+      bounds: options.bounds,
+      equation: options.settings.equation,
+      compiledFormulaMaterials: state.compiledMaterials,
+      formulaEvaluation: {
+        ...state.formulaEvaluation,
+        onSignArgument,
+      },
+      points: state.formulaPoints,
+      soldierCenter,
+      steepness: options.settings.steepness,
+    });
+  })
+    ? GRAPHWAR_TOOL_SIGN_EPSILON
+    : 0;
 }
 
 /** 用已整理好的公式上下文计算 Graphwar 实际需要的发射角。 */
@@ -185,6 +316,7 @@ export function getGraphwarTrajectoryLaunchAngle(
         {
           algorithm: context.settings.algorithm,
           equation: context.settings.equation,
+          compiledFormulaMaterials: context.compiledMaterials,
           formulaEvaluation: context.formulaEvaluation,
           points: context.formulaPoints,
           steepness: context.settings.steepness,
@@ -400,19 +532,32 @@ export function findGraphwarTrajectoryTargetHitIndex(options: {
 }
 
 /** 生成 Graphwar 实际公式点；路径点和发射点保持 double 精度，只有最终表达式文本会按小数位格式化。 */
-function createFormulaPathPoints(points: readonly GraphPoint[], settings: GraphwarTrajectoryFormulaSettings) {
+function createFormulaPathPoints(
+  points: readonly GraphPoint[],
+  settings: GraphwarTrajectoryFormulaSettings,
+  formulaEvaluation: FormulaEvaluationOptions,
+) {
   return points.length < 2
     ? [...points]
     : createGraphwarFormulaPathPoints({
         algorithm: settings.algorithm,
         equation: settings.equation,
-        formulaEvaluation: {
-          stepOverflowProtection: settings.stepOverflowProtection,
-          stepFormulaDecimalPlaces: settings.decimalPlaces,
-        },
+        formulaEvaluation,
         points,
         steepness: settings.formulaPathSteepness ?? settings.steepness,
       });
+}
+
+function sameGraphPoints(left: readonly GraphPoint[], right: readonly GraphPoint[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index].x !== right[index].x || left[index].y !== right[index].y) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** 创建 sampleGraphwarTrajectory 的早停回调，并把命中、障碍和可见像素指标集中记录。 */

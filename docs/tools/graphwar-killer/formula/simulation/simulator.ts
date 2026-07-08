@@ -16,7 +16,7 @@ import { createGraphwarExpressionEvaluator } from "../expression/evaluator";
 import type { GraphwarExpressionParserOptions } from "../expression/evaluator";
 /** 封装 Graphwar 公式模拟器，按游戏步进规则计算轨迹和停止原因。 */
 import { compileFormulaEvaluator } from "../generation/build";
-import type { FormulaEvaluationOptions } from "../generation/build";
+import type { CompiledGraphwarFormulaMaterials, FormulaEvaluationOptions } from "../generation/build";
 export type { GraphwarExpressionParserOptions } from "../expression/evaluator";
 
 /** 采样由路径点生成的公式时的完整输入，保持与 Graphwar 原版步进参数隔离。 */
@@ -29,6 +29,8 @@ export interface SampleGraphwarTrajectoryOptions {
   equation: EquationMode;
   /** 可选数值保护配置，确保模拟和生成公式时的 evaluator 一致。 */
   formulaEvaluation?: FormulaEvaluationOptions;
+  /** 已按最终文本规则预编译的公式材料；用于候选验证热路径复用。 */
+  compiledFormulaMaterials?: CompiledGraphwarFormulaMaterials;
   /** 已按 Graphwar 坐标表示的公式控制点。 */
   points: readonly GraphPoint[];
   /** 每个采样点后的早停钩子，用于目标/障碍验证。 */
@@ -81,6 +83,8 @@ export interface CreateGraphwarFormulaPathOptions {
   equation: EquationMode;
   /** 可选数值保护配置，保证发射角迭代和采样使用同一求值行为。 */
   formulaEvaluation?: FormulaEvaluationOptions;
+  /** 已按最终文本规则预编译的公式材料；用于避免发射角迭代重复建段。 */
+  compiledFormulaMaterials?: CompiledGraphwarFormulaMaterials;
   /** 用户选择或 worker 生成的 Graphwar 路径点。 */
   points: readonly GraphPoint[];
   /** Step 算法陡峭度。 */
@@ -424,20 +428,35 @@ function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: Graph
 
 /** 创建普通 y= 模式使用的函数值计算器。 */
 function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
-  return compileFormulaEvaluator(options.points, options.steepness, options.algorithm, options.formulaEvaluation)
-    .evaluateY;
+  return compileFormulaEvaluator(
+    options.points,
+    options.steepness,
+    options.algorithm,
+    options.formulaEvaluation,
+    options.compiledFormulaMaterials,
+  ).evaluateY;
 }
 
 /** 创建 y'= 模式使用的一阶导计算器。 */
 function createFirstOrderEvaluator(options: CreateGraphwarFormulaPathOptions): FirstOrderEvaluator {
-  return compileFormulaEvaluator(options.points, options.steepness, options.algorithm, options.formulaEvaluation)
-    .evaluateFirstDerivativeY;
+  return compileFormulaEvaluator(
+    options.points,
+    options.steepness,
+    options.algorithm,
+    options.formulaEvaluation,
+    options.compiledFormulaMaterials,
+  ).evaluateFirstDerivativeY;
 }
 
 /** 创建 y''= 模式使用的二阶导计算器。 */
 function createSecondOrderEvaluator(options: CreateGraphwarFormulaPathOptions): SecondOrderEvaluator {
-  return compileFormulaEvaluator(options.points, options.steepness, options.algorithm, options.formulaEvaluation)
-    .evaluateSecondDerivativeY;
+  return compileFormulaEvaluator(
+    options.points,
+    options.steepness,
+    options.algorithm,
+    options.formulaEvaluation,
+    options.compiledFormulaMaterials,
+  ).evaluateSecondDerivativeY;
 }
 
 /** 模拟 Graphwar 普通 y= 模式按函数有限差分迭代初始发射角。 */

@@ -809,11 +809,16 @@ withDefaults(
 }
 
 .graphwar-killer__point--live-click-preview {
-  fill: color-mix(in srgb, #f59e0b 20%, transparent);
+  animation: graphwar-killer-live-click-point-spin 900ms linear infinite;
   pointer-events: none;
-  stroke: #f59e0b;
-  stroke-dasharray: 3 3;
-  stroke-width: 2;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes graphwar-killer-live-click-point-spin {
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .graphwar-killer__point-label {

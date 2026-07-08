@@ -88,9 +88,9 @@ export interface GraphwarDetectionWorkflowController {
   clear: () => void;
   /** 页面卸载时释放检测 Worker 和延迟任务。 */
   dispose: () => void;
-  /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
+  /** 使用 Canvas 像素自动检测 Graphwar 坐标系边界，再按该边界识别士兵和障碍。 */
   detect: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
-  /** 使用 Canvas 像素只识别 Graphwar 棋盘边界，并清除旧对象结果。 */
+  /** 使用 Canvas 像素只识别 Graphwar 坐标系边界，并清除旧对象结果。 */
   detectBounds: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
   /** 在当前手动/自动边界内重新识别对象，不重新推断棋盘区域。 */
   detectInCurrentBounds: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
@@ -306,7 +306,7 @@ export function useGraphwarDetectionWorkflow(
     };
   }
 
-  /** 使用 Canvas 像素只识别 Graphwar 棋盘边界。 */
+  /** 使用 Canvas 像素只识别 Graphwar 坐标系边界。 */
   async function detectBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
     const activeRunId = beginRun(trigger);
     const startedAt = nowMs();
@@ -357,7 +357,7 @@ export function useGraphwarDetectionWorkflow(
     }
   }
 
-  /** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
+  /** 使用 Canvas 像素自动检测 Graphwar 坐标系边界，再按该边界识别士兵和障碍。 */
   async function detect(trigger: GraphwarDetectionRunTrigger = "manual") {
     const activeRunId = beginRun(trigger);
     const startedAt = nowMs();

@@ -9,7 +9,7 @@ import type { GraphwarOneClickClearCandidate } from "./search";
 
 /** 一键清图搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
 export interface GraphwarOneClickClearSearchTolerances {
-  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
+  /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansionPlanePixels: number;
   /** 一键清图删点局部命中检查半径，单位为 Graphwar 原始平面像素。 */
   oneClickClearDeleteCheckRadiusPlanePixels: number;

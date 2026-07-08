@@ -104,7 +104,7 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
   }
 }
 
-/** 只检测棋盘边界，避免手动边界按钮启动士兵和障碍识别。 */
+/** 只检测坐标系边界，避免手动边界按钮启动士兵和障碍识别。 */
 function runBoundsOnlyDetectionTask(
   id: number,
   task: Extract<GraphwarDetectionWorkerTask, { type: "detect-bounds-only" }>,

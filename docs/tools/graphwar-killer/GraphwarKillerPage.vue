@@ -1610,7 +1610,7 @@ function handleAppliedScreenshot() {
   magnifierPoint.value = undefined;
 }
 
-/** 截图尺寸落地后重置临时框选点，并按新像素重新识别棋盘对象。 */
+/** 截图尺寸落地后重置临时框选点，并按新像素重新识别对象。 */
 function handleLoadedScreenshot() {
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
@@ -1658,7 +1658,7 @@ function applyDetectedBounds(edgeRect: BoundsRect) {
   pointerPreviewPoint.value = undefined;
 }
 
-/** 返回“识别物体”按钮说明；禁用时说明缺少的前置边界。 */
+/** 返回“识别士兵/障碍”按钮说明；禁用时说明缺少的前置边界。 */
 function getDetectObjectsTitle() {
   if (!imageUrl.value) {
     return locale.status.detection.uploadFirst;
@@ -1678,12 +1678,12 @@ function scheduleGraphwarObjectDetection() {
   detectionWorkflow.schedule();
 }
 
-/** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
+/** 使用 Canvas 像素自动检测 Graphwar 坐标系边界，再按该边界识别士兵和障碍。 */
 async function detectGraphwarObjects(trigger: GraphwarDetectionRunTrigger = "manual") {
   await detectionWorkflow.detect(trigger);
 }
 
-/** 只识别 Graphwar 棋盘边界，并清除旧边界下的士兵和障碍结果。 */
+/** 只识别 Graphwar 坐标系边界，并清除旧边界下的士兵和障碍结果。 */
 async function detectGraphwarBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
   await detectionWorkflow.detectBounds(trigger);
 }

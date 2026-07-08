@@ -35,7 +35,7 @@ export interface GraphwarDetectionPanelModel {
   autoDetectionEnabled: boolean;
   /** 智能光标是否开启。 */
   smartCursorEnabled: boolean;
-  /** 识别物体按钮 hover 说明；禁用时应说明缺少的前置边界。 */
+  /** 识别士兵/障碍按钮 hover 说明；禁用时应说明缺少的前置边界。 */
   detectObjectsTitle: string;
   /** 标题右侧状态展示模型。 */
   headerStatus: GraphwarDetectionPanelHeaderStatus;

@@ -18,7 +18,7 @@ export interface GraphwarSmartPathfindingTrajectoryResult {
 }
 
 interface GraphwarSmartPathfindingTrajectoryOptions {
-  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
+  /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 当前 Graphwar 坐标边界；缺失时应沿用页面原来的预检失败语义。 */
   bounds: GraphBounds | undefined;

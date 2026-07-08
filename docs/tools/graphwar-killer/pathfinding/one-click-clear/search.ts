@@ -105,7 +105,7 @@ export interface GraphwarOneClickClearDagEdgeBuildRequest {
   bounds: GraphBounds;
   /** 截图内 Graphwar 棋盘矩形。 */
   boundsRect: BoundsRect;
-  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
+  /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 待尝试的 DAG 边，已按稳定顺序生成。 */
   jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[];

@@ -36,7 +36,7 @@ export type GraphwarDetectionWorkerTimingDetail =
   | { type: "template-matching-fallback-serial" }
   | { type: "template-matching-merge" };
 
-/** 自动识别棋盘边界并识别对象。 */
+/** 自动识别坐标系边界并识别对象。 */
 export interface GraphwarAutoDetectionInput {
   /** 当前截图像素。 */
   imageData: ImageData;
@@ -46,29 +46,29 @@ export interface GraphwarAutoDetectionInput {
   soldierSettings?: GraphwarSoldierDetectionSettings;
 }
 
-/** 只识别棋盘边界；不读取士兵和障碍设置，避免边界按钮被对象识别参数阻塞。 */
+/** 只识别坐标系边界；不读取士兵和障碍设置，避免边界按钮被对象识别参数阻塞。 */
 export interface GraphwarBoundsOnlyDetectionInput {
   /** 当前截图像素。 */
   imageData: ImageData;
 }
 
-/** 在指定棋盘边界内识别对象。 */
+/** 在指定坐标系边界内识别对象。 */
 export interface GraphwarBoundsDetectionInput extends GraphwarAutoDetectionInput {
-  /** 已确定的棋盘边界。 */
+  /** 已确定的坐标系边界。 */
   edgeRect: BoundsRect;
 }
 
 /** 自动识别任务结果；找不到棋盘时只返回空 edgeRect。 */
 export interface GraphwarAutoDetectionResult {
-  /** 自动推断出的棋盘边界；undefined 表示未识别到棋盘。 */
+  /** 自动推断出的坐标系边界；undefined 表示未识别到坐标系边界。 */
   edgeRect?: BoundsRect;
-  /** 棋盘边界存在时识别到的对象。 */
+  /** 坐标系边界存在时识别到的对象。 */
   objects?: GraphwarObjectsDetectionResult;
 }
 
-/** 只识别棋盘边界的结果；undefined 表示未识别到棋盘。 */
+/** 只识别坐标系边界的结果；undefined 表示未识别到坐标系边界。 */
 export interface GraphwarBoundsOnlyDetectionResult {
-  /** 自动推断出的棋盘边界；undefined 表示未识别到棋盘。 */
+  /** 自动推断出的坐标系边界；undefined 表示未识别到坐标系边界。 */
   edgeRect?: BoundsRect;
 }
 

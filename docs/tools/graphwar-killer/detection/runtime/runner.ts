@@ -84,7 +84,7 @@ export function createGraphwarDetectionRunner() {
     return worker;
   }
 
-  /** 执行自动检测流程，先识别棋盘边界，再在边界内识别对象。 */
+  /** 执行自动检测流程，先识别坐标系边界，再在边界内识别对象。 */
   function detectAuto(input: GraphwarAutoDetectionInput, options?: GraphwarDetectionRunOptions) {
     cancel();
     const activeWorker = ensureWorker();
@@ -106,7 +106,7 @@ export function createGraphwarDetectionRunner() {
     );
   }
 
-  /** 只识别棋盘边界，供手动“识别边界”按钮使用。 */
+  /** 只识别坐标系边界，供手动“识别边界”按钮使用。 */
   function detectBounds(input: GraphwarBoundsOnlyDetectionInput, options?: GraphwarDetectionRunOptions) {
     cancel();
     const activeWorker = ensureWorker();
@@ -379,7 +379,7 @@ function cloneGraphwarSoldierDetectionSettings(
   };
 }
 
-/** 棋盘边界应复制成纯矩形数据，页面侧 ref/proxy 不应越过 Worker 消息边界。 */
+/** 坐标系边界应复制成纯矩形数据，页面侧 ref/proxy 不应越过 Worker 消息边界。 */
 function cloneBoundsRect(rect: BoundsRect): BoundsRect {
   return {
     height: rect.height,

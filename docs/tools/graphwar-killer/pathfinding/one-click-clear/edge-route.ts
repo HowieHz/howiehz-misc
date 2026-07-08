@@ -14,7 +14,7 @@ export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   bounds: GraphBounds;
   /** 截图内 Graphwar 棋盘矩形。 */
   boundsRect: BoundsRect;
-  /** 障碍和棋盘边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
+  /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;

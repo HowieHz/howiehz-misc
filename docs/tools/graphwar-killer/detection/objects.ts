@@ -87,7 +87,7 @@ export interface GraphwarDetectionWarning {
   message: string;
 }
 
-/** 指定棋盘边界内的一次完整对象识别结果。 */
+/** 指定坐标系边界内的一次完整对象识别结果。 */
 export interface GraphwarObjectsDetectionResult {
   /** 识别出的士兵检测框。 */
   soldiers: GraphwarDetectionBox[];
@@ -620,7 +620,7 @@ interface SoldierTemplateBaseScore {
 /** 按朝向预构建的士兵模板基础数据，避免每次识别重复展开网格。 */
 const graphwarSoldierTemplateBases = createGraphwarSoldierTemplateBases();
 
-/** 使用 Canvas 像素自动检测 Graphwar 棋盘边界，再按该边界识别士兵和障碍。 */
+/** 使用 Canvas 像素自动检测 Graphwar 坐标系边界，再按该边界识别士兵和障碍。 */
 export function detectGraphwarObjectsInBounds(
   imageData: ImageData,
   edgeRect: BoundsRect,

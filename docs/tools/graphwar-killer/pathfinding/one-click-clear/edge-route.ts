@@ -2,6 +2,7 @@ import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds } from "../../core/types";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import { buildGraphwarThetaStarPathForMask } from "../routing/theta-star";
+import type { GraphwarThetaStarScratch } from "../routing/theta-star";
 import {
   buildGraphwarVisibilityGraphPathForMask,
   type GraphwarVisibilityGraphObstacleData,
@@ -24,6 +25,8 @@ export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
+  /** 与当前 worker 或串行批次同生命周期的 Theta* 工作区；可减少一键清图重复分配。 */
+  thetaStarScratch?: GraphwarThetaStarScratch;
   /** 与 routeMask 同生命周期的可视图数据；Theta* 模式不需要。 */
   visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
 }
@@ -48,6 +51,7 @@ export async function buildOneClickClearDagEdgeRoute(
           boundaryExpansion: context.boundaryExpansion,
           routeMask: context.routeMask,
           routeTolerancePlanePixels: context.routeTolerancePlanePixels,
+          scratch: context.thetaStarScratch,
           startPoint: job.startPoint,
           targetPoint: job.targetPoint,
         })

@@ -17,6 +17,23 @@ interface ThetaStarOpenNode {
   routeCost: number;
 }
 
+/** 一列里连续可通行的 y 区间；端点都可落点。 */
+interface ThetaStarColumnFreeSpan {
+  maxY: number;
+  minY: number;
+}
+
+interface ThetaStarFreeSpanCache {
+  /** 障碍和边界外扩值参与可通行区间计算，必须一起校验。 */
+  boundaryExpansion: number;
+  /** 按 x+ 搜索坐标系缓存的列区间。 */
+  columns: readonly ThetaStarColumnFreeSpan[][];
+  /** 是否镜像到 x+ 搜索坐标系。 */
+  mirrored: boolean;
+  /** 区间所属的 route mask 引用。 */
+  routeMask: Uint8Array;
+}
+
 interface ThetaStarSearchContext {
   boundaryExpansion: number;
   canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
@@ -25,6 +42,26 @@ interface ThetaStarSearchContext {
   routeMask: Uint8Array;
   start: PlaneGridPoint;
   target: PlaneGridPoint;
+}
+
+export interface GraphwarThetaStarScratch {
+  /** 当前节点扩展时复用的 y 候选列表，避免热循环反复分配小数组。 */
+  candidateYs: number[];
+  /** 已关闭节点标记。 */
+  closed: Uint8Array;
+  /** 可通行列区间 cache；同一个 worker 处理同一个 route mask 的多条边时复用。 */
+  freeSpanCache?: ThetaStarFreeSpanCache;
+  /** 起点到对应节点的最短已知代价。 */
+  gScore: Float64Array;
+  /** 路径回溯父节点。 */
+  parentIndexes: Int32Array;
+  /** 本轮搜索写过的节点；结束时只重置这些位置，不再全图 fill。 */
+  touchedIndexes: number[];
+}
+
+export interface GraphwarThetaStarPathfindingOptions extends GraphwarPathfindingOptions {
+  /** 调用方可复用的工作区；一键清图 worker 会用它减少重复分配和全图清空。 */
+  scratch?: GraphwarThetaStarScratch;
 }
 
 const THETA_STAR_HEURISTICS = {
@@ -37,15 +74,29 @@ const THETA_STAR_HEURISTICS = {
 } as const;
 
 /*
- * Theta* 在常规 8 邻域上只允许每前进 1px 纵向移动 1px，容易错过 Graphwar 中近似竖直的有效控制段。
- * 这里仍保持 x+ 单调，但允许一个 x+ cell 搭配更大的 y 跳步；每条跳步边都会做真实 mask 线段碰撞检查。
+ * 下一步仍只推进到 x+1，避免退化成全可见图；y 候选来自前方列的自由区间边界，
+ * 让搜索能提前朝障碍上下边缘移动，而不是撞到障碍列后才做大幅跳转。
  */
-const THETA_STAR_Y_OFFSETS: readonly number[] = [
-  0, -1, 1, -2, 2, -3, 3, -4, 4, -6, 6, -8, 8, -12, 12, -16, 16, -24, 24, -32, 32, -48, 48, -64, 64,
-];
+const THETA_STAR_LOOKAHEAD_COLUMN_OFFSETS: readonly number[] = [1, 2, 4, 8, 16, 32, 64, 128];
+
+const GRAPHWAR_PLANE_CELL_COUNT = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
+
+export function createGraphwarThetaStarScratch(): GraphwarThetaStarScratch {
+  const gScore = new Float64Array(GRAPHWAR_PLANE_CELL_COUNT);
+  const parentIndexes = new Int32Array(GRAPHWAR_PLANE_CELL_COUNT);
+  gScore.fill(Infinity);
+  parentIndexes.fill(-1);
+  return {
+    candidateYs: [],
+    closed: new Uint8Array(GRAPHWAR_PLANE_CELL_COUNT),
+    gScore,
+    parentIndexes,
+    touchedIndexes: [],
+  };
+}
 
 /** 用有向 Theta* 在固定 Graphwar 平面 mask 上搜索更穷尽的 x+ 绕障路线。 */
-export async function buildGraphwarThetaStarPathForMask(options: GraphwarPathfindingOptions) {
+export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaStarPathfindingOptions) {
   const mirrored = !xPlusGoesRight(options.bounds);
   const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.startPoint, options.boundsRect), mirrored);
   const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.targetPoint, options.boundsRect), mirrored);
@@ -79,17 +130,25 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarPathfin
     return directPath.map((point) => mirrorPlaneGridPoint(point, mirrored));
   }
 
-  const path = await findThetaStarPath({
-    boundaryExpansion: options.boundaryExpansion,
-    canAdvance,
-    isCancelled: options.isCancelled,
-    mirrored,
-    onPreview: options.onPreview,
-    routeMask: options.routeMask,
-    start,
-    target,
-    yieldControl: options.yieldControl,
-  });
+  const scratch = options.scratch ?? createGraphwarThetaStarScratch();
+  let path: PlaneGridPoint[] | undefined;
+  try {
+    resetThetaStarSearchScratch(scratch);
+    path = await findThetaStarPath({
+      boundaryExpansion: options.boundaryExpansion,
+      canAdvance,
+      isCancelled: options.isCancelled,
+      mirrored,
+      onPreview: options.onPreview,
+      routeMask: options.routeMask,
+      scratch,
+      start,
+      target,
+      yieldControl: options.yieldControl,
+    });
+  } finally {
+    resetThetaStarSearchScratch(scratch);
+  }
   return path?.map((point) => mirrorPlaneGridPoint(point, mirrored));
 }
 
@@ -100,25 +159,28 @@ async function findThetaStarPath({
   mirrored,
   onPreview,
   routeMask,
+  scratch,
   start,
   target,
   yieldControl,
 }: ThetaStarSearchContext & {
   isCancelled?: () => boolean;
+  scratch: GraphwarThetaStarScratch;
   yieldControl?: () => Promise<void> | void;
 }) {
   const startIndex = createPlaneGridPointIndex(start);
   const targetIndex = createPlaneGridPointIndex(target);
-  const gScore = new Float64Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
-  const parentIndexes = new Int32Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
-  const closed = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
-  gScore.fill(Infinity);
-  parentIndexes.fill(-1);
+  const { closed, gScore, parentIndexes } = scratch;
+  const freeSpansByColumn = getThetaStarFreeSpansByColumn({
+    boundaryExpansion,
+    mirrored,
+    routeMask,
+    scratch,
+  });
 
   const openSet = new ThetaStarOpenSet();
   const acceptedEdges: [PlaneGridPoint, PlaneGridPoint][] | undefined = onPreview ? [] : undefined;
-  gScore[startIndex] = 0;
-  parentIndexes[startIndex] = startIndex;
+  setThetaStarNodeState(scratch, startIndex, 0, startIndex);
   openSet.push({
     index: startIndex,
     priority: planeGridPointDistance(start, target),
@@ -181,26 +243,31 @@ async function findThetaStarPath({
     }
 
     closed[currentNode.index] = 1;
-    for (const yOffset of THETA_STAR_Y_OFFSETS) {
-      const next = { x: current.x + 1, y: current.y + yOffset };
-      if (next.x > target.x || !isInsidePlane(next.x, next.y)) {
-        continue;
-      }
+    const nextX = current.x + 1;
+    if (nextX > target.x) {
+      continue;
+    }
+    const candidateYs = collectNextColumnCandidateYs({
+      current,
+      freeSpansByColumn,
+      nextX,
+      scratch,
+      target,
+    });
+    for (const nextY of candidateYs) {
+      const next = { x: nextX, y: nextY };
       if (
-        pointHitsPlaneMask(next, routeMask, mirrored, boundaryExpansion) ||
         !relaxThetaStarNeighbor({
           acceptedEdges,
           boundaryExpansion,
           canAdvance,
-          closed,
           current,
           currentIndex: currentNode.index,
-          gScore,
           mirrored,
           next,
           openSet,
-          parentIndexes,
           routeMask,
+          scratch,
           target,
         })
       ) {
@@ -234,26 +301,23 @@ function relaxThetaStarNeighbor({
   acceptedEdges,
   boundaryExpansion,
   canAdvance,
-  closed,
   current,
   currentIndex,
-  gScore,
   mirrored,
   next,
   openSet,
-  parentIndexes,
   routeMask,
+  scratch,
   target,
 }: Pick<ThetaStarSearchContext, "boundaryExpansion" | "canAdvance" | "mirrored" | "routeMask" | "target"> & {
   acceptedEdges?: [PlaneGridPoint, PlaneGridPoint][];
-  closed: Uint8Array;
   current: PlaneGridPoint;
   currentIndex: number;
-  gScore: Float64Array;
   next: PlaneGridPoint;
   openSet: ThetaStarOpenSet;
-  parentIndexes: Int32Array;
+  scratch: GraphwarThetaStarScratch;
 }) {
+  const { gScore, parentIndexes } = scratch;
   const nextIndex = createPlaneGridPointIndex(next);
   const parentIndex = parentIndexes[currentIndex];
   const parent = parentIndex >= 0 ? createPlaneGridPointFromIndex(parentIndex) : current;
@@ -277,9 +341,7 @@ function relaxThetaStarNeighbor({
     return false;
   }
 
-  gScore[nextIndex] = routeCost;
-  parentIndexes[nextIndex] = routeFromIndex;
-  closed[nextIndex] = 0;
+  setThetaStarNodeState(scratch, nextIndex, routeCost, routeFromIndex);
   openSet.push({
     index: nextIndex,
     priority: routeCost + planeGridPointDistance(next, target),
@@ -289,6 +351,146 @@ function relaxThetaStarNeighbor({
     recordAcceptedEdge(acceptedEdges, routeFrom, next);
   }
   return true;
+}
+
+function collectNextColumnCandidateYs({
+  current,
+  freeSpansByColumn,
+  nextX,
+  scratch,
+  target,
+}: {
+  current: PlaneGridPoint;
+  freeSpansByColumn: readonly ThetaStarColumnFreeSpan[][];
+  nextX: number;
+  scratch: GraphwarThetaStarScratch;
+  target: PlaneGridPoint;
+}) {
+  const candidateYs = scratch.candidateYs;
+  candidateYs.length = 0;
+  const nextColumnSpans = freeSpansByColumn[nextX] ?? [];
+  addThetaStarCandidateY(candidateYs, current.y, nextColumnSpans);
+  addThetaStarCandidateY(candidateYs, target.y, nextColumnSpans);
+
+  for (const offset of THETA_STAR_LOOKAHEAD_COLUMN_OFFSETS) {
+    const lookaheadX = Math.min(target.x, current.x + offset);
+    const lookaheadSpans = freeSpansByColumn[lookaheadX] ?? [];
+    for (const span of lookaheadSpans) {
+      addThetaStarCandidateY(candidateYs, span.minY, nextColumnSpans);
+      addThetaStarCandidateY(candidateYs, span.maxY, nextColumnSpans);
+    }
+  }
+
+  candidateYs.sort(
+    (left, right) =>
+      Math.abs(left - current.y) - Math.abs(right - current.y) ||
+      Math.abs(left - target.y) - Math.abs(right - target.y) ||
+      left - right,
+  );
+  return candidateYs;
+}
+
+function addThetaStarCandidateY(
+  candidateYs: number[],
+  candidateY: number,
+  nextColumnSpans: readonly ThetaStarColumnFreeSpan[],
+) {
+  if (!columnFreeSpansIncludeY(nextColumnSpans, candidateY) || candidateYs.includes(candidateY)) {
+    return;
+  }
+  candidateYs.push(candidateY);
+}
+
+function columnFreeSpansIncludeY(spans: readonly ThetaStarColumnFreeSpan[], y: number) {
+  for (const span of spans) {
+    if (y >= span.minY && y <= span.maxY) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getThetaStarFreeSpansByColumn({
+  boundaryExpansion,
+  mirrored,
+  routeMask,
+  scratch,
+}: Pick<ThetaStarSearchContext, "boundaryExpansion" | "mirrored" | "routeMask"> & {
+  scratch: GraphwarThetaStarScratch;
+}) {
+  const cached = scratch.freeSpanCache;
+  if (
+    cached &&
+    cached.boundaryExpansion === boundaryExpansion &&
+    cached.mirrored === mirrored &&
+    cached.routeMask === routeMask
+  ) {
+    return cached.columns;
+  }
+
+  const columns: ThetaStarColumnFreeSpan[][] = [];
+  const point = { x: 0, y: 0 };
+  for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
+    point.x = x;
+    columns.push(collectThetaStarColumnFreeSpans(point, routeMask, mirrored, boundaryExpansion));
+  }
+  scratch.freeSpanCache = {
+    boundaryExpansion,
+    columns,
+    mirrored,
+    routeMask,
+  };
+  return columns;
+}
+
+function collectThetaStarColumnFreeSpans(
+  point: PlaneGridPoint,
+  routeMask: Uint8Array,
+  mirrored: boolean,
+  boundaryExpansion: number,
+) {
+  const spans: ThetaStarColumnFreeSpan[] = [];
+  let spanStartY: number | undefined;
+  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+    point.y = y;
+    const free = !pointHitsPlaneMask(point, routeMask, mirrored, boundaryExpansion);
+    if (free && spanStartY === undefined) {
+      spanStartY = y;
+      continue;
+    }
+    if (!free && spanStartY !== undefined) {
+      spans.push({ minY: spanStartY, maxY: y - 1 });
+      spanStartY = undefined;
+    }
+  }
+  if (spanStartY !== undefined) {
+    spans.push({ minY: spanStartY, maxY: GRAPHWAR_PLANE_HEIGHT - 1 });
+  }
+  return spans;
+}
+
+function setThetaStarNodeState(
+  scratch: GraphwarThetaStarScratch,
+  index: number,
+  routeCost: number,
+  parentIndex: number,
+) {
+  if (scratch.parentIndexes[index] === -1) {
+    scratch.touchedIndexes.push(index);
+  }
+  scratch.gScore[index] = routeCost;
+  scratch.parentIndexes[index] = parentIndex;
+  scratch.closed[index] = 0;
+}
+
+function resetThetaStarSearchScratch(scratch: GraphwarThetaStarScratch) {
+  for (const index of scratch.touchedIndexes) {
+    scratch.gScore[index] = Infinity;
+    scratch.parentIndexes[index] = -1;
+    scratch.closed[index] = 0;
+  }
+  scratch.touchedIndexes.length = 0;
+  scratch.candidateYs.length = 0;
 }
 
 async function reportThetaStarProgress({
@@ -429,10 +631,6 @@ function createPlaneGridPointFromIndex(index: number): PlaneGridPoint {
     x: index % GRAPHWAR_PLANE_LENGTH,
     y: Math.floor(index / GRAPHWAR_PLANE_LENGTH),
   };
-}
-
-function isInsidePlane(x: number, y: number) {
-  return x >= 0 && x < GRAPHWAR_PLANE_LENGTH && y >= 0 && y < GRAPHWAR_PLANE_HEIGHT;
 }
 
 function planeGridPointDistance(left: PlaneGridPoint, right: PlaneGridPoint) {

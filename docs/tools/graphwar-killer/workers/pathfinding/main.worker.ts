@@ -12,7 +12,11 @@ import type {
   GraphwarOneClickClearDebugTiming,
 } from "../../pathfinding/one-click-clear/search";
 import { buildGraphwarOneClickClearPath } from "../../pathfinding/one-click-clear/search";
-import { buildGraphwarThetaStarPathForMask } from "../../pathfinding/routing/theta-star";
+import {
+  buildGraphwarThetaStarPathForMask,
+  createGraphwarThetaStarScratch,
+} from "../../pathfinding/routing/theta-star";
+import type { GraphwarThetaStarScratch } from "../../pathfinding/routing/theta-star";
 import {
   buildGraphwarVisibilityGraphPathForMask,
   createRouteMaskCacheKey,
@@ -101,6 +105,7 @@ interface EdgeRouteTimingTotals {
 }
 
 const masterRouteMaskCache = new Map<string, Uint8Array>();
+const masterThetaStarScratch = createGraphwarThetaStarScratch();
 const masterVisibilityGraphCache = new Map<string, MasterVisibilityGraphCacheEntry>();
 
 workerScope.addEventListener("message", (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => {
@@ -188,6 +193,7 @@ async function findRouteForMask(
           onPreview: postPreview,
           routeMask,
           routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+          scratch: masterThetaStarScratch,
           startPoint: input.startPoint,
           targetPoint: input.targetPoint,
         })
@@ -727,7 +733,9 @@ async function buildOneClickClearDagEdgesSerial(
           routeTolerancePlanePixels: input.routeTolerancePlanePixels,
         })
       : undefined;
-  // 串行和 fallback 的可视图模式按批次复用同一个轮廓 cache；Theta* 不需要这份预处理。
+  const thetaStarScratch: GraphwarThetaStarScratch | undefined =
+    input.routeMode === "theta-star" ? createGraphwarThetaStarScratch() : undefined;
+  // 串行和 fallback 按批次复用可视图轮廓或 Theta* 工作区，避免每条 DAG 边重复预处理。
   const routeBuildContext = {
     boundaryExpansion: input.boundaryExpansion,
     bounds: input.bounds,
@@ -735,6 +743,7 @@ async function buildOneClickClearDagEdgesSerial(
     routeMask: input.routeMask,
     routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    ...(thetaStarScratch ? { thetaStarScratch } : {}),
     ...(visibilityGraphObstacleData ? { visibilityGraphObstacleData } : {}),
   };
 

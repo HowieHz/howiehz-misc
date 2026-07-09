@@ -122,10 +122,12 @@ export const graphwarKillerLocale = {
       screenCaptureUnsupported: "当前浏览器不支持 Screen Capture API。",
     },
     agent: {
+      defaultStatus: "点击“读取状态”从 Graphwar Agent 载入当前游戏信息",
       failed: (message) => `读取状态失败：${message}`,
       fireFailed: (message) => `开火失败：${message}`,
       fired: "已提交函数并开火。",
       loaded: (soldiers) => `已读取当前状态：障碍和 ${soldiers} 个士兵`,
+      readFirst: "先读取 Agent 状态",
       reading: "正在读取状态",
     },
     autoGraphPathfindingDisabled: "一键清图正在重写，暂不可用",
@@ -676,6 +678,7 @@ export const graphwarKillerLocale = {
       title: "函数",
     },
     screenshot: {
+      agentPlaceholder: "读取 Agent 状态后开始规划",
       capture: "截取屏幕",
       captureTitle: "调用浏览器屏幕捕获，把 Graphwar 窗口截图载入工具。",
       placeholder: "上传、拖入或粘贴截图后开始标定",

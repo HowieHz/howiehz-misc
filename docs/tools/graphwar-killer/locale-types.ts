@@ -201,10 +201,12 @@ export interface GraphwarKillerLocale {
       screenCaptureUnsupported: string;
     };
     agent: {
+      defaultStatus: string;
       failed: (message: string) => string;
       fireFailed: (message: string) => string;
       fired: string;
       loaded: (soldiers: number) => string;
+      readFirst: string;
       reading: string;
     };
     autoGraphPathfindingDisabled: string;
@@ -428,6 +430,7 @@ export interface GraphwarKillerLocale {
       title: string;
     };
     screenshot: {
+      agentPlaceholder: string;
       capture: string;
       captureTitle: string;
       placeholder: string;

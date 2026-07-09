@@ -153,10 +153,12 @@ export const graphwarKillerLocale = {
       screenCaptureUnsupported: "This browser does not support the Screen Capture API.",
     },
     agent: {
+      defaultStatus: "Click Read State to load the current game state from Graphwar Agent",
       failed: (message) => `Failed to read state: ${message}`,
       fireFailed: (message) => `Failed to fire: ${message}`,
       fired: "Function submitted and fired.",
       loaded: (soldiers) => `Read current state: obstacles and ${soldiers} soldier(s)`,
+      readFirst: "Read Agent state first",
       reading: "Reading state",
     },
     autoGraphPathfindingDisabled: "One-Click Clear is being rebuilt and is unavailable for now",
@@ -773,6 +775,7 @@ export const graphwarKillerLocale = {
       title: "Formula",
     },
     screenshot: {
+      agentPlaceholder: "Read Agent state to start planning",
       capture: "Capture screenshot",
       captureTitle: "Use the browser's screen capture prompt to load a Graphwar screenshot into the tool.",
       placeholder: "Upload, drag in, or paste a screenshot to start calibration",

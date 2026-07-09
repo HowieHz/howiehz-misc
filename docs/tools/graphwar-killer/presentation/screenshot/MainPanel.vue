@@ -7,6 +7,8 @@ import GraphwarStageOverlay, { type GraphwarStageOverlayModel } from "../stage/M
 interface GraphwarScreenshotPanelStageModel {
   /** 舞台是否没有截图；父页面应沿用原 imageUrl 判定。 */
   empty: boolean;
+  /** 无截图时的舞台占位文案。 */
+  emptyPlaceholder: string;
   /** 主舞台障碍笔刷裁剪 id。 */
   mainClipPathId: string;
   /** 放大镜舞台障碍笔刷裁剪 id。 */
@@ -148,7 +150,7 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
         v-else
         class="graphwar-killer__placeholder"
       >
-        {{ locale.ui.screenshot.placeholder }}
+        {{ panel.stage.emptyPlaceholder }}
       </div>
       <GraphwarStageOverlay
         :clip-path-id="panel.stage.mainClipPathId"

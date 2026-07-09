@@ -1279,7 +1279,7 @@ const oneClickClearSettingsMessage = computed(() => {
 });
 const smartPathfindingPrerequisiteMessage = computed(() => {
   if (!imageUrl.value) {
-    return locale.status.detection.uploadFirst;
+    return getMissingStateImageMessage();
   }
   if (!activeBoundsReady.value) {
     return locale.smartPathfinding.needBounds;
@@ -1334,10 +1334,13 @@ const smartPathfindingHeaderStatusResult = computed(() =>
     hintMessage: locale.ui.pathfinding.smartPathfindingTitle,
   }),
 );
+const pathfindingDisabledHeaderMessage = computed(() =>
+  algorithmMode.value === "step" ? stepPathfindingDisabledMessage.value : "",
+);
 const pathfindingHeaderStatusResult = computed(() =>
   getFirstHeaderStatus(
-    // 参数错误只应在智能寻路有效启用时展示；关闭状态会隐藏一键清图入口，不应泄漏其校验错误。
-    createHeaderStatus(isSmartPathfindingDisabled() ? getSmartPathfindingDisabledMessage() : "", "warning"),
+    // 缺截图/边界/识别结果是上游准备状态，只放在按钮 title，避免寻路标题常驻截图提示。
+    createHeaderStatus(pathfindingDisabledHeaderMessage.value, "warning"),
     smartPathfindingHeaderStatusResult.value,
   ),
 );
@@ -1675,7 +1678,10 @@ const resultPanel = computed(() => {
   };
 });
 const screenshotImageStatusText = computed(
-  () => imageStatus.value || imageName.value || locale.status.image.defaultStatus,
+  () =>
+    imageStatus.value ||
+    imageName.value ||
+    (graphwarAgentEnabled.value ? locale.status.agent.defaultStatus : locale.status.image.defaultStatus),
 );
 // 截图面板只应消费展示 DTO；DOM refs 和舞台交互语义仍由页面侧工作流持有。
 const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
@@ -1691,6 +1697,9 @@ const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
   pathStatus: pathStatus.value,
   stage: {
     empty: !imageUrl.value,
+    emptyPlaceholder: graphwarAgentEnabled.value
+      ? locale.ui.screenshot.agentPlaceholder
+      : locale.ui.screenshot.placeholder,
     magnifierClipPathId: magnifierObstacleBrushClipPathId,
     mainClipPathId: mainObstacleBrushClipPathId,
     overlay: stageOverlay.value,
@@ -1921,11 +1930,15 @@ function applyDetectedBounds(edgeRect: BoundsRect) {
 /** 返回“识别士兵/障碍”按钮说明；禁用时说明缺少的前置边界。 */
 function getDetectObjectsTitle() {
   if (!imageUrl.value) {
-    return locale.status.detection.uploadFirst;
+    return getMissingStateImageMessage();
   }
   return activeBoundsReady.value
     ? locale.ui.detection.detectObjectsTitle
     : locale.ui.detection.detectObjectsNeedBoundsTitle;
+}
+
+function getMissingStateImageMessage() {
+  return graphwarAgentEnabled.value ? locale.status.agent.readFirst : locale.status.detection.uploadFirst;
 }
 
 /** 有效截图边界至少需要能形成可见区域，和手动画框提交阈值保持一致。 */

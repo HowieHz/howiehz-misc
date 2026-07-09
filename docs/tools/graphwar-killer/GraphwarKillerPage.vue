@@ -794,14 +794,14 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
     toolWorkflowModes: toolWorkflowModes.value,
   };
 });
-const activeToolHint = computed(() =>
+const activeToolBaseHint = computed(() =>
   toolMode.value === "bounds"
     ? locale.status.activeToolHint.bounds
     : toolMode.value === "obstacle"
       ? locale.status.activeToolHint.obstacle
       : toolWorkflowMode.value === "simulator"
         ? locale.status.activeToolHint.simulatorPath
-        : locale.status.activeToolHint.solverPath,
+        : "",
 );
 const boundsPreviewRect = computed(() =>
   boundsFirstPoint.value && pointerPreviewPoint.value
@@ -1009,6 +1009,7 @@ const {
   label: liveClickPreviewLabel,
   lineSegments: liveClickPreviewLineSegments,
   point: liveClickPreviewPoint,
+  renderedElapsedMs: liveClickPreviewRenderedElapsedMs,
   refreshPointerPathPointIndex: refreshLiveClickPreviewPointerPathPointIndex,
   schedulePointerPoint: scheduleLiveClickPreviewPointerPoint,
   setPointerPoint: setLiveClickPreviewPointerPoint,
@@ -1056,6 +1057,23 @@ const {
     formulaSettings: graphwarTrajectoryFormulaSettings,
     getCollisionSettings: () => trajectoryCollisionSettings.value,
   },
+});
+const liveClickPreviewRenderedStatus = computed(() =>
+  liveClickPreviewRenderedElapsedMs.value === undefined
+    ? ""
+    : locale.status.liveClickPreview.rendered(formatLiveClickPreviewElapsed(liveClickPreviewRenderedElapsedMs.value)),
+);
+const activeToolHint = computed(() => {
+  if (liveClickPreviewRenderedStatus.value) {
+    return {
+      kind: "success" as const,
+      message: liveClickPreviewRenderedStatus.value,
+    };
+  }
+  return {
+    kind: "info" as const,
+    message: activeToolBaseHint.value,
+  };
 });
 const visibleBoundaryExpansionRect = computed<BoundsRect | undefined>(() => {
   if (
@@ -1734,6 +1752,10 @@ function createResultPanelPointRows() {
       },
     };
   });
+}
+
+function formatLiveClickPreviewElapsed(elapsedMs: number) {
+  return `${formatDecimal(Math.max(0, elapsedMs) / 1000, 2)} s`;
 }
 
 /** 获取高精度时间戳，用于前端阶段计时。 */

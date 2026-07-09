@@ -158,6 +158,9 @@ export interface GraphwarKillerLocale {
       simulatorPath: string;
       solverPath: string;
     };
+    liveClickPreview: {
+      rendered: (elapsed: string) => string;
+    };
     calculation: {
       enterFunction: string;
       enterLaunchAngle: string;

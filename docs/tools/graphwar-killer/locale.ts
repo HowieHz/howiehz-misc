@@ -76,6 +76,9 @@ export const graphwarKillerLocale = {
       simulatorPath: "左键选择初始发射士兵；再次点选会替换当前士兵。",
       solverPath: "左键先点自己士兵中心；再点路径点中心；左键拖动路径点微调，右键点路径点删除，右键空白处撤回最近一个",
     },
+    liveClickPreview: {
+      rendered: (elapsed) => `已渲染实时预览，耗时 ${elapsed}`,
+    },
     calculation: {
       enterFunction: "请输入函数",
       enterLaunchAngle: "请输入发射角",

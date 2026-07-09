@@ -4,6 +4,13 @@ import type { CSSProperties } from "vue";
 import type { ToolMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
 
+interface GraphwarActionPanelStatus {
+  /** 状态样式；实时预览完成用 success，普通工具提示用 info。 */
+  kind: "info" | "success";
+  /** 展示在操作栏标题右侧的状态文本。 */
+  message: string;
+}
+
 interface GraphwarActionPanelSlider {
   /** 输入框允许的最大值。 */
   inputMaximum: number;
@@ -21,7 +28,7 @@ interface GraphwarActionPanelSlider {
 
 export interface GraphwarActionPanelModel {
   /** 标题行右侧的当前工具提示。 */
-  activeToolHint: string;
+  activeToolHint: GraphwarActionPanelStatus;
   /** 放大镜是否开启。 */
   magnifierEnabled: boolean;
   /** 放大镜缩放输入展示模型。 */
@@ -92,7 +99,15 @@ function handleObstacleBrushDiameterInput(event: Event) {
       <h2 id="graphwar-killer-actions-title">
         {{ locale.ui.actions.title }}
       </h2>
-      <span :title="panel.activeToolHint">{{ panel.activeToolHint }}</span>
+      <span
+        v-if="panel.activeToolHint.message"
+        role="status"
+        aria-live="polite"
+        :title="panel.activeToolHint.message"
+        :class="{ 'graphwar-killer__label-status--success': panel.activeToolHint.kind === 'success' }"
+      >
+        {{ panel.activeToolHint.message }}
+      </span>
     </div>
     <div class="graphwar-killer__image-actions">
       <div
@@ -395,6 +410,11 @@ function handleObstacleBrushDiameterInput(event: Event) {
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.graphwar-killer__label-row > .graphwar-killer__label-status--success {
+  color: #15803d;
+  font-weight: 700;
 }
 
 .graphwar-killer__image-actions,

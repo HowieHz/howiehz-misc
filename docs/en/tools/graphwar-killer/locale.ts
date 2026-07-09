@@ -107,6 +107,9 @@ export const graphwarKillerLocale = {
       solverPath:
         "Left-click your soldier's center first, then path-point centers. Drag path points to fine-tune them, right-click a point to delete it, or right-click empty space to undo the latest point.",
     },
+    liveClickPreview: {
+      rendered: (elapsed) => `Rendered live preview in ${elapsed}`,
+    },
     calculation: {
       enterFunction: "Enter a function",
       enterLaunchAngle: "Enter a launch angle",

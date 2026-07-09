@@ -162,12 +162,8 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     slot.worker.addEventListener("message", (event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>) =>
       handleWorkerMessage(slot, event),
     );
-    slot.worker.addEventListener("messageerror", () =>
-      handleWorkerFailure(slot, new Error("Graphwar live click preview worker message could not be deserialized")),
-    );
-    slot.worker.addEventListener("error", (event) =>
-      handleWorkerFailure(slot, event.error instanceof Error ? event.error : new Error(event.message)),
-    );
+    slot.worker.addEventListener("messageerror", () => handleWorkerFailure(slot));
+    slot.worker.addEventListener("error", () => handleWorkerFailure(slot));
     workerSlots.push(slot);
     return slot;
   }
@@ -193,12 +189,21 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     startQueuedTaskIfPossible();
   }
 
-  function handleWorkerFailure(slot: LiveClickPreviewWorkerSlot, error: Error) {
-    if (slot.activeTask) {
-      settleTaskAsError(slot.activeTask, error);
-      slot.activeTask = undefined;
+  function handleWorkerFailure(slot: LiveClickPreviewWorkerSlot) {
+    if (workerSlots.indexOf(slot) < 0) {
+      return;
     }
-    resetWorkerSlot(slot);
+
+    // 异步加载/运行失败通常表示当前环境跑不了这个 Worker；降级为外层虚线，不回主线程采样。
+    workerUnavailable = true;
+    for (const workerSlot of workerSlots) {
+      if (workerSlot.activeTask) {
+        settleTaskAsResult(workerSlot.activeTask, createGuideOnlyRenderResult());
+        workerSlot.activeTask = undefined;
+      }
+      workerSlot.worker.terminate();
+    }
+    workerSlots.length = 0;
     startQueuedTaskIfPossible();
   }
 

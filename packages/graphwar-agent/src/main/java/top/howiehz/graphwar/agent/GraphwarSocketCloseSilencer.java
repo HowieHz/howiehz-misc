@@ -15,8 +15,12 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
     private static final String HANDLER_METHOD = "printUnexpectedServerConnectionReadError";
     private static final String HANDLER_DESCRIPTOR = "(Ljava/io/IOException;)V";
     private static final String SOCKET_CLOSED_MESSAGE = "Socket closed";
+    private static final int IINC = 0x84;
     private static final int INVOKESTATIC = 0xb8;
     private static final int INVOKEVIRTUAL = 0xb6;
+    private static final int LOOKUPSWITCH = 0xab;
+    private static final int TABLESWITCH = 0xaa;
+    private static final int WIDE = 0xc4;
 
     @Override
     public byte[] transform(
@@ -264,8 +268,12 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
             int patchCount = 0;
 
             // Same-length replacement keeps branch offsets, exception tables and frames valid.
-            for (int offset = codeOffset; offset + 2 < codeEnd; offset += 1) {
+            // Walk instruction starts only; raw byte scanning could mutate operands or switch data.
+            for (int offset = codeOffset;
+                    offset < codeEnd;
+                    offset = nextInstructionOffset(codeOffset, codeEnd, offset)) {
                 if (readU1(offset) == INVOKEVIRTUAL
+                        && offset + 2 < codeEnd
                         && isIOExceptionPrintStackTraceMethodRef(readU2(offset + 1))) {
                     bytes[offset] = (byte) INVOKESTATIC;
                     writeU2(bytes, offset + 1, handlerMethodRefIndex);
@@ -274,6 +282,131 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
             }
 
             return patchCount;
+        }
+
+        private int nextInstructionOffset(int codeOffset, int codeEnd, int offset) {
+            int instructionLength = readInstructionLength(codeOffset, codeEnd, offset);
+            int nextOffset = offset + instructionLength;
+            if (instructionLength <= 0 || nextOffset > codeEnd) {
+                throw new IllegalArgumentException(
+                        "invalid bytecode instruction at " + (offset - codeOffset));
+            }
+            return nextOffset;
+        }
+
+        private int readInstructionLength(int codeOffset, int codeEnd, int offset) {
+            int opcode = readU1(offset);
+            switch (opcode) {
+                case TABLESWITCH:
+                    return readTableSwitchInstructionLength(codeOffset, codeEnd, offset);
+                case LOOKUPSWITCH:
+                    return readLookupSwitchInstructionLength(codeOffset, codeEnd, offset);
+                case WIDE:
+                    return readWideInstructionLength(codeEnd, offset);
+                case 0x10:
+                case 0x12:
+                case 0xbc:
+                    return 2;
+                case 0x11:
+                case 0x13:
+                case 0x14:
+                case IINC:
+                    return 3;
+                case 0xb9:
+                case 0xba:
+                case 0xc8:
+                case 0xc9:
+                    return 5;
+                case 0xc5:
+                    return 4;
+                default:
+                    if (opcode <= 0x0f
+                            || (opcode >= 0x1a && opcode <= 0x35)
+                            || (opcode >= 0x3b && opcode <= 0x83)
+                            || (opcode >= 0x85 && opcode <= 0x98)
+                            || (opcode >= 0xac && opcode <= 0xb1)
+                            || opcode == 0xbe
+                            || opcode == 0xbf
+                            || opcode == 0xc2
+                            || opcode == 0xc3
+                            || opcode == 0xca
+                            || opcode == 0xfe
+                            || opcode == 0xff) {
+                        return 1;
+                    }
+                    if ((opcode >= 0x15 && opcode <= 0x19)
+                            || (opcode >= 0x36 && opcode <= 0x3a)
+                            || opcode == 0xa9) {
+                        return 2;
+                    }
+                    if ((opcode >= 0x99 && opcode <= 0xa8)
+                            || (opcode >= 0xb2 && opcode <= 0xb8)
+                            || opcode == 0xbb
+                            || opcode == 0xbd
+                            || opcode == 0xc0
+                            || opcode == 0xc1
+                            || (opcode >= 0xc6 && opcode <= 0xc7)) {
+                        return 3;
+                    }
+                    throw new IllegalArgumentException(
+                            "unsupported bytecode opcode 0x" + Integer.toHexString(opcode));
+            }
+        }
+
+        private int readTableSwitchInstructionLength(int codeOffset, int codeEnd, int offset) {
+            int cursor = switchPayloadOffset(codeOffset, offset);
+            if (cursor + 12 > codeEnd) {
+                throw new IllegalArgumentException(
+                        "truncated tableswitch at " + (offset - codeOffset));
+            }
+
+            int low = readU4(cursor + 4);
+            int high = readU4(cursor + 8);
+            long caseCount = (long) high - low + 1L;
+            if (caseCount < 1L) {
+                throw new IllegalArgumentException(
+                        "invalid tableswitch case range at " + (offset - codeOffset));
+            }
+            long length = (long) (cursor - offset) + 12L + caseCount * 4L;
+            return checkedVariableInstructionLength(length, codeOffset, codeEnd, offset);
+        }
+
+        private int readLookupSwitchInstructionLength(int codeOffset, int codeEnd, int offset) {
+            int cursor = switchPayloadOffset(codeOffset, offset);
+            if (cursor + 8 > codeEnd) {
+                throw new IllegalArgumentException(
+                        "truncated lookupswitch at " + (offset - codeOffset));
+            }
+
+            int pairCount = readU4(cursor + 4);
+            if (pairCount < 0) {
+                throw new IllegalArgumentException(
+                        "invalid lookupswitch pair count at " + (offset - codeOffset));
+            }
+            long length = (long) (cursor - offset) + 8L + (long) pairCount * 8L;
+            return checkedVariableInstructionLength(length, codeOffset, codeEnd, offset);
+        }
+
+        private int readWideInstructionLength(int codeEnd, int offset) {
+            if (offset + 1 >= codeEnd) {
+                throw new IllegalArgumentException("truncated wide instruction");
+            }
+            return readU1(offset + 1) == IINC ? 6 : 4;
+        }
+
+        private int switchPayloadOffset(int codeOffset, int offset) {
+            int afterOpcode = offset + 1;
+            int padding = (4 - ((afterOpcode - codeOffset) & 3)) & 3;
+            return afterOpcode + padding;
+        }
+
+        private int checkedVariableInstructionLength(
+                long length, int codeOffset, int codeEnd, int offset) {
+            if (length <= 0L || length > codeEnd - offset) {
+                throw new IllegalArgumentException(
+                        "invalid variable-length bytecode instruction at " + (offset - codeOffset));
+            }
+            return (int) length;
         }
 
         private boolean isIOExceptionPrintStackTraceMethodRef(int constantPoolIndex) {

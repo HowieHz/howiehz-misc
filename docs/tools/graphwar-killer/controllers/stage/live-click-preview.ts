@@ -262,6 +262,7 @@ export function useGraphwarLiveClickPreview(
       pointerFrame = undefined;
     }
     curvePoints.value = "";
+    clearRenderedStatus();
     runner.cancel();
   }
 
@@ -331,6 +332,7 @@ export function useGraphwarLiveClickPreview(
     (input) => {
       if (!input) {
         curvePoints.value = "";
+        clearRenderedStatus();
         runner.cancel();
         return;
       }
@@ -348,6 +350,7 @@ export function useGraphwarLiveClickPreview(
         .catch((error: unknown) => {
           if (!isGraphwarLiveClickPreviewCancelledError(error)) {
             curvePoints.value = "";
+            clearRenderedStatus();
           }
         });
     },

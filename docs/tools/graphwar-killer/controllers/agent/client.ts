@@ -60,7 +60,7 @@ export interface GraphwarAgentSnapshot {
   boundsRect: BoundsRect;
   /** Synthetic image name shown in the screenshot panel. */
   imageName: string;
-  /** White 770x450 canvas; all real data is rendered through overlays. */
+  /** Transparent 770x450 canvas; all real data is rendered through overlays. */
   imageUrl: string;
   /** Current local firing soldier in view pixels; omitted when it is not this client's turn. */
   localCurrentTurnSoldierPoint?: PixelPoint;
@@ -282,7 +282,6 @@ function createGraphwarAgentBoundsRect(): BoundsRect {
 function createGraphwarAgentCanvasDataUrl() {
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${GRAPHWAR_PLANE_LENGTH}" height="${GRAPHWAR_PLANE_HEIGHT}" viewBox="0 0 ${GRAPHWAR_PLANE_LENGTH} ${GRAPHWAR_PLANE_HEIGHT}">`,
-    '<rect width="100%" height="100%" fill="#ffffff"/>',
     "</svg>",
   ].join("");
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;

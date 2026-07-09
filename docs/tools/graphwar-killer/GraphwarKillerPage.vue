@@ -809,9 +809,11 @@ const boundsPreviewRect = computed(() =>
     : undefined,
 );
 const visibleBoundsRect = computed(() => boundsPreviewRect.value ?? boundsRect.value);
+// Agent 数据来自游戏内状态；关闭智能光标时仍保留识别参照，但点击/悬停交互仍只看 smartCursorEnabled。
+const recognizedObjectOverlayVisible = computed(() => smartCursorEnabled.value || graphwarAgentEnabled.value);
 const stageCoordinateLines = computed<StageCoordinateLines>(() => {
   const boundsResult = parsedBounds.value;
-  if (!boundsResult.ok) {
+  if (!graphwarAgentEnabled.value || !boundsResult.ok) {
     return { axisLines: [], gridLines: [] };
   }
 
@@ -1084,7 +1086,7 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
   if (blocksFriendlyFireTargets.value) {
     visibleSoldiers = visibleSoldiers.filter((box) => !isDetectedFriendlySoldierObstacle(box));
   }
-  if (smartCursorEnabled.value && pathPixels.value.length === 0) {
+  if (recognizedObjectOverlayVisible.value && pathPixels.value.length === 0) {
     visibleSoldiers = visibleSoldiers.filter((box) => isDetectionBoxOnNegativeGraphX(box));
   }
   const lastPoint = pathPixels.value.at(-1);
@@ -1098,7 +1100,7 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
   return visibleSoldiers.filter((box) => Boolean(createSearchStartSoldierAimPoint(lastPoint, box)));
 });
 const inactiveDetectionBoxes = computed<DetectionBox[]>(() => {
-  if (!smartCursorEnabled.value || toolWorkflowMode.value === "simulator") {
+  if (!recognizedObjectOverlayVisible.value || toolWorkflowMode.value === "simulator") {
     return [];
   }
 
@@ -1561,6 +1563,7 @@ const stageOverlay = computed(() => ({
     oneClickClearHitFlashBoxes: oneClickClearHitFlashSoldiers.value,
     soldierFlashActive: detectionSoldierFlashActive.value,
     soldierFlashBoxes: detectedSoldiers.value,
+    visible: recognizedObjectOverlayVisible.value,
   },
   liveClickPreview: {
     curvePoints: liveClickPreviewCurvePoints.value,
@@ -1577,7 +1580,7 @@ const stageOverlay = computed(() => ({
     routeFillPath: smartPathfindingObstacleRouteFillPath.value,
     simulationEdgePath: smartPathfindingObstacleSimulationEdgePath.value,
     simulationFillPath: smartPathfindingObstacleSimulationFillPath.value,
-    smartCursorEnabled: smartCursorEnabled.value,
+    visible: recognizedObjectOverlayVisible.value,
     visibleEdgePath: visibleObstacleEdgePath.value,
     visibleFillPath: visibleObstacleFillPath.value,
   },

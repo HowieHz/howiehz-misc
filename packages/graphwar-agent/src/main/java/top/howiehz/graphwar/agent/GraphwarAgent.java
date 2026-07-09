@@ -34,6 +34,9 @@ public final class GraphwarAgent {
         // Source: Graphwar can receive duplicate REMOVE_PLAYER messages and then log a
         // NullPointerException while removing a player that is already absent.
         instrumentation.addTransformer(new GraphwarRemovePlayerMessageSilencer(), false);
+        // Source: RoomBoard's failed-join cleanup calls GameData.disconnect(), but a
+        // previous room kick has already nulled GameData.serverConnection.
+        instrumentation.addTransformer(new GraphwarRoomJoinFailureFixer(), false);
 
         printBuildInfo();
         PortSelection portSelection = parsePort(agentArgs);

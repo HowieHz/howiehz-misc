@@ -414,7 +414,12 @@ function sameStepGlitchSegment(left: StepGlitchSegment | undefined, right: StepG
     return left === right;
   }
 
-  return left.derivative === right.derivative && left.startX === right.startX && left.targetY === right.targetY;
+  return (
+    left.derivative === right.derivative &&
+    left.endX === right.endX &&
+    left.startX === right.startX &&
+    left.targetY === right.targetY
+  );
 }
 
 /** Graphwar 缩步只会尝试 STEP_SIZE/2^n；漏洞 D 需要按最后一个实际档位估算。 */
@@ -475,6 +480,7 @@ function createStepGlitchSegment(
 
   return {
     derivative: replacementDeltaY / jump.step,
+    endX: jump.endX,
     startX: jump.startX,
     targetY,
   };
@@ -485,8 +491,8 @@ function createStepGlitchJump(previousX: number, targetX: number) {
     return undefined;
   }
 
-  // x 门对齐目标竖线；D 固定按源码最小缩步档估算，才能产生可见的漏洞跃迁。
-  return { checkX: targetX, startX: targetX, step: GRAPHWAR_STEP_GLITCH_MIN_STEP };
+  // 窗口只保留一个原始最大步长，避免后续反向段把旧漏洞门重新打开。
+  return { checkX: targetX, endX: targetX + GRAPHWAR_STEP_SIZE, startX: targetX, step: GRAPHWAR_STEP_GLITCH_MIN_STEP };
 }
 
 function stepGlitchVerticalLineHitsObstacle(

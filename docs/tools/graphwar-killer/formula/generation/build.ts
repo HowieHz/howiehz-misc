@@ -362,7 +362,7 @@ function evaluateCompiledStepStableSecondDerivativeBody(t: number) {
   return q * ((1 - q) / denominator ** 3);
 }
 
-/** 回放漏洞模式门函数；保持与输出文本同一份单门触发公式。 */
+/** 回放漏洞模式门函数；x 右门负责让旧漏洞只在局部窗口内生效。 */
 function evaluateCompiledStepGlitchFirstDerivative(
   x: number,
   y: number,
@@ -371,8 +371,9 @@ function evaluateCompiledStepGlitchFirstDerivative(
 ) {
   const direction = segment.derivative < 0 ? -1 : 1;
   const xGate = 1 + evaluateStableSignRatio(x - segment.startX, options);
+  const xLimitGate = 1 - evaluateStableSignRatio(x - segment.endX, options);
   const yGate = 1 + evaluateStableSignRatio(direction * (segment.targetY - y), options);
-  return (segment.derivative / 4) * xGate * yGate;
+  return (segment.derivative / 8) * xGate * xLimitGate * yGate;
 }
 
 /** 内部 step 采样应使用最终公式文本中的陡峭度，确保 y/dy/ddy 回放一致。 */
@@ -421,6 +422,7 @@ function createCompiledStepGlitchSegment(
 
   return {
     derivative: createCompiledFormulaCoefficient(segment.derivative, options),
+    endX: createCompiledFormulaXCenter(segment.endX, options),
     startX: createCompiledFormulaXCenter(segment.startX, options),
     targetY: createCompiledFormulaYCenter(segment.targetY, options),
   };
@@ -654,7 +656,7 @@ function formatStepFirstDerivativeExpression(
   return cleanupExpression(parts.join("")) || "0";
 }
 
-/** 格式化单门漏洞项；正向就是 D/4 乘以 x 触发门，再乘以 y 触发门。 */
+/** 格式化局部漏洞项；右侧 x 门会在一个原始步长后关闭旧漏洞。 */
 function formatStepGlitchFirstDerivativeExpression(
   segment: StepGlitchSegment,
   decimalPlaces: number | undefined,
@@ -662,12 +664,13 @@ function formatStepGlitchFirstDerivativeExpression(
 ) {
   const direction = segment.derivative < 0 ? -1 : 1;
   const xGate = `1+${formatStableSignRatio(formatXOffset(segment.startX, decimalPlaces), signEpsilon)}`;
+  const xLimitGate = `1-${formatStableSignRatio(formatXOffset(segment.endX, decimalPlaces), signEpsilon)}`;
   const yGate = `1+${formatStableSignRatio(
     formatDirectedTargetYOffset(segment.targetY, direction, decimalPlaces),
     signEpsilon,
   )}`;
-  // 两个 sign 门全开时 (1+1)*(1+1)=4，因此文本系数使用 D/4，实际导数仍是 D。
-  return formatSignedRawTerm(segment.derivative / 4, `(${xGate})*(${yGate})`, decimalPlaces);
+  // 三个 sign 门全开时乘积是 8，因此文本系数使用 D/8，实际导数仍是 D。
+  return formatSignedRawTerm(segment.derivative / 8, `(${xGate})*(${xLimitGate})*(${yGate})`, decimalPlaces);
 }
 
 /** 格式化 sigmoid 阶跃表达式的二阶导。 */

@@ -9,7 +9,7 @@ import {
 } from "../../core/numbers";
 import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "../../core/types";
 import { GRAPHWAR_TOOL_SIGN_EPSILON, shouldUseStepDerivativeOverflowProtection } from "./step-numeric-strategy";
-import type { FormulaEvaluationOptions, StepOverflowProtectionRange } from "./step-numeric-strategy";
+import type { FormulaEvaluationOptions, StepGlitchSegment, StepOverflowProtectionRange } from "./step-numeric-strategy";
 export { GRAPHWAR_TOOL_SIGN_EPSILON } from "./step-numeric-strategy";
 export type { FormulaEvaluationOptions, StepOverflowProtectionRange } from "./step-numeric-strategy";
 
@@ -75,6 +75,8 @@ export interface CompiledAbsConnectorSegment {
 export interface CompiledStepTerm {
   /** 最终公式里的 Sigmoid 中心点。 */
   formulaCenterX: number;
+  /** Y'= 漏洞模式下替换普通 step 项的 x 窗口瞬移项。 */
+  glitchSegment?: StepGlitchSegment;
   /** 一阶导前置系数。 */
   firstDerivativeCoefficient: number;
   /** 二阶导前置系数。 */
@@ -167,7 +169,7 @@ export function buildFormula(
     const stepFormula = getCompiledStepFormula(points, steepness, formulaEvaluation, compiledMaterials);
     return {
       // y'= 模式输入 sigmoid 阶跃的一阶导。
-      expression: formatStepFirstDerivativeExpression(stepFormula, decimalPlaces),
+      expression: formatStepFirstDerivativeExpression(stepFormula, decimalPlaces, signEpsilon),
       terms,
     };
   }
@@ -208,6 +210,11 @@ export function formulaUsesStableSignRatio(
 ) {
   if (algorithm === "abs") {
     return mode === "dy" && getCompiledAbsConnectorSegments(points, options, compiledMaterials).length > 0;
+  }
+  if (algorithm === "step" && mode === "dy") {
+    return getCompiledStepFormula(points, steepness, options, compiledMaterials).terms.some((term) =>
+      Boolean(term.glitchSegment),
+    );
   }
   if (algorithm !== "step" || mode !== "ddy") {
     return false;
@@ -256,6 +263,10 @@ function compileStepEvaluator(
       let slope = 0;
       for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
         const term = formula.terms[index];
+        if (term.glitchSegment) {
+          slope = evaluateCompiledStepGlitchFirstDerivative(x, term.glitchSegment, options) + slope;
+          continue;
+        }
         if (term.firstDerivativeCoefficient === 0) {
           // 最终公式会省略 0 系数项；编译路径也不应求值其 body，避免 0 * NaN 偏离文本回放。
           continue;
@@ -276,6 +287,9 @@ function compileStepEvaluator(
       let acceleration = 0;
       for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
         const term = formula.terms[index];
+        if (term.glitchSegment) {
+          continue;
+        }
         if (term.secondDerivativeCoefficient === 0) {
           // 省略项没有 sign(t) 子表达式；跳过才能让 sign epsilon 探测与最终文本一致。
           continue;
@@ -300,6 +314,9 @@ function compileStepEvaluator(
       let yOffset = 0;
       for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
         const term = formula.terms[index];
+        if (term.glitchSegment) {
+          continue;
+        }
         if (term.yCoefficient === 0) {
           continue;
         }
@@ -345,6 +362,17 @@ function evaluateCompiledStepStableSecondDerivativeBody(t: number) {
   return q * ((1 - q) / denominator ** 3);
 }
 
+/** 回放漏洞模式 x 窗口项；不使用 y 门，才能保持 D = deltaY / step 的简单假设。 */
+function evaluateCompiledStepGlitchFirstDerivative(
+  x: number,
+  segment: StepGlitchSegment,
+  options?: FormulaEvaluationOptions,
+) {
+  const leftGate = 1 + evaluateStableSignRatio(x - segment.startX, options);
+  const rightGate = 1 + evaluateStableSignRatio(segment.endX - x, options);
+  return (segment.derivative / 4) * leftGate * rightGate;
+}
+
 /** 内部 step 采样应使用最终公式文本中的陡峭度，确保 y/dy/ddy 回放一致。 */
 function createCompiledStepFormula(
   points: readonly GraphPoint[],
@@ -354,17 +382,19 @@ function createCompiledStepFormula(
   const formulaSteepness = createCompiledStepFormulaSteepness(steepness, options);
   const terms: CompiledStepTerm[] = [];
   for (let index = 1; index < points.length; index += 1) {
+    const glitchSegment = createCompiledStepGlitchSegment(options?.stepGlitchSegments?.[index - 1], options);
     const formulaCenterX = createCompiledFormulaXCenter(points[index].x, options);
     const deltaY = points[index].y - points[index - 1].y;
     const yCoefficient = createCompiledFormulaCoefficient(deltaY, options);
     const firstDerivativeCoefficient = createCompiledFormulaCoefficient(deltaY * steepness, options);
     const secondDerivativeCoefficient = createCompiledFormulaCoefficient(deltaY * steepness * steepness, options);
-    if (yCoefficient === 0 && firstDerivativeCoefficient === 0 && secondDerivativeCoefficient === 0) {
+    if (!glitchSegment && yCoefficient === 0 && firstDerivativeCoefficient === 0 && secondDerivativeCoefficient === 0) {
       continue;
     }
 
     terms.push({
       formulaCenterX,
+      ...(glitchSegment ? { glitchSegment } : {}),
       derivativeUsesOverflowProtection: createCompiledStepDerivativeOverflowProtection(
         formulaSteepness,
         formulaCenterX,
@@ -377,6 +407,27 @@ function createCompiledStepFormula(
   }
 
   return { formulaSteepness, terms };
+}
+
+function createCompiledStepGlitchSegment(
+  segment: StepGlitchSegment | undefined,
+  options?: FormulaEvaluationOptions,
+): StepGlitchSegment | undefined {
+  if (!segment) {
+    return undefined;
+  }
+
+  const derivative = createCompiledFormulaCoefficient(segment.derivative, options);
+  if (derivative === 0) {
+    return undefined;
+  }
+
+  return {
+    derivative,
+    endX: createCompiledFormulaXCenter(segment.endX, options),
+    startX: createCompiledFormulaXCenter(segment.startX, options),
+    step: createCompiledFormulaDistance(segment.step, options),
+  };
 }
 
 function createCompiledStepFormulaSteepness(steepness: number, options?: FormulaEvaluationOptions) {
@@ -574,9 +625,17 @@ function formatStepExpression(formula: CompiledStepFormula, decimalPlaces: numbe
 }
 
 /** 格式化 sigmoid 阶跃表达式的一阶导。 */
-function formatStepFirstDerivativeExpression(formula: CompiledStepFormula, decimalPlaces: number | undefined) {
+function formatStepFirstDerivativeExpression(
+  formula: CompiledStepFormula,
+  decimalPlaces: number | undefined,
+  signEpsilon: number,
+) {
   const parts: string[] = [];
   for (const term of formula.terms) {
+    if (term.glitchSegment) {
+      parts.push(formatStepGlitchFirstDerivativeExpression(term.glitchSegment, decimalPlaces, signEpsilon));
+      continue;
+    }
     if (term.firstDerivativeCoefficient === 0) {
       continue;
     }
@@ -588,6 +647,18 @@ function formatStepFirstDerivativeExpression(formula: CompiledStepFormula, decim
     parts.push(formatSignedRawTerm(term.firstDerivativeCoefficient, `${expText}/(1+${expText})^2`, decimalPlaces));
   }
   return cleanupExpression(parts.join("")) || "0";
+}
+
+/** 格式化 x-only 漏洞项；按四个 RK4 k 全命中窗口估算 D = deltaY / step。 */
+function formatStepGlitchFirstDerivativeExpression(
+  segment: StepGlitchSegment,
+  decimalPlaces: number | undefined,
+  signEpsilon: number,
+) {
+  const leftGate = `1+${formatStableSignRatio(formatXOffset(segment.startX, decimalPlaces), signEpsilon)}`;
+  const rightGate = `1+${formatStableSignRatio(formatReverseXOffset(segment.endX, decimalPlaces), signEpsilon)}`;
+  // 两个 sign 门全开时 (1+1)*(1+1)=4，因此文本系数使用 D/4，实际导数仍是 D。
+  return formatSignedRawTerm(segment.derivative / 4, `(${leftGate})*(${rightGate})`, decimalPlaces);
 }
 
 /** 格式化 sigmoid 阶跃表达式的二阶导。 */
@@ -1103,6 +1174,11 @@ function formatAbsXOffset(centerX: number, decimalPlaces?: number) {
 function formatXOffset(centerX: number, decimalPlaces?: number) {
   const offset = normalizeZero(-centerX, decimalPlaces);
   return offset === 0 ? "x" : `x${formatSignedNumber(offset, decimalPlaces)}`;
+}
+
+/** 格式化 c-x，用作漏洞模式 x 窗口的右侧边界。 */
+function formatReverseXOffset(centerX: number, decimalPlaces?: number) {
+  return `(${formatDecimal(centerX, decimalPlaces)}-x)`;
 }
 
 /** 格式化带符号的 k*body 项，并丢弃四舍五入后为 0 的系数。 */

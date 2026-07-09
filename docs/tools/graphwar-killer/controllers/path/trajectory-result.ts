@@ -54,6 +54,10 @@ interface GraphwarTrajectoryResultOptions {
     steepness: ReadonlyRef<number>;
     /** Step 陡峭度是否来自合法输入。 */
     steepnessValid: ReadonlyRef<boolean>;
+    /** Step 漏洞模式是否启用；只有 y'= 模式和存在障碍 mask 时会生效。 */
+    stepGlitchModeEnabled: ReadonlyRef<boolean>;
+    /** Step 漏洞模式检查竖线障碍时使用的模拟 mask。 */
+    getStepGlitchObstacleMask: () => Uint8Array | undefined;
     /** 是否允许 Step 公式启用 exp 抗溢出保护。 */
     stepOverflowProtectionEnabled: ReadonlyRef<boolean>;
     /** 当前工具工作流。 */
@@ -114,6 +118,11 @@ export function useGraphwarTrajectoryResult(
     equation: options.settings.equationMode.value,
     formulaPathSteepness: formulaSteepness.value,
     steepness: formulaSteepness.value,
+    stepGlitchMode:
+      options.settings.stepGlitchModeEnabled.value &&
+      options.settings.algorithmMode.value === "step" &&
+      options.settings.equationMode.value === "dy",
+    stepGlitchObstacleMask: options.settings.getStepGlitchObstacleMask(),
     stepOverflowProtection: options.settings.stepOverflowProtectionEnabled.value,
   }));
 

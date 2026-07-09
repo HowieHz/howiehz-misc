@@ -738,6 +738,9 @@ export const graphwarKillerLocale = {
       simulator: "模拟器设定",
       skipUnknownCharacters: "跳过未知字符",
       skipUnknownCharactersTitle: "Graphwar 会跳过未知字符。",
+      stepGlitchMode: "漏洞模式",
+      stepGlitchModeTitle:
+        "仅在阶跃函数的 y'= 模式下生效；需要已有障碍识别结果。命中竖直障碍段时会尝试生成 x 窗口瞬移项。",
       stepSteepness: "阶跃陡峭度 a",
       stepSteepnessAriaLabel: "阶跃函数陡峭度 a",
       stepSteepnessTitle: "阶跃函数的陡峭度参数 a；数值越大，拐点越陡，但越容易出现数值溢出。",

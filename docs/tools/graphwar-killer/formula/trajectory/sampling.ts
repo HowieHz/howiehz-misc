@@ -1,4 +1,9 @@
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import {
+  GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
+  GRAPHWAR_PLANE_HEIGHT,
+  GRAPHWAR_PLANE_LENGTH,
+  GRAPHWAR_STEP_SIZE,
+} from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import type {
   AlgorithmMode,
@@ -17,7 +22,7 @@ import {
   createStepOverflowProtectionRange,
   probeSignEpsilonRequirement,
 } from "../generation/step-numeric-strategy";
-import type { FormulaEvaluationOptions } from "../generation/step-numeric-strategy";
+import type { FormulaEvaluationOptions, StepGlitchSegment } from "../generation/step-numeric-strategy";
 import {
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
@@ -45,6 +50,10 @@ export interface GraphwarTrajectoryFormulaSettings {
   formulaPathSteepness?: number;
   /** Step 公式的陡峭度。 */
   steepness: number;
+  /** 是否允许 step y'= 按障碍竖线替换为 x 窗口漏洞项。 */
+  stepGlitchMode: boolean;
+  /** Step 漏洞模式检查障碍时使用的 Graphwar 原始平面 mask；无 mask 时静默回退普通 step。 */
+  stepGlitchObstacleMask?: Uint8Array;
   /** 是否允许 step 公式启用 exp 抗溢出保护。 */
   stepOverflowProtection: boolean;
 }
@@ -172,6 +181,8 @@ interface TrajectoryFormulaState {
   signEpsilon: number;
 }
 
+const GRAPHWAR_STEP_GLITCH_CANDIDATE_STEPS = createGraphwarStepGlitchCandidateSteps();
+
 function createResolvedTrajectoryFormulaState(options: {
   bounds: GraphBounds;
   points: readonly GraphPoint[];
@@ -196,7 +207,8 @@ function createTrajectoryFormulaState(
   signEpsilon: number,
 ): TrajectoryFormulaState {
   const formulaPoints = createResolvedFormulaPathPoints(options, signEpsilon);
-  const formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon);
+  const stepGlitchSegments = createStepGlitchSegments(options, formulaPoints);
+  const formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon, stepGlitchSegments);
   return {
     compiledMaterials: compileGraphwarFormulaMaterials(
       formulaPoints,
@@ -217,13 +229,137 @@ function createTrajectoryFormulaEvaluation(
   },
   formulaPoints: readonly GraphPoint[],
   signEpsilon: number,
+  stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[],
 ): FormulaEvaluationOptions {
   return {
     formulaDecimalPlaces: options.settings.decimalPlaces,
     signEpsilon,
+    stepGlitchSegments,
     stepOverflowProtection: options.settings.stepOverflowProtection,
     stepOverflowProtectionRange: createStepOverflowProtectionRange(options.bounds, formulaPoints),
   };
+}
+
+/** Graphwar 缩步只会尝试 STEP_SIZE/2^n，直到第一次不大于源码的最小 x 步长。 */
+function createGraphwarStepGlitchCandidateSteps() {
+  const steps: number[] = [];
+  let step = GRAPHWAR_STEP_SIZE;
+  while (true) {
+    steps.push(step);
+    if (step <= GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
+      return steps;
+    }
+    step /= 2;
+  }
+}
+
+function createStepGlitchSegments(
+  options: {
+    bounds: GraphBounds;
+    points: readonly GraphPoint[];
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+  formulaPoints: readonly GraphPoint[],
+) {
+  const mask = options.settings.stepGlitchObstacleMask;
+  if (
+    !options.settings.stepGlitchMode ||
+    options.settings.algorithm !== "step" ||
+    options.settings.equation !== "dy" ||
+    !mask ||
+    options.points.length < 2
+  ) {
+    return undefined;
+  }
+
+  const segments: (StepGlitchSegment | undefined)[] = [];
+  let hasGlitchSegment = false;
+  for (let index = 1; index < options.points.length; index += 1) {
+    const previous = options.points[index - 1];
+    const target = options.points[index];
+    // 障碍检查遵循用户画出的局部段；替换高度则对齐最终公式点，避免首段发射点修正后少跳或多跳。
+    const replacementDeltaY = (formulaPoints[index]?.y ?? target.y) - (formulaPoints[index - 1]?.y ?? previous.y);
+    const segment = createStepGlitchSegment(previous, target, replacementDeltaY, options.bounds, mask);
+    segments.push(segment);
+    hasGlitchSegment ||= Boolean(segment);
+  }
+  return hasGlitchSegment ? segments : undefined;
+}
+
+function createStepGlitchSegment(
+  previous: GraphPoint,
+  target: GraphPoint,
+  replacementDeltaY: number,
+  bounds: GraphBounds,
+  mask: Uint8Array,
+): StepGlitchSegment | undefined {
+  const jump = createStepGlitchJump(previous.x, target.x);
+  if (
+    !jump ||
+    replacementDeltaY === 0 ||
+    !stepGlitchVerticalLineHitsObstacle(jump.checkX, previous.y, target.y, bounds, mask)
+  ) {
+    return undefined;
+  }
+
+  return {
+    derivative: replacementDeltaY / jump.step,
+    endX: target.x,
+    startX: jump.startX,
+    step: jump.step,
+  };
+}
+
+function createStepGlitchJump(previousX: number, targetX: number) {
+  if (!(targetX > previousX)) {
+    return undefined;
+  }
+
+  for (const step of GRAPHWAR_STEP_GLITCH_CANDIDATE_STEPS) {
+    const startX = targetX - step;
+    if (startX > previousX) {
+      return { checkX: startX, startX, step };
+    }
+  }
+
+  // 极短局部段没有源码步长档位能落在段内；按用户语义检查 x1 竖线，同时让窗口覆盖本段避免零宽。
+  return { checkX: targetX, startX: previousX, step: targetX - previousX };
+}
+
+function stepGlitchVerticalLineHitsObstacle(
+  graphX: number,
+  startY: number,
+  endY: number,
+  bounds: GraphBounds,
+  mask: Uint8Array,
+) {
+  if (!Number.isFinite(graphX) || !Number.isFinite(startY) || !Number.isFinite(endY)) {
+    return false;
+  }
+
+  const planeX = graphXToPlaneX(graphX, bounds);
+  if (planeX < 0 || planeX >= GRAPHWAR_PLANE_LENGTH) {
+    return false;
+  }
+
+  const startPlaneY = graphYToPlaneY(startY, bounds);
+  const endPlaneY = graphYToPlaneY(endY, bounds);
+  const minY = Math.max(0, Math.min(startPlaneY, endPlaneY));
+  const maxY = Math.min(GRAPHWAR_PLANE_HEIGHT - 1, Math.max(startPlaneY, endPlaneY));
+  for (let y = minY; y <= maxY; y += 1) {
+    if (mask[y * GRAPHWAR_PLANE_LENGTH + planeX]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function graphXToPlaneX(x: number, bounds: GraphBounds) {
+  return Math.floor(((x - bounds.minX) / (bounds.maxX - bounds.minX)) * GRAPHWAR_PLANE_LENGTH);
+}
+
+function graphYToPlaneY(y: number, bounds: GraphBounds) {
+  return Math.floor(((bounds.maxY - y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT);
 }
 
 const FORMULA_PATH_RANGE_RESOLUTION_PASSES = 3;

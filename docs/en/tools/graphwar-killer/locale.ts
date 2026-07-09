@@ -838,6 +838,9 @@ export const graphwarKillerLocale = {
       simulator: "Simulator",
       skipUnknownCharacters: "Skip unknown characters",
       skipUnknownCharactersTitle: "Graphwar skips unknown characters.",
+      stepGlitchMode: "Glitch mode",
+      stepGlitchModeTitle:
+        "Only applies to step y'= mode and requires an existing obstacle recognition result. When a vertical obstacle segment is hit, it attempts to generate an x-window jump term.",
       stepSteepness: "Step steepness a",
       stepSteepnessAriaLabel: "Step function steepness a",
       stepSteepnessTitle:

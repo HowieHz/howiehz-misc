@@ -488,6 +488,8 @@ export interface GraphwarKillerLocale {
       simulator: string;
       skipUnknownCharacters: string;
       skipUnknownCharactersTitle: string;
+      stepGlitchMode: string;
+      stepGlitchModeTitle: string;
       stepSteepness: string;
       stepSteepnessAriaLabel: string;
       stepSteepnessTitle: string;

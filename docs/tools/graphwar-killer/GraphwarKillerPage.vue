@@ -180,6 +180,7 @@ const minYText = ref(`-${graphwarVisibleYLimitText}`);
 const maxYText = ref(graphwarVisibleYLimitText);
 const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
+const stepGlitchModeEnabled = ref(true);
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const advancedSettingsVisible = ref(false);
 const simulatorSkipUnknownCharacters = ref(true);
@@ -658,6 +659,8 @@ const {
     precisionValid: formulaInputPrecisionValid,
     steepness: formulaInputSteepness,
     steepnessValid: formulaInputSteepnessValid,
+    getStepGlitchObstacleMask: () => simulationObstacleMask.value,
+    stepGlitchModeEnabled,
     stepOverflowProtectionEnabled,
     toolWorkflowMode,
   },
@@ -783,6 +786,8 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
       maximum: MAX_FORMULA_DECIMAL_PLACES,
       text: precisionText.value,
     },
+    stepGlitchModeDisabled: equationMode.value !== "dy",
+    stepGlitchModeEnabled: stepGlitchModeEnabled.value,
     stepOverflowProtectionEnabled: stepOverflowProtectionEnabled.value,
     steepnessText: steepnessText.value,
     toolWorkflowMode: toolWorkflowMode.value,
@@ -2611,6 +2616,7 @@ function undoLastPoint() {
       @set-tool-workflow-mode="setToolWorkflowMode"
       @start-debug-activation-hold="startDebugActivationHold"
       @toggle-advanced-settings="toggleAdvancedSettings"
+      @toggle-step-glitch-mode="stepGlitchModeEnabled = !stepGlitchModeEnabled"
       @toggle-step-overflow-protection="stepOverflowProtectionEnabled = !stepOverflowProtectionEnabled"
       @update-precision-text="precisionText = $event"
       @update-steepness-text="steepnessText = $event"

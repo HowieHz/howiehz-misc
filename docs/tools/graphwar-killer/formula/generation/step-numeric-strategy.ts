@@ -15,6 +15,18 @@ export interface StepOverflowProtectionRange {
   minX: number;
 }
 
+/** Step y'= 漏洞段；用于把普通 step 项替换成 x 窗口内的高导数瞬移项。 */
+export interface StepGlitchSegment {
+  /** 全部 RK4 子步都命中窗口时的目标导数。 */
+  derivative: number;
+  /** X 窗口右边界，也就是当前路径段目标 x。 */
+  endX: number;
+  /** 本段选中的 Graphwar 自适应步长档位。 */
+  step: number;
+  /** X 窗口左边界。 */
+  startX: number;
+}
+
 /** 编译和输出共用的公式数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
 export interface FormulaEvaluationOptions {
   /** 采样应按最终公式小数位判断参数、系数、溢出和 sign 折点。 */
@@ -23,6 +35,8 @@ export interface FormulaEvaluationOptions {
   onSignArgument?: (value: number) => void;
   /** 稳定符号比值的除零保护值；0 表示保留 Graphwar 原始数值行为。 */
   signEpsilon?: number;
+  /** 每个 step 段对应的漏洞替换项；undefined 表示该段保持普通 step。 */
+  stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[];
   /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否对 step 表达式使用抗溢出的等价格式。 */

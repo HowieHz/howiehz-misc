@@ -266,6 +266,7 @@ function createTrajectorySettingsCacheKey(settings: GraphwarTrajectoryFormulaSet
     settings.equation,
     settings.formulaPathSteepness,
     settings.steepness,
+    settings.stepGlitchMode,
     settings.stepOverflowProtection,
   ];
 }

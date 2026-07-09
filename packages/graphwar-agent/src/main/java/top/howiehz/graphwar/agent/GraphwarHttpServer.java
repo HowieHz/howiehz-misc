@@ -1,9 +1,8 @@
 package top.howiehz.graphwar.agent;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -19,6 +18,10 @@ import java.util.concurrent.ThreadFactory;
 final class GraphwarHttpServer {
     // Keep the server tiny and dependency-free. com.sun.net.httpserver.HttpServer is
     // convenient, but its non-daemon workers kept short validation JVMs alive.
+    // Graphwar functions are short text inputs; cap request size so the local server
+    // cannot be used as an unbounded memory sink.
+    private static final int MAX_REQUEST_BODY_BYTES = 8192;
+    private static final int MAX_REQUEST_HEADER_BYTES = 8192;
     private static final int MAX_PORT = 65535;
     private final ExecutorService executor;
     private final GraphwarStateReader stateReader;
@@ -114,18 +117,26 @@ final class GraphwarHttpServer {
     }
 
     private Request readRequest(Socket socket) throws IOException {
-        BufferedReader reader = new BufferedReader(
-            new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII)
-        );
-        String requestLine = reader.readLine();
+        // Read raw bytes instead of BufferedReader so header buffering cannot consume
+        // bytes that belong to the UTF-8 POST body.
+        InputStream input = socket.getInputStream();
+        byte[] headerBytes = readHeaderBytes(input);
+        if (headerBytes.length == 0) {
+            return Request.invalid();
+        }
+
+        String headerText = new String(headerBytes, StandardCharsets.US_ASCII);
+        String[] lines = headerText.split("\r\n");
+        String requestLine = lines.length == 0 ? "" : lines[0];
         if (requestLine == null || requestLine.isEmpty()) {
             return Request.invalid();
         }
 
-        String line;
-        while ((line = reader.readLine()) != null && !line.isEmpty()) {
-            // The API is body-free GET/OPTIONS only, so headers only need to be drained.
+        int contentLength = readContentLength(lines);
+        if (contentLength < 0 || contentLength > MAX_REQUEST_BODY_BYTES) {
+            return Request.invalid();
         }
+        String body = new String(readBodyBytes(input, contentLength), StandardCharsets.UTF_8);
 
         String[] parts = requestLine.split(" ", 3);
         if (parts.length < 2) {
@@ -134,10 +145,69 @@ final class GraphwarHttpServer {
 
         try {
             URI uri = new URI(parts[1]);
-            return new Request(parts[0], uri.getPath(), uri.getRawQuery());
+            return new Request(parts[0], uri.getPath(), uri.getRawQuery(), body);
         } catch (URISyntaxException error) {
             return Request.invalid();
         }
+    }
+
+    private static byte[] readHeaderBytes(InputStream input) throws IOException {
+        ByteArrayOutputStream headers = new ByteArrayOutputStream(1024);
+        byte[] terminator = new byte[] { '\r', '\n', '\r', '\n' };
+        int matched = 0;
+
+        while (headers.size() < MAX_REQUEST_HEADER_BYTES) {
+            int next = input.read();
+            if (next < 0) {
+                return new byte[0];
+            }
+
+            headers.write(next);
+            if (next == terminator[matched]) {
+                matched += 1;
+                if (matched == terminator.length) {
+                    return headers.toByteArray();
+                }
+            } else {
+                matched = next == terminator[0] ? 1 : 0;
+            }
+        }
+
+        return new byte[0];
+    }
+
+    private static int readContentLength(String[] headerLines) {
+        int contentLength = 0;
+        for (int index = 1; index < headerLines.length; index += 1) {
+            String line = headerLines[index];
+            int separator = line.indexOf(':');
+            if (separator <= 0) {
+                continue;
+            }
+            if (!"Content-Length".equalsIgnoreCase(line.substring(0, separator).trim())) {
+                continue;
+            }
+
+            try {
+                contentLength = Integer.parseInt(line.substring(separator + 1).trim());
+            } catch (NumberFormatException error) {
+                return -1;
+            }
+        }
+        return contentLength;
+    }
+
+    private static byte[] readBodyBytes(InputStream input, int contentLength) throws IOException {
+        byte[] body = new byte[contentLength];
+        int offset = 0;
+        while (offset < body.length) {
+            int bytesRead = input.read(body, offset, body.length - offset);
+            if (bytesRead < 0) {
+                throw new IOException("request body ended early");
+            }
+            offset += bytesRead;
+        }
+        return body;
     }
 
     private Response handleRequest(Request request) {
@@ -146,6 +216,12 @@ final class GraphwarHttpServer {
         }
         if ("OPTIONS".equals(request.method)) {
             return Response.empty(204);
+        }
+        if ("POST".equals(request.method)) {
+            if ("/function".equals(request.path)) {
+                return handleSubmitFunction(request.body);
+            }
+            return Response.text(404, "not found\n");
         }
         if (!"GET".equals(request.method)) {
             return Response.text(405, "method not allowed\n");
@@ -161,6 +237,21 @@ final class GraphwarHttpServer {
             return handleObstacleMask(request.query);
         }
         return Response.text(404, "not found\n");
+    }
+
+    private Response handleSubmitFunction(String function) {
+        try {
+            // The body is intentionally just the function text; callers do not need a
+            // JSON encoder for Graphwar's expression language.
+            stateReader.submitFunction(function);
+            return Response.json(200, "{\"ok\":true}\n");
+        } catch (GraphwarInvalidFunctionException error) {
+            return Response.text(400, error.getMessage() + "\n");
+        } catch (GraphwarStateUnavailableException error) {
+            return Response.text(409, error.getMessage() + "\n");
+        } catch (GraphwarStateException error) {
+            return Response.text(500, error.getMessage() + "\n");
+        }
     }
 
     private Response handleState() {
@@ -202,7 +293,7 @@ final class GraphwarHttpServer {
         writeAscii(headers, "Content-Type: " + response.contentType + "\r\n");
         writeAscii(headers, "Content-Length: " + response.body.length + "\r\n");
         writeAscii(headers, "Access-Control-Allow-Origin: *\r\n");
-        writeAscii(headers, "Access-Control-Allow-Methods: GET, OPTIONS\r\n");
+        writeAscii(headers, "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n");
         writeAscii(headers, "Access-Control-Allow-Headers: Content-Type\r\n");
         writeAscii(headers, "Access-Control-Allow-Private-Network: true\r\n");
         writeAscii(headers, "Cache-Control: no-store\r\n");
@@ -254,12 +345,14 @@ final class GraphwarHttpServer {
         final String method;
         final String path;
         final String query;
+        final String body;
         final boolean valid;
 
-        Request(String method, String path, String query) {
+        Request(String method, String path, String query, String body) {
             this.method = method;
             this.path = path;
             this.query = query;
+            this.body = body;
             this.valid = true;
         }
 
@@ -267,6 +360,7 @@ final class GraphwarHttpServer {
             this.method = "";
             this.path = "";
             this.query = "";
+            this.body = "";
             this.valid = false;
         }
 

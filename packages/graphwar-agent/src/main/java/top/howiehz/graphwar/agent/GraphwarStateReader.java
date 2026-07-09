@@ -4,11 +4,14 @@ import java.awt.Image;
 import java.awt.Window;
 import java.awt.image.BufferedImage;
 import java.lang.reflect.Array;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 
 final class GraphwarStateReader {
+    private static final int GRAPHWAR_GAME_STATE_GAME = 2;
+
     // The official jar is not on this package's compile classpath. Reflection keeps the
     // build JDK-only while still reading Graphwar's public runtime methods.
     String readStateJson() throws GraphwarStateException {
@@ -48,6 +51,49 @@ final class GraphwarStateReader {
         }
 
         return mask;
+    }
+
+    void submitFunction(String function) throws GraphwarStateException {
+        if (function == null || function.isEmpty()) {
+            throw new GraphwarInvalidFunctionException("Graphwar function is empty");
+        }
+
+        Object graphwar = findGraphwarWindow();
+        if (graphwar == null) {
+            throw new GraphwarStateUnavailableException("Graphwar window was not found");
+        }
+
+        Object gameData = invoke(graphwar, "getGameData");
+        if (gameData == null) {
+            throw new GraphwarStateUnavailableException("Graphwar GameData is not initialized yet");
+        }
+
+        // Source: GraphServer.Constants.GAME == 2 in the official Graphwar source.
+        if (readInt(gameData, "getGameState", -1) != GRAPHWAR_GAME_STATE_GAME) {
+            throw new GraphwarStateUnavailableException("Graphwar is not in an active game");
+        }
+
+        int currentTurn = readInt(gameData, "getCurrentTurnIndex", -1);
+        List<?> players = readPlayers(gameData);
+        if (currentTurn < 0 || currentTurn >= players.size()) {
+            throw new GraphwarStateUnavailableException("Graphwar current turn is unavailable");
+        }
+
+        Object currentPlayer = players.get(currentTurn);
+        if (!readBoolean(currentPlayer, "isLocalPlayer", false)) {
+            throw new GraphwarStateUnavailableException("It is not this client's turn");
+        }
+        // Source: GameScreen.actionPerformed does not fire for ComputerPlayer turns.
+        if ("Graphwar.ComputerPlayer".equals(currentPlayer.getClass().getName())) {
+            throw new GraphwarStateUnavailableException("The current turn belongs to a local computer player");
+        }
+        if (readBoolean(gameData, "isDrawingFunction", false)) {
+            throw new GraphwarStateUnavailableException("Graphwar is already drawing a function");
+        }
+
+        validateFunctionSyntax(graphwar, function);
+        // Source: GameScreen submits the text field through GameData.sendFunction(String).
+        invoke(gameData, "sendFunction", String.class, function);
     }
 
     private RuntimeState readRuntimeState(boolean requireObstacle) throws GraphwarStateException {
@@ -118,6 +164,23 @@ final class GraphwarStateReader {
             return (List<?>) players;
         }
         throw new GraphwarStateException("Graphwar players list is unavailable");
+    }
+
+    private static void validateFunctionSyntax(Object graphwar, String function) throws GraphwarStateException {
+        try {
+            Class<?> functionClass = Class.forName("Graphwar.Function", false, graphwar.getClass().getClassLoader());
+            Constructor<?> constructor = functionClass.getDeclaredConstructor(String.class);
+            constructor.setAccessible(true);
+            constructor.newInstance(function);
+        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | NoSuchMethodException error) {
+            throw new GraphwarStateException("Cannot validate Graphwar function syntax", error);
+        } catch (InvocationTargetException error) {
+            Throwable cause = error.getCause();
+            if (cause != null && "Graphwar.MalformedFunction".equals(cause.getClass().getName())) {
+                throw new GraphwarInvalidFunctionException("Malformed Graphwar function");
+            }
+            throw new GraphwarStateException("Graphwar function validation failed", cause);
+        }
     }
 
     private static void appendPlane(StringBuilder json) {
@@ -243,6 +306,18 @@ final class GraphwarStateReader {
             return method.invoke(target);
         } catch (IllegalAccessException | NoSuchMethodException error) {
             throw new GraphwarStateException("Cannot read Graphwar method " + methodName, error);
+        } catch (InvocationTargetException error) {
+            throw new GraphwarStateException("Graphwar method " + methodName + " failed", error.getCause());
+        }
+    }
+
+    private static Object invoke(Object target, String methodName, Class<?> parameterType, Object argument)
+        throws GraphwarStateException {
+        try {
+            Method method = target.getClass().getMethod(methodName, parameterType);
+            return method.invoke(target, argument);
+        } catch (IllegalAccessException | NoSuchMethodException error) {
+            throw new GraphwarStateException("Cannot call Graphwar method " + methodName, error);
         } catch (InvocationTargetException error) {
             throw new GraphwarStateException("Graphwar method " + methodName + " failed", error.getCause());
         }

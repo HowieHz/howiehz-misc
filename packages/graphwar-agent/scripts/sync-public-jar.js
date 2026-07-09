@@ -1,0 +1,160 @@
+import { Buffer } from "node:buffer";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
+import { stdout } from "node:process";
+import { fileURLToPath, URL } from "node:url";
+
+const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
+const repoRoot = join(packageRoot, "..", "..");
+const buildRoot = join(packageRoot, "build");
+const builtJarPath = join(packageRoot, "build", "libs", "graphwar-agent.jar");
+const publicJarPath = join(repoRoot, "docs", "public", "graphwar-agent.jar");
+const buildInfoClassPath = "top/howiehz/graphwar/agent/GraphwarAgentBuildInfo.class";
+const manifestPath = "META-INF/MANIFEST.MF";
+
+if (!existsSync(builtJarPath)) {
+  throw new Error(`Built jar was not found at ${relative(repoRoot, builtJarPath)}`);
+}
+
+mkdirSync(dirname(publicJarPath), { recursive: true });
+
+if (existsSync(publicJarPath) && semanticJarHash(builtJarPath) === semanticJarHash(publicJarPath)) {
+  stdout.write(`Public jar is already up to date: ${relative(repoRoot, publicJarPath)}\n`);
+} else {
+  copyFileSync(builtJarPath, publicJarPath);
+  stdout.write(`Updated ${relative(repoRoot, publicJarPath)}\n`);
+}
+
+function semanticJarHash(jarPath) {
+  const tempDirectory = mkdtempSync(join(buildRoot, "sync-public-jar-"));
+
+  try {
+    extractJar(jarPath, tempDirectory);
+
+    const metadata = readBuildMetadata(tempDirectory);
+    const hash = createHash("sha256");
+    for (const file of collectFiles(tempDirectory).sort()) {
+      const entryPath = relative(tempDirectory, file).split(sep).join("/");
+      if (entryPath === buildInfoClassPath) {
+        continue;
+      }
+
+      hash.update(entryPath);
+      hash.update("\0");
+      hash.update(normalizeJarEntry(entryPath, readFileSync(file), metadata));
+      hash.update("\0");
+    }
+    return hash.digest("hex");
+  } finally {
+    rmSync(tempDirectory, { force: true, recursive: true });
+  }
+}
+
+function extractJar(jarPath, outputDirectory) {
+  const result = spawnSync("jar", ["xf", jarPath], {
+    cwd: outputDirectory,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    const output = `${result.stdout}\n${result.stderr}`.trim();
+    throw new Error(`Failed to extract ${relative(repoRoot, jarPath)}${output ? `: ${output}` : ""}`);
+  }
+}
+
+function collectFiles(rootDirectory) {
+  const files = [];
+  const pendingDirectories = [rootDirectory];
+
+  while (pendingDirectories.length > 0) {
+    const directory = pendingDirectories.pop();
+    for (const entry of readdirSync(directory)) {
+      const path = join(directory, entry);
+      const stat = statSync(path);
+      if (stat.isDirectory()) {
+        pendingDirectories.push(path);
+      } else if (stat.isFile()) {
+        files.push(path);
+      }
+    }
+  }
+
+  return files;
+}
+
+function readBuildMetadata(extractedJarRoot) {
+  const manifestFile = join(extractedJarRoot, ...manifestPath.split("/"));
+  if (!existsSync(manifestFile)) {
+    return {};
+  }
+
+  const manifest = readFileSync(manifestFile, "utf8");
+  const sourceCommit = readManifestHeader(manifest, "Graphwar-Agent-Source-Commit");
+  return {
+    sourceCommit,
+    sourceCommitShort: sourceCommit && sourceCommit !== "unknown" ? sourceCommit.slice(0, 12) : sourceCommit,
+    sourceCommitTime: readManifestHeader(manifest, "Graphwar-Agent-Source-Commit-Time"),
+  };
+}
+
+function readManifestHeader(manifest, name) {
+  const prefix = `${name}: `;
+  for (const line of manifest.replace(/\r\n/g, "\n").split("\n")) {
+    if (line.startsWith(prefix)) {
+      return line.slice(prefix.length);
+    }
+  }
+  return "";
+}
+
+function normalizeJarEntry(entryPath, content, metadata) {
+  if (entryPath === manifestPath) {
+    return normalizeManifest(content);
+  }
+  if (entryPath.endsWith(".class")) {
+    return normalizeClassBuildMetadata(content, metadata);
+  }
+  return content;
+}
+
+function normalizeManifest(content) {
+  const lines = content.toString("utf8").replace(/\r\n/g, "\n").split("\n");
+  const normalizedLines = [];
+
+  for (const line of lines) {
+    if (line.startsWith("Graphwar-Agent-Source-Commit:")) {
+      normalizedLines.push("Graphwar-Agent-Source-Commit: <source-commit>");
+    } else if (line.startsWith("Graphwar-Agent-Source-Commit-Time:")) {
+      normalizedLines.push("Graphwar-Agent-Source-Commit-Time: <source-commit-time>");
+    } else if (!line.startsWith("Created-By:")) {
+      normalizedLines.push(line);
+    }
+  }
+
+  return Buffer.from(normalizedLines.join("\n"), "utf8");
+}
+
+function normalizeClassBuildMetadata(content, metadata) {
+  // javac inlines GraphwarAgentBuildInfo constants into GraphwarAgent.class, so
+  // raw class bytes can differ even when only source commit metadata changed.
+  let normalized = content
+    .toString("latin1")
+    .replace(
+      /\[graphwar-agent\] source commit (?:unknown|[0-9a-f]{12}) \((?:unknown|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\)/g,
+      "[graphwar-agent] source commit <source-commit> (<source-commit-time>)",
+    );
+
+  normalized = replaceAscii(normalized, metadata.sourceCommit, "<source-commit>");
+  normalized = replaceAscii(normalized, metadata.sourceCommitShort, "<source-commit-short>");
+  normalized = replaceAscii(normalized, metadata.sourceCommitTime, "<source-commit-time>");
+
+  return Buffer.from(normalized, "latin1");
+}
+
+function replaceAscii(value, search, replacement) {
+  if (!search || search === "unknown") {
+    return value;
+  }
+  return value.split(search).join(replacement);
+}

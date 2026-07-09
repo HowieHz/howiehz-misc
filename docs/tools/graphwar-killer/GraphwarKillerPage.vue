@@ -1,6 +1,12 @@
 <script setup lang="ts">
+import { withBase } from "vitepress";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+import {
+  GRAPHWAR_AGENT_DEFAULT_BASE_URL,
+  readGraphwarAgentSnapshot,
+  submitGraphwarAgentFunction,
+} from "./controllers/agent/client";
 import { useGraphwarDebugActivation } from "./controllers/debug/activation";
 import { useGraphwarDebugTimings } from "./controllers/debug/timings";
 import {
@@ -40,7 +46,7 @@ import {
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
   GRAPHWAR_VISIBLE_Y_LIMIT,
 } from "./core/game/constants";
-import { imageToGraphPoint, normalizeBoundsRect } from "./core/geometry";
+import { graphToImagePoint, imageToGraphPoint, normalizeBoundsRect } from "./core/geometry";
 import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
@@ -52,18 +58,22 @@ import {
   parseFiniteNumber,
 } from "./core/numbers";
 import { graphwarToolDefaults } from "./core/tool/defaults";
-import type {
-  AlgorithmMode,
-  BoundsRect,
-  EquationMode,
-  GraphPoint,
-  PixelPoint,
-  ToolMode,
-  ToolWorkflowMode,
+import {
+  createGraphPoint,
+  type AlgorithmMode,
+  type BoundsRect,
+  type EquationMode,
+  type GraphBounds,
+  type GraphPoint,
+  type PixelPoint,
+  type ToolMode,
+  type ToolWorkflowMode,
+  type TransferStatus,
 } from "./core/types";
 import type { GraphwarDetectionBox } from "./detection/objects";
 import type { GraphwarKillerLocale } from "./locale-types";
 import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";
+import type { GraphwarPathfindingRouteMode } from "./pathfinding/routing/mode";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/runtime/cache";
 import { createGraphwarPathfindingRunner } from "./pathfinding/runtime/runner";
 import { createGraphwarPathLineSegments, type GraphwarPathfindingLineSegment } from "./pathfinding/smart/preview";
@@ -103,6 +113,13 @@ import {
 type PathfindingMode = "off" | "smart" | "auto-graph";
 /** 截图上的检测框，坐标均为图片像素。 */
 type DetectionBox = GraphwarDetectionBox;
+/** 舞台背景里的 Graphwar 坐标参考线，坐标均已投影为截图像素。 */
+interface StageCoordinateLines {
+  /** Graphwar 坐标轴线段。 */
+  axisLines: GraphwarPathfindingLineSegment[];
+  /** Graphwar 坐标网格线段。 */
+  gridLines: GraphwarPathfindingLineSegment[];
+}
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
 }>();
@@ -113,6 +130,9 @@ const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
 const graphwarBoundaryExpansionLimit = Math.floor((Math.min(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) - 1) / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const graphwarBoundsMinimumSizePixels = 4;
+const graphwarStageGridAxisEpsilon = 1e-9;
+const graphwarStageGridTargetLineCount = 64;
+const graphwarStageGridStepMultipliers = [1, 2, 5, 10] as const;
 const magnifierMinimumZoom = 1;
 const magnifierSliderMaximumZoom = 5;
 const magnifierInputMaximumZoom = 100;
@@ -124,8 +144,10 @@ const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
 const smartPathfindingBlockedPointFlashMs = 1800;
+const graphwarAgentFireStatusFlashMs = 2000;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
+const graphwarAgentDownloadHref = withBase("/graphwar-agent.jar");
 
 // 页面状态按未来可抽工作流分区维护：基础舞台、公式设置、截图、识别、障碍编辑、寻路。
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
@@ -158,6 +180,7 @@ const minYText = ref(`-${graphwarVisibleYLimitText}`);
 const maxYText = ref(graphwarVisibleYLimitText);
 const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
+const stepGlitchModeEnabled = ref(true);
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const advancedSettingsVisible = ref(false);
 const simulatorSkipUnknownCharacters = ref(true);
@@ -167,12 +190,52 @@ const maximumSoldierCountText = ref(String(graphwarToolDefaults.maximumSoldierCo
 const soldierTemplateCandidateTopRatioText = ref(String(graphwarToolDefaults.soldierTemplateCandidateTopRatio));
 const templateMatchingWorkerCountText = ref(String(graphwarToolDefaults.templateMatchingWorkerCount));
 const pathfindingWorkerCountText = ref(String(graphwarToolDefaults.pathfindingWorkerCount));
-const routePlanningToleranceText = ref(String(GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS));
-const obstacleSimulationToleranceText = ref("1");
+// 截图识别需要默认安全距离吸收像素误差；Agent 返回精确障碍，默认不额外外扩。
+const detectionRoutePlanningToleranceText = ref(String(GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS));
+const detectionObstacleSimulationToleranceText = ref("1");
+const graphwarAgentRoutePlanningToleranceText = ref("1");
+const graphwarAgentObstacleSimulationToleranceText = ref("0");
 const pathfindingBoundaryExpansionText = ref("1");
 const oneClickClearDeleteCheckRadiusText = ref(String(oneClickClearDeleteCheckRadiusDefaultPlanePixels));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
+const graphwarAgentEnabled = ref(false);
+const graphwarAgentBaseUrlText = ref(GRAPHWAR_AGENT_DEFAULT_BASE_URL);
+const graphwarAgentReadInProgress = ref(false);
+const graphwarAgentFireInProgress = ref(false);
+const graphwarAgentFireStatus = ref<TransferStatus>("idle");
+const graphwarAgentFireFailureMessage = ref("");
+let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
+const graphwarAgentConfigured = computed(
+  () => graphwarAgentEnabled.value && graphwarAgentBaseUrlText.value.trim().length > 0,
+);
+const activeRoutePlanningToleranceText = computed({
+  get: () =>
+    graphwarAgentEnabled.value
+      ? graphwarAgentRoutePlanningToleranceText.value
+      : detectionRoutePlanningToleranceText.value,
+  set: (value) => {
+    if (graphwarAgentEnabled.value) {
+      graphwarAgentRoutePlanningToleranceText.value = value;
+    } else {
+      detectionRoutePlanningToleranceText.value = value;
+    }
+  },
+});
+const activeObstacleSimulationToleranceText = computed({
+  get: () =>
+    graphwarAgentEnabled.value
+      ? graphwarAgentObstacleSimulationToleranceText.value
+      : detectionObstacleSimulationToleranceText.value,
+  set: (value) => {
+    if (graphwarAgentEnabled.value) {
+      graphwarAgentObstacleSimulationToleranceText.value = value;
+    } else {
+      detectionObstacleSimulationToleranceText.value = value;
+    }
+  },
+});
+let graphwarAgentImageLoadBypassUrl = "";
 // 路径状态已独立在 composable 中；页面只负责把当前工作流模式和交互事件接进去。
 const {
   clearActivePath: clearActivePathState,
@@ -197,6 +260,7 @@ const {
 } = useGraphwarPathState(toolWorkflowMode);
 // 截图工作流拥有文件输入、粘贴、截屏和舞台坐标换算；识别流程只消费落地后的 ImageData。
 const {
+  applyGeneratedImage,
   captureScreenImage,
   getImageDataFromCurrentImage,
   getImagePointFromEvent,
@@ -228,6 +292,7 @@ const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
 const obstacleBrushDiameterText = ref("30");
 const searchAnimationEnabled = ref(true);
+const fastPathfindingEnabled = ref(true);
 // 智能寻路和一键清图共用同一组运行状态、预览层和取消 token，避免两个异步任务同时回写页面。
 const smartPathfindingSession = useGraphwarSmartPathfindingSession({
   blockedPointFlashMs: smartPathfindingBlockedPointFlashMs,
@@ -281,6 +346,7 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
     getPathPixels: () => pathPixels.value,
+    getRouteMode: getPathfindingRouteMode,
     getSimulationMask: () => simulationObstacleMask.value,
     getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
     getTolerances: () => (parsedObstacleTolerances.value.ok ? parsedObstacleTolerances.value : undefined),
@@ -478,8 +544,8 @@ const {
     pathfinding: {
       boundaryExpansionText: pathfindingBoundaryExpansionText,
       oneClickClearDeleteCheckRadiusText,
-      routePlanningToleranceText,
-      simulationToleranceText: obstacleSimulationToleranceText,
+      routePlanningToleranceText: activeRoutePlanningToleranceText,
+      simulationToleranceText: activeObstacleSimulationToleranceText,
       workerCountText: pathfindingWorkerCountText,
     },
   },
@@ -593,6 +659,8 @@ const {
     precisionValid: formulaInputPrecisionValid,
     steepness: formulaInputSteepness,
     steepnessValid: formulaInputSteepnessValid,
+    getStepGlitchObstacleMask: () => simulationObstacleMask.value,
+    stepGlitchModeEnabled,
     stepOverflowProtectionEnabled,
     toolWorkflowMode,
   },
@@ -612,13 +680,41 @@ const {
   copyButtonText,
   copyFormula,
   dispose: disposeResultActions,
-  statusAnnouncement,
+  statusAnnouncement: copyStatusAnnouncement,
 } = useGraphwarResultActions({
   formulaResult,
   getCopyMessages: () => locale.status.copy,
   simulatorFormulaText,
   simulatorLaunchAngleText,
   toolWorkflowMode,
+});
+
+const graphwarAgentFireButtonText = computed(() => {
+  if (graphwarAgentFireInProgress.value) {
+    return locale.ui.result.firing;
+  }
+  if (graphwarAgentFireStatus.value === "success") {
+    return locale.ui.result.fireSuccess;
+  }
+  if (graphwarAgentFireStatus.value === "error") {
+    return locale.ui.result.fireError;
+  }
+  return locale.ui.result.fire;
+});
+const canFireGraphwarAgentFunction = computed(
+  () => graphwarAgentConfigured.value && canCopyFormula.value && !graphwarAgentFireInProgress.value,
+);
+const statusAnnouncement = computed(() => {
+  if (graphwarAgentFireInProgress.value) {
+    return locale.ui.result.firing;
+  }
+  if (graphwarAgentFireStatus.value === "success") {
+    return locale.status.agent.fired;
+  }
+  if (graphwarAgentFireStatus.value === "error") {
+    return locale.status.agent.fireFailed(graphwarAgentFireFailureMessage.value);
+  }
+  return copyStatusAnnouncement.value;
 });
 
 const activeEquationDescription = computed(() => {
@@ -690,6 +786,8 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
       maximum: MAX_FORMULA_DECIMAL_PLACES,
       text: precisionText.value,
     },
+    stepGlitchModeDisabled: equationMode.value !== "dy",
+    stepGlitchModeEnabled: stepGlitchModeEnabled.value,
     stepOverflowProtectionEnabled: stepOverflowProtectionEnabled.value,
     steepnessText: steepnessText.value,
     toolWorkflowMode: toolWorkflowMode.value,
@@ -711,6 +809,16 @@ const boundsPreviewRect = computed(() =>
     : undefined,
 );
 const visibleBoundsRect = computed(() => boundsPreviewRect.value ?? boundsRect.value);
+// Agent 数据来自游戏内状态；关闭智能光标时仍保留识别参照，但点击/悬停交互仍只看 smartCursorEnabled。
+const recognizedObjectOverlayVisible = computed(() => smartCursorEnabled.value || graphwarAgentEnabled.value);
+const stageCoordinateLines = computed<StageCoordinateLines>(() => {
+  const boundsResult = parsedBounds.value;
+  if (!graphwarAgentEnabled.value || !boundsResult.ok) {
+    return { axisLines: [], gridLines: [] };
+  }
+
+  return createStageCoordinateLines(boundsResult.bounds, visibleBoundsRect.value);
+});
 const activeBoundaryExpansion = useGraphwarPathfindingBoundaryExpansion({
   modes: {
     pathfindingObstacleEdgesActive,
@@ -855,6 +963,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
     getPathfindingWorkerCount: () =>
       parsedPathfindingWorkerCount.value.ok ? parsedPathfindingWorkerCount.value.workerCount : undefined,
     getPathPoints: () => pathPixels.value,
+    getRouteMode: getPathfindingRouteMode,
     getSimulationMask: () => simulationObstacleMask.value,
     getTolerances: () => (parsedOneClickClearTolerances.value.ok ? parsedOneClickClearTolerances.value : undefined),
     isUnsupportedMode: isOneClickClearModeUnsupported,
@@ -977,7 +1086,7 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
   if (blocksFriendlyFireTargets.value) {
     visibleSoldiers = visibleSoldiers.filter((box) => !isDetectedFriendlySoldierObstacle(box));
   }
-  if (smartCursorEnabled.value && pathPixels.value.length === 0) {
+  if (recognizedObjectOverlayVisible.value && pathPixels.value.length === 0) {
     visibleSoldiers = visibleSoldiers.filter((box) => isDetectionBoxOnNegativeGraphX(box));
   }
   const lastPoint = pathPixels.value.at(-1);
@@ -989,6 +1098,15 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
   }
 
   return visibleSoldiers.filter((box) => Boolean(createSearchStartSoldierAimPoint(lastPoint, box)));
+});
+const inactiveDetectionBoxes = computed<DetectionBox[]>(() => {
+  if (!recognizedObjectOverlayVisible.value || toolWorkflowMode.value === "simulator") {
+    return [];
+  }
+
+  const activeBoxIds = new Set(detectionBoxes.value.map((box) => box.id));
+  // 已选中的目标仍应保留浅蓝识别圈；排除它只用于防止重复作为下一目标。
+  return detectedSoldiers.value.filter((box) => !activeBoxIds.has(box.id));
 });
 const pathfindingMode = computed<PathfindingMode>(() => (effectiveSmartPathfindingEnabled.value ? "smart" : "off"));
 const stepPathfindingDisabledMessage = computed(() => locale.status.stepPathfindingDisabled);
@@ -1028,9 +1146,19 @@ const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
 );
 // 识别面板只应消费展示 DTO；识别运行、状态优先级和耗时格式化仍由页面侧保持原语义。
 const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
+  agent: {
+    baseUrlText: graphwarAgentBaseUrlText.value,
+    configured: graphwarAgentConfigured.value,
+    enabled: graphwarAgentEnabled.value,
+    inProgress: graphwarAgentReadInProgress.value,
+  },
   autoDetectionEnabled: autoDetectionEnabled.value,
-  canDetectBounds: Boolean(imageUrl.value) && !detectionInProgress.value,
-  canDetectObjects: Boolean(imageUrl.value) && activeBoundsReady.value && !detectionInProgress.value,
+  canDetectBounds: Boolean(imageUrl.value) && !detectionInProgress.value && !graphwarAgentReadInProgress.value,
+  canDetectObjects:
+    Boolean(imageUrl.value) &&
+    activeBoundsReady.value &&
+    !detectionInProgress.value &&
+    !graphwarAgentReadInProgress.value,
   debugTimingRows: detectionDebugTimingRows.value.map((entry, index) => ({
     key: `${entry.stage}-${index}`,
     text: entry.elapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
@@ -1151,7 +1279,7 @@ const oneClickClearSettingsMessage = computed(() => {
 });
 const smartPathfindingPrerequisiteMessage = computed(() => {
   if (!imageUrl.value) {
-    return locale.status.detection.uploadFirst;
+    return getMissingStateImageMessage();
   }
   if (!activeBoundsReady.value) {
     return locale.smartPathfinding.needBounds;
@@ -1206,10 +1334,13 @@ const smartPathfindingHeaderStatusResult = computed(() =>
     hintMessage: locale.ui.pathfinding.smartPathfindingTitle,
   }),
 );
+const pathfindingDisabledHeaderMessage = computed(() =>
+  algorithmMode.value === "step" ? stepPathfindingDisabledMessage.value : "",
+);
 const pathfindingHeaderStatusResult = computed(() =>
   getFirstHeaderStatus(
-    // 参数错误只应在智能寻路有效启用时展示；关闭状态会隐藏一键清图入口，不应泄漏其校验错误。
-    createHeaderStatus(isSmartPathfindingDisabled() ? getSmartPathfindingDisabledMessage() : "", "warning"),
+    // 缺截图/边界/识别结果是上游准备状态，只放在按钮 title，避免寻路标题常驻截图提示。
+    createHeaderStatus(pathfindingDisabledHeaderMessage.value, "warning"),
     smartPathfindingHeaderStatusResult.value,
   ),
 );
@@ -1224,6 +1355,7 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
       title: entry.title,
     })),
     debugTimingVisible: smartPathfindingEnabled.value && debugInfoEnabled.value,
+    fastPathfindingEnabled: fastPathfindingEnabled.value,
     friendlyFireEnabled: friendlyFireEnabled.value,
     headerStatus: {
       kind: headerStatus.kind,
@@ -1261,10 +1393,11 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     minYText: minYText.value,
   },
   pathfinding: {
-    obstacleSimulationToleranceText: obstacleSimulationToleranceText.value,
+    obstacleExpansionMode: graphwarAgentEnabled.value ? "agent" : "detection",
+    obstacleSimulationToleranceText: activeObstacleSimulationToleranceText.value,
     oneClickClearDeleteCheckRadiusMinimumPlanePixels,
     oneClickClearDeleteCheckRadiusText: oneClickClearDeleteCheckRadiusText.value,
-    routePlanningToleranceText: routePlanningToleranceText.value,
+    routePlanningToleranceText: activeRoutePlanningToleranceText.value,
     workerCountText: pathfindingWorkerCountText.value,
   },
   recognition: {
@@ -1292,14 +1425,134 @@ const pathLineSegments = computed<GraphwarPathfindingLineSegment[]>(() => create
 function createPathLineSegments(points: readonly PixelPoint[]) {
   return createGraphwarPathLineSegments(points, displayedSoldierVisibleRadiusPixels.value);
 }
+
+/** 生成舞台参考线时使用 Graphwar 坐标再投影到截图，避免 CSS 像素网格和实际坐标错位。 */
+function createStageCoordinateLines(bounds: GraphBounds, rect: BoundsRect): StageCoordinateLines {
+  if (rect.width <= 0 || rect.height <= 0) {
+    return { axisLines: [], gridLines: [] };
+  }
+
+  return {
+    axisLines: createStageAxisLines(bounds, rect),
+    gridLines: createStageGridLines(bounds, rect),
+  };
+}
+
+function createStageAxisLines(bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment[] {
+  const lines: GraphwarPathfindingLineSegment[] = [];
+  if (isStageCoordinateWithinBounds(0, bounds.minX, bounds.maxX)) {
+    lines.push(createStageVerticalLine(0, bounds, rect));
+  }
+  if (isStageCoordinateWithinBounds(0, bounds.minY, bounds.maxY)) {
+    lines.push(createStageHorizontalLine(0, bounds, rect));
+  }
+  return lines;
+}
+
+function createStageGridLines(bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment[] {
+  const lines: GraphwarPathfindingLineSegment[] = [];
+  appendStageVerticalGridLines(lines, bounds, rect, selectStageGridStep(bounds.maxX - bounds.minX));
+  appendStageHorizontalGridLines(lines, bounds, rect, selectStageGridStep(bounds.maxY - bounds.minY));
+  return lines;
+}
+
+function appendStageVerticalGridLines(
+  lines: GraphwarPathfindingLineSegment[],
+  bounds: GraphBounds,
+  rect: BoundsRect,
+  step: number,
+) {
+  for (
+    let x = getFirstStageGridCoordinate(bounds.minX, step);
+    x <= bounds.maxX + graphwarStageGridAxisEpsilon;
+    x += step
+  ) {
+    const coordinate = normalizeStageGridCoordinate(x);
+    if (isStageAxisCoordinate(coordinate)) {
+      continue;
+    }
+    lines.push(createStageVerticalLine(coordinate, bounds, rect));
+  }
+}
+
+function appendStageHorizontalGridLines(
+  lines: GraphwarPathfindingLineSegment[],
+  bounds: GraphBounds,
+  rect: BoundsRect,
+  step: number,
+) {
+  for (
+    let y = getFirstStageGridCoordinate(bounds.minY, step);
+    y <= bounds.maxY + graphwarStageGridAxisEpsilon;
+    y += step
+  ) {
+    const coordinate = normalizeStageGridCoordinate(y);
+    if (isStageAxisCoordinate(coordinate)) {
+      continue;
+    }
+    lines.push(createStageHorizontalLine(coordinate, bounds, rect));
+  }
+}
+
+function createStageVerticalLine(x: number, bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment {
+  const start = graphToImagePoint(createGraphPoint(x, bounds.minY), bounds, rect);
+  const end = graphToImagePoint(createGraphPoint(x, bounds.maxY), bounds, rect);
+  return {
+    x1: start.x,
+    x2: end.x,
+    y1: start.y,
+    y2: end.y,
+  };
+}
+
+function createStageHorizontalLine(y: number, bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment {
+  const start = graphToImagePoint(createGraphPoint(bounds.minX, y), bounds, rect);
+  const end = graphToImagePoint(createGraphPoint(bounds.maxX, y), bounds, rect);
+  return {
+    x1: start.x,
+    x2: end.x,
+    y1: start.y,
+    y2: end.y,
+  };
+}
+
+function selectStageGridStep(range: number) {
+  const rawStep = Math.max(1, Math.abs(range) / graphwarStageGridTargetLineCount);
+  const scale = 10 ** Math.floor(Math.log10(rawStep));
+  for (const multiplier of graphwarStageGridStepMultipliers) {
+    const step = multiplier * scale;
+    if (rawStep <= step) {
+      return step;
+    }
+  }
+  return 10 * scale;
+}
+
+function getFirstStageGridCoordinate(minimum: number, step: number) {
+  return Math.ceil((minimum - graphwarStageGridAxisEpsilon) / step) * step;
+}
+
+function normalizeStageGridCoordinate(coordinate: number) {
+  return isStageAxisCoordinate(coordinate) ? 0 : coordinate;
+}
+
+function isStageAxisCoordinate(coordinate: number) {
+  return Math.abs(coordinate) <= graphwarStageGridAxisEpsilon;
+}
+
+function isStageCoordinateWithinBounds(coordinate: number, minimum: number, maximum: number) {
+  return coordinate >= minimum - graphwarStageGridAxisEpsilon && coordinate <= maximum + graphwarStageGridAxisEpsilon;
+}
 const smartPathfindingPreviewPathPoints = computed(() => formatSvgPathPoints(smartPathfindingPreviewPath.value));
 // 舞台 overlay 只应消费展示 DTO；业务规则和半径公式应由页面侧投影，避免子 Module 反向理解工作流。
 const stageOverlay = computed(() => ({
   bounds: {
     allowedTargetRect: allowedTargetRect.value,
+    axisLines: stageCoordinateLines.value.axisLines,
     clipBoundsRect: boundsRect.value,
     flashActive: boundsFlashActive.value,
     firstPoint: boundsFirstPoint.value,
+    gridLines: stageCoordinateLines.value.gridLines,
     previewRect: boundsPreviewRect.value,
     visibleBoundaryExpansionRect: visibleBoundaryExpansionRect.value,
     visibleRect: visibleBoundsRect.value,
@@ -1307,10 +1560,12 @@ const stageOverlay = computed(() => ({
   detection: {
     boxes: detectionBoxes.value,
     hoveredSoldierId: hoveredDetectedSoldierId.value,
+    inactiveBoxes: inactiveDetectionBoxes.value,
     oneClickClearHitFlashActive: oneClickClearHitFlashActive.value,
     oneClickClearHitFlashBoxes: oneClickClearHitFlashSoldiers.value,
     soldierFlashActive: detectionSoldierFlashActive.value,
     soldierFlashBoxes: detectedSoldiers.value,
+    visible: recognizedObjectOverlayVisible.value,
   },
   liveClickPreview: {
     curvePoints: liveClickPreviewCurvePoints.value,
@@ -1327,7 +1582,7 @@ const stageOverlay = computed(() => ({
     routeFillPath: smartPathfindingObstacleRouteFillPath.value,
     simulationEdgePath: smartPathfindingObstacleSimulationEdgePath.value,
     simulationFillPath: smartPathfindingObstacleSimulationFillPath.value,
-    smartCursorEnabled: smartCursorEnabled.value,
+    visible: recognizedObjectOverlayVisible.value,
     visibleEdgePath: visibleObstacleEdgePath.value,
     visibleFillPath: visibleObstacleFillPath.value,
   },
@@ -1401,6 +1656,9 @@ const magnifierContentStyle = computed(() => {
 const resultPanel = computed(() => {
   const solverResult = formulaResult.value;
   return {
+    agentFireButtonText: graphwarAgentFireButtonText.value,
+    agentFireVisible: graphwarAgentEnabled.value,
+    canFireAgentFunction: canFireGraphwarAgentFunction.value,
     canClearSimulatorInputs: canClearSimulatorInputs.value,
     canCopyFormula: canCopyFormula.value,
     calculationMessage: calculationMessage.value,
@@ -1420,11 +1678,15 @@ const resultPanel = computed(() => {
   };
 });
 const screenshotImageStatusText = computed(
-  () => imageStatus.value || imageName.value || locale.status.image.defaultStatus,
+  () =>
+    imageStatus.value ||
+    imageName.value ||
+    (graphwarAgentEnabled.value ? locale.status.agent.defaultStatus : locale.status.image.defaultStatus),
 );
 // 截图面板只应消费展示 DTO；DOM refs 和舞台交互语义仍由页面侧工作流持有。
 const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
   busyOverlayVisible: detectionInProgress.value,
+  imageActionsVisible: !graphwarAgentEnabled.value,
   imageStatusText: screenshotImageStatusText.value,
   imageUrl: imageUrl.value,
   magnifier: {
@@ -1435,6 +1697,9 @@ const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
   pathStatus: pathStatus.value,
   stage: {
     empty: !imageUrl.value,
+    emptyPlaceholder: graphwarAgentEnabled.value
+      ? locale.ui.screenshot.agentPlaceholder
+      : locale.ui.screenshot.placeholder,
     magnifierClipPathId: magnifierObstacleBrushClipPathId,
     mainClipPathId: mainObstacleBrushClipPathId,
     overlay: stageOverlay.value,
@@ -1486,6 +1751,7 @@ onBeforeUnmount(() => {
   graphwarPathfindingRunner.close();
   cancelSmartPathfinding(false);
   disposeResultActions();
+  disposeGraphwarAgentFireStatus();
   disposeLiveClickPreview();
   disposeDebugActivation();
   disposeStageFeedback();
@@ -1517,7 +1783,7 @@ watch([stepOverflowProtectionEnabled], () => {
   clearSmartPathfindingStatus();
 });
 
-watch([obstacleSimulationToleranceText, steepnessText], () => {
+watch([activeObstacleSimulationToleranceText, steepnessText], () => {
   clearSmartPathfindingStatus();
 });
 
@@ -1540,7 +1806,7 @@ watch([objectDetectionReady, smartPathfindingEnabled], () => {
 watch(
   [
     pathfindingWorkerCountText,
-    routePlanningToleranceText,
+    activeRoutePlanningToleranceText,
     pathfindingBoundaryExpansionText,
     oneClickClearDeleteCheckRadiusText,
     minXText,
@@ -1613,8 +1879,12 @@ function handleAppliedScreenshot() {
 function handleLoadedScreenshot() {
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
+  if (graphwarAgentImageLoadBypassUrl && imageUrl.value === graphwarAgentImageLoadBypassUrl) {
+    graphwarAgentImageLoadBypassUrl = "";
+    return;
+  }
   if (autoDetectionEnabled.value) {
-    void detectGraphwarObjects("auto");
+    void runAutomaticGraphwarDetection();
   }
 }
 
@@ -1660,11 +1930,15 @@ function applyDetectedBounds(edgeRect: BoundsRect) {
 /** 返回“识别士兵/障碍”按钮说明；禁用时说明缺少的前置边界。 */
 function getDetectObjectsTitle() {
   if (!imageUrl.value) {
-    return locale.status.detection.uploadFirst;
+    return getMissingStateImageMessage();
   }
   return activeBoundsReady.value
     ? locale.ui.detection.detectObjectsTitle
     : locale.ui.detection.detectObjectsNeedBoundsTitle;
+}
+
+function getMissingStateImageMessage() {
+  return graphwarAgentEnabled.value ? locale.status.agent.readFirst : locale.status.detection.uploadFirst;
 }
 
 /** 有效截图边界至少需要能形成可见区域，和手动画框提交阈值保持一致。 */
@@ -1674,7 +1948,28 @@ function isUsableBoundsRect(rect: BoundsRect) {
 
 /** 延迟重新识别，合并连续设置变化，避免每次输入都立即读像素。 */
 function scheduleGraphwarObjectDetection() {
+  if (graphwarAgentEnabled.value) {
+    return;
+  }
   detectionWorkflow.schedule();
+}
+
+/** 完整自动识别入口：只处理截图像素；Agent 读取保持手动触发。 */
+async function runAutomaticGraphwarDetection() {
+  if (graphwarAgentEnabled.value) {
+    return;
+  }
+
+  await detectGraphwarObjects("auto");
+}
+
+/** 当前边界内的自动刷新入口；Agent 读取保持手动触发。 */
+async function runAutomaticGraphwarObjectsInCurrentBounds() {
+  if (graphwarAgentEnabled.value) {
+    return;
+  }
+
+  await detectGraphwarObjectsInCurrentBounds("auto");
 }
 
 /** 使用 Canvas 像素自动检测 Graphwar 坐标系边界，再按该边界识别士兵和障碍。 */
@@ -1692,9 +1987,146 @@ async function detectGraphwarObjectsInCurrentBounds(trigger: GraphwarDetectionRu
   await detectionWorkflow.detectInCurrentBounds(trigger);
 }
 
+/** 从本机 Graphwar Agent 读取当前渲染状态，直接落地为精确士兵和障碍数据。 */
+async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual") {
+  if (trigger === "auto") {
+    return;
+  }
+  if (graphwarAgentReadInProgress.value) {
+    return;
+  }
+
+  graphwarAgentReadInProgress.value = true;
+  cancelDetection(false);
+  imageStatus.value = locale.status.agent.reading;
+  setDetectionStatus(locale.status.agent.reading, "warning");
+  try {
+    const snapshot = await readGraphwarAgentSnapshot(graphwarAgentBaseUrlText.value);
+    graphwarAgentBaseUrlText.value = snapshot.baseUrl;
+    graphwarAgentImageLoadBypassUrl = snapshot.imageUrl;
+    applyGeneratedImage(snapshot.imageUrl, snapshot.imageName, GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT);
+    resetGraphwarDefaultBoundsTexts();
+    applyGraphwarAgentEquationMode(snapshot.equationMode);
+    detectionWorkflow.applyExternalResult(
+      snapshot.boundsRect,
+      snapshot.detectionResult,
+      locale.status.agent.loaded(snapshot.detectionResult.soldiers.length),
+    );
+    applyGraphwarAgentCurrentTurnSoldier(snapshot.localCurrentTurnSoldierPoint);
+    toolMode.value = "path";
+    imageStatus.value = "";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failedMessage = locale.status.agent.failed(message);
+    imageStatus.value = failedMessage;
+    setDetectionStatus(failedMessage, "error");
+  } finally {
+    graphwarAgentReadInProgress.value = false;
+  }
+}
+
+/** Agent 当前回合是权威状态；只替换发射点，保留用户已经选好的后续目标。 */
+function applyGraphwarAgentCurrentTurnSoldier(point: PixelPoint | undefined) {
+  if (!point) {
+    return;
+  }
+
+  setPathPixels(pathPixels.value.length > 0 ? [point, ...pathPixels.value.slice(1)] : [point]);
+}
+
+/** 通过 Agent 调用 Graphwar 原版开火路径，提交当前结果面板里的函数文本。 */
+async function fireGraphwarAgentFunction() {
+  const functionText = getCurrentGraphwarFunctionText();
+  if (!canFireGraphwarAgentFunction.value || !functionText) {
+    return;
+  }
+
+  graphwarAgentFireInProgress.value = true;
+  setGraphwarAgentFireStatus("idle");
+  try {
+    const baseUrl = await submitGraphwarAgentFunction(graphwarAgentBaseUrlText.value, functionText);
+    graphwarAgentBaseUrlText.value = baseUrl;
+    setGraphwarAgentFireStatus("success");
+  } catch (error) {
+    graphwarAgentFireFailureMessage.value = error instanceof Error ? error.message : String(error);
+    setGraphwarAgentFireStatus("error");
+  } finally {
+    graphwarAgentFireInProgress.value = false;
+  }
+}
+
+/** 保持开火和复制使用同一份函数来源：solver 用生成结果，simulator 用用户输入。 */
+function getCurrentGraphwarFunctionText() {
+  const text = toolWorkflowMode.value === "solver" ? formulaResult.value?.expression : simulatorFormulaText.value;
+  return text && text.trim() ? text : "";
+}
+
+/** 设置开火按钮短反馈；和复制按钮一样，非 idle 状态会自动复位。 */
+function setGraphwarAgentFireStatus(status: TransferStatus) {
+  graphwarAgentFireStatus.value = status;
+  if (status !== "error") {
+    graphwarAgentFireFailureMessage.value = "";
+  }
+  if (graphwarAgentFireStatusTimer) {
+    clearTimeout(graphwarAgentFireStatusTimer);
+    graphwarAgentFireStatusTimer = undefined;
+  }
+
+  if (status !== "idle") {
+    graphwarAgentFireStatusTimer = setTimeout(() => {
+      graphwarAgentFireStatus.value = "idle";
+      graphwarAgentFireFailureMessage.value = "";
+      graphwarAgentFireStatusTimer = undefined;
+    }, graphwarAgentFireStatusFlashMs);
+  }
+}
+
+function disposeGraphwarAgentFireStatus() {
+  if (graphwarAgentFireStatusTimer) {
+    clearTimeout(graphwarAgentFireStatusTimer);
+    graphwarAgentFireStatusTimer = undefined;
+  }
+}
+
+/** Agent 状态固定使用 Graphwar 官方平面范围，避免沿用上一张截图的手动标定。 */
+function resetGraphwarDefaultBoundsTexts() {
+  minXText.value = `-${graphwarDefaultXLimitText}`;
+  maxXText.value = graphwarDefaultXLimitText;
+  minYText.value = `-${graphwarVisibleYLimitText}`;
+  maxYText.value = graphwarVisibleYLimitText;
+}
+
+/** 如果当前算法允许，就同步 Graphwar 房间的游戏模式。 */
+function applyGraphwarAgentEquationMode(mode: EquationMode | undefined) {
+  if (!mode) {
+    return;
+  }
+  if (toolWorkflowMode.value === "simulator") {
+    simulatorEquationMode.value = mode;
+  } else if (!isEquationModeDisabled(mode)) {
+    solverEquationMode.value = mode;
+  }
+}
+
 /** 切换自动识别；关闭后保留当前识别结果供用户继续编辑。 */
 function toggleAutoDetection() {
   detectionWorkflow.toggleAutoDetection();
+}
+
+/** 切换是否使用 Agent；只影响识别来源，不会清掉当前截图或识别结果。 */
+function toggleGraphwarAgentUsage() {
+  graphwarAgentEnabled.value = !graphwarAgentEnabled.value;
+  if (graphwarAgentEnabled.value) {
+    detectionWorkflow.cancel(false);
+  } else {
+    setGraphwarAgentFireStatus("idle");
+  }
+}
+
+/** 同步 Agent 地址输入；地址为空时不展示手动读取按钮。 */
+function setGraphwarAgentBaseUrlText(value: string) {
+  graphwarAgentBaseUrlText.value = value;
+  setGraphwarAgentFireStatus("idle");
 }
 
 /** 切换智能光标；关闭时清掉士兵悬停，避免残留高亮。 */
@@ -1774,6 +2206,22 @@ function toggleSearchAnimation() {
   clearSmartPathfindingPreview();
 }
 
+/** 切换几何路线算法；算法改变会让旧搜索结果和 worker 私有 cache 都失效。 */
+function toggleFastPathfinding() {
+  if (smartPathfindingInProgress.value) {
+    cancelSmartPathfinding(false);
+  }
+  fastPathfindingEnabled.value = !fastPathfindingEnabled.value;
+  invalidatePathfindingCaches();
+  clearSmartPathfindingStatus();
+  clearSmartPathfindingPreview();
+}
+
+/** 页面开关叫“快速”，worker 协议使用稳定算法名，避免文案影响缓存和消息格式。 */
+function getPathfindingRouteMode(): GraphwarPathfindingRouteMode {
+  return fastPathfindingEnabled.value ? "visibility-graph" : "theta-star";
+}
+
 /** 根据当前模式将指针点击分发给边界点选或路径点选。 */
 function handleStagePointerDown(event: PointerEvent) {
   const point = getImagePointFromEvent(event);
@@ -1801,7 +2249,7 @@ function handleStagePointerDown(event: PointerEvent) {
       toolMode.value = "path";
       if (autoDetectionEnabled.value) {
         // 手动框选只负责更新边界；对象识别仍应遵守自动识别开关。
-        void detectGraphwarObjectsInCurrentBounds("auto");
+        void runAutomaticGraphwarObjectsInCurrentBounds();
       }
     }
     boundsFirstPoint.value = undefined;
@@ -2183,6 +2631,7 @@ function undoLastPoint() {
       @set-tool-workflow-mode="setToolWorkflowMode"
       @start-debug-activation-hold="startDebugActivationHold"
       @toggle-advanced-settings="toggleAdvancedSettings"
+      @toggle-step-glitch-mode="stepGlitchModeEnabled = !stepGlitchModeEnabled"
       @toggle-step-overflow-protection="stepOverflowProtectionEnabled = !stepOverflowProtectionEnabled"
       @update-precision-text="precisionText = $event"
       @update-steepness-text="steepnessText = $event"
@@ -2200,11 +2649,11 @@ function undoLastPoint() {
       @update-min-x-text="minXText = $event"
       @update-min-y-text="minYText = $event"
       @update-obstacle-min-area-text="obstacleMinAreaText = $event"
-      @update-obstacle-simulation-tolerance-text="obstacleSimulationToleranceText = $event"
+      @update-obstacle-simulation-tolerance-text="activeObstacleSimulationToleranceText = $event"
       @update-one-click-clear-delete-check-radius-text="oneClickClearDeleteCheckRadiusText = $event"
       @update-pathfinding-boundary-expansion-text="pathfindingBoundaryExpansionText = $event"
       @update-pathfinding-worker-count-text="pathfindingWorkerCountText = $event"
-      @update-route-planning-tolerance-text="routePlanningToleranceText = $event"
+      @update-route-planning-tolerance-text="activeRoutePlanningToleranceText = $event"
       @update-template-matching-worker-count-text="templateMatchingWorkerCountText = $event"
     />
     <div class="graphwar-killer__detection-pathfinding-row">
@@ -2213,8 +2662,11 @@ function undoLastPoint() {
         :panel="detectionPanel"
         @detect-bounds="void detectGraphwarBounds()"
         @detect-objects="void detectGraphwarObjectsInCurrentBounds()"
+        @read-agent="void readGraphwarAgent()"
+        @toggle-agent-usage="toggleGraphwarAgentUsage"
         @toggle-auto-detection="toggleAutoDetection"
         @toggle-smart-cursor="toggleSmartCursor"
+        @update-agent-base-url="setGraphwarAgentBaseUrlText"
       />
       <GraphwarSmartPathfindingPanel
         v-if="toolWorkflowMode !== 'simulator'"
@@ -2222,6 +2674,7 @@ function undoLastPoint() {
         :panel="smartPathfindingPanel"
         @run-one-click-clear="void runOneClickClear()"
         @toggle-friendly-fire="toggleFriendlyFire"
+        @toggle-fast-pathfinding="toggleFastPathfinding"
         @toggle-search-animation="toggleSearchAnimation"
         @toggle-smart-pathfinding="toggleSmartPathfinding"
       />
@@ -2260,6 +2713,7 @@ function undoLastPoint() {
       :result="resultPanel"
       @clear-simulator="clearSimulatorInputs"
       @copy-formula="copyFormula"
+      @fire-agent-function="void fireGraphwarAgentFunction()"
       @finish-point-coordinate-edit="finishPathPointCoordinateEdit"
       @start-point-coordinate-edit="startPathPointCoordinateEdit"
       @update-point-coordinate="handlePathPointCoordinateInput"
@@ -2268,16 +2722,57 @@ function undoLastPoint() {
     />
   </div>
 
-  <section class="graphwar-killer__instructions">
+  <section>
     <h2>{{ locale.ui.instructions.title }}</h2>
-    <ul>
-      <li
-        v-for="item in locale.ui.instructions.items"
-        :key="item"
-      >
-        {{ item }}
-      </li>
-    </ul>
+    <section>
+      <h3>{{ locale.ui.instructions.stepsTitle }}</h3>
+      <ol>
+        <li
+          v-for="item in locale.ui.instructions.steps"
+          :key="item"
+        >
+          {{ item }}
+        </li>
+      </ol>
+    </section>
+    <section>
+      <h3 id="graphwar-killer-agent-help">
+        {{ locale.ui.instructions.agent.title }}
+      </h3>
+      <p>
+        {{ locale.ui.instructions.agent.textBeforeDownload }}
+        <a :href="graphwarAgentDownloadHref">
+          <code>{{ locale.ui.instructions.agent.download }}</code>
+        </a>
+        {{ locale.ui.instructions.agent.textBeforeCommand }}
+        <code>{{ locale.ui.instructions.agent.command }}</code>
+        {{ locale.ui.instructions.agent.textAfterCommand }}
+      </p>
+    </section>
+    <section>
+      <h3>{{ locale.ui.instructions.expression.title }}</h3>
+      <table>
+        <tbody>
+          <tr
+            v-for="item in locale.ui.instructions.expression.items"
+            :key="item.label"
+          >
+            <th scope="row">
+              {{ item.label }}
+            </th>
+            <td>
+              <template
+                v-for="(part, partIndex) in item.parts"
+                :key="`${item.label}-${partIndex}`"
+              >
+                <code v-if="part.type === 'code'">{{ part.text }}</code>
+                <span v-else>{{ part.text }}</span>
+              </template>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   </section>
 </template>
 

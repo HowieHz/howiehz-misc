@@ -18,6 +18,7 @@ import {
   createGraphwarOneClickClearHitCandidates,
   type GraphwarOneClickClearTargetSoldier,
 } from "../../../pathfinding/one-click-clear/targets";
+import type { GraphwarPathfindingRouteMode } from "../../../pathfinding/routing/mode";
 import type { GraphwarPathfindingResultCacheTimingEntry } from "../../../pathfinding/runtime/cache";
 import type {
   GraphwarOneClickClearPathWorkerInput,
@@ -84,6 +85,7 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
     getObstacleMask: () => Uint8Array | undefined;
     getPathfindingWorkerCount: () => number | undefined;
     getPathPoints: () => readonly PixelPoint[];
+    getRouteMode: () => GraphwarPathfindingRouteMode;
     getSimulationMask: () => Uint8Array | undefined;
     getTolerances: () => GraphwarOneClickClearSearchTolerances | undefined;
     isUnsupportedMode: () => boolean;
@@ -252,6 +254,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       pathPoints: options.input.getPathPoints(),
       prefixTarget: preflightResult.prefixTarget,
       routeMaskCacheId: options.pathfinding.cache.getRouteObstacleMaskCacheId(preflightResult.obstacleMask),
+      routeMode: options.input.getRouteMode(),
       routeObstacleMask: preflightResult.obstacleMask,
       settings: options.input.getFormulaSettings(),
       simulationMask: options.input.getSimulationMask(),

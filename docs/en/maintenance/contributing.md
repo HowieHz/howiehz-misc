@@ -22,6 +22,8 @@ Install Node.js and pnpm first, then run this in the repository root:
 pnpm install
 ```
 
+If you need to format Java code or build `graphwar-agent`, make sure `java`, `javac`, and `jar` are available on `PATH`. JDK 21 is recommended and is also used in CI.
+
 ## Common Commands
 
 ### Docs Site
@@ -39,7 +41,7 @@ pnpm install
 
 ### Local Checks
 
-- Format files: `pnpm fmt`
+- Format files: `pnpm fmt`. Java files are formatted with `google-java-format` in AOSP style, and the formatter jar is cached under `.cache/google-java-format/`
 - Run linting and type checks: `pnpm lint`
 - Run all tests: `pnpm test`
 

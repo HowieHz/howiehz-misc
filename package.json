@@ -31,6 +31,7 @@
     "docs:preview": "pnpm run compat-finder:build && pnpm --filter docs preview",
     "docs:watch": "pnpm --parallel --stream --filter compat-finder --filter docs watch",
     "fmt": "pnpm run '/^fmt:/'",
+    "fmt:java": "node scripts/format-java.js",
     "fmt:oxfmt": "oxfmt --threads 3 '**/*.{json,jsonc,yaml,md,css,js,mjs,ts,vue,html}'",
     "lint": "pnpm run '/^lint:/'",
     "lint:autocorrect": "autocorrect --fix",

@@ -15,6 +15,18 @@ export interface StepOverflowProtectionRange {
   minX: number;
 }
 
+/** Step y'= 漏洞段；用于把普通 step 项替换成触发 Graphwar 缩步漏洞的高导数门函数。 */
+export interface StepGlitchSegment {
+  /** 目标导数；按源码最小步长估算，用来迫使自适应步长缩到漏洞边界。 */
+  derivative: number;
+  /** 触发窗口的右边界；关闭旧漏洞门，避免后续反向段重新触发。 */
+  endX: number;
+  /** 触发门的 x 阈值，也就是当前路径段目标 x。 */
+  startX: number;
+  /** 触发门的 y 阈值，也就是当前路径段目标 y。 */
+  targetY: number;
+}
+
 /** 编译和输出共用的公式数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
 export interface FormulaEvaluationOptions {
   /** 采样应按最终公式小数位判断参数、系数、溢出和 sign 折点。 */
@@ -23,6 +35,10 @@ export interface FormulaEvaluationOptions {
   onSignArgument?: (value: number) => void;
   /** 稳定符号比值的除零保护值；0 表示保留 Graphwar 原始数值行为。 */
   signEpsilon?: number;
+  /** 每个 step 段对应的漏洞替换项；undefined 表示该段保持普通 step。 */
+  stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[];
+  /** 每个 step 段的有效高度差；漏洞段后的普通 step 也要从模拟器实际 y 继续累计。 */
+  stepSegmentDeltaYs?: readonly (number | undefined)[];
   /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否对 step 表达式使用抗溢出的等价格式。 */

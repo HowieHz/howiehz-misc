@@ -13,6 +13,7 @@ import type {
   GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 
 /** 路线规划默认使用单个 2px 几何 route tolerance，普通寻路和一键清图保持一致。 */
 export const GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS = 2;
@@ -111,6 +112,8 @@ export interface GraphwarOneClickClearDagEdgeBuildRequest {
   jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[];
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
+  /** 几何路线算法模式；由页面快速模式开关统一控制。 */
+  routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
   /** 用户配置的最大并行消费者数量。 */
@@ -163,6 +166,8 @@ export interface GraphwarOneClickClearOptions {
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 一键清图单值几何路线 mask。 */
   routeMask: GraphwarOneClickClearRouteMask;
+  /** 几何路线算法模式；DAG 建边和普通寻路保持一致。 */
+  routeMode: GraphwarPathfindingRouteMode;
   /** 函数模拟用障碍 mask。 */
   simulationMask?: Uint8Array;
   /** 函数模拟边界收缩值，单位为 Graphwar 原始平面像素。 */
@@ -643,6 +648,7 @@ function createOneClickClearDagEdgeBuildRequest(
     boundsRect: options.boundsRect,
     jobs,
     routeMask: options.routeMask.mask,
+    routeMode: options.routeMode,
     routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
     workerCount: options.dagEdgeWorkerCount ?? 1,
   };

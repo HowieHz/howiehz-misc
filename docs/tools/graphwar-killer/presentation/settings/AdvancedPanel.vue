@@ -37,6 +37,8 @@ interface GraphwarAdvancedSettingsRecognition {
 }
 
 interface GraphwarAdvancedSettingsPathfinding {
+  /** 当前障碍外扩配置所属来源；两套输入互不覆盖。 */
+  obstacleExpansionMode: "agent" | "detection";
   /** 路径规划障碍外扩输入框文本。 */
   routePlanningToleranceText: string;
   /** 轨迹模拟障碍外扩输入框文本。 */
@@ -325,6 +327,13 @@ const oneClickClearDeleteCheckRadiusText = computed({
             :title="locale.ui.pathfinding.obstacleExpansionTitle"
           >
             {{ locale.ui.pathfinding.obstacleExpansion }}
+            <span class="graphwar-killer__details-summary-note">
+              {{
+                panel.pathfinding.obstacleExpansionMode === "agent"
+                  ? locale.ui.pathfinding.obstacleExpansionAgentMode
+                  : locale.ui.pathfinding.obstacleExpansionDetectionMode
+              }}
+            </span>
           </summary>
           <div class="graphwar-killer__pathfinding-setting-grid">
             <label
@@ -425,6 +434,7 @@ const oneClickClearDeleteCheckRadiusText = computed({
   height: 30px;
   line-height: 1.15;
   min-height: 0;
+  min-width: 0;
   padding: 4px 8px;
   transition:
     border-color 0.2s ease,
@@ -516,6 +526,13 @@ const oneClickClearDeleteCheckRadiusText = computed({
   font-weight: 700;
   line-height: 1.4;
   margin: -2px 0;
+}
+
+.graphwar-killer__details-summary-note {
+  color: color-mix(in srgb, var(--vp-c-text-1) 62%, var(--vp-c-text-2) 38%);
+  font-size: 0.84rem;
+  font-weight: 600;
+  margin-left: 6px;
 }
 
 .graphwar-killer__details > summary:focus-visible {

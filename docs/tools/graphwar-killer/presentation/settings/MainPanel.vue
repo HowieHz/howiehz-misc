@@ -51,6 +51,10 @@ export interface GraphwarSettingsPanelModel {
   precision: GraphwarSettingsPanelPrecision;
   /** Step 算法是否启用溢出保护。 */
   stepOverflowProtectionEnabled: boolean;
+  /** Step 漏洞模式按钮是否禁用。 */
+  stepGlitchModeDisabled: boolean;
+  /** Step 漏洞模式是否启用；只有 y'= 模式会消费。 */
+  stepGlitchModeEnabled: boolean;
   /** Step 陡峭度输入框当前文本；非法输入应原样保留给父页面校验。 */
   steepnessText: string;
   /** 当前页面主工作流。 */
@@ -74,6 +78,7 @@ const emit = defineEmits<{
   setToolWorkflowMode: [mode: ToolWorkflowMode];
   startDebugActivationHold: [event: PointerEvent];
   toggleAdvancedSettings: [];
+  toggleStepGlitchMode: [];
   toggleStepOverflowProtection: [];
   updatePrecisionText: [value: string];
   updateSteepnessText: [value: string];
@@ -183,6 +188,16 @@ const steepnessText = computed({
       >
         {{ locale.ui.settings.overflowProtection }}
       </button>
+      <button
+        type="button"
+        :aria-pressed="panel.stepGlitchModeEnabled"
+        :class="{ 'graphwar-killer__toggle-button--active': panel.stepGlitchModeEnabled }"
+        :disabled="panel.stepGlitchModeDisabled"
+        :title="locale.ui.settings.stepGlitchModeTitle"
+        @click="emit('toggleStepGlitchMode')"
+      >
+        {{ locale.ui.settings.stepGlitchMode }}
+      </button>
     </div>
     <div class="graphwar-killer__setting-row graphwar-killer__game-mode-row">
       <span class="graphwar-killer__setting-label">{{ locale.ui.settings.gameMode }}</span>
@@ -281,6 +296,7 @@ const steepnessText = computed({
   height: 30px;
   line-height: 1.15;
   min-height: 0;
+  min-width: 0;
   padding: 4px 8px;
   transition:
     border-color 0.2s ease,

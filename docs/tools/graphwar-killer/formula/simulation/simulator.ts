@@ -301,6 +301,7 @@ function createFirstOrderEquationStepper(options: SampleGraphwarTrajectoryOption
     launchPoint,
     options.bounds,
     (previous, step) => rk4FirstOrderStep(previous, step, evaluateDY),
+    // Graphwar 原版 ODE 循环在 x 步长缩到下限后仍接受过长线段；这会产生穿墙隧穿。
     { initialState: options.initialState, stopAtMinStep: false },
   );
 }
@@ -323,6 +324,7 @@ function createSecondOrderEquationStepper(options: SampleGraphwarTrajectoryOptio
     launchState,
     options.bounds,
     (previous, step) => rk4SecondOrderStep(previous, step, evaluateDDY),
+    // 保持和一阶 ODE 相同的原版隧穿行为，避免预览误判会在陡峭段爆炸。
     { initialState: options.initialState, stopAtMinStep: false },
   );
 }
@@ -657,6 +659,7 @@ function findNextSample<TPoint extends GraphPoint>(
 
   while (isFinitePoint(next) && distanceSquared(previous, next) > GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED) {
     if (next.x - previous.x <= GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
+      // y= 会在这里爆炸；ODE 官方源码的 for 条件会直接退出并继续用当前过长点。
       return options.stopAtMinStep
         ? { ok: false as const, stopReason: "too-steep" as const }
         : { ok: true as const, point: next };

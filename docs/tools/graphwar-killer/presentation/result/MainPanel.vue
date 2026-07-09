@@ -27,6 +27,10 @@ interface GraphwarResultPanelPointRow {
 }
 
 export interface GraphwarResultPanelModel {
+  /** Agent 开火按钮当前文案。 */
+  agentFireButtonText: string;
+  /** 是否允许通过 Agent 提交当前函数。 */
+  canFireAgentFunction: boolean;
   /** 是否允许清空模拟器输入。 */
   canClearSimulatorInputs: boolean;
   /** 是否允许复制当前结果。 */
@@ -57,6 +61,8 @@ export interface GraphwarResultPanelModel {
   trajectoryWarning: string;
   /** 当前主工作流。 */
   workflowMode: ToolWorkflowMode;
+  /** 是否展示 Agent 开火按钮。 */
+  agentFireVisible: boolean;
 }
 
 const props = defineProps<{
@@ -70,6 +76,7 @@ const emit = defineEmits<{
   clearSimulator: [];
   copyFormula: [];
   finishPointCoordinateEdit: [];
+  fireAgentFunction: [];
   startPointCoordinateEdit: [index: number, axis: GraphwarResultPanelCoordinateAxis];
   updatePointCoordinate: [index: number, axis: GraphwarResultPanelCoordinateAxis, value: string];
   updateSimulatorFormulaText: [value: string];
@@ -109,6 +116,16 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         {{ locale.ui.result.title }}
       </h2>
       <div class="graphwar-killer__result-actions">
+        <button
+          v-if="result.agentFireVisible"
+          type="button"
+          class="graphwar-killer__agent-fire-button"
+          :disabled="!result.canFireAgentFunction"
+          :title="locale.ui.result.fireTitle"
+          @click="emit('fireAgentFunction')"
+        >
+          {{ result.agentFireButtonText }}
+        </button>
         <button
           type="button"
           class="graphwar-killer__primary-button"
@@ -260,6 +277,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   height: 30px;
   line-height: 1.15;
   min-height: 0;
+  min-width: 0;
   padding: 4px 8px;
   transition:
     border-color 0.2s ease,
@@ -319,6 +337,16 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   white-space: nowrap;
 }
 
+.graphwar-killer__agent-fire-button {
+  background: color-mix(in srgb, var(--vp-c-danger-1) 10%, var(--vp-c-bg));
+  border-color: color-mix(in srgb, var(--vp-c-danger-1) 42%, var(--vp-c-divider));
+  color: var(--vp-c-danger-1);
+  min-height: 34px;
+  min-width: 72px;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
 .graphwar-killer__secondary-button {
   min-height: 34px;
   min-width: 72px;
@@ -359,6 +387,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
 }
 
 .graphwar-killer__formula-input {
+  /* Formula text is the only intentional typography override for input values. */
   font-family: var(--vp-font-family-mono);
   min-width: 0;
 }
@@ -427,6 +456,11 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   color: var(--vp-c-white);
 }
 
+.graphwar-killer__agent-fire-button:hover:not(:disabled) {
+  border-color: var(--vp-c-danger-1);
+  color: var(--vp-c-danger-1);
+}
+
 .graphwar-killer__result-panel input:focus-visible,
 .graphwar-killer__result-panel button:focus-visible {
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
@@ -441,6 +475,10 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   }
 
   .graphwar-killer__primary-button {
+    width: 100%;
+  }
+
+  .graphwar-killer__agent-fire-button {
     width: 100%;
   }
 

@@ -44,12 +44,16 @@ interface GraphwarStageOverlayObstacleBrushPreview {
 interface GraphwarStageOverlayBoundsLayer {
   /** 当前允许点击的目标范围。 */
   allowedTargetRect?: BoundsRect;
+  /** 当前 Graphwar 坐标轴线段，已按截图像素投影。 */
+  axisLines: readonly GraphwarStageOverlayLineSegment[];
   /** 障碍笔刷裁剪使用已落地边界，不能跟随手动框选预览。 */
   clipBoundsRect: BoundsRect;
   /** 边界自动识别成功后的高亮状态。 */
   flashActive: boolean;
   /** 正在手动框选边界时的第一个点。 */
   firstPoint?: PixelPoint;
+  /** 当前 Graphwar 坐标网格线段，已按截图像素投影。 */
+  gridLines: readonly GraphwarStageOverlayLineSegment[];
   /** 正在手动框选边界时的预览矩形。 */
   previewRect?: BoundsRect;
   /** 当前用于弹道验证的障碍边界矩形。 */
@@ -70,12 +74,12 @@ interface GraphwarStageOverlayObstacleLayer {
   routeEdgePath: string;
   /** 寻路几何障碍填充 path。 */
   routeFillPath: string;
-  /** 是否显示智能光标识别层。 */
-  smartCursorEnabled: boolean;
   /** 弹道模拟障碍边界 path。 */
   simulationEdgePath: string;
   /** 弹道模拟障碍填充 path。 */
   simulationFillPath: string;
+  /** 普通障碍是否显示；Agent 模式可在智能光标关闭时继续展示它们。 */
+  visible: boolean;
   /** 普通障碍边界 path。 */
   visibleEdgePath: string;
   /** 普通障碍填充 path。 */
@@ -84,10 +88,12 @@ interface GraphwarStageOverlayObstacleLayer {
 
 /** 检测框和检测闪烁图层。 */
 interface GraphwarStageOverlayDetectionLayer {
-  /** 已识别对象的可视圆。 */
+  /** 当前可选对象的可视圆。 */
   boxes: readonly GraphwarStageOverlayDetectionBox[];
   /** 当前悬停的士兵 id。 */
   hoveredSoldierId?: string;
+  /** 已识别但当前不可选的士兵提示圆；仅展示，不参与 hover 或点击。 */
+  inactiveBoxes: readonly GraphwarStageOverlayDetectionBox[];
   /** 一键清图命中后的闪烁状态。 */
   oneClickClearHitFlashActive: boolean;
   /** 一键清图命中的士兵。 */
@@ -96,6 +102,8 @@ interface GraphwarStageOverlayDetectionLayer {
   soldierFlashActive: boolean;
   /** 士兵识别完成后的闪烁对象。 */
   soldierFlashBoxes: readonly GraphwarStageOverlayDetectionBox[];
+  /** 士兵识别圆是否显示；不代表智能光标交互可用。 */
+  visible: boolean;
 }
 
 /** 已选路径点和路径线图层。 */
@@ -215,6 +223,19 @@ withDefaults(
         />
       </clipPath>
     </defs>
+    <g
+      v-if="overlay.bounds.gridLines.length"
+      class="graphwar-killer__grid"
+    >
+      <line
+        v-for="(segment, index) in overlay.bounds.gridLines"
+        :key="`${keyPrefix}grid-${index}`"
+        :x1="segment.x1"
+        :y1="segment.y1"
+        :x2="segment.x2"
+        :y2="segment.y2"
+      />
+    </g>
     <rect
       class="graphwar-killer__bounds"
       :class="{
@@ -243,34 +264,21 @@ withDefaults(
       :height="overlay.bounds.visibleBoundaryExpansionRect.height"
     />
     <line
+      v-for="(segment, index) in overlay.bounds.axisLines"
+      :key="`${keyPrefix}axis-${index}`"
       class="graphwar-killer__axis"
-      :x1="overlay.bounds.visibleRect.x"
-      :x2="overlay.bounds.visibleRect.x + overlay.bounds.visibleRect.width"
-      :y1="overlay.bounds.visibleRect.y + overlay.bounds.visibleRect.height / 2"
-      :y2="overlay.bounds.visibleRect.y + overlay.bounds.visibleRect.height / 2"
-    />
-    <line
-      class="graphwar-killer__axis"
-      :x1="overlay.bounds.visibleRect.x + overlay.bounds.visibleRect.width / 2"
-      :x2="overlay.bounds.visibleRect.x + overlay.bounds.visibleRect.width / 2"
-      :y1="overlay.bounds.visibleRect.y"
-      :y2="overlay.bounds.visibleRect.y + overlay.bounds.visibleRect.height"
+      :x1="segment.x1"
+      :x2="segment.x2"
+      :y1="segment.y1"
+      :y2="segment.y2"
     />
     <path
-      v-if="
-        overlay.obstacles.smartCursorEnabled &&
-          !overlay.obstacles.pathfindingEdgesActive &&
-          overlay.obstacles.visibleFillPath
-      "
+      v-if="overlay.obstacles.visible && !overlay.obstacles.pathfindingEdgesActive && overlay.obstacles.visibleFillPath"
       class="graphwar-killer__obstacle-fill"
       :d="overlay.obstacles.visibleFillPath"
     />
     <path
-      v-if="
-        overlay.obstacles.smartCursorEnabled &&
-          !overlay.obstacles.pathfindingEdgesActive &&
-          overlay.obstacles.visibleEdgePath
-      "
+      v-if="overlay.obstacles.visible && !overlay.obstacles.pathfindingEdgesActive && overlay.obstacles.visibleEdgePath"
       class="graphwar-killer__obstacle-edge"
       :d="overlay.obstacles.visibleEdgePath"
     />
@@ -296,7 +304,19 @@ withDefaults(
         :d="overlay.obstacles.simulationEdgePath"
       />
     </template>
-    <template v-if="overlay.obstacles.smartCursorEnabled">
+    <template v-if="overlay.detection.visible">
+      <g
+        v-for="box in overlay.detection.inactiveBoxes"
+        :key="`${keyPrefix}inactive-${box.id}`"
+        class="graphwar-killer__detection-group"
+      >
+        <circle
+          class="graphwar-killer__detection graphwar-killer__detection--inactive-soldier"
+          :cx="box.visualCenterX"
+          :cy="box.visualCenterY"
+          :r="box.visualRadius"
+        />
+      </g>
       <g
         v-for="box in overlay.detection.boxes"
         :key="`${keyPrefix}${box.id}`"
@@ -508,6 +528,13 @@ withDefaults(
   animation: graphwar-killer-bounds-flash 1600ms ease-out;
 }
 
+.graphwar-killer__grid {
+  pointer-events: none;
+  stroke: color-mix(in srgb, var(--vp-c-divider) 56%, transparent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
 .graphwar-killer__boundary-expansion {
   fill: none;
   pointer-events: none;
@@ -541,6 +568,11 @@ withDefaults(
 
 .graphwar-killer__detection--soldier {
   stroke: #2563eb;
+}
+
+.graphwar-killer__detection--inactive-soldier {
+  stroke: #93c5fd;
+  stroke-opacity: 82%;
 }
 
 .graphwar-killer__detection-flash-group {

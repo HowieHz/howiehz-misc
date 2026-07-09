@@ -71,6 +71,17 @@ type GraphwarKillerPathfindingDebugDetailText = Record<
   };
 };
 
+/** 底部说明中的行内文本片段；code 片段交给 VitePress 行内代码样式渲染。 */
+type GraphwarKillerInlineTextPart =
+  | {
+      text: string;
+      type: "text";
+    }
+  | {
+      text: string;
+      type: "code";
+    };
+
 /**
  * Graphwar 杀手页面的完整文案协议。
  *
@@ -189,6 +200,15 @@ export interface GraphwarKillerLocale {
       screenCaptureUnavailable: string;
       screenCaptureUnsupported: string;
     };
+    agent: {
+      defaultStatus: string;
+      failed: (message: string) => string;
+      fireFailed: (message: string) => string;
+      fired: string;
+      loaded: (soldiers: number) => string;
+      readFirst: string;
+      reading: string;
+    };
     autoGraphPathfindingDisabled: string;
     pathPointCoordinateNumber: string;
     secondOrderAngleHint: (angle: string) => string;
@@ -257,6 +277,18 @@ export interface GraphwarKillerLocale {
       undoPointTitle: string;
     };
     detection: {
+      agent: {
+        address: string;
+        addressAriaLabel: string;
+        addressTitle: string;
+        helpLink: string;
+        read: string;
+        reading: string;
+        readTitle: string;
+        settingsSummary: string;
+        toggle: string;
+        toggleTitle: string;
+      };
       autoDetection: string;
       autoDetectionTitle: string;
       busyOverlay: string;
@@ -290,7 +322,23 @@ export interface GraphwarKillerLocale {
       title: string;
     };
     instructions: {
-      items: readonly string[];
+      agent: {
+        command: string;
+        download: string;
+        textAfterCommand: string;
+        textBeforeCommand: string;
+        textBeforeDownload: string;
+        title: string;
+      };
+      expression: {
+        items: readonly {
+          label: string;
+          parts: readonly GraphwarKillerInlineTextPart[];
+        }[];
+        title: string;
+      };
+      steps: readonly string[];
+      stepsTitle: string;
       title: string;
     };
     introLinkText: string;
@@ -333,6 +381,10 @@ export interface GraphwarKillerLocale {
         GraphwarKillerDebugStageText
       >;
       debugSummary: string;
+      fastPathfinding: string;
+      fastPathfindingTitle: string;
+      obstacleExpansionAgentMode: string;
+      obstacleExpansionDetectionMode: string;
       obstacleExpansion: string;
       obstacleExpansionTitle: string;
       oneClickClearDeleteCheckRadius: string;
@@ -365,6 +417,11 @@ export interface GraphwarKillerLocale {
       clearSimulator: string;
       clearSimulatorTitle: string;
       copyTitle: string;
+      fire: string;
+      fireError: string;
+      fireSuccess: string;
+      fireTitle: string;
+      firing: string;
       formulaInputAriaLabel: string;
       formulaInputTitle: string;
       launchAngle: string;
@@ -373,6 +430,7 @@ export interface GraphwarKillerLocale {
       title: string;
     };
     screenshot: {
+      agentPlaceholder: string;
       capture: string;
       captureTitle: string;
       placeholder: string;
@@ -433,6 +491,8 @@ export interface GraphwarKillerLocale {
       simulator: string;
       skipUnknownCharacters: string;
       skipUnknownCharactersTitle: string;
+      stepGlitchMode: string;
+      stepGlitchModeTitle: string;
       stepSteepness: string;
       stepSteepnessAriaLabel: string;
       stepSteepnessTitle: string;

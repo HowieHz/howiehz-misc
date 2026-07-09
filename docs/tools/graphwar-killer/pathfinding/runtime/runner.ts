@@ -318,6 +318,7 @@ function cloneGraphwarPathfindingRouteInput(input: GraphwarPathfindingRouteInput
     previewEnabled: input.previewEnabled,
     routeMask: input.routeMask,
     routeMaskCacheId: input.routeMaskCacheId,
+    routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     startPoint: clonePixelPoint(input.startPoint),
     targetPoint: clonePixelPoint(input.targetPoint),
@@ -334,6 +335,7 @@ function cloneGraphwarSmartPathfindingPathInput(
     hitTarget: cloneGraphwarTrajectoryTargetCircle(input.hitTarget),
     previewEnabled: input.previewEnabled,
     routeMaskCacheId: input.routeMaskCacheId,
+    routeMode: input.routeMode,
     routeObstacleMask: input.routeObstacleMask,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     settings: cloneGraphwarTrajectoryFormulaSettings(input.settings),
@@ -359,6 +361,7 @@ function cloneGraphwarOneClickClearDagEdgeBuildRequest(
       to: job.to,
     })),
     routeMask: input.routeMask,
+    routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     workerCount: input.workerCount,
   };
@@ -378,6 +381,7 @@ function cloneGraphwarOneClickClearPathWorkerInput(
     pathPoints: input.pathPoints.map(clonePixelPoint),
     ...(input.prefixTarget ? { prefixTarget: cloneGraphwarTrajectoryTargetCircle(input.prefixTarget) } : {}),
     routeMaskCacheId: input.routeMaskCacheId,
+    routeMode: input.routeMode,
     routeObstacleMask: input.routeObstacleMask,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     settings: cloneGraphwarTrajectoryFormulaSettings(input.settings),
@@ -415,6 +419,8 @@ function cloneGraphwarTrajectoryFormulaSettings(
     equation: settings.equation,
     ...(settings.formulaPathSteepness === undefined ? {} : { formulaPathSteepness: settings.formulaPathSteepness }),
     steepness: settings.steepness,
+    stepGlitchMode: settings.stepGlitchMode,
+    ...(settings.stepGlitchObstacleMask ? { stepGlitchObstacleMask: settings.stepGlitchObstacleMask } : {}),
     stepOverflowProtection: settings.stepOverflowProtection,
   };
 }

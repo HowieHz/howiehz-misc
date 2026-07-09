@@ -1,5 +1,6 @@
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../../core/types";
 import type { GraphwarTrajectoryFormulaSettings } from "../../../formula/trajectory/sampling";
+import type { GraphwarPathfindingRouteMode } from "../../../pathfinding/routing/mode";
 import type { GraphwarPathfindingPreview } from "../../../pathfinding/routing/visibility-graph";
 import type { GraphwarPathfindingResultCacheTimingEntry } from "../../../pathfinding/runtime/cache";
 import type {
@@ -71,6 +72,8 @@ interface GraphwarSmartPathfindingBuilderOptions {
     getObstacleMask: () => Uint8Array | undefined;
     /** 当前工作流路径；builder 会在构造输入前复制快照。 */
     getPathPixels: () => readonly PixelPoint[];
+    /** 当前几何路线算法模式。 */
+    getRouteMode: () => GraphwarPathfindingRouteMode;
     /** 函数模拟用障碍 mask。 */
     getSimulationMask: () => Uint8Array | undefined;
     /** 普通点击目标点使用的默认真实命中半径，单位为截图像素；无有效 bounds 时不可用。 */
@@ -172,6 +175,7 @@ export function useGraphwarSmartPathfindingBuilder(
       hitTarget: targetHitCircle,
       previewEnabled: options.preview.isSearchAnimationEnabled(),
       routeMaskCacheId: options.pathfinding.cache.getRouteObstacleMaskCacheId(obstacleMask),
+      routeMode: options.input.getRouteMode(),
       routeObstacleMask: obstacleMask,
       settings: options.input.getFormulaSettings(),
       simulationMask: options.input.getSimulationMask(),

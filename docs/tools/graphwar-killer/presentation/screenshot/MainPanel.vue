@@ -7,6 +7,8 @@ import GraphwarStageOverlay, { type GraphwarStageOverlayModel } from "../stage/M
 interface GraphwarScreenshotPanelStageModel {
   /** 舞台是否没有截图；父页面应沿用原 imageUrl 判定。 */
   empty: boolean;
+  /** 无截图时的舞台占位文案。 */
+  emptyPlaceholder: string;
   /** 主舞台障碍笔刷裁剪 id。 */
   mainClipPathId: string;
   /** 放大镜舞台障碍笔刷裁剪 id。 */
@@ -27,6 +29,8 @@ interface GraphwarScreenshotPanelMagnifierModel {
 }
 
 export interface GraphwarScreenshotPanelModel {
+  /** 截屏/上传按钮是否展示；Agent 模式只使用读取入口。 */
+  imageActionsVisible: boolean;
   /** 识别忙碌遮罩是否展示。 */
   busyOverlayVisible: boolean;
   /** 当前截图状态文案。 */
@@ -95,7 +99,10 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
         {{ panel.pathStatus }}
       </span>
     </div>
-    <div class="graphwar-killer__image-actions">
+    <div
+      v-if="panel.imageActionsVisible"
+      class="graphwar-killer__image-actions"
+    >
       <button
         type="button"
         :title="locale.ui.screenshot.captureTitle"
@@ -143,7 +150,7 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
         v-else
         class="graphwar-killer__placeholder"
       >
-        {{ locale.ui.screenshot.placeholder }}
+        {{ panel.stage.emptyPlaceholder }}
       </div>
       <GraphwarStageOverlay
         :clip-path-id="panel.stage.mainClipPathId"
@@ -318,10 +325,7 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
 }
 
 .graphwar-killer__stage {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--vp-c-divider) 42%, transparent) 1px, transparent 1px),
-    linear-gradient(color-mix(in srgb, var(--vp-c-divider) 42%, transparent) 1px, transparent 1px), var(--vp-c-bg-soft);
-  background-size: 40px 40px;
+  background: var(--vp-c-bg-soft);
   border: 1px solid var(--vp-c-divider);
   overflow: hidden;
   position: relative;

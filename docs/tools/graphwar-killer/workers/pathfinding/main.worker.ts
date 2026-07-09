@@ -13,11 +13,19 @@ import type {
 } from "../../pathfinding/one-click-clear/search";
 import { buildGraphwarOneClickClearPath } from "../../pathfinding/one-click-clear/search";
 import {
+  buildGraphwarThetaStarPathForMask,
+  createGraphwarThetaStarScratch,
+} from "../../pathfinding/routing/theta-star";
+import type { GraphwarThetaStarScratch } from "../../pathfinding/routing/theta-star";
+import {
   buildGraphwarVisibilityGraphPathForMask,
   createRouteMaskCacheKey,
   createGraphwarVisibilityGraphObstacleData,
 } from "../../pathfinding/routing/visibility-graph";
-import type { GraphwarVisibilityGraphObstacleData } from "../../pathfinding/routing/visibility-graph";
+import type {
+  GraphwarPathfindingPreview,
+  GraphwarVisibilityGraphObstacleData,
+} from "../../pathfinding/routing/visibility-graph";
 import type {
   GraphwarOneClickClearDagEdgesWorkerInput,
   GraphwarOneClickClearEdgeWorkerRequest,
@@ -97,6 +105,7 @@ interface EdgeRouteTimingTotals {
 }
 
 const masterRouteMaskCache = new Map<string, Uint8Array>();
+const masterThetaStarScratch = createGraphwarThetaStarScratch();
 const masterVisibilityGraphCache = new Map<string, MasterVisibilityGraphCacheEntry>();
 
 workerScope.addEventListener("message", (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => {
@@ -167,30 +176,44 @@ async function findRouteForMask(
   let visibilityCache: GraphwarPathfindingRouteResult["visibilityCache"] = "skipped";
   let visibilityCacheElapsedMs = 0;
   const searchStartedAt = nowMs();
-  const path = await buildGraphwarVisibilityGraphPathForMask({
-    bounds: input.bounds,
-    boundsRect: input.boundsRect,
-    boundaryExpansion: input.boundaryExpansion,
-    getVisibilityGraphObstacleData: () => {
-      const startedAt = nowMs();
-      const lookup = getMasterVisibilityGraphObstacleData(input, routeMask);
-      visibilityCache = lookup.cacheHit ? "hit" : "miss";
-      visibilityCacheElapsedMs += nowMs() - startedAt;
-      return lookup.data;
-    },
-    onPreview: input.previewEnabled
-      ? (preview) =>
-          postResponse({
-            id,
-            preview,
-            type: "preview",
-          })
-      : undefined,
-    routeMask,
-    routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-    startPoint: input.startPoint,
-    targetPoint: input.targetPoint,
-  });
+  const postPreview = input.previewEnabled
+    ? (preview: GraphwarPathfindingPreview) =>
+        postResponse({
+          id,
+          preview,
+          type: "preview",
+        })
+    : undefined;
+  const path =
+    input.routeMode === "theta-star"
+      ? await buildGraphwarThetaStarPathForMask({
+          bounds: input.bounds,
+          boundsRect: input.boundsRect,
+          boundaryExpansion: input.boundaryExpansion,
+          onPreview: postPreview,
+          routeMask,
+          routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+          scratch: masterThetaStarScratch,
+          startPoint: input.startPoint,
+          targetPoint: input.targetPoint,
+        })
+      : await buildGraphwarVisibilityGraphPathForMask({
+          bounds: input.bounds,
+          boundsRect: input.boundsRect,
+          boundaryExpansion: input.boundaryExpansion,
+          getVisibilityGraphObstacleData: () => {
+            const startedAt = nowMs();
+            const lookup = getMasterVisibilityGraphObstacleData(input, routeMask);
+            visibilityCache = lookup.cacheHit ? "hit" : "miss";
+            visibilityCacheElapsedMs += nowMs() - startedAt;
+            return lookup.data;
+          },
+          onPreview: postPreview,
+          routeMask,
+          routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+          startPoint: input.startPoint,
+          targetPoint: input.targetPoint,
+        });
 
   return {
     ...(path ? { path } : {}),
@@ -225,6 +248,7 @@ async function findSmartPath(
       previewEnabled: input.previewEnabled,
       routeMask: routeMaskLookup.mask,
       routeMaskCacheId: input.routeMaskCacheId,
+      routeMode: input.routeMode,
       routeTolerancePlanePixels: input.routeTolerancePlanePixels,
       startPoint,
       targetPoint: input.targetPoint,
@@ -448,6 +472,7 @@ async function buildOneClickClearPath(
       mask: routeMaskLookup.mask,
       routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     },
+    routeMode: input.routeMode,
     settings: input.settings,
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
@@ -663,6 +688,7 @@ function runOneClickClearDagEdgeWorkerPool(
             boundsRect: context.boundsRect,
             boundaryExpansion: context.boundaryExpansion,
             routeMask: context.routeMask,
+            routeMode: context.routeMode,
             routeTolerancePlanePixels: context.routeTolerancePlanePixels,
             workerIndex,
           },
@@ -699,19 +725,26 @@ async function buildOneClickClearDagEdgesSerial(
     routeMapPixelsElapsedMs: 0,
     routePathfindingElapsedMs: 0,
   };
-  const visibilityGraphObstacleData = createGraphwarVisibilityGraphObstacleData({
-    bounds: input.bounds,
-    routeMask: input.routeMask,
-    routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-  });
-  // 串行和 fallback 路径按批次复用同一个 visibilityGraphObstacleData，避免每条 DAG 边重复建轮廓。
+  const visibilityGraphObstacleData =
+    input.routeMode === "visibility-graph"
+      ? createGraphwarVisibilityGraphObstacleData({
+          bounds: input.bounds,
+          routeMask: input.routeMask,
+          routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+        })
+      : undefined;
+  const thetaStarScratch: GraphwarThetaStarScratch | undefined =
+    input.routeMode === "theta-star" ? createGraphwarThetaStarScratch() : undefined;
+  // 串行和 fallback 按批次复用可视图轮廓或 Theta* 工作区，避免每条 DAG 边重复预处理。
   const routeBuildContext = {
     boundaryExpansion: input.boundaryExpansion,
     bounds: input.bounds,
     boundsRect: input.boundsRect,
     routeMask: input.routeMask,
+    routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-    visibilityGraphObstacleData,
+    ...(thetaStarScratch ? { thetaStarScratch } : {}),
+    ...(visibilityGraphObstacleData ? { visibilityGraphObstacleData } : {}),
   };
 
   for (const job of jobs) {

@@ -23,8 +23,8 @@ export interface StepGlitchSegment {
   step: number;
   /** 触发门的 x 阈值。 */
   startX: number;
-  /** 触发门的 y 阈值，也就是当前路径段起点 y。 */
-  startY: number;
+  /** 触发门的 y 阈值，也就是当前路径段目标 y。 */
+  targetY: number;
 }
 
 /** 编译和输出共用的公式数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */

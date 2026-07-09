@@ -371,7 +371,7 @@ function evaluateCompiledStepGlitchFirstDerivative(
 ) {
   const direction = segment.derivative < 0 ? -1 : 1;
   const xGate = 1 + evaluateStableSignRatio(x - segment.startX, options);
-  const yGate = 1 + evaluateStableSignRatio(direction * (y - segment.startY), options);
+  const yGate = 1 + evaluateStableSignRatio(direction * (segment.targetY - y), options);
   return (segment.derivative / 4) * xGate * yGate;
 }
 
@@ -427,7 +427,7 @@ function createCompiledStepGlitchSegment(
   return {
     derivative,
     startX: createCompiledFormulaXCenter(segment.startX, options),
-    startY: createCompiledFormulaYCenter(segment.startY, options),
+    targetY: createCompiledFormulaYCenter(segment.targetY, options),
     step: createCompiledFormulaDistance(segment.step, options),
   };
 }
@@ -669,7 +669,7 @@ function formatStepGlitchFirstDerivativeExpression(
   const direction = segment.derivative < 0 ? -1 : 1;
   const xGate = `1+${formatStableSignRatio(formatXOffset(segment.startX, decimalPlaces), signEpsilon)}`;
   const yGate = `1+${formatStableSignRatio(
-    formatDirectedYOffset(segment.startY, direction, decimalPlaces),
+    formatDirectedTargetYOffset(segment.targetY, direction, decimalPlaces),
     signEpsilon,
   )}`;
   // 两个 sign 门全开时 (1+1)*(1+1)=4，因此文本系数使用 D/4，实际导数仍是 D。
@@ -1191,12 +1191,12 @@ function formatXOffset(centerX: number, decimalPlaces?: number) {
   return offset === 0 ? "x" : `x${formatSignedNumber(offset, decimalPlaces)}`;
 }
 
-function formatDirectedYOffset(centerY: number, direction: 1 | -1, decimalPlaces?: number) {
+function formatDirectedTargetYOffset(targetY: number, direction: 1 | -1, decimalPlaces?: number) {
   if (direction > 0) {
-    const offset = normalizeZero(-centerY, decimalPlaces);
-    return offset === 0 ? "y" : `y${formatSignedNumber(offset, decimalPlaces)}`;
+    return `(${formatDecimal(targetY, decimalPlaces)}-y)`;
   }
-  return `(${formatDecimal(centerY, decimalPlaces)}-y)`;
+  const offset = normalizeZero(-targetY, decimalPlaces);
+  return offset === 0 ? "y" : `y${formatSignedNumber(offset, decimalPlaces)}`;
 }
 
 /** 格式化带符号的 k*body 项，并丢弃四舍五入后为 0 的系数。 */

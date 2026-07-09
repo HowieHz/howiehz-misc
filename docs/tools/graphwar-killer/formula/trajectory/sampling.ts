@@ -277,9 +277,11 @@ function createStepGlitchSegments(
   for (let index = 1; index < options.points.length; index += 1) {
     const previous = options.points[index - 1];
     const target = options.points[index];
-    // 障碍检查遵循用户画出的局部段；替换高度则对齐最终公式点，避免首段发射点修正后少跳或多跳。
-    const replacementDeltaY = (formulaPoints[index]?.y ?? target.y) - (formulaPoints[index - 1]?.y ?? previous.y);
-    const segment = createStepGlitchSegment(previous, target, replacementDeltaY, options.bounds, mask);
+    const formulaPreviousY = formulaPoints[index - 1]?.y ?? previous.y;
+    const formulaTargetY = formulaPoints[index]?.y ?? target.y;
+    // 障碍检查遵循用户画出的局部段；目标门和替换高度对齐最终公式点，避免发射点修正后门函数错位。
+    const replacementDeltaY = formulaTargetY - formulaPreviousY;
+    const segment = createStepGlitchSegment(previous, target, formulaTargetY, replacementDeltaY, options.bounds, mask);
     segments.push(segment);
     hasGlitchSegment ||= Boolean(segment);
   }
@@ -289,6 +291,7 @@ function createStepGlitchSegments(
 function createStepGlitchSegment(
   previous: GraphPoint,
   target: GraphPoint,
+  targetY: number,
   replacementDeltaY: number,
   bounds: GraphBounds,
   mask: Uint8Array,
@@ -305,7 +308,7 @@ function createStepGlitchSegment(
   return {
     derivative: replacementDeltaY / jump.step,
     startX: jump.startX,
-    startY: previous.y,
+    targetY,
     step: jump.step,
   };
 }

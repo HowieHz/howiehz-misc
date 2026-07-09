@@ -28,13 +28,15 @@ final class GraphwarHttpServer {
     private final ServerSocket serverSocket;
     private volatile boolean running;
 
-    private GraphwarHttpServer(ServerSocket serverSocket, ExecutorService executor, GraphwarStateReader stateReader) {
+    private GraphwarHttpServer(
+            ServerSocket serverSocket, ExecutorService executor, GraphwarStateReader stateReader) {
         this.executor = executor;
         this.serverSocket = serverSocket;
         this.stateReader = stateReader;
     }
 
-    static GraphwarHttpServer start(int port, int fallbackPortCount, GraphwarStateReader stateReader) {
+    static GraphwarHttpServer start(
+            int port, int fallbackPortCount, GraphwarStateReader stateReader) {
         IOException firstError = null;
         int lastPort = Math.min(MAX_PORT, port + Math.max(0, fallbackPortCount));
 
@@ -43,7 +45,8 @@ final class GraphwarHttpServer {
             try {
                 ServerSocket serverSocket = bindLoopback(candidatePort);
                 ExecutorService executor = Executors.newCachedThreadPool(new AgentThreadFactory());
-                GraphwarHttpServer httpServer = new GraphwarHttpServer(serverSocket, executor, stateReader);
+                GraphwarHttpServer httpServer =
+                        new GraphwarHttpServer(serverSocket, executor, stateReader);
                 httpServer.startAcceptThread();
                 return httpServer;
             } catch (IOException error) {
@@ -99,7 +102,8 @@ final class GraphwarHttpServer {
                 executor.execute(() -> handleSocket(socket));
             } catch (IOException error) {
                 if (running) {
-                    System.err.println("[graphwar-agent] HTTP accept failed: " + error.getMessage());
+                    System.err.println(
+                            "[graphwar-agent] HTTP accept failed: " + error.getMessage());
                 }
             }
         }
@@ -153,7 +157,7 @@ final class GraphwarHttpServer {
 
     private static byte[] readHeaderBytes(InputStream input) throws IOException {
         ByteArrayOutputStream headers = new ByteArrayOutputStream(1024);
-        byte[] terminator = new byte[] { '\r', '\n', '\r', '\n' };
+        byte[] terminator = new byte[] {'\r', '\n', '\r', '\n'};
         int matched = 0;
 
         while (headers.size() < MAX_REQUEST_HEADER_BYTES) {
@@ -289,7 +293,9 @@ final class GraphwarHttpServer {
 
     private static void writeResponse(Socket socket, Response response) throws IOException {
         ByteArrayOutputStream headers = new ByteArrayOutputStream(256);
-        writeAscii(headers, "HTTP/1.1 " + response.status + " " + statusText(response.status) + "\r\n");
+        writeAscii(
+                headers,
+                "HTTP/1.1 " + response.status + " " + statusText(response.status) + "\r\n");
         writeAscii(headers, "Content-Type: " + response.contentType + "\r\n");
         writeAscii(headers, "Content-Length: " + response.body.length + "\r\n");
         writeAscii(headers, "Access-Control-Allow-Origin: *\r\n");
@@ -389,11 +395,15 @@ final class GraphwarHttpServer {
         }
 
         static Response json(int status, String text) {
-            return new Response(status, text.getBytes(StandardCharsets.UTF_8), "application/json; charset=utf-8");
+            return new Response(
+                    status,
+                    text.getBytes(StandardCharsets.UTF_8),
+                    "application/json; charset=utf-8");
         }
 
         static Response text(int status, String text) {
-            return new Response(status, text.getBytes(StandardCharsets.UTF_8), "text/plain; charset=utf-8");
+            return new Response(
+                    status, text.getBytes(StandardCharsets.UTF_8), "text/plain; charset=utf-8");
         }
     }
 }

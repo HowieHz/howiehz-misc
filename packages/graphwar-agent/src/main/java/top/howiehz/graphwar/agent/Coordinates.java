@@ -7,8 +7,7 @@ final class Coordinates {
     static final int PLANE_HEIGHT = 450;
     static final double PLANE_GAME_LENGTH = 50.0;
 
-    private Coordinates() {
-    }
+    private Coordinates() {}
 
     static int toViewPointX(int worldX, boolean terrainReversed) {
         // Source: GraphPlane mirrors soldiers and markers with x = PLANE_LENGTH - x.

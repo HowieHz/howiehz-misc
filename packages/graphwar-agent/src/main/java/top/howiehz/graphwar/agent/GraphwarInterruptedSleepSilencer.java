@@ -16,12 +16,12 @@ final class GraphwarInterruptedSleepSilencer implements ClassFileTransformer {
 
     @Override
     public byte[] transform(
-        ClassLoader loader,
-        String className,
-        Class<?> classBeingRedefined,
-        ProtectionDomain protectionDomain,
-        byte[] classfileBuffer
-    ) throws IllegalClassFormatException {
+            ClassLoader loader,
+            String className,
+            Class<?> classBeingRedefined,
+            ProtectionDomain protectionDomain,
+            byte[] classfileBuffer)
+            throws IllegalClassFormatException {
         if (!isTargetClass(className)) {
             return null;
         }
@@ -31,11 +31,10 @@ final class GraphwarInterruptedSleepSilencer implements ClassFileTransformer {
             return patched == classfileBuffer ? null : patched;
         } catch (RuntimeException error) {
             System.err.println(
-                "[graphwar-agent] failed to silence Graphwar countdown interrupt log in "
-                    + className
-                    + ": "
-                    + error.getMessage()
-            );
+                    "[graphwar-agent] failed to silence Graphwar countdown interrupt log in "
+                            + className
+                            + ": "
+                            + error.getMessage());
             return null;
         }
     }
@@ -109,7 +108,9 @@ final class GraphwarInterruptedSleepSilencer implements ClassFileTransformer {
                 offset += 6; // access_flags, name_index, descriptor_index
                 int attributesCount = readU2(offset);
                 offset += 2;
-                for (int attributeIndex = 0; attributeIndex < attributesCount; attributeIndex += 1) {
+                for (int attributeIndex = 0;
+                        attributeIndex < attributesCount;
+                        attributeIndex += 1) {
                     int attributeNameIndex = readU2(offset);
                     int attributeLength = readU4(offset + 2);
                     int infoOffset = offset + 6;
@@ -131,7 +132,8 @@ final class GraphwarInterruptedSleepSilencer implements ClassFileTransformer {
                     case 1:
                         int length = readU2(offset);
                         offset += 2;
-                        utf8Values[index] = new String(bytes, offset, length, StandardCharsets.UTF_8);
+                        utf8Values[index] =
+                                new String(bytes, offset, length, StandardCharsets.UTF_8);
                         offset += length;
                         break;
                     case 3:
@@ -201,10 +203,8 @@ final class GraphwarInterruptedSleepSilencer implements ClassFileTransformer {
             // The target classes are tiny helpers. Same-length replacement keeps branch
             // offsets, exception tables and StackMap frames valid without a bytecode library.
             for (int offset = codeOffset; offset + 2 < codeEnd; offset += 1) {
-                if (
-                    readU1(offset) == INVOKEVIRTUAL
-                        && isPrintStackTraceMethodRef(readU2(offset + 1))
-                ) {
+                if (readU1(offset) == INVOKEVIRTUAL
+                        && isPrintStackTraceMethodRef(readU2(offset + 1))) {
                     bytes[offset] = (byte) POP;
                     bytes[offset + 1] = (byte) NOP;
                     bytes[offset + 2] = (byte) NOP;
@@ -230,8 +230,8 @@ final class GraphwarInterruptedSleepSilencer implements ClassFileTransformer {
             String methodName = utf8Values[nameAndTypeNameIndexes[nameAndTypeIndex]];
             String descriptor = utf8Values[nameAndTypeDescriptorIndexes[nameAndTypeIndex]];
             return "java/lang/InterruptedException".equals(className)
-                && "printStackTrace".equals(methodName)
-                && "()V".equals(descriptor);
+                    && "printStackTrace".equals(methodName)
+                    && "()V".equals(descriptor);
         }
 
         private int readU1(int offset) {

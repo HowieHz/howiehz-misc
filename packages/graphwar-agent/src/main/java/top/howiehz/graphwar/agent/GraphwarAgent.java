@@ -9,8 +9,7 @@ public final class GraphwarAgent {
     private static final int DEFAULT_PORT_SEARCH_LIMIT = 100;
     private static GraphwarHttpServer server;
 
-    private GraphwarAgent() {
-    }
+    private GraphwarAgent() {}
 
     public static void premain(String agentArgs, Instrumentation instrumentation) {
         start(agentArgs, instrumentation);
@@ -32,19 +31,18 @@ public final class GraphwarAgent {
 
         printBuildInfo();
         PortSelection portSelection = parsePort(agentArgs);
-        server = GraphwarHttpServer.start(
-            portSelection.port,
-            portSelection.fallbackPortCount,
-            new GraphwarStateReader()
-        );
+        server =
+                GraphwarHttpServer.start(
+                        portSelection.port,
+                        portSelection.fallbackPortCount,
+                        new GraphwarStateReader());
 
         if (server.getPort() != portSelection.port) {
             System.err.println(
-                "[graphwar-agent] port "
-                    + portSelection.port
-                    + " unavailable; selected "
-                    + server.getPort()
-            );
+                    "[graphwar-agent] port "
+                            + portSelection.port
+                            + " unavailable; selected "
+                            + server.getPort());
         }
         System.err.println("[graphwar-agent] listening on http://127.0.0.1:" + server.getPort());
     }
@@ -52,12 +50,11 @@ public final class GraphwarAgent {
     private static void printBuildInfo() {
         System.err.println("[graphwar-agent] version " + GraphwarAgentBuildInfo.VERSION);
         System.err.println(
-            "[graphwar-agent] source commit "
-                + GraphwarAgentBuildInfo.SOURCE_COMMIT_SHORT
-                + " ("
-                + GraphwarAgentBuildInfo.SOURCE_COMMIT_TIME
-                + ")"
-        );
+                "[graphwar-agent] source commit "
+                        + GraphwarAgentBuildInfo.SOURCE_COMMIT_SHORT
+                        + " ("
+                        + GraphwarAgentBuildInfo.SOURCE_COMMIT_TIME
+                        + ")");
     }
 
     private static PortSelection parsePort(String agentArgs) {

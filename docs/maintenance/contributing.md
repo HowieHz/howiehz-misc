@@ -22,6 +22,8 @@ outline: deep
 pnpm install
 ```
 
+如果需要运行 Java 代码格式化或构建 `graphwar-agent`，还需要让 `java` / `javac` / `jar` 可在 `PATH` 中执行。推荐使用 JDK 21，CI 也使用 JDK 21。
+
 ## 常用命令
 
 ### 文档站
@@ -39,7 +41,7 @@ pnpm install
 
 ### 仓库级检查
 
-- 格式化：`pnpm fmt`
+- 格式化：`pnpm fmt`。其中 Java 文件会使用 `google-java-format` 的 AOSP 风格格式化，formatter jar 会缓存到 `.cache/google-java-format/`
 - 求疵与类型检查：`pnpm lint`
 - 运行全部测试：`pnpm test`
 

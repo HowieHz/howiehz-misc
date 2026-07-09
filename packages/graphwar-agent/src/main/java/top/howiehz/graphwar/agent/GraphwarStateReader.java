@@ -85,7 +85,8 @@ final class GraphwarStateReader {
         }
         // Source: GameScreen.actionPerformed does not fire for ComputerPlayer turns.
         if ("Graphwar.ComputerPlayer".equals(currentPlayer.getClass().getName())) {
-            throw new GraphwarStateUnavailableException("The current turn belongs to a local computer player");
+            throw new GraphwarStateUnavailableException(
+                    "The current turn belongs to a local computer player");
         }
         if (readBoolean(gameData, "isDrawingFunction", false)) {
             throw new GraphwarStateUnavailableException("Graphwar is already drawing a function");
@@ -109,7 +110,8 @@ final class GraphwarStateReader {
         Object gameData = invoke(graphwar, "getGameData");
         if (gameData == null) {
             if (requireObstacle) {
-                throw new GraphwarStateUnavailableException("Graphwar GameData is not initialized yet");
+                throw new GraphwarStateUnavailableException(
+                        "Graphwar GameData is not initialized yet");
             }
             return RuntimeState.unavailable("game-data-not-initialized");
         }
@@ -118,7 +120,8 @@ final class GraphwarStateReader {
         if (obstacle == null) {
             // getObstacle() becomes available only after a game has started.
             if (requireObstacle) {
-                throw new GraphwarStateUnavailableException("Graphwar game has not started; obstacle is unavailable");
+                throw new GraphwarStateUnavailableException(
+                        "Graphwar game has not started; obstacle is unavailable");
             }
             return RuntimeState.unavailable("game-not-started");
         }
@@ -166,13 +169,18 @@ final class GraphwarStateReader {
         throw new GraphwarStateException("Graphwar players list is unavailable");
     }
 
-    private static void validateFunctionSyntax(Object graphwar, String function) throws GraphwarStateException {
+    private static void validateFunctionSyntax(Object graphwar, String function)
+            throws GraphwarStateException {
         try {
-            Class<?> functionClass = Class.forName("Graphwar.Function", false, graphwar.getClass().getClassLoader());
+            Class<?> functionClass =
+                    Class.forName("Graphwar.Function", false, graphwar.getClass().getClassLoader());
             Constructor<?> constructor = functionClass.getDeclaredConstructor(String.class);
             constructor.setAccessible(true);
             constructor.newInstance(function);
-        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | NoSuchMethodException error) {
+        } catch (ClassNotFoundException
+                | InstantiationException
+                | IllegalAccessException
+                | NoSuchMethodException error) {
             throw new GraphwarStateException("Cannot validate Graphwar function syntax", error);
         } catch (InvocationTargetException error) {
             Throwable cause = error.getCause();
@@ -229,7 +237,7 @@ final class GraphwarStateReader {
     }
 
     private static void appendPlayers(StringBuilder json, List<?> players, boolean terrainReversed)
-        throws GraphwarStateException {
+            throws GraphwarStateException {
         json.append(",\"players\":[");
         for (int index = 0; index < players.size(); index += 1) {
             if (index > 0) {
@@ -240,8 +248,9 @@ final class GraphwarStateReader {
         json.append(']');
     }
 
-    private static void appendPlayer(StringBuilder json, Object player, int playerIndex, boolean terrainReversed)
-        throws GraphwarStateException {
+    private static void appendPlayer(
+            StringBuilder json, Object player, int playerIndex, boolean terrainReversed)
+            throws GraphwarStateException {
         int numSoldiers = readInt(player, "getNumSoldiers", 0);
         json.append('{');
         json.append("\"index\":").append(playerIndex);
@@ -251,7 +260,8 @@ final class GraphwarStateReader {
         appendJsonString(json, readString(player, "getName", ""));
         json.append(",\"local\":").append(readBoolean(player, "isLocalPlayer", false));
         json.append(",\"disconnected\":").append(readBoolean(player, "isDisconnected", false));
-        json.append(",\"currentTurnSoldier\":").append(readInt(player, "getCurrentTurnSoldierIndex", -1));
+        json.append(",\"currentTurnSoldier\":")
+                .append(readInt(player, "getCurrentTurnSoldierIndex", -1));
         json.append(",\"soldiers\":[");
 
         Object soldiers = invoke(player, "getSoldiers");
@@ -270,8 +280,9 @@ final class GraphwarStateReader {
         json.append("]}");
     }
 
-    private static void appendSoldier(StringBuilder json, Object soldier, int index, boolean terrainReversed)
-        throws GraphwarStateException {
+    private static void appendSoldier(
+            StringBuilder json, Object soldier, int index, boolean terrainReversed)
+            throws GraphwarStateException {
         int worldX = readInt(soldier, "getX", 0);
         int worldY = readInt(soldier, "getY", 0);
         int viewX = Coordinates.toViewPointX(worldX, terrainReversed);
@@ -294,7 +305,11 @@ final class GraphwarStateReader {
 
     private static void appendPoint(StringBuilder json, int pixelX, int pixelY) {
         json.append('{');
-        json.append("\"pixel\":{\"x\":").append(pixelX).append(",\"y\":").append(pixelY).append('}');
+        json.append("\"pixel\":{\"x\":")
+                .append(pixelX)
+                .append(",\"y\":")
+                .append(pixelY)
+                .append('}');
         json.append(",\"game\":{\"x\":").append(Coordinates.toGameX(pixelX));
         json.append(",\"y\":").append(Coordinates.toGameY(pixelY)).append("}}");
     }
@@ -307,38 +322,45 @@ final class GraphwarStateReader {
         } catch (IllegalAccessException | NoSuchMethodException error) {
             throw new GraphwarStateException("Cannot read Graphwar method " + methodName, error);
         } catch (InvocationTargetException error) {
-            throw new GraphwarStateException("Graphwar method " + methodName + " failed", error.getCause());
+            throw new GraphwarStateException(
+                    "Graphwar method " + methodName + " failed", error.getCause());
         }
     }
 
-    private static Object invoke(Object target, String methodName, Class<?> parameterType, Object argument)
-        throws GraphwarStateException {
+    private static Object invoke(
+            Object target, String methodName, Class<?> parameterType, Object argument)
+            throws GraphwarStateException {
         try {
             Method method = target.getClass().getMethod(methodName, parameterType);
             return method.invoke(target, argument);
         } catch (IllegalAccessException | NoSuchMethodException error) {
             throw new GraphwarStateException("Cannot call Graphwar method " + methodName, error);
         } catch (InvocationTargetException error) {
-            throw new GraphwarStateException("Graphwar method " + methodName + " failed", error.getCause());
+            throw new GraphwarStateException(
+                    "Graphwar method " + methodName + " failed", error.getCause());
         }
     }
 
-    private static boolean readBoolean(Object target, String methodName, boolean fallback) throws GraphwarStateException {
+    private static boolean readBoolean(Object target, String methodName, boolean fallback)
+            throws GraphwarStateException {
         Object value = invoke(target, methodName);
         return value instanceof Boolean ? ((Boolean) value).booleanValue() : fallback;
     }
 
-    private static double readDouble(Object target, String methodName, double fallback) throws GraphwarStateException {
+    private static double readDouble(Object target, String methodName, double fallback)
+            throws GraphwarStateException {
         Object value = invoke(target, methodName);
         return value instanceof Number ? ((Number) value).doubleValue() : fallback;
     }
 
-    private static int readInt(Object target, String methodName, int fallback) throws GraphwarStateException {
+    private static int readInt(Object target, String methodName, int fallback)
+            throws GraphwarStateException {
         Object value = invoke(target, methodName);
         return value instanceof Number ? ((Number) value).intValue() : fallback;
     }
 
-    private static String readString(Object target, String methodName, String fallback) throws GraphwarStateException {
+    private static String readString(Object target, String methodName, String fallback)
+            throws GraphwarStateException {
         Object value = invoke(target, methodName);
         return value instanceof String ? (String) value : fallback;
     }

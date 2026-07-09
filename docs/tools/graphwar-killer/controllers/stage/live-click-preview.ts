@@ -124,7 +124,7 @@ export interface GraphwarLiveClickPreviewController {
 export function useGraphwarLiveClickPreview(
   options: GraphwarLiveClickPreviewOptions,
 ): GraphwarLiveClickPreviewController {
-  const enabled = ref(false);
+  const enabled = ref(true);
   const curvePoints = ref("");
   const renderedElapsedMs = ref<number>();
   const pointerPoint = ref<PixelPoint>();

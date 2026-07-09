@@ -50,6 +50,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   const workerSlots: LiveClickPreviewWorkerSlot[] = [];
   let generation = 0;
   let latestSettledRequestId = 0;
+  // 单个 runner 内的请求全序号；JS 安全整数空间足够一个浏览器会话使用，不做回绕分支。
   let nextRequestId = 1;
   let queuedTask: PendingLiveClickPreviewTask | undefined;
   let queuedTaskInput: GraphwarLiveClickPreviewRenderInput | undefined;

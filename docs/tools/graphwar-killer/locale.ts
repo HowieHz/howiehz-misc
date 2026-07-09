@@ -200,7 +200,7 @@ export const graphwarKillerLocale = {
       obstacleBrushDiameterAriaLabel: "障碍笔刷直径，单位为 Graphwar 原始 770x450 平面像素",
       obstacleBrushDiameterTitle:
         "圆形障碍笔刷直径，单位是 Graphwar 原始 770x450 平面像素；滑条可快速调整 1px 到 200px，输入框支持 1px 到 1000px。",
-      liveClickPreview: "实时预览点击",
+      liveClickPreview: "实时预览",
       liveClickPreviewTitle: "预览当前指针位置左键点击后会追加或落位的路径点和新路径线。",
       pickBounds: "点选边界",
       pickBoundsTitle: "进入边界点选模式：左键点两个坐标系角点来校准截图边界。",

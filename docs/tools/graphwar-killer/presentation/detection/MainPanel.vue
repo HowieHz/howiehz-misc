@@ -364,6 +364,12 @@ function handleAgentBaseUrlInput(event: Event) {
   justify-content: start;
 }
 
+.graphwar-killer__agent-url input {
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
 .graphwar-killer__agent-usage-hint {
   color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
   font-size: 0.86rem;

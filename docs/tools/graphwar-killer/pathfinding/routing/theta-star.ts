@@ -157,6 +157,29 @@ async function findThetaStarPath({
       return path;
     }
 
+    if (canAdvance(current, target) && edgeIsClear(current, target, routeMask, mirrored, boundaryExpansion)) {
+      if (acceptedEdges) {
+        recordAcceptedEdge(acceptedEdges, current, target);
+      }
+      const rawPath = [...reconstructThetaStarPath(currentNode.index, parentIndexes), target];
+      const path = simplifyThetaStarPath(rawPath, {
+        boundaryExpansion,
+        canAdvance,
+        mirrored,
+        routeMask,
+        start,
+        target,
+      });
+      onPreview?.({
+        acceptedEdges: acceptedEdges ?? [],
+        bestPath: path,
+        candidates: collectThetaStarPreviewCandidates(openSet, currentNode.index, startIndex, targetIndex),
+        current,
+        mirrored,
+      });
+      return path;
+    }
+
     closed[currentNode.index] = 1;
     for (const yOffset of THETA_STAR_Y_OFFSETS) {
       const next = { x: current.x + 1, y: current.y + yOffset };

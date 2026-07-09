@@ -305,7 +305,6 @@ function createStepGlitchSegment(
     derivative: replacementDeltaY / jump.step,
     startX: jump.startX,
     targetY,
-    step: jump.step,
   };
 }
 

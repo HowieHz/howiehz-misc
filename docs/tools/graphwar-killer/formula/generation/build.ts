@@ -428,7 +428,6 @@ function createCompiledStepGlitchSegment(
     derivative,
     startX: createCompiledFormulaXCenter(segment.startX, options),
     targetY: createCompiledFormulaYCenter(segment.targetY, options),
-    step: createCompiledFormulaDistance(segment.step, options),
   };
 }
 

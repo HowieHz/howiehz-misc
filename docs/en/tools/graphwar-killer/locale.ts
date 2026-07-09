@@ -377,6 +377,9 @@ export const graphwarKillerLocale = {
       agent: {
         command: "java -javaagent:graphwar-agent.jar -jar graphwar.jar",
         download: "graphwar-agent.jar",
+        moreInfoAfterLink: ".",
+        moreInfoBeforeLink: "For more information, see ",
+        moreInfoLink: "Graphwar Agent",
         textAfterCommand: " to start Graphwar Agent and the game together.",
         textBeforeCommand: " in the game directory, then run ",
         textBeforeDownload: "Use Graphwar Agent to read game information: put ",

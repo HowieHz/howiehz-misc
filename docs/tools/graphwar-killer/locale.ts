@@ -323,6 +323,9 @@ export const graphwarKillerLocale = {
       agent: {
         command: "java -javaagent:graphwar-agent.jar -jar graphwar.jar",
         download: "graphwar-agent.jar",
+        moreInfoAfterLink: "。",
+        moreInfoBeforeLink: "更多信息请查看 ",
+        moreInfoLink: "Graphwar Agent",
         textAfterCommand: " 同时启动 Graphwar Agent 和游戏。",
         textBeforeCommand: " 放在游戏目录，最后通过 ",
         textBeforeDownload: "通过 Graphwar Agent 读取游戏信息：将 ",

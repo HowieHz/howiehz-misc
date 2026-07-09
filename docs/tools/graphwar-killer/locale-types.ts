@@ -328,6 +328,9 @@ export interface GraphwarKillerLocale {
       agent: {
         command: string;
         download: string;
+        moreInfoAfterLink: string;
+        moreInfoBeforeLink: string;
+        moreInfoLink: string;
         textAfterCommand: string;
         textBeforeCommand: string;
         textBeforeDownload: string;

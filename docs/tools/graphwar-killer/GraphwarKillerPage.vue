@@ -151,6 +151,7 @@ const graphwarAgentFireStatusFlashMs = 2000;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 const graphwarAgentDownloadHref = withBase("/graphwar-agent.jar");
+const graphwarAgentRepositoryHref = "https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent";
 
 // 页面状态按未来可抽工作流分区维护：基础舞台、公式设置、截图、识别、障碍编辑、寻路。
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
@@ -2778,6 +2779,11 @@ function undoLastPoint() {
         {{ locale.ui.instructions.agent.textBeforeCommand }}
         <code>{{ locale.ui.instructions.agent.command }}</code>
         {{ locale.ui.instructions.agent.textAfterCommand }}
+        {{ locale.ui.instructions.agent.moreInfoBeforeLink }}
+        <a :href="graphwarAgentRepositoryHref">
+          {{ locale.ui.instructions.agent.moreInfoLink }}
+        </a>
+        {{ locale.ui.instructions.agent.moreInfoAfterLink }}
       </p>
     </section>
     <section>

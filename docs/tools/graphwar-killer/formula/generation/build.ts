@@ -419,13 +419,8 @@ function createCompiledStepGlitchSegment(
     return undefined;
   }
 
-  const derivative = createCompiledFormulaCoefficient(segment.derivative, options);
-  if (derivative === 0) {
-    return undefined;
-  }
-
   return {
-    derivative,
+    derivative: createCompiledFormulaCoefficient(segment.derivative, options),
     startX: createCompiledFormulaXCenter(segment.startX, options),
     targetY: createCompiledFormulaYCenter(segment.targetY, options),
   };

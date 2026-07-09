@@ -270,16 +270,19 @@ function createStepGlitchSegments(
 
   const segments: (StepGlitchSegment | undefined)[] = [];
   let hasGlitchSegment = false;
+  let estimatedY = formulaPoints[0]?.y ?? options.points[0]?.y ?? 0;
   for (let index = 1; index < options.points.length; index += 1) {
     const previous = options.points[index - 1];
     const target = options.points[index];
     const formulaPreviousY = formulaPoints[index - 1]?.y ?? previous.y;
     const formulaTargetY = formulaPoints[index]?.y ?? target.y;
-    // 障碍检查遵循用户画出的局部段；目标门和替换高度对齐最终公式点，避免发射点修正后门函数错位。
-    const replacementDeltaY = formulaTargetY - formulaPreviousY;
+    const plannedDeltaY = formulaTargetY - formulaPreviousY;
+    // 障碍检查遵循用户画出的局部段；D 按上一段估计落点修订，避免连续漏洞段累计过冲误差。
+    const replacementDeltaY = formulaTargetY - estimatedY;
     const segment = createStepGlitchSegment(previous, target, formulaTargetY, replacementDeltaY, options.bounds, mask);
     segments.push(segment);
     hasGlitchSegment ||= Boolean(segment);
+    estimatedY = segment ? estimateStepGlitchLandingY(estimatedY, segment) : estimatedY + plannedDeltaY;
   }
   return hasGlitchSegment ? segments : undefined;
 }
@@ -293,11 +296,7 @@ function createStepGlitchSegment(
   mask: Uint8Array,
 ): StepGlitchSegment | undefined {
   const jump = createStepGlitchJump(previous.x, target.x);
-  if (
-    !jump ||
-    replacementDeltaY === 0 ||
-    !stepGlitchVerticalLineHitsObstacle(jump.checkX, previous.y, target.y, bounds, mask)
-  ) {
+  if (!jump || !stepGlitchVerticalLineHitsObstacle(jump.checkX, previous.y, target.y, bounds, mask)) {
     return undefined;
   }
 
@@ -306,6 +305,41 @@ function createStepGlitchSegment(
     startX: jump.startX,
     targetY,
   };
+}
+
+function estimateStepGlitchLandingY(startY: number, segment: StepGlitchSegment) {
+  let x = segment.startX;
+  let y = startY;
+  const direction = segment.derivative < 0 ? -1 : 1;
+  // 门函数通常一两次最小步就越过目标；限制步数，避免估计器变成第二套采样器。
+  for (let stepIndex = 0; stepIndex < 4; stepIndex += 1) {
+    y = estimateStepGlitchRk4Y(x, y, segment);
+    x += GRAPHWAR_STEP_GLITCH_MIN_STEP;
+    if (direction * (y - segment.targetY) >= 0) {
+      return y;
+    }
+  }
+  return y;
+}
+
+function estimateStepGlitchRk4Y(x: number, y: number, segment: StepGlitchSegment) {
+  const h = GRAPHWAR_STEP_GLITCH_MIN_STEP;
+  const k1 = evaluateStepGlitchDerivative(x, y, segment);
+  const k2 = evaluateStepGlitchDerivative(x + 0.5 * h, y + 0.5 * h * k1, segment);
+  const k3 = evaluateStepGlitchDerivative(x + 0.5 * h, y + 0.5 * h * k2, segment);
+  const k4 = evaluateStepGlitchDerivative(x + h, y + h * k3, segment);
+  return y + (h / 6) * (k1 + 2 * k2 + 2 * k3 + k4);
+}
+
+function evaluateStepGlitchDerivative(x: number, y: number, segment: StepGlitchSegment) {
+  const direction = segment.derivative < 0 ? -1 : 1;
+  const xGate = 1 + evaluateStepGlitchSign(x - segment.startX);
+  const yGate = 1 + evaluateStepGlitchSign(direction * (segment.targetY - y));
+  return (segment.derivative / 4) * xGate * yGate;
+}
+
+function evaluateStepGlitchSign(value: number) {
+  return value / (Math.abs(value) + GRAPHWAR_TOOL_SIGN_EPSILON);
 }
 
 function createStepGlitchJump(previousX: number, targetX: number) {

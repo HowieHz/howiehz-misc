@@ -181,7 +181,7 @@ interface TrajectoryFormulaState {
   signEpsilon: number;
 }
 
-const GRAPHWAR_STEP_GLITCH_CANDIDATE_STEPS = createGraphwarStepGlitchCandidateSteps();
+const GRAPHWAR_STEP_GLITCH_MIN_STEP = createGraphwarStepGlitchMinStep();
 
 function createResolvedTrajectoryFormulaState(options: {
   bounds: GraphBounds;
@@ -240,17 +240,13 @@ function createTrajectoryFormulaEvaluation(
   };
 }
 
-/** Graphwar 缩步只会尝试 STEP_SIZE/2^n，直到第一次不大于源码的最小 x 步长。 */
-function createGraphwarStepGlitchCandidateSteps() {
-  const steps: number[] = [];
+/** Graphwar 缩步只会尝试 STEP_SIZE/2^n；漏洞 D 需要按最后一个实际档位估算。 */
+function createGraphwarStepGlitchMinStep() {
   let step = GRAPHWAR_STEP_SIZE;
-  while (true) {
-    steps.push(step);
-    if (step <= GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
-      return steps;
-    }
+  while (step > GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
     step /= 2;
   }
+  return step;
 }
 
 function createStepGlitchSegments(
@@ -318,15 +314,8 @@ function createStepGlitchJump(previousX: number, targetX: number) {
     return undefined;
   }
 
-  for (const step of GRAPHWAR_STEP_GLITCH_CANDIDATE_STEPS) {
-    const startX = targetX - step;
-    if (startX > previousX) {
-      return { checkX: startX, startX, step };
-    }
-  }
-
-  // 极短局部段没有源码步长档位能落在段内；按用户语义检查 x1 竖线，同时让触发门覆盖本段避免零宽。
-  return { checkX: targetX, startX: previousX, step: targetX - previousX };
+  // x 门对齐目标竖线；D 固定按源码最小缩步档估算，才能产生可见的漏洞跃迁。
+  return { checkX: targetX, startX: targetX, step: GRAPHWAR_STEP_GLITCH_MIN_STEP };
 }
 
 function stepGlitchVerticalLineHitsObstacle(

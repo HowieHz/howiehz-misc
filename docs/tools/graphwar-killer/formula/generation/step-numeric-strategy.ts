@@ -19,9 +19,9 @@ export interface StepOverflowProtectionRange {
 export interface StepGlitchSegment {
   /** 目标导数；按源码最小步长估算，用来迫使自适应步长缩到漏洞边界。 */
   derivative: number;
-  /** 本段选中的 Graphwar 自适应步长档位。 */
+  /** Graphwar 自适应缩步的最小实际档位；D 按这个步长估算。 */
   step: number;
-  /** 触发门的 x 阈值。 */
+  /** 触发门的 x 阈值，也就是当前路径段目标 x。 */
   startX: number;
   /** 触发门的 y 阈值，也就是当前路径段目标 y。 */
   targetY: number;

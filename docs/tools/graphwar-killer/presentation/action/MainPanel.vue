@@ -69,7 +69,7 @@ const emit = defineEmits<{
 }>();
 
 function getInputValue(event: Event) {
-  const input = event.target;
+  const input = event.currentTarget;
   return input instanceof HTMLInputElement ? input.value : undefined;
 }
 

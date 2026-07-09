@@ -2,7 +2,7 @@ import type { PixelPoint } from "../../core/types";
 import {
   getGraphwarSoldierCenter,
   graphwarSoldierContainsHitPoint,
-  graphwarSoldierIsOnNegativeGraphX,
+  graphwarSoldierIsOnNonPositiveGraphX,
   graphwarSoldierReachesForward,
   type GraphwarTargetingGeometry,
   type GraphwarTargetingSoldier,
@@ -89,10 +89,10 @@ function isOneClickClearLaunchSoldier(pathPoints: readonly PixelPoint[], soldier
   return Boolean(firstPoint && graphwarSoldierContainsHitPoint(soldier, firstPoint));
 }
 
-/** 当前规则下 x<0 的非发射士兵视为友方；geometry 缺失时应沿用页面原本的非友方语义。 */
+/** 当前规则下 x<=0 的非发射士兵视为友方；geometry 缺失时应沿用页面原本的非友方语义。 */
 function isOneClickClearFriendlySoldier(
   geometry: GraphwarTargetingGeometry | undefined,
   soldier: GraphwarOneClickClearTargetSoldier,
 ) {
-  return Boolean(geometry && graphwarSoldierIsOnNegativeGraphX(soldier, geometry));
+  return Boolean(geometry && graphwarSoldierIsOnNonPositiveGraphX(soldier, geometry));
 }

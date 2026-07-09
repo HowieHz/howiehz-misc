@@ -240,13 +240,13 @@ export function graphwarSoldierReachesForward(
   return graphwarPointAdvances(startPoint, getGraphwarSoldierCenter(soldier), geometry);
 }
 
-/** 判断检测框中心是否在 Graphwar x<0 一侧。 */
-export function graphwarSoldierIsOnNegativeGraphX(
+/** 判断检测框中心是否在 Graphwar x<=0 发射侧；Graphwar 原版允许函数从 x=0 士兵起步。 */
+export function graphwarSoldierIsOnNonPositiveGraphX(
   soldier: GraphwarTargetingSoldier,
   geometry: GraphwarTargetingGeometry,
 ) {
   const center = imageToGraphPoint(getGraphwarSoldierCenter(soldier), geometry.bounds, geometry.boundsRect);
-  return center.x < 0;
+  return center.x <= 0;
 }
 
 /** 获取 Graphwar x 最大的已选路径点，用于过滤当前目标。 */

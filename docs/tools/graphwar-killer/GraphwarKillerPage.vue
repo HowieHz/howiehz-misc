@@ -849,7 +849,7 @@ const {
   createSoldierHitCircle,
   getRightmostPathPoint,
   isFriendlyObstacleSoldier: isDetectedFriendlySoldierObstacle,
-  isSoldierOnNegativeGraphX: isDetectionBoxOnNegativeGraphX,
+  isSoldierOnLaunchSide: isDetectionBoxOnLaunchSide,
 } = useGraphwarTargetingContext<DetectionBox>({
   boundsRect,
   getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
@@ -1116,7 +1116,7 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
     visibleSoldiers = visibleSoldiers.filter((box) => !isDetectedFriendlySoldierObstacle(box));
   }
   if (recognizedObjectOverlayVisible.value && pathPixels.value.length === 0) {
-    visibleSoldiers = visibleSoldiers.filter((box) => isDetectionBoxOnNegativeGraphX(box));
+    visibleSoldiers = visibleSoldiers.filter((box) => isDetectionBoxOnLaunchSide(box));
   }
   const lastPoint = pathPixels.value.at(-1);
   if (!lastPoint) {

@@ -7,7 +7,7 @@ import {
   createSmartPathfindingSoldierTarget as createGraphwarSmartPathfindingSoldierTarget,
   getRightmostPathPoint as getGraphwarRightmostPathPoint,
   graphwarSoldierContainsHitPoint,
-  graphwarSoldierIsOnNegativeGraphX,
+  graphwarSoldierIsOnNonPositiveGraphX,
   type GraphwarHitCircle,
   type GraphwarSmartPathfindingSoldierTarget,
   type GraphwarTargetingGeometry,
@@ -47,10 +47,10 @@ export interface GraphwarTargetingContextController<TSoldier extends GraphwarTar
   ) => GraphwarSmartPathfindingSoldierTarget | undefined;
   /** 获取 Graphwar x 最大的已选路径点，用于过滤当前目标。 */
   getRightmostPathPoint: () => PixelPoint | undefined;
-  /** 当前规则下 x<0 的非发射士兵视为友方障碍。 */
+  /** 当前规则下 x<=0 的非发射士兵视为友方障碍。 */
   isFriendlyObstacleSoldier: (soldier: TSoldier) => boolean;
-  /** 智能光标初始选点只标记 x- 士兵。 */
-  isSoldierOnNegativeGraphX: (soldier: TSoldier) => boolean;
+  /** 智能光标初始选点只标记发射侧士兵；中心线可作为 Graphwar 发射点。 */
+  isSoldierOnLaunchSide: (soldier: TSoldier) => boolean;
 }
 
 /** 集中把页面当前状态适配为 Graphwar 目标选择规则，避免页面散落 bounds/path 组合逻辑。 */
@@ -101,9 +101,9 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
       : undefined;
   }
 
-  function isSoldierOnNegativeGraphX(soldier: TSoldier) {
+  function isSoldierOnLaunchSide(soldier: TSoldier) {
     const geometry = createGeometry();
-    return geometry ? graphwarSoldierIsOnNegativeGraphX(soldier, geometry) : false;
+    return geometry ? graphwarSoldierIsOnNonPositiveGraphX(soldier, geometry) : false;
   }
 
   function isFriendlyObstacleSoldier(soldier: TSoldier) {
@@ -111,7 +111,7 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
     if (!geometry || soldierMatchesLaunchPoint(soldier)) {
       return false;
     }
-    return graphwarSoldierIsOnNegativeGraphX(soldier, geometry);
+    return graphwarSoldierIsOnNonPositiveGraphX(soldier, geometry);
   }
 
   /** 一键清图以第一个路径点作为发射士兵，后续路径点都是普通控制点。 */
@@ -129,6 +129,6 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
     createSoldierHitCircle,
     getRightmostPathPoint,
     isFriendlyObstacleSoldier,
-    isSoldierOnNegativeGraphX,
+    isSoldierOnLaunchSide,
   };
 }

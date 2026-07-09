@@ -191,6 +191,8 @@ export interface GraphwarKillerLocale {
     };
     agent: {
       failed: (message: string) => string;
+      fireFailed: (message: string) => string;
+      fired: string;
       loaded: (soldiers: number) => string;
       reading: string;
     };
@@ -387,6 +389,11 @@ export interface GraphwarKillerLocale {
       clearSimulator: string;
       clearSimulatorTitle: string;
       copyTitle: string;
+      fire: string;
+      fireError: string;
+      fireSuccess: string;
+      fireTitle: string;
+      firing: string;
       formulaInputAriaLabel: string;
       formulaInputTitle: string;
       launchAngle: string;

@@ -2,7 +2,11 @@
 import { withBase } from "vitepress";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import { GRAPHWAR_AGENT_DEFAULT_BASE_URL, readGraphwarAgentSnapshot } from "./controllers/agent/client";
+import {
+  GRAPHWAR_AGENT_DEFAULT_BASE_URL,
+  readGraphwarAgentSnapshot,
+  submitGraphwarAgentFunction,
+} from "./controllers/agent/client";
 import { useGraphwarDebugActivation } from "./controllers/debug/activation";
 import { useGraphwarDebugTimings } from "./controllers/debug/timings";
 import {
@@ -62,6 +66,7 @@ import type {
   PixelPoint,
   ToolMode,
   ToolWorkflowMode,
+  TransferStatus,
 } from "./core/types";
 import type { GraphwarDetectionBox } from "./detection/objects";
 import type { GraphwarKillerLocale } from "./locale-types";
@@ -126,6 +131,7 @@ const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
 const smartPathfindingBlockedPointFlashMs = 1800;
+const graphwarAgentFireStatusFlashMs = 2000;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 const graphwarAgentDownloadHref = withBase("/graphwar-agent.jar");
@@ -182,6 +188,10 @@ const simulatorLaunchAngleText = ref("");
 const graphwarAgentEnabled = ref(false);
 const graphwarAgentBaseUrlText = ref(GRAPHWAR_AGENT_DEFAULT_BASE_URL);
 const graphwarAgentReadInProgress = ref(false);
+const graphwarAgentFireInProgress = ref(false);
+const graphwarAgentFireStatus = ref<TransferStatus>("idle");
+const graphwarAgentFireFailureMessage = ref("");
+let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
 const graphwarAgentConfigured = computed(
   () => graphwarAgentEnabled.value && graphwarAgentBaseUrlText.value.trim().length > 0,
 );
@@ -652,13 +662,41 @@ const {
   copyButtonText,
   copyFormula,
   dispose: disposeResultActions,
-  statusAnnouncement,
+  statusAnnouncement: copyStatusAnnouncement,
 } = useGraphwarResultActions({
   formulaResult,
   getCopyMessages: () => locale.status.copy,
   simulatorFormulaText,
   simulatorLaunchAngleText,
   toolWorkflowMode,
+});
+
+const graphwarAgentFireButtonText = computed(() => {
+  if (graphwarAgentFireInProgress.value) {
+    return locale.ui.result.firing;
+  }
+  if (graphwarAgentFireStatus.value === "success") {
+    return locale.ui.result.fireSuccess;
+  }
+  if (graphwarAgentFireStatus.value === "error") {
+    return locale.ui.result.fireError;
+  }
+  return locale.ui.result.fire;
+});
+const canFireGraphwarAgentFunction = computed(
+  () => graphwarAgentConfigured.value && canCopyFormula.value && !graphwarAgentFireInProgress.value,
+);
+const statusAnnouncement = computed(() => {
+  if (graphwarAgentFireInProgress.value) {
+    return locale.ui.result.firing;
+  }
+  if (graphwarAgentFireStatus.value === "success") {
+    return locale.status.agent.fired;
+  }
+  if (graphwarAgentFireStatus.value === "error") {
+    return locale.status.agent.fireFailed(graphwarAgentFireFailureMessage.value);
+  }
+  return copyStatusAnnouncement.value;
 });
 
 const activeEquationDescription = computed(() => {
@@ -1464,6 +1502,9 @@ const magnifierContentStyle = computed(() => {
 const resultPanel = computed(() => {
   const solverResult = formulaResult.value;
   return {
+    agentFireButtonText: graphwarAgentFireButtonText.value,
+    agentFireVisible: graphwarAgentEnabled.value,
+    canFireAgentFunction: canFireGraphwarAgentFunction.value,
     canClearSimulatorInputs: canClearSimulatorInputs.value,
     canCopyFormula: canCopyFormula.value,
     calculationMessage: calculationMessage.value,
@@ -1550,6 +1591,7 @@ onBeforeUnmount(() => {
   graphwarPathfindingRunner.close();
   cancelSmartPathfinding(false);
   disposeResultActions();
+  disposeGraphwarAgentFireStatus();
   disposeLiveClickPreview();
   disposeDebugActivation();
   disposeStageFeedback();
@@ -1818,6 +1860,60 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
   }
 }
 
+/** 通过 Agent 调用 Graphwar 原版开火路径，提交当前结果面板里的函数文本。 */
+async function fireGraphwarAgentFunction() {
+  const functionText = getCurrentGraphwarFunctionText();
+  if (!canFireGraphwarAgentFunction.value || !functionText) {
+    return;
+  }
+
+  graphwarAgentFireInProgress.value = true;
+  setGraphwarAgentFireStatus("idle");
+  try {
+    const baseUrl = await submitGraphwarAgentFunction(graphwarAgentBaseUrlText.value, functionText);
+    graphwarAgentBaseUrlText.value = baseUrl;
+    setGraphwarAgentFireStatus("success");
+  } catch (error) {
+    graphwarAgentFireFailureMessage.value = error instanceof Error ? error.message : String(error);
+    setGraphwarAgentFireStatus("error");
+  } finally {
+    graphwarAgentFireInProgress.value = false;
+  }
+}
+
+/** 保持开火和复制使用同一份函数来源：solver 用生成结果，simulator 用用户输入。 */
+function getCurrentGraphwarFunctionText() {
+  const text = toolWorkflowMode.value === "solver" ? formulaResult.value?.expression : simulatorFormulaText.value;
+  return text && text.trim() ? text : "";
+}
+
+/** 设置开火按钮短反馈；和复制按钮一样，非 idle 状态会自动复位。 */
+function setGraphwarAgentFireStatus(status: TransferStatus) {
+  graphwarAgentFireStatus.value = status;
+  if (status !== "error") {
+    graphwarAgentFireFailureMessage.value = "";
+  }
+  if (graphwarAgentFireStatusTimer) {
+    clearTimeout(graphwarAgentFireStatusTimer);
+    graphwarAgentFireStatusTimer = undefined;
+  }
+
+  if (status !== "idle") {
+    graphwarAgentFireStatusTimer = setTimeout(() => {
+      graphwarAgentFireStatus.value = "idle";
+      graphwarAgentFireFailureMessage.value = "";
+      graphwarAgentFireStatusTimer = undefined;
+    }, graphwarAgentFireStatusFlashMs);
+  }
+}
+
+function disposeGraphwarAgentFireStatus() {
+  if (graphwarAgentFireStatusTimer) {
+    clearTimeout(graphwarAgentFireStatusTimer);
+    graphwarAgentFireStatusTimer = undefined;
+  }
+}
+
 /** Agent 状态固定使用 Graphwar 官方平面范围，避免沿用上一张截图的手动标定。 */
 function resetGraphwarDefaultBoundsTexts() {
   minXText.value = `-${graphwarDefaultXLimitText}`;
@@ -1848,12 +1944,15 @@ function toggleGraphwarAgentUsage() {
   graphwarAgentEnabled.value = !graphwarAgentEnabled.value;
   if (graphwarAgentEnabled.value) {
     detectionWorkflow.cancel(false);
+  } else {
+    setGraphwarAgentFireStatus("idle");
   }
 }
 
 /** 同步 Agent 地址输入；地址为空时不展示手动读取按钮。 */
 function setGraphwarAgentBaseUrlText(value: string) {
   graphwarAgentBaseUrlText.value = value;
+  setGraphwarAgentFireStatus("idle");
 }
 
 /** 切换智能光标；关闭时清掉士兵悬停，避免残留高亮。 */
@@ -2422,6 +2521,7 @@ function undoLastPoint() {
       :result="resultPanel"
       @clear-simulator="clearSimulatorInputs"
       @copy-formula="copyFormula"
+      @fire-agent-function="void fireGraphwarAgentFunction()"
       @finish-point-coordinate-edit="finishPathPointCoordinateEdit"
       @start-point-coordinate-edit="startPathPointCoordinateEdit"
       @update-point-coordinate="handlePathPointCoordinateInput"

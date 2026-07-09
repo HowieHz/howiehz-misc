@@ -87,6 +87,24 @@ export async function readGraphwarAgentSnapshot(baseUrlText: string): Promise<Gr
   };
 }
 
+export async function submitGraphwarAgentFunction(baseUrlText: string, functionText: string) {
+  const baseUrl = normalizeGraphwarAgentBaseUrl(baseUrlText);
+  const response = await fetch(new URL("function", baseUrl), {
+    body: functionText,
+    cache: "no-store",
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(await createResponseErrorMessage(response));
+  }
+
+  return baseUrl.toString().replace(/\/$/, "");
+}
+
 function normalizeGraphwarAgentBaseUrl(baseUrlText: string) {
   const trimmed = baseUrlText.trim() || GRAPHWAR_AGENT_DEFAULT_BASE_URL;
   const withProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;

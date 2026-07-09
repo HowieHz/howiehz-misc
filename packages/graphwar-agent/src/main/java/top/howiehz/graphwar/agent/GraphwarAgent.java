@@ -28,9 +28,12 @@ public final class GraphwarAgent {
         // Source: Graphwar's countdown helpers cancel sleep with Thread.interrupt() and
         // print the expected InterruptedException. Register before game classes load.
         instrumentation.addTransformer(new GraphwarInterruptedSleepSilencer(), false);
-        // Source: Graphwar.ServerConnection can close its socket while the read loop is
-        // blocked, then print the expected SocketException("Socket closed").
+        // Source: Graphwar ServerConnection/GlobalClient can close sockets while their
+        // read loops are blocked, then print the expected SocketException("Socket closed").
         instrumentation.addTransformer(new GraphwarSocketCloseSilencer(), false);
+        // Source: Graphwar can receive duplicate REMOVE_PLAYER messages and then log a
+        // NullPointerException while removing a player that is already absent.
+        instrumentation.addTransformer(new GraphwarRemovePlayerMessageSilencer(), false);
 
         printBuildInfo();
         PortSelection portSelection = parsePort(agentArgs);

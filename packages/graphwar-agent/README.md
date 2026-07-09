@@ -14,7 +14,7 @@ It exposes soldier coordinates, obstacle data, and function submission for the m
 - **Accurate obstacle detection**: reuses Graphwar's own collision rule, where every non-white terrain pixel is blocking.
 - **Submits functions through the original logic**: the HTTP endpoint ultimately calls `GameData#sendFunction(String)`. That reuses the original turn checks, function validation, and firing message.
 - **Returns two coordinate spaces**: returns Graphwar's internal `world` coordinates and the current screen-oriented `view` coordinates, plus mathematical game coordinates.
-- **Silences expected upstream noise**: the official code prints exception stacks when the start countdown is canceled normally or when the match socket closes normally. The agent removes only these expected logs. It does not change the original logic.
+- **Silences expected upstream noise**: the official code prints exception stacks when the start countdown is canceled normally, lobby or match sockets close normally, or already-absent players are removed again. The agent removes only these expected logs. It does not change the original logic.
 
 ## Build
 
@@ -234,7 +234,7 @@ viewX = 769 - worldX
 
 ## Implementation Notes
 
-- The agent does not use JVMTI. Its only bytecode patch removes expected exception noise from the official client.
+- The agent does not use JVMTI. Its bytecode patches only remove expected exception noise from the official client.
 - The HTTP server binds only to `127.0.0.1`.
 - Graphwar state is read through reflection because the official jar is not a compile-time dependency of this package.
 - The obstacle rule comes from the official `Obstacle#collidePoint`: `terrain.getRGB(x, y) != -1` means blocking.

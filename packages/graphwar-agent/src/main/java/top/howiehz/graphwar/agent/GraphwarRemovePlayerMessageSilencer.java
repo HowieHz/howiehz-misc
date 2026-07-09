@@ -1,21 +1,30 @@
 package top.howiehz.graphwar.agent;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.IllegalClassFormatException;
-import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.security.ProtectionDomain;
 
-public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
-    private static final String CLIENT_GLOBAL_CLIENT = "Graphwar/GlobalClient";
-    private static final String CLIENT_SERVER_CONNECTION = "Graphwar/ServerConnection";
+final class GraphwarRemovePlayerMessageSilencer implements ClassFileTransformer {
+    private static final String GAME_DATA = "Graphwar/GameData";
     private static final String HANDLER_CLASS =
-            "top/howiehz/graphwar/agent/GraphwarSocketCloseSilencer";
-    private static final String HANDLER_METHOD = "printUnexpectedConnectionReadError";
-    private static final String HANDLER_DESCRIPTOR = "(Ljava/io/IOException;)V";
-    private static final String SOCKET_CLOSED_MESSAGE = "Socket closed";
+            "top/howiehz/graphwar/agent/GraphwarRemovePlayerMessageSilencer";
+    private static final String INVALID_MESSAGE_HANDLER = "printUnexpectedInvalidMessage";
+    private static final String INVALID_MESSAGE_HANDLER_DESCRIPTOR =
+            "(Ljava/lang/Object;Ljava/lang/String;)V";
+    private static final String ERROR_HANDLER = "printUnexpectedHandleMessageError";
+    private static final String ERROR_HANDLER_DESCRIPTOR = "(Ljava/lang/Exception;)V";
+    private static final String INVALID_MESSAGE_METHOD = "invalidMessage";
+    private static final String INVALID_MESSAGE_DESCRIPTOR = "(Ljava/lang/String;)V";
+    private static final String HANDLE_MESSAGE_METHOD = "handleMessage";
+    private static final String HANDLE_MESSAGE_DESCRIPTOR = "(Ljava/lang/String;)V";
+    private static final String PRINT_STACK_TRACE_METHOD = "printStackTrace";
+    private static final String PRINT_STACK_TRACE_DESCRIPTOR = "()V";
+    private static final String REMOVE_PLAYER_MESSAGE_PREFIX = "29&";
+    private static final String REMOVE_PLAYER_METHOD = "removePlayerMessage";
+    private static final ThreadLocal<String> SUPPRESSED_INVALID_MESSAGE = new ThreadLocal<>();
+    private static final int INVOKESPECIAL = 0xb7;
     private static final int INVOKESTATIC = 0xb8;
     private static final int INVOKEVIRTUAL = 0xb6;
 
@@ -27,7 +36,7 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
             ProtectionDomain protectionDomain,
             byte[] classfileBuffer)
             throws IllegalClassFormatException {
-        if (!isTargetClass(className)) {
+        if (!GAME_DATA.equals(className)) {
             return null;
         }
 
@@ -36,7 +45,7 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
             return patched == classfileBuffer ? null : patched;
         } catch (RuntimeException error) {
             System.err.println(
-                    "[graphwar-agent] failed to silence normal Graphwar socket close log in "
+                    "[graphwar-agent] failed to silence duplicate Graphwar remove-player log in "
                             + className
                             + ": "
                             + error.getMessage());
@@ -46,39 +55,82 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
 
     static byte[] silence(byte[] classfileBuffer) {
         ClassFile classFile = new ClassFile(classfileBuffer);
-        if (!classFile.hasIOExceptionPrintStackTraceMethodRef()) {
+        if (!classFile.hasInvalidMessageMethodRef()
+                || !classFile.hasExceptionPrintStackTraceMethodRef()) {
             return classfileBuffer;
         }
 
-        PatchedConstantPool constantPool = classFile.appendHandlerMethodRef();
-        int patchCount =
+        PatchedConstantPool constantPool = classFile.appendHandlerMethodRefs();
+        PatchCounts patchCounts =
                 new ClassFile(constantPool.bytes)
-                        .patchServerConnectionRunPrintStackTrace(
-                                constantPool.handlerMethodRefIndex);
-        return patchCount == 0 ? classfileBuffer : constantPool.bytes;
+                        .patchHandleMessageLogs(
+                                constantPool.invalidMessageHandlerMethodRefIndex,
+                                constantPool.errorHandlerMethodRefIndex);
+        return patchCounts.hasBothPatches() ? constantPool.bytes : classfileBuffer;
     }
 
-    public static void printUnexpectedConnectionReadError(IOException error) {
-        // Official Graphwar closes lobby/match sockets while their read threads may still
-        // be blocked in readLine(); SocketException("Socket closed") is the normal result.
-        if (error instanceof SocketException && SOCKET_CLOSED_MESSAGE.equals(error.getMessage())) {
+    public static void printUnexpectedInvalidMessage(Object gameData, String message) {
+        if (isRemovePlayerMessage(message)) {
+            SUPPRESSED_INVALID_MESSAGE.set(message);
             return;
         }
 
+        printInvalidMessage(message);
+    }
+
+    public static void printUnexpectedHandleMessageError(Exception error) {
+        String suppressedMessage = SUPPRESSED_INVALID_MESSAGE.get();
+        SUPPRESSED_INVALID_MESSAGE.remove();
+        if (suppressedMessage != null && isUnknownRemovePlayerError(error)) {
+            return;
+        }
+
+        if (suppressedMessage != null) {
+            printInvalidMessage(suppressedMessage);
+        }
         error.printStackTrace();
     }
 
-    private static boolean isTargetClass(String className) {
-        return CLIENT_SERVER_CONNECTION.equals(className) || CLIENT_GLOBAL_CLIENT.equals(className);
+    private static boolean isRemovePlayerMessage(String message) {
+        return message != null && message.startsWith(REMOVE_PLAYER_MESSAGE_PREFIX);
+    }
+
+    private static boolean isUnknownRemovePlayerError(Exception error) {
+        if (!(error instanceof NullPointerException)) {
+            return false;
+        }
+
+        StackTraceElement[] stackTrace = error.getStackTrace();
+        return stackTrace.length > 0
+                && GAME_DATA.replace('/', '.').equals(stackTrace[0].getClassName())
+                && REMOVE_PLAYER_METHOD.equals(stackTrace[0].getMethodName());
+    }
+
+    private static void printInvalidMessage(String message) {
+        System.out.println("Invalid message received: " + message);
     }
 
     private static final class PatchedConstantPool {
         final byte[] bytes;
-        final int handlerMethodRefIndex;
+        final int errorHandlerMethodRefIndex;
+        final int invalidMessageHandlerMethodRefIndex;
 
-        PatchedConstantPool(byte[] bytes, int handlerMethodRefIndex) {
+        PatchedConstantPool(
+                byte[] bytes,
+                int invalidMessageHandlerMethodRefIndex,
+                int errorHandlerMethodRefIndex) {
             this.bytes = bytes;
-            this.handlerMethodRefIndex = handlerMethodRefIndex;
+            this.invalidMessageHandlerMethodRefIndex = invalidMessageHandlerMethodRefIndex;
+            this.errorHandlerMethodRefIndex = errorHandlerMethodRefIndex;
+        }
+    }
+
+    private static final class PatchCounts {
+        int errorPrintStackTrace;
+        int invalidMessage;
+
+        boolean hasBothPatches() {
+            return invalidMessage > 0 && errorPrintStackTrace > 0;
         }
     }
 
@@ -109,34 +161,51 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
             this.afterConstantPoolOffset = readConstantPool();
         }
 
-        boolean hasIOExceptionPrintStackTraceMethodRef() {
+        boolean hasInvalidMessageMethodRef() {
             for (int index = 1; index < methodRefClassIndexes.length; index += 1) {
-                if (isIOExceptionPrintStackTraceMethodRef(index)) {
+                if (isInvalidMessageMethodRef(index)) {
                     return true;
                 }
             }
             return false;
         }
 
-        PatchedConstantPool appendHandlerMethodRef() {
+        boolean hasExceptionPrintStackTraceMethodRef() {
+            for (int index = 1; index < methodRefClassIndexes.length; index += 1) {
+                if (isExceptionPrintStackTraceMethodRef(index)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        PatchedConstantPool appendHandlerMethodRefs() {
             int handlerClassUtf8Index = constantPoolCount;
             int handlerClassIndex = handlerClassUtf8Index + 1;
-            int handlerMethodNameIndex = handlerClassIndex + 1;
-            int handlerDescriptorIndex = handlerMethodNameIndex + 1;
-            int handlerNameAndTypeIndex = handlerDescriptorIndex + 1;
-            int handlerMethodRefIndex = handlerNameAndTypeIndex + 1;
-            int newConstantPoolCount = handlerMethodRefIndex + 1;
+            int invalidHandlerNameIndex = handlerClassIndex + 1;
+            int invalidHandlerDescriptorIndex = invalidHandlerNameIndex + 1;
+            int invalidHandlerNameAndTypeIndex = invalidHandlerDescriptorIndex + 1;
+            int invalidHandlerMethodRefIndex = invalidHandlerNameAndTypeIndex + 1;
+            int errorHandlerNameIndex = invalidHandlerMethodRefIndex + 1;
+            int errorHandlerDescriptorIndex = errorHandlerNameIndex + 1;
+            int errorHandlerNameAndTypeIndex = errorHandlerDescriptorIndex + 1;
+            int errorHandlerMethodRefIndex = errorHandlerNameAndTypeIndex + 1;
+            int newConstantPoolCount = errorHandlerMethodRefIndex + 1;
             if (newConstantPoolCount > 0xffff) {
                 throw new IllegalArgumentException("constant pool is full");
             }
 
-            ByteArrayOutputStream entries = new ByteArrayOutputStream(192);
+            ByteArrayOutputStream entries = new ByteArrayOutputStream(256);
             writeUtf8(entries, HANDLER_CLASS);
             writeClass(entries, handlerClassUtf8Index);
-            writeUtf8(entries, HANDLER_METHOD);
-            writeUtf8(entries, HANDLER_DESCRIPTOR);
-            writeNameAndType(entries, handlerMethodNameIndex, handlerDescriptorIndex);
-            writeMethodRef(entries, handlerClassIndex, handlerNameAndTypeIndex);
+            writeUtf8(entries, INVALID_MESSAGE_HANDLER);
+            writeUtf8(entries, INVALID_MESSAGE_HANDLER_DESCRIPTOR);
+            writeNameAndType(entries, invalidHandlerNameIndex, invalidHandlerDescriptorIndex);
+            writeMethodRef(entries, handlerClassIndex, invalidHandlerNameAndTypeIndex);
+            writeUtf8(entries, ERROR_HANDLER);
+            writeUtf8(entries, ERROR_HANDLER_DESCRIPTOR);
+            writeNameAndType(entries, errorHandlerNameIndex, errorHandlerDescriptorIndex);
+            writeMethodRef(entries, handlerClassIndex, errorHandlerNameAndTypeIndex);
 
             byte[] entryBytes = entries.toByteArray();
             byte[] patched = new byte[bytes.length + entryBytes.length];
@@ -149,10 +218,12 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
                     afterConstantPoolOffset + entryBytes.length,
                     bytes.length - afterConstantPoolOffset);
             writeU2(patched, 8, newConstantPoolCount);
-            return new PatchedConstantPool(patched, handlerMethodRefIndex);
+            return new PatchedConstantPool(
+                    patched, invalidHandlerMethodRefIndex, errorHandlerMethodRefIndex);
         }
 
-        int patchServerConnectionRunPrintStackTrace(int handlerMethodRefIndex) {
+        PatchCounts patchHandleMessageLogs(
+                int invalidMessageHandlerMethodRefIndex, int errorHandlerMethodRefIndex) {
             int offset = afterConstantPoolOffset;
             offset += 6; // access_flags, this_class, super_class
             int interfacesCount = readU2(offset);
@@ -164,15 +235,16 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
                 offset = skipMember(offset);
             }
 
-            int patchCount = 0;
+            PatchCounts patchCounts = new PatchCounts();
             int methodsCount = readU2(offset);
             offset += 2;
             for (int index = 0; index < methodsCount; index += 1) {
                 int methodNameIndex = readU2(offset + 2);
                 int methodDescriptorIndex = readU2(offset + 4);
-                boolean isRunMethod =
-                        "run".equals(utf8Values[methodNameIndex])
-                                && "()V".equals(utf8Values[methodDescriptorIndex]);
+                boolean isHandleMessageMethod =
+                        HANDLE_MESSAGE_METHOD.equals(utf8Values[methodNameIndex])
+                                && HANDLE_MESSAGE_DESCRIPTOR.equals(
+                                        utf8Values[methodDescriptorIndex]);
                 offset += 6; // access_flags, name_index, descriptor_index
                 int attributesCount = readU2(offset);
                 offset += 2;
@@ -182,13 +254,17 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
                     int attributeNameIndex = readU2(offset);
                     int attributeLength = readU4(offset + 2);
                     int infoOffset = offset + 6;
-                    if (isRunMethod && "Code".equals(utf8Values[attributeNameIndex])) {
-                        patchCount += patchCodeAttribute(infoOffset, handlerMethodRefIndex);
+                    if (isHandleMessageMethod && "Code".equals(utf8Values[attributeNameIndex])) {
+                        patchCodeAttribute(
+                                infoOffset,
+                                invalidMessageHandlerMethodRefIndex,
+                                errorHandlerMethodRefIndex,
+                                patchCounts);
                     }
                     offset = infoOffset + attributeLength;
                 }
             }
-            return patchCount;
+            return patchCounts;
         }
 
         private int readConstantPool() {
@@ -262,32 +338,48 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
             return offset;
         }
 
-        private int patchCodeAttribute(int infoOffset, int handlerMethodRefIndex) {
+        private void patchCodeAttribute(
+                int infoOffset,
+                int invalidMessageHandlerMethodRefIndex,
+                int errorHandlerMethodRefIndex,
+                PatchCounts patchCounts) {
             int codeLength = readU4(infoOffset + 4);
             int codeOffset = infoOffset + 8;
             int codeEnd = codeOffset + codeLength;
-            int patchCount = 0;
 
-            // Same-length replacement keeps branch offsets, exception tables and frames valid.
-            // Walk instruction starts only; raw byte scanning could mutate operands or switch data.
+            // Same-length replacements preserve branches, exception tables and frames.
+            // Walk instruction starts only; raw byte scanning could mutate operands.
             for (int offset = codeOffset;
                     offset < codeEnd;
                     offset =
                             GraphwarBytecodeInstructions.nextOffset(
                                     bytes, codeOffset, codeEnd, offset)) {
-                if (readU1(offset) == INVOKEVIRTUAL
+                int opcode = readU1(offset);
+                if (opcode == INVOKESPECIAL
                         && offset + 2 < codeEnd
-                        && isIOExceptionPrintStackTraceMethodRef(readU2(offset + 1))) {
+                        && isInvalidMessageMethodRef(readU2(offset + 1))) {
                     bytes[offset] = (byte) INVOKESTATIC;
-                    writeU2(bytes, offset + 1, handlerMethodRefIndex);
-                    patchCount += 1;
+                    writeU2(bytes, offset + 1, invalidMessageHandlerMethodRefIndex);
+                    patchCounts.invalidMessage += 1;
+                } else if (opcode == INVOKEVIRTUAL
+                        && offset + 2 < codeEnd
+                        && isExceptionPrintStackTraceMethodRef(readU2(offset + 1))) {
+                    bytes[offset] = (byte) INVOKESTATIC;
+                    writeU2(bytes, offset + 1, errorHandlerMethodRefIndex);
+                    patchCounts.errorPrintStackTrace += 1;
                 }
             }
-
-            return patchCount;
         }
 
-        private boolean isIOExceptionPrintStackTraceMethodRef(int constantPoolIndex) {
+        private boolean isInvalidMessageMethodRef(int constantPoolIndex) {
+            return isMethodRef(
+                    constantPoolIndex,
+                    GAME_DATA,
+                    INVALID_MESSAGE_METHOD,
+                    INVALID_MESSAGE_DESCRIPTOR);
+        }
+
+        private boolean isExceptionPrintStackTraceMethodRef(int constantPoolIndex) {
             if (constantPoolIndex <= 0 || constantPoolIndex >= methodRefClassIndexes.length) {
                 return false;
             }
@@ -301,9 +393,27 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
             String className = utf8Values[classNameIndexes[classIndex]];
             String methodName = utf8Values[nameAndTypeNameIndexes[nameAndTypeIndex]];
             String descriptor = utf8Values[nameAndTypeDescriptorIndexes[nameAndTypeIndex]];
-            return "java/io/IOException".equals(className)
-                    && "printStackTrace".equals(methodName)
-                    && "()V".equals(descriptor);
+            return "java/lang/Exception".equals(className)
+                    && PRINT_STACK_TRACE_METHOD.equals(methodName)
+                    && PRINT_STACK_TRACE_DESCRIPTOR.equals(descriptor);
+        }
+
+        private boolean isMethodRef(
+                int constantPoolIndex, String className, String methodName, String descriptor) {
+            if (constantPoolIndex <= 0 || constantPoolIndex >= methodRefClassIndexes.length) {
+                return false;
+            }
+
+            int classIndex = methodRefClassIndexes[constantPoolIndex];
+            int nameAndTypeIndex = methodRefNameAndTypeIndexes[constantPoolIndex];
+            if (classIndex == 0 || nameAndTypeIndex == 0) {
+                return false;
+            }
+
+            return className.equals(utf8Values[classNameIndexes[classIndex]])
+                    && methodName.equals(utf8Values[nameAndTypeNameIndexes[nameAndTypeIndex]])
+                    && descriptor.equals(
+                            utf8Values[nameAndTypeDescriptorIndexes[nameAndTypeIndex]]);
         }
 
         private int readU1(int offset) {

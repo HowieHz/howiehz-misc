@@ -48,8 +48,8 @@ importers:
         specifier: ^4.17.1
         version: 4.17.1(@typescript-eslint/utils@8.63.0)(eslint@10.6.0)
       eslint-plugin-oxlint:
-        specifier: ^1.72.0
-        version: 1.72.0(oxlint@1.73.0)
+        specifier: ^1.73.0
+        version: 1.73.0(oxlint@1.73.0)
       eslint-plugin-vue:
         specifier: ^10.9.2
         version: 10.9.2(@typescript-eslint/parser@8.63.0)(eslint@10.6.0)(vue-eslint-parser@10.4.1)
@@ -2016,10 +2016,10 @@ packages:
       eslint-import-resolver-node:
         optional: true
 
-  eslint-plugin-oxlint@1.72.0:
-    resolution: {integrity: sha512-WBPQdXRRatC2/8wWZ16iM/p+Eg3YTwa7As8IouMWnoAUYPOqa6QW3/kExifTpU7e9tFta5MT36+Z4eAWsg35Ag==}
+  eslint-plugin-oxlint@1.73.0:
+    resolution: {integrity: sha512-2qsGYkwpas99+jLmB7F3W8Gv+7QkHIr67AMw10UTs/QAMCm2eO0Z8B8ROMvAgyKaWIitkcvH8DwLfTrHMeXzCw==}
     peerDependencies:
-      oxlint: ~1.72.0
+      oxlint: ~1.73.0
 
   eslint-plugin-vue@10.9.2:
     resolution: {integrity: sha512-4g7ZP3pYcuqd7Zp0pzUKcos0W+RkjBz4EGdhJ92FcYk6v03Ti/GK5NwjgsjxHK+98eXDbHeK7VtX1az7/8doZA==}
@@ -5318,7 +5318,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-plugin-oxlint@1.72.0(oxlint@1.73.0):
+  eslint-plugin-oxlint@1.73.0(oxlint@1.73.0):
     dependencies:
       jsonc-parser: 3.3.1
       oxlint: 1.73.0(oxlint-tsgolint@0.24.0)

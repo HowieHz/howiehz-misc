@@ -1061,7 +1061,7 @@ const {
 const liveClickPreviewRenderedStatus = computed(() =>
   liveClickPreviewRenderedElapsedMs.value === undefined
     ? ""
-    : locale.status.liveClickPreview.rendered(formatLiveClickPreviewElapsed(liveClickPreviewRenderedElapsedMs.value)),
+    : locale.status.liveClickPreview.rendered(formatElapsedDuration(liveClickPreviewRenderedElapsedMs.value)),
 );
 const activeToolHint = computed(() => {
   if (liveClickPreviewRenderedStatus.value) {
@@ -1752,10 +1752,6 @@ function createResultPanelPointRows() {
       },
     };
   });
-}
-
-function formatLiveClickPreviewElapsed(elapsedMs: number) {
-  return `${formatDecimal(Math.max(0, elapsedMs) / 1000, 2)} s`;
 }
 
 /** 获取高精度时间戳，用于前端阶段计时。 */

@@ -4,6 +4,7 @@ import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarOneClickClearPathWorkerInput } from "../runtime/protocol";
 import type { GraphwarOneClickClearCandidate } from "./search";
 
@@ -73,6 +74,8 @@ interface GraphwarOneClickClearSearchInputOptions {
   prefixTarget: GraphwarTrajectoryTargetCircle | undefined;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
   routeMaskCacheId: number;
+  /** 几何路线算法模式；普通智能寻路和一键清图使用同一个开关。 */
+  routeMode: GraphwarPathfindingRouteMode;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
   /** 当前公式采样设置。 */
@@ -129,6 +132,7 @@ export function createGraphwarOneClickClearSearchInput(
     pathPoints: [...options.pathPoints],
     prefixTarget: options.prefixTarget,
     routeMaskCacheId: options.routeMaskCacheId,
+    routeMode: options.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     settings: options.settings,

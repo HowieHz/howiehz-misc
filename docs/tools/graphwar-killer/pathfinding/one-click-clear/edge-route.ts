@@ -1,5 +1,7 @@
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds } from "../../core/types";
+import type { GraphwarPathfindingRouteMode } from "../routing/mode";
+import { buildGraphwarThetaStarPathForMask } from "../routing/theta-star";
 import {
   buildGraphwarVisibilityGraphPathForMask,
   type GraphwarVisibilityGraphObstacleData,
@@ -8,7 +10,7 @@ import type { GraphwarOneClickClearEdgeWorkerJobResult } from "../runtime/protoc
 /** 一键清图 DAG 单边建路；master 串行 fallback 和 edge Worker 并行消费者共用同一条路线规则。 */
 import type { GraphwarOneClickClearDagEdgeBuildJob } from "./search";
 
-/** 单边建路所需的共享上下文；visibilityGraphObstacleData 的生命周期由调用方控制。 */
+/** 单边建路所需的共享上下文；可视图轮廓 cache 的生命周期由调用方控制。 */
 export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;
@@ -18,10 +20,12 @@ export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
+  /** 几何路线算法模式；和普通智能寻路共用页面上的快速开关。 */
+  routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
-  /** 与 routeMask 同生命周期的可视图数据；调用方负责决定复用范围。 */
-  visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData;
+  /** 与 routeMask 同生命周期的可视图数据；Theta* 模式不需要。 */
+  visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
 }
 
 /**
@@ -36,16 +40,27 @@ export async function buildOneClickClearDagEdgeRoute(
   job: GraphwarOneClickClearDagEdgeBuildJob,
 ): Promise<GraphwarOneClickClearEdgeWorkerJobResult> {
   const pathfindingStartedAt = performance.now();
-  const route = await buildGraphwarVisibilityGraphPathForMask({
-    bounds: context.bounds,
-    boundsRect: context.boundsRect,
-    boundaryExpansion: context.boundaryExpansion,
-    routeMask: context.routeMask,
-    routeTolerancePlanePixels: context.routeTolerancePlanePixels,
-    startPoint: job.startPoint,
-    targetPoint: job.targetPoint,
-    visibilityGraphObstacleData: context.visibilityGraphObstacleData,
-  });
+  const route =
+    context.routeMode === "theta-star"
+      ? await buildGraphwarThetaStarPathForMask({
+          bounds: context.bounds,
+          boundsRect: context.boundsRect,
+          boundaryExpansion: context.boundaryExpansion,
+          routeMask: context.routeMask,
+          routeTolerancePlanePixels: context.routeTolerancePlanePixels,
+          startPoint: job.startPoint,
+          targetPoint: job.targetPoint,
+        })
+      : await buildGraphwarVisibilityGraphPathForMask({
+          bounds: context.bounds,
+          boundsRect: context.boundsRect,
+          boundaryExpansion: context.boundaryExpansion,
+          routeMask: context.routeMask,
+          routeTolerancePlanePixels: context.routeTolerancePlanePixels,
+          startPoint: job.startPoint,
+          targetPoint: job.targetPoint,
+          visibilityGraphObstacleData: context.visibilityGraphObstacleData,
+        });
   const routePathfindingElapsedMs = performance.now() - pathfindingStartedAt;
 
   // 没有至少一段可画路线时不做像素映射；route-map-pixels 只统计实际映射工作。

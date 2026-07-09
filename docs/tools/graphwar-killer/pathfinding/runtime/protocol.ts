@@ -13,6 +13,7 @@ import type {
   GraphwarOneClickClearResult,
   GraphwarOneClickClearSearchInput,
 } from "../one-click-clear/search";
+import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
 
 /** 普通智能寻路的一条几何搜索请求。 */
@@ -35,6 +36,8 @@ export interface GraphwarPathfindingRouteInput {
   targetPoint: PixelPoint;
   /** 是否需要把搜索动画快照发回主线程。 */
   previewEnabled: boolean;
+  /** 几何路线算法模式；默认页面会传 visibility graph，复杂地形可切到 Theta*。 */
+  routeMode: GraphwarPathfindingRouteMode;
 }
 
 /** 普通智能寻路几何搜索返回的耗时和路径。 */
@@ -80,6 +83,8 @@ export interface GraphwarSmartPathfindingPathInput {
   hitTarget: GraphwarTrajectoryTargetCircle;
   /** 是否需要把搜索动画快照发回主线程。 */
   previewEnabled: boolean;
+  /** 几何路线算法模式；普通寻路和一键清图保持同一个选择。 */
+  routeMode: GraphwarPathfindingRouteMode;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
@@ -202,6 +207,8 @@ export interface GraphwarOneClickClearEdgeWorkerInit {
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
+  /** 几何路线算法模式；edge Worker 内按它决定是否建立可视图 cache。 */
+  routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
   /** 子 Worker 序号，仅用于调试错误信息。 */

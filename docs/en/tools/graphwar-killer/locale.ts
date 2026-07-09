@@ -541,7 +541,7 @@ export const graphwarKillerLocale = {
         "visibility-cache-skipped": {
           label: "Visibility cache unused",
           title:
-            "This Smart Pathfinding run either used a direct route or failed before obstacle-route search, so no visibility graph was needed.",
+            "This Smart Pathfinding run used Theta*, used a direct route, or failed before obstacle-route search, so no visibility graph was needed.",
         },
         "optimize-path": {
           label: "Optimize path nodes",
@@ -623,6 +623,9 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
+      fastPathfinding: "Fast",
+      fastPathfindingTitle:
+        "Use fast visibility-graph routing; turn it off to use Theta* for broader search around complex obstacles.",
       obstacleExpansionAgentMode: "Agent mode",
       obstacleExpansionDetectionMode: "Detection mode",
       obstacleExpansion: "Obstacle expansion",

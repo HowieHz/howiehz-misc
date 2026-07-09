@@ -71,6 +71,7 @@ import type {
 import type { GraphwarDetectionBox } from "./detection/objects";
 import type { GraphwarKillerLocale } from "./locale-types";
 import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";
+import type { GraphwarPathfindingRouteMode } from "./pathfinding/routing/mode";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/runtime/cache";
 import { createGraphwarPathfindingRunner } from "./pathfinding/runtime/runner";
 import { createGraphwarPathLineSegments, type GraphwarPathfindingLineSegment } from "./pathfinding/smart/preview";
@@ -278,6 +279,7 @@ const smartPathfindingEnabled = ref(false);
 const friendlyFireEnabled = ref(false);
 const obstacleBrushDiameterText = ref("30");
 const searchAnimationEnabled = ref(true);
+const fastPathfindingEnabled = ref(true);
 // 智能寻路和一键清图共用同一组运行状态、预览层和取消 token，避免两个异步任务同时回写页面。
 const smartPathfindingSession = useGraphwarSmartPathfindingSession({
   blockedPointFlashMs: smartPathfindingBlockedPointFlashMs,
@@ -331,6 +333,7 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
     getPathPixels: () => pathPixels.value,
+    getRouteMode: getPathfindingRouteMode,
     getSimulationMask: () => simulationObstacleMask.value,
     getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
     getTolerances: () => (parsedObstacleTolerances.value.ok ? parsedObstacleTolerances.value : undefined),
@@ -933,6 +936,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
     getPathfindingWorkerCount: () =>
       parsedPathfindingWorkerCount.value.ok ? parsedPathfindingWorkerCount.value.workerCount : undefined,
     getPathPoints: () => pathPixels.value,
+    getRouteMode: getPathfindingRouteMode,
     getSimulationMask: () => simulationObstacleMask.value,
     getTolerances: () => (parsedOneClickClearTolerances.value.ok ? parsedOneClickClearTolerances.value : undefined),
     isUnsupportedMode: isOneClickClearModeUnsupported,
@@ -1323,6 +1327,7 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
       title: entry.title,
     })),
     debugTimingVisible: smartPathfindingEnabled.value && debugInfoEnabled.value,
+    fastPathfindingEnabled: fastPathfindingEnabled.value,
     friendlyFireEnabled: friendlyFireEnabled.value,
     headerStatus: {
       kind: headerStatus.kind,
@@ -2042,6 +2047,22 @@ function toggleSearchAnimation() {
   clearSmartPathfindingPreview();
 }
 
+/** 切换几何路线算法；算法改变会让旧搜索结果和 worker 私有 cache 都失效。 */
+function toggleFastPathfinding() {
+  if (smartPathfindingInProgress.value) {
+    cancelSmartPathfinding(false);
+  }
+  fastPathfindingEnabled.value = !fastPathfindingEnabled.value;
+  invalidatePathfindingCaches();
+  clearSmartPathfindingStatus();
+  clearSmartPathfindingPreview();
+}
+
+/** 页面开关叫“快速”，worker 协议使用稳定算法名，避免文案影响缓存和消息格式。 */
+function getPathfindingRouteMode(): GraphwarPathfindingRouteMode {
+  return fastPathfindingEnabled.value ? "visibility-graph" : "theta-star";
+}
+
 /** 根据当前模式将指针点击分发给边界点选或路径点选。 */
 function handleStagePointerDown(event: PointerEvent) {
   const point = getImagePointFromEvent(event);
@@ -2493,6 +2514,7 @@ function undoLastPoint() {
         :panel="smartPathfindingPanel"
         @run-one-click-clear="void runOneClickClear()"
         @toggle-friendly-fire="toggleFriendlyFire"
+        @toggle-fast-pathfinding="toggleFastPathfinding"
         @toggle-search-animation="toggleSearchAnimation"
         @toggle-smart-pathfinding="toggleSmartPathfinding"
       />

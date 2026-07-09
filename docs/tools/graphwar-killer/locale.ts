@@ -467,7 +467,7 @@ export const graphwarKillerLocale = {
         },
         "visibility-cache-skipped": {
           label: "可视图缓存未使用",
-          title: "本次普通寻路直连成功或提前失败，没有进入绕障可视图搜索。",
+          title: "本次普通寻路使用 Theta*、直连成功或提前失败，没有进入绕障可视图搜索。",
         },
         "optimize-path": {
           label: "优化路径节点",
@@ -535,6 +535,8 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "调试信息",
+      fastPathfinding: "快速",
+      fastPathfindingTitle: "开启时使用可视图快速寻路；关闭时使用 Theta*，提高复杂障碍下的搜索覆盖。",
       obstacleExpansionAgentMode: "Agent 模式",
       obstacleExpansionDetectionMode: "识别模式",
       obstacleExpansion: "障碍外扩",

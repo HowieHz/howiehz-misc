@@ -355,6 +355,8 @@ export interface GraphwarKillerLocale {
         GraphwarKillerDebugStageText
       >;
       debugSummary: string;
+      fastPathfinding: string;
+      fastPathfindingTitle: string;
       obstacleExpansionAgentMode: string;
       obstacleExpansionDetectionMode: string;
       obstacleExpansion: string;

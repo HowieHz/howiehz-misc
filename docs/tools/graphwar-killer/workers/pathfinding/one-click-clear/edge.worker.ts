@@ -1,4 +1,4 @@
-/** 一键清图 DAG 边消费者 worker：初始化一次私有可视图 cache，然后按需处理单条边。 */
+/** 一键清图 DAG 边消费者 worker：初始化一次私有上下文，然后按需处理单条边。 */
 import { buildOneClickClearDagEdgeRoute } from "../../../pathfinding/one-click-clear/edge-route";
 import { createGraphwarVisibilityGraphObstacleData } from "../../../pathfinding/routing/visibility-graph";
 import type { GraphwarVisibilityGraphObstacleData } from "../../../pathfinding/routing/visibility-graph";
@@ -22,8 +22,8 @@ interface GraphwarOneClickClearEdgeWorkerScope {
 const workerScope = self as unknown as GraphwarOneClickClearEdgeWorkerScope;
 
 interface EdgeWorkerContext extends GraphwarOneClickClearEdgeWorkerInit {
-  /** 本 worker 私有可视图 cache，绑定本 worker 自己收到的 routeMask 引用。 */
-  visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData;
+  /** 本 worker 私有可视图 cache，绑定本 worker 自己收到的 routeMask 引用；Theta* 模式不需要。 */
+  visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
 }
 
 let context: EdgeWorkerContext | undefined;
@@ -38,15 +38,19 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
     if (request.type === "init") {
       /*
        * Edge Worker 不能复用主线程可视图 cache：cache 用 routeMask 引用相等判断兼容性。
-       * 在本 worker 内创建，才能保证 visibilityGraphObstacleData 绑定本 worker 收到的 routeMask。
+       * 只有可视图模式需要在本 worker 内创建，才能绑定本 worker 收到的 routeMask。
        */
+      const visibilityGraphObstacleData =
+        request.context.routeMode === "visibility-graph"
+          ? createGraphwarVisibilityGraphObstacleData({
+              bounds: request.context.bounds,
+              routeMask: request.context.routeMask,
+              routeTolerancePlanePixels: request.context.routeTolerancePlanePixels,
+            })
+          : undefined;
       context = {
         ...request.context,
-        visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
-          bounds: request.context.bounds,
-          routeMask: request.context.routeMask,
-          routeTolerancePlanePixels: request.context.routeTolerancePlanePixels,
-        }),
+        ...(visibilityGraphObstacleData ? { visibilityGraphObstacleData } : {}),
       };
       postResponse({
         type: "ready",

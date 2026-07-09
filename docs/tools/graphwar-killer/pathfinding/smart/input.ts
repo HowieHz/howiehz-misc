@@ -3,6 +3,7 @@ import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarSmartPathfindingPathInput } from "../runtime/protocol";
 
 /** 智能寻路搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
@@ -24,6 +25,8 @@ interface GraphwarSmartPathfindingSearchInputOptions {
   previewEnabled: boolean;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
   routeMaskCacheId: number;
+  /** 几何路线算法模式；由页面快速模式开关统一决定。 */
+  routeMode: GraphwarPathfindingRouteMode;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
   /** 当前公式采样设置。 */
@@ -49,6 +52,7 @@ export function createGraphwarSmartPathfindingSearchInput(
     hitTarget: options.hitTarget,
     previewEnabled: options.previewEnabled,
     routeMaskCacheId: options.routeMaskCacheId,
+    routeMode: options.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     settings: options.settings,

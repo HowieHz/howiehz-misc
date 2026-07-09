@@ -30,6 +30,8 @@ export interface GraphwarSmartPathfindingPanelModel {
   smartPathfindingToggleDisabled: boolean;
   /** 智能寻路按钮 hover 说明。 */
   smartPathfindingToggleTitle: string;
+  /** 是否使用快速可视图寻路；关闭时使用 Theta*。 */
+  fastPathfindingEnabled: boolean;
   /** 是否允许命中友军。 */
   friendlyFireEnabled: boolean;
   /** 是否展示搜索动画。 */
@@ -55,6 +57,7 @@ defineProps<{
 
 const emit = defineEmits<{
   runOneClickClear: [];
+  toggleFastPathfinding: [];
   toggleFriendlyFire: [];
   toggleSearchAnimation: [];
   toggleSmartPathfinding: [];
@@ -93,6 +96,16 @@ const emit = defineEmits<{
         @click="emit('toggleSmartPathfinding')"
       >
         {{ locale.ui.pathfinding.smartPathfinding }}
+      </button>
+      <button
+        v-if="panel.smartPathfindingEnabled"
+        type="button"
+        :aria-pressed="panel.fastPathfindingEnabled"
+        :class="{ 'graphwar-killer__toggle-button--active': panel.fastPathfindingEnabled }"
+        :title="locale.ui.pathfinding.fastPathfindingTitle"
+        @click="emit('toggleFastPathfinding')"
+      >
+        {{ locale.ui.pathfinding.fastPathfinding }}
       </button>
       <button
         v-if="panel.smartPathfindingEnabled"

@@ -75,7 +75,7 @@ export interface CompiledAbsConnectorSegment {
 export interface CompiledStepTerm {
   /** 最终公式里的 Sigmoid 中心点。 */
   formulaCenterX: number;
-  /** Y'= 漏洞模式下替换普通 step 项的 x 窗口瞬移项。 */
+  /** Y'= 漏洞模式下替换普通 step 项的高导数门函数。 */
   glitchSegment?: StepGlitchSegment;
   /** 一阶导前置系数。 */
   firstDerivativeCoefficient: number;
@@ -108,7 +108,7 @@ export interface CompiledGraphwarFormulaMaterials {
 /** 采样器使用的预编译公式求值器，避免在每个轨迹点重新解析表达式文本。 */
 export interface CompiledFormulaEvaluator {
   /** 计算 y'，供 y'= 模式积分和发射角迭代使用。 */
-  evaluateFirstDerivativeY: (x: number) => number;
+  evaluateFirstDerivativeY: (x: number, y: number) => number;
   /** 计算 y''，供 y''= 模式 RK4 使用。 */
   evaluateSecondDerivativeY: (x: number) => number;
   /** 计算 y，供普通 y= 模式和预览使用。 */
@@ -259,12 +259,12 @@ function compileStepEvaluator(
   const formula = getCompiledStepFormula(points, steepness, options, compiledMaterials);
 
   return {
-    evaluateFirstDerivativeY(x) {
+    evaluateFirstDerivativeY(x, y) {
       let slope = 0;
       for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
         const term = formula.terms[index];
         if (term.glitchSegment) {
-          slope = evaluateCompiledStepGlitchFirstDerivative(x, term.glitchSegment, options) + slope;
+          slope = evaluateCompiledStepGlitchFirstDerivative(x, y, term.glitchSegment, options) + slope;
           continue;
         }
         if (term.firstDerivativeCoefficient === 0) {
@@ -362,15 +362,17 @@ function evaluateCompiledStepStableSecondDerivativeBody(t: number) {
   return q * ((1 - q) / denominator ** 3);
 }
 
-/** 回放漏洞模式 x 窗口项；不使用 y 门，才能保持 D = deltaY / step 的简单假设。 */
+/** 回放漏洞模式门函数；保持与输出文本同一份单门触发公式。 */
 function evaluateCompiledStepGlitchFirstDerivative(
   x: number,
+  y: number,
   segment: StepGlitchSegment,
   options?: FormulaEvaluationOptions,
 ) {
-  const leftGate = 1 + evaluateStableSignRatio(x - segment.startX, options);
-  const rightGate = 1 + evaluateStableSignRatio(segment.endX - x, options);
-  return (segment.derivative / 4) * leftGate * rightGate;
+  const direction = segment.derivative < 0 ? -1 : 1;
+  const xGate = 1 + evaluateStableSignRatio(x - segment.startX, options);
+  const yGate = 1 + evaluateStableSignRatio(direction * (y - segment.startY), options);
+  return (segment.derivative / 4) * xGate * yGate;
 }
 
 /** 内部 step 采样应使用最终公式文本中的陡峭度，确保 y/dy/ddy 回放一致。 */
@@ -424,8 +426,8 @@ function createCompiledStepGlitchSegment(
 
   return {
     derivative,
-    endX: createCompiledFormulaXCenter(segment.endX, options),
     startX: createCompiledFormulaXCenter(segment.startX, options),
+    startY: createCompiledFormulaYCenter(segment.startY, options),
     step: createCompiledFormulaDistance(segment.step, options),
   };
 }
@@ -437,8 +439,17 @@ function createCompiledStepFormulaSteepness(steepness: number, options?: Formula
 
 /** 内部 step 采样应使用最终公式文本中的中心点，避免小数位边界偏移。 */
 function createCompiledFormulaXCenter(centerX: number, options?: FormulaEvaluationOptions) {
+  return createCompiledFormulaOffsetCenter(centerX, options);
+}
+
+/** 内部 step 采样应使用最终公式文本中的 y 阈值，避免小数位边界偏移。 */
+function createCompiledFormulaYCenter(centerY: number, options?: FormulaEvaluationOptions) {
+  return createCompiledFormulaOffsetCenter(centerY, options);
+}
+
+function createCompiledFormulaOffsetCenter(center: number, options?: FormulaEvaluationOptions) {
   const decimalPlaces = getFormulaDecimalPlaces(options);
-  return decimalPlaces === undefined ? centerX : -roundToDecimalPlaces(-centerX, decimalPlaces);
+  return decimalPlaces === undefined ? center : -roundToDecimalPlaces(-center, decimalPlaces);
 }
 
 /** 无采样范围时，编译路径应与公式输出一样保守使用 stable 导数形式。 */
@@ -649,16 +660,20 @@ function formatStepFirstDerivativeExpression(
   return cleanupExpression(parts.join("")) || "0";
 }
 
-/** 格式化 x-only 漏洞项；按四个 RK4 k 全命中窗口估算 D = deltaY / step。 */
+/** 格式化单门漏洞项；正向就是 D/4 乘以 x 触发门，再乘以 y 触发门。 */
 function formatStepGlitchFirstDerivativeExpression(
   segment: StepGlitchSegment,
   decimalPlaces: number | undefined,
   signEpsilon: number,
 ) {
-  const leftGate = `1+${formatStableSignRatio(formatXOffset(segment.startX, decimalPlaces), signEpsilon)}`;
-  const rightGate = `1+${formatStableSignRatio(formatReverseXOffset(segment.endX, decimalPlaces), signEpsilon)}`;
+  const direction = segment.derivative < 0 ? -1 : 1;
+  const xGate = `1+${formatStableSignRatio(formatXOffset(segment.startX, decimalPlaces), signEpsilon)}`;
+  const yGate = `1+${formatStableSignRatio(
+    formatDirectedYOffset(segment.startY, direction, decimalPlaces),
+    signEpsilon,
+  )}`;
   // 两个 sign 门全开时 (1+1)*(1+1)=4，因此文本系数使用 D/4，实际导数仍是 D。
-  return formatSignedRawTerm(segment.derivative / 4, `(${leftGate})*(${rightGate})`, decimalPlaces);
+  return formatSignedRawTerm(segment.derivative / 4, `(${xGate})*(${yGate})`, decimalPlaces);
 }
 
 /** 格式化 sigmoid 阶跃表达式的二阶导。 */
@@ -1176,9 +1191,12 @@ function formatXOffset(centerX: number, decimalPlaces?: number) {
   return offset === 0 ? "x" : `x${formatSignedNumber(offset, decimalPlaces)}`;
 }
 
-/** 格式化 c-x，用作漏洞模式 x 窗口的右侧边界。 */
-function formatReverseXOffset(centerX: number, decimalPlaces?: number) {
-  return `(${formatDecimal(centerX, decimalPlaces)}-x)`;
+function formatDirectedYOffset(centerY: number, direction: 1 | -1, decimalPlaces?: number) {
+  if (direction > 0) {
+    const offset = normalizeZero(-centerY, decimalPlaces);
+    return offset === 0 ? "y" : `y${formatSignedNumber(offset, decimalPlaces)}`;
+  }
+  return `(${formatDecimal(centerY, decimalPlaces)}-y)`;
 }
 
 /** 格式化带符号的 k*body 项，并丢弃四舍五入后为 0 的系数。 */

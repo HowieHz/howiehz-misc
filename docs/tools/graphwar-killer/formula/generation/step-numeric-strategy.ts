@@ -15,16 +15,16 @@ export interface StepOverflowProtectionRange {
   minX: number;
 }
 
-/** Step y'= 漏洞段；用于把普通 step 项替换成 x 窗口内的高导数瞬移项。 */
+/** Step y'= 漏洞段；用于把普通 step 项替换成触发 Graphwar 缩步漏洞的高导数门函数。 */
 export interface StepGlitchSegment {
-  /** 全部 RK4 子步都命中窗口时的目标导数。 */
+  /** 目标导数；按源码最小步长估算，用来迫使自适应步长缩到漏洞边界。 */
   derivative: number;
-  /** X 窗口右边界，也就是当前路径段目标 x。 */
-  endX: number;
   /** 本段选中的 Graphwar 自适应步长档位。 */
   step: number;
-  /** X 窗口左边界。 */
+  /** 触发门的 x 阈值。 */
   startX: number;
+  /** 触发门的 y 阈值，也就是当前路径段起点 y。 */
+  startY: number;
 }
 
 /** 编译和输出共用的公式数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */

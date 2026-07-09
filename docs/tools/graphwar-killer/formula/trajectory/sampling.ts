@@ -50,7 +50,7 @@ export interface GraphwarTrajectoryFormulaSettings {
   formulaPathSteepness?: number;
   /** Step 公式的陡峭度。 */
   steepness: number;
-  /** 是否允许 step y'= 按障碍竖线替换为 x 窗口漏洞项。 */
+  /** 是否允许 step y'= 按障碍竖线替换为漏洞门函数项。 */
   stepGlitchMode: boolean;
   /** Step 漏洞模式检查障碍时使用的 Graphwar 原始平面 mask；无 mask 时静默回退普通 step。 */
   stepGlitchObstacleMask?: Uint8Array;
@@ -304,8 +304,8 @@ function createStepGlitchSegment(
 
   return {
     derivative: replacementDeltaY / jump.step,
-    endX: target.x,
     startX: jump.startX,
+    startY: previous.y,
     step: jump.step,
   };
 }
@@ -322,7 +322,7 @@ function createStepGlitchJump(previousX: number, targetX: number) {
     }
   }
 
-  // 极短局部段没有源码步长档位能落在段内；按用户语义检查 x1 竖线，同时让窗口覆盖本段避免零宽。
+  // 极短局部段没有源码步长档位能落在段内；按用户语义检查 x1 竖线，同时让触发门覆盖本段避免零宽。
   return { checkX: targetX, startX: previousX, step: targetX - previousX };
 }
 

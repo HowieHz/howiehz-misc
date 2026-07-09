@@ -108,7 +108,7 @@ export function createGraphwarPathfindingCacheController() {
       input.routeTolerancePlanePixels,
       input.simulationBoundaryExpansion,
       getOptionalMaskCacheId(input.simulationMask),
-      createTrajectorySettingsCacheKey(input.settings),
+      createTrajectorySettingsCacheKey(input.settings, getOptionalMaskCacheId(input.settings.stepGlitchObstacleMask)),
       createPointArrayCacheKey(input.sourcePath),
       createPointCacheKey(input.targetPoint),
       createTargetCircleCacheKey(input.hitTarget),
@@ -127,7 +127,7 @@ export function createGraphwarPathfindingCacheController() {
       input.routeTolerancePlanePixels,
       input.simulationBoundaryExpansion,
       getOptionalMaskCacheId(input.simulationMask),
-      createTrajectorySettingsCacheKey(input.settings),
+      createTrajectorySettingsCacheKey(input.settings, getOptionalMaskCacheId(input.settings.stepGlitchObstacleMask)),
       createPointArrayCacheKey(input.pathPoints),
       input.prefixTarget ? createTargetCircleCacheKey(input.prefixTarget) : undefined,
       input.candidates.map(createOneClickClearCandidateCacheKey),
@@ -259,7 +259,10 @@ function createTargetCircleCacheKey(target: { center: PixelPoint; radius: number
   return [createPointCacheKey(target.center), target.radius];
 }
 
-function createTrajectorySettingsCacheKey(settings: GraphwarTrajectoryFormulaSettings) {
+function createTrajectorySettingsCacheKey(
+  settings: GraphwarTrajectoryFormulaSettings,
+  stepGlitchObstacleMaskId: number,
+) {
   return [
     settings.algorithm,
     settings.decimalPlaces,
@@ -267,6 +270,8 @@ function createTrajectorySettingsCacheKey(settings: GraphwarTrajectoryFormulaSet
     settings.formulaPathSteepness,
     settings.steepness,
     settings.stepGlitchMode,
+    // 漏洞模式按障碍竖线决定是否替换为门函数；mask 变化必须让 worker 结果缓存失效。
+    settings.stepGlitchMode ? stepGlitchObstacleMaskId : 0,
     settings.stepOverflowProtection,
   ];
 }

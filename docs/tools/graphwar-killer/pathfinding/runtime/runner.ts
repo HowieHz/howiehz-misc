@@ -420,6 +420,7 @@ function cloneGraphwarTrajectoryFormulaSettings(
     ...(settings.formulaPathSteepness === undefined ? {} : { formulaPathSteepness: settings.formulaPathSteepness }),
     steepness: settings.steepness,
     stepGlitchMode: settings.stepGlitchMode,
+    ...(settings.stepGlitchObstacleMask ? { stepGlitchObstacleMask: settings.stepGlitchObstacleMask } : {}),
     stepOverflowProtection: settings.stepOverflowProtection,
   };
 }

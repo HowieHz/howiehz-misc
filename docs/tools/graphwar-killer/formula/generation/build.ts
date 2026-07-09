@@ -386,7 +386,7 @@ function createCompiledStepFormula(
   for (let index = 1; index < points.length; index += 1) {
     const glitchSegment = createCompiledStepGlitchSegment(options?.stepGlitchSegments?.[index - 1], options);
     const formulaCenterX = createCompiledFormulaXCenter(points[index].x, options);
-    const deltaY = points[index].y - points[index - 1].y;
+    const deltaY = options?.stepSegmentDeltaYs?.[index - 1] ?? points[index].y - points[index - 1].y;
     const yCoefficient = createCompiledFormulaCoefficient(deltaY, options);
     const firstDerivativeCoefficient = createCompiledFormulaCoefficient(deltaY * steepness, options);
     const secondDerivativeCoefficient = createCompiledFormulaCoefficient(deltaY * steepness * steepness, options);

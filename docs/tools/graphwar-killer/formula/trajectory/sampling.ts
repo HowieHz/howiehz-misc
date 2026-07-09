@@ -181,6 +181,11 @@ interface TrajectoryFormulaState {
   signEpsilon: number;
 }
 
+interface StepSimulationRefinement {
+  stepGlitchSegments: readonly (StepGlitchSegment | undefined)[];
+  stepSegmentDeltaYs: readonly (number | undefined)[];
+}
+
 const GRAPHWAR_STEP_GLITCH_MIN_STEP = createGraphwarStepGlitchMinStep();
 
 function createResolvedTrajectoryFormulaState(options: {
@@ -212,23 +217,37 @@ function createTrajectoryFormulaState(
     options,
     formulaPoints,
   );
-  let formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon, stepGlitchSegments);
+  let stepSegmentDeltaYs: readonly (number | undefined)[] | undefined;
+  let formulaEvaluation = createTrajectoryFormulaEvaluation(
+    options,
+    formulaPoints,
+    signEpsilon,
+    stepGlitchSegments,
+    stepSegmentDeltaYs,
+  );
   let compiledMaterials = compileGraphwarFormulaMaterials(
     formulaPoints,
     options.settings.steepness,
     options.settings.algorithm,
     formulaEvaluation,
   );
-  const refinedStepGlitchSegments = refineStepGlitchSegmentsWithSimulation(
+  const refinedStepSegments = refineStepSegmentsWithSimulation(
     options,
     formulaPoints,
     formulaEvaluation,
     compiledMaterials,
     stepGlitchSegments,
   );
-  if (refinedStepGlitchSegments !== stepGlitchSegments) {
-    stepGlitchSegments = refinedStepGlitchSegments;
-    formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon, stepGlitchSegments);
+  if (refinedStepSegments) {
+    stepGlitchSegments = refinedStepSegments.stepGlitchSegments;
+    stepSegmentDeltaYs = refinedStepSegments.stepSegmentDeltaYs;
+    formulaEvaluation = createTrajectoryFormulaEvaluation(
+      options,
+      formulaPoints,
+      signEpsilon,
+      stepGlitchSegments,
+      stepSegmentDeltaYs,
+    );
     compiledMaterials = compileGraphwarFormulaMaterials(
       formulaPoints,
       options.settings.steepness,
@@ -252,17 +271,19 @@ function createTrajectoryFormulaEvaluation(
   formulaPoints: readonly GraphPoint[],
   signEpsilon: number,
   stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[],
+  stepSegmentDeltaYs?: readonly (number | undefined)[],
 ): FormulaEvaluationOptions {
   return {
     formulaDecimalPlaces: options.settings.decimalPlaces,
     signEpsilon,
     stepGlitchSegments,
+    stepSegmentDeltaYs,
     stepOverflowProtection: options.settings.stepOverflowProtection,
     stepOverflowProtectionRange: createStepOverflowProtectionRange(options.bounds, formulaPoints),
   };
 }
 
-function refineStepGlitchSegmentsWithSimulation(
+function refineStepSegmentsWithSimulation(
   options: {
     bounds: GraphBounds;
     points: readonly GraphPoint[];
@@ -273,14 +294,15 @@ function refineStepGlitchSegmentsWithSimulation(
   formulaEvaluation: FormulaEvaluationOptions,
   compiledMaterials: CompiledGraphwarFormulaMaterials,
   stepGlitchSegments: readonly (StepGlitchSegment | undefined)[] | undefined,
-) {
+): StepSimulationRefinement | undefined {
   const mask = options.settings.stepGlitchObstacleMask;
   const soldierCenter = options.soldierCenter ?? formulaPoints[0];
   if (!stepGlitchSegments || !mask || !soldierCenter || options.points.length < 3) {
-    return stepGlitchSegments;
+    return undefined;
   }
 
   const refinedSegments = [...stepGlitchSegments];
+  const refinedDeltaYs: (number | undefined)[] = [];
   let changed = false;
   let currentEvaluation = formulaEvaluation;
   let currentMaterials = compiledMaterials;
@@ -310,25 +332,26 @@ function refineStepGlitchSegmentsWithSimulation(
     }
 
     initialState = sample.endState;
-    const nextSegment = createStepGlitchSegmentFromActualStart(
-      options,
-      formulaPoints,
-      pointIndex,
-      actualStartPoint.y,
-      mask,
-    );
-    if (sameStepGlitchSegment(refinedSegments[pointIndex], nextSegment)) {
+    const nextDeltaY = createStepSegmentDeltaYFromActualStart(options, formulaPoints, pointIndex, actualStartPoint.y);
+    const nextSegment = createStepGlitchSegmentFromDeltaY(options, formulaPoints, pointIndex, nextDeltaY, mask);
+    const nextDeltaYOverride = createStepSegmentDeltaYOverride(options, formulaPoints, pointIndex, nextDeltaY);
+    if (
+      sameStepGlitchSegment(refinedSegments[pointIndex], nextSegment) &&
+      refinedDeltaYs[pointIndex] === nextDeltaYOverride
+    ) {
       continue;
     }
 
-    // 连续漏洞段会把下一段起点 y 带偏；按模拟器的实际落点重算 D，避免误差沿路径累计。
+    // 漏洞段会把实际 y 带偏；后续普通 step 和漏洞 D 都要从模拟器落点继续累计。
     refinedSegments[pointIndex] = nextSegment;
+    refinedDeltaYs[pointIndex] = nextDeltaYOverride;
     changed = true;
     currentEvaluation = createTrajectoryFormulaEvaluation(
       options,
       formulaPoints,
       formulaEvaluation.signEpsilon ?? 0,
       refinedSegments,
+      refinedDeltaYs,
     );
     currentMaterials = compileGraphwarFormulaMaterials(
       formulaPoints,
@@ -338,23 +361,52 @@ function refineStepGlitchSegmentsWithSimulation(
     );
   }
 
-  return changed ? refinedSegments : stepGlitchSegments;
+  return changed ? { stepGlitchSegments: refinedSegments, stepSegmentDeltaYs: refinedDeltaYs } : undefined;
 }
 
-function createStepGlitchSegmentFromActualStart(
+function createStepSegmentDeltaYFromActualStart(
+  options: {
+    points: readonly GraphPoint[];
+  },
+  formulaPoints: readonly GraphPoint[],
+  segmentIndex: number,
+  actualStartY: number,
+) {
+  const target = options.points[segmentIndex + 1];
+  const formulaTargetY = formulaPoints[segmentIndex + 1]?.y ?? target.y;
+  return formulaTargetY - actualStartY;
+}
+
+function createStepSegmentDeltaYOverride(
+  options: {
+    points: readonly GraphPoint[];
+  },
+  formulaPoints: readonly GraphPoint[],
+  segmentIndex: number,
+  deltaY: number,
+) {
+  const previous = options.points[segmentIndex];
+  const target = options.points[segmentIndex + 1];
+  const formulaPreviousY = formulaPoints[segmentIndex]?.y ?? previous.y;
+  const formulaTargetY = formulaPoints[segmentIndex + 1]?.y ?? target.y;
+  const defaultDeltaY = formulaTargetY - formulaPreviousY;
+  return deltaY === defaultDeltaY ? undefined : deltaY;
+}
+
+function createStepGlitchSegmentFromDeltaY(
   options: {
     bounds: GraphBounds;
     points: readonly GraphPoint[];
   },
   formulaPoints: readonly GraphPoint[],
   segmentIndex: number,
-  actualStartY: number,
+  deltaY: number,
   mask: Uint8Array,
 ) {
   const previous = options.points[segmentIndex];
   const target = options.points[segmentIndex + 1];
   const formulaTargetY = formulaPoints[segmentIndex + 1]?.y ?? target.y;
-  return createStepGlitchSegment(previous, target, formulaTargetY, formulaTargetY - actualStartY, options.bounds, mask);
+  return createStepGlitchSegment(previous, target, formulaTargetY, deltaY, options.bounds, mask);
 }
 
 function sameStepGlitchSegment(left: StepGlitchSegment | undefined, right: StepGlitchSegment | undefined) {

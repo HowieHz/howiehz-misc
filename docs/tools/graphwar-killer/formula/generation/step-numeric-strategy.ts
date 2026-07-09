@@ -35,6 +35,8 @@ export interface FormulaEvaluationOptions {
   signEpsilon?: number;
   /** 每个 step 段对应的漏洞替换项；undefined 表示该段保持普通 step。 */
   stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[];
+  /** 每个 step 段的有效高度差；漏洞段后的普通 step 也要从模拟器实际 y 继续累计。 */
+  stepSegmentDeltaYs?: readonly (number | undefined)[];
   /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否对 step 表达式使用抗溢出的等价格式。 */

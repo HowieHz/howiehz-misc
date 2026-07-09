@@ -341,6 +341,8 @@ export function useGraphwarLiveClickPreview(
           curvePoints.value = result.curvePoints;
           if (result.curvePoints) {
             showRenderedStatus(result.elapsedMs);
+          } else {
+            clearRenderedStatus();
           }
         })
         .catch((error: unknown) => {

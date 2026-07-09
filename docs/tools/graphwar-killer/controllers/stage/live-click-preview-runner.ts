@@ -1,6 +1,5 @@
 import { createGraphPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint } from "../../core/types";
-import { renderGraphwarLiveClickPreview } from "./live-click-preview-render";
 import type {
   GraphwarLiveClickPreviewRenderInput,
   GraphwarLiveClickPreviewRenderResult,
@@ -54,13 +53,9 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   let nextRequestId = 1;
   let queuedTask: PendingLiveClickPreviewTask | undefined;
   let queuedTaskInput: GraphwarLiveClickPreviewRenderInput | undefined;
+  let workerUnavailable = false;
 
   function render(input: GraphwarLiveClickPreviewRenderInput) {
-    if (typeof Worker === "undefined") {
-      return Promise.resolve().then(() => renderGraphwarLiveClickPreview(cloneRenderInput(input)));
-    }
-
-    const taskInput = cloneRenderInput(input);
     const requestId = nextRequestId;
     nextRequestId += 1;
     return new Promise<GraphwarLiveClickPreviewRenderResult>((resolve, reject) => {
@@ -72,6 +67,12 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
         resolve,
         settled: false,
       };
+      if (isWorkerUnavailable()) {
+        settleTaskAsResult(task, createGuideOnlyRenderResult());
+        return;
+      }
+
+      const taskInput = cloneRenderInput(input);
       if (startTaskIfPossible(task, taskInput)) {
         return;
       }
@@ -86,6 +87,10 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   function startTaskIfPossible(task: PendingLiveClickPreviewTask, input: GraphwarLiveClickPreviewRenderInput) {
     const slot = claimIdleWorkerSlot();
     if (!slot) {
+      if (workerUnavailable) {
+        settleTaskAsResult(task, createGuideOnlyRenderResult());
+        return true;
+      }
       return false;
     }
 
@@ -127,6 +132,9 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   }
 
   function claimIdleWorkerSlot() {
+    if (isWorkerUnavailable()) {
+      return undefined;
+    }
     if (getActiveTaskCount() >= getWorkerCountLimit()) {
       return undefined;
     }
@@ -136,12 +144,21 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
       }
     }
 
-    const slot: LiveClickPreviewWorkerSlot = {
-      worker: new Worker(new URL("../../workers/live-click-preview/main.worker.ts", import.meta.url), {
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("../../workers/live-click-preview/main.worker.ts", import.meta.url), {
         name: "graphwar-live-click-preview",
         type: "module",
-      }),
-    };
+      });
+    } catch {
+      // 首个 Worker 无法构造时多半是 CSP/WebView/module worker 限制；只保留外层引导虚线，避免退回主线程采样卡住交互。
+      if (workerSlots.length === 0) {
+        workerUnavailable = true;
+      }
+      return undefined;
+    }
+
+    const slot: LiveClickPreviewWorkerSlot = { worker };
     slot.worker.addEventListener("message", (event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>) =>
       handleWorkerMessage(slot, event),
     );
@@ -196,6 +213,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     if (startTaskIfPossible(task, input)) {
       queuedTask = undefined;
       queuedTaskInput = undefined;
+      return;
     }
     trimIdleWorkerSlots();
   }
@@ -280,10 +298,25 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
       : 1;
   }
 
+  function isWorkerUnavailable() {
+    if (workerUnavailable || typeof Worker === "undefined") {
+      workerUnavailable = true;
+      return true;
+    }
+    return false;
+  }
+
   return {
     cancel,
     close,
     render,
+  };
+}
+
+function createGuideOnlyRenderResult(): GraphwarLiveClickPreviewRenderResult {
+  return {
+    curvePoints: "",
+    elapsedMs: 0,
   };
 }
 

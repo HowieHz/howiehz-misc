@@ -59,7 +59,7 @@ export type GraphwarLiveClickPreviewWorkerResponse =
       type: "error";
     };
 
-/** 渲染实时点击预览；主线程 fallback 和 Worker 入口共享这一份纯函数。 */
+/** 渲染实时点击预览；保持纯函数，供 Worker 入口直接调用。 */
 export function renderGraphwarLiveClickPreview(
   input: GraphwarLiveClickPreviewRenderInput,
 ): GraphwarLiveClickPreviewRenderResult {

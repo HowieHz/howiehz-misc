@@ -202,8 +202,14 @@ final class GraphwarInterruptedSleepSilencer implements ClassFileTransformer {
 
             // The target classes are tiny helpers. Same-length replacement keeps branch
             // offsets, exception tables and StackMap frames valid without a bytecode library.
-            for (int offset = codeOffset; offset + 2 < codeEnd; offset += 1) {
+            // Walk instruction starts only; raw byte scanning could mutate operands or switch data.
+            for (int offset = codeOffset;
+                    offset < codeEnd;
+                    offset =
+                            GraphwarBytecodeInstructions.nextOffset(
+                                    bytes, codeOffset, codeEnd, offset)) {
                 if (readU1(offset) == INVOKEVIRTUAL
+                        && offset + 2 < codeEnd
                         && isPrintStackTraceMethodRef(readU2(offset + 1))) {
                     bytes[offset] = (byte) POP;
                     bytes[offset + 1] = (byte) NOP;

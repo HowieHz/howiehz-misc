@@ -20,9 +20,12 @@ import type { GraphwarPathfindingLineSegment } from "../../pathfinding/smart/pre
 import type { GraphwarSmartPathfindingSoldierTarget } from "../../pathfinding/targeting";
 import type { GraphwarLiveClickPreviewRenderInput } from "./live-click-preview-render";
 import {
+  GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM,
   createGraphwarLiveClickPreviewRunner,
   isGraphwarLiveClickPreviewCancelledError,
 } from "./live-click-preview-runner";
+
+export { GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM };
 
 interface ReadonlyRef<T> {
   readonly value: T;
@@ -46,6 +49,10 @@ interface GraphwarLiveClickPreviewOptions {
     createLineSegments: (points: readonly PixelPoint[]) => GraphwarPathfindingLineSegment[];
     mappedPathPoints: ReadonlyRef<readonly GraphPoint[]>;
     pathPixels: ReadonlyRef<readonly PixelPoint[]>;
+  };
+  /** Worker 调度设置独立于寻路 Worker；实时预览只消费已解析后的安全值。 */
+  runtime: {
+    workerCount: ReadonlyRef<number>;
   };
   /** 公式和模式开关应由页面统一解析，预览只消费合法性结果。 */
   settings: {
@@ -122,7 +129,9 @@ export function useGraphwarLiveClickPreview(
   const renderedElapsedMs = ref<number>();
   const pointerPoint = ref<PixelPoint>();
   const pointerPathPointIndex = ref<number>();
-  const runner = createGraphwarLiveClickPreviewRunner();
+  const runner = createGraphwarLiveClickPreviewRunner({
+    workerCount: options.runtime.workerCount,
+  });
   let pointerFrame: number | undefined;
   let pendingPathPointIndex: number | undefined;
   let pendingPointerPoint: PixelPoint | undefined;

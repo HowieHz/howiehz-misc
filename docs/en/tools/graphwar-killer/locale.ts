@@ -802,6 +802,13 @@ export const graphwarKillerLocale = {
         minYAriaLabel: "Graphwar coordinate-system bottom-edge y coordinate",
         minYTitle: "Y coordinate for the bottom edge of the Graphwar coordinate system.",
       },
+      actionBar: {
+        heading: "Action Bar",
+        liveClickPreviewWorkerCount: "Live preview parallelism",
+        liveClickPreviewWorkerCountAriaLabel: "Number of live click preview Workers",
+        liveClickPreviewWorkerCountTitle:
+          "Live preview uses persistent Workers in parallel; new pointer positions keep only one latest waiting task, and completed older requests are discarded by request order. Default 4, range 1 to 16.",
+      },
       advancedSettings: "Advanced",
       debugActivationCountdown: (remainingSeconds) => `Hold ${remainingSeconds}s more to enable debug info`,
       decimalPlaces: "Decimal places",

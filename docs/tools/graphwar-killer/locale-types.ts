@@ -457,6 +457,12 @@ export interface GraphwarKillerLocale {
         minYAriaLabel: string;
         minYTitle: string;
       };
+      actionBar: {
+        heading: string;
+        liveClickPreviewWorkerCount: string;
+        liveClickPreviewWorkerCountAriaLabel: string;
+        liveClickPreviewWorkerCountTitle: string;
+      };
       advancedSettings: string;
       debugActivationCountdown: (remainingSeconds: string) => string;
       decimalPlaces: string;

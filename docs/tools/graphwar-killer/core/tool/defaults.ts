@@ -33,6 +33,8 @@ interface GraphwarToolDefaults {
   templateMatchingWorkerCount: number;
   /** 几何寻路默认 Worker 数量。 */
   pathfindingWorkerCount: number;
+  /** 实时点击预览默认 Worker 数量；高频 pointermove 需要多 lane 吸收短时抖动。 */
+  liveClickPreviewWorkerCount: number;
   /** 默认最多保留的士兵识别数量，防止噪点生成过多目标。 */
   maximumSoldierCount: number;
 }
@@ -56,5 +58,6 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
   soldierTemplateCandidateTopRatio: 0.1,
   templateMatchingWorkerCount: 4,
   pathfindingWorkerCount: 4,
+  liveClickPreviewWorkerCount: 4,
   maximumSoldierCount: 40,
 };

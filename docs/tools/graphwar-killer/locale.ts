@@ -705,6 +705,13 @@ export const graphwarKillerLocale = {
         minYAriaLabel: "Graphwar 坐标系下边界 y 坐标",
         minYTitle: "Graphwar 坐标系下边界对应的 y 坐标。",
       },
+      actionBar: {
+        heading: "操作栏设定",
+        liveClickPreviewWorkerCount: "实时预览并行数",
+        liveClickPreviewWorkerCountAriaLabel: "实时点击预览 Worker 数量",
+        liveClickPreviewWorkerCountTitle:
+          "实时预览会用常驻 Worker 并行计算；新鼠标位置只保留一个最新等待任务，已开始的任务算完后按请求顺序丢弃旧结果。默认 4，取值 1 到 16。",
+      },
       advancedSettings: "高级设定",
       debugActivationCountdown: (remainingSeconds) => `再长按 ${remainingSeconds}s 开启调试信息`,
       decimalPlaces: "保留小数位",

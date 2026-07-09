@@ -35,7 +35,10 @@ import { useGraphwarScreenshotWorkflow } from "./controllers/screenshot/workflow
 import { useGraphwarSettingsValidation } from "./controllers/settings/validation";
 import { useGraphwarStageFeedback } from "./controllers/stage/feedback";
 import { useGraphwarStageHitTesting, type GraphwarStageHitTestingController } from "./controllers/stage/hit-testing";
-import { useGraphwarLiveClickPreview } from "./controllers/stage/live-click-preview";
+import {
+  GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM,
+  useGraphwarLiveClickPreview,
+} from "./controllers/stage/live-click-preview";
 import { useGraphwarObstacleEditor } from "./controllers/stage/obstacle-editor";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
@@ -190,6 +193,7 @@ const maximumSoldierCountText = ref(String(graphwarToolDefaults.maximumSoldierCo
 const soldierTemplateCandidateTopRatioText = ref(String(graphwarToolDefaults.soldierTemplateCandidateTopRatio));
 const templateMatchingWorkerCountText = ref(String(graphwarToolDefaults.templateMatchingWorkerCount));
 const pathfindingWorkerCountText = ref(String(graphwarToolDefaults.pathfindingWorkerCount));
+const liveClickPreviewWorkerCountText = ref(String(graphwarToolDefaults.liveClickPreviewWorkerCount));
 // 截图识别需要默认安全距离吸收像素误差；Agent 返回精确障碍，默认不额外外扩。
 const detectionRoutePlanningToleranceText = ref(String(GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS));
 const detectionObstacleSimulationToleranceText = ref("1");
@@ -630,6 +634,9 @@ const formulaInputDecimalPlaces = computed(() =>
 const formulaInputSteepness = computed(() => (parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1));
 const formulaInputPrecisionValid = computed(() => parsedPrecision.value.ok);
 const formulaInputSteepnessValid = computed(() => parsedSteepness.value.ok);
+const liveClickPreviewWorkerCount = computed(() =>
+  normalizeLiveClickPreviewWorkerCount(liveClickPreviewWorkerCountText.value),
+);
 // 轨迹结果 Module 应集中公式上下文、主采样、命中索引和绘制曲线；页面保留输入校验与文案映射。
 const {
   createPathTrajectoryFormulaSettings,
@@ -1030,6 +1037,9 @@ const {
     mappedPathPoints,
     pathPixels,
   },
+  runtime: {
+    workerCount: liveClickPreviewWorkerCount,
+  },
   settings: {
     algorithmMode,
     effectiveSmartPathfindingEnabled,
@@ -1404,6 +1414,10 @@ const stageStyle = computed(() => ({
 const soldierHitRadiusPixels = computed(() => getGraphwarPlaneRadiusPixels(GRAPHWAR_SOLDIER_RADIUS));
 // 高级设置面板只应消费展示 DTO；输入校验、缓存失效和检测/寻路副作用仍由页面侧维护。
 const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() => ({
+  actionBar: {
+    liveClickPreviewWorkerCountMaximum: GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM,
+    liveClickPreviewWorkerCountText: liveClickPreviewWorkerCountText.value,
+  },
   bounds: {
     maxXText: maxXText.value,
     maxYText: maxYText.value,
@@ -1752,6 +1766,16 @@ function createResultPanelPointRows() {
       },
     };
   });
+}
+
+function normalizeLiveClickPreviewWorkerCount(text: string) {
+  const workerCount = parseFiniteNumber(text);
+  return workerCount === undefined ||
+    !Number.isInteger(workerCount) ||
+    workerCount < 1 ||
+    workerCount > GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM
+    ? graphwarToolDefaults.liveClickPreviewWorkerCount
+    : workerCount;
 }
 
 /** 获取高精度时间戳，用于前端阶段计时。 */
@@ -2666,6 +2690,7 @@ function undoLastPoint() {
       @update-maximum-soldier-count-text="maximumSoldierCountText = $event"
       @update-min-x-text="minXText = $event"
       @update-min-y-text="minYText = $event"
+      @update-live-click-preview-worker-count-text="liveClickPreviewWorkerCountText = $event"
       @update-obstacle-min-area-text="obstacleMinAreaText = $event"
       @update-obstacle-simulation-tolerance-text="activeObstacleSimulationToleranceText = $event"
       @update-one-click-clear-delete-check-radius-text="oneClickClearDeleteCheckRadiusText = $event"

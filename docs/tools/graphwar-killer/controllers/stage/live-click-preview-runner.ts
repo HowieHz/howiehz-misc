@@ -21,128 +21,268 @@ export function isGraphwarLiveClickPreviewCancelledError(error: unknown) {
 }
 
 interface PendingLiveClickPreviewTask {
+  cancelled: boolean;
+  generation: number;
   id: number;
   reject: (reason?: unknown) => void;
   resolve: (value: GraphwarLiveClickPreviewRenderResult) => void;
+  settled: boolean;
 }
 
-/** 创建实时预览 runner；每次新落点会取消旧 Worker 任务，只保留最新结果。 */
-export function createGraphwarLiveClickPreviewRunner() {
-  let worker: Worker | undefined;
+interface GraphwarLiveClickPreviewRunnerOptions {
+  /** 已由页面校验/归一化的并行 Worker 数；runner 仍会二次 clamp 作为安全边界。 */
+  workerCount: ReadonlyRef<number>;
+}
+
+interface ReadonlyRef<T> {
+  readonly value: T;
+}
+
+interface LiveClickPreviewWorkerSlot {
+  activeTask?: PendingLiveClickPreviewTask;
+  worker: Worker;
+}
+
+export const GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM = 16;
+
+/** 创建实时预览 runner；常驻 Worker 并行处理已开始任务，等待槽只保留最新落点。 */
+export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickPreviewRunnerOptions) {
+  const workerSlots: LiveClickPreviewWorkerSlot[] = [];
+  let generation = 0;
+  let latestSettledRequestId = 0;
   let nextRequestId = 1;
-  let pendingTask: PendingLiveClickPreviewTask | undefined;
+  let queuedTask: PendingLiveClickPreviewTask | undefined;
+  let queuedTaskInput: GraphwarLiveClickPreviewRenderInput | undefined;
 
   function render(input: GraphwarLiveClickPreviewRenderInput) {
-    cancel();
-    const activeWorker = ensureWorker();
-    if (!activeWorker) {
+    if (typeof Worker === "undefined") {
       return Promise.resolve().then(() => renderGraphwarLiveClickPreview(cloneRenderInput(input)));
     }
 
-    const request: GraphwarLiveClickPreviewWorkerRequest = {
-      id: nextRequestId,
-      input,
-    };
+    const taskInput = cloneRenderInput(input);
+    const requestId = nextRequestId;
     nextRequestId += 1;
     return new Promise<GraphwarLiveClickPreviewRenderResult>((resolve, reject) => {
-      pendingTask = {
-        id: request.id,
+      const task: PendingLiveClickPreviewTask = {
+        cancelled: false,
+        generation,
+        id: requestId,
         reject,
         resolve,
+        settled: false,
       };
-      try {
-        activeWorker.postMessage(cloneWorkerRequest(request));
-      } catch (error) {
-        pendingTask = undefined;
-        reject(error);
+      if (startTaskIfPossible(task, taskInput)) {
+        return;
       }
+
+      // 高频 pointermove 只保留一个等待中的最新输入；已经开始的任务不硬中断。
+      settleTaskAsCancelled(queuedTask);
+      queuedTask = task;
+      queuedTaskInput = taskInput;
     });
   }
 
-  function cancel() {
-    if (!pendingTask) {
-      return;
+  function startTaskIfPossible(task: PendingLiveClickPreviewTask, input: GraphwarLiveClickPreviewRenderInput) {
+    const slot = claimIdleWorkerSlot();
+    if (!slot) {
+      return false;
     }
-    pendingTask.reject(new GraphwarLiveClickPreviewCancelledError());
-    pendingTask = undefined;
-    resetWorker();
+
+    slot.activeTask = task;
+    try {
+      slot.worker.postMessage({
+        id: task.id,
+        input,
+      } satisfies GraphwarLiveClickPreviewWorkerRequest);
+    } catch (error) {
+      slot.activeTask = undefined;
+      settleTaskAsError(task, error instanceof Error ? error : new Error(String(error)));
+      resetWorkerSlot(slot);
+      startQueuedTaskIfPossible();
+    }
+    return true;
+  }
+
+  function cancel() {
+    generation += 1;
+    latestSettledRequestId = nextRequestId - 1;
+    settleTaskAsCancelled(queuedTask);
+    queuedTask = undefined;
+    queuedTaskInput = undefined;
+    for (const slot of workerSlots) {
+      if (slot.activeTask) {
+        slot.activeTask.cancelled = true;
+        settleTaskAsCancelled(slot.activeTask);
+      }
+    }
   }
 
   function close() {
     cancel();
-    resetWorker();
+    for (const slot of workerSlots) {
+      slot.worker.terminate();
+    }
+    workerSlots.length = 0;
   }
 
-  function ensureWorker() {
-    if (typeof Worker === "undefined") {
+  function claimIdleWorkerSlot() {
+    if (getActiveTaskCount() >= getWorkerCountLimit()) {
       return undefined;
     }
-    if (worker) {
-      return worker;
+    for (const slot of workerSlots) {
+      if (!slot.activeTask) {
+        return slot;
+      }
     }
 
-    worker = new Worker(new URL("../../workers/live-click-preview/main.worker.ts", import.meta.url), {
-      name: "graphwar-live-click-preview",
-      type: "module",
-    });
-    worker.addEventListener("message", handleWorkerMessage);
-    worker.addEventListener("messageerror", handleWorkerMessageError);
-    worker.addEventListener("error", handleWorkerError);
-    return worker;
+    const slot: LiveClickPreviewWorkerSlot = {
+      worker: new Worker(new URL("../../workers/live-click-preview/main.worker.ts", import.meta.url), {
+        name: "graphwar-live-click-preview",
+        type: "module",
+      }),
+    };
+    slot.worker.addEventListener("message", (event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>) =>
+      handleWorkerMessage(slot, event),
+    );
+    slot.worker.addEventListener("messageerror", () =>
+      handleWorkerFailure(slot, new Error("Graphwar live click preview worker message could not be deserialized")),
+    );
+    slot.worker.addEventListener("error", (event) =>
+      handleWorkerFailure(slot, event.error instanceof Error ? event.error : new Error(event.message)),
+    );
+    workerSlots.push(slot);
+    return slot;
   }
 
-  function handleWorkerMessage(event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>) {
+  function handleWorkerMessage(
+    slot: LiveClickPreviewWorkerSlot,
+    event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>,
+  ) {
+    const task = slot.activeTask;
     const response = event.data;
-    if (!pendingTask || pendingTask.id !== response.id) {
+    if (!task || task.id !== response.id) {
       return;
     }
 
-    const completedTask = pendingTask;
-    pendingTask = undefined;
+    slot.activeTask = undefined;
     if (response.type === "error") {
-      completedTask.reject(new Error(response.message));
-      resetWorker();
+      settleTaskAsError(task, new Error(response.message));
+      startQueuedTaskIfPossible();
       return;
     }
-    completedTask.resolve(response.result);
+
+    settleTaskAsResult(task, response.result);
+    startQueuedTaskIfPossible();
   }
 
-  function handleWorkerMessageError() {
-    rejectPendingTask(new Error("Graphwar live click preview worker message could not be deserialized"));
+  function handleWorkerFailure(slot: LiveClickPreviewWorkerSlot, error: Error) {
+    if (slot.activeTask) {
+      settleTaskAsError(slot.activeTask, error);
+      slot.activeTask = undefined;
+    }
+    resetWorkerSlot(slot);
+    startQueuedTaskIfPossible();
   }
 
-  function handleWorkerError(event: ErrorEvent) {
-    rejectPendingTask(event.error instanceof Error ? event.error : new Error(event.message));
-  }
-
-  function rejectPendingTask(error: Error) {
-    if (!pendingTask) {
+  function startQueuedTaskIfPossible() {
+    if (!queuedTask || !queuedTaskInput) {
+      trimIdleWorkerSlots();
       return;
     }
-    pendingTask.reject(error);
-    pendingTask = undefined;
-    resetWorker();
+
+    const task = queuedTask;
+    const input = queuedTaskInput;
+    if (startTaskIfPossible(task, input)) {
+      queuedTask = undefined;
+      queuedTaskInput = undefined;
+    }
+    trimIdleWorkerSlots();
   }
 
-  function resetWorker() {
-    if (!worker) {
+  function settleTaskAsResult(task: PendingLiveClickPreviewTask, result: GraphwarLiveClickPreviewRenderResult) {
+    if (task.generation !== generation || task.cancelled || task.id < latestSettledRequestId) {
+      settleTaskAsCancelled(task);
       return;
     }
-    worker.terminate();
-    worker = undefined;
+
+    latestSettledRequestId = task.id;
+    settleTask(task, () => task.resolve(result));
+  }
+
+  function settleTaskAsError(task: PendingLiveClickPreviewTask, error: Error) {
+    if (task.generation !== generation || task.cancelled || task.id < latestSettledRequestId) {
+      settleTaskAsCancelled(task);
+      return;
+    }
+
+    latestSettledRequestId = task.id;
+    settleTask(task, () => task.reject(error));
+  }
+
+  function settleTaskAsCancelled(task: PendingLiveClickPreviewTask | undefined) {
+    if (!task) {
+      return;
+    }
+
+    task.cancelled = true;
+    settleTask(task, () => task.reject(new GraphwarLiveClickPreviewCancelledError()));
+  }
+
+  function settleTask(task: PendingLiveClickPreviewTask, callback: () => void) {
+    if (task.settled) {
+      return;
+    }
+
+    task.settled = true;
+    callback();
+  }
+
+  function resetWorkerSlot(slot: LiveClickPreviewWorkerSlot) {
+    const index = workerSlots.indexOf(slot);
+    if (index >= 0) {
+      workerSlots.splice(index, 1);
+    }
+    slot.worker.terminate();
+  }
+
+  function trimIdleWorkerSlots() {
+    let idleBudget = Math.max(0, getWorkerCountLimit() - getActiveTaskCount());
+    for (let index = 0; index < workerSlots.length; index += 1) {
+      const slot = workerSlots[index];
+      if (slot.activeTask) {
+        continue;
+      }
+      if (idleBudget > 0) {
+        idleBudget -= 1;
+        continue;
+      }
+      workerSlots.splice(index, 1);
+      index -= 1;
+      slot.worker.terminate();
+    }
+  }
+
+  function getActiveTaskCount() {
+    let count = 0;
+    for (const slot of workerSlots) {
+      if (slot.activeTask) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  function getWorkerCountLimit() {
+    const count = options.workerCount.value;
+    return Number.isInteger(count) && count >= 1
+      ? Math.min(count, GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM)
+      : 1;
   }
 
   return {
     cancel,
     close,
     render,
-  };
-}
-
-function cloneWorkerRequest(request: GraphwarLiveClickPreviewWorkerRequest): GraphwarLiveClickPreviewWorkerRequest {
-  return {
-    id: request.id,
-    input: cloneRenderInput(request.input),
   };
 }
 

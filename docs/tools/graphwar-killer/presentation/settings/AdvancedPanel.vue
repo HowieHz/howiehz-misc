@@ -51,6 +51,13 @@ interface GraphwarAdvancedSettingsPathfinding {
   oneClickClearDeleteCheckRadiusMinimumPlanePixels: number;
 }
 
+interface GraphwarAdvancedSettingsActionBar {
+  /** 实时点击预览 Worker 数输入框文本。 */
+  liveClickPreviewWorkerCountText: string;
+  /** 实时点击预览 Worker 数上限；父页面和调度器应使用同一范围。 */
+  liveClickPreviewWorkerCountMaximum: number;
+}
+
 export interface GraphwarAdvancedSettingsPanelModel {
   /** 坐标边界设置展示模型。 */
   bounds: GraphwarAdvancedSettingsBounds;
@@ -60,6 +67,8 @@ export interface GraphwarAdvancedSettingsPanelModel {
   recognition: GraphwarAdvancedSettingsRecognition;
   /** 寻路设置展示模型。 */
   pathfinding: GraphwarAdvancedSettingsPathfinding;
+  /** 操作栏设置展示模型。 */
+  actionBar: GraphwarAdvancedSettingsActionBar;
 }
 
 const props = defineProps<{
@@ -78,6 +87,7 @@ const emit = defineEmits<{
   updateMaximumSoldierCountText: [value: string];
   updateMinXText: [value: string];
   updateMinYText: [value: string];
+  updateLiveClickPreviewWorkerCountText: [value: string];
   updateObstacleMinAreaText: [value: string];
   updateObstacleSimulationToleranceText: [value: string];
   updateOneClickClearDeleteCheckRadiusText: [value: string];
@@ -150,6 +160,11 @@ const pathfindingWorkerCountText = computed({
 const oneClickClearDeleteCheckRadiusText = computed({
   get: () => props.panel.pathfinding.oneClickClearDeleteCheckRadiusText,
   set: (value) => emit("updateOneClickClearDeleteCheckRadiusText", value),
+});
+
+const liveClickPreviewWorkerCountText = computed({
+  get: () => props.panel.actionBar.liveClickPreviewWorkerCountText,
+  set: (value) => emit("updateLiveClickPreviewWorkerCountText", value),
 });
 </script>
 
@@ -393,6 +408,26 @@ const oneClickClearDeleteCheckRadiusText = computed({
             :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
           >
           <span>{{ locale.ui.pathfinding.unit }}</span>
+        </label>
+      </div>
+      <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+        <h3>
+          {{ locale.ui.settings.actionBar.heading }}
+        </h3>
+        <label
+          class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
+          :title="locale.ui.settings.actionBar.liveClickPreviewWorkerCountTitle"
+        >
+          {{ locale.ui.settings.actionBar.liveClickPreviewWorkerCount }}
+          <input
+            v-model="liveClickPreviewWorkerCountText"
+            inputmode="numeric"
+            min="1"
+            :max="panel.actionBar.liveClickPreviewWorkerCountMaximum"
+            autocomplete="off"
+            :aria-label="locale.ui.settings.actionBar.liveClickPreviewWorkerCountAriaLabel"
+            :title="locale.ui.settings.actionBar.liveClickPreviewWorkerCountTitle"
+          >
         </label>
       </div>
     </div>

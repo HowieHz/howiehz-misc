@@ -115,7 +115,7 @@ export interface GraphwarLiveClickPreviewController {
 export function useGraphwarLiveClickPreview(
   options: GraphwarLiveClickPreviewOptions,
 ): GraphwarLiveClickPreviewController {
-  const enabled = ref(false);
+  const enabled = ref(true);
   const pointerPoint = ref<PixelPoint>();
   const pointerPathPointIndex = ref<number>();
   let pointerFrame: number | undefined;

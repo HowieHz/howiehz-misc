@@ -1,11 +1,13 @@
 import type { Ref } from "vue";
 
 import {
+  createMinimumForwardPointAtGraphY,
+  graphXAdvancesFromPoint,
   normalizePathForMinimumForwardStep,
   normalizePathPointForStrictForward,
   pathFollowsGraphRule,
 } from "../../core/game/forward-rule";
-import { graphToImagePoint } from "../../core/geometry";
+import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import {
   createGraphPoint,
   type BoundsRect,
@@ -172,7 +174,26 @@ export function useGraphwarPathPointEditing(
       axis === "x" ? coordinate : currentPoint.x,
       axis === "y" ? coordinate : currentPoint.y,
     );
-    return setPathPoint(index, graphToImagePoint(nextGraphPoint, bounds, options.boundsRect.value));
+    return setPathPointFromGraphPoint(index, nextGraphPoint);
+  }
+
+  /** 手输 Graphwar 坐标允许超出可见边界；这里只维护 x+ 规则，不夹取 y 或 x。 */
+  function setPathPointFromGraphPoint(index: number, point: GraphPoint) {
+    const bounds = options.getBounds();
+    if (!bounds || index < 0 || index >= options.pathPixels.value.length) {
+      return false;
+    }
+
+    const nextPath = [...options.pathPixels.value];
+    nextPath[index] = graphToImagePoint(point, bounds, options.boundsRect.value);
+    const normalizedPath = normalizePathForMinimumForwardStepAllowingOutOfBounds(nextPath);
+    if (!pathFollowsGraphRuleForCurrentBounds(normalizedPath)) {
+      options.pathStatus.value = options.getForwardPathMessage();
+      return false;
+    }
+
+    options.setPathPixels(normalizedPath);
+    return true;
   }
 
   /** 按严格 x+ 规则把整条路径推进到下一个可表示 double。 */
@@ -183,6 +204,43 @@ export function useGraphwarPathPointEditing(
     }
 
     return normalizePathForMinimumForwardStep(points, bounds, options.boundsRect.value);
+  }
+
+  /** 坐标输入可能故意写出界点；传播 x+ 最小步长时保留这些点的 Graphwar y。 */
+  function normalizePathForMinimumForwardStepAllowingOutOfBounds(points: readonly PixelPoint[]) {
+    const bounds = options.getBounds();
+    const firstPoint = points[0];
+    if (!bounds || !firstPoint || points.length < 2) {
+      return [...points];
+    }
+
+    const normalizedPoints: PixelPoint[] = [firstPoint];
+    for (let index = 1; index < points.length; index += 1) {
+      const point = points[index];
+      if (point) {
+        normalizedPoints.push(
+          normalizePathPointForStrictForwardAllowingOutOfBounds(point, normalizedPoints.at(-1), bounds),
+        );
+      }
+    }
+    return normalizedPoints;
+  }
+
+  function normalizePathPointForStrictForwardAllowingOutOfBounds(
+    point: PixelPoint,
+    previousPoint: PixelPoint | undefined,
+    bounds: GraphBounds,
+  ) {
+    if (!previousPoint) {
+      return point;
+    }
+
+    const graphPoint = imageToGraphPoint(point, bounds, options.boundsRect.value);
+    if (graphXAdvancesFromPoint(previousPoint, graphPoint.x, bounds, options.boundsRect.value)) {
+      return point;
+    }
+
+    return createMinimumForwardPointAtGraphY(previousPoint, graphPoint.y, bounds, options.boundsRect.value) ?? point;
   }
 
   /** 先按边界收缩点，再只在必要时把 Graphwar x 推到上一个点后的下一个 double。 */

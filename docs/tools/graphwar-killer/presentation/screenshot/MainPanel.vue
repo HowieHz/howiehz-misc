@@ -323,10 +323,7 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
 }
 
 .graphwar-killer__stage {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--vp-c-divider) 42%, transparent) 1px, transparent 1px),
-    linear-gradient(color-mix(in srgb, var(--vp-c-divider) 42%, transparent) 1px, transparent 1px), var(--vp-c-bg-soft);
-  background-size: 40px 40px;
+  background: var(--vp-c-bg-soft);
   border: 1px solid var(--vp-c-divider);
   overflow: hidden;
   position: relative;

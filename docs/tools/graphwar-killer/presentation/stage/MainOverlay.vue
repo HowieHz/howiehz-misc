@@ -44,12 +44,16 @@ interface GraphwarStageOverlayObstacleBrushPreview {
 interface GraphwarStageOverlayBoundsLayer {
   /** 当前允许点击的目标范围。 */
   allowedTargetRect?: BoundsRect;
+  /** 当前 Graphwar 坐标轴线段，已按截图像素投影。 */
+  axisLines: readonly GraphwarStageOverlayLineSegment[];
   /** 障碍笔刷裁剪使用已落地边界，不能跟随手动框选预览。 */
   clipBoundsRect: BoundsRect;
   /** 边界自动识别成功后的高亮状态。 */
   flashActive: boolean;
   /** 正在手动框选边界时的第一个点。 */
   firstPoint?: PixelPoint;
+  /** 当前 Graphwar 坐标网格线段，已按截图像素投影。 */
+  gridLines: readonly GraphwarStageOverlayLineSegment[];
   /** 正在手动框选边界时的预览矩形。 */
   previewRect?: BoundsRect;
   /** 当前用于弹道验证的障碍边界矩形。 */
@@ -217,6 +221,19 @@ withDefaults(
         />
       </clipPath>
     </defs>
+    <g
+      v-if="overlay.bounds.gridLines.length"
+      class="graphwar-killer__grid"
+    >
+      <line
+        v-for="(segment, index) in overlay.bounds.gridLines"
+        :key="`${keyPrefix}grid-${index}`"
+        :x1="segment.x1"
+        :y1="segment.y1"
+        :x2="segment.x2"
+        :y2="segment.y2"
+      />
+    </g>
     <rect
       class="graphwar-killer__bounds"
       :class="{
@@ -245,18 +262,13 @@ withDefaults(
       :height="overlay.bounds.visibleBoundaryExpansionRect.height"
     />
     <line
+      v-for="(segment, index) in overlay.bounds.axisLines"
+      :key="`${keyPrefix}axis-${index}`"
       class="graphwar-killer__axis"
-      :x1="overlay.bounds.visibleRect.x"
-      :x2="overlay.bounds.visibleRect.x + overlay.bounds.visibleRect.width"
-      :y1="overlay.bounds.visibleRect.y + overlay.bounds.visibleRect.height / 2"
-      :y2="overlay.bounds.visibleRect.y + overlay.bounds.visibleRect.height / 2"
-    />
-    <line
-      class="graphwar-killer__axis"
-      :x1="overlay.bounds.visibleRect.x + overlay.bounds.visibleRect.width / 2"
-      :x2="overlay.bounds.visibleRect.x + overlay.bounds.visibleRect.width / 2"
-      :y1="overlay.bounds.visibleRect.y"
-      :y2="overlay.bounds.visibleRect.y + overlay.bounds.visibleRect.height"
+      :x1="segment.x1"
+      :x2="segment.x2"
+      :y1="segment.y1"
+      :y2="segment.y2"
     />
     <path
       v-if="
@@ -520,6 +532,13 @@ withDefaults(
 
 .graphwar-killer__bounds--flash {
   animation: graphwar-killer-bounds-flash 1600ms ease-out;
+}
+
+.graphwar-killer__grid {
+  pointer-events: none;
+  stroke: color-mix(in srgb, var(--vp-c-divider) 56%, transparent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .graphwar-killer__boundary-expansion {

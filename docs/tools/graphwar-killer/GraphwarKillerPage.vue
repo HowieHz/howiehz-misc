@@ -46,7 +46,7 @@ import {
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
   GRAPHWAR_VISIBLE_Y_LIMIT,
 } from "./core/game/constants";
-import { imageToGraphPoint, normalizeBoundsRect } from "./core/geometry";
+import { graphToImagePoint, imageToGraphPoint, normalizeBoundsRect } from "./core/geometry";
 import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
@@ -58,15 +58,17 @@ import {
   parseFiniteNumber,
 } from "./core/numbers";
 import { graphwarToolDefaults } from "./core/tool/defaults";
-import type {
-  AlgorithmMode,
-  BoundsRect,
-  EquationMode,
-  GraphPoint,
-  PixelPoint,
-  ToolMode,
-  ToolWorkflowMode,
-  TransferStatus,
+import {
+  createGraphPoint,
+  type AlgorithmMode,
+  type BoundsRect,
+  type EquationMode,
+  type GraphBounds,
+  type GraphPoint,
+  type PixelPoint,
+  type ToolMode,
+  type ToolWorkflowMode,
+  type TransferStatus,
 } from "./core/types";
 import type { GraphwarDetectionBox } from "./detection/objects";
 import type { GraphwarKillerLocale } from "./locale-types";
@@ -111,6 +113,13 @@ import {
 type PathfindingMode = "off" | "smart" | "auto-graph";
 /** 截图上的检测框，坐标均为图片像素。 */
 type DetectionBox = GraphwarDetectionBox;
+/** 舞台背景里的 Graphwar 坐标参考线，坐标均已投影为截图像素。 */
+interface StageCoordinateLines {
+  /** Graphwar 坐标轴线段。 */
+  axisLines: GraphwarPathfindingLineSegment[];
+  /** Graphwar 坐标网格线段。 */
+  gridLines: GraphwarPathfindingLineSegment[];
+}
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
 }>();
@@ -121,6 +130,9 @@ const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
 const graphwarBoundaryExpansionLimit = Math.floor((Math.min(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) - 1) / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const graphwarBoundsMinimumSizePixels = 4;
+const graphwarStageGridAxisEpsilon = 1e-9;
+const graphwarStageGridTargetLineCount = 64;
+const graphwarStageGridStepMultipliers = [1, 2, 5, 10] as const;
 const magnifierMinimumZoom = 1;
 const magnifierSliderMaximumZoom = 5;
 const magnifierInputMaximumZoom = 100;
@@ -792,6 +804,14 @@ const boundsPreviewRect = computed(() =>
     : undefined,
 );
 const visibleBoundsRect = computed(() => boundsPreviewRect.value ?? boundsRect.value);
+const stageCoordinateLines = computed<StageCoordinateLines>(() => {
+  const boundsResult = parsedBounds.value;
+  if (!boundsResult.ok) {
+    return { axisLines: [], gridLines: [] };
+  }
+
+  return createStageCoordinateLines(boundsResult.bounds, visibleBoundsRect.value);
+});
 const activeBoundaryExpansion = useGraphwarPathfindingBoundaryExpansion({
   modes: {
     pathfindingObstacleEdgesActive,
@@ -1396,14 +1416,134 @@ const pathLineSegments = computed<GraphwarPathfindingLineSegment[]>(() => create
 function createPathLineSegments(points: readonly PixelPoint[]) {
   return createGraphwarPathLineSegments(points, displayedSoldierVisibleRadiusPixels.value);
 }
+
+/** 生成舞台参考线时使用 Graphwar 坐标再投影到截图，避免 CSS 像素网格和实际坐标错位。 */
+function createStageCoordinateLines(bounds: GraphBounds, rect: BoundsRect): StageCoordinateLines {
+  if (rect.width <= 0 || rect.height <= 0) {
+    return { axisLines: [], gridLines: [] };
+  }
+
+  return {
+    axisLines: createStageAxisLines(bounds, rect),
+    gridLines: createStageGridLines(bounds, rect),
+  };
+}
+
+function createStageAxisLines(bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment[] {
+  const lines: GraphwarPathfindingLineSegment[] = [];
+  if (isStageCoordinateWithinBounds(0, bounds.minX, bounds.maxX)) {
+    lines.push(createStageVerticalLine(0, bounds, rect));
+  }
+  if (isStageCoordinateWithinBounds(0, bounds.minY, bounds.maxY)) {
+    lines.push(createStageHorizontalLine(0, bounds, rect));
+  }
+  return lines;
+}
+
+function createStageGridLines(bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment[] {
+  const lines: GraphwarPathfindingLineSegment[] = [];
+  appendStageVerticalGridLines(lines, bounds, rect, selectStageGridStep(bounds.maxX - bounds.minX));
+  appendStageHorizontalGridLines(lines, bounds, rect, selectStageGridStep(bounds.maxY - bounds.minY));
+  return lines;
+}
+
+function appendStageVerticalGridLines(
+  lines: GraphwarPathfindingLineSegment[],
+  bounds: GraphBounds,
+  rect: BoundsRect,
+  step: number,
+) {
+  for (
+    let x = getFirstStageGridCoordinate(bounds.minX, step);
+    x <= bounds.maxX + graphwarStageGridAxisEpsilon;
+    x += step
+  ) {
+    const coordinate = normalizeStageGridCoordinate(x);
+    if (isStageAxisCoordinate(coordinate)) {
+      continue;
+    }
+    lines.push(createStageVerticalLine(coordinate, bounds, rect));
+  }
+}
+
+function appendStageHorizontalGridLines(
+  lines: GraphwarPathfindingLineSegment[],
+  bounds: GraphBounds,
+  rect: BoundsRect,
+  step: number,
+) {
+  for (
+    let y = getFirstStageGridCoordinate(bounds.minY, step);
+    y <= bounds.maxY + graphwarStageGridAxisEpsilon;
+    y += step
+  ) {
+    const coordinate = normalizeStageGridCoordinate(y);
+    if (isStageAxisCoordinate(coordinate)) {
+      continue;
+    }
+    lines.push(createStageHorizontalLine(coordinate, bounds, rect));
+  }
+}
+
+function createStageVerticalLine(x: number, bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment {
+  const start = graphToImagePoint(createGraphPoint(x, bounds.minY), bounds, rect);
+  const end = graphToImagePoint(createGraphPoint(x, bounds.maxY), bounds, rect);
+  return {
+    x1: start.x,
+    x2: end.x,
+    y1: start.y,
+    y2: end.y,
+  };
+}
+
+function createStageHorizontalLine(y: number, bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment {
+  const start = graphToImagePoint(createGraphPoint(bounds.minX, y), bounds, rect);
+  const end = graphToImagePoint(createGraphPoint(bounds.maxX, y), bounds, rect);
+  return {
+    x1: start.x,
+    x2: end.x,
+    y1: start.y,
+    y2: end.y,
+  };
+}
+
+function selectStageGridStep(range: number) {
+  const rawStep = Math.max(1, Math.abs(range) / graphwarStageGridTargetLineCount);
+  const scale = 10 ** Math.floor(Math.log10(rawStep));
+  for (const multiplier of graphwarStageGridStepMultipliers) {
+    const step = multiplier * scale;
+    if (rawStep <= step) {
+      return step;
+    }
+  }
+  return 10 * scale;
+}
+
+function getFirstStageGridCoordinate(minimum: number, step: number) {
+  return Math.ceil((minimum - graphwarStageGridAxisEpsilon) / step) * step;
+}
+
+function normalizeStageGridCoordinate(coordinate: number) {
+  return isStageAxisCoordinate(coordinate) ? 0 : coordinate;
+}
+
+function isStageAxisCoordinate(coordinate: number) {
+  return Math.abs(coordinate) <= graphwarStageGridAxisEpsilon;
+}
+
+function isStageCoordinateWithinBounds(coordinate: number, minimum: number, maximum: number) {
+  return coordinate >= minimum - graphwarStageGridAxisEpsilon && coordinate <= maximum + graphwarStageGridAxisEpsilon;
+}
 const smartPathfindingPreviewPathPoints = computed(() => formatSvgPathPoints(smartPathfindingPreviewPath.value));
 // 舞台 overlay 只应消费展示 DTO；业务规则和半径公式应由页面侧投影，避免子 Module 反向理解工作流。
 const stageOverlay = computed(() => ({
   bounds: {
     allowedTargetRect: allowedTargetRect.value,
+    axisLines: stageCoordinateLines.value.axisLines,
     clipBoundsRect: boundsRect.value,
     flashActive: boundsFlashActive.value,
     firstPoint: boundsFirstPoint.value,
+    gridLines: stageCoordinateLines.value.gridLines,
     previewRect: boundsPreviewRect.value,
     visibleBoundaryExpansionRect: visibleBoundaryExpansionRect.value,
     visibleRect: visibleBoundsRect.value,

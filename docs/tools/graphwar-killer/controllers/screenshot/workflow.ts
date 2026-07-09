@@ -19,6 +19,8 @@ interface GraphwarScreenshotWorkflowOptions {
 
 /** 截图 Module 暴露给页面的稳定 Interface。 */
 export interface GraphwarScreenshotWorkflowController {
+  /** 应用由非文件输入生成的图片 URL，例如 Agent 的 770x450 状态画布。 */
+  applyGeneratedImage: (url: string, name: string, width: number, height: number) => void;
   /** 通过浏览器截屏 API 读取截图。 */
   captureScreenImage: () => Promise<void>;
   /** 读取当前图片元素像素。 */
@@ -112,6 +114,13 @@ export function useGraphwarScreenshotWorkflow(
       applyLoadedImage(reader.result, file.name || options.imageText.pastedName);
     });
     reader.readAsDataURL(file);
+  }
+
+  /** 应用调用方生成的图片 URL；尺寸已知时先落地，避免等待图片 load 才能渲染 overlay。 */
+  function applyGeneratedImage(url: string, name: string, width: number, height: number) {
+    imageWidth.value = width;
+    imageHeight.value = height;
+    applyLoadedImage(url, name);
   }
 
   /** 通过浏览器 Screen Capture API 截取屏幕图片。 */
@@ -258,6 +267,7 @@ export function useGraphwarScreenshotWorkflow(
   }
 
   return {
+    applyGeneratedImage,
     captureScreenImage,
     getImageDataFromCurrentImage,
     getImagePointFromEvent,

@@ -88,6 +88,8 @@ export interface GraphwarDetectionWorkflowController {
   clear: () => void;
   /** 页面卸载时释放检测 Worker 和延迟任务。 */
   dispose: () => void;
+  /** 从外部精确数据源写入边界、士兵和障碍结果。 */
+  applyExternalResult: (bounds: BoundsRect, result: GraphwarObjectsDetectionResult, statusMessage: string) => void;
   /** 使用 Canvas 像素自动检测 Graphwar 坐标系边界，再按该边界识别士兵和障碍。 */
   detect: (trigger?: GraphwarDetectionRunTrigger) => Promise<void>;
   /** 使用 Canvas 像素只识别 Graphwar 坐标系边界，并清除旧对象结果。 */
@@ -161,6 +163,24 @@ export function useGraphwarDetectionWorkflow(
     options.detectedSoldiers.value = [];
     options.effects.clearDetectedObjectSideEffects();
     options.effects.clearSmartPathfindingStatus();
+  }
+
+  /** 从 Agent 等精确外部来源写入结果，复用检测完成后的缓存和舞台副作用。 */
+  function applyExternalResult(bounds: BoundsRect, result: GraphwarObjectsDetectionResult, statusMessage: string) {
+    clearScheduledDetection();
+    if (!stopActiveRun()) {
+      runId += 1;
+      activeRunTrigger = undefined;
+    }
+
+    options.effects.clearSmartPathfindingStatus();
+    options.effects.applyDetectedBounds(bounds);
+    options.effects.invalidatePathfindingCaches();
+    options.detectedSoldiers.value = result.soldiers;
+    options.effects.flashBoundsRect();
+    options.effects.flashDetectedSoldiers();
+    options.effects.applyDetectedObstacles(result.obstacles);
+    setStatus(statusMessage, "success");
   }
 
   /** 开始一次新的检测运行，并让旧异步响应自动失效。 */
@@ -580,6 +600,7 @@ export function useGraphwarDetectionWorkflow(
     autoDetectionEnabled,
     cancel,
     clear,
+    applyExternalResult,
     detect,
     detectBounds,
     detectInCurrentBounds,

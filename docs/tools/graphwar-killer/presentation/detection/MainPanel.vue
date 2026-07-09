@@ -26,7 +26,22 @@ interface GraphwarDetectionPanelDebugRow {
   text: string;
 }
 
+interface GraphwarDetectionPanelAgentModel {
+  /** Agent 地址输入框文本。 */
+  baseUrlText: string;
+  /** 地址已配置好时，面板操作区展示读取按钮。 */
+  configured: boolean;
+  /** 文档站 public 目录中的 Agent jar 下载地址。 */
+  downloadHref: string;
+  /** 当前是否正在读取 Agent。 */
+  inProgress: boolean;
+  /** 是否使用 Agent 作为识别来源。 */
+  enabled: boolean;
+}
+
 export interface GraphwarDetectionPanelModel {
+  /** 使用 Graphwar Agent 的展示模型。 */
+  agent: GraphwarDetectionPanelAgentModel;
   /** 是否允许从截图中识别边界。 */
   canDetectBounds: boolean;
   /** 是否允许在当前已确认边界内识别士兵和障碍。 */
@@ -57,9 +72,19 @@ defineProps<{
 const emit = defineEmits<{
   detectBounds: [];
   detectObjects: [];
+  readAgent: [];
   toggleAutoDetection: [];
+  toggleAgentUsage: [];
   toggleSmartCursor: [];
+  updateAgentBaseUrl: [value: string];
 }>();
+
+function handleAgentBaseUrlInput(event: Event) {
+  const input = event.currentTarget;
+  if (input instanceof HTMLInputElement) {
+    emit("updateAgentBaseUrl", input.value);
+  }
+}
 </script>
 
 <template>
@@ -94,6 +119,7 @@ const emit = defineEmits<{
     </div>
     <div class="graphwar-killer__image-actions">
       <button
+        v-if="!panel.agent.enabled"
         type="button"
         :disabled="!panel.canDetectBounds"
         :title="locale.ui.detection.detectBoundsTitle"
@@ -102,6 +128,7 @@ const emit = defineEmits<{
         {{ locale.ui.detection.detectBounds }}
       </button>
       <button
+        v-if="!panel.agent.enabled"
         type="button"
         :disabled="!panel.canDetectObjects"
         :title="panel.detectObjectsTitle"
@@ -110,6 +137,16 @@ const emit = defineEmits<{
         {{ locale.ui.detection.detectObjects }}
       </button>
       <button
+        v-if="panel.agent.configured"
+        type="button"
+        :disabled="panel.agent.inProgress"
+        :title="locale.ui.detection.agent.readTitle"
+        @click="emit('readAgent')"
+      >
+        {{ panel.agent.inProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
+      </button>
+      <button
+        v-if="!panel.agent.enabled"
         type="button"
         :aria-pressed="panel.autoDetectionEnabled"
         :class="{ 'graphwar-killer__toggle-button--active': panel.autoDetectionEnabled }"
@@ -127,7 +164,43 @@ const emit = defineEmits<{
       >
         {{ locale.ui.detection.smartCursor }}
       </button>
+      <button
+        type="button"
+        :aria-expanded="panel.agent.enabled"
+        :aria-pressed="panel.agent.enabled"
+        :class="{ 'graphwar-killer__toggle-button--active': panel.agent.enabled }"
+        :title="locale.ui.detection.agent.toggleTitle"
+        @click="emit('toggleAgentUsage')"
+      >
+        {{ locale.ui.detection.agent.toggle }}
+      </button>
     </div>
+    <details
+      v-if="panel.agent.enabled"
+      class="graphwar-killer__subpanel graphwar-killer__details graphwar-killer__agent-usage"
+    >
+      <summary>{{ locale.ui.detection.agent.settingsSummary }}</summary>
+      <label
+        class="graphwar-killer__agent-url"
+        :title="locale.ui.detection.agent.addressTitle"
+      >
+        {{ locale.ui.detection.agent.address }}
+        <input
+          type="url"
+          :aria-label="locale.ui.detection.agent.addressAriaLabel"
+          :title="locale.ui.detection.agent.addressTitle"
+          :value="panel.agent.baseUrlText"
+          @input="handleAgentBaseUrlInput"
+        >
+      </label>
+      <p class="graphwar-killer__agent-usage-hint">
+        {{ locale.ui.detection.agent.helpPrefix }}
+        <a :href="panel.agent.downloadHref">{{ locale.ui.detection.agent.download }}</a>
+        {{ locale.ui.detection.agent.helpMiddle }}
+        <code>java -javaagent:graphwar-agent.jar -jar graphwar.jar</code>
+        {{ locale.ui.detection.agent.helpSuffix }}
+      </p>
+    </details>
     <details
       v-if="panel.debugTimingVisible"
       class="graphwar-killer__subpanel graphwar-killer__details"
@@ -166,6 +239,32 @@ const emit = defineEmits<{
   font-size: 1rem;
   margin: 0;
   padding: 0;
+}
+
+.graphwar-killer__detection-panel label {
+  display: grid;
+  font-weight: 600;
+  gap: 3px;
+  min-width: 0;
+}
+
+.graphwar-killer__detection-panel input:not([type="file"]) {
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  box-sizing: border-box;
+  color: var(--vp-c-text-1);
+  font: inherit;
+  height: 30px;
+  line-height: 1.15;
+  min-height: 0;
+  min-width: 0;
+  padding: 4px 8px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+  width: 100%;
 }
 
 .graphwar-killer__detection-panel button {
@@ -249,6 +348,34 @@ const emit = defineEmits<{
   padding: 8px;
 }
 
+.graphwar-killer__subpanel h3 {
+  font-size: 0.92rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.graphwar-killer__agent-usage {
+  align-content: start;
+}
+
+.graphwar-killer__agent-url {
+  align-items: center;
+  grid-template-columns: max-content minmax(220px, 420px);
+  justify-content: start;
+}
+
+.graphwar-killer__agent-usage-hint {
+  color: color-mix(in srgb, var(--vp-c-text-1) 66%, var(--vp-c-text-2) 34%);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.graphwar-killer__agent-usage-hint code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .graphwar-killer__details {
   gap: 0;
 }
@@ -306,6 +433,7 @@ const emit = defineEmits<{
   transform: translateY(-1px);
 }
 
+.graphwar-killer__detection-panel input:focus-visible,
 .graphwar-killer__detection-panel button:focus-visible {
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
@@ -320,6 +448,10 @@ const emit = defineEmits<{
 
   .graphwar-killer__label-row > span {
     text-align: left;
+  }
+
+  .graphwar-killer__agent-url {
+    grid-template-columns: 1fr;
   }
 }
 </style>

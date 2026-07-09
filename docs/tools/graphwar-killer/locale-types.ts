@@ -189,6 +189,11 @@ export interface GraphwarKillerLocale {
       screenCaptureUnavailable: string;
       screenCaptureUnsupported: string;
     };
+    agent: {
+      failed: (message: string) => string;
+      loaded: (soldiers: number) => string;
+      reading: string;
+    };
     autoGraphPathfindingDisabled: string;
     pathPointCoordinateNumber: string;
     secondOrderAngleHint: (angle: string) => string;
@@ -257,6 +262,21 @@ export interface GraphwarKillerLocale {
       undoPointTitle: string;
     };
     detection: {
+      agent: {
+        address: string;
+        addressAriaLabel: string;
+        addressTitle: string;
+        download: string;
+        helpMiddle: string;
+        helpPrefix: string;
+        helpSuffix: string;
+        read: string;
+        reading: string;
+        readTitle: string;
+        settingsSummary: string;
+        toggle: string;
+        toggleTitle: string;
+      };
       autoDetection: string;
       autoDetectionTitle: string;
       busyOverlay: string;
@@ -333,6 +353,8 @@ export interface GraphwarKillerLocale {
         GraphwarKillerDebugStageText
       >;
       debugSummary: string;
+      obstacleExpansionAgentMode: string;
+      obstacleExpansionDetectionMode: string;
       obstacleExpansion: string;
       obstacleExpansionTitle: string;
       oneClickClearDeleteCheckRadius: string;

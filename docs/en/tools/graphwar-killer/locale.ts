@@ -152,6 +152,11 @@ export const graphwarKillerLocale = {
       screenCaptureUnavailable: "Screen capture is not available in this environment.",
       screenCaptureUnsupported: "This browser does not support the Screen Capture API.",
     },
+    agent: {
+      failed: (message) => `Failed to read state: ${message}`,
+      loaded: (soldiers) => `Read current state: obstacles and ${soldiers} soldier(s)`,
+      reading: "Reading state",
+    },
     autoGraphPathfindingDisabled: "One-Click Clear is being rebuilt and is unavailable for now",
     pathPointCoordinateNumber: "Point coordinates must be numbers",
     secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to about ${angle} deg.`,
@@ -246,6 +251,21 @@ export const graphwarKillerLocale = {
       undoPointTitle: "Undo the most recently added path point",
     },
     detection: {
+      agent: {
+        address: "Agent URL",
+        addressAriaLabel: "Graphwar Agent URL",
+        addressTitle: "Local Graphwar Agent HTTP URL. Default: http://127.0.0.1:17900.",
+        download: "graphwar-agent.jar",
+        helpMiddle: " in the game directory, then start the game and Agent with ",
+        helpPrefix: "Use Graphwar Agent to read game information. Put ",
+        helpSuffix: ".",
+        read: "Read state",
+        reading: "Reading",
+        readTitle: "Read current soldier coordinates and obstacles from Graphwar Agent.",
+        settingsSummary: "Agent settings",
+        toggle: "Use Agent",
+        toggleTitle: "Use Graphwar Agent for current game data and hide screenshot pixel-detection actions.",
+      },
       autoDetection: "Auto detect",
       autoDetectionTitle:
         "When a screenshot loads, detect bounds, soldiers, and obstacles automatically; when detection settings change, redetect soldiers and obstacles inside the current bounds.",
@@ -351,7 +371,7 @@ export const graphwarKillerLocale = {
     },
     instructions: {
       items: [
-        "Add a Graphwar screenshot by uploading, dragging, or pasting it.",
+        "Add a Graphwar screenshot by uploading, dragging, pasting, or reading a local Graphwar Agent.",
         "Enter the coordinate range and game mode, or click Detect Bounds, then Detect Soldiers/Obstacles to mark soldiers and obstacles.",
         "Solver mode: in Pick path, click your soldier first, then the target path points; copy the generated function into Graphwar.",
         "Simulator mode: select the initial firing soldier and enter a function. y'' mode also needs a launch angle.",
@@ -601,6 +621,8 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
+      obstacleExpansionAgentMode: "Agent mode",
+      obstacleExpansionDetectionMode: "Detection mode",
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
         "Adjust the safety margin around detected obstacles and coordinate-system bounds for pathfinding and collision checks.",

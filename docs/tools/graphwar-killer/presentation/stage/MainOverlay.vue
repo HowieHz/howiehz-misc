@@ -84,10 +84,12 @@ interface GraphwarStageOverlayObstacleLayer {
 
 /** 检测框和检测闪烁图层。 */
 interface GraphwarStageOverlayDetectionLayer {
-  /** 已识别对象的可视圆。 */
+  /** 当前可选对象的可视圆。 */
   boxes: readonly GraphwarStageOverlayDetectionBox[];
   /** 当前悬停的士兵 id。 */
   hoveredSoldierId?: string;
+  /** 已识别但当前不可选的士兵提示圆；仅展示，不参与 hover 或点击。 */
+  inactiveBoxes: readonly GraphwarStageOverlayDetectionBox[];
   /** 一键清图命中后的闪烁状态。 */
   oneClickClearHitFlashActive: boolean;
   /** 一键清图命中的士兵。 */
@@ -297,6 +299,18 @@ withDefaults(
       />
     </template>
     <template v-if="overlay.obstacles.smartCursorEnabled">
+      <g
+        v-for="box in overlay.detection.inactiveBoxes"
+        :key="`${keyPrefix}inactive-${box.id}`"
+        class="graphwar-killer__detection-group"
+      >
+        <circle
+          class="graphwar-killer__detection graphwar-killer__detection--inactive-soldier"
+          :cx="box.visualCenterX"
+          :cy="box.visualCenterY"
+          :r="box.visualRadius"
+        />
+      </g>
       <g
         v-for="box in overlay.detection.boxes"
         :key="`${keyPrefix}${box.id}`"
@@ -541,6 +555,11 @@ withDefaults(
 
 .graphwar-killer__detection--soldier {
   stroke: #2563eb;
+}
+
+.graphwar-killer__detection--inactive-soldier {
+  stroke: #93c5fd;
+  stroke-opacity: 82%;
 }
 
 .graphwar-killer__detection-flash-group {

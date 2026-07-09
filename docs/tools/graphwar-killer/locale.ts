@@ -535,7 +535,7 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "调试信息",
-      fastPathfinding: "快速",
+      fastPathfinding: "快速模式",
       fastPathfindingTitle: "开启时使用可视图快速寻路；关闭时使用 Theta*，提高复杂障碍下的搜索覆盖。",
       obstacleExpansionAgentMode: "Agent 模式",
       obstacleExpansionDetectionMode: "识别模式",

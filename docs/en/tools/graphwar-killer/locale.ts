@@ -623,7 +623,7 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
-      fastPathfinding: "Fast",
+      fastPathfinding: "Fast mode",
       fastPathfindingTitle:
         "Use fast visibility-graph routing; turn it off to use Theta* for broader search around complex obstacles.",
       obstacleExpansionAgentMode: "Agent mode",

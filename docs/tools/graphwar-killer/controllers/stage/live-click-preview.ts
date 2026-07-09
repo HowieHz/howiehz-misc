@@ -351,7 +351,7 @@ export function useGraphwarLiveClickPreview(
     renderStatusTimer = window.setTimeout(() => {
       renderedElapsedMs.value = undefined;
       renderStatusTimer = undefined;
-    }, 3000);
+    }, 2000);
   }
 
   function clearRenderedStatus() {

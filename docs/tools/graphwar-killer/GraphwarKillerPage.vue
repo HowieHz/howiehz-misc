@@ -801,7 +801,7 @@ const activeToolBaseHint = computed(() =>
       ? locale.status.activeToolHint.obstacle
       : toolWorkflowMode.value === "simulator"
         ? locale.status.activeToolHint.simulatorPath
-        : "",
+        : locale.status.activeToolHint.solverPath,
 );
 const boundsPreviewRect = computed(() =>
   boundsFirstPoint.value && pointerPreviewPoint.value

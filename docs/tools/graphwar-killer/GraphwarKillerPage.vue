@@ -1105,9 +1105,8 @@ const inactiveDetectionBoxes = computed<DetectionBox[]>(() => {
   }
 
   const activeBoxIds = new Set(detectionBoxes.value.map((box) => box.id));
-  return detectedSoldiers.value.filter(
-    (box) => !activeBoxIds.has(box.id) && !detectionBoxMatchesSelectedPathPoint(box),
-  );
+  // 已选中的目标仍应保留浅蓝识别圈；排除它只用于防止重复作为下一目标。
+  return detectedSoldiers.value.filter((box) => !activeBoxIds.has(box.id));
 });
 const pathfindingMode = computed<PathfindingMode>(() => (effectiveSmartPathfindingEnabled.value ? "smart" : "off"));
 const stepPathfindingDisabledMessage = computed(() => locale.status.stepPathfindingDisabled);

@@ -309,7 +309,8 @@ function refineStepSegmentsWithSimulation(
   let initialState: GraphwarTrajectorySamplingState | undefined;
 
   for (let pointIndex = 1; pointIndex < options.points.length - 1; pointIndex += 1) {
-    const stopX = createStepSegmentRefinementStopX(options.points[pointIndex].x, refinedSegments[pointIndex - 1]);
+    const previousSegment = refinedSegments[pointIndex - 1];
+    const stopX = createStepSegmentRefinementStopX(options.points[pointIndex].x, previousSegment);
     const sample = sampleGraphwarTrajectory({
       algorithm: options.settings.algorithm,
       bounds: options.bounds,
@@ -334,7 +335,13 @@ function refineStepSegmentsWithSimulation(
     initialState = sample.endState;
     const nextDeltaY = createStepSegmentDeltaYFromActualStart(options, formulaPoints, pointIndex, actualStartPoint.y);
     const nextSegment = createStepGlitchSegmentFromDeltaY(options, formulaPoints, pointIndex, nextDeltaY, mask);
-    const nextDeltaYOverride = createStepSegmentDeltaYOverride(options, formulaPoints, pointIndex, nextDeltaY);
+    const nextDeltaYOverride = createStepSegmentDeltaYOverride(
+      options,
+      formulaPoints,
+      pointIndex,
+      nextDeltaY,
+      previousSegment,
+    );
     if (
       sameStepGlitchSegment(refinedSegments[pointIndex], nextSegment) &&
       refinedDeltaYs[pointIndex] === nextDeltaYOverride
@@ -389,7 +396,13 @@ function createStepSegmentDeltaYOverride(
   formulaPoints: readonly GraphPoint[],
   segmentIndex: number,
   deltaY: number,
+  previousSegment: StepGlitchSegment | undefined,
 ) {
+  // 普通 step 在路径点处可能还没完全收敛；只有漏洞跳变后的落点需要改写下一段累计高度。
+  if (!previousSegment) {
+    return undefined;
+  }
+
   const previous = options.points[segmentIndex];
   const target = options.points[segmentIndex + 1];
   const formulaPreviousY = formulaPoints[segmentIndex]?.y ?? previous.y;

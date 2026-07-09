@@ -1,3 +1,4 @@
+import { nowMs } from "../../core/time";
 import { createPixelPoint, type BoundsRect, type GraphBounds, type PixelPoint } from "../../core/types";
 import { addSoldierAreasToObstacleMask, dilateObstacleMask, type GraphwarDetectionBox } from "../../detection/objects";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
@@ -350,11 +351,6 @@ function cloneTargetCircle(target: { center: PixelPoint; radius: number }) {
 
 function clonePixelPoint(point: PixelPoint) {
   return createPixelPoint(point.x, point.y);
-}
-
-/** 获取高精度时间戳，用于保留原页面缓存计时语义。 */
-function nowMs() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
 }
 
 /** 输入相同才复用派生 mask；士兵写入顺序不影响结果，因此按稳定 key 排序。 */

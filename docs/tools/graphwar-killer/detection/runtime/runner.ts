@@ -1,4 +1,5 @@
 /** 主线程侧 Graphwar 截图识别 runner，集中管理 Worker 生命周期、取消和同步 fallback。 */
+import { nowMs } from "../../core/time";
 import type { BoundsRect } from "../../core/types";
 import { detectGraphwarObjectsInBounds, detectGraphwarPlayArea } from "../objects";
 import type {
@@ -414,9 +415,4 @@ function createObjectDetectionInstrumentation(
     measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) =>
       measureDetectionStage(timings, stage, task),
   };
-}
-
-/** 获取高精度时间戳，兼容没有 performance 的运行环境。 */
-function nowMs() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
 }

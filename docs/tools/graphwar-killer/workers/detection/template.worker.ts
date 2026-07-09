@@ -1,4 +1,5 @@
 /** 士兵模板匹配子 worker：只负责候选切片评分，不做全局排序和重叠抑制。 */
+import { nowMs } from "../../core/time";
 import { matchSoldierTemplates } from "../../detection/objects";
 import type {
   GraphwarSoldierTemplateWorkerRequest,
@@ -37,8 +38,3 @@ workerScope.addEventListener("message", (event) => {
     });
   }
 });
-
-/** 获取高精度时间戳，兼容没有 performance 的 Worker 环境。 */
-function nowMs() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
-}

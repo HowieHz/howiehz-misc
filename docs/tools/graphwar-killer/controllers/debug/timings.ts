@@ -1,5 +1,6 @@
 import { computed, ref, type ComputedRef } from "vue";
 
+import { nowMs } from "../../core/time";
 import type {
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
@@ -629,9 +630,4 @@ function createFinalDebugTimingEntries(timings: readonly AnyDebugTimingEntry[], 
   };
 
   return [...timings, outsideStagesTiming, totalTiming];
-}
-
-/** 获取高精度时间戳，用于前端阶段计时。 */
-function nowMs() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
 }

@@ -1,5 +1,5 @@
-import { formatSvgNumber } from "../../core/numbers";
-import type { BoundsRect, EquationMode, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
+import { nowMs } from "../../core/time";
+import type { BoundsRect, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
   createGraphwarTrajectoryFormulaContext,
@@ -8,6 +8,7 @@ import {
   type GraphwarTrajectoryCollisionSettings,
   type GraphwarTrajectoryFormulaSettings,
 } from "../../formula/trajectory/sampling";
+import { formatVisibleTrajectoryPoints } from "../../presentation/stage/svg-polyline";
 
 interface GraphwarLiveClickPreviewRenderInputBase {
   /** 当前 Graphwar 坐标边界。 */
@@ -102,13 +103,4 @@ function sampleFormulaPreview(input: Extract<GraphwarLiveClickPreviewRenderInput
     collectVisiblePixels: true,
     context,
   });
-}
-
-function formatVisibleTrajectoryPoints(points: readonly PixelPoint[], hitIndex: number) {
-  const sampledPoints = hitIndex >= 0 ? points.slice(0, hitIndex + 1) : points;
-  return sampledPoints.map((point) => `${formatSvgNumber(point.x)},${formatSvgNumber(point.y)}`).join(" ");
-}
-
-function nowMs() {
-  return performance.now();
 }

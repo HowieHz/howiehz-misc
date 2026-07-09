@@ -3,6 +3,7 @@ import { computed } from "vue";
 
 import type { ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import { getInputValue } from "../dom/input";
 
 type GraphwarResultPanelCoordinateAxis = "x" | "y";
 
@@ -91,11 +92,6 @@ const simulatorLaunchAngleText = computed({
   get: () => props.result.simulatorLaunchAngleText,
   set: (value) => emit("updateSimulatorLaunchAngleText", value),
 });
-
-function getInputValue(event: Event) {
-  const input = event.currentTarget;
-  return input instanceof HTMLInputElement ? input.value : undefined;
-}
 
 function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoordinateAxis, event: Event) {
   const value = getInputValue(event);

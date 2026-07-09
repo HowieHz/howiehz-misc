@@ -3,6 +3,7 @@ import type { CSSProperties } from "vue";
 
 import type { ToolMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import { getInputValue } from "../dom/input";
 
 interface GraphwarActionPanelStatus {
   /** 状态样式；实时预览完成用 success，普通工具提示用 info。 */
@@ -67,11 +68,6 @@ const emit = defineEmits<{
   updateMagnifierZoom: [value: string];
   updateObstacleBrushDiameter: [value: string];
 }>();
-
-function getInputValue(event: Event) {
-  const input = event.currentTarget;
-  return input instanceof HTMLInputElement ? input.value : undefined;
-}
 
 function handleMagnifierZoomInput(event: Event) {
   const value = getInputValue(event);

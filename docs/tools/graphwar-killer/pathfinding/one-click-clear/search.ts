@@ -1,6 +1,7 @@
 /** 在当前 Graphwar 路径后追加 DAG 清图路线；几何建路点和弹道命中圈分开建模。 */
 import { imageToGraphPoint } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
+import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type { GraphwarTrajectorySamplingState } from "../../formula/simulation/simulator";
 import {
@@ -1155,8 +1156,4 @@ function emitOneClickClearDebugTimings(
 
 function emitOneClickClearDebugTiming(options: GraphwarOneClickClearOptions, timing: GraphwarOneClickClearDebugTiming) {
   options.onDebugTiming?.(timing);
-}
-
-function nowMs() {
-  return performance.now();
 }

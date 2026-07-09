@@ -1,5 +1,6 @@
 import { nextTick, ref, type Ref } from "vue";
 
+import { nowMs } from "../../core/time";
 import type { BoundsRect } from "../../core/types";
 import type { GraphwarDetectionBox, GraphwarObjectsDetectionResult } from "../../detection/objects";
 import {
@@ -617,9 +618,4 @@ export function useGraphwarDetectionWorkflow(
     toggleAutoDetection,
     toggleSmartCursor,
   };
-}
-
-/** 获取高精度时间戳，用于前端阶段计时。 */
-function nowMs() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
 }

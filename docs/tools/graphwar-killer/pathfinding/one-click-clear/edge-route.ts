@@ -1,4 +1,5 @@
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
+import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds } from "../../core/types";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import { buildGraphwarThetaStarPathForMask } from "../routing/theta-star";
@@ -42,7 +43,7 @@ export async function buildOneClickClearDagEdgeRoute(
   context: GraphwarOneClickClearDagEdgeRouteBuildContext,
   job: GraphwarOneClickClearDagEdgeBuildJob,
 ): Promise<GraphwarOneClickClearEdgeWorkerJobResult> {
-  const pathfindingStartedAt = performance.now();
+  const pathfindingStartedAt = nowMs();
   const route =
     context.routeMode === "theta-star"
       ? await buildGraphwarThetaStarPathForMask({
@@ -65,7 +66,7 @@ export async function buildOneClickClearDagEdgeRoute(
           targetPoint: job.targetPoint,
           visibilityGraphObstacleData: context.visibilityGraphObstacleData,
         });
-  const routePathfindingElapsedMs = performance.now() - pathfindingStartedAt;
+  const routePathfindingElapsedMs = nowMs() - pathfindingStartedAt;
 
   // 没有至少一段可画路线时不做像素映射；route-map-pixels 只统计实际映射工作。
   if (!route || route.length < 2) {
@@ -76,9 +77,9 @@ export async function buildOneClickClearDagEdgeRoute(
     };
   }
 
-  const mapStartedAt = performance.now();
+  const mapStartedAt = nowMs();
   const pixelRoute = route.map((point) => planeGridCellCenterToImagePoint(point, context.boundsRect));
-  const routeMapPixelsElapsedMs = performance.now() - mapStartedAt;
+  const routeMapPixelsElapsedMs = nowMs() - mapStartedAt;
 
   // 首尾必须回到原始截图控制点；中间点才来自平面格点中心映射。
   pixelRoute[0] = job.startPoint;

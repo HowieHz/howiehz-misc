@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { GraphwarKillerLocale } from "../../locale-types";
+import { getInputValue } from "../dom/input";
 
 type GraphwarDetectionPanelStatusKind = "info" | "success" | "warning" | "error";
 
@@ -78,10 +79,11 @@ const emit = defineEmits<{
 }>();
 
 function handleAgentBaseUrlInput(event: Event) {
-  const input = event.currentTarget;
-  if (input instanceof HTMLInputElement) {
-    emit("updateAgentBaseUrl", input.value);
+  const value = getInputValue(event);
+  if (value === undefined) {
+    return;
   }
+  emit("updateAgentBaseUrl", value);
 }
 </script>
 

@@ -57,9 +57,9 @@ import {
   formatAngleDegree,
   formatDecimal,
   formatDoublePrecisionDecimal,
-  formatSvgNumber,
   parseFiniteNumber,
 } from "./core/numbers";
+import { nowMs } from "./core/time";
 import { graphwarToolDefaults } from "./core/tool/defaults";
 import {
   createGraphPoint,
@@ -95,6 +95,7 @@ import GraphwarAdvancedSettingsPanel, {
   type GraphwarAdvancedSettingsPanelModel,
 } from "./presentation/settings/AdvancedPanel.vue";
 import GraphwarSettingsPanel, { type GraphwarSettingsPanelModel } from "./presentation/settings/MainPanel.vue";
+import { formatSvgPolylinePoints } from "./presentation/stage/svg-polyline";
 import { formatElapsedDuration } from "./presentation/status/duration";
 import {
   createHeaderStatus,
@@ -1400,13 +1401,6 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
   };
 });
 
-/** 将像素点数组格式化为 SVG polyline points 字符串。 */
-function formatSvgPathPoints(points: readonly PixelPoint[]) {
-  return points.length >= 2
-    ? points.map((point) => `${formatSvgNumber(point.x)},${formatSvgNumber(point.y)}`).join(" ")
-    : "";
-}
-
 const stageStyle = computed(() => ({
   aspectRatio: `${imageWidth.value} / ${imageHeight.value}`,
 }));
@@ -1575,7 +1569,7 @@ function isStageAxisCoordinate(coordinate: number) {
 function isStageCoordinateWithinBounds(coordinate: number, minimum: number, maximum: number) {
   return coordinate >= minimum - graphwarStageGridAxisEpsilon && coordinate <= maximum + graphwarStageGridAxisEpsilon;
 }
-const smartPathfindingPreviewPathPoints = computed(() => formatSvgPathPoints(smartPathfindingPreviewPath.value));
+const smartPathfindingPreviewPathPoints = computed(() => formatSvgPolylinePoints(smartPathfindingPreviewPath.value));
 // 舞台 overlay 只应消费展示 DTO；业务规则和半径公式应由页面侧投影，避免子 Module 反向理解工作流。
 const stageOverlay = computed(() => ({
   bounds: {
@@ -1776,11 +1770,6 @@ function normalizeLiveClickPreviewWorkerCount(text: string) {
     workerCount > GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM
     ? graphwarToolDefaults.liveClickPreviewWorkerCount
     : workerCount;
-}
-
-/** 获取高精度时间戳，用于前端阶段计时。 */
-function nowMs() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
 }
 
 onMounted(() => {

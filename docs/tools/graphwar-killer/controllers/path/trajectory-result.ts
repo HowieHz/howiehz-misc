@@ -1,6 +1,5 @@
 import { computed } from "vue";
 
-import { formatSvgNumber } from "../../core/numbers";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -20,6 +19,7 @@ import {
   type GraphwarTrajectoryCollisionSettings,
   type GraphwarTrajectoryFormulaSettings,
 } from "../../formula/trajectory/sampling";
+import { formatVisibleTrajectoryPoints } from "../../presentation/stage/svg-polyline";
 
 interface ReadonlyRef<T> {
   readonly value: T;
@@ -301,10 +301,4 @@ export function useGraphwarTrajectoryResult(
     simulatorLaunchAngleRadians,
     trajectoryWarningReason,
   };
-}
-
-/** 将已映射到截图坐标的轨迹点格式化为 SVG polyline；hitIndex 指定目标或障碍截断位置。 */
-export function formatVisibleTrajectoryPoints(points: readonly PixelPoint[], hitIndex: number) {
-  const sampledPoints = hitIndex >= 0 ? points.slice(0, hitIndex + 1) : points;
-  return sampledPoints.map((point) => `${formatSvgNumber(point.x)},${formatSvgNumber(point.y)}`).join(" ");
 }

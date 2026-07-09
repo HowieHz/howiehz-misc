@@ -1,4 +1,5 @@
 /** 在 Web Worker 中执行耗时的 Graphwar 截图识别，避免阻塞页面主线程。 */
+import { nowMs } from "../../core/time";
 import type { BoundsRect } from "../../core/types";
 import {
   collectSoldierTemplateCenterCandidatesForMatching,
@@ -538,9 +539,4 @@ function createObjectDetectionInstrumentation(
     measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) =>
       measureDetectionStage(timings, stage, task),
   };
-}
-
-/** 获取高精度时间戳，兼容没有 performance 的 Worker 环境。 */
-function nowMs() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
 }

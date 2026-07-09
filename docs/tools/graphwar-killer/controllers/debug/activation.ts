@@ -1,5 +1,7 @@
 import { ref, type Ref } from "vue";
 
+import { nowMs } from "../../core/time";
+
 const debugActivationHoldMs = 3000;
 const debugActivationCountdownStepMs = 100;
 const debugActivationCountdownVisibleAfterMs = 1000;
@@ -141,9 +143,4 @@ export function useGraphwarDebugActivation(options: GraphwarDebugActivationOptio
     startHold,
     successVisible,
   };
-}
-
-/** 获取高精度时间戳，用于长按判定。 */
-function nowMs() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
 }

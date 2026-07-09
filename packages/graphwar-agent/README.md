@@ -14,7 +14,7 @@ It exposes soldier coordinates, obstacle data, and function submission for the m
 - **Accurate obstacle detection**: reuses Graphwar's own collision rule, where every non-white terrain pixel is blocking.
 - **Submits functions through the original logic**: the HTTP endpoint ultimately calls `GameData#sendFunction(String)`. That reuses the original turn checks, function validation, and firing message.
 - **Returns two coordinate spaces**: returns Graphwar's internal `world` coordinates and the current screen-oriented `view` coordinates, plus mathematical game coordinates.
-- **Small upstream compatibility fixes**: the agent silences expected exception noise and avoids one official lobby dead-end after a failed room rejoin.
+- **Official-client compatibility**: silences expected exception noise. Fixes one official client bug: after a room kick, a failed rejoin can leave the lobby stuck.
 
 ## Build
 
@@ -234,7 +234,7 @@ viewX = 769 - worldX
 
 ## Implementation Notes
 
-- The agent does not use JVMTI. Its bytecode patches are narrow compatibility fixes for known official-client edge cases.
+- The agent does not use JVMTI. Bytecode patches stay narrow. They only handle known official-client edge cases.
 - The HTTP server binds only to `127.0.0.1`.
 - Graphwar state is read through reflection because the official jar is not a compile-time dependency of this package.
 - The obstacle rule comes from the official `Obstacle#collidePoint`: `terrain.getRGB(x, y) != -1` means blocking.

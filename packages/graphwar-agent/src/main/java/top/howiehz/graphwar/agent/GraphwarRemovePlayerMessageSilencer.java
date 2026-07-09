@@ -6,7 +6,7 @@ import java.lang.instrument.IllegalClassFormatException;
 import java.nio.charset.StandardCharsets;
 import java.security.ProtectionDomain;
 
-final class GraphwarRemovePlayerMessageSilencer implements ClassFileTransformer {
+public final class GraphwarRemovePlayerMessageSilencer implements ClassFileTransformer {
     private static final String GAME_DATA = "Graphwar/GameData";
     private static final String HANDLER_CLASS =
             "top/howiehz/graphwar/agent/GraphwarRemovePlayerMessageSilencer";

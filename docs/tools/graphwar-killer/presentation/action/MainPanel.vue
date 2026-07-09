@@ -292,6 +292,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
   height: 30px;
   line-height: 1.15;
   min-height: 0;
+  min-width: 0;
   padding: 4px 8px;
   transition:
     border-color 0.2s ease,

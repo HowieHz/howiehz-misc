@@ -277,6 +277,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   height: 30px;
   line-height: 1.15;
   min-height: 0;
+  min-width: 0;
   padding: 4px 8px;
   transition:
     border-color 0.2s ease,
@@ -386,6 +387,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
 }
 
 .graphwar-killer__formula-input {
+  /* Formula text is the only intentional typography override for input values. */
   font-family: var(--vp-font-family-mono);
   min-width: 0;
 }

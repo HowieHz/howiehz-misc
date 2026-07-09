@@ -253,8 +253,7 @@ function handleAgentBaseUrlInput(event: Event) {
   border: 1px solid var(--vp-c-divider);
   border-radius: 8px;
   box-sizing: border-box;
-  color: var(--vp-c-text-1);
-  font: inherit;
+  font-variant-numeric: tabular-nums;
   height: 30px;
   line-height: 1.15;
   min-height: 0;
@@ -362,12 +361,6 @@ function handleAgentBaseUrlInput(event: Event) {
   align-items: center;
   grid-template-columns: max-content minmax(220px, 420px);
   justify-content: start;
-}
-
-.graphwar-killer__agent-url input {
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 400;
 }
 
 .graphwar-killer__agent-usage-hint {

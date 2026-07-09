@@ -13,10 +13,10 @@ export function formatSvgPolylinePoints(points: readonly PixelPoint[]) {
 /**
  * 将截图像素轨迹格式化为只包含可见段的 SVG polyline points 属性。
  *
- * `hitIndex` 表示第一个障碍/目标命中点；-1 表示保留完整轨迹。集中在 stage presentation 层，保证结果轨迹和实时预览使用同一套 SVG 数字格式。
+ * `hitIndex` 是第一个障碍命中点；Graphwar 原版碰撞后只绘制到 numSteps - 1。因此这里排除命中点本身；-1 表示保留完整轨迹。
  */
 export function formatVisibleTrajectoryPoints(points: readonly PixelPoint[], hitIndex: number) {
-  const visiblePointCount = hitIndex >= 0 ? Math.min(points.length, hitIndex + 1) : points.length;
+  const visiblePointCount = hitIndex >= 0 ? Math.min(points.length, hitIndex) : points.length;
   return formatSvgPolylinePointSlice(points, visiblePointCount);
 }
 

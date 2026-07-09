@@ -37,15 +37,21 @@ jobs:
         id: update-google-java-format
         run: node .github/scripts/update-google-java-format.js
 
-      - name: Format with updated google-java-format
+      - name: Require PR workflow token
         if: ${{ steps.update-google-java-format.outputs.changed == 'true' }}
-        run: pnpm fmt
+        env:
+          PR_WORKFLOW_TOKEN: ${{ secrets.PR_WORKFLOW_TOKEN }}
+        run: |
+          if [ -z "$PR_WORKFLOW_TOKEN" ]; then
+            echo "PR_WORKFLOW_TOKEN is required so updater PRs trigger normal CI." >&2
+            exit 1
+          fi
 
       - name: Create Pull Request
         if: ${{ steps.update-google-java-format.outputs.changed == 'true' }}
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # https://github.com/peter-evans/create-pull-request/releases/tag/v8.1.1
         with:
-          token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
+          token: ${{ secrets.PR_WORKFLOW_TOKEN }}
           commit-message: "chore: update google-java-format"
           title: "chore: update google-java-format"
           body: |
@@ -55,7 +61,7 @@ jobs:
             - google-java-format version: `${{ steps.update-google-java-format.outputs.version }}`
             - SHA256: `${{ steps.update-google-java-format.outputs.sha256 }}`
 
-            `pnpm fmt` was run with the updated formatter so Java formatting changes are included.
+            The updater only changes the tracked version and SHA256. It does not run the newly downloaded formatter jar before review; normal PR CI should validate formatting after the update is reviewed.
           branch: chore/update-google-java-format
           delete-branch: true
           labels: dependencies

@@ -1848,6 +1848,7 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
       snapshot.detectionResult,
       locale.status.agent.loaded(snapshot.detectionResult.soldiers.length),
     );
+    applyGraphwarAgentCurrentTurnSoldier(snapshot.localCurrentTurnSoldierPoint);
     toolMode.value = "path";
     imageStatus.value = "";
   } catch (error) {
@@ -1858,6 +1859,15 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
   } finally {
     graphwarAgentReadInProgress.value = false;
   }
+}
+
+/** Agent 当前回合是权威状态；只替换发射点，保留用户已经选好的后续目标。 */
+function applyGraphwarAgentCurrentTurnSoldier(point: PixelPoint | undefined) {
+  if (!point) {
+    return;
+  }
+
+  setPathPixels(pathPixels.value.length > 0 ? [point, ...pathPixels.value.slice(1)] : [point]);
 }
 
 /** 通过 Agent 调用 Graphwar 原版开火路径，提交当前结果面板里的函数文本。 */

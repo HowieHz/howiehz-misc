@@ -11,6 +11,7 @@ import java.util.List;
 
 final class GraphwarStateReader {
     private static final int GRAPHWAR_GAME_STATE_GAME = 2;
+    private static final String GRAPHWAR_COMPUTER_PLAYER_CLASS_NAME = "Graphwar.ComputerPlayer";
 
     // The official jar is not on this package's compile classpath. Reflection keeps the
     // build JDK-only while still reading Graphwar's public runtime methods.
@@ -84,7 +85,7 @@ final class GraphwarStateReader {
             throw new GraphwarStateUnavailableException("It is not this client's turn");
         }
         // Source: GameScreen.actionPerformed does not fire for ComputerPlayer turns.
-        if ("Graphwar.ComputerPlayer".equals(currentPlayer.getClass().getName())) {
+        if (isComputerPlayer(currentPlayer)) {
             throw new GraphwarStateUnavailableException(
                     "The current turn belongs to a local computer player");
         }
@@ -259,6 +260,7 @@ final class GraphwarStateReader {
         json.append(",\"name\":");
         appendJsonString(json, readString(player, "getName", ""));
         json.append(",\"local\":").append(readBoolean(player, "isLocalPlayer", false));
+        json.append(",\"computer\":").append(isComputerPlayer(player));
         json.append(",\"disconnected\":").append(readBoolean(player, "isDisconnected", false));
         json.append(",\"currentTurnSoldier\":")
                 .append(readInt(player, "getCurrentTurnSoldierIndex", -1));
@@ -278,6 +280,10 @@ final class GraphwarStateReader {
         }
 
         json.append("]}");
+    }
+
+    private static boolean isComputerPlayer(Object player) {
+        return GRAPHWAR_COMPUTER_PLAYER_CLASS_NAME.equals(player.getClass().getName());
     }
 
     private static void appendSoldier(

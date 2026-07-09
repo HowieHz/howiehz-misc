@@ -4,7 +4,7 @@ import {
   GRAPHWAR_SOLDIER_RADIUS,
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
 } from "../../core/game/constants";
-import { createPixelPoint, type BoundsRect, type EquationMode } from "../../core/types";
+import { createPixelPoint, type BoundsRect, type EquationMode, type PixelPoint } from "../../core/types";
 import {
   countObstacleMaskComponents,
   type GraphwarDetectionBox,
@@ -27,12 +27,16 @@ interface GraphwarAgentSoldier {
 }
 
 interface GraphwarAgentPlayer {
+  computer?: unknown;
+  currentTurnSoldier?: unknown;
   index?: unknown;
+  local?: unknown;
   soldiers?: unknown;
 }
 
 interface GraphwarAgentState {
   available?: unknown;
+  currentTurn?: unknown;
   gameMode?: unknown;
   obstacleMask?: {
     viewUrl?: unknown;
@@ -58,6 +62,8 @@ export interface GraphwarAgentSnapshot {
   imageName: string;
   /** White 770x450 canvas; all real data is rendered through overlays. */
   imageUrl: string;
+  /** Current local firing soldier in view pixels; omitted when it is not this client's turn. */
+  localCurrentTurnSoldierPoint?: PixelPoint;
 }
 
 export async function readGraphwarAgentSnapshot(baseUrlText: string): Promise<GraphwarAgentSnapshot> {
@@ -84,6 +90,7 @@ export async function readGraphwarAgentSnapshot(baseUrlText: string): Promise<Gr
     equationMode: getGraphwarAgentEquationMode(state.gameMode),
     imageName: "Graphwar Agent",
     imageUrl: createGraphwarAgentCanvasDataUrl(),
+    localCurrentTurnSoldierPoint: readLocalCurrentTurnSoldierPoint(state),
   };
 }
 
@@ -205,6 +212,34 @@ function createGraphwarAgentSoldierBoxes(state: GraphwarAgentState): GraphwarDet
   return soldiers;
 }
 
+function readLocalCurrentTurnSoldierPoint(state: GraphwarAgentState): PixelPoint | undefined {
+  const currentTurn = readInteger(state.currentTurn);
+  if (currentTurn === undefined) {
+    return undefined;
+  }
+
+  const players = Array.isArray(state.players) ? (state.players as GraphwarAgentPlayer[]) : [];
+  // Agent currentTurn mirrors GameData.getCurrentTurnIndex(), i.e. the player array position.
+  const player = players[currentTurn];
+  // New Agent versions expose computer; old jars omit it, so only strict true disables marking.
+  if (!player || player.local !== true || player.computer === true) {
+    return undefined;
+  }
+
+  const currentTurnSoldier = readInteger(player.currentTurnSoldier);
+  if (currentTurnSoldier === undefined) {
+    return undefined;
+  }
+
+  const soldiers = Array.isArray(player.soldiers) ? (player.soldiers as GraphwarAgentSoldier[]) : [];
+  const soldier = soldiers[currentTurnSoldier];
+  if (!soldier || soldier.alive !== true) {
+    return undefined;
+  }
+
+  return readAgentSoldierViewPoint(soldier);
+}
+
 function readAgentSoldierViewPoint(soldier: GraphwarAgentSoldier) {
   const x = Number(soldier.view?.pixel?.x);
   const y = Number(soldier.view?.pixel?.y);
@@ -214,8 +249,12 @@ function readAgentSoldierViewPoint(soldier: GraphwarAgentSoldier) {
   return createPixelPoint(x, y);
 }
 
+function readInteger(value: unknown) {
+  return Number.isInteger(value) ? Number(value) : undefined;
+}
+
 function readStableIndex(value: unknown, fallback: number) {
-  return Number.isInteger(value) ? Number(value) : fallback;
+  return readInteger(value) ?? fallback;
 }
 
 function getGraphwarAgentEquationMode(gameMode: unknown): EquationMode | undefined {

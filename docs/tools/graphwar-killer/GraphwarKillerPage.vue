@@ -91,9 +91,8 @@ import GraphwarSmartPathfindingPanel, {
 } from "./presentation/pathfinding/MainPanel.vue";
 import GraphwarResultPanel from "./presentation/result/MainPanel.vue";
 import GraphwarScreenshotPanel, { type GraphwarScreenshotPanelModel } from "./presentation/screenshot/MainPanel.vue";
-import GraphwarAdvancedSettingsPanel, {
-  type GraphwarAdvancedSettingsPanelModel,
-} from "./presentation/settings/AdvancedPanel.vue";
+import type { GraphwarAdvancedSettingsPanelModel } from "./presentation/settings/advanced-panel-model";
+import GraphwarAdvancedSettingsPanel from "./presentation/settings/AdvancedPanel.vue";
 import GraphwarSettingsPanel, { type GraphwarSettingsPanelModel } from "./presentation/settings/MainPanel.vue";
 import { formatSvgPolylinePoints } from "./presentation/stage/svg-polyline";
 import { formatElapsedDuration } from "./presentation/status/duration";

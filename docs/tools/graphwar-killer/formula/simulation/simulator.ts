@@ -209,16 +209,19 @@ function createStepAdjustedFormulaPathPoints(
 }
 
 /** 将 step 中心向左移动，让曲线在用户目标 x 处已经足够接近目标 y。 */
-function calculateStepCenterX(previousTarget: GraphPoint, target: GraphPoint, steepness: number) {
-  const deltaY = target.y - previousTarget.y;
-  const availableOffset = target.x - previousTarget.x - STEP_CENTER_MARGIN;
+export function calculateStepFormulaCenterX(startX: number, targetX: number, deltaY: number, steepness: number) {
+  const availableOffset = targetX - startX - STEP_CENTER_MARGIN;
   const requiredProgress = 1 - STEP_TARGET_VERTICAL_TOLERANCE / Math.abs(deltaY);
   if (deltaY === 0 || requiredProgress <= 0.5 || availableOffset <= 0 || !Number.isFinite(availableOffset)) {
-    return target.x;
+    return targetX;
   }
 
   const centerOffset = Math.log(requiredProgress / (1 - requiredProgress)) / steepness;
-  return target.x - Math.min(centerOffset, availableOffset);
+  return targetX - Math.min(centerOffset, availableOffset);
+}
+
+function calculateStepCenterX(previousTarget: GraphPoint, target: GraphPoint, steepness: number) {
+  return calculateStepFormulaCenterX(previousTarget.x, target.x, target.y - previousTarget.y, steepness);
 }
 
 /** 使用 Graphwar 的采样、步长二分和 RK4 规则生成预览轨迹点。 */

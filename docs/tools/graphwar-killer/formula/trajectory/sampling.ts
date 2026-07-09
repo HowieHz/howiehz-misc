@@ -5,6 +5,7 @@ import {
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
+import { createGraphPoint } from "../../core/types";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -24,6 +25,7 @@ import {
 } from "../generation/step-numeric-strategy";
 import type { FormulaEvaluationOptions, StepGlitchSegment } from "../generation/step-numeric-strategy";
 import {
+  calculateStepFormulaCenterX,
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
   sampleGraphwarExpressionTrajectory,
@@ -182,6 +184,7 @@ interface TrajectoryFormulaState {
 }
 
 interface StepSimulationRefinement {
+  formulaPoints: GraphPoint[];
   stepGlitchSegments: readonly (StepGlitchSegment | undefined)[];
   stepSegmentDeltaYs: readonly (number | undefined)[];
 }
@@ -217,7 +220,7 @@ function createTrajectoryFormulaState(
   },
   signEpsilon: number,
 ): TrajectoryFormulaState {
-  const formulaPoints = createResolvedFormulaPathPoints(options, signEpsilon);
+  let formulaPoints = createResolvedFormulaPathPoints(options, signEpsilon);
   let stepGlitchSegments: readonly (StepGlitchSegment | undefined)[] | undefined = createStepGlitchSegments(
     options,
     formulaPoints,
@@ -245,6 +248,7 @@ function createTrajectoryFormulaState(
     signEpsilon,
   );
   if (refinedStepSegments) {
+    formulaPoints = refinedStepSegments.formulaPoints;
     stepGlitchSegments = refinedStepSegments.stepGlitchSegments;
     stepSegmentDeltaYs = refinedStepSegments.stepSegmentDeltaYs;
     formulaEvaluation = createTrajectoryFormulaEvaluation(
@@ -310,6 +314,7 @@ function refineStepSegmentsWithSimulation(
 
   const refinedSegments = [...stepGlitchSegments];
   const refinedDeltaYs: (number | undefined)[] = [];
+  const refinedFormulaPoints = [...formulaPoints];
   let changed = false;
   let currentEvaluation = formulaEvaluation;
   let currentMaterials = compiledMaterials;
@@ -319,8 +324,8 @@ function refineStepSegmentsWithSimulation(
     const previousSegment = segmentIndex > 0 ? refinedSegments[segmentIndex - 1] : undefined;
     const startSample =
       segmentIndex === 0
-        ? { point: formulaPoints[0] }
-        : sampleStepSegmentStart(options, formulaPoints, currentEvaluation, currentMaterials, initialState, {
+        ? { point: refinedFormulaPoints[0] }
+        : sampleStepSegmentStart(options, refinedFormulaPoints, currentEvaluation, currentMaterials, initialState, {
             previousSegment,
             segmentIndex,
             soldierCenter,
@@ -332,18 +337,26 @@ function refineStepSegmentsWithSimulation(
 
     const nextDeltaY = createStepSegmentDeltaYFromActualStart(
       options,
-      formulaPoints,
+      refinedFormulaPoints,
       segmentIndex,
       startSample.point.y,
     );
     const nextDeltaYOverride = createStepSegmentDeltaYOverride(
       options,
-      formulaPoints,
+      refinedFormulaPoints,
       segmentIndex,
       nextDeltaY,
       previousSegment,
     );
-    const nextSegment = selectStepGlitchSegmentCandidate(options, formulaPoints, {
+    const nextFormulaPoint = createStepSegmentFormulaPointAfterRefinement(
+      options,
+      refinedFormulaPoints,
+      segmentIndex,
+      startSample.point,
+      nextDeltaY,
+      nextDeltaYOverride,
+    );
+    const nextSegment = selectStepGlitchSegmentCandidate(options, refinedFormulaPoints, {
       baseDeltaYs: refinedDeltaYs,
       baseSegments: refinedSegments,
       deltaY: nextDeltaY,
@@ -356,31 +369,37 @@ function refineStepSegmentsWithSimulation(
     });
     if (
       sameStepGlitchSegment(refinedSegments[segmentIndex], nextSegment) &&
-      refinedDeltaYs[segmentIndex] === nextDeltaYOverride
+      refinedDeltaYs[segmentIndex] === nextDeltaYOverride &&
+      sameGraphPoint(refinedFormulaPoints[segmentIndex + 1], nextFormulaPoint)
     ) {
       continue;
     }
 
-    // 漏洞段会把实际 y 带偏；后续普通 step 和漏洞 D 都要从模拟器落点继续累计。
+    // 漏洞段会把实际 y 带偏；后续普通 step 的 ΔY 和中心点都要从模拟器落点继续累计。
     refinedSegments[segmentIndex] = nextSegment;
     refinedDeltaYs[segmentIndex] = nextDeltaYOverride;
+    if (nextFormulaPoint) {
+      refinedFormulaPoints[segmentIndex + 1] = nextFormulaPoint;
+    }
     changed = true;
     currentEvaluation = createTrajectoryFormulaEvaluation(
       options,
-      formulaPoints,
+      refinedFormulaPoints,
       signEpsilon,
       refinedSegments,
       refinedDeltaYs,
     );
     currentMaterials = compileGraphwarFormulaMaterials(
-      formulaPoints,
+      refinedFormulaPoints,
       options.settings.steepness,
       options.settings.algorithm,
       currentEvaluation,
     );
   }
 
-  return changed ? { stepGlitchSegments: refinedSegments, stepSegmentDeltaYs: refinedDeltaYs } : undefined;
+  return changed
+    ? { formulaPoints: refinedFormulaPoints, stepGlitchSegments: refinedSegments, stepSegmentDeltaYs: refinedDeltaYs }
+    : undefined;
 }
 
 interface StepSegmentStartSample {
@@ -543,6 +562,30 @@ function createStepSegmentDeltaYOverride(
   return deltaY === defaultDeltaY ? undefined : deltaY;
 }
 
+function createStepSegmentFormulaPointAfterRefinement(
+  options: {
+    points: readonly GraphPoint[];
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+  formulaPoints: readonly GraphPoint[],
+  segmentIndex: number,
+  actualStartPoint: GraphPoint,
+  deltaY: number,
+  deltaYOverride: number | undefined,
+) {
+  const formulaTarget = formulaPoints[segmentIndex + 1];
+  const target = options.points[segmentIndex + 1];
+  if (deltaYOverride === undefined || !formulaTarget || !target) {
+    return formulaTarget;
+  }
+
+  // 修正漏洞后的普通 step 时，中心也要按实际起点重算；否则大 ΔY 会在目标 x 右侧才收敛。
+  return createGraphPoint(
+    calculateStepFormulaCenterX(actualStartPoint.x, target.x, deltaY, options.settings.steepness),
+    formulaTarget.y,
+  );
+}
+
 function sameStepGlitchSegment(left: StepGlitchSegment | undefined, right: StepGlitchSegment | undefined) {
   if (!left || !right) {
     return left === right;
@@ -554,6 +597,14 @@ function sameStepGlitchSegment(left: StepGlitchSegment | undefined, right: StepG
     left.startX === right.startX &&
     left.targetY === right.targetY
   );
+}
+
+function sameGraphPoint(left: GraphPoint | undefined, right: GraphPoint | undefined) {
+  if (!left || !right) {
+    return left === right;
+  }
+
+  return left.x === right.x && left.y === right.y;
 }
 
 /** Graphwar 缩步只会尝试 STEP_SIZE/2^n；漏洞 D 需要按最后一个实际档位估算。 */

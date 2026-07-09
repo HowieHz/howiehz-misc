@@ -71,6 +71,17 @@ type GraphwarKillerPathfindingDebugDetailText = Record<
   };
 };
 
+/** 底部说明中的行内文本片段；code 片段交给 VitePress 行内代码样式渲染。 */
+type GraphwarKillerInlineTextPart =
+  | {
+      text: string;
+      type: "text";
+    }
+  | {
+      text: string;
+      type: "code";
+    };
+
 /**
  * Graphwar 杀手页面的完整文案协议。
  *
@@ -320,7 +331,7 @@ export interface GraphwarKillerLocale {
       expression: {
         items: readonly {
           label: string;
-          text: string;
+          parts: readonly GraphwarKillerInlineTextPart[];
         }[];
         title: string;
       };

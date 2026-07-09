@@ -2561,11 +2561,11 @@ function undoLastPoint() {
     />
   </div>
 
-  <section class="graphwar-killer__instructions">
+  <section>
     <h2>{{ locale.ui.instructions.title }}</h2>
-    <section class="graphwar-killer__instruction-section">
+    <section>
       <h3>{{ locale.ui.instructions.stepsTitle }}</h3>
-      <ol class="graphwar-killer__instruction-steps">
+      <ol>
         <li
           v-for="item in locale.ui.instructions.steps"
           :key="item"
@@ -2574,29 +2574,43 @@ function undoLastPoint() {
         </li>
       </ol>
     </section>
-    <section class="graphwar-killer__instruction-section">
+    <section>
       <h3 id="graphwar-killer-agent-help">
         {{ locale.ui.instructions.agent.title }}
       </h3>
       <p>
         {{ locale.ui.instructions.agent.textBeforeDownload }}
-        <a :href="graphwarAgentDownloadHref">{{ locale.ui.instructions.agent.download }}</a>
+        <a :href="graphwarAgentDownloadHref">
+          <code>{{ locale.ui.instructions.agent.download }}</code>
+        </a>
         {{ locale.ui.instructions.agent.textBeforeCommand }}
         <code>{{ locale.ui.instructions.agent.command }}</code>
         {{ locale.ui.instructions.agent.textAfterCommand }}
       </p>
     </section>
-    <section class="graphwar-killer__instruction-section">
+    <section>
       <h3>{{ locale.ui.instructions.expression.title }}</h3>
-      <dl class="graphwar-killer__expression-list">
-        <div
-          v-for="item in locale.ui.instructions.expression.items"
-          :key="item.label"
-        >
-          <dt>{{ item.label }}</dt>
-          <dd>{{ item.text }}</dd>
-        </div>
-      </dl>
+      <table>
+        <tbody>
+          <tr
+            v-for="item in locale.ui.instructions.expression.items"
+            :key="item.label"
+          >
+            <th scope="row">
+              {{ item.label }}
+            </th>
+            <td>
+              <template
+                v-for="(part, partIndex) in item.parts"
+                :key="`${item.label}-${partIndex}`"
+              >
+                <code v-if="part.type === 'code'">{{ part.text }}</code>
+                <span v-else>{{ part.text }}</span>
+              </template>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </section>
   </section>
 </template>
@@ -2619,57 +2633,6 @@ function undoLastPoint() {
   gap: 8px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
   min-width: 0;
-}
-
-.graphwar-killer__instructions {
-  margin-top: 22px;
-}
-
-.graphwar-killer__instructions h2,
-.graphwar-killer__instructions h3 {
-  border: 0;
-}
-
-.graphwar-killer__instruction-section {
-  margin-top: 14px;
-}
-
-.graphwar-killer__instruction-section h3 {
-  font-size: 1.05rem;
-  margin: 0 0 8px;
-  padding-top: 0.25rem;
-}
-
-.graphwar-killer__instruction-section p {
-  margin: 0;
-}
-
-.graphwar-killer__instruction-steps {
-  margin: 0;
-  padding-left: 1.35rem;
-}
-
-.graphwar-killer__instruction-steps li + li {
-  margin-top: 4px;
-}
-
-.graphwar-killer__expression-list {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-}
-
-.graphwar-killer__expression-list div {
-  display: grid;
-  gap: 2px;
-}
-
-.graphwar-killer__expression-list dt {
-  font-weight: 700;
-}
-
-.graphwar-killer__expression-list dd {
-  margin: 0;
 }
 
 .graphwar-killer__sr-only {

@@ -1,8 +1,10 @@
 # graphwar-agent
 
+[English](./README.md) | **简体中文**
+
 graphwar-agent 是一个给官方 Graphwar 客户端使用的本地 Java Agent。
 
-它在不修改官方 jar 的前提下，把当前对局里正在渲染的士兵坐标、障碍数据和函数提交能力暴露成只监听本机的 HTTP 接口。
+可以在不修改官方客户端的前提下，把当前对局里正在渲染的士兵坐标、障碍数据和函数提交能力暴露成只监听本机的 HTTP 接口。
 
 ## 为什么用 graphwar-agent
 

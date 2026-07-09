@@ -4,7 +4,7 @@
 [![npm downloads][npmx-downloads-src]][npmx-href]
 [![CI][ci-src]][ci-href]
 
-[English](./README.md) | 简体中文
+[English](./README.md) | **简体中文**
 
 compat-finder 是一个用于排查多个目标之间兼容性问题的库和命令行工具。
 

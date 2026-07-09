@@ -4,7 +4,7 @@
 [![npm downloads][npmx-downloads-src]][npmx-href]
 [![CI][ci-src]][ci-href]
 
-English | [简体中文](./README.zh.md)
+**English** | [简体中文](./README.zh.md)
 
 compat-finder is a library and CLI for troubleshooting compatibility issues across multiple targets.
 

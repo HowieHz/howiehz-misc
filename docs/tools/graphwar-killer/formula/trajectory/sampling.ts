@@ -309,7 +309,7 @@ function refineStepSegmentsWithSimulation(
   let initialState: GraphwarTrajectorySamplingState | undefined;
 
   for (let pointIndex = 1; pointIndex < options.points.length - 1; pointIndex += 1) {
-    const targetX = options.points[pointIndex].x;
+    const stopX = createStepSegmentRefinementStopX(options.points[pointIndex].x, refinedSegments[pointIndex - 1]);
     const sample = sampleGraphwarTrajectory({
       algorithm: options.settings.algorithm,
       bounds: options.bounds,
@@ -318,7 +318,7 @@ function refineStepSegmentsWithSimulation(
       formulaEvaluation: currentEvaluation,
       initialState,
       points: formulaPoints,
-      shouldStop: (point) => point.x >= targetX,
+      shouldStop: (point) => point.x >= stopX,
       soldierCenter,
       steepness: options.settings.steepness,
     });
@@ -362,6 +362,11 @@ function refineStepSegmentsWithSimulation(
   }
 
   return changed ? { stepGlitchSegments: refinedSegments, stepSegmentDeltaYs: refinedDeltaYs } : undefined;
+}
+
+function createStepSegmentRefinementStopX(pointX: number, previousSegment: StepGlitchSegment | undefined) {
+  // 前一段是漏洞段时，要等局部 x 窗口关闭后再取落点；否则会把跳前 y 误当成下一段起点。
+  return previousSegment ? previousSegment.endX : pointX;
 }
 
 function createStepSegmentDeltaYFromActualStart(

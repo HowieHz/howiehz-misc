@@ -57,9 +57,6 @@ export const graphwarKillerLocale = {
     },
   ],
   validation: {
-    boundaryExpansionNegative: "Boundary expansion cannot be negative",
-    boundaryExpansionNumber: "Boundary expansion must be a number",
-    boundaryExpansionPixelRange: (max) => `Boundary expansion must be between 0px and ${max}`,
     boundsInvalidNumber: "Bounds coordinates must be valid numbers",
     decimalPlacesInteger: "Decimal places must be an integer",
     decimalPlacesRange: (max) => `Decimal places must be between 0 and ${max}`,
@@ -496,10 +493,6 @@ export const graphwarKillerLocale = {
       allowFriendlyFire: "Allow friendly fire",
       allowFriendlyFireTitle:
         "When enabled, Smart Pathfinding and One-Click Clear may route through your own soldiers; when disabled, your soldiers are avoided as obstacles.",
-      boundaryExpansion: "Boundary expansion",
-      boundaryExpansionAriaLabel: "Boundary expansion in raw Graphwar 770x450 plane pixels",
-      boundaryExpansionTitle:
-        "Treat the coordinate-system boundary as expanded inward into the collision area. Unit: raw Graphwar 770x450 plane pixels.",
       debugNoTiming: "No pathfinding timing recorded yet",
       debugDetails: {
         "build-dag-edges": {

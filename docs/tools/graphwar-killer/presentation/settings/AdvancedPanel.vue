@@ -24,7 +24,6 @@ const emit = defineEmits<{
   updateObstacleMinAreaText: [value: string];
   updateObstacleSimulationToleranceText: [value: string];
   updateOneClickClearDeleteCheckRadiusText: [value: string];
-  updatePathfindingBoundaryExpansionText: [value: string];
   updatePathfindingWorkerCountText: [value: string];
   updateRoutePlanningToleranceText: [value: string];
   updateTemplateMatchingWorkerCountText: [value: string];
@@ -68,11 +67,6 @@ const templateMatchingWorkerCountText = computed({
 const obstacleMinAreaText = computed({
   get: () => props.panel.recognition.obstacleMinAreaText,
   set: (value) => emit("updateObstacleMinAreaText", value),
-});
-
-const pathfindingBoundaryExpansionText = computed({
-  get: () => props.panel.recognition.pathfindingBoundaryExpansionText,
-  set: (value) => emit("updatePathfindingBoundaryExpansionText", value),
 });
 
 const routePlanningToleranceText = computed({
@@ -248,20 +242,6 @@ const liveClickPreviewWorkerCountText = computed({
               :title="locale.ui.detection.minObstacleAreaTitle"
             >
             <span>px²</span>
-          </label>
-          <label
-            class="graphwar-killer__detection-setting-label"
-            :title="locale.ui.pathfinding.boundaryExpansionTitle"
-          >
-            {{ locale.ui.pathfinding.boundaryExpansion }}
-            <input
-              v-model="pathfindingBoundaryExpansionText"
-              inputmode="decimal"
-              min="0"
-              :aria-label="locale.ui.pathfinding.boundaryExpansionAriaLabel"
-              :title="locale.ui.pathfinding.boundaryExpansionTitle"
-            >
-            <span>{{ locale.ui.pathfinding.unit }}</span>
           </label>
         </div>
       </div>

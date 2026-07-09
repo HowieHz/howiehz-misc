@@ -31,8 +31,6 @@ export interface GraphwarAdvancedSettingsRecognition {
   obstacleMinAreaText: string;
   /** 障碍最大面积；父页面应按当前 Graphwar 平面尺寸传入。 */
   obstacleMaximumArea: number;
-  /** 自动识别边界外扩输入框文本。 */
-  pathfindingBoundaryExpansionText: string;
 }
 
 export interface GraphwarAdvancedSettingsPathfinding {

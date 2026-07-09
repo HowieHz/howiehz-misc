@@ -6,6 +6,7 @@ import {
 } from "../core/game/forward-rule";
 /** Graphwar 目标选择规则；页面和寻路流程应复用同一套 x+ 与命中圈语义。 */
 import { imageToGraphPoint, xPlusGoesRight } from "../core/geometry";
+import { clampNumber, nextDownDouble } from "../core/numbers";
 import { createPixelPoint } from "../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
 
@@ -27,9 +28,9 @@ export interface GraphwarTargetingGeometry {
   boundsRect: BoundsRect;
 }
 
-/** 目标规则需要的可点击区域；已经包含边界外扩后的收缩结果。 */
+/** 目标规则需要的可点击区域；已经包含按 route tolerance 派生的边界内收结果。 */
 export interface GraphwarTargetingArea extends GraphwarTargetingGeometry {
-  /** 当前可选目标区域，边界视为有效。 */
+  /** 当前可选目标区域；右/下边界按平面网格半开区间处理。 */
   targetBoundsRect: BoundsRect;
 }
 
@@ -57,7 +58,7 @@ export interface GraphwarSmartPathfindingSoldierTarget {
   targetPoint: PixelPoint;
 }
 
-/** 按当前边界外扩把坐标系内部收缩成可选目标区域。 */
+/** 按当前边界内收值把坐标系内部收缩成可选目标区域。 */
 export function createBoundsRectWithBoundaryExpansion(rect: BoundsRect, boundaryExpansion: number) {
   const horizontalInset = (boundaryExpansion / GRAPHWAR_PLANE_LENGTH) * rect.width;
   const verticalInset = (boundaryExpansion / GRAPHWAR_PLANE_HEIGHT) * rect.height;
@@ -144,16 +145,23 @@ export function createSoldierAimCheckResult(
     return pointIsInsideTargetBounds(center, area) ? { kind: "center", point: center } : undefined;
   }
 
-  if (soldierAimPointPassesMinimumForwardCheck(center, startPoint, area)) {
+  const centerAdvances = graphwarPointAdvances(startPoint, center, area);
+  if (pointIsInsideTargetBounds(center, area) && centerAdvances) {
     return { kind: "center", point: center };
+  }
+
+  const boundedCenter = centerAdvances ? createBoundarySafeSoldierTargetPoint(startPoint, soldier, area) : undefined;
+  if (boundedCenter) {
+    return { kind: "edge", point: boundedCenter };
+  }
+
+  const xPlusEdgePoint = createSoldierHitCircleXPlusEdgePoint(soldier, area);
+  if (!graphwarPointAdvances(startPoint, xPlusEdgePoint, area)) {
+    return undefined;
   }
 
   // 第二检查仅把命中圈 x+ 边缘作为“是否可选中”的资格线；
   // 真正落点固定为 lastX 的下一个可表示 double，y 保持命中圈中心，避免点击偏移改变目标。
-  if (!graphwarPointAdvances(startPoint, createSoldierHitCircleXPlusEdgePoint(soldier, area), area)) {
-    return undefined;
-  }
-
   const minimumForwardPoint = createMinimumForwardSoldierTargetPoint(startPoint, soldier, area);
   return minimumForwardPoint ? { kind: "edge", point: minimumForwardPoint } : undefined;
 }
@@ -215,7 +223,7 @@ export function createMinimumForwardSoldierTargetPoint(
   if (!targetPoint) {
     return undefined;
   }
-  return pointIsInsideTargetBounds(targetPoint, area) && graphwarSoldierContainsHitPoint(soldier, targetPoint)
+  return pointIsInsideTargetBounds(targetPoint, area) && graphwarSoldierStrictlyContainsHitPoint(soldier, targetPoint)
     ? targetPoint
     : undefined;
 }
@@ -263,23 +271,14 @@ export function getRightmostPathPoint(points: readonly PixelPoint[], geometry: G
   return rightmostPoint;
 }
 
-/** 判断点是否在考虑边界外扩后的可用目标区域内。 */
+/** 判断点是否在考虑边界内收后的可用目标区域内。 */
 function pointIsInsideTargetBounds(point: PixelPoint, area: GraphwarTargetingArea) {
   return pointIsInsideBoundsRect(point, area.targetBoundsRect);
 }
 
-/** 判断点是否在指定截图矩形内，边界视为有效。 */
+/** 判断点是否在指定截图矩形内；右/下边界会映射到平面外，按半开区间排除。 */
 function pointIsInsideBoundsRect(point: PixelPoint, rect: BoundsRect) {
-  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
-}
-
-/** 判断一个士兵候选点是否严格沿 Graphwar x+ 前进，并且没有越出收缩边界。 */
-function soldierAimPointPassesMinimumForwardCheck(
-  point: PixelPoint,
-  startPoint: PixelPoint,
-  area: GraphwarTargetingArea,
-) {
-  return pointIsInsideTargetBounds(point, area) && graphwarPointAdvances(startPoint, point, area);
+  return point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height;
 }
 
 /** 返回士兵命中圈在 x+ 方向上的边缘点，y 固定为命中圈中心。 */
@@ -292,4 +291,33 @@ function createSoldierHitCircleXPlusEdgePoint(soldier: GraphwarTargetingSoldier,
 /** 判断给定 Graphwar x 是否已经严格位于截图起点对应的 Graphwar x+ 方向。 */
 function graphXReachesMinimumForward(graphX: number, startPoint: PixelPoint, geometry: GraphwarTargetingGeometry) {
   return graphXAdvancesFromPoint(startPoint, graphX, geometry.bounds, geometry.boundsRect);
+}
+
+/** 士兵中心贴边时，把目标点夹进可通行边界内；命中仍必须严格落在士兵真实命中圆内。 */
+function createBoundarySafeSoldierTargetPoint(
+  startPoint: PixelPoint,
+  soldier: GraphwarTargetingSoldier,
+  area: GraphwarTargetingArea,
+) {
+  const targetPoint = clampPointInsideTargetBounds(getGraphwarSoldierCenter(soldier), area.targetBoundsRect);
+  return graphwarPointAdvances(startPoint, targetPoint, area) &&
+    graphwarSoldierStrictlyContainsHitPoint(soldier, targetPoint)
+    ? targetPoint
+    : undefined;
+}
+
+/** 将点夹进目标矩形的半开区间；右/下边界会落到平面外，必须退到前一个 double。 */
+function clampPointInsideTargetBounds(point: PixelPoint, rect: BoundsRect) {
+  return createPixelPoint(
+    clampNumber(point.x, rect.x, nextDownDouble(rect.x + rect.width)),
+    clampNumber(point.y, rect.y, nextDownDouble(rect.y + rect.height)),
+  );
+}
+
+/** 公式采样判定目标命中使用严格小于半径；目标点也要遵守同一语义。 */
+function graphwarSoldierStrictlyContainsHitPoint(soldier: GraphwarTargetingSoldier, point: PixelPoint) {
+  const center = getGraphwarSoldierCenter(soldier);
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  return dx * dx + dy * dy < soldier.hitRadius * soldier.hitRadius;
 }

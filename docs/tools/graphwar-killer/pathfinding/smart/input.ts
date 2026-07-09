@@ -8,10 +8,12 @@ import type { GraphwarSmartPathfindingPathInput } from "../runtime/protocol";
 
 /** 智能寻路搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
 export interface GraphwarSmartPathfindingSearchTolerances {
-  /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
-  boundaryExpansionPlanePixels: number;
+  /** 几何路线边界内收值，和 route tolerance 同源。 */
+  routeBoundaryInsetPlanePixels: number;
   /** 几何路线规划容差，单位为 Graphwar 原始平面像素。 */
   routePlanningTolerancePlanePixels: number;
+  /** 函数模拟边界内收值，和 simulation tolerance 同源。 */
+  simulationBoundaryInsetPlanePixels: number;
 }
 
 interface GraphwarSmartPathfindingSearchInputOptions {
@@ -46,7 +48,7 @@ export function createGraphwarSmartPathfindingSearchInput(
   options: GraphwarSmartPathfindingSearchInputOptions,
 ): GraphwarSmartPathfindingPathInput {
   return {
-    boundaryExpansion: options.tolerances.boundaryExpansionPlanePixels,
+    boundaryExpansion: options.tolerances.routeBoundaryInsetPlanePixels,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     hitTarget: options.hitTarget,
@@ -56,7 +58,7 @@ export function createGraphwarSmartPathfindingSearchInput(
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     settings: options.settings,
-    simulationBoundaryExpansion: options.tolerances.boundaryExpansionPlanePixels,
+    simulationBoundaryExpansion: options.tolerances.simulationBoundaryInsetPlanePixels,
     simulationMask: options.simulationMask,
     sourcePath: options.sourcePath,
     targetPoint: options.targetPoint,

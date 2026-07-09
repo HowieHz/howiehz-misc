@@ -28,9 +28,6 @@ export const graphwarKillerLocale = {
     { value: "akima", label: "Akima 插值", title: "用 Akima 三次插值生成平滑路径，对局部异常点更稳。" },
   ],
   validation: {
-    boundaryExpansionNegative: "边界外扩不能小于 0",
-    boundaryExpansionNumber: "边界外扩需要填写数字",
-    boundaryExpansionPixelRange: (max) => `边界外扩需要在 0px 到 ${max}px 之间`,
     boundsInvalidNumber: "边界坐标需要填写合法数字",
     decimalPlacesInteger: "保留小数位需要填写整数",
     decimalPlacesRange: (max) => `保留小数位需要在 0 到 ${max} 之间`,
@@ -437,9 +434,6 @@ export const graphwarKillerLocale = {
     pathfinding: {
       allowFriendlyFire: "允许友伤",
       allowFriendlyFireTitle: "开启后，寻路和一键清图允许轨迹穿过己方士兵；关闭时会把己方士兵当作障碍避开。",
-      boundaryExpansion: "边界外扩",
-      boundaryExpansionAriaLabel: "边界外扩，单位为 Graphwar 原始 770x450 平面像素",
-      boundaryExpansionTitle: "把坐标系四周边界向内扩成碰撞区。单位是 Graphwar 原始 770x450 平面像素。",
       debugNoTiming: "暂无寻路耗时记录",
       debugDetails: {
         "build-dag-edges": {

@@ -19,7 +19,7 @@ import { useGraphwarPathPointEditing } from "./controllers/path/point-editing";
 import { useGraphwarPathState } from "./controllers/path/state";
 import { useGraphwarTrajectoryResult } from "./controllers/path/trajectory-result";
 import {
-  useGraphwarPathfindingBoundaryExpansion,
+  useGraphwarPathfindingRouteBoundaryInset,
   useGraphwarPathfindingObstacleProjection,
 } from "./controllers/pathfinding/obstacles";
 import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/one-click-clear/workflow";
@@ -130,7 +130,6 @@ const { locale } = defineProps<{
 const graphwarDefaultXLimitText = formatDoublePrecisionDecimal(GRAPHWAR_DEFAULT_X_LIMIT);
 const graphwarVisibleYLimitText = formatDoublePrecisionDecimal(GRAPHWAR_VISIBLE_Y_LIMIT);
 const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
-const graphwarBoundaryExpansionLimit = Math.floor((Math.min(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) - 1) / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const graphwarBoundsMinimumSizePixels = 4;
 const graphwarStageGridAxisEpsilon = 1e-9;
@@ -200,7 +199,6 @@ const detectionRoutePlanningToleranceText = ref(String(GRAPHWAR_DEFAULT_ROUTE_PL
 const detectionObstacleSimulationToleranceText = ref("1");
 const graphwarAgentRoutePlanningToleranceText = ref("1");
 const graphwarAgentObstacleSimulationToleranceText = ref("0");
-const pathfindingBoundaryExpansionText = ref("1");
 const oneClickClearDeleteCheckRadiusText = ref(String(oneClickClearDeleteCheckRadiusDefaultPlanePixels));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
@@ -547,7 +545,6 @@ const {
       diameterText: obstacleBrushDiameterText,
     },
     pathfinding: {
-      boundaryExpansionText: pathfindingBoundaryExpansionText,
       oneClickClearDeleteCheckRadiusText,
       routePlanningToleranceText: activeRoutePlanningToleranceText,
       simulationToleranceText: activeObstacleSimulationToleranceText,
@@ -567,7 +564,6 @@ const {
       minimumDiameter: obstacleBrushMinimumDiameter,
     },
     pathfinding: {
-      boundaryExpansionLimit: graphwarBoundaryExpansionLimit,
       deleteCheckRadiusMinimumPlanePixels: oneClickClearDeleteCheckRadiusMinimumPlanePixels,
       obstacleToleranceLimit: graphwarObstacleToleranceLimit,
     },
@@ -827,7 +823,7 @@ const stageCoordinateLines = computed<StageCoordinateLines>(() => {
 
   return createStageCoordinateLines(boundsResult.bounds, visibleBoundsRect.value);
 });
-const activeBoundaryExpansion = useGraphwarPathfindingBoundaryExpansion({
+const activeRouteBoundaryInset = useGraphwarPathfindingRouteBoundaryInset({
   modes: {
     pathfindingObstacleEdgesActive,
     smartCursorEnabled,
@@ -836,8 +832,11 @@ const activeBoundaryExpansion = useGraphwarPathfindingBoundaryExpansion({
     parsedObstacleTolerances,
   },
 });
+const activeSimulationBoundaryInset = computed(() =>
+  parsedObstacleTolerances.value.ok ? parsedObstacleTolerances.value.simulationBoundaryInsetPlanePixels : 0,
+);
 const targetBoundsRect = computed(() =>
-  createBoundsRectWithBoundaryExpansion(boundsRect.value, activeBoundaryExpansion.value),
+  createBoundsRectWithBoundaryExpansion(boundsRect.value, activeRouteBoundaryInset.value),
 );
 // 目标选择上下文应集中 bounds/path 到 Graphwar 目标规则的适配，避免页面散落坐标组合逻辑。
 const {
@@ -883,7 +882,7 @@ const {
     toolWorkflowMode,
   },
   settings: {
-    activeBoundaryExpansion,
+    activeSimulationBoundaryInset,
     getSoldierHitRadiusPixels: () => soldierHitRadiusPixels.value,
     parsedBounds,
     parsedObstacleTolerances,
@@ -1087,18 +1086,12 @@ const activeToolHint = computed(() => {
   };
 });
 const visibleBoundaryExpansionRect = computed<BoundsRect | undefined>(() => {
-  if (
-    (!smartCursorEnabled.value && !pathfindingObstacleEdgesActive.value) ||
-    !parsedObstacleTolerances.value.ok ||
-    parsedObstacleTolerances.value.boundaryExpansionPlanePixels <= 0
-  ) {
+  const simulationBoundaryInset = activeSimulationBoundaryInset.value;
+  if ((!smartCursorEnabled.value && !pathfindingObstacleEdgesActive.value) || simulationBoundaryInset <= 0) {
     return undefined;
   }
 
-  return createBoundsRectWithBoundaryExpansion(
-    visibleBoundsRect.value,
-    parsedObstacleTolerances.value.boundaryExpansionPlanePixels,
-  );
+  return createBoundsRectWithBoundaryExpansion(visibleBoundsRect.value, simulationBoundaryInset);
 });
 const allowedTargetRect = computed<BoundsRect | undefined>(() => {
   if (toolMode.value !== "path" || !imageUrl.value || !parsedBounds.value.ok) {
@@ -1431,7 +1424,6 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     maximumSoldierCountText: maximumSoldierCountText.value,
     obstacleMaximumArea: graphwarObstacleMaxArea,
     obstacleMinAreaText: obstacleMinAreaText.value,
-    pathfindingBoundaryExpansionText: pathfindingBoundaryExpansionText.value,
     templateMatchingWorkerCountText: templateMatchingWorkerCountText.value,
   },
   simulator: {
@@ -1838,7 +1830,6 @@ watch(
   [
     pathfindingWorkerCountText,
     activeRoutePlanningToleranceText,
-    pathfindingBoundaryExpansionText,
     oneClickClearDeleteCheckRadiusText,
     minXText,
     maxXText,
@@ -2683,7 +2674,6 @@ function undoLastPoint() {
       @update-obstacle-min-area-text="obstacleMinAreaText = $event"
       @update-obstacle-simulation-tolerance-text="activeObstacleSimulationToleranceText = $event"
       @update-one-click-clear-delete-check-radius-text="oneClickClearDeleteCheckRadiusText = $event"
-      @update-pathfinding-boundary-expansion-text="pathfindingBoundaryExpansionText = $event"
       @update-pathfinding-worker-count-text="pathfindingWorkerCountText = $event"
       @update-route-planning-tolerance-text="activeRoutePlanningToleranceText = $event"
       @update-template-matching-worker-count-text="templateMatchingWorkerCountText = $event"

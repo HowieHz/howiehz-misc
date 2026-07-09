@@ -25,7 +25,7 @@ export interface GraphwarPathfindingOptions {
   bounds: GraphBounds;
   /** 截图内的 Graphwar 平面矩形，用于像素点和平面点互转。 */
   boundsRect: BoundsRect;
-  /** 障碍和收缩边界命中检测用的外扩值，单位为 Graphwar 原始平面像素。 */
+  /** 障碍和收缩边界命中检测用的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
   /** 判断一条有向边是否满足 Graphwar x+ 规则；默认要求 next.x > previous.x。 */
   canAdvance?: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;

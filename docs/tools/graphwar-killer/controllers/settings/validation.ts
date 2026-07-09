@@ -3,6 +3,7 @@ import { computed, type ComputedRef } from "vue";
 import { MAX_FORMULA_DECIMAL_PLACES, nearlyEqual, parseFiniteNumber } from "../../core/numbers";
 import type { GraphBounds } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import { createBoundaryInsetFromObstacleTolerance } from "../../pathfinding/tolerances";
 
 interface GraphwarReadonlyRef<T> {
   readonly value: T;
@@ -34,8 +35,9 @@ export type ParsedPathfindingWorkerCount = { ok: true; workerCount: number } | {
 export type ParsedObstacleTolerances =
   | {
       ok: true;
-      boundaryExpansionPlanePixels: number;
+      routeBoundaryInsetPlanePixels: number;
       routePlanningTolerancePlanePixels: number;
+      simulationBoundaryInsetPlanePixels: number;
       simulationTolerancePlanePixels: number;
     }
   | { ok: false; message: string };
@@ -81,7 +83,6 @@ interface GraphwarSettingsValidationInputs {
   };
   /** 寻路校验只解析用户输入；截图像素换算应留给具体消费方。 */
   pathfinding: {
-    boundaryExpansionText: GraphwarReadonlyRef<string>;
     oneClickClearDeleteCheckRadiusText: GraphwarReadonlyRef<string>;
     routePlanningToleranceText: GraphwarReadonlyRef<string>;
     simulationToleranceText: GraphwarReadonlyRef<string>;
@@ -102,7 +103,6 @@ interface GraphwarSettingsValidationLimits {
     minimumDiameter: number;
   };
   pathfinding: {
-    boundaryExpansionLimit: number;
     deleteCheckRadiusMinimumPlanePixels: number;
     obstacleToleranceLimit: number;
   };
@@ -331,18 +331,11 @@ export function useGraphwarSettingsValidation(
       return { ok: false as const, message: validation.simulationToleranceNumber };
     }
 
-    const boundaryExpansionPlanePixels = parseFiniteNumber(options.inputs.pathfinding.boundaryExpansionText.value);
-    if (boundaryExpansionPlanePixels === undefined) {
-      return { ok: false as const, message: validation.boundaryExpansionNumber };
-    }
-    if (boundaryExpansionPlanePixels < 0) {
-      return { ok: false as const, message: validation.boundaryExpansionNegative };
-    }
-
     return {
       ok: true as const,
-      boundaryExpansionPlanePixels,
+      routeBoundaryInsetPlanePixels: createBoundaryInsetFromObstacleTolerance(routePlanningTolerancePlanePixels),
       routePlanningTolerancePlanePixels,
+      simulationBoundaryInsetPlanePixels: createBoundaryInsetFromObstacleTolerance(simulationTolerancePlanePixels),
       simulationTolerancePlanePixels,
     };
   }
@@ -364,13 +357,6 @@ export function useGraphwarSettingsValidation(
       return {
         ok: false as const,
         message: validation.simulationTolerancePixelRange(options.limits.pathfinding.obstacleToleranceLimit),
-      };
-    }
-
-    if (toleranceValues.boundaryExpansionPlanePixels > options.limits.pathfinding.boundaryExpansionLimit) {
-      return {
-        ok: false as const,
-        message: validation.boundaryExpansionPixelRange(options.limits.pathfinding.boundaryExpansionLimit),
       };
     }
 

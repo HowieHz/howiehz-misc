@@ -250,7 +250,7 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
 
   function getBoundaryExpansion() {
     const tolerances = options.trajectory.parsedObstacleTolerances.value;
-    return tolerances.ok ? tolerances.boundaryExpansionPlanePixels : 0;
+    return tolerances.ok ? tolerances.simulationBoundaryInsetPlanePixels : 0;
   }
 
   function getBounds(): GraphBounds | undefined {

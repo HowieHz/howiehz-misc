@@ -17,11 +17,11 @@ interface ReadonlyRef<T> {
 
 type GraphwarPathfindingCacheController = ReturnType<typeof createGraphwarPathfindingCacheController>;
 
-interface GraphwarPathfindingBoundaryExpansionOptions {
+interface GraphwarPathfindingRouteBoundaryInsetOptions {
   modes: {
-    /** 智能光标预览需要碰撞边界收缩，即使还未启用完整智能寻路。 */
+    /** 智能光标预览需要 route 边界内收，即使还未启用完整智能寻路。 */
     smartCursorEnabled: ReadonlyRef<boolean>;
-    /** 寻路障碍显示启用时，route/simulation 都应使用同一边界收缩设置。 */
+    /** 寻路障碍显示启用时，目标选择应按 route tolerance 同步边界内收。 */
     pathfindingObstacleEdgesActive: ReadonlyRef<boolean>;
   };
   settings: {
@@ -56,8 +56,8 @@ interface GraphwarPathfindingObstacleProjectionOptions {
     toolWorkflowMode: ReadonlyRef<ToolWorkflowMode>;
   };
   settings: {
-    /** 寻路碰撞边界收缩值由本 Module 的边界派生入口提供。 */
-    activeBoundaryExpansion: ComputedRef<number>;
+    /** 弹道模拟边界收缩值和 simulation tolerance 同源，避免边界另起一套安全距离。 */
+    activeSimulationBoundaryInset: ComputedRef<number>;
     /** 友方士兵障碍应使用真实命中半径；无有效 bounds 时不可构造。 */
     getSoldierHitRadiusPixels: () => number | undefined;
     /** 边界和容差校验结果应由 settings controller 保持原错误优先级。 */
@@ -87,14 +87,14 @@ export interface GraphwarPathfindingObstacleProjectionController {
   trajectoryCollisionSettings: ComputedRef<GraphwarTrajectoryCollisionSettings | undefined>;
 }
 
-/** 计算寻路/智能光标共享的碰撞边界收缩值，供目标区域和障碍碰撞共同消费。 */
-export function useGraphwarPathfindingBoundaryExpansion(
-  options: GraphwarPathfindingBoundaryExpansionOptions,
+/** 计算目标选择和几何寻路共享的边界收缩值；边界按 route tolerance 作为硬障碍处理。 */
+export function useGraphwarPathfindingRouteBoundaryInset(
+  options: GraphwarPathfindingRouteBoundaryInsetOptions,
 ): ComputedRef<number> {
   return computed(() =>
     (options.modes.smartCursorEnabled.value || options.modes.pathfindingObstacleEdgesActive.value) &&
     options.settings.parsedObstacleTolerances.value.ok
-      ? options.settings.parsedObstacleTolerances.value.boundaryExpansionPlanePixels
+      ? options.settings.parsedObstacleTolerances.value.routeBoundaryInsetPlanePixels
       : 0,
   );
 }
@@ -245,7 +245,7 @@ export function useGraphwarPathfindingObstacleProjection(
     }
 
     return {
-      boundaryExpansion: options.settings.activeBoundaryExpansion.value,
+      boundaryExpansion: options.settings.activeSimulationBoundaryInset.value,
       mask: obstacleMask,
     };
   });

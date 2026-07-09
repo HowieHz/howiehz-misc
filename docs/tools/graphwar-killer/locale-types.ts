@@ -109,9 +109,6 @@ export interface GraphwarKillerLocale {
   }[];
   /** 输入校验错误文案。 */
   validation: {
-    boundaryExpansionNegative: string;
-    boundaryExpansionNumber: string;
-    boundaryExpansionPixelRange: (max: number) => string;
     boundsInvalidNumber: string;
     maxXGreaterThanMinX: string;
     maxYGreaterThanMinY: string;
@@ -353,9 +350,6 @@ export interface GraphwarKillerLocale {
     pathfinding: {
       allowFriendlyFire: string;
       allowFriendlyFireTitle: string;
-      boundaryExpansion: string;
-      boundaryExpansionAriaLabel: string;
-      boundaryExpansionTitle: string;
       debugDetails: GraphwarKillerPathfindingDebugDetailText;
       debugNoTiming: string;
       debugStages: Record<

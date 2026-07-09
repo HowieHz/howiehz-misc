@@ -24,7 +24,7 @@ interface ThetaStarColumnFreeSpan {
 }
 
 interface ThetaStarFreeSpanCache {
-  /** 障碍和边界外扩值参与可通行区间计算，必须一起校验。 */
+  /** 障碍和边界内收值参与可通行区间计算，必须一起校验。 */
   boundaryExpansion: number;
   /** 按 x+ 搜索坐标系缓存的列区间。 */
   columns: readonly ThetaStarColumnFreeSpan[][];

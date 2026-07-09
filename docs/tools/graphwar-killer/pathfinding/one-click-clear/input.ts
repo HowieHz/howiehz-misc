@@ -10,12 +10,14 @@ import type { GraphwarOneClickClearCandidate } from "./search";
 
 /** 一键清图搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
 export interface GraphwarOneClickClearSearchTolerances {
-  /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
-  boundaryExpansionPlanePixels: number;
+  /** 几何路线边界内收值，和 route tolerance 同源。 */
+  routeBoundaryInsetPlanePixels: number;
   /** 一键清图删点局部命中检查半径，单位为 Graphwar 原始平面像素。 */
   oneClickClearDeleteCheckRadiusPlanePixels: number;
   /** 几何路线规划容差，单位为 Graphwar 原始平面像素。 */
   routePlanningTolerancePlanePixels: number;
+  /** 函数模拟边界内收值，和 simulation tolerance 同源。 */
+  simulationBoundaryInsetPlanePixels: number;
 }
 
 export type GraphwarOneClickClearSearchPreflightFailureReason =
@@ -120,7 +122,7 @@ export function createGraphwarOneClickClearSearchInput(
   options: GraphwarOneClickClearSearchInputOptions,
 ): GraphwarOneClickClearPathWorkerInput {
   return {
-    boundaryExpansion: options.tolerances.boundaryExpansionPlanePixels,
+    boundaryExpansion: options.tolerances.routeBoundaryInsetPlanePixels,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     candidates: options.candidates,
@@ -136,7 +138,7 @@ export function createGraphwarOneClickClearSearchInput(
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     settings: options.settings,
-    simulationBoundaryExpansion: options.tolerances.boundaryExpansionPlanePixels,
+    simulationBoundaryExpansion: options.tolerances.simulationBoundaryInsetPlanePixels,
     simulationMask: options.simulationMask,
   };
 }

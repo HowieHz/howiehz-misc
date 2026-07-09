@@ -212,10 +212,7 @@ export const graphwarKillerLocale = {
         address: "Agent 地址",
         addressAriaLabel: "Graphwar Agent 地址",
         addressTitle: "Graphwar Agent 本机 HTTP 地址，默认 http://127.0.0.1:17900。",
-        download: "graphwar-agent.jar",
-        helpMiddle: " 放在游戏目录，通过 ",
-        helpPrefix: "通过 Graphwar Agent 读取游戏信息，将 ",
-        helpSuffix: " 同时启动游戏和 Agent。",
+        helpLink: "如何使用 Graphwar Agent",
         read: "读取状态",
         reading: "读取中",
         readTitle: "从 Graphwar Agent 读取当前士兵坐标和障碍。",
@@ -318,20 +315,50 @@ export const graphwarKillerLocale = {
       title: "识别",
     },
     instructions: {
-      items: [
-        "放入 Graphwar 截图：上传、拖入、直接粘贴，或读取本机 Graphwar Agent。",
-        "填好坐标范围和游戏模式；也可以先点“识别边界”，再点“识别士兵/障碍”标记士兵和障碍。",
+      agent: {
+        command: "java -javaagent:graphwar-agent.jar -jar graphwar.jar",
+        download: "graphwar-agent.jar",
+        textAfterCommand: " 同时启动 Graphwar Agent 和游戏。",
+        textBeforeCommand: " 放在游戏目录，最后通过 ",
+        textBeforeDownload: "通过 Graphwar Agent 读取游戏信息：将 ",
+        title: "如何使用 Graphwar Agent",
+      },
+      expression: {
+        items: [
+          // 底部教程应列出 Graphwar 原版输入框支持的语法，避免用户误按 JavaScript/Math 表达式输入。
+          {
+            label: "变量",
+            text: "可用 x、y、y'；默认兼容 Graphwar 原版时，y' 会被解析为 y，可在“高级设定”里关闭。",
+          },
+          {
+            label: "运算符",
+            text: "可用 +、-、/、*、^，并支持括号和 2x、2sin(x) 这样的隐式乘法。",
+          },
+          {
+            label: "函数",
+            text: "可用 sqrt()、log()、ln()、abs()、sin()（别名 sen()）、cos()、tan()（别名 tg()）、exp()；log 是 10 底，ln 是自然对数。",
+          },
+          {
+            label: "常量",
+            text: "可用 e、pi。",
+          },
+          {
+            label: "兼容行为",
+            text: "Graphwar 原版会跳过未知字符；可在“高级设定”里关闭。",
+          },
+        ],
+        title: "表达式语法",
+      },
+      steps: [
+        "输入来源：上传、拖入、直接粘贴 Graphwar 截图；需要准确游戏状态时，可开启“使用 Agent”。",
+        "截图识别：填好坐标范围和游戏模式；也可以先点“识别边界”，再点“识别士兵/障碍”标记士兵和障碍。",
+        "Agent 读取：在识别面板开启“使用 Agent”，确认 Agent 地址后点“读取状态”。",
         "解算器模式：在“点选路径”中先点自己士兵，再点目标路径点；复制生成的函数到 Graphwar。",
         "模拟器模式：选择初始发射士兵，输入函数；y'' 模式还需要输入发射角。",
         "需要辅助点选时，打开“智能光标”；需要按识别出的障碍绕路时，打开“智能寻路”。",
         "智能寻路中右键可中止。",
-        // 底部教程应列出 Graphwar 原版输入框支持的语法，避免用户误按 JavaScript/Math 表达式输入。
-        "表达式可用变量：x、y、y'；默认兼容 Graphwar 原版时，y' 会被解析为 y，可在“高级设定”里关闭。",
-        "表达式可用运算符：+、-、/、*、^，并支持括号和 2x、2sin(x) 这样的隐式乘法。",
-        "表达式可用函数：sqrt()、log()、ln()、abs()、sin()（别名 sen()）、cos()、tan()（别名 tg()）、exp()；log 是 10 底，ln 是自然对数。",
-        "表达式可用常量：e、pi。",
-        "Graphwar 原版会跳过未知字符；可在“高级设定”里关闭。",
       ],
+      stepsTitle: "基本流程",
       title: "使用说明",
     },
     introLinkText: "Graphwar",

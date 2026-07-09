@@ -257,10 +257,7 @@ export const graphwarKillerLocale = {
         address: "Agent URL",
         addressAriaLabel: "Graphwar Agent URL",
         addressTitle: "Local Graphwar Agent HTTP URL. Default: http://127.0.0.1:17900.",
-        download: "graphwar-agent.jar",
-        helpMiddle: " in the game directory, then start the game and Agent with ",
-        helpPrefix: "Use Graphwar Agent to read game information. Put ",
-        helpSuffix: ".",
+        helpLink: "How to use Graphwar Agent",
         read: "Read state",
         reading: "Reading",
         readTitle: "Read current soldier coordinates and obstacles from Graphwar Agent.",
@@ -372,20 +369,50 @@ export const graphwarKillerLocale = {
       title: "Detection",
     },
     instructions: {
-      items: [
-        "Add a Graphwar screenshot by uploading, dragging, pasting, or reading a local Graphwar Agent.",
-        "Enter the coordinate range and game mode, or click Detect Bounds, then Detect Soldiers/Obstacles to mark soldiers and obstacles.",
+      agent: {
+        command: "java -javaagent:graphwar-agent.jar -jar graphwar.jar",
+        download: "graphwar-agent.jar",
+        textAfterCommand: " to start Graphwar Agent and the game together.",
+        textBeforeCommand: " in the game directory, then run ",
+        textBeforeDownload: "Use Graphwar Agent to read game information: put ",
+        title: "How to use Graphwar Agent",
+      },
+      expression: {
+        items: [
+          // The footer tutorial should list Graphwar's original input tokens, not the full JavaScript/Math syntax.
+          {
+            label: "Variables",
+            text: "Use x, y, and y'. With the default Graphwar-compatible setting, y' is parsed as y; turn this off in Advanced.",
+          },
+          {
+            label: "Operators",
+            text: "Use +, -, /, *, and ^. Parentheses and implicit multiplication such as 2x or 2sin(x) are also supported.",
+          },
+          {
+            label: "Functions",
+            text: "Use sqrt(), log(), ln(), abs(), sin() (alias sen()), cos(), tan() (alias tg()), and exp(). log is base 10; ln is the natural logarithm.",
+          },
+          {
+            label: "Constants",
+            text: "Use e and pi.",
+          },
+          {
+            label: "Compatibility",
+            text: "Graphwar is known to skip unknown characters; turn this off in Advanced.",
+          },
+        ],
+        title: "Expression Syntax",
+      },
+      steps: [
+        "Input source: upload, drag, or paste a Graphwar screenshot; for accurate game state, turn on Use Agent.",
+        "Screenshot detection: enter the coordinate range and game mode, or click Detect Bounds, then Detect Soldiers/Obstacles to mark soldiers and obstacles.",
+        "Agent reading: in the Detection panel, turn on Use Agent, confirm the Agent URL, then click Read State.",
         "Solver mode: in Pick path, click your soldier first, then the target path points; copy the generated function into Graphwar.",
         "Simulator mode: select the initial firing soldier and enter a function. y'' mode also needs a launch angle.",
         "Turn on Smart Cursor for assisted picking; choose Smart Pathfinding when the route should avoid detected obstacles.",
         "During Smart Pathfinding, right-click the screenshot to cancel.",
-        // The footer tutorial should list Graphwar's original input tokens, not the full JavaScript/Math syntax.
-        "Allowed variables: x, y, and y'. With the default Graphwar-compatible setting, y' is parsed as y; turn this off in Advanced.",
-        "Allowed operators: +, -, /, *, and ^. Parentheses and implicit multiplication such as 2x or 2sin(x) are also supported.",
-        "Allowed functions: sqrt(), log(), ln(), abs(), sin() (alias sen()), cos(), tan() (alias tg()), and exp(). log is base 10; ln is the natural logarithm.",
-        "Allowed constants: e and pi.",
-        "Graphwar is known to skip unknown characters; turn this off in Advanced.",
       ],
+      stepsTitle: "Basic Workflow",
       title: "How to Use",
     },
     introLinkText: "Graphwar",

@@ -268,10 +268,7 @@ export interface GraphwarKillerLocale {
         address: string;
         addressAriaLabel: string;
         addressTitle: string;
-        download: string;
-        helpMiddle: string;
-        helpPrefix: string;
-        helpSuffix: string;
+        helpLink: string;
         read: string;
         reading: string;
         readTitle: string;
@@ -312,7 +309,23 @@ export interface GraphwarKillerLocale {
       title: string;
     };
     instructions: {
-      items: readonly string[];
+      agent: {
+        command: string;
+        download: string;
+        textAfterCommand: string;
+        textBeforeCommand: string;
+        textBeforeDownload: string;
+        title: string;
+      };
+      expression: {
+        items: readonly {
+          label: string;
+          text: string;
+        }[];
+        title: string;
+      };
+      steps: readonly string[];
+      stepsTitle: string;
       title: string;
     };
     introLinkText: string;

@@ -31,8 +31,6 @@ interface GraphwarDetectionPanelAgentModel {
   baseUrlText: string;
   /** 地址已配置好时，面板操作区展示读取按钮。 */
   configured: boolean;
-  /** 文档站 public 目录中的 Agent jar 下载地址。 */
-  downloadHref: string;
   /** 当前是否正在读取 Agent。 */
   inProgress: boolean;
   /** 是否使用 Agent 作为识别来源。 */
@@ -194,11 +192,7 @@ function handleAgentBaseUrlInput(event: Event) {
         >
       </label>
       <p class="graphwar-killer__agent-usage-hint">
-        {{ locale.ui.detection.agent.helpPrefix }}
-        <a :href="panel.agent.downloadHref">{{ locale.ui.detection.agent.download }}</a>
-        {{ locale.ui.detection.agent.helpMiddle }}
-        <code>java -javaagent:graphwar-agent.jar -jar graphwar.jar</code>
-        {{ locale.ui.detection.agent.helpSuffix }}
+        <a href="#graphwar-killer-agent-help">{{ locale.ui.detection.agent.helpLink }}</a>
       </p>
     </details>
     <details

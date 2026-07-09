@@ -203,19 +203,41 @@ function createTrajectoryFormulaState(
     bounds: GraphBounds;
     points: readonly GraphPoint[];
     settings: GraphwarTrajectoryFormulaSettings;
+    soldierCenter?: GraphPoint;
   },
   signEpsilon: number,
 ): TrajectoryFormulaState {
   const formulaPoints = createResolvedFormulaPathPoints(options, signEpsilon);
-  const stepGlitchSegments = createStepGlitchSegments(options, formulaPoints);
-  const formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon, stepGlitchSegments);
-  return {
-    compiledMaterials: compileGraphwarFormulaMaterials(
+  let stepGlitchSegments: readonly (StepGlitchSegment | undefined)[] | undefined = createStepGlitchSegments(
+    options,
+    formulaPoints,
+  );
+  let formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon, stepGlitchSegments);
+  let compiledMaterials = compileGraphwarFormulaMaterials(
+    formulaPoints,
+    options.settings.steepness,
+    options.settings.algorithm,
+    formulaEvaluation,
+  );
+  const refinedStepGlitchSegments = refineStepGlitchSegmentsWithSimulation(
+    options,
+    formulaPoints,
+    formulaEvaluation,
+    compiledMaterials,
+    stepGlitchSegments,
+  );
+  if (refinedStepGlitchSegments !== stepGlitchSegments) {
+    stepGlitchSegments = refinedStepGlitchSegments;
+    formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon, stepGlitchSegments);
+    compiledMaterials = compileGraphwarFormulaMaterials(
       formulaPoints,
       options.settings.steepness,
       options.settings.algorithm,
       formulaEvaluation,
-    ),
+    );
+  }
+  return {
+    compiledMaterials,
     formulaEvaluation,
     formulaPoints,
     signEpsilon,
@@ -238,6 +260,109 @@ function createTrajectoryFormulaEvaluation(
     stepOverflowProtection: options.settings.stepOverflowProtection,
     stepOverflowProtectionRange: createStepOverflowProtectionRange(options.bounds, formulaPoints),
   };
+}
+
+function refineStepGlitchSegmentsWithSimulation(
+  options: {
+    bounds: GraphBounds;
+    points: readonly GraphPoint[];
+    settings: GraphwarTrajectoryFormulaSettings;
+    soldierCenter?: GraphPoint;
+  },
+  formulaPoints: readonly GraphPoint[],
+  formulaEvaluation: FormulaEvaluationOptions,
+  compiledMaterials: CompiledGraphwarFormulaMaterials,
+  stepGlitchSegments: readonly (StepGlitchSegment | undefined)[] | undefined,
+) {
+  const mask = options.settings.stepGlitchObstacleMask;
+  const soldierCenter = options.soldierCenter ?? formulaPoints[0];
+  if (!stepGlitchSegments || !mask || !soldierCenter || options.points.length < 3) {
+    return stepGlitchSegments;
+  }
+
+  const refinedSegments = [...stepGlitchSegments];
+  let changed = false;
+  let currentEvaluation = formulaEvaluation;
+  let currentMaterials = compiledMaterials;
+  let initialState: GraphwarTrajectorySamplingState | undefined;
+
+  for (let pointIndex = 1; pointIndex < options.points.length - 1; pointIndex += 1) {
+    const targetX = options.points[pointIndex].x;
+    const sample = sampleGraphwarTrajectory({
+      algorithm: options.settings.algorithm,
+      bounds: options.bounds,
+      equation: options.settings.equation,
+      compiledFormulaMaterials: currentMaterials,
+      formulaEvaluation: currentEvaluation,
+      initialState,
+      points: formulaPoints,
+      shouldStop: (point) => point.x >= targetX,
+      soldierCenter,
+      steepness: options.settings.steepness,
+    });
+    if (sample.stopReason !== "stopped" || !sample.endState) {
+      break;
+    }
+
+    const actualStartPoint = sample.points[sample.points.length - 1];
+    if (!actualStartPoint || !Number.isFinite(actualStartPoint.y)) {
+      break;
+    }
+
+    initialState = sample.endState;
+    const nextSegment = createStepGlitchSegmentFromActualStart(
+      options,
+      formulaPoints,
+      pointIndex,
+      actualStartPoint.y,
+      mask,
+    );
+    if (sameStepGlitchSegment(refinedSegments[pointIndex], nextSegment)) {
+      continue;
+    }
+
+    // 连续漏洞段会把下一段起点 y 带偏；按模拟器的实际落点重算 D，避免误差沿路径累计。
+    refinedSegments[pointIndex] = nextSegment;
+    changed = true;
+    currentEvaluation = createTrajectoryFormulaEvaluation(
+      options,
+      formulaPoints,
+      formulaEvaluation.signEpsilon ?? 0,
+      refinedSegments,
+    );
+    currentMaterials = compileGraphwarFormulaMaterials(
+      formulaPoints,
+      options.settings.steepness,
+      options.settings.algorithm,
+      currentEvaluation,
+    );
+  }
+
+  return changed ? refinedSegments : stepGlitchSegments;
+}
+
+function createStepGlitchSegmentFromActualStart(
+  options: {
+    bounds: GraphBounds;
+    points: readonly GraphPoint[];
+  },
+  formulaPoints: readonly GraphPoint[],
+  segmentIndex: number,
+  actualStartY: number,
+  mask: Uint8Array,
+) {
+  const previous = options.points[segmentIndex];
+  const target = options.points[segmentIndex + 1];
+  const formulaTargetY = formulaPoints[segmentIndex + 1]?.y ?? target.y;
+  return createStepGlitchSegment(previous, target, formulaTargetY, formulaTargetY - actualStartY, options.bounds, mask);
+}
+
+function sameStepGlitchSegment(left: StepGlitchSegment | undefined, right: StepGlitchSegment | undefined) {
+  if (!left || !right) {
+    return left === right;
+  }
+
+  return left.derivative === right.derivative && left.startX === right.startX && left.targetY === right.targetY;
 }
 
 /** Graphwar 缩步只会尝试 STEP_SIZE/2^n；漏洞 D 需要按最后一个实际档位估算。 */
@@ -270,19 +395,15 @@ function createStepGlitchSegments(
 
   const segments: (StepGlitchSegment | undefined)[] = [];
   let hasGlitchSegment = false;
-  let estimatedY = formulaPoints[0]?.y ?? options.points[0]?.y ?? 0;
   for (let index = 1; index < options.points.length; index += 1) {
     const previous = options.points[index - 1];
     const target = options.points[index];
     const formulaPreviousY = formulaPoints[index - 1]?.y ?? previous.y;
     const formulaTargetY = formulaPoints[index]?.y ?? target.y;
-    const plannedDeltaY = formulaTargetY - formulaPreviousY;
-    // 障碍检查遵循用户画出的局部段；D 按上一段估计落点修订，避免连续漏洞段累计过冲误差。
-    const replacementDeltaY = formulaTargetY - estimatedY;
+    const replacementDeltaY = formulaTargetY - formulaPreviousY;
     const segment = createStepGlitchSegment(previous, target, formulaTargetY, replacementDeltaY, options.bounds, mask);
     segments.push(segment);
     hasGlitchSegment ||= Boolean(segment);
-    estimatedY = segment ? estimateStepGlitchLandingY(estimatedY, segment) : estimatedY + plannedDeltaY;
   }
   return hasGlitchSegment ? segments : undefined;
 }
@@ -305,41 +426,6 @@ function createStepGlitchSegment(
     startX: jump.startX,
     targetY,
   };
-}
-
-function estimateStepGlitchLandingY(startY: number, segment: StepGlitchSegment) {
-  let x = segment.startX;
-  let y = startY;
-  const direction = segment.derivative < 0 ? -1 : 1;
-  // 门函数通常一两次最小步就越过目标；限制步数，避免估计器变成第二套采样器。
-  for (let stepIndex = 0; stepIndex < 4; stepIndex += 1) {
-    y = estimateStepGlitchRk4Y(x, y, segment);
-    x += GRAPHWAR_STEP_GLITCH_MIN_STEP;
-    if (direction * (y - segment.targetY) >= 0) {
-      return y;
-    }
-  }
-  return y;
-}
-
-function estimateStepGlitchRk4Y(x: number, y: number, segment: StepGlitchSegment) {
-  const h = GRAPHWAR_STEP_GLITCH_MIN_STEP;
-  const k1 = evaluateStepGlitchDerivative(x, y, segment);
-  const k2 = evaluateStepGlitchDerivative(x + 0.5 * h, y + 0.5 * h * k1, segment);
-  const k3 = evaluateStepGlitchDerivative(x + 0.5 * h, y + 0.5 * h * k2, segment);
-  const k4 = evaluateStepGlitchDerivative(x + h, y + h * k3, segment);
-  return y + (h / 6) * (k1 + 2 * k2 + 2 * k3 + k4);
-}
-
-function evaluateStepGlitchDerivative(x: number, y: number, segment: StepGlitchSegment) {
-  const direction = segment.derivative < 0 ? -1 : 1;
-  const xGate = 1 + evaluateStepGlitchSign(x - segment.startX);
-  const yGate = 1 + evaluateStepGlitchSign(direction * (segment.targetY - y));
-  return (segment.derivative / 4) * xGate * yGate;
-}
-
-function evaluateStepGlitchSign(value: number) {
-  return value / (Math.abs(value) + GRAPHWAR_TOOL_SIGN_EPSILON);
 }
 
 function createStepGlitchJump(previousX: number, targetX: number) {

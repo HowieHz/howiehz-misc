@@ -1,10 +1,12 @@
 import {
   GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
+  GRAPHWAR_GAME_SOLDIER_RADIUS,
   GRAPHWAR_PLANE_HEIGHT,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
+import { MAX_FORMULA_DECIMAL_PLACES, roundToDecimalPlaces } from "../../core/numbers";
 import { createGraphPoint } from "../../core/types";
 import type {
   AlgorithmMode,
@@ -197,6 +199,8 @@ const GRAPHWAR_STEP_GLITCH_MIN_STEP = createGraphwarStepGlitchMinStep();
 const STEP_GLITCH_RK4_CONTRIBUTION_FACTORS = [1, 5 / 6, 2 / 3, 1 / 2, 1 / 3, 1 / 6] as const;
 // x 右门按 Graphwar 缩步序列枚举；太短会被 0.01 粗步直接跨过，模拟回放会自然淘汰。
 const STEP_GLITCH_WINDOW_WIDTHS = createStepGlitchWindowWidths();
+// Graphwar 原版士兵命中判定使用半径平方比较；漏洞候选也按同一游戏坐标半径判断是否经过目标圈。
+const STEP_GLITCH_TARGET_HIT_RADIUS_SQUARED = GRAPHWAR_GAME_SOLDIER_RADIUS ** 2;
 
 interface StepGlitchCandidateContext {
   baseDeltaYs: readonly (number | undefined)[];
@@ -474,16 +478,17 @@ function selectStepGlitchSegmentCandidate(
     options,
     formulaPoints,
     context.segmentIndex,
+    options.settings.decimalPlaces,
     replacementDeltaY,
     context.mask,
   );
-  if (candidates.length <= 1) {
-    return candidates[0];
+  if (candidates.length === 0) {
+    return undefined;
   }
 
-  let bestSegment = candidates[0];
+  let bestSegment: StepGlitchSegment | undefined;
   let bestError = Number.POSITIVE_INFINITY;
-  let bestWindowWidth = Number.POSITIVE_INFINITY;
+  let bestWindowWidth = Number.NEGATIVE_INFINITY;
   for (const candidate of candidates) {
     const candidateSegments = [...context.baseSegments];
     const candidateDeltaYs = [...context.baseDeltaYs];
@@ -515,19 +520,41 @@ function selectStepGlitchSegmentCandidate(
       steepness: options.settings.steepness,
     });
     const landingPoint = sample.stopReason === "stopped" ? sample.points[sample.points.length - 1] : undefined;
-    if (!landingPoint || !Number.isFinite(landingPoint.y)) {
+    if (
+      !landingPoint ||
+      !Number.isFinite(landingPoint.y) ||
+      !stepGlitchCandidateHitsTargetCircle(sample.points, candidate)
+    ) {
       continue;
     }
 
     const error = Math.abs(landingPoint.y - candidate.targetY);
     const windowWidth = candidate.endX - candidate.startX;
-    if (error < bestError || (error === bestError && windowWidth < bestWindowWidth)) {
+    // 同样落点误差时保留更长 x 窗口，右门通常能用更少小数位输出。
+    if (error < bestError || (error === bestError && windowWidth > bestWindowWidth)) {
       bestError = error;
       bestWindowWidth = windowWidth;
       bestSegment = candidate;
     }
   }
   return bestSegment;
+}
+
+function stepGlitchCandidateHitsTargetCircle(points: readonly GraphPoint[], candidate: StepGlitchSegment) {
+  if (!Number.isFinite(candidate.targetX) || !Number.isFinite(candidate.targetY)) {
+    return false;
+  }
+
+  // 从第 1 个采样点开始对齐 Graphwar 的命中循环；起点不参与士兵命中判定。
+  for (let index = 1; index < points.length; index += 1) {
+    const point = points[index];
+    const dx = point.x - candidate.targetX;
+    const dy = point.y - candidate.targetY;
+    if (dx * dx + dy * dy < STEP_GLITCH_TARGET_HIT_RADIUS_SQUARED) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function createStepGlitchReplacementDeltaY(
@@ -546,18 +573,20 @@ function createStepGlitchReplacementDeltaY(
     return undefined;
   }
 
-  const preJumpPoint = sampleStepGlitchPreJumpPoint(options, formulaPoints, context, jump);
+  const formulaJump = createStepGlitchJumpWithWindowWidth(jump, GRAPHWAR_STEP_SIZE, options.settings.decimalPlaces);
+  const preJumpPoint = sampleStepGlitchPreJumpPoint(options, formulaPoints, context, formulaJump);
   if (!preJumpPoint || !Number.isFinite(preJumpPoint.y)) {
     return undefined;
   }
 
   const formulaTargetY = formulaPoints[context.segmentIndex + 1]?.y ?? target.y;
-  const rawDeltaY = formulaTargetY - preJumpPoint.y;
+  const targetY = createStepGlitchFormulaTargetY(formulaTargetY, options.settings.decimalPlaces);
+  const rawDeltaY = targetY - preJumpPoint.y;
   if (rawDeltaY === 0) {
     return rawDeltaY;
   }
 
-  // D 应按漏洞真正触发前的实际 y 计算；重复触发交给 x 右门候选缩短处理，不额外微调目标 y。
+  // D 应按漏洞真正触发前的实际 y，以及最终公式文本里的目标中心计算。
   return rawDeltaY;
 }
 
@@ -675,7 +704,9 @@ function sameStepGlitchSegment(left: StepGlitchSegment | undefined, right: StepG
   return (
     left.derivative === right.derivative &&
     left.endX === right.endX &&
+    left.gateY === right.gateY &&
     left.startX === right.startX &&
+    left.targetX === right.targetX &&
     left.targetY === right.targetY
   );
 }
@@ -731,8 +762,19 @@ function createStepGlitchSegments(
     const target = options.points[index];
     const formulaPreviousY = formulaPoints[index - 1]?.y ?? previous.y;
     const formulaTargetY = formulaPoints[index]?.y ?? target.y;
-    const replacementDeltaY = formulaTargetY - formulaPreviousY;
-    const segment = createStepGlitchSegment(previous, target, formulaTargetY, replacementDeltaY, options.bounds, mask);
+    const targetY = createStepGlitchFormulaTargetY(formulaTargetY, options.settings.decimalPlaces);
+    const replacementDeltaY = targetY - formulaPreviousY;
+    const gateY = createStepGlitchFormulaGateY(targetY, replacementDeltaY, options.settings.decimalPlaces);
+    const segment = createStepGlitchSegment(
+      previous,
+      target,
+      targetY,
+      gateY,
+      replacementDeltaY,
+      options.settings.decimalPlaces,
+      options.bounds,
+      mask,
+    );
     segments.push(segment);
     hasGlitchSegment ||= Boolean(segment);
   }
@@ -748,61 +790,118 @@ function createStepGlitchSegmentCandidates(
   },
   formulaPoints: readonly GraphPoint[],
   segmentIndex: number,
+  decimalPlaces: number,
   replacementDeltaY: number,
   mask: Uint8Array,
 ): StepGlitchSegment[] {
   const previous = options.points[segmentIndex];
   const target = options.points[segmentIndex + 1];
   const formulaTargetY = formulaPoints[segmentIndex + 1]?.y ?? target.y;
+  const targetY = createStepGlitchFormulaTargetY(formulaTargetY, decimalPlaces);
+  const gateY = createStepGlitchFormulaGateY(targetY, replacementDeltaY, decimalPlaces);
   const jump = createStepGlitchJump(previous.x, target.x);
-  if (!jump || !stepGlitchVerticalLineHitsObstacle(jump.checkX, previous.y, target.y, options.bounds, mask)) {
+  if (!jump) {
+    return [];
+  }
+
+  const startX = createStepGlitchFormulaXGate(jump.startX, decimalPlaces);
+  // 障碍识别必须跟最终公式里的 x 左门对齐；raw target.x 只保留给目标命中圆中心。
+  if (!stepGlitchVerticalLineHitsObstacle(startX, previous.y, target.y, options.bounds, mask)) {
     return [];
   }
 
   const candidates: StepGlitchSegment[] = [];
   for (const windowWidth of STEP_GLITCH_WINDOW_WIDTHS) {
-    const windowedJump = createStepGlitchJumpWithWindowWidth(jump, windowWidth);
+    const windowedJump = createStepGlitchJumpWithWindowWidth(jump, windowWidth, decimalPlaces);
     for (const factor of STEP_GLITCH_RK4_CONTRIBUTION_FACTORS) {
-      candidates.push(createStepGlitchSegmentFromJump(windowedJump, formulaTargetY, replacementDeltaY, factor));
+      candidates.push(createStepGlitchSegmentFromJump(windowedJump, targetY, gateY, replacementDeltaY, factor));
     }
   }
   return candidates;
+}
+
+function createStepGlitchFormulaTargetY(targetY: number, decimalPlaces: number) {
+  // D 按最终公式小数位里的目标中心计算，避免文本回放和候选搜索目标不一致。
+  return -roundToDecimalPlaces(-targetY, decimalPlaces);
+}
+
+function createStepGlitchFormulaGateY(targetY: number, deltaY: number, decimalPlaces: number) {
+  if (deltaY === 0) {
+    return targetY;
+  }
+
+  // 进入命中圈就应关闭 y 门：上跳关在下沿，下跳关在上沿，避免窗口内重复触发。
+  const gateY = deltaY > 0 ? targetY - GRAPHWAR_GAME_SOLDIER_RADIUS : targetY + GRAPHWAR_GAME_SOLDIER_RADIUS;
+  return -roundToDecimalPlaces(-gateY, decimalPlaces);
+}
+
+function createStepGlitchFormulaXWindow(startX: number, width: number, decimalPlaces: number) {
+  const formulaStartX = createStepGlitchFormulaXGate(startX, decimalPlaces);
+  const endDecimalPlaces = createStepGlitchWindowDecimalPlaces(width, decimalPlaces);
+  return { endX: createStepGlitchFormulaXGate(formulaStartX + width, endDecimalPlaces), startX: formulaStartX };
+}
+
+function createStepGlitchWindowDecimalPlaces(width: number, decimalPlaces: number) {
+  // 左门吃用户公式精度；右门只补到窗口所需精度，例如 0.01 -> 2 位、0.000009765625 -> 6 位。
+  const windowDecimalPlaces = Math.max(0, Math.ceil(-Math.log10(width)));
+  return Math.min(MAX_FORMULA_DECIMAL_PLACES, Math.max(decimalPlaces, windowDecimalPlaces));
+}
+
+function createStepGlitchFormulaXGate(x: number, decimalPlaces: number) {
+  return -roundToDecimalPlaces(-x, decimalPlaces);
 }
 
 function createStepGlitchSegment(
   previous: GraphPoint,
   target: GraphPoint,
   targetY: number,
+  gateY: number,
   replacementDeltaY: number,
+  decimalPlaces: number,
   bounds: GraphBounds,
   mask: Uint8Array,
 ): StepGlitchSegment | undefined {
   const jump = createStepGlitchJump(previous.x, target.x);
-  if (!jump || !stepGlitchVerticalLineHitsObstacle(jump.checkX, previous.y, target.y, bounds, mask)) {
+  if (!jump) {
     return undefined;
   }
 
-  return createStepGlitchSegmentFromJump(jump, targetY, replacementDeltaY, 1);
+  const formulaJump = createStepGlitchJumpWithWindowWidth(jump, GRAPHWAR_STEP_SIZE, decimalPlaces);
+  // 初始漏洞段也按最终公式左门查障碍，避免和候选搜索使用不同跳点。
+  if (!stepGlitchVerticalLineHitsObstacle(formulaJump.startX, previous.y, target.y, bounds, mask)) {
+    return undefined;
+  }
+
+  return createStepGlitchSegmentFromJump(formulaJump, targetY, gateY, replacementDeltaY, 1);
 }
 
 function createStepGlitchSegmentFromJump(
   jump: StepGlitchJump,
   targetY: number,
+  gateY: number,
   replacementDeltaY: number,
   contributionFactor: number,
 ): StepGlitchSegment {
   return {
     derivative: replacementDeltaY / (contributionFactor * jump.step),
     endX: jump.endX,
+    gateY,
     startX: jump.startX,
+    targetX: jump.checkX,
     targetY,
   };
 }
 
-function createStepGlitchJumpWithWindowWidth(jump: StepGlitchJump, width: number): StepGlitchJump {
+function createStepGlitchJumpWithWindowWidth(
+  jump: StepGlitchJump,
+  width: number,
+  decimalPlaces: number,
+): StepGlitchJump {
+  const window = createStepGlitchFormulaXWindow(jump.startX, width, decimalPlaces);
   return {
     ...jump,
-    endX: jump.startX + width,
+    endX: window.endX,
+    startX: window.startX,
   };
 }
 

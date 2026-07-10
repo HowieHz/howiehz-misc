@@ -372,7 +372,7 @@ function evaluateCompiledStepGlitchFirstDerivative(
   const direction = segment.derivative < 0 ? -1 : 1;
   const xGate = 1 + evaluateStableSignRatio(x - segment.startX, options);
   const xLimitGate = 1 - evaluateStableSignRatio(x - segment.endX, options);
-  const yGate = 1 + evaluateStableSignRatio(direction * (segment.targetY - y), options);
+  const yGate = 1 + evaluateStableSignRatio(direction * (segment.gateY - y), options);
   return (segment.derivative / 8) * xGate * xLimitGate * yGate;
 }
 
@@ -423,7 +423,9 @@ function createCompiledStepGlitchSegment(
   return {
     derivative: createCompiledFormulaCoefficient(segment.derivative, options),
     endX: segment.endX,
+    gateY: createCompiledFormulaYCenter(segment.gateY, options),
     startX: segment.startX,
+    targetX: segment.targetX,
     targetY: createCompiledFormulaYCenter(segment.targetY, options),
   };
 }
@@ -666,7 +668,7 @@ function formatStepGlitchFirstDerivativeExpression(
   const xGate = `1+${formatStableSignRatio(formatStepGlitchXOffset(segment.startX), signEpsilon)}`;
   const xLimitGate = `1-${formatStableSignRatio(formatStepGlitchXOffset(segment.endX), signEpsilon)}`;
   const yGate = `1+${formatStableSignRatio(
-    formatDirectedTargetYOffset(segment.targetY, direction, decimalPlaces),
+    formatDirectedTargetYOffset(segment.gateY, direction, decimalPlaces),
     signEpsilon,
   )}`;
   // 三个 sign 门全开时乘积是 8，因此文本系数使用 D/8，实际导数仍是 D。
@@ -1188,7 +1190,7 @@ function formatXOffset(centerX: number, decimalPlaces?: number) {
   return offset === 0 ? "x" : `x${formatSignedNumber(offset, decimalPlaces)}`;
 }
 
-/** 漏洞 x 窗口可能小于用户输出精度，必须绕过 decimalPlaces，避免 start/end 被舍入成同一条线。 */
+/** 漏洞 x 门已经在采样层按最终文本精度整理过，这里只负责无损输出整理后的门线。 */
 function formatStepGlitchXOffset(centerX: number) {
   const offset = Object.is(centerX, -0) ? 0 : -centerX;
   return offset === 0 ? "x" : `x${formatDoublePrecisionSignedNumber(offset)}`;

@@ -23,16 +23,16 @@ export const GRAPHWAR_PLANE_HEIGHT = graphwarSourceConstants.planeHeight;
 /** Graphwar 源码 Constants.java 里 x 轴对应的游戏坐标宽度。 */
 export const GRAPHWAR_PLANE_GAME_LENGTH = graphwarSourceConstants.planeGameLength;
 
-/** Graphwar 源码 Constants.java 里的士兵像素半径。 */
+/** 原版函数碰撞和发射点偏移使用的士兵命中半径，单位：Graphwar 平面像素。 */
 export const GRAPHWAR_SOLDIER_RADIUS = graphwarSourceConstants.soldierRadius;
 
-/** Graphwar 源码 Constants.java 里的士兵选择/安全半径。 */
+/** 原版生成士兵/障碍时使用的安全间距；不是工具 UI 里的选中圈或命中圈。 */
 export const GRAPHWAR_SOLDIER_SELECTION_RADIUS = graphwarSourceConstants.soldierSelectionRadius;
 
-/** Graphwar 原版士兵贴图透明画布尺寸，来自 rsc/soldiers/*.png 和 GraphPlane#addHelmet。 */
+/** 原版士兵 PNG 的透明画布尺寸；不代表可见身体大小，也不参与命中判定。 */
 export const GRAPHWAR_SOLDIER_SPRITE_SIZE = 20;
 
-/** Graphwar 默认士兵合成图的非透明像素外框尺寸，来自 addHelmet 后的 rsc/soldiers/*.png 量测。 */
+/** 工具从原版合成士兵图量出的可见身体外框宽高；可视半径是该值的一半。 */
 export const GRAPHWAR_SOLDIER_VISIBLE_SIZE = 17;
 
 /** Graphwar 源码 Constants.java 里的默认函数积分步长。 */
@@ -60,6 +60,6 @@ export const GRAPHWAR_DEFAULT_X_LIMIT = GRAPHWAR_PLANE_GAME_LENGTH / 2;
 export const GRAPHWAR_VISIBLE_Y_LIMIT =
   ((GRAPHWAR_PLANE_HEIGHT / 2) * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH;
 
-/** Graphwar 里士兵半径换算到游戏坐标后的长度。 */
+/** 与 GRAPHWAR_SOLDIER_RADIUS 同一个命中半径，只是从平面像素换算到 Graphwar 游戏坐标。 */
 export const GRAPHWAR_GAME_SOLDIER_RADIUS =
   (GRAPHWAR_SOLDIER_RADIUS * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH;

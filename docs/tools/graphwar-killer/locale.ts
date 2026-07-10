@@ -79,8 +79,14 @@ export const graphwarKillerLocale = {
     calculation: {
       enterFunction: "请输入函数",
       enterLaunchAngle: "请输入发射角",
+      fallbackWarning: "⚠ 已降级",
+      fallbackWarningTitle: (message) => `主轨迹 Worker 不可用，已降级为主线程解算和模拟：${message}`,
+      inProgress: "正在解算函数并模拟轨迹……",
       selectInitialSoldier: "先选择初始发射士兵",
       selectPath: "先点出自己的位置，再选择至少一个路径点",
+      simulateFailed: "模拟轨迹失败",
+      solveFailed: "解算函数失败",
+      success: (elapsed) => `已解算函数并模拟轨迹，耗时 ${elapsed}`,
     },
     copy: {
       buttonDefault: "复制函数",

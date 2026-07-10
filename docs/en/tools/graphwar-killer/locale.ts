@@ -110,8 +110,15 @@ export const graphwarKillerLocale = {
     calculation: {
       enterFunction: "Enter a function",
       enterLaunchAngle: "Enter a launch angle",
+      fallbackWarning: "⚠ fallback",
+      fallbackWarningTitle: (message) =>
+        `Main trajectory Worker is unavailable; fell back to solving and simulation on the main thread: ${message}`,
+      inProgress: "Solving the function and simulating the trajectory...",
       selectInitialSoldier: "Select the initial firing soldier first",
       selectPath: "Click your position first, then select at least one path point",
+      simulateFailed: "Failed to simulate the trajectory",
+      solveFailed: "Failed to solve the function",
+      success: (elapsed) => `Solved the function and simulated the trajectory in ${elapsed}`,
     },
     copy: {
       buttonDefault: "Copy function",

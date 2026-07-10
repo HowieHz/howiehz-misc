@@ -161,8 +161,14 @@ export interface GraphwarKillerLocale {
     calculation: {
       enterFunction: string;
       enterLaunchAngle: string;
+      fallbackWarning: string;
+      fallbackWarningTitle: (message: string) => string;
+      inProgress: string;
       selectInitialSoldier: string;
       selectPath: string;
+      simulateFailed: string;
+      solveFailed: string;
+      success: (elapsed: string) => string;
     };
     copy: {
       buttonDefault: string;

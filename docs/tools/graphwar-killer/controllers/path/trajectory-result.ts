@@ -1,4 +1,4 @@
-import { computed } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 import type {
   AlgorithmMode,
@@ -10,27 +10,51 @@ import type {
   PixelPoint,
   ToolWorkflowMode,
 } from "../../core/types";
-import {
-  createGraphwarTrajectoryFormulaContext,
-  findGraphwarTrajectoryTargetHitIndex,
-  getGraphwarTrajectoryLaunchAngle,
-  sampleGraphwarExpressionTrajectoryWithStops,
-  sampleGraphwarFormulaTrajectory,
-  type GraphwarTrajectoryCollisionSettings,
-  type GraphwarTrajectoryFormulaSettings,
+import type { GraphwarExpressionParserOptions } from "../../formula/expression/evaluator";
+import type {
+  GraphwarTrajectoryCollisionSettings,
+  GraphwarTrajectoryFormulaSettings,
 } from "../../formula/trajectory/sampling";
-import { formatVisibleTrajectoryPoints } from "../../presentation/stage/svg-polyline";
+import {
+  type GraphwarTrajectoryCalculationFailureStage,
+  type GraphwarTrajectoryCalculationInput,
+  type GraphwarTrajectoryCalculationResult,
+  type GraphwarTrajectoryWarningReason,
+} from "./trajectory-calculation";
+import { createGraphwarTrajectoryRunner, isGraphwarTrajectoryCancelledError } from "./trajectory-runner";
+
+export type { GraphwarTrajectoryWarningReason } from "./trajectory-calculation";
 
 interface ReadonlyRef<T> {
   readonly value: T;
 }
 
-/** 轨迹结果提示原因；页面应负责把原因映射成本地化文案。 */
-export type GraphwarTrajectoryWarningReason = "invalid" | "max-steps" | "obstacle" | "out-of-bounds" | "too-steep";
+export type GraphwarTrajectoryCalculationStatus =
+  | { type: "idle" }
+  | { type: "in-progress" }
+  | { elapsedMs: number; type: "success" }
+  | { message: string; stage: GraphwarTrajectoryCalculationFailureStage; type: "failure" };
+
+interface PublishedTrajectoryResult {
+  /** 当前画布展示的完整轨迹快照。 */
+  displayedTrajectory?: PublishedTrajectorySnapshot;
+  /** 模拟器最后一次成功的完整轨迹。 */
+  simulatorTrajectory?: PublishedTrajectorySnapshot;
+  /** 求解器最后一次成功的完整结果；公式、角度和轨迹必须成组保留。 */
+  solver?: {
+    formulaResult: FormulaResult;
+    secondOrderLaunchAngleDegrees?: number;
+    trajectory: PublishedTrajectorySnapshot;
+  };
+}
+
+type PublishedTrajectorySnapshot = Pick<GraphwarTrajectoryCalculationResult, "curvePoints" | "warningReason">;
 
 interface GraphwarTrajectoryResultOptions {
   /** 碰撞采样应使用页面当前障碍和边界收缩配置。 */
   getCollisionSettings: () => GraphwarTrajectoryCollisionSettings | undefined;
+  /** 模拟容差无效时不能把缺失碰撞设置误当成“无障碍”。 */
+  collisionSettingsValid: ReadonlyRef<boolean>;
   /** 坐标映射由页面统一提供，避免轨迹 Module 自行读取输入框文本。 */
   geometry: {
     /** 当前截图坐标系矩形。 */
@@ -88,103 +112,38 @@ interface GraphwarTrajectoryResultOptions {
 }
 
 export interface GraphwarTrajectoryResultController {
+  /** 当前计算 Worker 已永久降级到主线程时的具体原因。 */
+  calculationFallbackReason: ReadonlyRef<string>;
+  /** 当前主公式和轨迹计算状态。 */
+  calculationStatus: ReadonlyRef<GraphwarTrajectoryCalculationStatus>;
   /** 创建像素路径验证入口使用的公式采样设置。 */
   createPathTrajectoryFormulaSettings: () => GraphwarTrajectoryFormulaSettings;
+  /** 页面卸载时取消任务、计时器并关闭常驻 Worker。 */
+  dispose: () => void;
   /** 有效小数位；无效输入时回退到页面默认值。 */
   formulaOutputDecimalPlaces: ReadonlyRef<number>;
-  /** 当前公式生成结果；无效配置或模拟器模式返回 undefined。 */
+  /** 最后一次完整成功的求解器公式；模拟器计算不会覆盖该快照。 */
   formulaResult: ReadonlyRef<FormulaResult | undefined>;
   /** 当前公式采样设置。 */
   graphwarTrajectoryFormulaSettings: ReadonlyRef<GraphwarTrajectoryFormulaSettings>;
-  /** 当前二阶发射角，单位为度。 */
+  /** 最后一次完整成功的求解器二阶发射角，单位为度。 */
   secondOrderLaunchAngleDegrees: ReadonlyRef<number | undefined>;
   /** 模拟器二阶发射角，单位为弧度。 */
   simulatorLaunchAngleRadians: ReadonlyRef<number | undefined>;
-  /** 当前主轨迹 SVG polyline points。 */
+  /** 当前工作流恢复或新计算成功的主轨迹 SVG polyline points。 */
   plottedCurvePoints: ReadonlyRef<string>;
-  /** 轨迹提示原因；页面应负责映射本地化文本。 */
+  /** 当前展示轨迹的提示原因。 */
   trajectoryWarningReason: ReadonlyRef<GraphwarTrajectoryWarningReason | undefined>;
 }
 
-/** 管理公式生成、模拟器采样和主轨迹命中/障碍结果。 */
+const trajectoryCalculationSuccessVisibleMs = 2000;
+
+/** 管理公式设置、异步主轨迹计算、原子结果和计算状态。 */
 export function useGraphwarTrajectoryResult(
   options: GraphwarTrajectoryResultOptions,
 ): GraphwarTrajectoryResultController {
   const formulaOutputDecimalPlaces = computed(() => options.settings.precisionDecimalPlaces.value);
   const formulaSteepness = computed(() => options.settings.steepness.value);
-  const graphwarTrajectoryFormulaSettings = computed<GraphwarTrajectoryFormulaSettings>(() => ({
-    algorithm: options.settings.algorithmMode.value,
-    decimalPlaces: formulaOutputDecimalPlaces.value,
-    equation: options.settings.equationMode.value,
-    formulaPathSteepness: formulaSteepness.value,
-    steepness: formulaSteepness.value,
-    stepGlitchMode:
-      options.settings.stepGlitchModeEnabled.value &&
-      options.settings.algorithmMode.value === "step" &&
-      options.settings.equationMode.value === "dy",
-    stepGlitchObstacleMask: options.settings.getStepGlitchObstacleMask(),
-    stepOverflowProtection: options.settings.stepOverflowProtectionEnabled.value,
-  }));
-
-  const graphwarTrajectoryFormulaContext = computed(() => {
-    const bounds = options.geometry.getBounds();
-    if (!bounds) {
-      return undefined;
-    }
-    return createGraphwarTrajectoryFormulaContext({
-      bounds,
-      points: options.path.mappedPathPoints.value,
-      settings: graphwarTrajectoryFormulaSettings.value,
-      soldierCenter: options.path.mappedPathPoints.value[0],
-    });
-  });
-
-  function createPathTrajectoryFormulaSettings(): GraphwarTrajectoryFormulaSettings {
-    return graphwarTrajectoryFormulaSettings.value;
-  }
-
-  const formulaResult = computed(() => {
-    if (options.settings.toolWorkflowMode.value !== "solver") {
-      return undefined;
-    }
-    const context = graphwarTrajectoryFormulaContext.value;
-    if (!context || context.formulaPoints.length < 2) {
-      return undefined;
-    }
-    if (options.settings.algorithmMode.value === "step" && !options.settings.steepnessValid.value) {
-      return undefined;
-    }
-    if (!options.settings.precisionValid.value) {
-      return undefined;
-    }
-    if (options.settings.algorithmMode.value === "abs" && options.settings.equationMode.value === "ddy") {
-      return undefined;
-    }
-    if (options.settings.isEquationModeDisabled(options.settings.equationMode.value)) {
-      return undefined;
-    }
-
-    // UI 展示和复制应直接复用采样上下文里的最终文本，避免同一热路径重复格式化公式材料。
-    return context.formulaResult;
-  });
-
-  const secondOrderLaunchAngleDegrees = computed(() => {
-    const context = graphwarTrajectoryFormulaContext.value;
-    if (
-      options.settings.equationMode.value !== "ddy" ||
-      options.settings.toolWorkflowMode.value !== "solver" ||
-      options.settings.isEquationModeDisabled(options.settings.equationMode.value) ||
-      (options.settings.algorithmMode.value === "step" && !options.settings.steepnessValid.value) ||
-      !context ||
-      context.formulaPoints.length < 2
-    ) {
-      return undefined;
-    }
-
-    const angle = (getGraphwarTrajectoryLaunchAngle(context, options.path.mappedPathPoints.value[0]) * 180) / Math.PI;
-    return Number.isFinite(angle) ? angle : undefined;
-  });
-
   const simulatorLaunchAngleRadians = computed(() => {
     if (options.settings.equationMode.value !== "ddy") {
       return undefined;
@@ -192,107 +151,306 @@ export function useGraphwarTrajectoryResult(
     const angle = options.simulator.parseNumber(options.simulator.launchAngleText.value);
     return angle === undefined ? undefined : (angle * Math.PI) / 180;
   });
+  const graphwarTrajectoryFormulaSettings = computed<GraphwarTrajectoryFormulaSettings>(() => {
+    const stepGlitchMode =
+      options.settings.stepGlitchModeEnabled.value &&
+      options.settings.algorithmMode.value === "step" &&
+      options.settings.equationMode.value === "dy";
+    const stepGlitchObstacleMask = stepGlitchMode ? options.settings.getStepGlitchObstacleMask() : undefined;
+    return {
+      algorithm: options.settings.algorithmMode.value,
+      decimalPlaces: formulaOutputDecimalPlaces.value,
+      equation: options.settings.equationMode.value,
+      formulaPathSteepness: formulaSteepness.value,
+      steepness: formulaSteepness.value,
+      stepGlitchMode,
+      ...(stepGlitchObstacleMask ? { stepGlitchObstacleMask } : {}),
+      stepOverflowProtection: options.settings.stepOverflowProtectionEnabled.value,
+    };
+  });
 
-  const trajectoryValidationTargetPoint = computed(() =>
-    options.settings.toolWorkflowMode.value === "solver" && options.path.pathPixels.value.length >= 2
-      ? options.path.pathPixels.value.at(-1)
-      : undefined,
-  );
+  const calculationFallbackReason = ref("");
+  const calculationStatus = ref<GraphwarTrajectoryCalculationStatus>({ type: "idle" });
+  const publishedResult = ref<PublishedTrajectoryResult>({});
+  const formulaResult = computed(() => publishedResult.value.solver?.formulaResult);
+  const plottedCurvePoints = computed(() => publishedResult.value.displayedTrajectory?.curvePoints ?? "");
+  const secondOrderLaunchAngleDegrees = computed(() => publishedResult.value.solver?.secondOrderLaunchAngleDegrees);
+  const trajectoryWarningReason = computed(() => publishedResult.value.displayedTrajectory?.warningReason);
+  const trajectoryCalculationInput = computed(createTrajectoryCalculationInput);
+  const runner = createGraphwarTrajectoryRunner({
+    onFallback: (reason) => {
+      calculationFallbackReason.value ||= reason;
+    },
+    waitForFallbackPaint: waitForFallbackPaint,
+  });
+  let activeGeneration = 0;
+  let pendingFrame: number | undefined;
+  let pendingInput: GraphwarTrajectoryCalculationInput | undefined;
+  let successTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const trajectorySampleResult = computed(() => {
-    const bounds = options.geometry.getBounds();
-    if (options.settings.toolWorkflowMode.value === "simulator") {
-      if (!bounds || options.path.mappedPathPoints.value.length < 1 || !options.simulator.formulaText.value.trim()) {
-        return undefined;
+  watch(
+    trajectoryCalculationInput,
+    (input) => {
+      activeGeneration += 1;
+      runner.cancel();
+      clearSuccessTimer();
+      if (!input) {
+        cancelPendingFrame();
+        pendingInput = undefined;
+        calculationStatus.value = { type: "idle" };
+        clearCalculatedResult(options.settings.toolWorkflowMode.value);
+        return;
       }
 
-      return sampleGraphwarExpressionTrajectoryWithStops({
-        bounds,
-        boundsRect: options.geometry.boundsRect.value,
-        collision: options.getCollisionSettings(),
-        collectVisiblePixels: true,
-        equation: options.settings.equationMode.value,
-        expression: options.simulator.formulaText.value,
-        launchAngleRadians: simulatorLaunchAngleRadians.value,
-        parser: {
-          parseDerivativeAsY: options.simulator.parseDerivativeAsY.value,
-          skipUnknownCharacters: options.simulator.skipUnknownCharacters.value,
-        },
-        soldierCenter: options.path.mappedPathPoints.value[0],
-      });
+      selectWorkflowSnapshot(input.type);
+      calculationStatus.value = { type: "in-progress" };
+      pendingInput = input;
+      scheduleLatestCalculation();
+    },
+    { immediate: true },
+  );
+
+  /** 像素路径验证仍需同步读取轻量公式设置，不能等待主轨迹 Worker。 */
+  function createPathTrajectoryFormulaSettings(): GraphwarTrajectoryFormulaSettings {
+    return graphwarTrajectoryFormulaSettings.value;
+  }
+
+  /** 把一帧内的连续输入合并成最后一次任务，减少输入和拖拽时的 Worker 轮换。 */
+  function scheduleLatestCalculation() {
+    if (pendingFrame !== undefined) {
+      return;
+    }
+    if (typeof requestAnimationFrame === "undefined") {
+      startPendingCalculation();
+      return;
+    }
+    pendingFrame = requestAnimationFrame(() => {
+      pendingFrame = undefined;
+      startPendingCalculation();
+    });
+  }
+
+  function startPendingCalculation() {
+    const input = pendingInput;
+    pendingInput = undefined;
+    if (!input) {
+      return;
     }
 
-    const context = graphwarTrajectoryFormulaContext.value;
+    const generation = activeGeneration;
+    void runner
+      .run(input)
+      .then(({ elapsedMs, outcome }) => {
+        if (generation !== activeGeneration) {
+          return;
+        }
+        if (!outcome.ok) {
+          clearCalculatedResult(input.type);
+          calculationStatus.value = {
+            message: outcome.message,
+            stage: outcome.stage,
+            type: "failure",
+          };
+          return;
+        }
+
+        if (!publishCalculatedResult(input.type, outcome.result)) {
+          calculationStatus.value = {
+            message: "The solver returned no formula result.",
+            stage: "formula",
+            type: "failure",
+          };
+          return;
+        }
+        calculationStatus.value = { elapsedMs, type: "success" };
+        successTimer = setTimeout(() => {
+          if (generation === activeGeneration && calculationStatus.value.type === "success") {
+            calculationStatus.value = { type: "idle" };
+          }
+          successTimer = undefined;
+        }, trajectoryCalculationSuccessVisibleMs);
+      })
+      .catch((error: unknown) => {
+        if (generation !== activeGeneration || isGraphwarTrajectoryCancelledError(error)) {
+          return;
+        }
+        clearCalculatedResult(input.type);
+        calculationStatus.value = {
+          message: error instanceof Error ? error.message : String(error),
+          stage: "trajectory",
+          type: "failure",
+        };
+      });
+  }
+
+  function createTrajectoryCalculationInput(): GraphwarTrajectoryCalculationInput | undefined {
+    const bounds = options.geometry.getBounds();
+    if (!bounds || !options.collisionSettingsValid.value) {
+      return undefined;
+    }
+
+    const collision = options.getCollisionSettings();
+    const base = {
+      bounds,
+      boundsRect: options.geometry.boundsRect.value,
+      ...(collision ? { collision } : {}),
+    };
+    if (options.settings.toolWorkflowMode.value === "simulator") {
+      const soldierCenter = options.path.mappedPathPoints.value[0];
+      const expression = options.simulator.formulaText.value;
+      if (
+        !soldierCenter ||
+        !expression.trim() ||
+        (options.settings.equationMode.value === "ddy" && simulatorLaunchAngleRadians.value === undefined)
+      ) {
+        return undefined;
+      }
+      const parser: GraphwarExpressionParserOptions = {
+        parseDerivativeAsY: options.simulator.parseDerivativeAsY.value,
+        skipUnknownCharacters: options.simulator.skipUnknownCharacters.value,
+      };
+      return {
+        ...base,
+        equation: options.settings.equationMode.value,
+        expression,
+        ...(simulatorLaunchAngleRadians.value === undefined
+          ? {}
+          : { launchAngleRadians: simulatorLaunchAngleRadians.value }),
+        parser,
+        soldierCenter,
+        type: "simulator",
+      };
+    }
+
+    const points = options.path.mappedPathPoints.value;
     if (
-      !formulaResult.value ||
-      !bounds ||
+      points.length < 2 ||
+      !options.settings.precisionValid.value ||
       (options.settings.algorithmMode.value === "step" && !options.settings.steepnessValid.value) ||
-      !context ||
-      context.formulaPoints.length < 2
+      (options.settings.algorithmMode.value === "abs" && options.settings.equationMode.value === "ddy") ||
+      options.settings.isEquationModeDisabled(options.settings.equationMode.value)
     ) {
       return undefined;
     }
 
-    return sampleGraphwarFormulaTrajectory({
-      bounds,
-      boundsRect: options.geometry.boundsRect.value,
-      collision: options.getCollisionSettings(),
-      collectVisiblePixels: true,
-      context,
-    });
-  });
-  const trajectorySample = computed(() => trajectorySampleResult.value?.sample);
-
-  const trajectoryTargetHitIndex = computed(() => {
-    const bounds = options.geometry.getBounds();
-    const sample = trajectorySample.value;
-    const targetPoint = trajectoryValidationTargetPoint.value;
+    const targetPoint = options.path.pathPixels.value.at(-1);
     const targetHitRadiusPixels = options.getTargetHitRadiusPixels();
-    if (!sample || !bounds || !targetPoint || targetHitRadiusPixels === undefined) {
-      return -1;
+    return {
+      ...base,
+      points,
+      settings: graphwarTrajectoryFormulaSettings.value,
+      ...(targetPoint ? { targetPoint } : {}),
+      ...(targetHitRadiusPixels === undefined ? {} : { targetHitRadiusPixels }),
+      type: "solver",
+    };
+  }
+
+  /** 一次发布完整结果，避免公式、角度、轨迹和警告被观察到中间状态。 */
+  function publishCalculatedResult(
+    inputType: GraphwarTrajectoryCalculationInput["type"],
+    result: GraphwarTrajectoryCalculationResult,
+  ) {
+    const trajectory = {
+      curvePoints: result.curvePoints,
+      ...(result.warningReason === undefined ? {} : { warningReason: result.warningReason }),
+    };
+    if (inputType === "simulator") {
+      publishedResult.value = {
+        ...(publishedResult.value.solver ? { solver: publishedResult.value.solver } : {}),
+        displayedTrajectory: trajectory,
+        simulatorTrajectory: trajectory,
+      };
+      return true;
+    }
+    if (!result.formulaResult) {
+      clearCalculatedResult("solver");
+      return false;
     }
 
-    return findGraphwarTrajectoryTargetHitIndex({
-      bounds,
-      boundsRect: options.geometry.boundsRect.value,
-      points: sample.points,
-      targetHitRadiusPixels,
-      targetPoint,
+    publishedResult.value = {
+      displayedTrajectory: trajectory,
+      ...(publishedResult.value.simulatorTrajectory
+        ? { simulatorTrajectory: publishedResult.value.simulatorTrajectory }
+        : {}),
+      solver: {
+        formulaResult: result.formulaResult,
+        ...(result.secondOrderLaunchAngleDegrees === undefined
+          ? {}
+          : { secondOrderLaunchAngleDegrees: result.secondOrderLaunchAngleDegrees }),
+        trajectory,
+      },
+    };
+    return true;
+  }
+
+  /** 切换工作流时恢复该工作流的完整快照；首次计算才沿用当前画布轨迹。 */
+  function selectWorkflowSnapshot(inputType: GraphwarTrajectoryCalculationInput["type"]) {
+    const current = publishedResult.value;
+    const trajectory = inputType === "solver" ? current.solver?.trajectory : current.simulatorTrajectory;
+    if (!trajectory || current.displayedTrajectory === trajectory) {
+      return;
+    }
+    publishedResult.value = {
+      ...current,
+      displayedTrajectory: trajectory,
+    };
+  }
+
+  /** 当前工作流结果失效时清除该快照，保留另一工作流供用户返回。 */
+  function clearCalculatedResult(inputType: GraphwarTrajectoryCalculationInput["type"]) {
+    const current = publishedResult.value;
+    publishedResult.value =
+      inputType === "solver"
+        ? current.simulatorTrajectory
+          ? { simulatorTrajectory: current.simulatorTrajectory }
+          : {}
+        : current.solver
+          ? { solver: current.solver }
+          : {};
+  }
+
+  function cancelPendingFrame() {
+    if (pendingFrame === undefined) {
+      return;
+    }
+    if (typeof cancelAnimationFrame !== "undefined") {
+      cancelAnimationFrame(pendingFrame);
+    }
+    pendingFrame = undefined;
+  }
+
+  function clearSuccessTimer() {
+    if (successTimer === undefined) {
+      return;
+    }
+    clearTimeout(successTimer);
+    successTimer = undefined;
+  }
+
+  /** 双帧等待跨过一次实际绘制，避免主线程长任务抢在状态提示上屏前执行。 */
+  async function waitForFallbackPaint() {
+    await nextTick();
+    if (typeof requestAnimationFrame === "undefined") {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });
-  });
+  }
 
-  const trajectoryObstacleHitIndex = computed(() => {
-    const obstacleHitIndex = trajectorySampleResult.value?.obstacleHitIndex ?? -1;
-    const targetHitIndex = trajectoryTargetHitIndex.value;
-    // 目标之后才撞障碍不影响“当前路径命中目标”的提示。
-    return targetHitIndex >= 0 && obstacleHitIndex >= targetHitIndex ? -1 : obstacleHitIndex;
-  });
-
-  const trajectoryWarningReason = computed<GraphwarTrajectoryWarningReason | undefined>(() => {
-    if (trajectoryObstacleHitIndex.value >= 0) {
-      return "obstacle";
-    }
-    if (trajectoryTargetHitIndex.value >= 0) {
-      return undefined;
-    }
-
-    const stopReason = trajectorySample.value?.stopReason;
-    if (!stopReason || stopReason === "completed" || stopReason === "unsupported" || stopReason === "stopped") {
-      return undefined;
-    }
-    if (stopReason === "too-steep" || stopReason === "max-steps" || stopReason === "out-of-bounds") {
-      return stopReason;
-    }
-    return "invalid";
-  });
-
-  const plottedCurvePoints = computed(() => {
-    const result = trajectorySampleResult.value;
-    return result ? formatVisibleTrajectoryPoints(result.visiblePixels, trajectoryObstacleHitIndex.value) : "";
-  });
+  function dispose() {
+    activeGeneration += 1;
+    pendingInput = undefined;
+    cancelPendingFrame();
+    clearSuccessTimer();
+    runner.close();
+  }
 
   return {
+    calculationFallbackReason,
+    calculationStatus,
     createPathTrajectoryFormulaSettings,
+    dispose,
     formulaOutputDecimalPlaces,
     formulaResult,
     graphwarTrajectoryFormulaSettings,

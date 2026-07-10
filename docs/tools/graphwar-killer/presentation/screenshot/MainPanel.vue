@@ -3,6 +3,7 @@ import type { ComponentPublicInstance, CSSProperties } from "vue";
 
 import type { GraphwarKillerLocale } from "../../locale-types";
 import GraphwarStageOverlay, { type GraphwarStageOverlayModel } from "../stage/MainOverlay.vue";
+import type { GraphwarScreenshotHeaderStatus } from "../status/screenshot";
 
 interface GraphwarScreenshotPanelStageModel {
   /** 舞台是否没有截图；父页面应沿用原 imageUrl 判定。 */
@@ -28,6 +29,13 @@ interface GraphwarScreenshotPanelMagnifierModel {
   visible: boolean;
 }
 
+interface GraphwarScreenshotPanelStatusWarning {
+  /** 与主状态同时展示的短警告；空字符串表示不显示。 */
+  message: string;
+  /** 降级等非致命异常的完整 hover 说明。 */
+  title: string;
+}
+
 export interface GraphwarScreenshotPanelModel {
   /** 截屏/上传按钮是否展示；Agent 模式只使用读取入口。 */
   imageActionsVisible: boolean;
@@ -37,8 +45,10 @@ export interface GraphwarScreenshotPanelModel {
   imageStatusText: string;
   /** 当前截图 data URL。 */
   imageUrl: string;
-  /** 标题右侧警告文案；父页面应已按当前路径错误、模式建议的顺序选择。 */
-  headerWarningText: string;
+  /** 标题右侧主状态；父页面应已按路径错误、计算状态、模式建议的顺序选择。 */
+  headerStatus: GraphwarScreenshotHeaderStatus;
+  /** 与主状态并列的非致命降级警告。 */
+  statusWarning: GraphwarScreenshotPanelStatusWarning;
   /** 舞台展示模型。 */
   stage: GraphwarScreenshotPanelStageModel;
   /** 放大镜展示模型。 */
@@ -92,11 +102,25 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
         {{ panel.imageStatusText }}
       </span>
       <span
-        v-if="panel.headerWarningText"
-        class="graphwar-killer__header-warning-text graphwar-killer__label-status--warning"
-        :title="panel.headerWarningText"
+        v-if="panel.headerStatus.message"
+        class="graphwar-killer__header-status-text"
+        role="status"
+        aria-live="polite"
+        :class="{
+          'graphwar-killer__label-status--error': panel.headerStatus.kind === 'error',
+          'graphwar-killer__label-status--success': panel.headerStatus.kind === 'success',
+          'graphwar-killer__label-status--warning': panel.headerStatus.kind === 'warning',
+        }"
+        :title="panel.headerStatus.title"
       >
-        {{ panel.headerWarningText }}
+        {{ panel.headerStatus.message }}
+      </span>
+      <span
+        v-if="panel.statusWarning.message"
+        class="graphwar-killer__status-warning-text graphwar-killer__label-status--warning"
+        :title="panel.statusWarning.title"
+      >
+        {{ panel.statusWarning.message }}
       </span>
     </div>
     <div
@@ -273,6 +297,15 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
   font-weight: 700;
 }
 
+.graphwar-killer__label-row > .graphwar-killer__label-status--error {
+  color: #dc2626;
+}
+
+.graphwar-killer__label-row > .graphwar-killer__label-status--success {
+  color: #15803d;
+  font-weight: 700;
+}
+
 .graphwar-killer__label-row--image-status {
   align-items: baseline;
   display: flex;
@@ -287,7 +320,8 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
   text-align: left !important;
 }
 
-.graphwar-killer__header-warning-text {
+.graphwar-killer__header-status-text,
+.graphwar-killer__status-warning-text {
   flex: 0 1 auto;
   max-width: min(100%, 44rem);
   text-align: right;
@@ -459,6 +493,13 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
 
   .graphwar-killer__label-row > span {
     text-align: left;
+  }
+
+  .graphwar-killer__header-status-text,
+  .graphwar-killer__status-warning-text {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
   }
 }
 </style>

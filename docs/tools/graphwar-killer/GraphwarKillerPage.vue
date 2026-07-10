@@ -111,6 +111,10 @@ import {
   createSmartPathfindingInProgressMessage,
   createSmartPathfindingSuccessMessage,
 } from "./presentation/status/pathfinding";
+import {
+  emptyGraphwarScreenshotHeaderStatus,
+  getGraphwarScreenshotHeaderStatus,
+} from "./presentation/status/screenshot";
 
 /** 寻路模式；auto-graph 保留为待重写的禁用入口。 */
 type PathfindingMode = "off" | "smart" | "auto-graph";
@@ -641,93 +645,6 @@ const formulaInputSteepnessValid = computed(() => parsedSteepness.value.ok);
 const liveClickPreviewWorkerCount = computed(() =>
   normalizeLiveClickPreviewWorkerCount(liveClickPreviewWorkerCountText.value),
 );
-// 轨迹结果 Module 应集中公式上下文、主采样、命中索引和绘制曲线；页面保留输入校验与文案映射。
-const {
-  createPathTrajectoryFormulaSettings,
-  formulaOutputDecimalPlaces,
-  formulaResult,
-  graphwarTrajectoryFormulaSettings,
-  plottedCurvePoints,
-  secondOrderLaunchAngleDegrees,
-  simulatorLaunchAngleRadians,
-  trajectoryWarningReason,
-} = useGraphwarTrajectoryResult({
-  geometry: {
-    boundsRect,
-    getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
-  },
-  getCollisionSettings: () => trajectoryCollisionSettings.value,
-  getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
-  path: {
-    mappedPathPoints,
-    pathPixels,
-  },
-  settings: {
-    algorithmMode,
-    equationMode,
-    isEquationModeDisabled,
-    precisionDecimalPlaces: formulaInputDecimalPlaces,
-    precisionValid: formulaInputPrecisionValid,
-    steepness: formulaInputSteepness,
-    steepnessValid: formulaInputSteepnessValid,
-    getStepGlitchObstacleMask: () => simulationObstacleMask.value,
-    stepGlitchModeEnabled,
-    stepOverflowProtectionEnabled,
-    toolWorkflowMode,
-  },
-  simulator: {
-    formulaText: simulatorFormulaText,
-    launchAngleText: simulatorLaunchAngleText,
-    parseDerivativeAsY: simulatorParseDerivativeAsY,
-    parseNumber: parseFiniteNumber,
-    skipUnknownCharacters: simulatorSkipUnknownCharacters,
-  },
-});
-// 结果操作 Module 应集中复制反馈、clipboard fallback 和模拟器清空；页面只提供当前结果来源。
-const {
-  canClearSimulatorInputs,
-  canCopyFormula,
-  clearSimulatorInputs,
-  copyButtonText,
-  copyFormula,
-  dispose: disposeResultActions,
-  statusAnnouncement: copyStatusAnnouncement,
-} = useGraphwarResultActions({
-  formulaResult,
-  getCopyMessages: () => locale.status.copy,
-  simulatorFormulaText,
-  simulatorLaunchAngleText,
-  toolWorkflowMode,
-});
-
-const graphwarAgentFireButtonText = computed(() => {
-  if (graphwarAgentFireInProgress.value) {
-    return locale.ui.result.firing;
-  }
-  if (graphwarAgentFireStatus.value === "success") {
-    return locale.ui.result.fireSuccess;
-  }
-  if (graphwarAgentFireStatus.value === "error") {
-    return locale.ui.result.fireError;
-  }
-  return locale.ui.result.fire;
-});
-const canFireGraphwarAgentFunction = computed(
-  () => graphwarAgentConfigured.value && canCopyFormula.value && !graphwarAgentFireInProgress.value,
-);
-const statusAnnouncement = computed(() => {
-  if (graphwarAgentFireInProgress.value) {
-    return locale.ui.result.firing;
-  }
-  if (graphwarAgentFireStatus.value === "success") {
-    return locale.status.agent.fired;
-  }
-  if (graphwarAgentFireStatus.value === "error") {
-    return locale.status.agent.fireFailed(graphwarAgentFireFailureMessage.value);
-  }
-  return copyStatusAnnouncement.value;
-});
-
 const activeEquationDescription = computed(() => {
   if (toolWorkflowMode.value === "simulator") {
     return locale.status.activeEquation.simulator;
@@ -896,6 +813,97 @@ const {
     parsedBounds,
     parsedObstacleTolerances,
   },
+});
+const trajectoryCollisionSettingsValid = computed(() => parsedObstacleTolerances.value.ok);
+// 主轨迹 Module 在依赖准备完成后统一异步解算函数、模拟轨迹并原子发布结果。
+const {
+  calculationFallbackReason: trajectoryCalculationFallbackReason,
+  calculationStatus: trajectoryCalculationStatus,
+  createPathTrajectoryFormulaSettings,
+  dispose: disposeTrajectoryResult,
+  formulaOutputDecimalPlaces,
+  formulaResult,
+  graphwarTrajectoryFormulaSettings,
+  plottedCurvePoints,
+  secondOrderLaunchAngleDegrees,
+  simulatorLaunchAngleRadians,
+  trajectoryWarningReason,
+} = useGraphwarTrajectoryResult({
+  collisionSettingsValid: trajectoryCollisionSettingsValid,
+  geometry: {
+    boundsRect,
+    getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
+  },
+  getCollisionSettings: () => trajectoryCollisionSettings.value,
+  getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
+  path: {
+    mappedPathPoints,
+    pathPixels,
+  },
+  settings: {
+    algorithmMode,
+    equationMode,
+    isEquationModeDisabled,
+    precisionDecimalPlaces: formulaInputDecimalPlaces,
+    precisionValid: formulaInputPrecisionValid,
+    steepness: formulaInputSteepness,
+    steepnessValid: formulaInputSteepnessValid,
+    getStepGlitchObstacleMask: () => simulationObstacleMask.value,
+    stepGlitchModeEnabled,
+    stepOverflowProtectionEnabled,
+    toolWorkflowMode,
+  },
+  simulator: {
+    formulaText: simulatorFormulaText,
+    launchAngleText: simulatorLaunchAngleText,
+    parseDerivativeAsY: simulatorParseDerivativeAsY,
+    parseNumber: parseFiniteNumber,
+    skipUnknownCharacters: simulatorSkipUnknownCharacters,
+  },
+});
+// 结果操作 Module 应集中复制反馈、clipboard fallback 和模拟器清空；页面只提供当前结果来源。
+const {
+  canClearSimulatorInputs,
+  canCopyFormula,
+  clearSimulatorInputs,
+  copyButtonText,
+  copyFormula,
+  dispose: disposeResultActions,
+  statusAnnouncement: copyStatusAnnouncement,
+} = useGraphwarResultActions({
+  formulaResult,
+  getCopyMessages: () => locale.status.copy,
+  simulatorFormulaText,
+  simulatorLaunchAngleText,
+  toolWorkflowMode,
+});
+
+const graphwarAgentFireButtonText = computed(() => {
+  if (graphwarAgentFireInProgress.value) {
+    return locale.ui.result.firing;
+  }
+  if (graphwarAgentFireStatus.value === "success") {
+    return locale.ui.result.fireSuccess;
+  }
+  if (graphwarAgentFireStatus.value === "error") {
+    return locale.ui.result.fireError;
+  }
+  return locale.ui.result.fire;
+});
+const canFireGraphwarAgentFunction = computed(
+  () => graphwarAgentConfigured.value && canCopyFormula.value && !graphwarAgentFireInProgress.value,
+);
+const statusAnnouncement = computed(() => {
+  if (graphwarAgentFireInProgress.value) {
+    return locale.ui.result.firing;
+  }
+  if (graphwarAgentFireStatus.value === "success") {
+    return locale.status.agent.fired;
+  }
+  if (graphwarAgentFireStatus.value === "error") {
+    return locale.status.agent.fireFailed(graphwarAgentFireFailureMessage.value);
+  }
+  return copyStatusAnnouncement.value;
 });
 // 舞台命中测试应集中路径点选择圈、士兵可视选择圈和真实命中圈，避免交互层混用半径语义。
 const stageHitTesting: GraphwarStageHitTestingController<DetectionBox> = useGraphwarStageHitTesting<DetectionBox>({
@@ -1339,7 +1347,9 @@ const secondOrderLaunchAngleText = computed(() =>
   secondOrderLaunchAngleDegrees.value === undefined ? "" : formatAngleDegree(secondOrderLaunchAngleDegrees.value),
 );
 const secondOrderAngleHint = computed(() =>
-  secondOrderLaunchAngleText.value ? locale.status.secondOrderAngleHint(secondOrderLaunchAngleText.value) : "",
+  toolWorkflowMode.value === "solver" && secondOrderLaunchAngleText.value
+    ? locale.status.secondOrderAngleHint(secondOrderLaunchAngleText.value)
+    : "",
 );
 
 const trajectoryWarning = computed(() => {
@@ -1722,12 +1732,55 @@ const stepGlitchAgentRecommendation = computed(() =>
     ? locale.ui.screenshot.stepGlitchAgentRecommendation(locale.ui.detection.agent.toggle)
     : "",
 );
-// 当前路径错误直接影响操作，应优先覆盖只提供精度建议的 Agent 提示。
-const screenshotHeaderWarningText = computed(() => pathStatus.value || stepGlitchAgentRecommendation.value);
+const trajectoryCalculationHeaderStatus = computed(() => {
+  const status = trajectoryCalculationStatus.value;
+  if (status.type === "in-progress") {
+    return {
+      kind: "warning" as const,
+      message: locale.status.calculation.inProgress,
+      title: locale.status.calculation.inProgress,
+    };
+  }
+  if (status.type === "success") {
+    const message = locale.status.calculation.success(formatElapsedDuration(status.elapsedMs));
+    return {
+      kind: "success" as const,
+      message,
+      title: message,
+    };
+  }
+  if (status.type === "failure") {
+    const message =
+      status.stage === "formula" ? locale.status.calculation.solveFailed : locale.status.calculation.simulateFailed;
+    return {
+      kind: "error" as const,
+      message,
+      title: `${message}: ${status.message}`,
+    };
+  }
+  return {
+    ...emptyGraphwarScreenshotHeaderStatus,
+  };
+});
+// 当前路径错误直接影响操作；计算状态覆盖长期 Agent 建议，成功超时后再恢复建议。
+const screenshotHeaderStatus = computed(() =>
+  getGraphwarScreenshotHeaderStatus({
+    agentRecommendation: stepGlitchAgentRecommendation.value,
+    calculationStatus: trajectoryCalculationHeaderStatus.value,
+    pathError: pathStatus.value,
+  }),
+);
+const screenshotStatusWarning = computed(() => {
+  const reason = trajectoryCalculationFallbackReason.value;
+  return {
+    message: reason ? locale.status.calculation.fallbackWarning : "",
+    title: reason ? locale.status.calculation.fallbackWarningTitle(reason) : "",
+  };
+});
 // 截图面板只应消费展示 DTO；DOM refs 和舞台交互语义仍由页面侧工作流持有。
 const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
   busyOverlayVisible: detectionInProgress.value,
-  headerWarningText: screenshotHeaderWarningText.value,
+  headerStatus: screenshotHeaderStatus.value,
   imageActionsVisible: !graphwarAgentEnabled.value,
   imageStatusText: screenshotImageStatusText.value,
   imageUrl: imageUrl.value,
@@ -1746,6 +1799,7 @@ const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
     overlay: stageOverlay.value,
     style: stageStyle.value,
   },
+  statusWarning: screenshotStatusWarning.value,
 }));
 
 function setScreenshotStageElement(element: HTMLElement | undefined) {
@@ -1796,6 +1850,7 @@ onBeforeUnmount(() => {
   detectionWorkflow.dispose();
   graphwarPathfindingRunner.close();
   cancelSmartPathfinding(false);
+  disposeTrajectoryResult();
   disposeResultActions();
   disposeGraphwarAgentFireStatus();
   disposeLiveClickPreview();

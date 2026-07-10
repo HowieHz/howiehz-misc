@@ -1,9 +1,11 @@
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { xPlusGoesRight } from "../../core/geometry";
+import { nearlyEqual } from "../../core/numbers";
 import { imagePointToPlaneGridPoint, mirrorPlaneGridPoint, type PlaneGridPoint } from "../../core/plane-grid";
 import {
   lineHitsPlaneMask,
   pointHitsPlaneMask,
+  type GraphwarPathfindingEdgeEvaluator,
   type GraphwarPathfindingOptions,
   type GraphwarPathfindingPreview,
 } from "./visibility-graph";
@@ -15,6 +17,27 @@ interface ThetaStarOpenNode {
   priority: number;
   /** 入队时的最优已知 gScore；弹出时用于跳过旧副本。 */
   routeCost: number;
+}
+
+/** Step Theta* 使用词典序成本，不复用欧氏 gScore，避免改变现有模式的热路径。 */
+interface StepThetaStarCost {
+  /** 已使用的控制段数量。 */
+  segments: number;
+  /** 已累计的控制点纵向变化。 */
+  secondary: number;
+}
+
+interface StepThetaStarState {
+  cost: StepThetaStarCost;
+  index: number;
+  key: string;
+  parentKey: string;
+  routeState: number;
+  routeStateKey?: string;
+}
+
+interface StepThetaStarOpenNode extends StepThetaStarState {
+  estimatedCost: StepThetaStarCost;
 }
 
 /** 一列里连续可通行的 y 区间；端点都可落点。 */
@@ -104,6 +127,15 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
     ? (previous: PlaneGridPoint, next: PlaneGridPoint) =>
         options.canAdvance?.(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored)) ?? false
     : (previous: PlaneGridPoint, next: PlaneGridPoint) => next.x > previous.x;
+  const customEdgeEvaluator = options.evaluateEdge
+    ? createThetaStarEdgeEvaluator(options.evaluateEdge, mirrored)
+    : undefined;
+  const estimateRemainingSecondaryCost = createThetaStarRemainingCostEstimator(options, mirrored);
+  const initialRouteState = options.initialRouteState;
+  const initialRouteStateKey = options.initialRouteStateKey;
+  if (customEdgeEvaluator && !Number.isFinite(initialRouteState)) {
+    return undefined;
+  }
   if (
     pointHitsPlaneMask(start, options.routeMask, mirrored, options.boundaryExpansion) ||
     pointHitsPlaneMask(target, options.routeMask, mirrored, options.boundaryExpansion)
@@ -115,10 +147,13 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
     return undefined;
   }
 
-  if (
-    canAdvance(start, target) &&
-    !lineHitsPlaneMask(start, target, options.routeMask, mirrored, options.boundaryExpansion)
-  ) {
+  const directEdge = canAdvance(start, target)
+    ? (customEdgeEvaluator?.(start, target, initialRouteState as number, initialRouteStateKey) ??
+      (!customEdgeEvaluator && !lineHitsPlaneMask(start, target, options.routeMask, mirrored, options.boundaryExpansion)
+        ? { secondaryCost: planeGridPointDistance(start, target) }
+        : undefined))
+    : undefined;
+  if (directEdge) {
     const directPath = [start, target];
     options.onPreview?.({
       acceptedEdges: [[start, target]],
@@ -134,22 +169,382 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
   let path: PlaneGridPoint[] | undefined;
   try {
     resetThetaStarSearchScratch(scratch);
-    path = await findThetaStarPath({
-      boundaryExpansion: options.boundaryExpansion,
-      canAdvance,
-      isCancelled: options.isCancelled,
-      mirrored,
-      onPreview: options.onPreview,
-      routeMask: options.routeMask,
-      scratch,
-      start,
-      target,
-      yieldControl: options.yieldControl,
-    });
+    path = customEdgeEvaluator
+      ? await findStepThetaStarPath({
+          boundaryExpansion: options.boundaryExpansion,
+          canAdvance,
+          estimateRemainingSecondaryCost,
+          evaluateEdge: customEdgeEvaluator,
+          initialRouteState: initialRouteState as number,
+          initialRouteStateKey,
+          isCancelled: options.isCancelled,
+          mirrored,
+          onPreview: options.onPreview,
+          routeMask: options.routeMask,
+          scratch,
+          start,
+          target,
+          yieldControl: options.yieldControl,
+        })
+      : await findThetaStarPath({
+          boundaryExpansion: options.boundaryExpansion,
+          canAdvance,
+          isCancelled: options.isCancelled,
+          mirrored,
+          onPreview: options.onPreview,
+          routeMask: options.routeMask,
+          scratch,
+          start,
+          target,
+          yieldControl: options.yieldControl,
+        });
   } finally {
     resetThetaStarSearchScratch(scratch);
   }
   return path?.map((point) => mirrorPlaneGridPoint(point, mirrored));
+}
+
+/** Step 使用少控制点优先的词典序 Theta*；默认欧氏实现继续走下方 typed-array 热路径。 */
+async function findStepThetaStarPath({
+  boundaryExpansion,
+  canAdvance,
+  estimateRemainingSecondaryCost,
+  evaluateEdge,
+  initialRouteState,
+  initialRouteStateKey,
+  isCancelled,
+  mirrored,
+  onPreview,
+  routeMask,
+  scratch,
+  start,
+  target,
+  yieldControl,
+}: ThetaStarSearchContext & {
+  estimateRemainingSecondaryCost: (current: PlaneGridPoint, target: PlaneGridPoint) => number;
+  evaluateEdge: GraphwarPathfindingEdgeEvaluator;
+  initialRouteState: number;
+  initialRouteStateKey?: string;
+  isCancelled?: () => boolean;
+  scratch: GraphwarThetaStarScratch;
+  yieldControl?: () => Promise<void> | void;
+}) {
+  const startIndex = createPlaneGridPointIndex(start);
+  const targetIndex = createPlaneGridPointIndex(target);
+  const freeSpansByColumn = getThetaStarFreeSpansByColumn({
+    boundaryExpansion,
+    mirrored,
+    routeMask,
+    scratch,
+  });
+  const states = new Map<string, StepThetaStarState>();
+  const closed = new Set<string>();
+  const openSet = new StepThetaStarOpenSet();
+  const acceptedEdges: [PlaneGridPoint, PlaneGridPoint][] | undefined = onPreview ? [] : undefined;
+  const startCost = { secondary: 0, segments: 0 };
+  const startKey = createStepThetaStateKey(startIndex, initialRouteState, initialRouteStateKey);
+  const startState: StepThetaStarState = {
+    cost: startCost,
+    index: startIndex,
+    key: startKey,
+    parentKey: startKey,
+    routeState: initialRouteState,
+    ...(initialRouteStateKey === undefined ? {} : { routeStateKey: initialRouteStateKey }),
+  };
+  states.set(startKey, startState);
+  openSet.push({
+    ...startState,
+    estimatedCost: createStepThetaEstimatedCost(startCost, start, target, estimateRemainingSecondaryCost),
+  });
+
+  let expansionCount = 0;
+  while (openSet.size > 0) {
+    if (isCancelled?.()) {
+      return undefined;
+    }
+
+    const currentNode = openSet.pop();
+    const currentState = currentNode ? states.get(currentNode.key) : undefined;
+    if (
+      !currentNode ||
+      !currentState ||
+      closed.has(currentNode.key) ||
+      compareStepThetaCosts(currentNode.cost, currentState.cost) !== 0
+    ) {
+      continue;
+    }
+
+    const current = createPlaneGridPointFromIndex(currentNode.index);
+    if (currentNode.index === targetIndex) {
+      const rawPath = reconstructStepThetaStarPath(currentNode.key, states);
+      const path = simplifyStepThetaStarPath(
+        rawPath,
+        canAdvance,
+        evaluateEdge,
+        initialRouteState,
+        initialRouteStateKey,
+      );
+      onPreview?.({
+        acceptedEdges: acceptedEdges ?? [],
+        bestPath: path,
+        candidates: collectStepThetaStarPreviewCandidates(openSet, currentNode.index, startIndex, targetIndex),
+        current,
+        mirrored,
+      });
+      return path;
+    }
+
+    closed.add(currentNode.key);
+    relaxStepThetaStarNeighbor({
+      acceptedEdges,
+      canAdvance,
+      closed,
+      current,
+      currentState,
+      estimateRemainingSecondaryCost,
+      evaluateEdge,
+      next: target,
+      openSet,
+      states,
+      target,
+    });
+
+    const nextX = current.x + 1;
+    if (nextX <= target.x) {
+      const candidateYs = collectNextColumnCandidateYs({
+        current,
+        freeSpansByColumn,
+        nextX,
+        scratch,
+        target,
+      });
+      for (const nextY of candidateYs) {
+        relaxStepThetaStarNeighbor({
+          acceptedEdges,
+          canAdvance,
+          closed,
+          current,
+          currentState,
+          estimateRemainingSecondaryCost,
+          evaluateEdge,
+          next: { x: nextX, y: nextY },
+          openSet,
+          states,
+          target,
+        });
+      }
+    }
+
+    expansionCount += 1;
+    if (expansionCount % THETA_STAR_HEURISTICS.previewExpansionInterval !== 0) {
+      continue;
+    }
+    if (isCancelled?.()) {
+      return undefined;
+    }
+    onPreview?.({
+      acceptedEdges: acceptedEdges ?? [],
+      bestPath: reconstructStepThetaStarPath(currentNode.key, states),
+      candidates: collectStepThetaStarPreviewCandidates(openSet, currentNode.index, startIndex, targetIndex),
+      current,
+      mirrored,
+    });
+    const yielded = yieldControl?.();
+    if (yielded) {
+      await yielded;
+    }
+  }
+  return undefined;
+}
+
+function relaxStepThetaStarNeighbor({
+  acceptedEdges,
+  canAdvance,
+  closed,
+  current,
+  currentState,
+  estimateRemainingSecondaryCost,
+  evaluateEdge,
+  next,
+  openSet,
+  states,
+  target,
+}: {
+  acceptedEdges?: [PlaneGridPoint, PlaneGridPoint][];
+  canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
+  closed: Set<string>;
+  current: PlaneGridPoint;
+  currentState: StepThetaStarState;
+  estimateRemainingSecondaryCost: (current: PlaneGridPoint, target: PlaneGridPoint) => number;
+  evaluateEdge: GraphwarPathfindingEdgeEvaluator;
+  next: PlaneGridPoint;
+  openSet: StepThetaStarOpenSet;
+  states: Map<string, StepThetaStarState>;
+  target: PlaneGridPoint;
+}) {
+  const nextIndex = createPlaneGridPointIndex(next);
+  const transitions = [createStepThetaTransition(current, currentState, next, canAdvance, evaluateEdge)];
+  const parentState = states.get(currentState.parentKey);
+  if (parentState && parentState.index !== currentState.index) {
+    const parent = createPlaneGridPointFromIndex(parentState.index);
+    transitions.push(createStepThetaTransition(parent, parentState, next, canAdvance, evaluateEdge));
+  }
+
+  // 父节点捷径和普通扩展可能落在不同量化高度，必须分别保留，不能先按坐标择一。
+  for (const transition of transitions) {
+    if (!transition) {
+      continue;
+    }
+    const nextKey = createStepThetaStateKey(nextIndex, transition.nextRouteState, transition.nextRouteStateKey);
+    const previous = states.get(nextKey);
+    if (previous && compareStepThetaCosts(previous.cost, transition.cost) <= 0) {
+      continue;
+    }
+
+    const nextState: StepThetaStarState = {
+      cost: transition.cost,
+      index: nextIndex,
+      key: nextKey,
+      parentKey: transition.fromKey,
+      routeState: transition.nextRouteState,
+      ...(transition.nextRouteStateKey === undefined ? {} : { routeStateKey: transition.nextRouteStateKey }),
+    };
+    states.set(nextKey, nextState);
+    closed.delete(nextKey);
+    openSet.push({
+      ...nextState,
+      estimatedCost: createStepThetaEstimatedCost(nextState.cost, next, target, estimateRemainingSecondaryCost),
+    });
+    if (acceptedEdges) {
+      recordAcceptedEdge(acceptedEdges, transition.from, next);
+    }
+  }
+}
+
+function createStepThetaTransition(
+  from: PlaneGridPoint,
+  fromState: StepThetaStarState,
+  next: PlaneGridPoint,
+  canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean,
+  evaluateEdge: GraphwarPathfindingEdgeEvaluator,
+) {
+  if (!canAdvance(from, next)) {
+    return undefined;
+  }
+  const edge = evaluateEdge(from, next, fromState.routeState, fromState.routeStateKey);
+  if (!edge) {
+    return undefined;
+  }
+  return {
+    cost: {
+      secondary: fromState.cost.secondary + edge.secondaryCost,
+      segments: fromState.cost.segments + 1,
+    },
+    from,
+    fromKey: fromState.key,
+    nextRouteState: edge.nextRouteState,
+    ...(edge.nextRouteStateKey === undefined ? {} : { nextRouteStateKey: edge.nextRouteStateKey }),
+  };
+}
+
+function createStepThetaEstimatedCost(
+  cost: StepThetaStarCost,
+  current: PlaneGridPoint,
+  target: PlaneGridPoint,
+  estimateRemainingSecondaryCost: (current: PlaneGridPoint, target: PlaneGridPoint) => number,
+): StepThetaStarCost {
+  if (pointsEqual(current, target)) {
+    return cost;
+  }
+  return {
+    secondary: cost.secondary + estimateRemainingSecondaryCost(current, target),
+    segments: cost.segments + 1,
+  };
+}
+
+function reconstructStepThetaStarPath(targetKey: string, states: ReadonlyMap<string, StepThetaStarState>) {
+  const path: PlaneGridPoint[] = [];
+  const seen = new Set<string>();
+  let currentKey = targetKey;
+  while (!seen.has(currentKey)) {
+    seen.add(currentKey);
+    const state = states.get(currentKey);
+    if (!state) {
+      break;
+    }
+    path.push(createPlaneGridPointFromIndex(state.index));
+    if (state.parentKey === currentKey) {
+      break;
+    }
+    currentKey = state.parentKey;
+  }
+  return path.reverse();
+}
+
+function simplifyStepThetaStarPath(
+  path: readonly PlaneGridPoint[],
+  canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean,
+  evaluateEdge: GraphwarPathfindingEdgeEvaluator,
+  initialRouteState: number,
+  initialRouteStateKey?: string,
+) {
+  if (path.length <= 2) {
+    return [...path];
+  }
+  const simplified: PlaneGridPoint[] = [];
+  let anchorIndex = 0;
+  let routeState = initialRouteState;
+  let routeStateKey = initialRouteStateKey;
+  while (anchorIndex < path.length) {
+    const anchor = path[anchorIndex];
+    if (!anchor) {
+      break;
+    }
+    simplified.push(anchor);
+    if (anchorIndex >= path.length - 1) {
+      break;
+    }
+    let nextIndex: number | undefined;
+    let nextRouteState: number | undefined;
+    let nextRouteStateKey: string | undefined;
+    for (let candidateIndex = path.length - 1; candidateIndex > anchorIndex; candidateIndex -= 1) {
+      const candidate = path[candidateIndex];
+      const edge =
+        candidate && canAdvance(anchor, candidate)
+          ? evaluateEdge(anchor, candidate, routeState, routeStateKey)
+          : undefined;
+      if (edge) {
+        nextIndex = candidateIndex;
+        nextRouteState = edge.nextRouteState;
+        nextRouteStateKey = edge.nextRouteStateKey;
+        break;
+      }
+    }
+    if (nextIndex === undefined || nextRouteState === undefined) {
+      // 前一个捷径可能改变后续量化状态；无法继续时退回搜索已证明有效的原始路径。
+      return [...path];
+    }
+    routeState = nextRouteState;
+    routeStateKey = nextRouteStateKey;
+    anchorIndex = nextIndex;
+  }
+  return simplified;
+}
+
+function collectStepThetaStarPreviewCandidates(
+  openSet: StepThetaStarOpenSet,
+  currentIndex: number,
+  startIndex: number,
+  targetIndex: number,
+) {
+  const indexes = new Set<number>([startIndex, targetIndex, currentIndex]);
+  for (const index of openSet.snapshotIndexes(THETA_STAR_HEURISTICS.previewCandidateLimit)) {
+    indexes.add(index);
+    if (indexes.size >= THETA_STAR_HEURISTICS.previewCandidateLimit) {
+      break;
+    }
+  }
+  return [...indexes].map(createPlaneGridPointFromIndex);
 }
 
 async function findThetaStarPath({
@@ -641,6 +1036,125 @@ function pointsEqual(left: PlaneGridPoint, right: PlaneGridPoint) {
   return left.x === right.x && left.y === right.y;
 }
 
+function createThetaStarEdgeEvaluator(evaluateEdge: GraphwarPathfindingEdgeEvaluator, mirrored: boolean) {
+  return (previous: PlaneGridPoint, next: PlaneGridPoint, routeState: number, routeStateKey?: string) => {
+    const result = evaluateEdge(
+      mirrorPlaneGridPoint(previous, mirrored),
+      mirrorPlaneGridPoint(next, mirrored),
+      routeState,
+      routeStateKey,
+    );
+    return result &&
+      Number.isFinite(result.nextRouteState) &&
+      Number.isFinite(result.secondaryCost) &&
+      result.secondaryCost >= 0
+      ? result
+      : undefined;
+  };
+}
+
+function createStepThetaStateKey(index: number, routeState: number, routeStateKey?: string) {
+  return routeStateKey === undefined ? `${index}:number:${routeState}` : `${index}:key:${routeStateKey}`;
+}
+
+function createThetaStarRemainingCostEstimator(options: GraphwarPathfindingOptions, mirrored: boolean) {
+  if (!options.estimateRemainingSecondaryCost) {
+    return planeGridPointDistance;
+  }
+  return (current: PlaneGridPoint, target: PlaneGridPoint) => {
+    const estimate = options.estimateRemainingSecondaryCost?.(
+      mirrorPlaneGridPoint(current, mirrored),
+      mirrorPlaneGridPoint(target, mirrored),
+    );
+    return estimate !== undefined && Number.isFinite(estimate) && estimate >= 0 ? estimate : 0;
+  };
+}
+
+function compareStepThetaCosts(left: StepThetaStarCost, right: StepThetaStarCost) {
+  return (
+    left.segments - right.segments ||
+    (nearlyEqual(left.secondary, right.secondary) ? 0 : left.secondary - right.secondary)
+  );
+}
+
+class StepThetaStarOpenSet {
+  private readonly nodes: StepThetaStarOpenNode[] = [];
+
+  get size() {
+    return this.nodes.length;
+  }
+
+  push(node: StepThetaStarOpenNode) {
+    this.nodes.push(node);
+    this.bubbleUp(this.nodes.length - 1);
+  }
+
+  pop() {
+    const first = this.nodes[0];
+    const last = this.nodes.pop();
+    if (!first || !last) {
+      return first;
+    }
+    if (this.nodes.length > 0) {
+      this.nodes[0] = last;
+      this.sinkDown(0);
+    }
+    return first;
+  }
+
+  snapshotIndexes(limit: number) {
+    return this.nodes
+      .slice(0, limit)
+      .sort(compareStepThetaOpenNodes)
+      .map((node) => node.index);
+  }
+
+  private bubbleUp(startIndex: number) {
+    let index = startIndex;
+    while (index > 0) {
+      const parentIndex = Math.floor((index - 1) / 2);
+      const node = this.nodes[index];
+      const parent = this.nodes[parentIndex];
+      if (!node || !parent || compareStepThetaOpenNodes(node, parent) >= 0) {
+        break;
+      }
+      this.nodes[index] = parent;
+      this.nodes[parentIndex] = node;
+      index = parentIndex;
+    }
+  }
+
+  private sinkDown(startIndex: number) {
+    let index = startIndex;
+    while (true) {
+      const leftIndex = index * 2 + 1;
+      const rightIndex = leftIndex + 1;
+      let bestIndex = index;
+      const best = this.nodes[bestIndex];
+      const left = this.nodes[leftIndex];
+      const right = this.nodes[rightIndex];
+      if (left && best && compareStepThetaOpenNodes(left, best) < 0) {
+        bestIndex = leftIndex;
+      }
+      const nextBest = this.nodes[bestIndex];
+      if (right && nextBest && compareStepThetaOpenNodes(right, nextBest) < 0) {
+        bestIndex = rightIndex;
+      }
+      if (bestIndex === index) {
+        break;
+      }
+      const node = this.nodes[index];
+      const child = this.nodes[bestIndex];
+      if (!node || !child) {
+        break;
+      }
+      this.nodes[index] = child;
+      this.nodes[bestIndex] = node;
+      index = bestIndex;
+    }
+  }
+}
+
 class ThetaStarOpenSet {
   private readonly nodes: ThetaStarOpenNode[] = [];
 
@@ -723,4 +1237,15 @@ class ThetaStarOpenSet {
 
 function compareThetaStarOpenNodes(left: ThetaStarOpenNode, right: ThetaStarOpenNode) {
   return left.priority - right.priority || left.routeCost - right.routeCost || left.index - right.index;
+}
+
+function compareStepThetaOpenNodes(left: StepThetaStarOpenNode, right: StepThetaStarOpenNode) {
+  return (
+    compareStepThetaCosts(left.estimatedCost, right.estimatedCost) ||
+    compareStepThetaCosts(left.cost, right.cost) ||
+    left.index - right.index ||
+    left.routeState - right.routeState ||
+    (left.routeStateKey ?? "").localeCompare(right.routeStateKey ?? "") ||
+    left.parentKey.localeCompare(right.parentKey)
+  );
 }

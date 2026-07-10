@@ -109,6 +109,8 @@ export interface GraphwarSmartPathfindingPathResult {
   blockedPoint?: PixelPoint;
   /** 无可用路径时的失败阶段，页面用它保留原来的状态语义。 */
   failureReason?: "graph-rule" | "route" | "trajectory";
+  /** Step 已有路径严格域失败时的首个段下标；页面用它高亮整段。 */
+  invalidSegmentIndex?: number;
   /** 可写回页面的完整像素路径；undefined 表示没有可用路径。 */
   path?: PixelPoint[];
   /** Worker 内部细分耗时。 */
@@ -207,10 +209,14 @@ export interface GraphwarOneClickClearEdgeWorkerInit {
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
+  /** Step 累计高度的首路径点；ABS 建路忽略该字段。 */
+  routeOriginPoint: PixelPoint;
   /** 几何路线算法模式；edge Worker 内按它决定是否建立可视图 cache。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
+  /** Step 严格边判定需要的精简公式设置。 */
+  settings: GraphwarOneClickClearDagEdgeBuildRequest["settings"];
   /** 子 Worker 序号，仅用于调试错误信息。 */
   workerIndex: number;
 }
@@ -237,6 +243,10 @@ export interface GraphwarOneClickClearEdgeWorkerJobResult {
   routeMapPixelsElapsedMs: number;
   /** 已按截图像素映射且首尾替换为精确控制点的路线。 */
   route?: PixelPoint[];
+  /** Step 路线终点的实际累计高度；ABS 结果保持 undefined。 */
+  resolvedEndY?: number;
+  /** Step 路线终点的 canonical 打印系数累计身份。 */
+  resolvedEndStateKey?: string;
 }
 
 /** Edge Worker 发回 master Worker 的消息。 */

@@ -44,8 +44,8 @@ interface GraphwarPathfindingObstacleProjectionOptions {
     isFriendlyObstacleSoldier: (soldier: GraphwarDetectionBox) => boolean;
   };
   modes: {
-    /** 关闭友伤且已有路径时，友方士兵应作为寻路障碍。 */
-    blocksFriendlyFireTargets: ReadonlyRef<boolean>;
+    /** 关闭友伤且已有路径时，友方士兵应写入所有寻路任务的基础 mask。 */
+    includesFriendlySoldierObstacles: ReadonlyRef<boolean>;
     /** 普通模式不应把 route tolerance mask 用作公式模拟碰撞。 */
     effectiveSmartPathfindingEnabled: ReadonlyRef<boolean>;
     /** 只有智能寻路展示启用时才绘制 route/simulation 派生障碍。 */
@@ -73,6 +73,8 @@ export interface GraphwarPathfindingObstacleProjectionController {
   visibleObstacleFillPath: ComputedRef<string>;
   /** 公式模拟使用的障碍 mask。 */
   simulationObstacleMask: ComputedRef<Uint8Array | undefined>;
+  /** 智能寻路和一键清图使用的 simulation tolerance 障碍 mask。 */
+  smartPathfindingSimulationObstacleMask: ComputedRef<Uint8Array | undefined>;
   /** 写入友方士兵后的智能寻路基础障碍 mask。 */
   smartPathfindingBaseObstacleMask: ComputedRef<Uint8Array | undefined>;
   /** Route tolerance 派生障碍 SVG 边线。 */
@@ -123,7 +125,11 @@ export function useGraphwarPathfindingObstacleProjection(
 
   const smartPathfindingBaseObstacleMask = computed(() => {
     const obstacleMap = options.detection.obstacles.value;
-    if (!obstacleMap || !options.modes.blocksFriendlyFireTargets.value || !options.settings.parsedBounds.value.ok) {
+    if (
+      !obstacleMap ||
+      !options.modes.includesFriendlySoldierObstacles.value ||
+      !options.settings.parsedBounds.value.ok
+    ) {
       return obstacleMap?.mask;
     }
 
@@ -210,24 +216,25 @@ export function useGraphwarPathfindingObstacleProjection(
     );
   });
 
+  const smartPathfindingSimulationObstacleMask = computed(() => {
+    const tolerances = options.settings.parsedObstacleTolerances.value;
+    if (!tolerances.ok) {
+      return undefined;
+    }
+    const obstacleMask = smartPathfindingBaseObstacleMask.value;
+    return obstacleMask
+      ? options.cache.getCachedRouteMask(obstacleMask, tolerances.simulationTolerancePlanePixels).mask
+      : undefined;
+  });
+
   const simulationObstacleMask = computed(() => {
     const obstacleMap = options.detection.obstacles.value;
     if (!obstacleMap) {
       return undefined;
     }
-    if (!options.modes.effectiveSmartPathfindingEnabled.value) {
-      return obstacleMap.mask;
-    }
-
-    const tolerances = options.settings.parsedObstacleTolerances.value;
-    if (!tolerances.ok) {
-      return undefined;
-    }
-
-    const obstacleMask = smartPathfindingBaseObstacleMask.value;
-    return obstacleMask
-      ? options.cache.getCachedRouteMask(obstacleMask, tolerances.simulationTolerancePlanePixels).mask
-      : undefined;
+    return options.modes.effectiveSmartPathfindingEnabled.value
+      ? smartPathfindingSimulationObstacleMask.value
+      : obstacleMap.mask;
   });
 
   const trajectoryCollisionSettings = computed<GraphwarTrajectoryCollisionSettings | undefined>(() => {
@@ -262,6 +269,7 @@ export function useGraphwarPathfindingObstacleProjection(
     smartPathfindingObstacleRouteFillPath,
     smartPathfindingObstacleSimulationEdgePath,
     smartPathfindingObstacleSimulationFillPath,
+    smartPathfindingSimulationObstacleMask,
     trajectoryCollisionSettings,
     visibleObstacleEdgePath,
     visibleObstacleFillPath,

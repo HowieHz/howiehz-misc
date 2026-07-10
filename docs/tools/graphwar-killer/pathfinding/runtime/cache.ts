@@ -100,7 +100,7 @@ export function createGraphwarPathfindingCacheController() {
 
   function createSmartPathfindingResultCacheKey(input: GraphwarSmartPathfindingPathInput) {
     return JSON.stringify([
-      "smart-path-result-v1",
+      "smart-path-result-v2",
       createGraphBoundsCacheKey(input.bounds),
       createBoundsRectCacheKey(input.boundsRect),
       input.boundaryExpansion,
@@ -118,7 +118,7 @@ export function createGraphwarPathfindingCacheController() {
 
   function createOneClickClearResultCacheKey(input: GraphwarOneClickClearPathWorkerInput) {
     return JSON.stringify([
-      "one-click-clear-result-v1",
+      "one-click-clear-result-v2",
       createGraphBoundsCacheKey(input.bounds),
       createBoundsRectCacheKey(input.boundsRect),
       input.boundaryExpansion,
@@ -294,6 +294,7 @@ function cloneSmartPathfindingPathResult(
   return {
     ...(result.blockedPoint ? { blockedPoint: clonePixelPoint(result.blockedPoint) } : {}),
     ...(result.failureReason ? { failureReason: result.failureReason } : {}),
+    ...(result.invalidSegmentIndex === undefined ? {} : { invalidSegmentIndex: result.invalidSegmentIndex }),
     ...(result.path ? { path: result.path.map(clonePixelPoint) } : {}),
     timings: result.timings.map((timing) => ({
       elapsedMs: timing.elapsedMs,
@@ -337,6 +338,7 @@ function cloneOneClickClearResult(result: GraphwarOneClickClearPathWorkerResult[
   return {
     elapsedMs: result.elapsedMs,
     expandedStates: result.expandedStates,
+    ...(result.invalidSegmentIndex === undefined ? {} : { invalidSegmentIndex: result.invalidSegmentIndex }),
     reason: result.reason,
     type: result.type,
   };

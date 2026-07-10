@@ -5,8 +5,6 @@ import {
   GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
   GRAPHWAR_MAX_ANGLE_LOOPS,
-  GRAPHWAR_PLANE_GAME_LENGTH,
-  GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
@@ -17,6 +15,8 @@ import type { GraphwarExpressionParserOptions } from "../expression/evaluator";
 /** 封装 Graphwar 公式模拟器，按游戏步进规则计算轨迹和停止原因。 */
 import { compileFormulaEvaluator } from "../generation/build";
 import type { CompiledGraphwarFormulaMaterials, FormulaEvaluationOptions } from "../generation/build";
+import { calculateStepFormulaCenterX, resolveStepFormula } from "../generation/step-numeric-strategy";
+export { calculateStepFormulaCenterX } from "../generation/step-numeric-strategy";
 export type { GraphwarExpressionParserOptions } from "../expression/evaluator";
 
 /** 采样由路径点生成的公式时的完整输入，保持与 Graphwar 原版步进参数隔离。 */
@@ -45,10 +45,6 @@ export interface SampleGraphwarTrajectoryOptions {
   steepness: number;
 }
 
-const STEP_CENTER_MARGIN = GRAPHWAR_PLANE_GAME_LENGTH / GRAPHWAR_PLANE_LENGTH;
-/** Sigmoid 只会渐近目标高度；零尾差会要求中心无限左移，因此该容差必须大于 0。 */
-const STEP_TARGET_VERTICAL_TOLERANCE =
-  (graphwarToolDefaults.targetRangePixelTolerance * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH;
 /** 发射点迭代收敛阈值取 Graphwar 最小 x 步长的 1/10，避免无意义抖动。 */
 const FORMULA_LAUNCH_POINT_TOLERANCE = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE / 10;
 /** 发射点收敛比较使用距离平方，避免每轮开方。 */
@@ -184,10 +180,7 @@ export function createGraphwarFormulaPathPoints(options: CreateGraphwarFormulaPa
   return formulaPoints;
 }
 
-/**
- * Step mode path points are user-facing targets. The formula's c value is the sigmoid midpoint, so move each midpoint
- * left enough that the curve is already near the target height at target x.
- */
+/** Step 点击点是用户目标；先解析 canonical 有效 ΔY，再把 sigmoid 中心左移到目标 x 前。 */
 function createStepAdjustedFormulaPathPoints(
   options: CreateGraphwarFormulaPathOptions,
   targetPoints: readonly GraphPoint[],
@@ -201,29 +194,30 @@ function createStepAdjustedFormulaPathPoints(
     return [...targetPoints];
   }
 
+  const resolvedFormula = resolveStepFormula(
+    targetPoints,
+    options.steepness,
+    options.equation,
+    options.formulaEvaluation,
+  );
   const formulaPoints = [targetPoints[0]];
   for (let index = 1; index < targetPoints.length; index += 1) {
     const previousTarget = targetPoints[index - 1];
     const target = targetPoints[index];
-    formulaPoints.push(createGraphPoint(calculateStepCenterX(previousTarget, target, options.steepness), target.y));
+    const transition = resolvedFormula.transitions[index - 1];
+    formulaPoints.push(
+      createGraphPoint(
+        calculateStepFormulaCenterX(
+          previousTarget.x,
+          target.x,
+          transition?.effectiveDeltaY ?? Number.NaN,
+          resolvedFormula.formulaSteepness,
+        ),
+        target.y,
+      ),
+    );
   }
   return formulaPoints;
-}
-
-/** 将 step 中心向左移动，让曲线在用户目标 x 处已经足够接近目标 y。 */
-export function calculateStepFormulaCenterX(startX: number, targetX: number, deltaY: number, steepness: number) {
-  const availableOffset = targetX - startX - STEP_CENTER_MARGIN;
-  const requiredProgress = 1 - STEP_TARGET_VERTICAL_TOLERANCE / Math.abs(deltaY);
-  if (deltaY === 0 || requiredProgress <= 0.5 || availableOffset <= 0 || !Number.isFinite(availableOffset)) {
-    return targetX;
-  }
-
-  const centerOffset = Math.log(requiredProgress / (1 - requiredProgress)) / steepness;
-  return targetX - Math.min(centerOffset, availableOffset);
-}
-
-function calculateStepCenterX(previousTarget: GraphPoint, target: GraphPoint, steepness: number) {
-  return calculateStepFormulaCenterX(previousTarget.x, target.x, target.y - previousTarget.y, steepness);
 }
 
 /** 使用 Graphwar 的采样、步长二分和 RK4 规则生成预览轨迹点。 */
@@ -439,7 +433,7 @@ function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
     options.points,
     options.steepness,
     options.algorithm,
-    options.formulaEvaluation,
+    createEquationAwareFormulaEvaluation(options),
     options.compiledFormulaMaterials,
   ).evaluateY;
 }
@@ -450,7 +444,7 @@ function createFirstOrderEvaluator(options: CreateGraphwarFormulaPathOptions): F
     options.points,
     options.steepness,
     options.algorithm,
-    options.formulaEvaluation,
+    createEquationAwareFormulaEvaluation(options),
     options.compiledFormulaMaterials,
   ).evaluateFirstDerivativeY;
 }
@@ -461,9 +455,16 @@ function createSecondOrderEvaluator(options: CreateGraphwarFormulaPathOptions): 
     options.points,
     options.steepness,
     options.algorithm,
-    options.formulaEvaluation,
+    createEquationAwareFormulaEvaluation(options),
     options.compiledFormulaMaterials,
   ).evaluateSecondDerivativeY;
+}
+
+/** 独立调用模拟器时也要把方程传给 Step 编译器，不能默认退回 y= 的 canonical 系数。 */
+function createEquationAwareFormulaEvaluation(options: CreateGraphwarFormulaPathOptions): FormulaEvaluationOptions {
+  return options.formulaEvaluation?.equation === options.equation
+    ? options.formulaEvaluation
+    : { ...options.formulaEvaluation, equation: options.equation };
 }
 
 /** 模拟 Graphwar 普通 y= 模式按函数有限差分迭代初始发射角。 */

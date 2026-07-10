@@ -1,4 +1,5 @@
 import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../../core/game/forward-rule";
+import { imageToGraphPoint } from "../../core/geometry";
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import type { GraphBounds, PixelPoint } from "../../core/types";
@@ -6,6 +7,7 @@ import type { GraphBounds, PixelPoint } from "../../core/types";
 import { dilateObstacleMask } from "../../detection/objects";
 import { sampleGraphwarPathTrajectory } from "../../formula/trajectory/sampling";
 import { buildOneClickClearDagEdgeRoute } from "../../pathfinding/one-click-clear/edge-route";
+import type { GraphwarOneClickClearDagEdgeRouteBuildContext } from "../../pathfinding/one-click-clear/edge-route";
 import type {
   GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildResult,
@@ -13,6 +15,14 @@ import type {
   GraphwarOneClickClearDebugTiming,
 } from "../../pathfinding/one-click-clear/search";
 import { buildGraphwarOneClickClearPath } from "../../pathfinding/one-click-clear/search";
+import type { GraphwarPlaneMaskSummedArea } from "../../pathfinding/routing/step-envelope";
+import {
+  createGraphwarStepPathfindingEdgeEvaluator,
+  createGraphwarStepRouteModel,
+  createGraphwarStepRouteSummedArea,
+  validateGraphwarStepRoutePath,
+} from "../../pathfinding/routing/step-route";
+import type { GraphwarStepRouteModel } from "../../pathfinding/routing/step-route";
 import {
   buildGraphwarThetaStarPathForMask,
   createGraphwarThetaStarScratch,
@@ -24,6 +34,7 @@ import {
   createGraphwarVisibilityGraphObstacleData,
 } from "../../pathfinding/routing/visibility-graph";
 import type {
+  GraphwarPathfindingOptions,
   GraphwarPathfindingPreview,
   GraphwarVisibilityGraphObstacleData,
 } from "../../pathfinding/routing/visibility-graph";
@@ -70,6 +81,23 @@ interface MasterRouteMaskLookup {
   elapsedMs: number;
   /** 可直接交给几何寻路的 route mask。 */
   mask: Uint8Array;
+  /** Step 请求按需构建的二维前缀和；ABS 请求保持 undefined。 */
+  summedArea?: GraphwarPlaneMaskSummedArea;
+}
+
+interface MasterRouteMaskCacheEntry {
+  mask: Uint8Array;
+  summedArea?: GraphwarPlaneMaskSummedArea;
+}
+
+type RouteRuntimeOptions = Pick<
+  GraphwarPathfindingOptions,
+  "estimateRemainingSecondaryCost" | "evaluateEdge" | "initialRouteState" | "initialRouteStateKey"
+>;
+
+interface SmartStepRouteContext {
+  model: GraphwarStepRouteModel;
+  summedArea: GraphwarPlaneMaskSummedArea;
 }
 
 interface MasterRouteMaskSourceInput {
@@ -86,10 +114,14 @@ interface MasterRouteMaskSourceInput {
 interface EdgeWorkerHandle {
   /** 子 worker 当前正在处理的 job；失败 fallback 时会补跑所有未完成 job。 */
   activeJob?: GraphwarOneClickClearDagEdgeBuildJob;
+  /** 当前 job 的 session 内请求号；复用 worker 后用于拒绝迟到结果。 */
+  activeRequestId?: number;
   /** 清理事件监听器。 */
   cleanup: () => void;
   /** 是否已结束并记录耗时。 */
   finished: boolean;
+  /** 是否已完成初始化，可接收 DAG 边 job。 */
+  ready: boolean;
   /** 子 worker 创建时间。 */
   startedAt: number;
   /** 实际子 worker。 */
@@ -105,7 +137,38 @@ interface EdgeRouteTimingTotals {
   routeMapPixelsElapsedMs: number;
 }
 
-const masterRouteMaskCache = new Map<string, Uint8Array>();
+type OneClickClearDagEdgeSessionState = "disposed" | "fallback" | "idle" | "running";
+
+interface OneClickClearDagEdgeBatch {
+  /** 已完成 job id；worker 失败时只串行补跑剩余项。 */
+  completedJobIds: Set<number>;
+  /** 本批输入 job，顺序也是最终结果的稳定顺序。 */
+  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[];
+  /** 下一个尚未分配给 worker 的 job 下标。 */
+  nextJobIndex: number;
+  /** Promise 失败出口。 */
+  reject: (error: Error) => void;
+  /** 按 job id 保存结果，避免并行完成顺序影响输出。 */
+  routesByJobId: Map<number, GraphwarOneClickClearDagEdgeRoute>;
+  /** Promise 成功出口。 */
+  resolve: (result: GraphwarOneClickClearDagEdgeBuildResult) => void;
+  /** 本批是否已结束；迟到消息必须忽略。 */
+  settled: boolean;
+  /** 本批累计的实际建路耗时。 */
+  totals: EdgeRouteTimingTotals;
+  /** 本批实际可参与调度的 worker 数。 */
+  workerCount: number;
+}
+
+interface OneClickClearDagEdgeSession {
+  /** 结束本次一键清图请求，并返回每个 child worker 唯一的一条生命周期 timing。 */
+  dispose: () => GraphwarOneClickClearDebugTiming[];
+  /** 使用同一静态上下文构建下一批动态 DAG 边。批次必须串行调用。 */
+  runBatch: (jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[]) => Promise<GraphwarOneClickClearDagEdgeBuildResult>;
+}
+
+const masterRouteMaskCache = new Map<string, MasterRouteMaskCacheEntry>();
+const masterStepSummedAreaCache = new WeakMap<Uint8Array, GraphwarPlaneMaskSummedArea>();
 const masterThetaStarScratch = createGraphwarThetaStarScratch();
 const masterVisibilityGraphCache = new Map<string, MasterVisibilityGraphCacheEntry>();
 
@@ -173,6 +236,7 @@ async function findRouteForMask(
   id: number,
   input: GraphwarPathfindingRouteInput,
   routeMask: Uint8Array,
+  runtimeOptions?: RouteRuntimeOptions,
 ): Promise<GraphwarPathfindingRouteResult> {
   let visibilityCache: GraphwarPathfindingRouteResult["visibilityCache"] = "skipped";
   let visibilityCacheElapsedMs = 0;
@@ -191,6 +255,7 @@ async function findRouteForMask(
           bounds: input.bounds,
           boundsRect: input.boundsRect,
           boundaryExpansion: input.boundaryExpansion,
+          ...runtimeOptions,
           onPreview: postPreview,
           routeMask,
           routeTolerancePlanePixels: input.routeTolerancePlanePixels,
@@ -202,6 +267,7 @@ async function findRouteForMask(
           bounds: input.bounds,
           boundsRect: input.boundsRect,
           boundaryExpansion: input.boundaryExpansion,
+          ...runtimeOptions,
           getVisibilityGraphObstacleData: () => {
             const startedAt = nowMs();
             const lookup = getMasterVisibilityGraphObstacleData(input, routeMask);
@@ -230,15 +296,68 @@ async function findSmartPath(
 ): Promise<GraphwarSmartPathfindingPathResult> {
   const timings: GraphwarSmartPathfindingWorkerTiming[] = [];
   const startPoint = input.sourcePath.at(-1);
-  if (!startPoint) {
+  const routeOriginPoint = input.sourcePath[0];
+  if (!startPoint || !routeOriginPoint) {
     return { failureReason: "route", timings };
   }
 
-  const routeMaskLookup = getMasterRouteMaskFromBase(input);
+  const isStepRoute = input.settings.algorithm === "step";
+  const routeMaskLookup = getMasterRouteMaskFromBase(input, isStepRoute);
   timings.push({
     elapsedMs: routeMaskLookup.elapsedMs,
     stage: routeMaskLookup.cacheHit ? "route-mask-cache-hit" : "route-mask-cache-miss",
   });
+
+  let stepContext: SmartStepRouteContext | undefined;
+  let routeRuntimeOptions: RouteRuntimeOptions | undefined;
+  if (isStepRoute) {
+    const model = createGraphwarStepRouteModel(
+      imageToGraphPoint(routeOriginPoint, input.bounds, input.boundsRect).y,
+      input.settings,
+    );
+    if (!model || !routeMaskLookup.summedArea) {
+      return { failureReason: "route", timings };
+    }
+
+    const prefixValidation = validateGraphwarStepRoutePath({
+      boundaryInset: input.boundaryExpansion,
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      model,
+      points: input.sourcePath,
+      summedArea: routeMaskLookup.summedArea,
+    });
+    if (!prefixValidation.ok) {
+      return {
+        failureReason: "route",
+        ...(prefixValidation.invalidSegmentIndex === undefined
+          ? {}
+          : { invalidSegmentIndex: prefixValidation.invalidSegmentIndex }),
+        timings,
+      };
+    }
+    if (prefixValidation.resolvedEndY === undefined) {
+      return { failureReason: "route", timings };
+    }
+
+    stepContext = {
+      model,
+      summedArea: routeMaskLookup.summedArea,
+    };
+    routeRuntimeOptions = createGraphwarStepPathfindingEdgeEvaluator({
+      boundaryInset: input.boundaryExpansion,
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      exactStartPoint: startPoint,
+      exactTargetPoint: input.targetPoint,
+      model,
+      resolvedStartY: prefixValidation.resolvedEndY,
+      ...(prefixValidation.routeStateKey === undefined
+        ? {}
+        : { resolvedStartStateKey: prefixValidation.routeStateKey }),
+      summedArea: routeMaskLookup.summedArea,
+    });
+  }
 
   const routeResult = await findRouteForMask(
     id,
@@ -255,6 +374,7 @@ async function findSmartPath(
       targetPoint: input.targetPoint,
     },
     routeMaskLookup.mask,
+    routeRuntimeOptions,
   );
   addSmartPathfindingRouteTimings(timings, routeResult);
   if (!routeResult.path || routeResult.path.length < 2) {
@@ -263,7 +383,7 @@ async function findSmartPath(
 
   const normalizedPath = normalizeSmartPathfindingPathFromPlanePath(routeResult.path, input.targetPoint, input);
   const validation = measureSmartPathfindingWorkerTiming(timings, "validate-trajectory", () =>
-    validateSmartPathfindingTrajectory(input, normalizedPath),
+    validateSmartPathfindingTrajectory(input, normalizedPath, stepContext),
   );
   if (!validation.followsGraphRule) {
     return { failureReason: "graph-rule", timings };
@@ -279,7 +399,7 @@ async function findSmartPath(
   const path =
     normalizedPath.length > 3
       ? measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
-          optimizeSmartPathfindingPath(input, normalizedPath),
+          optimizeSmartPathfindingPath(input, normalizedPath, stepContext),
         )
       : normalizedPath;
   return { path, timings };
@@ -309,25 +429,45 @@ function getMasterRouteMask(input: GraphwarPathfindingRouteInput) {
   return masterVisibilityGraphCache.get(cacheKey)?.routeMask ?? input.routeMask;
 }
 
-function getMasterRouteMaskFromBase(input: MasterRouteMaskSourceInput): MasterRouteMaskLookup {
+function getMasterRouteMaskFromBase(input: MasterRouteMaskSourceInput, needsSummedArea = false): MasterRouteMaskLookup {
   const startedAt = nowMs();
   const cacheKey = createMasterRouteMaskCacheKey(input);
   const cached = masterRouteMaskCache.get(cacheKey);
   if (cached) {
+    if (needsSummedArea && !cached.summedArea) {
+      cached.summedArea = getOrCreateMasterStepSummedArea(cached.mask);
+    }
     return {
       cacheHit: true,
       elapsedMs: nowMs() - startedAt,
-      mask: cached,
+      mask: cached.mask,
+      ...(cached.summedArea ? { summedArea: cached.summedArea } : {}),
     };
   }
 
   const mask = dilateObstacleMask(input.routeObstacleMask, input.routeTolerancePlanePixels);
-  masterRouteMaskCache.set(cacheKey, mask);
+  const entry: MasterRouteMaskCacheEntry = {
+    mask,
+    ...(needsSummedArea ? { summedArea: getOrCreateMasterStepSummedArea(mask) } : {}),
+  };
+  masterRouteMaskCache.set(cacheKey, entry);
   return {
     cacheHit: false,
     elapsedMs: nowMs() - startedAt,
     mask,
+    ...(entry.summedArea ? { summedArea: entry.summedArea } : {}),
   };
+}
+
+/** Master 内同一个 route mask 的 Step 前缀和只构建一次，供 smart 与多批 DAG 建边复用。 */
+function getOrCreateMasterStepSummedArea(mask: Uint8Array) {
+  const cached = masterStepSummedAreaCache.get(mask);
+  if (cached) {
+    return cached;
+  }
+  const summedArea = createGraphwarStepRouteSummedArea(mask);
+  masterStepSummedAreaCache.set(mask, summedArea);
+  return summedArea;
 }
 
 function getMasterVisibilityGraphObstacleData(
@@ -387,10 +527,30 @@ function normalizeSmartPathfindingPathFromPlanePath(
   return normalizePathForMinimumForwardStep([...input.sourcePath, ...appendPoints], input.bounds, input.boundsRect);
 }
 
-function validateSmartPathfindingTrajectory(input: GraphwarSmartPathfindingPathInput, points: readonly PixelPoint[]) {
+function validateSmartPathfindingTrajectory(
+  input: GraphwarSmartPathfindingPathInput,
+  points: readonly PixelPoint[],
+  stepContext?: SmartStepRouteContext,
+) {
   if (!pathFollowsGraphRule(points, input.bounds, input.boundsRect)) {
     return {
       followsGraphRule: false,
+      reachesTargetBeforeObstacle: false,
+    };
+  }
+  if (
+    stepContext &&
+    !validateGraphwarStepRoutePath({
+      boundaryInset: input.boundaryExpansion,
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      model: stepContext.model,
+      points,
+      summedArea: stepContext.summedArea,
+    }).ok
+  ) {
+    return {
+      followsGraphRule: true,
       reachesTargetBeforeObstacle: false,
     };
   }
@@ -412,7 +572,11 @@ function validateSmartPathfindingTrajectory(input: GraphwarSmartPathfindingPathI
   };
 }
 
-function optimizeSmartPathfindingPath(input: GraphwarSmartPathfindingPathInput, points: readonly PixelPoint[]) {
+function optimizeSmartPathfindingPath(
+  input: GraphwarSmartPathfindingPathInput,
+  points: readonly PixelPoint[],
+  stepContext?: SmartStepRouteContext,
+) {
   let optimized = [...points];
   let changed = true;
   const firstOptimizableIndex = Math.max(1, input.sourcePath.length);
@@ -420,7 +584,7 @@ function optimizeSmartPathfindingPath(input: GraphwarSmartPathfindingPathInput, 
     changed = false;
     for (let index = firstOptimizableIndex; index < optimized.length - 1 && optimized.length > 2; index += 1) {
       const candidatePath = [...optimized.slice(0, index), ...optimized.slice(index + 1)];
-      const validation = validateSmartPathfindingTrajectory(input, candidatePath);
+      const validation = validateSmartPathfindingTrajectory(input, candidatePath, stepContext);
       if (validation.followsGraphRule && validation.reachesTargetBeforeObstacle) {
         optimized = candidatePath;
         changed = true;
@@ -450,282 +614,443 @@ function measureSmartPathfindingWorkerTiming<TResult>(
 async function buildOneClickClearPath(
   input: GraphwarOneClickClearPathWorkerInput,
 ): Promise<GraphwarOneClickClearPathWorkerResult> {
+  const startedAt = nowMs();
   const timings: GraphwarOneClickClearDebugTiming[] = [];
-  const routeMaskLookup = getMasterRouteMaskFromBase(input);
+  const isStepRoute = input.settings.algorithm === "step";
+  const routeMaskLookup = getMasterRouteMaskFromBase(input, isStepRoute);
   timings.push({
     elapsedMs: routeMaskLookup.elapsedMs,
     stage: routeMaskLookup.cacheHit ? "route-mask-cache-hit" : "route-mask-cache-miss",
   });
-  const result = await buildGraphwarOneClickClearPath({
-    boundaryExpansion: input.boundaryExpansion,
-    buildDagEdges: (request) => buildOneClickClearDagEdges(request),
-    bounds: input.bounds,
-    boundsRect: input.boundsRect,
-    candidates: input.candidates,
-    dagEdgeWorkerCount: input.dagEdgeWorkerCount,
-    deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
-    hitCandidates: input.hitCandidates,
-    isCancelled: () => false,
-    onDebugTiming: (timing) => timings.push(timing),
-    pathPoints: input.pathPoints,
-    ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
-    routeMask: {
-      mask: routeMaskLookup.mask,
-      routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-    },
-    routeMode: input.routeMode,
-    settings: input.settings,
-    simulationBoundaryExpansion: input.simulationBoundaryExpansion,
-    ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
-  });
+  let stepRouteValidationContext: SmartStepRouteContext | undefined;
+  if (isStepRoute && routeMaskLookup.summedArea) {
+    const originPoint = input.pathPoints[0];
+    const model = originPoint
+      ? createGraphwarStepRouteModel(imageToGraphPoint(originPoint, input.bounds, input.boundsRect).y, input.settings)
+      : undefined;
+    if (model) {
+      stepRouteValidationContext = { model, summedArea: routeMaskLookup.summedArea };
+      const validationStartedAt = nowMs();
+      const prefixValidation = validateGraphwarStepRoutePath({
+        boundaryInset: input.boundaryExpansion,
+        bounds: input.bounds,
+        boundsRect: input.boundsRect,
+        model,
+        points: input.pathPoints,
+        summedArea: routeMaskLookup.summedArea,
+      });
+      timings.push({
+        elapsedMs: nowMs() - validationStartedAt,
+        stage: "validate-prefix",
+      });
+      if (!prefixValidation.ok) {
+        return {
+          result: {
+            elapsedMs: nowMs() - startedAt,
+            expandedStates: 0,
+            ...(prefixValidation.invalidSegmentIndex === undefined
+              ? {}
+              : { invalidSegmentIndex: prefixValidation.invalidSegmentIndex }),
+            reason: "preflight-blocked",
+            type: "failure",
+          },
+          timings,
+        };
+      }
+    }
+  }
+  let dagEdgeSession: OneClickClearDagEdgeSession | undefined;
+  let result: GraphwarOneClickClearPathWorkerResult["result"];
+  try {
+    result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: input.boundaryExpansion,
+      buildDagEdges: (request) => {
+        dagEdgeSession ??= createOneClickClearDagEdgeSession(request);
+        return dagEdgeSession.runBatch(request.jobs);
+      },
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      candidates: input.candidates,
+      dagEdgeWorkerCount: input.dagEdgeWorkerCount,
+      deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
+      hitCandidates: input.hitCandidates,
+      isCancelled: () => false,
+      onDebugTiming: (timing) => timings.push(timing),
+      pathPoints: input.pathPoints,
+      ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
+      routeMask: {
+        mask: routeMaskLookup.mask,
+        routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+      },
+      routeMode: input.routeMode,
+      settings: input.settings,
+      simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+      ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
+      ...(stepRouteValidationContext
+        ? {
+            validateStepRoute: (points) =>
+              validateGraphwarStepRoutePath({
+                boundaryInset: input.boundaryExpansion,
+                bounds: input.bounds,
+                boundsRect: input.boundsRect,
+                model: stepRouteValidationContext.model,
+                points,
+                summedArea: stepRouteValidationContext.summedArea,
+              }).ok,
+          }
+        : {}),
+    });
+  } finally {
+    if (dagEdgeSession) {
+      timings.push(...dagEdgeSession.dispose());
+    }
+  }
   return { result, timings };
 }
 
 async function buildOneClickClearDagEdges(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
 ): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
-  // 单 lane、单 job 或缺少 Worker API 时没有调度收益，直接走串行建边。
-  if (input.workerCount <= 1 || input.jobs.length <= 1 || typeof Worker === "undefined") {
-    return buildOneClickClearDagEdgesSerial(input, input.jobs, "serial", 1);
+  const session = createOneClickClearDagEdgeSession(input);
+  try {
+    const result = await session.runBatch(input.jobs);
+    return {
+      routes: result.routes,
+      timings: [...result.timings, ...session.dispose()],
+    };
+  } catch (error) {
+    session.dispose();
+    throw error;
   }
-
-  return runOneClickClearDagEdgeWorkerPool(input, Math.min(input.workerCount, input.jobs.length));
 }
 
-/** 并行调度 DAG 单边 job；任一子 worker 出错时，未完成边交给串行路径补跑。 */
-function runOneClickClearDagEdgeWorkerPool(
+/**
+ * 一次一键清图请求共用的 DAG 建边 session。
+ *
+ * Step 动态 DAG 会按 x 层多次提交批次；session 让 child worker、可视图预处理和 Theta* scratch 跨批次复用。
+ */
+function createOneClickClearDagEdgeSession(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
-  laneCount: number,
-): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
-  return new Promise((resolve, reject) => {
-    const handles: EdgeWorkerHandle[] = [];
-    const completedJobIds = new Set<number>();
-    const routes: GraphwarOneClickClearDagEdgeRoute[] = [];
-    const timings: GraphwarOneClickClearDebugTiming[] = [
-      {
-        detail: {
-          mode: "parallel",
-          type: "dag-edge-mode",
-          workerCount: laneCount,
-        },
-        elapsedMs: 0,
-        stage: "build-dag-edges",
-      },
-    ];
-    const totals: EdgeRouteTimingTotals = {
-      routeMapPixelsElapsedMs: 0,
-      routePathfindingElapsedMs: 0,
-    };
-    let nextJobIndex = 0;
-    let nextRequestId = 1;
-    let settled = false;
+): OneClickClearDagEdgeSession {
+  const requestedWorkerCount = Math.floor(input.workerCount);
+  const configuredWorkerCount =
+    Number.isFinite(requestedWorkerCount) && requestedWorkerCount > 0 ? requestedWorkerCount : 1;
+  const handles: EdgeWorkerHandle[] = [];
+  const workerTimings: GraphwarOneClickClearDebugTiming[] = [];
+  let activeBatch: OneClickClearDagEdgeBatch | undefined;
+  let fallbackWorkerCount = 1;
+  let nextRequestId = 1;
+  let serialBatchRunning = false;
+  let serialRouteContext: GraphwarOneClickClearDagEdgeRouteBuildContext | undefined;
+  let state: OneClickClearDagEdgeSessionState = "idle";
 
-    const finishWorker = (handle: EdgeWorkerHandle) => {
-      if (handle.finished) {
-        return;
-      }
-      handle.finished = true;
-      handle.cleanup();
-      handle.worker.terminate();
-      timings.push({
-        detail: {
-          type: "dag-edge-worker",
-          workerIndex: handle.workerIndex,
-        },
-        elapsedMs: nowMs() - handle.startedAt,
-        stage: "build-dag-edges",
-      });
-    };
-
-    const resolveWithParallelResult = () => {
-      if (settled || completedJobIds.size < input.jobs.length) {
-        return;
-      }
-      settled = true;
-      for (const handle of handles) {
-        finishWorker(handle);
-      }
-      resolve({
-        routes,
-        timings: [...timings, ...createRouteTimingEntries(totals)],
-      });
-    };
-
-    const fallbackWithRemainingJobs = (failedHandle: EdgeWorkerHandle | undefined) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      for (const timing of timings) {
-        if (timing.detail?.type === "dag-edge-mode") {
-          timing.detail = {
-            mode: "parallel-fallback",
-            type: "dag-edge-mode",
-            workerCount: laneCount,
-          };
-          break;
-        }
-      }
-      for (const handle of handles) {
-        finishWorker(handle);
-      }
-      if (failedHandle && !handles.includes(failedHandle)) {
-        finishWorker(failedHandle);
-      }
-
-      const remainingJobs = input.jobs.filter((job) => !completedJobIds.has(job.id));
-      void buildOneClickClearDagEdgesSerial(input, remainingJobs, "parallel-fallback", laneCount)
-        .then((serial) => {
-          resolve({
-            routes: [...routes, ...serial.routes],
-            timings: [
-              ...timings,
-              ...serial.timings.filter((timing) => timing.detail?.type !== "dag-edge-mode"),
-              ...createRouteTimingEntries(totals),
-            ],
-          });
-        })
-        .catch((error: unknown) => {
-          reject(error instanceof Error ? error : new Error(String(error)));
-        });
-    };
-
-    const assignNextJob = (handle: EdgeWorkerHandle) => {
-      if (settled) {
-        return;
-      }
-      const job = input.jobs[nextJobIndex];
-      nextJobIndex += 1;
-      if (!job) {
-        finishWorker(handle);
-        resolveWithParallelResult();
-        return;
-      }
-
-      handle.activeJob = job;
-      try {
-        handle.worker.postMessage({
-          job,
-          requestId: nextRequestId,
-          type: "job",
-        } satisfies GraphwarOneClickClearEdgeWorkerRequest);
-        nextRequestId += 1;
-      } catch {
-        handle.activeJob = undefined;
-        fallbackWithRemainingJobs(handle);
-      }
-    };
-
-    try {
-      for (let workerIndex = 1; workerIndex <= laneCount; workerIndex += 1) {
-        const handle = createEdgeWorkerHandle(workerIndex, input, assignNextJob, (failed) =>
-          fallbackWithRemainingJobs(failed),
-        );
-        handles.push(handle);
-      }
-    } catch {
-      fallbackWithRemainingJobs(undefined);
-    }
-
-    function handleJobResult(handle: EdgeWorkerHandle, result: GraphwarOneClickClearEdgeWorkerJobResult) {
-      if (settled || !handle.activeJob) {
-        return;
-      }
-      completedJobIds.add(result.jobId);
-      totals.routePathfindingElapsedMs += result.routePathfindingElapsedMs;
-      totals.routeMapPixelsElapsedMs += result.routeMapPixelsElapsedMs;
-      routes.push(createOneClickClearDagEdgeRoute(result));
-      handle.activeJob = undefined;
-      assignNextJob(handle);
-      resolveWithParallelResult();
-    }
-
-    function createEdgeWorkerHandle(
-      workerIndex: number,
-      context: GraphwarOneClickClearDagEdgesWorkerInput,
-      onReady: (handle: EdgeWorkerHandle) => void,
-      onFailed: (handle: EdgeWorkerHandle) => void,
-    ): EdgeWorkerHandle {
-      const worker = new Worker(new URL("./one-click-clear/edge.worker.ts", import.meta.url), {
-        name: `graphwar-one-click-clear-edge-${workerIndex}`,
-        type: "module",
-      });
-      const handle: EdgeWorkerHandle = {
-        cleanup: () => cleanup(),
-        finished: false,
-        startedAt: nowMs(),
-        worker,
-        workerIndex,
-      };
-      const handleMessage = (event: MessageEvent<GraphwarOneClickClearEdgeWorkerResponse>) => {
-        const response = event.data;
-        if (response.workerIndex !== workerIndex) {
-          return;
-        }
-        if (response.type === "ready") {
-          onReady(handle);
-          return;
-        }
-        if (response.type === "error") {
-          onFailed(handle);
-          return;
-        }
-        handleJobResult(handle, response.result);
-      };
-      const handleMessageError = () => onFailed(handle);
-      const handleError = () => onFailed(handle);
-      const cleanup = () => {
-        worker.removeEventListener("message", handleMessage);
-        worker.removeEventListener("messageerror", handleMessageError);
-        worker.removeEventListener("error", handleError);
-      };
-      worker.addEventListener("message", handleMessage);
-      worker.addEventListener("messageerror", handleMessageError);
-      worker.addEventListener("error", handleError);
-      try {
-        worker.postMessage({
-          context: {
-            bounds: context.bounds,
-            boundsRect: context.boundsRect,
-            boundaryExpansion: context.boundaryExpansion,
-            routeMask: context.routeMask,
-            routeMode: context.routeMode,
-            routeTolerancePlanePixels: context.routeTolerancePlanePixels,
-            workerIndex,
-          },
-          type: "init",
-        } satisfies GraphwarOneClickClearEdgeWorkerRequest);
-      } catch {
-        onFailed(handle);
-      }
-      return handle;
-    }
-  });
-}
-
-/** 按顺序构建 DAG 边；用于小任务串行模式，也用于并行 worker 失败后的剩余 job 补跑。 */
-async function buildOneClickClearDagEdgesSerial(
-  input: GraphwarOneClickClearDagEdgesWorkerInput,
-  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
-  mode: "serial" | "parallel-fallback",
-  workerCount: number,
-): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
-  const routes: GraphwarOneClickClearDagEdgeRoute[] = [];
-  const timings: GraphwarOneClickClearDebugTiming[] = [
-    {
-      detail: {
-        mode,
-        type: "dag-edge-mode",
-        workerCount,
-      },
-      elapsedMs: 0,
-      stage: "build-dag-edges",
-    },
-  ];
-  const totals: EdgeRouteTimingTotals = {
-    routeMapPixelsElapsedMs: 0,
-    routePathfindingElapsedMs: 0,
+  const getSerialRouteContext = () => {
+    serialRouteContext ??= createOneClickClearSerialRouteContext(input);
+    return serialRouteContext;
   };
+
+  const finishWorker = (handle: EdgeWorkerHandle) => {
+    if (handle.finished) {
+      return;
+    }
+    handle.finished = true;
+    handle.activeJob = undefined;
+    handle.activeRequestId = undefined;
+    handle.cleanup();
+    handle.worker.terminate();
+    workerTimings.push({
+      detail: {
+        type: "dag-edge-worker",
+        workerIndex: handle.workerIndex,
+      },
+      elapsedMs: nowMs() - handle.startedAt,
+      stage: "build-dag-edges",
+    });
+  };
+
+  const dispose = () => {
+    if (state === "disposed") {
+      return [];
+    }
+    state = "disposed";
+    const batch = activeBatch;
+    activeBatch = undefined;
+    if (batch && !batch.settled) {
+      batch.settled = true;
+      batch.reject(new Error("One-Click Clear DAG edge session was disposed"));
+    }
+    for (const handle of handles) {
+      finishWorker(handle);
+    }
+    return workerTimings.splice(0);
+  };
+
+  const runSerialJobs = async (jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[]) => {
+    if (serialBatchRunning) {
+      throw new Error("One-Click Clear DAG edge batches must run sequentially");
+    }
+    serialBatchRunning = true;
+    try {
+      return await runOneClickClearDagEdgeJobsSerial(getSerialRouteContext(), jobs);
+    } finally {
+      serialBatchRunning = false;
+    }
+  };
+
+  const runSerialBatch = async (
+    jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
+    mode: "parallel-fallback" | "serial",
+    workerCount: number,
+  ) => {
+    const serial = await runSerialJobs(jobs);
+    return createOneClickClearDagEdgeBuildResult(serial.routes, mode, workerCount, serial.totals);
+  };
+
+  const resolveParallelBatch = (batch: OneClickClearDagEdgeBatch) => {
+    if (batch.settled || batch.completedJobIds.size < batch.jobs.length) {
+      return;
+    }
+    batch.settled = true;
+    activeBatch = undefined;
+    state = "idle";
+    batch.resolve(
+      createOneClickClearDagEdgeBuildResult(
+        collectOneClickClearDagEdgeBatchRoutes(batch),
+        "parallel",
+        batch.workerCount,
+        batch.totals,
+      ),
+    );
+  };
+
+  const switchToSerialFallback = () => {
+    if (state === "disposed" || state === "fallback") {
+      return;
+    }
+    const batch = activeBatch;
+    fallbackWorkerCount = Math.max(fallbackWorkerCount, batch?.workerCount ?? handles.length, 1);
+    state = "fallback";
+    for (const handle of handles) {
+      finishWorker(handle);
+    }
+    if (!batch || batch.settled) {
+      return;
+    }
+
+    batch.settled = true;
+    activeBatch = undefined;
+    const remainingJobs = batch.jobs.filter((job) => !batch.completedJobIds.has(job.id));
+    void runSerialJobs(remainingJobs)
+      .then((serial) => {
+        for (const route of serial.routes) {
+          batch.routesByJobId.set(route.jobId, route);
+        }
+        batch.resolve(
+          createOneClickClearDagEdgeBuildResult(
+            collectOneClickClearDagEdgeBatchRoutes(batch),
+            "parallel-fallback",
+            fallbackWorkerCount,
+            {
+              routeMapPixelsElapsedMs: batch.totals.routeMapPixelsElapsedMs + serial.totals.routeMapPixelsElapsedMs,
+              routePathfindingElapsedMs:
+                batch.totals.routePathfindingElapsedMs + serial.totals.routePathfindingElapsedMs,
+            },
+          ),
+        );
+      })
+      .catch((error: unknown) => {
+        batch.reject(error instanceof Error ? error : new Error(String(error)));
+      });
+  };
+
+  const assignNextJob = (handle: EdgeWorkerHandle) => {
+    const batch = activeBatch;
+    if (state !== "running" || !batch || batch.settled || handle.finished || !handle.ready || handle.activeJob) {
+      return;
+    }
+    const job = batch.jobs[batch.nextJobIndex];
+    if (!job) {
+      resolveParallelBatch(batch);
+      return;
+    }
+    batch.nextJobIndex += 1;
+
+    const requestId = nextRequestId;
+    nextRequestId += 1;
+    handle.activeJob = job;
+    handle.activeRequestId = requestId;
+    try {
+      handle.worker.postMessage({
+        job,
+        requestId,
+        type: "job",
+      } satisfies GraphwarOneClickClearEdgeWorkerRequest);
+    } catch {
+      handle.activeJob = undefined;
+      handle.activeRequestId = undefined;
+      switchToSerialFallback();
+    }
+  };
+
+  const handleJobResult = (
+    handle: EdgeWorkerHandle,
+    requestId: number,
+    result: GraphwarOneClickClearEdgeWorkerJobResult,
+  ) => {
+    const batch = activeBatch;
+    const activeJob = handle.activeJob;
+    if (
+      state !== "running" ||
+      !batch ||
+      batch.settled ||
+      !activeJob ||
+      handle.activeRequestId !== requestId ||
+      activeJob.id !== result.jobId
+    ) {
+      return;
+    }
+
+    batch.completedJobIds.add(result.jobId);
+    batch.totals.routePathfindingElapsedMs += result.routePathfindingElapsedMs;
+    batch.totals.routeMapPixelsElapsedMs += result.routeMapPixelsElapsedMs;
+    batch.routesByJobId.set(result.jobId, createOneClickClearDagEdgeRoute(result));
+    handle.activeJob = undefined;
+    handle.activeRequestId = undefined;
+    assignNextJob(handle);
+    resolveParallelBatch(batch);
+  };
+
+  const createEdgeWorkerHandle = (workerIndex: number) => {
+    const worker = new Worker(new URL("./one-click-clear/edge.worker.ts", import.meta.url), {
+      name: `graphwar-one-click-clear-edge-${workerIndex}`,
+      type: "module",
+    });
+    const handle: EdgeWorkerHandle = {
+      cleanup: () => cleanup(),
+      finished: false,
+      ready: false,
+      startedAt: nowMs(),
+      worker,
+      workerIndex,
+    };
+    const handleMessage = (event: MessageEvent<GraphwarOneClickClearEdgeWorkerResponse>) => {
+      const response = event.data;
+      if (response.workerIndex !== handle.workerIndex || handle.finished) {
+        return;
+      }
+      if (response.type === "ready") {
+        handle.ready = true;
+        assignNextJob(handle);
+        return;
+      }
+      if (response.type === "error") {
+        switchToSerialFallback();
+        return;
+      }
+      handleJobResult(handle, response.requestId, response.result);
+    };
+    const handleMessageError = () => switchToSerialFallback();
+    const handleError = () => switchToSerialFallback();
+    const cleanup = () => {
+      worker.removeEventListener("message", handleMessage);
+      worker.removeEventListener("messageerror", handleMessageError);
+      worker.removeEventListener("error", handleError);
+    };
+    worker.addEventListener("message", handleMessage);
+    worker.addEventListener("messageerror", handleMessageError);
+    worker.addEventListener("error", handleError);
+    handles.push(handle);
+    try {
+      worker.postMessage({
+        context: {
+          bounds: input.bounds,
+          boundsRect: input.boundsRect,
+          boundaryExpansion: input.boundaryExpansion,
+          routeMask: input.routeMask,
+          routeOriginPoint: input.routeOriginPoint,
+          routeMode: input.routeMode,
+          routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+          settings: input.settings,
+          workerIndex,
+        },
+        type: "init",
+      } satisfies GraphwarOneClickClearEdgeWorkerRequest);
+    } catch {
+      switchToSerialFallback();
+    }
+  };
+
+  const ensureWorkerCount = (workerCount: number) => {
+    while (handles.length < workerCount && state === "running") {
+      try {
+        createEdgeWorkerHandle(handles.length + 1);
+      } catch {
+        switchToSerialFallback();
+      }
+    }
+  };
+
+  const runParallelBatch = (jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[], workerCount: number) =>
+    new Promise<GraphwarOneClickClearDagEdgeBuildResult>((resolve, reject) => {
+      const batch: OneClickClearDagEdgeBatch = {
+        completedJobIds: new Set(),
+        jobs,
+        nextJobIndex: 0,
+        reject,
+        resolve,
+        routesByJobId: new Map(),
+        settled: false,
+        totals: {
+          routeMapPixelsElapsedMs: 0,
+          routePathfindingElapsedMs: 0,
+        },
+        workerCount,
+      };
+      activeBatch = batch;
+      state = "running";
+      ensureWorkerCount(workerCount);
+      for (const handle of handles) {
+        assignNextJob(handle);
+      }
+    });
+
+  const runBatch = async (jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[]) => {
+    if (state === "disposed") {
+      throw new Error("One-Click Clear DAG edge session is disposed");
+    }
+    if (state === "running" || serialBatchRunning) {
+      throw new Error("One-Click Clear DAG edge batches must run sequentially");
+    }
+    if (jobs.length === 0) {
+      return { routes: [], timings: [] };
+    }
+    if (state === "fallback") {
+      return runSerialBatch(jobs, "parallel-fallback", fallbackWorkerCount);
+    }
+
+    const workerApiAvailable = typeof Worker !== "undefined";
+    if (!workerApiAvailable || configuredWorkerCount <= 1 || (handles.length === 0 && jobs.length <= 1)) {
+      state = "running";
+      try {
+        return await runSerialBatch(jobs, "serial", 1);
+      } finally {
+        if (state === "running") {
+          state = "idle";
+        }
+      }
+    }
+
+    const workerCount = Math.min(configuredWorkerCount, jobs.length);
+    return runParallelBatch(jobs, workerCount);
+  };
+
+  return { dispose, runBatch };
+}
+
+/** 串行与 parallel-fallback 共用同一份请求级预处理材料。 */
+function createOneClickClearSerialRouteContext(
+  input: GraphwarOneClickClearDagEdgesWorkerInput,
+): GraphwarOneClickClearDagEdgeRouteBuildContext {
   const visibilityGraphObstacleData =
     input.routeMode === "visibility-graph"
       ? createGraphwarVisibilityGraphObstacleData({
@@ -736,36 +1061,88 @@ async function buildOneClickClearDagEdgesSerial(
       : undefined;
   const thetaStarScratch: GraphwarThetaStarScratch | undefined =
     input.routeMode === "theta-star" ? createGraphwarThetaStarScratch() : undefined;
-  // 串行和 fallback 按批次复用可视图轮廓或 Theta* 工作区，避免每条 DAG 边重复预处理。
-  const routeBuildContext = {
+  const stepRouteModel = createGraphwarStepRouteModel(
+    imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect).y,
+    input.settings,
+  );
+  return {
     boundaryExpansion: input.boundaryExpansion,
     bounds: input.bounds,
     boundsRect: input.boundsRect,
     routeMask: input.routeMask,
     routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    stepRouteRequired: input.settings.algorithm === "step",
+    ...(stepRouteModel
+      ? {
+          stepRouteModel,
+          stepRouteSummedArea: getOrCreateMasterStepSummedArea(input.routeMask),
+        }
+      : {}),
     ...(thetaStarScratch ? { thetaStarScratch } : {}),
     ...(visibilityGraphObstacleData ? { visibilityGraphObstacleData } : {}),
   };
+}
 
+/** 按输入顺序串行建边；调用方负责 session 状态与 mode timing。 */
+async function runOneClickClearDagEdgeJobsSerial(
+  context: GraphwarOneClickClearDagEdgeRouteBuildContext,
+  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
+) {
+  const routes: GraphwarOneClickClearDagEdgeRoute[] = [];
+  const totals: EdgeRouteTimingTotals = {
+    routeMapPixelsElapsedMs: 0,
+    routePathfindingElapsedMs: 0,
+  };
   for (const job of jobs) {
-    const result = await buildOneClickClearDagEdgeRoute(routeBuildContext, job);
+    const result = await buildOneClickClearDagEdgeRoute(context, job);
     totals.routePathfindingElapsedMs += result.routePathfindingElapsedMs;
     totals.routeMapPixelsElapsedMs += result.routeMapPixelsElapsedMs;
     routes.push(createOneClickClearDagEdgeRoute(result));
   }
+  return { routes, totals };
+}
 
+function createOneClickClearDagEdgeBuildResult(
+  routes: readonly GraphwarOneClickClearDagEdgeRoute[],
+  mode: "parallel" | "parallel-fallback" | "serial",
+  workerCount: number,
+  totals: EdgeRouteTimingTotals,
+): GraphwarOneClickClearDagEdgeBuildResult {
   return {
     routes,
-    timings: [...timings, ...createRouteTimingEntries(totals)],
+    timings: [
+      {
+        detail: {
+          mode,
+          type: "dag-edge-mode",
+          workerCount,
+        },
+        elapsedMs: 0,
+        stage: "build-dag-edges",
+      },
+      ...createRouteTimingEntries(totals),
+    ],
   };
+}
+
+/** 并行完成顺序不稳定；最终始终按提交 jobs 顺序合并。 */
+function collectOneClickClearDagEdgeBatchRoutes(batch: OneClickClearDagEdgeBatch) {
+  return batch.jobs.map((job) => batch.routesByJobId.get(job.id) ?? { jobId: job.id });
 }
 
 /** 把单边 worker 结果合并回 DAG 边结果；默认没有 route 表示不可达边，jobId 仍用于稳定匹配边。 */
 function createOneClickClearDagEdgeRoute(
-  result: Pick<GraphwarOneClickClearEdgeWorkerJobResult, "jobId" | "route">,
+  result: Pick<GraphwarOneClickClearEdgeWorkerJobResult, "jobId" | "resolvedEndStateKey" | "resolvedEndY" | "route">,
 ): GraphwarOneClickClearDagEdgeRoute {
-  return result.route ? { jobId: result.jobId, route: result.route } : { jobId: result.jobId };
+  return result.route
+    ? {
+        jobId: result.jobId,
+        ...(result.resolvedEndStateKey === undefined ? {} : { resolvedEndStateKey: result.resolvedEndStateKey }),
+        ...(result.resolvedEndY === undefined ? {} : { resolvedEndY: result.resolvedEndY }),
+        route: result.route,
+      }
+    : { jobId: result.jobId };
 }
 
 function createRouteTimingEntries(totals: EdgeRouteTimingTotals): GraphwarOneClickClearDebugTiming[] {

@@ -33,6 +33,7 @@
     "fmt": "pnpm run '/^fmt:/'",
     "fmt:java": "node scripts/format-java.js",
     "fmt:oxfmt": "oxfmt --threads 3 '**/*.{json,jsonc,yaml,md,css,js,mjs,ts,vue,html}'",
+    "graphwar-killer:test": "vitest run docs/tools/graphwar-killer",
     "lint": "pnpm run '/^lint:/'",
     "lint:autocorrect": "autocorrect --fix",
     "lint:md": "markdownlint --fix '**/*.md' --ignore-path .gitignore",
@@ -73,6 +74,7 @@
     "stylelint-order": "^8.1.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10",
     "vue-eslint-parser": "^10.4.1",
     "vue-tsc": "^3.3.6"
   },

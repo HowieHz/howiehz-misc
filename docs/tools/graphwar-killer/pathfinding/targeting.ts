@@ -130,8 +130,9 @@ export function createSearchStartSoldierAimPoint(
   startPoint: PixelPoint | undefined,
   soldier: GraphwarTargetingSoldier,
   area: GraphwarTargetingArea,
+  requireExactCenter = false,
 ) {
-  return createSoldierAimCheckResult(startPoint, soldier, area)?.point;
+  return createSoldierAimCheckResult(startPoint, soldier, area, requireExactCenter)?.point;
 }
 
 /** 检查士兵中心点和 x+ 边缘点是否满足最小前进规则，保留首个可用结果。 */
@@ -139,6 +140,7 @@ export function createSoldierAimCheckResult(
   startPoint: PixelPoint | undefined,
   soldier: GraphwarTargetingSoldier,
   area: GraphwarTargetingArea,
+  requireExactCenter = false,
 ): GraphwarSoldierAimCheckResult | undefined {
   const center = getGraphwarSoldierCenter(soldier);
   if (!startPoint) {
@@ -148,6 +150,11 @@ export function createSoldierAimCheckResult(
   const centerAdvances = graphwarPointAdvances(startPoint, center, area);
   if (pointIsInsideTargetBounds(center, area) && centerAdvances) {
     return { kind: "center", point: center };
+  }
+
+  // Step 的控制点必须保持在士兵中心；不能沿用 ABS 的命中圈边缘回退，否则会改变阶梯终点语义。
+  if (requireExactCenter) {
+    return undefined;
   }
 
   const boundedCenter = centerAdvances ? createBoundarySafeSoldierTargetPoint(startPoint, soldier, area) : undefined;
@@ -171,8 +178,9 @@ export function createSmartPathfindingSoldierTarget(
   startPoint: PixelPoint,
   soldier: GraphwarTargetingSoldier,
   area: GraphwarTargetingArea,
+  requireExactCenter = false,
 ): GraphwarSmartPathfindingSoldierTarget | undefined {
-  const targetPoint = createSearchStartSoldierAimPoint(startPoint, soldier, area);
+  const targetPoint = createSearchStartSoldierAimPoint(startPoint, soldier, area, requireExactCenter);
   if (!targetPoint) {
     return undefined;
   }

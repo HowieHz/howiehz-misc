@@ -32,6 +32,7 @@ export interface GraphwarSmartPathfindingSessionOptions {
 export interface GraphwarSmartPathfindingSessionController {
   activePhase: Ref<SmartPathfindingPhase>;
   blockedPoint: Ref<PixelPoint | undefined>;
+  blockedSegment: Ref<GraphwarPathfindingLineSegment | undefined>;
   cancel: (showStatus: boolean) => boolean;
   clearBlockedPoint: () => void;
   clearPreview: () => void;
@@ -40,6 +41,7 @@ export interface GraphwarSmartPathfindingSessionController {
   dispose: () => void;
   finishRun: (token: number) => boolean;
   flashBlockedPoint: (point: PixelPoint | undefined) => void;
+  flashBlockedSegment: (start: PixelPoint | undefined, end: PixelPoint | undefined) => void;
   inProgress: Ref<boolean>;
   isCurrentRun: (token: number) => boolean;
   optimizationPreviewPoint: Ref<PixelPoint | undefined>;
@@ -74,6 +76,7 @@ export function useGraphwarSmartPathfindingSession(
   const previewPath = ref<PixelPoint[]>([]);
   const optimizationPreviewPoint = ref<PixelPoint>();
   const blockedPoint = ref<PixelPoint>();
+  const blockedSegment = ref<GraphwarPathfindingLineSegment>();
   let blockedPointTimer: ReturnType<typeof setTimeout> | undefined;
   let cancelToken = 0;
 
@@ -113,7 +116,7 @@ export function useGraphwarSmartPathfindingSession(
     }
 
     inProgress.value = false;
-    clearPreview();
+    clearActivePreview();
     return true;
   }
 
@@ -160,12 +163,26 @@ export function useGraphwarSmartPathfindingSession(
     }, options.blockedPointFlashMs);
   }
 
+  function flashBlockedSegment(start: PixelPoint | undefined, end: PixelPoint | undefined) {
+    clearBlockedPoint();
+    if (!start || !end) {
+      return;
+    }
+
+    blockedSegment.value = createGraphwarPathfindingLineSegment(start, end);
+    blockedPointTimer = setTimeout(() => {
+      blockedSegment.value = undefined;
+      blockedPointTimer = undefined;
+    }, options.blockedPointFlashMs);
+  }
+
   function clearBlockedPoint() {
     if (blockedPointTimer) {
       clearTimeout(blockedPointTimer);
       blockedPointTimer = undefined;
     }
     blockedPoint.value = undefined;
+    blockedSegment.value = undefined;
   }
 
   function setPreviewConnection(startPoint: PixelPoint, targetPoint: PixelPoint) {
@@ -180,11 +197,16 @@ export function useGraphwarSmartPathfindingSession(
   }
 
   function clearPreview() {
+    clearActivePreview();
+    clearBlockedPoint();
+  }
+
+  /** 结束一次运行只清搜索动画；阻塞反馈由自己的短时定时器收尾。 */
+  function clearActivePreview() {
     previewConnection.value = undefined;
     clearSearchPreview();
     previewPath.value = [];
     optimizationPreviewPoint.value = undefined;
-    clearBlockedPoint();
   }
 
   function dispose() {
@@ -194,6 +216,7 @@ export function useGraphwarSmartPathfindingSession(
   return {
     activePhase,
     blockedPoint,
+    blockedSegment,
     cancel,
     clearBlockedPoint,
     clearPreview,
@@ -202,6 +225,7 @@ export function useGraphwarSmartPathfindingSession(
     dispose,
     finishRun,
     flashBlockedPoint,
+    flashBlockedSegment,
     inProgress,
     isCurrentRun,
     optimizationPreviewPoint,

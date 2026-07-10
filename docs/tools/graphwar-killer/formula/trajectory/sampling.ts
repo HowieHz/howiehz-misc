@@ -23,12 +23,14 @@ import { buildFormula, compileGraphwarFormulaMaterials, formulaUsesStableSignRat
 import type { CompiledGraphwarFormulaMaterials } from "../generation/build";
 import {
   GRAPHWAR_TOOL_SIGN_EPSILON,
+  calculateStepFormulaCenterX,
   createStepOverflowProtectionRange,
   probeSignEpsilonRequirement,
+  quantizeStepFormulaSteepness,
+  resolveStepFormulaTransition,
 } from "../generation/step-numeric-strategy";
 import type { FormulaEvaluationOptions, StepGlitchSegment } from "../generation/step-numeric-strategy";
 import {
-  calculateStepFormulaCenterX,
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
   sampleGraphwarExpressionTrajectory,
@@ -187,12 +189,13 @@ interface TrajectoryFormulaState {
 }
 
 interface StepSimulationRefinement {
-  formulaPoints: GraphPoint[];
   stepGlitchSegments: readonly (StepGlitchSegment | undefined)[];
   stepSegmentDeltaYs: readonly (number | undefined)[];
 }
 
 const GRAPHWAR_STEP_GLITCH_MIN_STEP = createGraphwarStepGlitchMinStep();
+/** Glitch 项会反向改变发射点；少量外层迭代让替换项、普通补偿和中心互相收敛。 */
+const STEP_FORMULA_REFINEMENT_PASSES = 3;
 // 初始 0.01 可用两位小数精确表示；每缩半一次多保留一位，确保左门仍是严格的 R-w。
 const GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES = Math.max(0, Math.ceil(-Math.log10(GRAPHWAR_STEP_SIZE)));
 // 一阶 RK4 更新量是 h*(k1 + 2*k2 + 2*k3 + k4)/6。漏洞门函数临界时，
@@ -252,38 +255,48 @@ function createTrajectoryFormulaState(
     formulaPoints,
   );
   let stepSegmentDeltaYs: readonly (number | undefined)[] | undefined;
-  let formulaEvaluation = createTrajectoryFormulaEvaluation(
+  if (stepGlitchSegments) {
+    for (let pass = 0; pass < STEP_FORMULA_REFINEMENT_PASSES; pass += 1) {
+      const refined = refineStepSegmentsWithSimulation(
+        options,
+        formulaPoints,
+        stepGlitchSegments,
+        stepSegmentDeltaYs,
+        signEpsilon,
+      );
+      if (refined) {
+        stepGlitchSegments = refined.stepGlitchSegments;
+        stepSegmentDeltaYs = refined.stepSegmentDeltaYs;
+      }
+
+      // 最终替换项也会改变发射角和发射边缘点；必须把它们喂回原有固定点迭代后再验一次候选。
+      const nextFormulaPoints = createResolvedFormulaPathPoints(
+        options,
+        signEpsilon,
+        stepGlitchSegments,
+        stepSegmentDeltaYs,
+      );
+      const stable = !refined && sameGraphPoints(formulaPoints, nextFormulaPoints);
+      formulaPoints = nextFormulaPoints;
+      if (stable) {
+        break;
+      }
+    }
+  }
+
+  const formulaEvaluation = createTrajectoryFormulaEvaluation(
     options,
     formulaPoints,
     signEpsilon,
     stepGlitchSegments,
     stepSegmentDeltaYs,
   );
-  let compiledMaterials = compileGraphwarFormulaMaterials(
+  const compiledMaterials = compileGraphwarFormulaMaterials(
     formulaPoints,
     options.settings.steepness,
     options.settings.algorithm,
     formulaEvaluation,
   );
-  const refinedStepSegments = refineStepSegmentsWithSimulation(options, formulaPoints, stepGlitchSegments, signEpsilon);
-  if (refinedStepSegments) {
-    formulaPoints = refinedStepSegments.formulaPoints;
-    stepGlitchSegments = refinedStepSegments.stepGlitchSegments;
-    stepSegmentDeltaYs = refinedStepSegments.stepSegmentDeltaYs;
-    formulaEvaluation = createTrajectoryFormulaEvaluation(
-      options,
-      formulaPoints,
-      signEpsilon,
-      stepGlitchSegments,
-      stepSegmentDeltaYs,
-    );
-    compiledMaterials = compileGraphwarFormulaMaterials(
-      formulaPoints,
-      options.settings.steepness,
-      options.settings.algorithm,
-      formulaEvaluation,
-    );
-  }
   return {
     compiledMaterials,
     formulaEvaluation,
@@ -301,12 +314,15 @@ function createTrajectoryFormulaEvaluation(
   signEpsilon: number,
   stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[],
   stepSegmentDeltaYs?: readonly (number | undefined)[],
+  stepDisabledSegments?: readonly boolean[],
 ): FormulaEvaluationOptions {
   return {
+    equation: options.settings.equation,
     formulaDecimalPlaces: options.settings.decimalPlaces,
     signEpsilon,
     stepGlitchSegments,
     stepSegmentDeltaYs,
+    stepDisabledSegments,
     stepOverflowProtection: options.settings.stepOverflowProtection,
     stepOverflowProtectionRange: createStepOverflowProtectionRange(options.bounds, formulaPoints),
   };
@@ -321,6 +337,7 @@ function refineStepSegmentsWithSimulation(
   },
   formulaPoints: readonly GraphPoint[],
   stepGlitchSegments: readonly (StepGlitchSegment | undefined)[] | undefined,
+  stepSegmentDeltaYs: readonly (number | undefined)[] | undefined,
   signEpsilon: number,
 ): StepSimulationRefinement | undefined {
   const mask = options.settings.stepGlitchObstacleMask;
@@ -330,7 +347,7 @@ function refineStepSegmentsWithSimulation(
   }
 
   const refinedSegments = [...stepGlitchSegments];
-  const refinedDeltaYs: (number | undefined)[] = [];
+  const refinedDeltaYs = [...(stepSegmentDeltaYs ?? [])];
   const refinedFormulaPoints = [...formulaPoints];
   let changed = false;
 
@@ -360,19 +377,13 @@ function refineStepSegmentsWithSimulation(
       segmentIndex,
       startSample.point.y,
     );
-    const nextDeltaYOverride = createStepSegmentDeltaYOverride(
-      options,
-      refinedFormulaPoints,
-      segmentIndex,
-      nextDeltaY,
-      previousSegment,
-    );
+    // Glitch 替换了整段普通 sigmoid；即使落点正好等于控制点，也必须重建下一段累计原点。
+    const nextDeltaYOverride = previousSegment ? nextDeltaY : undefined;
     const nextFormulaPoint = createStepSegmentFormulaPointAfterRefinement(
       options,
       refinedFormulaPoints,
       segmentIndex,
       startSample.point,
-      nextDeltaY,
       nextDeltaYOverride,
     );
     const nextSegment = selectStepGlitchSegmentCandidate(options, refinedFormulaPoints, {
@@ -405,9 +416,7 @@ function refineStepSegmentsWithSimulation(
     changed = true;
   }
 
-  return changed
-    ? { formulaPoints: refinedFormulaPoints, stepGlitchSegments: refinedSegments, stepSegmentDeltaYs: refinedDeltaYs }
-    : undefined;
+  return changed ? { stepGlitchSegments: refinedSegments, stepSegmentDeltaYs: refinedDeltaYs } : undefined;
 }
 
 interface StepSegmentStartSample {
@@ -425,14 +434,16 @@ function createStepGlitchPrefixFormula(
 ): StepGlitchPrefixFormula {
   const prefixSegments = [...context.baseSegments];
   const prefixDeltaYs = [...context.baseDeltaYs];
+  const disabledSegments: boolean[] = [];
   prefixSegments[context.segmentIndex] = undefined;
-  prefixDeltaYs[context.segmentIndex] = 0;
+  disabledSegments[context.segmentIndex] = true;
   const formulaEvaluation = createTrajectoryFormulaEvaluation(
     options,
     formulaPoints,
     context.signEpsilon,
     prefixSegments,
     prefixDeltaYs,
+    disabledSegments,
   );
   return {
     compiledMaterials: compileGraphwarFormulaMaterials(
@@ -502,14 +513,15 @@ function selectStepGlitchSegmentCandidate(
   formulaPoints: readonly GraphPoint[],
   context: StepGlitchCandidateContext,
 ) {
+  const candidateContext = createStepGlitchCandidateContext(options, formulaPoints, context);
   const source = createStepGlitchCandidateSource(
     options,
     formulaPoints,
-    context.segmentIndex,
-    context.formulaCenterX,
-    context.segmentStartY,
+    candidateContext.segmentIndex,
+    candidateContext.formulaCenterX,
+    candidateContext.segmentStartY,
     options.settings.decimalPlaces,
-    context.mask,
+    candidateContext.mask,
   );
   if (!source) {
     return undefined;
@@ -521,8 +533,8 @@ function selectStepGlitchSegmentCandidate(
     windowWidth >= GRAPHWAR_STEP_GLITCH_MIN_STEP;
     windowWidth /= 2, windowDecimalPlaces += 1
   ) {
-    const previous = options.points[context.segmentIndex];
-    const target = options.points[context.segmentIndex + 1];
+    const previous = options.points[candidateContext.segmentIndex];
+    const target = options.points[candidateContext.segmentIndex + 1];
     const windowedJump = createStepGlitchJump(
       previous.x,
       target.x,
@@ -535,19 +547,28 @@ function selectStepGlitchSegmentCandidate(
     }
 
     // 同一窗口的六档 RK4 候选共享左门和跳前高度；只需为不同 factor 改写 D。
-    const preJumpSample = sampleStepGlitchPreJump(options, formulaPoints, context, windowedJump);
+    const preJumpSample = sampleStepGlitchPreJump(options, formulaPoints, candidateContext, windowedJump);
     if (!preJumpSample) {
       continue;
     }
     const replacementDeltaY = source.targetY - preJumpSample.point.y;
     const gateY = createStepGlitchFormulaGateY(source.targetY, replacementDeltaY, options.settings.decimalPlaces);
-    // epsilon 会让左门外保留极小尾值；该罕见分支必须从发射点回放，不能恢复严格关门的前缀状态。
-    const candidateInitialState = context.signEpsilon === 0 ? preJumpSample.resumeState : undefined;
+    // epsilon 尾值或 Glitch 落点覆盖都会改变候选的完整系数集；此时不能拼接旧公式采出的前缀状态。
+    const candidateInitialState =
+      candidateContext.signEpsilon === 0 && candidateContext.deltaYOverride === undefined
+        ? preJumpSample.resumeState
+        : undefined;
     let bestSegment: StepGlitchSegment | undefined;
     let bestError = Number.POSITIVE_INFINITY;
     for (const factor of STEP_GLITCH_RK4_CONTRIBUTION_FACTORS) {
       const candidate = createStepGlitchSegmentFromJump(windowedJump, source.targetY, gateY, replacementDeltaY, factor);
-      const sample = sampleStepGlitchCandidate(options, formulaPoints, context, candidate, candidateInitialState);
+      const sample = sampleStepGlitchCandidate(
+        options,
+        formulaPoints,
+        candidateContext,
+        candidate,
+        candidateInitialState,
+      );
       const landingPoint = sample.stopReason === "stopped" ? sample.points[sample.points.length - 1] : undefined;
       if (!landingPoint || !Number.isFinite(landingPoint.y) || countStepGlitchJumps(sample.points, candidate) !== 1) {
         continue;
@@ -564,6 +585,33 @@ function selectStepGlitchSegmentCandidate(
     }
   }
   return undefined;
+}
+
+/** ΔY 覆盖会改写后续 canonical 系数；候选的跳前探针必须先用同一份覆盖量重编译。 */
+function createStepGlitchCandidateContext(
+  options: {
+    bounds: GraphBounds;
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+  formulaPoints: readonly GraphPoint[],
+  context: StepGlitchCandidateContext,
+): StepGlitchCandidateContext {
+  if (context.deltaYOverride === undefined) {
+    return context;
+  }
+
+  const baseDeltaYs = [...context.baseDeltaYs];
+  baseDeltaYs[context.segmentIndex] = context.deltaYOverride;
+  return {
+    ...context,
+    baseDeltaYs,
+    prefixFormula: createStepGlitchPrefixFormula(options, formulaPoints, {
+      baseDeltaYs,
+      baseSegments: context.baseSegments,
+      segmentIndex: context.segmentIndex,
+      signEpsilon: context.signEpsilon,
+    }),
+  };
 }
 
 function sampleStepGlitchCandidate(
@@ -699,28 +747,6 @@ function createStepSegmentDeltaYFromActualStart(
   return formulaTargetY - actualStartY;
 }
 
-function createStepSegmentDeltaYOverride(
-  options: {
-    points: readonly GraphPoint[];
-  },
-  formulaPoints: readonly GraphPoint[],
-  segmentIndex: number,
-  deltaY: number,
-  previousSegment: StepGlitchSegment | undefined,
-) {
-  // 普通 step 在路径点处可能还没完全收敛；只有漏洞跳变后的落点需要改写下一段累计高度。
-  if (!previousSegment) {
-    return undefined;
-  }
-
-  const previous = options.points[segmentIndex];
-  const target = options.points[segmentIndex + 1];
-  const formulaPreviousY = formulaPoints[segmentIndex]?.y ?? previous.y;
-  const formulaTargetY = formulaPoints[segmentIndex + 1]?.y ?? target.y;
-  const defaultDeltaY = formulaTargetY - formulaPreviousY;
-  return deltaY === defaultDeltaY ? undefined : deltaY;
-}
-
 function createStepSegmentFormulaPointAfterRefinement(
   options: {
     points: readonly GraphPoint[];
@@ -729,7 +755,6 @@ function createStepSegmentFormulaPointAfterRefinement(
   formulaPoints: readonly GraphPoint[],
   segmentIndex: number,
   actualStartPoint: GraphPoint,
-  deltaY: number,
   deltaYOverride: number | undefined,
 ) {
   const formulaTarget = formulaPoints[segmentIndex + 1];
@@ -738,9 +763,17 @@ function createStepSegmentFormulaPointAfterRefinement(
     return formulaTarget;
   }
 
-  // 修正漏洞后的普通 step 时，中心也要按实际起点重算；否则大 ΔY 会在目标 x 右侧才收敛。
+  const formulaSteepness = quantizeStepFormulaSteepness(options.settings.steepness, options.settings.decimalPlaces);
+  const transition = resolveStepFormulaTransition(
+    actualStartPoint.y,
+    formulaTarget.y,
+    options.settings.equation,
+    formulaSteepness,
+    options.settings.decimalPlaces,
+  );
+  // 漏洞后的普通段要按 canonical 有效 ΔY 重算中心；否则低精度文本会与内部中心脱节。
   return createGraphPoint(
-    calculateStepFormulaCenterX(actualStartPoint.x, target.x, deltaY, options.settings.steepness),
+    calculateStepFormulaCenterX(actualStartPoint.x, target.x, transition.effectiveDeltaY, formulaSteepness),
     formulaTarget.y,
   );
 }
@@ -1050,10 +1083,15 @@ function createResolvedFormulaPathPoints(
     settings: GraphwarTrajectoryFormulaSettings;
   },
   signEpsilon: number,
+  stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[],
+  stepSegmentDeltaYs?: readonly (number | undefined)[],
 ) {
   let formulaEvaluation: FormulaEvaluationOptions = {
+    equation: options.settings.equation,
     formulaDecimalPlaces: options.settings.decimalPlaces,
     signEpsilon,
+    stepGlitchSegments,
+    stepSegmentDeltaYs,
     stepOverflowProtection: options.settings.stepOverflowProtection,
   };
   let formulaPoints = createFormulaPathPoints(options.points, options.settings, formulaEvaluation);
@@ -1062,7 +1100,13 @@ function createResolvedFormulaPathPoints(
   }
 
   for (let pass = 0; pass < FORMULA_PATH_RANGE_RESOLUTION_PASSES; pass += 1) {
-    formulaEvaluation = createTrajectoryFormulaEvaluation(options, formulaPoints, signEpsilon);
+    formulaEvaluation = createTrajectoryFormulaEvaluation(
+      options,
+      formulaPoints,
+      signEpsilon,
+      stepGlitchSegments,
+      stepSegmentDeltaYs,
+    );
     const nextFormulaPoints = createFormulaPathPoints(options.points, options.settings, formulaEvaluation);
     if (sameGraphPoints(formulaPoints, nextFormulaPoints)) {
       return formulaPoints;

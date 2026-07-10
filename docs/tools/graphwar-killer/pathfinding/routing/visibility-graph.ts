@@ -19,6 +19,24 @@ export interface GraphwarPathfindingPreview {
   mirrored: boolean;
 }
 
+/** 调用方注入的边判定结果；undefined 表示该有向边不可用。 */
+export interface GraphwarPathfindingEdgeEvaluation {
+  /** 走完当前边后的有限数值状态；同坐标只有状态也相同时才可合并标签。 */
+  nextRouteState: number;
+  /** 可选的精确状态身份；存在时搜索合并标签不再依赖浮点字符串。 */
+  nextRouteStateKey?: string;
+  /** 当前路线排序的次级增量；Step 使用控制点纵向变化，默认路线使用欧氏长度。 */
+  secondaryCost: number;
+}
+
+/** 自定义边判定接收未镜像坐标和前一标签状态，并返回下一标签状态。 */
+export type GraphwarPathfindingEdgeEvaluator = (
+  previous: PlaneGridPoint,
+  next: PlaneGridPoint,
+  routeState: number,
+  routeStateKey?: string,
+) => GraphwarPathfindingEdgeEvaluation | undefined;
+
 /** 按固定平面 mask 构造一条几何可行路径所需的纯数据和可选调度回调。 */
 export interface GraphwarPathfindingOptions {
   /** 当前 Graphwar 坐标边界，用于判断 x+ 方向。 */
@@ -29,6 +47,14 @@ export interface GraphwarPathfindingOptions {
   boundaryExpansion: number;
   /** 判断一条有向边是否满足 Graphwar x+ 规则；默认要求 next.x > previous.x。 */
   canAdvance?: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
+  /** 自定义有向边判定和次级成本；省略时保持原来的直线碰撞和欧氏长度语义。 */
+  evaluateEdge?: GraphwarPathfindingEdgeEvaluator;
+  /** 自定义到目标的次级成本下界；Step 使用剩余控制点纵向变化。 */
+  estimateRemainingSecondaryCost?: (current: PlaneGridPoint, target: PlaneGridPoint) => number;
+  /** 自定义边判定的起始状态；必须是有限数。默认几何路由不读取该字段。 */
+  initialRouteState?: number;
+  /** 自定义起始状态的精确身份；省略时回退到有限数值状态。 */
+  initialRouteStateKey?: string;
   /** 长循环取消检查；只由页面交互侧传入。 */
   isCancelled?: () => boolean;
   /** 搜索回调；页面用于动画，worker 保持为空。 */
@@ -112,10 +138,10 @@ interface VisibilityGraphObstacleContour {
   signedArea: number;
 }
 
-/** Lazy visibility search 的排序代价：先短路径，再少折线段。 */
+/** Lazy visibility search 的排序代价：先少控制段，再比较模式自己的次级成本。 */
 interface PathfindingCost {
-  /** 当前路径累计欧氏长度平方近似。 */
-  length: number;
+  /** 当前路径累计的模式次级成本。 */
+  secondary: number;
   /** 当前路径折线段数量。 */
   segments: number;
 }
@@ -128,6 +154,16 @@ interface VisibilitySearchState {
   cost: PathfindingCost;
   /** 回溯路径时使用的上一个候选点下标。 */
   previousIndex?: number;
+}
+
+/** 自定义路由以“坐标 + 数值状态”为标签，避免量化历史不同的路线被错误合并。 */
+interface StatefulVisibilitySearchState {
+  candidateIndex: number;
+  cost: PathfindingCost;
+  key: string;
+  previousKey?: string;
+  routeState: number;
+  routeStateKey?: string;
 }
 
 /** 记录 mask cache 使用的是膨胀还是腐蚀，避免正负半径 key 冲突。 */
@@ -183,6 +219,13 @@ export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarP
     ? (previous: PlaneGridPoint, next: PlaneGridPoint) =>
         options.canAdvance?.(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored)) ?? false
     : (previous: PlaneGridPoint, next: PlaneGridPoint) => next.x > previous.x;
+  const evaluateEdge = options.evaluateEdge ? createVisibilityEdgeEvaluator(options.evaluateEdge, mirrored) : undefined;
+  const estimateRemainingSecondaryCost = createVisibilityRemainingCostEstimator(options, mirrored);
+  const initialRouteState = options.initialRouteState;
+  const initialRouteStateKey = options.initialRouteStateKey;
+  if (evaluateEdge && !Number.isFinite(initialRouteState)) {
+    return undefined;
+  }
   if (
     pointHitsPlaneMaskWithBoundaryExpansion(start, options.routeMask, mirrored, boundaryExpansion) ||
     pointHitsPlaneMaskWithBoundaryExpansion(target, options.routeMask, mirrored, boundaryExpansion)
@@ -194,10 +237,14 @@ export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarP
     return undefined;
   }
 
-  if (
-    canAdvance(start, target) &&
-    !lineHitsPlaneMaskWithBoundaryExpansion(start, target, options.routeMask, mirrored, boundaryExpansion)
-  ) {
+  const directEdge = canAdvance(start, target)
+    ? evaluateEdge
+      ? evaluateEdge(start, target, initialRouteState as number, initialRouteStateKey)
+      : !lineHitsPlaneMaskWithBoundaryExpansion(start, target, options.routeMask, mirrored, boundaryExpansion)
+        ? true
+        : undefined
+    : undefined;
+  if (directEdge) {
     const directPath = [start, target];
     options.onPreview?.({
       acceptedEdges: [[start, target]],
@@ -219,18 +266,33 @@ export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarP
     target,
     visibilityGraphObstacleData: options.visibilityGraphObstacleData ?? options.getVisibilityGraphObstacleData?.(),
   });
-  const path = await findLazyVisibilityGraphPath({
-    boundaryExpansion,
-    canAdvance,
-    candidates,
-    isCancelled: options.isCancelled,
-    mirrored,
-    onPreview: options.onPreview,
-    routeMask: options.routeMask,
-    startIndex: 0,
-    targetIndex: 1,
-    yieldControl: options.yieldControl,
-  });
+  const path = evaluateEdge
+    ? await findStatefulLazyVisibilityGraphPath({
+        canAdvance,
+        candidates,
+        estimateRemainingSecondaryCost,
+        evaluateEdge,
+        initialRouteState: initialRouteState as number,
+        initialRouteStateKey,
+        isCancelled: options.isCancelled,
+        mirrored,
+        onPreview: options.onPreview,
+        startIndex: 0,
+        targetIndex: 1,
+        yieldControl: options.yieldControl,
+      })
+    : await findLazyVisibilityGraphPath({
+        boundaryExpansion,
+        canAdvance,
+        candidates,
+        isCancelled: options.isCancelled,
+        mirrored,
+        onPreview: options.onPreview,
+        routeMask: options.routeMask,
+        startIndex: 0,
+        targetIndex: 1,
+        yieldControl: options.yieldControl,
+      });
   return path?.map((point) => mirrorPlaneGridPoint(point, mirrored));
 }
 
@@ -306,6 +368,41 @@ export function pointHitsPlaneMask(
   boundaryExpansion: number,
 ) {
   return pointHitsPlaneMaskWithBoundaryExpansion(point, mask, mirrored, normalizeBoundaryExpansion(boundaryExpansion));
+}
+
+/** 把调用方的原始坐标边判定适配到内部统一的 x+ 镜像坐标；默认分支保持原直线行为。 */
+function createVisibilityEdgeEvaluator(
+  evaluateEdge: GraphwarPathfindingEdgeEvaluator,
+  mirrored: boolean,
+): GraphwarPathfindingEdgeEvaluator {
+  return (previous, next, routeState, routeStateKey) => {
+    const result = evaluateEdge(
+      mirrorPlaneGridPoint(previous, mirrored),
+      mirrorPlaneGridPoint(next, mirrored),
+      routeState,
+      routeStateKey,
+    );
+    return result &&
+      Number.isFinite(result.nextRouteState) &&
+      Number.isFinite(result.secondaryCost) &&
+      result.secondaryCost >= 0
+      ? result
+      : undefined;
+  };
+}
+
+/** 启发式只参与候选顺序；非法或负值回退 0，不能因此错误剪掉可用路径。 */
+function createVisibilityRemainingCostEstimator(options: GraphwarPathfindingOptions, mirrored: boolean) {
+  if (!options.estimateRemainingSecondaryCost) {
+    return planeGridPointDistance;
+  }
+  return (current: PlaneGridPoint, target: PlaneGridPoint) => {
+    const estimate = options.estimateRemainingSecondaryCost?.(
+      mirrorPlaneGridPoint(current, mirrored),
+      mirrorPlaneGridPoint(target, mirrored),
+    );
+    return estimate !== undefined && Number.isFinite(estimate) && estimate >= 0 ? estimate : 0;
+  };
 }
 
 /** 已归一化边界收缩后的单点碰撞检查；调用者负责只传整数非负 expansion。 */
@@ -830,7 +927,7 @@ async function findLazyVisibilityGraphPath({
   yieldControl?: () => Promise<void> | void;
 }) {
   const states = new Map<number, VisibilitySearchState>([
-    [startIndex, { candidateIndex: startIndex, cost: { length: 0, segments: 0 } }],
+    [startIndex, { candidateIndex: startIndex, cost: { secondary: 0, segments: 0 } }],
   ]);
   const openIndexes = new Set<number>([startIndex]);
   const closedIndexes = new Set<number>();
@@ -887,7 +984,7 @@ async function findLazyVisibilityGraphPath({
       }
 
       const nextCost = {
-        length: currentState.cost.length + planeGridPointDistance(currentPoint, nextPoint),
+        secondary: currentState.cost.secondary + planeGridPointDistance(currentPoint, nextPoint),
         segments: currentState.cost.segments + 1,
       };
       const previousNextState = states.get(nextIndex);
@@ -1010,16 +1107,16 @@ function compareSearchQueueCandidates(
   }
 
   const leftF = {
-    length: leftState.cost.length + planeGridPointDistance(leftPoint, target),
+    secondary: leftState.cost.secondary + planeGridPointDistance(leftPoint, target),
     segments: leftState.cost.segments,
   };
   const rightF = {
-    length: rightState.cost.length + planeGridPointDistance(rightPoint, target),
+    secondary: rightState.cost.secondary + planeGridPointDistance(rightPoint, target),
     segments: rightState.cost.segments,
   };
   return (
     comparePathfindingCosts(leftF, rightF) ||
-    leftState.cost.length - rightState.cost.length ||
+    leftState.cost.secondary - rightState.cost.secondary ||
     Math.abs(target.x - leftPoint.x) - Math.abs(target.x - rightPoint.x) ||
     Math.abs(target.y - leftPoint.y) - Math.abs(target.y - rightPoint.y) ||
     leftIndex - rightIndex
@@ -1046,6 +1143,291 @@ function reconstructVisibilitySearchPath(
     currentIndex = state.previousIndex;
   }
   return path.reverse();
+}
+
+/** 自定义边判定的 Lazy Visibility Graph；每个坐标可保留多个不同数值状态的标签。 */
+async function findStatefulLazyVisibilityGraphPath({
+  canAdvance,
+  candidates,
+  estimateRemainingSecondaryCost,
+  evaluateEdge,
+  initialRouteState,
+  initialRouteStateKey,
+  isCancelled,
+  mirrored,
+  onPreview,
+  startIndex,
+  targetIndex,
+  yieldControl,
+}: {
+  canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
+  candidates: readonly PlaneGridPoint[];
+  estimateRemainingSecondaryCost: (current: PlaneGridPoint, target: PlaneGridPoint) => number;
+  evaluateEdge: GraphwarPathfindingEdgeEvaluator;
+  initialRouteState: number;
+  initialRouteStateKey?: string;
+  isCancelled?: () => boolean;
+  mirrored: boolean;
+  onPreview?: (preview: GraphwarPathfindingPreview) => void;
+  startIndex: number;
+  targetIndex: number;
+  yieldControl?: () => Promise<void> | void;
+}) {
+  const startKey = createStatefulVisibilitySearchKey(startIndex, initialRouteState, initialRouteStateKey);
+  const startState: StatefulVisibilitySearchState = {
+    candidateIndex: startIndex,
+    cost: { secondary: 0, segments: 0 },
+    key: startKey,
+    routeState: initialRouteState,
+    ...(initialRouteStateKey === undefined ? {} : { routeStateKey: initialRouteStateKey }),
+  };
+  const states = new Map<string, StatefulVisibilitySearchState>([[startKey, startState]]);
+  const openKeys = new Set<string>([startKey]);
+  const closedKeys = new Set<string>();
+  const acceptedEdges: [PlaneGridPoint, PlaneGridPoint][] = [];
+  let expansionCount = 0;
+
+  while (openKeys.size > 0) {
+    if (isCancelled?.()) {
+      return undefined;
+    }
+
+    const currentKey = selectBestOpenStatefulVisibilityKey(
+      openKeys,
+      states,
+      candidates,
+      targetIndex,
+      estimateRemainingSecondaryCost,
+    );
+    if (currentKey === undefined) {
+      return undefined;
+    }
+
+    openKeys.delete(currentKey);
+    const currentState = states.get(currentKey);
+    const currentPoint = currentState ? candidates[currentState.candidateIndex] : undefined;
+    if (!currentState || !currentPoint) {
+      continue;
+    }
+
+    if (currentState.candidateIndex === targetIndex) {
+      const path = reconstructStatefulVisibilitySearchPath(currentKey, states, candidates);
+      onPreview?.({
+        acceptedEdges,
+        bestPath: path,
+        candidates: limitPreviewCandidates(candidates, currentPoint),
+        current: currentPoint,
+        mirrored,
+      });
+      return path;
+    }
+
+    closedKeys.add(currentKey);
+    for (let nextIndex = 0; nextIndex < candidates.length; nextIndex += 1) {
+      if (nextIndex === currentState.candidateIndex) {
+        continue;
+      }
+
+      const nextPoint = candidates[nextIndex];
+      if (!nextPoint || !canAdvance(currentPoint, nextPoint)) {
+        continue;
+      }
+      const edge = evaluateEdge(currentPoint, nextPoint, currentState.routeState, currentState.routeStateKey);
+      if (!edge) {
+        continue;
+      }
+
+      acceptedEdges.push([currentPoint, nextPoint]);
+      if (acceptedEdges.length > VISIBILITY_GRAPH_HEURISTICS.previewEdgeLimit) {
+        acceptedEdges.splice(0, acceptedEdges.length - VISIBILITY_GRAPH_HEURISTICS.previewEdgeLimit);
+      }
+
+      const nextKey = createStatefulVisibilitySearchKey(nextIndex, edge.nextRouteState, edge.nextRouteStateKey);
+      const nextCost = {
+        secondary: currentState.cost.secondary + edge.secondaryCost,
+        segments: currentState.cost.segments + 1,
+      };
+      const previousNextState = states.get(nextKey);
+      if (previousNextState && comparePathfindingCosts(previousNextState.cost, nextCost) <= 0) {
+        continue;
+      }
+
+      states.set(nextKey, {
+        candidateIndex: nextIndex,
+        cost: nextCost,
+        key: nextKey,
+        previousKey: currentKey,
+        routeState: edge.nextRouteState,
+        ...(edge.nextRouteStateKey === undefined ? {} : { routeStateKey: edge.nextRouteStateKey }),
+      });
+      closedKeys.delete(nextKey);
+      openKeys.add(nextKey);
+    }
+
+    expansionCount += 1;
+    if (
+      expansionCount % VISIBILITY_GRAPH_HEURISTICS.previewExpansionInterval === 0 &&
+      !(await reportStatefulVisibilitySearchProgress({
+        acceptedEdges,
+        candidates,
+        currentKey,
+        estimateRemainingSecondaryCost,
+        isCancelled,
+        mirrored,
+        onPreview,
+        openKeys,
+        startIndex,
+        states,
+        targetIndex,
+        yieldControl,
+      }))
+    ) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+async function reportStatefulVisibilitySearchProgress({
+  acceptedEdges,
+  candidates,
+  currentKey,
+  estimateRemainingSecondaryCost,
+  isCancelled,
+  mirrored,
+  onPreview,
+  openKeys,
+  startIndex,
+  states,
+  targetIndex,
+  yieldControl,
+}: {
+  acceptedEdges: readonly [PlaneGridPoint, PlaneGridPoint][];
+  candidates: readonly PlaneGridPoint[];
+  currentKey: string;
+  estimateRemainingSecondaryCost: (current: PlaneGridPoint, target: PlaneGridPoint) => number;
+  isCancelled?: () => boolean;
+  mirrored: boolean;
+  onPreview?: (preview: GraphwarPathfindingPreview) => void;
+  openKeys: ReadonlySet<string>;
+  startIndex: number;
+  states: ReadonlyMap<string, StatefulVisibilitySearchState>;
+  targetIndex: number;
+  yieldControl?: () => Promise<void> | void;
+}) {
+  if (isCancelled?.()) {
+    return false;
+  }
+
+  const bestOpenKey =
+    selectBestOpenStatefulVisibilityKey(openKeys, states, candidates, targetIndex, estimateRemainingSecondaryCost) ??
+    currentKey;
+  const currentState = states.get(currentKey);
+  const current = currentState ? candidates[currentState.candidateIndex] : undefined;
+  onPreview?.({
+    acceptedEdges,
+    bestPath: reconstructStatefulVisibilitySearchPath(bestOpenKey, states, candidates),
+    candidates: limitPreviewCandidates(candidates, current ?? candidates[startIndex]),
+    current,
+    mirrored,
+  });
+
+  const yielded = yieldControl?.();
+  if (yielded) {
+    await yielded;
+  }
+  return !isCancelled?.();
+}
+
+function selectBestOpenStatefulVisibilityKey(
+  openKeys: ReadonlySet<string>,
+  states: ReadonlyMap<string, StatefulVisibilitySearchState>,
+  candidates: readonly PlaneGridPoint[],
+  targetIndex: number,
+  estimateRemainingSecondaryCost: (current: PlaneGridPoint, target: PlaneGridPoint) => number,
+) {
+  let bestKey: string | undefined;
+  for (const key of openKeys) {
+    if (
+      bestKey === undefined ||
+      compareStatefulVisibilityQueueCandidates(
+        key,
+        bestKey,
+        states,
+        candidates,
+        targetIndex,
+        estimateRemainingSecondaryCost,
+      ) < 0
+    ) {
+      bestKey = key;
+    }
+  }
+  return bestKey;
+}
+
+function compareStatefulVisibilityQueueCandidates(
+  leftKey: string,
+  rightKey: string,
+  states: ReadonlyMap<string, StatefulVisibilitySearchState>,
+  candidates: readonly PlaneGridPoint[],
+  targetIndex: number,
+  estimateRemainingSecondaryCost: (current: PlaneGridPoint, target: PlaneGridPoint) => number,
+) {
+  const leftState = states.get(leftKey);
+  const rightState = states.get(rightKey);
+  const leftPoint = leftState ? candidates[leftState.candidateIndex] : undefined;
+  const rightPoint = rightState ? candidates[rightState.candidateIndex] : undefined;
+  const target = candidates[targetIndex];
+  if (!leftState || !rightState || !leftPoint || !rightPoint || !target) {
+    return leftKey.localeCompare(rightKey);
+  }
+
+  const leftF = {
+    secondary: leftState.cost.secondary + estimateRemainingSecondaryCost(leftPoint, target),
+    segments: leftState.cost.segments,
+  };
+  const rightF = {
+    secondary: rightState.cost.secondary + estimateRemainingSecondaryCost(rightPoint, target),
+    segments: rightState.cost.segments,
+  };
+  return (
+    comparePathfindingCosts(leftF, rightF) ||
+    comparePathfindingCosts(leftState.cost, rightState.cost) ||
+    Math.abs(target.x - leftPoint.x) - Math.abs(target.x - rightPoint.x) ||
+    Math.abs(target.y - leftPoint.y) - Math.abs(target.y - rightPoint.y) ||
+    leftState.candidateIndex - rightState.candidateIndex ||
+    leftState.routeState - rightState.routeState ||
+    (leftState.routeStateKey ?? "").localeCompare(rightState.routeStateKey ?? "")
+  );
+}
+
+/** 沿标签 key 迭代回溯；不按坐标去重，因为同坐标可合法拥有不同状态。 */
+function reconstructStatefulVisibilitySearchPath(
+  targetKey: string,
+  states: ReadonlyMap<string, StatefulVisibilitySearchState>,
+  candidates: readonly PlaneGridPoint[],
+) {
+  const path: PlaneGridPoint[] = [];
+  const seenKeys = new Set<string>();
+  let currentKey: string | undefined = targetKey;
+  while (currentKey !== undefined && !seenKeys.has(currentKey)) {
+    seenKeys.add(currentKey);
+    const state = states.get(currentKey);
+    const point = state ? candidates[state.candidateIndex] : undefined;
+    if (!state || !point) {
+      break;
+    }
+    path.push(point);
+    currentKey = state.previousKey;
+  }
+  return path.reverse();
+}
+
+function createStatefulVisibilitySearchKey(candidateIndex: number, routeState: number, routeStateKey?: string) {
+  // 精确 key 和 number fallback 分命名空间，避免自定义 evaluator 混用两种身份时碰撞。
+  return routeStateKey === undefined
+    ? `${candidateIndex}:number:${routeState}`
+    : `${candidateIndex}:key:${routeStateKey}`;
 }
 
 /** 限制页面预览候选点数量，优先显示当前点附近的候选点。 */
@@ -1211,7 +1593,10 @@ function routeMaskCellIsBlocked(point: PlaneGridPoint, mask: Uint8Array, mirrore
 
 /** 比较路径搜索代价，先少折线段，再短路径长度。 */
 function comparePathfindingCosts(left: PathfindingCost, right: PathfindingCost) {
-  return left.segments - right.segments || (nearlyEqual(left.length, right.length) ? 0 : left.length - right.length);
+  return (
+    left.segments - right.segments ||
+    (nearlyEqual(left.secondary, right.secondary) ? 0 : left.secondary - right.secondary)
+  );
 }
 
 /** 按平面坐标稳定比较两个网格点。 */

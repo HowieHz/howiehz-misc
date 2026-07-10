@@ -74,6 +74,7 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
   /** 页面副作用应集中注入，workflow 只决定触发时机。 */
   effects: {
     applyPath: (points: PixelPoint[]) => void;
+    flashBlockedSegment: (start: PixelPoint | undefined, end: PixelPoint | undefined) => void;
     flashHitSoldiers: (targetIds: readonly string[]) => void;
     setStatus: (message: string, kind: GraphwarOneClickClearStatusKind) => void;
   };
@@ -168,6 +169,13 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
         return true;
       }
 
+      if (result.invalidSegmentIndex !== undefined) {
+        const pathPoints = options.input.getPathPoints();
+        options.effects.flashBlockedSegment(
+          pathPoints[result.invalidSegmentIndex],
+          pathPoints[result.invalidSegmentIndex + 1],
+        );
+      }
       finishFailureResult(
         timings,
         result.reason,

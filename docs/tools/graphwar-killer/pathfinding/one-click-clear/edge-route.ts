@@ -2,6 +2,9 @@ import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds } from "../../core/types";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
+import type { GraphwarPlaneMaskSummedArea } from "../routing/step-envelope";
+import type { GraphwarStepRouteModel } from "../routing/step-route";
+import { createGraphwarStepPathfindingEdgeEvaluator, validateGraphwarStepRoutePath } from "../routing/step-route";
 import { buildGraphwarThetaStarPathForMask } from "../routing/theta-star";
 import type { GraphwarThetaStarScratch } from "../routing/theta-star";
 import {
@@ -22,6 +25,12 @@ export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
+  /** True 时缺少完整 Step runtime 应直接把边判为不可用。 */
+  stepRouteRequired: boolean;
+  /** Step 批次共用的数值模型；ABS 批次保持 undefined。 */
+  stepRouteModel?: GraphwarStepRouteModel;
+  /** Step 批次共用的 route mask 二维前缀和。 */
+  stepRouteSummedArea?: GraphwarPlaneMaskSummedArea;
   /** 几何路线算法模式；和普通智能寻路共用页面上的快速开关。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
@@ -43,6 +52,15 @@ export async function buildOneClickClearDagEdgeRoute(
   context: GraphwarOneClickClearDagEdgeRouteBuildContext,
   job: GraphwarOneClickClearDagEdgeBuildJob,
 ): Promise<GraphwarOneClickClearEdgeWorkerJobResult> {
+  const stepRoute = createOneClickClearStepRouteRuntime(context, job);
+  if (context.stepRouteRequired && !stepRoute) {
+    return {
+      jobId: job.id,
+      routeMapPixelsElapsedMs: 0,
+      routePathfindingElapsedMs: 0,
+    };
+  }
+
   const pathfindingStartedAt = nowMs();
   const route =
     context.routeMode === "theta-star"
@@ -50,6 +68,7 @@ export async function buildOneClickClearDagEdgeRoute(
           bounds: context.bounds,
           boundsRect: context.boundsRect,
           boundaryExpansion: context.boundaryExpansion,
+          ...stepRoute?.runtime,
           routeMask: context.routeMask,
           routeTolerancePlanePixels: context.routeTolerancePlanePixels,
           scratch: context.thetaStarScratch,
@@ -60,6 +79,7 @@ export async function buildOneClickClearDagEdgeRoute(
           bounds: context.bounds,
           boundsRect: context.boundsRect,
           boundaryExpansion: context.boundaryExpansion,
+          ...stepRoute?.runtime,
           routeMask: context.routeMask,
           routeTolerancePlanePixels: context.routeTolerancePlanePixels,
           startPoint: job.startPoint,
@@ -84,10 +104,76 @@ export async function buildOneClickClearDagEdgeRoute(
   // 首尾必须回到原始截图控制点；中间点才来自平面格点中心映射。
   pixelRoute[0] = job.startPoint;
   pixelRoute[pixelRoute.length - 1] = job.targetPoint;
+  if (stepRoute) {
+    const validation = validateGraphwarStepRoutePath({
+      boundaryInset: context.boundaryExpansion,
+      bounds: context.bounds,
+      boundsRect: context.boundsRect,
+      initialResolvedY: stepRoute.resolvedStartY,
+      ...(stepRoute.resolvedStartStateKey === undefined
+        ? {}
+        : { initialRouteStateKey: stepRoute.resolvedStartStateKey }),
+      model: stepRoute.model,
+      points: pixelRoute,
+      summedArea: stepRoute.summedArea,
+    });
+    if (!validation.ok || validation.resolvedEndY === undefined) {
+      return {
+        jobId: job.id,
+        routeMapPixelsElapsedMs,
+        routePathfindingElapsedMs,
+      };
+    }
+    return {
+      jobId: job.id,
+      ...(validation.routeStateKey === undefined ? {} : { resolvedEndStateKey: validation.routeStateKey }),
+      resolvedEndY: validation.resolvedEndY,
+      route: pixelRoute,
+      routeMapPixelsElapsedMs,
+      routePathfindingElapsedMs,
+    };
+  }
   return {
     jobId: job.id,
     route: pixelRoute,
     routeMapPixelsElapsedMs,
     routePathfindingElapsedMs,
+  };
+}
+
+/** 把具体 DAG 标签的累计高度适配成两种路由器共用的 Step runtime。 */
+function createOneClickClearStepRouteRuntime(
+  context: GraphwarOneClickClearDagEdgeRouteBuildContext,
+  job: GraphwarOneClickClearDagEdgeBuildJob,
+) {
+  const model = context.stepRouteModel;
+  const summedArea = context.stepRouteSummedArea;
+  const resolvedStartY = job.resolvedStartY;
+  const resolvedStartStateKey = job.resolvedStartStateKey;
+  if (
+    !model ||
+    !summedArea ||
+    resolvedStartY === undefined ||
+    !Number.isFinite(resolvedStartY) ||
+    resolvedStartStateKey === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    model,
+    resolvedStartStateKey,
+    resolvedStartY,
+    runtime: createGraphwarStepPathfindingEdgeEvaluator({
+      boundaryInset: context.boundaryExpansion,
+      bounds: context.bounds,
+      boundsRect: context.boundsRect,
+      exactStartPoint: job.startPoint,
+      exactTargetPoint: job.targetPoint,
+      model,
+      resolvedStartStateKey,
+      resolvedStartY,
+      summedArea,
+    }),
+    summedArea,
   };
 }

@@ -184,6 +184,10 @@ const maxYText = ref(graphwarVisibleYLimitText);
 const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
 const stepGlitchModeEnabled = ref(false);
+// 漏洞开关会跨方程保留；只有 Step y' 真正启用漏洞公式时才限制寻路。
+const effectiveStepGlitchModeEnabled = computed(
+  () => algorithmMode.value === "step" && solverEquationMode.value === "dy" && stepGlitchModeEnabled.value,
+);
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const advancedSettingsVisible = ref(false);
 const simulatorSkipUnknownCharacters = ref(true);
@@ -308,6 +312,7 @@ const smartPathfindingSession = useGraphwarSmartPathfindingSession({
 const {
   activePhase: activeSmartPathfindingPhase,
   blockedPoint: smartPathfindingBlockedPoint,
+  blockedSegment: smartPathfindingBlockedSegment,
   inProgress: smartPathfindingInProgress,
   optimizationPreviewPoint: pathfindingOptimizationPreviewPoint,
   previewAcceptedEdges: smartPathfindingPreviewAcceptedEdges,
@@ -342,6 +347,7 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
   },
   effects: {
     flashBlockedPoint: smartPathfindingSession.flashBlockedPoint,
+    flashBlockedSegment: smartPathfindingSession.flashBlockedSegment,
   },
   input: {
     boundsRect,
@@ -495,13 +501,14 @@ const {
 const effectiveSmartPathfindingEnabled = computed(
   () =>
     toolWorkflowMode.value !== "simulator" &&
-    algorithmMode.value !== "step" &&
+    !effectiveStepGlitchModeEnabled.value &&
     smartPathfindingEnabled.value &&
     objectDetectionReady.value,
 );
 const pathfindingObstacleEdgesActive = computed(() => effectiveSmartPathfindingEnabled.value);
+const includesFriendlySoldierObstacles = computed(() => !friendlyFireEnabled.value && pathPixels.value.length > 0);
 const blocksFriendlyFireTargets = computed(
-  () => pathfindingObstacleEdgesActive.value && !friendlyFireEnabled.value && pathPixels.value.length > 0,
+  () => pathfindingObstacleEdgesActive.value && includesFriendlySoldierObstacles.value,
 );
 
 const equationModes = computed(() => locale.equationModes);
@@ -854,6 +861,7 @@ const {
   getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
   getTargetBoundsRect: () => targetBoundsRect.value,
   pathPixels,
+  requireExactSoldierCenter: () => algorithmMode.value === "step",
 });
 // 障碍投影应集中 friendly mask、route/simulation mask、SVG path 和轨迹碰撞设置，页面只保留状态来源。
 const {
@@ -863,6 +871,7 @@ const {
   smartPathfindingObstacleRouteFillPath,
   smartPathfindingObstacleSimulationEdgePath,
   smartPathfindingObstacleSimulationFillPath,
+  smartPathfindingSimulationObstacleMask,
   trajectoryCollisionSettings,
   visibleObstacleEdgePath,
   visibleObstacleFillPath,
@@ -875,8 +884,8 @@ const {
     soldiers: detectedSoldiers,
   },
   modes: {
-    blocksFriendlyFireTargets,
     effectiveSmartPathfindingEnabled,
+    includesFriendlySoldierObstacles,
     pathfindingObstacleEdgesActive,
     smartCursorEnabled,
     toolWorkflowMode,
@@ -959,6 +968,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
   },
   effects: {
     applyPath: setPathPixels,
+    flashBlockedSegment: smartPathfindingSession.flashBlockedSegment,
     flashHitSoldiers: flashOneClickClearHitSoldiers,
     setStatus: setSmartPathfindingStatus,
   },
@@ -971,7 +981,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
       parsedPathfindingWorkerCount.value.ok ? parsedPathfindingWorkerCount.value.workerCount : undefined,
     getPathPoints: () => pathPixels.value,
     getRouteMode: getPathfindingRouteMode,
-    getSimulationMask: () => simulationObstacleMask.value,
+    getSimulationMask: () => smartPathfindingSimulationObstacleMask.value,
     getTolerances: () => (parsedOneClickClearTolerances.value.ok ? parsedOneClickClearTolerances.value : undefined),
     isUnsupportedMode: isOneClickClearModeUnsupported,
   },
@@ -1119,6 +1129,7 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
     return [];
   }
 
+  // 复用实际落点规则：Step 只展示中心严格 x+ 的士兵，其他算法仍允许命中圈内的前进回退点。
   return visibleSoldiers.filter((box) => Boolean(createSearchStartSoldierAimPoint(lastPoint, box)));
 });
 const inactiveDetectionBoxes = computed<DetectionBox[]>(() => {
@@ -1357,7 +1368,7 @@ const smartPathfindingHeaderStatusResult = computed(() =>
   }),
 );
 const pathfindingDisabledHeaderMessage = computed(() =>
-  algorithmMode.value === "step" ? stepPathfindingDisabledMessage.value : "",
+  effectiveStepGlitchModeEnabled.value ? stepPathfindingDisabledMessage.value : "",
 );
 const pathfindingHeaderStatusResult = computed(() =>
   getFirstHeaderStatus(
@@ -1613,6 +1624,7 @@ const stageOverlay = computed(() => ({
   },
   pathfinding: {
     blockedPoint: smartPathfindingBlockedPoint.value,
+    blockedSegment: smartPathfindingBlockedSegment.value,
     inProgress: smartPathfindingInProgress.value,
     optimizationPreviewPoint: pathfindingOptimizationPreviewPoint.value,
     // 搜索动画只应表达“正在优化这个点”，沿用路径点可视圈，不引入单独预览半径。
@@ -1788,26 +1800,34 @@ watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTop
 });
 
 watch([formulaOutputDecimalPlaces], () => {
+  cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
 });
 
 watch([algorithmMode, solverEquationMode], () => {
   clearSmartPathfindingStatus();
   cancelSmartPathfinding(false);
-  if (algorithmMode.value === "step" && smartPathfindingEnabled.value) {
-    smartPathfindingEnabled.value = false;
-  }
   if (algorithmMode.value === "abs" && solverEquationMode.value === "ddy") {
     solverEquationMode.value = "y";
   }
 });
 
 watch([stepOverflowProtectionEnabled], () => {
+  cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
 });
 
 watch([activeObstacleSimulationToleranceText, steepnessText], () => {
+  cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
+});
+
+watch(effectiveStepGlitchModeEnabled, (enabled) => {
+  cancelSmartPathfinding(false);
+  clearSmartPathfindingStatus();
+  if (enabled) {
+    smartPathfindingEnabled.value = false;
+  }
 });
 
 watch([smartCursorEnabled, smartPathfindingEnabled, detectedObstacles], () => {
@@ -1838,6 +1858,7 @@ watch(
   ],
   () => {
     // 这些输入会改变几何搜索、worker 并行或公式边界语义，页面 cache 和 worker cache 必须一起失效。
+    cancelSmartPathfinding(false);
     invalidatePathfindingCaches();
     clearSmartPathfindingStatus();
   },
@@ -2178,14 +2199,14 @@ function setMagnifierZoomText(value: string) {
   magnifierZoomText.value = value;
 }
 
-/** Step 公式不支持智能/一键清图，因为弹道和路径点语义不稳定。 */
+/** 只有实际生效的 Step 漏洞公式不支持寻路；y/y'' 中残留的勾选状态不参与限制。 */
 function isSmartPathfindingDisabled() {
-  return algorithmMode.value === "step" || Boolean(smartPathfindingPrerequisiteMessage.value);
+  return effectiveStepGlitchModeEnabled.value || Boolean(smartPathfindingPrerequisiteMessage.value);
 }
 
 /** 返回智能寻路被禁用的具体原因。 */
 function getSmartPathfindingDisabledMessage() {
-  return algorithmMode.value === "step"
+  return effectiveStepGlitchModeEnabled.value
     ? stepPathfindingDisabledMessage.value
     : smartPathfindingPrerequisiteMessage.value;
 }
@@ -2197,9 +2218,12 @@ function getSmartPathfindingToggleTitle() {
     : locale.ui.pathfinding.smartPathfindingTitle;
 }
 
-/** 一键清图目前只支持双绝对值 y/y'，按钮状态和运行前校验共用同一条件。 */
+/** 一键清图支持 ABS y/y' 和无有效漏洞的 Step y/y'/y''；其他算法仍走原禁用提示。 */
 function isOneClickClearModeUnsupported() {
-  return algorithmMode.value !== "abs" || equationMode.value === "ddy";
+  if (effectiveStepGlitchModeEnabled.value) {
+    return true;
+  }
+  return algorithmMode.value === "abs" ? equationMode.value === "ddy" : algorithmMode.value !== "step";
 }
 
 /** 返回一键清图按钮 title，不支持当前模式时直接解释禁用原因。 */

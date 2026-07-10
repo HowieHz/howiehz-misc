@@ -59,6 +59,8 @@ interface GraphwarSmartPathfindingBuilderOptions {
   effects: {
     /** 短暂标记真实弹道被阻挡的位置。 */
     flashBlockedPoint: (point: PixelPoint | undefined) => void;
+    /** 短暂标记已有 Step 路径中首个严格域失败的控制段。 */
+    flashBlockedSegment: (start: PixelPoint | undefined, end: PixelPoint | undefined) => void;
   };
   /** 构造 worker 输入时应读取调用时的最新页面状态。 */
   input: {
@@ -208,6 +210,12 @@ export function useGraphwarSmartPathfindingBuilder(
     }
     if (result.blockedPoint) {
       options.effects.flashBlockedPoint(result.blockedPoint);
+    }
+    if (result.invalidSegmentIndex !== undefined) {
+      options.effects.flashBlockedSegment(
+        sourcePath[result.invalidSegmentIndex],
+        sourcePath[result.invalidSegmentIndex + 1],
+      );
     }
     if (result.path && options.preview.isSearchAnimationEnabled()) {
       options.preview.setPath(getGraphwarSmartPathfindingAppendedSegment(result.path, sourcePath.length));

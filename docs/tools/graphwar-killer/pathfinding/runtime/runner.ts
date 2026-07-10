@@ -354,15 +354,27 @@ function cloneGraphwarOneClickClearDagEdgeBuildRequest(
     bounds: cloneGraphBounds(input.bounds),
     boundsRect: cloneBoundsRect(input.boundsRect),
     jobs: input.jobs.map((job) => ({
-      ...(job.from === undefined ? {} : { from: job.from }),
+      from: job.from,
       id: job.id,
+      ...(job.resolvedStartStateKey === undefined ? {} : { resolvedStartStateKey: job.resolvedStartStateKey }),
+      ...(job.resolvedStartY === undefined ? {} : { resolvedStartY: job.resolvedStartY }),
       startPoint: clonePixelPoint(job.startPoint),
       targetPoint: clonePixelPoint(job.targetPoint),
       to: job.to,
     })),
     routeMask: input.routeMask,
+    routeOriginPoint: clonePixelPoint(input.routeOriginPoint),
     routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    settings: {
+      algorithm: input.settings.algorithm,
+      decimalPlaces: input.settings.decimalPlaces,
+      equation: input.settings.equation,
+      ...(input.settings.formulaPathSteepness === undefined
+        ? {}
+        : { formulaPathSteepness: input.settings.formulaPathSteepness }),
+      steepness: input.settings.steepness,
+    },
     workerCount: input.workerCount,
   };
 }

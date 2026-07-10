@@ -138,6 +138,8 @@ interface GraphwarStageOverlayLiveClickPreviewLayer {
 interface GraphwarStageOverlayPathfindingLayer {
   /** 被当前轨迹预检拦截的位置。 */
   blockedPoint?: PixelPoint;
+  /** 已有 Step 路径中首个严格域失败的控制段。 */
+  blockedSegment?: GraphwarStageOverlayLineSegment;
   /** 当前是否有智能寻路运行中。 */
   inProgress: boolean;
   /** 寻路优化阶段当前尝试点。 */
@@ -465,6 +467,14 @@ withDefaults(
       :cy="overlay.pathfinding.blockedPoint.y"
       :r="overlay.path.selectionRadius"
     />
+    <line
+      v-if="overlay.pathfinding.blockedSegment"
+      class="graphwar-killer__pathfinding-blocked-segment"
+      :x1="overlay.pathfinding.blockedSegment.x1"
+      :y1="overlay.pathfinding.blockedSegment.y1"
+      :x2="overlay.pathfinding.blockedSegment.x2"
+      :y2="overlay.pathfinding.blockedSegment.y2"
+    />
     <g
       v-for="(point, index) in overlay.path.points"
       :key="`${keyPrefix}point-${index}`"
@@ -718,6 +728,16 @@ withDefaults(
   stroke: #dc2626;
   stroke-dasharray: 5 4;
   stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.graphwar-killer__pathfinding-blocked-segment {
+  animation: graphwar-killer-curve-blink 450ms ease-in-out infinite;
+  pointer-events: none;
+  stroke: #dc2626;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+  stroke-width: 4;
   vector-effect: non-scaling-stroke;
 }
 

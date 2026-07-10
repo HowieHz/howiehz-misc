@@ -27,6 +27,8 @@ interface GraphwarTargetingContextOptions {
   getTargetBoundsRect: () => BoundsRect | undefined;
   /** 当前路径；第一个点用于识别发射士兵，最后一点用于默认 x+ 起点。 */
   pathPixels: ReadonlyRef<readonly PixelPoint[]>;
+  /** 当前算法是否要求士兵目标严格落在源码中心，不允许命中圈边缘回退。 */
+  requireExactSoldierCenter: () => boolean;
 }
 
 export interface GraphwarTargetingContextController<TSoldier extends GraphwarTargetingSoldier> {
@@ -82,12 +84,16 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
 
   function createSearchStartSoldierAimPoint(startPoint: PixelPoint | undefined, soldier: TSoldier) {
     const area = createArea();
-    return area ? createGraphwarSearchStartSoldierAimPoint(startPoint, soldier, area) : undefined;
+    return area
+      ? createGraphwarSearchStartSoldierAimPoint(startPoint, soldier, area, options.requireExactSoldierCenter())
+      : undefined;
   }
 
   function createSmartPathfindingSoldierTarget(startPoint: PixelPoint, soldier: TSoldier) {
     const area = createArea();
-    return area ? createGraphwarSmartPathfindingSoldierTarget(startPoint, soldier, area) : undefined;
+    return area
+      ? createGraphwarSmartPathfindingSoldierTarget(startPoint, soldier, area, options.requireExactSoldierCenter())
+      : undefined;
   }
 
   function createSoldierHitCircle(soldier: TSoldier) {

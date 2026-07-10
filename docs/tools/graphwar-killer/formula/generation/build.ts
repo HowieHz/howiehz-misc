@@ -8,7 +8,13 @@ import {
   roundToDecimalPlaces,
 } from "../../core/numbers";
 import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "../../core/types";
-import { GRAPHWAR_TOOL_SIGN_EPSILON, shouldUseStepDerivativeOverflowProtection } from "./step-numeric-strategy";
+import {
+  GRAPHWAR_TOOL_SIGN_EPSILON,
+  quantizeFormulaCoefficient,
+  quantizeStepFormulaCenterX,
+  resolveStepFormula,
+  shouldUseStepDerivativeOverflowProtection,
+} from "./step-numeric-strategy";
 import type { FormulaEvaluationOptions, StepGlitchSegment, StepOverflowProtectionRange } from "./step-numeric-strategy";
 export { GRAPHWAR_TOOL_SIGN_EPSILON } from "./step-numeric-strategy";
 export type { FormulaEvaluationOptions, StepOverflowProtectionRange } from "./step-numeric-strategy";
@@ -89,6 +95,8 @@ export interface CompiledStepTerm {
 
 /** Step 公式最终文本等价材料；同一份数据应同时服务输出和采样。 */
 export interface CompiledStepFormula {
+  /** 生成 canonical 系数时采用的方程模式。 */
+  equation: EquationMode;
   /** 最终公式文本里的陡峭度。 */
   formulaSteepness: number;
   /** 当前精度下仍会输出的阶跃项。 */
@@ -125,7 +133,7 @@ export function buildFormula(
   options: BuildFormulaOptions = {},
 ): FormulaResult {
   const signEpsilon = options.signEpsilon ?? GRAPHWAR_TOOL_SIGN_EPSILON;
-  const formulaEvaluation = createFormulaEvaluationOptions(decimalPlaces, options);
+  const formulaEvaluation = createFormulaEvaluationOptions(mode, decimalPlaces, options);
   const compiledMaterials =
     options.compiledMaterials ?? compileGraphwarFormulaMaterials(points, steepness, algorithm, formulaEvaluation);
   const terms = createStepTerms(points);
@@ -212,8 +220,8 @@ export function formulaUsesStableSignRatio(
     return mode === "dy" && getCompiledAbsConnectorSegments(points, options, compiledMaterials).length > 0;
   }
   if (algorithm === "step" && mode === "dy") {
-    return getCompiledStepFormula(points, steepness, options, compiledMaterials).terms.some((term) =>
-      Boolean(term.glitchSegment),
+    return getCompiledStepFormula(points, steepness, options, compiledMaterials).terms.some(
+      (term) => term.glitchSegment !== undefined && term.glitchSegment.derivative !== 0,
     );
   }
   if (algorithm !== "step" || mode !== "ddy") {
@@ -264,6 +272,10 @@ function compileStepEvaluator(
       for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
         const term = formula.terms[index];
         if (term.glitchSegment) {
+          if (term.glitchSegment.derivative === 0) {
+            // 最终文本会省略舍入为 0 的 D/8；不能继续求门函数并产生 0*NaN。
+            continue;
+          }
           slope = evaluateCompiledStepGlitchFirstDerivative(x, y, term.glitchSegment, options) + slope;
           continue;
         }
@@ -382,15 +394,18 @@ function createCompiledStepFormula(
   steepness: number,
   options?: FormulaEvaluationOptions,
 ) {
-  const formulaSteepness = createCompiledStepFormulaSteepness(steepness, options);
+  const equation = options?.equation ?? "y";
+  const resolvedFormula = resolveStepFormula(points, steepness, equation, options);
+  const formulaSteepness = resolvedFormula.formulaSteepness;
   const terms: CompiledStepTerm[] = [];
   for (let index = 1; index < points.length; index += 1) {
+    const transition = resolvedFormula.transitions[index - 1];
+    if (!transition || options?.stepDisabledSegments?.[index - 1]) {
+      continue;
+    }
     const glitchSegment = createCompiledStepGlitchSegment(options?.stepGlitchSegments?.[index - 1], options);
     const formulaCenterX = createCompiledFormulaXCenter(points[index].x, options);
-    const deltaY = options?.stepSegmentDeltaYs?.[index - 1] ?? points[index].y - points[index - 1].y;
-    const yCoefficient = createCompiledFormulaCoefficient(deltaY, options);
-    const firstDerivativeCoefficient = createCompiledFormulaCoefficient(deltaY * steepness, options);
-    const secondDerivativeCoefficient = createCompiledFormulaCoefficient(deltaY * steepness * steepness, options);
+    const { firstDerivativeCoefficient, secondDerivativeCoefficient, yCoefficient } = transition;
     if (!glitchSegment && yCoefficient === 0 && firstDerivativeCoefficient === 0 && secondDerivativeCoefficient === 0) {
       continue;
     }
@@ -409,7 +424,7 @@ function createCompiledStepFormula(
     });
   }
 
-  return { formulaSteepness, terms };
+  return { equation, formulaSteepness, terms };
 }
 
 function createCompiledStepGlitchSegment(
@@ -420,8 +435,11 @@ function createCompiledStepGlitchSegment(
     return undefined;
   }
 
+  const decimalPlaces = getFormulaDecimalPlaces(options);
+  // 三个 sign 门全开时贡献 8；先量化最终文本里的 D/8，再反推候选模拟应使用的有效 D。
+  const gateCoefficient = quantizeFormulaCoefficient(segment.derivative / 8, decimalPlaces);
   return {
-    derivative: createCompiledFormulaCoefficient(segment.derivative, options),
+    derivative: 8 * gateCoefficient,
     endX: segment.endX,
     gateY: createCompiledFormulaYCenter(segment.gateY, options),
     startX: segment.startX,
@@ -429,14 +447,9 @@ function createCompiledStepGlitchSegment(
   };
 }
 
-function createCompiledStepFormulaSteepness(steepness: number, options?: FormulaEvaluationOptions) {
-  const decimalPlaces = getFormulaDecimalPlaces(options);
-  return decimalPlaces === undefined ? steepness : roundToDecimalPlaces(steepness, decimalPlaces);
-}
-
 /** 内部 step 采样应使用最终公式文本中的中心点，避免小数位边界偏移。 */
 function createCompiledFormulaXCenter(centerX: number, options?: FormulaEvaluationOptions) {
-  return createCompiledFormulaOffsetCenter(centerX, options);
+  return quantizeStepFormulaCenterX(centerX, getFormulaDecimalPlaces(options));
 }
 
 /** 内部 step 采样应使用最终公式文本中的 y 阈值，避免小数位边界偏移。 */
@@ -460,23 +473,6 @@ function createCompiledStepDerivativeOverflowProtection(
     : (options?.stepOverflowProtection ?? true);
 }
 
-/** 内部 step 采样应使用最终公式文本中的系数，省略项和低精度系数才不会影响轨迹。 */
-function createCompiledFormulaCoefficient(coefficientValue: number, options?: FormulaEvaluationOptions) {
-  const decimalPlaces = getFormulaDecimalPlaces(options);
-  if (decimalPlaces === undefined) {
-    return coefficientValue;
-  }
-
-  // formatSignedRawTerm 先按原符号决定 +/-，再格式化绝对值；这里按同一规则生成可求值数字。
-  const normalizedCoefficient = normalizeZero(coefficientValue, decimalPlaces);
-  if (normalizedCoefficient === 0) {
-    return 0;
-  }
-
-  const magnitude = roundToDecimalPlaces(Math.abs(normalizedCoefficient), decimalPlaces);
-  return normalizedCoefficient < 0 ? -magnitude : magnitude;
-}
-
 /** 编译和输出都应显式使用同一份最终公式小数位。 */
 function getFormulaDecimalPlaces(options?: FormulaEvaluationOptions) {
   return options?.formulaDecimalPlaces;
@@ -484,10 +480,12 @@ function getFormulaDecimalPlaces(options?: FormulaEvaluationOptions) {
 
 /** `buildFormula` 的 options 应转成采样层可复用的公式等价配置。 */
 function createFormulaEvaluationOptions(
+  equation: EquationMode,
   decimalPlaces: number | undefined,
   options: BuildFormulaOptions,
 ): FormulaEvaluationOptions {
   return {
+    equation,
     formulaDecimalPlaces: decimalPlaces,
     stepOverflowProtection: options.stepOverflowProtection ?? true,
     stepOverflowProtectionRange: options.stepOverflowProtectionRange,
@@ -510,7 +508,8 @@ function getCompiledStepFormula(
   options: FormulaEvaluationOptions | undefined,
   compiledMaterials: CompiledGraphwarFormulaMaterials | undefined,
 ) {
-  return compiledMaterials?.algorithm === "step" && compiledMaterials.stepFormula
+  const equation = options?.equation ?? "y";
+  return compiledMaterials?.algorithm === "step" && compiledMaterials.stepFormula?.equation === equation
     ? compiledMaterials.stepFormula
     : createCompiledStepFormula(points, steepness, options);
 }
@@ -528,7 +527,7 @@ function createCompiledAbsConnectorSegments(
       continue;
     }
 
-    const coefficient = createCompiledFormulaCoefficient(segment.deltaY / (2 * segment.width), options);
+    const coefficient = quantizeFormulaCoefficient(segment.deltaY / (2 * segment.width), decimalPlaces);
     if (coefficient === 0) {
       continue;
     }

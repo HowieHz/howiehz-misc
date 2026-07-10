@@ -164,7 +164,8 @@ export const graphwarKillerLocale = {
     autoGraphPathfindingDisabled: "One-Click Clear is being rebuilt and is unavailable for now",
     pathPointCoordinateNumber: "Point coordinates must be numbers",
     secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to about ${angle} deg.`,
-    stepPathfindingDisabled: "Step functions do not support Smart Pathfinding yet",
+    stepPathfindingDisabled:
+      "Glitch mode for Step y' does not support Smart Pathfinding or One-Click Clear; disable Glitch mode first",
     trajectoryWarning: {
       obstacle: "The current function trajectory hits an obstacle or boundary",
       stopped: {
@@ -214,7 +215,8 @@ export const graphwarKillerLocale = {
         const cacheText = resultCacheHit ? " (using result cache)" : "";
         return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} soldier(s) in ${elapsed}`;
       },
-      unsupported: "One-Click Clear currently only supports double absolute-value y= and y'= modes",
+      unsupported:
+        "One-Click Clear supports double absolute-value y= and y'=, or Step y=, y'=, and y''= with Glitch mode disabled",
     },
   },
   ui: {

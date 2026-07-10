@@ -133,7 +133,7 @@ export const graphwarKillerLocale = {
     autoGraphPathfindingDisabled: "一键清图正在重写，暂不可用",
     pathPointCoordinateNumber: "点坐标需要填写数字",
     secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到约 ${angle}°。`,
-    stepPathfindingDisabled: "阶跃函数暂不支持智能寻路",
+    stepPathfindingDisabled: "阶跃 y' 的漏洞模式不支持智能寻路或一键清图，请先关闭漏洞模式",
     trajectoryWarning: {
       obstacle: "当前公式轨迹会撞到障碍物或边界",
       stopped: {
@@ -174,7 +174,7 @@ export const graphwarKillerLocale = {
         const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
         return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
       },
-      unsupported: "一键清图目前只支持双绝对值函数的 y= 和 y'= 模式",
+      unsupported: "一键清图仅支持双绝对值的 y=、y'=，或关闭漏洞模式的阶跃 y=、y'=、y''=",
     },
   },
   ui: {

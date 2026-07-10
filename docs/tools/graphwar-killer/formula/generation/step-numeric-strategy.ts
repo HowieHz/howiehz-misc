@@ -23,7 +23,7 @@ export interface StepGlitchSegment {
   endX: number;
   /** Y 门关闭阈值；进入目标命中圈就应关门，不必继续冲到目标中心线。 */
   gateY: number;
-  /** 最终公式里的 x 左门；尽量按用户小数位贴近目标点，但必须在文本回放中可复现。 */
+  /** 最终公式里的 x 左门；由固定右门减去候选窗口宽度，并按窗口所需精度输出。 */
   startX: number;
   /** 当前路径段目标中心 y；用于 D 计算和候选落点误差。 */
   targetY: number;

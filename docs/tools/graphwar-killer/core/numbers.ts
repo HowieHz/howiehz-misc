@@ -80,6 +80,26 @@ export function roundToDecimalPlaces(value: number, decimalPlaces = DEFAULT_FORM
   return normalizedValue === 0 ? 0 : Number(normalizedValue.toFixed(safeDecimalPlaces));
 }
 
+/** 按指定小数位向数轴负方向量化；与 trunc 不同，负数结果也保证不大于原值。 */
+export function floorToDecimalPlaces(value: number, decimalPlaces = DEFAULT_FORMULA_DECIMAL_PLACES) {
+  const safeDecimalPlaces = clampDecimalPlaces(decimalPlaces);
+  const roundedValue = roundToDecimalPlaces(value, safeDecimalPlaces);
+  if (!Number.isFinite(value) || roundedValue <= value) {
+    return roundedValue;
+  }
+
+  // 只有就近舍入落在原值右侧时才缩放取 floor；远离十进制整数边界，可避开乘法残差误降一档。
+  const scale = 10 ** safeDecimalPlaces;
+  let scaledFloor = Math.floor(value * scale);
+  let flooredValue = scaledFloor / scale;
+  // 高小数位除法仍可能向上偏一个 ULP；逐个 double 左移，守住“不大于原值”的公开契约。
+  while (flooredValue > value) {
+    scaledFloor = Math.floor(nextDownDouble(scaledFloor));
+    flooredValue = scaledFloor / scale;
+  }
+  return Object.is(flooredValue, -0) ? 0 : flooredValue;
+}
+
 /** 用足够精度格式化 Graphwar 公式数字，并去掉多余末尾 0。 */
 export function formatDecimal(value: number, decimalPlaces = DEFAULT_FORMULA_DECIMAL_PLACES) {
   const safeDecimalPlaces = clampDecimalPlaces(decimalPlaces);

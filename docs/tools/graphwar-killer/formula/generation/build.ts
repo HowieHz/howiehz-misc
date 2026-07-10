@@ -657,7 +657,7 @@ function formatStepFirstDerivativeExpression(
   return cleanupExpression(parts.join("")) || "0";
 }
 
-/** 格式化局部漏洞项；右侧 x 门会在一个原始步长后关闭旧漏洞。 */
+/** 格式化局部漏洞项；右侧 x 门会在候选窗口末端关闭旧漏洞。 */
 function formatStepGlitchFirstDerivativeExpression(
   segment: StepGlitchSegment,
   decimalPlaces: number | undefined,

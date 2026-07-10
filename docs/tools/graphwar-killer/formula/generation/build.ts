@@ -422,8 +422,8 @@ function createCompiledStepGlitchSegment(
 
   return {
     derivative: createCompiledFormulaCoefficient(segment.derivative, options),
-    endX: createCompiledFormulaXCenter(segment.endX, options),
-    startX: createCompiledFormulaXCenter(segment.startX, options),
+    endX: segment.endX,
+    startX: segment.startX,
     targetY: createCompiledFormulaYCenter(segment.targetY, options),
   };
 }
@@ -663,8 +663,8 @@ function formatStepGlitchFirstDerivativeExpression(
   signEpsilon: number,
 ) {
   const direction = segment.derivative < 0 ? -1 : 1;
-  const xGate = `1+${formatStableSignRatio(formatXOffset(segment.startX, decimalPlaces), signEpsilon)}`;
-  const xLimitGate = `1-${formatStableSignRatio(formatXOffset(segment.endX, decimalPlaces), signEpsilon)}`;
+  const xGate = `1+${formatStableSignRatio(formatStepGlitchXOffset(segment.startX), signEpsilon)}`;
+  const xLimitGate = `1-${formatStableSignRatio(formatStepGlitchXOffset(segment.endX), signEpsilon)}`;
   const yGate = `1+${formatStableSignRatio(
     formatDirectedTargetYOffset(segment.targetY, direction, decimalPlaces),
     signEpsilon,
@@ -1186,6 +1186,19 @@ function formatAbsXOffset(centerX: number, decimalPlaces?: number) {
 function formatXOffset(centerX: number, decimalPlaces?: number) {
   const offset = normalizeZero(-centerX, decimalPlaces);
   return offset === 0 ? "x" : `x${formatSignedNumber(offset, decimalPlaces)}`;
+}
+
+/** 漏洞 x 窗口可能小于用户输出精度，必须绕过 decimalPlaces，避免 start/end 被舍入成同一条线。 */
+function formatStepGlitchXOffset(centerX: number) {
+  const offset = Object.is(centerX, -0) ? 0 : -centerX;
+  return offset === 0 ? "x" : `x${formatDoublePrecisionSignedNumber(offset)}`;
+}
+
+function formatDoublePrecisionSignedNumber(value: number) {
+  if (Object.is(value, -0) || value === 0) {
+    return "+0";
+  }
+  return value < 0 ? formatDoublePrecisionDecimal(value) : `+${formatDoublePrecisionDecimal(value)}`;
 }
 
 function formatDirectedTargetYOffset(targetY: number, direction: 1 | -1, decimalPlaces?: number) {

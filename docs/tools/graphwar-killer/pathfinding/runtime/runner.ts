@@ -48,7 +48,13 @@ interface PendingPathfindingWorkerTask {
   resolve: (value: GraphwarPathfindingWorkerSuccessResponse["result"]) => void;
 }
 
-/** 创建页面可复用的几何寻路 runner。 */
+/**
+ * 创建页面可复用的几何寻路 runner。
+ *
+ * 正常完成后保留 master Worker 及其派生 cache，除非任务期间已标记 cache 失效。当前 UI 入口会阻止寻路期间再次提交目标，runner 仍会防御性取消重叠调用。
+ *
+ * 取消直接终止并丢弃 Worker，既能立即停止同步搜索，也避免所有正常搜索为低频取消持续承担分片调度开销；后续请求再按需创建。
+ */
 export function createGraphwarPathfindingRunner() {
   let worker: Worker | undefined;
   let nextRequestId = 1;
@@ -180,7 +186,7 @@ export function createGraphwarPathfindingRunner() {
     resetWorker();
   }
 
-  /** 让 master Worker 内部 cache 失效；忙碌时等当前任务收尾后重建。 */
+  /** 输入语义失效时 cache 本就不可复用；空闲时立即丢弃，忙碌时标记为任务结算后丢弃，后续请求再按需创建。 */
   function clearCache() {
     if (pendingTask) {
       resetWorkerAfterCurrentTask = true;

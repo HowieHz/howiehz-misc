@@ -11,6 +11,7 @@ import java.security.ProtectionDomain;
 public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
     private static final String CLIENT_GLOBAL_CLIENT = "Graphwar/GlobalClient";
     private static final String CLIENT_SERVER_CONNECTION = "Graphwar/ServerConnection";
+    private static final String LOCAL_SERVER_CLIENT_CONNECTION = "GraphServer/ClientConnection";
     private static final String HANDLER_CLASS =
             "top/howiehz/graphwar/agent/GraphwarSocketCloseSilencer";
     private static final String HANDLER_METHOD = "printUnexpectedConnectionReadError";
@@ -53,13 +54,12 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
         PatchedConstantPool constantPool = classFile.appendHandlerMethodRef();
         int patchCount =
                 new ClassFile(constantPool.bytes)
-                        .patchServerConnectionRunPrintStackTrace(
-                                constantPool.handlerMethodRefIndex);
+                        .patchRunPrintStackTrace(constantPool.handlerMethodRefIndex);
         return patchCount == 0 ? classfileBuffer : constantPool.bytes;
     }
 
     public static void printUnexpectedConnectionReadError(IOException error) {
-        // Official Graphwar closes lobby/match sockets while their read threads may still
+        // Official Graphwar closes client/server sockets while their read threads may still
         // be blocked in readLine(); SocketException("Socket closed") is the normal result.
         if (error instanceof SocketException && SOCKET_CLOSED_MESSAGE.equals(error.getMessage())) {
             return;
@@ -69,7 +69,9 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
     }
 
     private static boolean isTargetClass(String className) {
-        return CLIENT_SERVER_CONNECTION.equals(className) || CLIENT_GLOBAL_CLIENT.equals(className);
+        return CLIENT_SERVER_CONNECTION.equals(className)
+                || CLIENT_GLOBAL_CLIENT.equals(className)
+                || LOCAL_SERVER_CLIENT_CONNECTION.equals(className);
     }
 
     private static final class PatchedConstantPool {
@@ -152,7 +154,7 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
             return new PatchedConstantPool(patched, handlerMethodRefIndex);
         }
 
-        int patchServerConnectionRunPrintStackTrace(int handlerMethodRefIndex) {
+        int patchRunPrintStackTrace(int handlerMethodRefIndex) {
             int offset = afterConstantPoolOffset;
             offset += 6; // access_flags, this_class, super_class
             int interfacesCount = readU2(offset);

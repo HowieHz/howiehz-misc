@@ -7,5 +7,8 @@
     "build": "node scripts/build.js",
     "clean": "node scripts/clean.js",
     "sync:public": "node scripts/sync-public-jar.js"
+  },
+  "engines": {
+    "node": "^22 || >=24"
   }
 }

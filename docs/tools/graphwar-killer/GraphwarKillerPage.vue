@@ -1031,6 +1031,7 @@ const {
   curvePoints: liveClickPreviewCurvePoints,
   dispose: disposeLiveClickPreview,
   enabled: liveClickPreviewEnabled,
+  inProgress: liveClickPreviewInProgress,
   label: liveClickPreviewLabel,
   lineSegments: liveClickPreviewLineSegments,
   point: liveClickPreviewPoint,
@@ -1092,6 +1093,12 @@ const liveClickPreviewRenderedStatus = computed(() =>
     : locale.status.liveClickPreview.rendered(formatElapsedDuration(liveClickPreviewRenderedElapsedMs.value)),
 );
 const activeToolHint = computed(() => {
+  if (liveClickPreviewInProgress.value) {
+    return {
+      kind: "warning" as const,
+      message: locale.status.liveClickPreview.inProgress,
+    };
+  }
   if (liveClickPreviewRenderedStatus.value) {
     return {
       kind: "success" as const,

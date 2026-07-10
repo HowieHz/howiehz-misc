@@ -74,6 +74,7 @@ export const graphwarKillerLocale = {
       solverPath: "左键先点自己士兵中心；再点路径点中心；左键拖动路径点微调，右键点路径点删除，右键空白处撤回最近一个",
     },
     liveClickPreview: {
+      inProgress: "正在计算实时预览……",
       rendered: (elapsed) => `已渲染实时预览，耗时 ${elapsed}`,
     },
     calculation: {

@@ -105,6 +105,7 @@ export const graphwarKillerLocale = {
         "Left-click your soldier's center first, then path-point centers. Drag path points to fine-tune them, right-click a point to delete it, or right-click empty space to undo the latest point.",
     },
     liveClickPreview: {
+      inProgress: "Calculating live preview...",
       rendered: (elapsed) => `Rendered live preview in ${elapsed}`,
     },
     calculation: {

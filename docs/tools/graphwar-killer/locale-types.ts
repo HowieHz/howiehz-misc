@@ -156,6 +156,7 @@ export interface GraphwarKillerLocale {
       solverPath: string;
     };
     liveClickPreview: {
+      inProgress: string;
       rendered: (elapsed: string) => string;
     };
     calculation: {

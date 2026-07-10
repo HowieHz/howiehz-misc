@@ -98,6 +98,8 @@ interface GraphwarLiveClickPreviewOptions {
 export interface GraphwarLiveClickPreviewController {
   /** 实时点击预览是否启用。 */
   enabled: Ref<boolean>;
+  /** 最新一次实时预览是否仍在 Worker 中计算。 */
+  inProgress: ReadonlyRef<boolean>;
   /** 当前预览轨迹 SVG polyline points。 */
   curvePoints: ReadonlyRef<string>;
   /** 当前预览点标签。 */
@@ -127,6 +129,7 @@ export function useGraphwarLiveClickPreview(
   // 实时预览会随指针移动持续计算；默认关闭，仅在用户明确开启后运行。
   const enabled = ref(false);
   const curvePoints = ref("");
+  const inProgress = ref(false);
   const renderedElapsedMs = ref<number>();
   const pointerPoint = ref<PixelPoint>();
   const pointerPathPointIndex = ref<number>();
@@ -134,6 +137,7 @@ export function useGraphwarLiveClickPreview(
     workerCount: options.runtime.workerCount,
   });
   let pointerFrame: number | undefined;
+  let renderGeneration = 0;
   let pendingPathPointIndex: number | undefined;
   let pendingPointerPoint: PixelPoint | undefined;
   let renderStatusTimer: number | undefined;
@@ -254,6 +258,8 @@ export function useGraphwarLiveClickPreview(
 
   /** 清理悬停预览时取消待执行帧，避免离开舞台或切模式后旧落点回写。 */
   function clearPointerPoint() {
+    renderGeneration += 1;
+    inProgress.value = false;
     pendingPointerPoint = undefined;
     pendingPathPointIndex = undefined;
     pointerPoint.value = undefined;
@@ -331,16 +337,24 @@ export function useGraphwarLiveClickPreview(
   watch(
     renderInput,
     (input) => {
+      renderGeneration += 1;
+      const generation = renderGeneration;
       if (!input) {
+        inProgress.value = false;
         curvePoints.value = "";
         clearRenderedStatus();
         runner.cancel();
         return;
       }
 
+      inProgress.value = true;
       void runner
         .render(input)
         .then((result) => {
+          if (generation !== renderGeneration) {
+            return;
+          }
+          inProgress.value = false;
           curvePoints.value = result.curvePoints;
           if (result.curvePoints) {
             showRenderedStatus(result.elapsedMs);
@@ -349,6 +363,10 @@ export function useGraphwarLiveClickPreview(
           }
         })
         .catch((error: unknown) => {
+          if (generation !== renderGeneration) {
+            return;
+          }
+          inProgress.value = false;
           if (!isGraphwarLiveClickPreviewCancelledError(error)) {
             curvePoints.value = "";
             clearRenderedStatus();
@@ -382,6 +400,7 @@ export function useGraphwarLiveClickPreview(
     curvePoints,
     dispose,
     enabled,
+    inProgress,
     label,
     lineSegments,
     point,

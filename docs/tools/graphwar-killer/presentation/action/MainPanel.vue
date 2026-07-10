@@ -6,8 +6,8 @@ import type { GraphwarKillerLocale } from "../../locale-types";
 import { getInputValue } from "../dom/input";
 
 interface GraphwarActionPanelStatus {
-  /** 状态样式；实时预览完成用 success，普通工具提示用 info。 */
-  kind: "info" | "success";
+  /** 状态样式；实时预览计算用 warning，完成用 success，普通工具提示用 info。 */
+  kind: "info" | "success" | "warning";
   /** 展示在操作栏标题右侧的状态文本。 */
   message: string;
 }
@@ -100,7 +100,10 @@ function handleObstacleBrushDiameterInput(event: Event) {
         role="status"
         aria-live="polite"
         :title="panel.activeToolHint.message"
-        :class="{ 'graphwar-killer__label-status--success': panel.activeToolHint.kind === 'success' }"
+        :class="{
+          'graphwar-killer__label-status--success': panel.activeToolHint.kind === 'success',
+          'graphwar-killer__label-status--warning': panel.activeToolHint.kind === 'warning',
+        }"
       >
         {{ panel.activeToolHint.message }}
       </span>
@@ -410,6 +413,11 @@ function handleObstacleBrushDiameterInput(event: Event) {
 
 .graphwar-killer__label-row > .graphwar-killer__label-status--success {
   color: #15803d;
+  font-weight: 700;
+}
+
+.graphwar-killer__label-row > .graphwar-killer__label-status--warning {
+  color: #b45309;
   font-weight: 700;
 }
 

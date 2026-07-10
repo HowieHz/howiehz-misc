@@ -1,4 +1,5 @@
 import {
+  GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
   GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
   GRAPHWAR_PLANE_HEIGHT,
@@ -195,12 +196,8 @@ const GRAPHWAR_STEP_GLITCH_MIN_STEP = createGraphwarStepGlitchMinStep();
 // 一阶 RK4 更新量是 h*(k1 + 2*k2 + 2*k3 + k4)/6。漏洞门函数临界时，
 // 4 次采样里可能只有部分 k 取到 D，其余近似 0；因此有效位移是 factor*h*D。
 // 权重 {1, 2, 2, 1}/6 的非零子集和去重后只有这六档：1/6、1/3、1/2、2/3、5/6、1。
-// 后面按 D = ΔY / (factor * minStep) 生成候选，再用同一采样器回放选最接近目标 y 的那档。
+// 每个 x 窗口按 D = ΔY / (factor * minStep) 回放六档，只从恰好一次漏洞跳的候选中择优。
 const STEP_GLITCH_RK4_CONTRIBUTION_FACTORS = [1, 5 / 6, 2 / 3, 1 / 2, 1 / 3, 1 / 6] as const;
-// x 右门按 Graphwar 缩步序列枚举；太短会被 0.01 粗步直接跨过，模拟回放会自然淘汰。
-const STEP_GLITCH_WINDOW_WIDTHS = createStepGlitchWindowWidths();
-// Graphwar 原版士兵命中判定使用半径平方比较；漏洞候选也按同一游戏坐标半径判断是否经过目标圈。
-const STEP_GLITCH_TARGET_HIT_RADIUS_SQUARED = GRAPHWAR_GAME_SOLDIER_RADIUS ** 2;
 
 interface StepGlitchCandidateContext {
   baseDeltaYs: readonly (number | undefined)[];
@@ -474,7 +471,7 @@ function selectStepGlitchSegmentCandidate(
   context: StepGlitchCandidateContext,
 ) {
   const replacementDeltaY = createStepGlitchReplacementDeltaY(options, formulaPoints, context) ?? context.deltaY;
-  const candidates = createStepGlitchSegmentCandidates(
+  const source = createStepGlitchCandidateSource(
     options,
     formulaPoints,
     context.segmentIndex,
@@ -482,79 +479,103 @@ function selectStepGlitchSegmentCandidate(
     replacementDeltaY,
     context.mask,
   );
-  if (candidates.length === 0) {
+  if (!source) {
     return undefined;
   }
 
-  let bestSegment: StepGlitchSegment | undefined;
-  let bestError = Number.POSITIVE_INFINITY;
-  let bestWindowWidth = Number.NEGATIVE_INFINITY;
-  for (const candidate of candidates) {
-    const candidateSegments = [...context.baseSegments];
-    const candidateDeltaYs = [...context.baseDeltaYs];
-    candidateSegments[context.segmentIndex] = candidate;
-    candidateDeltaYs[context.segmentIndex] = context.deltaYOverride;
-    const formulaEvaluation = createTrajectoryFormulaEvaluation(
-      options,
-      formulaPoints,
-      context.signEpsilon,
-      candidateSegments,
-      candidateDeltaYs,
-    );
-    const compiledMaterials = compileGraphwarFormulaMaterials(
-      formulaPoints,
-      options.settings.steepness,
-      options.settings.algorithm,
-      formulaEvaluation,
-    );
-    const sample = sampleGraphwarTrajectory({
-      algorithm: options.settings.algorithm,
-      bounds: options.bounds,
-      equation: options.settings.equation,
-      compiledFormulaMaterials: compiledMaterials,
-      formulaEvaluation,
-      initialState: context.initialState,
-      points: formulaPoints,
-      shouldStop: (point) => point.x >= candidate.endX,
-      soldierCenter: context.soldierCenter,
-      steepness: options.settings.steepness,
-    });
-    const landingPoint = sample.stopReason === "stopped" ? sample.points[sample.points.length - 1] : undefined;
-    if (
-      !landingPoint ||
-      !Number.isFinite(landingPoint.y) ||
-      !stepGlitchCandidateHitsTargetCircle(sample.points, candidate)
-    ) {
+  // 从 0.01 开始逐档缩半；当前窗口出现单跳候选后立即采用，不再测试更窄窗口。
+  for (let windowWidth = GRAPHWAR_STEP_SIZE; windowWidth >= GRAPHWAR_STEP_GLITCH_MIN_STEP; windowWidth /= 2) {
+    const windowedJump = createStepGlitchJumpWithWindowWidth(source.jump, windowWidth, options.settings.decimalPlaces);
+    let bestSegment: StepGlitchSegment | undefined;
+    let bestError = Number.POSITIVE_INFINITY;
+    for (const factor of STEP_GLITCH_RK4_CONTRIBUTION_FACTORS) {
+      const candidate = createStepGlitchSegmentFromJump(
+        windowedJump,
+        source.targetY,
+        source.gateY,
+        replacementDeltaY,
+        factor,
+      );
+      const sample = sampleStepGlitchCandidate(options, formulaPoints, context, candidate);
+      const landingPoint = sample.stopReason === "stopped" ? sample.points[sample.points.length - 1] : undefined;
+      if (!landingPoint || !Number.isFinite(landingPoint.y) || countStepGlitchJumps(sample.points, candidate) !== 1) {
+        continue;
+      }
+
+      const error = Math.abs(landingPoint.y - candidate.targetY);
+      if (error < bestError) {
+        bestError = error;
+        bestSegment = candidate;
+      }
+    }
+    if (bestSegment) {
+      return bestSegment;
+    }
+  }
+  return undefined;
+}
+
+function sampleStepGlitchCandidate(
+  options: {
+    bounds: GraphBounds;
+    points: readonly GraphPoint[];
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+  formulaPoints: readonly GraphPoint[],
+  context: StepGlitchCandidateContext,
+  candidate: StepGlitchSegment,
+) {
+  const candidateSegments = [...context.baseSegments];
+  const candidateDeltaYs = [...context.baseDeltaYs];
+  candidateSegments[context.segmentIndex] = candidate;
+  candidateDeltaYs[context.segmentIndex] = context.deltaYOverride;
+  const formulaEvaluation = createTrajectoryFormulaEvaluation(
+    options,
+    formulaPoints,
+    context.signEpsilon,
+    candidateSegments,
+    candidateDeltaYs,
+  );
+  const compiledMaterials = compileGraphwarFormulaMaterials(
+    formulaPoints,
+    options.settings.steepness,
+    options.settings.algorithm,
+    formulaEvaluation,
+  );
+  return sampleGraphwarTrajectory({
+    algorithm: options.settings.algorithm,
+    bounds: options.bounds,
+    equation: options.settings.equation,
+    compiledFormulaMaterials: compiledMaterials,
+    formulaEvaluation,
+    initialState: context.initialState,
+    points: formulaPoints,
+    shouldStop: (point) => point.x >= candidate.endX,
+    soldierCenter: context.soldierCenter,
+    steepness: options.settings.steepness,
+  });
+}
+
+function countStepGlitchJumps(points: readonly GraphPoint[], candidate: StepGlitchSegment) {
+  let jumpCount = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const point = points[index];
+    if (point.x < candidate.startX || previous.x > candidate.endX) {
       continue;
     }
 
-    const error = Math.abs(landingPoint.y - candidate.targetY);
-    const windowWidth = candidate.endX - candidate.startX;
-    // 同样落点误差时保留更长 x 窗口，右门通常能用更少小数位输出。
-    if (error < bestError || (error === bestError && windowWidth > bestWindowWidth)) {
-      bestError = error;
-      bestWindowWidth = windowWidth;
-      bestSegment = candidate;
+    const dx = point.x - previous.x;
+    const dy = point.y - previous.y;
+    // 官方 ODE 只会在 x 步长到达下限时接受仍然超距的点；每个这样的相邻段就是一次漏洞跳。
+    if (dx <= GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE && dx * dx + dy * dy > GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED) {
+      jumpCount += 1;
+      if (jumpCount > 1) {
+        return jumpCount;
+      }
     }
   }
-  return bestSegment;
-}
-
-function stepGlitchCandidateHitsTargetCircle(points: readonly GraphPoint[], candidate: StepGlitchSegment) {
-  if (!Number.isFinite(candidate.targetX) || !Number.isFinite(candidate.targetY)) {
-    return false;
-  }
-
-  // 从第 1 个采样点开始对齐 Graphwar 的命中循环；起点不参与士兵命中判定。
-  for (let index = 1; index < points.length; index += 1) {
-    const point = points[index];
-    const dx = point.x - candidate.targetX;
-    const dy = point.y - candidate.targetY;
-    if (dx * dx + dy * dy < STEP_GLITCH_TARGET_HIT_RADIUS_SQUARED) {
-      return true;
-    }
-  }
-  return false;
+  return jumpCount;
 }
 
 function createStepGlitchReplacementDeltaY(
@@ -706,7 +727,6 @@ function sameStepGlitchSegment(left: StepGlitchSegment | undefined, right: StepG
     left.endX === right.endX &&
     left.gateY === right.gateY &&
     left.startX === right.startX &&
-    left.targetX === right.targetX &&
     left.targetY === right.targetY
   );
 }
@@ -726,14 +746,6 @@ function createGraphwarStepGlitchMinStep() {
     step /= 2;
   }
   return step;
-}
-
-function createStepGlitchWindowWidths() {
-  const widths: number[] = [];
-  for (let width = GRAPHWAR_STEP_SIZE; width >= GRAPHWAR_STEP_GLITCH_MIN_STEP; width /= 2) {
-    widths.push(width);
-  }
-  return widths;
 }
 
 function createStepGlitchSegments(
@@ -783,7 +795,13 @@ function createStepGlitchSegments(
 
 type StepGlitchJump = NonNullable<ReturnType<typeof createStepGlitchJump>>;
 
-function createStepGlitchSegmentCandidates(
+interface StepGlitchCandidateSource {
+  gateY: number;
+  jump: StepGlitchJump;
+  targetY: number;
+}
+
+function createStepGlitchCandidateSource(
   options: {
     bounds: GraphBounds;
     points: readonly GraphPoint[];
@@ -793,7 +811,7 @@ function createStepGlitchSegmentCandidates(
   decimalPlaces: number,
   replacementDeltaY: number,
   mask: Uint8Array,
-): StepGlitchSegment[] {
+): StepGlitchCandidateSource | undefined {
   const previous = options.points[segmentIndex];
   const target = options.points[segmentIndex + 1];
   const formulaTargetY = formulaPoints[segmentIndex + 1]?.y ?? target.y;
@@ -801,23 +819,16 @@ function createStepGlitchSegmentCandidates(
   const gateY = createStepGlitchFormulaGateY(targetY, replacementDeltaY, decimalPlaces);
   const jump = createStepGlitchJump(previous.x, target.x);
   if (!jump) {
-    return [];
+    return undefined;
   }
 
   const startX = createStepGlitchFormulaXGate(jump.startX, decimalPlaces);
-  // 障碍识别必须跟最终公式里的 x 左门对齐；raw target.x 只保留给目标命中圆中心。
+  // 障碍识别必须跟最终公式里的 x 左门对齐，不能继续使用舍入前的 target.x。
   if (!stepGlitchVerticalLineHitsObstacle(startX, previous.y, target.y, options.bounds, mask)) {
-    return [];
+    return undefined;
   }
 
-  const candidates: StepGlitchSegment[] = [];
-  for (const windowWidth of STEP_GLITCH_WINDOW_WIDTHS) {
-    const windowedJump = createStepGlitchJumpWithWindowWidth(jump, windowWidth, decimalPlaces);
-    for (const factor of STEP_GLITCH_RK4_CONTRIBUTION_FACTORS) {
-      candidates.push(createStepGlitchSegmentFromJump(windowedJump, targetY, gateY, replacementDeltaY, factor));
-    }
-  }
-  return candidates;
+  return { gateY, jump, targetY };
 }
 
 function createStepGlitchFormulaTargetY(targetY: number, decimalPlaces: number) {
@@ -887,7 +898,6 @@ function createStepGlitchSegmentFromJump(
     endX: jump.endX,
     gateY,
     startX: jump.startX,
-    targetX: jump.checkX,
     targetY,
   };
 }
@@ -911,7 +921,7 @@ function createStepGlitchJump(previousX: number, targetX: number) {
   }
 
   // 窗口只保留一个原始最大步长，避免后续反向段把旧漏洞门重新打开。
-  return { checkX: targetX, endX: targetX + GRAPHWAR_STEP_SIZE, startX: targetX, step: GRAPHWAR_STEP_GLITCH_MIN_STEP };
+  return { endX: targetX + GRAPHWAR_STEP_SIZE, startX: targetX, step: GRAPHWAR_STEP_GLITCH_MIN_STEP };
 }
 
 function stepGlitchVerticalLineHitsObstacle(

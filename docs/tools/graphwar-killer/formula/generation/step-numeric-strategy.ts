@@ -25,9 +25,7 @@ export interface StepGlitchSegment {
   gateY: number;
   /** 最终公式里的 x 左门；尽量按用户小数位贴近目标点，但必须在文本回放中可复现。 */
   startX: number;
-  /** 当前路径段目标中心 x；用于命中圈，不随公式 x 门舍入移动。 */
-  targetX: number;
-  /** 当前路径段目标中心 y；用于 D 计算、命中圈和候选误差。 */
+  /** 当前路径段目标中心 y；用于 D 计算和候选落点误差。 */
   targetY: number;
 }
 

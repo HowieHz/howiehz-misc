@@ -425,7 +425,6 @@ function createCompiledStepGlitchSegment(
     endX: segment.endX,
     gateY: createCompiledFormulaYCenter(segment.gateY, options),
     startX: segment.startX,
-    targetX: segment.targetX,
     targetY: createCompiledFormulaYCenter(segment.targetY, options),
   };
 }

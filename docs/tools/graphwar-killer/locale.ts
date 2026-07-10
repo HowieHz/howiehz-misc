@@ -750,7 +750,7 @@ export const graphwarKillerLocale = {
       skipUnknownCharactersTitle: "Graphwar 会跳过未知字符。",
       stepGlitchMode: "漏洞模式",
       stepGlitchModeTitle:
-        "仅在阶跃函数的 y'= 模式下生效；需要已有障碍识别结果。命中竖直障碍段时会尝试生成漏洞瞬移项。",
+        "仅在阶跃函数的 y'= 模式下生效；需要已有障碍识别结果。命中竖直障碍段时会尝试生成漏洞瞬移项。建议通过 Agent 读取游戏信息，需要准确的士兵位置。",
       stepSteepness: "阶跃陡峭度 a",
       stepSteepnessAriaLabel: "阶跃函数陡峭度 a",
       stepSteepnessTitle: "阶跃函数的陡峭度参数 a；数值越大，拐点越陡，但越容易出现数值溢出。",

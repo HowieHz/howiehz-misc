@@ -849,7 +849,7 @@ export const graphwarKillerLocale = {
       skipUnknownCharactersTitle: "Graphwar skips unknown characters.",
       stepGlitchMode: "Glitch mode",
       stepGlitchModeTitle:
-        "Only applies to step y'= mode and requires an existing obstacle recognition result. When a vertical obstacle segment is hit, it attempts to generate a glitch jump term.",
+        "Only applies to step y'= mode and requires an existing obstacle recognition result. When a vertical obstacle segment is hit, it attempts to generate a glitch jump term. Using Agent to read game information is recommended because accurate soldier positions are required.",
       stepSteepness: "Step steepness a",
       stepSteepnessAriaLabel: "Step function steepness a",
       stepSteepnessTitle:

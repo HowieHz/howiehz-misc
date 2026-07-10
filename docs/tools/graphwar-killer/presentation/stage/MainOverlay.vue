@@ -130,8 +130,8 @@ interface GraphwarStageOverlayLiveClickPreviewLayer {
   label: string;
   /** 实时点击预览连接线。 */
   lineSegments: readonly GraphwarStageOverlayLineSegment[];
-  /** 实时点击预览点。 */
-  point?: PixelPoint;
+  /** 旧曲线绑定点在前、当前鼠标点在后的实时预览点。 */
+  points: readonly PixelPoint[];
 }
 
 /** 智能寻路搜索动画和阻塞提示图层。 */
@@ -497,17 +497,20 @@ withDefaults(
         {{ index === 0 ? overlay.path.selfLabel : index }}
       </text>
     </g>
-    <g v-if="overlay.liveClickPreview.point">
+    <g
+      v-for="(point, index) in overlay.liveClickPreview.points"
+      :key="`${keyPrefix}live-click-preview-point-${index}`"
+    >
       <circle
         class="graphwar-killer__point graphwar-killer__point--live-click-preview"
-        :cx="overlay.liveClickPreview.point.x"
-        :cy="overlay.liveClickPreview.point.y"
+        :cx="point.x"
+        :cy="point.y"
         :r="overlay.path.selectionRadius"
       />
       <text
         class="graphwar-killer__point-label"
-        :x="overlay.liveClickPreview.point.x + overlay.path.selectionRadius + pathPointLabelGapSvgPixels"
-        :y="overlay.liveClickPreview.point.y - overlay.path.selectionRadius - pathPointLabelGapSvgPixels"
+        :x="point.x + overlay.path.selectionRadius + pathPointLabelGapSvgPixels"
+        :y="point.y - overlay.path.selectionRadius - pathPointLabelGapSvgPixels"
       >
         {{ overlay.liveClickPreview.label }}
       </text>

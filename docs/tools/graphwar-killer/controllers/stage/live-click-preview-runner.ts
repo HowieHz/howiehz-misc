@@ -104,7 +104,6 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
       slot.activeTask = undefined;
       settleTaskAsError(task, error instanceof Error ? error : new Error(String(error)));
       resetWorkerSlot(slot);
-      startQueuedTaskIfPossible();
     }
     return true;
   }
@@ -115,11 +114,16 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     settleTaskAsCancelled(queuedTask);
     queuedTask = undefined;
     queuedTaskInput = undefined;
-    for (const slot of workerSlots) {
-      if (slot.activeTask) {
-        slot.activeTask.cancelled = true;
-        settleTaskAsCancelled(slot.activeTask);
+    // 上下文已经失效时，旧任务既不能展示也不应继续占满池；空闲热 Worker 仍可复用。
+    for (let index = workerSlots.length - 1; index >= 0; index -= 1) {
+      const slot = workerSlots[index];
+      const task = slot.activeTask;
+      if (!task) {
+        continue;
       }
+      slot.activeTask = undefined;
+      settleTaskAsCancelled(task);
+      resetWorkerSlot(slot);
     }
   }
 
@@ -173,8 +177,13 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>,
   ) {
     const task = slot.activeTask;
-    const response = event.data;
-    if (!task || task.id !== response.id) {
+    if (!task) {
+      return;
+    }
+    const response: unknown = event.data;
+    if (!isWorkerResponseForRequest(response, task.id)) {
+      // 当前 slot 同时只处理一个请求；id/envelope 不匹配说明 Worker 协议已失效，沿用现有降级路径。
+      handleWorkerFailure(slot);
       return;
     }
 
@@ -213,13 +222,16 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
       return;
     }
 
+    // 先原子移出队列，避免 postMessage 同步抛错时重入并再次投递同一任务。
     const task = queuedTask;
     const input = queuedTaskInput;
+    queuedTask = undefined;
+    queuedTaskInput = undefined;
     if (startTaskIfPossible(task, input)) {
-      queuedTask = undefined;
-      queuedTaskInput = undefined;
       return;
     }
+    queuedTask = task;
+    queuedTaskInput = input;
     trimIdleWorkerSlots();
   }
 
@@ -391,4 +403,25 @@ function cloneBoundsRect(rect: BoundsRect) {
 
 function cloneGraphPoint(point: GraphPoint) {
   return createGraphPoint(point.x, point.y);
+}
+
+function isWorkerResponseForRequest(
+  value: unknown,
+  requestId: number,
+): value is GraphwarLiveClickPreviewWorkerResponse {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const response = value as Record<string, unknown>;
+  if (response.id !== requestId) {
+    return false;
+  }
+  if (response.type === "error") {
+    return typeof response.message === "string";
+  }
+  if (response.type !== "success" || !response.result || typeof response.result !== "object") {
+    return false;
+  }
+  const result = response.result as Record<string, unknown>;
+  return typeof result.curvePoints === "string" && typeof result.elapsedMs === "number";
 }

@@ -1,6 +1,7 @@
 import { computed, ref, watch, type Ref } from "vue";
 
 import { imageToGraphPoint, normalizePathPoint } from "../../core/geometry";
+import { createGraphPoint } from "../../core/types";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -95,6 +96,30 @@ interface GraphwarLiveClickPreviewOptions {
   getSelfLabel: () => string;
 }
 
+type GraphwarLiveClickPreviewExpressionContext = Omit<
+  Extract<GraphwarLiveClickPreviewRenderInput, { type: "expression" }>,
+  "soldierCenter"
+>;
+type GraphwarLiveClickPreviewFormulaContext = Extract<GraphwarLiveClickPreviewRenderInput, { type: "formula" }>;
+type GraphwarLiveClickPreviewRenderContext =
+  | GraphwarLiveClickPreviewExpressionContext
+  | GraphwarLiveClickPreviewFormulaContext;
+
+interface GraphwarLiveClickPreviewRenderRequest {
+  /** 对象身份用于拒绝公式、路径或碰撞设置变化前的迟到结果。 */
+  context: GraphwarLiveClickPreviewRenderContext;
+  input: GraphwarLiveClickPreviewRenderInput;
+  /** 原始 pointer 变化先于 rAF 落位，用它避免旧结果提前结束 warning。 */
+  pointerIntent: number;
+  /** 本次 Worker 输入对应的最终像素落位点。 */
+  point: PixelPoint;
+}
+
+interface GraphwarLiveClickPreviewSnapshot {
+  curvePoints: string;
+  point: PixelPoint;
+}
+
 export interface GraphwarLiveClickPreviewController {
   /** 实时点击预览是否启用。 */
   enabled: Ref<boolean>;
@@ -106,8 +131,8 @@ export interface GraphwarLiveClickPreviewController {
   label: ReadonlyRef<string>;
   /** 从路径尾点到预览点的提示线段；只表达追加关系，不表达实际函数轨迹。 */
   lineSegments: ReadonlyRef<GraphwarPathfindingLineSegment[]>;
-  /** 当前左键点击会追加或落位的预览点。 */
-  point: ReadonlyRef<PixelPoint | undefined>;
+  /** 预览点按旧曲线绑定点、当前鼠标点的绘制顺序排列；坐标相同时只含当前点。 */
+  points: ReadonlyRef<readonly PixelPoint[]>;
   /** 最近一次实时预览渲染耗时；短时间后自动清空，用于操作栏临时状态。 */
   renderedElapsedMs: ReadonlyRef<number | undefined>;
   /** 清理悬停预览并取消待执行的绘制帧。 */
@@ -128,7 +153,8 @@ export function useGraphwarLiveClickPreview(
 ): GraphwarLiveClickPreviewController {
   // 实时预览会随指针移动持续计算；默认关闭，仅在用户明确开启后运行。
   const enabled = ref(false);
-  const curvePoints = ref("");
+  const displayedPreview = ref<GraphwarLiveClickPreviewSnapshot>();
+  const curvePoints = computed(() => displayedPreview.value?.curvePoints ?? "");
   const inProgress = ref(false);
   const renderedElapsedMs = ref<number>();
   const pointerPoint = ref<PixelPoint>();
@@ -136,9 +162,16 @@ export function useGraphwarLiveClickPreview(
   const runner = createGraphwarLiveClickPreviewRunner({
     workerCount: options.runtime.workerCount,
   });
+  let activeRenderContext: GraphwarLiveClickPreviewRenderContext | undefined;
+  let latestPublishedSequence = 0;
+  let latestRequestedSequence = 0;
+  let nextRenderSequence = 1;
   let pointerFrame: number | undefined;
-  let renderGeneration = 0;
+  let committedPointerIntent = 0;
+  let latestPointerIntent = 0;
+  let renderSession = 0;
   let pendingPathPointIndex: number | undefined;
+  let pendingPointerIntent: number | undefined;
   let pendingPointerPoint: PixelPoint | undefined;
   let renderStatusTimer: number | undefined;
 
@@ -168,59 +201,34 @@ export function useGraphwarLiveClickPreview(
     return options.path.createLineSegments([start, previewPoint]);
   });
 
-  const renderInput = computed<GraphwarLiveClickPreviewRenderInput | undefined>(() => {
+  const points = computed<readonly PixelPoint[]>(() => {
+    const currentPoint = point.value;
+    if (!currentPoint) {
+      return [];
+    }
+    const renderedPoint = displayedPreview.value?.point;
+    return renderedPoint && !pixelPointsEqual(renderedPoint, currentPoint)
+      ? [renderedPoint, currentPoint]
+      : [currentPoint];
+  });
+
+  const renderContext = computed<GraphwarLiveClickPreviewRenderContext | undefined>(() => {
+    return createRenderContext();
+  });
+  const renderRequest = computed<GraphwarLiveClickPreviewRenderRequest | undefined>(() => {
     const previewPoint = point.value;
-    const bounds = options.geometry.getBounds();
-    if (!previewPoint || !bounds || options.settings.effectiveSmartPathfindingEnabled.value) {
+    if (!previewPoint) {
       return undefined;
     }
-
-    if (options.settings.toolWorkflowMode.value === "simulator") {
-      if (!options.simulator.formulaText.value.trim()) {
-        return undefined;
-      }
-
-      const collision = options.trajectory.getCollisionSettings();
-      return {
-        bounds,
-        boundsRect: options.geometry.boundsRect.value,
-        ...(collision ? { collision } : {}),
-        equation: options.settings.equationMode.value,
-        expression: options.simulator.formulaText.value,
-        ...(options.simulator.launchAngleRadians.value === undefined
-          ? {}
-          : { launchAngleRadians: options.simulator.launchAngleRadians.value }),
-        parser: {
-          parseDerivativeAsY: options.simulator.parseDerivativeAsY.value,
-          skipUnknownCharacters: options.simulator.skipUnknownCharacters.value,
-        },
-        soldierCenter: imageToGraphPoint(previewPoint, bounds, options.geometry.boundsRect.value),
-        type: "expression",
-      };
-    }
-
-    if (
-      options.path.pathPixels.value.length === 0 ||
-      !options.settings.precisionValid.value ||
-      (options.settings.algorithmMode.value === "step" && !options.settings.steepnessValid.value) ||
-      (options.settings.algorithmMode.value === "abs" && options.settings.equationMode.value === "ddy") ||
-      options.settings.isEquationModeDisabled(options.settings.equationMode.value)
-    ) {
+    const context = renderContext.value;
+    if (!context) {
       return undefined;
     }
-
-    const previewPathPoints = [
-      ...options.path.mappedPathPoints.value,
-      imageToGraphPoint(previewPoint, bounds, options.geometry.boundsRect.value),
-    ];
-    const collision = options.trajectory.getCollisionSettings();
     return {
-      bounds,
-      boundsRect: options.geometry.boundsRect.value,
-      ...(collision ? { collision } : {}),
-      points: previewPathPoints,
-      settings: options.trajectory.formulaSettings.value,
-      type: "formula",
+      context,
+      input: createRenderInput(context, previewPoint),
+      pointerIntent: committedPointerIntent,
+      point: previewPoint,
     };
   });
 
@@ -233,8 +241,10 @@ export function useGraphwarLiveClickPreview(
 
   /** 高频 pointermove 只保留最新落点，每个浏览器绘制帧最多触发一次轨迹预览重算。 */
   function schedulePointerPoint(point: PixelPoint, pathPointIndex: number | undefined) {
+    latestPointerIntent += 1;
     pendingPointerPoint = point;
     pendingPathPointIndex = pathPointIndex;
+    pendingPointerIntent = latestPointerIntent;
     if (pointerFrame !== undefined) {
       return;
     }
@@ -242,9 +252,16 @@ export function useGraphwarLiveClickPreview(
     pointerFrame = requestAnimationFrame(() => {
       const point = pendingPointerPoint;
       const pathPointIndex = pendingPathPointIndex;
+      const pointerIntent = pendingPointerIntent;
       pointerFrame = undefined;
       pendingPointerPoint = undefined;
       pendingPathPointIndex = undefined;
+      pendingPointerIntent = undefined;
+      if (!point || pointerIntent === undefined) {
+        return;
+      }
+      // 请求版本必须和本帧实际提交的坐标成对，不能借用尚未落位的新 pointer intent。
+      committedPointerIntent = pointerIntent;
       pointerPoint.value = point;
       pointerPathPointIndex.value = pathPointIndex;
     });
@@ -252,25 +269,24 @@ export function useGraphwarLiveClickPreview(
 
   /** 立即记录当前指针点，用于 pointerdown 先同步命中状态。 */
   function setPointerPoint(point: PixelPoint, pathPointIndex: number | undefined) {
+    latestPointerIntent += 1;
+    committedPointerIntent = latestPointerIntent;
     pointerPoint.value = point;
     pointerPathPointIndex.value = pathPointIndex;
   }
 
   /** 清理悬停预览时取消待执行帧，避免离开舞台或切模式后旧落点回写。 */
   function clearPointerPoint() {
-    renderGeneration += 1;
-    inProgress.value = false;
     pendingPointerPoint = undefined;
     pendingPathPointIndex = undefined;
+    pendingPointerIntent = undefined;
     pointerPoint.value = undefined;
     pointerPathPointIndex.value = undefined;
     if (pointerFrame !== undefined) {
       cancelAnimationFrame(pointerFrame);
       pointerFrame = undefined;
     }
-    curvePoints.value = "";
-    clearRenderedStatus();
-    runner.cancel();
+    invalidateRenderSession();
   }
 
   /** 路径点或点半径变化时刷新命中缓存，保持悬停预览和当前路径状态一致。 */
@@ -335,27 +351,57 @@ export function useGraphwarLiveClickPreview(
   }
 
   watch(
-    renderInput,
-    (input) => {
-      renderGeneration += 1;
-      const generation = renderGeneration;
-      if (!input) {
-        inProgress.value = false;
-        curvePoints.value = "";
-        clearRenderedStatus();
-        runner.cancel();
+    renderRequest,
+    (request) => {
+      // request 已携带其 context；无预览点时不要订阅或复制整条路径上下文。
+      const currentContext = request?.context;
+      const contextChanged = currentContext !== activeRenderContext;
+      if (contextChanged) {
+        activeRenderContext = currentContext;
+        invalidateRenderSession();
+      }
+      if (!request) {
+        if (!contextChanged) {
+          invalidateRenderSession();
+        }
         return;
       }
 
+      const sequence = nextRenderSequence;
+      nextRenderSequence += 1;
+      latestRequestedSequence = sequence;
+      const session = renderSession;
       inProgress.value = true;
       void runner
-        .render(input)
+        .render(request.input)
         .then((result) => {
-          if (generation !== renderGeneration) {
+          const currentPoint = point.value;
+          if (
+            !currentPoint ||
+            session !== renderSession ||
+            request.context !== activeRenderContext ||
+            request.context !== renderContext.value ||
+            sequence <= latestPublishedSequence
+          ) {
             return;
           }
+
+          latestPublishedSequence = sequence;
+          displayedPreview.value = result.curvePoints
+            ? {
+                curvePoints: result.curvePoints,
+                point: request.point,
+              }
+            : undefined;
+          if (
+            sequence !== latestRequestedSequence ||
+            request.pointerIntent !== latestPointerIntent ||
+            !pixelPointsEqual(request.point, currentPoint)
+          ) {
+            return;
+          }
+
           inProgress.value = false;
-          curvePoints.value = result.curvePoints;
           if (result.curvePoints) {
             showRenderedStatus(result.elapsedMs);
           } else {
@@ -363,18 +409,114 @@ export function useGraphwarLiveClickPreview(
           }
         })
         .catch((error: unknown) => {
-          if (generation !== renderGeneration) {
+          const currentPoint = point.value;
+          if (
+            !currentPoint ||
+            session !== renderSession ||
+            request.context !== activeRenderContext ||
+            request.context !== renderContext.value ||
+            sequence !== latestRequestedSequence ||
+            request.pointerIntent !== latestPointerIntent ||
+            !pixelPointsEqual(request.point, currentPoint)
+          ) {
             return;
           }
           inProgress.value = false;
           if (!isGraphwarLiveClickPreviewCancelledError(error)) {
-            curvePoints.value = "";
+            displayedPreview.value = undefined;
             clearRenderedStatus();
           }
         });
     },
     { immediate: true },
   );
+
+  /** 结束当前预览会话；上下文变化和交互失效都必须阻止迟到 Promise 回写。 */
+  function invalidateRenderSession() {
+    renderSession += 1;
+    latestRequestedSequence = 0;
+    inProgress.value = false;
+    displayedPreview.value = undefined;
+    clearRenderedStatus();
+    runner.cancel();
+  }
+
+  function createRenderContext(): GraphwarLiveClickPreviewRenderContext | undefined {
+    const bounds = options.geometry.getBounds();
+    if (!bounds || options.settings.effectiveSmartPathfindingEnabled.value) {
+      return undefined;
+    }
+
+    const boundsRect = options.geometry.boundsRect.value;
+    const collision = options.trajectory.getCollisionSettings();
+    const base = {
+      bounds: {
+        maxX: bounds.maxX,
+        maxY: bounds.maxY,
+        minX: bounds.minX,
+        minY: bounds.minY,
+      },
+      boundsRect: {
+        height: boundsRect.height,
+        width: boundsRect.width,
+        x: boundsRect.x,
+        y: boundsRect.y,
+      },
+      ...(collision ? { collision } : {}),
+    };
+    if (options.settings.toolWorkflowMode.value === "simulator") {
+      const expression = options.simulator.formulaText.value;
+      if (!expression.trim()) {
+        return undefined;
+      }
+      return {
+        ...base,
+        equation: options.settings.equationMode.value,
+        expression,
+        ...(options.simulator.launchAngleRadians.value === undefined
+          ? {}
+          : { launchAngleRadians: options.simulator.launchAngleRadians.value }),
+        parser: {
+          parseDerivativeAsY: options.simulator.parseDerivativeAsY.value,
+          skipUnknownCharacters: options.simulator.skipUnknownCharacters.value,
+        },
+        type: "expression",
+      };
+    }
+
+    if (
+      options.path.pathPixels.value.length === 0 ||
+      !options.settings.precisionValid.value ||
+      (options.settings.algorithmMode.value === "step" && !options.settings.steepnessValid.value) ||
+      (options.settings.algorithmMode.value === "abs" && options.settings.equationMode.value === "ddy") ||
+      options.settings.isEquationModeDisabled(options.settings.equationMode.value)
+    ) {
+      return undefined;
+    }
+    return {
+      ...base,
+      // 固定已有路径点；仅鼠标预览点留到每个请求创建时追加。
+      points: options.path.mappedPathPoints.value.map((pathPoint) => createGraphPoint(pathPoint.x, pathPoint.y)),
+      settings: options.trajectory.formulaSettings.value,
+      type: "formula",
+    };
+  }
+
+  function createRenderInput(
+    context: GraphwarLiveClickPreviewRenderContext,
+    previewPoint: PixelPoint,
+  ): GraphwarLiveClickPreviewRenderInput {
+    const graphPoint = imageToGraphPoint(previewPoint, context.bounds, context.boundsRect);
+    return context.type === "expression"
+      ? {
+          ...context,
+          soldierCenter: graphPoint,
+        }
+      : {
+          ...context,
+          points: [...context.points, graphPoint],
+        };
+  }
 
   function showRenderedStatus(elapsedMs: number) {
     renderedElapsedMs.value = elapsedMs;
@@ -403,10 +545,14 @@ export function useGraphwarLiveClickPreview(
     inProgress,
     label,
     lineSegments,
-    point,
+    points,
     renderedElapsedMs,
     refreshPointerPathPointIndex,
     schedulePointerPoint,
     setPointerPoint,
   };
+}
+
+function pixelPointsEqual(left: PixelPoint, right: PixelPoint) {
+  return left.x === right.x && left.y === right.y;
 }

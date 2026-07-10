@@ -1034,7 +1034,7 @@ const {
   inProgress: liveClickPreviewInProgress,
   label: liveClickPreviewLabel,
   lineSegments: liveClickPreviewLineSegments,
-  point: liveClickPreviewPoint,
+  points: liveClickPreviewPoints,
   renderedElapsedMs: liveClickPreviewRenderedElapsedMs,
   refreshPointerPathPointIndex: refreshLiveClickPreviewPointerPathPointIndex,
   schedulePointerPoint: scheduleLiveClickPreviewPointerPoint,
@@ -1622,7 +1622,7 @@ const stageOverlay = computed(() => ({
     curveStrokeColor: trajectoryStrokeColor.value,
     label: liveClickPreviewLabel.value,
     lineSegments: liveClickPreviewLineSegments.value,
-    point: liveClickPreviewPoint.value,
+    points: liveClickPreviewPoints.value,
   },
   obstacles: {
     brushEraseEnabled: obstacleBrushEraseEnabled.value,

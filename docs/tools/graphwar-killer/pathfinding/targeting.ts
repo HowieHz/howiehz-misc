@@ -7,6 +7,7 @@ import {
 /** Graphwar 目标选择规则；页面和寻路流程应复用同一套 x+ 与命中圈语义。 */
 import { imageToGraphPoint, xPlusGoesRight } from "../core/geometry";
 import { clampNumber, nextDownDouble } from "../core/numbers";
+import { graphwarToolDefaults } from "../core/tool/defaults";
 import { createPixelPoint } from "../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
 
@@ -52,6 +53,8 @@ export interface GraphwarSoldierAimCheckResult {
 
 /** 智能寻路目标；几何路径可瞄准推进后的点，弹道仍应命中原命中圈。 */
 export interface GraphwarSmartPathfindingSoldierTarget {
+  /** 主目标失败时可尝试的命中圈 x+ 内边缘；目前只供 Step 单点寻路使用。 */
+  fallbackTargetPoint?: PixelPoint;
   /** 弹道必须命中的目标圈。 */
   hitCircle: GraphwarHitCircle;
   /** 几何路径要连接到的点。 */
@@ -173,13 +176,29 @@ export function createSoldierAimCheckResult(
   return minimumForwardPoint ? { kind: "edge", point: minimumForwardPoint } : undefined;
 }
 
-/** 构造普通智能寻路的士兵目标：路径连到可用瞄点，弹道仍必须打中原命中圈。 */
+/** 构造智能寻路士兵目标：Step 中心失败时可重试命中圈 x+ 边缘，弹道始终验证原命中圈。 */
 export function createSmartPathfindingSoldierTarget(
   startPoint: PixelPoint,
   soldier: GraphwarTargetingSoldier,
   area: GraphwarTargetingArea,
   requireExactCenter = false,
 ): GraphwarSmartPathfindingSoldierTarget | undefined {
+  if (requireExactCenter) {
+    const center = getGraphwarSoldierCenter(soldier);
+    const centerTarget =
+      pointIsInsideTargetBounds(center, area) && graphwarPointAdvances(startPoint, center, area) ? center : undefined;
+    const edgeTarget = createSoldierHitCircleXPlusInnerTargetPoint(startPoint, soldier, area);
+    const targetPoint = centerTarget ?? edgeTarget;
+    if (!targetPoint) {
+      return undefined;
+    }
+    return {
+      ...(centerTarget && edgeTarget ? { fallbackTargetPoint: edgeTarget } : {}),
+      hitCircle: createGraphwarSoldierHitCircle(soldier),
+      targetPoint,
+    };
+  }
+
   const targetPoint = createSearchStartSoldierAimPoint(startPoint, soldier, area, requireExactCenter);
   if (!targetPoint) {
     return undefined;
@@ -189,6 +208,37 @@ export function createSmartPathfindingSoldierTarget(
     hitCircle: createGraphwarSoldierHitCircle(soldier),
     targetPoint,
   };
+}
+
+/** Step 单点寻路的备用目标：靠近命中圈 x+ 边缘，并为目标处纵向尾差预留一个原始平面像素。 */
+function createSoldierHitCircleXPlusInnerTargetPoint(
+  startPoint: PixelPoint,
+  soldier: GraphwarTargetingSoldier,
+  area: GraphwarTargetingArea,
+) {
+  const center = getGraphwarSoldierCenter(soldier);
+  const xPlusIsRight = xPlusGoesRight(area.bounds);
+  const tailInset =
+    graphwarToolDefaults.targetRangePixelTolerance *
+    Math.max(area.boundsRect.width / GRAPHWAR_PLANE_LENGTH, area.boundsRect.height / GRAPHWAR_PLANE_HEIGHT);
+  const innerRadius = soldier.hitRadius - tailInset;
+  if (!(innerRadius > 0)) {
+    return undefined;
+  }
+  const innerEdgeX = center.x + (xPlusIsRight ? innerRadius : -innerRadius);
+  const targetPoint = createPixelPoint(
+    clampNumber(
+      innerEdgeX,
+      area.targetBoundsRect.x,
+      nextDownDouble(area.targetBoundsRect.x + area.targetBoundsRect.width),
+    ),
+    center.y,
+  );
+  return pointIsInsideTargetBounds(targetPoint, area) &&
+    graphwarPointAdvances(startPoint, targetPoint, area) &&
+    graphwarSoldierStrictlyContainsHitPoint(soldier, targetPoint)
+    ? targetPoint
+    : undefined;
 }
 
 /** 按指定起点把 x 不够的目标改为同 y 的最小 double x+ 点；无剩余空间时返回 undefined。 */

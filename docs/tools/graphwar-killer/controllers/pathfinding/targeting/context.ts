@@ -27,7 +27,7 @@ interface GraphwarTargetingContextOptions {
   getTargetBoundsRect: () => BoundsRect | undefined;
   /** 当前路径；第一个点用于识别发射士兵，最后一点用于默认 x+ 起点。 */
   pathPixels: ReadonlyRef<readonly PixelPoint[]>;
-  /** 当前算法是否要求士兵目标严格落在源码中心，不允许命中圈边缘回退。 */
+  /** 当前算法是否要求普通落点使用士兵中心；单点寻路可另带 x+ 边缘 fallback。 */
   requireExactSoldierCenter: () => boolean;
 }
 
@@ -42,7 +42,7 @@ export interface GraphwarTargetingContextController<TSoldier extends GraphwarTar
   createSearchStartSoldierAimPoint: (startPoint: PixelPoint | undefined, soldier: TSoldier) => PixelPoint | undefined;
   /** 从士兵创建命中圆，统一目标选择和弹道命中判定。 */
   createSoldierHitCircle: (soldier: TSoldier) => GraphwarHitCircle;
-  /** 构造普通智能寻路的士兵目标：路径连到可用瞄点，弹道仍必须打中原命中圈。 */
+  /** 构造智能寻路士兵目标；Step 可携带命中圈 x+ 边缘 fallback。 */
   createSmartPathfindingSoldierTarget: (
     startPoint: PixelPoint,
     soldier: TSoldier,

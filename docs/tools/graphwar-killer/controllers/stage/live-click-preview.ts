@@ -124,7 +124,8 @@ export interface GraphwarLiveClickPreviewController {
 export function useGraphwarLiveClickPreview(
   options: GraphwarLiveClickPreviewOptions,
 ): GraphwarLiveClickPreviewController {
-  const enabled = ref(true);
+  // 实时预览会随指针移动持续计算；默认关闭，仅在用户明确开启后运行。
+  const enabled = ref(false);
   const curvePoints = ref("");
   const renderedElapsedMs = ref<number>();
   const pointerPoint = ref<PixelPoint>();

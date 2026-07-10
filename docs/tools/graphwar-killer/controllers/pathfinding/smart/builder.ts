@@ -140,6 +140,11 @@ export function useGraphwarSmartPathfindingBuilder(
     }
 
     const targetPoint = "targetPoint" in target ? target.targetPoint : target;
+    const fallbackTargetPoint = "targetPoint" in target ? target.fallbackTargetPoint : undefined;
+    const targetPoints =
+      fallbackTargetPoint && !samePixelPoint(targetPoint, fallbackTargetPoint)
+        ? [targetPoint, fallbackTargetPoint]
+        : [targetPoint];
     const hitTarget = "targetPoint" in target ? target.hitCircle : target;
     const tolerances = options.input.getTolerances();
     const sourcePath = [...options.input.getPathPixels()];
@@ -170,41 +175,37 @@ export function useGraphwarSmartPathfindingBuilder(
     if (!targetHitCircle) {
       return undefined;
     }
+    const searchBounds = bounds;
+    const searchObstacleMask = obstacleMask;
+    const searchTargetHitCircle = targetHitCircle;
+    const searchTolerances = tolerances;
 
-    const input = createGraphwarSmartPathfindingSearchInput({
-      bounds,
-      boundsRect: options.input.boundsRect.value,
-      hitTarget: targetHitCircle,
-      previewEnabled: options.preview.isSearchAnimationEnabled(),
-      routeMaskCacheId: options.pathfinding.cache.getRouteObstacleMaskCacheId(obstacleMask),
-      routeMode: options.input.getRouteMode(),
-      routeObstacleMask: obstacleMask,
-      settings: options.input.getFormulaSettings(),
-      simulationMask: options.input.getSimulationMask(),
-      sourcePath,
-      targetPoint,
-      tolerances,
-    });
-    const resultCacheKey = options.pathfinding.cache.createSmartPathfindingResultCacheKey(input);
-    let result = options.pathfinding.cache.getCachedSmartPathfindingResult(resultCacheKey, (timing) =>
-      timings?.push(timing),
-    );
-    const resultCacheHit = result !== undefined;
-    try {
-      if (!result) {
-        result = await options.pathfinding.runner.findSmartPath(input, {
-          onPreview: options.preview.isSearchAnimationEnabled() ? setSearchPreview : undefined,
-        });
-        options.pathfinding.cache.cacheSmartPathfindingResult(resultCacheKey, result);
-      }
-    } catch (error) {
-      if (!options.run.isCurrent(cancelToken) || isGraphwarPathfindingCancelledError(error)) {
+    let result: GraphwarSmartPathfindingPathResult | undefined;
+    let resultCacheHit = false;
+    for (let index = 0; index < targetPoints.length; index += 1) {
+      const candidateTargetPoint = targetPoints[index];
+      if (!candidateTargetPoint || !options.run.isCurrent(cancelToken)) {
         return undefined;
       }
+      if (index > 0 && options.preview.isSearchAnimationEnabled()) {
+        options.preview.setConnection(startPoint, candidateTargetPoint);
+      }
+
+      const attempt = await findPathfindingResult(candidateTargetPoint);
+      if (!attempt) {
+        return undefined;
+      }
+      result = attempt.result;
+      resultCacheHit = attempt.cacheHit;
+      options.debug.addWorkerTimings(timings, result.timings);
+      // 旧路径严格域失败与目标点无关；其他失败才值得尝试命中圈 x+ 边缘。
+      if (result.path || result.invalidSegmentIndex !== undefined) {
+        break;
+      }
+    }
+    if (!result) {
       return undefined;
     }
-
-    options.debug.addWorkerTimings(timings, result.timings);
     if (result.failureReason === "graph-rule") {
       return { reason: "graph-rule", type: "failure" };
     }
@@ -221,6 +222,42 @@ export function useGraphwarSmartPathfindingBuilder(
       options.preview.setPath(getGraphwarSmartPathfindingAppendedSegment(result.path, sourcePath.length));
     }
     return result.path ? { cacheHit: resultCacheHit, path: result.path, type: "success" } : undefined;
+
+    async function findPathfindingResult(candidateTargetPoint: PixelPoint) {
+      const input = createGraphwarSmartPathfindingSearchInput({
+        bounds: searchBounds,
+        boundsRect: options.input.boundsRect.value,
+        hitTarget: searchTargetHitCircle,
+        previewEnabled: options.preview.isSearchAnimationEnabled(),
+        routeMaskCacheId: options.pathfinding.cache.getRouteObstacleMaskCacheId(searchObstacleMask),
+        routeMode: options.input.getRouteMode(),
+        routeObstacleMask: searchObstacleMask,
+        settings: options.input.getFormulaSettings(),
+        simulationMask: options.input.getSimulationMask(),
+        sourcePath,
+        targetPoint: candidateTargetPoint,
+        tolerances: searchTolerances,
+      });
+      const resultCacheKey = options.pathfinding.cache.createSmartPathfindingResultCacheKey(input);
+      let attemptResult = options.pathfinding.cache.getCachedSmartPathfindingResult(resultCacheKey, (timing) =>
+        timings?.push(timing),
+      );
+      const cacheHit = attemptResult !== undefined;
+      try {
+        if (!attemptResult) {
+          attemptResult = await options.pathfinding.runner.findSmartPath(input, {
+            onPreview: options.preview.isSearchAnimationEnabled() ? setSearchPreview : undefined,
+          });
+          options.pathfinding.cache.cacheSmartPathfindingResult(resultCacheKey, attemptResult);
+        }
+      } catch (error) {
+        if (!options.run.isCurrent(cancelToken) || isGraphwarPathfindingCancelledError(error)) {
+          return undefined;
+        }
+        return undefined;
+      }
+      return { cacheHit, result: attemptResult };
+    }
   }
 
   function setSearchPreview(preview: GraphwarPathfindingPreview) {
@@ -237,4 +274,8 @@ function waitForNextPathfindingSlice() {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, 0);
   });
+}
+
+function samePixelPoint(left: PixelPoint, right: PixelPoint) {
+  return left.x === right.x && left.y === right.y;
 }

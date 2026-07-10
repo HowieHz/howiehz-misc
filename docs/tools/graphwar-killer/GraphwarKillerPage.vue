@@ -1129,8 +1129,12 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
     return [];
   }
 
-  // 复用实际落点规则：Step 只展示中心严格 x+ 的士兵，其他算法仍允许命中圈内的前进回退点。
-  return visibleSoldiers.filter((box) => Boolean(createSearchStartSoldierAimPoint(lastPoint, box)));
+  // 单点智能寻路还可尝试 Step 命中圈 x+ 边缘；普通追加路径仍沿用各算法自己的首选瞄点。
+  return visibleSoldiers.filter((box) =>
+    effectiveSmartPathfindingEnabled.value
+      ? Boolean(createSmartPathfindingSoldierTarget(lastPoint, box))
+      : Boolean(createSearchStartSoldierAimPoint(lastPoint, box)),
+  );
 });
 const inactiveDetectionBoxes = computed<DetectionBox[]>(() => {
   if (!recognizedObjectOverlayVisible.value || toolWorkflowMode.value === "simulator") {

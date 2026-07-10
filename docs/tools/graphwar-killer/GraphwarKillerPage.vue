@@ -1717,9 +1717,17 @@ const screenshotImageStatusText = computed(
     imageName.value ||
     (graphwarAgentEnabled.value ? locale.status.agent.defaultStatus : locale.status.image.defaultStatus),
 );
+const stepGlitchAgentRecommendation = computed(() =>
+  toolWorkflowMode.value === "solver" && effectiveStepGlitchModeEnabled.value && !graphwarAgentEnabled.value
+    ? locale.ui.screenshot.stepGlitchAgentRecommendation(locale.ui.detection.agent.toggle)
+    : "",
+);
+// 当前路径错误直接影响操作，应优先覆盖只提供精度建议的 Agent 提示。
+const screenshotHeaderWarningText = computed(() => pathStatus.value || stepGlitchAgentRecommendation.value);
 // 截图面板只应消费展示 DTO；DOM refs 和舞台交互语义仍由页面侧工作流持有。
 const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
   busyOverlayVisible: detectionInProgress.value,
+  headerWarningText: screenshotHeaderWarningText.value,
   imageActionsVisible: !graphwarAgentEnabled.value,
   imageStatusText: screenshotImageStatusText.value,
   imageUrl: imageUrl.value,
@@ -1728,7 +1736,6 @@ const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
     style: magnifierStyle.value,
     visible: magnifierEnabled.value && Boolean(imageUrl.value) && Boolean(magnifierPoint.value),
   },
-  pathStatus: pathStatus.value,
   stage: {
     empty: !imageUrl.value,
     emptyPlaceholder: graphwarAgentEnabled.value

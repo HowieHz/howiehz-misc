@@ -777,6 +777,8 @@ export const graphwarKillerLocale = {
     },
     screenshot: {
       agentPlaceholder: "Read Agent state to start planning",
+      stepGlitchAgentRecommendation: (agentToggleLabel) =>
+        `Enable "${agentToggleLabel}" for accurate soldier positions`,
       capture: "Capture screenshot",
       captureTitle: "Use the browser's screen capture prompt to load a Graphwar screenshot into the tool.",
       placeholder: "Upload, drag in, or paste a screenshot to start calibration",

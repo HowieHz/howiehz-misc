@@ -37,8 +37,8 @@ export interface GraphwarScreenshotPanelModel {
   imageStatusText: string;
   /** 当前截图 data URL。 */
   imageUrl: string;
-  /** 当前路径警告文案；空字符串表示不显示。 */
-  pathStatus: string;
+  /** 标题右侧警告文案；父页面应已按当前路径错误、模式建议的顺序选择。 */
+  headerWarningText: string;
   /** 舞台展示模型。 */
   stage: GraphwarScreenshotPanelStageModel;
   /** 放大镜展示模型。 */
@@ -92,11 +92,11 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
         {{ panel.imageStatusText }}
       </span>
       <span
-        v-if="panel.pathStatus"
-        class="graphwar-killer__path-status-text graphwar-killer__label-status--warning"
-        :title="panel.pathStatus"
+        v-if="panel.headerWarningText"
+        class="graphwar-killer__header-warning-text graphwar-killer__label-status--warning"
+        :title="panel.headerWarningText"
       >
-        {{ panel.pathStatus }}
+        {{ panel.headerWarningText }}
       </span>
     </div>
     <div
@@ -287,7 +287,7 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
   text-align: left !important;
 }
 
-.graphwar-killer__path-status-text {
+.graphwar-killer__header-warning-text {
   flex: 0 1 auto;
   max-width: min(100%, 44rem);
   text-align: right;

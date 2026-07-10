@@ -431,6 +431,7 @@ export interface GraphwarKillerLocale {
     };
     screenshot: {
       agentPlaceholder: string;
+      stepGlitchAgentRecommendation: (agentToggleLabel: string) => string;
       capture: string;
       captureTitle: string;
       placeholder: string;

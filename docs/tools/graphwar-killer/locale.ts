@@ -679,6 +679,7 @@ export const graphwarKillerLocale = {
     },
     screenshot: {
       agentPlaceholder: "读取 Agent 状态后开始规划",
+      stepGlitchAgentRecommendation: (agentToggleLabel) => `推荐启用“${agentToggleLabel}”以获取准确的士兵位置`,
       capture: "截取屏幕",
       captureTitle: "调用浏览器屏幕捕获，把 Graphwar 窗口截图载入工具。",
       placeholder: "上传、拖入或粘贴截图后开始标定",

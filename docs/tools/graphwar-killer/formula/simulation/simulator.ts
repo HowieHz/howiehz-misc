@@ -166,6 +166,7 @@ export function createGraphwarFormulaPathPoints(options: CreateGraphwarFormulaPa
 
   let formulaPoints = createStepAdjustedFormulaPathPoints(options, options.points);
   const soldierCenter = options.points[0];
+  // 原版只消费最终公式；工具还需让“整条公式算出的发射边缘点”反向收敛为公式首点，因此额外做固定点迭代。
   for (let index = 0; index < graphwarToolDefaults.formulaLaunchPointIterations; index += 1) {
     const launchPoint = getLaunchPoint({ ...options, points: formulaPoints }, soldierCenter);
     if (!isFinitePoint(launchPoint)) {

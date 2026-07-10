@@ -15,7 +15,7 @@ interface GraphwarToolDefaults {
     /** 默认平面高度。 */
     height: number;
   };
-  /** 弹道命中目标圆时允许的额外像素误差。 */
+  /** Step 在目标 x 处允许的纵向尾差，单位为 Graphwar 原始平面像素。 */
   targetRangePixelTolerance: number;
   /** 放大镜预览窗口尺寸。 */
   magnifierSize: number;
@@ -49,7 +49,7 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
     width: 770,
     height: 450.72,
   },
-  targetRangePixelTolerance: 1.5,
+  targetRangePixelTolerance: 1,
   magnifierSize: 132,
   magnifierZoom: 3,
   steepness: 67,

@@ -46,6 +46,7 @@ export interface SampleGraphwarTrajectoryOptions {
 }
 
 const STEP_CENTER_MARGIN = GRAPHWAR_PLANE_GAME_LENGTH / GRAPHWAR_PLANE_LENGTH;
+/** Sigmoid 只会渐近目标高度；零尾差会要求中心无限左移，因此该容差必须大于 0。 */
 const STEP_TARGET_VERTICAL_TOLERANCE =
   (graphwarToolDefaults.targetRangePixelTolerance * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH;
 /** 发射点迭代收敛阈值取 Graphwar 最小 x 步长的 1/10，避免无意义抖动。 */

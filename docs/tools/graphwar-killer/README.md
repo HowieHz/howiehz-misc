@@ -20,7 +20,7 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 - [presentation/](./presentation/)：展示层模块；页面面板按 `settings/`、`detection/`、`pathfinding/`、`action/`、`screenshot/`、`result/`
   分组，目录内用 `MainPanel.vue`/`AdvancedPanel.vue` 表达主面板，跨页面复用的面板模型放在同目录 `*-model.ts`；`dom/` 包含 DOM
   事件适配工具，`stage/` 包含截图舞台 SVG 覆盖层和 polyline points 格式化，`status/` 包含状态文案聚合与耗时格式化。
-- [workers/](./workers/)：Web Worker 入口文件；`detection/` 包含截图识别主 worker 和模板匹配子 worker，`pathfinding/` 包含寻路主 worker，`pathfinding/one-click-clear/` 包含一键清图边 worker。
+- [workers/](./workers/)：Web Worker 入口文件；`trajectory/` 包含主轨迹 worker，`live-click-preview/` 包含实时预览 worker，`detection/` 包含截图识别主 worker 和模板匹配子 worker，`pathfinding/` 包含寻路主 worker，`pathfinding/one-click-clear/` 包含一键清图边 worker。
 - [locale.ts](./locale.ts)：中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。
 
 ## 已知改进点

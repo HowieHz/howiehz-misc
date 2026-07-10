@@ -1,3 +1,4 @@
+import { nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type {
   GraphwarTrajectoryCalculationInput,
@@ -64,7 +65,7 @@ const WORKER_SLOT_TARGET = 2;
  */
 export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunnerOptions = {}) {
   const createWorker = options.createWorker ?? createDefaultTrajectoryWorker;
-  const now = options.now ?? getCurrentTime;
+  const now = options.now ?? nowMs;
   const workerSlots: TrajectoryWorkerSlot[] = [];
   let closed = false;
   let currentTask: PendingTrajectoryTask | undefined;
@@ -72,6 +73,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
   let nextRequestId = 1;
   let workerFallback = false;
 
+  /** 固定输入快照并启动 latest-wins 主轨迹任务。 */
   function run(input: GraphwarTrajectoryCalculationInput) {
     const startedAt = now();
     if (closed) {
@@ -89,13 +91,12 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
         normalizeError(error, "Graphwar trajectory input could not be cloned"),
       );
     }
-    const taskGeneration = generation;
     const requestId = nextRequestId;
     nextRequestId += 1;
 
     return new Promise<GraphwarTrajectoryRunResult>((resolve, reject) => {
       const task: PendingTrajectoryTask = {
-        generation: taskGeneration,
+        generation,
         id: requestId,
         input: taskInput,
         reject,
@@ -131,6 +132,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     }
   }
 
+  /** 拒绝当前任务，并硬终止真正承载它的 Worker。 */
   function cancelCurrentTask() {
     const task = currentTask;
     if (!task) {
@@ -145,6 +147,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     settleTask(task, () => task.reject(new GraphwarTrajectoryCancelledError()));
   }
 
+  /** 优先复用空闲槽，并在没有可用槽时创建新的 Worker。 */
   function startWorkerTask(task: PendingTrajectoryTask) {
     if (!isCurrentTask(task)) {
       return;
@@ -164,6 +167,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     handleWorkerInfrastructureFailure(task, created.error);
   }
 
+  /** 将任务绑定到槽位并投递，同时维持一个热备槽。 */
   function postWorkerTask(slot: TrajectoryWorkerSlot, task: PendingTrajectoryTask) {
     slot.activeTask = task;
     try {
@@ -178,18 +182,14 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       return;
     }
 
-    ensureHotSpare();
-  }
-
-  function ensureHotSpare() {
     while (!closed && !workerFallback && workerSlots.length < WORKER_SLOT_TARGET) {
-      const created = tryCreateWorkerSlot();
-      if (!created.slot) {
+      if (!tryCreateWorkerSlot().slot) {
         return;
       }
     }
   }
 
+  /** 创建槽位并绑定协议事件，将构造失败统一转换成 Error。 */
   function tryCreateWorkerSlot():
     | { error: Error; slot?: undefined }
     | { error?: undefined; slot: TrajectoryWorkerSlot } {
@@ -217,6 +217,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     }
   }
 
+  /** 校验当前槽位的响应，并只提交权威任务的完整结果。 */
   function handleWorkerMessage(
     slot: TrajectoryWorkerSlot,
     event: MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>,
@@ -250,6 +251,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     );
   }
 
+  /** 移除故障槽，并决定当前任务是否需要换槽重试。 */
   function handleWorkerFailure(slot: TrajectoryWorkerSlot, error: Error) {
     if (workerSlots.indexOf(slot) < 0) {
       return;
@@ -265,39 +267,34 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     handleWorkerInfrastructureFailure(task, error);
   }
 
+  /** 首次基础设施失败换槽并优先复用热备，重试仍失败则永久降级到主线程。 */
   function handleWorkerInfrastructureFailure(task: PendingTrajectoryTask, error: Error) {
     if (!isCurrentTask(task)) {
       return;
     }
 
-    // 第一次基础设施失败优先换到热备；热备也失败才永久回退主线程。
+    // 第一次基础设施失败换槽并优先复用热备；重试仍失败才永久回退主线程。
     if (task.workerFailureCount === 0) {
       task.workerFailureCount = 1;
       startWorkerTask(task);
       return;
     }
 
-    enterMainThreadFallback(error);
+    if (!workerFallback) {
+      workerFallback = true;
+      for (const slot of [...workerSlots]) {
+        terminateWorkerSlot(slot);
+      }
+      try {
+        options.onFallback?.(error.message);
+      } catch {
+        // 状态渲染回调异常不能阻止保底计算继续执行。
+      }
+    }
     void runOnMainThread(task);
   }
 
-  function enterMainThreadFallback(error: Error) {
-    if (workerFallback) {
-      return;
-    }
-
-    workerFallback = true;
-    for (const slot of [...workerSlots]) {
-      terminateWorkerSlot(slot);
-    }
-    const reason = error.message;
-    try {
-      options.onFallback?.(reason);
-    } catch {
-      // 状态渲染回调异常不能阻止保底计算继续执行。
-    }
-  }
-
+  /** 等待降级状态绘制，并保留独立异步边界，让已排队的取消先于阻塞计算生效。 */
   async function waitForFallbackStatusPaint() {
     try {
       await options.waitForFallbackPaint?.();
@@ -306,6 +303,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     }
   }
 
+  /** 等待降级状态绘制后，同步计算并仅提交仍然权威的任务。 */
   async function runOnMainThread(task: PendingTrajectoryTask) {
     await waitForFallbackStatusPaint();
     if (!isCurrentTask(task)) {
@@ -335,10 +333,12 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     );
   }
 
+  /** 判断任务是否仍是唯一可写回页面的权威任务。 */
   function isCurrentTask(task: PendingTrajectoryTask) {
     return !closed && currentTask === task && task.generation === generation && !task.settled;
   }
 
+  /** 保证每个任务的 Promise 只结算一次。 */
   function settleTask(task: PendingTrajectoryTask, callback: () => void) {
     if (task.settled) {
       return;
@@ -347,6 +347,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     callback();
   }
 
+  /** 从池中移除槽位并释放其 Worker。 */
   function terminateWorkerSlot(slot: TrajectoryWorkerSlot) {
     const index = workerSlots.indexOf(slot);
     if (index >= 0) {
@@ -363,6 +364,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
   };
 }
 
+/** 创建页面默认使用的主轨迹 module Worker。 */
 function createDefaultTrajectoryWorker() {
   if (typeof Worker === "undefined") {
     throw new Error("Web Worker is unavailable");
@@ -373,23 +375,23 @@ function createDefaultTrajectoryWorker() {
   });
 }
 
-function getCurrentTime() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
-}
-
+/** 计算非负且有限的端到端耗时。 */
 function getElapsedMs(now: () => number, startedAt: number) {
   const elapsedMs = now() - startedAt;
   return Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0;
 }
 
+/** 将跨边界抛出的任意值收敛为可展示的 Error。 */
 function normalizeError(error: unknown, fallbackMessage: string) {
   return error instanceof Error ? error : new Error(error === undefined ? fallbackMessage : String(error));
 }
 
+/** 验证响应具有匹配请求所需的最小协议外壳。 */
 function isWorkerResponseEnvelope(response: unknown): response is { id: number; outcome?: unknown } {
   return typeof response === "object" && response !== null && "id" in response && typeof response.id === "number";
 }
 
+/** 按请求类型验证 Worker 返回的完整轨迹 outcome。 */
 function isGraphwarTrajectoryCalculationOutcome(
   outcome: unknown,
   inputType: GraphwarTrajectoryCalculationInput["type"],
@@ -431,6 +433,7 @@ function isGraphwarTrajectoryCalculationOutcome(
   );
 }
 
+/** 验证求解器结果中可跨 Worker 边界的公式结构。 */
 function isFormulaResult(value: unknown) {
   if (typeof value !== "object" || value === null || !("expression" in value) || !("terms" in value)) {
     return false;
@@ -450,6 +453,7 @@ function isFormulaResult(value: unknown) {
   );
 }
 
+/** 收窄 Worker 可返回的轨迹提示原因。 */
 function isGraphwarTrajectoryWarningReason(value: unknown) {
   return (
     value === "invalid" ||

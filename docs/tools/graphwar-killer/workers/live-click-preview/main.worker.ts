@@ -14,6 +14,7 @@ interface GraphwarLiveClickPreviewWorkerScope {
 
 const workerScope = self as unknown as GraphwarLiveClickPreviewWorkerScope;
 
+/** 同步渲染一个预览请求，并将异常收敛为协议错误响应。 */
 workerScope.addEventListener("message", (event) => {
   const request = event.data;
   try {

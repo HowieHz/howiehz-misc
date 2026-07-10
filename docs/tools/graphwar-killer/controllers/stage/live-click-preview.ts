@@ -212,9 +212,7 @@ export function useGraphwarLiveClickPreview(
       : [currentPoint];
   });
 
-  const renderContext = computed<GraphwarLiveClickPreviewRenderContext | undefined>(() => {
-    return createRenderContext();
-  });
+  const renderContext = computed<GraphwarLiveClickPreviewRenderContext | undefined>(createRenderContext);
   const renderRequest = computed<GraphwarLiveClickPreviewRenderRequest | undefined>(() => {
     const previewPoint = point.value;
     if (!previewPoint) {
@@ -224,9 +222,19 @@ export function useGraphwarLiveClickPreview(
     if (!context) {
       return undefined;
     }
+    const graphPoint = imageToGraphPoint(previewPoint, context.bounds, context.boundsRect);
     return {
       context,
-      input: createRenderInput(context, previewPoint),
+      input:
+        context.type === "expression"
+          ? {
+              ...context,
+              soldierCenter: graphPoint,
+            }
+          : {
+              ...context,
+              points: [...context.points, graphPoint],
+            },
       pointerIntent: committedPointerIntent,
       point: previewPoint,
     };
@@ -403,7 +411,15 @@ export function useGraphwarLiveClickPreview(
 
           inProgress.value = false;
           if (result.curvePoints) {
-            showRenderedStatus(result.elapsedMs);
+            // 每次成功都从最新耗时重新计时，旧 timer 不得提前清除新状态。
+            renderedElapsedMs.value = result.elapsedMs;
+            if (renderStatusTimer !== undefined) {
+              window.clearTimeout(renderStatusTimer);
+            }
+            renderStatusTimer = window.setTimeout(() => {
+              renderedElapsedMs.value = undefined;
+              renderStatusTimer = undefined;
+            }, 2000);
           } else {
             clearRenderedStatus();
           }
@@ -441,6 +457,7 @@ export function useGraphwarLiveClickPreview(
     runner.cancel();
   }
 
+  /** 固定低频公式和碰撞上下文；每次指针请求只追加变化的预览点。 */
   function createRenderContext(): GraphwarLiveClickPreviewRenderContext | undefined {
     const bounds = options.geometry.getBounds();
     if (!bounds || options.settings.effectiveSmartPathfindingEnabled.value) {
@@ -502,33 +519,7 @@ export function useGraphwarLiveClickPreview(
     };
   }
 
-  function createRenderInput(
-    context: GraphwarLiveClickPreviewRenderContext,
-    previewPoint: PixelPoint,
-  ): GraphwarLiveClickPreviewRenderInput {
-    const graphPoint = imageToGraphPoint(previewPoint, context.bounds, context.boundsRect);
-    return context.type === "expression"
-      ? {
-          ...context,
-          soldierCenter: graphPoint,
-        }
-      : {
-          ...context,
-          points: [...context.points, graphPoint],
-        };
-  }
-
-  function showRenderedStatus(elapsedMs: number) {
-    renderedElapsedMs.value = elapsedMs;
-    if (renderStatusTimer !== undefined) {
-      window.clearTimeout(renderStatusTimer);
-    }
-    renderStatusTimer = window.setTimeout(() => {
-      renderedElapsedMs.value = undefined;
-      renderStatusTimer = undefined;
-    }, 2000);
-  }
-
+  /** 清除实时预览成功提示及其计时器，避免失效会话留下旧耗时。 */
   function clearRenderedStatus() {
     renderedElapsedMs.value = undefined;
     if (renderStatusTimer !== undefined) {
@@ -553,6 +544,7 @@ export function useGraphwarLiveClickPreview(
   };
 }
 
+/** 精确比较同一截图坐标系中的预览点，避免旧轨迹绑定到新鼠标位置。 */
 function pixelPointsEqual(left: PixelPoint, right: PixelPoint) {
   return left.x === right.x && left.y === right.y;
 }

@@ -10,7 +10,6 @@ import type {
   PixelPoint,
   ToolWorkflowMode,
 } from "../../core/types";
-import type { GraphwarExpressionParserOptions } from "../../formula/expression/evaluator";
 import type {
   GraphwarTrajectoryCollisionSettings,
   GraphwarTrajectoryFormulaSettings,
@@ -181,7 +180,7 @@ export function useGraphwarTrajectoryResult(
     onFallback: (reason) => {
       calculationFallbackReason.value ||= reason;
     },
-    waitForFallbackPaint: waitForFallbackPaint,
+    waitForFallbackPaint,
   });
   let activeGeneration = 0;
   let pendingFrame: number | undefined;
@@ -202,10 +201,28 @@ export function useGraphwarTrajectoryResult(
         return;
       }
 
-      selectWorkflowSnapshot(input.type);
+      // 切换工作流时先恢复其完整快照，避免等待新任务期间展示另一工作流的轨迹。
+      const current = publishedResult.value;
+      const trajectory = input.type === "solver" ? current.solver?.trajectory : current.simulatorTrajectory;
+      if (trajectory && current.displayedTrajectory !== trajectory) {
+        publishedResult.value = {
+          ...current,
+          displayedTrajectory: trajectory,
+        };
+      }
       calculationStatus.value = { type: "in-progress" };
       pendingInput = input;
-      scheduleLatestCalculation();
+      // 一帧内只投递最后一份输入，避免连续编辑反复轮换 Worker。
+      if (pendingFrame === undefined) {
+        if (typeof requestAnimationFrame === "undefined") {
+          startPendingCalculation();
+        } else {
+          pendingFrame = requestAnimationFrame(() => {
+            pendingFrame = undefined;
+            startPendingCalculation();
+          });
+        }
+      }
     },
     { immediate: true },
   );
@@ -215,21 +232,7 @@ export function useGraphwarTrajectoryResult(
     return graphwarTrajectoryFormulaSettings.value;
   }
 
-  /** 把一帧内的连续输入合并成最后一次任务，减少输入和拖拽时的 Worker 轮换。 */
-  function scheduleLatestCalculation() {
-    if (pendingFrame !== undefined) {
-      return;
-    }
-    if (typeof requestAnimationFrame === "undefined") {
-      startPendingCalculation();
-      return;
-    }
-    pendingFrame = requestAnimationFrame(() => {
-      pendingFrame = undefined;
-      startPendingCalculation();
-    });
-  }
-
+  /** 取走当前帧合并后的输入，并只允许对应 generation 发布异步结果。 */
   function startPendingCalculation() {
     const input = pendingInput;
     pendingInput = undefined;
@@ -283,6 +286,7 @@ export function useGraphwarTrajectoryResult(
       });
   }
 
+  /** 从当前工作流构造可结构化克隆的完整输入；无效页面状态直接停留在空结果。 */
   function createTrajectoryCalculationInput(): GraphwarTrajectoryCalculationInput | undefined {
     const bounds = options.geometry.getBounds();
     if (!bounds || !options.collisionSettingsValid.value) {
@@ -305,10 +309,6 @@ export function useGraphwarTrajectoryResult(
       ) {
         return undefined;
       }
-      const parser: GraphwarExpressionParserOptions = {
-        parseDerivativeAsY: options.simulator.parseDerivativeAsY.value,
-        skipUnknownCharacters: options.simulator.skipUnknownCharacters.value,
-      };
       return {
         ...base,
         equation: options.settings.equationMode.value,
@@ -316,7 +316,10 @@ export function useGraphwarTrajectoryResult(
         ...(simulatorLaunchAngleRadians.value === undefined
           ? {}
           : { launchAngleRadians: simulatorLaunchAngleRadians.value }),
-        parser,
+        parser: {
+          parseDerivativeAsY: options.simulator.parseDerivativeAsY.value,
+          skipUnknownCharacters: options.simulator.skipUnknownCharacters.value,
+        },
         soldierCenter,
         type: "simulator",
       };
@@ -383,19 +386,6 @@ export function useGraphwarTrajectoryResult(
     return true;
   }
 
-  /** 切换工作流时恢复该工作流的完整快照；首次计算才沿用当前画布轨迹。 */
-  function selectWorkflowSnapshot(inputType: GraphwarTrajectoryCalculationInput["type"]) {
-    const current = publishedResult.value;
-    const trajectory = inputType === "solver" ? current.solver?.trajectory : current.simulatorTrajectory;
-    if (!trajectory || current.displayedTrajectory === trajectory) {
-      return;
-    }
-    publishedResult.value = {
-      ...current,
-      displayedTrajectory: trajectory,
-    };
-  }
-
   /** 当前工作流结果失效时清除该快照，保留另一工作流供用户返回。 */
   function clearCalculatedResult(inputType: GraphwarTrajectoryCalculationInput["type"]) {
     const current = publishedResult.value;
@@ -409,6 +399,7 @@ export function useGraphwarTrajectoryResult(
           : {};
   }
 
+  /** 取消尚未投递的帧任务，防止空输入或卸载后继续启动 Worker。 */
   function cancelPendingFrame() {
     if (pendingFrame === undefined) {
       return;
@@ -419,6 +410,7 @@ export function useGraphwarTrajectoryResult(
     pendingFrame = undefined;
   }
 
+  /** 清除上一轮成功提示计时，避免旧计时器覆盖新计算状态。 */
   function clearSuccessTimer() {
     if (successTimer === undefined) {
       return;
@@ -438,6 +430,7 @@ export function useGraphwarTrajectoryResult(
     });
   }
 
+  /** 页面卸载时使迟到结果失效，并释放帧、计时器和 Worker。 */
   function dispose() {
     activeGeneration += 1;
     pendingInput = undefined;

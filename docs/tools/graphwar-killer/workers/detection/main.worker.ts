@@ -32,6 +32,7 @@ import type {
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
 } from "../../detection/runtime/protocol";
+import { measureDetectionStage } from "../../detection/runtime/timing";
 import type {
   GraphwarSoldierTemplateWorkerRequest,
   GraphwarSoldierTemplateWorkerResponse,
@@ -69,6 +70,7 @@ interface SoldierTemplateWorkerHandle {
 
 const workerScope = self as unknown as GraphwarDetectionWorkerScope;
 
+/** 接收主线程请求，并将异步检测交给统一的协议分派入口。 */
 workerScope.addEventListener("message", (event) => {
   void runDetectionRequest(event.data);
 });
@@ -82,7 +84,17 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
       return;
     }
     if (request.task.type === "detect-bounds-only") {
-      runBoundsOnlyDetectionTask(request.id, request.task, timings);
+      postStage(request.id, "detecting-bounds");
+      postSuccess(
+        request.id,
+        "detect-bounds-only",
+        {
+          edgeRect: measureDetectionStage(timings, "detecting-bounds", () =>
+            detectGraphwarPlayArea(request.task.imageData),
+          ),
+        },
+        timings,
+      );
       return;
     }
 
@@ -101,23 +113,12 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
       timings,
     );
   } catch (error) {
-    postError(request.id, error);
+    workerScope.postMessage({
+      id: request.id,
+      message: error instanceof Error ? error.message : String(error),
+      type: "error",
+    });
   }
-}
-
-/** 只检测坐标系边界，避免手动边界按钮启动士兵和障碍识别。 */
-function runBoundsOnlyDetectionTask(
-  id: number,
-  task: Extract<GraphwarDetectionWorkerTask, { type: "detect-bounds-only" }>,
-  timings: GraphwarDetectionWorkerTimingEntry[],
-) {
-  postStage(id, "detecting-bounds");
-  postSuccess(
-    id,
-    "detect-bounds-only",
-    { edgeRect: measureDetectionStage(timings, "detecting-bounds", () => detectGraphwarPlayArea(task.imageData)) },
-    timings,
-  );
 }
 
 /** 执行自动检测任务，只有识别到平面边界后才继续对象检测。 */
@@ -180,13 +181,10 @@ async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
     );
   });
   const soldiers = createSoldierDetectionBoxes(matches, edgeRect);
-  const obstacles = detectGraphwarObstaclesInBounds(
-    imageData,
-    edgeRect,
-    thresholds,
-    soldiers,
-    createObjectDetectionInstrumentation(timings),
-  );
+  const obstacles = detectGraphwarObstaclesInBounds(imageData, edgeRect, thresholds, soldiers, {
+    measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) =>
+      measureDetectionStage(timings, stage, task),
+  } satisfies GraphwarObjectDetectionInstrumentation);
   return warnings.length ? { obstacles, soldiers, warnings } : { obstacles, soldiers };
 }
 
@@ -214,10 +212,9 @@ async function matchSoldierTemplatesWithOptionalWorkers(
     });
     return matches;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     warnings.push({
       code: "template-matching-worker-fallback",
-      message,
+      message: error instanceof Error ? error.message : String(error),
     });
     recordDetectionTimingDetail(timings, "matching-soldier-templates", 0, {
       mode: "parallel-fallback",
@@ -265,18 +262,30 @@ async function runSoldierTemplateWorkerTasks(
   const handles: SoldierTemplateWorkerHandle[] = [];
   try {
     measureDetectionDetail(timings, "matching-soldier-templates", { type: "template-matching-dispatch" }, () => {
-      const tasks = createSoldierTemplateWorkerTasks(imageData, candidates, laneCount);
+      const tasks: SoldierTemplateWorkerTask[] = [];
+      for (let index = 0; index < laneCount; index += 1) {
+        tasks.push({
+          // 连续均分候选，保持 lane 顺序和原合并顺序一致。
+          candidates: candidates.slice(
+            Math.floor((index * candidates.length) / laneCount),
+            Math.floor(((index + 1) * candidates.length) / laneCount),
+          ),
+          // 每个 buffer 只能转移一次；lane 必须拥有独立的截图像素。
+          imageData: new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height),
+          workerIndex: index + 1,
+        });
+      }
+      // 先完成全部像素复制；任一复制失败时都不留下已启动的半组 Worker。
       for (const task of tasks) {
         handles.push(createSoldierTemplateWorkerHandle(task, edgeRect, scale));
       }
     });
 
-    const settledResults = await Promise.allSettled(
-      handles.map(async (handle) => ({ handle, result: await handle.promise })),
-    );
     const failures: string[] = [];
     const matches: SoldierMatchCandidate[] = [];
-    for (const settled of settledResults) {
+    for (const settled of await Promise.allSettled(
+      handles.map(async (handle) => ({ handle, result: await handle.promise })),
+    )) {
       if (settled.status === "rejected") {
         failures.push(settled.reason instanceof Error ? settled.reason.message : String(settled.reason));
         continue;
@@ -300,25 +309,6 @@ async function runSoldierTemplateWorkerTasks(
   }
 }
 
-/** 按候选数量切分模板匹配任务，并复制 ImageData 给每个子 Worker。 */
-function createSoldierTemplateWorkerTasks(
-  imageData: ImageData,
-  candidates: readonly SoldierTemplateCenterCandidate[],
-  laneCount: number,
-) {
-  const tasks: SoldierTemplateWorkerTask[] = [];
-  for (let index = 0; index < laneCount; index += 1) {
-    const start = Math.floor((index * candidates.length) / laneCount);
-    const end = Math.floor(((index + 1) * candidates.length) / laneCount);
-    tasks.push({
-      candidates: candidates.slice(start, end),
-      imageData: cloneImageData(imageData),
-      workerIndex: index + 1,
-    });
-  }
-  return tasks;
-}
-
 /** 创建单个模板匹配子 Worker 的 Promise 封装和清理钩子。 */
 function createSoldierTemplateWorkerHandle(
   task: SoldierTemplateWorkerTask,
@@ -338,6 +328,7 @@ function createSoldierTemplateWorkerHandle(
       imageData: task.imageData,
       scale,
     };
+    /** 只结算当前请求的首个有效响应，避免迟到消息污染结果。 */
     const handleMessage = (event: MessageEvent<GraphwarSoldierTemplateWorkerResponse>) => {
       const response = event.data;
       if (response.id !== request.id) {
@@ -350,14 +341,17 @@ function createSoldierTemplateWorkerHandle(
       }
       resolve({ elapsedMs: response.elapsedMs, matches: response.matches });
     };
+    /** 将结构化克隆失败转换为当前 lane 的失败结果。 */
     const handleMessageError = () => {
       cleanup?.();
       reject(new Error(`Worker ${task.workerIndex}: message could not be deserialized`));
     };
+    /** 将子 Worker 运行时异常传递给并行 fallback。 */
     const handleError = (event: ErrorEvent) => {
       cleanup?.();
       reject(event.error instanceof Error ? event.error : new Error(`Worker ${task.workerIndex}: ${event.message}`));
     };
+    /** 统一解绑 lane 监听器，确保成功、失败和最终回收共用清理路径。 */
     cleanup = () => {
       worker.removeEventListener("message", handleMessage);
       worker.removeEventListener("messageerror", handleMessageError);
@@ -379,11 +373,6 @@ function createSoldierTemplateWorkerHandle(
     worker,
     workerIndex: task.workerIndex,
   };
-}
-
-/** 复制 ImageData，避免同一个 buffer 被转移给多个子 Worker。 */
-function cloneImageData(imageData: ImageData) {
-  return new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height);
 }
 
 /** 通知主线程当前检测阶段，便于页面显示进度。 */
@@ -440,46 +429,11 @@ function postSuccess(
             timings,
             type: "success" as const,
           };
-  workerScope.postMessage(response, collectTransferList(result));
-}
-
-/** 把 Worker 内异常序列化成主线程可显示的错误消息。 */
-function postError(id: number, error: unknown) {
-  workerScope.postMessage({
-    id,
-    message: error instanceof Error ? error.message : String(error),
-    type: "error",
-  });
-}
-
-/** 收集检测结果中可转移的 mask buffer，减少跨线程复制。 */
-function collectTransferList(
-  result:
-    | GraphwarAutoDetectionResult
-    | GraphwarBoundsOnlyDetectionResult
-    | ReturnType<typeof detectGraphwarObjectsInBounds>,
-) {
-  const mask =
-    "obstacles" in result ? result.obstacles.mask : "objects" in result ? result.objects?.obstacles.mask : undefined;
-  const buffer = mask?.buffer;
-  return buffer instanceof ArrayBuffer ? [buffer] : [];
-}
-
-/** 包装同步检测阶段计时，用于主阶段耗时统计。 */
-function measureDetectionStage<TResult>(
-  timings: GraphwarDetectionWorkerTimingEntry[],
-  stage: GraphwarDetectionWorkerStage,
-  task: () => TResult,
-) {
-  const startedAt = nowMs();
-  try {
-    return task();
-  } finally {
-    timings.push({
-      elapsedMs: nowMs() - startedAt,
-      stage,
-    });
-  }
+  // 纯边界结果没有 mask；其余结果只转移最终障碍 mask 的 buffer。
+  const buffer = (
+    "obstacles" in result ? result.obstacles.mask : "objects" in result ? result.objects?.obstacles.mask : undefined
+  )?.buffer;
+  workerScope.postMessage(response, buffer instanceof ArrayBuffer ? [buffer] : []);
 }
 
 /** 包装异步阶段计时，并把阶段内细分 timing 放在主阶段之后。 */
@@ -529,14 +483,4 @@ function recordDetectionTimingDetail(
     elapsedMs,
     stage,
   });
-}
-
-/** 把对象检测内部 instrumentation 接入 Worker timing 结构。 */
-function createObjectDetectionInstrumentation(
-  timings: GraphwarDetectionWorkerTimingEntry[],
-): GraphwarObjectDetectionInstrumentation {
-  return {
-    measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) =>
-      measureDetectionStage(timings, stage, task),
-  };
 }

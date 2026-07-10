@@ -45,6 +45,7 @@ interface EdgeWorkerContext extends GraphwarOneClickClearEdgeWorkerInit {
 
 let context: EdgeWorkerContext | undefined;
 
+/** 接收初始化或单边任务，并复用同一个 Worker 私有上下文。 */
 workerScope.addEventListener("message", (event: MessageEvent<GraphwarOneClickClearEdgeWorkerRequest>) => {
   void handleRequest(event.data);
 });
@@ -94,10 +95,9 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
     if (!activeContext) {
       throw new Error("Edge worker was not initialized");
     }
-    const result = await buildOneClickClearDagEdgeRoute(activeContext, request.job);
     postResponse({
       requestId: request.requestId,
-      result,
+      result: await buildOneClickClearDagEdgeRoute(activeContext, request.job),
       type: "job-result",
       workerIndex: activeContext.workerIndex,
     });
@@ -110,6 +110,7 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
   }
 }
 
+/** 将 edge Worker 的就绪、结果或错误响应发回 master。 */
 function postResponse(response: GraphwarOneClickClearEdgeWorkerResponse) {
   workerScope.postMessage(response);
 }

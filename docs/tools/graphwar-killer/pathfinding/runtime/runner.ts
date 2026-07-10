@@ -316,6 +316,7 @@ function cloneGraphwarPathfindingWorkerRequest(
   };
 }
 
+/** 复制普通几何路由输入；大型 mask 保留引用，交由 structured clone 复制。 */
 function cloneGraphwarPathfindingRouteInput(input: GraphwarPathfindingRouteInput): GraphwarPathfindingRouteInput {
   return {
     boundaryExpansion: input.boundaryExpansion,
@@ -331,6 +332,7 @@ function cloneGraphwarPathfindingRouteInput(input: GraphwarPathfindingRouteInput
   };
 }
 
+/** 复制完整智能寻路输入，隔离页面响应式对象。 */
 function cloneGraphwarSmartPathfindingPathInput(
   input: GraphwarSmartPathfindingPathInput,
 ): GraphwarSmartPathfindingPathInput {
@@ -352,6 +354,7 @@ function cloneGraphwarSmartPathfindingPathInput(
   };
 }
 
+/** 复制 DAG 建边批次及其精简公式设置。 */
 function cloneGraphwarOneClickClearDagEdgeBuildRequest(
   input: GraphwarOneClickClearDagEdgeBuildRequest,
 ): GraphwarOneClickClearDagEdgeBuildRequest {
@@ -385,6 +388,7 @@ function cloneGraphwarOneClickClearDagEdgeBuildRequest(
   };
 }
 
+/** 复制完整一键清图输入，保留 mask buffer 并深复制小型结构。 */
 function cloneGraphwarOneClickClearPathWorkerInput(
   input: GraphwarOneClickClearPathWorkerInput,
 ): GraphwarOneClickClearPathWorkerInput {
@@ -408,6 +412,7 @@ function cloneGraphwarOneClickClearPathWorkerInput(
   };
 }
 
+/** 复制一键清图候选目标，避免命中圆携带页面代理。 */
 function cloneGraphwarOneClickClearCandidate(candidate: GraphwarOneClickClearPathWorkerInput["candidates"][number]) {
   return {
     enemy: candidate.enemy,
@@ -417,6 +422,7 @@ function cloneGraphwarOneClickClearCandidate(candidate: GraphwarOneClickClearPat
   };
 }
 
+/** 将轨迹目标圆复制成可结构化克隆的纯数据。 */
 function cloneGraphwarTrajectoryTargetCircle(
   target:
     | GraphwarSmartPathfindingPathInput["hitTarget"]
@@ -428,6 +434,7 @@ function cloneGraphwarTrajectoryTargetCircle(
   };
 }
 
+/** 复制公式采样设置，并保持可选漏洞 mask 的原始二进制引用。 */
 function cloneGraphwarTrajectoryFormulaSettings(
   settings: GraphwarSmartPathfindingPathInput["settings"] | GraphwarOneClickClearPathWorkerInput["settings"],
 ) {
@@ -443,6 +450,7 @@ function cloneGraphwarTrajectoryFormulaSettings(
   };
 }
 
+/** 将 Graphwar 坐标范围复制成纯数据。 */
 function cloneGraphBounds(bounds: GraphwarPathfindingRouteInput["bounds"]) {
   return {
     maxX: bounds.maxX,
@@ -452,6 +460,7 @@ function cloneGraphBounds(bounds: GraphwarPathfindingRouteInput["bounds"]) {
   };
 }
 
+/** 将截图边界矩形复制成纯数据。 */
 function cloneBoundsRect(boundsRect: GraphwarPathfindingRouteInput["boundsRect"]) {
   return {
     height: boundsRect.height,
@@ -461,6 +470,7 @@ function cloneBoundsRect(boundsRect: GraphwarPathfindingRouteInput["boundsRect"]
   };
 }
 
+/** 将像素点复制为标准核心类型。 */
 function clonePixelPoint(point: GraphwarPathfindingRouteInput["startPoint"]) {
   return createPixelPoint(point.x, point.y);
 }

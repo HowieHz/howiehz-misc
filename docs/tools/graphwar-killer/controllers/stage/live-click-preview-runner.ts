@@ -1,5 +1,4 @@
 import { createGraphPoint } from "../../core/types";
-import type { BoundsRect, GraphBounds, GraphPoint } from "../../core/types";
 import type {
   GraphwarLiveClickPreviewRenderInput,
   GraphwarLiveClickPreviewRenderResult,
@@ -15,6 +14,7 @@ class GraphwarLiveClickPreviewCancelledError extends Error {
   }
 }
 
+/** 判断实时预览失败是否只是正常的 latest-wins 取消。 */
 export function isGraphwarLiveClickPreviewCancelledError(error: unknown) {
   return error instanceof GraphwarLiveClickPreviewCancelledError;
 }
@@ -55,6 +55,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   let queuedTaskInput: GraphwarLiveClickPreviewRenderInput | undefined;
   let workerUnavailable = false;
 
+  /** 复制可变输入外壳，并立即调度或替换等待中的预览任务。 */
   function render(input: GraphwarLiveClickPreviewRenderInput) {
     const requestId = nextRequestId;
     nextRequestId += 1;
@@ -84,6 +85,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     });
   }
 
+  /** 尝试为任务获取一个槽位并完成协议投递。 */
   function startTaskIfPossible(task: PendingLiveClickPreviewTask, input: GraphwarLiveClickPreviewRenderInput) {
     const slot = claimIdleWorkerSlot();
     if (!slot) {
@@ -108,6 +110,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     return true;
   }
 
+  /** 取消当前预览上下文，并保留没有承载任务的热 Worker。 */
   function cancel() {
     generation += 1;
     latestSettledRequestId = nextRequestId - 1;
@@ -127,6 +130,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     }
   }
 
+  /** 永久关闭 runner 并释放整个 Worker 池。 */
   function close() {
     cancel();
     for (const slot of workerSlots) {
@@ -135,6 +139,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     workerSlots.length = 0;
   }
 
+  /** 在并行上限内复用空闲槽，必要时懒创建 Worker。 */
   function claimIdleWorkerSlot() {
     if (isWorkerUnavailable()) {
       return undefined;
@@ -172,6 +177,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     return slot;
   }
 
+  /** 校验槽位响应，并继续调度最新等待任务。 */
   function handleWorkerMessage(
     slot: LiveClickPreviewWorkerSlot,
     event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>,
@@ -198,6 +204,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     startQueuedTaskIfPossible();
   }
 
+  /** 将异步 Worker 故障转换成引导线降级，并释放整个池。 */
   function handleWorkerFailure(slot: LiveClickPreviewWorkerSlot) {
     if (workerSlots.indexOf(slot) < 0) {
       return;
@@ -216,6 +223,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     startQueuedTaskIfPossible();
   }
 
+  /** 从等待槽原子取出最新任务，并在有容量时启动它。 */
   function startQueuedTaskIfPossible() {
     if (!queuedTask || !queuedTaskInput) {
       trimIdleWorkerSlots();
@@ -235,6 +243,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     trimIdleWorkerSlots();
   }
 
+  /** 只允许当前 generation 中最新完成的结果成功写回。 */
   function settleTaskAsResult(task: PendingLiveClickPreviewTask, result: GraphwarLiveClickPreviewRenderResult) {
     if (task.generation !== generation || task.cancelled || task.id < latestSettledRequestId) {
       settleTaskAsCancelled(task);
@@ -245,6 +254,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     settleTask(task, () => task.resolve(result));
   }
 
+  /** 只向仍然权威的任务传播渲染错误。 */
   function settleTaskAsError(task: PendingLiveClickPreviewTask, error: Error) {
     if (task.generation !== generation || task.cancelled || task.id < latestSettledRequestId) {
       settleTaskAsCancelled(task);
@@ -255,6 +265,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     settleTask(task, () => task.reject(error));
   }
 
+  /** 将存在的任务幂等结算为正常取消。 */
   function settleTaskAsCancelled(task: PendingLiveClickPreviewTask | undefined) {
     if (!task) {
       return;
@@ -264,6 +275,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     settleTask(task, () => task.reject(new GraphwarLiveClickPreviewCancelledError()));
   }
 
+  /** 保证每个预览任务的 Promise 只结算一次。 */
   function settleTask(task: PendingLiveClickPreviewTask, callback: () => void) {
     if (task.settled) {
       return;
@@ -273,6 +285,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     callback();
   }
 
+  /** 从池中移除并终止一个不可再用的槽位。 */
   function resetWorkerSlot(slot: LiveClickPreviewWorkerSlot) {
     const index = workerSlots.indexOf(slot);
     if (index >= 0) {
@@ -281,6 +294,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     slot.worker.terminate();
   }
 
+  /** 按当前配置回收超出并行上限的空闲槽位。 */
   function trimIdleWorkerSlots() {
     let idleBudget = Math.max(0, getWorkerCountLimit() - getActiveTaskCount());
     for (let index = 0; index < workerSlots.length; index += 1) {
@@ -298,6 +312,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     }
   }
 
+  /** 统计当前真正占用 Worker 的预览任务数。 */
   function getActiveTaskCount() {
     let count = 0;
     for (const slot of workerSlots) {
@@ -308,6 +323,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     return count;
   }
 
+  /** 将响应式配置收窄到 runner 支持的并行范围。 */
   function getWorkerCountLimit() {
     const count = options.workerCount.value;
     return Number.isInteger(count) && count >= 1
@@ -315,6 +331,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
       : 1;
   }
 
+  /** 记录当前环境是否已确定无法使用实时预览 Worker。 */
   function isWorkerUnavailable() {
     if (workerUnavailable || typeof Worker === "undefined") {
       workerUnavailable = true;
@@ -330,6 +347,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   };
 }
 
+/** 创建只保留外层引导线的降级结果。 */
 function createGuideOnlyRenderResult(): GraphwarLiveClickPreviewRenderResult {
   return {
     curvePoints: "",
@@ -337,11 +355,32 @@ function createGuideOnlyRenderResult(): GraphwarLiveClickPreviewRenderResult {
   };
 }
 
+/** 复制标量与点数组，隔离排队期间的界面修改；大型 mask 保留引用，投递时由 structured clone 复制。 */
 function cloneRenderInput(input: GraphwarLiveClickPreviewRenderInput): GraphwarLiveClickPreviewRenderInput {
+  const bounds = input.bounds;
+  const boundsRect = input.boundsRect;
+  const collision = input.collision;
   const base = {
-    bounds: cloneGraphBounds(input.bounds),
-    boundsRect: cloneBoundsRect(input.boundsRect),
-    ...(input.collision ? { collision: cloneCollisionSettings(input.collision) } : {}),
+    bounds: {
+      maxX: bounds.maxX,
+      maxY: bounds.maxY,
+      minX: bounds.minX,
+      minY: bounds.minY,
+    },
+    boundsRect: {
+      height: boundsRect.height,
+      width: boundsRect.width,
+      x: boundsRect.x,
+      y: boundsRect.y,
+    },
+    ...(collision
+      ? {
+          collision: {
+            ...(collision.boundaryExpansion === undefined ? {} : { boundaryExpansion: collision.boundaryExpansion }),
+            ...(collision.mask ? { mask: collision.mask } : {}),
+          },
+        }
+      : {}),
   };
   if (input.type === "expression") {
     return {
@@ -350,14 +389,14 @@ function cloneRenderInput(input: GraphwarLiveClickPreviewRenderInput): GraphwarL
       expression: input.expression,
       ...(input.launchAngleRadians === undefined ? {} : { launchAngleRadians: input.launchAngleRadians }),
       ...(input.parser ? { parser: { ...input.parser } } : {}),
-      soldierCenter: cloneGraphPoint(input.soldierCenter),
+      soldierCenter: createGraphPoint(input.soldierCenter.x, input.soldierCenter.y),
       type: "expression",
     };
   }
 
   return {
     ...base,
-    points: input.points.map(cloneGraphPoint),
+    points: input.points.map((point) => createGraphPoint(point.x, point.y)),
     settings: {
       algorithm: input.settings.algorithm,
       decimalPlaces: input.settings.decimalPlaces,
@@ -376,35 +415,7 @@ function cloneRenderInput(input: GraphwarLiveClickPreviewRenderInput): GraphwarL
   };
 }
 
-function cloneCollisionSettings(settings: NonNullable<GraphwarLiveClickPreviewRenderInput["collision"]>) {
-  return {
-    ...(settings.boundaryExpansion === undefined ? {} : { boundaryExpansion: settings.boundaryExpansion }),
-    ...(settings.mask ? { mask: settings.mask } : {}),
-  };
-}
-
-function cloneGraphBounds(bounds: GraphBounds) {
-  return {
-    maxX: bounds.maxX,
-    maxY: bounds.maxY,
-    minX: bounds.minX,
-    minY: bounds.minY,
-  };
-}
-
-function cloneBoundsRect(rect: BoundsRect) {
-  return {
-    height: rect.height,
-    width: rect.width,
-    x: rect.x,
-    y: rect.y,
-  };
-}
-
-function cloneGraphPoint(point: GraphPoint) {
-  return createGraphPoint(point.x, point.y);
-}
-
+/** 验证响应属于预期请求且满足成功或失败协议。 */
 function isWorkerResponseForRequest(
   value: unknown,
   requestId: number,

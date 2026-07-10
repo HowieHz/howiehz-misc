@@ -172,17 +172,23 @@ const masterStepSummedAreaCache = new WeakMap<Uint8Array, GraphwarPlaneMaskSumme
 const masterThetaStarScratch = createGraphwarThetaStarScratch();
 const masterVisibilityGraphCache = new Map<string, MasterVisibilityGraphCacheEntry>();
 
+/** 接收页面请求，并将异步搜索交给统一的 master 分派入口。 */
 workerScope.addEventListener("message", (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => {
   void handleRequest(event.data);
 });
 
+/** 将单个 master 请求分派到对应搜索流程，并统一序列化异常。 */
 async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
   try {
     if (request.task.type === "find-route") {
-      const result = await findRoute(request.id, request.task.input);
+      const input = request.task.input;
       postResponse({
         id: request.id,
-        result,
+        result: await findRouteForMask(
+          request.id,
+          input,
+          masterVisibilityGraphCache.get(createMasterVisibilityGraphCacheKey(input))?.routeMask ?? input.routeMask,
+        ),
         taskType: "find-route",
         type: "success",
       });
@@ -190,10 +196,9 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
     }
 
     if (request.task.type === "find-smart-path") {
-      const result = await findSmartPath(request.id, request.task.input);
       postResponse({
         id: request.id,
-        result,
+        result: await findSmartPath(request.id, request.task.input),
         taskType: "find-smart-path",
         type: "success",
       });
@@ -201,20 +206,18 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
     }
 
     if (request.task.type === "build-one-click-clear-dag-edges") {
-      const result = await buildOneClickClearDagEdges(request.task.input);
       postResponse({
         id: request.id,
-        result,
+        result: await buildOneClickClearDagEdges(request.task.input),
         taskType: "build-one-click-clear-dag-edges",
         type: "success",
       });
       return;
     }
 
-    const result = await buildOneClickClearPath(request.task.input);
     postResponse({
       id: request.id,
-      result,
+      result: await buildOneClickClearPath(request.task.input),
       taskType: "build-one-click-clear-path",
       type: "success",
     });
@@ -227,11 +230,7 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
   }
 }
 
-async function findRoute(id: number, input: GraphwarPathfindingRouteInput): Promise<GraphwarPathfindingRouteResult> {
-  const routeMask = getMasterRouteMask(input);
-  return findRouteForMask(id, input, routeMask);
-}
-
+/** 在给定 route mask 上运行所选几何路由器，并归集搜索与可视图缓存耗时。 */
 async function findRouteForMask(
   id: number,
   input: GraphwarPathfindingRouteInput,
@@ -290,6 +289,7 @@ async function findRouteForMask(
   };
 }
 
+/** 完成智能寻路的几何搜索、轨迹验证和路径删点。 */
 async function findSmartPath(
   id: number,
   input: GraphwarSmartPathfindingPathInput,
@@ -376,7 +376,21 @@ async function findSmartPath(
     routeMaskLookup.mask,
     routeRuntimeOptions,
   );
-  addSmartPathfindingRouteTimings(timings, routeResult);
+  timings.push(
+    {
+      elapsedMs: routeResult.visibilityCacheElapsedMs,
+      stage:
+        routeResult.visibilityCache === "hit"
+          ? "visibility-cache-hit"
+          : routeResult.visibilityCache === "miss"
+            ? "visibility-cache-miss"
+            : "visibility-cache-skipped",
+    },
+    {
+      elapsedMs: routeResult.searchElapsedMs,
+      stage: "search-route",
+    },
+  );
   if (!routeResult.path || routeResult.path.length < 2) {
     return { failureReason: "route", timings };
   }
@@ -405,33 +419,10 @@ async function findSmartPath(
   return { path, timings };
 }
 
-function addSmartPathfindingRouteTimings(
-  timings: GraphwarSmartPathfindingWorkerTiming[],
-  result: GraphwarPathfindingRouteResult,
-) {
-  timings.push({
-    elapsedMs: result.visibilityCacheElapsedMs,
-    stage:
-      result.visibilityCache === "hit"
-        ? "visibility-cache-hit"
-        : result.visibilityCache === "miss"
-          ? "visibility-cache-miss"
-          : "visibility-cache-skipped",
-  });
-  timings.push({
-    elapsedMs: result.searchElapsedMs,
-    stage: "search-route",
-  });
-}
-
-function getMasterRouteMask(input: GraphwarPathfindingRouteInput) {
-  const cacheKey = createMasterVisibilityGraphCacheKey(input);
-  return masterVisibilityGraphCache.get(cacheKey)?.routeMask ?? input.routeMask;
-}
-
+/** 获取或派生 master 私有 route mask，并按需补齐 Step 前缀和。 */
 function getMasterRouteMaskFromBase(input: MasterRouteMaskSourceInput, needsSummedArea = false): MasterRouteMaskLookup {
   const startedAt = nowMs();
-  const cacheKey = createMasterRouteMaskCacheKey(input);
+  const cacheKey = [input.routeMaskCacheId, createRouteMaskCacheKey(input.routeTolerancePlanePixels)].join("|");
   const cached = masterRouteMaskCache.get(cacheKey);
   if (cached) {
     if (needsSummedArea && !cached.summedArea) {
@@ -470,6 +461,7 @@ function getOrCreateMasterStepSummedArea(mask: Uint8Array) {
   return summedArea;
 }
 
+/** 获取与 mask、方向和容差匹配的可视图预处理数据。 */
 function getMasterVisibilityGraphObstacleData(
   input: Pick<GraphwarPathfindingRouteInput, "bounds" | "routeMaskCacheId" | "routeTolerancePlanePixels">,
   routeMask: Uint8Array,
@@ -498,12 +490,7 @@ function getMasterVisibilityGraphObstacleData(
   };
 }
 
-function createMasterRouteMaskCacheKey(
-  input: Pick<MasterRouteMaskSourceInput, "routeMaskCacheId" | "routeTolerancePlanePixels">,
-) {
-  return [input.routeMaskCacheId, createRouteMaskCacheKey(input.routeTolerancePlanePixels)].join("|");
-}
-
+/** 为可视图预处理生成包含方向语义的稳定 cache key。 */
 function createMasterVisibilityGraphCacheKey(
   input: Pick<GraphwarPathfindingRouteInput, "bounds" | "routeMaskCacheId" | "routeTolerancePlanePixels">,
 ) {
@@ -514,6 +501,7 @@ function createMasterVisibilityGraphCacheKey(
   ].join("|");
 }
 
+/** 将平面网格路线映射回截图路径，并恢复精确目标点。 */
 function normalizeSmartPathfindingPathFromPlanePath(
   pathfindingPath: readonly { x: number; y: number }[],
   targetPoint: PixelPoint,
@@ -527,6 +515,7 @@ function normalizeSmartPathfindingPathFromPlanePath(
   return normalizePathForMinimumForwardStep([...input.sourcePath, ...appendPoints], input.bounds, input.boundsRect);
 }
 
+/** 用 Graphwar 规则、Step 包络和真实轨迹共同验证候选路径。 */
 function validateSmartPathfindingTrajectory(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
@@ -572,6 +561,7 @@ function validateSmartPathfindingTrajectory(
   };
 }
 
+/** 反复尝试移除新增控制点，同时保持完整轨迹有效。 */
 function optimizeSmartPathfindingPath(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
@@ -595,6 +585,7 @@ function optimizeSmartPathfindingPath(
   return optimized;
 }
 
+/** 记录同步智能寻路阶段耗时，同时保留任务的返回值与异常。 */
 function measureSmartPathfindingWorkerTiming<TResult>(
   timings: GraphwarSmartPathfindingWorkerTiming[],
   stage: GraphwarSmartPathfindingWorkerTiming["stage"],
@@ -611,6 +602,7 @@ function measureSmartPathfindingWorkerTiming<TResult>(
   }
 }
 
+/** 在 master 内执行完整一键清图，并管理请求级 edge Worker session。 */
 async function buildOneClickClearPath(
   input: GraphwarOneClickClearPathWorkerInput,
 ): Promise<GraphwarOneClickClearPathWorkerResult> {
@@ -708,6 +700,7 @@ async function buildOneClickClearPath(
   return { result, timings };
 }
 
+/** 复用请求级 edge session 构建一批 DAG 边并收集子 Worker 耗时。 */
 async function buildOneClickClearDagEdges(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
 ): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
@@ -744,11 +737,7 @@ function createOneClickClearDagEdgeSession(
   let serialRouteContext: GraphwarOneClickClearDagEdgeRouteBuildContext | undefined;
   let state: OneClickClearDagEdgeSessionState = "idle";
 
-  const getSerialRouteContext = () => {
-    serialRouteContext ??= createOneClickClearSerialRouteContext(input);
-    return serialRouteContext;
-  };
-
+  /** 终止并解绑单个 edge Worker，且只记录一次生命周期耗时。 */
   const finishWorker = (handle: EdgeWorkerHandle) => {
     if (handle.finished) {
       return;
@@ -768,6 +757,7 @@ function createOneClickClearDagEdgeSession(
     });
   };
 
+  /** 结束请求级 session，并拒绝尚未结算的活动批次。 */
   const dispose = () => {
     if (state === "disposed") {
       return [];
@@ -785,18 +775,22 @@ function createOneClickClearDagEdgeSession(
     return workerTimings.splice(0);
   };
 
+  /** 串行执行一组 jobs，并保护批次不得重入。 */
   const runSerialJobs = async (jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[]) => {
     if (serialBatchRunning) {
       throw new Error("One-Click Clear DAG edge batches must run sequentially");
     }
     serialBatchRunning = true;
     try {
-      return await runOneClickClearDagEdgeJobsSerial(getSerialRouteContext(), jobs);
+      // 只有真正进入串行路径时才支付预处理成本；后续 fallback 批次复用同一上下文。
+      serialRouteContext ??= createOneClickClearSerialRouteContext(input);
+      return await runOneClickClearDagEdgeJobsSerial(serialRouteContext, jobs);
     } finally {
       serialBatchRunning = false;
     }
   };
 
+  /** 将串行结果包装成与并行路径一致的批次响应。 */
   const runSerialBatch = async (
     jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
     mode: "parallel-fallback" | "serial",
@@ -806,6 +800,7 @@ function createOneClickClearDagEdgeSession(
     return createOneClickClearDagEdgeBuildResult(serial.routes, mode, workerCount, serial.totals);
   };
 
+  /** 在所有 jobs 完成后按提交顺序结算并行批次。 */
   const resolveParallelBatch = (batch: OneClickClearDagEdgeBatch) => {
     if (batch.settled || batch.completedJobIds.size < batch.jobs.length) {
       return;
@@ -823,6 +818,7 @@ function createOneClickClearDagEdgeSession(
     );
   };
 
+  /** 子 Worker 不可用时终止池，并只补跑尚未完成的 jobs。 */
   const switchToSerialFallback = () => {
     if (state === "disposed" || state === "fallback") {
       return;
@@ -839,8 +835,8 @@ function createOneClickClearDagEdgeSession(
 
     batch.settled = true;
     activeBatch = undefined;
-    const remainingJobs = batch.jobs.filter((job) => !batch.completedJobIds.has(job.id));
-    void runSerialJobs(remainingJobs)
+    // 已完成的并行 job 已写入 batch，串行 fallback 只补跑剩余部分。
+    void runSerialJobs(batch.jobs.filter((job) => !batch.completedJobIds.has(job.id)))
       .then((serial) => {
         for (const route of serial.routes) {
           batch.routesByJobId.set(route.jobId, route);
@@ -863,6 +859,7 @@ function createOneClickClearDagEdgeSession(
       });
   };
 
+  /** 向空闲且就绪的 edge Worker 分配当前批次的下一个 job。 */
   const assignNextJob = (handle: EdgeWorkerHandle) => {
     const batch = activeBatch;
     if (state !== "running" || !batch || batch.settled || handle.finished || !handle.ready || handle.activeJob) {
@@ -892,6 +889,7 @@ function createOneClickClearDagEdgeSession(
     }
   };
 
+  /** 校验请求身份后合并单边结果，并继续驱动该 Worker。 */
   const handleJobResult = (
     handle: EdgeWorkerHandle,
     requestId: number,
@@ -920,6 +918,7 @@ function createOneClickClearDagEdgeSession(
     resolveParallelBatch(batch);
   };
 
+  /** 创建并初始化一个绑定当前 session 静态上下文的 edge Worker。 */
   const createEdgeWorkerHandle = (workerIndex: number) => {
     const worker = new Worker(new URL("./one-click-clear/edge.worker.ts", import.meta.url), {
       name: `graphwar-one-click-clear-edge-${workerIndex}`,
@@ -933,6 +932,7 @@ function createOneClickClearDagEdgeSession(
       worker,
       workerIndex,
     };
+    /** 将 edge Worker 响应路由到就绪、失败或 job 结算流程。 */
     const handleMessage = (event: MessageEvent<GraphwarOneClickClearEdgeWorkerResponse>) => {
       const response = event.data;
       if (response.workerIndex !== handle.workerIndex || handle.finished) {
@@ -949,8 +949,11 @@ function createOneClickClearDagEdgeSession(
       }
       handleJobResult(handle, response.requestId, response.result);
     };
+    /** 将消息反序列化失败切换到串行 fallback。 */
     const handleMessageError = () => switchToSerialFallback();
+    /** 将 edge Worker 运行时失败切换到串行 fallback。 */
     const handleError = () => switchToSerialFallback();
+    /** 统一解绑 edge Worker 的事件监听器。 */
     const cleanup = () => {
       worker.removeEventListener("message", handleMessage);
       worker.removeEventListener("messageerror", handleMessageError);
@@ -980,16 +983,7 @@ function createOneClickClearDagEdgeSession(
     }
   };
 
-  const ensureWorkerCount = (workerCount: number) => {
-    while (handles.length < workerCount && state === "running") {
-      try {
-        createEdgeWorkerHandle(handles.length + 1);
-      } catch {
-        switchToSerialFallback();
-      }
-    }
-  };
-
+  /** 初始化并行批次状态，并启动所有可用 Worker。 */
   const runParallelBatch = (jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[], workerCount: number) =>
     new Promise<GraphwarOneClickClearDagEdgeBuildResult>((resolve, reject) => {
       const batch: OneClickClearDagEdgeBatch = {
@@ -1008,12 +1002,19 @@ function createOneClickClearDagEdgeSession(
       };
       activeBatch = batch;
       state = "running";
-      ensureWorkerCount(workerCount);
+      while (handles.length < workerCount && state === "running") {
+        try {
+          createEdgeWorkerHandle(handles.length + 1);
+        } catch {
+          switchToSerialFallback();
+        }
+      }
       for (const handle of handles) {
         assignNextJob(handle);
       }
     });
 
+  /** 选择空批次、串行、fallback 或并行执行路径，并强制批次串行提交。 */
   const runBatch = async (jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[]) => {
     if (state === "disposed") {
       throw new Error("One-Click Clear DAG edge session is disposed");
@@ -1028,8 +1029,7 @@ function createOneClickClearDagEdgeSession(
       return runSerialBatch(jobs, "parallel-fallback", fallbackWorkerCount);
     }
 
-    const workerApiAvailable = typeof Worker !== "undefined";
-    if (!workerApiAvailable || configuredWorkerCount <= 1 || (handles.length === 0 && jobs.length <= 1)) {
+    if (typeof Worker === "undefined" || configuredWorkerCount <= 1 || (handles.length === 0 && jobs.length <= 1)) {
       state = "running";
       try {
         return await runSerialBatch(jobs, "serial", 1);
@@ -1040,8 +1040,7 @@ function createOneClickClearDagEdgeSession(
       }
     }
 
-    const workerCount = Math.min(configuredWorkerCount, jobs.length);
-    return runParallelBatch(jobs, workerCount);
+    return runParallelBatch(jobs, Math.min(configuredWorkerCount, jobs.length));
   };
 
   return { dispose, runBatch };
@@ -1103,6 +1102,7 @@ async function runOneClickClearDagEdgeJobsSerial(
   return { routes, totals };
 }
 
+/** 统一构造 DAG 建边结果及其执行模式和几何耗时。 */
 function createOneClickClearDagEdgeBuildResult(
   routes: readonly GraphwarOneClickClearDagEdgeRoute[],
   mode: "parallel" | "parallel-fallback" | "serial",
@@ -1121,7 +1121,14 @@ function createOneClickClearDagEdgeBuildResult(
         elapsedMs: 0,
         stage: "build-dag-edges",
       },
-      ...createRouteTimingEntries(totals),
+      {
+        elapsedMs: totals.routePathfindingElapsedMs,
+        stage: "route-pathfinding",
+      },
+      {
+        elapsedMs: totals.routeMapPixelsElapsedMs,
+        stage: "route-map-pixels",
+      },
     ],
   };
 }
@@ -1145,19 +1152,7 @@ function createOneClickClearDagEdgeRoute(
     : { jobId: result.jobId };
 }
 
-function createRouteTimingEntries(totals: EdgeRouteTimingTotals): GraphwarOneClickClearDebugTiming[] {
-  return [
-    {
-      elapsedMs: totals.routePathfindingElapsedMs,
-      stage: "route-pathfinding",
-    },
-    {
-      elapsedMs: totals.routeMapPixelsElapsedMs,
-      stage: "route-map-pixels",
-    },
-  ];
-}
-
+/** 将 master 响应发送到主线程。 */
 function postResponse(response: GraphwarPathfindingWorkerResponse) {
   workerScope.postMessage(response);
 }

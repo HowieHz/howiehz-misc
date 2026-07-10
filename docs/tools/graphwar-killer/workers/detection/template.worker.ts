@@ -19,10 +19,12 @@ interface GraphwarSoldierTemplateWorkerScope {
 
 const workerScope = self as unknown as GraphwarSoldierTemplateWorkerScope;
 
+/** 对单个候选切片完成同步评分，并把异常序列化为 lane 错误。 */
 workerScope.addEventListener("message", (event) => {
   const request = event.data;
   const startedAt = nowMs();
   try {
+    // 先完成评分再读取 elapsedMs；该顺序不能依赖响应对象的属性求值位置。
     const matches = matchSoldierTemplates(request.imageData, request.edgeRect, request.scale, request.candidates);
     workerScope.postMessage({
       elapsedMs: nowMs() - startedAt,

@@ -98,6 +98,7 @@ export function calculateGraphwarTrajectory(
   return input.type === "solver" ? calculateSolverTrajectory(input) : calculateSimulatorTrajectory(input);
 }
 
+/** 分阶段解算求解器输入，让公式生成与轨迹模拟异常保留各自的页面错误语义。 */
 function calculateSolverTrajectory(
   input: Extract<GraphwarTrajectoryCalculationInput, { type: "solver" }>,
 ): GraphwarTrajectoryCalculationOutcome {
@@ -137,8 +138,19 @@ function calculateSolverTrajectory(
       collectVisiblePixels: true,
       context: prepared.context,
     });
-    const targetHitIndex = findTargetHitIndex(input, sampleResult);
-    const obstacleHitIndex = prioritizeTargetOverLaterObstacle(targetHitIndex, sampleResult.obstacleHitIndex);
+    const targetHitIndex =
+      input.targetPoint && input.targetHitRadiusPixels !== undefined
+        ? findGraphwarTrajectoryTargetHitIndex({
+            bounds: input.bounds,
+            boundsRect: input.boundsRect,
+            points: sampleResult.sample.points,
+            targetHitRadiusPixels: input.targetHitRadiusPixels,
+            targetPoint: input.targetPoint,
+          })
+        : -1;
+    // 命中目标后的碰撞不影响当前路径成功提示，保持与原主线程实现一致。
+    const obstacleHitIndex =
+      targetHitIndex >= 0 && sampleResult.obstacleHitIndex >= targetHitIndex ? -1 : sampleResult.obstacleHitIndex;
     const warningReason = resolveWarningReason(sampleResult, targetHitIndex, obstacleHitIndex);
     return {
       ok: true,
@@ -156,6 +168,7 @@ function calculateSolverTrajectory(
   }
 }
 
+/** 模拟器不生成公式，只把表达式采样异常归入轨迹阶段。 */
 function calculateSimulatorTrajectory(
   input: Extract<GraphwarTrajectoryCalculationInput, { type: "simulator" }>,
 ): GraphwarTrajectoryCalculationOutcome {
@@ -190,27 +203,7 @@ interface PreparedSolverCalculation {
   secondOrderLaunchAngleDegrees?: number;
 }
 
-function findTargetHitIndex(
-  input: Extract<GraphwarTrajectoryCalculationInput, { type: "solver" }>,
-  sampleResult: GraphwarTrajectorySampleResult,
-) {
-  if (!input.targetPoint || input.targetHitRadiusPixels === undefined) {
-    return -1;
-  }
-  return findGraphwarTrajectoryTargetHitIndex({
-    bounds: input.bounds,
-    boundsRect: input.boundsRect,
-    points: sampleResult.sample.points,
-    targetHitRadiusPixels: input.targetHitRadiusPixels,
-    targetPoint: input.targetPoint,
-  });
-}
-
-/** 命中目标后的碰撞不影响当前路径成功提示，保持与原主线程实现一致。 */
-function prioritizeTargetOverLaterObstacle(targetHitIndex: number, obstacleHitIndex: number) {
-  return targetHitIndex >= 0 && obstacleHitIndex >= targetHitIndex ? -1 : obstacleHitIndex;
-}
-
+/** 把采样停止原因和命中顺序收敛为页面唯一的轨迹提示。 */
 function resolveWarningReason(
   sampleResult: GraphwarTrajectorySampleResult,
   targetHitIndex: number,
@@ -233,6 +226,7 @@ function resolveWarningReason(
   return undefined;
 }
 
+/** 将任意抛出值规范化为可跨 Worker 边界传输的阶段失败结果。 */
 function createFailureOutcome(
   stage: GraphwarTrajectoryCalculationFailureStage,
   error: unknown,

@@ -1,6 +1,4 @@
 /** 主线程侧 Graphwar 截图识别 runner，集中管理 Worker 生命周期、取消和同步 fallback。 */
-import { nowMs } from "../../core/time";
-import type { BoundsRect } from "../../core/types";
 import { detectGraphwarObjectsInBounds, detectGraphwarPlayArea } from "../objects";
 import type {
   GraphwarObjectDetectionInstrumentation,
@@ -20,6 +18,7 @@ import type {
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
 } from "./protocol";
+import { measureDetectionStage } from "./timing";
 
 export type { GraphwarDetectionWorkerStage };
 export type { GraphwarDetectionWorkerTimingDetail };
@@ -167,7 +166,8 @@ export function createGraphwarDetectionRunner() {
       };
       try {
         const cloneableRequest = cloneGraphwarDetectionWorkerRequest(request);
-        activeWorker.postMessage(cloneableRequest, collectRequestTransferList(cloneableRequest));
+        const imageBuffer = cloneableRequest.task.imageData.data.buffer;
+        activeWorker.postMessage(cloneableRequest, imageBuffer instanceof ArrayBuffer ? [imageBuffer] : []);
       } catch (error) {
         pendingTask = undefined;
         reject(error);
@@ -175,7 +175,7 @@ export function createGraphwarDetectionRunner() {
     });
   }
 
-  /** 取消当前检测并重建 Worker，避免旧任务继续占用资源或回写状态。 */
+  /** 取消当前检测并丢弃 Worker，避免旧任务继续占用资源或回写状态。 */
   function cancel() {
     if (!pendingTask) {
       return;
@@ -312,12 +312,6 @@ function detectObjectsInBoundsSynchronously(
   return objects;
 }
 
-/** 收集可转移的 ImageData buffer，避免主线程和 Worker 间复制大图。 */
-function collectRequestTransferList(request: GraphwarDetectionWorkerRequest) {
-  const buffer = request.task.imageData.data.buffer;
-  return buffer instanceof ArrayBuffer ? [buffer] : [];
-}
-
 /** 复制 Worker 请求外壳；ImageData 应保留原对象，以便继续转移原始 buffer。 */
 function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerRequest): GraphwarDetectionWorkerRequest {
   if (request.task.type === "detect-bounds-only") {
@@ -330,10 +324,19 @@ function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerReq
     };
   }
 
+  const soldierSettings = request.task.soldierSettings;
   const cloneableSharedInput = {
     imageData: request.task.imageData,
-    soldierSettings: cloneGraphwarSoldierDetectionSettings(request.task.soldierSettings),
-    thresholds: cloneGraphwarObstacleDetectionThresholds(request.task.thresholds),
+    soldierSettings: soldierSettings
+      ? {
+          candidateTopRatio: soldierSettings.candidateTopRatio,
+          maximumSoldierCount: soldierSettings.maximumSoldierCount,
+          templateMatchingWorkerCount: soldierSettings.templateMatchingWorkerCount,
+        }
+      : undefined,
+    thresholds: {
+      minArea: request.task.thresholds.minArea,
+    },
   };
 
   if (request.task.type === "detect-auto") {
@@ -350,64 +353,18 @@ function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerReq
     id: request.id,
     task: {
       ...cloneableSharedInput,
-      edgeRect: cloneBoundsRect(request.task.edgeRect),
+      edgeRect: {
+        height: request.task.edgeRect.height,
+        width: request.task.edgeRect.width,
+        x: request.task.edgeRect.x,
+        y: request.task.edgeRect.y,
+      },
       type: "detect-bounds",
     },
   };
 }
 
-/** 障碍阈值应以纯对象跨 Worker 边界，避免 Vue reactive proxy 触发结构化克隆失败。 */
-function cloneGraphwarObstacleDetectionThresholds(
-  thresholds: GraphwarAutoDetectionInput["thresholds"],
-): GraphwarAutoDetectionInput["thresholds"] {
-  return {
-    minArea: thresholds.minArea,
-  };
-}
-
-/** 士兵识别设置应复制成纯对象；undefined 应继续表示使用检测模块默认设置。 */
-function cloneGraphwarSoldierDetectionSettings(
-  settings: GraphwarAutoDetectionInput["soldierSettings"],
-): GraphwarAutoDetectionInput["soldierSettings"] {
-  if (!settings) {
-    return undefined;
-  }
-
-  return {
-    candidateTopRatio: settings.candidateTopRatio,
-    maximumSoldierCount: settings.maximumSoldierCount,
-    templateMatchingWorkerCount: settings.templateMatchingWorkerCount,
-  };
-}
-
-/** 坐标系边界应复制成纯矩形数据，页面侧 ref/proxy 不应越过 Worker 消息边界。 */
-function cloneBoundsRect(rect: BoundsRect): BoundsRect {
-  return {
-    height: rect.height,
-    width: rect.width,
-    x: rect.x,
-    y: rect.y,
-  };
-}
-
-/** 包装检测阶段计时，让同步 fallback 的调试数据和 Worker 结果一致。 */
-function measureDetectionStage<TResult>(
-  timings: GraphwarDetectionWorkerTimingEntry[],
-  stage: GraphwarDetectionWorkerStage,
-  task: () => TResult,
-) {
-  const startedAt = nowMs();
-  try {
-    return task();
-  } finally {
-    timings.push({
-      elapsedMs: nowMs() - startedAt,
-      stage,
-    });
-  }
-}
-
-/** 将对象识别内部阶段计时接入 worker timing 列表。 */
+/** 将对象识别内部阶段计时接入 Worker timing 列表。 */
 function createObjectDetectionInstrumentation(
   timings: GraphwarDetectionWorkerTimingEntry[],
 ): GraphwarObjectDetectionInstrumentation {

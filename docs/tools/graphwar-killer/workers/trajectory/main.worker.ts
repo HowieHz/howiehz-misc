@@ -14,6 +14,7 @@ interface GraphwarTrajectoryWorkerScope {
 
 const workerScope = self as unknown as GraphwarTrajectoryWorkerScope;
 
+/** 同步执行一个原子主轨迹请求，并回传带原请求 id 的结果。 */
 workerScope.addEventListener("message", (event) => {
   const request = event.data;
   workerScope.postMessage({

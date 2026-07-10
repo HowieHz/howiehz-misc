@@ -59,7 +59,8 @@ const WORKER_SLOT_TARGET = 2;
 /**
  * 创建主轨迹 runner。
  *
- * 同一时刻只有一个权威任务；第二个常驻 Worker 作为热备，让新输入可以先终止旧计算，再立即使用已经加载的 Worker，而不必等待旧同步循环响应取消消息。
+ * 同一时刻只有一个权威任务；首个任务投递后，第二个槽位会预创建备用 Worker，让其初始化尽量与当前计算重叠。新输入会终止旧计算，并在固定输入快照后向备用投递，无需等待旧同步循环自行结束；若备用尚未
+ * ready，浏览器会排队消息，因此这里不承诺完全消除冷启动等待。
  */
 export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunnerOptions = {}) {
   const createWorker = options.createWorker ?? createDefaultTrajectoryWorker;

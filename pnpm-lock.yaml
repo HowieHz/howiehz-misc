@@ -16,7 +16,7 @@ importers:
         version: 0.7.0
       '@changesets/cli':
         specifier: ^2.31.0
-        version: 2.31.0(@types/node@26.1.0)
+        version: 2.31.0(@types/node@26.1.1)
       '@eslint/compat':
         specifier: ^2.1.0
         version: 2.1.0(eslint@10.6.0)
@@ -24,8 +24,8 @@ importers:
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.6.0)
       '@types/node':
-        specifier: ^26.1.0
-        version: 26.1.0
+        specifier: ^26.1.1
+        version: 26.1.1
       '@typescript-eslint/parser':
         specifier: ^8.63.0
         version: 8.63.0(eslint@10.6.0)(typescript@6.0.3)
@@ -134,7 +134,7 @@ importers:
         version: 1.5.2
       vitepress:
         specifier: 2.0.0-alpha.18
-        version: 2.0.0-alpha.18(@types/node@26.1.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3)
+        version: 2.0.0-alpha.18(@types/node@26.1.1)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3)
       vitepress-plugin-group-icons:
         specifier: ^1.7.5
         version: 1.7.5(vite@8.1.3)
@@ -158,7 +158,7 @@ importers:
         version: 0.22.3(@arethetypeswrong/core@0.18.4)(@typescript/native-preview@7.0.0-dev.20260707.2)(publint@0.3.21)(typescript@6.0.3)(vue-tsc@3.3.6)
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.1.0)(vite@8.1.3)
+        version: 4.1.10(@types/node@26.1.1)(vite@8.1.3)
 
   packages/graphwar-agent: {}
 
@@ -1205,8 +1205,8 @@ packages:
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
 
-  '@types/node@26.1.0':
-    resolution: {integrity: sha512-O0A1G3xPGy4w7AgQdAQYUlQ+BKk2Oovw8eRpofyp5KdBZULnbe+WqaOVNrm705SHphCiG4XHsACrSmPu1f+Kgw==}
+  '@types/node@26.1.1':
+    resolution: {integrity: sha512-nxAkRSVkN1Y0JC1W8ky/fTfkGsMmcrRsbx+3XoZE+rMOX71kLYTV7fLXpqud1GpbpP5TuffXFqfX7fH2GgZREw==}
 
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
@@ -3787,7 +3787,7 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@changesets/cli@2.31.0(@types/node@26.1.0)':
+  '@changesets/cli@2.31.0(@types/node@26.1.1)':
     dependencies:
       '@changesets/apply-release-plan': 7.1.1
       '@changesets/assemble-release-plan': 6.0.10
@@ -3803,7 +3803,7 @@ snapshots:
       '@changesets/should-skip-package': 0.1.2
       '@changesets/types': 6.1.0
       '@changesets/write': 0.4.0
-      '@inquirer/external-editor': 1.0.3(@types/node@26.1.0)
+      '@inquirer/external-editor': 1.0.3(@types/node@26.1.1)
       '@manypkg/get-packages': 1.1.3
       ansi-colors: 4.1.3
       enquirer: 2.4.1
@@ -4166,12 +4166,12 @@ snapshots:
   '@img/sharp-win32-x64@0.34.5':
     optional: true
 
-  '@inquirer/external-editor@1.0.3(@types/node@26.1.0)':
+  '@inquirer/external-editor@1.0.3(@types/node@26.1.1)':
     dependencies:
       chardet: 2.2.0
       iconv-lite: 0.7.3
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -4251,7 +4251,7 @@ snapshots:
     dependencies:
       '@vueuse/core': 14.3.0(vue@3.5.39)
       less: 4.6.7
-      vitepress: 2.0.0-alpha.18(@types/node@26.1.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3)
+      vitepress: 2.0.0-alpha.18(@types/node@26.1.1)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3)
       vue: 3.5.39(typescript@6.0.3)
 
   '@oxc-project/types@0.138.0': {}
@@ -4598,7 +4598,7 @@ snapshots:
 
   '@types/node@12.20.55': {}
 
-  '@types/node@26.1.0':
+  '@types/node@26.1.1':
     dependencies:
       undici-types: 8.3.0
 
@@ -4814,7 +4814,7 @@ snapshots:
   '@vitejs/plugin-vue@6.0.7(vite@8.1.3)(vue@3.5.39)':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.1.3(@types/node@26.1.0)(less@4.6.7)
+      vite: 8.1.3(@types/node@26.1.1)(less@4.6.7)
       vue: 3.5.39(typescript@6.0.3)
 
   '@vitest/expect@4.1.10':
@@ -4832,7 +4832,7 @@ snapshots:
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.1.3(@types/node@26.1.0)(less@4.6.7)
+      vite: 8.1.3(@types/node@26.1.1)(less@4.6.7)
 
   '@vitest/pretty-format@4.1.10':
     dependencies:
@@ -7027,7 +7027,7 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-  vite@8.1.3(@types/node@26.1.0)(less@4.6.7):
+  vite@8.1.3(@types/node@26.1.1)(less@4.6.7):
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.5
@@ -7035,7 +7035,7 @@ snapshots:
       rolldown: 1.1.4
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
       fsevents: 2.3.3
       less: 4.6.7
 
@@ -7045,7 +7045,7 @@ snapshots:
       '@iconify-json/vscode-icons': 1.2.65
       '@iconify/utils': 3.1.4
     optionalDependencies:
-      vite: 8.1.3(@types/node@26.1.0)(less@4.6.7)
+      vite: 8.1.3(@types/node@26.1.1)(less@4.6.7)
 
   vitepress-plugin-pagefind@0.4.22(pagefind@1.5.2)(vitepress@2.0.0-alpha.18)(vue@3.5.39):
     dependencies:
@@ -7053,7 +7053,7 @@ snapshots:
       '@vueuse/core': 14.3.0(vue@3.5.39)
       javascript-stringify: 2.1.0
       pagefind: 1.5.2
-      vitepress: 2.0.0-alpha.18(@types/node@26.1.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3)
+      vitepress: 2.0.0-alpha.18(@types/node@26.1.1)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3)
       vue: 3.5.39(typescript@6.0.3)
 
   vitepress-plugin-rss@0.4.4(vitepress@2.0.0-alpha.18):
@@ -7062,9 +7062,9 @@ snapshots:
       feed: 5.2.1
       markdown-it-container: 4.0.0
       sharp: 0.34.5
-      vitepress: 2.0.0-alpha.18(@types/node@26.1.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3)
+      vitepress: 2.0.0-alpha.18(@types/node@26.1.1)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3)
 
-  vitepress@2.0.0-alpha.18(@types/node@26.1.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3):
+  vitepress@2.0.0-alpha.18(@types/node@26.1.1)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3):
     dependencies:
       '@docsearch/css': 4.6.3
       '@docsearch/js': 4.6.3
@@ -7083,7 +7083,7 @@ snapshots:
       mark.js: 8.11.1
       minisearch: 7.2.0
       shiki: 4.3.1
-      vite: 8.1.3(@types/node@26.1.0)(less@4.6.7)
+      vite: 8.1.3(@types/node@26.1.1)(less@4.6.7)
       vue: 3.5.39(typescript@6.0.3)
     optionalDependencies:
       markdown-it-mathjax3: 4.3.2
@@ -7114,7 +7114,7 @@ snapshots:
       - universal-cookie
       - yaml
 
-  vitest@4.1.10(@types/node@26.1.0)(vite@8.1.3):
+  vitest@4.1.10(@types/node@26.1.1)(vite@8.1.3):
     dependencies:
       '@vitest/expect': 4.1.10
       '@vitest/mocker': 4.1.10(vite@8.1.3)
@@ -7134,10 +7134,10 @@ snapshots:
       tinyexec: 1.2.4
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
-      vite: 8.1.3(@types/node@26.1.0)(less@4.6.7)
+      vite: 8.1.3(@types/node@26.1.1)(less@4.6.7)
       why-is-node-running: 2.3.0
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 26.1.1
     transitivePeerDependencies:
       - msw
 

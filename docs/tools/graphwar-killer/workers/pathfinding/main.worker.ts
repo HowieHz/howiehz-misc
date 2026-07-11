@@ -1,5 +1,5 @@
 import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../../core/game/forward-rule";
-import { imageToGraphPoint } from "../../core/geometry";
+import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import type { GraphBounds, PixelPoint } from "../../core/types";
@@ -16,6 +16,7 @@ import type {
 } from "../../pathfinding/one-click-clear/search";
 import { buildGraphwarOneClickClearPath } from "../../pathfinding/one-click-clear/search";
 import type { GraphwarPlaneMaskSummedArea } from "../../pathfinding/routing/step-envelope";
+import { scanGraphwarStepGlitchPath } from "../../pathfinding/routing/step-glitch-scan";
 import {
   createGraphwarStepPathfindingEdgeEvaluator,
   createGraphwarStepRouteModel,
@@ -301,6 +302,10 @@ async function findSmartPath(
     return { failureReason: "route", timings };
   }
 
+  if (input.settings.algorithm === "step" && input.settings.equation === "dy" && input.settings.stepGlitchMode) {
+    return findStepGlitchSmartPath(input, timings);
+  }
+
   const isStepRoute = input.settings.algorithm === "step";
   const routeMaskLookup = getMasterRouteMaskFromBase(input, isStepRoute);
   timings.push({
@@ -416,6 +421,66 @@ async function findSmartPath(
           optimizeSmartPathfindingPath(input, normalizedPath, stepContext),
         )
       : normalizedPath;
+  return { path, timings };
+}
+
+/** Step y'= 邪道单目标直接扫描控制点；不经过普通 route mask、Theta* 或可视图。 */
+function findStepGlitchSmartPath(
+  input: GraphwarSmartPathfindingPathInput,
+  timings: GraphwarSmartPathfindingWorkerTiming[],
+): GraphwarSmartPathfindingPathResult {
+  const scanResult = measureSmartPathfindingWorkerTiming(timings, "search-route", () => {
+    const simulationMask = input.simulationMask;
+    return simulationMask
+      ? scanGraphwarStepGlitchPath({
+          bounds: input.bounds,
+          boundsRect: input.boundsRect,
+          hitTarget: input.hitTarget,
+          settings: input.settings,
+          simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+          simulationMask,
+          sourcePath: input.sourcePath,
+          targetPoint: input.targetPoint,
+        })
+      : undefined;
+  });
+  if (!scanResult) {
+    return { failureReason: "route", timings };
+  }
+  if (scanResult.status === "passable") {
+    return { failureReason: "trajectory", timings };
+  }
+  if (scanResult.status === "blocked") {
+    const blockedPoint = scanResult.blockedPoint
+      ? graphToImagePoint(scanResult.blockedPoint, input.bounds, input.boundsRect)
+      : undefined;
+    return {
+      ...(blockedPoint ? { blockedPoint } : {}),
+      failureReason: blockedPoint ? "trajectory" : "route",
+      timings,
+    };
+  }
+
+  const validation = measureSmartPathfindingWorkerTiming(timings, "validate-trajectory", () =>
+    validateSmartPathfindingTrajectory(input, scanResult.path, undefined),
+  );
+  if (!validation.followsGraphRule) {
+    return { failureReason: "graph-rule", timings };
+  }
+  if (!validation.reachesTargetBeforeObstacle) {
+    return {
+      ...(validation.blockedPoint ? { blockedPoint: validation.blockedPoint } : {}),
+      failureReason: "trajectory",
+      timings,
+    };
+  }
+
+  const path =
+    input.routeMode === "theta-star"
+      ? measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
+          optimizeSmartPathfindingPath(input, scanResult.path, undefined),
+        )
+      : scanResult.path;
   return { path, timings };
 }
 
@@ -609,13 +674,14 @@ async function buildOneClickClearPath(
   const startedAt = nowMs();
   const timings: GraphwarOneClickClearDebugTiming[] = [];
   const isStepRoute = input.settings.algorithm === "step";
-  const routeMaskLookup = getMasterRouteMaskFromBase(input, isStepRoute);
+  const isStepGlitchRoute = isStepRoute && input.settings.equation === "dy" && input.settings.stepGlitchMode;
+  const routeMaskLookup = getMasterRouteMaskFromBase(input, isStepRoute && !isStepGlitchRoute);
   timings.push({
     elapsedMs: routeMaskLookup.elapsedMs,
     stage: routeMaskLookup.cacheHit ? "route-mask-cache-hit" : "route-mask-cache-miss",
   });
   let stepRouteValidationContext: SmartStepRouteContext | undefined;
-  if (isStepRoute && routeMaskLookup.summedArea) {
+  if (isStepRoute && !isStepGlitchRoute && routeMaskLookup.summedArea) {
     const originPoint = input.pathPoints[0];
     const model = originPoint
       ? createGraphwarStepRouteModel(imageToGraphPoint(originPoint, input.bounds, input.boundsRect).y, input.settings)

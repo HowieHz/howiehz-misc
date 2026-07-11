@@ -1,0 +1,272 @@
+import { describe, expect, it } from "vitest";
+
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
+import { floorToDecimalPlaces } from "../../core/numbers";
+import { createGraphPoint } from "../../core/types";
+import type { BoundsRect, GraphBounds } from "../../core/types";
+import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
+import { createGraphwarStepGlitchScanMaskIndex, scanGraphwarStepGlitchPath } from "./step-glitch-scan";
+
+const bounds: GraphBounds = { maxX: -4, maxY: 10, minX: -12, minY: -10 };
+const boundsRect: BoundsRect = { height: GRAPHWAR_PLANE_HEIGHT, width: GRAPHWAR_PLANE_LENGTH, x: 0, y: 0 };
+const settings: GraphwarTrajectoryFormulaSettings = {
+  algorithm: "step",
+  decimalPlaces: 4,
+  equation: "dy",
+  steepness: 67,
+  stepGlitchMode: true,
+  stepOverflowProtection: true,
+};
+
+describe("Step y' glitch scan", () => {
+  it("precomputes the farthest same-row free column in x+ order", () => {
+    const mask = createEmptyMask();
+    mask[2 * GRAPHWAR_PLANE_LENGTH + 4] = 1;
+    const index = createGraphwarStepGlitchScanMaskIndex({ bounds, simulationMask: mask });
+
+    expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH]).toBe(3);
+    expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH + 3]).toBe(3);
+    expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH + 4]).toBe(-1);
+    expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH + 5]).toBe(GRAPHWAR_PLANE_LENGTH - 1);
+  });
+
+  it("builds the same reachability index for mirrored x+ bounds", () => {
+    const mask = createEmptyMask();
+    mask[2 * GRAPHWAR_PLANE_LENGTH + 4] = 1;
+    const index = createGraphwarStepGlitchScanMaskIndex({
+      bounds: { ...bounds, maxX: bounds.minX, minX: bounds.maxX },
+      simulationMask: mask,
+    });
+    const blockedSearchX = GRAPHWAR_PLANE_LENGTH - 1 - 4;
+
+    expect(index.mirrored).toBe(true);
+    expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH]).toBe(blockedSearchX - 1);
+    expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH + blockedSearchX]).toBe(-1);
+  });
+
+  it("rejects modes other than effective Step y' glitch", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 8 },
+      settings: { ...settings, equation: "y" },
+      simulationMask: createEmptyMask(),
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result).toMatchObject({ expandedStates: 0, reason: "unsupported", status: "blocked" });
+  });
+
+  it("returns hit after replaying the complete final expression", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 2);
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      maxExpandedStates: 8,
+      settings,
+      simulationMask: createEmptyMask(),
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    expect(result.expandedStates).toBe(1);
+    expect(result.reachedTargetCount).toBe(1);
+  });
+
+  it("keeps required targets ahead of the current hit target", () => {
+    const start = toPixel(-11, 0);
+    const required = toPixel(-8.5, 0);
+    const target = toPixel(-6, 0);
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      maxExpandedStates: 8,
+      requiredTargetSequence: [{ center: required, radius: 12 }],
+      settings,
+      simulationMask: createEmptyMask(),
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    expect(result.reachedTargetCount).toBe(2);
+  });
+
+  it("returns passable when the formula reaches the control x without hitting the requested circle", () => {
+    const start = toPixel(-11, 0);
+    const targetPoint = toPixel(-6, 0);
+    const missedTarget = toPixel(-6, 8);
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: missedTarget, radius: 2 },
+      maxExpandedStates: 8,
+      settings,
+      simulationMask: createEmptyMask(),
+      sourcePath: [start],
+      targetPoint,
+    });
+
+    expect(result.status).toBe("passable");
+    if (result.status === "passable") {
+      expect(result.acceptedPoint.x).toBeGreaterThanOrEqual(-6);
+    }
+  });
+
+  it("jumps to a disjoint free row when the next obstacle column blocks the source row", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 4);
+    const mask = createEmptyMask();
+    const wallX = Math.floor(((toPixel(-8, 0).x - boundsRect.x) / boundsRect.width) * GRAPHWAR_PLANE_LENGTH);
+    for (let row = 180; row <= 270; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      maxExpandedStates: 32,
+      settings,
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    if (result.status === "hit") {
+      expect(result.path).toHaveLength(2);
+      expect(result.path.at(-1)?.x).toBeLessThan(target.x);
+    }
+  });
+
+  it("preserves the intended decimal right gate through the pixel round-trip", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-5.5, 4);
+    const mask = createEmptyMask();
+    const wallX = 516;
+    for (let row = 180; row <= 270; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      maxExpandedStates: 32,
+      settings: { ...settings, decimalPlaces: 2 },
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    if (result.status === "hit") {
+      const controlPoint = result.path.at(-1);
+      expect(controlPoint).toBeDefined();
+      if (controlPoint) {
+        const controlX = imageToGraphPoint(controlPoint, bounds, boundsRect).x;
+        expect(floorToDecimalPlaces(controlX, 2)).toBe(-6.63);
+      }
+    }
+  });
+
+  it("preserves the intended decimal right gate with mirrored x+ bounds", () => {
+    const mirroredBounds: GraphBounds = { ...bounds, maxX: bounds.minX, minX: bounds.maxX };
+    const start = toPixelForBounds(-11, 0, mirroredBounds);
+    const target = toPixelForBounds(-5.5, 4, mirroredBounds);
+    const mask = createEmptyMask();
+    const wallX = 263;
+    for (let row = 180; row <= 270; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds: mirroredBounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      maxExpandedStates: 32,
+      settings,
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    if (result.status === "hit") {
+      const controlPoint = result.path.at(-1);
+      expect(controlPoint).toBeDefined();
+      if (controlPoint) {
+        const controlX = imageToGraphPoint(controlPoint, mirroredBounds, boundsRect).x;
+        expect(floorToDecimalPlaces(controlX, settings.decimalPlaces)).toBe(-6.7329);
+      }
+    }
+  });
+
+  it("distinguishes the replay cap from an exhausted search frontier", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 4);
+    const mask = createEmptyMask();
+    const wallX = Math.floor(((toPixel(-8, 0).x - boundsRect.x) / boundsRect.width) * GRAPHWAR_PLANE_LENGTH);
+    for (let row = 180; row <= 270; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 0 },
+      maxExpandedStates: 1,
+      settings,
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result).toMatchObject({
+      expandedStates: 1,
+      limitReached: true,
+      reason: "limit",
+      status: "blocked",
+    });
+  });
+
+  it("returns blocked when a full-height wall has no landing row", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+    const mask = createEmptyMask();
+    const wallX = Math.floor(((toPixel(-8, 0).x - boundsRect.x) / boundsRect.width) * GRAPHWAR_PLANE_LENGTH);
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 8 },
+      maxExpandedStates: 8,
+      settings,
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.expandedStates).toBe(0);
+  });
+});
+
+function createEmptyMask() {
+  return new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+}
+
+function toPixel(x: number, y: number) {
+  return toPixelForBounds(x, y, bounds);
+}
+
+function toPixelForBounds(x: number, y: number, pointBounds: GraphBounds) {
+  return graphToImagePoint(createGraphPoint(x, y), pointBounds, boundsRect);
+}

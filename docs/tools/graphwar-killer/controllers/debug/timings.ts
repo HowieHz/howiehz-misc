@@ -500,6 +500,7 @@ const oneClickClearSearchDebugDetailOrder: readonly (
   "dag-edge-worker",
   "route-pathfinding",
   "route-map-pixels",
+  "scan-step-glitch",
   "dag-longest-path",
   "validate-route",
   "segment-graph-rule",

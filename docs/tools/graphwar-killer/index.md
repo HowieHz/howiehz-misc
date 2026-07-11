@@ -72,14 +72,14 @@ java -javaagent:graphwar-agent.jar -jar graphwar.jar
 
 <!-- markdownlint-disable MD013 -->
 
-| 函数算法 | 邪道[^pathfinding-glitch]                          | 游戏模式         | 智能寻路[^pathfinding-solver-only]                 | 一键清图[^pathfinding-solver-only]                 | 目标候选点                                                               | 主要特点 | 时间复杂度[^pathfinding-complexity]                                |
-| -------- | -------------------------------------------------- | ---------------- | -------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------ | -------- | ------------------------------------------------------------------ |
-| 双绝对值 | <span title="不适用" aria-label="不适用">⛔️</span> | `y`、`y'`        | <span title="支持" aria-label="支持">✅</span>     | <span title="支持" aria-label="支持">✅</span>     | 智能寻路：单目标点模式[^pathfinding-single-target]<br>一键清图：士兵中心 | 两点直连 | 智能寻路 O(R)<br>一键清图 O(N²R)                                   |
-| 双绝对值 | <span title="不适用" aria-label="不适用">⛔️</span> | `y''`            | <span title="不支持" aria-label="不支持">❌</span> | <span title="不支持" aria-label="不支持">❌</span> | —                                                                        | 两点直连 | —                                                                  |
-| 阶跃     | <span title="关闭" aria-label="关闭">❌</span>     | `y`、`y'`、`y''` | <span title="支持" aria-label="支持">✅</span>     | <span title="支持" aria-label="支持">✅</span>     | 智能寻路：中心优先模式[^pathfinding-center-first]<br>一键清图：士兵中心  | 走直角   | 智能寻路 O(R)，最多执行 2 次<br>一键清图 O(N·D·R)，D 最坏为 O(2^N) |
-| 阶跃     | <span title="开启" aria-label="开启">✅</span>     | `y'`             | <span title="不支持" aria-label="不支持">❌</span> | <span title="不支持" aria-label="不支持">❌</span> | —                                                                        | 走直角   | —                                                                  |
-| PCHIP    | <span title="不适用" aria-label="不适用">⛔️</span> | `y`、`y'`、`y''` | <span title="支持" aria-label="支持">✅</span>     | <span title="不支持" aria-label="不支持">❌</span> | 智能寻路：单目标点模式[^pathfinding-single-target]                       | 曲线拟合 | 智能寻路 O(R)                                                      |
-| Akima    | <span title="不适用" aria-label="不适用">⛔️</span> | `y`、`y'`、`y''` | <span title="支持" aria-label="支持">✅</span>     | <span title="不支持" aria-label="不支持">❌</span> | 智能寻路：单目标点模式[^pathfinding-single-target]                       | 曲线拟合 | 智能寻路 O(R)                                                      |
+| 函数算法 | 邪道[^pathfinding-glitch]                         | 游戏模式         | 智能寻路[^pathfinding-solver-only]                 | 一键清图[^pathfinding-solver-only]                 | 目标候选点                                                                                               | 主要特点           | 时间复杂度[^pathfinding-complexity]                                |
+| -------- | ------------------------------------------------- | ---------------- | -------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------ |
+| 双绝对值 | <span title="不适用" aria-label="不适用">—</span> | `y`、`y'`        | <span title="支持" aria-label="支持">✅</span>     | <span title="支持" aria-label="支持">✅</span>     | 智能寻路：单目标点模式[^pathfinding-single-target]<br>一键清图：士兵中心                                 | 两点直连           | 智能寻路 O(R)<br>一键清图 O(N²R)                                   |
+| 双绝对值 | <span title="不适用" aria-label="不适用">—</span> | `y''`            | <span title="不支持" aria-label="不支持">❌</span> | <span title="不支持" aria-label="不支持">❌</span> | —                                                                                                        | 两点直连           | —                                                                  |
+| 阶跃     | <span title="关闭" aria-label="关闭">❌</span>    | `y`、`y'`、`y''` | <span title="支持" aria-label="支持">✅</span>     | <span title="支持" aria-label="支持">✅</span>     | 智能寻路：中心优先模式[^pathfinding-center-first]<br>一键清图：士兵中心                                  | 走直角             | 智能寻路 O(R)，最多执行 2 次<br>一键清图 O(N·D·R)，D 最坏为 O(2^N) |
+| 阶跃     | <span title="开启" aria-label="开启">✅</span>    | `y'`             | <span title="支持" aria-label="支持">✅</span>     | <span title="支持" aria-label="支持">✅</span>     | 智能寻路：中心优先模式[^pathfinding-center-first]<br>一键清图：命中圈分配点[^pathfinding-glitch-targets] | 横向扫描与纵向隧穿 | 智能寻路 O(P + S·F)<br>一键清图 O(P + N·S·F)                       |
+| PCHIP    | <span title="不适用" aria-label="不适用">—</span> | `y`、`y'`、`y''` | <span title="支持" aria-label="支持">✅</span>     | <span title="不支持" aria-label="不支持">❌</span> | 智能寻路：单目标点模式[^pathfinding-single-target]                                                       | 曲线拟合           | 智能寻路 O(R)                                                      |
+| Akima    | <span title="不适用" aria-label="不适用">—</span> | `y`、`y'`、`y''` | <span title="支持" aria-label="支持">✅</span>     | <span title="不支持" aria-label="不支持">❌</span> | 智能寻路：单目标点模式[^pathfinding-single-target]                                                       | 曲线拟合           | 智能寻路 O(R)                                                      |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -91,7 +91,9 @@ java -javaagent:graphwar-agent.jar -jar graphwar.jar
 
 [^pathfinding-center-first]: 中心优先模式最多按“士兵中心 → 命中圈 `x+` 侧内边缘”的顺序尝试两个目标点。中心可用时先尝试中心；中心目标的寻路或完整弹道验证失败后，再以内边缘完整重跑一次。中心一开始不可用时，直接使用内边缘。
 
-[^pathfinding-complexity]: 这里只计算寻找绕障路线本身，不包含生成函数、模拟弹道、检查命中、删点和失败后重选；完整步骤见[计算流程](#graphwar-killer-pathfinding-workflows)。`N` 是一键清图实际参与规划的士兵数：不含发射士兵，并按“允许友伤”和 `x+` 方向筛选。`D` 是阶跃一键清图因不同实际落点而分别保留的情况总数。`R` 是[寻路算法说明](#graphwar-killer-pathfinding-engines)中单次寻路的复杂度。
+[^pathfinding-glitch-targets]: 邪道一键清图按士兵中心 x 递增处理目标。同 x 士兵在严格位于命中圆内部的公共横向区间中分配严格递增的控制点；前后已经占用该区间的目标点作为固定锚点。组内按相对发射士兵起始 y 的 `|ΔY|` 从小到大分配到从左到右的控制点。分配直接使用最终命中判定采用的截图像素坐标，并在转换后复验 Graph x 严格递增。
+
+[^pathfinding-complexity]: 普通模式只计算寻找绕障路线本身，不包含生成函数、模拟弹道、检查命中、删点和失败后重选；邪道扫描必须用最终公式回放裁决每个候选，因此其复杂度包含回放。完整步骤见[计算流程](#graphwar-killer-pathfinding-workflows)。`N` 是一键清图实际参与规划的士兵数：不含发射士兵，并按“允许友伤”和 `x+` 方向筛选。`D` 是普通阶跃一键清图因不同实际落点而分别保留的情况总数。`R` 是[寻路算法说明](#graphwar-killer-pathfinding-engines)中单次普通路由搜索的复杂度。`P` 是 770×450 网格的格子数；`S` 是单个邪道目标实际回放的候选数，当前最多 512；`F` 是一次最终公式回放的采样成本。
 
 #### 计算流程 {#graphwar-killer-pathfinding-workflows}
 
@@ -146,6 +148,24 @@ java -javaagent:graphwar-agent.jar -jar graphwar.jar
         <table class="graphwar-workflow-settings" role="presentation">
           <tbody>
             <tr>
+              <td>智能寻路</td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>阶跃 · <code>y'</code></td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>邪道模式开启</td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+      <td>检查当前路径并回放到真实恢复点 → 沿当前高度扫描到首个阻挡列 → 从阻挡列右侧的全部自由 y 中按“后续可达 x 最远”优先生成右门控制点 → 在左门附近完成纵向隧穿，并把每个候选的最终公式从发射点完整回放 → 从首个 <code>x≥R</code> 的真实接受点继续扫描 → 命中目标 → 关闭快速模式时尝试删点 → 完整回放并更新路径。快速模式不改变扫描算法，只跳过删点优化。</td>
+    </tr>
+    <tr>
+      <td>
+        <table class="graphwar-workflow-settings" role="presentation">
+          <tbody>
+            <tr>
               <td>一键清图</td>
             </tr>
             <tr class="graphwar-workflow-settings__group-start">
@@ -174,6 +194,24 @@ java -javaagent:graphwar-agent.jar -jar graphwar.jar
       </td>
       <td>检查当前阶跃路径的实际落点 → 同一士兵因前面路线不同而产生多个实际落点时，分别继续尝试 → 逐段检查能否避开障碍并接上前一段 → 选择预计能命中最多士兵的顺序 → 从发射点生成并模拟完整函数 → 排除失败的连接并重新选择 → 删除不必要的路径点并从头模拟 → 更新路径和实际命中结果。</td>
     </tr>
+    <tr>
+      <td>
+        <table class="graphwar-workflow-settings" role="presentation">
+          <tbody>
+            <tr>
+              <td>一键清图</td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>阶跃 · <code>y'</code></td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>邪道模式开启</td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+      <td>检查当前路径 → 按中心 x 分组并为同 x 士兵分配严格递增的命中圈控制点 → 按分配后的 x 从小到大逐个扫描 → 只有命中目标时才提交路线；未命中、当前目标 x 范围内无路或达到候选回放上限时，保留最近一次命中的路线并对更右目标重新扫描 → 关闭快速模式时尝试删除新增点 → 从发射点完整回放 → 更新路径和实际命中结果。</td>
+    </tr>
   </tbody>
 </table>
 
@@ -183,10 +221,12 @@ java -javaagent:graphwar-agent.jar -jar graphwar.jar
 
 <!-- markdownlint-disable MD013 -->
 
-| 快速模式                                                       | 寻路算法        | 用于                | 主要特点                                                                                                     | 当前实现最坏时间复杂度[^routing-complexity]                                                          |
-| -------------------------------------------------------------- | --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| <span title="开启（默认）" aria-label="开启（默认）">✅</span> | 惰性可视图      | 智能寻路 + 一键清图 | 从障碍轮廓挑少量路径点来绕路，通常更快、路线更直；障碍复杂时可能找不到 Theta* 能找到的路线[^routing-cache]。 | 首次 O(P² + C + T² + T·V·(L + log V))；缓存命中时省去 P²，但仍需 O(C) 扫描轮廓。非阶跃模式最坏 T=V。 |
-| <span title="关闭" aria-label="关闭">❌</span>                 | 定制有向 Theta* | 智能寻路 + 一键清图 | 在 770×450 网格中向 `x+` 方向逐步找路，通常更慢，但更容易绕过复杂障碍[^routing-cache]。                      | O(P + T[H² + H(L + log T)] + Q²L)；缓存命中时省去 P。                                                |
+| 快速模式                                                       | 寻路算法        | 用于                | 主要特点                                                                                                                             | 当前实现最坏时间复杂度[^routing-complexity]                                                          |
+| -------------------------------------------------------------- | --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| <span title="开启（默认）" aria-label="开启（默认）">✅</span> | 惰性可视图      | 智能寻路 + 一键清图 | 从障碍轮廓挑少量路径点来绕路，通常更快、路线更直；障碍复杂时可能找不到 Theta* 能找到的路线[^routing-cache]。                         | 首次 O(P² + C + T² + T·V·(L + log V))；缓存命中时省去 P²，但仍需 O(C) 扫描轮廓。非阶跃模式最坏 T=V。 |
+| <span title="关闭" aria-label="关闭">❌</span>                 | 定制有向 Theta* | 智能寻路 + 一键清图 | 在 770×450 网格中向 `x+` 方向逐步找路，通常更慢，但更容易绕过复杂障碍[^routing-cache]。                                              | O(P + T[H² + H(L + log T)] + Q²L)；缓存命中时省去 P。                                                |
+| <span title="开启" aria-label="开启">✅</span>                 | 邪道横向扫描    | 阶跃 `y'` 邪道模式  | 运行相同的横向扫描和最终回放，但跳过命中后的删点优化。                                                                               | O(P + S·F)；一键清图复用同一份 O(P) 索引。                                                           |
+| <span title="关闭" aria-label="关闭">❌</span>                 | 邪道横向扫描    | 阶跃 `y'` 邪道模式  | 预计算每格同 y 的最远自由列；遇阻时按后续可达 x 排序纵向隧穿候选，在单个目标扫描内用显式栈保留未尝试分支；命中后尝试删点并完整回放。 | O(P + S·F)，另加删点候选的完整回放。                                                                 |
 
 <!-- markdownlint-enable MD013 -->
 

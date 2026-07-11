@@ -570,7 +570,12 @@ function selectStepGlitchSegmentCandidate(
         candidateInitialState,
       );
       const landingPoint = sample.stopReason === "stopped" ? sample.points[sample.points.length - 1] : undefined;
-      if (!landingPoint || !Number.isFinite(landingPoint.y) || countStepGlitchJumps(sample.points, candidate) !== 1) {
+      if (
+        !landingPoint ||
+        !Number.isFinite(landingPoint.y) ||
+        countStepGlitchJumps(sample.points, candidate) !== 1 ||
+        stepGlitchSampleHitsObstacle(sample.points, options.bounds, candidateContext.mask)
+      ) {
         continue;
       }
 
@@ -1072,6 +1077,24 @@ function graphXToPlaneX(x: number, bounds: GraphBounds) {
 
 function graphYToPlaneY(y: number, bounds: GraphBounds) {
   return Math.floor(((bounds.maxY - y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT);
+}
+
+/** 候选窗口只允许跳跃线段穿障碍；每个真实接受点仍必须落在空白 cell。 */
+function stepGlitchSampleHitsObstacle(points: readonly GraphPoint[], bounds: GraphBounds, mask: Uint8Array) {
+  for (const point of points) {
+    const planeX = graphXToPlaneX(point.x, bounds);
+    const planeY = graphYToPlaneY(point.y, bounds);
+    if (
+      planeX < 0 ||
+      planeX >= GRAPHWAR_PLANE_LENGTH ||
+      planeY < 0 ||
+      planeY >= GRAPHWAR_PLANE_HEIGHT ||
+      mask[planeY * GRAPHWAR_PLANE_LENGTH + planeX]
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 const FORMULA_PATH_RANGE_RESOLUTION_PASSES = 3;

@@ -205,10 +205,8 @@ export interface GraphwarKillerLocale {
       readFirst: string;
       reading: string;
     };
-    autoGraphPathfindingDisabled: string;
     pathPointCoordinateNumber: string;
     secondOrderAngleHint: (angle: string) => string;
-    stepPathfindingDisabled: string;
     trajectoryWarning: {
       obstacle: string;
       stopped: Record<GraphwarKillerStopReason, string>;

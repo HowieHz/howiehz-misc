@@ -137,10 +137,8 @@ export const graphwarKillerLocale = {
       readFirst: "先读取 Agent 状态",
       reading: "正在读取状态",
     },
-    autoGraphPathfindingDisabled: "一键清图正在重写，暂不可用",
     pathPointCoordinateNumber: "点坐标需要填写数字",
     secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到约 ${angle}°。`,
-    stepPathfindingDisabled: "阶跃 y' 的邪道模式不支持智能寻路或一键清图，请先关闭邪道模式",
     trajectoryWarning: {
       obstacle: "当前公式轨迹会撞到障碍物或边界",
       stopped: {
@@ -181,7 +179,7 @@ export const graphwarKillerLocale = {
         const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
         return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
       },
-      unsupported: "一键清图仅支持双绝对值的 y、y'，或关闭邪道模式的阶跃 y、y'、y''",
+      unsupported: "一键清图仅支持双绝对值的 y、y'，或阶跃 y、y'、y''",
     },
   },
   ui: {
@@ -346,8 +344,8 @@ export const graphwarKillerLocale = {
           title: "单个 DAG 建边子 Worker 的总耗时；任务由 Worker 动态领取，耗时不代表固定边切片。",
         },
         "build-dag-targets": {
-          label: "- 清图收集 DAG 目标",
-          title: "把可选士兵转换为按 Graphwar 中心 x 从低到高排序的 DAG 节点。",
+          label: "- 清图收集目标",
+          title: "普通模式建立按中心 x 排序的 DAG 目标；邪道模式为同 x 士兵分配严格递增的命中圈控制点。",
         },
         "dag-longest-path": {
           label: "- 清图 DAG 最长路",
@@ -376,6 +374,10 @@ export const graphwarKillerLocale = {
         "route-pathfinding": {
           label: "- 清图真实几何寻路",
           title: "搜索两个中心点之间满足 x+ 规则的绕障几何路线。",
+        },
+        "scan-step-glitch": {
+          label: "- 清图邪道水平扫描",
+          title: "按目标 x 递增扫描自由水平行，并用最终公式回放验证每个纵向隧穿候选。",
         },
         "segment-build-formula": {
           label: "- 清图分段建公式",
@@ -519,7 +521,7 @@ export const graphwarKillerLocale = {
       },
       debugSummary: "调试信息",
       fastPathfinding: "快速模式",
-      fastPathfindingTitle: "开启时使用可视图快速寻路；关闭时使用 Theta*，提高复杂障碍下的搜索覆盖。",
+      fastPathfindingTitle: "普通模式开启时使用可视图、关闭时使用 Theta*；阶跃 y' 邪道模式开启时跳过删点优化。",
       obstacleExpansionAgentMode: "Agent 模式",
       obstacleExpansionDetectionMode: "识别模式",
       obstacleExpansion: "障碍外扩",

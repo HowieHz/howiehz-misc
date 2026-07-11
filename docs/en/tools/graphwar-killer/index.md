@@ -72,14 +72,14 @@ This starts Graphwar Agent and the game together. Return to the tool, turn on Us
 
 <!-- markdownlint-disable MD013 -->
 
-| Function algorithm    | Glitch[^pathfinding-glitch]                                        | Game mode        | Smart Pathfinding[^pathfinding-solver-only]                  | One-Click Clear[^pathfinding-solver-only]                    | Target candidates                                                                                     | Key characteristics         | Time complexity[^pathfinding-complexity]                                                                     |
-| --------------------- | ------------------------------------------------------------------ | ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Double absolute value | <span title="Not applicable" aria-label="Not applicable">⛔️</span> | `y`, `y'`        | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Supported" aria-label="Supported">✅</span>     | Smart Pathfinding: Single-target mode[^pathfinding-single-target]<br>One-Click Clear: soldier centers | Direct point-to-point lines | Smart Pathfinding O(R)<br>One-Click Clear O(N²R)                                                             |
-| Double absolute value | <span title="Not applicable" aria-label="Not applicable">⛔️</span> | `y''`            | <span title="Unsupported" aria-label="Unsupported">❌</span> | <span title="Unsupported" aria-label="Unsupported">❌</span> | —                                                                                                     | Direct point-to-point lines | —                                                                                                            |
-| Step                  | <span title="Off" aria-label="Off">❌</span>                       | `y`, `y'`, `y''` | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Supported" aria-label="Supported">✅</span>     | Smart Pathfinding: Center-first mode[^pathfinding-center-first]<br>One-Click Clear: soldier centers   | Right-angle paths           | Smart Pathfinding O(R), with at most 2 runs<br>One-Click Clear O(N·D·R), where D is O(2^N) in the worst case |
-| Step                  | <span title="On" aria-label="On">✅</span>                         | `y'`             | <span title="Unsupported" aria-label="Unsupported">❌</span> | <span title="Unsupported" aria-label="Unsupported">❌</span> | —                                                                                                     | Right-angle paths           | —                                                                                                            |
-| PCHIP                 | <span title="Not applicable" aria-label="Not applicable">⛔️</span> | `y`, `y'`, `y''` | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Unsupported" aria-label="Unsupported">❌</span> | Smart Pathfinding: Single-target mode[^pathfinding-single-target]                                     | Curve fitting               | Smart Pathfinding O(R)                                                                                       |
-| Akima                 | <span title="Not applicable" aria-label="Not applicable">⛔️</span> | `y`, `y'`, `y''` | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Unsupported" aria-label="Unsupported">❌</span> | Smart Pathfinding: Single-target mode[^pathfinding-single-target]                                     | Curve fitting               | Smart Pathfinding O(R)                                                                                       |
+| Function algorithm    | Glitch[^pathfinding-glitch]                                       | Game mode        | Smart Pathfinding[^pathfinding-solver-only]                  | One-Click Clear[^pathfinding-solver-only]                    | Target candidates                                                                                                                            | Key characteristics                    | Time complexity[^pathfinding-complexity]                                                                     |
+| --------------------- | ----------------------------------------------------------------- | ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Double absolute value | <span title="Not applicable" aria-label="Not applicable">—</span> | `y`, `y'`        | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Supported" aria-label="Supported">✅</span>     | Smart Pathfinding: Single-target mode[^pathfinding-single-target]<br>One-Click Clear: soldier centers                                        | Direct point-to-point lines            | Smart Pathfinding O(R)<br>One-Click Clear O(N²R)                                                             |
+| Double absolute value | <span title="Not applicable" aria-label="Not applicable">—</span> | `y''`            | <span title="Unsupported" aria-label="Unsupported">❌</span> | <span title="Unsupported" aria-label="Unsupported">❌</span> | —                                                                                                                                            | Direct point-to-point lines            | —                                                                                                            |
+| Step                  | <span title="Off" aria-label="Off">❌</span>                      | `y`, `y'`, `y''` | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Supported" aria-label="Supported">✅</span>     | Smart Pathfinding: Center-first mode[^pathfinding-center-first]<br>One-Click Clear: soldier centers                                          | Right-angle paths                      | Smart Pathfinding O(R), with at most 2 runs<br>One-Click Clear O(N·D·R), where D is O(2^N) in the worst case |
+| Step                  | <span title="On" aria-label="On">✅</span>                        | `y'`             | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Supported" aria-label="Supported">✅</span>     | Smart Pathfinding: Center-first mode[^pathfinding-center-first]<br>One-Click Clear: allocated hit-circle points[^pathfinding-glitch-targets] | Horizontal scan and vertical tunneling | Smart Pathfinding O(P + S·F)<br>One-Click Clear O(P + N·S·F)                                                 |
+| PCHIP                 | <span title="Not applicable" aria-label="Not applicable">—</span> | `y`, `y'`, `y''` | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Unsupported" aria-label="Unsupported">❌</span> | Smart Pathfinding: Single-target mode[^pathfinding-single-target]                                                                            | Curve fitting                          | Smart Pathfinding O(R)                                                                                       |
+| Akima                 | <span title="Not applicable" aria-label="Not applicable">—</span> | `y`, `y'`, `y''` | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Unsupported" aria-label="Unsupported">❌</span> | Smart Pathfinding: Single-target mode[^pathfinding-single-target]                                                                            | Curve fitting                          | Smart Pathfinding O(R)                                                                                       |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -91,7 +91,9 @@ This starts Graphwar Agent and the game together. Return to the tool, turn on Us
 
 [^pathfinding-center-first]: Center-first mode tries at most two target points in order: the soldier center, then the hit circle's inner edge on the `x+` side. If the center is available, it is tried first; if routing to the center or full trajectory validation for the center target fails, the entire process is rerun once with the inner edge. If the center is unavailable from the start, the inner edge is used directly.
 
-[^pathfinding-complexity]: This column counts route finding only. It excludes formula generation, trajectory simulation, hit checks, point removal, and reselection after a failure; see [Calculation Workflows](#graphwar-killer-pathfinding-workflows) for the complete process. `N` is the number of soldiers included in One-Click Clear after excluding the firing soldier and applying the Allow friendly fire and `x+` filters. `D` is the total number of Step cases kept separately because they reach different actual endpoints. `R` is the cost of one route search in [Routing Algorithms](#graphwar-killer-pathfinding-engines).
+[^pathfinding-glitch-targets]: Glitch One-Click Clear processes targets by increasing soldier-center x. Soldiers with the same x receive strictly increasing control points inside the strict shared horizontal interior of their hit circles. Previously or subsequently occupied points inside that interval are fixed anchors. Within a group, increasing `|ΔY|` from the firing soldier's initial y maps to control points from left to right. Allocation uses the screenshot-pixel coordinates used by the final hit test, then rechecks that Graph x remains strictly increasing after conversion.
+
+[^pathfinding-complexity]: For ordinary modes, this column counts route finding only and excludes formula generation, trajectory simulation, hit checks, point removal, and reselection after a failure. Glitch scanning must replay the final formula to decide every candidate, so its complexity includes replay. See [Calculation Workflows](#graphwar-killer-pathfinding-workflows) for the complete process. `N` is the number of soldiers included in One-Click Clear after excluding the firing soldier and applying the Allow friendly fire and `x+` filters. `D` is the total number of ordinary Step cases kept separately because they reach different actual endpoints. `R` is the cost of one ordinary route search in [Routing Algorithms](#graphwar-killer-pathfinding-engines). `P` is the 770×450 grid-cell count; `S` is the number of glitch candidates actually replayed for one target, currently capped at 512; `F` is the sampling cost of one final-formula replay.
 
 #### Calculation Workflows {#graphwar-killer-pathfinding-workflows}
 
@@ -146,6 +148,24 @@ This starts Graphwar Agent and the game together. Return to the tool, turn on Us
         <table class="graphwar-workflow-settings" role="presentation">
           <tbody>
             <tr>
+              <td>Smart Pathfinding</td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Step · <code>y'</code></td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Glitch Mode on</td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+      <td>Replay the current path to its actual recovery point → scan the current height to its first blocked column → generate right-gate control points from every free y beyond that column, preferring the candidate whose next horizontal run reaches farthest → tunnel vertically near the left gate and replay each candidate's final formula from the launch point → continue from the first real accepted point with <code>x≥R</code> → hit the target → try point deletion when Fast Mode is off → replay the full formula and update the path. Fast Mode does not change scanning; it only skips point deletion.</td>
+    </tr>
+    <tr>
+      <td>
+        <table class="graphwar-workflow-settings" role="presentation">
+          <tbody>
+            <tr>
               <td>One-Click Clear</td>
             </tr>
             <tr class="graphwar-workflow-settings__group-start">
@@ -174,6 +194,24 @@ This starts Graphwar Agent and the game together. Return to the tool, turn on Us
       </td>
       <td>Check the actual landing point of the current Step path → when earlier routes reach the same soldier at different actual landing points, continue trying each case separately → check whether each segment clears obstacles and connects to the previous segment → choose the order expected to hit the most soldiers → generate the complete function and simulate it from the launch point → exclude failed connections and choose again → remove unnecessary path points and simulate from the start → update the path and actual hit results.</td>
     </tr>
+    <tr>
+      <td>
+        <table class="graphwar-workflow-settings" role="presentation">
+          <tbody>
+            <tr>
+              <td>One-Click Clear</td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Step · <code>y'</code></td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Glitch Mode on</td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+      <td>Check the current path → group soldiers by center x and allocate strictly increasing hit-circle control points to equal-x soldiers → scan targets by increasing allocated x → commit a route only when it hits; after a miss, no path within the current target x, or the replay limit, keep the most recently hit route and rescan from it for the next target → try deleting generated points when Fast Mode is off → replay from the launch point → update the path and actual hit results.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -183,10 +221,12 @@ This starts Graphwar Agent and the game together. Return to the tool, turn on Us
 
 <!-- markdownlint-disable MD013 -->
 
-| Fast mode                                                      | Routing algorithm      | Used by                             | Key characteristics                                                                                                                                                                               | Current worst-case time complexity[^routing-complexity]                                                                                            |
-| -------------------------------------------------------------- | ---------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| <span title="On (default)" aria-label="On (default)">✅</span> | Lazy Visibility Graph  | Smart Pathfinding + One-Click Clear | Chooses a small set of path points from obstacle contours. It is usually faster and produces straighter routes, but may miss a route that Theta* finds through complex obstacles[^routing-cache]. | First run O(P² + C + T² + T·V·(L + log V)); a cache hit omits P² but still scans O(C) contour vertices. For non-Step modes, T=V in the worst case. |
-| <span title="Off" aria-label="Off">❌</span>                   | Custom directed Theta* | Smart Pathfinding + One-Click Clear | Searches the 770×450 grid step by step in the `x+` direction. It is usually slower but handles complex obstacles more reliably[^routing-cache].                                                   | O(P + T[H² + H(L + log T)] + Q²L); a cache hit omits P.                                                                                            |
+| Fast mode                                                      | Routing algorithm      | Used by                             | Key characteristics                                                                                                                                                                                     | Current worst-case time complexity[^routing-complexity]                                                                                            |
+| -------------------------------------------------------------- | ---------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <span title="On (default)" aria-label="On (default)">✅</span> | Lazy Visibility Graph  | Smart Pathfinding + One-Click Clear | Chooses a small set of path points from obstacle contours. It is usually faster and produces straighter routes, but may miss a route that Theta* finds through complex obstacles[^routing-cache].       | First run O(P² + C + T² + T·V·(L + log V)); a cache hit omits P² but still scans O(C) contour vertices. For non-Step modes, T=V in the worst case. |
+| <span title="Off" aria-label="Off">❌</span>                   | Custom directed Theta* | Smart Pathfinding + One-Click Clear | Searches the 770×450 grid step by step in the `x+` direction. It is usually slower but handles complex obstacles more reliably[^routing-cache].                                                         | O(P + T[H² + H(L + log T)] + Q²L); a cache hit omits P.                                                                                            |
+| <span title="On" aria-label="On">✅</span>                     | Glitch horizontal scan | Step `y'` Glitch Mode               | Runs the same horizontal scan and final replay, but skips point deletion after a hit.                                                                                                                   | O(P + S·F); One-Click Clear reuses the same O(P) index.                                                                                            |
+| <span title="Off" aria-label="Off">❌</span>                   | Glitch horizontal scan | Step `y'` Glitch Mode               | Precomputes each cell's farthest same-y free column, orders vertical tunneling candidates by next reachable x, retains branches on an explicit stack within one target scan, then tries point deletion. | O(P + S·F), plus full replays for point-deletion candidates.                                                                                       |
 
 <!-- markdownlint-enable MD013 -->
 

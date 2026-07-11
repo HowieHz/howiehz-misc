@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { graphToImagePoint } from "../../core/geometry";
+import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { imagePointToPlaneGridPoint } from "../../core/plane-grid";
 import { createGraphPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
@@ -23,6 +23,64 @@ const settings = {
 };
 
 describe("Step one-click clear optimization", () => {
+  it("uses the sequential glitch scanner instead of DAG edge routing", async () => {
+    const start = toImagePoint(-20, 0);
+    const lower = toImagePoint(-10, -2);
+    const upper = toImagePoint(-10, 2);
+    const simulationMask = new Uint8Array(770 * 450);
+    const candidates = [
+      {
+        enemy: true,
+        hitCenter: upper,
+        hitRadius: 24,
+        id: "upper",
+      },
+      {
+        enemy: true,
+        hitCenter: lower,
+        hitRadius: 24,
+        id: "lower",
+      },
+    ];
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: () => {
+        throw new Error("Step glitch clear must not build DAG edges");
+      },
+      candidates,
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: candidates,
+      pathPoints: [start],
+      routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: {
+        ...settings,
+        equation: "dy",
+        stepGlitchMode: true,
+        stepGlitchObstacleMask: simulationMask,
+      },
+      simulationBoundaryExpansion: 0,
+      simulationMask,
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.targetIds).toEqual(["lower", "upper"]);
+      const graphPoints = result.pathPoints.map((point) => imageToGraphPoint(point, bounds, boundsRect));
+      for (let index = 1; index < graphPoints.length; index += 1) {
+        const previous = graphPoints[index - 1];
+        const point = graphPoints[index];
+        if (!previous || !point) {
+          throw new Error("Expected a dense one-click-clear path");
+        }
+        expect(point.x).toBeGreaterThan(previous.x);
+      }
+    }
+  });
+
   it("keeps a control point when deleting it violates the strict Step envelope", async () => {
     const start = toImagePoint(-20, 0);
     const middle = toImagePoint(-15, 4);

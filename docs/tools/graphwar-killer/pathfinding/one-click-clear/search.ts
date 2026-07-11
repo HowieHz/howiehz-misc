@@ -1,5 +1,6 @@
 /** 在当前 Graphwar 路径后追加 DAG 清图路线；几何建路点和弹道命中圈分开建模。 */
-import { imageToGraphPoint } from "../../core/geometry";
+import { GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
@@ -16,6 +17,8 @@ import type {
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
+import { createGraphwarStepGlitchScanMaskIndex, scanGraphwarStepGlitchPath } from "../routing/step-glitch-scan";
+import { assignGraphwarStepGlitchTargetRoutePoints } from "./step-glitch-targets";
 
 /** 路线规划默认使用单个 2px 几何 route tolerance，普通寻路和一键清图保持一致。 */
 export const GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS = 2;
@@ -51,6 +54,7 @@ export type GraphwarOneClickClearDebugStage =
   | "route-mask-cache-miss"
   | "route-map-pixels"
   | "route-pathfinding"
+  | "scan-step-glitch"
   | "segment-build-formula"
   | "segment-graph-rule"
   | "segment-sample-trajectory"
@@ -367,7 +371,11 @@ function oneClickClearSupportsFormulaSettings(settings: GraphwarTrajectoryFormul
   if (settings.algorithm === "abs") {
     return settings.equation !== "ddy";
   }
-  return settings.algorithm === "step" && !(settings.equation === "dy" && settings.stepGlitchMode);
+  return settings.algorithm === "step";
+}
+
+function oneClickClearUsesStepGlitch(settings: GraphwarTrajectoryFormulaSettings) {
+  return settings.algorithm === "step" && settings.equation === "dy" && settings.stepGlitchMode;
 }
 
 /** 用建路目标点 DAG 找到显式击杀最多的追加路径。 */
@@ -382,12 +390,15 @@ export async function buildGraphwarOneClickClearPath(
     return createOneClickClearFailure("preflight-blocked", startedAt, 0);
   }
 
+  const stepGlitchMode = oneClickClearUsesStepGlitch(options.settings);
   const prefixValid =
     options.pathPoints.length >= 2
       ? measureOneClickClearDebugTiming(
           options,
           "validate-prefix",
-          () => oneClickClearStepRouteIsValid(options, options.pathPoints) && validateOneClickClearPrefix(options),
+          () =>
+            (stepGlitchMode || oneClickClearStepRouteIsValid(options, options.pathPoints)) &&
+            validateOneClickClearPrefix(options),
         )
       : true;
   if (!prefixValid) {
@@ -395,13 +406,16 @@ export async function buildGraphwarOneClickClearPath(
   }
 
   const targets = measureOneClickClearDebugTiming(options, "build-dag-targets", () =>
-    collectOneClickClearDagTargets(options),
+    stepGlitchMode ? collectOneClickClearStepGlitchTargets(options) : collectOneClickClearDagTargets(options),
   );
   if (targets.length === 0) {
     return createOneClickClearFailure("no-candidate", startedAt, 0);
   }
 
   const context: OneClickClearSearchContext = { options };
+  if (stepGlitchMode) {
+    return buildOneClickClearStepGlitchPath(context, targets, startedAt);
+  }
   let dag: OneClickClearDag;
   try {
     dag = await measureOneClickClearDebugTimingAsync(options, "build-dag-edges", () =>
@@ -443,6 +457,95 @@ export async function buildGraphwarOneClickClearPath(
       failedEdge.active = false;
     });
   }
+}
+
+/** 邪道清图按分配后的目标 x 顺序扫描；跳过单个目标不应回到普通 Step DAG。 */
+async function buildOneClickClearStepGlitchPath(
+  context: OneClickClearSearchContext,
+  targets: readonly OneClickClearTarget[],
+  startedAt: number,
+): Promise<GraphwarOneClickClearResult> {
+  const options = context.options;
+  const simulationMask = options.simulationMask ?? options.settings.stepGlitchObstacleMask;
+  if (!simulationMask) {
+    return createOneClickClearFailure("preflight-blocked", startedAt, 0);
+  }
+
+  const maskIndex = createGraphwarStepGlitchScanMaskIndex({
+    boundaryExpansion: options.simulationBoundaryExpansion,
+    bounds: options.bounds,
+    simulationMask,
+  });
+  let route: OneClickClearValidatedRoute = {
+    pathPoints: [...options.pathPoints],
+    targetSequence: [],
+  };
+  let workUnits = 0;
+
+  for (const target of targets) {
+    if (options.isCancelled?.()) {
+      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+    }
+
+    const scanStartedAt = nowMs();
+    const scan = scanGraphwarStepGlitchPath({
+      bounds: options.bounds,
+      boundsRect: options.boundsRect,
+      hitTarget: target.hitCircle,
+      maskIndex,
+      requiredTargetSequence: createOneClickClearStepValidationTargets(options, route.targetSequence),
+      settings: options.settings,
+      simulationBoundaryExpansion: options.simulationBoundaryExpansion,
+      simulationMask,
+      sourcePath: route.pathPoints,
+      targetPoint: target.routePoint,
+    });
+    emitOneClickClearDebugTiming(options, {
+      elapsedMs: nowMs() - scanStartedAt,
+      stage: "scan-step-glitch",
+    });
+    workUnits += scan.expandedStates;
+
+    // 只有命中才提交路线；其他结果保留最近命中的路线，让更右目标重新选择上下通道。
+    if (scan.status === "hit") {
+      route = {
+        pathPoints: scan.path,
+        targetSequence: [...route.targetSequence, target],
+      };
+    } else if (scan.status === "blocked" && (scan.reason === "invalid-input" || scan.reason === "unsupported")) {
+      return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
+    }
+
+    await yieldOneClickClearControl(options);
+  }
+
+  // 邪道快速模式复用现有 routeMode 协议：扫描算法不变，只跳过昂贵的逐点删除回放。
+  const finalized =
+    options.routeMode === "visibility-graph"
+      ? { route, workUnits }
+      : await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
+          optimizeOneClickClearPath(context, route, workUnits),
+        );
+  workUnits = finalized.workUnits;
+  const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
+    sampleOneClickClearTargetSequence(options, finalized.route),
+  );
+  if (!finalValidation.reachesTargetSequenceBeforeObstacle) {
+    return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+  }
+
+  const hitTargets = collectOneClickClearHitTargets(options, finalized.route.pathPoints);
+  if (hitTargets.length === 0) {
+    return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+  }
+  return {
+    elapsedMs: Math.max(0, nowMs() - startedAt),
+    expandedStates: workUnits,
+    pathPoints: finalized.route.pathPoints,
+    targetIds: hitTargets.map((target) => target.id),
+    targetSequence: hitTargets.map((target) => createOneClickClearTargetCircle(target)),
+    type: "success",
+  };
 }
 
 /** 执行一次候选路线生命周期：DAG 选路、增量验证、删点优化、最终复验。 */
@@ -577,6 +680,79 @@ function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): 
   }
 
   return targets.sort(compareOneClickClearTargetOrder).map((target, orderIndex) => ({ ...target, orderIndex }));
+}
+
+/** 邪道清图先在像素命中圈中分配同 x 士兵的严格递增命中点，再进入顺序扫描。 */
+function collectOneClickClearStepGlitchTargets(options: GraphwarOneClickClearOptions): OneClickClearTarget[] {
+  const pathStart = options.pathPoints[0];
+  const pathTail = options.pathPoints.at(-1);
+  if (!pathStart || !pathTail) {
+    return [];
+  }
+
+  const pathTailGraph = imageToGraphPoint(pathTail, options.bounds, options.boundsRect);
+  const xPlusIsRight = xPlusGoesRight(options.bounds);
+  const boundaryInsetPixels =
+    (Math.max(0, Math.floor(options.simulationBoundaryExpansion)) / GRAPHWAR_PLANE_LENGTH) * options.boundsRect.width;
+  const usableMinX = options.boundsRect.x + boundaryInsetPixels;
+  const usableMaxX = options.boundsRect.x + options.boundsRect.width - boundaryInsetPixels;
+  const candidates = options.candidates
+    .flatMap((candidate, sourceIndex) => {
+      const target = createOneClickClearTarget(candidate, sourceIndex, options);
+      const center = imageToGraphPoint(candidate.hitCenter, options.bounds, options.boundsRect);
+      if (!graphXAdvancesStrictly(pathTailGraph.x, center.x)) {
+        return [];
+      }
+
+      return candidate.hitRadius > 0
+        ? [
+            {
+              center: candidate.hitCenter,
+              hitCircle: target,
+              hitRadius: candidate.hitRadius,
+              routePoint: candidate.hitCenter,
+              sourceIndex,
+            },
+          ]
+        : [];
+    })
+    .sort(
+      (left, right) =>
+        (xPlusIsRight ? left.center.x - right.center.x : right.center.x - left.center.x) ||
+        left.center.y - right.center.y ||
+        left.sourceIndex - right.sourceIndex,
+    );
+
+  const assignedTargets = assignGraphwarStepGlitchTargetRoutePoints({
+    candidates,
+    pathStartY: pathStart.y,
+    pathTailX: pathTail.x,
+    usableMaxX,
+    usableMinX,
+    xPlusIsRight,
+  });
+  const targets: OneClickClearTarget[] = [];
+  let previousGraphX = pathTailGraph.x;
+  for (const assigned of assignedTargets) {
+    const routeGraphX = imageToGraphPoint(assigned.routePoint, options.bounds, options.boundsRect).x;
+    const deltaX = assigned.routePoint.x - assigned.hitCircle.hitCenter.x;
+    const deltaY = assigned.routePoint.y - assigned.hitCircle.hitCenter.y;
+    if (
+      deltaX ** 2 + deltaY ** 2 >= assigned.hitCircle.hitRadius ** 2 ||
+      !graphXAdvancesStrictly(previousGraphX, routeGraphX)
+    ) {
+      continue;
+    }
+
+    targets.push({
+      ...assigned.hitCircle,
+      orderIndex: targets.length,
+      routePoint: assigned.routePoint,
+      sortGraphX: routeGraphX,
+    });
+    previousGraphX = routeGraphX;
+  }
+  return targets;
 }
 
 /** 集中构造一键清图内部目标，避免调用点混用“建路点”和“命中圈”。 */
@@ -1156,7 +1332,11 @@ function validateOneClickClearTargetSequence(
 
 /** Step 的严格包络是硬边条件；删点和最终安全网都必须重新检查整条候选路径。 */
 function oneClickClearStepRouteIsValid(options: GraphwarOneClickClearOptions, pathPoints: readonly PixelPoint[]) {
-  return options.settings.algorithm !== "step" || options.validateStepRoute?.(pathPoints) === true;
+  return (
+    options.settings.algorithm !== "step" ||
+    oneClickClearUsesStepGlitch(options.settings) ||
+    options.validateStepRoute?.(pathPoints) === true
+  );
 }
 
 /** 返回整条弹道复验结果；routePoint 提供目标采样点，hitCircle 提供真实命中半径。 */

@@ -499,11 +499,7 @@ const {
   toggleAdvancedSettings,
 });
 const effectiveSmartPathfindingEnabled = computed(
-  () =>
-    toolWorkflowMode.value !== "simulator" &&
-    !effectiveStepGlitchModeEnabled.value &&
-    smartPathfindingEnabled.value &&
-    objectDetectionReady.value,
+  () => toolWorkflowMode.value !== "simulator" && smartPathfindingEnabled.value && objectDetectionReady.value,
 );
 const pathfindingObstacleEdgesActive = computed(() => effectiveSmartPathfindingEnabled.value);
 const includesFriendlySoldierObstacles = computed(() => !friendlyFireEnabled.value && pathPixels.value.length > 0);
@@ -1157,7 +1153,6 @@ const inactiveDetectionBoxes = computed<DetectionBox[]>(() => {
   return detectedSoldiers.value.filter((box) => !activeBoxIds.has(box.id));
 });
 const pathfindingMode = computed<PathfindingMode>(() => (effectiveSmartPathfindingEnabled.value ? "smart" : "off"));
-const stepPathfindingDisabledMessage = computed(() => locale.status.stepPathfindingDisabled);
 
 const calculationMessage = computed(() => {
   if (toolWorkflowMode.value === "simulator") {
@@ -1384,19 +1379,9 @@ const smartPathfindingHeaderStatusResult = computed(() =>
     hintMessage: locale.ui.pathfinding.smartPathfindingTitle,
   }),
 );
-const pathfindingDisabledHeaderMessage = computed(() =>
-  effectiveStepGlitchModeEnabled.value ? stepPathfindingDisabledMessage.value : "",
-);
-const pathfindingHeaderStatusResult = computed(() =>
-  getFirstHeaderStatus(
-    // 缺截图/边界/识别结果是上游准备状态，只放在按钮 title，避免寻路标题常驻截图提示。
-    createHeaderStatus(pathfindingDisabledHeaderMessage.value, "warning"),
-    smartPathfindingHeaderStatusResult.value,
-  ),
-);
 // 智能寻路面板只应消费展示 DTO；按钮 guard、运行状态和调试耗时仍由页面侧保持原语义。
 const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() => {
-  const headerStatus = pathfindingHeaderStatusResult.value;
+  const headerStatus = smartPathfindingHeaderStatusResult.value;
   return {
     debugTimingRows: smartPathfindingDebugTimingRows.value.map((entry, index) => ({
       indentLevel: entry.indentLevel,
@@ -1891,12 +1876,9 @@ watch([activeObstacleSimulationToleranceText, steepnessText], () => {
   clearSmartPathfindingStatus();
 });
 
-watch(effectiveStepGlitchModeEnabled, (enabled) => {
+watch(effectiveStepGlitchModeEnabled, () => {
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
-  if (enabled) {
-    smartPathfindingEnabled.value = false;
-  }
 });
 
 watch([smartCursorEnabled, smartPathfindingEnabled, detectedObstacles], () => {
@@ -2268,16 +2250,14 @@ function setMagnifierZoomText(value: string) {
   magnifierZoomText.value = value;
 }
 
-/** 只有实际生效的 Step 邪道公式不支持寻路；y/y'' 中残留的勾选状态不参与限制。 */
+/** 智能寻路只依赖通用的截图、边界和障碍准备状态。 */
 function isSmartPathfindingDisabled() {
-  return effectiveStepGlitchModeEnabled.value || Boolean(smartPathfindingPrerequisiteMessage.value);
+  return Boolean(smartPathfindingPrerequisiteMessage.value);
 }
 
 /** 返回智能寻路被禁用的具体原因。 */
 function getSmartPathfindingDisabledMessage() {
-  return effectiveStepGlitchModeEnabled.value
-    ? stepPathfindingDisabledMessage.value
-    : smartPathfindingPrerequisiteMessage.value;
+  return smartPathfindingPrerequisiteMessage.value;
 }
 
 /** 返回智能寻路按钮 title，禁用时优先解释原因。 */
@@ -2287,11 +2267,8 @@ function getSmartPathfindingToggleTitle() {
     : locale.ui.pathfinding.smartPathfindingTitle;
 }
 
-/** 一键清图支持 ABS y/y' 和未实际启用邪道模式的 Step y/y'/y''；其他算法仍走原禁用提示。 */
+/** 一键清图支持 ABS y/y' 和全部 Step 方程模式；其他算法仍走原禁用提示。 */
 function isOneClickClearModeUnsupported() {
-  if (effectiveStepGlitchModeEnabled.value) {
-    return true;
-  }
   return algorithmMode.value === "abs" ? equationMode.value === "ddy" : algorithmMode.value !== "step";
 }
 

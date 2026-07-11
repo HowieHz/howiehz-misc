@@ -169,11 +169,8 @@ export const graphwarKillerLocale = {
       readFirst: "Read Agent state first",
       reading: "Reading state",
     },
-    autoGraphPathfindingDisabled: "One-Click Clear is being rebuilt and is unavailable for now",
     pathPointCoordinateNumber: "Point coordinates must be numbers",
     secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to about ${angle} deg.`,
-    stepPathfindingDisabled:
-      "Glitch Mode for Step y' does not support Smart Pathfinding or One-Click Clear; disable Glitch Mode first",
     trajectoryWarning: {
       obstacle: "The current function trajectory hits an obstacle or boundary",
       stopped: {
@@ -223,8 +220,7 @@ export const graphwarKillerLocale = {
         const cacheText = resultCacheHit ? " (using result cache)" : "";
         return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} soldier(s) in ${elapsed}`;
       },
-      unsupported:
-        "One-Click Clear supports double absolute-value y and y', or Step y, y', and y'' with Glitch Mode disabled",
+      unsupported: "One-Click Clear supports double absolute-value y and y', or Step y, y', and y''",
     },
   },
   ui: {
@@ -406,8 +402,9 @@ export const graphwarKillerLocale = {
             "Total time for one DAG edge child Worker; jobs are claimed dynamically, so this is not a fixed edge slice.",
         },
         "build-dag-targets": {
-          label: "- Collect clear DAG targets",
-          title: "Convert selectable soldiers into DAG nodes sorted by increasing Graphwar center x.",
+          label: "- Collect clear targets",
+          title:
+            "Ordinary modes build DAG targets sorted by center x; Glitch Mode allocates strictly increasing hit-circle control points to equal-x soldiers.",
         },
         "dag-longest-path": {
           label: "- Run clear DAG longest path",
@@ -439,6 +436,11 @@ export const graphwarKillerLocale = {
         "route-pathfinding": {
           label: "- Run clear geometry search",
           title: "Search for an obstacle-avoiding geometry route between two center points that satisfies x+ rules.",
+        },
+        "scan-step-glitch": {
+          label: "- Scan Step glitch routes",
+          title:
+            "Scan free horizontal rows in increasing target x order and validate each vertical tunneling candidate by replaying the final formula.",
         },
         "segment-build-formula": {
           label: "- Build clear segment formula",
@@ -609,7 +611,7 @@ export const graphwarKillerLocale = {
       debugSummary: "Debug info",
       fastPathfinding: "Fast mode",
       fastPathfindingTitle:
-        "Use fast visibility-graph routing; turn it off to use Theta* for broader search around complex obstacles.",
+        "Ordinary modes use the visibility graph when on and Theta* when off; Step y' Glitch Mode skips point deletion when on.",
       obstacleExpansionAgentMode: "Agent mode",
       obstacleExpansionDetectionMode: "Detection mode",
       obstacleExpansion: "Obstacle expansion",

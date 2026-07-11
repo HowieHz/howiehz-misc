@@ -41,6 +41,60 @@ describe("Step glitch smart trajectory validation", () => {
     expect(result.reachesTargetBeforeObstacle).toBe(false);
     expect(result.blockedPoint).toBeDefined();
   });
+
+  it("allows a new target before a farther committed incidental hit", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-8, 0);
+    const committed = toPixel(-6, 0);
+
+    const result = createGraphwarSmartPathfindingTrajectoryResult({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 2 },
+      obstacleMask: new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT),
+      points: [start, target],
+      requiredTargets: [{ center: committed, radius: 2 }],
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "y",
+        steepness: 67,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      targetHitRadiusPixels: 2,
+    });
+
+    expect(result.reachesTargetBeforeObstacle).toBe(true);
+  });
+
+  it("rejects a path that reaches the new target but loses a committed soldier", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-8, 0);
+    const missedCommitted = toPixel(-6, 6);
+
+    const result = createGraphwarSmartPathfindingTrajectoryResult({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 2 },
+      obstacleMask: new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT),
+      points: [start, target],
+      requiredTargets: [{ center: missedCommitted, radius: 2 }],
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "y",
+        steepness: 67,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      targetHitRadiusPixels: 2,
+    });
+
+    expect(result.reachesTargetBeforeObstacle).toBe(false);
+  });
 });
 
 function toPixel(x: number, y: number) {

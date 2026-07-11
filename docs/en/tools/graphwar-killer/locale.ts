@@ -413,7 +413,22 @@ export const graphwarKillerLocale = {
         "optimize-path": {
           label: "- Optimize clear path",
           title:
-            "Conservatively delete points from the validated clear path and verify each deletion still hits the target hit-circle sequence in order.",
+            "Conservatively delete points from the validated clear path and verify each deletion still hits every new and committed target.",
+        },
+        "prefix-evidence-hit": {
+          label: "- Clear prefix evidence hit",
+          title:
+            "The fixed path exactly matches the last successful full formula, so its real recovery point is reused.",
+        },
+        "prefix-evidence-miss": {
+          label: "- Clear prefix evidence miss",
+          title:
+            "No final-formula evidence matches this fixed path, so the prefix must be prepared after direct validation fails.",
+        },
+        "prepare-pathfinding-prefix": {
+          label: "- Prepare clear prefix",
+          title:
+            "Replay the fixed path once to verify old targets and its tail, then obtain the real Glitch Mode recovery point.",
         },
         "remove-failed-edge": {
           label: "- Remove failed clear edge",
@@ -455,7 +470,7 @@ export const graphwarKillerLocale = {
         "segment-sample-trajectory": {
           label: "- Sample clear segment trajectory",
           title:
-            "Re-sample the accepted target sequence with the current full path and confirm the new target hit circle is reached before obstacles.",
+            "Re-sample the current full path and confirm the current new target and every historical target are hit before obstacles.",
         },
         "validate-route": {
           label: "- Validate clear DAG route",
@@ -465,7 +480,12 @@ export const graphwarKillerLocale = {
         "validate-final": {
           label: "- Validate final clear",
           title:
-            "Resample the optimized full clear path and confirm it still hits every DAG target hit circle in order.",
+            "Resample the optimized full clear path and confirm it still hits every selected new target and every committed target.",
+        },
+        "validate-direct-trajectory": {
+          label: "- Validate direct clear trajectory",
+          title:
+            "Replay the final formula with the target appended directly; success skips prefix preparation and route scanning.",
         },
         "visibility-cache-hit": {
           label: "- Clear visibility cache hit",
@@ -495,6 +515,21 @@ export const graphwarKillerLocale = {
           label: "Create target",
           title:
             "When a soldier is clicked, use its center first; if that fails the x+ rule, move the geometry target to the minimum x+ point inside the hit circle while trajectory validation still uses the original hit circle.",
+        },
+        "prefix-evidence-hit": {
+          label: "Prefix evidence hit",
+          title:
+            "The old path, target sequence, formula settings, and simulation environment exactly match the latest successful formula, so its recovery point is reused.",
+        },
+        "prefix-evidence-miss": {
+          label: "Prefix evidence miss",
+          title:
+            "No exact old-formula evidence is available; after direct validation fails, the old path must be replayed once.",
+        },
+        "prepare-pathfinding-prefix": {
+          label: "Prepare pathfinding prefix",
+          title:
+            "Replay the old full formula to verify committed targets and the current tail, then obtain the Glitch Mode scanner recovery point.",
         },
         "result-cache-hit": {
           label: "Result cache hit",
@@ -606,6 +641,11 @@ export const graphwarKillerLocale = {
           label: "Validate function trajectory",
           title:
             "Convert the candidate geometry path into a Graphwar function trajectory and check that it hits the target before obstacles or bounds.",
+        },
+        "validate-direct-trajectory": {
+          label: "Validate direct trajectory",
+          title:
+            "Replay the final formula formed by appending the new target directly; success returns immediately without prefix preparation or route scanning.",
         },
       },
       debugSummary: "Debug info",

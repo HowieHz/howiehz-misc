@@ -340,6 +340,7 @@ function cloneGraphwarSmartPathfindingPathInput(
     boundaryExpansion: input.boundaryExpansion,
     bounds: cloneGraphBounds(input.bounds),
     boundsRect: cloneBoundsRect(input.boundsRect),
+    committedTargets: input.committedTargets.map(cloneGraphwarCommittedTarget),
     hitTarget: cloneGraphwarTrajectoryTargetCircle(input.hitTarget),
     previewEnabled: input.previewEnabled,
     routeMaskCacheId: input.routeMaskCacheId,
@@ -349,7 +350,9 @@ function cloneGraphwarSmartPathfindingPathInput(
     settings: cloneGraphwarTrajectoryFormulaSettings(input.settings),
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
+    simulationMaskCacheId: input.simulationMaskCacheId,
     sourcePath: input.sourcePath.map(clonePixelPoint),
+    ...(input.prefixTarget ? { prefixTarget: cloneGraphwarTrajectoryTargetCircle(input.prefixTarget) } : {}),
     targetPoint: clonePixelPoint(input.targetPoint),
   };
 }
@@ -397,6 +400,7 @@ function cloneGraphwarOneClickClearPathWorkerInput(
     bounds: cloneGraphBounds(input.bounds),
     boundsRect: cloneBoundsRect(input.boundsRect),
     candidates: input.candidates.map(cloneGraphwarOneClickClearCandidate),
+    committedTargets: input.committedTargets.map(cloneGraphwarCommittedTarget),
     dagEdgeWorkerCount: input.dagEdgeWorkerCount,
     deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
     hitCandidates: input.hitCandidates.map(cloneGraphwarOneClickClearCandidate),
@@ -409,6 +413,7 @@ function cloneGraphwarOneClickClearPathWorkerInput(
     settings: cloneGraphwarTrajectoryFormulaSettings(input.settings),
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
+    simulationMaskCacheId: input.simulationMaskCacheId,
   };
 }
 
@@ -431,6 +436,17 @@ function cloneGraphwarTrajectoryTargetCircle(
   return {
     center: clonePixelPoint(target.center),
     radius: target.radius,
+  };
+}
+
+function cloneGraphwarCommittedTarget(
+  target:
+    | GraphwarSmartPathfindingPathInput["committedTargets"][number]
+    | GraphwarOneClickClearPathWorkerInput["committedTargets"][number],
+) {
+  return {
+    ...(target.anchor ? { anchor: clonePixelPoint(target.anchor) } : {}),
+    hitCircle: cloneGraphwarTrajectoryTargetCircle(target.hitCircle),
   };
 }
 

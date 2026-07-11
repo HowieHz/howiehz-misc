@@ -43,7 +43,7 @@ interface FriendlyObstacleMaskCacheEntry {
 
 /** 集中维护智能寻路页面侧缓存，避免页面脚本知道每个缓存的失效和 clone 细节。 */
 export function createGraphwarPathfindingCacheController() {
-  const routeObstacleMaskIds = new WeakMap<Uint8Array, number>();
+  const obstacleMaskIds = new WeakMap<Uint8Array, number>();
   const routeMaskCache = new WeakMap<Uint8Array, Map<string, GraphwarRouteMaskCacheEntry>>();
   const friendlyObstacleMaskCache = new WeakMap<Uint8Array, FriendlyObstacleMaskCacheEntry>();
   const smartPathfindingResultCache = new Map<string, GraphwarSmartPathfindingPathResult>();
@@ -95,7 +95,7 @@ export function createGraphwarPathfindingCacheController() {
   }
 
   function getOptionalMaskCacheId(mask: Uint8Array | undefined) {
-    return mask ? getRouteObstacleMaskCacheId(mask) : 0;
+    return mask ? getMaskCacheId(mask) : 0;
   }
 
   function createSmartPathfindingResultCacheKey(input: GraphwarSmartPathfindingPathInput) {
@@ -108,9 +108,11 @@ export function createGraphwarPathfindingCacheController() {
       input.routeMaskCacheId,
       input.routeTolerancePlanePixels,
       input.simulationBoundaryExpansion,
-      getOptionalMaskCacheId(input.simulationMask),
+      input.simulationMaskCacheId,
       createTrajectorySettingsCacheKey(input.settings, getOptionalMaskCacheId(input.settings.stepGlitchObstacleMask)),
       createPointArrayCacheKey(input.sourcePath),
+      input.committedTargets.map((target) => createTargetCircleCacheKey(target.hitCircle)),
+      input.prefixTarget ? createTargetCircleCacheKey(input.prefixTarget) : undefined,
       createPointCacheKey(input.targetPoint),
       createTargetCircleCacheKey(input.hitTarget),
     ]);
@@ -118,7 +120,7 @@ export function createGraphwarPathfindingCacheController() {
 
   function createOneClickClearResultCacheKey(input: GraphwarOneClickClearPathWorkerInput) {
     return JSON.stringify([
-      "one-click-clear-result-v2",
+      "one-click-clear-result-v3",
       createGraphBoundsCacheKey(input.bounds),
       createBoundsRectCacheKey(input.boundsRect),
       input.boundaryExpansion,
@@ -127,9 +129,11 @@ export function createGraphwarPathfindingCacheController() {
       input.routeMaskCacheId,
       input.routeTolerancePlanePixels,
       input.simulationBoundaryExpansion,
-      getOptionalMaskCacheId(input.simulationMask),
+      input.simulationMaskCacheId,
       createTrajectorySettingsCacheKey(input.settings, getOptionalMaskCacheId(input.settings.stepGlitchObstacleMask)),
       createPointArrayCacheKey(input.pathPoints),
+      // 成功结果会原样回写目标锚点；同一路径和命中圈的不同锚点不能共享结果。
+      input.committedTargets.map(createCommittedTargetCacheKey),
       input.prefixTarget ? createTargetCircleCacheKey(input.prefixTarget) : undefined,
       input.candidates.map(createOneClickClearCandidateCacheKey),
       input.hitCandidates.map(createOneClickClearCandidateCacheKey),
@@ -161,15 +165,15 @@ export function createGraphwarPathfindingCacheController() {
     return getCachedRouteMaskWithStatus(mask, routeTolerance).entry;
   }
 
-  function getRouteObstacleMaskCacheId(mask: Uint8Array) {
-    const cached = routeObstacleMaskIds.get(mask);
+  function getMaskCacheId(mask: Uint8Array) {
+    const cached = obstacleMaskIds.get(mask);
     if (cached !== undefined) {
       return cached;
     }
 
     const id = nextRouteMaskCacheId;
     nextRouteMaskCacheId += 1;
-    routeObstacleMaskIds.set(mask, id);
+    obstacleMaskIds.set(mask, id);
     return id;
   }
 
@@ -190,7 +194,7 @@ export function createGraphwarPathfindingCacheController() {
     }
 
     const entry: GraphwarRouteMaskCacheEntry = {
-      id: getRouteObstacleMaskCacheId(mask),
+      id: getMaskCacheId(mask),
       mask: dilateObstacleMask(mask, routeTolerance),
     };
     entries.set(key, entry);
@@ -215,7 +219,7 @@ export function createGraphwarPathfindingCacheController() {
     getCachedRouteMask,
     getCachedRouteMaskWithStatus,
     getCachedSmartPathfindingResult,
-    getRouteObstacleMaskCacheId,
+    getMaskCacheId,
     invalidateResultCache,
   };
 }
@@ -258,6 +262,10 @@ function createPointArrayCacheKey(points: readonly PixelPoint[]) {
 
 function createTargetCircleCacheKey(target: { center: PixelPoint; radius: number }) {
   return [createPointCacheKey(target.center), target.radius];
+}
+
+function createCommittedTargetCacheKey(target: GraphwarOneClickClearPathWorkerInput["committedTargets"][number]) {
+  return [createTargetCircleCacheKey(target.hitCircle), target.anchor ? createPointCacheKey(target.anchor) : null];
 }
 
 function createTrajectorySettingsCacheKey(
@@ -330,7 +338,10 @@ function cloneOneClickClearResult(result: GraphwarOneClickClearPathWorkerResult[
       expandedStates: result.expandedStates,
       pathPoints: result.pathPoints.map(clonePixelPoint),
       targetIds: [...result.targetIds],
-      targetSequence: result.targetSequence.map(cloneTargetCircle),
+      targetSequence: result.targetSequence.map((target) => ({
+        ...(target.anchor ? { anchor: clonePixelPoint(target.anchor) } : {}),
+        hitCircle: cloneTargetCircle(target.hitCircle),
+      })),
       type: result.type,
     };
   }

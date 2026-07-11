@@ -65,6 +65,7 @@ function createBuilder(
     input: {
       boundsRect: { value: { height: 450, width: 770, x: 0, y: 0 } },
       getBounds: () => ({ maxX: 25, maxY: 15, minX: -25, minY: -15 }),
+      getCommittedTargets: () => [],
       getFormulaSettings: () => ({
         algorithm: "step",
         decimalPlaces: 4,
@@ -75,6 +76,7 @@ function createBuilder(
       }),
       getObstacleMask: () => new Uint8Array(770 * 450),
       getPathPixels: () => [startPoint],
+      getPrefixTarget: () => undefined,
       getRouteMode: () => "visibility-graph",
       getSimulationMask: () => undefined,
       getTargetHitRadiusPixels: () => 1,
@@ -90,7 +92,7 @@ function createBuilder(
         cacheSmartPathfindingResult: () => undefined,
         createSmartPathfindingResultCacheKey: (input) => String(input.targetPoint.x),
         getCachedSmartPathfindingResult: () => undefined,
-        getRouteObstacleMaskCacheId: () => 1,
+        getMaskCacheId: () => 1,
       },
       runner: { findSmartPath },
     },

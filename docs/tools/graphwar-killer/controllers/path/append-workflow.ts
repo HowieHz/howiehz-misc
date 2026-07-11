@@ -11,6 +11,7 @@ import {
   createGraphwarSmartPathfindingTrajectoryResult,
   type GraphwarSmartPathfindingHitTarget,
 } from "../../pathfinding/smart/trajectory";
+import type { GraphwarCommittedTarget } from "../../pathfinding/targeting";
 import type { GraphwarSmartPathfindingRunWorkflowController } from "../pathfinding/smart/workflow";
 import type { ParsedBounds, ParsedObstacleTolerances } from "../settings/validation";
 
@@ -40,6 +41,8 @@ interface GraphwarPathAppendWorkflowOptions<TSoldier, TSmartTarget> {
     toolWorkflowMode: ReadonlyRef<ToolWorkflowMode>;
   };
   path: {
+    /** 路径成功写入后提交士兵命中目标。 */
+    commitTarget: (target: GraphwarCommittedTarget) => void;
     /** 当前工作流路径。 */
     pathPixels: Ref<PixelPoint[]>;
     /** 路径状态文案仍由页面展示。 */
@@ -74,6 +77,8 @@ interface GraphwarPathAppendWorkflowOptions<TSoldier, TSmartTarget> {
     getDetectedSoldierColor: (soldier: TSoldier) => string | undefined;
     /** 当前识别士兵列表；只用于路径尾点命中圈预检。 */
     getSoldiers: () => readonly TSoldier[];
+    /** 当前路径已经承诺命中的士兵；存储顺序不限制后续整式的实际命中顺序。 */
+    getCommittedTargets: () => readonly GraphwarCommittedTarget[];
     /** 判断当前路径尾点是否已经落在士兵真实命中圈内。 */
     soldierContainsHitCircle: (soldier: TSoldier, point: PixelPoint) => boolean;
   };
@@ -158,16 +163,41 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
     }
 
     if (options.modes.isSmartPathfindingEnabled()) {
-      return appendDetectedSoldierSmartPathfindingPoint(soldier);
+      const appended = await appendDetectedSoldierSmartPathfindingPoint(soldier);
+      if (appended) {
+        commitDetectedSoldierTarget(soldier);
+      }
+      return appended;
     }
 
     const targetPoint = options.targets.createSearchStartSoldierAimPoint(options.path.pathPixels.value.at(-1), soldier);
-    return targetPoint ? appendPathPoint(targetPoint) : false;
+    const appended = targetPoint ? await appendPathPoint(targetPoint) : false;
+    if (appended) {
+      commitDetectedSoldierTarget(soldier);
+    }
+    return appended;
+  }
+
+  function commitDetectedSoldierTarget(soldier: TSoldier) {
+    const anchor = options.path.pathPixels.value.at(-1);
+    if (!anchor) {
+      return;
+    }
+    options.path.commitTarget({
+      anchor,
+      hitCircle: options.targets.createSoldierHitCircle(soldier),
+    });
   }
 
   /** 启动新寻路前先确认当前公式轨迹已经能到达当前最后路径点。 */
   function ensureCurrentPathReachesLastPointBeforeSmartPathfinding() {
     if (options.path.pathPixels.value.length < 2) {
+      return true;
+    }
+
+    const settings = options.trajectory.getFormulaSettings();
+    if (settings.algorithm === "step" && settings.equation === "dy" && settings.stepGlitchMode) {
+      // 邪道 Worker 会先试最终直连公式；失败后才用 exact evidence 或一次旧整式回放准备 prefix。
       return true;
     }
 
@@ -183,7 +213,8 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
       hitTarget: currentTarget,
       obstacleMask: options.trajectory.getSimulationObstacleMask(),
       points: [...options.path.pathPixels.value],
-      settings: options.trajectory.getFormulaSettings(),
+      requiredTargets: options.targets.getCommittedTargets().map((target) => target.hitCircle),
+      settings,
       targetHitRadiusPixels: options.trajectory.getTargetHitRadiusPixels(),
     });
     if (result.reachesTargetBeforeObstacle) {

@@ -9,12 +9,17 @@ import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 const scanMockState = vi.hoisted(() => ({
   outcomes: [] as ("hit" | "no-path")[],
   scanners: [] as {
+    hasPrefixEvidence: boolean;
     requiredTargets: { center: { x: number; y: number }; radius: number }[];
     sourcePath: { x: number; y: number }[];
   }[],
   scans: [] as { scannerId: number; targetPoint: { x: number; y: number } }[],
 }));
-const samplingMockState = vi.hoisted(() => ({ pathTargetSequenceCalls: 0 }));
+const samplingMockState = vi.hoisted(() => ({
+  pathTargetSequenceCalls: 0,
+  requiredTargets: [] as { x: number; y: number }[][],
+  targetSequences: [] as { x: number; y: number }[][],
+}));
 
 vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../formula/trajectory/sampling")>();
@@ -23,6 +28,8 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
     sampleGraphwarPathTargetSequence: vi.fn(
       (options: Parameters<typeof original.sampleGraphwarPathTargetSequence>[0]) => {
         samplingMockState.pathTargetSequenceCalls += 1;
+        samplingMockState.requiredTargets.push((options.requiredTargets ?? []).map((target) => ({ ...target.center })));
+        samplingMockState.targetSequences.push((options.targetCircles ?? []).map((target) => ({ ...target.center })));
         return original.sampleGraphwarPathTargetSequence(options);
       },
     ),
@@ -37,7 +44,8 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
       (options: Parameters<typeof original.createGraphwarStepGlitchPrefixScanner>[0]) => {
         const scannerId = scanMockState.scanners.length;
         scanMockState.scanners.push({
-          requiredTargets: (options.requiredTargetSequence ?? []).map((target) => ({
+          hasPrefixEvidence: options.prefixEvidence !== undefined,
+          requiredTargets: (options.requiredTargets ?? []).map((target) => ({
             center: { ...target.center },
             radius: target.radius,
           })),
@@ -55,14 +63,16 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
                 acceptedPoint: { x: 0, y: 0 },
                 expandedStates: 1,
                 path: [...options.sourcePath, target.targetPoint],
-                reachedTargetCount: (options.requiredTargetSequence?.length ?? 0) + 1,
+                reachedTargetCount: (options.requiredTargets?.length ?? 0) + 1,
                 status: "hit" as const,
+                timings: [],
               };
             }
             return {
               expandedStates: 1,
-              reachedTargetCount: options.requiredTargetSequence?.length ?? 0,
+              reachedTargetCount: options.requiredTargets?.length ?? 0,
               status: "no-path" as const,
+              timings: [],
             };
           },
         };
@@ -87,6 +97,8 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.scanners.length = 0;
     scanMockState.scans.length = 0;
     samplingMockState.pathTargetSequenceCalls = 0;
+    samplingMockState.requiredTargets.length = 0;
+    samplingMockState.targetSequences.length = 0;
   });
 
   it.each(["visibility-graph", "theta-star"] as const)(
@@ -138,6 +150,7 @@ describe("Step glitch one-click-clear target retries", () => {
 
     expect(scanMockState.scans.map((scan) => scan.scannerId)).toEqual([0, 1, 2, 2, 3]);
     expect(scanMockState.scanners.map((scanner) => scanner.sourcePath.length)).toEqual([1, 2, 3, 4]);
+    expect(scanMockState.scanners.map((scanner) => scanner.hasPrefixEvidence)).toEqual([false, true, true, true]);
     expect(scanMockState.scanners.map((scanner) => scanner.requiredTargets.length)).toEqual([0, 1, 2, 3]);
     expect(scanMockState.scanners[3]?.requiredTargets.map((target) => target.center)).toEqual([
       targetPoints[0],
@@ -149,7 +162,107 @@ describe("Step glitch one-click-clear target retries", () => {
     if (result.type === "success") {
       expect(result.pathPoints).toEqual([start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]]);
       expect(result.targetIds).toEqual(["2", "3", "4", "5", "6"]);
+      expect(result.targetSequence.find((target) => target.hitCircle.center === targetPoints[0])?.anchor).toEqual(
+        targetPoints[0],
+      );
+      expect(
+        result.targetSequence.find((target) => target.hitCircle.center === targetPoints[2])?.anchor,
+      ).toBeUndefined();
     }
+  });
+
+  it("keeps a committed target that is absent from the latest detection candidates", async () => {
+    scanMockState.outcomes.push("hit");
+    const start = toPixel(-11, 0);
+    const oldTarget = toPixel(-9, 0);
+    const nextTarget = toPixel(-6, 0);
+    const simulationMask = createEmptyMask();
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(
+        start,
+        [{ enemy: true, hitCenter: nextTarget, hitRadius: 12, id: "next" }],
+        simulationMask,
+        "visibility-graph",
+      ),
+      committedTargets: [{ anchor: oldTarget, hitCircle: { center: oldTarget, radius: 12 } }],
+      pathPoints: [start, oldTarget],
+      prefixTarget: { center: oldTarget, radius: 12 },
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.targetSequence.map((target) => target.hitCircle.center)).toEqual([oldTarget, nextTarget]);
+      expect(result.targetIds).toEqual(["next"]);
+    }
+    expect(samplingMockState.requiredTargets.at(-1)).toEqual([oldTarget]);
+    expect(samplingMockState.targetSequences.at(-1)).toEqual([nextTarget]);
+  });
+
+  it("does not report success when every new target fails and only an old committed target is hit", async () => {
+    scanMockState.outcomes.push("no-path");
+    const start = toPixel(-11, 0);
+    const oldTarget = toPixel(-9, 0);
+    const missedTarget = toPixel(-6, 8);
+    const simulationMask = createEmptyMask();
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(
+        start,
+        [{ enemy: true, hitCenter: missedTarget, hitRadius: 2, id: "missed" }],
+        simulationMask,
+        "visibility-graph",
+      ),
+      committedTargets: [{ anchor: oldTarget, hitCircle: { center: oldTarget, radius: 12 } }],
+      pathPoints: [start, oldTarget],
+      prefixTarget: { center: oldTarget, radius: 12 },
+    });
+
+    expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+  });
+
+  it("does not turn an ordinary old tail into a committed target during final validation", async () => {
+    scanMockState.outcomes.push("hit");
+    const start = toPixel(-11, 0);
+    const ordinaryTail = toPixel(-9, 4);
+    const nextTarget = toPixel(-6, 0);
+    const simulationMask = createEmptyMask();
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(
+        start,
+        [{ enemy: true, hitCenter: nextTarget, hitRadius: 12, id: "next" }],
+        simulationMask,
+        "visibility-graph",
+      ),
+      pathPoints: [start, ordinaryTail],
+      prefixTarget: { center: ordinaryTail, radius: 1 },
+    });
+
+    expect(result.type).toBe("success");
+    expect(samplingMockState.targetSequences.at(-1)).toEqual([nextTarget]);
+  });
+
+  it("allows a new target before a farther committed incidental hit", async () => {
+    scanMockState.outcomes.push("hit");
+    const start = toPixel(-11, 0);
+    const tail = toPixel(-9, 0);
+    const nextTarget = toPixel(-8, 0);
+    const oldIncidentalTarget = toPixel(-6, 0);
+    const simulationMask = createEmptyMask();
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(
+        start,
+        [{ enemy: true, hitCenter: nextTarget, hitRadius: 12, id: "next" }],
+        simulationMask,
+        "visibility-graph",
+      ),
+      committedTargets: [{ hitCircle: { center: oldIncidentalTarget, radius: 12 } }],
+      pathPoints: [start, tail],
+      prefixTarget: { center: tail, radius: 1 },
+    });
+
+    expect(result.type).toBe("success");
+    expect(scanMockState.scanners[0]?.requiredTargets.map((target) => target.center)).toEqual([oldIncidentalTarget]);
+    expect(samplingMockState.requiredTargets.at(-1)).toEqual([oldIncidentalTarget]);
+    expect(samplingMockState.targetSequences.at(-1)).toEqual([nextTarget]);
   });
 
   it("keeps committed target anchors during point deletion", async () => {
@@ -206,6 +319,7 @@ function createOptions(
       throw new Error("Step glitch clear must not build DAG edges");
     },
     candidates,
+    committedTargets: [],
     deleteHitCheckRadiusPixels: 0,
     hitCandidates: candidates,
     pathPoints: [start],
@@ -222,6 +336,7 @@ function createOptions(
     },
     simulationBoundaryExpansion: 0,
     simulationMask,
+    simulationMaskCacheId: 1,
   };
 }
 

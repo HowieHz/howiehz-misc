@@ -5,6 +5,7 @@ import type {
 } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarSmartPathfindingPathInput } from "../runtime/protocol";
+import type { GraphwarCommittedTarget } from "../targeting";
 
 /** 智能寻路搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
 export interface GraphwarSmartPathfindingSearchTolerances {
@@ -37,6 +38,12 @@ interface GraphwarSmartPathfindingSearchInputOptions {
   simulationMask: Uint8Array | undefined;
   /** 当前路径快照；最后一点应是几何搜索起点。 */
   sourcePath: readonly PixelPoint[];
+  /** 当前路径已承诺命中的士兵；后续控制点允许改变实际命中顺序。 */
+  committedTargets: readonly GraphwarCommittedTarget[];
+  /** 旧公式当前尾点的验证圆。 */
+  prefixTarget?: GraphwarTrajectoryTargetCircle;
+  /** 页面侧 simulation mask 的稳定快照 id。 */
+  simulationMaskCacheId: number;
   /** 路径终点，截图像素坐标。 */
   targetPoint: PixelPoint;
   /** 成功解析后的寻路容差。 */
@@ -52,6 +59,7 @@ export function createGraphwarSmartPathfindingSearchInput(
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     hitTarget: options.hitTarget,
+    committedTargets: options.committedTargets,
     previewEnabled: options.previewEnabled,
     routeMaskCacheId: options.routeMaskCacheId,
     routeMode: options.routeMode,
@@ -60,7 +68,9 @@ export function createGraphwarSmartPathfindingSearchInput(
     settings: options.settings,
     simulationBoundaryExpansion: options.tolerances.simulationBoundaryInsetPlanePixels,
     simulationMask: options.simulationMask,
+    simulationMaskCacheId: options.simulationMaskCacheId,
     sourcePath: options.sourcePath,
+    ...(options.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
     targetPoint: options.targetPoint,
   };
 }

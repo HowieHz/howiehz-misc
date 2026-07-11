@@ -91,6 +91,87 @@ describe("Step glitch smart-path validation", () => {
     expect(mocks.validateTrajectory).not.toHaveBeenCalled();
     expect(response.result).toMatchObject({ failureReason: "graph-rule" });
   });
+
+  it("reuses the last exact successful formula as the next scanner prefix", async () => {
+    const mask = new Uint8Array(1);
+    const first = createStepGlitchInput(mask, mask);
+    first.simulationMaskCacheId = 701;
+    const firstPath = [first.sourcePath[0], first.targetPoint];
+    mockHit(firstPath);
+    await dispatchSmartPathRequest(first);
+
+    postMessage.mockClear();
+    const secondTarget = createPixelPoint(300, 225);
+    const second: GraphwarSmartPathfindingPathInput = {
+      ...first,
+      committedTargets: [{ anchor: first.targetPoint, hitCircle: first.hitTarget }],
+      hitTarget: { center: secondTarget, radius: 10 },
+      prefixTarget: first.hitTarget,
+      sourcePath: firstPath,
+      targetPoint: secondTarget,
+    };
+    mockHit([...firstPath, secondTarget]);
+
+    await dispatchSmartPathRequest(second);
+
+    expect(mocks.scanStepGlitchPath).toHaveBeenCalledTimes(2);
+    expect(mocks.scanStepGlitchPath.mock.calls[1]?.[0]).toMatchObject({
+      prefixEvidence: { acceptedPoint: createGraphPoint(0, 0) },
+    });
+  });
+
+  it("reuses prefix evidence when the previous target was an ordinary point", async () => {
+    const mask = new Uint8Array(1);
+    const first = createStepGlitchInput(mask, mask);
+    first.simulationMaskCacheId = 751;
+    const firstPath = [first.sourcePath[0], first.targetPoint];
+    mockHit(firstPath);
+    await dispatchSmartPathRequest(first);
+
+    postMessage.mockClear();
+    const secondTarget = createPixelPoint(300, 225);
+    const second: GraphwarSmartPathfindingPathInput = {
+      ...first,
+      committedTargets: [],
+      hitTarget: { center: secondTarget, radius: 10 },
+      prefixTarget: first.hitTarget,
+      sourcePath: firstPath,
+      targetPoint: secondTarget,
+    };
+    mockHit([...firstPath, secondTarget]);
+
+    await dispatchSmartPathRequest(second);
+
+    expect(mocks.scanStepGlitchPath.mock.calls[1]?.[0]).toMatchObject({
+      prefixEvidence: { acceptedPoint: createGraphPoint(0, 0) },
+    });
+  });
+
+  it("rejects prefix evidence after the simulation mask id changes", async () => {
+    const mask = new Uint8Array(1);
+    const first = createStepGlitchInput(mask, mask);
+    first.simulationMaskCacheId = 801;
+    const firstPath = [first.sourcePath[0], first.targetPoint];
+    mockHit(firstPath);
+    await dispatchSmartPathRequest(first);
+
+    postMessage.mockClear();
+    const nextTarget = createPixelPoint(300, 225);
+    const changedMask: GraphwarSmartPathfindingPathInput = {
+      ...first,
+      committedTargets: [{ anchor: first.targetPoint, hitCircle: first.hitTarget }],
+      hitTarget: { center: nextTarget, radius: 10 },
+      prefixTarget: first.hitTarget,
+      simulationMaskCacheId: 802,
+      sourcePath: firstPath,
+      targetPoint: nextTarget,
+    };
+    mockHit([...firstPath, nextTarget]);
+
+    await dispatchSmartPathRequest(changedMask);
+
+    expect(mocks.scanStepGlitchPath.mock.calls[1]?.[0]).not.toHaveProperty("prefixEvidence");
+  });
 });
 
 function createStepGlitchInput(simulationMask: Uint8Array, formulaMask: Uint8Array): GraphwarSmartPathfindingPathInput {
@@ -99,6 +180,7 @@ function createStepGlitchInput(simulationMask: Uint8Array, formulaMask: Uint8Arr
     boundaryExpansion: 0,
     bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+    committedTargets: [],
     hitTarget: { center: createPixelPoint(200, 225), radius: 10 },
     previewEnabled: false,
     routeMaskCacheId: 1,
@@ -116,6 +198,7 @@ function createStepGlitchInput(simulationMask: Uint8Array, formulaMask: Uint8Arr
     },
     simulationBoundaryExpansion: 0,
     simulationMask,
+    simulationMaskCacheId: 1,
     sourcePath: [sourcePoint],
     targetPoint: createPixelPoint(200, 225),
   };
@@ -128,6 +211,7 @@ function mockHit(path: GraphwarSmartPathfindingPathInput["sourcePath"]) {
     path,
     reachedTargetCount: 1,
     status: "hit",
+    timings: [],
   });
 }
 

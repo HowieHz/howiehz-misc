@@ -6,7 +6,11 @@ import { floorToDecimalPlaces } from "../../core/numbers";
 import { createGraphPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds } from "../../core/types";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
-import { createGraphwarStepGlitchScanMaskIndex, scanGraphwarStepGlitchPath } from "./step-glitch-scan";
+import {
+  createGraphwarStepGlitchScanMaskIndex,
+  replayGraphwarStepGlitchPathToControlX,
+  scanGraphwarStepGlitchPath,
+} from "./step-glitch-scan";
 
 const bounds: GraphBounds = { maxX: -4, maxY: 10, minX: -12, minY: -10 };
 const boundsRect: BoundsRect = { height: GRAPHWAR_PLANE_HEIGHT, width: GRAPHWAR_PLANE_LENGTH, x: 0, y: 0 };
@@ -82,18 +86,18 @@ describe("Step y' glitch scan", () => {
     }
   });
 
-  it("keeps required targets ahead of the current hit target", () => {
+  it("allows the current target before a farther unordered required hit", () => {
     const start = toPixel(-11, 0);
-    const required = toPixel(-8.5, 0);
-    const target = toPixel(-6, 0);
+    const target = toPixel(-8, 0);
+    const required = toPixel(-6, 0);
     const result = scanGraphwarStepGlitchPath({
       bounds,
       boundsRect,
       hitTarget: { center: target, radius: 12 },
-      requiredTargetSequence: [{ center: required, radius: 12 }],
+      requiredTargets: [{ center: required, radius: 12 }],
       settings,
       simulationMask: createEmptyMask(),
-      sourcePath: [start, required],
+      sourcePath: [start],
       targetPoint: target,
     });
 
@@ -102,6 +106,29 @@ describe("Step y' glitch scan", () => {
     if (result.status === "hit") {
       expect(result.path.at(-1)).toBe(target);
     }
+  });
+
+  it("rejects a required-only gate replay when the last required hit is on an obstacle sample", () => {
+    const start = toPixel(-11, 0);
+    const required = toPixel(-8, 0);
+    const end = toPixel(-6, 0);
+    const simulationMask = createEmptyMask();
+    simulationMask[Math.floor(required.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(required.x)] = 1;
+
+    const replay = replayGraphwarStepGlitchPathToControlX({
+      bounds,
+      boundsRect,
+      controlX: -8,
+      path: [start, end],
+      requiredTargets: [{ center: required, radius: 12 }],
+      settings,
+      simulationMask,
+      sourcePath: [start],
+      targetSequence: [],
+    });
+
+    expect(replay.targetsHit).toBe(true);
+    expect(replay.acceptedPoint).toBeUndefined();
   });
 
   it("returns no-path when the formula reaches the control x without hitting the requested circle", () => {
@@ -253,7 +280,7 @@ describe("Step y' glitch scan", () => {
     });
 
     expect(result.status).toBe("no-path");
-    expect(result.expandedStates).toBe(0);
+    expect(result.expandedStates).toBe(1);
   });
 
   it("returns invalid-input when the assigned target does not advance x", () => {

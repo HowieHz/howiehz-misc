@@ -245,9 +245,12 @@ const activeObstacleSimulationToleranceText = computed({
 let graphwarAgentImageLoadBypassUrl = "";
 // 路径状态已独立在 composable 中；页面只负责把当前工作流模式和交互事件接进去。
 const {
+  applyValidatedPath: applyValidatedPathState,
   clearActivePath: clearActivePathState,
   clearAllModePaths: clearAllPathState,
   clearPathInteractionState,
+  commitTarget,
+  committedTargets,
   draggingPathPointIndex,
   finishPathPointCoordinateEdit: finishPathPointCoordinateEditState,
   getPathPointCoordinateText: getPathPointCoordinateTextState,
@@ -352,9 +355,11 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
   input: {
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
+    getCommittedTargets: () => committedTargets.value,
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
     getPathPixels: () => pathPixels.value,
+    getPrefixTarget: createCurrentPrefixTargetCircle,
     getRouteMode: getPathfindingRouteMode,
     getSimulationMask: () => simulationObstacleMask.value,
     getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
@@ -929,6 +934,7 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
       toolWorkflowMode,
     },
     path: {
+      commitTarget,
       pathPixels,
       pathStatus,
       setPathPixels,
@@ -947,6 +953,7 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
       createSoldierHitCircle,
       getDetectedSoldierColor,
       getDetectionBoxCenter,
+      getCommittedTargets: () => committedTargets.value,
       getSoldiers: () => detectedSoldiers.value,
       soldierContainsHitCircle: detectionBoxContainsHitCircle,
     },
@@ -957,6 +964,34 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
       parsedObstacleTolerances,
     },
   });
+
+/** 优先使用路径保存的不可变命中圈；普通尾点才退回当前默认命中半径。 */
+function createCurrentPrefixTargetCircle() {
+  if (pathPixels.value.length < 2) {
+    return undefined;
+  }
+  const lastPoint = pathPixels.value.at(-1);
+  if (!lastPoint) {
+    return undefined;
+  }
+  const committed = committedTargets.value.find(
+    (target) => target.anchor?.x === lastPoint.x && target.anchor.y === lastPoint.y,
+  );
+  if (committed) {
+    return committed.hitCircle;
+  }
+
+  const target = createCurrentLastPathHitTarget();
+  if (!target) {
+    return undefined;
+  }
+  if ("center" in target) {
+    return target;
+  }
+  const radius = soldierHitRadiusPixels.value;
+  return radius === undefined ? undefined : { center: target, radius };
+}
+
 // 一键清图 workflow 应集中预检、候选收集、worker 输入、cache 和结果落地；页面只保留当前状态入口。
 const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBox>({
   debug: {
@@ -967,7 +1002,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
     measureStageAsync: measureSmartPathfindingDebugStageAsync,
   },
   effects: {
-    applyPath: setPathPixels,
+    applyValidatedPath,
     flashBlockedSegment: smartPathfindingSession.flashBlockedSegment,
     flashHitSoldiers: flashOneClickClearHitSoldiers,
     setStatus: setSmartPathfindingStatus,
@@ -975,6 +1010,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
   input: {
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
+    getCommittedTargets: () => committedTargets.value,
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
     getPathfindingWorkerCount: () =>
@@ -1010,7 +1046,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
   targets: {
     createGeometry: createTargetingGeometry,
     getFriendlyFireEnabled: () => friendlyFireEnabled.value,
-    getPrefixTarget: createCurrentLastPathHitTarget,
+    getPrefixTarget: createCurrentPrefixTargetCircle,
     getSoldiers: () => detectedSoldiers.value,
   },
   time: {
@@ -2400,11 +2436,25 @@ async function runOneClickClear() {
 
 /** 路径变更后同步落地并清空旧状态。 */
 function setPathPixels(points: PixelPoint[]) {
+  // 坐标输入等同步编辑必须先作废旧 token，避免迟到的 Worker 结果覆盖用户刚写入的路径。
+  if (cancelSmartPathfinding(false)) {
+    clearSmartPathfindingStatus();
+  }
   if (pathStartChanges(points)) {
     invalidatePathfindingWorkerCache();
   }
   clearSmartPathfindingBlockedPoint();
   pathPixels.value = points;
+  pathStatus.value = "";
+}
+
+/** 一次性发布同一整式验证过的路径和目标序列，并保留页面统一的路径副作用。 */
+function applyValidatedPath(points: PixelPoint[], targets: Parameters<typeof applyValidatedPathState>[1]) {
+  if (pathStartChanges(points)) {
+    invalidatePathfindingWorkerCache();
+  }
+  clearSmartPathfindingBlockedPoint();
+  applyValidatedPathState(points, targets);
   pathStatus.value = "";
 }
 
@@ -2465,6 +2515,8 @@ function invalidatePathfindingWorkerCache() {
 
 /** 同时清理 worker 内部派生 cache 和页面侧完整结果 cache。 */
 function invalidatePathfindingCaches() {
+  // 输入语义换代必须先使页面 token 和旧 Worker 请求同时失效，避免迟到结果写回新场景。
+  cancelSmartPathfinding(false);
   invalidatePathfindingResultCache();
   invalidatePathfindingWorkerCache();
 }

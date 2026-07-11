@@ -322,6 +322,9 @@ export interface GraphwarKillerLocale {
       debugNoTiming: string;
       debugStages: Record<
         | "preflight"
+        | "prefix-evidence-hit"
+        | "prefix-evidence-miss"
+        | "prepare-pathfinding-prefix"
         | "collect-targets"
         | "result-cache-hit"
         | "result-cache-miss"
@@ -332,6 +335,7 @@ export interface GraphwarKillerLocale {
         | "visibility-cache-miss"
         | "visibility-cache-skipped"
         | "validate-trajectory"
+        | "validate-direct-trajectory"
         | "optimize-path"
         | "apply-result"
         | "one-click-clear-preflight"

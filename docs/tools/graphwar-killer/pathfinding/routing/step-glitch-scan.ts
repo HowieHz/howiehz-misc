@@ -8,6 +8,7 @@ import {
 import { graphToImagePoint, imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
 import { floorToDecimalPlaces, graphXAdvancesStrictly, nextUpDouble } from "../../core/numbers";
 import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../../core/plane-grid";
+import { nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import {
@@ -15,9 +16,7 @@ import {
   sampleGraphwarFormulaTrajectory,
 } from "../../formula/trajectory/sampling";
 import type {
-  GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaSettings,
-  GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 
@@ -38,8 +37,12 @@ export interface GraphwarStepGlitchPrefixOptions {
   boundsRect: BoundsRect;
   /** 可复用的同 mask 索引；不匹配时扫描器会自行重建。 */
   maskIndex?: GraphwarStepGlitchScanMaskIndex;
-  /** 固定前缀必须继续按顺序命中的目标。 */
-  requiredTargetSequence?: readonly GraphwarTrajectoryTargetCircle[];
+  /** 完全相同旧整式已经回放成功时，可直接复用其真实恢复点。 */
+  prefixEvidence?: GraphwarStepGlitchPrefixEvidence;
+  /** 旧公式必须命中的当前尾点；只用于 evidence/prefix 准备，不约束新最终直连公式。 */
+  prefixTarget?: GraphwarTrajectoryTargetCircle;
+  /** 固定前缀必须继续命中的士兵；后续控制点允许改变它们的实际命中顺序。 */
+  requiredTargets?: readonly GraphwarTrajectoryTargetCircle[];
   /** 函数采样边界内收值，单位为 Graphwar 原始平面像素。 */
   simulationBoundaryExpansion?: number;
   /** 前缀回放和后续候选都使用这一份 mask。 */
@@ -61,8 +64,10 @@ export type GraphwarStepGlitchScanOptions = GraphwarStepGlitchPrefixOptions & Gr
 interface GraphwarStepGlitchScanResultBase {
   /** 实际执行过最终文本回放的候选路径数。 */
   expandedStates: number;
-  /** 本条完整公式按顺序命中的 required targets 加当前目标数量。 */
+  /** 本条完整公式命中的无序必达目标加当前有序目标数量。 */
   reachedTargetCount: number;
+  /** 本次扫描内部阶段耗时；调用方负责映射到页面调试面板。 */
+  timings: GraphwarStepGlitchScanTiming[];
 }
 
 export type GraphwarStepGlitchScanResult =
@@ -80,14 +85,35 @@ export interface GraphwarStepGlitchPrefixScanner {
   scan: (target: GraphwarStepGlitchTargetOptions) => GraphwarStepGlitchScanResult;
 }
 
-/** 固定前缀的公式、完整回放和真实恢复点；只在当前 scanner 闭包中保留一份。 */
-interface PreparedGraphwarStepGlitchPrefix {
+/** 完全相同旧整式的验证证据；新增后缀仍必须从发射点完整回放。 */
+export interface GraphwarStepGlitchPrefixEvidence {
   acceptedPoint: GraphPoint;
-  formulaContext?: GraphwarTrajectoryFormulaContext;
+}
+
+export type GraphwarStepGlitchScanTimingStage =
+  | "prefix-evidence-hit"
+  | "prefix-evidence-miss"
+  | "prepare-prefix"
+  | "scan-candidates"
+  | "validate-direct";
+
+export interface GraphwarStepGlitchScanTiming {
+  elapsedMs: number;
+  stage: GraphwarStepGlitchScanTimingStage;
+}
+
+/** 固定前缀的坐标和公式设置；候选回放复用映射结果，但不复用物理状态。 */
+interface GraphwarStepGlitchReplayContext {
   formulaSettings: GraphwarTrajectoryFormulaSettings;
   graphPoints: readonly GraphPoint[];
-  replay?: GraphwarTrajectorySampleResult;
   simulationBoundaryExpansion: number;
+}
+
+/** 固定前缀的真实恢复点；只在当前 scanner 闭包中保留一份。 */
+interface PreparedGraphwarStepGlitchPrefix extends GraphwarStepGlitchReplayContext {
+  acceptedPoint: GraphPoint;
+  blockedPoint?: GraphPoint;
+  reachedTargetCount: number;
   status: "ready";
 }
 
@@ -115,11 +141,17 @@ interface ScanCandidate {
 
 type ScanWorkItem = { candidate: ScanCandidate; type: "candidate" } | { state: ScanState; type: "state" };
 
-interface ReplayResult {
+export interface GraphwarStepGlitchReplayResult {
   acceptedPoint?: GraphPoint;
   blockedPoint?: GraphPoint;
   reachedTargetCount: number;
-  sequenceHit: boolean;
+  /** 当前有序目标和全部无序必达目标是否都已命中。 */
+  targetsHit: boolean;
+}
+
+interface InitialDirectReplay {
+  path: PixelPoint[];
+  replay: GraphwarStepGlitchReplayResult;
 }
 
 /** 为固定 simulation mask 预计算每格沿 x+ 保持同一 y 时的最远自由列。 */
@@ -168,94 +200,152 @@ export function createGraphwarStepGlitchScanMaskIndex(options: {
   };
 }
 
-/** 准备固定前缀；同一 scanner 尝试多个更右目标时只做一次公式生成和完整回放。 */
-function prepareGraphwarStepGlitchPrefix(
+/** 构造候选回放共用的坐标和公式设置，不在这里采样旧 prefix。 */
+function createGraphwarStepGlitchReplayContext(
   options: GraphwarStepGlitchPrefixOptions,
-): PreparedGraphwarStepGlitchPrefixResult {
+  timings: GraphwarStepGlitchScanTiming[],
+): GraphwarStepGlitchReplayContext | Exclude<GraphwarStepGlitchScanResult, { status: "hit" }> {
   if (!stepGlitchScanIsSupported(options.settings)) {
-    return createFailedResult("unsupported", 0, 0);
+    return createFailedResult("unsupported", 0, 0, undefined, timings);
   }
   if (
     options.sourcePath.length === 0 ||
     options.simulationMask.length !== GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT
   ) {
-    return createFailedResult("invalid-input", 0, 0);
+    return createFailedResult("invalid-input", 0, 0, undefined, timings);
   }
 
   const simulationBoundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0));
-  const requiredTargetSequence = options.requiredTargetSequence ?? [];
   const settings: GraphwarTrajectoryFormulaSettings = {
     ...options.settings,
     stepGlitchObstacleMask: options.simulationMask,
   };
   const graphPoints = options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
-  const lastGraphPoint = graphPoints.at(-1);
+  return {
+    formulaSettings: settings,
+    graphPoints,
+    simulationBoundaryExpansion,
+  };
+}
+
+/** 准备固定前缀；证据未命中时才完整回放旧整式取得真实恢复点。 */
+function prepareGraphwarStepGlitchPrefix(
+  options: GraphwarStepGlitchPrefixOptions,
+  context: GraphwarStepGlitchReplayContext,
+  timings: GraphwarStepGlitchScanTiming[],
+): PreparedGraphwarStepGlitchPrefixResult {
+  const requiredTargets = options.requiredTargets ?? [];
+  const prefixTarget = options.prefixTarget;
+  // 即使尾点也属于 required，仍单独跟踪它；恢复扫描应停在尾控制点，不能等更右的历史命中。
+  const prefixTargetSequence = prefixTarget ? [prefixTarget] : [];
+  const expectedTargetCount = requiredTargets.length + prefixTargetSequence.length;
+  const lastGraphPoint = context.graphPoints.at(-1);
   if (!lastGraphPoint) {
-    return createFailedResult("invalid-input", 0, 0);
+    return createFailedResult("invalid-input", 0, 0, undefined, timings);
   }
 
-  if (graphPoints.length === 1) {
-    return requiredTargetSequence.length === 0
+  if (context.graphPoints.length === 1) {
+    return expectedTargetCount === 0
       ? {
           acceptedPoint: lastGraphPoint,
-          formulaSettings: settings,
-          graphPoints,
-          simulationBoundaryExpansion,
+          ...context,
+          reachedTargetCount: 0,
           status: "ready",
         }
-      : createFailedResult("no-path", 0, 0);
+      : createFailedResult("no-path", 0, 0, undefined, timings);
   }
 
-  const formulaContext = createGraphwarTrajectoryFormulaContext({
-    bounds: options.bounds,
-    points: graphPoints,
-    settings,
-    soldierCenter: graphPoints[0],
+  const evidenceStartedAt = nowMs();
+  const evidence = options.prefixEvidence;
+  const evidenceMatchesControlX = Boolean(evidence && evidence.acceptedPoint.x >= lastGraphPoint.x);
+  timings.push({
+    elapsedMs: nowMs() - evidenceStartedAt,
+    stage: evidenceMatchesControlX ? "prefix-evidence-hit" : "prefix-evidence-miss",
   });
-  if (formulaContext.formulaPoints.length < 2) {
-    return createFailedResult("no-path", 0, 0);
+  if (evidence && evidenceMatchesControlX) {
+    return {
+      acceptedPoint: evidence.acceptedPoint,
+      ...context,
+      reachedTargetCount: expectedTargetCount,
+      status: "ready",
+    };
   }
-  const replay = sampleGraphwarFormulaTrajectory({
-    bounds: options.bounds,
-    boundsRect: options.boundsRect,
-    collision: {
-      boundaryExpansion: simulationBoundaryExpansion,
-      mask: options.simulationMask,
-    },
-    context: formulaContext,
-    stopOnTargetSequenceComplete: false,
-    targetSequence: requiredTargetSequence,
-  });
-  const acceptedPoint = findAcceptedPointAtOrAfterControlX(
-    replay.sample.points,
-    replay.obstacleHitIndex,
-    lastGraphPoint.x,
-    requiredTargetSequence.length > 0 ? replay.targetHitIndex : 0,
+
+  const replay = measureGraphwarStepGlitchScanTiming(timings, "prepare-prefix", () =>
+    replayPathToControlX(options, context, options.sourcePath, prefixTargetSequence, requiredTargets, lastGraphPoint.x),
   );
-  const blockedPoint = replay.obstacleHitIndex >= 0 ? replay.sample.points[replay.obstacleHitIndex] : undefined;
-  if (replay.reachedTargetCount < requiredTargetSequence.length || !acceptedPoint) {
-    return createFailedResult("no-path", 0, replay.reachedTargetCount, blockedPoint);
+  if (!replay.targetsHit || !replay.acceptedPoint) {
+    return createFailedResult("no-path", 0, replay.reachedTargetCount, replay.blockedPoint, timings);
   }
 
   return {
-    acceptedPoint,
-    formulaContext,
-    formulaSettings: settings,
-    graphPoints,
-    replay,
-    simulationBoundaryExpansion,
+    acceptedPoint: replay.acceptedPoint,
+    ...context,
+    ...(replay.blockedPoint ? { blockedPoint: replay.blockedPoint } : {}),
+    reachedTargetCount: replay.reachedTargetCount,
     status: "ready",
   };
 }
 
-/** 创建绑定单个固定前缀的扫描器；失败目标共享缓存，成功提交后由调用方丢弃。 */
+/** 创建绑定单个固定前缀的扫描器；先试最终直连，失败后才懒准备旧 prefix。 */
 export function createGraphwarStepGlitchPrefixScanner(
   options: GraphwarStepGlitchPrefixOptions,
 ): GraphwarStepGlitchPrefixScanner {
-  const prefix = prepareGraphwarStepGlitchPrefix(options);
+  let preparedPrefix: PreparedGraphwarStepGlitchPrefixResult | undefined;
   return {
-    scan: (target) =>
-      prefix.status === "ready" ? scanPreparedGraphwarStepGlitchPath(options, prefix, target) : prefix,
+    scan: (target) => {
+      const timings: GraphwarStepGlitchScanTiming[] = [];
+      const context = createGraphwarStepGlitchReplayContext(options, timings);
+      if ("status" in context) {
+        return context;
+      }
+
+      const requiredTargets = options.requiredTargets ?? [];
+      const targetSequence = createOrderedTargetSequence(requiredTargets, target.hitTarget);
+      const targetGraphPoint = imageToGraphPoint(target.targetPoint, options.bounds, options.boundsRect);
+      const lastSourceGraphPoint = context.graphPoints.at(-1);
+      if (!lastSourceGraphPoint || !graphXAdvancesStrictly(lastSourceGraphPoint.x, targetGraphPoint.x)) {
+        return createFailedResult("invalid-input", 0, requiredTargets.length, undefined, timings);
+      }
+
+      const directPath = [...options.sourcePath, target.targetPoint];
+      const directReplay = measureGraphwarStepGlitchScanTiming(timings, "validate-direct", () =>
+        replayPathToControlX(options, context, directPath, targetSequence, requiredTargets, targetGraphPoint.x),
+      );
+      if (directReplay.targetsHit && directReplay.acceptedPoint) {
+        return {
+          acceptedPoint: directReplay.acceptedPoint,
+          expandedStates: 1,
+          path: directPath,
+          reachedTargetCount: directReplay.reachedTargetCount,
+          status: "hit",
+          timings,
+        };
+      }
+
+      preparedPrefix ??= prepareGraphwarStepGlitchPrefix(options, context, timings);
+      if (preparedPrefix.status !== "ready") {
+        return createFailedResult(
+          preparedPrefix.status,
+          1,
+          Math.max(preparedPrefix.reachedTargetCount, directReplay.reachedTargetCount),
+          directReplay.blockedPoint ?? preparedPrefix.blockedPoint,
+          timings,
+        );
+      }
+      return measureGraphwarStepGlitchScanTiming(timings, "scan-candidates", () =>
+        scanPreparedGraphwarStepGlitchPath(
+          options,
+          preparedPrefix as PreparedGraphwarStepGlitchPrefix,
+          target,
+          {
+            path: directPath,
+            replay: directReplay,
+          },
+          timings,
+        ),
+      );
+    },
   };
 }
 
@@ -264,20 +354,43 @@ export function scanGraphwarStepGlitchPath(options: GraphwarStepGlitchScanOption
   return createGraphwarStepGlitchPrefixScanner(options).scan(options);
 }
 
+/** 精确回放指定最终路径；删点优化用它保存与实际返回路径一致的 evidence。 */
+export function replayGraphwarStepGlitchPathToControlX(
+  options: GraphwarStepGlitchPrefixOptions & {
+    controlX: number;
+    path: readonly PixelPoint[];
+    targetSequence: readonly GraphwarTrajectoryTargetCircle[];
+  },
+): GraphwarStepGlitchReplayResult {
+  const context = createGraphwarStepGlitchReplayContext(options, []);
+  return "status" in context
+    ? { reachedTargetCount: 0, targetsHit: false }
+    : replayPathToControlX(
+        options,
+        context,
+        options.path,
+        options.targetSequence,
+        options.requiredTargets ?? [],
+        options.controlX,
+      );
+}
+
 function scanPreparedGraphwarStepGlitchPath(
   options: GraphwarStepGlitchPrefixOptions,
   prefix: PreparedGraphwarStepGlitchPrefix,
   target: GraphwarStepGlitchTargetOptions,
+  initialDirect: InitialDirectReplay,
+  timings: GraphwarStepGlitchScanTiming[],
 ): GraphwarStepGlitchScanResult {
   const boundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0));
   const maskIndex = getCompatibleMaskIndex(options, boundaryExpansion);
-  const requiredTargets = options.requiredTargetSequence ?? [];
-  const targetSequence = [...requiredTargets, target.hitTarget];
+  const requiredTargets = options.requiredTargets ?? [];
+  const targetSequence = createOrderedTargetSequence(requiredTargets, target.hitTarget);
   const targetGraphPoint = imageToGraphPoint(target.targetPoint, options.bounds, options.boundsRect);
   const lastSourceGraphPoint = prefix.graphPoints.at(-1);
-  const prefixReachedTargetCount = prefix.replay?.reachedTargetCount ?? 0;
+  const prefixReachedTargetCount = prefix.reachedTargetCount;
   if (!lastSourceGraphPoint || !graphXAdvancesStrictly(lastSourceGraphPoint.x, targetGraphPoint.x)) {
-    return createFailedResult("invalid-input", 0, prefixReachedTargetCount);
+    return createFailedResult("invalid-input", 0, prefixReachedTargetCount, undefined, timings);
   }
 
   const initialAcceptedPoint = prefix.acceptedPoint;
@@ -295,12 +408,9 @@ function scanPreparedGraphwarStepGlitchPath(
       type: "state",
     },
   ];
-  let expandedStates = 0;
-  let bestReachedTargetCount = prefixReachedTargetCount;
-  let blockedPoint =
-    prefix.replay && prefix.replay.obstacleHitIndex >= 0
-      ? prefix.replay.sample.points[prefix.replay.obstacleHitIndex]
-      : undefined;
+  let expandedStates = 1;
+  let bestReachedTargetCount = Math.max(prefixReachedTargetCount, initialDirect.replay.reachedTargetCount);
+  let blockedPoint = initialDirect.replay.blockedPoint ?? prefix.blockedPoint;
 
   while (work.length > 0) {
     const item = work.pop();
@@ -328,19 +438,23 @@ function scanPreparedGraphwarStepGlitchPath(
       continue;
     }
 
+    if (samePixelPath(item.candidate.path, initialDirect.path)) {
+      continue;
+    }
     expandedStates += 1;
     const finalTargetCandidate = item.candidate.kind === "target";
     const replay = replayPathToControlX(
       options,
       prefix,
       item.candidate.path,
-      finalTargetCandidate ? targetSequence : requiredTargets,
+      finalTargetCandidate ? targetSequence : [],
+      requiredTargets,
       item.candidate.controlX,
     );
     bestReachedTargetCount = Math.max(bestReachedTargetCount, replay.reachedTargetCount);
     blockedPoint ??= replay.blockedPoint;
     if (finalTargetCandidate) {
-      if (!replay.sequenceHit || !replay.acceptedPoint) {
+      if (!replay.targetsHit || !replay.acceptedPoint) {
         continue;
       }
       return {
@@ -349,9 +463,10 @@ function scanPreparedGraphwarStepGlitchPath(
         path: item.candidate.path,
         reachedTargetCount: replay.reachedTargetCount,
         status: "hit",
+        timings,
       };
     }
-    if (replay.reachedTargetCount < requiredTargets.length || !replay.acceptedPoint) {
+    if (!replay.targetsHit || !replay.acceptedPoint) {
       continue;
     }
 
@@ -370,7 +485,7 @@ function scanPreparedGraphwarStepGlitchPath(
     });
   }
 
-  return createFailedResult("no-path", expandedStates, bestReachedTargetCount, blockedPoint);
+  return createFailedResult("no-path", expandedStates, bestReachedTargetCount, blockedPoint, timings);
 }
 
 function stepGlitchScanIsSupported(settings: GraphwarTrajectoryFormulaSettings) {
@@ -380,54 +495,106 @@ function stepGlitchScanIsSupported(settings: GraphwarTrajectoryFormulaSettings) 
 /** 后缀会反向改变 Step 发射点和旧轨迹；只复用坐标映射，候选仍从发射点回放整式。 */
 function replayPathToControlX(
   options: GraphwarStepGlitchPrefixOptions,
-  prefix: PreparedGraphwarStepGlitchPrefix,
+  context: GraphwarStepGlitchReplayContext,
   path: readonly PixelPoint[],
   targetSequence: readonly GraphwarTrajectoryTargetCircle[],
+  requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
   controlX: number,
-): ReplayResult {
+): GraphwarStepGlitchReplayResult {
   if (path.length < 2 || path.length < options.sourcePath.length) {
-    return { reachedTargetCount: 0, sequenceHit: false };
+    return { reachedTargetCount: 0, targetsHit: false };
   }
   const graphPoints = [
-    ...prefix.graphPoints,
+    ...context.graphPoints,
     ...path
       .slice(options.sourcePath.length)
       .map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
   ];
-  const context = createGraphwarTrajectoryFormulaContext({
+  const formulaContext = createGraphwarTrajectoryFormulaContext({
     bounds: options.bounds,
     points: graphPoints,
-    settings: prefix.formulaSettings,
+    settings: context.formulaSettings,
     soldierCenter: graphPoints[0],
   });
-  if (context.formulaPoints.length < 2) {
-    return { reachedTargetCount: 0, sequenceHit: false };
+  if (formulaContext.formulaPoints.length < 2) {
+    return { reachedTargetCount: 0, targetsHit: false };
   }
 
   const result = sampleGraphwarFormulaTrajectory({
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     collision: {
-      boundaryExpansion: prefix.simulationBoundaryExpansion,
+      boundaryExpansion: context.simulationBoundaryExpansion,
       mask: options.simulationMask,
     },
-    ...(targetSequence.length > 0 ? { continueAfterTargetSequenceUntilGraphX: controlX } : {}),
-    context,
-    stopOnTargetSequenceComplete: false,
+    continueAfterTargetsUntilGraphX: controlX,
+    context: formulaContext,
+    requiredTargets,
+    stopOnTargetsComplete: false,
     targetSequence,
   });
-  const sequenceHit = targetSequence.length > 0 && result.reachedTargetCount >= targetSequence.length;
+  const targetsHit =
+    result.reachedTargetCount >= targetSequence.length && result.reachedRequiredTargetCount >= requiredTargets.length;
+  const lastSafeIndex = result.obstacleHitIndex >= 0 ? result.obstacleHitIndex - 1 : result.sample.points.length - 1;
+  const validationTargetHitIndex = Math.max(result.targetHitIndex, result.requiredTargetsHitIndex);
+  const validationTargetsFinishSafely =
+    targetSequence.length === 0 && requiredTargets.length === 0
+      ? true
+      : validationTargetHitIndex >= 0 && validationTargetHitIndex <= lastSafeIndex;
   return {
-    acceptedPoint: findAcceptedPointAtOrAfterControlX(
-      result.sample.points,
-      result.obstacleHitIndex,
-      controlX,
-      targetSequence.length > 0 ? result.targetHitIndex : 0,
-    ),
+    // Required 只证明整式最终命中，可能位于下个控制点右侧；扫描恢复点只等待当前有序目标。
+    acceptedPoint:
+      targetsHit && validationTargetsFinishSafely
+        ? findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
+            result.sample.points,
+            result.obstacleHitIndex,
+            controlX,
+            Math.max(result.targetHitIndex, 0),
+          )
+        : undefined,
     blockedPoint: result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined,
-    reachedTargetCount: result.reachedTargetCount,
-    sequenceHit,
+    reachedTargetCount: result.reachedTargetCount + result.reachedRequiredTargetCount,
+    targetsHit,
   };
+}
+
+/** 当前目标若已属于历史必达集合，就不再制造第二份有序命中要求。 */
+function createOrderedTargetSequence(
+  requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
+  target: GraphwarTrajectoryTargetCircle,
+) {
+  return requiredTargets.some((required) => sameTargetCircle(required, target)) ? [] : [target];
+}
+
+function sameTargetCircle(left: GraphwarTrajectoryTargetCircle, right: GraphwarTrajectoryTargetCircle) {
+  return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
+}
+
+function samePixelPath(left: readonly PixelPoint[], right: readonly PixelPoint[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const leftPoint = left[index];
+    const rightPoint = right[index];
+    if (!leftPoint || !rightPoint || leftPoint.x !== rightPoint.x || leftPoint.y !== rightPoint.y) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function measureGraphwarStepGlitchScanTiming<TResult>(
+  timings: GraphwarStepGlitchScanTiming[],
+  stage: GraphwarStepGlitchScanTimingStage,
+  task: () => TResult,
+) {
+  const startedAt = nowMs();
+  try {
+    return task();
+  } finally {
+    timings.push({ elapsedMs: nowMs() - startedAt, stage });
+  }
 }
 
 function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, boundaryExpansion: number) {
@@ -630,7 +797,7 @@ function createGlitchWindowWidths() {
   return widths;
 }
 
-function findAcceptedPointAtOrAfterControlX(
+export function findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
   points: readonly GraphPoint[],
   obstacleHitIndex: number,
   controlX: number,
@@ -653,11 +820,13 @@ function createFailedResult(
   expandedStates: number,
   reachedTargetCount: number,
   blockedPoint?: GraphPoint,
+  timings: GraphwarStepGlitchScanTiming[] = [],
 ): Exclude<GraphwarStepGlitchScanResult, { status: "hit" }> {
   return {
     ...(blockedPoint ? { blockedPoint } : {}),
     expandedStates,
     reachedTargetCount,
     status,
+    timings,
   };
 }

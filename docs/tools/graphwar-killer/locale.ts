@@ -353,7 +353,19 @@ export const graphwarKillerLocale = {
         },
         "optimize-path": {
           label: "- 清图删点优化",
-          title: "对验证通过的清图路径做保守删点，并用目标命中圈序列验证每次删除后仍能按序命中。",
+          title: "对验证通过的清图路径做保守删点，并确认每次删除后仍命中全部新旧目标。",
+        },
+        "prefix-evidence-hit": {
+          label: "- 清图前缀证据命中",
+          title: "当前固定路径与上一条成功整式完全一致，直接复用其真实恢复点。",
+        },
+        "prefix-evidence-miss": {
+          label: "- 清图前缀证据未命中",
+          title: "当前固定路径没有可复用的最终整式证据；直连失败后需要重新准备前缀。",
+        },
+        "prepare-pathfinding-prefix": {
+          label: "- 清图准备寻路前缀",
+          title: "完整回放当前固定路径，确认旧目标和尾点并取得邪道扫描的真实恢复点。",
         },
         "remove-failed-edge": {
           label: "- 清图删除失败边",
@@ -389,7 +401,7 @@ export const graphwarKillerLocale = {
         },
         "segment-sample-trajectory": {
           label: "- 清图分段轨迹采样",
-          title: "按当前完整路径重采样已接受目标序列，确认新增目标命中圈会在碰撞障碍前被命中。",
+          title: "按当前完整路径重采样，确认当前新目标和全部历史目标都在碰撞障碍前被命中。",
         },
         "validate-route": {
           label: "- 清图验证 DAG 路线",
@@ -397,7 +409,11 @@ export const graphwarKillerLocale = {
         },
         "validate-final": {
           label: "- 清图最终验证",
-          title: "对优化后的完整清图路径重新采样，确认仍按 DAG 序列命中全部目标命中圈。",
+          title: "对优化后的完整清图路径重新采样，确认全部选中新目标和旧目标仍被命中。",
+        },
+        "validate-direct-trajectory": {
+          label: "- 清图验证直连轨迹",
+          title: "先完整回放当前路径直接追加目标的最终整式；成功时无需准备旧前缀或扫描绕障候选。",
         },
         "visibility-cache-hit": {
           label: "- 清图可视图缓存命中",
@@ -425,6 +441,18 @@ export const graphwarKillerLocale = {
           label: "生成目标",
           title:
             "点击士兵时，优先使用士兵中心；中心不满足 x+ 时把几何目标推到命中圈内的最小 x+ 点，弹道仍校验原命中圈。",
+        },
+        "prefix-evidence-hit": {
+          label: "前缀证据命中",
+          title: "当前旧路径、目标序列、公式设置和模拟环境与最近成功整式完全一致，复用真实恢复点。",
+        },
+        "prefix-evidence-miss": {
+          label: "前缀证据未命中",
+          title: "没有完全匹配的旧整式证据；直连失败后需要完整回放旧路径一次。",
+        },
+        "prepare-pathfinding-prefix": {
+          label: "准备寻路前缀",
+          title: "完整回放旧整式，确认已提交目标和当前尾点，并取得邪道 scanner 的真实恢复点。",
         },
         "result-cache-hit": {
           label: "结果缓存命中",
@@ -517,6 +545,10 @@ export const graphwarKillerLocale = {
         "validate-trajectory": {
           label: "验证函数轨迹",
           title: "把候选几何路径转换为 Graphwar 函数轨迹，检查它是否先命中目标再碰到障碍或边界。",
+        },
+        "validate-direct-trajectory": {
+          label: "验证直连轨迹",
+          title: "完整回放旧路径直接追加新目标的最终整式；成功时立即返回，不再准备前缀或扫描绕障路线。",
         },
       },
       debugSummary: "调试信息",

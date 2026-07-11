@@ -40,7 +40,7 @@ describe("Graphwar trajectory target tracking", () => {
         currentPoint: createGraphPoint(0, 0),
         sampleIndex: 0,
       },
-      stopOnTargetSequenceComplete: false,
+      stopOnTargetsComplete: false,
       targetSequence: [{ center: firstPixel, radius: 0.01 }],
       trackedTargets: [
         { center: launchPixel, radius: 0.01 },
@@ -73,7 +73,7 @@ describe("Graphwar trajectory target tracking", () => {
         sampleIndex: 0,
       },
       skipInitialStop: true,
-      stopOnTargetSequenceComplete: false,
+      stopOnTargetsComplete: false,
       targetSequence: [{ center: firstPixel, radius: 0.01 }],
       trackedTargets: [
         { center: firstPixel, radius: 0.01 },
@@ -86,6 +86,35 @@ describe("Graphwar trajectory target tracking", () => {
     expect(result.reachedTargetCount).toBe(1);
     expect(result.targetHitIndex).toBe(1);
     expect(result.trackedTargetHitIndexes).toEqual([1, 1]);
+  });
+
+  it("stops only after the ordered target and every unordered required target are hit", () => {
+    const orderedTarget = toPixel(GRAPHWAR_STEP_SIZE, 0);
+    const nearerRequiredTarget = toPixel(GRAPHWAR_STEP_SIZE * 2, 0);
+    const fartherRequiredTarget = toPixel(GRAPHWAR_STEP_SIZE * 3, 0);
+
+    const result = sampleGraphwarFormulaTrajectory({
+      bounds,
+      boundsRect,
+      context: createHorizontalFormulaContext(),
+      initialState: {
+        currentPoint: createGraphPoint(0, 0),
+        sampleIndex: 0,
+      },
+      // 故意按实际命中顺序的反序传入，证明 requiredTargets 不携带顺序约束。
+      requiredTargets: [
+        { center: fartherRequiredTarget, radius: 0.01 },
+        { center: nearerRequiredTarget, radius: 0.01 },
+      ],
+      targetSequence: [{ center: orderedTarget, radius: 0.01 }],
+    });
+
+    expect(result.earlyStopReason).toBe("target");
+    expect(result.reachedTargetCount).toBe(1);
+    expect(result.reachedRequiredTargetCount).toBe(2);
+    expect(result.targetHitIndex).toBe(1);
+    expect(result.requiredTargetsHitIndex).toBe(3);
+    expect(result.sample.points.at(-1)).toEqual(createGraphPoint(GRAPHWAR_STEP_SIZE * 3, 0));
   });
 
   it("exposes unordered hits and obstacle state through path target-sequence sampling", () => {
@@ -109,7 +138,7 @@ describe("Graphwar trajectory target tracking", () => {
     const stopped = sampleGraphwarPathTargetSequence(options);
     const continued = sampleGraphwarPathTargetSequence({
       ...options,
-      stopOnTargetSequenceComplete: false,
+      stopOnTargetsComplete: false,
     });
 
     expect(stopped.trackedTargetHitIndexes).toEqual([-1]);
@@ -126,13 +155,22 @@ describe("Graphwar trajectory target tracking", () => {
     };
 
     expect(
-      graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle({ obstacleHitIndex: 3, sample, targetHitIndex: 1 }, 2),
+      graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle(
+        { obstacleHitIndex: 3, requiredTargetsHitIndex: -1, sample, targetHitIndex: 1 },
+        2,
+      ),
     ).toBe(true);
     expect(
-      graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle({ obstacleHitIndex: 3, sample, targetHitIndex: 3 }, 2),
+      graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle(
+        { obstacleHitIndex: 3, requiredTargetsHitIndex: -1, sample, targetHitIndex: 3 },
+        2,
+      ),
     ).toBe(false);
     expect(
-      graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle({ obstacleHitIndex: 3, sample, targetHitIndex: 1 }, 3),
+      graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle(
+        { obstacleHitIndex: 3, requiredTargetsHitIndex: -1, sample, targetHitIndex: 1 },
+        3,
+      ),
     ).toBe(false);
   });
 });

@@ -2,9 +2,13 @@ import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../../
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
-import type { GraphBounds, PixelPoint } from "../../core/types";
+import { createGraphPoint, type GraphBounds, type GraphPoint, type PixelPoint } from "../../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../../detection/objects";
+import type {
+  GraphwarTrajectoryFormulaSettings,
+  GraphwarTrajectoryTargetCircle,
+} from "../../formula/trajectory/sampling";
 import { buildOneClickClearDagEdgeRoute } from "../../pathfinding/one-click-clear/edge-route";
 import type { GraphwarOneClickClearDagEdgeRouteBuildContext } from "../../pathfinding/one-click-clear/edge-route";
 import type {
@@ -15,7 +19,12 @@ import type {
 } from "../../pathfinding/one-click-clear/search";
 import { buildGraphwarOneClickClearPath } from "../../pathfinding/one-click-clear/search";
 import type { GraphwarPlaneMaskSummedArea } from "../../pathfinding/routing/step-envelope";
-import { scanGraphwarStepGlitchPath } from "../../pathfinding/routing/step-glitch-scan";
+import {
+  replayGraphwarStepGlitchPathToControlX,
+  scanGraphwarStepGlitchPath,
+  type GraphwarStepGlitchPrefixEvidence,
+  type GraphwarStepGlitchScanTimingStage,
+} from "../../pathfinding/routing/step-glitch-scan";
 import {
   createGraphwarStepPathfindingEdgeEvaluator,
   createGraphwarStepRouteModel,
@@ -172,6 +181,12 @@ const masterRouteMaskCache = new Map<string, MasterRouteMaskCacheEntry>();
 const masterStepSummedAreaCache = new WeakMap<Uint8Array, GraphwarPlaneMaskSummedArea>();
 const masterThetaStarScratch = createGraphwarThetaStarScratch();
 const masterVisibilityGraphCache = new Map<string, MasterVisibilityGraphCacheEntry>();
+let masterStepGlitchEvidence: MasterStepGlitchEvidence | undefined;
+
+interface MasterStepGlitchEvidence extends GraphwarStepGlitchPrefixEvidence {
+  /** 只有精确最终整式输入相同才能复用 acceptedPoint。 */
+  key: string;
+}
 
 /** 接收页面请求，并将异步搜索交给统一的 master 分派入口。 */
 workerScope.addEventListener("message", (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => {
@@ -429,21 +444,27 @@ function findStepGlitchSmartPath(
   input: GraphwarSmartPathfindingPathInput,
   timings: GraphwarSmartPathfindingWorkerTiming[],
 ): GraphwarSmartPathfindingPathResult {
-  const scanResult = measureSmartPathfindingWorkerTiming(timings, "search-route", () => {
-    const simulationMask = input.simulationMask;
-    return simulationMask
-      ? scanGraphwarStepGlitchPath({
-          bounds: input.bounds,
-          boundsRect: input.boundsRect,
-          hitTarget: input.hitTarget,
-          settings: input.settings,
-          simulationBoundaryExpansion: input.simulationBoundaryExpansion,
-          simulationMask,
-          sourcePath: input.sourcePath,
-          targetPoint: input.targetPoint,
-        })
-      : undefined;
+  const simulationMask = input.simulationMask;
+  if (!simulationMask) {
+    return { failureReason: "route", timings };
+  }
+  const committedSequence = input.committedTargets.map((target) => target.hitCircle);
+  const finalTargetSequence = appendUniqueTargetCircle(committedSequence, input.hitTarget);
+  const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, committedSequence, input.prefixTarget);
+  const scanResult = scanGraphwarStepGlitchPath({
+    bounds: input.bounds,
+    boundsRect: input.boundsRect,
+    hitTarget: input.hitTarget,
+    ...(prefixEvidence ? { prefixEvidence } : {}),
+    ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
+    requiredTargets: committedSequence,
+    settings: input.settings,
+    simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+    simulationMask,
+    sourcePath: input.sourcePath,
+    targetPoint: input.targetPoint,
   });
+  appendStepGlitchScanTimings(timings, scanResult.timings);
   if (!scanResult) {
     return { failureReason: "route", timings };
   }
@@ -481,13 +502,178 @@ function findStepGlitchSmartPath(
     };
   }
 
-  const path =
-    input.routeMode === "theta-star"
-      ? measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
-          optimizeSmartPathfindingPath(input, scanResult.path, undefined),
-        )
-      : scanResult.path;
+  let path = scanResult.path;
+  let acceptedPoint = scanResult.acceptedPoint;
+  if (input.routeMode === "theta-star" && input.settings.stepGlitchObstacleMask === simulationMask) {
+    const optimized = measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
+      optimizeStepGlitchSmartPath(input, path, committedSequence, input.hitTarget, acceptedPoint),
+    );
+    path = optimized.path;
+    acceptedPoint = optimized.acceptedPoint;
+  } else if (input.routeMode === "theta-star") {
+    path = measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
+      optimizeSmartPathfindingPath(input, path, undefined),
+    );
+  }
+  setMasterStepGlitchEvidence(input, path, finalTargetSequence, input.hitTarget, acceptedPoint);
   return { path, timings };
+}
+
+function optimizeStepGlitchSmartPath(
+  input: GraphwarSmartPathfindingPathInput,
+  points: readonly PixelPoint[],
+  requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
+  target: GraphwarTrajectoryTargetCircle,
+  acceptedPoint: GraphPoint,
+) {
+  let optimized = [...points];
+  let optimizedAcceptedPoint = acceptedPoint;
+  const firstOptimizableIndex = Math.max(1, input.sourcePath.length);
+  for (let index = firstOptimizableIndex; index < optimized.length - 1 && optimized.length > 2;) {
+    const candidatePath = [...optimized.slice(0, index), ...optimized.slice(index + 1)];
+    if (!pathFollowsGraphRule(candidatePath, input.bounds, input.boundsRect) || !input.simulationMask) {
+      index += 1;
+      continue;
+    }
+    const replay = replayGraphwarStepGlitchPathToControlX({
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      controlX: imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x,
+      path: candidatePath,
+      requiredTargets,
+      settings: input.settings,
+      simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+      simulationMask: input.simulationMask,
+      sourcePath: input.sourcePath,
+      targetSequence: requiredTargets.some((required) => sameTargetCircle(required, target)) ? [] : [target],
+    });
+    if (!replay.targetsHit || !replay.acceptedPoint) {
+      index += 1;
+      continue;
+    }
+    optimized = candidatePath;
+    optimizedAcceptedPoint = replay.acceptedPoint;
+  }
+  return { acceptedPoint: optimizedAcceptedPoint, path: optimized };
+}
+
+interface MasterStepGlitchEvidenceContext {
+  bounds: GraphBounds;
+  boundsRect: GraphwarSmartPathfindingPathInput["boundsRect"];
+  settings: GraphwarTrajectoryFormulaSettings;
+  simulationBoundaryExpansion: number;
+  simulationMask?: Uint8Array;
+  simulationMaskCacheId: number;
+}
+
+function getMasterStepGlitchEvidence(
+  input: MasterStepGlitchEvidenceContext,
+  path: readonly PixelPoint[],
+  targetSequence: readonly GraphwarTrajectoryTargetCircle[],
+  prefixTarget: GraphwarTrajectoryTargetCircle | undefined,
+): GraphwarStepGlitchPrefixEvidence | undefined {
+  if (!masterStepGlitchEvidence || !masterStepGlitchEvidenceIsEnabled(input)) {
+    return undefined;
+  }
+  const key = createMasterStepGlitchEvidenceKey(input, path, targetSequence, prefixTarget);
+  return masterStepGlitchEvidence.key === key
+    ? {
+        acceptedPoint: createGraphPoint(
+          masterStepGlitchEvidence.acceptedPoint.x,
+          masterStepGlitchEvidence.acceptedPoint.y,
+        ),
+      }
+    : undefined;
+}
+
+function setMasterStepGlitchEvidence(
+  input: MasterStepGlitchEvidenceContext,
+  path: readonly PixelPoint[],
+  targetSequence: readonly GraphwarTrajectoryTargetCircle[],
+  prefixTarget: GraphwarTrajectoryTargetCircle,
+  acceptedPoint: GraphPoint,
+) {
+  if (!masterStepGlitchEvidenceIsEnabled(input)) {
+    return;
+  }
+  masterStepGlitchEvidence = {
+    acceptedPoint: createGraphPoint(acceptedPoint.x, acceptedPoint.y),
+    key: createMasterStepGlitchEvidenceKey(input, path, targetSequence, prefixTarget),
+  };
+}
+
+function masterStepGlitchEvidenceIsEnabled(input: MasterStepGlitchEvidenceContext) {
+  return Boolean(input.simulationMask && input.settings.stepGlitchObstacleMask === input.simulationMask);
+}
+
+/** Evidence 证明的是精确最终整式；任何会改变公式或碰撞语义的输入都进入 key。 */
+function createMasterStepGlitchEvidenceKey(
+  input: MasterStepGlitchEvidenceContext,
+  path: readonly PixelPoint[],
+  targetSequence: readonly GraphwarTrajectoryTargetCircle[],
+  prefixTarget: GraphwarTrajectoryTargetCircle | undefined,
+) {
+  // 普通点击不会进入 committedTargets；把尾点统一并入已证明目标，避免同一证据因表示形式不同而 miss。
+  const provenTargetSequence = prefixTarget
+    ? appendUniqueTargetCircle(targetSequence, prefixTarget)
+    : [...targetSequence];
+  return JSON.stringify([
+    "step-glitch-evidence-v1",
+    [input.bounds.minX, input.bounds.maxX, input.bounds.minY, input.bounds.maxY],
+    [input.boundsRect.x, input.boundsRect.y, input.boundsRect.width, input.boundsRect.height],
+    input.simulationBoundaryExpansion,
+    input.simulationMaskCacheId,
+    createStepGlitchFormulaSettingsKey(input.settings),
+    path.map((point) => [point.x, point.y]),
+    provenTargetSequence.map(createTargetCircleKey),
+    prefixTarget ? createTargetCircleKey(prefixTarget) : undefined,
+  ]);
+}
+
+function createStepGlitchFormulaSettingsKey(settings: GraphwarTrajectoryFormulaSettings) {
+  return [
+    settings.algorithm,
+    settings.decimalPlaces,
+    settings.equation,
+    settings.formulaPathSteepness,
+    settings.steepness,
+    settings.stepGlitchMode,
+    settings.stepOverflowProtection,
+  ];
+}
+
+function createTargetCircleKey(target: GraphwarTrajectoryTargetCircle) {
+  return [target.center.x, target.center.y, target.radius];
+}
+
+function appendUniqueTargetCircle(
+  targets: readonly GraphwarTrajectoryTargetCircle[],
+  target: GraphwarTrajectoryTargetCircle,
+) {
+  return targets.some((existing) => sameTargetCircle(existing, target)) ? [...targets] : [...targets, target];
+}
+
+function sameTargetCircle(left: GraphwarTrajectoryTargetCircle, right: GraphwarTrajectoryTargetCircle) {
+  return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
+}
+
+function appendStepGlitchScanTimings(
+  timings: GraphwarSmartPathfindingWorkerTiming[],
+  scanTimings: readonly { elapsedMs: number; stage: GraphwarStepGlitchScanTimingStage }[],
+) {
+  for (const timing of scanTimings) {
+    timings.push({
+      elapsedMs: timing.elapsedMs,
+      stage:
+        timing.stage === "validate-direct"
+          ? "validate-direct-trajectory"
+          : timing.stage === "prepare-prefix"
+            ? "prepare-pathfinding-prefix"
+            : timing.stage === "scan-candidates"
+              ? "search-route"
+              : timing.stage,
+    });
+  }
 }
 
 /** 获取或派生 master 私有 route mask，并按需补齐 Step 前缀和。 */
@@ -622,6 +808,7 @@ function validateSmartPathfindingTrajectory(
     hitTarget: input.hitTarget,
     obstacleMask: input.simulationMask,
     points,
+    requiredTargets: input.committedTargets.map((target) => target.hitCircle),
     settings: input.settings,
     targetHitRadiusPixels: input.hitTarget.radius,
   });
@@ -724,8 +911,20 @@ async function buildOneClickClearPath(
     }
   }
   let dagEdgeSession: OneClickClearDagEdgeSession | undefined;
+  let validatedStepGlitchEvidence:
+    | {
+        acceptedPoint: GraphPoint;
+        path: readonly PixelPoint[];
+        prefixTarget: GraphwarTrajectoryTargetCircle;
+        targetSequence: readonly GraphwarTrajectoryTargetCircle[];
+      }
+    | undefined;
   let result: GraphwarOneClickClearPathWorkerResult["result"];
   try {
+    const committedSequence = input.committedTargets.map((target) => target.hitCircle);
+    const prefixEvidence = isStepGlitchRoute
+      ? getMasterStepGlitchEvidence(input, input.pathPoints, committedSequence, input.prefixTarget)
+      : undefined;
     result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: input.boundaryExpansion,
       buildDagEdges: (request) => {
@@ -735,11 +934,20 @@ async function buildOneClickClearPath(
       bounds: input.bounds,
       boundsRect: input.boundsRect,
       candidates: input.candidates,
+      committedTargets: input.committedTargets,
       dagEdgeWorkerCount: input.dagEdgeWorkerCount,
       deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
       hitCandidates: input.hitCandidates,
       isCancelled: () => false,
       onDebugTiming: (timing) => timings.push(timing),
+      ...(isStepGlitchRoute
+        ? {
+            onValidatedStepGlitchPath: (evidence) => {
+              validatedStepGlitchEvidence = evidence;
+            },
+            ...(prefixEvidence ? { stepGlitchPrefixEvidence: prefixEvidence } : {}),
+          }
+        : {}),
       pathPoints: input.pathPoints,
       ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
       routeMask: {
@@ -750,6 +958,7 @@ async function buildOneClickClearPath(
       settings: input.settings,
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
+      simulationMaskCacheId: input.simulationMaskCacheId,
       ...(stepRouteValidationContext
         ? {
             validateStepRoute: (points) =>
@@ -768,6 +977,15 @@ async function buildOneClickClearPath(
     if (dagEdgeSession) {
       timings.push(...dagEdgeSession.dispose());
     }
+  }
+  if (result.type === "success" && validatedStepGlitchEvidence) {
+    setMasterStepGlitchEvidence(
+      input,
+      validatedStepGlitchEvidence.path,
+      validatedStepGlitchEvidence.targetSequence,
+      validatedStepGlitchEvidence.prefixTarget,
+      validatedStepGlitchEvidence.acceptedPoint,
+    );
   }
   return { result, timings };
 }

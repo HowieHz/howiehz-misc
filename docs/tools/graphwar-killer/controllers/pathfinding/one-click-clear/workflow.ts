@@ -26,6 +26,7 @@ import type {
 } from "../../../pathfinding/runtime/protocol";
 import { isGraphwarPathfindingCancelledError } from "../../../pathfinding/runtime/runner";
 import type { GraphwarTargetingGeometry } from "../../../pathfinding/targeting";
+import type { GraphwarCommittedTarget } from "../../../pathfinding/targeting";
 import type { SmartPathfindingDebugStage, SmartPathfindingDebugTimingEntry } from "../../debug/timings";
 
 type GraphwarOneClickClearStatusKind = "error" | "success" | "warning";
@@ -38,7 +39,7 @@ interface GraphwarOneClickClearRunCache {
     cacheKey: string,
     onTiming?: (timing: GraphwarPathfindingResultCacheTimingEntry) => void,
   ) => GraphwarOneClickClearPathWorkerResult | undefined;
-  getRouteObstacleMaskCacheId: (mask: Uint8Array) => number;
+  getMaskCacheId: (mask: Uint8Array) => number;
 }
 
 interface GraphwarOneClickClearRunRunner {
@@ -73,7 +74,7 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
   };
   /** 页面副作用应集中注入，workflow 只决定触发时机。 */
   effects: {
-    applyPath: (points: PixelPoint[]) => void;
+    applyValidatedPath: (points: PixelPoint[], targets: readonly GraphwarCommittedTarget[]) => void;
     flashBlockedSegment: (start: PixelPoint | undefined, end: PixelPoint | undefined) => void;
     flashHitSoldiers: (targetIds: readonly string[]) => void;
     setStatus: (message: string, kind: GraphwarOneClickClearStatusKind) => void;
@@ -82,6 +83,7 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
   input: {
     boundsRect: { readonly value: BoundsRect };
     getBounds: () => GraphBounds | undefined;
+    getCommittedTargets: () => readonly GraphwarCommittedTarget[];
     getFormulaSettings: () => GraphwarTrajectoryFormulaSettings;
     getObstacleMask: () => Uint8Array | undefined;
     getPathfindingWorkerCount: () => number | undefined;
@@ -250,22 +252,35 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     timings: SmartPathfindingDebugTimingEntry[],
   ) {
     const candidates = options.debug.measureStage(timings, "one-click-clear-collect-targets", () =>
-      createGraphwarOneClickClearCandidates(createTargetCollectionOptions()),
+      createGraphwarOneClickClearCandidates(createTargetCollectionOptions()).filter(
+        (candidate) =>
+          !options.input
+            .getCommittedTargets()
+            .some(
+              (target) =>
+                target.hitCircle.center.x === candidate.hitCenter.x &&
+                target.hitCircle.center.y === candidate.hitCenter.y &&
+                target.hitCircle.radius === candidate.hitRadius,
+            ),
+      ),
     );
     const hitCandidates = createGraphwarOneClickClearHitCandidates(createTargetCollectionOptions());
+    const simulationMask = options.input.getSimulationMask();
     const searchInput = createGraphwarOneClickClearSearchInput({
       bounds: preflightResult.bounds,
       boundsRect: options.input.boundsRect.value,
       candidates,
+      committedTargets: options.input.getCommittedTargets(),
       dagEdgeWorkerCount: preflightResult.dagEdgeWorkerCount,
       hitCandidates,
       pathPoints: options.input.getPathPoints(),
       prefixTarget: preflightResult.prefixTarget,
-      routeMaskCacheId: options.pathfinding.cache.getRouteObstacleMaskCacheId(preflightResult.obstacleMask),
+      routeMaskCacheId: options.pathfinding.cache.getMaskCacheId(preflightResult.obstacleMask),
       routeMode: options.input.getRouteMode(),
       routeObstacleMask: preflightResult.obstacleMask,
       settings: options.input.getFormulaSettings(),
-      simulationMask: options.input.getSimulationMask(),
+      simulationMask,
+      simulationMaskCacheId: simulationMask ? options.pathfinding.cache.getMaskCacheId(simulationMask) : 0,
       tolerances: preflightResult.tolerances,
     });
     const searchCacheKey = options.pathfinding.cache.createOneClickClearResultCacheKey(searchInput);
@@ -302,7 +317,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     finishDebugTimings: (completedAt?: number) => void,
   ) {
     options.debug.measureStage(timings, "one-click-clear-apply-result", () =>
-      options.effects.applyPath(result.pathPoints),
+      options.effects.applyValidatedPath(result.pathPoints, result.targetSequence),
     );
     options.effects.flashHitSoldiers(result.targetIds);
     let completedAt = options.time.now();

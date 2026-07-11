@@ -6,6 +6,7 @@ import type {
 } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarOneClickClearPathWorkerInput } from "../runtime/protocol";
+import type { GraphwarCommittedTarget } from "../targeting";
 import type { GraphwarOneClickClearCandidate } from "./search";
 
 /** 一键清图搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
@@ -66,6 +67,8 @@ interface GraphwarOneClickClearSearchInputOptions {
   boundsRect: BoundsRect;
   /** 一键清图 DAG 入口候选，顺序应保持目标收集 Module 输出。 */
   candidates: readonly GraphwarOneClickClearCandidate[];
+  /** 当前路径已经承诺命中的士兵。 */
+  committedTargets: readonly GraphwarCommittedTarget[];
   /** DAG 建边 worker 数量；页面继续负责输入解析和范围限制。 */
   dagEdgeWorkerCount: number;
   /** 全路径命中统计候选，不应被起点右侧规则过滤。 */
@@ -84,6 +87,8 @@ interface GraphwarOneClickClearSearchInputOptions {
   settings: GraphwarTrajectoryFormulaSettings;
   /** 函数模拟用障碍 mask。 */
   simulationMask: Uint8Array | undefined;
+  /** 页面侧 simulation mask 的稳定快照 id。 */
+  simulationMaskCacheId: number;
   /** 成功预检后的寻路容差。 */
   tolerances: GraphwarOneClickClearSearchTolerances;
 }
@@ -126,6 +131,7 @@ export function createGraphwarOneClickClearSearchInput(
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     candidates: options.candidates,
+    committedTargets: options.committedTargets,
     dagEdgeWorkerCount: options.dagEdgeWorkerCount,
     // Worker 内删点命中检查在截图坐标里量距离，因此在协议边界从 Graphwar 平面像素换算为截图像素。
     deleteHitCheckRadiusPixels:
@@ -140,5 +146,6 @@ export function createGraphwarOneClickClearSearchInput(
     settings: options.settings,
     simulationBoundaryExpansion: options.tolerances.simulationBoundaryInsetPlanePixels,
     simulationMask: options.simulationMask,
+    simulationMaskCacheId: options.simulationMaskCacheId,
   };
 }

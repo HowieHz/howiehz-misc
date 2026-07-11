@@ -15,6 +15,7 @@ import type {
 } from "../one-click-clear/search";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
+import type { GraphwarCommittedTarget } from "../targeting";
 
 /** 普通智能寻路的一条几何搜索请求。 */
 export interface GraphwarPathfindingRouteInput {
@@ -54,10 +55,14 @@ export interface GraphwarPathfindingRouteResult {
 
 /** 智能寻路 worker 内部耗时阶段；主线程只负责展示。 */
 export type GraphwarSmartPathfindingWorkerTimingStage =
+  | "prefix-evidence-hit"
+  | "prefix-evidence-miss"
+  | "prepare-pathfinding-prefix"
   | "optimize-path"
   | "route-mask-cache-hit"
   | "route-mask-cache-miss"
   | "search-route"
+  | "validate-direct-trajectory"
   | "validate-trajectory"
   | "visibility-cache-hit"
   | "visibility-cache-miss"
@@ -99,6 +104,12 @@ export interface GraphwarSmartPathfindingPathInput {
   settings: GraphwarTrajectoryFormulaSettings;
   /** 当前已有路径，最后一点是几何搜索起点。 */
   sourcePath: readonly PixelPoint[];
+  /** 当前路径已经承诺命中的士兵；普通绕路点不进入，数组顺序不约束后续命中顺序。 */
+  committedTargets: readonly GraphwarCommittedTarget[];
+  /** 旧公式必须命中的当前尾控制点；evidence miss 时用于合并旧 preflight。 */
+  prefixTarget?: GraphwarTrajectoryTargetCircle;
+  /** 页面侧 simulation mask 的稳定快照 id，供 master Worker 跨消息识别同一 mask。 */
+  simulationMaskCacheId: number;
   /** 路径终点，截图像素坐标。 */
   targetPoint: PixelPoint;
 }

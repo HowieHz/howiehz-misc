@@ -52,6 +52,7 @@ describe("One-click clear optimization", () => {
         throw new Error("Step glitch clear must not build DAG edges");
       },
       candidates,
+      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
       pathPoints: [start],
@@ -65,6 +66,7 @@ describe("One-click clear optimization", () => {
       },
       simulationBoundaryExpansion: 0,
       simulationMask,
+      simulationMaskCacheId: 1,
     });
 
     expect(result.type).toBe("success");
@@ -121,6 +123,7 @@ describe("One-click clear optimization", () => {
         timings: [],
       }),
       candidates,
+      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
       onDebugTiming: (timing) => {
@@ -137,6 +140,7 @@ describe("One-click clear optimization", () => {
       },
       simulationBoundaryExpansion: 0,
       simulationMask,
+      simulationMaskCacheId: 1,
     });
 
     expect(result.type).toBe("success");
@@ -145,6 +149,139 @@ describe("One-click clear optimization", () => {
       expect(result.targetIds).toEqual(["first", "second", "failed", "alternative"]);
     }
     expect(segmentSampleCount).toBe(3);
+  });
+
+  it.each(["abs", "step"] as const)(
+    "allows %s to add a nearer target before a farther committed incidental hit",
+    async (algorithm) => {
+      const start = toImagePoint(-20, 0);
+      const tail = toImagePoint(-15, 0);
+      const nextTarget = toImagePoint(-10, 0);
+      const oldIncidentalTarget = toImagePoint(-5, 0);
+      const simulationMask = new Uint8Array(770 * 450);
+      const candidate = { enemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({
+            jobId: job.id,
+            resolvedEndStateKey: "0",
+            resolvedEndY: 0,
+            route: [job.startPoint, job.targetPoint],
+          })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        committedTargets: [{ hitCircle: { center: oldIncidentalTarget, radius: 4 } }],
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        pathPoints: [start, tail],
+        prefixTarget: { center: tail, radius: 4 },
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        settings: { ...settings, algorithm },
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+        validateStepRoute: () => true,
+      });
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.targetSequence.map((target) => target.hitCircle.center)).toEqual([
+          nextTarget,
+          oldIncidentalTarget,
+        ]);
+      }
+    },
+  );
+
+  it("reuses the ABS proof that committed targets were hit before the incremental suffix", async () => {
+    const start = toImagePoint(-20, 0);
+    const tail = toImagePoint(-15, 0);
+    const committed = toImagePoint(-14, 0);
+    const first = toImagePoint(-10, 0);
+    const second = toImagePoint(-5, 0);
+    const simulationMask = new Uint8Array(770 * 450);
+    const candidates = [
+      { enemy: true, hitCenter: first, hitRadius: 4, id: "first" },
+      { enemy: true, hitCenter: second, hitRadius: 4, id: "second" },
+    ];
+    let segmentSampleCount = 0;
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        timings: [],
+      }),
+      candidates,
+      committedTargets: [{ hitCircle: { center: committed, radius: 4 } }],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: candidates,
+      onDebugTiming: (timing) => {
+        if (timing.stage === "segment-sample-trajectory") {
+          segmentSampleCount += 1;
+        }
+      },
+      pathPoints: [start, tail],
+      prefixTarget: { center: tail, radius: 4 },
+      routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: { ...settings, algorithm: "abs" },
+      simulationBoundaryExpansion: 0,
+      simulationMask,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result.type).toBe("success");
+    expect(segmentSampleCount).toBe(2);
+  });
+
+  it("restarts ABS validation when a far committed hit advanced past the next target", async () => {
+    const start = toImagePoint(-20, 0);
+    const tail = toImagePoint(-15, 0);
+    const first = toImagePoint(-10, 0);
+    const second = toImagePoint(-7, 0);
+    const farCommitted = toImagePoint(-5, 0);
+    const simulationMask = new Uint8Array(770 * 450);
+    const candidates = [
+      { enemy: true, hitCenter: first, hitRadius: 4, id: "first" },
+      { enemy: true, hitCenter: second, hitRadius: 4, id: "second" },
+    ];
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        timings: [],
+      }),
+      candidates,
+      committedTargets: [{ hitCircle: { center: farCommitted, radius: 4 } }],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: candidates,
+      pathPoints: [start, tail],
+      prefixTarget: { center: tail, radius: 4 },
+      routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: { ...settings, algorithm: "abs" },
+      simulationBoundaryExpansion: 0,
+      simulationMask,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.targetIds).toEqual(["first", "second"]);
+      expect(result.targetSequence.map((target) => target.hitCircle.center)).toEqual([first, second, farCommitted]);
+    }
   });
 
   it("reuses the exact final validation produced after local ABS point deletion", async () => {
@@ -167,6 +304,7 @@ describe("One-click clear optimization", () => {
         timings: [],
       }),
       candidates: [candidate],
+      committedTargets: [],
       deleteHitCheckRadiusPixels: 2,
       hitCandidates: [candidate],
       onDebugTiming: (timing) => {
@@ -183,6 +321,7 @@ describe("One-click clear optimization", () => {
       },
       simulationBoundaryExpansion: 0,
       simulationMask,
+      simulationMaskCacheId: 1,
     });
 
     expect(result.type).toBe("success");
@@ -229,6 +368,7 @@ describe("One-click clear optimization", () => {
         timings: [],
       }),
       candidates: [candidate],
+      committedTargets: [],
       deleteHitCheckRadiusPixels: 2,
       hitCandidates: [candidate],
       onDebugTiming: (timing) => {
@@ -242,6 +382,7 @@ describe("One-click clear optimization", () => {
       settings: absSettings,
       simulationBoundaryExpansion: 0,
       simulationMask,
+      simulationMaskCacheId: 1,
     });
 
     expect(result.type).toBe("success");
@@ -300,6 +441,7 @@ describe("One-click clear optimization", () => {
           id: "target",
         },
       ],
+      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: [
         {
@@ -314,6 +456,7 @@ describe("One-click clear optimization", () => {
       routeMode: "visibility-graph",
       settings,
       simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 0,
       validateStepRoute,
     });
 

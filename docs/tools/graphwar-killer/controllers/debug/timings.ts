@@ -30,6 +30,9 @@ export type DetectionDebugStage =
 /** 智能寻路调试耗时阶段。 */
 export type SmartPathfindingDebugStage =
   | "preflight"
+  | "prefix-evidence-hit"
+  | "prefix-evidence-miss"
+  | "prepare-pathfinding-prefix"
   | "collect-targets"
   | "result-cache-hit"
   | "result-cache-miss"
@@ -40,6 +43,7 @@ export type SmartPathfindingDebugStage =
   | "visibility-cache-miss"
   | "visibility-cache-skipped"
   | "validate-trajectory"
+  | "validate-direct-trajectory"
   | "optimize-path"
   | "apply-result"
   | "one-click-clear-preflight"
@@ -489,6 +493,10 @@ const oneClickClearSearchDebugDetailOrder: readonly (
   | GraphwarOneClickClearDebugDetail["type"]
 )[] = [
   "validate-prefix",
+  "validate-direct-trajectory",
+  "prefix-evidence-hit",
+  "prefix-evidence-miss",
+  "prepare-pathfinding-prefix",
   "route-mask-cache-hit",
   "route-mask-cache-miss",
   "build-dag-targets",

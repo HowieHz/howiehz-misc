@@ -55,14 +55,14 @@ describe("Step numeric compensation", () => {
     expect(viaAnotherPlateau.plateauState.resolvedY).toBe(direct.plateauState.resolvedY);
   });
 
-  it("resets the canonical origin after a Glitch lands exactly on its control point", () => {
+  it("resets the canonical origin after a glitch jump lands exactly on its control point", () => {
     const resolved = resolveStepFormula(
       [createGraphPoint(0, 0), createGraphPoint(1, 0.25), createGraphPoint(2, 1)],
       2,
       "dy",
       {
         formulaDecimalPlaces: 0,
-        // 段 0 被 Glitch 替换并实际落到 0.25；几何 ΔY 恰好仍是默认 0.75。
+        // 段 0 被邪道项替换并实际落到 0.25；几何 ΔY 恰好仍是默认 0.75。
         stepSegmentDeltaYs: [undefined, 0.75],
       },
     );

@@ -15,6 +15,7 @@
     "vue": "^3.5.39"
   },
   "devDependencies": {
+    "@mdit/plugin-footnote": "^1.0.1",
     "@nolebase/vitepress-plugin-highlight-targeted-heading": "^2.18.2",
     "@shikijs/vitepress-twoslash": "^4.3.1",
     "lightningcss": "^1.32.0",

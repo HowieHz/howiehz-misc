@@ -6,20 +6,20 @@ export const graphwarKillerLocale = {
       value: "y",
       label: "y=",
       description: "Output a step function",
-      title: "Output or simulate a standard function for Graphwar's y= mode.",
+      title: "Output or simulate a standard function for Graphwar's y mode.",
     },
     {
       value: "dy",
       label: "y'=",
       description: "Output the step function's first derivative",
-      title: "Output or simulate a first-derivative function for Graphwar's y'= mode.",
+      title: "Output or simulate a first-derivative function for Graphwar's y' mode.",
     },
     {
       value: "ddy",
       label: "y''=",
       description: "Output the step function's second derivative",
       title:
-        "Output or simulate a second-derivative function for Graphwar's y''= mode; some algorithms are unsupported.",
+        "Output or simulate a second-derivative function for Graphwar's y'' mode; some algorithms are unsupported.",
     },
   ],
   toolWorkflowModes: [
@@ -38,7 +38,7 @@ export const graphwarKillerLocale = {
     {
       value: "abs",
       label: "Double absolute-value function",
-      title: "Connect path points with double absolute values; expressions are shorter and work well for y= and y'=.",
+      title: "Connect path points with double absolute values; expressions are shorter and work well for y and y'.",
     },
     {
       value: "step",
@@ -173,7 +173,7 @@ export const graphwarKillerLocale = {
     pathPointCoordinateNumber: "Point coordinates must be numbers",
     secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to about ${angle} deg.`,
     stepPathfindingDisabled:
-      "Glitch mode for Step y' does not support Smart Pathfinding or One-Click Clear; disable Glitch mode first",
+      "Glitch Mode for Step y' does not support Smart Pathfinding or One-Click Clear; disable Glitch Mode first",
     trajectoryWarning: {
       obstacle: "The current function trajectory hits an obstacle or boundary",
       stopped: {
@@ -224,7 +224,7 @@ export const graphwarKillerLocale = {
         return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} soldier(s) in ${elapsed}`;
       },
       unsupported:
-        "One-Click Clear supports double absolute-value y= and y'=, or Step y=, y'=, and y''= with Glitch mode disabled",
+        "One-Click Clear supports double absolute-value y and y', or Step y, y', and y'' with Glitch Mode disabled",
     },
   },
   ui: {
@@ -380,125 +380,6 @@ export const graphwarKillerLocale = {
       detectObjectsTitle: "Detect soldiers and obstacles inside the current confirmed bounds.",
       title: "Detection",
     },
-    instructions: {
-      agent: {
-        command: "java -javaagent:graphwar-agent.jar -jar graphwar.jar",
-        download: "graphwar-agent.jar",
-        moreInfoAfterLink: ".",
-        moreInfoBeforeLink: "For more information, see ",
-        moreInfoLink: "Graphwar Agent",
-        textAfterCommand: " to start Graphwar Agent and the game together.",
-        textBeforeCommand: " in the game directory, then run ",
-        textBeforeDownload: "Use Graphwar Agent to read game information: put ",
-        title: "How to use Graphwar Agent",
-      },
-      expression: {
-        items: [
-          // The footer tutorial should list Graphwar's original input tokens, not the full JavaScript/Math syntax.
-          {
-            label: "Variables",
-            parts: [
-              { type: "text", text: "Use " },
-              { type: "code", text: "x" },
-              { type: "text", text: ", " },
-              { type: "code", text: "y" },
-              { type: "text", text: ", and " },
-              { type: "code", text: "y'" },
-              { type: "text", text: "." },
-            ],
-          },
-          {
-            label: "Operators",
-            parts: [
-              { type: "text", text: "Use " },
-              { type: "code", text: "+" },
-              { type: "text", text: ", " },
-              { type: "code", text: "-" },
-              { type: "text", text: ", " },
-              { type: "code", text: "/" },
-              { type: "text", text: ", " },
-              { type: "code", text: "*" },
-              { type: "text", text: ", and " },
-              { type: "code", text: "^" },
-              { type: "text", text: ". Parentheses and implicit multiplication such as " },
-              { type: "code", text: "2x" },
-              { type: "text", text: " or " },
-              { type: "code", text: "2sin(x)" },
-              { type: "text", text: " are also supported." },
-            ],
-          },
-          {
-            label: "Functions",
-            parts: [
-              { type: "text", text: "Use " },
-              { type: "code", text: "sqrt()" },
-              { type: "text", text: ", " },
-              { type: "code", text: "log()" },
-              { type: "text", text: ", " },
-              { type: "code", text: "ln()" },
-              { type: "text", text: ", " },
-              { type: "code", text: "abs()" },
-              { type: "text", text: ", " },
-              { type: "code", text: "sin()" },
-              { type: "text", text: " (alias " },
-              { type: "code", text: "sen()" },
-              { type: "text", text: "), " },
-              { type: "code", text: "cos()" },
-              { type: "text", text: ", " },
-              { type: "code", text: "tan()" },
-              { type: "text", text: " (alias " },
-              { type: "code", text: "tg()" },
-              { type: "text", text: "), and " },
-              { type: "code", text: "exp()" },
-              { type: "text", text: ". " },
-              { type: "code", text: "log" },
-              { type: "text", text: " is base 10; " },
-              { type: "code", text: "ln" },
-              { type: "text", text: " is the natural logarithm." },
-            ],
-          },
-          {
-            label: "Constants",
-            parts: [
-              { type: "text", text: "Use " },
-              { type: "code", text: "e" },
-              { type: "text", text: " and " },
-              { type: "code", text: "pi" },
-              { type: "text", text: "." },
-            ],
-          },
-          {
-            label: "Compatibility",
-            parts: [
-              { type: "text", text: "With the default Graphwar-compatible setting, " },
-              { type: "code", text: "y'" },
-              { type: "text", text: " is parsed as " },
-              { type: "code", text: "y" },
-              {
-                type: "text",
-                text: "; Graphwar is also known to skip unknown characters. Turn both behaviors off in Advanced.",
-              },
-            ],
-          },
-        ],
-        title: "Expression Syntax",
-      },
-      steps: [
-        "Input source: upload, drag, or paste a Graphwar screenshot; for accurate game state, turn on Use Agent.",
-        "Screenshot detection: enter the coordinate range and game mode, or click Detect Bounds, then Detect Soldiers/Obstacles to mark soldiers and obstacles.",
-        "Agent reading: in the Detection panel, turn on Use Agent, confirm the Agent URL, then click Read State.",
-        "Solver mode: in Pick path, click your soldier first, then the target path points; copy the generated function into Graphwar.",
-        "Simulator mode: select the initial firing soldier and enter a function. y'' mode also needs a launch angle.",
-        "Turn on Smart Cursor for assisted picking; choose Smart Pathfinding when the route should avoid detected obstacles.",
-        "During Smart Pathfinding, right-click the screenshot to cancel.",
-      ],
-      stepsTitle: "Basic Workflow",
-      title: "How to Use",
-    },
-    introLinkText: "Graphwar",
-    introPrefix: "In Solver mode, calibrate a ",
-    introSuffix:
-      " screenshot and pick a path to generate a function expression. In Simulator mode, enter a function expression to simulate the result. All calculations happen locally.",
     pathfinding: {
       allowFriendlyFire: "Allow friendly fire",
       allowFriendlyFireTitle:
@@ -780,7 +661,7 @@ export const graphwarKillerLocale = {
       formulaInputTitle: "Enter the Graphwar function expression to simulate on the screenshot.",
       launchAngle: "Launch angle",
       launchAngleAriaLabel: "Launch angle for y'' mode",
-      launchAngleTitle: "Launch angle required by y''= mode, in degrees.",
+      launchAngleTitle: "Launch angle required by y'' mode, in degrees.",
       title: "Formula",
     },
     screenshot: {
@@ -826,7 +707,7 @@ export const graphwarKillerLocale = {
       debugInfoEnabled: "Debug info enabled",
       gameMode: "Game mode",
       gameModeAriaLabel: "Graphwar game mode",
-      gameModeTitle: "Choose the Graphwar input mode: y=, y'=, or y''=.",
+      gameModeTitle: "Choose the Graphwar input mode: y, y', or y''.",
       mode: "Workflow",
       modeAriaLabel: "Workflow",
       modeTitle: "Choose whether to generate a copyable function or simulate an existing function's trajectory.",
@@ -859,9 +740,9 @@ export const graphwarKillerLocale = {
       simulator: "Simulator",
       skipUnknownCharacters: "Skip unknown characters",
       skipUnknownCharactersTitle: "Graphwar skips unknown characters.",
-      stepGlitchMode: "Glitch mode",
+      stepGlitchMode: "Glitch Mode",
       stepGlitchModeTitle:
-        "Only applies to step y'= mode and requires an existing obstacle recognition result. When the approximate normal-step path region contains an obstacle, it attempts to generate a glitch jump term. Using Agent to read game information is recommended because accurate soldier positions are required.",
+        "Only applies to step y' mode and requires an existing obstacle recognition result. When the approximate normal-step path region contains an obstacle, Glitch Mode attempts to generate a jump term. Using Agent to read game information is recommended because accurate soldier positions are required.",
       stepSteepness: "Step steepness a",
       stepSteepnessAriaLabel: "Step function steepness a",
       stepSteepnessTitle:

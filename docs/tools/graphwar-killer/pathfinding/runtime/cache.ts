@@ -271,7 +271,7 @@ function createTrajectorySettingsCacheKey(
     settings.formulaPathSteepness,
     settings.steepness,
     settings.stepGlitchMode,
-    // 漏洞模式按普通 sigmoid 近似路径区域决定是否替换为门函数；mask 变化必须让 worker 结果缓存失效。
+    // 邪道模式按普通 sigmoid 近似路径区域决定是否替换为门函数；mask 变化必须让 worker 结果缓存失效。
     settings.stepGlitchMode ? stepGlitchObstacleMaskId : 0,
     settings.stepOverflowProtection,
   ];

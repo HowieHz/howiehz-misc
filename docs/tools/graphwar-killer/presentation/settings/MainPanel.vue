@@ -51,9 +51,9 @@ export interface GraphwarSettingsPanelModel {
   precision: GraphwarSettingsPanelPrecision;
   /** Step 算法是否启用溢出保护。 */
   stepOverflowProtectionEnabled: boolean;
-  /** Step 漏洞模式按钮是否禁用。 */
+  /** Step 邪道模式按钮是否禁用。 */
   stepGlitchModeDisabled: boolean;
-  /** Step 漏洞模式是否启用；只有 y'= 模式会消费。 */
+  /** Step 邪道模式是否启用；只有 y'= 模式会消费。 */
   stepGlitchModeEnabled: boolean;
   /** Step 陡峭度输入框当前文本；非法输入应原样保留给父页面校验。 */
   steepnessText: string;

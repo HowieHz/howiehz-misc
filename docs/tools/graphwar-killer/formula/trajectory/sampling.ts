@@ -57,9 +57,9 @@ export interface GraphwarTrajectoryFormulaSettings {
   formulaPathSteepness?: number;
   /** Step 公式的陡峭度。 */
   steepness: number;
-  /** 是否允许 step y'= 在普通 sigmoid 路径区域受阻时替换为漏洞门函数项。 */
+  /** 是否允许 step y'= 在普通 sigmoid 路径区域受阻时替换为邪道门函数项。 */
   stepGlitchMode: boolean;
-  /** Step 漏洞模式近似探测普通 sigmoid 路径区域时使用的 Graphwar 原始平面 mask。 */
+  /** Step 邪道模式近似探测普通 sigmoid 路径区域时使用的 Graphwar 原始平面 mask。 */
   stepGlitchObstacleMask?: Uint8Array;
   /** 是否允许 step 公式启用 exp 抗溢出保护。 */
   stepOverflowProtection: boolean;
@@ -194,14 +194,14 @@ interface StepSimulationRefinement {
 }
 
 const GRAPHWAR_STEP_GLITCH_MIN_STEP = createGraphwarStepGlitchMinStep();
-/** Glitch 项会反向改变发射点；少量外层迭代让替换项、普通补偿和中心互相收敛。 */
+/** 邪道项会反向改变发射点；少量外层迭代让替换项、普通补偿和中心互相收敛。 */
 const STEP_FORMULA_REFINEMENT_PASSES = 3;
 // 初始 0.01 可用两位小数精确表示；每缩半一次多保留一位，确保左门仍是严格的 R-w。
 const GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES = Math.max(0, Math.ceil(-Math.log10(GRAPHWAR_STEP_SIZE)));
-// 一阶 RK4 更新量是 h*(k1 + 2*k2 + 2*k3 + k4)/6。漏洞门函数临界时，
+// 一阶 RK4 更新量是 h*(k1 + 2*k2 + 2*k3 + k4)/6。邪道门函数临界时，
 // 4 次采样里可能只有部分 k 取到 D，其余近似 0；因此有效位移是 factor*h*D。
 // 权重 {1, 2, 2, 1}/6 的非零子集和去重后只有这六档：1/6、1/3、1/2、2/3、5/6、1。
-// 每个 x 窗口按 D = ΔY / (factor * minStep) 回放六档，只从恰好一次漏洞跳的候选中择优。
+// 每个 x 窗口按 D = ΔY / (factor * minStep) 回放六档，只从恰好一次邪道跳转的候选中择优。
 const STEP_GLITCH_RK4_CONTRIBUTION_FACTORS = [1, 5 / 6, 2 / 3, 1 / 2, 1 / 3, 1 / 6] as const;
 
 interface StepGlitchCandidateContext extends StepGlitchPrefixFormulaContext {
@@ -377,7 +377,7 @@ function refineStepSegmentsWithSimulation(
       segmentIndex,
       startSample.point.y,
     );
-    // Glitch 替换了整段普通 sigmoid；即使落点正好等于控制点，也必须重建下一段累计原点。
+    // 邪道项替换了整段普通 sigmoid；即使落点正好等于控制点，也必须重建下一段累计原点。
     const nextDeltaYOverride = previousSegment ? nextDeltaY : undefined;
     const nextFormulaPoint = createStepSegmentFormulaPointAfterRefinement(
       options,
@@ -407,7 +407,7 @@ function refineStepSegmentsWithSimulation(
       continue;
     }
 
-    // 漏洞段会把实际 y 带偏；后续普通 step 的 ΔY 和中心点都要从模拟器落点继续累计。
+    // 邪道段会把实际 y 带偏；后续普通 step 的 ΔY 和中心点都要从模拟器落点继续累计。
     refinedSegments[segmentIndex] = nextSegment;
     refinedDeltaYs[segmentIndex] = nextDeltaYOverride;
     if (nextFormulaPoint) {
@@ -423,7 +423,7 @@ interface StepSegmentStartSample {
   point: GraphPoint;
 }
 
-/** 编译不含当前段的前缀公式；段起点和各窗口的跳前探测共用它，避免 seed 漏洞污染恢复状态。 */
+/** 编译不含当前段的前缀公式；段起点和各窗口的跳前探测共用它，避免 seed 邪道项污染恢复状态。 */
 function createStepGlitchPrefixFormula(
   options: {
     bounds: GraphBounds;
@@ -553,7 +553,7 @@ function selectStepGlitchSegmentCandidate(
     }
     const replacementDeltaY = source.targetY - preJumpSample.point.y;
     const gateY = createStepGlitchFormulaGateY(source.targetY, replacementDeltaY, options.settings.decimalPlaces);
-    // epsilon 尾值或 Glitch 落点覆盖都会改变候选的完整系数集；此时不能拼接旧公式采出的前缀状态。
+    // epsilon 尾值或邪道落点覆盖都会改变候选的完整系数集；此时不能拼接旧公式采出的前缀状态。
     const candidateInitialState =
       candidateContext.signEpsilon === 0 && candidateContext.deltaYOverride === undefined
         ? preJumpSample.resumeState
@@ -667,7 +667,7 @@ function countStepGlitchJumps(points: readonly GraphPoint[], candidate: StepGlit
 
     const dx = point.x - previous.x;
     const dy = point.y - previous.y;
-    // 官方 ODE 只会在 x 步长到达下限时接受仍然超距的点；每个这样的相邻段就是一次漏洞跳。
+    // 官方 ODE 只会在 x 步长到达下限时接受仍然超距的点；每个这样的相邻段就是一次邪道跳转。
     if (dx <= GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE && dx * dx + dy * dy > GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED) {
       jumpCount += 1;
       if (jumpCount > 1) {
@@ -730,7 +730,7 @@ function sampleStepGlitchPreJump(
 }
 
 function createStepSegmentRefinementStopX(pointX: number, previousSegment: StepGlitchSegment | undefined) {
-  // 前一段是漏洞段时，要等局部 x 窗口关闭后再取落点；否则会把跳前 y 误当成下一段起点。
+  // 前一段是邪道段时，要等局部 x 窗口关闭后再取落点；否则会把跳前 y 误当成下一段起点。
   return previousSegment ? previousSegment.endX : pointX;
 }
 
@@ -771,7 +771,7 @@ function createStepSegmentFormulaPointAfterRefinement(
     formulaSteepness,
     options.settings.decimalPlaces,
   );
-  // 漏洞后的普通段要按 canonical 有效 ΔY 重算中心；否则低精度文本会与内部中心脱节。
+  // 邪道后的普通段要按 canonical 有效 ΔY 重算中心；否则低精度文本会与内部中心脱节。
   return createGraphPoint(
     calculateStepFormulaCenterX(actualStartPoint.x, target.x, transition.effectiveDeltaY, formulaSteepness),
     formulaTarget.y,
@@ -800,7 +800,7 @@ function sameGraphPoint(left: GraphPoint | undefined, right: GraphPoint | undefi
   return left.x === right.x && left.y === right.y;
 }
 
-/** Graphwar 缩步只会尝试 STEP_SIZE/2^n；漏洞 D 需要按最后一个实际档位估算。 */
+/** Graphwar 缩步只会尝试 STEP_SIZE/2^n；邪道项的 D 需要按最后一个实际档位估算。 */
 function createGraphwarStepGlitchMinStep() {
   let step = GRAPHWAR_STEP_SIZE;
   while (step > GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
@@ -993,7 +993,7 @@ function createWidestStepGlitchJump(previousX: number, targetX: number, decimalP
   return undefined;
 }
 
-/** 用普通 sigmoid 的近似水平前缀和两块半高矩形做粗筛，避免把探测绑到某个漏洞窗口。 */
+/** 用普通 sigmoid 的近似水平前缀和两块半高矩形做粗筛，避免把探测绑到某个邪道窗口。 */
 function stepGlitchObstacleEnvelopeHitsObstacle(
   previous: GraphPoint,
   target: GraphPoint,

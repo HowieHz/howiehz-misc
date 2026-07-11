@@ -15,7 +15,7 @@ const boundsRect: BoundsRect = { height: 512, width: 1024, x: 0, y: 0 };
 const emptyArea = createGraphwarPlaneMaskSummedArea(new Uint8Array(770 * 450));
 
 describe("stateful Step route evaluation", () => {
-  it("only rejects the effective y' Glitch combination", () => {
+  it("only rejects the effective y' Glitch Mode combination", () => {
     const base = {
       algorithm: "step" as const,
       decimalPlaces: 0,

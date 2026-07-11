@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { withBase } from "vitepress";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
@@ -153,9 +152,6 @@ const smartPathfindingBlockedPointFlashMs = 1800;
 const graphwarAgentFireStatusFlashMs = 2000;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
-const graphwarAgentDownloadHref = withBase("/graphwar-agent.jar");
-const graphwarAgentRepositoryHref = "https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent";
-
 // 页面状态按未来可抽工作流分区维护：基础舞台、公式设置、截图、识别、障碍编辑、寻路。
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
 // boundsRect 会保留上一次矩形数值；boundsReady 表示该矩形已在当前截图上被用户或识别流程确认。
@@ -188,7 +184,7 @@ const maxYText = ref(graphwarVisibleYLimitText);
 const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
 const stepGlitchModeEnabled = ref(false);
-// 漏洞开关会跨方程保留；只有 Step y' 真正启用漏洞公式时才限制寻路。
+// 邪道模式开关会跨方程保留；只有 Step y' 真正启用邪道公式时才限制寻路。
 const effectiveStepGlitchModeEnabled = computed(
   () => algorithmMode.value === "step" && solverEquationMode.value === "dy" && stepGlitchModeEnabled.value,
 );
@@ -2272,7 +2268,7 @@ function setMagnifierZoomText(value: string) {
   magnifierZoomText.value = value;
 }
 
-/** 只有实际生效的 Step 漏洞公式不支持寻路；y/y'' 中残留的勾选状态不参与限制。 */
+/** 只有实际生效的 Step 邪道公式不支持寻路；y/y'' 中残留的勾选状态不参与限制。 */
 function isSmartPathfindingDisabled() {
   return effectiveStepGlitchModeEnabled.value || Boolean(smartPathfindingPrerequisiteMessage.value);
 }
@@ -2291,7 +2287,7 @@ function getSmartPathfindingToggleTitle() {
     : locale.ui.pathfinding.smartPathfindingTitle;
 }
 
-/** 一键清图支持 ABS y/y' 和无有效漏洞的 Step y/y'/y''；其他算法仍走原禁用提示。 */
+/** 一键清图支持 ABS y/y' 和未实际启用邪道模式的 Step y/y'/y''；其他算法仍走原禁用提示。 */
 function isOneClickClearModeUnsupported() {
   if (effectiveStepGlitchModeEnabled.value) {
     return true;
@@ -2725,12 +2721,6 @@ function undoLastPoint() {
 <!-- autocorrect-enable -->
 
 <template>
-  <p>
-    {{ locale.ui.introPrefix }}
-    <a href="https://graphwar.com/graphwar_1/index.html">{{ locale.ui.introLinkText }}</a>
-    {{ locale.ui.introSuffix }}
-  </p>
-
   <div class="graphwar-killer">
     <p
       class="graphwar-killer__sr-only"
@@ -2840,64 +2830,6 @@ function undoLastPoint() {
       @update-simulator-launch-angle-text="simulatorLaunchAngleText = $event"
     />
   </div>
-
-  <section>
-    <h2>{{ locale.ui.instructions.title }}</h2>
-    <section>
-      <h3>{{ locale.ui.instructions.stepsTitle }}</h3>
-      <ol>
-        <li
-          v-for="item in locale.ui.instructions.steps"
-          :key="item"
-        >
-          {{ item }}
-        </li>
-      </ol>
-    </section>
-    <section>
-      <h3 id="graphwar-killer-agent-help">
-        {{ locale.ui.instructions.agent.title }}
-      </h3>
-      <p>
-        {{ locale.ui.instructions.agent.textBeforeDownload }}
-        <a :href="graphwarAgentDownloadHref">
-          <code>{{ locale.ui.instructions.agent.download }}</code>
-        </a>
-        {{ locale.ui.instructions.agent.textBeforeCommand }}
-        <code>{{ locale.ui.instructions.agent.command }}</code>
-        {{ locale.ui.instructions.agent.textAfterCommand }}
-        {{ locale.ui.instructions.agent.moreInfoBeforeLink }}
-        <a :href="graphwarAgentRepositoryHref">
-          {{ locale.ui.instructions.agent.moreInfoLink }}
-        </a>
-        {{ locale.ui.instructions.agent.moreInfoAfterLink }}
-      </p>
-    </section>
-    <section>
-      <h3>{{ locale.ui.instructions.expression.title }}</h3>
-      <table>
-        <tbody>
-          <tr
-            v-for="item in locale.ui.instructions.expression.items"
-            :key="item.label"
-          >
-            <th scope="row">
-              {{ item.label }}
-            </th>
-            <td>
-              <template
-                v-for="(part, partIndex) in item.parts"
-                :key="`${item.label}-${partIndex}`"
-              >
-                <code v-if="part.type === 'code'">{{ part.text }}</code>
-                <span v-else>{{ part.text }}</span>
-              </template>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-  </section>
 </template>
 
 <style scoped>

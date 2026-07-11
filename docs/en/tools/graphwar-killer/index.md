@@ -6,6 +6,8 @@ published: 2026-06-23T12:00:00+08:00
 
 # Graphwar Killer
 
+In Solver mode, calibrate a [Graphwar](https://graphwar.com/graphwar_1/index.html) screenshot and pick a path to generate a function expression. In Simulator mode, enter a function expression to simulate the result. All calculations happen locally.
+
 <!-- autocorrect-disable -->
 <script setup lang="ts">
 import GraphwarKillerPage from "../../../tools/graphwar-killer/GraphwarKillerPage.vue";
@@ -13,3 +15,181 @@ import { graphwarKillerLocale } from "./locale";
 </script>
 
 <GraphwarKillerPage :locale="graphwarKillerLocale" />
+<!-- autocorrect-enable -->
+
+## How to Use {#graphwar-killer-instructions}
+
+### Basic Workflow {#graphwar-killer-basic-workflow}
+
+- Input sources:
+  - Screenshot detection: upload, drag, or paste a Graphwar screenshot and enter the coordinate range and game mode. You can also run Detect Bounds, then Detect Soldiers/Obstacles.
+  - Agent reading: when accurate game state is required, turn on Use Agent, confirm the Agent URL, and select Read State.
+- Modes:
+  - Solver mode: select your soldier first, add targets or intermediate path points, then copy the generated function into Graphwar.
+  - Simulator mode: select the initial firing soldier and enter a function. `y''` mode also needs a launch angle.
+
+### Key Features {#graphwar-killer-features}
+
+#### Smart Cursor {#graphwar-killer-smart-cursor}
+
+Snaps path selections to detected soldier centers and enables obstacle and boundary collision simulation.
+
+#### Smart Pathfinding {#graphwar-killer-smart-pathfinding}
+
+After you select a target, Smart Pathfinding finds a route from the current path end around detected obstacles, then generates a function and validates its trajectory with the simulator.
+
+##### One-Click Clear {#graphwar-killer-one-click-clear}
+
+Starting from the current path end, One-Click Clear filters usable targets whose soldier centers are in the `x+` direction and plans a route that kills as many soldiers as possible.
+
+#### Glitch Mode {#graphwar-killer-step-glitch-mode}
+
+Applies only to step functions in `y'` mode. When an obstacle lies inside the approximate normal-step path region, Glitch Mode attempts to generate a jump term that crosses the obstacle vertically. This mode needs obstacle data and accurate soldier positions, so reading game state through Agent is recommended.
+
+### Expression Syntax {#graphwar-killer-expression-syntax}
+
+| Category      | Supported syntax                                                                                                                                                              |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variables     | Use `x`, `y`, and `y'`.                                                                                                                                                       |
+| Operators     | Use `+`, `-`, `/`, `*`, and `^`. Parentheses and implicit multiplication such as `2x` or `2sin(x)` are also supported.                                                        |
+| Functions     | Use `sqrt()`, `log()`, `ln()`, `abs()`, `sin()` (alias `sen()`), `cos()`, `tan()` (alias `tg()`), and `exp()`. `log` is the base-10 logarithm; `ln` is the natural logarithm. |
+| Constants     | Use `e` and `pi`.                                                                                                                                                             |
+| Compatibility | By default, Graphwar compatibility treats `y'` as `y` and ignores unknown characters. Both options can be turned off in Advanced.                                             |
+
+### How to use Graphwar Agent {#graphwar-killer-agent-help}
+
+Put [`graphwar-agent.jar`](/graphwar-agent.jar) in the game directory, then run this command from that directory:
+
+```bash
+java -javaagent:graphwar-agent.jar -jar graphwar.jar
+```
+
+This starts Graphwar Agent and the game together. Return to the tool, turn on Use Agent, then select Read State to retrieve the current game state. For more information, see [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent).
+
+### Pathfinding Details {#graphwar-killer-pathfinding-details}
+
+#### Support Matrix {#graphwar-killer-pathfinding-support}
+
+<!-- markdownlint-disable MD013 -->
+
+| Function algorithm    | Glitch[^pathfinding-glitch]                                        | Game mode        | Smart Pathfinding[^pathfinding-solver-only]                  | One-Click Clear[^pathfinding-solver-only]                    | Target candidates                                                                                     | Key characteristics         | Time complexity[^pathfinding-complexity]                                                                     |
+| --------------------- | ------------------------------------------------------------------ | ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Double absolute value | <span title="Not applicable" aria-label="Not applicable">⛔️</span> | `y`, `y'`        | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Supported" aria-label="Supported">✅</span>     | Smart Pathfinding: Single-target mode[^pathfinding-single-target]<br>One-Click Clear: soldier centers | Direct point-to-point lines | Smart Pathfinding O(R)<br>One-Click Clear O(N²R)                                                             |
+| Double absolute value | <span title="Not applicable" aria-label="Not applicable">⛔️</span> | `y''`            | <span title="Unsupported" aria-label="Unsupported">❌</span> | <span title="Unsupported" aria-label="Unsupported">❌</span> | —                                                                                                     | Direct point-to-point lines | —                                                                                                            |
+| Step                  | <span title="Off" aria-label="Off">❌</span>                       | `y`, `y'`, `y''` | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Supported" aria-label="Supported">✅</span>     | Smart Pathfinding: Center-first mode[^pathfinding-center-first]<br>One-Click Clear: soldier centers   | Right-angle paths           | Smart Pathfinding O(R), with at most 2 runs<br>One-Click Clear O(N·D·R), where D is O(2^N) in the worst case |
+| Step                  | <span title="On" aria-label="On">✅</span>                         | `y'`             | <span title="Unsupported" aria-label="Unsupported">❌</span> | <span title="Unsupported" aria-label="Unsupported">❌</span> | —                                                                                                     | Right-angle paths           | —                                                                                                            |
+| PCHIP                 | <span title="Not applicable" aria-label="Not applicable">⛔️</span> | `y`, `y'`, `y''` | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Unsupported" aria-label="Unsupported">❌</span> | Smart Pathfinding: Single-target mode[^pathfinding-single-target]                                     | Curve fitting               | Smart Pathfinding O(R)                                                                                       |
+| Akima                 | <span title="Not applicable" aria-label="Not applicable">⛔️</span> | `y`, `y'`, `y''` | <span title="Supported" aria-label="Supported">✅</span>     | <span title="Unsupported" aria-label="Unsupported">❌</span> | Smart Pathfinding: Single-target mode[^pathfinding-single-target]                                     | Curve fitting               | Smart Pathfinding O(R)                                                                                       |
+
+<!-- markdownlint-enable MD013 -->
+
+[^pathfinding-glitch]: The Glitch Mode toggle affects only Step `y'`.
+
+[^pathfinding-solver-only]: Simulator mode does not provide Smart Pathfinding or One-Click Clear.
+
+[^pathfinding-single-target]: Single-target mode tries one target point only. For a soldier, it uses the center when available; otherwise it uses a valid point inside the hit circle. Once chosen, the target is not changed if routing or full trajectory validation fails. An ordinary click outside the `x+` direction is moved to the nearest usable `x+` position at the same `y`.
+
+[^pathfinding-center-first]: Center-first mode tries at most two target points in order: the soldier center, then the hit circle's inner edge on the `x+` side. If the center is available, it is tried first; if that attempt fails, the entire process is rerun once with the inner edge. If the center is unavailable from the start, the inner edge is used directly.
+
+[^pathfinding-complexity]: This column counts route finding only. It excludes formula generation, trajectory simulation, hit checks, point removal, and reselection after a failure; see [Calculation Workflows](#graphwar-killer-pathfinding-workflows) for the complete process. `N` is the number of soldiers included in One-Click Clear after excluding the firing soldier and applying the Allow friendly fire and `x+` filters. `D` is the total number of Step cases kept separately because they reach different actual endpoints. `R` is the cost of one route search in [Routing Algorithms](#graphwar-killer-pathfinding-engines).
+
+#### Calculation Workflows {#graphwar-killer-pathfinding-workflows}
+
+<!-- markdownlint-disable MD013 -->
+
+<table tabindex="0">
+  <thead>
+    <tr>
+      <th scope="col">Configuration</th>
+      <th scope="col">Workflow</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>
+        <table class="graphwar-workflow-settings" role="presentation">
+          <tbody>
+            <tr>
+              <td>Smart Pathfinding</td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Double absolute value · <code>y</code>, <code>y'</code></td>
+            </tr>
+            <tr>
+              <td>PCHIP, Akima · <code>y</code>, <code>y'</code>, <code>y''</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+      <td>Check the current path and target → move the target to a usable position when needed → find a route around obstacles with the algorithm selected by Fast Mode → generate the function and simulate its trajectory → check the <code>x+</code> direction, target hit, obstacles, and bounds → remove unnecessary new path points and simulate again → update the path. A failure does not try another target point.</td>
+    </tr>
+    <tr>
+      <td>
+        <table class="graphwar-workflow-settings" role="presentation">
+          <tbody>
+            <tr>
+              <td>Smart Pathfinding</td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Step · <code>y</code>, <code>y'</code>, <code>y''</code></td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Glitch Mode off</td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+      <td>Check the actual landing point of the current Step path → prefer the soldier center and use the hit circle's inner edge on the <code>x+</code> side when needed → find a Step route whose every step clears the obstacles → generate the complete function and simulate it from the start → check the target hit, obstacles, and bounds → retry with the inner-edge target if the center fails → remove unnecessary new path points and simulate again → update the path.</td>
+    </tr>
+    <tr>
+      <td>
+        <table class="graphwar-workflow-settings" role="presentation">
+          <tbody>
+            <tr>
+              <td>One-Click Clear</td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Double absolute value · <code>y</code>, <code>y'</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+      <td>Check the current path → collect soldier centers in the <code>x+</code> direction → try routes from the start to each target and between targets → choose the order expected to hit the most soldiers → generate and simulate each segment → exclude failed connections and choose again → remove unnecessary path points and simulate from the start → update the path and actual hit results.</td>
+    </tr>
+    <tr>
+      <td>
+        <table class="graphwar-workflow-settings" role="presentation">
+          <tbody>
+            <tr>
+              <td>One-Click Clear</td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Step · <code>y</code>, <code>y'</code>, <code>y''</code></td>
+            </tr>
+            <tr class="graphwar-workflow-settings__group-start">
+              <td>Glitch Mode off</td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+      <td>Check the actual landing point of the current Step path → when earlier routes reach the same soldier at different actual landing points, continue trying each case separately → check whether each segment clears obstacles and connects to the previous segment → choose the order expected to hit the most soldiers → generate the complete function and simulate it from the launch point → exclude failed connections and choose again → remove unnecessary path points and simulate from the start → update the path and actual hit results.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-enable MD013 -->
+
+#### Routing Algorithms {#graphwar-killer-pathfinding-engines}
+
+<!-- markdownlint-disable MD013 -->
+
+| Fast mode                                                      | Routing algorithm      | Used by                             | Key characteristics                                                                                                                                                                               | Current worst-case time complexity[^routing-complexity]                                                                                            |
+| -------------------------------------------------------------- | ---------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <span title="On (default)" aria-label="On (default)">✅</span> | Lazy Visibility Graph  | Smart Pathfinding + One-Click Clear | Chooses a small set of path points from obstacle contours. It is usually faster and produces straighter routes, but may miss a route that Theta* finds through complex obstacles[^routing-cache]. | First run O(P² + C + T² + T·V·(L + log V)); a cache hit omits P² but still scans O(C) contour vertices. For non-Step modes, T=V in the worst case. |
+| <span title="Off" aria-label="Off">❌</span>                   | Custom directed Theta* | Smart Pathfinding + One-Click Clear | Searches the 770×450 grid step by step in the `x+` direction. It is usually slower but handles complex obstacles more reliably[^routing-cache].                                                   | O(P + T[H² + H(L + log T)] + Q²L); a cache hit omits P.                                                                                            |
+
+<!-- markdownlint-enable MD013 -->
+
+[^routing-complexity]: `P` is the number of cells in the 770×450 grid; `C` is the number of points on the simplified obstacle contours; `V` is the number of possible path points used by this Lazy Visibility Graph; `T` is the total number of times those points are checked, and the same point may be checked again when reached in a different way or after a better route is found; `H` is the grid height of 450; `L` is the number of cells checked for one straight or Step segment; `Q` is the final path-point count.
+
+[^routing-cache]: When the obstacles, `x+` direction, and related tolerances stay unchanged, prepared obstacle data is reused instead of rebuilt. The cache affects speed only, not route selection. One-Click Clear reuses it only within the current run, with each parallel task keeping its own copy.

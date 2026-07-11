@@ -464,7 +464,7 @@ function isGraphwarTrajectoryWarningReason(value: unknown) {
   );
 }
 
-/** 深拷贝输入，且让同源 collision/glitch mask 在请求快照里继续共用同一份副本。 */
+/** 深拷贝输入，且让同源的碰撞 mask 和邪道障碍 mask 在请求快照里继续共用同一份副本。 */
 function cloneGraphwarTrajectoryCalculationInput(
   input: GraphwarTrajectoryCalculationInput,
 ): GraphwarTrajectoryCalculationInput {

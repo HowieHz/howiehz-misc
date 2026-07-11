@@ -81,7 +81,7 @@ export interface CompiledAbsConnectorSegment {
 export interface CompiledStepTerm {
   /** 最终公式里的 Sigmoid 中心点。 */
   formulaCenterX: number;
-  /** Y'= 漏洞模式下替换普通 step 项的高导数门函数。 */
+  /** Y'= 邪道模式下替换普通 step 项的高导数门函数。 */
   glitchSegment?: StepGlitchSegment;
   /** 一阶导前置系数。 */
   firstDerivativeCoefficient: number;
@@ -374,7 +374,7 @@ function evaluateCompiledStepStableSecondDerivativeBody(t: number) {
   return q * ((1 - q) / denominator ** 3);
 }
 
-/** 回放漏洞模式门函数；x 右门负责让旧漏洞只在局部窗口内生效。 */
+/** 回放邪道模式门函数；x 右门负责让旧邪道项只在局部窗口内生效。 */
 function evaluateCompiledStepGlitchFirstDerivative(
   x: number,
   y: number,
@@ -656,7 +656,7 @@ function formatStepFirstDerivativeExpression(
   return cleanupExpression(parts.join("")) || "0";
 }
 
-/** 格式化局部漏洞项；右侧 x 门会在候选窗口末端关闭旧漏洞。 */
+/** 格式化局部邪道项；右侧 x 门会在候选窗口末端关闭旧邪道项。 */
 function formatStepGlitchFirstDerivativeExpression(
   segment: StepGlitchSegment,
   decimalPlaces: number | undefined,
@@ -1188,7 +1188,7 @@ function formatXOffset(centerX: number, decimalPlaces?: number) {
   return offset === 0 ? "x" : `x${formatSignedNumber(offset, decimalPlaces)}`;
 }
 
-/** 漏洞 x 门已经在采样层按最终文本精度整理过，这里只负责无损输出整理后的门线。 */
+/** 邪道 x 门已经在采样层按最终文本精度整理过，这里只负责无损输出整理后的门线。 */
 function formatStepGlitchXOffset(centerX: number) {
   const offset = Object.is(centerX, -0) ? 0 : -centerX;
   return offset === 0 ? "x" : `x${formatDoublePrecisionSignedNumber(offset)}`;

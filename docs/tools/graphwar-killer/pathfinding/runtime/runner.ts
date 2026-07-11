@@ -434,7 +434,7 @@ function cloneGraphwarTrajectoryTargetCircle(
   };
 }
 
-/** 复制公式采样设置，并保持可选漏洞 mask 的原始二进制引用。 */
+/** 复制公式采样设置，并保持可选邪道障碍 mask 的原始二进制引用。 */
 function cloneGraphwarTrajectoryFormulaSettings(
   settings: GraphwarSmartPathfindingPathInput["settings"] | GraphwarOneClickClearPathWorkerInput["settings"],
 ) {

@@ -71,17 +71,6 @@ type GraphwarKillerPathfindingDebugDetailText = Record<
   };
 };
 
-/** 底部说明中的行内文本片段；code 片段交给 VitePress 行内代码样式渲染。 */
-type GraphwarKillerInlineTextPart =
-  | {
-      text: string;
-      type: "text";
-    }
-  | {
-      text: string;
-      type: "code";
-    };
-
 /**
  * Graphwar 杀手页面的完整文案协议。
  *
@@ -328,32 +317,6 @@ export interface GraphwarKillerLocale {
       detectObjectsTitle: string;
       title: string;
     };
-    instructions: {
-      agent: {
-        command: string;
-        download: string;
-        moreInfoAfterLink: string;
-        moreInfoBeforeLink: string;
-        moreInfoLink: string;
-        textAfterCommand: string;
-        textBeforeCommand: string;
-        textBeforeDownload: string;
-        title: string;
-      };
-      expression: {
-        items: readonly {
-          label: string;
-          parts: readonly GraphwarKillerInlineTextPart[];
-        }[];
-        title: string;
-      };
-      steps: readonly string[];
-      stepsTitle: string;
-      title: string;
-    };
-    introLinkText: string;
-    introPrefix: string;
-    introSuffix: string;
     pathfinding: {
       allowFriendlyFire: string;
       allowFriendlyFireTitle: string;

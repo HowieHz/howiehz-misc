@@ -85,7 +85,7 @@ interface GraphwarStepPathfindingEvaluatorOptions extends GraphwarStepRouteColli
   resolvedStartStateKey?: string;
 }
 
-/** 只有 y' 的有效 Glitch 会改变逐段语义；y/y'' 即使保留原始勾选也仍可寻路。 */
+/** 只有 y' 的有效邪道模式会改变逐段语义；y/y'' 即使保留原始勾选也仍可寻路。 */
 export function createGraphwarStepRouteModel(
   originY: number,
   settings: GraphwarStepRouteSettings,

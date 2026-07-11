@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { footnote } from "@mdit/plugin-footnote";
 import { transformerTwoslash } from "@shikijs/vitepress-twoslash";
 import { createFileSystemTypesCache } from "@shikijs/vitepress-twoslash/cache-fs";
 import browserslist from "browserslist";
@@ -423,6 +424,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
     // Explicitly load these languages for types highlighting
     languages: ["js", "jsx", "ts", "tsx"],
     config(md) {
+      md.use(footnote);
       md.use(groupIconMdPlugin);
     },
   },

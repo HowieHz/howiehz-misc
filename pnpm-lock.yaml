@@ -94,7 +94,7 @@ importers:
         version: 8.63.0(eslint@10.6.0)(typescript@6.0.3)
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.1.0)(vite@8.1.3)
+        version: 4.1.10(@types/node@26.1.1)(vite@8.1.3)
       vue-eslint-parser:
         specifier: ^10.4.1
         version: 10.4.1(eslint@10.6.0)
@@ -117,6 +117,9 @@ importers:
         specifier: ^3.5.39
         version: 3.5.39(typescript@6.0.3)
     devDependencies:
+      '@mdit/plugin-footnote':
+        specifier: ^1.0.1
+        version: 1.0.1(markdown-it@14.3.0)
       '@nolebase/vitepress-plugin-highlight-targeted-heading':
         specifier: ^2.18.2
         version: 2.18.2(@vueuse/core@14.3.0)(vitepress@2.0.0-alpha.18)(vue@3.5.39)
@@ -628,6 +631,12 @@ packages:
 
   '@manypkg/get-packages@1.1.3':
     resolution: {integrity: sha512-fo+QhuU3qE/2TQMQmbVMqaQ6EWbMhi4ABWP+O4AM1NqPBuy0OrApV5LO6BrrgnhtAHS2NH6RrVk9OL181tTi8A==}
+
+  '@mdit/plugin-footnote@1.0.1':
+    resolution: {integrity: sha512-PrH02dlVQT8/vPvfGrLHpcHq8N0+gOaAVNOfuhwlPqWCL4He3o+buUCxm1Uem02+UR8/TRBW50M/XD/dVSe2jw==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      markdown-it: ^14.2.0
 
   '@napi-rs/wasm-runtime@1.1.6':
     resolution: {integrity: sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==}
@@ -4277,6 +4286,11 @@ snapshots:
       fs-extra: 8.1.0
       globby: 11.1.0
       read-yaml-file: 1.1.0
+
+  '@mdit/plugin-footnote@1.0.1(markdown-it@14.3.0)':
+    dependencies:
+      '@types/markdown-it': 14.1.2
+      markdown-it: 14.3.0
 
   '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:

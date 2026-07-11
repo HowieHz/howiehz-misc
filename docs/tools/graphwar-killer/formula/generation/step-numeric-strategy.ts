@@ -54,7 +54,7 @@ export interface ResolvedStepFormula {
 export interface StepFormulaPlateauState {
   /** 有公式精度时保存精确整数单位；undefined 表示调用方要求保留未量化 double。 */
   coefficientUnits?: bigint;
-  /** 当前累计格点的固定高度原点；Glitch 实际落点会建立新原点。 */
+  /** 当前累计格点的固定高度原点；邪道实际落点会建立新原点。 */
   originY: number;
   /** 从原点和整数单位重建的 canonical 平台高度。 */
   resolvedY: number;
@@ -214,7 +214,7 @@ export function resolveStepFormula(
   for (let index = 1; index < points.length; index += 1) {
     const targetY = points[index].y;
     const deltaYOverride = options?.stepSegmentDeltaYs?.[index - 1];
-    // Glitch 落点后的覆盖量等于 targetY-actualStartY，可直接恢复真实段起点再继续解析。
+    // 邪道落点后的覆盖量等于 targetY-actualStartY，可直接恢复真实段起点再继续解析。
     if (deltaYOverride !== undefined) {
       plateauState = createStepFormulaPlateauState(targetY - deltaYOverride, decimalPlaces);
     }
@@ -309,11 +309,11 @@ export interface StepOverflowProtectionRange {
   minX: number;
 }
 
-/** Step y'= 漏洞段；用于把普通 step 项替换成触发 Graphwar 缩步漏洞的高导数门函数。 */
+/** Step y'= 邪道段；用于把普通 step 项替换成触发 Graphwar 缩步漏洞的高导数门函数。 */
 export interface StepGlitchSegment {
-  /** 目标导数；按源码最小步长估算，用来迫使自适应步长缩到漏洞边界。 */
+  /** 目标导数；按源码最小步长估算，用来迫使自适应步长缩到邪道触发边界。 */
   derivative: number;
-  /** 触发窗口的右边界；关闭旧漏洞门，避免后续反向段重新触发。 */
+  /** 触发窗口的右边界；关闭旧邪道门，避免后续反向段重新触发。 */
   endX: number;
   /** Y 门关闭阈值；进入目标命中圈就应关门，不必继续冲到目标中心线。 */
   gateY: number;
@@ -333,11 +333,11 @@ export interface FormulaEvaluationOptions {
   onSignArgument?: (value: number) => void;
   /** 稳定符号比值的除零保护值；0 表示保留 Graphwar 原始数值行为。 */
   signEpsilon?: number;
-  /** 每个 step 段对应的漏洞替换项；undefined 表示该段保持普通 step。 */
+  /** 每个 step 段对应的邪道替换项；undefined 表示该段保持普通 step。 */
   stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[];
-  /** 每个 step 段的期望高度差覆盖；漏洞段后的普通 step 用它恢复模拟器实际起点。 */
+  /** 每个 step 段的期望高度差覆盖；邪道段后的普通 step 用它恢复模拟器实际起点。 */
   stepSegmentDeltaYs?: readonly (number | undefined)[];
-  /** 只从表达式中临时排除指定段；累计平台仍按完整路径推进，供 Glitch 前缀探针使用。 */
+  /** 只从表达式中临时排除指定段；累计平台仍按完整路径推进，供邪道前缀探针使用。 */
   stepDisabledSegments?: readonly boolean[];
   /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;

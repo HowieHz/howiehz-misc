@@ -77,9 +77,9 @@ interface GraphwarTrajectoryResultOptions {
     steepness: ReadonlyRef<number>;
     /** Step 陡峭度是否来自合法输入。 */
     steepnessValid: ReadonlyRef<boolean>;
-    /** Step 漏洞模式是否启用；只有 y'= 模式和存在障碍 mask 时会生效。 */
+    /** Step 邪道模式是否启用；只有 y'= 模式和存在障碍 mask 时会生效。 */
     stepGlitchModeEnabled: ReadonlyRef<boolean>;
-    /** Step 漏洞模式近似探测普通 sigmoid 路径区域时使用的模拟 mask。 */
+    /** Step 邪道模式近似探测普通 sigmoid 路径区域时使用的模拟 mask。 */
     getStepGlitchObstacleMask: () => Uint8Array | undefined;
     /** 是否允许 Step 公式启用 exp 抗溢出保护。 */
     stepOverflowProtectionEnabled: ReadonlyRef<boolean>;

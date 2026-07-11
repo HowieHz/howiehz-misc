@@ -230,6 +230,7 @@ function prepareGraphwarStepGlitchPrefix(
     replay.sample.points,
     replay.obstacleHitIndex,
     lastGraphPoint.x,
+    requiredTargetSequence.length > 0 ? replay.targetHitIndex : 0,
   );
   const blockedPoint = replay.obstacleHitIndex >= 0 ? replay.sample.points[replay.obstacleHitIndex] : undefined;
   if (replay.reachedTargetCount < requiredTargetSequence.length || !acceptedPoint) {
@@ -417,7 +418,12 @@ function replayPathToControlX(
   });
   const sequenceHit = targetSequence.length > 0 && result.reachedTargetCount >= targetSequence.length;
   return {
-    acceptedPoint: findAcceptedPointAtOrAfterControlX(result.sample.points, result.obstacleHitIndex, controlX),
+    acceptedPoint: findAcceptedPointAtOrAfterControlX(
+      result.sample.points,
+      result.obstacleHitIndex,
+      controlX,
+      targetSequence.length > 0 ? result.targetHitIndex : 0,
+    ),
     blockedPoint: result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined,
     reachedTargetCount: result.reachedTargetCount,
     sequenceHit,
@@ -624,8 +630,13 @@ function createGlitchWindowWidths() {
   return widths;
 }
 
-function findAcceptedPointAtOrAfterControlX(points: readonly GraphPoint[], obstacleHitIndex: number, controlX: number) {
-  for (let index = 0; index < points.length; index += 1) {
+function findAcceptedPointAtOrAfterControlX(
+  points: readonly GraphPoint[],
+  obstacleHitIndex: number,
+  controlX: number,
+  minimumIndex = 0,
+) {
+  for (let index = Math.max(0, minimumIndex); index < points.length; index += 1) {
     if (obstacleHitIndex >= 0 && index >= obstacleHitIndex) {
       break;
     }

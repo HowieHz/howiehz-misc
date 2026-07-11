@@ -113,6 +113,8 @@ export interface GraphwarTrajectorySampleResult {
   sample: GraphwarTrajectorySample;
   /** 首次命中当前目标的采样点索引，-1 表示未命中。 */
   targetHitIndex: number;
+  /** 各无序跟踪目标首次命中的采样点索引；-1 表示未命中。 */
+  trackedTargetHitIndexes: number[];
   /** 映射回截图后的可绘制轨迹像素。 */
   visiblePixels: PixelPoint[];
 }
@@ -137,12 +139,18 @@ export interface GraphwarPathTargetSequenceResult {
   earlyStopReason?: GraphwarTrajectoryEarlyStopReason;
   /** 已按顺序命中的目标数量。 */
   reachedTargetCount: number;
+  /** 首次碰到障碍的采样点索引，-1 表示未碰到。 */
+  obstacleHitIndex: number;
   /** True 表示所有目标都在撞障碍前按序命中。 */
   reachesTargetSequenceBeforeObstacle: boolean;
   /** 原始 Graphwar 采样结果，供调试和成本统计使用。 */
   sample: GraphwarTrajectorySample;
   /** 实际检查过的采样点数量。 */
   samplePointCount: number;
+  /** 完成有序目标序列的采样点索引；-1 表示未完成。 */
+  targetHitIndex: number;
+  /** 各无序跟踪目标首次命中的采样点索引；-1 表示未命中。 */
+  trackedTargetHitIndexes: number[];
   /** 截图像素轨迹，页面可直接绘制。 */
   visiblePixels: PixelPoint[];
 }
@@ -155,6 +163,21 @@ export function graphwarTrajectoryReachesGraphXBeforeObstacle(
   const lastPoint = result.sample.points.at(-1);
   return (
     result.earlyStopReason !== "obstacle" && Number.isFinite(graphX) && Boolean(lastPoint && lastPoint.x >= graphX)
+  );
+}
+
+/** 完整回放中，目标序列完成后必须仍有一个非障碍采样点到达指定 x。 */
+export function graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle(
+  result: Pick<GraphwarPathTargetSequenceResult, "obstacleHitIndex" | "sample" | "targetHitIndex">,
+  graphX: number,
+) {
+  const lastSafeIndex = result.obstacleHitIndex >= 0 ? result.obstacleHitIndex - 1 : result.sample.points.length - 1;
+  const lastSafePoint = result.sample.points[lastSafeIndex];
+  return (
+    Number.isFinite(graphX) &&
+    result.targetHitIndex >= 0 &&
+    result.targetHitIndex <= lastSafeIndex &&
+    Boolean(lastSafePoint && lastSafePoint.x >= graphX)
   );
 }
 
@@ -1238,6 +1261,8 @@ export function sampleGraphwarFormulaTrajectory(options: {
   targetPoint?: PixelPoint;
   targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   targetSequencePoints?: readonly PixelPoint[];
+  /** 只记录首次命中位置、不影响停止条件的无序目标圆。 */
+  trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
 }): GraphwarTrajectorySampleResult {
   const stopTracker = createGraphwarTrajectoryStopTracker(options);
   // 必须按最终公式文本重新解析回放：小数位和 Graphwar parser 行为都是验证对象的一部分。
@@ -1352,6 +1377,10 @@ export function sampleGraphwarPathTargetSequence(options: {
   targetHitRadiusPixels: number;
   targetCircles?: readonly GraphwarTrajectoryTargetCircle[];
   targetPoints: readonly PixelPoint[];
+  /** False 时目标序列完成后继续自然采样，直到障碍、边界或模拟器自身停止。 */
+  stopOnTargetSequenceComplete?: boolean;
+  /** 只记录首次命中位置、不参与顺序和停止条件的目标圆。 */
+  trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
 }): GraphwarPathTargetSequenceResult {
   const targetSequence =
     options.targetCircles ??
@@ -1359,12 +1388,16 @@ export function sampleGraphwarPathTargetSequence(options: {
       center,
       radius: options.targetHitRadiusPixels,
     }));
-  if (targetSequence.length === 0) {
+  const trackedTargets = options.trackedTargets ?? [];
+  if (targetSequence.length === 0 && trackedTargets.length === 0) {
     return {
+      obstacleHitIndex: -1,
       reachedTargetCount: 0,
       reachesTargetSequenceBeforeObstacle: true,
       sample: createEmptyTrajectorySample(),
       samplePointCount: 0,
+      targetHitIndex: -1,
+      trackedTargetHitIndexes: [],
       visiblePixels: [],
     };
   }
@@ -1379,14 +1412,19 @@ export function sampleGraphwarPathTargetSequence(options: {
   });
   if (context.formulaPoints.length < 2) {
     return {
+      obstacleHitIndex: -1,
       reachedTargetCount: 0,
       reachesTargetSequenceBeforeObstacle: false,
       sample: createEmptyTrajectorySample(),
       samplePointCount: 0,
+      targetHitIndex: -1,
+      trackedTargetHitIndexes: trackedTargets.map(() => -1),
       visiblePixels: [],
     };
   }
 
+  const stopOnTargetSequenceComplete =
+    options.continueAfterTargetSequenceUntilGraphX === undefined ? options.stopOnTargetSequenceComplete : false;
   const result = sampleGraphwarFormulaTrajectory({
     bounds: options.bounds,
     boundsRect: options.boundsRect,
@@ -1397,20 +1435,22 @@ export function sampleGraphwarPathTargetSequence(options: {
     collectVisiblePixels: options.collectVisiblePixels,
     ...(options.continueAfterTargetSequenceUntilGraphX === undefined
       ? {}
-      : {
-          continueAfterTargetSequenceUntilGraphX: options.continueAfterTargetSequenceUntilGraphX,
-          stopOnTargetSequenceComplete: false,
-        }),
+      : { continueAfterTargetSequenceUntilGraphX: options.continueAfterTargetSequenceUntilGraphX }),
     context,
+    ...(stopOnTargetSequenceComplete === undefined ? {} : { stopOnTargetSequenceComplete }),
     targetHitRadiusPixels: options.targetHitRadiusPixels,
     targetSequence,
+    trackedTargets,
   });
   return {
     earlyStopReason: result.earlyStopReason,
+    obstacleHitIndex: result.obstacleHitIndex,
     reachedTargetCount: result.reachedTargetCount,
     reachesTargetSequenceBeforeObstacle: result.reachedTargetCount >= targetSequence.length,
     sample: result.sample,
     samplePointCount: result.sample.points.length,
+    targetHitIndex: result.targetHitIndex,
+    trackedTargetHitIndexes: result.trackedTargetHitIndexes,
     visiblePixels: result.visiblePixels,
   };
 }
@@ -1483,6 +1523,7 @@ function createGraphwarTrajectoryStopTracker(options: {
   targetPoint?: PixelPoint;
   targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   targetSequencePoints?: readonly PixelPoint[];
+  trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
 }) {
   const targetSequence =
     options.targetSequence ??
@@ -1492,6 +1533,10 @@ function createGraphwarTrajectoryStopTracker(options: {
     );
   const boundsRect = options.boundsRect;
   const collisionMask = options.collision?.mask;
+  const targetRadiusSquares = targetSequence.map((target) => target.radius * target.radius);
+  const trackedTargets = options.trackedTargets ?? [];
+  const trackedTargetHitIndexes = trackedTargets.map(() => -1);
+  const trackedTargetRadiusSquares = trackedTargets.map((target) => target.radius * target.radius);
   // 采样点循环会高频判障碍；这里预先归一化边界和比例，循环内只做乘法与整数化。
   const collisionBoundaryExpansion = Math.floor(options.collision?.boundaryExpansion ?? 0);
   const collisionPlaneScaleX = GRAPHWAR_PLANE_LENGTH / boundsRect.width;
@@ -1509,18 +1554,36 @@ function createGraphwarTrajectoryStopTracker(options: {
         visiblePixels.push(pixel);
       }
 
-      // Graphwar 从第 1 个采样点开始判士兵命中，起点不参与命中检测。
-      while (index > 0 && reachedTargetCount < targetSequence.length) {
-        const target = targetSequence[reachedTargetCount];
-        if (!target) {
-          break;
+      // Graphwar 从第 1 个采样点开始判士兵命中；先收齐同点的无序命中，再进入停止判定。
+      if (index > 0) {
+        for (let targetIndex = 0; targetIndex < trackedTargets.length; targetIndex += 1) {
+          if (trackedTargetHitIndexes[targetIndex] !== -1) {
+            continue;
+          }
+          const target = trackedTargets[targetIndex];
+          if (!target) {
+            continue;
+          }
+          const targetDx = pixel.x - target.center.x;
+          const targetDy = pixel.y - target.center.y;
+          if (targetDx * targetDx + targetDy * targetDy >= trackedTargetRadiusSquares[targetIndex]) {
+            continue;
+          }
+          trackedTargetHitIndexes[targetIndex] = index;
         }
-        const targetDx = pixel.x - target.center.x;
-        const targetDy = pixel.y - target.center.y;
-        if (targetDx * targetDx + targetDy * targetDy >= target.radius * target.radius) {
-          break;
+
+        while (reachedTargetCount < targetSequence.length) {
+          const target = targetSequence[reachedTargetCount];
+          if (!target) {
+            break;
+          }
+          const targetDx = pixel.x - target.center.x;
+          const targetDy = pixel.y - target.center.y;
+          if (targetDx * targetDx + targetDy * targetDy >= targetRadiusSquares[reachedTargetCount]) {
+            break;
+          }
+          reachedTargetCount += 1;
         }
-        reachedTargetCount += 1;
       }
       const targetSequenceReached = targetSequence.length > 0 && reachedTargetCount >= targetSequence.length;
       if (targetSequenceReached && targetHitIndex < 0) {
@@ -1560,6 +1623,7 @@ function createGraphwarTrajectoryStopTracker(options: {
         reachedTargetCount,
         sample,
         targetHitIndex,
+        trackedTargetHitIndexes,
         visiblePixels,
       };
     },

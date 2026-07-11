@@ -8,6 +8,7 @@ import { resolveStepFormula } from "../../formula/generation/step-numeric-strate
 import type { GraphwarTrajectorySamplingState } from "../../formula/simulation/simulator";
 import {
   createGraphwarTrajectoryFormulaContext,
+  graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle,
   graphwarTrajectoryReachesGraphXBeforeObstacle,
   sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTargetSequence,
@@ -333,6 +334,24 @@ interface OneClickClearRouteValidationResult {
   validationCount: number;
 }
 
+interface OneClickClearRouteValidationSnapshot {
+  /** 本快照已经验证到的最后一条边；重选路线只复用连续相同的 edge id 前缀。 */
+  edgeId: number;
+  /** 已验证前缀的完整路径。 */
+  pathPoints: PixelPoint[];
+  /** ABS 可从物理状态续播；Step 只复用目标和路径，追加后缀仍从发射点回放。 */
+  segmentState: OneClickClearRouteSegmentValidationState;
+  /** 已验证前缀按顺序命中的目标。 */
+  targetSequence: OneClickClearTarget[];
+}
+
+interface OneClickClearPathOptimizationResult {
+  /** 局部快检删点后的精确路径若已完整复验，调用方可直接复用。 */
+  finalValidation?: ReturnType<typeof sampleOneClickClearTargetSequence>;
+  route: OneClickClearValidatedRoute;
+  workUnits: number;
+}
+
 /** 一次清图搜索尝试的控制流：失败直接结束，retry 禁边后重跑 DP，validated 进入成功落地。 */
 type OneClickClearSearchAttemptResult =
   | {
@@ -352,12 +371,16 @@ type OneClickClearSearchAttemptResult =
   | {
       /** 已通过增量验证、删点优化和最终整路复验的路线。 */
       route: OneClickClearValidatedRoute;
+      /** 最终整路复验同一次回放统计出的全部实际命中。 */
+      hitTargets: OneClickClearHitTarget[];
       type: "validated";
       /** 已累计的建边、验证和优化工作量。 */
       workUnits: number;
     };
 interface OneClickClearSearchContext {
   options: GraphwarOneClickClearOptions;
+  /** DAG 禁边重选时复用上一轮完全相同的已验证边前缀。 */
+  routeValidationPrefix?: OneClickClearRouteValidationSnapshot[];
 }
 
 interface OneClickClearRouteSegmentValidationState {
@@ -445,13 +468,12 @@ export async function buildGraphwarOneClickClearPath(
       return createOneClickClearFailure(attempt.reason, startedAt, workUnits);
     }
     if (attempt.type === "validated") {
-      const hitTargets = collectOneClickClearHitTargets(options, attempt.route.pathPoints);
       return {
         elapsedMs: Math.max(0, nowMs() - startedAt),
         expandedStates: workUnits,
         pathPoints: attempt.route.pathPoints,
-        targetIds: hitTargets.map((target) => target.id),
-        targetSequence: hitTargets.map((target) => createOneClickClearTargetCircle(target)),
+        targetIds: attempt.hitTargets.map((target) => target.id),
+        targetSequence: attempt.hitTargets.map((target) => createOneClickClearTargetCircle(target)),
         type: "success",
       };
     }
@@ -535,13 +557,13 @@ async function buildOneClickClearStepGlitchPath(
         );
   workUnits = finalized.workUnits;
   const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
-    sampleOneClickClearTargetSequence(options, finalized.route),
+    sampleOneClickClearTargetSequence(options, finalized.route, true),
   );
   if (!finalValidation.reachesTargetSequenceBeforeObstacle) {
     return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
   }
 
-  const hitTargets = collectOneClickClearHitTargets(options, finalized.route.pathPoints);
+  const hitTargets = collectOneClickClearHitTargets(options, finalValidation.trackedTargetHitIndexes);
   if (hitTargets.length === 0) {
     return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
   }
@@ -605,14 +627,17 @@ async function runOneClickClearSearchAttempt(
   const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
     optimizeOneClickClearPath(context, validatedRoute, nextWorkUnits),
   );
-  const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
-    sampleOneClickClearTargetSequence(options, optimized.route),
-  );
+  const finalValidation =
+    optimized.finalValidation ??
+    measureOneClickClearDebugTiming(options, "validate-final", () =>
+      sampleOneClickClearTargetSequence(options, optimized.route, true),
+    );
   if (
     oneClickClearStepRouteIsValid(options, optimized.route.pathPoints) &&
     finalValidation.reachesTargetSequenceBeforeObstacle
   ) {
     return {
+      hitTargets: collectOneClickClearHitTargets(options, finalValidation.trackedTargetHitIndexes),
       route: optimized.route,
       type: "validated",
       workUnits: optimized.workUnits,
@@ -1226,15 +1251,34 @@ function validateOneClickClearDagRoute(
   dag: OneClickClearDag,
   edges: readonly OneClickClearDagEdge[],
 ): OneClickClearRouteValidationResult {
-  let pathPoints = [...context.options.pathPoints];
-  let segmentState: OneClickClearRouteSegmentValidationState = { initialReachedTargetCount: 0 };
-  const targetSequence: OneClickClearTarget[] = [];
+  const cachedPrefix = context.routeValidationPrefix ?? [];
+  let sharedPrefixLength = 0;
+  while (
+    sharedPrefixLength < edges.length &&
+    cachedPrefix[sharedPrefixLength]?.edgeId === edges[sharedPrefixLength]?.id
+  ) {
+    sharedPrefixLength += 1;
+  }
+
+  const reused = sharedPrefixLength > 0 ? cachedPrefix[sharedPrefixLength - 1] : undefined;
+  let pathPoints = reused ? [...reused.pathPoints] : [...context.options.pathPoints];
+  let segmentState: OneClickClearRouteSegmentValidationState = reused
+    ? { ...reused.segmentState }
+    : { initialReachedTargetCount: 0 };
+  const targetSequence: OneClickClearTarget[] = reused ? [...reused.targetSequence] : [];
+  const validatedPrefix = cachedPrefix.slice(0, sharedPrefixLength);
   let validationCount = 0;
 
-  for (const edge of edges) {
+  for (let edgeIndex = sharedPrefixLength; edgeIndex < edges.length; edgeIndex += 1) {
+    const edge = edges[edgeIndex];
+    if (!edge) {
+      context.routeValidationPrefix = validatedPrefix;
+      return { validationCount };
+    }
     const targetNode = dag.nodes[edge.to];
     const target = targetNode ? dag.targets[targetNode.targetIndex] : undefined;
     if (!targetNode || !target) {
+      context.routeValidationPrefix = validatedPrefix;
       return { failedEdge: edge, validationCount };
     }
 
@@ -1243,6 +1287,7 @@ function validateOneClickClearDagRoute(
     validationCount += 1;
     const validation = validateOneClickClearRouteSegment(context, nextPath, nextTargetSequence, segmentState);
     if (!validation) {
+      context.routeValidationPrefix = validatedPrefix;
       return { failedEdge: edge, validationCount };
     }
 
@@ -1252,7 +1297,15 @@ function validateOneClickClearDagRoute(
       ...(validation.sample.endState ? { initialState: validation.sample.endState } : {}),
     };
     targetSequence.push(target);
+    validatedPrefix.push({
+      edgeId: edge.id,
+      pathPoints,
+      segmentState,
+      targetSequence: [...targetSequence],
+    });
   }
+
+  context.routeValidationPrefix = validatedPrefix;
 
   return {
     route: {
@@ -1350,6 +1403,7 @@ function oneClickClearStepRouteIsValid(options: GraphwarOneClickClearOptions, pa
 function sampleOneClickClearTargetSequence(
   options: GraphwarOneClickClearOptions,
   route: Pick<OneClickClearValidatedRoute, "pathPoints" | "targetSequence">,
+  trackActualHits = false,
 ) {
   const stepTargets =
     options.settings.algorithm === "step"
@@ -1364,10 +1418,18 @@ function sampleOneClickClearTargetSequence(
     boundaryExpansion: options.simulationBoundaryExpansion,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
-    ...(targetControlGraphX === undefined ? {} : { continueAfterTargetSequenceUntilGraphX: targetControlGraphX }),
+    ...(targetControlGraphX === undefined || trackActualHits
+      ? {}
+      : { continueAfterTargetSequenceUntilGraphX: targetControlGraphX }),
     obstacleMask: options.simulationMask,
     points: route.pathPoints,
     settings: options.settings,
+    ...(trackActualHits
+      ? {
+          stopOnTargetSequenceComplete: false,
+          trackedTargets: options.hitCandidates.map((target) => createOneClickClearTargetCircle(target)),
+        }
+      : {}),
     targetHitRadiusPixels: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS,
     targetCircles: stepTargets ?? route.targetSequence.map((target) => target.hitCircle),
     targetPoints:
@@ -1379,7 +1441,10 @@ function sampleOneClickClearTargetSequence(
 
   const prefixTargetCount = options.pathPoints.length >= 2 ? 1 : 0;
   const reachesTargetControl =
-    targetControlGraphX === undefined || graphwarTrajectoryReachesGraphXBeforeObstacle(result, targetControlGraphX);
+    targetControlGraphX === undefined ||
+    (trackActualHits
+      ? graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle(result, targetControlGraphX)
+      : graphwarTrajectoryReachesGraphXBeforeObstacle(result, targetControlGraphX));
   return {
     ...result,
     reachedTargetCount: Math.max(0, result.reachedTargetCount - prefixTargetCount),
@@ -1410,12 +1475,12 @@ function createOneClickClearStepValidationTargets(
 /** 最终统计当前完整弹道实际命中的候选士兵，包含非 DAG 节点的顺路命中。 */
 function collectOneClickClearHitTargets(
   options: GraphwarOneClickClearOptions,
-  pathPoints: readonly PixelPoint[],
+  trackedTargetHitIndexes: readonly number[],
 ): OneClickClearHitTarget[] {
   return options.hitCandidates
-    .flatMap<OneClickClearHitTarget>((candidate) => {
-      const samplePointCount = sampleOneClickClearTargetHit(options, pathPoints, candidate);
-      return samplePointCount === undefined ? [] : [{ ...candidate, hitSamplePointCount: samplePointCount }];
+    .flatMap<OneClickClearHitTarget>((candidate, targetIndex) => {
+      const hitIndex = trackedTargetHitIndexes[targetIndex];
+      return hitIndex === undefined || hitIndex < 0 ? [] : [{ ...candidate, hitSamplePointCount: hitIndex + 1 }];
     })
     .sort(compareOneClickClearHitTargets);
 }
@@ -1441,7 +1506,7 @@ async function optimizeOneClickClearPath(
   context: OneClickClearSearchContext,
   route: OneClickClearValidatedRoute,
   workUnits: number,
-) {
+): Promise<OneClickClearPathOptimizationResult> {
   let optimized = route;
   const firstGeneratedIndex = context.options.pathPoints.length;
   const protectedTargetPoints = oneClickClearUsesStepGlitch(context.options.settings)
@@ -1488,34 +1553,19 @@ async function optimizeOneClickClearPath(
   }
   if (localHitCheckCanSkipFullValidation && optimized !== route) {
     workUnits += 1;
-    // y=/y'= abs 的局部命中检查能证明删点不漏打士兵；这里复验整路，补上障碍/边界等非士兵因素。
+    // 局部快检只证明不漏打士兵；这里一次补齐障碍验证和最终实际命中统计。
+    const finalValidation = measureOneClickClearDebugTiming(context.options, "validate-final", () =>
+      sampleOneClickClearTargetSequence(context.options, optimized, true),
+    );
     if (
       !oneClickClearStepRouteIsValid(context.options, optimized.pathPoints) ||
-      !validateOneClickClearTargetSequence(context.options, optimized)
+      !finalValidation.reachesTargetSequenceBeforeObstacle
     ) {
       return { route, workUnits };
     }
+    return { finalValidation, route: optimized, workUnits };
   }
   return { route: optimized, workUnits };
-}
-
-function sampleOneClickClearTargetHit(
-  options: GraphwarOneClickClearOptions,
-  pathPoints: readonly PixelPoint[],
-  target: GraphwarOneClickClearCandidate,
-) {
-  const result = sampleGraphwarPathTargetSequence({
-    boundaryExpansion: options.simulationBoundaryExpansion,
-    bounds: options.bounds,
-    boundsRect: options.boundsRect,
-    obstacleMask: options.simulationMask,
-    points: pathPoints,
-    settings: options.settings,
-    targetHitRadiusPixels: target.hitRadius,
-    targetCircles: [createOneClickClearTargetCircle(target)],
-    targetPoints: [target.hitCenter],
-  });
-  return result.reachesTargetSequenceBeforeObstacle ? result.samplePointCount : undefined;
 }
 
 function graphXAdvancesFromX(fromGraphX: number, toGraphX: number) {
@@ -1523,12 +1573,21 @@ function graphXAdvancesFromX(fromGraphX: number, toGraphX: number) {
 }
 
 function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions, points: readonly PixelPoint[]) {
+  const firstPoint = points[0];
+  if (!firstPoint) {
+    return true;
+  }
+  let previous = imageToGraphPoint(firstPoint, options.bounds, options.boundsRect);
   for (let index = 1; index < points.length; index += 1) {
-    const previous = imageToGraphPoint(points[index - 1], options.bounds, options.boundsRect);
-    const next = imageToGraphPoint(points[index], options.bounds, options.boundsRect);
+    const point = points[index];
+    if (!point) {
+      return false;
+    }
+    const next = imageToGraphPoint(point, options.bounds, options.boundsRect);
     if (!graphXAdvancesFromX(previous.x, next.x)) {
       return false;
     }
+    previous = next;
   }
   return true;
 }

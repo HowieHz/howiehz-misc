@@ -458,9 +458,18 @@ function findStepGlitchSmartPath(
     };
   }
 
-  const validation = measureSmartPathfindingWorkerTiming(timings, "validate-trajectory", () =>
-    validateSmartPathfindingTrajectory(input, scanResult.path, undefined),
-  );
+  const validation = measureSmartPathfindingWorkerTiming(timings, "validate-trajectory", () => {
+    if (input.settings.stepGlitchObstacleMask !== input.simulationMask) {
+      return validateSmartPathfindingTrajectory(input, scanResult.path, undefined);
+    }
+
+    // Scanner 已用同一公式 mask 完整回放到目标控制点；这里只保留不依赖轨迹采样的 x+ 规则检查。
+    const followsGraphRule = pathFollowsGraphRule(scanResult.path, input.bounds, input.boundsRect);
+    return {
+      followsGraphRule,
+      reachesTargetBeforeObstacle: followsGraphRule,
+    };
+  });
   if (!validation.followsGraphRule) {
     return { failureReason: "graph-rule", timings };
   }

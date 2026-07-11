@@ -14,6 +14,20 @@ const scanMockState = vi.hoisted(() => ({
   }[],
   scans: [] as { scannerId: number; targetPoint: { x: number; y: number } }[],
 }));
+const samplingMockState = vi.hoisted(() => ({ pathTargetSequenceCalls: 0 }));
+
+vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../formula/trajectory/sampling")>();
+  return {
+    ...original,
+    sampleGraphwarPathTargetSequence: vi.fn(
+      (options: Parameters<typeof original.sampleGraphwarPathTargetSequence>[0]) => {
+        samplingMockState.pathTargetSequenceCalls += 1;
+        return original.sampleGraphwarPathTargetSequence(options);
+      },
+    ),
+  };
+});
 
 vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
   const original = await importOriginal<typeof import("../routing/step-glitch-scan")>();
@@ -72,6 +86,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.outcomes.length = 0;
     scanMockState.scanners.length = 0;
     scanMockState.scans.length = 0;
+    samplingMockState.pathTargetSequenceCalls = 0;
   });
 
   it.each(["visibility-graph", "theta-star"] as const)(
@@ -100,6 +115,7 @@ describe("Step glitch one-click-clear target retries", () => {
         expect(result.targetIds).toEqual(["hit"]);
         expect(result.pathPoints.at(-1)).toEqual(hit);
       }
+      expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
       expect(debugStages.includes("optimize-path")).toBe(stepGlitchModeRunsPointDeletion(routeMode));
     },
   );

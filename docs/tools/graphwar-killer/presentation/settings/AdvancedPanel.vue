@@ -99,251 +99,257 @@ const liveClickPreviewWorkerCountText = computed({
   <section
     class="graphwar-killer__panel graphwar-killer__advanced-settings-panel"
     aria-labelledby="graphwar-killer-advanced-settings-title"
+    :aria-disabled="panel.interactionDisabled"
   >
     <div class="graphwar-killer__label-row">
       <h2 id="graphwar-killer-advanced-settings-title">
         {{ locale.ui.settings.advancedSettings }}
       </h2>
     </div>
-    <div class="graphwar-killer__advanced-settings-grid">
-      <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-        <h3>
-          {{ locale.ui.settings.bounds.heading }}
-        </h3>
-        <div class="graphwar-killer__coordinate-grid">
-          <label :title="locale.ui.settings.bounds.minXTitle">
-            -x
-            <input
-              v-model="minXText"
-              inputmode="decimal"
-              autocomplete="off"
-              :aria-label="locale.ui.settings.bounds.minXAriaLabel"
-              :title="locale.ui.settings.bounds.minXTitle"
-            >
-          </label>
-          <label :title="locale.ui.settings.bounds.maxXTitle">
-            +x
-            <input
-              v-model="maxXText"
-              inputmode="decimal"
-              autocomplete="off"
-              :aria-label="locale.ui.settings.bounds.maxXAriaLabel"
-              :title="locale.ui.settings.bounds.maxXTitle"
-            >
-          </label>
-          <label :title="locale.ui.settings.bounds.minYTitle">
-            -y
-            <input
-              v-model="minYText"
-              inputmode="decimal"
-              autocomplete="off"
-              :aria-label="locale.ui.settings.bounds.minYAriaLabel"
-              :title="locale.ui.settings.bounds.minYTitle"
-            >
-          </label>
-          <label :title="locale.ui.settings.bounds.maxYTitle">
-            +y
-            <input
-              v-model="maxYText"
-              inputmode="decimal"
-              autocomplete="off"
-              :aria-label="locale.ui.settings.bounds.maxYAriaLabel"
-              :title="locale.ui.settings.bounds.maxYTitle"
-            >
-          </label>
+    <fieldset
+      class="graphwar-killer__advanced-settings-fields"
+      :disabled="panel.interactionDisabled"
+    >
+      <div class="graphwar-killer__advanced-settings-grid">
+        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+          <h3>
+            {{ locale.ui.settings.bounds.heading }}
+          </h3>
+          <div class="graphwar-killer__coordinate-grid">
+            <label :title="locale.ui.settings.bounds.minXTitle">
+              -x
+              <input
+                v-model="minXText"
+                inputmode="decimal"
+                autocomplete="off"
+                :aria-label="locale.ui.settings.bounds.minXAriaLabel"
+                :title="locale.ui.settings.bounds.minXTitle"
+              >
+            </label>
+            <label :title="locale.ui.settings.bounds.maxXTitle">
+              +x
+              <input
+                v-model="maxXText"
+                inputmode="decimal"
+                autocomplete="off"
+                :aria-label="locale.ui.settings.bounds.maxXAriaLabel"
+                :title="locale.ui.settings.bounds.maxXTitle"
+              >
+            </label>
+            <label :title="locale.ui.settings.bounds.minYTitle">
+              -y
+              <input
+                v-model="minYText"
+                inputmode="decimal"
+                autocomplete="off"
+                :aria-label="locale.ui.settings.bounds.minYAriaLabel"
+                :title="locale.ui.settings.bounds.minYTitle"
+              >
+            </label>
+            <label :title="locale.ui.settings.bounds.maxYTitle">
+              +y
+              <input
+                v-model="maxYText"
+                inputmode="decimal"
+                autocomplete="off"
+                :aria-label="locale.ui.settings.bounds.maxYAriaLabel"
+                :title="locale.ui.settings.bounds.maxYTitle"
+              >
+            </label>
+          </div>
         </div>
-      </div>
-      <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-        <h3>
-          {{ locale.ui.settings.simulator }}
-        </h3>
-        <div class="graphwar-killer__image-actions">
-          <button
-            type="button"
-            :aria-pressed="panel.simulator.skipUnknownCharacters"
-            :class="{ 'graphwar-killer__toggle-button--active': panel.simulator.skipUnknownCharacters }"
-            :title="locale.ui.settings.skipUnknownCharactersTitle"
-            @click="emit('toggleSimulatorSkipUnknownCharacters')"
-          >
-            {{ locale.ui.settings.skipUnknownCharacters }}
-          </button>
-          <button
-            type="button"
-            :aria-pressed="panel.simulator.parseDerivativeAsY"
-            :class="{ 'graphwar-killer__toggle-button--active': panel.simulator.parseDerivativeAsY }"
-            :title="locale.ui.settings.parseDerivativeAsYTitle"
-            @click="emit('toggleSimulatorParseDerivativeAsY')"
-          >
-            {{ locale.ui.settings.parseDerivativeAsY }}
-          </button>
+        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+          <h3>
+            {{ locale.ui.settings.simulator }}
+          </h3>
+          <div class="graphwar-killer__image-actions">
+            <button
+              type="button"
+              :aria-pressed="panel.simulator.skipUnknownCharacters"
+              :class="{ 'graphwar-killer__toggle-button--active': panel.simulator.skipUnknownCharacters }"
+              :title="locale.ui.settings.skipUnknownCharactersTitle"
+              @click="emit('toggleSimulatorSkipUnknownCharacters')"
+            >
+              {{ locale.ui.settings.skipUnknownCharacters }}
+            </button>
+            <button
+              type="button"
+              :aria-pressed="panel.simulator.parseDerivativeAsY"
+              :class="{ 'graphwar-killer__toggle-button--active': panel.simulator.parseDerivativeAsY }"
+              :title="locale.ui.settings.parseDerivativeAsYTitle"
+              @click="emit('toggleSimulatorParseDerivativeAsY')"
+            >
+              {{ locale.ui.settings.parseDerivativeAsY }}
+            </button>
+          </div>
         </div>
-      </div>
-      <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-        <h3>
-          {{ locale.ui.settings.recognition.heading }}
-        </h3>
-        <div class="graphwar-killer__recognition-setting-row">
-          <label
-            class="graphwar-killer__detection-setting-label"
-            :title="locale.ui.settings.recognition.maximumSoldierCountTitle"
-          >
-            {{ locale.ui.settings.recognition.maximumSoldierCount }}
-            <input
-              v-model="maximumSoldierCountText"
-              inputmode="numeric"
-              min="1"
-              autocomplete="off"
-              :aria-label="locale.ui.settings.recognition.maximumSoldierCountAriaLabel"
+        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+          <h3>
+            {{ locale.ui.settings.recognition.heading }}
+          </h3>
+          <div class="graphwar-killer__recognition-setting-row">
+            <label
+              class="graphwar-killer__detection-setting-label"
               :title="locale.ui.settings.recognition.maximumSoldierCountTitle"
             >
-          </label>
-          <label
-            class="graphwar-killer__detection-setting-label"
-            :title="locale.ui.settings.recognition.candidateTopRatioTitle"
-          >
-            {{ locale.ui.settings.recognition.candidateTopRatio }}
-            <input
-              v-model="candidateTopRatioText"
-              inputmode="decimal"
-              min="0.000001"
-              max="1"
-              step="0.01"
-              autocomplete="off"
-              :aria-label="locale.ui.settings.recognition.candidateTopRatioAriaLabel"
+              {{ locale.ui.settings.recognition.maximumSoldierCount }}
+              <input
+                v-model="maximumSoldierCountText"
+                inputmode="numeric"
+                min="1"
+                autocomplete="off"
+                :aria-label="locale.ui.settings.recognition.maximumSoldierCountAriaLabel"
+                :title="locale.ui.settings.recognition.maximumSoldierCountTitle"
+              >
+            </label>
+            <label
+              class="graphwar-killer__detection-setting-label"
               :title="locale.ui.settings.recognition.candidateTopRatioTitle"
             >
-          </label>
+              {{ locale.ui.settings.recognition.candidateTopRatio }}
+              <input
+                v-model="candidateTopRatioText"
+                inputmode="decimal"
+                min="0.000001"
+                max="1"
+                step="0.01"
+                autocomplete="off"
+                :aria-label="locale.ui.settings.recognition.candidateTopRatioAriaLabel"
+                :title="locale.ui.settings.recognition.candidateTopRatioTitle"
+              >
+            </label>
+            <label
+              class="graphwar-killer__detection-setting-label"
+              :title="locale.ui.settings.recognition.templateMatchingWorkerCountTitle"
+            >
+              {{ locale.ui.settings.recognition.templateMatchingWorkerCount }}
+              <input
+                v-model="templateMatchingWorkerCountText"
+                inputmode="numeric"
+                min="1"
+                max="128"
+                autocomplete="off"
+                :aria-label="locale.ui.settings.recognition.templateMatchingWorkerCountAriaLabel"
+                :title="locale.ui.settings.recognition.templateMatchingWorkerCountTitle"
+              >
+            </label>
+            <label
+              class="graphwar-killer__detection-setting-label"
+              :title="locale.ui.detection.minObstacleAreaTitle"
+            >
+              {{ locale.ui.detection.minObstacleArea }}
+              <input
+                v-model="obstacleMinAreaText"
+                inputmode="numeric"
+                min="0"
+                :max="panel.recognition.obstacleMaximumArea"
+                :aria-label="locale.ui.detection.minObstacleAreaAriaLabel"
+                :title="locale.ui.detection.minObstacleAreaTitle"
+              >
+              <span>px²</span>
+            </label>
+          </div>
+        </div>
+        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+          <h3>
+            {{ locale.ui.settings.pathfinding.heading }}
+          </h3>
+          <details class="graphwar-killer__details">
+            <summary
+              id="graphwar-killer-obstacle-expansion-title"
+              :title="locale.ui.pathfinding.obstacleExpansionTitle"
+            >
+              {{ locale.ui.pathfinding.obstacleExpansion }}
+              <span class="graphwar-killer__details-summary-note">
+                {{
+                  panel.pathfinding.obstacleExpansionMode === "agent"
+                    ? locale.ui.pathfinding.obstacleExpansionAgentMode
+                    : locale.ui.pathfinding.obstacleExpansionDetectionMode
+                }}
+              </span>
+            </summary>
+            <div class="graphwar-killer__pathfinding-setting-grid">
+              <label
+                class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
+                :title="locale.ui.pathfinding.routePlanningToleranceTitle"
+              >
+                {{ locale.ui.pathfinding.routePlanningTolerance }}
+                <input
+                  v-model="routePlanningToleranceText"
+                  inputmode="decimal"
+                  :aria-label="locale.ui.pathfinding.routePlanningToleranceAriaLabel"
+                  :title="locale.ui.pathfinding.routePlanningToleranceTitle"
+                >
+                <span>{{ locale.ui.pathfinding.unit }}</span>
+              </label>
+              <label
+                class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
+                :title="locale.ui.pathfinding.simulationToleranceTitle"
+              >
+                {{ locale.ui.pathfinding.simulationTolerance }}
+                <input
+                  v-model="obstacleSimulationToleranceText"
+                  inputmode="decimal"
+                  :aria-label="locale.ui.pathfinding.simulationToleranceAriaLabel"
+                  :title="locale.ui.pathfinding.simulationToleranceTitle"
+                >
+                <span>{{ locale.ui.pathfinding.unit }}</span>
+              </label>
+            </div>
+          </details>
           <label
-            class="graphwar-killer__detection-setting-label"
-            :title="locale.ui.settings.recognition.templateMatchingWorkerCountTitle"
+            class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
+            :title="locale.ui.settings.pathfinding.workerCountTitle"
           >
-            {{ locale.ui.settings.recognition.templateMatchingWorkerCount }}
+            {{ locale.ui.settings.pathfinding.workerCount }}
             <input
-              v-model="templateMatchingWorkerCountText"
+              v-model="pathfindingWorkerCountText"
               inputmode="numeric"
               min="1"
               max="128"
               autocomplete="off"
-              :aria-label="locale.ui.settings.recognition.templateMatchingWorkerCountAriaLabel"
-              :title="locale.ui.settings.recognition.templateMatchingWorkerCountTitle"
+              :aria-label="locale.ui.settings.pathfinding.workerCountAriaLabel"
+              :title="locale.ui.settings.pathfinding.workerCountTitle"
             >
           </label>
           <label
-            class="graphwar-killer__detection-setting-label"
-            :title="locale.ui.detection.minObstacleAreaTitle"
+            class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
+            :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
           >
-            {{ locale.ui.detection.minObstacleArea }}
+            {{ locale.ui.pathfinding.oneClickClearDeleteCheckRadius }}
             <input
-              v-model="obstacleMinAreaText"
-              inputmode="numeric"
-              min="0"
-              :max="panel.recognition.obstacleMaximumArea"
-              :aria-label="locale.ui.detection.minObstacleAreaAriaLabel"
-              :title="locale.ui.detection.minObstacleAreaTitle"
+              v-model="oneClickClearDeleteCheckRadiusText"
+              inputmode="decimal"
+              :min="panel.pathfinding.oneClickClearDeleteCheckRadiusMinimumPlanePixels"
+              step="0.1"
+              :aria-label="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusAriaLabel"
+              :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
             >
-            <span>px²</span>
+            <span>{{ locale.ui.pathfinding.unit }}</span>
+          </label>
+        </div>
+        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+          <h3>
+            {{ locale.ui.settings.actionBar.heading }}
+          </h3>
+          <label
+            class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
+            :title="locale.ui.settings.actionBar.liveClickPreviewWorkerCountTitle"
+          >
+            {{ locale.ui.settings.actionBar.liveClickPreviewWorkerCount }}
+            <input
+              v-model="liveClickPreviewWorkerCountText"
+              inputmode="numeric"
+              min="1"
+              :max="panel.actionBar.liveClickPreviewWorkerCountMaximum"
+              autocomplete="off"
+              :aria-label="locale.ui.settings.actionBar.liveClickPreviewWorkerCountAriaLabel"
+              :title="locale.ui.settings.actionBar.liveClickPreviewWorkerCountTitle"
+            >
           </label>
         </div>
       </div>
-      <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-        <h3>
-          {{ locale.ui.settings.pathfinding.heading }}
-        </h3>
-        <details class="graphwar-killer__details">
-          <summary
-            id="graphwar-killer-obstacle-expansion-title"
-            :title="locale.ui.pathfinding.obstacleExpansionTitle"
-          >
-            {{ locale.ui.pathfinding.obstacleExpansion }}
-            <span class="graphwar-killer__details-summary-note">
-              {{
-                panel.pathfinding.obstacleExpansionMode === "agent"
-                  ? locale.ui.pathfinding.obstacleExpansionAgentMode
-                  : locale.ui.pathfinding.obstacleExpansionDetectionMode
-              }}
-            </span>
-          </summary>
-          <div class="graphwar-killer__pathfinding-setting-grid">
-            <label
-              class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-              :title="locale.ui.pathfinding.routePlanningToleranceTitle"
-            >
-              {{ locale.ui.pathfinding.routePlanningTolerance }}
-              <input
-                v-model="routePlanningToleranceText"
-                inputmode="decimal"
-                :aria-label="locale.ui.pathfinding.routePlanningToleranceAriaLabel"
-                :title="locale.ui.pathfinding.routePlanningToleranceTitle"
-              >
-              <span>{{ locale.ui.pathfinding.unit }}</span>
-            </label>
-            <label
-              class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-              :title="locale.ui.pathfinding.simulationToleranceTitle"
-            >
-              {{ locale.ui.pathfinding.simulationTolerance }}
-              <input
-                v-model="obstacleSimulationToleranceText"
-                inputmode="decimal"
-                :aria-label="locale.ui.pathfinding.simulationToleranceAriaLabel"
-                :title="locale.ui.pathfinding.simulationToleranceTitle"
-              >
-              <span>{{ locale.ui.pathfinding.unit }}</span>
-            </label>
-          </div>
-        </details>
-        <label
-          class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-          :title="locale.ui.settings.pathfinding.workerCountTitle"
-        >
-          {{ locale.ui.settings.pathfinding.workerCount }}
-          <input
-            v-model="pathfindingWorkerCountText"
-            inputmode="numeric"
-            min="1"
-            max="128"
-            autocomplete="off"
-            :aria-label="locale.ui.settings.pathfinding.workerCountAriaLabel"
-            :title="locale.ui.settings.pathfinding.workerCountTitle"
-          >
-        </label>
-        <label
-          class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-          :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
-        >
-          {{ locale.ui.pathfinding.oneClickClearDeleteCheckRadius }}
-          <input
-            v-model="oneClickClearDeleteCheckRadiusText"
-            inputmode="decimal"
-            :min="panel.pathfinding.oneClickClearDeleteCheckRadiusMinimumPlanePixels"
-            step="0.1"
-            :aria-label="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusAriaLabel"
-            :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
-          >
-          <span>{{ locale.ui.pathfinding.unit }}</span>
-        </label>
-      </div>
-      <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-        <h3>
-          {{ locale.ui.settings.actionBar.heading }}
-        </h3>
-        <label
-          class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-          :title="locale.ui.settings.actionBar.liveClickPreviewWorkerCountTitle"
-        >
-          {{ locale.ui.settings.actionBar.liveClickPreviewWorkerCount }}
-          <input
-            v-model="liveClickPreviewWorkerCountText"
-            inputmode="numeric"
-            min="1"
-            :max="panel.actionBar.liveClickPreviewWorkerCountMaximum"
-            autocomplete="off"
-            :aria-label="locale.ui.settings.actionBar.liveClickPreviewWorkerCountAriaLabel"
-            :title="locale.ui.settings.actionBar.liveClickPreviewWorkerCountTitle"
-          >
-        </label>
-      </div>
-    </div>
+    </fieldset>
   </section>
 </template>
 
@@ -412,6 +418,13 @@ const liveClickPreviewWorkerCountText = computed({
 .graphwar-killer__advanced-settings-panel button:disabled {
   cursor: not-allowed;
   opacity: 58%;
+}
+
+.graphwar-killer__advanced-settings-fields {
+  border: 0;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 0;
 }
 
 .graphwar-killer__label-row {

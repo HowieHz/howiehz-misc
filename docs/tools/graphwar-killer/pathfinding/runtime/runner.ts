@@ -3,6 +3,7 @@ import { createPixelPoint } from "../../core/types";
 import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearDagEdgeBuildResult,
+  GraphwarOneClickClearIncumbent,
 } from "../one-click-clear/search";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
 import type {
@@ -32,6 +33,8 @@ export function isGraphwarPathfindingCancelledError(error: unknown) {
 
 /** 单次几何寻路运行时的页面回调。 */
 export interface GraphwarPathfindingRunOptions {
+  /** 一键清图最终回放验证后的 best-so-far；其他任务不会调用。 */
+  onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
   /** 普通智能寻路搜索动画快照。 */
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
 }
@@ -42,6 +45,8 @@ interface PendingPathfindingWorkerTask {
   id: number;
   /** 搜索动画回调；只有普通智能寻路会使用。 */
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
+  /** 一键清图当前最优方案回调；请求取消或换代后不会再调用。 */
+  onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
   /** Promise 失败回调。 */
   reject: (reason?: unknown) => void;
   /** Promise 成功回调。 */
@@ -137,19 +142,27 @@ export function createGraphwarPathfindingRunner() {
   }
 
   /** 在 master Worker 中执行完整一键清图搜索，避免主线程同步采样卡顿。 */
-  function buildOneClickClearPath(input: GraphwarOneClickClearPathWorkerInput) {
+  function buildOneClickClearPath(
+    input: GraphwarOneClickClearPathWorkerInput,
+    options?: GraphwarPathfindingRunOptions,
+  ) {
     cancel();
     const activeWorker = ensureWorker();
     if (!activeWorker) {
       return Promise.reject(new Error("Graphwar pathfinding worker is unavailable"));
     }
-    return runWorkerTask<GraphwarOneClickClearPathWorkerResult>(activeWorker, {
-      id: nextRequestId,
-      task: {
-        input,
-        type: "build-one-click-clear-path",
+    return runWorkerTask<GraphwarOneClickClearPathWorkerResult>(
+      activeWorker,
+      {
+        id: nextRequestId,
+        task: {
+          input,
+          reportIncumbents: options?.onIncumbent !== undefined,
+          type: "build-one-click-clear-path",
+        },
       },
-    });
+      options,
+    );
   }
 
   /** 发送单个 Worker 请求，并记录当前等待响应的任务。 */
@@ -162,6 +175,7 @@ export function createGraphwarPathfindingRunner() {
     return new Promise<TResult>((resolve, reject) => {
       pendingTask = {
         id: request.id,
+        onIncumbent: options?.onIncumbent,
         onPreview: options?.onPreview,
         reject,
         resolve: resolve as PendingPathfindingWorkerTask["resolve"],
@@ -212,6 +226,10 @@ export function createGraphwarPathfindingRunner() {
     }
     if (response.type === "preview") {
       pendingTask.onPreview?.(response.preview);
+      return;
+    }
+    if (response.type === "one-click-clear-incumbent") {
+      pendingTask.onIncumbent?.(response.incumbent);
       return;
     }
 
@@ -311,6 +329,7 @@ function cloneGraphwarPathfindingWorkerRequest(
     id: request.id,
     task: {
       input: cloneGraphwarOneClickClearPathWorkerInput(request.task.input),
+      reportIncumbents: request.task.reportIncumbents,
       type: "build-one-click-clear-path",
     },
   };

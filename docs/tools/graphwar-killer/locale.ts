@@ -181,6 +181,24 @@ export const graphwarKillerLocale = {
       },
       unsupported: "一键清图仅支持双绝对值的 y、y'，或阶跃 y、y'、y''",
     },
+    managed: {
+      backgroundWarning: "页面位于后台，托管发射可能延迟",
+      calculating: (targetCount) =>
+        targetCount === undefined ? "托管计算中" : `托管计算中，当前最优命中 ${targetCount} 个目标`,
+      completedWaiting: "托管计算完成，等待己方回合",
+      connectionFailed: (message) => `Agent 连接失败，正在重试：${message}`,
+      deadlineFired: "剩余 3 秒中断，已发射当前最优方案",
+      deadlineNoPlan: "剩余 3 秒中断，无可用方案",
+      enabled: "托管已启用，正在读取游戏状态",
+      incompatible: "Agent 接口不兼容，托管已关闭，请升级 Agent",
+      readying: "房间内本地玩家尚未准备，正在自动准备",
+      searchFailed: "托管计算失败，本回合不再重试",
+      shotUnknown: (message) => `发射结果未知，本回合不再重试：${message}`,
+      stopped: "托管已关闭",
+      successFired: "托管计算完成，已发射最优方案",
+      waitingForGame: "托管已启用，等待进入房间或对局",
+      waitingForTurn: "等待己方回合并推测下一次发射",
+    },
   },
   ui: {
     actions: {
@@ -563,6 +581,13 @@ export const graphwarKillerLocale = {
       oneClickClearDeleteCheckRadiusTitle:
         "一键清图尝试删除路径点时，用这个半径检查删点前后的小段路径是否仍经过同一批士兵。单位是 Graphwar 原始 770x450 平面像素；0 表示跳过这个快速局部命中检查，每次候选删点都改用整路验证。",
       oneClickClearTitle: "从当前路径尾部开始，自动追加路线并尽量按顺序击杀右侧可用士兵。",
+      managedFriendlyFireWarning: "托管已允许友伤，友军会作为一键清图候选。",
+      managedMode: "托管模式",
+      managedModeBusyTitle: "当前 Agent 读取、发射或手动寻路结束后才能开启托管模式。",
+      managedModeDisableTitle: "关闭托管模式并解锁设置。",
+      managedModeNeedAgentTitle: "先启用 Agent 并填写有效的 Agent 地址。",
+      managedModeTitle: "自动读取状态、准备、计算一键清图并在己方回合发射。",
+      managedModeUnsupportedTitle: "当前算法无法在三个游戏模式下全部使用一键清图。",
       routePlanningTolerance: "路线规划容差",
       routePlanningToleranceAriaLabel: "路线规划容差，单位为 Graphwar 原始 770x450 平面像素",
       routePlanningToleranceTitle:

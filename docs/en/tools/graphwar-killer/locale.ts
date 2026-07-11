@@ -222,6 +222,26 @@ export const graphwarKillerLocale = {
       },
       unsupported: "One-Click Clear supports double absolute-value y and y', or Step y, y', and y''",
     },
+    managed: {
+      backgroundWarning: "The page is in the background; managed firing may be delayed",
+      calculating: (targetCount) =>
+        targetCount === undefined
+          ? "Managed mode is calculating"
+          : `Managed mode is calculating; best result hits ${targetCount} target(s)`,
+      completedWaiting: "Managed calculation complete; waiting for a local turn",
+      connectionFailed: (message) => `Agent connection failed; retrying: ${message}`,
+      deadlineFired: "Stopped with 3 seconds remaining and fired the current best plan",
+      deadlineNoPlan: "Stopped with 3 seconds remaining; no usable plan",
+      enabled: "Managed mode enabled; reading game state",
+      incompatible: "Managed mode stopped because the Agent API is incompatible; upgrade the Agent",
+      readying: "A local room player is not ready; requesting ready automatically",
+      searchFailed: "Managed calculation failed; this turn will not be retried",
+      shotUnknown: (message) => `Shot result is unknown and will not be retried this turn: ${message}`,
+      stopped: "Managed mode stopped",
+      successFired: "Managed calculation complete; fired the best plan",
+      waitingForGame: "Managed mode enabled; waiting for a room or match",
+      waitingForTurn: "Waiting for a local turn while calculating the next shot",
+    },
   },
   ui: {
     actions: {
@@ -664,6 +684,14 @@ export const graphwarKillerLocale = {
         "When One-Click Clear tries to delete a path point, this radius checks whether the small path section before and after deletion still passes through the same soldiers. Unit: raw Graphwar 770x450 plane pixels. Use 0 to skip this fast local hit check and full-route validate each candidate deletion.",
       oneClickClearTitle:
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
+      managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
+      managedMode: "Managed mode",
+      managedModeBusyTitle:
+        "Wait for the current Agent read, shot, or manual pathfinding run before enabling managed mode.",
+      managedModeDisableTitle: "Disable managed mode and unlock settings.",
+      managedModeNeedAgentTitle: "Enable Agent and enter a valid Agent URL first.",
+      managedModeTitle: "Read state, ready, calculate One-Click Clear, and fire automatically on local turns.",
+      managedModeUnsupportedTitle: "The current algorithm cannot use One-Click Clear in all three game modes.",
       routePlanningTolerance: "Route planning tolerance",
       routePlanningToleranceAriaLabel: "Route planning tolerance in raw Graphwar 770x450 plane pixels",
       routePlanningToleranceTitle:

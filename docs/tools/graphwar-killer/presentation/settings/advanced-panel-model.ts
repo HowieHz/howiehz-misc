@@ -56,6 +56,8 @@ export interface GraphwarAdvancedSettingsActionBar {
 }
 
 export interface GraphwarAdvancedSettingsPanelModel {
+  /** 托管期间锁定所有会改变识别、公式或寻路输入的高级设置。 */
+  interactionDisabled: boolean;
   /** 坐标边界设置展示模型。 */
   bounds: GraphwarAdvancedSettingsBounds;
   /** 模拟器设置展示模型。 */

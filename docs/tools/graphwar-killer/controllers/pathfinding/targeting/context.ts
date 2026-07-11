@@ -18,7 +18,7 @@ interface ReadonlyRef<T> {
   readonly value: T;
 }
 
-interface GraphwarTargetingContextOptions {
+interface GraphwarTargetingContextOptions<TSoldier extends GraphwarTargetingSoldier> {
   /** 当前截图坐标系矩形；目标规则应始终使用页面当前标定。 */
   boundsRect: ReadonlyRef<BoundsRect>;
   /** 当前 Graphwar 坐标范围；无效时目标选择应保持原失败语义。 */
@@ -29,6 +29,8 @@ interface GraphwarTargetingContextOptions {
   pathPixels: ReadonlyRef<readonly PixelPoint[]>;
   /** 当前算法是否要求普通落点使用士兵中心；单点寻路可另带 x+ 边缘 fallback。 */
   requireExactSoldierCenter: () => boolean;
+  /** Agent 可提供权威阵营；返回 undefined 时截图识别继续使用 x<=0 规则。 */
+  isFriendlySoldier?: (soldier: TSoldier) => boolean | undefined;
 }
 
 export interface GraphwarTargetingContextController<TSoldier extends GraphwarTargetingSoldier> {
@@ -49,15 +51,15 @@ export interface GraphwarTargetingContextController<TSoldier extends GraphwarTar
   ) => GraphwarSmartPathfindingSoldierTarget | undefined;
   /** 获取 Graphwar x 最大的已选路径点，用于过滤当前目标。 */
   getRightmostPathPoint: () => PixelPoint | undefined;
-  /** 当前规则下 x<=0 的非发射士兵视为友方障碍。 */
+  /** Agent 权威阵营优先；缺失时 x<=0 的非发射士兵视为友方障碍。 */
   isFriendlyObstacleSoldier: (soldier: TSoldier) => boolean;
-  /** 智能光标初始选点只标记发射侧士兵；中心线可作为 Graphwar 发射点。 */
+  /** 智能光标优先标记 Agent 友军；缺失阵营时回退发射侧规则，中心线可作为发射点。 */
   isSoldierOnLaunchSide: (soldier: TSoldier) => boolean;
 }
 
 /** 集中把页面当前状态适配为 Graphwar 目标选择规则，避免页面散落 bounds/path 组合逻辑。 */
 export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSoldier>(
-  options: GraphwarTargetingContextOptions,
+  options: GraphwarTargetingContextOptions<TSoldier>,
 ): GraphwarTargetingContextController<TSoldier> {
   /** 创建当前目标规则的坐标映射输入；无效 bounds 应保持原来的失败语义。 */
   function createGeometry() {
@@ -107,15 +109,25 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
       : undefined;
   }
 
+  /** Agent 阵营优先；截图数据缺少阵营时才回退到 x<=0 发射侧规则。 */
   function isSoldierOnLaunchSide(soldier: TSoldier) {
+    const authoritative = options.isFriendlySoldier?.(soldier);
+    if (authoritative !== undefined) {
+      return authoritative;
+    }
     const geometry = createGeometry();
     return geometry ? graphwarSoldierIsOnNonPositiveGraphX(soldier, geometry) : false;
   }
 
+  /** 排除发射士兵后按权威阵营判断友方；截图数据继续回退到发射侧规则。 */
   function isFriendlyObstacleSoldier(soldier: TSoldier) {
     const geometry = createGeometry();
     if (!geometry || soldierMatchesLaunchPoint(soldier)) {
       return false;
+    }
+    const authoritative = options.isFriendlySoldier?.(soldier);
+    if (authoritative !== undefined) {
+      return authoritative;
     }
     return graphwarSoldierIsOnNonPositiveGraphX(soldier, geometry);
   }

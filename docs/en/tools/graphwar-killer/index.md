@@ -42,6 +42,17 @@ After you select a target, Smart Pathfinding finds a route from the current path
 
 Starting from the current path end, One-Click Clear filters usable targets whose soldier centers are in the `x+` direction and plans a route that kills as many soldiers as possible.
 
+##### Managed Mode {#graphwar-killer-managed-mode}
+
+After Use Agent and Smart Pathfinding are enabled, Managed Mode is available only when the current algorithm supports One-Click Clear in all three game modes: `y`, `y'`, and `y''`. Step is currently the only qualifying algorithm.
+Managed Mode locks every calculation and firing input, reads authoritative state once per second, readies local room players automatically, and calculates for the current or next local human soldier.
+
+- The tool fires as soon as the search finishes.
+- When 3 seconds remain, it stops calculating. It fires the best validated plan available, or skips the turn when there is no plan.
+- It does not retry during the same turn if calculation fails or the shot result cannot be confirmed.
+- It recalculates every turn and does not reuse the previous turn's result.
+- Keep the managed page in the foreground. The tool tries to keep the screen awake; background use may cause delays and shows a warning.
+
 #### Glitch Mode {#graphwar-killer-step-glitch-mode}
 
 Applies only to step functions in `y'` mode. When an obstacle lies inside the approximate normal-step path region, Glitch Mode attempts to generate a jump term that crosses the obstacle vertically. This mode needs obstacle data and accurate soldier positions, so reading game state through Agent is recommended.
@@ -64,7 +75,7 @@ Put [`graphwar-agent.jar`](/graphwar-agent.jar) in the game directory, then run 
 java -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
-This starts Graphwar Agent and the game together. Return to the tool, turn on Use Agent, then select Read State to retrieve the current game state. For more information, see [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent).
+This starts Graphwar Agent and the game together. Return to the tool and turn on Use Agent to read state manually, or enable Smart Pathfinding and then Managed Mode. For more information, see [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent).
 
 ### Pathfinding Details {#graphwar-killer-pathfinding-details}
 

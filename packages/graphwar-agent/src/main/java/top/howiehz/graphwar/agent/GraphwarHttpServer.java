@@ -223,13 +223,11 @@ final class GraphwarHttpServer {
             return Response.empty(204);
         }
         if ("POST".equals(request.method)) {
-            if ("/function".equals(request.path)) {
+            if ("/shot".equals(request.path)) {
                 try {
-                    // The body is intentionally just the function text; callers do not
-                    // need a JSON encoder for Graphwar's expression language.
-                    stateReader.submitFunction(request.body);
+                    stateReader.submitShot(GraphwarShotRequest.parse(request.body));
                     return Response.json(200, "{\"ok\":true}\n");
-                } catch (GraphwarInvalidFunctionException error) {
+                } catch (GraphwarInvalidFunctionException | GraphwarInvalidShotException error) {
                     return Response.text(400, error.getMessage() + "\n");
                 } catch (GraphwarStateUnavailableException error) {
                     return Response.text(409, error.getMessage() + "\n");
@@ -288,7 +286,8 @@ final class GraphwarHttpServer {
             }
 
             try {
-                return Response.binary(200, stateReader.readObstacleMask(space));
+                GraphwarStateReader.ObstacleMaskSnapshot mask = stateReader.readObstacleMask(space);
+                return Response.binary(200, mask.bytes, mask.battleRevision);
             } catch (GraphwarStateUnavailableException error) {
                 return Response.text(409, error.getMessage() + "\n");
             } catch (GraphwarStateException error) {
@@ -330,7 +329,11 @@ final class GraphwarHttpServer {
         writeAscii(headers, "Access-Control-Allow-Origin: *\r\n");
         writeAscii(headers, "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n");
         writeAscii(headers, "Access-Control-Allow-Headers: Content-Type\r\n");
+        writeAscii(headers, "Access-Control-Expose-Headers: X-Graphwar-Battle-Revision\r\n");
         writeAscii(headers, "Access-Control-Allow-Private-Network: true\r\n");
+        if (response.battleRevision != null) {
+            writeAscii(headers, "X-Graphwar-Battle-Revision: " + response.battleRevision + "\r\n");
+        }
         writeAscii(headers, "Cache-Control: no-store\r\n");
         writeAscii(headers, "Connection: close\r\n");
         writeAscii(headers, "\r\n");
@@ -386,34 +389,42 @@ final class GraphwarHttpServer {
     }
 
     private static final class Response {
+        final String battleRevision;
         final byte[] body;
         final String contentType;
         final int status;
 
-        Response(int status, byte[] body, String contentType) {
+        /** Couples optional verification metadata to one completed response body. */
+        Response(int status, byte[] body, String contentType, String battleRevision) {
+            this.battleRevision = battleRevision;
             this.body = body;
             this.contentType = contentType;
             this.status = status;
         }
 
-        static Response binary(int status, byte[] body) {
-            return new Response(status, body, "application/octet-stream");
+        /** Builds a mask response whose header verifies its snapshot. */
+        static Response binary(int status, byte[] body, String battleRevision) {
+            return new Response(status, body, "application/octet-stream", battleRevision);
         }
 
         static Response empty(int status) {
-            return new Response(status, new byte[0], "text/plain; charset=utf-8");
+            return new Response(status, new byte[0], "text/plain; charset=utf-8", null);
         }
 
         static Response json(int status, String text) {
             return new Response(
                     status,
                     text.getBytes(StandardCharsets.UTF_8),
-                    "application/json; charset=utf-8");
+                    "application/json; charset=utf-8",
+                    null);
         }
 
         static Response text(int status, String text) {
             return new Response(
-                    status, text.getBytes(StandardCharsets.UTF_8), "text/plain; charset=utf-8");
+                    status,
+                    text.getBytes(StandardCharsets.UTF_8),
+                    "text/plain; charset=utf-8",
+                    null);
         }
     }
 }

@@ -33,6 +33,8 @@ export interface GraphwarScreenshotWorkflowController {
   handleImageLoad: () => void;
   /** 文件输入入口。 */
   handleImageUpload: (event: Event) => void;
+  /** 使已经开始但尚未落地的用户截图读取失效。 */
+  invalidatePendingUserImageRequests: () => void;
   /** 粘贴图片入口。 */
   handlePaste: (event: ClipboardEvent) => void;
   /** 当前图片高度。 */
@@ -70,6 +72,7 @@ export function useGraphwarScreenshotWorkflow(
   const stageRef = ref<HTMLElement>();
   const stageDisplayWidth = ref(graphwarToolDefaults.canvasWidth);
   const stageDisplayHeight = ref(graphwarToolDefaults.canvasHeight);
+  let imageInputGeneration = 0;
 
   /** 从隐藏文件输入框加载用户上传的截图。 */
   function handleImageUpload(event: Event) {
@@ -105,9 +108,10 @@ export function useGraphwarScreenshotWorkflow(
 
   /** 将图片文件读取为 data URL，并设置为当前截图。 */
   function loadImageFile(file: File) {
+    const requestGeneration = ++imageInputGeneration;
     const reader = new FileReader();
     reader.addEventListener("load", () => {
-      if (typeof reader.result !== "string") {
+      if (requestGeneration !== imageInputGeneration || typeof reader.result !== "string") {
         return;
       }
 
@@ -118,6 +122,7 @@ export function useGraphwarScreenshotWorkflow(
 
   /** 应用调用方生成的图片 URL；尺寸已知时先落地，避免等待图片 load 才能渲染 overlay。 */
   function applyGeneratedImage(url: string, name: string, width: number, height: number) {
+    imageInputGeneration += 1;
     imageWidth.value = width;
     imageHeight.value = height;
     applyLoadedImage(url, name);
@@ -125,6 +130,7 @@ export function useGraphwarScreenshotWorkflow(
 
   /** 通过浏览器 Screen Capture API 截取屏幕图片。 */
   async function captureScreenImage() {
+    const requestGeneration = ++imageInputGeneration;
     if (typeof navigator === "undefined" || typeof document === "undefined") {
       imageStatus.value = options.imageText.screenCaptureUnavailable;
       return;
@@ -160,14 +166,23 @@ export function useGraphwarScreenshotWorkflow(
       }
 
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      applyLoadedImage(canvas.toDataURL("image/png"), options.imageText.screenCaptureName);
+      if (requestGeneration === imageInputGeneration) {
+        applyLoadedImage(canvas.toDataURL("image/png"), options.imageText.screenCaptureName);
+      }
     } catch {
-      imageStatus.value = options.imageText.screenCaptureIncomplete;
+      if (requestGeneration === imageInputGeneration) {
+        imageStatus.value = options.imageText.screenCaptureIncomplete;
+      }
     } finally {
       for (const track of stream?.getTracks() ?? []) {
         track.stop();
       }
     }
+  }
+
+  /** 托管等外部状态接管截图时，让迟到的文件读取和截屏结果无法回写。 */
+  function invalidatePendingUserImageRequests() {
+    imageInputGeneration += 1;
   }
 
   /** 等待截屏视频流拿到尺寸，以便绘制到 canvas。 */
@@ -281,6 +296,7 @@ export function useGraphwarScreenshotWorkflow(
     imageStatus,
     imageUrl,
     imageWidth,
+    invalidatePendingUserImageRequests,
     normalizeBoundsPickerPoint,
     stageDisplayHeight,
     stageDisplayWidth,

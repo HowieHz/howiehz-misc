@@ -24,6 +24,8 @@ interface GraphwarSmartPathfindingPanelDebugRow {
 }
 
 export interface GraphwarSmartPathfindingPanelModel {
+  /** 托管期间锁定除展示选项和托管关闭按钮外的寻路操作。 */
+  interactionDisabled: boolean;
   /** 智能寻路是否开启。 */
   smartPathfindingEnabled: boolean;
   /** 智能寻路按钮是否禁用。 */
@@ -40,6 +42,14 @@ export interface GraphwarSmartPathfindingPanelModel {
   oneClickClearDisabled: boolean;
   /** 一键清图按钮 hover 说明。 */
   oneClickClearTitle: string;
+  /** 托管模式是否开启。 */
+  managedModeEnabled: boolean;
+  /** 托管模式按钮是否禁用；已开启时必须允许关闭。 */
+  managedModeDisabled: boolean;
+  /** 托管模式按钮 hover 说明。 */
+  managedModeTitle: string;
+  /** 托管期间持续展示的友伤风险提示。 */
+  managedFriendlyFireWarning: string;
   /** 标题右侧状态展示模型。 */
   headerStatus: GraphwarSmartPathfindingPanelHeaderStatus;
   /** 是否展示调试耗时面板。 */
@@ -59,6 +69,7 @@ const emit = defineEmits<{
   runOneClickClear: [];
   toggleFastPathfinding: [];
   toggleFriendlyFire: [];
+  toggleManagedMode: [];
   toggleSearchAnimation: [];
   toggleSmartPathfinding: [];
 }>();
@@ -76,6 +87,9 @@ const emit = defineEmits<{
       <span
         v-if="panel.headerStatus.message"
         class="graphwar-killer__pathfinding-header-status"
+        aria-atomic="true"
+        aria-live="polite"
+        role="status"
         :title="panel.headerStatus.title"
         :class="{
           'graphwar-killer__label-status--error': panel.headerStatus.kind === 'error',
@@ -91,7 +105,7 @@ const emit = defineEmits<{
         type="button"
         :aria-pressed="panel.smartPathfindingEnabled"
         :class="{ 'graphwar-killer__toggle-button--active': panel.smartPathfindingEnabled }"
-        :disabled="panel.smartPathfindingToggleDisabled"
+        :disabled="panel.smartPathfindingToggleDisabled || panel.interactionDisabled"
         :title="panel.smartPathfindingToggleTitle"
         @click="emit('toggleSmartPathfinding')"
       >
@@ -102,6 +116,7 @@ const emit = defineEmits<{
         type="button"
         :aria-pressed="panel.fastPathfindingEnabled"
         :class="{ 'graphwar-killer__toggle-button--active': panel.fastPathfindingEnabled }"
+        :disabled="panel.interactionDisabled"
         :title="locale.ui.pathfinding.fastPathfindingTitle"
         @click="emit('toggleFastPathfinding')"
       >
@@ -112,6 +127,7 @@ const emit = defineEmits<{
         type="button"
         :aria-pressed="panel.friendlyFireEnabled"
         :class="{ 'graphwar-killer__toggle-button--active': panel.friendlyFireEnabled }"
+        :disabled="panel.interactionDisabled"
         :title="locale.ui.pathfinding.allowFriendlyFireTitle"
         @click="emit('toggleFriendlyFire')"
       >
@@ -127,17 +143,37 @@ const emit = defineEmits<{
       >
         {{ locale.ui.pathfinding.searchAnimation }}
       </button>
-      <button
+      <div
         v-if="panel.smartPathfindingEnabled"
-        type="button"
-        aria-pressed="false"
-        :disabled="panel.oneClickClearDisabled"
-        :title="panel.oneClickClearTitle"
-        @click="emit('runOneClickClear')"
+        class="graphwar-killer__managed-actions"
       >
-        {{ locale.ui.pathfinding.autoGraph }}
-      </button>
+        <button
+          type="button"
+          aria-pressed="false"
+          :disabled="panel.oneClickClearDisabled || panel.interactionDisabled"
+          :title="panel.oneClickClearTitle"
+          @click="emit('runOneClickClear')"
+        >
+          {{ locale.ui.pathfinding.autoGraph }}
+        </button>
+        <button
+          type="button"
+          :aria-pressed="panel.managedModeEnabled"
+          :class="{ 'graphwar-killer__toggle-button--active': panel.managedModeEnabled }"
+          :disabled="panel.managedModeDisabled"
+          :title="panel.managedModeTitle"
+          @click="emit('toggleManagedMode')"
+        >
+          {{ locale.ui.pathfinding.managedMode }}
+        </button>
+      </div>
     </div>
+    <p
+      v-if="panel.managedFriendlyFireWarning"
+      class="graphwar-killer__managed-warning"
+    >
+      {{ panel.managedFriendlyFireWarning }}
+    </p>
     <div
       v-if="panel.debugTimingVisible"
       class="graphwar-killer__pathfinding-settings"
@@ -257,10 +293,25 @@ const emit = defineEmits<{
   padding: 6px 10px;
 }
 
+/* Keep the managed toggle immediately beside the action it automates. */
+.graphwar-killer__managed-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
 .graphwar-killer__pathfinding-settings {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.graphwar-killer__managed-warning {
+  color: #b45309;
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 0;
 }
 
 .graphwar-killer__subpanel {
@@ -347,7 +398,11 @@ const emit = defineEmits<{
   }
 
   .graphwar-killer__label-row > span {
+    overflow: visible;
+    overflow-wrap: anywhere;
     text-align: left;
+    text-overflow: clip;
+    white-space: normal;
   }
 }
 </style>

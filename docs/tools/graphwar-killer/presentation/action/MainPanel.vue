@@ -28,6 +28,8 @@ interface GraphwarActionPanelSlider {
 }
 
 export interface GraphwarActionPanelModel {
+  /** 托管期间锁定路径和障碍编辑，保留放大镜等纯展示控制。 */
+  interactionDisabled: boolean;
   /** 标题行右侧的当前工具提示。 */
   activeToolHint: GraphwarActionPanelStatus;
   /** 放大镜是否开启。 */
@@ -123,6 +125,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           type="button"
           :aria-pressed="panel.toolMode === 'bounds'"
           :class="{ 'graphwar-killer__tool-toggle-button--active': panel.toolMode === 'bounds' }"
+          :disabled="panel.interactionDisabled"
           :title="locale.ui.actions.pickBoundsTitle"
           @click="emit('setToolMode', 'bounds')"
         >
@@ -132,6 +135,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           type="button"
           :aria-pressed="panel.toolMode === 'path'"
           :class="{ 'graphwar-killer__tool-toggle-button--active': panel.toolMode === 'path' }"
+          :disabled="panel.interactionDisabled"
           :title="locale.ui.actions.pickPathTitle"
           @click="emit('setToolMode', 'path')"
         >
@@ -141,7 +145,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           type="button"
           :aria-pressed="panel.toolMode === 'obstacle'"
           :class="{ 'graphwar-killer__tool-toggle-button--active': panel.toolMode === 'obstacle' }"
-          :disabled="!panel.obstacleBrushAvailable"
+          :disabled="panel.interactionDisabled || !panel.obstacleBrushAvailable"
           :title="locale.ui.actions.drawObstacleTitle"
           @click="emit('setToolMode', 'obstacle')"
         >
@@ -194,6 +198,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
     >
       <button
         type="button"
+        :disabled="panel.interactionDisabled"
         :title="locale.ui.actions.clearPathTitle"
         @click="emit('clearPath')"
       >
@@ -201,6 +206,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
       </button>
       <button
         type="button"
+        :disabled="panel.interactionDisabled"
         :title="locale.ui.actions.undoPointTitle"
         @click="emit('undoPoint')"
       >
@@ -232,6 +238,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           :style="panel.obstacleBrushDiameter.rangeStyle"
           :min="panel.obstacleBrushDiameter.minimum"
           :max="panel.obstacleBrushDiameter.sliderMaximum"
+          :disabled="panel.interactionDisabled"
           step="1"
           :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
           :title="locale.ui.actions.obstacleBrushDiameterTitle"
@@ -243,6 +250,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           inputmode="numeric"
           :min="panel.obstacleBrushDiameter.minimum"
           :max="panel.obstacleBrushDiameter.inputMaximum"
+          :disabled="panel.interactionDisabled"
           step="1"
           :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
           :title="locale.ui.actions.obstacleBrushDiameterTitle"
@@ -254,6 +262,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
         type="button"
         :aria-pressed="panel.obstacleBrushEraseEnabled"
         :class="{ 'graphwar-killer__toggle-button--active': panel.obstacleBrushEraseEnabled }"
+        :disabled="panel.interactionDisabled"
         :title="locale.ui.actions.eraseObstacleTitle"
         @click="emit('toggleObstacleBrushErase')"
       >
@@ -261,7 +270,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
       </button>
       <button
         type="button"
-        :disabled="!panel.obstacleEditsDirty"
+        :disabled="panel.interactionDisabled || !panel.obstacleEditsDirty"
         :title="locale.ui.actions.clearObstacleEditsTitle"
         @click="emit('clearObstacleEdits')"
       >

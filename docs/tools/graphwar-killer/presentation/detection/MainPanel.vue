@@ -39,6 +39,8 @@ interface GraphwarDetectionPanelAgentModel {
 }
 
 export interface GraphwarDetectionPanelModel {
+  /** 托管期间锁定识别来源、Agent 配置和手动读取入口。 */
+  interactionDisabled: boolean;
   /** 使用 Graphwar Agent 的展示模型。 */
   agent: GraphwarDetectionPanelAgentModel;
   /** 是否允许从截图中识别边界。 */
@@ -91,6 +93,7 @@ function handleAgentBaseUrlInput(event: Event) {
   <section
     class="graphwar-killer__panel graphwar-killer__detection-panel"
     aria-labelledby="graphwar-killer-detection-title"
+    :aria-disabled="panel.interactionDisabled"
   >
     <div class="graphwar-killer__label-row">
       <h2 id="graphwar-killer-detection-title">
@@ -117,104 +120,109 @@ function handleAgentBaseUrlInput(event: Event) {
         {{ panel.statusWarning.message }}
       </span>
     </div>
-    <div class="graphwar-killer__image-actions">
-      <button
-        v-if="!panel.agent.enabled"
-        type="button"
-        :disabled="!panel.canDetectBounds"
-        :title="locale.ui.detection.detectBoundsTitle"
-        @click="emit('detectBounds')"
-      >
-        {{ locale.ui.detection.detectBounds }}
-      </button>
-      <button
-        v-if="!panel.agent.enabled"
-        type="button"
-        :disabled="!panel.canDetectObjects"
-        :title="panel.detectObjectsTitle"
-        @click="emit('detectObjects')"
-      >
-        {{ locale.ui.detection.detectObjects }}
-      </button>
-      <button
-        v-if="panel.agent.configured"
-        type="button"
-        :disabled="panel.agent.inProgress"
-        :title="locale.ui.detection.agent.readTitle"
-        @click="emit('readAgent')"
-      >
-        {{ panel.agent.inProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
-      </button>
-      <button
-        v-if="!panel.agent.enabled"
-        type="button"
-        :aria-pressed="panel.autoDetectionEnabled"
-        :class="{ 'graphwar-killer__toggle-button--active': panel.autoDetectionEnabled }"
-        :title="locale.ui.detection.autoDetectionTitle"
-        @click="emit('toggleAutoDetection')"
-      >
-        {{ locale.ui.detection.autoDetection }}
-      </button>
-      <button
-        type="button"
-        :aria-pressed="panel.smartCursorEnabled"
-        :class="{ 'graphwar-killer__toggle-button--active': panel.smartCursorEnabled }"
-        :title="locale.ui.detection.smartCursorTitle"
-        @click="emit('toggleSmartCursor')"
-      >
-        {{ locale.ui.detection.smartCursor }}
-      </button>
-      <button
-        type="button"
-        :aria-expanded="panel.agent.enabled"
-        :aria-pressed="panel.agent.enabled"
-        :class="{ 'graphwar-killer__toggle-button--active': panel.agent.enabled }"
-        :title="locale.ui.detection.agent.toggleTitle"
-        @click="emit('toggleAgentUsage')"
-      >
-        {{ locale.ui.detection.agent.toggle }}
-      </button>
-    </div>
-    <details
-      v-if="panel.agent.enabled"
-      class="graphwar-killer__subpanel graphwar-killer__details graphwar-killer__agent-usage"
+    <fieldset
+      class="graphwar-killer__detection-fields"
+      :disabled="panel.interactionDisabled"
     >
-      <summary>{{ locale.ui.detection.agent.settingsSummary }}</summary>
-      <label
-        class="graphwar-killer__agent-url"
-        :title="locale.ui.detection.agent.addressTitle"
-      >
-        {{ locale.ui.detection.agent.address }}
-        <input
-          type="url"
-          :aria-label="locale.ui.detection.agent.addressAriaLabel"
-          :title="locale.ui.detection.agent.addressTitle"
-          :value="panel.agent.baseUrlText"
-          @input="handleAgentBaseUrlInput"
+      <div class="graphwar-killer__image-actions">
+        <button
+          v-if="!panel.agent.enabled"
+          type="button"
+          :disabled="!panel.canDetectBounds"
+          :title="locale.ui.detection.detectBoundsTitle"
+          @click="emit('detectBounds')"
         >
-      </label>
-      <p class="graphwar-killer__agent-usage-hint">
-        <a href="#graphwar-killer-agent-help">{{ locale.ui.detection.agent.helpLink }}</a>
-      </p>
-    </details>
-    <details
-      v-if="panel.debugTimingVisible"
-      class="graphwar-killer__subpanel graphwar-killer__details"
-    >
-      <summary>{{ locale.ui.detection.debugSummary }}</summary>
-      <div class="graphwar-killer__debug-timing">
-        <span v-if="!panel.debugTimingRows.length">{{ locale.ui.detection.debugNoTiming }}</span>
-        <template v-else>
-          <span
-            v-for="entry in panel.debugTimingRows"
-            :key="entry.key"
-            :title="entry.title"
-          >
-            {{ entry.text }}
-          </span>
-        </template>
+          {{ locale.ui.detection.detectBounds }}
+        </button>
+        <button
+          v-if="!panel.agent.enabled"
+          type="button"
+          :disabled="!panel.canDetectObjects"
+          :title="panel.detectObjectsTitle"
+          @click="emit('detectObjects')"
+        >
+          {{ locale.ui.detection.detectObjects }}
+        </button>
+        <button
+          v-if="panel.agent.configured"
+          type="button"
+          :disabled="panel.agent.inProgress"
+          :title="locale.ui.detection.agent.readTitle"
+          @click="emit('readAgent')"
+        >
+          {{ panel.agent.inProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
+        </button>
+        <button
+          v-if="!panel.agent.enabled"
+          type="button"
+          :aria-pressed="panel.autoDetectionEnabled"
+          :class="{ 'graphwar-killer__toggle-button--active': panel.autoDetectionEnabled }"
+          :title="locale.ui.detection.autoDetectionTitle"
+          @click="emit('toggleAutoDetection')"
+        >
+          {{ locale.ui.detection.autoDetection }}
+        </button>
+        <button
+          type="button"
+          :aria-pressed="panel.smartCursorEnabled"
+          :class="{ 'graphwar-killer__toggle-button--active': panel.smartCursorEnabled }"
+          :title="locale.ui.detection.smartCursorTitle"
+          @click="emit('toggleSmartCursor')"
+        >
+          {{ locale.ui.detection.smartCursor }}
+        </button>
+        <button
+          type="button"
+          :aria-expanded="panel.agent.enabled"
+          :aria-pressed="panel.agent.enabled"
+          :class="{ 'graphwar-killer__toggle-button--active': panel.agent.enabled }"
+          :title="locale.ui.detection.agent.toggleTitle"
+          @click="emit('toggleAgentUsage')"
+        >
+          {{ locale.ui.detection.agent.toggle }}
+        </button>
       </div>
-    </details>
+      <details
+        v-if="panel.agent.enabled"
+        class="graphwar-killer__subpanel graphwar-killer__details graphwar-killer__agent-usage"
+      >
+        <summary>{{ locale.ui.detection.agent.settingsSummary }}</summary>
+        <label
+          class="graphwar-killer__agent-url"
+          :title="locale.ui.detection.agent.addressTitle"
+        >
+          {{ locale.ui.detection.agent.address }}
+          <input
+            type="url"
+            :aria-label="locale.ui.detection.agent.addressAriaLabel"
+            :title="locale.ui.detection.agent.addressTitle"
+            :value="panel.agent.baseUrlText"
+            @input="handleAgentBaseUrlInput"
+          >
+        </label>
+        <p class="graphwar-killer__agent-usage-hint">
+          <a href="#graphwar-killer-agent-help">{{ locale.ui.detection.agent.helpLink }}</a>
+        </p>
+      </details>
+      <details
+        v-if="panel.debugTimingVisible"
+        class="graphwar-killer__subpanel graphwar-killer__details"
+      >
+        <summary>{{ locale.ui.detection.debugSummary }}</summary>
+        <div class="graphwar-killer__debug-timing">
+          <span v-if="!panel.debugTimingRows.length">{{ locale.ui.detection.debugNoTiming }}</span>
+          <template v-else>
+            <span
+              v-for="entry in panel.debugTimingRows"
+              :key="entry.key"
+              :title="entry.title"
+            >
+              {{ entry.text }}
+            </span>
+          </template>
+        </div>
+      </details>
+    </fieldset>
   </section>
 </template>
 
@@ -283,6 +291,15 @@ function handleAgentBaseUrlInput(event: Event) {
 .graphwar-killer__detection-panel button:disabled {
   cursor: not-allowed;
   opacity: 58%;
+}
+
+.graphwar-killer__detection-fields {
+  border: 0;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 0;
 }
 
 .graphwar-killer__label-row {

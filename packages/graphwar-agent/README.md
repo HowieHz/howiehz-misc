@@ -4,7 +4,7 @@ English | [简体中文](./README.zh.md)
 
 graphwar-agent is a local Java agent for the official Graphwar client.
 
-It exposes pre-game room state and ready control, plus soldier coordinates, obstacle data, and function submission for the current match, as a localhost-only HTTP API. It does this without modifying the official client.
+It exposes pre-game room state and ready control, plus consistent match snapshots, obstacle data, and guarded shot submission, as a localhost-only HTTP API. It does this without modifying the official client.
 
 ## Why graphwar-agent
 
@@ -12,7 +12,7 @@ It exposes pre-game room state and ready control, plus soldier coordinates, obst
 - **No runtime dependencies**: the agent code depends only on the JDK, and the build scripts call only `javac` and `jar`.
 - **Reads official state directly**: reads the current `GameData`, players, soldiers, and obstacle map from `Graphwar.Graphwar#getGameData()`.
 - **Accurate obstacle detection**: reuses Graphwar's own collision rule, where every non-white terrain pixel is blocking.
-- **Submits functions through the original logic**: the HTTP endpoint ultimately calls `GameData#sendFunction(String)`. That reuses the original turn checks, function validation, and firing message.
+- **Submits guarded shots through the original logic**: the HTTP endpoint validates an exact turn and battlefield revision before calling `GameData#setAngle(double)` when needed and `GameData#sendFunction(String)`.
 - **Returns two coordinate spaces**: returns Graphwar's internal `world` coordinates and the current screen-oriented `view` coordinates, plus mathematical game coordinates.
 - **Official-client compatibility**: silences expected exception noise. Fixes one official client bug: after a room kick, a failed rejoin can leave the lobby stuck.
 
@@ -135,17 +135,25 @@ Windows PowerShell:
 Invoke-RestMethod http://127.0.0.1:17900/state
 ```
 
-`/state` returns:
+Active `/state` responses use API version 2 and include:
 
+- `apiVersion`: currently `2`.
+- `capabilities`: boolean `shot`, `room`, `ready`, and `worldObstacleMask` feature flags.
 - `agent`: agent version, source commit, and commit time.
 - `plane`: Graphwar plane dimensions and game-coordinate length.
 - `available`: whether match state can currently be read.
+- `gameInstanceId`: opaque ID that changes when the official client creates a new battlefield.
+- `turnToken`: opaque ID for the exact current turn. It changes even if the same soldier and positions recur.
+- `battleRevision`: SHA-256 revision of the game mode, current view orientation, player ownership/team state, soldier alive/render state and world positions, and world obstacle mask.
+- `remainingTurnMs`: authoritative remaining turn time reported by `GameData#getRemainingTime()`.
+- `drawingFunction`, `exploding`, and `phase`: resolution state. `phase` is `aiming`, `drawing`, `exploding`, or `inactive`.
 - `terrainReversed`: whether the current client is rendering terrain in reverse.
-- `gameState`, `gameMode`, `currentTurn`: current game state.
-- `players[].soldiers[]`: each soldier's alive state, angle, `world` coordinates, and `view` coordinates.
-- `obstacleMask`: obstacle data dimensions, values, and download URL.
+- `gameState`, `gameMode`, `currentTurn`, and `currentTurnPlayerId`: current game state and shooter ownership.
+- `players[]`: protocol `id` / `playerId`, list `index`, team, local/computer/ready/disconnected state, and current soldier index.
+- `players[].soldiers[]`: `index` / `soldierIndex`, alive/render state, angle in radians, and `world` and `view` coordinates.
+- `obstacleMask`: obstacle dimensions, URLs, and the revision/header used to verify a downloaded mask.
 
-Before a match starts, `available` is `false`, and `reason` explains which piece of state is missing.
+Outside an active match, `available` is `false`, and `reason` explains which piece of state is missing. API metadata remains present so callers can distinguish an unavailable match from an outdated agent.
 
 ### Room State and Ready Control
 
@@ -189,7 +197,9 @@ Invoke-RestMethod http://127.0.0.1:17900/room
 
 `leader` reports whether the local client is the room leader. Each player has its current list `index`, protocol `id`, `name`, `team`, ownership (`local`), ready state, soldier count, and connection state. `computer` is `true` or `false` for a local player, but `null` for a remote player because the official protocol does not expose whether a remote player is computer-controlled.
 
-Outside `PRE_GAME`, the response instead has `available: false` and a stable `reason`. This endpoint covers only the current pre-game room: it does not expose the lobby room list or provide room creation, joining, UI, or server-sent events. Poll `GET /room` when updated state is needed. Like the other endpoints, it uses the localhost binding as its security boundary and does not add token authentication.
+Outside `PRE_GAME`, the response instead has `available: false` and a stable `reason`. This endpoint covers only the current pre-game room: it does not expose the lobby room list or provide room creation, joining, UI, or server-sent events. Poll `GET /room` when updated state is needed.
+
+The loopback binding blocks remote hosts, but CORS and Private Network Access are intentionally open so browser pages can call the API. Any browser origin granted local-network access can therefore control the Agent; do not keep it running while browsing untrusted pages. The API does not add token authentication.
 
 Set the ready state for every local player, using the same behavior as the official ready button:
 
@@ -216,28 +226,42 @@ The body for `POST /ready` must be exactly lowercase `true` or `false`; any othe
 
 Poll `GET /room` to confirm the state reported after the server responds. `POST /ready` returns `409` outside `PRE_GAME` or when the client has no local players.
 
-Submit a function:
+Submit one guarded shot using values from the latest `/state` response:
 
 Linux / macOS:
 
 ```shell
 curl -X POST \
-  -H "Content-Type: text/plain; charset=utf-8" \
-  --data-binary "sin(x)" \
-  http://127.0.0.1:17900/function
+  -H "Content-Type: application/json; charset=utf-8" \
+  --data-binary '{"function":"sin(x)","turnToken":"TURN_TOKEN","battleRevision":"sha256:REVISION"}' \
+  http://127.0.0.1:17900/shot
 ```
 
 Windows PowerShell:
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17900/function -ContentType "text/plain; charset=utf-8" -Body "sin(x)"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17900/shot -ContentType "application/json; charset=utf-8" -Body '{"function":"sin(x)","turnToken":"TURN_TOKEN","battleRevision":"sha256:REVISION"}'
 ```
 
-The request body for `POST /function` is the UTF-8 function text. This is equivalent to submitting the current text in the official game's function input box:
+`POST /shot` accepts exactly this JSON shape:
 
-- Returns `409` if it is not the local player's turn, the match has not started, or a function is currently being drawn.
-- Returns `400` if the function is empty or cannot be parsed by Graphwar's official `Function`.
-- Second-derivative mode uses the current soldier angle from the game. Angle adjustment still uses the official client's own key handling.
+```json
+{
+  "function": "sin(x)",
+  "turnToken": "opaque turn token",
+  "battleRevision": "sha256:opaque battlefield revision",
+  "angleRadians": 0.25
+}
+```
+
+`function`, `turnToken`, and `battleRevision` are required. `angleRadians` is required only for second-derivative mode (`gameMode: 2`) and forbidden in normal and first-derivative modes (`gameMode: 0` and `1`). Angles must be finite radians in `[-pi/2, pi/2]`.
+
+- Returns `200` with `{ "ok": true }` after the original calls have been queued.
+- Returns `400` for malformed or unknown JSON fields, an invalid Graphwar function, or a mode/angle mismatch.
+- Returns `409` when the token or revision is stale, the turn is not owned by a local human, the turn expired, a function is resolving, or the same turn token was already submitted.
+- Returns `500` when the official client API cannot be reflected or invoked.
+
+The agent claims the token before the first possible shot side effect. Do not retry a request whose response was lost: the same token is intentionally rejected. The former `POST /function` endpoint has been removed and returns `404`.
 
 Download obstacle data in the current screen orientation:
 
@@ -266,6 +290,14 @@ Windows PowerShell:
 ```powershell
 Invoke-WebRequest http://127.0.0.1:17900/obstacle-mask.bin?space=world -OutFile obstacle-mask.world.bin
 ```
+
+Every successful mask response includes:
+
+```text
+X-Graphwar-Battle-Revision: sha256:...
+```
+
+Compare this header with `/state.battleRevision` (also available as `/state.obstacleMask.revision`). If the values differ, state changed between the two requests; discard the mask and read a new snapshot. Browsers can read the header through CORS because the agent exposes it explicitly.
 
 Obstacle data format:
 
@@ -312,6 +344,8 @@ viewX = 769 - worldX
 - The agent does not use JVMTI. Bytecode patches stay narrow. They only handle known official-client edge cases.
 - The HTTP server binds only to `127.0.0.1`.
 - Graphwar state is read through reflection because the official jar is not a compile-time dependency of this package.
+- Active state and obstacle data are copied while holding the same `GameData` monitor used by official incoming-message handling. JSON serialization happens after the immutable copy is complete.
+- `/shot` rechecks and claims its safety values while holding that monitor, then queues `SET_ANGLE` before `FIRE_FUNC` for second-derivative mode. Those remain two messages in the unmodified official protocol, so this is a local atomic guard rather than a server-side network transaction. Do not adjust the angle or fire through the official UI while managed mode is submitting a shot.
 - The official client discards the initial `ready` value while constructing a synchronized player. After that initial sync, `/room` can report a remote player as not ready until the server sends a later ready-state update.
 - The obstacle rule comes from the official `Obstacle#collidePoint`: `terrain.getRGB(x, y) != -1` means blocking.
 - Coordinate conversion uses the inverse formulas of the official `GraphPlane#convertX` / `GraphPlane#convertY`.

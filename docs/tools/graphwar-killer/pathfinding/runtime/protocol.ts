@@ -10,6 +10,7 @@ import type {
   GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildResult,
   GraphwarOneClickClearDebugTiming,
+  GraphwarOneClickClearIncumbent,
   GraphwarOneClickClearResult,
   GraphwarOneClickClearSearchInput,
 } from "../one-click-clear/search";
@@ -158,6 +159,8 @@ export type GraphwarPathfindingWorkerTask =
     }
   | {
       input: GraphwarOneClickClearPathWorkerInput;
+      /** True 时 master 会在完整搜索期间发布已最终回放验证的当前最优方案。 */
+      reportIncumbents: boolean;
       type: "build-one-click-clear-path";
     };
 
@@ -208,6 +211,12 @@ export type GraphwarPathfindingWorkerResponse =
       id: number;
       preview: GraphwarPathfindingPreview;
       type: "preview";
+    }
+  | {
+      id: number;
+      /** 可在截止时直接发射的当前最优方案。 */
+      incumbent: GraphwarOneClickClearIncumbent;
+      type: "one-click-clear-incumbent";
     };
 
 /** Edge Worker 初始化上下文；一个 worker 生命周期内只初始化一次。 */

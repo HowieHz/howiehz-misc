@@ -42,6 +42,16 @@ import { graphwarKillerLocale } from "./locale";
 
 从当前路径末端出发，筛选士兵中心位于 `x+` 方向的可用目标，规划出击杀数尽可能多的路线。
 
+##### 托管模式 {#graphwar-killer-managed-mode}
+
+开启“使用 Agent”和“智能寻路”后，只有当前算法在 `y`、`y'`、`y''` 三种游戏模式下都支持一键清图时才能开启托管；目前满足条件的是阶跃算法。托管会锁定所有计算和发射输入，每秒读取一次权威状态，在房间内自动准备，并为当前或下一名将行动的本地真人士兵计算一键清图。
+
+- 搜索完成后会立即发射。
+- 回合只剩 3 秒时会停止计算。有已经验证过的方案，就发射当前最好的一个；没有就跳过这一回合。
+- 计算失败或无法确认是否发射成功时，本回合不会重试。
+- 每个回合都会重新计算，不会复用上个回合的结果。
+- 托管时请让本页保持在前台。工具会尝试让屏幕常亮；切到后台可能造成延迟，并会显示警告。
+
 #### 邪道模式 {#graphwar-killer-step-glitch-mode}
 
 仅对阶跃函数的 `y'` 模式生效。普通阶跃的近似路径区域内存在障碍时，邪道模式会尝试生成用于纵向跨越障碍的瞬移项；该模式需要障碍数据和准确的士兵位置，推荐通过 Agent 读取游戏状态。
@@ -64,7 +74,7 @@ import { graphwarKillerLocale } from "./locale";
 java -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
-该命令会同时启动 Graphwar Agent 和游戏。回到工具后开启“使用 Agent”，即可使用“读取状态”获取当前游戏状态。更多信息请查看 [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent)。
+该命令会同时启动 Graphwar Agent 和游戏。回到工具后开启“使用 Agent”，即可手动“读取状态”，或在启用“智能寻路”后开启“托管模式”。更多信息请查看 [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent)。
 
 ### 寻路功能相关说明 {#graphwar-killer-pathfinding-details}
 

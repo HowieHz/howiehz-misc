@@ -233,7 +233,7 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
 
     postResponse({
       id: request.id,
-      result: await buildOneClickClearPath(request.task.input),
+      result: await buildOneClickClearPath(request.id, request.task.input, request.task.reportIncumbents),
       taskType: "build-one-click-clear-path",
       type: "success",
     });
@@ -862,7 +862,9 @@ function measureSmartPathfindingWorkerTiming<TResult>(
 
 /** 在 master 内执行完整一键清图，并管理请求级 edge Worker session。 */
 async function buildOneClickClearPath(
+  requestId: number,
   input: GraphwarOneClickClearPathWorkerInput,
+  reportIncumbents: boolean,
 ): Promise<GraphwarOneClickClearPathWorkerResult> {
   const startedAt = nowMs();
   const timings: GraphwarOneClickClearDebugTiming[] = [];
@@ -922,9 +924,11 @@ async function buildOneClickClearPath(
   let result: GraphwarOneClickClearPathWorkerResult["result"];
   try {
     const committedSequence = input.committedTargets.map((target) => target.hitCircle);
-    const prefixEvidence = isStepGlitchRoute
-      ? getMasterStepGlitchEvidence(input, input.pathPoints, committedSequence, input.prefixTarget)
-      : undefined;
+    // 托管进度请求不读取或写入跨请求 evidence，确保每个回合只依赖本次权威快照。
+    const prefixEvidence =
+      isStepGlitchRoute && !reportIncumbents
+        ? getMasterStepGlitchEvidence(input, input.pathPoints, committedSequence, input.prefixTarget)
+        : undefined;
     result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: input.boundaryExpansion,
       buildDagEdges: (request) => {
@@ -940,6 +944,16 @@ async function buildOneClickClearPath(
       hitCandidates: input.hitCandidates,
       isCancelled: () => false,
       onDebugTiming: (timing) => timings.push(timing),
+      ...(reportIncumbents
+        ? {
+            onValidatedIncumbent: (incumbent) =>
+              postResponse({
+                id: requestId,
+                incumbent,
+                type: "one-click-clear-incumbent",
+              }),
+          }
+        : {}),
       ...(isStepGlitchRoute
         ? {
             onValidatedStepGlitchPath: (evidence) => {
@@ -978,7 +992,7 @@ async function buildOneClickClearPath(
       timings.push(...dagEdgeSession.dispose());
     }
   }
-  if (result.type === "success" && validatedStepGlitchEvidence) {
+  if (!reportIncumbents && result.type === "success" && validatedStepGlitchEvidence) {
     setMasterStepGlitchEvidence(
       input,
       validatedStepGlitchEvidence.path,

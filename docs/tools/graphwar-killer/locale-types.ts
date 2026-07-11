@@ -238,6 +238,23 @@ export interface GraphwarKillerLocale {
       success: (killCount: number, elapsed: string, resultCacheHit?: boolean) => string;
       unsupported: string;
     };
+    managed: {
+      backgroundWarning: string;
+      calculating: (targetCount?: number) => string;
+      completedWaiting: string;
+      connectionFailed: (message: string) => string;
+      deadlineFired: string;
+      deadlineNoPlan: string;
+      enabled: string;
+      incompatible: string;
+      readying: string;
+      searchFailed: string;
+      shotUnknown: (message: string) => string;
+      stopped: string;
+      successFired: string;
+      waitingForGame: string;
+      waitingForTurn: string;
+    };
   };
   /** 页面控件、面板标题和可访问性标签文案。 */
   ui: {
@@ -363,6 +380,13 @@ export interface GraphwarKillerLocale {
       oneClickClearDeleteCheckRadiusAriaLabel: string;
       oneClickClearDeleteCheckRadiusTitle: string;
       oneClickClearTitle: string;
+      managedFriendlyFireWarning: string;
+      managedMode: string;
+      managedModeBusyTitle: string;
+      managedModeDisableTitle: string;
+      managedModeNeedAgentTitle: string;
+      managedModeTitle: string;
+      managedModeUnsupportedTitle: string;
       routePlanningTolerance: string;
       routePlanningToleranceAriaLabel: string;
       routePlanningToleranceTitle: string;

@@ -10,7 +10,7 @@ import {
   createGraphwarStepRouteSummedArea,
   validateGraphwarStepRoutePath,
 } from "../routing/step-route";
-import { buildGraphwarOneClickClearPath } from "./search";
+import { buildGraphwarOneClickClearPath, type GraphwarOneClickClearIncumbent } from "./search";
 
 const bounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
 const boundsRect: BoundsRect = { height: 450, width: 770, x: 0, y: 0 };
@@ -24,6 +24,226 @@ const settings = {
 };
 
 describe("One-click clear optimization", () => {
+  it("publishes a replay-validated single-target incumbent before building the full DAG", async () => {
+    const start = toImagePoint(-20, 0);
+    const first = toImagePoint(-15, 0);
+    const second = toImagePoint(-10, 0);
+    const candidates = [
+      { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+      { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+    ];
+    const events: string[] = [];
+    const incumbents: GraphwarOneClickClearIncumbent[] = [];
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => {
+        events.push(`batch:${request.jobs.length}`);
+        return {
+          routes: request.jobs.map((job) => ({
+            jobId: job.id,
+            route: [job.startPoint, job.targetPoint],
+          })),
+          timings: [],
+        };
+      },
+      candidates,
+      committedTargets: [],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: candidates,
+      onValidatedIncumbent: (incumbent) => {
+        events.push("incumbent");
+        incumbents.push(incumbent);
+      },
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: { ...settings, algorithm: "abs" },
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 0,
+    });
+
+    expect(result.type).toBe("success");
+    expect(events[0]).toBe("batch:1");
+    expect(events.indexOf("incumbent")).toBeGreaterThan(0);
+    expect(events.indexOf("incumbent")).toBeLessThan(events.indexOf("batch:3"));
+    expect(incumbents[0]).toMatchObject({
+      pathPoints: [start, first],
+      targetIds: expect.arrayContaining(["first"]),
+    });
+    expect(incumbents[0]?.expression).not.toBe("");
+    expect(incumbents[0]?.targetCount).toBe(incumbents[0]?.targetIds.length);
+  });
+
+  it("replaces an equal-hit fallback with the completed search result", async () => {
+    const start = toImagePoint(-20, 0);
+    const first = toImagePoint(-15, 0);
+    const second = toImagePoint(-10, 0);
+    const incumbents: GraphwarOneClickClearIncumbent[] = [];
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({
+          jobId: job.id,
+          ...(job.targetPoint.x === first.x && job.targetPoint.y === first.y
+            ? { route: [job.startPoint, job.targetPoint] }
+            : {}),
+        })),
+        timings: [],
+      }),
+      candidates: [
+        { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+        { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+      ],
+      committedTargets: [],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [
+        { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+        { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+      ],
+      onValidatedIncumbent: (incumbent) => incumbents.push(incumbent),
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: { ...settings, algorithm: "abs" },
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 0,
+    });
+
+    expect(result.type).toBe("success");
+    expect(incumbents).toHaveLength(2);
+    if (result.type === "success") {
+      expect(incumbents.at(-1)?.pathPoints).toEqual(result.pathPoints);
+      expect(incumbents.at(-1)?.targetIds).toEqual(result.targetIds);
+    }
+  });
+
+  it("returns a validated fallback when the full DAG has no route", async () => {
+    const start = toImagePoint(-20, 0);
+    const first = toImagePoint(-15, 0);
+    const second = toImagePoint(-10, 0);
+    const candidates = [
+      { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+      { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+    ];
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({
+          jobId: job.id,
+          ...(request.jobs.length === 1 ? { route: [job.startPoint, job.targetPoint] } : {}),
+        })),
+        timings: [],
+      }),
+      candidates,
+      committedTargets: [],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: candidates,
+      onValidatedIncumbent: (incumbent) => expect(incumbent.targetCount).toBeGreaterThan(0),
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: { ...settings, algorithm: "abs" },
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 0,
+    });
+
+    expect(result).toMatchObject({ type: "success", pathPoints: [start, first] });
+  });
+
+  it("includes the validated Y'' launch angle in an incumbent", async () => {
+    const start = toImagePoint(-20, 0);
+    const target = toImagePoint(-10, 0);
+    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const incumbents: GraphwarOneClickClearIncumbent[] = [];
+    let buildCount = 0;
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => {
+        buildCount += 1;
+        return {
+          routes: request.jobs.map((job) => ({
+            jobId: job.id,
+            resolvedEndStateKey: "0",
+            resolvedEndY: 0,
+            route: [job.startPoint, job.targetPoint],
+          })),
+          timings: [],
+        };
+      },
+      candidates: [candidate],
+      committedTargets: [],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      onValidatedIncumbent: (incumbent) => incumbents.push(incumbent),
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: { ...settings, equation: "ddy" },
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 0,
+      validateStepRoute: () => true,
+    });
+
+    expect(result.type).toBe("success");
+    expect(buildCount).toBe(1);
+    expect(incumbents).toHaveLength(1);
+    expect(incumbents[0]).toMatchObject({ targetCount: 1, targetIds: ["target"] });
+    expect(incumbents[0]?.launchAngleRadians).toBeTypeOf("number");
+    expect(Number.isFinite(incumbents[0]?.launchAngleRadians)).toBe(true);
+  });
+
+  it("does not publish a geometry route that fails formula validation", async () => {
+    const start = toImagePoint(-20, 0);
+    const backward = toImagePoint(-22, 0);
+    const target = toImagePoint(-10, 0);
+    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const incumbents: GraphwarOneClickClearIncumbent[] = [];
+    let buildCount = 0;
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => {
+        buildCount += 1;
+        return {
+          routes: request.jobs.map((job) => ({
+            jobId: job.id,
+            route: [job.startPoint, backward, job.targetPoint],
+          })),
+          timings: [],
+        };
+      },
+      candidates: [candidate],
+      committedTargets: [],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      onValidatedIncumbent: (incumbent) => incumbents.push(incumbent),
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: { ...settings, algorithm: "abs" },
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 0,
+    });
+
+    expect(result.type).toBe("failure");
+    expect(buildCount).toBe(1);
+    expect(incumbents).toEqual([]);
+  });
+
   it("uses the sequential glitch scanner instead of DAG edge routing", async () => {
     const start = toImagePoint(-20, 0);
     const lower = toImagePoint(-10, -2);

@@ -28,6 +28,8 @@ interface GraphwarResultPanelPointRow {
 }
 
 export interface GraphwarResultPanelModel {
+  /** 托管期间锁定公式输入、路径坐标和手动发射，保留复制。 */
+  interactionDisabled: boolean;
   /** Agent 开火按钮当前文案。 */
   agentFireButtonText: string;
   /** 是否允许通过 Agent 提交当前函数。 */
@@ -116,7 +118,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           v-if="result.agentFireVisible"
           type="button"
           class="graphwar-killer__agent-fire-button"
-          :disabled="!result.canFireAgentFunction"
+          :disabled="result.interactionDisabled || !result.canFireAgentFunction"
           :title="locale.ui.result.fireTitle"
           @click="emit('fireAgentFunction')"
         >
@@ -135,7 +137,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           v-if="result.workflowMode === 'simulator'"
           type="button"
           class="graphwar-killer__secondary-button"
-          :disabled="!result.canClearSimulatorInputs"
+          :disabled="result.interactionDisabled || !result.canClearSimulatorInputs"
           :title="locale.ui.result.clearSimulatorTitle"
           @click="emit('clearSimulator')"
         >
@@ -168,6 +170,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         autocomplete="off"
         :aria-label="locale.ui.result.formulaInputAriaLabel"
         :title="locale.ui.result.formulaInputTitle"
+        :disabled="result.interactionDisabled"
       >
     </div>
     <div
@@ -184,6 +187,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         autocomplete="off"
         :aria-label="locale.ui.result.launchAngleAriaLabel"
         :title="locale.ui.result.launchAngleTitle"
+        :disabled="result.interactionDisabled"
       >
     </div>
     <p
@@ -225,6 +229,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           :title="row.x.title"
           inputmode="decimal"
           autocomplete="off"
+          :disabled="result.interactionDisabled"
           @focus="emit('startPointCoordinateEdit', row.index, 'x')"
           @blur="emit('finishPointCoordinateEdit')"
           @input="handlePointCoordinateInput(row.index, 'x', $event)"
@@ -236,6 +241,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           :title="row.y.title"
           inputmode="decimal"
           autocomplete="off"
+          :disabled="result.interactionDisabled"
           @focus="emit('startPointCoordinateEdit', row.index, 'y')"
           @blur="emit('finishPointCoordinateEdit')"
           @input="handlePointCoordinateInput(row.index, 'y', $event)"

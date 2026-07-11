@@ -6,6 +6,7 @@ import {
   createGraphwarAgentShotRequest,
   GraphwarAgentClientError,
   readGraphwarAgentSnapshot,
+  selectGraphwarAgentCurrentShooter,
   selectGraphwarAgentShooter,
   type GraphwarAgentAvailableState,
 } from "./client";
@@ -81,7 +82,7 @@ describe("Graphwar Agent API v2 client", () => {
     expect(snapshot.worldObstacleMask[0]).toBe(1);
   });
 
-  it("predicts the nearest upcoming local human and rotates to their next alive soldier", () => {
+  it("keeps current-only selection empty while manual reads predict the next local human", () => {
     const state = createParsedState("y");
     const local = state.players[0];
     const firstSoldier = local.soldiers[0];
@@ -98,6 +99,7 @@ describe("Graphwar Agent API v2 client", () => {
       { ...local, id: 8, index: 2 },
     ];
 
+    expect(selectGraphwarAgentCurrentShooter(state)).toBeUndefined();
     expect(selectGraphwarAgentShooter(state)).toMatchObject({
       player: { id: 7 },
       soldier: { index: 1 },

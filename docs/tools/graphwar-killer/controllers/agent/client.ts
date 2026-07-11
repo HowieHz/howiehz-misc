@@ -53,9 +53,12 @@ export interface GraphwarAgentPlayer {
   team: number;
 }
 
-export interface GraphwarAgentShooter {
+export interface GraphwarAgentCurrentShooter {
   player: GraphwarAgentPlayer;
   soldier: GraphwarAgentSoldier;
+}
+
+export interface GraphwarAgentShooter extends GraphwarAgentCurrentShooter {
   speculative: boolean;
 }
 
@@ -329,14 +332,23 @@ export function createGraphwarAgentShooterViewSnapshot(
   };
 }
 
-/** Chooses the active local human or the next local human for manual and managed reads. */
-export function selectGraphwarAgentShooter(state: GraphwarAgentAvailableState): GraphwarAgentShooter | undefined {
+/** Chooses the active local-human shooter without predicting a future turn. */
+export function selectGraphwarAgentCurrentShooter(
+  state: GraphwarAgentAvailableState,
+): GraphwarAgentCurrentShooter | undefined {
   const currentPlayer = state.players[state.currentTurn];
-  if (state.phase === "aiming" && isGraphwarAgentLocalHuman(currentPlayer)) {
-    const soldier = currentPlayer.soldiers[currentPlayer.currentTurnSoldier];
-    if (soldier?.alive) {
-      return { player: currentPlayer, soldier, speculative: false };
-    }
+  if (state.phase !== "aiming" || !isGraphwarAgentLocalHuman(currentPlayer)) {
+    return undefined;
+  }
+  const soldier = currentPlayer.soldiers[currentPlayer.currentTurnSoldier];
+  return soldier?.alive ? { player: currentPlayer, soldier } : undefined;
+}
+
+/** Chooses the active local human or predicts the next one for a manual state read. */
+export function selectGraphwarAgentShooter(state: GraphwarAgentAvailableState): GraphwarAgentShooter | undefined {
+  const currentShooter = selectGraphwarAgentCurrentShooter(state);
+  if (currentShooter) {
+    return { ...currentShooter, speculative: false };
   }
 
   for (let offset = 1; offset <= state.players.length; offset += 1) {

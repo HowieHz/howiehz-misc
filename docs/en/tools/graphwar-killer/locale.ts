@@ -240,7 +240,7 @@ export const graphwarKillerLocale = {
       stopped: "Managed mode stopped",
       successFired: "Managed calculation complete; fired the best plan",
       waitingForGame: "Managed mode enabled; waiting for a room or match",
-      waitingForTurn: "Waiting for a local turn while calculating the next shot",
+      waitingForTurn: "Waiting for a local turn",
     },
   },
   ui: {

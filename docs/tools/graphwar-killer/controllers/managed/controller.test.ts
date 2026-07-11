@@ -84,6 +84,67 @@ describe("Graphwar managed-mode controller", () => {
     controller.stop();
   });
 
+  it("waits through remote, drawing, and exploding states for the current local-human turn", async () => {
+    vi.useFakeTimers();
+    const localPlayer = createAvailableState().players[0];
+    if (!localPlayer) {
+      throw new Error("Expected a local player fixture");
+    }
+    const players = [
+      { ...localPlayer, id: 6, local: false, name: "Remote", team: 1 },
+      { ...localPlayer, id: 7, index: 1, name: "Local", team: 2 },
+    ];
+    const client = createFakeClient();
+    client.readState
+      .mockResolvedValueOnce(createAvailableState({ currentTurn: 0, players, turnToken: "turn-remote" }))
+      .mockResolvedValueOnce(
+        createAvailableState({
+          currentTurn: 1,
+          drawingFunction: true,
+          phase: "drawing",
+          players,
+          turnToken: "turn-local",
+        }),
+      )
+      .mockResolvedValueOnce(
+        createAvailableState({
+          currentTurn: 1,
+          exploding: true,
+          phase: "exploding",
+          players,
+          turnToken: "turn-local",
+        }),
+      )
+      .mockResolvedValue(createAvailableState({ currentTurn: 1, players, turnToken: "turn-local" }));
+    const onState = vi.fn();
+    const controller = createGraphwarManagedController({ client, hooks: { onState } });
+
+    controller.start();
+    await flushPromises();
+    expect(onState).toHaveBeenCalledOnce();
+    expect(onState.mock.calls[0]?.[1]).toBeUndefined();
+    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onState).toHaveBeenCalledTimes(2);
+    expect(onState.mock.calls[1]?.[1]).toBeUndefined();
+    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onState).toHaveBeenCalledTimes(3);
+    expect(onState.mock.calls[2]?.[1]).toBeUndefined();
+    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onState).toHaveBeenCalledTimes(4);
+    expect(onState.mock.calls[3]?.[1]).toMatchObject({
+      player: { id: 7, team: 2 },
+      soldier: { index: 0 },
+    });
+    expect(client.readWorldObstacleMask).toHaveBeenCalledOnce();
+    controller.stop();
+  });
+
   it("invalidates a state response that arrives after lifecycle stop", async () => {
     const pending = createDeferred<GraphwarAgentState>();
     const client = createFakeClient();
@@ -210,6 +271,31 @@ describe("Graphwar managed-mode controller", () => {
     expect(controller.isRunning()).toBe(true);
     await vi.advanceTimersByTimeAsync(1000);
     expect(client.submitShot).toHaveBeenCalledOnce();
+    controller.stop();
+  });
+
+  it("abandons an invalid local plan without retrying it at the deadline", async () => {
+    vi.useFakeTimers();
+    const state = createAvailableState({ remainingTurnMs: 4000 });
+    const client = createFakeClient();
+    client.readState.mockResolvedValue(state);
+    const onDeadlineWithoutShot = vi.fn();
+    const onShotFailed = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onDeadlineWithoutShot, onShotFailed },
+    });
+
+    controller.start();
+    await flushPromises();
+    const invalidPlan = { equationMode: "dy", function: "x" } as const;
+    expect(controller.submitShot(state, invalidPlan)).toBe(false);
+    expect(controller.submitShot(state, invalidPlan)).toBe(false);
+    expect(onShotFailed).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onDeadlineWithoutShot).not.toHaveBeenCalled();
+    expect(client.submitShot).not.toHaveBeenCalled();
     controller.stop();
   });
 

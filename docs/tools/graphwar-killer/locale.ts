@@ -197,7 +197,7 @@ export const graphwarKillerLocale = {
       stopped: "托管已关闭",
       successFired: "托管计算完成，已发射最优方案",
       waitingForGame: "托管已启用，等待进入房间或对局",
-      waitingForTurn: "等待己方回合并推测下一次发射",
+      waitingForTurn: "等待己方回合",
     },
   },
   ui: {

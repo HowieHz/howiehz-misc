@@ -2,14 +2,14 @@ import {
   createGraphwarAgentShotRequest,
   GraphwarAgentClientError,
   isGraphwarAgentIncompatibleError,
-  selectGraphwarAgentShooter,
+  selectGraphwarAgentCurrentShooter,
   supportsGraphwarManagedMode,
   type GraphwarAgentAvailableRoom,
   type GraphwarAgentAvailableState,
   type GraphwarAgentClient,
+  type GraphwarAgentCurrentShooter,
   type GraphwarAgentPlayer,
   type GraphwarAgentRoom,
-  type GraphwarAgentShooter,
   type GraphwarAgentShotPlan,
   type GraphwarAgentState,
 } from "../agent/client";
@@ -18,18 +18,18 @@ export const GRAPHWAR_MANAGED_POLL_INTERVAL_MS = 1000;
 export const GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS = 5000;
 export const GRAPHWAR_MANAGED_SHOT_DEADLINE_MS = 3000;
 
-export type GraphwarManagedShooter = GraphwarAgentShooter;
+export type GraphwarManagedShooter = GraphwarAgentCurrentShooter;
 
 export interface GraphwarManagedControllerHooks {
   /** Chooses the last fully validated plan when the authoritative deadline is reached. */
   decideDeadlineShot?: (state: GraphwarAgentAvailableState) => GraphwarAgentShotPlan | undefined;
   /** Reports a protocol version or response shape that requires an Agent upgrade. */
   onIncompatibleError?: (error: GraphwarAgentClientError) => void;
-  /** Reports an active-game state and the current or next local-human shooter. */
+  /** Reports an active-game state and its current local-human shooter, if any. */
   onState?: (
     state: GraphwarAgentAvailableState,
     shooter: GraphwarManagedShooter | undefined,
-    worldObstacleMask: Uint8Array,
+    worldObstacleMask: Uint8Array | undefined,
   ) => void;
   /** Reports a polling-friendly pre-game room state. */
   onRoom?: (room: GraphwarAgentRoom) => void;
@@ -157,6 +157,12 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
         return;
       }
       if (state.available && state.phase !== "inactive") {
+        const shooter = state.turnToken ? selectGraphwarAgentCurrentShooter(state) : undefined;
+        // Remote and resolving turns only need state; defer the large mask until a local shot can be searched.
+        if (!shooter) {
+          handleAvailableState(state, undefined, undefined, pollGeneration, stateObservedAt);
+          return;
+        }
         let worldObstacleMask = latestWorldObstacleMask;
         if (latestWorldObstacleMaskRevision !== state.battleRevision || !worldObstacleMask) {
           worldObstacleMask = await options.client.readWorldObstacleMask(state, abortController.signal);
@@ -166,7 +172,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
         }
         latestWorldObstacleMask = worldObstacleMask;
         latestWorldObstacleMaskRevision = state.battleRevision;
-        handleAvailableState(state, worldObstacleMask, pollGeneration, stateObservedAt);
+        handleAvailableState(state, shooter, worldObstacleMask, pollGeneration, stateObservedAt);
         return;
       }
 
@@ -228,7 +234,8 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
   /** Publishes one active state, rotates bounded turn bookkeeping, and handles its deadline once. */
   function handleAvailableState(
     state: GraphwarAgentAvailableState,
-    worldObstacleMask: Uint8Array,
+    shooter: GraphwarManagedShooter | undefined,
+    worldObstacleMask: Uint8Array | undefined,
     pollGeneration: number,
     stateObservedAt: number,
   ) {
@@ -240,7 +247,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     }
     latestState = state;
     stateGenerations.set(state, pollGeneration);
-    hooks.onState?.(state, selectGraphwarAgentShooter(state), worldObstacleMask);
+    hooks.onState?.(state, shooter, worldObstacleMask);
     if (!isCurrentGeneration(pollGeneration)) {
       return;
     }
@@ -257,7 +264,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     }
 
     const turnKey = createTurnKey(state);
-    if (deadlineHandledTurns.has(turnKey) || claimedTurns.has(turnKey)) {
+    if (abandonedTurns.has(turnKey) || deadlineHandledTurns.has(turnKey) || claimedTurns.has(turnKey)) {
       clearDeadlineTimer();
       return;
     }
@@ -292,7 +299,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     }
 
     const turnKey = createTurnKey(state);
-    if (deadlineHandledTurns.has(turnKey) || claimedTurns.has(turnKey)) {
+    if (abandonedTurns.has(turnKey) || deadlineHandledTurns.has(turnKey) || claimedTurns.has(turnKey)) {
       return;
     }
     deadlineHandledTurns.add(turnKey);
@@ -324,6 +331,9 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     try {
       request = createGraphwarAgentShotRequest(state, plan);
     } catch (error) {
+      // A deterministic local validation failure cannot improve on the next poll of the same turn.
+      abandonedTurns.add(turnKey);
+      clearDeadlineTimer();
       hooks.onShotFailed?.(state, plan, normalizeGraphwarManagedError(error));
       return false;
     }

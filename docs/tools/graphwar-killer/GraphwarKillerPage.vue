@@ -248,9 +248,7 @@ let graphwarManagedIncumbent: GraphwarOneClickClearIncumbent | undefined;
 let graphwarManagedLastSubmittedTurnToken: string | undefined;
 let graphwarManagedSceneKey = "";
 let graphwarManagedSearchGeneration = 0;
-let graphwarManagedSearchSpeculative = false;
 let graphwarManagedSearchState: "idle" | "running" | "success" | "failure" = "idle";
-let graphwarManagedSearchTurnToken: string | undefined;
 let graphwarManagedStatusKind: SmartPathfindingStatusKind = "warning";
 let graphwarManagedStatusMessage = "";
 let graphwarManagedWakeLock: GraphwarWakeLockSentinel | undefined;
@@ -2440,9 +2438,7 @@ function toggleGraphwarManagedMode() {
   graphwarManagedModeEnabled.value = true;
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
-  graphwarManagedSearchSpeculative = false;
   graphwarManagedSearchState = "idle";
-  graphwarManagedSearchTurnToken = undefined;
   graphwarManagedLastSubmittedTurnToken = undefined;
   graphwarManagedDeadlineTurnToken = undefined;
   graphwarManagedWakeLockGeneration += 1;
@@ -2480,9 +2476,15 @@ function toggleGraphwarManagedMode() {
         setGraphwarManagedStatus(locale.smartPathfinding.managed.waitingForGame, "warning");
       },
       onShotFailed: (state, _plan, error) => {
+        if (graphwarManagedController?.getLatestState()?.turnToken !== state.turnToken) {
+          return;
+        }
         if (graphwarManagedLastSubmittedTurnToken === state.turnToken) {
           setGraphwarManagedStatus(locale.smartPathfinding.managed.shotUnknown(error.message), "error");
+          return;
         }
+        graphwarManagedSearchState = "failure";
+        setGraphwarManagedStatus(locale.smartPathfinding.managed.searchFailed, "error");
       },
       onShotSubmitted: (state) => {
         graphwarManagedLastSubmittedTurnToken = state.turnToken;
@@ -2529,16 +2531,16 @@ function stopGraphwarManagedMode(showStatus: boolean) {
   }
 }
 
-/** 将权威 world 快照转换为目标发射者视角，并仅在完整指纹变化时重启搜索。 */
+/** 仅在当前本地真人回合中按权威 world 快照启动一次搜索。 */
 function handleGraphwarManagedState(
   state: GraphwarAgentAvailableState,
   shooter: GraphwarManagedShooter | undefined,
-  worldObstacleMask: Uint8Array,
+  worldObstacleMask: Uint8Array | undefined,
 ) {
   if (!graphwarManagedModeEnabled.value || !graphwarManagedClient) {
     return;
   }
-  if (!shooter) {
+  if (!shooter || !state.turnToken || !worldObstacleMask) {
     resetGraphwarManagedSearch();
     setGraphwarManagedStatus(locale.smartPathfinding.managed.waitingForTurn, "warning");
     return;
@@ -2552,15 +2554,7 @@ function handleGraphwarManagedState(
     setSmartPathfindingStatus(locale.smartPathfinding.managed.incompatible, "error");
     return;
   }
-  if (
-    sceneKey === graphwarManagedSceneKey &&
-    (graphwarManagedSearchTurnToken === state.turnToken || graphwarManagedSearchSpeculative)
-  ) {
-    if (graphwarManagedSearchTurnToken !== state.turnToken) {
-      // A speculative run may span remote turns and then promote once to its predicted local turn.
-      graphwarManagedSearchTurnToken = state.turnToken;
-      graphwarManagedSearchSpeculative = shooter.speculative;
-    }
+  if (sceneKey === graphwarManagedSceneKey) {
     if (
       graphwarManagedSearchState === "success" &&
       state.remainingTurnMs > GRAPHWAR_MANAGED_SHOT_DEADLINE_MS &&
@@ -2581,9 +2575,7 @@ function handleGraphwarManagedState(
   cancelGraphwarManagedSearch();
   graphwarManagedSceneKey = sceneKey;
   graphwarManagedIncumbent = undefined;
-  graphwarManagedSearchSpeculative = shooter.speculative;
   graphwarManagedSearchState = "idle";
-  graphwarManagedSearchTurnToken = state.turnToken;
   graphwarManagedDeadlineTurnToken = undefined;
   graphwarManagedLastSubmittedTurnToken = undefined;
   const snapshot = createGraphwarAgentShooterViewSnapshot(
@@ -2604,7 +2596,7 @@ function handleGraphwarManagedState(
   void runGraphwarManagedSearch(sceneKey);
 }
 
-/** 绑定所有会改变搜索语义的状态；回合生命周期由调用方单独限制推测结果只晋升一次。 */
+/** 绑定当前权威回合和所有搜索语义，确保结果不会跨回合复用。 */
 function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shooter: GraphwarManagedShooter) {
   if (!parsedBounds.value.ok || !parsedPathfindingWorkerCount.value.ok || !parsedOneClickClearTolerances.value.ok) {
     return "";
@@ -2628,6 +2620,7 @@ function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shoot
     stepGlitchMode: settings.stepGlitchMode,
     stepOverflowProtection: settings.stepOverflowProtection,
     tolerances: parsedOneClickClearTolerances.value,
+    turnToken: state.turnToken,
   });
 }
 
@@ -2688,9 +2681,7 @@ function resetGraphwarManagedSearch() {
   cancelGraphwarManagedSearch();
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
-  graphwarManagedSearchSpeculative = false;
   graphwarManagedSearchState = "idle";
-  graphwarManagedSearchTurnToken = undefined;
 }
 
 /** 仅将当前完整指纹下的验证结果转换为 Agent 的模式化发射参数。 */
@@ -2706,7 +2697,7 @@ function createGraphwarManagedShotPlan(state: GraphwarAgentAvailableState): Grap
     player.computer ||
     player.disconnected ||
     !incumbent.expression.trim() ||
-    createGraphwarManagedSceneKey(state, { player, soldier, speculative: false }) !== graphwarManagedSceneKey
+    createGraphwarManagedSceneKey(state, { player, soldier }) !== graphwarManagedSceneKey
   ) {
     return undefined;
   }

@@ -45,13 +45,13 @@ Starting from the current path end, One-Click Clear filters usable targets whose
 ##### Managed Mode {#graphwar-killer-managed-mode}
 
 After Use Agent and Smart Pathfinding are enabled, Managed Mode is available only when the current algorithm supports One-Click Clear in all three game modes: `y`, `y'`, and `y''`. Step is currently the only qualifying algorithm.
-Managed Mode locks every calculation and firing input, reads authoritative state once per second, readies local room players automatically, and calculates for the current or next local human soldier.
+Managed Mode locks every calculation and firing input, reads authoritative state once per second, readies local room players automatically, and calculates only during the current local human turn.
 
 - The tool fires as soon as the search finishes.
 - When 3 seconds remain, it stops calculating. It fires the best validated plan available, or skips the turn when there is no plan.
 - It does not retry during the same turn if calculation fails or the shot result cannot be confirmed.
 - It recalculates every turn and does not reuse the previous turn's result.
-- Keep the managed page in the foreground. The tool tries to keep the screen awake; background use may cause delays and shows a warning.
+- Keep the managed page in the foreground. The tool tries to keep the screen awake. Going into the background may cause delays; the tool will show a warning.
 
 #### Glitch Mode {#graphwar-killer-step-glitch-mode}
 

@@ -39,6 +39,25 @@ describe("Step glitch one-click-clear target assignment", () => {
     expect(assigned[0]?.hitCircle).toBe(hitCircle);
   });
 
+  it("keeps a singleton at its center when the previous point is inside its hit circle", () => {
+    const assigned = assignGraphwarStepGlitchTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      candidates: [createTarget("only", 10, 3, 2, 0)],
+      pathTailX: 9,
+    });
+
+    expect(assigned.map((target) => target.routePoint)).toEqual([createPixelPoint(10, 3)]);
+  });
+
+  it("keeps a singleton at its center when the next column is inside its hit circle", () => {
+    const assigned = assignGraphwarStepGlitchTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      candidates: [createTarget("only", 10, 3, 5, 0), createTarget("next", 12, 4, 1, 1)],
+    });
+
+    expect(assigned.map((target) => target.routePoint)).toEqual([createPixelPoint(10, 3), createPixelPoint(12, 4)]);
+  });
+
   it("spans the strict shared hit interval and assigns x by launch-y proximity", () => {
     const candidates = [
       createTarget("far", 10, -4, 2, 0),
@@ -68,6 +87,15 @@ describe("Step glitch one-click-clear target assignment", () => {
         12,
       );
     }
+  });
+
+  it("uses the outermost integer pixel centers inside a shared hit circle", () => {
+    const assigned = assignGraphwarStepGlitchTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      candidates: [createTarget("a", 10.25, -1, 2, 0), createTarget("b", 10.25, 1, 2, 1)],
+    });
+
+    expect(assigned.map((target) => target.routePoint.x)).toEqual([9, 12]);
   });
 
   it("distributes after a left anchor through the safe right edge", () => {

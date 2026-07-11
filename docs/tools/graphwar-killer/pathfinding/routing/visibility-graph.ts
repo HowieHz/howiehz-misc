@@ -490,6 +490,7 @@ function collectVisibilityGraphCandidates({
   return [start, target, ...[...candidateMap.values()].sort((left, right) => left.x - right.x || left.y - right.y)];
 }
 
+/** 只复用输入完全一致的轮廓数据；模糊 tolerance 命中会改变真实路线语义。 */
 function getCompatibleVisibilityGraphObstacleData({
   mirrored,
   routeMask,
@@ -506,7 +507,7 @@ function getCompatibleVisibilityGraphObstacleData({
     visibilityGraphObstacleData &&
     visibilityGraphObstacleData.mirrored === mirrored &&
     visibilityGraphObstacleData.routeMask === routeMask &&
-    nearlyEqual(visibilityGraphObstacleData.routeTolerancePlanePixels, routeTolerancePlanePixels)
+    visibilityGraphObstacleData.routeTolerancePlanePixels === routeTolerancePlanePixels
   ) {
     return visibilityGraphObstacleData;
   }

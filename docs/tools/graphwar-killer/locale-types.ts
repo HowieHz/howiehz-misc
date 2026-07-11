@@ -240,11 +240,13 @@ export interface GraphwarKillerLocale {
     };
     managed: {
       backgroundWarning: string;
+      calculationComplete: (targetCount: number, elapsed: string) => string;
       calculating: (targetCount?: number) => string;
       completedWaiting: string;
       connectionFailed: (message: string) => string;
       deadlineFired: string;
       deadlineNoPlan: string;
+      deadlinePlan: (targetCount: number, elapsed: string) => string;
       enabled: string;
       incompatible: string;
       readying: string;

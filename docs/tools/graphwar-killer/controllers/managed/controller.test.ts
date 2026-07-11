@@ -247,27 +247,39 @@ describe("Graphwar managed-mode controller", () => {
     vi.useFakeTimers();
     const state = createAvailableState({ remainingTurnMs: 3000 });
     const shot = createDeferred<{ ok: true }>();
+    const submissionOrder: string[] = [];
     const client = createFakeClient();
     client.readState.mockResolvedValue(state);
-    client.submitShot.mockReturnValue(shot.promise);
+    client.submitShot.mockImplementation(() => {
+      submissionOrder.push("request");
+      return shot.promise;
+    });
     const plan = { equationMode: "y", function: "x" } as const;
     const onShotFailed = vi.fn();
+    const onShotSubmitted = vi.fn(() => submissionOrder.push("submitted"));
+    const onShotSucceeded = vi.fn();
     const controller = createGraphwarManagedController({
       client,
       hooks: {
         decideDeadlineShot: () => plan,
         onShotFailed,
+        onShotSubmitted,
+        onShotSucceeded,
       },
     });
 
     controller.start();
     await flushPromises();
     expect(client.submitShot).toHaveBeenCalledOnce();
+    expect(onShotSubmitted).toHaveBeenCalledOnce();
+    expect(onShotSucceeded).not.toHaveBeenCalled();
+    expect(submissionOrder).toEqual(["submitted", "request"]);
     expect(controller.submitShot(state, plan)).toBe(false);
 
     shot.reject(new GraphwarAgentClientError("transient", "result unknown"));
     await flushPromises();
     expect(onShotFailed).toHaveBeenCalledOnce();
+    expect(onShotSucceeded).not.toHaveBeenCalled();
     expect(controller.isRunning()).toBe(true);
     await vi.advanceTimersByTimeAsync(1000);
     expect(client.submitShot).toHaveBeenCalledOnce();

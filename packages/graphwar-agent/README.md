@@ -14,7 +14,7 @@ It exposes pre-game room state and ready control, plus consistent match snapshot
 - **Accurate obstacle detection**: reuses Graphwar's own collision rule, where every non-white terrain pixel is blocking.
 - **Submits guarded shots through the original logic**: the HTTP endpoint validates an exact turn and battlefield revision before calling `GameData#setAngle(double)` when needed and `GameData#sendFunction(String)`.
 - **Returns two coordinate spaces**: returns Graphwar's internal `world` coordinates and the current screen-oriented `view` coordinates, plus mathematical game coordinates.
-- **Official-client compatibility**: silences expected exception noise. Fixes one official client bug: after a room kick, a failed rejoin can leave the lobby stuck.
+- **Official-client compatibility**: silences expected exception noise. Fixes a failed-room-rejoin lockup and prevents invalid fade opacity from trapping the renderer in an exception loop.
 
 ## Build
 
@@ -342,6 +342,7 @@ viewX = 769 - worldX
 ## Implementation Notes
 
 - The agent does not use JVMTI. Bytecode patches stay narrow. They only handle known official-client edge cases.
+- `GraphPlane` float-alpha calls are clamped at the AWT boundary because Graphwar uses the non-monotonic wall clock for fade timers and otherwise retries an invalid opacity on every repaint.
 - The HTTP server binds only to `127.0.0.1`.
 - Graphwar state is read through reflection because the official jar is not a compile-time dependency of this package.
 - Active state and obstacle data are copied while holding the same `GameData` monitor used by official incoming-message handling. JSON serialization happens after the immutable copy is complete.

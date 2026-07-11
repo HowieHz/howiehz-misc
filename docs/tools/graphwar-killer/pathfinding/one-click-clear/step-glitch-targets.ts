@@ -1,4 +1,3 @@
-import { nextDownDouble, nextUpDouble } from "../../core/numbers";
 import { createPixelPoint } from "../../core/types";
 import type { PixelPoint } from "../../core/types";
 
@@ -44,9 +43,6 @@ interface StepGlitchSafeXInterval {
   right: number;
 }
 
-// 圆周减法和平方可能让相邻几个 double 仍判为边界；失败时回退圆心，优先保证严格命中。
-const MAX_STRICT_EDGE_NUDGES = 64;
-
 /** 为同中心 x 的士兵分配稳定、严格递增且位于所有像素命中圆内部的控制点。 */
 export function assignGraphwarStepGlitchTargetRoutePoints<TTarget extends GraphwarStepGlitchTargetCandidate>(
   options: GraphwarStepGlitchTargetAssignmentOptions<TTarget>,
@@ -66,16 +62,15 @@ export function assignGraphwarStepGlitchTargetRoutePoints<TTarget extends Graphw
     const group = options.candidates.slice(groupStart, groupEnd);
     const interval = createStepGlitchSafeXInterval(group, options);
     if (interval) {
-      const groupCenterForwardX = toForwardX(groupCenterX ?? Number.NaN, options.xPlusIsRight);
-      const nextCenterForwardX = toForwardX(options.candidates[groupEnd]?.center.x ?? Number.NaN, options.xPlusIsRight);
       const leftAnchor = selectStepGlitchLeftAnchor(interval, pathTailForwardX, lastAssignedForwardX);
+      const nextCenterForwardX = toForwardX(options.candidates[groupEnd]?.center.x ?? Number.NaN, options.xPlusIsRight);
       const rightAnchor = numberIsInsideInterval(nextCenterForwardX, interval) ? nextCenterForwardX : undefined;
       const orderedGroup = [...group].sort((left, right) =>
         compareStepGlitchTargetOrder(left, right, options.pathStartY),
       );
       const assignedForwardXs = createStepGlitchAssignedXs(
         orderedGroup.length,
-        groupCenterForwardX,
+        toForwardX(groupCenterX ?? Number.NaN, options.xPlusIsRight),
         interval,
         leftAnchor,
         rightAnchor,
@@ -141,22 +136,14 @@ function createStepGlitchSafeXInterval(
   return left <= right ? { left, right } : undefined;
 }
 
-/** 用与轨迹采样相同的严格圆内判定寻找最靠近圆周的可表示像素 x。 */
+/** 取严格圆内最外侧的整数像素中心，给实际落点保留不足一个像素的数值余量。 */
 function createStrictCircleXInterval(centerX: number, radius: number): StepGlitchSafeXInterval | undefined {
-  const left = nudgeCircleEdgeInside(centerX - radius, centerX, radius, true);
-  const right = nudgeCircleEdgeInside(centerX + radius, centerX, radius, false);
-  return left !== undefined && right !== undefined && left <= right ? { left, right } : undefined;
-}
-
-function nudgeCircleEdgeInside(edgeX: number, centerX: number, radius: number, moveRight: boolean) {
-  let x = edgeX;
-  for (let attempt = 0; attempt < MAX_STRICT_EDGE_NUDGES; attempt += 1) {
-    if ((x - centerX) ** 2 < radius ** 2) {
-      return x;
-    }
-    x = moveRight ? nextUpDouble(x) : nextDownDouble(x);
+  const left = Math.floor(centerX - radius) + 1;
+  const right = Math.ceil(centerX + radius) - 1;
+  if ((left - centerX) ** 2 < radius ** 2 && (right - centerX) ** 2 < radius ** 2 && left <= right) {
+    return { left, right };
   }
-  return Number.isFinite(centerX) && radius > 0 ? centerX : undefined;
+  return Number.isFinite(centerX) && radius > 0 ? { left: centerX, right: centerX } : undefined;
 }
 
 function selectStepGlitchLeftAnchor(
@@ -189,6 +176,7 @@ function compareStepGlitchTargetOrder(
   );
 }
 
+/** 单例保留圆心；只有同 x 多目标才在锚点和严格命中区间之间均分。 */
 function createStepGlitchAssignedXs(
   count: number,
   centerX: number,
@@ -199,8 +187,13 @@ function createStepGlitchAssignedXs(
   if (count <= 0) {
     return [];
   }
+  if (count === 1) {
+    return [centerX];
+  }
   if (leftAnchor !== undefined && rightAnchor !== undefined) {
-    return createEvenlySpacedInteriorXs(count, leftAnchor, rightAnchor);
+    return Array.from({ length: count }, (_, index) =>
+      interpolateStepGlitchX(leftAnchor, rightAnchor, index + 1, count + 1),
+    );
   }
   if (leftAnchor !== undefined) {
     return Array.from({ length: count }, (_, index) =>
@@ -212,14 +205,12 @@ function createStepGlitchAssignedXs(
       interpolateStepGlitchX(interval.left, rightAnchor, index, count),
     );
   }
-  if (count === 1) {
-    return [centerX];
-  }
   return Array.from({ length: count }, (_, index) =>
     interpolateStepGlitchX(interval.left, interval.right, index, count - 1),
   );
 }
 
+/** 验证分配点严格递增、位于安全区间内且没有越过右锚点。 */
 function stepGlitchAssignmentsAreValid(
   assignedXs: readonly number[],
   interval: StepGlitchSafeXInterval,
@@ -231,7 +222,7 @@ function stepGlitchAssignmentsAreValid(
       !Number.isFinite(assignedX) ||
       assignedX < interval.left ||
       assignedX > interval.right ||
-      assignedX < nextUpDouble(previousX) ||
+      assignedX <= previousX ||
       (rightAnchor !== undefined && assignedX >= rightAnchor)
     ) {
       return false;
@@ -239,10 +230,6 @@ function stepGlitchAssignmentsAreValid(
     previousX = assignedX;
   }
   return true;
-}
-
-function createEvenlySpacedInteriorXs(count: number, left: number, right: number) {
-  return Array.from({ length: count }, (_, index) => interpolateStepGlitchX(left, right, index + 1, count + 1));
 }
 
 function interpolateStepGlitchX(left: number, right: number, numerator: number, denominator: number) {

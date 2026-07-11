@@ -37,6 +37,9 @@ public final class GraphwarAgent {
         // Source: RoomBoard's failed-join cleanup calls GameData.disconnect(), but a
         // previous room kick has already nulled GameData.serverConnection.
         instrumentation.addTransformer(new GraphwarRoomJoinFailureFixer(), false);
+        // Source: GraphPlane derives fade opacity from non-monotonic wall-clock timers,
+        // but AlphaComposite rejects the resulting value when it briefly leaves [0, 1].
+        instrumentation.addTransformer(new GraphwarAlphaCompositeFixer(), false);
 
         printBuildInfo();
         PortSelection portSelection = parsePort(agentArgs);

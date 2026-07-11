@@ -98,6 +98,34 @@ describe("strict Step envelope", () => {
     );
   });
 
+  it("keeps both cells on native grid lines after real and mirrored Graph round trips", () => {
+    const realBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
+    for (const [gridX, gridY] of [
+      [1, 1],
+      [2, 2],
+      [100, 100],
+      [385, 225],
+      [769, 449],
+    ] as const) {
+      for (const pointBounds of [realBounds, { ...realBounds, maxX: -25, minX: 25 }]) {
+        const graphX = pointBounds.minX + (gridX / GRAPHWAR_PLANE_LENGTH) * (pointBounds.maxX - pointBounds.minX);
+        const graphY = pointBounds.maxY - (gridY / GRAPHWAR_PLANE_HEIGHT) * (pointBounds.maxY - pointBounds.minY);
+        expect(
+          mapGraphClosedRegionToPlaneMask({ maxX: graphX, maxY: graphY, minX: graphX, minY: graphY }, pointBounds),
+        ).toEqual({ maxX: gridX, maxY: gridY, minX: gridX - 1, minY: gridY - 1 });
+      }
+    }
+  });
+
+  it("does not snap a real sub-pixel coordinate to a nearby grid line", () => {
+    const graphX = bounds.minX + ((1 + 1e-9) / GRAPHWAR_PLANE_LENGTH) * (bounds.maxX - bounds.minX);
+    const graphY = bounds.maxY - ((1 + 1e-9) / GRAPHWAR_PLANE_HEIGHT) * (bounds.maxY - bounds.minY);
+
+    expect(mapGraphClosedRegionToPlaneMask({ maxX: graphX, maxY: graphY, minX: graphX, minY: graphY }, bounds)).toEqual(
+      { maxX: 1, maxY: 1, minX: 1, minY: 1 },
+    );
+  });
+
   it("uses the same closed-domain query for empty and horizontally mirrored maps", () => {
     const result = createGraphwarStepEnvelope({
       centerX: 200,

@@ -83,6 +83,32 @@ export interface GraphwarTrajectoryFormulaContext {
   signEpsilon: number;
   /** 可选士兵中心；存在时可直接计算 Graphwar 发射角。 */
   soldierCenter?: GraphPoint;
+  /** Step 邪道从左到右求解结果；只可作为精确追加路径的候选前缀。 */
+  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
+}
+
+/** 已求解 Step 邪道前缀；公式 Module 会逐项核对后再决定是否复用。 */
+export interface GraphwarStepGlitchFormulaPrefix {
+  /** 求解时使用的同一坐标边界。 */
+  readonly bounds: GraphBounds;
+  /** 未应用邪道修正前的公式点，用来确认追加项没有反向改变历史发射点或中心。 */
+  readonly initialFormulaPoints: readonly GraphPoint[];
+  /** 调用方传入的原始 Graphwar 路径点。 */
+  readonly points: readonly GraphPoint[];
+  /** 从左到右求解时修正过的前缀公式点。 */
+  readonly refinedFormulaPoints: readonly GraphPoint[];
+  /** 求解时使用的同一设置快照；mask 也通过该对象身份绑定。 */
+  readonly settings: GraphwarTrajectoryFormulaSettings;
+  /** 公式是否启用了 sign 除零保护。 */
+  readonly signEpsilon: number;
+  /** 求解时用于计算发射边缘的士兵中心。 */
+  readonly soldierCenter?: GraphPoint;
+  /** 每段初始包络是否需要邪道。 */
+  readonly stepGlitchRequirements: readonly boolean[];
+  /** 每段已经选定的邪道替换项。 */
+  readonly stepGlitchSegments: readonly (StepGlitchSegment | undefined)[];
+  /** 邪道后普通段已经解析出的实际高度差。 */
+  readonly stepSegmentDeltaYs: readonly (number | undefined)[];
 }
 
 /** 轨迹碰撞判定配置，单独建模是为了让目标命中和障碍命中共用同一采样管线。 */
@@ -199,6 +225,7 @@ export function createGraphwarTrajectoryFormulaContext(options: {
   points: readonly GraphPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
   soldierCenter?: GraphPoint;
+  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
 }): GraphwarTrajectoryFormulaContext {
   const state = createResolvedTrajectoryFormulaState(options);
   const formulaResult = buildFormula(
@@ -224,6 +251,7 @@ export function createGraphwarTrajectoryFormulaContext(options: {
     settings: options.settings,
     signEpsilon: state.signEpsilon,
     soldierCenter: options.soldierCenter,
+    stepGlitchFormulaPrefix: state.stepGlitchFormulaPrefix,
   };
 }
 
@@ -232,16 +260,16 @@ interface TrajectoryFormulaState {
   formulaEvaluation: FormulaEvaluationOptions;
   formulaPoints: GraphPoint[];
   signEpsilon: number;
+  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
 }
 
 interface StepSimulationRefinement {
+  formulaPoints: readonly GraphPoint[];
   stepGlitchSegments: readonly (StepGlitchSegment | undefined)[];
   stepSegmentDeltaYs: readonly (number | undefined)[];
 }
 
 const GRAPHWAR_STEP_GLITCH_MIN_STEP = createGraphwarStepGlitchMinStep();
-/** 邪道项会反向改变发射点；少量外层迭代让替换项、普通补偿和中心互相收敛。 */
-const STEP_FORMULA_REFINEMENT_PASSES = 3;
 // 初始 0.01 可用两位小数精确表示；每缩半一次多保留一位，确保左门仍是严格的 R-w。
 const GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES = Math.max(0, Math.ceil(-Math.log10(GRAPHWAR_STEP_SIZE)));
 // 一阶 RK4 更新量是 h*(k1 + 2*k2 + 2*k3 + k4)/6。邪道门函数临界时，
@@ -254,6 +282,7 @@ interface StepGlitchCandidateContext extends StepGlitchPrefixFormulaContext {
   deltaYOverride: number | undefined;
   formulaCenterX: number;
   mask: Uint8Array;
+  prefixInitialState: GraphwarTrajectorySamplingState | undefined;
   prefixFormula: StepGlitchPrefixFormula;
   segmentStartY: number;
   soldierCenter: GraphPoint;
@@ -261,6 +290,7 @@ interface StepGlitchCandidateContext extends StepGlitchPrefixFormulaContext {
 
 interface StepGlitchPrefixFormulaContext {
   baseDeltaYs: readonly (number | undefined)[];
+  baseDisabledSegments: readonly boolean[];
   baseSegments: readonly (StepGlitchSegment | undefined)[];
   segmentIndex: number;
   signEpsilon: number;
@@ -271,11 +301,13 @@ interface StepGlitchPrefixFormula {
   formulaEvaluation: FormulaEvaluationOptions;
 }
 
+/** 先按原始 sign 求解；只有实际采样踩中折点时才用 epsilon 重建一次。 */
 function createResolvedTrajectoryFormulaState(options: {
   bounds: GraphBounds;
   points: readonly GraphPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
   soldierCenter?: GraphPoint;
+  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
 }): TrajectoryFormulaState {
   const plainState = createTrajectoryFormulaState(options, 0);
   if (resolveSignEpsilonRequirement(options, plainState) === 0) {
@@ -286,48 +318,49 @@ function createResolvedTrajectoryFormulaState(options: {
   return createTrajectoryFormulaState(options, GRAPHWAR_TOOL_SIGN_EPSILON);
 }
 
+/** 求解一次 Step 邪道段并编译最终公式材料；最终文本回放负责裁决残余尾值误差。 */
 function createTrajectoryFormulaState(
   options: {
     bounds: GraphBounds;
     points: readonly GraphPoint[];
     settings: GraphwarTrajectoryFormulaSettings;
     soldierCenter?: GraphPoint;
+    stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
   },
   signEpsilon: number,
 ): TrajectoryFormulaState {
   let formulaPoints = createResolvedFormulaPathPoints(options, signEpsilon);
-  let stepGlitchSegments: readonly (StepGlitchSegment | undefined)[] | undefined = createStepGlitchSegments(
-    options,
-    formulaPoints,
-  );
+  const stepGlitchRequirements = createStepGlitchRequirements(options, formulaPoints);
+  let stepGlitchSegments: readonly (StepGlitchSegment | undefined)[] | undefined;
   let stepSegmentDeltaYs: readonly (number | undefined)[] | undefined;
-  if (stepGlitchSegments) {
-    for (let pass = 0; pass < STEP_FORMULA_REFINEMENT_PASSES; pass += 1) {
-      const refined = refineStepSegmentsWithSimulation(
-        options,
-        formulaPoints,
-        stepGlitchSegments,
-        stepSegmentDeltaYs,
-        signEpsilon,
-      );
-      if (refined) {
-        stepGlitchSegments = refined.stepGlitchSegments;
-        stepSegmentDeltaYs = refined.stepSegmentDeltaYs;
-      }
+  let stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix | undefined;
+  if (stepGlitchRequirements) {
+    const solved = refineStepSegmentsWithSimulation(
+      options,
+      formulaPoints,
+      stepGlitchRequirements,
+      signEpsilon,
+      options.stepGlitchFormulaPrefix,
+    );
+    stepGlitchSegments = solved.stepGlitchSegments;
+    stepSegmentDeltaYs = solved.stepSegmentDeltaYs;
+    stepGlitchFormulaPrefix = {
+      bounds: { ...options.bounds },
+      initialFormulaPoints: formulaPoints.map((point) => createGraphPoint(point.x, point.y)),
+      points: options.points.map((point) => createGraphPoint(point.x, point.y)),
+      refinedFormulaPoints: solved.formulaPoints.map((point) => createGraphPoint(point.x, point.y)),
+      settings: { ...options.settings },
+      signEpsilon,
+      ...(options.soldierCenter
+        ? { soldierCenter: createGraphPoint(options.soldierCenter.x, options.soldierCenter.y) }
+        : {}),
+      stepGlitchRequirements: [...stepGlitchRequirements],
+      stepGlitchSegments: [...stepGlitchSegments],
+      stepSegmentDeltaYs: [...stepSegmentDeltaYs],
+    };
 
-      // 最终替换项也会改变发射角和发射边缘点；必须把它们喂回原有固定点迭代后再验一次候选。
-      const nextFormulaPoints = createResolvedFormulaPathPoints(
-        options,
-        signEpsilon,
-        stepGlitchSegments,
-        stepSegmentDeltaYs,
-      );
-      const stable = !refined && sameGraphPoints(formulaPoints, nextFormulaPoints);
-      formulaPoints = nextFormulaPoints;
-      if (stable) {
-        break;
-      }
-    }
+    // 求解后的替换项只回算一次发射边缘和普通段中心；候选整式随后会做权威文本回放。
+    formulaPoints = createResolvedFormulaPathPoints(options, signEpsilon, stepGlitchSegments, stepSegmentDeltaYs);
   }
 
   const formulaEvaluation = createTrajectoryFormulaEvaluation(
@@ -348,9 +381,11 @@ function createTrajectoryFormulaState(
     formulaEvaluation,
     formulaPoints,
     signEpsilon,
+    stepGlitchFormulaPrefix,
   };
 }
 
+/** 集中绑定最终公式和临时前缀探针共用的 Step 数值选项。 */
 function createTrajectoryFormulaEvaluation(
   options: {
     bounds: GraphBounds;
@@ -374,6 +409,7 @@ function createTrajectoryFormulaEvaluation(
   };
 }
 
+/** 从左到右按真实落点求解邪道段，并修正邪道后第一个普通 Step 的累计原点。 */
 function refineStepSegmentsWithSimulation(
   options: {
     bounds: GraphBounds;
@@ -382,25 +418,93 @@ function refineStepSegmentsWithSimulation(
     soldierCenter?: GraphPoint;
   },
   formulaPoints: readonly GraphPoint[],
-  stepGlitchSegments: readonly (StepGlitchSegment | undefined)[] | undefined,
-  stepSegmentDeltaYs: readonly (number | undefined)[] | undefined,
+  stepGlitchRequirements: readonly boolean[],
   signEpsilon: number,
-): StepSimulationRefinement | undefined {
+  prefix: GraphwarStepGlitchFormulaPrefix | undefined,
+): StepSimulationRefinement {
   const mask = options.settings.stepGlitchObstacleMask;
   const soldierCenter = options.soldierCenter ?? formulaPoints[0];
-  if (!stepGlitchSegments || !mask || !soldierCenter || options.points.length < 2) {
-    return undefined;
+  if (!mask || !soldierCenter || options.points.length < 2) {
+    return { formulaPoints, stepGlitchSegments: [], stepSegmentDeltaYs: [] };
   }
 
-  const refinedSegments = [...stepGlitchSegments];
-  const refinedDeltaYs = [...(stepSegmentDeltaYs ?? [])];
-  const refinedFormulaPoints = [...formulaPoints];
-  let changed = false;
+  let reusableSegmentCount = 0;
+  if (
+    prefix &&
+    prefix.bounds.maxX === options.bounds.maxX &&
+    prefix.bounds.maxY === options.bounds.maxY &&
+    prefix.bounds.minX === options.bounds.minX &&
+    prefix.bounds.minY === options.bounds.minY &&
+    prefix.settings.algorithm === options.settings.algorithm &&
+    prefix.settings.decimalPlaces === options.settings.decimalPlaces &&
+    prefix.settings.equation === options.settings.equation &&
+    prefix.settings.formulaPathSteepness === options.settings.formulaPathSteepness &&
+    prefix.settings.steepness === options.settings.steepness &&
+    prefix.settings.stepGlitchMode === options.settings.stepGlitchMode &&
+    prefix.settings.stepGlitchObstacleMask === options.settings.stepGlitchObstacleMask &&
+    prefix.settings.stepOverflowProtection === options.settings.stepOverflowProtection &&
+    prefix.signEpsilon === signEpsilon &&
+    prefix.soldierCenter?.x === options.soldierCenter?.x &&
+    prefix.soldierCenter?.y === options.soldierCenter?.y &&
+    prefix.points.length <= options.points.length &&
+    prefix.initialFormulaPoints.length === prefix.points.length &&
+    prefix.refinedFormulaPoints.length === prefix.points.length &&
+    prefix.stepGlitchRequirements.length === prefix.points.length - 1 &&
+    prefix.stepGlitchSegments.length === prefix.points.length - 1 &&
+    prefix.stepSegmentDeltaYs.length === prefix.points.length - 1
+  ) {
+    reusableSegmentCount = prefix.stepGlitchSegments.length;
+    for (let index = 0; index < prefix.points.length; index += 1) {
+      const oldPoint = prefix.points[index];
+      const point = options.points[index];
+      const oldFormulaPoint = prefix.initialFormulaPoints[index];
+      const formulaPoint = formulaPoints[index];
+      if (
+        !oldPoint ||
+        !point ||
+        oldPoint.x !== point.x ||
+        oldPoint.y !== point.y ||
+        !oldFormulaPoint ||
+        !formulaPoint ||
+        oldFormulaPoint.x !== formulaPoint.x ||
+        oldFormulaPoint.y !== formulaPoint.y ||
+        (index < reusableSegmentCount && prefix.stepGlitchRequirements[index] !== stepGlitchRequirements[index])
+      ) {
+        reusableSegmentCount = 0;
+        break;
+      }
+    }
+  }
 
-  for (let segmentIndex = 0; segmentIndex < options.points.length - 1; segmentIndex += 1) {
+  const reusablePrefix = reusableSegmentCount > 0 ? prefix : undefined;
+  const refinedSegments: (StepGlitchSegment | undefined)[] = reusablePrefix
+    ? [...reusablePrefix.stepGlitchSegments]
+    : new Array(stepGlitchRequirements.length);
+  const refinedDeltaYs: (number | undefined)[] = reusablePrefix
+    ? [...reusablePrefix.stepSegmentDeltaYs]
+    : new Array(stepGlitchRequirements.length);
+  refinedSegments.length = stepGlitchRequirements.length;
+  refinedDeltaYs.length = stepGlitchRequirements.length;
+  // 求解只依赖已经接受的左侧前缀；关闭全部未来项后，追加控制点不会迫使历史段重新求解。
+  const disabledSegments = stepGlitchRequirements.map(() => true);
+  const refinedFormulaPoints = [...formulaPoints];
+  if (reusablePrefix) {
+    for (let index = 0; index <= reusableSegmentCount; index += 1) {
+      refinedFormulaPoints[index] = reusablePrefix.refinedFormulaPoints[index];
+    }
+    disabledSegments.fill(false, 0, reusableSegmentCount);
+  }
+
+  for (let segmentIndex = reusableSegmentCount; segmentIndex < options.points.length - 1; segmentIndex += 1) {
     const previousSegment = segmentIndex > 0 ? refinedSegments[segmentIndex - 1] : undefined;
+    // 普通段只有紧跟邪道时才需要按真实落点修正；其余段没有可计算的新状态。
+    if (!stepGlitchRequirements[segmentIndex] && !previousSegment) {
+      disabledSegments[segmentIndex] = false;
+      continue;
+    }
     const prefixFormula = createStepGlitchPrefixFormula(options, refinedFormulaPoints, {
       baseDeltaYs: refinedDeltaYs,
+      baseDisabledSegments: disabledSegments,
       baseSegments: refinedSegments,
       segmentIndex,
       signEpsilon,
@@ -432,44 +536,45 @@ function refineStepSegmentsWithSimulation(
       startSample.point,
       nextDeltaYOverride,
     );
-    const nextSegment = selectStepGlitchSegmentCandidate(options, refinedFormulaPoints, {
-      baseDeltaYs: refinedDeltaYs,
-      baseSegments: refinedSegments,
-      deltaYOverride: nextDeltaYOverride,
-      formulaCenterX:
-        nextFormulaPoint?.x ?? refinedFormulaPoints[segmentIndex + 1]?.x ?? options.points[segmentIndex + 1].x,
-      mask,
-      prefixFormula,
-      segmentIndex,
-      segmentStartY: startSample.point.y,
-      signEpsilon,
-      soldierCenter,
-    });
-    if (
-      sameStepGlitchSegment(refinedSegments[segmentIndex], nextSegment) &&
-      refinedDeltaYs[segmentIndex] === nextDeltaYOverride &&
-      sameGraphPoint(refinedFormulaPoints[segmentIndex + 1], nextFormulaPoint)
-    ) {
-      continue;
-    }
-
+    const nextSegment = stepGlitchRequirements[segmentIndex]
+      ? selectStepGlitchSegmentCandidate(options, refinedFormulaPoints, {
+          baseDeltaYs: refinedDeltaYs,
+          baseDisabledSegments: disabledSegments,
+          baseSegments: refinedSegments,
+          deltaYOverride: nextDeltaYOverride,
+          formulaCenterX:
+            nextFormulaPoint?.x ?? refinedFormulaPoints[segmentIndex + 1]?.x ?? options.points[segmentIndex + 1].x,
+          mask,
+          prefixInitialState: startSample.resumeState,
+          prefixFormula,
+          segmentIndex,
+          segmentStartY: startSample.point.y,
+          signEpsilon,
+          soldierCenter,
+        })
+      : undefined;
     // 邪道段会把实际 y 带偏；后续普通 step 的 ΔY 和中心点都要从模拟器落点继续累计。
     refinedSegments[segmentIndex] = nextSegment;
     refinedDeltaYs[segmentIndex] = nextDeltaYOverride;
+    disabledSegments[segmentIndex] = false;
     if (nextFormulaPoint) {
       refinedFormulaPoints[segmentIndex + 1] = nextFormulaPoint;
     }
-    changed = true;
   }
 
-  return changed ? { stepGlitchSegments: refinedSegments, stepSegmentDeltaYs: refinedDeltaYs } : undefined;
+  return {
+    formulaPoints: refinedFormulaPoints,
+    stepGlitchSegments: refinedSegments,
+    stepSegmentDeltaYs: refinedDeltaYs,
+  };
 }
 
 interface StepSegmentStartSample {
   point: GraphPoint;
+  resumeState?: GraphwarTrajectorySamplingState;
 }
 
-/** 编译不含当前段的前缀公式；段起点和各窗口的跳前探测共用它，避免 seed 邪道项污染恢复状态。 */
+/** 编译不含当前段和未求解邪道段的前缀公式，供段起点与窗口探针共享。 */
 function createStepGlitchPrefixFormula(
   options: {
     bounds: GraphBounds;
@@ -480,7 +585,7 @@ function createStepGlitchPrefixFormula(
 ): StepGlitchPrefixFormula {
   const prefixSegments = [...context.baseSegments];
   const prefixDeltaYs = [...context.baseDeltaYs];
-  const disabledSegments: boolean[] = [];
+  const disabledSegments = [...context.baseDisabledSegments];
   prefixSegments[context.segmentIndex] = undefined;
   disabledSegments[context.segmentIndex] = true;
   const formulaEvaluation = createTrajectoryFormulaEvaluation(
@@ -502,6 +607,7 @@ function createStepGlitchPrefixFormula(
   };
 }
 
+/** 用同一份前缀公式推进到指定 x；已有段起点状态时只采样尚未验证的后缀。 */
 function sampleStepGlitchPrefix(
   options: {
     bounds: GraphBounds;
@@ -512,6 +618,7 @@ function sampleStepGlitchPrefix(
   prefixFormula: StepGlitchPrefixFormula,
   soldierCenter: GraphPoint,
   stopX: number,
+  initialState?: GraphwarTrajectorySamplingState,
 ) {
   return sampleGraphwarTrajectory({
     algorithm: options.settings.algorithm,
@@ -519,6 +626,7 @@ function sampleStepGlitchPrefix(
     equation: options.settings.equation,
     compiledFormulaMaterials: prefixFormula.compiledMaterials,
     formulaEvaluation: prefixFormula.formulaEvaluation,
+    initialState,
     points: formulaPoints,
     shouldStop: (point) => point.x >= stopX,
     soldierCenter,
@@ -526,6 +634,7 @@ function sampleStepGlitchPrefix(
   });
 }
 
+/** 取得当前段开始处的真实接受点和可恢复状态，供本段所有窗口探针复用。 */
 function sampleStepSegmentStart(
   options: {
     bounds: GraphBounds;
@@ -547,9 +656,12 @@ function sampleStepSegmentStart(
   }
 
   const actualStartPoint = sample.points[sample.points.length - 1];
-  return actualStartPoint && Number.isFinite(actualStartPoint.y) ? { point: actualStartPoint } : undefined;
+  return actualStartPoint && Number.isFinite(actualStartPoint.y) && sample.endState
+    ? { point: actualStartPoint, resumeState: sample.endState }
+    : undefined;
 }
 
+/** 按窗口从宽到窄测试六档 RK4 贡献量，并返回落点误差最小的单跳候选。 */
 function selectStepGlitchSegmentCandidate(
   options: {
     bounds: GraphBounds;
@@ -593,17 +705,20 @@ function selectStepGlitchSegmentCandidate(
     }
 
     // 同一窗口的六档 RK4 候选共享左门和跳前高度；只需为不同 factor 改写 D。
-    const preJumpSample = sampleStepGlitchPreJump(options, formulaPoints, candidateContext, windowedJump);
+    const preJumpSample = sampleStepGlitchPreJump(
+      options,
+      formulaPoints,
+      candidateContext,
+      windowedJump,
+      candidateContext.prefixInitialState,
+    );
     if (!preJumpSample) {
       continue;
     }
     const replacementDeltaY = source.targetY - preJumpSample.point.y;
     const gateY = createStepGlitchFormulaGateY(source.targetY, replacementDeltaY, options.settings.decimalPlaces);
-    // epsilon 尾值或邪道落点覆盖都会改变候选的完整系数集；此时不能拼接旧公式采出的前缀状态。
-    const candidateInitialState =
-      candidateContext.signEpsilon === 0 && candidateContext.deltaYOverride === undefined
-        ? preJumpSample.resumeState
-        : undefined;
+    // epsilon 会让关闭的 x 门保留尾值；原始 sign 门严格为零时，六档候选共享门左状态。
+    const candidateInitialState = candidateContext.signEpsilon === 0 ? preJumpSample.resumeState : undefined;
     let bestSegment: StepGlitchSegment | undefined;
     let bestError = Number.POSITIVE_INFINITY;
     for (const factor of STEP_GLITCH_RK4_CONTRIBUTION_FACTORS) {
@@ -658,6 +773,7 @@ function createStepGlitchCandidateContext(
     baseDeltaYs,
     prefixFormula: createStepGlitchPrefixFormula(options, formulaPoints, {
       baseDeltaYs,
+      baseDisabledSegments: context.baseDisabledSegments,
       baseSegments: context.baseSegments,
       segmentIndex: context.segmentIndex,
       signEpsilon: context.signEpsilon,
@@ -665,6 +781,7 @@ function createStepGlitchCandidateContext(
   };
 }
 
+/** 编译当前邪道替换项，并从可复用门左状态推进到右门。 */
 function sampleStepGlitchCandidate(
   options: {
     bounds: GraphBounds;
@@ -678,14 +795,17 @@ function sampleStepGlitchCandidate(
 ) {
   const candidateSegments = [...context.baseSegments];
   const candidateDeltaYs = [...context.baseDeltaYs];
+  const candidateDisabledSegments = [...context.baseDisabledSegments];
   candidateSegments[context.segmentIndex] = candidate;
   candidateDeltaYs[context.segmentIndex] = context.deltaYOverride;
+  candidateDisabledSegments[context.segmentIndex] = false;
   const formulaEvaluation = createTrajectoryFormulaEvaluation(
     options,
     formulaPoints,
     context.signEpsilon,
     candidateSegments,
     candidateDeltaYs,
+    candidateDisabledSegments,
   );
   const compiledMaterials = compileGraphwarFormulaMaterials(
     formulaPoints,
@@ -734,6 +854,7 @@ interface StepGlitchPreJumpSample {
   resumeState: GraphwarTrajectorySamplingState;
 }
 
+/** 从段起点继续到窗口左门，并保留门左最后一个真实采样状态。 */
 function sampleStepGlitchPreJump(
   options: {
     bounds: GraphBounds;
@@ -743,6 +864,7 @@ function sampleStepGlitchPreJump(
   formulaPoints: readonly GraphPoint[],
   context: StepGlitchCandidateContext,
   jump: StepGlitchJump,
+  initialState: GraphwarTrajectorySamplingState | undefined,
 ): StepGlitchPreJumpSample | undefined {
   const sample = sampleStepGlitchPrefix(
     options,
@@ -750,6 +872,7 @@ function sampleStepGlitchPreJump(
     context.prefixFormula,
     context.soldierCenter,
     jump.startX,
+    initialState,
   );
   const crossingIndex = sample.points.length - 1;
   const previousIndex = crossingIndex - 1;
@@ -773,9 +896,8 @@ function sampleStepGlitchPreJump(
     point,
     resumeState: {
       currentPoint: previousPoint,
-      previousPoint: previousIndex > 0 ? sample.points[previousIndex - 1] : undefined,
-      // 前缀探针始终从发射点开始，因此本地 points 下标就是全局 sampleIndex。
-      sampleIndex: previousIndex,
+      previousPoint: previousIndex > 0 ? sample.points[previousIndex - 1] : initialState?.previousPoint,
+      sampleIndex: (initialState?.sampleIndex ?? 0) + previousIndex,
     },
   };
 }
@@ -829,28 +951,6 @@ function createStepSegmentFormulaPointAfterRefinement(
   );
 }
 
-function sameStepGlitchSegment(left: StepGlitchSegment | undefined, right: StepGlitchSegment | undefined) {
-  if (!left || !right) {
-    return left === right;
-  }
-
-  return (
-    left.derivative === right.derivative &&
-    left.endX === right.endX &&
-    left.gateY === right.gateY &&
-    left.startX === right.startX &&
-    left.targetY === right.targetY
-  );
-}
-
-function sameGraphPoint(left: GraphPoint | undefined, right: GraphPoint | undefined) {
-  if (!left || !right) {
-    return left === right;
-  }
-
-  return left.x === right.x && left.y === right.y;
-}
-
 /** Graphwar 缩步只会尝试 STEP_SIZE/2^n；邪道项的 D 需要按最后一个实际档位估算。 */
 function createGraphwarStepGlitchMinStep() {
   let step = GRAPHWAR_STEP_SIZE;
@@ -860,7 +960,8 @@ function createGraphwarStepGlitchMinStep() {
   return step;
 }
 
-function createStepGlitchSegments(
+/** 只标记初始包络命中障碍的段；正式窗口和导数等真实跳前高度可用后再求。 */
+function createStepGlitchRequirements(
   options: {
     bounds: GraphBounds;
     points: readonly GraphPoint[];
@@ -879,32 +980,17 @@ function createStepGlitchSegments(
     return undefined;
   }
 
-  const segments: (StepGlitchSegment | undefined)[] = [];
-  let hasGlitchSegment = false;
+  const requirements: boolean[] = [];
+  let hasRequiredSegment = false;
   for (let index = 1; index < options.points.length; index += 1) {
     const previous = options.points[index - 1];
     const target = options.points[index];
-    const formulaPreviousY = formulaPoints[index - 1]?.y ?? previous.y;
-    const formulaTargetY = formulaPoints[index]?.y ?? target.y;
     const formulaCenterX = formulaPoints[index]?.x ?? target.x;
-    const targetY = createStepGlitchFormulaTargetY(formulaTargetY, options.settings.decimalPlaces);
-    const replacementDeltaY = targetY - formulaPreviousY;
-    const gateY = createStepGlitchFormulaGateY(targetY, replacementDeltaY, options.settings.decimalPlaces);
-    const segment = createStepGlitchSegment(
-      previous,
-      target,
-      formulaCenterX,
-      targetY,
-      gateY,
-      replacementDeltaY,
-      options.settings.decimalPlaces,
-      options.bounds,
-      mask,
-    );
-    segments.push(segment);
-    hasGlitchSegment ||= Boolean(segment);
+    const required = stepGlitchObstacleEnvelopeHitsObstacle(previous, target, formulaCenterX, options.bounds, mask);
+    requirements.push(required);
+    hasRequiredSegment ||= required;
   }
-  return hasGlitchSegment ? segments : undefined;
+  return hasRequiredSegment ? requirements : undefined;
 }
 
 type StepGlitchJump = NonNullable<ReturnType<typeof createStepGlitchJump>>;
@@ -973,29 +1059,6 @@ function createStepGlitchFormulaXGate(x: number, decimalPlaces: number) {
   return -roundToDecimalPlaces(-x, decimalPlaces);
 }
 
-function createStepGlitchSegment(
-  previous: GraphPoint,
-  target: GraphPoint,
-  formulaCenterX: number,
-  targetY: number,
-  gateY: number,
-  replacementDeltaY: number,
-  decimalPlaces: number,
-  bounds: GraphBounds,
-  mask: Uint8Array,
-): StepGlitchSegment | undefined {
-  if (!stepGlitchObstacleEnvelopeHitsObstacle(previous, target, formulaCenterX, bounds, mask)) {
-    return undefined;
-  }
-
-  const jump = createWidestStepGlitchJump(previous.x, target.x, decimalPlaces);
-  if (!jump) {
-    return undefined;
-  }
-
-  return createStepGlitchSegmentFromJump(jump, targetY, gateY, replacementDeltaY, 1);
-}
-
 function createStepGlitchSegmentFromJump(
   jump: StepGlitchJump,
   targetY: number,
@@ -1028,20 +1091,6 @@ function createStepGlitchJump(
     return undefined;
   }
   return { ...window, step: GRAPHWAR_STEP_GLITCH_MIN_STEP };
-}
-
-function createWidestStepGlitchJump(previousX: number, targetX: number, decimalPlaces: number) {
-  for (
-    let width = GRAPHWAR_STEP_SIZE, windowDecimalPlaces = GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES;
-    width >= GRAPHWAR_STEP_GLITCH_MIN_STEP;
-    width /= 2, windowDecimalPlaces += 1
-  ) {
-    const jump = createStepGlitchJump(previousX, targetX, width, decimalPlaces, windowDecimalPlaces);
-    if (jump) {
-      return jump;
-    }
-  }
-  return undefined;
 }
 
 /** 用普通 sigmoid 的近似水平前缀和两块半高矩形做粗筛，避免把探测绑到某个邪道窗口。 */
@@ -1143,51 +1192,30 @@ function stepGlitchSampleHitsObstacle(points: readonly GraphPoint[], bounds: Gra
   return false;
 }
 
-const FORMULA_PATH_RANGE_RESOLUTION_PASSES = 3;
-
+/** 用士兵中心到 x+ 边界的一次保守区间决定抗溢出写法，避免发射边缘与公式互相迭代。 */
 function createResolvedFormulaPathPoints(
   options: {
     bounds: GraphBounds;
     points: readonly GraphPoint[];
     settings: GraphwarTrajectoryFormulaSettings;
+    soldierCenter?: GraphPoint;
   },
   signEpsilon: number,
   stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[],
   stepSegmentDeltaYs?: readonly (number | undefined)[],
 ) {
-  let formulaEvaluation: FormulaEvaluationOptions = {
-    equation: options.settings.equation,
-    formulaDecimalPlaces: options.settings.decimalPlaces,
-    signEpsilon,
-    stepGlitchSegments,
-    stepSegmentDeltaYs,
-    stepOverflowProtection: options.settings.stepOverflowProtection,
-  };
-  let formulaPoints = createFormulaPathPoints(options.points, options.settings, formulaEvaluation);
-  if (!formulaPathNeedsRangeResolution(options.settings)) {
-    return formulaPoints;
-  }
-
-  for (let pass = 0; pass < FORMULA_PATH_RANGE_RESOLUTION_PASSES; pass += 1) {
-    formulaEvaluation = createTrajectoryFormulaEvaluation(
+  const rangeStart = options.soldierCenter ?? options.points[0];
+  return createFormulaPathPoints(
+    options.points,
+    options.settings,
+    createTrajectoryFormulaEvaluation(
       options,
-      formulaPoints,
+      rangeStart ? [rangeStart] : [],
       signEpsilon,
       stepGlitchSegments,
       stepSegmentDeltaYs,
-    );
-    const nextFormulaPoints = createFormulaPathPoints(options.points, options.settings, formulaEvaluation);
-    if (sameGraphPoints(formulaPoints, nextFormulaPoints)) {
-      return formulaPoints;
-    }
-    formulaPoints = nextFormulaPoints;
-  }
-  return formulaPoints;
-}
-
-/** 只有 step 导数模式的 exp 抗溢出判断依赖采样范围；其他算法不应额外重跑发射点迭代。 */
-function formulaPathNeedsRangeResolution(settings: GraphwarTrajectoryFormulaSettings) {
-  return settings.algorithm === "step" && settings.equation !== "y" && settings.stepOverflowProtection;
+    ),
+  );
 }
 
 function resolveSignEpsilonRequirement(
@@ -1520,18 +1548,6 @@ function createFormulaPathPoints(
         points,
         steepness: settings.formulaPathSteepness ?? settings.steepness,
       });
-}
-
-function sameGraphPoints(left: readonly GraphPoint[], right: readonly GraphPoint[]) {
-  if (left.length !== right.length) {
-    return false;
-  }
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index].x !== right[index].x || left[index].y !== right[index].y) {
-      return false;
-    }
-  }
-  return true;
 }
 
 /** 创建 sampleGraphwarTrajectory 的早停回调，并把命中、障碍和可见像素指标集中记录。 */

@@ -6,7 +6,7 @@ import {
 } from "../core/game/forward-rule";
 /** Graphwar 目标选择规则；页面和寻路流程应复用同一套 x+ 与命中圈语义。 */
 import { imageToGraphPoint, xPlusGoesRight } from "../core/geometry";
-import { clampNumber, nextDownDouble } from "../core/numbers";
+import { clampNumber } from "../core/numbers";
 import { graphwarToolDefaults } from "../core/tool/defaults";
 import { createPixelPoint } from "../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../core/types";
@@ -285,14 +285,8 @@ function createSoldierHitCircleXPlusInnerTargetPoint(
     return undefined;
   }
   const innerEdgeX = center.x + (xPlusIsRight ? innerRadius : -innerRadius);
-  const targetPoint = createPixelPoint(
-    clampNumber(
-      innerEdgeX,
-      area.targetBoundsRect.x,
-      nextDownDouble(area.targetBoundsRect.x + area.targetBoundsRect.width),
-    ),
-    center.y,
-  );
+  const clampRange = createTargetBoundsClampRange(area);
+  const targetPoint = createPixelPoint(clampNumber(innerEdgeX, clampRange.minX, clampRange.maxX), center.y);
   return pointIsInsideTargetBounds(targetPoint, area) &&
     graphwarPointAdvances(startPoint, targetPoint, area) &&
     graphwarSoldierStrictlyContainsHitPoint(soldier, targetPoint)
@@ -416,18 +410,29 @@ function createBoundarySafeSoldierTargetPoint(
   soldier: GraphwarTargetingSoldier,
   area: GraphwarTargetingArea,
 ) {
-  const targetPoint = clampPointInsideTargetBounds(getGraphwarSoldierCenter(soldier), area.targetBoundsRect);
+  const targetPoint = clampPointInsideTargetBounds(getGraphwarSoldierCenter(soldier), area);
   return graphwarPointAdvances(startPoint, targetPoint, area) &&
     graphwarSoldierStrictlyContainsHitPoint(soldier, targetPoint)
     ? targetPoint
     : undefined;
 }
 
-/** 将点夹进目标矩形的半开区间；右/下边界会落到平面外，必须退到前一个 double。 */
-function clampPointInsideTargetBounds(point: PixelPoint, rect: BoundsRect) {
+/** 保留精确左/上边界，并把半开右/下边界退到最后一个原生 cell 中心。 */
+function createTargetBoundsClampRange(area: GraphwarTargetingArea) {
+  return {
+    maxX: area.targetBoundsRect.x + area.targetBoundsRect.width - area.boundsRect.width / GRAPHWAR_PLANE_LENGTH / 2,
+    maxY: area.targetBoundsRect.y + area.targetBoundsRect.height - area.boundsRect.height / GRAPHWAR_PLANE_HEIGHT / 2,
+    minX: area.targetBoundsRect.x,
+    minY: area.targetBoundsRect.y,
+  };
+}
+
+/** 将贴右/下边界的士兵中心夹到最后一个合法原生 cell 中心。 */
+function clampPointInsideTargetBounds(point: PixelPoint, area: GraphwarTargetingArea) {
+  const clampRange = createTargetBoundsClampRange(area);
   return createPixelPoint(
-    clampNumber(point.x, rect.x, nextDownDouble(rect.x + rect.width)),
-    clampNumber(point.y, rect.y, nextDownDouble(rect.y + rect.height)),
+    clampNumber(point.x, clampRange.minX, clampRange.maxX),
+    clampNumber(point.y, clampRange.minY, clampRange.maxY),
   );
 }
 

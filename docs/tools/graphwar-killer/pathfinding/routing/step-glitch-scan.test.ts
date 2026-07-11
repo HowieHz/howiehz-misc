@@ -207,6 +207,37 @@ describe("Step y' glitch scan", () => {
     }
   });
 
+  it("keeps a decimal right gate that used to exceed the fixed ULP retry limit", () => {
+    const wideBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
+    const start = toPixelForBounds(-1.5, 0, wideBounds);
+    const target = toPixelForBounds(-0.9737, 2, wideBounds);
+    const hitCenter = toPixelForBounds(-0.9737, 4, wideBounds);
+    const mask = createEmptyMask();
+    for (let row = 200; row <= 250; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + 370] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds: wideBounds,
+      boundsRect,
+      hitTarget: { center: hitCenter, radius: 12 },
+      settings,
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    if (result.status === "hit") {
+      const controlPoint = result.path.at(-2);
+      expect(controlPoint).toBeDefined();
+      if (controlPoint) {
+        expect(
+          floorToDecimalPlaces(imageToGraphPoint(controlPoint, wideBounds, boundsRect).x, settings.decimalPlaces),
+        ).toBe(-0.9738);
+      }
+    }
+  });
+
   it("preserves the intended decimal right gate with mirrored x+ bounds", () => {
     const mirroredBounds: GraphBounds = { ...bounds, maxX: bounds.minX, minX: bounds.maxX };
     const start = toPixelForBounds(-11, 0, mirroredBounds);

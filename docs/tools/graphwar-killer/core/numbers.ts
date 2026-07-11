@@ -49,9 +49,9 @@ export function nextDownDouble(value: number) {
   return -nextUpDouble(-value);
 }
 
-/** 判断 Graphwar x 是否至少前进到下一个可表示 double，而不是强制像素级间距。 */
+/** 判断两个有限 Graphwar x 是否严格递增；double 中 `>` 已等价于至少前进一个可表示值。 */
 export function graphXAdvancesStrictly(fromX: number, toX: number) {
-  return Number.isFinite(fromX) && Number.isFinite(toX) && toX >= nextUpDouble(fromX);
+  return Number.isFinite(fromX) && Number.isFinite(toX) && toX > fromX;
 }
 
 /** Graphwar 公式输出最多保留 double 有意义的十进制位数。 */

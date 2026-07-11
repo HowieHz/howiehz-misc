@@ -6,7 +6,7 @@ import {
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
-import { floorToDecimalPlaces, graphXAdvancesStrictly, nextUpDouble } from "../../core/numbers";
+import { clampDecimalPlaces, floorToDecimalPlaces, graphXAdvancesStrictly } from "../../core/numbers";
 import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
@@ -16,11 +16,11 @@ import {
   sampleGraphwarFormulaTrajectory,
 } from "../../formula/trajectory/sampling";
 import type {
+  GraphwarStepGlitchFormulaPrefix,
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 
-const MAX_CONTROL_POINT_ROUND_TRIP_NUDGES = 32;
 const glitchWindowWidths = createGlitchWindowWidths();
 
 /** 固定 simulation mask 的 x+ 水平可达索引，可在单目标和一键清图的多次扫描间复用。 */
@@ -39,6 +39,8 @@ export interface GraphwarStepGlitchPrefixOptions {
   maskIndex?: GraphwarStepGlitchScanMaskIndex;
   /** 完全相同旧整式已经回放成功时，可直接复用其真实恢复点。 */
   prefixEvidence?: GraphwarStepGlitchPrefixEvidence;
+  /** 已成功 sourcePath 的邪道求解结果；公式 Module 核对精确前缀后才会复用。 */
+  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
   /** 旧公式必须命中的当前尾点；只用于 evidence/prefix 准备，不约束新最终直连公式。 */
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 固定前缀必须继续命中的士兵；后续控制点允许改变它们的实际命中顺序。 */
@@ -73,6 +75,7 @@ interface GraphwarStepGlitchScanResultBase {
 export type GraphwarStepGlitchScanResult =
   | (GraphwarStepGlitchScanResultBase & {
       acceptedPoint: GraphPoint;
+      stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
       path: PixelPoint[];
       status: "hit";
     })
@@ -88,6 +91,8 @@ export interface GraphwarStepGlitchPrefixScanner {
 /** 完全相同旧整式的验证证据；新增后缀仍必须从发射点完整回放。 */
 export interface GraphwarStepGlitchPrefixEvidence {
   acceptedPoint: GraphPoint;
+  /** Master 精确 key 命中时可一并复用的公式求解前缀。 */
+  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
 }
 
 export type GraphwarStepGlitchScanTimingStage =
@@ -145,6 +150,8 @@ export interface GraphwarStepGlitchReplayResult {
   acceptedPoint?: GraphPoint;
   blockedPoint?: GraphPoint;
   reachedTargetCount: number;
+  /** 本条精确路径的求解结果；只有路径验证成功后才能提升为下一条 sourcePath 前缀。 */
+  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
   /** 当前有序目标和全部无序必达目标是否都已命中。 */
   targetsHit: boolean;
 }
@@ -216,10 +223,10 @@ function createGraphwarStepGlitchReplayContext(
   }
 
   const simulationBoundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0));
-  const settings: GraphwarTrajectoryFormulaSettings = {
-    ...options.settings,
-    stepGlitchObstacleMask: options.simulationMask,
-  };
+  const settings: GraphwarTrajectoryFormulaSettings =
+    options.settings.stepGlitchObstacleMask === options.simulationMask
+      ? options.settings
+      : { ...options.settings, stepGlitchObstacleMask: options.simulationMask };
   const graphPoints = options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
   return {
     formulaSettings: settings,
@@ -318,6 +325,9 @@ export function createGraphwarStepGlitchPrefixScanner(
           expandedStates: 1,
           path: directPath,
           reachedTargetCount: directReplay.reachedTargetCount,
+          ...(directReplay.stepGlitchFormulaPrefix
+            ? { stepGlitchFormulaPrefix: directReplay.stepGlitchFormulaPrefix }
+            : {}),
           status: "hit",
           timings,
         };
@@ -462,6 +472,7 @@ function scanPreparedGraphwarStepGlitchPath(
         expandedStates,
         path: item.candidate.path,
         reachedTargetCount: replay.reachedTargetCount,
+        ...(replay.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: replay.stepGlitchFormulaPrefix } : {}),
         status: "hit",
         timings,
       };
@@ -515,6 +526,7 @@ function replayPathToControlX(
     points: graphPoints,
     settings: context.formulaSettings,
     soldierCenter: graphPoints[0],
+    ...(options.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: options.stepGlitchFormulaPrefix } : {}),
   });
   if (formulaContext.formulaPoints.length < 2) {
     return { reachedTargetCount: 0, targetsHit: false };
@@ -554,6 +566,7 @@ function replayPathToControlX(
         : undefined,
     blockedPoint: result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined,
     reachedTargetCount: result.reachedTargetCount + result.reachedRequiredTargetCount,
+    stepGlitchFormulaPrefix: formulaContext.stepGlitchFormulaPrefix,
     targetsHit,
   };
 }
@@ -612,6 +625,7 @@ function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, bounda
       });
 }
 
+/** 为首个阻挡列后的自由行生成稳定排序、去重后的右门候选。 */
 function createGateCandidates(
   state: ScanState,
   firstBlockedSearchX: number,
@@ -648,7 +662,13 @@ function createGateCandidates(
         if (farthestX < controlSearchX) {
           continue;
         }
-        const controlPoint = createControlPointForFormulaEndX(controlX, row, options, options.settings.decimalPlaces);
+        const controlPoint = createControlPointForFormulaEndX(
+          controlX,
+          target.x,
+          row,
+          options,
+          options.settings.decimalPlaces,
+        );
         if (!controlPoint) {
           continue;
         }
@@ -753,30 +773,26 @@ function searchBoundaryToGraphX(
   return imageToGraphPoint(pixel, options.bounds, options.boundsRect).x;
 }
 
+/** 选择右门十进制桶内部的像素控制点，并验证一次坐标往返。 */
 function createControlPointForFormulaEndX(
   formulaEndX: number,
+  nextControlX: number,
   row: number,
   options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
   decimalPlaces: number,
 ) {
   const rowCenter = planeGridCellCenterToImagePoint({ x: 0, y: row }, options.boundsRect);
   const graphY = imageToGraphPoint(rowCenter, options.bounds, options.boundsRect).y;
-  let controlPointX = formulaEndX;
-
-  // Graph→像素→Graph 可能向左偏数个 ULP；向 x+ 微调，直到最终 floor 后的右门仍是期望值。
-  for (let attempt = 0; attempt < MAX_CONTROL_POINT_ROUND_TRIP_NUDGES; attempt += 1) {
-    const point = graphToImagePoint(createGraphPoint(controlPointX, graphY), options.bounds, options.boundsRect);
-    const roundTripX = imageToGraphPoint(point, options.bounds, options.boundsRect).x;
-    const actualFormulaEndX = floorToDecimalPlaces(roundTripX, decimalPlaces);
-    if (actualFormulaEndX === formulaEndX) {
-      return point;
-    }
-    if (actualFormulaEndX > formulaEndX) {
-      return undefined;
-    }
-    controlPointX = nextUpDouble(controlPointX);
-  }
-  return undefined;
+  // 取十进制桶中点，避免边界往返误差；下一控制点贴得更近时仍保留一半严格 x+ 间距。
+  const controlPointX = Math.min(
+    formulaEndX + 0.5 * 10 ** -clampDecimalPlaces(decimalPlaces),
+    formulaEndX + (nextControlX - formulaEndX) / 2,
+  );
+  const point = graphToImagePoint(createGraphPoint(controlPointX, graphY), options.bounds, options.boundsRect);
+  const roundTripX = imageToGraphPoint(point, options.bounds, options.boundsRect).x;
+  return floorToDecimalPlaces(roundTripX, decimalPlaces) === formulaEndX && roundTripX < nextControlX
+    ? point
+    : undefined;
 }
 
 function mirrorPlaneX(x: number, mirrored: boolean) {

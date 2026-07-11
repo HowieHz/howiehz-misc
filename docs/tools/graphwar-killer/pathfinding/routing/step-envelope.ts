@@ -295,11 +295,13 @@ function createConservativePlaneMaskRegion(startX: number, endX: number, startY:
   return planeMaskRegionIsValid(region) ? region : undefined;
 }
 
-/** 折算产生的 ULP 残差不应让数学上精确的网格线漏掉一侧 cell。 */
+// Graph↔原生平面折算最多跨越 770/450 的固定尺度；按全平面上界吸收乘除残差。
+const PLANE_GRID_LINE_SNAP_TOLERANCE = Number.EPSILON * Math.max(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT) * 4;
+
+/** 折算残差不应让数学上精确的网格线漏掉闭域另一侧 cell。 */
 function snapToPlaneGridLine(value: number) {
   const nearestInteger = Math.round(value);
-  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(nearestInteger)) * 4;
-  return Math.abs(value - nearestInteger) <= tolerance ? nearestInteger : value;
+  return Math.abs(value - nearestInteger) <= PLANE_GRID_LINE_SNAP_TOLERANCE ? nearestInteger : value;
 }
 
 function planeMaskRegionIsValid(region: PlaneMaskClosedRegion) {

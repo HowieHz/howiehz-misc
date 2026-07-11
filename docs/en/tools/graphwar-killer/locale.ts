@@ -224,6 +224,8 @@ export const graphwarKillerLocale = {
     },
     managed: {
       backgroundWarning: "The page is in the background; managed firing may be delayed",
+      calculationComplete: (targetCount, elapsed) =>
+        `Managed calculation completed in ${elapsed}; the best plan hits ${targetCount} target(s)`,
       calculating: (targetCount) =>
         targetCount === undefined
           ? "Managed mode is calculating"
@@ -232,6 +234,8 @@ export const graphwarKillerLocale = {
       connectionFailed: (message) => `Agent connection failed; retrying: ${message}`,
       deadlineFired: "Stopped with 3 seconds remaining and fired the current best plan",
       deadlineNoPlan: "Stopped with 3 seconds remaining; no usable plan",
+      deadlinePlan: (targetCount, elapsed) =>
+        `Managed calculation stopped with 3 seconds remaining after ${elapsed}; the best plan hits ${targetCount} target(s)`,
       enabled: "Managed mode enabled; reading game state",
       incompatible: "Managed mode stopped because the Agent API is incompatible; upgrade the Agent",
       readying: "A local room player is not ready; requesting ready automatically",

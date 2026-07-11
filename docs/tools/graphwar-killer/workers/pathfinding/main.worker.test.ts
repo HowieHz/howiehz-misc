@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createGraphPoint, createPixelPoint } from "../../core/types";
+import type { GraphwarStepGlitchFormulaPrefix } from "../../formula/trajectory/sampling";
 import type {
   GraphwarOneClickClearIncumbent,
   GraphwarOneClickClearOptions,
@@ -184,7 +185,19 @@ describe("Step glitch smart-path validation", () => {
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 701;
     const firstPath = [first.sourcePath[0], first.targetPoint];
-    mockHit(firstPath);
+    const formulaPoints = [createGraphPoint(-10, 0), createGraphPoint(-5, 1)];
+    const stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix = {
+      bounds: { ...first.bounds },
+      initialFormulaPoints: formulaPoints,
+      points: formulaPoints,
+      refinedFormulaPoints: formulaPoints,
+      settings: { ...first.settings },
+      signEpsilon: 0,
+      stepGlitchRequirements: [false],
+      stepGlitchSegments: [undefined],
+      stepSegmentDeltaYs: [undefined],
+    };
+    mockHit(firstPath, stepGlitchFormulaPrefix);
     await dispatchSmartPathRequest(first);
 
     postMessage.mockClear();
@@ -203,7 +216,11 @@ describe("Step glitch smart-path validation", () => {
 
     expect(mocks.scanStepGlitchPath).toHaveBeenCalledTimes(2);
     expect(mocks.scanStepGlitchPath.mock.calls[1]?.[0]).toMatchObject({
-      prefixEvidence: { acceptedPoint: createGraphPoint(0, 0) },
+      prefixEvidence: {
+        acceptedPoint: createGraphPoint(0, 0),
+        stepGlitchFormulaPrefix: { points: formulaPoints, settings: second.settings },
+      },
+      stepGlitchFormulaPrefix: { points: formulaPoints, settings: second.settings },
     });
   });
 
@@ -320,12 +337,17 @@ function createOneClickClearInput(): GraphwarOneClickClearPathWorkerInput {
   };
 }
 
-function mockHit(path: GraphwarSmartPathfindingPathInput["sourcePath"]) {
+/** 让邪道 scanner 返回一条已完整回放成功的精确路径。 */
+function mockHit(
+  path: GraphwarSmartPathfindingPathInput["sourcePath"],
+  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix,
+) {
   mocks.scanStepGlitchPath.mockReturnValue({
     acceptedPoint: createGraphPoint(0, 0),
     expandedStates: 1,
     path,
     reachedTargetCount: 1,
+    ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
     status: "hit",
     timings: [],
   });

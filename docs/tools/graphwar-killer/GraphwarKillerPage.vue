@@ -176,7 +176,7 @@ const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const obstacleBrushEditRefreshDelayMs = 250;
 const smartPathfindingBlockedPointFlashMs = 1800;
-const graphwarAgentFireStatusFlashMs = 2000;
+const graphwarAgentStatusFlashMs = 2000;
 const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
 const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 // 页面状态按未来可抽工作流分区维护：基础舞台、公式设置、截图、识别、障碍编辑、寻路。
@@ -241,6 +241,10 @@ const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
 const graphwarManagedModeEnabled = ref(false);
 let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
+let graphwarManagedCalculationStatus:
+  | { expiresAt: number; kind: SmartPathfindingStatusKind; message: string }
+  | undefined;
+let graphwarManagedCalculationStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let graphwarManagedClient: GraphwarAgentClient | undefined;
 let graphwarManagedController: GraphwarManagedController | undefined;
 let graphwarManagedDeadlineTurnToken: string | undefined;
@@ -248,6 +252,7 @@ let graphwarManagedIncumbent: GraphwarOneClickClearIncumbent | undefined;
 let graphwarManagedLastSubmittedTurnToken: string | undefined;
 let graphwarManagedSceneKey = "";
 let graphwarManagedSearchGeneration = 0;
+let graphwarManagedSearchStartedAt: number | undefined;
 let graphwarManagedSearchState: "idle" | "running" | "success" | "failure" = "idle";
 let graphwarManagedStatusKind: SmartPathfindingStatusKind = "warning";
 let graphwarManagedStatusMessage = "";
@@ -1069,7 +1074,17 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
     applyValidatedPath,
     flashBlockedSegment: smartPathfindingSession.flashBlockedSegment,
     flashHitSoldiers: flashOneClickClearHitSoldiers,
-    setStatus: setSmartPathfindingStatus,
+    setStatus: (message, kind) => {
+      if (graphwarManagedModeEnabled.value) {
+        if (kind === "success") {
+          showGraphwarManagedCalculationStatus(message, kind);
+          return;
+        }
+        setGraphwarManagedStatus(message, kind);
+        return;
+      }
+      setSmartPathfindingStatus(message, kind);
+    },
   },
   input: {
     boundsRect,
@@ -1096,7 +1111,9 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
         settingsMessage: oneClickClearSettingsMessage.value,
       }),
     getSuccessMessage: (targetCount, elapsedMs, resultCacheHit) =>
-      createOneClickClearSuccessMessage({ elapsedMs, locale, resultCacheHit, targetCount }),
+      graphwarManagedModeEnabled.value
+        ? locale.smartPathfinding.managed.calculationComplete(targetCount, formatElapsedDuration(elapsedMs))
+        : createOneClickClearSuccessMessage({ elapsedMs, locale, resultCacheHit, targetCount }),
   },
   pathfinding: {
     cache: pathfindingCache,
@@ -2379,7 +2396,7 @@ function setGraphwarAgentFireStatus(status: TransferStatus) {
       graphwarAgentFireStatus.value = "idle";
       graphwarAgentFireFailureMessage.value = "";
       graphwarAgentFireStatusTimer = undefined;
-    }, graphwarAgentFireStatusFlashMs);
+    }, graphwarAgentStatusFlashMs);
   }
 }
 
@@ -2438,6 +2455,7 @@ function toggleGraphwarManagedMode() {
   graphwarManagedModeEnabled.value = true;
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
+  graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
   graphwarManagedLastSubmittedTurnToken = undefined;
   graphwarManagedDeadlineTurnToken = undefined;
@@ -2449,14 +2467,25 @@ function toggleGraphwarManagedMode() {
     client,
     hooks: {
       decideDeadlineShot: (state) => {
+        const searchStartedAt = graphwarManagedSearchStartedAt;
         cancelGraphwarManagedSearch();
         const plan = createGraphwarManagedShotPlan(state);
-        if (!plan || !graphwarManagedIncumbent) {
+        const incumbent = graphwarManagedIncumbent;
+        if (!plan || !incumbent) {
           return undefined;
         }
+        if (searchStartedAt !== undefined) {
+          showGraphwarManagedCalculationStatus(
+            locale.smartPathfinding.managed.deadlinePlan(
+              incumbent.targetCount,
+              formatElapsedDuration(nowMs() - searchStartedAt),
+            ),
+            "warning",
+          );
+        }
         // 截止时把主线程保存的完整验证方案一次性发布到路径、公式和命中展示。
-        applyValidatedPath(graphwarManagedIncumbent.pathPoints, graphwarManagedIncumbent.targetSequence);
-        flashOneClickClearHitSoldiers(graphwarManagedIncumbent.targetIds);
+        applyValidatedPath(incumbent.pathPoints, incumbent.targetSequence);
+        flashOneClickClearHitSoldiers(incumbent.targetIds);
         graphwarManagedDeadlineTurnToken = state.turnToken;
         return plan;
       },
@@ -2518,6 +2547,7 @@ function toggleGraphwarManagedMode() {
 /** 停止轮询和搜索并解锁输入；已发布的最后路径和公式保持不变。 */
 function stopGraphwarManagedMode(showStatus: boolean) {
   graphwarManagedModeEnabled.value = false;
+  clearGraphwarManagedCalculationStatus();
   graphwarManagedWakeLockGeneration += 1;
   graphwarManagedController?.stop();
   graphwarManagedController = undefined;
@@ -2573,8 +2603,10 @@ function handleGraphwarManagedState(
   }
 
   cancelGraphwarManagedSearch();
+  clearGraphwarManagedCalculationStatus();
   graphwarManagedSceneKey = sceneKey;
   graphwarManagedIncumbent = undefined;
+  graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
   graphwarManagedDeadlineTurnToken = undefined;
   graphwarManagedLastSubmittedTurnToken = undefined;
@@ -2627,6 +2659,7 @@ function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shoot
 /** 运行一次无跨回合结果缓存的 anytime 搜索，并只接收当前 scene generation 的结果。 */
 async function runGraphwarManagedSearch(sceneKey: string) {
   const searchGeneration = ++graphwarManagedSearchGeneration;
+  graphwarManagedSearchStartedAt = nowMs();
   graphwarManagedSearchState = "running";
   setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(), "warning");
   const succeeded = await oneClickClearRunWorkflow.run({
@@ -2641,6 +2674,29 @@ async function runGraphwarManagedSearch(sceneKey: string) {
       graphwarManagedIncumbent = incumbent;
       setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(incumbent.targetCount), "warning");
     },
+    onSuccessBeforeEffects: () => {
+      if (
+        !graphwarManagedModeEnabled.value ||
+        searchGeneration !== graphwarManagedSearchGeneration ||
+        sceneKey !== graphwarManagedSceneKey ||
+        !graphwarManagedIncumbent
+      ) {
+        return;
+      }
+      graphwarManagedSearchState = "success";
+      const state = graphwarManagedController?.getLatestState();
+      if (
+        state &&
+        state.remainingTurnMs > GRAPHWAR_MANAGED_SHOT_DEADLINE_MS &&
+        isGraphwarManagedCurrentLocalTurn(state)
+      ) {
+        // 方案已经完整验证；必须在 workflow 写回最终路径或完成状态前提交，不把页面刷新放进关键路径。
+        if (submitGraphwarManagedShot(state)) {
+          return;
+        }
+      }
+      setGraphwarManagedStatus(locale.smartPathfinding.managed.completedWaiting, "success");
+    },
     useResultCache: false,
   });
   if (
@@ -2652,17 +2708,9 @@ async function runGraphwarManagedSearch(sceneKey: string) {
   }
   if (!succeeded || !graphwarManagedIncumbent) {
     graphwarManagedSearchState = "failure";
+    graphwarManagedSearchStartedAt = undefined;
     setGraphwarManagedStatus(locale.smartPathfinding.managed.searchFailed, "error");
-    return;
   }
-
-  graphwarManagedSearchState = "success";
-  const state = graphwarManagedController?.getLatestState();
-  if (state && state.remainingTurnMs > GRAPHWAR_MANAGED_SHOT_DEADLINE_MS && isGraphwarManagedCurrentLocalTurn(state)) {
-    submitGraphwarManagedShot(state);
-    return;
-  }
-  setGraphwarManagedStatus(locale.smartPathfinding.managed.completedWaiting, "success");
 }
 
 /** 取消当前 Worker 并递增 generation，使迟到的 incumbent 和完成结果都无法回写。 */
@@ -2681,6 +2729,7 @@ function resetGraphwarManagedSearch() {
   cancelGraphwarManagedSearch();
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
+  graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
 }
 
@@ -2709,12 +2758,10 @@ function createGraphwarManagedShotPlan(state: GraphwarAgentAvailableState): Grap
     : { angleRadians: incumbent.launchAngleRadians, equationMode: "ddy", function: incumbent.expression };
 }
 
-/** 正常完成只提交 controller 当前快照；controller 会在 await 前完成 at-most-once claim。 */
+/** 正常完成只提交 controller 当前快照，并返回本回合是否已在 await 前完成 once-only claim。 */
 function submitGraphwarManagedShot(state: GraphwarAgentAvailableState) {
   const plan = createGraphwarManagedShotPlan(state);
-  if (plan) {
-    graphwarManagedController?.submitShot(state, plan);
-  }
+  return plan ? (graphwarManagedController?.submitShot(state, plan) ?? false) : false;
 }
 
 /** 检查最新权威回合是否属于当前本地真人发射者。 */
@@ -2733,12 +2780,55 @@ function isGraphwarManagedCurrentLocalTurn(state: GraphwarAgentAvailableState) {
 function setGraphwarManagedStatus(message: string, kind: SmartPathfindingStatusKind) {
   graphwarManagedStatusMessage = message;
   graphwarManagedStatusKind = kind;
+  // 错误必须立即可见；普通轮询和成功回调则等耗时状态展示完再替换。
+  if (kind === "error") {
+    clearGraphwarManagedCalculationStatus();
+  } else if (graphwarManagedCalculationStatus) {
+    if (nowMs() < graphwarManagedCalculationStatus.expiresAt) {
+      return;
+    }
+    clearGraphwarManagedCalculationStatus();
+  }
   setSmartPathfindingStatus(
     typeof document !== "undefined" && document.visibilityState === "hidden"
       ? locale.smartPathfinding.managed.backgroundWarning
       : message,
     typeof document !== "undefined" && document.visibilityState === "hidden" ? "warning" : kind,
   );
+}
+
+/** 展示已验证方案的计算耗时，同时让发射和轮询状态在后台继续更新。 */
+function showGraphwarManagedCalculationStatus(message: string, kind: SmartPathfindingStatusKind) {
+  clearGraphwarManagedCalculationStatus();
+  const status = {
+    expiresAt: nowMs() + graphwarAgentStatusFlashMs,
+    kind,
+    message,
+  };
+  graphwarManagedCalculationStatus = status;
+  setSmartPathfindingStatus(
+    typeof document !== "undefined" && document.visibilityState === "hidden"
+      ? locale.smartPathfinding.managed.backgroundWarning
+      : message,
+    typeof document !== "undefined" && document.visibilityState === "hidden" ? "warning" : kind,
+  );
+  graphwarManagedCalculationStatusTimer = setTimeout(() => {
+    if (graphwarManagedCalculationStatus !== status) {
+      return;
+    }
+    graphwarManagedCalculationStatus = undefined;
+    graphwarManagedCalculationStatusTimer = undefined;
+    setGraphwarManagedStatus(graphwarManagedStatusMessage, graphwarManagedStatusKind);
+  }, graphwarAgentStatusFlashMs);
+}
+
+/** 取消托管计算耗时的展示期，避免关闭托管或切换局面后由旧定时器回写状态。 */
+function clearGraphwarManagedCalculationStatus() {
+  if (graphwarManagedCalculationStatusTimer) {
+    clearTimeout(graphwarManagedCalculationStatusTimer);
+    graphwarManagedCalculationStatusTimer = undefined;
+  }
+  graphwarManagedCalculationStatus = undefined;
 }
 
 /** 尽力申请屏幕常亮；浏览器拒绝时继续托管但不承诺后台准时。 */
@@ -2812,7 +2902,12 @@ function handleGraphwarManagedVisibilityChange() {
     void releaseGraphwarManagedWakeLock();
     return;
   }
-  setSmartPathfindingStatus(graphwarManagedStatusMessage, graphwarManagedStatusKind);
+  if (graphwarManagedCalculationStatus && nowMs() < graphwarManagedCalculationStatus.expiresAt) {
+    setSmartPathfindingStatus(graphwarManagedCalculationStatus.message, graphwarManagedCalculationStatus.kind);
+  } else {
+    clearGraphwarManagedCalculationStatus();
+    setSmartPathfindingStatus(graphwarManagedStatusMessage, graphwarManagedStatusKind);
+  }
   void requestGraphwarManagedWakeLock();
 }
 

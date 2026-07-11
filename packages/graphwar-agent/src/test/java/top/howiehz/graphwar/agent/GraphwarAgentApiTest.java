@@ -30,6 +30,7 @@ public final class GraphwarAgentApiTest {
     /** Runs every assertion and exits nonzero when any API contract regresses. */
     public static void main(String[] arguments) throws Exception {
         testShotJsonParser();
+        testGraphPlaneAlphaClamp();
         GameData gameData = new GameData();
         configureRoom(gameData);
         Graphwar graphwar = new Graphwar(gameData);
@@ -49,6 +50,53 @@ public final class GraphwarAgentApiTest {
         }
 
         System.out.println("graphwar-agent API tests passed");
+    }
+
+    /** Reproduces the official renderer crash and verifies transformed alpha clamping. */
+    private static void testGraphPlaneAlphaClamp() throws Exception {
+        byte[] originalClass;
+        try (InputStream input =
+                GraphwarAgentApiTest.class.getResourceAsStream("/Graphwar/GraphPlane.class")) {
+            if (input == null) {
+                throw new AssertionError("missing Graphwar.GraphPlane test class");
+            }
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = input.read(buffer)) >= 0) {
+                output.write(buffer, 0, bytesRead);
+            }
+            originalClass = output.toByteArray();
+        }
+
+        GraphwarAlphaCompositeFixer fixer = new GraphwarAlphaCompositeFixer();
+        assertTrue(
+                fixer.transform(null, "Graphwar/OtherPlane", null, null, originalClass) == null,
+                "unrelated renderer class was patched");
+        byte[] patchedClass =
+                fixer.transform(null, "Graphwar/GraphPlane", null, null, originalClass);
+        assertTrue(patchedClass != null, "GraphPlane alpha call was not patched");
+        Class<?> graphPlaneClass =
+                new TransformedClassLoader().define("Graphwar.GraphPlane", patchedClass);
+        Object graphPlane = graphPlaneClass.getConstructor().newInstance();
+        assertEquals(
+                Float.valueOf(1.0f),
+                graphPlaneClass
+                        .getMethod("renderAlpha", Float.TYPE)
+                        .invoke(graphPlane, Float.valueOf(1.25f)),
+                "alpha above one");
+        assertEquals(
+                Float.valueOf(0.0f),
+                graphPlaneClass
+                        .getMethod("renderAlpha", Float.TYPE)
+                        .invoke(graphPlane, Float.valueOf(-0.25f)),
+                "alpha below zero");
+        assertEquals(
+                Float.valueOf(0.4f),
+                graphPlaneClass
+                        .getMethod("renderAlpha", Float.TYPE)
+                        .invoke(graphPlane, Float.valueOf(0.4f)),
+                "valid alpha");
     }
 
     /** Verifies strict field, escape, and JSON-number handling before HTTP routing. */
@@ -730,6 +778,14 @@ public final class GraphwarAgentApiTest {
             this.battleRevision = battleRevision;
             this.stateBody = stateBody;
             this.turnToken = turnToken;
+        }
+    }
+
+    /** Defines transformed fixtures without delegating their name to the parent loader. */
+    private static final class TransformedClassLoader extends ClassLoader {
+        /** Defines one already transformed class under its original binary name. */
+        Class<?> define(String className, byte[] bytes) {
+            return defineClass(className, bytes, 0, bytes.length);
         }
     }
 }

@@ -15,6 +15,7 @@ import {
   sampleGraphwarPathTargetSequence,
 } from "../../formula/trajectory/sampling";
 import type {
+  GraphwarStepGlitchFormulaPrefix,
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
@@ -216,6 +217,7 @@ export interface GraphwarOneClickClearOptions {
     acceptedPoint: GraphPoint;
     path: readonly PixelPoint[];
     prefixTarget: GraphwarTrajectoryTargetCircle;
+    stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
     targetSequence: readonly GraphwarTrajectoryTargetCircle[];
   }) => void;
   /** 批量 DAG 建边入口；即使串行也交给 master Worker，避免在主线程跑几何搜索。 */
@@ -626,6 +628,7 @@ async function buildOneClickClearStepGlitchPath(
   };
   let prefixScanner: GraphwarStepGlitchPrefixScanner | undefined;
   let prefixEvidence = options.stepGlitchPrefixEvidence;
+  let stepGlitchFormulaPrefix = options.stepGlitchPrefixEvidence?.stepGlitchFormulaPrefix;
   let workUnits = 0;
 
   for (const target of targets) {
@@ -638,6 +641,7 @@ async function buildOneClickClearStepGlitchPath(
       boundsRect: options.boundsRect,
       maskIndex,
       ...(prefixEvidence ? { prefixEvidence } : {}),
+      ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
       ...(route.targetSequence.length === 0 && options.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
       requiredTargets: createOneClickClearHistoricalTargets(options, route.targetSequence),
       settings: options.settings,
@@ -657,6 +661,7 @@ async function buildOneClickClearStepGlitchPath(
       };
       // 成功候选已完整回放；下一目标复用 exact path 的恢复点，不再重放刚提交的 prefix。
       prefixEvidence = { acceptedPoint: scan.acceptedPoint };
+      stepGlitchFormulaPrefix = scan.stepGlitchFormulaPrefix;
       prefixScanner = undefined;
     } else if (scan.status === "invalid-input" || scan.status === "unsupported") {
       return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
@@ -693,7 +698,13 @@ async function buildOneClickClearStepGlitchPath(
     return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
   }
   const committedTargets = hitTargets.map(createOneClickClearCommittedTarget);
-  publishOneClickClearStepGlitchEvidence(options, finalized.route.pathPoints, committedTargets, finalValidation);
+  publishOneClickClearStepGlitchEvidence(
+    options,
+    finalized.route.pathPoints,
+    committedTargets,
+    finalValidation,
+    finalized.route === route ? stepGlitchFormulaPrefix : undefined,
+  );
   return {
     elapsedMs: Math.max(0, nowMs() - startedAt),
     expandedStates: workUnits,
@@ -1653,6 +1664,7 @@ function publishOneClickClearStepGlitchEvidence(
   path: readonly PixelPoint[],
   committedTargets: readonly GraphwarCommittedTarget[],
   validation: ReturnType<typeof sampleOneClickClearTargetSequence>,
+  stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix | undefined,
 ) {
   const lastPathPoint = path.at(-1);
   if (!options.onValidatedStepGlitchPath || !lastPathPoint) {
@@ -1676,6 +1688,7 @@ function publishOneClickClearStepGlitchEvidence(
     acceptedPoint,
     path,
     prefixTarget,
+    ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
     targetSequence: committedTargets.map((target) => target.hitCircle),
   });
 }

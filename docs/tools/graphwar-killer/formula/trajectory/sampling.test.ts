@@ -175,6 +175,68 @@ describe("Graphwar trajectory target tracking", () => {
   });
 });
 
+describe("Step glitch formula prefix", () => {
+  it("reuses an exact causal prefix without changing the appended formula", () => {
+    const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const obstaclePixel = toPixel(-8, 0);
+    obstacleMask[Math.floor(obstaclePixel.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(obstaclePixel.x)] = 1;
+    const stepSettings = {
+      algorithm: "step" as const,
+      decimalPlaces: 4,
+      equation: "dy" as const,
+      steepness: 67,
+      stepGlitchMode: true,
+      stepGlitchObstacleMask: obstacleMask,
+      stepOverflowProtection: true,
+    };
+    const prefixPoints = [
+      createGraphPoint(-11, 0),
+      createGraphPoint(-6, 4),
+      createGraphPoint(-5, 3),
+      createGraphPoint(-4, 2),
+    ];
+    const prefix = createGraphwarTrajectoryFormulaContext({
+      bounds,
+      points: prefixPoints,
+      settings: stepSettings,
+      soldierCenter: prefixPoints[0],
+    });
+    const appendedPoints = [...prefixPoints, createGraphPoint(-3, 1)];
+    const cold = createGraphwarTrajectoryFormulaContext({
+      bounds,
+      points: appendedPoints,
+      settings: stepSettings,
+      soldierCenter: appendedPoints[0],
+    });
+    const reused = createGraphwarTrajectoryFormulaContext({
+      bounds,
+      points: appendedPoints,
+      settings: stepSettings,
+      soldierCenter: appendedPoints[0],
+      stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
+    });
+
+    expect(prefix.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
+    expect(reused.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBe(
+      prefix.stepGlitchFormulaPrefix?.stepGlitchSegments[0],
+    );
+    expect(reused.playbackExpression).toBe(cold.playbackExpression);
+    expect(reused.formulaPoints).toEqual(cold.formulaPoints);
+    expect(reused.stepGlitchFormulaPrefix?.refinedFormulaPoints).toEqual(
+      cold.stepGlitchFormulaPrefix?.refinedFormulaPoints,
+    );
+    expect(reused.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual(
+      cold.stepGlitchFormulaPrefix?.stepGlitchRequirements,
+    );
+    expect(reused.stepGlitchFormulaPrefix?.stepGlitchSegments).toEqual(
+      cold.stepGlitchFormulaPrefix?.stepGlitchSegments,
+    );
+    expect(reused.stepGlitchFormulaPrefix?.stepSegmentDeltaYs).toEqual(
+      cold.stepGlitchFormulaPrefix?.stepSegmentDeltaYs,
+    );
+  });
+});
+
 function createHorizontalFormulaContext() {
   const soldierCenter = createGraphPoint(-1, 0);
   return createGraphwarTrajectoryFormulaContext({

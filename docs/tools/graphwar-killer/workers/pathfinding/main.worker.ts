@@ -456,6 +456,9 @@ function findStepGlitchSmartPath(
     boundsRect: input.boundsRect,
     hitTarget: input.hitTarget,
     ...(prefixEvidence ? { prefixEvidence } : {}),
+    ...(prefixEvidence?.stepGlitchFormulaPrefix
+      ? { stepGlitchFormulaPrefix: prefixEvidence.stepGlitchFormulaPrefix }
+      : {}),
     ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
     requiredTargets: committedSequence,
     settings: input.settings,
@@ -504,30 +507,51 @@ function findStepGlitchSmartPath(
 
   let path = scanResult.path;
   let acceptedPoint = scanResult.acceptedPoint;
+  let stepGlitchFormulaPrefix = scanResult.stepGlitchFormulaPrefix;
   if (input.routeMode === "theta-star" && input.settings.stepGlitchObstacleMask === simulationMask) {
     const optimized = measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
-      optimizeStepGlitchSmartPath(input, path, committedSequence, input.hitTarget, acceptedPoint),
+      optimizeStepGlitchSmartPath(
+        input,
+        path,
+        committedSequence,
+        input.hitTarget,
+        acceptedPoint,
+        stepGlitchFormulaPrefix,
+        prefixEvidence?.stepGlitchFormulaPrefix,
+      ),
     );
     path = optimized.path;
     acceptedPoint = optimized.acceptedPoint;
+    stepGlitchFormulaPrefix = optimized.stepGlitchFormulaPrefix;
   } else if (input.routeMode === "theta-star") {
     path = measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
       optimizeSmartPathfindingPath(input, path, undefined),
     );
   }
-  setMasterStepGlitchEvidence(input, path, finalTargetSequence, input.hitTarget, acceptedPoint);
+  setMasterStepGlitchEvidence(
+    input,
+    path,
+    finalTargetSequence,
+    input.hitTarget,
+    acceptedPoint,
+    stepGlitchFormulaPrefix,
+  );
   return { path, timings };
 }
 
+/** 删除单目标邪道路线的非锚点，并随精确成功路径更新可发布公式前缀。 */
 function optimizeStepGlitchSmartPath(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
   requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
   target: GraphwarTrajectoryTargetCircle,
   acceptedPoint: GraphPoint,
+  stepGlitchFormulaPrefix: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"],
+  sourceFormulaPrefix: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"],
 ) {
   let optimized = [...points];
   let optimizedAcceptedPoint = acceptedPoint;
+  let optimizedFormulaPrefix = stepGlitchFormulaPrefix;
   const firstOptimizableIndex = Math.max(1, input.sourcePath.length);
   for (let index = firstOptimizableIndex; index < optimized.length - 1 && optimized.length > 2;) {
     const candidatePath = [...optimized.slice(0, index), ...optimized.slice(index + 1)];
@@ -542,6 +566,7 @@ function optimizeStepGlitchSmartPath(
       path: candidatePath,
       requiredTargets,
       settings: input.settings,
+      ...(sourceFormulaPrefix ? { stepGlitchFormulaPrefix: sourceFormulaPrefix } : {}),
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       simulationMask: input.simulationMask,
       sourcePath: input.sourcePath,
@@ -553,8 +578,13 @@ function optimizeStepGlitchSmartPath(
     }
     optimized = candidatePath;
     optimizedAcceptedPoint = replay.acceptedPoint;
+    optimizedFormulaPrefix = replay.stepGlitchFormulaPrefix;
   }
-  return { acceptedPoint: optimizedAcceptedPoint, path: optimized };
+  return {
+    acceptedPoint: optimizedAcceptedPoint,
+    path: optimized,
+    ...(optimizedFormulaPrefix ? { stepGlitchFormulaPrefix: optimizedFormulaPrefix } : {}),
+  };
 }
 
 interface MasterStepGlitchEvidenceContext {
@@ -566,6 +596,7 @@ interface MasterStepGlitchEvidenceContext {
   simulationMaskCacheId: number;
 }
 
+/** 只在 Master 精确 key 命中时返回恢复点，并把等价 mask 设置重绑到本次请求。 */
 function getMasterStepGlitchEvidence(
   input: MasterStepGlitchEvidenceContext,
   path: readonly PixelPoint[],
@@ -582,16 +613,26 @@ function getMasterStepGlitchEvidence(
           masterStepGlitchEvidence.acceptedPoint.x,
           masterStepGlitchEvidence.acceptedPoint.y,
         ),
+        ...(masterStepGlitchEvidence.stepGlitchFormulaPrefix
+          ? {
+              stepGlitchFormulaPrefix: {
+                ...masterStepGlitchEvidence.stepGlitchFormulaPrefix,
+                settings: input.settings,
+              },
+            }
+          : {}),
       }
     : undefined;
 }
 
+/** 保存最近一条完整验证成功的邪道路径证据；下一次写入直接替换旧证据。 */
 function setMasterStepGlitchEvidence(
   input: MasterStepGlitchEvidenceContext,
   path: readonly PixelPoint[],
   targetSequence: readonly GraphwarTrajectoryTargetCircle[],
   prefixTarget: GraphwarTrajectoryTargetCircle,
   acceptedPoint: GraphPoint,
+  stepGlitchFormulaPrefix?: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"],
 ) {
   if (!masterStepGlitchEvidenceIsEnabled(input)) {
     return;
@@ -599,6 +640,7 @@ function setMasterStepGlitchEvidence(
   masterStepGlitchEvidence = {
     acceptedPoint: createGraphPoint(acceptedPoint.x, acceptedPoint.y),
     key: createMasterStepGlitchEvidenceKey(input, path, targetSequence, prefixTarget),
+    ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
   };
 }
 
@@ -918,6 +960,7 @@ async function buildOneClickClearPath(
         acceptedPoint: GraphPoint;
         path: readonly PixelPoint[];
         prefixTarget: GraphwarTrajectoryTargetCircle;
+        stepGlitchFormulaPrefix?: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"];
         targetSequence: readonly GraphwarTrajectoryTargetCircle[];
       }
     | undefined;
@@ -999,6 +1042,7 @@ async function buildOneClickClearPath(
       validatedStepGlitchEvidence.targetSequence,
       validatedStepGlitchEvidence.prefixTarget,
       validatedStepGlitchEvidence.acceptedPoint,
+      validatedStepGlitchEvidence.stepGlitchFormulaPrefix,
     );
   }
   return { result, timings };

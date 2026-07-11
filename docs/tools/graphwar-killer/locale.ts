@@ -183,12 +183,16 @@ export const graphwarKillerLocale = {
     },
     managed: {
       backgroundWarning: "页面位于后台，托管发射可能延迟",
+      calculationComplete: (targetCount, elapsed) =>
+        `托管计算完成，当前最优方案命中 ${targetCount} 个目标，耗时 ${elapsed}`,
       calculating: (targetCount) =>
         targetCount === undefined ? "托管计算中" : `托管计算中，当前最优命中 ${targetCount} 个目标`,
       completedWaiting: "托管计算完成，等待己方回合",
       connectionFailed: (message) => `Agent 连接失败，正在重试：${message}`,
       deadlineFired: "剩余 3 秒中断，已发射当前最优方案",
       deadlineNoPlan: "剩余 3 秒中断，无可用方案",
+      deadlinePlan: (targetCount, elapsed) =>
+        `托管计算在剩余 3 秒时中断，当前最优方案命中 ${targetCount} 个目标，耗时 ${elapsed}`,
       enabled: "托管已启用，正在读取游戏状态",
       incompatible: "Agent 接口不兼容，托管已关闭，请升级 Agent",
       readying: "房间内本地玩家尚未准备，正在自动准备",

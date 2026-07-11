@@ -99,4 +99,28 @@ describe("Step single-target soldier aiming", () => {
     expect(centerResult.reachesTargetSequenceBeforeObstacle).toBe(false);
     expect(edgeResult.reachesTargetSequenceBeforeObstacle).toBe(true);
   });
+
+  it("clamps boundary soldiers to native cell centers at fractional screenshot scales", () => {
+    for (const scale of [0.5, 1, 2]) {
+      const scaledArea: GraphwarTargetingArea = {
+        bounds: area.bounds,
+        boundsRect: { height: 450 * scale, width: 770 * scale, x: 10.25, y: 20.75 },
+        targetBoundsRect: { height: 450 * scale, width: 770 * scale, x: 10.25, y: 20.75 },
+      };
+      const edgeSoldier: GraphwarTargetingSoldier = {
+        hitRadius: 7,
+        sourceCenterX: scaledArea.targetBoundsRect.x + scaledArea.targetBoundsRect.width,
+        sourceCenterY: scaledArea.targetBoundsRect.y + scaledArea.targetBoundsRect.height,
+      };
+      const target = createSmartPathfindingSoldierTarget(
+        createPixelPoint(scaledArea.targetBoundsRect.x, edgeSoldier.sourceCenterY),
+        edgeSoldier,
+        scaledArea,
+      );
+
+      expect(target?.targetPoint).toEqual(
+        createPixelPoint(edgeSoldier.sourceCenterX - scale / 2, edgeSoldier.sourceCenterY - scale / 2),
+      );
+    }
+  });
 });

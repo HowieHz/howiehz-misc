@@ -53,6 +53,8 @@ interface GraphwarOneClickClearRunRunner {
 export interface GraphwarOneClickClearRunOptions {
   /** 接收已完成最终公式回放的当前最优方案；普通手动运行无需传入。 */
   onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
+  /** 最终成功后、写回最终路径与完成状态前同步调用；托管用它提交不依赖页面渲染的已验证方案。 */
+  onSuccessBeforeEffects?: () => void;
   /** 托管按实时局面搜索时关闭跨运行结果缓存。 */
   useResultCache?: boolean;
 }
@@ -175,12 +177,14 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       }
 
       const result = searchResult.search.result;
-      options.run.finish(pathfindingToken);
       if (result.type === "success") {
+        runOptions.onSuccessBeforeEffects?.();
+        options.run.finish(pathfindingToken);
         applySuccessResult(startedAt, timings, result, searchResult.cacheHit, finishOneClickClearDebugTimings);
         return true;
       }
 
+      options.run.finish(pathfindingToken);
       if (result.invalidSegmentIndex !== undefined) {
         const pathPoints = options.input.getPathPoints();
         options.effects.flashBlockedSegment(

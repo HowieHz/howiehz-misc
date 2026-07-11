@@ -8,6 +8,7 @@ import { resolveStepFormula } from "../../formula/generation/step-numeric-strate
 import type { GraphwarTrajectorySamplingState } from "../../formula/simulation/simulator";
 import {
   createGraphwarTrajectoryFormulaContext,
+  graphwarTrajectoryReachesGraphXBeforeObstacle,
   sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTargetSequence,
 } from "../../formula/trajectory/sampling";
@@ -17,7 +18,11 @@ import type {
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
-import { createGraphwarStepGlitchScanMaskIndex, scanGraphwarStepGlitchPath } from "../routing/step-glitch-scan";
+import {
+  createGraphwarStepGlitchPrefixScanner,
+  createGraphwarStepGlitchScanMaskIndex,
+} from "../routing/step-glitch-scan";
+import type { GraphwarStepGlitchPrefixScanner } from "../routing/step-glitch-scan";
 import { assignGraphwarStepGlitchTargetRoutePoints } from "./step-glitch-targets";
 
 /** 路线规划默认使用单个 2px 几何 route tolerance，普通寻路和一键清图保持一致。 */
@@ -480,6 +485,7 @@ async function buildOneClickClearStepGlitchPath(
     pathPoints: [...options.pathPoints],
     targetSequence: [],
   };
+  let prefixScanner: GraphwarStepGlitchPrefixScanner | undefined;
   let workUnits = 0;
 
   for (const target of targets) {
@@ -487,19 +493,18 @@ async function buildOneClickClearStepGlitchPath(
       return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
     }
 
-    const scanStartedAt = nowMs();
-    const scan = scanGraphwarStepGlitchPath({
+    prefixScanner ??= createGraphwarStepGlitchPrefixScanner({
       bounds: options.bounds,
       boundsRect: options.boundsRect,
-      hitTarget: target.hitCircle,
       maskIndex,
       requiredTargetSequence: createOneClickClearStepValidationTargets(options, route.targetSequence),
       settings: options.settings,
       simulationBoundaryExpansion: options.simulationBoundaryExpansion,
       simulationMask,
       sourcePath: route.pathPoints,
-      targetPoint: target.routePoint,
     });
+    const scanStartedAt = nowMs();
+    const scan = prefixScanner.scan({ hitTarget: target.hitCircle, targetPoint: target.routePoint });
     emitOneClickClearDebugTiming(options, {
       elapsedMs: nowMs() - scanStartedAt,
       stage: "scan-step-glitch",
@@ -512,7 +517,9 @@ async function buildOneClickClearStepGlitchPath(
         pathPoints: scan.path,
         targetSequence: [...route.targetSequence, target],
       };
-    } else if (scan.status === "blocked" && (scan.reason === "invalid-input" || scan.reason === "unsupported")) {
+      // 新后缀会改变整条 Step 公式；下一条边必须从新前缀重新求真实恢复点。
+      prefixScanner = undefined;
+    } else if (scan.status === "invalid-input" || scan.status === "unsupported") {
       return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
     }
 
@@ -1348,10 +1355,16 @@ function sampleOneClickClearTargetSequence(
     options.settings.algorithm === "step"
       ? createOneClickClearStepValidationTargets(options, route.targetSequence)
       : undefined;
+  const lastPathPoint = route.pathPoints.at(-1);
+  const targetControlGraphX =
+    oneClickClearUsesStepGlitch(options.settings) && lastPathPoint
+      ? imageToGraphPoint(lastPathPoint, options.bounds, options.boundsRect).x
+      : undefined;
   const result = sampleGraphwarPathTargetSequence({
     boundaryExpansion: options.simulationBoundaryExpansion,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
+    ...(targetControlGraphX === undefined ? {} : { continueAfterTargetSequenceUntilGraphX: targetControlGraphX }),
     obstacleMask: options.simulationMask,
     points: route.pathPoints,
     settings: options.settings,
@@ -1365,10 +1378,12 @@ function sampleOneClickClearTargetSequence(
   }
 
   const prefixTargetCount = options.pathPoints.length >= 2 ? 1 : 0;
+  const reachesTargetControl =
+    targetControlGraphX === undefined || graphwarTrajectoryReachesGraphXBeforeObstacle(result, targetControlGraphX);
   return {
     ...result,
     reachedTargetCount: Math.max(0, result.reachedTargetCount - prefixTargetCount),
-    reachesTargetSequenceBeforeObstacle: result.reachedTargetCount >= stepTargets.length,
+    reachesTargetSequenceBeforeObstacle: result.reachedTargetCount >= stepTargets.length && reachesTargetControl,
   };
 }
 
@@ -1421,7 +1436,7 @@ function createOneClickClearTargetCircle(target: Pick<GraphwarOneClickClearCandi
   };
 }
 
-/** 全局删点只保护原 prefix；新增序列一直到末尾都可尝试删除。 */
+/** 全局删点保护原 prefix；邪道还要保留每条已提交边精确结束的目标锚点。 */
 async function optimizeOneClickClearPath(
   context: OneClickClearSearchContext,
   route: OneClickClearValidatedRoute,
@@ -1429,11 +1444,19 @@ async function optimizeOneClickClearPath(
 ) {
   let optimized = route;
   const firstGeneratedIndex = context.options.pathPoints.length;
+  const protectedTargetPoints = oneClickClearUsesStepGlitch(context.options.settings)
+    ? new Set(route.targetSequence.map((target) => target.routePoint))
+    : undefined;
   const localHitCheckCanSkipFullValidation = oneClickClearLocalHitCheckCanSkipFullValidation(context.options);
   for (let pass = 0; pass < MAX_GLOBAL_DELETE_PASSES; pass += 1) {
     for (let index = firstGeneratedIndex; index < optimized.pathPoints.length;) {
       if (context.options.isCancelled?.()) {
         return { route: optimized, workUnits };
+      }
+      const point = optimized.pathPoints[index];
+      if (point && protectedTargetPoints?.has(point)) {
+        index += 1;
+        continue;
       }
 
       workUnits += 1;

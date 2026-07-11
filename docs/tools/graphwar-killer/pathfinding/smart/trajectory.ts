@@ -1,5 +1,9 @@
+import { imageToGraphPoint } from "../../core/geometry";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
-import { sampleGraphwarPathTrajectory } from "../../formula/trajectory/sampling";
+import {
+  graphwarTrajectoryReachesGraphXBeforeObstacle,
+  sampleGraphwarPathTrajectory,
+} from "../../formula/trajectory/sampling";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
@@ -68,11 +72,20 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
     return { reachesTargetBeforeObstacle: false, visiblePixels: [] };
   }
 
-  // 智能寻路候选路径和当前路径预检应共用同一套“目标前无障碍”判定。
+  const lastPoint = options.points.at(-1);
+  const targetControlGraphX =
+    options.settings.algorithm === "step" &&
+    options.settings.equation === "dy" &&
+    options.settings.stepGlitchMode &&
+    lastPoint
+      ? imageToGraphPoint(lastPoint, options.bounds, options.boundsRect).x
+      : undefined;
+  // 邪道前缀必须真正恢复到最后控制点 x，不能只在命中圈左缘提前命中。
   const result = sampleGraphwarPathTrajectory({
     boundaryExpansion: options.boundaryExpansion,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
+    ...(targetControlGraphX === undefined ? {} : { continueAfterTargetUntilGraphX: targetControlGraphX }),
     hitTargetPoint: target?.center,
     obstacleMask: options.obstacleMask,
     points: options.points,
@@ -81,7 +94,9 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
   });
   return {
     blockedPoint: result.earlyStopReason === "obstacle" ? result.visiblePixels.at(-1) : undefined,
-    reachesTargetBeforeObstacle: result.reachesTargetBeforeObstacle,
+    reachesTargetBeforeObstacle:
+      result.reachesTargetBeforeObstacle &&
+      (targetControlGraphX === undefined || graphwarTrajectoryReachesGraphXBeforeObstacle(result, targetControlGraphX)),
     visiblePixels: result.visiblePixels,
   };
 }

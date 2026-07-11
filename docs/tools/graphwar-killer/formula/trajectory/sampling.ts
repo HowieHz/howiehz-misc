@@ -147,6 +147,17 @@ export interface GraphwarPathTargetSequenceResult {
   visiblePixels: PixelPoint[];
 }
 
+/** 命中后续播模式会在目标 x 主动停止；障碍先停或采样未到 x 都不能作为可继续前缀。 */
+export function graphwarTrajectoryReachesGraphXBeforeObstacle(
+  result: Pick<GraphwarPathTrajectoryResult, "earlyStopReason" | "sample">,
+  graphX: number,
+) {
+  const lastPoint = result.sample.points.at(-1);
+  return (
+    result.earlyStopReason !== "obstacle" && Number.isFinite(graphX) && Boolean(lastPoint && lastPoint.x >= graphX)
+  );
+}
+
 /** 把路径点和 Graphwar 数值保护规则整理成一次采样可复用的公式上下文。 */
 export function createGraphwarTrajectoryFormulaContext(options: {
   bounds: GraphBounds;
@@ -1274,6 +1285,8 @@ export function sampleGraphwarPathTrajectory(options: {
   boundaryExpansion?: number;
   bounds: GraphBounds;
   boundsRect: BoundsRect;
+  /** 命中后继续回放到该 Graphwar x；用于确认目标控制点确实可达。 */
+  continueAfterTargetUntilGraphX?: number;
   hitTargetPoint?: PixelPoint;
   obstacleMask?: Uint8Array;
   points: readonly PixelPoint[];
@@ -1305,6 +1318,12 @@ export function sampleGraphwarPathTrajectory(options: {
       mask: options.obstacleMask,
     },
     collectVisiblePixels: true,
+    ...(options.continueAfterTargetUntilGraphX === undefined
+      ? {}
+      : {
+          continueAfterTargetSequenceUntilGraphX: options.continueAfterTargetUntilGraphX,
+          stopOnTargetSequenceComplete: false,
+        }),
     context,
     targetHitRadiusPixels: options.targetHitRadiusPixels,
     targetPoint: options.hitTargetPoint,
@@ -1324,6 +1343,8 @@ export function sampleGraphwarPathTargetSequence(options: {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
   collectVisiblePixels?: boolean;
+  /** 完成命中序列后继续回放到该 Graphwar x；用于确认最后目标控制点确实可达。 */
+  continueAfterTargetSequenceUntilGraphX?: number;
   obstacleMask?: Uint8Array;
   points: readonly PixelPoint[];
   settings: GraphwarTrajectoryFormulaSettings;
@@ -1374,6 +1395,12 @@ export function sampleGraphwarPathTargetSequence(options: {
       mask: options.obstacleMask,
     },
     collectVisiblePixels: options.collectVisiblePixels,
+    ...(options.continueAfterTargetSequenceUntilGraphX === undefined
+      ? {}
+      : {
+          continueAfterTargetSequenceUntilGraphX: options.continueAfterTargetSequenceUntilGraphX,
+          stopOnTargetSequenceComplete: false,
+        }),
     context,
     targetHitRadiusPixels: options.targetHitRadiusPixels,
     targetSequence,

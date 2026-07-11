@@ -58,7 +58,7 @@ describe("Step y' glitch scan", () => {
       targetPoint: target,
     });
 
-    expect(result).toMatchObject({ expandedStates: 0, reason: "unsupported", status: "blocked" });
+    expect(result).toMatchObject({ expandedStates: 0, status: "unsupported" });
   });
 
   it("returns hit after replaying the complete final expression", () => {
@@ -68,7 +68,6 @@ describe("Step y' glitch scan", () => {
       bounds,
       boundsRect,
       hitTarget: { center: target, radius: 12 },
-      maxExpandedStates: 8,
       settings,
       simulationMask: createEmptyMask(),
       sourcePath: [start],
@@ -78,6 +77,9 @@ describe("Step y' glitch scan", () => {
     expect(result.status).toBe("hit");
     expect(result.expandedStates).toBe(1);
     expect(result.reachedTargetCount).toBe(1);
+    if (result.status === "hit") {
+      expect(result.path.at(-1)).toBe(target);
+    }
   });
 
   it("keeps required targets ahead of the current hit target", () => {
@@ -88,19 +90,21 @@ describe("Step y' glitch scan", () => {
       bounds,
       boundsRect,
       hitTarget: { center: target, radius: 12 },
-      maxExpandedStates: 8,
       requiredTargetSequence: [{ center: required, radius: 12 }],
       settings,
       simulationMask: createEmptyMask(),
-      sourcePath: [start],
+      sourcePath: [start, required],
       targetPoint: target,
     });
 
     expect(result.status).toBe("hit");
     expect(result.reachedTargetCount).toBe(2);
+    if (result.status === "hit") {
+      expect(result.path.at(-1)).toBe(target);
+    }
   });
 
-  it("returns passable when the formula reaches the control x without hitting the requested circle", () => {
+  it("returns no-path when the formula reaches the control x without hitting the requested circle", () => {
     const start = toPixel(-11, 0);
     const targetPoint = toPixel(-6, 0);
     const missedTarget = toPixel(-6, 8);
@@ -108,17 +112,14 @@ describe("Step y' glitch scan", () => {
       bounds,
       boundsRect,
       hitTarget: { center: missedTarget, radius: 2 },
-      maxExpandedStates: 8,
       settings,
       simulationMask: createEmptyMask(),
       sourcePath: [start],
       targetPoint,
     });
 
-    expect(result.status).toBe("passable");
-    if (result.status === "passable") {
-      expect(result.acceptedPoint.x).toBeGreaterThanOrEqual(-6);
-    }
+    expect(result.status).toBe("no-path");
+    expect(result.expandedStates).toBe(1);
   });
 
   it("jumps to a disjoint free row when the next obstacle column blocks the source row", () => {
@@ -133,7 +134,6 @@ describe("Step y' glitch scan", () => {
       bounds,
       boundsRect,
       hitTarget: { center: target, radius: 12 },
-      maxExpandedStates: 32,
       settings,
       simulationMask: mask,
       sourcePath: [start],
@@ -142,8 +142,11 @@ describe("Step y' glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
-      expect(result.path).toHaveLength(2);
-      expect(result.path.at(-1)?.x).toBeLessThan(target.x);
+      const gate = result.path.at(-2);
+      expect(result.path).toHaveLength(3);
+      expect(gate?.x).toBeGreaterThan(start.x);
+      expect(gate?.x).toBeLessThan(target.x);
+      expect(result.path.at(-1)).toBe(target);
     }
   });
 
@@ -159,7 +162,6 @@ describe("Step y' glitch scan", () => {
       bounds,
       boundsRect,
       hitTarget: { center: target, radius: 12 },
-      maxExpandedStates: 32,
       settings: { ...settings, decimalPlaces: 2 },
       simulationMask: mask,
       sourcePath: [start],
@@ -168,8 +170,9 @@ describe("Step y' glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
-      const controlPoint = result.path.at(-1);
+      const controlPoint = result.path.at(-2);
       expect(controlPoint).toBeDefined();
+      expect(result.path.at(-1)).toBe(target);
       if (controlPoint) {
         const controlX = imageToGraphPoint(controlPoint, bounds, boundsRect).x;
         expect(floorToDecimalPlaces(controlX, 2)).toBe(-6.63);
@@ -190,7 +193,6 @@ describe("Step y' glitch scan", () => {
       bounds: mirroredBounds,
       boundsRect,
       hitTarget: { center: target, radius: 12 },
-      maxExpandedStates: 32,
       settings,
       simulationMask: mask,
       sourcePath: [start],
@@ -199,8 +201,9 @@ describe("Step y' glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
-      const controlPoint = result.path.at(-1);
+      const controlPoint = result.path.at(-2);
       expect(controlPoint).toBeDefined();
+      expect(result.path.at(-1)).toBe(target);
       if (controlPoint) {
         const controlX = imageToGraphPoint(controlPoint, mirroredBounds, boundsRect).x;
         expect(floorToDecimalPlaces(controlX, settings.decimalPlaces)).toBe(-6.7329);
@@ -208,34 +211,30 @@ describe("Step y' glitch scan", () => {
     }
   });
 
-  it("distinguishes the replay cap from an exhausted search frontier", () => {
+  it("exhausts every finite landing branch before returning no-path", () => {
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 4);
     const mask = createEmptyMask();
     const wallX = Math.floor(((toPixel(-8, 0).x - boundsRect.x) / boundsRect.width) * GRAPHWAR_PLANE_LENGTH);
-    for (let row = 180; row <= 270; row += 1) {
+    for (let row = 1; row < GRAPHWAR_PLANE_HEIGHT - 1; row += 1) {
       mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
     }
     const result = scanGraphwarStepGlitchPath({
       bounds,
       boundsRect,
       hitTarget: { center: target, radius: 0 },
-      maxExpandedStates: 1,
       settings,
       simulationMask: mask,
       sourcePath: [start],
       targetPoint: target,
     });
 
-    expect(result).toMatchObject({
-      expandedStates: 1,
-      limitReached: true,
-      reason: "limit",
-      status: "blocked",
-    });
+    expect(result.status).toBe("no-path");
+    expect(result.expandedStates).toBeGreaterThan(1);
+    expect(result).not.toHaveProperty("limitReached");
   });
 
-  it("returns blocked when a full-height wall has no landing row", () => {
+  it("returns no-path when a full-height wall has no landing row", () => {
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 0);
     const mask = createEmptyMask();
@@ -247,15 +246,30 @@ describe("Step y' glitch scan", () => {
       bounds,
       boundsRect,
       hitTarget: { center: target, radius: 8 },
-      maxExpandedStates: 8,
       settings,
       simulationMask: mask,
       sourcePath: [start],
       targetPoint: target,
     });
 
-    expect(result.status).toBe("blocked");
+    expect(result.status).toBe("no-path");
     expect(result.expandedStates).toBe(0);
+  });
+
+  it("returns invalid-input when the assigned target does not advance x", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-11.5, 0);
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 8 },
+      settings,
+      simulationMask: createEmptyMask(),
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result).toMatchObject({ expandedStates: 0, status: "invalid-input" });
   });
 });
 

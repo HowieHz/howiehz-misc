@@ -15,11 +15,12 @@ import {
   sampleGraphwarFormulaTrajectory,
 } from "../../formula/trajectory/sampling";
 import type {
+  GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaSettings,
+  GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 
-const DEFAULT_MAX_EXPANDED_STATES = 512;
 const MAX_CONTROL_POINT_ROUND_TRIP_NUDGES = 32;
 const glitchWindowWidths = createGlitchWindowWidths();
 
@@ -32,33 +33,34 @@ export interface GraphwarStepGlitchScanMaskIndex {
   readonly simulationMask: Uint8Array;
 }
 
-export interface GraphwarStepGlitchScanOptions {
+export interface GraphwarStepGlitchPrefixOptions {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
-  /** 当前目标的实际命中圈。 */
-  hitTarget: GraphwarTrajectoryTargetCircle;
-  /** 已有路径必须继续按顺序命中的目标；当前 hitTarget 会追加在其后。 */
+  /** 可复用的同 mask 索引；不匹配时扫描器会自行重建。 */
+  maskIndex?: GraphwarStepGlitchScanMaskIndex;
+  /** 固定前缀必须继续按顺序命中的目标。 */
   requiredTargetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   /** 函数采样边界内收值，单位为 Graphwar 原始平面像素。 */
   simulationBoundaryExpansion?: number;
-  /** 邪道选择和最终接受点碰撞都使用这一份 mask。 */
+  /** 前缀回放和后续候选都使用这一份 mask。 */
   simulationMask: Uint8Array;
-  /** 可复用的同 mask 索引；不匹配时扫描器会自行重建。 */
-  maskIndex?: GraphwarStepGlitchScanMaskIndex;
-  /** 最多执行多少次完整候选公式回放；默认 512，耗尽时返回 reason=limit，不代表前沿已经搜索完。 */
-  maxExpandedStates?: number;
   settings: GraphwarTrajectoryFormulaSettings;
-  /** 已有完整路径；最后一点是本次扫描起点。 */
+  /** 已提交的完整固定前缀；最后一点是后续边的起点。 */
   sourcePath: readonly PixelPoint[];
+}
+
+export interface GraphwarStepGlitchTargetOptions {
+  /** 当前目标的实际命中圈。 */
+  hitTarget: GraphwarTrajectoryTargetCircle;
   /** 当前目标使用的控制点；可与命中圈中心不同。 */
   targetPoint: PixelPoint;
 }
 
+export type GraphwarStepGlitchScanOptions = GraphwarStepGlitchPrefixOptions & GraphwarStepGlitchTargetOptions;
+
 interface GraphwarStepGlitchScanResultBase {
   /** 实际执行过最终文本回放的候选路径数。 */
   expandedStates: number;
-  /** True 表示达到回放预算后提前返回，不能解释为搜索前沿已经穷尽。 */
-  limitReached: boolean;
   /** 本条完整公式按顺序命中的 required targets 加当前目标数量。 */
   reachedTargetCount: number;
 }
@@ -70,20 +72,32 @@ export type GraphwarStepGlitchScanResult =
       status: "hit";
     })
   | (GraphwarStepGlitchScanResultBase & {
-      acceptedPoint: GraphPoint;
-      path: PixelPoint[];
-      status: "passable";
-    })
-  | (GraphwarStepGlitchScanResultBase & {
       blockedPoint?: GraphPoint;
-      reason: "invalid-input" | "limit" | "no-path" | "unsupported";
-      status: "blocked";
+      status: "invalid-input" | "no-path" | "unsupported";
     });
+
+export interface GraphwarStepGlitchPrefixScanner {
+  scan: (target: GraphwarStepGlitchTargetOptions) => GraphwarStepGlitchScanResult;
+}
+
+/** 固定前缀的公式、完整回放和真实恢复点；只在当前 scanner 闭包中保留一份。 */
+interface PreparedGraphwarStepGlitchPrefix {
+  acceptedPoint: GraphPoint;
+  formulaContext?: GraphwarTrajectoryFormulaContext;
+  formulaSettings: GraphwarTrajectoryFormulaSettings;
+  graphPoints: readonly GraphPoint[];
+  replay?: GraphwarTrajectorySampleResult;
+  simulationBoundaryExpansion: number;
+  status: "ready";
+}
+
+type PreparedGraphwarStepGlitchPrefixResult =
+  | PreparedGraphwarStepGlitchPrefix
+  | Exclude<GraphwarStepGlitchScanResult, { status: "hit" }>;
 
 interface ScanState {
   acceptedPoint: GraphPoint;
   path: PixelPoint[];
-  reachedTargetCount: number;
   row: number;
   searchX: number;
 }
@@ -91,6 +105,7 @@ interface ScanState {
 interface ScanCandidate {
   controlX: number;
   farthestX: number;
+  kind: "gate" | "target";
   path: PixelPoint[];
   row: number;
   targetDistance: number;
@@ -153,81 +168,138 @@ export function createGraphwarStepGlitchScanMaskIndex(options: {
   };
 }
 
-/** 扫描 Step y'= 邪道控制点；每个候选都按最终表达式文本从发射点完整回放。 */
-export function scanGraphwarStepGlitchPath(options: GraphwarStepGlitchScanOptions): GraphwarStepGlitchScanResult {
+/** 准备固定前缀；同一 scanner 尝试多个更右目标时只做一次公式生成和完整回放。 */
+function prepareGraphwarStepGlitchPrefix(
+  options: GraphwarStepGlitchPrefixOptions,
+): PreparedGraphwarStepGlitchPrefixResult {
   if (!stepGlitchScanIsSupported(options.settings)) {
-    return createBlockedResult("unsupported", 0, 0);
+    return createFailedResult("unsupported", 0, 0);
   }
-  const requestedMaxExpandedStates = options.maxExpandedStates ?? DEFAULT_MAX_EXPANDED_STATES;
   if (
     options.sourcePath.length === 0 ||
-    options.simulationMask.length !== GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT ||
-    !Number.isFinite(requestedMaxExpandedStates) ||
-    requestedMaxExpandedStates <= 0
+    options.simulationMask.length !== GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT
   ) {
-    return createBlockedResult("invalid-input", 0, 0);
+    return createFailedResult("invalid-input", 0, 0);
   }
 
-  const boundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0));
-  const maskIndex = getCompatibleMaskIndex(options, boundaryExpansion);
+  const simulationBoundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0));
+  const requiredTargetSequence = options.requiredTargetSequence ?? [];
   const settings: GraphwarTrajectoryFormulaSettings = {
     ...options.settings,
     stepGlitchObstacleMask: options.simulationMask,
   };
-  const requiredTargets = options.requiredTargetSequence ?? [];
-  const targetSequence = [...requiredTargets, options.hitTarget];
-  const targetGraphPoint = imageToGraphPoint(options.targetPoint, options.bounds, options.boundsRect);
-  const lastSourcePoint = options.sourcePath.at(-1);
-  if (!lastSourcePoint) {
-    return createBlockedResult("invalid-input", 0, 0);
-  }
-  const lastSourceGraphPoint = imageToGraphPoint(lastSourcePoint, options.bounds, options.boundsRect);
-  if (!graphXAdvancesStrictly(lastSourceGraphPoint.x, targetGraphPoint.x)) {
-    return createBlockedResult("invalid-input", 0, 0);
+  const graphPoints = options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
+  const lastGraphPoint = graphPoints.at(-1);
+  if (!lastGraphPoint) {
+    return createFailedResult("invalid-input", 0, 0);
   }
 
-  const initialReplay = replayPathToControlX(
-    options,
+  if (graphPoints.length === 1) {
+    return requiredTargetSequence.length === 0
+      ? {
+          acceptedPoint: lastGraphPoint,
+          formulaSettings: settings,
+          graphPoints,
+          simulationBoundaryExpansion,
+          status: "ready",
+        }
+      : createFailedResult("no-path", 0, 0);
+  }
+
+  const formulaContext = createGraphwarTrajectoryFormulaContext({
+    bounds: options.bounds,
+    points: graphPoints,
     settings,
-    options.sourcePath,
-    targetSequence,
-    lastSourceGraphPoint.x,
-    false,
+    soldierCenter: graphPoints[0],
+  });
+  if (formulaContext.formulaPoints.length < 2) {
+    return createFailedResult("no-path", 0, 0);
+  }
+  const replay = sampleGraphwarFormulaTrajectory({
+    bounds: options.bounds,
+    boundsRect: options.boundsRect,
+    collision: {
+      boundaryExpansion: simulationBoundaryExpansion,
+      mask: options.simulationMask,
+    },
+    context: formulaContext,
+    stopOnTargetSequenceComplete: false,
+    targetSequence: requiredTargetSequence,
+  });
+  const acceptedPoint = findAcceptedPointAtOrAfterControlX(
+    replay.sample.points,
+    replay.obstacleHitIndex,
+    lastGraphPoint.x,
   );
-  if (initialReplay.sequenceHit) {
-    return {
-      acceptedPoint: initialReplay.acceptedPoint ?? lastSourceGraphPoint,
-      expandedStates: 0,
-      limitReached: false,
-      path: [...options.sourcePath],
-      reachedTargetCount: initialReplay.reachedTargetCount,
-      status: "hit",
-    };
+  const blockedPoint = replay.obstacleHitIndex >= 0 ? replay.sample.points[replay.obstacleHitIndex] : undefined;
+  if (replay.reachedTargetCount < requiredTargetSequence.length || !acceptedPoint) {
+    return createFailedResult("no-path", 0, replay.reachedTargetCount, blockedPoint);
   }
-  const initialAcceptedPoint = options.sourcePath.length === 1 ? lastSourceGraphPoint : initialReplay.acceptedPoint;
-  if (!initialAcceptedPoint) {
-    return createBlockedResult("no-path", 0, initialReplay.reachedTargetCount, initialReplay.blockedPoint);
+
+  return {
+    acceptedPoint,
+    formulaContext,
+    formulaSettings: settings,
+    graphPoints,
+    replay,
+    simulationBoundaryExpansion,
+    status: "ready",
+  };
+}
+
+/** 创建绑定单个固定前缀的扫描器；失败目标共享缓存，成功提交后由调用方丢弃。 */
+export function createGraphwarStepGlitchPrefixScanner(
+  options: GraphwarStepGlitchPrefixOptions,
+): GraphwarStepGlitchPrefixScanner {
+  const prefix = prepareGraphwarStepGlitchPrefix(options);
+  return {
+    scan: (target) =>
+      prefix.status === "ready" ? scanPreparedGraphwarStepGlitchPath(options, prefix, target) : prefix,
+  };
+}
+
+/** 单目标便捷入口；每个追加候选仍按最终表达式文本从发射点完整回放。 */
+export function scanGraphwarStepGlitchPath(options: GraphwarStepGlitchScanOptions): GraphwarStepGlitchScanResult {
+  return createGraphwarStepGlitchPrefixScanner(options).scan(options);
+}
+
+function scanPreparedGraphwarStepGlitchPath(
+  options: GraphwarStepGlitchPrefixOptions,
+  prefix: PreparedGraphwarStepGlitchPrefix,
+  target: GraphwarStepGlitchTargetOptions,
+): GraphwarStepGlitchScanResult {
+  const boundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0));
+  const maskIndex = getCompatibleMaskIndex(options, boundaryExpansion);
+  const requiredTargets = options.requiredTargetSequence ?? [];
+  const targetSequence = [...requiredTargets, target.hitTarget];
+  const targetGraphPoint = imageToGraphPoint(target.targetPoint, options.bounds, options.boundsRect);
+  const lastSourceGraphPoint = prefix.graphPoints.at(-1);
+  const prefixReachedTargetCount = prefix.replay?.reachedTargetCount ?? 0;
+  if (!lastSourceGraphPoint || !graphXAdvancesStrictly(lastSourceGraphPoint.x, targetGraphPoint.x)) {
+    return createFailedResult("invalid-input", 0, prefixReachedTargetCount);
   }
+
+  const initialAcceptedPoint = prefix.acceptedPoint;
   const initialGridPoint = graphPointToSearchGrid(initialAcceptedPoint, options, maskIndex.mirrored);
-  const targetGridPoint = pixelPointToSearchGrid(options.targetPoint, options.boundsRect, maskIndex.mirrored);
-  const hitTargetGridPoint = pixelPointToSearchGrid(options.hitTarget.center, options.boundsRect, maskIndex.mirrored);
+  const targetGridPoint = pixelPointToSearchGrid(target.targetPoint, options.boundsRect, maskIndex.mirrored);
+  const hitTargetGridPoint = pixelPointToSearchGrid(target.hitTarget.center, options.boundsRect, maskIndex.mirrored);
   const work: ScanWorkItem[] = [
     {
       state: {
         acceptedPoint: initialAcceptedPoint,
         path: [...options.sourcePath],
-        reachedTargetCount: initialReplay.reachedTargetCount,
         row: initialGridPoint.y,
         searchX: initialGridPoint.x,
       },
       type: "state",
     },
   ];
-  const maxExpandedStates = Math.floor(requestedMaxExpandedStates);
   let expandedStates = 0;
-  let bestReachedTargetCount = initialReplay.reachedTargetCount;
-  let bestPassable: Extract<GraphwarStepGlitchScanResult, { status: "passable" }> | undefined;
-  let blockedPoint = initialReplay.blockedPoint;
+  let bestReachedTargetCount = prefixReachedTargetCount;
+  let blockedPoint =
+    prefix.replay && prefix.replay.obstacleHitIndex >= 0
+      ? prefix.replay.sample.points[prefix.replay.obstacleHitIndex]
+      : undefined;
 
   while (work.length > 0) {
     const item = work.pop();
@@ -237,11 +309,6 @@ export function scanGraphwarStepGlitchPath(options: GraphwarStepGlitchScanOption
 
     if (item.type === "state") {
       if (item.state.acceptedPoint.x >= targetGraphPoint.x) {
-        bestPassable = selectBetterPassable(
-          bestPassable,
-          createPassableResult(item.state, expandedStates),
-          targetGraphPoint,
-        );
         continue;
       }
 
@@ -251,7 +318,7 @@ export function scanGraphwarStepGlitchPath(options: GraphwarStepGlitchScanOption
       }
       const candidates =
         farthestX >= targetGridPoint.x
-          ? [createDirectTargetCandidate(item.state, options.targetPoint, targetGraphPoint, targetGridPoint.x)]
+          ? [createDirectTargetCandidate(item.state, target.targetPoint, targetGraphPoint, targetGridPoint.x)]
           : createGateCandidates(item.state, farthestX + 1, targetGraphPoint, hitTargetGridPoint.y, options, maskIndex);
       candidates.sort(compareScanCandidates);
       for (let index = candidates.length - 1; index >= 0; index -= 1) {
@@ -260,34 +327,24 @@ export function scanGraphwarStepGlitchPath(options: GraphwarStepGlitchScanOption
       continue;
     }
 
-    if (expandedStates >= maxExpandedStates) {
-      return bestPassable
-        ? { ...bestPassable, expandedStates, limitReached: true }
-        : createBlockedResult("limit", expandedStates, bestReachedTargetCount, blockedPoint);
-    }
     expandedStates += 1;
+    const finalTargetCandidate = item.candidate.kind === "target";
     const replay = replayPathToControlX(
       options,
-      settings,
+      prefix,
       item.candidate.path,
-      targetSequence,
+      finalTargetCandidate ? targetSequence : requiredTargets,
       item.candidate.controlX,
-      true,
     );
     bestReachedTargetCount = Math.max(bestReachedTargetCount, replay.reachedTargetCount);
     blockedPoint ??= replay.blockedPoint;
-    if (replay.sequenceHit) {
-      const lastCandidatePoint = item.candidate.path.at(-1);
-      const acceptedPoint =
-        replay.acceptedPoint ??
-        (lastCandidatePoint ? imageToGraphPoint(lastCandidatePoint, options.bounds, options.boundsRect) : undefined);
-      if (!acceptedPoint) {
+    if (finalTargetCandidate) {
+      if (!replay.sequenceHit || !replay.acceptedPoint) {
         continue;
       }
       return {
-        acceptedPoint,
+        acceptedPoint: replay.acceptedPoint,
         expandedStates,
-        limitReached: false,
         path: item.candidate.path,
         reachedTargetCount: replay.reachedTargetCount,
         status: "hit",
@@ -298,31 +355,76 @@ export function scanGraphwarStepGlitchPath(options: GraphwarStepGlitchScanOption
     }
 
     const nextGridPoint = graphPointToSearchGrid(replay.acceptedPoint, options, maskIndex.mirrored);
-    const nextState: ScanState = {
-      acceptedPoint: replay.acceptedPoint,
-      path: item.candidate.path,
-      reachedTargetCount: replay.reachedTargetCount,
-      row: nextGridPoint.y,
-      searchX: nextGridPoint.x,
-    };
     if (replay.acceptedPoint.x >= targetGraphPoint.x) {
-      const passable = createPassableResult(nextState, expandedStates);
-      bestPassable = selectBetterPassable(bestPassable, passable, targetGraphPoint);
-    } else {
-      work.push({ state: nextState, type: "state" });
+      continue;
     }
+    work.push({
+      state: {
+        acceptedPoint: replay.acceptedPoint,
+        path: item.candidate.path,
+        row: nextGridPoint.y,
+        searchX: nextGridPoint.x,
+      },
+      type: "state",
+    });
   }
 
-  return bestPassable
-    ? { ...bestPassable, expandedStates, limitReached: false }
-    : createBlockedResult("no-path", expandedStates, bestReachedTargetCount, blockedPoint);
+  return createFailedResult("no-path", expandedStates, bestReachedTargetCount, blockedPoint);
 }
 
 function stepGlitchScanIsSupported(settings: GraphwarTrajectoryFormulaSettings) {
   return settings.algorithm === "step" && settings.equation === "dy" && settings.stepGlitchMode;
 }
 
-function getCompatibleMaskIndex(options: GraphwarStepGlitchScanOptions, boundaryExpansion: number) {
+/** 后缀会反向改变 Step 发射点和旧轨迹；只复用坐标映射，候选仍从发射点回放整式。 */
+function replayPathToControlX(
+  options: GraphwarStepGlitchPrefixOptions,
+  prefix: PreparedGraphwarStepGlitchPrefix,
+  path: readonly PixelPoint[],
+  targetSequence: readonly GraphwarTrajectoryTargetCircle[],
+  controlX: number,
+): ReplayResult {
+  if (path.length < 2 || path.length < options.sourcePath.length) {
+    return { reachedTargetCount: 0, sequenceHit: false };
+  }
+  const graphPoints = [
+    ...prefix.graphPoints,
+    ...path
+      .slice(options.sourcePath.length)
+      .map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
+  ];
+  const context = createGraphwarTrajectoryFormulaContext({
+    bounds: options.bounds,
+    points: graphPoints,
+    settings: prefix.formulaSettings,
+    soldierCenter: graphPoints[0],
+  });
+  if (context.formulaPoints.length < 2) {
+    return { reachedTargetCount: 0, sequenceHit: false };
+  }
+
+  const result = sampleGraphwarFormulaTrajectory({
+    bounds: options.bounds,
+    boundsRect: options.boundsRect,
+    collision: {
+      boundaryExpansion: prefix.simulationBoundaryExpansion,
+      mask: options.simulationMask,
+    },
+    ...(targetSequence.length > 0 ? { continueAfterTargetSequenceUntilGraphX: controlX } : {}),
+    context,
+    stopOnTargetSequenceComplete: false,
+    targetSequence,
+  });
+  const sequenceHit = targetSequence.length > 0 && result.reachedTargetCount >= targetSequence.length;
+  return {
+    acceptedPoint: findAcceptedPointAtOrAfterControlX(result.sample.points, result.obstacleHitIndex, controlX),
+    blockedPoint: result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined,
+    reachedTargetCount: result.reachedTargetCount,
+    sequenceHit,
+  };
+}
+
+function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, boundaryExpansion: number) {
   const index = options.maskIndex;
   const mirrored = !xPlusGoesRight(options.bounds);
   return index &&
@@ -342,7 +444,7 @@ function createGateCandidates(
   firstBlockedSearchX: number,
   target: GraphPoint,
   targetRow: number,
-  options: GraphwarStepGlitchScanOptions,
+  options: GraphwarStepGlitchPrefixOptions,
   maskIndex: GraphwarStepGlitchScanMaskIndex,
 ) {
   const boundaryGraphX = searchBoundaryToGraphX(firstBlockedSearchX, options, maskIndex.mirrored);
@@ -355,7 +457,7 @@ function createGateCandidates(
     if (
       !graphXAdvancesStrictly(state.acceptedPoint.x, startX) ||
       !graphXAdvancesStrictly(startX, controlX) ||
-      controlX > target.x
+      !graphXAdvancesStrictly(controlX, target.x)
     ) {
       continue;
     }
@@ -381,6 +483,7 @@ function createGateCandidates(
         candidates.push({
           controlX,
           farthestX,
+          kind: "gate",
           path: [...state.path, controlPoint],
           row,
           targetDistance: Math.abs(row - targetRow),
@@ -397,6 +500,7 @@ function createDirectTargetCandidate(state: ScanState, targetPoint: PixelPoint, 
   return {
     controlX: target.x,
     farthestX,
+    kind: "target" as const,
     path: [...state.path, targetPoint],
     row: state.row,
     targetDistance: 0,
@@ -430,68 +534,6 @@ function collectFreeRowSpans(index: GraphwarStepGlitchScanMaskIndex, searchX: nu
   return spans;
 }
 
-function replayPathToControlX(
-  options: GraphwarStepGlitchScanOptions,
-  settings: GraphwarTrajectoryFormulaSettings,
-  path: readonly PixelPoint[],
-  targetSequence: readonly GraphwarTrajectoryTargetCircle[],
-  controlX: number,
-  stopOnSequenceComplete: boolean,
-): ReplayResult {
-  if (path.length < 2) {
-    return { reachedTargetCount: 0, sequenceHit: false };
-  }
-  const graphPoints = path.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
-  const context = createGraphwarTrajectoryFormulaContext({
-    bounds: options.bounds,
-    points: graphPoints,
-    settings,
-    soldierCenter: graphPoints[0],
-  });
-  if (context.formulaPoints.length < 2) {
-    return { reachedTargetCount: 0, sequenceHit: false };
-  }
-
-  const result = sampleGraphwarFormulaTrajectory({
-    bounds: options.bounds,
-    boundsRect: options.boundsRect,
-    collision: {
-      boundaryExpansion: options.simulationBoundaryExpansion,
-      mask: options.simulationMask,
-    },
-    context,
-    stopOnTargetSequenceComplete: stopOnSequenceComplete,
-    targetSequence,
-  });
-  const sequenceHit = targetSequence.length > 0 && result.reachedTargetCount >= targetSequence.length;
-  if (sequenceHit) {
-    return {
-      acceptedPoint: result.sample.points.at(-1),
-      reachedTargetCount: result.reachedTargetCount,
-      sequenceHit: true,
-    };
-  }
-
-  let acceptedPoint: GraphPoint | undefined;
-  for (let index = 0; index < result.sample.points.length; index += 1) {
-    const point = result.sample.points[index];
-    if (point.x < controlX) {
-      continue;
-    }
-    if (result.obstacleHitIndex >= 0 && index >= result.obstacleHitIndex) {
-      break;
-    }
-    acceptedPoint = point;
-    break;
-  }
-  return {
-    acceptedPoint,
-    blockedPoint: result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined,
-    reachedTargetCount: result.reachedTargetCount,
-    sequenceHit: false,
-  };
-}
-
 function getFarthestFreeX(index: GraphwarStepGlitchScanMaskIndex, searchX: number, row: number) {
   if (searchX < 0 || searchX >= GRAPHWAR_PLANE_LENGTH || row < 0 || row >= GRAPHWAR_PLANE_HEIGHT) {
     return -1;
@@ -506,7 +548,7 @@ function pixelPointToSearchGrid(point: PixelPoint, boundsRect: BoundsRect, mirro
 
 function graphPointToSearchGrid(
   point: GraphPoint,
-  options: Pick<GraphwarStepGlitchScanOptions, "bounds" | "boundsRect">,
+  options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
   mirrored: boolean,
 ) {
   return pixelPointToSearchGrid(
@@ -519,7 +561,7 @@ function graphPointToSearchGrid(
 function graphXToSearchColumn(
   graphX: number,
   graphY: number,
-  options: Pick<GraphwarStepGlitchScanOptions, "bounds" | "boundsRect">,
+  options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
   mirrored: boolean,
 ) {
   return graphPointToSearchGrid(createGraphPoint(graphX, graphY), options, mirrored).x;
@@ -527,7 +569,7 @@ function graphXToSearchColumn(
 
 function searchBoundaryToGraphX(
   searchBoundaryX: number,
-  options: Pick<GraphwarStepGlitchScanOptions, "bounds" | "boundsRect">,
+  options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
   mirrored: boolean,
 ) {
   const planeBoundaryX = mirrored ? GRAPHWAR_PLANE_LENGTH - searchBoundaryX : searchBoundaryX;
@@ -541,7 +583,7 @@ function searchBoundaryToGraphX(
 function createControlPointForFormulaEndX(
   formulaEndX: number,
   row: number,
-  options: Pick<GraphwarStepGlitchScanOptions, "bounds" | "boundsRect">,
+  options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
   decimalPlaces: number,
 ) {
   const rowCenter = planeGridCellCenterToImagePoint({ x: 0, y: row }, options.boundsRect);
@@ -582,48 +624,29 @@ function createGlitchWindowWidths() {
   return widths;
 }
 
-function createPassableResult(
-  state: ScanState,
-  expandedStates: number,
-): Extract<GraphwarStepGlitchScanResult, { status: "passable" }> {
-  return {
-    acceptedPoint: state.acceptedPoint,
-    expandedStates,
-    limitReached: false,
-    path: state.path,
-    reachedTargetCount: state.reachedTargetCount,
-    status: "passable",
-  };
-}
-
-function selectBetterPassable(
-  current: Extract<GraphwarStepGlitchScanResult, { status: "passable" }> | undefined,
-  candidate: Extract<GraphwarStepGlitchScanResult, { status: "passable" }>,
-  target: GraphPoint,
-) {
-  if (!current) {
-    return candidate;
+function findAcceptedPointAtOrAfterControlX(points: readonly GraphPoint[], obstacleHitIndex: number, controlX: number) {
+  for (let index = 0; index < points.length; index += 1) {
+    if (obstacleHitIndex >= 0 && index >= obstacleHitIndex) {
+      break;
+    }
+    const point = points[index];
+    if (point && point.x >= controlX) {
+      return point;
+    }
   }
-  const currentDistance = Math.abs(target.x - current.acceptedPoint.x);
-  const candidateDistance = Math.abs(target.x - candidate.acceptedPoint.x);
-  return candidateDistance < currentDistance ||
-    (candidateDistance === currentDistance && candidate.path.length < current.path.length)
-    ? candidate
-    : current;
+  return undefined;
 }
 
-function createBlockedResult(
-  reason: Extract<GraphwarStepGlitchScanResult, { status: "blocked" }>["reason"],
+function createFailedResult(
+  status: Exclude<GraphwarStepGlitchScanResult["status"], "hit">,
   expandedStates: number,
   reachedTargetCount: number,
   blockedPoint?: GraphPoint,
-): Extract<GraphwarStepGlitchScanResult, { status: "blocked" }> {
+): Exclude<GraphwarStepGlitchScanResult, { status: "hit" }> {
   return {
     ...(blockedPoint ? { blockedPoint } : {}),
     expandedStates,
-    limitReached: reason === "limit",
     reachedTargetCount,
-    reason,
-    status: "blocked",
+    status,
   };
 }

@@ -5,7 +5,6 @@ import { nowMs } from "../../core/time";
 import type { GraphBounds, PixelPoint } from "../../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../../detection/objects";
-import { sampleGraphwarPathTrajectory } from "../../formula/trajectory/sampling";
 import { buildOneClickClearDagEdgeRoute } from "../../pathfinding/one-click-clear/edge-route";
 import type { GraphwarOneClickClearDagEdgeRouteBuildContext } from "../../pathfinding/one-click-clear/edge-route";
 import type {
@@ -54,6 +53,7 @@ import type {
   GraphwarSmartPathfindingPathResult,
   GraphwarSmartPathfindingWorkerTiming,
 } from "../../pathfinding/runtime/protocol";
+import { createGraphwarSmartPathfindingTrajectoryResult } from "../../pathfinding/smart/trajectory";
 
 /** 当前 master Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarPathfindingWorkerScope {
@@ -447,10 +447,7 @@ function findStepGlitchSmartPath(
   if (!scanResult) {
     return { failureReason: "route", timings };
   }
-  if (scanResult.status === "passable") {
-    return { failureReason: "trajectory", timings };
-  }
-  if (scanResult.status === "blocked") {
+  if (scanResult.status !== "hit") {
     const blockedPoint = scanResult.blockedPoint
       ? graphToImagePoint(scanResult.blockedPoint, input.bounds, input.boundsRect)
       : undefined;
@@ -609,18 +606,18 @@ function validateSmartPathfindingTrajectory(
     };
   }
 
-  const result = sampleGraphwarPathTrajectory({
+  const result = createGraphwarSmartPathfindingTrajectoryResult({
     boundaryExpansion: input.simulationBoundaryExpansion,
     bounds: input.bounds,
     boundsRect: input.boundsRect,
-    hitTargetPoint: input.hitTarget.center,
+    hitTarget: input.hitTarget,
     obstacleMask: input.simulationMask,
     points,
     settings: input.settings,
     targetHitRadiusPixels: input.hitTarget.radius,
   });
   return {
-    blockedPoint: result.earlyStopReason === "obstacle" ? result.visiblePixels.at(-1) : undefined,
+    ...(result.blockedPoint ? { blockedPoint: result.blockedPoint } : {}),
     followsGraphRule: true,
     reachesTargetBeforeObstacle: result.reachesTargetBeforeObstacle,
   };

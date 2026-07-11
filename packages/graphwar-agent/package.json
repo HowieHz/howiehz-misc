@@ -1,12 +1,13 @@
 {
   "name": "graphwar-agent",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.js",
     "clean": "node scripts/clean.js",
-    "sync:public": "node scripts/sync-public-jar.js"
+    "sync:public": "node scripts/sync-public-jar.js",
+    "test": "node scripts/test.js"
   },
   "engines": {
     "node": "^22 || >=24"

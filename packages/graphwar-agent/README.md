@@ -4,7 +4,7 @@ English | [简体中文](./README.zh.md)
 
 graphwar-agent is a local Java agent for the official Graphwar client.
 
-It exposes soldier coordinates, obstacle data, and function submission for the match currently rendered by the client as a localhost-only HTTP API. It does this without modifying the official client.
+It exposes pre-game room state and ready control, plus soldier coordinates, obstacle data, and function submission for the current match, as a localhost-only HTTP API. It does this without modifying the official client.
 
 ## Why graphwar-agent
 
@@ -34,6 +34,12 @@ Run this from the repository root:
 pnpm --filter graphwar-agent build
 ```
 
+Run the dependency-free API regression tests:
+
+```shell
+pnpm --filter graphwar-agent test
+```
+
 The built jar is written to:
 
 ```text
@@ -48,7 +54,7 @@ pnpm --filter graphwar-agent sync:public
 
 CI runs this sync automatically as part of the graphwar-agent build flow. If `docs/public/graphwar-agent.jar` is missing or its effective contents differ, PRs from this repository will automatically commit the update.
 
-The comparison ignores build metadata such as the source commit, commit time, and jar generation environment.
+The comparison includes the source commit and commit time so CI can refresh provenance after the source commit exists. It ignores jar-generation metadata such as `Created-By`.
 
 Clean build artifacts:
 
@@ -140,6 +146,75 @@ Invoke-RestMethod http://127.0.0.1:17900/state
 - `obstacleMask`: obstacle data dimensions, values, and download URL.
 
 Before a match starts, `available` is `false`, and `reason` explains which piece of state is missing.
+
+### Room State and Ready Control
+
+Read the current pre-game room:
+
+Linux / macOS:
+
+```shell
+curl http://127.0.0.1:17900/room
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:17900/room
+```
+
+`GET /room` returns `200` in every client phase. `available` is `true` only while the client is in a `PRE_GAME` room:
+
+```json
+{
+  "available": true,
+  "gameState": 1,
+  "gameMode": 0,
+  "leader": false,
+  "players": [
+    {
+      "index": 0,
+      "id": 12,
+      "name": "Player",
+      "team": 1,
+      "local": true,
+      "computer": false,
+      "ready": false,
+      "numSoldiers": 2,
+      "disconnected": false
+    }
+  ]
+}
+```
+
+`leader` reports whether the local client is the room leader. Each player has its current list `index`, protocol `id`, `name`, `team`, ownership (`local`), ready state, soldier count, and connection state. `computer` is `true` or `false` for a local player, but `null` for a remote player because the official protocol does not expose whether a remote player is computer-controlled.
+
+Outside `PRE_GAME`, the response instead has `available: false` and a stable `reason`. This endpoint covers only the current pre-game room: it does not expose the lobby room list or provide room creation, joining, UI, or server-sent events. Poll `GET /room` when updated state is needed. Like the other endpoints, it uses the localhost binding as its security boundary and does not add token authentication.
+
+Set the ready state for every local player, using the same behavior as the official ready button:
+
+Linux / macOS:
+
+```shell
+curl -X POST \
+  -H "Content-Type: text/plain; charset=utf-8" \
+  --data-binary "true" \
+  http://127.0.0.1:17900/ready
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:17900/ready -ContentType "text/plain; charset=utf-8" -Body "true"
+```
+
+The body for `POST /ready` must be exactly lowercase `true` or `false`; any other body returns `400`. Every request sends the requested state through the official logic for all local players, even when the locally observed state already matches. A successful response means the command was sent:
+
+```json
+{ "ok": true, "requestedReady": true }
+```
+
+Poll `GET /room` to confirm the state reported after the server responds. `POST /ready` returns `409` outside `PRE_GAME` or when the client has no local players.
 
 Submit a function:
 
@@ -237,5 +312,6 @@ viewX = 769 - worldX
 - The agent does not use JVMTI. Bytecode patches stay narrow. They only handle known official-client edge cases.
 - The HTTP server binds only to `127.0.0.1`.
 - Graphwar state is read through reflection because the official jar is not a compile-time dependency of this package.
+- The official client discards the initial `ready` value while constructing a synchronized player. After that initial sync, `/room` can report a remote player as not ready until the server sends a later ready-state update.
 - The obstacle rule comes from the official `Obstacle#collidePoint`: `terrain.getRGB(x, y) != -1` means blocking.
 - Coordinate conversion uses the inverse formulas of the official `GraphPlane#convertX` / `GraphPlane#convertY`.

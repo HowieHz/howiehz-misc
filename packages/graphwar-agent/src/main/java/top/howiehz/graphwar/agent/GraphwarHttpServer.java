@@ -214,6 +214,7 @@ final class GraphwarHttpServer {
         return body;
     }
 
+    /** Routes one parsed request and preserves the API's stable status-code semantics. */
     private Response handleRequest(Request request) {
         if (!request.valid) {
             return Response.text(400, "bad request\n");
@@ -223,7 +224,33 @@ final class GraphwarHttpServer {
         }
         if ("POST".equals(request.method)) {
             if ("/function".equals(request.path)) {
-                return handleSubmitFunction(request.body);
+                try {
+                    // The body is intentionally just the function text; callers do not
+                    // need a JSON encoder for Graphwar's expression language.
+                    stateReader.submitFunction(request.body);
+                    return Response.json(200, "{\"ok\":true}\n");
+                } catch (GraphwarInvalidFunctionException error) {
+                    return Response.text(400, error.getMessage() + "\n");
+                } catch (GraphwarStateUnavailableException error) {
+                    return Response.text(409, error.getMessage() + "\n");
+                } catch (GraphwarStateException error) {
+                    return Response.text(500, error.getMessage() + "\n");
+                }
+            }
+            if ("/ready".equals(request.path)) {
+                if (!"true".equals(request.body) && !"false".equals(request.body)) {
+                    return Response.text(400, "ready body must be exactly true or false\n");
+                }
+
+                boolean ready = "true".equals(request.body);
+                try {
+                    stateReader.submitReady(ready);
+                    return Response.json(200, "{\"ok\":true,\"requestedReady\":" + ready + "}\n");
+                } catch (GraphwarStateUnavailableException error) {
+                    return Response.text(409, error.getMessage() + "\n");
+                } catch (GraphwarStateException error) {
+                    return Response.text(500, error.getMessage() + "\n");
+                }
             }
             return Response.text(404, "not found\n");
         }
@@ -235,67 +262,69 @@ final class GraphwarHttpServer {
             return Response.text(200, "ok\n");
         }
         if ("/state".equals(request.path)) {
-            return handleState();
+            try {
+                return Response.json(200, stateReader.readStateJson());
+            } catch (GraphwarStateException error) {
+                return Response.text(500, error.getMessage() + "\n");
+            }
+        }
+        if ("/room".equals(request.path)) {
+            try {
+                return Response.json(200, stateReader.readRoomJson());
+            } catch (GraphwarStateException error) {
+                return Response.text(500, error.getMessage() + "\n");
+            }
         }
         if ("/obstacle-mask.bin".equals(request.path)) {
-            return handleObstacleMask(request.query);
+            String space = "view";
+            if (request.query != null && !request.query.isEmpty()) {
+                for (String part : request.query.split("&")) {
+                    String[] pair = part.split("=", 2);
+                    if (pair.length == 2 && "space".equals(pair[0])) {
+                        space = "world".equals(pair[1]) ? "world" : "view";
+                        break;
+                    }
+                }
+            }
+
+            try {
+                return Response.binary(200, stateReader.readObstacleMask(space));
+            } catch (GraphwarStateUnavailableException error) {
+                return Response.text(409, error.getMessage() + "\n");
+            } catch (GraphwarStateException error) {
+                return Response.text(500, error.getMessage() + "\n");
+            }
         }
         return Response.text(404, "not found\n");
     }
 
-    private Response handleSubmitFunction(String function) {
-        try {
-            // The body is intentionally just the function text; callers do not need a
-            // JSON encoder for Graphwar's expression language.
-            stateReader.submitFunction(function);
-            return Response.json(200, "{\"ok\":true}\n");
-        } catch (GraphwarInvalidFunctionException error) {
-            return Response.text(400, error.getMessage() + "\n");
-        } catch (GraphwarStateUnavailableException error) {
-            return Response.text(409, error.getMessage() + "\n");
-        } catch (GraphwarStateException error) {
-            return Response.text(500, error.getMessage() + "\n");
-        }
-    }
-
-    private Response handleState() {
-        try {
-            return Response.json(200, stateReader.readStateJson());
-        } catch (GraphwarStateException error) {
-            return Response.text(500, error.getMessage() + "\n");
-        }
-    }
-
-    private Response handleObstacleMask(String query) {
-        try {
-            return Response.binary(200, stateReader.readObstacleMask(getSpaceParameter(query)));
-        } catch (GraphwarStateUnavailableException error) {
-            return Response.text(409, error.getMessage() + "\n");
-        } catch (GraphwarStateException error) {
-            return Response.text(500, error.getMessage() + "\n");
-        }
-    }
-
-    private static String getSpaceParameter(String query) {
-        if (query == null || query.isEmpty()) {
-            return "view";
-        }
-
-        String[] parts = query.split("&");
-        for (String part : parts) {
-            String[] pair = part.split("=", 2);
-            if (pair.length == 2 && "space".equals(pair[0])) {
-                return "world".equals(pair[1]) ? "world" : "view";
-            }
-        }
-        return "view";
-    }
-
+    /** Writes one complete response before the caller closes the connection. */
     private static void writeResponse(Socket socket, Response response) throws IOException {
         ByteArrayOutputStream headers = new ByteArrayOutputStream(256);
-        writeAscii(
-                headers,
-                "HTTP/1.1 " + response.status + " " + statusText(response.status) + "\r\n");
+        writeAscii(headers, "HTTP/1.1 " + response.status + " ");
+        switch (response.status) {
+            case 200:
+                writeAscii(headers, "OK\r\n");
+                break;
+            case 204:
+                writeAscii(headers, "No Content\r\n");
+                break;
+            case 400:
+                writeAscii(headers, "Bad Request\r\n");
+                break;
+            case 404:
+                writeAscii(headers, "Not Found\r\n");
+                break;
+            case 405:
+                writeAscii(headers, "Method Not Allowed\r\n");
+                break;
+            case 409:
+                writeAscii(headers, "Conflict\r\n");
+                break;
+            default:
+                writeAscii(headers, "Internal Server Error\r\n");
+                break;
+        }
         writeAscii(headers, "Content-Type: " + response.contentType + "\r\n");
         writeAscii(headers, "Content-Length: " + response.body.length + "\r\n");
         writeAscii(headers, "Access-Control-Allow-Origin: *\r\n");
@@ -314,25 +343,6 @@ final class GraphwarHttpServer {
 
     private static void writeAscii(OutputStream output, String value) throws IOException {
         output.write(value.getBytes(StandardCharsets.US_ASCII));
-    }
-
-    private static String statusText(int status) {
-        switch (status) {
-            case 200:
-                return "OK";
-            case 204:
-                return "No Content";
-            case 400:
-                return "Bad Request";
-            case 404:
-                return "Not Found";
-            case 405:
-                return "Method Not Allowed";
-            case 409:
-                return "Conflict";
-            default:
-                return "Internal Server Error";
-        }
     }
 
     private static final class AgentThreadFactory implements ThreadFactory {

@@ -20,14 +20,15 @@ if (!existsSync(builtJarPath)) {
 
 mkdirSync(dirname(publicJarPath), { recursive: true });
 
-if (existsSync(publicJarPath) && semanticJarHash(builtJarPath) === semanticJarHash(publicJarPath)) {
+if (existsSync(publicJarPath) && effectiveJarHash(builtJarPath) === effectiveJarHash(publicJarPath)) {
   stdout.write(`Public jar is already up to date: ${relative(repoRoot, publicJarPath)}\n`);
 } else {
   copyFileSync(builtJarPath, publicJarPath);
   stdout.write(`Updated ${relative(repoRoot, publicJarPath)}\n`);
 }
 
-function semanticJarHash(jarPath) {
+/** Hashes executable contents and source provenance, but not build-machine metadata. */
+function effectiveJarHash(jarPath) {
   const tempDirectory = mkdtempSync(join(buildRoot, "sync-public-jar-"));
 
   try {
@@ -46,6 +47,13 @@ function semanticJarHash(jarPath) {
       hash.update(normalizeJarEntry(entryPath, readFileSync(file), metadata));
       hash.update("\0");
     }
+
+    // A pre-commit build names the previous source commit. Keep provenance in the
+    // effective hash so CI refreshes the public jar after the source commit exists.
+    hash.update("source-commit\0");
+    hash.update(metadata.sourceCommit ?? "");
+    hash.update("\0source-commit-time\0");
+    hash.update(metadata.sourceCommitTime ?? "");
     return hash.digest("hex");
   } finally {
     rmSync(tempDirectory, { force: true, recursive: true });

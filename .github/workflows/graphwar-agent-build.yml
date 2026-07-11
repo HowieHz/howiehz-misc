@@ -70,6 +70,9 @@ jobs:
       - name: Build graphwar-agent
         run: pnpm --filter graphwar-agent build
 
+      - name: Test graphwar-agent
+        run: pnpm --filter graphwar-agent test
+
       - name: Smoke test agent jar
         run: java -javaagent:packages/graphwar-agent/build/libs/graphwar-agent.jar -version
 

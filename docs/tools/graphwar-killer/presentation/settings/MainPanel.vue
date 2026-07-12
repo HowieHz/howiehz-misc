@@ -60,7 +60,7 @@ export interface GraphwarSettingsPanelModel {
   precision: GraphwarSettingsPanelPrecision;
   /** Step 算法是否启用溢出保护。 */
   stepOverflowProtectionEnabled: boolean;
-  /** Step 邪道模式是否启用；只有 y'= 模式会消费。 */
+  /** Step 邪道模式是否启用；只有 y' 模式会消费。 */
   stepGlitchModeEnabled: boolean;
   /** 邪道偏好在不兼容组合或缺少障碍时保持可编辑的休眠状态。 */
   stepGlitchModeState: GraphwarControlCapability["state"];
@@ -205,27 +205,27 @@ const steepnessText = computed({
           </button>
         </div>
       </div>
-      <label
-        v-if="panel.toolWorkflowMode !== 'simulator'"
-        class="graphwar-killer__precision-label"
-        :title="locale.ui.settings.decimalPlacesTitle"
-      >
-        {{ locale.ui.settings.decimalPlaces }}
-        <input
-          v-model="precisionText"
-          inputmode="numeric"
-          autocomplete="off"
-          min="0"
-          :max="panel.precision.maximum"
-          :aria-label="locale.ui.settings.decimalPlacesAriaLabel"
-          :title="locale.ui.settings.decimalPlacesTitle"
-        >
-      </label>
       <div
-        v-if="panel.toolWorkflowMode !== 'simulator' && panel.algorithmMode === 'step'"
-        class="graphwar-killer__step-settings"
+        v-if="panel.toolWorkflowMode !== 'simulator'"
+        class="graphwar-killer__formula-options"
       >
         <label
+          class="graphwar-killer__precision-label"
+          :title="locale.ui.settings.decimalPlacesTitle"
+        >
+          {{ locale.ui.settings.decimalPlaces }}
+          <input
+            v-model="precisionText"
+            inputmode="numeric"
+            autocomplete="off"
+            min="0"
+            :max="panel.precision.maximum"
+            :aria-label="locale.ui.settings.decimalPlacesAriaLabel"
+            :title="locale.ui.settings.decimalPlacesTitle"
+          >
+        </label>
+        <label
+          v-if="panel.algorithmMode === 'step'"
           class="graphwar-killer__steepness-label"
           :title="locale.ui.settings.stepSteepnessTitle"
         >
@@ -239,23 +239,26 @@ const steepnessText = computed({
           >
         </label>
         <ToggleField
+          v-if="panel.algorithmMode === 'step'"
           id="graphwar-killer-overflow-protection"
+          class="graphwar-killer__formula-toggle"
           :checked="panel.stepOverflowProtectionEnabled"
           :label="locale.ui.settings.overflowProtection"
           state="normal"
           :title="locale.ui.settings.overflowProtectionTitle"
           @toggle="emit('toggleStepOverflowProtection')"
         />
+        <ToggleField
+          id="graphwar-killer-step-glitch-mode"
+          class="graphwar-killer__formula-toggle"
+          :checked="panel.stepGlitchModeEnabled"
+          :label="locale.ui.settings.stepGlitchMode"
+          :reason="panel.stepGlitchModeReason"
+          :state="panel.stepGlitchModeState"
+          :title="locale.ui.settings.stepGlitchModeTitle"
+          @toggle="emit('toggleStepGlitchMode')"
+        />
       </div>
-      <ToggleField
-        id="graphwar-killer-step-glitch-mode"
-        :checked="panel.stepGlitchModeEnabled"
-        :label="locale.ui.settings.stepGlitchMode"
-        :reason="panel.stepGlitchModeReason"
-        :state="panel.stepGlitchModeState"
-        :title="locale.ui.settings.stepGlitchModeTitle"
-        @toggle="emit('toggleStepGlitchMode')"
-      />
       <button
         type="button"
         class="graphwar-killer__secondary-button"
@@ -306,6 +309,8 @@ const steepnessText = computed({
   border: 1px solid var(--vp-c-divider);
   border-radius: 8px;
   box-sizing: border-box;
+  font-family: inherit;
+  font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
   height: 30px;
   line-height: 1.15;
@@ -387,24 +392,40 @@ const steepnessText = computed({
   font-weight: 700;
 }
 
-.graphwar-killer__step-settings {
+.graphwar-killer__formula-options {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 6px 12px;
+  min-width: 0;
 }
 
-.graphwar-killer__step-settings button {
-  min-height: 34px;
-  padding: 6px 10px;
+.graphwar-killer__formula-options > * {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.graphwar-killer__formula-options > label,
+.graphwar-killer__formula-options :deep(.graphwar-killer-toggle-field__text) {
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.graphwar-killer__formula-toggle {
+  align-self: stretch;
+  padding: 4px 6px;
+}
+
+.graphwar-killer__formula-toggle :deep(.graphwar-killer-toggle-field__control) {
+  height: 100%;
 }
 
 .graphwar-killer__steepness-label {
   align-items: center;
-  flex: 1 1 220px;
   gap: 6px;
-  grid-template-columns: auto minmax(0, 1fr);
-  min-width: min(100%, 220px);
+  grid-template-columns: auto minmax(54px, 70px);
+  justify-content: start;
 }
 
 .graphwar-killer__setting-row {
@@ -426,9 +447,9 @@ const steepnessText = computed({
 
 .graphwar-killer__precision-label {
   align-items: center;
-  font-weight: 600;
   gap: 6px;
-  grid-template-columns: auto minmax(74px, 92px);
+  grid-template-columns: auto minmax(48px, 60px);
+  justify-content: start;
 }
 
 .graphwar-killer__tool-toggle {

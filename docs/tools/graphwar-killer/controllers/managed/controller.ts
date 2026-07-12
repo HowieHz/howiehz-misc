@@ -17,6 +17,7 @@ import {
 export const GRAPHWAR_MANAGED_POLL_INTERVAL_MS = 1000;
 export const GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS = 5000;
 export const GRAPHWAR_MANAGED_SHOT_DEADLINE_MS = 3000;
+export const GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION = "999999999999999x";
 
 export type GraphwarManagedShooter = GraphwarAgentCurrentShooter;
 
@@ -33,7 +34,7 @@ export interface GraphwarManagedControllerHooks {
   ) => void;
   /** Reports a polling-friendly pre-game room state. */
   onRoom?: (room: GraphwarAgentRoom) => void;
-  /** Reports that the deadline was handled without a safe plan to fire. */
+  /** Reports that neither the retained plan nor the skip-turn fallback could be submitted. */
   onDeadlineWithoutShot?: (state: GraphwarAgentAvailableState) => void;
   /** Reports that one ready=true request is about to be sent. */
   onReadyRequested?: (room: GraphwarAgentAvailableRoom) => void;
@@ -72,6 +73,14 @@ export interface GraphwarManagedController {
   stop: () => void;
   /** Claims and submits one exact snapshot plan; false means it was stale or already handled. */
   submitShot: (state: GraphwarAgentAvailableState, plan: GraphwarAgentShotPlan) => boolean;
+}
+
+/** Builds the mode-specific shot that exits the battlefield when no usable route exists. */
+export function createGraphwarManagedSkipTurnPlan(state: GraphwarAgentAvailableState): GraphwarAgentShotPlan {
+  // Do not hit an obstacle as a fallback: its explosion could open a route that lets an opponent attack us.
+  return state.equationMode === "ddy"
+    ? { angleRadians: 0, equationMode: "ddy", function: GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION }
+    : { equationMode: state.equationMode, function: GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION };
 }
 
 /** Creates the browser-side managed-mode polling and once-only shot arbiter. */
@@ -303,11 +312,11 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       return;
     }
     deadlineHandledTurns.add(turnKey);
-    const plan = hooks.decideDeadlineShot?.(state);
+    const plan = hooks.decideDeadlineShot?.(state) ?? createGraphwarManagedSkipTurnPlan(state);
     if (!isCurrentGeneration(pollGeneration)) {
       return;
     }
-    if (!plan || !submitShot(state, plan)) {
+    if (!submitShot(state, plan)) {
       abandonedTurns.add(turnKey);
       hooks.onDeadlineWithoutShot?.(state);
     }

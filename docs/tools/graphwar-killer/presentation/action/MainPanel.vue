@@ -204,15 +204,14 @@ function handleObstacleBrushDiameterInput(event: Event) {
           {{ locale.ui.actions.drawObstacle }}
         </button>
       </div>
-      <button
-        type="button"
-        :aria-pressed="panel.magnifierEnabled"
-        :class="{ 'graphwar-killer__toggle-button--active': panel.magnifierEnabled }"
+      <ToggleField
+        id="graphwar-killer-magnifier"
+        :checked="panel.magnifierEnabled"
+        :label="locale.ui.actions.magnifier"
+        state="normal"
         :title="locale.ui.actions.magnifierTitle"
-        @click="emit('toggleMagnifier')"
-      >
-        {{ locale.ui.actions.magnifier }}
-      </button>
+        @toggle="emit('toggleMagnifier')"
+      />
       <label
         v-if="panel.magnifierEnabled"
         class="graphwar-killer__magnifier-zoom-label"
@@ -274,15 +273,14 @@ function handleObstacleBrushDiameterInput(event: Event) {
           aria-hidden="true"
         />
       </button>
-      <button
-        type="button"
-        :aria-pressed="panel.liveClickPreviewEnabled"
-        :class="{ 'graphwar-killer__toggle-button--active': panel.liveClickPreviewEnabled }"
+      <ToggleField
+        id="graphwar-killer-live-click-preview"
+        :checked="panel.liveClickPreviewEnabled"
+        :label="locale.ui.actions.liveClickPreview"
+        state="normal"
         :title="locale.ui.actions.liveClickPreviewTitle"
-        @click="emit('toggleLiveClickPreview')"
-      >
-        {{ locale.ui.actions.liveClickPreview }}
-      </button>
+        @toggle="emit('toggleLiveClickPreview')"
+      />
     </div>
     <div
       v-if="panel.obstacleBrushControlsVisible"
@@ -320,16 +318,14 @@ function handleObstacleBrushDiameterInput(event: Event) {
         >
         <span>{{ locale.ui.pathfinding.unit }}</span>
       </label>
-      <button
-        type="button"
-        :aria-pressed="panel.obstacleBrushEraseEnabled"
-        :class="{ 'graphwar-killer__toggle-button--active': panel.obstacleBrushEraseEnabled }"
-        :disabled="panel.interactionDisabled"
+      <ToggleField
+        id="graphwar-killer-obstacle-brush-erase"
+        :checked="panel.obstacleBrushEraseEnabled"
+        :label="locale.ui.actions.eraseObstacle"
+        :state="panel.interactionDisabled ? 'blocked' : 'normal'"
         :title="locale.ui.actions.eraseObstacleTitle"
-        @click="emit('toggleObstacleBrushErase')"
-      >
-        {{ locale.ui.actions.eraseObstacle }}
-      </button>
+        @toggle="emit('toggleObstacleBrushErase')"
+      />
       <button
         type="button"
         :disabled="panel.interactionDisabled || !panel.obstacleEditsDirty"
@@ -502,9 +498,15 @@ function handleObstacleBrushDiameterInput(event: Event) {
 }
 
 .graphwar-killer__interaction-preferences {
-  display: grid;
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.graphwar-killer__interaction-preferences > * {
+  flex: 0 1 auto;
+  max-width: 100%;
 }
 
 .graphwar-killer__image-actions button,
@@ -617,12 +619,6 @@ function handleObstacleBrushDiameterInput(event: Event) {
   color: var(--vp-c-white) !important;
 }
 
-.graphwar-killer__toggle-button--active {
-  background: var(--vp-c-brand-soft) !important;
-  border-color: var(--vp-c-brand-1) !important;
-  color: var(--vp-c-brand-1) !important;
-}
-
 .graphwar-killer__action-panel button:hover:not(:disabled) {
   border-color: var(--vp-c-brand-1);
   box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
@@ -655,10 +651,6 @@ function handleObstacleBrushDiameterInput(event: Event) {
 
   .graphwar-killer__label-row > span {
     text-align: left;
-  }
-
-  .graphwar-killer__interaction-preferences {
-    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -34,12 +34,18 @@ export interface GraphwarAdvancedSettingsRecognition {
 }
 
 export interface GraphwarAdvancedSettingsPathfinding {
-  /** 当前障碍外扩配置所属来源；两套输入互不覆盖。 */
-  obstacleExpansionMode: "agent" | "detection";
-  /** 路径规划障碍外扩输入框文本。 */
-  routePlanningToleranceText: string;
-  /** 轨迹模拟障碍外扩输入框文本。 */
-  obstacleSimulationToleranceText: string;
+  /** 截图识别来源的路径规划障碍外扩输入框文本。 */
+  detectionRoutePlanningToleranceText: string;
+  /** 截图识别来源的轨迹模拟障碍外扩输入框文本。 */
+  detectionObstacleSimulationToleranceText: string;
+  /** Agent 来源的路径规划障碍外扩输入框文本。 */
+  agentRoutePlanningToleranceText: string;
+  /** Agent 来源的轨迹模拟障碍外扩输入框文本。 */
+  agentObstacleSimulationToleranceText: string;
+  /** 阶跃 y' 邪道模式的路径规划障碍外扩输入框文本。 */
+  stepGlitchRoutePlanningToleranceText: string;
+  /** 阶跃 y' 邪道模式的轨迹模拟障碍外扩输入框文本。 */
+  stepGlitchObstacleSimulationToleranceText: string;
   /** 寻路 worker 数输入框文本。 */
   workerCountText: string;
   /** 一键清图删除检测半径输入框文本。 */

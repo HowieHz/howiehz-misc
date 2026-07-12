@@ -59,8 +59,6 @@ export interface GraphwarSmartPathfindingPanelModel {
   oneClickClear: GraphwarPathfindingTask;
   /** Managed mode switch state. */
   managedMode: GraphwarPathfindingToggle & { title: string };
-  /** Compact summaries of the three independently retained formula profiles. */
-  managedProfiles: readonly { equation: string; formula: string }[];
   /** Persistent warning while managed mode may target friendly soldiers. */
   managedFriendlyFireWarning: string;
   /** Current task status shown in the panel heading. */
@@ -114,13 +112,7 @@ const emit = defineEmits<{
       </span>
     </div>
 
-    <section
-      class="graphwar-killer__pathfinding-section"
-      aria-labelledby="graphwar-killer-pathfinding-tasks-title"
-    >
-      <h3 id="graphwar-killer-pathfinding-tasks-title">
-        {{ locale.ui.pathfinding.tasksTitle }}
-      </h3>
+    <div class="graphwar-killer__pathfinding-section">
       <div class="graphwar-killer__task-controls">
         <div class="graphwar-killer__command-field">
           <button
@@ -151,36 +143,30 @@ const emit = defineEmits<{
           @toggle="emit('toggleManagedMode')"
         />
       </div>
-      <div class="graphwar-killer__managed-profiles">
-        <span>{{ locale.ui.pathfinding.managedProfilesTitle }}</span>
-        <span
-          v-for="profile in panel.managedProfiles"
-          :key="profile.equation"
-        >
-          {{ profile.equation }}: {{ profile.formula }}
-        </span>
-      </div>
       <p
         v-if="panel.managedFriendlyFireWarning"
         class="graphwar-killer__managed-warning"
       >
         {{ panel.managedFriendlyFireWarning }}
       </p>
-    </section>
+    </div>
 
-    <section
-      class="graphwar-killer__pathfinding-section"
-      aria-labelledby="graphwar-killer-pathfinding-options-title"
-    >
-      <h3 id="graphwar-killer-pathfinding-options-title">
-        {{ locale.ui.pathfinding.optionsTitle }}
-      </h3>
+    <details class="graphwar-killer__details">
+      <summary>{{ locale.ui.pathfinding.settingsSummary }}</summary>
       <div class="graphwar-killer__route-row">
         <span>{{ locale.ui.pathfinding.routeAlgorithm }}</span>
-        <strong v-if="panel.usesStepGlitchRouting">{{ locale.ui.pathfinding.routeXPlusScan }}</strong>
+        <div
+          v-if="panel.usesStepGlitchRouting"
+          class="graphwar-killer__route-toggle graphwar-killer__route-toggle--single"
+        >
+          <strong class="graphwar-killer__route-toggle-static">
+            {{ locale.ui.pathfinding.routeXPlusScan }}
+          </strong>
+        </div>
         <div
           v-else
           class="graphwar-killer__route-toggle"
+          :class="{ 'graphwar-killer__route-toggle--theta-star': panel.routeMode === 'theta-star' }"
           role="group"
           :aria-label="locale.ui.pathfinding.routeAlgorithm"
           :title="locale.ui.pathfinding.routeAlgorithmTitle"
@@ -234,7 +220,7 @@ const emit = defineEmits<{
           @toggle="emit('toggleSearchAnimation')"
         />
       </div>
-    </section>
+    </details>
 
     <details
       v-if="panel.debugTimingVisible"
@@ -271,19 +257,11 @@ const emit = defineEmits<{
   padding: 10px;
 }
 
-.graphwar-killer__pathfinding-panel h2,
-.graphwar-killer__pathfinding-panel h3 {
+.graphwar-killer__pathfinding-panel h2 {
   border: 0;
+  font-size: 1rem;
   margin: 0;
   padding: 0;
-}
-
-.graphwar-killer__pathfinding-panel h2 {
-  font-size: 1rem;
-}
-
-.graphwar-killer__pathfinding-panel h3 {
-  font-size: 0.9rem;
 }
 
 .graphwar-killer__label-row {
@@ -330,11 +308,22 @@ const emit = defineEmits<{
   padding-top: 8px;
 }
 
-.graphwar-killer__task-controls,
-.graphwar-killer__option-grid {
+.graphwar-killer__task-controls {
   display: grid;
   gap: 6px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+}
+
+.graphwar-killer__option-grid {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graphwar-killer__option-grid > * {
+  flex: 0 1 auto;
+  max-width: 100%;
 }
 
 .graphwar-killer__command-field {
@@ -373,20 +362,6 @@ const emit = defineEmits<{
   gap: 5px;
 }
 
-.graphwar-killer__managed-profiles {
-  align-items: center;
-  color: var(--vp-c-text-2);
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 0.82rem;
-  gap: 4px 10px;
-}
-
-.graphwar-killer__managed-profiles > :first-child {
-  color: var(--vp-c-text-1);
-  font-weight: 700;
-}
-
 .graphwar-killer__route-row {
   align-items: center;
   display: grid;
@@ -394,37 +369,114 @@ const emit = defineEmits<{
   grid-template-columns: max-content minmax(0, 1fr);
 }
 
-.graphwar-killer__route-row > span,
-.graphwar-killer__route-row > strong {
+.graphwar-killer__route-row > span {
   font-size: 0.86rem;
 }
 
 .graphwar-killer__route-toggle {
-  background: var(--vp-c-bg-soft);
+  background: color-mix(in srgb, var(--vp-c-bg-soft) 68%, var(--vp-c-bg));
   border: 1px solid var(--vp-c-divider);
   border-radius: 999px;
   display: grid;
+  gap: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   max-width: 360px;
+  min-height: 34px;
+  min-width: 0;
+  overflow: hidden;
   padding: 2px;
+  position: relative;
+}
+
+.graphwar-killer__route-toggle::before {
+  background: var(--vp-c-brand-1);
+  border-radius: 999px;
+  bottom: 2px;
+  box-shadow: 0 6px 14px rgb(15 23 42 / 12%);
+  content: "";
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: transform 0.2s ease;
+  width: calc((100% - 4px) / 2);
+}
+
+.graphwar-killer__route-toggle--theta-star::before {
+  transform: translateX(100%);
+}
+
+.graphwar-killer__route-toggle--single {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 180px;
+}
+
+.graphwar-killer__route-toggle--single::before {
+  width: calc(100% - 4px);
+}
+
+.graphwar-killer__route-toggle-static {
+  align-items: center;
+  color: var(--vp-c-white);
+  display: flex;
+  font-size: 0.9rem;
+  justify-content: center;
+  line-height: 1.15;
+  min-height: 28px;
+  min-width: 0;
+  padding: 4px 10px;
+  position: relative;
+  text-align: center;
+  z-index: 1;
 }
 
 .graphwar-killer__route-toggle button {
   background: transparent;
   border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
+  line-height: 1.15;
+  min-height: 28px;
   min-width: 0;
   overflow-wrap: anywhere;
+  padding: 4px 10px;
+  position: relative;
+  text-align: center;
+  transform: none;
+  white-space: normal;
+  z-index: 1;
 }
 
 .graphwar-killer__route-toggle-button--active {
-  background: var(--vp-c-brand-1) !important;
   color: var(--vp-c-white) !important;
+}
+
+.graphwar-killer__details {
+  background: var(--vp-c-bg-soft);
+  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 82%, transparent);
+  border-radius: 8px;
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  padding: 8px;
+}
+
+.graphwar-killer__details[open] {
+  gap: 8px;
 }
 
 .graphwar-killer__details > summary {
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   font-weight: 700;
+  line-height: 1.4;
+  margin: -2px 0;
+}
+
+.graphwar-killer__details > summary:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
 }
 
 .graphwar-killer__debug-timing {
@@ -433,7 +485,7 @@ const emit = defineEmits<{
   display: grid;
   font-size: 0.86rem;
   line-height: 1.6;
-  margin-top: 8px;
+  margin: 0;
   overflow-x: auto;
   padding: 8px;
   white-space: nowrap;
@@ -446,6 +498,17 @@ const emit = defineEmits<{
 .graphwar-killer__pathfinding-panel button:hover:not(:disabled) {
   border-color: var(--vp-c-brand-1);
   color: var(--vp-c-brand-1);
+}
+
+.graphwar-killer__pathfinding-panel .graphwar-killer__route-toggle button:hover:not(:disabled) {
+  border-color: transparent;
+  box-shadow: none;
+  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
+  transform: none;
+}
+
+.graphwar-killer__pathfinding-panel .graphwar-killer__route-toggle-button--active:hover:not(:disabled) {
+  color: var(--vp-c-white);
 }
 
 .graphwar-killer__pathfinding-panel button:focus-visible {

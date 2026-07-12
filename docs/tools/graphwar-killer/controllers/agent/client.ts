@@ -272,10 +272,7 @@ export async function readGraphwarAgentSnapshot(
   const client = createGraphwarAgentClient(baseUrlText, options);
   const state = await client.readState();
   if (!state.available || state.phase === "inactive") {
-    throw new GraphwarAgentClientError(
-      "unavailable",
-      state.available ? "Graphwar is not in an active game" : state.reason,
-    );
+    throw new GraphwarAgentClientError("unavailable", state.available ? "game-not-active" : state.reason);
   }
 
   const worldObstacleMask = await client.readWorldObstacleMask(state);

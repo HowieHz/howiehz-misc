@@ -43,6 +43,7 @@ const describedBy = computed(
       :title="title"
     >
       <span class="graphwar-killer-toggle-field__text">{{ label }}</span>
+      <!-- 阻止原生 checkbox 自行提交；父层接受切换请求后才通过 prop 更新状态。 -->
       <input
         :id="id"
         :checked="checked"
@@ -50,7 +51,7 @@ const describedBy = computed(
         :aria-describedby="describedBy"
         role="switch"
         type="checkbox"
-        @change="emit('toggle')"
+        @click.prevent="emit('toggle')"
       >
       <span
         class="graphwar-killer-toggle-field__track"
@@ -79,7 +80,8 @@ const describedBy = computed(
 
 <style scoped>
 .graphwar-killer-toggle-field {
-  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--vp-c-bg-soft) 50%, var(--vp-c-bg));
+  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 82%, transparent);
   border-radius: 8px;
   display: grid;
   gap: 4px;
@@ -101,9 +103,9 @@ const describedBy = computed(
 .graphwar-killer-toggle-field__control {
   align-items: center;
   cursor: pointer;
-  display: grid;
+  display: flex;
   gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  justify-content: flex-start;
   margin: 0;
 }
 
@@ -134,6 +136,9 @@ const describedBy = computed(
   display: block;
   height: 22px;
   padding: 2px;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
   width: 38px;
 }
 
@@ -143,6 +148,7 @@ const describedBy = computed(
   box-shadow: 0 1px 3px rgb(15 23 42 / 20%);
   display: block;
   height: 16px;
+  transition: transform 0.2s ease;
   width: 16px;
 }
 

@@ -121,6 +121,7 @@ describe("Graphwar Agent API v2 client", () => {
 
     await expect(readGraphwarAgentSnapshot("http://127.0.0.1:17900", { fetch: fetchMock })).rejects.toMatchObject({
       kind: "unavailable",
+      message: "game-not-active",
     });
     expect(fetchMock).toHaveBeenCalledOnce();
   });

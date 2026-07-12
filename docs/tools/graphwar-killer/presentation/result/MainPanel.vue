@@ -48,8 +48,8 @@ export interface GraphwarResultPanelModel {
   calculationMessageVisible: boolean;
   /** 复制按钮当前文案。 */
   copyButtonText: string;
-  /** 当前方程模式标签。 */
-  equationLabel: string;
+  /** 仅显示在函数输入/输出框左侧的方程前缀。 */
+  equationPrefix: string;
   /** 路径点坐标表行。 */
   pointRows: readonly GraphwarResultPanelPointRow[];
   /** 二阶发射角提示。 */
@@ -167,7 +167,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
       class="graphwar-killer__formula-row"
     >
       <span class="graphwar-killer__formula-prefix">
-        {{ result.equationLabel }}
+        {{ result.equationPrefix }}
       </span>
       <p class="graphwar-killer__formula">
         {{ result.solverExpression }}
@@ -178,7 +178,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
       class="graphwar-killer__formula-row"
     >
       <span class="graphwar-killer__formula-prefix">
-        {{ result.equationLabel }}
+        {{ result.equationPrefix }}
       </span>
       <input
         v-model="simulatorFormulaText"

@@ -23,7 +23,7 @@ describe("ToggleField", () => {
     expect(input.attributes("disabled")).toBeUndefined();
     expect(wrapper.text()).toContain("Waiting for obstacles");
 
-    await input.trigger("change");
+    await input.trigger("click");
     expect(wrapper.emitted("toggle")).toHaveLength(1);
   });
 
@@ -39,5 +39,39 @@ describe("ToggleField", () => {
     });
 
     expect(wrapper.get("input").attributes()).toHaveProperty("disabled");
+  });
+
+  it("keeps the native state unchanged when the parent rejects a toggle request", async () => {
+    const wrapper = mount(ToggleField, {
+      props: {
+        checked: false,
+        id: "managed-mode",
+        label: "Managed mode",
+        state: "normal",
+      },
+    });
+    const input = wrapper.get("input");
+
+    await input.trigger("click");
+
+    expect(wrapper.emitted("toggle")).toHaveLength(1);
+    expect((input.element as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("commits the native state after the parent accepts a toggle request", async () => {
+    const wrapper = mount(ToggleField, {
+      props: {
+        checked: false,
+        id: "managed-mode",
+        label: "Managed mode",
+        state: "normal",
+      },
+    });
+    const input = wrapper.get("input");
+
+    await input.trigger("click");
+    await wrapper.setProps({ checked: true });
+
+    expect((input.element as HTMLInputElement).checked).toBe(true);
   });
 });

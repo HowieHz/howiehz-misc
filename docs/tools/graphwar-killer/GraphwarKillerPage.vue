@@ -7,6 +7,7 @@ import {
   createGraphwarAgentShotRequest,
   createGraphwarAgentWorldSnapshot,
   GRAPHWAR_AGENT_DEFAULT_BASE_URL,
+  GraphwarAgentClientError,
   normalizeGraphwarAgentBaseUrl,
   readGraphwarAgentSnapshot,
   type GraphwarAgentAvailableState,
@@ -24,7 +25,9 @@ import {
 } from "./controllers/detection/workflow";
 import {
   createGraphwarManagedController,
+  createGraphwarManagedSkipTurnPlan,
   GRAPHWAR_MANAGED_SHOT_DEADLINE_MS,
+  GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
   type GraphwarManagedController,
   type GraphwarManagedShooter,
 } from "./controllers/managed/controller";
@@ -119,6 +122,7 @@ import type { GraphwarAdvancedSettingsPanelModel } from "./presentation/settings
 import GraphwarAdvancedSettingsPanel from "./presentation/settings/AdvancedPanel.vue";
 import GraphwarSettingsPanel, { type GraphwarSettingsPanelModel } from "./presentation/settings/MainPanel.vue";
 import { formatSvgPolylinePoints } from "./presentation/stage/svg-polyline";
+import { createGraphwarAgentFailureReason } from "./presentation/status/agent";
 import { formatElapsedDuration } from "./presentation/status/duration";
 import {
   createHeaderStatus,
@@ -242,7 +246,11 @@ const stepGlitchModeEnabled = computed({
 });
 // 邪道偏好独立保存在 y' profile；只有当前 Step y' 才改变求解与寻路语义。
 const effectiveStepGlitchModeEnabled = computed(
-  () => algorithmMode.value === "step" && solverEquationMode.value === "dy" && stepGlitchModeEnabled.value,
+  () =>
+    toolWorkflowMode.value === "solver" &&
+    algorithmMode.value === "step" &&
+    solverEquationMode.value === "dy" &&
+    stepGlitchModeEnabled.value,
 );
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const advancedSettingsVisible = ref(false);
@@ -254,11 +262,14 @@ const soldierTemplateCandidateTopRatioText = ref(String(graphwarToolDefaults.sol
 const templateMatchingWorkerCountText = ref(String(graphwarToolDefaults.templateMatchingWorkerCount));
 const pathfindingWorkerCountText = ref(String(graphwarToolDefaults.pathfindingWorkerCount));
 const liveClickPreviewWorkerCountText = ref(String(graphwarToolDefaults.liveClickPreviewWorkerCount));
-// 截图识别需要默认安全距离吸收像素误差；Agent 返回精确障碍，默认不额外外扩。
+// 截图识别与 Agent 分别保留适合各自障碍精度的默认安全距离。
 const detectionRoutePlanningToleranceText = ref(String(GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS));
 const detectionObstacleSimulationToleranceText = ref("1");
 const graphwarAgentRoutePlanningToleranceText = ref("1");
 const graphwarAgentObstacleSimulationToleranceText = ref("0");
+// 邪道扫描直接使用精确障碍像素；实际生效时优先于截图和 Agent 来源容差。
+const stepGlitchRoutePlanningToleranceText = ref("0");
+const stepGlitchObstacleSimulationToleranceText = ref("0");
 const oneClickClearDeleteCheckRadiusText = ref(String(oneClickClearDeleteCheckRadiusDefaultPlanePixels));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
@@ -270,7 +281,7 @@ const graphwarAgentFireInProgress = ref(false);
 const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
 const graphwarManagedModeEnabled = ref(false);
-let graphwarManagedModeConfirmed = false;
+let graphwarManagedModeRiskConfirmed = false;
 let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let graphwarManagedCalculationStatus:
   | { expiresAt: number; kind: SmartPathfindingStatusKind; message: string }
@@ -301,12 +312,19 @@ const normalizedGraphwarAgentBaseUrl = computed(() => {
   }
 });
 const activeRoutePlanningToleranceText = computed({
-  get: () =>
-    graphwarAgentEnabled.value
+  get: () => {
+    // 邪道扫描的精确像素配置优先于障碍数据来源，避免 Agent 开关改变同一路线的容差。
+    if (effectiveStepGlitchModeEnabled.value) {
+      return stepGlitchRoutePlanningToleranceText.value;
+    }
+    return graphwarAgentEnabled.value
       ? graphwarAgentRoutePlanningToleranceText.value
-      : detectionRoutePlanningToleranceText.value,
+      : detectionRoutePlanningToleranceText.value;
+  },
   set: (value) => {
-    if (graphwarAgentEnabled.value) {
+    if (effectiveStepGlitchModeEnabled.value) {
+      stepGlitchRoutePlanningToleranceText.value = value;
+    } else if (graphwarAgentEnabled.value) {
       graphwarAgentRoutePlanningToleranceText.value = value;
     } else {
       detectionRoutePlanningToleranceText.value = value;
@@ -314,12 +332,18 @@ const activeRoutePlanningToleranceText = computed({
   },
 });
 const activeObstacleSimulationToleranceText = computed({
-  get: () =>
-    graphwarAgentEnabled.value
+  get: () => {
+    if (effectiveStepGlitchModeEnabled.value) {
+      return stepGlitchObstacleSimulationToleranceText.value;
+    }
+    return graphwarAgentEnabled.value
       ? graphwarAgentObstacleSimulationToleranceText.value
-      : detectionObstacleSimulationToleranceText.value,
+      : detectionObstacleSimulationToleranceText.value;
+  },
   set: (value) => {
-    if (graphwarAgentEnabled.value) {
+    if (effectiveStepGlitchModeEnabled.value) {
+      stepGlitchObstacleSimulationToleranceText.value = value;
+    } else if (graphwarAgentEnabled.value) {
       graphwarAgentObstacleSimulationToleranceText.value = value;
     } else {
       detectionObstacleSimulationToleranceText.value = value;
@@ -1699,17 +1723,6 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
         ? locale.ui.pathfinding.managedModeDisableTitle
         : locale.ui.pathfinding.managedModeTitle,
     },
-    managedProfiles: locale.equationModes.map((equation) => {
-      const profile = solverFormulaProfiles.value[equation.value];
-      return {
-        equation: equation.label,
-        formula: `${locale.algorithmModes.find((algorithm) => algorithm.value === profile.algorithm)?.label ?? profile.algorithm}${
-          equation.value === "dy" && profile.algorithm === "step" && profile.stepGlitchModeEnabled
-            ? ` + ${locale.ui.settings.stepGlitchMode}`
-            : ""
-        }`,
-      };
-    }),
     oneClickClear: {
       reason: getCapabilityReason(oneClickClearCapability.reason),
       state: oneClickClearCapability.state,
@@ -1743,12 +1756,15 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
   },
   interactionDisabled: graphwarManagedModeEnabled.value,
   pathfinding: {
-    obstacleExpansionMode: graphwarAgentEnabled.value ? "agent" : "detection",
-    obstacleSimulationToleranceText: activeObstacleSimulationToleranceText.value,
+    agentObstacleSimulationToleranceText: graphwarAgentObstacleSimulationToleranceText.value,
+    agentRoutePlanningToleranceText: graphwarAgentRoutePlanningToleranceText.value,
+    detectionObstacleSimulationToleranceText: detectionObstacleSimulationToleranceText.value,
+    detectionRoutePlanningToleranceText: detectionRoutePlanningToleranceText.value,
+    stepGlitchObstacleSimulationToleranceText: stepGlitchObstacleSimulationToleranceText.value,
+    stepGlitchRoutePlanningToleranceText: stepGlitchRoutePlanningToleranceText.value,
     oneClickClearDeleteCheckRadiusMinimumPlanePixels,
     oneClickClearDeleteCheckRadiusText: oneClickClearDeleteCheckRadiusText.value,
     oneClickClearDeleteCheckRadiusVisible: deleteOptimizationEnabled.value,
-    routePlanningToleranceText: activeRoutePlanningToleranceText.value,
     workerCountText: pathfindingWorkerCountText.value,
   },
   recognition: {
@@ -2017,7 +2033,7 @@ const resultPanel = computed(() => {
     calculationMessageVisible:
       Boolean(calculationMessage.value) && (toolWorkflowMode.value === "simulator" || !solverResult),
     copyButtonText: copyButtonText.value,
-    equationLabel: equationModes.value.find((mode) => mode.value === equationMode.value)?.label ?? "",
+    equationPrefix: equationModes.value.find((mode) => mode.value === equationMode.value)?.formulaPrefix ?? "",
     interactionDisabled: graphwarManagedModeEnabled.value,
     pointRows: createResultPanelPointRows(),
     secondOrderAngleHint: secondOrderAngleHint.value,
@@ -2523,8 +2539,7 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
     if (!requestIsCurrent()) {
       return;
     }
-    const message = error instanceof Error ? error.message : String(error);
-    const failedMessage = locale.status.agent.failed(message);
+    const failedMessage = locale.status.agent.failed(createGraphwarAgentFailureReason(locale, error));
     imageStatus.value = failedMessage;
     setDetectionStatus(failedMessage, "error");
   } finally {
@@ -2576,13 +2591,16 @@ async function fireGraphwarAgentFunction() {
   try {
     const client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value);
     const state = await client.readState();
-    if (!state.available || state.phase !== "aiming") {
-      throw new Error(state.available ? "Graphwar is not accepting a shot" : state.reason);
+    if (!state.available) {
+      throw new GraphwarAgentClientError("unavailable", state.reason);
+    }
+    if (state.phase !== "aiming") {
+      throw new GraphwarAgentClientError("conflict", "shot-not-accepted");
     }
     const functionText =
       toolWorkflowMode.value === "solver" ? formulaResult.value?.expression : simulatorFormulaText.value;
     if (!functionText?.trim() || equationMode.value !== state.equationMode) {
-      throw new Error("The current result does not match the active Graphwar mode");
+      throw new GraphwarAgentClientError("invalid-request", "result-mode-mismatch");
     }
     graphwarAgentBaseUrlText.value = client.baseUrl;
     if (state.equationMode === "ddy") {
@@ -2593,7 +2611,7 @@ async function fireGraphwarAgentFunction() {
             : (secondOrderLaunchAngleDegrees.value * Math.PI) / 180
           : simulatorLaunchAngleRadians.value;
       if (launchAngleRadians === undefined) {
-        throw new Error("The current result does not match the active Graphwar mode");
+        throw new GraphwarAgentClientError("invalid-request", "result-mode-mismatch");
       }
       await client.submitShot(
         createGraphwarAgentShotRequest(state, {
@@ -2609,7 +2627,7 @@ async function fireGraphwarAgentFunction() {
     }
     setGraphwarAgentFireStatus("success");
   } catch (error) {
-    graphwarAgentFireFailureMessage.value = error instanceof Error ? error.message : String(error);
+    graphwarAgentFireFailureMessage.value = createGraphwarAgentFailureReason(locale, error);
     setGraphwarAgentFireStatus("error");
   } finally {
     graphwarAgentFireInProgress.value = false;
@@ -2672,15 +2690,29 @@ function toggleGraphwarManagedMode() {
   }
 
   const repairPlan = createGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value);
-  if (!graphwarManagedModeConfirmed) {
-    const repairedModes = locale.equationModes
-      .filter((mode) => repairPlan[mode.value] !== undefined)
-      .map((mode) => mode.label)
-      .join(", ");
-    if (!window.confirm(locale.ui.pathfinding.managedModeConfirmation(repairedModes, friendlyFireEnabled.value))) {
+  const repairs = locale.equationModes.flatMap((mode) => {
+    const repair = repairPlan[mode.value];
+    if (!repair) {
+      return [];
+    }
+    return [
+      {
+        algorithm:
+          locale.algorithmModes.find((algorithm) => algorithm.value === repair.algorithm)?.label ?? repair.algorithm,
+        equation: mode.label,
+        properties:
+          mode.value === "dy" && repair.algorithm === "step" && repair.stepGlitchModeEnabled
+            ? [locale.ui.settings.stepGlitchMode]
+            : [],
+      },
+    ];
+  });
+  // 首次开启需要确认托管风险；以后只在即将覆盖用户算法设定时再次确认。
+  if (!graphwarManagedModeRiskConfirmed || repairs.length > 0) {
+    if (!window.confirm(locale.ui.pathfinding.managedModeConfirmation(repairs, friendlyFireEnabled.value))) {
       return;
     }
-    graphwarManagedModeConfirmed = true;
+    graphwarManagedModeRiskConfirmed = true;
   }
   solverFormulaProfiles.value = applyGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value, repairPlan);
 
@@ -2688,7 +2720,7 @@ function toggleGraphwarManagedMode() {
   try {
     client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value);
   } catch (error) {
-    setSmartPathfindingStatus(error instanceof Error ? error.message : String(error), "error");
+    setSmartPathfindingStatus(createGraphwarAgentFailureReason(locale, error), "error");
     return;
   }
 
@@ -2759,18 +2791,30 @@ function toggleGraphwarManagedMode() {
           return;
         }
         if (graphwarManagedLastSubmittedTurnToken === state.turnToken) {
-          setGraphwarManagedStatus(locale.smartPathfinding.managed.shotUnknown(error.message), "error");
+          setGraphwarManagedStatus(
+            locale.smartPathfinding.managed.shotUnknown(createGraphwarAgentFailureReason(locale, error)),
+            "error",
+          );
           return;
         }
         graphwarManagedSearchState = "failure";
         setGraphwarManagedStatus(locale.smartPathfinding.managed.searchFailed, "error");
       },
-      onShotSubmitted: (state) => {
+      onShotSubmitted: (state, plan) => {
         graphwarManagedLastSubmittedTurnToken = state.turnToken;
-        setGraphwarManagedStatus(locale.ui.result.firing, "warning");
+        setGraphwarManagedStatus(
+          plan.function === GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION
+            ? locale.smartPathfinding.managed.skippingTurn
+            : locale.ui.result.firing,
+          "warning",
+        );
       },
-      onShotSucceeded: (state) => {
+      onShotSucceeded: (state, plan) => {
         if (graphwarManagedLastSubmittedTurnToken !== state.turnToken) {
+          return;
+        }
+        if (plan.function === GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION) {
+          setGraphwarManagedStatus(locale.smartPathfinding.managed.skipTurnFired, "warning");
           return;
         }
         setGraphwarManagedStatus(
@@ -2782,7 +2826,10 @@ function toggleGraphwarManagedMode() {
       },
       onState: handleGraphwarManagedState,
       onTransientError: (error) => {
-        setGraphwarManagedStatus(locale.smartPathfinding.managed.connectionFailed(error.message), "error");
+        setGraphwarManagedStatus(
+          locale.smartPathfinding.managed.connectionFailed(createGraphwarAgentFailureReason(locale, error)),
+          "error",
+        );
       },
       onWaiting: () => {
         resetGraphwarManagedSearch();
@@ -2961,6 +3008,14 @@ async function runGraphwarManagedSearch(sceneKey: string) {
   if (!succeeded || !graphwarManagedIncumbent) {
     graphwarManagedSearchState = "failure";
     graphwarManagedSearchStartedAt = undefined;
+    const state = graphwarManagedController?.getLatestState();
+    if (
+      state &&
+      isGraphwarManagedCurrentLocalTurn(state) &&
+      graphwarManagedController?.submitShot(state, createGraphwarManagedSkipTurnPlan(state))
+    ) {
+      return;
+    }
     setGraphwarManagedStatus(locale.smartPathfinding.managed.searchFailed, "error");
   }
 }
@@ -3803,14 +3858,28 @@ function undoLastPoint() {
         !graphwarManagedModeEnabled && (liveClickPreviewWorkerCountText = $event)
       "
       @update-obstacle-min-area-text="!graphwarManagedModeEnabled && (obstacleMinAreaText = $event)"
-      @update-obstacle-simulation-tolerance-text="
-        !graphwarManagedModeEnabled && (activeObstacleSimulationToleranceText = $event)
+      @update-agent-obstacle-simulation-tolerance-text="
+        !graphwarManagedModeEnabled && (graphwarAgentObstacleSimulationToleranceText = $event)
+      "
+      @update-agent-route-planning-tolerance-text="
+        !graphwarManagedModeEnabled && (graphwarAgentRoutePlanningToleranceText = $event)
+      "
+      @update-detection-obstacle-simulation-tolerance-text="
+        !graphwarManagedModeEnabled && (detectionObstacleSimulationToleranceText = $event)
+      "
+      @update-detection-route-planning-tolerance-text="
+        !graphwarManagedModeEnabled && (detectionRoutePlanningToleranceText = $event)
+      "
+      @update-step-glitch-obstacle-simulation-tolerance-text="
+        !graphwarManagedModeEnabled && (stepGlitchObstacleSimulationToleranceText = $event)
+      "
+      @update-step-glitch-route-planning-tolerance-text="
+        !graphwarManagedModeEnabled && (stepGlitchRoutePlanningToleranceText = $event)
       "
       @update-one-click-clear-delete-check-radius-text="
         !graphwarManagedModeEnabled && (oneClickClearDeleteCheckRadiusText = $event)
       "
       @update-pathfinding-worker-count-text="!graphwarManagedModeEnabled && (pathfindingWorkerCountText = $event)"
-      @update-route-planning-tolerance-text="!graphwarManagedModeEnabled && (activeRoutePlanningToleranceText = $event)"
       @update-template-matching-worker-count-text="
         !graphwarManagedModeEnabled && (templateMatchingWorkerCountText = $event)
       "

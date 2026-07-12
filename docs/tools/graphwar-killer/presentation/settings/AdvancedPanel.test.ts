@@ -17,12 +17,15 @@ describe("AdvancedPanel", () => {
       bounds: { maxXText: "25", maxYText: "15", minXText: "-25", minYText: "-15" },
       interactionDisabled: false,
       pathfinding: {
-        obstacleExpansionMode: "detection",
-        obstacleSimulationToleranceText: "1",
+        agentObstacleSimulationToleranceText: "0",
+        agentRoutePlanningToleranceText: "2",
+        detectionObstacleSimulationToleranceText: "1",
+        detectionRoutePlanningToleranceText: "1",
+        stepGlitchObstacleSimulationToleranceText: "0",
+        stepGlitchRoutePlanningToleranceText: "0",
         oneClickClearDeleteCheckRadiusMinimumPlanePixels: 0,
         oneClickClearDeleteCheckRadiusText: "3.5",
         oneClickClearDeleteCheckRadiusVisible: false,
-        routePlanningToleranceText: "1",
         workerCountText: "4",
       },
       recognition: {
@@ -35,6 +38,24 @@ describe("AdvancedPanel", () => {
       simulator: { parseDerivativeAsY: true, skipUnknownCharacters: true },
     };
     const wrapper = mount(AdvancedPanel, { props: { locale: graphwarKillerLocale, panel } });
+    const routeToleranceInputs = wrapper
+      .findAll("input")
+      .filter((input) =>
+        input.attributes("aria-label")?.endsWith(graphwarKillerLocale.ui.pathfinding.routePlanningToleranceAriaLabel),
+      );
+    const simulationToleranceInputs = wrapper
+      .findAll("input")
+      .filter((input) =>
+        input.attributes("aria-label")?.endsWith(graphwarKillerLocale.ui.pathfinding.simulationToleranceAriaLabel),
+      );
+
+    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.pathfinding.obstacleExpansionDetectionMode);
+    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.pathfinding.obstacleExpansionAgentMode);
+    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.stepGlitchMode);
+    expect(routeToleranceInputs.map((input) => input.element.value)).toEqual(["1", "2", "0"]);
+    expect(simulationToleranceInputs.map((input) => input.element.value)).toEqual(["1", "0", "0"]);
+    await routeToleranceInputs[2].setValue("3");
+    expect(wrapper.emitted("updateStepGlitchRoutePlanningToleranceText")).toEqual([["3"]]);
 
     expect(
       wrapper

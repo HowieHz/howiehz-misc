@@ -9,13 +9,31 @@ import {
   type GraphwarAgentRoom,
   type GraphwarAgentState,
 } from "../agent/client";
-import { createGraphwarManagedController } from "./controller";
+import {
+  createGraphwarManagedController,
+  createGraphwarManagedSkipTurnPlan,
+  GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
+} from "./controller";
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe("Graphwar managed-mode controller", () => {
+  it.each([
+    ["y", undefined],
+    ["dy", undefined],
+    ["ddy", 0],
+  ] as const)("builds a valid %s skip-turn plan", (equationMode, angleRadians) => {
+    const state = createAvailableState({ equationMode });
+
+    expect(createGraphwarManagedSkipTurnPlan(state)).toEqual({
+      ...(angleRadians === undefined ? {} : { angleRadians }),
+      equationMode,
+      function: GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
+    });
+  });
+
   it("keeps polling single-flight and waits one interval after settlement", async () => {
     vi.useFakeTimers();
     const pending = createDeferred<GraphwarAgentState>();
@@ -332,7 +350,7 @@ describe("Graphwar managed-mode controller", () => {
     controller.stop();
   });
 
-  it("abandons a deadline with no validated plan exactly once", async () => {
+  it("skips a deadline with no validated plan exactly once", async () => {
     vi.useFakeTimers();
     const state = createAvailableState({ remainingTurnMs: 2500 });
     const client = createFakeClient();
@@ -345,11 +363,35 @@ describe("Graphwar managed-mode controller", () => {
 
     controller.start();
     await flushPromises();
-    expect(onDeadlineWithoutShot).toHaveBeenCalledOnce();
+    expect(client.submitShot).toHaveBeenCalledOnce();
+    expect(client.submitShot).toHaveBeenCalledWith({
+      battleRevision: state.battleRevision,
+      function: GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
+      turnToken: state.turnToken,
+    });
+    expect(onDeadlineWithoutShot).not.toHaveBeenCalled();
     expect(controller.submitShot(state, { equationMode: "y", function: "x" })).toBe(false);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(onDeadlineWithoutShot).toHaveBeenCalledOnce();
-    expect(client.submitShot).not.toHaveBeenCalled();
+    expect(onDeadlineWithoutShot).not.toHaveBeenCalled();
+    expect(client.submitShot).toHaveBeenCalledOnce();
+    controller.stop();
+  });
+
+  it("includes the required launch angle when skipping a y'' deadline", async () => {
+    const state = createAvailableState({ equationMode: "ddy", remainingTurnMs: 2500 });
+    const client = createFakeClient();
+    client.readState.mockResolvedValue(state);
+    const controller = createGraphwarManagedController({ client });
+
+    controller.start();
+    await flushPromises();
+
+    expect(client.submitShot).toHaveBeenCalledWith({
+      angleRadians: 0,
+      battleRevision: state.battleRevision,
+      function: GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
+      turnToken: state.turnToken,
+    });
     controller.stop();
   });
 
@@ -369,7 +411,8 @@ describe("Graphwar managed-mode controller", () => {
 
     controller.start();
     await flushPromises();
-    expect(onDeadlineWithoutShot).toHaveBeenCalledTimes(expectedCalls);
+    expect(client.submitShot).toHaveBeenCalledTimes(expectedCalls);
+    expect(onDeadlineWithoutShot).not.toHaveBeenCalled();
     controller.stop();
   });
 

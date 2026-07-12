@@ -2,6 +2,7 @@
 import { computed } from "vue";
 
 import type { GraphwarKillerLocale } from "../../locale-types";
+import ToggleField from "../controls/ToggleField.vue";
 import type { GraphwarAdvancedSettingsPanelModel } from "./advanced-panel-model";
 
 const props = defineProps<{
@@ -14,7 +15,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggleSimulatorParseDerivativeAsY: [];
   toggleSimulatorSkipUnknownCharacters: [];
+  updateAgentObstacleSimulationToleranceText: [value: string];
+  updateAgentRoutePlanningToleranceText: [value: string];
   updateCandidateTopRatioText: [value: string];
+  updateDetectionObstacleSimulationToleranceText: [value: string];
+  updateDetectionRoutePlanningToleranceText: [value: string];
+  updateStepGlitchObstacleSimulationToleranceText: [value: string];
+  updateStepGlitchRoutePlanningToleranceText: [value: string];
   updateMaxXText: [value: string];
   updateMaxYText: [value: string];
   updateMaximumSoldierCountText: [value: string];
@@ -22,10 +29,8 @@ const emit = defineEmits<{
   updateMinYText: [value: string];
   updateLiveClickPreviewWorkerCountText: [value: string];
   updateObstacleMinAreaText: [value: string];
-  updateObstacleSimulationToleranceText: [value: string];
   updateOneClickClearDeleteCheckRadiusText: [value: string];
   updatePathfindingWorkerCountText: [value: string];
-  updateRoutePlanningToleranceText: [value: string];
   updateTemplateMatchingWorkerCountText: [value: string];
 }>();
 
@@ -69,14 +74,34 @@ const obstacleMinAreaText = computed({
   set: (value) => emit("updateObstacleMinAreaText", value),
 });
 
-const routePlanningToleranceText = computed({
-  get: () => props.panel.pathfinding.routePlanningToleranceText,
-  set: (value) => emit("updateRoutePlanningToleranceText", value),
+const detectionRoutePlanningToleranceText = computed({
+  get: () => props.panel.pathfinding.detectionRoutePlanningToleranceText,
+  set: (value) => emit("updateDetectionRoutePlanningToleranceText", value),
 });
 
-const obstacleSimulationToleranceText = computed({
-  get: () => props.panel.pathfinding.obstacleSimulationToleranceText,
-  set: (value) => emit("updateObstacleSimulationToleranceText", value),
+const detectionObstacleSimulationToleranceText = computed({
+  get: () => props.panel.pathfinding.detectionObstacleSimulationToleranceText,
+  set: (value) => emit("updateDetectionObstacleSimulationToleranceText", value),
+});
+
+const agentRoutePlanningToleranceText = computed({
+  get: () => props.panel.pathfinding.agentRoutePlanningToleranceText,
+  set: (value) => emit("updateAgentRoutePlanningToleranceText", value),
+});
+
+const agentObstacleSimulationToleranceText = computed({
+  get: () => props.panel.pathfinding.agentObstacleSimulationToleranceText,
+  set: (value) => emit("updateAgentObstacleSimulationToleranceText", value),
+});
+
+const stepGlitchRoutePlanningToleranceText = computed({
+  get: () => props.panel.pathfinding.stepGlitchRoutePlanningToleranceText,
+  set: (value) => emit("updateStepGlitchRoutePlanningToleranceText", value),
+});
+
+const stepGlitchObstacleSimulationToleranceText = computed({
+  get: () => props.panel.pathfinding.stepGlitchObstacleSimulationToleranceText,
+  set: (value) => emit("updateStepGlitchObstacleSimulationToleranceText", value),
 });
 
 const pathfindingWorkerCountText = computed({
@@ -163,24 +188,22 @@ const liveClickPreviewWorkerCountText = computed({
             {{ locale.ui.settings.simulator }}
           </h3>
           <div class="graphwar-killer__image-actions">
-            <button
-              type="button"
-              :aria-pressed="panel.simulator.skipUnknownCharacters"
-              :class="{ 'graphwar-killer__toggle-button--active': panel.simulator.skipUnknownCharacters }"
+            <ToggleField
+              id="graphwar-killer-skip-unknown-characters"
+              :checked="panel.simulator.skipUnknownCharacters"
+              :label="locale.ui.settings.skipUnknownCharacters"
+              state="normal"
               :title="locale.ui.settings.skipUnknownCharactersTitle"
-              @click="emit('toggleSimulatorSkipUnknownCharacters')"
-            >
-              {{ locale.ui.settings.skipUnknownCharacters }}
-            </button>
-            <button
-              type="button"
-              :aria-pressed="panel.simulator.parseDerivativeAsY"
-              :class="{ 'graphwar-killer__toggle-button--active': panel.simulator.parseDerivativeAsY }"
+              @toggle="emit('toggleSimulatorSkipUnknownCharacters')"
+            />
+            <ToggleField
+              id="graphwar-killer-parse-derivative-as-y"
+              :checked="panel.simulator.parseDerivativeAsY"
+              :label="locale.ui.settings.parseDerivativeAsY"
+              state="normal"
               :title="locale.ui.settings.parseDerivativeAsYTitle"
-              @click="emit('toggleSimulatorParseDerivativeAsY')"
-            >
-              {{ locale.ui.settings.parseDerivativeAsY }}
-            </button>
+              @toggle="emit('toggleSimulatorParseDerivativeAsY')"
+            />
           </div>
         </div>
         <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
@@ -260,41 +283,95 @@ const liveClickPreviewWorkerCountText = computed({
               :title="locale.ui.pathfinding.obstacleExpansionTitle"
             >
               {{ locale.ui.pathfinding.obstacleExpansion }}
-              <span class="graphwar-killer__details-summary-note">
-                {{
-                  panel.pathfinding.obstacleExpansionMode === "agent"
-                    ? locale.ui.pathfinding.obstacleExpansionAgentMode
-                    : locale.ui.pathfinding.obstacleExpansionDetectionMode
-                }}
-              </span>
             </summary>
-            <div class="graphwar-killer__pathfinding-setting-grid">
-              <label
-                class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-                :title="locale.ui.pathfinding.routePlanningToleranceTitle"
-              >
-                {{ locale.ui.pathfinding.routePlanningTolerance }}
-                <input
-                  v-model="routePlanningToleranceText"
-                  inputmode="decimal"
-                  :aria-label="locale.ui.pathfinding.routePlanningToleranceAriaLabel"
+            <div class="graphwar-killer__obstacle-expansion-grid">
+              <div class="graphwar-killer__obstacle-expansion-source">
+                <strong>{{ locale.ui.pathfinding.obstacleExpansionDetectionMode }}</strong>
+                <label
+                  class="graphwar-killer__detection-setting-label"
                   :title="locale.ui.pathfinding.routePlanningToleranceTitle"
                 >
-                <span>{{ locale.ui.pathfinding.unit }}</span>
-              </label>
-              <label
-                class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
-                :title="locale.ui.pathfinding.simulationToleranceTitle"
-              >
-                {{ locale.ui.pathfinding.simulationTolerance }}
-                <input
-                  v-model="obstacleSimulationToleranceText"
-                  inputmode="decimal"
-                  :aria-label="locale.ui.pathfinding.simulationToleranceAriaLabel"
+                  {{ locale.ui.pathfinding.routePlanningTolerance }}
+                  <input
+                    v-model="detectionRoutePlanningToleranceText"
+                    inputmode="decimal"
+                    :aria-label="`${locale.ui.pathfinding.obstacleExpansionDetectionMode}: ${locale.ui.pathfinding.routePlanningToleranceAriaLabel}`"
+                    :title="locale.ui.pathfinding.routePlanningToleranceTitle"
+                  >
+                  <span>{{ locale.ui.pathfinding.unit }}</span>
+                </label>
+                <label
+                  class="graphwar-killer__detection-setting-label"
                   :title="locale.ui.pathfinding.simulationToleranceTitle"
                 >
-                <span>{{ locale.ui.pathfinding.unit }}</span>
-              </label>
+                  {{ locale.ui.pathfinding.simulationTolerance }}
+                  <input
+                    v-model="detectionObstacleSimulationToleranceText"
+                    inputmode="decimal"
+                    :aria-label="`${locale.ui.pathfinding.obstacleExpansionDetectionMode}: ${locale.ui.pathfinding.simulationToleranceAriaLabel}`"
+                    :title="locale.ui.pathfinding.simulationToleranceTitle"
+                  >
+                  <span>{{ locale.ui.pathfinding.unit }}</span>
+                </label>
+              </div>
+              <div class="graphwar-killer__obstacle-expansion-source">
+                <strong>{{ locale.ui.pathfinding.obstacleExpansionAgentMode }}</strong>
+                <label
+                  class="graphwar-killer__detection-setting-label"
+                  :title="locale.ui.pathfinding.routePlanningToleranceTitle"
+                >
+                  {{ locale.ui.pathfinding.routePlanningTolerance }}
+                  <input
+                    v-model="agentRoutePlanningToleranceText"
+                    inputmode="decimal"
+                    :aria-label="`${locale.ui.pathfinding.obstacleExpansionAgentMode}: ${locale.ui.pathfinding.routePlanningToleranceAriaLabel}`"
+                    :title="locale.ui.pathfinding.routePlanningToleranceTitle"
+                  >
+                  <span>{{ locale.ui.pathfinding.unit }}</span>
+                </label>
+                <label
+                  class="graphwar-killer__detection-setting-label"
+                  :title="locale.ui.pathfinding.simulationToleranceTitle"
+                >
+                  {{ locale.ui.pathfinding.simulationTolerance }}
+                  <input
+                    v-model="agentObstacleSimulationToleranceText"
+                    inputmode="decimal"
+                    :aria-label="`${locale.ui.pathfinding.obstacleExpansionAgentMode}: ${locale.ui.pathfinding.simulationToleranceAriaLabel}`"
+                    :title="locale.ui.pathfinding.simulationToleranceTitle"
+                  >
+                  <span>{{ locale.ui.pathfinding.unit }}</span>
+                </label>
+              </div>
+              <div class="graphwar-killer__obstacle-expansion-source">
+                <strong>{{ locale.ui.settings.stepGlitchMode }}</strong>
+                <label
+                  class="graphwar-killer__detection-setting-label"
+                  :title="locale.ui.pathfinding.routePlanningToleranceTitle"
+                >
+                  {{ locale.ui.pathfinding.routePlanningTolerance }}
+                  <input
+                    v-model="stepGlitchRoutePlanningToleranceText"
+                    inputmode="decimal"
+                    :aria-label="`${locale.ui.settings.stepGlitchMode}: ${locale.ui.pathfinding.routePlanningToleranceAriaLabel}`"
+                    :title="locale.ui.pathfinding.routePlanningToleranceTitle"
+                  >
+                  <span>{{ locale.ui.pathfinding.unit }}</span>
+                </label>
+                <label
+                  class="graphwar-killer__detection-setting-label"
+                  :title="locale.ui.pathfinding.simulationToleranceTitle"
+                >
+                  {{ locale.ui.pathfinding.simulationTolerance }}
+                  <input
+                    v-model="stepGlitchObstacleSimulationToleranceText"
+                    inputmode="decimal"
+                    :aria-label="`${locale.ui.settings.stepGlitchMode}: ${locale.ui.pathfinding.simulationToleranceAriaLabel}`"
+                    :title="locale.ui.pathfinding.simulationToleranceTitle"
+                  >
+                  <span>{{ locale.ui.pathfinding.unit }}</span>
+                </label>
+              </div>
             </div>
           </details>
           <label
@@ -375,8 +452,10 @@ const liveClickPreviewWorkerCountText = computed({
 
 .graphwar-killer__advanced-settings-panel label {
   display: grid;
+  font-size: 0.9rem;
   font-weight: 600;
   gap: 3px;
+  line-height: 1.3;
   min-width: 0;
 }
 
@@ -385,6 +464,8 @@ const liveClickPreviewWorkerCountText = computed({
   border: 1px solid var(--vp-c-divider);
   border-radius: 8px;
   box-sizing: border-box;
+  font-family: inherit;
+  font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
   height: 30px;
   line-height: 1.15;
@@ -395,7 +476,7 @@ const liveClickPreviewWorkerCountText = computed({
     border-color 0.2s ease,
     box-shadow 0.2s ease,
     background-color 0.2s ease;
-  width: 100%;
+  width: 92px;
 }
 
 .graphwar-killer__advanced-settings-panel button {
@@ -475,7 +556,13 @@ const liveClickPreviewWorkerCountText = computed({
 }
 
 .graphwar-killer__details {
+  background: var(--vp-c-bg-soft);
+  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 82%, transparent);
+  border-radius: 8px;
+  display: grid;
   gap: 0;
+  min-width: 0;
+  padding: 8px;
 }
 
 .graphwar-killer__details[open] {
@@ -490,33 +577,29 @@ const liveClickPreviewWorkerCountText = computed({
   margin: -2px 0;
 }
 
-.graphwar-killer__details-summary-note {
-  color: color-mix(in srgb, var(--vp-c-text-1) 62%, var(--vp-c-text-2) 38%);
-  font-size: 0.84rem;
-  font-weight: 600;
-  margin-left: 6px;
-}
-
 .graphwar-killer__details > summary:focus-visible {
   border-radius: 4px;
   outline: 2px solid var(--vp-c-brand-1);
   outline-offset: 2px;
 }
 
-.graphwar-killer__details[open] > summary {
-  margin-bottom: 6px;
+.graphwar-killer__obstacle-expansion-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  min-width: 0;
 }
 
-.graphwar-killer__pathfinding-setting-grid {
+.graphwar-killer__obstacle-expansion-source {
+  align-content: start;
   display: grid;
   gap: 6px;
   min-width: 0;
 }
 
-/* 寻路数值项有的在 details 内、有的直接在分组内；统一收紧宽度，避免父 grid 拉伸后把输入框推右。 */
-.graphwar-killer__pathfinding-setting-label {
-  grid-template-columns: max-content minmax(74px, 92px) auto;
-  justify-self: start;
+.graphwar-killer__obstacle-expansion-source > strong {
+  font-size: 0.9rem;
+  line-height: 1.3;
 }
 
 .graphwar-killer__recognition-setting-row {
@@ -526,40 +609,31 @@ const liveClickPreviewWorkerCountText = computed({
   min-width: 0;
 }
 
-.graphwar-killer__recognition-setting-row .graphwar-killer__detection-setting-label {
-  grid-template-columns: max-content minmax(74px, 92px) auto;
-  min-width: 0;
-}
-
 .graphwar-killer__coordinate-grid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
 }
 
 .graphwar-killer__coordinate-grid label {
   align-items: center;
   gap: 6px;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: max-content 92px;
+  justify-content: start;
 }
 
 .graphwar-killer__detection-setting-label {
   align-items: center;
   font-weight: 600;
   gap: 6px;
-  grid-template-columns: auto minmax(74px, 92px) auto;
+  grid-template-columns: max-content 92px auto;
+  justify-content: start;
 }
 
 .graphwar-killer__detection-setting-label span {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
   font-size: 0.88rem;
   font-weight: 500;
-}
-
-.graphwar-killer__toggle-button--active {
-  background: var(--vp-c-brand-soft) !important;
-  border-color: var(--vp-c-brand-1) !important;
-  color: var(--vp-c-brand-1) !important;
 }
 
 .graphwar-killer__advanced-settings-panel button:hover:not(:disabled) {

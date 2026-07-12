@@ -4,19 +4,22 @@ export const graphwarKillerLocale = {
   equationModes: [
     {
       value: "y",
-      label: "y=",
+      label: "y",
+      formulaPrefix: "y=",
       description: "Output a step function",
       title: "Output or simulate a standard function for Graphwar's y mode.",
     },
     {
       value: "dy",
-      label: "y'=",
+      label: "y'",
+      formulaPrefix: "y'=",
       description: "Output the step function's first derivative",
       title: "Output or simulate a first-derivative function for Graphwar's y' mode.",
     },
     {
       value: "ddy",
-      label: "y''=",
+      label: "y''",
+      formulaPrefix: "y''=",
       description: "Output the step function's second derivative",
       title:
         "Output or simulate a second-derivative function for Graphwar's y'' mode; some algorithms are unsupported.",
@@ -163,6 +166,32 @@ export const graphwarKillerLocale = {
     agent: {
       defaultStatus: "Click Read State to load the current game state from Graphwar Agent",
       failed: (message) => `Failed to read state: ${message}`,
+      failureReason: (kind, message) => {
+        switch (message) {
+          case "game-data-not-initialized":
+            return "Graphwar game data has not initialized";
+          case "game-not-active":
+            return "No game is currently active";
+          case "game-not-started":
+            return "Game has not started";
+          case "not-in-pre-game-room":
+            return "Not currently in a game room";
+        }
+        switch (kind) {
+          case "conflict":
+            return "Graphwar state changed; try again";
+          case "incompatible":
+            return "The Graphwar Agent version or response is incompatible; upgrade the Agent";
+          case "invalid-request":
+            return "The request sent to Graphwar Agent is invalid";
+          case "transient":
+            return "The network or Graphwar Agent is temporarily unavailable";
+          case "unavailable":
+            return `Agent returned an unknown state: ${message}`;
+          default:
+            return message;
+        }
+      },
       fireFailed: (message) => `Failed to fire: ${message}`,
       fired: "Function submitted and fired.",
       loaded: (soldiers) => `Read current state: obstacles and ${soldiers} soldier(s)`,
@@ -233,13 +262,15 @@ export const graphwarKillerLocale = {
       completedWaiting: "Managed calculation complete; waiting for a local turn",
       connectionFailed: (message) => `Agent connection failed; retrying: ${message}`,
       deadlineFired: "Stopped with 3 seconds remaining and fired the current best plan",
-      deadlineNoPlan: "Stopped with 3 seconds remaining; no usable plan",
+      deadlineNoPlan: "Stopped with 3 seconds remaining but could not submit the skip-turn function",
       deadlinePlan: (targetCount, elapsed) =>
         `Managed calculation stopped with 3 seconds remaining after ${elapsed}; the best plan hits ${targetCount} target(s)`,
       enabled: "Managed mode enabled; reading game state",
       incompatible: "Managed mode stopped because the Agent API is incompatible; upgrade the Agent",
       readying: "A local room player is not ready; requesting ready automatically",
-      searchFailed: "Managed calculation failed; this turn will not be retried",
+      searchFailed: "Managed calculation failed and could not skip this turn",
+      skippingTurn: "No usable plan; skipping this turn",
+      skipTurnFired: "No usable plan; skipped this turn",
       shotUnknown: (message) => `Shot result is unknown and will not be retried this turn: ${message}`,
       stopped: "Managed mode stopped",
       successFired: "Managed calculation complete; fired the best plan",
@@ -705,7 +736,7 @@ export const graphwarKillerLocale = {
       obstacleExpansionDetectionMode: "Detection mode",
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
-        "Adjust the safety margin around detected obstacles and coordinate-system bounds for pathfinding and collision checks.",
+        "Adjust the safety margin around detected obstacles and coordinate-system bounds for pathfinding and collision checks; active Glitch Mode uses its own settings first.",
       oneClickClearDeleteCheckRadius: "Point-delete hit check radius",
       oneClickClearDeleteCheckRadiusAriaLabel:
         "One-Click Clear point-delete hit check radius, in raw Graphwar 770x450 plane pixels",
@@ -716,9 +747,19 @@ export const graphwarKillerLocale = {
       managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
       managedMode: "Managed mode",
       managedModeDisableTitle: "Disable managed mode and unlock settings.",
-      managedModeConfirmation: (repairedModes, friendlyFireEnabled) =>
-        `Managed mode submits shots to Graphwar automatically. Friendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}. ${repairedModes ? `These formula profiles will be repaired: ${repairedModes}.` : "All three formula profiles are ready."}\n\nEnable managed mode?`,
-      managedProfilesTitle: "Managed formula profiles",
+      managedModeConfirmation: (repairs, friendlyFireEnabled) => {
+        const algorithmStatus =
+          repairs.length === 0
+            ? "The algorithm settings for all three game modes support One-Click Clear"
+            : [
+                "These game modes need different algorithm settings:",
+                ...repairs.map(
+                  (repair) =>
+                    `${repair.equation}: the current algorithm does not support One-Click Clear; it will be set to ${repair.algorithm}${repair.properties.length > 0 ? ` (${repair.properties.join(", ")})` : ""}`,
+                ),
+              ].join("\n");
+        return `Managed mode submits shots to Graphwar automatically\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\n\n${algorithmStatus}\n\nEnable managed mode?`;
+      },
       managedModeTitle: "Read state, ready, calculate One-Click Clear, and fire automatically on local turns.",
       routePlanningTolerance: "Route planning tolerance",
       routePlanningToleranceAriaLabel: "Route planning tolerance in raw Graphwar 770x450 plane pixels",
@@ -737,9 +778,8 @@ export const graphwarKillerLocale = {
       simulationToleranceTitle:
         "Obstacle tolerance used during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
       autoGraph: "One-Click Clear",
-      tasksTitle: "Pathfinding tasks",
       title: "Pathfinding",
-      optionsTitle: "Pathfinding options",
+      settingsSummary: "Pathfinding settings",
       unit: "px",
     },
     point: {
@@ -816,7 +856,7 @@ export const graphwarKillerLocale = {
       modeTitle: "Choose whether to generate a copyable function or simulate an existing function's trajectory.",
       overflowProtection: "Overflow protection",
       overflowProtectionTitle:
-        "Clamp the step function's exponential terms to reduce overflow risk after pasting into Graphwar.",
+        "Check whether Step derivative terms overflow within the possible sampling range from the launch point to the x+ boundary and use a numerically stable form when required.",
       parseDerivativeAsY: "y' -> y",
       parseDerivativeAsYTitle: "Graphwar has a bug: because of the regular expression order, y' is parsed as y.",
       pathfinding: {
@@ -851,7 +891,7 @@ export const graphwarKillerLocale = {
       stepSteepness: "Step steepness a",
       stepSteepnessAriaLabel: "Step function steepness a",
       stepSteepnessTitle:
-        "Steepness parameter a for the step function; higher values make turns sharper but increase overflow risk.",
+        "Steepness parameter a for the step function; higher values make turns sharper and cause derivative exponentials to reach the overflow threshold over shorter x distances.",
       title: "Settings",
     },
   },

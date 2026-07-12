@@ -1,4 +1,5 @@
 /** 定义 Graphwar 杀手本地化文案结构，供中英文页面共享。 */
+import type { GraphwarAgentClientErrorKind } from "./controllers/agent/client";
 import type { GraphwarCapabilityReason } from "./controllers/page/capabilities";
 import type { AlgorithmMode, EquationMode } from "./core/types";
 import type { GraphwarDetectionWarning } from "./detection/objects";
@@ -87,7 +88,10 @@ export interface GraphwarKillerLocale {
   /** Graphwar 方程解释模式切换项。 */
   equationModes: readonly {
     value: EquationMode;
+    /** 游戏模式名称，不包含函数输入框使用的等号。 */
     label: string;
+    /** 仅用于函数输入/输出框左侧的 Graphwar 公式前缀。 */
+    formulaPrefix: string;
     description: string;
     title: string;
   }[];
@@ -200,6 +204,7 @@ export interface GraphwarKillerLocale {
     agent: {
       defaultStatus: string;
       failed: (message: string) => string;
+      failureReason: (kind: GraphwarAgentClientErrorKind | undefined, message: string) => string;
       fireFailed: (message: string) => string;
       fired: string;
       loaded: (soldiers: number) => string;
@@ -252,6 +257,8 @@ export interface GraphwarKillerLocale {
       incompatible: string;
       readying: string;
       searchFailed: string;
+      skippingTurn: string;
+      skipTurnFired: string;
       shotUnknown: (message: string) => string;
       stopped: string;
       successFired: string;
@@ -391,8 +398,15 @@ export interface GraphwarKillerLocale {
       managedFriendlyFireWarning: string;
       managedMode: string;
       managedModeDisableTitle: string;
-      managedModeConfirmation: (repairedModes: string, friendlyFireEnabled: boolean) => string;
-      managedProfilesTitle: string;
+      /** 明确列出托管算法支持结论，以及每个不支持模式将采用的算法设定。 */
+      managedModeConfirmation: (
+        repairs: readonly {
+          equation: string;
+          algorithm: string;
+          properties: readonly string[];
+        }[],
+        friendlyFireEnabled: boolean,
+      ) => string;
       managedModeTitle: string;
       routePlanningTolerance: string;
       routePlanningToleranceAriaLabel: string;
@@ -408,9 +422,8 @@ export interface GraphwarKillerLocale {
       simulationToleranceAriaLabel: string;
       simulationToleranceTitle: string;
       autoGraph: string;
-      tasksTitle: string;
       title: string;
-      optionsTitle: string;
+      settingsSummary: string;
       unit: string;
     };
     point: {

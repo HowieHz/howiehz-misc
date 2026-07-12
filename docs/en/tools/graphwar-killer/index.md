@@ -52,7 +52,8 @@ Managed Mode only requires Use Agent with a valid URL; it does not depend on the
 On first enable, Managed Mode lists profiles that do not support One-Click Clear and, after confirmation, repairs only those profiles. It locks calculation and firing inputs, reads authoritative state once per second, selects the profile for the Agent's current game mode, and calculates One-Click Clear only during the current local human turn.
 
 - When a search finishes, its calculation time is shown briefly and the shot is submitted immediately without waiting for the screenshot or trajectory to render on the page.
-- When 3 seconds remain, it stops calculating. If a validated plan exists, it briefly shows the elapsed calculation time and fires the best one; otherwise, it skips the turn.
+- If the search fails, or if 3 seconds remain without a usable plan, Managed Mode fires `999999999999999x` to skip the turn quickly. It does not deliberately hit an obstacle as a fallback because the explosion would change the map and could open a route for an opponent to attack your team.
+- When 3 seconds remain, it stops calculating. If a validated plan exists, it briefly shows the elapsed calculation time and fires the best one.
 - It does not retry during the same turn if calculation fails or the shot result cannot be confirmed.
 - It recalculates every turn and does not reuse the previous turn's result.
 - Keep the managed page in the foreground. The tool tries to keep the screen awake. Going into the background may cause delays; the tool will show a warning.

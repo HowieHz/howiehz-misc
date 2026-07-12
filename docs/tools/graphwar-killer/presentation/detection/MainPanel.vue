@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
 
 type GraphwarDetectionPanelStatusKind = "info" | "success" | "warning" | "error";
@@ -104,116 +105,126 @@ function handleAgentBaseUrlInput(event: Event) {
       <h2 id="graphwar-killer-detection-title">
         {{ locale.ui.detection.title }}
       </h2>
-      <span
-        v-if="panel.headerStatus.message"
-        role="status"
-        aria-live="polite"
-        :title="panel.headerStatus.message"
-        :class="{
-          'graphwar-killer__label-status--error': panel.headerStatus.kind === 'error',
-          'graphwar-killer__label-status--warning': panel.headerStatus.kind === 'warning',
-          'graphwar-killer__label-status--success': panel.headerStatus.kind === 'success',
-        }"
+      <div
+        v-if="panel.headerStatus.message || panel.statusWarning.message"
+        class="graphwar-killer__label-feedback"
       >
-        {{ panel.headerStatus.message }}
-      </span>
-      <span
-        v-if="panel.statusWarning.message"
-        class="graphwar-killer__label-status graphwar-killer__label-status--warning"
-        :title="panel.statusWarning.title"
-      >
-        {{ panel.statusWarning.message }}
-      </span>
+        <span
+          v-if="panel.headerStatus.message"
+          role="status"
+          aria-live="polite"
+          :title="panel.headerStatus.message"
+          :class="{
+            'graphwar-killer__label-status--error': panel.headerStatus.kind === 'error',
+            'graphwar-killer__label-status--warning': panel.headerStatus.kind === 'warning',
+            'graphwar-killer__label-status--success': panel.headerStatus.kind === 'success',
+          }"
+        >
+          {{ panel.headerStatus.message }}
+        </span>
+        <span
+          v-if="panel.statusWarning.message"
+          class="graphwar-killer__label-status graphwar-killer__label-status--warning"
+          :title="panel.statusWarning.title"
+        >
+          {{ panel.statusWarning.message }}
+        </span>
+      </div>
+      <ToggleField
+        id="graphwar-killer-agent-usage"
+        class="graphwar-killer__source-toggle"
+        :checked="panel.agent.enabled"
+        :label="locale.ui.detection.agent.toggle"
+        :state="panel.interactionDisabled ? 'blocked' : 'normal'"
+        :title="locale.ui.detection.agent.toggleTitle"
+        @toggle="emit('toggleAgentUsage')"
+      />
     </div>
     <fieldset
       class="graphwar-killer__detection-fields"
       :disabled="panel.interactionDisabled"
     >
       <div class="graphwar-killer__image-actions">
-        <button
-          v-if="panel.screenshotActionsVisible"
-          type="button"
-          :title="locale.ui.screenshot.captureTitle"
-          @click="emit('captureImage')"
-        >
-          {{ locale.ui.screenshot.capture }}
-        </button>
-        <label
-          v-if="panel.screenshotActionsVisible"
-          class="graphwar-killer__upload"
-          :title="locale.ui.screenshot.uploadTitle"
-        >
-          <input
-            type="file"
-            accept="image/*"
-            :title="locale.ui.screenshot.uploadInputTitle"
-            @change="emit('uploadImage', $event)"
-          >
-          <span>{{ locale.ui.screenshot.upload }}</span>
-        </label>
-        <button
-          v-if="!panel.agent.enabled"
-          type="button"
-          :disabled="!panel.canDetectBounds"
-          :title="locale.ui.detection.detectBoundsTitle"
-          @click="emit('detectBounds')"
-        >
-          {{ locale.ui.detection.detectBounds }}
-        </button>
-        <button
-          v-if="!panel.agent.enabled"
-          type="button"
-          :disabled="!panel.canDetectObjects"
-          :title="panel.detectObjectsTitle"
-          @click="emit('detectObjects')"
-        >
-          {{ locale.ui.detection.detectObjects }}
-        </button>
         <div
-          v-if="panel.agent.enabled"
-          class="graphwar-killer__agent-read-field"
+          v-if="panel.screenshotActionsVisible"
+          class="graphwar-killer__source-action-row"
         >
           <button
             type="button"
-            :aria-describedby="panel.agent.readReason ? 'graphwar-killer-agent-read-reason' : undefined"
-            :disabled="panel.agent.readState === 'blocked' || panel.agent.readState === 'busy'"
-            :title="locale.ui.detection.agent.readTitle"
-            @click="emit('readAgent')"
+            :title="locale.ui.screenshot.captureTitle"
+            @click="emit('captureImage')"
           >
-            {{ panel.agent.inProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
+            {{ locale.ui.screenshot.capture }}
           </button>
-          <span
-            v-if="panel.agent.readReason"
-            id="graphwar-killer-agent-read-reason"
-            class="graphwar-killer__agent-read-reason"
+          <label
+            class="graphwar-killer__upload"
+            :title="locale.ui.screenshot.uploadTitle"
           >
-            {{ panel.agent.readReason }}
-          </span>
+            <input
+              type="file"
+              accept="image/*"
+              :title="locale.ui.screenshot.uploadInputTitle"
+              @change="emit('uploadImage', $event)"
+            >
+            <span>{{ locale.ui.screenshot.upload }}</span>
+          </label>
         </div>
-        <button
+        <div
           v-if="!panel.agent.enabled"
-          type="button"
-          :aria-pressed="panel.autoDetectionEnabled"
-          :class="{ 'graphwar-killer__toggle-button--active': panel.autoDetectionEnabled }"
-          :title="locale.ui.detection.autoDetectionTitle"
-          @click="emit('toggleAutoDetection')"
+          class="graphwar-killer__source-action-row"
         >
-          {{ locale.ui.detection.autoDetection }}
-        </button>
-        <button
-          type="button"
-          :aria-expanded="panel.agent.enabled"
-          :aria-pressed="panel.agent.enabled"
-          :class="{ 'graphwar-killer__toggle-button--active': panel.agent.enabled }"
-          :title="locale.ui.detection.agent.toggleTitle"
-          @click="emit('toggleAgentUsage')"
+          <button
+            type="button"
+            :disabled="!panel.canDetectBounds"
+            :title="locale.ui.detection.detectBoundsTitle"
+            @click="emit('detectBounds')"
+          >
+            {{ locale.ui.detection.detectBounds }}
+          </button>
+          <button
+            type="button"
+            :disabled="!panel.canDetectObjects"
+            :title="panel.detectObjectsTitle"
+            @click="emit('detectObjects')"
+          >
+            {{ locale.ui.detection.detectObjects }}
+          </button>
+          <ToggleField
+            id="graphwar-killer-auto-detection"
+            :checked="panel.autoDetectionEnabled"
+            :label="locale.ui.detection.autoDetection"
+            state="normal"
+            :title="locale.ui.detection.autoDetectionTitle"
+            @toggle="emit('toggleAutoDetection')"
+          />
+        </div>
+        <div
+          v-if="panel.agent.enabled"
+          class="graphwar-killer__source-action-row"
         >
-          {{ locale.ui.detection.agent.toggle }}
-        </button>
+          <div class="graphwar-killer__agent-read-field">
+            <button
+              type="button"
+              :aria-describedby="panel.agent.readReason ? 'graphwar-killer-agent-read-reason' : undefined"
+              :disabled="panel.agent.readState === 'blocked' || panel.agent.readState === 'busy'"
+              :title="locale.ui.detection.agent.readTitle"
+              @click="emit('readAgent')"
+            >
+              {{ panel.agent.inProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
+            </button>
+            <span
+              v-if="panel.agent.readReason"
+              id="graphwar-killer-agent-read-reason"
+              class="graphwar-killer__agent-read-reason"
+            >
+              {{ panel.agent.readReason }}
+            </span>
+          </div>
+        </div>
       </div>
       <details
         v-if="panel.agent.enabled"
-        class="graphwar-killer__subpanel graphwar-killer__details graphwar-killer__agent-usage"
+        class="graphwar-killer__details graphwar-killer__agent-usage"
       >
         <summary>{{ locale.ui.detection.agent.settingsSummary }}</summary>
         <label
@@ -235,7 +246,7 @@ function handleAgentBaseUrlInput(event: Event) {
       </details>
       <details
         v-if="panel.debugTimingVisible"
-        class="graphwar-killer__subpanel graphwar-killer__details"
+        class="graphwar-killer__details"
       >
         <summary>{{ locale.ui.detection.debugSummary }}</summary>
         <div class="graphwar-killer__debug-timing">
@@ -332,17 +343,24 @@ function handleAgentBaseUrlInput(event: Event) {
 }
 
 .graphwar-killer__label-row {
-  align-items: baseline;
-  display: flex;
+  align-items: center;
+  display: grid;
   gap: 8px;
-  justify-content: space-between;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   min-width: 0;
 }
 
-.graphwar-killer__label-row > span {
+.graphwar-killer__label-feedback {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.graphwar-killer__label-feedback > span {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
   display: block;
-  flex: 1 1 0;
   font-size: 0.88rem;
   line-height: 1.4;
   max-width: 100%;
@@ -353,28 +371,33 @@ function handleAgentBaseUrlInput(event: Event) {
   white-space: nowrap;
 }
 
-.graphwar-killer__label-row > .graphwar-killer__label-status--error {
+.graphwar-killer__label-feedback > .graphwar-killer__label-status--error {
   color: #dc2626;
 }
 
-.graphwar-killer__label-row > .graphwar-killer__label-status--warning {
+.graphwar-killer__label-feedback > .graphwar-killer__label-status--warning {
   color: #b45309;
   font-weight: 700;
 }
 
-.graphwar-killer__label-row > .graphwar-killer__label-status--success {
+.graphwar-killer__label-feedback > .graphwar-killer__label-status--success {
   color: #15803d;
   font-weight: 700;
 }
 
 .graphwar-killer__image-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.graphwar-killer__source-action-row {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.graphwar-killer__image-actions button {
+.graphwar-killer__source-action-row button {
   min-height: 34px;
   padding: 6px 10px;
 }
@@ -424,20 +447,14 @@ function handleAgentBaseUrlInput(event: Event) {
   font-weight: 700;
 }
 
-.graphwar-killer__subpanel {
+.graphwar-killer__details {
   background: var(--vp-c-bg-soft);
   border: 1px solid color-mix(in srgb, var(--vp-c-divider) 82%, transparent);
   border-radius: 8px;
   display: grid;
-  gap: 8px;
+  gap: 0;
   min-width: 0;
   padding: 8px;
-}
-
-.graphwar-killer__subpanel h3 {
-  font-size: 0.92rem;
-  line-height: 1.4;
-  margin: 0;
 }
 
 .graphwar-killer__agent-usage {
@@ -462,10 +479,6 @@ function handleAgentBaseUrlInput(event: Event) {
   white-space: normal;
 }
 
-.graphwar-killer__details {
-  gap: 0;
-}
-
 .graphwar-killer__details[open] {
   gap: 8px;
 }
@@ -482,10 +495,6 @@ function handleAgentBaseUrlInput(event: Event) {
   border-radius: 4px;
   outline: 2px solid var(--vp-c-brand-1);
   outline-offset: 2px;
-}
-
-.graphwar-killer__details[open] > summary {
-  margin-bottom: 6px;
 }
 
 .graphwar-killer__debug-timing {
@@ -506,12 +515,6 @@ function handleAgentBaseUrlInput(event: Event) {
   min-width: max-content;
 }
 
-.graphwar-killer__toggle-button--active {
-  background: var(--vp-c-brand-soft) !important;
-  border-color: var(--vp-c-brand-1) !important;
-  color: var(--vp-c-brand-1) !important;
-}
-
 .graphwar-killer__detection-panel button:hover:not(:disabled) {
   border-color: var(--vp-c-brand-1);
   box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
@@ -528,12 +531,22 @@ function handleAgentBaseUrlInput(event: Event) {
 
 @media (width <= 760px) {
   .graphwar-killer__label-row {
-    display: grid;
-    gap: 4px;
+    grid-template-columns: minmax(0, 1fr) max-content;
   }
 
-  .graphwar-killer__label-row > span {
-    text-align: left;
+  .graphwar-killer__label-feedback {
+    align-items: start;
+    display: grid;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+
+  .graphwar-killer__label-feedback > span {
+    overflow: visible;
+    text-align: start;
+    text-overflow: clip;
+    white-space: normal;
   }
 
   .graphwar-killer__agent-url {

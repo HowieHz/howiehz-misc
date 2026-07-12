@@ -512,7 +512,6 @@ const oneClickClearSearchDebugDetailOrder: readonly (
   "dag-longest-path",
   "validate-route",
   "segment-graph-rule",
-  "segment-build-formula",
   "segment-sample-trajectory",
   "remove-failed-edge",
   "optimize-path",
@@ -523,7 +522,6 @@ const oneClickClearNestedDebugDetails = new Set<GraphwarOneClickClearDebugStage>
   "route-pathfinding",
   "route-map-pixels",
   "segment-graph-rule",
-  "segment-build-formula",
   "segment-sample-trajectory",
 ]);
 

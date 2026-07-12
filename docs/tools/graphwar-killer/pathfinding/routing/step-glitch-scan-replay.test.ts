@@ -15,98 +15,106 @@ const sampleFormulaTrajectory = vi.hoisted(() => vi.fn());
 
 vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../formula/trajectory/sampling")>();
-  return {
-    ...original,
-    sampleGraphwarFormulaTrajectory: sampleFormulaTrajectory.mockImplementation(
-      (options: { requiredTargets?: readonly unknown[]; targetSequence?: readonly unknown[] }) => {
-        replayMockState.callCount += 1;
-        const requiredTargetCount = options.requiredTargets?.length ?? 0;
-        const targetCount = options.targetSequence?.length ?? 0;
-        if (replayMockState.farRequiredScenario) {
-          if (replayMockState.callCount === 1) {
-            return {
-              earlyStopReason: "obstacle" as const,
-              obstacleHitIndex: 1,
-              reachedRequiredTargetCount: 0,
-              reachedTargetCount: 0,
-              requiredTargetsHitIndex: -1,
-              sample: {
-                points: [
-                  { x: -9, y: 0 },
-                  { x: -8, y: 0 },
-                ],
-                stopReason: "stopped" as const,
-              },
-              targetHitIndex: -1,
-              trackedTargetHitIndexes: [],
-              visiblePixels: [],
-            };
-          }
-
-          const finalCandidate = replayMockState.callCount >= 4;
+  sampleFormulaTrajectory.mockImplementation(
+    (options: { requiredTargets?: readonly unknown[]; targetSequence?: readonly unknown[] }) => {
+      replayMockState.callCount += 1;
+      const requiredTargetCount = options.requiredTargets?.length ?? 0;
+      const targetCount = options.targetSequence?.length ?? 0;
+      if (replayMockState.farRequiredScenario) {
+        if (replayMockState.callCount === 1) {
           return {
-            earlyStopReason: "stopped" as const,
+            earlyStopReason: "obstacle" as const,
+            obstacleHitIndex: 1,
+            reachedRequiredTargetCount: 0,
+            reachedTargetCount: 0,
+            requiredTargetsHitIndex: -1,
+            sample: {
+              points: [
+                { x: -9, y: 0 },
+                { x: -8, y: 0 },
+              ],
+              stopReason: "stopped" as const,
+            },
+            targetHitIndex: -1,
+            trackedTargetHitIndexes: [],
+            visiblePixels: [],
+          };
+        }
+
+        const finalCandidate = replayMockState.callCount >= 4;
+        return {
+          earlyStopReason: "stopped" as const,
+          obstacleHitIndex: -1,
+          reachedRequiredTargetCount: requiredTargetCount,
+          reachedTargetCount: targetCount,
+          requiredTargetsHitIndex: requiredTargetCount > 0 ? 1 : -1,
+          sample: {
+            // Prefix/gate proof may finish at the farther historical target, but navigation resumes at index 0.
+            points: finalCandidate
+              ? [
+                  { x: -6, y: 4 },
+                  { x: -5, y: 2 },
+                ]
+              : [
+                  { x: replayMockState.callCount === 2 ? -9 : -7.5, y: replayMockState.callCount === 2 ? 0 : 4 },
+                  { x: -5, y: 2 },
+                ],
+            stopReason: "stopped" as const,
+          },
+          targetHitIndex: targetCount > 0 ? 0 : -1,
+          trackedTargetHitIndexes: [],
+          visiblePixels: [],
+        };
+      }
+      return replayMockState.directSuccess
+        ? {
+            earlyStopReason: "target" as const,
             obstacleHitIndex: -1,
             reachedRequiredTargetCount: requiredTargetCount,
             reachedTargetCount: targetCount,
             requiredTargetsHitIndex: requiredTargetCount > 0 ? 1 : -1,
             sample: {
-              // Prefix/gate proof may finish at the farther historical target, but navigation resumes at index 0.
-              points: finalCandidate
-                ? [
-                    { x: -6, y: 4 },
-                    { x: -5, y: 2 },
-                  ]
-                : [
-                    { x: replayMockState.callCount === 2 ? -9 : -7.5, y: replayMockState.callCount === 2 ? 0 : 4 },
-                    { x: -5, y: 2 },
-                  ],
+              points: [
+                { x: -11, y: 0 },
+                { x: -8.5, y: 0 },
+                { x: -6, y: 0 },
+              ],
               stopReason: "stopped" as const,
             },
-            targetHitIndex: targetCount > 0 ? 0 : -1,
+            targetHitIndex: targetCount,
+            trackedTargetHitIndexes: [],
+            visiblePixels: [],
+          }
+        : {
+            earlyStopReason: "obstacle" as const,
+            obstacleHitIndex: 2,
+            reachedRequiredTargetCount: 0,
+            reachedTargetCount: 1,
+            requiredTargetsHitIndex: -1,
+            sample: {
+              points: [
+                { x: -7, y: 0 },
+                { x: -6, y: 0 },
+                { x: -5.99, y: 0 },
+              ],
+              stopReason: "stopped" as const,
+            },
+            targetHitIndex: replayMockState.targetHitIndex,
             trackedTargetHitIndexes: [],
             visiblePixels: [],
           };
-        }
-        return replayMockState.directSuccess
-          ? {
-              earlyStopReason: "target" as const,
-              obstacleHitIndex: -1,
-              reachedRequiredTargetCount: requiredTargetCount,
-              reachedTargetCount: targetCount,
-              requiredTargetsHitIndex: requiredTargetCount > 0 ? 1 : -1,
-              sample: {
-                points: [
-                  { x: -11, y: 0 },
-                  { x: -8.5, y: 0 },
-                  { x: -6, y: 0 },
-                ],
-                stopReason: "stopped" as const,
-              },
-              targetHitIndex: targetCount,
-              trackedTargetHitIndexes: [],
-              visiblePixels: [],
-            }
-          : {
-              earlyStopReason: "obstacle" as const,
-              obstacleHitIndex: 2,
-              reachedRequiredTargetCount: 0,
-              reachedTargetCount: 1,
-              requiredTargetsHitIndex: -1,
-              sample: {
-                points: [
-                  { x: -7, y: 0 },
-                  { x: -6, y: 0 },
-                  { x: -5.99, y: 0 },
-                ],
-                stopReason: "stopped" as const,
-              },
-              targetHitIndex: replayMockState.targetHitIndex,
-              trackedTargetHitIndexes: [],
-              visiblePixels: [],
-            };
-      },
-    ),
+    },
+  );
+  return {
+    ...original,
+    resolveGraphwarTrajectory: vi.fn((options: Parameters<typeof original.resolveGraphwarTrajectory>[0]) => ({
+      context: original.resolveGraphwarTrajectory({
+        ...options,
+        requiredTargets: [],
+        targetSequence: [],
+      }).context,
+      result: sampleFormulaTrajectory(options),
+    })),
   };
 });
 

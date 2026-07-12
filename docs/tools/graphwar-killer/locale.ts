@@ -485,11 +485,7 @@ export const graphwarKillerLocale = {
         },
         "scan-step-glitch": {
           label: "- 清图邪道水平扫描",
-          title: "按目标 x 递增扫描自由水平行，并用最终公式回放验证每个纵向隧穿候选",
-        },
-        "segment-build-formula": {
-          label: "- 清图分段建公式",
-          title: "把当前验证前缀加新边后的完整路径转换成 Graphwar 公式采样上下文",
+          title: "按目标 x 递增扫描自由水平行，并用最终量化公式验证每个纵向隧穿候选",
         },
         "segment-graph-rule": {
           label: "- 清图分段 x+ 检查",

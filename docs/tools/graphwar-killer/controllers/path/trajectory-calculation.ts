@@ -1,12 +1,11 @@
 import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
-  createGraphwarTrajectoryFormulaContext,
   getGraphwarTrajectoryLaunchAngle,
+  GraphwarTrajectoryResolutionError,
+  resolveGraphwarTrajectory,
   sampleGraphwarExpressionTrajectoryWithStops,
-  sampleGraphwarFormulaTrajectory,
   type GraphwarTrajectoryCollisionSettings,
-  type GraphwarTrajectoryFormulaContext,
   type GraphwarTrajectoryFormulaSettings,
   type GraphwarTrajectorySampleResult,
 } from "../../formula/trajectory/sampling";
@@ -101,41 +100,21 @@ export function calculateGraphwarTrajectory(
 function calculateSolverTrajectory(
   input: Extract<GraphwarTrajectoryCalculationInput, { type: "solver" }>,
 ): GraphwarTrajectoryCalculationOutcome {
-  let prepared: PreparedSolverCalculation;
+  let resolved: ReturnType<typeof resolveGraphwarTrajectory>;
+  let launchAngleDegrees: number;
   try {
     if (input.points.length < 2) {
       throw new Error("At least two solver points are required.");
     }
 
-    const context = createGraphwarTrajectoryFormulaContext({
-      bounds: input.bounds,
-      points: input.points,
-      settings: input.settings,
-      soldierCenter: input.points[0],
-    });
-    if (context.formulaPoints.length < 2) {
-      throw new Error("The solver did not produce enough formula points.");
-    }
-
-    const launchAngleRadians =
-      input.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(context, input.points[0]) : Number.NaN;
-    const launchAngleDegrees = (launchAngleRadians * 180) / Math.PI;
-    prepared = {
-      context,
-      formulaResult: context.formulaResult,
-      ...(Number.isFinite(launchAngleDegrees) ? { secondOrderLaunchAngleDegrees: launchAngleDegrees } : {}),
-    };
-  } catch (error) {
-    return createFailureOutcome("formula", error);
-  }
-
-  try {
-    const sampleResult = sampleGraphwarFormulaTrajectory({
+    resolved = resolveGraphwarTrajectory({
       bounds: input.bounds,
       boundsRect: input.boundsRect,
       ...(input.collision ? { collision: input.collision } : {}),
       collectVisiblePixels: true,
-      context: prepared.context,
+      points: input.points,
+      settings: input.settings,
+      soldierCenter: input.points[0],
       // 主轨迹必须继续画到自然停止点；目标只记录首次命中，不能为了统计截短曲线。
       stopOnTargetsComplete: false,
       ...(input.targetPoint && input.targetHitRadiusPixels !== undefined
@@ -145,6 +124,20 @@ function calculateSolverTrajectory(
           }
         : {}),
     });
+    if (resolved.context.formulaPoints.length < 2) {
+      throw new Error("The solver did not produce enough formula points.");
+    }
+    const launchAngleRadians =
+      input.settings.equation === "ddy"
+        ? getGraphwarTrajectoryLaunchAngle(resolved.context, input.points[0])
+        : Number.NaN;
+    launchAngleDegrees = (launchAngleRadians * 180) / Math.PI;
+  } catch (error) {
+    return createFailureOutcome(error instanceof GraphwarTrajectoryResolutionError ? error.stage : "formula", error);
+  }
+
+  try {
+    const { context, result: sampleResult } = resolved;
     // 命中目标后的碰撞不影响当前路径成功提示，保持与原主线程实现一致。
     const obstacleHitIndex =
       sampleResult.targetHitIndex >= 0 && sampleResult.obstacleHitIndex >= sampleResult.targetHitIndex
@@ -155,10 +148,8 @@ function calculateSolverTrajectory(
       ok: true,
       result: {
         curvePoints: formatVisibleTrajectoryPoints(sampleResult.visiblePixels, obstacleHitIndex),
-        formulaResult: prepared.formulaResult,
-        ...(prepared.secondOrderLaunchAngleDegrees === undefined
-          ? {}
-          : { secondOrderLaunchAngleDegrees: prepared.secondOrderLaunchAngleDegrees }),
+        formulaResult: context.formulaResult,
+        ...(Number.isFinite(launchAngleDegrees) ? { secondOrderLaunchAngleDegrees: launchAngleDegrees } : {}),
         ...(warningReason ? { warningReason } : {}),
       },
     };
@@ -194,12 +185,6 @@ function calculateSimulatorTrajectory(
   } catch (error) {
     return createFailureOutcome("trajectory", error);
   }
-}
-
-interface PreparedSolverCalculation {
-  context: GraphwarTrajectoryFormulaContext;
-  formulaResult: FormulaResult;
-  secondOrderLaunchAngleDegrees?: number;
 }
 
 /** 把采样停止原因和命中顺序收敛为页面唯一的轨迹提示。 */

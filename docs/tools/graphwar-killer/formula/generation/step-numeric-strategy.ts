@@ -9,12 +9,10 @@ import {
 } from "../../core/numbers";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
 import type { EquationMode, GraphBounds, GraphPoint } from "../../core/types";
+import type { GraphwarSignProtection, GraphwarSignRole } from "./sign-protection";
 
 /** Java/Graphwar double 的指数上限；Graphwar 会把 exp(z) 解析成 Math.pow(Math.E, z)。 */
 const JAVA_DOUBLE_MAX_EXP_ARGUMENT = Math.log(Number.MAX_VALUE);
-
-/** 稳定版 sigmoid 公式在符号项可去奇点处避免 0 / 0 的 double 精度保护值。 */
-export const GRAPHWAR_TOOL_SIGN_EPSILON = Number.EPSILON;
 
 /** 相邻控制点解析出的最终文本等价 Step 数值。 */
 export interface ResolvedStepFormulaTransition {
@@ -329,10 +327,10 @@ export interface FormulaEvaluationOptions {
   equation?: EquationMode;
   /** 采样应按最终公式小数位判断参数、系数、溢出和 sign 折点。 */
   formulaDecimalPlaces?: number;
-  /** 采样符号项实参的钩子，用于判断是否必须启用 sign epsilon。 */
-  onSignArgument?: (value: number) => void;
-  /** 稳定符号比值的除零保护值；0 表示保留 Graphwar 原始数值行为。 */
-  signEpsilon?: number;
+  /** 只在最终 double 实参精确为 0 时上报原始段和逻辑角色。 */
+  onZeroSignArgument?: (segmentIndex: number, role: GraphwarSignRole) => void;
+  /** 按原始路径段保存的局部 sign 除零保护；未设置的逻辑项保留 Graphwar 原始除法。 */
+  signProtection?: GraphwarSignProtection;
   /** 每个 step 段对应的邪道替换项；undefined 表示该段保持普通 step。 */
   stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[];
   /** 每个 step 段的期望高度差覆盖；邪道段后的普通 step 用它恢复模拟器实际起点。 */
@@ -356,21 +354,6 @@ export function createStepOverflowProtectionRange(bounds: GraphBounds, points: r
     minX: startPoint.x,
     maxX: Math.max(bounds.minX, bounds.maxX),
   };
-}
-
-/**
- * 用 signEpsilon=0 的采样回放探测稳定符号近似是否必须启用 epsilon。
- *
- * Sign epsilon 会轻微改变折点附近曲线；只有真实轨迹踩到 sign(t) 的 t=0 折点时才写入保护。
- */
-export function probeSignEpsilonRequirement(probeSignArguments: (onSignArgument: (value: number) => void) => void) {
-  let hasZeroSignArgument = false;
-  probeSignArguments((value) => {
-    if (value === 0) {
-      hasZeroSignArgument = true;
-    }
-  });
-  return hasZeroSignArgument;
 }
 
 /** 运行时判断 step 导数项是否需要抗溢出，避免无风险项改变 Graphwar 原始行为。 */

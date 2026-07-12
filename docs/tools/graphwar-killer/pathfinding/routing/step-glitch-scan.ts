@@ -1,4 +1,4 @@
-/** Step y'= 邪道模式的从左到右扫描器；几何层只选门和落点，最终文本回放决定是否可达。 */
+/** Step y'= 邪道模式的从左到右扫描器；几何层只选门和落点，最终量化公式模拟决定是否可达。 */
 import {
   GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
   GRAPHWAR_PLANE_HEIGHT,
@@ -17,10 +17,7 @@ import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../
 import { nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
-import {
-  createGraphwarTrajectoryFormulaContext,
-  sampleGraphwarFormulaTrajectory,
-} from "../../formula/trajectory/sampling";
+import { resolveGraphwarTrajectory } from "../../formula/trajectory/sampling";
 import type {
   GraphwarStepGlitchFormulaPrefix,
   GraphwarStepGlitchXWindow,
@@ -72,7 +69,7 @@ export interface GraphwarStepGlitchTargetOptions {
 export type GraphwarStepGlitchScanOptions = GraphwarStepGlitchPrefixOptions & GraphwarStepGlitchTargetOptions;
 
 interface GraphwarStepGlitchScanResultBase {
-  /** 实际执行过最终文本回放的候选路径数。 */
+  /** 实际执行过最终量化公式模拟的候选路径数。 */
   expandedStates: number;
   /** 本条完整公式命中的无序必达目标加当前有序目标数量。 */
   reachedTargetCount: number;
@@ -571,19 +568,7 @@ function replayPathToControlX(
       .slice(options.sourcePath.length)
       .map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
   ];
-  const formulaContext = createGraphwarTrajectoryFormulaContext({
-    bounds: options.bounds,
-    points: graphPoints,
-    settings: context.formulaSettings,
-    soldierCenter: graphPoints[0],
-    ...(options.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: options.stepGlitchFormulaPrefix } : {}),
-    ...(stepGlitchXWindows ? { stepGlitchXWindows } : {}),
-  });
-  if (formulaContext.formulaPoints.length < 2) {
-    return { reachedTargetCount: 0, targetsHit: false };
-  }
-
-  const result = sampleGraphwarFormulaTrajectory({
+  const { context: formulaContext, result } = resolveGraphwarTrajectory({
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     collision: {
@@ -591,11 +576,19 @@ function replayPathToControlX(
       mask: options.simulationMask,
     },
     continueAfterTargetsUntilGraphX: controlX,
-    context: formulaContext,
+    points: graphPoints,
     requiredTargets,
+    settings: context.formulaSettings,
+    soldierCenter: graphPoints[0],
+    ...(options.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: options.stepGlitchFormulaPrefix } : {}),
+    ...(stepGlitchXWindows ? { stepGlitchXWindows } : {}),
     stopOnTargetsComplete: false,
     targetSequence,
   });
+  if (formulaContext.formulaPoints.length < 2) {
+    return { reachedTargetCount: 0, targetsHit: false };
+  }
+
   const targetsHit =
     result.reachedTargetCount >= targetSequence.length && result.reachedRequiredTargetCount >= requiredTargets.length;
   const lastSafeIndex = result.obstacleHitIndex >= 0 ? result.obstacleHitIndex - 1 : result.sample.points.length - 1;

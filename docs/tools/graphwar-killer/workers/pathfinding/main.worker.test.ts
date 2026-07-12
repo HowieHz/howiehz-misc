@@ -235,7 +235,7 @@ describe("Step glitch smart-path validation", () => {
       points: formulaPoints,
       refinedFormulaPoints: formulaPoints,
       settings: { ...first.settings },
-      signEpsilon: 0,
+      signProtection: [],
       stepGlitchRequirements: [false],
       stepGlitchSegments: [undefined],
       stepSegmentDeltaYs: [undefined],

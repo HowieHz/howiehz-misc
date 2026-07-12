@@ -4,15 +4,15 @@ import { imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
+import type { GraphwarSignProtection } from "../../formula/generation/build";
 import { resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
 import type { GraphwarTrajectorySamplingState } from "../../formula/simulation/simulator";
 import {
-  createGraphwarTrajectoryFormulaContext,
   getGraphwarTrajectoryLaunchAngle,
   graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle,
   graphwarTrajectoryReachesGraphXBeforeObstacle,
-  sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTargetSequence,
+  resolveGraphwarTrajectory,
 } from "../../formula/trajectory/sampling";
 import type {
   GraphwarStepGlitchFormulaPrefix,
@@ -73,7 +73,6 @@ export type GraphwarOneClickClearDebugStage =
   | "route-map-pixels"
   | "route-pathfinding"
   | "scan-step-glitch"
-  | "segment-build-formula"
   | "segment-graph-rule"
   | "segment-sample-trajectory"
   | "validate-final"
@@ -176,7 +175,7 @@ export interface GraphwarOneClickClearDagEdgeRoute {
   route?: PixelPoint[];
 }
 
-/** 已通过本次精确公式文本回放验证、可直接交给 Agent 发射的当前最优方案。 */
+/** 已通过本次最终量化公式模拟、可直接交给 Agent 发射的当前最优方案。 */
 export interface GraphwarOneClickClearIncumbent {
   /** 与前缀验证使用相同公式上下文生成的 Graphwar 表达式。 */
   expression: string;
@@ -404,7 +403,7 @@ interface OneClickClearRouteValidationSnapshot {
 }
 
 interface OneClickClearPathOptimizationResult {
-  /** 局部快检删点后的精确路径若已完整复验，调用方可直接复用。 */
+  /** 局部快检删点后的精确路径若已完整复验，调用方可直接复用结果及其公式上下文。 */
   finalValidation?: ReturnType<typeof sampleOneClickClearTargetSequence>;
   route: OneClickClearValidatedRoute;
   workUnits: number;
@@ -446,6 +445,8 @@ interface OneClickClearSearchContext {
 interface OneClickClearRouteSegmentValidationState {
   /** 上一个增量采样段结束时可恢复的物理状态。 */
   initialState?: GraphwarTrajectorySamplingState;
+  /** 物理状态只对生成它的局部 sign 保护集合有效。 */
+  signProtection?: GraphwarSignProtection;
 }
 
 interface OneClickClearRouteSegmentValidationResult {
@@ -534,7 +535,7 @@ async function buildOneClickClearDagPath(
       return createOneClickClearFailure(attempt.reason, startedAt, workUnits);
     }
     if (attempt.type === "validated") {
-      publishOneClickClearValidatedRoute(context, ensureOneClickClearRouteFormulaContext(options, attempt.route), true);
+      publishOneClickClearValidatedRoute(context, attempt.route, true);
       return {
         elapsedMs: Math.max(0, nowMs() - startedAt),
         expandedStates: workUnits,
@@ -607,11 +608,11 @@ async function buildOneClickClearStepGlitchPath(
         pathPoints: scan.path,
         targetSequence: [...route.targetSequence, target],
       };
-      // hit 已包含精确整式回放；此时发布不会为了预览再做一次昂贵采样。
+      // hit 已包含精确整式模拟；此时发布不会为了预览再做一次昂贵采样。
       if (route.formulaContext) {
         publishOneClickClearValidatedRoute(context, route);
       }
-      // 成功候选已完整回放；下一目标复用 exact path 的恢复点，不再重放刚提交的 prefix。
+      // 成功候选已完整模拟；下一目标复用 exact path 的恢复点，不再重算刚提交的 prefix。
       prefixEvidence = { acceptedPoint: scan.acceptedPoint };
       stepGlitchFormulaPrefix = scan.stepGlitchFormulaPrefix;
       // 每个 hit 都是可独立采用的精确路径；最终失败时 Master 仍应能复用被页面保留的这个前缀。
@@ -634,11 +635,11 @@ async function buildOneClickClearStepGlitchPath(
   const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
     sampleOneClickClearTargetSequence(options, finalized.route, true),
   );
-  if (!finalValidation.reachesTargetSequenceBeforeObstacle) {
+  if (!finalValidation.reachesTargetSequenceBeforeObstacle || !finalValidation.formulaContext) {
     return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
   }
-
-  publishOneClickClearValidatedRoute(context, ensureOneClickClearRouteFormulaContext(options, finalized.route), true);
+  const finalRoute = { ...finalized.route, formulaContext: finalValidation.formulaContext };
+  publishOneClickClearValidatedRoute(context, finalRoute, true);
 
   const hitTargets = collectOneClickClearHitTargets(
     finalValidation.trackedTargets,
@@ -650,9 +651,10 @@ async function buildOneClickClearStepGlitchPath(
   }
   publishOneClickClearStepGlitchEvidence(
     options,
-    finalized.route,
+    finalRoute,
     finalValidation,
-    finalized.route === route ? stepGlitchFormulaPrefix : undefined,
+    // 最终验证可能新增局部保护；恢复证据必须绑定它实际验证的精确公式前缀。
+    finalValidation.formulaContext.stepGlitchFormulaPrefix,
   );
   return {
     elapsedMs: Math.max(0, nowMs() - startedAt),
@@ -723,14 +725,15 @@ async function runOneClickClearSearchAttempt(
     );
   if (
     oneClickClearStepRouteIsValid(options, optimized.route.pathPoints) &&
-    finalValidation.reachesTargetSequenceBeforeObstacle
+    finalValidation.reachesTargetSequenceBeforeObstacle &&
+    finalValidation.formulaContext
   ) {
     return {
       hitTargets: collectOneClickClearHitTargets(
         finalValidation.trackedTargets,
         finalValidation.trackedTargetHitIndexes,
       ),
-      route: optimized.route,
+      route: { ...optimized.route, formulaContext: finalValidation.formulaContext },
       type: "validated",
       workUnits: optimized.workUnits,
     };
@@ -1384,6 +1387,7 @@ function validateOneClickClearDagRoute(
     formulaContext = validation.formulaContext;
     segmentState = {
       ...(validation.sampleResult.sample.endState ? { initialState: validation.sampleResult.sample.endState } : {}),
+      signProtection: validation.formulaContext.signProtection,
     };
     targetSequence.push(target);
     validatedPrefix.push({
@@ -1413,7 +1417,7 @@ function appendOneClickClearEdgeRoute(sourcePath: readonly PixelPoint[], route: 
   return [...sourcePath, ...route.slice(1)];
 }
 
-/** 只续采样新增段；目标命中验证使用 hitCircle，最终整路验证仍会重采样一次。 */
+/** 只续采样新增段；若保护扩大而退回发射点，完整历史目标会自动重新验证。 */
 function validateOneClickClearRouteSegment(
   context: OneClickClearSearchContext,
   nextPath: readonly PixelPoint[],
@@ -1428,16 +1432,8 @@ function validateOneClickClearRouteSegment(
     return undefined;
   }
 
-  const formulaContext = measureOneClickClearDebugTiming(options, "segment-build-formula", () => {
-    const mappedPoints = nextPath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
-    return createGraphwarTrajectoryFormulaContext({
-      bounds: options.bounds,
-      points: mappedPoints,
-      settings: options.settings,
-      soldierCenter: mappedPoints[0],
-    });
-  });
-  if (formulaContext.formulaPoints.length < 2) {
+  const mappedPoints = nextPath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
+  if (mappedPoints.length < 2) {
     return undefined;
   }
 
@@ -1452,26 +1448,29 @@ function validateOneClickClearRouteSegment(
     graphXAdvancesStrictly(state.initialState.currentPoint.x, currentTargetGraphX)
       ? state.initialState
       : undefined;
-  const validationTargets = createOneClickClearValidationTargets(
+  const validationTargets = createOneClickClearValidationTargets(options, targetSequence, true);
+  const { context: formulaContext, result } = measureOneClickClearDebugTiming(
     options,
-    targetSequence,
-    reusableInitialState === undefined,
-  );
-  const result = measureOneClickClearDebugTiming(options, "segment-sample-trajectory", () =>
-    sampleGraphwarFormulaTrajectory({
-      bounds: options.bounds,
-      boundsRect: options.boundsRect,
-      collision: {
-        boundaryExpansion: options.simulationBoundaryExpansion,
-        mask: options.simulationMask,
-      },
-      context: formulaContext,
-      // Step 的后续项会反向改变发射点和旧段尾部；每条候选必须从发射点完整回放。
-      initialState: reusableInitialState,
-      requiredTargets: validationTargets.requiredTargets,
-      skipInitialStop: reusableInitialState !== undefined,
-      targetSequence: validationTargets.orderedTargets,
-    }),
+    "segment-sample-trajectory",
+    () =>
+      resolveGraphwarTrajectory({
+        bounds: options.bounds,
+        boundsRect: options.boundsRect,
+        collision: {
+          boundaryExpansion: options.simulationBoundaryExpansion,
+          mask: options.simulationMask,
+        },
+        // Step 的后续项会反向改变发射点和旧段尾部；每条候选必须从发射点完整回放。
+        initialState: reusableInitialState,
+        initialReachedRequiredTargetCount: reusableInitialState ? validationTargets.requiredTargets.length : 0,
+        points: mappedPoints,
+        requiredTargets: validationTargets.requiredTargets,
+        settings: options.settings,
+        signProtection: reusableInitialState ? state.signProtection : undefined,
+        skipInitialStop: reusableInitialState !== undefined,
+        soldierCenter: mappedPoints[0],
+        targetSequence: validationTargets.orderedTargets,
+      }),
   );
   if (
     result.reachedTargetCount < validationTargets.orderedTargets.length ||
@@ -1600,7 +1599,7 @@ function createOneClickClearPreviousTargets(targetSequence: readonly OneClickCle
   return targets;
 }
 
-/** 最终统计回放已经证明 exact path；只在整次清图成功时把它交给 Master 发布。 */
+/** 最终统计模拟已经证明 exact path；只在整次清图成功时把它交给 Master 发布。 */
 function publishOneClickClearStepGlitchEvidence(
   options: GraphwarOneClickClearOptions,
   route: OneClickClearValidatedRoute,
@@ -1713,26 +1712,6 @@ function createOneClickClearIncumbent(
     expression: formulaContext.formulaResult.expression,
     ...(Number.isFinite(launchAngleRadians) ? { launchAngleRadians } : {}),
     pathPoints: [...pathPoints],
-  };
-}
-
-/** 最终删点可能改变路径；只在没有可复用验证上下文时为最终发布补建一次。 */
-function ensureOneClickClearRouteFormulaContext(
-  options: GraphwarOneClickClearOptions,
-  route: OneClickClearValidatedRoute,
-): OneClickClearValidatedRoute & { formulaContext: GraphwarTrajectoryFormulaContext } {
-  if (route.formulaContext) {
-    return { ...route, formulaContext: route.formulaContext };
-  }
-  const graphPoints = route.pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
-  return {
-    ...route,
-    formulaContext: createGraphwarTrajectoryFormulaContext({
-      bounds: options.bounds,
-      points: graphPoints,
-      settings: options.settings,
-      soldierCenter: graphPoints[0],
-    }),
   };
 }
 

@@ -16,8 +16,8 @@ const scanMockState = vi.hoisted(() => ({
   scans: [] as { scannerId: number; targetPoint: { x: number; y: number } }[],
 }));
 const samplingMockState = vi.hoisted(() => ({
-  createFormulaContext: undefined as
-    | (typeof import("../../formula/trajectory/sampling"))["createGraphwarTrajectoryFormulaContext"]
+  resolveTrajectory: undefined as
+    | (typeof import("../../formula/trajectory/sampling"))["resolveGraphwarTrajectory"]
     | undefined,
   formulaContextCalls: 0,
   pathTargetSequenceCalls: 0,
@@ -27,15 +27,13 @@ const samplingMockState = vi.hoisted(() => ({
 
 vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../formula/trajectory/sampling")>();
-  samplingMockState.createFormulaContext = original.createGraphwarTrajectoryFormulaContext;
+  samplingMockState.resolveTrajectory = original.resolveGraphwarTrajectory;
   return {
     ...original,
-    createGraphwarTrajectoryFormulaContext: vi.fn(
-      (options: Parameters<typeof original.createGraphwarTrajectoryFormulaContext>[0]) => {
-        samplingMockState.formulaContextCalls += 1;
-        return original.createGraphwarTrajectoryFormulaContext(options);
-      },
-    ),
+    resolveGraphwarTrajectory: vi.fn((options: Parameters<typeof original.resolveGraphwarTrajectory>[0]) => {
+      samplingMockState.formulaContextCalls += 1;
+      return original.resolveGraphwarTrajectory(options);
+    }),
     sampleGraphwarPathTargetSequence: vi.fn(
       (options: Parameters<typeof original.sampleGraphwarPathTargetSequence>[0]) => {
         samplingMockState.pathTargetSequenceCalls += 1;
@@ -71,20 +69,21 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
             scanMockState.scans.push({ scannerId, targetPoint: { ...target.targetPoint } });
             if (outcome === "hit") {
               const path = [...options.sourcePath, target.targetPoint];
-              const createFormulaContext = samplingMockState.createFormulaContext;
-              if (!createFormulaContext) {
+              const resolveTrajectory = samplingMockState.resolveTrajectory;
+              if (!resolveTrajectory) {
                 throw new Error("Formula context test factory is unavailable");
               }
               const graphPoints = path.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
               return {
                 acceptedPoint: { x: 0, y: 0 },
                 expandedStates: 1,
-                formulaContext: createFormulaContext({
+                formulaContext: resolveTrajectory({
                   bounds: options.bounds,
+                  boundsRect: options.boundsRect,
                   points: graphPoints,
                   settings: { ...options.settings, stepGlitchMode: false },
                   soldierCenter: graphPoints[0],
-                }),
+                }).context,
                 path,
                 reachedTargetCount: (options.requiredTargets?.length ?? 0) + 1,
                 status: "hit" as const,

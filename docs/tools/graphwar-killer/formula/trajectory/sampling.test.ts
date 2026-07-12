@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH, GRAPHWAR_STEP_SIZE } from "../../core/game/constants";
 import { graphToImagePoint } from "../../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
-import type { BoundsRect, GraphBounds } from "../../core/types";
+import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds } from "../../core/types";
+import { compileFormulaEvaluator, GraphwarSignRole } from "../generation/build";
+import { sampleGraphwarExpressionTrajectory } from "../simulation/simulator";
 import {
-  createGraphwarTrajectoryFormulaContext,
+  getGraphwarTrajectoryLaunchAngle,
   graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle,
-  sampleGraphwarFormulaTrajectory,
   sampleGraphwarPathTargetSequence,
+  resolveGraphwarTrajectory,
 } from "./sampling";
 
 const bounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
@@ -26,20 +28,23 @@ const settings = {
   stepGlitchMode: false,
   stepOverflowProtection: false,
 };
+const horizontalPoints = [createGraphPoint(-1, 0), createGraphPoint(1, 0)];
 
 describe("Graphwar trajectory target tracking", () => {
   it("tracks every strict-circle hit after the launch point while continuing past the ordered sequence", () => {
     const launchPixel = toPixel(0, 0);
     const firstPixel = toPixel(GRAPHWAR_STEP_SIZE, 0);
     const secondPixel = toPixel(GRAPHWAR_STEP_SIZE * 2, 0);
-    const result = sampleGraphwarFormulaTrajectory({
+    const { result } = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
-      context: createHorizontalFormulaContext(),
       initialState: {
         currentPoint: createGraphPoint(0, 0),
         sampleIndex: 0,
       },
+      points: horizontalPoints,
+      settings,
+      soldierCenter: horizontalPoints[0],
       stopOnTargetsComplete: false,
       targetSequence: [{ center: firstPixel, radius: 0.01 }],
       trackedTargets: [
@@ -63,16 +68,18 @@ describe("Graphwar trajectory target tracking", () => {
     const obstacleY = Math.floor(firstPixel.y);
     obstacleMask[obstacleY * GRAPHWAR_PLANE_LENGTH + obstacleX] = 1;
 
-    const result = sampleGraphwarFormulaTrajectory({
+    const { result } = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
       collision: { mask: obstacleMask },
-      context: createHorizontalFormulaContext(),
       initialState: {
         currentPoint: createGraphPoint(0, 0),
         sampleIndex: 0,
       },
+      points: horizontalPoints,
+      settings,
       skipInitialStop: true,
+      soldierCenter: horizontalPoints[0],
       stopOnTargetsComplete: false,
       targetSequence: [{ center: firstPixel, radius: 0.01 }],
       trackedTargets: [
@@ -93,19 +100,21 @@ describe("Graphwar trajectory target tracking", () => {
     const nearerRequiredTarget = toPixel(GRAPHWAR_STEP_SIZE * 2, 0);
     const fartherRequiredTarget = toPixel(GRAPHWAR_STEP_SIZE * 3, 0);
 
-    const result = sampleGraphwarFormulaTrajectory({
+    const { result } = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
-      context: createHorizontalFormulaContext(),
       initialState: {
         currentPoint: createGraphPoint(0, 0),
         sampleIndex: 0,
       },
+      points: horizontalPoints,
       // 故意按实际命中顺序的反序传入，证明 requiredTargets 不携带顺序约束。
       requiredTargets: [
         { center: fartherRequiredTarget, radius: 0.01 },
         { center: nearerRequiredTarget, radius: 0.01 },
       ],
+      settings,
+      soldierCenter: horizontalPoints[0],
       targetSequence: [{ center: orderedTarget, radius: 0.01 }],
     });
 
@@ -115,6 +124,35 @@ describe("Graphwar trajectory target tracking", () => {
     expect(result.targetHitIndex).toBe(1);
     expect(result.requiredTargetsHitIndex).toBe(3);
     expect(result.sample.points.at(-1)).toEqual(createGraphPoint(GRAPHWAR_STEP_SIZE * 3, 0));
+  });
+
+  it("revalidates seeded required targets after new sign protection invalidates the physical prefix", () => {
+    const points = [createGraphPoint(-2, 0), createGraphPoint(0, 1), createGraphPoint(2, 2)];
+    const requiredTarget = { center: toPixel(-1, 10), radius: 0.01 };
+    const options = {
+      bounds,
+      boundsRect,
+      initialReachedRequiredTargetCount: 1,
+      initialState: { currentPoint: createGraphPoint(0, 1), sampleIndex: 200 },
+      points,
+      requiredTargets: [requiredTarget],
+      settings: { ...settings, equation: "dy" as const },
+      soldierCenter: points[0],
+      targetSequence: [{ center: toPixel(1, 10), radius: 0.01 }],
+    };
+
+    const restarted = resolveGraphwarTrajectory(options);
+    const reused = resolveGraphwarTrajectory({
+      ...options,
+      signProtection: [
+        GraphwarSignRole.StartX | GraphwarSignRole.EndX,
+        GraphwarSignRole.StartX | GraphwarSignRole.EndX,
+      ],
+    });
+
+    // 未保护公式会在发射点确认零值并整路重跑；旧状态携带的命中计数不能跟着留下。
+    expect(restarted.result.reachedRequiredTargetCount).toBe(0);
+    expect(reused.result.reachedRequiredTargetCount).toBe(1);
   });
 
   it("exposes unordered hits and obstacle state through path target-sequence sampling", () => {
@@ -175,6 +213,98 @@ describe("Graphwar trajectory target tracking", () => {
   });
 });
 
+describe("Generated formula evaluator equivalence", () => {
+  const cases: readonly { algorithm: AlgorithmMode; equation: EquationMode }[] = [
+    { algorithm: "abs", equation: "y" },
+    { algorithm: "abs", equation: "dy" },
+    { algorithm: "step", equation: "y" },
+    { algorithm: "step", equation: "dy" },
+    { algorithm: "step", equation: "ddy" },
+    { algorithm: "pchip", equation: "y" },
+    { algorithm: "pchip", equation: "dy" },
+    { algorithm: "pchip", equation: "ddy" },
+    { algorithm: "akima", equation: "y" },
+    { algorithm: "akima", equation: "dy" },
+    { algorithm: "akima", equation: "ddy" },
+  ];
+
+  for (const testCase of cases) {
+    it(`matches parsed ${testCase.algorithm} ${testCase.equation} output exactly`, () => {
+      const points = [
+        createGraphPoint(-10, -1),
+        createGraphPoint(-7, 2),
+        createGraphPoint(-3, -2),
+        createGraphPoint(1, 1),
+      ];
+      const resolved = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points,
+        settings: {
+          algorithm: testCase.algorithm,
+          decimalPlaces: 4,
+          equation: testCase.equation,
+          steepness: 210,
+          stepGlitchMode: false,
+          stepOverflowProtection: true,
+        },
+        soldierCenter: points[0],
+      });
+      const parsed = sampleGraphwarExpressionTrajectory({
+        bounds,
+        equation: testCase.equation,
+        expression: resolved.context.formulaResult.expression,
+        ...(testCase.equation === "ddy"
+          ? { launchAngleRadians: getGraphwarTrajectoryLaunchAngle(resolved.context) }
+          : {}),
+        soldierCenter: points[0],
+      });
+      expectTrajectorySamplesToBeIdentical(resolved.result.sample, parsed);
+    });
+  }
+
+  it("keeps protected multi-segment abs derivatives in Graphwar's right-associated order", () => {
+    const points = [
+      createGraphPoint(-10, -1),
+      createGraphPoint(-5, 2),
+      createGraphPoint(0, -2),
+      createGraphPoint(5, 1),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points,
+      settings: { ...settings, equation: "dy" as const },
+      signProtection: points.slice(1).map(() => GraphwarSignRole.StartX | GraphwarSignRole.EndX),
+      soldierCenter: points[0],
+    });
+    const parsed = sampleGraphwarExpressionTrajectory({
+      bounds,
+      equation: "dy",
+      expression: resolved.context.formulaResult.expression,
+      soldierCenter: points[0],
+    });
+
+    expectTrajectorySamplesToBeIdentical(resolved.result.sample, parsed);
+  });
+
+  it("keeps soft ddy weighting finite when Graphwar divides before multiplying by two", () => {
+    const evaluator = compileFormulaEvaluator(
+      [
+        createGraphPoint(0, 0),
+        createGraphPoint(0.01, 1),
+        createGraphPoint(53_950_000, 0),
+        createGraphPoint(53_950_000.01, 1),
+      ],
+      1,
+      "pchip",
+      { equation: "ddy", formulaDecimalPlaces: 15 },
+    );
+
+    expect(Number.isNaN(evaluator.evaluateSecondDerivativeY(53_950_000))).toBe(false);
+  });
+});
+
 describe("Step glitch formula prefix", () => {
   it("reuses an exact causal prefix without changing the appended formula", () => {
     const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
@@ -195,46 +325,61 @@ describe("Step glitch formula prefix", () => {
       createGraphPoint(-5, 3),
       createGraphPoint(-4, 2),
     ];
-    const prefix = createGraphwarTrajectoryFormulaContext({
+    const prefixResolution = resolveGraphwarTrajectory({
       bounds,
+      boundsRect,
       points: prefixPoints,
       settings: stepSettings,
       soldierCenter: prefixPoints[0],
     });
+    const prefix = prefixResolution.context;
+    expectTrajectorySamplesToBeIdentical(
+      prefixResolution.result.sample,
+      sampleGraphwarExpressionTrajectory({
+        bounds,
+        equation: "dy",
+        expression: prefix.formulaResult.expression,
+        soldierCenter: prefixPoints[0],
+      }),
+    );
     const appendedPoints = [...prefixPoints, createGraphPoint(-3, 1)];
-    const cold = createGraphwarTrajectoryFormulaContext({
+    const cold = resolveGraphwarTrajectory({
       bounds,
+      boundsRect,
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-    });
-    const reused = createGraphwarTrajectoryFormulaContext({
+    }).context;
+    const reused = resolveGraphwarTrajectory({
       bounds,
+      boundsRect,
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
-    });
+    }).context;
     const prefixFormula = prefix.stepGlitchFormulaPrefix;
     const rebuiltWithFixedWindows = prefixFormula
-      ? createGraphwarTrajectoryFormulaContext({
+      ? resolveGraphwarTrajectory({
           bounds,
+          boundsRect,
           points: appendedPoints,
           settings: stepSettings,
+          signProtection: [],
           soldierCenter: appendedPoints[0],
-          // 强制 prefix 身份失配，覆盖 sign epsilon 改变后必须重算旧段的分支。
-          stepGlitchFormulaPrefix: { ...prefixFormula, signEpsilon: prefixFormula.signEpsilon + 1 },
+          // 强制保护快照失配，覆盖未来段新增 epsilon 后必须重算旧段的分支。
+          stepGlitchFormulaPrefix: { ...prefixFormula, signProtection: [1] },
           stepGlitchXWindows: prefixFormula.stepGlitchSegments.map((segment) =>
             segment ? { endX: segment.endX, startX: segment.startX } : undefined,
           ),
-        })
+        }).context
       : undefined;
 
     expect(prefix.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
     expect(reused.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBe(
       prefix.stepGlitchFormulaPrefix?.stepGlitchSegments[0],
     );
-    expect(reused.playbackExpression).toBe(cold.playbackExpression);
+    expect(reused.formulaResult.expression).toBe(cold.formulaResult.expression);
     expect(reused.formulaPoints).toEqual(cold.formulaPoints);
     expect(reused.stepGlitchFormulaPrefix?.refinedFormulaPoints).toEqual(
       cold.stepGlitchFormulaPrefix?.refinedFormulaPoints,
@@ -255,16 +400,28 @@ describe("Step glitch formula prefix", () => {
   });
 });
 
-function createHorizontalFormulaContext() {
-  const soldierCenter = createGraphPoint(-1, 0);
-  return createGraphwarTrajectoryFormulaContext({
-    bounds,
-    points: [soldierCenter, createGraphPoint(1, 0)],
-    settings,
-    soldierCenter,
-  });
-}
-
 function toPixel(x: number, y: number) {
   return graphToImagePoint(createGraphPoint(x, y), bounds, boundsRect);
+}
+
+/**
+ * Generated evaluators are authoritative only while every Graphwar double operation remains bit-for-bit text
+ * equivalent.
+ */
+function expectTrajectorySamplesToBeIdentical(
+  actual: { points: readonly { x: number; y: number }[]; stopReason: string },
+  expected: { points: readonly { x: number; y: number }[]; stopReason: string },
+) {
+  expect(actual.stopReason).toBe(expected.stopReason);
+  expect(actual.points).toHaveLength(expected.points.length);
+  for (let index = 0; index < actual.points.length; index += 1) {
+    expect(
+      Object.is(actual.points[index]?.x, expected.points[index]?.x),
+      `x differs at sample ${index}: ${actual.points[index]?.x} !== ${expected.points[index]?.x}`,
+    ).toBe(true);
+    expect(
+      Object.is(actual.points[index]?.y, expected.points[index]?.y),
+      `y differs at sample ${index}, x=${actual.points[index]?.x}: ${actual.points[index]?.y} !== ${expected.points[index]?.y}`,
+    ).toBe(true);
+  }
 }

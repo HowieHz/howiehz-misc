@@ -538,12 +538,7 @@ export const graphwarKillerLocale = {
         "scan-step-glitch": {
           label: "- Scan Step glitch routes",
           title:
-            "Scan free horizontal rows in increasing target x order and validate each vertical tunneling candidate by replaying the final formula.",
-        },
-        "segment-build-formula": {
-          label: "- Build clear segment formula",
-          title:
-            "Convert the full current path, including the validated prefix and new edge, into a Graphwar formula sampling context.",
+            "Scan free horizontal rows in increasing target x order and validate each vertical tunneling candidate with the final quantized formula.",
         },
         "segment-graph-rule": {
           label: "- Check clear segment x+",

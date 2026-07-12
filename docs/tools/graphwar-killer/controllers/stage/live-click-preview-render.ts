@@ -2,9 +2,8 @@ import { nowMs } from "../../core/time";
 import type { BoundsRect, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
-  createGraphwarTrajectoryFormulaContext,
+  resolveGraphwarTrajectory,
   sampleGraphwarExpressionTrajectoryWithStops,
-  sampleGraphwarFormulaTrajectory,
   type GraphwarTrajectoryCollisionSettings,
   type GraphwarTrajectoryFormulaSettings,
 } from "../../formula/trajectory/sampling";
@@ -78,29 +77,19 @@ export function renderGraphwarLiveClickPreview(
           ...(input.parser ? { parser: input.parser } : {}),
           soldierCenter: input.soldierCenter,
         })
-      : sampleFormulaPreview(input);
+      : input.points.length < 2
+        ? undefined
+        : resolveGraphwarTrajectory({
+            bounds: input.bounds,
+            boundsRect: input.boundsRect,
+            ...(input.collision ? { collision: input.collision } : {}),
+            collectVisiblePixels: true,
+            points: input.points,
+            settings: input.settings,
+            soldierCenter: input.points[0],
+          }).result;
   return {
     curvePoints: result ? formatVisibleTrajectoryPoints(result.visiblePixels, result.obstacleHitIndex) : "",
     elapsedMs: nowMs() - startedAt,
   };
-}
-
-function sampleFormulaPreview(input: Extract<GraphwarLiveClickPreviewRenderInput, { type: "formula" }>) {
-  const context = createGraphwarTrajectoryFormulaContext({
-    bounds: input.bounds,
-    points: input.points,
-    settings: input.settings,
-    soldierCenter: input.points[0],
-  });
-  if (context.formulaPoints.length < 2) {
-    return undefined;
-  }
-
-  return sampleGraphwarFormulaTrajectory({
-    bounds: input.bounds,
-    boundsRect: input.boundsRect,
-    ...(input.collision ? { collision: input.collision } : {}),
-    collectVisiblePixels: true,
-    context,
-  });
 }

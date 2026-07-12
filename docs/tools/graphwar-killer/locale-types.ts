@@ -408,8 +408,13 @@ export interface GraphwarKillerLocale {
       managedFriendlyFireWarning: string;
       managedMode: string;
       managedModeDisableTitle: string;
-      /** 明确列出托管算法支持结论，以及每个不支持模式将采用的算法设定。 */
+      /** 先完整列出三种模式的当前算法设定，再说明需要自动修正的模式。 */
       managedModeConfirmation: (
+        settings: readonly {
+          equation: string;
+          algorithm: string;
+          properties: readonly string[];
+        }[],
         repairs: readonly {
           equation: string;
           algorithm: string;

@@ -655,17 +655,24 @@ export const graphwarKillerLocale = {
       managedFriendlyFireWarning: "托管已允许友伤，友军会作为一键清图候选",
       managedMode: "托管模式",
       managedModeDisableTitle: "关闭托管模式并解锁设置",
-      managedModeConfirmation: (repairs, friendlyFireEnabled) => {
-        const algorithmStatus =
-          repairs.length === 0
-            ? "三个游戏模式的算法设定都支持一键清图"
+      managedModeConfirmation: (settings, repairs, friendlyFireEnabled) => {
+        const algorithmStatus = [
+          "当前算法设定：",
+          ...settings.map(
+            (setting) =>
+              `${setting.equation}：${setting.algorithm}${setting.properties.length > 0 ? `（${setting.properties.join("，")}）` : ""}`,
+          ),
+          ...(repairs.length === 0
+            ? []
             : [
+                "",
                 "以下游戏模式需要调整算法设定：",
                 ...repairs.map(
                   (repair) =>
                     `${repair.equation}：当前算法不支持一键清图，将设为${repair.algorithm}${repair.properties.length > 0 ? `（${repair.properties.join("，")}）` : ""}`,
                 ),
-              ].join("\n");
+              ]),
+        ].join("\n");
         return `托管会自动向 Graphwar 发射\n房间内会自动准备本地玩家\n当前${friendlyFireEnabled ? "允许" : "禁止"}友伤\n\n${algorithmStatus}\n\n确认开启托管？`;
       },
       managedModeTitle: "在己方回合自动读取状态、规划并发射",

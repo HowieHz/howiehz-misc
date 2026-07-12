@@ -2803,7 +2803,27 @@ function toggleGraphwarManagedMode() {
   });
   // 首次开启需要确认托管风险；以后只在即将覆盖用户算法设定时再次确认。
   if (!graphwarManagedModeRiskConfirmed || repairs.length > 0) {
-    if (!window.confirm(locale.ui.pathfinding.managedModeConfirmation(repairs, friendlyFireEnabled.value))) {
+    if (
+      !window.confirm(
+        locale.ui.pathfinding.managedModeConfirmation(
+          locale.equationModes.map((mode) => {
+            const profile = solverFormulaProfiles.value[mode.value];
+            return {
+              algorithm:
+                locale.algorithmModes.find((algorithm) => algorithm.value === profile.algorithm)?.label ??
+                profile.algorithm,
+              equation: mode.label,
+              properties:
+                mode.value === "dy" && profile.algorithm === "step" && profile.stepGlitchModeEnabled
+                  ? [locale.ui.settings.stepGlitchMode]
+                  : [],
+            };
+          }),
+          repairs,
+          friendlyFireEnabled.value,
+        ),
+      )
+    ) {
       return;
     }
     graphwarManagedModeRiskConfirmed = true;

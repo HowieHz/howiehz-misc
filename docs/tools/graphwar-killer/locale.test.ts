@@ -55,12 +55,18 @@ describe("Chinese Graphwar Killer locale", () => {
     expect(chineseLocaleStrings.filter((value) => value.endsWith("。"))).toEqual([]);
   });
 
-  it("states managed mode behavior, algorithm support, and repairs explicitly", () => {
-    const supportedConfirmation = graphwarKillerLocale.ui.pathfinding.managedModeConfirmation([], false);
+  it("lists current managed-mode algorithms before any repairs", () => {
+    const settings = [
+      { algorithm: "双绝对值函数", equation: "y", properties: [] },
+      { algorithm: "阶跃函数", equation: "y'", properties: ["邪道模式"] },
+      { algorithm: "阶跃函数", equation: "y''", properties: [] },
+    ];
+    const supportedConfirmation = graphwarKillerLocale.ui.pathfinding.managedModeConfirmation(settings, [], false);
     expect(supportedConfirmation).toContain("房间内会自动准备本地玩家");
-    expect(supportedConfirmation).toContain("三个游戏模式的算法设定都支持一键清图");
+    expect(supportedConfirmation).toContain("当前算法设定：\ny：双绝对值函数\ny'：阶跃函数（邪道模式）\ny''：阶跃函数");
     expect(
       graphwarKillerLocale.ui.pathfinding.managedModeConfirmation(
+        settings,
         [
           { algorithm: "双绝对值函数", equation: "y", properties: [] },
           { algorithm: "阶跃函数", equation: "y'", properties: ["邪道模式"] },
@@ -68,7 +74,7 @@ describe("Chinese Graphwar Killer locale", () => {
         true,
       ),
     ).toContain(
-      "y：当前算法不支持一键清图，将设为双绝对值函数\ny'：当前算法不支持一键清图，将设为阶跃函数（邪道模式）",
+      "当前算法设定：\ny：双绝对值函数\ny'：阶跃函数（邪道模式）\ny''：阶跃函数\n\n以下游戏模式需要调整算法设定：\ny：当前算法不支持一键清图，将设为双绝对值函数\ny'：当前算法不支持一键清图，将设为阶跃函数（邪道模式）",
     );
   });
 });
@@ -79,8 +85,32 @@ describe("English Graphwar Killer locale", () => {
   });
 
   it("states that managed mode automatically marks local room players ready", () => {
-    expect(englishGraphwarKillerLocale.ui.pathfinding.managedModeConfirmation([], false)).toContain(
-      "Local players in the room are marked ready automatically",
+    expect(
+      englishGraphwarKillerLocale.ui.pathfinding.managedModeConfirmation(
+        [
+          { algorithm: "Double Absolute Value", equation: "y", properties: [] },
+          { algorithm: "Step", equation: "y'", properties: ["Glitch Mode"] },
+          { algorithm: "Step", equation: "y''", properties: [] },
+        ],
+        [],
+        false,
+      ),
+    ).toContain("Local players in the room are marked ready automatically");
+  });
+
+  it("lists current managed-mode algorithms before any repairs", () => {
+    expect(
+      englishGraphwarKillerLocale.ui.pathfinding.managedModeConfirmation(
+        [
+          { algorithm: "Double Absolute Value", equation: "y", properties: [] },
+          { algorithm: "Step", equation: "y'", properties: ["Glitch Mode"] },
+          { algorithm: "Step", equation: "y''", properties: [] },
+        ],
+        [{ algorithm: "Double Absolute Value", equation: "y", properties: [] }],
+        false,
+      ),
+    ).toContain(
+      "Current algorithm settings:\ny: Double Absolute Value\ny': Step (Glitch Mode)\ny'': Step\n\nThese game modes need different algorithm settings:\ny: the current algorithm does not support One-Click Clear; it will be set to Double Absolute Value",
     );
   });
 });

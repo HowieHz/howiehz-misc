@@ -741,17 +741,24 @@ export const graphwarKillerLocale = {
       managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
       managedMode: "Managed mode",
       managedModeDisableTitle: "Turn off Managed Mode and unlock settings",
-      managedModeConfirmation: (repairs, friendlyFireEnabled) => {
-        const algorithmStatus =
-          repairs.length === 0
-            ? "The algorithm settings for all three game modes support One-Click Clear"
+      managedModeConfirmation: (settings, repairs, friendlyFireEnabled) => {
+        const algorithmStatus = [
+          "Current algorithm settings:",
+          ...settings.map(
+            (setting) =>
+              `${setting.equation}: ${setting.algorithm}${setting.properties.length > 0 ? ` (${setting.properties.join(", ")})` : ""}`,
+          ),
+          ...(repairs.length === 0
+            ? []
             : [
+                "",
                 "These game modes need different algorithm settings:",
                 ...repairs.map(
                   (repair) =>
                     `${repair.equation}: the current algorithm does not support One-Click Clear; it will be set to ${repair.algorithm}${repair.properties.length > 0 ? ` (${repair.properties.join(", ")})` : ""}`,
                 ),
-              ].join("\n");
+              ]),
+        ].join("\n");
         return `Managed mode submits shots to Graphwar automatically\nLocal players in the room are marked ready automatically\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\n\n${algorithmStatus}\n\nEnable managed mode?`;
       },
       managedModeTitle: "Read state, plan, and fire automatically during local turns",

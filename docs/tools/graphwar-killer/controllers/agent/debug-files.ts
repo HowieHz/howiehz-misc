@@ -5,6 +5,12 @@ export interface GraphwarAgentDebugFilePair {
   state: GraphwarAgentAvailableState;
 }
 
+export interface GraphwarAgentDebugDownload {
+  content: ArrayBuffer | string;
+  fileName: string;
+  mediaType: string;
+}
+
 export interface GraphwarAgentDebugFiles {
   /** 丢弃当前未消费的文件配对。 */
   clear: () => void;
@@ -12,6 +18,28 @@ export interface GraphwarAgentDebugFiles {
   setObstacleBuffer: (buffer: ArrayBuffer) => GraphwarAgentDebugFilePair | undefined;
   /** 写入状态文件；替换旧状态时同时丢弃属于旧状态的障碍文件。 */
   setState: (state: GraphwarAgentAvailableState) => GraphwarAgentDebugFilePair | undefined;
+}
+
+/** 把同一 revision 的 Agent 局面序列化为调试导入控件接受的两份文件。 */
+export function createGraphwarAgentDebugDownloads(
+  state: GraphwarAgentAvailableState,
+  worldObstacleMask: Uint8Array,
+  exportedAt = new Date(),
+): { obstacle: GraphwarAgentDebugDownload; state: GraphwarAgentDebugDownload } {
+  // 两个文件共用不含非法字符的时间戳，之后从下载目录中也能直观看出它们属于同一局面。
+  const suffix = exportedAt.toISOString().replaceAll(":", "-").replace(".", "-");
+  return {
+    obstacle: {
+      content: worldObstacleMask.slice().buffer,
+      fileName: `obstacle-mask-${suffix}.bin`,
+      mediaType: "application/octet-stream",
+    },
+    state: {
+      content: `${JSON.stringify(state, undefined, 2)}\n`,
+      fileName: `state-${suffix}.json`,
+      mediaType: "application/json",
+    },
+  };
 }
 
 /** 缓存一对调试导出文件；页面成功应用后必须 clear，避免下一局与旧文件混配。 */

@@ -14,6 +14,7 @@ describe("Detection MainPanel", () => {
         baseUrlText: "http://127.0.0.1:17900",
         debugFileActionsVisible: false,
         enabled: false,
+        exportInProgress: false,
         inProgress: false,
         readState: "normal" as const,
       },
@@ -71,6 +72,7 @@ describe("Detection MainPanel", () => {
       graphwarKillerLocale.ui.detection.agent.read,
       graphwarKillerLocale.ui.detection.agent.readStateFile,
       graphwarKillerLocale.ui.detection.agent.readObstacleFile,
+      graphwarKillerLocale.ui.detection.agent.exportScene,
     ]);
     const debugFileInputs = agentRows[0].findAll<HTMLInputElement>('.graphwar-killer__file-button input[type="file"]');
     expect(debugFileInputs).toHaveLength(2);
@@ -78,6 +80,44 @@ describe("Detection MainPanel", () => {
     await debugFileInputs[1]?.trigger("change");
     expect(wrapper.emitted("readAgentStateFile")).toHaveLength(1);
     expect(wrapper.emitted("readAgentObstacleFile")).toHaveLength(1);
+    const blockedExportButton = agentRows[0].findAll<HTMLButtonElement>("button").at(-1);
+    expect(blockedExportButton?.attributes("disabled")).toBeDefined();
+    await blockedExportButton?.trigger("click");
+    expect(wrapper.emitted("exportAgentScene")).toBeUndefined();
+
+    await wrapper.setProps({
+      panel: {
+        ...panel,
+        agent: { ...panel.agent, debugFileActionsVisible: true, enabled: true, readState: "normal" as const },
+        screenshotActionsVisible: false,
+      },
+    });
+    const readyExportButton = wrapper.get<HTMLButtonElement>(".graphwar-killer__agent-read-field button:last-of-type");
+    expect(readyExportButton.attributes("disabled")).toBeUndefined();
+    await readyExportButton.trigger("click");
+    expect(wrapper.emitted("exportAgentScene")).toHaveLength(1);
+
+    await wrapper.setProps({
+      panel: {
+        ...panel,
+        agent: {
+          ...panel.agent,
+          debugFileActionsVisible: true,
+          enabled: true,
+          exportInProgress: true,
+          readReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["agent-read-busy"],
+          readState: "busy" as const,
+        },
+      },
+    });
+    const exportingRow = wrapper.get(".graphwar-killer__agent-read-field");
+    expect(exportingRow.get<HTMLButtonElement>("button:last-of-type").text()).toBe(
+      graphwarKillerLocale.ui.detection.agent.exportingScene,
+    );
+    expect(exportingRow.get<HTMLButtonElement>("button:last-of-type").attributes("disabled")).toBeDefined();
+    for (const input of exportingRow.findAll<HTMLInputElement>('input[type="file"]')) {
+      expect(input.attributes("disabled")).toBeDefined();
+    }
     expect(wrapper.get(".graphwar-killer-control-reason__icon").attributes("aria-hidden")).toBe("true");
     const readAgentButton = wrapper.get<HTMLButtonElement>(".graphwar-killer__agent-read-field button");
     expect(readAgentButton.attributes("disabled")).toBeDefined();

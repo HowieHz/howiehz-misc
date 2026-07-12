@@ -37,6 +37,8 @@ interface GraphwarDetectionPanelAgentModel {
   inProgress: boolean;
   /** 调试模式下是否展示本地 Agent 响应文件入口。 */
   debugFileActionsVisible: boolean;
+  /** 当前是否正在读取并导出 Agent 局面。 */
+  exportInProgress: boolean;
   /** 是否使用 Agent 作为识别来源。 */
   enabled: boolean;
   /** 读取命令与页面 guard 共享的能力状态。 */
@@ -81,6 +83,7 @@ const emit = defineEmits<{
   captureImage: [];
   detectBounds: [];
   detectObjects: [];
+  exportAgentScene: [];
   readAgent: [];
   readAgentObstacleFile: [event: Event];
   readAgentStateFile: [event: Event];
@@ -227,7 +230,7 @@ function handleAgentBaseUrlInput(event: Event) {
                 <input
                   type="file"
                   accept=".json,application/json"
-                  :disabled="panel.agent.inProgress"
+                  :disabled="panel.agent.inProgress || panel.agent.exportInProgress"
                   @change="emit('readAgentStateFile', $event)"
                 >
                 <span class="graphwar-killer-control-button">{{ locale.ui.detection.agent.readStateFile }}</span>
@@ -239,11 +242,23 @@ function handleAgentBaseUrlInput(event: Event) {
                 <input
                   type="file"
                   accept=".bin,application/octet-stream"
-                  :disabled="panel.agent.inProgress"
+                  :disabled="panel.agent.inProgress || panel.agent.exportInProgress"
                   @change="emit('readAgentObstacleFile', $event)"
                 >
                 <span class="graphwar-killer-control-button">{{ locale.ui.detection.agent.readObstacleFile }}</span>
               </label>
+              <button
+                type="button"
+                :disabled="panel.agent.readState !== 'normal'"
+                :title="locale.ui.detection.agent.exportSceneTitle"
+                @click="emit('exportAgentScene')"
+              >
+                {{
+                  panel.agent.exportInProgress
+                    ? locale.ui.detection.agent.exportingScene
+                    : locale.ui.detection.agent.exportScene
+                }}
+              </button>
             </template>
             <ControlReason
               v-if="panel.agent.readReason"

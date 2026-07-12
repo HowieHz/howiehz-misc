@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import type { GraphwarAgentAvailableState } from "./client";
-import { createGraphwarAgentDebugFiles } from "./debug-files";
+import { createGraphwarAgentDebugDownloads, createGraphwarAgentDebugFiles } from "./debug-files";
 
 const firstState = { battleRevision: "first" } as GraphwarAgentAvailableState;
 const secondState = { battleRevision: "second" } as GraphwarAgentAvailableState;
 
 describe("Graphwar Agent debug files", () => {
+  it("exports a timestamp-matched pair that preserves state and world-mask bytes", () => {
+    const mask = new Uint8Array([0, 1, 1, 0]);
+    const downloads = createGraphwarAgentDebugDownloads(firstState, mask, new Date("2026-07-12T15:30:45.123Z"));
+
+    expect(downloads.state.fileName).toBe("state-2026-07-12T15-30-45-123Z.json");
+    expect(downloads.obstacle.fileName).toBe("obstacle-mask-2026-07-12T15-30-45-123Z.bin");
+    expect(JSON.parse(downloads.state.content as string)).toEqual(firstState);
+    expect(new Uint8Array(downloads.obstacle.content as ArrayBuffer)).toEqual(mask);
+  });
+
   it("accepts state and obstacle files in either order", () => {
     const stateFirst = createGraphwarAgentDebugFiles();
     const stateFirstBuffer = new ArrayBuffer(1);

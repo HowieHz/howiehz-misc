@@ -19,7 +19,12 @@ import {
   type GraphwarAgentSnapshot,
   type GraphwarAgentShotPlan,
 } from "./controllers/agent/client";
-import { createGraphwarAgentDebugFiles, type GraphwarAgentDebugFilePair } from "./controllers/agent/debug-files";
+import {
+  createGraphwarAgentDebugDownloads,
+  createGraphwarAgentDebugFiles,
+  type GraphwarAgentDebugDownload,
+  type GraphwarAgentDebugFilePair,
+} from "./controllers/agent/debug-files";
 import { useGraphwarDebugActivation } from "./controllers/debug/activation";
 import { useGraphwarDebugTimings } from "./controllers/debug/timings";
 import {
@@ -280,13 +285,13 @@ const simulatorLaunchAngleText = ref("");
 const graphwarAgentEnabled = ref(false);
 const graphwarAgentBaseUrlText = ref(GRAPHWAR_AGENT_DEFAULT_BASE_URL);
 const graphwarAgentReadInProgress = ref(false);
-let graphwarAgentReadGeneration = 0;
+const graphwarAgentExportInProgress = ref(false);
+let graphwarAgentTransferGeneration = 0;
 const graphwarAgentDebugFiles = createGraphwarAgentDebugFiles();
 const graphwarAgentFireInProgress = ref(false);
 const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
 const graphwarManagedModeEnabled = ref(false);
-let graphwarManagedModeRiskConfirmed = false;
 let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let graphwarManagedCalculationStatus:
   | { expiresAt: number; kind: SmartPathfindingStatusKind; message: string }
@@ -1082,7 +1087,7 @@ const graphwarCapabilities = computed(() =>
       },
       busy: {
         agentFire: graphwarAgentFireInProgress.value,
-        agentRead: graphwarAgentReadInProgress.value,
+        agentRead: graphwarAgentReadInProgress.value || graphwarAgentExportInProgress.value,
         managedMode: graphwarManagedModeEnabled.value,
         pathfinding: smartPathfindingInProgress.value,
       },
@@ -1486,8 +1491,11 @@ const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
     baseUrlText: graphwarAgentBaseUrlText.value,
     debugFileActionsVisible: debugInfoEnabled.value,
     enabled: graphwarAgentEnabled.value,
+    exportInProgress: graphwarAgentExportInProgress.value,
     inProgress: graphwarAgentReadInProgress.value,
-    readReason: getCapabilityReason(graphwarCapabilities.value.agentRead.reason),
+    readReason: graphwarAgentExportInProgress.value
+      ? locale.status.agent.exporting
+      : getCapabilityReason(graphwarCapabilities.value.agentRead.reason),
     readState: graphwarCapabilities.value.agentRead.state,
   },
   autoDetectionEnabled: autoDetectionEnabled.value,
@@ -2522,10 +2530,10 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
     return;
   }
   graphwarAgentDebugFiles.clear();
-  const requestGeneration = ++graphwarAgentReadGeneration;
+  const requestGeneration = ++graphwarAgentTransferGeneration;
   // 同一代次、来源和规范化 URL 必须全部匹配，响应才仍属于当前页面场景。
   const requestIsCurrent = () =>
-    requestGeneration === graphwarAgentReadGeneration &&
+    requestGeneration === graphwarAgentTransferGeneration &&
     !graphwarManagedModeEnabled.value &&
     graphwarAgentEnabled.value &&
     normalizedGraphwarAgentBaseUrl.value === requestBaseUrl;
@@ -2548,7 +2556,7 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
     imageStatus.value = failedMessage;
     setDetectionStatus(failedMessage, "error");
   } finally {
-    if (requestGeneration === graphwarAgentReadGeneration) {
+    if (requestGeneration === graphwarAgentTransferGeneration) {
       graphwarAgentReadInProgress.value = false;
     }
   }
@@ -2563,16 +2571,17 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
     !debugInfoEnabled.value ||
     !graphwarAgentEnabled.value ||
     graphwarManagedModeEnabled.value ||
-    graphwarAgentReadInProgress.value
+    graphwarAgentReadInProgress.value ||
+    graphwarAgentExportInProgress.value
   ) {
     return;
   }
 
   const file = input.files[0];
   input.value = "";
-  const requestGeneration = ++graphwarAgentReadGeneration;
+  const requestGeneration = ++graphwarAgentTransferGeneration;
   const requestIsCurrent = () =>
-    requestGeneration === graphwarAgentReadGeneration &&
+    requestGeneration === graphwarAgentTransferGeneration &&
     debugInfoEnabled.value &&
     graphwarAgentEnabled.value &&
     !graphwarManagedModeEnabled.value;
@@ -2637,8 +2646,75 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
     imageStatus.value = failedMessage;
     setDetectionStatus(failedMessage, "error");
   } finally {
-    if (requestGeneration === graphwarAgentReadGeneration) {
+    if (requestGeneration === graphwarAgentTransferGeneration) {
       graphwarAgentReadInProgress.value = false;
+    }
+  }
+}
+
+/** 使用短生命周期对象 URL 下载文件，避免大体积障碍掩码长期占用浏览器内存。 */
+function downloadGraphwarAgentDebugFile(file: GraphwarAgentDebugDownload) {
+  const url = URL.createObjectURL(new Blob([file.content], { type: file.mediaType }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = file.fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  // Firefox 和 Safari 可能在 click 返回后才读取 URL，因此延迟一个任务再释放。
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/** 读取一次 revision 一致的 Agent 快照，并导出调试导入控件可直接接受的文件对。 */
+async function exportGraphwarAgentDebugScene() {
+  if (
+    !debugInfoEnabled.value ||
+    graphwarManagedModeEnabled.value ||
+    graphwarAgentReadInProgress.value ||
+    graphwarAgentExportInProgress.value
+  ) {
+    return;
+  }
+  const capability = graphwarCapabilities.value.agentRead;
+  if (capability.state !== "normal") {
+    setDetectionStatus(getCapabilityReason(capability.reason) ?? "", "warning");
+    return;
+  }
+  const requestBaseUrl = normalizedGraphwarAgentBaseUrl.value;
+  if (!requestBaseUrl) {
+    return;
+  }
+
+  const requestGeneration = ++graphwarAgentTransferGeneration;
+  const requestIsCurrent = () =>
+    requestGeneration === graphwarAgentTransferGeneration &&
+    debugInfoEnabled.value &&
+    graphwarAgentEnabled.value &&
+    !graphwarManagedModeEnabled.value &&
+    normalizedGraphwarAgentBaseUrl.value === requestBaseUrl;
+  graphwarAgentExportInProgress.value = true;
+  imageStatus.value = locale.status.agent.exporting;
+  setDetectionStatus(locale.status.agent.exporting, "warning");
+  try {
+    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl);
+    if (!requestIsCurrent()) {
+      return;
+    }
+    const downloads = createGraphwarAgentDebugDownloads(snapshot.state, snapshot.worldObstacleMask);
+    downloadGraphwarAgentDebugFile(downloads.state);
+    downloadGraphwarAgentDebugFile(downloads.obstacle);
+    imageStatus.value = locale.status.agent.exported;
+    setDetectionStatus(locale.status.agent.exported, "success");
+  } catch (error) {
+    if (!requestIsCurrent()) {
+      return;
+    }
+    const message = locale.status.agent.exportFailed(createGraphwarAgentFailureReason(locale, error));
+    imageStatus.value = message;
+    setDetectionStatus(message, "error");
+  } finally {
+    if (requestGeneration === graphwarAgentTransferGeneration) {
+      graphwarAgentExportInProgress.value = false;
     }
   }
 }
@@ -2801,32 +2877,29 @@ function toggleGraphwarManagedMode() {
       },
     ];
   });
-  // 首次开启需要确认托管风险；以后只在即将覆盖用户算法设定时再次确认。
-  if (!graphwarManagedModeRiskConfirmed || repairs.length > 0) {
-    if (
-      !window.confirm(
-        locale.ui.pathfinding.managedModeConfirmation(
-          locale.equationModes.map((mode) => {
-            const profile = solverFormulaProfiles.value[mode.value];
-            return {
-              algorithm:
-                locale.algorithmModes.find((algorithm) => algorithm.value === profile.algorithm)?.label ??
-                profile.algorithm,
-              equation: mode.label,
-              properties:
-                mode.value === "dy" && profile.algorithm === "step" && profile.stepGlitchModeEnabled
-                  ? [locale.ui.settings.stepGlitchMode]
-                  : [],
-            };
-          }),
-          repairs,
-          friendlyFireEnabled.value,
-        ),
-      )
-    ) {
-      return;
-    }
-    graphwarManagedModeRiskConfirmed = true;
+  // 每次启动都让用户确认本轮托管行为、友伤状态和算法设定，不能沿用上一次同意。
+  if (
+    !window.confirm(
+      locale.ui.pathfinding.managedModeConfirmation(
+        locale.equationModes.map((mode) => {
+          const profile = solverFormulaProfiles.value[mode.value];
+          return {
+            algorithm:
+              locale.algorithmModes.find((algorithm) => algorithm.value === profile.algorithm)?.label ??
+              profile.algorithm,
+            equation: mode.label,
+            properties:
+              mode.value === "dy" && profile.algorithm === "step" && profile.stepGlitchModeEnabled
+                ? [locale.ui.settings.stepGlitchMode]
+                : [],
+          };
+        }),
+        repairs,
+        friendlyFireEnabled.value,
+      ),
+    )
+  ) {
+    return;
   }
   solverFormulaProfiles.value = applyGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value, repairPlan);
 
@@ -3335,20 +3408,25 @@ function toggleAutoDetection() {
 
 /** 作废旧 Agent 场景的异步读取、寻路和派生缓存，保留当前画布供新来源继续使用。 */
 function invalidateGraphwarAgentSceneWork() {
-  const agentReadWasInProgress = graphwarAgentReadInProgress.value;
-  graphwarAgentReadGeneration += 1;
+  const agentTransferWasInProgress = graphwarAgentReadInProgress.value || graphwarAgentExportInProgress.value;
+  graphwarAgentTransferGeneration += 1;
   graphwarAgentReadInProgress.value = false;
+  graphwarAgentExportInProgress.value = false;
   graphwarAgentDebugFiles.clear();
   // 只收尾本次 Agent reading 文案；并行产生的其他检测状态必须保留。
   if (
-    agentReadWasInProgress &&
-    (imageStatus.value === locale.status.agent.reading || imageStatus.value === locale.status.agent.readingFile)
+    agentTransferWasInProgress &&
+    (imageStatus.value === locale.status.agent.reading ||
+      imageStatus.value === locale.status.agent.readingFile ||
+      imageStatus.value === locale.status.agent.exporting)
   ) {
     imageStatus.value = "";
   }
   if (
-    agentReadWasInProgress &&
-    (detectionStatus.value === locale.status.agent.reading || detectionStatus.value === locale.status.agent.readingFile)
+    agentTransferWasInProgress &&
+    (detectionStatus.value === locale.status.agent.reading ||
+      detectionStatus.value === locale.status.agent.readingFile ||
+      detectionStatus.value === locale.status.agent.exporting)
   ) {
     setDetectionStatus("", "info");
   }
@@ -4050,6 +4128,7 @@ function undoLastPoint() {
         @capture-image="!graphwarManagedModeEnabled && captureScreenImage()"
         @detect-bounds="void detectGraphwarBounds()"
         @detect-objects="void detectGraphwarObjectsInCurrentBounds()"
+        @export-agent-scene="void exportGraphwarAgentDebugScene()"
         @read-agent="void readGraphwarAgent()"
         @read-agent-obstacle-file="void readGraphwarAgentDebugFile($event, 'obstacle')"
         @read-agent-state-file="void readGraphwarAgentDebugFile($event, 'state')"

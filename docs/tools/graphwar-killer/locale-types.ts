@@ -208,6 +208,9 @@ export interface GraphwarKillerLocale {
       fireFailed: (message: string) => string;
       fileFailed: (message: string) => string;
       fileIncompatible: string;
+      exportFailed: (message: string) => string;
+      exported: string;
+      exporting: string;
       fired: string;
       loaded: (soldiers: number) => string;
       obstacleFileLoaded: string;
@@ -314,6 +317,9 @@ export interface GraphwarKillerLocale {
         address: string;
         addressAriaLabel: string;
         addressTitle: string;
+        exportScene: string;
+        exportSceneTitle: string;
+        exportingScene: string;
         helpLink: string;
         readObstacleFile: string;
         readObstacleFileTitle: string;

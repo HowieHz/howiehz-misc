@@ -3,12 +3,15 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
   createGraphwarAgentClient,
+  createGraphwarAgentSnapshot,
   createGraphwarAgentShooterViewSnapshot,
   createGraphwarAgentShotRequest,
   createGraphwarAgentWorldSnapshot,
   GRAPHWAR_AGENT_DEFAULT_BASE_URL,
   GraphwarAgentClientError,
   normalizeGraphwarAgentBaseUrl,
+  parseGraphwarAgentState,
+  parseGraphwarAgentWorldObstacleMask,
   readGraphwarAgentSnapshot,
   type GraphwarAgentAvailableState,
   type GraphwarAgentClient,
@@ -16,6 +19,7 @@ import {
   type GraphwarAgentSnapshot,
   type GraphwarAgentShotPlan,
 } from "./controllers/agent/client";
+import { createGraphwarAgentDebugFiles, type GraphwarAgentDebugFilePair } from "./controllers/agent/debug-files";
 import { useGraphwarDebugActivation } from "./controllers/debug/activation";
 import { useGraphwarDebugTimings } from "./controllers/debug/timings";
 import {
@@ -277,6 +281,7 @@ const graphwarAgentEnabled = ref(false);
 const graphwarAgentBaseUrlText = ref(GRAPHWAR_AGENT_DEFAULT_BASE_URL);
 const graphwarAgentReadInProgress = ref(false);
 let graphwarAgentReadGeneration = 0;
+const graphwarAgentDebugFiles = createGraphwarAgentDebugFiles();
 const graphwarAgentFireInProgress = ref(false);
 const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
@@ -1484,6 +1489,7 @@ const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
 const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
   agent: {
     baseUrlText: graphwarAgentBaseUrlText.value,
+    debugFileActionsVisible: debugInfoEnabled.value,
     enabled: graphwarAgentEnabled.value,
     inProgress: graphwarAgentReadInProgress.value,
     readReason: getCapabilityReason(graphwarCapabilities.value.agentRead.reason),
@@ -2518,6 +2524,7 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
   if (!requestBaseUrl) {
     return;
   }
+  graphwarAgentDebugFiles.clear();
   const requestGeneration = ++graphwarAgentReadGeneration;
   // 同一代次、来源和规范化 URL 必须全部匹配，响应才仍属于当前页面场景。
   const requestIsCurrent = () =>
@@ -2541,6 +2548,95 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
       return;
     }
     const failedMessage = locale.status.agent.failed(createGraphwarAgentFailureReason(locale, error));
+    imageStatus.value = failedMessage;
+    setDetectionStatus(failedMessage, "error");
+  } finally {
+    if (requestGeneration === graphwarAgentReadGeneration) {
+      graphwarAgentReadInProgress.value = false;
+    }
+  }
+}
+
+/** 读取调试导出的 Agent 响应；只有状态与障碍文件成对就绪后才原子替换当前场景。 */
+async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacle") {
+  const input = event.currentTarget;
+  if (
+    !(input instanceof HTMLInputElement) ||
+    !input.files?.[0] ||
+    !debugInfoEnabled.value ||
+    !graphwarAgentEnabled.value ||
+    graphwarManagedModeEnabled.value ||
+    graphwarAgentReadInProgress.value
+  ) {
+    return;
+  }
+
+  const file = input.files[0];
+  input.value = "";
+  const requestGeneration = ++graphwarAgentReadGeneration;
+  const requestIsCurrent = () =>
+    requestGeneration === graphwarAgentReadGeneration &&
+    debugInfoEnabled.value &&
+    graphwarAgentEnabled.value &&
+    !graphwarManagedModeEnabled.value;
+  graphwarAgentReadInProgress.value = true;
+  cancelDetection(false);
+  imageStatus.value = locale.status.agent.readingFile;
+  setDetectionStatus(locale.status.agent.readingFile, "warning");
+
+  try {
+    let pair: GraphwarAgentDebugFilePair | undefined;
+    if (kind === "state") {
+      let value: unknown;
+      try {
+        value = JSON.parse(await file.text());
+      } catch (error) {
+        throw new GraphwarAgentClientError("incompatible", "state-file-invalid-json", undefined, error);
+      }
+      if (!requestIsCurrent()) {
+        return;
+      }
+      const state = parseGraphwarAgentState(value);
+      if (!state.available || state.phase === "inactive") {
+        throw new GraphwarAgentClientError("unavailable", state.available ? "game-not-active" : state.reason);
+      }
+      pair = graphwarAgentDebugFiles.setState(state);
+    } else {
+      const buffer = await file.arrayBuffer();
+      if (!requestIsCurrent()) {
+        return;
+      }
+      pair = graphwarAgentDebugFiles.setObstacleBuffer(buffer);
+    }
+
+    if (!pair) {
+      const message = kind === "state" ? locale.status.agent.stateFileLoaded : locale.status.agent.obstacleFileLoaded;
+      imageStatus.value = message;
+      setDetectionStatus(message, "warning");
+      return;
+    }
+
+    const snapshot = createGraphwarAgentSnapshot(
+      normalizedGraphwarAgentBaseUrl.value ?? GRAPHWAR_AGENT_DEFAULT_BASE_URL,
+      pair.state,
+      parseGraphwarAgentWorldObstacleMask(pair.obstacleBuffer, pair.state),
+    );
+    if (requestIsCurrent()) {
+      applyGraphwarAgentSnapshot(snapshot, snapshot.localCurrentTurnSoldierPoint);
+      // 一对文件只消费一次；下一次读取从空配对开始，避免新文件与上一局缓存混用。
+      graphwarAgentDebugFiles.clear();
+    }
+  } catch (error) {
+    if (!requestIsCurrent()) {
+      return;
+    }
+    const failureReason =
+      error instanceof GraphwarAgentClientError &&
+      error.kind === "incompatible" &&
+      error.message !== "state-file-invalid-json"
+        ? locale.status.agent.fileIncompatible
+        : createGraphwarAgentFailureReason(locale, error);
+    const failedMessage = locale.status.agent.fileFailed(failureReason);
     imageStatus.value = failedMessage;
     setDetectionStatus(failedMessage, "error");
   } finally {
@@ -3232,11 +3328,18 @@ function invalidateGraphwarAgentSceneWork() {
   const agentReadWasInProgress = graphwarAgentReadInProgress.value;
   graphwarAgentReadGeneration += 1;
   graphwarAgentReadInProgress.value = false;
+  graphwarAgentDebugFiles.clear();
   // 只收尾本次 Agent reading 文案；并行产生的其他检测状态必须保留。
-  if (agentReadWasInProgress && imageStatus.value === locale.status.agent.reading) {
+  if (
+    agentReadWasInProgress &&
+    (imageStatus.value === locale.status.agent.reading || imageStatus.value === locale.status.agent.readingFile)
+  ) {
     imageStatus.value = "";
   }
-  if (agentReadWasInProgress && detectionStatus.value === locale.status.agent.reading) {
+  if (
+    agentReadWasInProgress &&
+    (detectionStatus.value === locale.status.agent.reading || detectionStatus.value === locale.status.agent.readingFile)
+  ) {
     setDetectionStatus("", "info");
   }
   invalidatePathfindingCaches();
@@ -3909,6 +4012,8 @@ function undoLastPoint() {
         @detect-bounds="void detectGraphwarBounds()"
         @detect-objects="void detectGraphwarObjectsInCurrentBounds()"
         @read-agent="void readGraphwarAgent()"
+        @read-agent-obstacle-file="void readGraphwarAgentDebugFile($event, 'obstacle')"
+        @read-agent-state-file="void readGraphwarAgentDebugFile($event, 'state')"
         @toggle-agent-usage="toggleGraphwarAgentUsage"
         @toggle-auto-detection="toggleAutoDetection"
         @upload-image="!graphwarManagedModeEnabled && handleImageUpload($event)"

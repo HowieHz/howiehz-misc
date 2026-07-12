@@ -38,7 +38,7 @@
 
 .graphwar-killer-control-surface
   button:where(:disabled:not(.graphwar-killer-toggle-field__control, .graphwar-killer-segmented-button)),
-.graphwar-killer__upload input:disabled + .graphwar-killer-control-button {
+.graphwar-killer__file-button input:disabled + .graphwar-killer-control-button {
   cursor: not-allowed;
   opacity: 58%;
 }
@@ -52,7 +52,7 @@
   transform: translateY(-1px);
 }
 
-.graphwar-killer__upload input:disabled + .graphwar-killer-control-button:hover {
+.graphwar-killer__file-button input:disabled + .graphwar-killer-control-button:hover {
   border-color: var(--vp-c-divider);
   box-shadow: none;
   color: var(--vp-c-text-1);
@@ -62,7 +62,7 @@
 .graphwar-killer-control-surface
   button:where(:focus-visible:not(.graphwar-killer-toggle-field__control, .graphwar-killer-segmented-button)),
 .graphwar-killer-control-button:focus-visible,
-.graphwar-killer__upload input:focus-visible + .graphwar-killer-control-button {
+.graphwar-killer__file-button input:focus-visible + .graphwar-killer-control-button {
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
   outline: none;

@@ -149,6 +149,8 @@ export const graphwarKillerLocale = {
             return "游戏尚未开始";
           case "not-in-pre-game-room":
             return "当前不在游戏房间";
+          case "state-file-invalid-json":
+            return "状态文件不是有效的 JSON";
         }
         switch (kind) {
           case "conflict":
@@ -165,11 +167,16 @@ export const graphwarKillerLocale = {
             return message;
         }
       },
+      fileFailed: (message) => `读取调试文件失败：${message}`,
+      fileIncompatible: "状态文件与障碍文件不匹配或格式不受支持",
       fireFailed: (message) => `开火失败：${message}`,
       fired: "已提交函数并开火",
       loaded: (soldiers) => `已读取当前状态：障碍和 ${soldiers} 个士兵`,
+      obstacleFileLoaded: "已读取障碍文件，请读取状态文件",
       readFirst: "先读取 Agent 状态",
       reading: "正在读取状态",
+      readingFile: "正在读取文件",
+      stateFileLoaded: "已读取状态文件，请读取障碍文件",
     },
     pathPointCoordinateNumber: "点坐标需要填写数字",
     secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到约 ${angle}°`,
@@ -282,8 +289,12 @@ export const graphwarKillerLocale = {
         addressAriaLabel: "Graphwar Agent 地址",
         addressTitle: "Graphwar Agent 本机 HTTP 地址，默认 http://127.0.0.1:17900",
         helpLink: "如何使用 Graphwar Agent",
+        readObstacleFile: "读障碍文件",
+        readObstacleFileTitle: "读取 Graphwar Agent 保存的障碍二进制文件",
         read: "读取状态",
         reading: "读取中",
+        readStateFile: "读状态文件",
+        readStateFileTitle: "读取 Graphwar Agent 保存的状态 JSON 文件",
         readTitle: "从 Graphwar Agent 读取当前游戏状态",
         settingsSummary: "Agent 设置",
         toggle: "使用 Agent",

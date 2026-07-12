@@ -12,6 +12,7 @@ describe("Detection MainPanel", () => {
       interactionDisabled: false,
       agent: {
         baseUrlText: "http://127.0.0.1:17900",
+        debugFileActionsVisible: false,
         enabled: false,
         inProgress: false,
         readState: "normal" as const,
@@ -53,6 +54,7 @@ describe("Detection MainPanel", () => {
         ...panel,
         agent: {
           ...panel.agent,
+          debugFileActionsVisible: true,
           enabled: true,
           readReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["agent-read-busy"],
           readState: "busy" as const,
@@ -64,6 +66,18 @@ describe("Detection MainPanel", () => {
     const agentRows = wrapper.findAll(".graphwar-killer__source-action-row");
     expect(agentRows).toHaveLength(1);
     expect(agentRows[0].text()).toContain(graphwarKillerLocale.ui.detection.agent.read);
+    const agentButtons = agentRows[0].findAll("button, .graphwar-killer-control-button");
+    expect(agentButtons.map((button) => button.text())).toEqual([
+      graphwarKillerLocale.ui.detection.agent.read,
+      graphwarKillerLocale.ui.detection.agent.readStateFile,
+      graphwarKillerLocale.ui.detection.agent.readObstacleFile,
+    ]);
+    const debugFileInputs = agentRows[0].findAll<HTMLInputElement>('.graphwar-killer__file-button input[type="file"]');
+    expect(debugFileInputs).toHaveLength(2);
+    await debugFileInputs[0]?.trigger("change");
+    await debugFileInputs[1]?.trigger("change");
+    expect(wrapper.emitted("readAgentStateFile")).toHaveLength(1);
+    expect(wrapper.emitted("readAgentObstacleFile")).toHaveLength(1);
     expect(wrapper.get(".graphwar-killer-control-reason__icon").attributes("aria-hidden")).toBe("true");
     const readAgentButton = wrapper.get<HTMLButtonElement>(".graphwar-killer__agent-read-field button");
     expect(readAgentButton.attributes("disabled")).toBeDefined();

@@ -175,6 +175,8 @@ export const graphwarKillerLocale = {
             return "Game has not started";
           case "not-in-pre-game-room":
             return "Not currently in a game room";
+          case "state-file-invalid-json":
+            return "The state file is not valid JSON";
         }
         switch (kind) {
           case "conflict":
@@ -191,11 +193,16 @@ export const graphwarKillerLocale = {
             return message;
         }
       },
+      fileFailed: (message) => `Failed to read debug file: ${message}`,
+      fileIncompatible: "The state and obstacle files do not match or use an unsupported format",
       fireFailed: (message) => `Failed to fire: ${message}`,
       fired: "Function submitted and fired.",
       loaded: (soldiers) => `Read current state: obstacles and ${soldiers} ${soldiers === 1 ? "soldier" : "soldiers"}`,
+      obstacleFileLoaded: "Obstacle file loaded; select a state file",
       readFirst: "Read Agent state first",
       reading: "Reading state",
+      readingFile: "Reading file",
+      stateFileLoaded: "State file loaded; select an obstacle file",
     },
     pathPointCoordinateNumber: "Point coordinates must be numbers",
     secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to about ${angle} deg.`,
@@ -320,8 +327,12 @@ export const graphwarKillerLocale = {
         addressAriaLabel: "Graphwar Agent URL",
         addressTitle: "Local Graphwar Agent URL; default http://127.0.0.1:17900",
         helpLink: "How to use Graphwar Agent",
+        readObstacleFile: "Read obstacle file",
+        readObstacleFileTitle: "Read a saved Graphwar Agent obstacle binary file",
         read: "Read state",
         reading: "Reading",
+        readStateFile: "Read state file",
+        readStateFileTitle: "Read a saved Graphwar Agent state JSON file",
         readTitle: "Read the current game state from Graphwar Agent",
         settingsSummary: "Agent settings",
         toggle: "Use Agent",

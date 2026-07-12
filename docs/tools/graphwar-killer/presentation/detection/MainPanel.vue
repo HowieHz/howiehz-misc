@@ -35,6 +35,8 @@ interface GraphwarDetectionPanelAgentModel {
   baseUrlText: string;
   /** 当前是否正在读取 Agent。 */
   inProgress: boolean;
+  /** 调试模式下是否展示本地 Agent 响应文件入口。 */
+  debugFileActionsVisible: boolean;
   /** 是否使用 Agent 作为识别来源。 */
   enabled: boolean;
   /** 读取命令与页面 guard 共享的能力状态。 */
@@ -80,6 +82,8 @@ const emit = defineEmits<{
   detectBounds: [];
   detectObjects: [];
   readAgent: [];
+  readAgentObstacleFile: [event: Event];
+  readAgentStateFile: [event: Event];
   toggleAutoDetection: [];
   toggleAgentUsage: [];
   uploadImage: [event: Event];
@@ -160,7 +164,7 @@ function handleAgentBaseUrlInput(event: Event) {
             {{ locale.ui.screenshot.capture }}
           </button>
           <label
-            class="graphwar-killer__upload"
+            class="graphwar-killer__file-button graphwar-killer__upload"
             :title="locale.ui.screenshot.uploadTitle"
           >
             <input
@@ -215,6 +219,32 @@ function handleAgentBaseUrlInput(event: Event) {
             >
               {{ panel.agent.inProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
             </button>
+            <template v-if="panel.agent.debugFileActionsVisible">
+              <label
+                class="graphwar-killer__file-button"
+                :title="locale.ui.detection.agent.readStateFileTitle"
+              >
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  :disabled="panel.agent.inProgress"
+                  @change="emit('readAgentStateFile', $event)"
+                >
+                <span class="graphwar-killer-control-button">{{ locale.ui.detection.agent.readStateFile }}</span>
+              </label>
+              <label
+                class="graphwar-killer__file-button"
+                :title="locale.ui.detection.agent.readObstacleFileTitle"
+              >
+                <input
+                  type="file"
+                  accept=".bin,application/octet-stream"
+                  :disabled="panel.agent.inProgress"
+                  @change="emit('readAgentObstacleFile', $event)"
+                >
+                <span class="graphwar-killer-control-button">{{ locale.ui.detection.agent.readObstacleFile }}</span>
+              </label>
+            </template>
             <ControlReason
               v-if="panel.agent.readReason"
               id="graphwar-killer-agent-read-reason"
@@ -363,11 +393,11 @@ function handleAgentBaseUrlInput(event: Event) {
   gap: 6px;
 }
 
-.graphwar-killer__upload {
+.graphwar-killer__file-button {
   width: fit-content;
 }
 
-.graphwar-killer__upload input {
+.graphwar-killer__file-button input {
   height: 1px;
   opacity: 0%;
   pointer-events: none;

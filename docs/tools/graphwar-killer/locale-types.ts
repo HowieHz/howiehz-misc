@@ -206,10 +206,15 @@ export interface GraphwarKillerLocale {
       failed: (message: string) => string;
       failureReason: (kind: GraphwarAgentClientErrorKind | undefined, message: string) => string;
       fireFailed: (message: string) => string;
+      fileFailed: (message: string) => string;
+      fileIncompatible: string;
       fired: string;
       loaded: (soldiers: number) => string;
+      obstacleFileLoaded: string;
       readFirst: string;
       reading: string;
+      readingFile: string;
+      stateFileLoaded: string;
     };
     pathPointCoordinateNumber: string;
     secondOrderAngleHint: (angle: string) => string;
@@ -309,8 +314,12 @@ export interface GraphwarKillerLocale {
         addressAriaLabel: string;
         addressTitle: string;
         helpLink: string;
+        readObstacleFile: string;
+        readObstacleFileTitle: string;
         read: string;
         reading: string;
+        readStateFile: string;
+        readStateFileTitle: string;
         readTitle: string;
         settingsSummary: string;
         toggle: string;

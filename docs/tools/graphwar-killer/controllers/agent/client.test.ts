@@ -3,8 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { createPixelPoint } from "../../core/types";
 import {
   createGraphwarAgentClient,
+  createGraphwarAgentSnapshot,
   createGraphwarAgentShotRequest,
   GraphwarAgentClientError,
+  parseGraphwarAgentState,
+  parseGraphwarAgentWorldObstacleMask,
   readGraphwarAgentSnapshot,
   selectGraphwarAgentCurrentShooter,
   selectGraphwarAgentShooter,
@@ -54,6 +57,24 @@ describe("Graphwar Agent API v2 client", () => {
 
     expect(normalized[10]).toBe(1);
     expect(String(fetchMock.mock.calls[1][0])).toBe("http://127.0.0.1:17900/obstacle-mask.bin?space=world");
+  });
+
+  it("parses saved state and obstacle responses through the live snapshot adapter", () => {
+    const state = parseGraphwarAgentState(createStateResponse());
+    if (!state.available) {
+      throw new Error("Expected an available state");
+    }
+    const source = new Uint8Array(770 * 450);
+    source[10] = 3;
+
+    const mask = parseGraphwarAgentWorldObstacleMask(source.buffer, state);
+    const snapshot = createGraphwarAgentSnapshot("http://127.0.0.1:17900", state, mask);
+
+    expect(mask[10]).toBe(1);
+    expect(snapshot.detectionResult.obstacles.mask[759]).toBe(1);
+    expect(() => parseGraphwarAgentWorldObstacleMask(new ArrayBuffer(1), state)).toThrow(
+      "Unexpected obstacle data size",
+    );
   });
 
   it("adapts TEAM2 points and mask cells while retaining ownership metadata", async () => {

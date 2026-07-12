@@ -276,7 +276,16 @@ export async function readGraphwarAgentSnapshot(
   }
 
   const worldObstacleMask = await client.readWorldObstacleMask(state);
-  const worldSnapshot = createGraphwarAgentWorldSnapshot(client.baseUrl, state, worldObstacleMask);
+  return createGraphwarAgentSnapshot(client.baseUrl, state, worldObstacleMask);
+}
+
+/** Adapts already parsed state and world-mask data through the same path as a live Agent read. */
+export function createGraphwarAgentSnapshot(
+  baseUrl: string,
+  state: GraphwarAgentAvailableState,
+  worldObstacleMask: Uint8Array,
+): GraphwarAgentSnapshot {
+  const worldSnapshot = createGraphwarAgentWorldSnapshot(baseUrl, state, worldObstacleMask);
   const shooter = selectGraphwarAgentShooter(state);
   if (shooter) {
     return createGraphwarAgentShooterViewSnapshot(worldSnapshot, shooter.player.id, shooter.soldier.index);
@@ -459,7 +468,11 @@ async function readGraphwarAgentWorldObstacleMaskResponse(
     throw new GraphwarAgentClientError("conflict", "Graphwar state changed while reading the obstacle mask");
   }
 
-  const buffer = await response.arrayBuffer();
+  return parseGraphwarAgentWorldObstacleMask(await response.arrayBuffer(), state);
+}
+
+/** Validates and normalizes a saved world-mask response against its parsed state metadata. */
+export function parseGraphwarAgentWorldObstacleMask(buffer: ArrayBufferLike, state: GraphwarAgentAvailableState) {
   const expectedLength = state.obstacleMask.width * state.obstacleMask.height;
   if (buffer.byteLength !== expectedLength) {
     throw new GraphwarAgentClientError(
@@ -554,7 +567,7 @@ async function readGraphwarAgentJson(response: Response, endpoint: string) {
 }
 
 /** Parses the API-v2 state union and validates all authoritative match fields. */
-function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
+export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
   const state = requireRecord(value, "/state response");
   const apiVersion = requireInteger(state.apiVersion, "apiVersion");
   if (apiVersion !== GRAPHWAR_AGENT_API_VERSION) {

@@ -18,6 +18,19 @@ chineseLocaleStrings.push(
   graphwarKillerLocale.ui.point.coordinateTitle("路径 1", "x"),
 );
 
+const englishCompactTitles: string[] = [];
+const pendingEnglishLocaleValues: { key: string; value: unknown }[] = [{ key: "", value: englishGraphwarKillerLocale }];
+while (pendingEnglishLocaleValues.length > 0) {
+  const current = pendingEnglishLocaleValues.pop();
+  if (!current || current.key === "debugDetails" || current.key === "debugStages") continue;
+  if (typeof current.value === "string") {
+    if (current.key === "title" || current.key.endsWith("Title")) englishCompactTitles.push(current.value);
+  } else if (current.value && typeof current.value === "object") {
+    for (const [key, value] of Object.entries(current.value)) pendingEnglishLocaleValues.push({ key, value });
+  }
+}
+englishCompactTitles.push(englishGraphwarKillerLocale.ui.point.coordinateTitle("Path 1", "x"));
+
 describe("Chinese Graphwar Killer locale", () => {
   it("separates game mode names from formula prefixes", () => {
     expect(graphwarKillerLocale.equationModes.map((mode) => mode.label)).toEqual(["y", "y'", "y''"]);
@@ -61,9 +74,13 @@ describe("Chinese Graphwar Killer locale", () => {
 });
 
 describe("English Graphwar Killer locale", () => {
-  it("states that managed mode automatically readies local room players", () => {
+  it("keeps ordinary titles compact", () => {
+    expect(englishCompactTitles.filter((value) => value.endsWith("."))).toEqual([]);
+  });
+
+  it("states that managed mode automatically marks local room players ready", () => {
     expect(englishGraphwarKillerLocale.ui.pathfinding.managedModeConfirmation([], false)).toContain(
-      "Local room players are readied automatically",
+      "Local players in the room are marked ready automatically",
     );
   });
 });

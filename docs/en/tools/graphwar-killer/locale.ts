@@ -6,57 +6,56 @@ export const graphwarKillerLocale = {
       value: "y",
       label: "y",
       formulaPrefix: "y=",
-      description: "Output a step function",
-      title: "Output or simulate a standard function for Graphwar's y mode.",
+      description: "Output a function",
+      title: "Generate or simulate a function in y mode",
     },
     {
       value: "dy",
       label: "y'",
       formulaPrefix: "y'=",
-      description: "Output the step function's first derivative",
-      title: "Output or simulate a first-derivative function for Graphwar's y' mode.",
+      description: "Output a function's first derivative",
+      title: "Generate or simulate a first derivative in y' mode",
     },
     {
       value: "ddy",
       label: "y''",
       formulaPrefix: "y''=",
-      description: "Output the step function's second derivative",
-      title:
-        "Output or simulate a second-derivative function for Graphwar's y'' mode; some algorithms are unsupported.",
+      description: "Output a function's second derivative",
+      title: "Generate or simulate a second derivative in y'' mode; some algorithms are unavailable",
     },
   ],
   toolWorkflowModes: [
     {
       value: "solver",
-      label: "Generate Formula",
-      title: "Generate a function from the screenshot and path points for pasting into Graphwar.",
+      label: "Generate function",
+      title: "Generate a Graphwar function from the screenshot and path points",
     },
     {
       value: "simulator",
-      label: "Simulate Trajectory",
-      title: "Enter a function and preview its Graphwar trajectory on the screenshot.",
+      label: "Simulate trajectory",
+      title: "Preview a Graphwar function on the screenshot",
     },
   ],
   algorithmModes: [
     {
       value: "abs",
-      label: "Double absolute-value function",
-      title: "Connect path points with double absolute values; expressions are shorter and work well for y and y'.",
+      label: "Double absolute value",
+      title: "Connect path points with shorter expressions for y and y'",
     },
     {
       value: "step",
       label: "Step function",
-      title: "Connect path points with step functions; steepness is adjustable, but expressions are usually longer.",
+      title: "Connect path points with adjustable steepness; expressions are usually longer",
     },
     {
       value: "pchip",
       label: "PCHIP interpolation",
-      title: "Use monotone cubic interpolation for a smooth path that usually tracks hand-picked points closely.",
+      title: "Create a smooth path that closely follows the selected points",
     },
     {
       value: "akima",
       label: "Akima interpolation",
-      title: "Use Akima cubic interpolation for a smooth path that is more stable around local outliers.",
+      title: "Create a smooth path that is stable around local outliers",
     },
   ],
   validation: {
@@ -73,11 +72,11 @@ export const graphwarKillerLocale = {
     obstacleBrushDiameterRange: (min, max) => `Brush size must be between ${min}px and ${max}px`,
     obstacleMinAreaInteger: "Minimum obstacle area must be an integer",
     obstacleMinAreaRange: (max) => `Minimum obstacle area must be between 0 and ${max}`,
-    oneClickClearDeleteCheckRadiusNumber: "One-Click Clear point-delete hit check radius must be a number",
+    oneClickClearDeleteCheckRadiusNumber: "One-Click Clear point removal check radius must be a number",
     oneClickClearDeleteCheckRadiusRange: (min) =>
-      `One-Click Clear point-delete hit check radius must be at least ${min}px`,
-    pathfindingWorkerCountInteger: "Pathfinding parallelism must be an integer",
-    pathfindingWorkerCountRange: "Pathfinding parallelism must be between 1 and 128",
+      `One-Click Clear point removal check radius must be at least ${min}px`,
+    pathfindingWorkerCountInteger: "Pathfinding worker count must be an integer",
+    pathfindingWorkerCountRange: "Pathfinding worker count must be between 1 and 128",
     routePlanningToleranceNumber: "Route planning tolerance must be a number",
     routePlanningTolerancePixelRange: (limit) => `Route planning tolerance must be between -${limit}px and ${limit}px`,
     simulationToleranceNumber: "Simulation tolerance must be a number",
@@ -102,7 +101,7 @@ export const graphwarKillerLocale = {
     },
     activeToolHint: {
       bounds: "Left-click two corners to set bounds; right-click to cancel the selected point.",
-      obstacle: "Hold left-click to draw or erase detected obstacles; hover to preview the brush footprint.",
+      obstacle: "Hold left-click to draw or erase current obstacles; hover to preview the brush footprint.",
       simulatorPath: "Left-click the initial firing soldier; click another soldier to replace it.",
       solverPath:
         "Left-click your soldier's center first, then path-point centers. Drag path points to fine-tune them, right-click a point to delete it, or right-click empty space to undo the latest point.",
@@ -142,7 +141,7 @@ export const graphwarKillerLocale = {
       obstacleEditsApplied: (obstacles) => `Updated obstacle boundaries; currently ${obstacles} obstacles`,
       obstacleEditsCleared: (obstacles) => `Cleared obstacle edits; restored ${obstacles} obstacles`,
       updatingObstacleEdits: "Applying obstacle edits",
-      needBounds: "Detect or draw the Graphwar coordinate-system bounds first",
+      needBounds: "Detect or pick the Graphwar coordinate-system bounds first",
       noBounds: "Could not detect the Graphwar coordinate-system bounds",
       noPixels: "Could not read screenshot pixels",
       partialWarning: "⚠ partial issue",
@@ -194,7 +193,7 @@ export const graphwarKillerLocale = {
       },
       fireFailed: (message) => `Failed to fire: ${message}`,
       fired: "Function submitted and fired.",
-      loaded: (soldiers) => `Read current state: obstacles and ${soldiers} soldier(s)`,
+      loaded: (soldiers) => `Read current state: obstacles and ${soldiers} ${soldiers === 1 ? "soldier" : "soldiers"}`,
       readFirst: "Read Agent state first",
       reading: "Reading state",
     },
@@ -219,11 +218,11 @@ export const graphwarKillerLocale = {
     failure: (elapsed) =>
       elapsed === undefined
         ? "Path Planning failed: no valid path found"
-        : `Path Planning failed: no valid path found in ${elapsed}`,
+        : `Path Planning failed: no valid path found after ${elapsed}`,
     forwardMinimumDouble: "the next representable double-precision floating-point value",
     forwardPath: (minimumStep) =>
       `Each point's Graphwar x must be strictly greater than the previous point, moving at least to ${minimumStep}`,
-    needBounds: "Detect or draw coordinate-system bounds before using Path Planning",
+    needBounds: "Detect or pick coordinate-system bounds before using Path Planning",
     needDetection: "Detect soldiers and obstacles before using Path Planning",
     inProgress: {
       optimize: "Optimize path nodes",
@@ -242,32 +241,32 @@ export const graphwarKillerLocale = {
       needDetection: "Detect soldiers and obstacles before using One-Click Clear",
       needCurrentPath: "One-Click Clear needs an existing path start first",
       noCandidate: "One-Click Clear failed: no selectable target exists on the x+ side of the current path",
-      noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found in ${elapsed}`,
+      noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found after ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) =>
-        `One-Click Clear failed: the pathfinding Worker is unavailable or failed in ${elapsed}`,
+        `One-Click Clear failed: the pathfinding Worker is unavailable or failed after ${elapsed}`,
       success: (killCount, elapsed, resultCacheHit) => {
         const cacheText = resultCacheHit ? " (using result cache)" : "";
-        return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} soldier(s) in ${elapsed}`;
+        return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} ${killCount === 1 ? "soldier" : "soldiers"} in ${elapsed}`;
       },
       unsupported: "One-Click Clear supports double absolute-value y and y', or Step y, y', and y''",
     },
     managed: {
       backgroundWarning: "The page is in the background; managed firing may be delayed",
       calculationComplete: (targetCount, elapsed) =>
-        `Managed calculation completed in ${elapsed}; the best plan hits ${targetCount} target(s)`,
+        `Managed calculation completed in ${elapsed}; the best plan hits ${targetCount} ${targetCount === 1 ? "target" : "targets"}`,
       calculating: (targetCount) =>
         targetCount === undefined
           ? "Managed mode is calculating"
-          : `Managed mode is calculating; best result hits ${targetCount} target(s)`,
+          : `Managed mode is calculating; best result hits ${targetCount} ${targetCount === 1 ? "target" : "targets"}`,
       completedWaiting: "Managed calculation complete; waiting for a local turn",
       connectionFailed: (message) => `Agent connection failed; retrying: ${message}`,
       deadlineFired: "Stopped with 3 seconds remaining and fired the current best plan",
       deadlineNoPlan: "Stopped with 3 seconds remaining but could not submit the skip-turn function",
       deadlinePlan: (targetCount, elapsed) =>
-        `Managed calculation stopped with 3 seconds remaining after ${elapsed}; the best plan hits ${targetCount} target(s)`,
+        `Managed calculation stopped with 3 seconds remaining after ${elapsed}; the best plan hits ${targetCount} ${targetCount === 1 ? "target" : "targets"}`,
       enabled: "Managed mode enabled; reading game state",
       incompatible: "Managed mode stopped because the Agent API is incompatible; upgrade the Agent",
-      readying: "A local room player is not ready; requesting ready automatically",
+      readying: "A local player is not ready; marking them ready",
       searchFailed: "Managed calculation failed and could not skip this turn",
       skippingTurn: "No usable plan; skipping this turn",
       skipTurnFired: "No usable plan; skipped this turn",
@@ -281,44 +280,37 @@ export const graphwarKillerLocale = {
   ui: {
     actions: {
       collisionCheck: "Collision check",
-      collisionCheckTitle:
-        "Check manual Solver and Simulator trajectories against obstacles and bounds. Pathfinding always checks them.",
+      collisionCheckTitle: "Check manual and simulated trajectories for collisions; pathfinding always checks them",
       clearPath: "Clear path",
       clearPathTitle: "Clear all path points",
       clearObstacleEdits: "Clear obstacle edits",
-      clearObstacleEditsTitle: "Restore the original obstacle area from this detection run.",
+      clearObstacleEditsTitle: "Restore the original loaded obstacles",
       drawObstacle: "Draw obstacle",
-      drawObstacleTitle:
-        "Enter obstacle-drawing mode and use a circular brush to correct the current detected obstacles.",
+      drawObstacleTitle: "Correct the loaded obstacles with a circular brush",
       eraseObstacle: "Erase mode",
-      eraseObstacleTitle: "When enabled, the brush removes area from the current detected obstacles.",
+      eraseObstacleTitle: "Erase areas from the loaded obstacles",
       magnifier: "Magnifier",
-      magnifierTitle:
-        "Show a zoomed preview next to the screenshot for more precise soldier, bounds, and path picking.",
+      magnifierTitle: "Magnify the area around the pointer for precise selections",
       magnifierZoom: "Zoom",
       magnifierZoomAriaLabel: "Magnifier zoom",
-      magnifierZoomTitle:
-        "Adjust magnifier zoom; the slider quickly adjusts 1x to 5x, and the input accepts 1x to 100x.",
+      magnifierZoomTitle: "Set magnification; slider range 1x to 5x, input range 1x to 100x",
       obstacleBrushDiameter: "Brush size",
       obstacleBrushDiameterAriaLabel: "Obstacle brush diameter in raw Graphwar 770x450 plane pixels",
       obstacleBrushDiameterTitle:
-        "Circular obstacle brush diameter, in raw Graphwar 770x450 plane pixels; the slider quickly adjusts 1px to 200px, and the input accepts 1px to 1000px.",
+        "Set the circular brush diameter; slider range 1px to 200px, input range 1px to 1000px",
       liveClickPreview: "Live preview",
-      liveClickPreviewTitle:
-        "Preview the path point and new path line that a left-click at the current pointer would place.",
+      liveClickPreviewTitle: "Preview the path point and route created by clicking here",
       pickBounds: "Pick bounds",
-      pickBoundsTitle:
-        "Enter bounds-picking mode: left-click two coordinate-system corners to calibrate the screenshot bounds.",
+      pickBoundsTitle: "Select two coordinate-system corners to calibrate the screenshot",
       pickPath: "Pick path",
-      pickPathTitle: "Enter path-picking mode: click your soldier first, then target path points or target soldiers.",
+      pickPathTitle: "Select your soldier first, then path points or target soldiers",
       pathPlanning: "Path planning",
-      pathPlanningTitle: "Automatically find a route around obstacles after selecting a target.",
+      pathPlanningTitle: "Find a route around obstacles after selecting a target",
       snapSoldiers: "Snap soldiers",
-      snapSoldiersTitle: "Snap picking and hover to detected soldiers and use their real hit circles.",
+      snapSoldiersTitle: "Snap selections to detected soldiers and use their actual hit circles",
       title: "Controls",
       toolModeAriaLabel: "Tool mode",
-      toolModeTitle:
-        "Choose whether clicks on the screenshot pick coordinate-system bounds or pick your soldier and path points.",
+      toolModeTitle: "Choose the bounds, path, or obstacle editing tool",
       undoPoint: "Undo point",
       undoPointTitle: "Undo the most recently added path point",
     },
@@ -326,18 +318,17 @@ export const graphwarKillerLocale = {
       agent: {
         address: "Agent URL",
         addressAriaLabel: "Graphwar Agent URL",
-        addressTitle: "Local Graphwar Agent HTTP URL. Default: http://127.0.0.1:17900.",
+        addressTitle: "Local Graphwar Agent URL; default http://127.0.0.1:17900",
         helpLink: "How to use Graphwar Agent",
         read: "Read state",
         reading: "Reading",
-        readTitle: "Read current soldier coordinates and obstacles from Graphwar Agent.",
+        readTitle: "Read the current game state from Graphwar Agent",
         settingsSummary: "Agent settings",
         toggle: "Use Agent",
-        toggleTitle: "Use Graphwar Agent for current game data and hide screenshot pixel-detection actions.",
+        toggleTitle: "Read game state through Graphwar Agent",
       },
       autoDetection: "Auto detect",
-      autoDetectionTitle:
-        "When a screenshot loads, detect bounds, soldiers, and obstacles automatically; when detection settings change, redetect soldiers and obstacles inside the current bounds.",
+      autoDetectionTitle: "Detect bounds, soldiers, and obstacles when a screenshot loads",
       busyOverlay: "Detecting, right-click to cancel",
       debugNoTiming: "No detection timing recorded yet",
       debugDetails: {
@@ -356,9 +347,9 @@ export const graphwarKillerLocale = {
         "template-matching-mode": {
           label: (mode, workerCount) =>
             mode === "parallel"
-              ? `- Template matching mode: parallel, ${workerCount} worker`
+              ? `- Template matching mode: parallel, ${workerCount} ${workerCount === 1 ? "worker" : "workers"}`
               : mode === "parallel-fallback"
-                ? `- Template matching mode: parallel failed then serial, ${workerCount} worker -> 1 worker`
+                ? `- Template matching mode: parallel-to-serial fallback, ${workerCount} ${workerCount === 1 ? "worker" : "workers"} -> 1 worker`
                 : "- Template matching mode: serial, 1 worker",
           title: "The scheduling mode actually used by this soldier template matching run.",
         },
@@ -426,19 +417,17 @@ export const graphwarKillerLocale = {
       debugSummary: "Debug info",
       minObstacleArea: "Minimum obstacle area",
       minObstacleAreaAriaLabel: "Minimum obstacle area in raw Graphwar plane pixels",
-      minObstacleAreaTitle:
-        "Area threshold for filtering tiny noise; obstacle regions smaller than this are ignored, in raw Graphwar 770x450 plane pixels.",
+      minObstacleAreaTitle: "Ignore obstacle noise smaller than this area",
       detectBounds: "Detect bounds",
-      detectBoundsTitle: "Detect and mark the Graphwar coordinate-system bounds from the current screenshot.",
+      detectBoundsTitle: "Detect the coordinate-system bounds in the current screenshot",
       detectObjects: "Detect soldiers/obstacles",
-      detectObjectsNeedBoundsTitle: "Detect or draw the Graphwar coordinate-system bounds first.",
-      detectObjectsTitle: "Detect soldiers and obstacles inside the current confirmed bounds.",
+      detectObjectsNeedBoundsTitle: "Detect or select the coordinate-system bounds first",
+      detectObjectsTitle: "Detect soldiers and obstacles inside the current bounds",
       title: "Data source",
     },
     pathfinding: {
       allowFriendlyFire: "Allow friendly fire",
-      allowFriendlyFireTitle:
-        "When enabled, Path Planning and One-Click Clear may route through your own soldiers; when disabled, your soldiers are avoided as obstacles.",
+      allowFriendlyFireTitle: "Allow Path Planning and One-Click Clear to pass through allied soldiers",
       capabilityReasons: {
         "agent-disabled": "Turn on Use Agent first",
         "agent-fire-busy": "Agent is submitting a shot.",
@@ -446,7 +435,7 @@ export const graphwarKillerLocale = {
         "agent-scene-required": "Read the current Agent state first.",
         "agent-url-invalid": "Enter a valid Agent URL.",
         "bounds-required": "Detect or pick coordinate bounds first.",
-        "delete-check-radius-invalid": "Fix the point-delete hit check radius.",
+        "delete-check-radius-invalid": "Fix the point removal check radius.",
         "formula-settings-invalid": "Fix the formula settings first.",
         "formula-unsupported": "The current formula profile does not support One-Click Clear.",
         "image-required": "Load a screenshot first.",
@@ -469,9 +458,9 @@ export const graphwarKillerLocale = {
         "dag-edge-mode": {
           label: (mode, workerCount) =>
             mode === "parallel"
-              ? `- Clear DAG edge mode: parallel, ${workerCount} worker`
+              ? `- Clear DAG edge mode: parallel, ${workerCount} ${workerCount === 1 ? "worker" : "workers"}`
               : mode === "parallel-fallback"
-                ? `- Clear DAG edge mode: parallel failed then serial, ${workerCount} worker -> 1 worker`
+                ? `- Clear DAG edge mode: parallel-to-serial fallback, ${workerCount} ${workerCount === 1 ? "worker" : "workers"} -> 1 worker`
                 : "- Clear DAG edge mode: serial, 1 worker",
           title: "The scheduling mode actually used by this One-Click Clear DAG edge build.",
         },
@@ -727,24 +716,22 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
-      deleteOptimization: "Delete optimisation",
-      deleteOptimizationTitle:
-        "Try to remove unnecessary control points. Final replay, collision validation, and hit counting always remain enabled.",
+      deleteOptimization: "Point removal",
+      deleteOptimizationTitle: "Remove unnecessary control points; the full trajectory is still validated",
       obstacleExpansionAgentMode: "Agent mode",
       obstacleExpansionDetectionMode: "Detection mode",
       obstacleExpansion: "Obstacle expansion",
       obstacleExpansionTitle:
-        "Adjust the safety margin around detected obstacles and coordinate-system bounds for pathfinding and collision checks; active Glitch Mode uses its own settings first.",
-      oneClickClearDeleteCheckRadius: "Point-delete hit check radius",
+        "Set the obstacle margin for routing and collision checks; Glitch Mode uses its own value",
+      oneClickClearDeleteCheckRadius: "Point removal check radius",
       oneClickClearDeleteCheckRadiusAriaLabel:
-        "One-Click Clear point-delete hit check radius, in raw Graphwar 770x450 plane pixels",
+        "One-Click Clear point removal check radius, in raw Graphwar 770x450 plane pixels",
       oneClickClearDeleteCheckRadiusTitle:
-        "When One-Click Clear tries to delete a path point, this radius checks whether the small path section before and after deletion still passes through the same soldiers. Unit: raw Graphwar 770x450 plane pixels. Use 0 to skip this fast local hit check and full-route validate each candidate deletion.",
-      oneClickClearTitle:
-        "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
+        "Quickly check whether a local route still crosses the same soldiers; set to 0 to validate the full trajectory",
+      oneClickClearTitle: "Start at the current path end and target usable soldiers to the right",
       managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
       managedMode: "Managed mode",
-      managedModeDisableTitle: "Disable managed mode and unlock settings.",
+      managedModeDisableTitle: "Turn off Managed Mode and unlock settings",
       managedModeConfirmation: (repairs, friendlyFireEnabled) => {
         const algorithmStatus =
           repairs.length === 0
@@ -756,25 +743,23 @@ export const graphwarKillerLocale = {
                     `${repair.equation}: the current algorithm does not support One-Click Clear; it will be set to ${repair.algorithm}${repair.properties.length > 0 ? ` (${repair.properties.join(", ")})` : ""}`,
                 ),
               ].join("\n");
-        return `Managed mode submits shots to Graphwar automatically\nLocal room players are readied automatically\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\n\n${algorithmStatus}\n\nEnable managed mode?`;
+        return `Managed mode submits shots to Graphwar automatically\nLocal players in the room are marked ready automatically\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\n\n${algorithmStatus}\n\nEnable managed mode?`;
       },
-      managedModeTitle: "Read state, ready, calculate One-Click Clear, and fire automatically on local turns.",
+      managedModeTitle: "Read state, plan, and fire automatically during local turns",
       routePlanningTolerance: "Route planning tolerance",
       routePlanningToleranceAriaLabel: "Route planning tolerance in raw Graphwar 770x450 plane pixels",
-      routePlanningToleranceTitle:
-        "Single route tolerance used when Path Planning and One-Click Clear build geometry routes. Unit: raw Graphwar 770x450 plane pixels.",
+      routePlanningToleranceTitle: "Set the obstacle tolerance for Path Planning and One-Click Clear",
       routeAlgorithm: "Routing algorithm",
-      routeAlgorithmTitle: "Choose the geometry router used by ordinary path planning and One-Click Clear.",
+      routeAlgorithmTitle: "Choose the routing algorithm for Path Planning and One-Click Clear",
       routeLazyVisibilityGraph: "Lazy visibility graph",
       routeThetaStar: "Theta*",
       routeXPlusScan: "X+ Scan",
       searchAnimation: "Search animation",
-      searchAnimationTitle:
-        "Show Path Planning candidate points, explored edges, trial paths, and optimization points; turn it off to keep only the final path result.",
+      searchAnimationTitle: "Show candidate points, explored routes, and optimization progress",
       simulationTolerance: "Simulation tolerance",
       simulationToleranceAriaLabel: "Function-simulation tolerance in raw Graphwar 770x450 plane pixels",
       simulationToleranceTitle:
-        "Obstacle tolerance used during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
+        "Set the obstacle tolerance for simulation and collision checks; route selection is unchanged",
       autoGraph: "One-Click Clear",
       title: "Pathfinding",
       settingsSummary: "Pathfinding settings",
@@ -782,8 +767,7 @@ export const graphwarKillerLocale = {
     },
     point: {
       coordinateAriaLabel: (label, axis) => `${label} ${axis} coordinate`,
-      coordinateTitle: (label, axis) =>
-        `Edit the ${axis} coordinate for ${label}; this also moves the point on the screenshot.`,
+      coordinateTitle: (label, axis) => `Edit ${label}'s ${axis} coordinate and move the point on the screenshot`,
       header: "Point",
       pathLabel: (index) => `Path ${index}`,
       selfLabel: "Self",
@@ -791,18 +775,18 @@ export const graphwarKillerLocale = {
     },
     result: {
       clearSimulator: "Clear",
-      clearSimulatorTitle: "Clear the simulator function, launch angle, and selected starting soldier.",
-      copyTitle: "Copy the generated Graphwar function to the clipboard.",
+      clearSimulatorTitle: "Clear the function, launch angle, and selected firing soldier",
+      copyTitle: "Copy the generated Graphwar function",
       fire: "Fire",
       fireError: "Fire failed",
       fireSuccess: "Fired",
-      fireTitle: "Submit the current function through Graphwar Agent and fire.",
+      fireTitle: "Submit the current function through Graphwar Agent and fire",
       firing: "Firing",
       formulaInputAriaLabel: "Simulator function input",
-      formulaInputTitle: "Enter the Graphwar function expression to simulate on the screenshot.",
+      formulaInputTitle: "Enter the Graphwar function to simulate",
       launchAngle: "Launch angle",
       launchAngleAriaLabel: "Launch angle for y'' mode",
-      launchAngleTitle: "Launch angle required by y'' mode, in degrees.",
+      launchAngleTitle: "Launch angle for y'' mode, in degrees",
       title: "Formula",
     },
     screenshot: {
@@ -810,86 +794,79 @@ export const graphwarKillerLocale = {
       stepGlitchAgentRecommendation: (agentToggleLabel) =>
         `Enable "${agentToggleLabel}" for accurate soldier positions`,
       capture: "Capture screenshot",
-      captureTitle: "Use the browser's screen capture prompt to load a Graphwar screenshot into the tool.",
+      captureTitle: "Capture a Graphwar screenshot and load it into the tool",
       placeholder: "Upload, drag in, or paste a screenshot to start calibration",
       title: "Screenshot",
       upload: "Upload image",
-      uploadInputTitle: "Choose a Graphwar screenshot from your computer.",
-      uploadTitle: "Choose a Graphwar screenshot from your computer; you can also drag in or paste an image.",
+      uploadInputTitle: "Choose a Graphwar screenshot from your computer",
+      uploadTitle: "Choose, drag in, or paste a Graphwar screenshot",
     },
     settings: {
       algorithm: "Algorithm",
       algorithmAriaLabel: "Algorithm",
-      algorithmTitle: "Choose how path points are converted into a Graphwar function.",
+      algorithmTitle: "Choose how path points become a Graphwar function",
       bounds: {
         heading: "Bounds",
         maxXAriaLabel: "Graphwar coordinate-system right-edge x coordinate",
-        maxXTitle: "X coordinate for the right edge of the Graphwar coordinate system.",
+        maxXTitle: "X coordinate of the right boundary",
         maxYAriaLabel: "Graphwar coordinate-system top-edge y coordinate",
-        maxYTitle: "Y coordinate for the top edge of the Graphwar coordinate system.",
+        maxYTitle: "Y coordinate of the top boundary",
         minXAriaLabel: "Graphwar coordinate-system left-edge x coordinate",
-        minXTitle: "X coordinate for the left edge of the Graphwar coordinate system.",
+        minXTitle: "X coordinate of the left boundary",
         minYAriaLabel: "Graphwar coordinate-system bottom-edge y coordinate",
-        minYTitle: "Y coordinate for the bottom edge of the Graphwar coordinate system.",
+        minYTitle: "Y coordinate of the bottom boundary",
       },
       actionBar: {
         heading: "Action Bar",
-        liveClickPreviewWorkerCount: "Live preview parallelism",
+        liveClickPreviewWorkerCount: "Live preview workers",
         liveClickPreviewWorkerCountAriaLabel: "Number of live click preview Workers",
-        liveClickPreviewWorkerCountTitle:
-          "Live preview uses persistent Workers in parallel; new pointer positions keep only one latest waiting task, and completed older requests are discarded by request order. Default 4, range 1 to 16.",
+        liveClickPreviewWorkerCountTitle: "Set the number of live preview workers; default 4, range 1 to 16",
       },
       advancedSettings: "Advanced",
       debugActivationCountdown: (remainingSeconds) => `Hold ${remainingSeconds}s more to enable debug info`,
       decimalPlaces: "Decimal places",
       decimalPlacesAriaLabel: "Generated function decimal places",
       decimalPlacesTitle:
-        "Number of decimal places kept in generated function text; more digits are more precise but make the function longer.",
+        "Set decimal places in generated functions; more digits improve precision but increase length",
       debugInfoEnabled: "Debug info enabled",
       gameMode: "Game mode",
       gameModeAriaLabel: "Graphwar game mode",
-      gameModeTitle: "Choose the Graphwar input mode: y, y', or y''.",
+      gameModeTitle: "Choose the Graphwar input mode: y, y', or y''",
       mode: "Workflow",
       modeAriaLabel: "Workflow",
-      modeTitle: "Choose whether to generate a copyable function or simulate an existing function's trajectory.",
+      modeTitle: "Generate a function or simulate an existing one",
       overflowProtection: "Overflow protection",
-      overflowProtectionTitle:
-        "Check whether Step derivative terms overflow within the possible sampling range from the launch point to the x+ boundary and use a numerically stable form when required.",
+      overflowProtectionTitle: "Use a stable formula when Step derivative terms may overflow",
       parseDerivativeAsY: "y' -> y",
-      parseDerivativeAsYTitle: "Graphwar has a bug: because of the regular expression order, y' is parsed as y.",
+      parseDerivativeAsYTitle: "Match Graphwar's behavior of parsing y' as y",
       pathfinding: {
         heading: "Pathfinding",
-        workerCount: "Pathfinding parallelism",
+        workerCount: "Pathfinding workers",
         workerCountAriaLabel: "Number of geometry pathfinding Workers",
-        workerCountTitle:
-          "Regular route geometry search runs in a Worker; One-Click Clear DAG edge building may run up to this many edge-search Workers. Default 4, range 1 to 128; 1 means serial.",
+        workerCountTitle: "Set the number of pathfinding workers; default 4, range 1 to 128",
       },
       recognition: {
         candidateTopRatio: "Candidate keep ratio",
         candidateTopRatioAriaLabel: "Soldier template candidate keep ratio",
-        candidateTopRatioTitle:
-          "Before template matching, keep only top-ranked soldier candidates; 0.1 means the top 10%.",
+        candidateTopRatioTitle: "Keep only top-ranked soldier candidates before template matching; 0.1 keeps 10%",
         heading: "Recognition",
         maximumSoldierCount: "Detected soldier limit",
         maximumSoldierCountAriaLabel: "Detected soldier count limit",
-        maximumSoldierCountTitle: "Maximum number of soldiers kept in detection results; default 40.",
+        maximumSoldierCountTitle: "Set the maximum soldiers kept in detection results; default 40",
         templateMatchingWorkerCount: "Template matching workers",
         templateMatchingWorkerCountAriaLabel: "Number of soldier template matching Workers",
-        templateMatchingWorkerCountTitle:
-          "Number of Workers to run during soldier template matching; default 4, range 1 to 128, and it will not exceed the candidate count.",
+        templateMatchingWorkerCountTitle: "Set the number of template matching workers; default 4, range 1 to 128",
       },
       simulator: "Simulator",
       skipUnknownCharacters: "Skip unknown characters",
-      skipUnknownCharactersTitle: "Graphwar skips unknown characters.",
+      skipUnknownCharactersTitle: "Match Graphwar's behavior of skipping unknown characters",
       stepGlitchMode: "Glitch Mode",
       stepGlitchModeInactiveReason: "Switch to Step y' to use it",
       stepGlitchModeObstacleRequiredReason: "Requires obstacle data",
-      stepGlitchModeTitle:
-        "Only applies to step y' mode and requires an existing obstacle recognition result. When the approximate normal-step path region contains an obstacle, Glitch Mode attempts to generate a jump term. Using Agent to read game information is recommended because accurate soldier positions are required.",
+      stepGlitchModeTitle: "Use with Step y' to tunnel past obstacles; accurate obstacle and soldier data is required",
       stepSteepness: "Step steepness a",
       stepSteepnessAriaLabel: "Step function steepness a",
-      stepSteepnessTitle:
-        "Steepness parameter a for the step function; higher values make turns sharper and cause derivative exponentials to reach the overflow threshold over shorter x distances.",
+      stepSteepnessTitle: "Set Step steepness; higher values make sharper turns and trigger overflow protection sooner",
       title: "Settings",
     },
   },

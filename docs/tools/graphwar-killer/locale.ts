@@ -679,7 +679,7 @@ export const graphwarKillerLocale = {
                 ),
               ]),
         ].join("\n");
-        return `托管会自动向 Graphwar 发射\n房间内会自动准备本地玩家\n当前${friendlyFireEnabled ? "允许" : "禁止"}友伤\n\n${algorithmStatus}\n\n确认开启托管？`;
+        return `托管会自动向 Graphwar 发射\n在房间内会自动准备\n当前${friendlyFireEnabled ? "允许" : "禁止"}友伤\n\n${algorithmStatus}\n\n确认开启托管？`;
       },
       managedModeTitle: "在己方回合自动读取状态、规划并发射",
       routePlanningTolerance: "路线规划容差",

@@ -62,7 +62,7 @@ describe("Chinese Graphwar Killer locale", () => {
       { algorithm: "阶跃函数", equation: "y''", properties: [] },
     ];
     const supportedConfirmation = graphwarKillerLocale.ui.pathfinding.managedModeConfirmation(settings, [], false);
-    expect(supportedConfirmation).toContain("房间内会自动准备本地玩家");
+    expect(supportedConfirmation).toContain("在房间内会自动准备");
     expect(supportedConfirmation).toContain("当前算法设定：\ny：双绝对值函数\ny'：阶跃函数（邪道模式）\ny''：阶跃函数");
     expect(
       graphwarKillerLocale.ui.pathfinding.managedModeConfirmation(
@@ -84,7 +84,7 @@ describe("English Graphwar Killer locale", () => {
     expect(englishCompactTitles.filter((value) => value.endsWith("."))).toEqual([]);
   });
 
-  it("states that managed mode automatically marks local room players ready", () => {
+  it("states that managed mode automatically readies in rooms", () => {
     expect(
       englishGraphwarKillerLocale.ui.pathfinding.managedModeConfirmation(
         [
@@ -95,7 +95,7 @@ describe("English Graphwar Killer locale", () => {
         [],
         false,
       ),
-    ).toContain("Local players in the room are marked ready automatically");
+    ).toContain("Automatically readies in rooms");
   });
 
   it("lists current managed-mode algorithms before any repairs", () => {

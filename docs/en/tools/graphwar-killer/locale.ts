@@ -765,7 +765,7 @@ export const graphwarKillerLocale = {
                 ),
               ]),
         ].join("\n");
-        return `Managed mode submits shots to Graphwar automatically\nLocal players in the room are marked ready automatically\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\n\n${algorithmStatus}\n\nEnable managed mode?`;
+        return `Managed mode submits shots to Graphwar automatically\nAutomatically readies in rooms\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\n\n${algorithmStatus}\n\nEnable managed mode?`;
       },
       managedModeTitle: "Read state, plan, and fire automatically during local turns",
       routePlanningTolerance: "Route planning tolerance",

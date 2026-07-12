@@ -445,7 +445,18 @@ function scanPreparedGraphwarStepGlitchPath(
       }
       const candidates =
         farthestX >= targetGridPoint.x
-          ? [createDirectTargetCandidate(item.state, target.targetPoint, targetGraphPoint, targetGridPoint.x)]
+          ? [
+              {
+                controlX: targetGraphPoint.x,
+                farthestX: targetGridPoint.x,
+                kind: "target" as const,
+                path: [...item.state.path, target.targetPoint],
+                row: item.state.row,
+                targetDistance: 0,
+                verticalDistance: 0,
+                windowWidth: Number.POSITIVE_INFINITY,
+              },
+            ]
           : createGateCandidates(item.state, farthestX + 1, targetGraphPoint, hitTargetGridPoint.y, options, maskIndex);
       candidates.sort(compareScanCandidates);
       for (let index = candidates.length - 1; index >= 0; index -= 1) {
@@ -658,58 +669,45 @@ function createGateCandidates(
     }
 
     const controlSearchX = graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.mirrored);
-    const spans = collectFreeRowSpans(maskIndex, controlSearchX);
-    for (const span of spans) {
-      for (let row = span.minY; row <= span.maxY; row += 1) {
-        const key = `${controlX.toPrecision(17)}:${row}`;
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        const farthestX = getFarthestFreeX(maskIndex, controlSearchX, row);
-        if (farthestX < controlSearchX) {
-          continue;
-        }
-        const controlPoint = createControlPointForFormulaEndX(
-          controlX,
-          target.x,
-          row,
-          options,
-          options.settings.decimalPlaces,
-        );
-        if (!controlPoint) {
-          continue;
-        }
-
-        candidates.push({
-          controlX,
-          farthestX,
-          kind: "gate",
-          path: [...state.path, controlPoint],
-          row,
-          targetDistance: Math.abs(row - targetRow),
-          verticalDistance: Math.abs(row - state.row),
-          windowWidth,
-        });
+    const keyPrefix = `${controlX.toPrecision(17)}:`;
+    // 每行一次读取即可同时判断自由区和记录最远点；不构造 span，也不再二次扫描自由行。
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      const farthestX = getFarthestFreeX(maskIndex, controlSearchX, row);
+      if (farthestX < controlSearchX) {
+        continue;
       }
+      const key = `${keyPrefix}${row}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      const controlPoint = createControlPointForFormulaEndX(
+        controlX,
+        target.x,
+        row,
+        options,
+        options.settings.decimalPlaces,
+      );
+      if (!controlPoint) {
+        continue;
+      }
+
+      candidates.push({
+        controlX,
+        farthestX,
+        kind: "gate",
+        path: [...state.path, controlPoint],
+        row,
+        targetDistance: Math.abs(row - targetRow),
+        verticalDistance: Math.abs(row - state.row),
+        windowWidth,
+      });
     }
   }
   return candidates;
 }
 
-function createDirectTargetCandidate(state: ScanState, targetPoint: PixelPoint, target: GraphPoint, farthestX: number) {
-  return {
-    controlX: target.x,
-    farthestX,
-    kind: "target" as const,
-    path: [...state.path, targetPoint],
-    row: state.row,
-    targetDistance: 0,
-    verticalDistance: 0,
-    windowWidth: Number.POSITIVE_INFINITY,
-  };
-}
-
+/** 优先横向推进更远的稳定候选，末尾 tie-break 保证相同局面结果可复现。 */
 function compareScanCandidates(left: ScanCandidate, right: ScanCandidate) {
   return (
     right.farthestX - left.farthestX ||
@@ -720,21 +718,7 @@ function compareScanCandidates(left: ScanCandidate, right: ScanCandidate) {
   );
 }
 
-function collectFreeRowSpans(index: GraphwarStepGlitchScanMaskIndex, searchX: number) {
-  const spans: { maxY: number; minY: number }[] = [];
-  let start = -1;
-  for (let row = 0; row <= GRAPHWAR_PLANE_HEIGHT; row += 1) {
-    const free = row < GRAPHWAR_PLANE_HEIGHT && getFarthestFreeX(index, searchX, row) >= searchX;
-    if (free && start < 0) {
-      start = row;
-    } else if (!free && start >= 0) {
-      spans.push({ maxY: row - 1, minY: start });
-      start = -1;
-    }
-  }
-  return spans;
-}
-
+/** 查询指定行从 searchX 开始连续可通行区的最右列。 */
 function getFarthestFreeX(index: GraphwarStepGlitchScanMaskIndex, searchX: number, row: number) {
   if (searchX < 0 || searchX >= GRAPHWAR_PLANE_LENGTH || row < 0 || row >= GRAPHWAR_PLANE_HEIGHT) {
     return -1;

@@ -1508,31 +1508,6 @@ export function sampleGraphwarPathTargetSequence(options: {
   };
 }
 
-/** 找出预览轨迹首次碰到目标圆的采样点索引，供页面决定提示和截断显示。 */
-export function findGraphwarTrajectoryTargetHitIndex(options: {
-  bounds: GraphBounds;
-  boundsRect: BoundsRect;
-  points: readonly GraphPoint[];
-  /** 目标命中圆半径，单位为截图像素。 */
-  targetHitRadiusPixels: number;
-  targetPoint: PixelPoint;
-}) {
-  if (options.points.length === 0) {
-    return -1;
-  }
-  // 预览目标半径固定，提前平方后用距离平方比较，避免每个采样点 Math.hypot 开方。
-  const targetRadiusSquared = options.targetHitRadiusPixels * options.targetHitRadiusPixels;
-  for (let index = 1; index < options.points.length; index += 1) {
-    const pixel = graphToImagePoint(options.points[index], options.bounds, options.boundsRect);
-    const targetDx = pixel.x - options.targetPoint.x;
-    const targetDy = pixel.y - options.targetPoint.y;
-    if (targetDx * targetDx + targetDy * targetDy < targetRadiusSquared) {
-      return index;
-    }
-  }
-  return -1;
-}
-
 /** 生成 Graphwar 实际公式点；路径点和发射点保持 double 精度，只有最终表达式文本会按小数位格式化。 */
 function createFormulaPathPoints(
   points: readonly GraphPoint[],
@@ -1613,7 +1588,7 @@ function createGraphwarTrajectoryStopTracker(options: {
           }
           const targetDx = pixel.x - target.center.x;
           const targetDy = pixel.y - target.center.y;
-          if (targetDx * targetDx + targetDy * targetDy >= requiredTargetRadiusSquares[targetIndex]) {
+          if (!(targetDx * targetDx + targetDy * targetDy < requiredTargetRadiusSquares[targetIndex])) {
             continue;
           }
           requiredTargetHits[targetIndex] = 1;
@@ -1630,7 +1605,7 @@ function createGraphwarTrajectoryStopTracker(options: {
           }
           const targetDx = pixel.x - target.center.x;
           const targetDy = pixel.y - target.center.y;
-          if (targetDx * targetDx + targetDy * targetDy >= trackedTargetRadiusSquares[targetIndex]) {
+          if (!(targetDx * targetDx + targetDy * targetDy < trackedTargetRadiusSquares[targetIndex])) {
             continue;
           }
           trackedTargetHitIndexes[targetIndex] = index;
@@ -1643,7 +1618,7 @@ function createGraphwarTrajectoryStopTracker(options: {
           }
           const targetDx = pixel.x - target.center.x;
           const targetDy = pixel.y - target.center.y;
-          if (targetDx * targetDx + targetDy * targetDy >= targetRadiusSquares[reachedTargetCount]) {
+          if (!(targetDx * targetDx + targetDy * targetDy < targetRadiusSquares[reachedTargetCount])) {
             break;
           }
           reachedTargetCount += 1;

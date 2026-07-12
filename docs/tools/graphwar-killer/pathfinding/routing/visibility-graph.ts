@@ -1090,7 +1090,7 @@ function selectBestOpenCandidateIndex(
   return bestIndex;
 }
 
-/** 比较两个搜索候选点的 A* 排序优先级。 */
+/** 比较搜索候选的 A* 优先级，并用稳定 tie-break 保证相同局面结果可复现。 */
 function compareSearchQueueCandidates(
   leftIndex: number,
   rightIndex: number,
@@ -1107,16 +1107,13 @@ function compareSearchQueueCandidates(
     return leftIndex - rightIndex;
   }
 
-  const leftF = {
-    secondary: leftState.cost.secondary + planeGridPointDistance(leftPoint, target),
-    segments: leftState.cost.segments,
-  };
-  const rightF = {
-    secondary: rightState.cost.secondary + planeGridPointDistance(rightPoint, target),
-    segments: rightState.cost.segments,
-  };
+  const leftEstimatedSecondary = leftState.cost.secondary + planeGridPointDistance(leftPoint, target);
+  const rightEstimatedSecondary = rightState.cost.secondary + planeGridPointDistance(rightPoint, target);
   return (
-    comparePathfindingCosts(leftF, rightF) ||
+    leftState.cost.segments - rightState.cost.segments ||
+    (nearlyEqual(leftEstimatedSecondary, rightEstimatedSecondary)
+      ? 0
+      : leftEstimatedSecondary - rightEstimatedSecondary) ||
     leftState.cost.secondary - rightState.cost.secondary ||
     Math.abs(target.x - leftPoint.x) - Math.abs(target.x - rightPoint.x) ||
     Math.abs(target.y - leftPoint.y) - Math.abs(target.y - rightPoint.y) ||
@@ -1184,7 +1181,6 @@ async function findStatefulLazyVisibilityGraphPath({
   };
   const states = new Map<string, StatefulVisibilitySearchState>([[startKey, startState]]);
   const openKeys = new Set<string>([startKey]);
-  const closedKeys = new Set<string>();
   const acceptedEdges: [PlaneGridPoint, PlaneGridPoint][] = [];
   let expansionCount = 0;
 
@@ -1223,7 +1219,6 @@ async function findStatefulLazyVisibilityGraphPath({
       return path;
     }
 
-    closedKeys.add(currentKey);
     for (let nextIndex = 0; nextIndex < candidates.length; nextIndex += 1) {
       if (nextIndex === currentState.candidateIndex) {
         continue;
@@ -1261,7 +1256,6 @@ async function findStatefulLazyVisibilityGraphPath({
         routeState: edge.nextRouteState,
         ...(edge.nextRouteStateKey === undefined ? {} : { routeStateKey: edge.nextRouteStateKey }),
       });
-      closedKeys.delete(nextKey);
       openKeys.add(nextKey);
     }
 
@@ -1366,6 +1360,7 @@ function selectBestOpenStatefulVisibilityKey(
   return bestKey;
 }
 
+/** 比较有状态搜索队列；启发成本相等时回退到已付成本和稳定键。 */
 function compareStatefulVisibilityQueueCandidates(
   leftKey: string,
   rightKey: string,
@@ -1383,16 +1378,13 @@ function compareStatefulVisibilityQueueCandidates(
     return leftKey.localeCompare(rightKey);
   }
 
-  const leftF = {
-    secondary: leftState.cost.secondary + estimateRemainingSecondaryCost(leftPoint, target),
-    segments: leftState.cost.segments,
-  };
-  const rightF = {
-    secondary: rightState.cost.secondary + estimateRemainingSecondaryCost(rightPoint, target),
-    segments: rightState.cost.segments,
-  };
+  const leftEstimatedSecondary = leftState.cost.secondary + estimateRemainingSecondaryCost(leftPoint, target);
+  const rightEstimatedSecondary = rightState.cost.secondary + estimateRemainingSecondaryCost(rightPoint, target);
   return (
-    comparePathfindingCosts(leftF, rightF) ||
+    leftState.cost.segments - rightState.cost.segments ||
+    (nearlyEqual(leftEstimatedSecondary, rightEstimatedSecondary)
+      ? 0
+      : leftEstimatedSecondary - rightEstimatedSecondary) ||
     comparePathfindingCosts(leftState.cost, rightState.cost) ||
     Math.abs(target.x - leftPoint.x) - Math.abs(target.x - rightPoint.x) ||
     Math.abs(target.y - leftPoint.y) - Math.abs(target.y - rightPoint.y) ||

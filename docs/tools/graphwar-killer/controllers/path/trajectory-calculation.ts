@@ -2,7 +2,6 @@ import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, 
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
   createGraphwarTrajectoryFormulaContext,
-  findGraphwarTrajectoryTargetHitIndex,
   getGraphwarTrajectoryLaunchAngle,
   sampleGraphwarExpressionTrajectoryWithStops,
   sampleGraphwarFormulaTrajectory,
@@ -137,21 +136,21 @@ function calculateSolverTrajectory(
       ...(input.collision ? { collision: input.collision } : {}),
       collectVisiblePixels: true,
       context: prepared.context,
-    });
-    const targetHitIndex =
-      input.targetPoint && input.targetHitRadiusPixels !== undefined
-        ? findGraphwarTrajectoryTargetHitIndex({
-            bounds: input.bounds,
-            boundsRect: input.boundsRect,
-            points: sampleResult.sample.points,
+      // 主轨迹必须继续画到自然停止点；目标只记录首次命中，不能为了统计截短曲线。
+      stopOnTargetsComplete: false,
+      ...(input.targetPoint && input.targetHitRadiusPixels !== undefined
+        ? {
             targetHitRadiusPixels: input.targetHitRadiusPixels,
             targetPoint: input.targetPoint,
-          })
-        : -1;
+          }
+        : {}),
+    });
     // 命中目标后的碰撞不影响当前路径成功提示，保持与原主线程实现一致。
     const obstacleHitIndex =
-      targetHitIndex >= 0 && sampleResult.obstacleHitIndex >= targetHitIndex ? -1 : sampleResult.obstacleHitIndex;
-    const warningReason = resolveWarningReason(sampleResult, targetHitIndex, obstacleHitIndex);
+      sampleResult.targetHitIndex >= 0 && sampleResult.obstacleHitIndex >= sampleResult.targetHitIndex
+        ? -1
+        : sampleResult.obstacleHitIndex;
+    const warningReason = resolveWarningReason(sampleResult, sampleResult.targetHitIndex, obstacleHitIndex);
     return {
       ok: true,
       result: {

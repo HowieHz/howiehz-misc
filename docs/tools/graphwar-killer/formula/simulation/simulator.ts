@@ -271,7 +271,11 @@ export function getGraphwarLaunchAngle(options: CreateGraphwarFormulaPathOptions
 /** 模拟普通 y= 模式：从士兵边缘出发，并让 Graphwar 自动给函数加常数平移。 */
 function createNormalFunctionStepper(options: SampleGraphwarTrajectoryOptions) {
   const evaluateY = createYEvaluator(options);
-  const launchPoint = getLaunchPoint(options, options.soldierCenter);
+  // 软插值 evaluator 会携带整组 cubic segments；复用它求角度，不能为发射点再编译一次。
+  const angle = getNormalStartAngle(options.soldierCenter.x, evaluateY);
+  const launchPoint = Number.isFinite(angle)
+    ? moveFromSoldierCenter(options.soldierCenter, angle)
+    : options.soldierCenter;
   const offset = launchPoint.y - evaluateY(launchPoint.x);
   if (!isFinitePoint(launchPoint) || !Number.isFinite(offset)) {
     return { ok: false as const, stopReason: "invalid" as const };
@@ -291,7 +295,11 @@ function createNormalFunctionStepper(options: SampleGraphwarTrajectoryOptions) {
 /** 模拟 y'= 模式：先迭代发射角，再从士兵边缘开始做一阶 RK4。 */
 function createFirstOrderEquationStepper(options: SampleGraphwarTrajectoryOptions) {
   const evaluateDY = createFirstOrderEvaluator(options);
-  const launchPoint = getLaunchPoint(options, options.soldierCenter);
+  // 发射角和 RK4 共用同一 evaluator，避免 PCHIP/Akima 路径重复构建插值段。
+  const launchPoint = moveFromSoldierCenter(
+    options.soldierCenter,
+    getFirstOrderStartAngle(options.soldierCenter, evaluateDY),
+  );
   if (!isFinitePoint(launchPoint)) {
     return { ok: false as const, stopReason: "invalid" as const };
   }
@@ -313,7 +321,8 @@ function createSecondOrderEquationStepper(options: SampleGraphwarTrajectoryOptio
 
   const evaluateDDY = createSecondOrderEvaluator(options);
   const angle = getLaunchAngle(options, options.soldierCenter);
-  const launchPoint = getLaunchPoint(options, options.soldierCenter);
+  // 已完成的固定点角度迭代直接决定发射点，不能经 getLaunchPoint 再完整迭代一遍。
+  const launchPoint = moveFromSoldierCenter(options.soldierCenter, angle);
   const launchState = createSecondOrderState(launchPoint.x, launchPoint.y, Math.tan(angle));
   if (!isFinitePoint(launchState) || !Number.isFinite(launchState.dy)) {
     return { ok: false as const, stopReason: "invalid" as const };
@@ -578,6 +587,11 @@ function createBisectionTrajectoryStepper<TPoint extends GraphPoint>(
   options: { initialState?: GraphwarTrajectorySamplingState; stopAtMinStep: boolean },
 ) {
   const initialPoint = createInitialBisectionPoint(start, options.initialState);
+  // bounds 是本次同步采样的固定快照；归一化一次，避免最多 20,000 个接受点重复 Math.min/max。
+  const minX = Math.min(bounds.minX, bounds.maxX);
+  const maxX = Math.max(bounds.minX, bounds.maxX);
+  const minY = Math.min(bounds.minY, bounds.maxY);
+  const maxY = Math.max(bounds.minY, bounds.maxY);
   let previous = initialPoint;
   let state = createTrajectorySamplingState(
     initialPoint,
@@ -601,7 +615,7 @@ function createBisectionTrajectoryStepper<TPoint extends GraphPoint>(
       const previousPoint = createGraphPoint(previous.x, previous.y);
       previous = next.point;
       state = createTrajectorySamplingState(next.point, previousPoint, state.sampleIndex + 1);
-      if (isOutsideGraphBounds(next.point, bounds)) {
+      if (next.point.x < minX || next.point.x > maxX || next.point.y < minY || next.point.y > maxY) {
         return { ok: false as const, state, stopReason: "out-of-bounds" as const };
       }
 
@@ -732,15 +746,6 @@ function createTrajectorySample(
 /** 比较两个采样点的 Graphwar 游戏坐标距离平方。 */
 function distanceSquared(left: GraphPoint, right: GraphPoint) {
   return (right.x - left.x) ** 2 + (right.y - left.y) ** 2;
-}
-
-/** Graphwar 原版出平面会触发 Obstacle.collidePoint，等价于边界碰撞。 */
-function isOutsideGraphBounds(point: GraphPoint, bounds: GraphBounds) {
-  const minX = Math.min(bounds.minX, bounds.maxX);
-  const maxX = Math.max(bounds.minX, bounds.maxX);
-  const minY = Math.min(bounds.minY, bounds.maxY);
-  const maxY = Math.max(bounds.minY, bounds.maxY);
-  return point.x < minX || point.x > maxX || point.y < minY || point.y > maxY;
 }
 
 /** SVG 预览不能接收 NaN 或 Infinity。 */

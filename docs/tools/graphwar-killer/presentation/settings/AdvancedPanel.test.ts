@@ -38,6 +38,7 @@ describe("AdvancedPanel", () => {
       simulator: { parseDerivativeAsY: true, skipUnknownCharacters: true },
     };
     const wrapper = mount(AdvancedPanel, { props: { locale: graphwarKillerLocale, panel } });
+    expect(wrapper.classes()).toContain("graphwar-killer-control-surface");
     const routeToleranceInputs = wrapper
       .findAll("input")
       .filter((input) =>

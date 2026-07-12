@@ -637,6 +637,7 @@ const {
   remainingMs: debugActivationRemainingMs,
   startHold: startDebugActivationHold,
   successVisible: debugActivationSuccessVisible,
+  toggleAdvancedSettings: toggleAdvancedSettingsFromControl,
 } = useGraphwarDebugActivation({
   toggleAdvancedSettings,
 });
@@ -872,7 +873,7 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
       : toolWorkflowMode.value !== "solver" || solverEquationMode.value !== "dy" || algorithmMode.value !== "step"
         ? locale.ui.settings.stepGlitchModeInactiveReason
         : stepGlitchModeEnabled.value && !detectedObstacles.value
-          ? locale.ui.settings.stepGlitchModeWaitingReason
+          ? locale.ui.settings.stepGlitchModeObstacleRequiredReason
           : undefined,
     stepGlitchModeState: graphwarManagedModeEnabled.value
       ? "busy"
@@ -3830,7 +3831,7 @@ function undoLastPoint() {
       @set-equation-mode="setEquationMode"
       @set-tool-workflow-mode="setToolWorkflowMode"
       @start-debug-activation-hold="!graphwarManagedModeEnabled && startDebugActivationHold($event)"
-      @toggle-advanced-settings="toggleAdvancedSettings"
+      @toggle-advanced-settings="toggleAdvancedSettingsFromControl"
       @toggle-step-glitch-mode="toggleStepGlitchMode"
       @toggle-step-overflow-protection="
         !graphwarManagedModeEnabled && (stepOverflowProtectionEnabled = !stepOverflowProtectionEnabled)
@@ -3884,7 +3885,23 @@ function undoLastPoint() {
         !graphwarManagedModeEnabled && (templateMatchingWorkerCountText = $event)
       "
     />
-    <div class="graphwar-killer__detection-pathfinding-row">
+    <div class="graphwar-killer__action-detection-row">
+      <GraphwarActionPanel
+        :locale="locale"
+        :panel="actionPanel"
+        @clear-obstacle-edits="!graphwarManagedModeEnabled && resetObstacleEdits()"
+        @clear-path="clearPath"
+        @set-tool-mode="setToolMode"
+        @toggle-collision-check="toggleCollisionCheck"
+        @toggle-live-click-preview="liveClickPreviewEnabled = !liveClickPreviewEnabled"
+        @toggle-magnifier="magnifierEnabled = !magnifierEnabled"
+        @toggle-obstacle-brush-erase="!graphwarManagedModeEnabled && toggleObstacleBrushErase()"
+        @toggle-path-planning="togglePathPlanning"
+        @toggle-snap-soldiers="toggleSnapSoldiers"
+        @undo-point="undoLastPoint"
+        @update-magnifier-zoom="setMagnifierZoomText"
+        @update-obstacle-brush-diameter="setObstacleBrushDiameterText"
+      />
       <GraphwarDetectionPanel
         :locale="locale"
         :panel="detectionPanel"
@@ -3897,33 +3914,7 @@ function undoLastPoint() {
         @upload-image="!graphwarManagedModeEnabled && handleImageUpload($event)"
         @update-agent-base-url="setGraphwarAgentBaseUrlText"
       />
-      <GraphwarSmartPathfindingPanel
-        :locale="locale"
-        :panel="smartPathfindingPanel"
-        @run-one-click-clear="void runOneClickClear()"
-        @set-route-mode="setPathfindingRouteMode"
-        @toggle-delete-optimization="toggleDeleteOptimization"
-        @toggle-friendly-fire="toggleFriendlyFire"
-        @toggle-search-animation="toggleSearchAnimation"
-        @toggle-managed-mode="toggleGraphwarManagedMode"
-      />
     </div>
-    <GraphwarActionPanel
-      :locale="locale"
-      :panel="actionPanel"
-      @clear-obstacle-edits="!graphwarManagedModeEnabled && resetObstacleEdits()"
-      @clear-path="clearPath"
-      @set-tool-mode="setToolMode"
-      @toggle-collision-check="toggleCollisionCheck"
-      @toggle-live-click-preview="liveClickPreviewEnabled = !liveClickPreviewEnabled"
-      @toggle-magnifier="magnifierEnabled = !magnifierEnabled"
-      @toggle-obstacle-brush-erase="!graphwarManagedModeEnabled && toggleObstacleBrushErase()"
-      @toggle-path-planning="togglePathPlanning"
-      @toggle-snap-soldiers="toggleSnapSoldiers"
-      @undo-point="undoLastPoint"
-      @update-magnifier-zoom="setMagnifierZoomText"
-      @update-obstacle-brush-diameter="setObstacleBrushDiameterText"
-    />
     <GraphwarScreenshotPanel
       :locale="locale"
       :panel="screenshotPanel"
@@ -3954,8 +3945,20 @@ function undoLastPoint() {
       @update-simulator-formula-text="!graphwarManagedModeEnabled && (simulatorFormulaText = $event)"
       @update-simulator-launch-angle-text="!graphwarManagedModeEnabled && (simulatorLaunchAngleText = $event)"
     />
+    <GraphwarSmartPathfindingPanel
+      :locale="locale"
+      :panel="smartPathfindingPanel"
+      @run-one-click-clear="void runOneClickClear()"
+      @set-route-mode="setPathfindingRouteMode"
+      @toggle-delete-optimization="toggleDeleteOptimization"
+      @toggle-friendly-fire="toggleFriendlyFire"
+      @toggle-search-animation="toggleSearchAnimation"
+      @toggle-managed-mode="toggleGraphwarManagedMode"
+    />
   </div>
 </template>
+
+<style src="./presentation/controls/control-surface.css"></style>
 
 <style scoped>
 .graphwar-killer {
@@ -3970,7 +3973,7 @@ function undoLastPoint() {
   width: 100%;
 }
 
-.graphwar-killer__detection-pathfinding-row {
+.graphwar-killer__action-detection-row {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));

@@ -268,7 +268,7 @@ export const graphwarKillerLocale = {
       pickPath: "点选路径",
       pickPathTitle: "进入路径点选模式：先点己方士兵，再点目标路径点或目标士兵",
       pathPlanning: "路径规划",
-      pathPlanningTitle: "点选目标后自动寻找绕开障碍的路线。可提前开启，数据准备完成后自动生效",
+      pathPlanningTitle: "点选目标后自动寻找绕开障碍的路线",
       snapSoldiers: "吸附士兵",
       snapSoldiersTitle: "点选和悬停时吸附到识别出的士兵，并使用士兵的真实命中圈",
       title: "操作栏",
@@ -386,7 +386,7 @@ export const graphwarKillerLocale = {
       allowFriendlyFire: "允许友伤",
       allowFriendlyFireTitle: "开启后，寻路和一键清图允许轨迹穿过己方士兵；关闭时会把己方士兵当作障碍避开",
       capabilityReasons: {
-        "agent-disabled": "先开启使用 Agent",
+        "agent-disabled": "请先开启“使用 Agent”",
         "agent-fire-busy": "正在通过 Agent 发射",
         "agent-read-busy": "正在读取 Agent 状态",
         "agent-scene-required": "请先读取当前 Agent 状态",
@@ -402,7 +402,6 @@ export const graphwarKillerLocale = {
         "path-start-required": "请先选择当前发射士兵",
         "pathfinding-busy": "当前寻路任务结束后才能操作",
         "pathfinding-worker-count-invalid": "请修正寻路工作线程数量",
-        "result-required": "请先生成可用结果",
         "soldiers-required": "请先识别或读取士兵",
         "solver-required": "切换到解算器后生效",
       },
@@ -659,7 +658,7 @@ export const graphwarKillerLocale = {
                     `${repair.equation}：当前算法不支持一键清图，将设为${repair.algorithm}${repair.properties.length > 0 ? `（${repair.properties.join("，")}）` : ""}`,
                 ),
               ].join("\n");
-        return `托管会自动向 Graphwar 发射\n当前${friendlyFireEnabled ? "允许" : "禁止"}友伤\n\n${algorithmStatus}\n\n确认开启托管？`;
+        return `托管会自动向 Graphwar 发射\n房间内会自动准备本地玩家\n当前${friendlyFireEnabled ? "允许" : "禁止"}友伤\n\n${algorithmStatus}\n\n确认开启托管？`;
       },
       managedModeTitle: "自动读取状态、准备、计算一键清图并在己方回合发射",
       routePlanningTolerance: "路线规划容差",
@@ -780,8 +779,8 @@ export const graphwarKillerLocale = {
       skipUnknownCharacters: "跳过未知字符",
       skipUnknownCharactersTitle: "Graphwar 会跳过未知字符",
       stepGlitchMode: "邪道模式",
-      stepGlitchModeInactiveReason: "偏好已保留；切换到阶跃 y' 后生效",
-      stepGlitchModeWaitingReason: "等待障碍数据；偏好已保留",
+      stepGlitchModeInactiveReason: "切换到阶跃 y' 后生效",
+      stepGlitchModeObstacleRequiredReason: "需要障碍数据",
       stepGlitchModeTitle:
         "仅在阶跃函数的 y' 模式下生效；需要已有障碍识别结果。普通阶跃的近似路径区域内存在障碍时，邪道模式会尝试生成瞬移项。建议通过 Agent 读取游戏信息，需要准确的士兵位置",
       stepSteepness: "阶跃陡峭度 a",

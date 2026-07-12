@@ -32,13 +32,13 @@ export type GraphwarCapabilityReason =
   | "formula-settings-invalid"
   | "pathfinding-worker-count-invalid"
   | "obstacle-tolerances-invalid"
-  | "delete-check-radius-invalid"
-  | "result-required";
+  | "delete-check-radius-invalid";
 
 /** A control's complete interaction state; disabled remains a presentation-layer derivation. */
 export type GraphwarControlCapability =
   | { state: "normal"; reason?: never }
-  | { state: "dormant" | "blocked" | "busy"; reason: GraphwarCapabilityReason };
+  | { state: "blocked"; reason?: GraphwarCapabilityReason }
+  | { state: "dormant" | "busy"; reason: GraphwarCapabilityReason };
 
 /** Plain page facts consumed by capability derivation without importing Vue or localisation. */
 export interface GraphwarCapabilityFacts {
@@ -172,7 +172,7 @@ export function deriveGraphwarCapabilities(
             : !facts.formula.settingsValid
               ? { state: "blocked", reason: "formula-settings-invalid" }
               : !facts.resultAvailable
-                ? { state: "blocked", reason: "result-required" }
+                ? { state: "blocked" }
                 : normalCapability,
     snapSoldiers: facts.busy.managedMode
       ? { state: "busy", reason: "managed-lock" }

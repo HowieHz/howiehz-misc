@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { graphwarKillerLocale as englishGraphwarKillerLocale } from "../../en/tools/graphwar-killer/locale";
 import { graphwarKillerLocale } from "./locale";
 
 const chineseLocaleStrings: string[] = [];
@@ -41,10 +42,10 @@ describe("Chinese Graphwar Killer locale", () => {
     expect(chineseLocaleStrings.filter((value) => value.endsWith("。"))).toEqual([]);
   });
 
-  it("states managed mode algorithm support and repairs explicitly", () => {
-    expect(graphwarKillerLocale.ui.pathfinding.managedModeConfirmation([], false)).toContain(
-      "三个游戏模式的算法设定都支持一键清图",
-    );
+  it("states managed mode behavior, algorithm support, and repairs explicitly", () => {
+    const supportedConfirmation = graphwarKillerLocale.ui.pathfinding.managedModeConfirmation([], false);
+    expect(supportedConfirmation).toContain("房间内会自动准备本地玩家");
+    expect(supportedConfirmation).toContain("三个游戏模式的算法设定都支持一键清图");
     expect(
       graphwarKillerLocale.ui.pathfinding.managedModeConfirmation(
         [
@@ -55,6 +56,14 @@ describe("Chinese Graphwar Killer locale", () => {
       ),
     ).toContain(
       "y：当前算法不支持一键清图，将设为双绝对值函数\ny'：当前算法不支持一键清图，将设为阶跃函数（邪道模式）",
+    );
+  });
+});
+
+describe("English Graphwar Killer locale", () => {
+  it("states that managed mode automatically readies local room players", () => {
+    expect(englishGraphwarKillerLocale.ui.pathfinding.managedModeConfirmation([], false)).toContain(
+      "Local room players are readied automatically",
     );
   });
 });

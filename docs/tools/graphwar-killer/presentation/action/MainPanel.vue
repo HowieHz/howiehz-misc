@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Trash2, Undo2 } from "lucide-vue-next";
+import { Eraser, Trash2, Undo2 } from "@lucide/vue";
 import type { CSSProperties } from "vue";
 
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
@@ -113,7 +113,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
 
 <template>
   <section
-    class="graphwar-killer__panel graphwar-killer__action-panel"
+    class="graphwar-killer__panel graphwar-killer__action-panel graphwar-killer-control-surface"
     aria-labelledby="graphwar-killer-actions-title"
   >
     <div class="graphwar-killer__label-row">
@@ -164,7 +164,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
     </div>
     <div class="graphwar-killer__image-actions">
       <div
-        class="graphwar-killer__tool-toggle"
+        class="graphwar-killer__tool-toggle graphwar-killer-segmented-control"
         :class="{
           'graphwar-killer__tool-toggle--path': panel.toolMode === 'path',
           'graphwar-killer__tool-toggle--obstacle': panel.toolMode === 'obstacle',
@@ -175,8 +175,9 @@ function handleObstacleBrushDiameterInput(event: Event) {
       >
         <button
           type="button"
+          class="graphwar-killer-segmented-button"
           :aria-pressed="panel.toolMode === 'bounds'"
-          :class="{ 'graphwar-killer__tool-toggle-button--active': panel.toolMode === 'bounds' }"
+          :class="{ 'graphwar-killer-segmented-button--active': panel.toolMode === 'bounds' }"
           :disabled="panel.interactionDisabled"
           :title="locale.ui.actions.pickBoundsTitle"
           @click="emit('setToolMode', 'bounds')"
@@ -185,8 +186,9 @@ function handleObstacleBrushDiameterInput(event: Event) {
         </button>
         <button
           type="button"
+          class="graphwar-killer-segmented-button"
           :aria-pressed="panel.toolMode === 'path'"
-          :class="{ 'graphwar-killer__tool-toggle-button--active': panel.toolMode === 'path' }"
+          :class="{ 'graphwar-killer-segmented-button--active': panel.toolMode === 'path' }"
           :disabled="panel.interactionDisabled"
           :title="locale.ui.actions.pickPathTitle"
           @click="emit('setToolMode', 'path')"
@@ -195,8 +197,9 @@ function handleObstacleBrushDiameterInput(event: Event) {
         </button>
         <button
           type="button"
+          class="graphwar-killer-segmented-button"
           :aria-pressed="panel.toolMode === 'obstacle'"
-          :class="{ 'graphwar-killer__tool-toggle-button--active': panel.toolMode === 'obstacle' }"
+          :class="{ 'graphwar-killer-segmented-button--active': panel.toolMode === 'obstacle' }"
           :disabled="panel.interactionDisabled || !panel.obstacleBrushAvailable"
           :title="locale.ui.actions.drawObstacleTitle"
           @click="emit('setToolMode', 'obstacle')"
@@ -286,54 +289,70 @@ function handleObstacleBrushDiameterInput(event: Event) {
       v-if="panel.obstacleBrushControlsVisible"
       class="graphwar-killer__obstacle-brush-actions"
     >
-      <label
-        class="graphwar-killer__obstacle-brush-label"
-        :title="locale.ui.actions.obstacleBrushDiameterTitle"
-      >
-        {{ locale.ui.actions.obstacleBrushDiameter }}
-        <input
-          type="range"
-          :value="panel.obstacleBrushDiameter.sliderValue"
-          class="graphwar-killer__obstacle-brush-range"
-          :style="panel.obstacleBrushDiameter.rangeStyle"
-          :min="panel.obstacleBrushDiameter.minimum"
-          :max="panel.obstacleBrushDiameter.sliderMaximum"
-          :disabled="panel.interactionDisabled"
-          step="1"
-          :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
-          :title="locale.ui.actions.obstacleBrushDiameterTitle"
-          @input="handleObstacleBrushDiameterInput"
+      <div class="graphwar-killer__obstacle-brush-size">
+        <button
+          type="button"
+          class="graphwar-killer__icon-button"
+          :aria-label="locale.ui.actions.clearObstacleEdits"
+          :disabled="panel.interactionDisabled || !panel.obstacleEditsDirty"
+          :title="locale.ui.actions.clearObstacleEditsTitle"
+          @click="emit('clearObstacleEdits')"
         >
-        <input
-          type="number"
-          :value="panel.obstacleBrushDiameter.text"
-          inputmode="numeric"
-          :min="panel.obstacleBrushDiameter.minimum"
-          :max="panel.obstacleBrushDiameter.inputMaximum"
+          <Trash2
+            :size="17"
+            aria-hidden="true"
+          />
+        </button>
+        <button
+          type="button"
+          class="graphwar-killer__icon-button"
+          :class="{ 'graphwar-killer__icon-button--active': panel.obstacleBrushEraseEnabled }"
+          :aria-label="locale.ui.actions.eraseObstacle"
+          :aria-pressed="panel.obstacleBrushEraseEnabled"
           :disabled="panel.interactionDisabled"
-          step="1"
-          :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
-          :title="locale.ui.actions.obstacleBrushDiameterTitle"
-          @input="handleObstacleBrushDiameterInput"
+          :title="locale.ui.actions.eraseObstacleTitle"
+          @click="emit('toggleObstacleBrushErase')"
         >
-        <span>{{ locale.ui.pathfinding.unit }}</span>
-      </label>
-      <ToggleField
-        id="graphwar-killer-obstacle-brush-erase"
-        :checked="panel.obstacleBrushEraseEnabled"
-        :label="locale.ui.actions.eraseObstacle"
-        :state="panel.interactionDisabled ? 'blocked' : 'normal'"
-        :title="locale.ui.actions.eraseObstacleTitle"
-        @toggle="emit('toggleObstacleBrushErase')"
-      />
-      <button
-        type="button"
-        :disabled="panel.interactionDisabled || !panel.obstacleEditsDirty"
-        :title="locale.ui.actions.clearObstacleEditsTitle"
-        @click="emit('clearObstacleEdits')"
-      >
-        {{ locale.ui.actions.clearObstacleEdits }}
-      </button>
+          <Eraser
+            :size="17"
+            aria-hidden="true"
+          />
+        </button>
+        <label
+          class="graphwar-killer__obstacle-brush-label"
+          :title="locale.ui.actions.obstacleBrushDiameterTitle"
+        >
+          <span class="graphwar-killer__obstacle-brush-name">
+            {{ locale.ui.actions.obstacleBrushDiameter }}
+          </span>
+          <input
+            type="range"
+            :value="panel.obstacleBrushDiameter.sliderValue"
+            class="graphwar-killer__obstacle-brush-range"
+            :style="panel.obstacleBrushDiameter.rangeStyle"
+            :min="panel.obstacleBrushDiameter.minimum"
+            :max="panel.obstacleBrushDiameter.sliderMaximum"
+            :disabled="panel.interactionDisabled"
+            step="1"
+            :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
+            :title="locale.ui.actions.obstacleBrushDiameterTitle"
+            @input="handleObstacleBrushDiameterInput"
+          >
+          <input
+            type="number"
+            :value="panel.obstacleBrushDiameter.text"
+            inputmode="numeric"
+            :min="panel.obstacleBrushDiameter.minimum"
+            :max="panel.obstacleBrushDiameter.inputMaximum"
+            :disabled="panel.interactionDisabled"
+            step="1"
+            :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
+            :title="locale.ui.actions.obstacleBrushDiameterTitle"
+            @input="handleObstacleBrushDiameterInput"
+          >
+          <span>{{ locale.ui.pathfinding.unit }}</span>
+        </label>
+      </div>
     </div>
   </section>
 </template>
@@ -362,98 +381,6 @@ function handleObstacleBrushDiameterInput(event: Event) {
   font-weight: 600;
   gap: 3px;
   min-width: 0;
-}
-
-.graphwar-killer__action-panel input:not([type="file"]) {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 8px;
-  box-sizing: border-box;
-  font-variant-numeric: tabular-nums;
-  height: 30px;
-  line-height: 1.15;
-  min-height: 0;
-  min-width: 0;
-  padding: 4px 8px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
-  width: 100%;
-}
-
-.graphwar-killer__action-panel input[type="range"] {
-  appearance: none;
-  background: linear-gradient(
-    to right,
-    var(--vp-c-brand-1) 0 var(--graphwar-killer-range-progress, 0%),
-    var(--vp-c-divider) var(--graphwar-killer-range-progress, 0%) 100%
-  );
-  border: 0;
-  border-radius: 999px;
-  cursor: pointer;
-  height: 8px;
-  padding: 0;
-  width: 100%;
-}
-
-.graphwar-killer__action-panel input[type="range"]::-webkit-slider-runnable-track {
-  background: transparent;
-  border: 0;
-  height: 8px;
-}
-
-.graphwar-killer__action-panel input[type="range"]::-webkit-slider-thumb {
-  appearance: none;
-  background: var(--vp-c-brand-1);
-  border: 2px solid var(--vp-c-bg);
-  border-radius: 50%;
-  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
-  height: 18px;
-  margin-top: -5px;
-  width: 18px;
-}
-
-.graphwar-killer__action-panel input[type="range"]::-moz-range-track {
-  background: transparent;
-  border: 0;
-  height: 8px;
-}
-
-.graphwar-killer__action-panel input[type="range"]::-moz-range-progress {
-  background: transparent;
-}
-
-.graphwar-killer__action-panel input[type="range"]::-moz-range-thumb {
-  background: var(--vp-c-brand-1);
-  border: 2px solid var(--vp-c-bg);
-  border-radius: 50%;
-  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
-  height: 18px;
-  width: 18px;
-}
-
-.graphwar-killer__action-panel button {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  color: var(--vp-c-text-1);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1.2;
-  transition:
-    transform 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    color 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.graphwar-killer__action-panel button:disabled {
-  cursor: not-allowed;
-  opacity: 58%;
 }
 
 .graphwar-killer__label-row {
@@ -509,24 +436,23 @@ function handleObstacleBrushDiameterInput(event: Event) {
   max-width: 100%;
 }
 
-.graphwar-killer__image-actions button,
-.graphwar-killer__path-actions button,
-.graphwar-killer__obstacle-brush-actions button {
-  min-height: 34px;
-  padding: 6px 10px;
-}
-
-.graphwar-killer__path-actions .graphwar-killer__icon-button {
-  align-items: center;
-  display: inline-flex;
-  flex: 0 0 34px;
-  justify-content: center;
-  padding: 0;
-  width: 34px;
+button.graphwar-killer__icon-button--active {
+  background: var(--vp-c-brand-1);
+  border-color: var(--vp-c-brand-1);
+  color: var(--vp-c-white);
 }
 
 .graphwar-killer__obstacle-brush-actions {
   min-width: 0;
+}
+
+.graphwar-killer__obstacle-brush-size {
+  align-items: center;
+  display: flex;
+  flex: 1 1 380px;
+  gap: 6px;
+  max-width: min(100%, 600px);
+  min-width: min(100%, 280px);
 }
 
 .graphwar-killer__magnifier-zoom-label {
@@ -546,41 +472,20 @@ function handleObstacleBrushDiameterInput(event: Event) {
   font-weight: 500;
 }
 
+.graphwar-killer__obstacle-brush-label .graphwar-killer__obstacle-brush-name {
+  font-weight: 600;
+}
+
 .graphwar-killer__obstacle-brush-label {
   align-items: center;
-  flex: 1 1 340px;
+  flex: 1 1 auto;
   font-weight: 600;
   gap: 6px;
   grid-template-columns: auto minmax(120px, 1fr) minmax(58px, 74px) auto;
-  max-width: min(100%, 520px);
-  min-width: min(100%, 320px);
 }
 
 .graphwar-killer__tool-toggle {
-  background: color-mix(in srgb, var(--vp-c-bg-soft) 68%, var(--vp-c-bg));
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  display: grid;
-  gap: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-height: 34px;
-  min-width: 0;
-  overflow: hidden;
-  padding: 2px;
-  position: relative;
-}
-
-.graphwar-killer__tool-toggle::before {
-  background: var(--vp-c-brand-1);
-  border-radius: 999px;
-  bottom: 2px;
-  box-shadow: 0 6px 14px rgb(15 23 42 / 12%);
-  content: "";
-  left: 2px;
-  position: absolute;
-  top: 2px;
-  transition: transform 0.2s ease;
-  width: calc((100% - 4px) / 3);
+  --graphwar-killer-segment-count: 3;
 }
 
 .graphwar-killer__tool-toggle--path::before {
@@ -591,56 +496,8 @@ function handleObstacleBrushDiameterInput(event: Event) {
   transform: translateX(200%);
 }
 
-.graphwar-killer__tool-toggle button {
-  background: transparent;
-  border: 0;
-  border-radius: 999px;
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  font-size: 0.9rem;
-  line-height: 1.15;
-  min-height: 28px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  padding: 4px 10px;
-  position: relative;
-  text-align: center;
-  transform: none;
-  white-space: normal;
-  z-index: 1;
-}
-
-.graphwar-killer__tool-toggle button:hover {
-  box-shadow: none;
-  transform: none;
-}
-
-.graphwar-killer__tool-toggle-button--active {
-  color: var(--vp-c-white) !important;
-}
-
-.graphwar-killer__action-panel button:hover:not(:disabled) {
-  border-color: var(--vp-c-brand-1);
-  box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
-  color: var(--vp-c-brand-1);
-  transform: translateY(-1px);
-}
-
-.graphwar-killer__action-panel .graphwar-killer__tool-toggle button:hover:not(:disabled) {
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  transform: none;
-}
-
-.graphwar-killer__action-panel .graphwar-killer__tool-toggle-button--active:hover:not(:disabled) {
+.graphwar-killer__action-panel button.graphwar-killer__icon-button--active:hover:not(:disabled) {
   color: var(--vp-c-white);
-}
-
-.graphwar-killer__action-panel input:focus-visible,
-.graphwar-killer__action-panel button:focus-visible {
-  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
-  outline: none;
 }
 
 @media (width <= 760px) {
@@ -651,6 +508,14 @@ function handleObstacleBrushDiameterInput(event: Event) {
 
   .graphwar-killer__label-row > span {
     text-align: left;
+  }
+
+  .graphwar-killer__obstacle-brush-label {
+    grid-template-columns: minmax(40px, 1fr) minmax(48px, 64px) auto;
+  }
+
+  .graphwar-killer__obstacle-brush-name {
+    grid-column: 1 / -1;
   }
 }
 </style>

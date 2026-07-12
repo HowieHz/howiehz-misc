@@ -145,7 +145,7 @@ Invoke-RestMethod http://127.0.0.1:17900/state
 - `gameInstanceId`：官方客户端创建新战场时变化的不透明 ID。
 - `turnToken`：精确标识当前回合的不透明 ID；即使同一士兵和坐标再次出现也会变化。
 - `battleRevision`：对游戏模式、当前视角方向、玩家归属/队伍、士兵存活/渲染状态与世界坐标、世界障碍 mask 计算出的 SHA-256 revision。
-- `remainingTurnMs`：`GameData#getRemainingTime()` 报告的权威剩余回合毫秒数。
+- `remainingTurnMs`：`GameData#getRemainingTime()` 报告的剩余回合毫秒数。
 - `drawingFunction`、`exploding` 与 `phase`：结算状态；`phase` 为 `aiming`、`drawing`、`exploding` 或 `inactive`。
 - `terrainReversed`：当前客户端是否反向渲染地形。
 - `gameState`、`gameMode`、`currentTurn` 与 `currentTurnPlayerId`：当前游戏状态和发射方归属。

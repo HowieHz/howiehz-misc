@@ -312,8 +312,7 @@ export const graphwarKillerLocale = {
       pickPath: "Pick path",
       pickPathTitle: "Enter path-picking mode: click your soldier first, then target path points or target soldiers.",
       pathPlanning: "Path planning",
-      pathPlanningTitle:
-        "Automatically find a route around obstacles after selecting a target. It can wait for scene data.",
+      pathPlanningTitle: "Automatically find a route around obstacles after selecting a target.",
       snapSoldiers: "Snap soldiers",
       snapSoldiersTitle: "Snap picking and hover to detected soldiers and use their real hit circles.",
       title: "Controls",
@@ -441,7 +440,7 @@ export const graphwarKillerLocale = {
       allowFriendlyFireTitle:
         "When enabled, Path Planning and One-Click Clear may route through your own soldiers; when disabled, your soldiers are avoided as obstacles.",
       capabilityReasons: {
-        "agent-disabled": "Enable Agent first.",
+        "agent-disabled": "Turn on Use Agent first",
         "agent-fire-busy": "Agent is submitting a shot.",
         "agent-read-busy": "Agent state is being read.",
         "agent-scene-required": "Read the current Agent state first.",
@@ -457,7 +456,6 @@ export const graphwarKillerLocale = {
         "path-start-required": "Select the firing soldier first.",
         "pathfinding-busy": "Wait for the current pathfinding task.",
         "pathfinding-worker-count-invalid": "Fix the pathfinding Worker count.",
-        "result-required": "Generate a usable result first.",
         "soldiers-required": "Detect or read soldiers first.",
         "solver-required": "Switch to Solver to use this setting.",
       },
@@ -758,7 +756,7 @@ export const graphwarKillerLocale = {
                     `${repair.equation}: the current algorithm does not support One-Click Clear; it will be set to ${repair.algorithm}${repair.properties.length > 0 ? ` (${repair.properties.join(", ")})` : ""}`,
                 ),
               ].join("\n");
-        return `Managed mode submits shots to Graphwar automatically\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\n\n${algorithmStatus}\n\nEnable managed mode?`;
+        return `Managed mode submits shots to Graphwar automatically\nLocal room players are readied automatically\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\n\n${algorithmStatus}\n\nEnable managed mode?`;
       },
       managedModeTitle: "Read state, ready, calculate One-Click Clear, and fire automatically on local turns.",
       routePlanningTolerance: "Route planning tolerance",
@@ -884,8 +882,8 @@ export const graphwarKillerLocale = {
       skipUnknownCharacters: "Skip unknown characters",
       skipUnknownCharactersTitle: "Graphwar skips unknown characters.",
       stepGlitchMode: "Glitch Mode",
-      stepGlitchModeInactiveReason: "Preference retained; it applies to Step y' mode.",
-      stepGlitchModeWaitingReason: "Waiting for obstacle data; preference retained.",
+      stepGlitchModeInactiveReason: "Switch to Step y' to use it",
+      stepGlitchModeObstacleRequiredReason: "Requires obstacle data",
       stepGlitchModeTitle:
         "Only applies to step y' mode and requires an existing obstacle recognition result. When the approximate normal-step path region contains an obstacle, Glitch Mode attempts to generate a jump term. Using Agent to read game information is recommended because accurate soldier positions are required.",
       stepSteepness: "Step steepness a",

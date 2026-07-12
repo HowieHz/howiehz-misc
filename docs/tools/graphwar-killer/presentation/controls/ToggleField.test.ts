@@ -2,6 +2,7 @@
 
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
+import { defineComponent, nextTick, ref } from "vue";
 
 import ToggleField from "./ToggleField.vue";
 
@@ -12,18 +13,18 @@ describe("ToggleField", () => {
         checked: true,
         id: "collision-check",
         label: "Collision check",
-        reason: "Waiting for obstacles",
+        reason: "Requires obstacle data",
         state: "dormant",
       },
     });
-    const input = wrapper.get("input");
+    const control = wrapper.get('[role="switch"]');
 
-    expect(input.attributes("role")).toBe("switch");
-    expect(input.attributes("aria-describedby")).toBe("collision-check-reason");
-    expect(input.attributes("disabled")).toBeUndefined();
-    expect(wrapper.text()).toContain("Waiting for obstacles");
+    expect(control.attributes("aria-checked")).toBe("true");
+    expect(control.attributes("aria-describedby")).toBe("collision-check-reason");
+    expect(control.attributes("disabled")).toBeUndefined();
+    expect(wrapper.text()).toContain("Requires obstacle data");
 
-    await input.trigger("click");
+    await control.trigger("click");
     expect(wrapper.emitted("toggle")).toHaveLength(1);
   });
 
@@ -38,10 +39,10 @@ describe("ToggleField", () => {
       },
     });
 
-    expect(wrapper.get("input").attributes()).toHaveProperty("disabled");
+    expect(wrapper.get('[role="switch"]').attributes()).toHaveProperty("disabled");
   });
 
-  it("keeps the native state unchanged when the parent rejects a toggle request", async () => {
+  it("keeps the rendered state unchanged when the parent rejects a toggle request", async () => {
     const wrapper = mount(ToggleField, {
       props: {
         checked: false,
@@ -50,15 +51,15 @@ describe("ToggleField", () => {
         state: "normal",
       },
     });
-    const input = wrapper.get("input");
+    const control = wrapper.get('[role="switch"]');
 
-    await input.trigger("click");
+    await control.trigger("click");
 
     expect(wrapper.emitted("toggle")).toHaveLength(1);
-    expect((input.element as HTMLInputElement).checked).toBe(false);
+    expect(control.attributes("aria-checked")).toBe("false");
   });
 
-  it("commits the native state after the parent accepts a toggle request", async () => {
+  it("renders the state accepted by the parent", async () => {
     const wrapper = mount(ToggleField, {
       props: {
         checked: false,
@@ -67,11 +68,35 @@ describe("ToggleField", () => {
         state: "normal",
       },
     });
-    const input = wrapper.get("input");
+    const control = wrapper.get('[role="switch"]');
 
-    await input.trigger("click");
+    await control.trigger("click");
     await wrapper.setProps({ checked: true });
 
-    expect((input.element as HTMLInputElement).checked).toBe(true);
+    expect(control.attributes("aria-checked")).toBe("true");
+  });
+
+  it("shows a synchronous state change accepted by the parent", async () => {
+    const wrapper = mount(
+      defineComponent({
+        components: { ToggleField },
+        setup() {
+          return { checked: ref(false) };
+        },
+        template: `
+          <ToggleField
+            id="collision-check"
+            :checked="checked"
+            label="Collision check"
+            state="normal"
+            @toggle="checked = !checked"
+          />
+        `,
+      }),
+    );
+    (wrapper.get(".graphwar-killer-toggle-field__track").element as HTMLElement).click();
+    await nextTick();
+
+    expect(wrapper.get('[role="switch"]').attributes("aria-checked")).toBe("true");
   });
 });

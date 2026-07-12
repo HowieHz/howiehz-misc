@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Trash2 } from "lucide-vue-next";
+import { Trash2 } from "@lucide/vue";
 import { computed } from "vue";
 
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import ControlReason from "../controls/ControlReason.vue";
 import { getInputValue } from "../dom/input";
 
 type GraphwarResultPanelCoordinateAxis = "x" | "y";
@@ -111,7 +112,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
 
 <template>
   <section
-    class="graphwar-killer__panel graphwar-killer__result-panel"
+    class="graphwar-killer__panel graphwar-killer__result-panel graphwar-killer-control-surface"
     aria-labelledby="graphwar-killer-result-title"
   >
     <div class="graphwar-killer__label-row graphwar-killer__label-row--result">
@@ -130,13 +131,11 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         >
           {{ result.agentFireButtonText }}
         </button>
-        <span
+        <ControlReason
           v-if="result.agentFireVisible && result.agentFireReason"
           id="graphwar-killer-agent-fire-reason"
-          class="graphwar-killer__agent-fire-reason"
-        >
-          {{ result.agentFireReason }}
-        </span>
+          :message="result.agentFireReason"
+        />
         <button
           type="button"
           class="graphwar-killer__primary-button"
@@ -149,7 +148,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         <button
           v-if="result.workflowMode === 'simulator'"
           type="button"
-          class="graphwar-killer__secondary-button graphwar-killer__icon-button"
+          class="graphwar-killer__icon-button"
           :aria-label="locale.ui.result.clearSimulator"
           :disabled="result.interactionDisabled || !result.canClearSimulatorInputs"
           :title="locale.ui.result.clearSimulatorTitle"
@@ -287,47 +286,6 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   padding: 0;
 }
 
-.graphwar-killer__result-panel input:not([type="file"]) {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 8px;
-  box-sizing: border-box;
-  font-variant-numeric: tabular-nums;
-  height: 30px;
-  line-height: 1.15;
-  min-height: 0;
-  min-width: 0;
-  padding: 4px 8px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
-  width: 100%;
-}
-
-.graphwar-killer__result-panel button {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  color: var(--vp-c-text-1);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1.2;
-  transition:
-    transform 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    color 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.graphwar-killer__result-panel button:disabled {
-  cursor: not-allowed;
-  opacity: 58%;
-}
-
 .graphwar-killer__label-row {
   align-items: baseline;
   display: flex;
@@ -364,28 +322,6 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   min-width: 72px;
   padding: 6px 12px;
   white-space: nowrap;
-}
-
-.graphwar-killer__agent-fire-reason {
-  color: #b45309;
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.graphwar-killer__secondary-button {
-  min-height: 34px;
-  min-width: 72px;
-  padding: 6px 10px;
-  white-space: nowrap;
-}
-
-.graphwar-killer__secondary-button.graphwar-killer__icon-button {
-  align-items: center;
-  display: inline-flex;
-  justify-content: center;
-  min-width: 34px;
-  padding: 0;
-  width: 34px;
 }
 
 .graphwar-killer__formula-row {
@@ -479,13 +415,6 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   width: 130px;
 }
 
-.graphwar-killer__result-panel button:hover:not(:disabled) {
-  border-color: var(--vp-c-brand-1);
-  box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
-  color: var(--vp-c-brand-1);
-  transform: translateY(-1px);
-}
-
 .graphwar-killer__primary-button:hover:not(:disabled) {
   color: var(--vp-c-white);
 }
@@ -493,13 +422,6 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
 .graphwar-killer__agent-fire-button:hover:not(:disabled) {
   border-color: var(--vp-c-danger-1);
   color: var(--vp-c-danger-1);
-}
-
-.graphwar-killer__result-panel input:focus-visible,
-.graphwar-killer__result-panel button:focus-visible {
-  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
-  outline: none;
 }
 
 @media (width <= 760px) {

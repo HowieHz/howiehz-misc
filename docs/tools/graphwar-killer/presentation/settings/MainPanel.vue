@@ -108,7 +108,7 @@ const steepnessText = computed({
 
 <template>
   <section
-    class="graphwar-killer__panel graphwar-killer__settings-panel"
+    class="graphwar-killer__panel graphwar-killer__settings-panel graphwar-killer-control-surface"
     aria-labelledby="graphwar-killer-settings-title"
     :aria-disabled="panel.interactionDisabled"
   >
@@ -134,7 +134,7 @@ const steepnessText = computed({
       <div class="graphwar-killer__setting-row">
         <span class="graphwar-killer__setting-label">{{ locale.ui.settings.mode }}</span>
         <div
-          class="graphwar-killer__tool-toggle graphwar-killer__mode-toggle"
+          class="graphwar-killer__tool-toggle graphwar-killer__mode-toggle graphwar-killer-segmented-control"
           :class="{ 'graphwar-killer__mode-toggle--simulator': panel.toolWorkflowMode === 'simulator' }"
           role="group"
           :aria-label="locale.ui.settings.modeAriaLabel"
@@ -144,8 +144,9 @@ const steepnessText = computed({
             v-for="mode in panel.toolWorkflowModes"
             :key="mode.value"
             type="button"
+            class="graphwar-killer-segmented-button"
             :aria-pressed="panel.toolWorkflowMode === mode.value"
-            :class="{ 'graphwar-killer__tool-toggle-button--active': panel.toolWorkflowMode === mode.value }"
+            :class="{ 'graphwar-killer-segmented-button--active': panel.toolWorkflowMode === mode.value }"
             :title="mode.title"
             @click="emit('setToolWorkflowMode', mode.value)"
           >
@@ -156,7 +157,7 @@ const steepnessText = computed({
       <div class="graphwar-killer__setting-row graphwar-killer__game-mode-row">
         <span class="graphwar-killer__setting-label">{{ locale.ui.settings.gameMode }}</span>
         <div
-          class="graphwar-killer__equation-toggle"
+          class="graphwar-killer__equation-toggle graphwar-killer-segmented-control"
           :class="{
             'graphwar-killer__equation-toggle--dy': panel.equationMode === 'dy',
             'graphwar-killer__equation-toggle--ddy': panel.equationMode === 'ddy',
@@ -169,8 +170,9 @@ const steepnessText = computed({
             v-for="mode in panel.equationModes"
             :key="mode.value"
             type="button"
+            class="graphwar-killer-segmented-button"
             :aria-pressed="panel.equationMode === mode.value"
-            :class="{ 'graphwar-killer__equation-toggle-button--active': panel.equationMode === mode.value }"
+            :class="{ 'graphwar-killer-segmented-button--active': panel.equationMode === mode.value }"
             :disabled="mode.disabled"
             :title="mode.title"
             @click="emit('setEquationMode', mode.value)"
@@ -185,7 +187,7 @@ const steepnessText = computed({
       >
         <span class="graphwar-killer__setting-label">{{ locale.ui.settings.algorithm }}</span>
         <div
-          class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle"
+          class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle graphwar-killer-segmented-control"
           :class="`graphwar-killer__algorithm-toggle--${panel.algorithmMode}`"
           role="group"
           :aria-label="locale.ui.settings.algorithmAriaLabel"
@@ -195,8 +197,9 @@ const steepnessText = computed({
             v-for="mode in panel.algorithmModes"
             :key="mode.value"
             type="button"
+            class="graphwar-killer-segmented-button"
             :aria-pressed="panel.algorithmMode === mode.value"
-            :class="{ 'graphwar-killer__tool-toggle-button--active': panel.algorithmMode === mode.value }"
+            :class="{ 'graphwar-killer-segmented-button--active': panel.algorithmMode === mode.value }"
             :disabled="mode.disabled"
             :title="mode.title"
             @click="emit('setAlgorithmMode', mode.value)"
@@ -258,22 +261,19 @@ const steepnessText = computed({
           :title="locale.ui.settings.stepGlitchModeTitle"
           @toggle="emit('toggleStepGlitchMode')"
         />
+        <ToggleField
+          id="graphwar-killer-advanced-settings"
+          class="graphwar-killer__formula-toggle"
+          :checked="panel.advancedSettingsVisible"
+          :label="locale.ui.settings.advancedSettings"
+          :state="panel.interactionDisabled ? 'busy' : 'normal'"
+          @pointercancel="emit('cancelDebugActivationHold')"
+          @pointerdown="emit('startDebugActivationHold', $event)"
+          @pointerleave="emit('cancelDebugActivationHold')"
+          @pointerup="emit('finishDebugActivationHold')"
+          @toggle="emit('toggleAdvancedSettings')"
+        />
       </div>
-      <button
-        type="button"
-        class="graphwar-killer__secondary-button"
-        :aria-expanded="panel.advancedSettingsVisible"
-        :aria-pressed="panel.advancedSettingsVisible"
-        :class="{ 'graphwar-killer__toggle-button--active': panel.advancedSettingsVisible }"
-        @keydown.enter.prevent="emit('toggleAdvancedSettings')"
-        @keydown.space.prevent="emit('toggleAdvancedSettings')"
-        @pointercancel="emit('cancelDebugActivationHold')"
-        @pointerdown.prevent="emit('startDebugActivationHold', $event)"
-        @pointerleave="emit('cancelDebugActivationHold')"
-        @pointerup.prevent="emit('finishDebugActivationHold')"
-      >
-        {{ locale.ui.settings.advancedSettings }}
-      </button>
     </fieldset>
   </section>
 </template>
@@ -302,49 +302,6 @@ const steepnessText = computed({
   font-weight: 600;
   gap: 3px;
   min-width: 0;
-}
-
-.graphwar-killer__settings-panel input:not([type="file"]) {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 8px;
-  box-sizing: border-box;
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-variant-numeric: tabular-nums;
-  height: 30px;
-  line-height: 1.15;
-  min-height: 0;
-  min-width: 0;
-  padding: 4px 8px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
-  width: 100%;
-}
-
-.graphwar-killer__settings-panel button {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  color: var(--vp-c-text-1);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1.2;
-  transition:
-    transform 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    color 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.graphwar-killer__settings-panel button:disabled {
-  cursor: not-allowed;
-  opacity: 58%;
 }
 
 .graphwar-killer__settings-fields {
@@ -393,7 +350,7 @@ const steepnessText = computed({
 }
 
 .graphwar-killer__formula-options {
-  align-items: center;
+  align-items: flex-start;
   display: flex;
   flex-wrap: wrap;
   gap: 6px 12px;
@@ -413,12 +370,7 @@ const steepnessText = computed({
 }
 
 .graphwar-killer__formula-toggle {
-  align-self: stretch;
   padding: 4px 6px;
-}
-
-.graphwar-killer__formula-toggle :deep(.graphwar-killer-toggle-field__control) {
-  height: 100%;
 }
 
 .graphwar-killer__steepness-label {
@@ -453,38 +405,11 @@ const steepnessText = computed({
 }
 
 .graphwar-killer__tool-toggle {
-  background: color-mix(in srgb, var(--vp-c-bg-soft) 68%, var(--vp-c-bg));
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  display: grid;
-  gap: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-height: 34px;
-  min-width: 0;
-  overflow: hidden;
-  padding: 2px;
-  position: relative;
-}
-
-.graphwar-killer__tool-toggle::before {
-  background: var(--vp-c-brand-1);
-  border-radius: 999px;
-  bottom: 2px;
-  box-shadow: 0 6px 14px rgb(15 23 42 / 12%);
-  content: "";
-  left: 2px;
-  position: absolute;
-  top: 2px;
-  transition: transform 0.2s ease;
-  width: calc((100% - 4px) / 3);
+  --graphwar-killer-segment-count: 3;
 }
 
 .graphwar-killer__mode-toggle {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.graphwar-killer__mode-toggle::before {
-  width: calc((100% - 4px) / 2);
+  --graphwar-killer-segment-count: 2;
 }
 
 .graphwar-killer__mode-toggle--simulator::before {
@@ -492,12 +417,8 @@ const steepnessText = computed({
 }
 
 .graphwar-killer__algorithm-toggle {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  --graphwar-killer-segment-count: 4;
   min-height: 38px;
-}
-
-.graphwar-killer__algorithm-toggle::before {
-  width: calc((100% - 4px) / 4);
 }
 
 .graphwar-killer__algorithm-toggle--step::before {
@@ -519,59 +440,10 @@ const steepnessText = computed({
   padding: 4px 7px;
 }
 
-.graphwar-killer__tool-toggle button {
-  background: transparent;
-  border: 0;
-  border-radius: 999px;
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  font-size: 0.9rem;
-  line-height: 1.15;
-  min-height: 28px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  padding: 4px 10px;
-  position: relative;
-  text-align: center;
-  transform: none;
-  white-space: normal;
-  z-index: 1;
-}
-
-.graphwar-killer__tool-toggle button:hover {
-  box-shadow: none;
-  transform: none;
-}
-
-.graphwar-killer__tool-toggle-button--active {
-  color: var(--vp-c-white) !important;
-}
-
 .graphwar-killer__equation-toggle {
-  background: color-mix(in srgb, var(--vp-c-bg-soft) 68%, var(--vp-c-bg));
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  display: grid;
+  --graphwar-killer-segment-count: 3;
   flex: 0 1 230px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-height: 34px;
-  overflow: hidden;
-  padding: 2px;
-  position: relative;
   width: min(100%, 230px);
-}
-
-.graphwar-killer__equation-toggle::before {
-  background: var(--vp-c-brand-1);
-  border-radius: 999px;
-  bottom: 2px;
-  box-shadow: 0 6px 14px rgb(15 23 42 / 12%);
-  content: "";
-  left: 2px;
-  position: absolute;
-  top: 2px;
-  transition: transform 0.2s ease;
-  width: calc((100% - 4px) / 3);
 }
 
 .graphwar-killer__equation-toggle--dy::before {
@@ -582,78 +454,10 @@ const steepnessText = computed({
   transform: translateX(200%);
 }
 
-.graphwar-killer__equation-toggle button {
-  background: transparent;
-  border: 0;
-  border-radius: 999px;
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  font-family: inherit;
-  font-size: 0.9rem;
+.graphwar-killer__equation-toggle .graphwar-killer-segmented-button {
   line-height: 1.2;
-  min-height: 28px;
-  min-width: 0;
   padding: 4px 7px;
-  position: relative;
-  transform: none;
   white-space: nowrap;
-  z-index: 1;
-}
-
-.graphwar-killer__equation-toggle button:hover {
-  box-shadow: none;
-  transform: none;
-}
-
-.graphwar-killer__equation-toggle-button--active {
-  color: var(--vp-c-white) !important;
-}
-
-.graphwar-killer__secondary-button {
-  min-height: 34px;
-  min-width: 72px;
-  padding: 6px 10px;
-  white-space: nowrap;
-}
-
-.graphwar-killer__toggle-button--active {
-  background: var(--vp-c-brand-soft) !important;
-  border-color: var(--vp-c-brand-1) !important;
-  color: var(--vp-c-brand-1) !important;
-}
-
-.graphwar-killer__settings-panel button:hover:not(:disabled) {
-  border-color: var(--vp-c-brand-1);
-  box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
-  color: var(--vp-c-brand-1);
-  transform: translateY(-1px);
-}
-
-.graphwar-killer__settings-panel .graphwar-killer__tool-toggle button:hover:not(:disabled) {
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  transform: none;
-}
-
-.graphwar-killer__settings-panel .graphwar-killer__tool-toggle-button--active:hover:not(:disabled) {
-  color: var(--vp-c-white);
-}
-
-.graphwar-killer__settings-panel .graphwar-killer__equation-toggle button:hover:not(:disabled) {
-  box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
-  transform: none;
-}
-
-.graphwar-killer__settings-panel .graphwar-killer__equation-toggle-button--active:hover:not(:disabled) {
-  color: var(--vp-c-white);
-}
-
-.graphwar-killer__settings-panel input:focus-visible,
-.graphwar-killer__settings-panel button:focus-visible {
-  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
-  outline: none;
 }
 
 @media (width <= 760px) {

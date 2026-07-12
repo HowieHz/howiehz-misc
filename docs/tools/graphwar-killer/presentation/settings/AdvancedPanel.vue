@@ -122,7 +122,7 @@ const liveClickPreviewWorkerCountText = computed({
 
 <template>
   <section
-    class="graphwar-killer__panel graphwar-killer__advanced-settings-panel"
+    class="graphwar-killer__panel graphwar-killer__advanced-settings-panel graphwar-killer-control-surface"
     aria-labelledby="graphwar-killer-advanced-settings-title"
     :aria-disabled="panel.interactionDisabled"
   >
@@ -460,46 +460,7 @@ const liveClickPreviewWorkerCountText = computed({
 }
 
 .graphwar-killer__advanced-settings-panel input:not([type="file"]) {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 8px;
-  box-sizing: border-box;
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-variant-numeric: tabular-nums;
-  height: 30px;
-  line-height: 1.15;
-  min-height: 0;
-  min-width: 0;
-  padding: 4px 8px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
   width: 92px;
-}
-
-.graphwar-killer__advanced-settings-panel button {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  color: var(--vp-c-text-1);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1.2;
-  transition:
-    transform 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    color 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.graphwar-killer__advanced-settings-panel button:disabled {
-  cursor: not-allowed;
-  opacity: 58%;
 }
 
 .graphwar-killer__advanced-settings-fields {
@@ -522,11 +483,6 @@ const liveClickPreviewWorkerCountText = computed({
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.graphwar-killer__image-actions button {
-  min-height: 34px;
-  padding: 6px 10px;
 }
 
 .graphwar-killer__subpanel {
@@ -634,20 +590,6 @@ const liveClickPreviewWorkerCountText = computed({
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
   font-size: 0.88rem;
   font-weight: 500;
-}
-
-.graphwar-killer__advanced-settings-panel button:hover:not(:disabled) {
-  border-color: var(--vp-c-brand-1);
-  box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
-  color: var(--vp-c-brand-1);
-  transform: translateY(-1px);
-}
-
-.graphwar-killer__advanced-settings-panel input:focus-visible,
-.graphwar-killer__advanced-settings-panel button:focus-visible {
-  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
-  outline: none;
 }
 
 @media (width <= 760px) {

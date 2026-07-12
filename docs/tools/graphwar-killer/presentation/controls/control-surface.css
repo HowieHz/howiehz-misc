@@ -1,0 +1,222 @@
+/* Native controls share one visual contract; ToggleField keeps its own switch-specific interaction. */
+.graphwar-killer-control-surface
+  button:where(:not(.graphwar-killer-toggle-field__control, .graphwar-killer-segmented-button)),
+.graphwar-killer-control-button {
+  align-items: center;
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  box-sizing: border-box;
+  color: var(--vp-c-text-1);
+  cursor: pointer;
+  display: inline-flex;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  justify-content: center;
+  line-height: 1.2;
+  min-height: 34px;
+  padding: 6px 10px;
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.graphwar-killer-control-surface
+  button:where(:disabled:not(.graphwar-killer-toggle-field__control, .graphwar-killer-segmented-button)),
+.graphwar-killer__upload input:disabled + .graphwar-killer-control-button {
+  cursor: not-allowed;
+  opacity: 58%;
+}
+
+.graphwar-killer-control-surface
+  button:where(:hover:not(:disabled, .graphwar-killer-toggle-field__control, .graphwar-killer-segmented-button)),
+.graphwar-killer-control-button:hover {
+  border-color: var(--vp-c-brand-1);
+  box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
+  color: var(--vp-c-brand-1);
+  transform: translateY(-1px);
+}
+
+.graphwar-killer__upload input:disabled + .graphwar-killer-control-button:hover {
+  border-color: var(--vp-c-divider);
+  box-shadow: none;
+  color: var(--vp-c-text-1);
+  transform: none;
+}
+
+.graphwar-killer-control-surface
+  button:where(:focus-visible:not(.graphwar-killer-toggle-field__control, .graphwar-killer-segmented-button)),
+.graphwar-killer-control-button:focus-visible,
+.graphwar-killer__upload input:focus-visible + .graphwar-killer-control-button {
+  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
+  outline: none;
+}
+
+button.graphwar-killer__icon-button {
+  flex: 0 0 34px;
+  min-width: 34px;
+  padding: 0;
+  width: 34px;
+}
+
+.graphwar-killer-segmented-control {
+  --graphwar-killer-segment-count: 2;
+  background: color-mix(in srgb, var(--vp-c-bg-soft) 68%, var(--vp-c-bg));
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  display: grid;
+  gap: 0;
+  grid-template-columns: repeat(var(--graphwar-killer-segment-count), minmax(0, 1fr));
+  min-height: 34px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px;
+  position: relative;
+}
+
+.graphwar-killer-segmented-control::before {
+  background: var(--vp-c-brand-1);
+  border-radius: 999px;
+  bottom: 2px;
+  box-shadow: 0 6px 14px rgb(15 23 42 / 12%);
+  content: "";
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: transform 0.2s ease;
+  width: calc((100% - 4px) / var(--graphwar-killer-segment-count));
+}
+
+.graphwar-killer-segmented-button {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.15;
+  min-height: 28px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 4px 10px;
+  position: relative;
+  text-align: center;
+  transform: none;
+  transition: color 0.2s ease;
+  white-space: normal;
+  z-index: 1;
+}
+
+.graphwar-killer-segmented-button:disabled {
+  cursor: not-allowed;
+  opacity: 58%;
+}
+
+.graphwar-killer-segmented-button:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--vp-c-brand-1) 56%, var(--vp-c-bg));
+  outline: none;
+}
+
+.graphwar-killer-segmented-button:hover:not(:disabled) {
+  box-shadow: none;
+  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
+  transform: none;
+}
+
+.graphwar-killer-segmented-control .graphwar-killer-segmented-button--active,
+.graphwar-killer-segmented-control .graphwar-killer-segmented-button--active:hover:not(:disabled) {
+  color: var(--vp-c-white);
+}
+
+.graphwar-killer-control-surface input:where(:not([type="file"])) {
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  height: 30px;
+  line-height: 1.15;
+  min-height: 0;
+  min-width: 0;
+  padding: 4px 8px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+  width: 100%;
+}
+
+.graphwar-killer-control-surface input:where(:not([type="file"]):focus-visible) {
+  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
+  outline: none;
+}
+
+.graphwar-killer-control-surface input:where(:disabled:not([type="file"])) {
+  cursor: not-allowed;
+  opacity: 58%;
+}
+
+.graphwar-killer-control-surface input:where([type="range"]) {
+  appearance: none;
+  background: linear-gradient(
+    to right,
+    var(--vp-c-brand-1) 0 var(--graphwar-killer-range-progress, 0%),
+    var(--vp-c-divider) var(--graphwar-killer-range-progress, 0%) 100%
+  );
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  height: 8px;
+  padding: 0;
+}
+
+.graphwar-killer-control-surface input:where([type="range"]:disabled) {
+  cursor: not-allowed;
+}
+
+.graphwar-killer-control-surface input:where([type="range"])::-webkit-slider-runnable-track {
+  background: transparent;
+  border: 0;
+  height: 8px;
+}
+
+.graphwar-killer-control-surface input:where([type="range"])::-webkit-slider-thumb {
+  appearance: none;
+  background: var(--vp-c-brand-1);
+  border: 2px solid var(--vp-c-bg);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
+  height: 18px;
+  margin-top: -5px;
+  width: 18px;
+}
+
+.graphwar-killer-control-surface input:where([type="range"])::-moz-range-track {
+  background: transparent;
+  border: 0;
+  height: 8px;
+}
+
+.graphwar-killer-control-surface input:where([type="range"])::-moz-range-progress {
+  background: transparent;
+}
+
+.graphwar-killer-control-surface input:where([type="range"])::-moz-range-thumb {
+  background: var(--vp-c-brand-1);
+  border: 2px solid var(--vp-c-bg);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 20%);
+  height: 18px;
+  width: 18px;
+}

@@ -27,6 +27,8 @@ export interface GraphwarDebugActivationController {
   startHold: (event: PointerEvent) => void;
   /** 是否展示调试启用成功反馈。 */
   successVisible: Ref<boolean>;
+  /** 切换高级设置；长按刚完成时只消费随后的 click。 */
+  toggleAdvancedSettings: () => void;
 }
 
 /** 管理调试入口的长按状态、倒计时和成功闪烁；页面只负责展示文案和高级设置展开状态。 */
@@ -46,7 +48,7 @@ export function useGraphwarDebugActivation(options: GraphwarDebugActivationOptio
       return;
     }
     if (debugInfoEnabled.value) {
-      options.toggleAdvancedSettings();
+      triggered = false;
       return;
     }
 
@@ -64,14 +66,18 @@ export function useGraphwarDebugActivation(options: GraphwarDebugActivationOptio
     }, debugActivationHoldMs);
   }
 
-  /** 结束调试入口长按；未触发调试时保留普通点击展开设置。 */
+  /** 结束调试入口长按；普通切换统一由随后产生的 click 处理。 */
   function finishHold() {
-    const shouldToggleAdvancedSettings = !debugInfoEnabled.value && !triggered && startedAt !== undefined;
     clearHold();
-    if (shouldToggleAdvancedSettings) {
-      options.toggleAdvancedSettings();
+  }
+
+  /** 执行普通切换；长按启用调试后忽略浏览器紧接着派发的 click。 */
+  function toggleAdvancedSettings() {
+    if (triggered) {
+      triggered = false;
+      return;
     }
-    triggered = false;
+    options.toggleAdvancedSettings();
   }
 
   /** 鼠标移出或取消时终止调试长按流程。 */
@@ -142,5 +148,6 @@ export function useGraphwarDebugActivation(options: GraphwarDebugActivationOptio
     remainingMs,
     startHold,
     successVisible,
+    toggleAdvancedSettings,
   };
 }

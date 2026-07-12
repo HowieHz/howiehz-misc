@@ -17,6 +17,16 @@ import { graphwarKillerLocale } from "./locale";
 <GraphwarKillerPage :locale="graphwarKillerLocale" />
 <!-- autocorrect-enable -->
 
+## Expression Syntax {#graphwar-killer-expression-syntax}
+
+| Category      | Supported syntax                                                                                                                                                              |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variables     | Use `x`, `y`, and `y'`.                                                                                                                                                       |
+| Operators     | Use `+`, `-`, `/`, `*`, and `^`. Parentheses and implicit multiplication such as `2x` or `2sin(x)` are also supported.                                                        |
+| Functions     | Use `sqrt()`, `log()`, `ln()`, `abs()`, `sin()` (alias `sen()`), `cos()`, `tan()` (alias `tg()`), and `exp()`. `log` is the base-10 logarithm; `ln` is the natural logarithm. |
+| Constants     | Use `e` and `pi`.                                                                                                                                                             |
+| Compatibility | By default, Graphwar compatibility treats `y'` as `y` and ignores unknown characters. Both options can be turned off in Advanced.                                             |
+
 ## How to Use {#graphwar-killer-instructions}
 
 ### Basic Workflow {#graphwar-killer-basic-workflow}
@@ -47,9 +57,9 @@ Starting from the current path end, One-Click Clear filters usable targets whose
 
 ##### Managed Mode {#graphwar-killer-managed-mode}
 
-Managed Mode only requires Use Agent with a valid URL; it does not depend on the Path Planning switch. Solver keeps separate formula profiles for `y`, `y'`, and `y''`.
+Turn on Use Agent and confirm the Agent URL to enable Managed Mode. Solver keeps separate formula profiles for `y`, `y'`, and `y''`.
 
-On first enable, Managed Mode lists profiles that do not support One-Click Clear and, after confirmation, repairs only those profiles. It locks calculation and firing inputs, reads authoritative state once per second, selects the profile for the Agent's current game mode, and calculates One-Click Clear only during the current local human turn.
+On first enable, Managed Mode lists profiles that do not support One-Click Clear and, after confirmation, repairs only those profiles. It locks calculation and firing inputs, reads game state once per second, selects the profile for the Agent's current game mode, and calculates One-Click Clear only during the current local human turn.
 
 - When a search finishes, its calculation time is shown briefly and the shot is submitted immediately without waiting for the screenshot or trajectory to render on the page.
 - If the search fails, or if 3 seconds remain without a usable plan, Managed Mode fires `999999999999999x` to skip the turn quickly. It does not deliberately hit an obstacle as a fallback because the explosion would change the map and could open a route for an opponent to attack your team.
@@ -61,16 +71,6 @@ On first enable, Managed Mode lists profiles that do not support One-Click Clear
 #### Glitch Mode {#graphwar-killer-step-glitch-mode}
 
 Applies only to step functions in `y'` mode. When an obstacle lies inside the approximate normal-step path region, Glitch Mode attempts to generate a jump term that crosses the obstacle vertically. This mode needs obstacle data and accurate soldier positions, so reading game state through Agent is recommended.
-
-### Expression Syntax {#graphwar-killer-expression-syntax}
-
-| Category      | Supported syntax                                                                                                                                                              |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Variables     | Use `x`, `y`, and `y'`.                                                                                                                                                       |
-| Operators     | Use `+`, `-`, `/`, `*`, and `^`. Parentheses and implicit multiplication such as `2x` or `2sin(x)` are also supported.                                                        |
-| Functions     | Use `sqrt()`, `log()`, `ln()`, `abs()`, `sin()` (alias `sen()`), `cos()`, `tan()` (alias `tg()`), and `exp()`. `log` is the base-10 logarithm; `ln` is the natural logarithm. |
-| Constants     | Use `e` and `pi`.                                                                                                                                                             |
-| Compatibility | By default, Graphwar compatibility treats `y'` as `y` and ignores unknown characters. Both options can be turned off in Advanced.                                             |
 
 ### How to use Graphwar Agent {#graphwar-killer-agent-help}
 

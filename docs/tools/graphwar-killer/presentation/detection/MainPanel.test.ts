@@ -22,17 +22,27 @@ describe("Detection MainPanel", () => {
       debugTimingRows: [],
       debugTimingVisible: false,
       detectObjectsTitle: graphwarKillerLocale.ui.detection.detectObjectsTitle,
-      headerStatus: { kind: "info" as const, message: "" },
+      headerStatus: { kind: "error" as const, message: "读取状态失败：游戏尚未开始" },
       screenshotActionsVisible: true,
       statusWarning: { message: "", title: "" },
     };
     const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, panel } });
 
-    expect(wrapper.find(".graphwar-killer__label-row #graphwar-killer-agent-usage").exists()).toBe(true);
+    expect(wrapper.classes()).toContain("graphwar-killer-control-surface");
+    const labelRow = wrapper.get(".graphwar-killer__label-row");
+    const leading = labelRow.get(".graphwar-killer__label-leading");
+    expect(leading.element.children[0].id).toBe("graphwar-killer-detection-title");
+    expect(leading.element.children[1].querySelector("#graphwar-killer-agent-usage")?.getAttribute("role")).toBe(
+      "switch",
+    );
+    expect(labelRow.element.children[1]).toBe(wrapper.get(".graphwar-killer__label-feedback").element);
     const screenshotRows = wrapper.findAll(".graphwar-killer__source-action-row");
     expect(screenshotRows).toHaveLength(2);
     expect(screenshotRows[0].text()).toContain(graphwarKillerLocale.ui.screenshot.capture);
     expect(screenshotRows[0].text()).toContain(graphwarKillerLocale.ui.screenshot.upload);
+    expect(screenshotRows[0].get(".graphwar-killer__upload span").classes()).toContain(
+      "graphwar-killer-control-button",
+    );
     expect(screenshotRows[0].text()).not.toContain(graphwarKillerLocale.ui.detection.detectBounds);
     expect(screenshotRows[1].text()).toContain(graphwarKillerLocale.ui.detection.detectBounds);
     expect(screenshotRows[1].text()).toContain(graphwarKillerLocale.ui.detection.detectObjects);
@@ -41,7 +51,12 @@ describe("Detection MainPanel", () => {
     await wrapper.setProps({
       panel: {
         ...panel,
-        agent: { ...panel.agent, enabled: true },
+        agent: {
+          ...panel.agent,
+          enabled: true,
+          readReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["agent-read-busy"],
+          readState: "busy" as const,
+        },
         screenshotActionsVisible: false,
       },
     });
@@ -49,6 +64,13 @@ describe("Detection MainPanel", () => {
     const agentRows = wrapper.findAll(".graphwar-killer__source-action-row");
     expect(agentRows).toHaveLength(1);
     expect(agentRows[0].text()).toContain(graphwarKillerLocale.ui.detection.agent.read);
+    expect(wrapper.get(".graphwar-killer-control-reason__icon").attributes("aria-hidden")).toBe("true");
+    const readAgentButton = wrapper.get<HTMLButtonElement>(".graphwar-killer__agent-read-field button");
+    expect(readAgentButton.attributes("disabled")).toBeDefined();
+    expect(readAgentButton.attributes("aria-describedby")).toBe("graphwar-killer-agent-read-reason");
+    const agentSettings = wrapper.get(".graphwar-killer__agent-usage");
+    expect(agentSettings.find("a").exists()).toBe(false);
+    expect(agentSettings.element.nextElementSibling).toBe(wrapper.get(".graphwar-killer__agent-usage-hint").element);
 
     await wrapper.setProps({
       panel: {
@@ -58,7 +80,7 @@ describe("Detection MainPanel", () => {
         screenshotActionsVisible: false,
       },
     });
-    const agentToggle = wrapper.get<HTMLInputElement>("#graphwar-killer-agent-usage");
+    const agentToggle = wrapper.get<HTMLButtonElement>("#graphwar-killer-agent-usage");
     expect(agentToggle.attributes("disabled")).toBeDefined();
     await agentToggle.trigger("click");
     expect(wrapper.emitted("toggleAgentUsage")).toBeUndefined();

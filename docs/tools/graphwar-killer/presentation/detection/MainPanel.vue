@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import ControlReason from "../controls/ControlReason.vue";
 import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
 
@@ -97,14 +98,25 @@ function handleAgentBaseUrlInput(event: Event) {
 
 <template>
   <section
-    class="graphwar-killer__panel graphwar-killer__detection-panel"
+    class="graphwar-killer__panel graphwar-killer__detection-panel graphwar-killer-control-surface"
     aria-labelledby="graphwar-killer-detection-title"
     :aria-disabled="panel.interactionDisabled"
   >
     <div class="graphwar-killer__label-row">
-      <h2 id="graphwar-killer-detection-title">
-        {{ locale.ui.detection.title }}
-      </h2>
+      <div class="graphwar-killer__label-leading">
+        <h2 id="graphwar-killer-detection-title">
+          {{ locale.ui.detection.title }}
+        </h2>
+        <ToggleField
+          id="graphwar-killer-agent-usage"
+          class="graphwar-killer__source-toggle"
+          :checked="panel.agent.enabled"
+          :label="locale.ui.detection.agent.toggle"
+          :state="panel.interactionDisabled ? 'blocked' : 'normal'"
+          :title="locale.ui.detection.agent.toggleTitle"
+          @toggle="emit('toggleAgentUsage')"
+        />
+      </div>
       <div
         v-if="panel.headerStatus.message || panel.statusWarning.message"
         class="graphwar-killer__label-feedback"
@@ -130,15 +142,6 @@ function handleAgentBaseUrlInput(event: Event) {
           {{ panel.statusWarning.message }}
         </span>
       </div>
-      <ToggleField
-        id="graphwar-killer-agent-usage"
-        class="graphwar-killer__source-toggle"
-        :checked="panel.agent.enabled"
-        :label="locale.ui.detection.agent.toggle"
-        :state="panel.interactionDisabled ? 'blocked' : 'normal'"
-        :title="locale.ui.detection.agent.toggleTitle"
-        @toggle="emit('toggleAgentUsage')"
-      />
     </div>
     <fieldset
       class="graphwar-killer__detection-fields"
@@ -166,7 +169,7 @@ function handleAgentBaseUrlInput(event: Event) {
               :title="locale.ui.screenshot.uploadInputTitle"
               @change="emit('uploadImage', $event)"
             >
-            <span>{{ locale.ui.screenshot.upload }}</span>
+            <span class="graphwar-killer-control-button">{{ locale.ui.screenshot.upload }}</span>
           </label>
         </div>
         <div
@@ -212,38 +215,35 @@ function handleAgentBaseUrlInput(event: Event) {
             >
               {{ panel.agent.inProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
             </button>
-            <span
+            <ControlReason
               v-if="panel.agent.readReason"
               id="graphwar-killer-agent-read-reason"
-              class="graphwar-killer__agent-read-reason"
-            >
-              {{ panel.agent.readReason }}
-            </span>
+              :message="panel.agent.readReason"
+            />
           </div>
         </div>
       </div>
-      <details
-        v-if="panel.agent.enabled"
-        class="graphwar-killer__details graphwar-killer__agent-usage"
-      >
-        <summary>{{ locale.ui.detection.agent.settingsSummary }}</summary>
-        <label
-          class="graphwar-killer__agent-url"
-          :title="locale.ui.detection.agent.addressTitle"
-        >
-          {{ locale.ui.detection.agent.address }}
-          <input
-            type="url"
-            :aria-label="locale.ui.detection.agent.addressAriaLabel"
+      <template v-if="panel.agent.enabled">
+        <details class="graphwar-killer__details graphwar-killer__agent-usage">
+          <summary>{{ locale.ui.detection.agent.settingsSummary }}</summary>
+          <label
+            class="graphwar-killer__agent-url"
             :title="locale.ui.detection.agent.addressTitle"
-            :value="panel.agent.baseUrlText"
-            @input="handleAgentBaseUrlInput"
           >
-        </label>
+            {{ locale.ui.detection.agent.address }}
+            <input
+              type="url"
+              :aria-label="locale.ui.detection.agent.addressAriaLabel"
+              :title="locale.ui.detection.agent.addressTitle"
+              :value="panel.agent.baseUrlText"
+              @input="handleAgentBaseUrlInput"
+            >
+          </label>
+        </details>
         <p class="graphwar-killer__agent-usage-hint">
           <a href="#graphwar-killer-agent-help">{{ locale.ui.detection.agent.helpLink }}</a>
         </p>
-      </details>
+      </template>
       <details
         v-if="panel.debugTimingVisible"
         class="graphwar-killer__details"
@@ -292,47 +292,6 @@ function handleAgentBaseUrlInput(event: Event) {
   min-width: 0;
 }
 
-.graphwar-killer__detection-panel input:not([type="file"]) {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 8px;
-  box-sizing: border-box;
-  font-variant-numeric: tabular-nums;
-  height: 30px;
-  line-height: 1.15;
-  min-height: 0;
-  min-width: 0;
-  padding: 4px 8px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
-  width: 100%;
-}
-
-.graphwar-killer__detection-panel button {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  color: var(--vp-c-text-1);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1.2;
-  transition:
-    transform 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    color 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.graphwar-killer__detection-panel button:disabled {
-  cursor: not-allowed;
-  opacity: 58%;
-}
-
 .graphwar-killer__detection-fields {
   border: 0;
   display: grid;
@@ -346,7 +305,14 @@ function handleAgentBaseUrlInput(event: Event) {
   align-items: center;
   display: grid;
   gap: 8px;
-  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  grid-template-columns: max-content minmax(0, 1fr);
+  min-width: 0;
+}
+
+.graphwar-killer__label-leading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -397,11 +363,6 @@ function handleAgentBaseUrlInput(event: Event) {
   gap: 6px;
 }
 
-.graphwar-killer__source-action-row button {
-  min-height: 34px;
-  padding: 6px 10px;
-}
-
 .graphwar-killer__upload {
   width: fit-content;
 }
@@ -414,37 +375,11 @@ function handleAgentBaseUrlInput(event: Event) {
   width: 1px;
 }
 
-.graphwar-killer__upload span {
-  align-items: center;
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  color: var(--vp-c-text-1);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1.2;
-  min-height: 34px;
-  padding: 6px 10px;
-}
-
-.graphwar-killer__upload:hover span {
-  border-color: var(--vp-c-brand-1);
-  color: var(--vp-c-brand-1);
-}
-
 .graphwar-killer__agent-read-field {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.graphwar-killer__agent-read-reason {
-  color: #b45309;
-  font-size: 0.82rem;
-  font-weight: 700;
 }
 
 .graphwar-killer__details {
@@ -472,11 +407,6 @@ function handleAgentBaseUrlInput(event: Event) {
   font-size: 0.86rem;
   line-height: 1.5;
   margin: 0;
-}
-
-.graphwar-killer__agent-usage-hint code {
-  overflow-wrap: anywhere;
-  white-space: normal;
 }
 
 .graphwar-killer__details[open] {
@@ -515,23 +445,17 @@ function handleAgentBaseUrlInput(event: Event) {
   min-width: max-content;
 }
 
-.graphwar-killer__detection-panel button:hover:not(:disabled) {
-  border-color: var(--vp-c-brand-1);
-  box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
-  color: var(--vp-c-brand-1);
-  transform: translateY(-1px);
-}
-
-.graphwar-killer__detection-panel input:focus-visible,
-.graphwar-killer__detection-panel button:focus-visible {
-  border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
-  outline: none;
+.graphwar-killer__source-toggle :deep(.graphwar-killer-toggle-field__control:hover:not(:disabled)),
+.graphwar-killer__source-toggle :deep(.graphwar-killer-toggle-field__control:focus-visible) {
+  border-color: transparent;
+  box-shadow: none;
+  color: inherit;
+  transform: none;
 }
 
 @media (width <= 760px) {
   .graphwar-killer__label-row {
-    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .graphwar-killer__label-feedback {

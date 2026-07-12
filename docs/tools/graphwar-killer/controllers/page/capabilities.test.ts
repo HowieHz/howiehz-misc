@@ -121,7 +121,7 @@ describe("Graphwar capabilities", () => {
     ["obstacleEditing", { scene: { obstaclesAvailable: false } }, { state: "blocked", reason: "obstacles-required" }],
     ["agentRead", { agent: { enabled: false } }, { state: "blocked", reason: "agent-disabled" }],
     ["agentRead", { agent: { normalizedBaseUrl: undefined } }, { state: "blocked", reason: "agent-url-invalid" }],
-    ["agentFire", { resultAvailable: false }, { state: "blocked", reason: "result-required" }],
+    ["agentFire", { resultAvailable: false }, { state: "blocked" }],
   ] satisfies [keyof GraphwarCapabilities, GraphwarCapabilityFactsOverrides, GraphwarControlCapability][])(
     "derives %s's local control state",
     (name, overrides, expected) => {

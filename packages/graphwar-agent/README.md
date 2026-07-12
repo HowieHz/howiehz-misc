@@ -145,7 +145,7 @@ Active `/state` responses use API version 2 and include:
 - `gameInstanceId`: opaque ID that changes when the official client creates a new battlefield.
 - `turnToken`: opaque ID for the exact current turn. It changes even if the same soldier and positions recur.
 - `battleRevision`: SHA-256 revision of the game mode, current view orientation, player ownership/team state, soldier alive/render state and world positions, and world obstacle mask.
-- `remainingTurnMs`: authoritative remaining turn time reported by `GameData#getRemainingTime()`.
+- `remainingTurnMs`: remaining turn time reported by `GameData#getRemainingTime()`.
 - `drawingFunction`, `exploding`, and `phase`: resolution state. `phase` is `aiming`, `drawing`, `exploding`, or `inactive`.
 - `terrainReversed`: whether the current client is rendering terrain in reverse.
 - `gameState`, `gameMode`, `currentTurn`, and `currentTurnPlayerId`: current game state and shooter ownership.

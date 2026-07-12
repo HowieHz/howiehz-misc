@@ -116,12 +116,12 @@ importers:
       '@giscus/vue':
         specifier: ^3.1.1
         version: 3.1.1(vue@3.5.39)
+      '@lucide/vue':
+        specifier: ^1.24.0
+        version: 1.24.0(vue@3.5.39)
       compat-finder:
         specifier: workspace:*
         version: link:../packages/compat-finder
-      lucide-vue-next:
-        specifier: ^1.0.0
-        version: 1.0.0(vue@3.5.39)
       lunar-javascript:
         specifier: ^1.7.7
         version: 1.7.7
@@ -641,6 +641,11 @@ packages:
 
   '@loaderkit/resolve@1.0.6':
     resolution: {integrity: sha512-G8FdIoF5CypfwmD9rl8BXod5HDn8JqB0CCNBXDTaRZ+yRYhARrrSToX1zg1zy9jX3zLqigsELwhT4gNtkdQAUg==}
+
+  '@lucide/vue@1.24.0':
+    resolution: {integrity: sha512-5bNPX0G2YEWdUlBYk7pE8SgDg/f1mkIFpJ9vtE44pW/cwRz7Ioc0tOTESoVJAPvxIELSmYekX+XXIJMjsswNIg==}
+    peerDependencies:
+      vue: '>=3.0.1'
 
   '@manypkg/find-root@1.1.0':
     resolution: {integrity: sha512-mki5uBvhHzO8kYYix/WRy2WX8S3B5wdVSc9D6KcU5lQNglP2yt58/VfLuAK49glRXChosY8ap2oJ1qgma3GUVA==}
@@ -2778,12 +2783,6 @@ packages:
     resolution: {integrity: sha512-RPimw/7aMdv2oqRrxKwvZXcPfwBrn/JZ2xYcY9Hus/6LaS3VOAKVWKWgNLCFSiOm1ESXinjsDlidVU7JlnCN2A==}
     engines: {node: 20 || >=22}
 
-  lucide-vue-next@1.0.0:
-    resolution: {integrity: sha512-V6SPvx1IHTj/UY+FrIYWV5faISsPSb8BnWSFDxAtezWKvWc9ZZ40PDrdu1/Qb5vg4lHWr1hs1BAMGVGm6V1Xdg==}
-    deprecated: Package deprecated. Please use @lucide/vue instead.
-    peerDependencies:
-      vue: '>=3.0.1'
-
   lunar-javascript@1.7.7:
     resolution: {integrity: sha512-u/KYiwPIBo/0bT+WWfU7qO1d+aqeB90Tuy4ErXenr2Gam0QcWeezUvtiOIyXR7HbVnW2I1DKfU0NBvzMZhbVQw==}
 
@@ -4441,6 +4440,10 @@ snapshots:
   '@loaderkit/resolve@1.0.6':
     dependencies:
       '@braidai/lang': 1.1.2
+
+  '@lucide/vue@1.24.0(vue@3.5.39)':
+    dependencies:
+      vue: 3.5.39(typescript@6.0.3)
 
   '@manypkg/find-root@1.1.0':
     dependencies:
@@ -6277,10 +6280,6 @@ snapshots:
   lru-cache@10.4.3: {}
 
   lru-cache@11.5.1: {}
-
-  lucide-vue-next@1.0.0(vue@3.5.39):
-    dependencies:
-      vue: 3.5.39(typescript@6.0.3)
 
   lunar-javascript@1.7.7: {}
 

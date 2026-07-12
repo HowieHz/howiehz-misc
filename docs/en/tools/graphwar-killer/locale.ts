@@ -251,6 +251,7 @@ export const graphwarKillerLocale = {
       noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found after ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) =>
         `One-Click Clear failed: the pathfinding Worker is unavailable or failed after ${elapsed}`,
+      retained: "Kept the best result found so far",
       success: (killCount, elapsed, resultCacheHit) => {
         const cacheText = resultCacheHit ? " (using result cache)" : "";
         return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} ${killCount === 1 ? "soldier" : "soldiers"} in ${elapsed}`;
@@ -261,16 +262,13 @@ export const graphwarKillerLocale = {
       backgroundWarning: "The page is in the background; managed firing may be delayed",
       calculationComplete: (targetCount, elapsed) =>
         `Managed calculation completed in ${elapsed}; the best plan hits ${targetCount} ${targetCount === 1 ? "target" : "targets"}`,
-      calculating: (targetCount) =>
-        targetCount === undefined
-          ? "Managed mode is calculating"
-          : `Managed mode is calculating; best result hits ${targetCount} ${targetCount === 1 ? "target" : "targets"}`,
+      calculating: () => "Managed mode is calculating",
       completedWaiting: "Managed calculation complete; waiting for a local turn",
       connectionFailed: (message) => `Agent connection failed; retrying: ${message}`,
       deadlineFired: "Stopped with 3 seconds remaining and fired the current best plan",
       deadlineNoPlan: "Stopped with 3 seconds remaining but could not submit the skip-turn function",
-      deadlinePlan: (targetCount, elapsed) =>
-        `Managed calculation stopped with 3 seconds remaining after ${elapsed}; the best plan hits ${targetCount} ${targetCount === 1 ? "target" : "targets"}`,
+      deadlinePlan: (elapsed) =>
+        `Managed calculation stopped with 3 seconds remaining and kept the best plan after ${elapsed}`,
       enabled: "Managed mode enabled; reading game state",
       incompatible: "Managed mode stopped because the Agent API is incompatible; upgrade the Agent",
       readying: "A local player is not ready; marking them ready",
@@ -766,7 +764,8 @@ export const graphwarKillerLocale = {
       routeThetaStar: "Theta*",
       routeXPlusScan: "X+ Scan",
       searchAnimation: "Search animation",
-      searchAnimationTitle: "Show candidate points, explored routes, and optimization progress",
+      searchAnimationTitle:
+        "Show single-target search progress and the current best formula and trajectory for One-Click Clear and managed mode",
       simulationTolerance: "Simulation tolerance",
       simulationToleranceAriaLabel: "Function-simulation tolerance in raw Graphwar 770x450 plane pixels",
       simulationToleranceTitle:

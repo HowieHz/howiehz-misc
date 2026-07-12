@@ -112,7 +112,6 @@ export function createGraphwarPathfindingCacheController() {
       input.simulationMaskCacheId,
       createTrajectorySettingsCacheKey(input.settings, getOptionalMaskCacheId(input.settings.stepGlitchObstacleMask)),
       createPointArrayCacheKey(input.sourcePath),
-      input.committedTargets.map((target) => createTargetCircleCacheKey(target.hitCircle)),
       input.prefixTarget ? createTargetCircleCacheKey(input.prefixTarget) : undefined,
       createPointCacheKey(input.targetPoint),
       createTargetCircleCacheKey(input.hitTarget),
@@ -134,8 +133,6 @@ export function createGraphwarPathfindingCacheController() {
       input.simulationMaskCacheId,
       createTrajectorySettingsCacheKey(input.settings, getOptionalMaskCacheId(input.settings.stepGlitchObstacleMask)),
       createPointArrayCacheKey(input.pathPoints),
-      // 成功结果会原样回写目标锚点；同一路径和命中圈的不同锚点不能共享结果。
-      input.committedTargets.map(createCommittedTargetCacheKey),
       input.prefixTarget ? createTargetCircleCacheKey(input.prefixTarget) : undefined,
       input.candidates.map(createOneClickClearCandidateCacheKey),
       input.hitCandidates.map(createOneClickClearCandidateCacheKey),
@@ -266,10 +263,6 @@ function createTargetCircleCacheKey(target: { center: PixelPoint; radius: number
   return [createPointCacheKey(target.center), target.radius];
 }
 
-function createCommittedTargetCacheKey(target: GraphwarOneClickClearPathWorkerInput["committedTargets"][number]) {
-  return [createTargetCircleCacheKey(target.hitCircle), target.anchor ? createPointCacheKey(target.anchor) : null];
-}
-
 function createTrajectorySettingsCacheKey(
   settings: GraphwarTrajectoryFormulaSettings,
   stepGlitchObstacleMaskId: number,
@@ -340,10 +333,6 @@ function cloneOneClickClearResult(result: GraphwarOneClickClearPathWorkerResult[
       expandedStates: result.expandedStates,
       pathPoints: result.pathPoints.map(clonePixelPoint),
       targetIds: [...result.targetIds],
-      targetSequence: result.targetSequence.map((target) => ({
-        ...(target.anchor ? { anchor: clonePixelPoint(target.anchor) } : {}),
-        hitCircle: cloneTargetCircle(target.hitCircle),
-      })),
       type: result.type,
     };
   }
@@ -354,13 +343,6 @@ function cloneOneClickClearResult(result: GraphwarOneClickClearPathWorkerResult[
     ...(result.invalidSegmentIndex === undefined ? {} : { invalidSegmentIndex: result.invalidSegmentIndex }),
     reason: result.reason,
     type: result.type,
-  };
-}
-
-function cloneTargetCircle(target: { center: PixelPoint; radius: number }) {
-  return {
-    center: clonePixelPoint(target.center),
-    radius: target.radius,
   };
 }
 

@@ -50,6 +50,10 @@ Path Planning searches from the current path end, generates a function, and vali
 
 One-Click Clear starts at the current path end, finds usable soldiers in the `x+` direction, and plans a route that hits as many targets as possible.
 
+Search Animation shows single-target search progress and the best validated formula and actual trajectory found by One-Click Clear or Managed Mode. Intermediate results hide their control points. The control points become part of the formal path when the search finishes.
+
+To stop a manual One-Click Clear run and keep its current result without firing, right-click the screenshot. Turn off Managed Mode to stop a managed search.
+
 #### Support Matrix {#graphwar-killer-pathfinding-support}
 
 | Function algorithm    | Game mode        | Path Planning | One-Click Clear | Route style                        |
@@ -85,6 +89,8 @@ Glitch Mode applies only to Step `y'`. When a normal Step route encounters an ob
 Turn on Use Agent and enter a valid URL to use Managed Mode. It marks local players in the room as ready, then reads state, runs One-Click Clear, and fires during local turns.
 
 If a game mode uses an algorithm that does not support One-Click Clear, Managed Mode lists the required changes before updating those settings. After a search, it briefly shows the elapsed time and submits the shot without waiting for the page to render.
+
+Managed Mode always keeps the best formula found so far in the background. Search Animation affects only the on-page preview, not the search or deadline firing.
 
 With 3 seconds left, Managed Mode fires the best validated plan. If no plan is available, it submits a skip-turn function. It does not deliberately hit an obstacle as a fallback because doing so could change the map and open a route for an opponent.
 

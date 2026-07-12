@@ -48,7 +48,6 @@ function createInput(deleteOptimizationEnabled: boolean, routeMode: "theta-star"
     bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     candidates: [],
-    committedTargets: [],
     dagEdgeWorkerCount: 1,
     deleteOptimizationEnabled,
     hitCandidates: [],

@@ -448,9 +448,7 @@ function findStepGlitchSmartPath(
   if (!simulationMask) {
     return { failureReason: "route", timings };
   }
-  const committedSequence = input.committedTargets.map((target) => target.hitCircle);
-  const finalTargetSequence = appendUniqueTargetCircle(committedSequence, input.hitTarget);
-  const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, committedSequence, input.prefixTarget);
+  const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, input.prefixTarget);
   const scanResult = scanGraphwarStepGlitchPath({
     bounds: input.bounds,
     boundsRect: input.boundsRect,
@@ -460,7 +458,8 @@ function findStepGlitchSmartPath(
       ? { stepGlitchFormulaPrefix: prefixEvidence.stepGlitchFormulaPrefix }
       : {}),
     ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
-    requiredTargets: committedSequence,
+    // 单目标请求只从当前尾点继续；更早运行命中的士兵不属于本次目标。
+    requiredTargets: [],
     settings: input.settings,
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     simulationMask,
@@ -513,7 +512,6 @@ function findStepGlitchSmartPath(
       optimizeStepGlitchSmartPath(
         input,
         path,
-        committedSequence,
         input.hitTarget,
         acceptedPoint,
         stepGlitchFormulaPrefix,
@@ -528,14 +526,7 @@ function findStepGlitchSmartPath(
       optimizeSmartPathfindingPath(input, path, undefined),
     );
   }
-  setMasterStepGlitchEvidence(
-    input,
-    path,
-    finalTargetSequence,
-    input.hitTarget,
-    acceptedPoint,
-    stepGlitchFormulaPrefix,
-  );
+  setMasterStepGlitchEvidence(input, path, input.hitTarget, acceptedPoint, stepGlitchFormulaPrefix);
   return { path, timings };
 }
 
@@ -543,7 +534,6 @@ function findStepGlitchSmartPath(
 function optimizeStepGlitchSmartPath(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
-  requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
   target: GraphwarTrajectoryTargetCircle,
   acceptedPoint: GraphPoint,
   stepGlitchFormulaPrefix: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"],
@@ -564,13 +554,13 @@ function optimizeStepGlitchSmartPath(
       boundsRect: input.boundsRect,
       controlX: imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x,
       path: candidatePath,
-      requiredTargets,
+      requiredTargets: [],
       settings: input.settings,
       ...(sourceFormulaPrefix ? { stepGlitchFormulaPrefix: sourceFormulaPrefix } : {}),
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       simulationMask: input.simulationMask,
       sourcePath: input.sourcePath,
-      targetSequence: requiredTargets.some((required) => sameTargetCircle(required, target)) ? [] : [target],
+      targetSequence: [target],
     });
     if (!replay.targetsHit || !replay.acceptedPoint) {
       index += 1;
@@ -600,13 +590,12 @@ interface MasterStepGlitchEvidenceContext {
 function getMasterStepGlitchEvidence(
   input: MasterStepGlitchEvidenceContext,
   path: readonly PixelPoint[],
-  targetSequence: readonly GraphwarTrajectoryTargetCircle[],
   prefixTarget: GraphwarTrajectoryTargetCircle | undefined,
 ): GraphwarStepGlitchPrefixEvidence | undefined {
   if (!masterStepGlitchEvidence || !masterStepGlitchEvidenceIsEnabled(input)) {
     return undefined;
   }
-  const key = createMasterStepGlitchEvidenceKey(input, path, targetSequence, prefixTarget);
+  const key = createMasterStepGlitchEvidenceKey(input, path, prefixTarget);
   return masterStepGlitchEvidence.key === key
     ? {
         acceptedPoint: createGraphPoint(
@@ -629,7 +618,6 @@ function getMasterStepGlitchEvidence(
 function setMasterStepGlitchEvidence(
   input: MasterStepGlitchEvidenceContext,
   path: readonly PixelPoint[],
-  targetSequence: readonly GraphwarTrajectoryTargetCircle[],
   prefixTarget: GraphwarTrajectoryTargetCircle,
   acceptedPoint: GraphPoint,
   stepGlitchFormulaPrefix?: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"],
@@ -639,7 +627,7 @@ function setMasterStepGlitchEvidence(
   }
   masterStepGlitchEvidence = {
     acceptedPoint: createGraphPoint(acceptedPoint.x, acceptedPoint.y),
-    key: createMasterStepGlitchEvidenceKey(input, path, targetSequence, prefixTarget),
+    key: createMasterStepGlitchEvidenceKey(input, path, prefixTarget),
     ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
   };
 }
@@ -652,13 +640,8 @@ function masterStepGlitchEvidenceIsEnabled(input: MasterStepGlitchEvidenceContex
 function createMasterStepGlitchEvidenceKey(
   input: MasterStepGlitchEvidenceContext,
   path: readonly PixelPoint[],
-  targetSequence: readonly GraphwarTrajectoryTargetCircle[],
   prefixTarget: GraphwarTrajectoryTargetCircle | undefined,
 ) {
-  // 普通点击不会进入 committedTargets；把尾点统一并入已证明目标，避免同一证据因表示形式不同而 miss。
-  const provenTargetSequence = prefixTarget
-    ? appendUniqueTargetCircle(targetSequence, prefixTarget)
-    : [...targetSequence];
   return JSON.stringify([
     "step-glitch-evidence-v1",
     [input.bounds.minX, input.bounds.maxX, input.bounds.minY, input.bounds.maxY],
@@ -667,7 +650,7 @@ function createMasterStepGlitchEvidenceKey(
     input.simulationMaskCacheId,
     createStepGlitchFormulaSettingsKey(input.settings),
     path.map((point) => [point.x, point.y]),
-    provenTargetSequence.map(createTargetCircleKey),
+    // Evidence 只恢复精确公式前缀，不保存历史士兵：后续请求从路径尾点继续，但不承诺重命中旧目标。
     prefixTarget ? createTargetCircleKey(prefixTarget) : undefined,
   ]);
 }
@@ -686,17 +669,6 @@ function createStepGlitchFormulaSettingsKey(settings: GraphwarTrajectoryFormulaS
 
 function createTargetCircleKey(target: GraphwarTrajectoryTargetCircle) {
   return [target.center.x, target.center.y, target.radius];
-}
-
-function appendUniqueTargetCircle(
-  targets: readonly GraphwarTrajectoryTargetCircle[],
-  target: GraphwarTrajectoryTargetCircle,
-) {
-  return targets.some((existing) => sameTargetCircle(existing, target)) ? [...targets] : [...targets, target];
-}
-
-function sameTargetCircle(left: GraphwarTrajectoryTargetCircle, right: GraphwarTrajectoryTargetCircle) {
-  return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
 }
 
 function appendStepGlitchScanTimings(
@@ -850,7 +822,6 @@ function validateSmartPathfindingTrajectory(
     hitTarget: input.hitTarget,
     obstacleMask: input.simulationMask,
     points,
-    requiredTargets: input.committedTargets.map((target) => target.hitCircle),
     settings: input.settings,
     targetHitRadiusPixels: input.hitTarget.radius,
   });
@@ -961,17 +932,14 @@ async function buildOneClickClearPath(
         path: readonly PixelPoint[];
         prefixTarget: GraphwarTrajectoryTargetCircle;
         stepGlitchFormulaPrefix?: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"];
-        targetSequence: readonly GraphwarTrajectoryTargetCircle[];
       }
     | undefined;
   let result: GraphwarOneClickClearPathWorkerResult["result"];
   try {
-    const committedSequence = input.committedTargets.map((target) => target.hitCircle);
-    // 托管进度请求不读取或写入跨请求 evidence，确保每个回合只依赖本次权威快照。
-    const prefixEvidence =
-      isStepGlitchRoute && !reportIncumbents
-        ? getMasterStepGlitchEvidence(input, input.pathPoints, committedSequence, input.prefixTarget)
-        : undefined;
+    // incumbent 只是观察通道；开启搜索动画或托管上报不能改变精确前缀 evidence 的复用语义。
+    const prefixEvidence = isStepGlitchRoute
+      ? getMasterStepGlitchEvidence(input, input.pathPoints, input.prefixTarget)
+      : undefined;
     result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: input.boundaryExpansion,
       buildDagEdges: (request) => {
@@ -981,7 +949,6 @@ async function buildOneClickClearPath(
       bounds: input.bounds,
       boundsRect: input.boundsRect,
       candidates: input.candidates,
-      committedTargets: input.committedTargets,
       dagEdgeWorkerCount: input.dagEdgeWorkerCount,
       deleteOptimizationEnabled: input.deleteOptimizationEnabled,
       deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
@@ -1036,11 +1003,11 @@ async function buildOneClickClearPath(
       timings.push(...dagEdgeSession.dispose());
     }
   }
-  if (!reportIncumbents && result.type === "success" && validatedStepGlitchEvidence) {
+  if (validatedStepGlitchEvidence) {
+    // failure 也可能由主线程提升最后一个自然 incumbent；exact path key 可安全保存该恢复证据。
     setMasterStepGlitchEvidence(
       input,
       validatedStepGlitchEvidence.path,
-      validatedStepGlitchEvidence.targetSequence,
       validatedStepGlitchEvidence.prefixTarget,
       validatedStepGlitchEvidence.acceptedPoint,
       validatedStepGlitchEvidence.stepGlitchFormulaPrefix,

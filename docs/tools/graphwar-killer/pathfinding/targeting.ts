@@ -43,65 +43,6 @@ export interface GraphwarHitCircle {
   radius: number;
 }
 
-/** 当前未发射路径已经承诺命中的士兵；无锚点表示一键清图中的顺路命中。 */
-export interface GraphwarCommittedTarget {
-  /** 显式目标对应的控制点；顺路命中没有可编辑控制点。 */
-  anchor?: PixelPoint;
-  /** 最终整式必须严格命中的不可变圆快照。 */
-  hitCircle: GraphwarHitCircle;
-}
-
-/** 命中圈数值完全一致才视为同一逻辑目标，避免依赖跨识别不稳定的检测 id。 */
-export function graphwarHitCirclesEqual(left: GraphwarHitCircle, right: GraphwarHitCircle) {
-  return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
-}
-
-/** Graphwar 的士兵判定使用严格圆内；圆周上的控制点不能作为有效目标锚点。 */
-export function graphwarHitCircleStrictlyContainsPoint(circle: GraphwarHitCircle, point: PixelPoint) {
-  const dx = point.x - circle.center.x;
-  const dy = point.y - circle.center.y;
-  return dx * dx + dy * dy < circle.radius * circle.radius;
-}
-
-/** 精确命中圈执行 upsert，并保留首次命中顺序。 */
-export function upsertGraphwarCommittedTarget(
-  targets: readonly GraphwarCommittedTarget[],
-  target: GraphwarCommittedTarget,
-) {
-  const index = targets.findIndex((existing) => graphwarHitCirclesEqual(existing.hitCircle, target.hitCircle));
-  if (index < 0) {
-    return [...targets, cloneGraphwarCommittedTarget(target)];
-  }
-
-  const nextTargets = targets.map(cloneGraphwarCommittedTarget);
-  const existing = nextTargets[index];
-  if (existing) {
-    nextTargets[index] = {
-      ...(target.anchor
-        ? { anchor: createPixelPoint(target.anchor.x, target.anchor.y) }
-        : existing.anchor
-          ? { anchor: existing.anchor }
-          : {}),
-      hitCircle: cloneGraphwarHitCircle(target.hitCircle),
-    };
-  }
-  return nextTargets;
-}
-
-export function cloneGraphwarCommittedTarget(target: GraphwarCommittedTarget): GraphwarCommittedTarget {
-  return {
-    ...(target.anchor ? { anchor: createPixelPoint(target.anchor.x, target.anchor.y) } : {}),
-    hitCircle: cloneGraphwarHitCircle(target.hitCircle),
-  };
-}
-
-function cloneGraphwarHitCircle(circle: GraphwarHitCircle): GraphwarHitCircle {
-  return {
-    center: createPixelPoint(circle.center.x, circle.center.y),
-    radius: circle.radius,
-  };
-}
-
 /** 士兵命中圈的 x+ 检查结果：center 优先，edge 表示只能瞄准最小前进线。 */
 export interface GraphwarSoldierAimCheckResult {
   /** 通过哪一级检查。 */

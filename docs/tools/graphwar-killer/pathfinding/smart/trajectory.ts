@@ -34,8 +34,6 @@ interface GraphwarSmartPathfindingTrajectoryOptions {
   obstacleMask: Uint8Array | undefined;
   /** 待验证的完整像素路径。 */
   points: readonly PixelPoint[];
-  /** 当前路径已经承诺命中的士兵；后续控制点允许改变它们的实际命中顺序。 */
-  requiredTargets?: readonly GraphwarTrajectoryTargetCircle[];
   /** 当前公式采样设置。 */
   settings: GraphwarTrajectoryFormulaSettings;
   /** 普通点击目标点使用的默认真实命中半径，单位为截图像素；无有效 bounds 时不可用。 */
@@ -82,9 +80,6 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
     lastPoint
       ? imageToGraphPoint(lastPoint, options.bounds, options.boundsRect).x
       : undefined;
-  // 当前目标保留有序语义；历史士兵只要求全部命中，允许新目标插入它们原来的命中区间。
-  const requiredTargets = options.requiredTargets ?? [];
-  const targetSequence = requiredTargets.some((required) => sameTargetCircle(required, target)) ? [] : [target];
   const result = sampleGraphwarPathTargetSequence({
     boundaryExpansion: options.boundaryExpansion,
     bounds: options.bounds,
@@ -94,11 +89,10 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
     ...(targetControlGraphX === undefined ? {} : { continueAfterTargetsUntilGraphX: targetControlGraphX }),
     obstacleMask: options.obstacleMask,
     points: options.points,
-    requiredTargets,
     settings: options.settings,
     targetHitRadiusPixels: target.radius,
-    targetCircles: targetSequence,
-    targetPoints: targetSequence.map((item) => item.center),
+    targetCircles: [target],
+    targetPoints: [target.center],
   });
   return {
     blockedPoint: result.earlyStopReason === "obstacle" ? result.visiblePixels.at(-1) : undefined,
@@ -107,8 +101,4 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
       (targetControlGraphX === undefined || graphwarTrajectoryReachesGraphXBeforeObstacle(result, targetControlGraphX)),
     visiblePixels: result.visiblePixels,
   };
-}
-
-function sameTargetCircle(left: GraphwarTrajectoryTargetCircle, right: GraphwarTrajectoryTargetCircle) {
-  return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
 }

@@ -75,9 +75,6 @@ describe("Anytime one-click-clear progress", () => {
     const incumbent: GraphwarOneClickClearIncumbent = {
       expression: "0",
       pathPoints: input.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
-      targetCount: 1,
-      targetIds: ["target"],
-      targetSequence: [],
     };
     mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearOptions) => {
       options.onValidatedIncumbent?.(incumbent);
@@ -86,7 +83,6 @@ describe("Anytime one-click-clear progress", () => {
         expandedStates: 2,
         pathPoints: [...input.pathPoints],
         targetIds: ["target"],
-        targetSequence: [],
         type: "success" as const,
       };
     });
@@ -142,6 +138,53 @@ describe("Anytime one-click-clear progress", () => {
       taskType: "build-one-click-clear-path",
       type: "success",
     });
+  });
+
+  it("reuses Step glitch evidence from a failed search whose incumbent may be retained", async () => {
+    const input = createOneClickClearInput();
+    const targetPoint = createPixelPoint(300, 225);
+    const adoptedPath = [...input.pathPoints, targetPoint];
+    const prefixTarget = { center: targetPoint, radius: 7 };
+    input.settings = { ...input.settings, equation: "dy", stepGlitchMode: true };
+    input.simulationMask = new Uint8Array(770 * 450);
+    input.simulationMaskCacheId = 904;
+    mocks.buildOneClickClearPath
+      .mockImplementationOnce(async (options: GraphwarOneClickClearOptions) => {
+        options.onValidatedStepGlitchPath?.({
+          acceptedPoint: createGraphPoint(-5, 1),
+          path: adoptedPath,
+          prefixTarget,
+          targetSequence: [prefixTarget],
+        });
+        return { elapsedMs: 1, expandedStates: 1, reason: "no-usable-target", type: "failure" as const };
+      })
+      .mockImplementationOnce(async (options: GraphwarOneClickClearOptions) => {
+        expect(options.stepGlitchPrefixEvidence).toMatchObject({ acceptedPoint: createGraphPoint(-5, 1) });
+        return { elapsedMs: 1, expandedStates: 0, reason: "no-candidate", type: "failure" as const };
+      });
+
+    if (!handleMessage) {
+      throw new Error("Pathfinding worker message handler was not registered");
+    }
+    handleMessage({
+      data: { id: 43, task: { input, reportIncumbents: true, type: "build-one-click-clear-path" } },
+    } as MessageEvent<GraphwarPathfindingWorkerRequest>);
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+    postMessage.mockClear();
+    handleMessage(
+      new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
+        data: {
+          id: 44,
+          task: {
+            input: { ...input, pathPoints: adoptedPath, prefixTarget },
+            reportIncumbents: true,
+            type: "build-one-click-clear-path",
+          },
+        } satisfies GraphwarPathfindingWorkerRequest,
+      }),
+    );
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
   });
 });
 
@@ -204,7 +247,6 @@ describe("Step glitch smart-path validation", () => {
     const secondTarget = createPixelPoint(300, 225);
     const second: GraphwarSmartPathfindingPathInput = {
       ...first,
-      committedTargets: [{ anchor: first.targetPoint, hitCircle: first.hitTarget }],
       hitTarget: { center: secondTarget, radius: 10 },
       prefixTarget: first.hitTarget,
       sourcePath: firstPath,
@@ -236,7 +278,6 @@ describe("Step glitch smart-path validation", () => {
     const secondTarget = createPixelPoint(300, 225);
     const second: GraphwarSmartPathfindingPathInput = {
       ...first,
-      committedTargets: [],
       hitTarget: { center: secondTarget, radius: 10 },
       prefixTarget: first.hitTarget,
       sourcePath: firstPath,
@@ -263,7 +304,6 @@ describe("Step glitch smart-path validation", () => {
     const nextTarget = createPixelPoint(300, 225);
     const changedMask: GraphwarSmartPathfindingPathInput = {
       ...first,
-      committedTargets: [{ anchor: first.targetPoint, hitCircle: first.hitTarget }],
       hitTarget: { center: nextTarget, radius: 10 },
       prefixTarget: first.hitTarget,
       simulationMaskCacheId: 802,
@@ -284,7 +324,6 @@ function createStepGlitchInput(simulationMask: Uint8Array, formulaMask: Uint8Arr
     boundaryExpansion: 0,
     bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
-    committedTargets: [],
     deleteOptimizationEnabled: false,
     hitTarget: { center: createPixelPoint(200, 225), radius: 10 },
     previewEnabled: false,
@@ -316,7 +355,6 @@ function createOneClickClearInput(): GraphwarOneClickClearPathWorkerInput {
     bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     candidates: [],
-    committedTargets: [],
     dagEdgeWorkerCount: 1,
     deleteOptimizationEnabled: false,
     deleteHitCheckRadiusPixels: 0,

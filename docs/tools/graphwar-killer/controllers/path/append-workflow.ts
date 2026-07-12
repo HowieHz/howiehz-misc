@@ -11,7 +11,6 @@ import {
   createGraphwarSmartPathfindingTrajectoryResult,
   type GraphwarSmartPathfindingHitTarget,
 } from "../../pathfinding/smart/trajectory";
-import type { GraphwarCommittedTarget } from "../../pathfinding/targeting";
 import type { GraphwarSmartPathfindingRunWorkflowController } from "../pathfinding/smart/workflow";
 import type { ParsedBounds, ParsedObstacleTolerances } from "../settings/validation";
 
@@ -41,8 +40,6 @@ interface GraphwarPathAppendWorkflowOptions<TSoldier, TSmartTarget> {
     toolWorkflowMode: ReadonlyRef<ToolWorkflowMode>;
   };
   path: {
-    /** 路径成功写入后提交士兵命中目标。 */
-    commitTarget: (target: GraphwarCommittedTarget) => void;
     /** 当前工作流路径。 */
     pathPixels: Ref<PixelPoint[]>;
     /** 路径状态文案仍由页面展示。 */
@@ -77,8 +74,6 @@ interface GraphwarPathAppendWorkflowOptions<TSoldier, TSmartTarget> {
     getDetectedSoldierColor: (soldier: TSoldier) => string | undefined;
     /** 当前识别士兵列表；只用于路径尾点命中圈预检。 */
     getSoldiers: () => readonly TSoldier[];
-    /** 当前路径已经承诺命中的士兵；存储顺序不限制后续整式的实际命中顺序。 */
-    getCommittedTargets: () => readonly GraphwarCommittedTarget[];
     /** 判断当前路径尾点是否已经落在士兵真实命中圈内。 */
     soldierContainsHitCircle: (soldier: TSoldier, point: PixelPoint) => boolean;
   };
@@ -163,30 +158,11 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
     }
 
     if (options.modes.isSmartPathfindingEnabled()) {
-      const appended = await appendDetectedSoldierSmartPathfindingPoint(soldier);
-      if (appended) {
-        commitDetectedSoldierTarget(soldier);
-      }
-      return appended;
+      return appendDetectedSoldierSmartPathfindingPoint(soldier);
     }
 
     const targetPoint = options.targets.createSearchStartSoldierAimPoint(options.path.pathPixels.value.at(-1), soldier);
-    const appended = targetPoint ? await appendPathPoint(targetPoint) : false;
-    if (appended) {
-      commitDetectedSoldierTarget(soldier);
-    }
-    return appended;
-  }
-
-  function commitDetectedSoldierTarget(soldier: TSoldier) {
-    const anchor = options.path.pathPixels.value.at(-1);
-    if (!anchor) {
-      return;
-    }
-    options.path.commitTarget({
-      anchor,
-      hitCircle: options.targets.createSoldierHitCircle(soldier),
-    });
+    return targetPoint ? appendPathPoint(targetPoint) : false;
   }
 
   /** 启动新寻路前先确认当前公式轨迹已经能到达当前最后路径点。 */
@@ -213,7 +189,6 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
       hitTarget: currentTarget,
       obstacleMask: options.trajectory.getSimulationObstacleMask(),
       points: [...options.path.pathPixels.value],
-      requiredTargets: options.targets.getCommittedTargets().map((target) => target.hitCircle),
       settings,
       targetHitRadiusPixels: options.trajectory.getTargetHitRadiusPixels(),
     });

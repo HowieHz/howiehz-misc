@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createPixelPoint } from "../../../core/types";
 import type { GraphwarOneClickClearTargetSoldier } from "../../../pathfinding/one-click-clear/targets";
+import type { GraphwarOneClickClearPathWorkerResult } from "../../../pathfinding/runtime/protocol";
 import { useGraphwarOneClickClearRunWorkflow } from "./workflow";
 
 describe("one-click clear workflow", () => {
@@ -10,6 +11,9 @@ describe("one-click clear workflow", () => {
     const target = createPixelPoint(30, 40);
     const order: string[] = [];
     let now = 0;
+    let current = true;
+    let runnerMode: "error" | "failure" | "pending" | "success" = "success";
+    let resolvePending: ((result: GraphwarOneClickClearPathWorkerResult) => void) | undefined;
     const workflow = useGraphwarOneClickClearRunWorkflow<GraphwarOneClickClearTargetSoldier>({
       debug: {
         appendSearchWorkerTimings: () => undefined,
@@ -19,6 +23,7 @@ describe("one-click clear workflow", () => {
         measureStageAsync: (_timings, _stage, task) => task(),
       },
       effects: {
+        applyIncumbent: () => order.push("apply-incumbent"),
         applyValidatedPath: () => order.push("apply"),
         flashBlockedSegment: () => undefined,
         flashHitSoldiers: () => order.push("flash"),
@@ -27,7 +32,6 @@ describe("one-click clear workflow", () => {
       input: {
         boundsRect: { value: { height: 450, width: 770, x: 0, y: 0 } },
         getBounds: () => ({ maxX: 25, maxY: 15, minX: -25, minY: -15 }),
-        getCommittedTargets: () => [],
         getDeleteOptimizationEnabled: () => false,
         getFormulaSettings: () => ({
           algorithm: "step",
@@ -55,6 +59,7 @@ describe("one-click clear workflow", () => {
         getFailureMessage: () => "failure",
         getInProgressMessage: () => "running",
         getPreflightFailureStatus: () => ({ kind: "error", message: "preflight failure" }),
+        getRetainedMessage: () => "retained",
         getSuccessMessage: () => "success",
       },
       pathfinding: {
@@ -65,17 +70,33 @@ describe("one-click clear workflow", () => {
           getMaskCacheId: () => 1,
         },
         runner: {
-          buildOneClickClearPath: async () => ({
-            result: {
-              elapsedMs: 10,
-              expandedStates: 1,
-              pathPoints: [start, target],
-              targetIds: ["target"],
-              targetSequence: [],
-              type: "success",
-            },
-            timings: [],
-          }),
+          buildOneClickClearPath: async (_input, runnerOptions) => {
+            if (runnerMode !== "success") {
+              runnerOptions?.onIncumbent?.({ expression: "x", pathPoints: [start, target] });
+              if (runnerMode === "error") {
+                throw new Error("worker failed after incumbent");
+              }
+              if (runnerMode === "pending") {
+                return new Promise((resolve) => {
+                  resolvePending = resolve;
+                });
+              }
+              return {
+                result: { elapsedMs: 10, expandedStates: 1, reason: "no-usable-target", type: "failure" },
+                timings: [],
+              };
+            }
+            return {
+              result: {
+                elapsedMs: 10,
+                expandedStates: 1,
+                pathPoints: [start, target],
+                targetIds: ["target"],
+                type: "success",
+              },
+              timings: [],
+            };
+          },
         },
       },
       run: {
@@ -83,8 +104,11 @@ describe("one-click clear workflow", () => {
           order.push("finish");
           return true;
         },
-        isCurrent: () => true,
-        start: () => 1,
+        isCurrent: () => current,
+        start: () => {
+          current = true;
+          return 1;
+        },
       },
       targets: {
         createGeometry: () => undefined,
@@ -104,5 +128,31 @@ describe("one-click clear workflow", () => {
     ).resolves.toBe(true);
 
     expect(order.slice(0, 5)).toEqual(["submit", "finish", "apply", "flash", "status"]);
+
+    order.length = 0;
+    runnerMode = "failure";
+    await expect(workflow.run({ useResultCache: false })).resolves.toBe(true);
+    expect(order).toContain("apply-incumbent");
+    expect(order).not.toContain("apply");
+    expect(order).not.toContain("flash");
+
+    order.length = 0;
+    runnerMode = "error";
+    await expect(workflow.run({ useResultCache: false })).resolves.toBe(true);
+    expect(order).toContain("apply-incumbent");
+    expect(order).not.toContain("apply");
+
+    order.length = 0;
+    runnerMode = "pending";
+    const pendingRun = workflow.run({ useResultCache: false });
+    await Promise.resolve();
+    expect(workflow.finalizeActiveIncumbent()).toBe(true);
+    expect(order).toEqual(["apply-incumbent", "status"]);
+    current = false;
+    resolvePending?.({
+      result: { elapsedMs: 10, expandedStates: 1, reason: "no-usable-target", type: "failure" },
+      timings: [],
+    });
+    await expect(pendingRun).resolves.toBe(false);
   });
 });

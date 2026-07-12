@@ -5,23 +5,20 @@ import { createGraphwarOneClickClearSearchInput } from "../one-click-clear/input
 import { createGraphwarPathfindingCacheController } from "./cache";
 
 describe("Graphwar pathfinding result cache keys", () => {
-  it("separates one-click-clear inputs with different committed target anchors", () => {
+  it("separates one-click-clear inputs with different current path prefixes", () => {
     const cache = createGraphwarPathfindingCacheController();
-    const firstAnchor = createPixelPoint(20, 20);
-    const secondAnchor = createPixelPoint(24, 20);
 
-    const firstKey = cache.createOneClickClearResultCacheKey(createInput(firstAnchor));
-    const secondKey = cache.createOneClickClearResultCacheKey(createInput(secondAnchor));
+    const firstKey = cache.createOneClickClearResultCacheKey(createInput({ middleX: 20 }));
+    const secondKey = cache.createOneClickClearResultCacheKey(createInput({ middleX: 21 }));
 
     expect(firstKey).not.toBe(secondKey);
   });
 
   it("keeps ordinary route mode and deletion preference as independent result identities", () => {
     const cache = createGraphwarPathfindingCacheController();
-    const anchor = createPixelPoint(20, 20);
     const keys = (["visibility-graph", "theta-star"] as const).flatMap((routeMode) =>
       [false, true].map((deleteOptimizationEnabled) =>
-        cache.createOneClickClearResultCacheKey(createInput(anchor, { deleteOptimizationEnabled, routeMode })),
+        cache.createOneClickClearResultCacheKey(createInput({ deleteOptimizationEnabled, routeMode })),
       ),
     );
 
@@ -30,13 +27,12 @@ describe("Graphwar pathfinding result cache keys", () => {
 
   it("canonicalises the unused ordinary route mode for Step y' glitch inputs", () => {
     const cache = createGraphwarPathfindingCacheController();
-    const anchor = createPixelPoint(20, 20);
 
     const visibilityKey = cache.createOneClickClearResultCacheKey(
-      createInput(anchor, { routeMode: "visibility-graph", stepGlitchMode: true }),
+      createInput({ routeMode: "visibility-graph", stepGlitchMode: true }),
     );
     const thetaKey = cache.createOneClickClearResultCacheKey(
-      createInput(anchor, { routeMode: "theta-star", stepGlitchMode: true }),
+      createInput({ routeMode: "theta-star", stepGlitchMode: true }),
     );
 
     expect(visibilityKey).toBe(thetaKey);
@@ -44,9 +40,9 @@ describe("Graphwar pathfinding result cache keys", () => {
 });
 
 function createInput(
-  anchor: ReturnType<typeof createPixelPoint>,
   options: {
     deleteOptimizationEnabled?: boolean;
+    middleX?: number;
     routeMode?: "theta-star" | "visibility-graph";
     stepGlitchMode?: boolean;
   } = {},
@@ -58,11 +54,10 @@ function createInput(
     bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     candidates: [],
-    committedTargets: [{ anchor, hitCircle }],
     dagEdgeWorkerCount: 1,
     deleteOptimizationEnabled: options.deleteOptimizationEnabled ?? false,
     hitCandidates: [],
-    pathPoints: [start, createPixelPoint(20, 20), createPixelPoint(24, 20)],
+    pathPoints: [start, createPixelPoint(options.middleX ?? 20, 20), createPixelPoint(24, 20)],
     prefixTarget: hitCircle,
     routeMaskCacheId: 1,
     routeMode: options.routeMode ?? "visibility-graph",

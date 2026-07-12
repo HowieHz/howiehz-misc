@@ -1,13 +1,7 @@
 /** 管理路径编辑的双工作流状态，页面只负责 Graphwar 规则和重建副作用。 */
-import { computed, ref, type ComputedRef, type Ref, type WritableComputedRef } from "vue";
+import { computed, ref, type Ref, type WritableComputedRef } from "vue";
 
 import type { GraphPoint, PixelPoint, ToolWorkflowMode } from "../../core/types";
-import {
-  cloneGraphwarCommittedTarget,
-  graphwarHitCircleStrictlyContainsPoint,
-  upsertGraphwarCommittedTarget,
-  type GraphwarCommittedTarget,
-} from "../../pathfinding/targeting";
 
 const defaultTrajectoryStrokeColor = "#ec4899";
 
@@ -40,18 +34,14 @@ interface PathPointCoordinateSyncOptions {
 
 /** 页面使用的路径状态 Interface；隐藏双模式切换的内部实现。 */
 export interface GraphwarPathStateController {
-  /** 原子写入已完整验证的路径与士兵目标序列。 */
-  applyValidatedPath: (points: PixelPoint[], targets: readonly GraphwarCommittedTarget[]) => void;
+  /** 原子写入已完整验证的路径。 */
+  applyValidatedPath: (points: PixelPoint[]) => void;
   /** 清空当前工作流路径。 */
   clearActivePath: () => void;
   /** 清空 solver/simulator 两套路径。 */
   clearAllModePaths: () => void;
   /** 清空 hover、drag 和坐标编辑状态。 */
   clearPathInteractionState: () => void;
-  /** 将士兵目标提交到当前解算器路径；相同命中圈只更新锚点。 */
-  commitTarget: (target: GraphwarCommittedTarget) => void;
-  /** 当前解算器路径必须继续命中的士兵目标；数组顺序只保持稳定的首次命中展示。 */
-  committedTargets: ComputedRef<readonly GraphwarCommittedTarget[]>;
   /** 当前拖拽中的路径点索引。 */
   draggingPathPointIndex: Ref<number | undefined>;
   /** 结束坐标编辑并同步格式化文本。 */
@@ -90,21 +80,12 @@ export interface GraphwarPathStateController {
 export function useGraphwarPathState(workflowMode: Ref<ToolWorkflowMode>): GraphwarPathStateController {
   const solverPathPixels = ref<PixelPoint[]>([]);
   const simulatorPathPixels = ref<PixelPoint[]>([]);
-  const solverCommittedTargets = ref<GraphwarCommittedTarget[]>([]);
-  const committedTargets = computed<readonly GraphwarCommittedTarget[]>(() =>
-    workflowMode.value === "solver" ? solverCommittedTargets.value : [],
-  );
   const pathPixels = computed<PixelPoint[]>({
     get: () => (workflowMode.value === "simulator" ? simulatorPathPixels.value : solverPathPixels.value),
     set: (points) => {
       if (workflowMode.value === "simulator") {
         simulatorPathPixels.value = points;
       } else {
-        solverCommittedTargets.value = reconcileGraphwarCommittedTargetAnchors(
-          solverCommittedTargets.value,
-          solverPathPixels.value,
-          points,
-        );
         solverPathPixels.value = points;
       }
     },
@@ -152,9 +133,6 @@ export function useGraphwarPathState(workflowMode: Ref<ToolWorkflowMode>): Graph
   /** 清空当前工作流路径；调用方负责先处理取消、状态提示和一键清图副作用。 */
   function clearActivePath() {
     pathPixels.value = [];
-    if (workflowMode.value === "solver") {
-      solverCommittedTargets.value = [];
-    }
     pathStatus.value = "";
     hoveredPathPointIndex.value = undefined;
     trajectoryStrokeColor.value = defaultTrajectoryStrokeColor;
@@ -164,7 +142,6 @@ export function useGraphwarPathState(workflowMode: Ref<ToolWorkflowMode>): Graph
   function clearAllModePaths() {
     solverPathPixels.value = [];
     simulatorPathPixels.value = [];
-    solverCommittedTargets.value = [];
     solverPathStatus.value = "";
     simulatorPathStatus.value = "";
     clearPathInteractionState();
@@ -198,21 +175,13 @@ export function useGraphwarPathState(workflowMode: Ref<ToolWorkflowMode>): Graph
     return true;
   }
 
-  /** 原子替换路径与其验证目标；调用方只能传入同一次完整回放已经证明的组合。 */
-  function applyValidatedPath(points: PixelPoint[], targets: readonly GraphwarCommittedTarget[]) {
+  /** 原子替换当前路径；目标命中证据只属于产生它的那次搜索，不跨运行写入页面状态。 */
+  function applyValidatedPath(points: PixelPoint[]) {
     if (workflowMode.value === "simulator") {
       simulatorPathPixels.value = points;
       return;
     }
     solverPathPixels.value = points;
-    solverCommittedTargets.value = targets.map(cloneGraphwarCommittedTarget);
-  }
-
-  function commitTarget(target: GraphwarCommittedTarget) {
-    if (workflowMode.value !== "solver") {
-      return;
-    }
-    solverCommittedTargets.value = upsertGraphwarCommittedTarget(solverCommittedTargets.value, target);
   }
 
   /** 读取路径点坐标输入框文本。 */
@@ -274,8 +243,6 @@ export function useGraphwarPathState(workflowMode: Ref<ToolWorkflowMode>): Graph
     clearActivePath,
     clearAllModePaths,
     clearPathInteractionState,
-    commitTarget,
-    committedTargets,
     draggingPathPointIndex,
     finishPathPointCoordinateEdit,
     getPathPointCoordinateText,
@@ -293,38 +260,4 @@ export function useGraphwarPathState(workflowMode: Ref<ToolWorkflowMode>): Graph
     undoActivePathPoint,
     setPathPointCoordinateText,
   };
-}
-
-/** 普通点编辑保留目标；只有消失或移出严格命中圈的目标锚点才失效。 */
-function reconcileGraphwarCommittedTargetAnchors(
-  targets: readonly GraphwarCommittedTarget[],
-  previousPath: readonly PixelPoint[],
-  nextPath: readonly PixelPoint[],
-) {
-  const reconciled: GraphwarCommittedTarget[] = [];
-  for (const target of targets) {
-    const anchor = target.anchor;
-    if (!anchor || pathContainsExactPoint(nextPath, anchor)) {
-      reconciled.push(cloneGraphwarCommittedTarget(target));
-      continue;
-    }
-
-    const previousIndex = findExactPointIndex(previousPath, anchor);
-    const nextAnchor = previousPath.length === nextPath.length ? nextPath[previousIndex] : undefined;
-    if (nextAnchor && graphwarHitCircleStrictlyContainsPoint(target.hitCircle, nextAnchor)) {
-      reconciled.push({
-        anchor: nextAnchor,
-        hitCircle: target.hitCircle,
-      });
-    }
-  }
-  return reconciled;
-}
-
-function pathContainsExactPoint(points: readonly PixelPoint[], target: PixelPoint) {
-  return findExactPointIndex(points, target) >= 0;
-}
-
-function findExactPointIndex(points: readonly PixelPoint[], target: PixelPoint) {
-  return points.findIndex((point) => point.x === target.x && point.y === target.y);
 }

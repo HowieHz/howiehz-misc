@@ -168,7 +168,6 @@ function createInput(): GraphwarOneClickClearPathWorkerInput {
     bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     candidates: [],
-    committedTargets: [],
     dagEdgeWorkerCount: 1,
     deleteOptimizationEnabled: false,
     deleteHitCheckRadiusPixels: 0,
@@ -194,11 +193,8 @@ function createInput(): GraphwarOneClickClearPathWorkerInput {
 /** 构造可识别来源的 progress payload。 */
 function createIncumbent(id: string): GraphwarOneClickClearIncumbent {
   return {
-    expression: "0",
+    expression: id,
     pathPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
-    targetCount: 1,
-    targetIds: [id],
-    targetSequence: [],
   };
 }
 
@@ -210,7 +206,6 @@ function createResult(): GraphwarOneClickClearPathWorkerResult {
       expandedStates: 1,
       pathPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
       targetIds: ["target"],
-      targetSequence: [],
       type: "success",
     },
     timings: [],

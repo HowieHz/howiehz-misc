@@ -359,7 +359,6 @@ function cloneGraphwarSmartPathfindingPathInput(
     boundaryExpansion: input.boundaryExpansion,
     bounds: cloneGraphBounds(input.bounds),
     boundsRect: cloneBoundsRect(input.boundsRect),
-    committedTargets: input.committedTargets.map(cloneGraphwarCommittedTarget),
     deleteOptimizationEnabled: input.deleteOptimizationEnabled,
     hitTarget: cloneGraphwarTrajectoryTargetCircle(input.hitTarget),
     previewEnabled: input.previewEnabled,
@@ -420,7 +419,6 @@ function cloneGraphwarOneClickClearPathWorkerInput(
     bounds: cloneGraphBounds(input.bounds),
     boundsRect: cloneBoundsRect(input.boundsRect),
     candidates: input.candidates.map(cloneGraphwarOneClickClearCandidate),
-    committedTargets: input.committedTargets.map(cloneGraphwarCommittedTarget),
     dagEdgeWorkerCount: input.dagEdgeWorkerCount,
     deleteOptimizationEnabled: input.deleteOptimizationEnabled,
     deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
@@ -457,17 +455,6 @@ function cloneGraphwarTrajectoryTargetCircle(
   return {
     center: clonePixelPoint(target.center),
     radius: target.radius,
-  };
-}
-
-function cloneGraphwarCommittedTarget(
-  target:
-    | GraphwarSmartPathfindingPathInput["committedTargets"][number]
-    | GraphwarOneClickClearPathWorkerInput["committedTargets"][number],
-) {
-  return {
-    ...(target.anchor ? { anchor: clonePixelPoint(target.anchor) } : {}),
-    hitCircle: cloneGraphwarTrajectoryTargetCircle(target.hitCircle),
   };
 }
 

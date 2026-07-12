@@ -246,18 +246,19 @@ export interface GraphwarKillerLocale {
       noCandidate: string;
       noUsableTarget: (elapsed: string) => string;
       pathfindingWorkerFailed: (elapsed: string) => string;
+      retained: string;
       success: (killCount: number, elapsed: string, resultCacheHit?: boolean) => string;
       unsupported: string;
     };
     managed: {
       backgroundWarning: string;
       calculationComplete: (targetCount: number, elapsed: string) => string;
-      calculating: (targetCount?: number) => string;
+      calculating: () => string;
       completedWaiting: string;
       connectionFailed: (message: string) => string;
       deadlineFired: string;
       deadlineNoPlan: string;
-      deadlinePlan: (targetCount: number, elapsed: string) => string;
+      deadlinePlan: (elapsed: string) => string;
       enabled: string;
       incompatible: string;
       readying: string;

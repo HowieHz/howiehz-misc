@@ -24,7 +24,7 @@ const settings = {
 };
 
 describe("One-click clear optimization", () => {
-  it("publishes a replay-validated single-target incumbent before building the full DAG", async () => {
+  it("publishes each validated DAG prefix without an extra fallback search", async () => {
     const start = toImagePoint(-20, 0);
     const first = toImagePoint(-15, 0);
     const second = toImagePoint(-10, 0);
@@ -34,6 +34,8 @@ describe("One-click clear optimization", () => {
     ];
     const events: string[] = [];
     const incumbents: GraphwarOneClickClearIncumbent[] = [];
+    let finalValidationCount = 0;
+    let segmentValidationCount = 0;
 
     const result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: 0,
@@ -50,9 +52,17 @@ describe("One-click clear optimization", () => {
         };
       },
       candidates,
-      committedTargets: [],
+      deleteOptimizationEnabled: false,
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
+      onDebugTiming: (timing) => {
+        if (timing.stage === "validate-final") {
+          finalValidationCount += 1;
+        }
+        if (timing.stage === "segment-sample-trajectory") {
+          segmentValidationCount += 1;
+        }
+      },
       onValidatedIncumbent: (incumbent) => {
         events.push("incumbent");
         incumbents.push(incumbent);
@@ -66,18 +76,22 @@ describe("One-click clear optimization", () => {
     });
 
     expect(result.type).toBe("success");
-    expect(events[0]).toBe("batch:1");
-    expect(events.indexOf("incumbent")).toBeGreaterThan(0);
-    expect(events.indexOf("incumbent")).toBeLessThan(events.indexOf("batch:3"));
-    expect(incumbents[0]).toMatchObject({
-      pathPoints: [start, first],
-      targetIds: expect.arrayContaining(["first"]),
-    });
+    expect(events[0]).toBe("batch:3");
+    expect(events.filter((event) => event.startsWith("batch:"))).toEqual(["batch:3"]);
+    expect(incumbents.map((incumbent) => incumbent.pathPoints)).toEqual([
+      [start, first],
+      [start, first, second],
+      [start, first, second],
+    ]);
+    expect(segmentValidationCount).toBe(2);
+    expect(finalValidationCount).toBe(1);
     expect(incumbents[0]?.expression).not.toBe("");
-    expect(incumbents[0]?.targetCount).toBe(incumbents[0]?.targetIds.length);
+    expect(incumbents[0]).not.toHaveProperty("targetCount");
+    expect(incumbents[0]).not.toHaveProperty("targetIds");
+    expect(incumbents[0]).not.toHaveProperty("targetSequence");
   });
 
-  it("replaces an equal-hit fallback with the completed search result", async () => {
+  it("replaces an equal-length natural prefix with the completed search result", async () => {
     const start = toImagePoint(-20, 0);
     const first = toImagePoint(-15, 0);
     const second = toImagePoint(-10, 0);
@@ -100,7 +114,6 @@ describe("One-click clear optimization", () => {
         { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
         { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
       ],
-      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: [
         { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
@@ -119,18 +132,20 @@ describe("One-click clear optimization", () => {
     expect(incumbents).toHaveLength(2);
     if (result.type === "success") {
       expect(incumbents.at(-1)?.pathPoints).toEqual(result.pathPoints);
-      expect(incumbents.at(-1)?.targetIds).toEqual(result.targetIds);
     }
   });
 
-  it("returns a validated fallback when the full DAG has no route", async () => {
+  it("reports failure after publishing the longest naturally validated prefix", async () => {
     const start = toImagePoint(-20, 0);
     const first = toImagePoint(-15, 0);
     const second = toImagePoint(-10, 0);
+    const backward = toImagePoint(-16, 0);
     const candidates = [
       { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
       { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
     ];
+    const incumbents: GraphwarOneClickClearIncumbent[] = [];
+    let cancelled = false;
 
     const result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: 0,
@@ -139,15 +154,21 @@ describe("One-click clear optimization", () => {
       buildDagEdges: async (request) => ({
         routes: request.jobs.map((job) => ({
           jobId: job.id,
-          ...(request.jobs.length === 1 ? { route: [job.startPoint, job.targetPoint] } : {}),
+          route:
+            job.targetPoint.x === first.x
+              ? [job.startPoint, job.targetPoint]
+              : [job.startPoint, backward, job.targetPoint],
         })),
         timings: [],
       }),
       candidates,
-      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
-      onValidatedIncumbent: (incumbent) => expect(incumbent.targetCount).toBeGreaterThan(0),
+      isCancelled: () => cancelled,
+      onValidatedIncumbent: (incumbent) => {
+        incumbents.push(incumbent);
+        cancelled = true;
+      },
       pathPoints: [start],
       routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
@@ -156,7 +177,8 @@ describe("One-click clear optimization", () => {
       simulationMaskCacheId: 0,
     });
 
-    expect(result).toMatchObject({ type: "success", pathPoints: [start, first] });
+    expect(result).toMatchObject({ type: "failure" });
+    expect(incumbents.map((incumbent) => incumbent.pathPoints)).toEqual([[start, first]]);
   });
 
   it("includes the validated Y'' launch angle in an incumbent", async () => {
@@ -183,7 +205,6 @@ describe("One-click clear optimization", () => {
         };
       },
       candidates: [candidate],
-      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: [candidate],
       onValidatedIncumbent: (incumbent) => incumbents.push(incumbent),
@@ -198,10 +219,10 @@ describe("One-click clear optimization", () => {
 
     expect(result.type).toBe("success");
     expect(buildCount).toBe(1);
-    expect(incumbents).toHaveLength(1);
-    expect(incumbents[0]).toMatchObject({ targetCount: 1, targetIds: ["target"] });
+    expect(incumbents).toHaveLength(2);
     expect(incumbents[0]?.launchAngleRadians).toBeTypeOf("number");
     expect(Number.isFinite(incumbents[0]?.launchAngleRadians)).toBe(true);
+    expect(incumbents[1]?.launchAngleRadians).toBe(incumbents[0]?.launchAngleRadians);
   });
 
   it("does not publish a geometry route that fails formula validation", async () => {
@@ -227,7 +248,6 @@ describe("One-click clear optimization", () => {
         };
       },
       candidates: [candidate],
-      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: [candidate],
       onValidatedIncumbent: (incumbent) => incumbents.push(incumbent),
@@ -272,7 +292,6 @@ describe("One-click clear optimization", () => {
         throw new Error("Step glitch clear must not build DAG edges");
       },
       candidates,
-      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
       pathPoints: [start],
@@ -343,7 +362,6 @@ describe("One-click clear optimization", () => {
         timings: [],
       }),
       candidates,
-      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
       onDebugTiming: (timing) => {
@@ -372,12 +390,11 @@ describe("One-click clear optimization", () => {
   });
 
   it.each(["abs", "step"] as const)(
-    "allows %s to add a nearer target before a farther committed incidental hit",
+    "allows %s to add a target from the existing path tail without prior-run constraints",
     async (algorithm) => {
       const start = toImagePoint(-20, 0);
       const tail = toImagePoint(-15, 0);
       const nextTarget = toImagePoint(-10, 0);
-      const oldIncidentalTarget = toImagePoint(-5, 0);
       const simulationMask = new Uint8Array(770 * 450);
       const candidate = { enemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
 
@@ -395,7 +412,6 @@ describe("One-click clear optimization", () => {
           timings: [],
         }),
         candidates: [candidate],
-        committedTargets: [{ hitCircle: { center: oldIncidentalTarget, radius: 4 } }],
         deleteHitCheckRadiusPixels: 0,
         hitCandidates: [candidate],
         pathPoints: [start, tail],
@@ -411,18 +427,14 @@ describe("One-click clear optimization", () => {
 
       expect(result.type).toBe("success");
       if (result.type === "success") {
-        expect(result.targetSequence.map((target) => target.hitCircle.center)).toEqual([
-          nextTarget,
-          oldIncidentalTarget,
-        ]);
+        expect(result.targetIds).toEqual(["next"]);
       }
     },
   );
 
-  it("reuses the ABS proof that committed targets were hit before the incremental suffix", async () => {
+  it("reuses the ABS proof for earlier targets in the current request", async () => {
     const start = toImagePoint(-20, 0);
     const tail = toImagePoint(-15, 0);
-    const committed = toImagePoint(-14, 0);
     const first = toImagePoint(-10, 0);
     const second = toImagePoint(-5, 0);
     const simulationMask = new Uint8Array(770 * 450);
@@ -441,7 +453,6 @@ describe("One-click clear optimization", () => {
         timings: [],
       }),
       candidates,
-      committedTargets: [{ hitCircle: { center: committed, radius: 4 } }],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
       onDebugTiming: (timing) => {
@@ -463,12 +474,11 @@ describe("One-click clear optimization", () => {
     expect(segmentSampleCount).toBe(2);
   });
 
-  it("restarts ABS validation when a far committed hit advanced past the next target", async () => {
+  it("keeps current-request target validation independent from an existing path tail", async () => {
     const start = toImagePoint(-20, 0);
     const tail = toImagePoint(-15, 0);
     const first = toImagePoint(-10, 0);
     const second = toImagePoint(-7, 0);
-    const farCommitted = toImagePoint(-5, 0);
     const simulationMask = new Uint8Array(770 * 450);
     const candidates = [
       { enemy: true, hitCenter: first, hitRadius: 4, id: "first" },
@@ -484,7 +494,6 @@ describe("One-click clear optimization", () => {
         timings: [],
       }),
       candidates,
-      committedTargets: [{ hitCircle: { center: farCommitted, radius: 4 } }],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
       pathPoints: [start, tail],
@@ -500,7 +509,6 @@ describe("One-click clear optimization", () => {
     expect(result.type).toBe("success");
     if (result.type === "success") {
       expect(result.targetIds).toEqual(["first", "second"]);
-      expect(result.targetSequence.map((target) => target.hitCircle.center)).toEqual([first, second, farCommitted]);
     }
   });
 
@@ -524,7 +532,6 @@ describe("One-click clear optimization", () => {
         timings: [],
       }),
       candidates: [candidate],
-      committedTargets: [],
       deleteHitCheckRadiusPixels: 2,
       hitCandidates: [candidate],
       onDebugTiming: (timing) => {
@@ -588,7 +595,6 @@ describe("One-click clear optimization", () => {
         timings: [],
       }),
       candidates: [candidate],
-      committedTargets: [],
       deleteHitCheckRadiusPixels: 2,
       hitCandidates: [candidate],
       onDebugTiming: (timing) => {
@@ -661,7 +667,6 @@ describe("One-click clear optimization", () => {
           id: "target",
         },
       ],
-      committedTargets: [],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: [
         {

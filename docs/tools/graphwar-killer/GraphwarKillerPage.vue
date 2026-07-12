@@ -362,8 +362,6 @@ const {
   clearActivePath: clearActivePathState,
   clearAllModePaths: clearAllPathState,
   clearPathInteractionState,
-  commitTarget,
-  committedTargets,
   draggingPathPointIndex,
   finishPathPointCoordinateEdit: finishPathPointCoordinateEditState,
   getPathPointCoordinateText: getPathPointCoordinateTextState,
@@ -480,7 +478,6 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
   input: {
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
-    getCommittedTargets: () => committedTargets.value,
     getDeleteOptimizationEnabled: () => deleteOptimizationEnabled.value,
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
@@ -993,12 +990,17 @@ const trajectoryCollisionSettingsValid = computed(
 const {
   calculationFallbackReason: trajectoryCalculationFallbackReason,
   calculationStatus: trajectoryCalculationStatus,
+  clearIncumbentPreview,
+  commitIncumbentPreview,
+  commitIncumbentResult,
   createPathTrajectoryFormulaSettings,
   dispose: disposeTrajectoryResult,
   formulaOutputDecimalPlaces,
   formulaResult,
   graphwarTrajectoryFormulaSettings,
+  incumbentPreviewActive,
   plottedCurvePoints,
+  publishIncumbentPreview,
   secondOrderLaunchAngleDegrees,
   simulatorLaunchAngleRadians,
   trajectoryWarningReason,
@@ -1166,7 +1168,6 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
       toolWorkflowMode,
     },
     path: {
-      commitTarget,
       pathPixels,
       pathStatus,
       setPathPixels,
@@ -1178,6 +1179,7 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
       runWorkflow: {
         run: async (request) => {
           const task = { kind: "single" } as const;
+          clearIncumbentPreview();
           activePathfindingTask = task;
           try {
             return await smartPathfindingRunWorkflow.run(request);
@@ -1197,7 +1199,6 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
       createSoldierHitCircle,
       getDetectedSoldierColor,
       getDetectionBoxCenter,
-      getCommittedTargets: () => committedTargets.value,
       getSoldiers: () => detectedSoldiers.value,
       soldierContainsHitCircle: detectionBoxContainsHitCircle,
     },
@@ -1209,22 +1210,11 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
     },
   });
 
-/** 优先使用路径保存的不可变命中圈；普通尾点才退回当前默认命中半径。 */
+/** 当前尾点若仍落在已识别士兵内，优先使用该士兵的真实命中圈。 */
 function createCurrentPrefixTargetCircle() {
   if (pathPixels.value.length < 2) {
     return undefined;
   }
-  const lastPoint = pathPixels.value.at(-1);
-  if (!lastPoint) {
-    return undefined;
-  }
-  const committed = committedTargets.value.find(
-    (target) => target.anchor?.x === lastPoint.x && target.anchor.y === lastPoint.y,
-  );
-  if (committed) {
-    return committed.hitCircle;
-  }
-
   const target = createCurrentLastPathHitTarget();
   if (!target) {
     return undefined;
@@ -1251,7 +1241,12 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
     measureStageAsync: measureSmartPathfindingDebugStageAsync,
   },
   effects: {
-    applyValidatedPath,
+    applyIncumbent: applyOneClickClearIncumbent,
+    applyValidatedPath: (points) => {
+      // 正常完成恢复正式控制点，并让主轨迹按最终路径生成完整展示；中间预览不再拥有结果面板。
+      clearIncumbentPreview();
+      applyValidatedPath(points);
+    },
     flashBlockedSegment: smartPathfindingSession.flashBlockedSegment,
     flashHitSoldiers: flashOneClickClearHitSoldiers,
     setStatus: (message, kind) => {
@@ -1269,7 +1264,6 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
   input: {
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
-    getCommittedTargets: () => committedTargets.value,
     getDeleteOptimizationEnabled: () => deleteOptimizationEnabled.value,
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
@@ -1296,6 +1290,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
       graphwarManagedModeEnabled.value
         ? locale.smartPathfinding.managed.calculationComplete(targetCount, formatElapsedDuration(elapsedMs))
         : createOneClickClearSuccessMessage({ elapsedMs, locale, resultCacheHit, targetCount }),
+    getRetainedMessage: () => locale.smartPathfinding.oneClickClear.retained,
   },
   pathfinding: {
     cache: pathfindingCache,
@@ -1792,7 +1787,9 @@ const soldierVisibleRadiusPixels = computed(() => getGraphwarPlaneRadiusPixels(G
 const displayedSoldierVisibleRadiusPixels = computed(
   () => soldierVisibleRadiusPixels.value ?? GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2,
 );
-const pathLineSegments = computed<GraphwarPathfindingLineSegment[]>(() => createPathLineSegments(pathPixels.value));
+const pathLineSegments = computed<GraphwarPathfindingLineSegment[]>(() =>
+  incumbentPreviewActive.value ? [] : createPathLineSegments(pathPixels.value),
+);
 
 /** 按路径点圆半径截短线段，避免线条穿过点心。 */
 function createPathLineSegments(points: readonly PixelPoint[]) {
@@ -1962,7 +1959,7 @@ const stageOverlay = computed(() => ({
   path: {
     hoveredPointIndex: hoveredPathPointIndex.value,
     lineSegments: pathLineSegments.value,
-    points: pathPixels.value,
+    points: incumbentPreviewActive.value ? [] : pathPixels.value,
     selfLabel: locale.ui.point.svgSelfLabel,
     selectionRadius: displayedSoldierVisibleRadiusPixels.value,
   },
@@ -2042,7 +2039,7 @@ const resultPanel = computed(() => {
     copyButtonText: copyButtonText.value,
     equationPrefix: equationModes.value.find((mode) => mode.value === equationMode.value)?.formulaPrefix ?? "",
     interactionDisabled: graphwarManagedModeEnabled.value,
-    pointRows: createResultPanelPointRows(),
+    pointRows: incumbentPreviewActive.value ? [] : createResultPanelPointRows(),
     secondOrderAngleHint: secondOrderAngleHint.value,
     showSimulatorLaunchAngleInput: toolWorkflowMode.value === "simulator" && equationMode.value === "ddy",
     simulatorFormulaText: simulatorFormulaText.value,
@@ -2847,7 +2844,7 @@ function toggleGraphwarManagedMode() {
     hooks: {
       decideDeadlineShot: (state) => {
         const searchStartedAt = graphwarManagedSearchStartedAt;
-        cancelGraphwarManagedSearch();
+        cancelGraphwarManagedSearch(true);
         const plan = createGraphwarManagedShotPlan(state);
         const incumbent = graphwarManagedIncumbent;
         if (!plan || !incumbent) {
@@ -2855,16 +2852,12 @@ function toggleGraphwarManagedMode() {
         }
         if (searchStartedAt !== undefined) {
           showGraphwarManagedCalculationStatus(
-            locale.smartPathfinding.managed.deadlinePlan(
-              incumbent.targetCount,
-              formatElapsedDuration(nowMs() - searchStartedAt),
-            ),
+            locale.smartPathfinding.managed.deadlinePlan(formatElapsedDuration(nowMs() - searchStartedAt)),
             "warning",
           );
         }
-        // 截止时把主线程保存的完整验证方案一次性发布到路径、公式和命中展示。
-        applyValidatedPath(incumbent.pathPoints, incumbent.targetSequence);
-        flashOneClickClearHitSoldiers(incumbent.targetIds);
+        // 截止发射直接使用主线程检查点；路径与公式转正只服务页面，不进入发射关键路径。
+        applyOneClickClearIncumbent(incumbent);
         graphwarManagedDeadlineTurnToken = state.turnToken;
         return plan;
       },
@@ -2946,7 +2939,7 @@ function stopGraphwarManagedMode(showStatus: boolean) {
   graphwarManagedController?.stop();
   graphwarManagedController = undefined;
   graphwarManagedClient = undefined;
-  resetGraphwarManagedSearch();
+  resetGraphwarManagedSearch(true);
   graphwarManagedDeadlineTurnToken = undefined;
   graphwarManagedLastSubmittedTurnToken = undefined;
   void releaseGraphwarManagedWakeLock();
@@ -2988,10 +2981,7 @@ function handleGraphwarManagedState(
     } else if (graphwarManagedSearchState === "success" && graphwarManagedLastSubmittedTurnToken !== state.turnToken) {
       setGraphwarManagedStatus(locale.smartPathfinding.managed.completedWaiting, "success");
     } else if (graphwarManagedSearchState === "running") {
-      setGraphwarManagedStatus(
-        locale.smartPathfinding.managed.calculating(graphwarManagedIncumbent?.targetCount),
-        "warning",
-      );
+      setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(), "warning");
     }
     return;
   }
@@ -3068,7 +3058,7 @@ async function runGraphwarManagedSearch(sceneKey: string) {
         return;
       }
       graphwarManagedIncumbent = incumbent;
-      setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(incumbent.targetCount), "warning");
+      setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(), "warning");
     },
     onSuccessBeforeEffects: () => {
       if (
@@ -3118,10 +3108,10 @@ async function runGraphwarManagedSearch(sceneKey: string) {
 }
 
 /** 取消当前 Worker 并递增 generation，使迟到的 incumbent 和完成结果都无法回写。 */
-function cancelGraphwarManagedSearch() {
+function cancelGraphwarManagedSearch(preservePreview = false) {
   graphwarManagedSearchGeneration += 1;
   if (smartPathfindingInProgress.value) {
-    cancelSmartPathfinding(false);
+    cancelSmartPathfinding(false, preservePreview);
   }
   if (graphwarManagedSearchState === "running") {
     graphwarManagedSearchState = "idle";
@@ -3129,8 +3119,8 @@ function cancelGraphwarManagedSearch() {
 }
 
 /** 离开活动局面时丢弃未发布方案，但保留页面上最后一次已发布结果。 */
-function resetGraphwarManagedSearch() {
-  cancelGraphwarManagedSearch();
+function resetGraphwarManagedSearch(preservePreview = false) {
+  cancelGraphwarManagedSearch(preservePreview);
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
   graphwarManagedSearchStartedAt = undefined;
@@ -3581,9 +3571,20 @@ async function runOneClickClear() {
 async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClearRunWorkflow.run>) {
   // 冻结启动时实际采用的分支，避免运行期间的响应式配置让休眠参数误取消任务。
   const task = { kind: "one-click", usesDagWorker: requiresOneClickClearDagWorker() } as const;
+  clearIncumbentPreview();
   activePathfindingTask = task;
   try {
-    return await oneClickClearRunWorkflow.run(...args);
+    const runOptions = args[0];
+    return await oneClickClearRunWorkflow.run({
+      ...runOptions,
+      onIncumbent: (incumbent) => {
+        // 搜索动画只控制独立轨迹 Worker；主搜索始终上报检查点供取消和托管截止使用。
+        if (searchAnimationEnabled.value) {
+          publishIncumbentPreview(incumbent.expression, incumbent.launchAngleRadians);
+        }
+        runOptions?.onIncumbent?.(incumbent);
+      },
+    });
   } finally {
     if (activePathfindingTask === task) {
       activePathfindingTask = undefined;
@@ -3605,14 +3606,22 @@ function setPathPixels(points: PixelPoint[]) {
   pathStatus.value = "";
 }
 
-/** 一次性发布同一整式验证过的路径和目标序列，并保留页面统一的路径副作用。 */
-function applyValidatedPath(points: PixelPoint[], targets: Parameters<typeof applyValidatedPathState>[1]) {
+/** 一次性发布同一整式验证过的路径，并保留页面统一的路径副作用。 */
+function applyValidatedPath(points: PixelPoint[]) {
   if (pathStartChanges(points)) {
     invalidatePathfindingWorkerCache();
   }
   clearSmartPathfindingBlockedPoint();
-  applyValidatedPathState(points, targets);
+  applyValidatedPathState(points);
   pathStatus.value = "";
+}
+
+/** 提交已验证 incumbent；有动画就复用绘图结果，关闭动画则只发布公式，不补做轨迹回放。 */
+function applyOneClickClearIncumbent(incumbent: GraphwarOneClickClearIncumbent) {
+  if (!commitIncumbentPreview(incumbent.expression, incumbent.launchAngleRadians)) {
+    commitIncumbentResult(incumbent.expression, incumbent.launchAngleRadians);
+  }
+  applyValidatedPath(incumbent.pathPoints);
 }
 
 /** 发射点改变会影响友方士兵是否写入寻路障碍 mask。 */
@@ -3630,9 +3639,19 @@ function startSmartPathfinding(message?: string) {
   return smartPathfindingSession.start(message);
 }
 
-/** 取消 token 同时覆盖智能寻路和一键清图，避免旧 async 结果回写当前页面状态。 */
-function cancelSmartPathfinding(showStatus: boolean) {
-  return smartPathfindingSession.cancel(showStatus);
+/** 主动停止可提交一键清图检查点；内部失效必须先丢弃它，不能让旧局面结果落地。 */
+function cancelSmartPathfinding(showStatus: boolean, preservePreview = false) {
+  const retained =
+    showStatus && activePathfindingTask?.kind === "one-click"
+      ? oneClickClearRunWorkflow.finalizeActiveIncumbent()
+      : false;
+  if (!retained) {
+    oneClickClearRunWorkflow.discardActiveIncumbent();
+  }
+  if (!preservePreview && !retained) {
+    clearIncumbentPreview();
+  }
+  return smartPathfindingSession.cancel(retained ? false : showStatus);
 }
 
 /** 判断异步寻路/清图任务是否仍属于当前 token。 */

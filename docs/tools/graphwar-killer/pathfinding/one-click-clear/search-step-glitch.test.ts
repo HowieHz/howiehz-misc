@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
-import { graphToImagePoint } from "../../core/geometry";
+import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { createGraphPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
@@ -16,6 +16,10 @@ const scanMockState = vi.hoisted(() => ({
   scans: [] as { scannerId: number; targetPoint: { x: number; y: number } }[],
 }));
 const samplingMockState = vi.hoisted(() => ({
+  createFormulaContext: undefined as
+    | (typeof import("../../formula/trajectory/sampling"))["createGraphwarTrajectoryFormulaContext"]
+    | undefined,
+  formulaContextCalls: 0,
   pathTargetSequenceCalls: 0,
   requiredTargets: [] as { x: number; y: number }[][],
   targetSequences: [] as { x: number; y: number }[][],
@@ -23,8 +27,15 @@ const samplingMockState = vi.hoisted(() => ({
 
 vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../formula/trajectory/sampling")>();
+  samplingMockState.createFormulaContext = original.createGraphwarTrajectoryFormulaContext;
   return {
     ...original,
+    createGraphwarTrajectoryFormulaContext: vi.fn(
+      (options: Parameters<typeof original.createGraphwarTrajectoryFormulaContext>[0]) => {
+        samplingMockState.formulaContextCalls += 1;
+        return original.createGraphwarTrajectoryFormulaContext(options);
+      },
+    ),
     sampleGraphwarPathTargetSequence: vi.fn(
       (options: Parameters<typeof original.sampleGraphwarPathTargetSequence>[0]) => {
         samplingMockState.pathTargetSequenceCalls += 1;
@@ -59,10 +70,22 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
             }
             scanMockState.scans.push({ scannerId, targetPoint: { ...target.targetPoint } });
             if (outcome === "hit") {
+              const path = [...options.sourcePath, target.targetPoint];
+              const createFormulaContext = samplingMockState.createFormulaContext;
+              if (!createFormulaContext) {
+                throw new Error("Formula context test factory is unavailable");
+              }
+              const graphPoints = path.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
               return {
                 acceptedPoint: { x: 0, y: 0 },
                 expandedStates: 1,
-                path: [...options.sourcePath, target.targetPoint],
+                formulaContext: createFormulaContext({
+                  bounds: options.bounds,
+                  points: graphPoints,
+                  settings: { ...options.settings, stepGlitchMode: false },
+                  soldierCenter: graphPoints[0],
+                }),
+                path,
                 reachedTargetCount: (options.requiredTargets?.length ?? 0) + 1,
                 status: "hit" as const,
                 timings: [],
@@ -81,7 +104,7 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
   };
 });
 
-import { buildGraphwarOneClickClearPath } from "./search";
+import { buildGraphwarOneClickClearPath, type GraphwarOneClickClearIncumbent } from "./search";
 
 const bounds: GraphBounds = { maxX: -4, maxY: 10, minX: -12, minY: -10 };
 const boundsRect: BoundsRect = {
@@ -97,6 +120,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.scanners.length = 0;
     scanMockState.scans.length = 0;
     samplingMockState.pathTargetSequenceCalls = 0;
+    samplingMockState.formulaContextCalls = 0;
     samplingMockState.requiredTargets.length = 0;
     samplingMockState.targetSequences.length = 0;
   });
@@ -138,7 +162,7 @@ describe("Step glitch one-click-clear target retries", () => {
     },
   );
 
-  it("commits a fixed prefix edge-by-edge, reuses it after failure, and counts an incidental skipped hit", async () => {
+  it("keeps a fixed prefix edge-by-edge, reuses it after failure, and counts an incidental skipped hit", async () => {
     scanMockState.outcomes.push("hit", "hit", "no-path", "hit", "hit");
     const start = toPixel(-11, 0);
     const targetPoints = [-10, -9, -8, -7, -6].map((x) => toPixel(x, 0));
@@ -149,9 +173,11 @@ describe("Step glitch one-click-clear target retries", () => {
       id: String(index + 2),
     }));
     const simulationMask = createEmptyMask();
+    const incumbents: GraphwarOneClickClearIncumbent[] = [];
 
     const result = await buildGraphwarOneClickClearPath({
       ...createOptions(start, candidates, simulationMask, "visibility-graph"),
+      onValidatedIncumbent: (incumbent) => incumbents.push(incumbent),
     });
 
     expect(scanMockState.scans.map((scan) => scan.scannerId)).toEqual([0, 1, 2, 2, 3]);
@@ -164,20 +190,24 @@ describe("Step glitch one-click-clear target retries", () => {
       targetPoints[3],
     ]);
     expect(scanMockState.scans.filter((scan) => scan.targetPoint.x === targetPoints[2]?.x)).toHaveLength(1);
+    expect(incumbents.map((incumbent) => incumbent.pathPoints)).toEqual([
+      [start, targetPoints[0]],
+      [start, targetPoints[0], targetPoints[1]],
+      [start, targetPoints[0], targetPoints[1], targetPoints[3]],
+      [start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]],
+      [start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]],
+    ]);
+    // Four intermediate publications reuse scanner validation; only the normal final safety pass samples here.
+    expect(samplingMockState.formulaContextCalls).toBe(0);
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
     expect(result.type).toBe("success");
     if (result.type === "success") {
       expect(result.pathPoints).toEqual([start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]]);
       expect(result.targetIds).toEqual(["2", "3", "4", "5", "6"]);
-      expect(result.targetSequence.find((target) => target.hitCircle.center === targetPoints[0])?.anchor).toEqual(
-        targetPoints[0],
-      );
-      expect(
-        result.targetSequence.find((target) => target.hitCircle.center === targetPoints[2])?.anchor,
-      ).toBeUndefined();
     }
   });
 
-  it("keeps a committed target that is absent from the latest detection candidates", async () => {
+  it("does not carry an old path target into a new request", async () => {
     scanMockState.outcomes.push("hit");
     const start = toPixel(-11, 0);
     const oldTarget = toPixel(-9, 0);
@@ -190,21 +220,19 @@ describe("Step glitch one-click-clear target retries", () => {
         simulationMask,
         "visibility-graph",
       ),
-      committedTargets: [{ anchor: oldTarget, hitCircle: { center: oldTarget, radius: 12 } }],
       pathPoints: [start, oldTarget],
       prefixTarget: { center: oldTarget, radius: 12 },
     });
 
     expect(result.type).toBe("success");
     if (result.type === "success") {
-      expect(result.targetSequence.map((target) => target.hitCircle.center)).toEqual([oldTarget, nextTarget]);
       expect(result.targetIds).toEqual(["next"]);
     }
-    expect(samplingMockState.requiredTargets.at(-1)).toEqual([oldTarget]);
+    expect(samplingMockState.requiredTargets.at(-1)).toEqual([]);
     expect(samplingMockState.targetSequences.at(-1)).toEqual([nextTarget]);
   });
 
-  it("does not report success when every new target fails and only an old committed target is hit", async () => {
+  it("does not report success when every new target fails", async () => {
     scanMockState.outcomes.push("no-path");
     const start = toPixel(-11, 0);
     const oldTarget = toPixel(-9, 0);
@@ -217,7 +245,6 @@ describe("Step glitch one-click-clear target retries", () => {
         simulationMask,
         "visibility-graph",
       ),
-      committedTargets: [{ anchor: oldTarget, hitCircle: { center: oldTarget, radius: 12 } }],
       pathPoints: [start, oldTarget],
       prefixTarget: { center: oldTarget, radius: 12 },
     });
@@ -225,7 +252,7 @@ describe("Step glitch one-click-clear target retries", () => {
     expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
   });
 
-  it("does not turn an ordinary old tail into a committed target during final validation", async () => {
+  it("does not turn an old path tail into a target during final validation", async () => {
     scanMockState.outcomes.push("hit");
     const start = toPixel(-11, 0);
     const ordinaryTail = toPixel(-9, 4);
@@ -246,12 +273,11 @@ describe("Step glitch one-click-clear target retries", () => {
     expect(samplingMockState.targetSequences.at(-1)).toEqual([nextTarget]);
   });
 
-  it("allows a new target before a farther committed incidental hit", async () => {
+  it("starts a new request without historical target constraints", async () => {
     scanMockState.outcomes.push("hit");
     const start = toPixel(-11, 0);
     const tail = toPixel(-9, 0);
     const nextTarget = toPixel(-8, 0);
-    const oldIncidentalTarget = toPixel(-6, 0);
     const simulationMask = createEmptyMask();
     const result = await buildGraphwarOneClickClearPath({
       ...createOptions(
@@ -260,18 +286,17 @@ describe("Step glitch one-click-clear target retries", () => {
         simulationMask,
         "visibility-graph",
       ),
-      committedTargets: [{ hitCircle: { center: oldIncidentalTarget, radius: 12 } }],
       pathPoints: [start, tail],
       prefixTarget: { center: tail, radius: 1 },
     });
 
     expect(result.type).toBe("success");
-    expect(scanMockState.scanners[0]?.requiredTargets.map((target) => target.center)).toEqual([oldIncidentalTarget]);
-    expect(samplingMockState.requiredTargets.at(-1)).toEqual([oldIncidentalTarget]);
+    expect(scanMockState.scanners[0]?.requiredTargets).toEqual([]);
+    expect(samplingMockState.requiredTargets.at(-1)).toEqual([]);
     expect(samplingMockState.targetSequences.at(-1)).toEqual([nextTarget]);
   });
 
-  it("keeps committed target anchors during point deletion", async () => {
+  it("keeps current-request target anchors during point deletion", async () => {
     scanMockState.outcomes.push("hit", "hit");
     const start = toPixel(-11, 0);
     const first = toPixel(-9, 0);
@@ -293,7 +318,8 @@ describe("Step glitch one-click-clear target retries", () => {
   });
 
   it("rejects a hit that collides before reaching the assigned target x", async () => {
-    scanMockState.outcomes.push("hit");
+    // The real scanner reports no-path because its hit contract already includes reaching the assigned control x.
+    scanMockState.outcomes.push("no-path");
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 0);
     const simulationMask = createEmptyMask();
@@ -326,7 +352,6 @@ function createOptions(
       throw new Error("Step glitch clear must not build DAG edges");
     },
     candidates,
-    committedTargets: [],
     deleteOptimizationEnabled,
     deleteHitCheckRadiusPixels: 0,
     hitCandidates: candidates,

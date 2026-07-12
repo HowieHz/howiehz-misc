@@ -5,7 +5,6 @@ import type {
 } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarSmartPathfindingPathInput } from "../runtime/protocol";
-import type { GraphwarCommittedTarget } from "../targeting";
 
 /** 智能寻路搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
 export interface GraphwarSmartPathfindingSearchTolerances {
@@ -40,8 +39,6 @@ interface GraphwarSmartPathfindingSearchInputOptions {
   simulationMask: Uint8Array | undefined;
   /** 当前路径快照；最后一点应是几何搜索起点。 */
   sourcePath: readonly PixelPoint[];
-  /** 当前路径已承诺命中的士兵；后续控制点允许改变实际命中顺序。 */
-  committedTargets: readonly GraphwarCommittedTarget[];
   /** 旧公式当前尾点的验证圆。 */
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 页面侧 simulation mask 的稳定快照 id。 */
@@ -62,7 +59,6 @@ export function createGraphwarSmartPathfindingSearchInput(
     boundsRect: options.boundsRect,
     deleteOptimizationEnabled: options.deleteOptimizationEnabled,
     hitTarget: options.hitTarget,
-    committedTargets: options.committedTargets,
     previewEnabled: options.previewEnabled,
     routeMaskCacheId: options.routeMaskCacheId,
     // 邪道扫描不消费普通路由算法；规范值避免无关偏好污染结果缓存和 evidence。

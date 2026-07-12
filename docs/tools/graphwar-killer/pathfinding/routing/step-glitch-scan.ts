@@ -17,6 +17,7 @@ import {
 } from "../../formula/trajectory/sampling";
 import type {
   GraphwarStepGlitchFormulaPrefix,
+  GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
@@ -75,6 +76,8 @@ interface GraphwarStepGlitchScanResultBase {
 export type GraphwarStepGlitchScanResult =
   | (GraphwarStepGlitchScanResultBase & {
       acceptedPoint: GraphPoint;
+      /** 本次命中回放已经使用的精确公式上下文；调用方可直接生成 incumbent。 */
+      formulaContext?: GraphwarTrajectoryFormulaContext;
       stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
       path: PixelPoint[];
       status: "hit";
@@ -150,6 +153,8 @@ export interface GraphwarStepGlitchReplayResult {
   acceptedPoint?: GraphPoint;
   blockedPoint?: GraphPoint;
   reachedTargetCount: number;
+  /** 本次回放已经构造的公式上下文；命中候选发布时应直接复用。 */
+  formulaContext?: GraphwarTrajectoryFormulaContext;
   /** 本条精确路径的求解结果；只有路径验证成功后才能提升为下一条 sourcePath 前缀。 */
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
   /** 当前有序目标和全部无序必达目标是否都已命中。 */
@@ -323,6 +328,7 @@ export function createGraphwarStepGlitchPrefixScanner(
         return {
           acceptedPoint: directReplay.acceptedPoint,
           expandedStates: 1,
+          ...(directReplay.formulaContext ? { formulaContext: directReplay.formulaContext } : {}),
           path: directPath,
           reachedTargetCount: directReplay.reachedTargetCount,
           ...(directReplay.stepGlitchFormulaPrefix
@@ -470,6 +476,7 @@ function scanPreparedGraphwarStepGlitchPath(
       return {
         acceptedPoint: replay.acceptedPoint,
         expandedStates,
+        ...(replay.formulaContext ? { formulaContext: replay.formulaContext } : {}),
         path: item.candidate.path,
         reachedTargetCount: replay.reachedTargetCount,
         ...(replay.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: replay.stepGlitchFormulaPrefix } : {}),
@@ -565,6 +572,7 @@ function replayPathToControlX(
           )
         : undefined,
     blockedPoint: result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined,
+    formulaContext,
     reachedTargetCount: result.reachedTargetCount + result.reachedRequiredTargetCount,
     stepGlitchFormulaPrefix: formulaContext.stepGlitchFormulaPrefix,
     targetsHit,

@@ -16,6 +16,7 @@ import {
 } from "../../formula/trajectory/sampling";
 import type {
   GraphwarStepGlitchFormulaPrefix,
+  GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
@@ -31,7 +32,6 @@ import type {
   GraphwarStepGlitchPrefixScanner,
   GraphwarStepGlitchScanTimingStage,
 } from "../routing/step-glitch-scan";
-import type { GraphwarCommittedTarget } from "../targeting";
 import { assignGraphwarStepGlitchTargetRoutePoints } from "./step-glitch-targets";
 import { supportsOneClickClear } from "./support";
 
@@ -176,20 +176,14 @@ export interface GraphwarOneClickClearDagEdgeRoute {
   route?: PixelPoint[];
 }
 
-/** 已通过最终公式文本回放验证、可直接交给 Agent 发射的当前最优方案。 */
+/** 已通过本次精确公式文本回放验证、可直接交给 Agent 发射的当前最优方案。 */
 export interface GraphwarOneClickClearIncumbent {
-  /** 与最终回放使用相同路径和设置生成的 Graphwar 表达式。 */
+  /** 与前缀验证使用相同公式上下文生成的 Graphwar 表达式。 */
   expression: string;
   /** Y'' 模式需要的发射角；其他模式省略，单位为弧度，可直接用于 /shot。 */
   launchAngleRadians?: number;
   /** 已验证方案的完整截图像素路径。 */
   pathPoints: PixelPoint[];
-  /** 当前识别快照中实际命中的士兵数量。 */
-  targetCount: number;
-  /** 当前识别快照中实际命中的稳定士兵 id。 */
-  targetIds: string[];
-  /** 与路径一起发布的不可变目标命中圈，供页面保持路径语义。 */
-  targetSequence: GraphwarCommittedTarget[];
 }
 
 /** 运行一键清图所需的纯数据。 */
@@ -208,7 +202,7 @@ export interface GraphwarOneClickClearOptions {
   isCancelled?: () => boolean;
   /** 内部调试耗时回调；调用方负责聚合同类阶段，避免刷屏。 */
   onDebugTiming?: (timing: GraphwarOneClickClearDebugTiming) => void;
-  /** 完成一次最终整路回放后发布更优方案；未传时保持原单次完整搜索。 */
+  /** 主搜索自然验证出更长前缀时发布；回调本身不会触发额外轨迹回放。 */
   onValidatedIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
   /** Master 注入的最后一条精确旧整式证据；搜索内成功前缀只在本请求局部提升。 */
   stepGlitchPrefixEvidence?: GraphwarStepGlitchPrefixEvidence;
@@ -232,8 +226,6 @@ export interface GraphwarOneClickClearOptions {
   deleteOptimizationEnabled?: boolean;
   /** 当前路径已有像素点。 */
   pathPoints: readonly PixelPoint[];
-  /** 当前路径已承诺命中的士兵；一键清图只能追加，不能静默丢失这些目标。 */
-  committedTargets: readonly GraphwarCommittedTarget[];
   /** 当前最后路径点的验证目标；传入士兵命中圈时可复用现有路径预检语义。 */
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 一键清图单值几何路线 mask。 */
@@ -293,7 +285,6 @@ export type GraphwarOneClickClearResult =
       pathPoints: PixelPoint[];
       reason?: undefined;
       targetIds: string[];
-      targetSequence: GraphwarCommittedTarget[];
       type: "success";
     }
   | {
@@ -371,6 +362,8 @@ interface OneClickClearBestEntry {
 }
 
 interface OneClickClearValidatedRoute {
+  /** 最后一次段验证已经构造的精确公式上下文；路径变更后必须丢弃。 */
+  formulaContext?: GraphwarTrajectoryFormulaContext;
   /** 当前清图结果的完整路径。 */
   pathPoints: PixelPoint[];
   /** 已按 DAG 序列验证命中的目标。 */
@@ -380,7 +373,7 @@ interface OneClickClearValidatedRoute {
 interface OneClickClearTrackedTarget {
   /** 最终路径仍保留的显式目标控制点。 */
   anchor?: PixelPoint;
-  /** 当前识别快照中的 id；旧 committed 目标可能暂时没有。 */
+  /** 当前识别快照中的 id。 */
   id?: string;
   hitCircle: GraphwarTrajectoryTargetCircle;
 }
@@ -443,6 +436,8 @@ type OneClickClearSearchAttemptResult =
       workUnits: number;
     };
 interface OneClickClearSearchContext {
+  /** 只按本轮显式目标数筛选消息；完整取消检查点由主线程持有，Worker 不重复缓存路径。 */
+  bestValidatedTargetCount: number;
   options: GraphwarOneClickClearOptions;
   /** DAG 禁边重选时复用上一轮完全相同的已验证边前缀。 */
   routeValidationPrefix?: OneClickClearRouteValidationSnapshot[];
@@ -451,6 +446,11 @@ interface OneClickClearSearchContext {
 interface OneClickClearRouteSegmentValidationState {
   /** 上一个增量采样段结束时可恢复的物理状态。 */
   initialState?: GraphwarTrajectorySamplingState;
+}
+
+interface OneClickClearRouteSegmentValidationResult {
+  formulaContext: GraphwarTrajectoryFormulaContext;
+  sampleResult: GraphwarTrajectorySampleResult;
 }
 
 const START_NODE_INDEX = -1;
@@ -495,69 +495,12 @@ export async function buildGraphwarOneClickClearPath(
     return createOneClickClearFailure("no-candidate", startedAt, 0);
   }
 
-  let incumbentTargetCount = 0;
-  /** 中途只发布增加命中数的方案；完整搜索允许同命中数的最终排序最优方案替换保底路径。 */
-  const publishValidatedResult = (result: GraphwarOneClickClearResult, replaceEqual = false) => {
-    if (result.type !== "success" || !options.onValidatedIncumbent) {
-      return;
-    }
-    const incumbent = createOneClickClearIncumbent(options, result);
-    if (
-      !incumbent ||
-      incumbent.targetCount < incumbentTargetCount ||
-      (!replaceEqual && incumbent.targetCount === incumbentTargetCount)
-    ) {
-      return;
-    }
-    incumbentTargetCount = incumbent.targetCount;
-    options.onValidatedIncumbent(incumbent);
-  };
-
-  let fallbackResult: Extract<GraphwarOneClickClearResult, { type: "success" }> | undefined;
-  if (options.onValidatedIncumbent) {
-    const earlyResult = await buildOneClickClearEarlyIncumbent(options, targets, startedAt, stepGlitchMode);
-    if (earlyResult) {
-      publishValidatedResult(earlyResult);
-      if (targets.length === 1) {
-        return earlyResult;
-      }
-      if (earlyResult.type === "success") {
-        fallbackResult = earlyResult;
-      }
-    }
-  }
-
+  const context: OneClickClearSearchContext = { bestValidatedTargetCount: 0, options };
   const result = stepGlitchMode
-    ? await buildOneClickClearStepGlitchPath({ options }, targets, startedAt)
-    : await buildOneClickClearDagPath({ options }, targets, startedAt);
-  publishValidatedResult(result, true);
-  // 完整优化失败不应丢掉已经最终回放验证过的可发射保底方案。
-  return result.type === "success" ? result : (fallbackResult ?? result);
-}
-
-/** 逐个尝试稳定排序后的目标，尽早得到一条可发射保底方案。 */
-async function buildOneClickClearEarlyIncumbent(
-  options: GraphwarOneClickClearOptions,
-  targets: readonly OneClickClearTarget[],
-  startedAt: number,
-  stepGlitchMode: boolean,
-) {
-  let lastResult: GraphwarOneClickClearResult | undefined;
-  for (const target of targets) {
-    if (options.isCancelled?.()) {
-      return lastResult;
-    }
-    // 每次保底尝试使用独立验证上下文，避免相同 edge id 误复用上一个目标的前缀。
-    const result = stepGlitchMode
-      ? await buildOneClickClearStepGlitchPath({ options }, [target], startedAt)
-      : await buildOneClickClearDagPath({ options }, [target], startedAt);
-    lastResult = result;
-    if (result.type === "success") {
-      return result;
-    }
-    await yieldOneClickClearControl(options);
-  }
-  return lastResult;
+    ? await buildOneClickClearStepGlitchPath(context, targets, startedAt)
+    : await buildOneClickClearDagPath(context, targets, startedAt);
+  // 失败仍按失败返回，让主线程明确显示“已保留当前最优结果”；检查点已通过回调独立保存。
+  return result;
 }
 
 /** 建立完整 DAG，并反复禁用公式验证失败的边，直到得到最终复验成功的路线。 */
@@ -591,12 +534,12 @@ async function buildOneClickClearDagPath(
       return createOneClickClearFailure(attempt.reason, startedAt, workUnits);
     }
     if (attempt.type === "validated") {
+      publishOneClickClearValidatedRoute(context, ensureOneClickClearRouteFormulaContext(options, attempt.route), true);
       return {
         elapsedMs: Math.max(0, nowMs() - startedAt),
         expandedStates: workUnits,
         pathPoints: attempt.route.pathPoints,
         targetIds: attempt.hitTargets.flatMap((target) => (target.id ? [target.id] : [])),
-        targetSequence: attempt.hitTargets.map(createOneClickClearCommittedTarget),
         type: "success",
       };
     }
@@ -647,7 +590,7 @@ async function buildOneClickClearStepGlitchPath(
       ...(prefixEvidence ? { prefixEvidence } : {}),
       ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
       ...(route.targetSequence.length === 0 && options.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
-      requiredTargets: createOneClickClearHistoricalTargets(options, route.targetSequence),
+      requiredTargets: createOneClickClearPreviousTargets(route.targetSequence),
       settings: options.settings,
       simulationBoundaryExpansion: options.simulationBoundaryExpansion,
       simulationMask,
@@ -660,12 +603,19 @@ async function buildOneClickClearStepGlitchPath(
     // 只有命中才提交路线；其他结果保留最近命中的路线，让更右目标重新选择上下通道。
     if (scan.status === "hit") {
       route = {
+        ...(scan.formulaContext ? { formulaContext: scan.formulaContext } : {}),
         pathPoints: scan.path,
         targetSequence: [...route.targetSequence, target],
       };
+      // hit 已包含精确整式回放；此时发布不会为了预览再做一次昂贵采样。
+      if (route.formulaContext) {
+        publishOneClickClearValidatedRoute(context, route);
+      }
       // 成功候选已完整回放；下一目标复用 exact path 的恢复点，不再重放刚提交的 prefix。
       prefixEvidence = { acceptedPoint: scan.acceptedPoint };
       stepGlitchFormulaPrefix = scan.stepGlitchFormulaPrefix;
+      // 每个 hit 都是可独立采用的精确路径；最终失败时 Master 仍应能复用被页面保留的这个前缀。
+      publishOneClickClearStepGlitchHitEvidence(options, route, scan.acceptedPoint, scan.stepGlitchFormulaPrefix);
       prefixScanner = undefined;
     } else if (scan.status === "invalid-input" || scan.status === "unsupported") {
       return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
@@ -688,23 +638,19 @@ async function buildOneClickClearStepGlitchPath(
     return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
   }
 
+  publishOneClickClearValidatedRoute(context, ensureOneClickClearRouteFormulaContext(options, finalized.route), true);
+
   const hitTargets = collectOneClickClearHitTargets(
     finalValidation.trackedTargets,
     finalValidation.trackedTargetHitIndexes,
   );
-  // 旧 committed 只是本轮必须保留的约束；至少新增一个实际命中，才算这次清图有结果。
-  const addsNewHit = hitTargets.some(
-    (hit) =>
-      !options.committedTargets.some((committed) => sameOneClickClearTargetCircle(committed.hitCircle, hit.hitCircle)),
-  );
-  if (!addsNewHit) {
+  // 顺路命中不应把“没有任何扫描目标可达”伪装成一次成功清图。
+  if (finalized.route.targetSequence.length === 0) {
     return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
   }
-  const committedTargets = hitTargets.map(createOneClickClearCommittedTarget);
   publishOneClickClearStepGlitchEvidence(
     options,
-    finalized.route.pathPoints,
-    committedTargets,
+    finalized.route,
     finalValidation,
     finalized.route === route ? stepGlitchFormulaPrefix : undefined,
   );
@@ -713,7 +659,6 @@ async function buildOneClickClearStepGlitchPath(
     expandedStates: workUnits,
     pathPoints: finalized.route.pathPoints,
     targetIds: hitTargets.flatMap((target) => (target.id ? [target.id] : [])),
-    targetSequence: committedTargets,
     type: "success",
   };
 }
@@ -764,7 +709,7 @@ async function runOneClickClearSearchAttempt(
         };
   }
 
-  // 即使关闭删点也保留最终整路复验；它负责裁决后缀对历史命中和碰撞的影响。
+  // 即使关闭删点也保留最终整路复验；它负责裁决后缀对本轮先前目标和碰撞的影响。
   const optimized =
     options.deleteOptimizationEnabled !== false
       ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
@@ -816,14 +761,12 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
     center: options.pathPoints.at(-1) ?? options.pathPoints[0],
     radius: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS,
   };
-  const requiredTargets = uniqueCommittedTargetCircles(options);
   const result = sampleGraphwarPathTargetSequence({
     boundaryExpansion: options.simulationBoundaryExpansion,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     obstacleMask: options.simulationMask,
     points: options.pathPoints,
-    requiredTargets,
     settings: options.settings,
     targetHitRadiusPixels: target.radius,
     targetCircles: [target],
@@ -1411,6 +1354,7 @@ function validateOneClickClearDagRoute(
 
   const reused = sharedPrefixLength > 0 ? cachedPrefix[sharedPrefixLength - 1] : undefined;
   let pathPoints = reused ? [...reused.pathPoints] : [...context.options.pathPoints];
+  let formulaContext: GraphwarTrajectoryFormulaContext | undefined;
   let segmentState: OneClickClearRouteSegmentValidationState = reused ? { ...reused.segmentState } : {};
   const targetSequence: OneClickClearTarget[] = reused ? [...reused.targetSequence] : [];
   const validatedPrefix = cachedPrefix.slice(0, sharedPrefixLength);
@@ -1439,8 +1383,9 @@ function validateOneClickClearDagRoute(
     }
 
     pathPoints = nextPath;
+    formulaContext = validation.formulaContext;
     segmentState = {
-      ...(validation.sample.endState ? { initialState: validation.sample.endState } : {}),
+      ...(validation.sampleResult.sample.endState ? { initialState: validation.sampleResult.sample.endState } : {}),
     };
     targetSequence.push(target);
     validatedPrefix.push({
@@ -1449,12 +1394,15 @@ function validateOneClickClearDagRoute(
       segmentState,
       targetSequence: [...targetSequence],
     });
+    // 独立前缀已被本次 segment 回放证明，后续边失败不会使它失效。
+    publishOneClickClearValidatedRoute(context, { formulaContext, pathPoints, targetSequence });
   }
 
   context.routeValidationPrefix = validatedPrefix;
 
   return {
     route: {
+      ...(formulaContext ? { formulaContext } : {}),
       pathPoints,
       targetSequence,
     },
@@ -1473,7 +1421,7 @@ function validateOneClickClearRouteSegment(
   nextPath: readonly PixelPoint[],
   targetSequence: readonly OneClickClearTarget[],
   state: OneClickClearRouteSegmentValidationState,
-): GraphwarTrajectorySampleResult | undefined {
+): OneClickClearRouteSegmentValidationResult | undefined {
   const options = context.options;
   const followsGraphRule = measureOneClickClearDebugTiming(options, "segment-graph-rule", () =>
     oneClickClearPathFollowsGraphRule(options, nextPath),
@@ -1535,11 +1483,14 @@ function validateOneClickClearRouteSegment(
   }
 
   if (options.settings.algorithm !== "step") {
-    return result;
+    return { formulaContext, sampleResult: result };
   }
   return {
-    ...result,
-    reachedTargetCount: result.reachedTargetCount - validationTargets.prefixTargetCount,
+    formulaContext,
+    sampleResult: {
+      ...result,
+      reachedTargetCount: result.reachedTargetCount - validationTargets.prefixTargetCount,
+    },
   };
 }
 
@@ -1611,16 +1562,14 @@ function sampleOneClickClearTargetSequence(
   };
 }
 
-/** 把本次 route 目标与历史必达士兵分开，避免后续插入点被旧命中顺序错误限制。 */
+/** 把本次 route 的旧目标降为无序要求，当前新增目标继续使用有序命中语义。 */
 function createOneClickClearValidationTargets(
   options: GraphwarOneClickClearOptions,
   targetSequence: readonly OneClickClearTarget[],
-  includeHistoricalTargets: boolean,
+  includePreviousTargets: boolean,
 ) {
   const currentTarget = targetSequence.at(-1);
-  const requiredTargets = includeHistoricalTargets
-    ? createOneClickClearHistoricalTargets(options, targetSequence.slice(0, -1))
-    : [];
+  const requiredTargets = includePreviousTargets ? createOneClickClearPreviousTargets(targetSequence.slice(0, -1)) : [];
   const orderedTargets: GraphwarTrajectoryTargetCircle[] = [];
   let prefixTargetCount = 0;
   // 普通 Step 仍需先命中旧尾点；邪道允许新最终整式修复无效旧前缀。
@@ -1644,21 +1593,10 @@ function createOneClickClearValidationTargets(
   return { orderedTargets, prefixTargetCount, requiredTargets };
 }
 
-/** 邪道逐目标扫描把已提交边降为无序历史要求，当前扫描目标单独保留有序语义。 */
-function createOneClickClearHistoricalTargets(
-  options: GraphwarOneClickClearOptions,
-  targetSequence: readonly OneClickClearTarget[],
-) {
-  const targets = uniqueCommittedTargetCircles(options);
-  for (const target of targetSequence) {
-    appendOneClickClearTargetCircle(targets, target.hitCircle);
-  }
-  return targets;
-}
-
-function uniqueCommittedTargetCircles(options: GraphwarOneClickClearOptions) {
+/** 同一次清图的旧目标保持必达；上一轮士兵不会进入本请求。 */
+function createOneClickClearPreviousTargets(targetSequence: readonly OneClickClearTarget[]) {
   const targets: GraphwarTrajectoryTargetCircle[] = [];
-  for (const target of options.committedTargets) {
+  for (const target of targetSequence) {
     appendOneClickClearTargetCircle(targets, target.hitCircle);
   }
   return targets;
@@ -1667,12 +1605,11 @@ function uniqueCommittedTargetCircles(options: GraphwarOneClickClearOptions) {
 /** 最终统计回放已经证明 exact path；只在整次清图成功时把它交给 Master 发布。 */
 function publishOneClickClearStepGlitchEvidence(
   options: GraphwarOneClickClearOptions,
-  path: readonly PixelPoint[],
-  committedTargets: readonly GraphwarCommittedTarget[],
+  route: OneClickClearValidatedRoute,
   validation: ReturnType<typeof sampleOneClickClearTargetSequence>,
   stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix | undefined,
 ) {
-  const lastPathPoint = path.at(-1);
+  const lastPathPoint = route.pathPoints.at(-1);
   if (!options.onValidatedStepGlitchPath || !lastPathPoint) {
     return;
   }
@@ -1681,21 +1618,35 @@ function publishOneClickClearStepGlitchEvidence(
     validation.sample.points,
     validation.obstacleHitIndex,
     controlX,
-    // 历史/顺路命中可能在更右侧；evidence 证明它们存在，但下一次扫描仍从末尾显式目标恢复。
+    // 本轮先前目标或顺路命中可能在更右侧；下一次扫描仍从末尾显式目标恢复。
     Math.max(0, validation.targetHitIndex),
   );
   if (!acceptedPoint) {
     return;
   }
+  publishOneClickClearStepGlitchHitEvidence(options, route, acceptedPoint, stepGlitchFormulaPrefix);
+}
+
+/** 发布自然 hit 的精确恢复证据；exact path key 让未被页面采用的证据自然失配。 */
+function publishOneClickClearStepGlitchHitEvidence(
+  options: GraphwarOneClickClearOptions,
+  route: OneClickClearValidatedRoute,
+  acceptedPoint: GraphPoint,
+  stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix | undefined,
+) {
+  const lastPathPoint = route.pathPoints.at(-1);
+  if (!options.onValidatedStepGlitchPath || !lastPathPoint) {
+    return;
+  }
   const prefixTarget =
-    committedTargets.find((target) => target.anchor && samePixelPoint(target.anchor, lastPathPoint))?.hitCircle ??
+    route.targetSequence.find((target) => samePixelPoint(target.routePoint, lastPathPoint))?.hitCircle ??
     ({ center: lastPathPoint, radius: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS } satisfies GraphwarTrajectoryTargetCircle);
   options.onValidatedStepGlitchPath({
     acceptedPoint,
-    path,
+    path: route.pathPoints,
     prefixTarget,
     ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
-    targetSequence: committedTargets.map((target) => target.hitCircle),
+    targetSequence: route.targetSequence.map((target) => target.hitCircle),
   });
 }
 
@@ -1716,21 +1667,44 @@ function appendOneClickClearTargetCircle(
   targets.push(target);
 }
 
-/** 从最终回放成功的搜索结果生成不可变 shot plan；公式和角度共享同一份数值上下文。 */
+/**
+ * 提交主搜索自然产生的已验证前缀。
+ *
+ * 这里仅从现有控制点生成公式，不采样轨迹或统计顺路命中；动画因此不会增加搜索验证工作。
+ */
+function publishOneClickClearValidatedRoute(
+  context: OneClickClearSearchContext,
+  route: OneClickClearValidatedRoute,
+  replaceEqual = false,
+) {
+  if (
+    route.targetSequence.length === 0 ||
+    route.targetSequence.length < context.bestValidatedTargetCount ||
+    (!replaceEqual && route.targetSequence.length === context.bestValidatedTargetCount)
+  ) {
+    return;
+  }
+  const formulaContext = route.formulaContext;
+  let incumbent: GraphwarOneClickClearIncumbent | undefined;
+  if (context.options.onValidatedIncumbent) {
+    if (!formulaContext) {
+      return;
+    }
+    incumbent = createOneClickClearIncumbent(context.options, route.pathPoints, formulaContext);
+  }
+
+  context.bestValidatedTargetCount = route.targetSequence.length;
+  if (incumbent) {
+    context.options.onValidatedIncumbent?.(incumbent);
+  }
+}
+
+/** 从已验证路径生成不可变 shot plan；公式和角度共享同一份数值上下文。 */
 function createOneClickClearIncumbent(
   options: GraphwarOneClickClearOptions,
-  result: Extract<GraphwarOneClickClearResult, { type: "success" }>,
+  pathPoints: readonly PixelPoint[],
+  formulaContext: GraphwarTrajectoryFormulaContext,
 ): GraphwarOneClickClearIncumbent | undefined {
-  if (result.targetIds.length === 0) {
-    return undefined;
-  }
-  const graphPoints = result.pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
-  const formulaContext = createGraphwarTrajectoryFormulaContext({
-    bounds: options.bounds,
-    points: graphPoints,
-    settings: options.settings,
-    soldierCenter: graphPoints[0],
-  });
   if (formulaContext.formulaPoints.length < 2) {
     return undefined;
   }
@@ -1740,13 +1714,27 @@ function createOneClickClearIncumbent(
   return {
     expression: formulaContext.formulaResult.expression,
     ...(Number.isFinite(launchAngleRadians) ? { launchAngleRadians } : {}),
-    pathPoints: [...result.pathPoints],
-    targetCount: result.targetIds.length,
-    targetIds: [...result.targetIds],
-    targetSequence: result.targetSequence.map((target) => ({
-      ...(target.anchor ? { anchor: { ...target.anchor } } : {}),
-      hitCircle: { center: { ...target.hitCircle.center }, radius: target.hitCircle.radius },
-    })),
+    pathPoints: [...pathPoints],
+  };
+}
+
+/** 最终删点可能改变路径；只在没有可复用验证上下文时为最终发布补建一次。 */
+function ensureOneClickClearRouteFormulaContext(
+  options: GraphwarOneClickClearOptions,
+  route: OneClickClearValidatedRoute,
+): OneClickClearValidatedRoute & { formulaContext: GraphwarTrajectoryFormulaContext } {
+  if (route.formulaContext) {
+    return { ...route, formulaContext: route.formulaContext };
+  }
+  const graphPoints = route.pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
+  return {
+    ...route,
+    formulaContext: createGraphwarTrajectoryFormulaContext({
+      bounds: options.bounds,
+      points: graphPoints,
+      settings: options.settings,
+      soldierCenter: graphPoints[0],
+    }),
   };
 }
 
@@ -1782,15 +1770,12 @@ function countOneClickClearReachedRouteTargets(
   return reachedCount;
 }
 
-/** 旧 committed 与当前识别结果取并集；显式 route point 仍存在时为目标补上锚点。 */
+/** 最终统计合并当前识别候选与显式 route 目标，并为仍在路径中的目标保留锚点。 */
 function createOneClickClearTrackedTargets(
   options: GraphwarOneClickClearOptions,
   route: Pick<OneClickClearValidatedRoute, "pathPoints" | "targetSequence">,
 ) {
-  const tracked = options.committedTargets.map<OneClickClearTrackedTarget>((target) => ({
-    ...(target.anchor && pathContainsExactPoint(route.pathPoints, target.anchor) ? { anchor: target.anchor } : {}),
-    hitCircle: target.hitCircle,
-  }));
+  const tracked: OneClickClearTrackedTarget[] = [];
   for (const candidate of options.hitCandidates) {
     upsertOneClickClearTrackedTarget(tracked, {
       hitCircle: createOneClickClearTargetCircle(candidate),
@@ -1831,13 +1816,6 @@ function compareOneClickClearHitTargets(left: OneClickClearHitTarget, right: One
     left.hitCircle.center.y - right.hitCircle.center.y ||
     (left.id ?? "").localeCompare(right.id ?? "")
   );
-}
-
-function createOneClickClearCommittedTarget(target: OneClickClearHitTarget): GraphwarCommittedTarget {
-  return {
-    ...(target.anchor ? { anchor: target.anchor } : {}),
-    hitCircle: target.hitCircle,
-  };
 }
 
 function sameOneClickClearTargetCircle(left: GraphwarTrajectoryTargetCircle, right: GraphwarTrajectoryTargetCircle) {
@@ -1901,7 +1879,8 @@ async function optimizeOneClickClearPath(
             pathPoints: candidatePath,
           }))
       ) {
-        optimized = { ...optimized, pathPoints: candidatePath };
+        // 任何删点都会改变完整公式；旧段验证上下文不能继续用于 incumbent。
+        optimized = { pathPoints: candidatePath, targetSequence: optimized.targetSequence };
         continue;
       }
       index += 1;

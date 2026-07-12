@@ -42,7 +42,12 @@ export function createGraphwarOneClickClearCandidates<TSoldier extends GraphwarO
   const candidates: GraphwarOneClickClearCandidate[] = [];
   for (const soldier of options.soldiers) {
     const candidate = createOneClickClearTargetCandidate(options, soldier);
-    if (!candidate || !graphwarSoldierReachesForward(soldier, startPoint, options.geometry)) {
+    if (
+      !candidate ||
+      // 只排除当前尾点已经命中的士兵，避免下一次清图重复追加同一目标；不持久化历史命中约束。
+      graphwarSoldierContainsHitPoint(soldier, startPoint) ||
+      !graphwarSoldierReachesForward(soldier, startPoint, options.geometry)
+    ) {
       continue;
     }
 

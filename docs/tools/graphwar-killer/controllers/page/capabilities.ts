@@ -163,17 +163,19 @@ export function deriveGraphwarCapabilities(
             : normalCapability,
     agentFire: facts.busy.managedMode
       ? { state: "busy", reason: "managed-lock" }
-      : facts.busy.agentFire
-        ? { state: "busy", reason: "agent-fire-busy" }
-        : !facts.agent.enabled
-          ? { state: "blocked", reason: "agent-disabled" }
-          : !facts.agent.normalizedBaseUrl
-            ? { state: "blocked", reason: "agent-url-invalid" }
-            : !facts.formula.settingsValid
-              ? { state: "blocked", reason: "formula-settings-invalid" }
-              : !facts.resultAvailable
-                ? { state: "blocked" }
-                : normalCapability,
+      : facts.busy.pathfinding
+        ? { state: "busy", reason: "pathfinding-busy" }
+        : facts.busy.agentFire
+          ? { state: "busy", reason: "agent-fire-busy" }
+          : !facts.agent.enabled
+            ? { state: "blocked", reason: "agent-disabled" }
+            : !facts.agent.normalizedBaseUrl
+              ? { state: "blocked", reason: "agent-url-invalid" }
+              : !facts.formula.settingsValid
+                ? { state: "blocked", reason: "formula-settings-invalid" }
+                : !facts.resultAvailable
+                  ? { state: "blocked" }
+                  : normalCapability,
     snapSoldiers: facts.busy.managedMode
       ? { state: "busy", reason: "managed-lock" }
       : preferences.snapSoldiersEnabled && !facts.scene.soldiersAvailable

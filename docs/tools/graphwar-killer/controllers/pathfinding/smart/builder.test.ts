@@ -95,7 +95,6 @@ function createBuilder(
     input: {
       boundsRect: { value: { height: 450, width: 770, x: 0, y: 0 } },
       getBounds: () => ({ maxX: 25, maxY: 15, minX: -25, minY: -15 }),
-      getCommittedTargets: () => [],
       getDeleteOptimizationEnabled: () => false,
       getFormulaSettings: () => ({
         algorithm: "step",

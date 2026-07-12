@@ -216,6 +216,7 @@ export const graphwarKillerLocale = {
       noCandidate: "一键清图失败：当前路径右侧没有可选目标",
       noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) => `一键清图失败：寻路工作线程不可用或运行失败，耗时 ${elapsed}`,
+      retained: "已保留当前最优结果",
       success: (killCount, elapsed, resultCacheHit) => {
         const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
         return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
@@ -226,14 +227,12 @@ export const graphwarKillerLocale = {
       backgroundWarning: "页面位于后台，托管发射可能延迟",
       calculationComplete: (targetCount, elapsed) =>
         `托管计算完成，当前最优方案命中 ${targetCount} 个目标，耗时 ${elapsed}`,
-      calculating: (targetCount) =>
-        targetCount === undefined ? "托管计算中" : `托管计算中，当前最优命中 ${targetCount} 个目标`,
+      calculating: () => "托管计算中",
       completedWaiting: "托管计算完成，等待己方回合",
       connectionFailed: (message) => `Agent 连接失败，正在重试：${message}`,
       deadlineFired: "剩余 3 秒中断，已发射当前最优方案",
       deadlineNoPlan: "剩余 3 秒中断，无法提交跳过回合公式",
-      deadlinePlan: (targetCount, elapsed) =>
-        `托管计算在剩余 3 秒时中断，当前最优方案命中 ${targetCount} 个目标，耗时 ${elapsed}`,
+      deadlinePlan: (elapsed) => `托管计算在剩余 3 秒时中断，已采用当前最优方案，耗时 ${elapsed}`,
       enabled: "托管已启用，正在读取游戏状态",
       incompatible: "Agent 接口不兼容，托管已关闭，请升级 Agent",
       readying: "房间内本地玩家尚未准备，正在自动准备",
@@ -679,7 +678,7 @@ export const graphwarKillerLocale = {
       routeThetaStar: "Theta*",
       routeXPlusScan: "X+ 扫描",
       searchAnimation: "搜索动画",
-      searchAnimationTitle: "显示候选点、已探索路线和优化过程",
+      searchAnimationTitle: "显示单目标搜索过程，以及一键清图和托管的当前最优公式与轨迹",
       simulationTolerance: "函数模拟容差",
       simulationToleranceAriaLabel: "函数模拟容差，单位为 Graphwar 原始 770x450 平面像素",
       simulationToleranceTitle: "设置函数模拟和碰撞检查的障碍容差；不影响路线选择",

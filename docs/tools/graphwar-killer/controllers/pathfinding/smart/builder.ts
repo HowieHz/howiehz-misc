@@ -28,7 +28,6 @@ import {
   getGraphwarSmartPathfindingAppendedSegment,
 } from "../../../pathfinding/smart/trajectory";
 import type { GraphwarSmartPathfindingSoldierTarget } from "../../../pathfinding/targeting";
-import type { GraphwarCommittedTarget } from "../../../pathfinding/targeting";
 import type { SmartPathfindingDebugTimingEntry } from "../../debug/timings";
 import type { GraphwarSmartPathfindingRunBuildResult } from "./workflow";
 
@@ -80,8 +79,6 @@ interface GraphwarSmartPathfindingBuilderOptions {
     getObstacleMask: () => Uint8Array | undefined;
     /** 当前工作流路径；builder 会在构造输入前复制快照。 */
     getPathPixels: () => readonly PixelPoint[];
-    /** 当前路径已经承诺命中的士兵。 */
-    getCommittedTargets: () => readonly GraphwarCommittedTarget[];
     /** 旧公式当前尾点的精确预检目标。 */
     getPrefixTarget: () => GraphwarTrajectoryTargetCircle | undefined;
     /** 当前几何路线算法模式。 */
@@ -233,7 +230,6 @@ export function useGraphwarSmartPathfindingBuilder(
       const input = createGraphwarSmartPathfindingSearchInput({
         bounds: searchBounds,
         boundsRect: options.input.boundsRect.value,
-        committedTargets: options.input.getCommittedTargets(),
         deleteOptimizationEnabled: options.input.getDeleteOptimizationEnabled(),
         hitTarget: searchTargetHitCircle,
         prefixTarget: options.input.getPrefixTarget(),

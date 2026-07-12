@@ -194,6 +194,58 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.plottedCurvePoints.value).toBe("");
     controller.dispose();
   });
+
+  it("publishes only the latest incumbent preview and restores or commits it without recalculating", async () => {
+    const frames = installFakeBrowserRuntime();
+    const state = createControllerState();
+    const controller = useGraphwarTrajectoryResult(state.options);
+
+    setSolverPath(state, -10, 1);
+    await nextTick();
+    frames.flush();
+    respondToActiveWorker({
+      ok: true,
+      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
+    });
+    await nextTick();
+
+    controller.publishIncumbentPreview("first incumbent");
+    controller.publishIncumbentPreview("latest incumbent", Math.PI / 4);
+    expect(FakeWorker.instances.find((worker) => worker.terminated && worker.requests.length > 0)).toBeDefined();
+    expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("");
+    respondToActiveWorker({ ok: true, result: { curvePoints: "preview curve" } });
+    await nextTick();
+
+    expect(controller.incumbentPreviewActive.value).toBe(true);
+    expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("preview curve");
+    expect(controller.secondOrderLaunchAngleDegrees.value).toBe(45);
+
+    controller.clearIncumbentPreview();
+    expect(controller.incumbentPreviewActive.value).toBe(false);
+    expect(controller.formulaResult.value?.expression).toBe("formal formula");
+    expect(controller.plottedCurvePoints.value).toBe("formal curve");
+
+    controller.publishIncumbentPreview("committed incumbent");
+    respondToActiveWorker({ ok: true, result: { curvePoints: "committed curve" } });
+    await nextTick();
+    expect(controller.commitIncumbentPreview("stale incumbent")).toBe(false);
+    expect(controller.commitIncumbentPreview("committed incumbent")).toBe(true);
+
+    expect(controller.incumbentPreviewActive.value).toBe(false);
+    expect(controller.formulaResult.value?.expression).toBe("committed incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("committed curve");
+
+    controller.commitIncumbentResult("headless incumbent", Math.PI / 2);
+    setSolverPath(state, -5, 2);
+    await nextTick();
+    expect(controller.calculationStatus.value.type).toBe("idle");
+    expect(controller.formulaResult.value?.expression).toBe("headless incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("");
+    expect(controller.secondOrderLaunchAngleDegrees.value).toBe(90);
+    controller.dispose();
+  });
 });
 
 class FakeWorker {

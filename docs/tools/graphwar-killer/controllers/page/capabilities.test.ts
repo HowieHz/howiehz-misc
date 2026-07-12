@@ -222,6 +222,7 @@ describe("Graphwar capabilities", () => {
     );
 
     expect(capabilities.pathPlanning).toEqual({ state: "busy", reason: "pathfinding-busy" });
+    expect(capabilities.agentFire).toEqual({ state: "busy", reason: "pathfinding-busy" });
     expect(capabilities.oneClickClear).toEqual({ state: "busy", reason: "pathfinding-busy" });
     expect(capabilities.managedMode).toEqual({ state: "busy", reason: "pathfinding-busy" });
   });

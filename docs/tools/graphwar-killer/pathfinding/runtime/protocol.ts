@@ -16,7 +16,6 @@ import type {
 } from "../one-click-clear/search";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
-import type { GraphwarCommittedTarget } from "../targeting";
 
 /** 普通智能寻路的一条几何搜索请求。 */
 export interface GraphwarPathfindingRouteInput {
@@ -107,8 +106,6 @@ export interface GraphwarSmartPathfindingPathInput {
   settings: GraphwarTrajectoryFormulaSettings;
   /** 当前已有路径，最后一点是几何搜索起点。 */
   sourcePath: readonly PixelPoint[];
-  /** 当前路径已经承诺命中的士兵；普通绕路点不进入，数组顺序不约束后续命中顺序。 */
-  committedTargets: readonly GraphwarCommittedTarget[];
   /** 旧公式必须命中的当前尾控制点；evidence miss 时用于合并旧 preflight。 */
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 页面侧 simulation mask 的稳定快照 id，供 master Worker 跨消息识别同一 mask。 */
@@ -161,7 +158,7 @@ export type GraphwarPathfindingWorkerTask =
     }
   | {
       input: GraphwarOneClickClearPathWorkerInput;
-      /** True 时 master 会在完整搜索期间发布已最终回放验证的当前最优方案。 */
+      /** True 时 master 会发布主搜索自然验证出的当前最优前缀。 */
       reportIncumbents: boolean;
       type: "build-one-click-clear-path";
     };

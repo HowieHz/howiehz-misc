@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { createPixelPoint } from "../../core/types";
-import { createGraphwarOneClickClearHitCandidates, type GraphwarOneClickClearTargetSoldier } from "./targets";
+import {
+  createGraphwarOneClickClearCandidates,
+  createGraphwarOneClickClearHitCandidates,
+  type GraphwarOneClickClearTargetSoldier,
+} from "./targets";
 
 const geometry = {
   bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
@@ -51,5 +55,22 @@ describe("one-click-clear authoritative teams", () => {
       { enemy: false, id: "same-team-right" },
       { enemy: true, id: "enemy-left" },
     ]);
+  });
+
+  it("does not select the soldier already containing the current path tail", () => {
+    const options = {
+      friendlyFireEnabled: false,
+      geometry,
+      isFriendlySoldier: () => false,
+      pathPoints: [createPixelPoint(385, 100), createPixelPoint(494, 100)],
+      soldiers,
+    };
+
+    expect(createGraphwarOneClickClearCandidates(options).map((candidate) => candidate.id)).not.toContain(
+      "same-team-right",
+    );
+    expect(createGraphwarOneClickClearHitCandidates(options).map((candidate) => candidate.id)).toContain(
+      "same-team-right",
+    );
   });
 });

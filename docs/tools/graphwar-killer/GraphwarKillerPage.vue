@@ -1003,6 +1003,7 @@ const {
   formulaOutputDecimalPlaces,
   formulaResult,
   graphwarTrajectoryFormulaSettings,
+  handoffIncumbentPreviewToNextSolverResult,
   incumbentPreviewActive,
   plottedCurvePoints,
   publishIncumbentPreview,
@@ -1249,8 +1250,8 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
   effects: {
     applyIncumbent: applyOneClickClearIncumbent,
     applyValidatedPath: (points) => {
-      // 正常完成恢复正式控制点，并让主轨迹按最终路径生成完整展示；中间预览不再拥有结果面板。
-      clearIncumbentPreview();
+      // 保留最后完整预览，等最终路径的公式和轨迹都就绪后再原子恢复正式控制点。
+      handoffIncumbentPreviewToNextSolverResult();
       applyValidatedPath(points);
     },
     flashBlockedSegment: smartPathfindingSession.flashBlockedSegment,

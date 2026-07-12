@@ -195,7 +195,7 @@ describe("main trajectory result lifecycle", () => {
     controller.dispose();
   });
 
-  it("publishes only the latest incumbent preview and restores or commits it without recalculating", async () => {
+  it("atomically publishes only completed incumbent previews and restores or commits them without recalculating", async () => {
     const frames = installFakeBrowserRuntime();
     const state = createControllerState();
     const controller = useGraphwarTrajectoryResult(state.options);
@@ -212,8 +212,9 @@ describe("main trajectory result lifecycle", () => {
     controller.publishIncumbentPreview("first incumbent");
     controller.publishIncumbentPreview("latest incumbent", Math.PI / 4);
     expect(FakeWorker.instances.find((worker) => worker.terminated && worker.requests.length > 0)).toBeDefined();
-    expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("");
+    expect(controller.incumbentPreviewActive.value).toBe(false);
+    expect(controller.formulaResult.value?.expression).toBe("formal formula");
+    expect(controller.plottedCurvePoints.value).toBe("formal curve");
     respondToActiveWorker({ ok: true, result: { curvePoints: "preview curve" } });
     await nextTick();
 
@@ -222,8 +223,23 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.plottedCurvePoints.value).toBe("preview curve");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(45);
 
+    controller.publishIncumbentPreview("pending incumbent");
+    expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("preview curve");
+    respondToActiveWorker({ message: "preview failed", ok: false, stage: "trajectory" });
+    await nextTick();
+    expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("preview curve");
+
     controller.clearIncumbentPreview();
     expect(controller.incumbentPreviewActive.value).toBe(false);
+    expect(controller.formulaResult.value?.expression).toBe("formal formula");
+    expect(controller.plottedCurvePoints.value).toBe("formal curve");
+
+    controller.publishIncumbentPreview("cancelled incumbent");
+    controller.clearIncumbentPreview();
+    respondToActiveWorker({ ok: true, result: { curvePoints: "stale curve" } });
+    await nextTick();
     expect(controller.formulaResult.value?.expression).toBe("formal formula");
     expect(controller.plottedCurvePoints.value).toBe("formal curve");
 
@@ -244,6 +260,113 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.formulaResult.value?.expression).toBe("headless incumbent");
     expect(controller.plottedCurvePoints.value).toBe("");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(90);
+    controller.dispose();
+  });
+
+  it("commits a pending incumbent after its existing preview task finishes", async () => {
+    const frames = installFakeBrowserRuntime();
+    const state = createControllerState();
+    const controller = useGraphwarTrajectoryResult(state.options);
+
+    setSolverPath(state, -10, 1);
+    await nextTick();
+    frames.flush();
+    respondToActiveWorker({
+      ok: true,
+      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
+    });
+    await nextTick();
+
+    controller.publishIncumbentPreview("old incumbent");
+    respondToActiveWorker({ ok: true, result: { curvePoints: "old curve" } });
+    await nextTick();
+    controller.publishIncumbentPreview("pending incumbent", Math.PI / 4);
+    const requestCount = countWorkerRequests();
+
+    controller.commitIncumbentResult("pending incumbent", Math.PI / 4);
+    setSolverPath(state, -5, 2);
+    await nextTick();
+    frames.flush();
+
+    expect(countWorkerRequests()).toBe(requestCount);
+    expect(controller.formulaResult.value?.expression).toBe("old incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("old curve");
+
+    respondToActiveWorker({ ok: true, result: { curvePoints: "pending curve" } });
+    await nextTick();
+    expect(controller.incumbentPreviewActive.value).toBe(false);
+    expect(controller.formulaResult.value?.expression).toBe("pending incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("pending curve");
+    expect(controller.secondOrderLaunchAngleDegrees.value).toBe(45);
+    controller.dispose();
+  });
+
+  it("keeps the completed incumbent until the final solver result replaces it", async () => {
+    const frames = installFakeBrowserRuntime();
+    const state = createControllerState();
+    const controller = useGraphwarTrajectoryResult(state.options);
+
+    setSolverPath(state, -10, 1);
+    await nextTick();
+    frames.flush();
+    respondToActiveWorker({
+      ok: true,
+      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
+    });
+    await nextTick();
+    controller.publishIncumbentPreview("completed incumbent");
+    respondToActiveWorker({ ok: true, result: { curvePoints: "incumbent curve" } });
+    await nextTick();
+
+    controller.handoffIncumbentPreviewToNextSolverResult();
+    setSolverPath(state, -5, 2);
+    await nextTick();
+    frames.flush();
+    expect(controller.formulaResult.value?.expression).toBe("completed incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("incumbent curve");
+
+    respondToActiveWorker({
+      ok: true,
+      result: { curvePoints: "final curve", formulaResult: { expression: "final formula", terms: [] } },
+    });
+    await nextTick();
+    expect(controller.incumbentPreviewActive.value).toBe(false);
+    expect(controller.formulaResult.value?.expression).toBe("final formula");
+    expect(controller.plottedCurvePoints.value).toBe("final curve");
+    controller.dispose();
+  });
+
+  it("keeps the completed incumbent when the final solver result fails", async () => {
+    const frames = installFakeBrowserRuntime();
+    const state = createControllerState();
+    const controller = useGraphwarTrajectoryResult(state.options);
+
+    setSolverPath(state, -10, 1);
+    await nextTick();
+    frames.flush();
+    respondToActiveWorker({
+      ok: true,
+      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
+    });
+    await nextTick();
+    controller.publishIncumbentPreview("completed incumbent");
+    respondToActiveWorker({ ok: true, result: { curvePoints: "incumbent curve" } });
+    await nextTick();
+
+    controller.handoffIncumbentPreviewToNextSolverResult();
+    setSolverPath(state, -5, 2);
+    await nextTick();
+    frames.flush();
+    respondToActiveWorker({ message: "final simulation failed", ok: false, stage: "trajectory" });
+    await nextTick();
+
+    expect(controller.formulaResult.value?.expression).toBe("completed incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("incumbent curve");
+    expect(controller.calculationStatus.value).toEqual({
+      message: "final simulation failed",
+      stage: "trajectory",
+      type: "failure",
+    });
     controller.dispose();
   });
 });
@@ -361,4 +484,8 @@ function respondToActiveWorker(outcome: GraphwarTrajectoryCalculationOutcome) {
     throw new Error("No active Worker");
   }
   worker.respond(outcome);
+}
+
+function countWorkerRequests() {
+  return FakeWorker.instances.reduce((total, worker) => total + worker.requests.length, 0);
 }

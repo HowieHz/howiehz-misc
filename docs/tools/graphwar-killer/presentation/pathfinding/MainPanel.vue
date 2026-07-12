@@ -114,8 +114,8 @@ const emit = defineEmits<{
     </div>
 
     <div class="graphwar-killer__pathfinding-section">
-      <div class="graphwar-killer__task-controls">
-        <div class="graphwar-killer__command-field">
+      <div class="graphwar-killer__task-controls graphwar-killer-command-row">
+        <div class="graphwar-killer-command-field">
           <button
             type="button"
             :aria-describedby="panel.oneClickClear.reason ? 'graphwar-killer-one-click-clear-reason' : undefined"
@@ -314,7 +314,6 @@ const emit = defineEmits<{
 }
 
 .graphwar-killer__task-controls {
-  align-items: center;
   gap: 6px;
 }
 
@@ -327,11 +326,6 @@ const emit = defineEmits<{
 .graphwar-killer__option-grid > * {
   flex: 0 1 auto;
   max-width: 100%;
-}
-
-.graphwar-killer__command-field {
-  display: grid;
-  gap: 4px;
 }
 
 .graphwar-killer__managed-warning {

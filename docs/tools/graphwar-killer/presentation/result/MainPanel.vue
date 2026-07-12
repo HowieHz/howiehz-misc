@@ -119,23 +119,27 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
       <h2 id="graphwar-killer-result-title">
         {{ locale.ui.result.title }}
       </h2>
-      <div class="graphwar-killer__result-actions">
-        <button
+      <div class="graphwar-killer__result-actions graphwar-killer-command-row">
+        <div
           v-if="result.agentFireVisible"
-          type="button"
-          class="graphwar-killer__agent-fire-button"
-          :aria-describedby="result.agentFireReason ? 'graphwar-killer-agent-fire-reason' : undefined"
-          :disabled="result.agentFireState === 'blocked' || result.agentFireState === 'busy'"
-          :title="locale.ui.result.fireTitle"
-          @click="emit('fireAgentFunction')"
+          class="graphwar-killer-command-field"
         >
-          {{ result.agentFireButtonText }}
-        </button>
-        <ControlReason
-          v-if="result.agentFireVisible && result.agentFireReason"
-          id="graphwar-killer-agent-fire-reason"
-          :message="result.agentFireReason"
-        />
+          <button
+            type="button"
+            class="graphwar-killer__agent-fire-button"
+            :aria-describedby="result.agentFireReason ? 'graphwar-killer-agent-fire-reason' : undefined"
+            :disabled="result.agentFireState === 'blocked' || result.agentFireState === 'busy'"
+            :title="locale.ui.result.fireTitle"
+            @click="emit('fireAgentFunction')"
+          >
+            {{ result.agentFireButtonText }}
+          </button>
+          <ControlReason
+            v-if="result.agentFireReason"
+            id="graphwar-killer-agent-fire-reason"
+            :message="result.agentFireReason"
+          />
+        </div>
         <button
           type="button"
           class="graphwar-killer__primary-button"
@@ -295,7 +299,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
 }
 
 .graphwar-killer__label-row--result {
-  align-items: center;
+  align-items: flex-start;
 }
 
 .graphwar-killer__result-actions {
@@ -428,6 +432,10 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   .graphwar-killer__label-row {
     display: grid;
     gap: 4px;
+  }
+
+  .graphwar-killer-command-field {
+    width: 100%;
   }
 
   .graphwar-killer__primary-button {

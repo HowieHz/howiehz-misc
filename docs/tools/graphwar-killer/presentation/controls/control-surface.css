@@ -1,4 +1,15 @@
 /* Native controls share one visual contract; ToggleField keeps its own switch-specific interaction. */
+.graphwar-killer-command-row {
+  /* A command reason adds a second row without moving or stretching adjacent controls. */
+  align-items: flex-start;
+}
+
+.graphwar-killer-command-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .graphwar-killer-control-surface
   button:where(:not(.graphwar-killer-toggle-field__control, .graphwar-killer-segmented-button)),
 .graphwar-killer-control-button {

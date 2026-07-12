@@ -64,8 +64,6 @@ export interface GraphwarActionPanelModel {
   liveClickPreviewEnabled: boolean;
   /** 当前工具模式。 */
   toolMode: ToolMode;
-  /** 单目标路径规划偏好。 */
-  pathPlanning: GraphwarActionPanelToggle;
   /** 士兵吸附偏好。 */
   snapSoldiers: GraphwarActionPanelToggle;
 }
@@ -85,7 +83,6 @@ const emit = defineEmits<{
   toggleMagnifier: [];
   toggleCollisionCheck: [];
   toggleObstacleBrushErase: [];
-  togglePathPlanning: [];
   toggleSnapSoldiers: [];
   undoPoint: [];
   updateMagnifierZoom: [value: string];
@@ -132,17 +129,6 @@ function handleObstacleBrushDiameterInput(event: Event) {
       >
         {{ panel.activeToolHint.message }}
       </span>
-    </div>
-    <div class="graphwar-killer__interaction-preferences">
-      <ToggleField
-        id="graphwar-killer-path-planning"
-        :checked="panel.pathPlanning.enabled"
-        :label="locale.ui.actions.pathPlanning"
-        :reason="panel.pathPlanning.reason"
-        :state="panel.pathPlanning.state"
-        :title="locale.ui.actions.pathPlanningTitle"
-        @toggle="emit('togglePathPlanning')"
-      />
     </div>
     <div class="graphwar-killer__image-actions">
       <div
@@ -422,18 +408,6 @@ function handleObstacleBrushDiameterInput(event: Event) {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.graphwar-killer__interaction-preferences {
-  align-items: flex-start;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.graphwar-killer__interaction-preferences > * {
-  flex: 0 1 auto;
-  max-width: 100%;
 }
 
 .graphwar-killer__path-actions {

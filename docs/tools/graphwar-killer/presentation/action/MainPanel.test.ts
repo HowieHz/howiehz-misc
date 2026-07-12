@@ -32,7 +32,6 @@ const panel = {
   },
   obstacleBrushEraseEnabled: false,
   obstacleEditsDirty: false,
-  pathPlanning: { enabled: false, state: "normal" as const },
   snapSoldiers: { enabled: false, state: "normal" as const },
   toolMode: "path" as const,
 };
@@ -49,9 +48,7 @@ describe("Action MainPanel", () => {
       graphwarKillerLocale.ui.actions.collisionCheck,
       graphwarKillerLocale.ui.actions.liveClickPreview,
     ]);
-    expect(wrapper.get(".graphwar-killer__interaction-preferences").text()).toBe(
-      graphwarKillerLocale.ui.actions.pathPlanning,
-    );
+    expect(wrapper.find("#graphwar-killer-path-planning").exists()).toBe(false);
 
     await wrapper.setProps({ panel: { ...panel, toolMode: "bounds" } });
 

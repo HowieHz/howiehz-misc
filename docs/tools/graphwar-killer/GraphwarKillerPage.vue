@@ -1588,11 +1588,6 @@ const actionPanel = computed<GraphwarActionPanelModel>(() => ({
   },
   obstacleBrushEraseEnabled: obstacleBrushEraseEnabled.value,
   obstacleEditsDirty: obstacleEditsDirty.value,
-  pathPlanning: {
-    enabled: pathPlanningEnabled.value,
-    reason: getCapabilityReason(graphwarCapabilities.value.pathPlanning.reason),
-    state: graphwarCapabilities.value.pathPlanning.state,
-  },
   snapSoldiers: {
     enabled: snapSoldiersEnabled.value,
     reason: getCapabilityReason(graphwarCapabilities.value.snapSoldiers.reason),
@@ -1740,6 +1735,11 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
       reason: getCapabilityReason(oneClickClearCapability.reason),
       state: oneClickClearCapability.state,
       title: locale.ui.pathfinding.oneClickClearTitle,
+    },
+    pathPlanning: {
+      enabled: pathPlanningEnabled.value,
+      reason: getCapabilityReason(graphwarCapabilities.value.pathPlanning.reason),
+      state: graphwarCapabilities.value.pathPlanning.state,
     },
     routeMode: pathfindingRouteMode.value,
     searchAnimation: {
@@ -4119,7 +4119,6 @@ function undoLastPoint() {
         @toggle-live-click-preview="liveClickPreviewEnabled = !liveClickPreviewEnabled"
         @toggle-magnifier="magnifierEnabled = !magnifierEnabled"
         @toggle-obstacle-brush-erase="!graphwarManagedModeEnabled && toggleObstacleBrushErase()"
-        @toggle-path-planning="togglePathPlanning"
         @toggle-snap-soldiers="toggleSnapSoldiers"
         @undo-point="undoLastPoint"
         @update-magnifier-zoom="setMagnifierZoomText"
@@ -4180,6 +4179,7 @@ function undoLastPoint() {
       @toggle-friendly-fire="toggleFriendlyFire"
       @toggle-search-animation="toggleSearchAnimation"
       @toggle-managed-mode="toggleGraphwarManagedMode"
+      @toggle-path-planning="togglePathPlanning"
     />
   </div>
 </template>

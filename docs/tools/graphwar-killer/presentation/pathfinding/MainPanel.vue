@@ -57,6 +57,8 @@ export interface GraphwarSmartPathfindingPanelModel {
   friendlyFire: GraphwarPathfindingToggle;
   /** Presentation-only search preview preference. */
   searchAnimation: GraphwarPathfindingToggle;
+  /** Single-target pathfinding preference. */
+  pathPlanning: GraphwarPathfindingToggle;
   /** One-click clear command state. */
   oneClickClear: GraphwarPathfindingTask;
   /** Managed mode switch state. */
@@ -84,6 +86,7 @@ const emit = defineEmits<{
   toggleDeleteOptimization: [];
   toggleFriendlyFire: [];
   toggleManagedMode: [];
+  togglePathPlanning: [];
   toggleSearchAnimation: [];
 }>();
 </script>
@@ -116,6 +119,15 @@ const emit = defineEmits<{
 
     <div class="graphwar-killer__pathfinding-section">
       <div class="graphwar-killer__task-controls graphwar-killer-command-row">
+        <ToggleField
+          id="graphwar-killer-path-planning"
+          :checked="panel.pathPlanning.enabled"
+          :label="locale.ui.actions.pathPlanning"
+          :reason="panel.pathPlanning.reason"
+          :state="panel.pathPlanning.state"
+          :title="locale.ui.actions.pathPlanningTitle"
+          @toggle="emit('togglePathPlanning')"
+        />
         <div class="graphwar-killer-command-field">
           <button
             type="button"

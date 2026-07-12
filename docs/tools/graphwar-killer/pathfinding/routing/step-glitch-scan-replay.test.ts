@@ -167,7 +167,7 @@ describe("Step glitch scanner replay acceptance", () => {
     expect(sampleFormulaTrajectory).toHaveBeenCalledTimes(1);
   });
 
-  it("reuses prefix evidence and does not replay the failed direct candidate", () => {
+  it("reuses prefix evidence before scanning post-collision gate candidates", () => {
     const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
     const prefixTarget = graphToImagePoint(createGraphPoint(-8.5, 0), bounds, boundsRect);
     const targetPoint = graphToImagePoint(createGraphPoint(-6, 0), bounds, boundsRect);
@@ -193,13 +193,13 @@ describe("Step glitch scanner replay acceptance", () => {
     });
 
     expect(result.status).toBe("no-path");
-    expect(result.expandedStates).toBe(1);
+    expect(result.expandedStates).toBeGreaterThan(1);
     expect(result.timings.map((timing) => timing.stage)).toEqual([
       "validate-direct",
       "prefix-evidence-hit",
       "scan-candidates",
     ]);
-    expect(sampleFormulaTrajectory).toHaveBeenCalledTimes(1);
+    expect(sampleFormulaTrajectory.mock.calls.length).toBeGreaterThan(1);
   });
 
   it("starts gate scanning at the prefix control x when a required hit lies beyond the new target", () => {

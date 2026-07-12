@@ -111,6 +111,12 @@ export interface GraphwarStepGlitchFormulaPrefix {
   readonly stepSegmentDeltaYs: readonly (number | undefined)[];
 }
 
+/** 扫描器已经选定的邪道 x 窗口；存在时公式求解只验证这一档，不再自行重选宽度。 */
+export interface GraphwarStepGlitchXWindow {
+  readonly endX: number;
+  readonly startX: number;
+}
+
 /** 轨迹碰撞判定配置，单独建模是为了让目标命中和障碍命中共用同一采样管线。 */
 export interface GraphwarTrajectoryCollisionSettings {
   /** 边界内缩值，单位为 Graphwar 原始平面像素，防止弹道贴边时被当作可通行。 */
@@ -226,6 +232,7 @@ export function createGraphwarTrajectoryFormulaContext(options: {
   settings: GraphwarTrajectoryFormulaSettings;
   soldierCenter?: GraphPoint;
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
+  stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
 }): GraphwarTrajectoryFormulaContext {
   const state = createResolvedTrajectoryFormulaState(options);
   const formulaResult = buildFormula(
@@ -286,6 +293,7 @@ interface StepGlitchCandidateContext extends StepGlitchPrefixFormulaContext {
   prefixFormula: StepGlitchPrefixFormula;
   segmentStartY: number;
   soldierCenter: GraphPoint;
+  xWindow: GraphwarStepGlitchXWindow | undefined;
 }
 
 interface StepGlitchPrefixFormulaContext {
@@ -308,6 +316,7 @@ function createResolvedTrajectoryFormulaState(options: {
   settings: GraphwarTrajectoryFormulaSettings;
   soldierCenter?: GraphPoint;
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
+  stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
 }): TrajectoryFormulaState {
   const plainState = createTrajectoryFormulaState(options, 0);
   if (resolveSignEpsilonRequirement(options, plainState) === 0) {
@@ -326,6 +335,7 @@ function createTrajectoryFormulaState(
     settings: GraphwarTrajectoryFormulaSettings;
     soldierCenter?: GraphPoint;
     stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
+    stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
   },
   signEpsilon: number,
 ): TrajectoryFormulaState {
@@ -416,6 +426,7 @@ function refineStepSegmentsWithSimulation(
     points: readonly GraphPoint[];
     settings: GraphwarTrajectoryFormulaSettings;
     soldierCenter?: GraphPoint;
+    stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
   },
   formulaPoints: readonly GraphPoint[],
   stepGlitchRequirements: readonly boolean[],
@@ -551,6 +562,7 @@ function refineStepSegmentsWithSimulation(
           segmentStartY: startSample.point.y,
           signEpsilon,
           soldierCenter,
+          xWindow: options.stepGlitchXWindows?.[segmentIndex],
         })
       : undefined;
     // 邪道段会把实际 y 带偏；后续普通 step 的 ΔY 和中心点都要从模拟器落点继续累计。
@@ -685,25 +697,38 @@ function selectStepGlitchSegmentCandidate(
     return undefined;
   }
 
-  // 从 0.01 开始逐档缩半；当前窗口出现单跳候选后立即采用，不再测试更窄窗口。
-  for (
-    let windowWidth = GRAPHWAR_STEP_SIZE, windowDecimalPlaces = GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES;
-    windowWidth >= GRAPHWAR_STEP_GLITCH_MIN_STEP;
-    windowWidth /= 2, windowDecimalPlaces += 1
+  const previous = options.points[candidateContext.segmentIndex];
+  const target = options.points[candidateContext.segmentIndex + 1];
+  const fixedWindow = candidateContext.xWindow;
+  const jumps: StepGlitchJump[] = [];
+  if (
+    fixedWindow &&
+    fixedWindow.startX > previous.x &&
+    fixedWindow.endX > fixedWindow.startX &&
+    target.x >= fixedWindow.endX
   ) {
-    const previous = options.points[candidateContext.segmentIndex];
-    const target = options.points[candidateContext.segmentIndex + 1];
-    const windowedJump = createStepGlitchJump(
-      previous.x,
-      target.x,
-      windowWidth,
-      options.settings.decimalPlaces,
-      windowDecimalPlaces,
-    );
-    if (!windowedJump) {
-      continue;
+    jumps.push({ ...fixedWindow, step: GRAPHWAR_STEP_GLITCH_MIN_STEP });
+  } else if (!fixedWindow) {
+    // 普通公式仍从 0.01 逐档缩半；扫描候选传入固定窗口时只验证已选中的一档。
+    for (
+      let windowWidth = GRAPHWAR_STEP_SIZE, windowDecimalPlaces = GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES;
+      windowWidth >= GRAPHWAR_STEP_GLITCH_MIN_STEP;
+      windowWidth /= 2, windowDecimalPlaces += 1
+    ) {
+      const jump = createStepGlitchJump(
+        previous.x,
+        target.x,
+        windowWidth,
+        options.settings.decimalPlaces,
+        windowDecimalPlaces,
+      );
+      if (jump) {
+        jumps.push(jump);
+      }
     }
+  }
 
+  for (const windowedJump of jumps) {
     // 同一窗口的六档 RK4 候选共享左门和跳前高度；只需为不同 factor 改写 D。
     const preJumpSample = sampleStepGlitchPreJump(
       options,

@@ -6,7 +6,13 @@ import {
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
-import { clampDecimalPlaces, floorToDecimalPlaces, graphXAdvancesStrictly } from "../../core/numbers";
+import {
+  MAX_FORMULA_DECIMAL_PLACES,
+  clampDecimalPlaces,
+  floorToDecimalPlaces,
+  graphXAdvancesStrictly,
+  roundToDecimalPlaces,
+} from "../../core/numbers";
 import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
@@ -17,12 +23,13 @@ import {
 } from "../../formula/trajectory/sampling";
 import type {
   GraphwarStepGlitchFormulaPrefix,
+  GraphwarStepGlitchXWindow,
   GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 
-const glitchWindowWidths = createGlitchWindowWidths();
+const glitchWindows = createGlitchWindows();
 
 /** 固定 simulation mask 的 x+ 水平可达索引，可在单目标和一键清图的多次扫描间复用。 */
 export interface GraphwarStepGlitchScanMaskIndex {
@@ -136,6 +143,8 @@ interface ScanState {
   path: PixelPoint[];
   row: number;
   searchX: number;
+  /** 与 path 段对齐的固定邪道窗口；原 sourcePath 段继续复用既有公式求解语义。 */
+  stepGlitchXWindows: readonly (GraphwarStepGlitchXWindow | undefined)[];
 }
 
 interface ScanCandidate {
@@ -147,6 +156,7 @@ interface ScanCandidate {
   targetDistance: number;
   verticalDistance: number;
   windowWidth: number;
+  stepGlitchXWindows: readonly (GraphwarStepGlitchXWindow | undefined)[];
 }
 
 type ScanWorkItem = { candidate: ScanCandidate; type: "candidate" } | { state: ScanState; type: "state" };
@@ -423,6 +433,10 @@ function scanPreparedGraphwarStepGlitchPath(
         path: [...options.sourcePath],
         row: initialGridPoint.y,
         searchX: initialGridPoint.x,
+        stepGlitchXWindows: Array.from({ length: Math.max(0, options.sourcePath.length - 1) }, (_, index) => {
+          const segment = options.stepGlitchFormulaPrefix?.stepGlitchSegments[index];
+          return segment ? { endX: segment.endX, startX: segment.startX } : undefined;
+        }),
       },
       type: "state",
     },
@@ -458,12 +472,12 @@ function scanPreparedGraphwarStepGlitchPath(
                 targetDistance: 0,
                 verticalDistance: 0,
                 windowWidth: Number.POSITIVE_INFINITY,
+                stepGlitchXWindows: [...item.state.stepGlitchXWindows, undefined],
               },
             ]
           : createGateCandidates(
               item.state,
-              // 轨迹可能漂到相邻像素行；真实碰撞 x 优先，mask 行边界只作为无回放证据时的兜底。
-              item.state.blockedX ?? searchBoundaryToGraphX(farthestX + 1, options, maskIndex.mirrored),
+              // 轨迹可能漂到相邻像素行；真实碰撞定位的像素列优先，mask 行边界只作兜底。
               item.state.blockedX === undefined
                 ? farthestX + 1
                 : graphXToSearchColumn(item.state.blockedX, item.state.acceptedPoint.y, options, maskIndex.mirrored),
@@ -491,6 +505,7 @@ function scanPreparedGraphwarStepGlitchPath(
       finalTargetCandidate ? targetSequence : [],
       requiredTargets,
       item.candidate.controlX,
+      item.candidate.stepGlitchXWindows,
     );
     bestReachedTargetCount = Math.max(bestReachedTargetCount, replay.reachedTargetCount);
     blockedPoint ??= replay.blockedPoint;
@@ -524,6 +539,7 @@ function scanPreparedGraphwarStepGlitchPath(
         path: item.candidate.path,
         row: nextGridPoint.y,
         searchX: nextGridPoint.x,
+        stepGlitchXWindows: item.candidate.stepGlitchXWindows,
       },
       type: "state",
     });
@@ -544,6 +560,7 @@ function replayPathToControlX(
   targetSequence: readonly GraphwarTrajectoryTargetCircle[],
   requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
   controlX: number,
+  stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[],
 ): GraphwarStepGlitchReplayResult {
   if (path.length < 2 || path.length < options.sourcePath.length) {
     return { reachedTargetCount: 0, targetsHit: false };
@@ -560,6 +577,7 @@ function replayPathToControlX(
     settings: context.formulaSettings,
     soldierCenter: graphPoints[0],
     ...(options.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: options.stepGlitchFormulaPrefix } : {}),
+    ...(stepGlitchXWindows ? { stepGlitchXWindows } : {}),
   });
   if (formulaContext.formulaPoints.length < 2) {
     return { reachedTargetCount: 0, targetsHit: false };
@@ -659,10 +677,9 @@ function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, bounda
       });
 }
 
-/** 从真实碰撞或 mask 兜底得到的左门 x，生成稳定排序、去重后的右门候选。 */
+/** 从首次阻挡像素的前一格放置左门，并生成稳定排序、去重后的右门候选。 */
 function createGateCandidates(
   state: ScanState,
-  leftGateX: number,
   firstBlockedSearchX: number,
   target: GraphPoint,
   targetRow: number,
@@ -671,23 +688,47 @@ function createGateCandidates(
 ) {
   const candidates: ScanCandidate[] = [];
   const seen = new Set<string>();
+  if (firstBlockedSearchX <= 0 || firstBlockedSearchX >= GRAPHWAR_PLANE_LENGTH) {
+    return candidates;
+  }
 
-  for (const windowWidth of glitchWindowWidths) {
-    const controlX = floorToDecimalPlaces(leftGateX + windowWidth, options.settings.decimalPlaces);
-    const startX = controlX - windowWidth;
+  const rawLeftGateX = searchBoundaryToGraphX(firstBlockedSearchX - 1, options, maskIndex.mirrored);
+  const obstacleLeftX = searchBoundaryToGraphX(firstBlockedSearchX, options, maskIndex.mirrored);
+  let leftGateX = rawLeftGateX;
+  let leftGateDecimalPlaces = MAX_FORMULA_DECIMAL_PLACES;
+  // 从用户精度开始直接验证门是否仍在障碍格左侧。不用 log10 估算：double 减法可能把
+  // 0.01 变成 0.009999...，在十进制幂边界多估一位；这个有界循环通常首轮即通过。
+  for (
+    let decimalPlaces = clampDecimalPlaces(options.settings.decimalPlaces);
+    decimalPlaces <= MAX_FORMULA_DECIMAL_PLACES;
+    decimalPlaces += 1
+  ) {
+    const quantizedLeftGateX = -floorToDecimalPlaces(-rawLeftGateX, decimalPlaces);
+    if (quantizedLeftGateX < obstacleLeftX) {
+      leftGateX = quantizedLeftGateX;
+      leftGateDecimalPlaces = decimalPlaces;
+      break;
+    }
+  }
+
+  for (const window of glitchWindows) {
+    const gateDecimalPlaces = Math.max(leftGateDecimalPlaces, window.decimalPlaces);
+    // L 与 width 已按 gateDecimalPlaces 表示；就近量化只清理 binary 加法残差，不移动窗口方向。
+    const controlX = roundToDecimalPlaces(leftGateX + window.width, gateDecimalPlaces);
     if (
-      !graphXAdvancesStrictly(state.acceptedPoint.x, startX) ||
-      !graphXAdvancesStrictly(startX, controlX) ||
+      !graphXAdvancesStrictly(state.acceptedPoint.x, leftGateX) ||
+      !graphXAdvancesStrictly(leftGateX, controlX) ||
       !graphXAdvancesStrictly(controlX, target.x)
     ) {
       continue;
     }
 
+    const stepGlitchXWindows = [...state.stepGlitchXWindows, { endX: controlX, startX: leftGateX }];
     const controlSearchX = graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.mirrored);
     const keyPrefix = `${controlX.toPrecision(17)}:`;
     // 每行一次读取即可同时判断自由区和记录最远点；不构造 span，也不再二次扫描自由行。
     for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
-      // 门 x 取真实碰撞位置；mask 列只负责排除换行后仍跨不过原障碍的候选。
+      // 门由真实碰撞所在像素的前一格定位；mask 列只排除换行后仍跨不过原障碍的候选。
       const farthestX = getFarthestFreeX(maskIndex, Math.min(controlSearchX, firstBlockedSearchX), row);
       if (farthestX < Math.max(controlSearchX, firstBlockedSearchX)) {
         continue;
@@ -697,13 +738,7 @@ function createGateCandidates(
         continue;
       }
       seen.add(key);
-      const controlPoint = createControlPointForFormulaEndX(
-        controlX,
-        target.x,
-        row,
-        options,
-        options.settings.decimalPlaces,
-      );
+      const controlPoint = createControlPointForFormulaEndX(controlX, target.x, row, options, gateDecimalPlaces);
       if (!controlPoint) {
         continue;
       }
@@ -716,7 +751,8 @@ function createGateCandidates(
         row,
         targetDistance: Math.abs(row - targetRow),
         verticalDistance: Math.abs(row - state.row),
-        windowWidth,
+        windowWidth: window.width,
+        stepGlitchXWindows,
       });
     }
   }
@@ -807,18 +843,21 @@ function mirrorPlaneX(x: number, mirrored: boolean) {
   return mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - x : x;
 }
 
-function createGlitchWindowWidths() {
-  const widths: number[] = [];
+/** 枚举从 0.01 逐档缩半的窗口，并携带能无损表示每档宽度的小数位。 */
+function createGlitchWindows() {
+  const windows: { decimalPlaces: number; width: number }[] = [];
   let minimumWidth = GRAPHWAR_STEP_SIZE;
   while (minimumWidth > GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
     minimumWidth /= 2;
   }
+  let decimalPlaces = Math.max(0, Math.ceil(-Math.log10(GRAPHWAR_STEP_SIZE)));
   let width = GRAPHWAR_STEP_SIZE;
   while (width >= minimumWidth) {
-    widths.push(width);
+    windows.push({ decimalPlaces, width });
     width /= 2;
+    decimalPlaces += 1;
   }
-  return widths;
+  return windows;
 }
 
 export function findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(

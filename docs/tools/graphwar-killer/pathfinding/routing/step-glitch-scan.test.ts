@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH, GRAPHWAR_STEP_SIZE } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { floorToDecimalPlaces } from "../../core/numbers";
-import { createGraphPoint } from "../../core/types";
+import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds } from "../../core/types";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
 import {
@@ -200,16 +200,55 @@ describe("Step y' glitch scan", () => {
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
       const controlPoint = result.path.at(-2);
+      const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), bounds, boundsRect).x;
+      const leftGateX = -floorToDecimalPlaces(-rawLeftGateX, 2);
       expect(controlPoint).toBeDefined();
       expect(result.path.at(-1)).toBe(target);
       if (controlPoint) {
         const controlX = imageToGraphPoint(controlPoint, bounds, boundsRect).x;
-        expect(floorToDecimalPlaces(controlX, 2)).toBe(-6.63);
+        expect(floorToDecimalPlaces(controlX, 2)).toBe(leftGateX + GRAPHWAR_STEP_SIZE);
+      }
+      const segment = result.formulaContext?.stepGlitchFormulaPrefix?.stepGlitchSegments.find(
+        (candidate) => candidate !== undefined,
+      );
+      expect(segment?.startX).toBe(leftGateX);
+      expect(segment?.endX).toBe(leftGateX + GRAPHWAR_STEP_SIZE);
+    }
+  });
+
+  it("extends formula precision when the configured ceiling reaches the obstacle cell", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-5.5, 4);
+    const mask = createEmptyMask();
+    const wallX = 516;
+    for (let row = 180; row <= 270; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings: { ...settings, decimalPlaces: 0 },
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    if (result.status === "hit") {
+      const controlPoint = result.path.at(-2);
+      const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), bounds, boundsRect).x;
+      const leftGateX = -floorToDecimalPlaces(-rawLeftGateX, 2);
+      expect(controlPoint).toBeDefined();
+      if (controlPoint) {
+        expect(floorToDecimalPlaces(imageToGraphPoint(controlPoint, bounds, boundsRect).x, 2)).toBe(
+          leftGateX + GRAPHWAR_STEP_SIZE,
+        );
       }
     }
   });
 
-  it("keeps a decimal right gate that used to exceed the fixed ULP retry limit", () => {
+  it("keeps the pixel-derived right gate that used to exceed the fixed ULP retry limit", () => {
     const wideBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
     const start = toPixelForBounds(-1.5, 0, wideBounds);
     const target = toPixelForBounds(-0.9737, 2, wideBounds);
@@ -233,9 +272,10 @@ describe("Step y' glitch scan", () => {
       const controlPoint = result.path.at(-2);
       expect(controlPoint).toBeDefined();
       if (controlPoint) {
+        const rawLeftGateX = imageToGraphPoint(createPixelPoint(369, 0), wideBounds, boundsRect).x;
         expect(
           floorToDecimalPlaces(imageToGraphPoint(controlPoint, wideBounds, boundsRect).x, settings.decimalPlaces),
-        ).toBe(-0.9738);
+        ).toBe(-floorToDecimalPlaces(-rawLeftGateX, settings.decimalPlaces) + GRAPHWAR_STEP_SIZE);
       }
     }
   });
@@ -277,11 +317,14 @@ describe("Step y' glitch scan", () => {
       expect(result.path.at(-1)).toBe(target);
       if (controlPoint) {
         const controlX = imageToGraphPoint(controlPoint, mirroredBounds, boundsRect).x;
+        const blockedSearchX = GRAPHWAR_PLANE_LENGTH - 1 - wallX;
+        const rawLeftGateX = imageToGraphPoint(
+          createPixelPoint(GRAPHWAR_PLANE_LENGTH - (blockedSearchX - 1), 0),
+          mirroredBounds,
+          boundsRect,
+        ).x;
         expect(floorToDecimalPlaces(controlX, settings.decimalPlaces)).toBe(
-          floorToDecimalPlaces(
-            (directReplay.blockedPoint?.x ?? Number.NaN) + GRAPHWAR_STEP_SIZE,
-            settings.decimalPlaces,
-          ),
+          -floorToDecimalPlaces(-rawLeftGateX, settings.decimalPlaces) + GRAPHWAR_STEP_SIZE,
         );
       }
     }

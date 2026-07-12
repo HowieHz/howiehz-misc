@@ -215,6 +215,20 @@ describe("Step glitch formula prefix", () => {
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
     });
+    const prefixFormula = prefix.stepGlitchFormulaPrefix;
+    const rebuiltWithFixedWindows = prefixFormula
+      ? createGraphwarTrajectoryFormulaContext({
+          bounds,
+          points: appendedPoints,
+          settings: stepSettings,
+          soldierCenter: appendedPoints[0],
+          // 强制 prefix 身份失配，覆盖 sign epsilon 改变后必须重算旧段的分支。
+          stepGlitchFormulaPrefix: { ...prefixFormula, signEpsilon: prefixFormula.signEpsilon + 1 },
+          stepGlitchXWindows: prefixFormula.stepGlitchSegments.map((segment) =>
+            segment ? { endX: segment.endX, startX: segment.startX } : undefined,
+          ),
+        })
+      : undefined;
 
     expect(prefix.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
     expect(reused.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBe(
@@ -234,6 +248,10 @@ describe("Step glitch formula prefix", () => {
     expect(reused.stepGlitchFormulaPrefix?.stepSegmentDeltaYs).toEqual(
       cold.stepGlitchFormulaPrefix?.stepSegmentDeltaYs,
     );
+    expect(rebuiltWithFixedWindows?.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toMatchObject({
+      endX: prefixFormula?.stepGlitchSegments[0]?.endX,
+      startX: prefixFormula?.stepGlitchSegments[0]?.startX,
+    });
   });
 });
 

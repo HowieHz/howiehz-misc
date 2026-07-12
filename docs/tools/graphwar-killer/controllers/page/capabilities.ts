@@ -74,6 +74,7 @@ export interface GraphwarCapabilityFacts {
   busy: {
     pathfinding: boolean;
     agentRead: boolean;
+    agentExport: boolean;
     agentFire: boolean;
     managedMode: boolean;
   };
@@ -91,6 +92,7 @@ export interface GraphwarCapabilityPreferences {
 export interface GraphwarCapabilities {
   semanticControls: GraphwarControlCapability;
   agentRead: GraphwarControlCapability;
+  agentExport: GraphwarControlCapability;
   agentFire: GraphwarControlCapability;
   snapSoldiers: GraphwarControlCapability;
   collisionCheck: GraphwarControlCapability;
@@ -154,7 +156,16 @@ export function deriveGraphwarCapabilities(
     semanticControls: facts.busy.managedMode ? { state: "busy", reason: "managed-lock" } : normalCapability,
     agentRead: facts.busy.managedMode
       ? { state: "busy", reason: "managed-lock" }
-      : facts.busy.agentRead
+      : facts.busy.agentRead || facts.busy.agentExport
+        ? { state: "busy", reason: "agent-read-busy" }
+        : !facts.agent.enabled
+          ? { state: "blocked", reason: "agent-disabled" }
+          : !facts.agent.normalizedBaseUrl
+            ? { state: "blocked", reason: "agent-url-invalid" }
+            : normalCapability,
+    // 导出只读取 revision 一致的快照而不应用局面，因此可以与托管并行。
+    agentExport:
+      facts.busy.agentRead || facts.busy.agentExport
         ? { state: "busy", reason: "agent-read-busy" }
         : !facts.agent.enabled
           ? { state: "blocked", reason: "agent-disabled" }

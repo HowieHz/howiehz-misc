@@ -15,6 +15,7 @@ describe("Detection MainPanel", () => {
         debugFileActionsVisible: false,
         enabled: false,
         exportInProgress: false,
+        exportState: "normal" as const,
         inProgress: false,
         readState: "normal" as const,
       },
@@ -50,6 +51,14 @@ describe("Detection MainPanel", () => {
     expect(screenshotRows[1].text()).toContain(graphwarKillerLocale.ui.detection.detectObjects);
     expect(screenshotRows[1].text()).toContain(graphwarKillerLocale.ui.detection.autoDetection);
 
+    await wrapper.setProps({ panel: { ...panel, interactionDisabled: true } });
+    const lockedScreenshotRows = wrapper.findAll(".graphwar-killer__source-action-row");
+    expect(lockedScreenshotRows[0].get<HTMLButtonElement>("button").attributes("disabled")).toBeDefined();
+    expect(lockedScreenshotRows[0].get<HTMLInputElement>('input[type="file"]').attributes("disabled")).toBeDefined();
+    for (const button of lockedScreenshotRows[1].findAll<HTMLButtonElement>("button")) {
+      expect(button.attributes("disabled")).toBeDefined();
+    }
+
     await wrapper.setProps({
       panel: {
         ...panel,
@@ -57,6 +66,7 @@ describe("Detection MainPanel", () => {
           ...panel.agent,
           debugFileActionsVisible: true,
           enabled: true,
+          exportState: "busy" as const,
           readReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["agent-read-busy"],
           readState: "busy" as const,
         },
@@ -105,6 +115,7 @@ describe("Detection MainPanel", () => {
           debugFileActionsVisible: true,
           enabled: true,
           exportInProgress: true,
+          exportState: "busy" as const,
           readReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["agent-read-busy"],
           readState: "busy" as const,
         },
@@ -129,7 +140,13 @@ describe("Detection MainPanel", () => {
     await wrapper.setProps({
       panel: {
         ...panel,
-        agent: { ...panel.agent, enabled: true },
+        agent: {
+          ...panel.agent,
+          debugFileActionsVisible: true,
+          enabled: true,
+          exportState: "normal" as const,
+          readState: "busy" as const,
+        },
         interactionDisabled: true,
         screenshotActionsVisible: false,
       },
@@ -138,5 +155,14 @@ describe("Detection MainPanel", () => {
     expect(agentToggle.attributes("disabled")).toBeDefined();
     await agentToggle.trigger("click");
     expect(wrapper.emitted("toggleAgentUsage")).toBeUndefined();
+    const managedAgentRow = wrapper.get(".graphwar-killer__agent-read-field");
+    expect(managedAgentRow.get<HTMLButtonElement>("button:first-of-type").attributes("disabled")).toBeDefined();
+    for (const input of managedAgentRow.findAll<HTMLInputElement>('input[type="file"]')) {
+      expect(input.attributes("disabled")).toBeDefined();
+    }
+    const managedExportButton = managedAgentRow.get<HTMLButtonElement>("button:last-of-type");
+    expect(managedExportButton.attributes("disabled")).toBeUndefined();
+    await managedExportButton.trigger("click");
+    expect(wrapper.emitted("exportAgentScene")).toHaveLength(2);
   });
 });

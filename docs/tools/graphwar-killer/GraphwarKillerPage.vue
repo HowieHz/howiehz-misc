@@ -1087,7 +1087,8 @@ const graphwarCapabilities = computed(() =>
       },
       busy: {
         agentFire: graphwarAgentFireInProgress.value,
-        agentRead: graphwarAgentReadInProgress.value || graphwarAgentExportInProgress.value,
+        agentRead: graphwarAgentReadInProgress.value,
+        agentExport: graphwarAgentExportInProgress.value,
         managedMode: graphwarManagedModeEnabled.value,
         pathfinding: smartPathfindingInProgress.value,
       },
@@ -1492,6 +1493,7 @@ const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
     debugFileActionsVisible: debugInfoEnabled.value,
     enabled: graphwarAgentEnabled.value,
     exportInProgress: graphwarAgentExportInProgress.value,
+    exportState: graphwarCapabilities.value.agentExport.state,
     inProgress: graphwarAgentReadInProgress.value,
     readReason: graphwarAgentExportInProgress.value
       ? locale.status.agent.exporting
@@ -2667,15 +2669,10 @@ function downloadGraphwarAgentDebugFile(file: GraphwarAgentDebugDownload) {
 
 /** 读取一次 revision 一致的 Agent 快照，并导出调试导入控件可直接接受的文件对。 */
 async function exportGraphwarAgentDebugScene() {
-  if (
-    !debugInfoEnabled.value ||
-    graphwarManagedModeEnabled.value ||
-    graphwarAgentReadInProgress.value ||
-    graphwarAgentExportInProgress.value
-  ) {
+  if (!debugInfoEnabled.value || graphwarAgentReadInProgress.value || graphwarAgentExportInProgress.value) {
     return;
   }
-  const capability = graphwarCapabilities.value.agentRead;
+  const capability = graphwarCapabilities.value.agentExport;
   if (capability.state !== "normal") {
     setDetectionStatus(getCapabilityReason(capability.reason) ?? "", "warning");
     return;
@@ -2690,7 +2687,6 @@ async function exportGraphwarAgentDebugScene() {
     requestGeneration === graphwarAgentTransferGeneration &&
     debugInfoEnabled.value &&
     graphwarAgentEnabled.value &&
-    !graphwarManagedModeEnabled.value &&
     normalizedGraphwarAgentBaseUrl.value === requestBaseUrl;
   graphwarAgentExportInProgress.value = true;
   imageStatus.value = locale.status.agent.exporting;

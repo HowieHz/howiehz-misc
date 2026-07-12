@@ -39,6 +39,8 @@ interface GraphwarDetectionPanelAgentModel {
   debugFileActionsVisible: boolean;
   /** 当前是否正在读取并导出 Agent 局面。 */
   exportInProgress: boolean;
+  /** 导出只读取 Agent 快照，因此不继承托管锁。 */
+  exportState: GraphwarControlCapability["state"];
   /** 是否使用 Agent 作为识别来源。 */
   enabled: boolean;
   /** 读取命令与页面 guard 共享的能力状态。 */
@@ -107,7 +109,6 @@ function handleAgentBaseUrlInput(event: Event) {
   <section
     class="graphwar-killer__panel graphwar-killer__detection-panel graphwar-killer-control-surface"
     aria-labelledby="graphwar-killer-detection-title"
-    :aria-disabled="panel.interactionDisabled"
   >
     <div class="graphwar-killer__label-row">
       <div class="graphwar-killer__label-leading">
@@ -150,10 +151,7 @@ function handleAgentBaseUrlInput(event: Event) {
         </span>
       </div>
     </div>
-    <fieldset
-      class="graphwar-killer__detection-fields"
-      :disabled="panel.interactionDisabled"
-    >
+    <fieldset class="graphwar-killer__detection-fields">
       <div class="graphwar-killer__image-actions">
         <div
           v-if="panel.screenshotActionsVisible"
@@ -161,6 +159,7 @@ function handleAgentBaseUrlInput(event: Event) {
         >
           <button
             type="button"
+            :disabled="panel.interactionDisabled"
             :title="locale.ui.screenshot.captureTitle"
             @click="emit('captureImage')"
           >
@@ -173,6 +172,7 @@ function handleAgentBaseUrlInput(event: Event) {
             <input
               type="file"
               accept="image/*"
+              :disabled="panel.interactionDisabled"
               :title="locale.ui.screenshot.uploadInputTitle"
               @change="emit('uploadImage', $event)"
             >
@@ -185,7 +185,7 @@ function handleAgentBaseUrlInput(event: Event) {
         >
           <button
             type="button"
-            :disabled="!panel.canDetectBounds"
+            :disabled="panel.interactionDisabled || !panel.canDetectBounds"
             :title="locale.ui.detection.detectBoundsTitle"
             @click="emit('detectBounds')"
           >
@@ -193,7 +193,7 @@ function handleAgentBaseUrlInput(event: Event) {
           </button>
           <button
             type="button"
-            :disabled="!panel.canDetectObjects"
+            :disabled="panel.interactionDisabled || !panel.canDetectObjects"
             :title="panel.detectObjectsTitle"
             @click="emit('detectObjects')"
           >
@@ -203,7 +203,7 @@ function handleAgentBaseUrlInput(event: Event) {
             id="graphwar-killer-auto-detection"
             :checked="panel.autoDetectionEnabled"
             :label="locale.ui.detection.autoDetection"
-            state="normal"
+            :state="panel.interactionDisabled ? 'blocked' : 'normal'"
             :title="locale.ui.detection.autoDetectionTitle"
             @toggle="emit('toggleAutoDetection')"
           />
@@ -230,7 +230,7 @@ function handleAgentBaseUrlInput(event: Event) {
                 <input
                   type="file"
                   accept=".json,application/json"
-                  :disabled="panel.agent.inProgress || panel.agent.exportInProgress"
+                  :disabled="panel.interactionDisabled || panel.agent.inProgress || panel.agent.exportInProgress"
                   @change="emit('readAgentStateFile', $event)"
                 >
                 <span class="graphwar-killer-control-button">{{ locale.ui.detection.agent.readStateFile }}</span>
@@ -242,14 +242,14 @@ function handleAgentBaseUrlInput(event: Event) {
                 <input
                   type="file"
                   accept=".bin,application/octet-stream"
-                  :disabled="panel.agent.inProgress || panel.agent.exportInProgress"
+                  :disabled="panel.interactionDisabled || panel.agent.inProgress || panel.agent.exportInProgress"
                   @change="emit('readAgentObstacleFile', $event)"
                 >
                 <span class="graphwar-killer-control-button">{{ locale.ui.detection.agent.readObstacleFile }}</span>
               </label>
               <button
                 type="button"
-                :disabled="panel.agent.readState !== 'normal'"
+                :disabled="panel.agent.exportState !== 'normal'"
                 :title="locale.ui.detection.agent.exportSceneTitle"
                 @click="emit('exportAgentScene')"
               >
@@ -278,6 +278,7 @@ function handleAgentBaseUrlInput(event: Event) {
             {{ locale.ui.detection.agent.address }}
             <input
               type="url"
+              :disabled="panel.interactionDisabled"
               :aria-label="locale.ui.detection.agent.addressAriaLabel"
               :title="locale.ui.detection.agent.addressTitle"
               :value="panel.agent.baseUrlText"

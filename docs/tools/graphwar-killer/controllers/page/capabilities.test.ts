@@ -63,6 +63,7 @@ function createFacts(overrides: GraphwarCapabilityFactsOverrides = {}): Graphwar
     busy: {
       pathfinding: false,
       agentRead: false,
+      agentExport: false,
       agentFire: false,
       managedMode: false,
       ...overrides.busy,
@@ -95,6 +96,7 @@ describe("Graphwar capabilities", () => {
     expect(deriveGraphwarCapabilities(createFacts(), createPreferences())).toEqual({
       semanticControls: { state: "normal" },
       agentRead: { state: "normal" },
+      agentExport: { state: "normal" },
       agentFire: { state: "normal" },
       snapSoldiers: { state: "normal" },
       collisionCheck: { state: "normal" },
@@ -121,6 +123,8 @@ describe("Graphwar capabilities", () => {
     ["obstacleEditing", { scene: { obstaclesAvailable: false } }, { state: "blocked", reason: "obstacles-required" }],
     ["agentRead", { agent: { enabled: false } }, { state: "blocked", reason: "agent-disabled" }],
     ["agentRead", { agent: { normalizedBaseUrl: undefined } }, { state: "blocked", reason: "agent-url-invalid" }],
+    ["agentExport", { agent: { enabled: false } }, { state: "blocked", reason: "agent-disabled" }],
+    ["agentExport", { agent: { normalizedBaseUrl: undefined } }, { state: "blocked", reason: "agent-url-invalid" }],
     ["agentFire", { resultAvailable: false }, { state: "blocked" }],
   ] satisfies [keyof GraphwarCapabilities, GraphwarCapabilityFactsOverrides, GraphwarControlCapability][])(
     "derives %s's local control state",
@@ -390,7 +394,22 @@ describe("Graphwar capabilities", () => {
 
     expect(capabilities.semanticControls).toEqual({ state: "busy", reason: "managed-lock" });
     expect(capabilities.agentRead).toEqual({ state: "busy", reason: "managed-lock" });
+    expect(capabilities.agentExport).toEqual({ state: "blocked", reason: "agent-disabled" });
     expect(capabilities.oneClickClear).toEqual({ state: "busy", reason: "managed-lock" });
     expect(capabilities.managedMode).toEqual({ state: "normal" });
+  });
+
+  it("keeps Agent export available during managed mode while serializing debug transfers", () => {
+    expect(deriveCapability("agentExport", createFacts({ busy: { managedMode: true } }))).toEqual({
+      state: "normal",
+    });
+    expect(deriveCapability("agentExport", createFacts({ busy: { agentRead: true } }))).toEqual({
+      state: "busy",
+      reason: "agent-read-busy",
+    });
+    expect(deriveCapability("agentExport", createFacts({ busy: { agentExport: true } }))).toEqual({
+      state: "busy",
+      reason: "agent-read-busy",
+    });
   });
 });

@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { Trash2, Undo2 } from "lucide-vue-next";
 import type { CSSProperties } from "vue";
 
+import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { ToolMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
 
 interface GraphwarActionPanelStatus {
@@ -27,11 +30,22 @@ interface GraphwarActionPanelSlider {
   text: string;
 }
 
+interface GraphwarActionPanelToggle {
+  /** Persisted preference value. */
+  enabled: boolean;
+  /** Visible state derived by the shared capability model. */
+  state: GraphwarControlCapability["state"];
+  /** Localised reason for a non-normal state. */
+  reason?: string;
+}
+
 export interface GraphwarActionPanelModel {
   /** 托管期间锁定路径和障碍编辑，保留放大镜等纯展示控制。 */
   interactionDisabled: boolean;
   /** 标题行右侧的当前工具提示。 */
   activeToolHint: GraphwarActionPanelStatus;
+  /** 手工轨迹碰撞检查。 */
+  collisionCheck: GraphwarActionPanelToggle;
   /** 放大镜是否开启。 */
   magnifierEnabled: boolean;
   /** 放大镜缩放输入展示模型。 */
@@ -50,6 +64,10 @@ export interface GraphwarActionPanelModel {
   liveClickPreviewEnabled: boolean;
   /** 当前工具模式。 */
   toolMode: ToolMode;
+  /** 单目标路径规划偏好。 */
+  pathPlanning: GraphwarActionPanelToggle;
+  /** 士兵吸附偏好。 */
+  snapSoldiers: GraphwarActionPanelToggle;
 }
 
 defineProps<{
@@ -65,12 +83,16 @@ const emit = defineEmits<{
   setToolMode: [mode: ToolMode];
   toggleLiveClickPreview: [];
   toggleMagnifier: [];
+  toggleCollisionCheck: [];
   toggleObstacleBrushErase: [];
+  togglePathPlanning: [];
+  toggleSnapSoldiers: [];
   undoPoint: [];
   updateMagnifierZoom: [value: string];
   updateObstacleBrushDiameter: [value: string];
 }>();
 
+/** Forwards both range and numeric zoom inputs through one guarded DOM adapter. */
 function handleMagnifierZoomInput(event: Event) {
   const value = getInputValue(event);
   if (value === undefined) {
@@ -79,6 +101,7 @@ function handleMagnifierZoomInput(event: Event) {
   emit("updateMagnifierZoom", value);
 }
 
+/** Preserves invalid brush text for parent-side validation instead of coercing it in the panel. */
 function handleObstacleBrushDiameterInput(event: Event) {
   const value = getInputValue(event);
   if (value === undefined) {
@@ -109,6 +132,35 @@ function handleObstacleBrushDiameterInput(event: Event) {
       >
         {{ panel.activeToolHint.message }}
       </span>
+    </div>
+    <div class="graphwar-killer__interaction-preferences">
+      <ToggleField
+        id="graphwar-killer-snap-soldiers"
+        :checked="panel.snapSoldiers.enabled"
+        :label="locale.ui.actions.snapSoldiers"
+        :reason="panel.snapSoldiers.reason"
+        :state="panel.snapSoldiers.state"
+        :title="locale.ui.actions.snapSoldiersTitle"
+        @toggle="emit('toggleSnapSoldiers')"
+      />
+      <ToggleField
+        id="graphwar-killer-collision-check"
+        :checked="panel.collisionCheck.enabled"
+        :label="locale.ui.actions.collisionCheck"
+        :reason="panel.collisionCheck.reason"
+        :state="panel.collisionCheck.state"
+        :title="locale.ui.actions.collisionCheckTitle"
+        @toggle="emit('toggleCollisionCheck')"
+      />
+      <ToggleField
+        id="graphwar-killer-path-planning"
+        :checked="panel.pathPlanning.enabled"
+        :label="locale.ui.actions.pathPlanning"
+        :reason="panel.pathPlanning.reason"
+        :state="panel.pathPlanning.state"
+        :title="locale.ui.actions.pathPlanningTitle"
+        @toggle="emit('togglePathPlanning')"
+      />
     </div>
     <div class="graphwar-killer__image-actions">
       <div
@@ -198,19 +250,29 @@ function handleObstacleBrushDiameterInput(event: Event) {
     >
       <button
         type="button"
+        class="graphwar-killer__icon-button"
+        :aria-label="locale.ui.actions.clearPath"
         :disabled="panel.interactionDisabled"
         :title="locale.ui.actions.clearPathTitle"
         @click="emit('clearPath')"
       >
-        {{ locale.ui.actions.clearPath }}
+        <Trash2
+          :size="17"
+          aria-hidden="true"
+        />
       </button>
       <button
         type="button"
+        class="graphwar-killer__icon-button"
+        :aria-label="locale.ui.actions.undoPoint"
         :disabled="panel.interactionDisabled"
         :title="locale.ui.actions.undoPointTitle"
         @click="emit('undoPoint')"
       >
-        {{ locale.ui.actions.undoPoint }}
+        <Undo2
+          :size="17"
+          aria-hidden="true"
+        />
       </button>
       <button
         type="button"
@@ -285,7 +347,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
   align-content: start;
   background: var(--vp-c-bg);
   border: 1px solid color-mix(in srgb, var(--vp-c-divider) 88%, transparent);
-  border-radius: 12px;
+  border-radius: 8px;
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -439,11 +501,26 @@ function handleObstacleBrushDiameterInput(event: Event) {
   gap: 6px;
 }
 
+.graphwar-killer__interaction-preferences {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .graphwar-killer__image-actions button,
 .graphwar-killer__path-actions button,
 .graphwar-killer__obstacle-brush-actions button {
   min-height: 34px;
   padding: 6px 10px;
+}
+
+.graphwar-killer__path-actions .graphwar-killer__icon-button {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 34px;
+  justify-content: center;
+  padding: 0;
+  width: 34px;
 }
 
 .graphwar-killer__obstacle-brush-actions {
@@ -578,6 +655,10 @@ function handleObstacleBrushDiameterInput(event: Event) {
 
   .graphwar-killer__label-row > span {
     text-align: left;
+  }
+
+  .graphwar-killer__interaction-preferences {
+    grid-template-columns: 1fr;
   }
 }
 </style>

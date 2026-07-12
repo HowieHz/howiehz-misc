@@ -56,7 +56,7 @@ interface GraphwarDetectionWorkflowOptions {
     flashDetectedSoldiers: () => void;
     invalidatePathfindingCaches: () => void;
     applyDetectedBounds: (bounds: BoundsRect) => void;
-    onSmartCursorDisabled: () => void;
+    markScreenshotResult: () => void;
     setToolModeToPath: () => void;
   };
   /** 截图和像素读取应继续由截图 workflow 持有。 */
@@ -105,8 +105,6 @@ export interface GraphwarDetectionWorkflowController {
   schedule: () => void;
   /** 设置检测状态主文案，并清掉上一轮警告详情。 */
   setStatus: (message: string, kind: DetectionStatusKind) => void;
-  /** 智能光标开关；关闭时应清掉士兵悬停。 */
-  smartCursorEnabled: Ref<boolean>;
   /** 检测状态主文案。 */
   status: Ref<string>;
   /** 检测状态等级。 */
@@ -117,8 +115,6 @@ export interface GraphwarDetectionWorkflowController {
   statusWarning: Ref<string>;
   /** 切换自动识别。 */
   toggleAutoDetection: () => void;
-  /** 切换智能光标。 */
-  toggleSmartCursor: () => void;
 }
 
 /** 管理 Graphwar 截图识别的运行状态、debounce、Worker 调度和结果落地。 */
@@ -132,7 +128,6 @@ export function useGraphwarDetectionWorkflow(
   const statusWarningTitle = ref("");
   const inProgress = ref(false);
   const autoDetectionEnabled = ref(true);
-  const smartCursorEnabled = ref(true);
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let activeRunTrigger: GraphwarDetectionRunTrigger | undefined;
   let runId = 0;
@@ -536,6 +531,7 @@ export function useGraphwarDetectionWorkflow(
         options.effects.flashBoundsRect();
       }
       options.effects.applyDetectedObstacles(result.obstacles);
+      options.effects.markScreenshotResult();
     });
     let completedAt = nowMs();
     const elapsed = () => options.formatElapsedDuration(completedAt - startedAt);
@@ -583,14 +579,6 @@ export function useGraphwarDetectionWorkflow(
     }
   }
 
-  /** 切换智能光标；关闭时清掉士兵悬停，避免残留高亮。 */
-  function toggleSmartCursor() {
-    smartCursorEnabled.value = !smartCursorEnabled.value;
-    if (!smartCursorEnabled.value) {
-      options.effects.onSmartCursorDisabled();
-    }
-  }
-
   /** 页面卸载时释放检测 Worker 和延迟任务。 */
   function dispose() {
     detectionRunner.close();
@@ -610,12 +598,10 @@ export function useGraphwarDetectionWorkflow(
     isActiveRun,
     schedule,
     setStatus,
-    smartCursorEnabled,
     status,
     statusKind,
     statusWarning,
     statusWarningTitle,
     toggleAutoDetection,
-    toggleSmartCursor,
   };
 }

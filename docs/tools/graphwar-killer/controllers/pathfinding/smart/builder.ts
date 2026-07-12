@@ -74,6 +74,8 @@ interface GraphwarSmartPathfindingBuilderOptions {
     getBounds: () => GraphBounds | undefined;
     /** 当前公式采样设置。 */
     getFormulaSettings: () => GraphwarTrajectoryFormulaSettings;
+    /** 是否尝试删除新增控制点。 */
+    getDeleteOptimizationEnabled: () => boolean;
     /** 当前基础障碍 mask；不存在时不能启动几何寻路。 */
     getObstacleMask: () => Uint8Array | undefined;
     /** 当前工作流路径；builder 会在构造输入前复制快照。 */
@@ -90,8 +92,6 @@ interface GraphwarSmartPathfindingBuilderOptions {
     getTargetHitRadiusPixels: () => number | undefined;
     /** 当前寻路容差；无效时保持原来的早退语义。 */
     getTolerances: () => GraphwarSmartPathfindingSearchTolerances | undefined;
-    /** 寻路并行数无效时应沿用页面原来的早退语义。 */
-    isPathfindingWorkerCountValid: () => boolean;
   };
   /** 单目标寻路的 worker 与页面侧完整结果缓存。 */
   pathfinding: {
@@ -143,10 +143,6 @@ export function useGraphwarSmartPathfindingBuilder(
     if (!bounds) {
       return undefined;
     }
-    if (!options.input.isPathfindingWorkerCountValid()) {
-      return undefined;
-    }
-
     const targetPoint = "targetPoint" in target ? target.targetPoint : target;
     const fallbackTargetPoint = "targetPoint" in target ? target.fallbackTargetPoint : undefined;
     const targetPoints =
@@ -238,6 +234,7 @@ export function useGraphwarSmartPathfindingBuilder(
         bounds: searchBounds,
         boundsRect: options.input.boundsRect.value,
         committedTargets: options.input.getCommittedTargets(),
+        deleteOptimizationEnabled: options.input.getDeleteOptimizationEnabled(),
         hitTarget: searchTargetHitCircle,
         prefixTarget: options.input.getPrefixTarget(),
         previewEnabled: options.preview.isSearchAnimationEnabled(),
@@ -274,6 +271,9 @@ export function useGraphwarSmartPathfindingBuilder(
   }
 
   function setSearchPreview(preview: GraphwarPathfindingPreview) {
+    if (!options.preview.isSearchAnimationEnabled()) {
+      return;
+    }
     options.preview.setSearch(createGraphwarPathfindingPreviewSnapshot(preview, options.input.boundsRect.value));
   }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { GraphwarKillerLocale } from "../../locale-types";
 import { getInputValue } from "../dom/input";
 
@@ -30,12 +31,14 @@ interface GraphwarDetectionPanelDebugRow {
 interface GraphwarDetectionPanelAgentModel {
   /** Agent 地址输入框文本。 */
   baseUrlText: string;
-  /** 地址已配置好时，面板操作区展示读取按钮。 */
-  configured: boolean;
   /** 当前是否正在读取 Agent。 */
   inProgress: boolean;
   /** 是否使用 Agent 作为识别来源。 */
   enabled: boolean;
+  /** 读取命令与页面 guard 共享的能力状态。 */
+  readState: GraphwarControlCapability["state"];
+  /** Agent 未就绪或忙碌时的可见说明。 */
+  readReason?: string;
 }
 
 export interface GraphwarDetectionPanelModel {
@@ -49,8 +52,8 @@ export interface GraphwarDetectionPanelModel {
   canDetectObjects: boolean;
   /** 自动识别是否开启。 */
   autoDetectionEnabled: boolean;
-  /** 智能光标是否开启。 */
-  smartCursorEnabled: boolean;
+  /** 截图来源启用时展示上传和截屏命令。 */
+  screenshotActionsVisible: boolean;
   /** 识别士兵/障碍按钮 hover 说明；禁用时应说明缺少的前置边界。 */
   detectObjectsTitle: string;
   /** 标题右侧状态展示模型。 */
@@ -71,15 +74,17 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  captureImage: [];
   detectBounds: [];
   detectObjects: [];
   readAgent: [];
   toggleAutoDetection: [];
   toggleAgentUsage: [];
-  toggleSmartCursor: [];
+  uploadImage: [event: Event];
   updateAgentBaseUrl: [value: string];
 }>();
 
+/** Preserves the raw Agent URL text so the page can own normalisation and validation. */
 function handleAgentBaseUrlInput(event: Event) {
   const value = getInputValue(event);
   if (value === undefined) {
@@ -126,6 +131,27 @@ function handleAgentBaseUrlInput(event: Event) {
     >
       <div class="graphwar-killer__image-actions">
         <button
+          v-if="panel.screenshotActionsVisible"
+          type="button"
+          :title="locale.ui.screenshot.captureTitle"
+          @click="emit('captureImage')"
+        >
+          {{ locale.ui.screenshot.capture }}
+        </button>
+        <label
+          v-if="panel.screenshotActionsVisible"
+          class="graphwar-killer__upload"
+          :title="locale.ui.screenshot.uploadTitle"
+        >
+          <input
+            type="file"
+            accept="image/*"
+            :title="locale.ui.screenshot.uploadInputTitle"
+            @change="emit('uploadImage', $event)"
+          >
+          <span>{{ locale.ui.screenshot.upload }}</span>
+        </label>
+        <button
           v-if="!panel.agent.enabled"
           type="button"
           :disabled="!panel.canDetectBounds"
@@ -143,15 +169,27 @@ function handleAgentBaseUrlInput(event: Event) {
         >
           {{ locale.ui.detection.detectObjects }}
         </button>
-        <button
-          v-if="panel.agent.configured"
-          type="button"
-          :disabled="panel.agent.inProgress"
-          :title="locale.ui.detection.agent.readTitle"
-          @click="emit('readAgent')"
+        <div
+          v-if="panel.agent.enabled"
+          class="graphwar-killer__agent-read-field"
         >
-          {{ panel.agent.inProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
-        </button>
+          <button
+            type="button"
+            :aria-describedby="panel.agent.readReason ? 'graphwar-killer-agent-read-reason' : undefined"
+            :disabled="panel.agent.readState === 'blocked' || panel.agent.readState === 'busy'"
+            :title="locale.ui.detection.agent.readTitle"
+            @click="emit('readAgent')"
+          >
+            {{ panel.agent.inProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
+          </button>
+          <span
+            v-if="panel.agent.readReason"
+            id="graphwar-killer-agent-read-reason"
+            class="graphwar-killer__agent-read-reason"
+          >
+            {{ panel.agent.readReason }}
+          </span>
+        </div>
         <button
           v-if="!panel.agent.enabled"
           type="button"
@@ -161,15 +199,6 @@ function handleAgentBaseUrlInput(event: Event) {
           @click="emit('toggleAutoDetection')"
         >
           {{ locale.ui.detection.autoDetection }}
-        </button>
-        <button
-          type="button"
-          :aria-pressed="panel.smartCursorEnabled"
-          :class="{ 'graphwar-killer__toggle-button--active': panel.smartCursorEnabled }"
-          :title="locale.ui.detection.smartCursorTitle"
-          @click="emit('toggleSmartCursor')"
-        >
-          {{ locale.ui.detection.smartCursor }}
         </button>
         <button
           type="button"
@@ -231,7 +260,7 @@ function handleAgentBaseUrlInput(event: Event) {
   align-content: start;
   background: var(--vp-c-bg);
   border: 1px solid color-mix(in srgb, var(--vp-c-divider) 88%, transparent);
-  border-radius: 12px;
+  border-radius: 8px;
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -348,6 +377,51 @@ function handleAgentBaseUrlInput(event: Event) {
 .graphwar-killer__image-actions button {
   min-height: 34px;
   padding: 6px 10px;
+}
+
+.graphwar-killer__upload {
+  width: fit-content;
+}
+
+.graphwar-killer__upload input {
+  height: 1px;
+  opacity: 0%;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+}
+
+.graphwar-killer__upload span {
+  align-items: center;
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 999px;
+  color: var(--vp-c-text-1);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.2;
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.graphwar-killer__upload:hover span {
+  border-color: var(--vp-c-brand-1);
+  color: var(--vp-c-brand-1);
+}
+
+.graphwar-killer__agent-read-field {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graphwar-killer__agent-read-reason {
+  color: #b45309;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .graphwar-killer__subpanel {

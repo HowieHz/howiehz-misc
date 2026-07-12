@@ -66,6 +66,7 @@ describe("Graphwar Agent API v2 client", () => {
 
     const snapshot = await readGraphwarAgentSnapshot("http://127.0.0.1:17900", { fetch: fetchMock });
 
+    expect(snapshot.baseUrl).toBe("http://127.0.0.1:17900");
     expect(snapshot.localCurrentTurnSoldierPoint).toEqual({ x: 70, y: 210 });
     expect(snapshot.detectionResult.soldiers[0]).toMatchObject({
       computer: false,

@@ -431,7 +431,7 @@ async function findSmartPath(
   }
 
   const path =
-    normalizedPath.length > 3
+    input.deleteOptimizationEnabled && normalizedPath.length > 3
       ? measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
           optimizeSmartPathfindingPath(input, normalizedPath, stepContext),
         )
@@ -508,7 +508,7 @@ function findStepGlitchSmartPath(
   let path = scanResult.path;
   let acceptedPoint = scanResult.acceptedPoint;
   let stepGlitchFormulaPrefix = scanResult.stepGlitchFormulaPrefix;
-  if (input.routeMode === "theta-star" && input.settings.stepGlitchObstacleMask === simulationMask) {
+  if (input.deleteOptimizationEnabled && input.settings.stepGlitchObstacleMask === simulationMask) {
     const optimized = measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
       optimizeStepGlitchSmartPath(
         input,
@@ -523,7 +523,7 @@ function findStepGlitchSmartPath(
     path = optimized.path;
     acceptedPoint = optimized.acceptedPoint;
     stepGlitchFormulaPrefix = optimized.stepGlitchFormulaPrefix;
-  } else if (input.routeMode === "theta-star") {
+  } else if (input.deleteOptimizationEnabled) {
     path = measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
       optimizeSmartPathfindingPath(input, path, undefined),
     );
@@ -983,6 +983,7 @@ async function buildOneClickClearPath(
       candidates: input.candidates,
       committedTargets: input.committedTargets,
       dagEdgeWorkerCount: input.dagEdgeWorkerCount,
+      deleteOptimizationEnabled: input.deleteOptimizationEnabled,
       deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
       hitCandidates: input.hitCandidates,
       isCancelled: () => false,

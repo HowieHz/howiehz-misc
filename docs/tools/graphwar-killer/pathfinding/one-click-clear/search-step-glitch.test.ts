@@ -101,9 +101,14 @@ describe("Step glitch one-click-clear target retries", () => {
     samplingMockState.targetSequences.length = 0;
   });
 
-  it.each(["visibility-graph", "theta-star"] as const)(
-    "permanently skips no-path with %s and applies the matching deletion policy",
-    async (routeMode) => {
+  it.each([
+    { deleteOptimizationEnabled: false, routeMode: "visibility-graph" },
+    { deleteOptimizationEnabled: true, routeMode: "visibility-graph" },
+    { deleteOptimizationEnabled: false, routeMode: "theta-star" },
+    { deleteOptimizationEnabled: true, routeMode: "theta-star" },
+  ] as const)(
+    "permanently skips no-path with $routeMode and deletion=$deleteOptimizationEnabled",
+    async ({ deleteOptimizationEnabled, routeMode }) => {
       scanMockState.outcomes.push("no-path", "hit");
       const start = toPixel(-11, 0);
       const missed = toPixel(-9, 8);
@@ -116,7 +121,7 @@ describe("Step glitch one-click-clear target retries", () => {
       ];
 
       const result = await buildGraphwarOneClickClearPath({
-        ...createOptions(start, candidates, simulationMask, routeMode),
+        ...createOptions(start, candidates, simulationMask, routeMode, deleteOptimizationEnabled),
         onDebugTiming: (timing) => debugStages.push(timing.stage),
       });
 
@@ -128,7 +133,8 @@ describe("Step glitch one-click-clear target retries", () => {
         expect(result.pathPoints.at(-1)).toEqual(hit);
       }
       expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
-      expect(debugStages.includes("optimize-path")).toBe(stepGlitchModeRunsPointDeletion(routeMode));
+      expect(debugStages.includes("optimize-path")).toBe(deleteOptimizationEnabled);
+      expect(debugStages).toContain("validate-final");
     },
   );
 
@@ -310,6 +316,7 @@ function createOptions(
   candidates: { enemy: boolean; hitCenter: PixelPoint; hitRadius: number; id: string }[],
   simulationMask: Uint8Array,
   routeMode: GraphwarPathfindingRouteMode,
+  deleteOptimizationEnabled = true,
 ) {
   return {
     boundaryExpansion: 0,
@@ -320,6 +327,7 @@ function createOptions(
     },
     candidates,
     committedTargets: [],
+    deleteOptimizationEnabled,
     deleteHitCheckRadiusPixels: 0,
     hitCandidates: candidates,
     pathPoints: [start],
@@ -338,10 +346,6 @@ function createOptions(
     simulationMask,
     simulationMaskCacheId: 1,
   };
-}
-
-function stepGlitchModeRunsPointDeletion(routeMode: GraphwarPathfindingRouteMode) {
-  return routeMode === "theta-star";
 }
 
 function createEmptyMask() {

@@ -313,6 +313,7 @@ const liveClickPreviewWorkerCountText = computed({
             >
           </label>
           <label
+            v-if="panel.pathfinding.oneClickClearDeleteCheckRadiusVisible"
             class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
             :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
           >
@@ -358,7 +359,7 @@ const liveClickPreviewWorkerCountText = computed({
   align-content: start;
   background: var(--vp-c-bg);
   border: 1px solid color-mix(in srgb, var(--vp-c-divider) 88%, transparent);
-  border-radius: 12px;
+  border-radius: 8px;
   display: grid;
   gap: 8px;
   min-width: 0;

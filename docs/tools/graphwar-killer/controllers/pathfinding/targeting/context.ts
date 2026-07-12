@@ -53,7 +53,7 @@ export interface GraphwarTargetingContextController<TSoldier extends GraphwarTar
   getRightmostPathPoint: () => PixelPoint | undefined;
   /** Agent 权威阵营优先；缺失时 x<=0 的非发射士兵视为友方障碍。 */
   isFriendlyObstacleSoldier: (soldier: TSoldier) => boolean;
-  /** 智能光标优先标记 Agent 友军；缺失阵营时回退发射侧规则，中心线可作为发射点。 */
+  /** 优先使用 Agent 友军标记；缺失阵营时回退发射侧规则，中心线可作为发射点。 */
   isSoldierOnLaunchSide: (soldier: TSoldier) => boolean;
 }
 

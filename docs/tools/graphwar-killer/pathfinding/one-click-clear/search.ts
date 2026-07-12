@@ -143,7 +143,7 @@ export interface GraphwarOneClickClearDagEdgeBuildRequest {
   routeMask: Uint8Array;
   /** Step 解析累计高度的固定起点；ABS 建路忽略该字段。 */
   routeOriginPoint: PixelPoint;
-  /** 几何路线算法模式；由页面快速模式开关统一控制。 */
+  /** 几何路线算法模式；由页面寻路算法选择统一控制。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
@@ -228,6 +228,8 @@ export interface GraphwarOneClickClearOptions {
   dagEdgeWorkerCount?: number;
   /** 一键清图删点局部命中检查半径，单位为截图像素；0 表示每次候选删点都走整路验证。 */
   deleteHitCheckRadiusPixels: number;
+  /** 是否尝试删除控制点；关闭时仍执行最终整路验证和命中统计。 */
+  deleteOptimizationEnabled?: boolean;
   /** 当前路径已有像素点。 */
   pathPoints: readonly PixelPoint[];
   /** 当前路径已承诺命中的士兵；一键清图只能追加，不能静默丢失这些目标。 */
@@ -265,6 +267,8 @@ export type GraphwarOneClickClearSearchInput = Omit<
   | "validateStepRoute"
   | "yieldControl"
 > & {
+  /** Worker 请求显式传递删点偏好，不依赖直接调用 API 的兼容默认值。 */
+  deleteOptimizationEnabled: boolean;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
@@ -670,13 +674,12 @@ async function buildOneClickClearStepGlitchPath(
     await yieldOneClickClearControl(options);
   }
 
-  // 邪道快速模式复用现有 routeMode 协议：扫描算法不变，只跳过昂贵的逐点删除回放。
   const finalized =
-    options.routeMode === "visibility-graph"
-      ? { route, workUnits }
-      : await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
+    options.deleteOptimizationEnabled !== false
+      ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
           optimizeOneClickClearPath(context, route, workUnits),
-        );
+        )
+      : { route, workUnits };
   workUnits = finalized.workUnits;
   const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
     sampleOneClickClearTargetSequence(options, finalized.route, true),
@@ -761,10 +764,13 @@ async function runOneClickClearSearchAttempt(
         };
   }
 
-  // 删点优化可能改变后续弹道形状，优化后必须对完整目标序列做一次整路复验。
-  const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
-    optimizeOneClickClearPath(context, validatedRoute, nextWorkUnits),
-  );
+  // 即使关闭删点也保留最终整路复验；它负责裁决后缀对历史命中和碰撞的影响。
+  const optimized =
+    options.deleteOptimizationEnabled !== false
+      ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
+          optimizeOneClickClearPath(context, validatedRoute, nextWorkUnits),
+        )
+      : { route: validatedRoute, workUnits: nextWorkUnits };
   const finalValidation =
     optimized.finalValidation ??
     measureOneClickClearDebugTiming(options, "validate-final", () =>

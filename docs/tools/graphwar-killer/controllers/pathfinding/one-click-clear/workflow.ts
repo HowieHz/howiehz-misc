@@ -95,11 +95,13 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
     boundsRect: { readonly value: BoundsRect };
     getBounds: () => GraphBounds | undefined;
     getCommittedTargets: () => readonly GraphwarCommittedTarget[];
+    getDeleteOptimizationEnabled: () => boolean;
     getFormulaSettings: () => GraphwarTrajectoryFormulaSettings;
     getObstacleMask: () => Uint8Array | undefined;
     getPathfindingWorkerCount: () => number | undefined;
     getPathPoints: () => readonly PixelPoint[];
     getRouteMode: () => GraphwarPathfindingRouteMode;
+    requiresDagWorker: () => boolean;
     getSimulationMask: () => Uint8Array | undefined;
     getTolerances: () => GraphwarOneClickClearSearchTolerances | undefined;
     isUnsupportedMode: () => boolean;
@@ -231,6 +233,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
         getObstacleMask: options.input.getObstacleMask,
         pathfindingWorkerCount: workerCount,
         pathPointCount: options.input.getPathPoints().length,
+        requiresDagWorker: options.input.requiresDagWorker(),
         tolerances,
         unsupportedMode: options.input.isUnsupportedMode,
       });
@@ -287,6 +290,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       candidates,
       committedTargets: options.input.getCommittedTargets(),
       dagEdgeWorkerCount: preflightResult.dagEdgeWorkerCount,
+      deleteOptimizationEnabled: options.input.getDeleteOptimizationEnabled(),
       hitCandidates,
       pathPoints: options.input.getPathPoints(),
       prefixTarget: preflightResult.prefixTarget,

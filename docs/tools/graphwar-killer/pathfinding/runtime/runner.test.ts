@@ -29,6 +29,25 @@ afterEach(() => {
 });
 
 describe("Graphwar pathfinding runner incumbents", () => {
+  it("preserves the deletion preference in the cloned Worker request", async () => {
+    const runner = createGraphwarPathfindingRunner();
+    const input = createInput();
+    input.deleteOptimizationEnabled = true;
+    const resultPromise = runner.buildOneClickClearPath(input);
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+
+    expect(request.task.input.deleteOptimizationEnabled).toBe(true);
+    worker.emit({
+      id: request.id,
+      result: createResult(),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+    await resultPromise;
+    runner.close();
+  });
+
   it("opts into progress and forwards the current request's incumbent", async () => {
     const onIncumbent = vi.fn();
     const runner = createGraphwarPathfindingRunner();
@@ -151,6 +170,7 @@ function createInput(): GraphwarOneClickClearPathWorkerInput {
     candidates: [],
     committedTargets: [],
     dagEdgeWorkerCount: 1,
+    deleteOptimizationEnabled: false,
     deleteHitCheckRadiusPixels: 0,
     hitCandidates: [],
     pathPoints: [createPixelPoint(100, 225)],

@@ -153,11 +153,11 @@ export const graphwarKillerLocale = {
     cancelled: "已中断寻路",
     currentPathBlocked: "模拟结果未到达当前最后路径点，无法开始寻路任务",
     failure: (elapsed) =>
-      elapsed === undefined ? "智能寻路失败：未找到可行路径" : `智能寻路失败：未找到可行路径，耗时 ${elapsed}`,
+      elapsed === undefined ? "路径规划失败：未找到可行路径" : `路径规划失败：未找到可行路径，耗时 ${elapsed}`,
     forwardMinimumDouble: "下一个可表示的双精度浮点数",
     forwardPath: (minimumStep) => `每个点的 Graphwar x 都必须严格大于上一个点，至少移动到${minimumStep}`,
-    needBounds: "先识别或框选坐标系边界后才能使用智能寻路",
-    needDetection: "先识别士兵和障碍后才能使用智能寻路",
+    needBounds: "先识别或框选坐标系边界后才能使用路径规划",
+    needDetection: "先识别士兵和障碍后才能使用路径规划",
     inProgress: {
       optimize: "优化路径节点",
       search: "搜索绕障路线",
@@ -166,7 +166,7 @@ export const graphwarKillerLocale = {
     },
     success: (elapsed, resultCacheHit) => {
       const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
-      return elapsed === undefined ? `智能寻路完成${cacheText}` : `智能寻路完成${cacheText}，耗时 ${elapsed}`;
+      return elapsed === undefined ? `路径规划完成${cacheText}` : `路径规划完成${cacheText}，耗时 ${elapsed}`;
     },
     oneClickClear: {
       inProgress: "正在一键清图，在截图中右键停止",
@@ -206,13 +206,14 @@ export const graphwarKillerLocale = {
   },
   ui: {
     actions: {
+      collisionCheck: "碰撞检查",
+      collisionCheckTitle: "检查手工解算和模拟器轨迹是否碰到障碍或坐标边界。寻路任务始终强制检查。",
       clearPath: "清除路径点",
       clearPathTitle: "清除全部路径点",
       clearObstacleEdits: "清除障碍修改",
       clearObstacleEditsTitle: "恢复到本次自动识别得到的原始障碍范围。",
       drawObstacle: "绘制障碍",
-      drawObstacleTitle:
-        "进入障碍绘制模式：用圆形笔刷修正当前识别出的障碍范围；需要先识别到障碍，并开启智能光标或智能寻路。",
+      drawObstacleTitle: "进入障碍绘制模式：用圆形笔刷修正当前识别出的障碍范围；需要先识别到障碍。",
       eraseObstacle: "擦除模式",
       eraseObstacleTitle: "开启后，笔刷会从当前识别障碍中擦除区域。",
       magnifier: "放大镜",
@@ -230,6 +231,10 @@ export const graphwarKillerLocale = {
       pickBoundsTitle: "进入边界点选模式：左键点两个坐标系角点来校准截图边界。",
       pickPath: "点选路径",
       pickPathTitle: "进入路径点选模式：先点己方士兵，再点目标路径点或目标士兵。",
+      pathPlanning: "路径规划",
+      pathPlanningTitle: "点选目标后自动寻找绕开障碍的路线。可提前开启，数据准备完成后自动生效。",
+      snapSoldiers: "吸附士兵",
+      snapSoldiersTitle: "点选和悬停时吸附到识别出的士兵，并使用士兵的真实命中圈。",
       title: "操作栏",
       toolModeAriaLabel: "操作模式",
       toolModeTitle: "选择是在截图上点选坐标系边界，还是点选己方和目标路径点。",
@@ -334,18 +339,37 @@ export const graphwarKillerLocale = {
       minObstacleArea: "障碍最小面积",
       minObstacleAreaAriaLabel: "障碍最小面积，单位为 Graphwar 原始平面像素",
       minObstacleAreaTitle: "过滤小噪点的面积阈值；小于该值的障碍区域会被忽略，单位是 Graphwar 原始 770x450 平面像素。",
-      smartCursor: "智能光标",
-      smartCursorTitle: "点选路径时自动吸附到识别出的士兵中心，并开启障碍和边界碰撞模拟。",
       detectBounds: "识别边界",
       detectBoundsTitle: "从当前截图自动识别并标记 Graphwar 坐标系边界。",
       detectObjects: "识别士兵/障碍",
       detectObjectsNeedBoundsTitle: "需要先识别或框选 Graphwar 坐标系边界。",
       detectObjectsTitle: "在当前已确认边界内识别士兵和障碍。",
-      title: "识别",
+      title: "数据来源",
     },
     pathfinding: {
       allowFriendlyFire: "允许友伤",
       allowFriendlyFireTitle: "开启后，寻路和一键清图允许轨迹穿过己方士兵；关闭时会把己方士兵当作障碍避开。",
+      capabilityReasons: {
+        "agent-disabled": "先开启使用 Agent。",
+        "agent-fire-busy": "正在通过 Agent 发射。",
+        "agent-read-busy": "正在读取 Agent 状态。",
+        "agent-scene-required": "请先读取当前 Agent 状态。",
+        "agent-url-invalid": "请填写有效的 Agent 地址。",
+        "bounds-required": "请先识别或点选坐标边界。",
+        "delete-check-radius-invalid": "请修正删点命中检查半径。",
+        "formula-settings-invalid": "请先修正公式设置。",
+        "formula-unsupported": "当前公式配置不支持一键清图。",
+        "image-required": "请先载入截图。",
+        "managed-lock": "托管运行期间此设置被锁定。",
+        "obstacle-tolerances-invalid": "请修正障碍容差。",
+        "obstacles-required": "请先识别或读取障碍。",
+        "path-start-required": "请先选择当前发射士兵。",
+        "pathfinding-busy": "当前寻路任务结束后才能操作。",
+        "pathfinding-worker-count-invalid": "请修正寻路 Worker 数量。",
+        "result-required": "请先生成可用结果。",
+        "soldiers-required": "请先识别或读取士兵。",
+        "solver-required": "切换到解算器后生效。",
+      },
       debugNoTiming: "暂无寻路耗时记录",
       debugDetails: {
         "build-dag-edges": {
@@ -457,7 +481,7 @@ export const graphwarKillerLocale = {
       debugStages: {
         "apply-result": {
           label: "写回路径结果",
-          title: "把最终智能寻路路径写入当前路径状态，并清理旧的路径错误提示。",
+          title: "把最终规划路径写入当前路径状态，并清理旧的路径错误提示。",
         },
         "collect-targets": {
           label: "生成目标",
@@ -558,11 +582,11 @@ export const graphwarKillerLocale = {
         },
         "setting-status": {
           label: "设置状态栏",
-          title: "生成智能寻路成功或失败文案，并写入寻路标题右侧状态。",
+          title: "生成路径规划成功或失败文案，并写入寻路标题右侧状态。",
         },
         total: {
           label: "流程总耗时",
-          title: "本次智能寻路从开始到最终状态落地的墙钟耗时。",
+          title: "本次路径规划从开始到最终状态落地的墙钟耗时。",
         },
         "validate-trajectory": {
           label: "验证函数轨迹",
@@ -574,8 +598,8 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "调试信息",
-      fastPathfinding: "快速模式",
-      fastPathfindingTitle: "普通模式开启时使用可视图、关闭时使用 Theta*；阶跃 y' 邪道模式开启时跳过删点优化。",
+      deleteOptimization: "删点优化",
+      deleteOptimizationTitle: "尝试删除不必要的控制点；关闭时仍保留最终整路回放、碰撞验证和命中统计。",
       obstacleExpansionAgentMode: "Agent 模式",
       obstacleExpansionDetectionMode: "识别模式",
       obstacleExpansion: "障碍外扩",
@@ -587,25 +611,30 @@ export const graphwarKillerLocale = {
       oneClickClearTitle: "从当前路径尾部开始，自动追加路线并尽量按顺序击杀右侧可用士兵。",
       managedFriendlyFireWarning: "托管已允许友伤，友军会作为一键清图候选。",
       managedMode: "托管模式",
-      managedModeBusyTitle: "当前 Agent 读取、发射或手动寻路结束后才能开启托管模式。",
       managedModeDisableTitle: "关闭托管模式并解锁设置。",
-      managedModeNeedAgentTitle: "先启用 Agent 并填写有效的 Agent 地址。",
+      managedModeConfirmation: (repairedModes, friendlyFireEnabled) =>
+        `托管会自动向 Graphwar 发射。当前${friendlyFireEnabled ? "允许" : "禁止"}友伤。${repairedModes ? `将修正这些模式的公式配置：${repairedModes}。` : "三种模式的公式配置均可直接使用。"}\n\n确认开启托管？`,
+      managedProfilesTitle: "托管公式配置",
       managedModeTitle: "自动读取状态、准备、计算一键清图并在己方回合发射。",
-      managedModeUnsupportedTitle: "当前算法无法在三个游戏模式下全部使用一键清图。",
       routePlanningTolerance: "路线规划容差",
       routePlanningToleranceAriaLabel: "路线规划容差，单位为 Graphwar 原始 770x450 平面像素",
       routePlanningToleranceTitle:
-        "普通智能寻路和一键清图建立几何路线时使用的单个路线容差。单位是 Graphwar 原始 770x450 平面像素。",
+        "普通路径规划和一键清图建立几何路线时使用的单个路线容差。单位是 Graphwar 原始 770x450 平面像素。",
+      routeAlgorithm: "寻路算法",
+      routeAlgorithmTitle: "选择普通路径规划和一键清图使用的几何寻路算法。",
+      routeLazyVisibilityGraph: "惰性可视图",
+      routeThetaStar: "Theta*",
+      routeXPlusScan: "X+ 扫描",
       searchAnimation: "搜索动画",
-      searchAnimationTitle: "显示智能寻路的候选点、已探索边、尝试路径和优化点预览；关闭后只保留最终路径结果。",
+      searchAnimationTitle: "显示路径规划的候选点、已探索边、尝试路径和优化点预览；关闭后只保留最终路径结果。",
       simulationTolerance: "函数模拟容差",
       simulationToleranceAriaLabel: "函数模拟容差，单位为 Graphwar 原始 770x450 平面像素",
       simulationToleranceTitle:
         "函数模拟和碰撞检查时使用的障碍容差；不影响寻路怎么选路。单位是 Graphwar 原始 770x450 平面像素。",
       autoGraph: "一键清图",
-      smartPathfinding: "智能寻路",
-      smartPathfindingTitle: "点选目标点后自动寻找绕开识别障碍的路径。",
+      tasksTitle: "寻路任务",
       title: "寻路",
+      optionsTitle: "寻路选项",
       unit: "px",
     },
     point: {
@@ -705,6 +734,8 @@ export const graphwarKillerLocale = {
       skipUnknownCharacters: "跳过未知字符",
       skipUnknownCharactersTitle: "Graphwar 会跳过未知字符。",
       stepGlitchMode: "邪道模式",
+      stepGlitchModeInactiveReason: "偏好已保留；切换到 Step y' 后生效。",
+      stepGlitchModeWaitingReason: "等待障碍数据；偏好已保留。",
       stepGlitchModeTitle:
         "仅在阶跃函数的 y' 模式下生效；需要已有障碍识别结果。普通阶跃的近似路径区域内存在障碍时，邪道模式会尝试生成瞬移项。建议通过 Agent 读取游戏信息，需要准确的士兵位置。",
       stepSteepness: "阶跃陡峭度 a",

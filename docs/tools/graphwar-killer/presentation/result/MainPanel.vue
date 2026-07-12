@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { Trash2 } from "lucide-vue-next";
 import { computed } from "vue";
 
+import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
 import { getInputValue } from "../dom/input";
@@ -32,8 +34,10 @@ export interface GraphwarResultPanelModel {
   interactionDisabled: boolean;
   /** Agent 开火按钮当前文案。 */
   agentFireButtonText: string;
-  /** 是否允许通过 Agent 提交当前函数。 */
-  canFireAgentFunction: boolean;
+  /** Agent 开火命令与页面 guard 共享的能力状态。 */
+  agentFireState: GraphwarControlCapability["state"];
+  /** Agent 开火不可用时的可见原因。 */
+  agentFireReason?: string;
   /** 是否允许清空模拟器输入。 */
   canClearSimulatorInputs: boolean;
   /** 是否允许复制当前结果。 */
@@ -95,6 +99,7 @@ const simulatorLaunchAngleText = computed({
   set: (value) => emit("updateSimulatorLaunchAngleText", value),
 });
 
+/** Keeps coordinate parsing in the page while safely adapting the native input event. */
 function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoordinateAxis, event: Event) {
   const value = getInputValue(event);
   if (value === undefined) {
@@ -118,12 +123,20 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           v-if="result.agentFireVisible"
           type="button"
           class="graphwar-killer__agent-fire-button"
-          :disabled="result.interactionDisabled || !result.canFireAgentFunction"
+          :aria-describedby="result.agentFireReason ? 'graphwar-killer-agent-fire-reason' : undefined"
+          :disabled="result.agentFireState === 'blocked' || result.agentFireState === 'busy'"
           :title="locale.ui.result.fireTitle"
           @click="emit('fireAgentFunction')"
         >
           {{ result.agentFireButtonText }}
         </button>
+        <span
+          v-if="result.agentFireVisible && result.agentFireReason"
+          id="graphwar-killer-agent-fire-reason"
+          class="graphwar-killer__agent-fire-reason"
+        >
+          {{ result.agentFireReason }}
+        </span>
         <button
           type="button"
           class="graphwar-killer__primary-button"
@@ -136,12 +149,16 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         <button
           v-if="result.workflowMode === 'simulator'"
           type="button"
-          class="graphwar-killer__secondary-button"
+          class="graphwar-killer__secondary-button graphwar-killer__icon-button"
+          :aria-label="locale.ui.result.clearSimulator"
           :disabled="result.interactionDisabled || !result.canClearSimulatorInputs"
           :title="locale.ui.result.clearSimulatorTitle"
           @click="emit('clearSimulator')"
         >
-          {{ locale.ui.result.clearSimulator }}
+          <Trash2
+            :size="17"
+            aria-hidden="true"
+          />
         </button>
       </div>
     </div>
@@ -256,7 +273,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   align-content: start;
   background: var(--vp-c-bg);
   border: 1px solid color-mix(in srgb, var(--vp-c-divider) 88%, transparent);
-  border-radius: 12px;
+  border-radius: 8px;
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -349,11 +366,26 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   white-space: nowrap;
 }
 
+.graphwar-killer__agent-fire-reason {
+  color: #b45309;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .graphwar-killer__secondary-button {
   min-height: 34px;
   min-width: 72px;
   padding: 6px 10px;
   white-space: nowrap;
+}
+
+.graphwar-killer__secondary-button.graphwar-killer__icon-button {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  min-width: 34px;
+  padding: 0;
+  width: 34px;
 }
 
 .graphwar-killer__formula-row {

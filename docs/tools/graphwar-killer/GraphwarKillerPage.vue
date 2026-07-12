@@ -28,6 +28,7 @@ import {
   type GraphwarManagedController,
   type GraphwarManagedShooter,
 } from "./controllers/managed/controller";
+import { deriveGraphwarCapabilities, type GraphwarCapabilityReason } from "./controllers/page/capabilities";
 import { useGraphwarPathAppendWorkflow } from "./controllers/path/append-workflow";
 import { useGraphwarPathPointEditing } from "./controllers/path/point-editing";
 import { useGraphwarPathState } from "./controllers/path/state";
@@ -46,6 +47,12 @@ import { useGraphwarSmartPathfindingRunWorkflow } from "./controllers/pathfindin
 import { useGraphwarTargetingContext } from "./controllers/pathfinding/targeting/context";
 import { useGraphwarResultActions } from "./controllers/result/actions";
 import { useGraphwarScreenshotWorkflow } from "./controllers/screenshot/workflow";
+import {
+  applyGraphwarManagedFormulaProfileRepairPlan,
+  createDefaultGraphwarFormulaProfiles,
+  createGraphwarManagedFormulaProfileRepairPlan,
+  updateGraphwarFormulaProfile,
+} from "./controllers/settings/formula-profiles";
 import { useGraphwarSettingsValidation } from "./controllers/settings/validation";
 import { useGraphwarStageFeedback } from "./controllers/stage/feedback";
 import { useGraphwarStageHitTesting, type GraphwarStageHitTestingController } from "./controllers/stage/hit-testing";
@@ -101,7 +108,7 @@ import {
   createBoundsRectWithBoundaryExpansion,
   type GraphwarSmartPathfindingSoldierTarget as SmartPathfindingTarget,
 } from "./pathfinding/targeting";
-import GraphwarActionPanel from "./presentation/action/MainPanel.vue";
+import GraphwarActionPanel, { type GraphwarActionPanelModel } from "./presentation/action/MainPanel.vue";
 import GraphwarDetectionPanel, { type GraphwarDetectionPanelModel } from "./presentation/detection/MainPanel.vue";
 import GraphwarSmartPathfindingPanel, {
   type GraphwarSmartPathfindingPanelModel,
@@ -133,8 +140,6 @@ import {
   getGraphwarScreenshotHeaderStatus,
 } from "./presentation/status/screenshot";
 
-/** 寻路模式；auto-graph 保留为待重写的禁用入口。 */
-type PathfindingMode = "off" | "smart" | "auto-graph";
 /** 截图上的检测框，坐标均为图片像素。 */
 type DetectionBox = GraphwarDetectionBox;
 /** 舞台背景里的 Graphwar 坐标参考线，坐标均已投影为截图像素。 */
@@ -144,6 +149,15 @@ interface StageCoordinateLines {
   /** Graphwar 坐标网格线段。 */
   gridLines: GraphwarPathfindingLineSegment[];
 }
+/** Identifies which input produced the currently displayed recognition data. */
+type GraphwarDetectionProvenance =
+  | { source: "screenshot" }
+  | {
+      battleRevision: string;
+      gameInstanceId: string;
+      normalizedAgentUrl: string;
+      source: "agent";
+    };
 /** Minimal Wake Lock surface used without requiring optional browser typings. */
 interface GraphwarWakeLockSentinel {
   release: () => Promise<void>;
@@ -203,15 +217,30 @@ const equationMode = computed<EquationMode>({
     }
   },
 });
-const algorithmMode = ref<AlgorithmMode>("abs");
+const solverFormulaProfiles = ref(createDefaultGraphwarFormulaProfiles());
+const algorithmMode = computed<AlgorithmMode>({
+  get: () => solverFormulaProfiles.value[solverEquationMode.value].algorithm,
+  set: (algorithm) => {
+    solverFormulaProfiles.value = updateGraphwarFormulaProfile(solverFormulaProfiles.value, solverEquationMode.value, {
+      algorithm,
+    });
+  },
+});
 const minXText = ref(`-${graphwarDefaultXLimitText}`);
 const maxXText = ref(graphwarDefaultXLimitText);
 const minYText = ref(`-${graphwarVisibleYLimitText}`);
 const maxYText = ref(graphwarVisibleYLimitText);
 const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
-const stepGlitchModeEnabled = ref(false);
-// 邪道模式开关会跨方程保留；只有 Step y' 真正启用邪道公式时才限制寻路。
+const stepGlitchModeEnabled = computed({
+  get: () => solverFormulaProfiles.value.dy.stepGlitchModeEnabled,
+  set: (enabled: boolean) => {
+    solverFormulaProfiles.value = updateGraphwarFormulaProfile(solverFormulaProfiles.value, "dy", {
+      stepGlitchModeEnabled: enabled,
+    });
+  },
+});
+// 邪道偏好独立保存在 y' profile；只有当前 Step y' 才改变求解与寻路语义。
 const effectiveStepGlitchModeEnabled = computed(
   () => algorithmMode.value === "step" && solverEquationMode.value === "dy" && stepGlitchModeEnabled.value,
 );
@@ -236,10 +265,12 @@ const simulatorLaunchAngleText = ref("");
 const graphwarAgentEnabled = ref(false);
 const graphwarAgentBaseUrlText = ref(GRAPHWAR_AGENT_DEFAULT_BASE_URL);
 const graphwarAgentReadInProgress = ref(false);
+let graphwarAgentReadGeneration = 0;
 const graphwarAgentFireInProgress = ref(false);
 const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
 const graphwarManagedModeEnabled = ref(false);
+let graphwarManagedModeConfirmed = false;
 let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let graphwarManagedCalculationStatus:
   | { expiresAt: number; kind: SmartPathfindingStatusKind; message: string }
@@ -259,15 +290,14 @@ let graphwarManagedStatusMessage = "";
 let graphwarManagedWakeLock: GraphwarWakeLockSentinel | undefined;
 let graphwarManagedWakeLockGeneration = 0;
 let graphwarManagedWakeLockRequest: GraphwarWakeLockRequest | undefined;
-const graphwarAgentConfigured = computed(() => {
+const normalizedGraphwarAgentBaseUrl = computed(() => {
   if (!graphwarAgentEnabled.value || !graphwarAgentBaseUrlText.value.trim()) {
-    return false;
+    return undefined;
   }
   try {
-    normalizeGraphwarAgentBaseUrl(graphwarAgentBaseUrlText.value);
-    return true;
+    return normalizeGraphwarAgentBaseUrl(graphwarAgentBaseUrlText.value).toString();
   } catch {
-    return false;
+    return undefined;
   }
 });
 const activeRoutePlanningToleranceText = computed({
@@ -352,18 +382,29 @@ const graphwarPathfindingRunner = createGraphwarPathfindingRunner();
 const pathfindingCache = createGraphwarPathfindingCacheController();
 // 识别结果应由页面持有，供舞台投影、目标过滤、友方障碍和一键清图共享。
 const detectedSoldiers = ref<DetectionBox[]>([]);
+const detectionProvenance = ref<GraphwarDetectionProvenance>();
 const hoveredDetectedSoldierId = ref<string>();
-const smartPathfindingEnabled = ref(false);
+const pathPlanningEnabled = ref(false);
+// undefined 表示用户尚未选择；首次得到对应数据时才应用一次默认开启。
+const snapSoldiersPreference = ref<boolean>();
+const collisionCheckPreference = ref<boolean>();
+const snapSoldiersEnabled = computed(() => snapSoldiersPreference.value ?? false);
+const collisionCheckEnabled = computed(() => collisionCheckPreference.value ?? false);
 const friendlyFireEnabled = ref(false);
 const obstacleBrushDiameterText = ref("30");
 const searchAnimationEnabled = ref(true);
-const fastPathfindingEnabled = ref(true);
+const pathfindingRouteMode = ref<GraphwarPathfindingRouteMode>("visibility-graph");
+const deleteOptimizationEnabled = ref(false);
+let activePathfindingTask:
+  | { readonly kind: "single" }
+  | { readonly kind: "one-click"; readonly usesDagWorker: boolean }
+  | undefined;
 // 智能寻路和一键清图共用同一组运行状态、预览层和取消 token，避免两个异步任务同时回写页面。
 const smartPathfindingSession = useGraphwarSmartPathfindingSession({
   blockedPointFlashMs: smartPathfindingBlockedPointFlashMs,
   getCancelledMessage: () => createSmartPathfindingCancelledMessage(locale),
   getInProgressMessage: () => getSmartPathfindingInProgressMessage(),
-  isPathfindingModeActive: () => pathfindingMode.value === "smart",
+  isPathfindingModeActive: () => effectiveSmartPathfindingEnabled.value,
   pathStatus,
   pathfindingRunner: graphwarPathfindingRunner,
 });
@@ -411,6 +452,7 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
     getCommittedTargets: () => committedTargets.value,
+    getDeleteOptimizationEnabled: () => deleteOptimizationEnabled.value,
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
     getPathPixels: () => pathPixels.value,
@@ -419,7 +461,6 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
     getSimulationMask: () => simulationObstacleMask.value,
     getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
     getTolerances: () => (parsedObstacleTolerances.value.ok ? parsedObstacleTolerances.value : undefined),
-    isPathfindingWorkerCountValid: () => parsedPathfindingWorkerCount.value.ok,
   },
   pathfinding: {
     cache: pathfindingCache,
@@ -498,6 +539,23 @@ const {
   setStatus: setDetectionStatus,
 });
 const objectDetectionReady = computed(() => activeBoundsReady.value && Boolean(detectedObstacles.value));
+const activeObjectDetectionReady = computed(() => {
+  if (!objectDetectionReady.value) {
+    return false;
+  }
+  if (!graphwarAgentEnabled.value) {
+    return detectionProvenance.value?.source === "screenshot";
+  }
+  const provenance = detectionProvenance.value;
+  if (provenance?.source !== "agent") {
+    return false;
+  }
+  try {
+    return provenance.normalizedAgentUrl === normalizeGraphwarAgentBaseUrl(graphwarAgentBaseUrlText.value).toString();
+  } catch {
+    return false;
+  }
+});
 // 检测 workflow 应持有异步运行、状态绘制、debounce 和 worker 生命周期；跨 workflow 副作用由页面注入。
 const detectionWorkflow = useGraphwarDetectionWorkflow({
   boundsRect,
@@ -513,6 +571,7 @@ const detectionWorkflow = useGraphwarDetectionWorkflow({
       clearDetectionSoldierFlash();
       clearOneClickClearHitFlash();
       clearObstacleEditor();
+      detectionProvenance.value = undefined;
       hoveredDetectedSoldierId.value = undefined;
     },
     clearSmartPathfindingStatus,
@@ -520,8 +579,8 @@ const detectionWorkflow = useGraphwarDetectionWorkflow({
     flashDetectedSoldiers,
     invalidatePathfindingCaches,
     applyDetectedBounds,
-    onSmartCursorDisabled: () => {
-      hoveredDetectedSoldierId.value = undefined;
+    markScreenshotResult: () => {
+      detectionProvenance.value = { source: "screenshot" };
     },
     setToolModeToPath: () => {
       toolMode.value = "path";
@@ -540,7 +599,6 @@ const detectionWorkflow = useGraphwarDetectionWorkflow({
 const {
   autoDetectionEnabled,
   inProgress: detectionInProgress,
-  smartCursorEnabled,
   status: detectionStatus,
   statusKind: detectionStatusKind,
   statusWarning: detectionStatusWarning,
@@ -561,8 +619,10 @@ const {
 const effectiveSmartPathfindingEnabled = computed(
   () =>
     toolWorkflowMode.value !== "simulator" &&
-    smartPathfindingEnabled.value &&
-    (objectDetectionReady.value || graphwarAgentConfigured.value),
+    pathPlanningEnabled.value &&
+    activeObjectDetectionReady.value &&
+    !settingsMessage.value &&
+    parsedObstacleTolerances.value.ok,
 );
 const pathfindingObstacleEdgesActive = computed(() => effectiveSmartPathfindingEnabled.value);
 const includesFriendlySoldierObstacles = computed(() => !friendlyFireEnabled.value && pathPixels.value.length > 0);
@@ -634,6 +694,13 @@ const {
       obstacleToleranceLimit: graphwarObstacleToleranceLimit,
     },
   },
+});
+const effectiveOneClickClearTolerances = computed(() => {
+  if (deleteOptimizationEnabled.value) {
+    return parsedOneClickClearTolerances.value.ok ? parsedOneClickClearTolerances.value : undefined;
+  }
+  const tolerances = parsedObstacleTolerances.value;
+  return tolerances.ok ? { ...tolerances, oneClickClearDeleteCheckRadiusPlanePixels: 0 } : undefined;
 });
 
 function getGraphwarPlaneRadiusPixels(sourceRadius: number) {
@@ -746,25 +813,25 @@ const debugActivationCountdownMessage = computed(() => {
     ? ""
     : locale.ui.settings.debugActivationCountdown(formatDebugActivationRemainingSeconds(remainingMs));
 });
-const settingsHeaderStatusResult = computed(() =>
-  getFirstHeaderStatus(
+// 基础设置面板只应消费展示 DTO；模式切换、校验和调试长按流程仍由页面侧保持原语义。
+const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
+  const headerStatus = getFirstHeaderStatus(
     createHeaderStatus(settingsMessage.value, "error"),
     createHeaderStatus(debugActivationCountdownMessage.value, "warning"),
     createHeaderStatus(debugActivationSuccessVisible.value ? locale.ui.settings.debugInfoEnabled : "", "success"),
     createHeaderStatus(activeEquationDescription.value),
-  ),
-);
-// 基础设置面板只应消费展示 DTO；模式切换、校验和调试长按流程仍由页面侧保持原语义。
-const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
-  const headerStatus = settingsHeaderStatusResult.value;
+  );
   return {
     advancedSettingsVisible: advancedSettingsVisible.value,
     algorithmMode: algorithmMode.value,
-    algorithmModes: algorithmModes.value,
+    algorithmModes: algorithmModes.value.map((mode) => ({
+      ...mode,
+      disabled: equationMode.value === "ddy" && mode.value === "abs",
+    })),
     equationMode: equationMode.value,
     equationModes: equationModes.value.map((mode) => ({
       ...mode,
-      disabled: isEquationModeDisabled(mode.value),
+      disabled: false,
     })),
     headerStatus: {
       kind: headerStatus.kind,
@@ -775,8 +842,21 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
       maximum: MAX_FORMULA_DECIMAL_PLACES,
       text: precisionText.value,
     },
-    stepGlitchModeDisabled: equationMode.value !== "dy",
     stepGlitchModeEnabled: stepGlitchModeEnabled.value,
+    stepGlitchModeReason: graphwarManagedModeEnabled.value
+      ? getCapabilityReason("managed-lock")
+      : toolWorkflowMode.value !== "solver" || solverEquationMode.value !== "dy" || algorithmMode.value !== "step"
+        ? locale.ui.settings.stepGlitchModeInactiveReason
+        : stepGlitchModeEnabled.value && !detectedObstacles.value
+          ? locale.ui.settings.stepGlitchModeWaitingReason
+          : undefined,
+    stepGlitchModeState: graphwarManagedModeEnabled.value
+      ? "busy"
+      : toolWorkflowMode.value !== "solver" || solverEquationMode.value !== "dy" || algorithmMode.value !== "step"
+        ? "dormant"
+        : stepGlitchModeEnabled.value && !detectedObstacles.value
+          ? "dormant"
+          : "normal",
     stepOverflowProtectionEnabled: stepOverflowProtectionEnabled.value,
     steepnessText: steepnessText.value,
     toolWorkflowMode: toolWorkflowMode.value,
@@ -798,8 +878,9 @@ const boundsPreviewRect = computed(() =>
     : undefined,
 );
 const visibleBoundsRect = computed(() => boundsPreviewRect.value ?? boundsRect.value);
-// Agent 数据来自游戏内状态；关闭智能光标时仍保留识别参照，但点击/悬停交互仍只看 smartCursorEnabled。
-const recognizedObjectOverlayVisible = computed(() => smartCursorEnabled.value || graphwarAgentEnabled.value);
+const recognizedObjectOverlayVisible = computed(
+  () => detectedSoldiers.value.length > 0 || Boolean(detectedObstacles.value),
+);
 const stageCoordinateLines = computed<StageCoordinateLines>(() => {
   const boundsResult = parsedBounds.value;
   if (!graphwarAgentEnabled.value || !boundsResult.ok) {
@@ -810,8 +891,8 @@ const stageCoordinateLines = computed<StageCoordinateLines>(() => {
 });
 const activeRouteBoundaryInset = useGraphwarPathfindingRouteBoundaryInset({
   modes: {
+    collisionCheckEnabled,
     pathfindingObstacleEdgesActive,
-    smartCursorEnabled,
   },
   settings: {
     parsedObstacleTolerances,
@@ -863,11 +944,10 @@ const {
     soldiers: detectedSoldiers,
   },
   modes: {
+    collisionCheckEnabled,
     effectiveSmartPathfindingEnabled,
     includesFriendlySoldierObstacles,
     pathfindingObstacleEdgesActive,
-    smartCursorEnabled,
-    toolWorkflowMode,
   },
   settings: {
     activeSimulationBoundaryInset,
@@ -876,7 +956,9 @@ const {
     parsedObstacleTolerances,
   },
 });
-const trajectoryCollisionSettingsValid = computed(() => parsedObstacleTolerances.value.ok);
+const trajectoryCollisionSettingsValid = computed(
+  () => !collisionCheckEnabled.value || parsedObstacleTolerances.value.ok,
+);
 // 主轨迹 Module 在依赖准备完成后统一异步解算函数、模拟轨迹并原子发布结果。
 const {
   calculationFallbackReason: trajectoryCalculationFallbackReason,
@@ -952,12 +1034,63 @@ const graphwarAgentFireButtonText = computed(() => {
   }
   return locale.ui.result.fire;
 });
-const canFireGraphwarAgentFunction = computed(
-  () =>
-    !graphwarManagedModeEnabled.value &&
-    graphwarAgentConfigured.value &&
-    canCopyFormula.value &&
-    !graphwarAgentFireInProgress.value,
+/** Localises the stable reason shared by capability presentation and guarded commands. */
+function getCapabilityReason(reason: GraphwarCapabilityReason | undefined) {
+  return reason ? locale.ui.pathfinding.capabilityReasons[reason] : undefined;
+}
+
+// One derivation owns visible state and command guards; async workflows still repeat authoritative preflight checks.
+const graphwarCapabilities = computed(() =>
+  deriveGraphwarCapabilities(
+    {
+      activeSource: graphwarAgentEnabled.value ? "agent" : "screenshot",
+      agent: {
+        enabled: graphwarAgentEnabled.value,
+        normalizedBaseUrl: normalizedGraphwarAgentBaseUrl.value,
+      },
+      busy: {
+        agentFire: graphwarAgentFireInProgress.value,
+        agentRead: graphwarAgentReadInProgress.value,
+        managedMode: graphwarManagedModeEnabled.value,
+        pathfinding: smartPathfindingInProgress.value,
+      },
+      formula: {
+        managedSettingsValid: parsedBounds.value.ok && parsedPrecision.value.ok && parsedSteepness.value.ok,
+        oneClickClearSupported: supportsOneClickClear(algorithmMode.value, equationMode.value),
+        settingsValid: !settingsMessage.value,
+        usesStepGlitchRouting: effectiveStepGlitchModeEnabled.value,
+      },
+      pathfinding: {
+        deleteCheckRadiusValid: parsedOneClickClearTolerances.value.ok,
+        obstacleTolerancesValid: parsedObstacleTolerances.value.ok,
+        pathStartAvailable: mappedPathPoints.value.length > 0,
+        workerCountValid: parsedPathfindingWorkerCount.value.ok,
+      },
+      resultAvailable: canCopyFormula.value,
+      scene: {
+        boundsAvailable: activeBoundsReady.value,
+        imageAvailable: Boolean(imageUrl.value),
+        obstaclesAvailable: Boolean(detectedObstacles.value),
+        provenance:
+          detectionProvenance.value?.source === "agent"
+            ? {
+                battleRevision: detectionProvenance.value.battleRevision,
+                gameInstanceId: detectionProvenance.value.gameInstanceId,
+                normalizedAgentBaseUrl: detectionProvenance.value.normalizedAgentUrl,
+                source: "agent",
+              }
+            : detectionProvenance.value,
+        soldiersAvailable: detectedSoldiers.value.length > 0,
+      },
+      workflowMode: toolWorkflowMode.value,
+    },
+    {
+      collisionCheckEnabled: collisionCheckEnabled.value,
+      deleteOptimizationEnabled: deleteOptimizationEnabled.value,
+      pathPlanningEnabled: pathPlanningEnabled.value,
+      snapSoldiersEnabled: snapSoldiersEnabled.value,
+    },
+  ),
 );
 const statusAnnouncement = computed(() => {
   if (graphwarAgentFireInProgress.value) {
@@ -1012,7 +1145,19 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
     smartPathfinding: {
       clearStatus: clearSmartPathfindingStatus,
       flashBlockedPoint: flashSmartPathfindingBlockedPoint,
-      runWorkflow: smartPathfindingRunWorkflow,
+      runWorkflow: {
+        run: async (request) => {
+          const task = { kind: "single" } as const;
+          activePathfindingTask = task;
+          try {
+            return await smartPathfindingRunWorkflow.run(request);
+          } finally {
+            if (activePathfindingTask === task) {
+              activePathfindingTask = undefined;
+            }
+          }
+        },
+      },
       setStatus: setSmartPathfindingStatus,
     },
     targets: {
@@ -1062,6 +1207,11 @@ function createCurrentPrefixTargetCircle() {
 }
 
 // 一键清图 workflow 应集中预检、候选收集、worker 输入、cache 和结果落地；页面只保留当前状态入口。
+/** 托管需要预检三套配置；普通阶跃一键清图才由当前公式分支决定是否使用 DAG Worker。 */
+function requiresOneClickClearDagWorker() {
+  return graphwarManagedModeEnabled.value || !effectiveStepGlitchModeEnabled.value;
+}
+
 const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBox>({
   debug: {
     appendSearchWorkerTimings: appendOneClickClearSearchWorkerTimings,
@@ -1090,14 +1240,16 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
     getCommittedTargets: () => committedTargets.value,
+    getDeleteOptimizationEnabled: () => deleteOptimizationEnabled.value,
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
     getPathfindingWorkerCount: () =>
       parsedPathfindingWorkerCount.value.ok ? parsedPathfindingWorkerCount.value.workerCount : undefined,
     getPathPoints: () => pathPixels.value,
     getRouteMode: getPathfindingRouteMode,
+    requiresDagWorker: requiresOneClickClearDagWorker,
     getSimulationMask: () => smartPathfindingSimulationObstacleMask.value,
-    getTolerances: () => (parsedOneClickClearTolerances.value.ok ? parsedOneClickClearTolerances.value : undefined),
+    getTolerances: () => effectiveOneClickClearTolerances.value,
     isUnsupportedMode: isOneClickClearModeUnsupported,
   },
   messages: {
@@ -1190,7 +1342,7 @@ const {
     createSmartPathfindingSoldierTarget,
     getDetectedSoldierAtPoint,
     getDetectionBoxCenter,
-    smartCursorEnabled,
+    snapSoldiersEnabled,
   },
   trajectory: {
     formulaSettings: graphwarTrajectoryFormulaSettings,
@@ -1222,7 +1374,7 @@ const activeToolHint = computed(() => {
 });
 const visibleBoundaryExpansionRect = computed<BoundsRect | undefined>(() => {
   const simulationBoundaryInset = activeSimulationBoundaryInset.value;
-  if ((!smartCursorEnabled.value && !pathfindingObstacleEdgesActive.value) || simulationBoundaryInset <= 0) {
+  if ((!collisionCheckEnabled.value && !pathfindingObstacleEdgesActive.value) || simulationBoundaryInset <= 0) {
     return undefined;
   }
 
@@ -1270,8 +1422,6 @@ const inactiveDetectionBoxes = computed<DetectionBox[]>(() => {
   // 已选中的目标仍应保留浅蓝识别圈；排除它只用于防止重复作为下一目标。
   return detectedSoldiers.value.filter((box) => !activeBoxIds.has(box.id));
 });
-const pathfindingMode = computed<PathfindingMode>(() => (effectiveSmartPathfindingEnabled.value ? "smart" : "off"));
-
 const calculationMessage = computed(() => {
   if (toolWorkflowMode.value === "simulator") {
     if (pathPixels.value.length < 1) {
@@ -1309,9 +1459,10 @@ const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
 const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
   agent: {
     baseUrlText: graphwarAgentBaseUrlText.value,
-    configured: graphwarAgentConfigured.value,
     enabled: graphwarAgentEnabled.value,
     inProgress: graphwarAgentReadInProgress.value,
+    readReason: getCapabilityReason(graphwarCapabilities.value.agentRead.reason),
+    readState: graphwarCapabilities.value.agentRead.state,
   },
   autoDetectionEnabled: autoDetectionEnabled.value,
   canDetectBounds: Boolean(imageUrl.value) && !detectionInProgress.value && !graphwarAgentReadInProgress.value,
@@ -1332,7 +1483,7 @@ const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
     message: detectionHeaderStatus.value,
   },
   interactionDisabled: graphwarManagedModeEnabled.value,
-  smartCursorEnabled: smartCursorEnabled.value,
+  screenshotActionsVisible: !graphwarAgentEnabled.value,
   // 当前设置错误展示时，旧识别警告也应隐藏，避免混入上一轮结果元数据。
   statusWarning: {
     message: detectionSettingsMessage.value ? "" : detectionStatusWarning.value,
@@ -1352,9 +1503,7 @@ const magnifierZoomRangeStyle = computed(() => {
     "--graphwar-killer-range-progress": `${formatDecimal(progress, 4)}%`,
   };
 });
-const obstacleBrushAvailable = computed(
-  () => Boolean(detectedObstacles.value) && (smartCursorEnabled.value || smartPathfindingEnabled.value),
-);
+const obstacleBrushAvailable = computed(() => Boolean(detectedObstacles.value));
 const obstacleBrushControlsVisible = computed(() => toolMode.value === "obstacle");
 const obstacleBrushSliderDiameter = computed(() => {
   const diameter = parseFiniteNumber(obstacleBrushDiameterText.value);
@@ -1372,8 +1521,13 @@ const obstacleBrushRangeStyle = computed(() => {
   };
 });
 // 操作面板只应消费展示 DTO；工具切换和输入校验仍由页面侧维持原交互语义。
-const actionPanel = computed(() => ({
+const actionPanel = computed<GraphwarActionPanelModel>(() => ({
   activeToolHint: activeToolHint.value,
+  collisionCheck: {
+    enabled: collisionCheckEnabled.value,
+    reason: getCapabilityReason(graphwarCapabilities.value.collisionCheck.reason),
+    state: graphwarCapabilities.value.collisionCheck.state,
+  },
   interactionDisabled: graphwarManagedModeEnabled.value,
   liveClickPreviewEnabled: liveClickPreviewEnabled.value,
   magnifierEnabled: magnifierEnabled.value,
@@ -1397,6 +1551,16 @@ const actionPanel = computed(() => ({
   },
   obstacleBrushEraseEnabled: obstacleBrushEraseEnabled.value,
   obstacleEditsDirty: obstacleEditsDirty.value,
+  pathPlanning: {
+    enabled: pathPlanningEnabled.value,
+    reason: getCapabilityReason(graphwarCapabilities.value.pathPlanning.reason),
+    state: graphwarCapabilities.value.pathPlanning.state,
+  },
+  snapSoldiers: {
+    enabled: snapSoldiersEnabled.value,
+    reason: getCapabilityReason(graphwarCapabilities.value.snapSoldiers.reason),
+    state: graphwarCapabilities.value.snapSoldiers.state,
+  },
   toolMode: toolMode.value,
 }));
 const obstacleBrushPreview = computed(() => {
@@ -1415,56 +1579,29 @@ const obstacleBrushPreview = computed(() => {
   };
 });
 
-const smartPathfindingSettingsMessage = computed(() => {
-  if (toolWorkflowMode.value === "simulator") {
-    return "";
-  }
-  if (!parsedPathfindingWorkerCount.value.ok) {
-    return parsedPathfindingWorkerCount.value.message;
-  }
-  if (!parsedObstacleTolerances.value.ok) {
-    return parsedObstacleTolerances.value.message;
-  }
-  return "";
-});
 // 一键清图应保留原预检顺序，并在普通寻路容差上追加自身专属的删点半径校验。
 const oneClickClearSettingsMessage = computed(() => {
   if (toolWorkflowMode.value === "simulator") {
     return "";
   }
-  if (!parsedPathfindingWorkerCount.value.ok) {
+  if (!effectiveStepGlitchModeEnabled.value && !parsedPathfindingWorkerCount.value.ok) {
     return parsedPathfindingWorkerCount.value.message;
   }
-  if (!parsedOneClickClearTolerances.value.ok) {
-    return parsedOneClickClearTolerances.value.message;
-  }
-  return "";
-});
-const graphwarManagedEligibilityMessage = computed(() => {
-  if (toolWorkflowMode.value === "simulator") {
-    return locale.ui.pathfinding.managedModeUnsupportedTitle;
-  }
-  if (!graphwarAgentConfigured.value) {
-    return locale.ui.pathfinding.managedModeNeedAgentTitle;
-  }
-  if (smartPathfindingInProgress.value || graphwarAgentReadInProgress.value || graphwarAgentFireInProgress.value) {
-    return locale.ui.pathfinding.managedModeBusyTitle;
-  }
-  if (settingsMessage.value || oneClickClearSettingsMessage.value) {
-    return settingsMessage.value || oneClickClearSettingsMessage.value;
-  }
-  if (
-    !supportsOneClickClear(algorithmMode.value, "y") ||
-    !supportsOneClickClear(algorithmMode.value, "dy") ||
-    !supportsOneClickClear(algorithmMode.value, "ddy")
-  ) {
-    return locale.ui.pathfinding.managedModeUnsupportedTitle;
+  if (!effectiveOneClickClearTolerances.value) {
+    return deleteOptimizationEnabled.value && !parsedOneClickClearTolerances.value.ok
+      ? parsedOneClickClearTolerances.value.message
+      : parsedObstacleTolerances.value.ok
+        ? ""
+        : parsedObstacleTolerances.value.message;
   }
   return "";
 });
 const smartPathfindingPrerequisiteMessage = computed(() => {
-  if (graphwarAgentConfigured.value) {
+  if (activeObjectDetectionReady.value) {
     return "";
+  }
+  if (graphwarAgentEnabled.value) {
+    return locale.smartPathfinding.needDetection;
   }
   if (!imageUrl.value) {
     return getMissingStateImageMessage();
@@ -1472,10 +1609,7 @@ const smartPathfindingPrerequisiteMessage = computed(() => {
   if (!activeBoundsReady.value) {
     return locale.smartPathfinding.needBounds;
   }
-  if (!detectedObstacles.value) {
-    return locale.smartPathfinding.needDetection;
-  }
-  return "";
+  return locale.smartPathfinding.needDetection;
 });
 
 watch(
@@ -1514,19 +1648,22 @@ const trajectoryWarning = computed(() => {
   }
   return locale.status.trajectoryWarning.stopped.invalid;
 });
-const smartPathfindingHeaderStatusResult = computed(() =>
-  getSmartPathfindingHeaderStatus({
+// 智能寻路面板只应消费展示 DTO；按钮 guard、运行状态和调试耗时仍由页面侧保持原语义。
+const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() => {
+  const headerStatus = getSmartPathfindingHeaderStatus({
     smartPathfindingEnabled: effectiveSmartPathfindingEnabled.value,
-    smartPathfindingSettingsMessage: smartPathfindingSettingsMessage.value,
+    smartPathfindingSettingsMessage:
+      toolWorkflowMode.value === "simulator" || parsedObstacleTolerances.value.ok
+        ? ""
+        : parsedObstacleTolerances.value.message,
     smartPathfindingStatusMessage: smartPathfindingStatus.value,
     smartPathfindingStatusKind: smartPathfindingStatusKind.value,
     enableHintMessage: "",
-    hintMessage: locale.ui.pathfinding.smartPathfindingTitle,
-  }),
-);
-// 智能寻路面板只应消费展示 DTO；按钮 guard、运行状态和调试耗时仍由页面侧保持原语义。
-const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() => {
-  const headerStatus = smartPathfindingHeaderStatusResult.value;
+    hintMessage: locale.ui.actions.pathPlanningTitle,
+  });
+  const semanticCapability = graphwarCapabilities.value.semanticControls;
+  const oneClickClearCapability = graphwarCapabilities.value.oneClickClear;
+  const managedModeCapability = graphwarCapabilities.value.managedMode;
   return {
     debugTimingRows: smartPathfindingDebugTimingRows.value.map((entry, index) => ({
       indentLevel: entry.indentLevel,
@@ -1534,32 +1671,56 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
       text: entry.elapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
       title: entry.title,
     })),
-    debugTimingVisible: smartPathfindingEnabled.value && debugInfoEnabled.value,
-    fastPathfindingEnabled: fastPathfindingEnabled.value,
-    friendlyFireEnabled: friendlyFireEnabled.value,
+    debugTimingVisible: debugInfoEnabled.value,
+    deleteOptimization: {
+      enabled: deleteOptimizationEnabled.value,
+      reason: getCapabilityReason(semanticCapability.reason),
+      state: semanticCapability.state,
+    },
+    friendlyFire: {
+      enabled: friendlyFireEnabled.value,
+      reason: getCapabilityReason(semanticCapability.reason),
+      state: semanticCapability.state,
+    },
     headerStatus: {
       kind: headerStatus.kind,
       message: headerStatus.message,
       title: headerStatus.message,
     },
-    interactionDisabled: graphwarManagedModeEnabled.value,
     managedFriendlyFireWarning:
       graphwarManagedModeEnabled.value && friendlyFireEnabled.value
         ? locale.ui.pathfinding.managedFriendlyFireWarning
         : "",
-    // 已开启时必须始终允许用户关闭；未开启时才应用完整资格门禁。
-    managedModeDisabled: !graphwarManagedModeEnabled.value && Boolean(graphwarManagedEligibilityMessage.value),
-    managedModeEnabled: graphwarManagedModeEnabled.value,
-    managedModeTitle: graphwarManagedModeEnabled.value
-      ? locale.ui.pathfinding.managedModeDisableTitle
-      : graphwarManagedEligibilityMessage.value || locale.ui.pathfinding.managedModeTitle,
-    oneClickClearDisabled:
-      smartPathfindingInProgress.value || isOneClickClearModeUnsupported() || !objectDetectionReady.value,
-    oneClickClearTitle: getOneClickClearButtonTitle(),
-    searchAnimationEnabled: searchAnimationEnabled.value,
-    smartPathfindingEnabled: smartPathfindingEnabled.value,
-    smartPathfindingToggleDisabled: isSmartPathfindingDisabled(),
-    smartPathfindingToggleTitle: getSmartPathfindingToggleTitle(),
+    managedMode: {
+      enabled: graphwarManagedModeEnabled.value,
+      reason: getCapabilityReason(managedModeCapability.reason),
+      state: managedModeCapability.state,
+      title: graphwarManagedModeEnabled.value
+        ? locale.ui.pathfinding.managedModeDisableTitle
+        : locale.ui.pathfinding.managedModeTitle,
+    },
+    managedProfiles: locale.equationModes.map((equation) => {
+      const profile = solverFormulaProfiles.value[equation.value];
+      return {
+        equation: equation.label,
+        formula: `${locale.algorithmModes.find((algorithm) => algorithm.value === profile.algorithm)?.label ?? profile.algorithm}${
+          equation.value === "dy" && profile.algorithm === "step" && profile.stepGlitchModeEnabled
+            ? ` + ${locale.ui.settings.stepGlitchMode}`
+            : ""
+        }`,
+      };
+    }),
+    oneClickClear: {
+      reason: getCapabilityReason(oneClickClearCapability.reason),
+      state: oneClickClearCapability.state,
+      title: locale.ui.pathfinding.oneClickClearTitle,
+    },
+    routeMode: pathfindingRouteMode.value,
+    searchAnimation: {
+      enabled: searchAnimationEnabled.value,
+      state: "normal",
+    },
+    usesStepGlitchRouting: effectiveStepGlitchModeEnabled.value,
   };
 });
 
@@ -1586,6 +1747,7 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     obstacleSimulationToleranceText: activeObstacleSimulationToleranceText.value,
     oneClickClearDeleteCheckRadiusMinimumPlanePixels,
     oneClickClearDeleteCheckRadiusText: oneClickClearDeleteCheckRadiusText.value,
+    oneClickClearDeleteCheckRadiusVisible: deleteOptimizationEnabled.value,
     routePlanningToleranceText: activeRoutePlanningToleranceText.value,
     workerCountText: pathfindingWorkerCountText.value,
   },
@@ -1846,8 +2008,9 @@ const resultPanel = computed(() => {
   const solverResult = formulaResult.value;
   return {
     agentFireButtonText: graphwarAgentFireButtonText.value,
+    agentFireReason: getCapabilityReason(graphwarCapabilities.value.agentFire.reason),
+    agentFireState: graphwarCapabilities.value.agentFire.state,
     agentFireVisible: graphwarAgentEnabled.value,
-    canFireAgentFunction: canFireGraphwarAgentFunction.value,
     canClearSimulatorInputs: canClearSimulatorInputs.value,
     canCopyFormula: canCopyFormula.value,
     calculationMessage: calculationMessage.value,
@@ -1927,7 +2090,6 @@ const screenshotStatusWarning = computed(() => {
 const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
   busyOverlayVisible: detectionInProgress.value,
   headerStatus: screenshotHeaderStatus.value,
-  imageActionsVisible: !graphwarAgentEnabled.value,
   imageStatusText: screenshotImageStatusText.value,
   imageUrl: imageUrl.value,
   magnifier: {
@@ -2025,7 +2187,26 @@ watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTop
   scheduleGraphwarObjectDetection();
 });
 
+watch(
+  detectedSoldiers,
+  (soldiers) => {
+    if (snapSoldiersPreference.value === undefined && soldiers.length > 0) {
+      snapSoldiersPreference.value = true;
+    }
+  },
+  { deep: false },
+);
+
+watch(detectedObstacles, (obstacles) => {
+  if (collisionCheckPreference.value === undefined && obstacles) {
+    collisionCheckPreference.value = true;
+  }
+});
+
 watch([formulaOutputDecimalPlaces], () => {
+  if (toolWorkflowMode.value !== "solver") {
+    return;
+  }
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
 });
@@ -2037,17 +2218,27 @@ watch([algorithmMode, solverEquationMode], () => {
   }
   clearSmartPathfindingStatus();
   cancelSmartPathfinding(false);
-  if (algorithmMode.value === "abs" && solverEquationMode.value === "ddy") {
-    solverEquationMode.value = "y";
-  }
 });
 
 watch([stepOverflowProtectionEnabled], () => {
+  if (toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
+    return;
+  }
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
 });
 
-watch([activeObstacleSimulationToleranceText, steepnessText], () => {
+watch([activeObstacleSimulationToleranceText], () => {
+  if (collisionCheckEnabled.value || activePathfindingTask) {
+    cancelSmartPathfinding(false);
+    clearSmartPathfindingStatus();
+  }
+});
+
+watch(steepnessText, () => {
+  if (toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
+    return;
+  }
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
 });
@@ -2060,49 +2251,48 @@ watch(effectiveStepGlitchModeEnabled, () => {
   clearSmartPathfindingStatus();
 });
 
-watch([smartCursorEnabled, smartPathfindingEnabled, detectedObstacles], () => {
+watch(detectedObstacles, () => {
   if (toolMode.value === "obstacle" && !obstacleBrushAvailable.value) {
     setToolMode("path");
   }
 });
 
-watch([objectDetectionReady, smartPathfindingEnabled, graphwarAgentConfigured], () => {
-  if (!smartPathfindingEnabled.value || objectDetectionReady.value || graphwarAgentConfigured.value) {
+watch([activeRoutePlanningToleranceText, minXText, maxXText, minYText, maxYText], () => {
+  if (graphwarManagedModeEnabled.value) {
     return;
   }
-
+  // 这些输入会改变几何搜索、worker 并行或公式边界语义，页面 cache 和 worker cache 必须一起失效。
   cancelSmartPathfinding(false);
+  invalidatePathfindingCaches();
   clearSmartPathfindingStatus();
-  smartPathfindingEnabled.value = false;
 });
 
-watch(
-  [
-    pathfindingWorkerCountText,
-    activeRoutePlanningToleranceText,
-    oneClickClearDeleteCheckRadiusText,
-    minXText,
-    maxXText,
-    minYText,
-    maxYText,
-  ],
-  () => {
-    if (graphwarManagedModeEnabled.value) {
-      return;
-    }
-    // 这些输入会改变几何搜索、worker 并行或公式边界语义，页面 cache 和 worker cache 必须一起失效。
-    cancelSmartPathfinding(false);
-    invalidatePathfindingCaches();
-    clearSmartPathfindingStatus();
-  },
-);
-
-/** 根据当前算法限制 Graphwar 不支持或工具无法稳定生成的公式模式。 */
-function isEquationModeDisabled(mode: EquationMode) {
-  if (toolWorkflowMode.value === "simulator") {
-    return false;
+watch(pathfindingWorkerCountText, () => {
+  if (
+    graphwarManagedModeEnabled.value ||
+    activePathfindingTask?.kind !== "one-click" ||
+    !activePathfindingTask.usesDagWorker
+  ) {
+    return;
   }
-  return algorithmMode.value === "abs" && mode === "ddy";
+  cancelSmartPathfinding(false);
+  clearSmartPathfindingStatus();
+});
+
+watch(oneClickClearDeleteCheckRadiusText, () => {
+  if (!deleteOptimizationEnabled.value) {
+    return;
+  }
+  if (activePathfindingTask?.kind === "one-click") {
+    cancelSmartPathfinding(false);
+  }
+  invalidatePathfindingResultCache();
+  clearSmartPathfindingStatus();
+});
+
+/** 三种游戏模式始终可进入；不兼容算法由对应 profile 的算法选择器禁用。 */
+function isEquationModeDisabled() {
+  return false;
 }
 
 /** 切换公式生成/模拟器工作流，并清理只属于旧工作流的临时状态。 */
@@ -2124,8 +2314,6 @@ function setToolWorkflowMode(mode: ToolWorkflowMode) {
       simulatorPathPixels.value = [solverPathPixels.value[0]];
       simulatorTrajectoryStrokeColor.value = solverTrajectoryStrokeColor.value;
     }
-  } else if (algorithmMode.value === "abs" && solverEquationMode.value === "ddy") {
-    solverEquationMode.value = "y";
   }
   toolWorkflowMode.value = mode;
   clearPathInteractionState();
@@ -2134,11 +2322,34 @@ function setToolWorkflowMode(mode: ToolWorkflowMode) {
 
 /** 切换公式解释模式；若算法不支持则忽略，避免 UI 进入无效组合。 */
 function setEquationMode(mode: EquationMode) {
-  if (graphwarManagedModeEnabled.value || isEquationModeDisabled(mode) || equationMode.value === mode) {
+  if (graphwarManagedModeEnabled.value || equationMode.value === mode) {
     return;
   }
   clearSmartPathfindingStatus();
   equationMode.value = mode;
+}
+
+/** 更新当前游戏模式的公式算法；y'' 不接受双绝对值，但不会影响其他 profile。 */
+function setAlgorithmMode(mode: AlgorithmMode) {
+  if (graphwarManagedModeEnabled.value || (solverEquationMode.value === "ddy" && mode === "abs")) {
+    return;
+  }
+  algorithmMode.value = mode;
+}
+
+/** 开启邪道时原子进入其唯一有效组合；关闭时只保留当前公式模式。 */
+function toggleStepGlitchMode() {
+  if (graphwarManagedModeEnabled.value) {
+    return;
+  }
+  if (stepGlitchModeEnabled.value) {
+    stepGlitchModeEnabled.value = false;
+    return;
+  }
+  setToolWorkflowMode("solver");
+  solverEquationMode.value = "dy";
+  algorithmMode.value = "step";
+  stepGlitchModeEnabled.value = true;
 }
 
 /** 新截图应用后清理依赖旧图片的业务状态；旧边界矩形只保留为参考，需要重新确认后才可用于识别。 */
@@ -2280,22 +2491,36 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
   if (trigger === "auto") {
     return;
   }
-  if (graphwarManagedModeEnabled.value || graphwarAgentReadInProgress.value) {
+  const capability = graphwarCapabilities.value.agentRead;
+  if (capability.state !== "normal") {
+    setDetectionStatus(getCapabilityReason(capability.reason) ?? "", "warning");
     return;
   }
 
+  const requestBaseUrl = normalizedGraphwarAgentBaseUrl.value;
+  if (!requestBaseUrl) {
+    return;
+  }
+  const requestGeneration = ++graphwarAgentReadGeneration;
+  // 同一代次、来源和规范化 URL 必须全部匹配，响应才仍属于当前页面场景。
+  const requestIsCurrent = () =>
+    requestGeneration === graphwarAgentReadGeneration &&
+    !graphwarManagedModeEnabled.value &&
+    graphwarAgentEnabled.value &&
+    normalizedGraphwarAgentBaseUrl.value === requestBaseUrl;
   graphwarAgentReadInProgress.value = true;
   cancelDetection(false);
   imageStatus.value = locale.status.agent.reading;
   setDetectionStatus(locale.status.agent.reading, "warning");
   try {
-    const snapshot = await readGraphwarAgentSnapshot(graphwarAgentBaseUrlText.value);
-    if (graphwarManagedModeEnabled.value) {
+    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl);
+    // Agent 响应只属于发起时的来源和规范化地址；迟到响应不能覆盖用户刚切换的新场景。
+    if (!requestIsCurrent()) {
       return;
     }
     applyGraphwarAgentSnapshot(snapshot, snapshot.localCurrentTurnSoldierPoint);
   } catch (error) {
-    if (graphwarManagedModeEnabled.value) {
+    if (!requestIsCurrent()) {
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
@@ -2303,7 +2528,9 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
     imageStatus.value = failedMessage;
     setDetectionStatus(failedMessage, "error");
   } finally {
-    graphwarAgentReadInProgress.value = false;
+    if (requestGeneration === graphwarAgentReadGeneration) {
+      graphwarAgentReadInProgress.value = false;
+    }
   }
 }
 
@@ -2321,6 +2548,12 @@ function applyGraphwarAgentSnapshot(snapshot: GraphwarAgentSnapshot, pathStart: 
     snapshot.detectionResult,
     locale.status.agent.loaded(snapshot.detectionResult.soldiers.length),
   );
+  detectionProvenance.value = {
+    battleRevision: snapshot.state.battleRevision,
+    gameInstanceId: snapshot.state.gameInstanceId,
+    normalizedAgentUrl: normalizeGraphwarAgentBaseUrl(snapshot.baseUrl).toString(),
+    source: "agent",
+  };
   // Agent 当前回合是权威状态；只替换发射点，保留用户已经选好的后续目标。
   if (pathStart) {
     setPathPixels(pathPixels.value.length > 0 ? [pathStart, ...pathPixels.value.slice(1)] : [pathStart]);
@@ -2331,7 +2564,10 @@ function applyGraphwarAgentSnapshot(snapshot: GraphwarAgentSnapshot, pathStart: 
 
 /** 通过 Agent 调用 Graphwar 原版开火路径，提交当前结果面板里的函数文本。 */
 async function fireGraphwarAgentFunction() {
-  if (!canFireGraphwarAgentFunction.value) {
+  const capability = graphwarCapabilities.value.agentFire;
+  if (capability.state !== "normal") {
+    graphwarAgentFireFailureMessage.value = getCapabilityReason(capability.reason) ?? "";
+    setGraphwarAgentFireStatus("error");
     return;
   }
 
@@ -2415,7 +2651,7 @@ function applyGraphwarAgentEquationMode(mode: EquationMode | undefined) {
   }
   if (toolWorkflowMode.value === "simulator") {
     simulatorEquationMode.value = mode;
-  } else if (!isEquationModeDisabled(mode)) {
+  } else {
     solverEquationMode.value = mode;
   }
 }
@@ -2426,13 +2662,27 @@ function toggleGraphwarManagedMode() {
     stopGraphwarManagedMode(true);
     return;
   }
-  if (!smartPathfindingEnabled.value || graphwarManagedEligibilityMessage.value) {
+  const capability = graphwarCapabilities.value.managedMode;
+  if (capability.state !== "normal") {
     setSmartPathfindingStatus(
-      graphwarManagedEligibilityMessage.value || locale.ui.pathfinding.managedModeTitle,
+      getCapabilityReason(capability.reason) ?? locale.ui.pathfinding.managedModeTitle,
       "warning",
     );
     return;
   }
+
+  const repairPlan = createGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value);
+  if (!graphwarManagedModeConfirmed) {
+    const repairedModes = locale.equationModes
+      .filter((mode) => repairPlan[mode.value] !== undefined)
+      .map((mode) => mode.label)
+      .join(", ");
+    if (!window.confirm(locale.ui.pathfinding.managedModeConfirmation(repairedModes, friendlyFireEnabled.value))) {
+      return;
+    }
+    graphwarManagedModeConfirmed = true;
+  }
+  solverFormulaProfiles.value = applyGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value, repairPlan);
 
   let client: GraphwarAgentClient;
   try {
@@ -2630,7 +2880,8 @@ function handleGraphwarManagedState(
 
 /** 绑定当前权威回合和所有搜索语义，确保结果不会跨回合复用。 */
 function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shooter: GraphwarManagedShooter) {
-  if (!parsedBounds.value.ok || !parsedPathfindingWorkerCount.value.ok || !parsedOneClickClearTolerances.value.ok) {
+  const tolerances = effectiveOneClickClearTolerances.value;
+  if (!parsedBounds.value.ok || !parsedPathfindingWorkerCount.value.ok || !tolerances) {
     return "";
   }
   const settings = createPathTrajectoryFormulaSettings();
@@ -2639,19 +2890,20 @@ function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shoot
     battleRevision: state.battleRevision,
     bounds: parsedBounds.value.bounds,
     decimalPlaces: settings.decimalPlaces,
+    deleteOptimizationEnabled: deleteOptimizationEnabled.value,
     equation: state.equationMode,
     formulaPathSteepness: settings.formulaPathSteepness,
     friendlyFire: friendlyFireEnabled.value,
     gameInstanceId: state.gameInstanceId,
     pathfindingWorkerCount: parsedPathfindingWorkerCount.value.workerCount,
-    routeMode: getPathfindingRouteMode(),
+    routeMode: settings.stepGlitchMode ? "visibility-graph" : getPathfindingRouteMode(),
     shooterPlayerId: shooter.player.id,
     shooterSoldierIndex: shooter.soldier.index,
     shooterTeam: shooter.player.team,
     steepness: settings.steepness,
     stepGlitchMode: settings.stepGlitchMode,
     stepOverflowProtection: settings.stepOverflowProtection,
-    tolerances: parsedOneClickClearTolerances.value,
+    tolerances,
     turnToken: state.turnToken,
   });
 }
@@ -2662,7 +2914,7 @@ async function runGraphwarManagedSearch(sceneKey: string) {
   graphwarManagedSearchStartedAt = nowMs();
   graphwarManagedSearchState = "running";
   setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(), "warning");
-  const succeeded = await oneClickClearRunWorkflow.run({
+  const succeeded = await runOneClickClearWorkflow({
     onIncumbent: (incumbent) => {
       if (
         !graphwarManagedModeEnabled.value ||
@@ -2919,11 +3171,28 @@ function toggleAutoDetection() {
   detectionWorkflow.toggleAutoDetection();
 }
 
-/** 切换是否使用 Agent；只影响识别来源，不会清掉当前截图或识别结果。 */
+/** 作废旧 Agent 场景的异步读取、寻路和派生缓存，保留当前画布供新来源继续使用。 */
+function invalidateGraphwarAgentSceneWork() {
+  const agentReadWasInProgress = graphwarAgentReadInProgress.value;
+  graphwarAgentReadGeneration += 1;
+  graphwarAgentReadInProgress.value = false;
+  // 只收尾本次 Agent reading 文案；并行产生的其他检测状态必须保留。
+  if (agentReadWasInProgress && imageStatus.value === locale.status.agent.reading) {
+    imageStatus.value = "";
+  }
+  if (agentReadWasInProgress && detectionStatus.value === locale.status.agent.reading) {
+    setDetectionStatus("", "info");
+  }
+  invalidatePathfindingCaches();
+  clearSmartPathfindingStatus();
+}
+
+/** 切换是否使用 Agent；保留当前画布，但立即阻止旧来源的异步结果回写。 */
 function toggleGraphwarAgentUsage() {
   if (graphwarManagedModeEnabled.value) {
     return;
   }
+  invalidateGraphwarAgentSceneWork();
   graphwarAgentEnabled.value = !graphwarAgentEnabled.value;
   if (graphwarAgentEnabled.value) {
     detectionWorkflow.cancel(false);
@@ -2937,31 +3206,47 @@ function setGraphwarAgentBaseUrlText(value: string) {
   if (graphwarManagedModeEnabled.value) {
     return;
   }
+  const previousBaseUrl = normalizedGraphwarAgentBaseUrl.value;
   graphwarAgentBaseUrlText.value = value;
+  // 尾斜杠等价写法仍指向同一场景，不应打断正在运行的任务。
+  if (graphwarAgentEnabled.value && previousBaseUrl !== normalizedGraphwarAgentBaseUrl.value) {
+    invalidateGraphwarAgentSceneWork();
+  }
   setGraphwarAgentFireStatus("idle");
 }
 
-/** 切换智能光标；关闭时清掉士兵悬停，避免残留高亮。 */
-function toggleSmartCursor() {
+/** 切换士兵吸附；关闭时清掉悬停，避免视觉状态暗示仍会吸附。 */
+function toggleSnapSoldiers() {
   if (graphwarManagedModeEnabled.value) {
     return;
   }
-  detectionWorkflow.toggleSmartCursor();
+  snapSoldiersPreference.value = !snapSoldiersEnabled.value;
+  if (!snapSoldiersEnabled.value) {
+    hoveredDetectedSoldierId.value = undefined;
+  }
 }
 
-/** 切换智能寻路，并取消当前异步寻路任务。 */
-function toggleSmartPathfinding() {
+/** 切换手工碰撞检查；寻路任务仍使用自己的强制碰撞输入。 */
+function toggleCollisionCheck() {
   if (graphwarManagedModeEnabled.value) {
     return;
   }
-  if (isSmartPathfindingDisabled()) {
-    setSmartPathfindingStatus(getSmartPathfindingDisabledMessage(), "warning");
+  collisionCheckPreference.value = !collisionCheckEnabled.value;
+}
+
+/** 切换单目标路径规划；休眠状态仍允许用户预先保存偏好。 */
+function togglePathPlanning() {
+  const capability = graphwarCapabilities.value.pathPlanning;
+  if (capability.state === "blocked" || capability.state === "busy") {
+    if (capability.reason !== "managed-lock") {
+      setSmartPathfindingStatus(getCapabilityReason(capability.reason) ?? "", "warning");
+    }
     return;
   }
 
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
-  smartPathfindingEnabled.value = !smartPathfindingEnabled.value;
+  pathPlanningEnabled.value = !pathPlanningEnabled.value;
 }
 
 /** 同步障碍笔刷直径文本，保留非法输入供校验提示展示。 */
@@ -2977,36 +3262,14 @@ function setMagnifierZoomText(value: string) {
   magnifierZoomText.value = value;
 }
 
-/** 智能寻路只依赖通用的截图、边界和障碍准备状态。 */
-function isSmartPathfindingDisabled() {
-  return Boolean(smartPathfindingPrerequisiteMessage.value);
-}
-
 /** 返回智能寻路被禁用的具体原因。 */
 function getSmartPathfindingDisabledMessage() {
   return smartPathfindingPrerequisiteMessage.value;
 }
 
-/** 返回智能寻路按钮 title，禁用时优先解释原因。 */
-function getSmartPathfindingToggleTitle() {
-  return isSmartPathfindingDisabled()
-    ? getSmartPathfindingDisabledMessage()
-    : locale.ui.pathfinding.smartPathfindingTitle;
-}
-
 /** 复用单一能力表判断当前组合，避免托管和手动入口各自硬编码算法。 */
 function isOneClickClearModeUnsupported() {
   return !supportsOneClickClear(algorithmMode.value, equationMode.value);
-}
-
-/** 返回一键清图按钮 title，不支持当前模式时直接解释禁用原因。 */
-function getOneClickClearButtonTitle() {
-  if (!objectDetectionReady.value) {
-    return smartPathfindingPrerequisiteMessage.value;
-  }
-  return isOneClickClearModeUnsupported()
-    ? locale.smartPathfinding.oneClickClear.unsupported
-    : locale.ui.pathfinding.oneClickClearTitle;
 }
 
 /** 切换友伤设置；该设置会改变士兵是否写入障碍 mask，因此需要重建路线。 */
@@ -3028,23 +3291,39 @@ function toggleSearchAnimation() {
   clearSmartPathfindingPreview();
 }
 
-/** 切换几何路线算法；算法改变会让旧搜索结果和 worker 私有 cache 都失效。 */
-function toggleFastPathfinding() {
+/** 更新普通几何路线算法；邪道扫描不消费该设置，也不应因此被取消。 */
+function setPathfindingRouteMode(mode: GraphwarPathfindingRouteMode) {
+  if (graphwarManagedModeEnabled.value || pathfindingRouteMode.value === mode) {
+    return;
+  }
+  if (!effectiveStepGlitchModeEnabled.value && smartPathfindingInProgress.value) {
+    cancelSmartPathfinding(false);
+  }
+  pathfindingRouteMode.value = mode;
+  if (!effectiveStepGlitchModeEnabled.value) {
+    invalidatePathfindingCaches();
+    clearSmartPathfindingStatus();
+    clearSmartPathfindingPreview();
+  }
+}
+
+/** 切换删点优化；只丢弃最终结果缓存，保留与路线几何相同的 Worker 准备数据。 */
+function toggleDeleteOptimization() {
   if (graphwarManagedModeEnabled.value) {
     return;
   }
   if (smartPathfindingInProgress.value) {
     cancelSmartPathfinding(false);
   }
-  fastPathfindingEnabled.value = !fastPathfindingEnabled.value;
-  invalidatePathfindingCaches();
+  deleteOptimizationEnabled.value = !deleteOptimizationEnabled.value;
+  invalidatePathfindingResultCache();
   clearSmartPathfindingStatus();
   clearSmartPathfindingPreview();
 }
 
-/** 页面开关叫“快速”，worker 协议使用稳定算法名，避免文案影响缓存和消息格式。 */
+/** 邪道固定使用 X+ 扫描；普通模式才消费用户选择的几何路线算法。 */
 function getPathfindingRouteMode(): GraphwarPathfindingRouteMode {
-  return fastPathfindingEnabled.value ? "visibility-graph" : "theta-star";
+  return effectiveStepGlitchModeEnabled.value ? "visibility-graph" : pathfindingRouteMode.value;
 }
 
 /** 根据当前模式将指针点击分发给边界点选或路径点选。 */
@@ -3121,7 +3400,7 @@ function handleStagePointerDown(event: PointerEvent) {
   }
 
   const selectedSoldier = getDetectedSoldierAtPoint(point);
-  if (smartCursorEnabled.value && selectedSoldier) {
+  if (snapSoldiersEnabled.value && selectedSoldier) {
     void appendDetectedSoldierPathPoint(selectedSoldier);
     return;
   }
@@ -3131,10 +3410,26 @@ function handleStagePointerDown(event: PointerEvent) {
 
 /** 一键清图：从当前路径尾部出发，完整遍历 x 单调可达状态并追加当前模型下击杀最多的路径。 */
 async function runOneClickClear() {
-  if (graphwarManagedModeEnabled.value) {
+  const capability = graphwarCapabilities.value.oneClickClear;
+  if (capability.state !== "normal") {
+    setSmartPathfindingStatus(getCapabilityReason(capability.reason) ?? "", "warning");
     return false;
   }
-  return oneClickClearRunWorkflow.run();
+  return runOneClickClearWorkflow();
+}
+
+/** 标记一键清图任务，让只属于该任务的设置变化不会取消普通单目标寻路。 */
+async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClearRunWorkflow.run>) {
+  // 冻结启动时实际采用的分支，避免运行期间的响应式配置让休眠参数误取消任务。
+  const task = { kind: "one-click", usesDagWorker: requiresOneClickClearDagWorker() } as const;
+  activePathfindingTask = task;
+  try {
+    return await oneClickClearRunWorkflow.run(...args);
+  } finally {
+    if (activePathfindingTask === task) {
+      activePathfindingTask = undefined;
+    }
+  }
 }
 
 /** 路径变更后同步落地并清空旧状态。 */
@@ -3294,7 +3589,7 @@ function handleStagePointerMove(event: PointerEvent) {
     clearLiveClickPreviewPointerPoint();
   }
   hoveredPathPointIndex.value = pathPointIndex;
-  const hoveredSoldier = smartCursorEnabled.value ? getDetectedSoldierAtPoint(point)?.id : undefined;
+  const hoveredSoldier = snapSoldiersEnabled.value ? getDetectedSoldierAtPoint(point)?.id : undefined;
   hoveredDetectedSoldierId.value = hoveredSoldier;
   if (toolMode.value !== "bounds") {
     return;
@@ -3476,12 +3771,12 @@ function undoLastPoint() {
       :panel="settingsPanel"
       @cancel-debug-activation-hold="!graphwarManagedModeEnabled && cancelDebugActivationHold()"
       @finish-debug-activation-hold="!graphwarManagedModeEnabled && finishDebugActivationHold()"
-      @set-algorithm-mode="!graphwarManagedModeEnabled && (algorithmMode = $event)"
+      @set-algorithm-mode="setAlgorithmMode"
       @set-equation-mode="setEquationMode"
       @set-tool-workflow-mode="setToolWorkflowMode"
       @start-debug-activation-hold="!graphwarManagedModeEnabled && startDebugActivationHold($event)"
       @toggle-advanced-settings="toggleAdvancedSettings"
-      @toggle-step-glitch-mode="!graphwarManagedModeEnabled && (stepGlitchModeEnabled = !stepGlitchModeEnabled)"
+      @toggle-step-glitch-mode="toggleStepGlitchMode"
       @toggle-step-overflow-protection="
         !graphwarManagedModeEnabled && (stepOverflowProtectionEnabled = !stepOverflowProtectionEnabled)
       "
@@ -3524,24 +3819,24 @@ function undoLastPoint() {
       <GraphwarDetectionPanel
         :locale="locale"
         :panel="detectionPanel"
+        @capture-image="!graphwarManagedModeEnabled && captureScreenImage()"
         @detect-bounds="void detectGraphwarBounds()"
         @detect-objects="void detectGraphwarObjectsInCurrentBounds()"
         @read-agent="void readGraphwarAgent()"
         @toggle-agent-usage="toggleGraphwarAgentUsage"
         @toggle-auto-detection="toggleAutoDetection"
-        @toggle-smart-cursor="toggleSmartCursor"
+        @upload-image="!graphwarManagedModeEnabled && handleImageUpload($event)"
         @update-agent-base-url="setGraphwarAgentBaseUrlText"
       />
       <GraphwarSmartPathfindingPanel
-        v-if="toolWorkflowMode !== 'simulator'"
         :locale="locale"
         :panel="smartPathfindingPanel"
         @run-one-click-clear="void runOneClickClear()"
+        @set-route-mode="setPathfindingRouteMode"
+        @toggle-delete-optimization="toggleDeleteOptimization"
         @toggle-friendly-fire="toggleFriendlyFire"
-        @toggle-fast-pathfinding="toggleFastPathfinding"
         @toggle-search-animation="toggleSearchAnimation"
         @toggle-managed-mode="toggleGraphwarManagedMode"
-        @toggle-smart-pathfinding="toggleSmartPathfinding"
       />
     </div>
     <GraphwarActionPanel
@@ -3550,9 +3845,12 @@ function undoLastPoint() {
       @clear-obstacle-edits="!graphwarManagedModeEnabled && resetObstacleEdits()"
       @clear-path="clearPath"
       @set-tool-mode="setToolMode"
+      @toggle-collision-check="toggleCollisionCheck"
       @toggle-live-click-preview="liveClickPreviewEnabled = !liveClickPreviewEnabled"
       @toggle-magnifier="magnifierEnabled = !magnifierEnabled"
       @toggle-obstacle-brush-erase="!graphwarManagedModeEnabled && toggleObstacleBrushErase()"
+      @toggle-path-planning="togglePathPlanning"
+      @toggle-snap-soldiers="toggleSnapSoldiers"
       @undo-point="undoLastPoint"
       @update-magnifier-zoom="setMagnifierZoomText"
       @update-obstacle-brush-diameter="setObstacleBrushDiameterText"
@@ -3561,7 +3859,6 @@ function undoLastPoint() {
       :locale="locale"
       :panel="screenshotPanel"
       @cancel-detection="cancelDetection(true)"
-      @capture-image="!graphwarManagedModeEnabled && captureScreenImage()"
       @drop-image="!graphwarManagedModeEnabled && handleDrop($event)"
       @image-load="handleImageLoad"
       @set-image-element="setScreenshotImageElement"
@@ -3571,7 +3868,6 @@ function undoLastPoint() {
       @stage-pointer-leave="handleStagePointerLeave"
       @stage-pointer-move="handleStagePointerMove"
       @stage-pointer-up="handleStagePointerUp"
-      @upload-image="!graphwarManagedModeEnabled && handleImageUpload($event)"
     />
     <GraphwarResultPanel
       :locale="locale"
@@ -3596,7 +3892,7 @@ function undoLastPoint() {
 .graphwar-killer {
   background: var(--vp-c-bg-soft);
   border: 1px solid var(--vp-c-divider);
-  border-radius: 12px;
+  border-radius: 8px;
   display: grid;
   gap: 8px;
   margin: 10px 0 18px;

@@ -189,13 +189,13 @@ export const graphwarKillerLocale = {
     currentPathBlocked: "The simulation did not reach the current last path point, so pathfinding cannot start",
     failure: (elapsed) =>
       elapsed === undefined
-        ? "Smart Pathfinding failed: no valid path found"
-        : `Smart Pathfinding failed: no valid path found in ${elapsed}`,
+        ? "Path Planning failed: no valid path found"
+        : `Path Planning failed: no valid path found in ${elapsed}`,
     forwardMinimumDouble: "the next representable double-precision floating-point value",
     forwardPath: (minimumStep) =>
       `Each point's Graphwar x must be strictly greater than the previous point, moving at least to ${minimumStep}`,
-    needBounds: "Detect or draw coordinate-system bounds before using Smart Pathfinding",
-    needDetection: "Detect soldiers and obstacles before using Smart Pathfinding",
+    needBounds: "Detect or draw coordinate-system bounds before using Path Planning",
+    needDetection: "Detect soldiers and obstacles before using Path Planning",
     inProgress: {
       optimize: "Optimize path nodes",
       search: "Search obstacle route",
@@ -205,8 +205,8 @@ export const graphwarKillerLocale = {
     success: (elapsed, resultCacheHit) => {
       const cacheText = resultCacheHit ? " (using result cache)" : "";
       return elapsed === undefined
-        ? `Smart Pathfinding completed${cacheText}`
-        : `Smart Pathfinding completed${cacheText} in ${elapsed}`;
+        ? `Path Planning completed${cacheText}`
+        : `Path Planning completed${cacheText} in ${elapsed}`;
     },
     oneClickClear: {
       inProgress: "Running One-Click Clear; right-click the screenshot to stop",
@@ -249,13 +249,16 @@ export const graphwarKillerLocale = {
   },
   ui: {
     actions: {
+      collisionCheck: "Collision check",
+      collisionCheckTitle:
+        "Check manual Solver and Simulator trajectories against obstacles and bounds. Pathfinding always checks them.",
       clearPath: "Clear path",
       clearPathTitle: "Clear all path points",
       clearObstacleEdits: "Clear obstacle edits",
       clearObstacleEditsTitle: "Restore the original obstacle area from this detection run.",
       drawObstacle: "Draw obstacle",
       drawObstacleTitle:
-        "Enter obstacle-drawing mode: use a circular brush to correct the current detected obstacles. Requires detected obstacles and either Smart Cursor or Smart Pathfinding.",
+        "Enter obstacle-drawing mode and use a circular brush to correct the current detected obstacles.",
       eraseObstacle: "Erase mode",
       eraseObstacleTitle: "When enabled, the brush removes area from the current detected obstacles.",
       magnifier: "Magnifier",
@@ -277,6 +280,11 @@ export const graphwarKillerLocale = {
         "Enter bounds-picking mode: left-click two coordinate-system corners to calibrate the screenshot bounds.",
       pickPath: "Pick path",
       pickPathTitle: "Enter path-picking mode: click your soldier first, then target path points or target soldiers.",
+      pathPlanning: "Path planning",
+      pathPlanningTitle:
+        "Automatically find a route around obstacles after selecting a target. It can wait for scene data.",
+      snapSoldiers: "Snap soldiers",
+      snapSoldiersTitle: "Snap picking and hover to detected soldiers and use their real hit circles.",
       title: "Controls",
       toolModeAriaLabel: "Tool mode",
       toolModeTitle:
@@ -390,20 +398,38 @@ export const graphwarKillerLocale = {
       minObstacleAreaAriaLabel: "Minimum obstacle area in raw Graphwar plane pixels",
       minObstacleAreaTitle:
         "Area threshold for filtering tiny noise; obstacle regions smaller than this are ignored, in raw Graphwar 770x450 plane pixels.",
-      smartCursor: "Smart cursor",
-      smartCursorTitle:
-        "Snap path picking to detected soldier centers and enable obstacle and boundary collision simulation.",
       detectBounds: "Detect bounds",
       detectBoundsTitle: "Detect and mark the Graphwar coordinate-system bounds from the current screenshot.",
       detectObjects: "Detect soldiers/obstacles",
       detectObjectsNeedBoundsTitle: "Detect or draw the Graphwar coordinate-system bounds first.",
       detectObjectsTitle: "Detect soldiers and obstacles inside the current confirmed bounds.",
-      title: "Detection",
+      title: "Data source",
     },
     pathfinding: {
       allowFriendlyFire: "Allow friendly fire",
       allowFriendlyFireTitle:
-        "When enabled, Smart Pathfinding and One-Click Clear may route through your own soldiers; when disabled, your soldiers are avoided as obstacles.",
+        "When enabled, Path Planning and One-Click Clear may route through your own soldiers; when disabled, your soldiers are avoided as obstacles.",
+      capabilityReasons: {
+        "agent-disabled": "Enable Agent first.",
+        "agent-fire-busy": "Agent is submitting a shot.",
+        "agent-read-busy": "Agent state is being read.",
+        "agent-scene-required": "Read the current Agent state first.",
+        "agent-url-invalid": "Enter a valid Agent URL.",
+        "bounds-required": "Detect or pick coordinate bounds first.",
+        "delete-check-radius-invalid": "Fix the point-delete hit check radius.",
+        "formula-settings-invalid": "Fix the formula settings first.",
+        "formula-unsupported": "The current formula profile does not support One-Click Clear.",
+        "image-required": "Load a screenshot first.",
+        "managed-lock": "Managed mode owns this setting.",
+        "obstacle-tolerances-invalid": "Fix the obstacle tolerances.",
+        "obstacles-required": "Detect or read obstacles first.",
+        "path-start-required": "Select the firing soldier first.",
+        "pathfinding-busy": "Wait for the current pathfinding task.",
+        "pathfinding-worker-count-invalid": "Fix the pathfinding Worker count.",
+        "result-required": "Generate a usable result first.",
+        "soldiers-required": "Detect or read soldiers first.",
+        "solver-required": "Switch to Solver to use this setting.",
+      },
       debugNoTiming: "No pathfinding timing recorded yet",
       debugDetails: {
         "build-dag-edges": {
@@ -533,7 +559,7 @@ export const graphwarKillerLocale = {
       debugStages: {
         "apply-result": {
           label: "Apply path result",
-          title: "Write the final Smart Pathfinding path to the current path state and clear stale path errors.",
+          title: "Write the final planned path to the current path state and clear stale path errors.",
         },
         "collect-targets": {
           label: "Create target",
@@ -558,12 +584,12 @@ export const graphwarKillerLocale = {
         "result-cache-hit": {
           label: "Result cache hit",
           title:
-            "The current path, target, obstacle mask, tolerances, and formula settings match a cached Smart Pathfinding result, so the full result is reused.",
+            "The current path, target, obstacle mask, tolerances, and formula settings match a cached Path Planning result, so the full result is reused.",
         },
         "result-cache-miss": {
           label: "Result cache miss",
           title:
-            "No full Smart Pathfinding result can be reused for the current input, so the pathfinding Worker must search and validate again.",
+            "No full Path Planning result can be reused for the current input, so the pathfinding Worker must search and validate again.",
         },
         "route-mask-cache-hit": {
           label: "Route mask cache hit",
@@ -586,7 +612,7 @@ export const graphwarKillerLocale = {
         "visibility-cache-skipped": {
           label: "Visibility cache unused",
           title:
-            "This Smart Pathfinding run used Theta*, used a direct route, or failed before obstacle-route search, so no visibility graph was needed.",
+            "This Path Planning run used Theta*, used a direct route, or failed before obstacle-route search, so no visibility graph was needed.",
         },
         "optimize-path": {
           label: "Optimize path nodes",
@@ -654,12 +680,11 @@ export const graphwarKillerLocale = {
         },
         "setting-status": {
           label: "Set status text",
-          title:
-            "Build the Smart Pathfinding success or failure message and write it to the pathfinding header status.",
+          title: "Build the Path Planning success or failure message and write it to the pathfinding header status.",
         },
         total: {
           label: "Flow total",
-          title: "Wall-clock time from the start of this Smart Pathfinding run until the final status is applied.",
+          title: "Wall-clock time from the start of this Path Planning run until the final status is applied.",
         },
         "validate-trajectory": {
           label: "Validate function trajectory",
@@ -673,9 +698,9 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
-      fastPathfinding: "Fast mode",
-      fastPathfindingTitle:
-        "Ordinary modes use the visibility graph when on and Theta* when off; Step y' Glitch Mode skips point deletion when on.",
+      deleteOptimization: "Delete optimisation",
+      deleteOptimizationTitle:
+        "Try to remove unnecessary control points. Final replay, collision validation, and hit counting always remain enabled.",
       obstacleExpansionAgentMode: "Agent mode",
       obstacleExpansionDetectionMode: "Detection mode",
       obstacleExpansion: "Obstacle expansion",
@@ -690,27 +715,31 @@ export const graphwarKillerLocale = {
         "Start at the current path end, append a route, and try to kill selectable soldiers on the x+ side in order.",
       managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
       managedMode: "Managed mode",
-      managedModeBusyTitle:
-        "Wait for the current Agent read, shot, or manual pathfinding run before enabling managed mode.",
       managedModeDisableTitle: "Disable managed mode and unlock settings.",
-      managedModeNeedAgentTitle: "Enable Agent and enter a valid Agent URL first.",
+      managedModeConfirmation: (repairedModes, friendlyFireEnabled) =>
+        `Managed mode submits shots to Graphwar automatically. Friendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}. ${repairedModes ? `These formula profiles will be repaired: ${repairedModes}.` : "All three formula profiles are ready."}\n\nEnable managed mode?`,
+      managedProfilesTitle: "Managed formula profiles",
       managedModeTitle: "Read state, ready, calculate One-Click Clear, and fire automatically on local turns.",
-      managedModeUnsupportedTitle: "The current algorithm cannot use One-Click Clear in all three game modes.",
       routePlanningTolerance: "Route planning tolerance",
       routePlanningToleranceAriaLabel: "Route planning tolerance in raw Graphwar 770x450 plane pixels",
       routePlanningToleranceTitle:
-        "Single route tolerance used when Smart Pathfinding and One-Click Clear build geometry routes. Unit: raw Graphwar 770x450 plane pixels.",
+        "Single route tolerance used when Path Planning and One-Click Clear build geometry routes. Unit: raw Graphwar 770x450 plane pixels.",
+      routeAlgorithm: "Routing algorithm",
+      routeAlgorithmTitle: "Choose the geometry router used by ordinary path planning and One-Click Clear.",
+      routeLazyVisibilityGraph: "Lazy visibility graph",
+      routeThetaStar: "Theta*",
+      routeXPlusScan: "X+ Scan",
       searchAnimation: "Search animation",
       searchAnimationTitle:
-        "Show Smart Pathfinding candidate points, explored edges, trial paths, and optimization points; turn it off to keep only the final path result.",
+        "Show Path Planning candidate points, explored edges, trial paths, and optimization points; turn it off to keep only the final path result.",
       simulationTolerance: "Simulation tolerance",
       simulationToleranceAriaLabel: "Function-simulation tolerance in raw Graphwar 770x450 plane pixels",
       simulationToleranceTitle:
         "Obstacle tolerance used during function simulation and collision checks; it does not affect route selection. Unit: raw Graphwar 770x450 plane pixels.",
       autoGraph: "One-Click Clear",
-      smartPathfinding: "Smart Pathfinding",
-      smartPathfindingTitle: "After you pick a target point, automatically find a route around detected obstacles.",
+      tasksTitle: "Pathfinding tasks",
       title: "Pathfinding",
+      optionsTitle: "Pathfinding options",
       unit: "px",
     },
     point: {
@@ -815,6 +844,8 @@ export const graphwarKillerLocale = {
       skipUnknownCharacters: "Skip unknown characters",
       skipUnknownCharactersTitle: "Graphwar skips unknown characters.",
       stepGlitchMode: "Glitch Mode",
+      stepGlitchModeInactiveReason: "Preference retained; it applies to Step y' mode.",
+      stepGlitchModeWaitingReason: "Waiting for obstacle data; preference retained.",
       stepGlitchModeTitle:
         "Only applies to step y' mode and requires an existing obstacle recognition result. When the approximate normal-step path region contains an obstacle, Glitch Mode attempts to generate a jump term. Using Agent to read game information is recommended because accurate soldier positions are required.",
       stepSteepness: "Step steepness a",

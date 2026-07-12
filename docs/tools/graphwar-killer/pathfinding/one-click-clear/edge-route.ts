@@ -31,7 +31,7 @@ export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   stepRouteModel?: GraphwarStepRouteModel;
   /** Step 批次共用的 route mask 二维前缀和。 */
   stepRouteSummedArea?: GraphwarPlaneMaskSummedArea;
-  /** 几何路线算法模式；和普通智能寻路共用页面上的快速开关。 */
+  /** 几何路线算法模式；和单目标路径规划共用页面上的寻路算法选择。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;

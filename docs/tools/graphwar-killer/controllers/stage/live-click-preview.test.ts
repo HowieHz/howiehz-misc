@@ -484,7 +484,7 @@ function createOptions() {
       createSmartPathfindingSoldierTarget: () => undefined,
       getDetectedSoldierAtPoint: () => undefined,
       getDetectionBoxCenter: () => createPixelPoint(0, 0),
-      smartCursorEnabled: ref(false),
+      snapSoldiersEnabled: ref(false),
     },
     trajectory: {
       formulaSettings: ref({

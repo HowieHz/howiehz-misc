@@ -100,10 +100,11 @@ export function createGraphwarPathfindingCacheController() {
 
   function createSmartPathfindingResultCacheKey(input: GraphwarSmartPathfindingPathInput) {
     return JSON.stringify([
-      "smart-path-result-v2",
+      "smart-path-result-v3",
       createGraphBoundsCacheKey(input.bounds),
       createBoundsRectCacheKey(input.boundsRect),
       input.boundaryExpansion,
+      input.deleteOptimizationEnabled,
       input.routeMode,
       input.routeMaskCacheId,
       input.routeTolerancePlanePixels,
@@ -120,10 +121,11 @@ export function createGraphwarPathfindingCacheController() {
 
   function createOneClickClearResultCacheKey(input: GraphwarOneClickClearPathWorkerInput) {
     return JSON.stringify([
-      "one-click-clear-result-v3",
+      "one-click-clear-result-v4",
       createGraphBoundsCacheKey(input.bounds),
       createBoundsRectCacheKey(input.boundsRect),
       input.boundaryExpansion,
+      input.deleteOptimizationEnabled,
       input.deleteHitCheckRadiusPixels,
       input.routeMode,
       input.routeMaskCacheId,

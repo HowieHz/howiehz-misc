@@ -37,8 +37,6 @@ interface GraphwarScreenshotPanelStatusWarning {
 }
 
 export interface GraphwarScreenshotPanelModel {
-  /** 截屏/上传按钮是否展示；Agent 模式只使用读取入口。 */
-  imageActionsVisible: boolean;
   /** 识别忙碌遮罩是否展示。 */
   busyOverlayVisible: boolean;
   /** 当前截图状态文案。 */
@@ -64,7 +62,6 @@ defineProps<{
 
 const emit = defineEmits<{
   cancelDetection: [];
-  captureImage: [];
   dropImage: [event: DragEvent];
   imageLoad: [];
   setImageElement: [element: HTMLImageElement | undefined];
@@ -74,13 +71,14 @@ const emit = defineEmits<{
   stagePointerLeave: [event: PointerEvent];
   stagePointerMove: [event: PointerEvent];
   stagePointerUp: [event: PointerEvent];
-  uploadImage: [event: Event];
 }>();
 
+/** Narrows Vue's template ref union before exposing the stage to pointer workflows. */
 function setStageElement(element: Element | ComponentPublicInstance | null) {
   emit("setStageElement", element instanceof HTMLElement ? element : undefined);
 }
 
+/** Narrows Vue's template ref union before exposing the loaded image to pixel readers. */
 function setImageElement(element: Element | ComponentPublicInstance | null) {
   emit("setImageElement", element instanceof HTMLImageElement ? element : undefined);
 }
@@ -122,30 +120,6 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
       >
         {{ panel.statusWarning.message }}
       </span>
-    </div>
-    <div
-      v-if="panel.imageActionsVisible"
-      class="graphwar-killer__image-actions"
-    >
-      <button
-        type="button"
-        :title="locale.ui.screenshot.captureTitle"
-        @click="emit('captureImage')"
-      >
-        {{ locale.ui.screenshot.capture }}
-      </button>
-      <label
-        class="graphwar-killer__upload"
-        :title="locale.ui.screenshot.uploadTitle"
-      >
-        <input
-          type="file"
-          accept="image/*"
-          :title="locale.ui.screenshot.uploadInputTitle"
-          @change="emit('uploadImage', $event)"
-        >
-        <span>{{ locale.ui.screenshot.upload }}</span>
-      </label>
     </div>
     <div
       :ref="setStageElement"
@@ -226,7 +200,7 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
   align-content: start;
   background: var(--vp-c-bg);
   border: 1px solid color-mix(in srgb, var(--vp-c-divider) 88%, transparent);
-  border-radius: 12px;
+  border-radius: 8px;
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -245,30 +219,6 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
   font-weight: 600;
   gap: 3px;
   min-width: 0;
-}
-
-.graphwar-killer__screenshot-panel button,
-.graphwar-killer__upload span {
-  background: var(--vp-c-bg);
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 999px;
-  color: var(--vp-c-text-1);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 700;
-  line-height: 1.2;
-  transition:
-    transform 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    color 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.graphwar-killer__screenshot-panel button:disabled {
-  cursor: not-allowed;
-  opacity: 58%;
 }
 
 .graphwar-killer__label-row {
@@ -325,37 +275,6 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
   flex: 0 1 auto;
   max-width: min(100%, 44rem);
   text-align: right;
-}
-
-.graphwar-killer__image-actions {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.graphwar-killer__image-actions button {
-  min-height: 34px;
-  padding: 6px 10px;
-}
-
-.graphwar-killer__upload {
-  width: fit-content;
-}
-
-.graphwar-killer__upload input {
-  height: 1px;
-  opacity: 0%;
-  pointer-events: none;
-  position: absolute;
-  width: 1px;
-}
-
-.graphwar-killer__upload span {
-  align-items: center;
-  display: inline-flex;
-  min-height: 34px;
-  padding: 6px 10px;
 }
 
 .graphwar-killer__stage {
@@ -465,16 +384,6 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
   padding: 6px 10px;
 }
 
-.graphwar-killer__screenshot-panel button:hover:not(:disabled),
-.graphwar-killer__upload:hover span {
-  border-color: var(--vp-c-brand-1);
-  box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
-  color: var(--vp-c-brand-1);
-  transform: translateY(-1px);
-}
-
-.graphwar-killer__screenshot-panel input:focus-visible,
-.graphwar-killer__screenshot-panel button:focus-visible,
 .graphwar-killer__stage:focus-visible {
   border-color: color-mix(in srgb, var(--vp-c-brand-1) 52%, var(--vp-c-divider));
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);

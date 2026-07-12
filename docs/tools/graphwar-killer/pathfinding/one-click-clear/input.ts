@@ -36,6 +36,8 @@ interface GraphwarOneClickClearSearchPreflightOptions {
   getObstacleMask: () => Uint8Array | undefined;
   /** 当前路径点数量；一键清图必须从已有路径尾部继续。 */
   pathPointCount: number;
+  /** 当前任务是否会建立普通 DAG；邪道手动清图不消费 worker 数。 */
+  requiresDagWorker: boolean;
   /** 成功解析后的 DAG 建边 worker 数量；缺失时应保持页面原设置错误语义。 */
   pathfindingWorkerCount: number | undefined;
   /** 成功解析后的寻路容差；缺失时应保持页面原设置错误语义。 */
@@ -69,6 +71,8 @@ interface GraphwarOneClickClearSearchInputOptions {
   candidates: readonly GraphwarOneClickClearCandidate[];
   /** 当前路径已经承诺命中的士兵。 */
   committedTargets: readonly GraphwarCommittedTarget[];
+  /** 是否尝试删除控制点。 */
+  deleteOptimizationEnabled: boolean;
   /** DAG 建边 worker 数量；页面继续负责输入解析和范围限制。 */
   dagEdgeWorkerCount: number;
   /** 全路径命中统计候选，不应被起点右侧规则过滤。 */
@@ -79,7 +83,7 @@ interface GraphwarOneClickClearSearchInputOptions {
   prefixTarget: GraphwarTrajectoryTargetCircle | undefined;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
   routeMaskCacheId: number;
-  /** 几何路线算法模式；普通智能寻路和一键清图使用同一个开关。 */
+  /** 普通几何路线算法；Step y' 邪道会在协议边界改用规范值。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
@@ -97,7 +101,11 @@ interface GraphwarOneClickClearSearchInputOptions {
 export function createGraphwarOneClickClearSearchPreflight(
   options: GraphwarOneClickClearSearchPreflightOptions,
 ): GraphwarOneClickClearSearchPreflightResult {
-  if (!options.bounds || !options.tolerances || options.pathfindingWorkerCount === undefined) {
+  if (
+    !options.bounds ||
+    !options.tolerances ||
+    (options.requiresDagWorker && options.pathfindingWorkerCount === undefined)
+  ) {
     return { ok: false, reason: "invalid-settings" };
   }
   if (options.unsupportedMode()) {
@@ -114,7 +122,7 @@ export function createGraphwarOneClickClearSearchPreflight(
 
   return {
     bounds: options.bounds,
-    dagEdgeWorkerCount: options.pathfindingWorkerCount,
+    dagEdgeWorkerCount: options.pathfindingWorkerCount ?? 1,
     obstacleMask,
     ok: true,
     prefixTarget: options.createPrefixTarget(),
@@ -133,14 +141,21 @@ export function createGraphwarOneClickClearSearchInput(
     candidates: options.candidates,
     committedTargets: options.committedTargets,
     dagEdgeWorkerCount: options.dagEdgeWorkerCount,
+    deleteOptimizationEnabled: options.deleteOptimizationEnabled,
     // Worker 内删点命中检查在截图坐标里量距离，因此在协议边界从 Graphwar 平面像素换算为截图像素。
-    deleteHitCheckRadiusPixels:
-      options.tolerances.oneClickClearDeleteCheckRadiusPlanePixels * (options.boundsRect.width / GRAPHWAR_PLANE_LENGTH),
+    deleteHitCheckRadiusPixels: options.deleteOptimizationEnabled
+      ? options.tolerances.oneClickClearDeleteCheckRadiusPlanePixels *
+        (options.boundsRect.width / GRAPHWAR_PLANE_LENGTH)
+      : 0,
     hitCandidates: options.hitCandidates,
     pathPoints: [...options.pathPoints],
     prefixTarget: options.prefixTarget,
     routeMaskCacheId: options.routeMaskCacheId,
-    routeMode: options.routeMode,
+    // Step y' 邪道不消费普通路由算法；规范值让无关配置共享同一结果身份。
+    routeMode:
+      options.settings.algorithm === "step" && options.settings.equation === "dy" && options.settings.stepGlitchMode
+        ? "visibility-graph"
+        : options.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     settings: options.settings,

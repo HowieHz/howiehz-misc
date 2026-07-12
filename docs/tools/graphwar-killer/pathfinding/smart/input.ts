@@ -20,6 +20,8 @@ export interface GraphwarSmartPathfindingSearchTolerances {
 interface GraphwarSmartPathfindingSearchInputOptions {
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;
+  /** 是否尝试删除新增控制点。 */
+  deleteOptimizationEnabled: boolean;
   /** 截图内 Graphwar 坐标系矩形。 */
   boundsRect: BoundsRect;
   /** 命中目标圆；页面负责把普通点击转换为默认半径目标。 */
@@ -28,7 +30,7 @@ interface GraphwarSmartPathfindingSearchInputOptions {
   previewEnabled: boolean;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
   routeMaskCacheId: number;
-  /** 几何路线算法模式；由页面快速模式开关统一决定。 */
+  /** 普通几何路线算法；Step y' 邪道会在协议边界改用规范值。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
@@ -58,11 +60,16 @@ export function createGraphwarSmartPathfindingSearchInput(
     boundaryExpansion: options.tolerances.routeBoundaryInsetPlanePixels,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
+    deleteOptimizationEnabled: options.deleteOptimizationEnabled,
     hitTarget: options.hitTarget,
     committedTargets: options.committedTargets,
     previewEnabled: options.previewEnabled,
     routeMaskCacheId: options.routeMaskCacheId,
-    routeMode: options.routeMode,
+    // 邪道扫描不消费普通路由算法；规范值避免无关偏好污染结果缓存和 evidence。
+    routeMode:
+      options.settings.algorithm === "step" && options.settings.equation === "dy" && options.settings.stepGlitchMode
+        ? "visibility-graph"
+        : options.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     settings: options.settings,

@@ -72,7 +72,7 @@ interface GraphwarLiveClickPreviewOptions {
     parseDerivativeAsY: ReadonlyRef<boolean>;
     skipUnknownCharacters: ReadonlyRef<boolean>;
   };
-  /** 智能光标目标规则应由页面的目标选择 Module 统一提供。 */
+  /** 士兵吸附目标规则应由页面的目标选择 Module 统一提供。 */
   target: {
     createMinimumForwardTargetPoint: (point: PixelPoint) => PixelPoint | undefined;
     createSearchStartSoldierAimPoint: (
@@ -85,7 +85,7 @@ interface GraphwarLiveClickPreviewOptions {
     ) => GraphwarSmartPathfindingSoldierTarget | undefined;
     getDetectionBoxCenter: (box: GraphwarDetectionBox) => PixelPoint;
     getDetectedSoldierAtPoint: (point: PixelPoint) => GraphwarDetectionBox | undefined;
-    smartCursorEnabled: ReadonlyRef<boolean>;
+    snapSoldiersEnabled: ReadonlyRef<boolean>;
   };
   /** 轨迹采样设置应与主结果共享，避免实时预览生成不同公式。 */
   trajectory: {
@@ -311,7 +311,7 @@ export function useGraphwarLiveClickPreview(
       return undefined;
     }
 
-    const selectedSoldier = options.target.smartCursorEnabled.value
+    const selectedSoldier = options.target.snapSoldiersEnabled.value
       ? options.target.getDetectedSoldierAtPoint(point)
       : undefined;
     if (!selectedSoldier) {

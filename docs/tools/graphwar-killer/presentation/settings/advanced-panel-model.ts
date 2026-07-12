@@ -44,6 +44,8 @@ export interface GraphwarAdvancedSettingsPathfinding {
   workerCountText: string;
   /** 一键清图删除检测半径输入框文本。 */
   oneClickClearDeleteCheckRadiusText: string;
+  /** 删点关闭时半径没有语义，因此不展示也不参与命令校验。 */
+  oneClickClearDeleteCheckRadiusVisible: boolean;
   /** 一键清图删除检测半径最小值，单位为 Graphwar 原始平面像素。 */
   oneClickClearDeleteCheckRadiusMinimumPlanePixels: number;
 }

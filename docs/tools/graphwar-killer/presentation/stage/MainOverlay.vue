@@ -78,7 +78,7 @@ interface GraphwarStageOverlayObstacleLayer {
   simulationEdgePath: string;
   /** 弹道模拟障碍填充 path。 */
   simulationFillPath: string;
-  /** 普通障碍是否显示；Agent 模式可在智能光标关闭时继续展示它们。 */
+  /** 普通障碍是否显示；交互偏好关闭时仍可作为识别结果展示。 */
   visible: boolean;
   /** 普通障碍边界 path。 */
   visibleEdgePath: string;
@@ -102,7 +102,7 @@ interface GraphwarStageOverlayDetectionLayer {
   soldierFlashActive: boolean;
   /** 士兵识别完成后的闪烁对象。 */
   soldierFlashBoxes: readonly GraphwarStageOverlayDetectionBox[];
-  /** 士兵识别圆是否显示；不代表智能光标交互可用。 */
+  /** 士兵识别圆是否显示；不代表士兵吸附交互已启用。 */
   visible: boolean;
 }
 

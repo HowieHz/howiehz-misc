@@ -1,5 +1,6 @@
-import type { AlgorithmMode, EquationMode } from "./core/types";
 /** 定义 Graphwar 杀手本地化文案结构，供中英文页面共享。 */
+import type { GraphwarCapabilityReason } from "./controllers/page/capabilities";
+import type { AlgorithmMode, EquationMode } from "./core/types";
 import type { GraphwarDetectionWarning } from "./detection/objects";
 import type { GraphwarDetectionWorkerTimingDetail } from "./detection/runtime/protocol";
 import type {
@@ -261,6 +262,8 @@ export interface GraphwarKillerLocale {
   /** 页面控件、面板标题和可访问性标签文案。 */
   ui: {
     actions: {
+      collisionCheck: string;
+      collisionCheckTitle: string;
       clearPath: string;
       clearPathTitle: string;
       clearObstacleEdits: string;
@@ -283,6 +286,10 @@ export interface GraphwarKillerLocale {
       pickBoundsTitle: string;
       pickPath: string;
       pickPathTitle: string;
+      pathPlanning: string;
+      pathPlanningTitle: string;
+      snapSoldiers: string;
+      snapSoldiersTitle: string;
       title: string;
       toolModeAriaLabel: string;
       toolModeTitle: string;
@@ -325,8 +332,6 @@ export interface GraphwarKillerLocale {
       minObstacleArea: string;
       minObstacleAreaAriaLabel: string;
       minObstacleAreaTitle: string;
-      smartCursor: string;
-      smartCursorTitle: string;
       detectBounds: string;
       detectBoundsTitle: string;
       detectObjects: string;
@@ -337,6 +342,7 @@ export interface GraphwarKillerLocale {
     pathfinding: {
       allowFriendlyFire: string;
       allowFriendlyFireTitle: string;
+      capabilityReasons: Record<GraphwarCapabilityReason, string>;
       debugDetails: GraphwarKillerPathfindingDebugDetailText;
       debugNoTiming: string;
       debugStages: Record<
@@ -372,8 +378,8 @@ export interface GraphwarKillerLocale {
         GraphwarKillerDebugStageText
       >;
       debugSummary: string;
-      fastPathfinding: string;
-      fastPathfindingTitle: string;
+      deleteOptimization: string;
+      deleteOptimizationTitle: string;
       obstacleExpansionAgentMode: string;
       obstacleExpansionDetectionMode: string;
       obstacleExpansion: string;
@@ -384,23 +390,27 @@ export interface GraphwarKillerLocale {
       oneClickClearTitle: string;
       managedFriendlyFireWarning: string;
       managedMode: string;
-      managedModeBusyTitle: string;
       managedModeDisableTitle: string;
-      managedModeNeedAgentTitle: string;
+      managedModeConfirmation: (repairedModes: string, friendlyFireEnabled: boolean) => string;
+      managedProfilesTitle: string;
       managedModeTitle: string;
-      managedModeUnsupportedTitle: string;
       routePlanningTolerance: string;
       routePlanningToleranceAriaLabel: string;
       routePlanningToleranceTitle: string;
+      routeAlgorithm: string;
+      routeAlgorithmTitle: string;
+      routeLazyVisibilityGraph: string;
+      routeThetaStar: string;
+      routeXPlusScan: string;
       searchAnimation: string;
       searchAnimationTitle: string;
       simulationTolerance: string;
       simulationToleranceAriaLabel: string;
       simulationToleranceTitle: string;
       autoGraph: string;
-      smartPathfinding: string;
-      smartPathfindingTitle: string;
+      tasksTitle: string;
       title: string;
+      optionsTitle: string;
       unit: string;
     };
     point: {
@@ -497,6 +507,8 @@ export interface GraphwarKillerLocale {
       skipUnknownCharacters: string;
       skipUnknownCharactersTitle: string;
       stepGlitchMode: string;
+      stepGlitchModeInactiveReason: string;
+      stepGlitchModeWaitingReason: string;
       stepGlitchModeTitle: string;
       stepSteepness: string;
       stepSteepnessAriaLabel: string;

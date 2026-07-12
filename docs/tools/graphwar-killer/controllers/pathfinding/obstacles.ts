@@ -1,6 +1,6 @@
 import { computed, type ComputedRef } from "vue";
 
-import type { ToolWorkflowMode, BoundsRect } from "../../core/types";
+import type { BoundsRect } from "../../core/types";
 import {
   buildObstacleEdgePath,
   buildObstacleFillPath,
@@ -19,8 +19,8 @@ type GraphwarPathfindingCacheController = ReturnType<typeof createGraphwarPathfi
 
 interface GraphwarPathfindingRouteBoundaryInsetOptions {
   modes: {
-    /** 智能光标预览需要 route 边界内收，即使还未启用完整智能寻路。 */
-    smartCursorEnabled: ReadonlyRef<boolean>;
+    /** 手工碰撞检查启用时，普通目标选择也应避开 route 边界。 */
+    collisionCheckEnabled: ReadonlyRef<boolean>;
     /** 寻路障碍显示启用时，目标选择应按 route tolerance 同步边界内收。 */
     pathfindingObstacleEdgesActive: ReadonlyRef<boolean>;
   };
@@ -50,10 +50,8 @@ interface GraphwarPathfindingObstacleProjectionOptions {
     effectiveSmartPathfindingEnabled: ReadonlyRef<boolean>;
     /** 只有智能寻路展示启用时才绘制 route/simulation 派生障碍。 */
     pathfindingObstacleEdgesActive: ReadonlyRef<boolean>;
-    /** 智能光标预览需要碰撞设置，即使还未启用完整智能寻路。 */
-    smartCursorEnabled: ReadonlyRef<boolean>;
-    /** 模拟器模式需要碰撞设置来校验用户输入公式。 */
-    toolWorkflowMode: ReadonlyRef<ToolWorkflowMode>;
+    /** 手工解算和模拟器是否检查碰撞；寻路任务始终强制检查。 */
+    collisionCheckEnabled: ReadonlyRef<boolean>;
   };
   settings: {
     /** 弹道模拟边界收缩值和 simulation tolerance 同源，避免边界另起一套安全距离。 */
@@ -94,7 +92,7 @@ export function useGraphwarPathfindingRouteBoundaryInset(
   options: GraphwarPathfindingRouteBoundaryInsetOptions,
 ): ComputedRef<number> {
   return computed(() =>
-    (options.modes.smartCursorEnabled.value || options.modes.pathfindingObstacleEdgesActive.value) &&
+    (options.modes.collisionCheckEnabled.value || options.modes.pathfindingObstacleEdgesActive.value) &&
     options.settings.parsedObstacleTolerances.value.ok
       ? options.settings.parsedObstacleTolerances.value.routeBoundaryInsetPlanePixels
       : 0,
@@ -238,11 +236,7 @@ export function useGraphwarPathfindingObstacleProjection(
   });
 
   const trajectoryCollisionSettings = computed<GraphwarTrajectoryCollisionSettings | undefined>(() => {
-    if (
-      !options.modes.smartCursorEnabled.value &&
-      !options.modes.pathfindingObstacleEdgesActive.value &&
-      options.modes.toolWorkflowMode.value !== "simulator"
-    ) {
+    if (!options.modes.collisionCheckEnabled.value && !options.modes.pathfindingObstacleEdgesActive.value) {
       return undefined;
     }
 

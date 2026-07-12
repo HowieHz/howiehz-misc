@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createPixelPoint } from "../../../core/types";
+import type { GraphwarPathfindingPreview } from "../../../pathfinding/routing/visibility-graph";
 import type {
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
 } from "../../../pathfinding/runtime/protocol";
+import type { GraphwarPathfindingRunOptions } from "../../../pathfinding/runtime/runner";
+import type { GraphwarPathfindingPreviewSnapshot } from "../../../pathfinding/smart/preview";
 import { useGraphwarSmartPathfindingBuilder } from "./builder";
 
 const startPoint = createPixelPoint(32, 100);
@@ -51,10 +54,37 @@ describe("Step single-target fallback", () => {
 
     expect(findSmartPath).toHaveBeenCalledTimes(1);
   });
+
+  it("ignores a preview that arrives after search animation is disabled", async () => {
+    let animationEnabled = true;
+    const setSearch = vi.fn();
+    const findSmartPath = vi.fn(
+      async (_input: GraphwarSmartPathfindingPathInput, options?: GraphwarPathfindingRunOptions) => {
+        animationEnabled = false;
+        options?.onPreview?.(createPreview());
+        return { path: [startPoint, centerPoint], timings: [] };
+      },
+    );
+    const builder = createBuilder(findSmartPath, {
+      isSearchAnimationEnabled: () => animationEnabled,
+      setSearch,
+    });
+
+    await builder.buildPath(centerPoint, 1);
+
+    expect(setSearch).not.toHaveBeenCalled();
+  });
 });
 
 function createBuilder(
-  findSmartPath: (input: GraphwarSmartPathfindingPathInput) => Promise<GraphwarSmartPathfindingPathResult>,
+  findSmartPath: (
+    input: GraphwarSmartPathfindingPathInput,
+    options?: GraphwarPathfindingRunOptions,
+  ) => Promise<GraphwarSmartPathfindingPathResult>,
+  preview: {
+    isSearchAnimationEnabled?: () => boolean;
+    setSearch?: (snapshot: GraphwarPathfindingPreviewSnapshot) => void;
+  } = {},
 ) {
   return useGraphwarSmartPathfindingBuilder({
     debug: { addWorkerTimings: () => undefined },
@@ -66,6 +96,7 @@ function createBuilder(
       boundsRect: { value: { height: 450, width: 770, x: 0, y: 0 } },
       getBounds: () => ({ maxX: 25, maxY: 15, minX: -25, minY: -15 }),
       getCommittedTargets: () => [],
+      getDeleteOptimizationEnabled: () => false,
       getFormulaSettings: () => ({
         algorithm: "step",
         decimalPlaces: 4,
@@ -85,7 +116,6 @@ function createBuilder(
         routePlanningTolerancePlanePixels: 2,
         simulationBoundaryInsetPlanePixels: 0,
       }),
-      isPathfindingWorkerCountValid: () => true,
     },
     pathfinding: {
       cache: {
@@ -97,14 +127,24 @@ function createBuilder(
       runner: { findSmartPath },
     },
     preview: {
-      isSearchAnimationEnabled: () => false,
+      isSearchAnimationEnabled: preview.isSearchAnimationEnabled ?? (() => false),
       setConnection: () => undefined,
       setPath: () => undefined,
-      setSearch: () => undefined,
+      setSearch: preview.setSearch ?? (() => undefined),
     },
     run: {
       enterSearchPhase: () => undefined,
       isCurrent: () => true,
     },
   });
+}
+
+/** Builds the smallest valid Worker preview for late-frame preference tests. */
+function createPreview(): GraphwarPathfindingPreview {
+  return {
+    acceptedEdges: [],
+    bestPath: [],
+    candidates: [],
+    mirrored: false,
+  };
 }

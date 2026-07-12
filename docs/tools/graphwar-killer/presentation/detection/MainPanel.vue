@@ -2,6 +2,7 @@
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { GraphwarKillerLocale } from "../../locale-types";
 import ControlReason from "../controls/ControlReason.vue";
+import PanelDetails from "../controls/PanelDetails.vue";
 import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
 
@@ -269,8 +270,10 @@ function handleAgentBaseUrlInput(event: Event) {
         </div>
       </div>
       <template v-if="panel.agent.enabled">
-        <details class="graphwar-killer__details graphwar-killer__agent-usage">
-          <summary>{{ locale.ui.detection.agent.settingsSummary }}</summary>
+        <PanelDetails
+          class="graphwar-killer__agent-usage"
+          :summary="locale.ui.detection.agent.settingsSummary"
+        >
           <label
             class="graphwar-killer__agent-url"
             :title="locale.ui.detection.agent.addressTitle"
@@ -285,16 +288,15 @@ function handleAgentBaseUrlInput(event: Event) {
               @input="handleAgentBaseUrlInput"
             >
           </label>
-        </details>
+        </PanelDetails>
         <p class="graphwar-killer__agent-usage-hint">
           <a href="#graphwar-killer-agent-help">{{ locale.ui.detection.agent.helpLink }}</a>
         </p>
       </template>
-      <details
+      <PanelDetails
         v-if="panel.debugTimingVisible"
-        class="graphwar-killer__details"
+        :summary="locale.ui.detection.debugSummary"
       >
-        <summary>{{ locale.ui.detection.debugSummary }}</summary>
         <div class="graphwar-killer__debug-timing">
           <span v-if="!panel.debugTimingRows.length">{{ locale.ui.detection.debugNoTiming }}</span>
           <template v-else>
@@ -307,7 +309,7 @@ function handleAgentBaseUrlInput(event: Event) {
             </span>
           </template>
         </div>
-      </details>
+      </PanelDetails>
     </fieldset>
   </section>
 </template>
@@ -428,16 +430,6 @@ function handleAgentBaseUrlInput(event: Event) {
   gap: 6px;
 }
 
-.graphwar-killer__details {
-  background: var(--vp-c-bg-soft);
-  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 82%, transparent);
-  border-radius: 8px;
-  display: grid;
-  gap: 0;
-  min-width: 0;
-  padding: 8px;
-}
-
 .graphwar-killer__agent-usage {
   align-content: start;
 }
@@ -453,24 +445,6 @@ function handleAgentBaseUrlInput(event: Event) {
   font-size: 0.86rem;
   line-height: 1.5;
   margin: 0;
-}
-
-.graphwar-killer__details[open] {
-  gap: 8px;
-}
-
-.graphwar-killer__details > summary {
-  cursor: pointer;
-  font-size: 0.92rem;
-  font-weight: 700;
-  line-height: 1.4;
-  margin: -2px 0;
-}
-
-.graphwar-killer__details > summary:focus-visible {
-  border-radius: 4px;
-  outline: 2px solid var(--vp-c-brand-1);
-  outline-offset: 2px;
 }
 
 .graphwar-killer__debug-timing {

@@ -6,6 +6,7 @@ import type { GraphwarControlCapability } from "../../controllers/page/capabilit
 import type { ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
 import ControlReason from "../controls/ControlReason.vue";
+import PanelDetails from "../controls/PanelDetails.vue";
 import { getInputValue } from "../dom/input";
 
 type GraphwarResultPanelCoordinateAxis = "x" | "y";
@@ -228,46 +229,48 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
     >
       {{ result.calculationMessage }}
     </p>
-    <div
+    <PanelDetails
       v-if="result.pointRows.length"
-      class="graphwar-killer__point-table"
+      :summary="locale.ui.point.listSummary"
     >
-      <div>
-        <span>{{ locale.ui.point.header }}</span>
-        <span>x</span>
-        <span>y</span>
-      </div>
-      <div
-        v-for="row in result.pointRows"
-        :key="`row-${row.index}`"
-      >
-        <span>{{ row.label }}</span>
-        <input
-          class="graphwar-killer__point-coordinate-input"
-          :value="row.x.text"
-          :aria-label="row.x.ariaLabel"
-          :title="row.x.title"
-          inputmode="decimal"
-          autocomplete="off"
-          :disabled="result.interactionDisabled"
-          @focus="emit('startPointCoordinateEdit', row.index, 'x')"
-          @blur="emit('finishPointCoordinateEdit')"
-          @input="handlePointCoordinateInput(row.index, 'x', $event)"
+      <div class="graphwar-killer__point-table">
+        <div>
+          <span>{{ locale.ui.point.header }}</span>
+          <span>x</span>
+          <span>y</span>
+        </div>
+        <div
+          v-for="row in result.pointRows"
+          :key="`row-${row.index}`"
         >
-        <input
-          class="graphwar-killer__point-coordinate-input"
-          :value="row.y.text"
-          :aria-label="row.y.ariaLabel"
-          :title="row.y.title"
-          inputmode="decimal"
-          autocomplete="off"
-          :disabled="result.interactionDisabled"
-          @focus="emit('startPointCoordinateEdit', row.index, 'y')"
-          @blur="emit('finishPointCoordinateEdit')"
-          @input="handlePointCoordinateInput(row.index, 'y', $event)"
-        >
+          <span>{{ row.label }}</span>
+          <input
+            class="graphwar-killer__point-coordinate-input"
+            :value="row.x.text"
+            :aria-label="row.x.ariaLabel"
+            :title="row.x.title"
+            inputmode="decimal"
+            autocomplete="off"
+            :disabled="result.interactionDisabled"
+            @focus="emit('startPointCoordinateEdit', row.index, 'x')"
+            @blur="emit('finishPointCoordinateEdit')"
+            @input="handlePointCoordinateInput(row.index, 'x', $event)"
+          >
+          <input
+            class="graphwar-killer__point-coordinate-input"
+            :value="row.y.text"
+            :aria-label="row.y.ariaLabel"
+            :title="row.y.title"
+            inputmode="decimal"
+            autocomplete="off"
+            :disabled="result.interactionDisabled"
+            @focus="emit('startPointCoordinateEdit', row.index, 'y')"
+            @blur="emit('finishPointCoordinateEdit')"
+            @input="handlePointCoordinateInput(row.index, 'y', $event)"
+          >
+        </div>
       </div>
-    </div>
+    </PanelDetails>
   </section>
 </template>
 

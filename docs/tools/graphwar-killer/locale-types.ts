@@ -451,6 +451,7 @@ export interface GraphwarKillerLocale {
       coordinateAriaLabel: (label: string, axis: "x" | "y") => string;
       coordinateTitle: (label: string, axis: "x" | "y") => string;
       header: string;
+      listSummary: string;
       selfLabel: string;
       svgSelfLabel: string;
       pathLabel: (index: number) => string;

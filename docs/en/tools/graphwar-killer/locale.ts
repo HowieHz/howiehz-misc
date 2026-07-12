@@ -792,6 +792,7 @@ export const graphwarKillerLocale = {
       coordinateAriaLabel: (label, axis) => `${label} ${axis} coordinate`,
       coordinateTitle: (label, axis) => `Edit ${label}'s ${axis} coordinate and move the point on the screenshot`,
       header: "Point",
+      listSummary: "Path points",
       pathLabel: (index) => `Path ${index}`,
       selfLabel: "Self",
       svgSelfLabel: "Me",

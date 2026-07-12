@@ -3,6 +3,7 @@ import type { GraphwarControlCapability } from "../../controllers/page/capabilit
 import type { GraphwarKillerLocale } from "../../locale-types";
 import type { GraphwarPathfindingRouteMode } from "../../pathfinding/routing/mode";
 import ControlReason from "../controls/ControlReason.vue";
+import PanelDetails from "../controls/PanelDetails.vue";
 import ToggleField from "../controls/ToggleField.vue";
 
 type GraphwarPathfindingPanelStatusKind = "info" | "success" | "warning" | "error";
@@ -149,8 +150,7 @@ const emit = defineEmits<{
       </p>
     </div>
 
-    <details class="graphwar-killer__details">
-      <summary>{{ locale.ui.pathfinding.settingsSummary }}</summary>
+    <PanelDetails :summary="locale.ui.pathfinding.settingsSummary">
       <div class="graphwar-killer__pathfinding-settings-content">
         <div class="graphwar-killer__route-row">
           <span>{{ locale.ui.pathfinding.routeAlgorithm }}</span>
@@ -222,13 +222,12 @@ const emit = defineEmits<{
           />
         </div>
       </div>
-    </details>
+    </PanelDetails>
 
-    <details
+    <PanelDetails
       v-if="panel.debugTimingVisible"
-      class="graphwar-killer__details"
+      :summary="locale.ui.pathfinding.debugSummary"
     >
-      <summary>{{ locale.ui.pathfinding.debugSummary }}</summary>
       <div class="graphwar-killer__debug-timing">
         <span v-if="!panel.debugTimingRows.length">{{ locale.ui.pathfinding.debugNoTiming }}</span>
         <template v-else>
@@ -243,7 +242,7 @@ const emit = defineEmits<{
           </span>
         </template>
       </div>
-    </details>
+    </PanelDetails>
   </section>
 </template>
 
@@ -380,34 +379,6 @@ const emit = defineEmits<{
   position: relative;
   text-align: center;
   z-index: 1;
-}
-
-.graphwar-killer__details {
-  background: var(--vp-c-bg-soft);
-  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 82%, transparent);
-  border-radius: 8px;
-  display: grid;
-  gap: 0;
-  min-width: 0;
-  padding: 8px;
-}
-
-.graphwar-killer__details[open] {
-  gap: 8px;
-}
-
-.graphwar-killer__details > summary {
-  cursor: pointer;
-  font-size: 0.92rem;
-  font-weight: 700;
-  line-height: 1.4;
-  margin: -2px 0;
-}
-
-.graphwar-killer__details > summary:focus-visible {
-  border-radius: 4px;
-  outline: 2px solid var(--vp-c-brand-1);
-  outline-offset: 2px;
 }
 
 .graphwar-killer__debug-timing {

@@ -704,6 +704,7 @@ export const graphwarKillerLocale = {
       coordinateAriaLabel: (label, axis) => `${label} ${axis} 坐标`,
       coordinateTitle: (label, axis) => `编辑${label}的 ${axis} 坐标并同步移动截图上的点`,
       header: "点",
+      listSummary: "路径点列表",
       pathLabel: (index) => `路径 ${index}`,
       selfLabel: "己方",
       svgSelfLabel: "己",

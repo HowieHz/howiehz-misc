@@ -2,6 +2,7 @@
 import { computed } from "vue";
 
 import type { GraphwarKillerLocale } from "../../locale-types";
+import PanelDetails from "../controls/PanelDetails.vue";
 import ToggleField from "../controls/ToggleField.vue";
 import type { GraphwarAdvancedSettingsPanelModel } from "./advanced-panel-model";
 
@@ -277,13 +278,11 @@ const liveClickPreviewWorkerCountText = computed({
           <h3>
             {{ locale.ui.settings.pathfinding.heading }}
           </h3>
-          <details class="graphwar-killer__details">
-            <summary
-              id="graphwar-killer-obstacle-expansion-title"
-              :title="locale.ui.pathfinding.obstacleExpansionTitle"
-            >
-              {{ locale.ui.pathfinding.obstacleExpansion }}
-            </summary>
+          <PanelDetails
+            summary-id="graphwar-killer-obstacle-expansion-title"
+            :summary="locale.ui.pathfinding.obstacleExpansion"
+            :summary-title="locale.ui.pathfinding.obstacleExpansionTitle"
+          >
             <div class="graphwar-killer__obstacle-expansion-grid">
               <div class="graphwar-killer__obstacle-expansion-source">
                 <strong>{{ locale.ui.pathfinding.obstacleExpansionDetectionMode }}</strong>
@@ -373,7 +372,7 @@ const liveClickPreviewWorkerCountText = computed({
                 </label>
               </div>
             </div>
-          </details>
+          </PanelDetails>
           <label
             class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
             :title="locale.ui.settings.pathfinding.workerCountTitle"
@@ -509,34 +508,6 @@ const liveClickPreviewWorkerCountText = computed({
 
 .graphwar-killer__advanced-settings-group {
   align-content: start;
-}
-
-.graphwar-killer__details {
-  background: var(--vp-c-bg-soft);
-  border: 1px solid color-mix(in srgb, var(--vp-c-divider) 82%, transparent);
-  border-radius: 8px;
-  display: grid;
-  gap: 0;
-  min-width: 0;
-  padding: 8px;
-}
-
-.graphwar-killer__details[open] {
-  gap: 8px;
-}
-
-.graphwar-killer__details > summary {
-  cursor: pointer;
-  font-size: 0.92rem;
-  font-weight: 700;
-  line-height: 1.4;
-  margin: -2px 0;
-}
-
-.graphwar-killer__details > summary:focus-visible {
-  border-radius: 4px;
-  outline: 2px solid var(--vp-c-brand-1);
-  outline-offset: 2px;
 }
 
 .graphwar-killer__obstacle-expansion-grid {

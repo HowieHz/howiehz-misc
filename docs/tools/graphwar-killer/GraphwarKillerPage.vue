@@ -3021,8 +3021,12 @@ function toggleGraphwarManagedMode() {
   void requestGraphwarManagedWakeLock();
 }
 
-/** 停止轮询和搜索并解锁输入；已发布的最后路径和公式保持不变。 */
+/** 停止托管并解锁输入；用户主动关闭时先提交当前已验证 incumbent。 */
 function stopGraphwarManagedMode(showStatus: boolean) {
+  // 手动取消和关闭托管必须共享同一转正入口，避免一个显示路径点、另一个只留下隐藏预览。
+  if (showStatus) {
+    finalizeActiveOneClickClearIncumbent();
+  }
   graphwarManagedModeEnabled.value = false;
   clearGraphwarManagedCalculationStatus();
   graphwarManagedWakeLockGeneration += 1;
@@ -3736,10 +3740,7 @@ function startSmartPathfinding(message?: string) {
 
 /** 主动停止可提交一键清图检查点；内部失效必须先丢弃它，不能让旧局面结果落地。 */
 function cancelSmartPathfinding(showStatus: boolean, preservePreview = false) {
-  const retained =
-    showStatus && activePathfindingTask?.kind === "one-click"
-      ? oneClickClearRunWorkflow.finalizeActiveIncumbent()
-      : false;
+  const retained = showStatus && finalizeActiveOneClickClearIncumbent();
   if (!retained) {
     oneClickClearRunWorkflow.discardActiveIncumbent();
   }
@@ -3747,6 +3748,11 @@ function cancelSmartPathfinding(showStatus: boolean, preservePreview = false) {
     clearIncumbentPreview();
   }
   return smartPathfindingSession.cancel(retained ? false : showStatus);
+}
+
+/** 转正当前一键清图检查点；调用方仍负责终止共享寻路 session。 */
+function finalizeActiveOneClickClearIncumbent() {
+  return activePathfindingTask?.kind === "one-click" ? oneClickClearRunWorkflow.finalizeActiveIncumbent() : false;
 }
 
 /** 判断异步寻路/清图任务是否仍属于当前 token。 */

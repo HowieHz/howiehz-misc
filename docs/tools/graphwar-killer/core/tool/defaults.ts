@@ -21,7 +21,7 @@ interface GraphwarToolDefaults {
   magnifierSize: number;
   /** 放大镜默认缩放倍数。 */
   magnifierZoom: number;
-  /** Step 算法默认陡峭度，兼顾函数长度和接近垂直阶跃的效果。 */
+  /** Step 默认陡峭度；满高跳转按半像素舍入可在一个 Graphwar 横向像素内完成。 */
   steepness: number;
   /** 发射点固定点迭代次数上限，避免公式点调整陷入长循环。 */
   formulaLaunchPointIterations: number;
@@ -52,7 +52,7 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
   targetRangePixelTolerance: 1,
   magnifierSize: 132,
   magnifierZoom: 3,
-  steepness: 67,
+  steepness: 210,
   formulaLaunchPointIterations: 8,
   obstacleMinArea: 50,
   soldierTemplateCandidateTopRatio: 0.1,

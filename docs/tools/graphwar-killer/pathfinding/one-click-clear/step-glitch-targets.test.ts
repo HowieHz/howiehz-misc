@@ -17,7 +17,6 @@ interface TestHitCircle {
 type TestTarget = GraphwarStepGlitchTargetCandidate<TestHitCircle>;
 
 const defaultAssignmentOptions = {
-  pathStartY: 0,
   pathTailX: 0,
   usableMaxX: 100,
   usableMinX: -100,
@@ -58,12 +57,12 @@ describe("Step glitch one-click-clear target assignment", () => {
     expect(assigned.map((target) => target.routePoint)).toEqual([createPixelPoint(10, 3), createPixelPoint(12, 4)]);
   });
 
-  it("spans the strict shared hit interval and assigns x by launch-y proximity", () => {
+  it("spans the strict shared hit interval and gives larger map y the more-left x", () => {
     const candidates = [
-      createTarget("far", 10, -4, 2, 0),
-      createTarget("upper-tie-later", 10, -2, 3, 3),
-      createTarget("lower-tie", 10, 2, 2.5, 2),
-      createTarget("upper-tie-first", 10, -2, 2.5, 1),
+      createTarget("smallest-y", 10, -4, 2, 0),
+      createTarget("equal-y-first", 10, 2, 2.5, 1),
+      createTarget("largest-y", 10, 8, 2, 2),
+      createTarget("equal-y-later", 10, 2, 3, 3),
     ];
 
     const assigned = assignGraphwarStepGlitchTargetRoutePoints({
@@ -73,10 +72,10 @@ describe("Step glitch one-click-clear target assignment", () => {
     const assignedXs = assigned.map((target) => target.routePoint.x);
 
     expect(assigned.map((target) => target.hitCircle.id)).toEqual([
-      "lower-tie",
-      "upper-tie-first",
-      "upper-tie-later",
-      "far",
+      "largest-y",
+      "equal-y-first",
+      "equal-y-later",
+      "smallest-y",
     ]);
     expectStrictlyIncreasing(assignedXs, 0);
     expect(assignedXs[0]).toBeGreaterThan(8);
@@ -193,7 +192,6 @@ describe("Step glitch one-click-clear target assignment", () => {
         createTarget("left-graph", first.x, first.y, 10, 0, { id: "left-graph", sourcePixelX: first.x }),
         createTarget("right-graph", second.x, second.y, 10, 1, { id: "right-graph", sourcePixelX: second.x }),
       ],
-      pathStartY: tail.y,
       pathTailX: tail.x,
       usableMaxX: 770,
       usableMinX: 0,
@@ -210,7 +208,7 @@ describe("Step glitch one-click-clear target assignment", () => {
     { bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 }, xPlusIsRight: true },
     { bounds: { maxX: -25, maxY: 15, minX: 25, minY: -15 }, xPlusIsRight: false },
   ] as const)(
-    "keeps allocated endpoints strictly inside their pixel circles after $xPlusIsRight round-trip",
+    "orders same-x targets by map y and keeps them inside their circles after $xPlusIsRight round-trip",
     (test) => {
       const boundsRect: BoundsRect = { height: 450, width: 770, x: 0, y: 0 };
       const center = graphToImagePoint(createGraphPoint(10, 0), test.bounds, boundsRect);
@@ -218,10 +216,9 @@ describe("Step glitch one-click-clear target assignment", () => {
       const hitRadius = (boundsRect.width / 50) * 1;
       const assigned = assignGraphwarStepGlitchTargetRoutePoints({
         candidates: [
-          createTarget("a", center.x, center.y, hitRadius, 0),
-          createTarget("b", center.x, center.y, hitRadius, 1),
+          createTarget("smaller-y", center.x, center.y - 1, hitRadius, 0),
+          createTarget("larger-y", center.x, center.y + 1, hitRadius, 1),
         ],
-        pathStartY: tail.y,
         pathTailX: tail.x,
         usableMaxX: 770,
         usableMinX: 0,
@@ -230,11 +227,17 @@ describe("Step glitch one-click-clear target assignment", () => {
       const graphXs = assigned.map((target) => imageToGraphPoint(target.routePoint, test.bounds, boundsRect).x);
 
       expect(assigned).toHaveLength(2);
+      expect(assigned.map((target) => target.hitCircle.id)).toEqual(["larger-y", "smaller-y"]);
       expectStrictlyIncreasing(graphXs, 0);
+      expect(
+        test.xPlusIsRight
+          ? (assigned[0]?.routePoint.x ?? 0) < (assigned[1]?.routePoint.x ?? 0)
+          : (assigned[0]?.routePoint.x ?? 0) > (assigned[1]?.routePoint.x ?? 0),
+      ).toBe(true);
       for (const target of assigned) {
-        expect((target.routePoint.x - center.x) ** 2 + (target.routePoint.y - center.y) ** 2).toBeLessThan(
-          hitRadius ** 2,
-        );
+        expect(
+          (target.routePoint.x - target.center.x) ** 2 + (target.routePoint.y - target.center.y) ** 2,
+        ).toBeLessThan(hitRadius ** 2);
       }
     },
   );

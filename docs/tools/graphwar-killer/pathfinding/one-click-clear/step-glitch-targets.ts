@@ -24,8 +24,6 @@ export interface GraphwarStepGlitchTargetAssignmentOptions<
 > {
   /** 已按士兵中心 x+ 顺序排列的候选。 */
   candidates: readonly TTarget[];
-  /** 发射士兵起始像素 y；同 x 组内优先分配纵向变化较小的士兵。 */
-  pathStartY: number;
   /** 启动路径尾点像素 x；所有输出必须位于其 x+ 侧。 */
   pathTailX: number;
   /** Simulation 边界内可用的最右像素 x。 */
@@ -43,7 +41,7 @@ interface StepGlitchSafeXInterval {
   right: number;
 }
 
-/** 为同中心 x 的士兵分配稳定、严格递增且位于所有像素命中圆内部的控制点。 */
+/** 为同中心 x 的士兵分配稳定、沿 Graph x+ 严格前进且位于所有像素命中圆内部的控制点。 */
 export function assignGraphwarStepGlitchTargetRoutePoints<TTarget extends GraphwarStepGlitchTargetCandidate>(
   options: GraphwarStepGlitchTargetAssignmentOptions<TTarget>,
 ): GraphwarStepGlitchAssignedTarget<TTarget>[] {
@@ -65,8 +63,9 @@ export function assignGraphwarStepGlitchTargetRoutePoints<TTarget extends Graphw
       const leftAnchor = selectStepGlitchLeftAnchor(interval, pathTailForwardX, lastAssignedForwardX);
       const nextCenterForwardX = toForwardX(options.candidates[groupEnd]?.center.x ?? Number.NaN, options.xPlusIsRight);
       const rightAnchor = numberIsInsideInterval(nextCenterForwardX, interval) ? nextCenterForwardX : undefined;
-      const orderedGroup = [...group].sort((left, right) =>
-        compareStepGlitchTargetOrder(left, right, options.pathStartY),
+      // 固定地图顺序可跨发射士兵复用前缀；相同 y 沿用输入序号，避免识别结果抖动。
+      const orderedGroup = [...group].sort(
+        (left, right) => right.center.y - left.center.y || left.sourceIndex - right.sourceIndex,
       );
       const assignedForwardXs = createStepGlitchAssignedXs(
         orderedGroup.length,
@@ -164,18 +163,6 @@ function numberIsInsideInterval(value: number | undefined, interval: StepGlitchS
   return value !== undefined && Number.isFinite(value) && value >= interval.left && value <= interval.right;
 }
 
-function compareStepGlitchTargetOrder(
-  left: GraphwarStepGlitchTargetCandidate,
-  right: GraphwarStepGlitchTargetCandidate,
-  pathStartY: number,
-) {
-  return (
-    Math.abs(left.center.y - pathStartY) - Math.abs(right.center.y - pathStartY) ||
-    right.center.y - left.center.y ||
-    left.sourceIndex - right.sourceIndex
-  );
-}
-
 /** 单例保留圆心；只有同 x 多目标才在锚点和严格命中区间之间均分。 */
 function createStepGlitchAssignedXs(
   count: number,
@@ -210,7 +197,7 @@ function createStepGlitchAssignedXs(
   );
 }
 
-/** 验证分配点严格递增、位于安全区间内且没有越过右锚点。 */
+/** 验证分配点沿 Graph x+ 严格前进、位于安全区间内且没有越过前方锚点。 */
 function stepGlitchAssignmentsAreValid(
   assignedXs: readonly number[],
   interval: StepGlitchSafeXInterval,

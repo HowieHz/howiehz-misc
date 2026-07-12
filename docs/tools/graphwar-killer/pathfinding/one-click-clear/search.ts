@@ -806,11 +806,10 @@ function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): 
   return targets.sort(compareOneClickClearTargetOrder).map((target, orderIndex) => ({ ...target, orderIndex }));
 }
 
-/** 邪道清图先在像素命中圈中分配同 x 士兵的严格递增命中点，再进入顺序扫描。 */
+/** 邪道清图先在像素命中圈中分配同 x 士兵沿 Graph x+ 前进的命中点，再进入顺序扫描。 */
 function collectOneClickClearStepGlitchTargets(options: GraphwarOneClickClearOptions): OneClickClearTarget[] {
-  const pathStart = options.pathPoints[0];
   const pathTail = options.pathPoints.at(-1);
-  if (!pathStart || !pathTail) {
+  if (!pathTail) {
     return [];
   }
 
@@ -849,7 +848,6 @@ function collectOneClickClearStepGlitchTargets(options: GraphwarOneClickClearOpt
 
   const assignedTargets = assignGraphwarStepGlitchTargetRoutePoints({
     candidates,
-    pathStartY: pathStart.y,
     pathTailX: pathTail.x,
     usableMaxX,
     usableMinX,

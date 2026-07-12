@@ -135,24 +135,6 @@ function handleObstacleBrushDiameterInput(event: Event) {
     </div>
     <div class="graphwar-killer__interaction-preferences">
       <ToggleField
-        id="graphwar-killer-snap-soldiers"
-        :checked="panel.snapSoldiers.enabled"
-        :label="locale.ui.actions.snapSoldiers"
-        :reason="panel.snapSoldiers.reason"
-        :state="panel.snapSoldiers.state"
-        :title="locale.ui.actions.snapSoldiersTitle"
-        @toggle="emit('toggleSnapSoldiers')"
-      />
-      <ToggleField
-        id="graphwar-killer-collision-check"
-        :checked="panel.collisionCheck.enabled"
-        :label="locale.ui.actions.collisionCheck"
-        :reason="panel.collisionCheck.reason"
-        :state="panel.collisionCheck.state"
-        :title="locale.ui.actions.collisionCheckTitle"
-        @toggle="emit('toggleCollisionCheck')"
-      />
-      <ToggleField
         id="graphwar-killer-path-planning"
         :checked="panel.pathPlanning.enabled"
         :label="locale.ui.actions.pathPlanning"
@@ -276,6 +258,24 @@ function handleObstacleBrushDiameterInput(event: Event) {
           aria-hidden="true"
         />
       </button>
+      <ToggleField
+        id="graphwar-killer-snap-soldiers"
+        :checked="panel.snapSoldiers.enabled"
+        :label="locale.ui.actions.snapSoldiers"
+        :reason="panel.snapSoldiers.reason"
+        :state="panel.snapSoldiers.state"
+        :title="locale.ui.actions.snapSoldiersTitle"
+        @toggle="emit('toggleSnapSoldiers')"
+      />
+      <ToggleField
+        id="graphwar-killer-collision-check"
+        :checked="panel.collisionCheck.enabled"
+        :label="locale.ui.actions.collisionCheck"
+        :reason="panel.collisionCheck.reason"
+        :state="panel.collisionCheck.state"
+        :title="locale.ui.actions.collisionCheckTitle"
+        @toggle="emit('toggleCollisionCheck')"
+      />
       <ToggleField
         id="graphwar-killer-live-click-preview"
         :checked="panel.liveClickPreviewEnabled"
@@ -434,6 +434,11 @@ function handleObstacleBrushDiameterInput(event: Event) {
 .graphwar-killer__interaction-preferences > * {
   flex: 0 1 auto;
   max-width: 100%;
+}
+
+.graphwar-killer__path-actions {
+  /* Capability reasons may add a second line; keep neighboring controls anchored to the row top. */
+  align-items: flex-start;
 }
 
 button.graphwar-killer__icon-button--active {

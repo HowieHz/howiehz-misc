@@ -121,6 +121,7 @@ const describedBy = computed(
   font-weight: 700;
   line-height: 1.3;
   overflow-wrap: anywhere;
+  transition: color 0.2s ease;
 }
 
 .graphwar-killer-toggle-field__track {
@@ -133,8 +134,19 @@ const describedBy = computed(
   padding: 2px;
   transition:
     background-color 0.2s ease,
-    border-color 0.2s ease;
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
   width: 38px;
+}
+
+.graphwar-killer-toggle-field__control:hover:not(:disabled) .graphwar-killer-toggle-field__text {
+  color: var(--vp-c-brand-1);
+}
+
+.graphwar-killer-toggle-field__control:hover:not(:disabled) .graphwar-killer-toggle-field__track {
+  background: color-mix(in srgb, var(--vp-c-brand-1) 12%, var(--vp-c-divider));
+  border-color: color-mix(in srgb, var(--vp-c-brand-1) 54%, var(--vp-c-divider));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vp-c-brand-1) 10%, transparent);
 }
 
 .graphwar-killer-toggle-field__thumb {
@@ -150,6 +162,11 @@ const describedBy = computed(
 .graphwar-killer-toggle-field__control[aria-checked="true"] .graphwar-killer-toggle-field__track {
   background: var(--vp-c-brand-1);
   border-color: var(--vp-c-brand-1);
+}
+
+.graphwar-killer-toggle-field__control[aria-checked="true"]:hover:not(:disabled) .graphwar-killer-toggle-field__track {
+  background: color-mix(in srgb, var(--vp-c-brand-1) 86%, var(--vp-c-text-1));
+  border-color: color-mix(in srgb, var(--vp-c-brand-1) 86%, var(--vp-c-text-1));
 }
 
 .graphwar-killer-toggle-field__control[aria-checked="true"]

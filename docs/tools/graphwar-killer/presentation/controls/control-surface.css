@@ -110,7 +110,9 @@ button.graphwar-killer__icon-button {
   position: relative;
   text-align: center;
   transform: none;
-  transition: color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
   white-space: normal;
   z-index: 1;
 }
@@ -126,13 +128,18 @@ button.graphwar-killer__icon-button {
 }
 
 .graphwar-killer-segmented-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--vp-c-brand-1) 8%, transparent);
   box-shadow: none;
-  color: color-mix(in srgb, var(--vp-c-text-1) 64%, var(--vp-c-text-2) 36%);
+  color: var(--vp-c-text-1);
   transform: none;
 }
 
-.graphwar-killer-segmented-control .graphwar-killer-segmented-button--active,
+.graphwar-killer-segmented-control .graphwar-killer-segmented-button--active {
+  color: var(--vp-c-white);
+}
+
 .graphwar-killer-segmented-control .graphwar-killer-segmented-button--active:hover:not(:disabled) {
+  background: rgb(255 255 255 / 12%);
   color: var(--vp-c-white);
 }
 

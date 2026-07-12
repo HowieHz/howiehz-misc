@@ -131,6 +131,8 @@ type PreparedGraphwarStepGlitchPrefixResult =
 
 interface ScanState {
   acceptedPoint: GraphPoint;
+  /** 直连整式的真实碰撞 x；存在时门位置不得再由前缀所在像素行推算。 */
+  blockedX?: number;
   path: PixelPoint[];
   row: number;
   searchX: number;
@@ -417,6 +419,7 @@ function scanPreparedGraphwarStepGlitchPath(
     {
       state: {
         acceptedPoint: initialAcceptedPoint,
+        ...(initialDirect.replay.blockedPoint ? { blockedX: initialDirect.replay.blockedPoint.x } : {}),
         path: [...options.sourcePath],
         row: initialGridPoint.y,
         searchX: initialGridPoint.x,
@@ -444,7 +447,7 @@ function scanPreparedGraphwarStepGlitchPath(
         continue;
       }
       const candidates =
-        farthestX >= targetGridPoint.x
+        item.state.blockedX === undefined && farthestX >= targetGridPoint.x
           ? [
               {
                 controlX: targetGraphPoint.x,
@@ -457,7 +460,18 @@ function scanPreparedGraphwarStepGlitchPath(
                 windowWidth: Number.POSITIVE_INFINITY,
               },
             ]
-          : createGateCandidates(item.state, farthestX + 1, targetGraphPoint, hitTargetGridPoint.y, options, maskIndex);
+          : createGateCandidates(
+              item.state,
+              // 轨迹可能漂到相邻像素行；真实碰撞 x 优先，mask 行边界只作为无回放证据时的兜底。
+              item.state.blockedX ?? searchBoundaryToGraphX(farthestX + 1, options, maskIndex.mirrored),
+              item.state.blockedX === undefined
+                ? farthestX + 1
+                : graphXToSearchColumn(item.state.blockedX, item.state.acceptedPoint.y, options, maskIndex.mirrored),
+              targetGraphPoint,
+              hitTargetGridPoint.y,
+              options,
+              maskIndex,
+            );
       candidates.sort(compareScanCandidates);
       for (let index = candidates.length - 1; index >= 0; index -= 1) {
         work.push({ candidate: candidates[index], type: "candidate" });
@@ -506,6 +520,7 @@ function scanPreparedGraphwarStepGlitchPath(
     work.push({
       state: {
         acceptedPoint: replay.acceptedPoint,
+        ...(replay.blockedPoint ? { blockedX: replay.blockedPoint.x } : {}),
         path: item.candidate.path,
         row: nextGridPoint.y,
         searchX: nextGridPoint.x,
@@ -644,21 +659,21 @@ function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, bounda
       });
 }
 
-/** 为首个阻挡列后的自由行生成稳定排序、去重后的右门候选。 */
+/** 从真实碰撞或 mask 兜底得到的左门 x，生成稳定排序、去重后的右门候选。 */
 function createGateCandidates(
   state: ScanState,
+  leftGateX: number,
   firstBlockedSearchX: number,
   target: GraphPoint,
   targetRow: number,
   options: GraphwarStepGlitchPrefixOptions,
   maskIndex: GraphwarStepGlitchScanMaskIndex,
 ) {
-  const boundaryGraphX = searchBoundaryToGraphX(firstBlockedSearchX, options, maskIndex.mirrored);
   const candidates: ScanCandidate[] = [];
   const seen = new Set<string>();
 
   for (const windowWidth of glitchWindowWidths) {
-    const controlX = floorToDecimalPlaces(boundaryGraphX + windowWidth, options.settings.decimalPlaces);
+    const controlX = floorToDecimalPlaces(leftGateX + windowWidth, options.settings.decimalPlaces);
     const startX = controlX - windowWidth;
     if (
       !graphXAdvancesStrictly(state.acceptedPoint.x, startX) ||
@@ -672,8 +687,9 @@ function createGateCandidates(
     const keyPrefix = `${controlX.toPrecision(17)}:`;
     // 每行一次读取即可同时判断自由区和记录最远点；不构造 span，也不再二次扫描自由行。
     for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
-      const farthestX = getFarthestFreeX(maskIndex, controlSearchX, row);
-      if (farthestX < controlSearchX) {
+      // 门 x 取真实碰撞位置；mask 列只负责排除换行后仍跨不过原障碍的候选。
+      const farthestX = getFarthestFreeX(maskIndex, Math.min(controlSearchX, firstBlockedSearchX), row);
+      if (farthestX < Math.max(controlSearchX, firstBlockedSearchX)) {
         continue;
       }
       const key = `${keyPrefix}${row}`;

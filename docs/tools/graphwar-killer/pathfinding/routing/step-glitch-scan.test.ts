@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH, GRAPHWAR_STEP_SIZE } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { floorToDecimalPlaces } from "../../core/numbers";
 import { createGraphPoint } from "../../core/types";
@@ -149,13 +149,15 @@ describe("Step y' glitch scan", () => {
     expect(result.expandedStates).toBe(1);
   });
 
-  it("jumps to a disjoint free row when the next obstacle column blocks the source row", () => {
+  it("jumps to a disjoint free row when the trajectory collides outside the clear source row", () => {
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 4);
     const mask = createEmptyMask();
-    const wallX = Math.floor(((toPixel(-8, 0).x - boundsRect.x) / boundsRect.width) * GRAPHWAR_PLANE_LENGTH);
+    const wallX = Math.floor(((toPixel(-6.5, 0).x - boundsRect.x) / boundsRect.width) * GRAPHWAR_PLANE_LENGTH);
     for (let row = 180; row <= 270; row += 1) {
-      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+      if (row !== Math.floor(start.y)) {
+        mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+      }
     }
     const result = scanGraphwarStepGlitchPath({
       bounds,
@@ -247,6 +249,17 @@ describe("Step y' glitch scan", () => {
     for (let row = 180; row <= 270; row += 1) {
       mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
     }
+    const directReplay = replayGraphwarStepGlitchPathToControlX({
+      bounds: mirroredBounds,
+      boundsRect,
+      controlX: imageToGraphPoint(target, mirroredBounds, boundsRect).x,
+      path: [start, target],
+      settings,
+      simulationMask: mask,
+      sourcePath: [start],
+      targetSequence: [{ center: target, radius: 12 }],
+    });
+    expect(directReplay.blockedPoint).toBeDefined();
     const result = scanGraphwarStepGlitchPath({
       bounds: mirroredBounds,
       boundsRect,
@@ -264,7 +277,12 @@ describe("Step y' glitch scan", () => {
       expect(result.path.at(-1)).toBe(target);
       if (controlPoint) {
         const controlX = imageToGraphPoint(controlPoint, mirroredBounds, boundsRect).x;
-        expect(floorToDecimalPlaces(controlX, settings.decimalPlaces)).toBe(-6.7329);
+        expect(floorToDecimalPlaces(controlX, settings.decimalPlaces)).toBe(
+          floorToDecimalPlaces(
+            (directReplay.blockedPoint?.x ?? Number.NaN) + GRAPHWAR_STEP_SIZE,
+            settings.decimalPlaces,
+          ),
+        );
       }
     }
   });

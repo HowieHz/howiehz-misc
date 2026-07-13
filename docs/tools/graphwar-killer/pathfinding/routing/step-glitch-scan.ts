@@ -155,6 +155,10 @@ interface ScanLandingRow {
   /** 从原碰撞列开始沿 x+ 连续可达的最远列。 */
   farthestX: number;
   row: number;
+  /** 当前轨迹恢复行到候选行的垂直像素距离。 */
+  startDeltaY: number;
+  /** 目标命中圈中心行到候选行的垂直像素距离。 */
+  targetDeltaY: number;
 }
 
 interface ScanGateWindow {
@@ -439,6 +443,7 @@ function scanPreparedGraphwarStepGlitchPath(
   const initialAcceptedPoint = prefix.acceptedPoint;
   const initialGridPoint = graphPointToSearchGrid(initialAcceptedPoint, options, maskIndex.mirrored);
   const targetGridPoint = pixelPointToSearchGrid(target.targetPoint, options.boundsRect, maskIndex.mirrored);
+  const hitTargetGridPoint = pixelPointToSearchGrid(target.hitTarget.center, options.boundsRect, maskIndex.mirrored);
   const work: ScanWorkItem[] = [
     {
       state: {
@@ -492,6 +497,7 @@ function scanPreparedGraphwarStepGlitchPath(
             ? farthestX + 1
             : graphXToSearchColumn(item.state.blockedX, item.state.acceptedPoint.y, options, maskIndex.mirrored),
           targetGraphPoint,
+          hitTargetGridPoint.y,
           options,
           maskIndex,
         );
@@ -517,7 +523,7 @@ function scanPreparedGraphwarStepGlitchPath(
           continue;
         }
 
-        // 行排序只看碰撞列的最远 x；每档门仍用 O(1) 查表排除落在前一格障碍里的情况。
+        // 行评分固定在原碰撞列；每档门仍用 O(1) 查表排除落在前一格障碍里的情况。
         const farthestX = getFarthestFreeX(maskIndex, Math.min(window.searchX, item.scan.firstBlockedSearchX), row.row);
         if (farthestX < Math.max(window.searchX, item.scan.firstBlockedSearchX)) {
           continue;
@@ -731,11 +737,12 @@ function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, bounda
       });
 }
 
-/** 从首次阻挡像素的前一格放置左门，并准备最多 450 个按最远 x、行号排序的落点行。 */
+/** 从首次阻挡像素的前一格放置左门，并准备最多 450 个稳定排序的落点行。 */
 function createGateRowScan(
   state: ScanState,
   firstBlockedSearchX: number,
   target: GraphPoint,
+  targetRow: number,
   options: GraphwarStepGlitchPrefixOptions,
   maskIndex: GraphwarStepGlitchScanMaskIndex,
 ) {
@@ -794,10 +801,22 @@ function createGateRowScan(
   for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
     const farthestX = getFarthestFreeX(maskIndex, firstBlockedSearchX, row);
     if (farthestX >= firstBlockedSearchX) {
-      rows.push({ farthestX, row });
+      rows.push({
+        farthestX,
+        row,
+        startDeltaY: Math.abs(row - state.row),
+        targetDeltaY: Math.abs(row - targetRow),
+      });
     }
   }
-  rows.sort((left, right) => right.farthestX - left.farthestX || left.row - right.row);
+  // 先争取最大横向收益；收益相同时减少到目标、再到当前轨迹的垂直偏移，行号仅保证结果稳定。
+  rows.sort(
+    (left, right) =>
+      right.farthestX - left.farthestX ||
+      left.targetDeltaY - right.targetDeltaY ||
+      left.startDeltaY - right.startDeltaY ||
+      left.row - right.row,
+  );
   return rows.length > 0 ? { firstBlockedSearchX, rows, state, windows } : undefined;
 }
 

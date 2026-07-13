@@ -318,15 +318,16 @@ describe("Step glitch scanner replay acceptance", () => {
     expect(sampleFormulaTrajectory).toHaveBeenCalledTimes(4);
   });
 
-  it("orders landing rows only by farthest x and row before trying the widest window", () => {
+  it("prefers the hit-circle row after farthest x before trying narrower windows", () => {
     replayMockState.orderedRowScenario = true;
     const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
     const target = graphToImagePoint(createGraphPoint(-6, 8), bounds, boundsRect);
+    const hitCenter = graphToImagePoint(createGraphPoint(-6, 6), bounds, boundsRect);
 
     const result = scanGraphwarStepGlitchPath({
       bounds,
       boundsRect,
-      hitTarget: { center: target, radius: 12 },
+      hitTarget: { center: hitCenter, radius: 12 },
       settings: {
         algorithm: "step",
         decimalPlaces: 4,
@@ -342,7 +343,88 @@ describe("Step glitch scanner replay acceptance", () => {
 
     expect(result.status).toBe("hit");
     expect(replayMockState.testedGateYs[0]).toBeCloseTo(
-      imageToGraphPoint(createPixelPoint(0, 0.5), bounds, boundsRect).y,
+      imageToGraphPoint(createPixelPoint(0, Math.floor(hitCenter.y) + 0.5), bounds, boundsRect).y,
+    );
+    expect(replayMockState.testedGateYs[1]).toBeCloseTo(replayMockState.testedGateYs[0] ?? Number.NaN);
+    expect(replayMockState.testedWindowWidths[0]).toBeCloseTo(GRAPHWAR_STEP_SIZE);
+    expect(replayMockState.testedWindowWidths[1]).toBeCloseTo(GRAPHWAR_STEP_SIZE / 2);
+  });
+
+  it("uses distance from the current row before the row number when target distances tie", () => {
+    replayMockState.orderedRowScenario = true;
+    const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
+    const targetX = graphToImagePoint(createGraphPoint(-6, 0), bounds, boundsRect).x;
+    const target = createPixelPoint(targetX, 150.5);
+    const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const blockedX = Math.floor(graphToImagePoint(createGraphPoint(-8, 0), bounds, boundsRect).x);
+    const lowerRowNumber = 100;
+    const nearerStartRow = 200;
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      if (row !== lowerRowNumber && row !== nearerStartRow) {
+        simulationMask[row * GRAPHWAR_PLANE_LENGTH + blockedX] = 1;
+      }
+    }
+
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "dy",
+        steepness: 67,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      simulationMask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    expect(replayMockState.testedGateYs[0]).toBeCloseTo(
+      imageToGraphPoint(createPixelPoint(0, nearerStartRow + 0.5), bounds, boundsRect).y,
+    );
+    expect(replayMockState.testedGateYs[1]).toBeCloseTo(replayMockState.testedGateYs[0] ?? Number.NaN);
+    expect(replayMockState.testedWindowWidths[0]).toBeCloseTo(GRAPHWAR_STEP_SIZE);
+    expect(replayMockState.testedWindowWidths[1]).toBeCloseTo(GRAPHWAR_STEP_SIZE / 2);
+  });
+
+  it("uses the row number only when both vertical distances tie", () => {
+    replayMockState.orderedRowScenario = true;
+    const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
+    const target = graphToImagePoint(createGraphPoint(-6, 0), bounds, boundsRect);
+    const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const blockedX = Math.floor(graphToImagePoint(createGraphPoint(-8, 0), bounds, boundsRect).x);
+    const lowerRowNumber = 200;
+    const higherRowNumber = 250;
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      if (row !== lowerRowNumber && row !== higherRowNumber) {
+        simulationMask[row * GRAPHWAR_PLANE_LENGTH + blockedX] = 1;
+      }
+    }
+
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "dy",
+        steepness: 67,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      simulationMask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    expect(replayMockState.testedGateYs[0]).toBeCloseTo(
+      imageToGraphPoint(createPixelPoint(0, lowerRowNumber + 0.5), bounds, boundsRect).y,
     );
     expect(replayMockState.testedGateYs[1]).toBeCloseTo(replayMockState.testedGateYs[0] ?? Number.NaN);
     expect(replayMockState.testedWindowWidths[0]).toBeCloseTo(GRAPHWAR_STEP_SIZE);

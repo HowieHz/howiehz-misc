@@ -146,17 +146,35 @@ interface ScanState {
 
 interface ScanCandidate {
   controlX: number;
-  farthestX: number;
   kind: "gate" | "target";
   path: PixelPoint[];
-  row: number;
-  targetDistance: number;
-  verticalDistance: number;
-  windowWidth: number;
   stepGlitchXWindows: readonly (GraphwarStepGlitchXWindow | undefined)[];
 }
 
-type ScanWorkItem = { candidate: ScanCandidate; type: "candidate" } | { state: ScanState; type: "state" };
+interface ScanLandingRow {
+  /** 从原碰撞列开始沿 x+ 连续可达的最远列。 */
+  farthestX: number;
+  row: number;
+}
+
+interface ScanGateWindow {
+  controlX: number;
+  decimalPlaces: number;
+  searchX: number;
+  startX: number;
+}
+
+interface ScanGateRows {
+  firstBlockedSearchX: number;
+  rows: ScanLandingRow[];
+  state: ScanState;
+  windows: ScanGateWindow[];
+}
+
+type ScanWorkItem =
+  | { candidate: ScanCandidate; type: "candidate" }
+  | { rowIndex: number; scan: ScanGateRows; type: "gate-rows"; windowIndex: number }
+  | { state: ScanState; type: "state" };
 
 export interface GraphwarStepGlitchReplayResult {
   acceptedPoint?: GraphPoint;
@@ -421,7 +439,6 @@ function scanPreparedGraphwarStepGlitchPath(
   const initialAcceptedPoint = prefix.acceptedPoint;
   const initialGridPoint = graphPointToSearchGrid(initialAcceptedPoint, options, maskIndex.mirrored);
   const targetGridPoint = pixelPointToSearchGrid(target.targetPoint, options.boundsRect, maskIndex.mirrored);
-  const hitTargetGridPoint = pixelPointToSearchGrid(target.hitTarget.center, options.boundsRect, maskIndex.mirrored);
   const work: ScanWorkItem[] = [
     {
       state: {
@@ -457,35 +474,79 @@ function scanPreparedGraphwarStepGlitchPath(
       if (farthestX < item.state.searchX) {
         continue;
       }
-      const candidates =
-        item.state.blockedX === undefined && farthestX >= targetGridPoint.x
-          ? [
-              {
-                controlX: targetGraphPoint.x,
-                farthestX: targetGridPoint.x,
-                kind: "target" as const,
-                path: [...item.state.path, target.targetPoint],
-                row: item.state.row,
-                targetDistance: 0,
-                verticalDistance: 0,
-                windowWidth: Number.POSITIVE_INFINITY,
-                stepGlitchXWindows: [...item.state.stepGlitchXWindows, undefined],
-              },
-            ]
-          : createGateCandidates(
-              item.state,
-              // 轨迹可能漂到相邻像素行；真实碰撞定位的像素列优先，mask 行边界只作兜底。
-              item.state.blockedX === undefined
-                ? farthestX + 1
-                : graphXToSearchColumn(item.state.blockedX, item.state.acceptedPoint.y, options, maskIndex.mirrored),
-              targetGraphPoint,
-              hitTargetGridPoint.y,
-              options,
-              maskIndex,
-            );
-      candidates.sort(compareScanCandidates);
-      for (let index = candidates.length - 1; index >= 0; index -= 1) {
-        work.push({ candidate: candidates[index], type: "candidate" });
+      if (item.state.blockedX === undefined && farthestX >= targetGridPoint.x) {
+        work.push({
+          candidate: {
+            controlX: targetGraphPoint.x,
+            kind: "target",
+            path: [...item.state.path, target.targetPoint],
+            stepGlitchXWindows: [...item.state.stepGlitchXWindows, undefined],
+          },
+          type: "candidate",
+        });
+      } else {
+        const scan = createGateRowScan(
+          item.state,
+          // 轨迹可能漂到相邻像素行；真实碰撞定位的像素列优先，mask 行边界只作兜底。
+          item.state.blockedX === undefined
+            ? farthestX + 1
+            : graphXToSearchColumn(item.state.blockedX, item.state.acceptedPoint.y, options, maskIndex.mirrored),
+          targetGraphPoint,
+          options,
+          maskIndex,
+        );
+        if (scan) {
+          work.push({ rowIndex: 0, scan, type: "gate-rows", windowIndex: 0 });
+        }
+      }
+      continue;
+    }
+
+    if (item.type === "gate-rows") {
+      let { rowIndex, windowIndex } = item;
+      let candidate: ScanCandidate | undefined;
+      while (rowIndex < item.scan.rows.length) {
+        const row = item.scan.rows[rowIndex];
+        const window = item.scan.windows[windowIndex];
+        windowIndex += 1;
+        if (windowIndex >= item.scan.windows.length) {
+          rowIndex += 1;
+          windowIndex = 0;
+        }
+        if (!row || !window) {
+          continue;
+        }
+
+        // 行排序只看碰撞列的最远 x；每档门仍用 O(1) 查表排除落在前一格障碍里的情况。
+        const farthestX = getFarthestFreeX(maskIndex, Math.min(window.searchX, item.scan.firstBlockedSearchX), row.row);
+        if (farthestX < Math.max(window.searchX, item.scan.firstBlockedSearchX)) {
+          continue;
+        }
+        const controlPoint = createControlPointForFormulaEndX(
+          window.controlX,
+          targetGraphPoint.x,
+          row.row,
+          options,
+          window.decimalPlaces,
+        );
+        if (!controlPoint) {
+          continue;
+        }
+
+        candidate = {
+          controlX: window.controlX,
+          kind: "gate",
+          path: [...item.scan.state.path, controlPoint],
+          stepGlitchXWindows: [...item.scan.state.stepGlitchXWindows, { endX: window.controlX, startX: window.startX }],
+        };
+        break;
+      }
+      // 先压入续扫位置，再验证当前候选；成功分支会位于栈顶，失败后则从下一档窗口继续。
+      if (rowIndex < item.scan.rows.length) {
+        work.push({ rowIndex, scan: item.scan, type: "gate-rows", windowIndex });
+      }
+      if (candidate) {
+        work.push({ candidate, type: "candidate" });
       }
       continue;
     }
@@ -670,19 +731,16 @@ function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, bounda
       });
 }
 
-/** 从首次阻挡像素的前一格放置左门，并生成稳定排序、去重后的右门候选。 */
-function createGateCandidates(
+/** 从首次阻挡像素的前一格放置左门，并准备最多 450 个按最远 x、行号排序的落点行。 */
+function createGateRowScan(
   state: ScanState,
   firstBlockedSearchX: number,
   target: GraphPoint,
-  targetRow: number,
   options: GraphwarStepGlitchPrefixOptions,
   maskIndex: GraphwarStepGlitchScanMaskIndex,
 ) {
-  const candidates: ScanCandidate[] = [];
-  const seen = new Set<string>();
   if (firstBlockedSearchX <= 0 || firstBlockedSearchX >= GRAPHWAR_PLANE_LENGTH) {
-    return candidates;
+    return undefined;
   }
 
   const rawLeftGateX = searchBoundaryToGraphX(firstBlockedSearchX - 1, options, maskIndex.mirrored);
@@ -704,6 +762,7 @@ function createGateCandidates(
     }
   }
 
+  const windows: ScanGateWindow[] = [];
   for (const window of glitchWindows) {
     const gateDecimalPlaces = Math.max(leftGateDecimalPlaces, window.decimalPlaces);
     // L 与 width 已按 gateDecimalPlaces 表示；就近量化只清理 binary 加法残差，不移动窗口方向。
@@ -715,52 +774,31 @@ function createGateCandidates(
     ) {
       continue;
     }
+    // 十进制量化可能让相邻窄窗落到同一个右门；只保留先出现的较宽档。
+    if (windows.at(-1)?.controlX === controlX) {
+      continue;
+    }
+    windows.push({
+      controlX,
+      decimalPlaces: gateDecimalPlaces,
+      searchX: graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.mirrored),
+      startX: leftGateX,
+    });
+  }
+  if (windows.length === 0) {
+    return undefined;
+  }
 
-    const stepGlitchXWindows = [...state.stepGlitchXWindows, { endX: controlX, startX: leftGateX }];
-    const controlSearchX = graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.mirrored);
-    const keyPrefix = `${controlX.toPrecision(17)}:`;
-    // 每行一次读取即可同时判断自由区和记录最远点；不构造 span，也不再二次扫描自由行。
-    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
-      // 门由真实碰撞所在像素的前一格定位；mask 列只排除换行后仍跨不过原障碍的候选。
-      const farthestX = getFarthestFreeX(maskIndex, Math.min(controlSearchX, firstBlockedSearchX), row);
-      if (farthestX < Math.max(controlSearchX, firstBlockedSearchX)) {
-        continue;
-      }
-      const key = `${keyPrefix}${row}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      const controlPoint = createControlPointForFormulaEndX(controlX, target.x, row, options, gateDecimalPlaces);
-      if (!controlPoint) {
-        continue;
-      }
-
-      candidates.push({
-        controlX,
-        farthestX,
-        kind: "gate",
-        path: [...state.path, controlPoint],
-        row,
-        targetDistance: Math.abs(row - targetRow),
-        verticalDistance: Math.abs(row - state.row),
-        windowWidth: window.width,
-        stepGlitchXWindows,
-      });
+  const rows: ScanLandingRow[] = [];
+  // 使用固定碰撞列让每个 y 只有一个评分；具体窗口能否落稳由懒生成时的查表和最终回放决定。
+  for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+    const farthestX = getFarthestFreeX(maskIndex, firstBlockedSearchX, row);
+    if (farthestX >= firstBlockedSearchX) {
+      rows.push({ farthestX, row });
     }
   }
-  return candidates;
-}
-
-/** 优先横向推进更远的稳定候选，末尾 tie-break 保证相同局面结果可复现。 */
-function compareScanCandidates(left: ScanCandidate, right: ScanCandidate) {
-  return (
-    right.farthestX - left.farthestX ||
-    left.targetDistance - right.targetDistance ||
-    left.verticalDistance - right.verticalDistance ||
-    right.windowWidth - left.windowWidth ||
-    left.row - right.row
-  );
+  rows.sort((left, right) => right.farthestX - left.farthestX || left.row - right.row);
+  return rows.length > 0 ? { firstBlockedSearchX, rows, state, windows } : undefined;
 }
 
 /** 查询指定行从 searchX 开始连续可通行区的最右列。 */

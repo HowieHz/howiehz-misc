@@ -184,8 +184,11 @@ describe("Step y' glitch scan", () => {
     const target = toPixel(-5.5, 4);
     const mask = createEmptyMask();
     const wallX = 516;
-    for (let row = 180; row <= 270; row += 1) {
-      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    const landingRow = 100;
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      if (row !== landingRow) {
+        mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+      }
     }
     const result = scanGraphwarStepGlitchPath({
       bounds,

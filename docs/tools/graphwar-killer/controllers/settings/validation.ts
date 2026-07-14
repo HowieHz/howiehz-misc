@@ -129,6 +129,23 @@ export interface GraphwarSettingsValidationController {
   parsedSteepness: ComputedRef<ParsedSteepness>;
 }
 
+/** Parses a positive formula steepness while preserving undefined as the shared invalid sentinel. */
+export function parseGraphwarFormulaSteepness(text: string) {
+  const steepness = parseFiniteNumber(text);
+  return steepness !== undefined && steepness > 0 ? steepness : undefined;
+}
+
+/** Parses an integer formula precision within Graphwar's supported output range. */
+export function parseGraphwarFormulaPrecision(text: string) {
+  const decimalPlaces = parseFiniteNumber(text);
+  return decimalPlaces !== undefined &&
+    Number.isInteger(decimalPlaces) &&
+    decimalPlaces >= 0 &&
+    decimalPlaces <= MAX_FORMULA_DECIMAL_PLACES
+    ? decimalPlaces
+    : undefined;
+}
+
 /** 集中页面设置输入解析；页面应只消费校验结果，workflow 副作用应留在页面侧。 */
 export function useGraphwarSettingsValidation(
   options: GraphwarSettingsValidationOptions,
@@ -155,8 +172,8 @@ export function useGraphwarSettingsValidation(
   });
 
   const parsedSteepness = computed<ParsedSteepness>(() => {
-    const steepness = parseFiniteNumber(options.inputs.formula.steepnessText.value);
-    if (steepness === undefined || steepness <= 0) {
+    const steepness = parseGraphwarFormulaSteepness(options.inputs.formula.steepnessText.value);
+    if (steepness === undefined) {
       return { ok: false as const, message: options.getLocale().validation.steepnessNumber };
     }
     return { ok: true as const, steepness };
@@ -164,11 +181,13 @@ export function useGraphwarSettingsValidation(
 
   const parsedPrecision = computed<ParsedPrecision>(() => {
     const validation = options.getLocale().validation;
-    const decimalPlaces = parseFiniteNumber(options.inputs.formula.precisionText.value);
-    if (decimalPlaces === undefined || !Number.isInteger(decimalPlaces)) {
+    const precisionText = options.inputs.formula.precisionText.value;
+    const rawDecimalPlaces = parseFiniteNumber(precisionText);
+    if (rawDecimalPlaces === undefined || !Number.isInteger(rawDecimalPlaces)) {
       return { ok: false as const, message: validation.decimalPlacesInteger };
     }
-    if (decimalPlaces < 0 || decimalPlaces > MAX_FORMULA_DECIMAL_PLACES) {
+    const decimalPlaces = parseGraphwarFormulaPrecision(precisionText);
+    if (decimalPlaces === undefined) {
       return { ok: false as const, message: validation.decimalPlacesRange(MAX_FORMULA_DECIMAL_PLACES) };
     }
     return { ok: true as const, decimalPlaces };

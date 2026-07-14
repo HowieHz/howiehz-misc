@@ -1,9 +1,17 @@
+import { DEFAULT_FORMULA_DECIMAL_PLACES } from "../../core/numbers";
+import { graphwarToolDefaults } from "../../core/tool/defaults";
 import type { AlgorithmMode, EquationMode } from "../../core/types";
+import { formulaModeUsesSteepness } from "../../formula/generation/capabilities";
 import { supportsOneClickClear } from "../../pathfinding/one-click-clear/support";
+import { parseGraphwarFormulaPrecision, parseGraphwarFormulaSteepness } from "./validation";
 
 /** One Solver equation's independently retained formula preferences. */
 export interface GraphwarFormulaProfile {
   algorithm: AlgorithmMode;
+  /** Raw decimal-place input retained independently for this equation. */
+  precisionText: string;
+  /** Raw steepness input retained independently for this equation. */
+  steepnessText: string;
   /** ODE profiles retain this preference independently; the ordinary y profile strips it. */
   stepGlitchModeEnabled?: boolean;
 }
@@ -15,15 +23,23 @@ export interface GraphwarFormulaProfiles {
   ddy: GraphwarFormulaProfile & { stepGlitchModeEnabled: boolean };
 }
 
-/** A sparse, immutable description of the unsupported profiles managed mode must replace. */
-export type GraphwarManagedFormulaProfileRepairPlan = Partial<GraphwarFormulaProfiles>;
+type GraphwarFormulaProfileRepair = Pick<GraphwarFormulaProfile, "algorithm"> &
+  Partial<Pick<GraphwarFormulaProfile, "stepGlitchModeEnabled">>;
+
+/** A sparse, immutable description of the unsupported profile fields managed mode must replace. */
+export type GraphwarManagedFormulaProfileRepairPlan = Partial<Record<EquationMode, GraphwarFormulaProfileRepair>>;
+
+const defaultFormulaInputText = {
+  precisionText: String(DEFAULT_FORMULA_DECIMAL_PLACES),
+  steepnessText: String(graphwarToolDefaults.steepness),
+} as const;
 
 /** Creates fresh session defaults so callers never share mutable profile objects. */
 export function createDefaultGraphwarFormulaProfiles(): GraphwarFormulaProfiles {
   return {
-    y: { algorithm: "abs" },
-    dy: { algorithm: "step", stepGlitchModeEnabled: true },
-    ddy: { algorithm: "step", stepGlitchModeEnabled: true },
+    y: { algorithm: "abs", ...defaultFormulaInputText },
+    dy: { algorithm: "step", ...defaultFormulaInputText, stepGlitchModeEnabled: true },
+    ddy: { algorithm: "step", ...defaultFormulaInputText, stepGlitchModeEnabled: true },
   };
 }
 
@@ -38,21 +54,25 @@ export function updateGraphwarFormulaProfile(
   equation: EquationMode,
   update: Partial<GraphwarFormulaProfile>,
 ): GraphwarFormulaProfiles {
+  const current = profiles[equation];
+  const next = {
+    algorithm: update.algorithm ?? current.algorithm,
+    precisionText: update.precisionText ?? current.precisionText,
+    steepnessText: update.steepnessText ?? current.steepnessText,
+  };
   if (equation !== "y") {
     return {
       ...profiles,
       [equation]: {
-        ...profiles[equation],
-        ...update,
-        algorithm: update.algorithm ?? profiles[equation].algorithm,
-        stepGlitchModeEnabled: update.stepGlitchModeEnabled ?? profiles[equation].stepGlitchModeEnabled,
+        ...next,
+        stepGlitchModeEnabled: update.stepGlitchModeEnabled ?? current.stepGlitchModeEnabled,
       },
     };
   }
 
   return {
     ...profiles,
-    [equation]: { algorithm: update.algorithm ?? profiles[equation].algorithm },
+    [equation]: next,
   };
 }
 
@@ -83,12 +103,31 @@ export function applyGraphwarManagedFormulaProfileRepairPlan(
   profiles: GraphwarFormulaProfiles,
   plan: GraphwarManagedFormulaProfileRepairPlan,
 ): GraphwarFormulaProfiles {
-  if (!plan.y && !plan.dy && !plan.ddy) {
-    return profiles;
+  let repaired = profiles;
+  for (const equation of ["y", "dy", "ddy"] as const) {
+    const update = plan[equation];
+    if (update) {
+      repaired = updateGraphwarFormulaProfile(repaired, equation, update);
+    }
   }
-  return {
-    y: plan.y ? { algorithm: plan.y.algorithm } : profiles.y,
-    dy: plan.dy ?? profiles.dy,
-    ddy: plan.ddy ?? profiles.ddy,
-  };
+  return repaired;
+}
+
+/** Validates every formula profile exactly as managed mode will use it after applying required repairs. */
+export function graphwarFormulaProfilesAreValidForManagedMode(profiles: GraphwarFormulaProfiles) {
+  const repaired = applyGraphwarManagedFormulaProfileRepairPlan(
+    profiles,
+    createGraphwarManagedFormulaProfileRepairPlan(profiles),
+  );
+  for (const equation of ["y", "dy", "ddy"] as const) {
+    const profile = repaired[equation];
+    if (
+      parseGraphwarFormulaPrecision(profile.precisionText) === undefined ||
+      (formulaModeUsesSteepness(profile.algorithm, equation) &&
+        parseGraphwarFormulaSteepness(profile.steepnessText) === undefined)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }

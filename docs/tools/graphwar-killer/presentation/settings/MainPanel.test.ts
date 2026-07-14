@@ -33,6 +33,9 @@ describe("Settings MainPanel", () => {
       "graphwar-killer-advanced-settings",
     ]);
     expect(switches[2].attributes("aria-checked")).toBe("false");
+    expect(
+      wrapper.find(`[aria-label="${graphwarKillerLocale.ui.settings.decimalPlacesAriaLabel}"]`).attributes("title"),
+    ).toBe(graphwarKillerLocale.ui.settings.decimalPlacesTitle);
 
     await switches[2].trigger("click");
     expect(wrapper.emitted("toggleAdvancedSettings")).toHaveLength(1);

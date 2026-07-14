@@ -758,7 +758,8 @@ export const graphwarKillerLocale = {
       debugActivationCountdown: (remainingSeconds) => `再长按 ${remainingSeconds}s 开启调试信息`,
       decimalPlaces: "保留小数位",
       decimalPlacesAriaLabel: "生成函数保留小数位数",
-      decimalPlacesTitle: "设置生成函数保留的小数位数；位数越多，函数越精确也越长",
+      decimalPlacesTitle:
+        "设置生成函数通常保留的小数位数；位数越多，函数越精确也越长。邪道模式开启后，为保证门位置和脉冲有效，部分系数可能使用更多小数位",
       debugInfoEnabled: "已启用调试信息",
       gameMode: "游戏模式",
       gameModeAriaLabel: "Graphwar 游戏模式",

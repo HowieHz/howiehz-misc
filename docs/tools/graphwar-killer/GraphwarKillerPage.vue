@@ -63,6 +63,8 @@ import {
   applyGraphwarManagedFormulaProfileRepairPlan,
   createDefaultGraphwarFormulaProfiles,
   createGraphwarManagedFormulaProfileRepairPlan,
+  type GraphwarFormulaProfile,
+  graphwarFormulaProfilesAreValidForManagedMode,
   updateGraphwarFormulaProfile,
 } from "./controllers/settings/formula-profiles";
 import { useGraphwarSettingsValidation } from "./controllers/settings/validation";
@@ -232,19 +234,32 @@ const equationMode = computed<EquationMode>({
   },
 });
 const solverFormulaProfiles = ref(createDefaultGraphwarFormulaProfiles());
+
+/** Updates only the selected equation's retained formula inputs and preferences. */
+function updateCurrentFormulaProfile(update: Partial<GraphwarFormulaProfile>) {
+  solverFormulaProfiles.value = updateGraphwarFormulaProfile(
+    solverFormulaProfiles.value,
+    solverEquationMode.value,
+    update,
+  );
+}
+
 const algorithmMode = computed<AlgorithmMode>({
   get: () => solverFormulaProfiles.value[solverEquationMode.value].algorithm,
-  set: (algorithm) => {
-    solverFormulaProfiles.value = updateGraphwarFormulaProfile(solverFormulaProfiles.value, solverEquationMode.value, {
-      algorithm,
-    });
-  },
+  set: (algorithm) => updateCurrentFormulaProfile({ algorithm }),
+});
+const precisionText = computed({
+  get: () => solverFormulaProfiles.value[solverEquationMode.value].precisionText,
+  set: (text: string) => updateCurrentFormulaProfile({ precisionText: text }),
+});
+const steepnessText = computed({
+  get: () => solverFormulaProfiles.value[solverEquationMode.value].steepnessText,
+  set: (text: string) => updateCurrentFormulaProfile({ steepnessText: text }),
 });
 const minXText = ref(`-${graphwarDefaultXLimitText}`);
 const maxXText = ref(graphwarDefaultXLimitText);
 const minYText = ref(`-${graphwarVisibleYLimitText}`);
 const maxYText = ref(graphwarVisibleYLimitText);
-const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
 const stepGlitchProfileEquation = computed<"dy" | "ddy">(() => (solverEquationMode.value === "ddy" ? "ddy" : "dy"));
 const stepGlitchModeEnabled = computed({
@@ -266,7 +281,6 @@ const effectiveStepGlitchModeEnabled = computed(
     formulaModeUsesStepGlitch(algorithmMode.value, solverEquationMode.value, stepGlitchModeEnabled.value),
 );
 const formulaUsesSteepness = computed(() => formulaModeUsesSteepness(algorithmMode.value, solverEquationMode.value));
-const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const advancedSettingsVisible = ref(false);
 const simulatorSkipUnknownCharacters = ref(true);
 const simulatorParseDerivativeAsY = ref(true);
@@ -1100,8 +1114,9 @@ const graphwarCapabilities = computed(() =>
         pathfinding: smartPathfindingInProgress.value,
       },
       formula: {
-        // 托管会跨三个方程 profile 运行；其 y'' 支持算法始终需要陡峭度，不能只校验当前 profile。
-        managedSettingsValid: parsedBounds.value.ok && parsedPrecision.value.ok && parsedSteepness.value.ok,
+        // 托管会跨三个 profile 运行，必须按 repair 后的最终算法校验每份保留输入。
+        managedSettingsValid:
+          parsedBounds.value.ok && graphwarFormulaProfilesAreValidForManagedMode(solverFormulaProfiles.value),
         oneClickClearSupported: supportsOneClickClear(algorithmMode.value),
         settingsValid: !settingsMessage.value,
         usesStepGlitchRouting: effectiveStepGlitchModeEnabled.value,
@@ -2237,7 +2252,7 @@ watch(detectedObstacles, (obstacles) => {
 });
 
 watch([formulaOutputDecimalPlaces], () => {
-  if (toolWorkflowMode.value !== "solver") {
+  if (graphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver") {
     return;
   }
   cancelSmartPathfinding(false);
@@ -2269,7 +2284,7 @@ watch([activeObstacleSimulationToleranceText], () => {
 });
 
 watch(steepnessText, () => {
-  if (toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
+  if (graphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
     return;
   }
   cancelSmartPathfinding(false);

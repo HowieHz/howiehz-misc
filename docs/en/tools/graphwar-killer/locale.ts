@@ -847,7 +847,7 @@ export const graphwarKillerLocale = {
       decimalPlaces: "Decimal places",
       decimalPlacesAriaLabel: "Generated function decimal places",
       decimalPlacesTitle:
-        "Set decimal places in generated functions; more digits improve precision but increase length",
+        "Set the usual decimal places in generated functions; more digits improve precision but increase length. In Glitch Mode, some coefficients may use additional decimal places to keep gate positions and pulses valid",
       debugInfoEnabled: "Debug info enabled",
       gameMode: "Game mode",
       gameModeAriaLabel: "Graphwar game mode",

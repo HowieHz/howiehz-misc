@@ -1,6 +1,6 @@
 import { computed, ref, watch, type Ref } from "vue";
 
-import { imageToGraphPoint, normalizePathPoint } from "../../core/geometry";
+import { imageToGraphPoint, normalizePathPoint, pixelPointsEqual } from "../../core/geometry";
 import { createGraphPoint } from "../../core/types";
 import type {
   AlgorithmMode,
@@ -542,9 +542,4 @@ export function useGraphwarLiveClickPreview(
     schedulePointerPoint,
     setPointerPoint,
   };
-}
-
-/** 精确比较同一截图坐标系中的预览点，避免旧轨迹绑定到新鼠标位置。 */
-function pixelPointsEqual(left: PixelPoint, right: PixelPoint) {
-  return left.x === right.x && left.y === right.y;
 }

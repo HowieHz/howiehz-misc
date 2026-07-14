@@ -408,7 +408,10 @@ function evaluateGraphwarPolishExpression(
         stackSize += 1;
         break;
       case GraphwarExpressionTokenType.Value:
-        stack[stackSize] = token.value ?? Number.NaN;
+        if (token.value === undefined) {
+          return Number.NaN;
+        }
+        stack[stackSize] = token.value;
         stackSize += 1;
         break;
       default:

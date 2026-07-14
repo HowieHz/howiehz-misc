@@ -8,6 +8,7 @@ import {
 } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { MAX_FORMULA_DECIMAL_PLACES, floorToDecimalPlaces, roundToDecimalPlaces } from "../../core/numbers";
+import { planePointIsInsideBoundaryExpansion } from "../../core/plane-grid";
 import { createGraphPoint } from "../../core/types";
 import type {
   AlgorithmMode,
@@ -1800,7 +1801,7 @@ function createGraphwarTrajectoryStopTracker(options: {
         const planeY = Math.floor((pixel.y - boundsRect.y) * collisionPlaneScaleY);
         // 障碍 mask 的边界收缩在像素转平面格点后判断；展开热路径，避免每个采样点创建临时对象。
         if (
-          !isInsidePlaneWithBoundaryExpansion(planeX, planeY, collisionBoundaryExpansion) ||
+          !planePointIsInsideBoundaryExpansion(planeX, planeY, collisionBoundaryExpansion) ||
           Boolean(collisionMask[planeY * GRAPHWAR_PLANE_LENGTH + planeX])
         ) {
           obstacleHitIndex = index;
@@ -1842,16 +1843,6 @@ function createTrajectoryTargetSequenceFromPoints(
     return [];
   }
   return points.map((center) => ({ center, radius: targetHitRadiusPixels }));
-}
-
-/** 判断平面点是否在收缩后的可模拟区域内。 */
-function isInsidePlaneWithBoundaryExpansion(x: number, y: number, boundaryExpansion: number) {
-  return (
-    x >= boundaryExpansion &&
-    x < GRAPHWAR_PLANE_LENGTH - boundaryExpansion &&
-    y >= boundaryExpansion &&
-    y < GRAPHWAR_PLANE_HEIGHT - boundaryExpansion
-  );
 }
 
 /** 创建缺少路径点或目标时的空路径验证结果。 */

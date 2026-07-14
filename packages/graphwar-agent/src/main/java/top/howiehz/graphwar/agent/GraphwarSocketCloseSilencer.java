@@ -8,6 +8,7 @@ import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.security.ProtectionDomain;
 
+/** Suppresses only the expected socket-close exception from official connection read loops. */
 public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
     private static final String CLIENT_GLOBAL_CLIENT = "Graphwar/GlobalClient";
     private static final String CLIENT_SERVER_CONNECTION = "Graphwar/ServerConnection";
@@ -45,6 +46,7 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
         }
     }
 
+    /** Redirects official connection read failures through the selective public handler. */
     static byte[] silence(byte[] classfileBuffer) {
         ClassFile classFile = new ClassFile(classfileBuffer);
         if (!classFile.hasIOExceptionPrintStackTraceMethodRef()) {
@@ -58,6 +60,7 @@ public final class GraphwarSocketCloseSilencer implements ClassFileTransformer {
         return patchCount == 0 ? classfileBuffer : constantPool.bytes;
     }
 
+    /** Preserves unexpected read failures while discarding the normal local close signal. */
     public static void printUnexpectedConnectionReadError(IOException error) {
         // Official Graphwar closes client/server sockets while their read threads may still
         // be blocked in readLine(); SocketException("Socket closed") is the normal result.

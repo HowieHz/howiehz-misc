@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, relative } from "node:path";
 import { stdout } from "node:process";
 import { fileURLToPath, URL } from "node:url";
+
+import { collectFiles, runCommand } from "./utils.js";
 
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const sourceRoot = join(packageRoot, "src", "main", "java");
@@ -14,36 +16,11 @@ const manifestPath = join(buildRoot, "manifest.mf");
 const jarPath = join(libsRoot, "graphwar-agent.jar");
 const buildInfoPath = join(generatedSourceRoot, "top", "howiehz", "graphwar", "agent", "GraphwarAgentBuildInfo.java");
 const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
-
-function collectJavaSources(rootDirectory) {
-  const sources = [];
-  const pendingDirectories = [rootDirectory];
-
-  while (pendingDirectories.length > 0) {
-    const directory = pendingDirectories.pop();
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        pendingDirectories.push(path);
-      } else if (entry.isFile() && extname(entry.name) === ".java") {
-        sources.push(path);
-      }
-    }
-  }
-
-  return sources;
+if (typeof packageJson.version !== "string") {
+  throw new Error("graphwar-agent package.json must define a string version");
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, {
-    cwd: packageRoot,
-    stdio: "inherit",
-  });
-  if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed`);
-  }
-}
-
+/** Reads repository provenance while allowing source archives without Git metadata to build. */
 function readGitOutput(args, fallback) {
   const result = spawnSync("git", args, {
     cwd: packageRoot,
@@ -55,6 +32,7 @@ function readGitOutput(args, fallback) {
   return result.stdout.trim() || fallback;
 }
 
+/** Captures stable package and source provenance for the generated build-info class. */
 function createBuildInfo() {
   // Use the latest commit that touched this package, not HEAD. The docs jar is
   // auto-committed separately, so HEAD would make the checked-in jar chase its
@@ -65,10 +43,11 @@ function createBuildInfo() {
     sourceCommit,
     sourceCommitShort: sourceCommit === "unknown" ? "unknown" : sourceCommit.slice(0, 12),
     sourceCommitTime,
-    version: String(packageJson.version ?? "0.0.0"),
+    version: packageJson.version,
   };
 }
 
+/** Writes provenance through method calls so javac does not inline changing constants. */
 function writeBuildInfoSource(buildInfo) {
   mkdirSync(dirname(buildInfoPath), { recursive: true });
   writeFileSync(
@@ -95,10 +74,12 @@ function writeBuildInfoSource(buildInfo) {
   );
 }
 
+/** Escapes one generated Java string literal. */
 function escapeJavaString(value) {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+/** Produces a reproducible ZIP timestamp, including the oldest date accepted by jar. */
 function getJarTimestamp(sourceCommitTime) {
   const timestamp = new Date(sourceCommitTime);
   if (Number.isNaN(timestamp.getTime())) {
@@ -107,6 +88,7 @@ function getJarTimestamp(sourceCommitTime) {
   return timestamp.toISOString().replace(".000Z", "Z");
 }
 
+/** Detects whether the active JDK can stamp reproducible jar entries directly. */
 function jarSupportsDateOption() {
   const result = spawnSync("jar", ["--help"], {
     cwd: packageRoot,
@@ -122,12 +104,19 @@ mkdirSync(libsRoot, { recursive: true });
 const buildInfo = createBuildInfo();
 writeBuildInfoSource(buildInfo);
 
-const sources = [...collectJavaSources(sourceRoot), ...collectJavaSources(generatedSourceRoot)];
+const sources = [
+  ...collectFiles(sourceRoot, (file) => extname(file) === ".java"),
+  ...collectFiles(generatedSourceRoot, (file) => extname(file) === ".java"),
+];
 if (sources.length === 0) {
   throw new Error(`No Java sources found under ${relative(packageRoot, sourceRoot)}`);
 }
 
-run("javac", ["--release", "8", "-Xlint:-options", "-encoding", "UTF-8", "-d", classesRoot, ...sources]);
+runCommand(
+  "javac",
+  ["--release", "8", "-Xlint:-options", "-encoding", "UTF-8", "-d", classesRoot, ...sources],
+  packageRoot,
+);
 
 writeFileSync(
   manifestPath,
@@ -158,6 +147,6 @@ const jarArgs = jarSupportsDateOption()
       ".",
     ]
   : ["cfm", jarPath, manifestPath, "-C", classesRoot, "."];
-run("jar", jarArgs);
+runCommand("jar", jarArgs, packageRoot);
 
 stdout.write(`Built ${relative(packageRoot, jarPath)}\n`);

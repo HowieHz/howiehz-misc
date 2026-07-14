@@ -27,10 +27,18 @@ export function planeGridCellCenterToImagePoint(point: PlaneGridPoint, edgeRect:
 
 /** 将截图像素映射到平面网格，并裁剪到 770x450 内。 */
 export function imagePointToPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRect): PlaneGridPoint {
-  const rawPoint = imagePointToRawPlaneGridPoint(point, edgeRect);
+  // Keep the unbounded projection local: every caller of this interface needs a valid mask cell.
   return {
-    x: clampNumber(rawPoint.x, 0, GRAPHWAR_PLANE_LENGTH - 1),
-    y: clampNumber(rawPoint.y, 0, GRAPHWAR_PLANE_HEIGHT - 1),
+    x: clampNumber(
+      Math.floor(((point.x - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH),
+      0,
+      GRAPHWAR_PLANE_LENGTH - 1,
+    ),
+    y: clampNumber(
+      Math.floor(((point.y - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT),
+      0,
+      GRAPHWAR_PLANE_HEIGHT - 1,
+    ),
   };
 }
 
@@ -42,10 +50,40 @@ export function mirrorPlaneGridPoint(point: PlaneGridPoint, mirrored: boolean): 
   };
 }
 
-/** 将截图像素点映射到未裁剪的平面网格坐标，供裁剪入口复用。 */
-function imagePointToRawPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRect): PlaneGridPoint {
+/** 将平面网格点编码为固定 770x450 mask 的一维下标。 */
+export function planeGridPointToIndex(point: PlaneGridPoint) {
+  return point.y * GRAPHWAR_PLANE_LENGTH + point.x;
+}
+
+/** 将固定 770x450 mask 的一维下标还原为平面网格点。 */
+export function planeGridPointFromIndex(index: number): PlaneGridPoint {
   return {
-    x: Math.floor(((point.x - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH),
-    y: Math.floor(((point.y - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT),
+    x: index % GRAPHWAR_PLANE_LENGTH,
+    y: Math.floor(index / GRAPHWAR_PLANE_LENGTH),
   };
+}
+
+/** 返回两个平面网格点之间的欧氏距离。 */
+export function planeGridPointDistance(left: PlaneGridPoint, right: PlaneGridPoint) {
+  return Math.hypot(right.x - left.x, right.y - left.y);
+}
+
+/** 判断两个平面网格点是否表示同一个 mask cell。 */
+export function planeGridPointsEqual(left: PlaneGridPoint, right: PlaneGridPoint) {
+  return left.x === right.x && left.y === right.y;
+}
+
+/** 判断坐标是否位于固定 Graphwar 平面内。 */
+export function planePointIsInsideBounds(x: number, y: number) {
+  return x >= 0 && x < GRAPHWAR_PLANE_LENGTH && y >= 0 && y < GRAPHWAR_PLANE_HEIGHT;
+}
+
+/** 判断平面点是否位于边界内收后的可用区域内。 */
+export function planePointIsInsideBoundaryExpansion(x: number, y: number, boundaryExpansion: number) {
+  return (
+    x >= boundaryExpansion &&
+    x < GRAPHWAR_PLANE_LENGTH - boundaryExpansion &&
+    y >= boundaryExpansion &&
+    y < GRAPHWAR_PLANE_HEIGHT - boundaryExpansion
+  );
 }

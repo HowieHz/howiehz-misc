@@ -6,6 +6,7 @@ import java.lang.instrument.IllegalClassFormatException;
 import java.nio.charset.StandardCharsets;
 import java.security.ProtectionDomain;
 
+/** Suppresses only the duplicate remove-player log pair emitted by the official client. */
 public final class GraphwarRemovePlayerMessageSilencer implements ClassFileTransformer {
     private static final String GAME_DATA = "Graphwar/GameData";
     private static final String HANDLER_CLASS =
@@ -53,6 +54,7 @@ public final class GraphwarRemovePlayerMessageSilencer implements ClassFileTrans
         }
     }
 
+    /** Redirects the paired invalid-message and exception logs through selective handlers. */
     static byte[] silence(byte[] classfileBuffer) {
         ClassFile classFile = new ClassFile(classfileBuffer);
         if (!classFile.hasInvalidMessageMethodRef()
@@ -69,6 +71,7 @@ public final class GraphwarRemovePlayerMessageSilencer implements ClassFileTrans
         return patchCounts.hasBothPatches() ? constantPool.bytes : classfileBuffer;
     }
 
+    /** Defers duplicate remove-player messages until the paired handler outcome is known. */
     public static void printUnexpectedInvalidMessage(Object gameData, String message) {
         if (isRemovePlayerMessage(message)) {
             SUPPRESSED_INVALID_MESSAGE.set(message);
@@ -78,6 +81,7 @@ public final class GraphwarRemovePlayerMessageSilencer implements ClassFileTrans
         printInvalidMessage(message);
     }
 
+    /** Drops the expected duplicate-removal NPE and preserves every other message and error. */
     public static void printUnexpectedHandleMessageError(Exception error) {
         String suppressedMessage = SUPPRESSED_INVALID_MESSAGE.get();
         SUPPRESSED_INVALID_MESSAGE.remove();

@@ -5,6 +5,7 @@ import java.lang.instrument.IllegalClassFormatException;
 import java.nio.charset.StandardCharsets;
 import java.security.ProtectionDomain;
 
+/** Removes expected InterruptedException stack traces from official countdown helpers. */
 final class GraphwarInterruptedSleepSilencer implements ClassFileTransformer {
     // Source: official Graphwar GameData.Countdowner and GraphServer.StartDelayer both
     // catch InterruptedException from Thread.sleep() and call printStackTrace().
@@ -39,6 +40,7 @@ final class GraphwarInterruptedSleepSilencer implements ClassFileTransformer {
         }
     }
 
+    /** Replaces matching printStackTrace calls with same-length stack cleanup instructions. */
     static byte[] silence(byte[] classfileBuffer) {
         ClassFile classFile = new ClassFile(classfileBuffer);
         if (!classFile.hasPrintStackTraceMethodRef()) {

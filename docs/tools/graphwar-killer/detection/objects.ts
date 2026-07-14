@@ -6,7 +6,12 @@ import {
   GRAPHWAR_SOLDIER_VISIBLE_SIZE,
 } from "../core/game/constants";
 import { clampNumber, formatSvgNumber } from "../core/numbers";
-import { imagePointToPlaneGridPoint, planeToImagePoint, type PlaneGridPoint } from "../core/plane-grid";
+import {
+  imagePointToPlaneGridPoint,
+  planePointIsInsideBounds,
+  planeToImagePoint,
+  type PlaneGridPoint,
+} from "../core/plane-grid";
 import { createPixelPoint } from "../core/types";
 import type { BoundsRect, PixelPoint } from "../core/types";
 import {
@@ -723,7 +728,7 @@ export function dilateObstacleMask(mask: Uint8Array, radius: number) {
           }
           const nextX = x + offsetX;
           const nextY = y + offsetY;
-          if (isInsidePlane(nextX, nextY)) {
+          if (planePointIsInsideBounds(nextX, nextY)) {
             dilated[nextY * GRAPHWAR_PLANE_LENGTH + nextX] = 1;
           }
         }
@@ -821,7 +826,7 @@ export function paintObstacleMaskDisk(mask: Uint8Array, center: PlaneGridPoint, 
 
       const x = center.x + offsetX;
       const y = center.y + offsetY;
-      if (isInsidePlane(x, y)) {
+      if (planePointIsInsideBounds(x, y)) {
         const index = y * GRAPHWAR_PLANE_LENGTH + x;
         if (nextMask[index] !== value) {
           nextMask[index] = value;
@@ -1244,7 +1249,7 @@ function createSoldierTemplateCenterCandidates(
 
           const planeX = Math.round(((centerX - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH);
           const planeY = Math.round(((centerY - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT);
-          if (!isInsidePlane(planeX, planeY)) {
+          if (!planePointIsInsideBounds(planeX, planeY)) {
             continue;
           }
           const mirrored = expectedSoldierTemplateMirroredForPlaneX(planeX);
@@ -1830,7 +1835,10 @@ function floodSourceMaskComponent(targetMask: Uint8Array, sourceMask: Uint8Array
   const stack = [start];
   let added = false;
   while (stack.length) {
-    const current = stack.pop() ?? 0;
+    const current = stack.pop();
+    if (current === undefined) {
+      break;
+    }
     if (!sourceMask[current] || targetMask[current]) {
       continue;
     }
@@ -1904,7 +1912,7 @@ function erodeObstacleMaskByRadius(mask: Uint8Array, radius: number) {
           }
           const nextX = x + offsetX;
           const nextY = y + offsetY;
-          if (!isInsidePlane(nextX, nextY) || !mask[nextY * GRAPHWAR_PLANE_LENGTH + nextX]) {
+          if (!planePointIsInsideBounds(nextX, nextY) || !mask[nextY * GRAPHWAR_PLANE_LENGTH + nextX]) {
             isSolid = false;
             break;
           }
@@ -2010,7 +2018,7 @@ function hasNeighborObstaclePixel(mask: Uint8Array, x: number, y: number) {
       }
       const nextX = x + offsetX;
       const nextY = y + offsetY;
-      if (isInsidePlane(nextX, nextY) && mask[nextY * GRAPHWAR_PLANE_LENGTH + nextX]) {
+      if (planePointIsInsideBounds(nextX, nextY) && mask[nextY * GRAPHWAR_PLANE_LENGTH + nextX]) {
         return true;
       }
     }
@@ -2122,7 +2130,7 @@ function setMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number, v
 
       const x = center.x + offsetX;
       const y = center.y + offsetY;
-      if (isInsidePlane(x, y)) {
+      if (planePointIsInsideBounds(x, y)) {
         mask[y * GRAPHWAR_PLANE_LENGTH + x] = value;
       }
     }
@@ -2132,11 +2140,6 @@ function setMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number, v
 /** 判断圆形笔刷偏移是否落在半径内。 */
 function offsetIsInsideRadius(offsetX: number, offsetY: number, radiusSquared: number) {
   return offsetX * offsetX + offsetY * offsetY <= radiusSquared;
-}
-
-/** 判断平面网格点是否位于 Graphwar 原始平面内。 */
-function isInsidePlane(x: number, y: number) {
-  return x >= 0 && x < GRAPHWAR_PLANE_LENGTH && y >= 0 && y < GRAPHWAR_PLANE_HEIGHT;
 }
 
 /** 在二值 mask 中收集 4 邻域连通组件及其边界框。 */
@@ -2153,7 +2156,10 @@ function collectComponents(mask: Uint8Array, width: number): ComponentBox[] {
     const pixels: number[] = [];
 
     while (stack.length) {
-      const current = stack.pop() ?? 0;
+      const current = stack.pop();
+      if (current === undefined) {
+        break;
+      }
       const x = current % width;
       pixels.push(current);
 

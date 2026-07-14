@@ -164,9 +164,10 @@ async function copyText(text: string) {
   document.body.append(textarea);
   textarea.select();
 
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) {
-    throw new Error("Copy failed");
+  if (document.execCommand("copy")) {
+    textarea.remove();
+    return;
   }
+  textarea.remove();
+  throw new Error("Copy failed");
 }

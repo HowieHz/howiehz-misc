@@ -32,6 +32,7 @@ import type { SmartPathfindingDebugStage, SmartPathfindingDebugTimingEntry } fro
 type GraphwarOneClickClearStatusKind = "error" | "success" | "warning";
 type GraphwarOneClickClearPrefixTarget = PixelPoint | GraphwarTrajectoryTargetCircle;
 
+/** Page-side cache operations required by one-click-clear runs. */
 interface GraphwarOneClickClearRunCache {
   cacheOneClickClearResult: (cacheKey: string, result: GraphwarOneClickClearPathWorkerResult) => void;
   createOneClickClearResultCacheKey: (input: GraphwarOneClickClearPathWorkerInput) => string;
@@ -42,6 +43,7 @@ interface GraphwarOneClickClearRunCache {
   getMaskCacheId: (mask: Uint8Array) => number;
 }
 
+/** Worker runner operation required by one-click-clear runs. */
 interface GraphwarOneClickClearRunRunner {
   buildOneClickClearPath: (
     input: GraphwarOneClickClearPathWorkerInput,
@@ -49,6 +51,7 @@ interface GraphwarOneClickClearRunRunner {
   ) => Promise<GraphwarOneClickClearPathWorkerResult>;
 }
 
+/** Per-run behavior used by interactive and managed-play callers. */
 export interface GraphwarOneClickClearRunOptions {
   /** 接收主搜索自然产生的已验证方案；只用于展示或托管发射，不触发额外验证。 */
   onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
@@ -58,6 +61,7 @@ export interface GraphwarOneClickClearRunOptions {
   useResultCache?: boolean;
 }
 
+/** Page state and effects injected into the one-click-clear orchestration module. */
 interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneClickClearTargetSoldier> {
   /** 调试耗时顺序应和旧页面流程一致，避免面板展示发生语义偏移。 */
   debug: {
@@ -141,6 +145,7 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
   };
 }
 
+/** Lifecycle interface exposed to interactive and managed one-click-clear callers. */
 export interface GraphwarOneClickClearRunWorkflowController {
   /** 内部设置或局面失效时丢弃取消检查点，禁止旧结果随后落地。 */
   discardActiveIncumbent: () => void;
@@ -242,13 +247,12 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
   function createMeasuredPreflight(timings: SmartPathfindingDebugTimingEntry[]) {
     return options.debug.measureStage(timings, "one-click-clear-preflight", () => {
       const bounds = options.input.getBounds();
-      const workerCount = options.input.getPathfindingWorkerCount();
       const tolerances = options.input.getTolerances();
       const result = createGraphwarOneClickClearSearchPreflight({
         bounds,
         createPrefixTarget,
         getObstacleMask: options.input.getObstacleMask,
-        pathfindingWorkerCount: workerCount,
+        pathfindingWorkerCount: options.input.getPathfindingWorkerCount(),
         pathPointCount: options.input.getPathPoints().length,
         requiresDagWorker: options.input.requiresDagWorker(),
         tolerances,
@@ -290,7 +294,6 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     const candidates = options.debug.measureStage(timings, "one-click-clear-collect-targets", () =>
       createGraphwarOneClickClearCandidates(createTargetCollectionOptions()),
     );
-    const hitCandidates = createGraphwarOneClickClearHitCandidates(createTargetCollectionOptions());
     const simulationMask = options.input.getSimulationMask();
     const searchInput = createGraphwarOneClickClearSearchInput({
       bounds: preflightResult.bounds,
@@ -298,7 +301,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       candidates,
       dagEdgeWorkerCount: preflightResult.dagEdgeWorkerCount,
       deleteOptimizationEnabled: options.input.getDeleteOptimizationEnabled(),
-      hitCandidates,
+      hitCandidates: createGraphwarOneClickClearHitCandidates(createTargetCollectionOptions()),
       pathPoints: options.input.getPathPoints(),
       prefixTarget: preflightResult.prefixTarget,
       routeMaskCacheId: options.pathfinding.cache.getMaskCacheId(preflightResult.obstacleMask),

@@ -1,3 +1,4 @@
+import { pixelPointsEqual } from "../../../core/geometry";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../../core/types";
 import type {
   GraphwarTrajectoryFormulaSettings,
@@ -33,6 +34,7 @@ import type { GraphwarSmartPathfindingRunBuildResult } from "./workflow";
 
 type GraphwarSmartPathfindingBuildTarget = PixelPoint | GraphwarSmartPathfindingSoldierTarget;
 
+/** Builder 使用的页面侧智能寻路结果缓存接口。 */
 interface GraphwarSmartPathfindingBuilderCache {
   cacheSmartPathfindingResult: (cacheKey: string, result: GraphwarSmartPathfindingPathResult) => void;
   createSmartPathfindingResultCacheKey: (input: GraphwarSmartPathfindingPathInput) => string;
@@ -43,6 +45,7 @@ interface GraphwarSmartPathfindingBuilderCache {
   getMaskCacheId: (mask: Uint8Array) => number;
 }
 
+/** Builder 使用的 Master Worker 寻路接口。 */
 interface GraphwarSmartPathfindingBuilderRunner {
   findSmartPath: (
     input: GraphwarSmartPathfindingPathInput,
@@ -50,6 +53,7 @@ interface GraphwarSmartPathfindingBuilderRunner {
   ) => Promise<GraphwarSmartPathfindingPathResult>;
 }
 
+/** 组合一次智能寻路所需的页面状态、效果、缓存和运行生命周期。 */
 interface GraphwarSmartPathfindingBuilderOptions {
   /** 调试耗时应继续并入页面同一份调试列表。 */
   debug: {
@@ -143,7 +147,7 @@ export function useGraphwarSmartPathfindingBuilder(
     const targetPoint = "targetPoint" in target ? target.targetPoint : target;
     const fallbackTargetPoint = "targetPoint" in target ? target.fallbackTargetPoint : undefined;
     const targetPoints =
-      fallbackTargetPoint && !samePixelPoint(targetPoint, fallbackTargetPoint)
+      fallbackTargetPoint && !pixelPointsEqual(targetPoint, fallbackTargetPoint)
         ? [targetPoint, fallbackTargetPoint]
         : [targetPoint];
     const hitTarget = "targetPoint" in target ? target.hitCircle : target;
@@ -164,7 +168,10 @@ export function useGraphwarSmartPathfindingBuilder(
     }
 
     options.run.enterSearchPhase();
-    await waitForNextPathfindingSlice();
+    // Yield once before starting CPU-heavy work so the connection preview can paint.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
     if (!options.run.isCurrent(cancelToken)) {
       return undefined;
     }
@@ -176,12 +183,15 @@ export function useGraphwarSmartPathfindingBuilder(
     if (!targetHitCircle) {
       return undefined;
     }
+    // Snapshot narrowed inputs for the nested async attempts; TypeScript does not retain
+    // outer control-flow narrowing inside a function declaration.
     const searchBounds = bounds;
     const searchObstacleMask = obstacleMask;
-    const simulationMask = options.input.getSimulationMask();
-    const simulationMaskCacheId = simulationMask ? options.pathfinding.cache.getMaskCacheId(simulationMask) : 0;
     const searchTargetHitCircle = targetHitCircle;
     const searchTolerances = tolerances;
+    const simulationMask = options.input.getSimulationMask();
+    // Resolve the stable id once; a soldier target may run both center and edge attempts.
+    const simulationMaskCacheId = simulationMask ? options.pathfinding.cache.getMaskCacheId(simulationMask) : 0;
 
     let result: GraphwarSmartPathfindingPathResult | undefined;
     let resultCacheHit = false;
@@ -276,15 +286,4 @@ export function useGraphwarSmartPathfindingBuilder(
   return {
     buildPath,
   };
-}
-
-/** 让长循环让出事件循环，保证搜索动画和取消操作能及时响应。 */
-function waitForNextPathfindingSlice() {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, 0);
-  });
-}
-
-function samePixelPoint(left: PixelPoint, right: PixelPoint) {
-  return left.x === right.x && left.y === right.y;
 }

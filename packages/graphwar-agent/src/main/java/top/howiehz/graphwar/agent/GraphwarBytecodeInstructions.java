@@ -1,5 +1,6 @@
 package top.howiehz.graphwar.agent;
 
+/** Iterates JVM instructions without mistaking operands for patchable opcodes. */
 final class GraphwarBytecodeInstructions {
     private static final int IINC = 0x84;
     private static final int LOOKUPSWITCH = 0xab;
@@ -8,6 +9,7 @@ final class GraphwarBytecodeInstructions {
 
     private GraphwarBytecodeInstructions() {}
 
+    /** Returns the next instruction start or rejects malformed and unsupported bytecode. */
     static int nextOffset(byte[] bytes, int codeOffset, int codeEnd, int offset) {
         int instructionLength = readInstructionLength(bytes, codeOffset, codeEnd, offset);
         int nextOffset = offset + instructionLength;

@@ -15,6 +15,7 @@ export const GRAPHWAR_AGENT_API_VERSION = 2;
 export const GRAPHWAR_AGENT_DEFAULT_BASE_URL = "http://127.0.0.1:17900";
 export const GRAPHWAR_AGENT_BATTLE_REVISION_HEADER = "X-Graphwar-Battle-Revision";
 
+/** Agent feature flags checked before the page enables dependent workflows. */
 export interface GraphwarAgentCapabilities {
   ready: boolean;
   room: boolean;
@@ -22,16 +23,19 @@ export interface GraphwarAgentCapabilities {
   worldObstacleMask: boolean;
 }
 
+/** Fixed Graphwar plane dimensions reported by the Agent. */
 export interface GraphwarAgentPlane {
   gameLength: number;
   height: number;
   width: number;
 }
 
+/** A point in the Agent's authoritative, unmirrored world coordinates. */
 export interface GraphwarAgentWorldPoint {
   pixel: PixelPoint;
 }
 
+/** Authoritative soldier state before adapting it to the local shooter's view. */
 export interface GraphwarAgentSoldier {
   alive: boolean;
   angle: number;
@@ -40,6 +44,7 @@ export interface GraphwarAgentSoldier {
   world: GraphwarAgentWorldPoint;
 }
 
+/** One player and its soldiers in an Agent polling response. */
 export interface GraphwarAgentPlayer {
   computer: boolean;
   currentTurnSoldier: number;
@@ -53,15 +58,18 @@ export interface GraphwarAgentPlayer {
   team: number;
 }
 
+/** Player and soldier selected by the Agent's current-turn indexes. */
 export interface GraphwarAgentCurrentShooter {
   player: GraphwarAgentPlayer;
   soldier: GraphwarAgentSoldier;
 }
 
+/** Local human shooter selected for managed play and view adaptation. */
 export interface GraphwarAgentShooter extends GraphwarAgentCurrentShooter {
   speculative: boolean;
 }
 
+/** Agent soldier adapted to the detection-box interface used by page workflows. */
 export interface GraphwarAgentDetectionBox extends GraphwarDetectionBox {
   /** Authoritative local-computer ownership, independent of screen position. */
   computer: boolean;
@@ -79,10 +87,12 @@ export interface GraphwarAgentDetectionBox extends GraphwarDetectionBox {
   team: number;
 }
 
+/** Detection-compatible scene assembled from authoritative Agent state. */
 export interface GraphwarAgentDetectionResult extends Omit<GraphwarObjectsDetectionResult, "soldiers"> {
   soldiers: GraphwarAgentDetectionBox[];
 }
 
+/** Metadata required to fetch and verify the matching world obstacle mask. */
 export interface GraphwarAgentObstacleMaskMetadata {
   height: number;
   revision: string;
@@ -93,6 +103,7 @@ export interface GraphwarAgentObstacleMaskMetadata {
 
 export type GraphwarAgentPhase = "aiming" | "drawing" | "exploding" | "inactive";
 
+/** Fields shared by available and unavailable Agent polling responses. */
 interface GraphwarAgentStateBase {
   apiVersion: typeof GRAPHWAR_AGENT_API_VERSION;
   available: boolean;
@@ -100,11 +111,13 @@ interface GraphwarAgentStateBase {
   plane: GraphwarAgentPlane;
 }
 
+/** Stable unavailable response returned outside an active match. */
 export interface GraphwarAgentUnavailableState extends GraphwarAgentStateBase {
   available: false;
   reason: string;
 }
 
+/** Authoritative active-match snapshot with a battle revision and optional firing token. */
 export interface GraphwarAgentAvailableState extends GraphwarAgentStateBase {
   available: true;
   battleRevision: string;
@@ -124,6 +137,7 @@ export interface GraphwarAgentAvailableState extends GraphwarAgentStateBase {
 
 export type GraphwarAgentState = GraphwarAgentAvailableState | GraphwarAgentUnavailableState;
 
+/** One pre-game room participant; remote computer ownership may be unknown. */
 export interface GraphwarAgentRoomPlayer {
   computer: boolean | null;
   disconnected: boolean;
@@ -136,6 +150,7 @@ export interface GraphwarAgentRoomPlayer {
   team: number;
 }
 
+/** Available pre-game room snapshot. */
 export interface GraphwarAgentAvailableRoom {
   available: true;
   gameMode: number;
@@ -144,6 +159,7 @@ export interface GraphwarAgentAvailableRoom {
   players: GraphwarAgentRoomPlayer[];
 }
 
+/** Stable response used when the client is not in a pre-game room. */
 export interface GraphwarAgentUnavailableRoom {
   available: false;
   reason: string;
@@ -151,11 +167,13 @@ export interface GraphwarAgentUnavailableRoom {
 
 export type GraphwarAgentRoom = GraphwarAgentAvailableRoom | GraphwarAgentUnavailableRoom;
 
+/** Acknowledgement that the requested ready command was submitted. */
 export interface GraphwarAgentReadyResult {
   ok: true;
   requestedReady: boolean;
 }
 
+/** Shot command guarded by the state snapshot's token and revision. */
 export interface GraphwarAgentShotRequest {
   angleRadians?: number;
   battleRevision: string;
@@ -163,6 +181,7 @@ export interface GraphwarAgentShotRequest {
   turnToken: string;
 }
 
+/** Acknowledgement that the guarded shot command was accepted. */
 export interface GraphwarAgentShotResult {
   ok: true;
 }
@@ -178,12 +197,13 @@ export type GraphwarAgentShotPlan =
       function: string;
     };
 
+/** Page-ready scene in a selected local shooter's view, or a deterministic fallback view. */
 export interface GraphwarAgentSnapshot {
   /** Normalized base URL used for subsequent reads. */
   baseUrl: string;
   /** Fixed 770x450 canvas bounds used for direct Agent state. */
   boundsRect: BoundsRect;
-  /** Compatibility adapter in the selected local shooter's view. */
+  /** Compatibility adapter in the same selected or fallback view. */
   detectionResult: GraphwarAgentDetectionResult;
   /** Current game mode mapped from Graphwar constants. */
   equationMode: EquationMode;
@@ -227,6 +247,7 @@ export class GraphwarAgentClientError extends Error {
   }
 }
 
+/** Browser interface to one normalized localhost Agent endpoint. */
 export interface GraphwarAgentClient {
   readonly baseUrl: string;
   readRoom: (signal?: AbortSignal) => Promise<GraphwarAgentRoom>;
@@ -236,6 +257,7 @@ export interface GraphwarAgentClient {
   submitShot: (request: GraphwarAgentShotRequest) => Promise<GraphwarAgentShotResult>;
 }
 
+/** Injectable transport used by tests and browsers without global fetch. */
 export interface GraphwarAgentClientOptions {
   fetch?: typeof globalThis.fetch;
 }
@@ -301,7 +323,8 @@ export function createGraphwarAgentWorldSnapshot(
 ): GraphwarAgentWorldSnapshot {
   return {
     baseUrl,
-    boundsRect: createGraphwarAgentBoundsRect(),
+    // Agent coordinates always cover the complete native 770x450 canvas.
+    boundsRect: { height: GRAPHWAR_PLANE_HEIGHT, width: GRAPHWAR_PLANE_LENGTH, x: 0, y: 0 },
     equationMode: state.equationMode,
     imageName: "Graphwar Agent",
     imageUrl: createGraphwarAgentCanvasDataUrl(),
@@ -830,11 +853,6 @@ function worldMaskToShooterView(worldMask: Uint8Array, shooterTeam: number) {
 /** Restricts shooter selection to connected local non-computer players. */
 function isGraphwarAgentLocalHuman(player: GraphwarAgentPlayer | undefined) {
   return Boolean(player?.local && !player.computer && !player.disconnected);
-}
-
-/** Creates the fixed Agent canvas bounds. */
-function createGraphwarAgentBoundsRect(): BoundsRect {
-  return { height: GRAPHWAR_PLANE_HEIGHT, width: GRAPHWAR_PLANE_LENGTH, x: 0, y: 0 };
 }
 
 /** Creates a transparent canvas without relying on an external image asset. */

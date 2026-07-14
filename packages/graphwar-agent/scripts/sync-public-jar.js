@@ -1,10 +1,12 @@
 import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { stdout } from "node:process";
 import { fileURLToPath, URL } from "node:url";
+
+import { collectFiles } from "./utils.js";
 
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const repoRoot = join(packageRoot, "..", "..");
@@ -60,6 +62,7 @@ function effectiveJarHash(jarPath) {
   }
 }
 
+/** Extracts a jar into an isolated directory for normalized hashing. */
 function extractJar(jarPath, outputDirectory) {
   const result = spawnSync("jar", ["xf", jarPath], {
     cwd: outputDirectory,
@@ -71,26 +74,7 @@ function extractJar(jarPath, outputDirectory) {
   }
 }
 
-function collectFiles(rootDirectory) {
-  const files = [];
-  const pendingDirectories = [rootDirectory];
-
-  while (pendingDirectories.length > 0) {
-    const directory = pendingDirectories.pop();
-    for (const entry of readdirSync(directory)) {
-      const path = join(directory, entry);
-      const stat = statSync(path);
-      if (stat.isDirectory()) {
-        pendingDirectories.push(path);
-      } else if (stat.isFile()) {
-        files.push(path);
-      }
-    }
-  }
-
-  return files;
-}
-
+/** Reads source provenance from an extracted manifest when present. */
 function readBuildMetadata(extractedJarRoot) {
   const manifestFile = join(extractedJarRoot, ...manifestPath.split("/"));
   if (!existsSync(manifestFile)) {
@@ -106,6 +90,7 @@ function readBuildMetadata(extractedJarRoot) {
   };
 }
 
+/** Reads one unfolded manifest header written by this package's build script. */
 function readManifestHeader(manifest, name) {
   const prefix = `${name}: `;
   for (const line of manifest.replace(/\r\n/g, "\n").split("\n")) {
@@ -116,6 +101,7 @@ function readManifestHeader(manifest, name) {
   return "";
 }
 
+/** Removes build-machine metadata that does not change executable behavior. */
 function normalizeJarEntry(entryPath, content, metadata) {
   if (entryPath === manifestPath) {
     return normalizeManifest(content);
@@ -126,6 +112,7 @@ function normalizeJarEntry(entryPath, content, metadata) {
   return content;
 }
 
+/** Normalizes generated provenance and JDK-specific manifest headers. */
 function normalizeManifest(content) {
   const lines = content.toString("utf8").replace(/\r\n/g, "\n").split("\n");
   const normalizedLines = [];
@@ -143,6 +130,7 @@ function normalizeManifest(content) {
   return Buffer.from(normalizedLines.join("\n"), "utf8");
 }
 
+/** Normalizes provenance strings that javac may embed in executable class files. */
 function normalizeClassBuildMetadata(content, metadata) {
   // javac inlines GraphwarAgentBuildInfo constants into GraphwarAgent.class, so
   // raw class bytes can differ even when only source commit metadata changed.
@@ -160,6 +148,7 @@ function normalizeClassBuildMetadata(content, metadata) {
   return Buffer.from(normalized, "latin1");
 }
 
+/** Replaces one optional ASCII metadata value without touching unknown sentinels. */
 function replaceAscii(value, search, replacement) {
   if (!search || search === "unknown") {
     return value;

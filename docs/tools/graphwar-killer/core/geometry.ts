@@ -8,6 +8,11 @@ export function xPlusGoesRight(bounds: GraphBounds) {
   return bounds.maxX > bounds.minX;
 }
 
+/** 判断两个点是否表示同一截图像素坐标。 */
+export function pixelPointsEqual(left: PixelPoint, right: PixelPoint) {
+  return left.x === right.x && left.y === right.y;
+}
+
 /** 将截图像素点转换为 Graphwar 笛卡尔坐标。 */
 export function imageToGraphPoint(point: PixelPoint, bounds: GraphBounds, rect: BoundsRect): GraphPoint {
   return createGraphPoint(

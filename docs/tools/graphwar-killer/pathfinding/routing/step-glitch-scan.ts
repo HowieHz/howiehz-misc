@@ -37,6 +37,7 @@ export interface GraphwarStepGlitchScanMaskIndex {
   readonly simulationMask: Uint8Array;
 }
 
+/** Inputs that remain fixed while one scanner evaluates one or more targets. */
 export interface GraphwarStepGlitchPrefixOptions {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
@@ -59,6 +60,7 @@ export interface GraphwarStepGlitchPrefixOptions {
   sourcePath: readonly PixelPoint[];
 }
 
+/** Per-target control point and physical hit circle evaluated by a prepared scanner. */
 export interface GraphwarStepGlitchTargetOptions {
   /** 当前目标的实际命中圈。 */
   hitTarget: GraphwarTrajectoryTargetCircle;
@@ -66,8 +68,10 @@ export interface GraphwarStepGlitchTargetOptions {
   targetPoint: PixelPoint;
 }
 
+/** Complete one-shot scan input when a reusable scanner is not needed. */
 export type GraphwarStepGlitchScanOptions = GraphwarStepGlitchPrefixOptions & GraphwarStepGlitchTargetOptions;
 
+/** Work and timing fields shared by hit and failure results. */
 interface GraphwarStepGlitchScanResultBase {
   /** 实际执行过最终量化公式模拟的候选路径数。 */
   expandedStates: number;
@@ -77,6 +81,7 @@ interface GraphwarStepGlitchScanResultBase {
   timings: GraphwarStepGlitchScanTiming[];
 }
 
+/** Quantized replay result for one target scan. */
 export type GraphwarStepGlitchScanResult =
   | (GraphwarStepGlitchScanResultBase & {
       acceptedPoint: GraphPoint;
@@ -91,6 +96,7 @@ export type GraphwarStepGlitchScanResult =
       status: "invalid-input" | "no-path" | "unsupported";
     });
 
+/** Reuses one prepared prefix result; callers may also provide a reusable compatible mask index. */
 export interface GraphwarStepGlitchPrefixScanner {
   scan: (target: GraphwarStepGlitchTargetOptions) => GraphwarStepGlitchScanResult;
 }
@@ -102,6 +108,7 @@ export interface GraphwarStepGlitchPrefixEvidence {
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
 }
 
+/** Stable scan stages consumed by worker and page timing aggregation. */
 export type GraphwarStepGlitchScanTimingStage =
   | "prefix-evidence-hit"
   | "prefix-evidence-miss"
@@ -109,6 +116,7 @@ export type GraphwarStepGlitchScanTimingStage =
   | "scan-candidates"
   | "validate-direct";
 
+/** Elapsed time for one stable scan stage. */
 export interface GraphwarStepGlitchScanTiming {
   elapsedMs: number;
   stage: GraphwarStepGlitchScanTimingStage;
@@ -133,6 +141,7 @@ type PreparedGraphwarStepGlitchPrefixResult =
   | PreparedGraphwarStepGlitchPrefix
   | Exclude<GraphwarStepGlitchScanResult, { status: "hit" }>;
 
+/** One reachable scan frontier before target/gate candidates are expanded. */
 interface ScanState {
   acceptedPoint: GraphPoint;
   /** 直连整式的真实碰撞 x；存在时门位置不得再由前缀所在像素行推算。 */
@@ -144,6 +153,7 @@ interface ScanState {
   stepGlitchXWindows: readonly (GraphwarStepGlitchXWindow | undefined)[];
 }
 
+/** One candidate path awaiting final quantized formula replay. */
 interface ScanCandidate {
   controlX: number;
   kind: "gate" | "target";
@@ -151,6 +161,7 @@ interface ScanCandidate {
   stepGlitchXWindows: readonly (GraphwarStepGlitchXWindow | undefined)[];
 }
 
+/** Reachable landing row and its target/start proximity ranking. */
 interface ScanLandingRow {
   /** 从原碰撞列开始沿 x+ 连续可达的最远列。 */
   farthestX: number;
@@ -161,6 +172,7 @@ interface ScanLandingRow {
   targetDeltaY: number;
 }
 
+/** One quantized gate window derived from a collision frontier. */
 interface ScanGateWindow {
   controlX: number;
   decimalPlaces: number;
@@ -168,6 +180,7 @@ interface ScanGateWindow {
   startX: number;
 }
 
+/** Deferred row expansion for one gate window batch. */
 interface ScanGateRows {
   firstBlockedSearchX: number;
   rows: ScanLandingRow[];
@@ -175,11 +188,13 @@ interface ScanGateRows {
   windows: ScanGateWindow[];
 }
 
+/** Iterative DFS work item; the scanner never recurses through candidate states. */
 type ScanWorkItem =
   | { candidate: ScanCandidate; type: "candidate" }
   | { rowIndex: number; scan: ScanGateRows; type: "gate-rows"; windowIndex: number }
   | { state: ScanState; type: "state" };
 
+/** Physical replay evidence for one complete Step path. */
 export interface GraphwarStepGlitchReplayResult {
   acceptedPoint?: GraphPoint;
   blockedPoint?: GraphPoint;
@@ -192,6 +207,7 @@ export interface GraphwarStepGlitchReplayResult {
   targetsHit: boolean;
 }
 
+/** Direct target replay performed before any gate candidates are generated. */
 interface InitialDirectReplay {
   path: PixelPoint[];
   replay: GraphwarStepGlitchReplayResult;
@@ -910,6 +926,7 @@ function createGlitchWindows() {
   return windows;
 }
 
+/** Returns the first pre-collision sample at or beyond the requested control x. */
 export function findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
   points: readonly GraphPoint[],
   obstacleHitIndex: number,

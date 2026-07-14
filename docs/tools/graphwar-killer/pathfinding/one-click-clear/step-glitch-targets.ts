@@ -15,10 +15,12 @@ export interface GraphwarStepGlitchTargetCandidate<THitCircle = unknown> {
   sourceIndex: number;
 }
 
+/** 保留候选信息并把建路点替换为严格 x+ 分配结果。 */
 export type GraphwarStepGlitchAssignedTarget<
   TTarget extends GraphwarStepGlitchTargetCandidate = GraphwarStepGlitchTargetCandidate,
 > = Omit<TTarget, "routePoint"> & { routePoint: PixelPoint };
 
+/** Step 邪道目标分配所需的有序候选、边界和发射方向。 */
 export interface GraphwarStepGlitchTargetAssignmentOptions<
   TTarget extends GraphwarStepGlitchTargetCandidate = GraphwarStepGlitchTargetCandidate,
 > {
@@ -51,7 +53,11 @@ export function assignGraphwarStepGlitchTargetRoutePoints<TTarget extends Graphw
   let groupStart = 0;
 
   while (groupStart < options.candidates.length) {
-    const groupCenterX = options.candidates[groupStart]?.center.x;
+    const firstCandidate = options.candidates[groupStart];
+    if (!firstCandidate) {
+      break;
+    }
+    const groupCenterX = firstCandidate.center.x;
     let groupEnd = groupStart + 1;
     while (groupEnd < options.candidates.length && options.candidates[groupEnd]?.center.x === groupCenterX) {
       groupEnd += 1;
@@ -61,7 +67,8 @@ export function assignGraphwarStepGlitchTargetRoutePoints<TTarget extends Graphw
     const interval = createStepGlitchSafeXInterval(group, options);
     if (interval) {
       const leftAnchor = selectStepGlitchLeftAnchor(interval, pathTailForwardX, lastAssignedForwardX);
-      const nextCenterForwardX = toForwardX(options.candidates[groupEnd]?.center.x ?? Number.NaN, options.xPlusIsRight);
+      const nextCandidate = options.candidates[groupEnd];
+      const nextCenterForwardX = nextCandidate ? toForwardX(nextCandidate.center.x, options.xPlusIsRight) : undefined;
       const rightAnchor = numberIsInsideInterval(nextCenterForwardX, interval) ? nextCenterForwardX : undefined;
       // 固定地图顺序可跨发射士兵复用前缀；相同 y 沿用输入序号，避免识别结果抖动。
       const orderedGroup = [...group].sort(
@@ -69,7 +76,7 @@ export function assignGraphwarStepGlitchTargetRoutePoints<TTarget extends Graphw
       );
       const assignedForwardXs = createStepGlitchAssignedXs(
         orderedGroup.length,
-        toForwardX(groupCenterX ?? Number.NaN, options.xPlusIsRight),
+        toForwardX(groupCenterX, options.xPlusIsRight),
         interval,
         leftAnchor,
         rightAnchor,
@@ -92,7 +99,10 @@ export function assignGraphwarStepGlitchTargetRoutePoints<TTarget extends Graphw
 
           assignedTargets.push({
             ...candidate,
-            routePoint: createPixelPoint(fromForwardX(assignedForwardX, options.xPlusIsRight), candidate.center.y),
+            routePoint: createPixelPoint(
+              options.xPlusIsRight ? assignedForwardX : -assignedForwardX,
+              candidate.center.y,
+            ),
           });
           lastAssignedForwardX = assignedForwardX;
         }
@@ -145,6 +155,7 @@ function createStrictCircleXInterval(centerX: number, radius: number): StepGlitc
   return Number.isFinite(centerX) && radius > 0 ? { left: centerX, right: centerX } : undefined;
 }
 
+/** 选择安全区间内最靠 x+ 的既有锚点。 */
 function selectStepGlitchLeftAnchor(
   interval: StepGlitchSafeXInterval,
   pathTailX: number,
@@ -159,6 +170,7 @@ function selectStepGlitchLeftAnchor(
   return anchor;
 }
 
+/** 判断有限值是否位于闭区间内，并为调用方收窄类型。 */
 function numberIsInsideInterval(value: number | undefined, interval: StepGlitchSafeXInterval): value is number {
   return value !== undefined && Number.isFinite(value) && value >= interval.left && value <= interval.right;
 }
@@ -219,14 +231,12 @@ function stepGlitchAssignmentsAreValid(
   return true;
 }
 
+/** 按整数序号在线性区间内分配一个控制点 x。 */
 function interpolateStepGlitchX(left: number, right: number, numerator: number, denominator: number) {
   return left + ((right - left) * numerator) / denominator;
 }
 
+/** 将截图 x 投影到统一递增的 Graph x+ 方向。 */
 function toForwardX(pixelX: number, xPlusIsRight: boolean) {
   return xPlusIsRight ? pixelX : -pixelX;
-}
-
-function fromForwardX(forwardX: number, xPlusIsRight: boolean) {
-  return xPlusIsRight ? forwardX : -forwardX;
 }

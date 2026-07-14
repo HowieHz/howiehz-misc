@@ -2,6 +2,7 @@ package top.howiehz.graphwar.agent;
 
 import java.lang.instrument.Instrumentation;
 
+/** Installs Graphwar compatibility transformers and exposes the localhost control server. */
 public final class GraphwarAgent {
     // Chosen outside common service ports. The default path can scan forward; an explicit
     // port stays strict so callers do not silently connect to the wrong endpoint.
@@ -11,14 +12,17 @@ public final class GraphwarAgent {
 
     private GraphwarAgent() {}
 
+    /** Starts the Agent before the official client loads its classes. */
     public static void premain(String agentArgs, Instrumentation instrumentation) {
         start(agentArgs, instrumentation);
     }
 
+    /** Starts the Agent through the JVM dynamic-attach entry point. */
     public static void agentmain(String agentArgs, Instrumentation instrumentation) {
         start(agentArgs, instrumentation);
     }
 
+    /** Registers compatibility transformations, then binds the configured loopback HTTP port. */
     private static synchronized void start(String agentArgs, Instrumentation instrumentation) {
         // A JVM may load the agent through premain and agentmain; expose only one server.
         if (server != null) {
@@ -59,6 +63,7 @@ public final class GraphwarAgent {
         System.err.println("[graphwar-agent] listening on http://127.0.0.1:" + server.getPort());
     }
 
+    /** Prints the generated package version and source provenance for diagnostics. */
     private static void printBuildInfo() {
         System.err.println("[graphwar-agent] version " + GraphwarAgentBuildInfo.VERSION);
         System.err.println(
@@ -69,6 +74,7 @@ public final class GraphwarAgent {
                         + ")");
     }
 
+    /** Parses an exact explicit port or falls back to the default scanning policy. */
     private static PortSelection parsePort(String agentArgs) {
         if (agentArgs == null || agentArgs.trim().isEmpty()) {
             return defaultPortSelection();
@@ -93,6 +99,7 @@ public final class GraphwarAgent {
         return defaultPortSelection();
     }
 
+    /** Creates the default port selection with bounded forward scanning. */
     private static PortSelection defaultPortSelection() {
         return new PortSelection(DEFAULT_PORT, DEFAULT_PORT_SEARCH_LIMIT);
     }
@@ -101,6 +108,7 @@ public final class GraphwarAgent {
         final int fallbackPortCount;
         final int port;
 
+        /** Couples the first port with the number of fallback ports allowed. */
         PortSelection(int port, int fallbackPortCount) {
             this.fallbackPortCount = fallbackPortCount;
             this.port = port;

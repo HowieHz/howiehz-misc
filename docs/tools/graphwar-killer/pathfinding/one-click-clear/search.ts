@@ -1,6 +1,6 @@
 /** 在当前 Graphwar 路径后追加 DAG 清图路线；几何建路点和弹道命中圈分开建模。 */
 import { GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
-import { imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
+import { imageToGraphPoint, pixelPointsEqual, xPlusGoesRight } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
@@ -1636,7 +1636,7 @@ function publishOneClickClearStepGlitchHitEvidence(
     return;
   }
   const prefixTarget =
-    route.targetSequence.find((target) => samePixelPoint(target.routePoint, lastPathPoint))?.hitCircle ??
+    route.targetSequence.find((target) => pixelPointsEqual(target.routePoint, lastPathPoint))?.hitCircle ??
     ({ center: lastPathPoint, radius: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS } satisfies GraphwarTrajectoryTargetCircle);
   options.onValidatedStepGlitchPath({
     acceptedPoint,
@@ -1761,7 +1761,9 @@ function createOneClickClearTrackedTargets(
   }
   for (const target of route.targetSequence) {
     upsertOneClickClearTrackedTarget(tracked, {
-      ...(pathContainsExactPoint(route.pathPoints, target.routePoint) ? { anchor: target.routePoint } : {}),
+      ...(route.pathPoints.some((point) => pixelPointsEqual(point, target.routePoint))
+        ? { anchor: target.routePoint }
+        : {}),
       hitCircle: target.hitCircle,
       id: target.id,
     });
@@ -1797,14 +1799,6 @@ function compareOneClickClearHitTargets(left: OneClickClearHitTarget, right: One
 
 function sameOneClickClearTargetCircle(left: GraphwarTrajectoryTargetCircle, right: GraphwarTrajectoryTargetCircle) {
   return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
-}
-
-function pathContainsExactPoint(path: readonly PixelPoint[], point: PixelPoint) {
-  return path.some((candidate) => candidate.x === point.x && candidate.y === point.y);
-}
-
-function samePixelPoint(left: PixelPoint, right: PixelPoint) {
-  return left.x === right.x && left.y === right.y;
 }
 
 function createOneClickClearTargetCircle(target: Pick<GraphwarOneClickClearCandidate, "hitCenter" | "hitRadius">) {

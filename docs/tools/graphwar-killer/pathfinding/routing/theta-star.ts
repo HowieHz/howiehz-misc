@@ -1,10 +1,19 @@
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { xPlusGoesRight } from "../../core/geometry";
 import { nearlyEqual } from "../../core/numbers";
-import { imagePointToPlaneGridPoint, mirrorPlaneGridPoint, type PlaneGridPoint } from "../../core/plane-grid";
+import {
+  imagePointToPlaneGridPoint,
+  mirrorPlaneGridPoint,
+  planeGridPointDistance,
+  planeGridPointFromIndex,
+  planeGridPointsEqual,
+  planeGridPointToIndex,
+  type PlaneGridPoint,
+} from "../../core/plane-grid";
 import {
   lineHitsPlaneMask,
   pointHitsPlaneMask,
+  type GraphwarPathfindingEdgeEvaluation,
   type GraphwarPathfindingEdgeEvaluator,
   type GraphwarPathfindingOptions,
   type GraphwarPathfindingPreview,
@@ -67,6 +76,7 @@ interface ThetaStarSearchContext {
   target: PlaneGridPoint;
 }
 
+/** Reusable typed-array state for repeated Theta* searches on the same worker. */
 export interface GraphwarThetaStarScratch {
   /** 当前节点扩展时复用的 y 候选列表，避免热循环反复分配小数组。 */
   candidateYs: number[];
@@ -82,6 +92,7 @@ export interface GraphwarThetaStarScratch {
   touchedIndexes: number[];
 }
 
+/** Theta* options with an optional caller-owned scratch allocation. */
 export interface GraphwarThetaStarPathfindingOptions extends GraphwarPathfindingOptions {
   /** 调用方可复用的工作区；一键清图 worker 会用它减少重复分配和全图清空。 */
   scratch?: GraphwarThetaStarScratch;
@@ -104,6 +115,7 @@ const THETA_STAR_LOOKAHEAD_COLUMN_OFFSETS: readonly number[] = [1, 2, 4, 8, 16, 
 
 const GRAPHWAR_PLANE_CELL_COUNT = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 
+/** Allocates and initializes one reusable full-plane Theta* workspace. */
 export function createGraphwarThetaStarScratch(): GraphwarThetaStarScratch {
   const gScore = new Float64Array(GRAPHWAR_PLANE_CELL_COUNT);
   const parentIndexes = new Int32Array(GRAPHWAR_PLANE_CELL_COUNT);
@@ -123,9 +135,11 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
   const mirrored = !xPlusGoesRight(options.bounds);
   const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.startPoint, options.boundsRect), mirrored);
   const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.targetPoint, options.boundsRect), mirrored);
-  const canAdvance = options.canAdvance
+  // Capture the optional callback once so the hot search closure has no unreachable fallback.
+  const customCanAdvance = options.canAdvance;
+  const canAdvance = customCanAdvance
     ? (previous: PlaneGridPoint, next: PlaneGridPoint) =>
-        options.canAdvance?.(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored)) ?? false
+        customCanAdvance(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored))
     : (previous: PlaneGridPoint, next: PlaneGridPoint) => next.x > previous.x;
   const customEdgeEvaluator = options.evaluateEdge
     ? createThetaStarEdgeEvaluator(options.evaluateEdge, mirrored)
@@ -143,16 +157,18 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
     return undefined;
   }
 
-  if (!canAdvance(start, target) && !pointsEqual(start, target)) {
+  if (!canAdvance(start, target) && !planeGridPointsEqual(start, target)) {
     return undefined;
   }
 
-  const directEdge = canAdvance(start, target)
-    ? (customEdgeEvaluator?.(start, target, initialRouteState as number, initialRouteStateKey) ??
-      (!customEdgeEvaluator && !lineHitsPlaneMask(start, target, options.routeMask, mirrored, options.boundaryExpansion)
+  let directEdge: GraphwarPathfindingEdgeEvaluation | { secondaryCost: number } | undefined;
+  if (canAdvance(start, target)) {
+    directEdge = customEdgeEvaluator
+      ? customEdgeEvaluator(start, target, initialRouteState as number, initialRouteStateKey)
+      : !lineHitsPlaneMask(start, target, options.routeMask, mirrored, options.boundaryExpansion)
         ? { secondaryCost: planeGridPointDistance(start, target) }
-        : undefined))
-    : undefined;
+        : undefined;
+  }
   if (directEdge) {
     const directPath = [start, target];
     options.onPreview?.({
@@ -229,8 +245,8 @@ async function findStepThetaStarPath({
   scratch: GraphwarThetaStarScratch;
   yieldControl?: () => Promise<void> | void;
 }) {
-  const startIndex = createPlaneGridPointIndex(start);
-  const targetIndex = createPlaneGridPointIndex(target);
+  const startIndex = planeGridPointToIndex(start);
+  const targetIndex = planeGridPointToIndex(target);
   const freeSpansByColumn = getThetaStarFreeSpansByColumn({
     boundaryExpansion,
     mirrored,
@@ -274,7 +290,7 @@ async function findStepThetaStarPath({
       continue;
     }
 
-    const current = createPlaneGridPointFromIndex(currentNode.index);
+    const current = planeGridPointFromIndex(currentNode.index);
     if (currentNode.index === targetIndex) {
       const rawPath = reconstructStepThetaStarPath(currentNode.key, states);
       const path = simplifyStepThetaStarPath(
@@ -382,11 +398,11 @@ function relaxStepThetaStarNeighbor({
   states: Map<string, StepThetaStarState>;
   target: PlaneGridPoint;
 }) {
-  const nextIndex = createPlaneGridPointIndex(next);
+  const nextIndex = planeGridPointToIndex(next);
   const transitions = [createStepThetaTransition(current, currentState, next, canAdvance, evaluateEdge)];
   const parentState = states.get(currentState.parentKey);
   if (parentState && parentState.index !== currentState.index) {
-    const parent = createPlaneGridPointFromIndex(parentState.index);
+    const parent = planeGridPointFromIndex(parentState.index);
     transitions.push(createStepThetaTransition(parent, parentState, next, canAdvance, evaluateEdge));
   }
 
@@ -453,7 +469,7 @@ function createStepThetaEstimatedCost(
   target: PlaneGridPoint,
   estimateRemainingSecondaryCost: (current: PlaneGridPoint, target: PlaneGridPoint) => number,
 ): StepThetaStarCost {
-  if (pointsEqual(current, target)) {
+  if (planeGridPointsEqual(current, target)) {
     return cost;
   }
   return {
@@ -472,7 +488,7 @@ function reconstructStepThetaStarPath(targetKey: string, states: ReadonlyMap<str
     if (!state) {
       break;
     }
-    path.push(createPlaneGridPointFromIndex(state.index));
+    path.push(planeGridPointFromIndex(state.index));
     if (state.parentKey === currentKey) {
       break;
     }
@@ -544,7 +560,7 @@ function collectStepThetaStarPreviewCandidates(
       break;
     }
   }
-  return [...indexes].map(createPlaneGridPointFromIndex);
+  return [...indexes].map(planeGridPointFromIndex);
 }
 
 async function findThetaStarPath({
@@ -563,8 +579,8 @@ async function findThetaStarPath({
   scratch: GraphwarThetaStarScratch;
   yieldControl?: () => Promise<void> | void;
 }) {
-  const startIndex = createPlaneGridPointIndex(start);
-  const targetIndex = createPlaneGridPointIndex(target);
+  const startIndex = planeGridPointToIndex(start);
+  const targetIndex = planeGridPointToIndex(target);
   const { closed, gScore, parentIndexes } = scratch;
   const freeSpansByColumn = getThetaStarFreeSpansByColumn({
     boundaryExpansion,
@@ -593,7 +609,7 @@ async function findThetaStarPath({
       continue;
     }
 
-    const current = createPlaneGridPointFromIndex(currentNode.index);
+    const current = planeGridPointFromIndex(currentNode.index);
     if (currentNode.index === targetIndex) {
       const rawPath = reconstructThetaStarPath(targetIndex, parentIndexes);
       const path = simplifyThetaStarPath(rawPath, {
@@ -713,9 +729,9 @@ function relaxThetaStarNeighbor({
   scratch: GraphwarThetaStarScratch;
 }) {
   const { gScore, parentIndexes } = scratch;
-  const nextIndex = createPlaneGridPointIndex(next);
+  const nextIndex = planeGridPointToIndex(next);
   const parentIndex = parentIndexes[currentIndex];
-  const parent = parentIndex >= 0 ? createPlaneGridPointFromIndex(parentIndex) : current;
+  const parent = parentIndex >= 0 ? planeGridPointFromIndex(parentIndex) : current;
   let routeFrom = current;
   let routeFromIndex = currentIndex;
 
@@ -919,7 +935,7 @@ async function reportThetaStarProgress({
     acceptedEdges: acceptedEdges ?? [],
     bestPath: reconstructThetaStarPath(currentIndex, parentIndexes),
     candidates: collectThetaStarPreviewCandidates(openSet, currentIndex, startIndex, targetIndex),
-    current: createPlaneGridPointFromIndex(currentIndex),
+    current: planeGridPointFromIndex(currentIndex),
     mirrored,
   });
 
@@ -970,7 +986,7 @@ function reconstructThetaStarPath(targetIndex: number, parentIndexes: Int32Array
   const seenIndexes = new Set<number>();
   while (currentIndex >= 0 && !seenIndexes.has(currentIndex)) {
     seenIndexes.add(currentIndex);
-    path.push(createPlaneGridPointFromIndex(currentIndex));
+    path.push(planeGridPointFromIndex(currentIndex));
     const parentIndex = parentIndexes[currentIndex];
     if (parentIndex === currentIndex) {
       break;
@@ -993,7 +1009,7 @@ function collectThetaStarPreviewCandidates(
       break;
     }
   }
-  return [...indexes].map(createPlaneGridPointFromIndex);
+  return [...indexes].map(planeGridPointFromIndex);
 }
 
 function recordAcceptedEdge(
@@ -1015,25 +1031,6 @@ function edgeIsClear(
   boundaryExpansion: number,
 ) {
   return !lineHitsPlaneMask(start, target, routeMask, mirrored, boundaryExpansion);
-}
-
-function createPlaneGridPointIndex(point: PlaneGridPoint) {
-  return point.y * GRAPHWAR_PLANE_LENGTH + point.x;
-}
-
-function createPlaneGridPointFromIndex(index: number): PlaneGridPoint {
-  return {
-    x: index % GRAPHWAR_PLANE_LENGTH,
-    y: Math.floor(index / GRAPHWAR_PLANE_LENGTH),
-  };
-}
-
-function planeGridPointDistance(left: PlaneGridPoint, right: PlaneGridPoint) {
-  return Math.hypot(right.x - left.x, right.y - left.y);
-}
-
-function pointsEqual(left: PlaneGridPoint, right: PlaneGridPoint) {
-  return left.x === right.x && left.y === right.y;
 }
 
 function createThetaStarEdgeEvaluator(evaluateEdge: GraphwarPathfindingEdgeEvaluator, mirrored: boolean) {

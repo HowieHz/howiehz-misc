@@ -4,6 +4,7 @@ import { graphXAdvancesStrictly } from "../../core/numbers";
 import {
   imagePointToPlaneGridPoint,
   planeGridCellCenterToImagePoint,
+  planeGridPointsEqual,
   type PlaneGridPoint,
 } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
@@ -306,15 +307,11 @@ function planePointToExactOrCellCenter(
   exactTargetCell: PlaneGridPoint,
   options: Pick<GraphwarStepPathfindingEvaluatorOptions, "boundsRect" | "exactStartPoint" | "exactTargetPoint">,
 ) {
-  if (samePlanePoint(point, exactStartCell)) {
+  if (planeGridPointsEqual(point, exactStartCell)) {
     return options.exactStartPoint;
   }
-  if (samePlanePoint(point, exactTargetCell)) {
+  if (planeGridPointsEqual(point, exactTargetCell)) {
     return options.exactTargetPoint;
   }
   return planeGridCellCenterToImagePoint(point, options.boundsRect);
-}
-
-function samePlanePoint(left: PlaneGridPoint, right: PlaneGridPoint) {
-  return left.x === right.x && left.y === right.y;
 }

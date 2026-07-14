@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 
+/** Dependency-free loopback HTTP server for the Graphwar Agent contract. */
 final class GraphwarHttpServer {
     // Keep the server tiny and dependency-free. com.sun.net.httpserver.HttpServer is
     // convenient, but its non-daemon workers kept short validation JVMs alive.
@@ -35,6 +36,7 @@ final class GraphwarHttpServer {
         this.stateReader = stateReader;
     }
 
+    /** Binds the requested loopback port and optionally scans a bounded fallback range. */
     static GraphwarHttpServer start(
             int port, int fallbackPortCount, GraphwarStateReader stateReader) {
         IOException firstError = null;
@@ -59,6 +61,7 @@ final class GraphwarHttpServer {
         throw new IllegalStateException("Failed to start graphwar-agent HTTP server", firstError);
     }
 
+    /** Returns the actual bound port after fallback selection. */
     int getPort() {
         return serverSocket.getLocalPort();
     }
@@ -78,6 +81,7 @@ final class GraphwarHttpServer {
         }
     }
 
+    /** Stops accepting requests and interrupts all daemon request workers. */
     void stop() {
         running = false;
         try {
@@ -383,6 +387,7 @@ final class GraphwarHttpServer {
             this.valid = false;
         }
 
+        /** Creates a sentinel request that always routes to HTTP 400. */
         static Request invalid() {
             return new Request();
         }
@@ -407,10 +412,12 @@ final class GraphwarHttpServer {
             return new Response(status, body, "application/octet-stream", battleRevision);
         }
 
+        /** Creates a response with no body. */
         static Response empty(int status) {
             return new Response(status, new byte[0], "text/plain; charset=utf-8", null);
         }
 
+        /** Encodes one UTF-8 JSON response. */
         static Response json(int status, String text) {
             return new Response(
                     status,
@@ -419,6 +426,7 @@ final class GraphwarHttpServer {
                     null);
         }
 
+        /** Encodes one UTF-8 plain-text response. */
         static Response text(int status, String text) {
             return new Response(
                     status,

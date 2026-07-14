@@ -9,6 +9,7 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.security.ProtectionDomain;
 
+/** Repairs official failed-room cleanup after a previous kick cleared the connection. */
 public final class GraphwarRoomJoinFailureFixer implements ClassFileTransformer {
     private static final String GAME_DATA = "Graphwar/GameData";
     private static final String HANDLER_CLASS =
@@ -50,6 +51,7 @@ public final class GraphwarRoomJoinFailureFixer implements ClassFileTransformer 
         }
     }
 
+    /** Redirects RoomBoard's failed-join disconnect call through the recovery handler. */
     static byte[] fix(byte[] classfileBuffer) {
         ClassFile classFile = new ClassFile(classfileBuffer);
         if (!classFile.hasGameDataDisconnectMethodRef()) {
@@ -63,6 +65,7 @@ public final class GraphwarRoomJoinFailureFixer implements ClassFileTransformer 
         return patchCount == 0 ? classfileBuffer : constantPool.bytes;
     }
 
+    /** Disconnects when possible and otherwise restores GameData to its stopped state. */
     public static void disconnectAfterFailedRoomJoin(Object gameData) {
         if (gameData == null) {
             return;

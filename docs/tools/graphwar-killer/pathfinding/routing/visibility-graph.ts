@@ -2,7 +2,16 @@ import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/co
 /** Graphwar 固定平面上的几何寻路工具；页面和 worker 共用同一套图搜索实现。 */
 import { xPlusGoesRight } from "../../core/geometry";
 import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "../../core/numbers";
-import { imagePointToPlaneGridPoint, mirrorPlaneGridPoint, type PlaneGridPoint } from "../../core/plane-grid";
+import {
+  imagePointToPlaneGridPoint,
+  mirrorPlaneGridPoint,
+  planeGridPointDistance,
+  planeGridPointsEqual,
+  planeGridPointToIndex,
+  planePointIsInsideBoundaryExpansion,
+  planePointIsInsideBounds,
+  type PlaneGridPoint,
+} from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 
 /** 页面搜索动画需要的图搜索快照；worker 不传回调时不会产生该数据。 */
@@ -215,9 +224,11 @@ export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarP
   const boundaryExpansion = normalizeBoundaryExpansion(options.boundaryExpansion);
   const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.startPoint, options.boundsRect), mirrored);
   const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.targetPoint, options.boundsRect), mirrored);
-  const canAdvance = options.canAdvance
+  // Capture the optional callback once so the hot graph-search closure has no unreachable fallback.
+  const customCanAdvance = options.canAdvance;
+  const canAdvance = customCanAdvance
     ? (previous: PlaneGridPoint, next: PlaneGridPoint) =>
-        options.canAdvance?.(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored)) ?? false
+        customCanAdvance(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored))
     : (previous: PlaneGridPoint, next: PlaneGridPoint) => next.x > previous.x;
   const evaluateEdge = options.evaluateEdge ? createVisibilityEdgeEvaluator(options.evaluateEdge, mirrored) : undefined;
   const estimateRemainingSecondaryCost = createVisibilityRemainingCostEstimator(options, mirrored);
@@ -233,7 +244,7 @@ export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarP
     return undefined;
   }
 
-  if (!canAdvance(start, target) && !pointsEqual(start, target)) {
+  if (!canAdvance(start, target) && !planeGridPointsEqual(start, target)) {
     return undefined;
   }
 
@@ -413,7 +424,7 @@ function pointHitsPlaneMaskWithBoundaryExpansion(
   boundaryExpansion: number,
 ) {
   const x = mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - point.x : point.x;
-  if (!isInsidePlaneWithBoundaryExpansion(x, point.y, boundaryExpansion)) {
+  if (!planePointIsInsideBoundaryExpansion(x, point.y, boundaryExpansion)) {
     return true;
   }
   return Boolean(mask[point.y * GRAPHWAR_PLANE_LENGTH + x]);
@@ -558,7 +569,7 @@ function collectRouteMaskComponents(mask: Uint8Array, mirrored: boolean) {
   for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
     for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
       const start = { x, y };
-      const startIndex = createPlaneGridPointIndex(start);
+      const startIndex = planeGridPointToIndex(start);
       if (visited[startIndex] || !routeMaskCellIsBlocked(start, mask, mirrored)) {
         continue;
       }
@@ -593,10 +604,10 @@ function collectRouteMaskComponents(mask: Uint8Array, mirrored: boolean) {
 
         for (const offset of EIGHT_CONNECTED_OFFSETS) {
           const next = { x: cell.x + offset.x, y: cell.y + offset.y };
-          if (!isInsidePlane(next.x, next.y)) {
+          if (!planePointIsInsideBounds(next.x, next.y)) {
             continue;
           }
-          const nextIndex = createPlaneGridPointIndex(next);
+          const nextIndex = planeGridPointToIndex(next);
           if (visited[nextIndex] || !routeMaskCellIsBlocked(next, mask, mirrored)) {
             continue;
           }
@@ -957,7 +968,7 @@ async function findLazyVisibilityGraphPath({
       onPreview?.({
         acceptedEdges,
         bestPath: path,
-        candidates: limitPreviewCandidates(candidates, candidates[currentIndex] ?? candidates[startIndex]),
+        candidates: limitPreviewCandidates(candidates, currentPoint),
         current: currentPoint,
         mirrored,
       });
@@ -1577,7 +1588,7 @@ function cross(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGri
 
 /** 判断指定平面 cell 在 route mask 中是否阻挡。 */
 function routeMaskCellIsBlocked(point: PlaneGridPoint, mask: Uint8Array, mirrored: boolean) {
-  if (!isInsidePlane(point.x, point.y)) {
+  if (!planePointIsInsideBounds(point.x, point.y)) {
     return false;
   }
   const x = mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - point.x : point.x;
@@ -1597,44 +1608,14 @@ function comparePlaneGridPoints(left: PlaneGridPoint, right: PlaneGridPoint) {
   return left.x - right.x || left.y - right.y;
 }
 
-/** 判断两个平面网格点坐标是否相同。 */
-function pointsEqual(left: PlaneGridPoint, right: PlaneGridPoint) {
-  return left.x === right.x && left.y === right.y;
-}
-
 /** 创建平面网格点的字符串 key。 */
 function createPlaneGridPointKey(point: PlaneGridPoint) {
   return `${point.x};${point.y}`;
 }
 
-/** 创建平面网格点在 770x450 mask 中的一维下标。 */
-function createPlaneGridPointIndex(point: PlaneGridPoint) {
-  return point.y * GRAPHWAR_PLANE_LENGTH + point.x;
-}
-
-/** 判断坐标是否位于固定 Graphwar 平面内。 */
-function isInsidePlane(x: number, y: number) {
-  return x >= 0 && x < GRAPHWAR_PLANE_LENGTH && y >= 0 && y < GRAPHWAR_PLANE_HEIGHT;
-}
-
-/** 判断点是否在收缩后的 Graphwar 平面内部，贴边视为障碍。 */
-function isInsidePlaneWithBoundaryExpansion(x: number, y: number, boundaryExpansion: number) {
-  return (
-    x >= boundaryExpansion &&
-    x < GRAPHWAR_PLANE_LENGTH - boundaryExpansion &&
-    y >= boundaryExpansion &&
-    y < GRAPHWAR_PLANE_HEIGHT - boundaryExpansion
-  );
-}
-
 /** 边界收缩允许小数；调用方已限制非负，进入点/线碰撞热路径前统一折成整数。 */
 function normalizeBoundaryExpansion(boundaryExpansion: number) {
   return Math.floor(boundaryExpansion);
-}
-
-/** DP 转移代价使用欧氏距离，偏好更短更平滑的折线。 */
-function planeGridPointDistance(left: PlaneGridPoint, right: PlaneGridPoint) {
-  return Math.hypot(right.x - left.x, right.y - left.y);
 }
 
 /** 计算两个平面网格点的欧氏距离平方，避免无谓开方。 */

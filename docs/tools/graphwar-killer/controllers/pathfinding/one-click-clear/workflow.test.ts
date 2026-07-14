@@ -10,8 +10,13 @@ describe("one-click clear workflow", () => {
     const start = createPixelPoint(10, 20);
     const target = createPixelPoint(30, 40);
     const order: string[] = [];
+    const appliedExpressions: string[] = [];
+    const formulaObstacleMask = new Uint8Array(770 * 450);
+    const simulationMask = new Uint8Array(770 * 450);
     let now = 0;
     let current = true;
+    let cachedResult: GraphwarOneClickClearPathWorkerResult | undefined;
+    let runnerCallCount = 0;
     let runnerMode: "error" | "failure" | "pending" | "success" = "success";
     let resolvePending: ((result: GraphwarOneClickClearPathWorkerResult) => void) | undefined;
     const workflow = useGraphwarOneClickClearRunWorkflow<GraphwarOneClickClearTargetSoldier>({
@@ -23,8 +28,10 @@ describe("one-click clear workflow", () => {
         measureStageAsync: (_timings, _stage, task) => task(),
       },
       effects: {
-        applyIncumbent: () => order.push("apply-incumbent"),
-        applyValidatedPath: () => order.push("apply"),
+        applyIncumbent: (incumbent) => {
+          appliedExpressions.push(incumbent.expression);
+          order.push("apply-incumbent");
+        },
         flashBlockedSegment: () => undefined,
         flashHitSoldiers: () => order.push("flash"),
         setStatus: () => order.push("status"),
@@ -36,17 +43,18 @@ describe("one-click clear workflow", () => {
         getFormulaSettings: () => ({
           algorithm: "step",
           decimalPlaces: 4,
-          equation: "y",
+          equation: "dy",
           steepness: 67,
-          stepGlitchMode: false,
+          stepGlitchMode: true,
+          stepGlitchObstacleMask: formulaObstacleMask,
           stepOverflowProtection: true,
         }),
         getObstacleMask: () => new Uint8Array(770 * 450),
         getPathPoints: () => [start],
         getPathfindingWorkerCount: () => 1,
         getRouteMode: () => "visibility-graph",
-        requiresDagWorker: () => true,
-        getSimulationMask: () => undefined,
+        requiresDagWorker: () => false,
+        getSimulationMask: () => simulationMask,
         getTolerances: () => ({
           oneClickClearDeleteCheckRadiusPlanePixels: 0,
           routeBoundaryInsetPlanePixels: 0,
@@ -66,11 +74,13 @@ describe("one-click clear workflow", () => {
         cache: {
           cacheOneClickClearResult: () => undefined,
           createOneClickClearResultCacheKey: () => "cache-key",
-          getCachedOneClickClearResult: () => undefined,
+          getCachedOneClickClearResult: () => cachedResult,
           getMaskCacheId: () => 1,
         },
         runner: {
-          buildOneClickClearPath: async (_input, runnerOptions) => {
+          buildOneClickClearPath: async (input, runnerOptions) => {
+            runnerCallCount += 1;
+            expect(input.settings.stepGlitchObstacleMask).toBe(simulationMask);
             if (runnerMode !== "success") {
               runnerOptions?.onIncumbent?.({ expression: "x", pathPoints: [start, target] });
               if (runnerMode === "error") {
@@ -89,6 +99,7 @@ describe("one-click clear workflow", () => {
             return {
               result: {
                 elapsedMs: 10,
+                expression: "final",
                 expandedStates: 1,
                 pathPoints: [start, target],
                 targetIds: ["target"],
@@ -127,7 +138,27 @@ describe("one-click clear workflow", () => {
       }),
     ).resolves.toBe(true);
 
-    expect(order.slice(0, 5)).toEqual(["submit", "finish", "apply", "flash", "status"]);
+    expect(order.slice(0, 5)).toEqual(["submit", "finish", "apply-incumbent", "flash", "status"]);
+    expect(appliedExpressions).toContain("final");
+
+    cachedResult = {
+      result: {
+        elapsedMs: 10,
+        expression: "cached",
+        expandedStates: 1,
+        pathPoints: [start, target],
+        targetIds: ["target"],
+        type: "success",
+      },
+      timings: [],
+    };
+    const callsBeforeCacheHit = runnerCallCount;
+    order.length = 0;
+    await expect(workflow.run()).resolves.toBe(true);
+    expect(runnerCallCount).toBe(callsBeforeCacheHit);
+    expect(appliedExpressions.at(-1)).toBe("cached");
+    expect(order.slice(0, 4)).toEqual(["finish", "apply-incumbent", "flash", "status"]);
+    cachedResult = undefined;
 
     order.length = 0;
     runnerMode = "failure";

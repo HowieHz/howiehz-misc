@@ -140,8 +140,6 @@ export interface GraphwarTrajectoryResultController {
   incumbentPreviewActive: ReadonlyRef<boolean>;
   /** 当前公式采样设置。 */
   graphwarTrajectoryFormulaSettings: ReadonlyRef<GraphwarTrajectoryFormulaSettings>;
-  /** 保留当前完整预览，直到下一份正式 solver 结果可以原子接管展示。 */
-  handoffIncumbentPreviewToNextSolverResult: () => void;
   /** 最后一次完整成功的求解器二阶发射角，单位为度。 */
   secondOrderLaunchAngleDegrees: ReadonlyRef<number | undefined>;
   /** 模拟器二阶发射角，单位为弧度。 */
@@ -444,43 +442,38 @@ export function useGraphwarTrajectoryResult(
     return true;
   }
 
-  /** 复用匹配的待绘制预览；没有可复用任务时零回放提交公式和控制点。 */
+  /** 复用匹配的待绘制预览；没有任务时只采样已验证表达式，不从控制点重算公式。 */
   function commitIncumbentResult(expression: string, launchAngleRadians?: number) {
     const secondOrderLaunchAngleDegrees =
       launchAngleRadians === undefined ? undefined : (launchAngleRadians * 180) / Math.PI;
-    if (
-      pendingIncumbentPreview?.expression === expression &&
-      pendingIncumbentPreview.secondOrderLaunchAngleDegrees === secondOrderLaunchAngleDegrees
-    ) {
-      // 该 Worker 已在运行；标记成功后直接转正，路径写回不得取消或重复采样。
-      pendingIncumbentPreview.commitOnPublish = true;
-      skipNextSolverCalculation = true;
+    if (commitPendingIncumbentPreview(expression, secondOrderLaunchAngleDegrees)) {
       return;
     }
-    activeGeneration += 1;
-    incumbentPreviewSolverHandoff = false;
-    pendingIncumbentPreview = undefined;
-    runner.cancel();
-    cancelPendingFrame();
-    pendingInput = undefined;
-    clearSuccessTimer();
-    calculationStatus.value = { type: "idle" };
-    publishedResult.value = {
-      ...(publishedResult.value.simulatorTrajectory
-        ? { simulatorTrajectory: publishedResult.value.simulatorTrajectory }
-        : {}),
-      solver: {
-        formulaResult: { expression, terms: [] },
-        ...(secondOrderLaunchAngleDegrees === undefined ? {} : { secondOrderLaunchAngleDegrees }),
-        trajectory: { curvePoints: "" },
-      },
-    };
+
+    publishIncumbentPreview(expression, launchAngleRadians);
+    if (commitPendingIncumbentPreview(expression, secondOrderLaunchAngleDegrees)) {
+      return;
+    }
+
+    publishCommittedIncumbentWithoutTrajectory({
+      expression,
+      ...(secondOrderLaunchAngleDegrees === undefined ? {} : { secondOrderLaunchAngleDegrees }),
+    });
     skipNextSolverCalculation = true;
   }
 
-  /** 正常完成时让最终 solver 结果接管旧预览，避免清除与重算之间出现空窗。 */
-  function handoffIncumbentPreviewToNextSolverResult() {
-    incumbentPreviewSolverHandoff = publishedResult.value.incumbentPreview !== undefined;
+  /** 把同一表达式的在途绘图任务标记为终态，路径写回后不得取消或重复采样。 */
+  function commitPendingIncumbentPreview(expression: string, secondOrderLaunchAngleDegrees: number | undefined) {
+    if (
+      pendingIncumbentPreview?.expression !== expression ||
+      pendingIncumbentPreview.secondOrderLaunchAngleDegrees !== secondOrderLaunchAngleDegrees
+    ) {
+      return false;
+    }
+
+    pendingIncumbentPreview.commitOnPublish = true;
+    skipNextSolverCalculation = true;
+    return true;
   }
 
   /** 取走当前帧合并后的输入，并只允许对应 generation 发布异步结果。 */
@@ -711,7 +704,6 @@ export function useGraphwarTrajectoryResult(
     formulaOutputDecimalPlaces,
     formulaResult,
     graphwarTrajectoryFormulaSettings,
-    handoffIncumbentPreviewToNextSolverResult,
     incumbentPreviewActive,
     plottedCurvePoints,
     publishIncumbentPreview,

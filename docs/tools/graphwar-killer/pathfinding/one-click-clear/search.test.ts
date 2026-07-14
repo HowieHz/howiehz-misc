@@ -132,6 +132,7 @@ describe("One-click clear optimization", () => {
     expect(incumbents).toHaveLength(2);
     if (result.type === "success") {
       expect(incumbents.at(-1)?.pathPoints).toEqual(result.pathPoints);
+      expect(incumbents.at(-1)?.expression).toBe(result.expression);
     }
   });
 

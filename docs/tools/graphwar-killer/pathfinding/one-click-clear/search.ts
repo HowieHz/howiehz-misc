@@ -276,16 +276,15 @@ export type GraphwarOneClickClearFailureReason =
   | "preflight-blocked"
   | "unsupported";
 
-/** 一键清图搜索结果。 */
+/** 一键清图搜索结果；成功分支直接携带最终验证的公式方案，页面不得只按路径重新解算。 */
 export type GraphwarOneClickClearResult =
-  | {
+  | (GraphwarOneClickClearIncumbent & {
       elapsedMs: number;
       expandedStates: number;
-      pathPoints: PixelPoint[];
       reason?: undefined;
       targetIds: string[];
       type: "success";
-    }
+    })
   | {
       elapsedMs: number;
       expandedStates: number;
@@ -536,13 +535,7 @@ async function buildOneClickClearDagPath(
     }
     if (attempt.type === "validated") {
       publishOneClickClearValidatedRoute(context, attempt.route, true);
-      return {
-        elapsedMs: Math.max(0, nowMs() - startedAt),
-        expandedStates: workUnits,
-        pathPoints: attempt.route.pathPoints,
-        targetIds: attempt.hitTargets.flatMap((target) => (target.id ? [target.id] : [])),
-        type: "success",
-      };
+      return createOneClickClearSuccessResult(options, attempt.route, attempt.hitTargets, startedAt, workUnits);
     }
 
     const failedEdge = attempt.failedEdge;
@@ -656,13 +649,7 @@ async function buildOneClickClearStepGlitchPath(
     // 最终验证可能新增局部保护；恢复证据必须绑定它实际验证的精确公式前缀。
     finalValidation.formulaContext.stepGlitchFormulaPrefix,
   );
-  return {
-    elapsedMs: Math.max(0, nowMs() - startedAt),
-    expandedStates: workUnits,
-    pathPoints: finalized.route.pathPoints,
-    targetIds: hitTargets.flatMap((target) => (target.id ? [target.id] : [])),
-    type: "success",
-  };
+  return createOneClickClearSuccessResult(options, finalRoute, hitTargets, startedAt, workUnits);
 }
 
 /** 执行一次候选路线生命周期：DAG 选路、增量验证、删点优化、最终复验。 */
@@ -1714,6 +1701,30 @@ function createOneClickClearIncumbent(
     expression: formulaContext.formulaResult.expression,
     ...(Number.isFinite(launchAngleRadians) ? { launchAngleRadians } : {}),
     pathPoints: [...pathPoints],
+  };
+}
+
+/** 将最终验证使用的同一公式上下文固化进成功结果，禁止页面只拿路径重新解算。 */
+function createOneClickClearSuccessResult(
+  options: GraphwarOneClickClearOptions,
+  route: OneClickClearValidatedRoute,
+  hitTargets: readonly OneClickClearHitTarget[],
+  startedAt: number,
+  expandedStates: number,
+): GraphwarOneClickClearResult {
+  const incumbent = route.formulaContext
+    ? createOneClickClearIncumbent(options, route.pathPoints, route.formulaContext)
+    : undefined;
+  if (!incumbent) {
+    return createOneClickClearFailure("no-usable-target", startedAt, expandedStates);
+  }
+
+  return {
+    ...incumbent,
+    elapsedMs: Math.max(0, nowMs() - startedAt),
+    expandedStates,
+    targetIds: hitTargets.flatMap((target) => (target.id ? [target.id] : [])),
+    type: "success",
   };
 }
 

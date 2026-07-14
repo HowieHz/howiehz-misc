@@ -14,6 +14,7 @@ describe("one-click-clear input semantics", () => {
 
     expect(input.deleteHitCheckRadiusPixels).toBe(0);
     expect(input.routeMode).toBe("visibility-graph");
+    expect(input.settings.stepGlitchObstacleMask).toBe(input.simulationMask);
   });
 
   it("retains the deletion radius only while deletion optimisation is enabled", () => {

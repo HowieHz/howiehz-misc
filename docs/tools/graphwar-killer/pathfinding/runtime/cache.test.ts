@@ -37,6 +37,45 @@ describe("Graphwar pathfinding result cache keys", () => {
 
     expect(visibilityKey).toBe(thetaKey);
   });
+
+  it("separates Step glitch fallback masks when no simulation mask is available", () => {
+    const cache = createGraphwarPathfindingCacheController();
+    const first = createInput({ stepGlitchMode: true });
+    const second = createInput({ stepGlitchMode: true });
+    first.simulationMask = undefined;
+    first.simulationMaskCacheId = 0;
+    first.settings = { ...first.settings, stepGlitchObstacleMask: new Uint8Array(1) };
+    second.simulationMask = undefined;
+    second.simulationMaskCacheId = 0;
+    second.settings = { ...second.settings, stepGlitchObstacleMask: new Uint8Array(1) };
+
+    expect(cache.createOneClickClearResultCacheKey(first)).not.toBe(cache.createOneClickClearResultCacheKey(second));
+  });
+
+  it("preserves the validated formula when caching a one-click-clear success", () => {
+    const cache = createGraphwarPathfindingCacheController();
+    const result = {
+      result: {
+        elapsedMs: 12,
+        expression: "x",
+        expandedStates: 34,
+        launchAngleRadians: Math.PI / 4,
+        pathPoints: [createPixelPoint(10, 20), createPixelPoint(30, 40)],
+        targetIds: ["target"],
+        type: "success" as const,
+      },
+      timings: [],
+    };
+
+    cache.cacheOneClickClearResult("success", result);
+    const cached = cache.getCachedOneClickClearResult("success");
+
+    expect(cached).toEqual(result);
+    expect(cached?.result).not.toBe(result.result);
+    if (cached?.result.type === "success") {
+      expect(cached.result.pathPoints).not.toBe(result.result.pathPoints);
+    }
+  });
 });
 
 function createInput(

@@ -203,6 +203,7 @@ function createResult(): GraphwarOneClickClearPathWorkerResult {
   return {
     result: {
       elapsedMs: 1,
+      expression: "x",
       expandedStates: 1,
       pathPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
       targetIds: ["target"],

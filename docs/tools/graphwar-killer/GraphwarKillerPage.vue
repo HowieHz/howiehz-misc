@@ -1007,7 +1007,6 @@ const {
   formulaOutputDecimalPlaces,
   formulaResult,
   graphwarTrajectoryFormulaSettings,
-  handoffIncumbentPreviewToNextSolverResult,
   incumbentPreviewActive,
   plottedCurvePoints,
   publishIncumbentPreview,
@@ -1254,11 +1253,6 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
   },
   effects: {
     applyIncumbent: applyOneClickClearIncumbent,
-    applyValidatedPath: (points) => {
-      // 保留最后完整预览，等最终路径的公式和轨迹都就绪后再原子恢复正式控制点。
-      handoffIncumbentPreviewToNextSolverResult();
-      applyValidatedPath(points);
-    },
     flashBlockedSegment: smartPathfindingSession.flashBlockedSegment,
     flashHitSoldiers: flashOneClickClearHitSoldiers,
     setStatus: (message, kind) => {
@@ -3720,7 +3714,7 @@ function applyValidatedPath(points: PixelPoint[]) {
   pathStatus.value = "";
 }
 
-/** 提交已验证 incumbent；有动画就复用绘图结果，关闭动画则只发布公式，不补做轨迹回放。 */
+/** 提交已验证 incumbent；复用已有绘图，否则只采样精确表达式，不从控制点重算公式。 */
 function applyOneClickClearIncumbent(incumbent: GraphwarOneClickClearIncumbent) {
   if (!commitIncumbentPreview(incumbent.expression, incumbent.launchAngleRadians)) {
     commitIncumbentResult(incumbent.expression, incumbent.launchAngleRadians);

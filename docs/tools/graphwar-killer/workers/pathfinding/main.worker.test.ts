@@ -80,6 +80,7 @@ describe("Anytime one-click-clear progress", () => {
       options.onValidatedIncumbent?.(incumbent);
       return {
         elapsedMs: 3,
+        expression: incumbent.expression,
         expandedStates: 2,
         pathPoints: [...input.pathPoints],
         targetIds: ["target"],

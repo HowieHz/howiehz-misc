@@ -89,7 +89,6 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
   /** 页面副作用应集中注入，workflow 只决定触发时机。 */
   effects: {
     applyIncumbent: (incumbent: GraphwarOneClickClearIncumbent) => void;
-    applyValidatedPath: (points: PixelPoint[]) => void;
     flashBlockedSegment: (start: PixelPoint | undefined, end: PixelPoint | undefined) => void;
     flashHitSoldiers: (targetIds: readonly string[]) => void;
     setStatus: (message: string, kind: GraphwarOneClickClearStatusKind) => void;
@@ -362,9 +361,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     resultCacheHit: boolean,
     finishDebugTimings: (completedAt?: number) => void,
   ) {
-    options.debug.measureStage(timings, "one-click-clear-apply-result", () =>
-      options.effects.applyValidatedPath(result.pathPoints),
-    );
+    options.debug.measureStage(timings, "one-click-clear-apply-result", () => options.effects.applyIncumbent(result));
     options.effects.flashHitSoldiers(result.targetIds);
     let completedAt = options.time.now();
     options.debug.measureStage(timings, "one-click-clear-setting-status", () => {

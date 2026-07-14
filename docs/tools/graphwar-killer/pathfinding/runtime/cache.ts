@@ -119,6 +119,11 @@ export function createGraphwarPathfindingCacheController() {
   }
 
   function createOneClickClearResultCacheKey(input: GraphwarOneClickClearPathWorkerInput) {
+    // 规范输入复用 simulation 快照 id；低层 fallback 仍按实际公式 mask 区分结果身份。
+    const stepGlitchObstacleMaskId =
+      input.settings.stepGlitchObstacleMask === input.simulationMask
+        ? input.simulationMaskCacheId
+        : getOptionalMaskCacheId(input.settings.stepGlitchObstacleMask);
     return JSON.stringify([
       "one-click-clear-result-v4",
       createGraphBoundsCacheKey(input.bounds),
@@ -131,7 +136,7 @@ export function createGraphwarPathfindingCacheController() {
       input.routeTolerancePlanePixels,
       input.simulationBoundaryExpansion,
       input.simulationMaskCacheId,
-      createTrajectorySettingsCacheKey(input.settings, getOptionalMaskCacheId(input.settings.stepGlitchObstacleMask)),
+      createTrajectorySettingsCacheKey(input.settings, stepGlitchObstacleMaskId),
       createPointArrayCacheKey(input.pathPoints),
       input.prefixTarget ? createTargetCircleCacheKey(input.prefixTarget) : undefined,
       input.candidates.map(createOneClickClearCandidateCacheKey),
@@ -330,7 +335,9 @@ function cloneOneClickClearResult(result: GraphwarOneClickClearPathWorkerResult[
   if (result.type === "success") {
     return {
       elapsedMs: result.elapsedMs,
+      expression: result.expression,
       expandedStates: result.expandedStates,
+      ...(result.launchAngleRadians === undefined ? {} : { launchAngleRadians: result.launchAngleRadians }),
       pathPoints: result.pathPoints.map(clonePixelPoint),
       targetIds: [...result.targetIds],
       type: result.type,

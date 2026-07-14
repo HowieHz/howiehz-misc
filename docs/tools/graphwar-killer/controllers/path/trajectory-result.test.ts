@@ -254,11 +254,19 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.plottedCurvePoints.value).toBe("committed curve");
 
     controller.commitIncumbentResult("headless incumbent", Math.PI / 2);
+    const requestCount = countWorkerRequests();
     setSolverPath(state, -5, 2);
     await nextTick();
+    frames.flush();
     expect(controller.calculationStatus.value.type).toBe("idle");
+    expect(countWorkerRequests()).toBe(requestCount);
+    expect(controller.formulaResult.value?.expression).toBe("committed incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("committed curve");
+
+    respondToActiveWorker({ ok: true, result: { curvePoints: "headless curve" } });
+    await nextTick();
     expect(controller.formulaResult.value?.expression).toBe("headless incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("");
+    expect(controller.plottedCurvePoints.value).toBe("headless curve");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(90);
     controller.dispose();
   });
@@ -301,7 +309,7 @@ describe("main trajectory result lifecycle", () => {
     controller.dispose();
   });
 
-  it("keeps the completed incumbent until the final solver result replaces it", async () => {
+  it("keeps the exact formula without a stale curve when committed trajectory sampling fails", async () => {
     const frames = installFakeBrowserRuntime();
     const state = createControllerState();
     const controller = useGraphwarTrajectoryResult(state.options);
@@ -314,59 +322,16 @@ describe("main trajectory result lifecycle", () => {
       result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
     });
     await nextTick();
-    controller.publishIncumbentPreview("completed incumbent");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "incumbent curve" } });
-    await nextTick();
 
-    controller.handoffIncumbentPreviewToNextSolverResult();
+    controller.commitIncumbentResult("committed formula");
     setSolverPath(state, -5, 2);
     await nextTick();
     frames.flush();
-    expect(controller.formulaResult.value?.expression).toBe("completed incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("incumbent curve");
-
-    respondToActiveWorker({
-      ok: true,
-      result: { curvePoints: "final curve", formulaResult: { expression: "final formula", terms: [] } },
-    });
-    await nextTick();
-    expect(controller.incumbentPreviewActive.value).toBe(false);
-    expect(controller.formulaResult.value?.expression).toBe("final formula");
-    expect(controller.plottedCurvePoints.value).toBe("final curve");
-    controller.dispose();
-  });
-
-  it("keeps the completed incumbent when the final solver result fails", async () => {
-    const frames = installFakeBrowserRuntime();
-    const state = createControllerState();
-    const controller = useGraphwarTrajectoryResult(state.options);
-
-    setSolverPath(state, -10, 1);
-    await nextTick();
-    frames.flush();
-    respondToActiveWorker({
-      ok: true,
-      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
-    });
-    await nextTick();
-    controller.publishIncumbentPreview("completed incumbent");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "incumbent curve" } });
+    respondToActiveWorker({ message: "trajectory failed", ok: false, stage: "trajectory" });
     await nextTick();
 
-    controller.handoffIncumbentPreviewToNextSolverResult();
-    setSolverPath(state, -5, 2);
-    await nextTick();
-    frames.flush();
-    respondToActiveWorker({ message: "final simulation failed", ok: false, stage: "trajectory" });
-    await nextTick();
-
-    expect(controller.formulaResult.value?.expression).toBe("completed incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("incumbent curve");
-    expect(controller.calculationStatus.value).toEqual({
-      message: "final simulation failed",
-      stage: "trajectory",
-      type: "failure",
-    });
+    expect(controller.formulaResult.value?.expression).toBe("committed formula");
+    expect(controller.plottedCurvePoints.value).toBe("");
     controller.dispose();
   });
 });

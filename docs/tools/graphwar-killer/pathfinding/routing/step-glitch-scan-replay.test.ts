@@ -26,13 +26,7 @@ const sampleFormulaTrajectory = vi.hoisted(() => vi.fn());
 vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../formula/trajectory/sampling")>();
   sampleFormulaTrajectory.mockImplementation(
-    (options: {
-      continueAfterTargetsUntilGraphX?: number;
-      points?: readonly { x: number; y: number }[];
-      requiredTargets?: readonly unknown[];
-      stepGlitchXWindows?: readonly ({ endX: number; startX: number } | undefined)[];
-      targetSequence?: readonly unknown[];
-    }) => {
+    (options: Parameters<typeof original.tryResolveGraphwarTrajectoryCandidate>[0]) => {
       replayMockState.callCount += 1;
       const requiredTargetCount = options.requiredTargets?.length ?? 0;
       const targetCount = options.targetSequence?.length ?? 0;
@@ -182,11 +176,10 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
         replayMockState.convergenceFailure
           ? undefined
           : {
-              context: original.resolveGraphwarTrajectory({
-                ...options,
-                requiredTargets: [],
-                targetSequence: [],
-              }).context,
+              // Scanner acceptance only reads the resolved points and optional prefix; context construction has its own tests.
+              context: {
+                formulaPoints: [...options.points],
+              } as ReturnType<typeof original.resolveGraphwarTrajectory>["context"],
               result: sampleFormulaTrajectory(options),
             },
     ),

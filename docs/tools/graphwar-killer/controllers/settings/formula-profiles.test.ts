@@ -18,7 +18,7 @@ describe("formula profiles", () => {
     expect(profiles).toEqual({
       y: { algorithm: "abs" },
       dy: { algorithm: "step", stepGlitchModeEnabled: true },
-      ddy: { algorithm: "step" },
+      ddy: { algorithm: "step", stepGlitchModeEnabled: false },
     });
     expect(secondProfiles).not.toBe(profiles);
     expect(secondProfiles.y).not.toBe(profiles.y);
@@ -42,7 +42,7 @@ describe("formula profiles", () => {
     expect(original.dy).toEqual({ algorithm: "step", stepGlitchModeEnabled: true });
   });
 
-  it("keeps the glitch preference exclusive to the first-derivative profile", () => {
+  it("keeps independent glitch preferences for the two ODE profiles", () => {
     const profiles = createDefaultGraphwarFormulaProfiles();
 
     expect(
@@ -56,7 +56,8 @@ describe("formula profiles", () => {
         algorithm: "akima",
         stepGlitchModeEnabled: true,
       }).ddy,
-    ).toEqual({ algorithm: "akima" });
+    ).toEqual({ algorithm: "akima", stepGlitchModeEnabled: true });
+    expect(profiles.dy.stepGlitchModeEnabled).toBe(true);
   });
 
   it.each([
@@ -75,20 +76,20 @@ describe("formula profiles", () => {
     const profiles: GraphwarFormulaProfiles = {
       y: { algorithm: "pchip" },
       dy: { algorithm: "abs", stepGlitchModeEnabled: false },
-      ddy: { algorithm: "akima" },
+      ddy: { algorithm: "akima", stepGlitchModeEnabled: false },
     };
     const plan = createGraphwarManagedFormulaProfileRepairPlan(profiles);
 
     expect(plan).toEqual({
       y: { algorithm: "abs" },
-      ddy: { algorithm: "step" },
+      ddy: { algorithm: "step", stepGlitchModeEnabled: false },
     });
 
     const repaired = applyGraphwarManagedFormulaProfileRepairPlan(profiles, plan);
     expect(repaired).toEqual({
       y: { algorithm: "abs" },
       dy: { algorithm: "abs", stepGlitchModeEnabled: false },
-      ddy: { algorithm: "step" },
+      ddy: { algorithm: "step", stepGlitchModeEnabled: false },
     });
     expect(repaired.dy).toBe(profiles.dy);
     expect(profiles.y.algorithm).toBe("pchip");
@@ -110,7 +111,7 @@ describe("formula profiles", () => {
     const profiles: GraphwarFormulaProfiles = {
       y: { algorithm: "akima" },
       dy: { algorithm: "pchip", stepGlitchModeEnabled: false },
-      ddy: { algorithm: "abs" },
+      ddy: { algorithm: "abs", stepGlitchModeEnabled: false },
     };
     const repaired = applyGraphwarManagedFormulaProfileRepairPlan(
       profiles,
@@ -118,7 +119,7 @@ describe("formula profiles", () => {
     );
     const secondPlan = createGraphwarManagedFormulaProfileRepairPlan(repaired);
 
-    expect(repaired.ddy).toEqual({ algorithm: "abs" });
+    expect(repaired.ddy).toEqual({ algorithm: "abs", stepGlitchModeEnabled: false });
     expect(secondPlan).toEqual({});
     expect(applyGraphwarManagedFormulaProfileRepairPlan(repaired, secondPlan)).toBe(repaired);
   });

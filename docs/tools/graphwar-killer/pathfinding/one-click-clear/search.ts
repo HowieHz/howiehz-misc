@@ -5,6 +5,7 @@ import { graphXAdvancesStrictly } from "../../core/numbers";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { GraphwarSignProtection } from "../../formula/generation/build";
+import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import { resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
 import type { GraphwarTrajectorySamplingState } from "../../formula/simulation/simulator";
 import {
@@ -458,10 +459,6 @@ const MAX_GLOBAL_DELETE_PASSES = 1;
 // 截图像素：缺省 prefixTarget 和目标序列默认半径都会用它；显式 targetCircles 会覆盖。
 const FALLBACK_TARGET_RADIUS_IMAGE_PIXELS = 1;
 
-function oneClickClearUsesStepGlitch(settings: GraphwarTrajectoryFormulaSettings) {
-  return settings.algorithm === "step" && settings.equation === "dy" && settings.stepGlitchMode;
-}
-
 /** 用建路目标点 DAG 找到显式击杀最多的追加路径。 */
 export async function buildGraphwarOneClickClearPath(
   options: GraphwarOneClickClearOptions,
@@ -474,7 +471,11 @@ export async function buildGraphwarOneClickClearPath(
     return createOneClickClearFailure("preflight-blocked", startedAt, 0);
   }
 
-  const stepGlitchMode = oneClickClearUsesStepGlitch(options.settings);
+  const stepGlitchMode = formulaModeUsesStepGlitch(
+    options.settings.algorithm,
+    options.settings.equation,
+    options.settings.stepGlitchMode,
+  );
   const prefixValid = stepGlitchMode
     ? true
     : options.pathPoints.length >= 2
@@ -1492,7 +1493,7 @@ function validateOneClickClearTargetSequence(
 function oneClickClearStepRouteIsValid(options: GraphwarOneClickClearOptions, pathPoints: readonly PixelPoint[]) {
   return (
     options.settings.algorithm !== "step" ||
-    oneClickClearUsesStepGlitch(options.settings) ||
+    formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode) ||
     options.validateStepRoute?.(pathPoints) === true
   );
 }
@@ -1506,7 +1507,8 @@ function sampleOneClickClearTargetSequence(
   const validationTargets = createOneClickClearValidationTargets(options, route.targetSequence, true);
   const lastPathPoint = route.pathPoints.at(-1);
   const targetControlGraphX =
-    oneClickClearUsesStepGlitch(options.settings) && lastPathPoint
+    formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode) &&
+    lastPathPoint
       ? imageToGraphPoint(lastPathPoint, options.bounds, options.boundsRect).x
       : undefined;
   const trackedTargets = trackActualHits ? createOneClickClearTrackedTargets(options, route) : [];
@@ -1561,7 +1563,11 @@ function createOneClickClearValidationTargets(
   // 普通 Step 仍需先命中旧尾点；邪道允许新最终整式修复无效旧前缀。
   if (
     options.settings.algorithm === "step" &&
-    !oneClickClearUsesStepGlitch(options.settings) &&
+    !formulaModeUsesStepGlitch(
+      options.settings.algorithm,
+      options.settings.equation,
+      options.settings.stepGlitchMode,
+    ) &&
     options.pathPoints.length >= 2
   ) {
     const prefixTarget = options.prefixTarget ?? {
@@ -1829,7 +1835,11 @@ async function optimizeOneClickClearPath(
 ): Promise<OneClickClearPathOptimizationResult> {
   let optimized = route;
   const firstGeneratedIndex = context.options.pathPoints.length;
-  const protectedTargetPoints = oneClickClearUsesStepGlitch(context.options.settings)
+  const protectedTargetPoints = formulaModeUsesStepGlitch(
+    context.options.settings.algorithm,
+    context.options.settings.equation,
+    context.options.settings.stepGlitchMode,
+  )
     ? new Set(route.targetSequence.map((target) => target.routePoint))
     : undefined;
   const localHitCheckCanSkipFullValidation = oneClickClearLocalHitCheckCanSkipFullValidation(context.options);
@@ -1889,10 +1899,6 @@ async function optimizeOneClickClearPath(
   return { route: optimized, workUnits };
 }
 
-function graphXAdvancesFromX(fromGraphX: number, toGraphX: number) {
-  return graphXAdvancesStrictly(fromGraphX, toGraphX);
-}
-
 function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions, points: readonly PixelPoint[]) {
   const firstPoint = points[0];
   if (!firstPoint) {
@@ -1905,7 +1911,7 @@ function oneClickClearPathFollowsGraphRule(options: GraphwarOneClickClearOptions
       return false;
     }
     const next = imageToGraphPoint(point, options.bounds, options.boundsRect);
-    if (!graphXAdvancesFromX(previous.x, next.x)) {
+    if (!graphXAdvancesStrictly(previous.x, next.x)) {
       return false;
     }
     previous = next;

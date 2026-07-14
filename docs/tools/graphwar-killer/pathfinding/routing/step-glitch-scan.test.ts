@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH, GRAPHWAR_STEP_SIZE } from "../../core/game/constants";
+import {
+  GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
+  GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
+  GRAPHWAR_PLANE_HEIGHT,
+  GRAPHWAR_PLANE_LENGTH,
+  GRAPHWAR_STEP_SIZE,
+} from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { floorToDecimalPlaces } from "../../core/numbers";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds } from "../../core/types";
+import { sampleGraphwarExpressionTrajectory } from "../../formula/simulation/simulator";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
+import { getGraphwarTrajectoryLaunchAngle, resolveGraphwarTrajectory } from "../../formula/trajectory/sampling";
 import {
   createGraphwarStepGlitchScanMaskIndex,
   replayGraphwarStepGlitchPathToControlX,
@@ -23,7 +31,7 @@ const settings: GraphwarTrajectoryFormulaSettings = {
   stepOverflowProtection: true,
 };
 
-describe("Step y' glitch scan", () => {
+describe("Step ODE glitch scan", () => {
   it("precomputes the farthest same-row free column in x+ order", () => {
     const mask = createEmptyMask();
     mask[2 * GRAPHWAR_PLANE_LENGTH + 4] = 1;
@@ -49,7 +57,7 @@ describe("Step y' glitch scan", () => {
     expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH + blockedSearchX]).toBe(-1);
   });
 
-  it("rejects modes other than effective Step y' glitch", () => {
+  it("rejects modes other than an effective Step ODE glitch", () => {
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 0);
     const result = scanGraphwarStepGlitchPath({
@@ -177,6 +185,47 @@ describe("Step y' glitch scan", () => {
       expect(gate?.x).toBeLessThan(target.x);
       expect(result.path.at(-1)).toBe(target);
     }
+  });
+
+  it("replays one physical jump and restores y' with a second-order Step formula", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 4);
+    const mask = createEmptyMask();
+    const obstacleStartX = Math.floor(toPixel(-6.5, 0).x);
+    const obstacleEndX = Math.floor(toPixel(-6.3, 0).x);
+    for (let row = Math.floor(target.y) + 1; row < Math.floor(start.y); row += 1) {
+      for (let x = obstacleStartX; x <= obstacleEndX; x += 1) {
+        mask[row * GRAPHWAR_PLANE_LENGTH + x] = 1;
+      }
+    }
+    mask[Math.floor(start.y) * GRAPHWAR_PLANE_LENGTH + obstacleEndX] = 1;
+
+    const points = [start, target].map((point) => imageToGraphPoint(point, bounds, boundsRect));
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collision: { mask },
+      points,
+      settings: { ...settings, equation: "ddy", stepGlitchObstacleMask: mask },
+      soldierCenter: points[0],
+      stepGlitchXWindows: [{ endX: -6.5977, startX: -6.6077 }],
+    });
+    const segment = resolved.context.stepGlitchFormulaPrefix?.stepGlitchSegments[0];
+    expect(segment).toEqual(expect.objectContaining({ equation: "ddy" }));
+    expect(resolved.result.obstacleHitIndex).toBe(-1);
+    expect(countPhysicalStepGlitchJumps(resolved.result.sample.points)).toBe(1);
+    if (segment?.equation === "ddy") {
+      expect(resolved.result.sample.endState?.dy).toBeCloseTo(segment.targetDerivative, 4);
+    }
+    expect(
+      sampleGraphwarExpressionTrajectory({
+        bounds,
+        equation: "ddy",
+        expression: resolved.context.formulaResult.expression,
+        launchAngleRadians: getGraphwarTrajectoryLaunchAngle(resolved.context),
+        soldierCenter: points[0],
+      }),
+    ).toEqual(resolved.result.sample);
   });
 
   it("preserves the intended decimal right gate through the pixel round-trip", () => {
@@ -397,6 +446,22 @@ describe("Step y' glitch scan", () => {
 
 function createEmptyMask() {
   return new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+}
+
+/** Counts accepted minimum-step segments whose vertical displacement still exceeds Graphwar's distance limit. */
+function countPhysicalStepGlitchJumps(points: readonly { x: number; y: number }[]) {
+  let count = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const point = points[index];
+    if (
+      point.x - previous.x <= GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE &&
+      (point.x - previous.x) ** 2 + (point.y - previous.y) ** 2 > GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED
+    ) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 function toPixel(x: number, y: number) {

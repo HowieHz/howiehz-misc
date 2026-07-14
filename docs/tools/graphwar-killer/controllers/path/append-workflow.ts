@@ -3,6 +3,7 @@ import type { ComputedRef, Ref } from "vue";
 import { normalizePathPoint, imageToGraphPoint } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint, ToolWorkflowMode } from "../../core/types";
+import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
@@ -172,7 +173,7 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
     }
 
     const settings = options.trajectory.getFormulaSettings();
-    if (settings.algorithm === "step" && settings.equation === "dy" && settings.stepGlitchMode) {
+    if (formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.stepGlitchMode)) {
       // 邪道 Worker 会先试最终直连公式；失败后才用 exact evidence 或一次旧整式回放准备 prefix。
       return true;
     }

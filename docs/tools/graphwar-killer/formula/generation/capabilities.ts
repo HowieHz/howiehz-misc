@@ -4,3 +4,12 @@ import type { AlgorithmMode, EquationMode } from "../../core/types";
 export function formulaModeUsesSteepness(algorithm: AlgorithmMode, equation: EquationMode) {
   return algorithm === "step" || (algorithm === "abs" && equation === "ddy");
 }
+
+/** Step 邪道只适用于 ODE；调用方用这一处判定统一选择扫描器、mask 和缓存规范值。 */
+export function formulaModeUsesStepGlitch(
+  algorithm: AlgorithmMode,
+  equation: EquationMode,
+  stepGlitchModeEnabled: boolean,
+) {
+  return stepGlitchModeEnabled && algorithm === "step" && equation !== "y";
+}

@@ -5,6 +5,7 @@ import { nowMs } from "../../core/time";
 import { createGraphPoint, type GraphBounds, type GraphPoint, type PixelPoint } from "../../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../../detection/objects";
+import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
@@ -317,7 +318,7 @@ async function findSmartPath(
     return { failureReason: "route", timings };
   }
 
-  if (input.settings.algorithm === "step" && input.settings.equation === "dy" && input.settings.stepGlitchMode) {
+  if (formulaModeUsesStepGlitch(input.settings.algorithm, input.settings.equation, input.settings.stepGlitchMode)) {
     return findStepGlitchSmartPath(input, timings);
   }
 
@@ -439,7 +440,7 @@ async function findSmartPath(
   return { path, timings };
 }
 
-/** Step y'= 邪道单目标直接扫描控制点；不经过普通 route mask、Theta* 或可视图。 */
+/** Step ODE 邪道单目标直接扫描控制点；不经过普通 route mask、Theta* 或可视图。 */
 function findStepGlitchSmartPath(
   input: GraphwarSmartPathfindingPathInput,
   timings: GraphwarSmartPathfindingWorkerTiming[],
@@ -882,7 +883,11 @@ async function buildOneClickClearPath(
   const startedAt = nowMs();
   const timings: GraphwarOneClickClearDebugTiming[] = [];
   const isStepRoute = input.settings.algorithm === "step";
-  const isStepGlitchRoute = isStepRoute && input.settings.equation === "dy" && input.settings.stepGlitchMode;
+  const isStepGlitchRoute = formulaModeUsesStepGlitch(
+    input.settings.algorithm,
+    input.settings.equation,
+    input.settings.stepGlitchMode,
+  );
   const routeMaskLookup = getMasterRouteMaskFromBase(input, isStepRoute && !isStepGlitchRoute);
   timings.push({
     elapsedMs: routeMaskLookup.elapsedMs,

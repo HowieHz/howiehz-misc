@@ -168,7 +168,7 @@ export interface CompiledFormulaEvaluator {
   /** 计算 y'，供 y'= 模式积分和发射角迭代使用。 */
   evaluateFirstDerivativeY: (x: number, y: number) => number;
   /** 计算 y''，供 y''= 模式 RK4 使用。 */
-  evaluateSecondDerivativeY: (x: number) => number;
+  evaluateSecondDerivativeY: (x: number, y?: number, dy?: number) => number;
   /** 计算 y，供普通 y= 模式和预览使用。 */
   evaluateY: (x: number) => number;
 }
@@ -317,6 +317,10 @@ function compileStepEvaluator(
       for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
         const term = formula.terms[index];
         if (term.glitchSegment) {
+          if (term.glitchSegment.equation !== "dy") {
+            // 二阶邪道项在窗口外没有一阶导尾值，不能参与建议发射角。
+            continue;
+          }
           if (term.glitchSegment.derivative === 0) {
             // 最终文本会省略舍入为 0 的 D/8；不能继续求门函数并产生 0*NaN。
             continue;
@@ -342,11 +346,21 @@ function compileStepEvaluator(
       }
       return slope;
     },
-    evaluateSecondDerivativeY(x) {
+    evaluateSecondDerivativeY(x, y = 0) {
       let acceleration: number | undefined;
       for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
         const term = formula.terms[index];
         if (term.glitchSegment) {
+          if (term.glitchSegment.equation === "ddy") {
+            const contribution = evaluateCompiledStepGlitchSecondDerivative(
+              x,
+              y,
+              term.glitchSegment,
+              term.sourceSegmentIndex,
+              options,
+            );
+            acceleration = acceleration === undefined ? contribution : contribution + acceleration;
+          }
           continue;
         }
         if (term.secondDerivativeCoefficient === 0) {
@@ -425,7 +439,7 @@ function evaluateCompiledStepStableSecondDerivativeBody(t: number) {
 function evaluateCompiledStepGlitchFirstDerivative(
   x: number,
   y: number,
-  segment: StepGlitchSegment,
+  segment: Extract<StepGlitchSegment, { equation: "dy" }>,
   sourceSegmentIndex: number,
   options?: FormulaEvaluationOptions,
 ) {
@@ -436,6 +450,40 @@ function evaluateCompiledStepGlitchFirstDerivative(
     1 + evaluateStableSignRatio(direction * (segment.gateY - y), sourceSegmentIndex, GraphwarSignRole.GateY, options);
   // Graphwar 以最左乘号为根解析连续乘法，必须按文本的右结合树求值。
   return (segment.derivative / 8) * (xGate * (xLimitGate * yGate));
+}
+
+/** 回放 y'' 邪道的近侧加速门和远侧刹车门；最终文本只使用原版可靠的 x、y 变量。 */
+function evaluateCompiledStepGlitchSecondDerivative(
+  x: number,
+  y: number,
+  segment: Extract<StepGlitchSegment, { equation: "ddy" }>,
+  sourceSegmentIndex: number,
+  options?: FormulaEvaluationOptions,
+) {
+  const direction: 1 | -1 = segment.acceleration < 0 ? -1 : 1;
+  const xGate = 1 + evaluateStableSignRatio(x - segment.startX, sourceSegmentIndex, GraphwarSignRole.StartX, options);
+  const xLimitGate =
+    1 - evaluateStableSignRatio(x - segment.pulseEndX, sourceSegmentIndex, GraphwarSignRole.EndX, options);
+  const accelerationGate =
+    1 +
+    evaluateStableSignRatio(
+      direction * (segment.accelerationGateY - y),
+      sourceSegmentIndex,
+      GraphwarSignRole.GateY,
+      options,
+    );
+  const brakingGate =
+    1 +
+    evaluateStableSignRatio(
+      direction * (y - segment.brakingGateY),
+      sourceSegmentIndex,
+      GraphwarSignRole.BrakingGateY,
+      options,
+    );
+  return (
+    (segment.acceleration / 8) * (xGate * (xLimitGate * accelerationGate)) +
+    (segment.braking / 8) * (xGate * (xLimitGate * brakingGate))
+  );
 }
 
 /** 内部 step 采样应使用最终公式文本中的陡峭度，确保 y/dy/ddy 回放一致。 */
@@ -488,11 +536,27 @@ function createCompiledStepGlitchSegment(
   }
 
   const decimalPlaces = getFormulaDecimalPlaces(options);
+  if (segment.equation === "ddy") {
+    // 三个逻辑门全开时贡献 8；加速和刹车分支必须分别按最终文本系数量化。
+    return {
+      acceleration: 8 * quantizeFormulaCoefficient(segment.acceleration / 8, decimalPlaces),
+      accelerationGateY: quantizeFormulaOffsetCenter(segment.accelerationGateY, decimalPlaces),
+      braking: 8 * quantizeFormulaCoefficient(segment.braking / 8, decimalPlaces),
+      brakingGateY: quantizeFormulaOffsetCenter(segment.brakingGateY, decimalPlaces),
+      endX: segment.endX,
+      equation: segment.equation,
+      pulseEndX: segment.pulseEndX,
+      startX: segment.startX,
+      targetDerivative: segment.targetDerivative,
+      targetY: quantizeFormulaOffsetCenter(segment.targetY, decimalPlaces),
+    };
+  }
   // 三个 sign 门全开时贡献 8；先量化最终文本里的 D/8，再反推候选模拟应使用的有效 D。
   const gateCoefficient = quantizeFormulaCoefficient(segment.derivative / 8, decimalPlaces);
   return {
     derivative: 8 * gateCoefficient,
     endX: segment.endX,
+    equation: segment.equation,
     gateY: quantizeFormulaOffsetCenter(segment.gateY, decimalPlaces),
     startX: segment.startX,
     targetY: quantizeFormulaOffsetCenter(segment.targetY, decimalPlaces),
@@ -914,6 +978,9 @@ function formatStepFirstDerivativeExpression(
   const parts: string[] = [];
   for (const term of formula.terms) {
     if (term.glitchSegment) {
+      if (term.glitchSegment.equation !== "dy") {
+        continue;
+      }
       parts.push(
         formatStepGlitchFirstDerivativeExpression(
           term.glitchSegment,
@@ -942,7 +1009,7 @@ function formatStepFirstDerivativeExpression(
 
 /** 格式化局部邪道项；右侧 x 门会在候选窗口末端关闭旧邪道项。 */
 function formatStepGlitchFirstDerivativeExpression(
-  segment: StepGlitchSegment,
+  segment: Extract<StepGlitchSegment, { equation: "dy" }>,
   sourceSegmentIndex: number,
   decimalPlaces: number | undefined,
   signProtection: GraphwarSignProtection | undefined,
@@ -972,6 +1039,19 @@ function formatStepSecondDerivativeExpression(
 ) {
   const parts: string[] = [];
   for (const term of formula.terms) {
+    if (term.glitchSegment) {
+      if (term.glitchSegment.equation === "ddy") {
+        parts.push(
+          ...formatStepGlitchSecondDerivativeExpression(
+            term.glitchSegment,
+            term.sourceSegmentIndex,
+            decimalPlaces,
+            signProtection,
+          ),
+        );
+      }
+      continue;
+    }
     if (term.secondDerivativeCoefficient === 0) {
       continue;
     }
@@ -998,6 +1078,36 @@ function formatStepSecondDerivativeExpression(
     }
   }
   return cleanupExpression(parts.join("")) || "0";
+}
+
+/** 格式化二阶邪道的近侧加速和远侧刹车分支。 */
+function formatStepGlitchSecondDerivativeExpression(
+  segment: Extract<StepGlitchSegment, { equation: "ddy" }>,
+  sourceSegmentIndex: number,
+  decimalPlaces: number | undefined,
+  signProtection: GraphwarSignProtection | undefined,
+) {
+  const direction: 1 | -1 = segment.acceleration < 0 ? -1 : 1;
+  const xGate = `1+${formatStableSignRatio(
+    formatStepGlitchXOffset(segment.startX),
+    isGraphwarSignProtected(signProtection, sourceSegmentIndex, GraphwarSignRole.StartX),
+  )}`;
+  const xLimitGate = `1-${formatStableSignRatio(
+    formatStepGlitchXOffset(segment.pulseEndX),
+    isGraphwarSignProtected(signProtection, sourceSegmentIndex, GraphwarSignRole.EndX),
+  )}`;
+  const accelerationGate = `1+${formatStableSignRatio(
+    formatDirectedTargetYOffset(segment.accelerationGateY, direction, decimalPlaces),
+    isGraphwarSignProtected(signProtection, sourceSegmentIndex, GraphwarSignRole.GateY),
+  )}`;
+  const brakingGate = `1+${formatStableSignRatio(
+    formatDirectedTargetYOffset(segment.brakingGateY, direction === 1 ? -1 : 1, decimalPlaces),
+    isGraphwarSignProtected(signProtection, sourceSegmentIndex, GraphwarSignRole.BrakingGateY),
+  )}`;
+  return [
+    formatSignedRawTerm(segment.acceleration / 8, `(${xGate})*(${xLimitGate})*(${accelerationGate})`, decimalPlaces),
+    formatSignedRawTerm(segment.braking / 8, `(${xGate})*(${xLimitGate})*(${brakingGate})`, decimalPlaces),
+  ];
 }
 
 /** 格式化相邻点击点之间双绝对值连接函数的 y= 叠加式。 */

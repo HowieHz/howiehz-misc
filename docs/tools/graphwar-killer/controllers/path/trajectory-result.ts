@@ -10,7 +10,7 @@ import type {
   PixelPoint,
   ToolWorkflowMode,
 } from "../../core/types";
-import { formulaModeUsesSteepness } from "../../formula/generation/capabilities";
+import { formulaModeUsesSteepness, formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import type {
   GraphwarTrajectoryCollisionSettings,
   GraphwarTrajectoryFormulaSettings,
@@ -168,10 +168,11 @@ export function useGraphwarTrajectoryResult(
     return angle === undefined ? undefined : (angle * Math.PI) / 180;
   });
   const graphwarTrajectoryFormulaSettings = computed<GraphwarTrajectoryFormulaSettings>(() => {
-    const stepGlitchMode =
-      options.settings.stepGlitchModeEnabled.value &&
-      options.settings.algorithmMode.value === "step" &&
-      options.settings.equationMode.value === "dy";
+    const stepGlitchMode = formulaModeUsesStepGlitch(
+      options.settings.algorithmMode.value,
+      options.settings.equationMode.value,
+      options.settings.stepGlitchModeEnabled.value,
+    );
     const stepGlitchObstacleMask = stepGlitchMode ? options.settings.getStepGlitchObstacleMask() : undefined;
     return {
       algorithm: options.settings.algorithmMode.value,

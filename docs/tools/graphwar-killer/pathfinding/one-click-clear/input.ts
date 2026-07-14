@@ -1,5 +1,6 @@
 import { GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
@@ -80,7 +81,7 @@ interface GraphwarOneClickClearSearchInputOptions {
   prefixTarget: GraphwarTrajectoryTargetCircle | undefined;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
   routeMaskCacheId: number;
-  /** 普通几何路线算法；Step y' 邪道会在协议边界改用规范值。 */
+  /** 普通几何路线算法；Step ODE 邪道会在协议边界改用规范值。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
@@ -131,8 +132,11 @@ export function createGraphwarOneClickClearSearchPreflight(
 export function createGraphwarOneClickClearSearchInput(
   options: GraphwarOneClickClearSearchInputOptions,
 ): GraphwarOneClickClearPathWorkerInput {
-  const stepGlitchMode =
-    options.settings.algorithm === "step" && options.settings.equation === "dy" && options.settings.stepGlitchMode;
+  const stepGlitchMode = formulaModeUsesStepGlitch(
+    options.settings.algorithm,
+    options.settings.equation,
+    options.settings.stepGlitchMode,
+  );
   return {
     boundaryExpansion: options.tolerances.routeBoundaryInsetPlanePixels,
     bounds: options.bounds,
@@ -149,7 +153,7 @@ export function createGraphwarOneClickClearSearchInput(
     pathPoints: [...options.pathPoints],
     prefixTarget: options.prefixTarget,
     routeMaskCacheId: options.routeMaskCacheId,
-    // Step y' 邪道不消费普通路由算法；规范值让无关配置共享同一结果身份。
+    // Step ODE 邪道不消费普通路由算法；规范值让无关配置共享同一结果身份。
     routeMode: stepGlitchMode ? "visibility-graph" : options.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,

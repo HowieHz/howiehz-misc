@@ -4,6 +4,7 @@ export enum GraphwarSignRole {
   EndX = 2,
   CenterX = 4,
   GateY = 8,
+  BrakingGateY = 16,
 }
 
 /** 每项按原始路径段索引保存角色位；省略项和尾部 0 都表示该段没有保护。 */

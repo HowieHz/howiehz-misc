@@ -1,5 +1,6 @@
 import { imageToGraphPoint } from "../../core/geometry";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import {
   graphwarTrajectoryReachesGraphXBeforeObstacle,
   sampleGraphwarPathTargetSequence,
@@ -74,9 +75,7 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
 
   const lastPoint = options.points.at(-1);
   const targetControlGraphX =
-    options.settings.algorithm === "step" &&
-    options.settings.equation === "dy" &&
-    options.settings.stepGlitchMode &&
+    formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode) &&
     lastPoint
       ? imageToGraphPoint(lastPoint, options.bounds, options.boundsRect).x
       : undefined;

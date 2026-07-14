@@ -15,7 +15,7 @@ const boundsRect: BoundsRect = { height: 512, width: 1024, x: 0, y: 0 };
 const emptyArea = createGraphwarPlaneMaskSummedArea(new Uint8Array(770 * 450));
 
 describe("stateful Step route evaluation", () => {
-  it("only rejects the effective y' Glitch Mode combination", () => {
+  it("rejects effective ODE Glitch Mode combinations", () => {
     const base = {
       algorithm: "step" as const,
       decimalPlaces: 0,
@@ -26,7 +26,7 @@ describe("stateful Step route evaluation", () => {
 
     expect(createGraphwarStepRouteModel(200, { ...base, equation: "y" })).toBeDefined();
     expect(createGraphwarStepRouteModel(200, { ...base, equation: "dy" })).toBeUndefined();
-    expect(createGraphwarStepRouteModel(200, { ...base, equation: "ddy" })).toBeDefined();
+    expect(createGraphwarStepRouteModel(200, { ...base, equation: "ddy" })).toBeUndefined();
   });
 
   it("uses the incoming label state instead of projecting from the route origin", () => {

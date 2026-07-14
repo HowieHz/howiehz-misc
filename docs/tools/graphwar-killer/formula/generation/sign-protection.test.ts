@@ -59,6 +59,7 @@ describe("Graphwar local sign protection", () => {
         {
           derivative: 100,
           endX: -0.99,
+          equation: "dy" as const,
           gateY: 1,
           startX: -1,
           targetY: 2,

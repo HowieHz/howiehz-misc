@@ -60,7 +60,7 @@ export interface GraphwarTrajectoryFormulaSettings {
   formulaPathSteepness?: number;
   /** Step 或 ABS y'' 公式的陡峭度。 */
   steepness: number;
-  /** 是否允许 step y'= 在普通 sigmoid 路径区域受阻时替换为邪道门函数项。 */
+  /** 是否允许 Step ODE 在普通 sigmoid 路径区域受阻时替换为邪道门函数项。 */
   stepGlitchMode: boolean;
   /** Step 邪道模式近似探测普通 sigmoid 路径区域时使用的 Graphwar 原始平面 mask。 */
   stepGlitchObstacleMask?: Uint8Array;
@@ -460,6 +460,8 @@ const GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES = Math.max(0, Math.ceil
 // 权重 {1, 2, 2, 1}/6 的非零子集和去重后只有这六档：1/6、1/3、1/2、2/3、5/6、1。
 // 每个 x 窗口按 D = ΔY / (factor * minStep) 回放六档，只从恰好一次邪道跳转的候选中择优。
 const STEP_GLITCH_RK4_CONTRIBUTION_FACTORS = [1, 5 / 6, 2 / 3, 1 / 2, 1 / 3, 1 / 6] as const;
+/** 二阶门量化后的速度恢复只允许保留数值噪声，避免后续平台被残余斜率持续带偏。 */
+const STEP_GLITCH_SECOND_ORDER_DERIVATIVE_TOLERANCE = 1e-4;
 
 /** 评估同一段所有邪道窗口和 RK4 档位时复用的不可变上下文。 */
 interface StepGlitchCandidateContext extends StepGlitchPrefixFormulaContext {
@@ -927,7 +929,6 @@ function selectStepGlitchSegmentCandidate(
       continue;
     }
     const replacementDeltaY = source.targetY - preJumpSample.point.y;
-    const gateY = createStepGlitchFormulaGateY(source.targetY, replacementDeltaY, options.settings.decimalPlaces);
     // 当前段已有保护时，重新启用它会在左门前产生尾值，门左状态不再属于候选整式。
     const candidateInitialState =
       (candidateContext.signProtection[candidateContext.segmentIndex] ?? 0) === 0
@@ -936,8 +937,83 @@ function selectStepGlitchSegmentCandidate(
     let bestSegment: StepGlitchSegment | undefined;
     let bestSignProtection: GraphwarSignProtection | undefined;
     let bestError = Number.POSITIVE_INFINITY;
-    for (const factor of STEP_GLITCH_RK4_CONTRIBUTION_FACTORS) {
-      const candidate = createStepGlitchSegmentFromJump(windowedJump, source.targetY, gateY, replacementDeltaY, factor);
+    const candidates: StepGlitchSegment[] = [];
+    if (options.settings.equation === "dy") {
+      const gateY = createStepGlitchFormulaGateY(source.targetY, replacementDeltaY, options.settings.decimalPlaces);
+      for (const factor of STEP_GLITCH_RK4_CONTRIBUTION_FACTORS) {
+        candidates.push(
+          createStepFirstOrderGlitchSegment(windowedJump, source.targetY, gateY, replacementDeltaY, factor),
+        );
+      }
+    } else {
+      const resumeDerivative = preJumpSample.resumeState.dy;
+      const targetDerivative = preJumpSample.crossingDerivative;
+      if (
+        resumeDerivative !== undefined &&
+        targetDerivative !== undefined &&
+        Number.isFinite(resumeDerivative) &&
+        Number.isFinite(targetDerivative)
+      ) {
+        const h = windowedJump.step;
+        const directDeltaY =
+          source.targetY - preJumpSample.resumeState.currentPoint.y - h * (resumeDerivative + targetDerivative);
+        const directAcceleration = (3 * directDeltaY) / h ** 2;
+        let armStep = GRAPHWAR_STEP_SIZE;
+        while (armStep > h && preJumpSample.resumeState.currentPoint.x + armStep / 2 > windowedJump.startX) {
+          armStep /= 2;
+        }
+        const armedDeltaY =
+          source.targetY -
+          preJumpSample.resumeState.currentPoint.y -
+          (armStep + h) * resumeDerivative -
+          h * targetDerivative;
+        const armedAcceleration = armedDeltaY / ((h * armStep) / 6 + h ** 2 / 2);
+        // 纵跳的 a4 和下一最小步长的 a1 共用刹车脉冲；第二步位移为 0，并恢复前缀 y'。
+        // 直接相位在 a2/a3 加速；武装相位先让粗跨门步的 a4 加速，再由 a1/a2/a3 完成纵跳。
+        for (const profile of [
+          {
+            acceleration: directAcceleration,
+            braking: (3 * (targetDerivative - resumeDerivative)) / h - 2 * directAcceleration,
+            deltaY: directDeltaY,
+            pulseEndX: preJumpSample.resumeState.currentPoint.x + 1.25 * h,
+          },
+          {
+            acceleration: armedAcceleration,
+            braking: (3 * (targetDerivative - resumeDerivative)) / h - (armedAcceleration * (5 + armStep / h)) / 2,
+            deltaY: armedDeltaY,
+            pulseEndX: preJumpSample.resumeState.currentPoint.x + armStep + 1.25 * h,
+          },
+        ]) {
+          if (
+            !Number.isFinite(profile.acceleration) ||
+            !(profile.pulseEndX > windowedJump.startX) ||
+            !(profile.pulseEndX < windowedJump.endX) ||
+            Math.abs(profile.deltaY) <= 2 * GRAPHWAR_GAME_SOLDIER_RADIUS
+          ) {
+            continue;
+          }
+          const direction = profile.deltaY < 0 ? -1 : 1;
+          const gateY = quantizeFormulaOffsetCenter(
+            source.targetY - direction * GRAPHWAR_GAME_SOLDIER_RADIUS,
+            options.settings.decimalPlaces,
+          );
+          candidates.push({
+            acceleration: profile.acceleration,
+            accelerationGateY: gateY,
+            braking: profile.braking,
+            // 两个互补 y 门在目标命中圈近侧交接，确保武装相位的 a4 已能刹车。
+            brakingGateY: gateY,
+            endX: windowedJump.endX,
+            equation: "ddy",
+            pulseEndX: profile.pulseEndX,
+            startX: windowedJump.startX,
+            targetDerivative,
+            targetY: source.targetY,
+          });
+        }
+      }
+    }
+    for (const candidate of candidates) {
       const candidateResult = sampleStepGlitchCandidateWithSignProtection(
         options,
         formulaPoints,
@@ -947,16 +1023,25 @@ function selectStepGlitchSegmentCandidate(
       );
       const sample = candidateResult.sample;
       const landingPoint = sample.stopReason === "stopped" ? sample.points[sample.points.length - 1] : undefined;
+      const landingDerivative = sample.endState?.dy;
       if (
         !landingPoint ||
         !Number.isFinite(landingPoint.y) ||
+        (candidate.equation === "ddy" &&
+          (landingDerivative === undefined ||
+            Math.abs(landingDerivative - candidate.targetDerivative) >
+              STEP_GLITCH_SECOND_ORDER_DERIVATIVE_TOLERANCE)) ||
         countStepGlitchJumps(sample.points, candidate) !== 1 ||
         stepGlitchSampleHitsObstacle(sample.points, options.bounds, candidateContext.mask)
       ) {
         continue;
       }
 
-      const error = Math.abs(landingPoint.y - candidate.targetY);
+      const error =
+        Math.abs(landingPoint.y - candidate.targetY) +
+        (candidate.equation === "ddy" && landingDerivative !== undefined
+          ? Math.abs(landingDerivative - candidate.targetDerivative)
+          : 0);
       if (error < bestError) {
         bestError = error;
         bestSegment = candidate;
@@ -1110,6 +1195,8 @@ function countStepGlitchJumps(points: readonly GraphPoint[], candidate: StepGlit
 
 /** 左门前的插值高度和从上一个真实接受点恢复的状态。 */
 interface StepGlitchPreJumpSample {
+  /** 无当前邪道项时越过左门的首个接受点对应 y'；二阶候选恢复到这条前缀速度。 */
+  crossingDerivative?: number;
   point: GraphPoint;
   resumeState: GraphwarTrajectorySamplingState;
 }
@@ -1153,9 +1240,11 @@ function sampleStepGlitchPreJump(
   const ratio = (jump.startX - previousPoint.x) / (crossingPoint.x - previousPoint.x);
   const point = createGraphPoint(jump.startX, previousPoint.y + ratio * (crossingPoint.y - previousPoint.y));
   return {
+    crossingDerivative: sample.endState?.dy,
     point,
     resumeState: {
       currentPoint: previousPoint,
+      ...(sample.endState?.previousDy === undefined ? {} : { dy: sample.endState.previousDy }),
       previousPoint: previousIndex > 0 ? sample.points[previousIndex - 1] : initialState?.previousPoint,
       sampleIndex: (initialState?.sampleIndex ?? 0) + previousIndex,
     },
@@ -1213,7 +1302,7 @@ function createStepGlitchRequirements(
   if (
     !options.settings.stepGlitchMode ||
     options.settings.algorithm !== "step" ||
-    options.settings.equation !== "dy" ||
+    options.settings.equation === "y" ||
     !mask ||
     options.points.length < 2
   ) {
@@ -1297,7 +1386,7 @@ function createStepGlitchFormulaXWindow(
 }
 
 /** 把窗口和目标位移组合成可直接交给公式编译器的邪道段。 */
-function createStepGlitchSegmentFromJump(
+function createStepFirstOrderGlitchSegment(
   jump: StepGlitchJump,
   targetY: number,
   gateY: number,
@@ -1307,6 +1396,7 @@ function createStepGlitchSegmentFromJump(
   return {
     derivative: replacementDeltaY / (contributionFactor * jump.step),
     endX: jump.endX,
+    equation: "dy",
     gateY,
     startX: jump.startX,
     targetY,

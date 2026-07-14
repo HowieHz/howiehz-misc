@@ -47,7 +47,7 @@ interface GraphwarPathfindingTask {
 }
 
 export interface GraphwarSmartPathfindingPanelModel {
-  /** Whether current formula semantics use the fixed Step y' glitch scanner. */
+  /** Whether current formula semantics use the fixed Step ODE glitch scanner. */
   usesStepGlitchRouting: boolean;
   /** Ordinary geometry router; ignored while the fixed glitch scanner is active. */
   routeMode: GraphwarPathfindingRouteMode;

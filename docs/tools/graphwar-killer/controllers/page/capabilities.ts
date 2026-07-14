@@ -61,7 +61,7 @@ export interface GraphwarCapabilityFacts {
     /** Includes dormant settings that a later Agent-selected managed profile may consume. */
     managedSettingsValid: boolean;
     oneClickClearSupported: boolean;
-    /** True only for the effective Step y' glitch configuration. */
+    /** True only for an effective Step ODE glitch configuration. */
     usesStepGlitchRouting: boolean;
   };
   pathfinding: {
@@ -268,7 +268,7 @@ function deriveGraphwarOneClickClearCapability(
   if (!facts.formula.settingsValid) {
     return { state: "blocked", reason: "formula-settings-invalid" };
   }
-  // Manual Step y' glitch routing uses its fixed scan and does not build the ordinary DAG.
+  // Manual Step ODE glitch routing uses its fixed scan and does not build the ordinary DAG.
   if (!facts.formula.usesStepGlitchRouting && !facts.pathfinding.workerCountValid) {
     return { state: "blocked", reason: "pathfinding-worker-count-invalid" };
   }

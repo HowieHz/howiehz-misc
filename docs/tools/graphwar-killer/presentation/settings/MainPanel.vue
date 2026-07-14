@@ -60,7 +60,7 @@ export interface GraphwarSettingsPanelModel {
   precision: GraphwarSettingsPanelPrecision;
   /** Step 算法是否启用溢出保护。 */
   stepOverflowProtectionEnabled: boolean;
-  /** Step 邪道模式是否启用；只有 y' 模式会消费。 */
+  /** Step 邪道模式是否启用；两种 ODE 分别保存偏好。 */
   stepGlitchModeEnabled: boolean;
   /** 邪道偏好在不兼容组合或缺少障碍时保持可编辑的休眠状态。 */
   stepGlitchModeState: GraphwarControlCapability["state"];

@@ -314,19 +314,44 @@ export interface StepOverflowProtectionRange {
   minX: number;
 }
 
-/** Step y'= 邪道段；用于把普通 step 项替换成触发 Graphwar 缩步漏洞的高导数门函数。 */
-export interface StepGlitchSegment {
-  /** 目标导数；按源码最小步长估算，用来迫使自适应步长缩到邪道触发边界。 */
-  derivative: number;
+/** Step 邪道段共用的固定 x 窗口和落点目标。 */
+interface StepGlitchSegmentBase {
   /** 触发窗口的右边界；关闭旧邪道门，避免后续反向段重新触发。 */
   endX: number;
-  /** Y 门关闭阈值；进入目标命中圈就应关门，不必继续冲到目标中心线。 */
-  gateY: number;
   /** 最终公式里的 x 左门；扫描器可固定像素门，普通求解则由右门和窗口宽度推导。 */
   startX: number;
-  /** 当前路径段目标中心 y；用于 D 计算和候选落点误差。 */
+  /** 当前路径段目标中心 y；用于候选落点误差。 */
   targetY: number;
 }
+
+/** Step y'= 邪道段；高导数门在目标命中圈处关闭。 */
+export interface StepFirstOrderGlitchSegment extends StepGlitchSegmentBase {
+  /** 目标导数；按源码最小步长估算，用来迫使自适应步长缩到邪道触发边界。 */
+  derivative: number;
+  equation: "dy";
+  /** Y 门关闭阈值；进入目标命中圈就应关门，不必继续冲到目标中心线。 */
+  gateY: number;
+}
+
+/** Step y''= 邪道段；同一 RK4 步内先加速纵跳，再在末相位恢复原 y'。 */
+export interface StepSecondOrderGlitchSegment extends StepGlitchSegmentBase {
+  /** 纵跳阶段使用的加速度。 */
+  acceleration: number;
+  /** 轨迹尚未进入目标近侧命中边界时，加速门保持开启。 */
+  accelerationGateY: number;
+  /** 末个 RK4 相位使用的刹车加速度。 */
+  braking: number;
+  /** RK4 内部预测越过目标远侧命中边界后，刹车门才开启。 */
+  brakingGateY: number;
+  equation: "ddy";
+  /** 加速和刹车脉冲在恢复步的 a2 前一起关闭，避免内部预测重新触发。 */
+  pulseEndX: number;
+  /** 跳跃前后都应恢复到的 y'。 */
+  targetDerivative: number;
+}
+
+/** 最终公式中的一段 Step 邪道替换项。 */
+export type StepGlitchSegment = StepFirstOrderGlitchSegment | StepSecondOrderGlitchSegment;
 
 /** 编译和输出共用的公式数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
 export interface FormulaEvaluationOptions {

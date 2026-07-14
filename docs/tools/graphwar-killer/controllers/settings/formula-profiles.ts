@@ -4,7 +4,7 @@ import { supportsOneClickClear } from "../../pathfinding/one-click-clear/support
 /** One Solver equation's independently retained formula preferences. */
 export interface GraphwarFormulaProfile {
   algorithm: AlgorithmMode;
-  /** Only the first-derivative profile stores this preference. */
+  /** ODE profiles retain this preference independently; the ordinary y profile strips it. */
   stepGlitchModeEnabled?: boolean;
 }
 
@@ -12,7 +12,7 @@ export interface GraphwarFormulaProfile {
 export interface GraphwarFormulaProfiles {
   y: GraphwarFormulaProfile;
   dy: GraphwarFormulaProfile & { stepGlitchModeEnabled: boolean };
-  ddy: GraphwarFormulaProfile;
+  ddy: GraphwarFormulaProfile & { stepGlitchModeEnabled: boolean };
 }
 
 /** A sparse, immutable description of the unsupported profiles managed mode must replace. */
@@ -23,7 +23,7 @@ export function createDefaultGraphwarFormulaProfiles(): GraphwarFormulaProfiles 
   return {
     y: { algorithm: "abs" },
     dy: { algorithm: "step", stepGlitchModeEnabled: true },
-    ddy: { algorithm: "step" },
+    ddy: { algorithm: "step", stepGlitchModeEnabled: false },
   };
 }
 
@@ -32,20 +32,20 @@ export function getGraphwarFormulaProfile(profiles: GraphwarFormulaProfiles, equ
   return profiles[equation];
 }
 
-/** Replaces only the selected profile and strips the derivative-only preference from other equations. */
+/** Replaces only the selected profile and strips the ODE-only preference from ordinary y. */
 export function updateGraphwarFormulaProfile(
   profiles: GraphwarFormulaProfiles,
   equation: EquationMode,
   update: Partial<GraphwarFormulaProfile>,
 ): GraphwarFormulaProfiles {
-  if (equation === "dy") {
+  if (equation !== "y") {
     return {
       ...profiles,
-      dy: {
-        ...profiles.dy,
+      [equation]: {
+        ...profiles[equation],
         ...update,
-        algorithm: update.algorithm ?? profiles.dy.algorithm,
-        stepGlitchModeEnabled: update.stepGlitchModeEnabled ?? profiles.dy.stepGlitchModeEnabled,
+        algorithm: update.algorithm ?? profiles[equation].algorithm,
+        stepGlitchModeEnabled: update.stepGlitchModeEnabled ?? profiles[equation].stepGlitchModeEnabled,
       },
     };
   }
@@ -73,7 +73,7 @@ export function createGraphwarManagedFormulaProfileRepairPlan(
     plan.dy = { algorithm: "step", stepGlitchModeEnabled: true };
   }
   if (!graphwarFormulaProfileSupportsOneClickClear(profiles, "ddy")) {
-    plan.ddy = { algorithm: "step" };
+    plan.ddy = { algorithm: "step", stepGlitchModeEnabled: false };
   }
   return plan;
 }
@@ -89,6 +89,6 @@ export function applyGraphwarManagedFormulaProfileRepairPlan(
   return {
     y: plan.y ? { algorithm: plan.y.algorithm } : profiles.y,
     dy: plan.dy ?? profiles.dy,
-    ddy: plan.ddy ? { algorithm: plan.ddy.algorithm } : profiles.ddy,
+    ddy: plan.ddy ?? profiles.ddy,
   };
 }

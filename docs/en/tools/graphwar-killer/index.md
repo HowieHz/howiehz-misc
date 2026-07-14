@@ -62,7 +62,7 @@ To stop a manual One-Click Clear run and keep its current result without firing,
 | --------------------- | ---------------- | ------------- | --------------- | ---------------------------------- |
 | Double Absolute Value | `y`, `y'`, `y''` | Supported     | Supported       | Direct lines with smooth turns     |
 | Step                  | `y`, `y'`, `y''` | Supported     | Supported       | Right-angle paths                  |
-| Step (Glitch Mode)    | `y'`             | Supported     | Supported       | Horizontal scan and vertical jumps |
+| Step (Glitch Mode)    | `y'`, `y''`      | Supported     | Supported       | Horizontal scan and vertical jumps |
 | PCHIP                 | `y`, `y'`, `y''` | Supported     | —               | Smooth curves                      |
 | Akima                 | `y`, `y'`, `y''` | Supported     | —               | Smooth curves                      |
 
@@ -76,15 +76,15 @@ To stop a manual One-Click Clear run and keep its current result without firing,
 
 #### Routing Algorithms {#graphwar-killer-pathfinding-engines}
 
-| Algorithm             | Behavior                                                                                             |
-| --------------------- | ---------------------------------------------------------------------------------------------------- |
-| Lazy Visibility Graph | Default; usually faster with straighter routes, but it may miss a route around complex obstacles     |
-| Theta*                | Usually slower, but more reliable around complex obstacles                                           |
-| X+ Scan               | Used automatically by Step `y'` Glitch Mode; scans to the right and tries vertical jumps when needed |
+| Algorithm             | Behavior                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| Lazy Visibility Graph | Default; usually faster with straighter routes, but it may miss a route around complex obstacles    |
+| Theta*                | Usually slower, but more reliable around complex obstacles                                          |
+| X+ Scan               | Used automatically by Step ODE Glitch Mode; scans to the right and tries vertical jumps when needed |
 
 ### Glitch Mode {#graphwar-killer-step-glitch-mode}
 
-Glitch Mode applies only to Step `y'`. When a normal Step route encounters an obstacle, it tries to add a vertical jump. Accurate obstacle and soldier positions are required, so reading game state through Agent is recommended.
+Glitch Mode applies to Step `y'` and `y''`. When a normal Step route encounters an obstacle, it tries to add a vertical jump; `y''` uses a short braking pulse after the jump to restore the previous `y'`. Accurate obstacle and soldier positions are required, so reading game state through Agent is recommended.
 
 ### Managed Mode {#graphwar-killer-managed-mode}
 

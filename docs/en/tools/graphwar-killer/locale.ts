@@ -881,9 +881,10 @@ export const graphwarKillerLocale = {
       skipUnknownCharacters: "Skip unknown characters",
       skipUnknownCharactersTitle: "Match Graphwar's behavior of skipping unknown characters",
       stepGlitchMode: "Glitch Mode",
-      stepGlitchModeInactiveReason: "Switch to Step y' to use it",
+      stepGlitchModeInactiveReason: "Switch to a Step ODE mode to use it",
       stepGlitchModeObstacleRequiredReason: "Requires obstacle data",
-      stepGlitchModeTitle: "Use with Step y' to tunnel past obstacles; accurate obstacle and soldier data is required",
+      stepGlitchModeTitle:
+        "Use with Step y' or y'' to tunnel past obstacles; accurate obstacle and soldier data is required",
       steepness: "Steepness k",
       steepnessAriaLabel: "Formula steepness k",
       steepnessTitle:

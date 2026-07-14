@@ -8,6 +8,7 @@ import {
   type PlaneGridPoint,
 } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
+import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import {
   quantizeStepFormulaSteepness,
   resolveStepFormulaPlateauTransition,
@@ -86,14 +87,14 @@ interface GraphwarStepPathfindingEvaluatorOptions extends GraphwarStepRouteColli
   resolvedStartStateKey?: string;
 }
 
-/** 只有 y' 的有效邪道模式会改变逐段语义；y/y'' 即使保留原始勾选也仍可寻路。 */
+/** 有效 ODE 邪道模式会改变逐段语义，必须改走固定扫描器。 */
 export function createGraphwarStepRouteModel(
   originY: number,
   settings: GraphwarStepRouteSettings,
 ): GraphwarStepRouteModel | undefined {
   if (
     settings.algorithm !== "step" ||
-    (settings.equation === "dy" && settings.stepGlitchMode === true) ||
+    formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.stepGlitchMode === true) ||
     !Number.isFinite(originY)
   ) {
     return undefined;

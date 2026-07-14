@@ -1,4 +1,4 @@
-/** Step y'= 邪道模式的从左到右扫描器；几何层只选门和落点，最终量化公式模拟决定是否可达。 */
+/** Step ODE 邪道模式的从左到右扫描器；几何层只选门和落点，最终量化公式模拟决定是否可达。 */
 import {
   GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
   GRAPHWAR_PLANE_HEIGHT,
@@ -17,6 +17,7 @@ import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../
 import { nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
+import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import { tryResolveGraphwarTrajectoryCandidate } from "../../formula/trajectory/sampling";
 import type {
   GraphwarStepGlitchFormulaPrefix,
@@ -629,7 +630,7 @@ function scanPreparedGraphwarStepGlitchPath(
 }
 
 function stepGlitchScanIsSupported(settings: GraphwarTrajectoryFormulaSettings) {
-  return settings.algorithm === "step" && settings.equation === "dy" && settings.stepGlitchMode;
+  return formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.stepGlitchMode);
 }
 
 /** 后缀会反向改变 Step 发射点和旧轨迹；只复用坐标映射，候选仍从发射点回放整式。 */
@@ -829,12 +830,14 @@ function createGateRowScan(
       });
     }
   }
-  // 先争取最大横向收益；收益相同时减少到目标、再到当前轨迹的垂直偏移，行号仅保证结果稳定。
+  // 先争取最大横向收益。二阶模式还要恢复 y'，同收益时优先保持当前行能显著减少无效候选；
+  // 一阶模式继续优先贴近目标行，保留既有选路结果。行号只负责让完全同分的结果稳定。
   rows.sort(
     (left, right) =>
       right.farthestX - left.farthestX ||
-      left.targetDeltaY - right.targetDeltaY ||
-      left.startDeltaY - right.startDeltaY ||
+      (options.settings.equation === "ddy"
+        ? left.startDeltaY - right.startDeltaY || left.targetDeltaY - right.targetDeltaY
+        : left.targetDeltaY - right.targetDeltaY || left.startDeltaY - right.startDeltaY) ||
       left.row - right.row,
   );
   return rows.length > 0 ? { firstBlockedSearchX, rows, state, windows } : undefined;

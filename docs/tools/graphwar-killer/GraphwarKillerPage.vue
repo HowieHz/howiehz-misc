@@ -108,7 +108,7 @@ import {
   type TransferStatus,
 } from "./core/types";
 import type { GraphwarDetectionBox } from "./detection/objects";
-import { formulaModeUsesSteepness } from "./formula/generation/capabilities";
+import { formulaModeUsesSteepness, formulaModeUsesStepGlitch } from "./formula/generation/capabilities";
 import type { GraphwarKillerLocale } from "./locale-types";
 import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";
 import type { GraphwarOneClickClearIncumbent } from "./pathfinding/one-click-clear/search";
@@ -246,21 +246,24 @@ const minYText = ref(`-${graphwarVisibleYLimitText}`);
 const maxYText = ref(graphwarVisibleYLimitText);
 const steepnessText = ref(String(graphwarToolDefaults.steepness));
 const stepOverflowProtectionEnabled = ref(true);
+const stepGlitchProfileEquation = computed<"dy" | "ddy">(() => (solverEquationMode.value === "ddy" ? "ddy" : "dy"));
 const stepGlitchModeEnabled = computed({
-  get: () => solverFormulaProfiles.value.dy.stepGlitchModeEnabled,
+  get: () => solverFormulaProfiles.value[stepGlitchProfileEquation.value].stepGlitchModeEnabled,
   set: (enabled: boolean) => {
-    solverFormulaProfiles.value = updateGraphwarFormulaProfile(solverFormulaProfiles.value, "dy", {
-      stepGlitchModeEnabled: enabled,
-    });
+    solverFormulaProfiles.value = updateGraphwarFormulaProfile(
+      solverFormulaProfiles.value,
+      stepGlitchProfileEquation.value,
+      {
+        stepGlitchModeEnabled: enabled,
+      },
+    );
   },
 });
-// 邪道偏好独立保存在 y' profile；只有当前 Step y' 才改变求解与寻路语义。
+// 两种 ODE 各自保存邪道偏好；普通 y 下继续展示 y' 偏好，但不改变求解语义。
 const effectiveStepGlitchModeEnabled = computed(
   () =>
     toolWorkflowMode.value === "solver" &&
-    algorithmMode.value === "step" &&
-    solverEquationMode.value === "dy" &&
-    stepGlitchModeEnabled.value,
+    formulaModeUsesStepGlitch(algorithmMode.value, solverEquationMode.value, stepGlitchModeEnabled.value),
 );
 const formulaUsesSteepness = computed(() => formulaModeUsesSteepness(algorithmMode.value, solverEquationMode.value));
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
@@ -880,14 +883,14 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
     stepGlitchModeEnabled: stepGlitchModeEnabled.value,
     stepGlitchModeReason: graphwarManagedModeEnabled.value
       ? getCapabilityReason("managed-lock")
-      : toolWorkflowMode.value !== "solver" || solverEquationMode.value !== "dy" || algorithmMode.value !== "step"
+      : toolWorkflowMode.value !== "solver" || solverEquationMode.value === "y" || algorithmMode.value !== "step"
         ? locale.ui.settings.stepGlitchModeInactiveReason
         : stepGlitchModeEnabled.value && !detectedObstacles.value
           ? locale.ui.settings.stepGlitchModeObstacleRequiredReason
           : undefined,
     stepGlitchModeState: graphwarManagedModeEnabled.value
       ? "busy"
-      : toolWorkflowMode.value !== "solver" || solverEquationMode.value !== "dy" || algorithmMode.value !== "step"
+      : toolWorkflowMode.value !== "solver" || solverEquationMode.value === "y" || algorithmMode.value !== "step"
         ? "dormant"
         : stepGlitchModeEnabled.value && !detectedObstacles.value
           ? "dormant"
@@ -2367,13 +2370,17 @@ function setAlgorithmMode(mode: AlgorithmMode) {
   algorithmMode.value = mode;
 }
 
-/** 开启邪道时原子进入其唯一有效组合；关闭时只保留当前公式模式。 */
+/** ODE Step 直接切换自己的偏好；其他组合沿用旧入口进入 Step y'。 */
 function toggleStepGlitchMode() {
   if (graphwarManagedModeEnabled.value) {
     return;
   }
   if (stepGlitchModeEnabled.value) {
     stepGlitchModeEnabled.value = false;
+    return;
+  }
+  if (toolWorkflowMode.value === "solver" && solverEquationMode.value !== "y" && algorithmMode.value === "step") {
+    stepGlitchModeEnabled.value = true;
     return;
   }
   setToolWorkflowMode("solver");
@@ -2867,7 +2874,7 @@ function toggleGraphwarManagedMode() {
           locale.algorithmModes.find((algorithm) => algorithm.value === repair.algorithm)?.label ?? repair.algorithm,
         equation: mode.label,
         properties:
-          mode.value === "dy" && repair.algorithm === "step" && repair.stepGlitchModeEnabled
+          mode.value !== "y" && repair.algorithm === "step" && repair.stepGlitchModeEnabled
             ? [locale.ui.settings.stepGlitchMode]
             : [],
       },
@@ -2885,7 +2892,7 @@ function toggleGraphwarManagedMode() {
               profile.algorithm,
             equation: mode.label,
             properties:
-              mode.value === "dy" && profile.algorithm === "step" && profile.stepGlitchModeEnabled
+              mode.value !== "y" && profile.algorithm === "step" && profile.stepGlitchModeEnabled
                 ? [locale.ui.settings.stepGlitchMode]
                 : [],
           };

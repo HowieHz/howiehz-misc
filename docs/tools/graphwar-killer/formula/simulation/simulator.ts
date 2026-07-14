@@ -120,6 +120,8 @@ export interface GraphwarTrajectorySamplingState {
   sampleIndex: number;
   /** Y''= 模式的当前 y'；其他模式不设置。 */
   dy?: number;
+  /** Y''= 模式上一个接受点的 y'；跨门探针用它恢复完整前缀状态。 */
+  previousDy?: number;
 }
 
 /** Graphwar 规则采样的轨迹结果。 */
@@ -622,6 +624,7 @@ function createBisectionTrajectoryStepper<TPoint extends GraphPoint>(
     initialPoint,
     options.initialState?.previousPoint,
     options.initialState?.sampleIndex ?? 0,
+    options.initialState?.previousDy,
   );
   const stepper: GraphwarTrajectoryStepper = {
     get state() {
@@ -638,8 +641,9 @@ function createBisectionTrajectoryStepper<TPoint extends GraphPoint>(
       }
 
       const previousPoint = createGraphPoint(previous.x, previous.y);
+      const previousDy = isSecondOrderState(previous) ? previous.dy : undefined;
       previous = next.point;
-      state = createTrajectorySamplingState(next.point, previousPoint, state.sampleIndex + 1);
+      state = createTrajectorySamplingState(next.point, previousPoint, state.sampleIndex + 1, previousDy);
       if (next.point.x < minX || next.point.x > maxX || next.point.y < minY || next.point.y > maxY) {
         return { ok: false as const, state, stopReason: "out-of-bounds" as const };
       }
@@ -682,11 +686,13 @@ function createTrajectorySamplingState<TPoint extends GraphPoint>(
   current: TPoint,
   previousPoint: GraphPoint | undefined,
   sampleIndex: number,
+  previousDy?: number,
 ): GraphwarTrajectorySamplingState {
   return {
     currentPoint: createGraphPoint(current.x, current.y),
     dy: isSecondOrderState(current) ? current.dy : undefined,
     previousPoint,
+    previousDy,
     sampleIndex,
   };
 }

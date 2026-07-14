@@ -254,7 +254,7 @@ export function createMinimumForwardTargetPoint(
   // 设计意图：非士兵点击如果落在 x+ 打击范围左侧，目标应移到
   // “最后一个路径点之后的下一个可表示 double x”，y 保持点击值；这里不做
   // 障碍、寻路或额外命中判断，只检查最终 xy 是否仍在可用边界内。
-  const targetPoint = graphXReachesMinimumForward(targetGraph.x, startPoint, area)
+  const targetPoint = graphXAdvancesFromPoint(startPoint, targetGraph.x, area.bounds, area.boundsRect)
     ? point
     : createMinimumForwardPointAtGraphY(startPoint, targetGraph.y, area.bounds, area.boundsRect);
   if (!targetPoint) {
@@ -300,6 +300,15 @@ export function graphwarSoldierReachesForward(
   return graphwarPointAdvances(startPoint, getGraphwarSoldierCenter(soldier), geometry);
 }
 
+/** 判断首个路径点是否位于士兵真实命中圈内，用于统一排除发射士兵。 */
+export function graphwarSoldierMatchesLaunchPoint(
+  pathPoints: readonly PixelPoint[],
+  soldier: GraphwarTargetingSoldier,
+) {
+  const firstPoint = pathPoints[0];
+  return Boolean(firstPoint && graphwarSoldierContainsHitPoint(soldier, firstPoint));
+}
+
 /** 判断检测框中心是否在 Graphwar x<=0 发射侧；Graphwar 原版允许函数从 x=0 士兵起步。 */
 export function graphwarSoldierIsOnNonPositiveGraphX(
   soldier: GraphwarTargetingSoldier,
@@ -338,11 +347,6 @@ function createSoldierHitCircleXPlusEdgePoint(soldier: GraphwarTargetingSoldier,
   const center = getGraphwarSoldierCenter(soldier);
   const xPlusIsRight = xPlusGoesRight(geometry.bounds);
   return createPixelPoint(center.x + (xPlusIsRight ? soldier.hitRadius : -soldier.hitRadius), center.y);
-}
-
-/** 判断给定 Graphwar x 是否已经严格位于截图起点对应的 Graphwar x+ 方向。 */
-function graphXReachesMinimumForward(graphX: number, startPoint: PixelPoint, geometry: GraphwarTargetingGeometry) {
-  return graphXAdvancesFromPoint(startPoint, graphX, geometry.bounds, geometry.boundsRect);
 }
 
 /** 士兵中心贴边时，把目标点夹进可通行边界内；命中仍必须严格落在士兵真实命中圆内。 */

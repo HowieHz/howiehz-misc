@@ -227,6 +227,7 @@ function createStepAdjustedFormulaPathPoints(
     options.formulaEvaluation,
   );
   const formulaPoints = [targetPoints[0]];
+  // resolveStepFormula 为每对相邻点生成一个 transition；直接索引可让该内部契约保持可见。
   for (let index = 1; index < targetPoints.length; index += 1) {
     const previousTarget = targetPoints[index - 1];
     const target = targetPoints[index];
@@ -236,7 +237,7 @@ function createStepAdjustedFormulaPathPoints(
         calculateStepFormulaCenterX(
           previousTarget.x,
           target.x,
-          transition?.effectiveDeltaY ?? Number.NaN,
+          transition.effectiveDeltaY,
           resolvedFormula.formulaSteepness,
         ),
         target.y,
@@ -664,10 +665,13 @@ function createInitialBisectionPoint<TPoint extends GraphPoint>(
     return start;
   }
   if (isSecondOrderState(start)) {
+    if (initialState.dy === undefined) {
+      throw new Error("Second-order trajectory resume state is missing dy.");
+    }
     return createSecondOrderState(
       initialState.currentPoint.x,
       initialState.currentPoint.y,
-      initialState.dy ?? 0,
+      initialState.dy,
     ) as unknown as TPoint;
   }
   return createGraphPoint(initialState.currentPoint.x, initialState.currentPoint.y) as TPoint;

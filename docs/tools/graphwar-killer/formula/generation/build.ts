@@ -12,6 +12,7 @@ import { GraphwarSignRole, isGraphwarSignProtected } from "./sign-protection";
 import type { GraphwarSignProtection } from "./sign-protection";
 import {
   quantizeFormulaCoefficient,
+  quantizeFormulaOffsetCenter,
   quantizeStepFormulaSteepness,
   quantizeStepFormulaCenterX,
   resolveStepFormula,
@@ -128,14 +129,23 @@ export interface CompiledStepFormula {
 
 /** 软插值单段的最终文本等价常量；所有派生系数分别量化，不能从另一组舍入值反推。 */
 export interface CompiledSoftCubicSegment {
+  /** 三次 Hermite 主体的最终文本系数。 */
   cubicCoefficients: readonly [number, number, number, number];
+  /** 三次 Hermite 主体一阶导的最终文本系数。 */
   firstCubicCoefficients: readonly [number, number, number, number];
+  /** 软分段权重一阶导中的幂次系数。 */
   firstPowerCoefficient: number;
+  /** 分段半宽，用于构造软区间权重。 */
   halfWidth: number;
+  /** 三次 Hermite 主体二阶导的最终文本系数。 */
   secondCubicCoefficients: readonly [number, number, number, number];
+  /** 软分段权重二阶导中的幂次系数。 */
   secondPowerCoefficient: number;
+  /** 软分段权重使用的区间中心。 */
   softCenterX: number;
+  /** Hermite 局部参数的分段起点。 */
   startX: number;
+  /** Hermite 局部参数的非零分段宽度。 */
   width: number;
 }
 
@@ -468,6 +478,7 @@ function createCompiledStepFormula(
   return { equation, formulaSteepness, terms };
 }
 
+/** 把邪道段量化为最终公式文本实际回放的门和导数。 */
 function createCompiledStepGlitchSegment(
   segment: StepGlitchSegment | undefined,
   options?: FormulaEvaluationOptions,
@@ -482,25 +493,15 @@ function createCompiledStepGlitchSegment(
   return {
     derivative: 8 * gateCoefficient,
     endX: segment.endX,
-    gateY: createCompiledFormulaYCenter(segment.gateY, options),
+    gateY: quantizeFormulaOffsetCenter(segment.gateY, decimalPlaces),
     startX: segment.startX,
-    targetY: createCompiledFormulaYCenter(segment.targetY, options),
+    targetY: quantizeFormulaOffsetCenter(segment.targetY, decimalPlaces),
   };
 }
 
 /** 内部 step 采样应使用最终公式文本中的中心点，避免小数位边界偏移。 */
 function createCompiledFormulaXCenter(centerX: number, options?: FormulaEvaluationOptions) {
   return quantizeStepFormulaCenterX(centerX, getFormulaDecimalPlaces(options));
-}
-
-/** 内部 step 采样应使用最终公式文本中的 y 阈值，避免小数位边界偏移。 */
-function createCompiledFormulaYCenter(centerY: number, options?: FormulaEvaluationOptions) {
-  return createCompiledFormulaOffsetCenter(centerY, options);
-}
-
-function createCompiledFormulaOffsetCenter(center: number, options?: FormulaEvaluationOptions) {
-  const decimalPlaces = getFormulaDecimalPlaces(options);
-  return decimalPlaces === undefined ? center : -roundToDecimalPlaces(-center, decimalPlaces);
 }
 
 /** 无采样范围时，编译路径应与公式输出一样保守使用 stable 导数形式。 */
@@ -534,6 +535,7 @@ function createFormulaEvaluationOptions(
   };
 }
 
+/** 复用调用方的 Abs 材料，缺失时按同一公式选项重新编译。 */
 function getCompiledAbsConnectorSegments(
   points: readonly GraphPoint[],
   options: FormulaEvaluationOptions | undefined,
@@ -556,6 +558,7 @@ function getCompiledAbsSecondDerivativeFormula(
     : createCompiledAbsSecondDerivativeFormula(points, steepness, options);
 }
 
+/** 复用调用方的 Step 材料，缺失时按同一公式选项重新编译。 */
 function getCompiledStepFormula(
   points: readonly GraphPoint[],
   steepness: number,
@@ -1418,6 +1421,7 @@ function formatDoublePrecisionSignedNumber(value: number) {
   return value < 0 ? formatDoublePrecisionDecimal(value) : `+${formatDoublePrecisionDecimal(value)}`;
 }
 
+/** 格式化朝目标方向关闭门函数所需的带符号 y offset。 */
 function formatDirectedTargetYOffset(targetY: number, direction: 1 | -1, decimalPlaces?: number) {
   if (direction > 0) {
     return `(${formatDecimal(targetY, decimalPlaces)}-y)`;

@@ -443,8 +443,7 @@ export function isGraphwarAgentIncompatibleError(
 /** Normalizes user input once so every endpoint resolves against the same base URL. */
 export function normalizeGraphwarAgentBaseUrl(baseUrlText: string) {
   const trimmed = baseUrlText.trim() || GRAPHWAR_AGENT_DEFAULT_BASE_URL;
-  const withProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
-  const url = new URL(withProtocol);
+  const url = new URL(/^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new GraphwarAgentClientError("invalid-request", "Graphwar Agent URL must use HTTP or HTTPS");
   }

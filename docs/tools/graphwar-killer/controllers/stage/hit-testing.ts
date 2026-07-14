@@ -6,6 +6,7 @@ import { getGraphwarSoldierCenter, graphwarSoldierContainsHitPoint } from "../..
 // 截图/SVG 坐标像素：路径点太小时仍保留可点中的拖拽热区；这不是 Graphwar 士兵命中半径。
 const minimumPathPointSelectionRadiusImagePixels = 10;
 
+/** 舞台命中测试所需的当前图片、士兵和路径状态。 */
 interface GraphwarStageHitTestingOptions<TSoldier extends GraphwarDetectionBox> {
   /** 当前可见士兵列表；应由页面先应用工作流过滤，命中测试只负责逆序选中。 */
   getDetectionBoxes: () => readonly TSoldier[];
@@ -17,6 +18,7 @@ interface GraphwarStageHitTestingOptions<TSoldier extends GraphwarDetectionBox> 
   getPathPointSelectionRadius: () => number;
 }
 
+/** 舞台交互层复用的士兵、路径点和颜色命中 Interface。 */
 export interface GraphwarStageHitTestingController<TSoldier extends GraphwarDetectionBox> {
   /** 判断路径点是否落在 Graphwar 士兵实际命中圈内。 */
   detectionBoxContainsHitCircle: (box: TSoldier, point: PixelPoint) => boolean;
@@ -54,7 +56,8 @@ export function useGraphwarStageHitTesting<TSoldier extends GraphwarDetectionBox
     const boxes = options.getDetectionBoxes();
     for (let index = boxes.length - 1; index >= 0; index -= 1) {
       const box = boxes[index];
-      if (detectionBoxContainsSelectionCircle(box, point)) {
+      // 指针选中使用可见身体圆；路径和弹道命中仍走原版 hitRadius。
+      if (Math.hypot(point.x - box.visualCenterX, point.y - box.visualCenterY) <= box.visualRadius) {
         return box;
       }
     }
@@ -74,11 +77,6 @@ export function useGraphwarStageHitTesting<TSoldier extends GraphwarDetectionBox
   /** 判断指针或路径点是否落在 Graphwar 士兵实际命中圈内。 */
   function detectionBoxContainsHitCircle(box: TSoldier, point: PixelPoint) {
     return graphwarSoldierContainsHitPoint(box, point);
-  }
-
-  /** 判断指针是否落在 Graphwar 士兵可视选择圈内。 */
-  function detectionBoxContainsSelectionCircle(box: TSoldier, point: PixelPoint) {
-    return Math.hypot(point.x - box.visualCenterX, point.y - box.visualCenterY) <= box.visualRadius;
   }
 
   /** 从士兵检测框内采样玩家颜色，供模拟器轨迹线匹配当前士兵。 */

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createGraphPoint } from "../../core/types";
-import { getGraphwarLaunchAngle, GraphwarFormulaConvergenceError } from "./simulator";
+import { getGraphwarLaunchAngle, GraphwarFormulaConvergenceError, sampleGraphwarTrajectory } from "./simulator";
 
 const horizontalPoints = [createGraphPoint(-10, 0), createGraphPoint(0, 0)];
 
@@ -35,5 +35,19 @@ describe("Graphwar launch-angle convergence contracts", () => {
       getGraphwarLaunchAngle({ algorithm: "step", equation: "ddy", points: horizontalPoints, steepness: 210 }),
     ).toThrow(GraphwarFormulaConvergenceError);
     expect(callCount).toBe(101);
+  });
+
+  it("rejects a second-order resume state without its required slope", () => {
+    expect(() =>
+      sampleGraphwarTrajectory({
+        algorithm: "abs",
+        bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+        equation: "ddy",
+        initialState: { currentPoint: createGraphPoint(-5, 0), sampleIndex: 10 },
+        points: horizontalPoints,
+        soldierCenter: horizontalPoints[0],
+        steepness: 210,
+      }),
+    ).toThrow("Second-order trajectory resume state is missing dy.");
   });
 });

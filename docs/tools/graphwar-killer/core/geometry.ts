@@ -1,4 +1,5 @@
 /** 提供截图像素坐标、Graphwar 坐标和标定矩形之间的转换工具。 */
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "./game/constants";
 import { clampNumber } from "./numbers";
 import { createGraphPoint, createPixelPoint } from "./types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "./types";
@@ -6,6 +7,16 @@ import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "./types";
 /** 判断 Graphwar 的 x 递增方向是否对应标定图片边界的右侧。 */
 export function xPlusGoesRight(bounds: GraphBounds) {
   return bounds.maxX > bounds.minX;
+}
+
+/** 将 Graphwar x 映射到原生平面的连续 x；取整和裁剪由具体 mask 语义决定。 */
+export function graphXToPlaneX(x: number, bounds: GraphBounds) {
+  return ((x - bounds.minX) / (bounds.maxX - bounds.minX)) * GRAPHWAR_PLANE_LENGTH;
+}
+
+/** 将 Graphwar y 映射到原生平面的连续 y；Graphwar 笛卡尔 y+ 对应平面向上。 */
+export function graphYToPlaneY(y: number, bounds: GraphBounds) {
+  return ((bounds.maxY - y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT;
 }
 
 /** 判断两个点是否表示同一截图像素坐标。 */

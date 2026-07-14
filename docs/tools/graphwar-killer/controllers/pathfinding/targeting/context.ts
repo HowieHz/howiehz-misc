@@ -6,18 +6,20 @@ import {
   createSearchStartSoldierAimPoint as createGraphwarSearchStartSoldierAimPoint,
   createSmartPathfindingSoldierTarget as createGraphwarSmartPathfindingSoldierTarget,
   getRightmostPathPoint as getGraphwarRightmostPathPoint,
-  graphwarSoldierContainsHitPoint,
   graphwarSoldierIsOnNonPositiveGraphX,
+  graphwarSoldierMatchesLaunchPoint,
   type GraphwarHitCircle,
   type GraphwarSmartPathfindingSoldierTarget,
   type GraphwarTargetingGeometry,
   type GraphwarTargetingSoldier,
 } from "../../../pathfinding/targeting";
 
+/** 只读取 Vue ref 当前值所需的最小 Interface。 */
 interface ReadonlyRef<T> {
   readonly value: T;
 }
 
+/** 将页面响应式状态适配为纯目标规则所需的输入。 */
 interface GraphwarTargetingContextOptions<TSoldier extends GraphwarTargetingSoldier> {
   /** 当前截图坐标系矩形；目标规则应始终使用页面当前标定。 */
   boundsRect: ReadonlyRef<BoundsRect>;
@@ -33,6 +35,7 @@ interface GraphwarTargetingContextOptions<TSoldier extends GraphwarTargetingSold
   isFriendlySoldier?: (soldier: TSoldier) => boolean | undefined;
 }
 
+/** 页面和寻路工作流共享的目标选择 Interface。 */
 export interface GraphwarTargetingContextController<TSoldier extends GraphwarTargetingSoldier> {
   /** 根据当前路径尾点截出实际可点击区域。 */
   createAllowedTargetRect: () => BoundsRect | undefined;
@@ -74,16 +77,19 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
     return geometry && targetBoundsRect ? { ...geometry, targetBoundsRect } : undefined;
   }
 
+  /** 根据当前路径尾点截出实际可点击区域。 */
   function createAllowedTargetRect() {
     const area = createArea();
     return area ? createGraphwarAllowedTargetRect(area, options.pathPixels.value.at(-1)) : undefined;
   }
 
+  /** 按指定起点把 x 不够的目标改为同 y 的最小 double x+ 点。 */
   function createMinimumForwardTargetPoint(point: PixelPoint, startPoint = options.pathPixels.value.at(-1)) {
     const area = createArea();
     return area ? createGraphwarMinimumForwardTargetPoint(point, area, startPoint) : undefined;
   }
 
+  /** 为搜索起点选择士兵中心或命中圈内的最小前进点。 */
   function createSearchStartSoldierAimPoint(startPoint: PixelPoint | undefined, soldier: TSoldier) {
     const area = createArea();
     return area
@@ -91,6 +97,7 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
       : undefined;
   }
 
+  /** 构造同时保留几何目标和真实命中圈的智能寻路目标。 */
   function createSmartPathfindingSoldierTarget(startPoint: PixelPoint, soldier: TSoldier) {
     const area = createArea();
     return area
@@ -98,10 +105,12 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
       : undefined;
   }
 
+  /** 从士兵创建原版命中半径对应的目标圆。 */
   function createSoldierHitCircle(soldier: TSoldier) {
     return createGraphwarSoldierHitCircle(soldier);
   }
 
+  /** 返回当前路径在 Graphwar x+ 方向上最远的点。 */
   function getRightmostPathPoint() {
     const geometry = createGeometry();
     return geometry && options.pathPixels.value.length > 0
@@ -122,7 +131,7 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
   /** 排除发射士兵后按权威阵营判断友方；截图数据继续回退到发射侧规则。 */
   function isFriendlyObstacleSoldier(soldier: TSoldier) {
     const geometry = createGeometry();
-    if (!geometry || soldierMatchesLaunchPoint(soldier)) {
+    if (!geometry || graphwarSoldierMatchesLaunchPoint(options.pathPixels.value, soldier)) {
       return false;
     }
     const authoritative = options.isFriendlySoldier?.(soldier);
@@ -130,12 +139,6 @@ export function useGraphwarTargetingContext<TSoldier extends GraphwarTargetingSo
       return authoritative;
     }
     return graphwarSoldierIsOnNonPositiveGraphX(soldier, geometry);
-  }
-
-  /** 一键清图以第一个路径点作为发射士兵，后续路径点都是普通控制点。 */
-  function soldierMatchesLaunchPoint(soldier: TSoldier) {
-    const firstPoint = options.pathPixels.value[0];
-    return Boolean(firstPoint && graphwarSoldierContainsHitPoint(soldier, firstPoint));
   }
 
   return {

@@ -79,6 +79,11 @@ export function quantizeFormulaCoefficient(coefficientValue: number, decimalPlac
   return normalizedCoefficient < 0 ? -magnitude : magnitude;
 }
 
+/** 按最终 `value-center` 文本实际打印的负 offset 量化中心，再还原中心值。 */
+export function quantizeFormulaOffsetCenter(center: number, decimalPlaces?: number) {
+  return decimalPlaces === undefined ? center : -roundToDecimalPlaces(-center, decimalPlaces);
+}
+
 /** 先量化陡峭度，后续所有方程系数和中心都必须使用这个 kf。 */
 export function quantizeStepFormulaSteepness(steepness: number, decimalPlaces?: number) {
   return decimalPlaces === undefined ? steepness : roundToDecimalPlaces(steepness, decimalPlaces);
@@ -229,10 +234,12 @@ export function resolveStepFormula(
   return { equation, formulaSteepness, plateauState, transitions };
 }
 
+/** 返回 y、y'、y'' canonical 系数相对实际平台高度变化的尺度。 */
 function getStepEquationScale(equation: EquationMode, formulaSteepness: number) {
   return equation === "y" ? 1 : equation === "dy" ? formulaSteepness : formulaSteepness ** 2;
 }
 
+/** 从精确十进制系数累计值恢复 Graphwar double 平台高度。 */
 function resolveStepFormulaPlateauY(state: StepFormulaPlateauState, equationScale: number, decimalPlaces?: number) {
   if (decimalPlaces === undefined || state.coefficientUnits === undefined) {
     return state.resolvedY;

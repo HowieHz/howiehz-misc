@@ -87,9 +87,9 @@ export function useGraphwarScreenshotWorkflow(
 
   /** 处理页面上的 Ctrl / Cmd + V 直接粘贴图片。 */
   function handlePaste(event: ClipboardEvent) {
-    const items = Array.from(event.clipboardData?.items ?? []);
-    const imageItem = items.find((item) => item.type.startsWith("image/"));
-    const file = imageItem?.getAsFile();
+    const file = Array.from(event.clipboardData?.items ?? [])
+      .find((item) => item.type.startsWith("image/"))
+      ?.getAsFile();
     if (!file) {
       return;
     }

@@ -3,6 +3,7 @@ import {
   getGraphwarSoldierCenter,
   graphwarSoldierContainsHitPoint,
   graphwarSoldierIsOnNonPositiveGraphX,
+  graphwarSoldierMatchesLaunchPoint,
   graphwarSoldierReachesForward,
   type GraphwarTargetingGeometry,
   type GraphwarTargetingSoldier,
@@ -15,6 +16,7 @@ export interface GraphwarOneClickClearTargetSoldier extends GraphwarTargetingSol
   id: string;
 }
 
+/** 一键清图从当前路径、坐标映射和士兵集合派生候选所需的输入。 */
 export interface GraphwarOneClickClearTargetCollectionOptions<
   TSoldier extends GraphwarOneClickClearTargetSoldier = GraphwarOneClickClearTargetSoldier,
 > {
@@ -70,11 +72,12 @@ export function createGraphwarOneClickClearHitCandidates<TSoldier extends Graphw
   return candidates;
 }
 
+/** 排除发射士兵和禁用的友军后，把检测结果投影为稳定清图候选。 */
 function createOneClickClearTargetCandidate<TSoldier extends GraphwarOneClickClearTargetSoldier>(
   options: GraphwarOneClickClearTargetCollectionOptions<TSoldier>,
   soldier: TSoldier,
 ): GraphwarOneClickClearCandidate | undefined {
-  if (isOneClickClearLaunchSoldier(options.pathPoints, soldier)) {
+  if (graphwarSoldierMatchesLaunchPoint(options.pathPoints, soldier)) {
     return undefined;
   }
 
@@ -90,12 +93,6 @@ function createOneClickClearTargetCandidate<TSoldier extends GraphwarOneClickCle
     hitRadius: soldier.hitRadius,
     id: soldier.id,
   };
-}
-
-/** 第一个路径点对应发射士兵；一键清图不应把它作为清图目标或命中统计。 */
-function isOneClickClearLaunchSoldier(pathPoints: readonly PixelPoint[], soldier: GraphwarOneClickClearTargetSoldier) {
-  const firstPoint = pathPoints[0];
-  return Boolean(firstPoint && graphwarSoldierContainsHitPoint(soldier, firstPoint));
 }
 
 /** 当前规则下 x<=0 的非发射士兵视为友方；geometry 缺失时应沿用页面原本的非友方语义。 */

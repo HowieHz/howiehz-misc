@@ -1,5 +1,6 @@
 /** 为 Step 寻路提供严格包络构造和固定 Graphwar 平面上的 O(1) 闭域判空。 */
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { graphXToPlaneX, graphYToPlaneY } from "../../core/geometry";
 import type { GraphBounds } from "../../core/types";
 
 /** Graphwar 坐标中的轴对齐闭域。 */
@@ -156,10 +157,10 @@ export function mapGraphClosedRegionToPlaneMask(
     return undefined;
   }
 
-  const startPlaneX = graphXToPlaneBoundary(region.minX, bounds);
-  const endPlaneX = graphXToPlaneBoundary(region.maxX, bounds);
-  const startPlaneY = graphYToPlaneBoundary(region.minY, bounds);
-  const endPlaneY = graphYToPlaneBoundary(region.maxY, bounds);
+  const startPlaneX = graphXToPlaneX(region.minX, bounds);
+  const endPlaneX = graphXToPlaneX(region.maxX, bounds);
+  const startPlaneY = graphYToPlaneY(region.minY, bounds);
+  const endPlaneY = graphYToPlaneY(region.maxY, bounds);
   return createConservativePlaneMaskRegion(startPlaneX, endPlaneX, startPlaneY, endPlaneY);
 }
 
@@ -252,6 +253,7 @@ export function graphwarStepEnvelopeHitsPlaneMask(
   );
 }
 
+/** 验证闭域和坐标边界，防止无效范围进入保守 mask 映射。 */
 function graphRegionAndBoundsAreValid(region: GraphClosedRegion, bounds: GraphBounds) {
   if (
     ![region.maxX, region.maxY, region.minX, region.minY, bounds.maxX, bounds.maxY, bounds.minX, bounds.minY].every(
@@ -270,14 +272,6 @@ function graphRegionAndBoundsAreValid(region: GraphClosedRegion, bounds: GraphBo
   const graphMinY = Math.min(bounds.minY, bounds.maxY);
   const graphMaxY = Math.max(bounds.minY, bounds.maxY);
   return region.minX >= graphMinX && region.maxX <= graphMaxX && region.minY >= graphMinY && region.maxY <= graphMaxY;
-}
-
-function graphXToPlaneBoundary(x: number, bounds: GraphBounds) {
-  return ((x - bounds.minX) / (bounds.maxX - bounds.minX)) * GRAPHWAR_PLANE_LENGTH;
-}
-
-function graphYToPlaneBoundary(y: number, bounds: GraphBounds) {
-  return ((bounds.maxY - y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT;
 }
 
 /** 闭域贴网格线时包含两侧 cell；平面外的一侧没有 cell，因此最后裁到固定 mask。 */
@@ -304,6 +298,7 @@ function snapToPlaneGridLine(value: number) {
   return Math.abs(value - nearestInteger) <= PLANE_GRID_LINE_SNAP_TOLERANCE ? nearestInteger : value;
 }
 
+/** 验证闭域端点都是固定原生平面内的整数 cell。 */
 function planeMaskRegionIsValid(region: PlaneMaskClosedRegion) {
   return (
     Number.isInteger(region.minX) &&

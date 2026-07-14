@@ -12,6 +12,7 @@ import type { BoundsRect, GraphBounds } from "../../core/types";
 
 const replayMockState = vi.hoisted(() => ({
   callCount: 0,
+  convergenceFailure: false,
   directSuccess: false,
   farRequiredScenario: false,
   orderedGateSuccessAttempt: 2,
@@ -176,14 +177,19 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
   );
   return {
     ...original,
-    resolveGraphwarTrajectory: vi.fn((options: Parameters<typeof original.resolveGraphwarTrajectory>[0]) => ({
-      context: original.resolveGraphwarTrajectory({
-        ...options,
-        requiredTargets: [],
-        targetSequence: [],
-      }).context,
-      result: sampleFormulaTrajectory(options),
-    })),
+    tryResolveGraphwarTrajectoryCandidate: vi.fn(
+      (options: Parameters<typeof original.tryResolveGraphwarTrajectoryCandidate>[0]) =>
+        replayMockState.convergenceFailure
+          ? undefined
+          : {
+              context: original.resolveGraphwarTrajectory({
+                ...options,
+                requiredTargets: [],
+                targetSequence: [],
+              }).context,
+              result: sampleFormulaTrajectory(options),
+            },
+    ),
   };
 });
 
@@ -200,6 +206,7 @@ const boundsRect: BoundsRect = {
 describe("Step glitch scanner replay acceptance", () => {
   beforeEach(() => {
     replayMockState.callCount = 0;
+    replayMockState.convergenceFailure = false;
     replayMockState.directSuccess = false;
     replayMockState.farRequiredScenario = false;
     replayMockState.orderedGateSuccessAttempt = 2;
@@ -216,6 +223,12 @@ describe("Step glitch scanner replay acceptance", () => {
 
   it("rejects a target sequence completed only on the obstacle sample", () => {
     replayMockState.targetHitIndex = 2;
+
+    expect(scanDirectTarget().status).toBe("no-path");
+  });
+
+  it("rejects a candidate when strict formula resolution does not converge", () => {
+    replayMockState.convergenceFailure = true;
 
     expect(scanDirectTarget().status).toBe("no-path");
   });

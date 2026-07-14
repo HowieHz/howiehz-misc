@@ -12,6 +12,7 @@ import { GraphwarSignRole, isGraphwarSignProtected } from "./sign-protection";
 import type { GraphwarSignProtection } from "./sign-protection";
 import {
   quantizeFormulaCoefficient,
+  quantizeStepFormulaSteepness,
   quantizeStepFormulaCenterX,
   resolveStepFormula,
   shouldUseStepDerivativeOverflowProtection,
@@ -81,6 +82,22 @@ export interface CompiledAbsConnectorSegment {
   sourceSegmentIndex: number;
 }
 
+/** ABS y'' 平滑斜率变化的一项最终文本等价数据。 */
+export interface CompiledAbsSecondDerivativePulse {
+  /** 最终公式里的脉冲系数，已经包含陡峭度。 */
+  coefficient: number;
+  /** 最终公式里的脉冲中心点。 */
+  formulaCenterX: number;
+}
+
+/** ABS y'' 最终文本等价材料；只在二阶微分方程模式下编译。 */
+export interface CompiledAbsSecondDerivativeFormula {
+  /** 最终公式文本里的陡峭度。 */
+  formulaSteepness: number;
+  /** 内部折点的斜率差脉冲，以及末点把末段斜率归零的脉冲。 */
+  pulses: readonly CompiledAbsSecondDerivativePulse[];
+}
+
 /** Step 公式的一项最终文本等价预编译数据，统一支持 y、y'、y'' 三种模式。 */
 export interface CompiledStepTerm {
   /** 最终公式里的 Sigmoid 中心点。 */
@@ -128,6 +145,8 @@ export interface CompiledGraphwarFormulaMaterials {
   algorithm: AlgorithmMode;
   /** Abs 算法当前精度下仍会输出的连接段。 */
   absSegments?: readonly CompiledAbsConnectorSegment[];
+  /** ABS y'' 当前精度下仍会输出的平滑斜率变化脉冲。 */
+  absSecondDerivativeFormula?: CompiledAbsSecondDerivativeFormula;
   /** Step 算法当前精度下仍会输出的阶跃项。 */
   stepFormula?: CompiledStepFormula;
   /** PCHIP/Akima 当前精度下的文本等价 Hermite 和软权重常量。 */
@@ -167,9 +186,20 @@ export function buildFormula(
         terms,
       };
     }
+    if (mode === "ddy") {
+      return {
+        // y''= 用平滑脉冲近似硬折线的斜率变化；完整轨迹模拟负责裁决尾值误差。
+        // 当前没有缩短表达式的需求，因此固定使用稳定式，不读取 Step 的防溢出开关。
+        expression: formatAbsSecondDerivativeExpression(
+          getCompiledAbsSecondDerivativeFormula(points, steepness, formulaEvaluation, compiledMaterials),
+          decimalPlaces,
+        ),
+        terms,
+      };
+    }
 
     return {
-      // y= 模式输入相对形状即可，Graphwar 会按发射点补回绝对 y。abs + y''= 由页面禁用，不在这里生成。
+      // y= 模式输入相对形状即可，Graphwar 会按发射点补回绝对 y。
       expression: formatAbsConnectorExpression(segments, decimalPlaces),
       terms,
     };
@@ -222,7 +252,7 @@ export function compileFormulaEvaluator(
   compiledMaterials = compileGraphwarFormulaMaterials(points, steepness, algorithm, options),
 ): CompiledFormulaEvaluator {
   if (algorithm === "abs") {
-    return compileAbsConnectorEvaluator(points, options, compiledMaterials);
+    return compileAbsConnectorEvaluator(points, steepness, options, compiledMaterials);
   }
   if (algorithm === "pchip" || algorithm === "akima") {
     return compileSoftCubicInterpolationEvaluator(points, algorithm, options, compiledMaterials);
@@ -241,6 +271,9 @@ export function compileGraphwarFormulaMaterials(
     return {
       algorithm,
       absSegments: createCompiledAbsConnectorSegments(points, options),
+      ...(options?.equation === "ddy"
+        ? { absSecondDerivativeFormula: createCompiledAbsSecondDerivativeFormula(points, steepness, options) }
+        : {}),
     };
   }
   if (algorithm === "step") {
@@ -511,6 +544,18 @@ function getCompiledAbsConnectorSegments(
     : createCompiledAbsConnectorSegments(points, options);
 }
 
+/** ABS y'' 文本和求值器必须共用同一份量化脉冲，避免斜率差重复计算。 */
+function getCompiledAbsSecondDerivativeFormula(
+  points: readonly GraphPoint[],
+  steepness: number,
+  options: FormulaEvaluationOptions | undefined,
+  compiledMaterials: CompiledGraphwarFormulaMaterials | undefined,
+) {
+  return compiledMaterials?.algorithm === "abs" && compiledMaterials.absSecondDerivativeFormula
+    ? compiledMaterials.absSecondDerivativeFormula
+    : createCompiledAbsSecondDerivativeFormula(points, steepness, options);
+}
+
 function getCompiledStepFormula(
   points: readonly GraphPoint[],
   steepness: number,
@@ -564,6 +609,44 @@ function createCompiledAbsConnectorSegments(
   return segments;
 }
 
+/** 从完整原始分段生成斜率变化；零斜率段也会影响相邻折点，不能沿用 y= 的压缩连接段。 */
+function createCompiledAbsSecondDerivativeFormula(
+  points: readonly GraphPoint[],
+  steepness: number,
+  options?: FormulaEvaluationOptions,
+): CompiledAbsSecondDerivativeFormula {
+  const decimalPlaces = getFormulaDecimalPlaces(options);
+  const formulaSteepness = quantizeStepFormulaSteepness(steepness, decimalPlaces);
+  const segmentSlopes = createSegmentSlopes(points);
+  const pulses: CompiledAbsSecondDerivativePulse[] = [];
+  for (let index = 1; index < segmentSlopes.length; index += 1) {
+    const coefficient = quantizeFormulaCoefficient(
+      formulaSteepness * (segmentSlopes[index] - segmentSlopes[index - 1]),
+      decimalPlaces,
+    );
+    if (coefficient !== 0) {
+      pulses.push({
+        coefficient,
+        formulaCenterX: createCompiledFormulaXCenter(points[index].x, options),
+      });
+    }
+  }
+
+  const finalSlope = segmentSlopes.at(-1);
+  const finalPoint = points.at(-1);
+  if (finalSlope !== undefined && finalPoint) {
+    const coefficient = quantizeFormulaCoefficient(-formulaSteepness * finalSlope, decimalPlaces);
+    if (coefficient !== 0) {
+      // 发射点由初始 y' 直接建立首段斜率；只在末点补脉冲，让轨迹在路径后恢复水平。
+      pulses.push({
+        coefficient,
+        formulaCenterX: createCompiledFormulaXCenter(finalPoint.x, options),
+      });
+    }
+  }
+  return { formulaSteepness, pulses };
+}
+
 /** 正长度参数在文本里用普通数字格式化，应与 formatDecimal 的舍入规则一致。 */
 function createCompiledFormulaDistance(value: number, options?: FormulaEvaluationOptions) {
   const decimalPlaces = getFormulaDecimalPlaces(options);
@@ -573,10 +656,15 @@ function createCompiledFormulaDistance(value: number, options?: FormulaEvaluatio
 /** 预编译 abs 连接公式，把每段的端点和系数固定下来，采样时只做代入求值。 */
 function compileAbsConnectorEvaluator(
   points: readonly GraphPoint[],
+  steepness: number,
   options?: FormulaEvaluationOptions,
   compiledMaterials?: CompiledGraphwarFormulaMaterials,
 ): CompiledFormulaEvaluator {
   const segments = getCompiledAbsConnectorSegments(points, options, compiledMaterials);
+  const secondDerivativeFormula =
+    options?.equation === "ddy"
+      ? getCompiledAbsSecondDerivativeFormula(points, steepness, options, compiledMaterials)
+      : undefined;
 
   return {
     evaluateFirstDerivativeY(x) {
@@ -591,8 +679,18 @@ function compileAbsConnectorEvaluator(
       }
       return slope ?? 0;
     },
-    evaluateSecondDerivativeY() {
-      return Number.NaN;
+    evaluateSecondDerivativeY(x) {
+      if (!secondDerivativeFormula) {
+        return Number.NaN;
+      }
+
+      let acceleration = 0;
+      for (let index = secondDerivativeFormula.pulses.length - 1; index >= 0; index -= 1) {
+        const pulse = secondDerivativeFormula.pulses[index];
+        const t = secondDerivativeFormula.formulaSteepness * (x - pulse.formulaCenterX);
+        acceleration = pulse.coefficient * evaluateCompiledStepStableFirstDerivativeBody(t) + acceleration;
+      }
+      return acceleration;
     },
     evaluateY(x) {
       // 输出文本只描述相对形状，绝对高度由 Graphwar 发射点 offset 补回；提前加 baseY 会引入一次无谓消去和 ULP 差异。
@@ -827,11 +925,14 @@ function formatStepFirstDerivativeExpression(
       continue;
     }
 
-    // 一阶导可直接替换 exp 文本；稳定版和直写版的代数结构相同。
-    const expText = term.derivativeUsesOverflowProtection
-      ? formatStableStepDerivativeExp(formula.formulaSteepness, term.formulaCenterX, decimalPlaces)
-      : formatDirectStepDerivativeExp(formula.formulaSteepness, term.formulaCenterX, decimalPlaces);
-    parts.push(formatSignedRawTerm(term.firstDerivativeCoefficient, `${expText}/(1+${expText})^2`, decimalPlaces));
+    let body: string;
+    if (term.derivativeUsesOverflowProtection) {
+      body = formatStableStepFirstDerivativeBody(formula.formulaSteepness, term.formulaCenterX, decimalPlaces);
+    } else {
+      const expText = formatDirectStepDerivativeExp(formula.formulaSteepness, term.formulaCenterX, decimalPlaces);
+      body = `${expText}/(1+${expText})^2`;
+    }
+    parts.push(formatSignedRawTerm(term.firstDerivativeCoefficient, body, decimalPlaces));
   }
   return cleanupExpression(parts.join("")) || "0";
 }
@@ -924,6 +1025,24 @@ function formatAbsConnectorFirstDerivativeExpression(
       isGraphwarSignProtected(signProtection, segment.sourceSegmentIndex, GraphwarSignRole.EndX),
     )}`;
     parts.push(formatSignedRawTerm(segment.coefficient, `(${body})`, decimalPlaces));
+  }
+  return cleanupExpression(parts.join("")) || "0";
+}
+
+/** 格式化 ABS y'' 的平滑斜率变化脉冲。 */
+function formatAbsSecondDerivativeExpression(
+  formula: CompiledAbsSecondDerivativeFormula,
+  decimalPlaces: number | undefined,
+) {
+  const parts: string[] = [];
+  for (const pulse of formula.pulses) {
+    parts.push(
+      formatSignedRawTerm(
+        pulse.coefficient,
+        formatStableStepFirstDerivativeBody(formula.formulaSteepness, pulse.formulaCenterX, decimalPlaces),
+        decimalPlaces,
+      ),
+    );
   }
   return cleanupExpression(parts.join("")) || "0";
 }
@@ -1231,6 +1350,12 @@ function formatStepDerivativeArgument(steepness: number, centerX: number, decima
 /** 格式化 exp(-abs(a*(x+c)))，避免导数项产生巨大的 exp(...) 中间值。 */
 function formatStableStepDerivativeExp(steepness: number, centerX: number, decimalPlaces?: number) {
   return `exp(-abs(${formatStepDerivativeArgument(steepness, centerX, decimalPlaces)}))`;
+}
+
+/** 用 q=exp(-abs(t)) 输出 q/(1+q)^2。它与直接写法 exp(-t)/(1+exp(-t))^2 数学等价，但能避免 exp(-t) 溢出后的 Infinity/Infinity -> NaN。 */
+function formatStableStepFirstDerivativeBody(steepness: number, centerX: number, decimalPlaces?: number) {
+  const q = formatStableStepDerivativeExp(steepness, centerX, decimalPlaces);
+  return `${q}/(1+${q})^2`;
 }
 
 /** 格式化朴素 exp(-a*(x+c))，与 Graphwar 实际表达式数值行为一致。 */

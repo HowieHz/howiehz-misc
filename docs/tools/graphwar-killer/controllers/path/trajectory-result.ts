@@ -10,6 +10,7 @@ import type {
   PixelPoint,
   ToolWorkflowMode,
 } from "../../core/types";
+import { formulaModeUsesSteepness } from "../../formula/generation/capabilities";
 import type {
   GraphwarTrajectoryCollisionSettings,
   GraphwarTrajectoryFormulaSettings,
@@ -579,8 +580,8 @@ export function useGraphwarTrajectoryResult(
     if (
       points.length < 2 ||
       !options.settings.precisionValid.value ||
-      (options.settings.algorithmMode.value === "step" && !options.settings.steepnessValid.value) ||
-      (options.settings.algorithmMode.value === "abs" && options.settings.equationMode.value === "ddy") ||
+      (formulaModeUsesSteepness(options.settings.algorithmMode.value, options.settings.equationMode.value) &&
+        !options.settings.steepnessValid.value) ||
       options.settings.isEquationModeDisabled(options.settings.equationMode.value)
     ) {
       return undefined;

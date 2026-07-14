@@ -17,7 +17,7 @@ import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../
 import { nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
-import { resolveGraphwarTrajectory } from "../../formula/trajectory/sampling";
+import { tryResolveGraphwarTrajectoryCandidate } from "../../formula/trajectory/sampling";
 import type {
   GraphwarStepGlitchFormulaPrefix,
   GraphwarStepGlitchXWindow,
@@ -651,7 +651,7 @@ function replayPathToControlX(
       .slice(options.sourcePath.length)
       .map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
   ];
-  const { context: formulaContext, result } = resolveGraphwarTrajectory({
+  const resolved = tryResolveGraphwarTrajectoryCandidate({
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     collision: {
@@ -668,6 +668,10 @@ function replayPathToControlX(
     stopOnTargetsComplete: false,
     targetSequence,
   });
+  if (!resolved) {
+    return { reachedTargetCount: 0, targetsHit: false };
+  }
+  const { context: formulaContext, result } = resolved;
   if (formulaContext.formulaPoints.length < 2) {
     return { reachedTargetCount: 0, targetsHit: false };
   }

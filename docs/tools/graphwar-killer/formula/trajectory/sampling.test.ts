@@ -217,6 +217,7 @@ describe("Generated formula evaluator equivalence", () => {
   const cases: readonly { algorithm: AlgorithmMode; equation: EquationMode }[] = [
     { algorithm: "abs", equation: "y" },
     { algorithm: "abs", equation: "dy" },
+    { algorithm: "abs", equation: "ddy" },
     { algorithm: "step", equation: "y" },
     { algorithm: "step", equation: "dy" },
     { algorithm: "step", equation: "ddy" },
@@ -230,12 +231,10 @@ describe("Generated formula evaluator equivalence", () => {
 
   for (const testCase of cases) {
     it(`matches parsed ${testCase.algorithm} ${testCase.equation} output exactly`, () => {
-      const points = [
-        createGraphPoint(-10, -1),
-        createGraphPoint(-7, 2),
-        createGraphPoint(-3, -2),
-        createGraphPoint(1, 1),
-      ];
+      const points =
+        testCase.algorithm === "pchip" && testCase.equation === "ddy"
+          ? [createGraphPoint(-10, 0), createGraphPoint(-7, 0), createGraphPoint(-3, 0), createGraphPoint(1, 0)]
+          : [createGraphPoint(-10, -1), createGraphPoint(-7, 2), createGraphPoint(-3, -2), createGraphPoint(1, 1)];
       const resolved = resolveGraphwarTrajectory({
         bounds,
         boundsRect,
@@ -302,6 +301,30 @@ describe("Generated formula evaluator equivalence", () => {
     );
 
     expect(Number.isNaN(evaluator.evaluateSecondDerivativeY(53_950_000))).toBe(false);
+  });
+});
+
+describe("pathfinding formula convergence", () => {
+  it("rejects only a non-convergent formula candidate through the normal pathfinding result", () => {
+    const target = toPixel(1, 1);
+    const result = sampleGraphwarPathTargetSequence({
+      bounds,
+      boundsRect,
+      points: [toPixel(-10, -1), toPixel(-7, 2), toPixel(-3, -2), target],
+      settings: {
+        algorithm: "pchip",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      targetHitRadiusPixels: 1,
+      targetPoints: [target],
+    });
+
+    expect(result.reachesTargetSequenceBeforeObstacle).toBe(false);
+    expect(result.sample.stopReason).toBe("unsupported");
   });
 });
 

@@ -126,7 +126,7 @@ export interface GraphwarKillerLocale {
     soldierTemplateCandidateTopRatioRange: string;
     templateMatchingWorkerCountInteger: string;
     templateMatchingWorkerCountRange: string;
-    stepSteepnessNumber: string;
+    steepnessNumber: string;
     decimalPlacesInteger: string;
     decimalPlacesRange: (max: number) => string;
   };
@@ -135,6 +135,7 @@ export interface GraphwarKillerLocale {
     activeEquation: {
       abs: string;
       absDerivative: string;
+      absSecondDerivative: string;
       akima: string;
       akimaFirstDerivative: string;
       akimaSecondDerivative: string;
@@ -545,9 +546,9 @@ export interface GraphwarKillerLocale {
       stepGlitchModeInactiveReason: string;
       stepGlitchModeObstacleRequiredReason: string;
       stepGlitchModeTitle: string;
-      stepSteepness: string;
-      stepSteepnessAriaLabel: string;
-      stepSteepnessTitle: string;
+      steepness: string;
+      steepnessAriaLabel: string;
+      steepnessTitle: string;
       title: string;
     };
   };

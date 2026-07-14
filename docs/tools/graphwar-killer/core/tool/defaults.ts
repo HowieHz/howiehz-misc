@@ -21,10 +21,8 @@ interface GraphwarToolDefaults {
   magnifierSize: number;
   /** 放大镜默认缩放倍数。 */
   magnifierZoom: number;
-  /** Step 默认陡峭度；满高跳转按半像素舍入可在一个 Graphwar 横向像素内完成。 */
+  /** 公式默认陡峭度；Step 满高跳转按半像素舍入可在一个 Graphwar 横向像素内完成。 */
   steepness: number;
-  /** 发射点固定点迭代次数上限，避免公式点调整陷入长循环。 */
-  formulaLaunchPointIterations: number;
   /** 自动障碍识别保留连通域的默认最小面积。 */
   obstacleMinArea: number;
   /** 士兵模板候选投票排序后参与完整匹配的默认比例。 */
@@ -53,7 +51,6 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
   magnifierSize: 132,
   magnifierZoom: 3,
   steepness: 210,
-  formulaLaunchPointIterations: 8,
   obstacleMinArea: 50,
   soldierTemplateCandidateTopRatio: 0.1,
   templateMatchingWorkerCount: 4,

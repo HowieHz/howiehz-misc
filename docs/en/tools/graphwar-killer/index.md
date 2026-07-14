@@ -38,6 +38,8 @@ import { graphwarKillerLocale } from "./locale";
 
 The tool saves separate algorithm settings for `y`, `y'`, and `y''`. The defaults are Double Absolute Value for `y`, Step with Glitch Mode for `y'`, and Step for `y''`.
 
+Steepness applies to every Step formula and to the smooth turn pulses used by Double Absolute Value `y''`. Double Absolute Value `y''` always uses the stable pulse formula and does not use Step's overflow-protection switch.
+
 ### Canvas Tools {#graphwar-killer-canvas-interaction}
 
 - Snap Soldiers snaps selections to detected soldiers and uses their actual hit circles.
@@ -58,7 +60,7 @@ To stop a manual One-Click Clear run and keep its current result without firing,
 
 | Function algorithm    | Game mode        | Path Planning | One-Click Clear | Route style                        |
 | --------------------- | ---------------- | ------------- | --------------- | ---------------------------------- |
-| Double Absolute Value | `y`, `y'`        | Supported     | Supported       | Direct point-to-point lines        |
+| Double Absolute Value | `y`, `y'`, `y''` | Supported     | Supported       | Direct lines with smooth turns     |
 | Step                  | `y`, `y'`, `y''` | Supported     | Supported       | Right-angle paths                  |
 | Step (Glitch Mode)    | `y'`             | Supported     | Supported       | Horizontal scan and vertical jumps |
 | PCHIP                 | `y`, `y'`, `y''` | Supported     | —               | Smooth curves                      |

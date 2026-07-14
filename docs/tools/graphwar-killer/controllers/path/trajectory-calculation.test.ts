@@ -41,6 +41,54 @@ describe("main trajectory calculation", () => {
     expect(outcome.result.warningReason).toBeUndefined();
   });
 
+  it("keeps the analytic ABS y'' launch angle at full precision", () => {
+    const start = createGraphPoint(-10, 0);
+    const target = createGraphPoint(-3, 4);
+    const outcome = calculateGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: [start, target, createGraphPoint(5, 4)],
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+      type: "solver",
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+    expect(outcome.result.formulaResult?.expression).toContain("exp(-abs(");
+    expect(outcome.result.secondOrderLaunchAngleDegrees).toBeCloseTo(
+      (Math.atan2(target.y - start.y, target.x - start.x) * 180) / Math.PI,
+      12,
+    );
+  });
+
+  it("reports strict launch-point non-convergence as a formula-stage failure", () => {
+    const outcome = calculateGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: [createGraphPoint(-10, -1), createGraphPoint(-7, 2), createGraphPoint(-3, -2), createGraphPoint(1, 1)],
+      settings: {
+        algorithm: "pchip",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      type: "solver",
+    });
+
+    expect(outcome).toMatchObject({ ok: false, stage: "formula" });
+  });
+
   it("simulates a user expression without producing solver-only fields", () => {
     const outcome = calculateGraphwarTrajectory({
       bounds,

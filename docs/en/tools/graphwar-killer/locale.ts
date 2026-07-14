@@ -21,7 +21,7 @@ export const graphwarKillerLocale = {
       label: "y''",
       formulaPrefix: "y''=",
       description: "Output a function's second derivative",
-      title: "Generate or simulate a second derivative in y'' mode; some algorithms are unavailable",
+      title: "Generate or simulate a second derivative in y'' mode",
     },
   ],
   toolWorkflowModes: [
@@ -40,7 +40,7 @@ export const graphwarKillerLocale = {
     {
       value: "abs",
       label: "Double absolute value",
-      title: "Connect path points with shorter expressions for y and y'",
+      title: "Connect path points with shorter expressions; y'' uses a smooth second-derivative approximation",
     },
     {
       value: "step",
@@ -85,12 +85,13 @@ export const graphwarKillerLocale = {
     soldierTemplateCandidateTopRatioRange: "Candidate trim must be greater than 0 and no greater than 1",
     templateMatchingWorkerCountInteger: "Template matching workers must be an integer",
     templateMatchingWorkerCountRange: "Template matching workers must be between 1 and 128",
-    stepSteepnessNumber: "Step steepness must be a number greater than 0",
+    steepnessNumber: "Steepness must be a number greater than 0",
   },
   status: {
     activeEquation: {
       abs: "Output the double absolute-value connector function",
       absDerivative: "Output the first derivative of the double absolute-value connector function",
+      absSecondDerivative: "Output a smooth second-derivative approximation of the double-absolute path",
       akima: "Output the soft-piecewise expression for Akima cubic interpolation",
       akimaFirstDerivative: "Output the exact first derivative of the Akima soft-piecewise expression",
       akimaSecondDerivative: "Output the exact second derivative of the Akima soft-piecewise expression",
@@ -883,9 +884,10 @@ export const graphwarKillerLocale = {
       stepGlitchModeInactiveReason: "Switch to Step y' to use it",
       stepGlitchModeObstacleRequiredReason: "Requires obstacle data",
       stepGlitchModeTitle: "Use with Step y' to tunnel past obstacles; accurate obstacle and soldier data is required",
-      stepSteepness: "Step steepness a",
-      stepSteepnessAriaLabel: "Step function steepness a",
-      stepSteepnessTitle: "Set Step steepness; higher values make sharper turns and trigger overflow protection sooner",
+      steepness: "Steepness k",
+      steepnessAriaLabel: "Formula steepness k",
+      steepnessTitle:
+        "Set the steepness of Step turns or Double Absolute Value y'' pulses; higher values concentrate the change",
       title: "Settings",
     },
   },

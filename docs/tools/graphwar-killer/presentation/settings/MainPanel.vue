@@ -66,8 +66,10 @@ export interface GraphwarSettingsPanelModel {
   stepGlitchModeState: GraphwarControlCapability["state"];
   /** 邪道偏好当前没有效果时的可见说明。 */
   stepGlitchModeReason?: string;
-  /** Step 陡峭度输入框当前文本；非法输入应原样保留给父页面校验。 */
+  /** 公式陡峭度输入框当前文本；非法输入应原样保留给父页面校验。 */
   steepnessText: string;
+  /** 当前公式组合是否消费陡峭度。 */
+  steepnessVisible: boolean;
   /** 当前页面主工作流。 */
   toolWorkflowMode: ToolWorkflowMode;
   /** 页面主工作流选项。 */
@@ -228,17 +230,17 @@ const steepnessText = computed({
           >
         </label>
         <label
-          v-if="panel.algorithmMode === 'step'"
+          v-if="panel.steepnessVisible"
           class="graphwar-killer__steepness-label"
-          :title="locale.ui.settings.stepSteepnessTitle"
+          :title="locale.ui.settings.steepnessTitle"
         >
-          {{ locale.ui.settings.stepSteepness }}
+          {{ locale.ui.settings.steepness }}
           <input
             v-model="steepnessText"
             inputmode="decimal"
             autocomplete="off"
-            :aria-label="locale.ui.settings.stepSteepnessAriaLabel"
-            :title="locale.ui.settings.stepSteepnessTitle"
+            :aria-label="locale.ui.settings.steepnessAriaLabel"
+            :title="locale.ui.settings.steepnessTitle"
           >
         </label>
         <ToggleField

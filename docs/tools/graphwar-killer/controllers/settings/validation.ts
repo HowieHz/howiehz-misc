@@ -11,7 +11,7 @@ interface GraphwarReadonlyRef<T> {
 
 /** 坐标边界解析结果；失败分支直接携带本地化校验文案。 */
 export type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: string };
-/** Step 陡峭度解析结果；只有 step 算法会消费成功值。 */
+/** 公式陡峭度解析结果；Step 全模式和 ABS y'' 会消费成功值。 */
 export type ParsedSteepness = { ok: true; steepness: number } | { ok: false; message: string };
 /** 公式输出小数位解析结果；只控制生成公式文本，不约分内部路径点或发射点。 */
 export type ParsedPrecision = { ok: true; decimalPlaces: number } | { ok: false; message: string };
@@ -157,7 +157,7 @@ export function useGraphwarSettingsValidation(
   const parsedSteepness = computed<ParsedSteepness>(() => {
     const steepness = parseFiniteNumber(options.inputs.formula.steepnessText.value);
     if (steepness === undefined || steepness <= 0) {
-      return { ok: false as const, message: options.getLocale().validation.stepSteepnessNumber };
+      return { ok: false as const, message: options.getLocale().validation.steepnessNumber };
     }
     return { ok: true as const, steepness };
   });

@@ -108,6 +108,7 @@ import {
   type TransferStatus,
 } from "./core/types";
 import type { GraphwarDetectionBox } from "./detection/objects";
+import { formulaModeUsesSteepness } from "./formula/generation/capabilities";
 import type { GraphwarKillerLocale } from "./locale-types";
 import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";
 import type { GraphwarOneClickClearIncumbent } from "./pathfinding/one-click-clear/search";
@@ -261,6 +262,7 @@ const effectiveStepGlitchModeEnabled = computed(
     solverEquationMode.value === "dy" &&
     stepGlitchModeEnabled.value,
 );
+const formulaUsesSteepness = computed(() => formulaModeUsesSteepness(algorithmMode.value, solverEquationMode.value));
 const precisionText = ref(String(DEFAULT_FORMULA_DECIMAL_PLACES));
 const advancedSettingsVisible = ref(false);
 const simulatorSkipUnknownCharacters = ref(true);
@@ -809,7 +811,11 @@ const activeEquationDescription = computed(() => {
     return locale.status.activeEquation.simulator;
   }
   if (algorithmMode.value === "abs") {
-    return equationMode.value === "dy" ? locale.status.activeEquation.absDerivative : locale.status.activeEquation.abs;
+    return equationMode.value === "y"
+      ? locale.status.activeEquation.abs
+      : equationMode.value === "dy"
+        ? locale.status.activeEquation.absDerivative
+        : locale.status.activeEquation.absSecondDerivative;
   }
   if (algorithmMode.value === "pchip") {
     return equationMode.value === "y"
@@ -834,7 +840,7 @@ const settingsMessage = computed(() => {
   if (toolWorkflowMode.value !== "simulator" && !parsedPrecision.value.ok) {
     return parsedPrecision.value.message;
   }
-  if (toolWorkflowMode.value !== "simulator" && algorithmMode.value === "step" && !parsedSteepness.value.ok) {
+  if (toolWorkflowMode.value !== "simulator" && formulaUsesSteepness.value && !parsedSteepness.value.ok) {
     return parsedSteepness.value.message;
   }
   return "";
@@ -856,10 +862,7 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
   return {
     advancedSettingsVisible: advancedSettingsVisible.value,
     algorithmMode: algorithmMode.value,
-    algorithmModes: algorithmModes.value.map((mode) => ({
-      ...mode,
-      disabled: equationMode.value === "ddy" && mode.value === "abs",
-    })),
+    algorithmModes: algorithmModes.value.map((mode) => ({ ...mode, disabled: false })),
     equationMode: equationMode.value,
     equationModes: equationModes.value.map((mode) => ({
       ...mode,
@@ -890,6 +893,7 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
           ? "dormant"
           : "normal",
     stepOverflowProtectionEnabled: stepOverflowProtectionEnabled.value,
+    steepnessVisible: formulaUsesSteepness.value,
     steepnessText: steepnessText.value,
     toolWorkflowMode: toolWorkflowMode.value,
     toolWorkflowModes: toolWorkflowModes.value,
@@ -1094,8 +1098,9 @@ const graphwarCapabilities = computed(() =>
         pathfinding: smartPathfindingInProgress.value,
       },
       formula: {
+        // 托管会跨三个方程 profile 运行；其 y'' 支持算法始终需要陡峭度，不能只校验当前 profile。
         managedSettingsValid: parsedBounds.value.ok && parsedPrecision.value.ok && parsedSteepness.value.ok,
-        oneClickClearSupported: supportsOneClickClear(algorithmMode.value, equationMode.value),
+        oneClickClearSupported: supportsOneClickClear(algorithmMode.value),
         settingsValid: !settingsMessage.value,
         usesStepGlitchRouting: effectiveStepGlitchModeEnabled.value,
       },
@@ -1467,7 +1472,7 @@ const calculationMessage = computed(() => {
     }
     return "";
   }
-  if (algorithmMode.value === "step" && !parsedSteepness.value.ok) {
+  if (formulaUsesSteepness.value && !parsedSteepness.value.ok) {
     return "";
   }
   if (pathPixels.value.length < 2) {
@@ -2321,7 +2326,7 @@ watch(oneClickClearDeleteCheckRadiusText, () => {
   clearSmartPathfindingStatus();
 });
 
-/** 三种游戏模式始终可进入；不兼容算法由对应 profile 的算法选择器禁用。 */
+/** 三种游戏模式始终可进入。 */
 function isEquationModeDisabled() {
   return false;
 }
@@ -2351,7 +2356,7 @@ function setToolWorkflowMode(mode: ToolWorkflowMode) {
   hoveredDetectedSoldierId.value = undefined;
 }
 
-/** 切换公式解释模式；若算法不支持则忽略，避免 UI 进入无效组合。 */
+/** 切换公式解释模式；各模式独立保留自己的算法 profile。 */
 function setEquationMode(mode: EquationMode) {
   if (graphwarManagedModeEnabled.value || equationMode.value === mode) {
     return;
@@ -2360,9 +2365,9 @@ function setEquationMode(mode: EquationMode) {
   equationMode.value = mode;
 }
 
-/** 更新当前游戏模式的公式算法；y'' 不接受双绝对值，但不会影响其他 profile。 */
+/** 更新当前游戏模式的公式算法，不影响其他方程 profile。 */
 function setAlgorithmMode(mode: AlgorithmMode) {
-  if (graphwarManagedModeEnabled.value || (solverEquationMode.value === "ddy" && mode === "abs")) {
+  if (graphwarManagedModeEnabled.value) {
     return;
   }
   algorithmMode.value = mode;
@@ -3517,7 +3522,7 @@ function getSmartPathfindingDisabledMessage() {
 
 /** 复用单一能力表判断当前组合，避免托管和手动入口各自硬编码算法。 */
 function isOneClickClearModeUnsupported() {
-  return !supportsOneClickClear(algorithmMode.value, equationMode.value);
+  return !supportsOneClickClear(algorithmMode.value);
 }
 
 /** 切换友伤设置；该设置会改变士兵是否写入障碍 mask，因此需要重建路线。 */

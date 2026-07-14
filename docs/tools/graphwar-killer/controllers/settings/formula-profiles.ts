@@ -58,7 +58,7 @@ export function updateGraphwarFormulaProfile(
 
 /** Delegates support decisions to the one-click-clear implementation's authoritative contract. */
 export function graphwarFormulaProfileSupportsOneClickClear(profiles: GraphwarFormulaProfiles, equation: EquationMode) {
-  return supportsOneClickClear(profiles[equation].algorithm, equation);
+  return supportsOneClickClear(profiles[equation].algorithm);
 }
 
 /** Projects only unsupported profiles onto managed mode's supported fallbacks without mutating the input. */

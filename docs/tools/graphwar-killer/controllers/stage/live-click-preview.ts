@@ -13,6 +13,7 @@ import type {
   ToolWorkflowMode,
 } from "../../core/types";
 import type { GraphwarDetectionBox } from "../../detection/objects";
+import { formulaModeUsesSteepness } from "../../formula/generation/capabilities";
 import type {
   GraphwarTrajectoryCollisionSettings,
   GraphwarTrajectoryFormulaSettings,
@@ -504,8 +505,8 @@ export function useGraphwarLiveClickPreview(
     if (
       options.path.pathPixels.value.length === 0 ||
       !options.settings.precisionValid.value ||
-      (options.settings.algorithmMode.value === "step" && !options.settings.steepnessValid.value) ||
-      (options.settings.algorithmMode.value === "abs" && options.settings.equationMode.value === "ddy") ||
+      (formulaModeUsesSteepness(options.settings.algorithmMode.value, options.settings.equationMode.value) &&
+        !options.settings.steepnessValid.value) ||
       options.settings.isEquationModeDisabled(options.settings.equationMode.value)
     ) {
       return undefined;

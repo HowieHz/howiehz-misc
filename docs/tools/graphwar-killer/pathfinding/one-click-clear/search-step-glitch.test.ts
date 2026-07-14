@@ -20,6 +20,7 @@ const samplingMockState = vi.hoisted(() => ({
     | (typeof import("../../formula/trajectory/sampling"))["resolveGraphwarTrajectory"]
     | undefined,
   formulaContextCalls: 0,
+  formulaContextInitialStatePresent: [] as boolean[],
   pathTargetSequenceCalls: 0,
   requiredTargets: [] as { x: number; y: number }[][],
   targetSequences: [] as { x: number; y: number }[][],
@@ -31,9 +32,15 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
   return {
     ...original,
     resolveGraphwarTrajectory: vi.fn((options: Parameters<typeof original.resolveGraphwarTrajectory>[0]) => {
-      samplingMockState.formulaContextCalls += 1;
       return original.resolveGraphwarTrajectory(options);
     }),
+    tryResolveGraphwarTrajectoryCandidate: vi.fn(
+      (options: Parameters<typeof original.tryResolveGraphwarTrajectoryCandidate>[0]) => {
+        samplingMockState.formulaContextCalls += 1;
+        samplingMockState.formulaContextInitialStatePresent.push(options.initialState !== undefined);
+        return original.tryResolveGraphwarTrajectoryCandidate(options);
+      },
+    ),
     sampleGraphwarPathTargetSequence: vi.fn(
       (options: Parameters<typeof original.sampleGraphwarPathTargetSequence>[0]) => {
         samplingMockState.pathTargetSequenceCalls += 1;
@@ -120,6 +127,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.scans.length = 0;
     samplingMockState.pathTargetSequenceCalls = 0;
     samplingMockState.formulaContextCalls = 0;
+    samplingMockState.formulaContextInitialStatePresent.length = 0;
     samplingMockState.requiredTargets.length = 0;
     samplingMockState.targetSequences.length = 0;
   });
@@ -333,6 +341,47 @@ describe("Step glitch one-click-clear target retries", () => {
     });
 
     expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+  });
+
+  it("replays ABS y'' candidates from the muzzle instead of reusing a smooth-tail prefix", async () => {
+    const start = toPixel(-11, 0);
+    const first = toPixel(-9, 0);
+    const second = toPixel(-6, 0);
+    const candidates = [
+      { enemy: true, hitCenter: first, hitRadius: 12, id: "first" },
+      { enemy: true, hitCenter: second, hitRadius: 12, id: "second" },
+    ];
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        timings: [],
+      }),
+      candidates,
+      deleteOptimizationEnabled: false,
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: candidates,
+      pathPoints: [start],
+      routeMask: { mask: createEmptyMask(), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result.type).toBe("success");
+    expect(samplingMockState.formulaContextCalls).toBe(2);
+    expect(samplingMockState.formulaContextInitialStatePresent).toEqual([false, false]);
   });
 });
 

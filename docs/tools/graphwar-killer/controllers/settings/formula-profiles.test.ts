@@ -62,7 +62,7 @@ describe("formula profiles", () => {
   it.each([
     ["y", "abs", true],
     ["dy", "abs", true],
-    ["ddy", "abs", false],
+    ["ddy", "abs", true],
     ["y", "step", true],
     ["dy", "pchip", false],
   ] as const)("reports %s %s support through the authoritative contract", (equation, algorithm, supported) => {
@@ -118,6 +118,7 @@ describe("formula profiles", () => {
     );
     const secondPlan = createGraphwarManagedFormulaProfileRepairPlan(repaired);
 
+    expect(repaired.ddy).toEqual({ algorithm: "abs" });
     expect(secondPlan).toEqual({});
     expect(applyGraphwarManagedFormulaProfileRepairPlan(repaired, secondPlan)).toBe(repaired);
   });

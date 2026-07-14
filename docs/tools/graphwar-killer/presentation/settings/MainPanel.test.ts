@@ -42,6 +42,25 @@ describe("Settings MainPanel", () => {
     expect(wrapper.emitted("startDebugActivationHold")).toHaveLength(1);
     expect(wrapper.emitted("finishDebugActivationHold")).toHaveLength(1);
   });
+
+  it("shows steepness but not the Step overflow switch for ABS y''", () => {
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        panel: {
+          ...createPanel(),
+          algorithmMode: "abs",
+          algorithmModes: [{ disabled: false, label: "ABS", title: "ABS", value: "abs" }],
+          equationMode: "ddy",
+          equationModes: [{ disabled: false, label: "y''", title: "y''", value: "ddy" }],
+          steepnessVisible: true,
+        },
+      },
+    });
+
+    expect(wrapper.find(`[aria-label="${graphwarKillerLocale.ui.settings.steepnessAriaLabel}"]`).exists()).toBe(true);
+    expect(wrapper.find("#graphwar-killer-overflow-protection").exists()).toBe(false);
+  });
 });
 
 /** Creates the smallest complete settings model needed to exercise the Step option row. */
@@ -56,6 +75,7 @@ function createPanel() {
     interactionDisabled: false,
     precision: { maximum: 12, text: "4" },
     steepnessText: "67",
+    steepnessVisible: true,
     stepGlitchModeEnabled: false,
     stepGlitchModeState: "normal",
     stepOverflowProtectionEnabled: true,

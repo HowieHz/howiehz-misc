@@ -7,7 +7,6 @@ import {
   GRAPHWAR_MAX_ANGLE_LOOPS,
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
-import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint } from "../../core/types";
 import type { AlgorithmMode, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
 import { createGraphwarExpressionEvaluator } from "../expression/evaluator";
@@ -41,7 +40,7 @@ export interface SampleGraphwarTrajectoryOptions {
   soldierCenter: GraphPoint;
   /** 从 initialState 继续时避免重复检查已经接受的前缀命中点。 */
   skipInitialStop?: boolean;
-  /** Step 算法陡峭度。 */
+  /** Step 或 ABS y'' 公式使用的陡峭度。 */
   steepness: number;
 }
 
@@ -49,6 +48,19 @@ export interface SampleGraphwarTrajectoryOptions {
 const FORMULA_LAUNCH_POINT_TOLERANCE = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE / 10;
 /** 发射点收敛比较使用距离平方，避免每轮开方。 */
 const FORMULA_LAUNCH_POINT_TOLERANCE_SQUARED = FORMULA_LAUNCH_POINT_TOLERANCE ** 2;
+
+/** 标记工具自有固定点迭代未达到容差；候选搜索只能把这一类失败当作候选不可用。 */
+export class GraphwarFormulaConvergenceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GraphwarFormulaConvergenceError";
+  }
+}
+
+/** 收窄公式收敛失败，避免候选搜索吞掉其他实现异常。 */
+export function isGraphwarFormulaConvergenceError(error: unknown): error is GraphwarFormulaConvergenceError {
+  return error instanceof GraphwarFormulaConvergenceError;
+}
 
 /** 采样用户直接输入表达式的输入；表达式模式不经过路径点编译。 */
 export interface SampleGraphwarExpressionTrajectoryOptions {
@@ -84,7 +96,7 @@ export interface CreateGraphwarFormulaPathOptions {
   compiledFormulaMaterials?: CompiledGraphwarFormulaMaterials;
   /** 用户选择或 worker 生成的 Graphwar 路径点。 */
   points: readonly GraphPoint[];
-  /** Step 算法陡峭度。 */
+  /** Step 或 ABS y'' 公式使用的陡峭度。 */
   steepness: number;
 }
 
@@ -160,13 +172,27 @@ export function createGraphwarFormulaPathPoints(options: CreateGraphwarFormulaPa
     return [...options.points];
   }
 
-  let formulaPoints = createStepAdjustedFormulaPathPoints(options, options.points);
   const soldierCenter = options.points[0];
-  // 原版只消费最终公式；工具还需让“整条公式算出的发射边缘点”反向收敛为公式首点，因此额外做固定点迭代。
-  for (let index = 0; index < graphwarToolDefaults.formulaLaunchPointIterations; index += 1) {
-    const launchPoint = getLaunchPoint({ ...options, points: formulaPoints }, soldierCenter);
+  if (options.algorithm === "abs" && options.equation === "ddy") {
+    const launchPoint = moveFromSoldierCenter(
+      soldierCenter,
+      getAbsSecondOrderStartAngle(soldierCenter, options.points),
+    );
     if (!isFinitePoint(launchPoint)) {
-      return formulaPoints;
+      throw new GraphwarFormulaConvergenceError("ABS second-order launch point is not finite.");
+    }
+    // 解析角度让首个公式点直接落在枪口；首段斜率由 Graphwar 的初始 y' 建立，不需要发射点脉冲。
+    return [launchPoint, ...options.points.slice(1)];
+  }
+
+  let formulaPoints = createStepAdjustedFormulaPathPoints(options, options.points);
+  // 原版只消费最终公式；工具还需让“整条公式算出的发射边缘点”反向收敛为公式首点，因此额外做固定点迭代。
+  // GRAPHWAR_MAX_ANGLE_LOOPS 只限制异常工作量；达到上限不代表成功，仍必须满足发射点容差。
+  for (let index = 0; index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
+    const angle = getLaunchAngle({ ...options, points: formulaPoints }, soldierCenter);
+    const launchPoint = moveFromSoldierCenter(soldierCenter, angle);
+    if (!isFinitePoint(launchPoint)) {
+      throw new GraphwarFormulaConvergenceError("Formula launch point is not finite.");
     }
 
     const nextTargetPoints = [launchPoint, ...options.points.slice(1)];
@@ -177,7 +203,7 @@ export function createGraphwarFormulaPathPoints(options: CreateGraphwarFormulaPa
     formulaPoints = nextFormulaPoints;
   }
 
-  return formulaPoints;
+  throw new GraphwarFormulaConvergenceError("Formula launch point did not converge.");
 }
 
 /** Step 点击点是用户目标；先解析 canonical 有效 ΔY，再把 sigmoid 中心左移到目标 x 前。 */
@@ -315,10 +341,6 @@ function createFirstOrderEquationStepper(options: SampleGraphwarTrajectoryOption
 
 /** 模拟 y''= 模式：使用建议发射角和 tan(angle) 作为初始 y'，再做二阶 RK4。 */
 function createSecondOrderEquationStepper(options: SampleGraphwarTrajectoryOptions) {
-  if (options.algorithm === "abs") {
-    return { ok: false as const, stopReason: "unsupported" as const };
-  }
-
   const evaluateDDY = createSecondOrderEvaluator(options);
   const angle = getLaunchAngle(options, options.soldierCenter);
   // 已完成的固定点角度迭代直接决定发射点，不能经 getLaunchPoint 再完整迭代一遍。
@@ -413,15 +435,6 @@ function sampleSecondOrderExpression(
   );
 }
 
-/** 按 Graphwar 当前模式计算真实发射点；传入的 center 是用户点选的士兵中心。 */
-function getLaunchPoint(options: CreateGraphwarFormulaPathOptions, center: GraphPoint) {
-  const angle = getLaunchAngle(options, center);
-  if (options.equation === "y" && !Number.isFinite(angle)) {
-    return center;
-  }
-  return moveFromSoldierCenter(center, angle);
-}
-
 /** 按 Graphwar 当前模式计算发射角。 */
 function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: GraphPoint) {
   if (options.equation === "y") {
@@ -431,9 +444,15 @@ function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: Graph
     return getFirstOrderStartAngle(center, createFirstOrderEvaluator(options));
   }
   if (options.algorithm === "abs") {
-    return Number.NaN;
+    return getAbsSecondOrderStartAngle(center, options.points);
   }
   return getSecondOrderStartAngle(center, options);
+}
+
+/** ABS y'' 的初始 y' 就是枪口到首个目标点的割线斜率，因此发射角可直接解析得到。 */
+function getAbsSecondOrderStartAngle(center: GraphPoint, points: readonly GraphPoint[]) {
+  const firstTarget = points[1];
+  return firstTarget ? Math.atan2(firstTarget.y - center.y, firstTarget.x - center.x) : Number.NaN;
 }
 
 /** 创建普通 y= 模式使用的函数值计算器。 */
@@ -482,6 +501,7 @@ function getNormalStartAngle(centerX: number, evaluateY: (x: number) => number) 
   let angle = Math.atan(startTangent);
   let error = Number.POSITIVE_INFINITY;
 
+  // 原版达到循环上限后会直接使用最后角度；这里只复现源码行为，不把它升级成工具收敛失败。
   for (let index = 0; error > GRAPHWAR_ANGLE_ERROR && index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
     const finalX = centerX + GRAPHWAR_GAME_SOLDIER_RADIUS * Math.cos(angle);
     const tangent = (evaluateY(finalX + GRAPHWAR_STEP_SIZE) - evaluateY(finalX)) / GRAPHWAR_STEP_SIZE;
@@ -498,6 +518,7 @@ function getFirstOrderStartAngle(center: GraphPoint, evaluateDY: FirstOrderEvalu
   let angle = 0;
   let error = Number.POSITIVE_INFINITY;
 
+  // 与 y= 相同，100 次后的末值是 Graphwar 既有语义；严格失败只用于工具自有迭代。
   for (let index = 0; error > GRAPHWAR_ANGLE_ERROR && index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
     const finalPoint = moveFromSoldierCenter(center, angle);
     const nextPoint = rk4FirstOrderStep(finalPoint, GRAPHWAR_STEP_SIZE, evaluateDY);
@@ -510,20 +531,23 @@ function getFirstOrderStartAngle(center: GraphPoint, evaluateDY: FirstOrderEvalu
   return angle;
 }
 
-/** Y'' 模式需要手调角度；按发射边缘点处的目标曲线斜率做固定点迭代。 */
+/** 非 ABS 的 Y'' 建议角按发射边缘点处的目标曲线斜率做固定点迭代。 */
 function getSecondOrderStartAngle(center: GraphPoint, options: CreateGraphwarFormulaPathOptions) {
   const evaluateDY = createFirstOrderEvaluator(options);
   let angle = Math.atan(evaluateDY(center.x, center.y));
-  let error = Number.POSITIVE_INFINITY;
 
-  for (let index = 0; error > GRAPHWAR_ANGLE_ERROR && index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
+  // 这是工具建议角，不是 Graphwar y/y' 的源码循环；安全预算耗尽时必须明确失败，不能采用末次近似值。
+  for (let index = 0; index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
     const launchPoint = moveFromSoldierCenter(center, angle);
     const nextAngle = Math.atan(evaluateDY(launchPoint.x, launchPoint.y));
-    error = Math.abs(nextAngle - angle);
+    const error = Math.abs(nextAngle - angle);
     angle = nextAngle;
+    if (error <= GRAPHWAR_ANGLE_ERROR && Number.isFinite(angle)) {
+      return angle;
+    }
   }
 
-  return angle;
+  throw new GraphwarFormulaConvergenceError("Second-order launch angle did not converge.");
 }
 
 /** 从士兵中心沿发射角移动一个 Graphwar 士兵半径。 */

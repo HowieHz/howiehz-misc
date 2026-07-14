@@ -12,7 +12,7 @@ import {
   graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle,
   graphwarTrajectoryReachesGraphXBeforeObstacle,
   sampleGraphwarPathTargetSequence,
-  resolveGraphwarTrajectory,
+  tryResolveGraphwarTrajectoryCandidate,
 } from "../../formula/trajectory/sampling";
 import type {
   GraphwarStepGlitchFormulaPrefix,
@@ -468,7 +468,7 @@ export async function buildGraphwarOneClickClearPath(
   options: GraphwarOneClickClearOptions,
 ): Promise<GraphwarOneClickClearResult> {
   const startedAt = nowMs();
-  if (!supportsOneClickClear(options.settings.algorithm, options.settings.equation)) {
+  if (!supportsOneClickClear(options.settings.algorithm)) {
     return createOneClickClearFailure("unsupported", startedAt, 0);
   }
   if (options.pathPoints.length === 0) {
@@ -1444,34 +1444,36 @@ function validateOneClickClearRouteSegment(
   const currentTargetGraphX = imageToGraphPoint(currentTarget.routePoint, options.bounds, options.boundsRect).x;
   const reusableInitialState =
     options.settings.algorithm !== "step" &&
+    !(options.settings.algorithm === "abs" && options.settings.equation === "ddy") &&
     state.initialState &&
     graphXAdvancesStrictly(state.initialState.currentPoint.x, currentTargetGraphX)
       ? state.initialState
       : undefined;
   const validationTargets = createOneClickClearValidationTargets(options, targetSequence, true);
-  const { context: formulaContext, result } = measureOneClickClearDebugTiming(
-    options,
-    "segment-sample-trajectory",
-    () =>
-      resolveGraphwarTrajectory({
-        bounds: options.bounds,
-        boundsRect: options.boundsRect,
-        collision: {
-          boundaryExpansion: options.simulationBoundaryExpansion,
-          mask: options.simulationMask,
-        },
-        // Step 的后续项会反向改变发射点和旧段尾部；每条候选必须从发射点完整回放。
-        initialState: reusableInitialState,
-        initialReachedRequiredTargetCount: reusableInitialState ? validationTargets.requiredTargets.length : 0,
-        points: mappedPoints,
-        requiredTargets: validationTargets.requiredTargets,
-        settings: options.settings,
-        signProtection: reusableInitialState ? state.signProtection : undefined,
-        skipInitialStop: reusableInitialState !== undefined,
-        soldierCenter: mappedPoints[0],
-        targetSequence: validationTargets.orderedTargets,
-      }),
+  const resolved = measureOneClickClearDebugTiming(options, "segment-sample-trajectory", () =>
+    tryResolveGraphwarTrajectoryCandidate({
+      bounds: options.bounds,
+      boundsRect: options.boundsRect,
+      collision: {
+        boundaryExpansion: options.simulationBoundaryExpansion,
+        mask: options.simulationMask,
+      },
+      // Step 后续项会反向改变旧段；ABS y'' 的平滑脉冲也有折点前尾值，两者都必须从发射点完整回放。
+      initialState: reusableInitialState,
+      initialReachedRequiredTargetCount: reusableInitialState ? validationTargets.requiredTargets.length : 0,
+      points: mappedPoints,
+      requiredTargets: validationTargets.requiredTargets,
+      settings: options.settings,
+      signProtection: reusableInitialState ? state.signProtection : undefined,
+      skipInitialStop: reusableInitialState !== undefined,
+      soldierCenter: mappedPoints[0],
+      targetSequence: validationTargets.orderedTargets,
+    }),
   );
+  if (!resolved) {
+    return undefined;
+  }
+  const { context: formulaContext, result } = resolved;
   if (
     result.reachedTargetCount < validationTargets.orderedTargets.length ||
     result.reachedRequiredTargetCount < validationTargets.requiredTargets.length

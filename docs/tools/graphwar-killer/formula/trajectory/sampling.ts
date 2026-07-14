@@ -34,6 +34,7 @@ import type { FormulaEvaluationOptions, StepGlitchSegment } from "../generation/
 import {
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
+  isGraphwarFormulaConvergenceError,
   sampleGraphwarExpressionTrajectory,
   sampleGraphwarTrajectory,
 } from "../simulation/simulator";
@@ -56,7 +57,7 @@ export interface GraphwarTrajectoryFormulaSettings {
   equation: EquationMode;
   /** 路径生成公式时的 steepness；省略时使用 steepness。 */
   formulaPathSteepness?: number;
-  /** Step 公式的陡峭度。 */
+  /** Step 或 ABS y'' 公式的陡峭度。 */
   steepness: number;
   /** 是否允许 step y'= 在普通 sigmoid 路径区域受阻时替换为邪道门函数项。 */
   stepGlitchMode: boolean;
@@ -310,6 +311,9 @@ export function resolveGraphwarTrajectory(options: {
         steepness: options.settings.steepness,
       });
     } catch (error) {
+      if (isGraphwarFormulaConvergenceError(error)) {
+        throw error;
+      }
       throw new GraphwarTrajectoryResolutionError(error);
     }
     if (changed) {
@@ -321,6 +325,20 @@ export function resolveGraphwarTrajectory(options: {
 
     const context = finalizeGraphwarTrajectoryFormulaContext(options, state);
     return { context, result: stopTracker.createResult(sample) };
+  }
+}
+
+/** 候选搜索只把明确的公式收敛失败视为不可用；实现异常必须继续暴露。 */
+export function tryResolveGraphwarTrajectoryCandidate(
+  options: Parameters<typeof resolveGraphwarTrajectory>[0],
+): ReturnType<typeof resolveGraphwarTrajectory> | undefined {
+  try {
+    return resolveGraphwarTrajectory(options);
+  } catch (error) {
+    if (isGraphwarFormulaConvergenceError(error)) {
+      return undefined;
+    }
+    throw error;
   }
 }
 
@@ -1521,7 +1539,7 @@ export function sampleGraphwarPathTrajectory(options: {
   if (mappedPoints.length < 2) {
     return createEmptyPathTrajectoryResult();
   }
-  const { result } = resolveGraphwarTrajectory({
+  const resolved = tryResolveGraphwarTrajectoryCandidate({
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     collision: {
@@ -1541,6 +1559,10 @@ export function sampleGraphwarPathTrajectory(options: {
     targetHitRadiusPixels: options.targetHitRadiusPixels,
     targetPoint: options.hitTargetPoint,
   });
+  if (!resolved) {
+    return createEmptyPathTrajectoryResult();
+  }
+  const { result } = resolved;
   return {
     earlyStopReason: result.earlyStopReason,
     reachesTargetBeforeObstacle: result.targetHitIndex >= 0,
@@ -1598,23 +1620,12 @@ export function sampleGraphwarPathTargetSequence(options: {
   // 顺序命中校验也从像素路径开始，避免页面和 worker 各自重复公式采样细节。
   const mappedPoints = options.points.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
   if (mappedPoints.length < 2) {
-    return {
-      obstacleHitIndex: -1,
-      reachedRequiredTargetCount: 0,
-      reachedTargetCount: 0,
-      reachesTargetSequenceBeforeObstacle: false,
-      requiredTargetsHitIndex: -1,
-      sample: createEmptyTrajectorySample(),
-      samplePointCount: 0,
-      targetHitIndex: -1,
-      trackedTargetHitIndexes: trackedTargets.map(() => -1),
-      visiblePixels: [],
-    };
+    return createFailedPathTargetSequenceResult(trackedTargets.length);
   }
 
   const stopOnTargetsComplete =
     options.continueAfterTargetsUntilGraphX === undefined ? options.stopOnTargetsComplete : false;
-  const { context, result } = resolveGraphwarTrajectory({
+  const resolved = tryResolveGraphwarTrajectoryCandidate({
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     collision: {
@@ -1634,6 +1645,10 @@ export function sampleGraphwarPathTargetSequence(options: {
     targetSequence,
     trackedTargets,
   });
+  if (!resolved) {
+    return createFailedPathTargetSequenceResult(trackedTargets.length);
+  }
+  const { context, result } = resolved;
   return {
     earlyStopReason: result.earlyStopReason,
     obstacleHitIndex: result.obstacleHitIndex,
@@ -1851,6 +1866,22 @@ function createEmptyPathTrajectoryResult(): GraphwarPathTrajectoryResult {
     reachesTargetBeforeObstacle: false,
     sample: createEmptyTrajectorySample(),
     samplePointCount: 0,
+    visiblePixels: [],
+  };
+}
+
+/** 候选公式收敛失败时返回可判定的失败结果；其他异常继续向调用方暴露。 */
+function createFailedPathTargetSequenceResult(trackedTargetCount: number): GraphwarPathTargetSequenceResult {
+  return {
+    obstacleHitIndex: -1,
+    reachedRequiredTargetCount: 0,
+    reachedTargetCount: 0,
+    reachesTargetSequenceBeforeObstacle: false,
+    requiredTargetsHitIndex: -1,
+    sample: createEmptyTrajectorySample(),
+    samplePointCount: 0,
+    targetHitIndex: -1,
+    trackedTargetHitIndexes: Array.from({ length: trackedTargetCount }, () => -1),
     visiblePixels: [],
   };
 }

@@ -23,7 +23,7 @@ export function createDefaultGraphwarFormulaProfiles(): GraphwarFormulaProfiles 
   return {
     y: { algorithm: "abs" },
     dy: { algorithm: "step", stepGlitchModeEnabled: true },
-    ddy: { algorithm: "step", stepGlitchModeEnabled: false },
+    ddy: { algorithm: "step", stepGlitchModeEnabled: true },
   };
 }
 
@@ -73,7 +73,7 @@ export function createGraphwarManagedFormulaProfileRepairPlan(
     plan.dy = { algorithm: "step", stepGlitchModeEnabled: true };
   }
   if (!graphwarFormulaProfileSupportsOneClickClear(profiles, "ddy")) {
-    plan.ddy = { algorithm: "step", stepGlitchModeEnabled: false };
+    plan.ddy = { algorithm: "step", stepGlitchModeEnabled: true };
   }
   return plan;
 }

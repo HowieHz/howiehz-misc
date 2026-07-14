@@ -18,7 +18,7 @@ describe("formula profiles", () => {
     expect(profiles).toEqual({
       y: { algorithm: "abs" },
       dy: { algorithm: "step", stepGlitchModeEnabled: true },
-      ddy: { algorithm: "step", stepGlitchModeEnabled: false },
+      ddy: { algorithm: "step", stepGlitchModeEnabled: true },
     });
     expect(secondProfiles).not.toBe(profiles);
     expect(secondProfiles.y).not.toBe(profiles.y);
@@ -82,14 +82,14 @@ describe("formula profiles", () => {
 
     expect(plan).toEqual({
       y: { algorithm: "abs" },
-      ddy: { algorithm: "step", stepGlitchModeEnabled: false },
+      ddy: { algorithm: "step", stepGlitchModeEnabled: true },
     });
 
     const repaired = applyGraphwarManagedFormulaProfileRepairPlan(profiles, plan);
     expect(repaired).toEqual({
       y: { algorithm: "abs" },
       dy: { algorithm: "abs", stepGlitchModeEnabled: false },
-      ddy: { algorithm: "step", stepGlitchModeEnabled: false },
+      ddy: { algorithm: "step", stepGlitchModeEnabled: true },
     });
     expect(repaired.dy).toBe(profiles.dy);
     expect(profiles.y.algorithm).toBe("pchip");

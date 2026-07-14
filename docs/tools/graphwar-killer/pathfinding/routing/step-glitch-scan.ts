@@ -161,12 +161,6 @@ interface ScanLandingRow {
   targetDeltaY: number;
 }
 
-interface ScanLandingRowGroup {
-  /** 组内全部行从原碰撞列出发都具有相同的理论横向收益。 */
-  farthestX: number;
-  rows: ScanLandingRow[];
-}
-
 interface ScanGateWindow {
   controlX: number;
   decimalPlaces: number;
@@ -176,14 +170,14 @@ interface ScanGateWindow {
 
 interface ScanGateRows {
   firstBlockedSearchX: number;
-  rowGroups: ScanLandingRowGroup[];
+  rows: ScanLandingRow[];
   state: ScanState;
   windows: ScanGateWindow[];
 }
 
 type ScanWorkItem =
   | { candidate: ScanCandidate; type: "candidate" }
-  | { groupIndex: number; rowIndex: number; scan: ScanGateRows; type: "gate-rows"; windowIndex: number }
+  | { rowIndex: number; scan: ScanGateRows; type: "gate-rows"; windowIndex: number }
   | { state: ScanState; type: "state" };
 
 export interface GraphwarStepGlitchReplayResult {
@@ -508,27 +502,22 @@ function scanPreparedGraphwarStepGlitchPath(
           maskIndex,
         );
         if (scan) {
-          work.push({ groupIndex: 0, rowIndex: 0, scan, type: "gate-rows", windowIndex: 0 });
+          work.push({ rowIndex: 0, scan, type: "gate-rows", windowIndex: 0 });
         }
       }
       continue;
     }
 
     if (item.type === "gate-rows") {
-      let { groupIndex, rowIndex, windowIndex } = item;
+      let { rowIndex, windowIndex } = item;
       let candidate: ScanCandidate | undefined;
-      while (groupIndex < item.scan.rowGroups.length) {
-        const group = item.scan.rowGroups[groupIndex];
-        const row = group?.rows[rowIndex];
+      while (rowIndex < item.scan.rows.length) {
+        const row = item.scan.rows[rowIndex];
         const window = item.scan.windows[windowIndex];
-        rowIndex += 1;
-        if (group && rowIndex >= group.rows.length) {
-          rowIndex = 0;
-          windowIndex += 1;
-          if (windowIndex >= item.scan.windows.length) {
-            groupIndex += 1;
-            windowIndex = 0;
-          }
+        windowIndex += 1;
+        if (windowIndex >= item.scan.windows.length) {
+          rowIndex += 1;
+          windowIndex = 0;
         }
         if (!row || !window) {
           continue;
@@ -558,9 +547,9 @@ function scanPreparedGraphwarStepGlitchPath(
         };
         break;
       }
-      // 续扫项先入栈：当前候选失败后先走同组同宽的下一行，组内行耗尽后才缩窄窗口。
-      if (groupIndex < item.scan.rowGroups.length) {
-        work.push({ groupIndex, rowIndex, scan: item.scan, type: "gate-rows", windowIndex });
+      // 先压入续扫位置，再验证当前候选；成功分支会位于栈顶，失败后则从下一档窗口继续。
+      if (rowIndex < item.scan.rows.length) {
+        work.push({ rowIndex, scan: item.scan, type: "gate-rows", windowIndex });
       }
       if (candidate) {
         work.push({ candidate, type: "candidate" });
@@ -828,16 +817,7 @@ function createGateRowScan(
       left.startDeltaY - right.startDeltaY ||
       left.row - right.row,
   );
-  const rowGroups: ScanLandingRowGroup[] = [];
-  for (const row of rows) {
-    const group = rowGroups.at(-1);
-    if (group?.farthestX === row.farthestX) {
-      group.rows.push(row);
-    } else {
-      rowGroups.push({ farthestX: row.farthestX, rows: [row] });
-    }
-  }
-  return rowGroups.length > 0 ? { firstBlockedSearchX, rowGroups, state, windows } : undefined;
+  return rows.length > 0 ? { firstBlockedSearchX, rows, state, windows } : undefined;
 }
 
 /** 查询指定行从 searchX 开始连续可通行区的最右列。 */

@@ -342,15 +342,12 @@ describe("Step glitch scanner replay acceptance", () => {
     });
 
     expect(result.status).toBe("hit");
-    const hitRow = Math.floor(hitCenter.y);
     expect(replayMockState.testedGateYs[0]).toBeCloseTo(
-      imageToGraphPoint(createPixelPoint(0, hitRow + 0.5), bounds, boundsRect).y,
+      imageToGraphPoint(createPixelPoint(0, Math.floor(hitCenter.y) + 0.5), bounds, boundsRect).y,
     );
-    expect(replayMockState.testedGateYs[1]).toBeCloseTo(
-      imageToGraphPoint(createPixelPoint(0, hitRow + 1.5), bounds, boundsRect).y,
-    );
+    expect(replayMockState.testedGateYs[1]).toBeCloseTo(replayMockState.testedGateYs[0] ?? Number.NaN);
     expect(replayMockState.testedWindowWidths[0]).toBeCloseTo(GRAPHWAR_STEP_SIZE);
-    expect(replayMockState.testedWindowWidths[1]).toBeCloseTo(GRAPHWAR_STEP_SIZE);
+    expect(replayMockState.testedWindowWidths[1]).toBeCloseTo(GRAPHWAR_STEP_SIZE / 2);
   });
 
   it("uses distance from the current row before the row number when target distances tie", () => {
@@ -389,16 +386,13 @@ describe("Step glitch scanner replay acceptance", () => {
     expect(replayMockState.testedGateYs[0]).toBeCloseTo(
       imageToGraphPoint(createPixelPoint(0, nearerStartRow + 0.5), bounds, boundsRect).y,
     );
-    expect(replayMockState.testedGateYs[1]).toBeCloseTo(
-      imageToGraphPoint(createPixelPoint(0, lowerRowNumber + 0.5), bounds, boundsRect).y,
-    );
+    expect(replayMockState.testedGateYs[1]).toBeCloseTo(replayMockState.testedGateYs[0] ?? Number.NaN);
     expect(replayMockState.testedWindowWidths[0]).toBeCloseTo(GRAPHWAR_STEP_SIZE);
-    expect(replayMockState.testedWindowWidths[1]).toBeCloseTo(GRAPHWAR_STEP_SIZE);
+    expect(replayMockState.testedWindowWidths[1]).toBeCloseTo(GRAPHWAR_STEP_SIZE / 2);
   });
 
-  it("tries every row in an x group before narrowing the window", () => {
+  it("uses the row number only when both vertical distances tie", () => {
     replayMockState.orderedRowScenario = true;
-    replayMockState.orderedGateSuccessAttempt = 3;
     const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
     const target = graphToImagePoint(createGraphPoint(-6, 0), bounds, boundsRect);
     const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
@@ -432,16 +426,12 @@ describe("Step glitch scanner replay acceptance", () => {
     expect(replayMockState.testedGateYs[0]).toBeCloseTo(
       imageToGraphPoint(createPixelPoint(0, lowerRowNumber + 0.5), bounds, boundsRect).y,
     );
-    expect(replayMockState.testedGateYs[1]).toBeCloseTo(
-      imageToGraphPoint(createPixelPoint(0, higherRowNumber + 0.5), bounds, boundsRect).y,
-    );
-    expect(replayMockState.testedGateYs[2]).toBeCloseTo(replayMockState.testedGateYs[0] ?? Number.NaN);
+    expect(replayMockState.testedGateYs[1]).toBeCloseTo(replayMockState.testedGateYs[0] ?? Number.NaN);
     expect(replayMockState.testedWindowWidths[0]).toBeCloseTo(GRAPHWAR_STEP_SIZE);
-    expect(replayMockState.testedWindowWidths[1]).toBeCloseTo(GRAPHWAR_STEP_SIZE);
-    expect(replayMockState.testedWindowWidths[2]).toBeCloseTo(GRAPHWAR_STEP_SIZE / 2);
+    expect(replayMockState.testedWindowWidths[1]).toBeCloseTo(GRAPHWAR_STEP_SIZE / 2);
   });
 
-  it("exhausts every width in the farther x group before entering the next group", () => {
+  it("exhausts every width on the farthest row before restarting at the widest width on the next row", () => {
     replayMockState.orderedGateSuccessAttempt = Number.POSITIVE_INFINITY;
     replayMockState.orderedRowScenario = true;
     const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);

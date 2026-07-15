@@ -338,7 +338,7 @@ export interface StepFirstOrderGlitchSegment extends StepGlitchSegmentBase {
   gateY: number;
 }
 
-/** Step y''= 邪道段；同一 RK4 步内先加速纵跳，再在末相位恢复原 y'。 */
+/** Step y''= 邪道段；同一 RK4 步内先加速纵跳，再按跳前/跨门速度计算末相位刹车脉冲，候选按落点 y、单次跳转和无障碍验收，不验收最终 y'。 */
 export interface StepSecondOrderGlitchSegment extends StepGlitchSegmentBase {
   /** 纵跳阶段使用的加速度。 */
   acceleration: number;

@@ -1414,7 +1414,7 @@ function selectStepGlitchSegmentCandidate(
           (armStep + h) * resumeDerivative -
           h * targetDerivative;
         const armedAcceleration = armedDeltaY / ((h * armStep) / 6 + h ** 2 / 2);
-        // 纵跳的 a4 和下一最小步长的 a1 共用刹车脉冲；第二步位移为 0，并恢复前缀 y'。
+        // 纵跳的 a4 和下一最小步长的 a1 共用刹车脉冲；参数按前缀/跨门 y' 计算，候选按落点 y、单次跳转和无障碍验收，不验收最终 y'。
         // 直接相位在 a2/a3 加速；武装相位先让粗跨门步的 a4 加速，再由 a1/a2/a3 完成纵跳。
         for (const profile of [
           {
@@ -1633,7 +1633,7 @@ function countStepGlitchJumps(points: readonly GraphPoint[], candidate: StepGlit
 
 /** 左门前的插值高度和从上一个真实接受点恢复的状态。 */
 interface StepGlitchPreJumpSample {
-  /** 无当前邪道项时越过左门的首个接受点对应 y'；二阶候选恢复到这条前缀速度。 */
+  /** 无当前邪道项时越过左门的首个接受点对应 y'；二阶候选据此计算刹车脉冲，不作为最终验收条件。 */
   crossingDerivative?: number;
   point: GraphPoint;
   resumeState: GraphwarTrajectorySamplingState;

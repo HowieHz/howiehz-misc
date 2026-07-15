@@ -84,7 +84,9 @@ To stop a manual One-Click Clear run and keep its current result without firing,
 
 ### Glitch Mode {#graphwar-killer-step-glitch-mode}
 
-Glitch Mode applies to Step `y'` and `y''`. When a normal Step route encounters an obstacle, it tries to add a vertical jump; `y''` uses a short braking pulse after the jump to restore the previous `y'`. Accurate obstacle and soldier positions are required, so reading game state through Agent is recommended.
+Glitch Mode applies to Step `y'` and `y''`. When a normal Step route encounters an obstacle, it tries to add a vertical jump; `y''` computes a short braking pulse from the pre-jump and gate-crossing samples, then selects candidates by landing `y` and collision results.
+
+`y''` does not validate whether the post-pulse `y'` is restored, so later segments may inherit residual velocity. Accurate obstacle and soldier positions are required, so reading game state through Agent is recommended.
 
 ### Managed Mode {#graphwar-killer-managed-mode}
 

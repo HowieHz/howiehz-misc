@@ -19,7 +19,7 @@ interface GraphwarScreenshotWorkflowOptions {
 
 /** 截图 Module 暴露给页面的稳定 Interface。 */
 export interface GraphwarScreenshotWorkflowController {
-  /** 应用由非文件输入生成的图片 URL，例如 Agent 的 770x450 状态画布。 */
+  /** 应用非文件图片；每次调用都触发场景回调，包括 URL 未变化的 Agent 固定画布。 */
   applyGeneratedImage: (url: string, name: string, width: number, height: number) => void;
   /** 通过浏览器截屏 API 读取截图。 */
   captureScreenImage: () => Promise<void>;
@@ -120,7 +120,7 @@ export function useGraphwarScreenshotWorkflow(
     reader.readAsDataURL(file);
   }
 
-  /** 应用调用方生成的图片 URL；尺寸已知时先落地，避免等待图片 load 才能渲染 overlay。 */
+  /** 应用调用方生成的图片；尺寸先落地，并让相同 URL 的重放仍触发业务场景更新。 */
   function applyGeneratedImage(url: string, name: string, width: number, height: number) {
     imageInputGeneration += 1;
     imageWidth.value = width;

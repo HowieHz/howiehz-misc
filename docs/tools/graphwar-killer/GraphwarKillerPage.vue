@@ -426,7 +426,7 @@ const {
   stageRef,
 } = useGraphwarScreenshotWorkflow({
   imageText: locale.status.image,
-  onImageApplied: handleAppliedScreenshot,
+  onImageApplied: clearSceneDependentState,
   onImageLoaded: handleLoadedScreenshot,
 });
 const graphwarPathfindingRunner = createGraphwarPathfindingRunner();
@@ -2405,8 +2405,9 @@ function toggleStepGlitchMode() {
   stepGlitchModeEnabled.value = true;
 }
 
-/** 新截图应用后清理依赖旧图片的业务状态；旧边界矩形只保留为参考，需要重新确认后才可用于识别。 */
-function handleAppliedScreenshot() {
+/** 清理依赖旧场景的业务状态；边界矩形数值只保留为参考，需要由新场景重新确认。 */
+function clearSceneDependentState() {
+  clearLiveClickPreviewPointerPoint();
   clearAllModePaths();
   clearDetections();
   clearActiveBounds();
@@ -2738,13 +2739,12 @@ async function exportGraphwarAgentDebugScene() {
   }
 }
 
-/** 把同一 revision 的 Agent 视角原子写入页面，并按调用方决定是否替换发射点。 */
+/** 把同一 revision 的 Agent 视角原子写入页面，并以新发射点重建当前工作流路径。 */
 function applyGraphwarAgentSnapshot(snapshot: GraphwarAgentSnapshot, pathStart: PixelPoint | undefined) {
   graphwarAgentBaseUrlText.value = snapshot.baseUrl;
-  if (imageUrl.value !== snapshot.imageUrl) {
-    graphwarAgentImageLoadBypassUrl = snapshot.imageUrl;
-    applyGeneratedImage(snapshot.imageUrl, snapshot.imageName, GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT);
-  }
+  // Agent 画布 URL 固定；每次重放仍需触发截图回调，统一清除上一权威场景的路径和临时选点。
+  graphwarAgentImageLoadBypassUrl = snapshot.imageUrl;
+  applyGeneratedImage(snapshot.imageUrl, snapshot.imageName, GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT);
   resetGraphwarDefaultBoundsTexts();
   applyGraphwarAgentEquationMode(snapshot.equationMode);
   detectionWorkflow.applyExternalResult(
@@ -2758,9 +2758,9 @@ function applyGraphwarAgentSnapshot(snapshot: GraphwarAgentSnapshot, pathStart: 
     normalizedAgentUrl: normalizeGraphwarAgentBaseUrl(snapshot.baseUrl).toString(),
     source: "agent",
   };
-  // Agent 当前回合是权威状态；只替换发射点，保留用户已经选好的后续目标。
+  // 场景回调已经清空两种路径；只有权威发射者存在时才为当前工作流建立起点。
   if (pathStart) {
-    setPathPixels(pathPixels.value.length > 0 ? [pathStart, ...pathPixels.value.slice(1)] : [pathStart]);
+    pathPixels.value = [pathStart];
   }
   toolMode.value = "path";
   imageStatus.value = "";
@@ -3123,8 +3123,7 @@ function handleGraphwarManagedState(
     setSmartPathfindingStatus(locale.smartPathfinding.managed.incompatible, "error");
     return;
   }
-  applyGraphwarAgentSnapshot(snapshot, undefined);
-  setPathPixels([createPixelPoint(shooterBox.sourceCenterX, shooterBox.sourceCenterY)]);
+  applyGraphwarAgentSnapshot(snapshot, createPixelPoint(shooterBox.sourceCenterX, shooterBox.sourceCenterY));
   void runGraphwarManagedSearch(sceneKey);
 }
 

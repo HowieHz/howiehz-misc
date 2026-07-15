@@ -25,4 +25,18 @@ describe("Graphwar path state", () => {
     expect(state.simulatorPathPixels.value).toEqual([point]);
     expect(state.solverPathPixels.value).toEqual([]);
   });
+
+  it("clears both workflow paths before the active scene receives its new start", () => {
+    const workflowMode = ref<"simulator" | "solver">("solver");
+    const state = useGraphwarPathState(workflowMode);
+    state.applyValidatedPath([createPixelPoint(10, 100), createPixelPoint(50, 80)]);
+    workflowMode.value = "simulator";
+    state.applyValidatedPath([createPixelPoint(20, 120), createPixelPoint(60, 90)]);
+
+    state.clearAllModePaths();
+    state.pathPixels.value = [createPixelPoint(30, 130)];
+
+    expect(state.solverPathPixels.value).toEqual([]);
+    expect(state.simulatorPathPixels.value).toEqual([createPixelPoint(30, 130)]);
+  });
 });

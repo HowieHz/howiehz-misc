@@ -327,6 +327,22 @@ describe("live click preview status", () => {
     controller.dispose();
   });
 
+  it("does not restore a pending pointer frame after the scene clears", async () => {
+    const frames = installFakeBrowserRuntime();
+    const controller = useGraphwarLiveClickPreview(createOptions());
+    controller.enabled.value = true;
+
+    controller.schedulePointerPoint(createPixelPoint(200, 180), undefined);
+    controller.clearPointerPoint();
+    frames.flush();
+    await nextTick();
+
+    expect(controller.points.value).toEqual([]);
+    expect(controller.inProgress.value).toBe(false);
+    expect(FakeWorker.instances).toEqual([]);
+    controller.dispose();
+  });
+
   it("does not publish a resolved render after the pointer preview is cleared", async () => {
     installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());

@@ -2,9 +2,33 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useGraphwarScreenshotWorkflow } from "./workflow";
 
+const imageText = {
+  defaultStatus: "Choose an image",
+  pastedName: "Pasted image",
+  screenCaptureIncomplete: "Capture incomplete",
+  screenCaptureName: "Screen capture",
+  screenCaptureUnavailable: "Capture unavailable",
+  screenCaptureUnsupported: "Capture unsupported",
+};
+
 describe("Graphwar screenshot workflow", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("notifies the page when the same generated image is applied again", () => {
+    const onImageApplied = vi.fn();
+    const workflow = useGraphwarScreenshotWorkflow({
+      imageText,
+      onImageApplied,
+    });
+
+    workflow.applyGeneratedImage("data:image/svg+xml,agent", "Graphwar Agent", 770, 450);
+    workflow.applyGeneratedImage("data:image/svg+xml,agent", "Graphwar Agent", 770, 450);
+
+    expect(onImageApplied).toHaveBeenCalledTimes(2);
+    expect(workflow.imageWidth.value).toBe(770);
+    expect(workflow.imageHeight.value).toBe(450);
   });
 
   it("ignores a file read invalidated before its load event", () => {
@@ -28,14 +52,7 @@ describe("Graphwar screenshot workflow", () => {
     vi.stubGlobal("FileReader", FakeFileReader);
     const onImageApplied = vi.fn();
     const workflow = useGraphwarScreenshotWorkflow({
-      imageText: {
-        defaultStatus: "Choose an image",
-        pastedName: "Pasted image",
-        screenCaptureIncomplete: "Capture incomplete",
-        screenCaptureName: "Screen capture",
-        screenCaptureUnavailable: "Capture unavailable",
-        screenCaptureUnsupported: "Capture unsupported",
-      },
+      imageText,
       onImageApplied,
     });
 
@@ -87,14 +104,7 @@ describe("Graphwar screenshot workflow", () => {
       return 1;
     });
     const workflow = useGraphwarScreenshotWorkflow({
-      imageText: {
-        defaultStatus: "Choose an image",
-        pastedName: "Pasted image",
-        screenCaptureIncomplete: "Capture incomplete",
-        screenCaptureName: "Screen capture",
-        screenCaptureUnavailable: "Capture unavailable",
-        screenCaptureUnsupported: "Capture unsupported",
-      },
+      imageText,
       onImageApplied,
     });
 

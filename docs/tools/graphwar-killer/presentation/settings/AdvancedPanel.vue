@@ -207,7 +207,10 @@ const liveClickPreviewWorkerCountText = computed({
             />
           </div>
         </div>
-        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+        <div
+          v-if="panel.solverSettingsVisible"
+          class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group"
+        >
           <h3>
             {{ locale.ui.settings.recognition.heading }}
           </h3>
@@ -274,7 +277,10 @@ const liveClickPreviewWorkerCountText = computed({
             </label>
           </div>
         </div>
-        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+        <div
+          v-if="panel.solverSettingsVisible"
+          class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group"
+        >
           <h3>
             {{ locale.ui.settings.pathfinding.heading }}
           </h3>
@@ -405,7 +411,10 @@ const liveClickPreviewWorkerCountText = computed({
             <span>{{ locale.ui.pathfinding.unit }}</span>
           </label>
         </div>
-        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+        <div
+          v-if="panel.solverSettingsVisible"
+          class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group"
+        >
           <h3>
             {{ locale.ui.settings.actionBar.heading }}
           </h3>

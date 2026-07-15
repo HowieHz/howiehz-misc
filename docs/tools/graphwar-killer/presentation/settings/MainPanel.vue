@@ -109,32 +109,19 @@ const steepnessText = computed({
 </script>
 
 <template>
-  <section
-    class="graphwar-killer__panel graphwar-killer__settings-panel graphwar-killer-control-surface"
-    aria-labelledby="graphwar-killer-settings-title"
-    :aria-disabled="panel.interactionDisabled"
-  >
-    <div class="graphwar-killer__label-row">
-      <h2 id="graphwar-killer-settings-title">
-        {{ locale.ui.settings.title }}
-      </h2>
-      <span
-        :title="panel.headerStatus.message"
-        :class="{
-          'graphwar-killer__label-status--error': panel.headerStatus.kind === 'error',
-          'graphwar-killer__label-status--warning': panel.headerStatus.kind === 'warning',
-          'graphwar-killer__label-status--success': panel.headerStatus.kind === 'success',
-        }"
-      >
-        {{ panel.headerStatus.message }}
-      </span>
-    </div>
-    <fieldset
-      class="graphwar-killer__settings-fields"
-      :disabled="panel.interactionDisabled"
+  <div class="graphwar-killer__settings-stack">
+    <section
+      class="graphwar-killer__panel graphwar-killer__workflow-panel graphwar-killer-control-surface"
+      aria-labelledby="graphwar-killer-workflow-title"
+      :aria-disabled="panel.interactionDisabled"
     >
-      <div class="graphwar-killer__setting-row">
-        <span class="graphwar-killer__setting-label">{{ locale.ui.settings.mode }}</span>
+      <h2 id="graphwar-killer-workflow-title">
+        {{ locale.ui.settings.mode }}
+      </h2>
+      <fieldset
+        class="graphwar-killer__settings-fields"
+        :disabled="panel.interactionDisabled"
+      >
         <div
           class="graphwar-killer__tool-toggle graphwar-killer__mode-toggle graphwar-killer-segmented-control"
           :class="{ 'graphwar-killer__mode-toggle--simulator': panel.toolWorkflowMode === 'simulator' }"
@@ -155,9 +142,21 @@ const steepnessText = computed({
             {{ mode.label }}
           </button>
         </div>
-      </div>
-      <div class="graphwar-killer__setting-row graphwar-killer__game-mode-row">
-        <span class="graphwar-killer__setting-label">{{ locale.ui.settings.gameMode }}</span>
+      </fieldset>
+    </section>
+
+    <section
+      class="graphwar-killer__panel graphwar-killer__game-mode-panel graphwar-killer-control-surface"
+      aria-labelledby="graphwar-killer-game-mode-title"
+      :aria-disabled="panel.interactionDisabled"
+    >
+      <h2 id="graphwar-killer-game-mode-title">
+        {{ locale.ui.settings.gameMode }}
+      </h2>
+      <fieldset
+        class="graphwar-killer__settings-fields"
+        :disabled="panel.interactionDisabled"
+      >
         <div
           class="graphwar-killer__equation-toggle graphwar-killer-segmented-control"
           :class="{
@@ -182,102 +181,129 @@ const steepnessText = computed({
             {{ mode.label }}
           </button>
         </div>
+      </fieldset>
+    </section>
+
+    <section
+      class="graphwar-killer__panel graphwar-killer__settings-panel graphwar-killer-control-surface"
+      aria-labelledby="graphwar-killer-settings-title"
+      :aria-disabled="panel.interactionDisabled"
+    >
+      <div class="graphwar-killer__label-row">
+        <h2 id="graphwar-killer-settings-title">
+          {{ locale.ui.settings.title }}
+        </h2>
+        <span
+          v-if="panel.toolWorkflowMode !== 'simulator' || panel.headerStatus.kind !== 'info'"
+          :title="panel.headerStatus.message"
+          :class="{
+            'graphwar-killer__label-status--error': panel.headerStatus.kind === 'error',
+            'graphwar-killer__label-status--warning': panel.headerStatus.kind === 'warning',
+            'graphwar-killer__label-status--success': panel.headerStatus.kind === 'success',
+          }"
+        >
+          {{ panel.headerStatus.message }}
+        </span>
       </div>
-      <div
-        v-if="panel.toolWorkflowMode !== 'simulator'"
-        class="graphwar-killer__setting-row"
+      <fieldset
+        class="graphwar-killer__settings-fields"
+        :disabled="panel.interactionDisabled"
       >
-        <span class="graphwar-killer__setting-label">{{ locale.ui.settings.algorithm }}</span>
         <div
-          class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle graphwar-killer-segmented-control"
-          :class="`graphwar-killer__algorithm-toggle--${panel.algorithmMode}`"
-          role="group"
-          :aria-label="locale.ui.settings.algorithmAriaLabel"
-          :title="locale.ui.settings.algorithmTitle"
+          v-if="panel.toolWorkflowMode !== 'simulator'"
+          class="graphwar-killer__setting-row"
         >
-          <button
-            v-for="mode in panel.algorithmModes"
-            :key="mode.value"
-            type="button"
-            class="graphwar-killer-segmented-button"
-            :aria-pressed="panel.algorithmMode === mode.value"
-            :class="{ 'graphwar-killer-segmented-button--active': panel.algorithmMode === mode.value }"
-            :disabled="mode.disabled"
-            :title="mode.title"
-            @click="emit('setAlgorithmMode', mode.value)"
+          <span class="graphwar-killer__setting-label">{{ locale.ui.settings.algorithm }}</span>
+          <div
+            class="graphwar-killer__tool-toggle graphwar-killer__algorithm-toggle graphwar-killer-segmented-control"
+            :class="`graphwar-killer__algorithm-toggle--${panel.algorithmMode}`"
+            role="group"
+            :aria-label="locale.ui.settings.algorithmAriaLabel"
+            :title="locale.ui.settings.algorithmTitle"
           >
-            {{ mode.label }}
-          </button>
+            <button
+              v-for="mode in panel.algorithmModes"
+              :key="mode.value"
+              type="button"
+              class="graphwar-killer-segmented-button"
+              :aria-pressed="panel.algorithmMode === mode.value"
+              :class="{ 'graphwar-killer-segmented-button--active': panel.algorithmMode === mode.value }"
+              :disabled="mode.disabled"
+              :title="mode.title"
+              @click="emit('setAlgorithmMode', mode.value)"
+            >
+              {{ mode.label }}
+            </button>
+          </div>
         </div>
-      </div>
-      <div
-        v-if="panel.toolWorkflowMode !== 'simulator'"
-        class="graphwar-killer__formula-options"
-      >
-        <label
-          class="graphwar-killer__precision-label"
-          :title="locale.ui.settings.decimalPlacesTitle"
-        >
-          {{ locale.ui.settings.decimalPlaces }}
-          <input
-            v-model="precisionText"
-            inputmode="numeric"
-            autocomplete="off"
-            min="0"
-            :max="panel.precision.maximum"
-            :aria-label="locale.ui.settings.decimalPlacesAriaLabel"
-            :title="locale.ui.settings.decimalPlacesTitle"
-          >
-        </label>
-        <label
-          v-if="panel.steepnessVisible"
-          class="graphwar-killer__steepness-label"
-          :title="locale.ui.settings.steepnessTitle"
-        >
-          {{ locale.ui.settings.steepness }}
-          <input
-            v-model="steepnessText"
-            inputmode="decimal"
-            autocomplete="off"
-            :aria-label="locale.ui.settings.steepnessAriaLabel"
-            :title="locale.ui.settings.steepnessTitle"
-          >
-        </label>
-        <ToggleField
-          v-if="panel.algorithmMode === 'step'"
-          id="graphwar-killer-overflow-protection"
-          class="graphwar-killer__formula-toggle"
-          :checked="panel.stepOverflowProtectionEnabled"
-          :label="locale.ui.settings.overflowProtection"
-          state="normal"
-          :title="locale.ui.settings.overflowProtectionTitle"
-          @toggle="emit('toggleStepOverflowProtection')"
-        />
-        <ToggleField
-          id="graphwar-killer-step-glitch-mode"
-          class="graphwar-killer__formula-toggle"
-          :checked="panel.stepGlitchModeEnabled"
-          :label="locale.ui.settings.stepGlitchMode"
-          :reason="panel.stepGlitchModeReason"
-          :state="panel.stepGlitchModeState"
-          :title="locale.ui.settings.stepGlitchModeTitle"
-          @toggle="emit('toggleStepGlitchMode')"
-        />
-        <ToggleField
-          id="graphwar-killer-advanced-settings"
-          class="graphwar-killer__formula-toggle"
-          :checked="panel.advancedSettingsVisible"
-          :label="locale.ui.settings.advancedSettings"
-          :state="panel.interactionDisabled ? 'busy' : 'normal'"
-          @pointercancel="emit('cancelDebugActivationHold')"
-          @pointerdown="emit('startDebugActivationHold', $event)"
-          @pointerleave="emit('cancelDebugActivationHold')"
-          @pointerup="emit('finishDebugActivationHold')"
-          @toggle="emit('toggleAdvancedSettings')"
-        />
-      </div>
-    </fieldset>
-  </section>
+        <div class="graphwar-killer__formula-options">
+          <template v-if="panel.toolWorkflowMode !== 'simulator'">
+            <label
+              class="graphwar-killer__precision-label"
+              :title="locale.ui.settings.decimalPlacesTitle"
+            >
+              {{ locale.ui.settings.decimalPlaces }}
+              <input
+                v-model="precisionText"
+                inputmode="numeric"
+                autocomplete="off"
+                min="0"
+                :max="panel.precision.maximum"
+                :aria-label="locale.ui.settings.decimalPlacesAriaLabel"
+                :title="locale.ui.settings.decimalPlacesTitle"
+              >
+            </label>
+            <label
+              v-if="panel.steepnessVisible"
+              class="graphwar-killer__steepness-label"
+              :title="locale.ui.settings.steepnessTitle"
+            >
+              {{ locale.ui.settings.steepness }}
+              <input
+                v-model="steepnessText"
+                inputmode="decimal"
+                autocomplete="off"
+                :aria-label="locale.ui.settings.steepnessAriaLabel"
+                :title="locale.ui.settings.steepnessTitle"
+              >
+            </label>
+            <ToggleField
+              v-if="panel.algorithmMode === 'step'"
+              id="graphwar-killer-overflow-protection"
+              class="graphwar-killer__formula-toggle"
+              :checked="panel.stepOverflowProtectionEnabled"
+              :label="locale.ui.settings.overflowProtection"
+              state="normal"
+              :title="locale.ui.settings.overflowProtectionTitle"
+              @toggle="emit('toggleStepOverflowProtection')"
+            />
+            <ToggleField
+              id="graphwar-killer-step-glitch-mode"
+              class="graphwar-killer__formula-toggle"
+              :checked="panel.stepGlitchModeEnabled"
+              :label="locale.ui.settings.stepGlitchMode"
+              :reason="panel.stepGlitchModeReason"
+              :state="panel.stepGlitchModeState"
+              :title="locale.ui.settings.stepGlitchModeTitle"
+              @toggle="emit('toggleStepGlitchMode')"
+            />
+          </template>
+          <ToggleField
+            id="graphwar-killer-advanced-settings"
+            class="graphwar-killer__formula-toggle"
+            :checked="panel.advancedSettingsVisible"
+            :label="locale.ui.settings.advancedSettings"
+            :state="panel.interactionDisabled ? 'busy' : 'normal'"
+            @pointercancel="emit('cancelDebugActivationHold')"
+            @pointerdown="emit('startDebugActivationHold', $event)"
+            @pointerleave="emit('cancelDebugActivationHold')"
+            @pointerup="emit('finishDebugActivationHold')"
+            @toggle="emit('toggleAdvancedSettings')"
+          />
+        </div>
+      </fieldset>
+    </section>
+  </div>
 </template>
 
 <style scoped>
@@ -292,7 +318,13 @@ const steepnessText = computed({
   padding: 10px;
 }
 
-.graphwar-killer__settings-panel h2 {
+.graphwar-killer__settings-stack {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.graphwar-killer__settings-stack h2 {
   border: 0;
   font-size: 1rem;
   margin: 0;
@@ -412,6 +444,11 @@ const steepnessText = computed({
 
 .graphwar-killer__mode-toggle {
   --graphwar-killer-segment-count: 2;
+}
+
+.graphwar-killer__workflow-panel .graphwar-killer__mode-toggle,
+.graphwar-killer__game-mode-panel .graphwar-killer__equation-toggle {
+  width: 100%;
 }
 
 .graphwar-killer__mode-toggle--simulator::before {

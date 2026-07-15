@@ -1808,6 +1808,7 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     parseDerivativeAsY: simulatorParseDerivativeAsY.value,
     skipUnknownCharacters: simulatorSkipUnknownCharacters.value,
   },
+  solverSettingsVisible: toolWorkflowMode.value === "solver",
 }));
 // 截图/SVG 坐标像素：只描述 Graphwar 源码可视圈，不参与真实命中。
 const soldierVisibleRadiusPixels = computed(() => getGraphwarPlaneRadiusPixels(GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2));

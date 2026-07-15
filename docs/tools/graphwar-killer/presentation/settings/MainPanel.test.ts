@@ -15,8 +15,25 @@ describe("Settings MainPanel", () => {
       },
     });
     const switches = wrapper.findAll('.graphwar-killer__formula-options [role="switch"]');
+    const panels = wrapper.findAll(".graphwar-killer__settings-stack > .graphwar-killer__panel");
 
-    expect(wrapper.classes()).toContain("graphwar-killer-control-surface");
+    expect(panels).toHaveLength(3);
+    expect(panels.every((panel) => panel.classes().includes("graphwar-killer-control-surface"))).toBe(true);
+    expect(panels.map((panel) => panel.find("h2").text())).toEqual([
+      graphwarKillerLocale.ui.settings.mode,
+      graphwarKillerLocale.ui.settings.gameMode,
+      graphwarKillerLocale.ui.settings.title,
+    ]);
+    expect(panels[0].findAll(".graphwar-killer__mode-toggle")).toHaveLength(1);
+    expect(panels[0].find(".graphwar-killer__equation-toggle, .graphwar-killer__algorithm-toggle").exists()).toBe(
+      false,
+    );
+    expect(panels[0].find(".graphwar-killer__setting-label").exists()).toBe(false);
+    expect(panels[1].findAll(".graphwar-killer__equation-toggle")).toHaveLength(1);
+    expect(panels[1].find(".graphwar-killer__mode-toggle, .graphwar-killer__algorithm-toggle").exists()).toBe(false);
+    expect(panels[1].find(".graphwar-killer__setting-label").exists()).toBe(false);
+    expect(panels[2].findAll(".graphwar-killer__algorithm-toggle")).toHaveLength(1);
+    expect(panels[2].find(".graphwar-killer__mode-toggle, .graphwar-killer__equation-toggle").exists()).toBe(false);
     expect(
       wrapper
         .findAll(".graphwar-killer__tool-toggle button, .graphwar-killer__equation-toggle button")
@@ -63,6 +80,40 @@ describe("Settings MainPanel", () => {
 
     expect(wrapper.find(`[aria-label="${graphwarKillerLocale.ui.settings.steepnessAriaLabel}"]`).exists()).toBe(true);
     expect(wrapper.find("#graphwar-killer-overflow-protection").exists()).toBe(false);
+  });
+
+  it("keeps only the advanced-settings switch in Simulator settings", async () => {
+    const panel = {
+      ...createPanel(),
+      headerStatus: { kind: "info" as const, message: "simulator description" },
+      toolWorkflowMode: "simulator" as const,
+    };
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        panel,
+      },
+    });
+    const panels = wrapper.findAll(".graphwar-killer__settings-stack > .graphwar-killer__panel");
+
+    expect(panels).toHaveLength(3);
+    expect(panels.map((panel) => panel.find("h2").text())).toEqual([
+      graphwarKillerLocale.ui.settings.mode,
+      graphwarKillerLocale.ui.settings.gameMode,
+      graphwarKillerLocale.ui.settings.title,
+    ]);
+    expect(panels[0].findAll(".graphwar-killer__mode-toggle")).toHaveLength(1);
+    expect(panels[0].find(".graphwar-killer__equation-toggle").exists()).toBe(false);
+    expect(panels[1].findAll(".graphwar-killer__equation-toggle")).toHaveLength(1);
+    expect(panels[1].find(".graphwar-killer__mode-toggle").exists()).toBe(false);
+    expect(panels[2].find(".graphwar-killer__algorithm-toggle, input").exists()).toBe(false);
+    expect(panels[2].find(".graphwar-killer__label-row > span").exists()).toBe(false);
+    expect(panels[2].findAll('[role="switch"]').map((control) => control.attributes("id"))).toEqual([
+      "graphwar-killer-advanced-settings",
+    ]);
+
+    await wrapper.setProps({ panel: { ...panel, headerStatus: { kind: "warning", message: "warning" } } });
+    expect(panels[2].find(".graphwar-killer__label-row > span").text()).toBe("warning");
   });
 });
 

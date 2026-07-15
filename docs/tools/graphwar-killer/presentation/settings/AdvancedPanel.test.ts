@@ -36,6 +36,7 @@ describe("AdvancedPanel", () => {
         templateMatchingWorkerCountText: "2",
       },
       simulator: { parseDerivativeAsY: true, skipUnknownCharacters: true },
+      solverSettingsVisible: true,
     };
     const wrapper = mount(AdvancedPanel, { props: { locale: graphwarKillerLocale, panel } });
     expect(wrapper.classes()).toContain("graphwar-killer-control-surface");
@@ -92,5 +93,18 @@ describe("AdvancedPanel", () => {
             graphwarKillerLocale.ui.pathfinding.oneClickClearDeleteCheckRadiusAriaLabel,
         ),
     ).toBe(true);
+
+    await wrapper.setProps({ panel: { ...panel, solverSettingsVisible: false } });
+    expect(wrapper.findAll("h3").map((heading) => heading.text())).toEqual([
+      graphwarKillerLocale.ui.settings.bounds.heading,
+      graphwarKillerLocale.ui.settings.simulator,
+    ]);
+    expect(
+      [
+        graphwarKillerLocale.ui.settings.recognition.maximumSoldierCountAriaLabel,
+        graphwarKillerLocale.ui.settings.pathfinding.workerCountAriaLabel,
+        graphwarKillerLocale.ui.settings.actionBar.liveClickPreviewWorkerCountAriaLabel,
+      ].some((ariaLabel) => wrapper.find(`[aria-label="${ariaLabel}"]`).exists()),
+    ).toBe(false);
   });
 });

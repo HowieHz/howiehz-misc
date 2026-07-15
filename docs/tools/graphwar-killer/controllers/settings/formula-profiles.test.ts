@@ -26,7 +26,7 @@ describe("formula profiles", () => {
     expect(profiles).toEqual({
       y: { algorithm: "abs", ...defaultFormulaPreferences },
       dy: { algorithm: "step", ...defaultFormulaPreferences },
-      ddy: { algorithm: "step", ...defaultFormulaPreferences },
+      ddy: { algorithm: "step", ...defaultFormulaPreferences, steepnessText: "153" },
     });
     expect(secondProfiles).not.toBe(profiles);
     expect(secondProfiles.y).not.toBe(profiles.y);

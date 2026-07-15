@@ -43,7 +43,8 @@ export function createDefaultGraphwarFormulaProfiles(): GraphwarFormulaProfiles 
   return {
     y: { algorithm: "abs", ...defaultFormulaPreferences },
     dy: { algorithm: "step", ...defaultFormulaPreferences },
-    ddy: { algorithm: "step", ...defaultFormulaPreferences },
+    // Use a wider y'' default to reduce the RK4 residual slope observed with the shared k=210.
+    ddy: { algorithm: "step", ...defaultFormulaPreferences, steepnessText: "153" },
   };
 }
 

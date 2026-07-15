@@ -314,6 +314,7 @@ describe("ODE segment position compensation", () => {
     { algorithm: "step", equation: "dy", steepness: 210 },
     { algorithm: "step", equation: "ddy", steepness: 153 },
     { algorithm: "abs", equation: "dy", steepness: 210 },
+    { algorithm: "abs", equation: "ddy", steepness: 153 },
   ] satisfies readonly { algorithm: AlgorithmMode; equation: EquationMode; steepness: number }[])(
     "uses each real accepted point to start the next $algorithm $equation segment",
     ({ algorithm, equation, steepness }) => {
@@ -342,6 +343,55 @@ describe("ODE segment position compensation", () => {
       }
     },
   );
+
+  it.each([
+    { name: "long descending path", pathPoints: points, steepness: 10 },
+    {
+      name: "alternating-slope path",
+      pathPoints: [
+        points[0],
+        createGraphPoint(-19, 0),
+        createGraphPoint(-17, -1.2),
+        createGraphPoint(-15, 2),
+        createGraphPoint(-13, -2),
+        createGraphPoint(-11, 2),
+        createGraphPoint(-9, -2),
+        createGraphPoint(-7, 0),
+      ],
+      steepness: 10,
+    },
+    {
+      name: "single steep segment",
+      pathPoints: [points[0], createGraphPoint(-19, -6)],
+      steepness: 153,
+    },
+  ])("keeps every ABS y'' target within one plane pixel on a $name", ({ pathPoints, steepness }) => {
+    const sample = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    }).result.sample;
+
+    for (const target of pathPoints.slice(1)) {
+      const acceptedPoint = sample.points.find((point) => point.x >= target.x);
+      expect(acceptedPoint).toBeDefined();
+      if (acceptedPoint) {
+        expect(
+          Math.abs(acceptedPoint.y - target.y) * (GRAPHWAR_PLANE_LENGTH / Math.abs(bounds.maxX - bounds.minX)),
+          `target (${target.x}, ${target.y})`,
+        ).toBeLessThanOrEqual(1);
+      }
+    }
+  });
 
   it.each([
     { algorithm: "step", steepness: 67 },

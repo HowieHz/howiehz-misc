@@ -10,7 +10,7 @@ import {
 import { buildFormula, compileGraphwarFormulaMaterials } from "./build";
 
 describe("ABS second-derivative formula", () => {
-  it.each(["y", "ddy"] as const)("ignores stale position compensation in %s mode", (equation) => {
+  it.each(["y", "ddy"] as const)("ignores stale position points in %s mode", (equation) => {
     const points = [createGraphPoint(0, 0), createGraphPoint(2, 2), createGraphPoint(4, 2)];
     const plain = compileGraphwarFormulaMaterials(points, 210, "abs", { equation, formulaDecimalPlaces: 4 });
     const withStaleStart = compileGraphwarFormulaMaterials(points, 210, "abs", {
@@ -20,6 +20,17 @@ describe("ABS second-derivative formula", () => {
     });
 
     expect(withStaleStart).toEqual(plain);
+  });
+
+  it("uses resolved pulse deltas and allows unresolved pulses to stay disabled", () => {
+    const points = [createGraphPoint(0, 0), createGraphPoint(2, 2), createGraphPoint(4, 2)];
+    const materials = compileGraphwarFormulaMaterials(points, 210, "abs", {
+      equation: "ddy",
+      formulaDecimalPlaces: 4,
+      absSecondDerivativePulseDeltaSlopes: [undefined, 0.5],
+    });
+
+    expect(materials.absSecondDerivativeFormula?.pulses).toEqual([{ coefficient: 105, formulaCenterX: 4 }]);
   });
 
   it("emits internal slope changes and a terminal flattening pulse without a launch pulse", () => {

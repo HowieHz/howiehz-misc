@@ -360,6 +360,8 @@ export type StepGlitchSegment = StepFirstOrderGlitchSegment | StepSecondOrderGli
 
 /** 编译和输出共用的公式数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
 export interface FormulaEvaluationOptions {
+  /** ABS y'' 每个折点按真实二阶状态求出的速度变化；末项只保留路径后趋平意图，不验收最终导数。 */
+  absSecondDerivativePulseDeltaSlopes?: readonly (number | undefined)[];
   /** 从左到右模拟确认的真实段起点；首段始终使用重新解析出的枪口点。 */
   segmentStartPoints?: readonly (GraphPoint | undefined)[];
   /** 当前公式方程；Step 必须据此选择最终打印的 canonical 系数。 */

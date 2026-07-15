@@ -691,34 +691,31 @@ function createCompiledAbsSecondDerivativeFormula(
 ): CompiledAbsSecondDerivativeFormula {
   const decimalPlaces = getFormulaDecimalPlaces(options);
   const formulaSteepness = quantizeStepFormulaSteepness(steepness, decimalPlaces);
-  const segmentSlopes = createSegmentSlopes(points);
   const pulses: CompiledAbsSecondDerivativePulse[] = [];
-  for (let index = 1; index < segmentSlopes.length; index += 1) {
-    const coefficient = quantizeFormulaCoefficient(
-      formulaSteepness * (segmentSlopes[index] - segmentSlopes[index - 1]),
-      decimalPlaces,
-    );
-    if (coefficient !== 0) {
-      pulses.push({
-        coefficient,
-        formulaCenterX: createCompiledFormulaXCenter(points[index].x, options),
-      });
+  const deltaSlopes = options?.absSecondDerivativePulseDeltaSlopes ?? createAbsSecondDerivativePulseDeltaSlopes(points);
+  for (let index = 0; index < deltaSlopes.length; index += 1) {
+    const deltaSlope = deltaSlopes[index];
+    const center = points[index + 1];
+    if (deltaSlope === undefined || !center) {
+      continue;
     }
-  }
-
-  const finalSlope = segmentSlopes.at(-1);
-  const finalPoint = points.at(-1);
-  if (finalSlope !== undefined && finalPoint) {
-    const coefficient = quantizeFormulaCoefficient(-formulaSteepness * finalSlope, decimalPlaces);
+    const coefficient = quantizeFormulaCoefficient(formulaSteepness * deltaSlope, decimalPlaces);
     if (coefficient !== 0) {
-      // 发射点由初始 y' 直接建立首段斜率；只在末点补脉冲，让轨迹在路径后恢复水平。
       pulses.push({
         coefficient,
-        formulaCenterX: createCompiledFormulaXCenter(finalPoint.x, options),
+        formulaCenterX: createCompiledFormulaXCenter(center.x, options),
       });
     }
   }
   return { formulaSteepness, pulses };
+}
+
+/** 从理论折线生成内部斜率变化，并在末点补反向脉冲让路径后恢复水平。 */
+function createAbsSecondDerivativePulseDeltaSlopes(points: readonly GraphPoint[]) {
+  const segmentSlopes = createSegmentSlopes(points);
+  return segmentSlopes.map((slope, index) =>
+    index < segmentSlopes.length - 1 ? segmentSlopes[index + 1] - slope : -slope,
+  );
 }
 
 /** ABS y' 取已经接受的真实起点和原始目标；其他方程不得消费陈旧补正状态。 */

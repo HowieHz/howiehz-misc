@@ -88,6 +88,8 @@ export interface SampleGraphwarExpressionTrajectoryOptions {
 export interface CreateGraphwarFormulaPathOptions {
   /** 路径点转公式的算法。 */
   algorithm: AlgorithmMode;
+  /** 当前 Graphwar 坐标边界；Step 用它换算横纵轴上的原生平面像素。 */
+  bounds: GraphBounds;
   /** Graphwar 对公式文本的解释模式。 */
   equation: EquationMode;
   /** 可选数值保护配置，保证发射角迭代和采样使用同一求值行为。 */
@@ -99,6 +101,9 @@ export interface CreateGraphwarFormulaPathOptions {
   /** Step 或 ABS y'' 公式使用的陡峭度。 */
   steepness: number;
 }
+
+/** 已有公式点的求值和发射角不再消费坐标边界。 */
+type GraphwarFormulaOptions = Omit<CreateGraphwarFormulaPathOptions, "bounds">;
 
 /** 模拟器停止原因，直接映射 Graphwar 原版采样限制和工具早停。 */
 export type TrajectoryStopReason =
@@ -244,6 +249,7 @@ function createStepAdjustedFormulaPathPoints(
           target.x,
           transition.effectiveDeltaY,
           resolvedFormula.formulaSteepness,
+          options.bounds,
         ),
         target.y,
       ),
@@ -296,7 +302,7 @@ export function sampleGraphwarExpressionTrajectory(options: SampleGraphwarExpres
 }
 
 /** 计算 Graphwar 实际使用或需要手调的发射角。 */
-export function getGraphwarLaunchAngle(options: CreateGraphwarFormulaPathOptions, soldierCenter = options.points[0]) {
+export function getGraphwarLaunchAngle(options: GraphwarFormulaOptions, soldierCenter = options.points[0]) {
   return soldierCenter ? getLaunchAngle(options, soldierCenter) : Number.NaN;
 }
 
@@ -442,7 +448,7 @@ function sampleSecondOrderExpression(
 }
 
 /** 按 Graphwar 当前模式计算发射角。 */
-function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: GraphPoint) {
+function getLaunchAngle(options: GraphwarFormulaOptions, center: GraphPoint) {
   if (options.equation === "y") {
     return getNormalStartAngle(center.x, createYEvaluator(options));
   }
@@ -462,7 +468,7 @@ function getAbsSecondOrderStartAngle(center: GraphPoint, points: readonly GraphP
 }
 
 /** 创建普通 y= 模式使用的函数值计算器。 */
-function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
+function createYEvaluator(options: GraphwarFormulaOptions) {
   return compileFormulaEvaluator(
     options.points,
     options.steepness,
@@ -473,7 +479,7 @@ function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
 }
 
 /** 创建 y'= 模式使用的一阶导计算器。 */
-function createFirstOrderEvaluator(options: CreateGraphwarFormulaPathOptions): FirstOrderEvaluator {
+function createFirstOrderEvaluator(options: GraphwarFormulaOptions): FirstOrderEvaluator {
   return compileFormulaEvaluator(
     options.points,
     options.steepness,
@@ -484,7 +490,7 @@ function createFirstOrderEvaluator(options: CreateGraphwarFormulaPathOptions): F
 }
 
 /** 创建 y''= 模式使用的二阶导计算器。 */
-function createSecondOrderEvaluator(options: CreateGraphwarFormulaPathOptions): SecondOrderEvaluator {
+function createSecondOrderEvaluator(options: GraphwarFormulaOptions): SecondOrderEvaluator {
   return compileFormulaEvaluator(
     options.points,
     options.steepness,
@@ -495,7 +501,7 @@ function createSecondOrderEvaluator(options: CreateGraphwarFormulaPathOptions): 
 }
 
 /** 独立调用模拟器时也要把方程传给 Step 编译器，不能默认退回 y= 的 canonical 系数。 */
-function createEquationAwareFormulaEvaluation(options: CreateGraphwarFormulaPathOptions): FormulaEvaluationOptions {
+function createEquationAwareFormulaEvaluation(options: GraphwarFormulaOptions): FormulaEvaluationOptions {
   return options.formulaEvaluation?.equation === options.equation
     ? options.formulaEvaluation
     : { ...options.formulaEvaluation, equation: options.equation };
@@ -538,7 +544,7 @@ function getFirstOrderStartAngle(center: GraphPoint, evaluateDY: FirstOrderEvalu
 }
 
 /** 非 ABS 的 Y'' 建议角按发射边缘点处的目标曲线斜率做固定点迭代。 */
-function getSecondOrderStartAngle(center: GraphPoint, options: CreateGraphwarFormulaPathOptions) {
+function getSecondOrderStartAngle(center: GraphPoint, options: GraphwarFormulaOptions) {
   const evaluateDY = createFirstOrderEvaluator(options);
   let angle = Math.atan(evaluateDY(center.x, center.y));
 

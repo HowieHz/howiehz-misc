@@ -19,6 +19,13 @@ export function graphYToPlaneY(y: number, bounds: GraphBounds) {
   return ((bounds.maxY - y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT;
 }
 
+/** 将原生平面像素距离换算为指定坐标轴上的 Graphwar 图单位距离。 */
+export function planePixelsToGraphUnits(pixels: number, bounds: GraphBounds, axis: "x" | "y") {
+  const graphSpan = axis === "x" ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY;
+  const planePixels = axis === "x" ? GRAPHWAR_PLANE_LENGTH : GRAPHWAR_PLANE_HEIGHT;
+  return (Math.abs(graphSpan) * Math.abs(pixels)) / planePixels;
+}
+
 /** 判断两个点是否表示同一截图像素坐标。 */
 export function pixelPointsEqual(left: PixelPoint, right: PixelPoint) {
   return left.x === right.x && left.y === right.y;

@@ -153,6 +153,7 @@ export function evaluateGraphwarStepRouteTransition(
     next.x,
     resolved.effectiveDeltaY,
     model.formulaSteepness,
+    collision.bounds,
     model.decimalPlaces,
   );
   const envelopeResult = createGraphwarStepEnvelope({

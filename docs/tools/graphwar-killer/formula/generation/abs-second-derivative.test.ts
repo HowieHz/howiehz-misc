@@ -71,12 +71,14 @@ describe("ABS second-derivative formula", () => {
     const angle = Math.atan2(target.y - center.y, target.x - center.x);
     const formulaPoints = createGraphwarFormulaPathPoints({
       algorithm: "abs",
+      bounds: { maxX: 20, maxY: 20, minX: -20, minY: -20 },
       equation: "ddy",
       points,
       steepness: 210,
     });
     const staleGlitchFormulaPoints = createGraphwarFormulaPathPoints({
       algorithm: "abs",
+      bounds: { maxX: 20, maxY: 20, minX: -20, minY: -20 },
       equation: "ddy",
       formulaEvaluation: {
         equation: "ddy",
@@ -118,6 +120,7 @@ describe("ABS second-derivative formula", () => {
     expect(() =>
       createGraphwarFormulaPathPoints({
         algorithm: "pchip",
+        bounds: { maxX: 20, maxY: 20, minX: -20, minY: -20 },
         equation: "ddy",
         formulaEvaluation: { equation: "ddy", formulaDecimalPlaces: 4 },
         points,

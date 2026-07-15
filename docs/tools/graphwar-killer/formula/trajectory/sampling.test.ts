@@ -386,12 +386,54 @@ describe("ODE segment position compensation", () => {
       expect(acceptedPoint).toBeDefined();
       if (acceptedPoint) {
         expect(
-          Math.abs(acceptedPoint.y - target.y) * (GRAPHWAR_PLANE_LENGTH / Math.abs(bounds.maxX - bounds.minX)),
+          Math.abs(acceptedPoint.y - target.y) * (GRAPHWAR_PLANE_HEIGHT / Math.abs(bounds.maxY - bounds.minY)),
           `target (${target.x}, ${target.y})`,
         ).toBeLessThanOrEqual(1);
       }
     }
   });
+
+  it.each([
+    { algorithm: "abs", equation: "ddy", steepness: 10 },
+    { algorithm: "step", equation: "dy", steepness: 67 },
+  ] satisfies readonly { algorithm: AlgorithmMode; equation: EquationMode; steepness: number }[])(
+    "uses custom vertical bounds for the $algorithm $equation one-pixel contract",
+    ({ algorithm, equation, steepness }) => {
+      const customBounds: GraphBounds = { maxX: 25, maxY: 0.5, minX: -25, minY: -0.5 };
+      const customPoints = [
+        createGraphPoint(-20, 0),
+        createGraphPoint(-15, 0.4),
+        createGraphPoint(-10, -0.4),
+        createGraphPoint(-5, 0.3),
+      ];
+      const sample = resolveGraphwarTrajectory({
+        bounds: customBounds,
+        boundsRect,
+        points: customPoints,
+        settings: {
+          algorithm,
+          decimalPlaces: 4,
+          equation,
+          steepness,
+          stepGlitchMode: false,
+          stepOverflowProtection: true,
+        },
+        soldierCenter: customPoints[0],
+      }).result.sample;
+
+      for (const target of customPoints.slice(1)) {
+        const acceptedPoint = sample.points.find((point) => point.x >= target.x);
+        expect(acceptedPoint).toBeDefined();
+        if (acceptedPoint) {
+          expect(
+            Math.abs(acceptedPoint.y - target.y) *
+              (GRAPHWAR_PLANE_HEIGHT / Math.abs(customBounds.maxY - customBounds.minY)),
+            `target (${target.x}, ${target.y})`,
+          ).toBeLessThanOrEqual(1);
+        }
+      }
+    },
+  );
 
   it.each([
     { algorithm: "step", steepness: 67 },
@@ -419,7 +461,7 @@ describe("ODE segment position compensation", () => {
         expect(acceptedPoint).toBeDefined();
         if (acceptedPoint) {
           expect(
-            Math.abs(acceptedPoint.y - target.y) * (GRAPHWAR_PLANE_LENGTH / Math.abs(bounds.maxX - bounds.minX)),
+            Math.abs(acceptedPoint.y - target.y) * (GRAPHWAR_PLANE_HEIGHT / Math.abs(bounds.maxY - bounds.minY)),
           ).toBeLessThanOrEqual(1);
         }
       }

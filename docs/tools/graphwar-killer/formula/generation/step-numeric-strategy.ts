@@ -1,5 +1,5 @@
 /** Step 公式的数值保护策略；公式输出、寻路和轨迹采样必须共用同一套判断。 */
-import { GRAPHWAR_PLANE_GAME_LENGTH, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { planePixelsToGraphUnits } from "../../core/geometry";
 import {
   clampDecimalPlaces,
   floorToDecimalPlaces,
@@ -57,12 +57,6 @@ export interface StepFormulaPlateauState {
   /** 从原点和整数单位重建的 canonical 平台高度。 */
   resolvedY: number;
 }
-
-/** Step 在目标 x 处允许的纵向尾差；0 会要求 sigmoid 中心无限左移。 */
-const STEP_TARGET_VERTICAL_TOLERANCE =
-  (graphwarToolDefaults.targetRangePixelTolerance * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH;
-/** 中心必须至少位于段起点右侧一个 Graphwar 原始平面像素。 */
-const STEP_CENTER_MARGIN = GRAPHWAR_PLANE_GAME_LENGTH / GRAPHWAR_PLANE_LENGTH;
 
 /** 按最终公式文本规则量化普通系数，供输出、采样和寻路共用。 */
 export function quantizeFormulaCoefficient(coefficientValue: number, decimalPlaces?: number) {
@@ -271,6 +265,7 @@ export function calculateStepFormulaCenterX(
   targetX: number,
   effectiveDeltaY: number,
   formulaSteepness: number,
+  bounds: GraphBounds,
 ) {
   if (
     !Number.isFinite(startX) ||
@@ -284,8 +279,10 @@ export function calculateStepFormulaCenterX(
     return targetX;
   }
 
-  const availableOffset = targetX - startX - STEP_CENTER_MARGIN;
-  const requiredProgress = 1 - STEP_TARGET_VERTICAL_TOLERANCE / Math.abs(effectiveDeltaY);
+  const availableOffset = targetX - startX - planePixelsToGraphUnits(1, bounds, "x");
+  const requiredProgress =
+    1 -
+    planePixelsToGraphUnits(graphwarToolDefaults.targetRangePixelTolerance, bounds, "y") / Math.abs(effectiveDeltaY);
   if (effectiveDeltaY === 0 || requiredProgress <= 0.5 || availableOffset <= 0 || !Number.isFinite(availableOffset)) {
     return targetX;
   }
@@ -305,10 +302,11 @@ export function resolveStepFormulaCenterX(
   targetX: number,
   effectiveDeltaY: number,
   formulaSteepness: number,
+  bounds: GraphBounds,
   decimalPlaces?: number,
 ) {
   return quantizeStepFormulaCenterX(
-    calculateStepFormulaCenterX(startX, targetX, effectiveDeltaY, formulaSteepness),
+    calculateStepFormulaCenterX(startX, targetX, effectiveDeltaY, formulaSteepness, bounds),
     decimalPlaces,
   );
 }

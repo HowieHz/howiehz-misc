@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { GRAPHWAR_PLANE_HEIGHT } from "../../core/game/constants";
 import { createGraphPoint } from "../../core/types";
 import {
   calculateStepFormulaCenterX,
@@ -8,6 +9,8 @@ import {
   resolveStepFormula,
   resolveStepFormulaTransition,
 } from "./step-numeric-strategy";
+
+const bounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
 
 describe("Step numeric compensation", () => {
   it("uses the printed coefficient as the canonical value for every equation", () => {
@@ -89,10 +92,11 @@ describe("Step numeric compensation", () => {
   });
 
   it.each([0, 1])("keeps the printed center inside the 1px target-tail contract at precision %i", (precision) => {
-    const rawCenter = calculateStepFormulaCenterX(0, 1, 4, 67);
-    const center = resolveStepFormulaCenterX(0, 1, 4, 67, precision);
+    const rawCenter = calculateStepFormulaCenterX(0, 1, 4, 67, bounds);
+    const center = resolveStepFormulaCenterX(0, 1, 4, 67, bounds, precision);
     const progressAtTarget = 1 / (1 + Math.exp(-67 * (1 - center)));
-    const tailErrorPlanePixels = Math.abs(4 * (1 - progressAtTarget)) * (770 / 50);
+    const tailErrorPlanePixels =
+      Math.abs(4 * (1 - progressAtTarget)) * (GRAPHWAR_PLANE_HEIGHT / Math.abs(bounds.maxY - bounds.minY));
 
     expect(center).toBeLessThanOrEqual(rawCenter);
     expect(tailErrorPlanePixels).toBeLessThanOrEqual(1);

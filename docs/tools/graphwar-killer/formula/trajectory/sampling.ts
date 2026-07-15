@@ -2,14 +2,20 @@ import {
   GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
   GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
-  GRAPHWAR_MAX_ANGLE_LOOPS,
   GRAPHWAR_PLANE_HEIGHT,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
-import { graphToImagePoint, graphXToPlaneX, graphYToPlaneY, imageToGraphPoint } from "../../core/geometry";
+import {
+  graphToImagePoint,
+  graphXToPlaneX,
+  graphYToPlaneY,
+  imageToGraphPoint,
+  planePixelsToGraphUnits,
+} from "../../core/geometry";
 import { MAX_FORMULA_DECIMAL_PLACES, floorToDecimalPlaces } from "../../core/numbers";
 import { planePointIsInsideBoundaryExpansion } from "../../core/plane-grid";
+import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint } from "../../core/types";
 import type {
   AlgorithmMode,
@@ -461,9 +467,13 @@ interface StepSimulationRefinement {
 
 /** ABS y'' 按真实二阶状态重新求出的折点脉冲和段起点。 */
 interface AbsSecondDerivativeSimulationRefinement {
+  formulaPoints: GraphPoint[];
   pulseDeltaSlopes: readonly (number | undefined)[];
   segmentStartPoints: readonly (GraphPoint | undefined)[];
 }
+
+/** 只限制异常固定点路径的工作量；正常退出由一像素契约或最终文本量化状态决定。 */
+const ABS_SECOND_DERIVATIVE_MAX_REFINEMENT_ITERATIONS = 100;
 
 /** 邪道候选及其求值过程中确认的 sign 保护。 */
 interface StepGlitchCandidateSelection {
@@ -537,6 +547,7 @@ function createTrajectoryFormulaState(
   let resolvedSignProtection = signProtection;
   if (options.settings.algorithm === "abs" && options.settings.equation === "ddy") {
     const solved = refineAbsSecondDerivativeSegmentsWithSimulation(options, formulaPoints, signProtection);
+    formulaPoints = solved.formulaPoints;
     segmentStartPoints = solved.segmentStartPoints;
     absSecondDerivativePulseDeltaSlopes = solved.pulseDeltaSlopes;
   } else if (formulaModeUsesPositionCompensation(options.settings.algorithm, options.settings.equation)) {
@@ -657,23 +668,33 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
   const pulseDeltaSlopes: (number | undefined)[] = new Array(segmentCount);
   const segmentStartPoints: (GraphPoint | undefined)[] = new Array(segmentCount);
   if (segmentCount === 0) {
-    return { pulseDeltaSlopes, segmentStartPoints };
+    return { formulaPoints: [...formulaPoints], pulseDeltaSlopes, segmentStartPoints };
   }
+  const refinedFormulaPoints = [...formulaPoints];
   const soldierCenter = options.soldierCenter ?? options.points[0];
-  const finalPoint = formulaPoints.at(-1);
+  const finalPoint = refinedFormulaPoints.at(-1);
   if (!soldierCenter || !finalPoint) {
     throw new GraphwarFormulaConvergenceError("ABS second-order path endpoints are missing.");
   }
   const finalX = finalPoint.x;
+  const maximumPositionError = planePixelsToGraphUnits(
+    graphwarToolDefaults.targetRangePixelTolerance,
+    options.bounds,
+    "y",
+  );
+  const formulaSteepness = quantizeStepFormulaSteepness(options.settings.steepness, options.settings.decimalPlaces);
+  if (!(formulaSteepness > 0)) {
+    throw new GraphwarFormulaConvergenceError("ABS second-order pulse steepness is not positive.");
+  }
 
   for (let pulseIndex = 0; pulseIndex < segmentCount - 1; pulseIndex += 1) {
     const startSample = sampleAbsSecondDerivativePrefix(
       options,
-      formulaPoints,
+      refinedFormulaPoints,
       signProtection,
       pulseDeltaSlopes,
       soldierCenter,
-      formulaPoints[pulseIndex + 1].x,
+      refinedFormulaPoints[pulseIndex + 1].x,
     );
     const startPoint = startSample.points.at(-1);
     const startDy = startSample.endState?.dy;
@@ -700,23 +721,42 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
     pulseDeltaSlopes[pulseIndex] = deltaSlope;
   }
 
-  // 后续脉冲也有左尾；按最终文本的整组量化脉冲回扫，状态重复或误差不再改善时停止。
+  // 后续脉冲也有左尾；按最终文本的整组量化脉冲回扫，达到一像素契约后立即成功。
   const visitedPulseStates = new Set<string>();
   let bestPulseDeltaSlopes = [...pulseDeltaSlopes];
+  let bestFirstFormulaTargetY = refinedFormulaPoints[1].y;
   let bestWorstPositionError = Number.POSITIVE_INFINITY;
-  // 与其他工具自有公式固定点迭代共用 Graphwar 原版安全预算；正常退出仍由量化状态和误差决定。
-  while (visitedPulseStates.size < GRAPHWAR_MAX_ANGLE_LOOPS) {
+  let reachedRefinementLimit = true;
+  for (
+    let refinementIteration = 0;
+    refinementIteration < ABS_SECOND_DERIVATIVE_MAX_REFINEMENT_ITERATIONS;
+    refinementIteration += 1
+  ) {
     resolveAbsSecondDerivativeTerminalPulse(
       options,
-      formulaPoints,
+      refinedFormulaPoints,
       signProtection,
       pulseDeltaSlopes,
       soldierCenter,
       finalX,
     );
-    const pulseState = canonicalizeAbsSecondDerivativePulseState(options.settings, pulseDeltaSlopes);
+    // decimalPlaces 决定最终文本能表达的状态；原地落到该状态后，重复 key 表示继续迭代已无意义。
+    let pulseState = "";
+    for (let pulseIndex = 0; pulseIndex < pulseDeltaSlopes.length; pulseIndex += 1) {
+      const deltaSlope = pulseDeltaSlopes[pulseIndex];
+      if (deltaSlope === undefined) {
+        pulseState += "|undefined";
+        continue;
+      }
+      const coefficient = quantizeFormulaCoefficient(formulaSteepness * deltaSlope, options.settings.decimalPlaces);
+      pulseDeltaSlopes[pulseIndex] = coefficient / formulaSteepness;
+      pulseState += `|${coefficient}`;
+    }
+    pulseState += `|launch:${refinedFormulaPoints[1].y}`;
     if (visitedPulseStates.has(pulseState)) {
       pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
+      refinedFormulaPoints[1] = createGraphPoint(refinedFormulaPoints[1].x, bestFirstFormulaTargetY);
+      reachedRefinementLimit = false;
       break;
     }
     visitedPulseStates.add(pulseState);
@@ -724,18 +764,20 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
     const firstTarget = options.points[1];
     const firstTargetPoint = sampleAbsSecondDerivativeTargetPoint(
       options,
-      formulaPoints,
+      refinedFormulaPoints,
       signProtection,
       pulseDeltaSlopes,
       soldierCenter,
       firstTarget,
     );
-    let worstPositionError = Math.abs(firstTarget.y - firstTargetPoint.y);
+    const firstTargetPositionError = firstTarget.y - firstTargetPoint.y;
+    let worstPositionError = Math.abs(firstTargetPositionError);
+    let allTargetsWithinTolerance = worstPositionError <= maximumPositionError;
     for (let pulseIndex = 0; pulseIndex < segmentCount - 1; pulseIndex += 1) {
       const target = options.points[pulseIndex + 2];
       const targetPoint = sampleAbsSecondDerivativeTargetPoint(
         options,
-        formulaPoints,
+        refinedFormulaPoints,
         signProtection,
         pulseDeltaSlopes,
         soldierCenter,
@@ -747,21 +789,35 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
       }
       const positionError = target.y - targetPoint.y;
       const absolutePositionError = Math.abs(positionError);
+      allTargetsWithinTolerance = allTargetsWithinTolerance && absolutePositionError <= maximumPositionError;
       worstPositionError = Math.max(worstPositionError, absolutePositionError);
     }
-    if (worstPositionError < bestWorstPositionError) {
-      bestWorstPositionError = worstPositionError;
+    if (allTargetsWithinTolerance) {
       bestPulseDeltaSlopes = [...pulseDeltaSlopes];
-    } else {
-      pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
+      bestFirstFormulaTargetY = refinedFormulaPoints[1].y;
+      reachedRefinementLimit = false;
       break;
     }
-    // 每次更新后立刻重放下一目标，让后续脉冲消费本轮最新的前缀状态。
+    if (worstPositionError >= bestWorstPositionError) {
+      pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
+      refinedFormulaPoints[1] = createGraphPoint(refinedFormulaPoints[1].x, bestFirstFormulaTargetY);
+      reachedRefinementLimit = false;
+      break;
+    }
+    bestWorstPositionError = worstPositionError;
+    bestPulseDeltaSlopes = [...pulseDeltaSlopes];
+    bestFirstFormulaTargetY = refinedFormulaPoints[1].y;
+    // 首个公式目标只决定 ABS y'' 发射角；修正它即可补偿所有平滑脉冲在首目标左侧的尾值。
+    refinedFormulaPoints[1] = createGraphPoint(
+      refinedFormulaPoints[1].x,
+      refinedFormulaPoints[1].y + firstTargetPositionError,
+    );
+    // 每次更新后立刻重放下一目标，让后续脉冲消费本轮最新的发射角和前缀状态。
     for (let pulseIndex = 0; pulseIndex < segmentCount - 1; pulseIndex += 1) {
       const target = options.points[pulseIndex + 2];
       const targetPoint = sampleAbsSecondDerivativeTargetPoint(
         options,
-        formulaPoints,
+        refinedFormulaPoints,
         signProtection,
         pulseDeltaSlopes,
         soldierCenter,
@@ -772,17 +828,18 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
         pulseDeltaSlopes[pulseIndex] =
           deltaSlope +
           (target.y - targetPoint.y) /
-            Math.max(targetPoint.x - formulaPoints[pulseIndex + 1].x, GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE);
+            Math.max(targetPoint.x - refinedFormulaPoints[pulseIndex + 1].x, GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE);
       }
     }
   }
-  if (visitedPulseStates.size >= GRAPHWAR_MAX_ANGLE_LOOPS) {
+  if (reachedRefinementLimit) {
     pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
+    refinedFormulaPoints[1] = createGraphPoint(refinedFormulaPoints[1].x, bestFirstFormulaTargetY);
   }
 
   resolveAbsSecondDerivativeTerminalPulse(
     options,
-    formulaPoints,
+    refinedFormulaPoints,
     signProtection,
     pulseDeltaSlopes,
     soldierCenter,
@@ -791,7 +848,7 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
 
   const finalSample = sampleAbsSecondDerivativePrefix(
     options,
-    formulaPoints,
+    refinedFormulaPoints,
     signProtection,
     pulseDeltaSlopes,
     soldierCenter,
@@ -800,7 +857,6 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
   if (finalSample.stopReason !== "stopped") {
     throw new GraphwarFormulaConvergenceError("ABS second-order final replay did not converge.");
   }
-  const maximumPositionError = Math.abs(options.bounds.maxX - options.bounds.minX) / GRAPHWAR_PLANE_LENGTH;
   let sampleIndex = 0;
   for (let targetIndex = 1; targetIndex < options.points.length; targetIndex += 1) {
     while (
@@ -821,7 +877,7 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
       segmentStartPoints[targetIndex] = acceptedPoint;
     }
   }
-  return { pulseDeltaSlopes, segmentStartPoints };
+  return { formulaPoints: refinedFormulaPoints, pulseDeltaSlopes, segmentStartPoints };
 }
 
 /** 关闭旧终端脉冲后读取真实末段 y'，再生成保留原有路径后趋平意图的新脉冲。 */
@@ -851,26 +907,6 @@ function resolveAbsSecondDerivativeTerminalPulse(
     throw new GraphwarFormulaConvergenceError("ABS second-order terminal prefix did not converge.");
   }
   pulseDeltaSlopes[pulseDeltaSlopes.length - 1] = -terminalDy;
-}
-
-/** 把 raw delta 收敛到最终文本系数对应的真实斜率变化，并返回完整量化状态。 */
-function canonicalizeAbsSecondDerivativePulseState(
-  settings: Pick<GraphwarTrajectoryFormulaSettings, "decimalPlaces" | "steepness">,
-  pulseDeltaSlopes: (number | undefined)[],
-) {
-  const formulaSteepness = quantizeStepFormulaSteepness(settings.steepness, settings.decimalPlaces);
-  if (!(formulaSteepness > 0)) {
-    throw new GraphwarFormulaConvergenceError("ABS second-order pulse steepness is not positive.");
-  }
-  const coefficients = pulseDeltaSlopes.map((deltaSlope, index) => {
-    if (deltaSlope === undefined) {
-      return "undefined";
-    }
-    const coefficient = quantizeFormulaCoefficient(formulaSteepness * deltaSlope, settings.decimalPlaces);
-    pulseDeltaSlopes[index] = coefficient / formulaSteepness;
-    return String(coefficient);
-  });
-  return coefficients.join("|");
 }
 
 /** 用当前完整脉冲状态回放到目标 x，并返回 Graphwar 第一个越过目标线的真实接受点。 */
@@ -1662,6 +1698,7 @@ function createStepSegmentRefinementStopX(pointX: number, previousSegment: StepG
 /** 邪道落点改变累计平台后，重算下一普通段的最终公式中心。 */
 function createStepSegmentFormulaPointAfterRefinement(
   options: {
+    bounds: GraphBounds;
     points: readonly GraphPoint[];
     settings: GraphwarTrajectoryFormulaSettings;
   },
@@ -1686,7 +1723,13 @@ function createStepSegmentFormulaPointAfterRefinement(
   );
   // 邪道后的普通段要按 canonical 有效 ΔY 重算中心；否则低精度文本会与内部中心脱节。
   return createGraphPoint(
-    calculateStepFormulaCenterX(actualStartPoint.x, target.x, transition.effectiveDeltaY, formulaSteepness),
+    calculateStepFormulaCenterX(
+      actualStartPoint.x,
+      target.x,
+      transition.effectiveDeltaY,
+      formulaSteepness,
+      options.bounds,
+    ),
     formulaTarget.y,
   );
 }
@@ -1939,6 +1982,7 @@ function createResolvedFormulaPathPoints(
   const rangeStart = options.soldierCenter ?? options.points[0];
   return createFormulaPathPoints(
     options.points,
+    options.bounds,
     options.settings,
     createTrajectoryFormulaEvaluation(
       options,
@@ -2149,6 +2193,7 @@ export function sampleGraphwarPathTargetSequence(options: {
 /** 生成 Graphwar 实际公式点；路径点和发射点保持 double 精度，只有最终表达式文本会按小数位格式化。 */
 function createFormulaPathPoints(
   points: readonly GraphPoint[],
+  bounds: GraphBounds,
   settings: GraphwarTrajectoryFormulaSettings,
   formulaEvaluation: FormulaEvaluationOptions,
 ) {
@@ -2156,6 +2201,7 @@ function createFormulaPathPoints(
     ? [...points]
     : createGraphwarFormulaPathPoints({
         algorithm: settings.algorithm,
+        bounds,
         equation: settings.equation,
         formulaEvaluation,
         points,

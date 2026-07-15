@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { GRAPHWAR_PLANE_HEIGHT } from "../../core/game/constants";
+import { floorToDecimalPlaces } from "../../core/numbers";
 import { imagePointToPlaneGridPoint } from "../../core/plane-grid";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds } from "../../core/types";
@@ -86,6 +88,37 @@ describe("stateful Step route evaluation", () => {
       expect(result.transition.resolvedStartY).toBe(1);
       expect(result.transition.resolvedEndY).toBe(2);
       expect(result.transition.routeStateKey).toBe("2");
+    }
+  });
+
+  it("derives the route envelope center from custom vertical bounds", () => {
+    const customBounds: GraphBounds = { maxX: 25, maxY: 0.5, minX: -25, minY: -0.5 };
+    const model = createGraphwarStepRouteModel(0, {
+      algorithm: "step",
+      decimalPlaces: 4,
+      equation: "y",
+      steepness: 67,
+    });
+    expect(model).toBeDefined();
+    if (!model) {
+      return;
+    }
+
+    const target = createGraphPoint(-15, 0.4);
+    const result = evaluateGraphwarStepRouteTransition(model, 0, createGraphPoint(-20, 0), target, {
+      boundaryInset: 0,
+      bounds: customBounds,
+      summedArea: emptyArea,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const requiredProgress =
+        1 - Math.abs(customBounds.maxY - customBounds.minY) / GRAPHWAR_PLANE_HEIGHT / result.transition.resolvedEndY;
+      const expectedCenter = floorToDecimalPlaces(
+        target.x - Math.log(requiredProgress / (1 - requiredProgress)) / model.formulaSteepness,
+        model.decimalPlaces,
+      );
+      expect((result.transition.envelope.xs + target.x) / 2).toBe(expectedCenter);
     }
   });
 });

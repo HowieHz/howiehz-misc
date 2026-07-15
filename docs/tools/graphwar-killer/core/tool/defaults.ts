@@ -15,7 +15,7 @@ interface GraphwarToolDefaults {
     /** 默认平面高度。 */
     height: number;
   };
-  /** Step 在目标 x 处允许的纵向尾差，单位为 Graphwar 原始平面像素。 */
+  /** ODE 公式控制点允许的纵向误差，单位为 Graphwar 原始平面像素。 */
   targetRangePixelTolerance: number;
   /** 放大镜预览窗口尺寸。 */
   magnifierSize: number;

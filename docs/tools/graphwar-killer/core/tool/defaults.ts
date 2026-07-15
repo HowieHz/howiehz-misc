@@ -21,7 +21,15 @@ interface GraphwarToolDefaults {
   magnifierSize: number;
   /** 放大镜默认缩放倍数。 */
   magnifierZoom: number;
-  /** 公式默认陡峭度；Step 满高跳转按半像素舍入可在一个 Graphwar 横向像素内完成。 */
+  /**
+   * Step y/y' 公式 profile 共用的默认陡峭度。
+   *
+   * 满高 450px 的 sigmoid 在上下边缘各保留 0.5px 时，横向跨度为：
+   *
+   * `2 * ln((450 - 0.5) / 0.5) / k`
+   *
+   * 一个 Graphwar 横向像素为 `50 / 770`。要求跨度不超过该值，可得 `k >= 209.4795`，因此整数默认值向上取整为 210。
+   */
   steepness: number;
   /** 自动障碍识别保留连通域的默认最小面积。 */
   obstacleMinArea: number;

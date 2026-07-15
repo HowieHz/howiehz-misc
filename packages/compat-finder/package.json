@@ -54,7 +54,7 @@
   "devDependencies": {
     "@arethetypeswrong/core": "^0.18.5",
     "publint": "^0.3.21",
-    "tsdown": "^0.22.5",
+    "tsdown": "^0.22.7",
     "vitest": "^4.1.10"
   },
   "engines": {

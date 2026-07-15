@@ -13,6 +13,7 @@ import type { GraphwarSignProtection } from "./sign-protection";
 import {
   quantizeFormulaCoefficient,
   quantizeFormulaOffsetCenter,
+  getStepGlitchFormulaDecimalPlaces,
   quantizeStepFormulaSteepness,
   quantizeStepFormulaCenterX,
   resolveStepFormula,
@@ -497,11 +498,15 @@ function createCompiledStepFormula(
   const formulaSteepness = resolvedFormula.formulaSteepness;
   const terms: CompiledStepTerm[] = [];
   for (let index = 1; index < points.length; index += 1) {
-    const transition = resolvedFormula.transitions[index - 1];
-    if (!transition || options?.stepDisabledSegments?.[index - 1]) {
+    const sourceSegmentIndex = index - 1;
+    if (options?.disabledSegments?.[sourceSegmentIndex]) {
       continue;
     }
-    const glitchSegment = createCompiledStepGlitchSegment(options?.stepGlitchSegments?.[index - 1], options);
+    const transition = resolvedFormula.transitions[sourceSegmentIndex];
+    const glitchSegment = createCompiledStepGlitchSegment(options?.stepGlitchSegments?.[sourceSegmentIndex], options);
+    if (!transition) {
+      continue;
+    }
     const formulaCenterX = createCompiledFormulaXCenter(points[index].x, options);
     const { firstDerivativeCoefficient, secondDerivativeCoefficient, yCoefficient } = transition;
     if (!glitchSegment && yCoefficient === 0 && firstDerivativeCoefficient === 0 && secondDerivativeCoefficient === 0) {
@@ -518,7 +523,7 @@ function createCompiledStepFormula(
       ),
       firstDerivativeCoefficient,
       secondDerivativeCoefficient,
-      sourceSegmentIndex: index - 1,
+      sourceSegmentIndex,
       yCoefficient,
     });
   }
@@ -535,7 +540,7 @@ function createCompiledStepGlitchSegment(
     return undefined;
   }
 
-  const decimalPlaces = getFormulaDecimalPlaces(options);
+  const decimalPlaces = getStepGlitchFormulaDecimalPlaces(getFormulaDecimalPlaces(options));
   if (segment.equation === "ddy") {
     // 三个逻辑门全开时贡献 8；加速和刹车分支必须分别按最终文本系数量化。
     return {
@@ -547,7 +552,6 @@ function createCompiledStepGlitchSegment(
       equation: segment.equation,
       pulseEndX: segment.pulseEndX,
       startX: segment.startX,
-      targetDerivative: segment.targetDerivative,
       targetY: quantizeFormulaOffsetCenter(segment.targetY, decimalPlaces),
     };
   }
@@ -654,8 +658,11 @@ function createCompiledAbsConnectorSegments(
 ): CompiledAbsConnectorSegment[] {
   const decimalPlaces = getFormulaDecimalPlaces(options);
   const segments: CompiledAbsConnectorSegment[] = [];
-  for (let index = 1; index < points.length; index += 1) {
-    const segment = createAbsConnectorSegment(points[index - 1], points[index]);
+  for (let index = 0; index < points.length - 1; index += 1) {
+    if (options?.disabledSegments?.[index]) {
+      continue;
+    }
+    const segment = createAbsConnectorSegment(...getFormulaSegmentPoints(points, index, options));
     if (isRoundedAbsConnectorZero(segment, decimalPlaces)) {
       continue;
     }
@@ -668,7 +675,7 @@ function createCompiledAbsConnectorSegments(
     segments.push({
       coefficient,
       endX: createCompiledFormulaXCenter(segment.endX, options),
-      sourceSegmentIndex: index - 1,
+      sourceSegmentIndex: index,
       startX: createCompiledFormulaXCenter(segment.startX, options),
       width: createCompiledFormulaDistance(segment.width, options),
     });
@@ -712,6 +719,19 @@ function createCompiledAbsSecondDerivativeFormula(
     }
   }
   return { formulaSteepness, pulses };
+}
+
+/** ABS y' 取已经接受的真实起点和原始目标；其他方程不得消费陈旧补正状态。 */
+function getFormulaSegmentPoints(
+  points: readonly GraphPoint[],
+  segmentIndex: number,
+  options?: FormulaEvaluationOptions,
+): readonly [GraphPoint, GraphPoint] {
+  return [
+    (segmentIndex > 0 && options?.equation === "dy" ? options.segmentStartPoints?.[segmentIndex] : undefined) ??
+      points[segmentIndex],
+    points[segmentIndex + 1],
+  ];
 }
 
 /** 正长度参数在文本里用普通数字格式化，应与 formatDecimal 的舍入规则一致。 */
@@ -1014,6 +1034,7 @@ function formatStepGlitchFirstDerivativeExpression(
   decimalPlaces: number | undefined,
   signProtection: GraphwarSignProtection | undefined,
 ) {
+  decimalPlaces = getStepGlitchFormulaDecimalPlaces(decimalPlaces);
   const direction = segment.derivative < 0 ? -1 : 1;
   const xGate = `1+${formatStableSignRatio(
     formatStepGlitchXOffset(segment.startX),
@@ -1087,6 +1108,7 @@ function formatStepGlitchSecondDerivativeExpression(
   decimalPlaces: number | undefined,
   signProtection: GraphwarSignProtection | undefined,
 ) {
+  decimalPlaces = getStepGlitchFormulaDecimalPlaces(decimalPlaces);
   const direction: 1 | -1 = segment.acceleration < 0 ? -1 : 1;
   const xGate = `1+${formatStableSignRatio(
     formatStepGlitchXOffset(segment.startX),

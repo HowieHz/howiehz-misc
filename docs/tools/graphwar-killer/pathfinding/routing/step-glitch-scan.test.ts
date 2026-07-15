@@ -181,13 +181,17 @@ describe("Step ODE glitch scan", () => {
     if (result.status === "hit") {
       const gate = result.path.at(-2);
       expect(result.path).toHaveLength(3);
+      expect(result.formulaContext?.formulaEvaluation.segmentStartPoints?.[1]).toEqual(
+        result.formulaContext?.stepGlitchFormulaPrefix?.segmentStartPoints[1],
+      );
+      expect(result.formulaContext?.formulaEvaluation.segmentStartPoints?.[1]).toBeDefined();
       expect(gate?.x).toBeGreaterThan(start.x);
       expect(gate?.x).toBeLessThan(target.x);
       expect(result.path.at(-1)).toBe(target);
     }
   });
 
-  it("replays one physical jump and restores y' with a second-order Step formula", () => {
+  it("replays one physical jump with a second-order Step formula", () => {
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 4);
     const mask = createEmptyMask();
@@ -214,9 +218,6 @@ describe("Step ODE glitch scan", () => {
     expect(segment).toEqual(expect.objectContaining({ equation: "ddy" }));
     expect(resolved.result.obstacleHitIndex).toBe(-1);
     expect(countPhysicalStepGlitchJumps(resolved.result.sample.points)).toBe(1);
-    if (segment?.equation === "ddy") {
-      expect(resolved.result.sample.endState?.dy).toBeCloseTo(segment.targetDerivative, 4);
-    }
     expect(
       sampleGraphwarExpressionTrajectory({
         bounds,
@@ -251,6 +252,7 @@ describe("Step ODE glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
+      expect(result.formulaContext?.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
       const controlPoint = result.path.at(-2);
       const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), bounds, boundsRect).x;
       const leftGateX = -floorToDecimalPlaces(-rawLeftGateX, 2);
@@ -288,6 +290,7 @@ describe("Step ODE glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
+      expect(result.formulaContext?.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
       const controlPoint = result.path.at(-2);
       const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), bounds, boundsRect).x;
       const leftGateX = -floorToDecimalPlaces(-rawLeftGateX, 2);

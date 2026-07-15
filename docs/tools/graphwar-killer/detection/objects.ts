@@ -702,7 +702,7 @@ export function addSoldierAreasToObstacleMask(
   const radius = Math.ceil((soldierHitRadiusPixels / edgeRect.width) * GRAPHWAR_PLANE_LENGTH);
   for (const soldier of soldiers) {
     const center = imagePointToPlaneGridPoint(getDetectionBoxCenter(soldier), edgeRect);
-    fillMaskDisk(mask, center, radius);
+    fillMaskCellsIntersectingDisk(mask, center, radius);
   }
 }
 
@@ -2111,16 +2111,6 @@ function samplePlaneImagePixel(imageData: ImageData, edgeRect: BoundsRect, plane
 
 /** 清除 mask 中一个圆形区域。 */
 function clearMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number) {
-  setMaskDisk(mask, center, radius, 0);
-}
-
-/** 填充 mask 中一个圆形区域。 */
-function fillMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number) {
-  setMaskDisk(mask, center, radius, 1);
-}
-
-/** 用圆盘写入 mask，士兵区域增删共用同一实现。 */
-function setMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number, value: 0 | 1) {
   const radiusSquared = radius * radius;
   for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
     for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
@@ -2131,7 +2121,27 @@ function setMaskDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number, v
       const x = center.x + offsetX;
       const y = center.y + offsetY;
       if (planePointIsInsideBounds(x, y)) {
-        mask[y * GRAPHWAR_PLANE_LENGTH + x] = value;
+        mask[y * GRAPHWAR_PLANE_LENGTH + x] = 0;
+      }
+    }
+  }
+}
+
+/** 保守填充所有与圆盘相交的 cell，避免连续轨迹向下映射时漏掉命中圈边缘。 */
+function fillMaskCellsIntersectingDisk(mask: Uint8Array, center: PlaneGridPoint, radius: number) {
+  const radiusSquared = radius * radius;
+  const minX = Math.max(0, Math.floor(center.x - radius) - 1);
+  const maxX = Math.min(GRAPHWAR_PLANE_LENGTH - 1, Math.ceil(center.x + radius));
+  const minY = Math.max(0, Math.floor(center.y - radius) - 1);
+  const maxY = Math.min(GRAPHWAR_PLANE_HEIGHT - 1, Math.ceil(center.y + radius));
+  for (let y = minY; y <= maxY; y += 1) {
+    const nearestY = clampNumber(center.y, y, y + 1);
+    for (let x = minX; x <= maxX; x += 1) {
+      const nearestX = clampNumber(center.x, x, x + 1);
+      const deltaX = nearestX - center.x;
+      const deltaY = nearestY - center.y;
+      if (deltaX * deltaX + deltaY * deltaY <= radiusSquared) {
+        mask[y * GRAPHWAR_PLANE_LENGTH + x] = 1;
       }
     }
   }

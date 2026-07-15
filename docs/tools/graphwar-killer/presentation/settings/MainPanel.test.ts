@@ -7,7 +7,7 @@ import { graphwarKillerLocale } from "../../locale";
 import MainPanel from "./MainPanel.vue";
 
 describe("Settings MainPanel", () => {
-  it("places the advanced-settings switch after the Step switches", async () => {
+  it("places the advanced-settings switch after the formula switches", async () => {
     const wrapper = mount(MainPanel, {
       props: {
         locale: graphwarKillerLocale,
@@ -84,6 +84,7 @@ describe("Settings MainPanel", () => {
 
     expect(wrapper.find(`[aria-label="${graphwarKillerLocale.ui.settings.steepnessAriaLabel}"]`).exists()).toBe(true);
     expect(wrapper.find("#graphwar-killer-overflow-protection").exists()).toBe(false);
+    expect(wrapper.find("#graphwar-killer-step-glitch-mode").attributes("aria-checked")).toBe("false");
   });
 
   it("keeps only the advanced-settings switch in Simulator settings", async () => {
@@ -122,7 +123,7 @@ describe("Settings MainPanel", () => {
   });
 });
 
-/** Creates the smallest complete settings model needed to exercise the Step option row. */
+/** 创建覆盖公式开关排列所需的最小完整设置模型。 */
 function createPanel() {
   return {
     advancedSettingsVisible: false,

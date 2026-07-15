@@ -10,6 +10,18 @@ import {
 import { buildFormula, compileGraphwarFormulaMaterials } from "./build";
 
 describe("ABS second-derivative formula", () => {
+  it.each(["y", "ddy"] as const)("ignores stale position compensation in %s mode", (equation) => {
+    const points = [createGraphPoint(0, 0), createGraphPoint(2, 2), createGraphPoint(4, 2)];
+    const plain = compileGraphwarFormulaMaterials(points, 210, "abs", { equation, formulaDecimalPlaces: 4 });
+    const withStaleStart = compileGraphwarFormulaMaterials(points, 210, "abs", {
+      equation,
+      formulaDecimalPlaces: 4,
+      segmentStartPoints: [undefined, createGraphPoint(2.5, 2.5)],
+    });
+
+    expect(withStaleStart).toEqual(plain);
+  });
+
   it("emits internal slope changes and a terminal flattening pulse without a launch pulse", () => {
     const points = [createGraphPoint(0, 0), createGraphPoint(2, 2), createGraphPoint(4, 2), createGraphPoint(6, 6)];
     const materials = compileGraphwarFormulaMaterials(points, 210, "abs", {
@@ -52,7 +64,18 @@ describe("ABS second-derivative formula", () => {
       points,
       steepness: 210,
     });
+    const staleGlitchFormulaPoints = createGraphwarFormulaPathPoints({
+      algorithm: "abs",
+      equation: "ddy",
+      formulaEvaluation: {
+        equation: "ddy",
+        stepGlitchSegments: [{ derivative: 1, endX: 1, equation: "dy", gateY: 1, startX: 0, targetY: 1 }],
+      },
+      points,
+      steepness: 210,
+    });
 
+    expect(staleGlitchFormulaPoints).toEqual(formulaPoints);
     expect(formulaPoints[0].x).toBeCloseTo(center.x + GRAPHWAR_GAME_SOLDIER_RADIUS * Math.cos(angle), 15);
     expect(formulaPoints[0].y).toBeCloseTo(center.y + GRAPHWAR_GAME_SOLDIER_RADIUS * Math.sin(angle), 15);
     expect(

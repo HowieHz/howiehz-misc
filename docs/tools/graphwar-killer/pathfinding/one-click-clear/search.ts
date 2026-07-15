@@ -547,7 +547,7 @@ async function buildOneClickClearDagPath(
   }
 }
 
-/** 邪道清图按分配后的目标 x 顺序扫描；跳过单个目标不应回到普通 Step DAG。 */
+/** 邪道清图按分配后的目标 x 顺序扫描；跳过单个目标不应回到普通 DAG。 */
 async function buildOneClickClearStepGlitchPath(
   context: OneClickClearSearchContext,
   targets: readonly OneClickClearTarget[],

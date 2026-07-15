@@ -5,11 +5,21 @@ export function formulaModeUsesSteepness(algorithm: AlgorithmMode, equation: Equ
   return algorithm === "step" || (algorithm === "abs" && equation === "ddy");
 }
 
-/** Step 邪道只适用于 ODE；调用方用这一处判定统一选择扫描器、mask 和缓存规范值。 */
+/** Step ODE 与双 ABS y' 从真实接受点继续生成下一段，避免理论控制点误差逐段累计。 */
+export function formulaModeUsesPositionCompensation(algorithm: AlgorithmMode, equation: EquationMode) {
+  return (algorithm === "step" && equation !== "y") || (algorithm === "abs" && equation === "dy");
+}
+
+/** 只有 ODE 的 Step 能把受阻段替换为硬 Step。 */
+export function formulaModeSupportsStepGlitch(algorithm: AlgorithmMode, equation: EquationMode) {
+  return algorithm === "step" && equation !== "y";
+}
+
+/** Step 邪道只替换受阻的 Step ODE 段；调用方据此统一选择扫描器和 mask。 */
 export function formulaModeUsesStepGlitch(
   algorithm: AlgorithmMode,
   equation: EquationMode,
   stepGlitchModeEnabled: boolean,
 ) {
-  return stepGlitchModeEnabled && algorithm === "step" && equation !== "y";
+  return stepGlitchModeEnabled && formulaModeSupportsStepGlitch(algorithm, equation);
 }

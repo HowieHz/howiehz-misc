@@ -1,6 +1,7 @@
 import { nowMs } from "../../core/time";
 import { createPixelPoint, type BoundsRect, type GraphBounds, type PixelPoint } from "../../core/types";
 import { addSoldierAreasToObstacleMask, dilateObstacleMask, type GraphwarDetectionBox } from "../../detection/objects";
+import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
 import type { GraphwarOneClickClearCandidate } from "../one-click-clear/search";
 import { createRouteMaskCacheKey } from "../routing/visibility-graph";
@@ -272,15 +273,16 @@ function createTrajectorySettingsCacheKey(
   settings: GraphwarTrajectoryFormulaSettings,
   stepGlitchObstacleMaskId: number,
 ) {
+  const stepGlitchMode = formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.stepGlitchMode);
   return [
     settings.algorithm,
     settings.decimalPlaces,
     settings.equation,
     settings.formulaPathSteepness,
     settings.steepness,
-    settings.stepGlitchMode,
-    // 邪道模式按普通 sigmoid 近似路径区域决定是否替换为门函数；mask 变化必须让 worker 结果缓存失效。
-    settings.stepGlitchMode ? stepGlitchObstacleMaskId : 0,
+    stepGlitchMode,
+    // 只有实际生效的 Step 邪道才消费障碍 mask；休眠偏好不能分裂缓存身份。
+    stepGlitchMode ? stepGlitchObstacleMaskId : 0,
     settings.stepOverflowProtection,
   ];
 }

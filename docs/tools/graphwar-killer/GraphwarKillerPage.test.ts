@@ -8,7 +8,7 @@ import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
 
 describe("Graphwar Killer page settings", () => {
-  it("toggles the y glitch preference without switching its game mode or algorithm", async () => {
+  it("keeps the glitch preference independent while leaving it inactive for ABS ODE modes", async () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const yMode = wrapper.findAll(".graphwar-killer__equation-toggle button")[0];
     const absAlgorithm = wrapper.findAll(".graphwar-killer__algorithm-toggle button")[0];
@@ -35,6 +35,25 @@ describe("Graphwar Killer page settings", () => {
     expect(wrapper.find("#graphwar-killer-step-glitch-mode-reason").text()).toContain(
       graphwarKillerLocale.ui.settings.stepGlitchModeAlgorithmInactiveReason,
     );
+
+    await wrapper.findAll(".graphwar-killer__equation-toggle button")[2].trigger("click");
+    await absAlgorithm.trigger("click");
+    expect(wrapper.find("#graphwar-killer-step-glitch-mode-reason").text()).toContain(
+      graphwarKillerLocale.ui.settings.stepGlitchModeAlgorithmInactiveReason,
+    );
+    wrapper.unmount();
+  });
+
+  it("leaves path planning under user control while glitch routing is effective", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const pathPlanning = wrapper.get("#graphwar-killer-path-planning");
+
+    await wrapper.findAll(".graphwar-killer__equation-toggle button")[1].trigger("click");
+
+    expect(pathPlanning.attributes("aria-checked")).toBe("false");
+    expect(pathPlanning.attributes("disabled")).toBeUndefined();
+    await pathPlanning.trigger("click");
+    expect(pathPlanning.attributes("aria-checked")).toBe("true");
     wrapper.unmount();
   });
 
@@ -75,6 +94,48 @@ describe("Graphwar Killer page settings", () => {
     expect(wrapper.find("#graphwar-killer-step-glitch-mode").attributes("aria-checked")).toBe("false");
     expect(wrapper.find("#graphwar-killer-overflow-protection").attributes("aria-checked")).toBe("false");
     expect(wrapper.find("#graphwar-killer-advanced-settings").attributes("aria-checked")).toBe("true");
+    wrapper.unmount();
+  });
+
+  it("keeps shared advanced settings available in the simulator workflow", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+
+    await wrapper.findAll(".graphwar-killer__mode-toggle button")[1].trigger("click");
+
+    const settingsPanel = wrapper.get(".graphwar-killer__settings-panel");
+    expect(settingsPanel.find("#graphwar-killer-advanced-settings").exists()).toBe(true);
+    expect(settingsPanel.find(".graphwar-killer__algorithm-toggle, input").exists()).toBe(false);
+
+    await settingsPanel.get("#graphwar-killer-advanced-settings").trigger("click");
+
+    expect(
+      wrapper
+        .get(".graphwar-killer__advanced-settings-panel")
+        .findAll("h3")
+        .map((heading) => heading.text()),
+    ).toEqual([graphwarKillerLocale.ui.settings.bounds.heading, graphwarKillerLocale.ui.settings.simulator]);
+    wrapper.unmount();
+  });
+
+  it("cancels a running search when ABS y'' steepness changes", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    await wrapper.findAll(".graphwar-killer__equation-toggle button")[2].trigger("click");
+    await wrapper.findAll(".graphwar-killer__algorithm-toggle button")[0].trigger("click");
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          smartPathfindingInProgress: boolean;
+          startSmartPathfinding: () => number;
+        };
+      }
+    ).setupState;
+
+    page.startSmartPathfinding();
+    expect(page.smartPathfindingInProgress).toBe(true);
+    await wrapper.find(`[aria-label="${graphwarKillerLocale.ui.settings.steepnessAriaLabel}"]`).setValue("211");
+    await nextTick();
+
+    expect(page.smartPathfindingInProgress).toBe(false);
     wrapper.unmount();
   });
 

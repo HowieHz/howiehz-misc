@@ -304,6 +304,156 @@ describe("Generated formula evaluator equivalence", () => {
   });
 });
 
+describe("ODE segment position compensation", () => {
+  const points = [
+    createGraphPoint(-23.376623376623378, 2.5974025974025974),
+    ...Array.from({ length: 8 }, (_, index) => createGraphPoint(-19 + 2 * index, -2 * index)),
+  ];
+
+  it.each([
+    { algorithm: "step", equation: "dy", steepness: 210 },
+    { algorithm: "step", equation: "ddy", steepness: 153 },
+    { algorithm: "abs", equation: "dy", steepness: 210 },
+  ] satisfies readonly { algorithm: AlgorithmMode; equation: EquationMode; steepness: number }[])(
+    "uses each real accepted point to start the next $algorithm $equation segment",
+    ({ algorithm, equation, steepness }) => {
+      const resolved = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points,
+        settings: {
+          algorithm,
+          decimalPlaces: 4,
+          equation,
+          steepness,
+          stepGlitchMode: false,
+          stepOverflowProtection: true,
+        },
+        soldierCenter: points[0],
+      });
+      const segmentStartPoints = resolved.context.formulaEvaluation.segmentStartPoints;
+
+      expect(segmentStartPoints).toHaveLength(points.length - 1);
+      expect(segmentStartPoints?.[0]).toBeUndefined();
+      for (let index = 1; index < points.length - 1; index += 1) {
+        const start = segmentStartPoints?.[index];
+        expect(start?.x).toBeGreaterThanOrEqual(points[index].x);
+        expect(Number.isFinite(start?.y)).toBe(true);
+      }
+    },
+  );
+
+  it.each([
+    { algorithm: "step", steepness: 67 },
+    { algorithm: "abs", steepness: 67 },
+  ] satisfies readonly { algorithm: AlgorithmMode; steepness: number }[])(
+    "keeps every $algorithm y' target within one plane pixel instead of accumulating drift",
+    ({ algorithm, steepness }) => {
+      const sample = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points,
+        settings: {
+          algorithm,
+          decimalPlaces: 4,
+          equation: "dy",
+          steepness,
+          stepGlitchMode: false,
+          stepOverflowProtection: true,
+        },
+        soldierCenter: points[0],
+      }).result.sample;
+
+      for (const target of points.slice(1)) {
+        const acceptedPoint = sample.points.find((point) => point.x >= target.x);
+        expect(acceptedPoint).toBeDefined();
+        if (acceptedPoint) {
+          expect(
+            Math.abs(acceptedPoint.y - target.y) * (GRAPHWAR_PLANE_LENGTH / Math.abs(bounds.maxX - bounds.minX)),
+          ).toBeLessThanOrEqual(1);
+        }
+      }
+    },
+  );
+
+  it.each([
+    { algorithm: "step", stepGlitchMode: false },
+    { algorithm: "abs", stepGlitchMode: true },
+  ] as const)(
+    "ignores glitch inputs for $algorithm y' when the mode is disabled or unsupported",
+    ({ algorithm, stepGlitchMode }) => {
+      const directPoints = [createGraphPoint(-11, 0), createGraphPoint(-6, 4)];
+      const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+      const obstacle = toPixel(-8.5, 2);
+      obstacleMask[Math.floor(obstacle.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(obstacle.x)] = 1;
+      const settings = {
+        algorithm,
+        decimalPlaces: 4,
+        equation: "dy" as const,
+        steepness: 67,
+        stepGlitchMode,
+        stepOverflowProtection: true,
+      };
+      const plain = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points: directPoints,
+        settings,
+        soldierCenter: directPoints[0],
+      }).context;
+      const withStaleMask = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points: directPoints,
+        settings: { ...settings, stepGlitchObstacleMask: obstacleMask },
+        soldierCenter: directPoints[0],
+      }).context;
+
+      expect(withStaleMask.formulaResult.expression).toBe(plain.formulaResult.expression);
+      expect(withStaleMask.compiledMaterials.stepFormula?.terms.some((term) => term.glitchSegment)).not.toBe(true);
+    },
+  );
+
+  it("rejects a stale hard-Step prefix while preserving ABS y' position compensation", () => {
+    const prefixPoints = points.slice(0, 2);
+    const absSettings = {
+      algorithm: "abs" as const,
+      decimalPlaces: 4,
+      equation: "dy" as const,
+      steepness: 67,
+      stepGlitchMode: true,
+      stepOverflowProtection: true,
+    };
+    const options = {
+      bounds,
+      boundsRect,
+      points: points.slice(0, 3),
+      settings: absSettings,
+      soldierCenter: points[0],
+    };
+    const plain = resolveGraphwarTrajectory(options).context;
+    const withStalePrefix = resolveGraphwarTrajectory({
+      ...options,
+      stepGlitchFormulaPrefix: {
+        bounds: { ...bounds },
+        initialFormulaPoints: prefixPoints,
+        points: prefixPoints,
+        refinedFormulaPoints: prefixPoints,
+        segmentStartPoints: [undefined],
+        settings: absSettings,
+        signProtection: [],
+        soldierCenter: points[0],
+        stepGlitchRequirements: [true],
+        stepGlitchSegments: [{ derivative: 1, endX: -5.5, equation: "dy", gateY: 0, startX: -6, targetY: 0 }],
+        stepSegmentDeltaYs: [-2],
+      },
+    }).context;
+
+    expect(withStalePrefix.formulaResult.expression).toBe(plain.formulaResult.expression);
+    expect(withStalePrefix.formulaEvaluation.segmentStartPoints).toEqual(plain.formulaEvaluation.segmentStartPoints);
+  });
+});
+
 describe("pathfinding formula convergence", () => {
   it("rejects only a non-convergent formula candidate through the normal pathfinding result", () => {
     const target = toPixel(1, 1);

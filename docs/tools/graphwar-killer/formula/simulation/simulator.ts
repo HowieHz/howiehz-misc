@@ -234,10 +234,13 @@ function createStepAdjustedFormulaPathPoints(
     const previousTarget = targetPoints[index - 1];
     const target = targetPoints[index];
     const transition = resolvedFormula.transitions[index - 1];
+    // 首段枪口会在本函数内重新求解；后续段才可使用上一轮真实接受点，避免旧枪口反向固定发射角。
+    const segmentStart =
+      (index > 1 ? options.formulaEvaluation?.segmentStartPoints?.[index - 1] : undefined) ?? previousTarget;
     formulaPoints.push(
       createGraphPoint(
         calculateStepFormulaCenterX(
-          previousTarget.x,
+          segmentStart.x,
           target.x,
           transition.effectiveDeltaY,
           resolvedFormula.formulaSteepness,

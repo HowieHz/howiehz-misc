@@ -110,7 +110,11 @@ import {
   type TransferStatus,
 } from "./core/types";
 import type { GraphwarDetectionBox } from "./detection/objects";
-import { formulaModeUsesSteepness, formulaModeUsesStepGlitch } from "./formula/generation/capabilities";
+import {
+  formulaModeSupportsStepGlitch,
+  formulaModeUsesSteepness,
+  formulaModeUsesStepGlitch,
+} from "./formula/generation/capabilities";
 import type { GraphwarKillerLocale } from "./locale-types";
 import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";
 import type { GraphwarOneClickClearIncumbent } from "./pathfinding/one-click-clear/search";
@@ -273,6 +277,9 @@ const effectiveStepGlitchModeEnabled = computed(
   () =>
     toolWorkflowMode.value === "solver" &&
     formulaModeUsesStepGlitch(algorithmMode.value, solverEquationMode.value, stepGlitchModeEnabled.value),
+);
+const formulaSupportsStepGlitch = computed(() =>
+  formulaModeSupportsStepGlitch(algorithmMode.value, solverEquationMode.value),
 );
 const formulaUsesSteepness = computed(() => formulaModeUsesSteepness(algorithmMode.value, solverEquationMode.value));
 const advancedSettingsVisible = ref(false);
@@ -878,7 +885,7 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
   } else if (solverEquationMode.value === "y") {
     stepGlitchModeReason = locale.ui.settings.stepGlitchModeGameModeInactiveReason;
     stepGlitchModeState = "dormant";
-  } else if (algorithmMode.value !== "step") {
+  } else if (!formulaSupportsStepGlitch.value) {
     stepGlitchModeReason = locale.ui.settings.stepGlitchModeAlgorithmInactiveReason;
     stepGlitchModeState = "dormant";
   } else if (stepGlitchModeEnabled.value && !detectedObstacles.value) {
@@ -2285,7 +2292,7 @@ watch([activeObstacleSimulationToleranceText], () => {
 });
 
 watch(steepnessText, () => {
-  if (graphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
+  if (graphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver" || !formulaUsesSteepness.value) {
     return;
   }
   cancelSmartPathfinding(false);
@@ -2878,10 +2885,9 @@ function toggleGraphwarManagedMode() {
         algorithm:
           locale.algorithmModes.find((algorithm) => algorithm.value === repair.algorithm)?.label ?? repair.algorithm,
         equation: mode.label,
-        properties:
-          mode.value !== "y" && repair.algorithm === "step" && repair.stepGlitchModeEnabled
-            ? [locale.ui.settings.stepGlitchMode]
-            : [],
+        properties: formulaModeUsesStepGlitch(repair.algorithm, mode.value, repair.stepGlitchModeEnabled === true)
+          ? [locale.ui.settings.stepGlitchMode]
+          : [],
       },
     ];
   });
@@ -2896,10 +2902,9 @@ function toggleGraphwarManagedMode() {
               locale.algorithmModes.find((algorithm) => algorithm.value === profile.algorithm)?.label ??
               profile.algorithm,
             equation: mode.label,
-            properties:
-              mode.value !== "y" && profile.algorithm === "step" && profile.stepGlitchModeEnabled
-                ? [locale.ui.settings.stepGlitchMode]
-                : [],
+            properties: formulaModeUsesStepGlitch(profile.algorithm, mode.value, profile.stepGlitchModeEnabled)
+              ? [locale.ui.settings.stepGlitchMode]
+              : [],
           };
         }),
         repairs,

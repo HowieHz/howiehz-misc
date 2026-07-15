@@ -42,9 +42,9 @@ export interface GraphwarAdvancedSettingsPathfinding {
   agentRoutePlanningToleranceText: string;
   /** Agent 来源的轨迹模拟障碍外扩输入框文本。 */
   agentObstacleSimulationToleranceText: string;
-  /** 阶跃 y' 邪道模式的路径规划障碍外扩输入框文本。 */
+  /** ODE 邪道模式的路径规划障碍外扩输入框文本。 */
   stepGlitchRoutePlanningToleranceText: string;
-  /** 阶跃 y' 邪道模式的轨迹模拟障碍外扩输入框文本。 */
+  /** ODE 邪道模式的轨迹模拟障碍外扩输入框文本。 */
   stepGlitchObstacleSimulationToleranceText: string;
   /** 寻路 worker 数输入框文本。 */
   workerCountText: string;

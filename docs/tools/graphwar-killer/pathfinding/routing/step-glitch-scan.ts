@@ -830,14 +830,12 @@ function createGateRowScan(
       });
     }
   }
-  // 先争取最大横向收益。二阶模式还要恢复 y'，同收益时优先保持当前行能显著减少无效候选；
-  // 一阶模式继续优先贴近目标行，保留既有选路结果。行号只负责让完全同分的结果稳定。
+  // 先争取最大横向收益，再贴近目标和当前行；两种 ODE 共用位置目标，不按残余斜率改变候选顺序。
   rows.sort(
     (left, right) =>
       right.farthestX - left.farthestX ||
-      (options.settings.equation === "ddy"
-        ? left.startDeltaY - right.startDeltaY || left.targetDeltaY - right.targetDeltaY
-        : left.targetDeltaY - right.targetDeltaY || left.startDeltaY - right.startDeltaY) ||
+      left.targetDeltaY - right.targetDeltaY ||
+      left.startDeltaY - right.startDeltaY ||
       left.row - right.row,
   );
   return rows.length > 0 ? { firstBlockedSearchX, rows, state, windows } : undefined;

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { createPixelPoint } from "../../core/types";
+import type { GraphwarDetectionBox } from "../../detection/objects";
 import { createGraphwarOneClickClearSearchInput } from "../one-click-clear/input";
 import { createGraphwarPathfindingCacheController } from "./cache";
 
@@ -52,6 +54,28 @@ describe("Graphwar pathfinding result cache keys", () => {
     expect(cache.createOneClickClearResultCacheKey(first)).not.toBe(cache.createOneClickClearResultCacheKey(second));
   });
 
+  it("ignores the dormant glitch preference and mask for ABS ODE inputs", () => {
+    const cache = createGraphwarPathfindingCacheController();
+    const enabled = createInput();
+    const disabled = createInput();
+    enabled.settings = {
+      ...enabled.settings,
+      algorithm: "abs",
+      equation: "dy",
+      stepGlitchMode: true,
+      stepGlitchObstacleMask: new Uint8Array(1),
+    };
+    disabled.settings = {
+      ...disabled.settings,
+      algorithm: "abs",
+      equation: "dy",
+      stepGlitchMode: false,
+      stepGlitchObstacleMask: new Uint8Array(1),
+    };
+
+    expect(cache.createOneClickClearResultCacheKey(enabled)).toBe(cache.createOneClickClearResultCacheKey(disabled));
+  });
+
   it("preserves the validated formula when caching a one-click-clear success", () => {
     const cache = createGraphwarPathfindingCacheController();
     const result = {
@@ -74,6 +98,44 @@ describe("Graphwar pathfinding result cache keys", () => {
     expect(cached?.result).not.toBe(result.result);
     if (cached?.result.type === "success") {
       expect(cached.result.pathPoints).not.toBe(result.result.pathPoints);
+    }
+  });
+
+  it("fills exactly the friendly-mask cells intersecting the soldier hit circle", () => {
+    const cache = createGraphwarPathfindingCacheController();
+    const mask = cache.getCachedFriendlyObstacleMask(
+      new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT),
+      { height: GRAPHWAR_PLANE_HEIGHT, width: GRAPHWAR_PLANE_LENGTH, x: 0, y: 0 },
+      [
+        {
+          confidence: 1,
+          height: 14,
+          hitRadius: 7,
+          id: "friendly",
+          kind: "soldier",
+          mirrored: false,
+          selectionRadius: 7,
+          sourceCenterX: 325,
+          sourceCenterY: 341,
+          templateName: "soldier1.png",
+          visualCenterX: 325,
+          visualCenterY: 341,
+          visualRadius: 7,
+          width: 14,
+          x: 318,
+          y: 334,
+        } satisfies GraphwarDetectionBox,
+      ],
+      7,
+    );
+
+    for (let y = 332; y <= 349; y += 1) {
+      const nearestY = Math.max(y, Math.min(341, y + 1));
+      for (let x = 316; x <= 333; x += 1) {
+        const nearestX = Math.max(x, Math.min(325, x + 1));
+        const intersects = (nearestX - 325) ** 2 + (nearestY - 341) ** 2 <= 7 ** 2;
+        expect(mask[y * GRAPHWAR_PLANE_LENGTH + x], `cell (${x}, ${y})`).toBe(Number(intersects));
+      }
     }
   });
 });

@@ -61,7 +61,7 @@ export interface GraphwarCapabilityFacts {
     /** Includes dormant settings that a later Agent-selected managed profile may consume. */
     managedSettingsValid: boolean;
     oneClickClearSupported: boolean;
-    /** True only for an effective Step ODE glitch configuration. */
+    /** 当前 Step ODE 是否实际使用固定邪道扫描器。 */
     usesStepGlitchRouting: boolean;
   };
   pathfinding: {
@@ -268,7 +268,7 @@ function deriveGraphwarOneClickClearCapability(
   if (!facts.formula.settingsValid) {
     return { state: "blocked", reason: "formula-settings-invalid" };
   }
-  // Manual Step ODE glitch routing uses its fixed scan and does not build the ordinary DAG.
+  // 手动 ODE 邪道使用固定扫描器，不会构建普通 DAG。
   if (!facts.formula.usesStepGlitchRouting && !facts.pathfinding.workerCountValid) {
     return { state: "blocked", reason: "pathfinding-worker-count-invalid" };
   }

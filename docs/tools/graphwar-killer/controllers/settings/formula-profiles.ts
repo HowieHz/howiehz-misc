@@ -12,15 +12,17 @@ export interface GraphwarFormulaProfile {
   precisionText: string;
   /** Raw steepness input retained independently for this equation. */
   steepnessText: string;
-  /** ODE profiles retain this preference independently; the ordinary y profile strips it. */
-  stepGlitchModeEnabled?: boolean;
+  /** Glitch-mode preference retained even when the current equation or algorithm cannot consume it. */
+  stepGlitchModeEnabled: boolean;
+  /** Step overflow preference retained even when the current algorithm cannot consume it. */
+  stepOverflowProtectionEnabled: boolean;
 }
 
 /** Solver formula preferences keyed by Graphwar's three equation modes. */
 export interface GraphwarFormulaProfiles {
   y: GraphwarFormulaProfile;
-  dy: GraphwarFormulaProfile & { stepGlitchModeEnabled: boolean };
-  ddy: GraphwarFormulaProfile & { stepGlitchModeEnabled: boolean };
+  dy: GraphwarFormulaProfile;
+  ddy: GraphwarFormulaProfile;
 }
 
 type GraphwarFormulaProfileRepair = Pick<GraphwarFormulaProfile, "algorithm"> &
@@ -29,17 +31,19 @@ type GraphwarFormulaProfileRepair = Pick<GraphwarFormulaProfile, "algorithm"> &
 /** A sparse, immutable description of the unsupported profile fields managed mode must replace. */
 export type GraphwarManagedFormulaProfileRepairPlan = Partial<Record<EquationMode, GraphwarFormulaProfileRepair>>;
 
-const defaultFormulaInputText = {
+const defaultFormulaPreferences = {
   precisionText: String(DEFAULT_FORMULA_DECIMAL_PLACES),
+  stepGlitchModeEnabled: true,
+  stepOverflowProtectionEnabled: true,
   steepnessText: String(graphwarToolDefaults.steepness),
 } as const;
 
 /** Creates fresh session defaults so callers never share mutable profile objects. */
 export function createDefaultGraphwarFormulaProfiles(): GraphwarFormulaProfiles {
   return {
-    y: { algorithm: "abs", ...defaultFormulaInputText },
-    dy: { algorithm: "step", ...defaultFormulaInputText, stepGlitchModeEnabled: true },
-    ddy: { algorithm: "step", ...defaultFormulaInputText, stepGlitchModeEnabled: true },
+    y: { algorithm: "abs", ...defaultFormulaPreferences },
+    dy: { algorithm: "step", ...defaultFormulaPreferences },
+    ddy: { algorithm: "step", ...defaultFormulaPreferences },
   };
 }
 
@@ -48,31 +52,22 @@ export function getGraphwarFormulaProfile(profiles: GraphwarFormulaProfiles, equ
   return profiles[equation];
 }
 
-/** Replaces only the selected profile and strips the ODE-only preference from ordinary y. */
+/** Replaces only the selected equation profile while retaining every unspecified preference. */
 export function updateGraphwarFormulaProfile(
   profiles: GraphwarFormulaProfiles,
   equation: EquationMode,
   update: Partial<GraphwarFormulaProfile>,
 ): GraphwarFormulaProfiles {
   const current = profiles[equation];
-  const next = {
-    algorithm: update.algorithm ?? current.algorithm,
-    precisionText: update.precisionText ?? current.precisionText,
-    steepnessText: update.steepnessText ?? current.steepnessText,
-  };
-  if (equation !== "y") {
-    return {
-      ...profiles,
-      [equation]: {
-        ...next,
-        stepGlitchModeEnabled: update.stepGlitchModeEnabled ?? current.stepGlitchModeEnabled,
-      },
-    };
-  }
-
   return {
     ...profiles,
-    [equation]: next,
+    [equation]: {
+      algorithm: update.algorithm ?? current.algorithm,
+      precisionText: update.precisionText ?? current.precisionText,
+      steepnessText: update.steepnessText ?? current.steepnessText,
+      stepGlitchModeEnabled: update.stepGlitchModeEnabled ?? current.stepGlitchModeEnabled,
+      stepOverflowProtectionEnabled: update.stepOverflowProtectionEnabled ?? current.stepOverflowProtectionEnabled,
+    },
   };
 }
 

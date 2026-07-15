@@ -58,9 +58,9 @@ export interface GraphwarSettingsPanelModel {
   headerStatus: GraphwarSettingsPanelHeaderStatus;
   /** 公式小数位输入展示模型。 */
   precision: GraphwarSettingsPanelPrecision;
-  /** Step 算法是否启用溢出保护。 */
+  /** 当前游戏模式是否启用 Step 溢出保护。 */
   stepOverflowProtectionEnabled: boolean;
-  /** Step 邪道模式是否启用；两种 ODE 分别保存偏好。 */
+  /** 当前游戏模式的邪道偏好；不兼容组合仍保留该值。 */
   stepGlitchModeEnabled: boolean;
   /** 邪道偏好在不兼容组合或缺少障碍时保持可编辑的休眠状态。 */
   stepGlitchModeState: GraphwarControlCapability["state"];
@@ -106,6 +106,10 @@ const steepnessText = computed({
   get: () => props.panel.steepnessText,
   set: (value) => emit("updateSteepnessText", value),
 });
+
+const activeToolWorkflowHint = computed(
+  () => props.panel.toolWorkflowModes.find((mode) => mode.value === props.panel.toolWorkflowMode)?.title ?? "",
+);
 </script>
 
 <template>
@@ -115,9 +119,12 @@ const steepnessText = computed({
       aria-labelledby="graphwar-killer-workflow-title"
       :aria-disabled="panel.interactionDisabled"
     >
-      <h2 id="graphwar-killer-workflow-title">
-        {{ locale.ui.settings.mode }}
-      </h2>
+      <div class="graphwar-killer__label-row">
+        <h2 id="graphwar-killer-workflow-title">
+          {{ locale.ui.settings.mode }}
+        </h2>
+        <span :title="activeToolWorkflowHint">{{ activeToolWorkflowHint }}</span>
+      </div>
       <fieldset
         class="graphwar-killer__settings-fields"
         :disabled="panel.interactionDisabled"
@@ -150,9 +157,14 @@ const steepnessText = computed({
       aria-labelledby="graphwar-killer-game-mode-title"
       :aria-disabled="panel.interactionDisabled"
     >
-      <h2 id="graphwar-killer-game-mode-title">
-        {{ locale.ui.settings.gameMode }}
-      </h2>
+      <div class="graphwar-killer__label-row">
+        <h2 id="graphwar-killer-game-mode-title">
+          {{ locale.ui.settings.gameMode }}
+        </h2>
+        <span :title="locale.ui.settings.gameModeSettingsHint">
+          {{ locale.ui.settings.gameModeSettingsHint }}
+        </span>
+      </div>
       <fieldset
         class="graphwar-killer__settings-fields"
         :disabled="panel.interactionDisabled"

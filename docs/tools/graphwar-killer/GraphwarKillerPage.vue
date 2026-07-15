@@ -256,25 +256,19 @@ const steepnessText = computed({
   get: () => solverFormulaProfiles.value[solverEquationMode.value].steepnessText,
   set: (text: string) => updateCurrentFormulaProfile({ steepnessText: text }),
 });
+const stepGlitchModeEnabled = computed({
+  get: () => solverFormulaProfiles.value[solverEquationMode.value].stepGlitchModeEnabled,
+  set: (enabled: boolean) => updateCurrentFormulaProfile({ stepGlitchModeEnabled: enabled }),
+});
+const stepOverflowProtectionEnabled = computed({
+  get: () => solverFormulaProfiles.value[solverEquationMode.value].stepOverflowProtectionEnabled,
+  set: (enabled: boolean) => updateCurrentFormulaProfile({ stepOverflowProtectionEnabled: enabled }),
+});
 const minXText = ref(`-${graphwarDefaultXLimitText}`);
 const maxXText = ref(graphwarDefaultXLimitText);
 const minYText = ref(`-${graphwarVisibleYLimitText}`);
 const maxYText = ref(graphwarVisibleYLimitText);
-const stepOverflowProtectionEnabled = ref(true);
-const stepGlitchProfileEquation = computed<"dy" | "ddy">(() => (solverEquationMode.value === "ddy" ? "ddy" : "dy"));
-const stepGlitchModeEnabled = computed({
-  get: () => solverFormulaProfiles.value[stepGlitchProfileEquation.value].stepGlitchModeEnabled,
-  set: (enabled: boolean) => {
-    solverFormulaProfiles.value = updateGraphwarFormulaProfile(
-      solverFormulaProfiles.value,
-      stepGlitchProfileEquation.value,
-      {
-        stepGlitchModeEnabled: enabled,
-      },
-    );
-  },
-});
-// 两种 ODE 各自保存邪道偏好；普通 y 下继续展示 y' 偏好，但不改变求解语义。
+// 公式输入和开关按游戏模式保存；只有高级设置的展开状态有意跨模式共享。
 const effectiveStepGlitchModeEnabled = computed(
   () =>
     toolWorkflowMode.value === "solver" &&
@@ -876,6 +870,21 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
     createHeaderStatus(debugActivationSuccessVisible.value ? locale.ui.settings.debugInfoEnabled : "", "success"),
     createHeaderStatus(activeEquationDescription.value),
   );
+  let stepGlitchModeReason: string | undefined;
+  let stepGlitchModeState: GraphwarSettingsPanelModel["stepGlitchModeState"] = "normal";
+  if (graphwarManagedModeEnabled.value) {
+    stepGlitchModeReason = getCapabilityReason("managed-lock");
+    stepGlitchModeState = "busy";
+  } else if (solverEquationMode.value === "y") {
+    stepGlitchModeReason = locale.ui.settings.stepGlitchModeGameModeInactiveReason;
+    stepGlitchModeState = "dormant";
+  } else if (algorithmMode.value !== "step") {
+    stepGlitchModeReason = locale.ui.settings.stepGlitchModeAlgorithmInactiveReason;
+    stepGlitchModeState = "dormant";
+  } else if (stepGlitchModeEnabled.value && !detectedObstacles.value) {
+    stepGlitchModeReason = locale.ui.settings.stepGlitchModeObstacleRequiredReason;
+    stepGlitchModeState = "dormant";
+  }
   return {
     advancedSettingsVisible: advancedSettingsVisible.value,
     algorithmMode: algorithmMode.value,
@@ -895,20 +904,8 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
       text: precisionText.value,
     },
     stepGlitchModeEnabled: stepGlitchModeEnabled.value,
-    stepGlitchModeReason: graphwarManagedModeEnabled.value
-      ? getCapabilityReason("managed-lock")
-      : toolWorkflowMode.value !== "solver" || solverEquationMode.value === "y" || algorithmMode.value !== "step"
-        ? locale.ui.settings.stepGlitchModeInactiveReason
-        : stepGlitchModeEnabled.value && !detectedObstacles.value
-          ? locale.ui.settings.stepGlitchModeObstacleRequiredReason
-          : undefined,
-    stepGlitchModeState: graphwarManagedModeEnabled.value
-      ? "busy"
-      : toolWorkflowMode.value !== "solver" || solverEquationMode.value === "y" || algorithmMode.value !== "step"
-        ? "dormant"
-        : stepGlitchModeEnabled.value && !detectedObstacles.value
-          ? "dormant"
-          : "normal",
+    stepGlitchModeReason,
+    stepGlitchModeState,
     stepOverflowProtectionEnabled: stepOverflowProtectionEnabled.value,
     steepnessVisible: formulaUsesSteepness.value,
     steepnessText: steepnessText.value,
@@ -2270,7 +2267,7 @@ watch([algorithmMode, solverEquationMode], () => {
 });
 
 watch([stepOverflowProtectionEnabled], () => {
-  if (toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
+  if (graphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
     return;
   }
   cancelSmartPathfinding(false);
@@ -2278,6 +2275,9 @@ watch([stepOverflowProtectionEnabled], () => {
 });
 
 watch([activeObstacleSimulationToleranceText], () => {
+  if (graphwarManagedModeEnabled.value) {
+    return;
+  }
   if (collisionCheckEnabled.value || activePathfindingTask) {
     cancelSmartPathfinding(false);
     clearSmartPathfindingStatus();
@@ -2386,23 +2386,12 @@ function setAlgorithmMode(mode: AlgorithmMode) {
   algorithmMode.value = mode;
 }
 
-/** ODE Step 直接切换自己的偏好；其他组合沿用旧入口进入 Step y'。 */
+/** 切换当前游戏模式的邪道偏好，不替用户改写工作流、游戏模式或算法。 */
 function toggleStepGlitchMode() {
   if (graphwarManagedModeEnabled.value) {
     return;
   }
-  if (stepGlitchModeEnabled.value) {
-    stepGlitchModeEnabled.value = false;
-    return;
-  }
-  if (toolWorkflowMode.value === "solver" && solverEquationMode.value !== "y" && algorithmMode.value === "step") {
-    stepGlitchModeEnabled.value = true;
-    return;
-  }
-  setToolWorkflowMode("solver");
-  solverEquationMode.value = "dy";
-  algorithmMode.value = "step";
-  stepGlitchModeEnabled.value = true;
+  stepGlitchModeEnabled.value = !stepGlitchModeEnabled.value;
 }
 
 /** 清理依赖旧场景的业务状态；边界矩形数值只保留为参考，需要由新场景重新确认。 */

@@ -28,12 +28,12 @@ export const graphwarKillerLocale = {
     {
       value: "solver",
       label: "Generate function",
-      title: "Generate a Graphwar function from the screenshot and path points",
+      title: "Generate a Graphwar function from path points",
     },
     {
       value: "simulator",
       label: "Simulate trajectory",
-      title: "Preview a Graphwar function on the screenshot",
+      title: "Enter a function and preview its Graphwar trajectory",
     },
   ],
   algorithmModes: [
@@ -851,6 +851,7 @@ export const graphwarKillerLocale = {
       debugInfoEnabled: "Debug info enabled",
       gameMode: "Game mode",
       gameModeAriaLabel: "Graphwar game mode",
+      gameModeSettingsHint: "Settings are saved separately for each game mode",
       gameModeTitle: "Choose the Graphwar input mode: y, y', or y''",
       mode: "Workflow",
       modeAriaLabel: "Workflow",
@@ -881,7 +882,8 @@ export const graphwarKillerLocale = {
       skipUnknownCharacters: "Skip unknown characters",
       skipUnknownCharactersTitle: "Match Graphwar's behavior of skipping unknown characters",
       stepGlitchMode: "Glitch Mode",
-      stepGlitchModeInactiveReason: "Switch to a Step ODE mode to use it",
+      stepGlitchModeAlgorithmInactiveReason: "Inactive in the current algorithm",
+      stepGlitchModeGameModeInactiveReason: "Inactive in the current game mode",
       stepGlitchModeObstacleRequiredReason: "Requires obstacle data",
       stepGlitchModeTitle:
         "Use with Step y' or y'' to tunnel past obstacles; accurate obstacle and soldier data is required",

@@ -26,8 +26,8 @@ export const graphwarKillerLocale = {
     },
   ],
   toolWorkflowModes: [
-    { value: "solver", label: "生成公式", title: "从截图和路径点生成可复制到 Graphwar 的函数" },
-    { value: "simulator", label: "模拟轨迹", title: "输入函数并在截图上预览 Graphwar 轨迹" },
+    { value: "solver", label: "生成公式", title: "从路径点生成可复制到 Graphwar 的函数" },
+    { value: "simulator", label: "模拟轨迹", title: "输入函数并预览 Graphwar 轨迹" },
   ],
   algorithmModes: [
     { value: "abs", label: "双绝对值函数", title: "用双绝对值连接路径点；y'' 使用平滑二阶导近似" },
@@ -763,6 +763,7 @@ export const graphwarKillerLocale = {
       debugInfoEnabled: "已启用调试信息",
       gameMode: "游戏模式",
       gameModeAriaLabel: "Graphwar 游戏模式",
+      gameModeSettingsHint: "不同游戏模式的设定会分别保存",
       gameModeTitle: "选择 Graphwar 输入框的游戏模式：y、y' 或 y''",
       mode: "工作流",
       modeAriaLabel: "工作流",
@@ -793,7 +794,8 @@ export const graphwarKillerLocale = {
       skipUnknownCharacters: "跳过未知字符",
       skipUnknownCharactersTitle: "Graphwar 会跳过未知字符",
       stepGlitchMode: "邪道模式",
-      stepGlitchModeInactiveReason: "切换到阶跃 ODE 后生效",
+      stepGlitchModeAlgorithmInactiveReason: "当前算法不生效",
+      stepGlitchModeGameModeInactiveReason: "当前游戏模式不生效",
       stepGlitchModeObstacleRequiredReason: "需要障碍数据",
       stepGlitchModeTitle: "用于阶跃 y' 或 y''；遇到障碍时尝试纵向瞬移，需要准确的障碍和士兵位置",
       steepness: "陡峭度 k",

@@ -25,11 +25,15 @@ describe("Settings MainPanel", () => {
       graphwarKillerLocale.ui.settings.title,
     ]);
     expect(panels[0].findAll(".graphwar-killer__mode-toggle")).toHaveLength(1);
+    expect(panels[0].find(".graphwar-killer__label-row > span").text()).toBe("Solver");
     expect(panels[0].find(".graphwar-killer__equation-toggle, .graphwar-killer__algorithm-toggle").exists()).toBe(
       false,
     );
     expect(panels[0].find(".graphwar-killer__setting-label").exists()).toBe(false);
     expect(panels[1].findAll(".graphwar-killer__equation-toggle")).toHaveLength(1);
+    expect(panels[1].find(".graphwar-killer__label-row > span").text()).toBe(
+      graphwarKillerLocale.ui.settings.gameModeSettingsHint,
+    );
     expect(panels[1].find(".graphwar-killer__mode-toggle, .graphwar-killer__algorithm-toggle").exists()).toBe(false);
     expect(panels[1].find(".graphwar-killer__setting-label").exists()).toBe(false);
     expect(panels[2].findAll(".graphwar-killer__algorithm-toggle")).toHaveLength(1);
@@ -103,6 +107,7 @@ describe("Settings MainPanel", () => {
       graphwarKillerLocale.ui.settings.title,
     ]);
     expect(panels[0].findAll(".graphwar-killer__mode-toggle")).toHaveLength(1);
+    expect(panels[0].find(".graphwar-killer__label-row > span").text()).toBe("Simulator");
     expect(panels[0].find(".graphwar-killer__equation-toggle").exists()).toBe(false);
     expect(panels[1].findAll(".graphwar-killer__equation-toggle")).toHaveLength(1);
     expect(panels[1].find(".graphwar-killer__mode-toggle").exists()).toBe(false);
@@ -134,6 +139,9 @@ function createPanel() {
     stepGlitchModeState: "normal",
     stepOverflowProtectionEnabled: true,
     toolWorkflowMode: "solver",
-    toolWorkflowModes: [{ label: "Solver", title: "Solver", value: "solver" }],
+    toolWorkflowModes: [
+      { label: "Solver", title: "Solver", value: "solver" },
+      { label: "Simulator", title: "Simulator", value: "simulator" },
+    ],
   } as const;
 }

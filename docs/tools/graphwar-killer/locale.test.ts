@@ -37,6 +37,21 @@ describe("Chinese Graphwar Killer locale", () => {
     expect(graphwarKillerLocale.equationModes.map((mode) => mode.formulaPrefix)).toEqual(["y=", "y'=", "y''="]);
   });
 
+  it("describes workflows and per-mode settings directly", () => {
+    expect(graphwarKillerLocale.toolWorkflowModes.map((mode) => mode.title)).toEqual([
+      "从路径点生成可复制到 Graphwar 的函数",
+      "输入函数并预览 Graphwar 轨迹",
+    ]);
+    expect(englishGraphwarKillerLocale.toolWorkflowModes.map((mode) => mode.title)).toEqual([
+      "Generate a Graphwar function from path points",
+      "Enter a function and preview its Graphwar trajectory",
+    ]);
+    expect(graphwarKillerLocale.ui.settings.gameModeSettingsHint).toBe("不同游戏模式的设定会分别保存");
+    expect(englishGraphwarKillerLocale.ui.settings.gameModeSettingsHint).toBe(
+      "Settings are saved separately for each game mode",
+    );
+  });
+
   it("does not expose translatable internal English terms", () => {
     expect(
       [

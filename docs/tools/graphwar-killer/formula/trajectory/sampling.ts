@@ -2,6 +2,7 @@ import {
   GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
   GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
+  GRAPHWAR_MAX_ANGLE_LOOPS,
   GRAPHWAR_PLANE_HEIGHT,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
@@ -29,6 +30,7 @@ import {
   calculateStepFormulaCenterX,
   createStepOverflowProtectionRange,
   getStepGlitchFormulaDecimalPlaces,
+  quantizeFormulaCoefficient,
   quantizeFormulaOffsetCenter,
   quantizeStepFormulaSteepness,
   resolveStepFormulaTransition,
@@ -640,11 +642,6 @@ function createTrajectoryFormulaEvaluation(
   };
 }
 
-// 1e-4 图单位可避免在常见公式量化档位间空转；最终回放仍会按平面像素裁决残差。
-const ABS_SECOND_DERIVATIVE_REFINE_ITERATIONS = 8;
-const ABS_SECOND_DERIVATIVE_REFINE_SWEEPS = 3;
-const ABS_SECOND_DERIVATIVE_REFINE_TOLERANCE = 1e-4;
-
 /** 从枪口逐段重放 ABS y''，让每个平滑脉冲按真实 y/y' 接上下一目标。当前脉冲的左尾会影响脉冲中心前的轨迹，因此每次候选都必须从枪口完整回放。 */
 function refineAbsSecondDerivativeSegmentsWithSimulation(
   options: {
@@ -695,56 +692,20 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
       segmentStartPoints[pulseIndex] = startPoint;
     }
 
-    let deltaSlope =
+    const deltaSlope =
       (target.y - startPoint.y) / Math.max(target.x - startPoint.x, GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) - startDy;
-    let bestDeltaSlope = deltaSlope;
-    let bestPositionError = Number.POSITIVE_INFINITY;
-    for (let iteration = 0; iteration < ABS_SECOND_DERIVATIVE_REFINE_ITERATIONS; iteration += 1) {
-      pulseDeltaSlopes[pulseIndex] = deltaSlope;
-      if (pulseIndex === segmentCount - 2) {
-        resolveAbsSecondDerivativeTerminalPulse(
-          options,
-          formulaPoints,
-          signProtection,
-          pulseDeltaSlopes,
-          soldierCenter,
-          finalX,
-        );
-      }
-      const targetSample = sampleAbsSecondDerivativePrefix(
-        options,
-        formulaPoints,
-        signProtection,
-        pulseDeltaSlopes,
-        soldierCenter,
-        target.x,
-      );
-      const targetPoint = targetSample.points.at(-1);
-      if (
-        targetSample.stopReason !== "stopped" ||
-        !targetPoint ||
-        !Number.isFinite(targetPoint.y) ||
-        !Number.isFinite(targetPoint.x)
-      ) {
-        throw new GraphwarFormulaConvergenceError("ABS second-order segment candidate did not converge.");
-      }
-      const positionError = target.y - targetPoint.y;
-      const absolutePositionError = Math.abs(positionError);
-      if (absolutePositionError < bestPositionError) {
-        bestDeltaSlope = deltaSlope;
-        bestPositionError = absolutePositionError;
-      }
-      if (absolutePositionError <= ABS_SECOND_DERIVATIVE_REFINE_TOLERANCE) {
-        break;
-      }
-      deltaSlope += positionError / Math.max(targetPoint.x - startPoint.x, GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE);
+    if (!Number.isFinite(deltaSlope)) {
+      throw new GraphwarFormulaConvergenceError("ABS second-order initial pulse is not finite.");
     }
-    pulseDeltaSlopes[pulseIndex] = bestDeltaSlope;
+    pulseDeltaSlopes[pulseIndex] = deltaSlope;
   }
 
-  // 后续脉冲也有左尾；用有限次前向回扫按最终脉冲集合重新校正已求目标。
-  for (let sweep = 0; sweep < ABS_SECOND_DERIVATIVE_REFINE_SWEEPS; sweep += 1) {
-    let allTargetsConverged = true;
+  // 后续脉冲也有左尾；按最终文本的整组量化脉冲回扫，状态重复或误差不再改善时停止。
+  const visitedPulseStates = new Set<string>();
+  let bestPulseDeltaSlopes = [...pulseDeltaSlopes];
+  let bestWorstPositionError = Number.POSITIVE_INFINITY;
+  // 与其他工具自有公式固定点迭代共用 Graphwar 原版安全预算；正常退出仍由量化状态和误差决定。
+  while (visitedPulseStates.size < GRAPHWAR_MAX_ANGLE_LOOPS) {
     resolveAbsSecondDerivativeTerminalPulse(
       options,
       formulaPoints,
@@ -753,39 +714,70 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
       soldierCenter,
       finalX,
     );
+    const pulseState = canonicalizeAbsSecondDerivativePulseState(options.settings, pulseDeltaSlopes);
+    if (visitedPulseStates.has(pulseState)) {
+      pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
+      break;
+    }
+    visitedPulseStates.add(pulseState);
+
+    const firstTarget = options.points[1];
+    const firstTargetPoint = sampleAbsSecondDerivativeTargetPoint(
+      options,
+      formulaPoints,
+      signProtection,
+      pulseDeltaSlopes,
+      soldierCenter,
+      firstTarget,
+    );
+    let worstPositionError = Math.abs(firstTarget.y - firstTargetPoint.y);
     for (let pulseIndex = 0; pulseIndex < segmentCount - 1; pulseIndex += 1) {
       const target = options.points[pulseIndex + 2];
-      const targetSample = sampleAbsSecondDerivativePrefix(
+      const targetPoint = sampleAbsSecondDerivativeTargetPoint(
         options,
         formulaPoints,
         signProtection,
         pulseDeltaSlopes,
         soldierCenter,
-        target.x,
+        target,
       );
-      const targetPoint = targetSample.points.at(-1);
       const deltaSlope = pulseDeltaSlopes[pulseIndex];
-      if (
-        targetSample.stopReason !== "stopped" ||
-        !targetPoint ||
-        deltaSlope === undefined ||
-        !Number.isFinite(targetPoint.x) ||
-        !Number.isFinite(targetPoint.y)
-      ) {
+      if (deltaSlope === undefined) {
         throw new GraphwarFormulaConvergenceError("ABS second-order compensated target did not converge.");
       }
       const positionError = target.y - targetPoint.y;
-      if (Math.abs(positionError) <= ABS_SECOND_DERIVATIVE_REFINE_TOLERANCE) {
-        continue;
-      }
-      allTargetsConverged = false;
-      pulseDeltaSlopes[pulseIndex] =
-        deltaSlope +
-        positionError / Math.max(targetPoint.x - formulaPoints[pulseIndex + 1].x, GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE);
+      const absolutePositionError = Math.abs(positionError);
+      worstPositionError = Math.max(worstPositionError, absolutePositionError);
     }
-    if (allTargetsConverged) {
+    if (worstPositionError < bestWorstPositionError) {
+      bestWorstPositionError = worstPositionError;
+      bestPulseDeltaSlopes = [...pulseDeltaSlopes];
+    } else {
+      pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
       break;
     }
+    // 每次更新后立刻重放下一目标，让后续脉冲消费本轮最新的前缀状态。
+    for (let pulseIndex = 0; pulseIndex < segmentCount - 1; pulseIndex += 1) {
+      const target = options.points[pulseIndex + 2];
+      const targetPoint = sampleAbsSecondDerivativeTargetPoint(
+        options,
+        formulaPoints,
+        signProtection,
+        pulseDeltaSlopes,
+        soldierCenter,
+        target,
+      );
+      const deltaSlope = pulseDeltaSlopes[pulseIndex];
+      if (deltaSlope !== undefined) {
+        pulseDeltaSlopes[pulseIndex] =
+          deltaSlope +
+          (target.y - targetPoint.y) /
+            Math.max(targetPoint.x - formulaPoints[pulseIndex + 1].x, GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE);
+      }
+    }
+  }
+  if (visitedPulseStates.size >= GRAPHWAR_MAX_ANGLE_LOOPS) {
+    pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
   }
 
   resolveAbsSecondDerivativeTerminalPulse(
@@ -859,6 +851,59 @@ function resolveAbsSecondDerivativeTerminalPulse(
     throw new GraphwarFormulaConvergenceError("ABS second-order terminal prefix did not converge.");
   }
   pulseDeltaSlopes[pulseDeltaSlopes.length - 1] = -terminalDy;
+}
+
+/** 把 raw delta 收敛到最终文本系数对应的真实斜率变化，并返回完整量化状态。 */
+function canonicalizeAbsSecondDerivativePulseState(
+  settings: Pick<GraphwarTrajectoryFormulaSettings, "decimalPlaces" | "steepness">,
+  pulseDeltaSlopes: (number | undefined)[],
+) {
+  const formulaSteepness = quantizeStepFormulaSteepness(settings.steepness, settings.decimalPlaces);
+  if (!(formulaSteepness > 0)) {
+    throw new GraphwarFormulaConvergenceError("ABS second-order pulse steepness is not positive.");
+  }
+  const coefficients = pulseDeltaSlopes.map((deltaSlope, index) => {
+    if (deltaSlope === undefined) {
+      return "undefined";
+    }
+    const coefficient = quantizeFormulaCoefficient(formulaSteepness * deltaSlope, settings.decimalPlaces);
+    pulseDeltaSlopes[index] = coefficient / formulaSteepness;
+    return String(coefficient);
+  });
+  return coefficients.join("|");
+}
+
+/** 用当前完整脉冲状态回放到目标 x，并返回 Graphwar 第一个越过目标线的真实接受点。 */
+function sampleAbsSecondDerivativeTargetPoint(
+  options: {
+    bounds: GraphBounds;
+    points: readonly GraphPoint[];
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+  formulaPoints: readonly GraphPoint[],
+  signProtection: GraphwarSignProtection,
+  pulseDeltaSlopes: readonly (number | undefined)[],
+  soldierCenter: GraphPoint,
+  target: GraphPoint,
+) {
+  const targetSample = sampleAbsSecondDerivativePrefix(
+    options,
+    formulaPoints,
+    signProtection,
+    pulseDeltaSlopes,
+    soldierCenter,
+    target.x,
+  );
+  const targetPoint = targetSample.points.at(-1);
+  if (
+    targetSample.stopReason !== "stopped" ||
+    !targetPoint ||
+    !Number.isFinite(targetPoint.x) ||
+    !Number.isFinite(targetPoint.y)
+  ) {
+    throw new GraphwarFormulaConvergenceError("ABS second-order compensated target did not converge.");
+  }
+  return targetPoint;
 }
 
 /** 编译一组 ABS y'' 前缀脉冲，并按 Graphwar 原始 RK4 规则推进到指定 x。 */

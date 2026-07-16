@@ -19,10 +19,12 @@ import { sampleGraphwarExpressionTrajectory, sampleGraphwarTrajectory } from "..
 import {
   compareGraphwarPathErrors,
   getGraphwarTrajectoryLaunchAngle,
+  GraphwarTrajectoryResolutionError,
   graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle,
   measureGraphwarFormulaPathError,
   sampleGraphwarPathTargetSequence,
   resolveGraphwarTrajectory,
+  tryResolveGraphwarTrajectoryCandidate,
 } from "./sampling";
 
 vi.mock("../generation/build", async (importOriginal) => {
@@ -510,6 +512,187 @@ describe("ODE segment position compensation", () => {
     createGraphPoint(-23.376623376623378, 2.5974025974025974),
     ...Array.from({ length: 8 }, (_, index) => createGraphPoint(-19 + 2 * index, -2 * index)),
   ];
+
+  it.each(["dy", "ddy"] as const)(
+    "falls back to a real hard Step for the adjacent %s target when soft Step cannot connect",
+    (equation) => {
+      const reproductionPoints = [
+        createGraphPoint(-22.857142857142858, 13.571428571428571),
+        createGraphPoint(-22.467532467532468, 1.7532467532467528),
+      ];
+      const targetPoint = toPixel(reproductionPoints[1].x, reproductionPoints[1].y);
+      const baseSettings = {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation,
+        steepness: 210,
+        stepOverflowProtection: true,
+      };
+      const soft = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points: reproductionPoints,
+        settings: { ...baseSettings, stepGlitchMode: false },
+        soldierCenter: reproductionPoints[0],
+        targetHitRadiusPixels: 7,
+        targetPoint,
+      });
+      const hard = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points: reproductionPoints,
+        settings: { ...baseSettings, stepGlitchMode: true },
+        soldierCenter: reproductionPoints[0],
+        stopOnTargetsComplete: false,
+        targetHitRadiusPixels: 7,
+        targetPoint,
+      });
+
+      expect(soft.result.targetHitIndex).toBe(-1);
+      expect(soft.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toBeUndefined();
+      expect(hard.result.targetHitIndex).toBeGreaterThanOrEqual(0);
+      expect(hard.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toMatchObject({ equation });
+      if (equation === "dy") {
+        expect(hard.context.formulaPoints[0]).not.toEqual(soft.context.formulaPoints[0]);
+      } else {
+        const launchAngleRadians = hard.context.launchAngleRadians;
+        expect(launchAngleRadians).toBeDefined();
+        if (launchAngleRadians === undefined) {
+          return;
+        }
+        expect(Math.abs(launchAngleRadians)).toBeGreaterThan(0);
+        expect(hard.context.stepGlitchFormulaPrefix?.launchAngleRadians).toBe(launchAngleRadians);
+      }
+      expectTrajectorySamplesToBeIdentical(
+        hard.result.sample,
+        sampleGraphwarExpressionTrajectory({
+          bounds,
+          equation,
+          expression: hard.context.formulaResult.expression,
+          ...(equation === "ddy" ? { launchAngleRadians: getGraphwarTrajectoryLaunchAngle(hard.context) } : {}),
+          soldierCenter: reproductionPoints[0],
+        }),
+      );
+    },
+  );
+
+  it.each(["dy", "ddy"] as const)("replaces only a later failed %s segment with hard Step", (equation) => {
+    const pathPoints = [
+      createGraphPoint(-24, 12),
+      createGraphPoint(-22.857142857142858, 13.571428571428571),
+      createGraphPoint(-22.84714285714286, 1.7532467532467528),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation,
+        steepness: 210,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+      targetHitRadiusPixels: 7,
+      targetPoint: toPixel(pathPoints[2].x, pathPoints[2].y),
+    });
+
+    const terms = resolved.context.compiledMaterials.stepFormula?.terms;
+    expect(terms).toBeDefined();
+    if (!terms) {
+      return;
+    }
+    expect(terms.some((term) => term.sourceSegmentIndex === 0 && term.glitchSegment !== undefined)).toBe(false);
+    expect(terms.find((term) => term.sourceSegmentIndex === 1)?.glitchSegment).toMatchObject({ equation });
+    expect(resolved.result.targetHitIndex).toBeGreaterThanOrEqual(0);
+  });
+
+  it.each(["dy", "ddy"] as const)("keeps a successful soft %s segment when glitch mode is enabled", (equation) => {
+    const pathPoints = [createGraphPoint(-10, 0), createGraphPoint(-5, 3)];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation,
+        steepness: 210,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+
+    expect(resolved.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toBeUndefined();
+    expect(resolved.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual([false]);
+  });
+
+  it.each(["dy", "ddy"] as const)(
+    "rejects a %s path when a failed soft segment has no valid hard Step candidate",
+    (equation) => {
+      const pathPoints = [
+        createGraphPoint(-12, 0),
+        createGraphPoint(-10, 0),
+        createGraphPoint(-9.99999, 10),
+        createGraphPoint(-5, 0),
+      ];
+      const options = {
+        bounds,
+        boundsRect,
+        points: pathPoints,
+        settings: {
+          algorithm: "step" as const,
+          decimalPlaces: 4,
+          equation,
+          steepness: 210,
+          stepGlitchMode: true,
+          stepOverflowProtection: true,
+        },
+        soldierCenter: pathPoints[0],
+      } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+
+      expect(() => resolveGraphwarTrajectory(options)).toThrow(GraphwarTrajectoryResolutionError);
+      expect(tryResolveGraphwarTrajectoryCandidate(options)).toBeUndefined();
+    },
+  );
+
+  it("keeps an obstacle-only soft fallback only when the final replay can validate its collision", () => {
+    const obstacleBounds = { maxX: -4, maxY: 10, minX: -12, minY: -10 };
+    const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const obstaclePixel = graphToImagePoint(createGraphPoint(-8, 0), obstacleBounds, boundsRect);
+    obstacleMask[Math.floor(obstaclePixel.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(obstaclePixel.x)] = 1;
+    const pathPoints = [createGraphPoint(-11, 0), createGraphPoint(-6, 0)];
+    const options = {
+      bounds: obstacleBounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "dy" as const,
+        steepness: 67,
+        stepGlitchMode: true,
+        stepGlitchObstacleMask: obstacleMask,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+
+    expect(() => resolveGraphwarTrajectory(options)).toThrow(GraphwarTrajectoryResolutionError);
+    const withCollision = resolveGraphwarTrajectory({ ...options, collision: { mask: obstacleMask } });
+    expect(withCollision.result.earlyStopReason).toBe("obstacle");
+    const collisionDependentPrefix = withCollision.context.stepGlitchFormulaPrefix;
+    expect(collisionDependentPrefix).toBeDefined();
+    if (!collisionDependentPrefix) {
+      return;
+    }
+    expect(() => resolveGraphwarTrajectory({ ...options, stepGlitchFormulaPrefix: collisionDependentPrefix })).toThrow(
+      GraphwarTrajectoryResolutionError,
+    );
+  });
 
   it("compiles each ABS y'' refinement target sweep only once", () => {
     const compileMaterials = vi.mocked(compileGraphwarFormulaMaterials);

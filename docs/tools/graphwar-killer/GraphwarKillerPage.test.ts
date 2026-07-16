@@ -52,6 +52,7 @@ describe("Graphwar Killer page settings", () => {
 
     expect(pathPlanning.attributes("aria-checked")).toBe("false");
     expect(pathPlanning.attributes("disabled")).toBeUndefined();
+    expect(wrapper.find("#graphwar-killer-step-glitch-mode-reason").exists()).toBe(false);
     await pathPlanning.trigger("click");
     expect(pathPlanning.attributes("aria-checked")).toBe("true");
     wrapper.unmount();

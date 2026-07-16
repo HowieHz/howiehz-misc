@@ -890,9 +890,8 @@ export const graphwarKillerLocale = {
       stepGlitchMode: "Glitch Mode",
       stepGlitchModeAlgorithmInactiveReason: "Inactive in the current algorithm",
       stepGlitchModeGameModeInactiveReason: "Inactive in the current game mode",
-      stepGlitchModeObstacleRequiredReason: "Requires obstacle data",
       stepGlitchModeTitle:
-        "Use with Step y' or y'' to tunnel past obstacles; accurate obstacle and soldier data is required",
+        "Use with Step y' or y'' to jump past obstacles or fall back when a normal Step cannot connect; collisions are still checked when obstacle data is available",
       steepness: "Steepness k",
       steepnessAriaLabel: "Formula steepness k",
       steepnessTitle:

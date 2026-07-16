@@ -892,9 +892,6 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
   } else if (!formulaSupportsStepGlitch.value) {
     stepGlitchModeReason = locale.ui.settings.stepGlitchModeAlgorithmInactiveReason;
     stepGlitchModeState = "dormant";
-  } else if (stepGlitchModeEnabled.value && !detectedObstacles.value) {
-    stepGlitchModeReason = locale.ui.settings.stepGlitchModeObstacleRequiredReason;
-    stepGlitchModeState = "dormant";
   }
   return {
     advancedSettingsVisible: advancedSettingsVisible.value,

@@ -157,7 +157,7 @@ describe("Step ODE glitch scan", () => {
     expect(result.expandedStates).toBe(1);
   });
 
-  it("jumps to a disjoint free row when the trajectory collides outside the clear source row", () => {
+  it("uses a direct hard Step before adding a disjoint gate when it safely clears the wall", () => {
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 4);
     const mask = createEmptyMask();
@@ -179,15 +179,26 @@ describe("Step ODE glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
-      const gate = result.path.at(-2);
-      expect(result.path).toHaveLength(3);
-      expect(result.formulaContext?.formulaEvaluation.segmentStartPoints?.[1]).toEqual(
-        result.formulaContext?.stepGlitchFormulaPrefix?.segmentStartPoints[1],
-      );
-      expect(result.formulaContext?.formulaEvaluation.segmentStartPoints?.[1]).toBeDefined();
-      expect(gate?.x).toBeGreaterThan(start.x);
-      expect(gate?.x).toBeLessThan(target.x);
-      expect(result.path.at(-1)).toBe(target);
+      const formulaContext = result.formulaContext;
+      expect(result.path).toEqual([start, target]);
+      expect(formulaContext).toBeDefined();
+      if (!formulaContext) {
+        return;
+      }
+      expect(formulaContext.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
+      const replay = sampleGraphwarExpressionTrajectory({
+        bounds,
+        equation: "dy",
+        expression: formulaContext.formulaResult.expression,
+        soldierCenter: imageToGraphPoint(start, bounds, boundsRect),
+      });
+      expect(countPhysicalStepGlitchJumps(replay.points)).toBe(1);
+      expect(
+        replay.points.some((point) => {
+          const pixel = graphToImagePoint(point, bounds, boundsRect);
+          return Boolean(mask[Math.floor(pixel.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(pixel.x)]);
+        }),
+      ).toBe(false);
     }
   });
 

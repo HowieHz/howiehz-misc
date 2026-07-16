@@ -123,6 +123,34 @@ describe("main trajectory calculation", () => {
     expect(outcome).toMatchObject({ ok: false, stage: "trajectory" });
   });
 
+  it.each(["dy", "ddy"] as const)(
+    "reports exhausted %s soft and hard Step candidates as a trajectory failure",
+    (equation) => {
+      const points = [
+        createGraphPoint(-12, 0),
+        createGraphPoint(-10, 0),
+        createGraphPoint(-9.99999, 10),
+        createGraphPoint(-5, 0),
+      ];
+      const outcome = calculateGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points,
+        settings: {
+          algorithm: "step",
+          decimalPlaces: 4,
+          equation,
+          steepness: 210,
+          stepGlitchMode: true,
+          stepOverflowProtection: true,
+        },
+        type: "solver",
+      });
+
+      expect(outcome).toMatchObject({ ok: false, stage: "trajectory" });
+    },
+  );
+
   it("keeps only display-rounded manual y'' target misses as a non-blocking warning", () => {
     const outcome = calculateGraphwarTrajectory({
       bounds,

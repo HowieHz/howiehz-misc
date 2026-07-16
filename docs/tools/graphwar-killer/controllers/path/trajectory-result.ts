@@ -91,7 +91,7 @@ interface GraphwarTrajectoryResultOptions {
     steepness: ReadonlyRef<number>;
     /** Step 陡峭度是否来自合法输入。 */
     steepnessValid: ReadonlyRef<boolean>;
-    /** 邪道模式是否启用；仅 Step ODE 且存在障碍 mask 时生效。 */
+    /** 邪道模式是否启用；仅 Step ODE 生效，障碍 mask 只决定是否额外验证碰撞。 */
     stepGlitchModeEnabled: ReadonlyRef<boolean>;
     /** 邪道扫描和最终候选验证共用的模拟 mask。 */
     getStepGlitchObstacleMask: () => Uint8Array | undefined;

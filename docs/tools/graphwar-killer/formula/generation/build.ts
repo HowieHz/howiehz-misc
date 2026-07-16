@@ -662,7 +662,15 @@ function createCompiledAbsConnectorSegments(
     if (options?.disabledSegments?.[index]) {
       continue;
     }
-    const segment = createAbsConnectorSegment(...getFormulaSegmentPoints(points, index, options));
+    let startPoint = points[index];
+    // 只有 ABS y' 消费模拟确认的真实段起点；其他方程必须保留原始点，避免读取陈旧补正状态。
+    if (index > 0 && options?.equation === "dy") {
+      const resolvedStartPoint = options.segmentStartPoints?.[index];
+      if (resolvedStartPoint !== undefined) {
+        startPoint = resolvedStartPoint;
+      }
+    }
+    const segment = createAbsConnectorSegment(startPoint, points[index + 1]);
     if (isRoundedAbsConnectorZero(segment, decimalPlaces)) {
       continue;
     }
@@ -692,7 +700,14 @@ function createCompiledAbsSecondDerivativeFormula(
   const decimalPlaces = getFormulaDecimalPlaces(options);
   const formulaSteepness = quantizeStepFormulaSteepness(steepness, decimalPlaces);
   const pulses: CompiledAbsSecondDerivativePulse[] = [];
-  const deltaSlopes = options?.absSecondDerivativePulseDeltaSlopes ?? createAbsSecondDerivativePulseDeltaSlopes(points);
+  let deltaSlopes = options?.absSecondDerivativePulseDeltaSlopes;
+  if (deltaSlopes === undefined) {
+    // 完整原始分段包含零斜率段；末点补反向脉冲，让路径后恢复水平。
+    const segmentSlopes = createSegmentSlopes(points);
+    deltaSlopes = segmentSlopes.map((slope, index) =>
+      index < segmentSlopes.length - 1 ? segmentSlopes[index + 1] - slope : -slope,
+    );
+  }
   for (let index = 0; index < deltaSlopes.length; index += 1) {
     const deltaSlope = deltaSlopes[index];
     const center = points[index + 1];
@@ -708,27 +723,6 @@ function createCompiledAbsSecondDerivativeFormula(
     }
   }
   return { formulaSteepness, pulses };
-}
-
-/** 从理论折线生成内部斜率变化，并在末点补反向脉冲让路径后恢复水平。 */
-function createAbsSecondDerivativePulseDeltaSlopes(points: readonly GraphPoint[]) {
-  const segmentSlopes = createSegmentSlopes(points);
-  return segmentSlopes.map((slope, index) =>
-    index < segmentSlopes.length - 1 ? segmentSlopes[index + 1] - slope : -slope,
-  );
-}
-
-/** ABS y' 取已经接受的真实起点和原始目标；其他方程不得消费陈旧补正状态。 */
-function getFormulaSegmentPoints(
-  points: readonly GraphPoint[],
-  segmentIndex: number,
-  options?: FormulaEvaluationOptions,
-): readonly [GraphPoint, GraphPoint] {
-  return [
-    (segmentIndex > 0 && options?.equation === "dy" ? options.segmentStartPoints?.[segmentIndex] : undefined) ??
-      points[segmentIndex],
-    points[segmentIndex + 1],
-  ];
 }
 
 /** 正长度参数在文本里用普通数字格式化，应与 formatDecimal 的舍入规则一致。 */

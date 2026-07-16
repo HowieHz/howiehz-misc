@@ -1,11 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH, GRAPHWAR_STEP_SIZE } from "../../core/game/constants";
+import {
+  GRAPHWAR_GAME_SOLDIER_RADIUS,
+  GRAPHWAR_PLANE_HEIGHT,
+  GRAPHWAR_PLANE_LENGTH,
+  GRAPHWAR_STEP_SIZE,
+} from "../../core/game/constants";
 import { graphToImagePoint } from "../../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds } from "../../core/types";
-import { compileFormulaEvaluator, compileGraphwarFormulaMaterials, GraphwarSignRole } from "../generation/build";
-import { sampleGraphwarExpressionTrajectory } from "../simulation/simulator";
+import {
+  buildFormula,
+  compileFormulaEvaluator,
+  compileGraphwarFormulaMaterials,
+  GraphwarSignRole,
+} from "../generation/build";
+import { sampleGraphwarExpressionTrajectory, sampleGraphwarTrajectory } from "../simulation/simulator";
 import {
   compareGraphwarPathErrors,
   getGraphwarTrajectoryLaunchAngle,
@@ -357,29 +367,125 @@ describe("Generated formula evaluator equivalence", () => {
     );
   });
 
-  it("keeps protected multi-segment abs derivatives in Graphwar's right-associated order", () => {
+  it("matches omitted zero and right-associated ABS segments on exact protected control lines", () => {
+    const soldierCenter = createGraphPoint(-GRAPHWAR_GAME_SOLDIER_RADIUS, 0);
     const points = [
-      createGraphPoint(-10, -1),
-      createGraphPoint(-5, 2),
-      createGraphPoint(0, -2),
-      createGraphPoint(5, 1),
+      createGraphPoint(0, 0),
+      createGraphPoint(GRAPHWAR_STEP_SIZE, 0),
+      createGraphPoint(2 * GRAPHWAR_STEP_SIZE, 0.0001),
+      createGraphPoint(3 * GRAPHWAR_STEP_SIZE, -0.0001),
+      createGraphPoint(4 * GRAPHWAR_STEP_SIZE, 0.0002),
     ];
-    const resolved = resolveGraphwarTrajectory({
+    const formulaEvaluation = {
+      equation: "dy" as const,
+      formulaDecimalPlaces: 4,
+      signProtection: [
+        0,
+        GraphwarSignRole.StartX | GraphwarSignRole.EndX,
+        GraphwarSignRole.StartX | GraphwarSignRole.EndX,
+        GraphwarSignRole.StartX | GraphwarSignRole.EndX,
+      ],
+    };
+    const initialState = { currentPoint: points[0], sampleIndex: 0 };
+    const compiledMaterials = compileGraphwarFormulaMaterials(points, 1, "abs", formulaEvaluation);
+    const expression = buildFormula(points, 1, "dy", "abs", 4, {
+      compiledMaterials,
+      signProtection: formulaEvaluation.signProtection,
+    }).expression;
+    const compiled = sampleGraphwarTrajectory({
+      algorithm: "abs",
       bounds,
-      boundsRect,
+      compiledFormulaMaterials: compiledMaterials,
+      equation: "dy",
+      formulaEvaluation,
+      initialState,
       points,
-      settings: { ...settings, equation: "dy" as const },
-      signProtection: points.slice(1).map(() => GraphwarSignRole.StartX | GraphwarSignRole.EndX),
-      soldierCenter: points[0],
+      soldierCenter,
+      steepness: 1,
     });
     const parsed = sampleGraphwarExpressionTrajectory({
       bounds,
       equation: "dy",
-      expression: resolved.context.formulaResult.expression,
-      soldierCenter: points[0],
+      expression,
+      initialState,
+      soldierCenter,
     });
 
-    expectTrajectorySamplesToBeIdentical(resolved.result.sample, parsed);
+    expect(compiledMaterials.absSegments?.map((segment) => segment.sourceSegmentIndex)).toEqual([1, 2, 3]);
+    for (const controlX of [
+      GRAPHWAR_STEP_SIZE,
+      2 * GRAPHWAR_STEP_SIZE,
+      3 * GRAPHWAR_STEP_SIZE,
+      4 * GRAPHWAR_STEP_SIZE,
+    ]) {
+      const controlIndex = compiled.points.findIndex((point) => Object.is(point.x, controlX));
+      expect(controlIndex).toBeGreaterThan(0);
+      expect(compiled.points[controlIndex - 1]?.x).toBeLessThan(controlX);
+      expect(compiled.points[controlIndex + 1]?.x).toBeGreaterThan(controlX);
+    }
+    expectTrajectorySamplesToBeIdentical(compiled, parsed);
+  });
+
+  it("matches the complete Step y'' trajectory before, on, and after protected high-precision gates", () => {
+    const soldierCenter = createGraphPoint(-GRAPHWAR_GAME_SOLDIER_RADIUS, 0);
+    const points = [createGraphPoint(0, 0), createGraphPoint(1, 0)];
+    const startX = GRAPHWAR_STEP_SIZE;
+    const pulseEndX = 2 * GRAPHWAR_STEP_SIZE;
+    const formulaEvaluation = {
+      equation: "ddy" as const,
+      formulaDecimalPlaces: 4,
+      signProtection: [
+        GraphwarSignRole.StartX | GraphwarSignRole.EndX | GraphwarSignRole.GateY | GraphwarSignRole.BrakingGateY,
+      ],
+      stepGlitchSegments: [
+        {
+          acceleration: 0.123456789012345,
+          accelerationGateY: 1.123456789012345,
+          braking: -0.123456789012345,
+          brakingGateY: 1.123456789012345,
+          endX: 3 * GRAPHWAR_STEP_SIZE,
+          equation: "ddy" as const,
+          formulaDecimalPlaces: 15,
+          pulseEndX,
+          startX,
+          targetY: 0,
+        },
+      ],
+      stepOverflowProtection: true,
+    };
+    const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+    const expression = buildFormula(points, 210, "ddy", "step", 4, {
+      compiledMaterials,
+      signProtection: formulaEvaluation.signProtection,
+      stepOverflowProtection: true,
+    }).expression;
+    const compiled = sampleGraphwarTrajectory({
+      algorithm: "step",
+      bounds,
+      compiledFormulaMaterials: compiledMaterials,
+      equation: "ddy",
+      formulaEvaluation,
+      launchAngleRadians: 0,
+      points,
+      soldierCenter,
+      steepness: 210,
+    });
+    const parsed = sampleGraphwarExpressionTrajectory({
+      bounds,
+      equation: "ddy",
+      expression,
+      launchAngleRadians: 0,
+      soldierCenter,
+    });
+
+    expect(compiledMaterials.stepFormula?.terms[0]?.glitchSegment?.formulaDecimalPlaces).toBe(15);
+    for (const gateX of [startX, pulseEndX]) {
+      const gateIndex = compiled.points.findIndex((point) => Object.is(point.x, gateX));
+      expect(gateIndex).toBeGreaterThan(0);
+      expect(compiled.points[gateIndex - 1]?.x).toBeLessThan(gateX);
+      expect(compiled.points[gateIndex + 1]?.x).toBeGreaterThan(gateX);
+    }
+    expectTrajectorySamplesToBeIdentical(compiled, parsed);
   });
 
   it("keeps soft ddy weighting finite when Graphwar divides before multiplying by two", () => {

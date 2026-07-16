@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { GRAPHWAR_GAME_SOLDIER_RADIUS } from "../../core/game/constants";
 import { createGraphPoint } from "../../core/types";
-import { getGraphwarLaunchAngle, GraphwarFormulaConvergenceError, sampleGraphwarTrajectory } from "./simulator";
+import {
+  createGraphwarFormulaPathPoints,
+  getGraphwarLaunchAngle,
+  GraphwarFormulaConvergenceError,
+  sampleGraphwarTrajectory,
+} from "./simulator";
 
 const horizontalPoints = [createGraphPoint(-10, 0), createGraphPoint(0, 0)];
 
@@ -65,6 +71,30 @@ describe("Graphwar launch-angle convergence contracts", () => {
     expect(() =>
       getGraphwarLaunchAngle({ algorithm: "step", equation: "ddy", points: horizontalPoints, steepness: 210 }),
     ).toThrow(GraphwarFormulaConvergenceError);
+  });
+
+  it("continues launch-point refinement while a sub-micro residual still strictly improves", () => {
+    const center = createGraphPoint(-10, 0);
+    const firstAngle = 0.1;
+    const improvedAngle = firstAngle + 0.000001;
+    let callCount = 0;
+    vi.spyOn(Math, "atan").mockImplementation(() => {
+      callCount += 1;
+      return callCount <= 2 ? firstAngle : improvedAngle;
+    });
+
+    const formulaPoints = createGraphwarFormulaPathPoints({
+      algorithm: "pchip",
+      bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+      equation: "ddy",
+      formulaEvaluation: { equation: "ddy", formulaDecimalPlaces: 15 },
+      points: [center, createGraphPoint(0, 1), createGraphPoint(10, 0)],
+      steepness: 210,
+    });
+
+    expect(callCount).toBe(6);
+    expect(Object.is(formulaPoints[0].x, center.x + GRAPHWAR_GAME_SOLDIER_RADIUS * Math.cos(improvedAngle))).toBe(true);
+    expect(Object.is(formulaPoints[0].y, center.y + GRAPHWAR_GAME_SOLDIER_RADIUS * Math.sin(improvedAngle))).toBe(true);
   });
 
   it("rejects a second-order resume state without its required slope", () => {

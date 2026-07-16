@@ -55,12 +55,7 @@ export interface SampleGraphwarTrajectoryOptions {
   steepness: number;
 }
 
-/** 发射点迭代收敛阈值取 Graphwar 最小 x 步长的 1/10，避免无意义抖动。 */
-const FORMULA_LAUNCH_POINT_TOLERANCE = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE / 10;
-/** 发射点收敛比较使用距离平方，避免每轮开方。 */
-const FORMULA_LAUNCH_POINT_TOLERANCE_SQUARED = FORMULA_LAUNCH_POINT_TOLERANCE ** 2;
-
-/** 标记工具自有固定点迭代未达到容差；候选搜索只能把这一类失败当作候选不可用。 */
+/** 标记工具自有局部求解没有有限执行状态或无法完成必要物理回放；候选搜索只能把这一类失败当作候选不可用。 */
 export class GraphwarFormulaConvergenceError extends Error {
   constructor(message: string) {
     super(message);
@@ -251,9 +246,6 @@ export function createGraphwarFormulaPathPoints(options: CreateGraphwarFormulaPa
     }
     bestResidualSquared = residualSquared;
     bestFormulaPoints = formulaPoints;
-    if (residualSquared <= FORMULA_LAUNCH_POINT_TOLERANCE_SQUARED) {
-      return bestFormulaPoints;
-    }
     formulaPoints = createStepAdjustedFormulaPathPoints(options, [launchPoint, ...options.points.slice(1)]);
   }
 

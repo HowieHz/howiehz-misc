@@ -186,12 +186,15 @@ export const graphwarKillerLocale = {
     secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到约 ${angle}°`,
     trajectoryWarning: {
       obstacle: "当前公式轨迹会撞到障碍物或边界",
+      pathQuality: (error) => `公式已生成，但普通控制点的最大路径误差为 ${error} 个原始平面像素`,
+      pathQualityUnreached: "公式已生成，但轨迹没有到达至少一条普通控制线",
       stopped: {
         invalid: "预览已中止：公式出现 NaN 或无穷值，实战中会提前爆炸",
         "max-steps": "预览已中止：达到 Graphwar 最大采样步数，函数过长，实战中会在末端爆炸",
         "out-of-bounds": "预览已中止：轨迹越出 Graphwar 平面，实战中会在边界处提前爆炸",
         "too-steep": "预览已中止：局部太陡，Graphwar 步长缩到最小仍无法继续，实战中会在这里爆炸",
       },
+      targetMissed: "当前 y'' 公式按页面显示的两位小数发射角回放后未命中目标",
     },
   },
   smartPathfinding: {

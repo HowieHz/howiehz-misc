@@ -109,7 +109,7 @@ describe("ABS second-derivative formula", () => {
     expect(sample.points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))).toBe(true);
   });
 
-  it("fails explicitly when the tool-owned launch-point iteration exhausts its safety budget", () => {
+  it("keeps the best finite launch-point state when the tool-owned iteration stops improving", () => {
     const points = [
       createGraphPoint(-10, -1),
       createGraphPoint(-7, 2),
@@ -117,15 +117,16 @@ describe("ABS second-derivative formula", () => {
       createGraphPoint(1, 1),
     ];
 
-    expect(() =>
-      createGraphwarFormulaPathPoints({
-        algorithm: "pchip",
-        bounds: { maxX: 20, maxY: 20, minX: -20, minY: -20 },
-        equation: "ddy",
-        formulaEvaluation: { equation: "ddy", formulaDecimalPlaces: 4 },
-        points,
-        steepness: 210,
-      }),
-    ).toThrow("Formula launch point did not converge.");
+    const formulaPoints = createGraphwarFormulaPathPoints({
+      algorithm: "pchip",
+      bounds: { maxX: 20, maxY: 20, minX: -20, minY: -20 },
+      equation: "ddy",
+      formulaEvaluation: { equation: "ddy", formulaDecimalPlaces: 4 },
+      points,
+      steepness: 210,
+    });
+
+    expect(formulaPoints).toHaveLength(points.length);
+    expect(formulaPoints.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))).toBe(true);
   });
 });

@@ -6,13 +6,7 @@ import {
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
-import {
-  graphToImagePoint,
-  graphXToPlaneX,
-  graphYToPlaneY,
-  imageToGraphPoint,
-  planePixelsToGraphUnits,
-} from "../../core/geometry";
+import { graphToImagePoint, graphXToPlaneX, graphYToPlaneY, imageToGraphPoint } from "../../core/geometry";
 import { MAX_FORMULA_DECIMAL_PLACES, floorToDecimalPlaces } from "../../core/numbers";
 import { planePointIsInsideBoundaryExpansion } from "../../core/plane-grid";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
@@ -24,6 +18,7 @@ import type {
   FormulaResult,
   GraphBounds,
   GraphPoint,
+  GraphwarSecondOrderLaunchAngleMode,
   PixelPoint,
 } from "../../core/types";
 /** 负责按 Graphwar 公式规则采样轨迹，并判断路径与目标/障碍的交互。 */
@@ -63,10 +58,12 @@ export type GraphwarTrajectoryEarlyStopReason = "obstacle" | "target";
 export interface GraphwarTrajectoryFormulaSettings {
   /** 路径点转公式的算法。 */
   algorithm: AlgorithmMode;
-  /** 最终公式文本的小数位；只限制表达式参数，不约分路径点或发射点。 */
+  /** 普通公式参数的小数位偏好；Step 邪道为保持门和跳转有效可提升到最低必要精度。 */
   decimalPlaces: number;
   /** Graphwar 对公式文本的解释模式。 */
   equation: EquationMode;
+  /** Y''= 最终回放消费完整 double 建议角，还是页面两位小数显示值；省略时使用完整角度。 */
+  secondOrderLaunchAngleMode?: GraphwarSecondOrderLaunchAngleMode;
   /** 路径生成公式时的 steepness；省略时使用 steepness。 */
   formulaPathSteepness?: number;
   /** Step 或 ABS y'' 公式的陡峭度。 */
@@ -89,6 +86,8 @@ export interface GraphwarTrajectoryFormulaContext {
   formulaEvaluation: FormulaEvaluationOptions;
   /** 已按发射点和 step 中心调整过的 Graphwar 路径点，保留 double 精度。 */
   formulaPoints: GraphPoint[];
+  /** Y''= 当前执行模型真正消费的发射角；其他方程省略。 */
+  launchAngleRadians?: number;
   /** 原始公式采样设置，随上下文一起传递以保证求值模式一致。 */
   settings: GraphwarTrajectoryFormulaSettings;
   /** 按原始路径段保存的局部 sign 保护快照。 */
@@ -161,6 +160,8 @@ export interface GraphwarTrajectorySampleResult {
   requiredTargetsHitIndex: number;
   /** Graphwar 规则采样出的游戏坐标轨迹。 */
   sample: GraphwarTrajectorySample;
+  /** 普通质量点的最大纵向误差，单位为 Graphwar 原始平面像素；没有质量点时省略。 */
+  pathError?: number;
   /** 完成有序目标序列的采样点索引，-1 表示未完成。 */
   targetHitIndex: number;
   /** 各无序跟踪目标首次命中的采样点索引；-1 表示未命中。 */
@@ -177,6 +178,8 @@ export interface GraphwarPathTrajectoryResult {
   reachesTargetBeforeObstacle: boolean;
   /** 原始 Graphwar 采样结果，供调试和成本统计使用。 */
   sample: GraphwarTrajectorySample;
+  /** 普通质量点的最大纵向误差，单位为 Graphwar 原始平面像素；没有质量点时省略。 */
+  pathError?: number;
   /** 实际检查过的采样点数量。 */
   samplePointCount: number;
   /** 截图像素轨迹，页面可直接绘制。 */
@@ -197,6 +200,8 @@ export interface GraphwarPathTargetSequenceResult {
   reachesTargetSequenceBeforeObstacle: boolean;
   /** 原始 Graphwar 采样结果，供调试和成本统计使用。 */
   sample: GraphwarTrajectorySample;
+  /** 普通质量点的最大纵向误差，单位为 Graphwar 原始平面像素；没有质量点时省略。 */
+  pathError?: number;
   /** 实际检查过的采样点数量。 */
   samplePointCount: number;
   /** 完成有序目标序列的采样点索引；-1 表示未完成。 */
@@ -252,6 +257,63 @@ export function graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle(
 }
 
 /**
+ * 比较自动候选的最后一级路径质量。
+ *
+ * 没有质量点时不参与 tie-break；有限误差优于 Infinity，双方 Infinity 时返回 0 以保持稳定顺序。
+ */
+export function compareGraphwarPathErrors(left: number | undefined, right: number | undefined) {
+  if (left === undefined || right === undefined) {
+    return 0;
+  }
+  const leftIsFinite = Number.isFinite(left);
+  const rightIsFinite = Number.isFinite(right);
+  if (leftIsFinite && rightIsFinite) {
+    return left - right;
+  }
+  if (leftIsFinite) {
+    return -1;
+  }
+  return rightIsFinite ? 1 : 0;
+}
+
+/**
+ * 按最终回放中第一个 x >= target.x 的原版接受点测量纵向路径误差。
+ *
+ * Graphwar 始终沿坐标 x+ 采样，截图镜像不改变这里的比较方向。未走到控制线返回 Infinity，避免用 轨迹末点掩盖缺失状态；空质量点集合返回 undefined。
+ */
+export function measureGraphwarFormulaPathError(
+  samplePoints: readonly GraphPoint[],
+  qualityPoints: readonly GraphPoint[],
+  bounds: GraphBounds,
+) {
+  if (qualityPoints.length === 0) {
+    return undefined;
+  }
+  const ySpan = Math.abs(bounds.maxY - bounds.minY);
+  if (!(ySpan > 0) || !Number.isFinite(ySpan)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  let pathError = 0;
+  let sampleIndex = 0;
+  for (const target of qualityPoints) {
+    while (sampleIndex < samplePoints.length && samplePoints[sampleIndex].x < target.x) {
+      sampleIndex += 1;
+    }
+    const acceptedPoint = samplePoints[sampleIndex];
+    if (!acceptedPoint) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const pointError = (Math.abs(acceptedPoint.y - target.y) * GRAPHWAR_PLANE_HEIGHT) / ySpan;
+    if (!Number.isFinite(pointError)) {
+      return Number.POSITIVE_INFINITY;
+    }
+    pathError = Math.max(pathError, pointError);
+  }
+  return pathError;
+}
+
+/**
  * 一次完成生成公式求解、局部 sign 探测和带早停的轨迹验证。
  *
  * 保护集合变化会使分母 epsilon 在旧门前产生尾值，因此每次重试都从发射点开始，并创建全新的命中统计器。
@@ -267,6 +329,8 @@ export function resolveGraphwarTrajectory(options: {
   initialReachedTargetCount?: number;
   initialState?: GraphwarTrajectorySamplingState;
   points: readonly GraphPoint[];
+  /** 不受真实命中圆约束的普通控制点；只用于非阻塞路径质量统计。 */
+  qualityPoints?: readonly GraphPoint[];
   requiredTargets?: readonly GraphwarTrajectoryTargetCircle[];
   settings: GraphwarTrajectoryFormulaSettings;
   /** 与 initialState 成对保存的保护快照；公式配置或路径身份不匹配时调用方不得传入。 */
@@ -318,7 +382,9 @@ export function resolveGraphwarTrajectory(options: {
           },
         },
         initialState,
+        ...(state.launchAngleRadians === undefined ? {} : { launchAngleRadians: state.launchAngleRadians }),
         points: state.formulaPoints,
+        secondOrderLaunchAngleMode: options.settings.secondOrderLaunchAngleMode,
         shouldStop: stopTracker.shouldStop,
         skipInitialStop: initialState ? options.skipInitialStop : false,
         soldierCenter: options.soldierCenter ?? state.formulaPoints[0],
@@ -380,6 +446,7 @@ function stepGlitchPrefixMatchesSource(
     prefix.settings.algorithm !== options.settings.algorithm ||
     prefix.settings.decimalPlaces !== options.settings.decimalPlaces ||
     prefix.settings.equation !== options.settings.equation ||
+    prefix.settings.secondOrderLaunchAngleMode !== options.settings.secondOrderLaunchAngleMode ||
     prefix.settings.formulaPathSteepness !== options.settings.formulaPathSteepness ||
     prefix.settings.steepness !== options.settings.steepness ||
     prefix.settings.stepGlitchMode !== options.settings.stepGlitchMode ||
@@ -426,6 +493,7 @@ function finalizeGraphwarTrajectoryFormulaContext(
     formulaResult,
     formulaEvaluation: state.formulaEvaluation,
     formulaPoints: state.formulaPoints,
+    ...(state.launchAngleRadians === undefined ? {} : { launchAngleRadians: state.launchAngleRadians }),
     settings: options.settings,
     signProtection: state.signProtection,
     soldierCenter: options.soldierCenter,
@@ -438,6 +506,7 @@ interface TrajectoryFormulaState {
   compiledMaterials: CompiledGraphwarFormulaMaterials;
   formulaEvaluation: FormulaEvaluationOptions;
   formulaPoints: GraphPoint[];
+  launchAngleRadians?: number;
   signProtection: GraphwarSignProtection;
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
 }
@@ -621,12 +690,32 @@ function createTrajectoryFormulaState(
     options.settings.algorithm,
     formulaEvaluation,
   );
+  const soldierCenter = options.soldierCenter ?? formulaPoints[0];
+  const launchAngleRadians =
+    options.settings.equation === "ddy" && soldierCenter
+      ? getGraphwarLaunchAngle(
+          {
+            algorithm: options.settings.algorithm,
+            compiledFormulaMaterials: compiledMaterials,
+            equation: options.settings.equation,
+            formulaEvaluation,
+            points: formulaPoints,
+            secondOrderLaunchAngleMode: options.settings.secondOrderLaunchAngleMode,
+            steepness: options.settings.steepness,
+          },
+          soldierCenter,
+        )
+      : undefined;
+  if (options.settings.equation === "ddy" && !Number.isFinite(launchAngleRadians)) {
+    throw new GraphwarFormulaConvergenceError("Second-order formula has no finite execution angle.");
+  }
   return {
     status: "resolved",
     state: {
       compiledMaterials,
       formulaEvaluation,
       formulaPoints,
+      ...(launchAngleRadians === undefined ? {} : { launchAngleRadians }),
       signProtection: [...resolvedSignProtection],
       stepGlitchFormulaPrefix,
     },
@@ -686,11 +775,6 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
     throw new GraphwarFormulaConvergenceError("ABS second-order path endpoints are missing.");
   }
   const finalX = finalPoint.x;
-  const maximumPositionError = planePixelsToGraphUnits(
-    graphwarToolDefaults.targetRangePixelTolerance,
-    options.bounds,
-    "y",
-  );
   const formulaSteepness = quantizeStepFormulaSteepness(options.settings.steepness, options.settings.decimalPlaces);
   if (!(formulaSteepness > 0)) {
     throw new GraphwarFormulaConvergenceError("ABS second-order pulse steepness is not positive.");
@@ -730,98 +814,135 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
     pulseDeltaSlopes[pulseIndex] = deltaSlope;
   }
 
-  // 后续脉冲也有左尾；按最终文本的整组量化脉冲回扫，达到一像素契约后立即成功。
+  // 后续平滑脉冲在中心左侧仍有尾值；ABS y'' 是唯一必须从枪口整组回放的跨段补偿模式。
   const visitedPulseStates = new Set<string>();
-  let bestPulseDeltaSlopes = [...pulseDeltaSlopes];
-  let bestFirstFormulaTargetY = refinedFormulaPoints[1].y;
-  let bestWorstPositionError = Number.POSITIVE_INFINITY;
-  let reachedRefinementLimit = true;
+  let bestPulseDeltaSlopes: (number | undefined)[] | undefined;
+  let bestFirstFormulaTargetY: number | undefined;
+  let bestRefinementError = Number.POSITIVE_INFINITY;
   for (
     let refinementIteration = 0;
     refinementIteration < ABS_SECOND_DERIVATIVE_MAX_REFINEMENT_ITERATIONS;
     refinementIteration += 1
   ) {
-    resolveAbsSecondDerivativeTerminalPulse(
-      options,
-      refinedFormulaPoints,
-      signProtection,
-      pulseDeltaSlopes,
-      soldierCenter,
-      finalX,
-    );
-    // decimalPlaces 决定最终文本能表达的状态；原地落到该状态后，重复 key 表示继续迭代已无意义。
-    let pulseState = "";
+    try {
+      resolveAbsSecondDerivativeTerminalPulse(
+        options,
+        refinedFormulaPoints,
+        signProtection,
+        pulseDeltaSlopes,
+        soldierCenter,
+        finalX,
+      );
+    } catch (error) {
+      if (bestPulseDeltaSlopes && isGraphwarFormulaConvergenceError(error)) {
+        break;
+      }
+      throw error;
+    }
+
+    // 系数和有效发射角共同决定最终执行行为；key 不读取量化前的修正变量。
+    const quantizedCoefficients: number[] = [];
+    let stateIsFinite = true;
     for (let pulseIndex = 0; pulseIndex < pulseDeltaSlopes.length; pulseIndex += 1) {
       const deltaSlope = pulseDeltaSlopes[pulseIndex];
       if (deltaSlope === undefined) {
-        pulseState += "|undefined";
-        continue;
+        stateIsFinite = false;
+        break;
       }
       const coefficient = quantizeFormulaCoefficient(formulaSteepness * deltaSlope, options.settings.decimalPlaces);
       pulseDeltaSlopes[pulseIndex] = coefficient / formulaSteepness;
-      pulseState += `|${coefficient}`;
+      if (!Number.isFinite(coefficient) || !Number.isFinite(pulseDeltaSlopes[pulseIndex])) {
+        stateIsFinite = false;
+        break;
+      }
+      quantizedCoefficients.push(Object.is(coefficient, -0) ? 0 : coefficient);
     }
-    pulseState += `|launch:${refinedFormulaPoints[1].y}`;
+    const launchAngleRadians = getGraphwarLaunchAngle(
+      {
+        algorithm: "abs",
+        equation: "ddy",
+        points: refinedFormulaPoints,
+        secondOrderLaunchAngleMode: options.settings.secondOrderLaunchAngleMode,
+        steepness: options.settings.steepness,
+      },
+      soldierCenter,
+    );
+    stateIsFinite &&= Number.isFinite(launchAngleRadians);
+    if (!stateIsFinite) {
+      if (bestPulseDeltaSlopes) {
+        break;
+      }
+      throw new GraphwarFormulaConvergenceError("ABS second-order refinement has no finite execution state.");
+    }
+
+    const pulseState = `${quantizedCoefficients.join("|")}|launch:${Object.is(launchAngleRadians, -0) ? 0 : launchAngleRadians}`;
     if (visitedPulseStates.has(pulseState)) {
-      pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
-      refinedFormulaPoints[1] = createGraphPoint(refinedFormulaPoints[1].x, bestFirstFormulaTargetY);
-      reachedRefinementLimit = false;
       break;
     }
     visitedPulseStates.add(pulseState);
 
-    const targetPoints = sampleAbsSecondDerivativeTargetPoints(
-      options,
-      refinedFormulaPoints,
-      signProtection,
-      pulseDeltaSlopes,
-      soldierCenter,
-      targets,
-    );
-    const firstTargetPositionError = targets[0].y - targetPoints[0].y;
-    let worstPositionError = Math.abs(firstTargetPositionError);
-    let allTargetsWithinTolerance = worstPositionError <= maximumPositionError;
-    for (let pulseIndex = 0; pulseIndex < segmentCount - 1; pulseIndex += 1) {
-      const target = targets[pulseIndex + 1];
-      const targetPoint = targetPoints[pulseIndex + 1];
-      const deltaSlope = pulseDeltaSlopes[pulseIndex];
-      if (deltaSlope === undefined) {
-        throw new GraphwarFormulaConvergenceError("ABS second-order compensated target did not converge.");
+    let targetPoints: GraphPoint[];
+    try {
+      targetPoints = sampleAbsSecondDerivativeTargetPoints(
+        options,
+        refinedFormulaPoints,
+        signProtection,
+        pulseDeltaSlopes,
+        soldierCenter,
+        targets,
+      );
+    } catch (error) {
+      if (bestPulseDeltaSlopes && isGraphwarFormulaConvergenceError(error)) {
+        break;
       }
-      const positionError = target.y - targetPoint.y;
-      const absolutePositionError = Math.abs(positionError);
-      allTargetsWithinTolerance = allTargetsWithinTolerance && absolutePositionError <= maximumPositionError;
-      worstPositionError = Math.max(worstPositionError, absolutePositionError);
+      throw error;
     }
-    if (allTargetsWithinTolerance) {
-      bestPulseDeltaSlopes = [...pulseDeltaSlopes];
-      bestFirstFormulaTargetY = refinedFormulaPoints[1].y;
-      reachedRefinementLimit = false;
+    let refinementError = 0;
+    for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+      refinementError = Math.max(
+        refinementError,
+        (Math.abs(targetPoints[targetIndex].y - targets[targetIndex].y) * GRAPHWAR_PLANE_HEIGHT) /
+          Math.abs(options.bounds.maxY - options.bounds.minY),
+      );
+    }
+    if (!Number.isFinite(refinementError)) {
+      if (bestPulseDeltaSlopes) {
+        break;
+      }
+      throw new GraphwarFormulaConvergenceError("ABS second-order refinement has no finite residual.");
+    }
+    if (!(refinementError < bestRefinementError)) {
       break;
     }
-    if (worstPositionError >= bestWorstPositionError) {
-      pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
-      refinedFormulaPoints[1] = createGraphPoint(refinedFormulaPoints[1].x, bestFirstFormulaTargetY);
-      reachedRefinementLimit = false;
-      break;
-    }
-    bestWorstPositionError = worstPositionError;
+    bestRefinementError = refinementError;
     bestPulseDeltaSlopes = [...pulseDeltaSlopes];
     bestFirstFormulaTargetY = refinedFormulaPoints[1].y;
+    if (refinementError <= graphwarToolDefaults.formulaPathQualityTargetPlanePixels) {
+      break;
+    }
+
     // 首个公式目标只决定 ABS y'' 发射角；修正它即可补偿所有平滑脉冲在首目标左侧的尾值。
     refinedFormulaPoints[1] = createGraphPoint(
       refinedFormulaPoints[1].x,
-      refinedFormulaPoints[1].y + firstTargetPositionError,
+      refinedFormulaPoints[1].y + targets[0].y - targetPoints[0].y,
     );
     // 发射角更新后只重放一次；本轮所有脉冲共享同一接受点快照，下轮再消费整组更新。
-    const adjustedTargetPoints = sampleAbsSecondDerivativeTargetPoints(
-      options,
-      refinedFormulaPoints,
-      signProtection,
-      pulseDeltaSlopes,
-      soldierCenter,
-      targets,
-    );
+    let adjustedTargetPoints: GraphPoint[];
+    try {
+      adjustedTargetPoints = sampleAbsSecondDerivativeTargetPoints(
+        options,
+        refinedFormulaPoints,
+        signProtection,
+        pulseDeltaSlopes,
+        soldierCenter,
+        targets,
+      );
+    } catch (error) {
+      if (isGraphwarFormulaConvergenceError(error)) {
+        break;
+      }
+      throw error;
+    }
     let propagatedSlopeCorrection = 0;
     let propagatedYInterceptCorrection = 0;
     for (let pulseIndex = 0; pulseIndex < segmentCount - 1; pulseIndex += 1) {
@@ -841,10 +962,12 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
       }
     }
   }
-  if (reachedRefinementLimit) {
-    pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
-    refinedFormulaPoints[1] = createGraphPoint(refinedFormulaPoints[1].x, bestFirstFormulaTargetY);
+  if (!bestPulseDeltaSlopes || bestFirstFormulaTargetY === undefined) {
+    throw new GraphwarFormulaConvergenceError("ABS second-order refinement has no finite execution state.");
   }
+  // 重复、残差持平/恶化或工作量上限都恢复历史最佳；1px 只负责提前停止，不是最终失败阈值。
+  pulseDeltaSlopes.splice(0, pulseDeltaSlopes.length, ...bestPulseDeltaSlopes);
+  refinedFormulaPoints[1] = createGraphPoint(refinedFormulaPoints[1].x, bestFirstFormulaTargetY);
 
   resolveAbsSecondDerivativeTerminalPulse(
     options,
@@ -865,9 +988,6 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
   );
   for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
     const acceptedPoint = finalTargetPoints[targetIndex];
-    if (Math.abs(acceptedPoint.y - targets[targetIndex].y) > maximumPositionError) {
-      throw new GraphwarFormulaConvergenceError("ABS second-order position compensation did not converge.");
-    }
     if (targetIndex + 1 < segmentCount) {
       segmentStartPoints[targetIndex + 1] = acceptedPoint;
     }
@@ -982,6 +1102,7 @@ function sampleAbsSecondDerivativePrefix(
     equation: "ddy",
     formulaEvaluation,
     points: formulaPoints,
+    secondOrderLaunchAngleMode: options.settings.secondOrderLaunchAngleMode,
     shouldStop: (point) => point.x >= stopX,
     soldierCenter,
     steepness: options.settings.steepness,
@@ -1277,6 +1398,7 @@ function sampleStepGlitchPrefix(
     formulaEvaluation: prefixFormula.formulaEvaluation,
     initialState,
     points: formulaPoints,
+    secondOrderLaunchAngleMode: options.settings.secondOrderLaunchAngleMode,
     shouldStop: (point) => point.x >= stopX,
     soldierCenter,
     steepness: options.settings.steepness,
@@ -1320,185 +1442,190 @@ function selectStepGlitchSegmentCandidate(
   formulaPoints: readonly GraphPoint[],
   context: StepGlitchCandidateContext,
 ) {
-  const glitchDecimalPlaces = getStepGlitchFormulaDecimalPlaces(options.settings.decimalPlaces);
   const candidateContext = createStepGlitchCandidateContext(options, formulaPoints, context);
-  const source = createStepGlitchCandidateSource(
-    options,
-    formulaPoints,
-    candidateContext.segmentIndex,
-    candidateContext.formulaCenterX,
-    candidateContext.segmentStartY,
-    glitchDecimalPlaces,
-    candidateContext.mask,
-    candidateContext.xWindow !== undefined,
-  );
-  if (!source) {
-    return undefined;
-  }
-
-  const previous = options.points[candidateContext.segmentIndex];
-  const target = options.points[candidateContext.segmentIndex + 1];
-  const fixedWindow = candidateContext.xWindow;
-  const jumps: StepGlitchJump[] = [];
-  if (
-    fixedWindow &&
-    fixedWindow.startX > previous.x &&
-    fixedWindow.endX > fixedWindow.startX &&
-    target.x >= fixedWindow.endX
+  // 用户小数位只约束普通参数；邪道从最低必要精度逐档提升，15 表示小数位而不是有效数字。
+  for (
+    let glitchDecimalPlaces = getStepGlitchFormulaDecimalPlaces(options.settings.decimalPlaces);
+    glitchDecimalPlaces <= MAX_FORMULA_DECIMAL_PLACES;
+    glitchDecimalPlaces += 1
   ) {
-    jumps.push({ ...fixedWindow, step: GRAPHWAR_STEP_GLITCH_MIN_STEP });
-  } else if (!fixedWindow) {
-    // 普通公式仍从 0.01 逐档缩半；扫描候选传入固定窗口时只验证已选中的一档。
-    for (
-      let windowWidth = GRAPHWAR_STEP_SIZE, windowDecimalPlaces = GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES;
-      windowWidth >= GRAPHWAR_STEP_GLITCH_MIN_STEP;
-      windowWidth /= 2, windowDecimalPlaces += 1
-    ) {
-      const jump = createStepGlitchJump(
-        previous.x,
-        target.x,
-        windowWidth,
-        options.settings.decimalPlaces,
-        windowDecimalPlaces,
-      );
-      if (jump) {
-        jumps.push(jump);
-      }
-    }
-  }
-
-  for (const windowedJump of jumps) {
-    // 同一窗口的六档 RK4 候选共享左门和跳前高度；只需为不同 factor 改写 D。
-    const preJumpSample = sampleStepGlitchPreJump(
+    const source = createStepGlitchCandidateSource(
       options,
       formulaPoints,
-      candidateContext,
-      windowedJump,
-      candidateContext.prefixInitialState,
+      candidateContext.segmentIndex,
+      candidateContext.formulaCenterX,
+      candidateContext.segmentStartY,
+      glitchDecimalPlaces,
+      candidateContext.mask,
+      candidateContext.xWindow !== undefined,
     );
-    if (!preJumpSample) {
-      continue;
+    if (!source) {
+      return undefined;
     }
-    const replacementDeltaY = source.targetY - preJumpSample.point.y;
-    // 当前段已有保护时，重新启用它会在左门前产生尾值，门左状态不再属于候选整式。
-    const candidateInitialState =
-      (candidateContext.signProtection[candidateContext.segmentIndex] ?? 0) === 0
-        ? preJumpSample.resumeState
-        : undefined;
-    let bestSegment: StepGlitchSegment | undefined;
-    let bestSignProtection: GraphwarSignProtection | undefined;
-    let bestError = Number.POSITIVE_INFINITY;
-    const candidates: StepGlitchSegment[] = [];
-    if (options.settings.equation === "dy") {
-      const gateY = createStepGlitchFormulaGateY(source.targetY, replacementDeltaY, glitchDecimalPlaces);
-      for (const factor of STEP_GLITCH_RK4_CONTRIBUTION_FACTORS) {
-        candidates.push(
-          createStepFirstOrderGlitchSegment(windowedJump, source.targetY, gateY, replacementDeltaY, factor),
-        );
-      }
-    } else {
-      const resumeDerivative = preJumpSample.resumeState.dy;
-      const targetDerivative = preJumpSample.crossingDerivative;
-      if (
-        resumeDerivative !== undefined &&
-        targetDerivative !== undefined &&
-        Number.isFinite(resumeDerivative) &&
-        Number.isFinite(targetDerivative)
+
+    const previous = options.points[candidateContext.segmentIndex];
+    const target = options.points[candidateContext.segmentIndex + 1];
+    const fixedWindow = candidateContext.xWindow;
+    const jumps: StepGlitchJump[] = [];
+    if (
+      fixedWindow &&
+      fixedWindow.startX > previous.x &&
+      fixedWindow.endX > fixedWindow.startX &&
+      target.x >= fixedWindow.endX
+    ) {
+      jumps.push({ ...fixedWindow, step: GRAPHWAR_STEP_GLITCH_MIN_STEP });
+    } else if (!fixedWindow) {
+      // 普通公式仍从 0.01 逐档缩半；扫描候选传入固定窗口时只验证已选中的一档。
+      for (
+        let windowWidth = GRAPHWAR_STEP_SIZE, windowDecimalPlaces = GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES;
+        windowWidth >= GRAPHWAR_STEP_GLITCH_MIN_STEP;
+        windowWidth /= 2, windowDecimalPlaces += 1
       ) {
-        const h = windowedJump.step;
-        const directDeltaY =
-          source.targetY - preJumpSample.resumeState.currentPoint.y - h * (resumeDerivative + targetDerivative);
-        // 位移反解沿用 RK4 权重：direct 的 a2/a3 给出 h²/3，armed 由粗步 a4 的 h*armStep/6
-        // 和下一最小步 a1/a2/a3 的 h²/2 组成；这些系数只描述加速相位，不是经验调参。
-        const directAcceleration = (3 * directDeltaY) / h ** 2;
-        let armStep = GRAPHWAR_STEP_SIZE;
-        while (armStep > h && preJumpSample.resumeState.currentPoint.x + armStep / 2 > windowedJump.startX) {
-          armStep /= 2;
-        }
-        const armedDeltaY =
-          source.targetY -
-          preJumpSample.resumeState.currentPoint.y -
-          (armStep + h) * resumeDerivative -
-          h * targetDerivative;
-        const armedAcceleration = armedDeltaY / ((h * armStep) / 6 + h ** 2 / 2);
-        // 纵跳的 a4 和下一最小步长的 a1 共用刹车脉冲；参数按前缀/跨门 y' 计算，候选按落点 y、单次跳转和无障碍验收，不验收最终 y'。
-        // 直接相位在 a2/a3 加速；武装相位先让粗跨门步的 a4 加速，再由 a1/a2/a3 完成纵跳。
-        for (const profile of [
-          {
-            acceleration: directAcceleration,
-            braking:
-              (STEP_GLITCH_SECOND_ORDER_BRAKING_DERIVATIVE_FACTOR * (targetDerivative - resumeDerivative)) / h -
-              STEP_GLITCH_SECOND_ORDER_DIRECT_ACCELERATION_BRAKING_RATIO * directAcceleration,
-            deltaY: directDeltaY,
-            pulseEndX: preJumpSample.resumeState.currentPoint.x + STEP_GLITCH_SECOND_ORDER_PULSE_END_STEP_FACTOR * h,
-          },
-          {
-            acceleration: armedAcceleration,
-            braking:
-              (STEP_GLITCH_SECOND_ORDER_BRAKING_DERIVATIVE_FACTOR * (targetDerivative - resumeDerivative)) / h -
-              (armedAcceleration * (STEP_GLITCH_SECOND_ORDER_ARMED_ACCELERATION_WEIGHT + armStep / h)) /
-                STEP_GLITCH_SECOND_ORDER_BRAKING_WEIGHT,
-            deltaY: armedDeltaY,
-            pulseEndX:
-              preJumpSample.resumeState.currentPoint.x + armStep + STEP_GLITCH_SECOND_ORDER_PULSE_END_STEP_FACTOR * h,
-          },
-        ]) {
-          if (
-            !Number.isFinite(profile.acceleration) ||
-            !(profile.pulseEndX > windowedJump.startX) ||
-            !(profile.pulseEndX < windowedJump.endX) ||
-            Math.abs(profile.deltaY) <= 2 * GRAPHWAR_GAME_SOLDIER_RADIUS
-          ) {
-            continue;
-          }
-          const direction = profile.deltaY < 0 ? -1 : 1;
-          const gateY = quantizeFormulaOffsetCenter(
-            source.targetY - direction * GRAPHWAR_GAME_SOLDIER_RADIUS,
-            glitchDecimalPlaces,
-          );
-          candidates.push({
-            acceleration: profile.acceleration,
-            accelerationGateY: gateY,
-            braking: profile.braking,
-            // 两个互补 y 门在目标命中圈近侧交接，确保武装相位的 a4 已能刹车。
-            brakingGateY: gateY,
-            endX: windowedJump.endX,
-            equation: "ddy",
-            pulseEndX: profile.pulseEndX,
-            startX: windowedJump.startX,
-            targetY: source.targetY,
-          });
+        const jump = createStepGlitchJump(previous.x, target.x, windowWidth, glitchDecimalPlaces, windowDecimalPlaces);
+        if (jump) {
+          jumps.push(jump);
         }
       }
     }
-    for (const candidate of candidates) {
-      const candidateResult = sampleStepGlitchCandidateWithSignProtection(
+
+    for (const windowedJump of jumps) {
+      // 同一窗口的六档 RK4 候选共享左门和跳前高度；只需为不同 factor 改写 D。
+      const preJumpSample = sampleStepGlitchPreJump(
         options,
         formulaPoints,
         candidateContext,
-        candidate,
-        candidateInitialState,
+        windowedJump,
+        candidateContext.prefixInitialState,
       );
-      const sample = candidateResult.sample;
-      const landingPoint = sample.stopReason === "stopped" ? sample.points[sample.points.length - 1] : undefined;
-      if (
-        !landingPoint ||
-        !Number.isFinite(landingPoint.y) ||
-        countStepGlitchJumps(sample.points, candidate) !== 1 ||
-        stepGlitchSampleHitsObstacle(sample.points, options.bounds, candidateContext.mask)
-      ) {
+      if (!preJumpSample) {
         continue;
       }
-
-      const error = Math.abs(landingPoint.y - candidate.targetY);
-      if (error < bestError) {
-        bestError = error;
-        bestSegment = candidate;
-        bestSignProtection = candidateResult.signProtection;
+      const replacementDeltaY = source.targetY - preJumpSample.point.y;
+      let bestSegment: StepGlitchSegment | undefined;
+      let bestSignProtection: GraphwarSignProtection | undefined;
+      let bestError = Number.POSITIVE_INFINITY;
+      const candidates: StepGlitchSegment[] = [];
+      if (options.settings.equation === "dy") {
+        const gateY = createStepGlitchFormulaGateY(source.targetY, replacementDeltaY, glitchDecimalPlaces);
+        for (const factor of STEP_GLITCH_RK4_CONTRIBUTION_FACTORS) {
+          candidates.push(
+            createStepFirstOrderGlitchSegment(
+              windowedJump,
+              source.targetY,
+              gateY,
+              replacementDeltaY,
+              factor,
+              glitchDecimalPlaces,
+            ),
+          );
+        }
+      } else {
+        const resumeDerivative = preJumpSample.resumeState.dy;
+        const targetDerivative = preJumpSample.crossingDerivative;
+        if (
+          resumeDerivative !== undefined &&
+          targetDerivative !== undefined &&
+          Number.isFinite(resumeDerivative) &&
+          Number.isFinite(targetDerivative)
+        ) {
+          const h = windowedJump.step;
+          const directDeltaY =
+            source.targetY - preJumpSample.resumeState.currentPoint.y - h * (resumeDerivative + targetDerivative);
+          // 位移反解沿用 RK4 权重：direct 的 a2/a3 给出 h²/3，armed 由粗步 a4 的 h*armStep/6
+          // 和下一最小步 a1/a2/a3 的 h²/2 组成；这些系数只描述加速相位，不是经验调参。
+          const directAcceleration = (3 * directDeltaY) / h ** 2;
+          let armStep = GRAPHWAR_STEP_SIZE;
+          while (armStep > h && preJumpSample.resumeState.currentPoint.x + armStep / 2 > windowedJump.startX) {
+            armStep /= 2;
+          }
+          const armedDeltaY =
+            source.targetY -
+            preJumpSample.resumeState.currentPoint.y -
+            (armStep + h) * resumeDerivative -
+            h * targetDerivative;
+          const armedAcceleration = armedDeltaY / ((h * armStep) / 6 + h ** 2 / 2);
+          // 纵跳的 a4 和下一最小步长的 a1 共用刹车脉冲；参数按前缀/跨门 y' 计算，候选按落点 y、单次跳转和无障碍验收，不验收最终 y'。
+          // 直接相位在 a2/a3 加速；武装相位先让粗跨门步的 a4 加速，再由 a1/a2/a3 完成纵跳。
+          for (const profile of [
+            {
+              acceleration: directAcceleration,
+              braking:
+                (STEP_GLITCH_SECOND_ORDER_BRAKING_DERIVATIVE_FACTOR * (targetDerivative - resumeDerivative)) / h -
+                STEP_GLITCH_SECOND_ORDER_DIRECT_ACCELERATION_BRAKING_RATIO * directAcceleration,
+              deltaY: directDeltaY,
+              pulseEndX: preJumpSample.resumeState.currentPoint.x + STEP_GLITCH_SECOND_ORDER_PULSE_END_STEP_FACTOR * h,
+            },
+            {
+              acceleration: armedAcceleration,
+              braking:
+                (STEP_GLITCH_SECOND_ORDER_BRAKING_DERIVATIVE_FACTOR * (targetDerivative - resumeDerivative)) / h -
+                (armedAcceleration * (STEP_GLITCH_SECOND_ORDER_ARMED_ACCELERATION_WEIGHT + armStep / h)) /
+                  STEP_GLITCH_SECOND_ORDER_BRAKING_WEIGHT,
+              deltaY: armedDeltaY,
+              pulseEndX:
+                preJumpSample.resumeState.currentPoint.x + armStep + STEP_GLITCH_SECOND_ORDER_PULSE_END_STEP_FACTOR * h,
+            },
+          ]) {
+            if (
+              !Number.isFinite(profile.acceleration) ||
+              !(profile.pulseEndX > windowedJump.startX) ||
+              !(profile.pulseEndX < windowedJump.endX) ||
+              Math.abs(profile.deltaY) <= 2 * GRAPHWAR_GAME_SOLDIER_RADIUS
+            ) {
+              continue;
+            }
+            const gateY = quantizeFormulaOffsetCenter(
+              source.targetY + (profile.deltaY < 0 ? GRAPHWAR_GAME_SOLDIER_RADIUS : -GRAPHWAR_GAME_SOLDIER_RADIUS),
+              glitchDecimalPlaces,
+            );
+            candidates.push({
+              acceleration: profile.acceleration,
+              accelerationGateY: gateY,
+              braking: profile.braking,
+              // 两个互补 y 门在目标命中圈近侧交接，确保武装相位的 a4 已能刹车。
+              brakingGateY: gateY,
+              endX: windowedJump.endX,
+              equation: "ddy",
+              formulaDecimalPlaces: glitchDecimalPlaces,
+              pulseEndX: profile.pulseEndX,
+              startX: windowedJump.startX,
+              targetY: source.targetY,
+            });
+          }
+        }
       }
-    }
-    if (bestSegment && bestSignProtection) {
-      return { segment: bestSegment, signProtection: bestSignProtection } satisfies StepGlitchCandidateSelection;
+      for (const candidate of candidates) {
+        const candidateResult = sampleStepGlitchCandidateWithSignProtection(
+          options,
+          formulaPoints,
+          candidateContext,
+          candidate,
+          // 当前段已有保护时，左门前状态不再属于候选整式，必须从枪口重新回放。
+          (candidateContext.signProtection[candidateContext.segmentIndex] ?? 0) === 0
+            ? preJumpSample.resumeState
+            : undefined,
+        );
+        const sample = candidateResult.sample;
+        const landingPoint = sample.stopReason === "stopped" ? sample.points[sample.points.length - 1] : undefined;
+        if (
+          !landingPoint ||
+          !Number.isFinite(landingPoint.y) ||
+          countStepGlitchJumps(sample.points, candidate) !== 1 ||
+          stepGlitchSampleHitsObstacle(sample.points, options.bounds, candidateContext.mask)
+        ) {
+          continue;
+        }
+
+        const error = Math.abs(landingPoint.y - candidate.targetY);
+        if (error < bestError) {
+          bestError = error;
+          bestSegment = candidate;
+          bestSignProtection = candidateResult.signProtection;
+        }
+      }
+      if (bestSegment && bestSignProtection) {
+        return { segment: bestSegment, signProtection: bestSignProtection } satisfies StepGlitchCandidateSelection;
+      }
     }
   }
   return undefined;
@@ -1615,6 +1742,7 @@ function sampleStepGlitchCandidate(
     formulaEvaluation,
     initialState,
     points: formulaPoints,
+    secondOrderLaunchAngleMode: options.settings.secondOrderLaunchAngleMode,
     shouldStop: (point) => point.x >= candidate.endX,
     soldierCenter: context.soldierCenter,
     steepness: options.settings.steepness,
@@ -1858,11 +1986,13 @@ function createStepFirstOrderGlitchSegment(
   gateY: number,
   replacementDeltaY: number,
   contributionFactor: number,
+  formulaDecimalPlaces: number,
 ): StepGlitchSegment {
   return {
     derivative: replacementDeltaY / (contributionFactor * jump.step),
     endX: jump.endX,
     equation: "dy",
+    formulaDecimalPlaces,
     gateY,
     startX: jump.startX,
     targetY,
@@ -2013,6 +2143,9 @@ export function getGraphwarTrajectoryLaunchAngle(
   context: GraphwarTrajectoryFormulaContext,
   soldierCenter = context.soldierCenter,
 ) {
+  if (context.launchAngleRadians !== undefined) {
+    return context.launchAngleRadians;
+  }
   return soldierCenter
     ? getGraphwarLaunchAngle(
         {
@@ -2021,6 +2154,7 @@ export function getGraphwarTrajectoryLaunchAngle(
           compiledFormulaMaterials: context.compiledMaterials,
           formulaEvaluation: context.formulaEvaluation,
           points: context.formulaPoints,
+          secondOrderLaunchAngleMode: context.settings.secondOrderLaunchAngleMode,
           steepness: context.settings.steepness,
         },
         soldierCenter,
@@ -2091,6 +2225,7 @@ export function sampleGraphwarPathTrajectory(options: {
           stopOnTargetsComplete: false,
         }),
     points: mappedPoints,
+    qualityPoints: mappedPoints.slice(1, -1),
     settings: options.settings,
     soldierCenter: mappedPoints[0],
     targetHitRadiusPixels: options.targetHitRadiusPixels,
@@ -2104,6 +2239,7 @@ export function sampleGraphwarPathTrajectory(options: {
     earlyStopReason: result.earlyStopReason,
     reachesTargetBeforeObstacle: result.targetHitIndex >= 0,
     sample: result.sample,
+    ...(result.pathError === undefined ? {} : { pathError: result.pathError }),
     samplePointCount: result.sample.points.length,
     visiblePixels: result.visiblePixels,
   };
@@ -2125,6 +2261,8 @@ export function sampleGraphwarPathTargetSequence(options: {
   /** 默认目标命中圆半径，单位为截图像素；显式 targetCircles 会覆盖。 */
   targetHitRadiusPixels: number;
   targetCircles?: readonly GraphwarTrajectoryTargetCircle[];
+  /** 与真实命中圆对应的路径控制点；这些点不重复参加 1px 路径质量统计。 */
+  targetControlPoints?: readonly PixelPoint[];
   targetPoints: readonly PixelPoint[];
   /** False 时目标序列完成后继续自然采样，直到障碍、边界或模拟器自身停止。 */
   stopOnTargetsComplete?: boolean;
@@ -2159,6 +2297,15 @@ export function sampleGraphwarPathTargetSequence(options: {
   if (mappedPoints.length < 2) {
     return createFailedPathTargetSequenceResult(trackedTargets.length);
   }
+  const targetControlPoints =
+    options.targetControlPoints ?? (targetSequence.length > 0 ? options.points.slice(-1) : []);
+  const qualityPoints = mappedPoints.filter(
+    (_point, index) =>
+      index > 0 &&
+      !targetControlPoints.some(
+        (targetPoint) => targetPoint.x === options.points[index]?.x && targetPoint.y === options.points[index]?.y,
+      ),
+  );
 
   const stopOnTargetsComplete =
     options.continueAfterTargetsUntilGraphX === undefined ? options.stopOnTargetsComplete : false;
@@ -2174,6 +2321,7 @@ export function sampleGraphwarPathTargetSequence(options: {
       ? {}
       : { continueAfterTargetsUntilGraphX: options.continueAfterTargetsUntilGraphX }),
     points: mappedPoints,
+    qualityPoints,
     requiredTargets,
     settings: options.settings,
     soldierCenter: mappedPoints[0],
@@ -2195,6 +2343,7 @@ export function sampleGraphwarPathTargetSequence(options: {
       result.reachedTargetCount >= targetSequence.length && result.reachedRequiredTargetCount >= requiredTargets.length,
     requiredTargetsHitIndex: result.requiredTargetsHitIndex,
     sample: result.sample,
+    ...(result.pathError === undefined ? {} : { pathError: result.pathError }),
     samplePointCount: result.sample.points.length,
     targetHitIndex: result.targetHitIndex,
     trackedTargetHitIndexes: result.trackedTargetHitIndexes,
@@ -2218,6 +2367,7 @@ function createFormulaPathPoints(
         equation: settings.equation,
         formulaEvaluation,
         points,
+        secondOrderLaunchAngleMode: settings.secondOrderLaunchAngleMode,
         steepness: settings.formulaPathSteepness ?? settings.steepness,
       });
 }
@@ -2231,6 +2381,8 @@ function createGraphwarTrajectoryStopTracker(options: {
   initialReachedRequiredTargetCount?: number;
   initialReachedTargetCount?: number;
   continueAfterTargetsUntilGraphX?: number;
+  /** 不受真实命中圆约束的普通控制点；只参与最终回放后的质量统计。 */
+  qualityPoints?: readonly GraphPoint[];
   stopOnTargetsComplete?: boolean;
   /** 默认目标命中圆半径，单位为截图像素；显式 targetSequence 会覆盖。 */
   targetHitRadiusPixels?: number;
@@ -2373,6 +2525,7 @@ function createGraphwarTrajectoryStopTracker(options: {
       return false;
     },
     createResult(sample: GraphwarTrajectorySample): GraphwarTrajectorySampleResult {
+      const pathError = measureGraphwarFormulaPathError(sample.points, options.qualityPoints ?? [], options.bounds);
       return {
         earlyStopReason,
         obstacleHitIndex,
@@ -2380,6 +2533,7 @@ function createGraphwarTrajectoryStopTracker(options: {
         reachedTargetCount,
         requiredTargetsHitIndex,
         sample,
+        ...(pathError === undefined ? {} : { pathError }),
         targetHitIndex,
         trackedTargetHitIndexes,
         visiblePixels,

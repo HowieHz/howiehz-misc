@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDoublePrecisionDecimal } from "../../core/numbers";
+import { formatDoublePrecisionDecimal, nextDownDouble, nextUpDouble } from "../../core/numbers";
 import { createGraphPoint } from "../../core/types";
+import { createGraphwarExpressionEvaluator } from "../expression/evaluator";
 import { buildFormula, compileFormulaEvaluator, compileGraphwarFormulaMaterials, GraphwarSignRole } from "./build";
 import { graphwarSignProtectionEquals } from "./sign-protection";
 
@@ -57,23 +58,43 @@ describe("Graphwar local sign protection", () => {
       signProtection: [GraphwarSignRole.GateY],
       stepGlitchSegments: [
         {
-          derivative: 100,
-          endX: -0.99,
+          derivative: 100.123456,
+          endX: -0.990001,
           equation: "dy" as const,
-          gateY: 1,
-          startX: -1,
-          targetY: 2,
+          formulaDecimalPlaces: 6,
+          gateY: 1.123456,
+          startX: -1.000001,
+          targetY: 2.123456,
         },
       ],
       stepOverflowProtection: true,
     };
+    const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
     const expression = buildFormula(points, 210, "dy", "step", 4, {
-      compiledMaterials: compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation),
+      compiledMaterials,
       signProtection: formulaEvaluation.signProtection,
       stepOverflowProtection: true,
     }).expression;
 
     expect(countOccurrences(expression, epsilonText)).toBe(1);
+    expect(compiledMaterials.stepFormula?.terms[0]?.glitchSegment?.formulaDecimalPlaces).toBe(6);
+    const parsed = createGraphwarExpressionEvaluator(expression);
+    if (!parsed) {
+      throw new Error("Expected the generated Step glitch expression to parse");
+    }
+    const compiled = compileFormulaEvaluator(points, 210, "step", formulaEvaluation, compiledMaterials);
+    for (const x of [
+      nextDownDouble(-1.000001),
+      -1.000001,
+      nextUpDouble(-1.000001),
+      nextDownDouble(-0.990001),
+      -0.990001,
+      nextUpDouble(-0.990001),
+    ]) {
+      for (const y of [nextDownDouble(1.123456), 1.123456, nextUpDouble(1.123456)]) {
+        expect(Object.is(compiled.evaluateFirstDerivativeY(x, y), parsed(x, y, 0))).toBe(true);
+      }
+    }
   });
 
   it("treats absent and trailing zero protection entries as the same snapshot", () => {

@@ -219,7 +219,7 @@ function createSoldierHitCircleXPlusInnerTargetPoint(
   const center = getGraphwarSoldierCenter(soldier);
   const xPlusIsRight = xPlusGoesRight(area.bounds);
   const tailInset =
-    graphwarToolDefaults.targetRangePixelTolerance *
+    graphwarToolDefaults.formulaPathQualityTargetPlanePixels *
     Math.max(area.boundsRect.width / GRAPHWAR_PLANE_LENGTH, area.boundsRect.height / GRAPHWAR_PLANE_HEIGHT);
   const innerRadius = soldier.hitRadius - tailInset;
   if (!(innerRadius > 0)) {

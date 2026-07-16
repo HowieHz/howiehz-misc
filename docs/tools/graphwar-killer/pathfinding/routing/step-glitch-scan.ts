@@ -773,8 +773,8 @@ function createGateRowScan(
 
   const rawLeftGateX = searchBoundaryToGraphX(firstBlockedSearchX - 1, options, maskIndex.mirrored);
   const obstacleLeftX = searchBoundaryToGraphX(firstBlockedSearchX, options, maskIndex.mirrored);
-  let leftGateX = rawLeftGateX;
-  let leftGateDecimalPlaces = MAX_FORMULA_DECIMAL_PLACES;
+  let leftGateX: number | undefined;
+  let leftGateDecimalPlaces: number | undefined;
   // 从用户精度开始直接验证门是否仍在障碍格左侧。不用 log10 估算：double 减法可能把
   // 0.01 变成 0.009999...，在十进制幂边界多估一位；这个有界循环通常首轮即通过。
   for (
@@ -788,6 +788,10 @@ function createGateRowScan(
       leftGateDecimalPlaces = decimalPlaces;
       break;
     }
+  }
+  // raw double 不是可提交的公式门；15 位仍无法留在障碍格外时只淘汰当前扫描候选。
+  if (leftGateX === undefined || leftGateDecimalPlaces === undefined) {
+    return undefined;
   }
 
   const windows: ScanGateWindow[] = [];

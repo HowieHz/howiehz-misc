@@ -10,6 +10,7 @@ import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import { compareGraphwarPathErrors } from "../../formula/trajectory/sampling";
 import { buildOneClickClearDagEdgeRoute } from "../../pathfinding/one-click-clear/edge-route";
 import type { GraphwarOneClickClearDagEdgeRouteBuildContext } from "../../pathfinding/one-click-clear/edge-route";
 import type {
@@ -661,6 +662,7 @@ function createStepGlitchFormulaSettingsKey(settings: GraphwarTrajectoryFormulaS
     settings.algorithm,
     settings.decimalPlaces,
     settings.equation,
+    settings.secondOrderLaunchAngleMode ?? "full-precision",
     settings.formulaPathSteepness,
     settings.steepness,
     settings.stepGlitchMode,
@@ -829,11 +831,12 @@ function validateSmartPathfindingTrajectory(
   return {
     ...(result.blockedPoint ? { blockedPoint: result.blockedPoint } : {}),
     followsGraphRule: true,
+    ...(result.pathError === undefined ? {} : { pathError: result.pathError }),
     reachesTargetBeforeObstacle: result.reachesTargetBeforeObstacle,
   };
 }
 
-/** 反复尝试移除新增控制点，同时保持完整轨迹有效。 */
+/** 反复移除新增控制点；同一轮都少一个点时，路径质量只作为硬验收后的最后一级 tie-break。 */
 function optimizeSmartPathfindingPath(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
@@ -844,14 +847,23 @@ function optimizeSmartPathfindingPath(
   const firstOptimizableIndex = Math.max(1, input.sourcePath.length);
   while (changed) {
     changed = false;
+    let bestCandidate: PixelPoint[] | undefined;
+    let bestPathError: number | undefined;
     for (let index = firstOptimizableIndex; index < optimized.length - 1 && optimized.length > 2; index += 1) {
       const candidatePath = [...optimized.slice(0, index), ...optimized.slice(index + 1)];
       const validation = validateSmartPathfindingTrajectory(input, candidatePath, stepContext);
-      if (validation.followsGraphRule && validation.reachesTargetBeforeObstacle) {
-        optimized = candidatePath;
-        changed = true;
-        break;
+      if (
+        validation.followsGraphRule &&
+        validation.reachesTargetBeforeObstacle &&
+        (!bestCandidate || compareGraphwarPathErrors(validation.pathError, bestPathError) < 0)
+      ) {
+        bestCandidate = candidatePath;
+        bestPathError = validation.pathError;
       }
+    }
+    if (bestCandidate) {
+      optimized = bestCandidate;
+      changed = true;
     }
   }
   return optimized;

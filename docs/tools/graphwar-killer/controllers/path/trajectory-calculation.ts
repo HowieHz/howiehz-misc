@@ -60,6 +60,12 @@ export interface GraphwarTrajectoryCalculationResult {
   formulaResult?: FormulaResult;
   /** Y''= 求解器建议的发射角，单位为度。 */
   secondOrderLaunchAngleDegrees?: number;
+  /** Y''= 最终回放实际消费的发射角，单位为弧度；Agent 提交必须原样复用。 */
+  secondOrderLaunchAngleRadians?: number;
+  /** 普通控制点的最大纵向误差，单位为 Graphwar 原始平面像素；没有质量点时省略。 */
+  pathError?: number;
+  /** Agent 关闭的手动 Y''= 按页面两位小数角回放后没有命中目标；不阻止最佳努力公式输出。 */
+  targetMissed?: boolean;
   /** 正常完成采样后的轨迹提示原因。 */
   warningReason?: GraphwarTrajectoryWarningReason;
 }
@@ -101,7 +107,8 @@ function calculateSolverTrajectory(
   input: Extract<GraphwarTrajectoryCalculationInput, { type: "solver" }>,
 ): GraphwarTrajectoryCalculationOutcome {
   let resolved: ReturnType<typeof resolveGraphwarTrajectory>;
-  let launchAngleDegrees: number;
+  let launchAngleRadians: number;
+  const targetCircleIsConfigured = input.targetPoint !== undefined && input.targetHitRadiusPixels !== undefined;
   try {
     if (input.points.length < 2) {
       throw new Error("At least two solver points are required.");
@@ -113,6 +120,7 @@ function calculateSolverTrajectory(
       ...(input.collision ? { collision: input.collision } : {}),
       collectVisiblePixels: true,
       points: input.points,
+      qualityPoints: input.points.slice(1, targetCircleIsConfigured ? -1 : input.points.length),
       settings: input.settings,
       soldierCenter: input.points[0],
       // 主轨迹必须继续画到自然停止点；目标只记录首次命中，不能为了统计截短曲线。
@@ -127,17 +135,24 @@ function calculateSolverTrajectory(
     if (resolved.context.formulaPoints.length < 2) {
       throw new Error("The solver did not produce enough formula points.");
     }
-    const launchAngleRadians =
+    launchAngleRadians =
       input.settings.equation === "ddy"
         ? getGraphwarTrajectoryLaunchAngle(resolved.context, input.points[0])
         : Number.NaN;
-    launchAngleDegrees = (launchAngleRadians * 180) / Math.PI;
   } catch (error) {
     return createFailureOutcome(error instanceof GraphwarTrajectoryResolutionError ? error.stage : "formula", error);
   }
 
   try {
     const { context, result: sampleResult } = resolved;
+    const targetMissed = targetCircleIsConfigured && sampleResult.targetHitIndex < 0;
+    // 只有无法精确提交角度的手动 Y''= 保留最佳努力公式；所有自动结果和其它手动方程都严格命中。
+    if (
+      targetMissed &&
+      !(input.settings.equation === "ddy" && input.settings.secondOrderLaunchAngleMode === "display-rounded")
+    ) {
+      return createFailureOutcome("trajectory", new Error("The final formula trajectory did not hit its target."));
+    }
     // 命中目标后的碰撞不影响当前路径成功提示，保持与原主线程实现一致。
     const obstacleHitIndex =
       sampleResult.targetHitIndex >= 0 && sampleResult.obstacleHitIndex >= sampleResult.targetHitIndex
@@ -149,7 +164,14 @@ function calculateSolverTrajectory(
       result: {
         curvePoints: formatVisibleTrajectoryPoints(sampleResult.visiblePixels, obstacleHitIndex),
         formulaResult: context.formulaResult,
-        ...(Number.isFinite(launchAngleDegrees) ? { secondOrderLaunchAngleDegrees: launchAngleDegrees } : {}),
+        ...(sampleResult.pathError === undefined ? {} : { pathError: sampleResult.pathError }),
+        ...(Number.isFinite(launchAngleRadians)
+          ? {
+              secondOrderLaunchAngleDegrees: (launchAngleRadians * 180) / Math.PI,
+              secondOrderLaunchAngleRadians: launchAngleRadians,
+            }
+          : {}),
+        ...(targetMissed ? { targetMissed: true } : {}),
         ...(warningReason ? { warningReason } : {}),
       },
     };

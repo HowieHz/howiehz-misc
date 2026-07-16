@@ -303,6 +303,38 @@ describe("Step ODE glitch scan", () => {
     }
   });
 
+  it("rejects only the current gate when 15 decimals still collapse onto the obstacle", () => {
+    const collapsedBounds: GraphBounds = {
+      maxX: 10_000_000_000_001,
+      maxY: 10,
+      minX: 10_000_000_000_000,
+      minY: -10,
+    };
+    const wallX = 500;
+    const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), collapsedBounds, boundsRect).x;
+    expect(rawLeftGateX).toBe(imageToGraphPoint(createPixelPoint(wallX, 0), collapsedBounds, boundsRect).x);
+
+    const start = toPixelForBounds(collapsedBounds.minX, 0, collapsedBounds);
+    const target = toPixelForBounds(collapsedBounds.minX + 0.95, 0, collapsedBounds);
+    const mask = createEmptyMask();
+    for (let row = 1; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds: collapsedBounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings,
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("no-path");
+    // 没有可提交的左门时不生成公式候选；外层扫描以普通 no-path 结束，不抛实现异常。
+    expect(result.expandedStates).toBe(1);
+  });
+
   it("keeps the pixel-derived right gate that used to exceed the fixed ULP retry limit", () => {
     const wideBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
     const start = toPixelForBounds(-1.5, 0, wideBounds);

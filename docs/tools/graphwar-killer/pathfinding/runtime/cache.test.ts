@@ -76,6 +76,37 @@ describe("Graphwar pathfinding result cache keys", () => {
     expect(cache.createOneClickClearResultCacheKey(enabled)).toBe(cache.createOneClickClearResultCacheKey(disabled));
   });
 
+  it("separates full-precision and display-rounded Y'' execution modes", () => {
+    const cache = createGraphwarPathfindingCacheController();
+    const implicitFullPrecision = createInput();
+    const fullPrecision = createInput();
+    const displayRounded = createInput();
+    implicitFullPrecision.settings = {
+      ...implicitFullPrecision.settings,
+      algorithm: "abs",
+      equation: "ddy",
+    };
+    fullPrecision.settings = {
+      ...fullPrecision.settings,
+      algorithm: "abs",
+      equation: "ddy",
+      secondOrderLaunchAngleMode: "full-precision",
+    };
+    displayRounded.settings = {
+      ...displayRounded.settings,
+      algorithm: "abs",
+      equation: "ddy",
+      secondOrderLaunchAngleMode: "display-rounded",
+    };
+
+    expect(cache.createOneClickClearResultCacheKey(implicitFullPrecision)).toBe(
+      cache.createOneClickClearResultCacheKey(fullPrecision),
+    );
+    expect(cache.createOneClickClearResultCacheKey(fullPrecision)).not.toBe(
+      cache.createOneClickClearResultCacheKey(displayRounded),
+    );
+  });
+
   it("preserves the validated formula when caching a one-click-clear success", () => {
     const cache = createGraphwarPathfindingCacheController();
     const result = {

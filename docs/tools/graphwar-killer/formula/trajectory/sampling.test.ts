@@ -7,8 +7,10 @@ import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds } from "../..
 import { compileFormulaEvaluator, compileGraphwarFormulaMaterials, GraphwarSignRole } from "../generation/build";
 import { sampleGraphwarExpressionTrajectory } from "../simulation/simulator";
 import {
+  compareGraphwarPathErrors,
   getGraphwarTrajectoryLaunchAngle,
   graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle,
+  measureGraphwarFormulaPathError,
   sampleGraphwarPathTargetSequence,
   resolveGraphwarTrajectory,
 } from "./sampling";
@@ -221,7 +223,53 @@ describe("Graphwar trajectory target tracking", () => {
   });
 });
 
+describe("formula path quality", () => {
+  it("uses the first accepted x+ point and reports undefined or Infinity without masking missing controls", () => {
+    const samplePoints = [createGraphPoint(0, 0), createGraphPoint(1, 2), createGraphPoint(2, 4)];
+
+    expect(measureGraphwarFormulaPathError(samplePoints, [], bounds)).toBeUndefined();
+    expect(measureGraphwarFormulaPathError(samplePoints, [createGraphPoint(0.5, 1)], bounds)).toBe(15);
+    expect(measureGraphwarFormulaPathError(samplePoints, [createGraphPoint(3, 4)], bounds)).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+    expect(
+      measureGraphwarFormulaPathError(samplePoints, [createGraphPoint(0.5, 1)], {
+        maxX: -25,
+        maxY: -15,
+        minX: 25,
+        minY: 15,
+      }),
+    ).toBe(15);
+  });
+
+  it("keeps Infinity ordering stable and ignores absent quality sets", () => {
+    expect(compareGraphwarPathErrors(1, Number.POSITIVE_INFINITY)).toBeLessThan(0);
+    expect(compareGraphwarPathErrors(Number.POSITIVE_INFINITY, 1)).toBeGreaterThan(0);
+    expect(compareGraphwarPathErrors(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)).toBe(0);
+    expect(compareGraphwarPathErrors(undefined, 1)).toBe(0);
+  });
+
+  it("excludes every control point already constrained by a real target circle", () => {
+    const start = toPixel(-10, 0);
+    const middle = toPixel(-5, 0);
+    const target = toPixel(1, 0);
+    const result = sampleGraphwarPathTargetSequence({
+      bounds,
+      boundsRect,
+      points: [start, middle, target],
+      settings,
+      targetCircles: [{ center: target, radius: 1 }],
+      targetControlPoints: [middle, target],
+      targetHitRadiusPixels: 1,
+      targetPoints: [target],
+    });
+
+    expect(result.pathError).toBeUndefined();
+  });
+});
+
 describe("Generated formula evaluator equivalence", () => {
+  const decimalPlacesCases = [0, 4, 15] as const;
   const cases: readonly { algorithm: AlgorithmMode; equation: EquationMode }[] = [
     { algorithm: "abs", equation: "y" },
     { algorithm: "abs", equation: "dy" },
@@ -238,37 +286,76 @@ describe("Generated formula evaluator equivalence", () => {
   ];
 
   for (const testCase of cases) {
-    it(`matches parsed ${testCase.algorithm} ${testCase.equation} output exactly`, () => {
-      const points =
-        testCase.algorithm === "pchip" && testCase.equation === "ddy"
-          ? [createGraphPoint(-10, 0), createGraphPoint(-7, 0), createGraphPoint(-3, 0), createGraphPoint(1, 0)]
-          : [createGraphPoint(-10, -1), createGraphPoint(-7, 2), createGraphPoint(-3, -2), createGraphPoint(1, 1)];
-      const resolved = resolveGraphwarTrajectory({
-        bounds,
-        boundsRect,
-        points,
-        settings: {
-          algorithm: testCase.algorithm,
-          decimalPlaces: 4,
+    for (const decimalPlaces of decimalPlacesCases) {
+      it(`matches parsed ${testCase.algorithm} ${testCase.equation} output exactly at ${decimalPlaces} decimals`, () => {
+        const points = [
+          createGraphPoint(-10, -1),
+          createGraphPoint(-7, 2),
+          createGraphPoint(-3, -2),
+          createGraphPoint(1, 1),
+        ];
+        const resolved = resolveGraphwarTrajectory({
+          bounds,
+          boundsRect,
+          points,
+          settings: {
+            algorithm: testCase.algorithm,
+            decimalPlaces,
+            equation: testCase.equation,
+            steepness: 210,
+            stepGlitchMode: false,
+            stepOverflowProtection: true,
+          },
+          soldierCenter: points[0],
+        });
+        const parsed = sampleGraphwarExpressionTrajectory({
+          bounds,
           equation: testCase.equation,
-          steepness: 210,
-          stepGlitchMode: false,
-          stepOverflowProtection: true,
-        },
-        soldierCenter: points[0],
+          expression: resolved.context.formulaResult.expression,
+          ...(testCase.equation === "ddy"
+            ? { launchAngleRadians: getGraphwarTrajectoryLaunchAngle(resolved.context) }
+            : {}),
+          soldierCenter: points[0],
+        });
+        expectTrajectorySamplesToBeIdentical(resolved.result.sample, parsed);
       });
-      const parsed = sampleGraphwarExpressionTrajectory({
-        bounds,
-        equation: testCase.equation,
-        expression: resolved.context.formulaResult.expression,
-        ...(testCase.equation === "ddy"
-          ? { launchAngleRadians: getGraphwarTrajectoryLaunchAngle(resolved.context) }
-          : {}),
-        soldierCenter: points[0],
-      });
-      expectTrajectorySamplesToBeIdentical(resolved.result.sample, parsed);
-    });
+    }
   }
+
+  it("matches the parsed Step y'' trajectory with mirrored coordinate bounds", () => {
+    const mirroredBounds = { maxX: -25, maxY: -15, minX: 25, minY: 15 };
+    const points = [
+      createGraphPoint(-10, -1),
+      createGraphPoint(-7, 2),
+      createGraphPoint(-3, -2),
+      createGraphPoint(1, 1),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds: mirroredBounds,
+      boundsRect,
+      points,
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 15,
+        equation: "ddy",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: points[0],
+    });
+
+    expectTrajectorySamplesToBeIdentical(
+      resolved.result.sample,
+      sampleGraphwarExpressionTrajectory({
+        bounds: mirroredBounds,
+        equation: "ddy",
+        expression: resolved.context.formulaResult.expression,
+        launchAngleRadians: getGraphwarTrajectoryLaunchAngle(resolved.context),
+        soldierCenter: points[0],
+      }),
+    );
+  });
 
   it("keeps protected multi-segment abs derivatives in Graphwar's right-associated order", () => {
     const points = [
@@ -597,7 +684,7 @@ describe("ODE segment position compensation", () => {
 });
 
 describe("pathfinding formula convergence", () => {
-  it("rejects only a non-convergent formula candidate through the normal pathfinding result", () => {
+  it("validates the restored best formula state instead of rejecting a work-limit result", () => {
     const target = toPixel(1, 1);
     const result = sampleGraphwarPathTargetSequence({
       bounds,
@@ -615,8 +702,8 @@ describe("pathfinding formula convergence", () => {
       targetPoints: [target],
     });
 
-    expect(result.reachesTargetSequenceBeforeObstacle).toBe(false);
-    expect(result.sample.stopReason).toBe("unsupported");
+    expect(result.reachesTargetSequenceBeforeObstacle).toBe(true);
+    expect(result.sample.stopReason).not.toBe("unsupported");
   });
 });
 

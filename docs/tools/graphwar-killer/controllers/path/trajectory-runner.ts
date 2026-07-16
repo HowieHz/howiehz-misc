@@ -415,6 +415,23 @@ function isGraphwarTrajectoryCalculationOutcome(
       return false;
     }
     if (
+      "secondOrderLaunchAngleRadians" in result &&
+      result.secondOrderLaunchAngleRadians !== undefined &&
+      !Number.isFinite(result.secondOrderLaunchAngleRadians)
+    ) {
+      return false;
+    }
+    if (
+      "pathError" in result &&
+      result.pathError !== undefined &&
+      (typeof result.pathError !== "number" || Number.isNaN(result.pathError))
+    ) {
+      return false;
+    }
+    if ("targetMissed" in result && result.targetMissed !== undefined && typeof result.targetMissed !== "boolean") {
+      return false;
+    }
+    if (
       "warningReason" in result &&
       result.warningReason !== undefined &&
       !isGraphwarTrajectoryWarningReason(result.warningReason)
@@ -520,6 +537,9 @@ function cloneGraphwarTrajectoryCalculationInput(
       algorithm: input.settings.algorithm,
       decimalPlaces: input.settings.decimalPlaces,
       equation: input.settings.equation,
+      ...(input.settings.secondOrderLaunchAngleMode === undefined
+        ? {}
+        : { secondOrderLaunchAngleMode: input.settings.secondOrderLaunchAngleMode }),
       ...(input.settings.formulaPathSteepness === undefined
         ? {}
         : { formulaPathSteepness: input.settings.formulaPathSteepness }),

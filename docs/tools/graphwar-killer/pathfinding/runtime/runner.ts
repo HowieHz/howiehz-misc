@@ -466,6 +466,9 @@ function cloneGraphwarTrajectoryFormulaSettings(
     algorithm: settings.algorithm,
     decimalPlaces: settings.decimalPlaces,
     equation: settings.equation,
+    ...(settings.secondOrderLaunchAngleMode === undefined
+      ? {}
+      : { secondOrderLaunchAngleMode: settings.secondOrderLaunchAngleMode }),
     ...(settings.formulaPathSteepness === undefined ? {} : { formulaPathSteepness: settings.formulaPathSteepness }),
     steepness: settings.steepness,
     stepGlitchMode: settings.stepGlitchMode,

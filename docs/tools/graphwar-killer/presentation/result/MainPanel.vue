@@ -68,6 +68,10 @@ export interface GraphwarResultPanelModel {
   solverResultVisible: boolean;
   /** 当前轨迹警告文案。 */
   trajectoryWarning: string;
+  /** 普通控制点路径质量未达到可选目标时的独立警告。 */
+  pathQualityWarning?: string;
+  /** 手动 Y''= 按页面显示角度未命中时的独立警告。 */
+  targetHitWarning?: string;
   /** 当前主工作流。 */
   workflowMode: ToolWorkflowMode;
   /** 是否展示 Agent 开火按钮。 */
@@ -222,6 +226,18 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
       class="graphwar-killer__hint graphwar-killer__hint--warning"
     >
       {{ result.trajectoryWarning }}
+    </p>
+    <p
+      v-if="result.targetHitWarning"
+      class="graphwar-killer__hint graphwar-killer__hint--warning"
+    >
+      {{ result.targetHitWarning }}
+    </p>
+    <p
+      v-if="result.pathQualityWarning"
+      class="graphwar-killer__hint graphwar-killer__hint--warning"
+    >
+      {{ result.pathQualityWarning }}
     </p>
     <p
       v-if="result.calculationMessageVisible"

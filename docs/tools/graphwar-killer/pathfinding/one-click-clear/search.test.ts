@@ -81,7 +81,6 @@ describe("One-click clear optimization", () => {
     expect(incumbents.map((incumbent) => incumbent.pathPoints)).toEqual([
       [start, first],
       [start, first, second],
-      [start, first, second],
     ]);
     expect(segmentValidationCount).toBe(2);
     expect(finalValidationCount).toBe(1);
@@ -91,7 +90,7 @@ describe("One-click clear optimization", () => {
     expect(incumbents[0]).not.toHaveProperty("targetSequence");
   });
 
-  it("replaces an equal-length natural prefix with the completed search result", async () => {
+  it("keeps the natural prefix when the completed result has identical business metrics", async () => {
     const start = toImagePoint(-20, 0);
     const first = toImagePoint(-15, 0);
     const second = toImagePoint(-10, 0);
@@ -129,7 +128,7 @@ describe("One-click clear optimization", () => {
     });
 
     expect(result.type).toBe("success");
-    expect(incumbents).toHaveLength(2);
+    expect(incumbents).toHaveLength(1);
     if (result.type === "success") {
       expect(incumbents.at(-1)?.pathPoints).toEqual(result.pathPoints);
       expect(incumbents.at(-1)?.expression).toBe(result.expression);
@@ -220,10 +219,12 @@ describe("One-click clear optimization", () => {
 
     expect(result.type).toBe("success");
     expect(buildCount).toBe(1);
-    expect(incumbents).toHaveLength(2);
+    expect(incumbents).toHaveLength(1);
     expect(incumbents[0]?.launchAngleRadians).toBeTypeOf("number");
     expect(Number.isFinite(incumbents[0]?.launchAngleRadians)).toBe(true);
-    expect(incumbents[1]?.launchAngleRadians).toBe(incumbents[0]?.launchAngleRadians);
+    if (result.type === "success") {
+      expect(result.launchAngleRadians).toBe(incumbents[0]?.launchAngleRadians);
+    }
   });
 
   it("does not publish a geometry route that fails formula validation", async () => {

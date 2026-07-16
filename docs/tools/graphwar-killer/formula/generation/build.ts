@@ -540,7 +540,8 @@ function createCompiledStepGlitchSegment(
     return undefined;
   }
 
-  const decimalPlaces = getStepGlitchFormulaDecimalPlaces(getFormulaDecimalPlaces(options));
+  const decimalPlaces =
+    segment.formulaDecimalPlaces ?? getStepGlitchFormulaDecimalPlaces(getFormulaDecimalPlaces(options));
   if (segment.equation === "ddy") {
     // 三个逻辑门全开时贡献 8；加速和刹车分支必须分别按最终文本系数量化。
     return {
@@ -550,6 +551,7 @@ function createCompiledStepGlitchSegment(
       brakingGateY: quantizeFormulaOffsetCenter(segment.brakingGateY, decimalPlaces),
       endX: segment.endX,
       equation: segment.equation,
+      formulaDecimalPlaces: decimalPlaces,
       pulseEndX: segment.pulseEndX,
       startX: segment.startX,
       targetY: quantizeFormulaOffsetCenter(segment.targetY, decimalPlaces),
@@ -561,6 +563,7 @@ function createCompiledStepGlitchSegment(
     derivative: 8 * gateCoefficient,
     endX: segment.endX,
     equation: segment.equation,
+    formulaDecimalPlaces: decimalPlaces,
     gateY: quantizeFormulaOffsetCenter(segment.gateY, decimalPlaces),
     startX: segment.startX,
     targetY: quantizeFormulaOffsetCenter(segment.targetY, decimalPlaces),
@@ -1025,7 +1028,7 @@ function formatStepGlitchFirstDerivativeExpression(
   decimalPlaces: number | undefined,
   signProtection: GraphwarSignProtection | undefined,
 ) {
-  decimalPlaces = getStepGlitchFormulaDecimalPlaces(decimalPlaces);
+  decimalPlaces = segment.formulaDecimalPlaces ?? getStepGlitchFormulaDecimalPlaces(decimalPlaces);
   const direction = segment.derivative < 0 ? -1 : 1;
   const xGate = `1+${formatStableSignRatio(
     formatStepGlitchXOffset(segment.startX),
@@ -1099,7 +1102,7 @@ function formatStepGlitchSecondDerivativeExpression(
   decimalPlaces: number | undefined,
   signProtection: GraphwarSignProtection | undefined,
 ) {
-  decimalPlaces = getStepGlitchFormulaDecimalPlaces(decimalPlaces);
+  decimalPlaces = segment.formulaDecimalPlaces ?? getStepGlitchFormulaDecimalPlaces(decimalPlaces);
   const direction: 1 | -1 = segment.acceleration < 0 ? -1 : 1;
   const xGate = `1+${formatStableSignRatio(
     formatStepGlitchXOffset(segment.startX),

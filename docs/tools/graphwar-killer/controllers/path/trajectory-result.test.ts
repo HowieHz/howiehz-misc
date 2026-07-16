@@ -31,7 +31,9 @@ describe("main trajectory result lifecycle", () => {
       result: {
         curvePoints: "first curve",
         formulaResult: { expression: "first formula", terms: [] },
+        pathError: Number.POSITIVE_INFINITY,
         secondOrderLaunchAngleDegrees: 12,
+        targetMissed: true,
         warningReason: "obstacle",
       },
     });
@@ -40,6 +42,8 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.formulaResult.value?.expression).toBe("first formula");
     expect(controller.plottedCurvePoints.value).toBe("first curve");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(12);
+    expect(controller.pathError.value).toBe(Number.POSITIVE_INFINITY);
+    expect(controller.targetMissed.value).toBe(true);
     expect(controller.trajectoryWarningReason.value).toBe("obstacle");
     expect(controller.calculationStatus.value.type).toBe("success");
 
@@ -60,6 +64,9 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.formulaResult.value).toBeUndefined();
     expect(controller.plottedCurvePoints.value).toBe("");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBeUndefined();
+    expect(controller.secondOrderLaunchAngleRadians.value).toBeUndefined();
+    expect(controller.pathError.value).toBeUndefined();
+    expect(controller.targetMissed.value).toBe(false);
     expect(controller.trajectoryWarningReason.value).toBeUndefined();
 
     controller.dispose();
@@ -124,6 +131,43 @@ describe("main trajectory result lifecycle", () => {
       },
     });
     await nextTick();
+    controller.dispose();
+  });
+
+  it("invalidates a y'' result when the effective launch-angle execution mode changes", async () => {
+    const frames = installFakeBrowserRuntime();
+    const state = createControllerState();
+    state.options.settings.equationMode.value = "ddy";
+    const controller = useGraphwarTrajectoryResult(state.options);
+
+    setSolverPath(state, -10, 1);
+    await nextTick();
+    frames.flush();
+    let request = FakeWorker.instances.findLast((worker) => worker.requests.length > 0)?.requests.at(-1);
+    expect(request?.input.type === "solver" && request.input.settings.secondOrderLaunchAngleMode).toBe(
+      "full-precision",
+    );
+    respondToActiveWorker({
+      ok: true,
+      result: {
+        curvePoints: "full curve",
+        formulaResult: { expression: "full formula", terms: [] },
+        secondOrderLaunchAngleDegrees: 7.073552961289569,
+        secondOrderLaunchAngleRadians: 0.12345678901234568,
+      },
+    });
+    await nextTick();
+    expect(controller.secondOrderLaunchAngleRadians.value).toBe(0.12345678901234568);
+
+    state.secondOrderLaunchAngleMode.value = "display-rounded";
+    await nextTick();
+    expect(controller.formulaResult.value?.expression).toBe("full formula");
+    expect(controller.secondOrderLaunchAngleRadians.value).toBeUndefined();
+    frames.flush();
+    request = FakeWorker.instances.findLast((worker) => worker.requests.length > 0)?.requests.at(-1);
+    expect(request?.input.type === "solver" && request.input.settings.secondOrderLaunchAngleMode).toBe(
+      "display-rounded",
+    );
     controller.dispose();
   });
 
@@ -198,6 +242,7 @@ describe("main trajectory result lifecycle", () => {
   it("atomically publishes only completed incumbent previews and restores or commits them without recalculating", async () => {
     const frames = installFakeBrowserRuntime();
     const state = createControllerState();
+    state.options.settings.equationMode.value = "ddy";
     const controller = useGraphwarTrajectoryResult(state.options);
 
     setSolverPath(state, -10, 1);
@@ -205,7 +250,13 @@ describe("main trajectory result lifecycle", () => {
     frames.flush();
     respondToActiveWorker({
       ok: true,
-      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
+      result: {
+        curvePoints: "formal curve",
+        formulaResult: { expression: "formal formula", terms: [] },
+        pathError: Number.POSITIVE_INFINITY,
+        targetMissed: true,
+        warningReason: "obstacle",
+      },
     });
     await nextTick();
 
@@ -222,6 +273,10 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
     expect(controller.plottedCurvePoints.value).toBe("preview curve");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(45);
+    expect(controller.secondOrderLaunchAngleRadians.value).toBe(Math.PI / 4);
+    expect(controller.pathError.value).toBeUndefined();
+    expect(controller.targetMissed.value).toBe(false);
+    expect(controller.trajectoryWarningReason.value).toBeUndefined();
 
     controller.publishIncumbentPreview("pending incumbent");
     expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
@@ -235,6 +290,9 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.incumbentPreviewActive.value).toBe(false);
     expect(controller.formulaResult.value?.expression).toBe("formal formula");
     expect(controller.plottedCurvePoints.value).toBe("formal curve");
+    expect(controller.pathError.value).toBe(Number.POSITIVE_INFINITY);
+    expect(controller.targetMissed.value).toBe(true);
+    expect(controller.trajectoryWarningReason.value).toBe("obstacle");
 
     controller.publishIncumbentPreview("cancelled incumbent");
     controller.clearIncumbentPreview();
@@ -404,7 +462,8 @@ function createControllerState() {
   const collisionSettingsValid = ref(true);
   const mappedPathPoints = ref([createGraphPoint(-20, 0)]);
   const pathPixels = ref([createPixelPoint(77, 225)]);
-  const equationMode = ref<"dy">("dy");
+  const equationMode = ref<"ddy" | "dy">("dy");
+  const secondOrderLaunchAngleMode = ref<"display-rounded" | "full-precision">("full-precision");
   const options = {
     collisionSettingsValid,
     geometry: {
@@ -417,6 +476,7 @@ function createControllerState() {
     settings: {
       algorithmMode,
       equationMode,
+      secondOrderLaunchAngleMode,
       getStepGlitchObstacleMask: () => undefined,
       isEquationModeDisabled: () => false,
       precisionDecimalPlaces: ref(4),
@@ -435,7 +495,7 @@ function createControllerState() {
       skipUnknownCharacters: ref(true),
     },
   };
-  return { collisionSettingsValid, mappedPathPoints, options, pathPixels };
+  return { collisionSettingsValid, mappedPathPoints, options, pathPixels, secondOrderLaunchAngleMode };
 }
 
 function setSolverPath(state: ReturnType<typeof createControllerState>, targetX: number, targetY: number) {

@@ -162,6 +162,11 @@ export function formatAngleDegree(value: number) {
   return normalizeZero(value, 2).toFixed(2);
 }
 
+/** 按页面实际显示的两位小数角度文本往返，供无法精确提交角度的手动 Y''= 回放使用。 */
+export function roundGraphwarLaunchAngleToDisplayRadians(angleRadians: number) {
+  return (Number(formatAngleDegree((angleRadians * 180) / Math.PI)) * Math.PI) / 180;
+}
+
 /** 以稳定且较短的小数形式格式化 SVG 折线坐标。 */
 export function formatSvgNumber(value: number) {
   return value.toFixed(2);

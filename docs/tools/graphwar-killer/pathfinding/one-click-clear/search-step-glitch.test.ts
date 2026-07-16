@@ -202,7 +202,6 @@ describe("Step glitch one-click-clear target retries", () => {
       [start, targetPoints[0], targetPoints[1]],
       [start, targetPoints[0], targetPoints[1], targetPoints[3]],
       [start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]],
-      [start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]],
     ]);
     // Four intermediate publications reuse scanner validation; only the normal final safety pass samples here.
     expect(samplingMockState.formulaContextCalls).toBe(0);

@@ -278,6 +278,7 @@ function createTrajectorySettingsCacheKey(
     settings.algorithm,
     settings.decimalPlaces,
     settings.equation,
+    settings.secondOrderLaunchAngleMode ?? "full-precision",
     settings.formulaPathSteepness,
     settings.steepness,
     stepGlitchMode,

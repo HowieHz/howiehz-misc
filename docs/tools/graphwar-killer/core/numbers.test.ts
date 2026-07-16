@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { floorToDecimalPlaces, graphXAdvancesStrictly, nextDownDouble, nextUpDouble } from "./numbers";
+import {
+  floorToDecimalPlaces,
+  graphXAdvancesStrictly,
+  nextDownDouble,
+  nextUpDouble,
+  roundGraphwarLaunchAngleToDisplayRadians,
+} from "./numbers";
 
 describe("Graphwar double ordering", () => {
   it("accepts exactly one representable step but rejects equality and non-finite values", () => {
@@ -31,5 +37,20 @@ describe("decimal floor", () => {
 
   it("uses mathematical floor rather than truncation for negative values", () => {
     expect(floorToDecimalPlaces(-1.23451, 4)).toBe(-1.2346);
+  });
+});
+
+describe("Graphwar launch-angle display", () => {
+  it.each([
+    [12.345, 12.35],
+    [-12.345, -12.35],
+  ])("replays the exact two-decimal degree string for the %s-degree rounding boundary", (degrees, displayed) => {
+    expect(
+      Object.is(roundGraphwarLaunchAngleToDisplayRadians((degrees * Math.PI) / 180), (displayed * Math.PI) / 180),
+    ).toBe(true);
+  });
+
+  it("normalizes negative zero before the radians round trip", () => {
+    expect(Object.is(roundGraphwarLaunchAngleToDisplayRadians(-0), -0)).toBe(false);
   });
 });

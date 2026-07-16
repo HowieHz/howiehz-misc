@@ -282,7 +282,8 @@ export function calculateStepFormulaCenterX(
   const availableOffset = targetX - startX - planePixelsToGraphUnits(1, bounds, "x");
   const requiredProgress =
     1 -
-    planePixelsToGraphUnits(graphwarToolDefaults.targetRangePixelTolerance, bounds, "y") / Math.abs(effectiveDeltaY);
+    planePixelsToGraphUnits(graphwarToolDefaults.formulaPathQualityTargetPlanePixels, bounds, "y") /
+      Math.abs(effectiveDeltaY);
   if (effectiveDeltaY === 0 || requiredProgress <= 0.5 || availableOffset <= 0 || !Number.isFinite(availableOffset)) {
     return targetX;
   }
@@ -327,6 +328,8 @@ interface StepGlitchSegmentBase {
   startX: number;
   /** 当前路径段目标中心 y；用于候选落点误差。 */
   targetY: number;
+  /** 该邪道段最低必要的公式小数位；可高于普通参数的用户偏好，最多为 15 位小数。 */
+  formulaDecimalPlaces?: number;
 }
 
 /** Step y'= 邪道段；高导数门在目标命中圈处关闭。 */

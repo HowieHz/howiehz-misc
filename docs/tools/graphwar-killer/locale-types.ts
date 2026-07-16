@@ -224,7 +224,10 @@ export interface GraphwarKillerLocale {
     secondOrderAngleHint: (angle: string) => string;
     trajectoryWarning: {
       obstacle: string;
+      pathQuality: (error: string) => string;
+      pathQualityUnreached: string;
       stopped: Record<GraphwarKillerStopReason, string>;
+      targetMissed: string;
     };
   };
   /** 智能寻路流程状态文案。 */

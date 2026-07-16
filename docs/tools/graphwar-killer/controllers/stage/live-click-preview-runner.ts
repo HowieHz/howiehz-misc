@@ -401,6 +401,9 @@ function cloneRenderInput(input: GraphwarLiveClickPreviewRenderInput): GraphwarL
       algorithm: input.settings.algorithm,
       decimalPlaces: input.settings.decimalPlaces,
       equation: input.settings.equation,
+      ...(input.settings.secondOrderLaunchAngleMode === undefined
+        ? {}
+        : { secondOrderLaunchAngleMode: input.settings.secondOrderLaunchAngleMode }),
       ...(input.settings.formulaPathSteepness === undefined
         ? {}
         : { formulaPathSteepness: input.settings.formulaPathSteepness }),

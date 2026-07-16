@@ -15,8 +15,13 @@ interface GraphwarToolDefaults {
     /** 默认平面高度。 */
     height: number;
   };
-  /** Graphwar 平面目标范围的像素容差，用于控制点、轨迹尾差和命中范围内缩。 */
-  targetRangePixelTolerance: number;
+  /**
+   * 生成公式的路径质量目标，单位为 Graphwar 原始平面像素。
+   *
+   * 它用于停止可选控制点补偿，并作为 Step sigmoid 尾差和命中圈边缘回退的安全预算；不是浮点 epsilon、公式理论可达精度、士兵命中半径或公式有效性的硬阈值。最终正确性仍由最终文本等价 compiled state 按
+   * Graphwar 的命中、碰撞、边界和停止规则完整回放决定。
+   */
+  formulaPathQualityTargetPlanePixels: number;
   /** 放大镜预览窗口尺寸。 */
   magnifierSize: number;
   /** 放大镜默认缩放倍数。 */
@@ -55,7 +60,7 @@ export const graphwarToolDefaults: GraphwarToolDefaults = {
     width: 770,
     height: 450.72,
   },
-  targetRangePixelTolerance: 1,
+  formulaPathQualityTargetPlanePixels: 1,
   magnifierSize: 132,
   magnifierZoom: 3,
   steepness: 210,

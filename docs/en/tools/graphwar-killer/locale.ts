@@ -212,6 +212,10 @@ export const graphwarKillerLocale = {
     secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to about ${angle} deg.`,
     trajectoryWarning: {
       obstacle: "The current function trajectory hits an obstacle or boundary",
+      pathQuality: (error) =>
+        `The formula was generated, but its maximum error at ordinary control points is ${error} raw plane pixels.`,
+      pathQualityUnreached:
+        "The formula was generated, but the trajectory does not reach at least one ordinary control line.",
       stopped: {
         invalid: "Preview stopped: the function produced NaN or infinity. In game, it will explode early.",
         "max-steps":
@@ -221,6 +225,8 @@ export const graphwarKillerLocale = {
         "too-steep":
           "Preview stopped: the local curve is too steep, and Graphwar cannot continue even at its minimum step size. In game, it will explode here.",
       },
+      targetMissed:
+        "The current y'' formula misses the target when replayed with the two-decimal launch angle shown on the page.",
     },
   },
   smartPathfinding: {

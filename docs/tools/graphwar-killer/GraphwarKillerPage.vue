@@ -312,6 +312,10 @@ const graphwarAgentFireInProgress = ref(false);
 const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
 const graphwarManagedModeEnabled = ref(false);
+// Agent/托管可精确提交 double；手动 Y''= 只能按页面实际显示的两位小数角复现。
+const secondOrderLaunchAngleMode = computed(() =>
+  graphwarAgentEnabled.value || graphwarManagedModeEnabled.value ? "full-precision" : "display-rounded",
+);
 let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let graphwarManagedCalculationStatus:
   | { expiresAt: number; kind: SmartPathfindingStatusKind; message: string }
@@ -1029,10 +1033,13 @@ const {
   formulaResult,
   graphwarTrajectoryFormulaSettings,
   incumbentPreviewActive,
+  pathError: formulaPathError,
   plottedCurvePoints,
   publishIncumbentPreview,
   secondOrderLaunchAngleDegrees,
+  secondOrderLaunchAngleRadians,
   simulatorLaunchAngleRadians,
+  targetMissed: formulaTargetMissed,
   trajectoryWarningReason,
 } = useGraphwarTrajectoryResult({
   collisionSettingsValid: trajectoryCollisionSettingsValid,
@@ -1049,6 +1056,7 @@ const {
   settings: {
     algorithmMode,
     equationMode,
+    secondOrderLaunchAngleMode,
     isEquationModeDisabled,
     precisionDecimalPlaces: formulaInputDecimalPlaces,
     precisionValid: formulaInputPrecisionValid,
@@ -1131,7 +1139,11 @@ const graphwarCapabilities = computed(() =>
         pathStartAvailable: mappedPathPoints.value.length > 0,
         workerCountValid: parsedPathfindingWorkerCount.value.ok,
       },
-      resultAvailable: canCopyFormula.value,
+      resultAvailable:
+        canCopyFormula.value &&
+        (equationMode.value !== "ddy" ||
+          toolWorkflowMode.value !== "solver" ||
+          secondOrderLaunchAngleRadians.value !== undefined),
       scene: {
         boundsAvailable: activeBoundsReady.value,
         imageAvailable: Boolean(imageUrl.value),
@@ -2059,6 +2071,7 @@ const magnifierContentStyle = computed(() => {
 // 结果面板只应消费展示 DTO；公式生成、复制和坐标写回应由页面侧保持原工作流语义。
 const resultPanel = computed(() => {
   const solverResult = formulaResult.value;
+  const pathError = formulaPathError.value;
   return {
     agentFireButtonText: graphwarAgentFireButtonText.value,
     agentFireReason: getCapabilityReason(graphwarCapabilities.value.agentFire.reason),
@@ -2073,6 +2086,12 @@ const resultPanel = computed(() => {
     equationPrefix: equationModes.value.find((mode) => mode.value === equationMode.value)?.formulaPrefix ?? "",
     interactionDisabled: graphwarManagedModeEnabled.value,
     pointRows: incumbentPreviewActive.value ? [] : createResultPanelPointRows(),
+    pathQualityWarning:
+      pathError === undefined || pathError <= graphwarToolDefaults.formulaPathQualityTargetPlanePixels
+        ? ""
+        : Number.isFinite(pathError)
+          ? locale.status.trajectoryWarning.pathQuality(pathError.toFixed(2))
+          : locale.status.trajectoryWarning.pathQualityUnreached,
     secondOrderAngleHint: secondOrderAngleHint.value,
     showSimulatorLaunchAngleInput: toolWorkflowMode.value === "simulator" && equationMode.value === "ddy",
     simulatorFormulaText: simulatorFormulaText.value,
@@ -2080,6 +2099,7 @@ const resultPanel = computed(() => {
     solverExpression: solverResult?.expression ?? "",
     solverResultVisible: toolWorkflowMode.value === "solver" && !!solverResult,
     trajectoryWarning: trajectoryWarning.value,
+    targetHitWarning: formulaTargetMissed.value ? locale.status.trajectoryWarning.targetMissed : "",
     workflowMode: toolWorkflowMode.value,
   };
 });
@@ -2790,11 +2810,7 @@ async function fireGraphwarAgentFunction() {
     graphwarAgentBaseUrlText.value = client.baseUrl;
     if (state.equationMode === "ddy") {
       const launchAngleRadians =
-        toolWorkflowMode.value === "solver"
-          ? secondOrderLaunchAngleDegrees.value === undefined
-            ? undefined
-            : (secondOrderLaunchAngleDegrees.value * Math.PI) / 180
-          : simulatorLaunchAngleRadians.value;
+        toolWorkflowMode.value === "solver" ? secondOrderLaunchAngleRadians.value : simulatorLaunchAngleRadians.value;
       if (launchAngleRadians === undefined) {
         throw new GraphwarAgentClientError("invalid-request", "result-mode-mismatch");
       }
@@ -3135,6 +3151,7 @@ function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shoot
     decimalPlaces: settings.decimalPlaces,
     deleteOptimizationEnabled: deleteOptimizationEnabled.value,
     equation: state.equationMode,
+    secondOrderLaunchAngleMode: settings.secondOrderLaunchAngleMode,
     formulaPathSteepness: settings.formulaPathSteepness,
     friendlyFire: friendlyFireEnabled.value,
     gameInstanceId: state.gameInstanceId,

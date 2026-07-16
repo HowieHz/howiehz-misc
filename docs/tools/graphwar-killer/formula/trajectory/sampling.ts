@@ -491,6 +491,14 @@ const GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES = Math.max(0, Math.ceil
 // 权重 {1, 2, 2, 1}/6 的非零子集和去重后只有这六档：1/6、1/3、1/2、2/3、5/6、1。
 // 每个 x 窗口按 D = ΔY / (factor * minStep) 回放六档，只从恰好一次邪道跳转的候选中择优。
 const STEP_GLITCH_RK4_CONTRIBUTION_FACTORS = [1, 5 / 6, 2 / 3, 1 / 2, 1 / 3, 1 / 6] as const;
+// 二阶邪道的纵跳 a4 与恢复 a1 都取 braking，权重和为 1+1；RK4 总权重 6 除以它得到速度项系数 3。
+const STEP_GLITCH_SECOND_ORDER_BRAKING_WEIGHT = 2;
+const STEP_GLITCH_SECOND_ORDER_BRAKING_DERIVATIVE_FACTOR = 3;
+// 直接相位 acceleration 只取 a2/a3，权重比 (2+2)/(1+1)=2；armed 最小步则取 a1/a2/a3，权重和为 5。
+const STEP_GLITCH_SECOND_ORDER_DIRECT_ACCELERATION_BRAKING_RATIO = 2;
+const STEP_GLITCH_SECOND_ORDER_ARMED_ACCELERATION_WEIGHT = 5;
+// 在恢复 a1 后关闭脉冲，但要早于位于 1.5h 的 a2/a3；取二者中点 1.25h。
+const STEP_GLITCH_SECOND_ORDER_PULSE_END_STEP_FACTOR = 1.25;
 /** 评估同一段所有邪道窗口和 RK4 档位时复用的不可变上下文。 */
 interface StepGlitchCandidateContext extends StepGlitchPrefixFormulaContext {
   deltaYOverride: number | undefined;
@@ -1400,6 +1408,8 @@ function selectStepGlitchSegmentCandidate(
         const h = windowedJump.step;
         const directDeltaY =
           source.targetY - preJumpSample.resumeState.currentPoint.y - h * (resumeDerivative + targetDerivative);
+        // 位移反解沿用 RK4 权重：direct 的 a2/a3 给出 h²/3，armed 由粗步 a4 的 h*armStep/6
+        // 和下一最小步 a1/a2/a3 的 h²/2 组成；这些系数只描述加速相位，不是经验调参。
         const directAcceleration = (3 * directDeltaY) / h ** 2;
         let armStep = GRAPHWAR_STEP_SIZE;
         while (armStep > h && preJumpSample.resumeState.currentPoint.x + armStep / 2 > windowedJump.startX) {
@@ -1416,15 +1426,21 @@ function selectStepGlitchSegmentCandidate(
         for (const profile of [
           {
             acceleration: directAcceleration,
-            braking: (3 * (targetDerivative - resumeDerivative)) / h - 2 * directAcceleration,
+            braking:
+              (STEP_GLITCH_SECOND_ORDER_BRAKING_DERIVATIVE_FACTOR * (targetDerivative - resumeDerivative)) / h -
+              STEP_GLITCH_SECOND_ORDER_DIRECT_ACCELERATION_BRAKING_RATIO * directAcceleration,
             deltaY: directDeltaY,
-            pulseEndX: preJumpSample.resumeState.currentPoint.x + 1.25 * h,
+            pulseEndX: preJumpSample.resumeState.currentPoint.x + STEP_GLITCH_SECOND_ORDER_PULSE_END_STEP_FACTOR * h,
           },
           {
             acceleration: armedAcceleration,
-            braking: (3 * (targetDerivative - resumeDerivative)) / h - (armedAcceleration * (5 + armStep / h)) / 2,
+            braking:
+              (STEP_GLITCH_SECOND_ORDER_BRAKING_DERIVATIVE_FACTOR * (targetDerivative - resumeDerivative)) / h -
+              (armedAcceleration * (STEP_GLITCH_SECOND_ORDER_ARMED_ACCELERATION_WEIGHT + armStep / h)) /
+                STEP_GLITCH_SECOND_ORDER_BRAKING_WEIGHT,
             deltaY: armedDeltaY,
-            pulseEndX: preJumpSample.resumeState.currentPoint.x + armStep + 1.25 * h,
+            pulseEndX:
+              preJumpSample.resumeState.currentPoint.x + armStep + STEP_GLITCH_SECOND_ORDER_PULSE_END_STEP_FACTOR * h,
           },
         ]) {
           if (

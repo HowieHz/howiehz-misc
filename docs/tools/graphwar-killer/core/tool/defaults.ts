@@ -15,7 +15,7 @@ interface GraphwarToolDefaults {
     /** 默认平面高度。 */
     height: number;
   };
-  /** ODE 公式控制点允许的纵向误差，单位为 Graphwar 原始平面像素。 */
+  /** Graphwar 平面目标范围的像素容差，用于控制点、轨迹尾差和命中范围内缩。 */
   targetRangePixelTolerance: number;
   /** 放大镜预览窗口尺寸。 */
   magnifierSize: number;

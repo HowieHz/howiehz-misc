@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH, GRAPHWAR_STEP_SIZE } from "../../core/game/constants";
 import { graphToImagePoint } from "../../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds } from "../../core/types";
-import { compileFormulaEvaluator, GraphwarSignRole } from "../generation/build";
+import { compileFormulaEvaluator, compileGraphwarFormulaMaterials, GraphwarSignRole } from "../generation/build";
 import { sampleGraphwarExpressionTrajectory } from "../simulation/simulator";
 import {
   getGraphwarTrajectoryLaunchAngle,
@@ -12,6 +12,14 @@ import {
   sampleGraphwarPathTargetSequence,
   resolveGraphwarTrajectory,
 } from "./sampling";
+
+vi.mock("../generation/build", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../generation/build")>();
+  return {
+    ...actual,
+    compileGraphwarFormulaMaterials: vi.fn(actual.compileGraphwarFormulaMaterials),
+  };
+});
 
 const bounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
 const boundsRect: BoundsRect = {
@@ -309,6 +317,48 @@ describe("ODE segment position compensation", () => {
     createGraphPoint(-23.376623376623378, 2.5974025974025974),
     ...Array.from({ length: 8 }, (_, index) => createGraphPoint(-19 + 2 * index, -2 * index)),
   ];
+
+  it("compiles each ABS y'' refinement target sweep only once", () => {
+    const compileMaterials = vi.mocked(compileGraphwarFormulaMaterials);
+    const shortPoints = points.slice(0, 5);
+    compileMaterials.mockClear();
+
+    resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: shortPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 10,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: shortPoints[0],
+    });
+    const shortCompileCount = compileMaterials.mock.calls.length;
+
+    compileMaterials.mockClear();
+    resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 10,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: points[0],
+    });
+    const longCompileCount = compileMaterials.mock.calls.length;
+
+    // 目标加倍只应增加初始化和少量整组回放，不应为每个目标再编译一遍。
+    expect(longCompileCount - shortCompileCount).toBeLessThanOrEqual(8);
+  });
 
   it.each([
     { algorithm: "step", equation: "dy", steepness: 210 },

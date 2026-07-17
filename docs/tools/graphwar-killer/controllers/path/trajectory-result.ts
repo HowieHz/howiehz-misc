@@ -79,7 +79,7 @@ interface GraphwarTrajectoryResultOptions {
     algorithmMode: ReadonlyRef<AlgorithmMode>;
     /** 当前 Graphwar 公式解释模式。 */
     equationMode: ReadonlyRef<EquationMode>;
-    /** Y''= 当前执行模型消费完整建议角，还是页面两位小数显示值。 */
+    /** Y''= 当前执行模型消费完整建议角，还是调用方指定的两位小数执行角。 */
     secondOrderLaunchAngleMode?: ReadonlyRef<GraphwarSecondOrderLaunchAngleMode>;
     /** 判断当前公式模式是否被页面禁用。 */
     isEquationModeDisabled: (mode: EquationMode) => boolean;
@@ -161,7 +161,7 @@ export interface GraphwarTrajectoryResultController {
   publishIncumbentPreview: (expression: string, launchAngleRadians?: number) => void;
   /** 当前展示轨迹的提示原因。 */
   trajectoryWarningReason: ReadonlyRef<GraphwarTrajectoryWarningReason | undefined>;
-  /** 当前展示的手动 Y''= 是否按两位小数角回放后未命中。 */
+  /** 当前展示的 Y''= 是否按显式两位小数执行角回放后未命中。 */
   targetMissed: ReadonlyRef<boolean>;
 }
 

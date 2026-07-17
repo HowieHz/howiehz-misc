@@ -70,7 +70,7 @@ export interface GraphwarResultPanelModel {
   trajectoryWarning: string;
   /** 普通控制点路径质量未达到可选目标时的独立警告。 */
   pathQualityWarning?: string;
-  /** 手动 Y''= 按页面显示角度未命中时的独立警告。 */
+  /** Y''= 按显式两位小数执行角未命中时的独立警告。 */
   targetHitWarning?: string;
   /** 当前主工作流。 */
   workflowMode: ToolWorkflowMode;

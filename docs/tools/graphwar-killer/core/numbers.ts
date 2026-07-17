@@ -162,7 +162,7 @@ export function formatAngleDegree(value: number) {
   return normalizeZero(value, 2).toFixed(2);
 }
 
-/** 按页面实际显示的两位小数角度文本往返，供无法精确提交角度的手动 Y''= 回放使用。 */
+/** 按两位小数角度文本往返，供显式选择 display-rounded 执行模型的 Y''= 回放使用。 */
 export function roundGraphwarLaunchAngleToDisplayRadians(angleRadians: number) {
   return (Number(formatAngleDegree((angleRadians * 180) / Math.PI)) * Math.PI) / 180;
 }

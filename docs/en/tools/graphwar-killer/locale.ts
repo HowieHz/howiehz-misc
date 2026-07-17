@@ -209,7 +209,7 @@ export const graphwarKillerLocale = {
       stateFileLoaded: "State file loaded; select an obstacle file",
     },
     pathPointCoordinateNumber: "Point coordinates must be numbers",
-    secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to about ${angle} deg.`,
+    secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to ${angle} deg.`,
     trajectoryWarning: {
       obstacle: "The current function trajectory hits an obstacle or boundary",
       pathQuality: (error) =>
@@ -225,8 +225,7 @@ export const graphwarKillerLocale = {
         "too-steep":
           "Preview stopped: the local curve is too steep, and Graphwar cannot continue even at its minimum step size. In game, it will explode here.",
       },
-      targetMissed:
-        "The current y'' formula misses the target when replayed with the two-decimal launch angle shown on the page.",
+      targetMissed: "The current y'' formula misses the target when replayed with a two-decimal launch angle.",
     },
   },
   smartPathfinding: {

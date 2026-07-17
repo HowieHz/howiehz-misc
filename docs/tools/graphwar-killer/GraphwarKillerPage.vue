@@ -89,7 +89,6 @@ import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
   clampNumber,
-  formatAngleDegree,
   formatDecimal,
   formatDoublePrecisionDecimal,
   parseFiniteNumber,
@@ -312,10 +311,8 @@ const graphwarAgentFireInProgress = ref(false);
 const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
 const graphwarManagedModeEnabled = ref(false);
-// Agent/托管可精确提交 double；手动 Y''= 只能按页面实际显示的两位小数角复现。
-const secondOrderLaunchAngleMode = computed(() =>
-  graphwarAgentEnabled.value || graphwarManagedModeEnabled.value ? "full-precision" : "display-rounded",
-);
+// 手动模式也显示求解器的完整推荐角，由用户按实际轨迹用方向键微调。
+const secondOrderLaunchAngleMode = ref("full-precision" as const);
 let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let graphwarManagedCalculationStatus:
   | { expiresAt: number; kind: SmartPathfindingStatusKind; message: string }
@@ -1683,7 +1680,9 @@ watch(
 );
 
 const secondOrderLaunchAngleText = computed(() =>
-  secondOrderLaunchAngleDegrees.value === undefined ? "" : formatAngleDegree(secondOrderLaunchAngleDegrees.value),
+  secondOrderLaunchAngleDegrees.value === undefined
+    ? ""
+    : formatDoublePrecisionDecimal(secondOrderLaunchAngleDegrees.value),
 );
 const secondOrderAngleHint = computed(() =>
   toolWorkflowMode.value === "solver" && secondOrderLaunchAngleText.value

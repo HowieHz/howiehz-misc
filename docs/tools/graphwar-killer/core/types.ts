@@ -6,7 +6,7 @@ declare const graphPointBrand: unique symbol;
 export type EquationMode = "y" | "dy" | "ddy";
 /** 生成可复制公式的曲线拼接策略；每种策略对应不同的稳定性和长度取舍。 */
 export type AlgorithmMode = "step" | "abs" | "pchip" | "akima";
-/** Y''= 公式的发射角执行精度；手动输入只能复现页面显示值，Agent 可提交完整 double。 */
+/** Y''= 公式的发射角执行精度；调用方显式选择完整 double 或两位小数兼容模型。 */
 export type GraphwarSecondOrderLaunchAngleMode = "display-rounded" | "full-precision";
 /** 页面舞台当前点击语义，避免边界标定、攻击路径和障碍修正共享同一状态入口。 */
 export type ToolMode = "bounds" | "path" | "obstacle";

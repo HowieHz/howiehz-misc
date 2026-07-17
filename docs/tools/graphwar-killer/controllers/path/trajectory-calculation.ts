@@ -64,7 +64,7 @@ export interface GraphwarTrajectoryCalculationResult {
   secondOrderLaunchAngleRadians?: number;
   /** 普通控制点的最大纵向误差，单位为 Graphwar 原始平面像素；没有质量点时省略。 */
   pathError?: number;
-  /** Agent 关闭的手动 Y''= 按页面两位小数角回放后没有命中目标；不阻止最佳努力公式输出。 */
+  /** 显式使用两位小数执行角的 Y''= 回放没有命中目标；不阻止最佳努力公式输出。 */
   targetMissed?: boolean;
   /** 正常完成采样后的轨迹提示原因。 */
   warningReason?: GraphwarTrajectoryWarningReason;
@@ -146,7 +146,7 @@ function calculateSolverTrajectory(
   try {
     const { context, result: sampleResult } = resolved;
     const targetMissed = targetCircleIsConfigured && sampleResult.targetHitIndex < 0;
-    // 只有无法精确提交角度的手动 Y''= 保留最佳努力公式；所有自动结果和其它手动方程都严格命中。
+    // 只有显式使用两位小数执行角的 Y''= 保留最佳努力公式；完整精度结果和其它方程都严格命中。
     if (
       targetMissed &&
       !(input.settings.equation === "ddy" && input.settings.secondOrderLaunchAngleMode === "display-rounded")

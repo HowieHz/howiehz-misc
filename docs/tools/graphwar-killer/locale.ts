@@ -183,7 +183,7 @@ export const graphwarKillerLocale = {
       stateFileLoaded: "已读取状态文件，请读取障碍文件",
     },
     pathPointCoordinateNumber: "点坐标需要填写数字",
-    secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到约 ${angle}°`,
+    secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到 ${angle}°`,
     trajectoryWarning: {
       obstacle: "当前公式轨迹会撞到障碍物或边界",
       pathQuality: (error) => `公式已生成，但普通控制点的最大路径误差为 ${error} 个原始平面像素`,
@@ -194,7 +194,7 @@ export const graphwarKillerLocale = {
         "out-of-bounds": "预览已中止：轨迹越出 Graphwar 平面，实战中会在边界处提前爆炸",
         "too-steep": "预览已中止：局部太陡，Graphwar 步长缩到最小仍无法继续，实战中会在这里爆炸",
       },
-      targetMissed: "当前 y'' 公式按页面显示的两位小数发射角回放后未命中目标",
+      targetMissed: "当前 y'' 公式按两位小数发射角回放后未命中目标",
     },
   },
   smartPathfinding: {

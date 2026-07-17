@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { graphwarKillerLocale as englishGraphwarKillerLocale } from "../../en/tools/graphwar-killer/locale";
 import { graphwarKillerLocale } from "./locale";
 
+const fullPrecisionAngleText = "-64.6230664748477";
 const chineseLocaleStrings: string[] = [];
 const pendingChineseLocaleValues: unknown[] = [graphwarKillerLocale];
 while (pendingChineseLocaleValues.length > 0) {
@@ -52,6 +53,12 @@ describe("Chinese Graphwar Killer locale", () => {
     );
   });
 
+  it("presents the full-precision launch angle without approximation wording", () => {
+    expect(graphwarKillerLocale.status.secondOrderAngleHint(fullPrecisionAngleText)).toBe(
+      `需要用键盘上下键把发射角调到 ${fullPrecisionAngleText}°`,
+    );
+  });
+
   it("does not expose translatable internal English terms", () => {
     expect(
       [
@@ -95,6 +102,12 @@ describe("Chinese Graphwar Killer locale", () => {
 });
 
 describe("English Graphwar Killer locale", () => {
+  it("presents the full-precision launch angle without approximation wording", () => {
+    expect(englishGraphwarKillerLocale.status.secondOrderAngleHint(fullPrecisionAngleText)).toBe(
+      `Use the Up/Down keys to set the launch angle to ${fullPrecisionAngleText} deg.`,
+    );
+  });
+
   it("keeps ordinary titles compact", () => {
     expect(englishCompactTitles.filter((value) => value.endsWith("."))).toEqual([]);
   });

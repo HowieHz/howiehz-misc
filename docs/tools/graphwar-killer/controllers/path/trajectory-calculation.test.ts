@@ -70,7 +70,7 @@ describe("main trajectory calculation", () => {
     expect(Object.is(outcome.result.secondOrderLaunchAngleDegrees, (expectedAngle * 180) / Math.PI)).toBe(true);
   });
 
-  it("replays and returns the page's two-decimal y'' launch angle when Agent precision is unavailable", () => {
+  it("replays and returns an explicitly requested two-decimal y'' launch angle", () => {
     const outcome = calculateGraphwarTrajectory({
       bounds,
       boundsRect,
@@ -151,7 +151,7 @@ describe("main trajectory calculation", () => {
     },
   );
 
-  it("keeps only display-rounded manual y'' target misses as a non-blocking warning", () => {
+  it("keeps only display-rounded y'' target misses as a non-blocking warning", () => {
     const outcome = calculateGraphwarTrajectory({
       bounds,
       boundsRect,

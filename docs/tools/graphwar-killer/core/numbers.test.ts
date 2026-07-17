@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   floorToDecimalPlaces,
+  formatDoublePrecisionDecimal,
   graphXAdvancesStrictly,
   nextDownDouble,
   nextUpDouble,
@@ -41,6 +42,10 @@ describe("decimal floor", () => {
 });
 
 describe("Graphwar launch-angle display", () => {
+  it("preserves the shortest round-trip decimal for full-precision guidance", () => {
+    expect(formatDoublePrecisionDecimal(-64.6230664748477)).toBe("-64.6230664748477");
+  });
+
   it.each([
     [12.345, 12.35],
     [-12.345, -12.35],

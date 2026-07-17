@@ -69,7 +69,7 @@ export interface GraphwarTrajectoryFormulaSettings {
   decimalPlaces: number;
   /** Graphwar 对公式文本的解释模式。 */
   equation: EquationMode;
-  /** Y''= 最终回放消费完整 double 建议角，还是页面两位小数显示值；省略时使用完整角度。 */
+  /** Y''= 最终回放消费完整 double 建议角，还是调用方指定的两位小数执行角；省略时使用完整角度。 */
   secondOrderLaunchAngleMode?: GraphwarSecondOrderLaunchAngleMode;
   /** 路径生成公式时的 steepness；省略时使用 steepness。 */
   formulaPathSteepness?: number;

@@ -47,7 +47,7 @@ export interface SampleGraphwarTrajectoryOptions {
   compiledFormulaMaterials?: CompiledGraphwarFormulaMaterials;
   /** 已按 Graphwar 坐标表示的公式控制点。 */
   points: readonly GraphPoint[];
-  /** Y''= 使用完整建议角，还是页面两位小数显示值。 */
+  /** Y''= 使用完整建议角，还是调用方指定的两位小数执行角。 */
   secondOrderLaunchAngleMode?: GraphwarSecondOrderLaunchAngleMode;
   /** 已由公式上下文确定的 Y''= 有效发射角；存在时禁止重新求解另一套角度。 */
   launchAngleRadians?: number;
@@ -112,7 +112,7 @@ export interface CreateGraphwarFormulaPathOptions {
   compiledFormulaMaterials?: CompiledGraphwarFormulaMaterials;
   /** 用户选择或 worker 生成的 Graphwar 路径点。 */
   points: readonly GraphPoint[];
-  /** Y''= 使用完整建议角，还是页面两位小数显示值。 */
+  /** Y''= 使用完整建议角，还是调用方指定的两位小数执行角。 */
   secondOrderLaunchAngleMode?: GraphwarSecondOrderLaunchAngleMode;
   /** Step 或 ABS y'' 公式使用的陡峭度。 */
   steepness: number;

@@ -8,6 +8,18 @@ import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
 
 describe("Graphwar Killer page settings", () => {
+  it("uses full-precision launch-angle guidance without Agent or managed mode", () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: { secondOrderLaunchAngleMode: "display-rounded" | "full-precision" };
+      }
+    ).setupState;
+
+    expect(page.secondOrderLaunchAngleMode).toBe("full-precision");
+    wrapper.unmount();
+  });
+
   it("keeps the glitch preference independent while leaving it inactive for ABS ODE modes", async () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const yMode = wrapper.findAll(".graphwar-killer__equation-toggle button")[0];

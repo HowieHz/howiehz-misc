@@ -243,6 +243,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     }
   }
 
+  /** 执行一键清图预检并记录页面侧耗时。 */
   function createMeasuredPreflight(timings: SmartPathfindingDebugTimingEntry[]) {
     return options.debug.measureStage(timings, "one-click-clear-preflight", () => {
       const bounds = options.input.getBounds();
@@ -261,6 +262,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     });
   }
 
+  /** 从当前已命中目标生成必须保留的前缀命中圈。 */
   function createPrefixTarget() {
     const target = options.targets.getPrefixTarget();
     if (!target) {
@@ -269,6 +271,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     return "center" in target ? { center: target.center, radius: target.radius } : { center: target, radius: 1 };
   }
 
+  /** 写入预检失败状态并结算调试耗时。 */
   function finishPreflightFailure(
     startedAt: number,
     timings: SmartPathfindingDebugTimingEntry[],
@@ -284,6 +287,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     options.debug.finishTimings(startedAt, timings, completedAt);
   }
 
+  /** 优先读取结果缓存，否则调度 Worker 并缓存稳定结果。 */
   async function buildSearchResult(
     preflightResult: Extract<ReturnType<typeof createGraphwarOneClickClearSearchPreflight>, { ok: true }>,
     timings: SmartPathfindingDebugTimingEntry[],
@@ -344,6 +348,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     };
   }
 
+  /** 组装敌我筛选和目标几何所需的最小选项。 */
   function createTargetCollectionOptions() {
     return {
       friendlyFireEnabled: options.targets.getFriendlyFireEnabled(),
@@ -354,6 +359,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     };
   }
 
+  /** 将成功路径、公式和命中目标原子写回页面。 */
   function applySuccessResult(
     startedAt: number,
     timings: SmartPathfindingDebugTimingEntry[],
@@ -379,6 +385,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     finishDebugTimings(completedAt);
   }
 
+  /** 根据失败原因选择保留 incumbent 或显示最终失败。 */
   function finishFailureResult(
     timings: SmartPathfindingDebugTimingEntry[],
     reason: GraphwarOneClickClearFailureReason,

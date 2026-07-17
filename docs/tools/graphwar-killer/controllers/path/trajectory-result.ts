@@ -9,6 +9,7 @@ import type {
   GraphPoint,
   GraphwarSecondOrderLaunchAngleMode,
   PixelPoint,
+  ReadonlyValue as ReadonlyRef,
   ToolWorkflowMode,
 } from "../../core/types";
 import { formulaModeUsesSteepness, formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
@@ -26,10 +27,6 @@ import { createGraphwarTrajectoryRunner, isGraphwarTrajectoryCancelledError } fr
 
 export type { GraphwarTrajectoryWarningReason } from "./trajectory-calculation";
 
-interface ReadonlyRef<T> {
-  readonly value: T;
-}
-
 export type GraphwarTrajectoryCalculationStatus =
   | { type: "idle" }
   | { type: "in-progress" }
@@ -45,6 +42,7 @@ interface PublishedFormulaTrajectoryResult {
   trajectory: PublishedTrajectorySnapshot;
 }
 
+/** 页面一次发布的求解结果、轨迹和警告快照。 */
 interface PublishedTrajectoryResult {
   /** 当前画布展示的完整轨迹快照。 */
   displayedTrajectory?: PublishedTrajectorySnapshot;
@@ -61,6 +59,7 @@ type PublishedTrajectorySnapshot = Pick<
   "curvePoints" | "pathError" | "targetMissed" | "warningReason"
 >;
 
+/** 轨迹结果控制器读取的页面设置、输入和状态依赖。 */
 interface GraphwarTrajectoryResultOptions {
   /** 碰撞采样应使用页面当前障碍和边界收缩配置。 */
   getCollisionSettings: () => GraphwarTrajectoryCollisionSettings | undefined;
@@ -124,6 +123,7 @@ interface GraphwarTrajectoryResultOptions {
   getTargetHitRadiusPixels: () => number | undefined;
 }
 
+/** 统一管理轨迹任务、已发布结果和页面展示状态的控制器。 */
 export interface GraphwarTrajectoryResultController {
   /** 当前计算 Worker 已永久降级到主线程时的具体原因。 */
   calculationFallbackReason: ReadonlyRef<string>;

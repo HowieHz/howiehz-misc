@@ -9,6 +9,7 @@ import type {
   GraphBounds,
   GraphPoint,
   PixelPoint,
+  ReadonlyValue as ReadonlyRef,
   ToolMode,
   ToolWorkflowMode,
 } from "../../core/types";
@@ -29,10 +30,7 @@ import {
 
 export { GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM };
 
-interface ReadonlyRef<T> {
-  readonly value: T;
-}
-
+/** 实时点击预览控制器读取的页面状态和算法依赖。 */
 interface GraphwarLiveClickPreviewOptions {
   /** 坐标映射应复用页面当前标定；bounds 无效时预览保持空结果。 */
   geometry: {
@@ -106,6 +104,7 @@ type GraphwarLiveClickPreviewRenderContext =
   | GraphwarLiveClickPreviewExpressionContext
   | GraphwarLiveClickPreviewFormulaContext;
 
+/** 一次可调度实时预览的输入、落点和路径快照。 */
 interface GraphwarLiveClickPreviewRenderRequest {
   /** 对象身份用于拒绝公式、路径或碰撞设置变化前的迟到结果。 */
   context: GraphwarLiveClickPreviewRenderContext;
@@ -116,11 +115,13 @@ interface GraphwarLiveClickPreviewRenderRequest {
   point: PixelPoint;
 }
 
+/** 用于跳过重复渲染请求的稳定输入快照。 */
 interface GraphwarLiveClickPreviewSnapshot {
   curvePoints: string;
   point: PixelPoint;
 }
 
+/** 根据当前鼠标落点调度并发布实时轨迹预览的控制器。 */
 export interface GraphwarLiveClickPreviewController {
   /** 实时点击预览是否启用。 */
   enabled: Ref<boolean>;

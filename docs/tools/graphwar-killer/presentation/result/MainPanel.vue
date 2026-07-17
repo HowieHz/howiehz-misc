@@ -11,6 +11,7 @@ import { getInputValue } from "../dom/input";
 
 type GraphwarResultPanelCoordinateAxis = "x" | "y";
 
+/** 单个路径坐标输入框的展示和可访问性信息。 */
 interface GraphwarResultPanelCoordinateControl {
   /** 输入框可访问性标签，父页面按当前路径点标签提前生成。 */
   ariaLabel: string;
@@ -20,6 +21,7 @@ interface GraphwarResultPanelCoordinateControl {
   title: string;
 }
 
+/** 结果面板中的一行路径点坐标。 */
 interface GraphwarResultPanelPointRow {
   /** 路径点索引；同时用于事件回传和稳定 key。 */
   index: number;
@@ -31,6 +33,7 @@ interface GraphwarResultPanelPointRow {
   y: GraphwarResultPanelCoordinateControl;
 }
 
+/** 公式结果、路径坐标、警告和 Agent 发射的展示模型。 */
 export interface GraphwarResultPanelModel {
   /** 托管期间锁定公式输入、路径坐标和手动发射，保留复制。 */
   interactionDisabled: boolean;

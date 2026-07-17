@@ -29,6 +29,7 @@ type GraphwarDetectionSettingsResult =
     }
   | { ok: false; message: string };
 
+/** 检测工作流所需的 runner、页面状态和副作用依赖。 */
 interface GraphwarDetectionWorkflowOptions {
   /** 调试计时应复用页面现有聚合规则，避免检测 Module 关心展示行。 */
   debug: {
@@ -80,6 +81,7 @@ interface GraphwarDetectionWorkflowOptions {
   detectedSoldiers: Ref<GraphwarDetectionBox[]>;
 }
 
+/** 串联截图读取、Worker 检测、状态提示和结果写回的控制器。 */
 export interface GraphwarDetectionWorkflowController {
   /** 自动识别开关；关闭后保留当前识别结果供用户继续编辑。 */
   autoDetectionEnabled: Ref<boolean>;

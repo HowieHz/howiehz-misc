@@ -27,6 +27,7 @@ type PathPointCoordinateState = Pick<
   | "syncPathPointCoordinateTexts"
 >;
 
+/** 路径点编辑器读取和写回页面状态的依赖。 */
 interface GraphwarPathPointEditingOptions {
   /** 当前截图坐标系矩形；路径点编辑应始终使用页面当前标定。 */
   boundsRect: Ref<BoundsRect>;
@@ -56,6 +57,7 @@ interface GraphwarPathPointEditingOptions {
   setPathPixels: (points: PixelPoint[]) => void;
 }
 
+/** 处理路径点拖动、坐标文本编辑和严格前进约束的控制器。 */
 export interface GraphwarPathPointEditingController {
   /** 结束路径点坐标编辑并恢复格式化文本。 */
   finishPathPointCoordinateEdit: () => void;
@@ -170,11 +172,10 @@ export function useGraphwarPathPointEditing(
       return false;
     }
 
-    const nextGraphPoint = createGraphPoint(
-      axis === "x" ? coordinate : currentPoint.x,
-      axis === "y" ? coordinate : currentPoint.y,
+    return setPathPointFromGraphPoint(
+      index,
+      createGraphPoint(axis === "x" ? coordinate : currentPoint.x, axis === "y" ? coordinate : currentPoint.y),
     );
-    return setPathPointFromGraphPoint(index, nextGraphPoint);
   }
 
   /** 手输 Graphwar 坐标允许超出可见边界；这里只维护 x+ 规则，不夹取 y 或 x。 */
@@ -226,6 +227,7 @@ export function useGraphwarPathPointEditing(
     return normalizedPoints;
   }
 
+  /** 强制新点沿 x+ 前进，同时保留用户已拖出边界的 y。 */
   function normalizePathPointForStrictForwardAllowingOutOfBounds(
     point: PixelPoint,
     previousPoint: PixelPoint | undefined,

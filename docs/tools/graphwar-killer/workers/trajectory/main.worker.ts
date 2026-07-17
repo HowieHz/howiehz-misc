@@ -4,6 +4,7 @@ import {
   type GraphwarTrajectoryCalculationWorkerResponse,
 } from "../../controllers/path/trajectory-calculation";
 
+/** 主轨迹 Worker 使用的最小全局作用域接口。 */
 interface GraphwarTrajectoryWorkerScope {
   addEventListener: (
     type: "message",

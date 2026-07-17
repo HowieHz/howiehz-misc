@@ -1,16 +1,19 @@
 import type { GraphwarAgentAvailableState } from "./client";
 
+/** Agent 导出的状态 JSON 与障碍二进制文件对。 */
 export interface GraphwarAgentDebugFilePair {
   obstacleBuffer: ArrayBuffer;
   state: GraphwarAgentAvailableState;
 }
 
+/** 单个可下载的 Agent 调试文件。 */
 export interface GraphwarAgentDebugDownload {
   content: ArrayBuffer | string;
   fileName: string;
   mediaType: string;
 }
 
+/** Agent 调试文件导入、匹配与导出的统一状态。 */
 export interface GraphwarAgentDebugFiles {
   /** 丢弃当前未消费的文件配对。 */
   clear: () => void;

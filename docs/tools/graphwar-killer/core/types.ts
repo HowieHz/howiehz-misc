@@ -23,6 +23,11 @@ interface Point2D {
   y: number;
 }
 
+/** 只暴露响应式值读取能力，避免控制器依赖 Vue Ref 的完整可写接口。 */
+export interface ReadonlyValue<T> {
+  readonly value: T;
+}
+
 /** 截图像素坐标点，使用品牌类型避免误传给 Graphwar 坐标 API。 */
 export type PixelPoint = Point2D & {
   readonly [pixelPointBrand]: "PixelPoint";
@@ -41,6 +46,11 @@ export type GraphPoint = Point2D & {
  */
 export function createPixelPoint(x: number, y: number): PixelPoint {
   return { x, y } as PixelPoint;
+}
+
+/** 复制截图像素坐标，去掉可能附着在源对象上的响应式代理。 */
+export function clonePixelPoint(point: PixelPoint): PixelPoint {
+  return createPixelPoint(point.x, point.y);
 }
 
 /**

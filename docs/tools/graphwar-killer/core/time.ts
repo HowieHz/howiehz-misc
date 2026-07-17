@@ -6,3 +6,17 @@
 export function nowMs() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }
+
+/** 执行同步阶段并在成功或抛错后统一追加耗时，避免各工作流重复维护 finally 计时。 */
+export function measureSyncStage<TResult, TStage>(
+  timings: { elapsedMs: number; stage: TStage }[],
+  stage: TStage,
+  task: () => TResult,
+) {
+  const startedAt = nowMs();
+  try {
+    return task();
+  } finally {
+    timings.push({ elapsedMs: nowMs() - startedAt, stage });
+  }
+}

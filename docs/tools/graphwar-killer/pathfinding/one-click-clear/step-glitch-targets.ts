@@ -36,6 +36,7 @@ export interface GraphwarStepGlitchTargetAssignmentOptions<
   xPlusIsRight: boolean;
 }
 
+/** 单个目标允许分配的严格 x 开区间离散范围。 */
 interface StepGlitchSafeXInterval {
   /** 沿 x+ 方向的一维坐标下界。 */
   left: number;
@@ -115,6 +116,7 @@ export function assignGraphwarStepGlitchTargetRoutePoints<TTarget extends Graphw
   return assignedTargets;
 }
 
+/** 求目标命中圈在可用 x 范围内的严格安全区间。 */
 function createStepGlitchSafeXInterval(
   targets: readonly GraphwarStepGlitchTargetCandidate[],
   options: Pick<GraphwarStepGlitchTargetAssignmentOptions, "usableMaxX" | "usableMinX" | "xPlusIsRight">,

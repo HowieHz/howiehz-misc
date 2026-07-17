@@ -529,6 +529,7 @@ function getCompatibleVisibilityGraphObstacleData({
   });
 }
 
+/** 从镜像 mask 构建轮廓、候选点和连通域索引。 */
 function createVisibilityGraphObstacleDataForMirroredMask({
   mirrored,
   routeMask,
@@ -1294,6 +1295,7 @@ async function findStatefulLazyVisibilityGraphPath({
   return undefined;
 }
 
+/** 发布有状态可视图搜索快照，并按需让出执行权。 */
 async function reportStatefulVisibilitySearchProgress({
   acceptedEdges,
   candidates,
@@ -1345,6 +1347,7 @@ async function reportStatefulVisibilitySearchProgress({
   return !isCancelled?.();
 }
 
+/** 从开放集合中选择估价最低且平局稳定的状态 key。 */
 function selectBestOpenStatefulVisibilityKey(
   openKeys: ReadonlySet<string>,
   states: ReadonlyMap<string, StatefulVisibilitySearchState>,
@@ -1427,6 +1430,7 @@ function reconstructStatefulVisibilitySearchPath(
   return path.reverse();
 }
 
+/** 将候选点和路由状态编码成无歧义搜索 key。 */
 function createStatefulVisibilitySearchKey(candidateIndex: number, routeState: number, routeStateKey?: string) {
   // 精确 key 和 number fallback 分命名空间，避免自定义 evaluator 混用两种身份时碰撞。
   return routeStateKey === undefined

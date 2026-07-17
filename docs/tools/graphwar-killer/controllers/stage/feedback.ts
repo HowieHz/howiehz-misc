@@ -4,6 +4,7 @@ import type { GraphwarDetectionBox } from "../../detection/objects";
 
 const graphwarStageFeedbackFlashMs = 1600;
 
+/** 管理舞台阻挡闪烁和士兵命中反馈的控制器。 */
 export interface GraphwarStageFeedbackController {
   /** 边界框是否处于短暂高亮状态。 */
   boundsFlashActive: Ref<boolean>;

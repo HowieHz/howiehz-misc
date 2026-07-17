@@ -27,6 +27,7 @@ export type GraphwarOneClickClearSearchPreflightFailureReason =
   | "missing-obstacle-mask"
   | "unsupported-mode";
 
+/** 一键清图预检所需的路径、目标和设置输入。 */
 interface GraphwarOneClickClearSearchPreflightOptions {
   /** 成功解析后的 Graphwar 坐标边界；缺失时应保持页面原设置错误语义。 */
   bounds: GraphBounds | undefined;
@@ -62,6 +63,7 @@ export type GraphwarOneClickClearSearchPreflightResult =
       reason: GraphwarOneClickClearSearchPreflightFailureReason;
     };
 
+/** 生成完整一键清图 Worker 输入所需的快照。 */
 interface GraphwarOneClickClearSearchInputOptions {
   /** 成功预检后的 Graphwar 坐标边界。 */
   bounds: GraphBounds;

@@ -1,5 +1,5 @@
 /** 主线程侧 Graphwar 几何寻路 runner，集中管理 Worker 生命周期和取消。 */
-import { createPixelPoint } from "../../core/types";
+import { clonePixelPoint } from "../../core/types";
 import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearDagEdgeBuildResult,
@@ -80,8 +80,12 @@ export function createGraphwarPathfindingRunner() {
       type: "module",
     });
     worker.addEventListener("message", handleWorkerMessage);
-    worker.addEventListener("messageerror", handleWorkerMessageError);
-    worker.addEventListener("error", handleWorkerError);
+    worker.addEventListener("messageerror", () => {
+      rejectPendingTask(new Error("Graphwar pathfinding worker message could not be deserialized"));
+    });
+    worker.addEventListener("error", (event: ErrorEvent) => {
+      rejectPendingTask(event.error instanceof Error ? event.error : new Error(event.message));
+    });
     return worker;
   }
 
@@ -242,16 +246,6 @@ export function createGraphwarPathfindingRunner() {
     }
     completedTask.resolve(response.result);
     resetWorkerIfCacheInvalidated();
-  }
-
-  /** 把 Worker 消息反序列化失败转换成当前任务失败。 */
-  function handleWorkerMessageError() {
-    rejectPendingTask(new Error("Graphwar pathfinding worker message could not be deserialized"));
-  }
-
-  /** 把 Worker 运行时错误转换成当前任务失败。 */
-  function handleWorkerError(event: ErrorEvent) {
-    rejectPendingTask(event.error instanceof Error ? event.error : new Error(event.message));
   }
 
   /** 统一拒绝挂起任务并丢弃当前 Worker。 */
@@ -495,9 +489,4 @@ function cloneBoundsRect(boundsRect: GraphwarPathfindingRouteInput["boundsRect"]
     x: boundsRect.x,
     y: boundsRect.y,
   };
-}
-
-/** 将像素点复制为标准核心类型。 */
-function clonePixelPoint(point: GraphwarPathfindingRouteInput["startPoint"]) {
-  return createPixelPoint(point.x, point.y);
 }

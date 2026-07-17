@@ -5,7 +5,7 @@ import {
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
-import { graphToImagePoint, imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
+import { graphToImagePoint, imageToGraphPoint, pixelCirclesEqual, xPlusGoesRight } from "../../core/geometry";
 import {
   MAX_FORMULA_DECIMAL_PLACES,
   clampDecimalPlaces,
@@ -14,7 +14,7 @@ import {
   roundToDecimalPlaces,
 } from "../../core/numbers";
 import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../../core/plane-grid";
-import { nowMs } from "../../core/time";
+import { measureSyncStage, nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
@@ -265,7 +265,9 @@ function createGraphwarStepGlitchReplayContext(
   options: GraphwarStepGlitchPrefixOptions,
   timings: GraphwarStepGlitchScanTiming[],
 ): GraphwarStepGlitchReplayContext | Exclude<GraphwarStepGlitchScanResult, { status: "hit" }> {
-  if (!stepGlitchScanIsSupported(options.settings)) {
+  if (
+    !formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode)
+  ) {
     return createFailedResult("unsupported", 0, 0, undefined, timings);
   }
   if (
@@ -275,16 +277,13 @@ function createGraphwarStepGlitchReplayContext(
     return createFailedResult("invalid-input", 0, 0, undefined, timings);
   }
 
-  const simulationBoundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0));
-  const settings: GraphwarTrajectoryFormulaSettings =
-    options.settings.stepGlitchObstacleMask === options.simulationMask
-      ? options.settings
-      : { ...options.settings, stepGlitchObstacleMask: options.simulationMask };
-  const graphPoints = options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
   return {
-    formulaSettings: settings,
-    graphPoints,
-    simulationBoundaryExpansion,
+    formulaSettings:
+      options.settings.stepGlitchObstacleMask === options.simulationMask
+        ? options.settings
+        : { ...options.settings, stepGlitchObstacleMask: options.simulationMask },
+    graphPoints: options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
+    simulationBoundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
   };
 }
 
@@ -331,7 +330,7 @@ function prepareGraphwarStepGlitchPrefix(
     };
   }
 
-  const replay = measureGraphwarStepGlitchScanTiming(timings, "prepare-prefix", () =>
+  const replay = measureSyncStage(timings, "prepare-prefix", () =>
     replayPathToControlX(options, context, options.sourcePath, prefixTargetSequence, requiredTargets, lastGraphPoint.x),
   );
   if (!replay.targetsHit || !replay.acceptedPoint) {
@@ -369,7 +368,7 @@ export function createGraphwarStepGlitchPrefixScanner(
       }
 
       const directPath = [...options.sourcePath, target.targetPoint];
-      const directReplay = measureGraphwarStepGlitchScanTiming(timings, "validate-direct", () =>
+      const directReplay = measureSyncStage(timings, "validate-direct", () =>
         replayPathToControlX(options, context, directPath, targetSequence, requiredTargets, targetGraphPoint.x),
       );
       if (directReplay.targetsHit && directReplay.acceptedPoint) {
@@ -397,7 +396,7 @@ export function createGraphwarStepGlitchPrefixScanner(
           timings,
         );
       }
-      return measureGraphwarStepGlitchScanTiming(timings, "scan-candidates", () =>
+      return measureSyncStage(timings, "scan-candidates", () =>
         scanPreparedGraphwarStepGlitchPath(
           options,
           preparedPrefix as PreparedGraphwarStepGlitchPrefix,
@@ -439,6 +438,7 @@ export function replayGraphwarStepGlitchPathToControlX(
       );
 }
 
+/** 扫描已准备的前缀状态，按稳定顺序验证候选门和落点。 */
 function scanPreparedGraphwarStepGlitchPath(
   options: GraphwarStepGlitchPrefixOptions,
   prefix: PreparedGraphwarStepGlitchPrefix,
@@ -629,10 +629,6 @@ function scanPreparedGraphwarStepGlitchPath(
   return createFailedResult("no-path", expandedStates, bestReachedTargetCount, blockedPoint, timings);
 }
 
-function stepGlitchScanIsSupported(settings: GraphwarTrajectoryFormulaSettings) {
-  return formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.stepGlitchMode);
-}
-
 /** 后缀会反向改变 Step 发射点和旧轨迹；只复用坐标映射，候选仍从发射点回放整式。 */
 function replayPathToControlX(
   options: GraphwarStepGlitchPrefixOptions,
@@ -709,13 +705,10 @@ function createOrderedTargetSequence(
   requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
   target: GraphwarTrajectoryTargetCircle,
 ) {
-  return requiredTargets.some((required) => sameTargetCircle(required, target)) ? [] : [target];
+  return requiredTargets.some((required) => pixelCirclesEqual(required, target)) ? [] : [target];
 }
 
-function sameTargetCircle(left: GraphwarTrajectoryTargetCircle, right: GraphwarTrajectoryTargetCircle) {
-  return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
-}
-
+/** 判断两条像素路径是否逐点完全一致。 */
 function samePixelPath(left: readonly PixelPoint[], right: readonly PixelPoint[]) {
   if (left.length !== right.length) {
     return false;
@@ -730,19 +723,7 @@ function samePixelPath(left: readonly PixelPoint[], right: readonly PixelPoint[]
   return true;
 }
 
-function measureGraphwarStepGlitchScanTiming<TResult>(
-  timings: GraphwarStepGlitchScanTiming[],
-  stage: GraphwarStepGlitchScanTimingStage,
-  task: () => TResult,
-) {
-  const startedAt = nowMs();
-  try {
-    return task();
-  } finally {
-    timings.push({ elapsedMs: nowMs() - startedAt, stage });
-  }
-}
-
+/** 复用输入一致的扫描索引，否则按本次边界设置重建。 */
 function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, boundaryExpansion: number) {
   const index = options.maskIndex;
   const mirrored = !xPlusGoesRight(options.bounds);
@@ -853,11 +834,13 @@ function getFarthestFreeX(index: GraphwarStepGlitchScanMaskIndex, searchX: numbe
   return index.farthestFreeX[row * GRAPHWAR_PLANE_LENGTH + searchX];
 }
 
+/** 把截图像素点映射到统一向右推进的搜索网格。 */
 function pixelPointToSearchGrid(point: PixelPoint, boundsRect: BoundsRect, mirrored: boolean) {
   const plane = imagePointToPlaneGridPoint(point, boundsRect);
   return { x: mirrorPlaneX(plane.x, mirrored), y: plane.y };
 }
 
+/** 把 Graphwar 坐标点映射到统一向右推进的搜索网格。 */
 function graphPointToSearchGrid(
   point: GraphPoint,
   options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
@@ -870,6 +853,7 @@ function graphPointToSearchGrid(
   );
 }
 
+/** 把 Graphwar x 映射到搜索网格列。 */
 function graphXToSearchColumn(
   graphX: number,
   graphY: number,
@@ -879,6 +863,7 @@ function graphXToSearchColumn(
   return graphPointToSearchGrid(createGraphPoint(graphX, graphY), options, mirrored).x;
 }
 
+/** 把搜索网格边界还原成 Graphwar x。 */
 function searchBoundaryToGraphX(
   searchBoundaryX: number,
   options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
@@ -914,6 +899,7 @@ function createControlPointForFormulaEndX(
     : undefined;
 }
 
+/** 按 x+ 方向选择原始或镜像平面列。 */
 function mirrorPlaneX(x: number, mirrored: boolean) {
   return mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - x : x;
 }
@@ -954,6 +940,7 @@ export function findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
   return undefined;
 }
 
+/** 统一构造带扫描统计的失败结果。 */
 function createFailedResult(
   status: Exclude<GraphwarStepGlitchScanResult["status"], "hit">,
   expandedStates: number,

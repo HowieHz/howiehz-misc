@@ -10,10 +10,12 @@ import {
 export type SmartPathfindingStatusKind = "info" | "success" | "warning" | "error";
 export type SmartPathfindingPhase = "optimize" | "search" | "trajectory";
 
+/** 寻路会话取消底层 runner 所需的最小接口。 */
 interface GraphwarPathfindingRunnerCancellationAdapter {
   cancel(): void;
 }
 
+/** 智能寻路会话所需的 runner、状态文案与预览依赖。 */
 export interface GraphwarSmartPathfindingSessionOptions {
   /** 撞击点闪烁持续时间。 */
   blockedPointFlashMs: number;
@@ -29,6 +31,7 @@ export interface GraphwarSmartPathfindingSessionOptions {
   getInProgressMessage: () => string;
 }
 
+/** 隔离寻路换代、取消、状态与预览生命周期的控制器。 */
 export interface GraphwarSmartPathfindingSessionController {
   activePhase: Ref<SmartPathfindingPhase>;
   blockedPoint: Ref<PixelPoint | undefined>;
@@ -80,6 +83,7 @@ export function useGraphwarSmartPathfindingSession(
   let blockedPointTimer: ReturnType<typeof setTimeout> | undefined;
   let cancelToken = 0;
 
+  /** 取消旧 runner，换代 token，并启动新的权威寻路会话。 */
   function start(message?: string) {
     options.pathfindingRunner.cancel();
     cancelToken += 1;
@@ -91,6 +95,7 @@ export function useGraphwarSmartPathfindingSession(
     return cancelToken;
   }
 
+  /** 取消活动会话并按需展示用户可见状态。 */
   function cancel(showStatus: boolean) {
     if (!inProgress.value) {
       return false;
@@ -106,12 +111,9 @@ export function useGraphwarSmartPathfindingSession(
     return true;
   }
 
-  function isCurrentRun(token: number) {
-    return token === cancelToken;
-  }
-
+  /** 只允许当前 token 结束会话，过期结果直接丢弃。 */
   function finishRun(token: number) {
-    if (!isCurrentRun(token)) {
+    if (token !== cancelToken) {
       return false;
     }
 
@@ -120,36 +122,43 @@ export function useGraphwarSmartPathfindingSession(
     return true;
   }
 
+  /** 原子更新寻路状态正文和类型。 */
   function setStatus(message: string, kind: SmartPathfindingStatusKind) {
     status.value = message;
     statusKind.value = kind;
   }
 
+  /** 切换活动阶段并刷新进行中文案。 */
   function setPhase(phase: SmartPathfindingPhase) {
     activePhase.value = phase;
     updateInProgressStatus();
   }
 
+  /** 在会话仍活动且页面模式匹配时刷新进行中文案。 */
   function updateInProgressStatus() {
     if (inProgress.value && options.isPathfindingModeActive()) {
       setStatus(options.getInProgressMessage(), "warning");
     }
   }
 
+  /** 清空寻路状态正文并恢复普通类型。 */
   function clearStatus() {
     setStatus("", "info");
   }
 
+  /** 发布当前预览路径的独立副本。 */
   function setPreviewPath(points: readonly PixelPoint[]) {
     previewPath.value = [...points];
   }
 
+  /** 清空搜索候选、当前位置和已接受边。 */
   function clearSearchPreview() {
     previewAcceptedEdges.value = [];
     previewCurrentPoint.value = undefined;
     previewPoints.value = [];
   }
 
+  /** 短暂突出单个阻挡点，并覆盖旧计时器。 */
   function flashBlockedPoint(point: PixelPoint | undefined) {
     clearBlockedPoint();
     if (!point) {
@@ -163,6 +172,7 @@ export function useGraphwarSmartPathfindingSession(
     }, options.blockedPointFlashMs);
   }
 
+  /** 短暂突出阻挡线段，并覆盖旧计时器。 */
   function flashBlockedSegment(start: PixelPoint | undefined, end: PixelPoint | undefined) {
     clearBlockedPoint();
     if (!start || !end) {
@@ -176,6 +186,7 @@ export function useGraphwarSmartPathfindingSession(
     }, options.blockedPointFlashMs);
   }
 
+  /** 清空阻挡点和线段反馈。 */
   function clearBlockedPoint() {
     if (blockedPointTimer) {
       clearTimeout(blockedPointTimer);
@@ -185,10 +196,12 @@ export function useGraphwarSmartPathfindingSession(
     blockedSegment.value = undefined;
   }
 
+  /** 发布当前候选起终点连线。 */
   function setPreviewConnection(startPoint: PixelPoint, targetPoint: PixelPoint) {
     previewConnection.value = createGraphwarPathfindingLineSegment(startPoint, targetPoint);
   }
 
+  /** 用不可变快照替换当前搜索预览。 */
   function setSearchPreview(snapshot: GraphwarPathfindingPreviewSnapshot) {
     previewAcceptedEdges.value = [...snapshot.acceptedEdges];
     previewCurrentPoint.value = snapshot.current;
@@ -196,6 +209,7 @@ export function useGraphwarSmartPathfindingSession(
     previewPath.value = [...snapshot.path];
   }
 
+  /** 清空活动结果和搜索过程的全部预览。 */
   function clearPreview() {
     clearActivePreview();
     clearBlockedPoint();
@@ -209,6 +223,7 @@ export function useGraphwarSmartPathfindingSession(
     optimizationPreviewPoint.value = undefined;
   }
 
+  /** 释放 runner、计时器和预览状态。 */
   function dispose() {
     clearBlockedPoint();
   }
@@ -227,7 +242,7 @@ export function useGraphwarSmartPathfindingSession(
     flashBlockedPoint,
     flashBlockedSegment,
     inProgress,
-    isCurrentRun,
+    isCurrentRun: (token: number) => token === cancelToken,
     optimizationPreviewPoint,
     previewAcceptedEdges,
     previewConnection,

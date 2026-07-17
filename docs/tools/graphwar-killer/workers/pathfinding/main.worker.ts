@@ -1,7 +1,7 @@
 import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../../core/game/forward-rule";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
-import { nowMs } from "../../core/time";
+import { measureSyncStage, nowMs } from "../../core/time";
 import { createGraphPoint, type GraphBounds, type GraphPoint, type PixelPoint } from "../../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../../detection/objects";
@@ -79,6 +79,7 @@ interface GraphwarPathfindingWorkerScope {
 
 const workerScope = self as unknown as GraphwarPathfindingWorkerScope;
 
+/** Master Worker 缓存的一份可视图障碍数据。 */
 interface MasterVisibilityGraphCacheEntry {
   /** Master worker 内部保留的 route mask 引用；cache 引用相等检查必须用它。 */
   routeMask: Uint8Array;
@@ -86,6 +87,7 @@ interface MasterVisibilityGraphCacheEntry {
   visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData;
 }
 
+/** Route mask 查询结果及其缓存耗时。 */
 interface MasterRouteMaskLookup {
   /** Worker 查询是否复用了已按 tolerance 派生的 route mask。 */
   cacheHit: boolean;
@@ -97,6 +99,7 @@ interface MasterRouteMaskLookup {
   summedArea?: GraphwarPlaneMaskSummedArea;
 }
 
+/** 基础 mask 派生后的路线 mask 与可选可视图数据。 */
 interface MasterRouteMaskCacheEntry {
   mask: Uint8Array;
   summedArea?: GraphwarPlaneMaskSummedArea;
@@ -107,11 +110,13 @@ type RouteRuntimeOptions = Pick<
   "estimateRemainingSecondaryCost" | "evaluateEdge" | "initialRouteState" | "initialRouteStateKey"
 >;
 
+/** Step 智能寻路复用的包络和前缀平台状态。 */
 interface SmartStepRouteContext {
   model: GraphwarStepRouteModel;
   summedArea: GraphwarPlaneMaskSummedArea;
 }
 
+/** Master route mask 缓存只需读取的输入字段。 */
 interface MasterRouteMaskSourceInput {
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;
@@ -123,6 +128,7 @@ interface MasterRouteMaskSourceInput {
   routeTolerancePlanePixels: number;
 }
 
+/** 一个边 Worker 的就绪、任务与完成状态。 */
 interface EdgeWorkerHandle {
   /** 子 worker 当前正在处理的 job；失败 fallback 时会补跑所有未完成 job。 */
   activeJob?: GraphwarOneClickClearDagEdgeBuildJob;
@@ -142,6 +148,7 @@ interface EdgeWorkerHandle {
   workerIndex: number;
 }
 
+/** 边 Worker 批次聚合的建模、寻路和映射耗时。 */
 interface EdgeRouteTimingTotals {
   /** 平面几何寻路累计耗时。 */
   routePathfindingElapsedMs: number;
@@ -151,6 +158,7 @@ interface EdgeRouteTimingTotals {
 
 type OneClickClearDagEdgeSessionState = "disposed" | "fallback" | "idle" | "running";
 
+/** 当前 DAG 建边批次的作业、结果和结算状态。 */
 interface OneClickClearDagEdgeBatch {
   /** 已完成 job id；worker 失败时只串行补跑剩余项。 */
   completedJobIds: Set<number>;
@@ -172,6 +180,7 @@ interface OneClickClearDagEdgeBatch {
   workerCount: number;
 }
 
+/** 一次复用 edge Worker 池的请求级会话。 */
 interface OneClickClearDagEdgeSession {
   /** 结束本次一键清图请求，并返回每个 child worker 唯一的一条生命周期 timing。 */
   dispose: () => GraphwarOneClickClearDebugTiming[];
@@ -185,6 +194,7 @@ const masterThetaStarScratch = createGraphwarThetaStarScratch();
 const masterVisibilityGraphCache = new Map<string, MasterVisibilityGraphCacheEntry>();
 let masterStepGlitchEvidence: MasterStepGlitchEvidence | undefined;
 
+/** Master 缓存的邪道前缀证据及其输入身份。 */
 interface MasterStepGlitchEvidence extends GraphwarStepGlitchPrefixEvidence {
   /** 只有精确最终整式输入相同才能复用 acceptedPoint。 */
   key: string;
@@ -418,7 +428,7 @@ async function findSmartPath(
   }
 
   const normalizedPath = normalizeSmartPathfindingPathFromPlanePath(routeResult.path, input.targetPoint, input);
-  const validation = measureSmartPathfindingWorkerTiming(timings, "validate-trajectory", () =>
+  const validation = measureSyncStage(timings, "validate-trajectory", () =>
     validateSmartPathfindingTrajectory(input, normalizedPath, stepContext),
   );
   if (!validation.followsGraphRule) {
@@ -434,7 +444,7 @@ async function findSmartPath(
 
   const path =
     input.deleteOptimizationEnabled && normalizedPath.length > 3
-      ? measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
+      ? measureSyncStage(timings, "optimize-path", () =>
           optimizeSmartPathfindingPath(input, normalizedPath, stepContext),
         )
       : normalizedPath;
@@ -483,7 +493,7 @@ function findStepGlitchSmartPath(
     };
   }
 
-  const validation = measureSmartPathfindingWorkerTiming(timings, "validate-trajectory", () => {
+  const validation = measureSyncStage(timings, "validate-trajectory", () => {
     if (input.settings.stepGlitchObstacleMask !== input.simulationMask) {
       return validateSmartPathfindingTrajectory(input, scanResult.path, undefined);
     }
@@ -510,7 +520,7 @@ function findStepGlitchSmartPath(
   let acceptedPoint = scanResult.acceptedPoint;
   let stepGlitchFormulaPrefix = scanResult.stepGlitchFormulaPrefix;
   if (input.deleteOptimizationEnabled && input.settings.stepGlitchObstacleMask === simulationMask) {
-    const optimized = measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
+    const optimized = measureSyncStage(timings, "optimize-path", () =>
       optimizeStepGlitchSmartPath(
         input,
         path,
@@ -524,9 +534,7 @@ function findStepGlitchSmartPath(
     acceptedPoint = optimized.acceptedPoint;
     stepGlitchFormulaPrefix = optimized.stepGlitchFormulaPrefix;
   } else if (input.deleteOptimizationEnabled) {
-    path = measureSmartPathfindingWorkerTiming(timings, "optimize-path", () =>
-      optimizeSmartPathfindingPath(input, path, undefined),
-    );
+    path = measureSyncStage(timings, "optimize-path", () => optimizeSmartPathfindingPath(input, path, undefined));
   }
   setMasterStepGlitchEvidence(input, path, input.hitTarget, acceptedPoint, stepGlitchFormulaPrefix);
   return { path, timings };
@@ -579,6 +587,7 @@ function optimizeStepGlitchSmartPath(
   };
 }
 
+/** 判断邪道证据是否可复用所需的最小输入。 */
 interface MasterStepGlitchEvidenceContext {
   bounds: GraphBounds;
   boundsRect: GraphwarSmartPathfindingPathInput["boundsRect"];
@@ -634,6 +643,7 @@ function setMasterStepGlitchEvidence(
   };
 }
 
+/** 判断 master Worker 是否应保存 Step 邪道前缀证据。 */
 function masterStepGlitchEvidenceIsEnabled(input: MasterStepGlitchEvidenceContext) {
   return Boolean(input.simulationMask && input.settings.stepGlitchObstacleMask === input.simulationMask);
 }
@@ -653,10 +663,11 @@ function createMasterStepGlitchEvidenceKey(
     createStepGlitchFormulaSettingsKey(input.settings),
     path.map((point) => [point.x, point.y]),
     // Evidence 只恢复精确公式前缀，不保存历史士兵：后续请求从路径尾点继续，但不承诺重命中旧目标。
-    prefixTarget ? createTargetCircleKey(prefixTarget) : undefined,
+    prefixTarget ? [prefixTarget.center.x, prefixTarget.center.y, prefixTarget.radius] : undefined,
   ]);
 }
 
+/** 把影响邪道前缀回放的公式设置编码成缓存 key 片段。 */
 function createStepGlitchFormulaSettingsKey(settings: GraphwarTrajectoryFormulaSettings) {
   return [
     settings.algorithm,
@@ -670,10 +681,7 @@ function createStepGlitchFormulaSettingsKey(settings: GraphwarTrajectoryFormulaS
   ];
 }
 
-function createTargetCircleKey(target: GraphwarTrajectoryTargetCircle) {
-  return [target.center.x, target.center.y, target.radius];
-}
-
+/** 把邪道扫描阶段追加到智能寻路 Worker 耗时。 */
 function appendStepGlitchScanTimings(
   timings: GraphwarSmartPathfindingWorkerTiming[],
   scanTimings: readonly { elapsedMs: number; stage: GraphwarStepGlitchScanTimingStage }[],
@@ -867,23 +875,6 @@ function optimizeSmartPathfindingPath(
     }
   }
   return optimized;
-}
-
-/** 记录同步智能寻路阶段耗时，同时保留任务的返回值与异常。 */
-function measureSmartPathfindingWorkerTiming<TResult>(
-  timings: GraphwarSmartPathfindingWorkerTiming[],
-  stage: GraphwarSmartPathfindingWorkerTiming["stage"],
-  task: () => TResult,
-) {
-  const startedAt = nowMs();
-  try {
-    return task();
-  } finally {
-    timings.push({
-      elapsedMs: nowMs() - startedAt,
-      stage,
-    });
-  }
 }
 
 /** 在 master 内执行完整一键清图，并管理请求级 edge Worker session。 */

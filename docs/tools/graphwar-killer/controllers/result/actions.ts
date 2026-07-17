@@ -1,13 +1,10 @@
 import { computed, ref, type Ref } from "vue";
 
-import type { FormulaResult, ToolWorkflowMode, TransferStatus } from "../../core/types";
+import type { FormulaResult, ReadonlyValue as ReadonlyRef, ToolWorkflowMode, TransferStatus } from "../../core/types";
 
 const graphwarCopyStatusFlashMs = 2000;
 
-interface ReadonlyRef<T> {
-  readonly value: T;
-}
-
+/** 复制公式操作的按钮与无障碍反馈文案。 */
 interface GraphwarResultCopyMessages {
   /** 默认复制按钮文案。 */
   buttonDefault: string;
@@ -21,6 +18,7 @@ interface GraphwarResultCopyMessages {
   success: string;
 }
 
+/** 结果操作控制器读取的模式、公式和副作用依赖。 */
 interface GraphwarResultActionsOptions {
   /** 当前公式生成结果；solver 模式应以结果对象存在性决定按钮可用性。 */
   formulaResult: ReadonlyRef<FormulaResult | undefined>;
@@ -34,6 +32,7 @@ interface GraphwarResultActionsOptions {
   toolWorkflowMode: ReadonlyRef<ToolWorkflowMode>;
 }
 
+/** 管理公式复制、模拟器清空和短时反馈状态的控制器。 */
 export interface GraphwarResultActionsController {
   /** 是否允许清空模拟器输入。 */
   canClearSimulatorInputs: ReadonlyRef<boolean>;

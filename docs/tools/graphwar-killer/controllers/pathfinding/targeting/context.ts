@@ -1,4 +1,4 @@
-import type { BoundsRect, GraphBounds, PixelPoint } from "../../../core/types";
+import type { BoundsRect, GraphBounds, PixelPoint, ReadonlyValue as ReadonlyRef } from "../../../core/types";
 import {
   createAllowedTargetRect as createGraphwarAllowedTargetRect,
   createGraphwarSoldierHitCircle,
@@ -13,11 +13,6 @@ import {
   type GraphwarTargetingGeometry,
   type GraphwarTargetingSoldier,
 } from "../../../pathfinding/targeting";
-
-/** 只读取 Vue ref 当前值所需的最小 Interface。 */
-interface ReadonlyRef<T> {
-  readonly value: T;
-}
 
 /** 将页面响应式状态适配为纯目标规则所需的输入。 */
 interface GraphwarTargetingContextOptions<TSoldier extends GraphwarTargetingSoldier> {

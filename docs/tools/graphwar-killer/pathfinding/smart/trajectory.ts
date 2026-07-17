@@ -24,6 +24,7 @@ export interface GraphwarSmartPathfindingTrajectoryResult {
   visiblePixels: PixelPoint[];
 }
 
+/** 把寻路路径验证成真实公式轨迹所需的输入。 */
 interface GraphwarSmartPathfindingTrajectoryOptions {
   /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;

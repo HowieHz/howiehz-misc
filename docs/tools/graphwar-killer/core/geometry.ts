@@ -31,6 +31,14 @@ export function pixelPointsEqual(left: PixelPoint, right: PixelPoint) {
   return left.x === right.x && left.y === right.y;
 }
 
+/** 判断两个截图像素圆是否具有完全相同的中心和半径。 */
+export function pixelCirclesEqual(
+  left: { center: PixelPoint; radius: number },
+  right: { center: PixelPoint; radius: number },
+) {
+  return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
+}
+
 /** 将截图像素点转换为 Graphwar 笛卡尔坐标。 */
 export function imageToGraphPoint(point: PixelPoint, bounds: GraphBounds, rect: BoundsRect): GraphPoint {
   return createGraphPoint(

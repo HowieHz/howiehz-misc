@@ -17,6 +17,7 @@ export interface GraphwarSmartPathfindingSearchTolerances {
   simulationBoundaryInsetPlanePixels: number;
 }
 
+/** 生成单目标智能寻路 Worker 输入所需的快照。 */
 interface GraphwarSmartPathfindingSearchInputOptions {
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;

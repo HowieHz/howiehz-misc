@@ -15,6 +15,7 @@ import {
 
 type GraphwarObstacleEditorStatusKind = "success" | "warning";
 
+/** 障碍画笔控制器所需的 mask、坐标和交互依赖。 */
 export interface GraphwarObstacleEditorOptions {
   /** 截图中的 Graphwar 坐标系矩形；笔刷坐标应以当前矩形换算到原始平面。 */
   boundsRect: Ref<BoundsRect>;
@@ -36,6 +37,7 @@ export interface GraphwarObstacleEditorOptions {
   setStatus: (message: string, kind: GraphwarObstacleEditorStatusKind) => void;
 }
 
+/** 管理障碍绘制、擦除、撤销状态与笔刷预览的控制器。 */
 export interface GraphwarObstacleEditorController {
   /** 接收自动识别出的障碍 mask，并保存可恢复基线。 */
   applyDetectedObstacles: (obstacles: DetectedObstacleMap) => void;

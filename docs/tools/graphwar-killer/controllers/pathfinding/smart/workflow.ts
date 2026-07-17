@@ -70,6 +70,7 @@ interface GraphwarSmartPathfindingRunRequest<TTarget> {
   preflight: () => boolean;
 }
 
+/** 执行单目标智能寻路并统一收敛状态与失败结果的控制器。 */
 export interface GraphwarSmartPathfindingRunWorkflowController<TTarget> {
   /** 运行一次单目标智能寻路，并负责 token、调试耗时、状态和结果落地。 */
   run: (request: GraphwarSmartPathfindingRunRequest<TTarget>) => Promise<boolean>;
@@ -135,6 +136,7 @@ export function useGraphwarSmartPathfindingRunWorkflow<TTarget>(
     return true;
   }
 
+  /** 只让当前会话写入失败状态，并统一结束运行 token。 */
   function finishWithFailure(
     startedAt: number,
     timings: SmartPathfindingDebugTimingEntry[],

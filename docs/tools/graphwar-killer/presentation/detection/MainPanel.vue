@@ -8,6 +8,7 @@ import { getInputValue } from "../dom/input";
 
 type GraphwarDetectionPanelStatusKind = "info" | "success" | "warning" | "error";
 
+/** 识别面板标题旁的主状态。 */
 interface GraphwarDetectionPanelHeaderStatus {
   /** 标题右侧状态文案；空字符串表示不显示。 */
   message: string;
@@ -15,6 +16,7 @@ interface GraphwarDetectionPanelHeaderStatus {
   kind: GraphwarDetectionPanelStatusKind;
 }
 
+/** 与识别主状态并列展示的非致命警告。 */
 interface GraphwarDetectionPanelStatusWarning {
   /** 识别结果警告文案；空字符串表示不显示。 */
   message: string;
@@ -22,6 +24,7 @@ interface GraphwarDetectionPanelStatusWarning {
   title: string;
 }
 
+/** 单条预先格式化的检测调试耗时。 */
 interface GraphwarDetectionPanelDebugRow {
   /** 稳定 key；父页面应按原 stage-index 规则生成。 */
   key: string;
@@ -31,6 +34,7 @@ interface GraphwarDetectionPanelDebugRow {
   text: string;
 }
 
+/** Agent 数据源相关控件和能力状态。 */
 interface GraphwarDetectionPanelAgentModel {
   /** Agent 地址输入框文本。 */
   baseUrlText: string;
@@ -50,6 +54,7 @@ interface GraphwarDetectionPanelAgentModel {
   readReason?: string;
 }
 
+/** 截图识别、Agent 来源和调试信息的展示模型。 */
 export interface GraphwarDetectionPanelModel {
   /** 托管期间锁定识别来源、Agent 配置和手动读取入口。 */
   interactionDisabled: boolean;

@@ -17,8 +17,7 @@ export function clampNumber(value: number, min: number, max: number) {
 
 /** 按参与比较的数值尺度估算 double 舍入误差容差。 */
 export function doublePrecisionTolerance(...values: readonly number[]) {
-  const finiteScale = values.filter(Number.isFinite).reduce((scale, value) => Math.max(scale, Math.abs(value)), 1);
-  return Number.EPSILON * finiteScale;
+  return Number.EPSILON * values.filter(Number.isFinite).reduce((scale, value) => Math.max(scale, Math.abs(value)), 1);
 }
 
 /** 使用 double 精度容差比较两个浮点数是否近似相等。 */
@@ -26,8 +25,7 @@ export function nearlyEqual(left: number, right: number) {
   return Math.abs(left - right) <= doublePrecisionTolerance(left, right);
 }
 
-const nextDoubleBuffer = new ArrayBuffer(8);
-const nextDoubleView = new DataView(nextDoubleBuffer);
+const nextDoubleView = new DataView(new ArrayBuffer(8));
 
 /** 返回大于 value 的最小 JavaScript/Java double；用于表达 Graphwar x 只需严格前进。 */
 export function nextUpDouble(value: number) {
@@ -69,8 +67,7 @@ export function clampDecimalPlaces(value: number) {
 
 /** 折叠微小浮点残差，避免生成公式里出现 -0 或当前精度下的 0.000...。 */
 export function normalizeZero(value: number, decimalPlaces = DEFAULT_FORMULA_DECIMAL_PLACES) {
-  const threshold = 0.5 * 10 ** -clampDecimalPlaces(decimalPlaces);
-  return Math.abs(value) < threshold ? 0 : value;
+  return Math.abs(value) < 0.5 * 10 ** -clampDecimalPlaces(decimalPlaces) ? 0 : value;
 }
 
 /** 按公式输出精度生成数值副本；内部计算在调用前仍保留 double 精度。 */
@@ -108,7 +105,9 @@ export function formatDecimal(value: number, decimalPlaces = DEFAULT_FORMULA_DEC
     return "0";
   }
 
-  return trimTrailingDecimalZeros(expandExponentialNotation(normalizedValue.toFixed(safeDecimalPlaces)));
+  return expandExponentialNotation(normalizedValue.toFixed(safeDecimalPlaces))
+    .replace(/(\.\d*?)0+$/, "$1")
+    .replace(/\.$/, "");
 }
 
 /** 格式化输入框里的坐标边界，保留 JS double 的最短往返表示且不受公式输出精度影响。 */
@@ -118,11 +117,6 @@ export function formatDoublePrecisionDecimal(value: number) {
   }
 
   return expandExponentialNotation(value.toString());
-}
-
-/** 去掉固定小数输出的末尾 0，缩短 Graphwar 公式文本。 */
-function trimTrailingDecimalZeros(value: string) {
-  return value.includes(".") ? value.replace(/\.?0+$/, "") : value;
 }
 
 /** Graphwar 不识别科学计数法；把 1e+21 展开成普通十进制数字串。 */

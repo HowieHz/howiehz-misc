@@ -8,6 +8,7 @@ import ToggleField from "../controls/ToggleField.vue";
 
 type GraphwarPathfindingPanelStatusKind = "info" | "success" | "warning" | "error";
 
+/** 寻路面板标题旁的当前任务状态。 */
 interface GraphwarPathfindingPanelHeaderStatus {
   /** 面板标题旁显示的完整任务状态。 */
   message: string;
@@ -17,6 +18,7 @@ interface GraphwarPathfindingPanelHeaderStatus {
   title: string;
 }
 
+/** 单条预先格式化并带缩进的寻路调试耗时。 */
 interface GraphwarPathfindingPanelDebugRow {
   /** 由原始阶段和索引生成的稳定行键。 */
   key: string;
@@ -28,6 +30,7 @@ interface GraphwarPathfindingPanelDebugRow {
   title?: string;
 }
 
+/** 由偏好值和能力状态共同驱动的寻路开关。 */
 interface GraphwarPathfindingToggle {
   /** 持久化的偏好值。 */
   enabled: boolean;
@@ -37,6 +40,7 @@ interface GraphwarPathfindingToggle {
   reason?: string;
 }
 
+/** 可直接触发的寻路任务及其能力说明。 */
 interface GraphwarPathfindingTask {
   /** 展示层和命令守卫共用的能力状态。 */
   state: GraphwarControlCapability["state"];
@@ -46,6 +50,7 @@ interface GraphwarPathfindingTask {
   title: string;
 }
 
+/** 智能寻路、一键清图和托管控制的展示模型。 */
 export interface GraphwarSmartPathfindingPanelModel {
   /** 当前 Step ODE 是否实际使用固定邪道扫描器。 */
   usesStepGlitchRouting: boolean;

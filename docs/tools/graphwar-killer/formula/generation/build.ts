@@ -216,7 +216,7 @@ export function buildFormula(
     };
   }
 
-  if (isCubicInterpolationAlgorithm(algorithm)) {
+  if (algorithm === "pchip" || algorithm === "akima") {
     return {
       // pchip/akima 共用同一段 Hermite 表达式，再按模式取 y、y' 或 y''。
       expression: formatSoftCubicInterpolationExpression(
@@ -961,11 +961,6 @@ function createStepTerms(points: readonly GraphPoint[]) {
   return terms;
 }
 
-/** 收窄三次插值算法类型，方便调用方进入 PCHIP/Akima 分支后获得精确类型。 */
-function isCubicInterpolationAlgorithm(algorithm: AlgorithmMode): algorithm is "pchip" | "akima" {
-  return algorithm === "pchip" || algorithm === "akima";
-}
-
 /** 格式化用户可粘贴到 Graphwar 的基础 y= sigmoid 阶跃表达式。 */
 function formatStepExpression(formula: CompiledStepFormula, decimalPlaces: number | undefined) {
   const parts: string[] = [];
@@ -1512,17 +1507,13 @@ function evaluateStableSignRatio(
   );
 }
 
-/** 分母除零保护值不能跟随用户小数位，否则低精度输出会把它折成 0。 */
-function formatSignEpsilon() {
-  return formatDoublePrecisionDecimal(Number.EPSILON);
-}
-
 /** 格式化逻辑 sign 项；未确认折点时保留 Graphwar 原始数值行为。 */
 function formatStableSignRatio(argumentText: string, protectedSign: boolean) {
   if (!protectedSign) {
     return `(${argumentText})/abs(${argumentText})`;
   }
-  return `(${argumentText})/(abs(${argumentText})+${formatSignEpsilon()})`;
+  // 分母保护值不能跟随用户小数位，否则低精度输出会把它折成 0。
+  return `(${argumentText})/(abs(${argumentText})+${formatDoublePrecisionDecimal(Number.EPSILON)})`;
 }
 
 /** 为双绝对值连接表达式格式化 abs(x+c)。 */

@@ -9,6 +9,7 @@ import {
   createGraphwarAgentWorldSnapshot,
   GRAPHWAR_AGENT_DEFAULT_BASE_URL,
   GraphwarAgentClientError,
+  isGraphwarAgentLocalHuman,
   normalizeGraphwarAgentBaseUrl,
   parseGraphwarAgentState,
   parseGraphwarAgentWorldObstacleMask,
@@ -192,26 +193,17 @@ const { locale } = defineProps<{
 
 const graphwarDefaultXLimitText = formatDoublePrecisionDecimal(GRAPHWAR_DEFAULT_X_LIMIT);
 const graphwarVisibleYLimitText = formatDoublePrecisionDecimal(GRAPHWAR_VISIBLE_Y_LIMIT);
-const graphwarObstacleToleranceLimit = Math.floor(GRAPHWAR_PLANE_LENGTH / 2);
 const graphwarObstacleMaxArea = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const graphwarBoundsMinimumSizePixels = 4;
 const graphwarStageGridAxisEpsilon = 1e-9;
-const graphwarStageGridTargetLineCount = 64;
-const graphwarStageGridStepMultipliers = [1, 2, 5, 10] as const;
 const magnifierMinimumZoom = 1;
 const magnifierSliderMaximumZoom = 5;
 const magnifierInputMaximumZoom = 100;
 const oneClickClearDeleteCheckRadiusMinimumPlanePixels = 0;
-// 默认值应对应 Graphwar 原版士兵命中半径 7px 的一半；搜索前再按截图横向比例换算。
-const oneClickClearDeleteCheckRadiusDefaultPlanePixels = GRAPHWAR_SOLDIER_RADIUS / 2;
 const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
-const obstacleBrushEditRefreshDelayMs = 250;
-const smartPathfindingBlockedPointFlashMs = 1800;
 const graphwarAgentStatusFlashMs = 2000;
-const mainObstacleBrushClipPathId = "graphwar-killer-obstacle-brush-clip";
-const magnifierObstacleBrushClipPathId = "graphwar-killer-magnifier-obstacle-brush-clip";
 // 页面状态按未来可抽工作流分区维护：基础舞台、公式设置、截图、识别、障碍编辑、寻路。
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
 // boundsRect 会保留上一次矩形数值；boundsReady 表示该矩形已在当前截图上被用户或识别流程确认。
@@ -298,7 +290,8 @@ const graphwarAgentObstacleSimulationToleranceText = ref("0");
 // 邪道扫描直接使用精确障碍像素；实际生效时优先于截图和 Agent 来源容差。
 const stepGlitchRoutePlanningToleranceText = ref("0");
 const stepGlitchObstacleSimulationToleranceText = ref("0");
-const oneClickClearDeleteCheckRadiusText = ref(String(oneClickClearDeleteCheckRadiusDefaultPlanePixels));
+// 默认值对应 Graphwar 原版士兵命中半径 7px 的一半；搜索前再按截图横向比例换算。
+const oneClickClearDeleteCheckRadiusText = ref(String(GRAPHWAR_SOLDIER_RADIUS / 2));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
 const graphwarAgentEnabled = ref(false);
@@ -454,7 +447,7 @@ let activePathfindingTask:
   | undefined;
 // 智能寻路和一键清图共用同一组运行状态、预览层和取消 token，避免两个异步任务同时回写页面。
 const smartPathfindingSession = useGraphwarSmartPathfindingSession({
-  blockedPointFlashMs: smartPathfindingBlockedPointFlashMs,
+  blockedPointFlashMs: 1800,
   getCancelledMessage: () => createSmartPathfindingCancelledMessage(locale),
   getInProgressMessage: () => getSmartPathfindingInProgressMessage(),
   isPathfindingModeActive: () => effectiveSmartPathfindingEnabled.value,
@@ -577,7 +570,7 @@ const {
   updateBrushPreview: updateObstacleBrushPreview,
 } = useGraphwarObstacleEditor({
   boundsRect,
-  editRefreshDelayMs: obstacleBrushEditRefreshDelayMs,
+  editRefreshDelayMs: 250,
   getBrushDiameter: () =>
     parsedObstacleBrushDiameter.value.ok ? parsedObstacleBrushDiameter.value.diameter : undefined,
   getEditsAppliedMessage: (count) => locale.status.detection.obstacleEditsApplied(count),
@@ -744,7 +737,7 @@ const {
     },
     pathfinding: {
       deleteCheckRadiusMinimumPlanePixels: oneClickClearDeleteCheckRadiusMinimumPlanePixels,
-      obstacleToleranceLimit: graphwarObstacleToleranceLimit,
+      obstacleToleranceLimit: Math.floor(GRAPHWAR_PLANE_LENGTH / 2),
     },
   },
 });
@@ -756,6 +749,7 @@ const effectiveOneClickClearTolerances = computed(() => {
   return tolerances.ok ? { ...tolerances, oneClickClearDeleteCheckRadiusPlanePixels: 0 } : undefined;
 });
 
+/** 将 Graphwar 原生平面半径缩放到当前截图像素。 */
 function getGraphwarPlaneRadiusPixels(sourceRadius: number) {
   if (!parsedBounds.value.ok) {
     return undefined;
@@ -822,9 +816,16 @@ const formulaInputDecimalPlaces = computed(() =>
 const formulaInputSteepness = computed(() => (parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1));
 const formulaInputPrecisionValid = computed(() => parsedPrecision.value.ok);
 const formulaInputSteepnessValid = computed(() => parsedSteepness.value.ok);
-const liveClickPreviewWorkerCount = computed(() =>
-  normalizeLiveClickPreviewWorkerCount(liveClickPreviewWorkerCountText.value),
-);
+/** 把用户配置收敛到实时预览 runner 支持的 Worker 数范围。 */
+const liveClickPreviewWorkerCount = computed(() => {
+  const workerCount = parseFiniteNumber(liveClickPreviewWorkerCountText.value);
+  return workerCount === undefined ||
+    !Number.isInteger(workerCount) ||
+    workerCount < 1 ||
+    workerCount > GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM
+    ? graphwarToolDefaults.liveClickPreviewWorkerCount
+    : workerCount;
+});
 const activeEquationDescription = computed(() => {
   if (toolWorkflowMode.value === "simulator") {
     return locale.status.activeEquation.simulator;
@@ -1560,30 +1561,33 @@ const magnifierZoom = computed(() =>
 const magnifierSliderZoom = computed(() =>
   clampNumber(magnifierZoom.value, magnifierMinimumZoom, magnifierSliderMaximumZoom),
 );
-const magnifierZoomRangeStyle = computed(() => {
-  const range = magnifierSliderMaximumZoom - magnifierMinimumZoom;
-  const progress = range > 0 ? ((magnifierSliderZoom.value - magnifierMinimumZoom) / range) * 100 : 0;
-  return {
-    "--graphwar-killer-range-progress": `${formatDecimal(progress, 4)}%`,
-  };
-});
+const magnifierZoomRangeStyle = computed(() =>
+  createRangeProgressStyle(magnifierSliderZoom.value, magnifierMinimumZoom, magnifierSliderMaximumZoom),
+);
 const obstacleBrushAvailable = computed(() => Boolean(detectedObstacles.value));
 const obstacleBrushControlsVisible = computed(() => toolMode.value === "obstacle");
-const obstacleBrushSliderDiameter = computed(() => {
-  const diameter = parseFiniteNumber(obstacleBrushDiameterText.value);
-  return clampNumber(
-    diameter ?? obstacleBrushMinimumDiameter,
+const obstacleBrushSliderDiameter = computed(() =>
+  clampNumber(
+    parseFiniteNumber(obstacleBrushDiameterText.value) ?? obstacleBrushMinimumDiameter,
     obstacleBrushMinimumDiameter,
     obstacleBrushSliderMaximumDiameter,
-  );
-});
-const obstacleBrushRangeStyle = computed(() => {
-  const range = obstacleBrushSliderMaximumDiameter - obstacleBrushMinimumDiameter;
-  const progress = range > 0 ? ((obstacleBrushSliderDiameter.value - obstacleBrushMinimumDiameter) / range) * 100 : 0;
+  ),
+);
+const obstacleBrushRangeStyle = computed(() =>
+  createRangeProgressStyle(
+    obstacleBrushSliderDiameter.value,
+    obstacleBrushMinimumDiameter,
+    obstacleBrushSliderMaximumDiameter,
+  ),
+);
+
+/** 创建原生 range 控件已填充区间使用的 CSS 变量。 */
+function createRangeProgressStyle(value: number, minimum: number, maximum: number) {
+  const range = maximum - minimum;
   return {
-    "--graphwar-killer-range-progress": `${formatDecimal(progress, 4)}%`,
+    "--graphwar-killer-range-progress": `${formatDecimal(range > 0 ? ((value - minimum) / range) * 100 : 0, 4)}%`,
   };
-});
+}
 // 操作面板只应消费展示 DTO；工具切换和输入校验仍由页面侧维持原交互语义。
 const actionPanel = computed<GraphwarActionPanelModel>(() => ({
   activeToolHint: activeToolHint.value,
@@ -1849,6 +1853,7 @@ function createStageCoordinateLines(bounds: GraphBounds, rect: BoundsRect): Stag
   };
 }
 
+/** 创建当前标定范围内的 x/y 坐标轴线。 */
 function createStageAxisLines(bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment[] {
   const lines: GraphwarPathfindingLineSegment[] = [];
   if (isStageCoordinateWithinBounds(0, bounds.minX, bounds.maxX)) {
@@ -1860,6 +1865,7 @@ function createStageAxisLines(bounds: GraphBounds, rect: BoundsRect): GraphwarPa
   return lines;
 }
 
+/** 按当前缩放级别创建可读密度的背景网格线。 */
 function createStageGridLines(bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment[] {
   const lines: GraphwarPathfindingLineSegment[] = [];
   appendStageVerticalGridLines(lines, bounds, rect, selectStageGridStep(bounds.maxX - bounds.minX));
@@ -1867,6 +1873,7 @@ function createStageGridLines(bounds: GraphBounds, rect: BoundsRect): GraphwarPa
   return lines;
 }
 
+/** 将非坐标轴的竖直网格线追加到输出。 */
 function appendStageVerticalGridLines(
   lines: GraphwarPathfindingLineSegment[],
   bounds: GraphBounds,
@@ -1886,6 +1893,7 @@ function appendStageVerticalGridLines(
   }
 }
 
+/** 将非坐标轴的水平网格线追加到输出。 */
 function appendStageHorizontalGridLines(
   lines: GraphwarPathfindingLineSegment[],
   bounds: GraphBounds,
@@ -1905,6 +1913,7 @@ function appendStageHorizontalGridLines(
   }
 }
 
+/** 创建一条裁剪到截图边界的竖直舞台线。 */
 function createStageVerticalLine(x: number, bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment {
   const start = graphToImagePoint(createGraphPoint(x, bounds.minY), bounds, rect);
   const end = graphToImagePoint(createGraphPoint(x, bounds.maxY), bounds, rect);
@@ -1916,6 +1925,7 @@ function createStageVerticalLine(x: number, bounds: GraphBounds, rect: BoundsRec
   };
 }
 
+/** 创建一条裁剪到截图边界的水平舞台线。 */
 function createStageHorizontalLine(y: number, bounds: GraphBounds, rect: BoundsRect): GraphwarPathfindingLineSegment {
   const start = graphToImagePoint(createGraphPoint(bounds.minX, y), bounds, rect);
   const end = graphToImagePoint(createGraphPoint(bounds.maxX, y), bounds, rect);
@@ -1927,30 +1937,39 @@ function createStageHorizontalLine(y: number, bounds: GraphBounds, rect: BoundsR
   };
 }
 
+/** 从 1/2/5 序列选择接近目标线数的网格步长。 */
 function selectStageGridStep(range: number) {
-  const rawStep = Math.max(1, Math.abs(range) / graphwarStageGridTargetLineCount);
+  // 约 64 条线能覆盖细节，同时不让大范围坐标把 DOM 撑得过密。
+  const rawStep = Math.max(1, Math.abs(range) / 64);
   const scale = 10 ** Math.floor(Math.log10(rawStep));
-  for (const multiplier of graphwarStageGridStepMultipliers) {
-    const step = multiplier * scale;
-    if (rawStep <= step) {
-      return step;
-    }
+  if (rawStep <= scale) {
+    return scale;
+  }
+  if (rawStep <= 2 * scale) {
+    return 2 * scale;
+  }
+  if (rawStep <= 5 * scale) {
+    return 5 * scale;
   }
   return 10 * scale;
 }
 
+/** 返回不小于范围下界的首个网格坐标。 */
 function getFirstStageGridCoordinate(minimum: number, step: number) {
   return Math.ceil((minimum - graphwarStageGridAxisEpsilon) / step) * step;
 }
 
+/** 消除网格步进累积的浮点尾差。 */
 function normalizeStageGridCoordinate(coordinate: number) {
   return isStageAxisCoordinate(coordinate) ? 0 : coordinate;
 }
 
+/** 判断网格坐标是否与零轴重合。 */
 function isStageAxisCoordinate(coordinate: number) {
   return Math.abs(coordinate) <= graphwarStageGridAxisEpsilon;
 }
 
+/** 用相对容差判断网格坐标是否仍在可见范围内。 */
 function isStageCoordinateWithinBounds(coordinate: number, minimum: number, maximum: number) {
   return coordinate >= minimum - graphwarStageGridAxisEpsilon && coordinate <= maximum + graphwarStageGridAxisEpsilon;
 }
@@ -2034,17 +2053,13 @@ const magnifierStyle = computed(() => {
 
   const displayX = (point.x / imageWidth.value) * stageDisplayWidth.value;
   const displayY = (point.y / imageHeight.value) * stageDisplayHeight.value;
-  const moveRight = displayX < stageDisplayWidth.value * 0.36;
-  const moveUp = displayY > stageDisplayHeight.value * 0.68;
-  const translateX = moveRight ? "18px" : `calc(-100% - 18px)`;
-  const translateY = moveUp ? "calc(-100% - 18px)" : "18px";
-
   return {
     width: `${graphwarToolDefaults.magnifierSize}px`,
     height: `${graphwarToolDefaults.magnifierSize}px`,
     left: `${displayX}px`,
     top: `${displayY}px`,
-    transform: `translate(${translateX}, ${translateY})`,
+    // 光标靠左时放到右侧、靠下时放到上方，避免放大镜遮住指针或越出舞台。
+    transform: `translate(${displayX < stageDisplayWidth.value * 0.36 ? "18px" : "calc(-100% - 18px)"}, ${displayY > stageDisplayHeight.value * 0.68 ? "calc(-100% - 18px)" : "18px"})`,
   };
 });
 const magnifierContentStyle = computed(() => {
@@ -2171,26 +2186,28 @@ const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
     emptyPlaceholder: graphwarAgentEnabled.value
       ? locale.ui.screenshot.agentPlaceholder
       : locale.ui.screenshot.placeholder,
-    magnifierClipPathId: magnifierObstacleBrushClipPathId,
-    mainClipPathId: mainObstacleBrushClipPathId,
+    magnifierClipPathId: "graphwar-killer-magnifier-obstacle-brush-clip",
+    mainClipPathId: "graphwar-killer-obstacle-brush-clip",
     overlay: stageOverlay.value,
     style: stageStyle.value,
   },
   statusWarning: screenshotStatusWarning.value,
 }));
 
+/** 保存截图舞台 DOM 引用。 */
 function setScreenshotStageElement(element: HTMLElement | undefined) {
   stageRef.value = element;
 }
 
+/** 保存截图图片 DOM 引用。 */
 function setScreenshotImageElement(element: HTMLImageElement | undefined) {
   imageRef.value = element;
 }
 
+/** 将路径点转换成结果面板需要的编号和坐标文本。 */
 function createResultPanelPointRows() {
   return mappedPathPoints.value.map((_, index) => {
-    const pointNumber = index + 1;
-    const label = pointNumber === 1 ? locale.ui.point.selfLabel : locale.ui.point.pathLabel(index);
+    const label = index === 0 ? locale.ui.point.selfLabel : locale.ui.point.pathLabel(index);
     return {
       index,
       label,
@@ -2206,16 +2223,6 @@ function createResultPanelPointRows() {
       },
     };
   });
-}
-
-function normalizeLiveClickPreviewWorkerCount(text: string) {
-  const workerCount = parseFiniteNumber(text);
-  return workerCount === undefined ||
-    !Number.isInteger(workerCount) ||
-    workerCount < 1 ||
-    workerCount > GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM
-    ? graphwarToolDefaults.liveClickPreviewWorkerCount
-    : workerCount;
 }
 
 /** 托管锁定截图来源时忽略全局粘贴，避免绕过已禁用的上传入口。 */
@@ -2493,6 +2500,7 @@ function getDetectObjectsTitle() {
     : locale.ui.detection.detectObjectsNeedBoundsTitle;
 }
 
+/** 根据当前数据源返回缺失局面图片的提示。 */
 function getMissingStateImageMessage() {
   return graphwarAgentEnabled.value ? locale.status.agent.readFirst : locale.status.detection.uploadFirst;
 }
@@ -2674,13 +2682,13 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
     if (!requestIsCurrent()) {
       return;
     }
-    const failureReason =
+    const failedMessage = locale.status.agent.fileFailed(
       error instanceof GraphwarAgentClientError &&
-      error.kind === "incompatible" &&
-      error.message !== "state-file-invalid-json"
+        error.kind === "incompatible" &&
+        error.message !== "state-file-invalid-json"
         ? locale.status.agent.fileIncompatible
-        : createGraphwarAgentFailureReason(locale, error);
-    const failedMessage = locale.status.agent.fileFailed(failureReason);
+        : createGraphwarAgentFailureReason(locale, error),
+    );
     imageStatus.value = failedMessage;
     setDetectionStatus(failedMessage, "error");
   } finally {
@@ -3256,11 +3264,8 @@ function createGraphwarManagedShotPlan(state: GraphwarAgentAvailableState): Grap
   const soldier = player?.soldiers[player.currentTurnSoldier];
   if (
     !incumbent ||
-    !player ||
+    !isGraphwarAgentLocalHuman(player) ||
     !soldier?.alive ||
-    !player.local ||
-    player.computer ||
-    player.disconnected ||
     !incumbent.expression.trim() ||
     createGraphwarManagedSceneKey(state, { player, soldier }) !== graphwarManagedSceneKey
   ) {
@@ -3284,11 +3289,7 @@ function submitGraphwarManagedShot(state: GraphwarAgentAvailableState) {
 function isGraphwarManagedCurrentLocalTurn(state: GraphwarAgentAvailableState) {
   const player = state.players[state.currentTurn];
   return Boolean(
-    state.phase === "aiming" &&
-    player?.local &&
-    !player.computer &&
-    !player.disconnected &&
-    player.soldiers[player.currentTurnSoldier]?.alive,
+    state.phase === "aiming" && isGraphwarAgentLocalHuman(player) && player.soldiers[player.currentTurnSoldier]?.alive,
   );
 }
 
@@ -3896,8 +3897,7 @@ function handleStagePointerMove(event: PointerEvent) {
     clearLiveClickPreviewPointerPoint();
   }
   hoveredPathPointIndex.value = pathPointIndex;
-  const hoveredSoldier = snapSoldiersEnabled.value ? getDetectedSoldierAtPoint(point)?.id : undefined;
-  hoveredDetectedSoldierId.value = hoveredSoldier;
+  hoveredDetectedSoldierId.value = snapSoldiersEnabled.value ? getDetectedSoldierAtPoint(point)?.id : undefined;
   if (toolMode.value !== "bounds") {
     return;
   }

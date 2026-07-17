@@ -21,6 +21,7 @@ export function isGraphwarTrajectoryCancelledError(error: unknown) {
   return error instanceof GraphwarTrajectoryCancelledError;
 }
 
+/** 单次轨迹任务的原子结果和端到端耗时。 */
 export interface GraphwarTrajectoryRunResult {
   /** 函数解算和轨迹模拟的原子结果。 */
   outcome: GraphwarTrajectoryCalculationOutcome;
@@ -28,6 +29,7 @@ export interface GraphwarTrajectoryRunResult {
   elapsedMs: number;
 }
 
+/** 轨迹 runner 的 Worker、计时与降级注入点。 */
 export interface GraphwarTrajectoryRunnerOptions {
   /** 测试注入点；页面默认创建专用 module Worker。 */
   createWorker?: () => Worker;
@@ -39,6 +41,7 @@ export interface GraphwarTrajectoryRunnerOptions {
   waitForFallbackPaint?: () => Promise<void>;
 }
 
+/** 当前权威轨迹任务及其换代和结算状态。 */
 interface PendingTrajectoryTask {
   generation: number;
   id: number;
@@ -50,6 +53,7 @@ interface PendingTrajectoryTask {
   workerFailureCount: number;
 }
 
+/** 一个可复用 Worker 及其当前绑定任务。 */
 interface TrajectoryWorkerSlot {
   activeTask?: PendingTrajectoryTask;
   worker: Worker;
@@ -227,7 +231,8 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       return;
     }
     const response = event.data as unknown;
-    if (!isWorkerResponseEnvelope(response)) {
+    // Worker 边界只先收窄 request id；完整 outcome 由下方按任务类型校验。
+    if (typeof response !== "object" || response === null || !("id" in response) || typeof response.id !== "number") {
       handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an invalid response"));
       return;
     }
@@ -235,7 +240,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an unexpected request id"));
       return;
     }
-    const outcome = response.outcome;
+    const outcome = "outcome" in response ? response.outcome : undefined;
     if (!isGraphwarTrajectoryCalculationOutcome(outcome, task.input.type)) {
       handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an invalid outcome"));
       return;
@@ -294,18 +299,14 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     void runOnMainThread(task);
   }
 
-  /** 等待降级状态绘制，并保留独立异步边界，让已排队的取消先于阻塞计算生效。 */
-  async function waitForFallbackStatusPaint() {
+  /** 等待降级状态绘制后，同步计算并仅提交仍然权威的任务。 */
+  async function runOnMainThread(task: PendingTrajectoryTask) {
+    // 保留独立异步边界，让已排队的取消先于阻塞计算生效。
     try {
       await options.waitForFallbackPaint?.();
     } catch {
       // 浏览器绘制等待失败时仍需继续执行主线程保底计算。
     }
-  }
-
-  /** 等待降级状态绘制后，同步计算并仅提交仍然权威的任务。 */
-  async function runOnMainThread(task: PendingTrajectoryTask) {
-    await waitForFallbackStatusPaint();
     if (!isCurrentTask(task)) {
       return;
     }
@@ -384,11 +385,6 @@ function getElapsedMs(now: () => number, startedAt: number) {
 /** 将跨边界抛出的任意值收敛为可展示的 Error。 */
 function normalizeError(error: unknown, fallbackMessage: string) {
   return error instanceof Error ? error : new Error(error === undefined ? fallbackMessage : String(error));
-}
-
-/** 验证响应具有匹配请求所需的最小协议外壳。 */
-function isWorkerResponseEnvelope(response: unknown): response is { id: number; outcome?: unknown } {
-  return typeof response === "object" && response !== null && "id" in response && typeof response.id === "number";
 }
 
 /** 按请求类型验证 Worker 返回的完整轨迹 outcome。 */

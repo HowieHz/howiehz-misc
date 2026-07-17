@@ -623,7 +623,10 @@ interface SoldierTemplateBaseScore {
 }
 
 /** 按朝向预构建的士兵模板基础数据，避免每次识别重复展开网格。 */
-const graphwarSoldierTemplateBases = createGraphwarSoldierTemplateBases();
+const graphwarSoldierTemplateBases: SoldierTemplateBase[] = [
+  createGraphwarSoldierTemplateBase(false),
+  createGraphwarSoldierTemplateBase(true),
+];
 
 /** 使用 Canvas 像素自动检测 Graphwar 坐标系边界，再按该边界识别士兵和障碍。 */
 export function detectGraphwarObjectsInBounds(
@@ -633,8 +636,10 @@ export function detectGraphwarObjectsInBounds(
   soldierSettings?: GraphwarSoldierDetectionSettings,
   instrumentation?: GraphwarObjectDetectionInstrumentation,
 ): GraphwarObjectsDetectionResult {
-  const soldierMatches = detectSoldierMatches(imageData, edgeRect, soldierSettings, instrumentation);
-  const soldiers = createSoldierDetectionBoxes(soldierMatches.matches, edgeRect);
+  const soldiers = createSoldierDetectionBoxes(
+    detectSoldierMatches(imageData, edgeRect, soldierSettings, instrumentation).matches,
+    edgeRect,
+  );
   return {
     soldiers,
     obstacles: detectGraphwarObstaclesInBounds(imageData, edgeRect, thresholds, soldiers, instrumentation),
@@ -651,7 +656,13 @@ export function detectGraphwarPlayArea(imageData: ImageData): BoundsRect | undef
 
   for (const vertical of verticalTriplets) {
     for (const horizontal of horizontalTriplets) {
-      const rect = createGraphwarPlaneRect(vertical, horizontal);
+      // 轴线 triplet 的内侧边界就是 Graphwar 平面可见矩形。
+      const rect: BoundsRect = {
+        height: horizontal.last.start + 1 - horizontal.first.end,
+        width: vertical.last.start + 1 - vertical.first.end,
+        x: vertical.first.end,
+        y: horizontal.first.end,
+      };
       if (rect.width <= 0 || rect.height <= 0) {
         continue;
       }
@@ -903,23 +914,11 @@ export function isPlayerColorPixel(red: number, green: number, blue: number) {
     return false;
   }
 
-  const maxChannel = Math.max(red, green, blue);
-  const minChannel = Math.min(red, green, blue);
-  return maxChannel - minChannel >= 34 && red + green + blue >= 72 && red + green + blue <= 700;
-}
-
-/** 由轴线 triplet 的外侧边界生成坐标系矩形。 */
-function createGraphwarPlaneRect(vertical: AxisTriplet, horizontal: AxisTriplet): BoundsRect {
-  const left = vertical.first.end;
-  const right = vertical.last.start + 1;
-  const top = horizontal.first.end;
-  const bottom = horizontal.last.start + 1;
-  return {
-    x: left,
-    y: top,
-    width: right - left,
-    height: bottom - top,
-  };
+  return (
+    Math.max(red, green, blue) - Math.min(red, green, blue) >= 34 &&
+    red + green + blue >= 72 &&
+    red + green + blue <= 700
+  );
 }
 
 /** 沿水平或竖直方向统计黑色轴线密度，输出可能的边界/中轴线候选组。 */
@@ -1243,7 +1242,12 @@ function createSoldierTemplateCenterCandidates(
         for (const templatePixel of templateBase.seedPixels) {
           const centerX = edgeRect.x + x - getSoldierTemplatePixelOffset(templatePixel.x, scale);
           const centerY = edgeRect.y + y - getSoldierTemplatePixelOffset(templatePixel.y, scale);
-          if (!soldierTemplateCenterFitsRect(centerX, centerY, edgeRect)) {
+          if (
+            centerX < edgeRect.x ||
+            centerX > edgeRect.x + edgeRect.width ||
+            centerY < edgeRect.y ||
+            centerY > edgeRect.y + edgeRect.height
+          ) {
             continue;
           }
 
@@ -1252,7 +1256,8 @@ function createSoldierTemplateCenterCandidates(
           if (!planePointIsInsideBounds(planeX, planeY)) {
             continue;
           }
-          const mirrored = expectedSoldierTemplateMirroredForPlaneX(planeX);
+          // Graphwar 原版士兵的朝向由所在半场决定。
+          const mirrored = planeX >= GRAPHWAR_PLANE_LENGTH / 2;
           if (templateBase.mirrored !== mirrored) {
             continue;
           }
@@ -1337,11 +1342,6 @@ function findBestSoldierTemplateMatch(
     }
   }
   return best;
-}
-
-/** Graphwar 原版士兵在右半平面使用镜像模板。 */
-function expectedSoldierTemplateMirroredForPlaneX(planeX: number) {
-  return planeX >= GRAPHWAR_PLANE_LENGTH / 2;
 }
 
 /** 模板评分分离固定像素、随机玩家色像素和前景形状，避免把任一颜色当唯一真值。 */
@@ -1578,7 +1578,13 @@ function scoreSoldierFixedPixel(pixel: { red: number; green: number; blue: numbe
   if (isSoldierWhiteHighlightPixel(pixel.red, pixel.green, pixel.blue)) {
     return 0.88;
   }
-  if (isSoldierDarkOutlinePixel(pixel.red, pixel.green, pixel.blue)) {
+  // 深色且低色度的像素对应士兵轮廓。
+  if (
+    pixel.red <= 145 &&
+    pixel.green <= 145 &&
+    pixel.blue <= 145 &&
+    Math.max(pixel.red, pixel.green, pixel.blue) - Math.min(pixel.red, pixel.green, pixel.blue) <= 48
+  ) {
     return 0.78;
   }
   return scoreSoldierForegroundPixel(pixel) * 0.48;
@@ -1615,11 +1621,6 @@ function scoreSoldierPlayerColorPixel(
     Math.abs(pixel.blue - playerColor.blue);
   const chroma = Math.max(pixel.red, pixel.green, pixel.blue) - Math.min(pixel.red, pixel.green, pixel.blue);
   return clampNumber(1 - distance / 420 + chroma / 900, 0, 1);
-}
-
-/** 判断模板源码中心是否仍落在坐标系截图矩形内。 */
-function soldierTemplateCenterFitsRect(centerX: number, centerY: number, rect: BoundsRect) {
-  return centerX >= rect.x && centerX <= rect.x + rect.width && centerY >= rect.y && centerY <= rect.y + rect.height;
 }
 
 /** 判断截图像素点是否在坐标系矩形内。 */
@@ -1675,11 +1676,6 @@ function interpolateBilinear(
 /** 将 20x20 士兵模板像素坐标转换成相对源码中心的截图偏移。 */
 function getSoldierTemplatePixelOffset(pixelCoordinate: number, scale: number) {
   return (pixelCoordinate + 0.5 - graphwarSoldierCanvasCenter) * scale;
-}
-
-/** 创建正常和镜像两套士兵模板基础数据。 */
-function createGraphwarSoldierTemplateBases(): SoldierTemplateBase[] {
-  return [createGraphwarSoldierTemplateBase(false), createGraphwarSoldierTemplateBase(true)];
 }
 
 /** 从模板网格构造一套固定像素、玩家色像素和动画签名模板。 */
@@ -1744,7 +1740,7 @@ function collectUniqueSoldierSignatureTemplates(templates: SoldierTemplate[]) {
   const seenSignatures = new Set<string>();
   const uniqueTemplates: SoldierTemplate[] = [];
   for (const template of templates) {
-    const key = createSoldierTemplateSignatureKey(template.signaturePixels);
+    const key = template.signaturePixels.map((pixel) => pixel.color).join(";");
     if (seenSignatures.has(key)) {
       continue;
     }
@@ -1752,11 +1748,6 @@ function collectUniqueSoldierSignatureTemplates(templates: SoldierTemplate[]) {
     uniqueTemplates.push(template);
   }
   return uniqueTemplates;
-}
-
-/** 为动画签名像素创建去重 key。 */
-function createSoldierTemplateSignatureKey(signaturePixels: readonly SoldierTemplateColorPixel[]) {
-  return signaturePixels.map((pixel) => pixel.color).join(";");
 }
 
 /** 将字符串网格中的模板像素提取成坐标列表，并按需镜像 x。 */
@@ -1777,8 +1768,9 @@ function createTemplatePixelsFromGrid(grid: readonly string[], mirrored: boolean
 
 /** 创建指定动画帧的签名颜色像素，镜像模板需要同步镜像 x。 */
 function createSoldierTemplateSignaturePixels(name: (typeof graphwarSoldierTemplateNames)[number], mirrored: boolean) {
+  // 每帧颜色表与签名坐标按同一固定索引声明；缺项属于源码配置错误，不应伪装成黑色像素。
   return graphwarSoldierAnimationSignatureCoordinates.map(([x, y], index) => ({
-    color: graphwarSoldierAnimationSignatureColorsByName[name][index] ?? "000000",
+    color: graphwarSoldierAnimationSignatureColorsByName[name][index],
     x: mirrored ? 19 - x : x,
     y,
   }));
@@ -1946,7 +1938,13 @@ function buildObstacleMask(imageData: ImageData, edgeRect: BoundsRect, minArea: 
   for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
     for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
       const source = samplePlaneImagePixel(imageData, edgeRect, x, y);
-      if (isObstacleSolidPixel(source.red, source.green, source.blue)) {
+      // 固定平面网格是识别热点，直接判断深色低色度地形，避免每格 helper 调用。
+      if (
+        source.red <= 104 &&
+        source.green <= 104 &&
+        source.blue <= 104 &&
+        getColorChroma(source.red, source.green, source.blue) <= 36
+      ) {
         rawSolidMask[y * GRAPHWAR_PLANE_LENGTH + x] = 1;
       }
     }
@@ -2240,11 +2238,6 @@ function isAxisBlackPixel(red: number, green: number, blue: number) {
   return red <= 42 && green <= 42 && blue <= 42;
 }
 
-/** 判断像素是否属于深色地形主体。 */
-function isObstacleSolidPixel(red: number, green: number, blue: number) {
-  return red <= 104 && green <= 104 && blue <= 104 && getColorChroma(red, green, blue) <= 36;
-}
-
 /** 判断像素是否可能是地形主体边缘的抗锯齿灰色。 */
 function isObstacleAntialiasEdgePixel(red: number, green: number, blue: number) {
   const maxChannel = Math.max(red, green, blue);
@@ -2277,11 +2270,6 @@ function isSoldierTemplateSeedPixel(red: number, green: number, blue: number) {
 /** 判断像素是否接近 Graphwar 士兵白色高光。 */
 function isSoldierWhiteHighlightPixel(red: number, green: number, blue: number) {
   return red >= 235 && green >= 235 && blue >= 220 && Math.max(red, green, blue) - Math.min(red, green, blue) <= 36;
-}
-
-/** 判断像素是否接近 Graphwar 士兵深色轮廓。 */
-function isSoldierDarkOutlinePixel(red: number, green: number, blue: number) {
-  return red <= 145 && green <= 145 && blue <= 145 && Math.max(red, green, blue) - Math.min(red, green, blue) <= 48;
 }
 
 /** 判断像素是否属于坐标系白色背景。 */

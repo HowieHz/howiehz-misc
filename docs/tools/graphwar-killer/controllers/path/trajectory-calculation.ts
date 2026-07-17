@@ -14,6 +14,7 @@ import { formatVisibleTrajectoryPoints } from "../../presentation/stage/svg-poly
 /** 轨迹结果提示原因；页面负责把原因映射成本地化文案。 */
 export type GraphwarTrajectoryWarningReason = "invalid" | "max-steps" | "obstacle" | "out-of-bounds" | "too-steep";
 
+/** 求解器和模拟器轨迹请求共享的坐标与碰撞输入。 */
 interface GraphwarTrajectoryCalculationInputBase {
   /** 当前有效 Graphwar 坐标范围。 */
   bounds: GraphBounds;
@@ -85,11 +86,13 @@ export type GraphwarTrajectoryCalculationOutcome =
       stage: GraphwarTrajectoryCalculationFailureStage;
     };
 
+/** 主线程发送给轨迹 Worker 的带编号请求。 */
 export interface GraphwarTrajectoryCalculationWorkerRequest {
   id: number;
   input: GraphwarTrajectoryCalculationInput;
 }
 
+/** 轨迹 Worker 返回给主线程的带编号结果。 */
 export interface GraphwarTrajectoryCalculationWorkerResponse {
   id: number;
   outcome: GraphwarTrajectoryCalculationOutcome;

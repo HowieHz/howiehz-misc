@@ -1,13 +1,9 @@
 import { computed, type ComputedRef } from "vue";
 
 import { MAX_FORMULA_DECIMAL_PLACES, nearlyEqual, parseFiniteNumber } from "../../core/numbers";
-import type { GraphBounds } from "../../core/types";
+import type { GraphBounds, ReadonlyValue as GraphwarReadonlyRef } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
 import { createBoundaryInsetFromObstacleTolerance } from "../../pathfinding/tolerances";
-
-interface GraphwarReadonlyRef<T> {
-  readonly value: T;
-}
 
 /** 坐标边界解析结果；失败分支直接携带本地化校验文案。 */
 export type ParsedBounds = { ok: true; bounds: GraphBounds } | { ok: false; message: string };
@@ -47,12 +43,14 @@ export type ParsedOneClickClearTolerances =
       oneClickClearDeleteCheckRadiusPlanePixels: number;
     })
   | { ok: false; message: string };
+/** 所有设置解析失败分支共享的本地化消息。 */
 interface ParsedSettingsFailure {
   ok: false;
   message: string;
 }
 type ParsedObstacleToleranceValues = Extract<ParsedObstacleTolerances, { ok: true }>;
 
+/** 设置校验器读取的页面文本 ref 集合。 */
 interface GraphwarSettingsValidationInputs {
   /** 边界输入应由页面持有，因为它们同时驱动面板展示、手动标定和路径坐标换算。 */
   bounds: {
@@ -90,6 +88,7 @@ interface GraphwarSettingsValidationInputs {
   };
 }
 
+/** 设置校验使用的 UI 与算法范围上限。 */
 interface GraphwarSettingsValidationLimits {
   detection: {
     obstacleMaximumArea: number;
@@ -108,6 +107,7 @@ interface GraphwarSettingsValidationLimits {
   };
 }
 
+/** 设置校验器的输入、范围和本地化依赖。 */
 interface GraphwarSettingsValidationOptions {
   /** 本地化文案应在 computed 求值时读取，避免 locale 切换后保留旧文案。 */
   getLocale: () => GraphwarKillerLocale;
@@ -117,6 +117,7 @@ interface GraphwarSettingsValidationOptions {
   limits: GraphwarSettingsValidationLimits;
 }
 
+/** 把页面设置文本解析成各工作流可直接消费的校验结果。 */
 export interface GraphwarSettingsValidationController {
   parsedBounds: ComputedRef<ParsedBounds>;
   parsedDetectionSettings: ComputedRef<ParsedDetectionSettings>;
@@ -331,6 +332,7 @@ export function useGraphwarSettingsValidation(
     };
   });
 
+  /** 一次解析路线、模拟和删点容差文本，保留既定错误优先级。 */
   function parseObstacleToleranceInputValues(): ParsedObstacleToleranceValues | ParsedSettingsFailure {
     const boundsResult = parsedBounds.value;
     if (!boundsResult.ok) {
@@ -359,6 +361,7 @@ export function useGraphwarSettingsValidation(
     };
   }
 
+  /** 校验容差的像素范围并生成最终边界内收值。 */
   function validateObstacleToleranceRanges(
     toleranceValues: ParsedObstacleToleranceValues,
   ): { ok: true } | ParsedSettingsFailure {

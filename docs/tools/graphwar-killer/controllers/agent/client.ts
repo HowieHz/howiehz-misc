@@ -849,8 +849,8 @@ function worldMaskToShooterView(worldMask: Uint8Array, shooterTeam: number) {
   return mask;
 }
 
-/** Restricts shooter selection to connected local non-computer players. */
-function isGraphwarAgentLocalHuman(player: GraphwarAgentPlayer | undefined) {
+/** 判断玩家是否为可由本地托管模式控制的已连接真人。 */
+export function isGraphwarAgentLocalHuman(player: GraphwarAgentPlayer | undefined): player is GraphwarAgentPlayer {
   return Boolean(player?.local && !player.computer && !player.disconnected);
 }
 

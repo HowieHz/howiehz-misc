@@ -75,9 +75,9 @@ describe("ABS y'' refinement convergence", () => {
     );
     const resolved = resolveTrajectory();
 
-    expect(probes.terminalProbeCount).toBe(4);
-    expect(probes.executionStates).toHaveLength(5);
-    expectResolvedPulseState(resolved, probes.executionStates[2]);
+    expect(probes.terminalProbeCount).toBe(3);
+    expect(probes.executionStates).toHaveLength(7);
+    expectResolvedPulseState(resolved, probes.executionStates[3]);
   });
 
   it.each([
@@ -89,7 +89,7 @@ describe("ABS y'' refinement convergence", () => {
     );
     const resolved = resolveTrajectory();
 
-    expect(probes.terminalProbeCount).toBe(4);
+    expect(probes.terminalProbeCount).toBe(2);
     expect(probes.executionStates).toHaveLength(6);
     expectResolvedPulseState(resolved, probes.executionStates[1]);
   });
@@ -101,7 +101,7 @@ describe("ABS y'' refinement convergence", () => {
     );
     const resolved = resolveTrajectory();
 
-    expect(probes.terminalProbeCount).toBe(101);
+    expect(probes.terminalProbeCount).toBe(2);
     expect(probes.executionStates).toHaveLength(103);
     expectResolvedPulseState(resolved, probes.executionStates[99]);
   });
@@ -116,7 +116,7 @@ describe("ABS y'' refinement convergence", () => {
     );
     const resolved = resolveTrajectory();
 
-    expect(probes.terminalProbeCount).toBe(3);
+    expect(probes.terminalProbeCount).toBe(2);
     expect(probes.executionStates).toHaveLength(5);
     expectResolvedPulseState(resolved, probes.executionStates[0]);
   });

@@ -1304,6 +1304,10 @@ function refineAbsSecondDerivativeSegmentsWithSimulation(
         }
         if (Number.isFinite(correctedCenterX)) {
           pulseCenterXs[0] = correctedCenterX;
+          if (terminalPulseIndex === 0 && correctedCenterX !== firstCenterX) {
+            // 单段路径的首脉冲也是末脉冲；下一轮先回放这对中心/系数，不能先让末脉冲求解覆盖中心。
+            terminalPulseIsResolved = true;
+          }
         }
       }
       const launchX = soldierCenter.x + GRAPHWAR_GAME_SOLDIER_RADIUS * Math.cos(launchAngleRadians);
@@ -2178,7 +2182,7 @@ function refineStepSegmentsWithSimulation(
         const prefixDerivative = prefixTargetSample.endState?.dy;
         const positionDerivative = softSelection.result.sample.endState?.dy;
         const positionDeltaY = candidateContext.deltaYOverride;
-        // 位置已进入 1px 后才尝试零速度及一次带内插值；残余 y' 本身不会触发 hard Step。
+        // 位置已进入 1px 后只尝试一次 canonical 零速度候选；残余 y' 本身不会触发 hard Step。
         if (
           bestSoftQuality &&
           bestSoftQuality.positionErrorPlanePixels <= graphwarToolDefaults.formulaPathQualityTargetPlanePixels &&
@@ -2222,54 +2226,6 @@ function refineStepSegmentsWithSimulation(
                 positionHitsObstacle);
             if (derivativeIsUsable && isSecondOrderLandingQualityBetter(derivativeQuality, bestSoftQuality)) {
               softSelection = derivativeSelection;
-            } else if (derivativeIsUsable && derivativeQuality.derivativeError < bestSoftQuality.derivativeError) {
-              const targetY = options.points[segmentIndex + 1].y;
-              const positionPoint = softSelection.result.sample.points.at(-1);
-              const derivativePoint = derivativeSelection.result.sample.points.at(-1);
-              if (positionPoint && derivativePoint) {
-                const positionError = positionPoint.y - targetY;
-                const derivativeError = derivativePoint.y - targetY;
-                const interpolationRatio =
-                  (Math.sign(derivativeError) *
-                    planePixelsToGraphUnits(
-                      graphwarToolDefaults.formulaPathQualityTargetPlanePixels *
-                        SECOND_ORDER_POSITION_CORRECTION_TARGET_FACTOR,
-                      options.bounds,
-                      "y",
-                    ) -
-                    positionError) /
-                  (derivativeError - positionError);
-                if (Number.isFinite(interpolationRatio) && interpolationRatio > 0 && interpolationRatio < 1) {
-                  const interpolatedDeltaY = positionDeltaY + interpolationRatio * (derivativeDeltaY - positionDeltaY);
-                  const interpolatedSelection = sampleStepSoftPositionCandidate(
-                    options,
-                    refinedFormulaPoints,
-                    { ...candidateContext, deltaYOverride: interpolatedDeltaY },
-                    createStepSegmentFormulaPointAfterRefinement(
-                      options,
-                      refinedFormulaPoints,
-                      segmentIndex,
-                      startSample.point,
-                      interpolatedDeltaY,
-                    ),
-                    startSample.resumeState,
-                  );
-                  const interpolatedQuality = createStepSecondOrderLandingQuality(
-                    interpolatedSelection.result.sample,
-                    targetY,
-                    options.bounds,
-                  );
-                  if (
-                    interpolatedQuality &&
-                    (!mask ||
-                      !stepGlitchSampleHitsObstacle(interpolatedSelection.result.sample.points, options.bounds, mask) ||
-                      positionHitsObstacle) &&
-                    isSecondOrderLandingQualityBetter(interpolatedQuality, bestSoftQuality)
-                  ) {
-                    softSelection = interpolatedSelection;
-                  }
-                }
-              }
             }
           }
         }

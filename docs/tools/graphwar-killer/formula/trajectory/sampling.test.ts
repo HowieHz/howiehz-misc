@@ -667,35 +667,6 @@ describe("ODE segment position compensation", () => {
     ).toBeLessThanOrEqual(1);
   });
 
-  it("interpolates soft Step y'' toward zero velocity inside the one-pixel band", () => {
-    const pathPoints = [
-      createGraphPoint(-21.46469640592113, -1.5646496275439858),
-      createGraphPoint(-13.313182745594531, -1.6720021665096283),
-    ];
-    const resolved = resolveGraphwarTrajectory({
-      bounds,
-      boundsRect,
-      points: pathPoints,
-      settings: {
-        algorithm: "step",
-        decimalPlaces: 4,
-        equation: "ddy",
-        steepness: 50,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
-      soldierCenter: pathPoints[0],
-    });
-    const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
-
-    expect(resolved.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toBeUndefined();
-    expect(Math.abs(targetState?.dy ?? Number.POSITIVE_INFINITY)).toBeLessThan(1.1);
-    expect(
-      Math.abs((targetState?.currentPoint.y ?? Number.POSITIVE_INFINITY) - pathPoints[1].y) *
-        (GRAPHWAR_PLANE_HEIGHT / Math.abs(bounds.maxY - bounds.minY)),
-    ).toBeLessThanOrEqual(1);
-  });
-
   it.each(["dy", "ddy"] as const)(
     "rejects a %s path when a failed soft segment has no valid hard Step candidate",
     (equation) => {

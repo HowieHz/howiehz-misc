@@ -8,7 +8,7 @@ import {
 } from "../../core/game/constants";
 import { graphToImagePoint } from "../../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
-import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds } from "../../core/types";
+import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
 import {
   buildFormula,
   compileFormulaEvaluator,
@@ -19,6 +19,7 @@ import { sampleGraphwarExpressionTrajectory, sampleGraphwarTrajectory } from "..
 import {
   compareGraphwarPathErrors,
   getGraphwarTrajectoryLaunchAngle,
+  type GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryResolutionError,
   graphwarTrajectoryReachesGraphXAfterTargetsBeforeObstacle,
   measureGraphwarFormulaPathError,
@@ -551,7 +552,8 @@ describe("ODE segment position compensation", () => {
       expect(soft.result.targetHitIndex).toBe(-1);
       expect(soft.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toBeUndefined();
       expect(hard.result.targetHitIndex).toBeGreaterThanOrEqual(0);
-      expect(hard.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toMatchObject({ equation });
+      const hardSegment = hard.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment;
+      expect(hardSegment).toMatchObject({ equation });
       if (equation === "dy") {
         expect(hard.context.formulaPoints[0]).not.toEqual(soft.context.formulaPoints[0]);
       } else {
@@ -562,6 +564,14 @@ describe("ODE segment position compensation", () => {
         }
         expect(Math.abs(launchAngleRadians)).toBeGreaterThan(0);
         expect(hard.context.stepGlitchFormulaPrefix?.launchAngleRadians).toBe(launchAngleRadians);
+        expect(hardSegment?.equation).toBe("ddy");
+        if (hardSegment?.equation === "ddy") {
+          const landingState = sampleResolvedSecondOrderStateAtX(hard.context, reproductionPoints[0], hardSegment.endX);
+          expect(landingState?.dy).toBeDefined();
+          expect(Math.abs(landingState?.dy ?? Number.POSITIVE_INFINITY)).toBeLessThan(
+            Math.abs(Math.tan(launchAngleRadians)) / 4,
+          );
+        }
       }
       expectTrajectorySamplesToBeIdentical(
         hard.result.sample,
@@ -628,6 +638,62 @@ describe("ODE segment position compensation", () => {
 
     expect(resolved.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toBeUndefined();
     expect(resolved.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual([false]);
+  });
+
+  it("prefers the lower-velocity soft Step y'' coefficient inside the one-pixel position band", () => {
+    const pathPoints = [createGraphPoint(-20, 0), createGraphPoint(-15, 0.05)];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 153,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
+
+    expect(resolved.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toBeUndefined();
+    expect(resolved.context.formulaEvaluation.stepSegmentDeltaYs?.[0]).toBeCloseTo(0, 12);
+    expect(Math.abs(targetState?.dy ?? Number.POSITIVE_INFINITY)).toBeLessThan(1e-8);
+    expect(
+      Math.abs((targetState?.currentPoint.y ?? Number.POSITIVE_INFINITY) - pathPoints[1].y) *
+        (GRAPHWAR_PLANE_HEIGHT / Math.abs(bounds.maxY - bounds.minY)),
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("interpolates soft Step y'' toward zero velocity inside the one-pixel band", () => {
+    const pathPoints = [
+      createGraphPoint(-21.46469640592113, -1.5646496275439858),
+      createGraphPoint(-13.313182745594531, -1.6720021665096283),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 50,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
+
+    expect(resolved.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toBeUndefined();
+    expect(Math.abs(targetState?.dy ?? Number.POSITIVE_INFINITY)).toBeLessThan(1.1);
+    expect(
+      Math.abs((targetState?.currentPoint.y ?? Number.POSITIVE_INFINITY) - pathPoints[1].y) *
+        (GRAPHWAR_PLANE_HEIGHT / Math.abs(bounds.maxY - bounds.minY)),
+    ).toBeLessThanOrEqual(1);
   });
 
   it.each(["dy", "ddy"] as const)(
@@ -817,6 +883,349 @@ describe("ODE segment position compensation", () => {
         ).toBeLessThanOrEqual(1);
       }
     }
+  });
+
+  it("falls back to finite control-line centers when shifted ABS y'' initialization exits bounds", () => {
+    const pathPoints = [
+      createGraphPoint(-22.5835789591074, -3.5372675713151693),
+      createGraphPoint(-16.856478302348407, -5.57771117426455),
+      createGraphPoint(-13.867602446731182, 5.952161388471723),
+    ];
+    const sample = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 1,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    }).result.sample;
+
+    for (const target of pathPoints.slice(1)) {
+      const acceptedPoint = sample.points.find((point) => point.x >= target.x);
+      expect(acceptedPoint).toBeDefined();
+      if (acceptedPoint) {
+        expect(
+          Math.abs(acceptedPoint.y - target.y) * (GRAPHWAR_PLANE_HEIGHT / Math.abs(bounds.maxY - bounds.minY)),
+        ).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it("resolves ABS y'' terminal braking when the pulse-free baseline exits vertical bounds", () => {
+    const pathPoints = [
+      createGraphPoint(-21.012923390138894, 1.9939800314605236),
+      createGraphPoint(-17.63011127007194, -5.462831843644381),
+      createGraphPoint(-17.35236822059378, -5.993274023756385),
+      createGraphPoint(-13.90852712360211, -9.619064398109913),
+      createGraphPoint(-13.093770099151882, 11.852192124351859),
+    ];
+    const sample = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 1,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    }).result.sample;
+
+    const finalTarget = pathPoints.at(-1);
+    expect(finalTarget).toBeDefined();
+    expect(sample.points.some((point) => finalTarget !== undefined && point.x >= finalTarget.x)).toBe(true);
+  });
+
+  it.each([1, 10])(
+    "keeps an in-band pulse-free ABS y'' terminal state when braking would miss at steepness %d",
+    (steepness) => {
+      const pathPoints = [createGraphPoint(-20, 0), createGraphPoint(-15, 10)];
+      const resolved = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points: pathPoints,
+        settings: {
+          algorithm: "abs",
+          decimalPlaces: 4,
+          equation: "ddy",
+          steepness,
+          stepGlitchMode: false,
+          stepOverflowProtection: true,
+        },
+        soldierCenter: pathPoints[0],
+      });
+      const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
+
+      expect(Number.isFinite(targetState?.dy)).toBe(true);
+      expect(
+        Math.abs((targetState?.currentPoint.y ?? Number.POSITIVE_INFINITY) - pathPoints[1].y) *
+          (GRAPHWAR_PLANE_HEIGHT / Math.abs(bounds.maxY - bounds.minY)),
+      ).toBeLessThanOrEqual(1);
+    },
+  );
+
+  it("does not reduce terminal ABS y'' velocity by worsening an earlier right derivative", () => {
+    const pathPoints = [
+      createGraphPoint(-22, -1.0491845551878214),
+      createGraphPoint(-21.467671938030982, -0.811212245374918),
+      createGraphPoint(-20.541042321827263, 0.5483070379123092),
+      createGraphPoint(-19.65015974340495, 2.680323550477624),
+      createGraphPoint(-19.02240197919309, 2.535522018559277),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 10,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
+
+    expect(quality.maximumPositionError).toBeLessThanOrEqual(1);
+    expect(quality.maximumDerivativeError).toBeLessThan(1.158);
+  });
+
+  it("compares a zero terminal pulse after freezing refined ABS y'' interior pulses", () => {
+    const pathPoints = [
+      createGraphPoint(-21.62599334376864, -2.4155505280941725),
+      createGraphPoint(-18.80634746765718, -1.2850833758711815),
+      createGraphPoint(-16.052303848927842, -8.952934484928846),
+      createGraphPoint(-15.353948607202621, -7.4924518167972565),
+      createGraphPoint(-14.257015920756388, 2.689184557646513),
+      createGraphPoint(-10.600464272778485, 1.498513363301754),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 0.5,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
+
+    expect(quality.maximumPositionError).toBeLessThan(80);
+    expect(quality.maximumDerivativeError).toBeLessThan(5.6);
+  });
+
+  it("bisects ABS y'' terminal braking when the direct zero-velocity step leaves the position band", () => {
+    const pathPoints = [
+      createGraphPoint(-21.051426488440484, 7.964645493775606),
+      createGraphPoint(-19.499049228895455, 1.213296476751566),
+      createGraphPoint(-18.53511652080342, -2.7887472957372665),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 10,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
+
+    expect(quality.maximumPositionError).toBeLessThanOrEqual(1);
+    expect(quality.maximumDerivativeError).toBeLessThan(3);
+  });
+
+  it("lets an out-of-band ABS y'' terminal pulse improve position before terminal velocity", () => {
+    const pathPoints = [
+      createGraphPoint(-21.366648801136762, -6.235762229189277),
+      createGraphPoint(-18.547285165917128, -7.804884888231754),
+      createGraphPoint(-16.97277726801112, 7.21820330992341),
+      createGraphPoint(-13.75109699917957, 4.762492373585701),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 1,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
+
+    expect(quality.maximumPositionError).toBeLessThan(67);
+    expect(quality.maximumDerivativeError).toBeLessThan(3.9);
+  });
+
+  it("keeps the baseline ABS y'' state when shifted initialization is strictly worse", () => {
+    const pathPoints = [
+      createGraphPoint(-22.21006666496396, -5.94690552726388),
+      createGraphPoint(-19.068092084955424, -4.327485705725849),
+      createGraphPoint(-16.423833050299436, -4.199997507967055),
+      createGraphPoint(-11.956480401568115, -4.608122534118593),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 10,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
+
+    expect(quality.maximumPositionError).toBeLessThanOrEqual(1);
+    expect(quality.maximumDerivativeError).toBeLessThan(0.25);
+  });
+
+  it("prefers an in-band ABS y'' baseline over an out-of-band shifted state", () => {
+    const pathPoints = [
+      createGraphPoint(-21.48980218358338, -5.074931778945029),
+      createGraphPoint(-19.51429943786934, 10.507857907097787),
+      createGraphPoint(-15.246956859249622, 9.178474145475775),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 153,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
+
+    expect(quality.maximumPositionError).toBeLessThan(0.5);
+    expect(quality.maximumDerivativeError).toBeLessThan(1.8);
+  });
+
+  it("brakes the terminal ABS y'' state when center quantization displaces the pulse from the target", () => {
+    const pathPoints = [createGraphPoint(-21, 0), createGraphPoint(-19, -6)];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 153,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
+
+    const terminalCenterX = resolved.context.compiledMaterials.absSecondDerivativeFormula?.pulses[0]?.formulaCenterX;
+    expect(Number.isFinite(terminalCenterX)).toBe(true);
+    expect(terminalCenterX).not.toBe(pathPoints[1].x);
+    expect(Math.abs(targetState?.dy ?? Number.POSITIVE_INFINITY)).toBeLessThan(0.2);
+    expect(
+      Math.abs((targetState?.currentPoint.y ?? Number.POSITIVE_INFINITY) - pathPoints[1].y) *
+        (GRAPHWAR_PLANE_HEIGHT / Math.abs(bounds.maxY - bounds.minY)),
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("optimizes ABS y'' control states toward the polyline right derivative", () => {
+    const pathPoints = [
+      createGraphPoint(-20, 0),
+      createGraphPoint(-15, 4),
+      createGraphPoint(-10, -2),
+      createGraphPoint(-5, 1),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 153,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+
+    for (let targetIndex = 1; targetIndex < pathPoints.length; targetIndex += 1) {
+      const target = pathPoints[targetIndex];
+      const state = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], target.x);
+      expect(state?.dy).toBeDefined();
+      if (!state || state.dy === undefined) {
+        continue;
+      }
+      const nextTarget = pathPoints[targetIndex + 1];
+      const targetDerivative = nextTarget
+        ? (nextTarget.y - state.currentPoint.y) / (nextTarget.x - state.currentPoint.x)
+        : 0;
+      expect(Math.abs(state.dy - targetDerivative), `target ${targetIndex}`).toBeLessThan(0.1);
+    }
+  });
+
+  it("damps the worst in-band ABS y'' derivative without moving the whole pulse vector", () => {
+    const pathPoints = [
+      createGraphPoint(-21.71140972734429, 4.596602194942534),
+      createGraphPoint(-17.39680150244385, 6.194855257868767),
+      createGraphPoint(-11.63892913539894, 3.7827049419283867),
+      createGraphPoint(-9.788756974972785, 4.786154270172119),
+    ];
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 153,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    });
+    const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
+
+    expect(quality.maximumPositionError).toBeLessThanOrEqual(1);
+    expect(quality.maximumDerivativeError).toBeLessThan(0.03);
   });
 
   it.each([
@@ -1091,8 +1500,61 @@ describe("Step glitch formula prefix", () => {
   });
 });
 
+/** Converts a Graphwar coordinate pair into the shared test fixture's image space. */
 function toPixel(x: number, y: number) {
   return graphToImagePoint(createGraphPoint(x, y), bounds, boundsRect);
+}
+
+/** Replays one resolved y'' formula to the first real accepted state on or after a control line. */
+function sampleResolvedSecondOrderStateAtX(
+  context: GraphwarTrajectoryFormulaContext,
+  soldierCenter: ReturnType<typeof createGraphPoint>,
+  stopX: number,
+) {
+  return sampleGraphwarTrajectory({
+    algorithm: context.settings.algorithm,
+    bounds,
+    compiledFormulaMaterials: context.compiledMaterials,
+    equation: "ddy",
+    formulaEvaluation: context.formulaEvaluation,
+    launchAngleRadians: getGraphwarTrajectoryLaunchAngle(context),
+    points: context.formulaPoints,
+    secondOrderLaunchAngleMode: context.settings.secondOrderLaunchAngleMode,
+    shouldStop: (point) => point.x >= stopX,
+    soldierCenter,
+    steepness: context.settings.steepness,
+  }).endState;
+}
+
+/** Measures the same accepted-position and polyline-right-derivative contract across all y'' control lines. */
+function measureResolvedSecondOrderControlQuality(
+  context: GraphwarTrajectoryFormulaContext,
+  pathPoints: readonly GraphPoint[],
+  qualityBounds: GraphBounds,
+) {
+  let maximumDerivativeError = 0;
+  let maximumPositionError = 0;
+  for (let targetIndex = 1; targetIndex < pathPoints.length; targetIndex += 1) {
+    const target = pathPoints[targetIndex];
+    const state = sampleResolvedSecondOrderStateAtX(context, pathPoints[0], target.x);
+    expect(state?.dy).toBeDefined();
+    if (!state || state.dy === undefined) {
+      continue;
+    }
+    const nextTarget = pathPoints[targetIndex + 1];
+    maximumDerivativeError = Math.max(
+      maximumDerivativeError,
+      Math.abs(
+        state.dy - (nextTarget ? (nextTarget.y - state.currentPoint.y) / (nextTarget.x - state.currentPoint.x) : 0),
+      ),
+    );
+    maximumPositionError = Math.max(
+      maximumPositionError,
+      Math.abs(state.currentPoint.y - target.y) *
+        (GRAPHWAR_PLANE_HEIGHT / Math.abs(qualityBounds.maxY - qualityBounds.minY)),
+    );
+  }
+  return { maximumDerivativeError, maximumPositionError };
 }
 
 /**

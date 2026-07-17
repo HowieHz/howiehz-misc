@@ -32,141 +32,154 @@ const sampleTrajectory = vi.mocked(sampleGraphwarTrajectory);
 describe("ABS y'' refinement convergence", () => {
   afterEach(() => sampleTrajectory.mockReset());
 
-  it("stops when the first finite state reaches the one-pixel quality target", () => {
-    const resolved = resolveWithSamples([
-      terminalSample(1),
-      targetErrorSample(0.5),
-      terminalSample(1),
-      targetErrorSample(0),
-      targetErrorSample(0),
-    ]);
+  it("stops when a state inside the one-pixel position band repeats", () => {
+    const probes = installAbsRefinementSamples(
+      () => targetErrorSample(0),
+      (_terminalProbeIndex, centerX) => terminalSampleForPulseDeltaSlope(-1, centerX),
+    );
+    const resolved = resolveTrajectory();
 
-    expect(sampleTrajectory).toHaveBeenCalledTimes(5);
-    expect(resolved.context.formulaPoints[1].y).toBe(0);
-    expect(resolved.context.formulaEvaluation.absSecondDerivativePulseDeltaSlopes).toEqual([-1]);
-  });
-
-  it("restores the best state when the next quantized state repeats", () => {
-    const resolved = resolveWithSamples([
-      terminalSample(1),
-      targetErrorSample(4),
-      targetErrorSample(0),
-      terminalSample(1),
-      terminalSample(1),
-      targetErrorSample(0),
-      targetErrorSample(0),
-    ]);
-
-    expect(sampleTrajectory).toHaveBeenCalledTimes(7);
-    expect(resolved.context.formulaPoints[1].y).toBe(0);
-    expect(resolved.context.formulaEvaluation.absSecondDerivativePulseDeltaSlopes).toEqual([-1]);
+    expect(probes.terminalProbeCount).toBe(3);
+    expect(probes.executionStates).toHaveLength(3);
+    expectResolvedPulseState(resolved, probes.executionStates[0]);
   });
 
   it("restores the best state when a two-state cycle returns to the first key", () => {
-    const resolved = resolveWithSamples([
-      terminalSample(1),
-      targetErrorSample(4),
-      targetErrorSample(0),
-      terminalSample(2),
-      targetErrorSample(3),
-      targetErrorSample(0),
-      terminalSample(1),
-      terminalSample(2),
-      targetErrorSample(0),
-      targetErrorSample(0),
-    ]);
+    let cycleCenterX: number | undefined;
+    let cycleDeltaSlope: number | undefined;
+    const probes = installAbsRefinementSamples(
+      (targetProbeIndex, state) => {
+        if (targetProbeIndex === 0) {
+          return targetErrorSample(4);
+        }
+        if (targetProbeIndex === 1) {
+          cycleCenterX = state.centerX;
+          cycleDeltaSlope = state.deltaSlope;
+          // shifted 初态右移 2；下一状态用更小幅度返回同一中心，再恢复本幅度触发 key 重复。
+          return targetPointSample(2 * state.deltaSlope);
+        }
+        if (targetProbeIndex === 2 && cycleCenterX !== undefined) {
+          return targetPointSample(-state.deltaSlope * (state.centerX - cycleCenterX));
+        }
+        return targetErrorSample(0);
+      },
+      (terminalProbeIndex, centerX) => {
+        const deltaSlope =
+          (terminalProbeIndex === 2 || terminalProbeIndex === 3) && cycleDeltaSlope !== undefined
+            ? cycleDeltaSlope / 2
+            : terminalProbeIndex === 1
+              ? -0.75
+              : -1;
+        return terminalSampleForPulseDeltaSlope(deltaSlope, centerX);
+      },
+    );
+    const resolved = resolveTrajectory();
 
-    expect(sampleTrajectory).toHaveBeenCalledTimes(10);
-    expect(resolved.context.formulaPoints[1].y).toBe(4);
-    expect(resolved.context.formulaEvaluation.absSecondDerivativePulseDeltaSlopes).toEqual([-2]);
+    expect(probes.terminalProbeCount).toBe(4);
+    expect(probes.executionStates).toHaveLength(5);
+    expectResolvedPulseState(resolved, probes.executionStates[2]);
   });
 
   it.each([
     ["stays level", 3],
     ["gets worse", 3.5],
   ] as const)("restores the best state when the residual %s", (_name, finalError) => {
-    const resolved = resolveWithSamples([
-      terminalSample(1),
-      targetErrorSample(4),
-      targetErrorSample(0),
-      terminalSample(2),
-      targetErrorSample(3),
-      targetErrorSample(0),
-      terminalSample(3),
-      targetErrorSample(finalError),
-      terminalSample(2),
-      targetErrorSample(0),
-      targetErrorSample(0),
-    ]);
+    const probes = installAbsRefinementSamples((targetProbeIndex) =>
+      targetErrorSample([4, 3, finalError][targetProbeIndex] ?? finalError),
+    );
+    const resolved = resolveTrajectory();
 
-    expect(sampleTrajectory).toHaveBeenCalledTimes(11);
-    expect(resolved.context.formulaPoints[1].y).toBe(4);
-    expect(resolved.context.formulaEvaluation.absSecondDerivativePulseDeltaSlopes).toEqual([-2]);
+    expect(probes.terminalProbeCount).toBe(4);
+    expect(probes.executionStates).toHaveLength(6);
+    expectResolvedPulseState(resolved, probes.executionStates[1]);
   });
 
   it("restores the last improving state after the work limit", () => {
-    const samples: GraphwarTrajectorySample[] = [];
-    let expectedTargetY = 0;
-    for (let index = 0; index < 100; index += 1) {
-      const error = 101 - index;
-      samples.push(terminalSample(index + 1), targetErrorSample(error), targetErrorSample(0));
-      if (index < 99) {
-        expectedTargetY += error;
-      }
-    }
-    samples.push(terminalSample(100), targetErrorSample(0), targetErrorSample(0));
+    const probes = installAbsRefinementSamples(
+      (targetProbeIndex) => targetErrorSample(targetProbeIndex < 100 ? 101 - targetProbeIndex : 2),
+      (_terminalProbeIndex, centerX) => terminalSampleForPulseDeltaSlope(-1_000, centerX),
+    );
+    const resolved = resolveTrajectory();
 
-    const resolved = resolveWithSamples(samples);
-
-    expect(sampleTrajectory).toHaveBeenCalledTimes(303);
-    expect(resolved.context.formulaPoints[1].y).toBe(expectedTargetY);
-    expect(resolved.context.formulaEvaluation.absSecondDerivativePulseDeltaSlopes).toEqual([-100]);
+    expect(probes.terminalProbeCount).toBe(101);
+    expect(probes.executionStates).toHaveLength(103);
+    expectResolvedPulseState(resolved, probes.executionStates[99]);
   });
 
   it("does not replace a finite best state with a non-finite residual", () => {
-    const resolved = resolveWithSamples([
-      terminalSample(1),
-      targetErrorSample(4),
-      targetErrorSample(0),
-      terminalSample(2),
-      targetPointSample(Number.MAX_VALUE),
-      terminalSample(1),
-      targetErrorSample(0),
-      targetErrorSample(0),
-    ]);
+    const probes = installAbsRefinementSamples((targetProbeIndex) =>
+      targetProbeIndex === 0
+        ? targetErrorSample(4)
+        : targetProbeIndex === 1
+          ? targetPointSample(Number.MAX_VALUE)
+          : targetErrorSample(4),
+    );
+    const resolved = resolveTrajectory();
 
-    expect(sampleTrajectory).toHaveBeenCalledTimes(8);
-    expect(resolved.context.formulaPoints[1].y).toBe(0);
-    expect(resolved.context.formulaEvaluation.absSecondDerivativePulseDeltaSlopes).toEqual([-1]);
+    expect(probes.terminalProbeCount).toBe(3);
+    expect(probes.executionStates).toHaveLength(5);
+    expectResolvedPulseState(resolved, probes.executionStates[0]);
   });
 
   it("fails when every residual is non-finite", () => {
-    installSamples([terminalSample(1), targetPointSample(Number.MAX_VALUE)]);
+    const probes = installAbsRefinementSamples(() => targetPointSample(Number.MAX_VALUE));
 
     expect(() => resolveTrajectory()).toThrow(GraphwarFormulaConvergenceError);
-    expect(sampleTrajectory).toHaveBeenCalledTimes(2);
+    expect(probes.terminalProbeCount).toBe(1);
+    expect(probes.executionStates).toHaveLength(1);
   });
 });
 
-/** Runs the public trajectory resolver and verifies that the scripted physical samples were consumed exactly once. */
-function resolveWithSamples(samples: readonly GraphwarTrajectorySample[]) {
-  const remainingSamples = installSamples(samples);
-  const resolved = resolveTrajectory();
-  expect(remainingSamples).toHaveLength(0);
-  return resolved;
+/** 一轮 ABS y'' 完整回放真正消费的末脉冲原子状态。 */
+interface AbsPulseExecutionState {
+  centerX: number;
+  deltaSlope: number;
 }
 
-/** Installs one deterministic sample per ABS refinement probe; an unexpected extra probe fails the test immediately. */
-function installSamples(samples: readonly GraphwarTrajectorySample[]) {
-  const remainingSamples = [...samples];
-  sampleTrajectory.mockImplementation(() => {
-    const sample = remainingSamples.shift();
-    if (!sample) {
-      throw new Error("Unexpected ABS y'' trajectory probe");
+/** Separates pulse-free terminal probes from complete execution states and records each atomic pulse pair. */
+function installAbsRefinementSamples(
+  createTargetSample: (targetProbeIndex: number, state: AbsPulseExecutionState) => GraphwarTrajectorySample,
+  createTerminalSample: (terminalProbeIndex: number, centerX: number | undefined) => GraphwarTrajectorySample = () =>
+    terminalSample(1),
+) {
+  const executionStates: AbsPulseExecutionState[] = [];
+  let terminalProbeCount = 0;
+  sampleTrajectory.mockImplementation((options) => {
+    const pulse = options.compiledFormulaMaterials?.absSecondDerivativeFormula?.pulses[0];
+    let sample: GraphwarTrajectorySample;
+    if (pulse) {
+      const state = {
+        centerX: pulse.formulaCenterX,
+        deltaSlope:
+          pulse.coefficient / (options.compiledFormulaMaterials?.absSecondDerivativeFormula?.formulaSteepness ?? 1),
+      };
+      sample = createTargetSample(executionStates.push(state) - 1, state);
+    } else if (options.formulaEvaluation?.absSecondDerivativePulseDeltaSlopes?.[0] === 0) {
+      // 本组只隔离主 refinement 状态机；零末脉冲候选由 sampling 回归单独覆盖。
+      sample = targetPointSample(Number.MAX_VALUE);
+    } else {
+      sample = createTerminalSample(
+        terminalProbeCount,
+        options.formulaEvaluation?.absSecondDerivativePulseCenterXs?.[0],
+      );
+      terminalProbeCount += 1;
+    }
+    if (sample.endState) {
+      options.shouldStop?.(
+        sample.endState.currentPoint,
+        sample.endState.previousPoint,
+        sample.endState.sampleIndex,
+        sample.endState,
+      );
     }
     return sample;
   });
-  return remainingSamples;
+  return {
+    executionStates,
+    get terminalProbeCount() {
+      return terminalProbeCount;
+    },
+  };
 }
 
 /** Resolves the same long, nearly horizontal path so display rounding keeps angle identity stable across test states. */
@@ -183,6 +196,15 @@ function resolveTrajectory() {
 /** Creates a stopped prefix sample whose terminal slope determines the quantized pulse state. */
 function terminalSample(dy: number) {
   return createSample(0, dy);
+}
+
+/** Builds the incoming y' that resolves to one requested pulse amplitude at the current fixed center. */
+function terminalSampleForPulseDeltaSlope(deltaSlope: number, centerX: number | undefined) {
+  if (centerX === undefined) {
+    return terminalSample(-deltaSlope);
+  }
+  const progress = (x: number) => 1 / (1 + Math.exp(-(x - centerX)));
+  return terminalSample(-deltaSlope * (progress(points[1].x) - progress(points[0].x)));
 }
 
 /** Creates a target-line sample with a requested signed correction toward the real target y. */
@@ -203,4 +225,16 @@ function createSample(y: number, dy: number): GraphwarTrajectorySample {
     points: [point],
     stopReason: "stopped",
   };
+}
+
+/** Verifies that convergence restored the center and coefficient from the same recorded execution state. */
+function expectResolvedPulseState(
+  resolved: ReturnType<typeof resolveTrajectory>,
+  expected: AbsPulseExecutionState | undefined,
+) {
+  expect(expected).toBeDefined();
+  expect(resolved.context.compiledMaterials.absSecondDerivativeFormula?.pulses[0]?.formulaCenterX).toBe(
+    expected?.centerX,
+  );
+  expect(resolved.context.formulaEvaluation.absSecondDerivativePulseDeltaSlopes?.[0]).toBe(expected?.deltaSlope);
 }

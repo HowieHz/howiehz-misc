@@ -25,6 +25,14 @@ import { calculateStepFormulaCenterX, resolveStepFormula } from "../generation/s
 export { calculateStepFormulaCenterX } from "../generation/step-numeric-strategy";
 export type { GraphwarExpressionParserOptions } from "../expression/evaluator";
 
+/** 每个真实接受点后的早停回调；二阶求解器可读取同一点的权威 y'，普通调用方可忽略第四参。 */
+export type GraphwarTrajectoryStopPredicate = (
+  point: GraphPoint,
+  previousPoint: GraphPoint | undefined,
+  index: number,
+  state: GraphwarTrajectorySamplingState,
+) => boolean;
+
 /** 采样由路径点生成的公式时的完整输入，保持与 Graphwar 原版步进参数隔离。 */
 export interface SampleGraphwarTrajectoryOptions {
   /** 路径点转公式的算法。 */
@@ -44,7 +52,7 @@ export interface SampleGraphwarTrajectoryOptions {
   /** 已由公式上下文确定的 Y''= 有效发射角；存在时禁止重新求解另一套角度。 */
   launchAngleRadians?: number;
   /** 每个采样点后的早停钩子，用于目标/障碍验证。 */
-  shouldStop?: (point: GraphPoint, previousPoint: GraphPoint | undefined, index: number) => boolean;
+  shouldStop?: GraphwarTrajectoryStopPredicate;
   /** 已验证前缀的采样状态；传入后从该点继续推进，而不是重新从发射点采样。 */
   initialState?: GraphwarTrajectorySamplingState;
   /** 士兵中心；Graphwar 实际发射点会从这里沿角度偏移半径。 */
@@ -81,7 +89,7 @@ export interface SampleGraphwarExpressionTrajectoryOptions {
   /** Graphwar 表达式解析兼容选项。 */
   parser?: GraphwarExpressionParserOptions;
   /** 每个采样点后的早停钩子，用于目标/障碍验证。 */
-  shouldStop?: (point: GraphPoint, previousPoint: GraphPoint | undefined, index: number) => boolean;
+  shouldStop?: GraphwarTrajectoryStopPredicate;
   /** 已验证前缀的采样状态；传入后从该点继续推进。 */
   initialState?: GraphwarTrajectorySamplingState;
   /** 士兵中心；Graphwar 实际发射点会从这里沿角度偏移半径。 */
@@ -651,7 +659,12 @@ function sampleWithTrajectoryStepper(
   const samples: GraphPoint[] = [stepper.state.currentPoint];
   if (
     !options.skipInitialStop &&
-    options.shouldStop?.(stepper.state.currentPoint, stepper.state.previousPoint, stepper.state.sampleIndex)
+    options.shouldStop?.(
+      stepper.state.currentPoint,
+      stepper.state.previousPoint,
+      stepper.state.sampleIndex,
+      stepper.state,
+    )
   ) {
     return createTrajectorySample(samples, "stopped", stepper.state);
   }
@@ -663,7 +676,7 @@ function sampleWithTrajectoryStepper(
     }
 
     samples.push(next.point);
-    if (options.shouldStop?.(next.point, next.previousPoint, next.sampleIndex)) {
+    if (options.shouldStop?.(next.point, next.previousPoint, next.sampleIndex, next.state)) {
       return createTrajectorySample(samples, "stopped", next.state);
     }
   }
@@ -676,7 +689,7 @@ function sampleByBisection<TPoint extends GraphPoint>(
   calculateNext: (previous: TPoint, step: number) => TPoint,
   options: {
     initialState?: GraphwarTrajectorySamplingState;
-    shouldStop?: (point: GraphPoint, previousPoint: GraphPoint | undefined, index: number) => boolean;
+    shouldStop?: GraphwarTrajectoryStopPredicate;
     skipInitialStop?: boolean;
     stopAtMinStep: boolean;
   },

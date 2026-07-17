@@ -721,7 +721,10 @@ function createCompiledAbsSecondDerivativeFormula(
     if (coefficient !== 0) {
       pulses.push({
         coefficient,
-        formulaCenterX: createCompiledFormulaXCenter(center.x, options),
+        formulaCenterX: createCompiledFormulaXCenter(
+          options?.absSecondDerivativePulseCenterXs?.[index] ?? center.x,
+          options,
+        ),
       });
     }
   }

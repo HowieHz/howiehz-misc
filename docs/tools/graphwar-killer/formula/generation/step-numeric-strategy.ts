@@ -341,7 +341,7 @@ export interface StepFirstOrderGlitchSegment extends StepGlitchSegmentBase {
   gateY: number;
 }
 
-/** Step y''= 邪道段；同一 RK4 步内先加速纵跳，再按跳前/跨门速度计算末相位刹车脉冲，候选按落点 y、单次跳转和无障碍验收，不验收最终 y'。 */
+/** Step y''= 邪道段；同一 RK4 步内先加速纵跳，再用末相位刹车把落点速度尽力归零。 */
 export interface StepSecondOrderGlitchSegment extends StepGlitchSegmentBase {
   /** 纵跳阶段使用的加速度。 */
   acceleration: number;
@@ -361,7 +361,9 @@ export type StepGlitchSegment = StepFirstOrderGlitchSegment | StepSecondOrderGli
 
 /** 编译和输出共用的公式数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
 export interface FormulaEvaluationOptions {
-  /** ABS y'' 每个折点按真实二阶状态求出的速度变化；末项只保留路径后趋平意图，不验收最终导数。 */
+  /** ABS y'' 为让真实控制线状态接近折线右导数而解析出的脉冲中心；未设置时保持原折点。 */
+  absSecondDerivativePulseCenterXs?: readonly (number | undefined)[];
+  /** ABS y'' 每个折点按真实二阶状态求出的速度变化。 */
   absSecondDerivativePulseDeltaSlopes?: readonly (number | undefined)[];
   /** 从左到右模拟确认的真实段起点；首段始终使用重新解析出的枪口点。 */
   segmentStartPoints?: readonly (GraphPoint | undefined)[];

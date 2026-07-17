@@ -7,6 +7,46 @@ import { graphwarKillerLocale } from "../../locale";
 import MainPanel from "./MainPanel.vue";
 
 describe("Result MainPanel", () => {
+  it("places the fraction-output switch beside the solver title and locks it with managed interactions", async () => {
+    const result = { ...createResultModel(), workflowMode: "solver" as const };
+    const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, result } });
+    const leading = wrapper.get(".graphwar-killer__result-leading");
+    const toggle = leading.get("#graphwar-killer-fraction-output");
+
+    expect(leading.element.children[0]).toBe(leading.get("h2").element);
+    expect(leading.element.children[1]).toBe(toggle.element.parentElement);
+    expect(toggle.attributes("aria-checked")).toBe("false");
+    expect(toggle.attributes("title")).toBe(graphwarKillerLocale.ui.result.fractionOutputTitle);
+
+    await toggle.trigger("click");
+    expect(wrapper.emitted("toggleFractionOutput")).toHaveLength(1);
+
+    await wrapper.setProps({ result: { ...result, fractionOutputEnabled: true, interactionDisabled: true } });
+    expect(toggle.attributes("aria-checked")).toBe("true");
+    expect(toggle.attributes()).toHaveProperty("disabled");
+  });
+
+  it("hides the fraction-output switch for simulator input", () => {
+    const wrapper = mount(MainPanel, {
+      props: { locale: graphwarKillerLocale, result: createResultModel() },
+    });
+
+    expect(wrapper.find("#graphwar-killer-fraction-output").exists()).toBe(false);
+  });
+
+  it("keeps the full angle in the title while rendering compact hint text", () => {
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        result: { ...createResultModel(), secondOrderAngleHint: { text: "1e-101°", title: "0.000...010976°" } },
+      },
+    });
+    const hint = wrapper.get(".graphwar-killer__second-order-angle-hint");
+
+    expect(hint.text()).toBe("1e-101°");
+    expect(hint.attributes("title")).toBe("0.000...010976°");
+  });
+
   it("keeps the Agent fire reason directly below its button", () => {
     const result = createResultModel();
     const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, result } });
@@ -54,9 +94,10 @@ function createResultModel() {
     canCopyFormula: true,
     copyButtonText: "复制函数",
     equationPrefix: "y=",
+    fractionOutputEnabled: false,
     interactionDisabled: false,
     pointRows: [],
-    secondOrderAngleHint: "",
+    secondOrderAngleHint: undefined,
     showSimulatorLaunchAngleInput: false,
     simulatorFormulaText: "",
     simulatorLaunchAngleText: "",

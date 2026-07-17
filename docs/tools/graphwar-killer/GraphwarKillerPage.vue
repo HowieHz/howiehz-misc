@@ -110,6 +110,7 @@ import {
   type TransferStatus,
 } from "./core/types";
 import type { GraphwarDetectionBox } from "./detection/objects";
+import { convertGraphwarExpressionDecimalsToFractions } from "./formula/expression/fraction-output";
 import {
   formulaModeSupportsStepGlitch,
   formulaModeUsesSteepness,
@@ -216,6 +217,7 @@ const magnifierZoomText = ref(String(graphwarToolDefaults.magnifierZoom));
 const magnifierPoint = ref<PixelPoint>();
 const toolMode = ref<ToolMode>("bounds");
 const toolWorkflowMode = ref<ToolWorkflowMode>("solver");
+const fractionOutputEnabled = ref(false);
 const solverEquationMode = ref<EquationMode>("y");
 const simulatorEquationMode = ref<EquationMode>("y");
 const equationMode = computed<EquationMode>({
@@ -1070,6 +1072,7 @@ const {
     skipUnknownCharacters: simulatorSkipUnknownCharacters,
   },
 });
+const generatedFormulaOutput = computed(() => formatGeneratedFormulaOutput(formulaResult.value?.expression ?? ""));
 // 结果操作 Module 应集中复制反馈、clipboard fallback 和模拟器清空；页面只提供当前结果来源。
 const {
   canClearSimulatorInputs,
@@ -1080,10 +1083,10 @@ const {
   dispose: disposeResultActions,
   statusAnnouncement: copyStatusAnnouncement,
 } = useGraphwarResultActions({
-  formulaResult,
   getCopyMessages: () => locale.status.copy,
   simulatorFormulaText,
   simulatorLaunchAngleText,
+  solverFormulaText: generatedFormulaOutput,
   toolWorkflowMode,
 });
 
@@ -1688,11 +1691,17 @@ const secondOrderLaunchAngleText = computed(() =>
     ? ""
     : formatDoublePrecisionDecimal(secondOrderLaunchAngleDegrees.value),
 );
-const secondOrderAngleHint = computed(() =>
-  toolWorkflowMode.value === "solver" && secondOrderLaunchAngleText.value
-    ? locale.status.secondOrderAngleHint(secondOrderLaunchAngleText.value)
-    : "",
-);
+/** 为二阶角度提示分离短展示文本和完整悬停文本，避免极小 double 撑宽页面。 */
+const secondOrderAngleHint = computed(() => {
+  const angleDegrees = secondOrderLaunchAngleDegrees.value;
+  if (toolWorkflowMode.value !== "solver" || angleDegrees === undefined) {
+    return undefined;
+  }
+  return {
+    text: locale.status.secondOrderAngleHint(angleDegrees.toString()),
+    title: locale.status.secondOrderAngleHint(secondOrderLaunchAngleText.value),
+  };
+});
 
 const trajectoryWarning = computed(() => {
   const reason = trajectoryWarningReason.value;
@@ -2095,6 +2104,7 @@ const resultPanel = computed(() => {
       Boolean(calculationMessage.value) && (toolWorkflowMode.value === "simulator" || !solverResult),
     copyButtonText: copyButtonText.value,
     equationPrefix: equationModes.value.find((mode) => mode.value === equationMode.value)?.formulaPrefix ?? "",
+    fractionOutputEnabled: fractionOutputEnabled.value,
     interactionDisabled: graphwarManagedModeEnabled.value,
     pointRows: incumbentPreviewActive.value ? [] : createResultPanelPointRows(),
     pathQualityWarning:
@@ -2107,7 +2117,7 @@ const resultPanel = computed(() => {
     showSimulatorLaunchAngleInput: toolWorkflowMode.value === "simulator" && equationMode.value === "ddy",
     simulatorFormulaText: simulatorFormulaText.value,
     simulatorLaunchAngleText: simulatorLaunchAngleText.value,
-    solverExpression: solverResult?.expression ?? "",
+    solverExpression: generatedFormulaOutput.value,
     solverResultVisible: toolWorkflowMode.value === "solver" && !!solverResult,
     trajectoryWarning: trajectoryWarning.value,
     targetHitWarning: formulaTargetMissed.value ? locale.status.trajectoryWarning.targetMissed : "",
@@ -2386,7 +2396,7 @@ function setToolWorkflowMode(mode: ToolWorkflowMode) {
     const solverResult = formulaResult.value;
     if (!simulatorFormulaText.value.trim() && solverResult) {
       simulatorEquationMode.value = solverEquationMode.value;
-      simulatorFormulaText.value = solverResult.expression;
+      simulatorFormulaText.value = generatedFormulaOutput.value;
       simulatorLaunchAngleText.value = secondOrderLaunchAngleText.value;
     }
     if (simulatorPathPixels.value.length === 0 && solverPathPixels.value.length > 0) {
@@ -2807,8 +2817,8 @@ async function fireGraphwarAgentFunction() {
       throw new GraphwarAgentClientError("conflict", "shot-not-accepted");
     }
     const functionText =
-      toolWorkflowMode.value === "solver" ? formulaResult.value?.expression : simulatorFormulaText.value;
-    if (!functionText?.trim() || equationMode.value !== state.equationMode) {
+      toolWorkflowMode.value === "solver" ? generatedFormulaOutput.value : simulatorFormulaText.value;
+    if (!functionText.trim() || equationMode.value !== state.equationMode) {
       throw new GraphwarAgentClientError("invalid-request", "result-mode-mismatch");
     }
     graphwarAgentBaseUrlText.value = client.baseUrl;
@@ -3272,11 +3282,15 @@ function createGraphwarManagedShotPlan(state: GraphwarAgentAvailableState): Grap
     return undefined;
   }
   if (state.equationMode !== "ddy") {
-    return { equationMode: state.equationMode, function: incumbent.expression };
+    return { equationMode: state.equationMode, function: formatGeneratedFormulaOutput(incumbent.expression) };
   }
   return incumbent.launchAngleRadians === undefined
     ? undefined
-    : { angleRadians: incumbent.launchAngleRadians, equationMode: "ddy", function: incumbent.expression };
+    : {
+        angleRadians: incumbent.launchAngleRadians,
+        equationMode: "ddy",
+        function: formatGeneratedFormulaOutput(incumbent.expression),
+      };
 }
 
 /** 正常完成只提交 controller 当前快照，并返回本回合是否已在 await 前完成 once-only claim。 */
@@ -3476,6 +3490,11 @@ function toggleGraphwarAgentUsage() {
   } else {
     setGraphwarAgentFireStatus("idle");
   }
+}
+
+/** 只后处理对外输出，内部求解、回放和缓存继续使用原始小数表达式。 */
+function formatGeneratedFormulaOutput(expression: string) {
+  return fractionOutputEnabled.value ? convertGraphwarExpressionDecimalsToFractions(expression) : expression;
 }
 
 /** 同步 Agent 地址输入；地址为空时不展示手动读取按钮。 */
@@ -4192,6 +4211,7 @@ function undoLastPoint() {
       @start-point-coordinate-edit="
         (index, axis) => !graphwarManagedModeEnabled && startPathPointCoordinateEdit(index, axis)
       "
+      @toggle-fraction-output="!graphwarManagedModeEnabled && (fractionOutputEnabled = !fractionOutputEnabled)"
       @update-point-coordinate="
         (index, axis, value) => !graphwarManagedModeEnabled && handlePathPointCoordinateInput(index, axis, value)
       "

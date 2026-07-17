@@ -807,6 +807,8 @@ export const graphwarKillerLocale = {
       fireSuccess: "Fired",
       fireTitle: "Submit the current function through Graphwar Agent and fire",
       firing: "Firing",
+      fractionOutput: "Fraction output",
+      fractionOutputTitle: "Convert finite decimals in the generated function to lowest-term fractions",
       formulaInputAriaLabel: "Simulator function input",
       formulaInputTitle: "Enter the Graphwar function to simulate",
       launchAngle: "Launch angle",

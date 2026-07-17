@@ -8,6 +8,56 @@ import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
 
 describe("Graphwar Killer page settings", () => {
+  it("uses compact double text for tiny angle hints and keeps the expanded title", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const angleDegrees = 1.0976980032456007e-101;
+    const expandedAngleText =
+      "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010976980032456007";
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: { commitIncumbentResult: (expression: string, launchAngleRadians: number) => void };
+      }
+    ).setupState;
+
+    await wrapper.findAll(".graphwar-killer__equation-toggle button")[2].trigger("click");
+    page.commitIncumbentResult("x", (angleDegrees * Math.PI) / 180);
+    await nextTick();
+
+    const hint = wrapper.get(".graphwar-killer__second-order-angle-hint");
+    expect(hint.text()).toContain("1.0976980032456007e-101°");
+    expect(hint.attributes("title")).toBe(graphwarKillerLocale.status.secondOrderAngleHint(expandedAngleText));
+    wrapper.unmount();
+  });
+
+  it("shares the fraction-output preference across solver modes and hides it in Simulator", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: { commitIncumbentResult: (expression: string) => void };
+      }
+    ).setupState;
+    const toggle = wrapper.get("#graphwar-killer-fraction-output");
+
+    page.commitIncumbentResult("0.5*x");
+    await nextTick();
+    expect(wrapper.get(".graphwar-killer__formula").text()).toBe("0.5*x");
+    expect(toggle.attributes("aria-checked")).toBe("false");
+    await toggle.trigger("click");
+    expect(toggle.attributes("aria-checked")).toBe("true");
+    expect(wrapper.get(".graphwar-killer__formula").text()).toBe("1/2*x");
+
+    await wrapper.findAll(".graphwar-killer__equation-toggle button")[1].trigger("click");
+    expect(wrapper.get("#graphwar-killer-fraction-output").attributes("aria-checked")).toBe("true");
+
+    await wrapper.findAll(".graphwar-killer__mode-toggle button")[1].trigger("click");
+    expect(wrapper.find("#graphwar-killer-fraction-output").exists()).toBe(false);
+    expect(wrapper.get<HTMLInputElement>(".graphwar-killer__formula-input").element.value).toBe("1/2*x");
+
+    await wrapper.findAll(".graphwar-killer__mode-toggle button")[0].trigger("click");
+    expect(wrapper.get("#graphwar-killer-fraction-output").attributes("aria-checked")).toBe("true");
+    wrapper.unmount();
+  });
+
   it("uses full-precision launch-angle guidance without Agent or managed mode", () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const page = (

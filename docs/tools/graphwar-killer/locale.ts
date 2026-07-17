@@ -718,6 +718,8 @@ export const graphwarKillerLocale = {
       fireSuccess: "已开火",
       fireTitle: "通过 Graphwar Agent 提交当前函数并开火",
       firing: "开火中",
+      fractionOutput: "结果转分数",
+      fractionOutputTitle: "将生成函数中的有限小数转换为最简分数",
       formulaInputAriaLabel: "模拟器函数输入",
       formulaInputTitle: "输入要模拟的 Graphwar 函数",
       launchAngle: "发射角",

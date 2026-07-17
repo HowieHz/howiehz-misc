@@ -7,6 +7,7 @@ import {
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
 import { graphToImagePoint } from "../../core/geometry";
+import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
 import {
@@ -508,6 +509,73 @@ describe("Generated formula evaluator equivalence", () => {
   });
 });
 
+describe("Canonical formula settings behavior", () => {
+  const points = [createGraphPoint(-10, -1), createGraphPoint(-7, 2), createGraphPoint(-3, -2), createGraphPoint(1, 1)];
+  const cases = [
+    {
+      changedSettings: { stepOverflowProtection: true },
+      name: "Step y overflow protection",
+      settings: {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "y" as const,
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+    },
+    {
+      changedSettings: { secondOrderLaunchAngleMode: "display-rounded" as const },
+      name: "non-second-order launch angle mode",
+      settings: {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "dy" as const,
+        secondOrderLaunchAngleMode: "full-precision" as const,
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+    },
+    {
+      changedSettings: { formulaPathSteepness: 211 },
+      name: "non-Step formula-path steepness",
+      settings: {
+        algorithm: "abs" as const,
+        decimalPlaces: 4,
+        equation: "dy" as const,
+        formulaPathSteepness: 210,
+        steepness: 67,
+        stepGlitchMode: false,
+        stepOverflowProtection: true,
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    it(`keeps real ${testCase.name} trajectories identical`, () => {
+      const baseline = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points,
+        settings: testCase.settings,
+        soldierCenter: points[0],
+      });
+      const changed = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        points,
+        settings: { ...testCase.settings, ...testCase.changedSettings },
+        soldierCenter: points[0],
+      });
+
+      expect(changed.context.formulaResult.expression).toBe(baseline.context.formulaResult.expression);
+      expect(changed.context.formulaPoints).toEqual(baseline.context.formulaPoints);
+      expectTrajectorySamplesToBeIdentical(changed.result.sample, baseline.result.sample);
+    });
+  }
+});
+
 describe("ODE segment position compensation", () => {
   const points = [
     createGraphPoint(-23.376623376623378, 2.5974025974025974),
@@ -640,6 +708,154 @@ describe("ODE segment position compensation", () => {
     expect(resolved.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual([false]);
   });
 
+  it("reuses a Step prefix across an irrelevant launch-angle setting change", () => {
+    const pathPoints = [createGraphPoint(-10, 0), createGraphPoint(-5, 3)];
+    const options = {
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "dy" as const,
+        secondOrderLaunchAngleMode: "full-precision" as const,
+        steepness: 67,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const initial = resolveGraphwarTrajectory(options);
+    const prefix = initial.context.stepGlitchFormulaPrefix;
+
+    expect(prefix).toBeDefined();
+    if (!prefix) {
+      return;
+    }
+    const changedOptions = {
+      ...options,
+      settings: { ...options.settings, secondOrderLaunchAngleMode: "display-rounded" as const },
+    };
+    const compileMaterials = vi.mocked(compileGraphwarFormulaMaterials);
+    compileMaterials.mockClear();
+    const reused = resolveGraphwarTrajectory({ ...changedOptions, stepGlitchFormulaPrefix: prefix });
+    const reusedCompileCount = compileMaterials.mock.calls.length;
+    compileMaterials.mockClear();
+    const cold = resolveGraphwarTrajectory(changedOptions);
+    const coldCompileCount = compileMaterials.mock.calls.length;
+
+    expect(reusedCompileCount).toBeLessThan(coldCompileCount);
+    expect(reused.context.formulaResult.expression).toBe(cold.context.formulaResult.expression);
+    expect(reused.context.formulaPoints).toEqual(cold.context.formulaPoints);
+    expectTrajectorySamplesToBeIdentical(reused.result.sample, cold.result.sample);
+  });
+
+  it("discards an incompatible prefix before merging its hard-Step requirement", () => {
+    const pathPoints = [createGraphPoint(-10, 0), createGraphPoint(-5, 3)];
+    const options = {
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "dy" as const,
+        steepness: 67,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const cold = resolveGraphwarTrajectory(options);
+    const prefix = cold.context.stepGlitchFormulaPrefix;
+
+    expect(prefix?.stepGlitchRequirements).toEqual([false]);
+    if (!prefix) {
+      return;
+    }
+    const incompatibleSignProtection = [...prefix.signProtection];
+    incompatibleSignProtection[0] = (incompatibleSignProtection[0] ?? 0) ^ GraphwarSignRole.StartX;
+    const incompatible = resolveGraphwarTrajectory({
+      ...options,
+      signProtection: prefix.signProtection,
+      stepGlitchFormulaPrefix: {
+        ...prefix,
+        signProtection: incompatibleSignProtection,
+        stepGlitchRequirements: [true],
+        stepGlitchSegments: [
+          {
+            derivative: 1,
+            endX: -5.5,
+            equation: "dy",
+            gateY: 0,
+            startX: -6,
+            targetY: 3,
+          },
+        ],
+      },
+    });
+
+    expect(incompatible.context.formulaResult.expression).toBe(cold.context.formulaResult.expression);
+    expect(incompatible.context.formulaPoints).toEqual(cold.context.formulaPoints);
+    expect(incompatible.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual(
+      cold.context.stepGlitchFormulaPrefix?.stepGlitchRequirements,
+    );
+    expect(incompatible.context.stepGlitchFormulaPrefix?.stepGlitchSegments).toEqual(
+      cold.context.stepGlitchFormulaPrefix?.stepGlitchSegments,
+    );
+  });
+
+  it("discards every prefix requirement when a later segment is incompatible", () => {
+    const pathPoints = [
+      createGraphPoint(-24, 12),
+      createGraphPoint(-22.857142857142858, 13.571428571428571),
+      createGraphPoint(-22.84714285714286, 1.7532467532467528),
+    ];
+    const options = {
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "dy" as const,
+        steepness: 210,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+      targetHitRadiusPixels: 7,
+      targetPoint: toPixel(pathPoints[2].x, pathPoints[2].y),
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const baseline = resolveGraphwarTrajectory(options);
+    const prefix = baseline.context.stepGlitchFormulaPrefix;
+
+    expect(prefix?.stepGlitchRequirements).toEqual([false, true]);
+    const hardSegment = prefix?.stepGlitchSegments[1];
+    expect(hardSegment).toBeDefined();
+    if (!prefix || !hardSegment) {
+      return;
+    }
+    const fixedOptions = {
+      ...options,
+      stepGlitchXWindows: [undefined, { endX: hardSegment.endX, startX: hardSegment.startX }],
+    };
+    const cold = resolveGraphwarTrajectory(fixedOptions);
+    const incompatible = resolveGraphwarTrajectory({
+      ...fixedOptions,
+      stepGlitchFormulaPrefix: {
+        ...prefix,
+        stepGlitchRequirements: [true, false],
+        stepGlitchSegments: [hardSegment, undefined],
+      },
+    });
+
+    expect(incompatible.context.formulaResult.expression).toBe(cold.context.formulaResult.expression);
+    expect(incompatible.context.formulaPoints).toEqual(cold.context.formulaPoints);
+    expect(incompatible.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual([false, true]);
+    expectTrajectorySamplesToBeIdentical(incompatible.result.sample, cold.result.sample);
+  });
+
   it("prefers the lower-velocity soft Step y'' coefficient inside the one-pixel position band", () => {
     const pathPoints = [createGraphPoint(-20, 0), createGraphPoint(-15, 0.05)];
     const resolved = resolveGraphwarTrajectory({
@@ -668,7 +884,7 @@ describe("ODE segment position compensation", () => {
   });
 
   it.each(["dy", "ddy"] as const)(
-    "rejects a %s path when a failed soft segment has no valid hard Step candidate",
+    "keeps a finite soft %s path when no improving hard Step candidate exists",
     (equation) => {
       const pathPoints = [
         createGraphPoint(-12, 0),
@@ -680,6 +896,7 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points: pathPoints,
+        qualityPoints: pathPoints.slice(1),
         settings: {
           algorithm: "step" as const,
           decimalPlaces: 4,
@@ -691,8 +908,11 @@ describe("ODE segment position compensation", () => {
         soldierCenter: pathPoints[0],
       } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
 
-      expect(() => resolveGraphwarTrajectory(options)).toThrow(GraphwarTrajectoryResolutionError);
-      expect(tryResolveGraphwarTrajectoryCandidate(options)).toBeUndefined();
+      const resolved = resolveGraphwarTrajectory(options);
+
+      expect(resolved.context.compiledMaterials.stepFormula?.terms.every((term) => !term.glitchSegment)).toBe(true);
+      expect(resolved.result.pathError).toBeGreaterThan(graphwarToolDefaults.formulaPathQualityTargetPlanePixels);
+      expect(tryResolveGraphwarTrajectoryCandidate(options)).toBeDefined();
     },
   );
 

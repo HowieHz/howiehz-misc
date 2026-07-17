@@ -224,7 +224,7 @@ describe("Step glitch smart-path validation", () => {
     expect(response.result).toMatchObject({ failureReason: "graph-rule" });
   });
 
-  it("reuses the last exact successful formula as the next scanner prefix", async () => {
+  it("reuses the last exact successful formula across an irrelevant settings change", async () => {
     const mask = new Uint8Array(1);
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 701;
@@ -251,6 +251,7 @@ describe("Step glitch smart-path validation", () => {
       ...first,
       hitTarget: { center: secondTarget, radius: 10 },
       prefixTarget: first.hitTarget,
+      settings: { ...first.settings, secondOrderLaunchAngleMode: "display-rounded" },
       sourcePath: firstPath,
       targetPoint: secondTarget,
     };
@@ -266,6 +267,31 @@ describe("Step glitch smart-path validation", () => {
       },
       stepGlitchFormulaPrefix: { points: formulaPoints, settings: second.settings },
     });
+  });
+
+  it("rejects prefix evidence after an effective settings change", async () => {
+    const mask = new Uint8Array(1);
+    const first = createStepGlitchInput(mask, mask);
+    first.simulationMaskCacheId = 731;
+    const firstPath = [first.sourcePath[0], first.targetPoint];
+    mockHit(firstPath);
+    await dispatchSmartPathRequest(first);
+
+    postMessage.mockClear();
+    const secondTarget = createPixelPoint(300, 225);
+    const changed: GraphwarSmartPathfindingPathInput = {
+      ...first,
+      hitTarget: { center: secondTarget, radius: 10 },
+      prefixTarget: first.hitTarget,
+      settings: { ...first.settings, steepness: first.settings.steepness + 1 },
+      sourcePath: firstPath,
+      targetPoint: secondTarget,
+    };
+    mockHit([...firstPath, secondTarget]);
+
+    await dispatchSmartPathRequest(changed);
+
+    expect(mocks.scanStepGlitchPath.mock.calls[1]?.[0]).not.toHaveProperty("prefixEvidence");
   });
 
   it("reuses prefix evidence when the previous target was an ordinary point", async () => {

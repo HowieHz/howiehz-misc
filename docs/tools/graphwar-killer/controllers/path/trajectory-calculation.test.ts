@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { graphToImagePoint } from "../../core/geometry";
 import { roundGraphwarLaunchAngleToDisplayRadians } from "../../core/numbers";
+import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import { calculateGraphwarTrajectory } from "./trajectory-calculation";
 
@@ -123,33 +124,33 @@ describe("main trajectory calculation", () => {
     expect(outcome).toMatchObject({ ok: false, stage: "trajectory" });
   });
 
-  it.each(["dy", "ddy"] as const)(
-    "reports exhausted %s soft and hard Step candidates as a trajectory failure",
-    (equation) => {
-      const points = [
-        createGraphPoint(-12, 0),
-        createGraphPoint(-10, 0),
-        createGraphPoint(-9.99999, 10),
-        createGraphPoint(-5, 0),
-      ];
-      const outcome = calculateGraphwarTrajectory({
-        bounds,
-        boundsRect,
-        points,
-        settings: {
-          algorithm: "step",
-          decimalPlaces: 4,
-          equation,
-          steepness: 210,
-          stepGlitchMode: true,
-          stepOverflowProtection: true,
-        },
-        type: "solver",
-      });
+  it.each(["dy", "ddy"] as const)("keeps a finite soft %s result when hard Step cannot improve it", (equation) => {
+    const points = [
+      createGraphPoint(-12, 0),
+      createGraphPoint(-10, 0),
+      createGraphPoint(-9.99999, 10),
+      createGraphPoint(-5, 0),
+    ];
+    const outcome = calculateGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points,
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation,
+        steepness: 210,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      type: "solver",
+    });
 
-      expect(outcome).toMatchObject({ ok: false, stage: "trajectory" });
-    },
-  );
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.pathError).toBeGreaterThan(graphwarToolDefaults.formulaPathQualityTargetPlanePixels);
+    }
+  });
 
   it("keeps only display-rounded y'' target misses as a non-blocking warning", () => {
     const outcome = calculateGraphwarTrajectory({

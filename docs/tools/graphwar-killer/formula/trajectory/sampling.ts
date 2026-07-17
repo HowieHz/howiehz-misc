@@ -57,6 +57,7 @@ import type {
   GraphwarTrajectorySample,
   GraphwarTrajectorySamplingState,
 } from "../simulation/simulator";
+import { graphwarTrajectoryFormulaSettingsAreEquivalent } from "./settings-identity";
 
 /** 轨迹采样主动提前停止的原因；只记录与目标/障碍判定有关的短路。 */
 export type GraphwarTrajectoryEarlyStopReason = "obstacle" | "target";
@@ -460,15 +461,8 @@ function stepGlitchPrefixMatchesSource(
     prefix.bounds.maxY !== options.bounds.maxY ||
     prefix.bounds.minX !== options.bounds.minX ||
     prefix.bounds.minY !== options.bounds.minY ||
-    prefix.settings.algorithm !== options.settings.algorithm ||
-    prefix.settings.decimalPlaces !== options.settings.decimalPlaces ||
-    prefix.settings.equation !== options.settings.equation ||
-    prefix.settings.secondOrderLaunchAngleMode !== options.settings.secondOrderLaunchAngleMode ||
-    prefix.settings.formulaPathSteepness !== options.settings.formulaPathSteepness ||
-    prefix.settings.steepness !== options.settings.steepness ||
-    prefix.settings.stepGlitchMode !== options.settings.stepGlitchMode ||
+    !graphwarTrajectoryFormulaSettingsAreEquivalent(prefix.settings, options.settings) ||
     prefix.settings.stepGlitchObstacleMask !== options.settings.stepGlitchObstacleMask ||
-    prefix.settings.stepOverflowProtection !== options.settings.stepOverflowProtection ||
     prefix.soldierCenter?.x !== options.soldierCenter?.x ||
     prefix.soldierCenter?.y !== options.soldierCenter?.y ||
     prefix.points.length > options.points.length
@@ -670,6 +664,8 @@ interface StepGlitchCandidateContext extends StepGlitchPrefixFormulaContext {
   deltaYOverride: number | undefined;
   mask: Uint8Array | undefined;
   launchAngleRadians: number | undefined;
+  /** Soft 回放可继续但未达质量目标时，hard Step 必须严格改善这份纵向像素误差。 */
+  maximumPositionErrorPlanePixels?: number;
   prefixInitialState: GraphwarTrajectorySamplingState | undefined;
   prefixFormula: StepGlitchPrefixFormula;
   soldierCenter: GraphPoint;
@@ -2012,10 +2008,6 @@ function refineStepSegmentsWithSimulation(
     !prefix.stepGlitchRequirements.some((required, index) => required && prefix.stepGlitchSegments[index] === undefined)
   ) {
     reusableSegmentCount = prefix.stepGlitchSegments.length;
-    // soft 失败是冻结前缀的因果证据；追加后缀不应把已接受 hard Step 重新解释成 soft 段。
-    for (let index = 0; index < reusableSegmentCount; index += 1) {
-      stepGlitchRequirements[index] ||= prefix.stepGlitchRequirements[index] === true;
-    }
     for (let index = 0; index < prefix.points.length; index += 1) {
       const oldPoint = prefix.points[index];
       const point = options.points[index];
@@ -2026,10 +2018,17 @@ function refineStepSegmentsWithSimulation(
         oldPoint.y !== point.y ||
         (index < reusableSegmentCount &&
           (options.settings.algorithm === "step" || options.stepGlitchXWindows !== undefined) &&
-          prefix.stepGlitchRequirements[index] !== stepGlitchRequirements[index])
+          stepGlitchRequirements[index] === true &&
+          prefix.stepGlitchRequirements[index] !== true)
       ) {
         reusableSegmentCount = 0;
         break;
+      }
+    }
+    if (reusableSegmentCount > 0) {
+      // soft 失败是冻结前缀的因果证据；全部兼容后再合并，避免后段失配污染 cold path。
+      for (let index = 0; index < reusableSegmentCount; index += 1) {
+        stepGlitchRequirements[index] ||= prefix.stepGlitchRequirements[index] === true;
       }
     }
   }
@@ -2096,6 +2095,9 @@ function refineStepSegmentsWithSimulation(
       };
     }
     if (!startSample || !Number.isFinite(startSample.point.y)) {
+      if (stepGlitchMode) {
+        throw new GraphwarStepSegmentConnectionError(segmentIndex);
+      }
       break;
     }
 
@@ -2156,7 +2158,8 @@ function refineStepSegmentsWithSimulation(
     let acceptedSoftDeltaYOverride: number | undefined = nextDeltaYOverride;
     let acceptedSoftFormulaPoint = nextFormulaPoint;
     let acceptedSoftStartSample: StepSegmentStartSample | undefined;
-    let softReplayFailed = false;
+    let softPathError = Number.POSITIVE_INFINITY;
+    let softReplayInvalid = false;
     let softReplayHitsObstacle = false;
     if (
       fixedWindow === undefined &&
@@ -2248,24 +2251,27 @@ function refineStepSegmentsWithSimulation(
         acceptedSoftStartSample = { point: acceptedPoint, resumeState: softCandidate.sample.endState };
       }
       const verticalSpan = Math.abs(options.bounds.maxY - options.bounds.minY);
-      // 1px 只决定是否值得尝试 hard Step，不替代最终命中、碰撞、边界和文本等价回放。
-      const pathError =
+      softPathError =
         acceptedPoint && verticalSpan > 0
           ? (Math.abs(acceptedPoint.y - options.points[segmentIndex + 1].y) * GRAPHWAR_PLANE_HEIGHT) / verticalSpan
           : Number.POSITIVE_INFINITY;
-      softReplayFailed =
-        softCandidate.sample.stopReason !== "stopped" ||
-        !Number.isFinite(pathError) ||
-        pathError > graphwarToolDefaults.formulaPathQualityTargetPlanePixels;
+      // 1px 可触发 hard 优化，但不是失败阈值；没有更好 hard 候选时仍保留有限 soft 回放。
+      softReplayInvalid = softCandidate.sample.stopReason !== "stopped" || !Number.isFinite(softPathError);
       softReplayHitsObstacle = Boolean(
         mask && stepGlitchSampleHitsObstacle(softCandidate.sample.points, options.bounds, mask),
       );
       if (stepGlitchMode) {
-        stepGlitchRequirements[segmentIndex] ||= softReplayFailed || softReplayHitsObstacle;
+        stepGlitchRequirements[segmentIndex] ||=
+          softReplayInvalid ||
+          softReplayHitsObstacle ||
+          softPathError > graphwarToolDefaults.formulaPathQualityTargetPlanePixels;
       }
     }
     const selection = stepGlitchRequirements[segmentIndex]
-      ? selectStepGlitchSegmentCandidate(options, refinedFormulaPoints, candidateContext)
+      ? selectStepGlitchSegmentCandidate(options, refinedFormulaPoints, {
+          ...candidateContext,
+          ...(softReplayInvalid || softReplayHitsObstacle ? {} : { maximumPositionErrorPlanePixels: softPathError }),
+        })
       : undefined;
     if (signProtectionChanged) {
       return {
@@ -2296,7 +2302,7 @@ function refineStepSegmentsWithSimulation(
     if (
       !selection &&
       (fixedWindow !== undefined ||
-        (stepGlitchMode && (softReplayFailed || (softReplayHitsObstacle && !options.collision?.mask))))
+        (stepGlitchMode && (softReplayInvalid || (softReplayHitsObstacle && !options.collision?.mask))))
     ) {
       // 几何失败不能回退；障碍-only soft 只有交给同次最终碰撞回放时，才可保留既有命中/碰撞顺序。
       throw new GraphwarStepSegmentConnectionError(segmentIndex);
@@ -2681,6 +2687,11 @@ function selectStepGlitchSegmentCandidate(
           !landingPoint ||
           !Number.isFinite(landingPoint.y) ||
           (candidate.equation === "ddy" && !secondOrderQuality) ||
+          (candidateContext.maximumPositionErrorPlanePixels !== undefined &&
+            (secondOrderQuality?.positionErrorPlanePixels ??
+              (Math.abs(landingPoint.y - candidate.targetY) * GRAPHWAR_PLANE_HEIGHT) /
+                Math.abs(options.bounds.maxY - options.bounds.minY)) >=
+              candidateContext.maximumPositionErrorPlanePixels) ||
           countStepGlitchJumps(sample.points, candidate) !== 1 ||
           (candidateContext.mask && stepGlitchSampleHitsObstacle(sample.points, options.bounds, candidateContext.mask))
         ) {
@@ -2997,7 +3008,6 @@ function createStepGlitchRequirements(
   },
   formulaPoints: readonly GraphPoint[],
 ) {
-  const mask = options.settings.stepGlitchObstacleMask;
   if (
     !formulaModeUsesStepGlitch(
       options.settings.algorithm,
@@ -3018,8 +3028,14 @@ function createStepGlitchRequirements(
       options.stepGlitchXWindows
         ? options.stepGlitchXWindows[index - 1] !== undefined
         : Boolean(
-            mask &&
-            stepGlitchObstacleEnvelopeHitsObstacle(previous, target, formulaPoints[index].x, options.bounds, mask),
+            options.settings.stepGlitchObstacleMask &&
+            stepGlitchObstacleEnvelopeHitsObstacle(
+              previous,
+              target,
+              formulaPoints[index].x,
+              options.bounds,
+              options.settings.stepGlitchObstacleMask,
+            ),
           ),
     );
   }

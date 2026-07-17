@@ -1,8 +1,8 @@
 import { nowMs } from "../../core/time";
 import { clonePixelPoint, type BoundsRect, type GraphBounds, type PixelPoint } from "../../core/types";
 import { addSoldierAreasToObstacleMask, dilateObstacleMask, type GraphwarDetectionBox } from "../../detection/objects";
-import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
+import { createGraphwarTrajectoryFormulaSettingsIdentity } from "../../formula/trajectory/settings-identity";
 import type { GraphwarOneClickClearCandidate } from "../one-click-clear/search";
 import { createRouteMaskCacheKey } from "../routing/visibility-graph";
 import type {
@@ -58,7 +58,7 @@ export function createGraphwarPathfindingCacheController() {
     onTiming?: (timing: GraphwarPathfindingResultCacheTimingEntry) => void,
   ) {
     const startedAt = nowMs();
-    const cached = smartPathfindingResultCache.get(cacheKey);
+    const cached = getAndTouchResultCacheEntry(smartPathfindingResultCache, cacheKey);
     onTiming?.({
       elapsedMs: nowMs() - startedAt,
       stage: cached ? "result-cache-hit" : "result-cache-miss",
@@ -82,7 +82,7 @@ export function createGraphwarPathfindingCacheController() {
     onTiming?: (timing: GraphwarPathfindingResultCacheTimingEntry) => void,
   ) {
     const startedAt = nowMs();
-    const cached = oneClickClearResultCache.get(cacheKey);
+    const cached = getAndTouchResultCacheEntry(oneClickClearResultCache, cacheKey);
     onTiming?.({
       elapsedMs: nowMs() - startedAt,
       stage: cached ? "one-click-clear-result-cache-hit" : "one-click-clear-result-cache-miss",
@@ -242,7 +242,18 @@ export function createGraphwarPathfindingCacheController() {
   };
 }
 
-/** 结果缓存按 FIFO 做小容量上限，避免连续尝试大量目标时长期持有大路径数组。 */
+/** 读取并提升命中项，使 Map 首项始终是最久未使用的结果。 */
+function getAndTouchResultCacheEntry<TResult>(cache: Map<string, TResult>, cacheKey: string) {
+  const cached = cache.get(cacheKey);
+  if (cached === undefined) {
+    return undefined;
+  }
+  cache.delete(cacheKey);
+  cache.set(cacheKey, cached);
+  return cached;
+}
+
+/** 结果缓存按 LRU 做小容量上限，避免连续尝试大量目标时长期持有大路径数组。 */
 function setBoundedResultCacheEntry<TResult>(
   cache: Map<string, TResult>,
   cacheKey: string,
@@ -292,18 +303,11 @@ function createTrajectorySettingsCacheKey(
   settings: GraphwarTrajectoryFormulaSettings,
   stepGlitchObstacleMaskId: number,
 ) {
-  const stepGlitchMode = formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.stepGlitchMode);
+  const identity = createGraphwarTrajectoryFormulaSettingsIdentity(settings);
   return [
-    settings.algorithm,
-    settings.decimalPlaces,
-    settings.equation,
-    settings.secondOrderLaunchAngleMode ?? "full-precision",
-    settings.formulaPathSteepness,
-    settings.steepness,
-    stepGlitchMode,
+    identity,
     // 只有实际生效的 Step 邪道才消费障碍 mask；休眠偏好不能分裂缓存身份。
-    stepGlitchMode ? stepGlitchObstacleMaskId : 0,
-    settings.stepOverflowProtection,
+    identity.stepGlitchMode ? stepGlitchObstacleMaskId : 0,
   ];
 }
 

@@ -107,6 +107,18 @@ describe("Graphwar pathfinding result cache keys", () => {
     );
   });
 
+  it.each(["y", "dy"] as const)("ignores the unused Y'' execution mode for %s inputs", (equation) => {
+    const cache = createGraphwarPathfindingCacheController();
+    const fullPrecision = createInput();
+    const displayRounded = createInput();
+    fullPrecision.settings = { ...fullPrecision.settings, equation, secondOrderLaunchAngleMode: "full-precision" };
+    displayRounded.settings = { ...displayRounded.settings, equation, secondOrderLaunchAngleMode: "display-rounded" };
+
+    expect(cache.createOneClickClearResultCacheKey(fullPrecision)).toBe(
+      cache.createOneClickClearResultCacheKey(displayRounded),
+    );
+  });
+
   it("preserves the validated formula when caching a one-click-clear success", () => {
     const cache = createGraphwarPathfindingCacheController();
     const result = {
@@ -130,6 +142,32 @@ describe("Graphwar pathfinding result cache keys", () => {
     if (cached?.result.type === "success") {
       expect(cached.result.pathPoints).not.toBe(result.result.pathPoints);
     }
+  });
+
+  it("promotes a smart-path result on hit before evicting the least recently used entry", () => {
+    const cache = createGraphwarPathfindingCacheController();
+    for (let index = 0; index < 64; index += 1) {
+      cache.cacheSmartPathfindingResult(`smart-${index}`, createSmartPathfindingResult(index));
+    }
+
+    expect(cache.getCachedSmartPathfindingResult("smart-0")).toBeDefined();
+    cache.cacheSmartPathfindingResult("smart-64", createSmartPathfindingResult(64));
+
+    expect(cache.getCachedSmartPathfindingResult("smart-1")).toBeUndefined();
+    expect(cache.getCachedSmartPathfindingResult("smart-0")).toBeDefined();
+  });
+
+  it("promotes a one-click result on hit before evicting the least recently used entry", () => {
+    const cache = createGraphwarPathfindingCacheController();
+    for (let index = 0; index < 16; index += 1) {
+      cache.cacheOneClickClearResult(`one-click-${index}`, createOneClickClearResult(index));
+    }
+
+    expect(cache.getCachedOneClickClearResult("one-click-0")).toBeDefined();
+    cache.cacheOneClickClearResult("one-click-16", createOneClickClearResult(16));
+
+    expect(cache.getCachedOneClickClearResult("one-click-1")).toBeUndefined();
+    expect(cache.getCachedOneClickClearResult("one-click-0")).toBeDefined();
   });
 
   it("fills exactly the friendly-mask cells intersecting the soldier hit circle", () => {
@@ -170,6 +208,27 @@ describe("Graphwar pathfinding result cache keys", () => {
     }
   });
 });
+
+/** 构造可按序号识别的最小智能寻路缓存结果。 */
+function createSmartPathfindingResult(index: number) {
+  return {
+    path: [createPixelPoint(index, index)],
+    timings: [],
+  };
+}
+
+/** 构造可按序号识别的最小一键清图缓存结果。 */
+function createOneClickClearResult(index: number) {
+  return {
+    result: {
+      elapsedMs: index,
+      expandedStates: index,
+      reason: "no-candidate" as const,
+      type: "failure" as const,
+    },
+    timings: [],
+  };
+}
 
 function createInput(
   options: {

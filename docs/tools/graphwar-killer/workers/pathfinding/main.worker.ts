@@ -11,6 +11,7 @@ import type {
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 import { compareGraphwarPathErrors } from "../../formula/trajectory/sampling";
+import { createGraphwarTrajectoryFormulaSettingsIdentity } from "../../formula/trajectory/settings-identity";
 import { buildOneClickClearDagEdgeRoute } from "../../pathfinding/one-click-clear/edge-route";
 import type { GraphwarOneClickClearDagEdgeRouteBuildContext } from "../../pathfinding/one-click-clear/edge-route";
 import type {
@@ -660,25 +661,11 @@ function createMasterStepGlitchEvidenceKey(
     [input.boundsRect.x, input.boundsRect.y, input.boundsRect.width, input.boundsRect.height],
     input.simulationBoundaryExpansion,
     input.simulationMaskCacheId,
-    createStepGlitchFormulaSettingsKey(input.settings),
+    createGraphwarTrajectoryFormulaSettingsIdentity(input.settings),
     path.map((point) => [point.x, point.y]),
     // Evidence 只恢复精确公式前缀，不保存历史士兵：后续请求从路径尾点继续，但不承诺重命中旧目标。
     prefixTarget ? [prefixTarget.center.x, prefixTarget.center.y, prefixTarget.radius] : undefined,
   ]);
-}
-
-/** 把影响邪道前缀回放的公式设置编码成缓存 key 片段。 */
-function createStepGlitchFormulaSettingsKey(settings: GraphwarTrajectoryFormulaSettings) {
-  return [
-    settings.algorithm,
-    settings.decimalPlaces,
-    settings.equation,
-    settings.secondOrderLaunchAngleMode ?? "full-precision",
-    settings.formulaPathSteepness,
-    settings.steepness,
-    settings.stepGlitchMode,
-    settings.stepOverflowProtection,
-  ];
 }
 
 /** 把邪道扫描阶段追加到智能寻路 Worker 耗时。 */

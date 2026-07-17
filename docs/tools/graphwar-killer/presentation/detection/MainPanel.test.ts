@@ -11,6 +11,7 @@ describe("Detection MainPanel", () => {
     const panel = {
       interactionDisabled: false,
       agent: {
+        autoExportOnClearFailureEnabled: false,
         baseUrlText: "http://127.0.0.1:17900",
         debugFileActionsVisible: false,
         enabled: false,
@@ -83,6 +84,7 @@ describe("Detection MainPanel", () => {
       graphwarKillerLocale.ui.detection.agent.readStateFile,
       graphwarKillerLocale.ui.detection.agent.readObstacleFile,
       graphwarKillerLocale.ui.detection.agent.exportScene,
+      graphwarKillerLocale.ui.detection.agent.exportOnClearFailure,
     ]);
     const debugFileInputs = agentRows[0].findAll<HTMLInputElement>('.graphwar-killer__file-button input[type="file"]');
     expect(debugFileInputs).toHaveLength(2);
@@ -90,10 +92,20 @@ describe("Detection MainPanel", () => {
     await debugFileInputs[1]?.trigger("change");
     expect(wrapper.emitted("readAgentStateFile")).toHaveLength(1);
     expect(wrapper.emitted("readAgentObstacleFile")).toHaveLength(1);
-    const blockedExportButton = agentRows[0].findAll<HTMLButtonElement>("button").at(-1);
-    expect(blockedExportButton?.attributes("disabled")).toBeDefined();
-    await blockedExportButton?.trigger("click");
+    const blockedExportButton = agentRows[0].get<HTMLButtonElement>(
+      `button[title="${graphwarKillerLocale.ui.detection.agent.exportSceneTitle}"]`,
+    );
+    expect(blockedExportButton.attributes("disabled")).toBeDefined();
+    await blockedExportButton.trigger("click");
     expect(wrapper.emitted("exportAgentScene")).toBeUndefined();
+    const blockedAutoExportSwitch = wrapper.get<HTMLButtonElement>("#graphwar-killer-export-on-clear-failure");
+    expect(blockedAutoExportSwitch.attributes("aria-checked")).toBe("false");
+    expect(blockedAutoExportSwitch.attributes("disabled")).toBeDefined();
+    expect(blockedAutoExportSwitch.attributes("title")).toBe(
+      graphwarKillerLocale.ui.detection.agent.exportOnClearFailureTitle,
+    );
+    await blockedAutoExportSwitch.trigger("click");
+    expect(wrapper.emitted("toggleExportOnClearFailure")).toBeUndefined();
 
     await wrapper.setProps({
       panel: {
@@ -102,10 +114,16 @@ describe("Detection MainPanel", () => {
         screenshotActionsVisible: false,
       },
     });
-    const readyExportButton = wrapper.get<HTMLButtonElement>(".graphwar-killer__agent-read-field button:last-of-type");
+    const readyExportButton = wrapper.get<HTMLButtonElement>(
+      `button[title="${graphwarKillerLocale.ui.detection.agent.exportSceneTitle}"]`,
+    );
     expect(readyExportButton.attributes("disabled")).toBeUndefined();
     await readyExportButton.trigger("click");
     expect(wrapper.emitted("exportAgentScene")).toHaveLength(1);
+    const readyAutoExportSwitch = wrapper.get<HTMLButtonElement>("#graphwar-killer-export-on-clear-failure");
+    expect(readyAutoExportSwitch.attributes("disabled")).toBeUndefined();
+    await readyAutoExportSwitch.trigger("click");
+    expect(wrapper.emitted("toggleExportOnClearFailure")).toHaveLength(1);
 
     await wrapper.setProps({
       panel: {
@@ -122,10 +140,14 @@ describe("Detection MainPanel", () => {
       },
     });
     const exportingRow = wrapper.get(".graphwar-killer__agent-read-field");
-    expect(exportingRow.get<HTMLButtonElement>("button:last-of-type").text()).toBe(
-      graphwarKillerLocale.ui.detection.agent.exportingScene,
+    const exportingButton = exportingRow.get<HTMLButtonElement>(
+      `button[title="${graphwarKillerLocale.ui.detection.agent.exportSceneTitle}"]`,
     );
-    expect(exportingRow.get<HTMLButtonElement>("button:last-of-type").attributes("disabled")).toBeDefined();
+    expect(exportingButton.text()).toBe(graphwarKillerLocale.ui.detection.agent.exportingScene);
+    expect(exportingButton.attributes("disabled")).toBeDefined();
+    expect(
+      exportingRow.get<HTMLButtonElement>("#graphwar-killer-export-on-clear-failure").attributes("disabled"),
+    ).toBeDefined();
     for (const input of exportingRow.findAll<HTMLInputElement>('input[type="file"]')) {
       expect(input.attributes("disabled")).toBeDefined();
     }
@@ -160,9 +182,15 @@ describe("Detection MainPanel", () => {
     for (const input of managedAgentRow.findAll<HTMLInputElement>('input[type="file"]')) {
       expect(input.attributes("disabled")).toBeDefined();
     }
-    const managedExportButton = managedAgentRow.get<HTMLButtonElement>("button:last-of-type");
+    const managedExportButton = managedAgentRow.get<HTMLButtonElement>(
+      `button[title="${graphwarKillerLocale.ui.detection.agent.exportSceneTitle}"]`,
+    );
     expect(managedExportButton.attributes("disabled")).toBeUndefined();
     await managedExportButton.trigger("click");
     expect(wrapper.emitted("exportAgentScene")).toHaveLength(2);
+    const managedAutoExportSwitch = managedAgentRow.get<HTMLButtonElement>("#graphwar-killer-export-on-clear-failure");
+    expect(managedAutoExportSwitch.attributes("disabled")).toBeUndefined();
+    await managedAutoExportSwitch.trigger("click");
+    expect(wrapper.emitted("toggleExportOnClearFailure")).toHaveLength(2);
   });
 });

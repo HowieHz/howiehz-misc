@@ -300,8 +300,11 @@ const graphwarAgentEnabled = ref(false);
 const graphwarAgentBaseUrlText = ref(GRAPHWAR_AGENT_DEFAULT_BASE_URL);
 const graphwarAgentReadInProgress = ref(false);
 const graphwarAgentExportInProgress = ref(false);
+const graphwarAgentAutoExportOnClearFailureEnabled = ref(false);
 let graphwarAgentTransferGeneration = 0;
 const graphwarAgentDebugFiles = createGraphwarAgentDebugFiles();
+// 保留页面当前实际应用的权威快照，自动导出可在托管开火前同步固化同一局面。
+let graphwarAgentAppliedSnapshot: GraphwarAgentSnapshot | undefined;
 const graphwarAgentFireInProgress = ref(false);
 const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
@@ -1521,6 +1524,7 @@ const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
 // 识别面板只应消费展示 DTO；识别运行、状态优先级和耗时格式化仍由页面侧保持原语义。
 const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
   agent: {
+    autoExportOnClearFailureEnabled: graphwarAgentAutoExportOnClearFailureEnabled.value,
     baseUrlText: graphwarAgentBaseUrlText.value,
     debugFileActionsVisible: debugInfoEnabled.value,
     enabled: graphwarAgentEnabled.value,
@@ -2453,6 +2457,7 @@ function handleLoadedScreenshot() {
     graphwarAgentImageLoadBypassUrl = "";
     return;
   }
+  graphwarAgentAppliedSnapshot = undefined;
   if (autoDetectionEnabled.value) {
     void runAutomaticGraphwarDetection();
   }
@@ -2721,8 +2726,8 @@ function downloadGraphwarAgentDebugFile(file: GraphwarAgentDebugDownload) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-/** 读取一次 revision 一致的 Agent 快照，并导出调试导入控件可直接接受的文件对。 */
-async function exportGraphwarAgentDebugScene() {
+/** 实时读取或复用已应用的 revision 一致快照，并导出调试导入控件可直接接受的文件对。 */
+async function exportGraphwarAgentDebugScene(appliedSnapshot?: GraphwarAgentSnapshot) {
   if (!debugInfoEnabled.value || graphwarAgentReadInProgress.value || graphwarAgentExportInProgress.value) {
     return;
   }
@@ -2746,7 +2751,7 @@ async function exportGraphwarAgentDebugScene() {
   imageStatus.value = locale.status.agent.exporting;
   setDetectionStatus(locale.status.agent.exporting, "warning");
   try {
-    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl);
+    const snapshot = appliedSnapshot ?? (await readGraphwarAgentSnapshot(requestBaseUrl));
     if (!requestIsCurrent()) {
       return;
     }
@@ -2771,6 +2776,7 @@ async function exportGraphwarAgentDebugScene() {
 
 /** 把同一 revision 的 Agent 视角原子写入页面，并以新发射点重建当前工作流路径。 */
 function applyGraphwarAgentSnapshot(snapshot: GraphwarAgentSnapshot, pathStart: PixelPoint | undefined) {
+  graphwarAgentAppliedSnapshot = snapshot;
   graphwarAgentBaseUrlText.value = snapshot.baseUrl;
   // Agent 画布 URL 固定；每次重放仍需触发截图回调，统一清除上一权威场景的路径和临时选点。
   graphwarAgentImageLoadBypassUrl = snapshot.imageUrl;
@@ -3718,12 +3724,20 @@ async function runOneClickClear() {
 async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClearRunWorkflow.run>) {
   // 冻结启动时实际采用的分支，避免运行期间的响应式配置让休眠参数误取消任务。
   const task = { kind: "one-click", usesDagWorker: requiresOneClickClearDagWorker() } as const;
+  // 自动导出必须绑定搜索使用的局面，不能在托管开火后重新读取 Agent。
+  const agentSnapshotAtStart = graphwarAgentEnabled.value ? graphwarAgentAppliedSnapshot : undefined;
   clearIncumbentPreview();
   activePathfindingTask = task;
   try {
     const runOptions = args[0];
     return await oneClickClearRunWorkflow.run({
       ...runOptions,
+      onClearFailure: () => {
+        if (graphwarAgentAutoExportOnClearFailureEnabled.value && agentSnapshotAtStart) {
+          void exportGraphwarAgentDebugScene(agentSnapshotAtStart);
+        }
+        runOptions?.onClearFailure?.();
+      },
       onIncumbent: (incumbent) => {
         // 搜索动画只控制独立轨迹 Worker；主搜索始终上报检查点供取消和托管截止使用。
         if (searchAnimationEnabled.value) {
@@ -4183,6 +4197,9 @@ function undoLastPoint() {
         @read-agent-state-file="void readGraphwarAgentDebugFile($event, 'state')"
         @toggle-agent-usage="toggleGraphwarAgentUsage"
         @toggle-auto-detection="toggleAutoDetection"
+        @toggle-export-on-clear-failure="
+          graphwarAgentAutoExportOnClearFailureEnabled = !graphwarAgentAutoExportOnClearFailureEnabled
+        "
         @upload-image="!graphwarManagedModeEnabled && handleImageUpload($event)"
         @update-agent-base-url="setGraphwarAgentBaseUrlText"
       />

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
-import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { flushPromises, mount } from "@vue/test-utils";
+import { describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
 import GraphwarKillerPage from "./GraphwarKillerPage.vue";
@@ -68,6 +68,86 @@ describe("Graphwar Killer page settings", () => {
 
     expect(page.secondOrderLaunchAngleMode).toBe("full-precision");
     wrapper.unmount();
+  });
+
+  it("keeps clear-failure auto-export off by default and available during managed mode", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          debugInfoEnabled: boolean;
+          graphwarAgentAutoExportOnClearFailureEnabled: boolean;
+          graphwarAgentEnabled: boolean;
+          graphwarManagedModeEnabled: boolean;
+        };
+      }
+    ).setupState;
+
+    expect(page.graphwarAgentAutoExportOnClearFailureEnabled).toBe(false);
+    expect(wrapper.find("#graphwar-killer-export-on-clear-failure").exists()).toBe(false);
+
+    page.debugInfoEnabled = true;
+    page.graphwarAgentEnabled = true;
+    await nextTick();
+    const autoExportSwitch = wrapper.get<HTMLButtonElement>("#graphwar-killer-export-on-clear-failure");
+    expect(autoExportSwitch.attributes("aria-checked")).toBe("false");
+    expect(autoExportSwitch.attributes("title")).toBe(
+      graphwarKillerLocale.ui.detection.agent.exportOnClearFailureTitle,
+    );
+
+    await autoExportSwitch.trigger("click");
+    expect(page.graphwarAgentAutoExportOnClearFailureEnabled).toBe(true);
+    expect(autoExportSwitch.attributes("aria-checked")).toBe("true");
+
+    page.graphwarManagedModeEnabled = true;
+    await nextTick();
+    expect(autoExportSwitch.attributes("disabled")).toBeUndefined();
+    await autoExportSwitch.trigger("click");
+    expect(page.graphwarAgentAutoExportOnClearFailureEnabled).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("exports the Agent snapshot captured before a clear-failure result without rereading", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          debugInfoEnabled: boolean;
+          graphwarAgentAutoExportOnClearFailureEnabled: boolean;
+          graphwarAgentAppliedSnapshot: unknown;
+          graphwarAgentEnabled: boolean;
+          oneClickClearRunWorkflow: {
+            run: (options?: { onClearFailure?: () => void }) => Promise<boolean>;
+          };
+          runOneClickClearWorkflow: () => Promise<boolean>;
+        };
+      }
+    ).setupState;
+
+    page.debugInfoEnabled = true;
+    page.graphwarAgentAutoExportOnClearFailureEnabled = true;
+    page.graphwarAgentAppliedSnapshot = {
+      state: { battleRevision: "before-shot" },
+      worldObstacleMask: new Uint8Array([0, 1]),
+    };
+    page.graphwarAgentEnabled = true;
+    page.oneClickClearRunWorkflow.run = async (options) => {
+      options?.onClearFailure?.();
+      return true;
+    };
+    await nextTick();
+
+    await expect(page.runOneClickClearWorkflow()).resolves.toBe(true);
+    await flushPromises();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(anchorClick).toHaveBeenCalledTimes(2);
+
+    wrapper.unmount();
+    anchorClick.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it("keeps the glitch preference independent while leaving it inactive for ABS ODE modes", async () => {

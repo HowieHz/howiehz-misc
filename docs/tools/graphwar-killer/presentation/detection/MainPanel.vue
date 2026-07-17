@@ -36,6 +36,8 @@ interface GraphwarDetectionPanelDebugRow {
 
 /** Agent 数据源相关控件和能力状态。 */
 interface GraphwarDetectionPanelAgentModel {
+  /** 一键清图未命中全部入口候选时是否自动导出 Agent 局面。 */
+  autoExportOnClearFailureEnabled: boolean;
   /** Agent 地址输入框文本。 */
   baseUrlText: string;
   /** 当前是否正在读取 Agent。 */
@@ -97,6 +99,7 @@ const emit = defineEmits<{
   readAgentStateFile: [event: Event];
   toggleAutoDetection: [];
   toggleAgentUsage: [];
+  toggleExportOnClearFailure: [];
   uploadImage: [event: Event];
   updateAgentBaseUrl: [value: string];
 }>();
@@ -265,6 +268,14 @@ function handleAgentBaseUrlInput(event: Event) {
                     : locale.ui.detection.agent.exportScene
                 }}
               </button>
+              <ToggleField
+                id="graphwar-killer-export-on-clear-failure"
+                :checked="panel.agent.autoExportOnClearFailureEnabled"
+                :label="locale.ui.detection.agent.exportOnClearFailure"
+                :state="panel.agent.exportState"
+                :title="locale.ui.detection.agent.exportOnClearFailureTitle"
+                @toggle="emit('toggleExportOnClearFailure')"
+              />
             </template>
             <ControlReason
               v-if="panel.agent.readReason"

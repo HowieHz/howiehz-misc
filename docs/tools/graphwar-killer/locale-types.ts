@@ -321,6 +321,8 @@ export interface GraphwarKillerLocale {
         address: string;
         addressAriaLabel: string;
         addressTitle: string;
+        exportOnClearFailure: string;
+        exportOnClearFailureTitle: string;
         exportScene: string;
         exportSceneTitle: string;
         exportingScene: string;

@@ -55,6 +55,8 @@ interface GraphwarOneClickClearRunRunner {
 export interface GraphwarOneClickClearRunOptions {
   /** 接收主搜索自然产生的已验证方案；只用于展示或托管发射，不触发额外验证。 */
   onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
+  /** 最终方案未命中全部入口候选时调用；候选和命中均按稳定 id 去重，搜索失败和取消不触发。 */
+  onClearFailure?: () => void;
   /** 最终成功后、写回最终路径与完成状态前同步调用；托管用它提交不依赖页面渲染的已验证方案。 */
   onSuccessBeforeEffects?: () => void;
   /** 托管按实时局面搜索时关闭跨运行结果缓存。 */
@@ -191,6 +193,13 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
 
       const result = searchResult.search.result;
       if (result.type === "success") {
+        // targetIds 还可能包含此前或顺路命中的非入口候选，只比较两个唯一 id 集合的交集。
+        if (
+          searchResult.candidateIds.size >
+          new Set(result.targetIds.filter((targetId) => searchResult.candidateIds.has(targetId))).size
+        ) {
+          runOptions.onClearFailure?.();
+        }
         runOptions.onSuccessBeforeEffects?.();
         options.run.finish(pathfindingToken);
         applySuccessResult(startedAt, timings, result, searchResult.cacheHit, finishOneClickClearDebugTimings);
@@ -344,6 +353,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     }
     return {
       cacheHit,
+      candidateIds: new Set(candidates.map((candidate) => candidate.id)),
       search,
     };
   }

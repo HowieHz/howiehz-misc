@@ -11,7 +11,10 @@ published: 2026-06-23T12:00:00+08:00
 <!-- autocorrect-disable -->
 <script setup lang="ts">
 import GraphwarKillerPage from "./GraphwarKillerPage.vue";
+import graphwarAgentInfo from "../../public/graphwar-agent.json";
 import { graphwarKillerLocale } from "./locale";
+
+const graphwarAgentSourceUrl = `https://github.com/HowieHz/howiehz-misc/commit/${graphwarAgentInfo.sourceCommit}`;
 </script>
 
 <GraphwarKillerPage :locale="graphwarKillerLocale" />
@@ -96,10 +99,29 @@ import { graphwarKillerLocale } from "./locale";
 
 ### 如何使用 Graphwar Agent {#graphwar-killer-agent-help}
 
-将 [`graphwar-agent.jar`](/graphwar-agent.jar) 放入游戏目录，然后在该目录运行：
+将 [`graphwar-agent.jar`](/graphwar-agent.jar) 放入游戏目录。
+
+::: details graphwar-agent.jar 文件信息
+
+- 文件大小：`{{ graphwarAgentInfo.fileSize.toLocaleString("en-US") }}` 字节
+- MD5：`{{ graphwarAgentInfo.md5 }}`
+- SHA-256：`{{ graphwarAgentInfo.sha256 }}`
+- 版本号：`{{ graphwarAgentInfo.version }}`
+- 构建来源提交时间：`{{ graphwarAgentInfo.sourceCommitTime }}`
+- 构建来源：<a :href="graphwarAgentSourceUrl"><code>{{ graphwarAgentInfo.sourceCommitShort }}</code></a>
+
+:::
+
+然后在该目录运行：
 
 ```bash
 java -javaagent:graphwar-agent.jar -jar graphwar.jar
+```
+
+Windows Steam 版的 Graphwar 可以直接使用游戏自带的 Java：
+
+```shell
+.\jre1.8\bin\java.exe -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
 该命令会同时启动 Graphwar Agent 和游戏。回到工具后开启“使用 Agent”，即可读取状态或开启托管模式。更多信息请查看 [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent)。

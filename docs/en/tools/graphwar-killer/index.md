@@ -11,7 +11,10 @@ Generate functions from a [Graphwar](https://graphwar.com/graphwar_1/index.html)
 <!-- autocorrect-disable -->
 <script setup lang="ts">
 import GraphwarKillerPage from "../../../tools/graphwar-killer/GraphwarKillerPage.vue";
+import graphwarAgentInfo from "../../../public/graphwar-agent.json";
 import { graphwarKillerLocale } from "./locale";
+
+const graphwarAgentSourceUrl = `https://github.com/HowieHz/howiehz-misc/commit/${graphwarAgentInfo.sourceCommit}`;
 </script>
 
 <GraphwarKillerPage :locale="graphwarKillerLocale" />
@@ -96,10 +99,29 @@ Keep this page in the foreground while Managed Mode is active. Browser backgroun
 
 ### How to Use Graphwar Agent {#graphwar-killer-agent-help}
 
-Place [`graphwar-agent.jar`](/graphwar-agent.jar) in the game directory, then run:
+Place [`graphwar-agent.jar`](/graphwar-agent.jar) in the game directory.
+
+::: details graphwar-agent.jar file information
+
+- File size: `{{ graphwarAgentInfo.fileSize.toLocaleString("en-US") }}` bytes
+- MD5: `{{ graphwarAgentInfo.md5 }}`
+- SHA-256: `{{ graphwarAgentInfo.sha256 }}`
+- Version: `{{ graphwarAgentInfo.version }}`
+- Source commit time: `{{ graphwarAgentInfo.sourceCommitTime }}`
+- Source commit: <a :href="graphwarAgentSourceUrl"><code>{{ graphwarAgentInfo.sourceCommitShort }}</code></a>
+
+:::
+
+Then run:
 
 ```bash
 java -javaagent:graphwar-agent.jar -jar graphwar.jar
+```
+
+The Windows Steam version of Graphwar can use its bundled Java directly:
+
+```shell
+.\jre1.8\bin\java.exe -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
 This starts Graphwar Agent and the game. Return to the tool and turn on Use Agent to read state or enable Managed Mode. For more information, see [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent).

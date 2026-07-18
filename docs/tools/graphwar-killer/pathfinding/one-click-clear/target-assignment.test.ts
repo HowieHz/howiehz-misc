@@ -4,6 +4,7 @@ import { imageToGraphPoint } from "../../core/geometry";
 import { graphXAdvancesStrictly, nextDownDouble } from "../../core/numbers";
 import { createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import { sampleGraphwarPathTargetSequence } from "../../formula/trajectory/sampling";
 import {
   assignGraphwarOneClickClearTargetRoutePoints,
   type GraphwarOneClickClearAssignmentCandidate,
@@ -113,6 +114,83 @@ describe("one-click-clear target assignment", () => {
     expect(assigned[0]?.routePoint.x).toBeGreaterThan(9.7);
     expect(assigned[1]?.routePoint.x).toBeGreaterThan(10.25);
     expectStrictlyIncreasingGraphXs(assigned.map((target) => target.routePoint));
+  });
+
+  it("keeps the last equal-center target away from the strict x+ circle boundary", () => {
+    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      candidates: [createTarget("lower", 50, 60, 7, 0), createTarget("upper", 50, 40, 7, 1)],
+    });
+
+    expect(assigned[1]?.routePoint.x).toBe(50);
+    expectStrictlyIncreasingGraphXs(assigned.map((target) => target.routePoint));
+  });
+
+  it("preserves both same-x hits after Step formula quantization and sampling", () => {
+    const replayBounds: GraphBounds = {
+      maxX: 25,
+      maxY: 14.61038961038961,
+      minX: -25,
+      minY: -14.61038961038961,
+    };
+    const replayBoundsRect: BoundsRect = { height: 450, width: 770, x: 0, y: 0 };
+    const firstCenter = createPixelPoint(609, 370);
+    const secondCenter = createPixelPoint(609, 280);
+    const prefix = [
+      createPixelPoint(243, 356),
+      createPixelPoint(413, 251),
+      createPixelPoint(416, 230),
+      createPixelPoint(443, 49),
+      createPixelPoint(462, 93),
+      createPixelPoint(472, 199),
+      createPixelPoint(483, 251),
+      createPixelPoint(485, 406),
+      createPixelPoint(495, 355),
+      createPixelPoint(527, 290),
+      createPixelPoint(544, 318),
+      createPixelPoint(545, 98),
+      createPixelPoint(561, 199),
+      createPixelPoint(574, 25),
+      createPixelPoint(587, 225),
+      createPixelPoint(599, 146),
+    ];
+    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
+      bounds: replayBounds,
+      boundsRect: replayBoundsRect,
+      candidates: [
+        createTarget("first", firstCenter.x, firstCenter.y, 7, 0),
+        createTarget("second", secondCenter.x, secondCenter.y, 7, 1),
+      ],
+      pathTail: prefix.at(-1) ?? prefix[0],
+      usableMaxX: nextDownDouble(770),
+      usableMaxY: nextDownDouble(450),
+      usableMinX: 0,
+      usableMinY: 0,
+    });
+    const result = sampleGraphwarPathTargetSequence({
+      bounds: replayBounds,
+      boundsRect: replayBoundsRect,
+      points: [...prefix, ...assigned.map((target) => target.routePoint)],
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "dy",
+        formulaPathSteepness: 210,
+        steepness: 210,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      targetCircles: [
+        { center: firstCenter, radius: 7 },
+        { center: secondCenter, radius: 7 },
+      ],
+      targetControlPoints: assigned.map((target) => target.routePoint),
+      targetHitRadiusPixels: 7,
+      targetPoints: assigned.map((target) => target.routePoint),
+    });
+
+    expect(result.reachesTargetSequenceBeforeObstacle).toBe(true);
+    expect(result.reachedTargetCount).toBe(2);
   });
 
   it("retains a failed target at its initial point and continues with later groups", () => {

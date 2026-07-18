@@ -24,11 +24,6 @@ Graphwar Killer calibrates a [Graphwar](https://graphwar.com/graphwar_1/index.ht
 - [workers/](../../../tools/graphwar-killer/workers/) contains Web Worker entry files: `trajectory/` holds the main trajectory worker, `live-click-preview/` holds the live-preview worker, `detection/` holds the screenshot-detection main worker and template-matching subworker, `pathfinding/` holds the pathfinding main worker, and `pathfinding/one-click-clear/` holds the one-click-clear edge worker.
 - [locale.ts](./locale.ts) provides the English page text; the Chinese page text lives in the Chinese page directory's [locale.ts](../../../tools/graphwar-killer/locale.ts).
 
-## One-Click Clear Target Assignment
-
-Every One-Click Clear formula mode shares one hit-circle target assignment flow. When a center cannot advance strictly from the current path end in the `x+` direction, the target uses the outermost safe integer pixel strictly inside the circle and usable bounds.
-Equal-initial-x targets are assigned in stable y order, then ordinary DAG layers or Glitch Mode scan layers are built from final x. Geometry routing changes only `routePoint.x`; final trajectory validation still uses each soldier's real center and radius.
-
 ## Known Improvements
 
 Regular Path Planning currently validates only the first geometry route it receives. If the real trajectory rejects that route, another obstacle-avoiding route may still work. A future implementation could retry with disabled edges or K-shortest paths; One-Click Clear edge building could reuse the same capability so each DAG edge is not limited to its first geometry route.

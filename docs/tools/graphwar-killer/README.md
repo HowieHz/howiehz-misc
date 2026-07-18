@@ -23,10 +23,6 @@ Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graph
 - [workers/](./workers/)：Web Worker 入口文件；`trajectory/` 包含主轨迹 worker，`live-click-preview/` 包含实时预览 worker，`detection/` 包含截图识别主 worker 和模板匹配子 worker，`pathfinding/` 包含寻路主 worker，`pathfinding/one-click-clear/` 包含一键清图边 worker。
 - [locale.ts](./locale.ts)：中文页面文案；英文文案在 [英文页面目录](../../en/tools/graphwar-killer/locale.ts) 的 `locale.ts`。
 
-## 一键清图目标分配
-
-全部一键清图公式模式共享同一套命中圈目标分配：圆心不能从当前路径尾点严格向 `x+` 推进时，使用严格圆内且位于可用边界的最外侧安全整数像素；同初始 x 目标按 y 稳定分配，并按最终 x 建立普通有向无环图层或邪道扫描层。几何建路只调整 `routePoint.x`，最终弹道仍用士兵真实圆心和半径复验。
-
 ## 已知改进点
 
 - 普通智能寻路当前只验证几何寻路返回的单条路线；若该路线的真实弹道验证失败，理论上仍可能存在另一条绕法可用。后续可尝试禁边重试或 K-shortest paths（多候选路线）来逐条验证候选路线；同一能力也可复用于一键清图的单次 DAG 建边，让每条 DAG 边不只依赖第一条几何路线。

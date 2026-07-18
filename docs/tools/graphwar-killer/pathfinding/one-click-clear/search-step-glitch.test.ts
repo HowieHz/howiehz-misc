@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
-import { createGraphPoint } from "../../core/types";
+import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 
@@ -211,6 +211,27 @@ describe("Step glitch one-click-clear target retries", () => {
       expect(result.pathPoints).toEqual([start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]]);
       expect(result.targetIds).toEqual(["2", "3", "4", "5", "6"]);
     }
+  });
+
+  it("tries equal-final-x fallbacks from one prefix and skips the layer after its first hit", async () => {
+    scanMockState.outcomes.push("hit", "no-path", "hit", "hit");
+    const start = toPixel(-11, 0);
+    const centerX = toPixel(-6, 0).x;
+    const candidates = [
+      { enemy: true, hitCenter: createPixelPoint(centerX, 320), hitRadius: 0.1, id: "first-small" },
+      { enemy: true, hitCenter: createPixelPoint(centerX, 280), hitRadius: 5, id: "wide" },
+      { enemy: true, hitCenter: createPixelPoint(centerX, 240), hitRadius: 0.1, id: "fallback-miss" },
+      { enemy: true, hitCenter: createPixelPoint(centerX, 200), hitRadius: 0.1, id: "fallback-hit" },
+      { enemy: true, hitCenter: createPixelPoint(centerX, 160), hitRadius: 0.1, id: "fallback-skipped" },
+    ];
+
+    await buildGraphwarOneClickClearPath(
+      createOptions(start, candidates, createEmptyMask(), "visibility-graph", false),
+    );
+
+    expect(scanMockState.scans.map((scan) => scan.scannerId)).toEqual([0, 1, 1, 2]);
+    expect(scanMockState.scans.map((scan) => scan.targetPoint.y)).toEqual([320, 240, 200, 280]);
+    expect(scanMockState.scans.some((scan) => scan.targetPoint.y === 160)).toBe(false);
   });
 
   it("does not carry an old path target into a new request", async () => {

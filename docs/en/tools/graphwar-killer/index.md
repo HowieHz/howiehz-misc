@@ -50,6 +50,8 @@ Steepness applies to every Step formula and to the smooth turn pulses used by Do
 
 Path Planning searches from the current path end, generates a function, and validates the full trajectory before updating the path.
 
+Single-target Step Path Planning targets the hit-circle center first, then tries the inner `x+` edge if the center route fails.
+
 One-Click Clear starts at the current path end, finds usable soldiers in the `x+` direction, and plans a route that hits as many targets as possible.
 
 Search Animation shows single-target search progress and the best validated formula and actual trajectory found by One-Click Clear or Managed Mode. Intermediate results hide their control points. The control points become part of the formal path when the search finishes.
@@ -70,12 +72,13 @@ Automatic file names include `clear-failure-incomplete`, `clear-failure-search-f
 | PCHIP                 | `y`, `y'`, `y''` | Supported     | —               | Smooth curves                      |
 | Akima                 | `y`, `y'`, `y''` | Supported     | —               | Smooth curves                      |
 
-#### Target Selection {#graphwar-killer-pathfinding-targets}
+#### One-Click Clear Target Assignment {#graphwar-killer-pathfinding-targets}
 
-- Every result is validated with the full trajectory before the path is updated.
-- Step Path Planning targets the center of a hit circle first, then tries the inner edge on the `x+` side.
-- When multiple soldiers share the same x, Glitch One-Click Clear assigns different points in their hit circles so the path can keep moving right.
-- Glitch One-Click Clear processes targets from left to right. If a target is unreachable, it skips that target and continues to the right.
+- Every One-Click Clear mode prefers the soldier center. If the center is not on the `x+` side of the current path end, it uses the outermost integer screenshot pixel strictly inside both the hit circle and usable bounds.
+- Targets with the same initial x are assigned hit-circle positions from `x-` to `x+`, ordered by descending screenshot y and stable input order for equal y. Each soldier uses its own safe interval; a target that cannot advance keeps its initial point.
+- Ordinary modes build the DAG from final target x values. Targets with the same final x remain alternatives in one layer and never receive an edge that violates strict `x+`.
+- Glitch One-Click Clear scans final target x values layer by layer. Equal-x candidates are tried from the same committed prefix, and the first successful candidate becomes that layer's control point.
+- Every result is validated with the full trajectory before the path is updated. Soldiers hit incidentally still count even when they were not selected as control points.
 - Point removal is off by default. When enabled, it tries to remove unnecessary control points without skipping final trajectory validation.
 
 #### Routing Algorithms {#graphwar-killer-pathfinding-engines}

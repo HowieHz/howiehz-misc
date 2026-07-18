@@ -39,6 +39,31 @@ export function pixelCirclesEqual(
   return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
 }
 
+/** 返回严格位于圆和可用边界内、最靠 Graph x+ 的整数截图像素中心。 */
+export function createStrictPixelCircleXPlusIntegerEdgePoint(
+  center: PixelPoint,
+  radius: number,
+  usableMinX: number,
+  usableMaxX: number,
+  xPlusIsRight: boolean,
+) {
+  if (
+    !Number.isFinite(center.x) ||
+    !Number.isFinite(center.y) ||
+    !Number.isFinite(radius) ||
+    radius <= 0 ||
+    !Number.isFinite(usableMinX) ||
+    !Number.isFinite(usableMaxX)
+  ) {
+    return undefined;
+  }
+
+  const minX = Math.max(Math.floor(center.x - radius) + 1, Math.ceil(Math.min(usableMinX, usableMaxX)));
+  const maxX = Math.min(Math.ceil(center.x + radius) - 1, Math.floor(Math.max(usableMinX, usableMaxX)));
+  const edgeX = xPlusIsRight ? maxX : minX;
+  return minX <= maxX && (edgeX - center.x) ** 2 < radius ** 2 ? createPixelPoint(edgeX, center.y) : undefined;
+}
+
 /** 将截图像素点转换为 Graphwar 笛卡尔坐标。 */
 export function imageToGraphPoint(point: PixelPoint, bounds: GraphBounds, rect: BoundsRect): GraphPoint {
   return createGraphPoint(

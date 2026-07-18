@@ -33,6 +33,15 @@ while (pendingEnglishLocaleValues.length > 0) {
 englishCompactTitles.push(englishGraphwarKillerLocale.ui.point.coordinateTitle("Path 1", "x"));
 
 describe("Chinese Graphwar Killer locale", () => {
+  it("describes shared One-Click Clear target assignment in labels and HTML titles", () => {
+    expect(graphwarKillerLocale.ui.pathfinding.debugDetails).not.toHaveProperty("build-dag-targets");
+    expect(graphwarKillerLocale.ui.pathfinding.debugDetails["assign-clear-targets"]).toEqual({
+      label: "- 清图分配目标",
+      title: "为全部一键清图模式选择圆心或严格圆内的 x+ 安全边缘，并按同初始 x 稳定分配命中圈控制点",
+    });
+    expect(graphwarKillerLocale.ui.pathfinding.oneClickClearTitle).toContain("x+ 侧命中圈");
+  });
+
   it("separates game mode names from formula prefixes", () => {
     expect(graphwarKillerLocale.equationModes.map((mode) => mode.label)).toEqual(["y", "y'", "y''"]);
     expect(graphwarKillerLocale.equationModes.map((mode) => mode.formulaPrefix)).toEqual(["y=", "y'=", "y''="]);
@@ -102,6 +111,16 @@ describe("Chinese Graphwar Killer locale", () => {
 });
 
 describe("English Graphwar Killer locale", () => {
+  it("describes shared One-Click Clear target assignment in labels and HTML titles", () => {
+    expect(englishGraphwarKillerLocale.ui.pathfinding.debugDetails).not.toHaveProperty("build-dag-targets");
+    expect(englishGraphwarKillerLocale.ui.pathfinding.debugDetails["assign-clear-targets"]).toEqual({
+      label: "- Assign clear targets",
+      title:
+        "For every One-Click Clear mode, choose each center or its strict x+ safe edge and stably assign hit-circle control points that share an initial x.",
+    });
+    expect(englishGraphwarKillerLocale.ui.pathfinding.oneClickClearTitle).toContain("x+ side");
+  });
+
   it("presents the full-precision launch angle without approximation wording", () => {
     expect(englishGraphwarKillerLocale.status.secondOrderAngleHint(fullPrecisionAngleText)).toBe(
       `Use the Up/Down keys to set the launch angle to ${fullPrecisionAngleText} deg.`,

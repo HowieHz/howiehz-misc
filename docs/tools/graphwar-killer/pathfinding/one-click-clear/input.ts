@@ -70,7 +70,7 @@ interface GraphwarOneClickClearSearchInputOptions {
   bounds: GraphBounds;
   /** 截图内 Graphwar 坐标系矩形。 */
   boundsRect: BoundsRect;
-  /** 一键清图 DAG 入口候选，顺序应保持目标收集 Module 输出。 */
+  /** 一键清图候选，顺序应保持目标收集 Module 输出。 */
   candidates: readonly GraphwarOneClickClearCandidate[];
   /** 是否尝试删除控制点。 */
   deleteOptimizationEnabled: boolean;

@@ -256,7 +256,7 @@ export const graphwarKillerLocale = {
       inProgress: "Running One-Click Clear; right-click the screenshot to stop",
       needDetection: "Detect soldiers and obstacles before using One-Click Clear",
       needCurrentPath: "One-Click Clear needs an existing path start first",
-      noCandidate: "One-Click Clear failed: no selectable target exists on the x+ side of the current path",
+      noCandidate: "One-Click Clear failed: no usable hit-circle target exists on the x+ side of the current path",
       noUsableTarget: (elapsed) => `One-Click Clear failed: no usable target found after ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) =>
         `One-Click Clear failed: the pathfinding Worker is unavailable or failed after ${elapsed}`,
@@ -477,7 +477,7 @@ export const graphwarKillerLocale = {
         "build-dag-edges": {
           label: "- Build clear DAG edges",
           title:
-            "Try x+ geometry routes between soldier centers with the current clear route mask, then record usable edges.",
+            "Try x+ geometry routes between assigned target points with the current clear route mask, then record usable edges.",
         },
         "dag-edge-mode": {
           label: (mode, workerCount) =>
@@ -493,14 +493,15 @@ export const graphwarKillerLocale = {
           title:
             "Total time for one DAG edge child Worker; jobs are claimed dynamically, so this is not a fixed edge slice.",
         },
-        "build-dag-targets": {
-          label: "- Collect clear targets",
+        "assign-clear-targets": {
+          label: "- Assign clear targets",
           title:
-            "Ordinary modes build DAG targets sorted by center x; Glitch Mode allocates strictly increasing hit-circle control points to equal-x soldiers.",
+            "For every One-Click Clear mode, choose each center or its strict x+ safe edge and stably assign hit-circle control points that share an initial x.",
         },
         "dag-longest-path": {
           label: "- Run clear DAG longest path",
-          title: "Run longest-path DP on the built center-point DAG and choose the route with the most explicit hits.",
+          title:
+            "Run longest-path DP on the DAG built from final target x values and choose the route with the most explicit hits.",
         },
         "optimize-path": {
           label: "- Optimize clear path",
@@ -538,11 +539,12 @@ export const graphwarKillerLocale = {
         "route-map-pixels": {
           label: "- Map clear route pixels",
           title:
-            "Convert Graphwar plane grid cells returned by geometry pathfinding into screenshot pixel path points while preserving exact center endpoints.",
+            "Convert Graphwar plane grid cells returned by geometry pathfinding into screenshot pixel path points while preserving exact assigned-target endpoints.",
         },
         "route-pathfinding": {
           label: "- Run clear geometry search",
-          title: "Search for an obstacle-avoiding geometry route between two center points that satisfies x+ rules.",
+          title:
+            "Search for an obstacle-avoiding geometry route between two assigned target points that satisfies x+ rules.",
         },
         "scan-step-glitch": {
           label: "- Scan Step glitch routes",
@@ -664,7 +666,7 @@ export const graphwarKillerLocale = {
         "one-click-clear-collect-targets": {
           label: "Collect clear targets",
           title:
-            "Filter selectable soldier-center candidates for One-Click Clear using the current friendly-fire setting and strict x+ rule.",
+            "Filter soldiers using the friendly-fire setting, keeping hit-circle candidates whose center or strict x+ safe edge can advance.",
         },
         "one-click-clear-result-cache-hit": {
           label: "Clear result cache hit",
@@ -693,7 +695,7 @@ export const graphwarKillerLocale = {
         "one-click-clear-search": {
           label: "Search and validate clear",
           title:
-            "Build the center-point DAG, run longest-path DP, delete failed DAG edges during validation, and stop with a usable clear route or no active route.",
+            "Assign shared hit-circle targets, build ordinary DAG layers or Glitch Mode scan layers from final x, and validate until a usable clear route or no active route remains.",
         },
         "one-click-clear-setting-status": {
           label: "Set clear status",
@@ -747,7 +749,7 @@ export const graphwarKillerLocale = {
         "One-Click Clear point removal check radius, in raw Graphwar 770x450 plane pixels",
       oneClickClearDeleteCheckRadiusTitle:
         "Quickly check whether a local route still crosses the same soldiers; set to 0 to validate the full trajectory",
-      oneClickClearTitle: "Start at the current path end and target usable soldiers to the right",
+      oneClickClearTitle: "Start at the current path end, assign targets, and hit reachable soldiers on the x+ side",
       managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
       managedMode: "Managed mode",
       managedModeDisableTitle: "Turn off Managed Mode and unlock settings",

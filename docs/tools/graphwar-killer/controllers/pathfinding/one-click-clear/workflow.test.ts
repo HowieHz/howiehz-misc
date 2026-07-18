@@ -16,7 +16,7 @@ describe("one-click clear workflow", () => {
       { hitRadius: 7, id: "target", sourceCenterX: 30, sourceCenterY: 40 },
       { hitRadius: 7, id: "target", sourceCenterX: 35, sourceCenterY: 45 },
       { hitRadius: 7, id: "missed", sourceCenterX: 50, sourceCenterY: 60 },
-      { hitRadius: 7, id: "incidental", sourceCenterX: 5, sourceCenterY: 80 },
+      { hitRadius: 7, id: "incidental", sourceCenterX: 2, sourceCenterY: 80 },
     ];
     const formulaObstacleMask = new Uint8Array(770 * 450);
     const simulationMask = new Uint8Array(770 * 450);

@@ -1,7 +1,7 @@
-/** 在当前 Graphwar 路径后追加 DAG 清图路线；几何建路点和弹道命中圈分开建模。 */
-import { GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
-import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual, xPlusGoesRight } from "../../core/geometry";
-import { graphXAdvancesStrictly } from "../../core/numbers";
+/** 在当前 Graphwar 路径后追加一键清图路线；几何建路点和弹道命中圈分开建模。 */
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual } from "../../core/geometry";
+import { graphXAdvancesStrictly, nextDownDouble } from "../../core/numbers";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { GraphwarSignProtection } from "../../formula/generation/build";
@@ -35,8 +35,8 @@ import type {
   GraphwarStepGlitchPrefixScanner,
   GraphwarStepGlitchScanTimingStage,
 } from "../routing/step-glitch-scan";
-import { assignGraphwarStepGlitchTargetRoutePoints } from "./step-glitch-targets";
 import { supportsOneClickClear } from "./support";
+import { assignGraphwarOneClickClearTargetRoutePoints } from "./target-assignment";
 
 /** 路线规划默认使用单个 2px 几何 route tolerance，普通寻路和一键清图保持一致。 */
 export const GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS = 2;
@@ -63,8 +63,8 @@ export interface GraphwarOneClickClearRouteMask {
 
 /** 一键清图内部调试阶段；页面按这些阶段聚合耗时。 */
 export type GraphwarOneClickClearDebugStage =
+  | "assign-clear-targets"
   | "build-dag-edges"
-  | "build-dag-targets"
   | "dag-longest-path"
   | "optimize-path"
   | "prefix-evidence-hit"
@@ -299,16 +299,12 @@ export type GraphwarOneClickClearResult =
 
 /** 一键清图内部统一的建路点、命中圈和排序信息。 */
 interface OneClickClearTarget extends GraphwarOneClickClearCandidate {
-  /** 几何 DAG 建路目标点，使用士兵命中圆中心。 */
+  /** 几何建路目标点；共享分配器可在真实命中圆内调整 x。 */
   routePoint: PixelPoint;
   /** 弹道验证命中圆；和几何建路目标点是两个概念。 */
   hitCircle: GraphwarTrajectoryTargetCircle;
   /** 建路目标点的 Graphwar x；DAG 稳定排序使用，x+ 可达性在平面像素层判断。 */
   sortGraphX: number;
-  /** 按建路目标 x 排序后的位置，用于稳定 tie-break。 */
-  orderIndex: number;
-  /** 输入候选序号；只用于相同 x 时保持稳定。 */
-  sourceIndex: number;
 }
 
 /** 从一个 DAG 节点到下一个目标状态的已建路线。 */
@@ -482,7 +478,7 @@ const START_NODE_INDEX = -1;
 // 截图像素：缺省 prefixTarget 和目标序列默认半径都会用它；显式 targetCircles 会覆盖。
 const FALLBACK_TARGET_RADIUS_IMAGE_PIXELS = 1;
 
-/** 用建路目标点 DAG 找到显式击杀最多的追加路径。 */
+/** 用共享目标分配和当前公式模式找到显式击杀最多的追加路径。 */
 export async function buildGraphwarOneClickClearPath(
   options: GraphwarOneClickClearOptions,
 ): Promise<GraphwarOneClickClearResult> {
@@ -512,8 +508,8 @@ export async function buildGraphwarOneClickClearPath(
     return createOneClickClearFailure("preflight-blocked", startedAt, 0);
   }
 
-  const targets = measureOneClickClearDebugTiming(options, "build-dag-targets", () =>
-    stepGlitchMode ? collectOneClickClearStepGlitchTargets(options) : collectOneClickClearDagTargets(options),
+  const targets = measureOneClickClearDebugTiming(options, "assign-clear-targets", () =>
+    collectOneClickClearTargets(options),
   );
   if (targets.length === 0) {
     return createOneClickClearFailure("no-candidate", startedAt, 0);
@@ -598,8 +594,13 @@ async function buildOneClickClearStepGlitchPath(
   let prefixEvidence = options.stepGlitchPrefixEvidence;
   let stepGlitchFormulaPrefix = options.stepGlitchPrefixEvidence?.stepGlitchFormulaPrefix;
   let workUnits = 0;
+  let acceptedLayerGraphX: number | undefined;
 
   for (const target of targets) {
+    // 同 x 保底目标是替代候选；该层已有控制点后直接进入下一层，顺路命中仍由最终弹道统计。
+    if (acceptedLayerGraphX === target.sortGraphX) {
+      continue;
+    }
     if (options.isCancelled?.()) {
       return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
     }
@@ -623,6 +624,7 @@ async function buildOneClickClearStepGlitchPath(
 
     // 只有命中才提交路线；其他结果保留最近命中的路线，让更右目标重新选择上下通道。
     if (scan.status === "hit") {
+      acceptedLayerGraphX = target.sortGraphX;
       route = {
         ...(scan.formulaContext ? { formulaContext: scan.formulaContext } : {}),
         pathPoints: scan.path,
@@ -801,134 +803,42 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearOptions) {
   return result.reachesTargetSequenceBeforeObstacle;
 }
 
-/**
- * 收集从当前路径末端建路点 x+ 侧可选的士兵，并按建路点 x 稳定排序。
- *
- * 几何 DAG 使用士兵中心作为建路点；弹道验证使用同一中心加士兵半径组成的命中圆。
- */
-function collectOneClickClearDagTargets(options: GraphwarOneClickClearOptions): OneClickClearTarget[] {
-  const startPoint = options.pathPoints.at(-1);
-  if (!startPoint) {
-    return [];
-  }
-
-  const startGraphX = imageToGraphPoint(startPoint, options.bounds, options.boundsRect).x;
-  const targets: OneClickClearTarget[] = [];
-  for (let sourceIndex = 0; sourceIndex < options.candidates.length; sourceIndex += 1) {
-    const candidate = options.candidates[sourceIndex];
-    if (!candidate) {
-      continue;
-    }
-
-    const target = createOneClickClearTarget(candidate, sourceIndex, options);
-    // DAG 只允许从当前路径尾点继续 x+；判断使用建路目标的 Graphwar x。
-    if (!graphXAdvancesStrictly(startGraphX, target.sortGraphX)) {
-      continue;
-    }
-
-    targets.push(target);
-  }
-
-  return targets.sort(compareOneClickClearTargetOrder).map((target, orderIndex) => ({ ...target, orderIndex }));
-}
-
-/** 邪道清图先在像素命中圈中分配同 x 士兵沿 Graph x+ 前进的命中点，再进入顺序扫描。 */
-function collectOneClickClearStepGlitchTargets(options: GraphwarOneClickClearOptions): OneClickClearTarget[] {
+/** 收集圆心或安全边缘候选，统一分配后按最终 x 建立普通 DAG 层或邪道扫描层。 */
+function collectOneClickClearTargets(options: GraphwarOneClickClearOptions): OneClickClearTarget[] {
   const pathTail = options.pathPoints.at(-1);
   if (!pathTail) {
     return [];
   }
 
-  const pathTailGraph = imageToGraphPoint(pathTail, options.bounds, options.boundsRect);
-  const xPlusIsRight = xPlusGoesRight(options.bounds);
-  const boundaryInsetPixels =
+  const horizontalBoundaryInsetPixels =
     (Math.max(0, Math.floor(options.simulationBoundaryExpansion)) / GRAPHWAR_PLANE_LENGTH) * options.boundsRect.width;
-  const usableMinX = options.boundsRect.x + boundaryInsetPixels;
-  const usableMaxX = options.boundsRect.x + options.boundsRect.width - boundaryInsetPixels;
-  const candidates = options.candidates
-    .flatMap((candidate, sourceIndex) => {
-      const target = createOneClickClearTarget(candidate, sourceIndex, options);
-      const center = imageToGraphPoint(candidate.hitCenter, options.bounds, options.boundsRect);
-      if (!graphXAdvancesStrictly(pathTailGraph.x, center.x)) {
-        return [];
-      }
-
-      return candidate.hitRadius > 0
-        ? [
-            {
-              center: candidate.hitCenter,
-              hitCircle: target,
-              hitRadius: candidate.hitRadius,
-              routePoint: candidate.hitCenter,
-              sourceIndex,
-            },
-          ]
-        : [];
-    })
-    .sort(
-      (left, right) =>
-        (xPlusIsRight ? left.center.x - right.center.x : right.center.x - left.center.x) ||
-        left.center.y - right.center.y ||
-        left.sourceIndex - right.sourceIndex,
-    );
-
-  const assignedTargets = assignGraphwarStepGlitchTargetRoutePoints({
-    candidates,
-    pathTailX: pathTail.x,
-    usableMaxX,
-    usableMinX,
-    xPlusIsRight,
-  });
-  const targets: OneClickClearTarget[] = [];
-  let previousGraphX = pathTailGraph.x;
-  for (const assigned of assignedTargets) {
-    const routeGraphX = imageToGraphPoint(assigned.routePoint, options.bounds, options.boundsRect).x;
-    const deltaX = assigned.routePoint.x - assigned.hitCircle.hitCenter.x;
-    const deltaY = assigned.routePoint.y - assigned.hitCircle.hitCenter.y;
-    if (
-      deltaX ** 2 + deltaY ** 2 >= assigned.hitCircle.hitRadius ** 2 ||
-      !graphXAdvancesStrictly(previousGraphX, routeGraphX)
-    ) {
-      continue;
-    }
-
-    targets.push({
-      ...assigned.hitCircle,
-      orderIndex: targets.length,
-      routePoint: assigned.routePoint,
-      sortGraphX: routeGraphX,
-    });
-    previousGraphX = routeGraphX;
-  }
-  return targets;
-}
-
-/** 集中构造一键清图内部目标，避免调用点混用“建路点”和“命中圈”。 */
-function createOneClickClearTarget(
-  candidate: GraphwarOneClickClearCandidate,
-  sourceIndex: number,
-  options: Pick<GraphwarOneClickClearOptions, "bounds" | "boundsRect">,
-): OneClickClearTarget {
-  // 建路点使用命中圆中心；命中验证由 hitCircle 保存中心和半径。
-  const routePoint = candidate.hitCenter;
-  return {
-    ...candidate,
-    hitCircle: {
+  const verticalBoundaryInsetPixels =
+    (Math.max(0, Math.floor(options.simulationBoundaryExpansion)) / GRAPHWAR_PLANE_HEIGHT) * options.boundsRect.height;
+  const assignedTargets = assignGraphwarOneClickClearTargetRoutePoints({
+    bounds: options.bounds,
+    boundsRect: options.boundsRect,
+    candidates: options.candidates.map((candidate, sourceIndex) => ({
       center: candidate.hitCenter,
-      radius: candidate.hitRadius,
+      hitCircle: candidate,
+      hitRadius: candidate.hitRadius,
+      sourceIndex,
+    })),
+    pathTail,
+    // Graphwar 平面右/下边界是半开区间；圆心保留 double 精度，只有边缘初始落点才收成整数像素。
+    usableMaxX: nextDownDouble(options.boundsRect.x + options.boundsRect.width - horizontalBoundaryInsetPixels),
+    usableMaxY: nextDownDouble(options.boundsRect.y + options.boundsRect.height - verticalBoundaryInsetPixels),
+    usableMinX: options.boundsRect.x + horizontalBoundaryInsetPixels,
+    usableMinY: options.boundsRect.y + verticalBoundaryInsetPixels,
+  });
+  return assignedTargets.map((assigned) => ({
+    ...assigned.hitCircle,
+    hitCircle: {
+      center: assigned.hitCircle.hitCenter,
+      radius: assigned.hitCircle.hitRadius,
     },
-    orderIndex: 0,
-    routePoint,
-    sortGraphX: imageToGraphPoint(routePoint, options.bounds, options.boundsRect).x,
-    sourceIndex,
-  };
-}
-
-/** 按建路目标点排序；同 x 不建边，但排序仍需稳定，y 和输入序号只负责 tie-break。 */
-function compareOneClickClearTargetOrder(left: OneClickClearTarget, right: OneClickClearTarget) {
-  return (
-    left.sortGraphX - right.sortGraphX || left.routePoint.y - right.routePoint.y || left.sourceIndex - right.sourceIndex
-  );
+    routePoint: assigned.routePoint,
+    sortGraphX: imageToGraphPoint(assigned.routePoint, options.bounds, options.boundsRect).x,
+  }));
 }
 
 /** 建立 START 和士兵建路点之间的几何 DAG；Step 必须把累计舍入高度纳入节点标签。 */

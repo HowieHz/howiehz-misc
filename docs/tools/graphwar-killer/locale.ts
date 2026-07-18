@@ -220,7 +220,7 @@ export const graphwarKillerLocale = {
       inProgress: "正在一键清图，在截图中右键停止",
       needDetection: "先识别士兵和障碍后才能使用一键清图",
       needCurrentPath: "一键清图需要先选择当前路径起点",
-      noCandidate: "一键清图失败：当前路径右侧没有可选目标",
+      noCandidate: "一键清图失败：当前路径 x+ 侧没有可用命中圈目标",
       noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) => `一键清图失败：寻路工作线程不可用或运行失败，耗时 ${elapsed}`,
       retained: "已保留当前最优结果",
@@ -431,7 +431,7 @@ export const graphwarKillerLocale = {
       debugDetails: {
         "build-dag-edges": {
           label: "- 清图建立有向无环图边",
-          title: "用当前一键清图路线掩码尝试士兵中心点之间的 x+ 几何寻路，并记录可用边",
+          title: "用当前一键清图路线掩码尝试分配目标点之间的 x+ 几何寻路，并记录可用边",
         },
         "dag-edge-mode": {
           label: (mode, workerCount) =>
@@ -446,13 +446,13 @@ export const graphwarKillerLocale = {
           label: (workerIndex) => `- 清图有向无环图建边工作线程 ${workerIndex}`,
           title: "单个有向无环图建边子工作线程的总耗时；任务由工作线程动态领取，耗时不代表固定边切片",
         },
-        "build-dag-targets": {
-          label: "- 清图收集目标",
-          title: "普通模式建立按中心 x 排序的有向无环图目标；邪道模式为同 x 士兵分配严格递增的命中圈控制点",
+        "assign-clear-targets": {
+          label: "- 清图分配目标",
+          title: "为全部一键清图模式选择圆心或严格圆内的 x+ 安全边缘，并按同初始 x 稳定分配命中圈控制点",
         },
         "dag-longest-path": {
           label: "- 清图有向无环图最长路",
-          title: "在已建好的中心点有向无环图上运行最长路动态规划，选择显式击杀数量最多的路线",
+          title: "在按最终目标 x 建好的有向无环图上运行最长路动态规划，选择显式击杀数量最多的路线",
         },
         "optimize-path": {
           label: "- 清图删点优化",
@@ -484,11 +484,11 @@ export const graphwarKillerLocale = {
         },
         "route-map-pixels": {
           label: "- 清图路线映射像素",
-          title: "把几何寻路返回的 Graphwar 平面格点转换成截图像素路径，并保留精确中心点首尾",
+          title: "把几何寻路返回的 Graphwar 平面格点转换成截图像素路径，并保留精确分配目标首尾",
         },
         "route-pathfinding": {
           label: "- 清图真实几何寻路",
-          title: "搜索两个中心点之间满足 x+ 规则的绕障几何路线",
+          title: "搜索两个分配目标点之间满足 x+ 规则的绕障几何路线",
         },
         "scan-step-glitch": {
           label: "- 清图邪道水平扫描",
@@ -590,7 +590,7 @@ export const graphwarKillerLocale = {
         },
         "one-click-clear-collect-targets": {
           label: "清图收集目标",
-          title: "按当前友伤设置和严格 x+ 规则筛选一键清图可尝试的士兵中心点候选",
+          title: "按当前友伤设置筛选一键清图士兵，并保留圆心或严格圆内 x+ 安全边缘可前进的命中圈候选",
         },
         "one-click-clear-result-cache-hit": {
           label: "清图结果缓存命中",
@@ -615,7 +615,7 @@ export const graphwarKillerLocale = {
         "one-click-clear-search": {
           label: "清图搜索验证",
           title:
-            "建立中心点有向无环图，运行最长路动态规划，验证失败时删除具体有向无环图边，直到得到可用清图路线或无路可用",
+            "共享分配命中圈目标后，按最终 x 建立普通有向无环图或邪道扫描层，并持续验证到得到可用清图路线或无路可用",
         },
         "one-click-clear-setting-status": {
           label: "清图设置状态栏",
@@ -660,7 +660,7 @@ export const graphwarKillerLocale = {
       oneClickClearDeleteCheckRadius: "清图删点命中检查半径",
       oneClickClearDeleteCheckRadiusAriaLabel: "一键清图删点命中检查半径，单位为 Graphwar 原始 770x450 平面像素",
       oneClickClearDeleteCheckRadiusTitle: "删点时快速检查局部路径是否仍经过相同士兵；设为 0 时直接验证完整轨迹",
-      oneClickClearTitle: "从当前路径末端开始，尽量击杀右侧可用士兵",
+      oneClickClearTitle: "从当前路径末端开始，分配并尽量击杀 x+ 侧命中圈可达的士兵",
       managedFriendlyFireWarning: "托管已允许友伤，友军会作为一键清图候选",
       managedMode: "托管模式",
       managedModeDisableTitle: "关闭托管模式并解锁设置",

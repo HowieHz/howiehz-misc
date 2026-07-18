@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { imagePointToPlaneGridPoint } from "../../core/plane-grid";
-import { createGraphPoint } from "../../core/types";
+import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import { sampleGraphwarPathTargetSequence } from "../../formula/trajectory/sampling";
 import {
@@ -10,7 +10,12 @@ import {
   createGraphwarStepRouteSummedArea,
   validateGraphwarStepRoutePath,
 } from "../routing/step-route";
-import { buildGraphwarOneClickClearPath, type GraphwarOneClickClearIncumbent } from "./search";
+import {
+  buildGraphwarOneClickClearPath,
+  type GraphwarOneClickClearCandidate,
+  type GraphwarOneClickClearDagEdgeBuildRequest,
+  type GraphwarOneClickClearIncumbent,
+} from "./search";
 
 const bounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
 const boundsRect: BoundsRect = { height: 450, width: 770, x: 0, y: 0 };
@@ -24,6 +29,42 @@ const settings = {
 };
 
 describe("One-click clear optimization", () => {
+  it("builds an ordinary DAG target at the strict x+ edge when the center does not advance", async () => {
+    const requests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
+    const start = createPixelPoint(200, 225);
+    const candidate = {
+      enemy: true,
+      hitCenter: createPixelPoint(198.25, 225),
+      hitRadius: 5,
+      id: "edge",
+    };
+
+    await buildGraphwarOneClickClearPath(createDagCaptureOptions(start, [candidate], requests));
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.jobs.map((job) => job.targetPoint)).toEqual([createPixelPoint(203, 225)]);
+  });
+
+  it("builds ordinary DAG topology from the final x assigned to equal-center targets", async () => {
+    const requests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
+    const start = createPixelPoint(200, 225);
+    const centerX = 300;
+    const candidates = [
+      { enemy: true, hitCenter: createPixelPoint(centerX, 250), hitRadius: 3, id: "large-y" },
+      { enemy: true, hitCenter: createPixelPoint(centerX, 200), hitRadius: 3, id: "small-y" },
+    ];
+
+    await buildGraphwarOneClickClearPath(createDagCaptureOptions(start, candidates, requests));
+
+    const jobs = requests[0]?.jobs ?? [];
+    const startTargets = jobs.filter((job) => job.from === -1).map((job) => job.targetPoint);
+    expect(startTargets).toHaveLength(2);
+    expect(startTargets[0]?.x).toBeLessThan(startTargets[1]?.x ?? Number.NEGATIVE_INFINITY);
+    expect(jobs).toContainEqual(
+      expect.objectContaining({ from: 0, startPoint: startTargets[0], targetPoint: startTargets[1], to: 1 }),
+    );
+  });
+
   it("publishes each validated DAG prefix without an extra fallback search", async () => {
     const start = toImagePoint(-20, 0);
     const first = toImagePoint(-15, 0);
@@ -694,6 +735,33 @@ describe("One-click clear optimization", () => {
     }
   });
 });
+
+/** 创建只捕获普通 DAG 建边请求、不返回可用几何边的搜索选项。 */
+function createDagCaptureOptions(
+  start: PixelPoint,
+  candidates: GraphwarOneClickClearCandidate[],
+  requests: GraphwarOneClickClearDagEdgeBuildRequest[],
+) {
+  return {
+    boundaryExpansion: 0,
+    bounds,
+    boundsRect,
+    buildDagEdges: async (request: GraphwarOneClickClearDagEdgeBuildRequest) => {
+      requests.push(request);
+      return { routes: [], timings: [] };
+    },
+    candidates,
+    deleteOptimizationEnabled: false,
+    deleteHitCheckRadiusPixels: 0,
+    hitCandidates: candidates,
+    pathPoints: [start],
+    routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+    routeMode: "visibility-graph" as const,
+    settings: { ...settings, algorithm: "abs" as const },
+    simulationBoundaryExpansion: 0,
+    simulationMaskCacheId: 0,
+  };
+}
 
 function toImagePoint(x: number, y: number) {
   return graphToImagePoint(createGraphPoint(x, y), bounds, boundsRect);

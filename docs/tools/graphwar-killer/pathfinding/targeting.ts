@@ -5,7 +5,7 @@ import {
   pathFollowsGraphRule,
 } from "../core/game/forward-rule";
 /** Graphwar 目标选择规则；页面和寻路流程应复用同一套 x+ 与命中圈语义。 */
-import { imageToGraphPoint, xPlusGoesRight } from "../core/geometry";
+import { createStrictPixelCircleXPlusIntegerEdgePoint, imageToGraphPoint, xPlusGoesRight } from "../core/geometry";
 import { clampNumber } from "../core/numbers";
 import { graphwarToolDefaults } from "../core/tool/defaults";
 import { createPixelPoint } from "../core/types";
@@ -291,13 +291,25 @@ export function graphwarPointAdvances(startPoint: PixelPoint, point: PixelPoint,
   return pathFollowsGraphRule([startPoint, point], geometry.bounds, geometry.boundsRect);
 }
 
-/** 判断士兵中心是否位于起点 x+ 侧；命中圆边缘不参与候选过滤。 */
+/** 判断士兵圆心或严格圆内的 x+ 安全整数像素是否位于起点 x+ 侧。 */
 export function graphwarSoldierReachesForward(
   soldier: GraphwarTargetingSoldier,
   startPoint: PixelPoint,
   geometry: GraphwarTargetingGeometry,
 ) {
-  return graphwarPointAdvances(startPoint, getGraphwarSoldierCenter(soldier), geometry);
+  const center = getGraphwarSoldierCenter(soldier);
+  if (graphwarPointAdvances(startPoint, center, geometry)) {
+    return true;
+  }
+
+  const safeEdgePoint = createStrictPixelCircleXPlusIntegerEdgePoint(
+    center,
+    soldier.hitRadius,
+    geometry.boundsRect.x,
+    Math.ceil(geometry.boundsRect.x + geometry.boundsRect.width) - 1,
+    xPlusGoesRight(geometry.bounds),
+  );
+  return Boolean(safeEdgePoint && graphwarPointAdvances(startPoint, safeEdgePoint, geometry));
 }
 
 /** 判断首个路径点是否位于士兵真实命中圈内，用于统一排除发射士兵。 */

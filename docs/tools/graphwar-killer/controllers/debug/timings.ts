@@ -496,7 +496,7 @@ const oneClickClearSearchDebugDetailOrder: readonly (
   "prepare-pathfinding-prefix",
   "route-mask-cache-hit",
   "route-mask-cache-miss",
-  "build-dag-targets",
+  "assign-clear-targets",
   "visibility-cache-hit",
   "visibility-cache-miss",
   "visibility-cache-skipped",

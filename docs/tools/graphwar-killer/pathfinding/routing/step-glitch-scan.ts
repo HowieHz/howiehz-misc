@@ -186,20 +186,20 @@ interface ScanLandingRow {
 interface ScanGateWindow {
   controlX: number;
   decimalPlaces: number;
-  /** 仅供非标准缩放下右门跨列时复用落点行的原碰撞列查询结果。 */
+  /** 右门所在的原生列；公式精度为 0 或 1 时，左门量化偏移可能让不同宽度落到不同列。 */
   searchX: number;
   startX: number;
 }
 
-/** 按一个回退距离分组的 11 档 gate 宽度；标准 bounds 下整组可以共享一次可达性查询。 */
+/** 按一个回退距离分组的 11 档 gate 宽度；原版像素固定，但低公式精度时仍可能跨列。 */
 interface ScanGateWindowBatch {
   /** 批次对应的回退列，1 表示 B-1，2 表示 B-2。 */
   backoffColumns: (typeof GATE_BACKOFF_COLUMNS)[number];
-  /** 共享的右门列；为 undefined 时，非标准 bounds 使用旧的逐窗口 fallback。 */
+  /** 共享的右门列；为 undefined 时，低精度量化让门宽跨列，使用旧的逐窗口 fallback。 */
   sharedWindowSearchX: number | undefined;
-  /** 只有标准回退列才能使用“跳过下一批”的单调性规则。 */
+  /** 只有右门仍位于预期回退列时，才能使用“跳过下一批”的单调性规则。 */
   usesMonotonicBackoffPruning: boolean;
-  /** 所有宽度共享右门列时实际查询的原生列；否则仅作为 fallback 提示。 */
+  /** 所有宽度共享右门列时实际查询的原生列；跨列时仅作为 fallback 提示。 */
   searchX: number;
   windows: ScanGateWindow[];
 }
@@ -604,8 +604,8 @@ function scanPreparedGraphwarStepGlitchPath(
           continue;
         }
         if (windowBatch.sharedWindowSearchX === undefined) {
-          // 非标准 bounds 可能让不同宽度落在不同列；这里保留旧的精确检查，不能把一列的结果当成另一列的缓存。
-          // 标准 Graphwar bounds 不会进入这个分支。
+          // 低公式精度可能让不同宽度落在不同列；这里保留旧的精确检查，不能把一列的结果当成另一列的缓存。
+          // 原版像素宽度仍固定为 50/770，只是左门量化后可能贴近列边界。
           const farthestX = getFarthestFreeX(
             maskIndex,
             Math.min(window.searchX, item.scan.firstBlockedSearchX),
@@ -915,7 +915,7 @@ function createGateRowScan(
         // B-1 不能到达 B 时，按列连续可达性可知 B-2 也不可能绕过 B-1。
         continue;
       }
-      // 非标准 bounds 的 fallback 会在候选循环逐档检查，这里只记录 B-1 批次存在。
+      // 低精度跨列时，fallback 会在候选循环逐档检查，这里只记录 B-1 批次存在。
       usableWindowBatchMask |= 1;
     }
     rows.push({

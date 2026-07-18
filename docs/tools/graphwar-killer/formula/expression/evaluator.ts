@@ -63,7 +63,9 @@ export function createGraphwarExpressionEvaluator(expression: string, parserOpti
     return undefined;
   }
 
-  return createGraphwarPolishExpressionEvaluator(polishTokens);
+  // 栈按 token 上限预分配，并由闭包在同一个 evaluator 的多次采样间复用。
+  const stack = new Array<number>(polishTokens.length);
+  return (x: number, y: number, dy: number) => evaluateGraphwarPolishExpression(polishTokens, stack, x, y, dy);
 }
 
 /** 按 Graphwar PolishNotationFunction 的 token 规则解析用户表达式。 */
@@ -290,20 +292,15 @@ function findGraphwarExpressionRootTokenIndex(input: GraphwarExpressionToken[], 
 function graphwarPolishValuesNeeded(tokens: readonly GraphwarExpressionToken[]) {
   let valuesNeeded = 1;
   for (let index = 0; index < tokens.length; index += 1) {
-    valuesNeeded += graphwarExpressionTokenIsOperation(tokens[index].type)
-      ? getGraphwarExpressionTokenParamCount(tokens[index].type) - 1
-      : -1;
+    valuesNeeded +=
+      tokens[index].type >= GraphwarExpressionTokenType.Add && tokens[index].type <= GraphwarExpressionTokenType.Ln
+        ? getGraphwarExpressionTokenParamCount(tokens[index].type) - 1
+        : -1;
     if (valuesNeeded === 0 && index + 1 < tokens.length) {
       return -1;
     }
   }
   return valuesNeeded;
-}
-
-/** 为编译后的 Polish 表达式创建可复用栈，避免每个采样点重新分配。 */
-function createGraphwarPolishExpressionEvaluator(tokens: readonly GraphwarExpressionToken[]) {
-  const stack = new Array<number>(tokens.length);
-  return (x: number, y: number, dy: number) => evaluateGraphwarPolishExpression(tokens, stack, x, y, dy);
 }
 
 /** 从后向前求值 Graphwar 前缀 Polish 表达式。 */
@@ -421,11 +418,6 @@ function evaluateGraphwarPolishExpression(
 
   const value = stackSize === 1 ? stack[0] : Number.NaN;
   return Number.isFinite(value) ? value : Number.NaN;
-}
-
-/** 判断 token 是否为 Graphwar 表达式运算符。 */
-function graphwarExpressionTokenIsOperation(type: GraphwarExpressionTokenType) {
-  return type >= GraphwarExpressionTokenType.Add && type <= GraphwarExpressionTokenType.Ln;
 }
 
 /** 返回 Graphwar 运算符需要的参数个数。 */

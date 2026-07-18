@@ -7,16 +7,31 @@ import {
   GRAPHWAR_MAX_ANGLE_LOOPS,
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
+import { roundGraphwarLaunchAngleToDisplayRadians } from "../../core/numbers";
 import { createGraphPoint } from "../../core/types";
-import type { AlgorithmMode, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
+import type {
+  AlgorithmMode,
+  EquationMode,
+  GraphBounds,
+  GraphPoint,
+  GraphwarSecondOrderLaunchAngleMode,
+} from "../../core/types";
 import { createGraphwarExpressionEvaluator } from "../expression/evaluator";
 import type { GraphwarExpressionParserOptions } from "../expression/evaluator";
 /** 封装 Graphwar 公式模拟器，按游戏步进规则计算轨迹和停止原因。 */
-import { compileFormulaEvaluator } from "../generation/build";
+import { compileFormulaEvaluator, compileGraphwarFormulaMaterials } from "../generation/build";
 import type { CompiledGraphwarFormulaMaterials, FormulaEvaluationOptions } from "../generation/build";
 import { calculateStepFormulaCenterX, resolveStepFormula } from "../generation/step-numeric-strategy";
 export { calculateStepFormulaCenterX } from "../generation/step-numeric-strategy";
 export type { GraphwarExpressionParserOptions } from "../expression/evaluator";
+
+/** 每个真实接受点后的早停回调；二阶求解器可读取同一点的权威 y'，普通调用方可忽略第四参。 */
+export type GraphwarTrajectoryStopPredicate = (
+  point: GraphPoint,
+  previousPoint: GraphPoint | undefined,
+  index: number,
+  state: GraphwarTrajectorySamplingState,
+) => boolean;
 
 /** 采样由路径点生成的公式时的完整输入，保持与 Graphwar 原版步进参数隔离。 */
 export interface SampleGraphwarTrajectoryOptions {
@@ -32,8 +47,12 @@ export interface SampleGraphwarTrajectoryOptions {
   compiledFormulaMaterials?: CompiledGraphwarFormulaMaterials;
   /** 已按 Graphwar 坐标表示的公式控制点。 */
   points: readonly GraphPoint[];
+  /** Y''= 使用完整建议角，还是调用方指定的两位小数执行角。 */
+  secondOrderLaunchAngleMode?: GraphwarSecondOrderLaunchAngleMode;
+  /** 已由公式上下文确定的 Y''= 有效发射角；存在时禁止重新求解另一套角度。 */
+  launchAngleRadians?: number;
   /** 每个采样点后的早停钩子，用于目标/障碍验证。 */
-  shouldStop?: (point: GraphPoint, previousPoint: GraphPoint | undefined, index: number) => boolean;
+  shouldStop?: GraphwarTrajectoryStopPredicate;
   /** 已验证前缀的采样状态；传入后从该点继续推进，而不是重新从发射点采样。 */
   initialState?: GraphwarTrajectorySamplingState;
   /** 士兵中心；Graphwar 实际发射点会从这里沿角度偏移半径。 */
@@ -44,12 +63,7 @@ export interface SampleGraphwarTrajectoryOptions {
   steepness: number;
 }
 
-/** 发射点迭代收敛阈值取 Graphwar 最小 x 步长的 1/10，避免无意义抖动。 */
-const FORMULA_LAUNCH_POINT_TOLERANCE = GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE / 10;
-/** 发射点收敛比较使用距离平方，避免每轮开方。 */
-const FORMULA_LAUNCH_POINT_TOLERANCE_SQUARED = FORMULA_LAUNCH_POINT_TOLERANCE ** 2;
-
-/** 标记工具自有固定点迭代未达到容差；候选搜索只能把这一类失败当作候选不可用。 */
+/** 标记工具自有局部求解没有有限执行状态或无法完成必要物理回放；候选搜索只能把这一类失败当作候选不可用。 */
 export class GraphwarFormulaConvergenceError extends Error {
   constructor(message: string) {
     super(message);
@@ -75,7 +89,7 @@ export interface SampleGraphwarExpressionTrajectoryOptions {
   /** Graphwar 表达式解析兼容选项。 */
   parser?: GraphwarExpressionParserOptions;
   /** 每个采样点后的早停钩子，用于目标/障碍验证。 */
-  shouldStop?: (point: GraphPoint, previousPoint: GraphPoint | undefined, index: number) => boolean;
+  shouldStop?: GraphwarTrajectoryStopPredicate;
   /** 已验证前缀的采样状态；传入后从该点继续推进。 */
   initialState?: GraphwarTrajectorySamplingState;
   /** 士兵中心；Graphwar 实际发射点会从这里沿角度偏移半径。 */
@@ -88,6 +102,8 @@ export interface SampleGraphwarExpressionTrajectoryOptions {
 export interface CreateGraphwarFormulaPathOptions {
   /** 路径点转公式的算法。 */
   algorithm: AlgorithmMode;
+  /** 当前 Graphwar 坐标边界；Step 用它换算横纵轴上的原生平面像素。 */
+  bounds: GraphBounds;
   /** Graphwar 对公式文本的解释模式。 */
   equation: EquationMode;
   /** 可选数值保护配置，保证发射角迭代和采样使用同一求值行为。 */
@@ -96,9 +112,19 @@ export interface CreateGraphwarFormulaPathOptions {
   compiledFormulaMaterials?: CompiledGraphwarFormulaMaterials;
   /** 用户选择或 worker 生成的 Graphwar 路径点。 */
   points: readonly GraphPoint[];
+  /** Y''= 使用完整建议角，还是调用方指定的两位小数执行角。 */
+  secondOrderLaunchAngleMode?: GraphwarSecondOrderLaunchAngleMode;
   /** Step 或 ABS y'' 公式使用的陡峭度。 */
   steepness: number;
 }
+
+/** 已有公式点的求值和发射角不再消费坐标边界。 */
+type GraphwarFormulaOptions = Omit<CreateGraphwarFormulaPathOptions, "bounds">;
+
+/** 工具自有发射点状态最多尝试的转换次数；耗尽只恢复历史最佳，不代表最终公式失败。 */
+const FORMULA_LAUNCH_POINT_MAX_STATE_TRANSITIONS = 100;
+/** 非 ABS Y''= 建议角最多尝试的转换次数；与 Graphwar 原版角度循环保持独立。 */
+const SECOND_ORDER_LAUNCH_ANGLE_MAX_STATE_TRANSITIONS = 100;
 
 /** 模拟器停止原因，直接映射 Graphwar 原版采样限制和工具早停。 */
 export type TrajectoryStopReason =
@@ -178,7 +204,10 @@ export function createGraphwarFormulaPathPoints(options: CreateGraphwarFormulaPa
   if (options.algorithm === "abs" && options.equation === "ddy") {
     const launchPoint = moveFromSoldierCenter(
       soldierCenter,
-      getAbsSecondOrderStartAngle(soldierCenter, options.points),
+      resolveSecondOrderExecutionAngle(
+        getAbsSecondOrderStartAngle(soldierCenter, options.points),
+        options.secondOrderLaunchAngleMode,
+      ),
     );
     if (!isFinitePoint(launchPoint)) {
       throw new GraphwarFormulaConvergenceError("ABS second-order launch point is not finite.");
@@ -188,24 +217,50 @@ export function createGraphwarFormulaPathPoints(options: CreateGraphwarFormulaPa
   }
 
   let formulaPoints = createStepAdjustedFormulaPathPoints(options, options.points);
-  // 原版只消费最终公式；工具还需让“整条公式算出的发射边缘点”反向收敛为公式首点，因此额外做固定点迭代。
-  // GRAPHWAR_MAX_ANGLE_LOOPS 只限制异常工作量；达到上限不代表成功，仍必须满足发射点容差。
-  for (let index = 0; index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
-    const angle = getLaunchAngle({ ...options, points: formulaPoints }, soldierCenter);
+  let bestFormulaPoints: GraphPoint[] | undefined;
+  let bestResidualSquared = Number.POSITIVE_INFINITY;
+  const visitedStates = new Set<string>();
+  // 状态 key 来自最终量化后的 compiled materials；同一 key 会执行同一条公式，继续迭代没有新信息。
+  for (let index = 0; index < FORMULA_LAUNCH_POINT_MAX_STATE_TRANSITIONS; index += 1) {
+    const compiledFormulaMaterials = compileGraphwarFormulaMaterials(
+      formulaPoints,
+      options.steepness,
+      options.algorithm,
+      options.formulaEvaluation,
+    );
+    // JSON 会把非有限数伪装成 null；单独标记后只让真实可执行材料进入 visited。
+    let stateIsFinite = true;
+    const stateKey = JSON.stringify(compiledFormulaMaterials, (_key, value: unknown) => {
+      if (typeof value !== "number") {
+        return value;
+      }
+      stateIsFinite &&= Number.isFinite(value);
+      return Object.is(value, -0) ? 0 : value;
+    });
+    if (!stateIsFinite || stateKey === undefined || visitedStates.has(stateKey)) {
+      break;
+    }
+    visitedStates.add(stateKey);
+
+    const angle = getLaunchAngle({ ...options, compiledFormulaMaterials, points: formulaPoints }, soldierCenter);
     const launchPoint = moveFromSoldierCenter(soldierCenter, angle);
     if (!isFinitePoint(launchPoint)) {
-      throw new GraphwarFormulaConvergenceError("Formula launch point is not finite.");
+      break;
     }
 
-    const nextTargetPoints = [launchPoint, ...options.points.slice(1)];
-    const nextFormulaPoints = createStepAdjustedFormulaPathPoints(options, nextTargetPoints);
-    if (distanceSquared(formulaPoints[0], launchPoint) <= FORMULA_LAUNCH_POINT_TOLERANCE_SQUARED) {
-      return nextFormulaPoints;
+    const residualSquared = distanceSquared(formulaPoints[0], launchPoint);
+    if (!Number.isFinite(residualSquared) || !(residualSquared < bestResidualSquared)) {
+      break;
     }
-    formulaPoints = nextFormulaPoints;
+    bestResidualSquared = residualSquared;
+    bestFormulaPoints = formulaPoints;
+    formulaPoints = createStepAdjustedFormulaPathPoints(options, [launchPoint, ...options.points.slice(1)]);
   }
 
-  throw new GraphwarFormulaConvergenceError("Formula launch point did not converge.");
+  if (bestFormulaPoints) {
+    return bestFormulaPoints;
+  }
+  throw new GraphwarFormulaConvergenceError("Formula launch point has no finite execution state.");
 }
 
 /** Step 点击点是用户目标；先解析 canonical 有效 ΔY，再把 sigmoid 中心左移到目标 x 前。 */
@@ -234,13 +289,17 @@ function createStepAdjustedFormulaPathPoints(
     const previousTarget = targetPoints[index - 1];
     const target = targetPoints[index];
     const transition = resolvedFormula.transitions[index - 1];
+    // 首段枪口会在本函数内重新求解；后续段才可使用上一轮真实接受点，避免旧枪口反向固定发射角。
+    const segmentStart =
+      (index > 1 ? options.formulaEvaluation?.segmentStartPoints?.[index - 1] : undefined) ?? previousTarget;
     formulaPoints.push(
       createGraphPoint(
         calculateStepFormulaCenterX(
-          previousTarget.x,
+          segmentStart.x,
           target.x,
           transition.effectiveDeltaY,
           resolvedFormula.formulaSteepness,
+          options.bounds,
         ),
         target.y,
       ),
@@ -293,7 +352,7 @@ export function sampleGraphwarExpressionTrajectory(options: SampleGraphwarExpres
 }
 
 /** 计算 Graphwar 实际使用或需要手调的发射角。 */
-export function getGraphwarLaunchAngle(options: CreateGraphwarFormulaPathOptions, soldierCenter = options.points[0]) {
+export function getGraphwarLaunchAngle(options: GraphwarFormulaOptions, soldierCenter = options.points[0]) {
   return soldierCenter ? getLaunchAngle(options, soldierCenter) : Number.NaN;
 }
 
@@ -345,7 +404,7 @@ function createFirstOrderEquationStepper(options: SampleGraphwarTrajectoryOption
 /** 模拟 y''= 模式：使用建议发射角和 tan(angle) 作为初始 y'，再做二阶 RK4。 */
 function createSecondOrderEquationStepper(options: SampleGraphwarTrajectoryOptions) {
   const evaluateDDY = createSecondOrderEvaluator(options);
-  const angle = getLaunchAngle(options, options.soldierCenter);
+  const angle = options.launchAngleRadians ?? getLaunchAngle(options, options.soldierCenter);
   // 已完成的固定点角度迭代直接决定发射点，不能经 getLaunchPoint 再完整迭代一遍。
   const launchPoint = moveFromSoldierCenter(options.soldierCenter, angle);
   const launchState = createSecondOrderState(launchPoint.x, launchPoint.y, Math.tan(angle));
@@ -439,7 +498,7 @@ function sampleSecondOrderExpression(
 }
 
 /** 按 Graphwar 当前模式计算发射角。 */
-function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: GraphPoint) {
+function getLaunchAngle(options: GraphwarFormulaOptions, center: GraphPoint) {
   if (options.equation === "y") {
     return getNormalStartAngle(center.x, createYEvaluator(options));
   }
@@ -447,7 +506,10 @@ function getLaunchAngle(options: CreateGraphwarFormulaPathOptions, center: Graph
     return getFirstOrderStartAngle(center, createFirstOrderEvaluator(options));
   }
   if (options.algorithm === "abs") {
-    return getAbsSecondOrderStartAngle(center, options.points);
+    return resolveSecondOrderExecutionAngle(
+      getAbsSecondOrderStartAngle(center, options.points),
+      options.secondOrderLaunchAngleMode,
+    );
   }
   return getSecondOrderStartAngle(center, options);
 }
@@ -459,7 +521,7 @@ function getAbsSecondOrderStartAngle(center: GraphPoint, points: readonly GraphP
 }
 
 /** 创建普通 y= 模式使用的函数值计算器。 */
-function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
+function createYEvaluator(options: GraphwarFormulaOptions) {
   return compileFormulaEvaluator(
     options.points,
     options.steepness,
@@ -470,7 +532,7 @@ function createYEvaluator(options: CreateGraphwarFormulaPathOptions) {
 }
 
 /** 创建 y'= 模式使用的一阶导计算器。 */
-function createFirstOrderEvaluator(options: CreateGraphwarFormulaPathOptions): FirstOrderEvaluator {
+function createFirstOrderEvaluator(options: GraphwarFormulaOptions): FirstOrderEvaluator {
   return compileFormulaEvaluator(
     options.points,
     options.steepness,
@@ -481,7 +543,7 @@ function createFirstOrderEvaluator(options: CreateGraphwarFormulaPathOptions): F
 }
 
 /** 创建 y''= 模式使用的二阶导计算器。 */
-function createSecondOrderEvaluator(options: CreateGraphwarFormulaPathOptions): SecondOrderEvaluator {
+function createSecondOrderEvaluator(options: GraphwarFormulaOptions): SecondOrderEvaluator {
   return compileFormulaEvaluator(
     options.points,
     options.steepness,
@@ -492,7 +554,7 @@ function createSecondOrderEvaluator(options: CreateGraphwarFormulaPathOptions): 
 }
 
 /** 独立调用模拟器时也要把方程传给 Step 编译器，不能默认退回 y= 的 canonical 系数。 */
-function createEquationAwareFormulaEvaluation(options: CreateGraphwarFormulaPathOptions): FormulaEvaluationOptions {
+function createEquationAwareFormulaEvaluation(options: GraphwarFormulaOptions): FormulaEvaluationOptions {
   return options.formulaEvaluation?.equation === options.equation
     ? options.formulaEvaluation
     : { ...options.formulaEvaluation, equation: options.equation };
@@ -535,22 +597,50 @@ function getFirstOrderStartAngle(center: GraphPoint, evaluateDY: FirstOrderEvalu
 }
 
 /** 非 ABS 的 Y'' 建议角按发射边缘点处的目标曲线斜率做固定点迭代。 */
-function getSecondOrderStartAngle(center: GraphPoint, options: CreateGraphwarFormulaPathOptions) {
+function getSecondOrderStartAngle(center: GraphPoint, options: GraphwarFormulaOptions) {
   const evaluateDY = createFirstOrderEvaluator(options);
-  let angle = Math.atan(evaluateDY(center.x, center.y));
+  let angle = resolveSecondOrderExecutionAngle(
+    Math.atan(evaluateDY(center.x, center.y)),
+    options.secondOrderLaunchAngleMode,
+  );
+  let bestAngle: number | undefined;
+  let bestResidual = Number.POSITIVE_INFINITY;
+  const visitedStates = new Set<string>();
 
-  // 这是工具建议角，不是 Graphwar y/y' 的源码循环；安全预算耗尽时必须明确失败，不能采用末次近似值。
-  for (let index = 0; index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
-    const launchPoint = moveFromSoldierCenter(center, angle);
-    const nextAngle = Math.atan(evaluateDY(launchPoint.x, launchPoint.y));
-    const error = Math.abs(nextAngle - angle);
-    angle = nextAngle;
-    if (error <= GRAPHWAR_ANGLE_ERROR && Number.isFinite(angle)) {
-      return angle;
+  // 建议角没有跨模式统一 epsilon；相邻固定点角差只在严格下降时更新历史最佳。
+  for (let index = 0; index < SECOND_ORDER_LAUNCH_ANGLE_MAX_STATE_TRANSITIONS; index += 1) {
+    if (!Number.isFinite(angle)) {
+      break;
     }
+    const stateKey = String(Object.is(angle, -0) ? 0 : angle);
+    if (visitedStates.has(stateKey)) {
+      break;
+    }
+    visitedStates.add(stateKey);
+    const launchPoint = moveFromSoldierCenter(center, angle);
+    const nextAngle = resolveSecondOrderExecutionAngle(
+      Math.atan(evaluateDY(launchPoint.x, launchPoint.y)),
+      options.secondOrderLaunchAngleMode,
+    );
+    const residual = Math.abs(nextAngle - angle);
+    if (!Number.isFinite(residual) || !(residual < bestResidual)) {
+      break;
+    }
+    bestResidual = residual;
+    bestAngle = angle;
+    angle = nextAngle;
   }
 
-  throw new GraphwarFormulaConvergenceError("Second-order launch angle did not converge.");
+  if (bestAngle !== undefined) {
+    return bestAngle;
+  }
+  throw new GraphwarFormulaConvergenceError("Second-order launch angle has no finite execution state.");
+}
+
+/** 把建议角折叠成当前执行模型真正消费的值，并拒绝 Graphwar 角度控件范围外的状态。 */
+function resolveSecondOrderExecutionAngle(angle: number, mode: GraphwarSecondOrderLaunchAngleMode | undefined) {
+  const executionAngle = mode === "display-rounded" ? roundGraphwarLaunchAngleToDisplayRadians(angle) : angle;
+  return executionAngle >= -Math.PI / 2 && executionAngle <= Math.PI / 2 ? executionAngle : Number.NaN;
 }
 
 /** 从士兵中心沿发射角移动一个 Graphwar 士兵半径。 */
@@ -569,7 +659,12 @@ function sampleWithTrajectoryStepper(
   const samples: GraphPoint[] = [stepper.state.currentPoint];
   if (
     !options.skipInitialStop &&
-    options.shouldStop?.(stepper.state.currentPoint, stepper.state.previousPoint, stepper.state.sampleIndex)
+    options.shouldStop?.(
+      stepper.state.currentPoint,
+      stepper.state.previousPoint,
+      stepper.state.sampleIndex,
+      stepper.state,
+    )
   ) {
     return createTrajectorySample(samples, "stopped", stepper.state);
   }
@@ -581,7 +676,7 @@ function sampleWithTrajectoryStepper(
     }
 
     samples.push(next.point);
-    if (options.shouldStop?.(next.point, next.previousPoint, next.sampleIndex)) {
+    if (options.shouldStop?.(next.point, next.previousPoint, next.sampleIndex, next.state)) {
       return createTrajectorySample(samples, "stopped", next.state);
     }
   }
@@ -594,7 +689,7 @@ function sampleByBisection<TPoint extends GraphPoint>(
   calculateNext: (previous: TPoint, step: number) => TPoint,
   options: {
     initialState?: GraphwarTrajectorySamplingState;
-    shouldStop?: (point: GraphPoint, previousPoint: GraphPoint | undefined, index: number) => boolean;
+    shouldStop?: GraphwarTrajectoryStopPredicate;
     skipInitialStop?: boolean;
     stopAtMinStep: boolean;
   },

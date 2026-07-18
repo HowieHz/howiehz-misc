@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
+  GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE,
   GRAPHWAR_PLANE_HEIGHT,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
@@ -18,6 +18,7 @@ const replayMockState = vi.hoisted(() => ({
   orderedGateSuccessAttempt: 2,
   orderedRowScenario: false,
   testedGateYs: [] as number[],
+  testedWindowStartXs: [] as number[],
   testedWindowWidths: [] as number[],
   targetHitIndex: 1,
 }));
@@ -56,6 +57,7 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
           replayMockState.testedGateYs.push(lastPoint.y);
           const window = options.stepGlitchXWindows?.at(-1);
           if (window) {
+            replayMockState.testedWindowStartXs.push(window.startX);
             replayMockState.testedWindowWidths.push(window.endX - window.startX);
           }
           if (replayMockState.testedGateYs.length < replayMockState.orderedGateSuccessAttempt) {
@@ -113,7 +115,7 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
           reachedTargetCount: targetCount,
           requiredTargetsHitIndex: requiredTargetCount > 0 ? 1 : -1,
           sample: {
-            // Prefix/gate proof may finish at the farther historical target, but navigation resumes at index 0.
+            // prefix 或 gate 证明可能在更远的历史目标处结束，但导航仍从索引 0 继续。
             points: finalCandidate
               ? [
                   { x: -6, y: 4 },
@@ -176,7 +178,7 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
         replayMockState.convergenceFailure
           ? undefined
           : {
-              // Scanner acceptance only reads the resolved points and optional prefix; context construction has its own tests.
+              // 扫描器验收只读取已解析的点和可选 prefix；上下文构造由其他测试单独覆盖。
               context: {
                 formulaPoints: [...options.points],
               } as ReturnType<typeof original.resolveGraphwarTrajectory>["context"],
@@ -205,6 +207,7 @@ describe("Step glitch scanner replay acceptance", () => {
     replayMockState.orderedGateSuccessAttempt = 2;
     replayMockState.orderedRowScenario = false;
     replayMockState.testedGateYs.length = 0;
+    replayMockState.testedWindowStartXs.length = 0;
     replayMockState.testedWindowWidths.length = 0;
     replayMockState.targetHitIndex = 1;
     sampleFormulaTrajectory.mockClear();
@@ -348,6 +351,7 @@ describe("Step glitch scanner replay acceptance", () => {
     });
 
     expect(result.status).toBe("hit");
+    expect(replayMockState.testedGateYs).toHaveLength(2);
     expect(replayMockState.testedGateYs[0]).toBeCloseTo(
       imageToGraphPoint(createPixelPoint(0, Math.floor(hitCenter.y) + 0.5), bounds, boundsRect).y,
     );
@@ -437,7 +441,185 @@ describe("Step glitch scanner replay acceptance", () => {
     expect(replayMockState.testedWindowWidths[1]).toBeCloseTo(GRAPHWAR_STEP_SIZE / 2);
   });
 
-  it("exhausts every width on the farthest row before restarting at the widest width on the next row", () => {
+  it("skips the two-column backoff when that earlier column cannot reach the collision column", () => {
+    replayMockState.orderedGateSuccessAttempt = Number.POSITIVE_INFINITY;
+    replayMockState.orderedRowScenario = true;
+    const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
+    const target = graphToImagePoint(createGraphPoint(-6, 8), bounds, boundsRect);
+    const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const blockedX = Math.floor(graphToImagePoint(createGraphPoint(-8, 0), bounds, boundsRect).x);
+    const landingRow = 100;
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      if (row !== landingRow) {
+        simulationMask[row * GRAPHWAR_PLANE_LENGTH + blockedX] = 1;
+      }
+    }
+    simulationMask[landingRow * GRAPHWAR_PLANE_LENGTH + blockedX - 2] = 1;
+
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "dy",
+        steepness: 67,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      simulationMask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+    const expectedWidths = createExpectedWindowWidths();
+
+    expect(result.status).toBe("no-path");
+    expect(result.expandedStates).toBe(1 + expectedWidths.length);
+    expect(replayMockState.testedWindowWidths).toHaveLength(expectedWidths.length);
+    expect(new Set(replayMockState.testedWindowStartXs).size).toBe(1);
+  });
+
+  it("skips a landing row and its earlier backoff when the one-column backoff is blocked", () => {
+    replayMockState.orderedGateSuccessAttempt = Number.POSITIVE_INFINITY;
+    replayMockState.orderedRowScenario = true;
+    const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
+    const target = graphToImagePoint(createGraphPoint(-6, 8), bounds, boundsRect);
+    const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const blockedX = Math.floor(graphToImagePoint(createGraphPoint(-8, 0), bounds, boundsRect).x);
+    const landingRow = 100;
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      if (row !== landingRow) {
+        simulationMask[row * GRAPHWAR_PLANE_LENGTH + blockedX] = 1;
+      }
+    }
+    simulationMask[landingRow * GRAPHWAR_PLANE_LENGTH + blockedX - 1] = 1;
+
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "dy",
+        steepness: 67,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      simulationMask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("no-path");
+    expect(result.expandedStates).toBe(1);
+    expect(replayMockState.testedWindowStartXs).toEqual([]);
+  });
+
+  it("keeps legacy candidates when unusual bounds put a right gate past a blocked left column", () => {
+    replayMockState.orderedGateSuccessAttempt = Number.POSITIVE_INFINITY;
+    replayMockState.orderedRowScenario = true;
+    const narrowBounds: GraphBounds = { maxX: -6, maxY: 10, minX: -10, minY: -10 };
+    const start = graphToImagePoint(createGraphPoint(-9.5, 0), narrowBounds, boundsRect);
+    const target = graphToImagePoint(createGraphPoint(-7.5, 8), narrowBounds, boundsRect);
+    const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const blockedX = Math.floor(graphToImagePoint(createGraphPoint(-8, 0), narrowBounds, boundsRect).x);
+    const landingRow = 100;
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      if (row !== landingRow) {
+        simulationMask[row * GRAPHWAR_PLANE_LENGTH + blockedX] = 1;
+      }
+    }
+    simulationMask[landingRow * GRAPHWAR_PLANE_LENGTH + blockedX - 1] = 1;
+
+    const result = scanGraphwarStepGlitchPath({
+      bounds: narrowBounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "dy",
+        steepness: 67,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      simulationMask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("no-path");
+    expect(result.expandedStates).toBeGreaterThan(1);
+    expect(replayMockState.testedWindowStartXs.length).toBeGreaterThan(0);
+  });
+
+  it("keeps both backoff batches in one native column with mirrored bounds", () => {
+    replayMockState.orderedGateSuccessAttempt = Number.POSITIVE_INFINITY;
+    replayMockState.orderedRowScenario = true;
+    // 原版 50 Graph x 宽度大于最大 0.01 门宽；镜像只改变截图方向，不改变 Graph x- 回退语义。
+    const mirroredBounds: GraphBounds = { maxX: -25, maxY: 10, minX: 25, minY: -10 };
+    const start = graphToImagePoint(createGraphPoint(-11, 0), mirroredBounds, boundsRect);
+    const target = graphToImagePoint(createGraphPoint(-6, 8), mirroredBounds, boundsRect);
+    const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const blockedX = Math.floor(graphToImagePoint(createGraphPoint(-8, 0), mirroredBounds, boundsRect).x);
+    const landingRow = 100;
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      if (row !== landingRow) {
+        simulationMask[row * GRAPHWAR_PLANE_LENGTH + blockedX] = 1;
+      }
+    }
+
+    const result = scanGraphwarStepGlitchPath({
+      bounds: mirroredBounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "dy",
+        steepness: 67,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      simulationMask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+    const expectedWidths = createExpectedWindowWidths();
+    const firstBackoffStartX = replayMockState.testedWindowStartXs[0];
+    const secondBackoffStartX = replayMockState.testedWindowStartXs[expectedWidths.length];
+
+    expect(result.status).toBe("no-path");
+    expect(result.expandedStates).toBe(1 + expectedWidths.length * 2);
+    expect(firstBackoffStartX).toBeDefined();
+    expect(secondBackoffStartX).toBeDefined();
+    if (firstBackoffStartX === undefined || secondBackoffStartX === undefined) {
+      return;
+    }
+    expect(secondBackoffStartX).toBeLessThan(firstBackoffStartX);
+    for (let offset = 0; offset < expectedWidths.length; offset += 1) {
+      expect(replayMockState.testedWindowStartXs[offset]).toBe(firstBackoffStartX);
+      expect(replayMockState.testedWindowStartXs[expectedWidths.length + offset]).toBe(secondBackoffStartX);
+    }
+    expect(
+      new Set(
+        expectedWidths.map((width) =>
+          Math.floor(graphToImagePoint(createGraphPoint(firstBackoffStartX + width, 0), mirroredBounds, boundsRect).x),
+        ),
+      ).size,
+    ).toBe(1);
+    expect(
+      new Set(
+        expectedWidths.map((width) =>
+          Math.floor(graphToImagePoint(createGraphPoint(secondBackoffStartX + width, 0), mirroredBounds, boundsRect).x),
+        ),
+      ).size,
+    ).toBe(1);
+  });
+
+  it("exhausts both backoff batches on the farthest row before scanning the next row", () => {
     replayMockState.orderedGateSuccessAttempt = Number.POSITIVE_INFINITY;
     replayMockState.orderedRowScenario = true;
     const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
@@ -469,29 +651,48 @@ describe("Step glitch scanner replay acceptance", () => {
       sourcePath: [start],
       targetPoint: target,
     });
-    let minimumWidth = GRAPHWAR_STEP_SIZE;
-    while (minimumWidth > GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
-      minimumWidth /= 2;
-    }
-    const expectedWidths: number[] = [];
-    for (let width = GRAPHWAR_STEP_SIZE; width >= minimumWidth; width /= 2) {
-      expectedWidths.push(width);
-    }
+    const expectedWidths = createExpectedWindowWidths();
     const fartherY = imageToGraphPoint(createPixelPoint(0, fartherRow + 0.5), bounds, boundsRect).y;
     const nearerY = imageToGraphPoint(createPixelPoint(0, nearerRow + 0.5), bounds, boundsRect).y;
 
     expect(result.status).toBe("no-path");
-    expect(result.expandedStates).toBe(1 + expectedWidths.length * 2);
+    expect(result.expandedStates).toBe(1 + expectedWidths.length * 4);
     expect(replayMockState.testedGateYs).toEqual([
       ...Array.from({ length: expectedWidths.length }, () => fartherY),
+      ...Array.from({ length: expectedWidths.length }, () => fartherY),
+      ...Array.from({ length: expectedWidths.length }, () => nearerY),
       ...Array.from({ length: expectedWidths.length }, () => nearerY),
     ]);
-    expect(replayMockState.testedWindowWidths).toHaveLength(expectedWidths.length * 2);
+    expect(replayMockState.testedWindowStartXs).toHaveLength(expectedWidths.length * 4);
+    expect(replayMockState.testedWindowWidths).toHaveLength(expectedWidths.length * 4);
     for (let index = 0; index < replayMockState.testedWindowWidths.length; index += 1) {
       expect(replayMockState.testedWindowWidths[index]).toBeCloseTo(expectedWidths[index % expectedWidths.length] ?? 0);
     }
+    const firstBackoffStartX = replayMockState.testedWindowStartXs[0];
+    const secondBackoffStartX = replayMockState.testedWindowStartXs[expectedWidths.length];
+    expect(firstBackoffStartX).toBeDefined();
+    expect(secondBackoffStartX).toBeDefined();
+    if (firstBackoffStartX === undefined || secondBackoffStartX === undefined) {
+      return;
+    }
+    expect(secondBackoffStartX).toBeLessThan(firstBackoffStartX);
+    expect(replayMockState.testedWindowStartXs).toEqual([
+      ...Array.from({ length: expectedWidths.length }, () => firstBackoffStartX),
+      ...Array.from({ length: expectedWidths.length }, () => secondBackoffStartX),
+      ...Array.from({ length: expectedWidths.length }, () => firstBackoffStartX),
+      ...Array.from({ length: expectedWidths.length }, () => secondBackoffStartX),
+    ]);
   });
 });
+
+/** 枚举排序断言使用的原版 Step gate 宽度，顺序从最宽到最窄。 */
+function createExpectedWindowWidths() {
+  const widths: number[] = [];
+  for (let width = GRAPHWAR_STEP_SIZE; width >= GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE; width /= 2) {
+    widths.push(width);
+  }
+  return widths;
+}
 
 function scanDirectTarget() {
   const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);

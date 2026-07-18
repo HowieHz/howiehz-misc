@@ -13,6 +13,7 @@ export interface GraphwarAdvancedSettingsBounds {
   maxYText: string;
 }
 
+/** 高级设置面板使用的模拟器选项。 */
 export interface GraphwarAdvancedSettingsSimulator {
   /** 模拟器解析时是否忽略未知字符。 */
   skipUnknownCharacters: boolean;
@@ -20,6 +21,7 @@ export interface GraphwarAdvancedSettingsSimulator {
   parseDerivativeAsY: boolean;
 }
 
+/** 高级设置面板使用的截图识别选项。 */
 export interface GraphwarAdvancedSettingsRecognition {
   /** 最大士兵数量输入框文本。 */
   maximumSoldierCountText: string;
@@ -33,6 +35,7 @@ export interface GraphwarAdvancedSettingsRecognition {
   obstacleMaximumArea: number;
 }
 
+/** 高级设置面板使用的寻路选项。 */
 export interface GraphwarAdvancedSettingsPathfinding {
   /** 截图识别来源的路径规划障碍外扩输入框文本。 */
   detectionRoutePlanningToleranceText: string;
@@ -42,9 +45,9 @@ export interface GraphwarAdvancedSettingsPathfinding {
   agentRoutePlanningToleranceText: string;
   /** Agent 来源的轨迹模拟障碍外扩输入框文本。 */
   agentObstacleSimulationToleranceText: string;
-  /** 阶跃 y' 邪道模式的路径规划障碍外扩输入框文本。 */
+  /** ODE 邪道模式的路径规划障碍外扩输入框文本。 */
   stepGlitchRoutePlanningToleranceText: string;
-  /** 阶跃 y' 邪道模式的轨迹模拟障碍外扩输入框文本。 */
+  /** ODE 邪道模式的轨迹模拟障碍外扩输入框文本。 */
   stepGlitchObstacleSimulationToleranceText: string;
   /** 寻路 worker 数输入框文本。 */
   workerCountText: string;
@@ -56,6 +59,7 @@ export interface GraphwarAdvancedSettingsPathfinding {
   oneClickClearDeleteCheckRadiusMinimumPlanePixels: number;
 }
 
+/** 高级设置面板使用的操作栏选项。 */
 export interface GraphwarAdvancedSettingsActionBar {
   /** 实时点击预览 Worker 数输入框文本。 */
   liveClickPreviewWorkerCountText: string;
@@ -63,6 +67,7 @@ export interface GraphwarAdvancedSettingsActionBar {
   liveClickPreviewWorkerCountMaximum: number;
 }
 
+/** 高级设置面板跨工作流共享的完整展示模型。 */
 export interface GraphwarAdvancedSettingsPanelModel {
   /** 托管期间锁定所有会改变识别、公式或寻路输入的高级设置。 */
   interactionDisabled: boolean;

@@ -8,6 +8,7 @@ import ToggleField from "../controls/ToggleField.vue";
 
 type GraphwarSettingsPanelStatusKind = "info" | "success" | "warning" | "error";
 
+/** 设置面板标题旁的聚合状态。 */
 interface GraphwarSettingsPanelHeaderStatus {
   /** 标题右侧状态文案；空字符串表示不显示。 */
   message: string;
@@ -15,6 +16,7 @@ interface GraphwarSettingsPanelHeaderStatus {
   kind: GraphwarSettingsPanelStatusKind;
 }
 
+/** 设置面板分段控件的通用选项。 */
 interface GraphwarSettingsPanelOption<T extends string> {
   /** 模式值；父页面应继续持有切换后的业务语义。 */
   value: T;
@@ -24,16 +26,19 @@ interface GraphwarSettingsPanelOption<T extends string> {
   title: string;
 }
 
+/** 带可用状态的公式算法选项。 */
 interface GraphwarSettingsPanelAlgorithmOption extends GraphwarSettingsPanelOption<AlgorithmMode> {
   /** Unsupported combinations remain visible and explainable. */
   disabled: boolean;
 }
 
+/** 带可用状态的 Graphwar 方程选项。 */
 interface GraphwarSettingsPanelEquationOption extends GraphwarSettingsPanelOption<EquationMode> {
   /** 当前模式是否被父页面判定为不可选。 */
   disabled: boolean;
 }
 
+/** 公式精度文本和值域信息。 */
 interface GraphwarSettingsPanelPrecision {
   /** 公式小数位输入框当前文本；非法输入应原样保留给父页面校验。 */
   text: string;
@@ -41,6 +46,7 @@ interface GraphwarSettingsPanelPrecision {
   maximum: number;
 }
 
+/** 基础公式、方程和工作流设置的展示模型。 */
 export interface GraphwarSettingsPanelModel {
   /** 托管期间锁定所有会改变公式或寻路输入的基础设置。 */
   interactionDisabled: boolean;

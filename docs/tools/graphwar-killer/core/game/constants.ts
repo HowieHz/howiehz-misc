@@ -17,6 +17,13 @@ export const graphwarSourceConstants = {
 /** Graphwar 源码 Constants.java 里的坐标平面像素宽度。 */
 export const GRAPHWAR_PLANE_LENGTH = graphwarSourceConstants.planeLength;
 
+/**
+ * 自动空间控制点至少前进的原生平面像素数。
+ *
+ * ULP 只保证 double 严格有序，原版 RK4 最后二分档位又属于公式采样漏洞；二者都不能替代游戏平面上可分辨的真实位移。
+ */
+export const GRAPHWAR_AUTO_CONTROL_POINT_MIN_FORWARD_PLANE_PIXELS = 1;
+
 /** Graphwar 源码 Constants.java 里的坐标平面像素高度。 */
 export const GRAPHWAR_PLANE_HEIGHT = graphwarSourceConstants.planeHeight;
 
@@ -46,6 +53,10 @@ export const GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED = graphwarSourceConstants.f
 
 /** Graphwar 源码 Constants.java 里的函数最小 x 步长。 */
 export const GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE = graphwarSourceConstants.funcMinXStepDistance;
+
+/** Graphwar 从默认步长逐档二分后，最后一个不大于源码下限的实际 x 步长。 */
+export const GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE =
+  GRAPHWAR_STEP_SIZE / 2 ** Math.ceil(Math.log2(GRAPHWAR_STEP_SIZE / GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE));
 
 /** Graphwar 源码 Constants.java 里的发射角迭代误差阈值。 */
 export const GRAPHWAR_ANGLE_ERROR = graphwarSourceConstants.angleError;

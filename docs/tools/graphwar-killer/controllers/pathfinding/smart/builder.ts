@@ -121,6 +121,7 @@ interface GraphwarSmartPathfindingBuilderOptions {
   };
 }
 
+/** 构造单目标寻路输入并应用 Worker 结果的控制器。 */
 export interface GraphwarSmartPathfindingBuilderController {
   /** 构造并执行一次单目标智能寻路，返回可直接落地的路径。 */
   buildPath: (
@@ -236,6 +237,7 @@ export function useGraphwarSmartPathfindingBuilder(
     }
     return result.path ? { cacheHit: resultCacheHit, path: result.path, type: "success" } : undefined;
 
+    /** 对一个候选目标点执行缓存查询或 Worker 寻路。 */
     async function findPathfindingResult(candidateTargetPoint: PixelPoint) {
       const input = createGraphwarSmartPathfindingSearchInput({
         bounds: searchBounds,
@@ -276,6 +278,7 @@ export function useGraphwarSmartPathfindingBuilder(
     }
   }
 
+  /** 仅在启用搜索动画时发布 Worker 预览。 */
   function setSearchPreview(preview: GraphwarPathfindingPreview) {
     if (!options.preview.isSearchAnimationEnabled()) {
       return;

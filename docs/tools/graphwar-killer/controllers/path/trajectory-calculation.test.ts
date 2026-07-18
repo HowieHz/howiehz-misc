@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { graphToImagePoint } from "../../core/geometry";
+import { roundGraphwarLaunchAngleToDisplayRadians } from "../../core/numbers";
+import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import { calculateGraphwarTrajectory } from "./trajectory-calculation";
 
@@ -64,13 +66,142 @@ describe("main trajectory calculation", () => {
       return;
     }
     expect(outcome.result.formulaResult?.expression).toContain("exp(-abs(");
-    expect(outcome.result.secondOrderLaunchAngleDegrees).toBeCloseTo(
-      (Math.atan2(target.y - start.y, target.x - start.x) * 180) / Math.PI,
-      12,
-    );
+    const expectedAngle = Math.atan2(target.y - start.y, target.x - start.x);
+    expect(Object.is(outcome.result.secondOrderLaunchAngleRadians, expectedAngle)).toBe(true);
+    expect(Object.is(outcome.result.secondOrderLaunchAngleDegrees, (expectedAngle * 180) / Math.PI)).toBe(true);
   });
 
-  it("reports strict launch-point non-convergence as a formula-stage failure", () => {
+  it("replays and returns an explicitly requested two-decimal y'' launch angle", () => {
+    const outcome = calculateGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: [createGraphPoint(-10, 0), createGraphPoint(-3, 4), createGraphPoint(5, 4)],
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        secondOrderLaunchAngleMode: "display-rounded",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+      type: "solver",
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const angle = outcome.result.secondOrderLaunchAngleDegrees;
+      expect(angle).toBeDefined();
+      expect(angle).toBeCloseTo(Number(angle?.toFixed(2)), 12);
+      expect(
+        Object.is(
+          outcome.result.secondOrderLaunchAngleRadians,
+          roundGraphwarLaunchAngleToDisplayRadians(Math.atan2(4, 7)),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it.each(["y", "dy", "ddy"] as const)("rejects a final %s formula that misses its real target circle", (equation) => {
+    const outcome = calculateGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: [createGraphPoint(-10, 0), createGraphPoint(10, 0)],
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation,
+        secondOrderLaunchAngleMode: "full-precision",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+      targetHitRadiusPixels: 1,
+      targetPoint: graphToImagePoint(createGraphPoint(10, 10), bounds, boundsRect),
+      type: "solver",
+    });
+
+    expect(outcome).toMatchObject({ ok: false, stage: "trajectory" });
+  });
+
+  it.each(["dy", "ddy"] as const)("keeps a finite soft %s result when hard Step cannot improve it", (equation) => {
+    const points = [
+      createGraphPoint(-12, 0),
+      createGraphPoint(-10, 0),
+      createGraphPoint(-9.99999, 10),
+      createGraphPoint(-5, 0),
+    ];
+    const outcome = calculateGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points,
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation,
+        steepness: 210,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      type: "solver",
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.pathError).toBeGreaterThan(graphwarToolDefaults.formulaPathQualityTargetPlanePixels);
+    }
+  });
+
+  it("keeps only display-rounded y'' target misses as a non-blocking warning", () => {
+    const outcome = calculateGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: [createGraphPoint(-10, 0), createGraphPoint(10, 0)],
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        secondOrderLaunchAngleMode: "display-rounded",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+      targetHitRadiusPixels: 1,
+      targetPoint: graphToImagePoint(createGraphPoint(10, 10), bounds, boundsRect),
+      type: "solver",
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.formulaResult?.expression).toBeTruthy();
+      expect(outcome.result.targetMissed).toBe(true);
+    }
+  });
+
+  it("returns a low-precision formula when its optional path-quality target is not reached", () => {
+    const outcome = calculateGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: [createGraphPoint(-10.2, -0.3), createGraphPoint(-3.37, 4.48), createGraphPoint(4.91, -2.26)],
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 0,
+        equation: "y",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+      type: "solver",
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.formulaResult?.expression).toBeTruthy();
+      expect(outcome.result.pathError).toBeGreaterThan(1);
+    }
+  });
+
+  it("uses the best finite launch-point state after the local residual stops improving", () => {
     const outcome = calculateGraphwarTrajectory({
       bounds,
       boundsRect,
@@ -86,7 +217,10 @@ describe("main trajectory calculation", () => {
       type: "solver",
     });
 
-    expect(outcome).toMatchObject({ ok: false, stage: "formula" });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result.formulaResult?.expression).toBeTruthy();
+    }
   });
 
   it("simulates a user expression without producing solver-only fields", () => {

@@ -11,7 +11,10 @@ published: 2026-06-23T12:00:00+08:00
 <!-- autocorrect-disable -->
 <script setup lang="ts">
 import GraphwarKillerPage from "./GraphwarKillerPage.vue";
+import graphwarAgentInfo from "../../public/graphwar-agent.json";
 import { graphwarKillerLocale } from "./locale";
+
+const graphwarAgentSourceUrl = `https://github.com/HowieHz/howiehz-misc/commit/${graphwarAgentInfo.sourceCommit}`;
 </script>
 
 <GraphwarKillerPage :locale="graphwarKillerLocale" />
@@ -19,13 +22,14 @@ import { graphwarKillerLocale } from "./locale";
 
 ## 表达式语法 {#graphwar-killer-expression-syntax}
 
-| 类别     | 支持内容                                                                                                                                  |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| 变量     | `x`、`y`、`y'`                                                                                                                            |
-| 运算符   | `+`、`-`、`/`、`*`、`^`、括号，以及 `2x`、`2sin(x)` 形式的隐式乘法                                                                        |
-| 函数     | `sqrt()`、`log()`、`ln()`、`abs()`、`sin()`（别名 `sen()`）、`cos()`、`tan()`（别名 `tg()`）、`exp()`；`log` 以 10 为底，`ln` 以 `e` 为底 |
-| 常量     | `e`、`pi`                                                                                                                                 |
-| 兼容行为 | 默认按 Graphwar 原版规则将 `y'` 视为 `y`，并跳过未知字符；可在“高级设定”中关闭                                                            |
+| 类别           | 支持内容                                                                                                                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 变量           | `x`、`y`、`y'`                                                                                                                                                                                          |
+| 运算符         | `+`、`-`、`/`、`*`、`^`、括号，以及 `2x`、`2sin(x)` 形式的隐式乘法                                                                                                                                      |
+| 优先级与结合性 | 由低到高为 `+ = -（二元） < -（一元） < * < / < ^`。二元 `-` 表示加上一元负号，因此 `1-2` 和 `1+-2` 都按 `1+(-2)` 计算。重复的同一二元运算符按右结合解析，如 `1+2+3` 为 `1+(2+3)`，`1/2/3` 为 `1/(2/3)` |
+| 函数           | `sqrt()`、`log()`、`ln()`、`abs()`、`sin()`（别名 `sen()`）、`cos()`、`tan()`（别名 `tg()`）、`exp()`；`log` 以 10 为底，`ln` 以 `e` 为底                                                               |
+| 常量           | `e`、`pi`                                                                                                                                                                                               |
+| 兼容行为       | 默认按 Graphwar 原版规则将 `y'` 视为 `y`，并跳过未知字符；可在“高级设定”中关闭                                                                                                                          |
 
 ## 使用说明 {#graphwar-killer-instructions}
 
@@ -36,9 +40,7 @@ import { graphwarKillerLocale } from "./locale";
 3. 在生成公式模式下，先选择自己的士兵，再添加目标或中间路径点。复制生成的函数到 Graphwar 即可使用。
 4. 在模拟轨迹模式下，选择发射士兵并输入函数。`y''` 还需要填写发射角。
 
-工具会为 `y`、`y'`、`y''` 分别保存算法设定。默认使用 `y` 双绝对值、`y'` 阶跃函数（邪道模式）和 `y''` 阶跃函数。
-
-陡峭度用于所有阶跃公式和双绝对值 `y''` 的平滑折点脉冲。双绝对值 `y''` 始终使用稳定脉冲公式，不使用阶跃算法的“防溢出”开关。
+工具会为 `y`、`y'`、`y''` 分别保存算法设定。默认使用 `y` 双绝对值、`y'` 阶跃函数（邪道模式）和 `y''` 阶跃函数（邪道模式）。
 
 ### 画布工具 {#graphwar-killer-canvas-interaction}
 
@@ -50,9 +52,9 @@ import { graphwarKillerLocale } from "./locale";
 
 路径规划从当前路径末端寻找绕障路线，生成函数，并在更新路径前验证完整轨迹。
 
-“一键清图”从当前路径末端开始，寻找 `x+` 方向的可用士兵，并尽量规划命中更多目标的路线。
+阶跃单目标路径规划优先瞄准命中圈中心；失败后再尝试命中圈 `x+` 侧的内边缘。
 
-“搜索动画”会显示单目标寻路过程，以及一键清图和托管当前已验证的最佳公式与实际轨迹。中间结果不会显示控制点；搜索完成后，当前控制点才会写入正式路径。手动一键清图可在截图中右键停止并保留当前结果，但不会自动发射；托管通过“托管模式”开关停止。
+“一键清图”从当前路径末端开始，寻找 `x+` 方向的可用士兵，并尽量规划命中更多目标的路线。
 
 #### 支持情况 {#graphwar-killer-pathfinding-support}
 
@@ -64,13 +66,12 @@ import { graphwarKillerLocale } from "./locale";
 | PCHIP            | `y`、`y'`、`y''` | 支持     | —        | 平滑曲线           |
 | Akima            | `y`、`y'`、`y''` | 支持     | —        | 平滑曲线           |
 
-#### 目标选择 {#graphwar-killer-pathfinding-targets}
+#### 一键清图瞄准规则 {#graphwar-killer-pathfinding-targets}
 
-- 所有结果都会通过完整轨迹验证后再更新路径。
-- 阶跃路径规划优先瞄准命中圈中心；失败后再尝试命中圈 `x+` 侧的内边缘。
-- 同一 x 上有多个士兵时，邪道一键清图会按像素 y 从大到小，依次分配从 `x-` 到 `x+` 的命中圈位置。
-- 邪道一键清图沿 `x+` 方向依次处理目标。当前目标不可达时，会跳过它并继续尝试后续目标。
-- “删点优化”默认关闭。开启后会尝试删除多余控制点，最终轨迹验证不会省略。
+- 优先瞄准士兵圆心；若圆心不在当前路径终点右侧，则改瞄准命中圈内最靠右的可用位置。
+- 多个士兵的 x 坐标相同时，会在各自命中圈内错开瞄准位置，尽量让路径继续向右推进。
+- 更新路径前会验证完整轨迹；弹道顺路命中的士兵也会计入结果。
+- 开启“删点优化”后，会在不影响命中的前提下尝试缩短路径。
 
 #### 寻路算法 {#graphwar-killer-pathfinding-engines}
 
@@ -82,7 +83,7 @@ import { graphwarKillerLocale } from "./locale";
 
 ### 邪道模式 {#graphwar-killer-step-glitch-mode}
 
-邪道模式用于阶跃 `y'` 和 `y''`。普通阶跃路线遇到障碍时，它会尝试生成纵向瞬移项；`y''` 会在跳跃后用短刹车脉冲恢复原来的 `y'`。该模式需要准确的障碍和士兵位置，推荐通过 Agent 读取游戏状态。
+邪道模式适用于阶跃 `y'` 和 `y''`。普通阶跃无法绕过障碍时，会尝试用纵向瞬移继续路径；有障碍数据时仍会验证碰撞。需要准确越障时，推荐使用 Agent。
 
 ### 托管模式 {#graphwar-killer-managed-mode}
 
@@ -98,10 +99,29 @@ import { graphwarKillerLocale } from "./locale";
 
 ### 如何使用 Graphwar Agent {#graphwar-killer-agent-help}
 
-将 [`graphwar-agent.jar`](/graphwar-agent.jar) 放入游戏目录，然后在该目录运行：
+将 [`graphwar-agent.jar`](/graphwar-agent.jar) 放入游戏目录。
+
+::: details graphwar-agent.jar 文件信息
+
+- 文件大小：`{{ graphwarAgentInfo.fileSize.toLocaleString("en-US") }}` 字节
+- MD5：`{{ graphwarAgentInfo.md5 }}`
+- SHA-256：`{{ graphwarAgentInfo.sha256 }}`
+- 版本号：`{{ graphwarAgentInfo.version }}`
+- 构建来源提交时间：`{{ graphwarAgentInfo.sourceCommitTime }}`
+- 构建来源：<a :href="graphwarAgentSourceUrl"><code>{{ graphwarAgentInfo.sourceCommitShort }}</code></a>
+
+:::
+
+然后在该目录运行：
 
 ```bash
 java -javaagent:graphwar-agent.jar -jar graphwar.jar
+```
+
+Windows Steam 版的 Graphwar 可以直接使用游戏自带的 Java：
+
+```shell
+.\jre1.8\bin\java.exe -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
 该命令会同时启动 Graphwar Agent 和游戏。回到工具后开启“使用 Agent”，即可读取状态或开启托管模式。更多信息请查看 [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent)。

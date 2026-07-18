@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
-import { createGraphPoint } from "../../core/types";
+import { imageXToNearestPlaneColumn, planeXToImageX } from "../../core/plane-grid";
+import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 
@@ -144,6 +145,7 @@ describe("Step glitch one-click-clear target retries", () => {
       const start = toPixel(-11, 0);
       const missed = toPixel(-9, 8);
       const hit = toPixel(-6, 0);
+      const assignedHit = toNativeColumnPoint(hit);
       const simulationMask = createEmptyMask();
       const debugStages: string[] = [];
       const candidates = [
@@ -161,7 +163,7 @@ describe("Step glitch one-click-clear target retries", () => {
       expect(result.type).toBe("success");
       if (result.type === "success") {
         expect(result.targetIds).toEqual(["hit"]);
-        expect(result.pathPoints.at(-1)).toEqual(hit);
+        expect(result.pathPoints.at(-1)).toEqual(assignedHit);
       }
       expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
       expect(debugStages.includes("optimize-path")).toBe(deleteOptimizationEnabled);
@@ -173,6 +175,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.outcomes.push("hit", "hit", "no-path", "hit", "hit");
     const start = toPixel(-11, 0);
     const targetPoints = [-10, -9, -8, -7, -6].map((x) => toPixel(x, 0));
+    const assignedTargetPoints = targetPoints.map(toNativeColumnPoint);
     const candidates = targetPoints.map((hitCenter, index) => ({
       enemy: true,
       hitCenter,
@@ -198,20 +201,48 @@ describe("Step glitch one-click-clear target retries", () => {
     ]);
     expect(scanMockState.scans.filter((scan) => scan.targetPoint.x === targetPoints[2]?.x)).toHaveLength(1);
     expect(incumbents.map((incumbent) => incumbent.pathPoints)).toEqual([
-      [start, targetPoints[0]],
-      [start, targetPoints[0], targetPoints[1]],
-      [start, targetPoints[0], targetPoints[1], targetPoints[3]],
-      [start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]],
-      [start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]],
+      [start, assignedTargetPoints[0]],
+      [start, assignedTargetPoints[0], assignedTargetPoints[1]],
+      [start, assignedTargetPoints[0], assignedTargetPoints[1], assignedTargetPoints[3]],
+      [start, assignedTargetPoints[0], assignedTargetPoints[1], assignedTargetPoints[3], assignedTargetPoints[4]],
     ]);
     // Four intermediate publications reuse scanner validation; only the normal final safety pass samples here.
     expect(samplingMockState.formulaContextCalls).toBe(0);
     expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
     expect(result.type).toBe("success");
     if (result.type === "success") {
-      expect(result.pathPoints).toEqual([start, targetPoints[0], targetPoints[1], targetPoints[3], targetPoints[4]]);
+      expect(result.pathPoints).toEqual([
+        start,
+        assignedTargetPoints[0],
+        assignedTargetPoints[1],
+        assignedTargetPoints[3],
+        assignedTargetPoints[4],
+      ]);
       expect(result.targetIds).toEqual(["2", "3", "4", "5", "6"]);
     }
+  });
+
+  it("assigns distinct native columns within one preferred-column group and omits exhausted targets", async () => {
+    scanMockState.outcomes.push("hit", "no-path");
+    const start = toPixel(-11, 0);
+    const centerX = toPixel(-6, 0).x;
+    const candidates = [
+      { enemy: true, hitCenter: createPixelPoint(centerX, 320), hitRadius: 0.6, id: "first-small" },
+      { enemy: true, hitCenter: createPixelPoint(centerX, 280), hitRadius: 5, id: "wide" },
+      { enemy: true, hitCenter: createPixelPoint(centerX, 240), hitRadius: 0.6, id: "exhausted-1" },
+      { enemy: true, hitCenter: createPixelPoint(centerX, 200), hitRadius: 0.6, id: "exhausted-2" },
+      { enemy: true, hitCenter: createPixelPoint(centerX, 160), hitRadius: 0.6, id: "exhausted-3" },
+    ];
+
+    await buildGraphwarOneClickClearPath(
+      createOptions(start, candidates, createEmptyMask(), "visibility-graph", false),
+    );
+
+    expect(scanMockState.scans.map((scan) => scan.scannerId)).toEqual([0, 1]);
+    expect(scanMockState.scans.map((scan) => scan.targetPoint)).toEqual([
+      createPixelPoint(577, 320),
+      createPixelPoint(578, 280),
+    ]);
   });
 
   it("does not carry an old path target into a new request", async () => {
@@ -320,7 +351,7 @@ describe("Step glitch one-click-clear target retries", () => {
 
     expect(result.type).toBe("success");
     if (result.type === "success") {
-      expect(result.pathPoints).toEqual([start, first, second]);
+      expect(result.pathPoints).toEqual([start, toNativeColumnPoint(first), toNativeColumnPoint(second)]);
     }
   });
 
@@ -427,4 +458,9 @@ function createEmptyMask() {
 
 function toPixel(x: number, y: number) {
   return graphToImagePoint(createGraphPoint(x, y), bounds, boundsRect);
+}
+
+/** 将测试命中圆心投影到生产分配器使用的最近原生列，y 保持真实中心。 */
+function toNativeColumnPoint(point: PixelPoint) {
+  return createPixelPoint(planeXToImageX(imageXToNearestPlaneColumn(point.x, boundsRect, false), boundsRect), point.y);
 }

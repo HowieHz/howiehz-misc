@@ -1,4 +1,4 @@
-import { createGraphPoint } from "../../core/types";
+import { createGraphPoint, type ReadonlyValue as ReadonlyRef } from "../../core/types";
 import type {
   GraphwarLiveClickPreviewRenderInput,
   GraphwarLiveClickPreviewRenderResult,
@@ -19,6 +19,7 @@ export function isGraphwarLiveClickPreviewCancelledError(error: unknown) {
   return error instanceof GraphwarLiveClickPreviewCancelledError;
 }
 
+/** 实时预览任务的换代、取消和结算状态。 */
 interface PendingLiveClickPreviewTask {
   cancelled: boolean;
   generation: number;
@@ -28,15 +29,13 @@ interface PendingLiveClickPreviewTask {
   settled: boolean;
 }
 
+/** 实时预览 runner 的并行 Worker 数配置。 */
 interface GraphwarLiveClickPreviewRunnerOptions {
   /** 已由页面校验/归一化的并行 Worker 数；runner 仍会二次 clamp 作为安全边界。 */
   workerCount: ReadonlyRef<number>;
 }
 
-interface ReadonlyRef<T> {
-  readonly value: T;
-}
-
+/** 一个实时预览 Worker 及其当前任务。 */
 interface LiveClickPreviewWorkerSlot {
   activeTask?: PendingLiveClickPreviewTask;
   worker: Worker;
@@ -401,6 +400,9 @@ function cloneRenderInput(input: GraphwarLiveClickPreviewRenderInput): GraphwarL
       algorithm: input.settings.algorithm,
       decimalPlaces: input.settings.decimalPlaces,
       equation: input.settings.equation,
+      ...(input.settings.secondOrderLaunchAngleMode === undefined
+        ? {}
+        : { secondOrderLaunchAngleMode: input.settings.secondOrderLaunchAngleMode }),
       ...(input.settings.formulaPathSteepness === undefined
         ? {}
         : { formulaPathSteepness: input.settings.formulaPathSteepness }),

@@ -1,13 +1,10 @@
 import { computed, ref, type Ref } from "vue";
 
-import type { FormulaResult, ToolWorkflowMode, TransferStatus } from "../../core/types";
+import type { ReadonlyValue as ReadonlyRef, ToolWorkflowMode, TransferStatus } from "../../core/types";
 
 const graphwarCopyStatusFlashMs = 2000;
 
-interface ReadonlyRef<T> {
-  readonly value: T;
-}
-
+/** 复制公式操作的按钮与无障碍反馈文案。 */
 interface GraphwarResultCopyMessages {
   /** 默认复制按钮文案。 */
   buttonDefault: string;
@@ -21,19 +18,21 @@ interface GraphwarResultCopyMessages {
   success: string;
 }
 
+/** 结果操作控制器读取的模式、公式和副作用依赖。 */
 interface GraphwarResultActionsOptions {
-  /** 当前公式生成结果；solver 模式应以结果对象存在性决定按钮可用性。 */
-  formulaResult: ReadonlyRef<FormulaResult | undefined>;
   /** 复制反馈文案应由页面从当前 locale 投影，避免本 Module 持有整包 locale。 */
   getCopyMessages: () => GraphwarResultCopyMessages;
   /** 模拟器表达式输入；复制时应保留用户原始文本。 */
   simulatorFormulaText: Ref<string>;
   /** 模拟器发射角输入；清空模拟器时应与表达式一起清理。 */
   simulatorLaunchAngleText: Ref<string>;
+  /** 求解器最终输出文本；允许页面在复制前应用纯展示后处理。 */
+  solverFormulaText: ReadonlyRef<string>;
   /** 当前主工作流；决定复制 solver 结果还是模拟器输入。 */
   toolWorkflowMode: ReadonlyRef<ToolWorkflowMode>;
 }
 
+/** 管理公式复制、模拟器清空和短时反馈状态的控制器。 */
 export interface GraphwarResultActionsController {
   /** 是否允许清空模拟器输入。 */
   canClearSimulatorInputs: ReadonlyRef<boolean>;
@@ -68,7 +67,7 @@ export function useGraphwarResultActions(options: GraphwarResultActionsOptions):
   });
   const canCopyFormula = computed(() =>
     options.toolWorkflowMode.value === "solver"
-      ? !!options.formulaResult.value
+      ? !!options.solverFormulaText.value
       : !!options.simulatorFormulaText.value.trim(),
   );
   const canClearSimulatorInputs = computed(
@@ -89,7 +88,7 @@ export function useGraphwarResultActions(options: GraphwarResultActionsOptions):
   async function copyFormula() {
     const text =
       options.toolWorkflowMode.value === "solver"
-        ? options.formulaResult.value?.expression
+        ? options.solverFormulaText.value
         : options.simulatorFormulaText.value;
     if (!canCopyFormula.value || !text) {
       return;

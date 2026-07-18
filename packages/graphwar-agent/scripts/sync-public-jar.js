@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { stdout } from "node:process";
 import { fileURLToPath, URL } from "node:url";
@@ -13,6 +13,7 @@ const repoRoot = join(packageRoot, "..", "..");
 const buildRoot = join(packageRoot, "build");
 const builtJarPath = join(packageRoot, "build", "libs", "graphwar-agent.jar");
 const publicJarPath = join(repoRoot, "docs", "public", "graphwar-agent.jar");
+const publicMetadataPath = join(repoRoot, "docs", "public", "graphwar-agent.json");
 const buildInfoClassPath = "top/howiehz/graphwar/agent/GraphwarAgentBuildInfo.class";
 const manifestPath = "META-INF/MANIFEST.MF";
 
@@ -27,6 +28,41 @@ if (existsSync(publicJarPath) && effectiveJarHash(builtJarPath) === effectiveJar
 } else {
   copyFileSync(builtJarPath, publicJarPath);
   stdout.write(`Updated ${relative(repoRoot, publicJarPath)}\n`);
+}
+
+writePublicMetadata();
+
+/** 为文档站生成公开 JAR 的哈希和内嵌构建来源信息。 */
+function writePublicMetadata() {
+  const content = readFileSync(publicJarPath);
+  const metadata = readJarMetadata(publicJarPath);
+  const document = {
+    fileSize: content.byteLength,
+    md5: createHash("md5").update(content).digest("hex"),
+    sha256: createHash("sha256").update(content).digest("hex"),
+    version: metadata.version || "unknown",
+    sourceCommit: metadata.sourceCommit || "unknown",
+    sourceCommitShort: metadata.sourceCommitShort || "unknown",
+    sourceCommitTime: metadata.sourceCommitTime || "unknown",
+  };
+  const serialized = `${JSON.stringify(document, null, 2)}\n`;
+  if (existsSync(publicMetadataPath) && readFileSync(publicMetadataPath, "utf8") === serialized) {
+    return;
+  }
+
+  writeFileSync(publicMetadataPath, serialized, "utf8");
+  stdout.write(`Updated ${relative(repoRoot, publicMetadataPath)}\n`);
+}
+
+/** 读取 JAR manifest，不让文档构建依赖 JDK。 */
+function readJarMetadata(jarPath) {
+  const tempDirectory = mkdtempSync(join(buildRoot, "read-public-metadata-"));
+  try {
+    extractJar(jarPath, tempDirectory);
+    return readBuildMetadata(tempDirectory);
+  } finally {
+    rmSync(tempDirectory, { force: true, recursive: true });
+  }
 }
 
 /** Hashes executable contents and source provenance, but not build-machine metadata. */
@@ -84,6 +120,7 @@ function readBuildMetadata(extractedJarRoot) {
   const manifest = readFileSync(manifestFile, "utf8");
   const sourceCommit = readManifestHeader(manifest, "Graphwar-Agent-Source-Commit");
   return {
+    version: readManifestHeader(manifest, "Implementation-Version"),
     sourceCommit,
     sourceCommitShort: sourceCommit && sourceCommit !== "unknown" ? sourceCommit.slice(0, 12) : sourceCommit,
     sourceCommitTime: readManifestHeader(manifest, "Graphwar-Agent-Source-Commit-Time"),

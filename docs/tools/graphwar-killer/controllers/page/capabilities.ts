@@ -1,9 +1,9 @@
 import type { ToolWorkflowMode } from "../../core/types";
 
-/** The page's selected scene source; Agent configuration is tracked independently. */
+/** 页面当前选择的局面来源；Agent 配置独立跟踪。 */
 export type GraphwarSceneSource = "screenshot" | "agent";
 
-/** Minimal identity retained with recognised scene data so stale Agent data cannot qualify new commands. */
+/** 随已识别局面保留的最小来源标识，防止陈旧 Agent 数据满足新命令条件。 */
 export type GraphwarSceneProvenance =
   | { source: "screenshot" }
   | {
@@ -13,7 +13,7 @@ export type GraphwarSceneProvenance =
       battleRevision: string;
     };
 
-/** Stable, locale-independent reasons shared by visible messages and command guards. */
+/** 可见提示和命令守卫共用的稳定原因，不依赖语言环境。 */
 export type GraphwarCapabilityReason =
   | "managed-lock"
   | "pathfinding-busy"
@@ -34,13 +34,13 @@ export type GraphwarCapabilityReason =
   | "obstacle-tolerances-invalid"
   | "delete-check-radius-invalid";
 
-/** A control's complete interaction state; disabled remains a presentation-layer derivation. */
+/** 控件的完整交互状态；disabled 仍由展示层派生。 */
 export type GraphwarControlCapability =
   | { state: "normal"; reason?: never }
   | { state: "blocked"; reason?: GraphwarCapabilityReason }
   | { state: "dormant" | "busy"; reason: GraphwarCapabilityReason };
 
-/** Plain page facts consumed by capability derivation without importing Vue or localisation. */
+/** 能力派生消费的页面事实，不引入 Vue 或本地化依赖。 */
 export interface GraphwarCapabilityFacts {
   workflowMode: ToolWorkflowMode;
   activeSource: GraphwarSceneSource;
@@ -53,15 +53,15 @@ export interface GraphwarCapabilityFacts {
   };
   agent: {
     enabled: boolean;
-    /** Present only when the enabled Agent URL parsed and was normalised successfully. */
+    /** 仅在已启用的 Agent URL 成功解析并规范化后存在。 */
     normalizedBaseUrl?: string;
   };
   formula: {
     settingsValid: boolean;
-    /** Includes dormant settings that a later Agent-selected managed profile may consume. */
+    /** 包含后续由 Agent 选择的托管 profile 可能消费的休眠设定。 */
     managedSettingsValid: boolean;
     oneClickClearSupported: boolean;
-    /** True only for an effective Step ODE glitch configuration. */
+    /** 当前 Step ODE 是否实际使用固定邪道扫描器。 */
     usesStepGlitchRouting: boolean;
   };
   pathfinding: {
@@ -80,7 +80,7 @@ export interface GraphwarCapabilityFacts {
   };
 }
 
-/** Preferences needed to decide whether a retained value currently has an effect. */
+/** 判断保留值当前是否生效所需的偏好设定。 */
 export interface GraphwarCapabilityPreferences {
   snapSoldiersEnabled: boolean;
   collisionCheckEnabled: boolean;
@@ -88,7 +88,7 @@ export interface GraphwarCapabilityPreferences {
   deleteOptimizationEnabled: boolean;
 }
 
-/** First-phase capabilities consumed by controls, visible reasons, and guarded commands. */
+/** 控件、可见原因和命令守卫消费的第一阶段能力。 */
 export interface GraphwarCapabilities {
   semanticControls: GraphwarControlCapability;
   agentRead: GraphwarControlCapability;
@@ -104,7 +104,7 @@ export interface GraphwarCapabilities {
 
 const normalCapability = { state: "normal" } as const;
 
-/** Checks both source and normalised URL; configuration alone never proves that Agent scene data is current. */
+/** 同时校验来源和规范化 URL；仅有配置不能证明 Agent 局面数据仍为当前数据。 */
 export function isCurrentGraphwarAgentScene(
   normalizedAgentBaseUrl: string | undefined,
   provenance: GraphwarSceneProvenance | undefined,
@@ -116,7 +116,7 @@ export function isCurrentGraphwarAgentScene(
   );
 }
 
-/** Returns the first scene action required before a forced-collision pathfinding command may run. */
+/** 返回强制碰撞寻路命令执行前首个缺少的局面条件。 */
 function getGraphwarPathfindingSceneReason(facts: GraphwarCapabilityFacts): GraphwarCapabilityReason | undefined {
   if (facts.activeSource === "agent") {
     if (!facts.agent.enabled) {
@@ -135,7 +135,7 @@ function getGraphwarPathfindingSceneReason(facts: GraphwarCapabilityFacts): Grap
   if (!facts.scene.boundsAvailable) {
     return "bounds-required";
   }
-  // Visible objects from another source may remain on screen, but they cannot qualify the active screenshot workflow.
+  // 其他来源的可见对象可能仍留在页面上，但不能满足当前截图工作流的条件。
   if (facts.activeSource === "screenshot" && facts.scene.provenance?.source !== "screenshot") {
     return "obstacles-required";
   }
@@ -145,7 +145,7 @@ function getGraphwarPathfindingSceneReason(facts: GraphwarCapabilityFacts): Grap
   return undefined;
 }
 
-/** Derives every first-phase state with explicit command-specific priority and no hidden mutable state. */
+/** 按命令的显式优先级派生全部第一阶段状态，不依赖隐藏可变状态。 */
 export function deriveGraphwarCapabilities(
   facts: GraphwarCapabilityFacts,
   preferences: GraphwarCapabilityPreferences,
@@ -208,7 +208,7 @@ export function deriveGraphwarCapabilities(
   };
 }
 
-/** Keeps the preference configurable while marking every currently ineffective path-planning prerequisite dormant. */
+/** 保留偏好可配置，同时将当前不生效的寻路前置条件标记为休眠。 */
 function deriveGraphwarPathPlanningCapability(
   facts: GraphwarCapabilityFacts,
   preferences: GraphwarCapabilityPreferences,
@@ -238,7 +238,7 @@ function deriveGraphwarPathPlanningCapability(
   return normalCapability;
 }
 
-/** Applies one-click clear's own forced-pathfinding requirements without consulting manual interaction switches. */
+/** 应用一键清图自身的强制寻路条件，不读取手动交互开关。 */
 function deriveGraphwarOneClickClearCapability(
   facts: GraphwarCapabilityFacts,
   preferences: GraphwarCapabilityPreferences,
@@ -268,7 +268,7 @@ function deriveGraphwarOneClickClearCapability(
   if (!facts.formula.settingsValid) {
     return { state: "blocked", reason: "formula-settings-invalid" };
   }
-  // Manual Step ODE glitch routing uses its fixed scan and does not build the ordinary DAG.
+  // 手动 ODE 邪道使用固定扫描器，不会构建普通 DAG。
   if (!facts.formula.usesStepGlitchRouting && !facts.pathfinding.workerCountValid) {
     return { state: "blocked", reason: "pathfinding-worker-count-invalid" };
   }
@@ -281,7 +281,7 @@ function deriveGraphwarOneClickClearCapability(
   return normalCapability;
 }
 
-/** Allows shutdown unconditionally, but validates all settings a future Agent-selected profile may consume on startup. */
+/** 关闭时无条件允许操作；开启时校验未来 Agent 所选 profile 可能消费的全部设定。 */
 function deriveGraphwarManagedModeCapability(
   facts: GraphwarCapabilityFacts,
   preferences: GraphwarCapabilityPreferences,
@@ -310,7 +310,7 @@ function deriveGraphwarManagedModeCapability(
   if (!facts.formula.managedSettingsValid) {
     return { state: "blocked", reason: "formula-settings-invalid" };
   }
-  // Managed mode always validates DAG capacity because the Agent may select an ordinary profile on a later turn.
+  // 托管模式始终校验 DAG 容量，因为 Agent 后续回合可能选择普通 profile。
   if (!facts.pathfinding.workerCountValid) {
     return { state: "blocked", reason: "pathfinding-worker-count-invalid" };
   }

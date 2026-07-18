@@ -1,6 +1,7 @@
 import {
   createGraphwarAgentShotRequest,
   GraphwarAgentClientError,
+  isGraphwarAgentLocalHuman,
   isGraphwarAgentIncompatibleError,
   selectGraphwarAgentCurrentShooter,
   supportsGraphwarManagedMode,
@@ -8,7 +9,6 @@ import {
   type GraphwarAgentAvailableState,
   type GraphwarAgentClient,
   type GraphwarAgentCurrentShooter,
-  type GraphwarAgentPlayer,
   type GraphwarAgentRoom,
   type GraphwarAgentShotPlan,
   type GraphwarAgentState,
@@ -21,9 +21,12 @@ export const GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION = "999999999999999x";
 
 export type GraphwarManagedShooter = GraphwarAgentCurrentShooter;
 
+/** 托管轮询在状态、截止时间和提交结果上的可选回调。 */
 export interface GraphwarManagedControllerHooks {
   /** Chooses the last fully validated plan when the authoritative deadline is reached. */
   decideDeadlineShot?: (state: GraphwarAgentAvailableState) => GraphwarAgentShotPlan | undefined;
+  /** Reports the authoritative deadline before choosing an incumbent or skip-turn plan. */
+  onDeadline?: (state: GraphwarAgentAvailableState) => void;
   /** Reports a protocol version or response shape that requires an Agent upgrade. */
   onIncompatibleError?: (error: GraphwarAgentClientError) => void;
   /** Reports an active-game state and its current local-human shooter, if any. */
@@ -54,6 +57,7 @@ export interface GraphwarManagedControllerHooks {
   onWaiting?: (state: GraphwarAgentState, room: GraphwarAgentRoom) => void;
 }
 
+/** 托管控制器的 Agent、时限和回调依赖。 */
 export interface GraphwarManagedControllerOptions {
   client: GraphwarAgentClient;
   deadlineMs?: number;
@@ -62,6 +66,7 @@ export interface GraphwarManagedControllerOptions {
   requestTimeoutMs?: number;
 }
 
+/** 管理单飞轮询、回合认领和一次性发射的托管控制器。 */
 export interface GraphwarManagedController {
   /** Returns the latest active-game state accepted by the current generation. */
   getLatestState: () => GraphwarAgentAvailableState | undefined;
@@ -232,6 +237,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
         activePollTimeout = undefined;
       }
       if (isCurrentGeneration(pollGeneration)) {
+        // 计时器把下一轮排入新任务；当前 poll 已经结算，不会累积递归调用栈。
         pollTimer = setTimeout(() => {
           pollTimer = undefined;
           void poll(pollGeneration);
@@ -266,7 +272,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       state.drawingFunction ||
       state.exploding ||
       !state.turnToken ||
-      !isLocalHumanPlayer(state.players[state.currentTurn])
+      !isGraphwarAgentLocalHuman(state.players[state.currentTurn])
     ) {
       clearDeadlineTimer();
       return;
@@ -302,7 +308,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       state.drawingFunction ||
       state.exploding ||
       !state.turnToken ||
-      !isLocalHumanPlayer(state.players[state.currentTurn])
+      !isGraphwarAgentLocalHuman(state.players[state.currentTurn])
     ) {
       return;
     }
@@ -312,6 +318,10 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       return;
     }
     deadlineHandledTurns.add(turnKey);
+    hooks.onDeadline?.(state);
+    if (!isCurrentGeneration(pollGeneration)) {
+      return;
+    }
     const plan = hooks.decideDeadlineShot?.(state) ?? createGraphwarManagedSkipTurnPlan(state);
     if (!isCurrentGeneration(pollGeneration)) {
       return;
@@ -327,7 +337,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     if (!running || !isCurrentSnapshot(state)) {
       return false;
     }
-    if (!isLocalHumanPlayer(state.players[state.currentTurn])) {
+    if (!isGraphwarAgentLocalHuman(state.players[state.currentTurn])) {
       return false;
     }
 
@@ -410,11 +420,6 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     stop,
     submitShot,
   };
-}
-
-/** Restricts automation to connected local non-computer players. */
-function isLocalHumanPlayer(player: GraphwarAgentPlayer | undefined) {
-  return Boolean(player?.local && !player.computer && !player.disconnected);
 }
 
 /** Keeps opaque identifiers separate without interpreting their contents. */

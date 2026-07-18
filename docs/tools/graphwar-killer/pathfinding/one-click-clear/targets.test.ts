@@ -73,4 +73,16 @@ describe("one-click-clear authoritative teams", () => {
       "same-team-right",
     );
   });
+
+  it("keeps a target whose center is behind the tail when its strict x+ edge remains reachable", () => {
+    const candidates = createGraphwarOneClickClearCandidates({
+      friendlyFireEnabled: false,
+      geometry,
+      isFriendlySoldier: () => false,
+      pathPoints: [createPixelPoint(385, 100), createPixelPoint(503, 200)],
+      soldiers,
+    });
+
+    expect(candidates.map((candidate) => candidate.id)).toContain("same-team-right");
+  });
 });

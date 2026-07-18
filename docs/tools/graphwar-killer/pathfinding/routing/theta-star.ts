@@ -19,6 +19,7 @@ import {
   type GraphwarPathfindingPreview,
 } from "./visibility-graph";
 
+/** 普通 Theta* 开放队列中的估价和节点索引。 */
 interface ThetaStarOpenNode {
   /** 平面网格一维下标。 */
   index: number;
@@ -36,6 +37,7 @@ interface StepThetaStarCost {
   secondary: number;
 }
 
+/** Step Theta* 某个复合状态的父链和累计代价。 */
 interface StepThetaStarState {
   cost: StepThetaStarCost;
   index: number;
@@ -45,6 +47,7 @@ interface StepThetaStarState {
   routeStateKey?: string;
 }
 
+/** Step Theta* 开放队列中的复合状态条目。 */
 interface StepThetaStarOpenNode extends StepThetaStarState {
   estimatedCost: StepThetaStarCost;
 }
@@ -55,6 +58,7 @@ interface ThetaStarColumnFreeSpan {
   minY: number;
 }
 
+/** 按列缓存的连续空闲跨度。 */
 interface ThetaStarFreeSpanCache {
   /** 障碍和边界内收值参与可通行区间计算，必须一起校验。 */
   boundaryExpansion: number;
@@ -66,6 +70,7 @@ interface ThetaStarFreeSpanCache {
   routeMask: Uint8Array;
 }
 
+/** 普通 Theta* 搜索共享的 mask、scratch 和回调。 */
 interface ThetaStarSearchContext {
   boundaryExpansion: number;
   canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
@@ -373,6 +378,7 @@ async function findStepThetaStarPath({
   return undefined;
 }
 
+/** 尝试用当前 Step 状态松弛一个相邻网格节点。 */
 function relaxStepThetaStarNeighbor({
   acceptedEdges,
   canAdvance,
@@ -437,6 +443,7 @@ function relaxStepThetaStarNeighbor({
   }
 }
 
+/** 计算 Step 边并携带下一路由状态。 */
 function createStepThetaTransition(
   from: PlaneGridPoint,
   fromState: StepThetaStarState,
@@ -463,6 +470,7 @@ function createStepThetaTransition(
   };
 }
 
+/** 合并已走代价和到目标的启发式估价。 */
 function createStepThetaEstimatedCost(
   cost: StepThetaStarCost,
   current: PlaneGridPoint,
@@ -478,6 +486,7 @@ function createStepThetaEstimatedCost(
   };
 }
 
+/** 沿父状态 key 迭代回溯 Step Theta* 路径。 */
 function reconstructStepThetaStarPath(targetKey: string, states: ReadonlyMap<string, StepThetaStarState>) {
   const path: PlaneGridPoint[] = [];
   const seen = new Set<string>();
@@ -497,6 +506,7 @@ function reconstructStepThetaStarPath(targetKey: string, states: ReadonlyMap<str
   return path.reverse();
 }
 
+/** 在保持 Step 边有效的前提下删除冗余中间点。 */
 function simplifyStepThetaStarPath(
   path: readonly PlaneGridPoint[],
   canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean,
@@ -547,6 +557,7 @@ function simplifyStepThetaStarPath(
   return simplified;
 }
 
+/** 收集开放状态对应的去重预览候选点。 */
 function collectStepThetaStarPreviewCandidates(
   openSet: StepThetaStarOpenSet,
   currentIndex: number,
@@ -563,6 +574,7 @@ function collectStepThetaStarPreviewCandidates(
   return [...indexes].map(planeGridPointFromIndex);
 }
 
+/** 在普通边模型上执行可取消、可预览的 Theta* 搜索。 */
 async function findThetaStarPath({
   boundaryExpansion,
   canAdvance,
@@ -708,6 +720,7 @@ async function findThetaStarPath({
   return undefined;
 }
 
+/** 尝试通过父节点视线或当前节点松弛普通邻居。 */
 function relaxThetaStarNeighbor({
   acceptedEdges,
   boundaryExpansion,
@@ -764,6 +777,7 @@ function relaxThetaStarNeighbor({
   return true;
 }
 
+/** 收集下一列可走跨度内的稳定候选 y。 */
 function collectNextColumnCandidateYs({
   current,
   freeSpansByColumn,
@@ -801,6 +815,7 @@ function collectNextColumnCandidateYs({
   return candidateYs;
 }
 
+/** 在边界内向候选列表追加未重复的 y。 */
 function addThetaStarCandidateY(
   candidateYs: number[],
   candidateY: number,
@@ -812,6 +827,7 @@ function addThetaStarCandidateY(
   candidateYs.push(candidateY);
 }
 
+/** 判断列空闲跨度是否覆盖指定 y。 */
 function columnFreeSpansIncludeY(spans: readonly ThetaStarColumnFreeSpan[], y: number) {
   for (const span of spans) {
     if (y >= span.minY && y <= span.maxY) {
@@ -821,6 +837,7 @@ function columnFreeSpansIncludeY(spans: readonly ThetaStarColumnFreeSpan[], y: n
   return false;
 }
 
+/** 懒计算并缓存指定列的连续空闲跨度。 */
 function getThetaStarFreeSpansByColumn({
   boundaryExpansion,
   mirrored,
@@ -854,6 +871,7 @@ function getThetaStarFreeSpansByColumn({
   return columns;
 }
 
+/** 从 route mask 扫描一列的连续空闲区间。 */
 function collectThetaStarColumnFreeSpans(
   point: PlaneGridPoint,
   routeMask: Uint8Array,
@@ -880,6 +898,7 @@ function collectThetaStarColumnFreeSpans(
   return spans;
 }
 
+/** 写入节点 g 分数、父索引和开放队列条目。 */
 function setThetaStarNodeState(
   scratch: GraphwarThetaStarScratch,
   index: number,
@@ -894,6 +913,7 @@ function setThetaStarNodeState(
   scratch.closed[index] = 0;
 }
 
+/** 清空上次搜索触及的 scratch 状态供下次复用。 */
 function resetThetaStarSearchScratch(scratch: GraphwarThetaStarScratch) {
   for (const index of scratch.touchedIndexes) {
     scratch.gScore[index] = Infinity;
@@ -904,6 +924,7 @@ function resetThetaStarSearchScratch(scratch: GraphwarThetaStarScratch) {
   scratch.candidateYs.length = 0;
 }
 
+/** 发布普通 Theta* 搜索快照并按需让出执行权。 */
 async function reportThetaStarProgress({
   acceptedEdges,
   currentIndex,
@@ -946,6 +967,7 @@ async function reportThetaStarProgress({
   return !isCancelled?.();
 }
 
+/** 用可见捷径迭代简化普通 Theta* 路径。 */
 function simplifyThetaStarPath(path: readonly PlaneGridPoint[], context: ThetaStarSearchContext) {
   if (path.length <= 2) {
     return [...path];
@@ -980,6 +1002,7 @@ function simplifyThetaStarPath(path: readonly PlaneGridPoint[], context: ThetaSt
   return simplified;
 }
 
+/** 沿父索引迭代回溯普通 Theta* 路径。 */
 function reconstructThetaStarPath(targetIndex: number, parentIndexes: Int32Array) {
   const path: PlaneGridPoint[] = [];
   let currentIndex = targetIndex;
@@ -996,6 +1019,7 @@ function reconstructThetaStarPath(targetIndex: number, parentIndexes: Int32Array
   return path.reverse();
 }
 
+/** 将开放节点索引转换成去重预览点。 */
 function collectThetaStarPreviewCandidates(
   openSet: ThetaStarOpenSet,
   currentIndex: number,
@@ -1012,6 +1036,7 @@ function collectThetaStarPreviewCandidates(
   return [...indexes].map(planeGridPointFromIndex);
 }
 
+/** 仅在端点变化时记录已接受边，避免预览重复。 */
 function recordAcceptedEdge(
   acceptedEdges: [PlaneGridPoint, PlaneGridPoint][],
   start: PlaneGridPoint,
@@ -1023,6 +1048,7 @@ function recordAcceptedEdge(
   }
 }
 
+/** 判断候选边是否存在且未命中障碍。 */
 function edgeIsClear(
   start: PlaneGridPoint,
   target: PlaneGridPoint,
@@ -1033,6 +1059,7 @@ function edgeIsClear(
   return !lineHitsPlaneMask(start, target, routeMask, mirrored, boundaryExpansion);
 }
 
+/** 为镜像搜索适配底层边评估器。 */
 function createThetaStarEdgeEvaluator(evaluateEdge: GraphwarPathfindingEdgeEvaluator, mirrored: boolean) {
   return (previous: PlaneGridPoint, next: PlaneGridPoint, routeState: number, routeStateKey?: string) => {
     const result = evaluateEdge(
@@ -1050,10 +1077,12 @@ function createThetaStarEdgeEvaluator(evaluateEdge: GraphwarPathfindingEdgeEvalu
   };
 }
 
+/** 将网格索引和 Step 路由状态编码成搜索 key。 */
 function createStepThetaStateKey(index: number, routeState: number, routeStateKey?: string) {
   return routeStateKey === undefined ? `${index}:number:${routeState}` : `${index}:key:${routeStateKey}`;
 }
 
+/** 创建按搜索方向归一化的剩余代价估算器。 */
 function createThetaStarRemainingCostEstimator(options: GraphwarPathfindingOptions, mirrored: boolean) {
   if (!options.estimateRemainingSecondaryCost) {
     return planeGridPointDistance;
@@ -1067,6 +1096,7 @@ function createThetaStarRemainingCostEstimator(options: GraphwarPathfindingOptio
   };
 }
 
+/** 按总代价、已走代价和转移代价稳定比较 Step 状态。 */
 function compareStepThetaCosts(left: StepThetaStarCost, right: StepThetaStarCost) {
   return (
     left.segments - right.segments ||
@@ -1232,10 +1262,12 @@ class ThetaStarOpenSet {
   }
 }
 
+/** 按估价和节点索引稳定排序普通开放节点。 */
 function compareThetaStarOpenNodes(left: ThetaStarOpenNode, right: ThetaStarOpenNode) {
   return left.priority - right.priority || left.routeCost - right.routeCost || left.index - right.index;
 }
 
+/** 按 Step 代价和状态 key 稳定排序开放节点。 */
 function compareStepThetaOpenNodes(left: StepThetaStarOpenNode, right: StepThetaStarOpenNode) {
   return (
     compareStepThetaCosts(left.estimatedCost, right.estimatedCost) ||

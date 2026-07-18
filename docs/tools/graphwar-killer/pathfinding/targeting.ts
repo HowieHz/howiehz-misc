@@ -1,6 +1,6 @@
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../core/game/constants";
 import {
-  createMinimumForwardPointAtGraphY,
+  createNextNativePlaneColumnPointAtGraphY,
   graphXAdvancesFromPoint,
   pathFollowsGraphRule,
 } from "../core/game/forward-rule";
@@ -77,26 +77,21 @@ export function createBoundsRectWithBoundaryExpansion(rect: BoundsRect, boundary
   };
 }
 
-/** 根据当前 x+ 最小前进线截出实际可点击区域。 */
+/** 根据当前路径尾点截出 x+ 侧预览；严格相等和后方点击由落点校验负责。 */
 export function createAllowedTargetRect(area: GraphwarTargetingArea, startPoint?: PixelPoint) {
   if (!startPoint) {
     return area.targetBoundsRect;
   }
 
-  const minForwardPixelX = getMinimumForwardPixelX(startPoint, area);
-  if (
-    minForwardPixelX === undefined ||
-    minForwardPixelX < area.targetBoundsRect.x ||
-    minForwardPixelX > area.targetBoundsRect.x + area.targetBoundsRect.width
-  ) {
+  if (startPoint.x < area.targetBoundsRect.x || startPoint.x > area.targetBoundsRect.x + area.targetBoundsRect.width) {
     return undefined;
   }
 
   if (xPlusGoesRight(area.bounds)) {
     return {
-      x: minForwardPixelX,
+      x: startPoint.x,
       y: area.targetBoundsRect.y,
-      width: area.targetBoundsRect.x + area.targetBoundsRect.width - minForwardPixelX,
+      width: area.targetBoundsRect.x + area.targetBoundsRect.width - startPoint.x,
       height: area.targetBoundsRect.height,
     };
   }
@@ -104,7 +99,7 @@ export function createAllowedTargetRect(area: GraphwarTargetingArea, startPoint?
   return {
     x: area.targetBoundsRect.x,
     y: area.targetBoundsRect.y,
-    width: minForwardPixelX - area.targetBoundsRect.x,
+    width: startPoint.x - area.targetBoundsRect.x,
     height: area.targetBoundsRect.height,
   };
 }
@@ -165,13 +160,7 @@ export function createSoldierAimCheckResult(
     return { kind: "edge", point: boundedCenter };
   }
 
-  const xPlusEdgePoint = createSoldierHitCircleXPlusEdgePoint(soldier, area);
-  if (!graphwarPointAdvances(startPoint, xPlusEdgePoint, area)) {
-    return undefined;
-  }
-
-  // 第二检查仅把命中圈 x+ 边缘作为“是否可选中”的资格线；
-  // 真正落点固定为 lastX 的下一个可表示 double，y 保持命中圈中心，避免点击偏移改变目标。
+  // 中心不可达时只尝试下一原生列；命中圈严格判定决定这个自动点是否仍可用。
   const minimumForwardPoint = createMinimumForwardSoldierTargetPoint(startPoint, soldier, area);
   return minimumForwardPoint ? { kind: "edge", point: minimumForwardPoint } : undefined;
 }
@@ -219,7 +208,7 @@ function createSoldierHitCircleXPlusInnerTargetPoint(
   const center = getGraphwarSoldierCenter(soldier);
   const xPlusIsRight = xPlusGoesRight(area.bounds);
   const tailInset =
-    graphwarToolDefaults.targetRangePixelTolerance *
+    graphwarToolDefaults.formulaPathQualityTargetPlanePixels *
     Math.max(area.boundsRect.width / GRAPHWAR_PLANE_LENGTH, area.boundsRect.height / GRAPHWAR_PLANE_HEIGHT);
   const innerRadius = soldier.hitRadius - tailInset;
   if (!(innerRadius > 0)) {
@@ -235,7 +224,7 @@ function createSoldierHitCircleXPlusInnerTargetPoint(
     : undefined;
 }
 
-/** 按指定起点把 x 不够的目标改为同 y 的最小 double x+ 点；无剩余空间时返回 undefined。 */
+/** 严格 x+ 的手工点保持连续 x；同 x 或后方点自动修复到下一合法原生列。 */
 export function createMinimumForwardTargetPoint(
   point: PixelPoint,
   area: GraphwarTargetingArea,
@@ -245,33 +234,35 @@ export function createMinimumForwardTargetPoint(
     return pointIsInsideTargetBounds(point, area) ? point : undefined;
   }
 
-  if (point.y < area.targetBoundsRect.y || point.y > area.targetBoundsRect.y + area.targetBoundsRect.height) {
+  if (point.y < area.targetBoundsRect.y || point.y >= area.targetBoundsRect.y + area.targetBoundsRect.height) {
     return undefined;
   }
 
   const targetGraph = imageToGraphPoint(point, area.bounds, area.boundsRect);
 
-  // 设计意图：非士兵点击如果落在 x+ 打击范围左侧，目标应移到
-  // “最后一个路径点之后的下一个可表示 double x”，y 保持点击值；这里不做
-  // 障碍、寻路或额外命中判断，只检查最终 xy 是否仍在可用边界内。
+  // 手工点只在违反严格 x+ 时进入自动列分配；不足 1px 但已前进的点击必须保持原值。
   const targetPoint = graphXAdvancesFromPoint(startPoint, targetGraph.x, area.bounds, area.boundsRect)
     ? point
-    : createMinimumForwardPointAtGraphY(startPoint, targetGraph.y, area.bounds, area.boundsRect);
+    : createNextNativePlaneColumnPointAtGraphY(startPoint, targetGraph.y, area.bounds, area.boundsRect);
   if (!targetPoint) {
     return undefined;
   }
   return pointIsInsideTargetBounds(targetPoint, area) ? targetPoint : undefined;
 }
 
-/** 生成最小 double x+ 处、且 y 保持士兵命中圈中心的目标点。 */
+/** 生成下一原生 x+ 列、且 y 保持士兵命中圈中心的自动目标点。 */
 export function createMinimumForwardSoldierTargetPoint(
   startPoint: PixelPoint,
   soldier: GraphwarTargetingSoldier,
   area: GraphwarTargetingArea,
 ) {
   const center = getGraphwarSoldierCenter(soldier);
-  const centerGraph = imageToGraphPoint(center, area.bounds, area.boundsRect);
-  const targetPoint = createMinimumForwardPointAtGraphY(startPoint, centerGraph.y, area.bounds, area.boundsRect);
+  const targetPoint = createNextNativePlaneColumnPointAtGraphY(
+    startPoint,
+    imageToGraphPoint(center, area.bounds, area.boundsRect).y,
+    area.bounds,
+    area.boundsRect,
+  );
   if (!targetPoint) {
     return undefined;
   }
@@ -280,24 +271,29 @@ export function createMinimumForwardSoldierTargetPoint(
     : undefined;
 }
 
-/** 返回当前起点之后最小 double x+ 对应的截图 x，用于绘制可点区域预览。 */
-export function getMinimumForwardPixelX(startPoint: PixelPoint, geometry: GraphwarTargetingGeometry) {
-  const startGraph = imageToGraphPoint(startPoint, geometry.bounds, geometry.boundsRect);
-  return createMinimumForwardPointAtGraphY(startPoint, startGraph.y, geometry.bounds, geometry.boundsRect)?.x;
-}
-
 /** 判断两个截图点映射到 Graphwar 后是否严格 x+。 */
 export function graphwarPointAdvances(startPoint: PixelPoint, point: PixelPoint, geometry: GraphwarTargetingGeometry) {
   return pathFollowsGraphRule([startPoint, point], geometry.bounds, geometry.boundsRect);
 }
 
-/** 判断士兵中心是否位于起点 x+ 侧；命中圆边缘不参与候选过滤。 */
+/** 判断士兵圆心或下一原生 x+ 列是否可作为自动目标。 */
 export function graphwarSoldierReachesForward(
   soldier: GraphwarTargetingSoldier,
   startPoint: PixelPoint,
   geometry: GraphwarTargetingGeometry,
 ) {
-  return graphwarPointAdvances(startPoint, getGraphwarSoldierCenter(soldier), geometry);
+  const center = getGraphwarSoldierCenter(soldier);
+  if (graphwarPointAdvances(startPoint, center, geometry)) {
+    return true;
+  }
+
+  const minimumForwardPoint = createNextNativePlaneColumnPointAtGraphY(
+    startPoint,
+    imageToGraphPoint(center, geometry.bounds, geometry.boundsRect).y,
+    geometry.bounds,
+    geometry.boundsRect,
+  );
+  return Boolean(minimumForwardPoint && graphwarSoldierStrictlyContainsHitPoint(soldier, minimumForwardPoint));
 }
 
 /** 判断首个路径点是否位于士兵真实命中圈内，用于统一排除发射士兵。 */
@@ -340,13 +336,6 @@ function pointIsInsideTargetBounds(point: PixelPoint, area: GraphwarTargetingAre
 /** 判断点是否在指定截图矩形内；右/下边界会映射到平面外，按半开区间排除。 */
 function pointIsInsideBoundsRect(point: PixelPoint, rect: BoundsRect) {
   return point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height;
-}
-
-/** 返回士兵命中圈在 x+ 方向上的边缘点，y 固定为命中圈中心。 */
-function createSoldierHitCircleXPlusEdgePoint(soldier: GraphwarTargetingSoldier, geometry: GraphwarTargetingGeometry) {
-  const center = getGraphwarSoldierCenter(soldier);
-  const xPlusIsRight = xPlusGoesRight(geometry.bounds);
-  return createPixelPoint(center.x + (xPlusIsRight ? soldier.hitRadius : -soldier.hitRadius), center.y);
 }
 
 /** 士兵中心贴边时，把目标点夹进可通行边界内；命中仍必须严格落在士兵真实命中圆内。 */

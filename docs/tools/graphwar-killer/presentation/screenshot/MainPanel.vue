@@ -5,6 +5,7 @@ import type { GraphwarKillerLocale } from "../../locale-types";
 import GraphwarStageOverlay, { type GraphwarStageOverlayModel } from "../stage/MainOverlay.vue";
 import type { GraphwarScreenshotHeaderStatus } from "../status/screenshot";
 
+/** 主截图舞台及其覆盖层和裁剪资源。 */
 interface GraphwarScreenshotPanelStageModel {
   /** 舞台是否没有截图；父页面应沿用原 imageUrl 判定。 */
   empty: boolean;
@@ -20,6 +21,7 @@ interface GraphwarScreenshotPanelStageModel {
   style: CSSProperties;
 }
 
+/** 放大镜的可见性与定位样式。 */
 interface GraphwarScreenshotPanelMagnifierModel {
   /** 放大镜内容定位样式。 */
   contentStyle: CSSProperties;
@@ -29,6 +31,7 @@ interface GraphwarScreenshotPanelMagnifierModel {
   visible: boolean;
 }
 
+/** 截图主状态之外的非致命警告。 */
 interface GraphwarScreenshotPanelStatusWarning {
   /** 与主状态同时展示的短警告；空字符串表示不显示。 */
   message: string;
@@ -36,6 +39,7 @@ interface GraphwarScreenshotPanelStatusWarning {
   title: string;
 }
 
+/** 截图舞台、放大镜和聚合状态的展示模型。 */
 export interface GraphwarScreenshotPanelModel {
   /** 识别忙碌遮罩是否展示。 */
   busyOverlayVisible: boolean;

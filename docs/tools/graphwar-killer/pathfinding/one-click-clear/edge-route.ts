@@ -1,3 +1,4 @@
+import { pointAdvancesByMinimumAutomaticForwardStep } from "../../core/game/forward-rule";
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds } from "../../core/types";
@@ -104,6 +105,21 @@ export async function buildOneClickClearDagEdgeRoute(
   // 首尾必须回到原始截图控制点；中间点才来自平面格点中心映射。
   pixelRoute[0] = job.startPoint;
   pixelRoute[pixelRoute.length - 1] = job.targetPoint;
+  for (let index = 1; index < pixelRoute.length; index += 1) {
+    const previousPoint = pixelRoute[index - 1];
+    const point = pixelRoute[index];
+    if (
+      previousPoint &&
+      point &&
+      !pointAdvancesByMinimumAutomaticForwardStep(previousPoint, point, context.bounds, context.boundsRect)
+    ) {
+      return {
+        jobId: job.id,
+        routeMapPixelsElapsedMs,
+        routePathfindingElapsedMs,
+      };
+    }
+  }
   if (stepRoute) {
     const validation = validateGraphwarStepRoutePath({
       boundaryInset: context.boundaryExpansion,

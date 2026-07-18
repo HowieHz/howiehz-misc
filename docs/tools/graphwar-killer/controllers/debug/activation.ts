@@ -7,11 +7,13 @@ const debugActivationCountdownStepMs = 100;
 const debugActivationCountdownVisibleAfterMs = 1000;
 const debugActivationSuccessFlashMs = 2000;
 
+/** 调试激活控制器所需的文案与状态回调。 */
 interface GraphwarDebugActivationOptions {
   /** 普通短按或已启用调试后的点击行为；高级设置展开状态应继续由页面持有。 */
   toggleAdvancedSettings: () => void;
 }
 
+/** 连续点击激活调试信息的交互控制器。 */
 export interface GraphwarDebugActivationController {
   /** 取消当前长按启用流程。 */
   cancelHold: () => void;

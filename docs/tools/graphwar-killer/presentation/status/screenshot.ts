@@ -1,5 +1,6 @@
 export type GraphwarScreenshotStatusKind = "success" | "warning" | "error";
 
+/** 截图区域聚合到页面标题栏的状态。 */
 export interface GraphwarScreenshotHeaderStatus {
   /** 标题右侧主状态文案；空字符串表示不显示。 */
   message: string;

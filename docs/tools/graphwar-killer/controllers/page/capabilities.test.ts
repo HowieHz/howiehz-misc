@@ -155,6 +155,16 @@ describe("Graphwar capabilities", () => {
     expect(capabilities.pathPlanning).toEqual({ state: "normal" });
   });
 
+  it("keeps path planning configurable while glitch routing is effective", () => {
+    expect(
+      deriveCapability(
+        "pathPlanning",
+        createFacts({ formula: { usesStepGlitchRouting: true } }),
+        createPreferences({ pathPlanningEnabled: false }),
+      ),
+    ).toEqual({ state: "normal" });
+  });
+
   it.each([
     [
       { imageAvailable: false, boundsAvailable: false, obstaclesAvailable: false },

@@ -6,6 +6,8 @@ declare const graphPointBrand: unique symbol;
 export type EquationMode = "y" | "dy" | "ddy";
 /** 生成可复制公式的曲线拼接策略；每种策略对应不同的稳定性和长度取舍。 */
 export type AlgorithmMode = "step" | "abs" | "pchip" | "akima";
+/** Y''= 公式的发射角执行精度；调用方显式选择完整 double 或两位小数兼容模型。 */
+export type GraphwarSecondOrderLaunchAngleMode = "display-rounded" | "full-precision";
 /** 页面舞台当前点击语义，避免边界标定、攻击路径和障碍修正共享同一状态入口。 */
 export type ToolMode = "bounds" | "path" | "obstacle";
 /** 页面主工作流：生成 Graphwar 公式，或模拟用户手写表达式。 */
@@ -19,6 +21,11 @@ interface Point2D {
   x: number;
   /** 纵坐标；单位由具体品牌类型决定。 */
   y: number;
+}
+
+/** 只暴露响应式值读取能力，避免控制器依赖 Vue Ref 的完整可写接口。 */
+export interface ReadonlyValue<T> {
+  readonly value: T;
 }
 
 /** 截图像素坐标点，使用品牌类型避免误传给 Graphwar 坐标 API。 */
@@ -39,6 +46,11 @@ export type GraphPoint = Point2D & {
  */
 export function createPixelPoint(x: number, y: number): PixelPoint {
   return { x, y } as PixelPoint;
+}
+
+/** 复制截图像素坐标，去掉可能附着在源对象上的响应式代理。 */
+export function clonePixelPoint(point: PixelPoint): PixelPoint {
+  return createPixelPoint(point.x, point.y);
 }
 
 /**

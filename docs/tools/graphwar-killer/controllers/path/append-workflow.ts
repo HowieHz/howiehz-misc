@@ -2,7 +2,14 @@ import type { ComputedRef, Ref } from "vue";
 
 import { normalizePathPoint, imageToGraphPoint } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
-import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint, ToolWorkflowMode } from "../../core/types";
+import type {
+  BoundsRect,
+  GraphBounds,
+  GraphPoint,
+  PixelPoint,
+  ReadonlyValue as ReadonlyRef,
+  ToolWorkflowMode,
+} from "../../core/types";
 import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import type {
   GraphwarTrajectoryFormulaSettings,
@@ -15,10 +22,7 @@ import {
 import type { GraphwarSmartPathfindingRunWorkflowController } from "../pathfinding/smart/workflow";
 import type { ParsedBounds, ParsedObstacleTolerances } from "../settings/validation";
 
-interface ReadonlyRef<T> {
-  readonly value: T;
-}
-
+/** 路径追加工作流的几何、状态、目标与轨迹依赖。 */
 interface GraphwarPathAppendWorkflowOptions<TSoldier, TSmartTarget> {
   geometry: {
     /** 当前截图坐标系矩形；点规范化和 Graphwar 坐标映射应使用同一份页面标定。 */
@@ -90,6 +94,7 @@ interface GraphwarPathAppendWorkflowOptions<TSoldier, TSmartTarget> {
   };
 }
 
+/** 将手工点击或智能寻路结果追加到当前路径的工作流控制器。 */
 export interface GraphwarPathAppendWorkflowController<TSoldier> {
   /** 追加普通截图点，按当前模式决定直连、智能寻路或模拟器单点路径。 */
   appendPathPoint: (point: PixelPoint) => Promise<boolean>;
@@ -255,11 +260,13 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
     return false;
   }
 
+  /** 返回当前有效的模拟障碍边界内收值。 */
   function getBoundaryExpansion() {
     const tolerances = options.trajectory.parsedObstacleTolerances.value;
     return tolerances.ok ? tolerances.simulationBoundaryInsetPlanePixels : 0;
   }
 
+  /** 从统一设置校验结果读取当前 Graphwar 坐标范围。 */
   function getBounds(): GraphBounds | undefined {
     const bounds = options.geometry.parsedBounds.value;
     return bounds.ok ? bounds.bounds : undefined;

@@ -8,6 +8,7 @@ import type { GraphwarKillerLocale } from "../../locale-types";
 import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
 
+/** 操作栏标题旁的短状态。 */
 interface GraphwarActionPanelStatus {
   /** 状态样式；实时预览计算用 warning，完成用 success，普通工具提示用 info。 */
   kind: "info" | "success" | "warning";
@@ -15,6 +16,7 @@ interface GraphwarActionPanelStatus {
   message: string;
 }
 
+/** 数值滑条及其文本输入的完整展示状态。 */
 interface GraphwarActionPanelSlider {
   /** 输入框允许的最大值。 */
   inputMaximum: number;
@@ -30,6 +32,7 @@ interface GraphwarActionPanelSlider {
   text: string;
 }
 
+/** 由偏好值和能力状态共同驱动的操作开关。 */
 interface GraphwarActionPanelToggle {
   /** Persisted preference value. */
   enabled: boolean;
@@ -39,6 +42,7 @@ interface GraphwarActionPanelToggle {
   reason?: string;
 }
 
+/** 操作栏所有工具、开关和笔刷控件的展示模型。 */
 export interface GraphwarActionPanelModel {
   /** 托管期间锁定路径和障碍编辑，保留放大镜等纯展示控制。 */
   interactionDisabled: boolean;

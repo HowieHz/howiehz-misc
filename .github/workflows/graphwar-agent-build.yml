@@ -9,6 +9,7 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "docs/public/graphwar-agent.jar"
+      - "docs/public/graphwar-agent.json"
       - "packages/graphwar-agent/**"
   pull_request:
     types: [opened, synchronize, reopened]
@@ -19,6 +20,7 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "docs/public/graphwar-agent.jar"
+      - "docs/public/graphwar-agent.json"
       - "packages/graphwar-agent/**"
   workflow_dispatch:
 
@@ -79,15 +81,15 @@ jobs:
       - name: Sync public graphwar-agent jar
         run: pnpm --filter graphwar-agent sync:public
 
-      - name: Check public jar diff
+      - name: Check public artifact diff
         id: public-jar-diff
         run: |
-          git add --intent-to-add -- docs/public/graphwar-agent.jar
-          if git diff --exit-code --quiet -- docs/public/graphwar-agent.jar; then
+          git add --intent-to-add -- docs/public/graphwar-agent.jar docs/public/graphwar-agent.json
+          if git diff --exit-code --quiet -- docs/public/graphwar-agent.jar docs/public/graphwar-agent.json; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            git status --short -- docs/public/graphwar-agent.jar
+            git status --short -- docs/public/graphwar-agent.jar docs/public/graphwar-agent.json
           fi
 
       - name: Commit public jar update
@@ -96,7 +98,7 @@ jobs:
         with:
           commit_message: |
             chore(graphwar-agent): update public agent jar
-          file_pattern: docs/public/graphwar-agent.jar
+          file_pattern: docs/public/graphwar-agent.jar docs/public/graphwar-agent.json
 
       - name: Upload graphwar-agent jar
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # https://github.com/actions/upload-artifact/releases/tag/v7.0.1
@@ -108,6 +110,6 @@ jobs:
       - name: Fail fork PR with public jar drift
         if: steps.public-jar-diff.outputs.has_changes == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: |
-          echo "The built graphwar-agent jar differs from docs/public/graphwar-agent.jar, but this PR comes from a fork and CI cannot push the update." >&2
-          echo "Run 'pnpm --filter graphwar-agent build && pnpm --filter graphwar-agent sync:public' locally and commit docs/public/graphwar-agent.jar." >&2
+          echo "The public Graphwar Agent artifacts differ from the build, but this PR comes from a fork and CI cannot push the update." >&2
+          echo "Run 'pnpm --filter graphwar-agent build && pnpm --filter graphwar-agent sync:public' locally and commit docs/public/graphwar-agent.jar and docs/public/graphwar-agent.json." >&2
           exit 1

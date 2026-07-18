@@ -10,6 +10,29 @@ import {
 import { buildFormula, compileGraphwarFormulaMaterials } from "./build";
 
 describe("ABS second-derivative formula", () => {
+  it.each(["y", "ddy"] as const)("ignores stale position points in %s mode", (equation) => {
+    const points = [createGraphPoint(0, 0), createGraphPoint(2, 2), createGraphPoint(4, 2)];
+    const plain = compileGraphwarFormulaMaterials(points, 210, "abs", { equation, formulaDecimalPlaces: 4 });
+    const withStaleStart = compileGraphwarFormulaMaterials(points, 210, "abs", {
+      equation,
+      formulaDecimalPlaces: 4,
+      segmentStartPoints: [undefined, createGraphPoint(2.5, 2.5)],
+    });
+
+    expect(withStaleStart).toEqual(plain);
+  });
+
+  it("uses resolved pulse deltas and allows unresolved pulses to stay disabled", () => {
+    const points = [createGraphPoint(0, 0), createGraphPoint(2, 2), createGraphPoint(4, 2)];
+    const materials = compileGraphwarFormulaMaterials(points, 210, "abs", {
+      equation: "ddy",
+      formulaDecimalPlaces: 4,
+      absSecondDerivativePulseDeltaSlopes: [undefined, 0.5],
+    });
+
+    expect(materials.absSecondDerivativeFormula?.pulses).toEqual([{ coefficient: 105, formulaCenterX: 4 }]);
+  });
+
   it("emits internal slope changes and a terminal flattening pulse without a launch pulse", () => {
     const points = [createGraphPoint(0, 0), createGraphPoint(2, 2), createGraphPoint(4, 2), createGraphPoint(6, 6)];
     const materials = compileGraphwarFormulaMaterials(points, 210, "abs", {
@@ -48,11 +71,24 @@ describe("ABS second-derivative formula", () => {
     const angle = Math.atan2(target.y - center.y, target.x - center.x);
     const formulaPoints = createGraphwarFormulaPathPoints({
       algorithm: "abs",
+      bounds: { maxX: 20, maxY: 20, minX: -20, minY: -20 },
       equation: "ddy",
       points,
       steepness: 210,
     });
+    const staleGlitchFormulaPoints = createGraphwarFormulaPathPoints({
+      algorithm: "abs",
+      bounds: { maxX: 20, maxY: 20, minX: -20, minY: -20 },
+      equation: "ddy",
+      formulaEvaluation: {
+        equation: "ddy",
+        stepGlitchSegments: [{ derivative: 1, endX: 1, equation: "dy", gateY: 1, startX: 0, targetY: 1 }],
+      },
+      points,
+      steepness: 210,
+    });
 
+    expect(staleGlitchFormulaPoints).toEqual(formulaPoints);
     expect(formulaPoints[0].x).toBeCloseTo(center.x + GRAPHWAR_GAME_SOLDIER_RADIUS * Math.cos(angle), 15);
     expect(formulaPoints[0].y).toBeCloseTo(center.y + GRAPHWAR_GAME_SOLDIER_RADIUS * Math.sin(angle), 15);
     expect(
@@ -73,7 +109,7 @@ describe("ABS second-derivative formula", () => {
     expect(sample.points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))).toBe(true);
   });
 
-  it("fails explicitly when the tool-owned launch-point iteration exhausts its safety budget", () => {
+  it("keeps the best finite launch-point state when the tool-owned iteration stops improving", () => {
     const points = [
       createGraphPoint(-10, -1),
       createGraphPoint(-7, 2),
@@ -81,14 +117,16 @@ describe("ABS second-derivative formula", () => {
       createGraphPoint(1, 1),
     ];
 
-    expect(() =>
-      createGraphwarFormulaPathPoints({
-        algorithm: "pchip",
-        equation: "ddy",
-        formulaEvaluation: { equation: "ddy", formulaDecimalPlaces: 4 },
-        points,
-        steepness: 210,
-      }),
-    ).toThrow("Formula launch point did not converge.");
+    const formulaPoints = createGraphwarFormulaPathPoints({
+      algorithm: "pchip",
+      bounds: { maxX: 20, maxY: 20, minX: -20, minY: -20 },
+      equation: "ddy",
+      formulaEvaluation: { equation: "ddy", formulaDecimalPlaces: 4 },
+      points,
+      steepness: 210,
+    });
+
+    expect(formulaPoints).toHaveLength(points.length);
+    expect(formulaPoints.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))).toBe(true);
   });
 });

@@ -30,6 +30,7 @@ interface GraphwarOneClickClearEdgeWorkerScope {
 
 const workerScope = self as unknown as GraphwarOneClickClearEdgeWorkerScope;
 
+/** 一键清图边 Worker 初始化后持有的只读搜索上下文。 */
 interface EdgeWorkerContext extends GraphwarOneClickClearEdgeWorkerInit {
   /** Step 批次缺少状态化 runtime 时必须拒绝边，不能回退为 ABS 直线。 */
   stepRouteRequired: boolean;

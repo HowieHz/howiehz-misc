@@ -1,5 +1,5 @@
 /** Step 公式的数值保护策略；公式输出、寻路和轨迹采样必须共用同一套判断。 */
-import { GRAPHWAR_PLANE_GAME_LENGTH, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { planePixelsToGraphUnits } from "../../core/geometry";
 import {
   clampDecimalPlaces,
   floorToDecimalPlaces,
@@ -58,12 +58,6 @@ export interface StepFormulaPlateauState {
   resolvedY: number;
 }
 
-/** Step 在目标 x 处允许的纵向尾差；0 会要求 sigmoid 中心无限左移。 */
-const STEP_TARGET_VERTICAL_TOLERANCE =
-  (graphwarToolDefaults.targetRangePixelTolerance * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH;
-/** 中心必须至少位于段起点右侧一个 Graphwar 原始平面像素。 */
-const STEP_CENTER_MARGIN = GRAPHWAR_PLANE_GAME_LENGTH / GRAPHWAR_PLANE_LENGTH;
-
 /** 按最终公式文本规则量化普通系数，供输出、采样和寻路共用。 */
 export function quantizeFormulaCoefficient(coefficientValue: number, decimalPlaces?: number) {
   if (decimalPlaces === undefined) {
@@ -82,6 +76,13 @@ export function quantizeFormulaCoefficient(coefficientValue: number, decimalPlac
 /** 按最终 `value-center` 文本实际打印的负 offset 量化中心，再还原中心值。 */
 export function quantizeFormulaOffsetCenter(center: number, decimalPlaces?: number) {
   return decimalPlaces === undefined ? center : -roundToDecimalPlaces(-center, decimalPlaces);
+}
+
+/** 邪道 y 门必须至少保留 1 位，避免 0 位把目标中心和小于 0.5 的士兵半径量化到同一门线。 */
+export function getStepGlitchFormulaDecimalPlaces(decimalPlaces: number): number;
+export function getStepGlitchFormulaDecimalPlaces(decimalPlaces?: number): number | undefined;
+export function getStepGlitchFormulaDecimalPlaces(decimalPlaces?: number) {
+  return decimalPlaces === undefined ? undefined : Math.max(1, decimalPlaces);
 }
 
 /** 先量化陡峭度，后续所有方程系数和中心都必须使用这个 kf。 */
@@ -264,6 +265,7 @@ export function calculateStepFormulaCenterX(
   targetX: number,
   effectiveDeltaY: number,
   formulaSteepness: number,
+  bounds: GraphBounds,
 ) {
   if (
     !Number.isFinite(startX) ||
@@ -277,8 +279,11 @@ export function calculateStepFormulaCenterX(
     return targetX;
   }
 
-  const availableOffset = targetX - startX - STEP_CENTER_MARGIN;
-  const requiredProgress = 1 - STEP_TARGET_VERTICAL_TOLERANCE / Math.abs(effectiveDeltaY);
+  const availableOffset = targetX - startX - planePixelsToGraphUnits(1, bounds, "x");
+  const requiredProgress =
+    1 -
+    planePixelsToGraphUnits(graphwarToolDefaults.formulaPathQualityTargetPlanePixels, bounds, "y") /
+      Math.abs(effectiveDeltaY);
   if (effectiveDeltaY === 0 || requiredProgress <= 0.5 || availableOffset <= 0 || !Number.isFinite(availableOffset)) {
     return targetX;
   }
@@ -298,10 +303,11 @@ export function resolveStepFormulaCenterX(
   targetX: number,
   effectiveDeltaY: number,
   formulaSteepness: number,
+  bounds: GraphBounds,
   decimalPlaces?: number,
 ) {
   return quantizeStepFormulaCenterX(
-    calculateStepFormulaCenterX(startX, targetX, effectiveDeltaY, formulaSteepness),
+    calculateStepFormulaCenterX(startX, targetX, effectiveDeltaY, formulaSteepness, bounds),
     decimalPlaces,
   );
 }
@@ -322,6 +328,8 @@ interface StepGlitchSegmentBase {
   startX: number;
   /** 当前路径段目标中心 y；用于候选落点误差。 */
   targetY: number;
+  /** 该邪道段最低必要的公式小数位；可高于普通参数的用户偏好，最多为 15 位小数。 */
+  formulaDecimalPlaces?: number;
 }
 
 /** Step y'= 邪道段；高导数门在目标命中圈处关闭。 */
@@ -333,7 +341,7 @@ export interface StepFirstOrderGlitchSegment extends StepGlitchSegmentBase {
   gateY: number;
 }
 
-/** Step y''= 邪道段；同一 RK4 步内先加速纵跳，再在末相位恢复原 y'。 */
+/** Step y''= 邪道段；同一 RK4 步内先加速纵跳，再用末相位刹车把落点速度尽力归零。 */
 export interface StepSecondOrderGlitchSegment extends StepGlitchSegmentBase {
   /** 纵跳阶段使用的加速度。 */
   acceleration: number;
@@ -346,8 +354,6 @@ export interface StepSecondOrderGlitchSegment extends StepGlitchSegmentBase {
   equation: "ddy";
   /** 加速和刹车脉冲在恢复步的 a2 前一起关闭，避免内部预测重新触发。 */
   pulseEndX: number;
-  /** 跳跃前后都应恢复到的 y'。 */
-  targetDerivative: number;
 }
 
 /** 最终公式中的一段 Step 邪道替换项。 */
@@ -355,6 +361,12 @@ export type StepGlitchSegment = StepFirstOrderGlitchSegment | StepSecondOrderGli
 
 /** 编译和输出共用的公式数值保护选项；调用方先探测轨迹，再决定是否启用保护。 */
 export interface FormulaEvaluationOptions {
+  /** ABS y'' 为让真实控制线状态接近折线右导数而解析出的脉冲中心；未设置时保持原折点。 */
+  absSecondDerivativePulseCenterXs?: readonly (number | undefined)[];
+  /** ABS y'' 每个折点按真实二阶状态求出的速度变化。 */
+  absSecondDerivativePulseDeltaSlopes?: readonly (number | undefined)[];
+  /** 从左到右模拟确认的真实段起点；首段始终使用重新解析出的枪口点。 */
+  segmentStartPoints?: readonly (GraphPoint | undefined)[];
   /** 当前公式方程；Step 必须据此选择最终打印的 canonical 系数。 */
   equation?: EquationMode;
   /** 采样应按最终公式小数位判断参数、系数、溢出和 sign 折点。 */
@@ -367,8 +379,8 @@ export interface FormulaEvaluationOptions {
   stepGlitchSegments?: readonly (StepGlitchSegment | undefined)[];
   /** 每个 step 段的期望高度差覆盖；邪道段后的普通 step 用它恢复模拟器实际起点。 */
   stepSegmentDeltaYs?: readonly (number | undefined)[];
-  /** 只从表达式中临时排除指定段；累计平台仍按完整路径推进，供邪道前缀探针使用。 */
-  stepDisabledSegments?: readonly boolean[];
+  /** 只从表达式中临时排除指定段；逐段求解用它保证 prefix 不包含当前及未来候选。 */
+  disabledSegments?: readonly boolean[];
   /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否对 step 表达式使用抗溢出的等价格式。 */

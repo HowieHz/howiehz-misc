@@ -1,6 +1,6 @@
 import { computed, type ComputedRef } from "vue";
 
-import type { BoundsRect } from "../../core/types";
+import type { BoundsRect, ReadonlyValue as ReadonlyRef } from "../../core/types";
 import {
   buildObstacleEdgePath,
   buildObstacleFillPath,
@@ -11,12 +11,9 @@ import type { GraphwarTrajectoryCollisionSettings } from "../../formula/trajecto
 import type { createGraphwarPathfindingCacheController } from "../../pathfinding/runtime/cache";
 import type { ParsedBounds, ParsedObstacleTolerances } from "../settings/validation";
 
-interface ReadonlyRef<T> {
-  readonly value: T;
-}
-
 type GraphwarPathfindingCacheController = ReturnType<typeof createGraphwarPathfindingCacheController>;
 
+/** 路线目标边界内收值所需的模式和容差输入。 */
 interface GraphwarPathfindingRouteBoundaryInsetOptions {
   modes: {
     /** 手工碰撞检查启用时，普通目标选择也应避开 route 边界。 */
@@ -30,6 +27,7 @@ interface GraphwarPathfindingRouteBoundaryInsetOptions {
   };
 }
 
+/** 多类寻路障碍 mask 派生所需的页面状态。 */
 interface GraphwarPathfindingObstacleProjectionOptions {
   /** 当前截图坐标系矩形；SVG path 和友方士兵 mask 应使用同一份页面标定。 */
   boundsRect: ReadonlyRef<BoundsRect>;
@@ -64,6 +62,7 @@ interface GraphwarPathfindingObstacleProjectionOptions {
   };
 }
 
+/** 派生寻路、模拟与展示障碍 mask 的控制器。 */
 export interface GraphwarPathfindingObstacleProjectionController {
   /** 普通障碍 SVG 边线；智能寻路显示派生障碍时应隐藏。 */
   visibleObstacleEdgePath: ComputedRef<string>;

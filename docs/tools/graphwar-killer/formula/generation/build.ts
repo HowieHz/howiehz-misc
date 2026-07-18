@@ -13,6 +13,7 @@ import type { GraphwarSignProtection } from "./sign-protection";
 import {
   quantizeFormulaCoefficient,
   quantizeFormulaOffsetCenter,
+  getStepGlitchFormulaDecimalPlaces,
   quantizeStepFormulaSteepness,
   quantizeStepFormulaCenterX,
   resolveStepFormula,
@@ -215,7 +216,7 @@ export function buildFormula(
     };
   }
 
-  if (isCubicInterpolationAlgorithm(algorithm)) {
+  if (algorithm === "pchip" || algorithm === "akima") {
     return {
       // pchip/akima 共用同一段 Hermite 表达式，再按模式取 y、y' 或 y''。
       expression: formatSoftCubicInterpolationExpression(
@@ -497,11 +498,15 @@ function createCompiledStepFormula(
   const formulaSteepness = resolvedFormula.formulaSteepness;
   const terms: CompiledStepTerm[] = [];
   for (let index = 1; index < points.length; index += 1) {
-    const transition = resolvedFormula.transitions[index - 1];
-    if (!transition || options?.stepDisabledSegments?.[index - 1]) {
+    const sourceSegmentIndex = index - 1;
+    if (options?.disabledSegments?.[sourceSegmentIndex]) {
       continue;
     }
-    const glitchSegment = createCompiledStepGlitchSegment(options?.stepGlitchSegments?.[index - 1], options);
+    const transition = resolvedFormula.transitions[sourceSegmentIndex];
+    const glitchSegment = createCompiledStepGlitchSegment(options?.stepGlitchSegments?.[sourceSegmentIndex], options);
+    if (!transition) {
+      continue;
+    }
     const formulaCenterX = createCompiledFormulaXCenter(points[index].x, options);
     const { firstDerivativeCoefficient, secondDerivativeCoefficient, yCoefficient } = transition;
     if (!glitchSegment && yCoefficient === 0 && firstDerivativeCoefficient === 0 && secondDerivativeCoefficient === 0) {
@@ -518,7 +523,7 @@ function createCompiledStepFormula(
       ),
       firstDerivativeCoefficient,
       secondDerivativeCoefficient,
-      sourceSegmentIndex: index - 1,
+      sourceSegmentIndex,
       yCoefficient,
     });
   }
@@ -535,7 +540,8 @@ function createCompiledStepGlitchSegment(
     return undefined;
   }
 
-  const decimalPlaces = getFormulaDecimalPlaces(options);
+  const decimalPlaces =
+    segment.formulaDecimalPlaces ?? getStepGlitchFormulaDecimalPlaces(getFormulaDecimalPlaces(options));
   if (segment.equation === "ddy") {
     // 三个逻辑门全开时贡献 8；加速和刹车分支必须分别按最终文本系数量化。
     return {
@@ -545,9 +551,9 @@ function createCompiledStepGlitchSegment(
       brakingGateY: quantizeFormulaOffsetCenter(segment.brakingGateY, decimalPlaces),
       endX: segment.endX,
       equation: segment.equation,
+      formulaDecimalPlaces: decimalPlaces,
       pulseEndX: segment.pulseEndX,
       startX: segment.startX,
-      targetDerivative: segment.targetDerivative,
       targetY: quantizeFormulaOffsetCenter(segment.targetY, decimalPlaces),
     };
   }
@@ -557,6 +563,7 @@ function createCompiledStepGlitchSegment(
     derivative: 8 * gateCoefficient,
     endX: segment.endX,
     equation: segment.equation,
+    formulaDecimalPlaces: decimalPlaces,
     gateY: quantizeFormulaOffsetCenter(segment.gateY, decimalPlaces),
     startX: segment.startX,
     targetY: quantizeFormulaOffsetCenter(segment.targetY, decimalPlaces),
@@ -654,8 +661,19 @@ function createCompiledAbsConnectorSegments(
 ): CompiledAbsConnectorSegment[] {
   const decimalPlaces = getFormulaDecimalPlaces(options);
   const segments: CompiledAbsConnectorSegment[] = [];
-  for (let index = 1; index < points.length; index += 1) {
-    const segment = createAbsConnectorSegment(points[index - 1], points[index]);
+  for (let index = 0; index < points.length - 1; index += 1) {
+    if (options?.disabledSegments?.[index]) {
+      continue;
+    }
+    let startPoint = points[index];
+    // 只有 ABS y' 消费模拟确认的真实段起点；其他方程必须保留原始点，避免读取陈旧补正状态。
+    if (index > 0 && options?.equation === "dy") {
+      const resolvedStartPoint = options.segmentStartPoints?.[index];
+      if (resolvedStartPoint !== undefined) {
+        startPoint = resolvedStartPoint;
+      }
+    }
+    const segment = createAbsConnectorSegment(startPoint, points[index + 1]);
     if (isRoundedAbsConnectorZero(segment, decimalPlaces)) {
       continue;
     }
@@ -668,7 +686,7 @@ function createCompiledAbsConnectorSegments(
     segments.push({
       coefficient,
       endX: createCompiledFormulaXCenter(segment.endX, options),
-      sourceSegmentIndex: index - 1,
+      sourceSegmentIndex: index,
       startX: createCompiledFormulaXCenter(segment.startX, options),
       width: createCompiledFormulaDistance(segment.width, options),
     });
@@ -684,30 +702,29 @@ function createCompiledAbsSecondDerivativeFormula(
 ): CompiledAbsSecondDerivativeFormula {
   const decimalPlaces = getFormulaDecimalPlaces(options);
   const formulaSteepness = quantizeStepFormulaSteepness(steepness, decimalPlaces);
-  const segmentSlopes = createSegmentSlopes(points);
   const pulses: CompiledAbsSecondDerivativePulse[] = [];
-  for (let index = 1; index < segmentSlopes.length; index += 1) {
-    const coefficient = quantizeFormulaCoefficient(
-      formulaSteepness * (segmentSlopes[index] - segmentSlopes[index - 1]),
-      decimalPlaces,
+  let deltaSlopes = options?.absSecondDerivativePulseDeltaSlopes;
+  if (deltaSlopes === undefined) {
+    // 完整原始分段包含零斜率段；末点补反向脉冲，让路径后恢复水平。
+    const segmentSlopes = createSegmentSlopes(points);
+    deltaSlopes = segmentSlopes.map((slope, index) =>
+      index < segmentSlopes.length - 1 ? segmentSlopes[index + 1] - slope : -slope,
     );
-    if (coefficient !== 0) {
-      pulses.push({
-        coefficient,
-        formulaCenterX: createCompiledFormulaXCenter(points[index].x, options),
-      });
-    }
   }
-
-  const finalSlope = segmentSlopes.at(-1);
-  const finalPoint = points.at(-1);
-  if (finalSlope !== undefined && finalPoint) {
-    const coefficient = quantizeFormulaCoefficient(-formulaSteepness * finalSlope, decimalPlaces);
+  for (let index = 0; index < deltaSlopes.length; index += 1) {
+    const deltaSlope = deltaSlopes[index];
+    const center = points[index + 1];
+    if (deltaSlope === undefined || !center) {
+      continue;
+    }
+    const coefficient = quantizeFormulaCoefficient(formulaSteepness * deltaSlope, decimalPlaces);
     if (coefficient !== 0) {
-      // 发射点由初始 y' 直接建立首段斜率；只在末点补脉冲，让轨迹在路径后恢复水平。
       pulses.push({
         coefficient,
-        formulaCenterX: createCompiledFormulaXCenter(finalPoint.x, options),
+        formulaCenterX: createCompiledFormulaXCenter(
+          options?.absSecondDerivativePulseCenterXs?.[index] ?? center.x,
+          options,
+        ),
       });
     }
   }
@@ -944,11 +961,6 @@ function createStepTerms(points: readonly GraphPoint[]) {
   return terms;
 }
 
-/** 收窄三次插值算法类型，方便调用方进入 PCHIP/Akima 分支后获得精确类型。 */
-function isCubicInterpolationAlgorithm(algorithm: AlgorithmMode): algorithm is "pchip" | "akima" {
-  return algorithm === "pchip" || algorithm === "akima";
-}
-
 /** 格式化用户可粘贴到 Graphwar 的基础 y= sigmoid 阶跃表达式。 */
 function formatStepExpression(formula: CompiledStepFormula, decimalPlaces: number | undefined) {
   const parts: string[] = [];
@@ -1014,6 +1026,7 @@ function formatStepGlitchFirstDerivativeExpression(
   decimalPlaces: number | undefined,
   signProtection: GraphwarSignProtection | undefined,
 ) {
+  decimalPlaces = segment.formulaDecimalPlaces ?? getStepGlitchFormulaDecimalPlaces(decimalPlaces);
   const direction = segment.derivative < 0 ? -1 : 1;
   const xGate = `1+${formatStableSignRatio(
     formatStepGlitchXOffset(segment.startX),
@@ -1087,6 +1100,7 @@ function formatStepGlitchSecondDerivativeExpression(
   decimalPlaces: number | undefined,
   signProtection: GraphwarSignProtection | undefined,
 ) {
+  decimalPlaces = segment.formulaDecimalPlaces ?? getStepGlitchFormulaDecimalPlaces(decimalPlaces);
   const direction: 1 | -1 = segment.acceleration < 0 ? -1 : 1;
   const xGate = `1+${formatStableSignRatio(
     formatStepGlitchXOffset(segment.startX),
@@ -1493,17 +1507,13 @@ function evaluateStableSignRatio(
   );
 }
 
-/** 分母除零保护值不能跟随用户小数位，否则低精度输出会把它折成 0。 */
-function formatSignEpsilon() {
-  return formatDoublePrecisionDecimal(Number.EPSILON);
-}
-
 /** 格式化逻辑 sign 项；未确认折点时保留 Graphwar 原始数值行为。 */
 function formatStableSignRatio(argumentText: string, protectedSign: boolean) {
   if (!protectedSign) {
     return `(${argumentText})/abs(${argumentText})`;
   }
-  return `(${argumentText})/(abs(${argumentText})+${formatSignEpsilon()})`;
+  // 分母保护值不能跟随用户小数位，否则低精度输出会把它折成 0。
+  return `(${argumentText})/(abs(${argumentText})+${formatDoublePrecisionDecimal(Number.EPSILON)})`;
 }
 
 /** 为双绝对值连接表达式格式化 abs(x+c)。 */

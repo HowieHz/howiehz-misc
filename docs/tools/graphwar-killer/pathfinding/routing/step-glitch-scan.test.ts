@@ -157,7 +157,7 @@ describe("Step ODE glitch scan", () => {
     expect(result.expandedStates).toBe(1);
   });
 
-  it("jumps to a disjoint free row when the trajectory collides outside the clear source row", () => {
+  it("uses a direct hard Step before adding a disjoint gate when it safely clears the wall", () => {
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 4);
     const mask = createEmptyMask();
@@ -179,15 +179,30 @@ describe("Step ODE glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
-      const gate = result.path.at(-2);
-      expect(result.path).toHaveLength(3);
-      expect(gate?.x).toBeGreaterThan(start.x);
-      expect(gate?.x).toBeLessThan(target.x);
-      expect(result.path.at(-1)).toBe(target);
+      const formulaContext = result.formulaContext;
+      expect(result.path).toEqual([start, target]);
+      expect(formulaContext).toBeDefined();
+      if (!formulaContext) {
+        return;
+      }
+      expect(formulaContext.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
+      const replay = sampleGraphwarExpressionTrajectory({
+        bounds,
+        equation: "dy",
+        expression: formulaContext.formulaResult.expression,
+        soldierCenter: imageToGraphPoint(start, bounds, boundsRect),
+      });
+      expect(countPhysicalStepGlitchJumps(replay.points)).toBe(1);
+      expect(
+        replay.points.some((point) => {
+          const pixel = graphToImagePoint(point, bounds, boundsRect);
+          return Boolean(mask[Math.floor(pixel.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(pixel.x)]);
+        }),
+      ).toBe(false);
     }
   });
 
-  it("replays one physical jump and restores y' with a second-order Step formula", () => {
+  it("replays one physical jump with a second-order Step formula", () => {
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 4);
     const mask = createEmptyMask();
@@ -214,9 +229,6 @@ describe("Step ODE glitch scan", () => {
     expect(segment).toEqual(expect.objectContaining({ equation: "ddy" }));
     expect(resolved.result.obstacleHitIndex).toBe(-1);
     expect(countPhysicalStepGlitchJumps(resolved.result.sample.points)).toBe(1);
-    if (segment?.equation === "ddy") {
-      expect(resolved.result.sample.endState?.dy).toBeCloseTo(segment.targetDerivative, 4);
-    }
     expect(
       sampleGraphwarExpressionTrajectory({
         bounds,
@@ -251,6 +263,7 @@ describe("Step ODE glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
+      expect(result.formulaContext?.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
       const controlPoint = result.path.at(-2);
       const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), bounds, boundsRect).x;
       const leftGateX = -floorToDecimalPlaces(-rawLeftGateX, 2);
@@ -288,6 +301,7 @@ describe("Step ODE glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
+      expect(result.formulaContext?.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
       const controlPoint = result.path.at(-2);
       const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), bounds, boundsRect).x;
       const leftGateX = -floorToDecimalPlaces(-rawLeftGateX, 2);
@@ -299,6 +313,38 @@ describe("Step ODE glitch scan", () => {
       }
     }
   });
+
+  it("continues with an earlier gate when the adjacent gate still collapses at 15 decimals", () => {
+    const collapsedBounds: GraphBounds = {
+      maxX: 10_000_000_000_001,
+      maxY: 10,
+      minX: 10_000_000_000_000,
+      minY: -10,
+    };
+    const wallX = 500;
+    const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), collapsedBounds, boundsRect).x;
+    expect(rawLeftGateX).toBe(imageToGraphPoint(createPixelPoint(wallX, 0), collapsedBounds, boundsRect).x);
+
+    const start = toPixelForBounds(collapsedBounds.minX, 0, collapsedBounds);
+    const target = toPixelForBounds(collapsedBounds.minX + 0.95, 0, collapsedBounds);
+    const mask = createEmptyMask();
+    for (let row = 1; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds: collapsedBounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings,
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("no-path");
+    // B-1 量化坍缩只淘汰该批；B-2 有数值间距时仍可生成候选，最终以普通 no-path 结束。
+    expect(result.expandedStates).toBeGreaterThan(1);
+  }, 30_000);
 
   it("keeps the pixel-derived right gate that used to exceed the fixed ULP retry limit", () => {
     const wideBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
@@ -448,7 +494,7 @@ function createEmptyMask() {
   return new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
 }
 
-/** Counts accepted minimum-step segments whose vertical displacement still exceeds Graphwar's distance limit. */
+/** 统计已接受的最小步长线段中，垂直位移仍超过 Graphwar 距离限制的数量。 */
 function countPhysicalStepGlitchJumps(points: readonly { x: number; y: number }[]) {
   let count = 0;
   for (let index = 1; index < points.length; index += 1) {

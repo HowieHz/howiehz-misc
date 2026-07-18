@@ -1,6 +1,7 @@
 package top.howiehz.graphwar.agent;
 
 import Graphwar.ComputerPlayer;
+import Graphwar.Function;
 import Graphwar.GameData;
 import Graphwar.Graphwar;
 import Graphwar.Obstacle;
@@ -30,6 +31,7 @@ public final class GraphwarAgentApiTest {
     /** Runs every assertion and exits nonzero when any API contract regresses. */
     public static void main(String[] arguments) throws Exception {
         testShotJsonParser();
+        testEquivalentFractionFunction();
         testGraphPlaneAlphaClamp();
         GameData gameData = new GameData();
         configureRoom(gameData);
@@ -50,6 +52,20 @@ public final class GraphwarAgentApiTest {
         }
 
         System.out.println("graphwar-agent API tests passed");
+    }
+
+    /**
+     * Verifies the long fraction accepted by the Agent preserves Graphwar's parsed double value.
+     */
+    private static void testEquivalentFractionFunction() throws Exception {
+        String numerator = "3096532637734579";
+        String denominator = "35184372088832";
+
+        assertEquals(
+                Double.valueOf(Double.parseDouble("88.008750871454684")),
+                Double.valueOf(Double.parseDouble(numerator) / Double.parseDouble(denominator)),
+                "equivalent fraction runtime value");
+        new Function(numerator + "/" + denominator);
     }
 
     /** Reproduces the official renderer crash and verifies transformed alpha clamping. */

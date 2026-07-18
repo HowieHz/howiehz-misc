@@ -11,7 +11,10 @@ Generate functions from a [Graphwar](https://graphwar.com/graphwar_1/index.html)
 <!-- autocorrect-disable -->
 <script setup lang="ts">
 import GraphwarKillerPage from "../../../tools/graphwar-killer/GraphwarKillerPage.vue";
+import graphwarAgentInfo from "../../../public/graphwar-agent.json";
 import { graphwarKillerLocale } from "./locale";
+
+const graphwarAgentSourceUrl = `https://github.com/HowieHz/howiehz-misc/commit/${graphwarAgentInfo.sourceCommit}`;
 </script>
 
 <GraphwarKillerPage :locale="graphwarKillerLocale" />
@@ -19,13 +22,14 @@ import { graphwarKillerLocale } from "./locale";
 
 ## Expression Syntax {#graphwar-killer-expression-syntax}
 
-| Category      | Supported syntax                                                                                                                                    |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Variables     | `x`, `y`, and `y'`                                                                                                                                  |
-| Operators     | `+`, `-`, `/`, `*`, `^`, parentheses, and implicit multiplication such as `2x` or `2sin(x)`                                                         |
-| Functions     | `sqrt()`, `log()`, `ln()`, `abs()`, `sin()` (alias `sen()`), `cos()`, `tan()` (alias `tg()`), and `exp()`; `log` is base 10, while `ln` is base `e` |
-| Constants     | `e` and `pi`                                                                                                                                        |
-| Compatibility | By default, Graphwar compatibility treats `y'` as `y` and skips unknown characters; both options can be turned off under Advanced settings          |
+| Category                     | Supported syntax                                                                                                                                                                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variables                    | `x`, `y`, and `y'`                                                                                                                                                                                                                                         |
+| Operators                    | `+`, `-`, `/`, `*`, `^`, parentheses, and implicit multiplication such as `2x` or `2sin(x)`                                                                                                                                                                |
+| Precedence and associativity | From lowest to highest: `+ = - (binary) < - (unary) < * < / < ^`. Binary `-` means adding a unary negative, so `1-2` and `1+-2` both evaluate as `1+(-2)`. Repeated binary operators are right-associative: `1+2+3` is `1+(2+3)`, and `1/2/3` is `1/(2/3)` |
+| Functions                    | `sqrt()`, `log()`, `ln()`, `abs()`, `sin()` (alias `sen()`), `cos()`, `tan()` (alias `tg()`), and `exp()`; `log` is base 10, while `ln` is base `e`                                                                                                        |
+| Constants                    | `e` and `pi`                                                                                                                                                                                                                                               |
+| Compatibility                | By default, Graphwar compatibility treats `y'` as `y` and skips unknown characters; both options can be turned off under Advanced settings                                                                                                                 |
 
 ## How to Use {#graphwar-killer-instructions}
 
@@ -36,9 +40,7 @@ import { graphwarKillerLocale } from "./locale";
 3. In Generate Function mode, select your soldier first, then add targets or intermediate path points. Paste the generated function into Graphwar.
 4. In Simulate Trajectory mode, select the firing soldier and enter a function. The `y''` mode also requires a launch angle.
 
-The tool saves separate algorithm settings for `y`, `y'`, and `y''`. The defaults are Double Absolute Value for `y`, Step with Glitch Mode for `y'`, and Step for `y''`.
-
-Steepness applies to every Step formula and to the smooth turn pulses used by Double Absolute Value `y''`. Double Absolute Value `y''` always uses the stable pulse formula and does not use Step's overflow-protection switch.
+The tool saves separate algorithm settings for `y`, `y'`, and `y''`. The defaults are Double Absolute Value for `y`, Step with Glitch Mode for `y'`, and Step with Glitch Mode for `y''`.
 
 ### Canvas Tools {#graphwar-killer-canvas-interaction}
 
@@ -50,11 +52,9 @@ Steepness applies to every Step formula and to the smooth turn pulses used by Do
 
 Path Planning searches from the current path end, generates a function, and validates the full trajectory before updating the path.
 
+Single-target Step Path Planning targets the hit-circle center first, then tries the inner `x+` edge if the center route fails.
+
 One-Click Clear starts at the current path end, finds usable soldiers in the `x+` direction, and plans a route that hits as many targets as possible.
-
-Search Animation shows single-target search progress and the best validated formula and actual trajectory found by One-Click Clear or Managed Mode. Intermediate results hide their control points. The control points become part of the formal path when the search finishes.
-
-To stop a manual One-Click Clear run and keep its current result without firing, right-click the screenshot. Turn off Managed Mode to stop a managed search.
 
 #### Support Matrix {#graphwar-killer-pathfinding-support}
 
@@ -66,13 +66,12 @@ To stop a manual One-Click Clear run and keep its current result without firing,
 | PCHIP                 | `y`, `y'`, `y''` | Supported     | —               | Smooth curves                      |
 | Akima                 | `y`, `y'`, `y''` | Supported     | —               | Smooth curves                      |
 
-#### Target Selection {#graphwar-killer-pathfinding-targets}
+#### One-Click Clear Aiming Rules {#graphwar-killer-pathfinding-targets}
 
-- Every result is validated with the full trajectory before the path is updated.
-- Step Path Planning targets the center of a hit circle first, then tries the inner edge on the `x+` side.
-- When multiple soldiers share the same x, Glitch One-Click Clear assigns different points in their hit circles so the path can keep moving right.
-- Glitch One-Click Clear processes targets from left to right. If a target is unreachable, it skips that target and continues to the right.
-- Point removal is off by default. When enabled, it tries to remove unnecessary control points without skipping final trajectory validation.
+- It aims at soldier centers first. If a center is not to the right of the current path end, it aims at the rightmost usable point inside that soldier's hit circle.
+- When multiple soldiers share the same x coordinate, their aim points are offset within their hit circles so the path can keep moving right.
+- The complete trajectory is validated before the path is updated. Soldiers hit along the way also count toward the result.
+- Point Removal can shorten the path when doing so preserves the hits.
 
 #### Routing Algorithms {#graphwar-killer-pathfinding-engines}
 
@@ -84,7 +83,7 @@ To stop a manual One-Click Clear run and keep its current result without firing,
 
 ### Glitch Mode {#graphwar-killer-step-glitch-mode}
 
-Glitch Mode applies to Step `y'` and `y''`. When a normal Step route encounters an obstacle, it tries to add a vertical jump; `y''` uses a short braking pulse after the jump to restore the previous `y'`. Accurate obstacle and soldier positions are required, so reading game state through Agent is recommended.
+Glitch Mode is available for Step `y'` and `y''`. When a normal Step cannot get around an obstacle, it tries a vertical jump and still validates collisions when obstacle data is available. Use Agent when accurate obstacle crossing is important.
 
 ### Managed Mode {#graphwar-killer-managed-mode}
 
@@ -100,10 +99,29 @@ Keep this page in the foreground while Managed Mode is active. Browser backgroun
 
 ### How to Use Graphwar Agent {#graphwar-killer-agent-help}
 
-Place [`graphwar-agent.jar`](/graphwar-agent.jar) in the game directory, then run:
+Place [`graphwar-agent.jar`](/graphwar-agent.jar) in the game directory.
+
+::: details graphwar-agent.jar file information
+
+- File size: `{{ graphwarAgentInfo.fileSize.toLocaleString("en-US") }}` bytes
+- MD5: `{{ graphwarAgentInfo.md5 }}`
+- SHA-256: `{{ graphwarAgentInfo.sha256 }}`
+- Version: `{{ graphwarAgentInfo.version }}`
+- Source commit time: `{{ graphwarAgentInfo.sourceCommitTime }}`
+- Source commit: <a :href="graphwarAgentSourceUrl"><code>{{ graphwarAgentInfo.sourceCommitShort }}</code></a>
+
+:::
+
+Then run:
 
 ```bash
 java -javaagent:graphwar-agent.jar -jar graphwar.jar
+```
+
+The Windows Steam version of Graphwar can use its bundled Java directly:
+
+```shell
+.\jre1.8\bin\java.exe -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
 This starts Graphwar Agent and the game. Return to the tool and turn on Use Agent to read state or enable Managed Mode. For more information, see [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent).

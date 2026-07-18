@@ -32,7 +32,7 @@ export interface GraphwarOneClickClearTargetCollectionOptions<
   isFriendlySoldier?: (soldier: TSoldier) => boolean | undefined;
 }
 
-/** 收集一键清图 DAG 入口候选；入口候选必须位于当前路径尾点的 x+ 侧。 */
+/** 收集一键清图候选；圆心或严格圆内的 x+ 安全边缘必须能从当前路径尾点前进。 */
 export function createGraphwarOneClickClearCandidates<TSoldier extends GraphwarOneClickClearTargetSoldier>(
   options: GraphwarOneClickClearTargetCollectionOptions<TSoldier>,
 ): GraphwarOneClickClearCandidate[] {

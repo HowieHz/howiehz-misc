@@ -7,10 +7,12 @@ import type { ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
 import ControlReason from "../controls/ControlReason.vue";
 import PanelDetails from "../controls/PanelDetails.vue";
+import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
 
 type GraphwarResultPanelCoordinateAxis = "x" | "y";
 
+/** 单个路径坐标输入框的展示和可访问性信息。 */
 interface GraphwarResultPanelCoordinateControl {
   /** 输入框可访问性标签，父页面按当前路径点标签提前生成。 */
   ariaLabel: string;
@@ -20,6 +22,7 @@ interface GraphwarResultPanelCoordinateControl {
   title: string;
 }
 
+/** 结果面板中的一行路径点坐标。 */
 interface GraphwarResultPanelPointRow {
   /** 路径点索引；同时用于事件回传和稳定 key。 */
   index: number;
@@ -31,6 +34,15 @@ interface GraphwarResultPanelPointRow {
   y: GraphwarResultPanelCoordinateControl;
 }
 
+/** 结果提示的可见短文本和悬停完整文本。 */
+interface GraphwarResultPanelHint {
+  /** 适合当前布局宽度的提示文本。 */
+  text: string;
+  /** 保留完整精度的悬停说明。 */
+  title: string;
+}
+
+/** 公式结果、路径坐标、警告和 Agent 发射的展示模型。 */
 export interface GraphwarResultPanelModel {
   /** 托管期间锁定公式输入、路径坐标和手动发射，保留复制。 */
   interactionDisabled: boolean;
@@ -52,10 +64,14 @@ export interface GraphwarResultPanelModel {
   copyButtonText: string;
   /** 仅显示在函数输入/输出框左侧的方程前缀。 */
   equationPrefix: string;
+  /** 是否把当前生成结果中的小数字面量展示为 Graphwar 运行值等价的分数。 */
+  fractionOutputEnabled: boolean;
+  /** 当前结果存在无法保证 Graphwar 运行值等价的小数时，在开关旁展示的提示。 */
+  fractionConversionWarning?: string;
   /** 路径点坐标表行。 */
   pointRows: readonly GraphwarResultPanelPointRow[];
-  /** 二阶发射角提示。 */
-  secondOrderAngleHint: string;
+  /** 二阶发射角提示；可见文本和完整 title 分开保留。 */
+  secondOrderAngleHint?: GraphwarResultPanelHint;
   /** 是否展示模拟器发射角输入。 */
   showSimulatorLaunchAngleInput: boolean;
   /** 模拟器表达式输入框文本。 */
@@ -68,6 +84,10 @@ export interface GraphwarResultPanelModel {
   solverResultVisible: boolean;
   /** 当前轨迹警告文案。 */
   trajectoryWarning: string;
+  /** 普通控制点路径质量未达到可选目标时的独立警告。 */
+  pathQualityWarning?: string;
+  /** Y''= 按显式两位小数执行角未命中时的独立警告。 */
+  targetHitWarning?: string;
   /** 当前主工作流。 */
   workflowMode: ToolWorkflowMode;
   /** 是否展示 Agent 开火按钮。 */
@@ -87,6 +107,7 @@ const emit = defineEmits<{
   finishPointCoordinateEdit: [];
   fireAgentFunction: [];
   startPointCoordinateEdit: [index: number, axis: GraphwarResultPanelCoordinateAxis];
+  toggleFractionOutput: [];
   updatePointCoordinate: [index: number, axis: GraphwarResultPanelCoordinateAxis, value: string];
   updateSimulatorFormulaText: [value: string];
   updateSimulatorLaunchAngleText: [value: string];
@@ -117,9 +138,21 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
     aria-labelledby="graphwar-killer-result-title"
   >
     <div class="graphwar-killer__label-row graphwar-killer__label-row--result">
-      <h2 id="graphwar-killer-result-title">
-        {{ locale.ui.result.title }}
-      </h2>
+      <div class="graphwar-killer__result-leading">
+        <h2 id="graphwar-killer-result-title">
+          {{ locale.ui.result.title }}
+        </h2>
+        <ToggleField
+          v-if="result.workflowMode === 'solver'"
+          id="graphwar-killer-fraction-output"
+          :checked="result.fractionOutputEnabled"
+          :label="locale.ui.result.fractionOutput"
+          :reason="result.fractionConversionWarning"
+          :state="result.interactionDisabled ? 'busy' : 'normal'"
+          :title="locale.ui.result.fractionOutputTitle"
+          @toggle="emit('toggleFractionOutput')"
+        />
+      </div>
       <div class="graphwar-killer__result-actions graphwar-killer-command-row">
         <div
           v-if="result.agentFireVisible"
@@ -213,15 +246,28 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
     </div>
     <p
       v-if="result.secondOrderAngleHint"
-      class="graphwar-killer__hint graphwar-killer__hint--warning"
+      class="graphwar-killer__hint graphwar-killer__hint--warning graphwar-killer__second-order-angle-hint"
+      :title="result.secondOrderAngleHint.title"
     >
-      {{ result.secondOrderAngleHint }}
+      {{ result.secondOrderAngleHint.text }}
     </p>
     <p
       v-if="result.trajectoryWarning"
       class="graphwar-killer__hint graphwar-killer__hint--warning"
     >
       {{ result.trajectoryWarning }}
+    </p>
+    <p
+      v-if="result.targetHitWarning"
+      class="graphwar-killer__hint graphwar-killer__hint--warning"
+    >
+      {{ result.targetHitWarning }}
+    </p>
+    <p
+      v-if="result.pathQualityWarning"
+      class="graphwar-killer__hint graphwar-killer__hint--warning"
+    >
+      {{ result.pathQualityWarning }}
     </p>
     <p
       v-if="result.calculationMessageVisible"
@@ -305,6 +351,14 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   align-items: flex-start;
 }
 
+.graphwar-killer__result-leading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
 .graphwar-killer__result-actions {
   display: flex;
   flex-wrap: wrap;
@@ -383,6 +437,9 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   font-size: 0.9rem;
   line-height: 1.5;
   margin: 0;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .graphwar-killer__hint--warning {

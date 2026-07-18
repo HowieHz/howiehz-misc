@@ -7,6 +7,7 @@ export type GraphwarSmartPathfindingFailureReason = "graph-rule" | "missing-obst
 
 export type GraphwarPathfindingPhase = "optimize" | "search" | "trajectory";
 
+/** 可直接展示的寻路状态正文和可选标题。 */
 export interface GraphwarPathfindingStatusMessage {
   /** 状态等级；一键清图预检只需要阻塞错误和可恢复警告。 */
   kind: "error" | "warning";
@@ -14,6 +15,7 @@ export interface GraphwarPathfindingStatusMessage {
   message: string;
 }
 
+/** 一键清图预检失败文案所需的状态输入。 */
 interface GraphwarOneClickClearPreflightFailureStatusInput {
   /** 智能寻路不可用时的兜底文案，应只在 invalid-settings 需要时求值。 */
   getDisabledMessage: () => string;
@@ -25,6 +27,7 @@ interface GraphwarOneClickClearPreflightFailureStatusInput {
   settingsMessage: string;
 }
 
+/** 一键清图搜索失败文案所需的结果输入。 */
 interface GraphwarOneClickClearFailureMessageInput {
   /** 本次运行耗时，单位毫秒。 */
   elapsedMs: number;
@@ -34,6 +37,7 @@ interface GraphwarOneClickClearFailureMessageInput {
   reason: GraphwarOneClickClearFailureReason;
 }
 
+/** 一键清图成功文案所需的击杀统计。 */
 interface GraphwarOneClickClearSuccessMessageInput {
   /** 本次运行耗时，单位毫秒。 */
   elapsedMs: number;
@@ -71,6 +75,12 @@ export function createOneClickClearPreflightFailureStatus(
     return {
       kind: "error",
       message: input.locale.smartPathfinding.oneClickClear.needDetection,
+    };
+  }
+  if (input.reason === "no-target") {
+    return {
+      kind: "error",
+      message: input.locale.smartPathfinding.oneClickClear.noCandidate,
     };
   }
   return {

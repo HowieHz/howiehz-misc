@@ -183,15 +183,18 @@ export const graphwarKillerLocale = {
       stateFileLoaded: "已读取状态文件，请读取障碍文件",
     },
     pathPointCoordinateNumber: "点坐标需要填写数字",
-    secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到约 ${angle}°`,
+    secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到 ${angle}°`,
     trajectoryWarning: {
       obstacle: "当前公式轨迹会撞到障碍物或边界",
+      pathQuality: (error) => `公式已生成，但普通控制点的最大路径误差为 ${error} 个原始平面像素`,
+      pathQualityUnreached: "公式已生成，但轨迹没有到达至少一条普通控制线",
       stopped: {
         invalid: "预览已中止：公式出现 NaN 或无穷值，实战中会提前爆炸",
         "max-steps": "预览已中止：达到 Graphwar 最大采样步数，函数过长，实战中会在末端爆炸",
         "out-of-bounds": "预览已中止：轨迹越出 Graphwar 平面，实战中会在边界处提前爆炸",
         "too-steep": "预览已中止：局部太陡，Graphwar 步长缩到最小仍无法继续，实战中会在这里爆炸",
       },
+      targetMissed: "当前 y'' 公式按两位小数发射角回放后未命中目标",
     },
   },
   smartPathfinding: {
@@ -217,7 +220,7 @@ export const graphwarKillerLocale = {
       inProgress: "正在一键清图，在截图中右键停止",
       needDetection: "先识别士兵和障碍后才能使用一键清图",
       needCurrentPath: "一键清图需要先选择当前路径起点",
-      noCandidate: "一键清图失败：当前路径右侧没有可选目标",
+      noCandidate: "一键清图失败：当前路径 x+ 侧没有可用命中圈目标",
       noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) => `一键清图失败：寻路工作线程不可用或运行失败，耗时 ${elapsed}`,
       retained: "已保留当前最优结果",
@@ -291,6 +294,9 @@ export const graphwarKillerLocale = {
         address: "Agent 地址",
         addressAriaLabel: "Graphwar Agent 地址",
         addressTitle: "Graphwar Agent 本机 HTTP 地址，默认 http://127.0.0.1:17900",
+        exportOnClearFailure: "清图失败自动导出",
+        exportOnClearFailureTitle:
+          "一键清图漏杀、搜索失败、工作线程异常或托管截止中断时，自动导出搜索启动时的 Graphwar Agent 局面；同一回合和战场版本只导出一次",
         exportScene: "导出局面",
         exportSceneTitle: "下载当前 Graphwar Agent 状态和障碍文件，供调试模式重新导入",
         exportingScene: "正在导出",
@@ -425,7 +431,7 @@ export const graphwarKillerLocale = {
       debugDetails: {
         "build-dag-edges": {
           label: "- 清图建立有向无环图边",
-          title: "用当前一键清图路线掩码尝试士兵中心点之间的 x+ 几何寻路，并记录可用边",
+          title: "用当前一键清图路线掩码尝试分配目标点之间的 x+ 几何寻路，并记录可用边",
         },
         "dag-edge-mode": {
           label: (mode, workerCount) =>
@@ -440,13 +446,13 @@ export const graphwarKillerLocale = {
           label: (workerIndex) => `- 清图有向无环图建边工作线程 ${workerIndex}`,
           title: "单个有向无环图建边子工作线程的总耗时；任务由工作线程动态领取，耗时不代表固定边切片",
         },
-        "build-dag-targets": {
-          label: "- 清图收集目标",
-          title: "普通模式建立按中心 x 排序的有向无环图目标；邪道模式为同 x 士兵分配严格递增的命中圈控制点",
+        "assign-clear-targets": {
+          label: "- 清图分配目标",
+          title: "为全部一键清图模式选择圆心或严格圆内的 x+ 安全边缘，并按同初始 x 稳定分配命中圈控制点",
         },
         "dag-longest-path": {
           label: "- 清图有向无环图最长路",
-          title: "在已建好的中心点有向无环图上运行最长路动态规划，选择显式击杀数量最多的路线",
+          title: "在按最终目标 x 建好的有向无环图上运行最长路动态规划，选择显式击杀数量最多的路线",
         },
         "optimize-path": {
           label: "- 清图删点优化",
@@ -478,11 +484,11 @@ export const graphwarKillerLocale = {
         },
         "route-map-pixels": {
           label: "- 清图路线映射像素",
-          title: "把几何寻路返回的 Graphwar 平面格点转换成截图像素路径，并保留精确中心点首尾",
+          title: "把几何寻路返回的 Graphwar 平面格点转换成截图像素路径，并保留精确分配目标首尾",
         },
         "route-pathfinding": {
           label: "- 清图真实几何寻路",
-          title: "搜索两个中心点之间满足 x+ 规则的绕障几何路线",
+          title: "搜索两个分配目标点之间满足 x+ 规则的绕障几何路线",
         },
         "scan-step-glitch": {
           label: "- 清图邪道水平扫描",
@@ -584,7 +590,7 @@ export const graphwarKillerLocale = {
         },
         "one-click-clear-collect-targets": {
           label: "清图收集目标",
-          title: "按当前友伤设置和严格 x+ 规则筛选一键清图可尝试的士兵中心点候选",
+          title: "按当前友伤设置筛选一键清图士兵，并保留圆心或严格圆内 x+ 安全边缘可前进的命中圈候选",
         },
         "one-click-clear-result-cache-hit": {
           label: "清图结果缓存命中",
@@ -609,7 +615,7 @@ export const graphwarKillerLocale = {
         "one-click-clear-search": {
           label: "清图搜索验证",
           title:
-            "建立中心点有向无环图，运行最长路动态规划，验证失败时删除具体有向无环图边，直到得到可用清图路线或无路可用",
+            "共享分配命中圈目标后，按最终 x 建立普通有向无环图或邪道扫描层，并持续验证到得到可用清图路线或无路可用",
         },
         "one-click-clear-setting-status": {
           label: "清图设置状态栏",
@@ -654,7 +660,7 @@ export const graphwarKillerLocale = {
       oneClickClearDeleteCheckRadius: "清图删点命中检查半径",
       oneClickClearDeleteCheckRadiusAriaLabel: "一键清图删点命中检查半径，单位为 Graphwar 原始 770x450 平面像素",
       oneClickClearDeleteCheckRadiusTitle: "删点时快速检查局部路径是否仍经过相同士兵；设为 0 时直接验证完整轨迹",
-      oneClickClearTitle: "从当前路径末端开始，尽量击杀右侧可用士兵",
+      oneClickClearTitle: "从当前路径末端开始，分配并尽量击杀 x+ 侧命中圈可达的士兵",
       managedFriendlyFireWarning: "托管已允许友伤，友军会作为一键清图候选",
       managedMode: "托管模式",
       managedModeDisableTitle: "关闭托管模式并解锁设置",
@@ -715,6 +721,9 @@ export const graphwarKillerLocale = {
       fireSuccess: "已开火",
       fireTitle: "通过 Graphwar Agent 提交当前函数并开火",
       firing: "开火中",
+      fractionConversionIncomplete: "部分小数无法等价转换",
+      fractionOutput: "结果转分数",
+      fractionOutputTitle: "将生成函数中的有限小数转换为 Graphwar 运行值等价的分数",
       formulaInputAriaLabel: "模拟器函数输入",
       formulaInputTitle: "输入要模拟的 Graphwar 函数",
       launchAngle: "发射角",
@@ -796,8 +805,7 @@ export const graphwarKillerLocale = {
       stepGlitchMode: "邪道模式",
       stepGlitchModeAlgorithmInactiveReason: "当前算法不生效",
       stepGlitchModeGameModeInactiveReason: "当前游戏模式不生效",
-      stepGlitchModeObstacleRequiredReason: "需要障碍数据",
-      stepGlitchModeTitle: "用于阶跃 y' 或 y''；遇到障碍时尝试纵向瞬移，需要准确的障碍和士兵位置",
+      stepGlitchModeTitle: "用于阶跃 y' 或 y''；遇到障碍或普通阶跃无法连接时尝试纵向瞬移，障碍数据存在时仍会验证碰撞",
       steepness: "陡峭度 k",
       steepnessAriaLabel: "公式陡峭度 k",
       steepnessTitle: "设置阶跃拐点或双绝对值 y'' 脉冲的陡峭度；值越大，变化越集中",

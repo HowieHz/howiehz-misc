@@ -8,75 +8,80 @@ import ToggleField from "../controls/ToggleField.vue";
 
 type GraphwarPathfindingPanelStatusKind = "info" | "success" | "warning" | "error";
 
+/** 寻路面板标题旁的当前任务状态。 */
 interface GraphwarPathfindingPanelHeaderStatus {
-  /** Full task status shown beside the panel heading. */
+  /** 面板标题旁显示的完整任务状态。 */
   message: string;
-  /** Visual status semantics retained from the existing workflow. */
+  /** 从现有工作流保留的视觉状态语义。 */
   kind: GraphwarPathfindingPanelStatusKind;
-  /** Supplementary hover text for truncated desktop layouts. */
+  /** 桌面布局截断时使用的补充悬浮文本。 */
   title: string;
 }
 
+/** 单条预先格式化并带缩进的寻路调试耗时。 */
 interface GraphwarPathfindingPanelDebugRow {
-  /** Stable row key derived from the original stage and index. */
+  /** 由原始阶段和索引生成的稳定行键。 */
   key: string;
-  /** Fully formatted timing text. */
+  /** 已完整格式化的耗时文本。 */
   text: string;
-  /** Visual nesting level used by worker sub-stages. */
+  /** Worker 子阶段使用的视觉嵌套层级。 */
   indentLevel: number;
-  /** Optional full stage explanation. */
+  /** 可选的完整阶段说明。 */
   title?: string;
 }
 
+/** 由偏好值和能力状态共同驱动的寻路开关。 */
 interface GraphwarPathfindingToggle {
-  /** Persisted preference value. */
+  /** 持久化的偏好值。 */
   enabled: boolean;
-  /** Shared capability state used by presentation and command guards. */
+  /** 展示层和命令守卫共用的能力状态。 */
   state: GraphwarControlCapability["state"];
-  /** Localised explanation for a non-normal state. */
+  /** 非 normal 状态的本地化说明。 */
   reason?: string;
 }
 
+/** 可直接触发的寻路任务及其能力说明。 */
 interface GraphwarPathfindingTask {
-  /** Shared capability state used by presentation and command guards. */
+  /** 展示层和命令守卫共用的能力状态。 */
   state: GraphwarControlCapability["state"];
-  /** Localised explanation for a non-normal state. */
+  /** 非 normal 状态的本地化说明。 */
   reason?: string;
-  /** Supplementary command description. */
+  /** 补充命令说明。 */
   title: string;
 }
 
+/** 智能寻路、一键清图和托管控制的展示模型。 */
 export interface GraphwarSmartPathfindingPanelModel {
-  /** Whether current formula semantics use the fixed Step ODE glitch scanner. */
+  /** 当前 Step ODE 是否实际使用固定邪道扫描器。 */
   usesStepGlitchRouting: boolean;
-  /** Ordinary geometry router; ignored while the fixed glitch scanner is active. */
+  /** 普通几何路由器；固定邪道扫描器启用时忽略。 */
   routeMode: GraphwarPathfindingRouteMode;
-  /** Global point-deletion preference. */
+  /** 全局删点偏好。 */
   deleteOptimization: GraphwarPathfindingToggle;
-  /** Whether pathfinding may cross friendly soldiers. */
+  /** 是否允许寻路穿过友军士兵。 */
   friendlyFire: GraphwarPathfindingToggle;
-  /** Presentation-only search preview preference. */
+  /** 仅影响展示的搜索预览偏好。 */
   searchAnimation: GraphwarPathfindingToggle;
-  /** Single-target pathfinding preference. */
+  /** 单目标寻路偏好。 */
   pathPlanning: GraphwarPathfindingToggle;
-  /** One-click clear command state. */
+  /** 一键清图命令状态。 */
   oneClickClear: GraphwarPathfindingTask;
-  /** Managed mode switch state. */
+  /** 托管模式开关状态。 */
   managedMode: GraphwarPathfindingToggle & { title: string };
-  /** Persistent warning while managed mode may target friendly soldiers. */
+  /** 托管模式可能瞄准友军时持续显示的警告。 */
   managedFriendlyFireWarning: string;
-  /** Current task status shown in the panel heading. */
+  /** 面板标题中显示的当前任务状态。 */
   headerStatus: GraphwarPathfindingPanelHeaderStatus;
-  /** Whether debug timing details should be rendered. */
+  /** 是否显示调试耗时详情。 */
   debugTimingVisible: boolean;
-  /** Preformatted debug timing rows. */
+  /** 预先格式化的调试耗时行。 */
   debugTimingRows: readonly GraphwarPathfindingPanelDebugRow[];
 }
 
 defineProps<{
-  /** Page localisation. */
+  /** 页面本地化文案。 */
   locale: GraphwarKillerLocale;
-  /** Pathfinding task and option presentation model. */
+  /** 寻路任务和选项的展示模型。 */
   panel: GraphwarSmartPathfindingPanelModel;
 }>();
 

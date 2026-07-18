@@ -224,7 +224,10 @@ export interface GraphwarKillerLocale {
     secondOrderAngleHint: (angle: string) => string;
     trajectoryWarning: {
       obstacle: string;
+      pathQuality: (error: string) => string;
+      pathQualityUnreached: string;
       stopped: Record<GraphwarKillerStopReason, string>;
+      targetMissed: string;
     };
   };
   /** 智能寻路流程状态文案。 */
@@ -318,6 +321,8 @@ export interface GraphwarKillerLocale {
         address: string;
         addressAriaLabel: string;
         addressTitle: string;
+        exportOnClearFailure: string;
+        exportOnClearFailureTitle: string;
         exportScene: string;
         exportSceneTitle: string;
         exportingScene: string;
@@ -466,6 +471,9 @@ export interface GraphwarKillerLocale {
       fireSuccess: string;
       fireTitle: string;
       firing: string;
+      fractionConversionIncomplete: string;
+      fractionOutput: string;
+      fractionOutputTitle: string;
       formulaInputAriaLabel: string;
       formulaInputTitle: string;
       launchAngle: string;
@@ -546,7 +554,6 @@ export interface GraphwarKillerLocale {
       stepGlitchMode: string;
       stepGlitchModeAlgorithmInactiveReason: string;
       stepGlitchModeGameModeInactiveReason: string;
-      stepGlitchModeObstacleRequiredReason: string;
       stepGlitchModeTitle: string;
       steepness: string;
       steepnessAriaLabel: string;

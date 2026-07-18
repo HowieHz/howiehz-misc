@@ -93,6 +93,33 @@ describe("live click preview runner", () => {
     expect(worker.terminated).toBe(true);
     runner.close();
   });
+
+  it("preserves the manual Y'' display-angle mode in the Worker snapshot", async () => {
+    installFakeWorker();
+    const runner = createGraphwarLiveClickPreviewRunner({ workerCount: ref(1) });
+    const input = createRenderInput(1);
+    if (input.type !== "formula") {
+      throw new Error("Expected formula render input");
+    }
+    input.settings = {
+      ...input.settings,
+      equation: "ddy",
+      secondOrderLaunchAngleMode: "display-rounded",
+    };
+
+    const result = runner.render(input);
+    const worker = FakeWorker.instances[0];
+    if (!worker) {
+      throw new Error("Expected live preview Worker");
+    }
+    const request = worker.requests[0];
+    expect(request?.input.type === "formula" && request.input.settings.secondOrderLaunchAngleMode).toBe(
+      "display-rounded",
+    );
+    worker.respond({ curvePoints: "rounded curve", elapsedMs: 10 });
+    await expect(result).resolves.toEqual({ curvePoints: "rounded curve", elapsedMs: 10 });
+    runner.close();
+  });
 });
 
 function installFakeWorker() {

@@ -9,6 +9,7 @@ import {
 } from "../../formula/trajectory/sampling";
 import { formatVisibleTrajectoryPoints } from "../../presentation/stage/svg-polyline";
 
+/** 求解器与模拟器实时预览共享的几何和碰撞输入。 */
 interface GraphwarLiveClickPreviewRenderInputBase {
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;
@@ -35,6 +36,7 @@ export type GraphwarLiveClickPreviewRenderInput =
       settings: GraphwarTrajectoryFormulaSettings;
     });
 
+/** 实时点击预览 Worker 可直接写回页面的渲染结果。 */
 export interface GraphwarLiveClickPreviewRenderResult {
   /** 已格式化给 SVG polyline 使用的轨迹点字符串。 */
   curvePoints: string;
@@ -42,6 +44,7 @@ export interface GraphwarLiveClickPreviewRenderResult {
   elapsedMs: number;
 }
 
+/** 实时点击预览 Worker 的带编号请求。 */
 export interface GraphwarLiveClickPreviewWorkerRequest {
   id: number;
   input: GraphwarLiveClickPreviewRenderInput;

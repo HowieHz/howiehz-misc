@@ -1,9 +1,9 @@
 import type { Ref } from "vue";
 
 import {
-  createMinimumForwardPointAtGraphY,
+  createNextNativePlaneColumnPointAtGraphY,
   graphXAdvancesFromPoint,
-  normalizePathForMinimumForwardStep,
+  normalizePathForStrictForward,
   normalizePathPointForStrictForward,
   pathFollowsGraphRule,
 } from "../../core/game/forward-rule";
@@ -27,6 +27,7 @@ type PathPointCoordinateState = Pick<
   | "syncPathPointCoordinateTexts"
 >;
 
+/** 路径点编辑器读取和写回页面状态的依赖。 */
 interface GraphwarPathPointEditingOptions {
   /** 当前截图坐标系矩形；路径点编辑应始终使用页面当前标定。 */
   boundsRect: Ref<BoundsRect>;
@@ -56,6 +57,7 @@ interface GraphwarPathPointEditingOptions {
   setPathPixels: (points: PixelPoint[]) => void;
 }
 
+/** 处理路径点拖动、坐标文本编辑和严格前进约束的控制器。 */
 export interface GraphwarPathPointEditingController {
   /** 结束路径点坐标编辑并恢复格式化文本。 */
   finishPathPointCoordinateEdit: () => void;
@@ -170,11 +172,10 @@ export function useGraphwarPathPointEditing(
       return false;
     }
 
-    const nextGraphPoint = createGraphPoint(
-      axis === "x" ? coordinate : currentPoint.x,
-      axis === "y" ? coordinate : currentPoint.y,
+    return setPathPointFromGraphPoint(
+      index,
+      createGraphPoint(axis === "x" ? coordinate : currentPoint.x, axis === "y" ? coordinate : currentPoint.y),
     );
-    return setPathPointFromGraphPoint(index, nextGraphPoint);
   }
 
   /** 手输 Graphwar 坐标允许超出可见边界；这里只维护 x+ 规则，不夹取 y 或 x。 */
@@ -196,14 +197,14 @@ export function useGraphwarPathPointEditing(
     return true;
   }
 
-  /** 按严格 x+ 规则把整条路径推进到下一个可表示 double。 */
+  /** 按严格 x+ 规则只修复无效后继点，已有有效手工前缀保持不变。 */
   function normalizePathForMinimumForwardStepForCurrentBounds(points: readonly PixelPoint[]) {
     const bounds = options.getBounds();
     if (!bounds || points.length < 2) {
       return [...points];
     }
 
-    return normalizePathForMinimumForwardStep(points, bounds, options.boundsRect.value);
+    return normalizePathForStrictForward(points, bounds, options.boundsRect.value);
   }
 
   /** 坐标输入可能故意写出界点；传播 x+ 最小步长时保留这些点的 Graphwar y。 */
@@ -226,6 +227,7 @@ export function useGraphwarPathPointEditing(
     return normalizedPoints;
   }
 
+  /** 强制新点沿 x+ 前进，同时保留用户已拖出边界的 y。 */
   function normalizePathPointForStrictForwardAllowingOutOfBounds(
     point: PixelPoint,
     previousPoint: PixelPoint | undefined,
@@ -240,10 +242,19 @@ export function useGraphwarPathPointEditing(
       return point;
     }
 
-    return createMinimumForwardPointAtGraphY(previousPoint, graphPoint.y, bounds, options.boundsRect.value) ?? point;
+    const minimumForwardPoint = createNextNativePlaneColumnPointAtGraphY(
+      previousPoint,
+      graphPoint.y,
+      bounds,
+      options.boundsRect.value,
+    );
+    if (!minimumForwardPoint) {
+      return point;
+    }
+    return minimumForwardPoint;
   }
 
-  /** 先按边界收缩点，再只在必要时把 Graphwar x 推到上一个点后的下一个 double。 */
+  /** 先按边界收缩点，再只把无效 Graphwar x 推到下一原生列。 */
   function normalizePathPointForStrictForwardForCurrentBounds(point: PixelPoint, previousPoint?: PixelPoint) {
     const bounds = options.getBounds();
     if (!bounds) {

@@ -19,9 +19,24 @@ export function graphYToPlaneY(y: number, bounds: GraphBounds) {
   return ((bounds.maxY - y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT;
 }
 
+/** 将原生平面像素距离换算为指定坐标轴上的 Graphwar 图单位距离。 */
+export function planePixelsToGraphUnits(pixels: number, bounds: GraphBounds, axis: "x" | "y") {
+  const graphSpan = axis === "x" ? bounds.maxX - bounds.minX : bounds.maxY - bounds.minY;
+  const planePixels = axis === "x" ? GRAPHWAR_PLANE_LENGTH : GRAPHWAR_PLANE_HEIGHT;
+  return (Math.abs(graphSpan) * Math.abs(pixels)) / planePixels;
+}
+
 /** 判断两个点是否表示同一截图像素坐标。 */
 export function pixelPointsEqual(left: PixelPoint, right: PixelPoint) {
   return left.x === right.x && left.y === right.y;
+}
+
+/** 判断两个截图像素圆是否具有完全相同的中心和半径。 */
+export function pixelCirclesEqual(
+  left: { center: PixelPoint; radius: number },
+  right: { center: PixelPoint; radius: number },
+) {
+  return left.center.x === right.center.x && left.center.y === right.center.y && left.radius === right.radius;
 }
 
 /** 将截图像素点转换为 Graphwar 笛卡尔坐标。 */

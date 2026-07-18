@@ -6,7 +6,6 @@ import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
   GraphwarPathfindingWorkerRequest,
-  GraphwarPathfindingWorkerResponse,
 } from "./protocol";
 import { createGraphwarPathfindingRunner, isGraphwarPathfindingCancelledError } from "./runner";
 
@@ -106,6 +105,54 @@ describe("Graphwar pathfinding runner incumbents", () => {
     expect(secondWorker.terminated).toBe(true);
     runner.close();
   });
+
+  it("rejects a non-object Worker message instead of leaving the task pending", async () => {
+    const runner = createGraphwarPathfindingRunner();
+    const resultPromise = runner.buildOneClickClearPath(createInput());
+    const worker = getWorker(0);
+
+    worker.emit(null);
+
+    await expect(resultPromise).rejects.toThrow("invalid response");
+    expect(worker.terminated).toBe(true);
+    runner.close();
+  });
+
+  it("rejects a malformed one-click-clear success response", async () => {
+    const runner = createGraphwarPathfindingRunner();
+    const resultPromise = runner.buildOneClickClearPath(createInput());
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+
+    worker.emit({
+      id: request.id,
+      result: {
+        result: { elapsedMs: 1, expandedStates: 1, targetIds: [], type: "success" },
+        timings: [],
+      },
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+
+    await expect(resultPromise).rejects.toThrow("invalid response");
+    expect(worker.terminated).toBe(true);
+    runner.close();
+  });
+
+  it("rejects a malformed incumbent before publishing it", async () => {
+    const onIncumbent = vi.fn();
+    const runner = createGraphwarPathfindingRunner();
+    const resultPromise = runner.buildOneClickClearPath(createInput(), { onIncumbent });
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+
+    worker.emit({ id: request.id, incumbent: { expression: "x" }, type: "one-click-clear-incumbent" });
+
+    await expect(resultPromise).rejects.toThrow("invalid response");
+    expect(onIncumbent).not.toHaveBeenCalled();
+    expect(worker.terminated).toBe(true);
+    runner.close();
+  });
 });
 
 class FakeWorker {
@@ -114,7 +161,7 @@ class FakeWorker {
   terminated = false;
   private readonly listeners = {
     error: [] as ((event: ErrorEvent) => void)[],
-    message: [] as ((event: MessageEvent<GraphwarPathfindingWorkerResponse>) => void)[],
+    message: [] as ((event: MessageEvent<unknown>) => void)[],
     messageerror: [] as ((event: MessageEvent) => void)[],
   };
 
@@ -135,8 +182,8 @@ class FakeWorker {
   }
 
   /** 测试刻意允许已终止 Worker 发出迟到消息，以验证请求身份防护。 */
-  emit(response: GraphwarPathfindingWorkerResponse) {
-    const event = { data: response } as MessageEvent<GraphwarPathfindingWorkerResponse>;
+  emit(response: unknown) {
+    const event = { data: response } as MessageEvent<unknown>;
     for (const listener of this.listeners.message) {
       listener(event);
     }

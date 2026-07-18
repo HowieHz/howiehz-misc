@@ -18,10 +18,13 @@ export interface GraphwarSmartPathfindingTrajectoryResult {
   blockedPoint?: PixelPoint;
   /** 是否先命中目标再碰障碍。 */
   reachesTargetBeforeObstacle: boolean;
+  /** 普通控制点的最大纵向路径误差；只供自动候选排序和调试。 */
+  pathError?: number;
   /** 可绘制轨迹。 */
   visiblePixels: PixelPoint[];
 }
 
+/** 把寻路路径验证成真实公式轨迹所需的输入。 */
 interface GraphwarSmartPathfindingTrajectoryOptions {
   /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
   boundaryExpansion: number;
@@ -89,12 +92,14 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
     obstacleMask: options.obstacleMask,
     points: options.points,
     settings: options.settings,
+    ...(lastPoint ? { targetControlPoints: [lastPoint] } : {}),
     targetHitRadiusPixels: target.radius,
     targetCircles: [target],
     targetPoints: [target.center],
   });
   return {
     blockedPoint: result.earlyStopReason === "obstacle" ? result.visiblePixels.at(-1) : undefined,
+    ...(result.pathError === undefined ? {} : { pathError: result.pathError }),
     reachesTargetBeforeObstacle:
       result.reachesTargetSequenceBeforeObstacle &&
       (targetControlGraphX === undefined || graphwarTrajectoryReachesGraphXBeforeObstacle(result, targetControlGraphX)),

@@ -4,6 +4,7 @@ import type {
   GraphwarLiveClickPreviewWorkerResponse,
 } from "../../controllers/stage/live-click-preview-render";
 
+/** 实时预览 Worker 使用的最小全局作用域接口。 */
 interface GraphwarLiveClickPreviewWorkerScope {
   addEventListener: (
     type: "message",

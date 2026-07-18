@@ -35,6 +35,7 @@ export interface GraphwarStepRouteModel {
   originY: number;
 }
 
+/** 一条 Step 路由边的代价、落点状态和包络信息。 */
 export interface GraphwarStepRouteTransition {
   envelope: GraphwarStepEnvelope;
   resolvedEndY: number;
@@ -70,12 +71,14 @@ type GraphwarStepRouteSettings = Pick<
 > &
   Partial<Pick<GraphwarTrajectoryFormulaSettings, "stepGlitchMode">>;
 
+/** Step 边评估共享的包络和障碍碰撞上下文。 */
 interface GraphwarStepRouteCollisionContext {
   boundaryInset: number;
   bounds: GraphBounds;
   summedArea: GraphwarPlaneMaskSummedArea;
 }
 
+/** Step 寻路边评估器的精确起终点和状态扩展选项。 */
 interface GraphwarStepPathfindingEvaluatorOptions extends GraphwarStepRouteCollisionContext {
   boundsRect: BoundsRect;
   exactStartPoint: PixelPoint;
@@ -153,6 +156,7 @@ export function evaluateGraphwarStepRouteTransition(
     next.x,
     resolved.effectiveDeltaY,
     model.formulaSteepness,
+    collision.bounds,
     model.decimalPlaces,
   );
   const envelopeResult = createGraphwarStepEnvelope({
@@ -302,6 +306,7 @@ function createGraphwarStepRoutePlateauState(
   }
 }
 
+/** 起终点保留精确像素，其余网格点映射到格心。 */
 function planePointToExactOrCellCenter(
   point: PlaneGridPoint,
   exactStartCell: PlaneGridPoint,

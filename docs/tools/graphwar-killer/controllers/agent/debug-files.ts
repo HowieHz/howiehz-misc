@@ -1,16 +1,20 @@
+import type { GraphwarClearFailureExportKind } from "../pathfinding/one-click-clear/outcome";
 import type { GraphwarAgentAvailableState } from "./client";
 
+/** Agent 导出的状态 JSON 与障碍二进制文件对。 */
 export interface GraphwarAgentDebugFilePair {
   obstacleBuffer: ArrayBuffer;
   state: GraphwarAgentAvailableState;
 }
 
+/** 单个可下载的 Agent 调试文件。 */
 export interface GraphwarAgentDebugDownload {
   content: ArrayBuffer | string;
   fileName: string;
   mediaType: string;
 }
 
+/** Agent 调试文件导入、匹配与导出的统一状态。 */
 export interface GraphwarAgentDebugFiles {
   /** 丢弃当前未消费的文件配对。 */
   clear: () => void;
@@ -20,23 +24,30 @@ export interface GraphwarAgentDebugFiles {
   setState: (state: GraphwarAgentAvailableState) => GraphwarAgentDebugFilePair | undefined;
 }
 
+/** 调试文件命名选项；failureKind 只用于自动导出，手动导出不传。 */
+export interface GraphwarAgentDebugDownloadOptions {
+  exportedAt?: Date;
+  failureKind?: GraphwarClearFailureExportKind;
+}
+
 /** 把同一 revision 的 Agent 局面序列化为调试导入控件接受的两份文件。 */
 export function createGraphwarAgentDebugDownloads(
   state: GraphwarAgentAvailableState,
   worldObstacleMask: Uint8Array,
-  exportedAt = new Date(),
+  options: GraphwarAgentDebugDownloadOptions = {},
 ): { obstacle: GraphwarAgentDebugDownload; state: GraphwarAgentDebugDownload } {
   // 两个文件共用不含非法字符的时间戳，之后从下载目录中也能直观看出它们属于同一局面。
-  const suffix = exportedAt.toISOString().replaceAll(":", "-").replace(".", "-");
+  const suffix = (options.exportedAt ?? new Date()).toISOString().replaceAll(":", "-").replace(".", "-");
+  const prefix = options.failureKind ? `clear-failure-${options.failureKind}-` : "";
   return {
     obstacle: {
       content: worldObstacleMask.slice().buffer,
-      fileName: `obstacle-mask-${suffix}.bin`,
+      fileName: `${prefix}obstacle-mask-${suffix}.bin`,
       mediaType: "application/octet-stream",
     },
     state: {
       content: `${JSON.stringify(state, undefined, 2)}\n`,
-      fileName: `state-${suffix}.json`,
+      fileName: `${prefix}state-${suffix}.json`,
       mediaType: "application/json",
     },
   };

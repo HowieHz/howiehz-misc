@@ -4,7 +4,11 @@ import { graphToImagePoint } from "../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../core/types";
 import { sampleGraphwarPathTargetSequence } from "../formula/trajectory/sampling";
 import type { GraphwarTargetingArea, GraphwarTargetingSoldier } from "./targeting";
-import { createSmartPathfindingSoldierTarget } from "./targeting";
+import {
+  createAllowedTargetRect,
+  createMinimumForwardTargetPoint,
+  createSmartPathfindingSoldierTarget,
+} from "./targeting";
 
 const area: GraphwarTargetingArea = {
   bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
@@ -122,5 +126,39 @@ describe("Step single-target soldier aiming", () => {
         createPixelPoint(edgeSoldier.sourceCenterX - scale / 2, edgeSoldier.sourceCenterY - scale / 2),
       );
     }
+  });
+});
+
+describe("manual target forward semantics", () => {
+  it("keeps a strict subpixel x+ click instead of quantizing it to a native column", () => {
+    const point = createPixelPoint(100.25, 120);
+
+    expect(createMinimumForwardTargetPoint(point, area, createPixelPoint(100, 200))).toBe(point);
+  });
+
+  it("repairs equal and backward clicks to the next native column with one real pixel of clearance", () => {
+    const start = createPixelPoint(100.25, 200);
+
+    expect(createMinimumForwardTargetPoint(createPixelPoint(100.25, 120), area, start)).toEqual(
+      createPixelPoint(102, 120),
+    );
+    expect(createMinimumForwardTargetPoint(createPixelPoint(90, 120), area, start)).toEqual(createPixelPoint(102, 120));
+  });
+
+  it("uses the unshifted path-tail x only for the clickable-area preview", () => {
+    const start = createPixelPoint(100.25, 200);
+
+    expect(createAllowedTargetRect(area, start)).toEqual({ height: 450, width: 669.75, x: 100.25, y: 0 });
+  });
+
+  it("preserves mirrored subpixel clicks and repairs non-forward clicks toward screen left", () => {
+    const mirroredArea = { ...area, bounds: { ...area.bounds, maxX: -25, minX: 25 } };
+    const start = createPixelPoint(100.25, 200);
+    const forwardPoint = createPixelPoint(100, 120);
+
+    expect(createMinimumForwardTargetPoint(forwardPoint, mirroredArea, start)).toBe(forwardPoint);
+    expect(createMinimumForwardTargetPoint(createPixelPoint(101, 120), mirroredArea, start)).toEqual(
+      createPixelPoint(99, 120),
+    );
   });
 });

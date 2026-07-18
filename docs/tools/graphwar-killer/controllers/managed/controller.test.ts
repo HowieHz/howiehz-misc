@@ -273,6 +273,7 @@ describe("Graphwar managed-mode controller", () => {
       return shot.promise;
     });
     const plan = { equationMode: "y", function: "x" } as const;
+    const onDeadline = vi.fn();
     const onShotFailed = vi.fn();
     const onShotSubmitted = vi.fn(() => submissionOrder.push("submitted"));
     const onShotSucceeded = vi.fn();
@@ -280,6 +281,7 @@ describe("Graphwar managed-mode controller", () => {
       client,
       hooks: {
         decideDeadlineShot: () => plan,
+        onDeadline,
         onShotFailed,
         onShotSubmitted,
         onShotSucceeded,
@@ -289,6 +291,7 @@ describe("Graphwar managed-mode controller", () => {
     controller.start();
     await flushPromises();
     expect(client.submitShot).toHaveBeenCalledOnce();
+    expect(onDeadline).toHaveBeenCalledOnce();
     expect(onShotSubmitted).toHaveBeenCalledOnce();
     expect(onShotSucceeded).not.toHaveBeenCalled();
     expect(submissionOrder).toEqual(["submitted", "request"]);
@@ -355,10 +358,11 @@ describe("Graphwar managed-mode controller", () => {
     const state = createAvailableState({ remainingTurnMs: 2500 });
     const client = createFakeClient();
     client.readState.mockResolvedValue(state);
+    const onDeadline = vi.fn();
     const onDeadlineWithoutShot = vi.fn();
     const controller = createGraphwarManagedController({
       client,
-      hooks: { decideDeadlineShot: () => undefined, onDeadlineWithoutShot },
+      hooks: { decideDeadlineShot: () => undefined, onDeadline, onDeadlineWithoutShot },
     });
 
     controller.start();
@@ -370,6 +374,7 @@ describe("Graphwar managed-mode controller", () => {
       turnToken: state.turnToken,
     });
     expect(onDeadlineWithoutShot).not.toHaveBeenCalled();
+    expect(onDeadline).toHaveBeenCalledOnce();
     expect(controller.submitShot(state, { equationMode: "y", function: "x" })).toBe(false);
     await vi.advanceTimersByTimeAsync(1000);
     expect(onDeadlineWithoutShot).not.toHaveBeenCalled();

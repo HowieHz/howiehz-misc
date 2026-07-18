@@ -136,6 +136,7 @@ describe("one-click-clear target assignment", () => {
     const replayBoundsRect: BoundsRect = { height: 450, width: 770, x: 0, y: 0 };
     const firstCenter = createPixelPoint(609, 370);
     const secondCenter = createPixelPoint(609, 280);
+    const pathTail = createPixelPoint(599, 146);
     const prefix = [
       createPixelPoint(243, 356),
       createPixelPoint(413, 251),
@@ -152,7 +153,7 @@ describe("one-click-clear target assignment", () => {
       createPixelPoint(561, 199),
       createPixelPoint(574, 25),
       createPixelPoint(587, 225),
-      createPixelPoint(599, 146),
+      pathTail,
     ];
     const assigned = assignGraphwarOneClickClearTargetRoutePoints({
       bounds: replayBounds,
@@ -161,7 +162,7 @@ describe("one-click-clear target assignment", () => {
         createTarget("first", firstCenter.x, firstCenter.y, 7, 0),
         createTarget("second", secondCenter.x, secondCenter.y, 7, 1),
       ],
-      pathTail: prefix.at(-1) ?? prefix[0],
+      pathTail,
       usableMaxX: nextDownDouble(770),
       usableMaxY: nextDownDouble(450),
       usableMinX: 0,

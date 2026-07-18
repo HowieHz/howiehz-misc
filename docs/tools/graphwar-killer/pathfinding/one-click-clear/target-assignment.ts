@@ -254,8 +254,9 @@ function assignTargetSubgroup<TTarget extends GraphwarOneClickClearAssignmentCan
       idealX = target.initialForwardX;
     } else if (leftBoundaryOpen) {
       const availableWidth = rightBoundary.value - leftBoundary;
-      // 宽命中圈的同中心组应给闭区间右边界留一档余量；贴着 nextDown 边界的控制点经公式量化和 RK4
-      // 采样后没有可用余量。只能靠边推进的目标和不足 1px 的极小圆仍保留原来的最外侧/double 分配。
+      // 圆心 x 相同的目标组在闭右边界前仍有至少一个原生平面像素可分配时，应多留一档余量；
+      // 贴着 nextDown 边界的控制点经公式量化和 RK4 采样后没有可用余量。只能靠边推进的目标，
+      // 或剩余宽度不足一个原生平面像素时，仍保留原来的最外侧/double 分配。
       idealX =
         leftBoundary +
         availableWidth /

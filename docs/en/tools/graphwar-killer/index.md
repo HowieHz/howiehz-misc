@@ -19,13 +19,14 @@ import { graphwarKillerLocale } from "./locale";
 
 ## Expression Syntax {#graphwar-killer-expression-syntax}
 
-| Category      | Supported syntax                                                                                                                                    |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Variables     | `x`, `y`, and `y'`                                                                                                                                  |
-| Operators     | `+`, `-`, `/`, `*`, `^`, parentheses, and implicit multiplication such as `2x` or `2sin(x)`                                                         |
-| Functions     | `sqrt()`, `log()`, `ln()`, `abs()`, `sin()` (alias `sen()`), `cos()`, `tan()` (alias `tg()`), and `exp()`; `log` is base 10, while `ln` is base `e` |
-| Constants     | `e` and `pi`                                                                                                                                        |
-| Compatibility | By default, Graphwar compatibility treats `y'` as `y` and skips unknown characters; both options can be turned off under Advanced settings          |
+| Category                     | Supported syntax                                                                                                                                                                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variables                    | `x`, `y`, and `y'`                                                                                                                                                                                                                                         |
+| Operators                    | `+`, `-`, `/`, `*`, `^`, parentheses, and implicit multiplication such as `2x` or `2sin(x)`                                                                                                                                                                |
+| Precedence and associativity | From lowest to highest: `+ = - (binary) < - (unary) < * < / < ^`. Binary `-` means adding a unary negative, so `1-2` and `1+-2` both evaluate as `1+(-2)`. Repeated binary operators are right-associative: `1+2+3` is `1+(2+3)`, and `1/2/3` is `1/(2/3)` |
+| Functions                    | `sqrt()`, `log()`, `ln()`, `abs()`, `sin()` (alias `sen()`), `cos()`, `tan()` (alias `tg()`), and `exp()`; `log` is base 10, while `ln` is base `e`                                                                                                        |
+| Constants                    | `e` and `pi`                                                                                                                                                                                                                                               |
+| Compatibility                | By default, Graphwar compatibility treats `y'` as `y` and skips unknown characters; both options can be turned off under Advanced settings                                                                                                                 |
 
 ## How to Use {#graphwar-killer-instructions}
 
@@ -36,12 +37,7 @@ import { graphwarKillerLocale } from "./locale";
 3. In Generate Function mode, select your soldier first, then add targets or intermediate path points. Paste the generated function into Graphwar.
 4. In Simulate Trajectory mode, select the firing soldier and enter a function. The `y''` mode also requires a launch angle.
 
-Fraction output changes only the formula used for result display, copying, and Agent shots; it does not change internal solving or trajectory replay. The tool prefers lowest-term fractions and verifies their runtime values using Graphwar's rule of parsing the numerator and denominator as separate `double` values before division.
-A decimal remains unchanged and produces a warning when equivalence cannot be guaranteed. Display, copy, manual shots, and managed shots use the same external formula rule for a result.
-
 The tool saves separate algorithm settings for `y`, `y'`, and `y''`. The defaults are Double Absolute Value for `y`, Step with Glitch Mode for `y'`, and Step with Glitch Mode for `y''`.
-
-Steepness applies to every Step formula and to the smooth turn pulses used by Double Absolute Value `y''`. Double Absolute Value `y''` always uses the stable pulse formula and does not use Step's overflow-protection switch.
 
 ### Canvas Tools {#graphwar-killer-canvas-interaction}
 
@@ -57,14 +53,6 @@ Single-target Step Path Planning targets the hit-circle center first, then tries
 
 One-Click Clear starts at the current path end, finds usable soldiers in the `x+` direction, and plans a route that hits as many targets as possible.
 
-Search Animation shows single-target search progress and the best validated formula and actual trajectory found by One-Click Clear or Managed Mode. Intermediate results hide their control points. The control points become part of the formal path when the search finishes.
-
-To stop a manual One-Click Clear run and keep its current result without firing, right-click the screenshot. Turn off Managed Mode to stop a managed search.
-
-After enabling Debug Info, turn on Export on clear failure to save the Agent state and obstacle files captured when a search starts. Missed targets, search failures, Worker errors, and managed-deadline interruptions are exported without rereading the game. A scene identified by `gameInstanceId`, `turnToken`, and `battleRevision` is exported once; different scenes are processed in order.
-
-Automatic file names include `clear-failure-incomplete`, `clear-failure-search-failure`, `clear-failure-search-error`, or `clear-failure-deadline`. Manual Export Scene file names are unchanged.
-
 #### Support Matrix {#graphwar-killer-pathfinding-support}
 
 | Function algorithm    | Game mode        | Path Planning | One-Click Clear | Route style                        |
@@ -75,14 +63,12 @@ Automatic file names include `clear-failure-incomplete`, `clear-failure-search-f
 | PCHIP                 | `y`, `y'`, `y''` | Supported     | —               | Smooth curves                      |
 | Akima                 | `y`, `y'`, `y''` | Supported     | —               | Smooth curves                      |
 
-#### One-Click Clear Target Assignment {#graphwar-killer-pathfinding-targets}
+#### One-Click Clear Aiming Rules {#graphwar-killer-pathfinding-targets}
 
-- Every One-Click Clear mode prefers the soldier center. If the center is not on the `x+` side of the current path end, it uses the outermost integer screenshot pixel strictly inside both the hit circle and usable bounds.
-- Targets with the same initial x are assigned hit-circle positions from `x-` to `x+`, ordered by descending screenshot y and stable input order for equal y. Each soldier uses its own safe interval; a target that cannot advance keeps its initial point.
-- Ordinary modes build the DAG from final target x values. Targets with the same final x remain alternatives in one layer and never receive an edge that violates strict `x+`.
-- Glitch One-Click Clear scans final target x values layer by layer. Equal-x candidates are tried from the same committed prefix, and the first successful candidate becomes that layer's control point.
-- Every result is validated with the full trajectory before the path is updated. Soldiers hit incidentally still count even when they were not selected as control points.
-- Point removal is off by default. When enabled, it tries to remove unnecessary control points without skipping final trajectory validation.
+- It aims at soldier centers first. If a center is not to the right of the current path end, it aims at the rightmost usable point inside that soldier's hit circle.
+- When multiple soldiers share the same x coordinate, their aim points are offset within their hit circles so the path can keep moving right.
+- The complete trajectory is validated before the path is updated. Soldiers hit along the way also count toward the result.
+- Point Removal can shorten the path when doing so preserves the hits.
 
 #### Routing Algorithms {#graphwar-killer-pathfinding-engines}
 
@@ -94,9 +80,7 @@ Automatic file names include `clear-failure-incomplete`, `clear-failure-search-f
 
 ### Glitch Mode {#graphwar-killer-step-glitch-mode}
 
-Glitch Mode applies to Step `y'` and `y''`. Each segment first tries a normal Step. It replaces only a segment that encounters an obstacle or whose final formula replay cannot connect to the current control point with a vertical jump. With no obstacle data, the whole plane is treated as passable; when obstacle data is available, real samples still undergo collision checks.
-
-`y''` computes short acceleration and braking pulses from the pre-jump and gate-crossing samples, then selects candidates by landing `y` and collision results. It does not additionally validate whether the post-pulse `y'` is restored, so later segments may inherit residual velocity. When tunneling through real obstacles, reading accurate obstacle and soldier positions through Agent is recommended.
+Glitch Mode is available for Step `y'` and `y''`. When a normal Step cannot get around an obstacle, it tries a vertical jump and still validates collisions when obstacle data is available. Use Agent when accurate obstacle crossing is important.
 
 ### Managed Mode {#graphwar-killer-managed-mode}
 

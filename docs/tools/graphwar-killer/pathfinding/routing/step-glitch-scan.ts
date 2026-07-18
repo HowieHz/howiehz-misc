@@ -33,6 +33,8 @@ import type {
 } from "../../formula/trajectory/sampling";
 
 const glitchWindows = createGlitchWindows();
+/** 统一搜索网格中固定的近到远回退距离。 */
+const GATE_BACKOFF_COLUMNS = [1, 2] as const;
 
 /** 固定 simulation mask 的 x+ 水平可达索引，可在单目标和一键清图的多次扫描间复用。 */
 export interface GraphwarStepGlitchScanMaskIndex {
@@ -43,7 +45,7 @@ export interface GraphwarStepGlitchScanMaskIndex {
   readonly simulationMask: Uint8Array;
 }
 
-/** Inputs that remain fixed while one scanner evaluates one or more targets. */
+/** 单个扫描器评估一个或多个目标时保持不变的输入。 */
 export interface GraphwarStepGlitchPrefixOptions {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
@@ -66,7 +68,7 @@ export interface GraphwarStepGlitchPrefixOptions {
   sourcePath: readonly PixelPoint[];
 }
 
-/** Per-target control point and physical hit circle evaluated by a prepared scanner. */
+/** 已准备好的扫描器用于评估单个目标的控制点和实际命中圈。 */
 export interface GraphwarStepGlitchTargetOptions {
   /** 当前目标的实际命中圈。 */
   hitTarget: GraphwarTrajectoryTargetCircle;
@@ -74,10 +76,10 @@ export interface GraphwarStepGlitchTargetOptions {
   targetPoint: PixelPoint;
 }
 
-/** Complete one-shot scan input when a reusable scanner is not needed. */
+/** 不需要复用扫描器时使用的完整单次扫描输入。 */
 export type GraphwarStepGlitchScanOptions = GraphwarStepGlitchPrefixOptions & GraphwarStepGlitchTargetOptions;
 
-/** Work and timing fields shared by hit and failure results. */
+/** 命中结果和失败结果共用的工作统计与耗时字段。 */
 interface GraphwarStepGlitchScanResultBase {
   /** 实际执行过最终量化公式模拟的候选路径数。 */
   expandedStates: number;
@@ -87,7 +89,7 @@ interface GraphwarStepGlitchScanResultBase {
   timings: GraphwarStepGlitchScanTiming[];
 }
 
-/** Quantized replay result for one target scan. */
+/** 单个目标扫描的量化回放结果。 */
 export type GraphwarStepGlitchScanResult =
   | (GraphwarStepGlitchScanResultBase & {
       acceptedPoint: GraphPoint;
@@ -102,7 +104,7 @@ export type GraphwarStepGlitchScanResult =
       status: "invalid-input" | "no-path" | "unsupported";
     });
 
-/** Reuses one prepared prefix result; callers may also provide a reusable compatible mask index. */
+/** 复用一份已准备好的 prefix 结果；调用方也可以提供兼容且可复用的 mask 索引。 */
 export interface GraphwarStepGlitchPrefixScanner {
   scan: (target: GraphwarStepGlitchTargetOptions) => GraphwarStepGlitchScanResult;
 }
@@ -114,7 +116,7 @@ export interface GraphwarStepGlitchPrefixEvidence {
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
 }
 
-/** Stable scan stages consumed by worker and page timing aggregation. */
+/** Worker 和页面耗时汇总使用的稳定扫描阶段。 */
 export type GraphwarStepGlitchScanTimingStage =
   | "prefix-evidence-hit"
   | "prefix-evidence-miss"
@@ -122,7 +124,7 @@ export type GraphwarStepGlitchScanTimingStage =
   | "scan-candidates"
   | "validate-direct";
 
-/** Elapsed time for one stable scan stage. */
+/** 单个稳定扫描阶段的耗时。 */
 export interface GraphwarStepGlitchScanTiming {
   elapsedMs: number;
   stage: GraphwarStepGlitchScanTimingStage;
@@ -147,7 +149,7 @@ type PreparedGraphwarStepGlitchPrefixResult =
   | PreparedGraphwarStepGlitchPrefix
   | Exclude<GraphwarStepGlitchScanResult, { status: "hit" }>;
 
-/** One reachable scan frontier before target/gate candidates are expanded. */
+/** 在展开目标或 gate 候选前的一个可达扫描前沿。 */
 interface ScanState {
   acceptedPoint: GraphPoint;
   /** 直连整式的真实碰撞 x；存在时门位置不得再由前缀所在像素行推算。 */
@@ -159,7 +161,7 @@ interface ScanState {
   stepGlitchXWindows: readonly (GraphwarStepGlitchXWindow | undefined)[];
 }
 
-/** One candidate path awaiting final quantized formula replay. */
+/** 等待最终量化公式回放的候选路径。 */
 interface ScanCandidate {
   controlX: number;
   kind: "gate" | "target";
@@ -167,7 +169,7 @@ interface ScanCandidate {
   stepGlitchXWindows: readonly (GraphwarStepGlitchXWindow | undefined)[];
 }
 
-/** Reachable landing row and its target/start proximity ranking. */
+/** 可达的落点行及其与目标行、起始行的接近程度排序信息。 */
 interface ScanLandingRow {
   /** 从原碰撞列开始沿 x+ 连续可达的最远列。 */
   farthestX: number;
@@ -176,31 +178,51 @@ interface ScanLandingRow {
   startDeltaY: number;
   /** 目标命中圈中心行到候选行的垂直像素距离。 */
   targetDeltaY: number;
+  /** 按回退顺序记录的两位可用性掩码：第 0 位表示 B-1，第 1 位表示 B-2。 */
+  usableWindowBatchMask: number;
 }
 
-/** One quantized gate window derived from a collision frontier. */
+/** 根据碰撞前沿生成的一个量化 gate 窗口。 */
 interface ScanGateWindow {
   controlX: number;
   decimalPlaces: number;
+  /** 仅供非标准缩放下右门跨列时复用落点行的原碰撞列查询结果。 */
   searchX: number;
   startX: number;
 }
 
-/** Deferred row expansion for one gate window batch. */
+/** 按一个回退距离分组的 11 档 gate 宽度；标准 bounds 下整组可以共享一次可达性查询。 */
+interface ScanGateWindowBatch {
+  /** 共享的右门列；为 undefined 时，非标准 bounds 使用旧的逐窗口 fallback。 */
+  sharedWindowSearchX: number | undefined;
+  /** 只有标准回退列才能使用“跳过下一批”的单调性规则。 */
+  usesMonotonicBackoffPruning: boolean;
+  /** 所有宽度共享右门列时实际查询的原生列；否则仅作为 fallback 提示。 */
+  searchX: number;
+  windows: ScanGateWindow[];
+}
+
+/** 延迟展开已排序落点行和 gate 窗口批次所需的数据。 */
 interface ScanGateRows {
   firstBlockedSearchX: number;
   rows: ScanLandingRow[];
   state: ScanState;
-  windows: ScanGateWindow[];
+  windowBatches: ScanGateWindowBatch[];
 }
 
-/** Iterative DFS work item; the scanner never recurses through candidate states. */
+/** 迭代 DFS 工作项；扫描器不会通过候选状态递归调用自身。 */
 type ScanWorkItem =
   | { candidate: ScanCandidate; type: "candidate" }
-  | { rowIndex: number; scan: ScanGateRows; type: "gate-rows"; windowIndex: number }
+  | {
+      rowIndex: number;
+      scan: ScanGateRows;
+      type: "gate-rows";
+      windowBatchIndex: number;
+      windowIndex: number;
+    }
   | { state: ScanState; type: "state" };
 
-/** Physical replay evidence for one complete Step path. */
+/** 一条完整 Step 路径的实际回放证据。 */
 export interface GraphwarStepGlitchReplayResult {
   acceptedPoint?: GraphPoint;
   blockedPoint?: GraphPoint;
@@ -213,7 +235,7 @@ export interface GraphwarStepGlitchReplayResult {
   targetsHit: boolean;
 }
 
-/** Direct target replay performed before any gate candidates are generated. */
+/** 生成任何 gate 候选前先执行的目标直连回放。 */
 interface InitialDirectReplay {
   path: PixelPoint[];
   replay: GraphwarStepGlitchReplayResult;
@@ -524,32 +546,60 @@ function scanPreparedGraphwarStepGlitchPath(
           maskIndex,
         );
         if (scan) {
-          work.push({ rowIndex: 0, scan, type: "gate-rows", windowIndex: 0 });
+          work.push({ rowIndex: 0, scan, type: "gate-rows", windowBatchIndex: 0, windowIndex: 0 });
         }
       }
       continue;
     }
 
     if (item.type === "gate-rows") {
-      let { rowIndex, windowIndex } = item;
+      let { rowIndex, windowBatchIndex, windowIndex } = item;
       let candidate: ScanCandidate | undefined;
       while (rowIndex < item.scan.rows.length) {
         const row = item.scan.rows[rowIndex];
-        const window = item.scan.windows[windowIndex];
-        windowIndex += 1;
-        if (windowIndex >= item.scan.windows.length) {
+        if (!row) {
+          break;
+        }
+        const windowBatch = item.scan.windowBatches[windowBatchIndex];
+        if (!windowBatch || windowBatchIndex >= item.scan.windowBatches.length) {
           rowIndex += 1;
+          windowBatchIndex = 0;
+          windowIndex = 0;
+          continue;
+        }
+        if ((row.usableWindowBatchMask & (1 << windowBatchIndex)) === 0) {
+          windowBatchIndex += 1;
+          windowIndex = 0;
+          continue;
+        }
+        const window = windowBatch.windows[windowIndex];
+        windowIndex += 1;
+        if (windowIndex >= windowBatch.windows.length) {
+          windowBatchIndex += 1;
           windowIndex = 0;
         }
-        if (!row || !window) {
+        if (windowBatchIndex >= item.scan.windowBatches.length) {
+          rowIndex += 1;
+          windowBatchIndex = 0;
+        }
+        if (!window) {
+          continue;
+        }
+        if (windowBatch.sharedWindowSearchX === undefined) {
+          // 非标准 bounds 可能让不同宽度落在不同列；这里保留旧的精确检查，不能把一列的结果当成另一列的缓存。
+          // 标准 Graphwar bounds 不会进入这个分支。
+          const farthestX = getFarthestFreeX(
+            maskIndex,
+            Math.min(window.searchX, item.scan.firstBlockedSearchX),
+            row.row,
+          );
+          if (farthestX < Math.max(window.searchX, item.scan.firstBlockedSearchX)) {
+            continue;
+          }
+        } else if (row.farthestX < window.searchX) {
           continue;
         }
 
-        // 行评分固定在原碰撞列；每档门仍用 O(1) 查表排除落在前一格障碍里的情况。
-        const farthestX = getFarthestFreeX(maskIndex, Math.min(window.searchX, item.scan.firstBlockedSearchX), row.row);
-        if (farthestX < Math.max(window.searchX, item.scan.firstBlockedSearchX)) {
-          continue;
-        }
         const controlPoint = createControlPointForFormulaEndX(
           window.controlX,
           targetGraphPoint.x,
@@ -571,7 +621,7 @@ function scanPreparedGraphwarStepGlitchPath(
       }
       // 先压入续扫位置，再验证当前候选；成功分支会位于栈顶，失败后则从下一档窗口继续。
       if (rowIndex < item.scan.rows.length) {
-        work.push({ rowIndex, scan: item.scan, type: "gate-rows", windowIndex });
+        work.push({ rowIndex, scan: item.scan, type: "gate-rows", windowBatchIndex, windowIndex });
       }
       if (candidate) {
         work.push({ candidate, type: "candidate" });
@@ -744,7 +794,7 @@ function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, bounda
       });
 }
 
-/** 从首次阻挡像素的前一格放置左门，并准备最多 450 个稳定排序的落点行。 */
+/** 从首次阻挡像素沿 x- 回退一列和两列放置左门，并准备稳定排序的落点行。 */
 function createGateRowScan(
   state: ScanState,
   firstBlockedSearchX: number,
@@ -757,66 +807,112 @@ function createGateRowScan(
     return undefined;
   }
 
-  const rawLeftGateX = searchBoundaryToGraphX(firstBlockedSearchX - 1, options, maskIndex.mirrored);
   const obstacleLeftX = searchBoundaryToGraphX(firstBlockedSearchX, options, maskIndex.mirrored);
-  let leftGateX: number | undefined;
-  let leftGateDecimalPlaces: number | undefined;
-  // 从用户精度开始直接验证门是否仍在障碍格左侧。不用 log10 估算：double 减法可能把
-  // 0.01 变成 0.009999...，在十进制幂边界多估一位；这个有界循环通常首轮即通过。
-  for (
-    let decimalPlaces = clampDecimalPlaces(options.settings.decimalPlaces);
-    decimalPlaces <= MAX_FORMULA_DECIMAL_PLACES;
-    decimalPlaces += 1
-  ) {
-    const quantizedLeftGateX = -floorToDecimalPlaces(-rawLeftGateX, decimalPlaces);
-    if (quantizedLeftGateX < obstacleLeftX) {
-      leftGateX = quantizedLeftGateX;
-      leftGateDecimalPlaces = decimalPlaces;
-      break;
+  const windowBatches: ScanGateWindowBatch[] = [];
+  for (const backoffColumns of GATE_BACKOFF_COLUMNS) {
+    const searchX = firstBlockedSearchX - backoffColumns;
+    if (searchX < 0) {
+      continue;
     }
-  }
-  // raw double 不是可提交的公式门；15 位仍无法留在障碍格外时只淘汰当前扫描候选。
-  if (leftGateX === undefined || leftGateDecimalPlaces === undefined) {
-    return undefined;
-  }
 
-  const windows: ScanGateWindow[] = [];
-  for (const window of glitchWindows) {
-    const gateDecimalPlaces = Math.max(leftGateDecimalPlaces, window.decimalPlaces);
-    // L 与 width 已按 gateDecimalPlaces 表示；就近量化只清理 binary 加法残差，不移动窗口方向。
-    const controlX = roundToDecimalPlaces(leftGateX + window.width, gateDecimalPlaces);
-    if (
-      !graphXAdvancesStrictly(state.acceptedPoint.x, leftGateX) ||
-      !graphXAdvancesStrictly(leftGateX, controlX) ||
-      !graphXAdvancesStrictly(controlX, target.x)
+    const rawLeftGateX = searchBoundaryToGraphX(searchX, options, maskIndex.mirrored);
+    let leftGateX: number | undefined;
+    let leftGateDecimalPlaces: number | undefined;
+    // 从用户精度开始直接验证门是否仍在障碍格左侧。不用 log10 估算：double 减法可能把
+    // 0.01 变成 0.009999...，在十进制幂边界多估一位；这个有界循环通常首轮即通过。
+    for (
+      let decimalPlaces = clampDecimalPlaces(options.settings.decimalPlaces);
+      decimalPlaces <= MAX_FORMULA_DECIMAL_PLACES;
+      decimalPlaces += 1
     ) {
+      const quantizedLeftGateX = -floorToDecimalPlaces(-rawLeftGateX, decimalPlaces);
+      if (quantizedLeftGateX < obstacleLeftX) {
+        leftGateX = quantizedLeftGateX;
+        leftGateDecimalPlaces = decimalPlaces;
+        break;
+      }
+    }
+    // raw double 不是可提交的公式门；15 位仍无法留在障碍格外时只淘汰当前回退距离。
+    if (leftGateX === undefined || leftGateDecimalPlaces === undefined) {
       continue;
     }
-    // 十进制量化可能让相邻窄窗落到同一个右门；只保留先出现的较宽档。
-    if (windows.at(-1)?.controlX === controlX) {
-      continue;
+
+    const windows: ScanGateWindow[] = [];
+    for (const window of glitchWindows) {
+      const gateDecimalPlaces = Math.max(leftGateDecimalPlaces, window.decimalPlaces);
+      // L 与 width 已按 gateDecimalPlaces 表示；就近量化只清理 binary 加法残差，不移动窗口方向。
+      const controlX = roundToDecimalPlaces(leftGateX + window.width, gateDecimalPlaces);
+      if (
+        !graphXAdvancesStrictly(state.acceptedPoint.x, leftGateX) ||
+        !graphXAdvancesStrictly(leftGateX, controlX) ||
+        !graphXAdvancesStrictly(controlX, target.x)
+      ) {
+        continue;
+      }
+      // 十进制量化可能让相邻窄窗落到同一个右门；只保留先出现的较宽档。
+      if (windows.at(-1)?.controlX === controlX) {
+        continue;
+      }
+      windows.push({
+        controlX,
+        decimalPlaces: gateDecimalPlaces,
+        searchX: graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.mirrored),
+        startX: leftGateX,
+      });
     }
-    windows.push({
-      controlX,
-      decimalPlaces: gateDecimalPlaces,
-      searchX: graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.mirrored),
-      startX: leftGateX,
-    });
+    if (windows.length > 0) {
+      const firstWindow = windows[0];
+      const sharedWindowSearchX =
+        firstWindow && windows.every((window) => window.searchX === firstWindow.searchX)
+          ? firstWindow.searchX
+          : undefined;
+      windowBatches.push({
+        searchX: sharedWindowSearchX === undefined ? searchX : Math.min(sharedWindowSearchX, firstBlockedSearchX),
+        sharedWindowSearchX,
+        usesMonotonicBackoffPruning: sharedWindowSearchX === searchX,
+        windows,
+      });
+    }
   }
-  if (windows.length === 0) {
+  if (windowBatches.length === 0) {
     return undefined;
   }
 
   const rows: ScanLandingRow[] = [];
-  // 使用固定碰撞列让每个 y 只有一个评分；具体窗口能否落稳由懒生成时的查表和最终回放决定。
+  // 原碰撞列只查询一次用于评分；每个回退批次再查询一次，供其中全部门宽复用。
   for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
     const farthestX = getFarthestFreeX(maskIndex, firstBlockedSearchX, row);
-    if (farthestX >= firstBlockedSearchX) {
+    if (farthestX < firstBlockedSearchX) {
+      continue;
+    }
+    let usableWindowBatchMask = 0;
+    for (let windowBatchIndex = 0; windowBatchIndex < windowBatches.length; windowBatchIndex += 1) {
+      const windowBatch = windowBatches[windowBatchIndex];
+      if (!windowBatch) {
+        break;
+      }
+      if (windowBatch.sharedWindowSearchX === undefined) {
+        // fallback 会在下面逐档检查宽度，因此不能使用标准的行级单调性剪枝。
+        usableWindowBatchMask |= 1 << windowBatchIndex;
+        continue;
+      }
+      if (getFarthestFreeX(maskIndex, windowBatch.searchX, row) < firstBlockedSearchX) {
+        // 更早的回退列也必须穿过当前列；当前批次失败后无需继续查询。
+        const nextWindowBatch = windowBatches[windowBatchIndex + 1];
+        if (!nextWindowBatch || nextWindowBatch.usesMonotonicBackoffPruning) {
+          break;
+        }
+        continue;
+      }
+      usableWindowBatchMask |= 1 << windowBatchIndex;
+    }
+    if (usableWindowBatchMask !== 0) {
       rows.push({
         farthestX,
         row,
         startDeltaY: Math.abs(row - state.row),
         targetDeltaY: Math.abs(row - targetRow),
+        usableWindowBatchMask,
       });
     }
   }
@@ -828,7 +924,7 @@ function createGateRowScan(
       left.startDeltaY - right.startDeltaY ||
       left.row - right.row,
   );
-  return rows.length > 0 ? { firstBlockedSearchX, rows, state, windows } : undefined;
+  return rows.length > 0 ? { firstBlockedSearchX, rows, state, windowBatches } : undefined;
 }
 
 /** 查询指定行从 searchX 开始连续可通行区的最右列。 */
@@ -917,7 +1013,7 @@ function createGlitchWindows() {
   return windows;
 }
 
-/** Returns the first pre-collision sample at or beyond the requested control x. */
+/** 返回碰撞前第一个不小于指定控制 x 的采样点。 */
 export function findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
   points: readonly GraphPoint[],
   obstacleHitIndex: number,

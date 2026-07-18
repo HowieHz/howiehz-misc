@@ -314,7 +314,7 @@ describe("Step ODE glitch scan", () => {
     }
   });
 
-  it("rejects only the current gate when 15 decimals still collapse onto the obstacle", () => {
+  it("continues with an earlier gate when the adjacent gate still collapses at 15 decimals", () => {
     const collapsedBounds: GraphBounds = {
       maxX: 10_000_000_000_001,
       maxY: 10,
@@ -342,9 +342,9 @@ describe("Step ODE glitch scan", () => {
     });
 
     expect(result.status).toBe("no-path");
-    // 没有可提交的左门时不生成公式候选；外层扫描以普通 no-path 结束，不抛实现异常。
-    expect(result.expandedStates).toBe(1);
-  });
+    // B-1 量化坍缩只淘汰该批；B-2 有数值间距时仍可生成候选，最终以普通 no-path 结束。
+    expect(result.expandedStates).toBeGreaterThan(1);
+  }, 30_000);
 
   it("keeps the pixel-derived right gate that used to exceed the fixed ULP retry limit", () => {
     const wideBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
@@ -494,7 +494,7 @@ function createEmptyMask() {
   return new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
 }
 
-/** Counts accepted minimum-step segments whose vertical displacement still exceeds Graphwar's distance limit. */
+/** 统计已接受的最小步长线段中，垂直位移仍超过 Graphwar 距离限制的数量。 */
 function countPhysicalStepGlitchJumps(points: readonly { x: number; y: number }[]) {
   let count = 0;
   for (let index = 1; index < points.length; index += 1) {

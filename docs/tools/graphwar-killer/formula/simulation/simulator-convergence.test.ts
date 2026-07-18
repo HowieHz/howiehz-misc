@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { GRAPHWAR_GAME_SOLDIER_RADIUS } from "../../core/game/constants";
+import {
+  GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE,
+  GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
+  GRAPHWAR_GAME_SOLDIER_RADIUS,
+} from "../../core/game/constants";
 import { createGraphPoint } from "../../core/types";
 import {
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
   GraphwarFormulaConvergenceError,
   sampleGraphwarTrajectory,
+  sampleGraphwarExpressionTrajectory,
 } from "./simulator";
 
 const horizontalPoints = [createGraphPoint(-10, 0), createGraphPoint(0, 0)];
@@ -109,5 +114,44 @@ describe("Graphwar launch-angle convergence contracts", () => {
         steepness: 210,
       }),
     ).toThrow("Second-order trajectory resume state is missing dy.");
+  });
+
+  it("stops y= before accepting a segment that remains too steep at the final bisection step", () => {
+    const result = sampleGraphwarExpressionTrajectory({
+      bounds: { maxX: 1e9, maxY: 1e9, minX: -1e9, minY: -1e9 },
+      equation: "y",
+      expression: "1000000*x",
+      initialState: { currentPoint: createGraphPoint(0, 0), sampleIndex: 0 },
+      soldierCenter: createGraphPoint(0, 0),
+    });
+
+    expect(result.stopReason).toBe("too-steep");
+    expect(result.points).toEqual([createGraphPoint(0, 0)]);
+  });
+
+  it.each([
+    ["dy", "1000000"],
+    ["ddy", "1000000000000"],
+  ] as const)("keeps the source-compatible %s acceptance of an overlong final-step point", (equation, expression) => {
+    const result = sampleGraphwarExpressionTrajectory({
+      bounds: { maxX: 1e9, maxY: 1e9, minX: -1e9, minY: -1e9 },
+      equation,
+      expression,
+      ...(equation === "ddy" ? { launchAngleRadians: 0 } : {}),
+      initialState: {
+        currentPoint: createGraphPoint(0, 0),
+        ...(equation === "ddy" ? { dy: 0 } : {}),
+        sampleIndex: 0,
+      },
+      shouldStop: (_point, _previousPoint, index) => index === 1,
+      soldierCenter: createGraphPoint(0, 0),
+    });
+    const acceptedPoint = result.points[1];
+
+    expect(result.stopReason).toBe("stopped");
+    expect(acceptedPoint?.x).toBe(GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE);
+    expect((acceptedPoint?.x ?? 0) ** 2 + (acceptedPoint?.y ?? 0) ** 2).toBeGreaterThan(
+      GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
+    );
   });
 });

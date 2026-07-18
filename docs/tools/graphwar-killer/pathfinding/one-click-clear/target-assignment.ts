@@ -1,7 +1,13 @@
-import { GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
-import { createMinimumForwardPointAtGraphY } from "../../core/game/forward-rule";
-import { createStrictPixelCircleXPlusIntegerEdgePoint, imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
-import { clampNumber, graphXAdvancesStrictly, nextDownDouble, nextUpDouble } from "../../core/numbers";
+import { GRAPHWAR_AUTO_CONTROL_POINT_MIN_FORWARD_PLANE_PIXELS, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { xPlusGoesRight } from "../../core/geometry";
+import {
+  forwardColumnToPlaneColumn,
+  imageXToNearestPlaneColumn,
+  imageXToPlaneX,
+  planeColumnToForwardColumn,
+  planeXToForwardX,
+  planeXToImageX,
+} from "../../core/plane-grid";
 import { createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 
@@ -22,11 +28,11 @@ export type GraphwarOneClickClearAssignedTarget<
   TTarget extends GraphwarOneClickClearAssignmentCandidate = GraphwarOneClickClearAssignmentCandidate,
 > = TTarget & { routePoint: PixelPoint };
 
-/** 一键清图共享目标分配所需的坐标映射、路径尾点和可用边界。 */
+/** 一键清图共享目标分配所需的坐标映射、路径尾点和半开可用区域。 */
 export interface GraphwarOneClickClearTargetAssignmentOptions<
   TTarget extends GraphwarOneClickClearAssignmentCandidate = GraphwarOneClickClearAssignmentCandidate,
 > {
-  /** 当前 Graphwar 坐标边界。 */
+  /** 当前 Graphwar 坐标边界；只用于确定截图中的 x+ 方向。 */
   bounds: GraphBounds;
   /** 截图内的 Graphwar 平面矩形。 */
   boundsRect: BoundsRect;
@@ -34,293 +40,137 @@ export interface GraphwarOneClickClearTargetAssignmentOptions<
   candidates: readonly TTarget[];
   /** 当前一键清图路径尾点。 */
   pathTail: PixelPoint;
-  /** 可用区域最下方的截图 y 闭边界。 */
-  usableMaxY: number;
-  /** 可用区域最右方的截图 x 闭边界。 */
-  usableMaxX: number;
-  /** 可用区域最上方的截图 y 闭边界。 */
-  usableMinY: number;
-  /** 可用区域最左方的截图 x 闭边界。 */
-  usableMinX: number;
+  /** 自动建路点可使用的半开截图矩形。 */
+  usableRect: BoundsRect;
 }
 
-/** 单个目标在统一递增的 Graph x+ 方向上可使用的闭区间。 */
-interface TargetSafeXInterval {
-  /** 靠近 Graph x- 的安全边界。 */
-  left: number;
-  /** 靠近 Graph x+ 的安全边界。 */
-  right: number;
-}
-
-/** 已确定圆心或安全边缘初始落点的内部目标。 */
+/** 已投影到首选原生 forward 列、等待稳定贪心分配的目标。 */
 interface PreparedTarget<TTarget extends GraphwarOneClickClearAssignmentCandidate> {
+  /** 原始候选及其真实命中对象。 */
   candidate: TTarget;
-  initialForwardX: number;
-  initialKind: "center" | "edge";
-  initialRoutePoint: PixelPoint;
-  safeInterval: TargetSafeXInterval;
-}
-
-/** 子组分配结果；lastControlForwardX 只记录能接入严格递增控制点序列的落点。 */
-interface TargetSubgroupAssignment<TTarget extends GraphwarOneClickClearAssignmentCandidate> {
-  assignedTargets: GraphwarOneClickClearAssignedTarget<TTarget>[];
-  lastControlForwardX: number;
+  /** 最近原生列映射到统一 x+ 坐标后的身份。 */
+  preferredForwardColumn: number;
 }
 
 /**
- * 为所有一键清图模式分配目标落点。
+ * 按 Graphwar 原生整数列为一键清图目标分配自动建路点。
  *
- * 初始 x 只负责分组；每组先放只能使用命中圆 x+ 边缘的目标，再放圆心目标。分配失败的目标保留初始落点，最终结果按分配后的 x 和稳定 y 优先级重新排序，供普通 DAG 和邪道扫描共享。
+ * 单目标优先士兵中心所属列；同列多目标从最小合法 forward 列开始稳定贪心，为后续目标保留空间。每个目标最多检查 770 个列，失败目标不返回占位点。
  */
 export function assignGraphwarOneClickClearTargetRoutePoints<TTarget extends GraphwarOneClickClearAssignmentCandidate>(
   options: GraphwarOneClickClearTargetAssignmentOptions<TTarget>,
 ): GraphwarOneClickClearAssignedTarget<TTarget>[] {
-  const xPlusIsRight = xPlusGoesRight(options.bounds);
-  const pathTailForwardX = toForwardX(options.pathTail.x, xPlusIsRight);
-  const pathTailGraphX = imageToGraphPoint(options.pathTail, options.bounds, options.boundsRect).x;
-  const preparedTargets: PreparedTarget<TTarget>[] = [];
+  if (
+    !Number.isFinite(options.usableRect.x) ||
+    !Number.isFinite(options.usableRect.y) ||
+    !Number.isFinite(options.usableRect.width) ||
+    !Number.isFinite(options.usableRect.height) ||
+    options.usableRect.width <= 0 ||
+    options.usableRect.height <= 0
+  ) {
+    return [];
+  }
 
+  const mirrored = !xPlusGoesRight(options.bounds);
+  const preparedTargets: PreparedTarget<TTarget>[] = [];
   for (const candidate of options.candidates) {
-    const prepared = prepareTarget(candidate, options, xPlusIsRight, pathTailGraphX);
-    if (prepared) {
-      preparedTargets.push(prepared);
+    if (
+      !Number.isFinite(candidate.center.x) ||
+      !Number.isFinite(candidate.center.y) ||
+      !Number.isFinite(candidate.hitRadius) ||
+      candidate.hitRadius <= 0 ||
+      candidate.center.y < options.usableRect.y ||
+      candidate.center.y >= options.usableRect.y + options.usableRect.height
+    ) {
+      continue;
     }
+
+    preparedTargets.push({
+      candidate,
+      preferredForwardColumn: planeColumnToForwardColumn(
+        imageXToNearestPlaneColumn(candidate.center.x, options.boundsRect, mirrored),
+        mirrored,
+      ),
+    });
   }
   preparedTargets.sort(
     (left, right) =>
-      left.initialForwardX - right.initialForwardX ||
+      left.preferredForwardColumn - right.preferredForwardColumn ||
       right.candidate.center.y - left.candidate.center.y ||
       left.candidate.sourceIndex - right.candidate.sourceIndex,
   );
 
   const assignedTargets: GraphwarOneClickClearAssignedTarget<TTarget>[] = [];
-  let lastControlForwardX = pathTailForwardX;
+  let previousForwardX = planeXToForwardX(imageXToPlaneX(options.pathTail.x, options.boundsRect), mirrored);
   let groupStart = 0;
   while (groupStart < preparedTargets.length) {
     const firstTarget = preparedTargets[groupStart];
     if (!firstTarget) {
       break;
     }
+
     let groupEnd = groupStart + 1;
     while (
       groupEnd < preparedTargets.length &&
-      preparedTargets[groupEnd]?.initialRoutePoint.x === firstTarget.initialRoutePoint.x
+      preparedTargets[groupEnd]?.preferredForwardColumn === firstTarget.preferredForwardColumn
     ) {
       groupEnd += 1;
     }
+    const preferCenterColumn = groupEnd - groupStart === 1;
 
-    const group = preparedTargets.slice(groupStart, groupEnd);
-    const nextGroupForwardX = preparedTargets[groupEnd]?.initialForwardX;
-    const edgeResult = assignTargetSubgroup(
-      group.filter((target) => target.initialKind === "edge"),
-      options,
-      xPlusIsRight,
-      lastControlForwardX,
-      { open: false, value: firstTarget.initialForwardX },
-    );
-    assignedTargets.push(...edgeResult.assignedTargets);
-    lastControlForwardX = edgeResult.lastControlForwardX;
+    for (let targetIndex = groupStart; targetIndex < groupEnd; targetIndex += 1) {
+      const target = preparedTargets[targetIndex];
+      if (!target) {
+        continue;
+      }
 
-    const centerTargets = group.filter((target) => target.initialKind === "center");
-    const centerRightBoundary =
-      nextGroupForwardX === undefined
-        ? undefined
-        : {
-            open: true,
-            value: nextGroupForwardX,
-          };
-    const centerResult = assignTargetSubgroup(
-      centerTargets,
-      options,
-      xPlusIsRight,
-      lastControlForwardX,
-      centerRightBoundary,
-    );
-    assignedTargets.push(...centerResult.assignedTargets);
-    lastControlForwardX = centerResult.lastControlForwardX;
+      const minimumForwardColumn = Math.max(
+        0,
+        Math.ceil(previousForwardX + GRAPHWAR_AUTO_CONTROL_POINT_MIN_FORWARD_PLANE_PIXELS),
+      );
+      if (minimumForwardColumn >= GRAPHWAR_PLANE_LENGTH) {
+        continue;
+      }
+
+      // 单目标先检查中心所属列；失败后与同列多目标一样，从最小允许列顺序扫描。
+      let forwardColumn =
+        preferCenterColumn && target.preferredForwardColumn >= minimumForwardColumn
+          ? target.preferredForwardColumn
+          : minimumForwardColumn;
+      let enumeratingFromMinimum = forwardColumn === minimumForwardColumn;
+      let checkedColumnCount = 0;
+      while (forwardColumn < GRAPHWAR_PLANE_LENGTH && checkedColumnCount < GRAPHWAR_PLANE_LENGTH) {
+        const imageX = planeXToImageX(forwardColumnToPlaneColumn(forwardColumn, mirrored), options.boundsRect);
+        checkedColumnCount += 1;
+        if (
+          imageX >= options.usableRect.x &&
+          imageX < options.usableRect.x + options.usableRect.width &&
+          forwardColumn - previousForwardX >= GRAPHWAR_AUTO_CONTROL_POINT_MIN_FORWARD_PLANE_PIXELS &&
+          (imageX - target.candidate.center.x) ** 2 < target.candidate.hitRadius ** 2
+        ) {
+          assignedTargets.push({
+            ...target.candidate,
+            routePoint: createPixelPoint(imageX, target.candidate.center.y),
+          });
+          previousForwardX = forwardColumn;
+          break;
+        }
+
+        if (!enumeratingFromMinimum) {
+          forwardColumn = minimumForwardColumn;
+          enumeratingFromMinimum = true;
+        } else {
+          forwardColumn += 1;
+          // 中心列已经单独检查过；跳过它可保证每个目标最多检查 770 个不同列。
+          if (preferCenterColumn && forwardColumn === target.preferredForwardColumn) {
+            forwardColumn += 1;
+          }
+        }
+      }
+    }
+
     groupStart = groupEnd;
   }
 
-  return assignedTargets.sort(
-    (left, right) =>
-      toForwardX(left.routePoint.x, xPlusIsRight) - toForwardX(right.routePoint.x, xPlusIsRight) ||
-      right.center.y - left.center.y ||
-      left.sourceIndex - right.sourceIndex,
-  );
-}
-
-/** 计算候选的自身安全区间，并选择圆心或 x+ 安全边缘作为初始落点。 */
-function prepareTarget<TTarget extends GraphwarOneClickClearAssignmentCandidate>(
-  candidate: TTarget,
-  options: GraphwarOneClickClearTargetAssignmentOptions<TTarget>,
-  xPlusIsRight: boolean,
-  pathTailGraphX: number,
-): PreparedTarget<TTarget> | undefined {
-  if (
-    !Number.isFinite(candidate.center.x) ||
-    !Number.isFinite(candidate.center.y) ||
-    !Number.isFinite(candidate.hitRadius) ||
-    candidate.hitRadius <= 0 ||
-    candidate.center.y < options.usableMinY ||
-    candidate.center.y > options.usableMaxY
-  ) {
-    return undefined;
-  }
-
-  const safeEdgePoint = createStrictPixelCircleXPlusIntegerEdgePoint(
-    candidate.center,
-    candidate.hitRadius,
-    options.usableMinX,
-    options.usableMaxX,
-    xPlusIsRight,
-  );
-  const centerIsUsable = candidate.center.x >= options.usableMinX && candidate.center.x <= options.usableMaxX;
-  const safeMinPixelX = Math.max(options.usableMinX, nextUpDouble(candidate.center.x - candidate.hitRadius));
-  const safeMaxPixelX = Math.min(options.usableMaxX, nextDownDouble(candidate.center.x + candidate.hitRadius));
-  if (safeMinPixelX > safeMaxPixelX) {
-    return undefined;
-  }
-  const safeInterval = {
-    left: toForwardX(xPlusIsRight ? safeMinPixelX : safeMaxPixelX, xPlusIsRight),
-    right: toForwardX(xPlusIsRight ? safeMaxPixelX : safeMinPixelX, xPlusIsRight),
-  };
-
-  const centerGraphX = imageToGraphPoint(candidate.center, options.bounds, options.boundsRect).x;
-  if (graphXAdvancesStrictly(pathTailGraphX, centerGraphX)) {
-    return centerIsUsable
-      ? {
-          candidate,
-          initialForwardX: toForwardX(candidate.center.x, xPlusIsRight),
-          initialKind: "center",
-          initialRoutePoint: candidate.center,
-          safeInterval,
-        }
-      : undefined;
-  }
-  if (!safeEdgePoint) {
-    return undefined;
-  }
-
-  return graphXAdvancesStrictly(pathTailGraphX, imageToGraphPoint(safeEdgePoint, options.bounds, options.boundsRect).x)
-    ? {
-        candidate,
-        initialForwardX: toForwardX(safeEdgePoint.x, xPlusIsRight),
-        initialKind: "edge",
-        initialRoutePoint: safeEdgePoint,
-        safeInterval,
-      }
-    : undefined;
-}
-
-/** 按 y 优先级稳定贪心分配一个边缘或圆心子组，失败项保留自己的初始落点。 */
-function assignTargetSubgroup<TTarget extends GraphwarOneClickClearAssignmentCandidate>(
-  targets: readonly PreparedTarget<TTarget>[],
-  options: GraphwarOneClickClearTargetAssignmentOptions<TTarget>,
-  xPlusIsRight: boolean,
-  previousControlForwardX: number,
-  requestedRightBoundary: { open: boolean; value: number } | undefined,
-): TargetSubgroupAssignment<TTarget> {
-  if (targets.length === 0) {
-    return { assignedTargets: [], lastControlForwardX: previousControlForwardX };
-  }
-
-  const orderedTargets = [...targets].sort(
-    (left, right) =>
-      right.candidate.center.y - left.candidate.center.y || left.candidate.sourceIndex - right.candidate.sourceIndex,
-  );
-  const minimumSafeX = Math.min(...orderedTargets.map((target) => target.safeInterval.left));
-  const maximumSafeX = Math.max(...orderedTargets.map((target) => target.safeInterval.right));
-  let leftBoundary = Math.max(previousControlForwardX, minimumSafeX);
-  let leftBoundaryOpen = previousControlForwardX >= minimumSafeX;
-  const rightBoundary =
-    requestedRightBoundary && requestedRightBoundary.value <= maximumSafeX
-      ? requestedRightBoundary
-      : { open: false, value: maximumSafeX };
-  const assignedTargets: GraphwarOneClickClearAssignedTarget<TTarget>[] = [];
-
-  for (let index = 0; index < orderedTargets.length; index += 1) {
-    const target = orderedTargets[index];
-    if (!target) {
-      continue;
-    }
-    const remainingCount = orderedTargets.length - index;
-    let idealX: number;
-    if (
-      targets.length === 1 &&
-      target.initialKind === "center" &&
-      target.initialForwardX > previousControlForwardX &&
-      (!rightBoundary.open || target.initialForwardX < rightBoundary.value)
-    ) {
-      idealX = target.initialForwardX;
-    } else if (leftBoundaryOpen) {
-      const availableWidth = rightBoundary.value - leftBoundary;
-      // 圆心 x 相同的目标组在闭右边界前仍有至少一个原生平面像素可分配时，应多留一档余量；
-      // 贴着 nextDown 边界的控制点经公式量化和 RK4 采样后没有可用余量。只能靠边推进的目标，
-      // 或剩余宽度不足一个原生平面像素时，仍保留原来的最外侧/double 分配。
-      idealX =
-        leftBoundary +
-        availableWidth /
-          (remainingCount +
-            (rightBoundary.open ||
-            (target.initialKind === "center" && availableWidth >= options.boundsRect.width / GRAPHWAR_PLANE_LENGTH)
-              ? 1
-              : 0));
-    } else {
-      idealX = leftBoundary;
-    }
-
-    const targetRightBoundary = Math.min(target.safeInterval.right, rightBoundary.value);
-    let assignedForwardX = clampNumber(idealX, target.safeInterval.left, targetRightBoundary);
-    if (leftBoundaryOpen && assignedForwardX <= leftBoundary) {
-      const previousPoint = createPixelPoint(fromForwardX(leftBoundary, xPlusIsRight), target.candidate.center.y);
-      const graphY = imageToGraphPoint(target.candidate.center, options.bounds, options.boundsRect).y;
-      const minimumForwardPoint = createMinimumForwardPointAtGraphY(
-        previousPoint,
-        graphY,
-        options.bounds,
-        options.boundsRect,
-      );
-      assignedForwardX = minimumForwardPoint
-        ? toForwardX(minimumForwardPoint.x, xPlusIsRight)
-        : Number.POSITIVE_INFINITY;
-    }
-
-    const routePoint = createPixelPoint(fromForwardX(assignedForwardX, xPlusIsRight), target.candidate.center.y);
-    const routeGraphX = imageToGraphPoint(routePoint, options.bounds, options.boundsRect).x;
-    const previousGraphX = imageToGraphPoint(
-      createPixelPoint(fromForwardX(previousControlForwardX, xPlusIsRight), target.candidate.center.y),
-      options.bounds,
-      options.boundsRect,
-    ).x;
-    const insideOwnCircle = (routePoint.x - target.candidate.center.x) ** 2 < target.candidate.hitRadius ** 2;
-    const assignmentIsValid =
-      Number.isFinite(assignedForwardX) &&
-      assignedForwardX >= target.safeInterval.left &&
-      assignedForwardX <= target.safeInterval.right &&
-      (rightBoundary.open ? assignedForwardX < rightBoundary.value : assignedForwardX <= rightBoundary.value) &&
-      graphXAdvancesStrictly(previousGraphX, routeGraphX) &&
-      insideOwnCircle;
-
-    assignedTargets.push({
-      ...target.candidate,
-      routePoint: assignmentIsValid ? routePoint : target.initialRoutePoint,
-    });
-    if (assignmentIsValid) {
-      previousControlForwardX = assignedForwardX;
-      leftBoundary = assignedForwardX;
-      leftBoundaryOpen = true;
-    }
-  }
-
-  return { assignedTargets, lastControlForwardX: previousControlForwardX };
-}
-
-/** 将截图 x 投影到统一递增的 Graph x+ 方向。 */
-function toForwardX(pixelX: number, xPlusIsRight: boolean) {
-  return xPlusIsRight ? pixelX : -pixelX;
-}
-
-/** 将统一递增的一维坐标还原成截图像素 x。 */
-function fromForwardX(forwardX: number, xPlusIsRight: boolean) {
-  return xPlusIsRight ? forwardX : -forwardX;
+  return assignedTargets;
 }

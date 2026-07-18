@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
+  GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE,
   GRAPHWAR_PLANE_HEIGHT,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
@@ -469,12 +469,8 @@ describe("Step glitch scanner replay acceptance", () => {
       sourcePath: [start],
       targetPoint: target,
     });
-    let minimumWidth = GRAPHWAR_STEP_SIZE;
-    while (minimumWidth > GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
-      minimumWidth /= 2;
-    }
     const expectedWidths: number[] = [];
-    for (let width = GRAPHWAR_STEP_SIZE; width >= minimumWidth; width /= 2) {
+    for (let width = GRAPHWAR_STEP_SIZE; width >= GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE; width /= 2) {
       expectedWidths.push(width);
     }
     const fartherY = imageToGraphPoint(createPixelPoint(0, fartherRow + 0.5), bounds, boundsRect).y;

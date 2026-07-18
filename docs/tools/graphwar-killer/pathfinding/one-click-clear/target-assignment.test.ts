@@ -1,13 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import { imageToGraphPoint } from "../../core/geometry";
-import { graphXAdvancesStrictly, nextDownDouble } from "../../core/numbers";
+import { graphXAdvancesStrictly } from "../../core/numbers";
+import {
+  forwardColumnToPlaneColumn,
+  imageXToNearestPlaneColumn,
+  imageXToPlaneX,
+  planeColumnToForwardColumn,
+  planeXToForwardX,
+  planeXToImageX,
+} from "../../core/plane-grid";
 import { createPixelPoint } from "../../core/types";
-import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type { BoundsRect, GraphBounds } from "../../core/types";
 import { sampleGraphwarPathTargetSequence } from "../../formula/trajectory/sampling";
 import {
   assignGraphwarOneClickClearTargetRoutePoints,
+  type GraphwarOneClickClearAssignedTarget,
   type GraphwarOneClickClearAssignmentCandidate,
+  type GraphwarOneClickClearTargetAssignmentOptions,
 } from "./target-assignment";
 
 interface TestHitCircle {
@@ -16,20 +26,17 @@ interface TestHitCircle {
 
 type TestTarget = GraphwarOneClickClearAssignmentCandidate<TestHitCircle>;
 
-const bounds: GraphBounds = { maxX: 100, maxY: 50, minX: 0, minY: -50 };
-const boundsRect: BoundsRect = { height: 100, width: 100, x: 0, y: 0 };
+const bounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
+const boundsRect: BoundsRect = { height: 450, width: 770, x: 0, y: 0 };
 const defaultAssignmentOptions = {
   bounds,
   boundsRect,
-  pathTail: createPixelPoint(0, 50),
-  usableMaxX: nextDownDouble(100),
-  usableMaxY: nextDownDouble(100),
-  usableMinX: 0,
-  usableMinY: 0,
+  pathTail: createPixelPoint(0, 225),
+  usableRect: boundsRect,
 };
 
-describe("one-click-clear target assignment", () => {
-  it("keeps an unobstructed singleton center and its original hit object", () => {
+describe("one-click-clear native-column target assignment", () => {
+  it("projects a singleton center to its nearest native column and preserves the hit object", () => {
     const hitCircle = { id: "only" };
     const assigned = assignGraphwarOneClickClearTargetRoutePoints({
       ...defaultAssignmentOptions,
@@ -37,58 +44,39 @@ describe("one-click-clear target assignment", () => {
     });
 
     expect(assigned).toHaveLength(1);
-    expect(assigned[0]?.routePoint).toEqual(createPixelPoint(10.25, 30));
+    expect(assigned[0]?.routePoint).toEqual(createPixelPoint(10, 30));
     expect(assigned[0]?.hitCircle).toBe(hitCircle);
   });
 
-  it("uses the outermost strict integer pixel when only the hit-circle edge advances", () => {
+  it("uses the first strict-circle column when the preferred center column cannot advance", () => {
     const assigned = assignGraphwarOneClickClearTargetRoutePoints({
       ...defaultAssignmentOptions,
       candidates: [createTarget("edge", 10.25, 30, 2, 0)],
-      pathTail: createPixelPoint(10.5, 50),
+      pathTail: createPixelPoint(10.5, 225),
     });
 
     expect(assigned.map((target) => target.routePoint)).toEqual([createPixelPoint(12, 30)]);
   });
 
-  it("clips an edge target to the outermost available safe pixel", () => {
+  it("uses half-open usable boundaries for integer columns and fixed center y", () => {
     const assigned = assignGraphwarOneClickClearTargetRoutePoints({
       ...defaultAssignmentOptions,
-      candidates: [createTarget("clipped", 98, 30, 5, 0)],
-      pathTail: createPixelPoint(98.5, 50),
+      candidates: [createTarget("right", 769.5, 449.999, 2, 0), createTarget("bottom", 100, 450, 2, 1)],
+      pathTail: createPixelPoint(760, 225),
     });
 
-    expect(assigned.map((target) => target.routePoint.x)).toEqual([99]);
+    expect(assigned.map((target) => target.hitCircle.id)).toEqual(["right"]);
+    expect(assigned[0]?.routePoint).toEqual(createPixelPoint(769, 449.999));
   });
 
-  it("keeps a fractional center inside the half-open usable boundary", () => {
-    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
-      ...defaultAssignmentOptions,
-      candidates: [createTarget("fractional", 99.5, 30, 1, 0)],
-      pathTail: createPixelPoint(90, 50),
-    });
-
-    expect(assigned.map((target) => target.routePoint)).toEqual([createPixelPoint(99.5, 30)]);
-  });
-
-  it("omits a soldier whose entire strict hit circle is not on the x+ side", () => {
-    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
-      ...defaultAssignmentOptions,
-      candidates: [createTarget("behind", 10, 30, 2, 0)],
-      pathTail: createPixelPoint(12, 50),
-    });
-
-    expect(assigned).toEqual([]);
-  });
-
-  it("orders equal initial x by descending screenshot y and then stable input index", () => {
+  it("orders one preferred-column group by descending y and stable source index", () => {
     const assigned = assignGraphwarOneClickClearTargetRoutePoints({
       ...defaultAssignmentOptions,
       candidates: [
-        createTarget("small-y", 10, 20, 2, 0),
-        createTarget("equal-y-first", 10, 30, 2, 1),
-        createTarget("large-y", 10, 40, 2, 2),
-        createTarget("equal-y-later", 10, 30, 2, 3),
+        createTarget("small-y", 10, 20, 7, 0),
+        createTarget("equal-y-first", 10, 30, 7, 1),
+        createTarget("large-y", 10, 40, 7, 2),
+        createTarget("equal-y-later", 10, 30, 7, 3),
       ],
     });
 
@@ -98,32 +86,89 @@ describe("one-click-clear target assignment", () => {
       "equal-y-later",
       "small-y",
     ]);
-    expectStrictlyIncreasingGraphXs(assigned.map((target) => target.routePoint));
-    for (const target of assigned) {
-      expect((target.routePoint.x - target.center.x) ** 2).toBeLessThan(target.hitRadius ** 2);
-    }
+    expect(assigned.map((target) => target.routePoint.x)).toEqual([4, 5, 6, 7]);
+    expectAssignmentsValid(defaultAssignmentOptions, assigned);
   });
 
-  it("lets a larger hit circle use space outside a smaller target's interval", () => {
+  it("excludes a radius boundary column instead of moving it inward with a ULP", () => {
     const assigned = assignGraphwarOneClickClearTargetRoutePoints({
       ...defaultAssignmentOptions,
-      candidates: [createTarget("small", 10, 40, 0.25, 0), createTarget("large", 10, 20, 5, 1)],
+      candidates: [createTarget("strict", 50, 30, 7, 0)],
+      pathTail: createPixelPoint(42, 225),
+      usableRect: { ...boundsRect, width: 47 },
     });
 
-    expect(assigned.map((target) => target.hitCircle.id)).toEqual(["small", "large"]);
-    expect(assigned[0]?.routePoint.x).toBeGreaterThan(9.7);
-    expect(assigned[1]?.routePoint.x).toBeGreaterThan(10.25);
-    expectStrictlyIncreasingGraphXs(assigned.map((target) => target.routePoint));
+    expect(assigned[0]?.routePoint.x).toBe(44);
+    expect((assigned[0]?.routePoint.x ?? 0) - 50).not.toBe(-7);
   });
 
-  it("keeps the last equal-center target away from the strict x+ circle boundary", () => {
+  it("assigns executable distinct columns for the reported 419/426 same-x regression", () => {
     const assigned = assignGraphwarOneClickClearTargetRoutePoints({
       ...defaultAssignmentOptions,
-      candidates: [createTarget("lower", 50, 60, 7, 0), createTarget("upper", 50, 40, 7, 1)],
+      candidates: [createTarget("lower", 426, 292, 7, 0), createTarget("upper", 426, 100, 7, 1)],
+      pathTail: createPixelPoint(419, 100),
     });
 
-    expect(assigned[1]?.routePoint.x).toBe(50);
-    expectStrictlyIncreasingGraphXs(assigned.map((target) => target.routePoint));
+    expect(assigned.map((target) => target.routePoint.x)).toEqual([420, 421]);
+    expectAssignmentsValid({ ...defaultAssignmentOptions, pathTail: createPixelPoint(419, 100) }, assigned);
+  });
+
+  it("omits an unassignable target without blocking later preferred columns", () => {
+    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      candidates: [
+        createTarget("first-small", 10, 40, 0.1, 0),
+        createTarget("middle-large", 10, 30, 5, 1),
+        createTarget("failed-small", 10, 20, 0.1, 2),
+        createTarget("later", 20, 30, 1, 3),
+      ],
+    });
+
+    expect(assigned.map((target) => target.hitCircle.id)).toEqual(["first-small", "middle-large", "later"]);
+    expect(assigned.map((target) => target.routePoint.x)).toEqual([10, 11, 20]);
+  });
+
+  it("absorbs near-integer path-tail residue but requires a full pixel after fractional tails", () => {
+    const nearInteger = assignGraphwarOneClickClearTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      candidates: [createTarget("near", 426, 30, 7, 0)],
+      pathTail: createPixelPoint(419.00000000000006, 225),
+    });
+    const fractional = assignGraphwarOneClickClearTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      candidates: [createTarget("fractional", 426, 30, 7, 0)],
+      pathTail: createPixelPoint(419.25, 225),
+    });
+
+    expect(nearInteger[0]?.routePoint.x).toBe(426);
+    expect(fractional[0]?.routePoint.x).toBe(426);
+
+    const forcedNearInteger = assignGraphwarOneClickClearTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      candidates: [createTarget("near", 420, 30, 2, 0)],
+      pathTail: createPixelPoint(419.00000000000006, 225),
+    });
+    const forcedFractional = assignGraphwarOneClickClearTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      candidates: [createTarget("fractional", 420, 30, 2, 0)],
+      pathTail: createPixelPoint(419.25, 225),
+    });
+    expect(forcedNearInteger[0]?.routePoint.x).toBe(420);
+    expect(forcedFractional[0]?.routePoint.x).toBe(421);
+  });
+
+  it("keeps forward columns increasing when mirrored screenshot x decreases", () => {
+    const mirroredBounds: GraphBounds = { ...bounds, maxX: -25, minX: 25 };
+    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
+      ...defaultAssignmentOptions,
+      bounds: mirroredBounds,
+      candidates: [createTarget("large-y", 80, 40, 3, 0), createTarget("small-y", 80, 20, 3, 1)],
+      pathTail: createPixelPoint(90, 225),
+    });
+    const graphXs = assigned.map((target) => imageToGraphPoint(target.routePoint, mirroredBounds, boundsRect).x);
+
+    expect(assigned.map((target) => target.routePoint.x)).toEqual([82, 81]);
+    expect(graphXAdvancesStrictly(graphXs[0] ?? Number.NaN, graphXs[1] ?? Number.NaN)).toBe(true);
   });
 
   it("preserves both same-x hits after Step formula quantization and sampling", () => {
@@ -133,7 +178,6 @@ describe("one-click-clear target assignment", () => {
       minX: -25,
       minY: -14.61038961038961,
     };
-    const replayBoundsRect: BoundsRect = { height: 450, width: 770, x: 0, y: 0 };
     const firstCenter = createPixelPoint(609, 370);
     const secondCenter = createPixelPoint(609, 280);
     const pathTail = createPixelPoint(599, 146);
@@ -157,20 +201,17 @@ describe("one-click-clear target assignment", () => {
     ];
     const assigned = assignGraphwarOneClickClearTargetRoutePoints({
       bounds: replayBounds,
-      boundsRect: replayBoundsRect,
+      boundsRect,
       candidates: [
         createTarget("first", firstCenter.x, firstCenter.y, 7, 0),
         createTarget("second", secondCenter.x, secondCenter.y, 7, 1),
       ],
       pathTail,
-      usableMaxX: nextDownDouble(770),
-      usableMaxY: nextDownDouble(450),
-      usableMinX: 0,
-      usableMinY: 0,
+      usableRect: boundsRect,
     });
     const result = sampleGraphwarPathTargetSequence({
       bounds: replayBounds,
-      boundsRect: replayBoundsRect,
+      boundsRect,
       points: [...prefix, ...assigned.map((target) => target.routePoint)],
       settings: {
         algorithm: "step",
@@ -190,92 +231,47 @@ describe("one-click-clear target assignment", () => {
       targetPoints: assigned.map((target) => target.routePoint),
     });
 
+    expect(assigned.map((target) => target.routePoint.x)).toEqual([603, 604]);
     expect(result.reachesTargetSequenceBeforeObstacle).toBe(true);
     expect(result.reachedTargetCount).toBe(2);
   });
 
-  it("retains a failed target at its initial point and continues with later groups", () => {
-    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
-      ...defaultAssignmentOptions,
-      candidates: [
-        createTarget("first-small", 10, 40, 0.1, 0),
-        createTarget("middle-large", 10, 30, 5, 1),
-        createTarget("failed-small", 10, 20, 0.1, 2),
-        createTarget("later", 20, 30, 1, 3),
-      ],
-    });
+  it("keeps bounded exhaustive assignments finite, half-open, strict-circle, and at least one pixel forward", () => {
+    for (const scale of [0.5, 1, 2]) {
+      const scaledRect = { height: 450 * scale, width: 770 * scale, x: 10.25, y: 20.75 };
+      for (const mirrored of [false, true]) {
+        for (const centerColumn of [0, 1, 7, 384, 763, 769]) {
+          const centerForwardColumn = planeColumnToForwardColumn(centerColumn, mirrored);
+          for (const hitRadiusPlanePixels of [1.1, 3, 7]) {
+            for (const pathTailOffset of [-8, 0, 8]) {
+              const pathTailForwardX = centerForwardColumn + pathTailOffset;
+              const pathTailPlaneX = mirrored ? 769 - pathTailForwardX : pathTailForwardX;
+              for (const targetCount of [1, 2, 3]) {
+                const options: GraphwarOneClickClearTargetAssignmentOptions<TestTarget> = {
+                  bounds: mirrored ? { ...bounds, maxX: -25, minX: 25 } : bounds,
+                  boundsRect: scaledRect,
+                  candidates: Array.from({ length: targetCount }, (_, index) =>
+                    createTarget(
+                      `target-${index}`,
+                      planeXToImageX(centerColumn, scaledRect),
+                      scaledRect.y + 100 * scale + index,
+                      hitRadiusPlanePixels * scale,
+                      index,
+                    ),
+                  ),
+                  pathTail: createPixelPoint(planeXToImageX(pathTailPlaneX, scaledRect), scaledRect.y + 200 * scale),
+                  usableRect: scaledRect,
+                };
+                const assigned = assignGraphwarOneClickClearTargetRoutePoints(options);
 
-    expect(assigned.map((target) => target.hitCircle.id)).toEqual([
-      "first-small",
-      "failed-small",
-      "middle-large",
-      "later",
-    ]);
-    expect(assigned.find((target) => target.hitCircle.id === "failed-small")?.routePoint.x).toBe(10);
-    expect(assigned.find((target) => target.hitCircle.id === "later")?.routePoint.x).toBe(20);
-  });
-
-  it("processes edge targets before center targets that share the same initial x", () => {
-    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
-      ...defaultAssignmentOptions,
-      candidates: [createTarget("center", 12, 40, 0.25, 0), createTarget("edge", 10.25, 20, 2, 1)],
-      pathTail: createPixelPoint(11.5, 50),
-    });
-
-    expect(assigned.map((target) => target.hitCircle.id)).toEqual(["edge", "center"]);
-    expect(assigned[0]?.routePoint.x).toBe(12);
-    expect(assigned[1]?.routePoint.x).toBeGreaterThan(12);
-  });
-
-  it("pushes a rounded equal slot to the next usable Graphwar double", () => {
-    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
-      ...defaultAssignmentOptions,
-      candidates: [
-        createTarget("edge", 0.25, 10, 1, 0),
-        ...Array.from({ length: 20 }, (_, index) => createTarget(`center-${index}`, 1, 80 - index, 2e-15, index + 1)),
-      ],
-      pathTail: createPixelPoint(0.9, 50),
-    });
-    const firstCenter = assigned.find((target) => target.hitCircle.id === "center-0");
-
-    expect(firstCenter?.routePoint.x).toBeGreaterThan(1);
-    expect((firstCenter?.routePoint.x ?? Number.POSITIVE_INFINITY) - 1).toBeLessThan(2e-15);
-  });
-
-  it("keeps Graph x increasing when mirrored screenshot x decreases", () => {
-    const mirroredBounds: GraphBounds = { ...bounds, maxX: 0, minX: 100 };
-    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
-      ...defaultAssignmentOptions,
-      bounds: mirroredBounds,
-      candidates: [createTarget("large-y", 80, 40, 3, 0), createTarget("small-y", 80, 20, 3, 1)],
-      pathTail: createPixelPoint(90, 50),
-    });
-    const graphXs = assigned.map((target) => imageToGraphPoint(target.routePoint, mirroredBounds, boundsRect).x);
-
-    expect(assigned.map((target) => target.hitCircle.id)).toEqual(["large-y", "small-y"]);
-    expect(assigned[0]?.routePoint.x).toBeGreaterThan(assigned[1]?.routePoint.x ?? Number.POSITIVE_INFINITY);
-    expect(graphXAdvancesStrictly(graphXs[0] ?? Number.NaN, graphXs[1] ?? Number.NaN)).toBe(true);
-  });
-
-  it("uses the mirrored strict integer edge when a mirrored center does not advance", () => {
-    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
-      ...defaultAssignmentOptions,
-      bounds: { ...bounds, maxX: 0, minX: 100 },
-      candidates: [createTarget("edge", 89.75, 30, 2, 0)],
-      pathTail: createPixelPoint(89.5, 50),
-    });
-
-    expect(assigned.map((target) => target.routePoint)).toEqual([createPixelPoint(88, 30)]);
-  });
-
-  it("omits targets whose fixed center y is outside the usable boundary", () => {
-    const assigned = assignGraphwarOneClickClearTargetRoutePoints({
-      ...defaultAssignmentOptions,
-      candidates: [createTarget("outside-y", 10, 2, 3, 0)],
-      usableMinY: 5,
-    });
-
-    expect(assigned).toEqual([]);
+                expect(assigned.map(summarizeAssignment)).toEqual(createNaiveAssignment(options));
+                expectAssignmentsValid(options, assigned);
+              }
+            }
+          }
+        }
+      }
+    }
   });
 });
 
@@ -296,12 +292,100 @@ function createTarget(
   };
 }
 
-/** 断言截图点映射后的 Graph x 严格递增。 */
-function expectStrictlyIncreasingGraphXs(points: readonly PixelPoint[]) {
-  let previousGraphX = imageToGraphPoint(defaultAssignmentOptions.pathTail, bounds, boundsRect).x;
-  for (const point of points) {
-    const graphX = imageToGraphPoint(point, bounds, boundsRect).x;
-    expect(graphXAdvancesStrictly(previousGraphX, graphX)).toBe(true);
-    previousGraphX = graphX;
+/** 用直接枚举全部 770 列的测试 oracle 计算稳定贪心结果。 */
+function createNaiveAssignment(options: GraphwarOneClickClearTargetAssignmentOptions<TestTarget>) {
+  const mirrored = options.bounds.maxX < options.bounds.minX;
+  const prepared = options.candidates
+    .filter(
+      (candidate) =>
+        Number.isFinite(candidate.center.x) &&
+        Number.isFinite(candidate.center.y) &&
+        Number.isFinite(candidate.hitRadius) &&
+        candidate.hitRadius > 0 &&
+        candidate.center.y >= options.usableRect.y &&
+        candidate.center.y < options.usableRect.y + options.usableRect.height,
+    )
+    .map((candidate) => ({
+      candidate,
+      preferredForwardColumn: planeColumnToForwardColumn(
+        imageXToNearestPlaneColumn(candidate.center.x, options.boundsRect, mirrored),
+        mirrored,
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        left.preferredForwardColumn - right.preferredForwardColumn ||
+        right.candidate.center.y - left.candidate.center.y ||
+        left.candidate.sourceIndex - right.candidate.sourceIndex,
+    );
+  const result: ReturnType<typeof summarizeAssignment>[] = [];
+  let previousForwardX = planeXToForwardX(imageXToPlaneX(options.pathTail.x, options.boundsRect), mirrored);
+
+  let groupStart = 0;
+  while (groupStart < prepared.length) {
+    let groupEnd = groupStart + 1;
+    while (
+      groupEnd < prepared.length &&
+      prepared[groupEnd]?.preferredForwardColumn === prepared[groupStart]?.preferredForwardColumn
+    ) {
+      groupEnd += 1;
+    }
+    const preferCenterColumn = groupEnd - groupStart === 1;
+    for (let index = groupStart; index < groupEnd; index += 1) {
+      const target = prepared[index];
+      if (!target) {
+        continue;
+      }
+
+      const minimumForwardColumn = Math.max(0, Math.ceil(previousForwardX + 1));
+      const legalColumns: { forwardColumn: number; imageX: number }[] = [];
+      for (let forwardColumn = minimumForwardColumn; forwardColumn < 770; forwardColumn += 1) {
+        const imageX = planeXToImageX(forwardColumnToPlaneColumn(forwardColumn, mirrored), options.boundsRect);
+        if (
+          imageX >= options.usableRect.x &&
+          imageX < options.usableRect.x + options.usableRect.width &&
+          (imageX - target.candidate.center.x) ** 2 < target.candidate.hitRadius ** 2
+        ) {
+          legalColumns.push({ forwardColumn, imageX });
+        }
+      }
+      const preferred = preferCenterColumn
+        ? legalColumns.find((column) => column.forwardColumn === target.preferredForwardColumn)
+        : undefined;
+      const assigned = preferred ?? legalColumns[0];
+      if (assigned) {
+        result.push({ id: target.candidate.hitCircle.id, x: assigned.imageX, y: target.candidate.center.y });
+        previousForwardX = assigned.forwardColumn;
+      }
+    }
+    groupStart = groupEnd;
+  }
+  return result;
+}
+
+/** 把生产与 oracle 结果收窄成精确可比较字段。 */
+function summarizeAssignment(target: GraphwarOneClickClearAssignedTarget<TestTarget>) {
+  return { id: target.hitCircle.id, x: target.routePoint.x, y: target.routePoint.y };
+}
+
+/** 统一验证原生列分配器的几何和顺序不变量。 */
+function expectAssignmentsValid(
+  options: Omit<GraphwarOneClickClearTargetAssignmentOptions<TestTarget>, "candidates">,
+  assigned: readonly GraphwarOneClickClearAssignedTarget<TestTarget>[],
+) {
+  const mirrored = options.bounds.maxX < options.bounds.minX;
+  let previousForwardX = planeXToForwardX(imageXToPlaneX(options.pathTail.x, options.boundsRect), mirrored);
+  for (const target of assigned) {
+    const planeX = imageXToPlaneX(target.routePoint.x, options.boundsRect);
+    const forwardX = planeXToForwardX(planeX, mirrored);
+    expect(Number.isFinite(target.routePoint.x)).toBe(true);
+    expect(planeX).toBeCloseTo(Math.round(planeX), 12);
+    expect(target.routePoint.x).toBeGreaterThanOrEqual(options.usableRect.x);
+    expect(target.routePoint.x).toBeLessThan(options.usableRect.x + options.usableRect.width);
+    expect(target.routePoint.y).toBeGreaterThanOrEqual(options.usableRect.y);
+    expect(target.routePoint.y).toBeLessThan(options.usableRect.y + options.usableRect.height);
+    expect((target.routePoint.x - target.center.x) ** 2).toBeLessThan(target.hitRadius ** 2);
+    expect(forwardX - previousForwardX).toBeGreaterThanOrEqual(1 - Number.EPSILON);
+    previousForwardX = forwardX;
   }
 }

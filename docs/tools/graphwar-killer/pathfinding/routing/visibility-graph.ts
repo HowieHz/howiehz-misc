@@ -3,6 +3,7 @@ import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/co
 import { xPlusGoesRight } from "../../core/geometry";
 import { clampNumber, nearlyEqual, roundToDecimalPlaces } from "../../core/numbers";
 import {
+  forwardColumnToPlaneColumn,
   imagePointToPlaneGridPoint,
   mirrorPlaneGridPoint,
   planeGridPointDistance,
@@ -423,7 +424,7 @@ function pointHitsPlaneMaskWithBoundaryExpansion(
   mirrored: boolean,
   boundaryExpansion: number,
 ) {
-  const x = mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - point.x : point.x;
+  const x = forwardColumnToPlaneColumn(point.x, mirrored);
   if (!planePointIsInsideBoundaryExpansion(x, point.y, boundaryExpansion)) {
     return true;
   }
@@ -1595,7 +1596,7 @@ function routeMaskCellIsBlocked(point: PlaneGridPoint, mask: Uint8Array, mirrore
   if (!planePointIsInsideBounds(point.x, point.y)) {
     return false;
   }
-  const x = mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - point.x : point.x;
+  const x = forwardColumnToPlaneColumn(point.x, mirrored);
   return Boolean(mask[point.y * GRAPHWAR_PLANE_LENGTH + x]);
 }
 

@@ -1,4 +1,8 @@
-import { normalizePathForMinimumForwardStep, pathFollowsGraphRule } from "../../core/game/forward-rule";
+import {
+  normalizeAutomaticPathPointForMinimumForwardStep,
+  normalizePathPointForStrictForward,
+  pathFollowsGraphRule,
+} from "../../core/game/forward-rule";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { measureSyncStage, nowMs } from "../../core/time";
@@ -781,7 +785,25 @@ function normalizeSmartPathfindingPathFromPlanePath(
     .map((pathPoint, index, points) =>
       index === points.length - 1 ? targetPoint : planeGridCellCenterToImagePoint(pathPoint, input.boundsRect),
     );
-  return normalizePathForMinimumForwardStep([...input.sourcePath, ...appendPoints], input.bounds, input.boundsRect);
+  const normalizedPoints = [...input.sourcePath];
+  for (let index = 0; index < appendPoints.length; index += 1) {
+    const point = appendPoints[index];
+    if (!point) {
+      continue;
+    }
+    // 中间 cell-center 是工具自动创建的空间点；末点恢复用户精确目标，只要求严格 x+。
+    normalizedPoints.push(
+      index === appendPoints.length - 1
+        ? normalizePathPointForStrictForward(point, normalizedPoints.at(-1), input.bounds, input.boundsRect)
+        : normalizeAutomaticPathPointForMinimumForwardStep(
+            point,
+            normalizedPoints.at(-1),
+            input.bounds,
+            input.boundsRect,
+          ),
+    );
+  }
+  return normalizedPoints;
 }
 
 /** 用 Graphwar 规则、Step 包络和真实轨迹共同验证候选路径。 */

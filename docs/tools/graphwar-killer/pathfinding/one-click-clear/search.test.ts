@@ -29,7 +29,7 @@ const settings = {
 };
 
 describe("One-click clear optimization", () => {
-  it("builds an ordinary DAG target at the strict x+ edge when the center does not advance", async () => {
+  it("builds an ordinary DAG target at the next legal native column when the center does not advance", async () => {
     const requests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
     const start = createPixelPoint(200, 225);
     const candidate = {
@@ -42,7 +42,7 @@ describe("One-click clear optimization", () => {
     await buildGraphwarOneClickClearPath(createDagCaptureOptions(start, [candidate], requests));
 
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.jobs.map((job) => job.targetPoint)).toEqual([createPixelPoint(203, 225)]);
+    expect(requests[0]?.jobs.map((job) => job.targetPoint)).toEqual([createPixelPoint(201, 225)]);
   });
 
   it("builds ordinary DAG topology from the final x assigned to equal-center targets", async () => {

@@ -1,4 +1,5 @@
 import {
+  GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE,
   GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
   GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
   GRAPHWAR_GAME_SOLDIER_RADIUS,
@@ -588,9 +589,6 @@ interface AbsSecondDerivativeRefinementCandidate {
   targetStates: AbsSecondDerivativeTargetState[];
 }
 
-/** Graphwar 只按二分缩步；直接推导最后一个不大于源码下限的实际档位。 */
-const GRAPHWAR_STEP_GLITCH_MIN_STEP =
-  GRAPHWAR_STEP_SIZE / 2 ** Math.ceil(Math.log2(GRAPHWAR_STEP_SIZE / GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE));
 // 初始 0.01 可用两位小数精确表示；每缩半一次多保留一位，确保左门仍是严格的 R-w。
 const GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES = Math.max(0, Math.ceil(-Math.log10(GRAPHWAR_STEP_SIZE)));
 // 一阶 RK4 更新量是 h*(k1 + 2*k2 + 2*k3 + k4)/6。邪道门函数临界时，
@@ -2522,7 +2520,7 @@ function selectStepGlitchSegmentCandidate(
       fixedWindow.endX > fixedWindow.startX &&
       target.x >= fixedWindow.endX
     ) {
-      jumps.push({ ...fixedWindow, step: GRAPHWAR_STEP_GLITCH_MIN_STEP });
+      jumps.push({ ...fixedWindow, step: GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE });
     } else if (launchWindowRequired) {
       // 目标控制线位于水平枪口左侧时，普通目标窗口永远无法参与发射状态。
       // y' 让 hard 门覆盖整个枪口角固定点；y'' 从实际水平枪口后开始，并携带该次发射状态完成脉冲回放。
@@ -2539,13 +2537,13 @@ function selectStepGlitchSegmentCandidate(
         glitchDecimalPlaces,
       );
       if (endX > startX) {
-        jumps.push({ endX, startX, step: GRAPHWAR_STEP_GLITCH_MIN_STEP });
+        jumps.push({ endX, startX, step: GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE });
       }
     } else if (!fixedWindow) {
       // 普通公式仍从 0.01 逐档缩半；扫描候选传入固定窗口时只验证已选中的一档。
       for (
         let windowWidth = GRAPHWAR_STEP_SIZE, windowDecimalPlaces = GRAPHWAR_STEP_GLITCH_INITIAL_WINDOW_DECIMAL_PLACES;
-        windowWidth >= GRAPHWAR_STEP_GLITCH_MIN_STEP;
+        windowWidth >= GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE;
         windowWidth /= 2, windowDecimalPlaces += 1
       ) {
         const jump = createStepGlitchJump(previous.x, target.x, windowWidth, glitchDecimalPlaces, windowDecimalPlaces);
@@ -3107,7 +3105,7 @@ function createStepGlitchJump(
   if (!(window.endX > window.startX) || !(window.startX > previousX)) {
     return undefined;
   }
-  return { ...window, step: GRAPHWAR_STEP_GLITCH_MIN_STEP };
+  return { ...window, step: GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE };
 }
 
 /** 用普通 sigmoid 的近似水平前缀和两块半高矩形做粗筛，避免把探测绑到某个邪道窗口。 */

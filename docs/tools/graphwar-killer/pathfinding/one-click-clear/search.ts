@@ -1,7 +1,7 @@
 /** 在当前 Graphwar 路径后追加一键清图路线；几何建路点和弹道命中圈分开建模。 */
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual } from "../../core/geometry";
-import { graphXAdvancesStrictly, nextDownDouble } from "../../core/numbers";
+import { graphXAdvancesStrictly } from "../../core/numbers";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { GraphwarSignProtection } from "../../formula/generation/build";
@@ -824,11 +824,13 @@ function collectOneClickClearTargets(options: GraphwarOneClickClearOptions): One
       sourceIndex,
     })),
     pathTail,
-    // Graphwar 平面右/下边界是半开区间；圆心保留 double 精度，只有边缘初始落点才收成整数像素。
-    usableMaxX: nextDownDouble(options.boundsRect.x + options.boundsRect.width - horizontalBoundaryInsetPixels),
-    usableMaxY: nextDownDouble(options.boundsRect.y + options.boundsRect.height - verticalBoundaryInsetPixels),
-    usableMinX: options.boundsRect.x + horizontalBoundaryInsetPixels,
-    usableMinY: options.boundsRect.y + verticalBoundaryInsetPixels,
+    // 单个半开矩形直接表达地图边界；目标分配只离散化 x，y 仍保留真实士兵中心。
+    usableRect: {
+      height: options.boundsRect.height - verticalBoundaryInsetPixels * 2,
+      width: options.boundsRect.width - horizontalBoundaryInsetPixels * 2,
+      x: options.boundsRect.x + horizontalBoundaryInsetPixels,
+      y: options.boundsRect.y + verticalBoundaryInsetPixels,
+    },
   });
   return assignedTargets.map((assigned) => ({
     ...assigned.hitCircle,

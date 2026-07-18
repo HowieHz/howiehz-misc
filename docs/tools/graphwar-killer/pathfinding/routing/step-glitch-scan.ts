@@ -1,6 +1,6 @@
 /** Step ODE 邪道模式的从左到右扫描器；几何层只选门和落点，最终量化公式模拟决定是否可达。 */
 import {
-  GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE,
+  GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE,
   GRAPHWAR_PLANE_HEIGHT,
   GRAPHWAR_PLANE_LENGTH,
   GRAPHWAR_STEP_SIZE,
@@ -13,7 +13,12 @@ import {
   graphXAdvancesStrictly,
   roundToDecimalPlaces,
 } from "../../core/numbers";
-import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../../core/plane-grid";
+import {
+  forwardColumnToPlaneColumn,
+  imagePointToPlaneGridPoint,
+  planeColumnToForwardColumn,
+  planeGridCellCenterToImagePoint,
+} from "../../core/plane-grid";
 import { measureSyncStage, nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
@@ -235,7 +240,7 @@ export function createGraphwarStepGlitchScanMaskIndex(options: {
   for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
     let farthest = -1;
     for (let searchX = GRAPHWAR_PLANE_LENGTH - 1; searchX >= 0; searchX -= 1) {
-      const planeX = mirrorPlaneX(searchX, mirrored);
+      const planeX = forwardColumnToPlaneColumn(searchX, mirrored);
       const blocked =
         planeX < boundaryExpansion ||
         planeX >= GRAPHWAR_PLANE_LENGTH - boundaryExpansion ||
@@ -837,7 +842,7 @@ function getFarthestFreeX(index: GraphwarStepGlitchScanMaskIndex, searchX: numbe
 /** 把截图像素点映射到统一向右推进的搜索网格。 */
 function pixelPointToSearchGrid(point: PixelPoint, boundsRect: BoundsRect, mirrored: boolean) {
   const plane = imagePointToPlaneGridPoint(point, boundsRect);
-  return { x: mirrorPlaneX(plane.x, mirrored), y: plane.y };
+  return { x: planeColumnToForwardColumn(plane.x, mirrored), y: plane.y };
 }
 
 /** 把 Graphwar 坐标点映射到统一向右推进的搜索网格。 */
@@ -899,21 +904,12 @@ function createControlPointForFormulaEndX(
     : undefined;
 }
 
-/** 按 x+ 方向选择原始或镜像平面列。 */
-function mirrorPlaneX(x: number, mirrored: boolean) {
-  return mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - x : x;
-}
-
 /** 枚举从 0.01 逐档缩半的窗口，并携带能无损表示每档宽度的小数位。 */
 function createGlitchWindows() {
   const windows: { decimalPlaces: number; width: number }[] = [];
-  let minimumWidth = GRAPHWAR_STEP_SIZE;
-  while (minimumWidth > GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
-    minimumWidth /= 2;
-  }
   let decimalPlaces = Math.max(0, Math.ceil(-Math.log10(GRAPHWAR_STEP_SIZE)));
   let width = GRAPHWAR_STEP_SIZE;
-  while (width >= minimumWidth) {
+  while (width >= GRAPHWAR_FUNC_LAST_BISECTED_X_STEP_DISTANCE) {
     windows.push({ decimalPlaces, width });
     width /= 2;
     decimalPlaces += 1;

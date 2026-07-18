@@ -193,6 +193,8 @@ interface ScanGateWindow {
 
 /** 按一个回退距离分组的 11 档 gate 宽度；标准 bounds 下整组可以共享一次可达性查询。 */
 interface ScanGateWindowBatch {
+  /** 批次对应的回退列，1 表示 B-1，2 表示 B-2。 */
+  backoffColumns: (typeof GATE_BACKOFF_COLUMNS)[number];
   /** 共享的右门列；为 undefined 时，非标准 bounds 使用旧的逐窗口 fallback。 */
   sharedWindowSearchX: number | undefined;
   /** 只有标准回退列才能使用“跳过下一批”的单调性规则。 */
@@ -567,10 +569,26 @@ function scanPreparedGraphwarStepGlitchPath(
           windowIndex = 0;
           continue;
         }
-        if ((row.usableWindowBatchMask & (1 << windowBatchIndex)) === 0) {
-          windowBatchIndex += 1;
-          windowIndex = 0;
-          continue;
+        const windowBatchBit = 1 << (windowBatch.backoffColumns - 1);
+        if ((row.usableWindowBatchMask & windowBatchBit) === 0) {
+          // B-2 只有在该行的 B-1 批次全部失败、真正切换到下一批时才查询。
+          if (windowBatch.backoffColumns === 2) {
+            if (
+              windowBatch.sharedWindowSearchX !== undefined &&
+              windowBatch.usesMonotonicBackoffPruning &&
+              getFarthestFreeX(maskIndex, windowBatch.searchX, row.row) < item.scan.firstBlockedSearchX
+            ) {
+              rowIndex += 1;
+              windowBatchIndex = 0;
+              windowIndex = 0;
+              continue;
+            }
+            row.usableWindowBatchMask |= windowBatchBit;
+          } else {
+            windowBatchIndex += 1;
+            windowIndex = 0;
+            continue;
+          }
         }
         const window = windowBatch.windows[windowIndex];
         windowIndex += 1;
@@ -867,6 +885,7 @@ function createGateRowScan(
           ? firstWindow.searchX
           : undefined;
       windowBatches.push({
+        backoffColumns,
         searchX: sharedWindowSearchX === undefined ? searchX : Math.min(sharedWindowSearchX, firstBlockedSearchX),
         sharedWindowSearchX,
         usesMonotonicBackoffPruning: sharedWindowSearchX === searchX,
@@ -879,42 +898,33 @@ function createGateRowScan(
   }
 
   const rows: ScanLandingRow[] = [];
-  // 原碰撞列只查询一次用于评分；每个回退批次再查询一次，供其中全部门宽复用。
+  // 原碰撞列只查询一次用于评分；B-1 在这里查询，B-2 延迟到候选循环真正切换批次时再查询。
   for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
     const farthestX = getFarthestFreeX(maskIndex, firstBlockedSearchX, row);
     if (farthestX < firstBlockedSearchX) {
       continue;
     }
     let usableWindowBatchMask = 0;
-    for (let windowBatchIndex = 0; windowBatchIndex < windowBatches.length; windowBatchIndex += 1) {
-      const windowBatch = windowBatches[windowBatchIndex];
-      if (!windowBatch) {
-        break;
-      }
-      if (windowBatch.sharedWindowSearchX === undefined) {
-        // fallback 会在下面逐档检查宽度，因此不能使用标准的行级单调性剪枝。
-        usableWindowBatchMask |= 1 << windowBatchIndex;
+    const firstWindowBatch = windowBatches[0];
+    if (firstWindowBatch?.backoffColumns === 1) {
+      if (
+        firstWindowBatch.sharedWindowSearchX !== undefined &&
+        firstWindowBatch.usesMonotonicBackoffPruning &&
+        getFarthestFreeX(maskIndex, firstWindowBatch.searchX, row) < firstBlockedSearchX
+      ) {
+        // B-1 不能到达 B 时，按列连续可达性可知 B-2 也不可能绕过 B-1。
         continue;
       }
-      if (getFarthestFreeX(maskIndex, windowBatch.searchX, row) < firstBlockedSearchX) {
-        // 更早的回退列也必须穿过当前列；当前批次失败后无需继续查询。
-        const nextWindowBatch = windowBatches[windowBatchIndex + 1];
-        if (!nextWindowBatch || nextWindowBatch.usesMonotonicBackoffPruning) {
-          break;
-        }
-        continue;
-      }
-      usableWindowBatchMask |= 1 << windowBatchIndex;
+      // 非标准 bounds 的 fallback 会在候选循环逐档检查，这里只记录 B-1 批次存在。
+      usableWindowBatchMask |= 1;
     }
-    if (usableWindowBatchMask !== 0) {
-      rows.push({
-        farthestX,
-        row,
-        startDeltaY: Math.abs(row - state.row),
-        targetDeltaY: Math.abs(row - targetRow),
-        usableWindowBatchMask,
-      });
-    }
+    rows.push({
+      farthestX,
+      row,
+      startDeltaY: Math.abs(row - state.row),
+      targetDeltaY: Math.abs(row - targetRow),
+      usableWindowBatchMask,
+    });
   }
   // 先争取最大横向收益，再贴近目标和当前行；两种 ODE 共用位置目标，不按残余斜率改变候选顺序。
   rows.sort(

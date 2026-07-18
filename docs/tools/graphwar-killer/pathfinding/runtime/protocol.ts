@@ -142,6 +142,83 @@ export interface GraphwarOneClickClearPathWorkerResult {
   timings: GraphwarOneClickClearDebugTiming[];
 }
 
+/** 在 Worker 信任边界校验可直接落地或发射的一键清图 incumbent。 */
+export function isGraphwarOneClickClearIncumbent(value: unknown): value is GraphwarOneClickClearIncumbent {
+  if (
+    !isRecord(value) ||
+    typeof value.expression !== "string" ||
+    !value.expression.trim() ||
+    !isPixelPointArray(value.pathPoints)
+  ) {
+    return false;
+  }
+  return value.launchAngleRadians === undefined || isFiniteNumber(value.launchAngleRadians);
+}
+
+/** 校验一键清图 Worker 最终响应，协议畸形必须由页面归类为 search-error。 */
+export function isGraphwarOneClickClearPathWorkerResult(
+  value: unknown,
+): value is GraphwarOneClickClearPathWorkerResult {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.timings) ||
+    !value.timings.every(
+      (timing) => isRecord(timing) && typeof timing.stage === "string" && isFiniteNumber(timing.elapsedMs),
+    ) ||
+    !isRecord(value.result) ||
+    !isFiniteNumber(value.result.elapsedMs) ||
+    !isFiniteNumber(value.result.expandedStates)
+  ) {
+    return false;
+  }
+  if (value.result.type === "success") {
+    return (
+      isGraphwarOneClickClearIncumbent(value.result) &&
+      Array.isArray(value.result.targetIds) &&
+      value.result.targetIds.every((targetId) => typeof targetId === "string")
+    );
+  }
+  if (value.result.type !== "failure" || !isGraphwarOneClickClearFailureReason(value.result.reason)) {
+    return false;
+  }
+  return (
+    value.result.invalidSegmentIndex === undefined ||
+    (typeof value.result.invalidSegmentIndex === "number" &&
+      Number.isInteger(value.result.invalidSegmentIndex) &&
+      value.result.invalidSegmentIndex >= 0)
+  );
+}
+
+/** 判断未知值是否为可安全读取字段的普通对象。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** 校验协议中的有限数值字段。 */
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** 校验 Worker 返回的截图像素路径。 */
+function isPixelPointArray(value: unknown): value is PixelPoint[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((point) => isRecord(point) && isFiniteNumber(point.x) && isFiniteNumber(point.y))
+  );
+}
+
+/** 收窄一键清图失败 reason，防止未知协议值进入本地化和分支判定。 */
+function isGraphwarOneClickClearFailureReason(value: unknown) {
+  return (
+    value === "no-candidate" ||
+    value === "no-usable-target" ||
+    value === "pathfinding-worker-failed" ||
+    value === "preflight-blocked" ||
+    value === "unsupported"
+  );
+}
+
 /** Pathfinding master Worker 可执行的任务。 */
 export type GraphwarPathfindingWorkerTask =
   | {

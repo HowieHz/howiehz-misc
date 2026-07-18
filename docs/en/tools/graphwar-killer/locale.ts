@@ -335,7 +335,7 @@ export const graphwarKillerLocale = {
         addressTitle: "Local Graphwar Agent URL; default http://127.0.0.1:17900",
         exportOnClearFailure: "Export on clear failure",
         exportOnClearFailureTitle:
-          "Automatically export the current Graphwar Agent scene when One-Click Clear misses any clearable target; clearable targets are unique search-candidate IDs, and candidate kills are the intersection of final hit IDs and candidate IDs",
+          "Export the Graphwar Agent scene captured when One-Click Clear started if it misses targets, fails, encounters a Worker error, or is interrupted at the managed deadline; each turn and battle revision is exported once",
         exportScene: "Export scene",
         exportSceneTitle: "Download the current Graphwar Agent state and obstacle files for debug import",
         exportingScene: "Exporting",

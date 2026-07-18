@@ -296,7 +296,7 @@ export const graphwarKillerLocale = {
         addressTitle: "Graphwar Agent 本机 HTTP 地址，默认 http://127.0.0.1:17900",
         exportOnClearFailure: "清图失败自动导出",
         exportOnClearFailureTitle:
-          "一键清图未命中全部可清目标时，自动导出当前 Graphwar Agent 局面；可清目标按本次搜索候选的唯一 ID 统计，本次候选击杀只统计最终命中 ID 与候选 ID 的交集",
+          "一键清图漏杀、搜索失败、工作线程异常或托管截止中断时，自动导出搜索启动时的 Graphwar Agent 局面；同一回合和战场版本只导出一次",
         exportScene: "导出局面",
         exportSceneTitle: "下载当前 Graphwar Agent 状态和障碍文件，供调试模式重新导入",
         exportingScene: "正在导出",

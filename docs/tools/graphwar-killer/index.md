@@ -54,6 +54,8 @@ import { graphwarKillerLocale } from "./locale";
 
 “搜索动画”会显示单目标寻路过程，以及一键清图和托管当前已验证的最佳公式与实际轨迹。中间结果不会显示控制点；搜索完成后，当前控制点才会写入正式路径。手动一键清图可在截图中右键停止并保留当前结果，但不会自动发射；托管通过“托管模式”开关停止。
 
+开启调试信息后，可以打开“清图失败自动导出”。漏杀、搜索失败、工作线程异常和托管截止中断都会导出搜索启动时的 Agent 状态与障碍文件，不重新读取游戏；同一 `gameInstanceId`、`turnToken` 和 `battleRevision` 只导出一次，不同局面按顺序处理。文件名会包含 `clear-failure-incomplete`、`clear-failure-search-failure`、`clear-failure-search-error` 或 `clear-failure-deadline`。手动“导出局面”的文件名保持不变。
+
 #### 支持情况 {#graphwar-killer-pathfinding-support}
 
 | 函数算法         | 游戏模式         | 路径规划 | 一键清图 | 路线特点           |

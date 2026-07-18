@@ -56,6 +56,10 @@ Search Animation shows single-target search progress and the best validated form
 
 To stop a manual One-Click Clear run and keep its current result without firing, right-click the screenshot. Turn off Managed Mode to stop a managed search.
 
+After enabling Debug Info, turn on Export on clear failure to save the Agent state and obstacle files captured when a search starts. Missed targets, search failures, Worker errors, and managed-deadline interruptions are exported without rereading the game. A scene identified by `gameInstanceId`, `turnToken`, and `battleRevision` is exported once; different scenes are processed in order.
+
+Automatic file names include `clear-failure-incomplete`, `clear-failure-search-failure`, `clear-failure-search-error`, or `clear-failure-deadline`. Manual Export Scene file names are unchanged.
+
 #### Support Matrix {#graphwar-killer-pathfinding-support}
 
 | Function algorithm    | Game mode        | Path Planning | One-Click Clear | Route style                        |

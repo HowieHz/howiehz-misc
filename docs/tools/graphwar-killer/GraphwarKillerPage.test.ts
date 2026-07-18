@@ -110,7 +110,12 @@ describe("Graphwar Killer page settings", () => {
   it("exports the Agent snapshot captured before a clear-failure result without rereading", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const downloadedFiles: string[] = [];
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadedFiles.push(this.download);
+      });
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const page = (
       wrapper.vm.$ as unknown as {
@@ -120,7 +125,7 @@ describe("Graphwar Killer page settings", () => {
           graphwarAgentAppliedSnapshot: unknown;
           graphwarAgentEnabled: boolean;
           oneClickClearRunWorkflow: {
-            run: (options?: { onClearFailure?: () => void }) => Promise<boolean>;
+            run: (options?: { onOutcome?: (outcome: { kind: "incomplete" }) => void }) => Promise<boolean>;
           };
           runOneClickClearWorkflow: () => Promise<boolean>;
         };
@@ -130,12 +135,12 @@ describe("Graphwar Killer page settings", () => {
     page.debugInfoEnabled = true;
     page.graphwarAgentAutoExportOnClearFailureEnabled = true;
     page.graphwarAgentAppliedSnapshot = {
-      state: { battleRevision: "before-shot" },
+      state: { battleRevision: "before-shot", gameInstanceId: "game", turnToken: "turn" },
       worldObstacleMask: new Uint8Array([0, 1]),
     };
     page.graphwarAgentEnabled = true;
     page.oneClickClearRunWorkflow.run = async (options) => {
-      options?.onClearFailure?.();
+      options?.onOutcome?.({ kind: "incomplete" });
       return true;
     };
     await nextTick();
@@ -144,6 +149,9 @@ describe("Graphwar Killer page settings", () => {
     await flushPromises();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(anchorClick).toHaveBeenCalledTimes(2);
+    expect(downloadedFiles).toHaveLength(2);
+    expect(downloadedFiles[0]).toMatch(/^clear-failure-incomplete-state-/);
+    expect(downloadedFiles[1]).toMatch(/^clear-failure-incomplete-obstacle-mask-/);
 
     wrapper.unmount();
     anchorClick.mockRestore();

@@ -77,6 +77,12 @@ export function createOneClickClearPreflightFailureStatus(
       message: input.locale.smartPathfinding.oneClickClear.needDetection,
     };
   }
+  if (input.reason === "no-target") {
+    return {
+      kind: "error",
+      message: input.locale.smartPathfinding.oneClickClear.noCandidate,
+    };
+  }
   return {
     kind: "error",
     message: createSmartPathfindingFailureMessage(input.locale),

@@ -6,13 +6,13 @@ import type {
   GraphwarOneClickClearIncumbent,
 } from "../one-click-clear/search";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
+import { isGraphwarOneClickClearIncumbent, isGraphwarOneClickClearPathWorkerResult } from "./protocol";
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
   GraphwarPathfindingRouteInput,
   GraphwarPathfindingRouteResult,
   GraphwarPathfindingWorkerRequest,
-  GraphwarPathfindingWorkerResponse,
   GraphwarPathfindingWorkerSuccessResponse,
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
@@ -51,6 +51,8 @@ interface PendingPathfindingWorkerTask {
   reject: (reason?: unknown) => void;
   /** Promise 成功回调。 */
   resolve: (value: GraphwarPathfindingWorkerSuccessResponse["result"]) => void;
+  /** 当前请求任务类型，用于拒绝错配的成功和进度消息。 */
+  taskType: GraphwarPathfindingWorkerRequest["task"]["type"];
 }
 
 /**
@@ -183,6 +185,7 @@ export function createGraphwarPathfindingRunner() {
         onPreview: options?.onPreview,
         reject,
         resolve: resolve as PendingPathfindingWorkerTask["resolve"],
+        taskType: request.task.type,
       };
       try {
         activeWorker.postMessage(cloneGraphwarPathfindingWorkerRequest(request));
@@ -223,29 +226,68 @@ export function createGraphwarPathfindingRunner() {
   }
 
   /** 只接收当前请求 id 对应的 Worker 消息，丢弃过期响应。 */
-  function handleWorkerMessage(event: MessageEvent<GraphwarPathfindingWorkerResponse>) {
+  function handleWorkerMessage(event: MessageEvent<unknown>) {
     const response = event.data;
-    if (!pendingTask || response.id !== pendingTask.id) {
+    if (!pendingTask) {
+      return;
+    }
+    if (!isRecord(response) || typeof response.id !== "number" || !Number.isInteger(response.id)) {
+      rejectPendingProtocolResponse();
+      return;
+    }
+    if (response.id !== pendingTask.id) {
       return;
     }
     if (response.type === "preview") {
-      pendingTask.onPreview?.(response.preview);
+      if (!isRecord(response.preview) || !pendingTask.onPreview) {
+        rejectPendingProtocolResponse();
+        return;
+      }
+      pendingTask.onPreview(response.preview as unknown as GraphwarPathfindingPreview);
       return;
     }
     if (response.type === "one-click-clear-incumbent") {
-      pendingTask.onIncumbent?.(response.incumbent);
+      if (
+        pendingTask.taskType !== "build-one-click-clear-path" ||
+        !pendingTask.onIncumbent ||
+        !isGraphwarOneClickClearIncumbent(response.incumbent)
+      ) {
+        rejectPendingProtocolResponse();
+        return;
+      }
+      pendingTask.onIncumbent(response.incumbent);
       return;
     }
 
     const completedTask = pendingTask;
     pendingTask = undefined;
     if (response.type === "error") {
+      if (typeof response.message !== "string") {
+        completedTask.reject(new Error("Graphwar pathfinding worker returned an invalid response"));
+        resetWorker();
+        return;
+      }
       completedTask.reject(new Error(response.message));
       resetWorkerIfCacheInvalidated();
       return;
     }
-    completedTask.resolve(response.result);
+    if (
+      response.type !== "success" ||
+      response.taskType !== completedTask.taskType ||
+      (completedTask.taskType === "build-one-click-clear-path" &&
+        !isGraphwarOneClickClearPathWorkerResult(response.result))
+    ) {
+      completedTask.reject(new Error("Graphwar pathfinding worker returned an invalid response"));
+      resetWorker();
+      return;
+    }
+    completedTask.resolve(response.result as GraphwarPathfindingWorkerSuccessResponse["result"]);
     resetWorkerIfCacheInvalidated();
+  }
+
+  /** 将当前请求的畸形消息作为协议错误拒绝，并丢弃不可信 Worker。 */
+  function rejectPendingProtocolResponse() {
+    rejectPendingTask(new Error("Graphwar pathfinding worker returned an invalid response"));
   }
 
   /** 统一拒绝挂起任务并丢弃当前 Worker。 */
@@ -285,6 +327,11 @@ export function createGraphwarPathfindingRunner() {
     findSmartPath,
     findRoute,
   };
+}
+
+/** 判断未知 Worker 消息是否可安全按字段读取。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 /** PostMessage 不能克隆 Vue reactive proxy；runner 边界统一复制成纯数据。 */

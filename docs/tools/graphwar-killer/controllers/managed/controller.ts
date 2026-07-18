@@ -25,6 +25,8 @@ export type GraphwarManagedShooter = GraphwarAgentCurrentShooter;
 export interface GraphwarManagedControllerHooks {
   /** Chooses the last fully validated plan when the authoritative deadline is reached. */
   decideDeadlineShot?: (state: GraphwarAgentAvailableState) => GraphwarAgentShotPlan | undefined;
+  /** Reports the authoritative deadline before choosing an incumbent or skip-turn plan. */
+  onDeadline?: (state: GraphwarAgentAvailableState) => void;
   /** Reports a protocol version or response shape that requires an Agent upgrade. */
   onIncompatibleError?: (error: GraphwarAgentClientError) => void;
   /** Reports an active-game state and its current local-human shooter, if any. */
@@ -316,6 +318,10 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       return;
     }
     deadlineHandledTurns.add(turnKey);
+    hooks.onDeadline?.(state);
+    if (!isCurrentGeneration(pollGeneration)) {
+      return;
+    }
     const plan = hooks.decideDeadlineShot?.(state) ?? createGraphwarManagedSkipTurnPlan(state);
     if (!isCurrentGeneration(pollGeneration)) {
       return;

@@ -2,6 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
+  createGraphwarAgentClearFailureExportQueue,
+  createGraphwarAgentClearFailureSceneKey,
+} from "./controllers/agent/clear-failure-export";
+import {
   createGraphwarAgentClient,
   createGraphwarAgentSnapshot,
   createGraphwarAgentShooterViewSnapshot,
@@ -50,6 +54,7 @@ import {
   useGraphwarPathfindingRouteBoundaryInset,
   useGraphwarPathfindingObstacleProjection,
 } from "./controllers/pathfinding/obstacles";
+import type { GraphwarClearFailureExportKind } from "./controllers/pathfinding/one-click-clear/outcome";
 import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/one-click-clear/workflow";
 import { useGraphwarSmartPathfindingBuilder } from "./controllers/pathfinding/smart/builder";
 import {
@@ -299,10 +304,32 @@ const simulatorLaunchAngleText = ref("");
 const graphwarAgentEnabled = ref(false);
 const graphwarAgentBaseUrlText = ref(GRAPHWAR_AGENT_DEFAULT_BASE_URL);
 const graphwarAgentReadInProgress = ref(false);
-const graphwarAgentExportInProgress = ref(false);
+const graphwarAgentManualExportInProgress = ref(false);
+const graphwarAgentAutoExportInProgress = ref(false);
+const graphwarAgentExportInProgress = computed(
+  () => graphwarAgentManualExportInProgress.value || graphwarAgentAutoExportInProgress.value,
+);
 const graphwarAgentAutoExportOnClearFailureEnabled = ref(false);
 let graphwarAgentTransferGeneration = 0;
 const graphwarAgentDebugFiles = createGraphwarAgentDebugFiles();
+const graphwarAgentClearFailureExportQueue = createGraphwarAgentClearFailureExportQueue({
+  exportRequest: (request) => {
+    graphwarAgentAutoExportInProgress.value = true;
+    setGraphwarAgentExportStatus(locale.status.agent.exporting, "warning");
+    try {
+      downloadGraphwarAgentDebugSceneFiles(request.state, request.worldObstacleMask, request.failureKind);
+      setGraphwarAgentExportStatus(locale.status.agent.exported, "success");
+    } finally {
+      graphwarAgentAutoExportInProgress.value = false;
+    }
+  },
+  onExportFailed: (error) => {
+    setGraphwarAgentExportStatus(
+      locale.status.agent.exportFailed(createGraphwarAgentFailureReason(locale, error)),
+      "error",
+    );
+  },
+});
 // 保留页面当前实际应用的权威快照，自动导出可在托管开火前同步固化同一局面。
 let graphwarAgentAppliedSnapshot: GraphwarAgentSnapshot | undefined;
 const graphwarAgentFireInProgress = ref(false);
@@ -322,7 +349,9 @@ let graphwarManagedDeadlineTurnToken: string | undefined;
 let graphwarManagedIncumbent: GraphwarOneClickClearIncumbent | undefined;
 let graphwarManagedLastSubmittedTurnToken: string | undefined;
 let graphwarManagedSceneKey = "";
+let graphwarManagedSearchErrorSceneKey: string | undefined;
 let graphwarManagedSearchGeneration = 0;
+let graphwarManagedSearchSnapshot: GraphwarAgentSnapshot | undefined;
 let graphwarManagedSearchStartedAt: number | undefined;
 let graphwarManagedSearchState: "idle" | "running" | "success" | "failure" = "idle";
 let graphwarManagedStatusKind: SmartPathfindingStatusKind = "warning";
@@ -2254,6 +2283,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("paste", handleWindowPaste);
   document.removeEventListener("visibilitychange", handleGraphwarManagedVisibilityChange);
+  graphwarAgentClearFailureExportQueue.clearPending();
   stopGraphwarManagedMode(false);
   detectionWorkflow.dispose();
   graphwarPathfindingRunner.close();
@@ -2275,6 +2305,12 @@ onBeforeUnmount(() => {
 watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTopRatioText], () => {
   clearSmartPathfindingStatus();
   scheduleGraphwarObjectDetection();
+});
+
+watch(debugInfoEnabled, (enabled) => {
+  if (!enabled) {
+    graphwarAgentClearFailureExportQueue.clearPending();
+  }
 });
 
 watch(
@@ -2720,14 +2756,34 @@ function downloadGraphwarAgentDebugFile(file: GraphwarAgentDebugDownload) {
   anchor.href = url;
   anchor.download = file.fileName;
   document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  // Firefox 和 Safari 可能在 click 返回后才读取 URL，因此延迟一个任务再释放。
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    // Firefox 和 Safari 可能在 click 返回后才读取 URL，因此延迟一个任务再释放。
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
 }
 
-/** 实时读取或复用已应用的 revision 一致快照，并导出调试导入控件可直接接受的文件对。 */
-async function exportGraphwarAgentDebugScene(appliedSnapshot?: GraphwarAgentSnapshot) {
+/** 下载同一权威局面的文件对；自动导出额外写入失败类别前缀。 */
+function downloadGraphwarAgentDebugSceneFiles(
+  state: GraphwarAgentAvailableState,
+  worldObstacleMask: Uint8Array,
+  failureKind?: GraphwarClearFailureExportKind,
+) {
+  const downloads = createGraphwarAgentDebugDownloads(state, worldObstacleMask, failureKind ? { failureKind } : {});
+  downloadGraphwarAgentDebugFile(downloads.state);
+  downloadGraphwarAgentDebugFile(downloads.obstacle);
+}
+
+/** 同步图片区和识别区的 Agent 导出反馈。 */
+function setGraphwarAgentExportStatus(message: string, kind: DetectionStatusKind) {
+  imageStatus.value = message;
+  setDetectionStatus(message, kind);
+}
+
+/** 实时读取 revision 一致快照，并导出调试导入控件可直接接受的文件对。 */
+async function exportGraphwarAgentDebugScene() {
   if (!debugInfoEnabled.value || graphwarAgentReadInProgress.value || graphwarAgentExportInProgress.value) {
     return;
   }
@@ -2747,29 +2803,26 @@ async function exportGraphwarAgentDebugScene(appliedSnapshot?: GraphwarAgentSnap
     debugInfoEnabled.value &&
     graphwarAgentEnabled.value &&
     normalizedGraphwarAgentBaseUrl.value === requestBaseUrl;
-  graphwarAgentExportInProgress.value = true;
-  imageStatus.value = locale.status.agent.exporting;
-  setDetectionStatus(locale.status.agent.exporting, "warning");
+  graphwarAgentManualExportInProgress.value = true;
+  setGraphwarAgentExportStatus(locale.status.agent.exporting, "warning");
   try {
-    const snapshot = appliedSnapshot ?? (await readGraphwarAgentSnapshot(requestBaseUrl));
+    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl);
     if (!requestIsCurrent()) {
       return;
     }
-    const downloads = createGraphwarAgentDebugDownloads(snapshot.state, snapshot.worldObstacleMask);
-    downloadGraphwarAgentDebugFile(downloads.state);
-    downloadGraphwarAgentDebugFile(downloads.obstacle);
-    imageStatus.value = locale.status.agent.exported;
-    setDetectionStatus(locale.status.agent.exported, "success");
+    downloadGraphwarAgentDebugSceneFiles(snapshot.state, snapshot.worldObstacleMask);
+    setGraphwarAgentExportStatus(locale.status.agent.exported, "success");
   } catch (error) {
     if (!requestIsCurrent()) {
       return;
     }
-    const message = locale.status.agent.exportFailed(createGraphwarAgentFailureReason(locale, error));
-    imageStatus.value = message;
-    setDetectionStatus(message, "error");
+    setGraphwarAgentExportStatus(
+      locale.status.agent.exportFailed(createGraphwarAgentFailureReason(locale, error)),
+      "error",
+    );
   } finally {
     if (requestGeneration === graphwarAgentTransferGeneration) {
-      graphwarAgentExportInProgress.value = false;
+      graphwarAgentManualExportInProgress.value = false;
     }
   }
 }
@@ -2973,6 +3026,8 @@ function toggleGraphwarManagedMode() {
   graphwarManagedModeEnabled.value = true;
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
+  graphwarManagedSearchErrorSceneKey = undefined;
+  graphwarManagedSearchSnapshot = undefined;
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
   graphwarManagedLastSubmittedTurnToken = undefined;
@@ -2992,7 +3047,7 @@ function toggleGraphwarManagedMode() {
         if (!plan || !incumbent) {
           return undefined;
         }
-        if (searchStartedAt !== undefined) {
+        if (searchStartedAt !== undefined && !graphwarManagedStateHasSearchError(state)) {
           showGraphwarManagedCalculationStatus(
             locale.smartPathfinding.managed.deadlinePlan(formatElapsedDuration(nowMs() - searchStartedAt)),
             "warning",
@@ -3002,6 +3057,17 @@ function toggleGraphwarManagedMode() {
         applyOneClickClearIncumbent(incumbent);
         graphwarManagedDeadlineTurnToken = state.turnToken;
         return plan;
+      },
+      onDeadline: (state) => {
+        const snapshot = graphwarManagedSearchSnapshot;
+        if (
+          graphwarManagedSearchState === "running" &&
+          snapshot &&
+          createGraphwarAgentClearFailureSceneKey(snapshot.state) === createGraphwarAgentClearFailureSceneKey(state)
+        ) {
+          // 截止是搜索结局，不依赖随后选择 incumbent、跳过函数或 Agent 是否接受发射。
+          enqueueGraphwarAgentClearFailureExport("deadline", snapshot);
+        }
       },
       onDeadlineWithoutShot: () => {
         cancelGraphwarManagedSearch();
@@ -3034,6 +3100,9 @@ function toggleGraphwarManagedMode() {
       },
       onShotSubmitted: (state, plan) => {
         graphwarManagedLastSubmittedTurnToken = state.turnToken;
+        if (graphwarManagedStateHasSearchError(state)) {
+          return;
+        }
         setGraphwarManagedStatus(
           plan.function === GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION
             ? locale.smartPathfinding.managed.skippingTurn
@@ -3042,7 +3111,7 @@ function toggleGraphwarManagedMode() {
         );
       },
       onShotSucceeded: (state, plan) => {
-        if (graphwarManagedLastSubmittedTurnToken !== state.turnToken) {
+        if (graphwarManagedLastSubmittedTurnToken !== state.turnToken || graphwarManagedStateHasSearchError(state)) {
           return;
         }
         if (plan.function === GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION) {
@@ -3124,6 +3193,8 @@ function handleGraphwarManagedState(
       isGraphwarManagedCurrentLocalTurn(state)
     ) {
       submitGraphwarManagedShot(state);
+    } else if (graphwarManagedStateHasSearchError(state)) {
+      return;
     } else if (graphwarManagedSearchState === "success" && graphwarManagedLastSubmittedTurnToken !== state.turnToken) {
       setGraphwarManagedStatus(locale.smartPathfinding.managed.completedWaiting, "success");
     } else if (graphwarManagedSearchState === "running") {
@@ -3136,6 +3207,7 @@ function handleGraphwarManagedState(
   clearGraphwarManagedCalculationStatus();
   graphwarManagedSceneKey = sceneKey;
   graphwarManagedIncumbent = undefined;
+  graphwarManagedSearchErrorSceneKey = undefined;
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
   graphwarManagedDeadlineTurnToken = undefined;
@@ -3154,7 +3226,7 @@ function handleGraphwarManagedState(
     return;
   }
   applyGraphwarAgentSnapshot(snapshot, createPixelPoint(shooterBox.sourceCenterX, shooterBox.sourceCenterY));
-  void runGraphwarManagedSearch(sceneKey);
+  void runGraphwarManagedSearch(sceneKey, snapshot);
 }
 
 /** 绑定当前权威回合和所有搜索语义，确保结果不会跨回合复用。 */
@@ -3189,8 +3261,9 @@ function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shoot
 }
 
 /** 运行一次无跨回合结果缓存的 anytime 搜索，并只接收当前 scene generation 的结果。 */
-async function runGraphwarManagedSearch(sceneKey: string) {
+async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgentSnapshot) {
   const searchGeneration = ++graphwarManagedSearchGeneration;
+  graphwarManagedSearchSnapshot = snapshot;
   graphwarManagedSearchStartedAt = nowMs();
   graphwarManagedSearchState = "running";
   setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(), "warning");
@@ -3205,6 +3278,16 @@ async function runGraphwarManagedSearch(sceneKey: string) {
       }
       graphwarManagedIncumbent = incumbent;
       setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(), "warning");
+    },
+    onOutcome: (outcome) => {
+      if (
+        outcome.kind === "search-error" &&
+        graphwarManagedModeEnabled.value &&
+        searchGeneration === graphwarManagedSearchGeneration &&
+        sceneKey === graphwarManagedSceneKey
+      ) {
+        graphwarManagedSearchErrorSceneKey = createGraphwarAgentClearFailureSceneKey(snapshot.state);
+      }
     },
     onSuccessBeforeEffects: () => {
       if (
@@ -3238,6 +3321,10 @@ async function runGraphwarManagedSearch(sceneKey: string) {
   ) {
     return;
   }
+  if (graphwarManagedStateHasSearchError(snapshot.state)) {
+    // 发射仍照常认领，但托管持久状态必须保留 workflow 已写入的真实 Worker 错误。
+    setGraphwarManagedStatus(smartPathfindingStatus.value, "error");
+  }
   if (!succeeded || !graphwarManagedIncumbent) {
     graphwarManagedSearchState = "failure";
     graphwarManagedSearchStartedAt = undefined;
@@ -3256,6 +3343,7 @@ async function runGraphwarManagedSearch(sceneKey: string) {
 /** 取消当前 Worker 并递增 generation，使迟到的 incumbent 和完成结果都无法回写。 */
 function cancelGraphwarManagedSearch(preservePreview = false) {
   graphwarManagedSearchGeneration += 1;
+  graphwarManagedSearchSnapshot = undefined;
   if (smartPathfindingInProgress.value) {
     cancelSmartPathfinding(false, preservePreview);
   }
@@ -3269,6 +3357,7 @@ function resetGraphwarManagedSearch(preservePreview = false) {
   cancelGraphwarManagedSearch(preservePreview);
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
+  graphwarManagedSearchErrorSceneKey = undefined;
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
 }
@@ -3302,7 +3391,16 @@ function createGraphwarManagedShotPlan(state: GraphwarAgentAvailableState): Grap
 /** 正常完成只提交 controller 当前快照，并返回本回合是否已在 await 前完成 once-only claim。 */
 function submitGraphwarManagedShot(state: GraphwarAgentAvailableState) {
   const plan = createGraphwarManagedShotPlan(state);
-  return plan ? (graphwarManagedController?.submitShot(state, plan) ?? false) : false;
+  if (!graphwarManagedController || !plan) {
+    return false;
+  }
+  return graphwarManagedController.submitShot(state, plan);
+}
+
+/** 判断权威状态是否属于当前已记录 Worker 错误的托管局面。 */
+function graphwarManagedStateHasSearchError(state: GraphwarAgentAvailableState) {
+  const sceneKey = createGraphwarAgentClearFailureSceneKey(state);
+  return sceneKey !== undefined && sceneKey === graphwarManagedSearchErrorSceneKey;
 }
 
 /** 检查最新权威回合是否属于当前本地真人发射者。 */
@@ -3458,10 +3556,10 @@ function toggleAutoDetection() {
 
 /** 作废旧 Agent 场景的异步读取、寻路和派生缓存，保留当前画布供新来源继续使用。 */
 function invalidateGraphwarAgentSceneWork() {
-  const agentTransferWasInProgress = graphwarAgentReadInProgress.value || graphwarAgentExportInProgress.value;
+  const agentTransferWasInProgress = graphwarAgentReadInProgress.value || graphwarAgentManualExportInProgress.value;
   graphwarAgentTransferGeneration += 1;
   graphwarAgentReadInProgress.value = false;
-  graphwarAgentExportInProgress.value = false;
+  graphwarAgentManualExportInProgress.value = false;
   graphwarAgentDebugFiles.clear();
   // 只收尾本次 Agent reading 文案；并行产生的其他检测状态必须保留。
   if (
@@ -3488,6 +3586,9 @@ function invalidateGraphwarAgentSceneWork() {
 function toggleGraphwarAgentUsage() {
   if (graphwarManagedModeEnabled.value) {
     return;
+  }
+  if (graphwarAgentEnabled.value) {
+    graphwarAgentClearFailureExportQueue.clearPending();
   }
   invalidateGraphwarAgentSceneWork();
   graphwarAgentEnabled.value = !graphwarAgentEnabled.value;
@@ -3720,6 +3821,17 @@ async function runOneClickClear() {
   return runOneClickClearWorkflow();
 }
 
+/** 在失败发生时冻结开关决策，并把权威启动快照交给统一去重队列。 */
+function enqueueGraphwarAgentClearFailureExport(
+  failureKind: GraphwarClearFailureExportKind,
+  snapshot: GraphwarAgentSnapshot,
+) {
+  if (!debugInfoEnabled.value || !graphwarAgentEnabled.value || !graphwarAgentAutoExportOnClearFailureEnabled.value) {
+    return false;
+  }
+  return graphwarAgentClearFailureExportQueue.enqueue(failureKind, snapshot);
+}
+
 /** 标记一键清图任务，让只属于该任务的设置变化不会取消普通单目标寻路。 */
 async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClearRunWorkflow.run>) {
   // 冻结启动时实际采用的分支，避免运行期间的响应式配置让休眠参数误取消任务。
@@ -3732,11 +3844,14 @@ async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClear
     const runOptions = args[0];
     return await oneClickClearRunWorkflow.run({
       ...runOptions,
-      onClearFailure: () => {
-        if (graphwarAgentAutoExportOnClearFailureEnabled.value && agentSnapshotAtStart) {
-          void exportGraphwarAgentDebugScene(agentSnapshotAtStart);
+      onOutcome: (outcome) => {
+        if (
+          agentSnapshotAtStart &&
+          (outcome.kind === "incomplete" || outcome.kind === "search-failure" || outcome.kind === "search-error")
+        ) {
+          enqueueGraphwarAgentClearFailureExport(outcome.kind, agentSnapshotAtStart);
         }
-        runOptions?.onClearFailure?.();
+        runOptions?.onOutcome?.(outcome);
       },
       onIncumbent: (incumbent) => {
         // 搜索动画只控制独立轨迹 Worker；主搜索始终上报检查点供取消和托管截止使用。

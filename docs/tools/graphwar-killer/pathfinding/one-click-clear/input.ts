@@ -25,6 +25,7 @@ export type GraphwarOneClickClearSearchPreflightFailureReason =
   | "invalid-settings"
   | "missing-current-path"
   | "missing-obstacle-mask"
+  | "no-target"
   | "unsupported-mode";
 
 /** 一键清图预检所需的路径、目标和设置输入。 */

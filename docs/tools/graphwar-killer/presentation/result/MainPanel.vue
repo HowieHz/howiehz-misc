@@ -64,8 +64,10 @@ export interface GraphwarResultPanelModel {
   copyButtonText: string;
   /** 仅显示在函数输入/输出框左侧的方程前缀。 */
   equationPrefix: string;
-  /** 是否把当前生成结果中的小数字面量展示为最简分数。 */
+  /** 是否把当前生成结果中的小数字面量展示为 Graphwar 运行值等价的分数。 */
   fractionOutputEnabled: boolean;
+  /** 当前结果存在无法保证 Graphwar 运行值等价的小数时，在开关旁展示的提示。 */
+  fractionConversionWarning?: string;
   /** 路径点坐标表行。 */
   pointRows: readonly GraphwarResultPanelPointRow[];
   /** 二阶发射角提示；可见文本和完整 title 分开保留。 */
@@ -145,6 +147,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           id="graphwar-killer-fraction-output"
           :checked="result.fractionOutputEnabled"
           :label="locale.ui.result.fractionOutput"
+          :reason="result.fractionConversionWarning"
           :state="result.interactionDisabled ? 'busy' : 'normal'"
           :title="locale.ui.result.fractionOutputTitle"
           @toggle="emit('toggleFractionOutput')"

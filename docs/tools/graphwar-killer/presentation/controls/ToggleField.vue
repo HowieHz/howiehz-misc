@@ -13,7 +13,7 @@ const props = defineProps<{
   label: string;
   /** Optional supporting description shown before a state reason. */
   description?: string;
-  /** Visible explanation for dormant, blocked, or busy state. */
+  /** Visible status or reason associated with the switch in any capability state. */
   reason?: string;
   /** Capability state shared with the parent command guard. */
   state: GraphwarControlCapability["state"];

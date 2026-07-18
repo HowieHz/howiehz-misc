@@ -4,6 +4,8 @@
 
 Graphwar 杀手在解算器模式下标定 [Graphwar](https://graphwar.com/graphwar_1/index.html) 截图坐标并生成函数表达式，在模拟器模式下输入函数表达式并模拟结果。
 
+“结果转分数”只后处理显示、复制和 Agent 发射使用的对外公式，内部求解、轨迹回放和缓存仍使用原始小数。转换优先输出直观的十进制最简分数；若 Graphwar 分别按 `double` 解析分子、分母后会改变运行值，则改用原小数 `double` 值的精确有理数。仍无法保证等价的小数会原样保留，并在开关旁提示；同一结果的显示、复制、手动发射和托管发射使用同一转换规则。
+
 ## 在线体验
 
 [开始使用 Graphwar 杀手](https://howiehz.top/misc/tools/graphwar-killer/)

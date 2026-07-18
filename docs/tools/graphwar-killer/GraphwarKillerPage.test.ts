@@ -4,6 +4,13 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
+import {
+  createGraphwarAgentClient,
+  type GraphwarAgentAvailableState,
+  type GraphwarAgentShotPlan,
+} from "./controllers/agent/client";
+import { createGraphwarManagedController, type GraphwarManagedController } from "./controllers/managed/controller";
+import { createPixelPoint } from "./core/types";
 import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
 
@@ -55,6 +62,183 @@ describe("Graphwar Killer page settings", () => {
 
     await wrapper.findAll(".graphwar-killer__mode-toggle button")[0].trigger("click");
     expect(wrapper.get("#graphwar-killer-fraction-output").attributes("aria-checked")).toBe("true");
+    wrapper.unmount();
+  });
+
+  it("shows a partial-conversion warning only while the current fraction output needs it", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          commitIncumbentResult: (expression: string) => void;
+        };
+      }
+    ).setupState;
+    const smallestSubnormal = `0.${"0".repeat(323)}49406564584124654`;
+    const toggle = wrapper.get("#graphwar-killer-fraction-output");
+
+    page.commitIncumbentResult(`0.5+${smallestSubnormal}`);
+    await nextTick();
+    expect(wrapper.find("#graphwar-killer-fraction-output-reason").exists()).toBe(false);
+
+    await toggle.trigger("click");
+    expect(wrapper.get("#graphwar-killer-fraction-output-reason").text()).toBe(
+      `! ${graphwarKillerLocale.ui.result.fractionConversionIncomplete}`,
+    );
+    expect(toggle.attributes("aria-describedby")).toBe("graphwar-killer-fraction-output-reason");
+
+    page.commitIncumbentResult("0.5*x");
+    await nextTick();
+    expect(wrapper.find("#graphwar-killer-fraction-output-reason").exists()).toBe(false);
+
+    page.commitIncumbentResult(smallestSubnormal);
+    await nextTick();
+    expect(wrapper.find("#graphwar-killer-fraction-output-reason").exists()).toBe(true);
+    page.commitIncumbentResult("");
+    await nextTick();
+    expect(wrapper.find("#graphwar-killer-fraction-output-reason").exists()).toBe(false);
+
+    wrapper.unmount();
+  });
+
+  it("copies and fires the click-time external formula despite a delayed Agent state read", async () => {
+    let resolveStateResponse!: (response: Response) => void;
+    const stateResponse = new Promise<Response>((resolve) => {
+      resolveStateResponse = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      if (String(input).endsWith("/state")) {
+        return stateResponse;
+      }
+      if (String(input).endsWith("/shot")) {
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      return Promise.reject(new Error(`Unexpected Agent request: ${String(input)} ${String(init?.method)}`));
+    });
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue();
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          commitIncumbentResult: (expression: string, launchAngleRadians?: number) => void;
+          fractionOutputEnabled: boolean;
+          graphwarAgentEnabled: boolean;
+          solverEquationMode: "ddy" | "dy" | "y";
+        };
+      }
+    ).setupState;
+
+    page.graphwarAgentEnabled = true;
+    page.solverEquationMode = "ddy";
+    page.commitIncumbentResult("88.008750871454684", 0.25);
+    page.fractionOutputEnabled = true;
+    await nextTick();
+    const displayedFormula = wrapper.get(".graphwar-killer__formula").text();
+    expect(displayedFormula).toBe("3096532637734579/35184372088832");
+
+    await wrapper.get(".graphwar-killer__result-panel .graphwar-killer__primary-button").trigger("click");
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith(displayedFormula);
+
+    await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
+    page.commitIncumbentResult("0.25*x", 0.5);
+    page.fractionOutputEnabled = false;
+    page.solverEquationMode = "y";
+    await nextTick();
+    resolveStateResponse(jsonResponse(createAgentState("ddy")));
+    await flushPromises();
+
+    const shotCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/shot"));
+    expect(shotCall).toBeDefined();
+    expect(JSON.parse(String(shotCall?.[1]?.body))).toMatchObject({
+      angleRadians: 0.25,
+      function: displayedFormula,
+    });
+
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+    if (clipboardDescriptor) {
+      Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+    } else {
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it("submits normal and deadline managed shots from the incumbent instead of the displayed result", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          commitIncumbentResult: (expression: string) => void;
+          createGraphwarManagedSceneKey: (
+            state: GraphwarAgentAvailableState,
+            shooter: {
+              player: GraphwarAgentAvailableState["players"][number];
+              soldier: GraphwarAgentAvailableState["players"][number]["soldiers"][number];
+            },
+          ) => string;
+          createGraphwarManagedShotPlan: (state: GraphwarAgentAvailableState) => GraphwarAgentShotPlan | undefined;
+          fractionOutputEnabled: boolean;
+          graphwarManagedController: GraphwarManagedController | undefined;
+          graphwarManagedIncumbent: { expression: string; launchAngleRadians?: number } | undefined;
+          graphwarManagedSceneKey: string;
+          submitGraphwarManagedShot: (state: GraphwarAgentAvailableState) => boolean;
+        };
+      }
+    ).setupState;
+    const normalState = createAgentState("y");
+    const normalFetch = createManagedAgentFetch(normalState);
+    const normalController = createGraphwarManagedController({
+      client: createGraphwarAgentClient("http://127.0.0.1:17900", { fetch: normalFetch }),
+    });
+
+    page.commitIncumbentResult("0.5*x");
+    page.fractionOutputEnabled = true;
+    page.graphwarManagedIncumbent = { expression: "88.008750871454684" };
+    page.graphwarManagedSceneKey = page.createGraphwarManagedSceneKey(normalState, {
+      player: normalState.players[0],
+      soldier: normalState.players[0].soldiers[0],
+    });
+    page.graphwarManagedController = normalController;
+    normalController.start();
+    await flushPromises();
+    await nextTick();
+
+    expect(wrapper.get(".graphwar-killer__formula").text()).toBe("1/2*x");
+    const latestNormalState = normalController.getLatestState();
+    if (!latestNormalState) {
+      throw new Error("Expected the managed controller to retain its polled state");
+    }
+    expect(page.submitGraphwarManagedShot(latestNormalState)).toBe(true);
+    await flushPromises();
+    expect(
+      JSON.parse(String(normalFetch.mock.calls.find(([input]) => String(input).endsWith("/shot"))?.[1]?.body)),
+    ).toMatchObject({ function: "3096532637734579/35184372088832" });
+    normalController.stop();
+
+    const deadlineState = { ...createAgentState("y"), remainingTurnMs: 3000, turnToken: "turn-2" };
+    const deadlineFetch = createManagedAgentFetch(deadlineState);
+    const deadlineController = createGraphwarManagedController({
+      client: createGraphwarAgentClient("http://127.0.0.1:17900", { fetch: deadlineFetch }),
+      hooks: { decideDeadlineShot: (state) => page.createGraphwarManagedShotPlan(state) },
+    });
+    page.graphwarManagedSceneKey = page.createGraphwarManagedSceneKey(deadlineState, {
+      player: deadlineState.players[0],
+      soldier: deadlineState.players[0].soldiers[0],
+    });
+    deadlineController.start();
+    await flushPromises();
+    expect(
+      JSON.parse(String(deadlineFetch.mock.calls.find(([input]) => String(input).endsWith("/shot"))?.[1]?.body)),
+    ).toMatchObject({ function: "3096532637734579/35184372088832" });
+    deadlineController.stop();
+
+    page.fractionOutputEnabled = false;
+    expect(page.createGraphwarManagedShotPlan(deadlineState)?.function).toBe("88.008750871454684");
+
     wrapper.unmount();
   });
 
@@ -332,3 +516,70 @@ describe("Graphwar Killer page settings", () => {
     wrapper.unmount();
   });
 });
+
+/** Creates one active Agent state for page-level manual and managed shot tests. */
+function createAgentState(equationMode: "ddy" | "dy" | "y"): GraphwarAgentAvailableState {
+  return {
+    apiVersion: 2,
+    available: true,
+    battleRevision: "sha256:battle-1",
+    capabilities: { ready: true, room: true, shot: true, worldObstacleMask: true },
+    currentTurn: 0,
+    drawingFunction: false,
+    equationMode,
+    exploding: false,
+    gameInstanceId: "game-1",
+    gameMode: equationMode === "y" ? 0 : equationMode === "dy" ? 1 : 2,
+    gameState: 2,
+    obstacleMask: {
+      height: 450,
+      revision: "sha256:battle-1",
+      revisionHeader: "X-Graphwar-Battle-Revision",
+      width: 770,
+      worldUrl: "/obstacle-mask.bin?space=world",
+    },
+    phase: "aiming",
+    plane: { gameLength: 50, height: 450, width: 770 },
+    players: [
+      {
+        computer: false,
+        currentTurnSoldier: 0,
+        disconnected: false,
+        id: 7,
+        index: 0,
+        local: true,
+        name: "Local",
+        soldiers: [{ alive: true, angle: 0, exploding: false, index: 0, world: { pixel: createPixelPoint(100, 200) } }],
+        team: 1,
+      },
+    ],
+    remainingTurnMs: 42_000,
+    turnToken: "turn-1",
+  };
+}
+
+/** Creates a JSON response with the same media type as Graphwar Agent. */
+function jsonResponse(value: unknown) {
+  return new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+}
+
+/** Creates a real Agent transport mock for managed state, mask, and shot requests. */
+function createManagedAgentFetch(state: GraphwarAgentAvailableState) {
+  return vi.fn<typeof fetch>((input) => {
+    const url = String(input);
+    if (url.endsWith("/state")) {
+      return Promise.resolve(jsonResponse(state));
+    }
+    if (url.includes("/obstacle-mask.bin")) {
+      return Promise.resolve(
+        new Response(new Uint8Array(state.obstacleMask.width * state.obstacleMask.height), {
+          headers: { [state.obstacleMask.revisionHeader]: state.obstacleMask.revision },
+        }),
+      );
+    }
+    if (url.endsWith("/shot")) {
+      return Promise.resolve(jsonResponse({ ok: true }));
+    }
+    return Promise.reject(new Error(`Unexpected managed Agent request: ${url}`));
+  });
+}

@@ -471,6 +471,7 @@ export interface GraphwarKillerLocale {
       fireSuccess: string;
       fireTitle: string;
       firing: string;
+      fractionConversionIncomplete: string;
       fractionOutput: string;
       fractionOutputTitle: string;
       formulaInputAriaLabel: string;

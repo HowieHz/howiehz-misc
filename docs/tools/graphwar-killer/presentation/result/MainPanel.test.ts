@@ -34,6 +34,21 @@ describe("Result MainPanel", () => {
     expect(wrapper.find("#graphwar-killer-fraction-output").exists()).toBe(false);
   });
 
+  it("associates a partial fraction-conversion warning with the switch", () => {
+    const result = {
+      ...createResultModel(),
+      fractionConversionWarning: graphwarKillerLocale.ui.result.fractionConversionIncomplete,
+      workflowMode: "solver" as const,
+    };
+    const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, result } });
+    const toggle = wrapper.get("#graphwar-killer-fraction-output");
+    const reason = wrapper.get("#graphwar-killer-fraction-output-reason");
+
+    expect(toggle.attributes("aria-describedby")).toBe("graphwar-killer-fraction-output-reason");
+    expect(reason.text()).toBe(`! ${graphwarKillerLocale.ui.result.fractionConversionIncomplete}`);
+    expect(reason.element.parentElement).toBe(toggle.element.parentElement);
+  });
+
   it("keeps the full angle in the title while rendering compact hint text", () => {
     const wrapper = mount(MainPanel, {
       props: {

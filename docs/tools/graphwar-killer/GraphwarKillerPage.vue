@@ -1104,7 +1104,13 @@ const {
     skipUnknownCharacters: simulatorSkipUnknownCharacters,
   },
 });
-const generatedFormulaOutput = computed(() => formatGeneratedFormulaOutput(formulaResult.value?.expression ?? ""));
+const generatedFormulaConversion = computed(() => {
+  const expression = formulaResult.value?.expression ?? "";
+  return fractionOutputEnabled.value
+    ? convertGraphwarExpressionDecimalsToFractions(expression)
+    : { expression, fullyConverted: true };
+});
+const generatedFormulaOutput = computed(() => generatedFormulaConversion.value.expression);
 // 结果操作 Module 应集中复制反馈、clipboard fallback 和模拟器清空；页面只提供当前结果来源。
 const {
   canClearSimulatorInputs,
@@ -2137,6 +2143,10 @@ const resultPanel = computed(() => {
       Boolean(calculationMessage.value) && (toolWorkflowMode.value === "simulator" || !solverResult),
     copyButtonText: copyButtonText.value,
     equationPrefix: equationModes.value.find((mode) => mode.value === equationMode.value)?.formulaPrefix ?? "",
+    fractionConversionWarning:
+      fractionOutputEnabled.value && solverResult && !generatedFormulaConversion.value.fullyConverted
+        ? locale.ui.result.fractionConversionIncomplete
+        : undefined,
     fractionOutputEnabled: fractionOutputEnabled.value,
     interactionDisabled: graphwarManagedModeEnabled.value,
     pointRows: incumbentPreviewActive.value ? [] : createResultPanelPointRows(),
@@ -2867,6 +2877,16 @@ async function fireGraphwarAgentFunction() {
   graphwarAgentFireInProgress.value = true;
   setGraphwarAgentFireStatus("idle");
   try {
+    // A click owns one immutable shot intent even if the result or controls change while Agent state is loading.
+    const functionText =
+      toolWorkflowMode.value === "solver" ? generatedFormulaOutput.value : simulatorFormulaText.value;
+    const equationModeSnapshot = equationMode.value;
+    const launchAngleRadians =
+      equationModeSnapshot === "ddy"
+        ? toolWorkflowMode.value === "solver"
+          ? secondOrderLaunchAngleRadians.value
+          : simulatorLaunchAngleRadians.value
+        : undefined;
     const client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value);
     const state = await client.readState();
     if (!state.available) {
@@ -2875,30 +2895,20 @@ async function fireGraphwarAgentFunction() {
     if (state.phase !== "aiming") {
       throw new GraphwarAgentClientError("conflict", "shot-not-accepted");
     }
-    const functionText =
-      toolWorkflowMode.value === "solver" ? generatedFormulaOutput.value : simulatorFormulaText.value;
-    if (!functionText.trim() || equationMode.value !== state.equationMode) {
+    if (!functionText.trim() || equationModeSnapshot !== state.equationMode) {
       throw new GraphwarAgentClientError("invalid-request", "result-mode-mismatch");
     }
     graphwarAgentBaseUrlText.value = client.baseUrl;
-    if (state.equationMode === "ddy") {
-      const launchAngleRadians =
-        toolWorkflowMode.value === "solver" ? secondOrderLaunchAngleRadians.value : simulatorLaunchAngleRadians.value;
+    let shotPlan: GraphwarAgentShotPlan;
+    if (equationModeSnapshot === "ddy") {
       if (launchAngleRadians === undefined) {
         throw new GraphwarAgentClientError("invalid-request", "result-mode-mismatch");
       }
-      await client.submitShot(
-        createGraphwarAgentShotRequest(state, {
-          angleRadians: launchAngleRadians,
-          equationMode: "ddy",
-          function: functionText,
-        }),
-      );
+      shotPlan = { angleRadians: launchAngleRadians, equationMode: "ddy", function: functionText };
     } else {
-      await client.submitShot(
-        createGraphwarAgentShotRequest(state, { equationMode: state.equationMode, function: functionText }),
-      );
+      shotPlan = { equationMode: equationModeSnapshot, function: functionText };
     }
+    await client.submitShot(createGraphwarAgentShotRequest(state, shotPlan));
     setGraphwarAgentFireStatus("success");
   } catch (error) {
     graphwarAgentFireFailureMessage.value = createGraphwarAgentFailureReason(locale, error);
@@ -3376,15 +3386,18 @@ function createGraphwarManagedShotPlan(state: GraphwarAgentAvailableState): Grap
   ) {
     return undefined;
   }
+  const functionText = fractionOutputEnabled.value
+    ? convertGraphwarExpressionDecimalsToFractions(incumbent.expression).expression
+    : incumbent.expression;
   if (state.equationMode !== "ddy") {
-    return { equationMode: state.equationMode, function: formatGeneratedFormulaOutput(incumbent.expression) };
+    return { equationMode: state.equationMode, function: functionText };
   }
   return incumbent.launchAngleRadians === undefined
     ? undefined
     : {
         angleRadians: incumbent.launchAngleRadians,
         equationMode: "ddy",
-        function: formatGeneratedFormulaOutput(incumbent.expression),
+        function: functionText,
       };
 }
 
@@ -3597,11 +3610,6 @@ function toggleGraphwarAgentUsage() {
   } else {
     setGraphwarAgentFireStatus("idle");
   }
-}
-
-/** 只后处理对外输出，内部求解、回放和缓存继续使用原始小数表达式。 */
-function formatGeneratedFormulaOutput(expression: string) {
-  return fractionOutputEnabled.value ? convertGraphwarExpressionDecimalsToFractions(expression) : expression;
 }
 
 /** 同步 Agent 地址输入；地址为空时不展示手动读取按钮。 */

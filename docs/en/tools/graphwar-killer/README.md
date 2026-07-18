@@ -4,6 +4,10 @@
 
 Graphwar Killer calibrates a [Graphwar](https://graphwar.com/graphwar_1/index.html) screenshot and generates function expressions in Solver mode, then lets you enter a function expression and simulate the result in Simulator mode.
 
+Fraction output post-processes only the external formula used for display, copying, and Agent shots; solving, trajectory replay, and caches keep the original decimals. It prefers intuitive lowest-term decimal fractions.
+If Graphwar would produce a different runtime value after parsing the numerator and denominator as separate `double` values, it uses the exact rational value of the original decimal's `double` instead. Decimals that still cannot be converted equivalently remain unchanged and produce a warning beside the switch.
+Display, copy, manual shots, and managed shots all use this same conversion rule.
+
 ## Try it online
 
 [Start using Graphwar Killer](https://howiehz.top/misc/en/tools/graphwar-killer/)

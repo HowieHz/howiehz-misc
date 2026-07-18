@@ -36,6 +36,9 @@ import { graphwarKillerLocale } from "./locale";
 3. In Generate Function mode, select your soldier first, then add targets or intermediate path points. Paste the generated function into Graphwar.
 4. In Simulate Trajectory mode, select the firing soldier and enter a function. The `y''` mode also requires a launch angle.
 
+Fraction output changes only the formula used for result display, copying, and Agent shots; it does not change internal solving or trajectory replay. The tool prefers lowest-term fractions and verifies their runtime values using Graphwar's rule of parsing the numerator and denominator as separate `double` values before division.
+A decimal remains unchanged and produces a warning when equivalence cannot be guaranteed. Display, copy, manual shots, and managed shots use the same external formula rule for a result.
+
 The tool saves separate algorithm settings for `y`, `y'`, and `y''`. The defaults are Double Absolute Value for `y`, Step with Glitch Mode for `y'`, and Step with Glitch Mode for `y''`.
 
 Steepness applies to every Step formula and to the smooth turn pulses used by Double Absolute Value `y''`. Double Absolute Value `y''` always uses the stable pulse formula and does not use Step's overflow-protection switch.

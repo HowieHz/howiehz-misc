@@ -555,12 +555,7 @@ async function requestGraphwarAgent(fetchImplementation: typeof globalThis.fetch
   try {
     response = await fetchImplementation(input, { cache: "no-store", ...init });
   } catch (error) {
-    throw new GraphwarAgentClientError(
-      "transient",
-      error instanceof Error ? error.message : String(error),
-      undefined,
-      error,
-    );
+    throw createGraphwarAgentTransientError(error);
   }
   if (response.ok) {
     return response;
@@ -579,13 +574,26 @@ async function requestGraphwarAgent(fetchImplementation: typeof globalThis.fetch
   throw new GraphwarAgentClientError("transient", message, response.status);
 }
 
-/** Reads JSON while treating malformed success bodies as protocol incompatibility. */
+/** Separates retryable body-stream failures from malformed successful JSON. */
 async function readGraphwarAgentJson(response: Response, endpoint: string) {
   try {
     return await response.json();
   } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw createGraphwarAgentTransientError(error, `${endpoint} response body could not be read: `);
+    }
     throw new GraphwarAgentClientError("incompatible", `${endpoint} returned invalid JSON`, response.status, error);
   }
+}
+
+/** Normalizes fetch and JSON-body transport failures as retryable. */
+function createGraphwarAgentTransientError(error: unknown, messagePrefix = "") {
+  return new GraphwarAgentClientError(
+    "transient",
+    `${messagePrefix}${error instanceof Error ? error.message : String(error)}`,
+    undefined,
+    error,
+  );
 }
 
 /** Parses the API-v2 state union and validates all authoritative match fields. */

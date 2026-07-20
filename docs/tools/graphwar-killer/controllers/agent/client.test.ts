@@ -228,7 +228,7 @@ describe("Graphwar Agent API v2 client", () => {
     expect(fetchMock.mock.calls[1][1]?.body).toBe("true");
   });
 
-  it("classifies an old or malformed contract as incompatible", async () => {
+  it("classifies an old contract as incompatible", async () => {
     const response = { ...createStateResponse(), apiVersion: 1 };
     const client = createGraphwarAgentClient("http://127.0.0.1:17900", {
       fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(response)),
@@ -237,6 +237,33 @@ describe("Graphwar Agent API v2 client", () => {
     await expect(client.readState()).rejects.toSatisfy(
       (error: unknown) => error instanceof GraphwarAgentClientError && error.kind === "incompatible",
     );
+  });
+
+  it("keeps malformed successful JSON classified as incompatible", async () => {
+    await expect(
+      createGraphwarAgentClient("http://127.0.0.1:17900", {
+        fetch: vi
+          .fn<typeof fetch>()
+          .mockResolvedValue(new Response("{", { headers: { "Content-Type": "application/json" } })),
+      }).readState(),
+    ).rejects.toMatchObject({ kind: "incompatible" });
+  });
+
+  it("keeps an interrupted success body retryable instead of reporting an incompatible Agent", async () => {
+    await expect(
+      createGraphwarAgentClient("http://127.0.0.1:17900", {
+        fetch: vi.fn<typeof fetch>().mockResolvedValue(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new DOMException("The operation was aborted", "AbortError"));
+              },
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        ),
+      }).readState(),
+    ).rejects.toMatchObject({ kind: "transient" });
   });
 });
 

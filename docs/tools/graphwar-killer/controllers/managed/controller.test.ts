@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createPixelPoint } from "../../core/types";
 import {
+  createGraphwarAgentClient,
   GraphwarAgentClientError,
   type GraphwarAgentAvailableRoom,
   type GraphwarAgentAvailableState,
@@ -80,6 +81,51 @@ describe("Graphwar managed-mode controller", () => {
     expect(client.readState).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1);
     expect(client.readState).toHaveBeenCalledTimes(2);
+    controller.stop();
+  });
+
+  it("retries when the request timeout interrupts a successful response body", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce((_input, init) =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(responseController) {
+                init?.signal?.addEventListener(
+                  "abort",
+                  () => responseController.error(new DOMException("timed out", "AbortError")),
+                  { once: true },
+                );
+              },
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        ),
+      )
+      .mockResolvedValue(
+        new Response(JSON.stringify(createAvailableState({ drawingFunction: true, phase: "drawing" })), {
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    const onIncompatibleError = vi.fn();
+    const onTransientError = vi.fn();
+    const controller = createGraphwarManagedController({
+      client: createGraphwarAgentClient("http://127.0.0.1:17900", { fetch: fetchMock }),
+      hooks: { onIncompatibleError, onTransientError },
+    });
+
+    controller.start();
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(onTransientError).toHaveBeenCalledOnce();
+    expect(onIncompatibleError).not.toHaveBeenCalled();
+    expect(controller.isRunning()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(controller.isRunning()).toBe(true);
     controller.stop();
   });
 

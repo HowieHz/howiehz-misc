@@ -327,9 +327,6 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
         targets: browserslistToTargets(browserslist(pkg.browserslist)),
       },
     },
-    build: {
-      cssMinify: "lightningcss",
-    },
     worker: {
       format: "es",
     },

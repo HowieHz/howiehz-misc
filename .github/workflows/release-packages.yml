@@ -20,7 +20,7 @@ jobs:
       has-release-packages: ${{ steps.release-packages.outputs.has_packages }}
       package-directories-json: ${{ steps.release-packages.outputs.package_directories_json }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # https://github.com/actions/checkout/releases/tag/v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           fetch-depth: 0
           token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
@@ -119,7 +119,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # https://github.com/actions/checkout/releases/tag/v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           sparse-checkout: |
             package.json
@@ -163,7 +163,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # https://github.com/actions/checkout/releases/tag/v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
           sparse-checkout: |

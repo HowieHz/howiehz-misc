@@ -361,21 +361,39 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     clearDeadlineTimer();
     const shotGeneration = generation;
     hooks.onShotSubmitted?.(state, plan);
+    let resultHandled = false;
+    /** Accepts only the first acknowledgement, failure, or watchdog result for this once-only shot. */
+    const handleResult = (callback: () => void) => {
+      if (resultHandled) {
+        return;
+      }
+      resultHandled = true;
+      clearTimeout(resultTimeout);
+      if (isCurrentGeneration(shotGeneration)) {
+        callback();
+      }
+    };
+    const resultTimeout = setTimeout(
+      () =>
+        handleResult(() =>
+          hooks.onShotFailed?.(
+            state,
+            plan,
+            new GraphwarAgentClientError("transient", "Graphwar Agent shot result timed out"),
+          ),
+        ),
+      requestTimeoutMs,
+    );
     void options.client.submitShot(request).then(
-      () => {
-        if (isCurrentGeneration(shotGeneration)) {
-          hooks.onShotSucceeded?.(state, plan);
-        }
-      },
+      () => handleResult(() => hooks.onShotSucceeded?.(state, plan)),
       (error: unknown) => {
-        if (!isCurrentGeneration(shotGeneration)) {
-          return;
-        }
-        const clientError = normalizeGraphwarManagedError(error);
-        hooks.onShotFailed?.(state, plan, clientError);
-        if (isGraphwarAgentIncompatibleError(clientError)) {
-          stopForIncompatible(clientError, shotGeneration);
-        }
+        handleResult(() => {
+          const clientError = normalizeGraphwarManagedError(error);
+          hooks.onShotFailed?.(state, plan, clientError);
+          if (isGraphwarAgentIncompatibleError(clientError)) {
+            stopForIncompatible(clientError, shotGeneration);
+          }
+        });
       },
     );
     return true;

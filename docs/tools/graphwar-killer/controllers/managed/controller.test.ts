@@ -353,6 +353,53 @@ describe("Graphwar managed-mode controller", () => {
     controller.stop();
   });
 
+  it.each(["resolve", "reject"] as const)(
+    "reports a hung shot as unknown without retrying or accepting a late %s",
+    async (lateResult) => {
+      vi.useFakeTimers();
+      const state = createAvailableState({ remainingTurnMs: 3000 });
+      const shot = createDeferred<{ ok: true }>();
+      const client = createFakeClient();
+      client.readState.mockResolvedValue(state);
+      client.submitShot.mockReturnValue(shot.promise);
+      const onShotFailed = vi.fn();
+      const onIncompatibleError = vi.fn();
+      const onShotSucceeded = vi.fn();
+      const controller = createGraphwarManagedController({
+        client,
+        hooks: { onIncompatibleError, onShotFailed, onShotSucceeded },
+        requestTimeoutMs: 50,
+      });
+
+      controller.start();
+      await flushPromises();
+      expect(client.submitShot).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(49);
+      expect(onShotFailed).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onShotFailed).toHaveBeenCalledWith(
+        state,
+        expect.any(Object),
+        expect.objectContaining({ kind: "transient", message: "Graphwar Agent shot result timed out" }),
+      );
+
+      if (lateResult === "resolve") {
+        shot.resolve({ ok: true });
+      } else {
+        shot.reject(new GraphwarAgentClientError("incompatible", "late incompatible result"));
+      }
+      await flushPromises();
+      expect(onShotFailed).toHaveBeenCalledOnce();
+      expect(onIncompatibleError).not.toHaveBeenCalled();
+      expect(onShotSucceeded).not.toHaveBeenCalled();
+      expect(controller.isRunning()).toBe(true);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(client.submitShot).toHaveBeenCalledOnce();
+      controller.stop();
+    },
+  );
+
   it("abandons an invalid local plan without retrying it at the deadline", async () => {
     vi.useFakeTimers();
     const state = createAvailableState({ remainingTurnMs: 4000 });

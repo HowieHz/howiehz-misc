@@ -121,8 +121,6 @@ export interface GraphwarDebugTimingsController {
     timings: SmartPathfindingDebugTimingEntry[] | undefined,
     workerTimings: readonly GraphwarSmartPathfindingWorkerTiming[],
   ) => void;
-  /** 清理智能寻路调试耗时展示。 */
-  clearSmartPathfindingDebugTimings: () => void;
   /** 转换检测 Worker 返回的 timing 格式。 */
   createDetectionDebugTimingEntriesFromWorker: (
     timings: readonly GraphwarDetectionWorkerTimingEntry[],
@@ -202,15 +200,9 @@ export function useGraphwarDebugTimings(options: GraphwarDebugTimingsOptions): G
     smartPathfindingDebugTimingEntries.value = createFinalDebugTimingEntries(timings, completedAt - startedAt);
   }
 
-  /** 清理智能寻路旧日志；连续托管搜索会跳过调用，等新记录结算后再替换。 */
-  function clearSmartPathfindingDebugTimings() {
-    smartPathfindingDebugTimingEntries.value = [];
-  }
-
   return {
     addSmartPathfindingWorkerTimings,
     appendOneClickClearSearchWorkerTimings,
-    clearSmartPathfindingDebugTimings,
     createDetectionDebugTimingEntriesFromWorker,
     detectionDebugTimingRows,
     finishDetectionDebugTimings,

@@ -28,8 +28,6 @@ interface GraphwarSmartPathfindingRunWorkflowOptions<TTarget> {
     cancelToken: number,
     timings: SmartPathfindingDebugTimingEntry[],
   ) => Promise<GraphwarSmartPathfindingRunBuildResult | undefined>;
-  /** 新运行开始前应清掉上一轮寻路调试结果。 */
-  clearDebugTimings: () => void;
   /** 汇总本次运行调试耗时。 */
   finishDebugTimings: (
     startedAt: number,
@@ -82,7 +80,6 @@ export function useGraphwarSmartPathfindingRunWorkflow<TTarget>(
 ): GraphwarSmartPathfindingRunWorkflowController<TTarget> {
   /** 运行一次单目标智能寻路。 */
   async function run(request: GraphwarSmartPathfindingRunRequest<TTarget>) {
-    options.clearDebugTimings();
     const startedAt = options.now();
     const timings: SmartPathfindingDebugTimingEntry[] = [];
     if (request.prepare && !request.prepare()) {

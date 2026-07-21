@@ -11,7 +11,6 @@ describe("one-click clear workflow", () => {
     const start = createPixelPoint(10, 20);
     const target = createPixelPoint(30, 40);
     const order: string[] = [];
-    let clearDebugTimingsCount = 0;
     let displayedDebugStages = ["previous"];
     const appliedExpressions: string[] = [];
     const candidateSoldiers: GraphwarOneClickClearTargetSoldier[] = [
@@ -37,10 +36,6 @@ describe("one-click clear workflow", () => {
     const workflow = useGraphwarOneClickClearRunWorkflow<GraphwarOneClickClearTargetSoldier>({
       debug: {
         appendSearchWorkerTimings: () => undefined,
-        clearTimings: () => {
-          clearDebugTimingsCount += 1;
-          displayedDebugStages = [];
-        },
         finishTimings: (_startedAt, timings) => {
           displayedDebugStages = timings.map((timing) => timing.stage);
         },
@@ -185,12 +180,10 @@ describe("one-click clear workflow", () => {
           }
         },
         onSuccessBeforeEffects: () => order.push("submit"),
-        preservePreviousDebugTimings: true,
         useResultCache: false,
       }),
     ).resolves.toBe(true);
 
-    expect(clearDebugTimingsCount).toBe(0);
     expect(displayedDebugStages).not.toContain("previous");
     expect(displayedDebugStages).toContain("one-click-clear-apply-result");
     expect(order.slice(0, 6)).toEqual(["clear-failure", "submit", "finish", "apply-incumbent", "flash", "status"]);
@@ -217,7 +210,6 @@ describe("one-click clear workflow", () => {
     ).resolves.toBe(true);
     expect(runnerCallCount).toBe(callsBeforeCacheHit);
     expect(appliedExpressions.at(-1)).toBe("cached");
-    expect(clearDebugTimingsCount).toBe(1);
     expect(order.slice(0, 4)).toEqual(["finish", "apply-incumbent", "flash", "status"]);
     expect(clearFailureCount).toBe(1);
     expect(outcomes).toContain("complete");
@@ -273,7 +265,6 @@ describe("one-click clear workflow", () => {
     displayedDebugStages = ["last-complete"];
     const pendingRun = workflow.run({
       onOutcome: (outcome) => outcomes.push(outcome.kind),
-      preservePreviousDebugTimings: true,
       useResultCache: false,
     });
     await Promise.resolve();
@@ -310,7 +301,6 @@ describe("one-click clear workflow", () => {
     await expect(
       workflow.run({
         onOutcome: (outcome) => outcomes.push(outcome.kind),
-        preservePreviousDebugTimings: true,
       }),
     ).resolves.toBe(false);
     expect(runnerCallCount).toBe(callsBeforePreflightFailure);

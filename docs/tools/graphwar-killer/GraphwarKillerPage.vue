@@ -506,7 +506,6 @@ const {
 const {
   addSmartPathfindingWorkerTimings,
   appendOneClickClearSearchWorkerTimings,
-  clearSmartPathfindingDebugTimings,
   createDetectionDebugTimingEntriesFromWorker,
   detectionDebugTimingRows,
   finishDetectionDebugTimings,
@@ -560,7 +559,6 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
 const smartPathfindingRunWorkflow = useGraphwarSmartPathfindingRunWorkflow<PixelPoint | SmartPathfindingTarget>({
   applyPath: setPathPixels,
   buildPath: smartPathfindingBuilder.buildPath,
-  clearDebugTimings: clearSmartPathfindingDebugTimings,
   finishDebugTimings: finishSmartPathfindingDebugTimings,
   finishRun: finishSmartPathfindingRun,
   getFailureMessage: (elapsedMs, reason) => createSmartPathfindingFailureMessage(locale, elapsedMs, reason),
@@ -1316,7 +1314,6 @@ function requiresOneClickClearDagWorker() {
 const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBox>({
   debug: {
     appendSearchWorkerTimings: appendOneClickClearSearchWorkerTimings,
-    clearTimings: clearSmartPathfindingDebugTimings,
     finishTimings: finishSmartPathfindingDebugTimings,
     measureStage: measureSmartPathfindingDebugStage,
     measureStageAsync: measureSmartPathfindingDebugStageAsync,
@@ -3322,7 +3319,6 @@ async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgen
       }
       setGraphwarManagedStatus(locale.smartPathfinding.managed.completedWaiting, "success");
     },
-    preservePreviousDebugTimings: true,
     useResultCache: false,
   });
   if (

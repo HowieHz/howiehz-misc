@@ -55,6 +55,7 @@ function createFacts(overrides: GraphwarCapabilityFactsOverrides = {}): Graphwar
     pathfinding: {
       pathStartAvailable: true,
       workerCountValid: true,
+      managedTimingValid: true,
       obstacleTolerancesValid: true,
       deleteCheckRadiusValid: true,
       ...overrides.pathfinding,
@@ -115,6 +116,17 @@ describe("Graphwar capabilities", () => {
 
     expect(capabilities.oneClickClear).toEqual({ state: "normal" });
     expect(capabilities.managedMode).toEqual({ state: "blocked", reason: "formula-settings-invalid" });
+  });
+
+  it("blocks only managed mode when managed timing is invalid", () => {
+    const capabilities = deriveGraphwarCapabilities(
+      createFacts({ pathfinding: { managedTimingValid: false } }),
+      createPreferences(),
+    );
+
+    expect(capabilities.pathPlanning).toEqual({ state: "normal" });
+    expect(capabilities.oneClickClear).toEqual({ state: "normal" });
+    expect(capabilities.managedMode).toEqual({ state: "blocked", reason: "managed-timing-invalid" });
   });
 
   it.each([

@@ -40,6 +40,7 @@ import {
 import {
   createGraphwarManagedController,
   createGraphwarManagedSkipTurnPlan,
+  GRAPHWAR_MANAGED_POLL_INTERVAL_MS,
   GRAPHWAR_MANAGED_SHOT_DEADLINE_MS,
   GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
   type GraphwarManagedController,
@@ -288,6 +289,8 @@ const maximumSoldierCountText = ref(String(graphwarToolDefaults.maximumSoldierCo
 const soldierTemplateCandidateTopRatioText = ref(String(graphwarToolDefaults.soldierTemplateCandidateTopRatio));
 const templateMatchingWorkerCountText = ref(String(graphwarToolDefaults.templateMatchingWorkerCount));
 const pathfindingWorkerCountText = ref(String(graphwarToolDefaults.pathfindingWorkerCount));
+const graphwarManagedPollIntervalText = ref(String(GRAPHWAR_MANAGED_POLL_INTERVAL_MS / 1000));
+const graphwarManagedShotReserveText = ref(String(GRAPHWAR_MANAGED_SHOT_DEADLINE_MS / 1000));
 const liveClickPreviewWorkerCountText = ref(String(graphwarToolDefaults.liveClickPreviewWorkerCount));
 // 截图识别与 Agent 分别保留适合各自障碍精度的默认安全距离。
 const detectionRoutePlanningToleranceText = ref(String(GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS));
@@ -345,6 +348,7 @@ let graphwarManagedCalculationStatus:
 let graphwarManagedCalculationStatusTimer: ReturnType<typeof setTimeout> | undefined;
 let graphwarManagedClient: GraphwarAgentClient | undefined;
 let graphwarManagedController: GraphwarManagedController | undefined;
+let graphwarManagedShotReserveMs = GRAPHWAR_MANAGED_SHOT_DEADLINE_MS;
 let graphwarManagedDeadlineTurnToken: string | undefined;
 let graphwarManagedIncumbent: GraphwarOneClickClearIncumbent | undefined;
 let graphwarManagedLastSubmittedTurnToken: string | undefined;
@@ -717,6 +721,7 @@ const {
   parsedBounds,
   parsedDetectionSettings,
   parsedMagnifierZoom,
+  parsedManagedTiming,
   parsedObstacleBrushDiameter,
   parsedOneClickClearTolerances,
   parsedObstacleTolerances,
@@ -744,6 +749,10 @@ const {
     },
     magnifier: {
       zoomText: magnifierZoomText,
+    },
+    managed: {
+      pollIntervalText: graphwarManagedPollIntervalText,
+      shotReserveText: graphwarManagedShotReserveText,
     },
     obstacleBrush: {
       diameterText: obstacleBrushDiameterText,
@@ -897,6 +906,9 @@ const settingsMessage = computed(() => {
   }
   return "";
 });
+const managedTimingMessage = computed(() =>
+  toolWorkflowMode.value === "solver" && !parsedManagedTiming.value.ok ? parsedManagedTiming.value.message : "",
+);
 const debugActivationCountdownMessage = computed(() => {
   const remainingMs = debugActivationRemainingMs.value;
   return remainingMs === undefined
@@ -907,6 +919,7 @@ const debugActivationCountdownMessage = computed(() => {
 const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
   const headerStatus = getFirstHeaderStatus(
     createHeaderStatus(settingsMessage.value, "error"),
+    createHeaderStatus(managedTimingMessage.value, "error"),
     createHeaderStatus(debugActivationCountdownMessage.value, "warning"),
     createHeaderStatus(debugActivationSuccessVisible.value ? locale.ui.settings.debugInfoEnabled : "", "success"),
     createHeaderStatus(activeEquationDescription.value),
@@ -1169,6 +1182,7 @@ const graphwarCapabilities = computed(() =>
       },
       pathfinding: {
         deleteCheckRadiusValid: parsedOneClickClearTolerances.value.ok,
+        managedTimingValid: parsedManagedTiming.value.ok,
         obstacleTolerancesValid: parsedObstacleTolerances.value.ok,
         pathStartAvailable: mappedPathPoints.value.length > 0,
         workerCountValid: parsedPathfindingWorkerCount.value.ok,
@@ -1851,6 +1865,8 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     agentRoutePlanningToleranceText: graphwarAgentRoutePlanningToleranceText.value,
     detectionObstacleSimulationToleranceText: detectionObstacleSimulationToleranceText.value,
     detectionRoutePlanningToleranceText: detectionRoutePlanningToleranceText.value,
+    managedPollIntervalText: graphwarManagedPollIntervalText.value,
+    managedShotReserveText: graphwarManagedShotReserveText.value,
     stepGlitchObstacleSimulationToleranceText: stepGlitchObstacleSimulationToleranceText.value,
     stepGlitchRoutePlanningToleranceText: stepGlitchRoutePlanningToleranceText.value,
     oneClickClearDeleteCheckRadiusMinimumPlanePixels,
@@ -2969,6 +2985,11 @@ function toggleGraphwarManagedMode() {
     );
     return;
   }
+  const managedTiming = parsedManagedTiming.value;
+  if (!managedTiming.ok) {
+    setSmartPathfindingStatus(managedTiming.message, "warning");
+    return;
+  }
 
   const repairPlan = createGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value);
   const repairs = locale.equationModes.flatMap((mode) => {
@@ -3005,6 +3026,10 @@ function toggleGraphwarManagedMode() {
         }),
         repairs,
         friendlyFireEnabled.value,
+        {
+          pollIntervalSeconds: String(managedTiming.pollIntervalMs / 1000),
+          shotReserveSeconds: String(managedTiming.shotReserveMs / 1000),
+        },
       ),
     )
   ) {
@@ -3029,6 +3054,7 @@ function toggleGraphwarManagedMode() {
   setGraphwarAgentFireStatus("idle");
   invalidatePendingUserImageRequests();
   graphwarManagedClient = client;
+  graphwarManagedShotReserveMs = managedTiming.shotReserveMs;
   graphwarAgentBaseUrlText.value = client.baseUrl;
   graphwarManagedModeEnabled.value = true;
   graphwarManagedSceneKey = "";
@@ -3045,6 +3071,7 @@ function toggleGraphwarManagedMode() {
 
   graphwarManagedController = createGraphwarManagedController({
     client,
+    deadlineMs: managedTiming.shotReserveMs,
     hooks: {
       decideDeadlineShot: (state) => {
         const searchStartedAt = graphwarManagedSearchStartedAt;
@@ -3144,6 +3171,8 @@ function toggleGraphwarManagedMode() {
         setGraphwarManagedStatus(locale.smartPathfinding.managed.waitingForGame, "warning");
       },
     },
+    pollIntervalMs: managedTiming.pollIntervalMs,
+    shotResultTimeoutMs: managedTiming.shotReserveMs,
   });
   graphwarManagedController.start();
   void requestGraphwarManagedWakeLock();
@@ -3196,7 +3225,7 @@ function handleGraphwarManagedState(
   if (sceneKey === graphwarManagedSceneKey) {
     if (
       graphwarManagedSearchState === "success" &&
-      state.remainingTurnMs > GRAPHWAR_MANAGED_SHOT_DEADLINE_MS &&
+      state.remainingTurnMs > graphwarManagedShotReserveMs &&
       isGraphwarManagedCurrentLocalTurn(state)
     ) {
       submitGraphwarManagedShot(state);
@@ -3307,11 +3336,7 @@ async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgen
       }
       graphwarManagedSearchState = "success";
       const state = graphwarManagedController?.getLatestState();
-      if (
-        state &&
-        state.remainingTurnMs > GRAPHWAR_MANAGED_SHOT_DEADLINE_MS &&
-        isGraphwarManagedCurrentLocalTurn(state)
-      ) {
+      if (state && state.remainingTurnMs > graphwarManagedShotReserveMs && isGraphwarManagedCurrentLocalTurn(state)) {
         // 方案已经完整验证；必须在 workflow 写回最终路径或完成状态前提交，不把页面刷新放进关键路径。
         if (submitGraphwarManagedShot(state)) {
           return;
@@ -4262,6 +4287,8 @@ function undoLastPoint() {
       @update-live-click-preview-worker-count-text="
         !graphwarManagedModeEnabled && (liveClickPreviewWorkerCountText = $event)
       "
+      @update-managed-poll-interval-text="!graphwarManagedModeEnabled && (graphwarManagedPollIntervalText = $event)"
+      @update-managed-shot-reserve-text="!graphwarManagedModeEnabled && (graphwarManagedShotReserveText = $event)"
       @update-obstacle-min-area-text="!graphwarManagedModeEnabled && (obstacleMinAreaText = $event)"
       @update-agent-obstacle-simulation-tolerance-text="
         !graphwarManagedModeEnabled && (graphwarAgentObstacleSimulationToleranceText = $event)

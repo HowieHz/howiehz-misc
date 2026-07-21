@@ -66,6 +66,12 @@ export const graphwarKillerLocale = {
     maxYGreaterThanMinY: "-y must be less than +y",
     magnifierZoomNumber: "Magnifier zoom must be a number",
     magnifierZoomRange: (min, max) => `Magnifier zoom must be between ${min}x and ${max}x`,
+    managedPollIntervalNumber: "State polling interval must be a number",
+    managedPollIntervalPrecision: "State polling interval must use at most three decimal places",
+    managedPollIntervalRange: "State polling interval must be between 0.001 and 60 seconds",
+    managedShotReserveNumber: "Shot reserve time must be a number",
+    managedShotReservePrecision: "Shot reserve time must use at most three decimal places",
+    managedShotReserveRange: "Shot reserve time must be between 0.001 and 60 seconds",
     maximumSoldierCountInteger: "Soldier limit must be an integer",
     maximumSoldierCountPositive: "Soldier limit must be greater than 0",
     obstacleBrushDiameterInteger: "Brush size must be an integer",
@@ -461,6 +467,7 @@ export const graphwarKillerLocale = {
         "bounds-required": "Detect or pick coordinate bounds first.",
         "delete-check-radius-invalid": "Fix the point removal check radius.",
         "formula-settings-invalid": "Fix the formula settings first.",
+        "managed-timing-invalid": "Fix the managed mode settings.",
         "formula-unsupported": "The current formula profile does not support One-Click Clear.",
         "image-required": "Load a screenshot first.",
         "managed-lock": "Managed mode owns this setting.",
@@ -753,7 +760,7 @@ export const graphwarKillerLocale = {
       managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
       managedMode: "Managed mode",
       managedModeDisableTitle: "Turn off Managed Mode and unlock settings",
-      managedModeConfirmation: (settings, repairs, friendlyFireEnabled) => {
+      managedModeConfirmation: (settings, repairs, friendlyFireEnabled, timing) => {
         const algorithmStatus = [
           "Current algorithm settings:",
           ...settings.map(
@@ -771,7 +778,7 @@ export const graphwarKillerLocale = {
                 ),
               ]),
         ].join("\n");
-        return `Managed mode submits shots to Graphwar automatically\nAutomatically readies in rooms\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\n\n${algorithmStatus}\n\nEnable managed mode?`;
+        return `Managed mode submits shots to Graphwar automatically\nAutomatically readies in rooms\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\nShot reserve time: ${timing.shotReserveSeconds} seconds\nState polling interval: ${timing.pollIntervalSeconds} seconds\n\n${algorithmStatus}\n\nEnable managed mode?`;
       },
       managedModeTitle: "Read state, plan, and fire automatically during local turns",
       routePlanningTolerance: "Route planning tolerance",
@@ -875,6 +882,15 @@ export const graphwarKillerLocale = {
       parseDerivativeAsYTitle: "Match Graphwar's behavior of parsing y' as y",
       pathfinding: {
         heading: "Pathfinding",
+        managedModeSettings: "Managed mode settings",
+        managedModeSettingsTitle: "Set the shot reserve time and state polling interval for managed mode",
+        managedPollInterval: "State polling interval",
+        managedPollIntervalAriaLabel: "Managed mode state polling interval in seconds",
+        managedPollIntervalTitle: "Wait this long after one state request finishes before starting the next request",
+        managedShotReserve: "Shot reserve time",
+        managedShotReserveAriaLabel: "Managed mode shot reserve time in seconds",
+        managedShotReserveTitle:
+          "Stop searching and submit the current plan this long before the turn ends; also wait this long for the shot result",
         workerCount: "Pathfinding workers",
         workerCountAriaLabel: "Number of geometry pathfinding Workers",
         workerCountTitle: "Set the number of pathfinding workers; default 4, range 1 to 128",

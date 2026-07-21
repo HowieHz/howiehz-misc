@@ -64,6 +64,8 @@ export interface GraphwarManagedControllerOptions {
   hooks?: GraphwarManagedControllerHooks;
   pollIntervalMs?: number;
   requestTimeoutMs?: number;
+  /** Maximum time to wait for a once-only shot acknowledgement without aborting or retrying it. */
+  shotResultTimeoutMs?: number;
 }
 
 /** 管理单飞轮询、回合认领和一次性发射的托管控制器。 */
@@ -94,6 +96,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
   const deadlineMs = options.deadlineMs ?? GRAPHWAR_MANAGED_SHOT_DEADLINE_MS;
   const pollIntervalMs = options.pollIntervalMs ?? GRAPHWAR_MANAGED_POLL_INTERVAL_MS;
   const requestTimeoutMs = options.requestTimeoutMs ?? GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS;
+  const shotResultTimeoutMs = options.shotResultTimeoutMs ?? requestTimeoutMs;
   const abandonedTurns = new Set<string>();
   const claimedTurns = new Set<string>();
   const deadlineHandledTurns = new Set<string>();
@@ -382,7 +385,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
             new GraphwarAgentClientError("transient", "Graphwar Agent shot result timed out"),
           ),
         ),
-      requestTimeoutMs,
+      shotResultTimeoutMs,
     );
     void options.client.submitShot(request).then(
       () => handleResult(() => hooks.onShotSucceeded?.(state, plan)),

@@ -21,6 +21,8 @@ describe("AdvancedPanel", () => {
         agentRoutePlanningToleranceText: "2",
         detectionObstacleSimulationToleranceText: "1",
         detectionRoutePlanningToleranceText: "1",
+        managedPollIntervalText: "1",
+        managedShotReserveText: "3",
         stepGlitchObstacleSimulationToleranceText: "0",
         stepGlitchRoutePlanningToleranceText: "0",
         oneClickClearDeleteCheckRadiusMinimumPlanePixels: 0,
@@ -58,6 +60,22 @@ describe("AdvancedPanel", () => {
     expect(simulationToleranceInputs.map((input) => input.element.value)).toEqual(["1", "0", "0"]);
     await routeToleranceInputs[2].setValue("3");
     expect(wrapper.emitted("updateStepGlitchRoutePlanningToleranceText")).toEqual([["3"]]);
+
+    const managedSettings = wrapper.find("#graphwar-killer-managed-settings-title").element.closest("details");
+    expect(managedSettings?.hasAttribute("open")).toBe(false);
+    expect(managedSettings?.textContent).toContain(graphwarKillerLocale.ui.settings.pathfinding.managedModeSettings);
+    const shotReserveInput = wrapper.find(
+      `[aria-label="${graphwarKillerLocale.ui.settings.pathfinding.managedShotReserveAriaLabel}"]`,
+    );
+    const pollIntervalInput = wrapper.find(
+      `[aria-label="${graphwarKillerLocale.ui.settings.pathfinding.managedPollIntervalAriaLabel}"]`,
+    );
+    expect(shotReserveInput.attributes()).toMatchObject({ max: "60", min: "0.001", step: "0.001" });
+    expect(pollIntervalInput.attributes()).toMatchObject({ max: "60", min: "0.001", step: "0.001" });
+    await shotReserveInput.setValue("2.5");
+    await pollIntervalInput.setValue("0.5");
+    expect(wrapper.emitted("updateManagedShotReserveText")).toEqual([["2.5"]]);
+    expect(wrapper.emitted("updateManagedPollIntervalText")).toEqual([["0.5"]]);
 
     expect(
       wrapper

@@ -43,6 +43,12 @@ export const graphwarKillerLocale = {
     maxYGreaterThanMinY: "-y 要小于 +y",
     magnifierZoomNumber: "放大倍率需要填写数字",
     magnifierZoomRange: (min, max) => `放大倍率需要在 ${min}x 到 ${max}x 之间`,
+    managedPollIntervalNumber: "状态轮询间隔需要填写数字",
+    managedPollIntervalPrecision: "状态轮询间隔最多保留三位小数",
+    managedPollIntervalRange: "状态轮询间隔需要在 0.001 秒到 60 秒之间",
+    managedShotReserveNumber: "发射预留时间需要填写数字",
+    managedShotReservePrecision: "发射预留时间最多保留三位小数",
+    managedShotReserveRange: "发射预留时间需要在 0.001 秒到 60 秒之间",
     maximumSoldierCountInteger: "士兵数上限需要填写整数",
     maximumSoldierCountPositive: "士兵数上限需要大于 0",
     obstacleBrushDiameterInteger: "笔刷大小需要填写整数",
@@ -416,6 +422,7 @@ export const graphwarKillerLocale = {
         "bounds-required": "请先识别或点选坐标边界",
         "delete-check-radius-invalid": "请修正删点命中检查半径",
         "formula-settings-invalid": "请先修正公式设置",
+        "managed-timing-invalid": "请修正托管模式设定",
         "formula-unsupported": "当前公式配置不支持一键清图",
         "image-required": "请先载入截图",
         "managed-lock": "托管运行期间此设置被锁定",
@@ -664,7 +671,7 @@ export const graphwarKillerLocale = {
       managedFriendlyFireWarning: "托管已允许友伤，友军会作为一键清图候选",
       managedMode: "托管模式",
       managedModeDisableTitle: "关闭托管模式并解锁设置",
-      managedModeConfirmation: (settings, repairs, friendlyFireEnabled) => {
+      managedModeConfirmation: (settings, repairs, friendlyFireEnabled, timing) => {
         const algorithmStatus = [
           "当前算法设定：",
           ...settings.map(
@@ -682,7 +689,7 @@ export const graphwarKillerLocale = {
                 ),
               ]),
         ].join("\n");
-        return `托管会自动向 Graphwar 发射\n在房间内会自动准备\n当前${friendlyFireEnabled ? "允许" : "禁止"}友伤\n\n${algorithmStatus}\n\n确认开启托管？`;
+        return `托管会自动向 Graphwar 发射\n在房间内会自动准备\n当前${friendlyFireEnabled ? "允许" : "禁止"}友伤\n发射预留时间：${timing.shotReserveSeconds} 秒\n状态轮询间隔：${timing.pollIntervalSeconds} 秒\n\n${algorithmStatus}\n\n确认开启托管？`;
       },
       managedModeTitle: "在己方回合自动读取状态、规划并发射",
       routePlanningTolerance: "路线规划容差",
@@ -783,6 +790,14 @@ export const graphwarKillerLocale = {
       parseDerivativeAsYTitle: "Graphwar 存在解析缺陷：由于正则表达式顺序，会将 y' 解析为 y",
       pathfinding: {
         heading: "寻路设定",
+        managedModeSettings: "托管模式设定",
+        managedModeSettingsTitle: "设置托管模式的发射预留时间和状态轮询间隔",
+        managedPollInterval: "状态轮询间隔",
+        managedPollIntervalAriaLabel: "托管模式状态轮询间隔，单位为秒",
+        managedPollIntervalTitle: "设置上一次状态请求完成后到下一次状态请求开始前的等待时间",
+        managedShotReserve: "发射预留时间",
+        managedShotReserveAriaLabel: "托管模式发射预留时间，单位为秒",
+        managedShotReserveTitle: "设置回合结束前停止搜索并提交当前方案的预留时间，同时作为发射结果等待时间",
         workerCount: "寻路工作线程数",
         workerCountAriaLabel: "几何寻路并行工作线程数量",
         workerCountTitle: "设置寻路使用的工作线程数；默认 4，范围 1 到 128",

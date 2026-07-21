@@ -29,6 +29,8 @@ const emit = defineEmits<{
   updateMinXText: [value: string];
   updateMinYText: [value: string];
   updateLiveClickPreviewWorkerCountText: [value: string];
+  updateManagedPollIntervalText: [value: string];
+  updateManagedShotReserveText: [value: string];
   updateObstacleMinAreaText: [value: string];
   updateOneClickClearDeleteCheckRadiusText: [value: string];
   updatePathfindingWorkerCountText: [value: string];
@@ -108,6 +110,16 @@ const stepGlitchObstacleSimulationToleranceText = computed({
 const pathfindingWorkerCountText = computed({
   get: () => props.panel.pathfinding.workerCountText,
   set: (value) => emit("updatePathfindingWorkerCountText", value),
+});
+
+const managedShotReserveText = computed({
+  get: () => props.panel.pathfinding.managedShotReserveText,
+  set: (value) => emit("updateManagedShotReserveText", value),
+});
+
+const managedPollIntervalText = computed({
+  get: () => props.panel.pathfinding.managedPollIntervalText,
+  set: (value) => emit("updateManagedPollIntervalText", value),
 });
 
 const oneClickClearDeleteCheckRadiusText = computed({
@@ -379,6 +391,48 @@ const liveClickPreviewWorkerCountText = computed({
               </div>
             </div>
           </PanelDetails>
+          <PanelDetails
+            summary-id="graphwar-killer-managed-settings-title"
+            :summary="locale.ui.settings.pathfinding.managedModeSettings"
+            :summary-title="locale.ui.settings.pathfinding.managedModeSettingsTitle"
+          >
+            <div class="graphwar-killer__managed-settings-grid">
+              <label
+                class="graphwar-killer__detection-setting-label"
+                :title="locale.ui.settings.pathfinding.managedShotReserveTitle"
+              >
+                {{ locale.ui.settings.pathfinding.managedShotReserve }}
+                <input
+                  v-model="managedShotReserveText"
+                  inputmode="decimal"
+                  min="0.001"
+                  max="60"
+                  step="0.001"
+                  autocomplete="off"
+                  :aria-label="locale.ui.settings.pathfinding.managedShotReserveAriaLabel"
+                  :title="locale.ui.settings.pathfinding.managedShotReserveTitle"
+                >
+                <span>s</span>
+              </label>
+              <label
+                class="graphwar-killer__detection-setting-label"
+                :title="locale.ui.settings.pathfinding.managedPollIntervalTitle"
+              >
+                {{ locale.ui.settings.pathfinding.managedPollInterval }}
+                <input
+                  v-model="managedPollIntervalText"
+                  inputmode="decimal"
+                  min="0.001"
+                  max="60"
+                  step="0.001"
+                  autocomplete="off"
+                  :aria-label="locale.ui.settings.pathfinding.managedPollIntervalAriaLabel"
+                  :title="locale.ui.settings.pathfinding.managedPollIntervalTitle"
+                >
+                <span>s</span>
+              </label>
+            </div>
+          </PanelDetails>
           <label
             class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
             :title="locale.ui.settings.pathfinding.workerCountTitle"
@@ -517,6 +571,12 @@ const liveClickPreviewWorkerCountText = computed({
 
 .graphwar-killer__advanced-settings-group {
   align-content: start;
+}
+
+.graphwar-killer__managed-settings-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .graphwar-killer__obstacle-expansion-grid {

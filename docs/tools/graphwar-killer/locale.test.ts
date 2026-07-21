@@ -4,6 +4,7 @@ import { graphwarKillerLocale as englishGraphwarKillerLocale } from "../../en/to
 import { graphwarKillerLocale } from "./locale";
 
 const fullPrecisionAngleText = "-64.6230664748477";
+const managedTiming = { pollIntervalSeconds: "1", shotReserveSeconds: "3" };
 const chineseLocaleStrings: string[] = [];
 const pendingChineseLocaleValues: unknown[] = [graphwarKillerLocale];
 while (pendingChineseLocaleValues.length > 0) {
@@ -92,8 +93,14 @@ describe("Chinese Graphwar Killer locale", () => {
       { algorithm: "阶跃函数", equation: "y'", properties: ["邪道模式"] },
       { algorithm: "阶跃函数", equation: "y''", properties: [] },
     ];
-    const supportedConfirmation = graphwarKillerLocale.ui.pathfinding.managedModeConfirmation(settings, [], false);
+    const supportedConfirmation = graphwarKillerLocale.ui.pathfinding.managedModeConfirmation(
+      settings,
+      [],
+      false,
+      managedTiming,
+    );
     expect(supportedConfirmation).toContain("在房间内会自动准备");
+    expect(supportedConfirmation).toContain("发射预留时间：3 秒\n状态轮询间隔：1 秒");
     expect(supportedConfirmation).toContain("当前算法设定：\ny：双绝对值函数\ny'：阶跃函数（邪道模式）\ny''：阶跃函数");
     expect(
       graphwarKillerLocale.ui.pathfinding.managedModeConfirmation(
@@ -103,6 +110,7 @@ describe("Chinese Graphwar Killer locale", () => {
           { algorithm: "阶跃函数", equation: "y'", properties: ["邪道模式"] },
         ],
         true,
+        managedTiming,
       ),
     ).toContain(
       "当前算法设定：\ny：双绝对值函数\ny'：阶跃函数（邪道模式）\ny''：阶跃函数\n\n以下游戏模式需要调整算法设定：\ny：当前算法不支持一键清图，将设为双绝对值函数\ny'：当前算法不支持一键清图，将设为阶跃函数（邪道模式）",
@@ -141,6 +149,7 @@ describe("English Graphwar Killer locale", () => {
         ],
         [],
         false,
+        managedTiming,
       ),
     ).toContain("Automatically readies in rooms");
   });
@@ -155,6 +164,7 @@ describe("English Graphwar Killer locale", () => {
         ],
         [{ algorithm: "Double Absolute Value", equation: "y", properties: [] }],
         false,
+        managedTiming,
       ),
     ).toContain(
       "Current algorithm settings:\ny: Double Absolute Value\ny': Step (Glitch Mode)\ny'': Step\n\nThese game modes need different algorithm settings:\ny: the current algorithm does not support One-Click Clear; it will be set to Double Absolute Value",

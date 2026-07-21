@@ -30,6 +30,7 @@ export type GraphwarCapabilityReason =
   | "path-start-required"
   | "formula-unsupported"
   | "formula-settings-invalid"
+  | "managed-timing-invalid"
   | "pathfinding-worker-count-invalid"
   | "obstacle-tolerances-invalid"
   | "delete-check-radius-invalid";
@@ -67,6 +68,8 @@ export interface GraphwarCapabilityFacts {
   pathfinding: {
     pathStartAvailable: boolean;
     workerCountValid: boolean;
+    /** 托管轮询与发射预留输入是否都能精确换算为允许范围内的整数毫秒。 */
+    managedTimingValid: boolean;
     obstacleTolerancesValid: boolean;
     deleteCheckRadiusValid: boolean;
   };
@@ -309,6 +312,9 @@ function deriveGraphwarManagedModeCapability(
   }
   if (!facts.formula.managedSettingsValid) {
     return { state: "blocked", reason: "formula-settings-invalid" };
+  }
+  if (!facts.pathfinding.managedTimingValid) {
+    return { state: "blocked", reason: "managed-timing-invalid" };
   }
   // 托管模式始终校验 DAG 容量，因为 Agent 后续回合可能选择普通 profile。
   if (!facts.pathfinding.workerCountValid) {

@@ -27,6 +27,10 @@ export type ParsedMagnifierZoom = { ok: true; zoom: number } | { ok: false; mess
 export type ParsedObstacleBrushDiameter = { ok: true; diameter: number } | { ok: false; message: string };
 /** 寻路并行数解析结果；1 表示一键清图 DAG 建边在 master worker 内串行执行。 */
 export type ParsedPathfindingWorkerCount = { ok: true; workerCount: number } | { ok: false; message: string };
+/** 托管模式时序解析结果；页面输入秒，控制器统一消费整数毫秒。 */
+export type ParsedManagedTiming =
+  | { ok: true; pollIntervalMs: number; shotReserveMs: number }
+  | { ok: false; message: string };
 /** 普通智能寻路容差解析结果；所有距离都使用 Graphwar 原始 770x450 平面像素。 */
 export type ParsedObstacleTolerances =
   | {
@@ -49,6 +53,9 @@ interface ParsedSettingsFailure {
   message: string;
 }
 type ParsedObstacleToleranceValues = Extract<ParsedObstacleTolerances, { ok: true }>;
+
+export const GRAPHWAR_MANAGED_TIMING_MINIMUM_MS = 1;
+export const GRAPHWAR_MANAGED_TIMING_MAXIMUM_MS = 60_000;
 
 /** 设置校验器读取的页面文本 ref 集合。 */
 interface GraphwarSettingsValidationInputs {
@@ -74,6 +81,11 @@ interface GraphwarSettingsValidationInputs {
   /** 放大镜校验应允许输入框范围大于滑条范围。 */
   magnifier: {
     zoomText: GraphwarReadonlyRef<string>;
+  };
+  /** 托管时序只影响托管 capability，不参与手动寻路校验。 */
+  managed: {
+    pollIntervalText: GraphwarReadonlyRef<string>;
+    shotReserveText: GraphwarReadonlyRef<string>;
   };
   /** 笔刷校验只负责直径合法性；绘制副作用留在障碍编辑 controller。 */
   obstacleBrush: {
@@ -122,6 +134,7 @@ export interface GraphwarSettingsValidationController {
   parsedBounds: ComputedRef<ParsedBounds>;
   parsedDetectionSettings: ComputedRef<ParsedDetectionSettings>;
   parsedMagnifierZoom: ComputedRef<ParsedMagnifierZoom>;
+  parsedManagedTiming: ComputedRef<ParsedManagedTiming>;
   parsedObstacleBrushDiameter: ComputedRef<ParsedObstacleBrushDiameter>;
   parsedOneClickClearTolerances: ComputedRef<ParsedOneClickClearTolerances>;
   parsedObstacleTolerances: ComputedRef<ParsedObstacleTolerances>;
@@ -145,6 +158,24 @@ export function parseGraphwarFormulaPrecision(text: string) {
     decimalPlaces <= MAX_FORMULA_DECIMAL_PLACES
     ? decimalPlaces
     : undefined;
+}
+
+/** 把 0.001 到 60 秒的用户输入解析成整数毫秒，并区分错误展示语义。 */
+export function parseGraphwarManagedTimingMilliseconds(
+  text: string,
+): { type: "valid"; milliseconds: number } | { type: "number" | "precision" | "range" } {
+  const seconds = parseFiniteNumber(text);
+  if (seconds === undefined) {
+    return { type: "number" };
+  }
+  if (!/^[+-]?(?:\d+|\d+\.\d{1,3}|\.\d{1,3})$/.test(text.trim())) {
+    return { type: "precision" };
+  }
+  const milliseconds = Math.round(seconds * 1000);
+  if (milliseconds < GRAPHWAR_MANAGED_TIMING_MINIMUM_MS || milliseconds > GRAPHWAR_MANAGED_TIMING_MAXIMUM_MS) {
+    return { type: "range" };
+  }
+  return { milliseconds, type: "valid" };
 }
 
 /** 集中页面设置输入解析；页面应只消费校验结果，workflow 副作用应留在页面侧。 */
@@ -178,6 +209,39 @@ export function useGraphwarSettingsValidation(
       return { ok: false as const, message: options.getLocale().validation.steepnessNumber };
     }
     return { ok: true as const, steepness };
+  });
+
+  const parsedManagedTiming = computed<ParsedManagedTiming>(() => {
+    const validation = options.getLocale().validation;
+    const shotReserve = parseGraphwarManagedTimingMilliseconds(options.inputs.managed.shotReserveText.value);
+    if (shotReserve.type !== "valid") {
+      return {
+        ok: false as const,
+        message:
+          shotReserve.type === "number"
+            ? validation.managedShotReserveNumber
+            : shotReserve.type === "range"
+              ? validation.managedShotReserveRange
+              : validation.managedShotReservePrecision,
+      };
+    }
+    const pollInterval = parseGraphwarManagedTimingMilliseconds(options.inputs.managed.pollIntervalText.value);
+    if (pollInterval.type !== "valid") {
+      return {
+        ok: false as const,
+        message:
+          pollInterval.type === "number"
+            ? validation.managedPollIntervalNumber
+            : pollInterval.type === "range"
+              ? validation.managedPollIntervalRange
+              : validation.managedPollIntervalPrecision,
+      };
+    }
+    return {
+      ok: true as const,
+      pollIntervalMs: pollInterval.milliseconds,
+      shotReserveMs: shotReserve.milliseconds,
+    };
   });
 
   const parsedPrecision = computed<ParsedPrecision>(() => {
@@ -389,6 +453,7 @@ export function useGraphwarSettingsValidation(
     parsedBounds,
     parsedDetectionSettings,
     parsedMagnifierZoom,
+    parsedManagedTiming,
     parsedObstacleBrushDiameter,
     parsedOneClickClearTolerances,
     parsedObstacleTolerances,

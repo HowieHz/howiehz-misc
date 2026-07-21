@@ -110,6 +110,12 @@ export interface GraphwarKillerLocale {
     magnifierZoomRange: (min: number, max: number) => string;
     maximumSoldierCountInteger: string;
     maximumSoldierCountPositive: string;
+    managedPollIntervalNumber: string;
+    managedPollIntervalPrecision: string;
+    managedPollIntervalRange: string;
+    managedShotReserveNumber: string;
+    managedShotReservePrecision: string;
+    managedShotReserveRange: string;
     obstacleMinAreaInteger: string;
     obstacleMinAreaRange: (max: number) => string;
     obstacleBrushDiameterInteger: string;
@@ -433,6 +439,10 @@ export interface GraphwarKillerLocale {
           properties: readonly string[];
         }[],
         friendlyFireEnabled: boolean,
+        timing: {
+          pollIntervalSeconds: string;
+          shotReserveSeconds: string;
+        },
       ) => string;
       managedModeTitle: string;
       routePlanningTolerance: string;
@@ -532,6 +542,14 @@ export interface GraphwarKillerLocale {
       parseDerivativeAsYTitle: string;
       pathfinding: {
         heading: string;
+        managedModeSettings: string;
+        managedModeSettingsTitle: string;
+        managedPollInterval: string;
+        managedPollIntervalAriaLabel: string;
+        managedPollIntervalTitle: string;
+        managedShotReserve: string;
+        managedShotReserveAriaLabel: string;
+        managedShotReserveTitle: string;
         workerCount: string;
         workerCountAriaLabel: string;
         workerCountTitle: string;

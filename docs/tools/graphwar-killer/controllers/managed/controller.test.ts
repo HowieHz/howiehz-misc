@@ -368,7 +368,7 @@ describe("Graphwar managed-mode controller", () => {
       const controller = createGraphwarManagedController({
         client,
         hooks: { onIncompatibleError, onShotFailed, onShotSucceeded },
-        requestTimeoutMs: 50,
+        shotResultTimeoutMs: 50,
       });
 
       controller.start();

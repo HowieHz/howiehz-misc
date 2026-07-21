@@ -45,6 +45,10 @@ export interface GraphwarAdvancedSettingsPathfinding {
   agentRoutePlanningToleranceText: string;
   /** Agent 来源的轨迹模拟障碍外扩输入框文本。 */
   agentObstacleSimulationToleranceText: string;
+  /** 托管模式状态轮询间隔输入框文本，单位为秒。 */
+  managedPollIntervalText: string;
+  /** 托管模式发射预留时间输入框文本，单位为秒。 */
+  managedShotReserveText: string;
   /** ODE 邪道模式的路径规划障碍外扩输入框文本。 */
   stepGlitchRoutePlanningToleranceText: string;
   /** ODE 邪道模式的轨迹模拟障碍外扩输入框文本。 */

@@ -11,6 +11,8 @@ describe("one-click clear workflow", () => {
     const start = createPixelPoint(10, 20);
     const target = createPixelPoint(30, 40);
     const order: string[] = [];
+    let clearDebugTimingsCount = 0;
+    let displayedDebugStages = ["previous"];
     const appliedExpressions: string[] = [];
     const candidateSoldiers: GraphwarOneClickClearTargetSoldier[] = [
       { hitRadius: 7, id: "target", sourceCenterX: 30, sourceCenterY: 40 },
@@ -35,10 +37,27 @@ describe("one-click clear workflow", () => {
     const workflow = useGraphwarOneClickClearRunWorkflow<GraphwarOneClickClearTargetSoldier>({
       debug: {
         appendSearchWorkerTimings: () => undefined,
-        clearTimings: () => undefined,
-        finishTimings: () => undefined,
-        measureStage: (_timings, _stage, task) => task(),
-        measureStageAsync: (_timings, _stage, task) => task(),
+        clearTimings: () => {
+          clearDebugTimingsCount += 1;
+          displayedDebugStages = [];
+        },
+        finishTimings: (_startedAt, timings) => {
+          displayedDebugStages = timings.map((timing) => timing.stage);
+        },
+        measureStage: (timings, stage, task) => {
+          try {
+            return task();
+          } finally {
+            timings.push({ elapsedMs: 0, stage });
+          }
+        },
+        measureStageAsync: async (timings, stage, task) => {
+          try {
+            return await task();
+          } finally {
+            timings.push({ elapsedMs: 0, stage });
+          }
+        },
       },
       effects: {
         applyIncumbent: (incumbent) => {
@@ -166,10 +185,14 @@ describe("one-click clear workflow", () => {
           }
         },
         onSuccessBeforeEffects: () => order.push("submit"),
+        preservePreviousDebugTimings: true,
         useResultCache: false,
       }),
     ).resolves.toBe(true);
 
+    expect(clearDebugTimingsCount).toBe(0);
+    expect(displayedDebugStages).not.toContain("previous");
+    expect(displayedDebugStages).toContain("one-click-clear-apply-result");
     expect(order.slice(0, 6)).toEqual(["clear-failure", "submit", "finish", "apply-incumbent", "flash", "status"]);
     expect(clearFailureCount).toBe(1);
     expect(appliedExpressions).toContain("final");
@@ -194,6 +217,7 @@ describe("one-click clear workflow", () => {
     ).resolves.toBe(true);
     expect(runnerCallCount).toBe(callsBeforeCacheHit);
     expect(appliedExpressions.at(-1)).toBe("cached");
+    expect(clearDebugTimingsCount).toBe(1);
     expect(order.slice(0, 4)).toEqual(["finish", "apply-incumbent", "flash", "status"]);
     expect(clearFailureCount).toBe(1);
     expect(outcomes).toContain("complete");
@@ -246,8 +270,10 @@ describe("one-click clear workflow", () => {
 
     order.length = 0;
     runnerMode = "pending";
+    displayedDebugStages = ["last-complete"];
     const pendingRun = workflow.run({
       onOutcome: (outcome) => outcomes.push(outcome.kind),
+      preservePreviousDebugTimings: true,
       useResultCache: false,
     });
     await Promise.resolve();
@@ -260,6 +286,7 @@ describe("one-click clear workflow", () => {
     });
     await expect(pendingRun).resolves.toBe(false);
     expect(outcomes.at(-1)).toBe("cancelled");
+    expect(displayedDebugStages).toEqual(["last-complete"]);
 
     current = true;
     publishIncumbent = false;
@@ -278,12 +305,20 @@ describe("one-click clear workflow", () => {
     expect(outcomes.at(-1)).toBe("status:error");
 
     candidateSoldiers.length = 0;
+    displayedDebugStages = ["last-complete"];
     const callsBeforePreflightFailure = runnerCallCount;
-    await expect(workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind) })).resolves.toBe(false);
+    await expect(
+      workflow.run({
+        onOutcome: (outcome) => outcomes.push(outcome.kind),
+        preservePreviousDebugTimings: true,
+      }),
+    ).resolves.toBe(false);
     expect(runnerCallCount).toBe(callsBeforePreflightFailure);
     expect(outcomes.at(-2)).toBe("preflight-failure");
     expect(outcomes.at(-1)).toBe("status:error");
     expect(preflightReasons.at(-1)).toBe("no-target");
+    expect(displayedDebugStages).not.toContain("last-complete");
+    expect(displayedDebugStages).toContain("one-click-clear-setting-status");
 
     boundsValid = false;
     await expect(workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind) })).resolves.toBe(false);

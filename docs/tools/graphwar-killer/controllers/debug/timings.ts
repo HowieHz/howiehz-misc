@@ -202,7 +202,7 @@ export function useGraphwarDebugTimings(options: GraphwarDebugTimingsOptions): G
     smartPathfindingDebugTimingEntries.value = createFinalDebugTimingEntries(timings, completedAt - startedAt);
   }
 
-  /** 寻路/清图启动时先清旧日志；预检阶段取消时也不会展示上一轮结果。 */
+  /** 清理智能寻路旧日志；连续托管搜索会跳过调用，等新记录结算后再替换。 */
   function clearSmartPathfindingDebugTimings() {
     smartPathfindingDebugTimingEntries.value = [];
   }

@@ -3322,6 +3322,7 @@ async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgen
       }
       setGraphwarManagedStatus(locale.smartPathfinding.managed.completedWaiting, "success");
     },
+    preservePreviousDebugTimings: true,
     useResultCache: false,
   });
   if (

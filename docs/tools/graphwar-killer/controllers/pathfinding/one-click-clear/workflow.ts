@@ -60,6 +60,8 @@ export interface GraphwarOneClickClearRunOptions {
   onOutcome?: (outcome: GraphwarOneClickClearRunOutcome) => void;
   /** 最终成功后、写回最终路径与完成状态前同步调用；托管用它提交不依赖页面渲染的已验证方案。 */
   onSuccessBeforeEffects?: () => void;
+  /** 托管连续搜索时保留上一轮完整耗时，直到本轮产生可结算的新记录。 */
+  preservePreviousDebugTimings?: boolean;
   /** 托管按实时局面搜索时关闭跨运行结果缓存。 */
   useResultCache?: boolean;
 }
@@ -174,7 +176,9 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
 
   /** 从当前路径尾部出发，追加当前模型下击杀最多的路径。 */
   async function run(runOptions: GraphwarOneClickClearRunOptions = {}) {
-    options.debug.clearTimings();
+    if (!runOptions.preservePreviousDebugTimings) {
+      options.debug.clearTimings();
+    }
     const startedAt = options.time.now();
     const timings: SmartPathfindingDebugTimingEntry[] = [];
     const preflightResult = createMeasuredPreflight(timings);

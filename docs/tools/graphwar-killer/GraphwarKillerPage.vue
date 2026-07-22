@@ -2200,17 +2200,17 @@ const magnifierContentStyle = computed(() => {
 const resultPanel = computed(() => {
   const solverResult = formulaResult.value;
   const pathError = formulaPathError.value;
-  const remainingTurnSeconds = graphwarAgentTurnCountdown.remainingSeconds.value;
+  const remainingTurnMilliseconds = graphwarAgentTurnCountdown.remainingMilliseconds.value;
   return {
     agentFireButtonText: graphwarAgentFireButtonText.value,
     agentFireReason: getCapabilityReason(graphwarCapabilities.value.agentFire.reason),
     agentFireState: graphwarCapabilities.value.agentFire.state,
     agentTurnCountdown:
-      remainingTurnSeconds === undefined
+      remainingTurnMilliseconds === undefined
         ? undefined
         : {
             isZeroVisible: graphwarAgentTurnCountdown.isZeroVisible.value,
-            text: locale.ui.result.turnTimeRemaining(formatGraphwarAgentTurnCountdown(remainingTurnSeconds)),
+            text: locale.ui.result.turnTimeRemaining(formatGraphwarAgentTurnCountdown(remainingTurnMilliseconds)),
           },
     isAgentFireVisible: isGraphwarAgentEnabled.value,
     canEditPointCoordinates: !isIncumbentPreviewActive.value,

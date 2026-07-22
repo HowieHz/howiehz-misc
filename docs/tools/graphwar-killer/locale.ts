@@ -812,7 +812,7 @@ export const graphwarKillerLocale = {
       fireSuccess: "已开火",
       fireTitle: "通过 Graphwar Agent 提交当前函数并开火",
       firing: "开火中",
-      turnTimeRemaining: (time) => `剩余 ${time}`,
+      turnTimeRemaining: (time) => `剩余 ${time} 秒`,
       fractionConversionIncomplete: "部分小数无法等价转换",
       fractionOutput: "结果转分数",
       fractionOutputTitle: "将生成函数中的有限小数转换为 Graphwar 运行值等价的分数",

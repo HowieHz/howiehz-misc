@@ -10,6 +10,7 @@ describe("Graphwar Agent turn countdown", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -17,11 +18,11 @@ describe("Graphwar Agent turn countdown", () => {
     const countdown = useGraphwarAgentTurnCountdown();
     countdown.update(createAvailableState({ observedAtEpochMs: Date.now() - 1500, remainingTurnMs: 5000 }));
 
-    expect(countdown.remainingSeconds.value).toBe(4);
+    expect(countdown.remainingMilliseconds.value).toBe(3500);
     vi.advanceTimersByTime(501);
-    expect(countdown.remainingSeconds.value).toBe(3);
+    expect(countdown.remainingMilliseconds.value).toBe(3000);
     vi.advanceTimersByTime(3000);
-    expect(countdown.remainingSeconds.value).toBe(0);
+    expect(countdown.remainingMilliseconds.value).toBe(0);
   });
 
   it("shows zero for at most two seconds and then disappears", () => {
@@ -31,9 +32,40 @@ describe("Graphwar Agent turn countdown", () => {
     vi.advanceTimersByTime(100);
     expect(countdown.isZeroVisible.value).toBe(true);
     vi.advanceTimersByTime(1999);
-    expect(countdown.remainingSeconds.value).toBe(0);
+    expect(countdown.remainingMilliseconds.value).toBe(0);
     vi.advanceTimersByTime(1);
-    expect(countdown.remainingSeconds.value).toBeUndefined();
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
+  });
+
+  it("increases display precision below one tenth of a second", () => {
+    const countdown = useGraphwarAgentTurnCountdown();
+    countdown.update(createAvailableState({ remainingTurnMs: 100 }));
+
+    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.1");
+    vi.advanceTimersByTime(10);
+    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.09");
+    vi.advanceTimersByTime(81);
+    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.009");
+    vi.advanceTimersByTime(8);
+    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.001");
+    vi.advanceTimersByTime(1);
+    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.000");
+  });
+
+  it("uses millisecond refreshes only at the final display precision", () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const countdown = useGraphwarAgentTurnCountdown();
+
+    countdown.update(createAvailableState({ remainingTurnMs: 58_000 }));
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 100);
+
+    countdown.clear();
+    countdown.update(createAvailableState({ remainingTurnMs: 90 }));
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 10);
+
+    countdown.clear();
+    countdown.update(createAvailableState({ remainingTurnMs: 9 }));
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 1);
   });
 
   it("does not extend or restart zero visibility for repeated calibration of the same turn", () => {
@@ -41,14 +73,14 @@ describe("Graphwar Agent turn countdown", () => {
     const turnToken = "00000000-0000-4000-8000-000000000011";
     countdown.update(createAvailableState({ remainingTurnMs: 0, turnToken }));
 
-    expect(countdown.remainingSeconds.value).toBe(0);
+    expect(countdown.remainingMilliseconds.value).toBe(0);
     vi.advanceTimersByTime(1000);
     countdown.update(createAvailableState({ remainingTurnMs: 0, turnToken }));
     vi.advanceTimersByTime(1000);
-    expect(countdown.remainingSeconds.value).toBeUndefined();
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
 
     countdown.update(createAvailableState({ remainingTurnMs: 0, turnToken }));
-    expect(countdown.remainingSeconds.value).toBeUndefined();
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
 
     countdown.update(
       createAvailableState({
@@ -56,7 +88,7 @@ describe("Graphwar Agent turn countdown", () => {
         turnToken: "00000000-0000-4000-8000-000000000012",
       }),
     );
-    expect(countdown.remainingSeconds.value).toBe(0);
+    expect(countdown.remainingMilliseconds.value).toBe(0);
   });
 
   it("clears on unavailable or non-aiming state", () => {
@@ -70,17 +102,22 @@ describe("Graphwar Agent turn countdown", () => {
       plane: createAvailableState().plane,
       reason: "game-not-started",
     });
-    expect(countdown.remainingSeconds.value).toBeUndefined();
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
 
     countdown.update(createAvailableState());
     countdown.update(createAvailableState({ phase: "drawing" }));
-    expect(countdown.remainingSeconds.value).toBeUndefined();
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
   });
 
-  it("formats fixed minute and second fields", () => {
-    expect(formatGraphwarAgentTurnCountdown(0)).toBe("0:00");
-    expect(formatGraphwarAgentTurnCountdown(42)).toBe("0:42");
-    expect(formatGraphwarAgentTurnCountdown(125)).toBe("2:05");
+  it("formats seconds with adaptive precision down to Agent milliseconds", () => {
+    expect(formatGraphwarAgentTurnCountdown(0)).toBe("0.000");
+    expect(formatGraphwarAgentTurnCountdown(1)).toBe("0.001");
+    expect(formatGraphwarAgentTurnCountdown(9)).toBe("0.009");
+    expect(formatGraphwarAgentTurnCountdown(10)).toBe("0.01");
+    expect(formatGraphwarAgentTurnCountdown(90)).toBe("0.09");
+    expect(formatGraphwarAgentTurnCountdown(100)).toBe("0.1");
+    expect(formatGraphwarAgentTurnCountdown(58_000)).toBe("58.0");
+    expect(formatGraphwarAgentTurnCountdown(125_000)).toBe("125.0");
   });
 });
 

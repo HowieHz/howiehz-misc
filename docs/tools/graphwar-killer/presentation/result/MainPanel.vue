@@ -160,16 +160,16 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
       <div class="graphwar-killer__result-actions graphwar-killer-command-row">
         <div
           v-if="result.isAgentFireVisible"
-          class="graphwar-killer-command-field"
+          class="graphwar-killer__agent-fire-command"
         >
-          <div class="graphwar-killer__agent-fire-command">
-            <span
-              v-if="result.agentTurnCountdown"
-              class="graphwar-killer__agent-turn-countdown"
-              :class="{ 'graphwar-killer__agent-turn-countdown--expired': result.agentTurnCountdown.isZeroVisible }"
-            >
-              {{ result.agentTurnCountdown.text }}
-            </span>
+          <span
+            v-if="result.agentTurnCountdown"
+            class="graphwar-killer__agent-turn-countdown"
+            :class="{ 'graphwar-killer__agent-turn-countdown--expired': result.agentTurnCountdown.isZeroVisible }"
+          >
+            {{ result.agentTurnCountdown.text }}
+          </span>
+          <div class="graphwar-killer-command-field graphwar-killer__agent-fire-field">
             <button
               type="button"
               class="graphwar-killer__agent-fire-button"
@@ -180,12 +180,12 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
             >
               {{ result.agentFireButtonText }}
             </button>
+            <ControlReason
+              v-if="result.agentFireReason"
+              id="graphwar-killer-agent-fire-reason"
+              :message="result.agentFireReason"
+            />
           </div>
-          <ControlReason
-            v-if="result.agentFireReason"
-            id="graphwar-killer-agent-fire-reason"
-            :message="result.agentFireReason"
-          />
         </div>
         <button
           type="button"
@@ -382,14 +382,21 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
 }
 
 .graphwar-killer__agent-fire-command {
-  align-items: center;
+  align-items: start;
   display: flex;
   gap: 8px;
 }
 
+.graphwar-killer__agent-fire-field {
+  width: min-content;
+}
+
 .graphwar-killer__agent-turn-countdown {
+  align-items: center;
   color: var(--vp-c-text-2);
+  display: flex;
   font-variant-numeric: tabular-nums;
+  min-height: 34px;
   min-width: 82px;
   text-align: end;
   white-space: nowrap;
@@ -536,13 +543,16 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
     width: 100%;
   }
 
+  .graphwar-killer__agent-fire-command {
+    width: 100%;
+  }
+
   .graphwar-killer__primary-button {
     width: 100%;
   }
 
   .graphwar-killer__agent-fire-button {
-    flex: 1;
-    width: auto;
+    width: 100%;
   }
 
   .graphwar-killer__point-table > div {

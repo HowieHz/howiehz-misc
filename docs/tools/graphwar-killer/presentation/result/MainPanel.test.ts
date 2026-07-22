@@ -62,15 +62,21 @@ describe("Result MainPanel", () => {
     expect(hint.attributes("title")).toBe("0.000...010976°");
   });
 
-  it("keeps the Agent fire reason directly below its button", () => {
-    const result = createResultModel();
+  it("keeps the Agent fire reason inside the button field without occupying the countdown column", () => {
+    const result = {
+      ...createResultModel(),
+      agentTurnCountdown: { isZeroVisible: false, text: "剩余 58.0 秒" },
+    };
     const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, result } });
     const actions = wrapper.get(".graphwar-killer__result-actions");
-    const fireField = actions.get(".graphwar-killer-command-field");
+    const command = actions.get(".graphwar-killer__agent-fire-command");
+    const fireField = command.get(".graphwar-killer__agent-fire-field");
 
-    expect(fireField.element.children[0]).toBe(fireField.get(".graphwar-killer__agent-fire-command").element);
+    expect(command.element.children[0]).toBe(command.get(".graphwar-killer__agent-turn-countdown").element);
+    expect(command.element.children[1]).toBe(fireField.element);
+    expect(fireField.element.children[0]).toBe(fireField.get(".graphwar-killer__agent-fire-button").element);
     expect(fireField.element.children[1]).toBe(fireField.get(".graphwar-killer-control-reason").element);
-    expect(fireField.element.nextElementSibling).toBe(actions.get(".graphwar-killer__primary-button").element);
+    expect(command.element.nextElementSibling).toBe(actions.get(".graphwar-killer__primary-button").element);
     expect(actions.get(".graphwar-killer__primary-button").element.parentElement).toBe(actions.element);
     expect(actions.get(".graphwar-killer__icon-button").element.parentElement).toBe(actions.element);
   });
@@ -79,13 +85,15 @@ describe("Result MainPanel", () => {
     const wrapper = mount(MainPanel, {
       props: {
         locale: graphwarKillerLocale,
-        result: { ...createResultModel(), agentTurnCountdown: { isZeroVisible: false, text: "剩余 0:42" } },
+        result: { ...createResultModel(), agentTurnCountdown: { isZeroVisible: false, text: "剩余 58.0 秒" } },
       },
     });
     const command = wrapper.get(".graphwar-killer__agent-fire-command");
+    const fireField = command.get(".graphwar-killer__agent-fire-field");
 
     expect(command.element.children[0]).toBe(command.get(".graphwar-killer__agent-turn-countdown").element);
-    expect(command.element.children[1]).toBe(command.get(".graphwar-killer__agent-fire-button").element);
+    expect(command.element.children[1]).toBe(fireField.element);
+    expect(fireField.element.children[0]).toBe(command.get(".graphwar-killer__agent-fire-button").element);
   });
 
   it("shows the path point list in a collapsed shared details panel", () => {

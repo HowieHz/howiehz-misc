@@ -909,7 +909,7 @@ export const graphwarKillerLocale = {
       fireSuccess: "Fired",
       fireTitle: "Submit the current function through Graphwar Agent and fire",
       firing: "Firing",
-      turnTimeRemaining: (time) => `${time} left`,
+      turnTimeRemaining: (time) => `${time}s left`,
       fractionConversionIncomplete: "Some decimals could not be converted equivalently.",
       fractionOutput: "Fraction output",
       fractionOutputTitle: "Convert finite decimals to fractions with equivalent Graphwar runtime values",

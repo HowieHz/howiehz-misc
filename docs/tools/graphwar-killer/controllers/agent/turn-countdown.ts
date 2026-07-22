@@ -13,16 +13,16 @@ export interface GraphwarAgentTurnCountdown {
   dispose: () => void;
   /** Reports whether the visible zero is inside its short grace period. */
   isZeroVisible: ComputedRef<boolean>;
-  /** Whole seconds rounded up while positive, then zero during the grace period. */
-  remainingSeconds: Readonly<Ref<number | undefined>>;
+  /** Display-quantized milliseconds, then zero during the grace period. */
+  remainingMilliseconds: Readonly<Ref<number | undefined>>;
   /** Calibrates from one accepted live `/state` response. */
   update: (state: GraphwarAgentState) => void;
 }
 
 /** Maintains one response-age-corrected countdown on a monotonic local deadline. */
 export function useGraphwarAgentTurnCountdown(): GraphwarAgentTurnCountdown {
-  const remainingSeconds = ref<number>();
-  const isZeroVisible = computed(() => remainingSeconds.value === 0);
+  const remainingMilliseconds = ref<number>();
+  const isZeroVisible = computed(() => remainingMilliseconds.value === 0);
   let activeTurnKey: string | undefined;
   let deadlineMs: number | undefined;
   let hideAtMs: number | undefined;
@@ -56,27 +56,29 @@ export function useGraphwarAgentTurnCountdown(): GraphwarAgentTurnCountdown {
   function refresh() {
     clearUpdateTimer();
     if (deadlineMs === undefined || hideAtMs === undefined) {
-      remainingSeconds.value = undefined;
+      remainingMilliseconds.value = undefined;
       return;
     }
     const currentTimeMs = nowMs();
     const remainingMs = deadlineMs - currentTimeMs;
     if (remainingMs > 0) {
-      const seconds = Math.ceil(remainingMs / 1000);
-      remainingSeconds.value = seconds;
-      updateTimer = setTimeout(refresh, Math.max(1, Math.ceil(remainingMs - (seconds - 1) * 1000)));
+      // Match the game's tenths, then reveal hundredths and milliseconds only near the deadline.
+      const resolutionMs = remainingMs > 100 ? 100 : remainingMs > 10 ? 10 : 1;
+      const displayRemainingMs = Math.ceil(remainingMs / resolutionMs) * resolutionMs;
+      remainingMilliseconds.value = displayRemainingMs;
+      updateTimer = setTimeout(refresh, Math.max(1, Math.ceil(remainingMs - (displayRemainingMs - resolutionMs))));
       return;
     }
     if (currentTimeMs < hideAtMs) {
       zeroGraceTurnKey = activeTurnKey;
-      remainingSeconds.value = 0;
+      remainingMilliseconds.value = 0;
       updateTimer = setTimeout(refresh, Math.max(1, Math.ceil(hideAtMs - currentTimeMs)));
       return;
     }
     // Keep the consumed turn identity after natural expiry so another identical zero snapshot stays hidden.
     deadlineMs = undefined;
     hideAtMs = undefined;
-    remainingSeconds.value = undefined;
+    remainingMilliseconds.value = undefined;
   }
 
   /** Clears both the deadline and any pending display transition. */
@@ -85,7 +87,7 @@ export function useGraphwarAgentTurnCountdown(): GraphwarAgentTurnCountdown {
     activeTurnKey = undefined;
     deadlineMs = undefined;
     hideAtMs = undefined;
-    remainingSeconds.value = undefined;
+    remainingMilliseconds.value = undefined;
     zeroGraceTurnKey = undefined;
   }
 
@@ -102,7 +104,7 @@ export function useGraphwarAgentTurnCountdown(): GraphwarAgentTurnCountdown {
     clear,
     dispose: clear,
     isZeroVisible,
-    remainingSeconds,
+    remainingMilliseconds,
     update,
   };
 }
@@ -115,8 +117,13 @@ export function getAdjustedGraphwarAgentRemainingTurnMs(
   return Math.max(0, state.remainingTurnMs - Math.max(0, currentEpochMs - state.observedAtEpochMs));
 }
 
-/** Formats a non-negative whole-second countdown without variable-width hour state. */
-export function formatGraphwarAgentTurnCountdown(remainingSeconds: number) {
-  const minutes = Math.floor(remainingSeconds / 60);
-  return `${minutes}:${String(remainingSeconds % 60).padStart(2, "0")}`;
+/** Formats seconds at tenths normally, then exposes the Agent's millisecond resolution near zero. */
+export function formatGraphwarAgentTurnCountdown(remainingMilliseconds: number) {
+  if (remainingMilliseconds >= 100) {
+    return (remainingMilliseconds / 1000).toFixed(1);
+  }
+  if (remainingMilliseconds >= 10) {
+    return (remainingMilliseconds / 1000).toFixed(2);
+  }
+  return (remainingMilliseconds / 1000).toFixed(3);
 }

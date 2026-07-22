@@ -139,8 +139,8 @@ describe("English Graphwar Killer locale", () => {
         "For every One-Click Clear mode, choose each center or its strict x+ safe edge and stably assign hit-circle control points that share an initial x.",
     });
     expect(englishGraphwarKillerLocale.ui.pathfinding.oneClickClearTitle).toContain("x+ side");
-    expect(graphwarKillerLocale.ui.result.turnTimeRemaining("0:42")).toBe("剩余 0:42");
-    expect(englishGraphwarKillerLocale.ui.result.turnTimeRemaining("0:42")).toBe("0:42 left");
+    expect(graphwarKillerLocale.ui.result.turnTimeRemaining("58.0")).toBe("剩余 58.0 秒");
+    expect(englishGraphwarKillerLocale.ui.result.turnTimeRemaining("58.0")).toBe("58.0s left");
   });
 
   it("presents the full-precision launch angle without approximation wording", () => {

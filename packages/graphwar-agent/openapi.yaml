@@ -7,8 +7,8 @@ info:
     identifier: MIT
   description: |
     Machine-readable HTTP and JSON shapes for Graphwar Agent API v3.
-    `API.md` is the normative source for concurrency, idempotency, token-claim,
-    eviction, stuck-worker, and recovery semantics. If the documents conflict,
+    `API.md` is the normative source for concurrency, duplicate-request handling,
+    token claims, record cleanup, stuck workers, and recovery. If the documents conflict,
     `API.md` takes precedence.
 servers:
   - url: http://127.0.0.1:17900
@@ -21,7 +21,7 @@ tags:
   - name: Room
     description: Pre-game-room snapshots and local ready-state control.
   - name: Shots
-    description: Bounded idempotent shot-command creation and recovery.
+    description: Shot-command creation, duplicate-request handling, and recovery.
   - name: Obstacles
     description: Revision-conditioned binary obstacle masks.
 security:
@@ -114,8 +114,9 @@ paths:
         - Room
       summary: Set every local player's target ready state
       description: |
-        Idempotently invokes the original client only for local players whose ready
-        state differs. Read `/room` afterward to observe server synchronization.
+        Invokes the original client only for local players whose ready state differs,
+        so repeating the request does not send a duplicate update. Read `/room`
+        afterward to observe server synchronization.
       requestBody:
         required: true
         content:
@@ -432,7 +433,7 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
     ShotCommandNotFound:
-      description: The command is unknown or has been evicted from the bounded ledger.
+      description: The command is unknown or was removed from stored history.
       content:
         application/json:
           schema:
@@ -513,6 +514,7 @@ components:
           minimum: 1024
           maximum: 16777216
           default: 65536
+          description: Maximum number of JSON request-body bytes accepted for one API request.
         maxFunctionBytes:
           type: integer
           minimum: 1

@@ -10,16 +10,16 @@ The current API version is v3. A v3 implementation MUST NOT silently expose the 
 
 The reference Agent exposes one API version at a time on a loopback HTTP server:
 
-| Method | Path                        | Purpose                                                  |
-| ------ | --------------------------- | -------------------------------------------------------- |
-| `GET`  | `/health`                   | Read protocol, authentication, build, and limit metadata |
-| `GET`  | `/state`                    | Read an active-match snapshot                            |
-| `GET`  | `/room`                     | Read a pre-game-room snapshot                            |
-| `PUT`  | `/room/ready`               | Set the target ready state of every local player         |
-| `POST` | `/shots`                    | Create or replay an idempotent shot command              |
-| `GET`  | `/shots/{requestId}`        | Read one retained shot command                           |
-| `GET`  | `/obstacle-masks/world.bin` | Read the world-oriented obstacle mask                    |
-| `GET`  | `/obstacle-masks/view.bin`  | Read the current-view-oriented obstacle mask             |
+| Method | Path                        | Purpose                                                   |
+| ------ | --------------------------- | --------------------------------------------------------- |
+| `GET`  | `/health`                   | Read API, authentication, build, and limit information    |
+| `GET`  | `/state`                    | Read an active-match snapshot                             |
+| `GET`  | `/room`                     | Read a pre-game-room snapshot                             |
+| `PUT`  | `/room/ready`               | Set the target ready state of every local player          |
+| `POST` | `/shots`                    | Create a shot command or return the matching existing one |
+| `GET`  | `/shots/{requestId}`        | Read one retained shot command                            |
+| `GET`  | `/obstacle-masks/world.bin` | Read the world-oriented obstacle mask                     |
+| `GET`  | `/obstacle-masks/view.bin`  | Read the current-view-oriented obstacle mask              |
 
 There is no command-list endpoint. Clients MUST retain their own `requestId` and SHOULD use `/state.shotCommand` to recover the current turn after a page reload or lost local state.
 
@@ -71,7 +71,7 @@ Authorization: Bearer TOKEN
 ```
 
 Missing or incorrect credentials return `401 authentication-required` and a `WWW-Authenticate: Bearer` header.
-The reference server checks authentication after bounded headers but before reading or allocating the request body.
+The reference server enforces the fixed header-size limit and checks authentication before reading or allocating the request body.
 Implementations SHOULD compare credentials without data-dependent early exit. Invalid explicit token syntax fails Agent startup.
 Tokens MUST NOT be placed in URLs and are not persisted by the reference Agent.
 
@@ -102,7 +102,7 @@ Common stable HTTP error codes are:
 |       `400` | `invalid-request-id`        | Non-canonical shot resource ID in the path                                                       |
 |       `401` | `authentication-required`   | Missing or incorrect bearer token                                                                |
 |       `404` | `route-not-found`           | No route exists at the requested path                                                            |
-|       `404` | `shot-command-not-found`    | The requested command is unknown or was evicted                                                  |
+|       `404` | `shot-command-not-found`    | The requested command is unknown or was removed from stored history                              |
 |       `405` | `method-not-allowed`        | The path exists but does not accept the method                                                   |
 |       `409` | `request-id-conflict`       | A retained ID is associated with different shot content                                          |
 |       `409` | `room-unavailable`          | Ready state cannot be changed in the current client state                                        |
@@ -140,22 +140,22 @@ A `405` response MUST include `Allow`. Successfully parsed API errors MUST use t
 }
 ```
 
-Clients MUST verify `apiVersion === 3` before using protected endpoints. `agent` values are build provenance for diagnostics; source archives without Git metadata MAY report `unknown`.
+Clients MUST verify `apiVersion === 3` before using protected endpoints. `agent` values are build information for diagnostics; source archives without Git metadata MAY report `unknown`.
 
 ### 3.1 Limits
 
 The reference implementation applies these limits before invoking the official parser:
 
-| Limit                     |         Default | Configurable range | Notes                                                               |
-| ------------------------- | --------------: | -----------------: | ------------------------------------------------------------------- |
-| Request headers           |    `8192` bytes |              fixed | Includes the terminating empty line                                 |
-| `maxRequestBodyBytes`     |         `65536` |  `1024`–`16777216` | Checked before allocating the request body                          |
-| `maxFunctionBytes`        |         `16384` |      `1`–`1048576` | UTF-8 bytes after JSON decoding; capped to the effective body limit |
-| `maxFunctionNestingDepth` |           `256` |         `1`–`4096` | Maximum open-parenthesis depth from an iterative scan               |
-| Shot command ledger       |    `50` records |              fixed | No TTL                                                              |
-| Synchronous shot wait     |       `5000` ms |              fixed | Does not cancel the official call                                   |
-| Shot worker stack hint    | `2097152` bytes |              fixed | A JVM/platform hint, not a guaranteed exact stack size              |
-| Graphwar HTTP slots       |             `6` |              fixed | Leaves two of eight workers available for health and command reads  |
+| Limit                     |         Default | Configurable range | Notes                                                                    |
+| ------------------------- | --------------: | -----------------: | ------------------------------------------------------------------------ |
+| Request headers           |    `8192` bytes |              fixed | Includes the terminating empty line                                      |
+| `maxRequestBodyBytes`     |         `65536` |  `1024`–`16777216` | Maximum JSON data accepted in one API request; checked before allocation |
+| `maxFunctionBytes`        |         `16384` |      `1`–`1048576` | UTF-8 bytes after JSON decoding; capped to the effective body limit      |
+| `maxFunctionNestingDepth` |           `256` |         `1`–`4096` | Maximum open-parenthesis depth from an iterative scan                    |
+| Stored shot commands      |    `50` records |              fixed | Old safe records are removed when space is needed                        |
+| Synchronous shot wait     |       `5000` ms |              fixed | Does not cancel the official call                                        |
+| Shot worker stack hint    | `2097152` bytes |              fixed | A JVM/platform hint, not a guaranteed exact stack size                   |
+| Graphwar HTTP slots       |             `6` |              fixed | Leaves two of eight workers available for health and command reads       |
 
 The configurable startup names are the names returned by `/health.limits`. Invalid or out-of-range numeric options are ignored by the reference implementation. The effective `maxFunctionBytes` MUST NOT exceed `maxRequestBodyBytes`.
 
@@ -176,7 +176,7 @@ Every response contains:
 - `plane`: fixed geometry (`width: 770`, `height: 450`, `gameLength: 50.0`)
 - `apiVersion: 3`
 - static `capabilities`
-- `agent` build provenance
+- `agent` build information
 - `isAvailable`
 
 Static capabilities describe implemented protocol features; they do not describe momentary game state:
@@ -382,13 +382,13 @@ It sets the target state for every local player using the original client method
 }
 ```
 
-The operation is idempotent: players already in the requested state MUST NOT be sent a duplicate ready mutation. The response confirms the requested target, not server synchronization; clients SHOULD read `/room` again to observe the resulting room snapshot.
+The operation can be repeated safely: players already in the requested state MUST NOT receive a duplicate ready update. The response confirms the requested target, not server synchronization; clients SHOULD read `/room` again to observe the resulting room snapshot.
 
 Outside a pre-game room, or when no local player exists, the endpoint returns `409 room-unavailable`.
 
 ## 6. Shot command resources
 
-Shot submission is a bounded, recoverable command-resource protocol. It guarantees idempotent Agent acceptance within the retained ledger; it does not claim a transactional acknowledgment from the original Graphwar protocol.
+Each shot submission creates a command that clients can query later. The Agent stores at most 50 command records. Repeating the same retained request ID and content returns the existing command without calling Graphwar again. This tells clients only how the Agent handled the request; Graphwar itself does not confirm execution with the request ID.
 
 ### 6.1 Create or replay a command
 
@@ -411,7 +411,7 @@ Rules:
 - Clients SHOULD generate each request ID with `crypto.randomUUID()` or an equivalently secure UUID generator and MUST NOT deliberately reuse it for different content.
 - `turnToken` MUST be the canonical lowercase UUID copied from one available state snapshot.
 - `battleRevision` MUST match `sha256:` followed by 64 lowercase hexadecimal digits and MUST be copied from the
-  same state snapshot. These fixed shapes keep all 50 retained command records predictably bounded.
+  same state snapshot. These fixed shapes keep the memory used by all 50 stored command records predictable.
 - `function` MUST be present as a JSON string. An empty or semantically invalid function establishes a `failed`
   command rather than an HTTP parsing error.
 - Every decoded string MUST contain valid Unicode scalar values; unpaired UTF-16 surrogates are rejected before
@@ -421,7 +421,7 @@ Rules:
 - `angleRadians` is REQUIRED in `ddy` mode and MUST be omitted in `y` and `dy` modes.
 - Clients MUST copy game identity, token, and revision from one recent `/state` snapshot.
 
-Once the JSON field set and canonical IDs are accepted, the Agent creates a command record even when validation later fails. The first creation returns `201 Created` with `Location: /shots/{requestId}`. A replay of retained identical content returns `200 OK` and the existing record without repeating the Graphwar side effect.
+Once the JSON fields and ID formats are accepted, the Agent creates a command record even when validation later fails. The first creation returns `201 Created` with `Location: /shots/{requestId}`. Repeating retained identical content returns `200 OK` and the existing record without repeating the Graphwar side effect.
 
 The Agent fingerprints `gameInstanceId`, function UTF-8 bytes, `turnToken`, `battleRevision`, and exact optional angle bits with unambiguous length-prefix encoding and SHA-256. The fingerprint is internal and MUST NOT appear in responses. A retained `requestId` with different content returns `409 request-id-conflict`.
 
@@ -429,7 +429,7 @@ Concurrent identical replays MUST return the currently observable record without
 
 ### 6.2 Read a command
 
-`GET /shots/{requestId}` accepts only a canonical lowercase UUID path segment. A retained command returns `200`. An unknown or evicted ID returns `404 shot-command-not-found`.
+`GET /shots/{requestId}` accepts only a canonical lowercase UUID path segment. A retained command returns `200`. An unknown or removed ID returns `404 shot-command-not-found`.
 
 The complete resource is:
 
@@ -445,7 +445,7 @@ The complete resource is:
 }
 ```
 
-The resource MUST NOT expose the function, angle, request fingerprint, internal exception, or transition history. Epoch timestamps are diagnostic wall-clock values; clients MUST NOT use them for safety decisions or timeout authority.
+The resource MUST NOT expose the function, angle, request fingerprint, internal exception, or transition history. Epoch timestamps are diagnostic wall-clock values; clients MUST NOT use them to decide whether a command is safe to retry or has timed out.
 
 ### 6.3 State machine and guarantees
 
@@ -526,21 +526,21 @@ recovery.
 
 Static `capabilities.canSubmitShots` remains true because the implementation supports the feature. Dynamic `/state.canAcceptShotCommands` is false while the slot is occupied, whenever `/state` itself can be read.
 
-### 6.5 Bounded ledger and eviction
+### 6.5 Stored command limit and cleanup
 
-The ledger contains at most 50 records and has no time TTL.
+The Agent stores at most 50 command records. Records are not removed merely because time has passed.
 
-- An active command MUST NOT be evicted.
-- A non-failed record associated with the currently observed game instance and turn token MUST remain pinned until a later state observation changes that identity.
-- Capacity is reclaimed by evicting the oldest terminal, non-active, non-pinned record.
-- The single-slot state machine normally guarantees an eligible record whenever the ledger reaches its bound. If an internal invariant violation leaves no eligible record, creation fails with `500 internal-error`, no command resource is established, and the hard bound remains intact.
-- When `/state` observes a new game instance, terminal records from older instances are removed, except the unique active record.
+- The command occupying the single Graphwar execution slot MUST NOT be removed.
+- A non-failed command for the currently observed game instance and turn token MUST be kept until a later state observation changes that identity.
+- When another record is needed, the Agent removes the oldest finished record that is not active and is not the current turn's non-failed command.
+- With a valid single-slot state, at least one such record is always available when 50 records are stored. If internal state corruption leaves none, creation fails with `500 internal-error`, no command is created, and the record count remains 50.
+- When `/state` observes a new game instance, finished records from older instances are removed, except the unique active record.
 - An active old-game record remains queryable and keeps the single execution slot occupied until it completes.
-- No tombstone set is retained, because unbounded historical IDs would defeat the memory bound.
+- The Agent does not keep a permanent list of removed request IDs, because that list could grow without limit.
 
-The record stores only small identifiers, timestamps, status/error data, and a SHA-256 fingerprint. Function text is held only for the active submission and becomes unreachable after execution completes. Replicas MUST enforce an equivalent hard bound and MUST NOT let command history, transition history, errors, or request bodies grow without limit.
+Each record stores only small identifiers, timestamps, status/error data, and a SHA-256 fingerprint. The Agent keeps function text only while the command is active and releases it after completion. Replicas MUST enforce the same fixed limit and MUST NOT let command history, transition history, errors, or request bodies grow without limit.
 
-After eviction, `GET` returns `404`. Reposting an evicted ID may establish a new record because no tombstone remains. Old game identity and turn tokens still protect against duplicate side effects, but clients MUST treat UUIDs as single-use and MUST NOT rely on behavior after their idempotency record is evicted.
+After a record is removed, `GET` returns `404`. Posting the removed ID again may create a new record because the Agent keeps no permanent ID history. Old game identity and turn tokens still protect against duplicate side effects, but clients MUST treat UUIDs as single-use and MUST NOT rely on how the Agent handles an ID after its record has been removed.
 
 ### 6.6 Lost-response recovery
 
@@ -593,12 +593,12 @@ The `ETag` MUST equal the conditioned revision and `/state.obstacleMask.revision
 
 A compatible replica MUST test at least the following:
 
-- `/health` stays public and reports API version, effective limits, authentication requirement, and build provenance.
+- `/health` stays public and reports API version, effective limits, authentication requirement, and build information.
 - Protected endpoints reject missing/incorrect bearer credentials only when authentication is enabled.
 - Every public boolean follows the `is*`, `can*`, or similarly affirmative predicate naming in this contract; negative-state booleans and v2 aliases are absent.
 - Available and unavailable `/state` and `/room` branches follow their exact null/omission rules.
 - Numeric Graphwar `gameState`/`gameMode` values and generic `id`/`index` aliases are absent.
-- Ready mutation is idempotent and updates only local players whose state differs.
+- Ready updates skip local players already in the requested state.
 - Both mask orientations, mirroring, exact byte layout, quoted `ETag`, required `If-Match`, and revision mismatch are tested.
 - Canonical lowercase UUID validation, unknown/duplicate JSON fields, mode-dependent angle rules, formula bytes, and iterative nesting limits are tested.
 - Same-ID/same-content replay produces no duplicate side effect.
@@ -609,9 +609,9 @@ A compatible replica MUST test at least the following:
 - A five-second POST wait does not cancel or replace a stuck official call.
 - Only one original shot worker can exist, and a stuck worker prevents further original calls.
 - Command queries and health remain responsive when a claimed call holds the `GameData` monitor.
-- Ledger capacity never exceeds 50, pinning and oldest-eligible eviction work, and an impossible full ledger returns `500 internal-error` without creating a record.
-- New-game cleanup retains the unique active old-game command while removing eligible terminal history.
-- Function text and unbounded transition history are not retained in terminal command records.
+- Stored command count never exceeds 50; active and current-turn records are preserved; the oldest safe finished records are removed; and an impossible full state returns `500 internal-error` without creating a record.
+- New-game cleanup retains the unique active old-game command while removing safe finished history.
+- Function text is released after a command finishes, and transition history is not stored.
 - Transport and business failures use stable machine-readable error codes rather than parsing English messages.
 
 Clients SHOULD validate their implementation against [openapi.yaml](./openapi.yaml) in addition to these behavioral tests.

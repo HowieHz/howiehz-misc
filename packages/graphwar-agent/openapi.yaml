@@ -490,6 +490,7 @@ components:
       properties:
         version:
           type: string
+          example: 2.0.0
         sourceCommit:
           type: string
           description: Full source commit or `unknown`.

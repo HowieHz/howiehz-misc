@@ -310,7 +310,7 @@ export function createGraphwarAgentClient(
   if (token.length > 4096) {
     throw new GraphwarAgentClientError(
       "invalid-request",
-      "Graphwar Agent token must contain at most 4096 printable ASCII characters excluding comma",
+      "Graphwar Agent token must contain at most 4096 visible ASCII characters excluding comma",
     );
   }
   for (let index = 0; index < token.length; index += 1) {
@@ -318,7 +318,7 @@ export function createGraphwarAgentClient(
     if (character < 0x21 || character > 0x7e || character === 0x2c) {
       throw new GraphwarAgentClientError(
         "invalid-request",
-        "Graphwar Agent token must contain printable ASCII characters excluding comma",
+        "Graphwar Agent token must contain visible ASCII characters excluding comma",
       );
     }
   }

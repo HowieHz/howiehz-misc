@@ -89,7 +89,7 @@ final class GraphwarAgentConfig {
                         token = value;
                     } else {
                         throw new IllegalArgumentException(
-                                "token must contain 1 to 4096 printable ASCII characters excluding"
+                                "token must contain 1 to 4096 visible ASCII characters excluding"
                                         + " comma");
                     }
                 }

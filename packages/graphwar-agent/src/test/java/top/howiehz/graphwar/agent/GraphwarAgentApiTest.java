@@ -259,6 +259,7 @@ public final class GraphwarAgentApiTest {
             throws Exception {
         String health = request(port, "GET", "/health", null, null).bodyText();
         assertContains(health, "\"apiVersion\":3", "health API version");
+        assertContains(health, "\"version\":\"2.0.0\"", "Agent version");
         assertContains(health, "\"isAuthenticationRequired\":false", "health auth flag");
 
         assertContains(

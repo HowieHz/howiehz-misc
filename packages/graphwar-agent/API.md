@@ -4,7 +4,7 @@ This document is the normative specification for Graphwar Agent API v3. The comp
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**, and **MAY** are to be interpreted as described in RFC 2119 and RFC 8174 when, and only when, they appear in all capitals.
 
-API v3 is intentionally incompatible with API v2. A v3 implementation MUST NOT silently expose the removed `/shot`, `/ready`, or `/obstacle-mask.bin` v2 behavior under those paths.
+The current API version is v3. A v3 implementation MUST NOT silently expose the removed `/shot`, `/ready`, or `/obstacle-mask.bin` v2 behavior under those paths.
 
 ## 1. Scope and endpoint summary
 
@@ -62,7 +62,7 @@ Authentication is disabled by default. Deployments support three startup modes:
 | ----------------- | ------------------------------------------------------------------------------------------------------ |
 | no `token` option | Authentication is disabled                                                                             |
 | `token=auto`      | Generate a 256-bit token with `SecureRandom`, encode it as unpadded base64url, and print it at startup |
-| `token=VALUE`     | Use and print 1–4096 printable ASCII characters excluding comma                                        |
+| `token=VALUE`     | Use and print 1–4096 visible ASCII characters excluding comma                                          |
 
 When authentication is enabled, every endpoint except `/health` and preflight `OPTIONS` MUST require:
 
@@ -132,7 +132,7 @@ A `405` response MUST include `Allow`. Successfully parsed API errors MUST use t
     "maxFunctionNestingDepth": 256
   },
   "agent": {
-    "version": "1.0.0",
+    "version": "2.0.0",
     "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
     "sourceCommitShort": "0123456789ab",
     "sourceCommitTime": "2026-01-01T00:00:00+00:00"
@@ -205,7 +205,7 @@ Clients MUST NOT interpret `capabilities.canSubmitShots` as permission to submit
     "canReadWorldObstacleMask": true
   },
   "agent": {
-    "version": "1.0.0",
+    "version": "2.0.0",
     "sourceCommit": "unknown",
     "sourceCommitShort": "unknown",
     "sourceCommitTime": "unknown"

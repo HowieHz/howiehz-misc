@@ -124,4 +124,22 @@ Windows Steam 版的 Graphwar 可以直接使用游戏自带的 Java：
 .\jre1.8\bin\java.exe -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
+::: details Graphwar Agent 启动选项
+
+如需设置启动选项，请在 Agent JAR 路径后追加 `=...`。多个选项用逗号分隔：
+
+```shell
+java -javaagent:graphwar-agent.jar=token=auto,maxRequestBodyBytes=1048576 -jar graphwar.jar
+```
+
+| 选项                      | 用途                          | 默认值                                                  | 可接受值                                      |
+| ------------------------- | ----------------------------- | ------------------------------------------------------- | --------------------------------------------- |
+| `port`                    | 设置 HTTP 监听端口            | `17900`；占用时再尝试后续 100 个端口（`17901`–`18000`） | `1`–`65535`；显式设置后不再尝试其他端口       |
+| `token`                   | 启用 bearer token 鉴权        | 不启用鉴权                                              | `auto`，或 1–4096 个不含逗号的可见 ASCII 字符 |
+| `maxRequestBodyBytes`     | 限制 JSON 请求体大小          | `65536`                                                 | `1024`–`16777216`                             |
+| `maxFunctionBytes`        | 限制函数字符串的 UTF-8 字节数 | `16384`                                                 | `1`–`1048576`，且不会超过实际请求体上限       |
+| `maxFunctionNestingDepth` | 限制函数表达式的最大嵌套深度  | `256`                                                   | `1`–`4096`                                    |
+
+:::
+
 该命令会同时启动 Graphwar Agent 和游戏。回到工具后开启“使用 Agent”，即可读取状态或开启托管模式。更多信息请查看 [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent)。

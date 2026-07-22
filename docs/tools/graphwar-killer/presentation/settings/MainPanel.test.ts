@@ -74,10 +74,10 @@ describe("Settings MainPanel", () => {
         panel: {
           ...createPanel(),
           algorithmMode: "abs",
-          algorithmModes: [{ disabled: false, label: "ABS", title: "ABS", value: "abs" }],
+          algorithmModes: [{ isEnabled: true, label: "ABS", title: "ABS", value: "abs" }],
           equationMode: "ddy",
-          equationModes: [{ disabled: false, label: "y''", title: "y''", value: "ddy" }],
-          steepnessVisible: true,
+          equationModes: [{ isEnabled: true, label: "y''", title: "y''", value: "ddy" }],
+          isSteepnessVisible: true,
         },
       },
     });
@@ -126,19 +126,19 @@ describe("Settings MainPanel", () => {
 /** 创建覆盖公式开关排列所需的最小完整设置模型。 */
 function createPanel() {
   return {
-    advancedSettingsVisible: false,
+    isAdvancedSettingsVisible: false,
     algorithmMode: "step",
-    algorithmModes: [{ disabled: false, label: "Step", title: "Step", value: "step" }],
+    algorithmModes: [{ isEnabled: true, label: "Step", title: "Step", value: "step" }],
     equationMode: "dy",
-    equationModes: [{ disabled: false, label: "y'", title: "y'", value: "dy" }],
+    equationModes: [{ isEnabled: true, label: "y'", title: "y'", value: "dy" }],
     headerStatus: { kind: "info", message: "" },
-    interactionDisabled: false,
+    canInteract: true,
     precision: { maximum: 12, text: "4" },
     steepnessText: "67",
-    steepnessVisible: true,
-    stepGlitchModeEnabled: false,
+    isSteepnessVisible: true,
+    isStepGlitchModeEnabled: false,
     stepGlitchModeState: "normal",
-    stepOverflowProtectionEnabled: true,
+    isStepOverflowProtectionEnabled: true,
     toolWorkflowMode: "solver",
     toolWorkflowModes: [
       { label: "Solver", title: "Solver", value: "solver" },

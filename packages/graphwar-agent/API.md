@@ -112,7 +112,7 @@ Common stable HTTP error codes are:
 |       `413` | `request-body-too-large`    | The body exceeds the configured byte limit                                                       |
 |       `415` | `unsupported-media-type`    | A JSON endpoint did not receive `application/json`                                               |
 |       `428` | `if-match-required`         | An obstacle request omitted `If-Match`                                                           |
-|       `431` | `request-headers-too-large` | Request headers exceed 8192 bytes                                                                |
+|       `431` | `request-headers-too-large` | Request headers exceed the configured byte limit                                                 |
 |       `500` | `internal-error`            | The official client or Agent failed unexpectedly                                                 |
 |       `503` | `server-busy`               | All Graphwar-dependent HTTP request slots are occupied                                           |
 
@@ -127,6 +127,7 @@ A `405` response MUST include `Allow`. Successfully parsed API errors MUST use t
   "apiVersion": 3,
   "isAuthenticationRequired": false,
   "limits": {
+    "maxRequestHeaderBytes": 8192,
     "maxRequestBodyBytes": 65536,
     "maxFunctionBytes": 16384,
     "maxFunctionNestingDepth": 256
@@ -148,7 +149,7 @@ The reference implementation applies these limits before invoking the official p
 
 | Limit                     |         Default | Configurable range | Notes                                                                    |
 | ------------------------- | --------------: | -----------------: | ------------------------------------------------------------------------ |
-| Request headers           |    `8192` bytes |              fixed | Includes the terminating empty line                                      |
+| `maxRequestHeaderBytes`   |          `8192` |   `8192`–`1048576` | Maximum request-header bytes, including the terminating empty line       |
 | `maxRequestBodyBytes`     |         `65536` |  `1024`–`16777216` | Maximum JSON data accepted in one API request; checked before allocation |
 | `maxFunctionBytes`        |         `16384` |      `1`–`1048576` | UTF-8 bytes after JSON decoding; capped to the effective body limit      |
 | `maxFunctionNestingDepth` |           `256` |         `1`–`4096` | Maximum open-parenthesis depth from an iterative scan                    |
@@ -177,6 +178,7 @@ Every response contains:
 - `apiVersion: 3`
 - static `capabilities`
 - `agent` build information
+- `observedAtEpochMs`: Unix epoch milliseconds when the Agent formed the state snapshot
 - `isAvailable`
 
 Static capabilities describe implemented protocol features; they do not describe momentary game state:
@@ -210,6 +212,7 @@ Clients MUST NOT interpret `capabilities.canSubmitShots` as permission to submit
     "sourceCommitShort": "unknown",
     "sourceCommitTime": "unknown"
   },
+  "observedAtEpochMs": 1735689600000,
   "isAvailable": false,
   "reason": "game-not-started"
 }
@@ -256,6 +259,7 @@ An available response adds:
 ```
 
 - `gameInstanceId` changes when the Agent observes a different `GameData` or obstacle identity.
+- `observedAtEpochMs` is the Agent wall-clock time, in Unix epoch milliseconds, when this `/state` snapshot was formed. Clients can combine it with `remainingTurnMs` to remove response age before anchoring a local monotonic countdown.
 - `turnToken` changes with the official turn marker, player ID, or soldier index. It is `null` when no current player is valid.
 - `battleRevision` is a lowercase SHA-256 revision over pathfinding-relevant state: equation mode, orientation, player ownership/team/connectivity, soldier life/explosion/position, and the world obstacle mask. Turn cursors and angles are intentionally excluded.
 - `phase` is `aiming`, `drawing`, or `exploding`.

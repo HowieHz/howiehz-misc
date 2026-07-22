@@ -71,11 +71,11 @@ export interface GraphwarAgentShooter extends GraphwarAgentCurrentShooter {
 /** Agent soldier adapted to the detection-box interface used by page workflows. */
 export interface GraphwarAgentDetectionBox extends GraphwarDetectionBox {
   /** Authoritative local-computer ownership, independent of screen position. */
-  computer: boolean;
+  isComputerControlled: boolean;
   /** Authoritative relation to the selected shooter's team, independent of screen position. */
-  friendly: boolean;
+  isFriendly: boolean;
   /** Authoritative local-client ownership, independent of screen position. */
-  local: boolean;
+  isLocal: boolean;
   /** Stable Graphwar protocol player id. */
   playerId: number;
   /** Current player-array index in the state snapshot. */
@@ -110,6 +110,7 @@ interface GraphwarAgentStateBase {
   apiVersion: typeof GRAPHWAR_AGENT_API_VERSION;
   capabilities: GraphwarAgentCapabilities;
   isAvailable: boolean;
+  observedAtEpochMs: number;
   plane: GraphwarAgentPlane;
 }
 
@@ -297,6 +298,11 @@ export interface GraphwarAgentClientOptions {
   token?: string;
 }
 
+/** Snapshot-only hooks that keep live state observation separate from offline snapshot adaptation. */
+export interface GraphwarAgentSnapshotReadOptions extends GraphwarAgentClientOptions {
+  onStateRead?: (state: GraphwarAgentState) => void;
+}
+
 /** Creates a client bound to one normalized local Agent address. */
 export function createGraphwarAgentClient(
   baseUrlText: string,
@@ -347,10 +353,11 @@ export function createGraphwarAgentClient(
 /** Reads and adapts one complete authoritative Agent snapshot for the existing page workflow. */
 export async function readGraphwarAgentSnapshot(
   baseUrlText: string,
-  options: GraphwarAgentClientOptions = {},
+  options: GraphwarAgentSnapshotReadOptions = {},
 ): Promise<GraphwarAgentSnapshot> {
   const client = createGraphwarAgentClient(baseUrlText, options);
   const state = await client.readState();
+  options.onStateRead?.(state);
   if (!state.isAvailable) {
     throw new GraphwarAgentClientError("unavailable", state.reason);
   }
@@ -733,12 +740,14 @@ export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
     throw new GraphwarAgentClientError("incompatible", `Unsupported Graphwar Agent API version: ${apiVersion}`);
   }
   const capabilities = parseGraphwarAgentCapabilities(state.capabilities);
+  const observedAtEpochMs = requireNonNegativeInteger(state.observedAtEpochMs, "observedAtEpochMs");
   const plane = parseGraphwarAgentPlane(state.plane);
   if (state.isAvailable === false) {
     return {
       apiVersion: GRAPHWAR_AGENT_API_VERSION,
       capabilities,
       isAvailable: false,
+      observedAtEpochMs,
       plane,
       reason: requireString(state.reason, "reason"),
     };
@@ -795,6 +804,7 @@ export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
     isAvailable: true,
     isTerrainReversed,
     obstacleMask,
+    observedAtEpochMs,
     phase,
     plane,
     players,
@@ -1068,13 +1078,13 @@ function createGraphwarAgentSoldierBoxes(
       const center = worldPointToShooterView(soldier.world.pixel, shooterTeam);
       soldiers.push({
         confidence: 1,
-        computer: player.isComputerControlled,
-        friendly: player.team === shooterTeam,
+        isComputerControlled: player.isComputerControlled,
+        isFriendly: player.team === shooterTeam,
         height: visualRadius * 2,
         hitRadius: GRAPHWAR_SOLDIER_RADIUS,
         id: `agent-player-${player.playerId}-soldier-${soldier.soldierIndex}`,
         kind: "soldier",
-        local: player.isLocal,
+        isLocal: player.isLocal,
         mirrored: false,
         playerId: player.playerId,
         playerIndex: player.playerIndex,

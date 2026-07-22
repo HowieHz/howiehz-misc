@@ -58,6 +58,7 @@ describe("Graphwar Agent API v3 client", () => {
       currentPlayerIndex: 0,
       isAvailable: true,
       isTerrainReversed: true,
+      observedAtEpochMs: 1_735_689_600_000,
       shotCommand: null,
     });
     if (!state.isAvailable) {
@@ -89,6 +90,15 @@ describe("Graphwar Agent API v3 client", () => {
     expect(() =>
       parseGraphwarAgentState({ ...createStateResponse(), isAvailable: undefined, available: true }),
     ).toThrow("isAvailable");
+    expect(() => parseGraphwarAgentState({ ...createStateResponse(), observedAtEpochMs: undefined })).toThrow(
+      "observedAtEpochMs",
+    );
+    expect(() => parseGraphwarAgentState({ ...createStateResponse(), observedAtEpochMs: -1 })).toThrow(
+      "observedAtEpochMs",
+    );
+    expect(() => parseGraphwarAgentState({ ...createStateResponse(), observedAtEpochMs: 1.5 })).toThrow(
+      "observedAtEpochMs",
+    );
   });
 
   it("rejects non-canonical v3 identities and battle revisions", () => {
@@ -142,15 +152,33 @@ describe("Graphwar Agent API v3 client", () => {
 
     expect(snapshot.localCurrentTurnSoldierPoint).toEqual({ x: 70, y: 210 });
     expect(snapshot.detectionResult.soldiers[0]).toMatchObject({
-      computer: false,
-      friendly: true,
-      local: true,
+      isComputerControlled: false,
+      isFriendly: true,
+      isLocal: true,
       playerId: 7,
       soldierIndex: 0,
       sourceCenterX: 70,
       team: 2,
     });
     expect(snapshot.detectionResult.obstacles.mask[769]).toBe(1);
+  });
+
+  it("reports parsed live state before waiting for the obstacle mask", async () => {
+    let resolveMask!: (response: Response) => void;
+    const maskResponse = new Promise<Response>((resolve) => {
+      resolveMask = resolve;
+    });
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(createStateResponse()))
+      .mockReturnValueOnce(maskResponse);
+    const onStateRead = vi.fn();
+    const snapshotPromise = readGraphwarAgentSnapshot("http://127.0.0.1:17900", { fetch: fetchMock, onStateRead });
+
+    await vi.waitFor(() => expect(onStateRead).toHaveBeenCalledOnce());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    resolveMask(new Response(new Uint8Array(770 * 450), { headers: { ETag: `"${revision}"` } }));
+    await snapshotPromise;
   });
 
   it("keeps current-only selection empty while manual reads predict the next local human", () => {
@@ -369,6 +397,7 @@ function createStateResponse() {
     gameInstanceId,
     isAvailable: true as const,
     isTerrainReversed: true,
+    observedAtEpochMs: 1_735_689_600_000,
     obstacleMask: {
       blockedValue: 1,
       emptyValue: 0,

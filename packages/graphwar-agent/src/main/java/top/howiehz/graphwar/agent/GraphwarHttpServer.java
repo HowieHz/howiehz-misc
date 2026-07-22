@@ -32,7 +32,6 @@ final class GraphwarHttpServer {
     private static final int HTTP_RECOVERY_WORKER_RESERVE = 2;
     private static final int HTTP_WORKER_COUNT = 8;
     private static final int MAX_PORT = 65_535;
-    private static final int MAX_REQUEST_HEADER_BYTES = 8_192;
     private final GraphwarAgentConfig config;
     private final ExecutorService executor;
     private final Semaphore graphwarRequestSlots =
@@ -245,12 +244,12 @@ final class GraphwarHttpServer {
         return new Request(parts[0], path, body, headers);
     }
 
-    /** Reads through the first CRLFCRLF without exceeding the fixed header bound. */
-    private static byte[] readHeaderBytes(InputStream input) throws IOException, RequestException {
+    /** Reads through the first CRLFCRLF without exceeding the configured header bound. */
+    private byte[] readHeaderBytes(InputStream input) throws IOException, RequestException {
         ByteArrayOutputStream headers = new ByteArrayOutputStream(1_024);
         byte[] terminator = new byte[] {'\r', '\n', '\r', '\n'};
         int matched = 0;
-        while (headers.size() < MAX_REQUEST_HEADER_BYTES) {
+        while (headers.size() < config.maxRequestHeaderBytes) {
             int next = input.read();
             if (next < 0) {
                 throw new RequestException(400, "bad-request", "The request headers ended early");
@@ -266,7 +265,9 @@ final class GraphwarHttpServer {
             }
         }
         throw new RequestException(
-                431, "request-headers-too-large", "The request headers exceed 8192 bytes");
+                431,
+                "request-headers-too-large",
+                "The request headers exceed " + config.maxRequestHeaderBytes + " bytes");
     }
 
     /** Parses case-insensitive unique header names from the bounded header block. */
@@ -460,7 +461,8 @@ final class GraphwarHttpServer {
         json.append("{\"apiVersion\":3");
         json.append(",\"isAuthenticationRequired\":").append(config.isAuthenticationRequired());
         json.append(",\"limits\":{");
-        json.append("\"maxRequestBodyBytes\":").append(config.maxRequestBodyBytes);
+        json.append("\"maxRequestHeaderBytes\":").append(config.maxRequestHeaderBytes);
+        json.append(",\"maxRequestBodyBytes\":").append(config.maxRequestBodyBytes);
         json.append(",\"maxFunctionBytes\":").append(config.maxFunctionBytes);
         json.append(",\"maxFunctionNestingDepth\":")
                 .append(config.maxFunctionNestingDepth)

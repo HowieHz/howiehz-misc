@@ -33,7 +33,7 @@ interface GraphwarPathfindingPanelDebugRow {
 /** 由偏好值和能力状态共同驱动的寻路开关。 */
 interface GraphwarPathfindingToggle {
   /** 持久化的偏好值。 */
-  enabled: boolean;
+  isEnabled: boolean;
   /** 展示层和命令守卫共用的能力状态。 */
   state: GraphwarControlCapability["state"];
   /** 非 normal 状态的本地化说明。 */
@@ -53,7 +53,7 @@ interface GraphwarPathfindingTask {
 /** 智能寻路、一键清图和托管控制的展示模型。 */
 export interface GraphwarSmartPathfindingPanelModel {
   /** 当前 Step ODE 是否实际使用固定邪道扫描器。 */
-  usesStepGlitchRouting: boolean;
+  isUsingStepGlitchRouting: boolean;
   /** 普通几何路由器；固定邪道扫描器启用时忽略。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 全局删点偏好。 */
@@ -73,7 +73,7 @@ export interface GraphwarSmartPathfindingPanelModel {
   /** 面板标题中显示的当前任务状态。 */
   headerStatus: GraphwarPathfindingPanelHeaderStatus;
   /** 是否显示调试耗时详情。 */
-  debugTimingVisible: boolean;
+  isDebugTimingVisible: boolean;
   /** 预先格式化的调试耗时行。 */
   debugTimingRows: readonly GraphwarPathfindingPanelDebugRow[];
 }
@@ -126,7 +126,7 @@ const emit = defineEmits<{
       <div class="graphwar-killer__task-controls graphwar-killer-command-row">
         <ToggleField
           id="graphwar-killer-path-planning"
-          :checked="panel.pathPlanning.enabled"
+          :checked="panel.pathPlanning.isEnabled"
           :label="locale.ui.actions.pathPlanning"
           :reason="panel.pathPlanning.reason"
           :state="panel.pathPlanning.state"
@@ -151,7 +151,7 @@ const emit = defineEmits<{
         </div>
         <ToggleField
           id="graphwar-killer-managed-mode"
-          :checked="panel.managedMode.enabled"
+          :checked="panel.managedMode.isEnabled"
           :label="locale.ui.pathfinding.managedMode"
           :reason="panel.managedMode.reason"
           :state="panel.managedMode.state"
@@ -172,7 +172,7 @@ const emit = defineEmits<{
         <div class="graphwar-killer__route-row">
           <span>{{ locale.ui.pathfinding.routeAlgorithm }}</span>
           <div
-            v-if="panel.usesStepGlitchRouting"
+            v-if="panel.isUsingStepGlitchRouting"
             class="graphwar-killer__route-toggle graphwar-killer__route-toggle--single graphwar-killer-segmented-control"
           >
             <strong class="graphwar-killer__route-toggle-static">
@@ -212,7 +212,7 @@ const emit = defineEmits<{
         <div class="graphwar-killer__option-grid">
           <ToggleField
             id="graphwar-killer-delete-optimization"
-            :checked="panel.deleteOptimization.enabled"
+            :checked="panel.deleteOptimization.isEnabled"
             :label="locale.ui.pathfinding.deleteOptimization"
             :reason="panel.deleteOptimization.reason"
             :state="panel.deleteOptimization.state"
@@ -221,7 +221,7 @@ const emit = defineEmits<{
           />
           <ToggleField
             id="graphwar-killer-friendly-fire"
-            :checked="panel.friendlyFire.enabled"
+            :checked="panel.friendlyFire.isEnabled"
             :label="locale.ui.pathfinding.allowFriendlyFire"
             :reason="panel.friendlyFire.reason"
             :state="panel.friendlyFire.state"
@@ -230,7 +230,7 @@ const emit = defineEmits<{
           />
           <ToggleField
             id="graphwar-killer-search-animation"
-            :checked="panel.searchAnimation.enabled"
+            :checked="panel.searchAnimation.isEnabled"
             :label="locale.ui.pathfinding.searchAnimation"
             :reason="panel.searchAnimation.reason"
             :state="panel.searchAnimation.state"
@@ -242,7 +242,7 @@ const emit = defineEmits<{
     </PanelDetails>
 
     <PanelDetails
-      v-if="panel.debugTimingVisible"
+      v-if="panel.isDebugTimingVisible"
       :summary="locale.ui.pathfinding.debugSummary"
     >
       <div class="graphwar-killer__debug-timing">

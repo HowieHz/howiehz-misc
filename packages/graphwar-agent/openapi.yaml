@@ -385,7 +385,7 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
     RequestHeadersTooLarge:
-      description: Request headers exceed 8192 bytes.
+      description: Request headers exceed the deployment's advertised limit.
       content:
         application/json:
           schema:
@@ -505,10 +505,17 @@ components:
       type: object
       additionalProperties: false
       required:
+        - maxRequestHeaderBytes
         - maxRequestBodyBytes
         - maxFunctionBytes
         - maxFunctionNestingDepth
       properties:
+        maxRequestHeaderBytes:
+          type: integer
+          minimum: 8192
+          maximum: 1048576
+          default: 8192
+          description: Maximum request-header bytes, including the terminating empty line.
         maxRequestBodyBytes:
           type: integer
           minimum: 1024
@@ -589,6 +596,7 @@ components:
         - apiVersion
         - capabilities
         - agent
+        - observedAtEpochMs
       properties:
         plane:
           $ref: "#/components/schemas/Plane"
@@ -599,6 +607,11 @@ components:
           $ref: "#/components/schemas/Capabilities"
         agent:
           $ref: "#/components/schemas/AgentBuild"
+        observedAtEpochMs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Unix epoch milliseconds when the Agent formed this state snapshot.
     UnavailableState:
       allOf:
         - $ref: "#/components/schemas/StateMetadata"

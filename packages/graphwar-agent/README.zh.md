@@ -25,13 +25,14 @@ java -javaagent:graphwar-agent.jar=port=17901 -jar graphwar.jar
 如需同时设置多个选项，请在 Agent JAR 路径后的参数中用逗号分隔：
 
 ```shell
-java -javaagent:graphwar-agent.jar=token=auto,maxRequestBodyBytes=1048576 -jar graphwar.jar
+java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxRequestBodyBytes=1048576 -jar graphwar.jar
 ```
 
 | 选项                      | 用途                                  | 默认值                                                  | 可接受值                                      |
 | ------------------------- | ------------------------------------- | ------------------------------------------------------- | --------------------------------------------- |
 | `port`                    | 设置 HTTP 监听端口                    | `17900`；占用时再尝试后续 100 个端口（`17901`–`18000`） | `1`–`65535`；显式设置后不再尝试其他端口       |
 | `token`                   | 启用 bearer token 鉴权                | 不启用鉴权                                              | `auto`，或 1–4096 个不含逗号的可见 ASCII 字符 |
+| `maxRequestHeaderBytes`   | 限制 HTTP 请求头大小                  | `8192`                                                  | `8192`–`1048576`                              |
 | `maxRequestBodyBytes`     | 限制单次 API 提交的 JSON 数据大小     | `65536`                                                 | `1024`–`16777216`                             |
 | `maxFunctionBytes`        | 限制单次提交的函数大小（按 UTF-8 计） | `16384`                                                 | `1`–`1048576`，且不会超过实际请求体上限       |
 | `maxFunctionNestingDepth` | 限制函数表达式的最大嵌套深度          | `256`                                                   | `1`–`4096`                                    |

@@ -21,7 +21,7 @@ describe("Result MainPanel", () => {
     await toggle.trigger("click");
     expect(wrapper.emitted("toggleFractionOutput")).toHaveLength(1);
 
-    await wrapper.setProps({ result: { ...result, fractionOutputEnabled: true, interactionDisabled: true } });
+    await wrapper.setProps({ result: { ...result, isFractionOutputEnabled: true, canInteract: false } });
     expect(toggle.attributes("aria-checked")).toBe("true");
     expect(toggle.attributes()).toHaveProperty("disabled");
   });
@@ -68,11 +68,24 @@ describe("Result MainPanel", () => {
     const actions = wrapper.get(".graphwar-killer__result-actions");
     const fireField = actions.get(".graphwar-killer-command-field");
 
-    expect(fireField.element.children[0]).toBe(fireField.get(".graphwar-killer__agent-fire-button").element);
+    expect(fireField.element.children[0]).toBe(fireField.get(".graphwar-killer__agent-fire-command").element);
     expect(fireField.element.children[1]).toBe(fireField.get(".graphwar-killer-control-reason").element);
     expect(fireField.element.nextElementSibling).toBe(actions.get(".graphwar-killer__primary-button").element);
     expect(actions.get(".graphwar-killer__primary-button").element.parentElement).toBe(actions.element);
     expect(actions.get(".graphwar-killer__icon-button").element.parentElement).toBe(actions.element);
+  });
+
+  it("keeps the turn countdown immediately left of the Agent fire button", () => {
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        result: { ...createResultModel(), agentTurnCountdown: { isZeroVisible: false, text: "剩余 0:42" } },
+      },
+    });
+    const command = wrapper.get(".graphwar-killer__agent-fire-command");
+
+    expect(command.element.children[0]).toBe(command.get(".graphwar-killer__agent-turn-countdown").element);
+    expect(command.element.children[1]).toBe(command.get(".graphwar-killer__agent-fire-button").element);
   });
 
   it("shows the path point list in a collapsed shared details panel", () => {
@@ -94,6 +107,29 @@ describe("Result MainPanel", () => {
     expect(details.get("summary").text()).toBe(graphwarKillerLocale.ui.point.listSummary);
     expect(details.get(".graphwar-killer__point-table").text()).toContain(graphwarKillerLocale.ui.point.selfLabel);
   });
+
+  it("keeps incumbent preview coordinates readonly without disabling unrelated controls", () => {
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        result: {
+          ...createResultModel(),
+          canEditPointCoordinates: false,
+          pointRows: [
+            {
+              index: 0,
+              label: "己方",
+              x: { ariaLabel: "己方 x", text: "1", title: "x" },
+              y: { ariaLabel: "己方 y", text: "2", title: "y" },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(wrapper.get(".graphwar-killer__point-coordinate-input").attributes()).toHaveProperty("readonly");
+    expect(wrapper.get(".graphwar-killer__primary-button").attributes()).not.toHaveProperty("disabled");
+  });
 });
 
 /** 创建结果面板测试共享的完整最小模型。 */
@@ -102,22 +138,23 @@ function createResultModel() {
     agentFireButtonText: graphwarKillerLocale.ui.result.fire,
     agentFireReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"],
     agentFireState: "busy",
-    agentFireVisible: true,
+    isAgentFireVisible: true,
     calculationMessage: "",
-    calculationMessageVisible: false,
+    isCalculationMessageVisible: false,
     canClearSimulatorInputs: true,
     canCopyFormula: true,
+    canEditPointCoordinates: true,
     copyButtonText: "复制函数",
     equationPrefix: "y=",
-    fractionOutputEnabled: false,
-    interactionDisabled: false,
+    isFractionOutputEnabled: false,
+    canInteract: true,
     pointRows: [],
     secondOrderAngleHint: undefined,
-    showSimulatorLaunchAngleInput: false,
+    isSimulatorLaunchAngleInputVisible: false,
     simulatorFormulaText: "",
     simulatorLaunchAngleText: "",
     solverExpression: "x",
-    solverResultVisible: true,
+    isSolverResultVisible: true,
     trajectoryWarning: "",
     workflowMode: "simulator",
   } as const;

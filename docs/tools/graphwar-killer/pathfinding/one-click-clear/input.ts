@@ -39,13 +39,13 @@ interface GraphwarOneClickClearSearchPreflightOptions {
   /** 当前路径点数量；一键清图必须从已有路径尾部继续。 */
   pathPointCount: number;
   /** 当前任务是否会建立普通 DAG；邪道手动清图不消费 worker 数。 */
-  requiresDagWorker: boolean;
+  shouldUseDagWorker: boolean;
   /** 成功解析后的 DAG 建边 worker 数量；缺失时应保持页面原设置错误语义。 */
   pathfindingWorkerCount: number | undefined;
   /** 成功解析后的寻路容差；缺失时应保持页面原设置错误语义。 */
   tolerances: GraphwarOneClickClearSearchTolerances | undefined;
-  /** 当前公式模式是否不支持一键清图；用函数保留原来的校验顺序。 */
-  unsupportedMode: () => boolean;
+  /** 当前公式模式是否支持一键清图；用函数保留原来的校验顺序。 */
+  isModeSupported: () => boolean;
 }
 
 export type GraphwarOneClickClearSearchPreflightResult =
@@ -73,7 +73,7 @@ interface GraphwarOneClickClearSearchInputOptions {
   /** 一键清图候选，顺序应保持目标收集 Module 输出。 */
   candidates: readonly GraphwarOneClickClearCandidate[];
   /** 是否尝试删除控制点。 */
-  deleteOptimizationEnabled: boolean;
+  isDeleteOptimizationEnabled: boolean;
   /** DAG 建边 worker 数量；页面继续负责输入解析和范围限制。 */
   dagEdgeWorkerCount: number;
   /** 全路径命中统计候选，不应被起点右侧规则过滤。 */
@@ -105,11 +105,11 @@ export function createGraphwarOneClickClearSearchPreflight(
   if (
     !options.bounds ||
     !options.tolerances ||
-    (options.requiresDagWorker && options.pathfindingWorkerCount === undefined)
+    (options.shouldUseDagWorker && options.pathfindingWorkerCount === undefined)
   ) {
     return { ok: false, reason: "invalid-settings" };
   }
-  if (options.unsupportedMode()) {
+  if (!options.isModeSupported()) {
     return { ok: false, reason: "unsupported-mode" };
   }
   if (options.pathPointCount === 0) {
@@ -146,9 +146,9 @@ export function createGraphwarOneClickClearSearchInput(
     boundsRect: options.boundsRect,
     candidates: options.candidates,
     dagEdgeWorkerCount: options.dagEdgeWorkerCount,
-    deleteOptimizationEnabled: options.deleteOptimizationEnabled,
+    deleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
     // Worker 内删点命中检查在截图坐标里量距离，因此在协议边界从 Graphwar 平面像素换算为截图像素。
-    deleteHitCheckRadiusPixels: options.deleteOptimizationEnabled
+    deleteHitCheckRadiusPixels: options.isDeleteOptimizationEnabled
       ? options.tolerances.oneClickClearDeleteCheckRadiusPlanePixels *
         (options.boundsRect.width / GRAPHWAR_PLANE_LENGTH)
       : 0,

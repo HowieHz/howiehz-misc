@@ -15,6 +15,43 @@ import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
 
 describe("Graphwar Killer page settings", () => {
+  it("coalesces incumbent control-point previews per frame and restores the formal path on clear", () => {
+    let previewFrame: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      previewFrame = callback;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          clearIncumbentPreview: () => void;
+          displayedPathPixels: readonly { x: number; y: number }[];
+          isIncumbentTrajectoryPending: boolean;
+          pathPixels: { x: number; y: number }[];
+          queueIncumbentPreview: (incumbent: { expression: string; pathPoints: { x: number; y: number }[] }) => void;
+        };
+      }
+    ).setupState;
+    const formalPath = [createPixelPoint(1, 2), createPixelPoint(3, 4)];
+    const latestPreview = [createPixelPoint(1, 2), createPixelPoint(7, 8)];
+    page.pathPixels = formalPath;
+
+    page.queueIncumbentPreview({ expression: "first", pathPoints: [formalPath[0], createPixelPoint(5, 6)] });
+    page.queueIncumbentPreview({ expression: "latest", pathPoints: latestPreview });
+    expect(page.displayedPathPixels).toEqual(formalPath);
+
+    previewFrame?.(performance.now());
+    expect(page.displayedPathPixels).toEqual(latestPreview);
+    expect(page.isIncumbentTrajectoryPending).toBe(true);
+
+    page.clearIncumbentPreview();
+    expect(page.displayedPathPixels).toEqual(formalPath);
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
+
   it("uses compact double text for tiny angle hints and keeps the expanded title", async () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const angleDegrees = 1.0976980032456007e-101;
@@ -124,19 +161,19 @@ describe("Graphwar Killer page settings", () => {
       wrapper.vm.$ as unknown as {
         setupState: {
           commitIncumbentResult: (expression: string, launchAngleRadians?: number) => void;
-          fractionOutputEnabled: boolean;
-          graphwarAgentEnabled: boolean;
+          isFractionOutputEnabled: boolean;
+          isGraphwarAgentEnabled: boolean;
           graphwarAgentTokenText: string;
           solverEquationMode: "ddy" | "dy" | "y";
         };
       }
     ).setupState;
 
-    page.graphwarAgentEnabled = true;
+    page.isGraphwarAgentEnabled = true;
     page.graphwarAgentTokenText = "session-token";
     page.solverEquationMode = "ddy";
     page.commitIncumbentResult("88.008750871454684", 0.25);
-    page.fractionOutputEnabled = true;
+    page.isFractionOutputEnabled = true;
     await nextTick();
     const displayedFormula = wrapper.get(".graphwar-killer__formula").text();
     expect(displayedFormula).toBe("3096532637734579/35184372088832");
@@ -147,7 +184,7 @@ describe("Graphwar Killer page settings", () => {
 
     await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
     page.commitIncumbentResult("0.25*x", 0.5);
-    page.fractionOutputEnabled = false;
+    page.isFractionOutputEnabled = false;
     page.solverEquationMode = "y";
     await nextTick();
     resolveStateResponse(jsonResponse(createAgentState("ddy")));
@@ -184,7 +221,7 @@ describe("Graphwar Killer page settings", () => {
             },
           ) => string;
           createGraphwarManagedShotPlan: (state: GraphwarAgentAvailableState) => GraphwarAgentShotPlan | undefined;
-          fractionOutputEnabled: boolean;
+          isFractionOutputEnabled: boolean;
           graphwarManagedController: GraphwarManagedController | undefined;
           graphwarManagedIncumbent: { expression: string; launchAngleRadians?: number } | undefined;
           graphwarManagedSceneKey: string;
@@ -199,7 +236,7 @@ describe("Graphwar Killer page settings", () => {
     });
 
     page.commitIncumbentResult("0.5*x");
-    page.fractionOutputEnabled = true;
+    page.isFractionOutputEnabled = true;
     page.graphwarManagedIncumbent = { expression: "88.008750871454684" };
     page.graphwarManagedSceneKey = page.createGraphwarManagedSceneKey(normalState, {
       player: normalState.players[0],
@@ -243,8 +280,38 @@ describe("Graphwar Killer page settings", () => {
     ).toMatchObject({ function: "3096532637734579/35184372088832" });
     deadlineController.stop();
 
-    page.fractionOutputEnabled = false;
+    page.isFractionOutputEnabled = false;
     expect(page.createGraphwarManagedShotPlan(deadlineState)?.function).toBe("88.008750871454684");
+
+    wrapper.unmount();
+  });
+
+  it("subtracts Agent snapshot age before allowing a managed shot inside the reserve window", () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          hasGraphwarManagedShotTimeRemaining: (state: GraphwarAgentAvailableState) => boolean;
+        };
+      }
+    ).setupState;
+
+    expect(
+      page.hasGraphwarManagedShotTimeRemaining(
+        createAgentState("y", {
+          observedAtEpochMs: Date.now() - 2000,
+          remainingTurnMs: 4000,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      page.hasGraphwarManagedShotTimeRemaining(
+        createAgentState("y", {
+          observedAtEpochMs: Date.now(),
+          remainingTurnMs: 4000,
+        }),
+      ),
+    ).toBe(true);
 
     wrapper.unmount();
   });
@@ -266,19 +333,19 @@ describe("Graphwar Killer page settings", () => {
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
-          debugInfoEnabled: boolean;
-          graphwarAgentAutoExportOnClearFailureEnabled: boolean;
-          graphwarAgentEnabled: boolean;
-          graphwarManagedModeEnabled: boolean;
+          isDebugInfoEnabled: boolean;
+          isGraphwarAgentAutoExportOnClearFailureEnabled: boolean;
+          isGraphwarAgentEnabled: boolean;
+          isGraphwarManagedModeEnabled: boolean;
         };
       }
     ).setupState;
 
-    expect(page.graphwarAgentAutoExportOnClearFailureEnabled).toBe(false);
+    expect(page.isGraphwarAgentAutoExportOnClearFailureEnabled).toBe(false);
     expect(wrapper.find("#graphwar-killer-export-on-clear-failure").exists()).toBe(false);
 
-    page.debugInfoEnabled = true;
-    page.graphwarAgentEnabled = true;
+    page.isDebugInfoEnabled = true;
+    page.isGraphwarAgentEnabled = true;
     await nextTick();
     const autoExportSwitch = wrapper.get<HTMLButtonElement>("#graphwar-killer-export-on-clear-failure");
     expect(autoExportSwitch.attributes("aria-checked")).toBe("false");
@@ -287,14 +354,14 @@ describe("Graphwar Killer page settings", () => {
     );
 
     await autoExportSwitch.trigger("click");
-    expect(page.graphwarAgentAutoExportOnClearFailureEnabled).toBe(true);
+    expect(page.isGraphwarAgentAutoExportOnClearFailureEnabled).toBe(true);
     expect(autoExportSwitch.attributes("aria-checked")).toBe("true");
 
-    page.graphwarManagedModeEnabled = true;
+    page.isGraphwarManagedModeEnabled = true;
     await nextTick();
     expect(autoExportSwitch.attributes("disabled")).toBeUndefined();
     await autoExportSwitch.trigger("click");
-    expect(page.graphwarAgentAutoExportOnClearFailureEnabled).toBe(false);
+    expect(page.isGraphwarAgentAutoExportOnClearFailureEnabled).toBe(false);
     wrapper.unmount();
   });
 
@@ -311,10 +378,10 @@ describe("Graphwar Killer page settings", () => {
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
-          debugInfoEnabled: boolean;
-          graphwarAgentAutoExportOnClearFailureEnabled: boolean;
+          isDebugInfoEnabled: boolean;
+          isGraphwarAgentAutoExportOnClearFailureEnabled: boolean;
           graphwarAgentAppliedSnapshot: unknown;
-          graphwarAgentEnabled: boolean;
+          isGraphwarAgentEnabled: boolean;
           oneClickClearRunWorkflow: {
             run: (options?: { onOutcome?: (outcome: { kind: "incomplete" }) => void }) => Promise<boolean>;
           };
@@ -323,13 +390,13 @@ describe("Graphwar Killer page settings", () => {
       }
     ).setupState;
 
-    page.debugInfoEnabled = true;
-    page.graphwarAgentAutoExportOnClearFailureEnabled = true;
+    page.isDebugInfoEnabled = true;
+    page.isGraphwarAgentAutoExportOnClearFailureEnabled = true;
     page.graphwarAgentAppliedSnapshot = {
       state: { battleRevision: "before-shot", gameInstanceId: "game", turnToken: "turn" },
       worldObstacleMask: new Uint8Array([0, 1]),
     };
-    page.graphwarAgentEnabled = true;
+    page.isGraphwarAgentEnabled = true;
     page.oneClickClearRunWorkflow.run = async (options) => {
       options?.onOutcome?.({ kind: "incomplete" });
       return true;
@@ -466,18 +533,18 @@ describe("Graphwar Killer page settings", () => {
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
-          smartPathfindingInProgress: boolean;
+          isSmartPathfindingInProgress: boolean;
           startSmartPathfinding: () => number;
         };
       }
     ).setupState;
 
     page.startSmartPathfinding();
-    expect(page.smartPathfindingInProgress).toBe(true);
+    expect(page.isSmartPathfindingInProgress).toBe(true);
     await wrapper.find(`[aria-label="${graphwarKillerLocale.ui.settings.steepnessAriaLabel}"]`).setValue("211");
     await nextTick();
 
-    expect(page.smartPathfindingInProgress).toBe(false);
+    expect(page.isSmartPathfindingInProgress).toBe(false);
     wrapper.unmount();
   });
 
@@ -489,13 +556,13 @@ describe("Graphwar Killer page settings", () => {
       wrapper.vm.$ as unknown as {
         setupState: {
           activeObstacleSimulationToleranceText: string;
-          collisionCheckEnabled: boolean;
-          collisionCheckPreference: boolean | undefined;
-          effectiveStepGlitchModeEnabled: boolean;
-          graphwarAgentEnabled: boolean;
+          isCollisionCheckEnabled: boolean;
+          shouldCheckCollisions: boolean | undefined;
+          isEffectiveStepGlitchModeEnabled: boolean;
+          isGraphwarAgentEnabled: boolean;
           graphwarAgentObstacleSimulationToleranceText: string;
-          graphwarManagedModeEnabled: boolean;
-          smartPathfindingInProgress: boolean;
+          isGraphwarManagedModeEnabled: boolean;
+          isSmartPathfindingInProgress: boolean;
           solverEquationMode: "ddy" | "dy" | "y";
           startSmartPathfinding: () => number;
           stepGlitchObstacleSimulationToleranceText: string;
@@ -503,29 +570,32 @@ describe("Graphwar Killer page settings", () => {
       }
     ).setupState;
 
-    page.collisionCheckPreference = true;
-    page.graphwarAgentEnabled = true;
+    page.shouldCheckCollisions = true;
+    page.isGraphwarAgentEnabled = true;
     page.graphwarAgentObstacleSimulationToleranceText = "0";
-    page.graphwarManagedModeEnabled = true;
+    page.isGraphwarManagedModeEnabled = true;
     page.stepGlitchObstacleSimulationToleranceText = "1";
     await nextTick();
     expect(page.activeObstacleSimulationToleranceText).toBe("0");
     page.solverEquationMode = "dy";
-    expect(page.effectiveStepGlitchModeEnabled).toBe(true);
+    expect(page.isEffectiveStepGlitchModeEnabled).toBe(true);
     expect(page.activeObstacleSimulationToleranceText).toBe("1");
-    expect(page.collisionCheckEnabled).toBe(true);
+    expect(page.isCollisionCheckEnabled).toBe(true);
     page.startSmartPathfinding();
-    expect(page.smartPathfindingInProgress).toBe(true);
+    expect(page.isSmartPathfindingInProgress).toBe(true);
 
     await nextTick();
 
-    expect(page.smartPathfindingInProgress).toBe(true);
+    expect(page.isSmartPathfindingInProgress).toBe(true);
     wrapper.unmount();
   });
 });
 
 /** Creates one active Agent state for page-level manual and managed shot tests. */
-function createAgentState(equationMode: "ddy" | "dy" | "y"): GraphwarAgentAvailableState {
+function createAgentState(
+  equationMode: "ddy" | "dy" | "y",
+  overrides: Partial<GraphwarAgentAvailableState> = {},
+): GraphwarAgentAvailableState {
   const battleRevision = `sha256:${"b".repeat(64)}`;
   return {
     apiVersion: 3,
@@ -543,6 +613,7 @@ function createAgentState(equationMode: "ddy" | "dy" | "y"): GraphwarAgentAvaila
     gameInstanceId: "00000000-0000-4000-8000-000000000010",
     isAvailable: true,
     isTerrainReversed: false,
+    observedAtEpochMs: Date.now(),
     obstacleMask: {
       blockedValue: 1,
       emptyValue: 0,
@@ -580,6 +651,7 @@ function createAgentState(equationMode: "ddy" | "dy" | "y"): GraphwarAgentAvaila
     remainingTurnMs: 42_000,
     shotCommand: null,
     turnToken: "00000000-0000-4000-8000-000000000011",
+    ...overrides,
   };
 }
 

@@ -10,17 +10,20 @@ final class GraphwarAgentConfig {
     static final int DEFAULT_MAX_FUNCTION_BYTES = 16_384;
     static final int DEFAULT_MAX_FUNCTION_NESTING_DEPTH = 256;
     static final int DEFAULT_MAX_REQUEST_BODY_BYTES = 65_536;
+    static final int DEFAULT_MAX_REQUEST_HEADER_BYTES = 8_192;
     static final int DEFAULT_PORT = 17_900;
     static final int DEFAULT_PORT_SEARCH_LIMIT = 100;
     private static final int MAX_CONFIGURED_FUNCTION_BYTES = 1_048_576;
     private static final int MAX_CONFIGURED_FUNCTION_NESTING_DEPTH = 4_096;
     private static final int MAX_CONFIGURED_REQUEST_BODY_BYTES = 16_777_216;
+    private static final int MAX_CONFIGURED_REQUEST_HEADER_BYTES = 1_048_576;
     private static final int MAX_TOKEN_CHARACTERS = 4_096;
 
     final int fallbackPortCount;
     final int maxFunctionBytes;
     final int maxFunctionNestingDepth;
     final int maxRequestBodyBytes;
+    final int maxRequestHeaderBytes;
     final int port;
     final String token;
 
@@ -28,6 +31,7 @@ final class GraphwarAgentConfig {
     private GraphwarAgentConfig(
             int port,
             int fallbackPortCount,
+            int maxRequestHeaderBytes,
             int maxRequestBodyBytes,
             int maxFunctionBytes,
             int maxFunctionNestingDepth,
@@ -36,6 +40,7 @@ final class GraphwarAgentConfig {
         this.maxFunctionBytes = maxFunctionBytes;
         this.maxFunctionNestingDepth = maxFunctionNestingDepth;
         this.maxRequestBodyBytes = maxRequestBodyBytes;
+        this.maxRequestHeaderBytes = maxRequestHeaderBytes;
         this.port = port;
         this.token = token;
     }
@@ -44,6 +49,7 @@ final class GraphwarAgentConfig {
     static GraphwarAgentConfig parse(String agentArgs) {
         int port = DEFAULT_PORT;
         int fallbackPortCount = DEFAULT_PORT_SEARCH_LIMIT;
+        int maxRequestHeaderBytes = DEFAULT_MAX_REQUEST_HEADER_BYTES;
         int maxRequestBodyBytes = DEFAULT_MAX_REQUEST_BODY_BYTES;
         int maxFunctionBytes = DEFAULT_MAX_FUNCTION_BYTES;
         int maxFunctionNestingDepth = DEFAULT_MAX_FUNCTION_NESTING_DEPTH;
@@ -62,6 +68,15 @@ final class GraphwarAgentConfig {
                     if (parsed != null) {
                         port = parsed.intValue();
                         fallbackPortCount = 0;
+                    }
+                } else if ("maxRequestHeaderBytes".equals(name)) {
+                    Integer parsed =
+                            parseBoundedInteger(
+                                    value,
+                                    DEFAULT_MAX_REQUEST_HEADER_BYTES,
+                                    MAX_CONFIGURED_REQUEST_HEADER_BYTES);
+                    if (parsed != null) {
+                        maxRequestHeaderBytes = parsed.intValue();
                     }
                 } else if ("maxRequestBodyBytes".equals(name)) {
                     Integer parsed =
@@ -102,6 +117,7 @@ final class GraphwarAgentConfig {
         return new GraphwarAgentConfig(
                 port,
                 fallbackPortCount,
+                maxRequestHeaderBytes,
                 maxRequestBodyBytes,
                 maxFunctionBytes,
                 maxFunctionNestingDepth,
@@ -113,18 +129,24 @@ final class GraphwarAgentConfig {
         return new GraphwarAgentConfig(
                 port,
                 fallbackPortCount,
+                DEFAULT_MAX_REQUEST_HEADER_BYTES,
                 DEFAULT_MAX_REQUEST_BODY_BYTES,
                 DEFAULT_MAX_FUNCTION_BYTES,
                 DEFAULT_MAX_FUNCTION_NESTING_DEPTH,
                 null);
     }
 
-    /** Creates one exact authenticated test configuration without weakening production parsing. */
+    /** Creates one authenticated test configuration with exact HTTP request limits. */
     static GraphwarAgentConfig forTest(
-            int port, int fallbackPortCount, int maxRequestBodyBytes, String token) {
+            int port,
+            int fallbackPortCount,
+            int maxRequestHeaderBytes,
+            int maxRequestBodyBytes,
+            String token) {
         return new GraphwarAgentConfig(
                 port,
                 fallbackPortCount,
+                maxRequestHeaderBytes,
                 maxRequestBodyBytes,
                 Math.min(DEFAULT_MAX_FUNCTION_BYTES, maxRequestBodyBytes),
                 DEFAULT_MAX_FUNCTION_NESTING_DEPTH,

@@ -137,7 +137,7 @@ const liveClickPreviewWorkerCountText = computed({
   <section
     class="graphwar-killer__panel graphwar-killer__advanced-settings-panel graphwar-killer-control-surface"
     aria-labelledby="graphwar-killer-advanced-settings-title"
-    :aria-disabled="panel.interactionDisabled"
+    :aria-disabled="!panel.canInteract"
   >
     <div class="graphwar-killer__label-row">
       <h2 id="graphwar-killer-advanced-settings-title">
@@ -146,7 +146,7 @@ const liveClickPreviewWorkerCountText = computed({
     </div>
     <fieldset
       class="graphwar-killer__advanced-settings-fields"
-      :disabled="panel.interactionDisabled"
+      :disabled="!panel.canInteract"
     >
       <div class="graphwar-killer__advanced-settings-grid">
         <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
@@ -203,7 +203,7 @@ const liveClickPreviewWorkerCountText = computed({
           <div class="graphwar-killer__image-actions">
             <ToggleField
               id="graphwar-killer-skip-unknown-characters"
-              :checked="panel.simulator.skipUnknownCharacters"
+              :checked="panel.simulator.shouldSkipUnknownCharacters"
               :label="locale.ui.settings.skipUnknownCharacters"
               state="normal"
               :title="locale.ui.settings.skipUnknownCharactersTitle"
@@ -211,7 +211,7 @@ const liveClickPreviewWorkerCountText = computed({
             />
             <ToggleField
               id="graphwar-killer-parse-derivative-as-y"
-              :checked="panel.simulator.parseDerivativeAsY"
+              :checked="panel.simulator.shouldParseDerivativeAsY"
               :label="locale.ui.settings.parseDerivativeAsY"
               state="normal"
               :title="locale.ui.settings.parseDerivativeAsYTitle"
@@ -220,7 +220,7 @@ const liveClickPreviewWorkerCountText = computed({
           </div>
         </div>
         <div
-          v-if="panel.solverSettingsVisible"
+          v-if="panel.isSolverSettingsVisible"
           class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group"
         >
           <h3>
@@ -290,7 +290,7 @@ const liveClickPreviewWorkerCountText = computed({
           </div>
         </div>
         <div
-          v-if="panel.solverSettingsVisible"
+          v-if="panel.isSolverSettingsVisible"
           class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group"
         >
           <h3>
@@ -449,7 +449,7 @@ const liveClickPreviewWorkerCountText = computed({
             >
           </label>
           <label
-            v-if="panel.pathfinding.oneClickClearDeleteCheckRadiusVisible"
+            v-if="panel.pathfinding.isOneClickClearDeleteCheckRadiusVisible"
             class="graphwar-killer__detection-setting-label graphwar-killer__pathfinding-setting-label"
             :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
           >
@@ -466,7 +466,7 @@ const liveClickPreviewWorkerCountText = computed({
           </label>
         </div>
         <div
-          v-if="panel.solverSettingsVisible"
+          v-if="panel.isSolverSettingsVisible"
           class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group"
         >
           <h3>

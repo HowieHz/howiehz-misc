@@ -13,9 +13,9 @@ export interface GraphwarFormulaProfile {
   /** 当前游戏模式独立保留的“陡峭度 k”原始输入。 */
   steepnessText: string;
   /** 即使当前游戏模式或算法不消费该选项，也保留邪道模式偏好。 */
-  stepGlitchModeEnabled: boolean;
+  isStepGlitchModeEnabled: boolean;
   /** 即使当前算法不消费该选项，也保留 Step 防溢出偏好。 */
-  stepOverflowProtectionEnabled: boolean;
+  isStepOverflowProtectionEnabled: boolean;
 }
 
 /** 按 Graphwar 三种游戏模式分别保存的 Solver 公式偏好。 */
@@ -27,15 +27,15 @@ export interface GraphwarFormulaProfiles {
 
 /** 托管模式对单份公式偏好的最小修复，包括算法和可选的邪道模式联动。 */
 type GraphwarFormulaProfileRepair = Pick<GraphwarFormulaProfile, "algorithm"> &
-  Partial<Pick<GraphwarFormulaProfile, "stepGlitchModeEnabled">>;
+  Partial<Pick<GraphwarFormulaProfile, "isStepGlitchModeEnabled">>;
 
 /** 稀疏且不可变地描述托管模式必须替换的不受支持配置。 */
 export type GraphwarManagedFormulaProfileRepairPlan = Partial<Record<EquationMode, GraphwarFormulaProfileRepair>>;
 
 const defaultFormulaPreferences = {
   precisionText: String(DEFAULT_FORMULA_DECIMAL_PLACES),
-  stepGlitchModeEnabled: true,
-  stepOverflowProtectionEnabled: true,
+  isStepGlitchModeEnabled: true,
+  isStepOverflowProtectionEnabled: true,
   steepnessText: String(graphwarToolDefaults.steepness),
 } as const;
 
@@ -77,8 +77,9 @@ export function updateGraphwarFormulaProfile(
       algorithm: update.algorithm ?? current.algorithm,
       precisionText: update.precisionText ?? current.precisionText,
       steepnessText: update.steepnessText ?? current.steepnessText,
-      stepGlitchModeEnabled: update.stepGlitchModeEnabled ?? current.stepGlitchModeEnabled,
-      stepOverflowProtectionEnabled: update.stepOverflowProtectionEnabled ?? current.stepOverflowProtectionEnabled,
+      isStepGlitchModeEnabled: update.isStepGlitchModeEnabled ?? current.isStepGlitchModeEnabled,
+      isStepOverflowProtectionEnabled:
+        update.isStepOverflowProtectionEnabled ?? current.isStepOverflowProtectionEnabled,
     },
   };
 }
@@ -97,10 +98,10 @@ export function createGraphwarManagedFormulaProfileRepairPlan(
     plan.y = { algorithm: "abs" };
   }
   if (!graphwarFormulaProfileSupportsOneClickClear(profiles, "dy")) {
-    plan.dy = { algorithm: "step", stepGlitchModeEnabled: true };
+    plan.dy = { algorithm: "step", isStepGlitchModeEnabled: true };
   }
   if (!graphwarFormulaProfileSupportsOneClickClear(profiles, "ddy")) {
-    plan.ddy = { algorithm: "step", stepGlitchModeEnabled: true };
+    plan.ddy = { algorithm: "step", isStepGlitchModeEnabled: true };
   }
   return plan;
 }

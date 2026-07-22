@@ -89,9 +89,13 @@ Glitch Mode is available for Step `y'` and `y''`. When a normal Step cannot get 
 
 Turn on Use Agent and enter a valid URL to use Managed Mode. It marks local players in the room as ready, then reads state, runs One-Click Clear, and fires during local turns.
 
+After the page receives live Agent state, it shows the current turn countdown to the left of Fire. Manual reads, Managed Mode polling, and the pre-fire check all recalibrate it.
+
 If a game mode uses an algorithm that does not support One-Click Clear, Managed Mode lists the required changes before updating those settings. After a search, it briefly shows the elapsed time and submits the shot without waiting for the page to render.
 
 Managed Mode always keeps the best formula found so far in the background. Search Animation affects only the on-page preview, not the search or deadline firing.
+
+With Search Animation enabled, control points from a new best plan appear first, while the previous plan's trajectory stays hidden until the matching trajectory is ready.
 
 When the configured shot reserve is reached, Managed Mode fires the best validated plan. If no plan is available, it submits a skip-turn function. It does not deliberately hit an obstacle as a fallback because doing so could change the map and open a route for an opponent.
 
@@ -131,13 +135,14 @@ The Windows Steam version of Graphwar can use its bundled Java directly:
 Append `=...` to the Agent JAR path to set startup options. Separate multiple options with commas:
 
 ```shell
-java -javaagent:graphwar-agent.jar=token=auto,maxRequestBodyBytes=1048576 -jar graphwar.jar
+java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxRequestBodyBytes=1048576 -jar graphwar.jar
 ```
 
 | Option                    | Purpose                                      | Default                                                    | Accepted values                                             |
 | ------------------------- | -------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- |
 | `port`                    | Set the HTTP listening port                  | `17900`; if busy, try the next 100 ports (`17901`–`18000`) | `1`–`65535`; an explicit value disables fallback            |
 | `token`                   | Enable bearer-token authentication           | Authentication disabled                                    | `auto`, or 1–4096 visible ASCII characters excluding commas |
+| `maxRequestHeaderBytes`   | Limit HTTP request-header size               | `8192`                                                     | `8192`–`1048576`                                            |
 | `maxRequestBodyBytes`     | Limit the JSON data accepted per API request | `65536`                                                    | `1024`–`16777216`                                           |
 | `maxFunctionBytes`        | Limit submitted function size in UTF-8 bytes | `16384`                                                    | `1`–`1048576`, capped to the effective request-body limit   |
 | `maxFunctionNestingDepth` | Limit function-expression nesting depth      | `256`                                                      | `1`–`4096`                                                  |

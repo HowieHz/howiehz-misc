@@ -34,7 +34,7 @@ export function getFirstHeaderStatus(...statuses: readonly HeaderStatus[]): Head
 /** 智能寻路面板标题状态的全部输入，集中建模避免模板里散落优先级判断。 */
 export interface SmartPathfindingHeaderStatusInput {
   /** 单目标路径规划是否生效；一键清图等共享任务状态不受此开关控制。 */
-  smartPathfindingEnabled: boolean;
+  isSmartPathfindingEnabled: boolean;
   /** 智能寻路参数校验错误。 */
   smartPathfindingSettingsMessage: string;
   /** 智能寻路运行状态文案。 */
@@ -53,7 +53,7 @@ export function getSmartPathfindingHeaderStatus(input: SmartPathfindingHeaderSta
     input.smartPathfindingStatusMessage,
     input.smartPathfindingStatusKind,
   );
-  if (!input.smartPathfindingEnabled) {
+  if (!input.isSmartPathfindingEnabled) {
     // 一键清图不依赖路径规划开关，但复用同一任务状态，不能在这里吞掉其运行结果。
     return getFirstHeaderStatus(smartPathfindingStatus, createHeaderStatus(input.enableHintMessage));
   }

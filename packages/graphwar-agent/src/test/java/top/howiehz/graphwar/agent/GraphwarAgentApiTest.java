@@ -263,6 +263,7 @@ public final class GraphwarAgentApiTest {
         assertContains(health, "\"apiVersion\":3", "health API version");
         assertContains(health, "\"version\":\"2.0.0\"", "Agent version");
         assertContains(health, "\"isAuthenticationRequired\":false", "health auth flag");
+        assertContains(health, "\"maxRequestHeaderBytes\":8192", "health header limit");
 
         assertContains(
                 request(port, "GET", "/room", null, null).bodyText(),
@@ -277,6 +278,7 @@ public final class GraphwarAgentApiTest {
         configureActiveMatch(gameData);
         String stateBody = request(port, "GET", "/state", null, null).bodyText();
         assertContains(stateBody, "\"apiVersion\":3", "state API version");
+        assertContains(stateBody, "\"observedAtEpochMs\":", "state observation time");
         assertContains(stateBody, "\"isAvailable\":true", "state availability");
         assertContains(
                 stateBody,
@@ -366,10 +368,9 @@ public final class GraphwarAgentApiTest {
         testNewGameCleanupWithoutTurnToken(port, gameData, unknownRequestId);
 
         gameData.setGameState(1);
-        assertContains(
-                request(port, "GET", "/state", null, null).bodyText(),
-                "\"isAvailable\":false",
-                "unavailable state");
+        String unavailableState = request(port, "GET", "/state", null, null).bodyText();
+        assertContains(unavailableState, "\"observedAtEpochMs\":", "unavailable observation time");
+        assertContains(unavailableState, "\"isAvailable\":false", "unavailable state");
         graphwar.setGameData(null);
         assertEquals(
                 "{\"isAvailable\":false,\"reason\":\"game-data-not-initialized\"}",
@@ -543,7 +544,7 @@ public final class GraphwarAgentApiTest {
         GameData gameData = new GameData();
         configureActiveMatch(gameData);
         Graphwar graphwar = new Graphwar(gameData);
-        GraphwarAgentConfig config = GraphwarAgentConfig.forTest(0, 0, 1_024, "secret");
+        GraphwarAgentConfig config = GraphwarAgentConfig.forTest(0, 0, 16_384, 1_024, "secret");
         GraphwarStateReader stateReader = new GraphwarStateReader(config, () -> graphwar);
         GraphwarShotCommandStore commands = new GraphwarShotCommandStore(stateReader);
         stateReader.setShotCommands(commands);
@@ -551,6 +552,19 @@ public final class GraphwarAgentApiTest {
         try {
             String health = request(server.getPort(), "GET", "/health", null, null).bodyText();
             assertContains(health, "\"isAuthenticationRequired\":true", "authenticated health");
+            assertContains(health, "\"maxRequestHeaderBytes\":16384", "configured header limit");
+            assertEquals(
+                    431,
+                    requestWithHeader(
+                                    server.getPort(),
+                                    "GET",
+                                    "/health",
+                                    null,
+                                    null,
+                                    "X-Fill",
+                                    repeat('x', 16_384))
+                            .status,
+                    "request header limit");
             assertEquals(
                     405,
                     request(
@@ -619,8 +633,14 @@ public final class GraphwarAgentApiTest {
 
         GraphwarAgentConfig raised =
                 GraphwarAgentConfig.parse(
-                        "maxRequestBodyBytes=16777216,maxFunctionBytes=1048576,"
+                        "maxRequestHeaderBytes=1048576,maxRequestBodyBytes=16777216,"
+                                + "maxFunctionBytes=1048576,"
                                 + "maxFunctionNestingDepth=4096");
+        assertEquals(1_048_576, raised.maxRequestHeaderBytes, "raised header limit");
+        assertEquals(
+                8_192,
+                GraphwarAgentConfig.parse("maxRequestHeaderBytes=1024").maxRequestHeaderBytes,
+                "undersized header limit");
         assertEquals(16_777_216, raised.maxRequestBodyBytes, "raised body limit");
         assertEquals(1_048_576, raised.maxFunctionBytes, "raised function limit");
         assertEquals(4_096, raised.maxFunctionNestingDepth, "raised nesting limit");

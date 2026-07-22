@@ -61,7 +61,7 @@ export interface GraphwarOneClickClearRunOptions {
   /** 最终成功后、写回最终路径与完成状态前同步调用；托管用它提交不依赖页面渲染的已验证方案。 */
   onSuccessBeforeEffects?: () => void;
   /** 托管按实时局面搜索时关闭跨运行结果缓存。 */
-  useResultCache?: boolean;
+  shouldUseResultCache?: boolean;
 }
 
 /** 一键清图运行结局；布尔返回仍表示是否有方案落地，不能表达失败原因。 */
@@ -108,16 +108,16 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
   input: {
     boundsRect: { readonly value: BoundsRect };
     getBounds: () => GraphBounds | undefined;
-    getDeleteOptimizationEnabled: () => boolean;
+    isDeleteOptimizationEnabled: () => boolean;
     getFormulaSettings: () => GraphwarTrajectoryFormulaSettings;
     getObstacleMask: () => Uint8Array | undefined;
     getPathfindingWorkerCount: () => number | undefined;
     getPathPoints: () => readonly PixelPoint[];
     getRouteMode: () => GraphwarPathfindingRouteMode;
-    requiresDagWorker: () => boolean;
+    shouldUseDagWorker: () => boolean;
     getSimulationMask: () => Uint8Array | undefined;
     getTolerances: () => GraphwarOneClickClearSearchTolerances | undefined;
-    isUnsupportedMode: () => boolean;
+    isModeSupported: () => boolean;
   };
   /** 本地化和状态文案仍由页面持有。 */
   messages: {
@@ -127,7 +127,7 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
       kind: "error" | "warning";
       message: string;
     };
-    getSuccessMessage: (targetCount: number, elapsedMs: number, resultCacheHit: boolean) => string;
+    getSuccessMessage: (targetCount: number, elapsedMs: number, hasResultCacheHit: boolean) => string;
     getRetainedMessage: () => string;
   };
   /** 一键清图的 worker 与页面侧完整结果缓存。 */
@@ -144,7 +144,7 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
   /** 目标收集应复用 pathfinding 目录的候选规则，页面只提供当前状态。 */
   targets: {
     createGeometry: () => GraphwarTargetingGeometry | undefined;
-    getFriendlyFireEnabled: () => boolean;
+    isFriendlyFireEnabled: () => boolean;
     getPrefixTarget: () => GraphwarOneClickClearPrefixTarget | undefined;
     getSoldiers: () => readonly TSoldier[];
     isFriendlySoldier: (soldier: TSoldier) => boolean | undefined;
@@ -301,9 +301,9 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
         getObstacleMask: options.input.getObstacleMask,
         pathfindingWorkerCount: options.input.getPathfindingWorkerCount(),
         pathPointCount: options.input.getPathPoints().length,
-        requiresDagWorker: options.input.requiresDagWorker(),
+        shouldUseDagWorker: options.input.shouldUseDagWorker(),
         tolerances,
-        unsupportedMode: options.input.isUnsupportedMode,
+        isModeSupported: options.input.isModeSupported,
       });
       return result.ok ? result : { ...result, ...options.messages.getPreflightFailureStatus(result.reason) };
     });
@@ -348,7 +348,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       boundsRect: options.input.boundsRect.value,
       candidates,
       dagEdgeWorkerCount: preflightResult.dagEdgeWorkerCount,
-      deleteOptimizationEnabled: options.input.getDeleteOptimizationEnabled(),
+      isDeleteOptimizationEnabled: options.input.isDeleteOptimizationEnabled(),
       hitCandidates: createGraphwarOneClickClearHitCandidates(createTargetCollectionOptions()),
       pathPoints: options.input.getPathPoints(),
       prefixTarget: preflightResult.prefixTarget,
@@ -361,14 +361,14 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       tolerances: preflightResult.tolerances,
     });
     const searchCacheKey =
-      runOptions.useResultCache === false
+      runOptions.shouldUseResultCache === false
         ? ""
         : options.pathfinding.cache.createOneClickClearResultCacheKey(searchInput);
     let search =
-      runOptions.useResultCache === false
+      runOptions.shouldUseResultCache === false
         ? undefined
         : options.pathfinding.cache.getCachedOneClickClearResult(searchCacheKey, (timing) => timings.push(timing));
-    const cacheHit = search !== undefined;
+    const hasResultCacheHit = search !== undefined;
     if (!search) {
       search = await options.debug.measureStageAsync(timings, "one-click-clear-search", () =>
         options.pathfinding.runner.buildOneClickClearPath(searchInput, {
@@ -384,7 +384,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       );
       // 带 incumbent 的 failure 会丢检查点，Worker 错误可能是瞬时故障；两者都不能污染结果缓存。
       if (
-        runOptions.useResultCache !== false &&
+        runOptions.shouldUseResultCache !== false &&
         (search.result.type === "success" ||
           (search.result.reason !== "pathfinding-worker-failed" && !activeRun?.incumbent))
       ) {
@@ -392,7 +392,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       }
     }
     return {
-      cacheHit,
+      cacheHit: hasResultCacheHit,
       candidateIds: new Set(candidates.map((candidate) => candidate.id)),
       search,
     };
@@ -401,7 +401,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
   /** 组装敌我筛选和目标几何所需的最小选项。 */
   function createTargetCollectionOptions() {
     return {
-      friendlyFireEnabled: options.targets.getFriendlyFireEnabled(),
+      friendlyFireEnabled: options.targets.isFriendlyFireEnabled(),
       geometry: options.targets.createGeometry(),
       isFriendlySoldier: options.targets.isFriendlySoldier,
       pathPoints: options.input.getPathPoints(),
@@ -414,7 +414,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     startedAt: number,
     timings: SmartPathfindingDebugTimingEntry[],
     result: Extract<GraphwarOneClickClearPathWorkerResult["result"], { type: "success" }>,
-    resultCacheHit: boolean,
+    hasResultCacheHit: boolean,
     finishDebugTimings: (completedAt?: number) => void,
   ) {
     options.debug.measureStage(timings, "one-click-clear-apply-result", () => options.effects.applyIncumbent(result));
@@ -425,8 +425,8 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       options.effects.setStatus(
         options.messages.getSuccessMessage(
           result.targetIds.length,
-          resultCacheHit ? completedAt - startedAt : result.elapsedMs,
-          resultCacheHit,
+          hasResultCacheHit ? completedAt - startedAt : result.elapsedMs,
+          hasResultCacheHit,
         ),
         "success",
       );

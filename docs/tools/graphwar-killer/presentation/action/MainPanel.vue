@@ -35,7 +35,7 @@ interface GraphwarActionPanelSlider {
 /** 由偏好值和能力状态共同驱动的操作开关。 */
 interface GraphwarActionPanelToggle {
   /** Persisted preference value. */
-  enabled: boolean;
+  isEnabled: boolean;
   /** Visible state derived by the shared capability model. */
   state: GraphwarControlCapability["state"];
   /** Localised reason for a non-normal state. */
@@ -45,27 +45,27 @@ interface GraphwarActionPanelToggle {
 /** 操作栏所有工具、开关和笔刷控件的展示模型。 */
 export interface GraphwarActionPanelModel {
   /** 托管期间锁定路径和障碍编辑，保留放大镜等纯展示控制。 */
-  interactionDisabled: boolean;
+  canInteract: boolean;
   /** 标题行右侧的当前工具提示。 */
   activeToolHint: GraphwarActionPanelStatus;
   /** 手工轨迹碰撞检查。 */
   collisionCheck: GraphwarActionPanelToggle;
   /** 放大镜是否开启。 */
-  magnifierEnabled: boolean;
+  isMagnifierEnabled: boolean;
   /** 放大镜缩放输入展示模型。 */
   magnifierZoom: GraphwarActionPanelSlider;
   /** 障碍笔刷是否可用。 */
-  obstacleBrushAvailable: boolean;
+  isObstacleBrushAvailable: boolean;
   /** 障碍笔刷直径输入展示模型。 */
   obstacleBrushDiameter: GraphwarActionPanelSlider;
   /** 障碍笔刷是否处于擦除模式。 */
-  obstacleBrushEraseEnabled: boolean;
+  isObstacleBrushEraseEnabled: boolean;
   /** 是否展示障碍笔刷控件。 */
-  obstacleBrushControlsVisible: boolean;
+  isObstacleBrushControlsVisible: boolean;
   /** 当前是否有未清除的障碍编辑。 */
-  obstacleEditsDirty: boolean;
+  hasObstacleEdits: boolean;
   /** 实时点击预览是否开启。 */
-  liveClickPreviewEnabled: boolean;
+  isLiveClickPreviewEnabled: boolean;
   /** 当前工具模式。 */
   toolMode: ToolMode;
   /** 士兵吸附偏好。 */
@@ -150,7 +150,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           class="graphwar-killer-segmented-button"
           :aria-pressed="panel.toolMode === 'bounds'"
           :class="{ 'graphwar-killer-segmented-button--active': panel.toolMode === 'bounds' }"
-          :disabled="panel.interactionDisabled"
+          :disabled="!panel.canInteract"
           :title="locale.ui.actions.pickBoundsTitle"
           @click="emit('setToolMode', 'bounds')"
         >
@@ -161,7 +161,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           class="graphwar-killer-segmented-button"
           :aria-pressed="panel.toolMode === 'path'"
           :class="{ 'graphwar-killer-segmented-button--active': panel.toolMode === 'path' }"
-          :disabled="panel.interactionDisabled"
+          :disabled="!panel.canInteract"
           :title="locale.ui.actions.pickPathTitle"
           @click="emit('setToolMode', 'path')"
         >
@@ -172,7 +172,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           class="graphwar-killer-segmented-button"
           :aria-pressed="panel.toolMode === 'obstacle'"
           :class="{ 'graphwar-killer-segmented-button--active': panel.toolMode === 'obstacle' }"
-          :disabled="panel.interactionDisabled || !panel.obstacleBrushAvailable"
+          :disabled="!panel.canInteract || !panel.isObstacleBrushAvailable"
           :title="locale.ui.actions.drawObstacleTitle"
           @click="emit('setToolMode', 'obstacle')"
         >
@@ -181,14 +181,14 @@ function handleObstacleBrushDiameterInput(event: Event) {
       </div>
       <ToggleField
         id="graphwar-killer-magnifier"
-        :checked="panel.magnifierEnabled"
+        :checked="panel.isMagnifierEnabled"
         :label="locale.ui.actions.magnifier"
         state="normal"
         :title="locale.ui.actions.magnifierTitle"
         @toggle="emit('toggleMagnifier')"
       />
       <label
-        v-if="panel.magnifierEnabled"
+        v-if="panel.isMagnifierEnabled"
         class="graphwar-killer__magnifier-zoom-label"
         :title="locale.ui.actions.magnifierZoomTitle"
       >
@@ -226,7 +226,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
         type="button"
         class="graphwar-killer__icon-button"
         :aria-label="locale.ui.actions.clearPath"
-        :disabled="panel.interactionDisabled"
+        :disabled="!panel.canInteract"
         :title="locale.ui.actions.clearPathTitle"
         @click="emit('clearPath')"
       >
@@ -239,7 +239,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
         type="button"
         class="graphwar-killer__icon-button"
         :aria-label="locale.ui.actions.undoPoint"
-        :disabled="panel.interactionDisabled"
+        :disabled="!panel.canInteract"
         :title="locale.ui.actions.undoPointTitle"
         @click="emit('undoPoint')"
       >
@@ -250,7 +250,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
       </button>
       <ToggleField
         id="graphwar-killer-snap-soldiers"
-        :checked="panel.snapSoldiers.enabled"
+        :checked="panel.snapSoldiers.isEnabled"
         :label="locale.ui.actions.snapSoldiers"
         :reason="panel.snapSoldiers.reason"
         :state="panel.snapSoldiers.state"
@@ -259,7 +259,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
       />
       <ToggleField
         id="graphwar-killer-collision-check"
-        :checked="panel.collisionCheck.enabled"
+        :checked="panel.collisionCheck.isEnabled"
         :label="locale.ui.actions.collisionCheck"
         :reason="panel.collisionCheck.reason"
         :state="panel.collisionCheck.state"
@@ -268,7 +268,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
       />
       <ToggleField
         id="graphwar-killer-live-click-preview"
-        :checked="panel.liveClickPreviewEnabled"
+        :checked="panel.isLiveClickPreviewEnabled"
         :label="locale.ui.actions.liveClickPreview"
         state="normal"
         :title="locale.ui.actions.liveClickPreviewTitle"
@@ -276,7 +276,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
       />
     </div>
     <div
-      v-if="panel.obstacleBrushControlsVisible"
+      v-if="panel.isObstacleBrushControlsVisible"
       class="graphwar-killer__obstacle-brush-actions"
     >
       <div class="graphwar-killer__obstacle-brush-size">
@@ -284,7 +284,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           type="button"
           class="graphwar-killer__icon-button"
           :aria-label="locale.ui.actions.clearObstacleEdits"
-          :disabled="panel.interactionDisabled || !panel.obstacleEditsDirty"
+          :disabled="!panel.canInteract || !panel.hasObstacleEdits"
           :title="locale.ui.actions.clearObstacleEditsTitle"
           @click="emit('clearObstacleEdits')"
         >
@@ -296,10 +296,10 @@ function handleObstacleBrushDiameterInput(event: Event) {
         <button
           type="button"
           class="graphwar-killer__icon-button"
-          :class="{ 'graphwar-killer__icon-button--active': panel.obstacleBrushEraseEnabled }"
+          :class="{ 'graphwar-killer__icon-button--active': panel.isObstacleBrushEraseEnabled }"
           :aria-label="locale.ui.actions.eraseObstacle"
-          :aria-pressed="panel.obstacleBrushEraseEnabled"
-          :disabled="panel.interactionDisabled"
+          :aria-pressed="panel.isObstacleBrushEraseEnabled"
+          :disabled="!panel.canInteract"
           :title="locale.ui.actions.eraseObstacleTitle"
           @click="emit('toggleObstacleBrushErase')"
         >
@@ -322,7 +322,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
             :style="panel.obstacleBrushDiameter.rangeStyle"
             :min="panel.obstacleBrushDiameter.minimum"
             :max="panel.obstacleBrushDiameter.sliderMaximum"
-            :disabled="panel.interactionDisabled"
+            :disabled="!panel.canInteract"
             step="1"
             :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
             :title="locale.ui.actions.obstacleBrushDiameterTitle"
@@ -334,7 +334,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
             inputmode="numeric"
             :min="panel.obstacleBrushDiameter.minimum"
             :max="panel.obstacleBrushDiameter.inputMaximum"
-            :disabled="panel.interactionDisabled"
+            :disabled="!panel.canInteract"
             step="1"
             :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
             :title="locale.ui.actions.obstacleBrushDiameterTitle"

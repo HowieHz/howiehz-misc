@@ -10,21 +10,21 @@ describe("Pathfinding MainPanel", () => {
   it("places Path Planning before One-Click Clear and preserves its toggle event", async () => {
     const panel = {
       debugTimingRows: [],
-      debugTimingVisible: false,
-      deleteOptimization: { enabled: false, state: "normal" as const },
-      friendlyFire: { enabled: false, state: "normal" as const },
+      isDebugTimingVisible: false,
+      deleteOptimization: { isEnabled: false, state: "normal" as const },
+      friendlyFire: { isEnabled: false, state: "normal" as const },
       headerStatus: { kind: "info" as const, message: "", title: "" },
       managedFriendlyFireWarning: "",
-      managedMode: { enabled: false, state: "normal" as const, title: "" },
+      managedMode: { isEnabled: false, state: "normal" as const, title: "" },
       oneClickClear: {
         reason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["path-start-required"],
         state: "blocked" as const,
         title: graphwarKillerLocale.ui.pathfinding.oneClickClearTitle,
       },
-      pathPlanning: { enabled: false, state: "normal" as const },
+      pathPlanning: { isEnabled: false, state: "normal" as const },
       routeMode: "visibility-graph" as const,
-      searchAnimation: { enabled: false, state: "normal" as const },
-      usesStepGlitchRouting: false,
+      searchAnimation: { isEnabled: false, state: "normal" as const },
+      isUsingStepGlitchRouting: false,
     };
     const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, panel } });
     const taskControls = wrapper.get(".graphwar-killer__task-controls");
@@ -40,7 +40,7 @@ describe("Pathfinding MainPanel", () => {
 
     const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
     await wrapper.setProps({
-      panel: { ...panel, pathPlanning: { enabled: false, reason, state: "blocked" as const } },
+      panel: { ...panel, pathPlanning: { isEnabled: false, reason, state: "blocked" as const } },
     });
 
     const pathPlanning = wrapper.get("#graphwar-killer-path-planning");

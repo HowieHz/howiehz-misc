@@ -56,6 +56,8 @@ public final class GraphwarAgent {
                             + server.getPort());
         }
         System.err.println(
+                "[graphwar-agent] request header limit " + config.maxRequestHeaderBytes + " bytes");
+        System.err.println(
                 "[graphwar-agent] request body limit " + config.maxRequestBodyBytes + " bytes");
         System.err.println(
                 "[graphwar-agent] function limits "

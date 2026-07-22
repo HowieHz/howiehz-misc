@@ -9,26 +9,26 @@ import MainPanel from "./MainPanel.vue";
 describe("Detection MainPanel", () => {
   it("keeps the source switch in the heading and groups screenshot actions into two rows", async () => {
     const panel = {
-      interactionDisabled: false,
+      canInteract: true,
       agent: {
-        autoExportOnClearFailureEnabled: false,
+        isAutoExportOnClearFailureEnabled: false,
         baseUrlText: "http://127.0.0.1:17900",
-        debugFileActionsVisible: false,
-        enabled: false,
-        exportInProgress: false,
+        isDebugFileActionsVisible: false,
+        isEnabled: false,
+        isExportInProgress: false,
         exportState: "normal" as const,
-        inProgress: false,
+        isInProgress: false,
         readState: "normal" as const,
         tokenText: "",
       },
-      autoDetectionEnabled: true,
+      isAutoDetectionEnabled: true,
       canDetectBounds: true,
       canDetectObjects: true,
       debugTimingRows: [],
-      debugTimingVisible: false,
+      isDebugTimingVisible: false,
       detectObjectsTitle: graphwarKillerLocale.ui.detection.detectObjectsTitle,
       headerStatus: { kind: "error" as const, message: "读取状态失败：游戏尚未开始" },
-      screenshotActionsVisible: true,
+      isScreenshotActionsVisible: true,
       statusWarning: { message: "", title: "" },
     };
     const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, panel } });
@@ -53,7 +53,7 @@ describe("Detection MainPanel", () => {
     expect(screenshotRows[1].text()).toContain(graphwarKillerLocale.ui.detection.detectObjects);
     expect(screenshotRows[1].text()).toContain(graphwarKillerLocale.ui.detection.autoDetection);
 
-    await wrapper.setProps({ panel: { ...panel, interactionDisabled: true } });
+    await wrapper.setProps({ panel: { ...panel, canInteract: false } });
     const lockedScreenshotRows = wrapper.findAll(".graphwar-killer__source-action-row");
     expect(lockedScreenshotRows[0].get<HTMLButtonElement>("button").attributes("disabled")).toBeDefined();
     expect(lockedScreenshotRows[0].get<HTMLInputElement>('input[type="file"]').attributes("disabled")).toBeDefined();
@@ -66,13 +66,13 @@ describe("Detection MainPanel", () => {
         ...panel,
         agent: {
           ...panel.agent,
-          debugFileActionsVisible: true,
-          enabled: true,
+          isDebugFileActionsVisible: true,
+          isEnabled: true,
           exportState: "busy" as const,
           readReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["agent-read-busy"],
           readState: "busy" as const,
         },
-        screenshotActionsVisible: false,
+        isScreenshotActionsVisible: false,
       },
     });
 
@@ -116,8 +116,8 @@ describe("Detection MainPanel", () => {
     await wrapper.setProps({
       panel: {
         ...panel,
-        agent: { ...panel.agent, debugFileActionsVisible: true, enabled: true, readState: "normal" as const },
-        screenshotActionsVisible: false,
+        agent: { ...panel.agent, isDebugFileActionsVisible: true, isEnabled: true, readState: "normal" as const },
+        isScreenshotActionsVisible: false,
       },
     });
     const readyExportButton = wrapper.get<HTMLButtonElement>(
@@ -136,9 +136,9 @@ describe("Detection MainPanel", () => {
         ...panel,
         agent: {
           ...panel.agent,
-          debugFileActionsVisible: true,
-          enabled: true,
-          exportInProgress: true,
+          isDebugFileActionsVisible: true,
+          isEnabled: true,
+          isExportInProgress: true,
           exportState: "busy" as const,
           readReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["agent-read-busy"],
           readState: "busy" as const,
@@ -170,13 +170,13 @@ describe("Detection MainPanel", () => {
         ...panel,
         agent: {
           ...panel.agent,
-          debugFileActionsVisible: true,
-          enabled: true,
+          isDebugFileActionsVisible: true,
+          isEnabled: true,
           exportState: "normal" as const,
           readState: "busy" as const,
         },
-        interactionDisabled: true,
-        screenshotActionsVisible: false,
+        canInteract: false,
+        isScreenshotActionsVisible: false,
       },
     });
     const agentToggle = wrapper.get<HTMLButtonElement>("#graphwar-killer-agent-usage");

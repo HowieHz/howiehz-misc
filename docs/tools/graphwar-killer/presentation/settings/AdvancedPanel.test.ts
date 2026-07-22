@@ -25,7 +25,7 @@ describe("AdvancedPanel", () => {
         liveClickPreviewWorkerCountText: "2",
       },
       bounds: { maxXText: "25", maxYText: "15", minXText: "-25", minYText: "-15" },
-      interactionDisabled: false,
+      canInteract: true,
       pathfinding: {
         agentObstacleSimulationToleranceText: "0",
         agentRoutePlanningToleranceText: "2",
@@ -37,7 +37,7 @@ describe("AdvancedPanel", () => {
         stepGlitchRoutePlanningToleranceText: "0",
         oneClickClearDeleteCheckRadiusMinimumPlanePixels: 0,
         oneClickClearDeleteCheckRadiusText: "3.5",
-        oneClickClearDeleteCheckRadiusVisible: false,
+        isOneClickClearDeleteCheckRadiusVisible: false,
         workerCountText: "4",
       },
       recognition: {
@@ -47,8 +47,8 @@ describe("AdvancedPanel", () => {
         obstacleMinAreaText: "8",
         templateMatchingWorkerCountText: "2",
       },
-      simulator: { parseDerivativeAsY: true, skipUnknownCharacters: true },
-      solverSettingsVisible: true,
+      simulator: { shouldParseDerivativeAsY: true, shouldSkipUnknownCharacters: true },
+      isSolverSettingsVisible: true,
     };
     const wrapper = mount(AdvancedPanel, { props: { locale: graphwarKillerLocale, panel } });
     expect(wrapper.classes()).toContain("graphwar-killer-control-surface");
@@ -108,7 +108,7 @@ describe("AdvancedPanel", () => {
     await wrapper.setProps({
       panel: {
         ...panel,
-        pathfinding: { ...panel.pathfinding, oneClickClearDeleteCheckRadiusVisible: true },
+        pathfinding: { ...panel.pathfinding, isOneClickClearDeleteCheckRadiusVisible: true },
       },
     });
 
@@ -122,7 +122,7 @@ describe("AdvancedPanel", () => {
         ),
     ).toBe(true);
 
-    await wrapper.setProps({ panel: { ...panel, solverSettingsVisible: false } });
+    await wrapper.setProps({ panel: { ...panel, isSolverSettingsVisible: false } });
     expect(wrapper.findAll("h3").map((heading) => heading.text())).toEqual([
       graphwarKillerLocale.ui.settings.bounds.heading,
       graphwarKillerLocale.ui.settings.simulator,

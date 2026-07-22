@@ -16,9 +16,9 @@ export interface GraphwarAdvancedSettingsBounds {
 /** 高级设置面板使用的模拟器选项。 */
 export interface GraphwarAdvancedSettingsSimulator {
   /** 模拟器解析时是否忽略未知字符。 */
-  skipUnknownCharacters: boolean;
+  shouldSkipUnknownCharacters: boolean;
   /** 模拟器解析时是否把导数表达式当作 y 处理。 */
-  parseDerivativeAsY: boolean;
+  shouldParseDerivativeAsY: boolean;
 }
 
 /** 高级设置面板使用的截图识别选项。 */
@@ -58,7 +58,7 @@ export interface GraphwarAdvancedSettingsPathfinding {
   /** 一键清图删除检测半径输入框文本。 */
   oneClickClearDeleteCheckRadiusText: string;
   /** 删点关闭时半径没有语义，因此不展示也不参与命令校验。 */
-  oneClickClearDeleteCheckRadiusVisible: boolean;
+  isOneClickClearDeleteCheckRadiusVisible: boolean;
   /** 一键清图删除检测半径最小值，单位为 Graphwar 原始平面像素。 */
   oneClickClearDeleteCheckRadiusMinimumPlanePixels: number;
 }
@@ -74,9 +74,9 @@ export interface GraphwarAdvancedSettingsActionBar {
 /** 高级设置面板跨工作流共享的完整展示模型。 */
 export interface GraphwarAdvancedSettingsPanelModel {
   /** 托管期间锁定所有会改变识别、公式或寻路输入的高级设置。 */
-  interactionDisabled: boolean;
+  canInteract: boolean;
   /** 生成公式工作流专用的识别、寻路和操作栏设置是否可见。 */
-  solverSettingsVisible: boolean;
+  isSolverSettingsVisible: boolean;
   /** 坐标边界设置展示模型。 */
   bounds: GraphwarAdvancedSettingsBounds;
   /** 模拟器设置展示模型。 */

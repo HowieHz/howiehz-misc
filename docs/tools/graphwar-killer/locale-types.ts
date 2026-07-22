@@ -252,7 +252,7 @@ export interface GraphwarKillerLocale {
       trajectory: string;
       stopSuffix: string;
     };
-    success: (elapsed?: string, resultCacheHit?: boolean) => string;
+    success: (elapsed?: string, hasResultCacheHit?: boolean) => string;
     oneClickClear: {
       inProgress: string;
       needDetection: string;
@@ -261,7 +261,7 @@ export interface GraphwarKillerLocale {
       noUsableTarget: (elapsed: string) => string;
       pathfindingWorkerFailed: (elapsed: string) => string;
       retained: string;
-      success: (killCount: number, elapsed: string, resultCacheHit?: boolean) => string;
+      success: (killCount: number, elapsed: string, hasResultCacheHit?: boolean) => string;
       unsupported: string;
     };
     managed: {
@@ -445,7 +445,7 @@ export interface GraphwarKillerLocale {
           algorithm: string;
           properties: readonly string[];
         }[],
-        friendlyFireEnabled: boolean,
+        isFriendlyFireEnabled: boolean,
         timing: {
           pollIntervalSeconds: string;
           shotReserveSeconds: string;
@@ -488,6 +488,7 @@ export interface GraphwarKillerLocale {
       fireSuccess: string;
       fireTitle: string;
       firing: string;
+      turnTimeRemaining: (time: string) => string;
       fractionConversionIncomplete: string;
       fractionOutput: string;
       fractionOutputTitle: string;

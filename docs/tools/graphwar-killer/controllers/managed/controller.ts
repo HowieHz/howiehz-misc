@@ -16,6 +16,7 @@ import {
   type GraphwarAgentState,
 } from "../agent/client";
 import { resolveExistingGraphwarAgentShotCommand, resolveGraphwarAgentShotCommand } from "../agent/shot-command";
+import { getAdjustedGraphwarAgentRemainingTurnMs } from "../agent/turn-countdown";
 
 export const GRAPHWAR_MANAGED_POLL_INTERVAL_MS = 1000;
 export const GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS = 5000;
@@ -48,6 +49,8 @@ export interface GraphwarManagedControllerHooks {
     shooter: GraphwarManagedShooter | undefined,
     worldObstacleMask: Uint8Array | undefined,
   ) => void;
+  /** Reports every accepted live state immediately, before optional room or obstacle requests. */
+  onStateRead?: (state: GraphwarAgentState) => void;
   /** Reports a command that reached the Agent's deterministic failed state. */
   onShotFailed?: (
     state: GraphwarAgentAvailableState,
@@ -193,10 +196,11 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     }, requestTimeoutMs);
     activePollTimeout = pollTimeout;
     try {
-      // Count the complete state request against the turn budget; the response snapshot may
-      // already be several seconds old when a congested localhost request reaches the page.
-      const stateObservedAt = Date.now();
       const state = await options.client.readState(abortController.signal);
+      if (!isCurrentGeneration(pollGeneration)) {
+        return;
+      }
+      hooks.onStateRead?.(state);
       if (!isCurrentGeneration(pollGeneration)) {
         return;
       }
@@ -211,13 +215,13 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
         rotateTrackedTurn(state);
         // Once this turn owns a command, neither a mask nor another search can improve its outcome.
         if (state.shotCommand || hasRequestedCurrentTurn) {
-          handleAvailableState(state, undefined, undefined, pollGeneration, stateObservedAt);
+          handleAvailableState(state, undefined, undefined, pollGeneration);
           return;
         }
         const shooter = state.turnToken ? selectGraphwarAgentCurrentShooter(state) : undefined;
         // Remote and resolving turns only need state; defer the large mask until a local shot can be searched.
         if (!shooter) {
-          handleAvailableState(state, undefined, undefined, pollGeneration, stateObservedAt);
+          handleAvailableState(state, undefined, undefined, pollGeneration);
           return;
         }
         let worldObstacleMask = latestWorldObstacleMask;
@@ -229,7 +233,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
         }
         latestWorldObstacleMask = worldObstacleMask;
         latestWorldObstacleMaskRevision = state.battleRevision;
-        handleAvailableState(state, shooter, worldObstacleMask, pollGeneration, stateObservedAt);
+        handleAvailableState(state, shooter, worldObstacleMask, pollGeneration);
         return;
       }
 
@@ -295,7 +299,6 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     shooter: GraphwarManagedShooter | undefined,
     worldObstacleMask: Uint8Array | undefined,
     pollGeneration: number,
-    stateObservedAt: number,
   ) {
     latestState = state;
     stateGenerations.set(state, pollGeneration);
@@ -369,14 +372,12 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     }
 
     clearDeadlineTimer();
-    if (state.remainingTurnMs > deadlineMs) {
-      deadlineTimer = setTimeout(
-        () => {
-          deadlineTimer = undefined;
-          handleDeadline(state, pollGeneration);
-        },
-        Math.max(0, state.remainingTurnMs - deadlineMs - Math.max(0, Date.now() - stateObservedAt)),
-      );
+    const remainingTurnMs = getAdjustedGraphwarAgentRemainingTurnMs(state);
+    if (remainingTurnMs > deadlineMs) {
+      deadlineTimer = setTimeout(() => {
+        deadlineTimer = undefined;
+        handleDeadline(state, pollGeneration);
+      }, remainingTurnMs - deadlineMs);
       return;
     }
     handleDeadline(state, pollGeneration);

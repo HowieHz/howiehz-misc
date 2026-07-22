@@ -69,7 +69,7 @@ final class GraphwarStateReader {
     String readStateJson() throws GraphwarStateException {
         StateSnapshot snapshot = readStateSnapshot(false);
         if (!snapshot.isAvailable) {
-            return unavailableStateJson(snapshot.reason);
+            return unavailableStateJson(snapshot.reason, snapshot.observedAtEpochMs);
         }
 
         StringBuilder json = new StringBuilder(10_240);
@@ -77,6 +77,7 @@ final class GraphwarStateReader {
         appendPlane(json);
         appendApiMetadata(json);
         appendAgent(json);
+        json.append(",\"observedAtEpochMs\":").append(snapshot.observedAtEpochMs);
         json.append(",\"isAvailable\":true");
         json.append(",\"gameInstanceId\":");
         appendJsonString(json, snapshot.gameInstanceId);
@@ -420,6 +421,8 @@ final class GraphwarStateReader {
                         currentTurnPlayerId,
                         currentTurnSoldierIndex);
 
+        long remainingTurnMs = Math.max(0L, readLong(gameData, "getRemainingTime", 0L));
+        long observedAtEpochMs = System.currentTimeMillis();
         return new StateSnapshot(
                 true,
                 null,
@@ -427,7 +430,8 @@ final class GraphwarStateReader {
                 identity.turnToken,
                 identity.observationSequence,
                 battleRevision,
-                Math.max(0L, readLong(gameData, "getRemainingTime", 0L)),
+                observedAtEpochMs,
+                remainingTurnMs,
                 isDrawingFunction,
                 isExploding,
                 isExploding ? "exploding" : isDrawingFunction ? "drawing" : "aiming",
@@ -689,12 +693,13 @@ final class GraphwarStateReader {
     }
 
     /** Preserves capability discovery when no active battlefield can be copied. */
-    private static String unavailableStateJson(String reason) {
+    private static String unavailableStateJson(String reason, long observedAtEpochMs) {
         StringBuilder json = new StringBuilder(384);
         json.append('{');
         appendPlane(json);
         appendApiMetadata(json);
         appendAgent(json);
+        json.append(",\"observedAtEpochMs\":").append(observedAtEpochMs);
         json.append(",\"isAvailable\":false,\"reason\":");
         appendJsonString(json, reason);
         json.append('}');
@@ -1060,6 +1065,7 @@ final class GraphwarStateReader {
         final int gameState;
         final String phase;
         final List<PlayerSnapshot> players;
+        final long observedAtEpochMs;
         final long observationSequence;
         final long remainingTurnMs;
         final String reason;
@@ -1075,6 +1081,7 @@ final class GraphwarStateReader {
                 String turnToken,
                 long observationSequence,
                 String battleRevision,
+                long observedAtEpochMs,
                 long remainingTurnMs,
                 boolean isDrawingFunction,
                 boolean isExploding,
@@ -1097,6 +1104,7 @@ final class GraphwarStateReader {
             this.gameState = gameState;
             this.phase = phase;
             this.players = players == null ? null : Collections.unmodifiableList(players);
+            this.observedAtEpochMs = observedAtEpochMs;
             this.observationSequence = observationSequence;
             this.remainingTurnMs = remainingTurnMs;
             this.reason = reason;
@@ -1114,6 +1122,7 @@ final class GraphwarStateReader {
                     null,
                     -1L,
                     null,
+                    System.currentTimeMillis(),
                     0L,
                     false,
                     false,

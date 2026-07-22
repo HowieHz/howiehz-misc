@@ -16,6 +16,45 @@ describe("Graphwar managed controller v3", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
+  it("reports live state before waiting for the matching obstacle mask", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    let resolveMask!: (mask: Uint8Array) => void;
+    client.readWorldObstacleMask.mockReturnValue(
+      new Promise((resolve) => {
+        resolveMask = resolve;
+      }),
+    );
+    const onState = vi.fn();
+    const onStateRead = vi.fn();
+    const controller = createGraphwarManagedController({ client, hooks: { onState, onStateRead } });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onStateRead).toHaveBeenCalledWith(state);
+    expect(onState).not.toHaveBeenCalled();
+
+    resolveMask(new Uint8Array(770 * 450));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onState).toHaveBeenCalled();
+    controller.stop();
+  });
+
+  it("rechecks the managed generation after the live-state hook", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onStateRead: () => controller.stop() },
+    });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+  });
+
   it("submits one stable command and reports submitted exactly once", async () => {
     const state = createAvailableState();
     const client = createClient(state);
@@ -561,6 +600,7 @@ function createAvailableState(overrides: Partial<GraphwarAgentAvailableState> = 
     shotCommand: null,
     turnToken,
     ...overrides,
+    observedAtEpochMs: overrides.observedAtEpochMs ?? Date.now(),
   };
 }
 
@@ -570,6 +610,7 @@ function createUnavailableState(): GraphwarAgentState {
     apiVersion: 3,
     capabilities: createCapabilities(),
     isAvailable: false,
+    observedAtEpochMs: Date.now(),
     plane: { gameLength: 50, height: 450, width: 770 },
     reason: "game-not-active",
   };

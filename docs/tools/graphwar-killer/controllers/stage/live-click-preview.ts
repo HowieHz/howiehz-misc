@@ -41,7 +41,7 @@ interface GraphwarLiveClickPreviewOptions {
   interaction: {
     draggingPathPointIndex: ReadonlyRef<number | undefined>;
     getPathPointIndexAtPoint: (point: PixelPoint) => number | undefined;
-    smartPathfindingInProgress: ReadonlyRef<boolean>;
+    isSmartPathfindingInProgress: ReadonlyRef<boolean>;
     toolMode: ReadonlyRef<ToolMode>;
   };
   /** 路径数据和绘制线段规则应与主路径展示保持一致。 */
@@ -57,19 +57,19 @@ interface GraphwarLiveClickPreviewOptions {
   /** 公式和模式开关应由页面统一解析，预览只消费合法性结果。 */
   settings: {
     algorithmMode: ReadonlyRef<AlgorithmMode>;
-    effectiveSmartPathfindingEnabled: ReadonlyRef<boolean>;
+    isEffectiveSmartPathfindingEnabled: ReadonlyRef<boolean>;
     equationMode: ReadonlyRef<EquationMode>;
-    isEquationModeDisabled: (mode: EquationMode) => boolean;
-    precisionValid: ReadonlyRef<boolean>;
-    steepnessValid: ReadonlyRef<boolean>;
+    isEquationModeEnabled: (mode: EquationMode) => boolean;
+    isPrecisionValid: ReadonlyRef<boolean>;
+    isSteepnessValid: ReadonlyRef<boolean>;
     toolWorkflowMode: ReadonlyRef<ToolWorkflowMode>;
   };
   /** 模拟器表达式预览应复用主轨迹解析策略。 */
   simulator: {
     formulaText: ReadonlyRef<string>;
     launchAngleRadians: ReadonlyRef<number | undefined>;
-    parseDerivativeAsY: ReadonlyRef<boolean>;
-    skipUnknownCharacters: ReadonlyRef<boolean>;
+    shouldParseDerivativeAsY: ReadonlyRef<boolean>;
+    shouldSkipUnknownCharacters: ReadonlyRef<boolean>;
   };
   /** 士兵吸附目标规则应由页面的目标选择 Module 统一提供。 */
   target: {
@@ -84,7 +84,7 @@ interface GraphwarLiveClickPreviewOptions {
     ) => GraphwarSmartPathfindingSoldierTarget | undefined;
     getDetectionBoxCenter: (box: GraphwarDetectionBox) => PixelPoint;
     getDetectedSoldierAtPoint: (point: PixelPoint) => GraphwarDetectionBox | undefined;
-    snapSoldiersEnabled: ReadonlyRef<boolean>;
+    isSnapSoldiersEnabled: ReadonlyRef<boolean>;
   };
   /** 轨迹采样设置应与主结果共享，避免实时预览生成不同公式。 */
   trajectory: {
@@ -124,9 +124,9 @@ interface GraphwarLiveClickPreviewSnapshot {
 /** 根据当前鼠标落点调度并发布实时轨迹预览的控制器。 */
 export interface GraphwarLiveClickPreviewController {
   /** 实时点击预览是否启用。 */
-  enabled: Ref<boolean>;
+  isEnabled: Ref<boolean>;
   /** 最新一次实时预览是否仍在 Worker 中计算。 */
-  inProgress: ReadonlyRef<boolean>;
+  isInProgress: ReadonlyRef<boolean>;
   /** 当前预览轨迹 SVG polyline points。 */
   curvePoints: ReadonlyRef<string>;
   /** 当前预览点标签。 */
@@ -154,10 +154,10 @@ export function useGraphwarLiveClickPreview(
   options: GraphwarLiveClickPreviewOptions,
 ): GraphwarLiveClickPreviewController {
   // 实时预览会随指针移动持续计算；默认关闭，仅在用户明确开启后运行。
-  const enabled = ref(false);
+  const isEnabled = ref(false);
   const displayedPreview = ref<GraphwarLiveClickPreviewSnapshot>();
   const curvePoints = computed(() => displayedPreview.value?.curvePoints ?? "");
-  const inProgress = ref(false);
+  const isInProgress = ref(false);
   const renderedElapsedMs = ref<number>();
   const pointerPoint = ref<PixelPoint>();
   const pointerPathPointIndex = ref<number>();
@@ -180,9 +180,9 @@ export function useGraphwarLiveClickPreview(
   const point = computed(() => {
     const currentPoint = pointerPoint.value;
     if (
-      !enabled.value ||
+      !isEnabled.value ||
       options.interaction.toolMode.value !== "path" ||
-      options.interaction.smartPathfindingInProgress.value ||
+      options.interaction.isSmartPathfindingInProgress.value ||
       !currentPoint
     ) {
       return undefined;
@@ -313,7 +313,7 @@ export function useGraphwarLiveClickPreview(
       return undefined;
     }
 
-    const selectedSoldier = options.target.snapSoldiersEnabled.value
+    const selectedSoldier = options.target.isSnapSoldiersEnabled.value
       ? options.target.getDetectedSoldierAtPoint(point)
       : undefined;
     if (!selectedSoldier) {
@@ -327,7 +327,7 @@ export function useGraphwarLiveClickPreview(
     if (!startPoint) {
       return undefined;
     }
-    const targetPoint = options.settings.effectiveSmartPathfindingEnabled.value
+    const targetPoint = options.settings.isEffectiveSmartPathfindingEnabled.value
       ? options.target.createSmartPathfindingSoldierTarget(startPoint, selectedSoldier)?.targetPoint
       : options.target.createSearchStartSoldierAimPoint(startPoint, selectedSoldier);
     return targetPoint ? createManualClickPreviewPoint(targetPoint) : undefined;
@@ -381,7 +381,7 @@ export function useGraphwarLiveClickPreview(
       nextRenderSequence += 1;
       latestRequestedSequence = sequence;
       const session = renderSession;
-      inProgress.value = true;
+      isInProgress.value = true;
       void runner
         .render(request.input)
         .then((result) => {
@@ -411,7 +411,7 @@ export function useGraphwarLiveClickPreview(
             return;
           }
 
-          inProgress.value = false;
+          isInProgress.value = false;
           if (result.curvePoints) {
             // 每次成功都从最新耗时重新计时，旧 timer 不得提前清除新状态。
             renderedElapsedMs.value = result.elapsedMs;
@@ -439,7 +439,7 @@ export function useGraphwarLiveClickPreview(
           ) {
             return;
           }
-          inProgress.value = false;
+          isInProgress.value = false;
           if (!isGraphwarLiveClickPreviewCancelledError(error)) {
             displayedPreview.value = undefined;
             clearRenderedStatus();
@@ -453,7 +453,7 @@ export function useGraphwarLiveClickPreview(
   function invalidateRenderSession() {
     renderSession += 1;
     latestRequestedSequence = 0;
-    inProgress.value = false;
+    isInProgress.value = false;
     displayedPreview.value = undefined;
     clearRenderedStatus();
     runner.cancel();
@@ -462,7 +462,7 @@ export function useGraphwarLiveClickPreview(
   /** 固定低频公式和碰撞上下文；每次指针请求只追加变化的预览点。 */
   function createRenderContext(): GraphwarLiveClickPreviewRenderContext | undefined {
     const bounds = options.geometry.getBounds();
-    if (!bounds || options.settings.effectiveSmartPathfindingEnabled.value) {
+    if (!bounds || options.settings.isEffectiveSmartPathfindingEnabled.value) {
       return undefined;
     }
 
@@ -496,8 +496,8 @@ export function useGraphwarLiveClickPreview(
           ? {}
           : { launchAngleRadians: options.simulator.launchAngleRadians.value }),
         parser: {
-          parseDerivativeAsY: options.simulator.parseDerivativeAsY.value,
-          skipUnknownCharacters: options.simulator.skipUnknownCharacters.value,
+          shouldParseDerivativeAsY: options.simulator.shouldParseDerivativeAsY.value,
+          shouldSkipUnknownCharacters: options.simulator.shouldSkipUnknownCharacters.value,
         },
         type: "expression",
       };
@@ -505,10 +505,10 @@ export function useGraphwarLiveClickPreview(
 
     if (
       options.path.pathPixels.value.length === 0 ||
-      !options.settings.precisionValid.value ||
+      !options.settings.isPrecisionValid.value ||
       (formulaModeUsesSteepness(options.settings.algorithmMode.value, options.settings.equationMode.value) &&
-        !options.settings.steepnessValid.value) ||
-      options.settings.isEquationModeDisabled(options.settings.equationMode.value)
+        !options.settings.isSteepnessValid.value) ||
+      !options.settings.isEquationModeEnabled(options.settings.equationMode.value)
     ) {
       return undefined;
     }
@@ -534,8 +534,8 @@ export function useGraphwarLiveClickPreview(
     clearPointerPoint,
     curvePoints,
     dispose,
-    enabled,
-    inProgress,
+    isEnabled,
+    isInProgress,
     label,
     lineSegments,
     points,

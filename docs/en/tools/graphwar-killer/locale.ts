@@ -334,8 +334,8 @@ export const graphwarKillerLocale = {
       stopSuffix: ", right-click the screenshot to stop",
       trajectory: "Validate function trajectory",
     },
-    success: (elapsed, resultCacheHit) => {
-      const cacheText = resultCacheHit ? " (using result cache)" : "";
+    success: (elapsed, hasResultCacheHit) => {
+      const cacheText = hasResultCacheHit ? " (using result cache)" : "";
       return elapsed === undefined
         ? `Path Planning completed${cacheText}`
         : `Path Planning completed${cacheText} in ${elapsed}`;
@@ -349,8 +349,8 @@ export const graphwarKillerLocale = {
       pathfindingWorkerFailed: (elapsed) =>
         `One-Click Clear failed: the pathfinding Worker is unavailable or failed after ${elapsed}`,
       retained: "Kept the best result found so far",
-      success: (killCount, elapsed, resultCacheHit) => {
-        const cacheText = resultCacheHit ? " (using result cache)" : "";
+      success: (killCount, elapsed, hasResultCacheHit) => {
+        const cacheText = hasResultCacheHit ? " (using result cache)" : "";
         return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} ${killCount === 1 ? "soldier" : "soldiers"} in ${elapsed}`;
       },
       unsupported: "One-Click Clear supports double absolute-value y and y', or Step y, y', and y''",
@@ -850,7 +850,7 @@ export const graphwarKillerLocale = {
       managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
       managedMode: "Managed mode",
       managedModeDisableTitle: "Turn off Managed Mode and unlock settings",
-      managedModeConfirmation: (settings, repairs, friendlyFireEnabled, timing) => {
+      managedModeConfirmation: (settings, repairs, isFriendlyFireEnabled, timing) => {
         const algorithmStatus = [
           "Current algorithm settings:",
           ...settings.map(
@@ -868,7 +868,7 @@ export const graphwarKillerLocale = {
                 ),
               ]),
         ].join("\n");
-        return `Managed mode submits shots to Graphwar automatically\nAutomatically readies in rooms\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\nShot reserve time: ${formatSeconds(timing.shotReserveSeconds)}\nState polling interval: ${formatSeconds(timing.pollIntervalSeconds)}\n\n${algorithmStatus}\n\nEnable managed mode?`;
+        return `Managed mode submits shots to Graphwar automatically\nAutomatically readies in rooms\nFriendly fire is ${isFriendlyFireEnabled ? "enabled" : "disabled"}\nShot reserve time: ${formatSeconds(timing.shotReserveSeconds)}\nState polling interval: ${formatSeconds(timing.pollIntervalSeconds)}\n\n${algorithmStatus}\n\nEnable managed mode?`;
       },
       managedModeTitle: "Read state, plan, and fire automatically during local turns",
       routePlanningTolerance: "Route planning tolerance",
@@ -909,6 +909,7 @@ export const graphwarKillerLocale = {
       fireSuccess: "Fired",
       fireTitle: "Submit the current function through Graphwar Agent and fire",
       firing: "Firing",
+      turnTimeRemaining: (time) => `${time} left`,
       fractionConversionIncomplete: "Some decimals could not be converted equivalently.",
       fractionOutput: "Fraction output",
       fractionOutputTitle: "Convert finite decimals to fractions with equivalent Graphwar runtime values",

@@ -8,10 +8,10 @@ import MainPanel from "./MainPanel.vue";
 
 const panel = {
   activeToolHint: { kind: "info" as const, message: "" },
-  collisionCheck: { enabled: false, state: "normal" as const },
-  interactionDisabled: false,
-  liveClickPreviewEnabled: false,
-  magnifierEnabled: false,
+  collisionCheck: { isEnabled: false, state: "normal" as const },
+  canInteract: true,
+  isLiveClickPreviewEnabled: false,
+  isMagnifierEnabled: false,
   magnifierZoom: {
     inputMaximum: 100,
     minimum: 1,
@@ -20,8 +20,8 @@ const panel = {
     sliderValue: 2,
     text: "2",
   },
-  obstacleBrushAvailable: true,
-  obstacleBrushControlsVisible: false,
+  isObstacleBrushAvailable: true,
+  isObstacleBrushControlsVisible: false,
   obstacleBrushDiameter: {
     inputMaximum: 1000,
     minimum: 1,
@@ -30,9 +30,9 @@ const panel = {
     sliderValue: 20,
     text: "20",
   },
-  obstacleBrushEraseEnabled: false,
-  obstacleEditsDirty: false,
-  snapSoldiers: { enabled: false, state: "normal" as const },
+  isObstacleBrushEraseEnabled: false,
+  hasObstacleEdits: false,
+  snapSoldiers: { isEnabled: false, state: "normal" as const },
   toolMode: "path" as const,
 };
 

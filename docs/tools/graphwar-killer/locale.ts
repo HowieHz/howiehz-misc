@@ -295,8 +295,8 @@ export const graphwarKillerLocale = {
       stopSuffix: "，在截图中右键停止",
       trajectory: "验证函数轨迹",
     },
-    success: (elapsed, resultCacheHit) => {
-      const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
+    success: (elapsed, hasResultCacheHit) => {
+      const cacheText = hasResultCacheHit ? "（使用结果缓存）" : "";
       return elapsed === undefined ? `路径规划完成${cacheText}` : `路径规划完成${cacheText}，耗时 ${elapsed}`;
     },
     oneClickClear: {
@@ -307,8 +307,8 @@ export const graphwarKillerLocale = {
       noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) => `一键清图失败：寻路工作线程不可用或运行失败，耗时 ${elapsed}`,
       retained: "已保留当前最优结果",
-      success: (killCount, elapsed, resultCacheHit) => {
-        const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
+      success: (killCount, elapsed, hasResultCacheHit) => {
+        const cacheText = hasResultCacheHit ? "（使用结果缓存）" : "";
         return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
       },
       unsupported: "一键清图仅支持双绝对值的 y、y'，或阶跃 y、y'、y''",
@@ -755,7 +755,7 @@ export const graphwarKillerLocale = {
       managedFriendlyFireWarning: "托管已允许友伤，友军会作为一键清图候选",
       managedMode: "托管模式",
       managedModeDisableTitle: "关闭托管模式并解锁设置",
-      managedModeConfirmation: (settings, repairs, friendlyFireEnabled, timing) => {
+      managedModeConfirmation: (settings, repairs, isFriendlyFireEnabled, timing) => {
         const algorithmStatus = [
           "当前算法设定：",
           ...settings.map(
@@ -773,7 +773,7 @@ export const graphwarKillerLocale = {
                 ),
               ]),
         ].join("\n");
-        return `托管会自动向 Graphwar 发射\n在房间内会自动准备\n当前${friendlyFireEnabled ? "允许" : "禁止"}友伤\n发射预留时间：${timing.shotReserveSeconds} 秒\n状态轮询间隔：${timing.pollIntervalSeconds} 秒\n\n${algorithmStatus}\n\n确认开启托管？`;
+        return `托管会自动向 Graphwar 发射\n在房间内会自动准备\n当前${isFriendlyFireEnabled ? "允许" : "禁止"}友伤\n发射预留时间：${timing.shotReserveSeconds} 秒\n状态轮询间隔：${timing.pollIntervalSeconds} 秒\n\n${algorithmStatus}\n\n确认开启托管？`;
       },
       managedModeTitle: "在己方回合自动读取状态、规划并发射",
       routePlanningTolerance: "路线规划容差",
@@ -812,6 +812,7 @@ export const graphwarKillerLocale = {
       fireSuccess: "已开火",
       fireTitle: "通过 Graphwar Agent 提交当前函数并开火",
       firing: "开火中",
+      turnTimeRemaining: (time) => `剩余 ${time}`,
       fractionConversionIncomplete: "部分小数无法等价转换",
       fractionOutput: "结果转分数",
       fractionOutputTitle: "将生成函数中的有限小数转换为 Graphwar 运行值等价的分数",

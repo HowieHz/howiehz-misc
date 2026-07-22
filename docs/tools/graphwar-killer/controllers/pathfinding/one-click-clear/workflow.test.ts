@@ -69,7 +69,7 @@ describe("one-click clear workflow", () => {
       input: {
         boundsRect: { value: { height: 450, width: 770, x: 0, y: 0 } },
         getBounds: () => (boundsValid ? { maxX: 25, maxY: 15, minX: -25, minY: -15 } : undefined),
-        getDeleteOptimizationEnabled: () => false,
+        isDeleteOptimizationEnabled: () => false,
         getFormulaSettings: () => ({
           algorithm: "step",
           decimalPlaces: 4,
@@ -83,7 +83,7 @@ describe("one-click clear workflow", () => {
         getPathPoints: () => [start],
         getPathfindingWorkerCount: () => 1,
         getRouteMode: () => "visibility-graph",
-        requiresDagWorker: () => false,
+        shouldUseDagWorker: () => false,
         getSimulationMask: () => simulationMask,
         getTolerances: () => ({
           oneClickClearDeleteCheckRadiusPlanePixels: 0,
@@ -91,7 +91,7 @@ describe("one-click clear workflow", () => {
           routePlanningTolerancePlanePixels: 0,
           simulationBoundaryInsetPlanePixels: 0,
         }),
-        isUnsupportedMode: () => false,
+        isModeSupported: () => true,
       },
       messages: {
         getFailureMessage: () => "failure",
@@ -162,7 +162,7 @@ describe("one-click clear workflow", () => {
           bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
           boundsRect: { height: 450, width: 770, x: 0, y: 0 },
         }),
-        getFriendlyFireEnabled: () => false,
+        isFriendlyFireEnabled: () => false,
         getPrefixTarget: () => undefined,
         getSoldiers: () => candidateSoldiers,
         isFriendlySoldier: () => false,
@@ -180,7 +180,7 @@ describe("one-click clear workflow", () => {
           }
         },
         onSuccessBeforeEffects: () => order.push("submit"),
-        useResultCache: false,
+        shouldUseResultCache: false,
       }),
     ).resolves.toBe(true);
 
@@ -225,7 +225,7 @@ describe("one-click clear workflow", () => {
             clearFailureCount += 1;
           }
         },
-        useResultCache: false,
+        shouldUseResultCache: false,
       }),
     ).resolves.toBe(true);
     expect(order).toContain("apply-incumbent");
@@ -236,7 +236,7 @@ describe("one-click clear workflow", () => {
     order.length = 0;
     runnerFailureReason = "pathfinding-worker-failed";
     await expect(
-      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), useResultCache: false }),
+      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), shouldUseResultCache: false }),
     ).resolves.toBe(true);
     expect(outcomes.at(-2)).toBe("search-error");
     expect(outcomes.at(-1)).toBe("status:error");
@@ -252,7 +252,7 @@ describe("one-click clear workflow", () => {
             clearFailureCount += 1;
           }
         },
-        useResultCache: false,
+        shouldUseResultCache: false,
       }),
     ).resolves.toBe(true);
     expect(order).toContain("apply-incumbent");
@@ -265,7 +265,7 @@ describe("one-click clear workflow", () => {
     displayedDebugStages = ["last-complete"];
     const pendingRun = workflow.run({
       onOutcome: (outcome) => outcomes.push(outcome.kind),
-      useResultCache: false,
+      shouldUseResultCache: false,
     });
     await Promise.resolve();
     expect(workflow.finalizeActiveIncumbent()).toBe(true);
@@ -283,14 +283,14 @@ describe("one-click clear workflow", () => {
     publishIncumbent = false;
     runnerMode = "failure";
     await expect(
-      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), useResultCache: false }),
+      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), shouldUseResultCache: false }),
     ).resolves.toBe(false);
     expect(outcomes.at(-2)).toBe("search-failure");
     expect(outcomes.at(-1)).toBe("status:error");
 
     runnerMode = "error";
     await expect(
-      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), useResultCache: false }),
+      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), shouldUseResultCache: false }),
     ).resolves.toBe(false);
     expect(outcomes.at(-2)).toBe("search-error");
     expect(outcomes.at(-1)).toBe("status:error");

@@ -116,6 +116,18 @@ describe("Chinese Graphwar Killer locale", () => {
       "当前算法设定：\ny：双绝对值函数\ny'：阶跃函数（邪道模式）\ny''：阶跃函数\n\n以下游戏模式需要调整算法设定：\ny：当前算法不支持一键清图，将设为双绝对值函数\ny'：当前算法不支持一键清图，将设为阶跃函数（邪道模式）",
     );
   });
+
+  it("uses the configured shot reserve in managed deadline statuses", () => {
+    expect(graphwarKillerLocale.smartPathfinding.managed.deadlineFired("10")).toBe(
+      "剩余 10 秒中断，已发射当前最优方案",
+    );
+    expect(graphwarKillerLocale.smartPathfinding.managed.deadlineNoPlan("10")).toBe(
+      "剩余 10 秒中断，无法提交跳过回合公式",
+    );
+    expect(graphwarKillerLocale.smartPathfinding.managed.deadlinePlan("10", "1.2 秒")).toBe(
+      "托管计算在剩余 10 秒时中断，已采用当前最优方案，耗时 1.2 秒",
+    );
+  });
 });
 
 describe("English Graphwar Killer locale", () => {
@@ -169,5 +181,26 @@ describe("English Graphwar Killer locale", () => {
     ).toContain(
       "Current algorithm settings:\ny: Double Absolute Value\ny': Step (Glitch Mode)\ny'': Step\n\nThese game modes need different algorithm settings:\ny: the current algorithm does not support One-Click Clear; it will be set to Double Absolute Value",
     );
+  });
+
+  it("uses the configured shot reserve in managed deadline statuses", () => {
+    expect(englishGraphwarKillerLocale.smartPathfinding.managed.deadlineFired("10")).toBe(
+      "Stopped with 10 seconds remaining and fired the current best plan",
+    );
+    expect(englishGraphwarKillerLocale.smartPathfinding.managed.deadlineNoPlan("10")).toBe(
+      "Stopped with 10 seconds remaining but could not submit the skip-turn function",
+    );
+    expect(englishGraphwarKillerLocale.smartPathfinding.managed.deadlinePlan("10", "1.2 seconds")).toBe(
+      "Managed calculation stopped with 10 seconds remaining and kept the best plan after 1.2 seconds",
+    );
+    expect(englishGraphwarKillerLocale.smartPathfinding.managed.deadlineFired("1")).toBe(
+      "Stopped with 1 second remaining and fired the current best plan",
+    );
+    expect(
+      englishGraphwarKillerLocale.ui.pathfinding.managedModeConfirmation([], [], false, {
+        pollIntervalSeconds: "1",
+        shotReserveSeconds: "1",
+      }),
+    ).toContain("Shot reserve time: 1 second\nState polling interval: 1 second");
   });
 });

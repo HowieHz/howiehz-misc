@@ -3028,6 +3028,7 @@ function toggleGraphwarManagedMode() {
     setSmartPathfindingStatus(managedTiming.message, "warning");
     return;
   }
+  const shotReserveSeconds = String(managedTiming.shotReserveMs / 1000);
 
   const repairPlan = createGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value);
   const repairs = locale.equationModes.flatMap((mode) => {
@@ -3066,7 +3067,7 @@ function toggleGraphwarManagedMode() {
         friendlyFireEnabled.value,
         {
           pollIntervalSeconds: String(managedTiming.pollIntervalMs / 1000),
-          shotReserveSeconds: String(managedTiming.shotReserveMs / 1000),
+          shotReserveSeconds,
         },
       ),
     )
@@ -3121,7 +3122,10 @@ function toggleGraphwarManagedMode() {
         }
         if (searchStartedAt !== undefined && !graphwarManagedStateHasSearchError(state)) {
           showGraphwarManagedCalculationStatus(
-            locale.smartPathfinding.managed.deadlinePlan(formatElapsedDuration(nowMs() - searchStartedAt)),
+            locale.smartPathfinding.managed.deadlinePlan(
+              shotReserveSeconds,
+              formatElapsedDuration(nowMs() - searchStartedAt),
+            ),
             "warning",
           );
         }
@@ -3143,7 +3147,7 @@ function toggleGraphwarManagedMode() {
       },
       onDeadlineWithoutShot: () => {
         cancelGraphwarManagedSearch();
-        setGraphwarManagedStatus(locale.smartPathfinding.managed.deadlineNoPlan, "error");
+        setGraphwarManagedStatus(locale.smartPathfinding.managed.deadlineNoPlan(shotReserveSeconds), "error");
       },
       onIncompatibleError: () => {
         stopGraphwarManagedMode(false);
@@ -3220,7 +3224,7 @@ function toggleGraphwarManagedMode() {
         }
         setGraphwarManagedStatus(
           graphwarManagedDeadlineTurnToken === state.turnToken
-            ? locale.smartPathfinding.managed.deadlineFired
+            ? locale.smartPathfinding.managed.deadlineFired(shotReserveSeconds)
             : locale.smartPathfinding.managed.successFired,
           graphwarManagedDeadlineTurnToken === state.turnToken ? "warning" : "success",
         );

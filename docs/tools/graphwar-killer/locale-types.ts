@@ -270,9 +270,9 @@ export interface GraphwarKillerLocale {
       calculating: () => string;
       completedWaiting: string;
       connectionFailed: (message: string) => string;
-      deadlineFired: string;
-      deadlineNoPlan: string;
-      deadlinePlan: (elapsed: string) => string;
+      deadlineFired: (shotReserveSeconds: string) => string;
+      deadlineNoPlan: (shotReserveSeconds: string) => string;
+      deadlinePlan: (shotReserveSeconds: string, elapsed: string) => string;
       enabled: string;
       incompatible: string;
       invalidRequest: (message: string) => string;

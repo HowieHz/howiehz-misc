@@ -257,6 +257,7 @@ export type GraphwarAgentWorldSnapshot = Omit<
 >;
 
 export type GraphwarAgentClientErrorKind =
+  | "command"
   | "conflict"
   | "incompatible"
   | "invalid-request"
@@ -987,7 +988,7 @@ export function requireMatchingGraphwarAgentShotCommand(
 /** Converts a terminal command diagnostic to the page's structured error type. */
 export function createGraphwarAgentShotCommandError(command: GraphwarAgentShotCommand) {
   return new GraphwarAgentClientError(
-    "conflict",
+    "command",
     command.error?.message ?? `Graphwar Agent returned ${command.status} without command error details`,
     undefined,
     undefined,

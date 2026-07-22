@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPixelPoint } from "../../core/types";
 import {
   createGraphwarAgentClient,
+  createGraphwarAgentShotCommandError,
   createGraphwarAgentSnapshot,
   createGraphwarAgentShotRequest,
   GraphwarAgentClientError,
@@ -230,6 +231,10 @@ describe("Graphwar Agent API v3 client", () => {
         error: { canRetryWithNewRequestId: false, code: "x", message: "x" },
       }),
     ).toThrow("canRetryWithNewRequestId");
+    expect(createGraphwarAgentShotCommandError(createCommand("failed"))).toMatchObject({
+      code: "shot-rejected",
+      kind: "command",
+    });
   });
 
   it("uses PUT JSON for idempotent ready state", async () => {
@@ -287,6 +292,36 @@ describe("Graphwar Agent API v3 client", () => {
     await expect(
       createGraphwarAgentClient("http://127.0.0.1:17900", { fetch: fetchMock, token: "wrong" }).readState(),
     ).rejects.toMatchObject({ code: "authentication-required", kind: "invalid-request", status: 401 });
+  });
+
+  it.each([
+    [400, "bad-request", "invalid-request"],
+    [400, "invalid-ready-request", "invalid-request"],
+    [400, "invalid-shot-request", "invalid-request"],
+    [400, "invalid-request-id", "invalid-request"],
+    [401, "authentication-required", "invalid-request"],
+    [404, "route-not-found", "incompatible"],
+    [404, "shot-command-not-found", "conflict"],
+    [405, "method-not-allowed", "incompatible"],
+    [409, "request-id-conflict", "conflict"],
+    [409, "room-unavailable", "conflict"],
+    [409, "obstacle-mask-unavailable", "conflict"],
+    [411, "content-length-required", "invalid-request"],
+    [412, "battle-revision-changed", "conflict"],
+    [413, "request-body-too-large", "invalid-request"],
+    [415, "unsupported-media-type", "invalid-request"],
+    [428, "if-match-required", "conflict"],
+    [431, "request-headers-too-large", "invalid-request"],
+    [500, "internal-error", "transient"],
+    [503, "server-busy", "transient"],
+  ] as const)("classifies HTTP %i %s as %s", async (status, code, kind) => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ error: { code, message: "raw detail" } }, { status }));
+
+    await expect(
+      createGraphwarAgentClient("http://127.0.0.1:17900", { fetch: fetchMock }).readState(),
+    ).rejects.toMatchObject({ code, kind, status });
   });
 
   it("parses saved state and rejects mismatched obstacle sizes", () => {

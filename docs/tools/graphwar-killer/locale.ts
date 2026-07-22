@@ -148,20 +148,80 @@ export const graphwarKillerLocale = {
       failed: (message) => `读取状态失败：${message}`,
       failureReason: (kind, message, code) => {
         switch (code) {
+          case "angle-not-allowed":
+            return "当前方程模式不接受发射角度";
+          case "angle-out-of-range":
+            return "发射角度超出允许范围";
+          case "angle-required":
+            return "当前方程模式需要发射角度";
           case "authentication-required":
-            return "Agent 访问令牌无效";
+            return "Agent 访问令牌未设置或无效";
+          case "bad-request":
+            return "Agent 无法解析请求";
           case "battle-revision-changed":
             return "Graphwar 战场状态已变化，请重试";
+          case "battle-revision-stale":
+            return "发射前战场状态已变化";
+          case "content-length-required":
+            return "请求缺少 Content-Length";
+          case "function-empty":
+            return "发射函数不能为空";
+          case "function-nesting-too-deep":
+            return "发射函数嵌套层级超过 Agent 限制";
+          case "function-too-large":
+            return "发射函数超过 Agent 大小限制";
+          case "game-instance-stale":
+            return "当前对局已发生变化";
+          case "graphwar-call-failed":
+            return "Graphwar 执行发射时失败，结果未知";
+          case "graphwar-state-unavailable":
+            return "Graphwar 当前无法接受发射命令";
+          case "if-match-required":
+            return "障碍请求缺少战场版本";
+          case "internal-error":
+            return "Graphwar Agent 内部错误";
+          case "invalid-ready-request":
+            return "准备状态请求无效";
+          case "invalid-request-id":
+            return "发射请求 ID 格式无效";
+          case "invalid-shot-request":
+            return "发射请求无效";
+          case "malformed-function":
+            return "发射函数格式无效";
+          case "method-not-allowed":
+            return "Agent 地址错误或不支持所需的 v3 API 方法，请检查 Agent 地址或升级 Agent";
+          case "obstacle-mask-unavailable":
+            return "当前没有可用的障碍快照";
+          case "request-body-too-large":
+            return "请求数据超过 Agent 限制";
+          case "request-headers-too-large":
+            return "请求头超过 Agent 限制";
           case "request-id-conflict":
             return "发射请求 ID 与已有命令冲突";
+          case "room-unavailable":
+            return "当前房间无法更改准备状态";
+          case "route-not-found":
+            return "Agent 地址错误或缺少所需的 v3 API 路由，请检查 Agent 地址或升级 Agent";
           case "server-busy":
             return "Agent 的 Graphwar 请求槽正忙，请稍后重试";
+          case "shot-already-resolving":
+            return "当前回合的发射正在结算";
           case "shot-command-not-found":
             return "Agent 找不到该发射命令";
           case "shot-executor-busy":
             return "Agent 正在处理上一条发射命令";
+          case "turn-expired":
+            return "当前回合已经结束";
+          case "turn-token-stale":
+            return "当前回合令牌已失效";
+          case "turn-token-used":
+            return "当前回合已经提交过发射命令";
+          case "unsupported-media-type":
+            return "请求数据格式不受 Agent 支持";
         }
         switch (message) {
+          case "graphwar-window-not-found":
+            return "未找到 Graphwar 游戏窗口";
           case "game-data-not-initialized":
             return "Graphwar 游戏数据尚未初始化";
           case "game-not-active":
@@ -174,6 +234,8 @@ export const graphwarKillerLocale = {
             return "状态文件不是有效的 JSON";
         }
         switch (kind) {
+          case "command":
+            return "Graphwar Agent 返回了未知的发射错误";
           case "conflict":
             return "Graphwar 状态已变化，请重试";
           case "incompatible":
@@ -258,9 +320,10 @@ export const graphwarKillerLocale = {
       calculating: () => "托管计算中",
       completedWaiting: "托管计算完成，等待己方回合",
       connectionFailed: (message) => `Agent 请求失败，正在重试：${message}`,
-      deadlineFired: "剩余 3 秒中断，已发射当前最优方案",
-      deadlineNoPlan: "剩余 3 秒中断，无法提交跳过回合公式",
-      deadlinePlan: (elapsed) => `托管计算在剩余 3 秒时中断，已采用当前最优方案，耗时 ${elapsed}`,
+      deadlineFired: (shotReserveSeconds) => `剩余 ${shotReserveSeconds} 秒中断，已发射当前最优方案`,
+      deadlineNoPlan: (shotReserveSeconds) => `剩余 ${shotReserveSeconds} 秒中断，无法提交跳过回合公式`,
+      deadlinePlan: (shotReserveSeconds, elapsed) =>
+        `托管计算在剩余 ${shotReserveSeconds} 秒时中断，已采用当前最优方案，耗时 ${elapsed}`,
       enabled: "托管已启用，正在读取游戏状态",
       incompatible: "Agent 接口不兼容，托管已关闭，请升级 Agent",
       invalidRequest: (message) => `Agent 拒绝请求，托管已关闭：${message}`,

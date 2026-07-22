@@ -1,5 +1,10 @@
 import type { GraphwarKillerLocale } from "../../../tools/graphwar-killer/locale-types";
 
+/** Formats a validated decimal second count with the correct English unit. */
+function formatSeconds(seconds: string) {
+  return `${seconds} ${Number(seconds) === 1 ? "second" : "seconds"}`;
+}
+
 export const graphwarKillerLocale = {
   equationModes: [
     {
@@ -174,20 +179,80 @@ export const graphwarKillerLocale = {
       failed: (message) => `Failed to read state: ${message}`,
       failureReason: (kind, message, code) => {
         switch (code) {
+          case "angle-not-allowed":
+            return "The current equation mode does not accept a shot angle";
+          case "angle-out-of-range":
+            return "The shot angle is outside the allowed range";
+          case "angle-required":
+            return "The current equation mode requires a shot angle";
           case "authentication-required":
-            return "The Agent access token is invalid";
+            return "The Agent access token is missing or invalid";
+          case "bad-request":
+            return "The Agent could not parse the request";
           case "battle-revision-changed":
             return "The Graphwar battlefield changed; try again";
+          case "battle-revision-stale":
+            return "The battlefield changed before the shot was executed";
+          case "content-length-required":
+            return "The request is missing Content-Length";
+          case "function-empty":
+            return "The shot function cannot be empty";
+          case "function-nesting-too-deep":
+            return "The shot function exceeds the Agent nesting limit";
+          case "function-too-large":
+            return "The shot function exceeds the Agent size limit";
+          case "game-instance-stale":
+            return "The current match has changed";
+          case "graphwar-call-failed":
+            return "Graphwar failed while executing the shot; the result is unknown";
+          case "graphwar-state-unavailable":
+            return "Graphwar cannot accept a shot command right now";
+          case "if-match-required":
+            return "The obstacle request is missing the battlefield revision";
+          case "internal-error":
+            return "Graphwar Agent encountered an internal error";
+          case "invalid-ready-request":
+            return "The ready-state request is invalid";
+          case "invalid-request-id":
+            return "The shot request ID format is invalid";
+          case "invalid-shot-request":
+            return "The shot request is invalid";
+          case "malformed-function":
+            return "The shot function is malformed";
+          case "method-not-allowed":
+            return "The Agent address is incorrect or the required v3 API method is unsupported; check the address or upgrade the Agent";
+          case "obstacle-mask-unavailable":
+            return "No obstacle snapshot is currently available";
+          case "request-body-too-large":
+            return "The request data exceeds the Agent limit";
+          case "request-headers-too-large":
+            return "The request headers exceed the Agent limit";
           case "request-id-conflict":
             return "The shot request ID conflicts with an existing command";
+          case "room-unavailable":
+            return "The ready state cannot be changed in the current room";
+          case "route-not-found":
+            return "The Agent address is incorrect or a required v3 API route is missing; check the address or upgrade the Agent";
           case "server-busy":
             return "The Agent's Graphwar request slots are busy; try again shortly";
+          case "shot-already-resolving":
+            return "The shot for this turn is already resolving";
           case "shot-command-not-found":
             return "The Agent could not find this shot command";
           case "shot-executor-busy":
             return "The Agent is still processing the previous shot command";
+          case "turn-expired":
+            return "The current turn has ended";
+          case "turn-token-stale":
+            return "The current turn token is no longer current";
+          case "turn-token-used":
+            return "A shot command has already been submitted for this turn";
+          case "unsupported-media-type":
+            return "The Agent does not support the request data format";
         }
         switch (message) {
+          case "graphwar-window-not-found":
+            return "The Graphwar game window was not found";
           case "game-data-not-initialized":
             return "Graphwar game data has not initialized";
           case "game-not-active":
@@ -200,6 +265,8 @@ export const graphwarKillerLocale = {
             return "The state file is not valid JSON";
         }
         switch (kind) {
+          case "command":
+            return "Graphwar Agent returned an unknown shot error";
           case "conflict":
             return "Graphwar state changed; try again";
           case "incompatible":
@@ -295,10 +362,12 @@ export const graphwarKillerLocale = {
       calculating: () => "Managed mode is calculating",
       completedWaiting: "Managed calculation complete; waiting for a local turn",
       connectionFailed: (message) => `Agent request failed; retrying: ${message}`,
-      deadlineFired: "Stopped with 3 seconds remaining and fired the current best plan",
-      deadlineNoPlan: "Stopped with 3 seconds remaining but could not submit the skip-turn function",
-      deadlinePlan: (elapsed) =>
-        `Managed calculation stopped with 3 seconds remaining and kept the best plan after ${elapsed}`,
+      deadlineFired: (shotReserveSeconds) =>
+        `Stopped with ${formatSeconds(shotReserveSeconds)} remaining and fired the current best plan`,
+      deadlineNoPlan: (shotReserveSeconds) =>
+        `Stopped with ${formatSeconds(shotReserveSeconds)} remaining but could not submit the skip-turn function`,
+      deadlinePlan: (shotReserveSeconds, elapsed) =>
+        `Managed calculation stopped with ${formatSeconds(shotReserveSeconds)} remaining and kept the best plan after ${elapsed}`,
       enabled: "Managed mode enabled; reading game state",
       incompatible: "Managed mode stopped because the Agent API is incompatible; upgrade the Agent",
       invalidRequest: (message) => `Managed mode stopped because the Agent rejected the request: ${message}`,
@@ -799,7 +868,7 @@ export const graphwarKillerLocale = {
                 ),
               ]),
         ].join("\n");
-        return `Managed mode submits shots to Graphwar automatically\nAutomatically readies in rooms\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\nShot reserve time: ${timing.shotReserveSeconds} seconds\nState polling interval: ${timing.pollIntervalSeconds} seconds\n\n${algorithmStatus}\n\nEnable managed mode?`;
+        return `Managed mode submits shots to Graphwar automatically\nAutomatically readies in rooms\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\nShot reserve time: ${formatSeconds(timing.shotReserveSeconds)}\nState polling interval: ${formatSeconds(timing.pollIntervalSeconds)}\n\n${algorithmStatus}\n\nEnable managed mode?`;
       },
       managedModeTitle: "Read state, plan, and fire automatically during local turns",
       routePlanningTolerance: "Route planning tolerance",

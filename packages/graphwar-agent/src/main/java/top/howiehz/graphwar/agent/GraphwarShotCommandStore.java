@@ -26,6 +26,7 @@ final class GraphwarShotCommandStore {
     private final Object lock = new Object();
     private final GraphwarStateReader stateReader;
     private Command activeCommand;
+    private boolean hasReportedLedgerInvariantViolation;
     private String currentGameInstanceId;
     private String currentTurnToken;
     private long latestObservationSequence = Long.MIN_VALUE;
@@ -208,29 +209,46 @@ final class GraphwarShotCommandStore {
     private void ensureCapacity() throws GraphwarShotCommandException {
         while (commands.size() >= MAX_RECORDS) {
             Command candidate = null;
+            int pinnedRecordCount = 0;
+            int terminalRecordCount = 0;
             for (Command command : commands.values()) {
-                if (command != activeCommand && command.isTerminal() && !isPinned(command)) {
+                boolean isPinned =
+                        currentGameInstanceId != null
+                                && currentGameInstanceId.equals(command.gameInstanceId)
+                                && currentTurnToken != null
+                                && currentTurnToken.equals(command.turnToken)
+                                && !"failed".equals(command.status);
+                boolean isTerminal = command.isTerminal();
+                if (isPinned) {
+                    pinnedRecordCount += 1;
+                }
+                if (isTerminal) {
+                    terminalRecordCount += 1;
+                }
+                if (candidate == null && command != activeCommand && isTerminal && !isPinned) {
                     candidate = command;
-                    break;
                 }
             }
             if (candidate == null) {
+                // A healthy single-slot ledger cannot fill with only active or pinned records.
+                // Preserve the hard bound and expose this as an implementation fault.
+                if (!hasReportedLedgerInvariantViolation) {
+                    hasReportedLedgerInvariantViolation = true;
+                    System.err.println(
+                            "[graphwar-agent] Shot command ledger invariant violated: records="
+                                    + commands.size()
+                                    + ", terminal="
+                                    + terminalRecordCount
+                                    + ", pinned="
+                                    + pinnedRecordCount
+                                    + ", hasActiveCommand="
+                                    + (activeCommand != null));
+                }
                 throw new GraphwarShotCommandException(
-                        503,
-                        "command-capacity-exhausted",
-                        "The shot command record capacity is exhausted");
+                        500, "internal-error", "The shot command ledger invariant was violated");
             }
             commands.remove(candidate.requestId);
         }
-    }
-
-    /** Protects the current turn's non-failed recovery record from eviction. */
-    private boolean isPinned(Command command) {
-        return currentGameInstanceId != null
-                && currentGameInstanceId.equals(command.gameInstanceId)
-                && currentTurnToken != null
-                && currentTurnToken.equals(command.turnToken)
-                && !"failed".equals(command.status);
     }
 
     /** Maps known pre-claim validation failures to stable public error codes. */

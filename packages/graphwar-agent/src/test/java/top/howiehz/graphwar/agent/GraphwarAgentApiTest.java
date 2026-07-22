@@ -11,11 +11,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -35,6 +38,7 @@ public final class GraphwarAgentApiTest {
     /** Runs every assertion and exits nonzero when any API contract regresses. */
     public static void main(String[] arguments) throws Exception {
         testShotJsonParser();
+        testLedgerInvariantFailureIsInternalError();
         testOutOfOrderStateObservation();
         testEquivalentFractionFunction();
         testGraphPlaneAlphaClamp();
@@ -51,6 +55,59 @@ public final class GraphwarAgentApiTest {
         testAuthenticationAndRequestLimit();
 
         System.out.println("graphwar-agent API tests passed");
+    }
+
+    /** Verifies an impossible full ledger is reported as an internal invariant failure. */
+    private static void testLedgerInvariantFailureIsInternalError() throws Exception {
+        GraphwarStateReader stateReader = new GraphwarStateReader(() -> null);
+        GraphwarShotCommandStore commands = new GraphwarShotCommandStore(stateReader);
+        commands.observeState(1L, GAME_INSTANCE_ID, TURN_TOKEN);
+        try {
+            Field recordsField = GraphwarShotCommandStore.class.getDeclaredField("commands");
+            recordsField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> records = (Map<String, Object>) recordsField.get(commands);
+            Class<?> commandClass =
+                    Class.forName("top.howiehz.graphwar.agent.GraphwarShotCommandStore$Command");
+            Constructor<?> constructor =
+                    commandClass.getDeclaredConstructor(GraphwarShotRequest.class, byte[].class);
+            constructor.setAccessible(true);
+            for (int index = 0; index < GraphwarShotCommandStore.MAX_RECORDS; index += 1) {
+                String requestId = uuidFor(700 + index);
+                GraphwarShotRequest request =
+                        GraphwarShotRequest.parse(
+                                createV3ShotBody(
+                                        requestId,
+                                        GAME_INSTANCE_ID,
+                                        TURN_TOKEN,
+                                        REVISION,
+                                        "x",
+                                        null));
+                records.put(requestId, constructor.newInstance(request, new byte[] {(byte) index}));
+            }
+
+            try {
+                commands.submit(
+                        GraphwarShotRequest.parse(
+                                createV3ShotBody(
+                                        uuidFor(800),
+                                        GAME_INSTANCE_ID,
+                                        TURN_TOKEN,
+                                        REVISION,
+                                        "x",
+                                        null)));
+                throw new AssertionError("invalid full ledger accepted another command");
+            } catch (GraphwarShotCommandException expected) {
+                assertEquals(500, expected.status, "ledger invariant HTTP status");
+                assertEquals("internal-error", expected.code, "ledger invariant error code");
+            }
+            assertEquals(
+                    GraphwarShotCommandStore.MAX_RECORDS,
+                    records.size(),
+                    "ledger invariant retained bound");
+        } finally {
+            commands.stop();
+        }
     }
 
     /**

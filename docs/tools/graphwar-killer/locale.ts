@@ -152,8 +152,6 @@ export const graphwarKillerLocale = {
             return "Agent 访问令牌无效";
           case "battle-revision-changed":
             return "Graphwar 战场状态已变化，请重试";
-          case "command-capacity-exhausted":
-            return "Agent 发射记录已满，需要重启 Agent";
           case "request-id-conflict":
             return "发射请求 ID 与已有命令冲突";
           case "server-busy":

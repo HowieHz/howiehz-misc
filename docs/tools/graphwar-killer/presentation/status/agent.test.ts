@@ -38,18 +38,12 @@ describe("Graphwar Agent status", () => {
     );
   });
 
-  it("localizes stable v3 error codes without exposing the server's English message", () => {
-    const error = new GraphwarAgentClientError(
-      "transient",
-      "raw server detail",
-      503,
-      undefined,
-      "command-capacity-exhausted",
-    );
+  it("does not expose an internal Agent error message", () => {
+    const error = new GraphwarAgentClientError("transient", "raw server detail", 500, undefined, "internal-error");
 
-    expect(createGraphwarAgentFailureReason(chineseLocale, error)).toBe("Agent 发射记录已满，需要重启 Agent");
+    expect(createGraphwarAgentFailureReason(chineseLocale, error)).toBe("网络或 Graphwar Agent 暂时不可用");
     expect(createGraphwarAgentFailureReason(englishLocale, error)).toBe(
-      "The Agent command ledger is full; restart the Agent",
+      "The network or Graphwar Agent is temporarily unavailable",
     );
   });
 });

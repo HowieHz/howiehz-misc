@@ -178,8 +178,6 @@ export const graphwarKillerLocale = {
             return "The Agent access token is invalid";
           case "battle-revision-changed":
             return "The Graphwar battlefield changed; try again";
-          case "command-capacity-exhausted":
-            return "The Agent command ledger is full; restart the Agent";
           case "request-id-conflict":
             return "The shot request ID conflicts with an existing command";
           case "server-busy":

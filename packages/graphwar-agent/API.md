@@ -94,28 +94,27 @@ Clients MUST make decisions from `error.code`, not `error.message`. Messages are
 
 Common stable HTTP error codes are:
 
-| HTTP status | Code                         | Meaning                                                                                          |
-| ----------: | ---------------------------- | ------------------------------------------------------------------------------------------------ |
-|       `400` | `bad-request`                | Invalid request line, headers, `Content-Length`, target, UTF-8, or unsupported transfer encoding |
-|       `400` | `invalid-ready-request`      | Invalid ready JSON                                                                               |
-|       `400` | `invalid-shot-request`       | Invalid shot JSON or request field set                                                           |
-|       `400` | `invalid-request-id`         | Non-canonical shot resource ID in the path                                                       |
-|       `401` | `authentication-required`    | Missing or incorrect bearer token                                                                |
-|       `404` | `route-not-found`            | No route exists at the requested path                                                            |
-|       `404` | `shot-command-not-found`     | The requested command is unknown or was evicted                                                  |
-|       `405` | `method-not-allowed`         | The path exists but does not accept the method                                                   |
-|       `409` | `request-id-conflict`        | A retained ID is associated with different shot content                                          |
-|       `409` | `room-unavailable`           | Ready state cannot be changed in the current client state                                        |
-|       `409` | `obstacle-mask-unavailable`  | No active obstacle snapshot is available                                                         |
-|       `411` | `content-length-required`    | A JSON request endpoint omitted `Content-Length`                                                 |
-|       `412` | `battle-revision-changed`    | `If-Match` does not match the current obstacle revision                                          |
-|       `413` | `request-body-too-large`     | The body exceeds the configured byte limit                                                       |
-|       `415` | `unsupported-media-type`     | A JSON endpoint did not receive `application/json`                                               |
-|       `428` | `if-match-required`          | An obstacle request omitted `If-Match`                                                           |
-|       `431` | `request-headers-too-large`  | Request headers exceed 8192 bytes                                                                |
-|       `500` | `internal-error`             | The official client or Agent failed unexpectedly                                                 |
-|       `503` | `command-capacity-exhausted` | No shot-ledger record can be safely evicted                                                      |
-|       `503` | `server-busy`                | All Graphwar-dependent HTTP request slots are occupied                                           |
+| HTTP status | Code                        | Meaning                                                                                          |
+| ----------: | --------------------------- | ------------------------------------------------------------------------------------------------ |
+|       `400` | `bad-request`               | Invalid request line, headers, `Content-Length`, target, UTF-8, or unsupported transfer encoding |
+|       `400` | `invalid-ready-request`     | Invalid ready JSON                                                                               |
+|       `400` | `invalid-shot-request`      | Invalid shot JSON or request field set                                                           |
+|       `400` | `invalid-request-id`        | Non-canonical shot resource ID in the path                                                       |
+|       `401` | `authentication-required`   | Missing or incorrect bearer token                                                                |
+|       `404` | `route-not-found`           | No route exists at the requested path                                                            |
+|       `404` | `shot-command-not-found`    | The requested command is unknown or was evicted                                                  |
+|       `405` | `method-not-allowed`        | The path exists but does not accept the method                                                   |
+|       `409` | `request-id-conflict`       | A retained ID is associated with different shot content                                          |
+|       `409` | `room-unavailable`          | Ready state cannot be changed in the current client state                                        |
+|       `409` | `obstacle-mask-unavailable` | No active obstacle snapshot is available                                                         |
+|       `411` | `content-length-required`   | A JSON request endpoint omitted `Content-Length`                                                 |
+|       `412` | `battle-revision-changed`   | `If-Match` does not match the current obstacle revision                                          |
+|       `413` | `request-body-too-large`    | The body exceeds the configured byte limit                                                       |
+|       `415` | `unsupported-media-type`    | A JSON endpoint did not receive `application/json`                                               |
+|       `428` | `if-match-required`         | An obstacle request omitted `If-Match`                                                           |
+|       `431` | `request-headers-too-large` | Request headers exceed 8192 bytes                                                                |
+|       `500` | `internal-error`            | The official client or Agent failed unexpectedly                                                 |
+|       `503` | `server-busy`               | All Graphwar-dependent HTTP request slots are occupied                                           |
 
 A `405` response MUST include `Allow`. Successfully parsed API errors MUST use the JSON envelope, but a server overloaded before it can accept or parse a request MAY close the transport without an API response.
 
@@ -534,7 +533,7 @@ The ledger contains at most 50 records and has no time TTL.
 - An active command MUST NOT be evicted.
 - A non-failed record associated with the currently observed game instance and turn token MUST remain pinned until a later state observation changes that identity.
 - Capacity is reclaimed by evicting the oldest terminal, non-active, non-pinned record.
-- If no record is eligible, creation fails with `503 command-capacity-exhausted` and no command resource is established.
+- The single-slot state machine normally guarantees an eligible record whenever the ledger reaches its bound. If an internal invariant violation leaves no eligible record, creation fails with `500 internal-error`, no command resource is established, and the hard bound remains intact.
 - When `/state` observes a new game instance, terminal records from older instances are removed, except the unique active record.
 - An active old-game record remains queryable and keeps the single execution slot occupied until it completes.
 - No tombstone set is retained, because unbounded historical IDs would defeat the memory bound.
@@ -610,7 +609,7 @@ A compatible replica MUST test at least the following:
 - A five-second POST wait does not cancel or replace a stuck official call.
 - Only one original shot worker can exist, and a stuck worker prevents further original calls.
 - Command queries and health remain responsive when a claimed call holds the `GameData` monitor.
-- Ledger capacity never exceeds 50, pinning and oldest-eligible eviction work, and exhausted capacity returns `503` without creating a record.
+- Ledger capacity never exceeds 50, pinning and oldest-eligible eviction work, and an impossible full ledger returns `500 internal-error` without creating a record.
 - New-game cleanup retains the unique active old-game command while removing eligible terminal history.
 - Function text and unbounded transition history are not retained in terminal command records.
 - Transport and business failures use stable machine-readable error codes rather than parsing English messages.

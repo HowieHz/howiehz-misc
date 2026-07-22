@@ -204,7 +204,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
         "503":
-          $ref: "#/components/responses/ServiceUnavailable"
+          $ref: "#/components/responses/ServerBusy"
   /shots/{requestId}:
     parameters:
       - $ref: "#/components/parameters/RequestId"
@@ -421,12 +421,6 @@ components:
             $ref: "#/components/schemas/ErrorEnvelope"
     ServerBusy:
       description: All Graphwar-dependent HTTP request slots are occupied.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorEnvelope"
-    ServiceUnavailable:
-      description: The Graphwar request slots are occupied or the 50-record ledger has no safely evictable record.
       content:
         application/json:
           schema:
@@ -1111,7 +1105,6 @@ components:
                 - if-match-required
                 - request-headers-too-large
                 - internal-error
-                - command-capacity-exhausted
                 - server-busy
             message:
               type: string

@@ -87,7 +87,7 @@ describe("Graphwar managed controller v3", () => {
     const state = createAvailableState();
     const client = createClient(state);
     client.submitShot.mockRejectedValue(
-      new GraphwarAgentClientError("transient", "capacity exhausted", 503, undefined, "command-capacity-exhausted"),
+      new GraphwarAgentClientError("transient", "ledger invariant violated", 500, undefined, "internal-error"),
     );
     const onShotFailed = vi.fn();
     const controller = createGraphwarManagedController({ client, hooks: { onShotFailed } });

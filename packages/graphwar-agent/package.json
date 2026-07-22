@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node scripts/build.js",
     "clean": "node scripts/clean.js",
+    "openapi:test": "redocly lint openapi.yaml",
     "sync:public": "node scripts/sync-public-jar.js",
     "test": "node scripts/test.js"
   },

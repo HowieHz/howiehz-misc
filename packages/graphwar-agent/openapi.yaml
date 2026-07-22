@@ -1,0 +1,1117 @@
+openapi: 3.2.0
+info:
+  title: Graphwar Agent HTTP API
+  version: "3"
+  license:
+    name: MIT
+    identifier: MIT
+  description: |
+    Machine-readable HTTP and JSON shapes for Graphwar Agent API v3.
+    `API.md` is the normative source for concurrency, idempotency, token-claim,
+    eviction, stuck-worker, and recovery semantics. If the documents conflict,
+    `API.md` takes precedence.
+servers:
+  - url: http://127.0.0.1:17900
+    description: Default loopback address; the actual startup port may differ.
+tags:
+  - name: Metadata
+    description: Protocol, deployment, and build information.
+  - name: Match
+    description: Active-match snapshots and dynamic command availability.
+  - name: Room
+    description: Pre-game-room snapshots and local ready-state control.
+  - name: Shots
+    description: Bounded idempotent shot-command creation and recovery.
+  - name: Obstacles
+    description: Revision-conditioned binary obstacle masks.
+security:
+  - {}
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags:
+        - Metadata
+      summary: Read API, build, authentication, and limit metadata
+      description: This endpoint is always public, even when bearer authentication is enabled.
+      security:
+        - {}
+      responses:
+        "200":
+          description: Agent metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "431":
+          $ref: "#/components/responses/RequestHeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /state:
+    get:
+      operationId: getState
+      tags:
+        - Match
+      summary: Read the current active-match snapshot
+      description: |
+        Returns HTTP 200 for both available and normally unavailable match state.
+        Static capabilities describe implemented features. `canAcceptShotCommands`
+        is the separate dynamic execution-slot signal when a match is available.
+      responses:
+        "200":
+          description: Available or unavailable match state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "431":
+          $ref: "#/components/responses/RequestHeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServerBusy"
+  /room:
+    get:
+      operationId: getRoom
+      tags:
+        - Room
+      summary: Read the current pre-game-room snapshot
+      description: Returns HTTP 200 for both available and normally unavailable room state.
+      responses:
+        "200":
+          description: Available or unavailable room state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "431":
+          $ref: "#/components/responses/RequestHeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServerBusy"
+  /room/ready:
+    put:
+      operationId: setRoomReady
+      tags:
+        - Room
+      summary: Set every local player's target ready state
+      description: |
+        Idempotently invokes the original client only for local players whose ready
+        state differs. Read `/room` afterward to observe server synchronization.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReadyRequest"
+      responses:
+        "200":
+          description: The requested target was applied to the local client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "400":
+          $ref: "#/components/responses/InvalidReadyRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "409":
+          $ref: "#/components/responses/RoomUnavailable"
+        "411":
+          $ref: "#/components/responses/ContentLengthRequired"
+        "413":
+          $ref: "#/components/responses/RequestBodyTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/RequestHeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServerBusy"
+  /shots:
+    post:
+      operationId: submitShotCommand
+      tags:
+        - Shots
+      summary: Create or safely replay a shot command
+      description: |
+        A first valid resource ID returns 201 even when later command validation
+        produces a `failed` resource. A retained identical replay returns 200 and
+        never repeats the original shot side effect. See `API.md` for the five-second
+        synchronous wait and the single-worker guarantee.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShotRequest"
+      responses:
+        "200":
+          description: An identical retained command was replayed.
+          headers:
+            Location:
+              $ref: "#/components/headers/ShotLocation"
+            Retry-After:
+              $ref: "#/components/headers/ShotRetryAfter"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShotCommand"
+        "201":
+          description: A command resource was created.
+          headers:
+            Location:
+              $ref: "#/components/headers/ShotLocation"
+            Retry-After:
+              $ref: "#/components/headers/ShotRetryAfter"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShotCommand"
+        "400":
+          $ref: "#/components/responses/InvalidShotRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "409":
+          $ref: "#/components/responses/RequestIdConflict"
+        "411":
+          $ref: "#/components/responses/ContentLengthRequired"
+        "413":
+          $ref: "#/components/responses/RequestBodyTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/RequestHeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /shots/{requestId}:
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      operationId: getShotCommand
+      tags:
+        - Shots
+      summary: Read one retained shot command
+      description: |
+        This query remains responsive when an original shot call is stuck while
+        holding Graphwar's GameData monitor, subject to configured authentication.
+      responses:
+        "200":
+          description: Retained command resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShotCommand"
+        "400":
+          $ref: "#/components/responses/InvalidRequestId"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "404":
+          $ref: "#/components/responses/ShotCommandNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "431":
+          $ref: "#/components/responses/RequestHeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /obstacle-masks/world.bin:
+    get:
+      operationId: getWorldObstacleMask
+      tags:
+        - Obstacles
+      summary: Read the world-oriented obstacle mask
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          $ref: "#/components/responses/ObstacleMask"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "409":
+          $ref: "#/components/responses/ObstacleMaskUnavailable"
+        "412":
+          $ref: "#/components/responses/BattleRevisionChanged"
+        "428":
+          $ref: "#/components/responses/IfMatchRequired"
+        "431":
+          $ref: "#/components/responses/RequestHeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServerBusy"
+  /obstacle-masks/view.bin:
+    get:
+      operationId: getViewObstacleMask
+      tags:
+        - Obstacles
+      summary: Read the current-view-oriented obstacle mask
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          $ref: "#/components/responses/ObstacleMask"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "409":
+          $ref: "#/components/responses/ObstacleMaskUnavailable"
+        "412":
+          $ref: "#/components/responses/BattleRevisionChanged"
+        "428":
+          $ref: "#/components/responses/IfMatchRequired"
+        "431":
+          $ref: "#/components/responses/RequestHeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServerBusy"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Optional deployment-level bearer token. `/health` is always public. When
+        the Agent starts without a token, protected operations accept anonymous requests.
+  parameters:
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      description: Canonical lowercase UUID generated by the caller.
+      schema:
+        $ref: "#/components/schemas/CanonicalUuid"
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Exactly one quoted strong battle-revision entity tag.
+      schema:
+        type: string
+        pattern: '^"sha256:[0-9a-f]{64}"$'
+        examples:
+          - '"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"'
+  headers:
+    ShotLocation:
+      description: Relative URL of the command resource.
+      required: true
+      schema:
+        type: string
+        pattern: "^/shots/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    ShotRetryAfter:
+      description: Present with value `1` only while the returned command is validating or claimed.
+      schema:
+        type: integer
+        const: 1
+    ObstacleEtag:
+      description: Quoted strong entity tag equal to the conditioned battle revision.
+      required: true
+      schema:
+        type: string
+        pattern: '^"sha256:[0-9a-f]{64}"$'
+  responses:
+    BadRequest:
+      description: The HTTP request is malformed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    AuthenticationRequired:
+      description: A valid bearer token is required by this deployment.
+      headers:
+        WWW-Authenticate:
+          description: Bearer authentication challenge.
+          required: true
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    MethodNotAllowed:
+      description: The path does not accept this HTTP method.
+      headers:
+        Allow:
+          description: Accepted method for the path.
+          required: true
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ContentLengthRequired:
+      description: Content-Length is required for POST /shots and PUT /room/ready requests.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RequestBodyTooLarge:
+      description: The request body exceeds the deployment's advertised limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    UnsupportedMediaType:
+      description: Content-Type must have the application/json media type.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RequestHeadersTooLarge:
+      description: Request headers exceed 8192 bytes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    InternalError:
+      description: The Agent or official client failed unexpectedly.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    InvalidReadyRequest:
+      description: The ready JSON object is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RoomUnavailable:
+      description: The client is not in a mutable pre-game room or has no local players.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    InvalidShotRequest:
+      description: The shot JSON object or its canonical IDs are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RequestIdConflict:
+      description: The retained request ID is associated with different shot content.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ServerBusy:
+      description: All Graphwar-dependent HTTP request slots are occupied.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ServiceUnavailable:
+      description: The Graphwar request slots are occupied or the 50-record ledger has no safely evictable record.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    InvalidRequestId:
+      description: The shot resource path does not contain a canonical lowercase UUID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ShotCommandNotFound:
+      description: The command is unknown or has been evicted from the bounded ledger.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    IfMatchRequired:
+      description: Obstacle reads require If-Match.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    BattleRevisionChanged:
+      description: The current obstacle revision differs from If-Match.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ObstacleMaskUnavailable:
+      description: No active obstacle snapshot is available.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ObstacleMask:
+      description: |
+        Exactly 346500 row-major bytes. Value 1 is blocked and value 0 is empty.
+        The ETag equals the quoted battle revision supplied in If-Match.
+      headers:
+        ETag:
+          $ref: "#/components/headers/ObstacleEtag"
+      content:
+        application/octet-stream:
+          schema:
+            type: string
+            format: binary
+  schemas:
+    CanonicalUuid:
+      type: string
+      format: uuid
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      examples:
+        - 550e8400-e29b-41d4-a716-446655440000
+    BattleRevision:
+      type: string
+      pattern: "^sha256:[0-9a-f]{64}$"
+      examples:
+        - sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    AgentBuild:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - sourceCommit
+        - sourceCommitShort
+        - sourceCommitTime
+      properties:
+        version:
+          type: string
+        sourceCommit:
+          type: string
+          description: Full source commit or `unknown`.
+        sourceCommitShort:
+          type: string
+          description: Short source commit or `unknown`.
+        sourceCommitTime:
+          type: string
+          description: Source commit timestamp or `unknown`.
+    Limits:
+      type: object
+      additionalProperties: false
+      required:
+        - maxRequestBodyBytes
+        - maxFunctionBytes
+        - maxFunctionNestingDepth
+      properties:
+        maxRequestBodyBytes:
+          type: integer
+          minimum: 1024
+          maximum: 16777216
+          default: 65536
+        maxFunctionBytes:
+          type: integer
+          minimum: 1
+          maximum: 1048576
+          default: 16384
+          description: Never greater than maxRequestBodyBytes.
+        maxFunctionNestingDepth:
+          type: integer
+          minimum: 1
+          maximum: 4096
+          default: 256
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - apiVersion
+        - isAuthenticationRequired
+        - limits
+        - agent
+      properties:
+        apiVersion:
+          type: integer
+          const: 3
+        isAuthenticationRequired:
+          type: boolean
+        limits:
+          $ref: "#/components/schemas/Limits"
+        agent:
+          $ref: "#/components/schemas/AgentBuild"
+    Plane:
+      type: object
+      additionalProperties: false
+      required:
+        - width
+        - height
+        - gameLength
+      properties:
+        width:
+          type: integer
+          const: 770
+        height:
+          type: integer
+          const: 450
+        gameLength:
+          type: number
+          const: 50.0
+    Capabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - canSubmitShots
+        - canReadRoom
+        - canSetReady
+        - canReadWorldObstacleMask
+      properties:
+        canSubmitShots:
+          type: boolean
+          const: true
+        canReadRoom:
+          type: boolean
+          const: true
+        canSetReady:
+          type: boolean
+          const: true
+        canReadWorldObstacleMask:
+          type: boolean
+          const: true
+    StateMetadata:
+      type: object
+      required:
+        - plane
+        - apiVersion
+        - capabilities
+        - agent
+      properties:
+        plane:
+          $ref: "#/components/schemas/Plane"
+        apiVersion:
+          type: integer
+          const: 3
+        capabilities:
+          $ref: "#/components/schemas/Capabilities"
+        agent:
+          $ref: "#/components/schemas/AgentBuild"
+    UnavailableState:
+      allOf:
+        - $ref: "#/components/schemas/StateMetadata"
+        - type: object
+          required:
+            - isAvailable
+            - reason
+          properties:
+            isAvailable:
+              type: boolean
+              const: false
+            reason:
+              type: string
+              enum:
+                - graphwar-window-not-found
+                - game-data-not-initialized
+                - game-not-started
+      unevaluatedProperties: false
+    AvailableState:
+      allOf:
+        - $ref: "#/components/schemas/StateMetadata"
+        - type: object
+          required:
+            - isAvailable
+            - gameInstanceId
+            - turnToken
+            - battleRevision
+            - remainingTurnMs
+            - phase
+            - isTerrainReversed
+            - equationMode
+            - currentPlayerIndex
+            - currentPlayerId
+            - canAcceptShotCommands
+            - shotCommand
+            - obstacleMask
+            - players
+          properties:
+            isAvailable:
+              type: boolean
+              const: true
+            gameInstanceId:
+              $ref: "#/components/schemas/CanonicalUuid"
+            turnToken:
+              oneOf:
+                - $ref: "#/components/schemas/CanonicalUuid"
+                - type: "null"
+            battleRevision:
+              $ref: "#/components/schemas/BattleRevision"
+            remainingTurnMs:
+              type: integer
+              format: int64
+              minimum: 0
+            phase:
+              $ref: "#/components/schemas/MatchPhase"
+            isTerrainReversed:
+              type: boolean
+            equationMode:
+              $ref: "#/components/schemas/EquationMode"
+            currentPlayerIndex:
+              type:
+                - integer
+                - "null"
+              minimum: 0
+            currentPlayerId:
+              type:
+                - integer
+                - "null"
+            canAcceptShotCommands:
+              type: boolean
+            shotCommand:
+              oneOf:
+                - $ref: "#/components/schemas/ShotCommandSummary"
+                - type: "null"
+            obstacleMask:
+              $ref: "#/components/schemas/ObstacleMaskMetadata"
+            players:
+              type: array
+              items:
+                $ref: "#/components/schemas/MatchPlayer"
+      unevaluatedProperties: false
+    StateResponse:
+      oneOf:
+        - $ref: "#/components/schemas/UnavailableState"
+        - $ref: "#/components/schemas/AvailableState"
+    MatchPhase:
+      type: string
+      enum:
+        - aiming
+        - drawing
+        - exploding
+    EquationMode:
+      type: string
+      enum:
+        - y
+        - dy
+        - ddy
+    ShotCommandSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - status
+      properties:
+        requestId:
+          $ref: "#/components/schemas/CanonicalUuid"
+        status:
+          type: string
+          enum:
+            - validating
+            - claimed
+            - submitted
+            - unknown
+    ObstacleMaskMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - width
+        - height
+        - blockedValue
+        - emptyValue
+        - isViewMirrored
+        - revision
+        - viewUrl
+        - worldUrl
+      properties:
+        width:
+          type: integer
+          const: 770
+        height:
+          type: integer
+          const: 450
+        blockedValue:
+          type: integer
+          const: 1
+        emptyValue:
+          type: integer
+          const: 0
+        isViewMirrored:
+          type: boolean
+        revision:
+          $ref: "#/components/schemas/BattleRevision"
+        viewUrl:
+          type: string
+          const: /obstacle-masks/view.bin
+        worldUrl:
+          type: string
+          const: /obstacle-masks/world.bin
+    MatchPlayer:
+      type: object
+      additionalProperties: false
+      required:
+        - playerIndex
+        - playerId
+        - team
+        - name
+        - isLocal
+        - isComputerControlled
+        - isReady
+        - isConnected
+        - currentSoldierIndex
+        - soldiers
+      properties:
+        playerIndex:
+          type: integer
+          minimum: 0
+        playerId:
+          type: integer
+        team:
+          type: integer
+        name:
+          type: string
+        isLocal:
+          type: boolean
+        isComputerControlled:
+          type: boolean
+        isReady:
+          type: boolean
+        isConnected:
+          type: boolean
+        currentSoldierIndex:
+          type:
+            - integer
+            - "null"
+          minimum: 0
+        soldiers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Soldier"
+    Soldier:
+      type: object
+      additionalProperties: false
+      required:
+        - soldierIndex
+        - isAlive
+        - isRendered
+        - angleRadians
+        - world
+        - view
+      properties:
+        soldierIndex:
+          type: integer
+          minimum: 0
+        isAlive:
+          type: boolean
+        isRendered:
+          type: boolean
+        angleRadians:
+          type: number
+        world:
+          $ref: "#/components/schemas/CoordinatePoint"
+        view:
+          $ref: "#/components/schemas/CoordinatePoint"
+    CoordinatePoint:
+      type: object
+      additionalProperties: false
+      required:
+        - pixel
+        - game
+      properties:
+        pixel:
+          $ref: "#/components/schemas/IntegerPoint"
+        game:
+          $ref: "#/components/schemas/NumberPoint"
+    IntegerPoint:
+      type: object
+      additionalProperties: false
+      required:
+        - x
+        - y
+      properties:
+        x:
+          type: integer
+        y:
+          type: integer
+    NumberPoint:
+      type: object
+      additionalProperties: false
+      required:
+        - x
+        - y
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+    UnavailableRoom:
+      type: object
+      additionalProperties: false
+      required:
+        - isAvailable
+        - reason
+      properties:
+        isAvailable:
+          type: boolean
+          const: false
+        reason:
+          type: string
+          enum:
+            - graphwar-window-not-found
+            - game-data-not-initialized
+            - not-in-pre-game-room
+    AvailableRoom:
+      type: object
+      additionalProperties: false
+      required:
+        - isAvailable
+        - equationMode
+        - isLeader
+        - players
+      properties:
+        isAvailable:
+          type: boolean
+          const: true
+        equationMode:
+          $ref: "#/components/schemas/EquationMode"
+        isLeader:
+          type: boolean
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoomPlayer"
+    RoomResponse:
+      oneOf:
+        - $ref: "#/components/schemas/UnavailableRoom"
+        - $ref: "#/components/schemas/AvailableRoom"
+    RoomPlayer:
+      type: object
+      additionalProperties: false
+      required:
+        - playerIndex
+        - playerId
+        - name
+        - team
+        - isLocal
+        - isComputerControlled
+        - isReady
+        - numSoldiers
+        - isConnected
+      properties:
+        playerIndex:
+          type: integer
+          minimum: 0
+        playerId:
+          type: integer
+        name:
+          type: string
+        team:
+          type: integer
+        isLocal:
+          type: boolean
+        isComputerControlled:
+          type:
+            - boolean
+            - "null"
+        isReady:
+          type: boolean
+        numSoldiers:
+          type: integer
+          minimum: 0
+        isConnected:
+          type: boolean
+    ReadyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - isReady
+      properties:
+        isReady:
+          type: boolean
+    ReadyResponse:
+      $ref: "#/components/schemas/ReadyRequest"
+    ShotRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - gameInstanceId
+        - function
+        - turnToken
+        - battleRevision
+      properties:
+        requestId:
+          $ref: "#/components/schemas/CanonicalUuid"
+        gameInstanceId:
+          $ref: "#/components/schemas/CanonicalUuid"
+        function:
+          type: string
+          description: |
+            Limited by the UTF-8 byte limit advertised by `/health`. An empty or
+            semantically invalid function creates a failed command resource.
+        turnToken:
+          $ref: "#/components/schemas/CanonicalUuid"
+        battleRevision:
+          $ref: "#/components/schemas/BattleRevision"
+        angleRadians:
+          type: number
+          description: |
+            Required only for `ddy`; forbidden for `y` and `dy`. Out-of-range finite
+            values or numbers that overflow the Java double range create a failed command.
+    ShotCommandBase:
+      type: object
+      required:
+        - requestId
+        - gameInstanceId
+        - turnToken
+        - battleRevision
+        - status
+        - createdAtEpochMs
+        - updatedAtEpochMs
+      properties:
+        requestId:
+          $ref: "#/components/schemas/CanonicalUuid"
+        gameInstanceId:
+          $ref: "#/components/schemas/CanonicalUuid"
+        turnToken:
+          $ref: "#/components/schemas/CanonicalUuid"
+        battleRevision:
+          $ref: "#/components/schemas/BattleRevision"
+        status:
+          type: string
+        createdAtEpochMs:
+          type: integer
+          format: int64
+        updatedAtEpochMs:
+          type: integer
+          format: int64
+    SuccessfulOrActiveShotCommand:
+      allOf:
+        - $ref: "#/components/schemas/ShotCommandBase"
+        - type: object
+          properties:
+            status:
+              type: string
+              enum:
+                - validating
+                - claimed
+                - submitted
+      unevaluatedProperties: false
+    FailedShotCommand:
+      allOf:
+        - $ref: "#/components/schemas/ShotCommandBase"
+        - type: object
+          required:
+            - error
+          properties:
+            status:
+              type: string
+              const: failed
+            error:
+              $ref: "#/components/schemas/FailedCommandError"
+      unevaluatedProperties: false
+    UnknownShotCommand:
+      allOf:
+        - $ref: "#/components/schemas/ShotCommandBase"
+        - type: object
+          required:
+            - error
+          properties:
+            status:
+              type: string
+              const: unknown
+            error:
+              $ref: "#/components/schemas/UnknownCommandError"
+      unevaluatedProperties: false
+    ShotCommand:
+      oneOf:
+        - $ref: "#/components/schemas/SuccessfulOrActiveShotCommand"
+        - $ref: "#/components/schemas/FailedShotCommand"
+        - $ref: "#/components/schemas/UnknownShotCommand"
+    FailedCommandError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - canRetryWithNewRequestId
+      properties:
+        code:
+          type: string
+          enum:
+            - shot-executor-busy
+            - function-empty
+            - function-too-large
+            - function-nesting-too-deep
+            - malformed-function
+            - angle-required
+            - angle-not-allowed
+            - angle-out-of-range
+            - invalid-shot-request
+            - turn-token-stale
+            - turn-token-used
+            - battle-revision-stale
+            - game-instance-stale
+            - turn-expired
+            - shot-already-resolving
+            - graphwar-state-unavailable
+        message:
+          type: string
+        canRetryWithNewRequestId:
+          type: boolean
+    UnknownCommandError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum:
+            - graphwar-call-failed
+            - internal-error
+        message:
+          type: string
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - bad-request
+                - invalid-ready-request
+                - invalid-shot-request
+                - invalid-request-id
+                - authentication-required
+                - route-not-found
+                - shot-command-not-found
+                - method-not-allowed
+                - request-id-conflict
+                - room-unavailable
+                - obstacle-mask-unavailable
+                - content-length-required
+                - battle-revision-changed
+                - request-body-too-large
+                - unsupported-media-type
+                - if-match-required
+                - request-headers-too-large
+                - internal-error
+                - command-capacity-exhausted
+                - server-busy
+            message:
+              type: string

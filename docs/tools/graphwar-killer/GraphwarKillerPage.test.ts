@@ -110,8 +110,8 @@ describe("Graphwar Killer page settings", () => {
       if (String(input).endsWith("/state")) {
         return stateResponse;
       }
-      if (String(input).endsWith("/shot")) {
-        return Promise.resolve(jsonResponse({ ok: true }));
+      if (String(input).endsWith("/shots")) {
+        return Promise.resolve(jsonResponse(createSubmittedCommand(init)));
       }
       return Promise.reject(new Error(`Unexpected Agent request: ${String(input)} ${String(init?.method)}`));
     });
@@ -126,12 +126,14 @@ describe("Graphwar Killer page settings", () => {
           commitIncumbentResult: (expression: string, launchAngleRadians?: number) => void;
           fractionOutputEnabled: boolean;
           graphwarAgentEnabled: boolean;
+          graphwarAgentTokenText: string;
           solverEquationMode: "ddy" | "dy" | "y";
         };
       }
     ).setupState;
 
     page.graphwarAgentEnabled = true;
+    page.graphwarAgentTokenText = "session-token";
     page.solverEquationMode = "ddy";
     page.commitIncumbentResult("88.008750871454684", 0.25);
     page.fractionOutputEnabled = true;
@@ -151,12 +153,13 @@ describe("Graphwar Killer page settings", () => {
     resolveStateResponse(jsonResponse(createAgentState("ddy")));
     await flushPromises();
 
-    const shotCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/shot"));
+    const shotCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/shots"));
     expect(shotCall).toBeDefined();
     expect(JSON.parse(String(shotCall?.[1]?.body))).toMatchObject({
       angleRadians: 0.25,
       function: displayedFormula,
     });
+    expect(new Headers(shotCall?.[1]?.headers).get("Authorization")).toBe("Bearer session-token");
 
     wrapper.unmount();
     vi.unstubAllGlobals();
@@ -215,11 +218,15 @@ describe("Graphwar Killer page settings", () => {
     expect(page.submitGraphwarManagedShot(latestNormalState)).toBe(true);
     await flushPromises();
     expect(
-      JSON.parse(String(normalFetch.mock.calls.find(([input]) => String(input).endsWith("/shot"))?.[1]?.body)),
+      JSON.parse(String(normalFetch.mock.calls.find(([input]) => String(input).endsWith("/shots"))?.[1]?.body)),
     ).toMatchObject({ function: "3096532637734579/35184372088832" });
     normalController.stop();
 
-    const deadlineState = { ...createAgentState("y"), remainingTurnMs: 3000, turnToken: "turn-2" };
+    const deadlineState = {
+      ...createAgentState("y"),
+      remainingTurnMs: 3000,
+      turnToken: "00000000-0000-4000-8000-000000000012",
+    };
     const deadlineFetch = createManagedAgentFetch(deadlineState);
     const deadlineController = createGraphwarManagedController({
       client: createGraphwarAgentClient("http://127.0.0.1:17900", { fetch: deadlineFetch }),
@@ -232,7 +239,7 @@ describe("Graphwar Killer page settings", () => {
     deadlineController.start();
     await flushPromises();
     expect(
-      JSON.parse(String(deadlineFetch.mock.calls.find(([input]) => String(input).endsWith("/shot"))?.[1]?.body)),
+      JSON.parse(String(deadlineFetch.mock.calls.find(([input]) => String(input).endsWith("/shots"))?.[1]?.body)),
     ).toMatchObject({ function: "3096532637734579/35184372088832" });
     deadlineController.stop();
 
@@ -519,42 +526,60 @@ describe("Graphwar Killer page settings", () => {
 
 /** Creates one active Agent state for page-level manual and managed shot tests. */
 function createAgentState(equationMode: "ddy" | "dy" | "y"): GraphwarAgentAvailableState {
+  const battleRevision = `sha256:${"b".repeat(64)}`;
   return {
-    apiVersion: 2,
-    available: true,
-    battleRevision: "sha256:battle-1",
-    capabilities: { ready: true, room: true, shot: true, worldObstacleMask: true },
-    currentTurn: 0,
-    drawingFunction: false,
+    apiVersion: 3,
+    battleRevision,
+    canAcceptShotCommands: true,
+    capabilities: {
+      canReadRoom: true,
+      canReadWorldObstacleMask: true,
+      canSetReady: true,
+      canSubmitShots: true,
+    },
+    currentPlayerId: 7,
+    currentPlayerIndex: 0,
     equationMode,
-    exploding: false,
-    gameInstanceId: "game-1",
-    gameMode: equationMode === "y" ? 0 : equationMode === "dy" ? 1 : 2,
-    gameState: 2,
+    gameInstanceId: "00000000-0000-4000-8000-000000000010",
+    isAvailable: true,
+    isTerrainReversed: false,
     obstacleMask: {
+      blockedValue: 1,
+      emptyValue: 0,
       height: 450,
-      revision: "sha256:battle-1",
-      revisionHeader: "X-Graphwar-Battle-Revision",
+      isViewMirrored: false,
+      revision: battleRevision,
+      viewUrl: "/obstacle-masks/view.bin",
       width: 770,
-      worldUrl: "/obstacle-mask.bin?space=world",
+      worldUrl: "/obstacle-masks/world.bin",
     },
     phase: "aiming",
     plane: { gameLength: 50, height: 450, width: 770 },
     players: [
       {
-        computer: false,
-        currentTurnSoldier: 0,
-        disconnected: false,
-        id: 7,
-        index: 0,
-        local: true,
+        currentSoldierIndex: 0,
+        isComputerControlled: false,
+        isConnected: true,
+        isLocal: true,
+        isReady: true,
         name: "Local",
-        soldiers: [{ alive: true, angle: 0, exploding: false, index: 0, world: { pixel: createPixelPoint(100, 200) } }],
+        playerId: 7,
+        playerIndex: 0,
+        soldiers: [
+          {
+            angleRadians: 0,
+            isAlive: true,
+            isRendered: true,
+            soldierIndex: 0,
+            world: { pixel: createPixelPoint(100, 200) },
+          },
+        ],
         team: 1,
       },
     ],
     remainingTurnMs: 42_000,
-    turnToken: "turn-1",
+    shotCommand: null,
+    turnToken: "00000000-0000-4000-8000-000000000011",
   };
 }
 
@@ -565,21 +590,40 @@ function jsonResponse(value: unknown) {
 
 /** Creates a real Agent transport mock for managed state, mask, and shot requests. */
 function createManagedAgentFetch(state: GraphwarAgentAvailableState) {
-  return vi.fn<typeof fetch>((input) => {
+  return vi.fn<typeof fetch>((input, init) => {
     const url = String(input);
     if (url.endsWith("/state")) {
       return Promise.resolve(jsonResponse(state));
     }
-    if (url.includes("/obstacle-mask.bin")) {
+    if (url.includes("/obstacle-masks/world.bin")) {
       return Promise.resolve(
         new Response(new Uint8Array(state.obstacleMask.width * state.obstacleMask.height), {
-          headers: { [state.obstacleMask.revisionHeader]: state.obstacleMask.revision },
+          headers: { ETag: `"${state.obstacleMask.revision}"` },
         }),
       );
     }
-    if (url.endsWith("/shot")) {
-      return Promise.resolve(jsonResponse({ ok: true }));
+    if (url.endsWith("/shots")) {
+      return Promise.resolve(jsonResponse(createSubmittedCommand(init)));
     }
     return Promise.reject(new Error(`Unexpected managed Agent request: ${url}`));
   });
+}
+
+/** Builds the terminal v3 resource matching one mocked POST body. */
+function createSubmittedCommand(init: RequestInit | undefined) {
+  const request = JSON.parse(String(init?.body)) as {
+    battleRevision: string;
+    gameInstanceId: string;
+    requestId: string;
+    turnToken: string;
+  };
+  return {
+    battleRevision: request.battleRevision,
+    createdAtEpochMs: 1,
+    gameInstanceId: request.gameInstanceId,
+    requestId: request.requestId,
+    status: "submitted",
+    turnToken: request.turnToken,
+    updatedAtEpochMs: 2,
+  };
 }

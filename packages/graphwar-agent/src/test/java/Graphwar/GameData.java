@@ -23,6 +23,9 @@ public final class GameData {
     // The production reader intentionally reflects this exact official field.
     private long timeTurnStarted = 1L;
     private volatile CountDownLatch concurrentReadyBarrier;
+    private volatile CountDownLatch functionBlocker;
+    private volatile CountDownLatch functionEntered;
+    private volatile boolean shouldThrowFromFunction;
 
     /** Mirrors the official current-turn index getter. */
     public int getCurrentTurnIndex() {
@@ -98,6 +101,22 @@ public final class GameData {
         assertRequiredLock();
         synchronized (shotCalls) {
             shotCalls.add("function:" + function);
+        }
+        CountDownLatch entered = functionEntered;
+        if (entered != null) {
+            entered.countDown();
+        }
+        CountDownLatch blocker = functionBlocker;
+        if (blocker != null) {
+            try {
+                blocker.await();
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("blocked function was interrupted", error);
+            }
+        }
+        if (shouldThrowFromFunction) {
+            throw new IllegalStateException("simulated original-client failure");
         }
     }
 
@@ -216,6 +235,32 @@ public final class GameData {
     /** Enables a first-player barrier that exposes interleaved ready batches. */
     public void setConcurrentReadyBarrier(boolean enabled) {
         concurrentReadyBarrier = enabled ? new CountDownLatch(2) : null;
+    }
+
+    /** Makes the next and subsequent function calls wait until the test releases them. */
+    public void setFunctionBlocked(boolean blocked) {
+        if (blocked) {
+            functionEntered = new CountDownLatch(1);
+            functionBlocker = new CountDownLatch(1);
+            return;
+        }
+        CountDownLatch blocker = functionBlocker;
+        functionBlocker = null;
+        functionEntered = null;
+        if (blocker != null) {
+            blocker.countDown();
+        }
+    }
+
+    /** Waits until the dedicated shot worker has entered the original function call. */
+    public boolean awaitFunctionCall(long timeout, TimeUnit unit) throws InterruptedException {
+        CountDownLatch entered = functionEntered;
+        return entered != null && entered.await(timeout, unit);
+    }
+
+    /** Selects whether the original function call throws after the irreversible claim. */
+    public void setShouldThrowFromFunction(boolean shouldThrow) {
+        shouldThrowFromFunction = shouldThrow;
     }
 
     /** Fails when a reflected state getter runs outside the GameData monitor. */

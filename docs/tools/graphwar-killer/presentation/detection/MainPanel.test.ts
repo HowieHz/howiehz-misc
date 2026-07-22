@@ -19,6 +19,7 @@ describe("Detection MainPanel", () => {
         exportState: "normal" as const,
         inProgress: false,
         readState: "normal" as const,
+        tokenText: "",
       },
       autoDetectionEnabled: true,
       canDetectBounds: true,
@@ -106,6 +107,11 @@ describe("Detection MainPanel", () => {
     );
     await blockedAutoExportSwitch.trigger("click");
     expect(wrapper.emitted("toggleExportOnClearFailure")).toBeUndefined();
+    const tokenInput = wrapper.get<HTMLInputElement>('input[type="password"]');
+    expect(tokenInput.attributes("autocomplete")).toBe("off");
+    expect(tokenInput.attributes("maxlength")).toBe("4096");
+    await tokenInput.setValue("session-token");
+    expect(wrapper.emitted("updateAgentToken")?.at(-1)).toEqual(["session-token"]);
 
     await wrapper.setProps({
       panel: {
@@ -175,6 +181,7 @@ describe("Detection MainPanel", () => {
     });
     const agentToggle = wrapper.get<HTMLButtonElement>("#graphwar-killer-agent-usage");
     expect(agentToggle.attributes("disabled")).toBeDefined();
+    expect(wrapper.get<HTMLInputElement>('input[type="password"]').attributes("disabled")).toBeDefined();
     await agentToggle.trigger("click");
     expect(wrapper.emitted("toggleAgentUsage")).toBeUndefined();
     const managedAgentRow = wrapper.get(".graphwar-killer__agent-read-field");

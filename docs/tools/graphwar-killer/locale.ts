@@ -146,7 +146,23 @@ export const graphwarKillerLocale = {
     agent: {
       defaultStatus: "点击“读取状态”从 Graphwar Agent 载入当前游戏信息",
       failed: (message) => `读取状态失败：${message}`,
-      failureReason: (kind, message) => {
+      failureReason: (kind, message, code) => {
+        switch (code) {
+          case "authentication-required":
+            return "Agent 访问令牌无效";
+          case "battle-revision-changed":
+            return "Graphwar 战场状态已变化，请重试";
+          case "command-capacity-exhausted":
+            return "Agent 发射记录已满，需要重启 Agent";
+          case "request-id-conflict":
+            return "发射请求 ID 与已有命令冲突";
+          case "server-busy":
+            return "Agent 的 Graphwar 请求槽正忙，请稍后重试";
+          case "shot-command-not-found":
+            return "Agent 找不到该发射命令";
+          case "shot-executor-busy":
+            return "Agent 正在处理上一条发射命令";
+        }
         switch (message) {
           case "game-data-not-initialized":
             return "Graphwar 游戏数据尚未初始化";
@@ -180,6 +196,7 @@ export const graphwarKillerLocale = {
       exported: "已导出当前局面",
       exporting: "正在导出局面",
       fireFailed: (message) => `开火失败：${message}`,
+      fireUnknown: (message) => `发射结果未知，本次不会换用新请求重试：${message}`,
       fired: "已提交函数并开火",
       loaded: (soldiers) => `已读取当前状态：障碍和 ${soldiers} 个士兵`,
       obstacleFileLoaded: "已读取障碍文件，请读取状态文件",
@@ -250,6 +267,7 @@ export const graphwarKillerLocale = {
       incompatible: "Agent 接口不兼容，托管已关闭，请升级 Agent",
       readying: "房间内本地玩家尚未准备，正在自动准备",
       searchFailed: "托管计算失败，无法跳过本回合",
+      shotFailed: (message) => `发射命令失败，本回合不再自动重试：${message}`,
       skippingTurn: "没有可用方案，正在跳过本回合",
       skipTurnFired: "没有可用方案，已跳过本回合",
       shotUnknown: (message) => `发射结果未知，本回合不再重试：${message}`,
@@ -300,6 +318,10 @@ export const graphwarKillerLocale = {
         address: "Agent 地址",
         addressAriaLabel: "Graphwar Agent 地址",
         addressTitle: "Graphwar Agent 本机 HTTP 地址，默认 http://127.0.0.1:17900",
+        token: "访问令牌",
+        tokenAriaLabel: "Graphwar Agent 访问令牌",
+        tokenPlaceholder: "未启用鉴权时留空",
+        tokenTitle: "可选的 Graphwar Agent Bearer token；仅保留到当前页面关闭",
         exportOnClearFailure: "清图失败自动导出",
         exportOnClearFailureTitle:
           "一键清图漏杀、搜索失败、工作线程异常或托管截止中断时，自动导出搜索启动时的 Graphwar Agent 局面；同一回合和战场版本只导出一次",

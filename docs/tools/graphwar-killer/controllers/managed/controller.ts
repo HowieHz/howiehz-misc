@@ -1,7 +1,7 @@
 import {
+  createGraphwarAgentShotCommandError,
   createGraphwarAgentShotRequest,
   GraphwarAgentClientError,
-  isGraphwarAgentLocalHuman,
   isGraphwarAgentIncompatibleError,
   selectGraphwarAgentCurrentShooter,
   supportsGraphwarManagedMode,
@@ -10,9 +10,12 @@ import {
   type GraphwarAgentClient,
   type GraphwarAgentCurrentShooter,
   type GraphwarAgentRoom,
+  type GraphwarAgentShotCommand,
+  type GraphwarAgentShotCommandSummary,
   type GraphwarAgentShotPlan,
   type GraphwarAgentState,
 } from "../agent/client";
+import { resolveExistingGraphwarAgentShotCommand, resolveGraphwarAgentShotCommand } from "../agent/shot-command";
 
 export const GRAPHWAR_MANAGED_POLL_INTERVAL_MS = 1000;
 export const GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS = 5000;
@@ -21,32 +24,42 @@ export const GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION = "999999999999999x";
 
 export type GraphwarManagedShooter = GraphwarAgentCurrentShooter;
 
-/** 托管轮询在状态、截止时间和提交结果上的可选回调。 */
+/** 托管轮询在状态、截止时间和发射结果上的可选回调。 */
 export interface GraphwarManagedControllerHooks {
   /** Chooses the last fully validated plan when the authoritative deadline is reached. */
   decideDeadlineShot?: (state: GraphwarAgentAvailableState) => GraphwarAgentShotPlan | undefined;
   /** Reports the authoritative deadline before choosing an incumbent or skip-turn plan. */
   onDeadline?: (state: GraphwarAgentAvailableState) => void;
+  /** Reports that neither the retained plan nor the skip-turn fallback could be submitted. */
+  onDeadlineWithoutShot?: (state: GraphwarAgentAvailableState) => void;
   /** Reports a protocol version or response shape that requires an Agent upgrade. */
   onIncompatibleError?: (error: GraphwarAgentClientError) => void;
+  /** Reports the terminal result of a command recovered without its original local plan. */
+  onRecoveredShotCommand?: (state: GraphwarAgentAvailableState, command: GraphwarAgentShotCommand) => void;
+  /** Reports that one ready=true request is about to be sent. */
+  onReadyRequested?: (room: GraphwarAgentAvailableRoom) => void;
+  /** Reports a polling-friendly pre-game room state. */
+  onRoom?: (room: GraphwarAgentRoom) => void;
   /** Reports an active-game state and its current local-human shooter, if any. */
   onState?: (
     state: GraphwarAgentAvailableState,
     shooter: GraphwarManagedShooter | undefined,
     worldObstacleMask: Uint8Array | undefined,
   ) => void;
-  /** Reports a polling-friendly pre-game room state. */
-  onRoom?: (room: GraphwarAgentRoom) => void;
-  /** Reports that neither the retained plan nor the skip-turn fallback could be submitted. */
-  onDeadlineWithoutShot?: (state: GraphwarAgentAvailableState) => void;
-  /** Reports that one ready=true request is about to be sent. */
-  onReadyRequested?: (room: GraphwarAgentAvailableRoom) => void;
-  /** Reports a submitted shot before its HTTP result is known. */
-  onShotSubmitted?: (state: GraphwarAgentAvailableState, plan: GraphwarAgentShotPlan) => void;
-  /** Reports the acknowledgement for a once-only shot. */
-  onShotSucceeded?: (state: GraphwarAgentAvailableState, plan: GraphwarAgentShotPlan) => void;
-  /** Reports a shot failure without retrying it. */
+  /** Reports a command that reached the Agent's deterministic failed state. */
   onShotFailed?: (
+    state: GraphwarAgentAvailableState,
+    plan: GraphwarAgentShotPlan,
+    error: GraphwarAgentClientError,
+  ) => void;
+  /** Reports that one stable request ID has entered the recovery workflow. */
+  onShotRequestStarted?: (state: GraphwarAgentAvailableState, plan: GraphwarAgentShotPlan) => void;
+  /** Reports that a retained non-terminal command is being recovered after local state loss. */
+  onShotRecoveryStarted?: (state: GraphwarAgentAvailableState, summary: GraphwarAgentShotCommandSummary) => void;
+  /** Reports a command that the original client returned from normally. */
+  onShotSubmitted?: (state: GraphwarAgentAvailableState, plan: GraphwarAgentShotPlan) => void;
+  /** Reports an irreversible claim whose final original-client result is unknown. */
+  onShotUnknown?: (
     state: GraphwarAgentAvailableState,
     plan: GraphwarAgentShotPlan,
     error: GraphwarAgentClientError,
@@ -64,11 +77,11 @@ export interface GraphwarManagedControllerOptions {
   hooks?: GraphwarManagedControllerHooks;
   pollIntervalMs?: number;
   requestTimeoutMs?: number;
-  /** Maximum time to wait for a once-only shot acknowledgement without aborting or retrying it. */
+  /** Time before a pending POST switches to GET-based command recovery. */
   shotResultTimeoutMs?: number;
 }
 
-/** 管理单飞轮询、回合认领和一次性发射的托管控制器。 */
+/** 管理单飞轮询、O(1) 回合状态和幂等发射恢复的托管控制器。 */
 export interface GraphwarManagedController {
   /** Returns the latest active-game state accepted by the current generation. */
   getLatestState: () => GraphwarAgentAvailableState | undefined;
@@ -76,9 +89,9 @@ export interface GraphwarManagedController {
   isRunning: () => boolean;
   /** Starts one immediate poll and then one single-flight poll per interval. */
   start: () => void;
-  /** Stops polling and invalidates every pending state, room, and ready response. */
+  /** Stops polling and invalidates every pending state, room, ready, and recovery response. */
   stop: () => void;
-  /** Claims and submits one exact snapshot plan; false means it was stale or already handled. */
+  /** Claims and submits one exact snapshot plan; false means it is stale, busy, or already handled. */
   submitShot: (state: GraphwarAgentAvailableState, plan: GraphwarAgentShotPlan) => boolean;
 }
 
@@ -97,37 +110,40 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
   const pollIntervalMs = options.pollIntervalMs ?? GRAPHWAR_MANAGED_POLL_INTERVAL_MS;
   const requestTimeoutMs = options.requestTimeoutMs ?? GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS;
   const shotResultTimeoutMs = options.shotResultTimeoutMs ?? requestTimeoutMs;
-  const abandonedTurns = new Set<string>();
-  const claimedTurns = new Set<string>();
-  const deadlineHandledTurns = new Set<string>();
   const stateGenerations = new WeakMap<GraphwarAgentAvailableState, number>();
   let activePoll: AbortController | undefined;
   let activePollTimeout: ReturnType<typeof setTimeout> | undefined;
+  let activeShotRecovery: AbortController | undefined;
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
+  let hasAbandonedCurrentTurn = false;
+  let hasHandledCurrentDeadline = false;
+  let hasRequestedCurrentTurn = false;
+  let handledShotRequestId: string | undefined;
   let latestState: GraphwarAgentAvailableState | undefined;
   let latestWorldObstacleMask: Uint8Array | undefined;
   let latestWorldObstacleMaskRevision: string | undefined;
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
-  let running = false;
+  let isRunning = false;
   let trackedGameInstanceId: string | undefined;
+  let trackedTurnKey: string | undefined;
 
   /** Starts a fresh polling generation without overlapping an existing one. */
   function start() {
-    if (running) {
+    if (isRunning) {
       return;
     }
-    running = true;
+    isRunning = true;
     generation += 1;
     void poll(generation);
   }
 
-  /** Invalidates pending work before aborting its transport and timer. */
+  /** Invalidates pending work before aborting its transport and timers. */
   function stop() {
-    if (!running && !activePoll && !activePollTimeout && !pollTimer) {
+    if (!isRunning && !activePoll && !activePollTimeout && !pollTimer && !activeShotRecovery) {
       return;
     }
-    running = false;
+    isRunning = false;
     generation += 1;
     if (pollTimer) {
       clearTimeout(pollTimer);
@@ -139,15 +155,30 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       clearTimeout(activePollTimeout);
       activePollTimeout = undefined;
     }
+    activeShotRecovery?.abort();
+    activeShotRecovery = undefined;
     clearDeadlineTimer();
     latestState = undefined;
     latestWorldObstacleMask = undefined;
     latestWorldObstacleMaskRevision = undefined;
+    trackedGameInstanceId = undefined;
+    trackedTurnKey = undefined;
+    handledShotRequestId = undefined;
+    hasAbandonedCurrentTurn = false;
+    hasHandledCurrentDeadline = false;
+    hasRequestedCurrentTurn = false;
   }
 
   /** Reads state, optionally reads a room, and schedules only after the current poll settles. */
   async function poll(pollGeneration: number) {
     if (!isCurrentGeneration(pollGeneration)) {
+      return;
+    }
+    // A claimed original call may hold Graphwar's GameData monitor indefinitely. During
+    // command recovery, query only /shots/{id} so timed-out /state requests cannot fill
+    // the Agent's bounded HTTP worker pool.
+    if (activeShotRecovery) {
+      scheduleNextPoll(pollGeneration);
       return;
     }
     const abortController = new AbortController();
@@ -160,9 +191,10 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     }, requestTimeoutMs);
     activePollTimeout = pollTimeout;
     try {
-      const state = await options.client.readState(abortController.signal);
-      // Mask download time must count against the authoritative turn budget.
+      // Count the complete state request against the turn budget; the response snapshot may
+      // already be several seconds old when a congested localhost request reaches the page.
       const stateObservedAt = Date.now();
+      const state = await options.client.readState(abortController.signal);
       if (!isCurrentGeneration(pollGeneration)) {
         return;
       }
@@ -173,7 +205,13 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
         );
         return;
       }
-      if (state.available && state.phase !== "inactive") {
+      if (state.isAvailable) {
+        rotateTrackedTurn(state);
+        // Once this turn owns a command, neither a mask nor another search can improve its outcome.
+        if (state.shotCommand || hasRequestedCurrentTurn) {
+          handleAvailableState(state, undefined, undefined, pollGeneration, stateObservedAt);
+          return;
+        }
         const shooter = state.turnToken ? selectGraphwarAgentCurrentShooter(state) : undefined;
         // Remote and resolving turns only need state; defer the large mask until a local shot can be searched.
         if (!shooter) {
@@ -205,11 +243,11 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       if (!isCurrentGeneration(pollGeneration)) {
         return;
       }
-      if (!room.available) {
+      if (!room.isAvailable) {
         hooks.onWaiting?.(state, room);
         return;
       }
-      if (room.players.some((player) => player.local && !player.disconnected && !player.ready)) {
+      if (room.players.some((player) => player.isLocal && player.isConnected && !player.isReady)) {
         hooks.onReadyRequested?.(room);
         if (!isCurrentGeneration(pollGeneration)) {
           return;
@@ -225,7 +263,13 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
         stopForIncompatible(
           isGraphwarAgentIncompatibleError(clientError)
             ? clientError
-            : new GraphwarAgentClientError("incompatible", clientError.message, clientError.status, clientError),
+            : new GraphwarAgentClientError(
+                "incompatible",
+                clientError.message,
+                clientError.status,
+                clientError,
+                clientError.code,
+              ),
           pollGeneration,
         );
       } else {
@@ -240,16 +284,21 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
         activePollTimeout = undefined;
       }
       if (isCurrentGeneration(pollGeneration)) {
-        // 计时器把下一轮排入新任务；当前 poll 已经结算，不会累积递归调用栈。
-        pollTimer = setTimeout(() => {
-          pollTimer = undefined;
-          void poll(pollGeneration);
-        }, pollIntervalMs);
+        scheduleNextPoll(pollGeneration);
       }
     }
   }
 
-  /** Publishes one active state, rotates bounded turn bookkeeping, and handles its deadline once. */
+  /** Queues one iterative poll after the current poll or recovery gate has settled. */
+  function scheduleNextPoll(pollGeneration: number) {
+    // The timer queues a new task, so call stacks never grow with uptime.
+    pollTimer = setTimeout(() => {
+      pollTimer = undefined;
+      void poll(pollGeneration);
+    }, pollIntervalMs);
+  }
+
+  /** Publishes one active state, rotates O(1) turn bookkeeping, and handles its deadline once. */
   function handleAvailableState(
     state: GraphwarAgentAvailableState,
     shooter: GraphwarManagedShooter | undefined,
@@ -257,32 +306,78 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     pollGeneration: number,
     stateObservedAt: number,
   ) {
-    if (trackedGameInstanceId !== state.gameInstanceId) {
-      abandonedTurns.clear();
-      claimedTurns.clear();
-      deadlineHandledTurns.clear();
-      trackedGameInstanceId = state.gameInstanceId;
-    }
     latestState = state;
     stateGenerations.set(state, pollGeneration);
+    if (state.shotCommand) {
+      // The summary survives page/controller state loss. Query its full resource once so
+      // submitted, failed, and unknown remain distinguishable without inventing a new ID.
+      hasRequestedCurrentTurn = true;
+      clearDeadlineTimer();
+      if (state.turnToken && handledShotRequestId !== state.shotCommand.requestId && !activeShotRecovery) {
+        handledShotRequestId = state.shotCommand.requestId;
+        const recovery = new AbortController();
+        activeShotRecovery = recovery;
+        if (state.shotCommand.status === "validating" || state.shotCommand.status === "claimed") {
+          hooks.onShotRecoveryStarted?.(state, state.shotCommand);
+        }
+        void resolveExistingGraphwarAgentShotCommand(
+          options.client,
+          {
+            battleRevision: state.battleRevision,
+            gameInstanceId: state.gameInstanceId,
+            requestId: state.shotCommand.requestId,
+            turnToken: state.turnToken,
+          },
+          {
+            pollIntervalMs,
+            readTimeoutMs: requestTimeoutMs,
+            signal: recovery.signal,
+          },
+        ).then(
+          (command) => {
+            if (!isCurrentGeneration(pollGeneration) || recovery.signal.aborted || activeShotRecovery !== recovery) {
+              return;
+            }
+            activeShotRecovery = undefined;
+            hooks.onRecoveredShotCommand?.(state, command);
+          },
+          (error: unknown) => {
+            if (!isCurrentGeneration(pollGeneration) || recovery.signal.aborted) {
+              return;
+            }
+            activeShotRecovery = undefined;
+            const clientError = normalizeGraphwarManagedError(error);
+            stopForIncompatible(
+              isGraphwarAgentIncompatibleError(clientError) || clientError.kind === "invalid-request"
+                ? clientError
+                : new GraphwarAgentClientError(
+                    "incompatible",
+                    clientError.message,
+                    clientError.status,
+                    clientError,
+                    clientError.code,
+                  ),
+              pollGeneration,
+            );
+          },
+        );
+      }
+      return;
+    }
+    if (hasRequestedCurrentTurn) {
+      clearDeadlineTimer();
+      return;
+    }
     hooks.onState?.(state, shooter, worldObstacleMask);
     if (!isCurrentGeneration(pollGeneration)) {
       return;
     }
 
-    if (
-      state.phase !== "aiming" ||
-      state.drawingFunction ||
-      state.exploding ||
-      !state.turnToken ||
-      !isGraphwarAgentLocalHuman(state.players[state.currentTurn])
-    ) {
+    if (state.phase !== "aiming" || !state.turnToken || !shooter) {
       clearDeadlineTimer();
       return;
     }
-
-    const turnKey = createTurnKey(state);
-    if (abandonedTurns.has(turnKey) || deadlineHandledTurns.has(turnKey) || claimedTurns.has(turnKey)) {
+    if (hasAbandonedCurrentTurn || hasHandledCurrentDeadline || hasRequestedCurrentTurn) {
       clearDeadlineTimer();
       return;
     }
@@ -306,21 +401,20 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     if (!isCurrentGeneration(pollGeneration) || !isCurrentSnapshot(state)) {
       return;
     }
+    const shooter = selectGraphwarAgentCurrentShooter(state);
     if (
       state.phase !== "aiming" ||
-      state.drawingFunction ||
-      state.exploding ||
       !state.turnToken ||
-      !isGraphwarAgentLocalHuman(state.players[state.currentTurn])
+      !shooter ||
+      hasAbandonedCurrentTurn ||
+      hasHandledCurrentDeadline ||
+      hasRequestedCurrentTurn ||
+      !state.canAcceptShotCommands
     ) {
       return;
     }
 
-    const turnKey = createTurnKey(state);
-    if (abandonedTurns.has(turnKey) || deadlineHandledTurns.has(turnKey) || claimedTurns.has(turnKey)) {
-      return;
-    }
-    deadlineHandledTurns.add(turnKey);
+    hasHandledCurrentDeadline = true;
     hooks.onDeadline?.(state);
     if (!isCurrentGeneration(pollGeneration)) {
       return;
@@ -330,22 +424,21 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       return;
     }
     if (!submitShot(state, plan)) {
-      abandonedTurns.add(turnKey);
+      hasAbandonedCurrentTurn = true;
       hooks.onDeadlineWithoutShot?.(state);
     }
   }
 
-  /** Claims before awaiting HTTP so completion and deadline callbacks cannot both fire. */
+  /** Claims the current turn before starting one stable-ID command recovery loop. */
   function submitShot(state: GraphwarAgentAvailableState, plan: GraphwarAgentShotPlan) {
-    if (!running || !isCurrentSnapshot(state)) {
-      return false;
-    }
-    if (!isGraphwarAgentLocalHuman(state.players[state.currentTurn])) {
-      return false;
-    }
-
-    const turnKey = createTurnKey(state);
-    if (abandonedTurns.has(turnKey) || claimedTurns.has(turnKey)) {
+    if (
+      !isRunning ||
+      !isCurrentSnapshot(state) ||
+      !selectGraphwarAgentCurrentShooter(state) ||
+      !state.canAcceptShotCommands ||
+      hasAbandonedCurrentTurn ||
+      hasRequestedCurrentTurn
+    ) {
       return false;
     }
 
@@ -354,52 +447,71 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       request = createGraphwarAgentShotRequest(state, plan);
     } catch (error) {
       // A deterministic local validation failure cannot improve on the next poll of the same turn.
-      abandonedTurns.add(turnKey);
+      hasAbandonedCurrentTurn = true;
       clearDeadlineTimer();
       hooks.onShotFailed?.(state, plan, normalizeGraphwarManagedError(error));
       return false;
     }
 
-    claimedTurns.add(turnKey);
+    hasRequestedCurrentTurn = true;
+    handledShotRequestId = request.requestId;
     clearDeadlineTimer();
     const shotGeneration = generation;
-    hooks.onShotSubmitted?.(state, plan);
-    let resultHandled = false;
-    /** Accepts only the first acknowledgement, failure, or watchdog result for this once-only shot. */
-    const handleResult = (callback: () => void) => {
-      if (resultHandled) {
-        return;
-      }
-      resultHandled = true;
-      clearTimeout(resultTimeout);
-      if (isCurrentGeneration(shotGeneration)) {
-        callback();
-      }
-    };
-    const resultTimeout = setTimeout(
-      () =>
-        handleResult(() =>
-          hooks.onShotFailed?.(
-            state,
-            plan,
-            new GraphwarAgentClientError("transient", "Graphwar Agent shot result timed out"),
-          ),
-        ),
-      shotResultTimeoutMs,
-    );
-    void options.client.submitShot(request).then(
-      () => handleResult(() => hooks.onShotSucceeded?.(state, plan)),
+    const recovery = new AbortController();
+    activeShotRecovery?.abort();
+    activeShotRecovery = recovery;
+    hooks.onShotRequestStarted?.(state, plan);
+    void resolveGraphwarAgentShotCommand(options.client, request, {
+      pollIntervalMs,
+      postResultTimeoutMs: shotResultTimeoutMs,
+      readTimeoutMs: requestTimeoutMs,
+      signal: recovery.signal,
+    }).then(
+      (command) => {
+        if (!isCurrentGeneration(shotGeneration) || recovery.signal.aborted) {
+          return;
+        }
+        activeShotRecovery = undefined;
+        if (command.status === "submitted") {
+          hooks.onShotSubmitted?.(state, plan);
+          return;
+        }
+        const error = createGraphwarAgentShotCommandError(command);
+        if (command.status === "failed") {
+          hooks.onShotFailed?.(state, plan, error);
+        } else {
+          hooks.onShotUnknown?.(state, plan, error);
+        }
+      },
       (error: unknown) => {
-        handleResult(() => {
-          const clientError = normalizeGraphwarManagedError(error);
-          hooks.onShotFailed?.(state, plan, clientError);
-          if (isGraphwarAgentIncompatibleError(clientError)) {
-            stopForIncompatible(clientError, shotGeneration);
-          }
-        });
+        if (!isCurrentGeneration(shotGeneration) || recovery.signal.aborted) {
+          return;
+        }
+        activeShotRecovery = undefined;
+        const clientError = normalizeGraphwarManagedError(error);
+        hooks.onShotFailed?.(state, plan, clientError);
+        if (isGraphwarAgentIncompatibleError(clientError)) {
+          stopForIncompatible(clientError, shotGeneration);
+        }
       },
     );
     return true;
+  }
+
+  /** Keeps only the current concrete turn's three decision flags. */
+  function rotateTrackedTurn(state: GraphwarAgentAvailableState) {
+    const turnKey = state.turnToken ? createTurnKey(state) : undefined;
+    if (trackedGameInstanceId === state.gameInstanceId && (!turnKey || trackedTurnKey === turnKey)) {
+      return;
+    }
+    activeShotRecovery?.abort();
+    activeShotRecovery = undefined;
+    trackedGameInstanceId = state.gameInstanceId;
+    trackedTurnKey = turnKey;
+    handledShotRequestId = undefined;
+    hasAbandonedCurrentTurn = false;
+    hasHandledCurrentDeadline = false;
+    hasRequestedCurrentTurn = false;
   }
 
   /** Stops only the generation that observed an incompatible contract. */
@@ -413,7 +525,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
 
   /** Guards every async continuation against stop/restart and incompatible shutdown. */
   function isCurrentGeneration(candidate: number) {
-    return running && candidate === generation;
+    return isRunning && candidate === generation;
   }
 
   /** Requires identity, turn, and battle revision equality before a plan can be fired. */
@@ -436,7 +548,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
 
   return {
     getLatestState: () => latestState,
-    isRunning: () => running,
+    isRunning: () => isRunning,
     start,
     stop,
     submitShot,

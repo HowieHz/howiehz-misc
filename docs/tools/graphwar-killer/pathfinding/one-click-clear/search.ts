@@ -182,7 +182,7 @@ export interface GraphwarOneClickClearDagEdgeRoute {
 export interface GraphwarOneClickClearIncumbent {
   /** 与前缀验证使用相同公式上下文生成的 Graphwar 表达式。 */
   expression: string;
-  /** Y'' 模式需要的发射角；其他模式省略，单位为弧度，可直接用于 /shot。 */
+  /** Y'' 模式需要的发射角；其他模式省略，单位为弧度，可直接用于 /shots。 */
   launchAngleRadians?: number;
   /** 已验证方案的完整截图像素路径。 */
   pathPoints: PixelPoint[];

@@ -211,8 +211,9 @@ export interface GraphwarKillerLocale {
     agent: {
       defaultStatus: string;
       failed: (message: string) => string;
-      failureReason: (kind: GraphwarAgentClientErrorKind | undefined, message: string) => string;
+      failureReason: (kind: GraphwarAgentClientErrorKind | undefined, message: string, code?: string) => string;
       fireFailed: (message: string) => string;
+      fireUnknown: (message: string) => string;
       fileFailed: (message: string) => string;
       fileIncompatible: string;
       exportFailed: (message: string) => string;
@@ -276,6 +277,7 @@ export interface GraphwarKillerLocale {
       incompatible: string;
       readying: string;
       searchFailed: string;
+      shotFailed: (message: string) => string;
       skippingTurn: string;
       skipTurnFired: string;
       shotUnknown: (message: string) => string;
@@ -327,6 +329,10 @@ export interface GraphwarKillerLocale {
         address: string;
         addressAriaLabel: string;
         addressTitle: string;
+        token: string;
+        tokenAriaLabel: string;
+        tokenPlaceholder: string;
+        tokenTitle: string;
         exportOnClearFailure: string;
         exportOnClearFailureTitle: string;
         exportScene: string;

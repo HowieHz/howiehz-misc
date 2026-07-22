@@ -37,4 +37,19 @@ describe("Graphwar Agent status", () => {
       "Agent returned an unknown state: future-agent-state",
     );
   });
+
+  it("localizes stable v3 error codes without exposing the server's English message", () => {
+    const error = new GraphwarAgentClientError(
+      "transient",
+      "raw server detail",
+      503,
+      undefined,
+      "command-capacity-exhausted",
+    );
+
+    expect(createGraphwarAgentFailureReason(chineseLocale, error)).toBe("Agent 发射记录已满，需要重启 Agent");
+    expect(createGraphwarAgentFailureReason(englishLocale, error)).toBe(
+      "The Agent command ledger is full; restart the Agent",
+    );
+  });
 });

@@ -172,7 +172,23 @@ export const graphwarKillerLocale = {
     agent: {
       defaultStatus: "Click Read State to load the current game state from Graphwar Agent",
       failed: (message) => `Failed to read state: ${message}`,
-      failureReason: (kind, message) => {
+      failureReason: (kind, message, code) => {
+        switch (code) {
+          case "authentication-required":
+            return "The Agent access token is invalid";
+          case "battle-revision-changed":
+            return "The Graphwar battlefield changed; try again";
+          case "command-capacity-exhausted":
+            return "The Agent command ledger is full; restart the Agent";
+          case "request-id-conflict":
+            return "The shot request ID conflicts with an existing command";
+          case "server-busy":
+            return "The Agent's Graphwar request slots are busy; try again shortly";
+          case "shot-command-not-found":
+            return "The Agent could not find this shot command";
+          case "shot-executor-busy":
+            return "The Agent is still processing the previous shot command";
+        }
         switch (message) {
           case "game-data-not-initialized":
             return "Graphwar game data has not initialized";
@@ -206,6 +222,7 @@ export const graphwarKillerLocale = {
       exported: "Current scene exported",
       exporting: "Exporting scene",
       fireFailed: (message) => `Failed to fire: ${message}`,
+      fireUnknown: (message) => `The shot result is unknown and will not be retried with a new request: ${message}`,
       fired: "Function submitted and fired.",
       loaded: (soldiers) => `Read current state: obstacles and ${soldiers} ${soldiers === 1 ? "soldier" : "soldiers"}`,
       obstacleFileLoaded: "Obstacle file loaded; select a state file",
@@ -288,6 +305,7 @@ export const graphwarKillerLocale = {
       incompatible: "Managed mode stopped because the Agent API is incompatible; upgrade the Agent",
       readying: "A local player is not ready; marking them ready",
       searchFailed: "Managed calculation failed and could not skip this turn",
+      shotFailed: (message) => `The shot command failed and will not be retried automatically this turn: ${message}`,
       skippingTurn: "No usable plan; skipping this turn",
       skipTurnFired: "No usable plan; skipped this turn",
       shotUnknown: (message) => `Shot result is unknown and will not be retried this turn: ${message}`,
@@ -339,6 +357,10 @@ export const graphwarKillerLocale = {
         address: "Agent URL",
         addressAriaLabel: "Graphwar Agent URL",
         addressTitle: "Local Graphwar Agent URL; default http://127.0.0.1:17900",
+        token: "Access token",
+        tokenAriaLabel: "Graphwar Agent access token",
+        tokenPlaceholder: "Leave empty when authentication is disabled",
+        tokenTitle: "Optional Graphwar Agent bearer token; retained only until this page closes",
         exportOnClearFailure: "Export on clear failure",
         exportOnClearFailureTitle:
           "Export the Graphwar Agent scene captured when One-Click Clear started if it misses targets, fails, encounters a Worker error, or is interrupted at the managed deadline; each turn and battle revision is exported once",

@@ -1,18 +1,29 @@
 package top.howiehz.graphwar.agent;
 
-/** Strictly parses the small JSON object accepted by {@code POST /shot}. */
+import java.util.UUID;
+
+/** Strictly parses the bounded JSON object accepted by {@code POST /shots}. */
 final class GraphwarShotRequest {
     final Double angleRadians;
     final String battleRevision;
     final String function;
+    final String gameInstanceId;
+    final String requestId;
     final String turnToken;
 
     /** Retains validated JSON values without deriving any mutable game state. */
     private GraphwarShotRequest(
-            String function, String turnToken, String battleRevision, Double angleRadians) {
+            String requestId,
+            String gameInstanceId,
+            String function,
+            String turnToken,
+            String battleRevision,
+            Double angleRadians) {
         this.angleRadians = angleRadians;
         this.battleRevision = battleRevision;
         this.function = function;
+        this.gameInstanceId = gameInstanceId;
+        this.requestId = requestId;
         this.turnToken = turnToken;
     }
 
@@ -23,10 +34,14 @@ final class GraphwarShotRequest {
         parser.expect('{');
 
         String function = null;
+        String gameInstanceId = null;
+        String requestId = null;
         String turnToken = null;
         String battleRevision = null;
         Double angleRadians = null;
         boolean hasFunction = false;
+        boolean hasGameInstanceId = false;
+        boolean hasRequestId = false;
         boolean hasTurnToken = false;
         boolean hasBattleRevision = false;
         boolean hasAngleRadians = false;
@@ -39,7 +54,19 @@ final class GraphwarShotRequest {
                 parser.expect(':');
                 parser.skipWhitespace();
 
-                if ("function".equals(name)) {
+                if ("requestId".equals(name)) {
+                    if (hasRequestId) {
+                        throw parser.error("duplicate field requestId");
+                    }
+                    requestId = parser.readString();
+                    hasRequestId = true;
+                } else if ("gameInstanceId".equals(name)) {
+                    if (hasGameInstanceId) {
+                        throw parser.error("duplicate field gameInstanceId");
+                    }
+                    gameInstanceId = parser.readString();
+                    hasGameInstanceId = true;
+                } else if ("function".equals(name)) {
                     if (hasFunction) {
                         throw parser.error("duplicate field function");
                     }
@@ -80,14 +107,52 @@ final class GraphwarShotRequest {
         if (!parser.isFinished()) {
             throw parser.error("unexpected content after the JSON object");
         }
-        if (!hasFunction || !hasTurnToken || !hasBattleRevision) {
-            throw parser.error("function, turnToken, and battleRevision are required");
+        if (!hasRequestId
+                || !hasGameInstanceId
+                || !hasFunction
+                || !hasTurnToken
+                || !hasBattleRevision) {
+            throw parser.error(
+                    "requestId, gameInstanceId, function, turnToken, and battleRevision are"
+                            + " required");
         }
-        return new GraphwarShotRequest(function, turnToken, battleRevision, angleRadians);
+        requireCanonicalUuid(requestId, parser, "requestId");
+        requireCanonicalUuid(gameInstanceId, parser, "gameInstanceId");
+        requireCanonicalUuid(turnToken, parser, "turnToken");
+        requireBattleRevision(battleRevision, parser);
+        return new GraphwarShotRequest(
+                requestId, gameInstanceId, function, turnToken, battleRevision, angleRadians);
     }
 
-    /** Minimal cursor parser for JSON strings and numbers used by the shot contract. */
-    private static final class Parser {
+    /** Requires the lowercase canonical UUID representation used in resource paths. */
+    private static void requireCanonicalUuid(String value, Parser parser, String field)
+            throws GraphwarInvalidShotException {
+        try {
+            if (!UUID.fromString(value).toString().equals(value)) {
+                throw parser.error(field + " must be a canonical lowercase UUID");
+            }
+        } catch (IllegalArgumentException error) {
+            throw parser.error(field + " must be a canonical lowercase UUID");
+        }
+    }
+
+    /** Bounds retained revision metadata to the exact lowercase digest emitted by `/state`. */
+    private static void requireBattleRevision(String value, Parser parser)
+            throws GraphwarInvalidShotException {
+        if (value.length() != 71 || !value.startsWith("sha256:")) {
+            throw parser.error("battleRevision must be a lowercase SHA-256 revision");
+        }
+        for (int index = 7; index < value.length(); index += 1) {
+            char character = value.charAt(index);
+            if (!((character >= '0' && character <= '9')
+                    || (character >= 'a' && character <= 'f'))) {
+                throw parser.error("battleRevision must be a lowercase SHA-256 revision");
+            }
+        }
+    }
+
+    /** Minimal JSON cursor shared by the two bounded request objects. */
+    static final class Parser {
         private final String input;
         private int index;
 
@@ -155,6 +220,19 @@ final class GraphwarShotRequest {
             }
         }
 
+        /** Parses one lowercase JSON boolean literal. */
+        boolean readBoolean() throws GraphwarInvalidShotException {
+            if (input.startsWith("true", index)) {
+                index += 4;
+                return true;
+            }
+            if (input.startsWith("false", index)) {
+                index += 5;
+                return false;
+            }
+            throw error("expected a boolean");
+        }
+
         /** Decodes one JSON string including standard and unicode escapes. */
         String readString() throws GraphwarInvalidShotException {
             expect('"');
@@ -163,7 +241,9 @@ final class GraphwarShotRequest {
                 char character = input.charAt(index);
                 index += 1;
                 if (character == '"') {
-                    return value.toString();
+                    String decoded = value.toString();
+                    requirePairedSurrogates(decoded);
+                    return decoded;
                 }
                 if (character == '\\') {
                     appendEscape(value);
@@ -174,6 +254,22 @@ final class GraphwarShotRequest {
                 }
             }
             throw error("unterminated string");
+        }
+
+        /** Rejects non-scalar UTF-16 so distinct JSON strings keep distinct UTF-8 fingerprints. */
+        private void requirePairedSurrogates(String value) throws GraphwarInvalidShotException {
+            for (int offset = 0; offset < value.length(); offset += 1) {
+                char character = value.charAt(offset);
+                if (Character.isHighSurrogate(character)) {
+                    if (offset + 1 >= value.length()
+                            || !Character.isLowSurrogate(value.charAt(offset + 1))) {
+                        throw error("strings cannot contain an unpaired surrogate");
+                    }
+                    offset += 1;
+                } else if (Character.isLowSurrogate(character)) {
+                    throw error("strings cannot contain an unpaired surrogate");
+                }
+            }
         }
 
         /** Skips only the four whitespace characters permitted by JSON. */

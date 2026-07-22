@@ -16,8 +16,6 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -25,12 +23,19 @@ import java.util.concurrent.TimeUnit;
 
 /** Dependency-free regression tests for the complete localhost API contract. */
 public final class GraphwarAgentApiTest {
+    private static final String GAME_INSTANCE_ID = "00000000-0000-0000-0000-000000000001";
+    private static final String REQUEST_ID = "00000000-0000-0000-0000-000000000002";
+    private static final String REVISION =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private static final String TURN_TOKEN = "00000000-0000-0000-0000-000000000003";
+
     /** Prevents construction of the test entry-point class. */
     private GraphwarAgentApiTest() {}
 
     /** Runs every assertion and exits nonzero when any API contract regresses. */
     public static void main(String[] arguments) throws Exception {
         testShotJsonParser();
+        testOutOfOrderStateObservation();
         testEquivalentFractionFunction();
         testGraphPlaneAlphaClamp();
         GameData gameData = new GameData();
@@ -39,17 +44,11 @@ public final class GraphwarAgentApiTest {
         GraphwarStateReader stateReader = new GraphwarStateReader(() -> graphwar);
         GraphwarHttpServer server = GraphwarHttpServer.start(0, 0, stateReader);
         try {
-            testRoomSnapshot(server.getPort(), gameData);
-            testReadyRequests(server.getPort(), gameData);
-            testConcurrentReadyRequests(server.getPort(), gameData);
-            configureActiveMatch(gameData);
-            testActiveStateAndObstacleRevision(server.getPort(), gameData);
-            testShotValidationAndModes(server.getPort(), gameData);
-            testConcurrentShotClaim(server.getPort(), gameData);
-            testAvailabilityAndRemovedRoute(server.getPort(), gameData, graphwar, stateReader);
+            testV3HttpContract(server.getPort(), gameData, graphwar, stateReader);
         } finally {
             server.stop();
         }
+        testAuthenticationAndRequestLimit();
 
         System.out.println("graphwar-agent API tests passed");
     }
@@ -119,11 +118,20 @@ public final class GraphwarAgentApiTest {
     private static void testShotJsonParser() throws Exception {
         GraphwarShotRequest parsed =
                 GraphwarShotRequest.parse(
-                        "{\"function\":\"x\\u002b1\",\"turnToken\":\"turn\","
-                                + "\"battleRevision\":\"revision\",\"angleRadians\":-2.5e-1}");
+                        "{\"requestId\":\""
+                                + REQUEST_ID
+                                + "\",\"gameInstanceId\":\""
+                                + GAME_INSTANCE_ID
+                                + "\",\"function\":\"x\\u002b1\",\"turnToken\":\""
+                                + TURN_TOKEN
+                                + "\",\"battleRevision\":\""
+                                + REVISION
+                                + "\",\"angleRadians\":-2.5e-1}");
+        assertEquals(REQUEST_ID, parsed.requestId, "parsed request ID");
+        assertEquals(GAME_INSTANCE_ID, parsed.gameInstanceId, "parsed game instance ID");
         assertEquals("x+1", parsed.function, "unicode shot function");
-        assertEquals("turn", parsed.turnToken, "parsed turn token");
-        assertEquals("revision", parsed.battleRevision, "parsed battle revision");
+        assertEquals(TURN_TOKEN, parsed.turnToken, "parsed turn token");
+        assertEquals(REVISION, parsed.battleRevision, "parsed battle revision");
         assertEquals(Double.valueOf(-0.25), parsed.angleRadians, "parsed angle");
 
         for (String body :
@@ -147,6 +155,438 @@ public final class GraphwarAgentApiTest {
                         "invalid shot message");
             }
         }
+
+        for (String invalidString : Arrays.asList("\\uD800", "\\uDC00", "\\uD800x")) {
+            try {
+                GraphwarShotRequest.parse(
+                        "{\"requestId\":\""
+                                + REQUEST_ID
+                                + "\",\"gameInstanceId\":\""
+                                + GAME_INSTANCE_ID
+                                + "\",\"function\":\""
+                                + invalidString
+                                + "\",\"turnToken\":\""
+                                + TURN_TOKEN
+                                + "\",\"battleRevision\":\""
+                                + REVISION
+                                + "\"}");
+                throw new AssertionError("unpaired surrogate was accepted: " + invalidString);
+            } catch (GraphwarInvalidShotException expected) {
+                assertContains(expected.getMessage(), "unpaired surrogate", "surrogate message");
+            }
+        }
+    }
+
+    /** Verifies that a late older state response cannot roll command retention backward. */
+    private static void testOutOfOrderStateObservation() throws Exception {
+        GraphwarStateReader stateReader = new GraphwarStateReader(() -> null);
+        GraphwarShotCommandStore commands = new GraphwarShotCommandStore(stateReader);
+        stateReader.setShotCommands(commands);
+        String requestId = uuidFor(90);
+        try {
+            commands.submit(
+                    GraphwarShotRequest.parse(
+                            createV3ShotBody(
+                                    requestId, uuidFor(91), uuidFor(92), REVISION, "x", null)));
+            commands.observeState(2L, uuidFor(91), uuidFor(92));
+            commands.observeState(1L, uuidFor(93), null);
+            assertContains(commands.read(requestId), requestId, "out-of-order state observation");
+        } finally {
+            commands.stop();
+        }
+    }
+
+    /** Verifies the v3 wire contract, idempotent commands, conditions, and renamed fields. */
+    private static void testV3HttpContract(
+            int port, GameData gameData, Graphwar graphwar, GraphwarStateReader stateReader)
+            throws Exception {
+        String health = request(port, "GET", "/health", null, null).bodyText();
+        assertContains(health, "\"apiVersion\":3", "health API version");
+        assertContains(health, "\"isAuthenticationRequired\":false", "health auth flag");
+
+        assertContains(
+                request(port, "GET", "/room", null, null).bodyText(),
+                "\"isAvailable\":true",
+                "room availability");
+        assertResponse(
+                request(port, "PUT", "/room/ready", "{\"isReady\":true}", "application/json"),
+                200,
+                "{\"isReady\":true}\n",
+                "ready target");
+
+        configureActiveMatch(gameData);
+        String stateBody = request(port, "GET", "/state", null, null).bodyText();
+        assertContains(stateBody, "\"apiVersion\":3", "state API version");
+        assertContains(stateBody, "\"isAvailable\":true", "state availability");
+        assertContains(
+                stateBody,
+                "\"capabilities\":{\"canSubmitShots\":true,\"canReadRoom\":true,"
+                        + "\"canSetReady\":true,\"canReadWorldObstacleMask\":true}",
+                "v3 capabilities");
+        assertContains(stateBody, "\"equationMode\":\"y\"", "equation mode");
+        assertContains(stateBody, "\"currentPlayerIndex\":0", "current player index");
+        assertContains(stateBody, "\"currentPlayerId\":7", "current player ID");
+        assertContains(stateBody, "\"isTerrainReversed\":true", "orientation");
+        assertContains(stateBody, "\"playerIndex\":0,\"playerId\":7", "player identity");
+        assertContains(stateBody, "\"isConnected\":true", "connection state");
+        assertContains(stateBody, "\"soldierIndex\":0,\"isAlive\":true", "soldier state");
+        assertContains(stateBody, "\"shotCommand\":null", "empty shot summary");
+
+        String revision = extractJsonString(stateBody, "battleRevision");
+        HttpResponse mask =
+                requestWithHeader(
+                        port,
+                        "GET",
+                        "/obstacle-masks/world.bin",
+                        null,
+                        null,
+                        "If-Match",
+                        "\"" + revision + "\"");
+        assertEquals(200, mask.status, "conditioned mask status");
+        assertEquals("\"" + revision + "\"", mask.entityTag, "mask ETag");
+        assertEquals(770 * 450, mask.body.length, "mask length");
+        assertEquals(
+                428,
+                request(port, "GET", "/obstacle-masks/world.bin", null, null).status,
+                "missing If-Match");
+
+        String gameInstanceId = extractJsonString(stateBody, "gameInstanceId");
+        String turnToken = extractJsonString(stateBody, "turnToken");
+        String shotBody =
+                createV3ShotBody(REQUEST_ID, gameInstanceId, turnToken, revision, "x", null);
+        gameData.clearShotCalls();
+        HttpResponse created = request(port, "POST", "/shots", shotBody, "application/json");
+        assertEquals(201, created.status, "created command status");
+        assertContains(created.bodyText(), "\"status\":\"submitted\"", "submitted command");
+        assertEquals(
+                Collections.singletonList("function:x"),
+                gameData.getShotCalls(),
+                "shot side effect");
+        assertEquals(
+                200,
+                request(port, "POST", "/shots", shotBody, "application/json").status,
+                "idempotent replay");
+        assertEquals(1, gameData.getShotCalls().size(), "replay side effects");
+        assertContains(
+                request(port, "GET", "/shots/" + REQUEST_ID, null, null).bodyText(),
+                "\"status\":\"submitted\"",
+                "command query");
+        assertEquals(
+                409,
+                request(
+                                port,
+                                "POST",
+                                "/shots",
+                                createV3ShotBody(
+                                        REQUEST_ID,
+                                        gameInstanceId,
+                                        turnToken,
+                                        revision,
+                                        "x+1",
+                                        null),
+                                "application/json")
+                        .status,
+                "request ID conflict");
+
+        String secondRequestId = "00000000-0000-0000-0000-000000000003";
+        HttpResponse usedToken =
+                request(
+                        port,
+                        "POST",
+                        "/shots",
+                        createV3ShotBody(
+                                secondRequestId, gameInstanceId, turnToken, revision, "x", null),
+                        "application/json");
+        assertEquals(201, usedToken.status, "failed command resource status");
+        assertContains(usedToken.bodyText(), "\"status\":\"failed\"", "failed command");
+        assertContains(usedToken.bodyText(), "\"code\":\"turn-token-used\"", "stable error code");
+
+        testStuckShotRecoveryAndLedgerBound(port, gameData);
+        String unknownRequestId = testUnknownAfterClaim(port, gameData);
+        testNewGameCleanupWithoutTurnToken(port, gameData, unknownRequestId);
+
+        gameData.setGameState(1);
+        assertContains(
+                request(port, "GET", "/state", null, null).bodyText(),
+                "\"isAvailable\":false",
+                "unavailable state");
+        graphwar.setGameData(null);
+        assertEquals(
+                "{\"isAvailable\":false,\"reason\":\"game-data-not-initialized\"}",
+                stateReader.readRoomJson(),
+                "missing GameData room");
+    }
+
+    /** Verifies concurrent replay, a stuck single slot, busy failures, and 50-record eviction. */
+    private static void testStuckShotRecoveryAndLedgerBound(int port, GameData gameData)
+            throws Exception {
+        configureActiveMatch(gameData);
+        gameData.setTimeTurnStarted(2_000L);
+        String state = request(port, "GET", "/state", null, null).bodyText();
+        String gameInstanceId = extractJsonString(state, "gameInstanceId");
+        String turnToken = extractJsonString(state, "turnToken");
+        String revision = extractJsonString(state, "battleRevision");
+        String activeRequestId = uuidFor(100);
+        String body =
+                createV3ShotBody(activeRequestId, gameInstanceId, turnToken, revision, "x", null);
+        gameData.setFunctionBlocked(true);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Future<HttpResponse> first =
+                executor.submit(() -> request(port, "POST", "/shots", body, "application/json"));
+        try {
+            assertTrue(
+                    gameData.awaitFunctionCall(2, TimeUnit.SECONDS),
+                    "shot worker did not enter the blocked original call");
+            HttpResponse replay = request(port, "POST", "/shots", body, "application/json");
+            assertEquals(200, replay.status, "concurrent replay status");
+            assertContains(replay.bodyText(), "\"status\":\"claimed\"", "concurrent replay state");
+
+            String firstBusyRequestId = null;
+            for (int index = 0; index < 55; index += 1) {
+                String busyRequestId = uuidFor(200 + index);
+                if (firstBusyRequestId == null) {
+                    firstBusyRequestId = busyRequestId;
+                }
+                HttpResponse busy =
+                        request(
+                                port,
+                                "POST",
+                                "/shots",
+                                createV3ShotBody(
+                                        busyRequestId,
+                                        gameInstanceId,
+                                        turnToken,
+                                        revision,
+                                        "x",
+                                        null),
+                                "application/json");
+                assertEquals(201, busy.status, "busy command creation");
+                assertContains(
+                        busy.bodyText(), "\"code\":\"shot-executor-busy\"", "busy error code");
+            }
+
+            assertEquals(
+                    200,
+                    request(port, "GET", "/shots/" + activeRequestId, null, null).status,
+                    "active command retained");
+            assertEquals(
+                    404,
+                    request(port, "GET", "/shots/" + firstBusyRequestId, null, null).status,
+                    "oldest terminal command evicted");
+            HttpResponse timedOut = first.get(7, TimeUnit.SECONDS);
+            assertEquals(201, timedOut.status, "timed-out initial command status");
+            assertContains(
+                    timedOut.bodyText(), "\"status\":\"claimed\"", "timed-out command state");
+
+            ExecutorService blockedStateReads = Executors.newFixedThreadPool(6);
+            try {
+                for (int index = 0; index < 6; index += 1) {
+                    blockedStateReads.submit(() -> request(port, "GET", "/state", null, null));
+                }
+                Thread.sleep(100L);
+                assertEquals(
+                        200,
+                        request(port, "GET", "/health", null, null).status,
+                        "health worker reserve");
+                assertEquals(
+                        200,
+                        request(port, "GET", "/shots/" + activeRequestId, null, null).status,
+                        "command recovery worker reserve");
+            } finally {
+                blockedStateReads.shutdownNow();
+            }
+        } finally {
+            gameData.setFunctionBlocked(false);
+            executor.shutdownNow();
+        }
+
+        long deadline = System.currentTimeMillis() + 2_000L;
+        String completed;
+        do {
+            completed = request(port, "GET", "/shots/" + activeRequestId, null, null).bodyText();
+            if (completed.contains("\"status\":\"submitted\"")) {
+                return;
+            }
+            Thread.sleep(10L);
+        } while (System.currentTimeMillis() < deadline);
+        throw new AssertionError("released blocked command did not become submitted: " + completed);
+    }
+
+    /** Verifies that an exception after claim is retained as unknown rather than retried. */
+    private static String testUnknownAfterClaim(int port, GameData gameData) throws IOException {
+        configureActiveMatch(gameData);
+        gameData.setTimeTurnStarted(3_000L);
+        String state = request(port, "GET", "/state", null, null).bodyText();
+        String requestId = uuidFor(300);
+        gameData.setShouldThrowFromFunction(true);
+        try {
+            HttpResponse response =
+                    request(
+                            port,
+                            "POST",
+                            "/shots",
+                            createV3ShotBody(
+                                    requestId,
+                                    extractJsonString(state, "gameInstanceId"),
+                                    extractJsonString(state, "turnToken"),
+                                    extractJsonString(state, "battleRevision"),
+                                    "x",
+                                    null),
+                            "application/json");
+            assertEquals(201, response.status, "unknown command creation");
+            assertContains(response.bodyText(), "\"status\":\"unknown\"", "unknown command status");
+            assertContains(
+                    response.bodyText(), "\"code\":\"graphwar-call-failed\"", "unknown error code");
+            return requestId;
+        } finally {
+            gameData.setShouldThrowFromFunction(false);
+        }
+    }
+
+    /** Verifies a new active game clears old terminal records even before it has a valid turn. */
+    private static void testNewGameCleanupWithoutTurnToken(
+            int port, GameData gameData, String oldRequestId) throws IOException {
+        gameData.setObstacle(new Obstacle());
+        gameData.setCurrentTurn(-1);
+        String state = request(port, "GET", "/state", null, null).bodyText();
+        assertContains(state, "\"turnToken\":null", "new game without active turn");
+        assertEquals(
+                404,
+                request(port, "GET", "/shots/" + oldRequestId, null, null).status,
+                "old game terminal cleanup");
+        gameData.setCurrentTurn(0);
+    }
+
+    /** Creates a deterministic canonical UUID for ledger-capacity assertions. */
+    private static String uuidFor(int value) {
+        return String.format("00000000-0000-0000-0000-%012d", Integer.valueOf(value));
+    }
+
+    /** Verifies unauthenticated health, bearer protection, and preallocation body rejection. */
+    private static void testAuthenticationAndRequestLimit() throws Exception {
+        GameData gameData = new GameData();
+        configureActiveMatch(gameData);
+        Graphwar graphwar = new Graphwar(gameData);
+        GraphwarAgentConfig config = GraphwarAgentConfig.forTest(0, 0, 1_024, "secret");
+        GraphwarStateReader stateReader = new GraphwarStateReader(config, () -> graphwar);
+        GraphwarShotCommandStore commands = new GraphwarShotCommandStore(stateReader);
+        stateReader.setShotCommands(commands);
+        GraphwarHttpServer server = GraphwarHttpServer.start(config, stateReader, commands);
+        try {
+            String health = request(server.getPort(), "GET", "/health", null, null).bodyText();
+            assertContains(health, "\"isAuthenticationRequired\":true", "authenticated health");
+            assertEquals(
+                    405,
+                    request(
+                                    server.getPort(),
+                                    "POST",
+                                    "/health",
+                                    repeat('x', 1_025),
+                                    "application/json")
+                            .status,
+                    "unused health body bypasses allocation limit");
+            HttpResponse missing = request(server.getPort(), "GET", "/state", null, null);
+            assertEquals(401, missing.status, "missing bearer status");
+            assertContains(
+                    missing.bodyText(),
+                    "\"code\":\"authentication-required\"",
+                    "missing bearer code");
+            assertEquals(
+                    401,
+                    request(
+                                    server.getPort(),
+                                    "POST",
+                                    "/shots",
+                                    repeat('x', 1_025),
+                                    "application/json")
+                            .status,
+                    "authentication before body limit");
+            assertEquals(
+                    401,
+                    requestWithHeader(
+                                    server.getPort(),
+                                    "GET",
+                                    "/state",
+                                    null,
+                                    null,
+                                    "Authorization",
+                                    "Bearer wrong")
+                            .status,
+                    "wrong bearer status");
+            assertEquals(
+                    200,
+                    requestWithHeader(
+                                    server.getPort(),
+                                    "GET",
+                                    "/state",
+                                    null,
+                                    null,
+                                    "Authorization",
+                                    "Bearer secret")
+                            .status,
+                    "valid bearer status");
+            assertEquals(
+                    413,
+                    requestWithHeader(
+                                    server.getPort(),
+                                    "POST",
+                                    "/shots",
+                                    repeat('x', 1_025),
+                                    "application/json",
+                                    "Authorization",
+                                    "Bearer secret")
+                            .status,
+                    "request body limit");
+        } finally {
+            server.stop();
+        }
+
+        GraphwarAgentConfig raised =
+                GraphwarAgentConfig.parse(
+                        "maxRequestBodyBytes=16777216,maxFunctionBytes=1048576,"
+                                + "maxFunctionNestingDepth=4096");
+        assertEquals(16_777_216, raised.maxRequestBodyBytes, "raised body limit");
+        assertEquals(1_048_576, raised.maxFunctionBytes, "raised function limit");
+        assertEquals(4_096, raised.maxFunctionNestingDepth, "raised nesting limit");
+        boolean hasRejectedInvalidToken = false;
+        try {
+            GraphwarAgentConfig.parse("token=not valid");
+        } catch (IllegalArgumentException expected) {
+            hasRejectedInvalidToken = true;
+        }
+        assertTrue(hasRejectedInvalidToken, "invalid explicit token was accepted");
+    }
+
+    /** Creates bounded ASCII test input without relying on newer JDK String.repeat. */
+    private static String repeat(char character, int count) {
+        StringBuilder value = new StringBuilder(count);
+        for (int index = 0; index < count; index += 1) {
+            value.append(character);
+        }
+        return value.toString();
+    }
+
+    /** Builds one exact v3 shot payload with a stable caller-generated request ID. */
+    private static String createV3ShotBody(
+            String requestId,
+            String gameInstanceId,
+            String turnToken,
+            String battleRevision,
+            String function,
+            String angleRadians) {
+        return "{\"requestId\":\""
+                + requestId
+                + "\",\"gameInstanceId\":\""
+                + gameInstanceId
+                + "\",\"function\":\""
+                + function
+                + "\",\"turnToken\":\""
+                + turnToken
+                + "\",\"battleRevision\":\""
+                + battleRevision
+                + "\""
+                + (angleRadians == null ? "" : ",\"angleRadians\":" + angleRadians)
+                + "}";
     }
 
     /** Builds the exact mixed-ownership pre-game room used by room assertions. */
@@ -180,498 +620,6 @@ public final class GraphwarAgentApiTest {
         gameData.setTimeTurnStarted(1_000L);
     }
 
-    /** Verifies that opposite concurrent requests remain contiguous ready batches. */
-    private static void testConcurrentReadyRequests(int port, GameData gameData) throws Exception {
-        gameData.clearReadyCalls();
-        gameData.setConcurrentReadyBarrier(true);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        CountDownLatch start = new CountDownLatch(1);
-        Future<HttpResponse> readyTrue =
-                executor.submit(
-                        () -> {
-                            start.await();
-                            return request(port, "POST", "/ready", "true", "text/plain");
-                        });
-        Future<HttpResponse> readyFalse =
-                executor.submit(
-                        () -> {
-                            start.await();
-                            return request(port, "POST", "/ready", "false", "text/plain");
-                        });
-
-        try {
-            start.countDown();
-            assertResponse(
-                    readyTrue.get(5, TimeUnit.SECONDS),
-                    200,
-                    "{\"ok\":true,\"requestedReady\":true}\n",
-                    "concurrent ready true");
-            assertResponse(
-                    readyFalse.get(5, TimeUnit.SECONDS),
-                    200,
-                    "{\"ok\":true,\"requestedReady\":false}\n",
-                    "concurrent ready false");
-
-            List<String> calls = gameData.getReadyCalls();
-            assertTrue(
-                    calls.equals(Arrays.asList("7:true", "8:true", "7:false", "8:false"))
-                            || calls.equals(
-                                    Arrays.asList("7:false", "8:false", "7:true", "8:true")),
-                    "concurrent ready batches interleaved: " + calls);
-        } finally {
-            gameData.setConcurrentReadyBarrier(false);
-            executor.shutdownNow();
-        }
-    }
-
-    /** Verifies the exact room schema, JSON escaping, tri-state computer flag, and lock. */
-    private static void testRoomSnapshot(int port, GameData gameData) throws IOException {
-        gameData.setLockRequired(true);
-        HttpResponse response;
-        try {
-            response = request(port, "GET", "/room", null, null);
-        } finally {
-            gameData.setLockRequired(false);
-        }
-
-        assertEquals(200, response.status, "room status");
-        assertEquals(
-                "{\"available\":true,\"gameState\":1,\"gameMode\":2,\"leader\":true,"
-                        + "\"players\":[{\"index\":0,\"id\":7,\"name\":\"Local \\\"Human\\\"\","
-                        + "\"team\":1,\"local\":true,\"computer\":false,\"ready\":false,"
-                        + "\"numSoldiers\":2,\"disconnected\":false},{\"index\":1,\"id\":8,"
-                        + "\"name\":\"Local CPU\",\"team\":2,\"local\":true,\"computer\":true,"
-                        + "\"ready\":true,\"numSoldiers\":3,\"disconnected\":false},{\"index\":2,"
-                        + "\"id\":9,\"name\":\"Remote\\nPlayer\",\"team\":2,\"local\":false,"
-                        + "\"computer\":null,\"ready\":true,\"numSoldiers\":4,"
-                        + "\"disconnected\":true}]}",
-                response.bodyText(),
-                "room body");
-    }
-
-    /** Verifies strict ready bodies and original-button-equivalent calls. */
-    private static void testReadyRequests(int port, GameData gameData) throws IOException {
-        assertResponse(
-                request(port, "POST", "/ready", "true", "text/plain"),
-                200,
-                "{\"ok\":true,\"requestedReady\":true}\n",
-                "ready true");
-        assertEquals(
-                Arrays.asList("7:true", "8:true"), gameData.getReadyCalls(), "ready true calls");
-
-        gameData.clearReadyCalls();
-        assertResponse(
-                request(port, "POST", "/ready", "false", "text/plain"),
-                200,
-                "{\"ok\":true,\"requestedReady\":false}\n",
-                "ready false");
-        assertEquals(
-                Arrays.asList("7:false", "8:false"), gameData.getReadyCalls(), "ready false calls");
-
-        for (String body : Arrays.asList("", "TRUE", " true", "false\n", "{\"ready\":true}")) {
-            gameData.clearReadyCalls();
-            assertResponse(
-                    request(port, "POST", "/ready", body, "text/plain"),
-                    400,
-                    "ready body must be exactly true or false\n",
-                    "invalid ready body");
-            assertEquals(Collections.emptyList(), gameData.getReadyCalls(), "invalid ready calls");
-        }
-    }
-
-    /** Verifies snapshot metadata, ownership, world coordinates, locks, and mask headers. */
-    private static void testActiveStateAndObstacleRevision(int port, GameData gameData)
-            throws IOException {
-        assertResponse(
-                request(port, "GET", "/room", null, null),
-                200,
-                "{\"available\":false,\"reason\":\"not-in-pre-game-room\"}",
-                "active game room");
-        assertEquals(
-                409,
-                request(port, "POST", "/ready", "true", "text/plain").status,
-                "active game ready");
-        gameData.setLockRequired(true);
-        HttpResponse state;
-        HttpResponse worldMask;
-        try {
-            state = request(port, "GET", "/state", null, null);
-            worldMask = request(port, "GET", "/obstacle-mask.bin?space=world", null, null);
-        } finally {
-            gameData.setLockRequired(false);
-        }
-
-        assertEquals(200, state.status, "active state status");
-        String body = state.bodyText();
-        assertContains(body, "\"apiVersion\":2", "API version");
-        assertContains(
-                body,
-                "\"capabilities\":{\"shot\":true,\"room\":true,\"ready\":true,"
-                        + "\"worldObstacleMask\":true}",
-                "capabilities");
-        assertContains(body, "\"remainingTurnMs\":57000", "remaining turn time");
-        assertContains(body, "\"phase\":\"aiming\"", "aiming phase");
-        assertContains(body, "\"currentTurnPlayerId\":7", "current player ID");
-        assertContains(body, "\"playerId\":7", "player ID alias");
-        assertContains(body, "\"team\":1,\"name\":\"Local Human\"", "player team");
-        assertContains(body, "\"ready\":false", "active ready state");
-        assertContains(body, "\"soldierIndex\":0", "soldier index alias");
-        assertContains(body, "\"world\":{\"pixel\":{\"x\":107,\"y\":200}", "world coordinates");
-        assertContains(body, "\"view\":{\"pixel\":{\"x\":663,\"y\":200}", "view coordinates");
-
-        String revision = extractJsonString(body, "battleRevision");
-        String turnToken = extractJsonString(body, "turnToken");
-        String gameInstanceId = extractJsonString(body, "gameInstanceId");
-        assertTrue(revision.startsWith("sha256:"), "battle revision algorithm");
-        assertTrue(!turnToken.isEmpty(), "turn token");
-        assertTrue(!gameInstanceId.isEmpty(), "game instance ID");
-        assertEquals(770 * 450, worldMask.body.length, "world mask size");
-        assertEquals(1, worldMask.body[6 * 770 + 5] & 0xff, "world blocked cell");
-        assertEquals(revision, worldMask.battleRevision, "world mask response revision");
-        assertContains(
-                worldMask.exposedHeaders, "X-Graphwar-Battle-Revision", "exposed revision header");
-
-        gameData.getObstacle().setBlocked(6, 6, true);
-        String changedState = request(port, "GET", "/state", null, null).bodyText();
-        String changedRevision = extractJsonString(changedState, "battleRevision");
-        assertNotEquals(revision, changedRevision, "terrain mutation revision");
-        assertEquals(
-                turnToken,
-                extractJsonString(changedState, "turnToken"),
-                "terrain mutation must not change turn identity");
-
-        byte[] unchangedWorldMask =
-                request(port, "GET", "/obstacle-mask.bin?space=world", null, null).body;
-        gameData.setTerrainReversed(false);
-        String orientationState = request(port, "GET", "/state", null, null).bodyText();
-        assertNotEquals(
-                changedRevision,
-                extractJsonString(orientationState, "battleRevision"),
-                "view orientation revision");
-        assertTrue(
-                Arrays.equals(
-                        unchangedWorldMask,
-                        request(port, "GET", "/obstacle-mask.bin?space=world", null, null).body),
-                "view orientation must not change world mask bytes");
-        assertEquals(
-                turnToken,
-                extractJsonString(orientationState, "turnToken"),
-                "view orientation must not change turn identity");
-
-        gameData.setTimeTurnStarted(1_001L);
-        String nextTurnState = request(port, "GET", "/state", null, null).bodyText();
-        assertNotEquals(turnToken, extractJsonString(nextTurnState, "turnToken"), "new turn token");
-        assertEquals(
-                gameInstanceId,
-                extractJsonString(nextTurnState, "gameInstanceId"),
-                "same game instance");
-
-        gameData.setObstacle(new Obstacle());
-        String nextGameState = request(port, "GET", "/state", null, null).bodyText();
-        assertNotEquals(
-                gameInstanceId,
-                extractJsonString(nextGameState, "gameInstanceId"),
-                "new obstacle identifies a new game");
-    }
-
-    /** Verifies JSON strictness, all angle rules, stale guards, and side-effect ordering. */
-    private static void testShotValidationAndModes(int port, GameData gameData) throws IOException {
-        gameData.setTerrainReversed(false);
-        gameData.setCurrentTurn(0);
-        gameData.setGameMode(0);
-        gameData.setDrawingFunction(false);
-        gameData.setExploding(false);
-        gameData.setRemainingTime(57_000L);
-
-        ShotContext normal = readFreshShotContext(port, gameData, 2_000L);
-        assertEquals(
-                400,
-                request(port, "POST", "/shot", shotBody("x", normal, "0.25"), "application/json")
-                        .status,
-                "normal mode angle");
-        assertEquals(
-                400,
-                request(
-                                port,
-                                "POST",
-                                "/shot",
-                                "{\"function\":\"x\",\"turnToken\":\""
-                                        + normal.turnToken
-                                        + "\",\"battleRevision\":\""
-                                        + normal.battleRevision
-                                        + "\",\"typo\":1}",
-                                "application/json")
-                        .status,
-                "unknown shot field");
-        gameData.clearShotCalls();
-        assertResponse(
-                request(port, "POST", "/shot", shotBody("x", normal, null), "application/json"),
-                200,
-                "{\"ok\":true}\n",
-                "normal shot");
-        assertEquals(
-                Collections.singletonList("function:x"),
-                gameData.getShotCalls(),
-                "normal shot calls");
-        assertEquals(
-                409,
-                request(port, "POST", "/shot", shotBody("x", normal, null), "application/json")
-                        .status,
-                "duplicate turn token");
-        assertEquals(1, gameData.getShotCalls().size(), "duplicate shot effects");
-
-        ShotContext malformed = readFreshShotContext(port, gameData, 2_001L);
-        assertEquals(
-                400,
-                request(port, "POST", "/shot", shotBody("bad", malformed, null), "application/json")
-                        .status,
-                "malformed function");
-        assertEquals(
-                200,
-                request(port, "POST", "/shot", shotBody("x+1", malformed, null), "application/json")
-                        .status,
-                "corrected function keeps claim available");
-
-        gameData.setGameMode(1);
-        ShotContext firstDerivative = readFreshShotContext(port, gameData, 2_002L);
-        assertEquals(
-                400,
-                request(
-                                port,
-                                "POST",
-                                "/shot",
-                                shotBody("y", firstDerivative, "0"),
-                                "application/json")
-                        .status,
-                "first derivative angle");
-
-        gameData.setGameMode(2);
-        ShotContext secondDerivative = readFreshShotContext(port, gameData, 2_003L);
-        assertEquals(
-                400,
-                request(
-                                port,
-                                "POST",
-                                "/shot",
-                                shotBody("x", secondDerivative, null),
-                                "application/json")
-                        .status,
-                "missing second derivative angle");
-        assertEquals(
-                400,
-                request(
-                                port,
-                                "POST",
-                                "/shot",
-                                shotBody("x", secondDerivative, "1e309"),
-                                "application/json")
-                        .status,
-                "infinite angle");
-        assertEquals(
-                400,
-                request(
-                                port,
-                                "POST",
-                                "/shot",
-                                shotBody("x", secondDerivative, "1.5709"),
-                                "application/json")
-                        .status,
-                "out-of-range angle");
-        gameData.clearShotCalls();
-        assertEquals(
-                200,
-                request(
-                                port,
-                                "POST",
-                                "/shot",
-                                shotBody("x", secondDerivative, "0.25"),
-                                "application/json")
-                        .status,
-                "second derivative shot");
-        assertEquals(
-                Arrays.asList("angle:0.25", "function:x"),
-                gameData.getShotCalls(),
-                "angle before function");
-
-        gameData.setGameMode(0);
-        ShotContext staleTurn = readFreshShotContext(port, gameData, 2_004L);
-        gameData.setTimeTurnStarted(2_005L);
-        assertEquals(
-                409,
-                request(port, "POST", "/shot", shotBody("x", staleTurn, null), "application/json")
-                        .status,
-                "stale turn token");
-
-        ShotContext staleBattle = readFreshShotContext(port, gameData, 2_006L);
-        gameData.getObstacle().setBlocked(10, 10, true);
-        assertEquals(
-                409,
-                request(port, "POST", "/shot", shotBody("x", staleBattle, null), "application/json")
-                        .status,
-                "stale battle revision");
-
-        gameData.setCurrentTurn(2);
-        ShotContext remoteTurn = readFreshShotContext(port, gameData, 2_007L);
-        assertEquals(
-                409,
-                request(port, "POST", "/shot", shotBody("x", remoteTurn, null), "application/json")
-                        .status,
-                "remote turn");
-
-        gameData.setCurrentTurn(1);
-        ShotContext computerTurn = readFreshShotContext(port, gameData, 2_008L);
-        assertEquals(
-                409,
-                request(
-                                port,
-                                "POST",
-                                "/shot",
-                                shotBody("x", computerTurn, null),
-                                "application/json")
-                        .status,
-                "local computer turn");
-
-        gameData.setCurrentTurn(0);
-        gameData.setDrawingFunction(true);
-        ShotContext drawing = readFreshShotContext(port, gameData, 2_009L);
-        assertContains(drawing.stateBody, "\"phase\":\"drawing\"", "drawing phase");
-        assertEquals(
-                409,
-                request(port, "POST", "/shot", shotBody("x", drawing, null), "application/json")
-                        .status,
-                "drawing conflict");
-        gameData.setDrawingFunction(false);
-
-        gameData.setExploding(true);
-        ShotContext exploding = readFreshShotContext(port, gameData, 2_010L);
-        assertContains(exploding.stateBody, "\"phase\":\"exploding\"", "exploding phase");
-        gameData.setExploding(false);
-
-        gameData.setRemainingTime(0L);
-        ShotContext expired = readFreshShotContext(port, gameData, 2_011L);
-        assertEquals(
-                409,
-                request(port, "POST", "/shot", shotBody("x", expired, null), "application/json")
-                        .status,
-                "expired turn");
-        gameData.setRemainingTime(57_000L);
-    }
-
-    /** Verifies that two simultaneous requests can consume a turn token only once. */
-    private static void testConcurrentShotClaim(int port, GameData gameData) throws Exception {
-        gameData.setCurrentTurn(0);
-        gameData.setGameMode(0);
-        gameData.setDrawingFunction(false);
-        gameData.setExploding(false);
-        gameData.clearShotCalls();
-        ShotContext context = readFreshShotContext(port, gameData, 3_000L);
-        String body = shotBody("x", context, null);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        CountDownLatch start = new CountDownLatch(1);
-        try {
-            Future<HttpResponse> first =
-                    executor.submit(
-                            () -> {
-                                start.await();
-                                return request(port, "POST", "/shot", body, "application/json");
-                            });
-            Future<HttpResponse> second =
-                    executor.submit(
-                            () -> {
-                                start.await();
-                                return request(port, "POST", "/shot", body, "application/json");
-                            });
-            start.countDown();
-            int firstStatus = first.get(5, TimeUnit.SECONDS).status;
-            int secondStatus = second.get(5, TimeUnit.SECONDS).status;
-            assertTrue(
-                    (firstStatus == 200 && secondStatus == 409)
-                            || (firstStatus == 409 && secondStatus == 200),
-                    "concurrent shot statuses: " + firstStatus + ", " + secondStatus);
-            assertEquals(
-                    Collections.singletonList("function:x"),
-                    gameData.getShotCalls(),
-                    "concurrent shot effects");
-        } finally {
-            executor.shutdownNow();
-        }
-    }
-
-    /** Verifies polling reasons, guards, metadata, and removal of the old route. */
-    private static void testAvailabilityAndRemovedRoute(
-            int port, GameData gameData, Graphwar graphwar, GraphwarStateReader stateReader)
-            throws Exception {
-        gameData.setGameState(1);
-        assertResponse(
-                request(port, "GET", "/room", null, null),
-                200,
-                "{\"available\":true,\"gameState\":1,\"gameMode\":0,\"leader\":true,"
-                        + "\"players\":[{\"index\":0,\"id\":7,\"name\":\"Local Human\","
-                        + "\"team\":1,\"local\":true,\"computer\":false,\"ready\":false,"
-                        + "\"numSoldiers\":2,\"disconnected\":false},{\"index\":1,\"id\":8,"
-                        + "\"name\":\"Local CPU\",\"team\":2,\"local\":true,\"computer\":true,"
-                        + "\"ready\":true,\"numSoldiers\":2,\"disconnected\":false},{\"index\":2,"
-                        + "\"id\":9,\"name\":\"Remote\",\"team\":2,\"local\":false,"
-                        + "\"computer\":null,\"ready\":true,\"numSoldiers\":2,"
-                        + "\"disconnected\":false}]}",
-                "pre-game room after match");
-        assertResponse(request(port, "GET", "/health", null, null), 200, "ok\n", "health");
-        String unavailableState = request(port, "GET", "/state", null, null).bodyText();
-        assertContains(unavailableState, "\"apiVersion\":2", "unavailable API version");
-        assertContains(
-                unavailableState, "\"reason\":\"game-not-started\"", "unavailable state reason");
-        assertEquals(
-                409,
-                request(port, "GET", "/obstacle-mask.bin", null, null).status,
-                "unavailable obstacle route");
-        assertEquals(
-                404,
-                request(port, "POST", "/function", "x", "text/plain").status,
-                "removed function route");
-
-        gameData.clearPlayers();
-        gameData.addPlayer(new Player(gameData, 9, "Remote", 2, false, false, 2, false));
-        assertEquals(200, request(port, "GET", "/room", null, null).status, "room without locals");
-        assertEquals(
-                409,
-                request(port, "POST", "/ready", "true", "text/plain").status,
-                "ready without locals");
-
-        graphwar.setGameData(null);
-        assertEquals(
-                "{\"available\":false,\"reason\":\"game-data-not-initialized\"}",
-                stateReader.readRoomJson(),
-                "missing GameData");
-        assertEquals(
-                "{\"available\":false,\"reason\":\"graphwar-window-not-found\"}",
-                new GraphwarStateReader(() -> null).readRoomJson(),
-                "missing Graphwar window");
-    }
-
-    /** Starts a fresh fake turn and captures the safety values from its state response. */
-    private static ShotContext readFreshShotContext(int port, GameData gameData, long turnStartedAt)
-            throws IOException {
-        gameData.setTimeTurnStarted(turnStartedAt);
-        String stateBody = request(port, "GET", "/state", null, null).bodyText();
-        return new ShotContext(
-                extractJsonString(stateBody, "turnToken"),
-                extractJsonString(stateBody, "battleRevision"),
-                stateBody);
-    }
-
-    /** Builds the strict shot request while keeping angle JSON numeric. */
-    private static String shotBody(String function, ShotContext context, String angleRadians) {
-        return "{\"function\":\""
-                + function
-                + "\",\"turnToken\":\""
-                + context.turnToken
-                + "\",\"battleRevision\":\""
-                + context.battleRevision
-                + "\""
-                + (angleRadians == null ? "" : ",\"angleRadians\":" + angleRadians)
-                + "}";
-    }
-
     /** Extracts one unescaped opaque string field from a JSON response. */
     private static String extractJsonString(String json, String field) {
         String marker = "\"" + field + "\":\"";
@@ -691,12 +639,29 @@ public final class GraphwarAgentApiTest {
     private static HttpResponse request(
             int port, String method, String path, String body, String contentType)
             throws IOException {
+        return requestWithHeader(port, method, path, body, contentType, null, null);
+    }
+
+    /** Sends one request with an optional contract header such as If-Match. */
+    private static HttpResponse requestWithHeader(
+            int port,
+            String method,
+            String path,
+            String body,
+            String contentType,
+            String headerName,
+            String headerValue)
+            throws IOException {
         HttpURLConnection connection =
                 (HttpURLConnection) new URL("http://127.0.0.1:" + port + path).openConnection();
         connection.setConnectTimeout(5000);
-        connection.setReadTimeout(5000);
+        // The v3 shot endpoint deliberately waits up to five seconds before returning claimed.
+        connection.setReadTimeout(10_000);
         connection.setRequestMethod(method);
         connection.setUseCaches(false);
+        if (headerName != null && headerValue != null) {
+            connection.setRequestProperty(headerName, headerValue);
+        }
         if (body != null) {
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             connection.setDoOutput(true);
@@ -708,7 +673,7 @@ public final class GraphwarAgentApiTest {
         }
 
         int status = connection.getResponseCode();
-        String battleRevision = connection.getHeaderField("X-Graphwar-Battle-Revision");
+        String entityTag = connection.getHeaderField("ETag");
         String exposedHeaders = connection.getHeaderField("Access-Control-Expose-Headers");
         InputStream input =
                 status >= 400 ? connection.getErrorStream() : connection.getInputStream();
@@ -723,7 +688,7 @@ public final class GraphwarAgentApiTest {
             }
         }
         connection.disconnect();
-        return new HttpResponse(status, output.toByteArray(), battleRevision, exposedHeaders);
+        return new HttpResponse(status, output.toByteArray(), entityTag, exposedHeaders);
     }
 
     /** Verifies a UTF-8 response status and body together for clearer failures. */
@@ -766,13 +731,15 @@ public final class GraphwarAgentApiTest {
     private static final class HttpResponse {
         final String battleRevision;
         final byte[] body;
+        final String entityTag;
         final String exposedHeaders;
         final int status;
 
         /** Captures one completed local HTTP exchange. */
-        HttpResponse(int status, byte[] body, String battleRevision, String exposedHeaders) {
-            this.battleRevision = battleRevision;
+        HttpResponse(int status, byte[] body, String entityTag, String exposedHeaders) {
+            this.battleRevision = entityTag == null ? null : entityTag.replace("\"", "");
             this.body = body;
+            this.entityTag = entityTag;
             this.exposedHeaders = exposedHeaders;
             this.status = status;
         }
@@ -780,20 +747,6 @@ public final class GraphwarAgentApiTest {
         /** Decodes text endpoints without corrupting binary mask assertions. */
         String bodyText() {
             return new String(body, StandardCharsets.UTF_8);
-        }
-    }
-
-    /** Safety values read from one exact state snapshot. */
-    private static final class ShotContext {
-        final String battleRevision;
-        final String stateBody;
-        final String turnToken;
-
-        /** Captures the values a caller must echo to POST /shot. */
-        ShotContext(String turnToken, String battleRevision, String stateBody) {
-            this.battleRevision = battleRevision;
-            this.stateBody = stateBody;
-            this.turnToken = turnToken;
         }
     }
 

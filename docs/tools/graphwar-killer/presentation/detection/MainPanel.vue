@@ -54,6 +54,8 @@ interface GraphwarDetectionPanelAgentModel {
   readState: GraphwarControlCapability["state"];
   /** Agent 未就绪或忙碌时的可见说明。 */
   readReason?: string;
+  /** Optional bearer token retained only by the page session. */
+  tokenText: string;
 }
 
 /** 截图识别、Agent 来源和调试信息的展示模型。 */
@@ -102,6 +104,7 @@ const emit = defineEmits<{
   toggleExportOnClearFailure: [];
   uploadImage: [event: Event];
   updateAgentBaseUrl: [value: string];
+  updateAgentToken: [value: string];
 }>();
 
 /** Preserves the raw Agent URL text so the page can own normalisation and validation. */
@@ -111,6 +114,14 @@ function handleAgentBaseUrlInput(event: Event) {
     return;
   }
   emit("updateAgentBaseUrl", value);
+}
+
+/** Preserves the raw optional token without persisting it in settings. */
+function handleAgentTokenInput(event: Event) {
+  const value = getInputValue(event);
+  if (value !== undefined) {
+    emit("updateAgentToken", value);
+  }
 }
 </script>
 
@@ -302,6 +313,23 @@ function handleAgentBaseUrlInput(event: Event) {
               :title="locale.ui.detection.agent.addressTitle"
               :value="panel.agent.baseUrlText"
               @input="handleAgentBaseUrlInput"
+            >
+          </label>
+          <label
+            class="graphwar-killer__agent-url"
+            :title="locale.ui.detection.agent.tokenTitle"
+          >
+            {{ locale.ui.detection.agent.token }}
+            <input
+              type="password"
+              autocomplete="off"
+              maxlength="4096"
+              :disabled="panel.interactionDisabled"
+              :aria-label="locale.ui.detection.agent.tokenAriaLabel"
+              :placeholder="locale.ui.detection.agent.tokenPlaceholder"
+              :title="locale.ui.detection.agent.tokenTitle"
+              :value="panel.agent.tokenText"
+              @input="handleAgentTokenInput"
             >
           </label>
         </PanelDetails>

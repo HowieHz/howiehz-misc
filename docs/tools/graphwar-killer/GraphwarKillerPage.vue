@@ -9,6 +9,7 @@ import {
   createGraphwarAgentClient,
   createGraphwarAgentSnapshot,
   createGraphwarAgentShooterViewSnapshot,
+  createGraphwarAgentShotCommandError,
   createGraphwarAgentShotRequest,
   createGraphwarAgentWorldSnapshot,
   GRAPHWAR_AGENT_DEFAULT_BASE_URL,
@@ -30,6 +31,7 @@ import {
   type GraphwarAgentDebugDownload,
   type GraphwarAgentDebugFilePair,
 } from "./controllers/agent/debug-files";
+import { resolveGraphwarAgentShotCommand } from "./controllers/agent/shot-command";
 import { useGraphwarDebugActivation } from "./controllers/debug/activation";
 import { useGraphwarDebugTimings } from "./controllers/debug/timings";
 import {
@@ -41,6 +43,7 @@ import {
   createGraphwarManagedController,
   createGraphwarManagedSkipTurnPlan,
   GRAPHWAR_MANAGED_POLL_INTERVAL_MS,
+  GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS,
   GRAPHWAR_MANAGED_SHOT_DEADLINE_MS,
   GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
   type GraphwarManagedController,
@@ -211,6 +214,7 @@ const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const graphwarAgentStatusFlashMs = 2000;
+const graphwarAgentManualRecoveryTimeoutMs = 60_000;
 // 页面状态按未来可抽工作流分区维护：基础舞台、公式设置、截图、识别、障碍编辑、寻路。
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
 // boundsRect 会保留上一次矩形数值；boundsReady 表示该矩形已在当前截图上被用户或识别流程确认。
@@ -306,6 +310,8 @@ const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
 const graphwarAgentEnabled = ref(false);
 const graphwarAgentBaseUrlText = ref(GRAPHWAR_AGENT_DEFAULT_BASE_URL);
+// The optional bearer token is deliberately session-only and never enters persisted settings.
+const graphwarAgentTokenText = ref("");
 const graphwarAgentReadInProgress = ref(false);
 const graphwarAgentManualExportInProgress = ref(false);
 const graphwarAgentAutoExportInProgress = ref(false);
@@ -351,7 +357,7 @@ let graphwarManagedController: GraphwarManagedController | undefined;
 let graphwarManagedShotReserveMs = GRAPHWAR_MANAGED_SHOT_DEADLINE_MS;
 let graphwarManagedDeadlineTurnToken: string | undefined;
 let graphwarManagedIncumbent: GraphwarOneClickClearIncumbent | undefined;
-let graphwarManagedLastSubmittedTurnToken: string | undefined;
+let graphwarManagedLastRequestedTurnToken: string | undefined;
 let graphwarManagedSceneKey = "";
 let graphwarManagedSearchErrorSceneKey: string | undefined;
 let graphwarManagedSearchGeneration = 0;
@@ -1581,6 +1587,7 @@ const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
       ? locale.status.agent.exporting
       : getCapabilityReason(graphwarCapabilities.value.agentRead.reason),
     readState: graphwarCapabilities.value.agentRead.state,
+    tokenText: graphwarAgentTokenText.value,
   },
   autoDetectionEnabled: autoDetectionEnabled.value,
   canDetectBounds: Boolean(imageUrl.value) && !detectionInProgress.value && !graphwarAgentReadInProgress.value,
@@ -2662,7 +2669,7 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
   imageStatus.value = locale.status.agent.reading;
   setDetectionStatus(locale.status.agent.reading, "warning");
   try {
-    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl);
+    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl, { token: graphwarAgentTokenText.value });
     // Agent 响应只属于发起时的来源和规范化地址；迟到响应不能覆盖用户刚切换的新场景。
     if (!requestIsCurrent()) {
       return;
@@ -2723,8 +2730,8 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
         return;
       }
       const state = parseGraphwarAgentState(value);
-      if (!state.available || state.phase === "inactive") {
-        throw new GraphwarAgentClientError("unavailable", state.available ? "game-not-active" : state.reason);
+      if (!state.isAvailable) {
+        throw new GraphwarAgentClientError("unavailable", state.reason);
       }
       pair = graphwarAgentDebugFiles.setState(state);
     } else {
@@ -2829,7 +2836,7 @@ async function exportGraphwarAgentDebugScene() {
   graphwarAgentManualExportInProgress.value = true;
   setGraphwarAgentExportStatus(locale.status.agent.exporting, "warning");
   try {
-    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl);
+    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl, { token: graphwarAgentTokenText.value });
     if (!requestIsCurrent()) {
       return;
     }
@@ -2889,6 +2896,8 @@ async function fireGraphwarAgentFunction() {
 
   graphwarAgentFireInProgress.value = true;
   setGraphwarAgentFireStatus("idle");
+  const shotRecovery = new AbortController();
+  let shotRecoveryTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
     // A click owns one immutable shot intent even if the result or controls change while Agent state is loading.
     const functionText =
@@ -2900,9 +2909,16 @@ async function fireGraphwarAgentFunction() {
           ? secondOrderLaunchAngleRadians.value
           : simulatorLaunchAngleRadians.value
         : undefined;
-    const client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value);
-    const state = await client.readState();
-    if (!state.available) {
+    const client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value, { token: graphwarAgentTokenText.value });
+    const stateRequest = new AbortController();
+    const stateRequestTimeout = setTimeout(
+      () => stateRequest.abort(new DOMException("Graphwar Agent state request timed out", "TimeoutError")),
+      GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS,
+    );
+    const state = await client.readState(stateRequest.signal).finally(() => {
+      clearTimeout(stateRequestTimeout);
+    });
+    if (!state.isAvailable) {
       throw new GraphwarAgentClientError("unavailable", state.reason);
     }
     if (state.phase !== "aiming") {
@@ -2921,12 +2937,34 @@ async function fireGraphwarAgentFunction() {
     } else {
       shotPlan = { equationMode: equationModeSnapshot, function: functionText };
     }
-    await client.submitShot(createGraphwarAgentShotRequest(state, shotPlan));
+    shotRecoveryTimeout = setTimeout(
+      () => shotRecovery.abort(new DOMException("Graphwar Agent shot recovery timed out", "TimeoutError")),
+      graphwarAgentManualRecoveryTimeoutMs,
+    );
+    const command = await resolveGraphwarAgentShotCommand(client, createGraphwarAgentShotRequest(state, shotPlan), {
+      pollIntervalMs: GRAPHWAR_MANAGED_POLL_INTERVAL_MS,
+      postResultTimeoutMs: GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS,
+      readTimeoutMs: GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS,
+      signal: shotRecovery.signal,
+    });
+    if (command.status === "failed") {
+      throw createGraphwarAgentShotCommandError(command);
+    }
+    if (command.status === "unknown") {
+      graphwarAgentFireFailureMessage.value = locale.status.agent.fireUnknown(
+        createGraphwarAgentFailureReason(locale, createGraphwarAgentShotCommandError(command)),
+      );
+      setGraphwarAgentFireStatus("error");
+      return;
+    }
     setGraphwarAgentFireStatus("success");
   } catch (error) {
     graphwarAgentFireFailureMessage.value = createGraphwarAgentFailureReason(locale, error);
     setGraphwarAgentFireStatus("error");
   } finally {
+    if (shotRecoveryTimeout) {
+      clearTimeout(shotRecoveryTimeout);
+    }
     graphwarAgentFireInProgress.value = false;
   }
 }
@@ -3039,7 +3077,7 @@ function toggleGraphwarManagedMode() {
 
   let client: GraphwarAgentClient;
   try {
-    client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value);
+    client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value, { token: graphwarAgentTokenText.value });
   } catch (error) {
     setSmartPathfindingStatus(createGraphwarAgentFailureReason(locale, error), "error");
     return;
@@ -3063,7 +3101,7 @@ function toggleGraphwarManagedMode() {
   graphwarManagedSearchSnapshot = undefined;
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
-  graphwarManagedLastSubmittedTurnToken = undefined;
+  graphwarManagedLastRequestedTurnToken = undefined;
   graphwarManagedDeadlineTurnToken = undefined;
   graphwarManagedWakeLockGeneration += 1;
   toolMode.value = "path";
@@ -3089,7 +3127,7 @@ function toggleGraphwarManagedMode() {
         }
         // 截止发射直接使用主线程检查点；路径与公式转正只服务页面，不进入发射关键路径。
         applyOneClickClearIncumbent(incumbent);
-        graphwarManagedDeadlineTurnToken = state.turnToken;
+        graphwarManagedDeadlineTurnToken = state.turnToken ?? undefined;
         return plan;
       },
       onDeadline: (state) => {
@@ -3114,6 +3152,26 @@ function toggleGraphwarManagedMode() {
       onReadyRequested: () => {
         setGraphwarManagedStatus(locale.smartPathfinding.managed.readying, "warning");
       },
+      onRecoveredShotCommand: (state, command) => {
+        graphwarManagedLastRequestedTurnToken = state.turnToken ?? undefined;
+        if (command.status === "submitted") {
+          setGraphwarManagedStatus(locale.ui.result.fireSuccess, "success");
+          return;
+        }
+        const error = createGraphwarAgentShotCommandError(command);
+        if (command.status === "failed") {
+          graphwarManagedSearchState = "failure";
+          setGraphwarManagedStatus(
+            locale.smartPathfinding.managed.shotFailed(createGraphwarAgentFailureReason(locale, error)),
+            "error",
+          );
+        } else if (command.status === "unknown") {
+          setGraphwarManagedStatus(
+            locale.smartPathfinding.managed.shotUnknown(createGraphwarAgentFailureReason(locale, error)),
+            "error",
+          );
+        }
+      },
       onRoom: () => {
         resetGraphwarManagedSearch();
         setGraphwarManagedStatus(locale.smartPathfinding.managed.waitingForGame, "warning");
@@ -3122,18 +3180,14 @@ function toggleGraphwarManagedMode() {
         if (graphwarManagedController?.getLatestState()?.turnToken !== state.turnToken) {
           return;
         }
-        if (graphwarManagedLastSubmittedTurnToken === state.turnToken) {
-          setGraphwarManagedStatus(
-            locale.smartPathfinding.managed.shotUnknown(createGraphwarAgentFailureReason(locale, error)),
-            "error",
-          );
-          return;
-        }
         graphwarManagedSearchState = "failure";
-        setGraphwarManagedStatus(locale.smartPathfinding.managed.searchFailed, "error");
+        setGraphwarManagedStatus(
+          locale.smartPathfinding.managed.shotFailed(createGraphwarAgentFailureReason(locale, error)),
+          "error",
+        );
       },
-      onShotSubmitted: (state, plan) => {
-        graphwarManagedLastSubmittedTurnToken = state.turnToken;
+      onShotRequestStarted: (state, plan) => {
+        graphwarManagedLastRequestedTurnToken = state.turnToken ?? undefined;
         if (graphwarManagedStateHasSearchError(state)) {
           return;
         }
@@ -3144,8 +3198,13 @@ function toggleGraphwarManagedMode() {
           "warning",
         );
       },
-      onShotSucceeded: (state, plan) => {
-        if (graphwarManagedLastSubmittedTurnToken !== state.turnToken || graphwarManagedStateHasSearchError(state)) {
+      onShotRecoveryStarted: (state) => {
+        cancelGraphwarManagedSearch(true);
+        graphwarManagedLastRequestedTurnToken = state.turnToken ?? undefined;
+        setGraphwarManagedStatus(locale.ui.result.firing, "warning");
+      },
+      onShotSubmitted: (state, plan) => {
+        if (graphwarManagedLastRequestedTurnToken !== state.turnToken || graphwarManagedStateHasSearchError(state)) {
           return;
         }
         if (plan.function === GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION) {
@@ -3157,6 +3216,15 @@ function toggleGraphwarManagedMode() {
             ? locale.smartPathfinding.managed.deadlineFired
             : locale.smartPathfinding.managed.successFired,
           graphwarManagedDeadlineTurnToken === state.turnToken ? "warning" : "success",
+        );
+      },
+      onShotUnknown: (state, _plan, error) => {
+        if (graphwarManagedController?.getLatestState()?.turnToken !== state.turnToken) {
+          return;
+        }
+        setGraphwarManagedStatus(
+          locale.smartPathfinding.managed.shotUnknown(createGraphwarAgentFailureReason(locale, error)),
+          "error",
         );
       },
       onState: handleGraphwarManagedState,
@@ -3192,7 +3260,7 @@ function stopGraphwarManagedMode(showStatus: boolean) {
   graphwarManagedClient = undefined;
   resetGraphwarManagedSearch(true);
   graphwarManagedDeadlineTurnToken = undefined;
-  graphwarManagedLastSubmittedTurnToken = undefined;
+  graphwarManagedLastRequestedTurnToken = undefined;
   void releaseGraphwarManagedWakeLock();
   if (showStatus) {
     setSmartPathfindingStatus(locale.smartPathfinding.managed.stopped, "warning");
@@ -3231,7 +3299,7 @@ function handleGraphwarManagedState(
       submitGraphwarManagedShot(state);
     } else if (graphwarManagedStateHasSearchError(state)) {
       return;
-    } else if (graphwarManagedSearchState === "success" && graphwarManagedLastSubmittedTurnToken !== state.turnToken) {
+    } else if (graphwarManagedSearchState === "success" && graphwarManagedLastRequestedTurnToken !== state.turnToken) {
       setGraphwarManagedStatus(locale.smartPathfinding.managed.completedWaiting, "success");
     } else if (graphwarManagedSearchState === "running") {
       setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(), "warning");
@@ -3247,14 +3315,14 @@ function handleGraphwarManagedState(
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
   graphwarManagedDeadlineTurnToken = undefined;
-  graphwarManagedLastSubmittedTurnToken = undefined;
+  graphwarManagedLastRequestedTurnToken = undefined;
   const snapshot = createGraphwarAgentShooterViewSnapshot(
     createGraphwarAgentWorldSnapshot(graphwarManagedClient.baseUrl, state, worldObstacleMask),
-    shooter.player.id,
-    shooter.soldier.index,
+    shooter.player.playerId,
+    shooter.soldier.soldierIndex,
   );
   const shooterBox = snapshot.detectionResult.soldiers.find(
-    (soldier) => soldier.playerId === shooter.player.id && soldier.soldierIndex === shooter.soldier.index,
+    (soldier) => soldier.playerId === shooter.player.playerId && soldier.soldierIndex === shooter.soldier.soldierIndex,
   );
   if (!shooterBox) {
     stopGraphwarManagedMode(false);
@@ -3285,8 +3353,8 @@ function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shoot
     gameInstanceId: state.gameInstanceId,
     pathfindingWorkerCount: parsedPathfindingWorkerCount.value.workerCount,
     routeMode: settings.stepGlitchMode ? "visibility-graph" : getPathfindingRouteMode(),
-    shooterPlayerId: shooter.player.id,
-    shooterSoldierIndex: shooter.soldier.index,
+    shooterPlayerId: shooter.player.playerId,
+    shooterSoldierIndex: shooter.soldier.soldierIndex,
     shooterTeam: shooter.player.team,
     steepness: settings.steepness,
     stepGlitchMode: settings.stepGlitchMode,
@@ -3397,12 +3465,15 @@ function resetGraphwarManagedSearch(preservePreview = false) {
 /** 仅将当前完整指纹下的验证结果转换为 Agent 的模式化发射参数。 */
 function createGraphwarManagedShotPlan(state: GraphwarAgentAvailableState): GraphwarAgentShotPlan | undefined {
   const incumbent = graphwarManagedIncumbent;
-  const player = state.players[state.currentTurn];
-  const soldier = player?.soldiers[player.currentTurnSoldier];
+  const player = state.currentPlayerIndex === null ? undefined : state.players[state.currentPlayerIndex];
+  const soldier =
+    player?.currentSoldierIndex === null || player?.currentSoldierIndex === undefined
+      ? undefined
+      : player.soldiers[player.currentSoldierIndex];
   if (
     !incumbent ||
     !isGraphwarAgentLocalHuman(player) ||
-    !soldier?.alive ||
+    !soldier?.isAlive ||
     !incumbent.expression.trim() ||
     createGraphwarManagedSceneKey(state, { player, soldier }) !== graphwarManagedSceneKey
   ) {
@@ -3440,10 +3511,12 @@ function graphwarManagedStateHasSearchError(state: GraphwarAgentAvailableState) 
 
 /** 检查最新权威回合是否属于当前本地真人发射者。 */
 function isGraphwarManagedCurrentLocalTurn(state: GraphwarAgentAvailableState) {
-  const player = state.players[state.currentTurn];
-  return Boolean(
-    state.phase === "aiming" && isGraphwarAgentLocalHuman(player) && player.soldiers[player.currentTurnSoldier]?.alive,
-  );
+  const player = state.currentPlayerIndex === null ? undefined : state.players[state.currentPlayerIndex];
+  const soldier =
+    player?.currentSoldierIndex === null || player?.currentSoldierIndex === undefined
+      ? undefined
+      : player.soldiers[player.currentSoldierIndex];
+  return Boolean(state.phase === "aiming" && isGraphwarAgentLocalHuman(player) && soldier?.isAlive);
 }
 
 /** 保存托管状态；后台警告临时覆盖展示，回到前台后恢复真实状态。 */
@@ -3643,6 +3716,18 @@ function setGraphwarAgentBaseUrlText(value: string) {
   graphwarAgentBaseUrlText.value = value;
   // 尾斜杠等价写法仍指向同一场景，不应打断正在运行的任务。
   if (graphwarAgentEnabled.value && previousBaseUrl !== normalizedGraphwarAgentBaseUrl.value) {
+    invalidateGraphwarAgentSceneWork();
+  }
+  setGraphwarAgentFireStatus("idle");
+}
+
+/** Updates the session-only bearer token and invalidates requests made with the previous credential. */
+function setGraphwarAgentTokenText(value: string) {
+  if (graphwarManagedModeEnabled.value || graphwarAgentTokenText.value === value) {
+    return;
+  }
+  graphwarAgentTokenText.value = value;
+  if (graphwarAgentEnabled.value) {
     invalidateGraphwarAgentSceneWork();
   }
   setGraphwarAgentFireStatus("idle");
@@ -4349,6 +4434,7 @@ function undoLastPoint() {
         "
         @upload-image="!graphwarManagedModeEnabled && handleImageUpload($event)"
         @update-agent-base-url="setGraphwarAgentBaseUrlText"
+        @update-agent-token="setGraphwarAgentTokenText"
       />
     </div>
     <GraphwarScreenshotPanel

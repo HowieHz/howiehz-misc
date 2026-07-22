@@ -16,8 +16,10 @@ import java.lang.reflect.Field;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -436,10 +438,13 @@ public final class GraphwarAgentApiTest {
             assertContains(
                     timedOut.bodyText(), "\"status\":\"claimed\"", "timed-out command state");
 
-            ExecutorService blockedStateReads = Executors.newFixedThreadPool(6);
+            ExecutorService blockedStateReadExecutor = Executors.newFixedThreadPool(6);
+            List<Future<HttpResponse>> blockedStateReads = new ArrayList<Future<HttpResponse>>(6);
             try {
                 for (int index = 0; index < 6; index += 1) {
-                    blockedStateReads.submit(() -> request(port, "GET", "/state", null, null));
+                    blockedStateReads.add(
+                            blockedStateReadExecutor.submit(
+                                    () -> request(port, "GET", "/state", null, null)));
                 }
                 Thread.sleep(100L);
                 assertEquals(
@@ -451,7 +456,20 @@ public final class GraphwarAgentApiTest {
                         request(port, "GET", "/shots/" + activeRequestId, null, null).status,
                         "command recovery worker reserve");
             } finally {
-                blockedStateReads.shutdownNow();
+                // Releasing the Graphwar monitor does not immediately release the six HTTP
+                // admission slots. Wait for every blocked request to finish before the next
+                // contract test sends another Graphwar-dependent request.
+                gameData.setFunctionBlocked(false);
+                try {
+                    for (Future<HttpResponse> blockedStateRead : blockedStateReads) {
+                        assertEquals(
+                                200,
+                                blockedStateRead.get(5, TimeUnit.SECONDS).status,
+                                "released blocked state request");
+                    }
+                } finally {
+                    blockedStateReadExecutor.shutdownNow();
+                }
             }
         } finally {
             gameData.setFunctionBlocked(false);

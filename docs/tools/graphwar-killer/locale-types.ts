@@ -275,6 +275,7 @@ export interface GraphwarKillerLocale {
       deadlinePlan: (elapsed: string) => string;
       enabled: string;
       incompatible: string;
+      invalidRequest: (message: string) => string;
       readying: string;
       searchFailed: string;
       shotFailed: (message: string) => string;

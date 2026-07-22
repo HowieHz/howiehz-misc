@@ -3149,6 +3149,13 @@ function toggleGraphwarManagedMode() {
         stopGraphwarManagedMode(false);
         setSmartPathfindingStatus(locale.smartPathfinding.managed.incompatible, "error");
       },
+      onInvalidRequestError: (error) => {
+        stopGraphwarManagedMode(false);
+        setSmartPathfindingStatus(
+          locale.smartPathfinding.managed.invalidRequest(createGraphwarAgentFailureReason(locale, error)),
+          "error",
+        );
+      },
       onReadyRequested: () => {
         setGraphwarManagedStatus(locale.smartPathfinding.managed.readying, "warning");
       },

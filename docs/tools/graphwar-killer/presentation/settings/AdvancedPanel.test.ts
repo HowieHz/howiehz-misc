@@ -5,9 +5,19 @@ import { describe, expect, it } from "vitest";
 
 import { graphwarKillerLocale } from "../../locale";
 import type { GraphwarAdvancedSettingsPanelModel } from "./advanced-panel-model";
+import advancedPanelSource from "./AdvancedPanel.vue?raw";
 import AdvancedPanel from "./AdvancedPanel.vue";
 
 describe("AdvancedPanel", () => {
+  it("keeps grouped pathfinding settings left-aligned", () => {
+    expect(advancedPanelSource).toMatch(
+      /\.graphwar-killer__managed-settings-grid\s*{[^}]*grid-template-columns:\s*repeat\(auto-fit,[^;]+;[^}]*justify-content:\s*start;/s,
+    );
+    expect(advancedPanelSource).toMatch(
+      /\.graphwar-killer__obstacle-expansion-grid\s*{[^}]*grid-template-columns:\s*repeat\(auto-fit,[^;]+;[^}]*justify-content:\s*start;/s,
+    );
+  });
+
   it("keeps worker count visible while deletion radius follows the deletion preference", async () => {
     const panel: GraphwarAdvancedSettingsPanelModel = {
       actionBar: {

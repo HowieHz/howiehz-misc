@@ -318,15 +318,76 @@ describe("Graphwar managed controller v3", () => {
     client.readShotCommand.mockRejectedValue(
       new GraphwarAgentClientError("invalid-request", "headers too large", 431, undefined, "request-headers-too-large"),
     );
-    const onIncompatibleError = vi.fn();
-    const controller = createGraphwarManagedController({ client, hooks: { onIncompatibleError }, pollIntervalMs: 10 });
+    const onInvalidRequestError = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onInvalidRequestError },
+      pollIntervalMs: 10,
+    });
 
     controller.start();
     await vi.advanceTimersByTimeAsync(50);
 
     expect(client.readShotCommand).toHaveBeenCalledOnce();
-    expect(onIncompatibleError).toHaveBeenCalledOnce();
+    expect(onInvalidRequestError).toHaveBeenCalledOnce();
     expect(controller.isRunning()).toBe(false);
+  });
+
+  it("stops with the invalid-request hook when Agent authentication fails", async () => {
+    const client = createClient(createUnavailableState());
+    client.readState.mockRejectedValue(
+      new GraphwarAgentClientError(
+        "invalid-request",
+        "A valid bearer token is required",
+        401,
+        undefined,
+        "authentication-required",
+      ),
+    );
+    const onIncompatibleError = vi.fn();
+    const onInvalidRequestError = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onIncompatibleError, onInvalidRequestError },
+      pollIntervalMs: 10,
+    });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(client.readState).toHaveBeenCalledOnce();
+    expect(onInvalidRequestError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "authentication-required", kind: "invalid-request", status: 401 }),
+    );
+    expect(onIncompatibleError).not.toHaveBeenCalled();
+    expect(controller.isRunning()).toBe(false);
+  });
+
+  it("retries a retained command after a state-command conflict without reporting incompatibility", async () => {
+    const request = createRequest();
+    const state = createAvailableState({ shotCommand: { requestId: request.requestId, status: "claimed" } });
+    const client = createClient(state);
+    client.readShotCommand
+      .mockRejectedValueOnce(new GraphwarAgentClientError("conflict", "state changed", 409))
+      .mockResolvedValue(createCommand(request, "submitted"));
+    const onIncompatibleError = vi.fn();
+    const onRecoveredShotCommand = vi.fn();
+    const onTransientError = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onIncompatibleError, onRecoveredShotCommand, onTransientError },
+      pollIntervalMs: 10,
+    });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(client.readShotCommand).toHaveBeenCalledTimes(2);
+    expect(onTransientError).toHaveBeenCalledOnce();
+    expect(onRecoveredShotCommand).toHaveBeenCalledOnce();
+    expect(onIncompatibleError).not.toHaveBeenCalled();
+    expect(controller.isRunning()).toBe(true);
+    controller.stop();
   });
 
   it("waits while the dynamic execution slot is busy without disabling managed mode", async () => {

@@ -46,4 +46,21 @@ describe("Graphwar Agent status", () => {
       "The network or Graphwar Agent is temporarily unavailable",
     );
   });
+
+  it("explains the managed-mode setting that must be corrected after authentication fails", () => {
+    const error = new GraphwarAgentClientError(
+      "invalid-request",
+      "A valid bearer token is required",
+      401,
+      undefined,
+      "authentication-required",
+    );
+
+    expect(
+      chineseLocale.smartPathfinding.managed.invalidRequest(createGraphwarAgentFailureReason(chineseLocale, error)),
+    ).toBe("Agent 拒绝请求，托管已关闭：Agent 访问令牌无效");
+    expect(
+      englishLocale.smartPathfinding.managed.invalidRequest(createGraphwarAgentFailureReason(englishLocale, error)),
+    ).toBe("Managed mode stopped because the Agent rejected the request: The Agent access token is invalid");
+  });
 });

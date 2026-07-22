@@ -34,6 +34,8 @@ export interface GraphwarManagedControllerHooks {
   onDeadlineWithoutShot?: (state: GraphwarAgentAvailableState) => void;
   /** Reports a protocol version or response shape that requires an Agent upgrade. */
   onIncompatibleError?: (error: GraphwarAgentClientError) => void;
+  /** Reports a deterministic request or Agent setting error that requires user correction. */
+  onInvalidRequestError?: (error: GraphwarAgentClientError) => void;
   /** Reports the terminal result of a command recovered without its original local plan. */
   onRecoveredShotCommand?: (state: GraphwarAgentAvailableState, command: GraphwarAgentShotCommand) => void;
   /** Reports that one ready=true request is about to be sent. */
@@ -260,18 +262,7 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       }
       const clientError = normalizeGraphwarManagedError(error);
       if (isGraphwarAgentIncompatibleError(clientError) || clientError.kind === "invalid-request") {
-        stopForIncompatible(
-          isGraphwarAgentIncompatibleError(clientError)
-            ? clientError
-            : new GraphwarAgentClientError(
-                "incompatible",
-                clientError.message,
-                clientError.status,
-                clientError,
-                clientError.code,
-              ),
-          pollGeneration,
-        );
+        stopForTerminalRequestError(clientError, pollGeneration);
       } else {
         hooks.onTransientError?.(clientError);
       }
@@ -347,18 +338,13 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
             }
             activeShotRecovery = undefined;
             const clientError = normalizeGraphwarManagedError(error);
-            stopForIncompatible(
-              isGraphwarAgentIncompatibleError(clientError) || clientError.kind === "invalid-request"
-                ? clientError
-                : new GraphwarAgentClientError(
-                    "incompatible",
-                    clientError.message,
-                    clientError.status,
-                    clientError,
-                    clientError.code,
-                  ),
-              pollGeneration,
-            );
+            if (isGraphwarAgentIncompatibleError(clientError) || clientError.kind === "invalid-request") {
+              stopForTerminalRequestError(clientError, pollGeneration);
+              return;
+            }
+            // A state/command race may settle on the next state snapshot; allow that snapshot to restart recovery.
+            handledShotRequestId = undefined;
+            hooks.onTransientError?.(clientError);
           },
         );
       }
@@ -490,8 +476,8 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
         activeShotRecovery = undefined;
         const clientError = normalizeGraphwarManagedError(error);
         hooks.onShotFailed?.(state, plan, clientError);
-        if (isGraphwarAgentIncompatibleError(clientError)) {
-          stopForIncompatible(clientError, shotGeneration);
+        if (isGraphwarAgentIncompatibleError(clientError) || clientError.kind === "invalid-request") {
+          stopForTerminalRequestError(clientError, shotGeneration);
         }
       },
     );
@@ -521,6 +507,24 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
     }
     hooks.onIncompatibleError?.(error);
     stop();
+  }
+
+  /** Preserves correctable request failures instead of presenting them as Agent incompatibility. */
+  function stopForTerminalRequestError(error: GraphwarAgentClientError, errorGeneration: number) {
+    if (error.kind === "invalid-request") {
+      if (!isCurrentGeneration(errorGeneration)) {
+        return;
+      }
+      hooks.onInvalidRequestError?.(error);
+      stop();
+      return;
+    }
+    stopForIncompatible(
+      isGraphwarAgentIncompatibleError(error)
+        ? error
+        : new GraphwarAgentClientError("incompatible", error.message, error.status, error, error.code),
+      errorGeneration,
+    );
   }
 
   /** Guards every async continuation against stop/restart and incompatible shutdown. */

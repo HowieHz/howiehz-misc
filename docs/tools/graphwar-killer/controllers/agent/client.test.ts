@@ -274,6 +274,21 @@ describe("Graphwar Agent API v3 client", () => {
     ).rejects.toMatchObject({ kind: "invalid-request", status });
   });
 
+  it("preserves the authentication error code for an invalid Agent token", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        jsonResponse(
+          { error: { code: "authentication-required", message: "A valid bearer token is required" } },
+          { status: 401 },
+        ),
+      );
+
+    await expect(
+      createGraphwarAgentClient("http://127.0.0.1:17900", { fetch: fetchMock, token: "wrong" }).readState(),
+    ).rejects.toMatchObject({ code: "authentication-required", kind: "invalid-request", status: 401 });
+  });
+
   it("parses saved state and rejects mismatched obstacle sizes", () => {
     const state = createParsedState("y");
     const source = new Uint8Array(770 * 450);

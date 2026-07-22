@@ -118,6 +118,8 @@ const graphwarAgentSourceUrl = `https://github.com/HowieHz/howiehz-misc/commit/$
 java -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
+该命令会同时启动 Graphwar Agent 和游戏。回到页面后开启“使用 Agent”，即可读取状态或开启托管模式。
+
 Windows Steam 版的 Graphwar 可以直接使用游戏自带的 Java：
 
 ```shell
@@ -142,4 +144,4 @@ java -javaagent:graphwar-agent.jar=token=auto,maxRequestBodyBytes=1048576 -jar g
 
 :::
 
-该命令会同时启动 Graphwar Agent 和游戏。回到工具后开启“使用 Agent”，即可读取状态或开启托管模式。更多信息请查看 [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent)。
+更多信息请查看 [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent)。

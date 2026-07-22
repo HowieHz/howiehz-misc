@@ -118,6 +118,8 @@ Then run:
 java -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
+This starts Graphwar Agent and the game. Return to the page and turn on Use Agent to read state or enable Managed Mode.
+
 The Windows Steam version of Graphwar can use its bundled Java directly:
 
 ```shell
@@ -142,4 +144,4 @@ java -javaagent:graphwar-agent.jar=token=auto,maxRequestBodyBytes=1048576 -jar g
 
 :::
 
-This starts Graphwar Agent and the game. Return to the tool and turn on Use Agent to read state or enable Managed Mode. For more information, see [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent).
+For more information, see [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent).

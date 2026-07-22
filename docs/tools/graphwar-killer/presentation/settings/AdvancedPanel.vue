@@ -576,13 +576,15 @@ const liveClickPreviewWorkerCountText = computed({
 .graphwar-killer__managed-settings-grid {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 320px));
+  justify-content: start;
 }
 
 .graphwar-killer__obstacle-expansion-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 320px));
+  justify-content: start;
   min-width: 0;
 }
 

@@ -232,7 +232,7 @@ public final class GraphwarAgentApiTest {
         GameData gameData = new GameData();
         gameScreenClass
                 .getMethod("fire", GameData.class, String.class)
-                .invoke(gameScreen, gameData, repeatedTerms("x", "+", 1_537));
+                .invoke(gameScreen, gameData, overDefaultTokenFunction("+"));
         assertEquals(0, gameData.getShotCalls().size(), "guarded UI complex function calls");
         gameScreenClass
                 .getMethod("fire", GameData.class, String.class)
@@ -285,7 +285,7 @@ public final class GraphwarAgentApiTest {
                         computerPlayer,
                         computerGameData,
                         Double.valueOf(0.25),
-                        repeatedTerms("x", "+", 1_537));
+                        overDefaultTokenFunction("+"));
         assertEquals(
                 Collections.singletonList("angle:0.25"),
                 computerGameData.getShotCalls(),
@@ -315,7 +315,7 @@ public final class GraphwarAgentApiTest {
                 .getMethod("handleIncomingFunction", String[].class)
                 .invoke(
                         ignoredDrawingGameData,
-                        new Object[] {new String[] {"24", "7", repeatedTerms("x", "%2B", 1_537)}});
+                        new Object[] {new String[] {"24", "7", overDefaultTokenFunction("%2B")}});
         assertEquals(
                 Boolean.FALSE,
                 gameDataClass.getMethod("isDisconnected").invoke(ignoredDrawingGameData),
@@ -327,7 +327,7 @@ public final class GraphwarAgentApiTest {
                 .getMethod("handleIncomingFunction", String[].class)
                 .invoke(
                         ignoredOutOfTurnGameData,
-                        new Object[] {new String[] {"24", "9", repeatedTerms("x", "%2B", 1_537)}});
+                        new Object[] {new String[] {"24", "9", overDefaultTokenFunction("%2B")}});
         assertEquals(
                 Boolean.FALSE,
                 gameDataClass.getMethod("isDisconnected").invoke(ignoredOutOfTurnGameData),
@@ -339,7 +339,7 @@ public final class GraphwarAgentApiTest {
                 .getMethod("handleIncomingFunction", String[].class)
                 .invoke(
                         inboundGameData,
-                        new Object[] {new String[] {"24", "7", repeatedTerms("x", "%2B", 1_537)}});
+                        new Object[] {new String[] {"24", "7", overDefaultTokenFunction("%2B")}});
         assertEquals(
                 Boolean.TRUE,
                 gameDataClass.getMethod("isDisconnected").invoke(inboundGameData),
@@ -524,7 +524,7 @@ public final class GraphwarAgentApiTest {
         assertContains(health, "\"isAuthenticationRequired\":false", "health auth flag");
         assertContains(health, "\"maxRequestHeaderBytes\":8192", "health header limit");
         assertContains(health, "\"maxFunctionBytes\":65536", "health function byte limit");
-        assertContains(health, "\"maxFunctionTokens\":3072", "health function token limit");
+        assertContains(health, "\"maxFunctionTokens\":4432", "health function token limit");
 
         assertContains(
                 request(port, "GET", "/room", null, null).bodyText(),
@@ -616,7 +616,7 @@ public final class GraphwarAgentApiTest {
                                 gameInstanceId,
                                 turnToken,
                                 revision,
-                                repeatedTerms("x", "+", 1_537),
+                                overDefaultTokenFunction("+"),
                                 null),
                         "application/json");
         assertEquals(201, complexFunction.status, "complex function command creation");
@@ -838,10 +838,13 @@ public final class GraphwarAgentApiTest {
         stateReader.setShotCommands(commands);
         GraphwarHttpServer server = GraphwarHttpServer.start(config, stateReader, commands);
         try {
-            String exactTokenFunction = repeatedTerms("sin", "", 3_071) + "x";
+            String exactTokenFunction =
+                    repeatedTerms("sin", "", GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS - 1)
+                            + "x";
             assertEquals(
-                    3_072,
-                    GraphwarFunctionLimits.countTokens(exactTokenFunction, 3_072),
+                    GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS,
+                    GraphwarFunctionLimits.countTokens(
+                            exactTokenFunction, GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS),
                     "exact HTTP token boundary fixture");
             String state = request(server.getPort(), "GET", "/state", null, null).bodyText();
             String exactTokenRequestId = uuidFor(400);
@@ -1133,7 +1136,7 @@ public final class GraphwarAgentApiTest {
                 GraphwarAgentConfig.parse(
                         "maxRequestHeaderBytes=1048576,maxRequestBodyBytes=16777216,"
                                 + "maxFunctionBytes=1048576,"
-                                + "maxFunctionTokens=4432");
+                                + "maxFunctionTokens=40960");
         assertEquals(1_048_576, raised.maxRequestHeaderBytes, "raised header limit");
         assertEquals(
                 8_192,
@@ -1155,14 +1158,14 @@ public final class GraphwarAgentApiTest {
                 GraphwarAgentConfig.parse("maxRequestBodyBytes=16777216,maxFunctionBytes=1048577")
                         .maxFunctionBytes,
                 "oversized function byte limit");
-        assertEquals(4_432, raised.maxFunctionTokens, "maximum token limit");
+        assertEquals(40_960, raised.maxFunctionTokens, "maximum token limit");
         assertEquals(
                 2_048,
                 GraphwarAgentConfig.parse("maxFunctionTokens=2048").maxFunctionTokens,
                 "lower token limit");
         assertEquals(
-                3_072,
-                GraphwarAgentConfig.parse("maxFunctionTokens=4433").maxFunctionTokens,
+                4_432,
+                GraphwarAgentConfig.parse("maxFunctionTokens=40961").maxFunctionTokens,
                 "oversized token limit");
         boolean hasRejectedInvalidToken = false;
         try {
@@ -1180,6 +1183,12 @@ public final class GraphwarAgentApiTest {
             value.append(character);
         }
         return value.toString();
+    }
+
+    /** Builds one binary plus chain exactly one effective token above the active default. */
+    private static String overDefaultTokenFunction(String separator) {
+        return repeatedTerms(
+                "x", separator, GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS / 2 + 1);
     }
 
     /** Verifies Graphwar-compatible tokens, aliases, replacements, and implicit products. */
@@ -1218,13 +1227,51 @@ public final class GraphwarAgentApiTest {
         assertEquals(
                 1, GraphwarFunctionLimits.countTokens(" \t?x\n", 100), "ignored whitespace tokens");
         assertEquals(
-                3_072,
-                GraphwarFunctionLimits.countTokens(repeatedTerms("sin", "", 3_071) + "x", 3_072),
-                "exact token limit");
+                GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS,
+                GraphwarFunctionLimits.countTokens(
+                        repeatedTerms(
+                                        "sin",
+                                        "",
+                                        GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS - 1)
+                                + "x",
+                        GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS),
+                "exact default token limit");
         assertEquals(
-                3_073,
-                GraphwarFunctionLimits.countTokens(repeatedTerms("sin", "", 3_072) + "x", 3_072),
-                "early token cutoff");
+                GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS + 1,
+                GraphwarFunctionLimits.countTokens(
+                        overDefaultTokenFunction("+"),
+                        GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS),
+                "default token limit cutoff");
+        String configuredCeilingFunction =
+                repeatedTerms("sin", "", GraphwarAgentConfig.MAX_CONFIGURED_FUNCTION_TOKENS - 1)
+                        + "x";
+        String overConfiguredCeilingFunction =
+                repeatedTerms("sin", "", GraphwarAgentConfig.MAX_CONFIGURED_FUNCTION_TOKENS) + "x";
+        GraphwarFunctionLimits configuredCeilingLimits =
+                new GraphwarFunctionLimits(
+                        Integer.MAX_VALUE, GraphwarAgentConfig.MAX_CONFIGURED_FUNCTION_TOKENS);
+        assertEquals(
+                GraphwarAgentConfig.MAX_CONFIGURED_FUNCTION_TOKENS,
+                GraphwarFunctionLimits.countTokens(
+                        configuredCeilingFunction,
+                        GraphwarAgentConfig.MAX_CONFIGURED_FUNCTION_TOKENS),
+                "exact configured token ceiling");
+        assertEquals(
+                GraphwarAgentConfig.MAX_CONFIGURED_FUNCTION_TOKENS + 1,
+                GraphwarFunctionLimits.countTokens(
+                        overConfiguredCeilingFunction,
+                        GraphwarAgentConfig.MAX_CONFIGURED_FUNCTION_TOKENS),
+                "configured token ceiling cutoff");
+        configuredCeilingLimits.validate(configuredCeilingFunction);
+        try {
+            configuredCeilingLimits.validate(overConfiguredCeilingFunction);
+            throw new AssertionError("Configured token ceiling accepted one extra token");
+        } catch (GraphwarInvalidFunctionException expected) {
+            assertEquals(
+                    "Graphwar function exceeds the token limit",
+                    expected.getMessage(),
+                    "configured token ceiling rejection");
+        }
 
         new GraphwarFunctionLimits(3, 100).validate("界");
         new GraphwarFunctionLimits(4, 100).validate("😀");
@@ -1240,7 +1287,10 @@ public final class GraphwarAgentApiTest {
 
         String unicodeBypass = repeatedTerms("Pİ", "", 21_845) + "X";
         try {
-            new GraphwarFunctionLimits(65_536, 3_072).validate(unicodeBypass);
+            new GraphwarFunctionLimits(
+                            GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_BYTES,
+                            GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS)
+                    .validate(unicodeBypass);
             throw new AssertionError("Unicode lowercase expansion bypassed the token limit");
         } catch (GraphwarInvalidFunctionException expected) {
             assertEquals(
@@ -1250,7 +1300,15 @@ public final class GraphwarAgentApiTest {
         }
 
         try {
-            new GraphwarFunctionLimits(65_536, 3_072).validate(repeatedTerms("+", "", 3_071) + "x");
+            new GraphwarFunctionLimits(
+                            GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_BYTES,
+                            GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS)
+                    .validate(
+                            repeatedTerms(
+                                            "+",
+                                            "",
+                                            GraphwarAgentConfig.DEFAULT_MAX_FUNCTION_TOKENS / 2)
+                                    + "x");
             throw new AssertionError("Unary plus nodes bypassed the token limit");
         } catch (GraphwarInvalidFunctionException expected) {
             assertEquals(

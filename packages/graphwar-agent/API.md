@@ -130,7 +130,7 @@ A `405` response MUST include `Allow`. Successfully parsed API errors MUST use t
     "maxRequestHeaderBytes": 8192,
     "maxRequestBodyBytes": 65536,
     "maxFunctionBytes": 65536,
-    "maxFunctionTokens": 3072
+    "maxFunctionTokens": 4432
   },
   "agent": {
     "version": "2.0.0",
@@ -152,7 +152,7 @@ The reference implementation applies these limits before invoking the official p
 | `maxRequestHeaderBytes` |          `8192` |   `8192`–`1048576` | Maximum request-header bytes, including the terminating empty line       |
 | `maxRequestBodyBytes`   |         `65536` |  `1024`–`16777216` | Maximum JSON data accepted in one API request; checked before allocation |
 | `maxFunctionBytes`      |         `65536` |      `1`–`1048576` | UTF-8 bytes after JSON decoding; capped to the effective body limit      |
-| `maxFunctionTokens`     |          `3072` |         `1`–`4432` | Effective evaluation tokens, including inserted implicit multiplication  |
+| `maxFunctionTokens`     |          `4432` |        `1`–`40960` | Effective evaluation tokens, including inserted implicit multiplication  |
 | Stored shot commands    |    `50` records |              fixed | Old safe records are removed when space is needed                        |
 | Shot worker stack hint  | `2097152` bytes |              fixed | A JVM/platform hint, not a guaranteed exact stack size                   |
 | Graphwar HTTP slots     |             `6` |              fixed | Leaves two of eight workers available for health and command reads       |
@@ -160,16 +160,15 @@ The reference implementation applies these limits before invoking the official p
 The configurable startup names are the names returned by `/health.limits`. Invalid or out-of-range numeric options are ignored by the reference implementation. The effective `maxFunctionBytes` MUST NOT exceed `maxRequestBodyBytes`.
 
 Graphwar itself defines no formula-length limit, and its original parser recursively rebuilds expression trees.
-The 3072-token default rounds down 70% of the first unstable cold mixed-shape result: 4448 effective tokens on a
-1 MiB JDK 21 thread. Testing each shape alone produced a misleadingly higher limit because JIT profiling changed
-recursive frame usage. The opt-in 4432-token maximum was the highest tested candidate below that unstable result
-to pass in all three fresh JVMs. A bracket-heavy 1048575-byte formula with one effective token and an exact
-1048576-byte/4432-token combined formula also parsed successfully in the same probe. The combined opt-in maxima
-can make background validation take several seconds. The POST still returns the current pending command
-immediately with `Retry-After`; the worker continues independently. These opt-in maxima have less safety margin
-than the defaults, and the JDK 21 measurements do not guarantee identical JRE 8 stack behavior. These are
-engineering limits, not natural Graphwar protocol maxima. The source under `tmp/graphwar` is design evidence only
-and MUST NOT become a runtime, build, or conformance-test dependency.
+The 4432-token default passed all three fresh mixed-shape runs and ten repeated verification runs on a 1 MiB JDK 21
+thread. Nearby higher candidates varied between fresh JVM runs because JIT profiling changes recursive frame usage,
+so no higher parser-safe boundary is claimed. A bracket-heavy 1048575-byte formula with one effective token and an
+exact 1048576-byte/4432-token combined formula also parsed successfully in the same probe. The configurable
+40960-token ceiling is only an iterative input-scan bound, not a parser-safety claim: values above 4432 may exhaust
+the original parser's stack or occupy its processing thread for a long time. The POST still returns the current
+pending command immediately with `Retry-After`; the worker continues independently. These are engineering limits,
+not natural Graphwar protocol maxima. The source under `tmp/graphwar` is design evidence only and MUST NOT become a
+runtime, build, or conformance-test dependency.
 
 Replicas MUST reject inputs outside the advertised effective limits before invoking recursive official code. Token counting MUST be iterative or otherwise independently bounded. Neither formula limit can be configured above its opt-in maximum; no unlimited mode exists.
 

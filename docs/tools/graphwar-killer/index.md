@@ -145,9 +145,11 @@ java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxReq
 | `maxRequestHeaderBytes` | 限制 HTTP 请求头大小                  | `8192`                                                  | `8192`–`1048576`                              |
 | `maxRequestBodyBytes`   | 限制单次 API 提交的 JSON 数据大小     | `65536`                                                 | `1024`–`16777216`                             |
 | `maxFunctionBytes`      | 限制单次提交的函数大小（按 UTF-8 计） | `65536`                                                 | `1`–`1048576`，且不会超过实际请求体上限       |
-| `maxFunctionTokens`     | 限制 Graphwar 实际求值 token 数       | `3072`                                                  | `1`–`4432`                                    |
+| `maxFunctionTokens`     | 限制 Graphwar 实际求值 token 数       | `4432`                                                  | `1`–`40960`                                   |
 
-默认值保留了较保守的栈和延迟余量。同时把两个公式限制提高到可选最大值时，后台校验可能持续数秒。发射 POST 仍会立即返回；客户端必须先按 pending 响应的 `Retry-After` 等待，再轮询其 `Location`，直至命令结束。
+4432 token 默认值通过了原版 parser 的 1 MiB 栈探针全部重复测试。邻近的更高候选值在全新 JVM 间结果不一致，因此高于 4432
+的值属于 parser 不安全的显式配置：深递归公式可能耗尽 Graphwar 线程栈，大公式也可能长期占用处理线程。发射 POST
+仍会立即返回；客户端必须先按 pending 响应的 `Retry-After` 等待，再轮询其 `Location`，直至命令结束。
 
 :::
 

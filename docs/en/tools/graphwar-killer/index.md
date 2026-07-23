@@ -145,9 +145,13 @@ java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxReq
 | `maxRequestHeaderBytes` | Limit HTTP request-header size               | `8192`                                                     | `8192`–`1048576`                                            |
 | `maxRequestBodyBytes`   | Limit the JSON data accepted per API request | `65536`                                                    | `1024`–`16777216`                                           |
 | `maxFunctionBytes`      | Limit submitted function size in UTF-8 bytes | `65536`                                                    | `1`–`1048576`, capped to the effective request-body limit   |
-| `maxFunctionTokens`     | Limit effective Graphwar evaluation tokens   | `3072`                                                     | `1`–`4432`                                                  |
+| `maxFunctionTokens`     | Limit effective Graphwar evaluation tokens   | `4432`                                                     | `1`–`40960`                                                 |
 
-The defaults retain conservative stack and latency headroom. Raising both formula limits to their opt-in maxima can make background validation take several seconds. Shot POSTs still return immediately; clients must wait for a pending response's `Retry-After` interval, then poll its `Location` until the command finishes.
+The 4432-token default passed all repeated runs in the reference 1 MiB-stack probe. Nearby higher candidates varied
+between fresh JVM runs, so values above 4432 are parser-unsafe opt-ins: deeply recursive formulas can exhaust
+Graphwar's thread stack, and large formulas can occupy its processing thread for a long time. Shot POSTs still
+return immediately; clients must wait for a pending response's `Retry-After` interval, then poll its `Location`
+until the command finishes.
 
 :::
 

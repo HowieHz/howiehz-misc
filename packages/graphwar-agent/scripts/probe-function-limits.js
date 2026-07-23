@@ -55,7 +55,7 @@ runCommand(
 );
 
 const mixedCandidates = [4_608, 4_480, 4_464, 4_448, 4_432, 4_352, 4_096];
-const totalRuns = mixedCandidates.length * FRESH_JVM_RUNS + 10 + 2 + 2 + 2;
+const totalRuns = mixedCandidates.length * FRESH_JVM_RUNS + 10 + 1 + 1 + 1 + 2;
 let completedRuns = 0;
 const mixedResults = [];
 
@@ -92,16 +92,15 @@ for (const tokens of mixedCandidates) {
   stdout.write(`tokens=${tokens} mixedPasses=${passes}/${FRESH_JVM_RUNS}\n`);
 }
 
-const firstUnstable = [...mixedResults]
-  .sort((left, right) => left.tokens - right.tokens)
-  .find((result) => result.passes < FRESH_JVM_RUNS);
-if (!firstUnstable) {
-  throw new Error("No unstable mixed-shape candidate was observed; extend the probe range");
+const defaultCandidate = mixedResults.find((result) => result.tokens === DEFAULT_MAX_FUNCTION_TOKENS);
+if (!defaultCandidate || defaultCandidate.passes !== FRESH_JVM_RUNS) {
+  throw new Error("The configured default token limit did not pass every fresh-JVM candidate probe");
 }
-const selectedTokens = Math.floor((firstUnstable.tokens * 0.7) / 1_024) * 1_024;
-const configuredMaximumResult = mixedResults.find((result) => result.tokens === MAX_CONFIGURED_FUNCTION_TOKENS);
-if (!configuredMaximumResult || configuredMaximumResult.passes !== FRESH_JVM_RUNS) {
-  throw new Error("The configured maximum token limit did not pass every fresh-JVM mixed-shape probe");
+const lowestObservedUnstable = [...mixedResults]
+  .filter((result) => result.tokens > DEFAULT_MAX_FUNCTION_TOKENS && result.passes < FRESH_JVM_RUNS)
+  .sort((left, right) => left.tokens - right.tokens)[0];
+if (!lowestObservedUnstable) {
+  throw new Error("No unstable candidate above the default was observed; extend the probe range");
 }
 
 let defaultPasses = 0;
@@ -121,19 +120,23 @@ stdout.write(
   `default-verification tokens=${DEFAULT_MAX_FUNCTION_TOKENS} mixedPasses=${defaultPasses}/10 repetitionsPerShape=${MIXED_REPETITIONS} stack=1048576\n`,
 );
 stdout.write(
-  `selectedDefaultTokens=${selectedTokens} rationale="70% of the first unstable ${firstUnstable.tokens}-token cold mixed-shape result, rounded down"\n`,
+  `default-candidate tokens=${defaultCandidate.tokens} freshJvmPasses=${defaultCandidate.passes}/${FRESH_JVM_RUNS} lowestObservedUnstableTokens=${lowestObservedUnstable.tokens}\n`,
 );
-stdout.write(
-  `verifiedConfiguredMaximumTokens=${MAX_CONFIGURED_FUNCTION_TOKENS} mixedPasses=${configuredMaximumResult.passes}/${FRESH_JVM_RUNS}\n`,
-);
-if (defaultPasses !== 10 || DEFAULT_MAX_FUNCTION_TOKENS > selectedTokens) {
-  throw new Error("The configured default token limit did not retain the measured safety margin");
+stdout.write(`configuredFunctionTokenCeiling=${MAX_CONFIGURED_FUNCTION_TOKENS} safety="not parser-verified"\n`);
+if (defaultPasses !== 10) {
+  throw new Error("The configured default token limit did not pass repeated verification");
 }
 
-for (const [label, tokens] of [
-  ["default", DEFAULT_MAX_FUNCTION_TOKENS],
-  ["configured maximum", MAX_CONFIGURED_FUNCTION_TOKENS],
-]) {
+const configuredCeilingProbe = runProbe(["mixed", String(MAX_CONFIGURED_FUNCTION_TOKENS), "1"]);
+if (configuredCeilingProbe.status !== 0 && configuredCeilingProbe.status !== 1) {
+  throwProbeError("configured token ceiling", configuredCeilingProbe);
+}
+reportProgress("configured token ceiling risk probe", totalRuns);
+stdout.write(
+  `configured-ceiling tokens=${MAX_CONFIGURED_FUNCTION_TOKENS} result=${configuredCeilingProbe.status === 0 ? "pass" : "overflow"}\n`,
+);
+
+for (const [label, tokens] of [["default", DEFAULT_MAX_FUNCTION_TOKENS]]) {
   const performance = runProbe(["performance", String(tokens)]);
   if (performance.status !== 0) {
     throwProbeError(`${label} performance`, performance);
@@ -145,10 +148,7 @@ for (const [label, tokens] of [
   }
 }
 
-for (const [label, bytes, tokens] of [
-  ["default", DEFAULT_MAX_FUNCTION_BYTES, DEFAULT_MAX_FUNCTION_TOKENS],
-  ["configured maximum", MAX_CONFIGURED_FUNCTION_BYTES, MAX_CONFIGURED_FUNCTION_TOKENS],
-]) {
+for (const [label, bytes, tokens] of [["default", DEFAULT_MAX_FUNCTION_BYTES, DEFAULT_MAX_FUNCTION_TOKENS]]) {
   const combinedBoundary = runProbe(["combined", String(bytes), String(tokens)]);
   if (combinedBoundary.status !== 0) {
     throwProbeError(`${label} combined byte/token boundary`, combinedBoundary);
@@ -175,7 +175,7 @@ for (const bytes of [DEFAULT_MAX_FUNCTION_BYTES - 1, MAX_CONFIGURED_FUNCTION_BYT
   }
 }
 stdout.write(
-  `defaultFunctionBytes=${DEFAULT_MAX_FUNCTION_BYTES} verifiedConfiguredMaximumFunctionBytes=${MAX_CONFIGURED_FUNCTION_BYTES}\n`,
+  `defaultFunctionBytes=${DEFAULT_MAX_FUNCTION_BYTES} configuredFunctionBytesCeiling=${MAX_CONFIGURED_FUNCTION_BYTES}\n`,
 );
 
 /** Runs one fresh 1 MiB-stack JVM against the unmodified original parser classes. */

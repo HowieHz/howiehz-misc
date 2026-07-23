@@ -7,21 +7,19 @@ import java.util.Base64;
 
 /** Parses and owns bounded Graphwar Agent startup configuration. */
 final class GraphwarAgentConfig {
-    // Keep the measured conservative limits as defaults; explicit configuration may opt into the
-    // larger probe-observed boundaries below.
+    // Keep input volume bounded independently from parser and evaluation complexity.
     static final int DEFAULT_MAX_FUNCTION_BYTES = 65_536;
-    // Cold mixed-shape probes became unstable at 4,448 tokens on a 1 MiB JDK 21 thread. Rounding
-    // 70% down to 3,072 leaves stack/JVM headroom and also bounds 20,000-step evaluation work.
-    static final int DEFAULT_MAX_FUNCTION_TOKENS = 3_072;
+    // Cold mixed-shape probes repeatedly pass at 4,432 tokens on a 1 MiB JDK 21 thread. Nearby
+    // higher candidates vary across fresh JVM runs, so they are not treated as parser-safe.
+    static final int DEFAULT_MAX_FUNCTION_TOKENS = 4_432;
     static final int DEFAULT_MAX_REQUEST_BODY_BYTES = 65_536;
     static final int DEFAULT_MAX_REQUEST_HEADER_BYTES = 8_192;
     static final int DEFAULT_PORT = 17_900;
     static final int DEFAULT_PORT_SEARCH_LIMIT = 100;
-    // The original parser completed the 1 MiB bracket-heavy probe, while its 1 MiB-stack mixed
-    // probe was stable through 4,432 tokens and first became unstable at 4,448. These opt-in
-    // boundaries deliberately retain less headroom than the defaults.
+    // The byte ceiling passed the bracket-heavy parser probe. The token ceiling only bounds the
+    // iterative pre-scan; values above the measured default are explicit, parser-unsafe opt-ins.
     private static final int MAX_CONFIGURED_FUNCTION_BYTES = 1_048_576;
-    private static final int MAX_CONFIGURED_FUNCTION_TOKENS = 4_432;
+    static final int MAX_CONFIGURED_FUNCTION_TOKENS = 40_960;
     private static final int MAX_CONFIGURED_REQUEST_BODY_BYTES = 16_777_216;
     private static final int MAX_CONFIGURED_REQUEST_HEADER_BYTES = 1_048_576;
     private static final int MAX_TOKEN_CHARACTERS = 4_096;

@@ -531,9 +531,12 @@ components:
         maxFunctionTokens:
           type: integer
           minimum: 1
-          maximum: 4432
-          default: 3072
-          description: Maximum effective Graphwar evaluation tokens after implicit multiplication.
+          maximum: 40960
+          default: 4432
+          description: >-
+            Maximum effective Graphwar evaluation tokens after implicit multiplication. Values
+            above 4432 exceed the reference parser's repeatedly verified 1 MiB-stack default and
+            are not parser-safe.
     HealthResponse:
       type: object
       additionalProperties: false

@@ -64,11 +64,12 @@ describe("Chinese Graphwar Killer locale", () => {
     );
   });
 
-  it("separates the approximate launch angle hint from its full-precision title", () => {
-    expect(graphwarKillerLocale.status.secondOrderAngleHint("0.00", "0")).toBe(
-      "需要用键盘上下键把发射角调到约 0.00°（0°）",
+  it("marks only rounded launch angle hints as approximate", () => {
+    expect(graphwarKillerLocale.status.secondOrderAngleHint("0.00")).toBe("需要用键盘上下键把发射角调到 0.00°");
+    expect(graphwarKillerLocale.status.secondOrderAngleHint("0.00", "1e-27")).toBe(
+      "需要用键盘上下键把发射角调到约 0.00°（1e-27°）",
     );
-    expect(graphwarKillerLocale.status.secondOrderAngleHint("12.34")).toBe("需要用键盘上下键把发射角调到约 12.34°");
+    expect(graphwarKillerLocale.status.secondOrderAngleHint("12.34")).toBe("需要用键盘上下键把发射角调到 12.34°");
     expect(graphwarKillerLocale.status.secondOrderAngleHintTitle(fullPrecisionAngleText)).toBe(
       `需要用键盘上下键把发射角调到 ${fullPrecisionAngleText}°`,
     );
@@ -148,12 +149,15 @@ describe("English Graphwar Killer locale", () => {
     expect(englishGraphwarKillerLocale.ui.result.turnTimeRemaining("58.0")).toBe("58.0s left");
   });
 
-  it("separates the approximate launch angle hint from its full-precision title", () => {
-    expect(englishGraphwarKillerLocale.status.secondOrderAngleHint("0.00", "0")).toBe(
-      "Use the Up/Down keys to set the launch angle to approximately 0.00 deg (0 deg).",
+  it("marks only rounded launch angle hints as approximate", () => {
+    expect(englishGraphwarKillerLocale.status.secondOrderAngleHint("0.00")).toBe(
+      "Use the Up/Down keys to set the launch angle to 0.00 deg.",
+    );
+    expect(englishGraphwarKillerLocale.status.secondOrderAngleHint("0.00", "1e-27")).toBe(
+      "Use the Up/Down keys to set the launch angle to approximately 0.00 deg (1e-27 deg).",
     );
     expect(englishGraphwarKillerLocale.status.secondOrderAngleHint("12.34")).toBe(
-      "Use the Up/Down keys to set the launch angle to approximately 12.34 deg.",
+      "Use the Up/Down keys to set the launch angle to 12.34 deg.",
     );
     expect(englishGraphwarKillerLocale.status.secondOrderAngleHintTitle(fullPrecisionAngleText)).toBe(
       `Use the Up/Down keys to set the launch angle to ${fullPrecisionAngleText} deg.`,

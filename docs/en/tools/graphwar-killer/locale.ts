@@ -298,7 +298,9 @@ export const graphwarKillerLocale = {
     },
     pathPointCoordinateNumber: "Point coordinates must be numbers",
     secondOrderAngleHint: (roundedAngle, exactAngle = undefined) =>
-      `Use the Up/Down keys to set the launch angle to approximately ${roundedAngle} deg${exactAngle === undefined ? "." : ` (${exactAngle} deg).`}`,
+      exactAngle === undefined
+        ? `Use the Up/Down keys to set the launch angle to ${roundedAngle} deg.`
+        : `Use the Up/Down keys to set the launch angle to approximately ${roundedAngle} deg (${exactAngle} deg).`,
     secondOrderAngleHintTitle: (angle) => `Use the Up/Down keys to set the launch angle to ${angle} deg.`,
     trajectoryWarning: {
       obstacle: "The current function trajectory hits an obstacle or boundary",

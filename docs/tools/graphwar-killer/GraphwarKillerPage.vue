@@ -1863,18 +1863,17 @@ const secondOrderLaunchAngleText = computed(() =>
     ? ""
     : formatDoublePrecisionDecimal(secondOrderLaunchAngleDegrees.value),
 );
-/** 正文贴近原版两位角度面板，必要时附短原值；title 始终保留展开后的完整值。 */
+/** 正文使用原版两位角度，仅在发生舍入时附短原值；title 保留展开后的完整值。 */
 const secondOrderAngleHint = computed(() => {
   const angleDegrees = secondOrderLaunchAngleDegrees.value;
   if (toolWorkflowMode.value !== "solver" || angleDegrees === undefined) {
     return undefined;
   }
   const roundedAngle = formatAngleDegree(angleDegrees);
-  const exactAngle = angleDegrees.toString();
   return {
     text: locale.status.secondOrderAngleHint(
       roundedAngle,
-      angleDegrees === 0 || Number(roundedAngle) !== angleDegrees ? exactAngle : undefined,
+      Number(roundedAngle) !== angleDegrees ? angleDegrees.toString() : undefined,
     ),
     title: locale.status.secondOrderAngleHintTitle(secondOrderLaunchAngleText.value),
   };

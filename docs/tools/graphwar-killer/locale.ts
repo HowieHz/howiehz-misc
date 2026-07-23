@@ -267,7 +267,9 @@ export const graphwarKillerLocale = {
     },
     pathPointCoordinateNumber: "点坐标需要填写数字",
     secondOrderAngleHint: (roundedAngle, exactAngle = undefined) =>
-      `需要用键盘上下键把发射角调到约 ${roundedAngle}°${exactAngle === undefined ? "" : `（${exactAngle}°）`}`,
+      exactAngle === undefined
+        ? `需要用键盘上下键把发射角调到 ${roundedAngle}°`
+        : `需要用键盘上下键把发射角调到约 ${roundedAngle}°（${exactAngle}°）`,
     secondOrderAngleHintTitle: (angle) => `需要用键盘上下键把发射角调到 ${angle}°`,
     trajectoryWarning: {
       obstacle: "当前公式轨迹会撞到障碍物或边界",

@@ -17,14 +17,19 @@ import {
   GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
   type GraphwarManagedController,
 } from "./controllers/managed/controller";
-import type {
-  GraphwarTrajectoryCalculationWorkerRequest,
-  GraphwarTrajectoryCalculationWorkerResponse,
-} from "./controllers/path/trajectory-calculation";
+import type { GraphwarTrajectoryCalculationWorkerRequest } from "./controllers/path/trajectory-calculation";
 import { createPixelPoint } from "./core/types";
 import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
 import GraphwarScreenshotPanel from "./presentation/screenshot/MainPanel.vue";
+
+interface ValidatedTrajectorySnapshot {
+  equationMode: "ddy" | "dy" | "y";
+  expression: string;
+  launchAngleRadians?: number;
+  sourceIdentity?: string;
+  trajectoryPoints: readonly { x: number; y: number }[];
+}
 
 describe("Graphwar Killer page settings", () => {
   it("coalesces incumbent control-point previews per frame and restores the formal path on clear", () => {
@@ -40,7 +45,6 @@ describe("Graphwar Killer page settings", () => {
         setupState: {
           clearIncumbentPreview: () => void;
           displayedPathPixels: readonly { x: number; y: number }[];
-          isIncumbentTrajectoryPending: boolean;
           pathPixels: { x: number; y: number }[];
           queueIncumbentPreview: (incumbent: {
             expression: string;
@@ -64,7 +68,6 @@ describe("Graphwar Killer page settings", () => {
 
     previewFrame?.(performance.now());
     expect(page.displayedPathPixels).toEqual(latestPreview);
-    expect(page.isIncumbentTrajectoryPending).toBe(true);
 
     page.clearIncumbentPreview();
     expect(page.displayedPathPixels).toEqual(formalPath);
@@ -72,13 +75,13 @@ describe("Graphwar Killer page settings", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps the previous trajectory until the latest incumbent trajectory is ready", async () => {
+  it("publishes the latest validated incumbent trajectory without sampling it again", async () => {
     const frameCallbacks = new Map<number, FrameRequestCallback>();
     const trajectoryWorkers: FakeTrajectoryWorker[] = [];
     let nextFrameId = 1;
     class FakeTrajectoryWorker {
       readonly requests: GraphwarTrajectoryCalculationWorkerRequest[] = [];
-      private messageListener?: (event: MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>) => void;
+      terminated = false;
 
       constructor(_url: URL, options: WorkerOptions) {
         if (options.name === "graphwar-main-trajectory") {
@@ -87,30 +90,16 @@ describe("Graphwar Killer page settings", () => {
       }
 
       addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
-        if (type === "message" && typeof listener === "function") {
-          this.messageListener = listener;
-        }
+        void type;
+        void listener;
       }
 
       postMessage(request: GraphwarTrajectoryCalculationWorkerRequest) {
         this.requests.push(request);
       }
 
-      respond(curvePoints: string, trajectoryPoints: readonly { x: number; y: number }[]) {
-        const request = this.requests.at(-1);
-        if (!request || !this.messageListener) {
-          throw new Error("Trajectory Worker has no pending request");
-        }
-        this.messageListener({
-          data: {
-            id: request.id,
-            outcome: { ok: true, result: { curvePoints, trajectoryPoints } },
-          },
-        } as MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>);
-      }
-
       terminate() {
-        this.messageListener = undefined;
+        this.terminated = true;
       }
     }
     vi.stubGlobal("Worker", FakeTrajectoryWorker);
@@ -133,50 +122,33 @@ describe("Graphwar Killer page settings", () => {
       wrapper.vm.$ as unknown as {
         setupState: {
           displayedPathPixels: readonly { x: number; y: number }[];
-          isIncumbentTrajectoryPending: boolean;
           pathPixels: { x: number; y: number }[];
           queueIncumbentPreview: (incumbent: {
             expression: string;
             pathPoints: { x: number; y: number }[];
             trajectoryPoints: { x: number; y: number }[];
           }) => void;
+          plottedTrajectory: { equationMode: "ddy" | "dy" | "y" } | undefined;
+          solverEquationMode: "ddy" | "dy" | "y";
           stageOverlay: { trajectory: { curvePoints: string } };
         };
       }
     ).setupState;
-    const oldPath = [createPixelPoint(100, 225), createPixelPoint(200, 200)];
+    const firstPath = [createPixelPoint(100, 225), createPixelPoint(200, 200)];
     const latestPath = [createPixelPoint(100, 225), createPixelPoint(300, 180)];
+    const latestTrajectory = [createPixelPoint(100, 225), createPixelPoint(210, 190), createPixelPoint(300, 180)];
     try {
-      page.pathPixels = oldPath;
-      await nextTick();
       flushFrames();
+      const requestCount = trajectoryWorkers.reduce((count, worker) => count + worker.requests.length, 0);
 
-      page.queueIncumbentPreview({ expression: "x", pathPoints: oldPath, trajectoryPoints: oldPath });
-      flushFrames();
-      trajectoryWorkers
-        .findLast((worker) => {
-          const input = worker.requests.at(-1)?.input;
-          return input?.type === "simulator" && input.expression === "x";
-        })
-        ?.respond("old trajectory", oldPath);
-      await flushPromises();
-      expect(page.stageOverlay.trajectory.curvePoints).toBe("old trajectory");
-
-      page.queueIncumbentPreview({ expression: "x+1", pathPoints: latestPath, trajectoryPoints: latestPath });
+      page.queueIncumbentPreview({ expression: "x", pathPoints: firstPath, trajectoryPoints: firstPath });
+      page.queueIncumbentPreview({ expression: "x+1", pathPoints: latestPath, trajectoryPoints: latestTrajectory });
+      page.solverEquationMode = "dy";
       flushFrames();
       expect(page.displayedPathPixels).toEqual(latestPath);
-      expect(page.isIncumbentTrajectoryPending).toBe(true);
-      expect(page.stageOverlay.trajectory.curvePoints).toBe("old trajectory");
-
-      trajectoryWorkers
-        .findLast((worker) => {
-          const input = worker.requests.at(-1)?.input;
-          return input?.type === "simulator" && input.expression === "x+1";
-        })
-        ?.respond("latest trajectory", latestPath);
-      await flushPromises();
-      expect(page.isIncumbentTrajectoryPending).toBe(false);
-      expect(page.stageOverlay.trajectory.curvePoints).toBe("latest trajectory");
+      expect(page.plottedTrajectory?.equationMode).toBe("y");
+      expect(page.stageOverlay.trajectory.curvePoints).toBe("100.00,225.00 210.00,190.00 300.00,180.00");
+      expect(trajectoryWorkers.reduce((count, worker) => count + worker.requests.length, 0)).toBe(requestCount);
     } finally {
       wrapper.unmount();
       vi.unstubAllGlobals();
@@ -190,12 +162,12 @@ describe("Graphwar Killer page settings", () => {
       "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010976980032456007";
     const page = (
       wrapper.vm.$ as unknown as {
-        setupState: { commitIncumbentResult: (expression: string, launchAngleRadians: number) => void };
+        setupState: { commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void };
       }
     ).setupState;
 
     await wrapper.findAll(".graphwar-killer__equation-toggle button")[2].trigger("click");
-    page.commitIncumbentResult("x", (angleDegrees * Math.PI) / 180);
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("x", (angleDegrees * Math.PI) / 180));
     await nextTick();
 
     const hint = wrapper.get(".graphwar-killer__second-order-angle-hint");
@@ -208,12 +180,12 @@ describe("Graphwar Killer page settings", () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const page = (
       wrapper.vm.$ as unknown as {
-        setupState: { commitIncumbentResult: (expression: string) => void };
+        setupState: { commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void };
       }
     ).setupState;
     const toggle = wrapper.get("#graphwar-killer-fraction-output");
 
-    page.commitIncumbentResult("0.5*x");
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("0.5*x"));
     await nextTick();
     expect(wrapper.get(".graphwar-killer__formula").text()).toBe("0.5*x");
     expect(toggle.attributes("aria-checked")).toBe("false");
@@ -238,14 +210,14 @@ describe("Graphwar Killer page settings", () => {
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
-          commitIncumbentResult: (expression: string) => void;
+          commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void;
         };
       }
     ).setupState;
     const smallestSubnormal = `0.${"0".repeat(323)}49406564584124654`;
     const toggle = wrapper.get("#graphwar-killer-fraction-output");
 
-    page.commitIncumbentResult(`0.5+${smallestSubnormal}`);
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot(`0.5+${smallestSubnormal}`));
     await nextTick();
     expect(wrapper.find("#graphwar-killer-fraction-output-reason").exists()).toBe(false);
 
@@ -255,14 +227,14 @@ describe("Graphwar Killer page settings", () => {
     );
     expect(toggle.attributes("aria-describedby")).toBe("graphwar-killer-fraction-output-reason");
 
-    page.commitIncumbentResult("0.5*x");
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("0.5*x"));
     await nextTick();
     expect(wrapper.find("#graphwar-killer-fraction-output-reason").exists()).toBe(false);
 
-    page.commitIncumbentResult(smallestSubnormal);
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot(smallestSubnormal));
     await nextTick();
     expect(wrapper.find("#graphwar-killer-fraction-output-reason").exists()).toBe(true);
-    page.commitIncumbentResult("");
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot(""));
     await nextTick();
     expect(wrapper.find("#graphwar-killer-fraction-output-reason").exists()).toBe(false);
 
@@ -291,7 +263,7 @@ describe("Graphwar Killer page settings", () => {
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
-          commitIncumbentResult: (expression: string, launchAngleRadians?: number) => void;
+          commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void;
           isFractionOutputEnabled: boolean;
           isGraphwarAgentEnabled: boolean;
           graphwarAgentTokenText: string;
@@ -303,7 +275,7 @@ describe("Graphwar Killer page settings", () => {
     page.isGraphwarAgentEnabled = true;
     page.graphwarAgentTokenText = "session-token";
     page.solverEquationMode = "ddy";
-    page.commitIncumbentResult("88.008750871454684", 0.25);
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("88.008750871454684", 0.25));
     page.isFractionOutputEnabled = true;
     await nextTick();
     const displayedFormula = wrapper.get(".graphwar-killer__formula").text();
@@ -314,7 +286,7 @@ describe("Graphwar Killer page settings", () => {
     expect(writeText).toHaveBeenCalledWith(displayedFormula);
 
     await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
-    page.commitIncumbentResult("0.25*x", 0.5);
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("0.25*x", 0.5));
     page.isFractionOutputEnabled = false;
     page.solverEquationMode = "y";
     await nextTick();
@@ -552,7 +524,7 @@ describe("Graphwar Killer page settings", () => {
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
-          commitIncumbentResult: (expression: string) => void;
+          commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void;
           graphwarAgentPendingFunctionDraw: unknown;
           isGraphwarAgentEnabled: boolean;
           readGraphwarAgent: () => Promise<void>;
@@ -561,7 +533,7 @@ describe("Graphwar Killer page settings", () => {
     ).setupState;
 
     page.isGraphwarAgentEnabled = true;
-    page.commitIncumbentResult("x");
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("x"));
     await nextTick();
     await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
     await flushPromises();
@@ -749,7 +721,7 @@ describe("Graphwar Killer page settings", () => {
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
-          commitIncumbentResult: (expression: string) => void;
+          commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void;
           isGraphwarAgentEnabled: boolean;
           setGraphwarAgentTokenText: (value: string) => void;
         };
@@ -757,7 +729,7 @@ describe("Graphwar Killer page settings", () => {
     ).setupState;
 
     page.isGraphwarAgentEnabled = true;
-    page.commitIncumbentResult("x");
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("x"));
     await nextTick();
     await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
     await flushPromises();
@@ -796,14 +768,14 @@ describe("Graphwar Killer page settings", () => {
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
-          commitIncumbentResult: (expression: string) => void;
+          commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void;
           isGraphwarAgentEnabled: boolean;
         };
       }
     ).setupState;
 
     page.isGraphwarAgentEnabled = true;
-    page.commitIncumbentResult("x");
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("x"));
     await nextTick();
     await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
     await flushPromises();
@@ -1103,7 +1075,7 @@ describe("Graphwar Killer page settings", () => {
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
-          commitIncumbentResult: (expression: string) => void;
+          commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void;
           createGraphwarManagedSceneKey: (
             state: GraphwarAgentAvailableState,
             shooter: {
@@ -1132,7 +1104,7 @@ describe("Graphwar Killer page settings", () => {
       client: createGraphwarAgentClient("http://127.0.0.1:17900", { fetch: normalFetch }),
     });
 
-    page.commitIncumbentResult("0.5*x");
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("0.5*x"));
     page.isFractionOutputEnabled = true;
     page.graphwarManagedIncumbent = {
       expression: "88.008750871454684",
@@ -1490,6 +1462,19 @@ describe("Graphwar Killer page settings", () => {
     wrapper.unmount();
   });
 });
+
+/** Creates a validated result snapshot for page tests that only need formula state. */
+function createValidatedTrajectorySnapshot(
+  expression: string,
+  launchAngleRadians?: number,
+): ValidatedTrajectorySnapshot {
+  return {
+    equationMode: launchAngleRadians === undefined ? "y" : "ddy",
+    expression,
+    ...(launchAngleRadians === undefined ? {} : { launchAngleRadians }),
+    trajectoryPoints: [],
+  };
+}
 
 /** Creates one active Agent state for page-level manual and managed shot tests. */
 function createAgentState(

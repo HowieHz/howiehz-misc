@@ -292,7 +292,42 @@ describe("main trajectory result lifecycle", () => {
     controller.dispose();
   });
 
-  it("atomically publishes only completed incumbent previews and restores or commits them without recalculating", async () => {
+  it("keeps the formal calculation running underneath a validated incumbent preview", async () => {
+    const frames = installFakeBrowserRuntime();
+    const state = createControllerState();
+    const controller = useGraphwarTrajectoryResult(state.options);
+
+    setSolverPath(state, -10, 1);
+    await nextTick();
+    frames.flush();
+    const requestCount = countWorkerRequests();
+    controller.publishIncumbentPreview({
+      equationMode: "dy",
+      expression: "incumbent",
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
+    });
+
+    expect(countWorkerRequests()).toBe(requestCount);
+    respondToActiveWorker({
+      ok: true,
+      result: {
+        curvePoints: "formal curve",
+        formulaResult: { expression: "formal formula", terms: [] },
+        trajectoryPoints: [createPixelPoint(5, 6), createPixelPoint(7, 8)],
+      },
+    });
+    await nextTick();
+    expect(controller.formulaResult.value?.expression).toBe("incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("1.00,2.00 3.00,4.00");
+
+    controller.clearIncumbentPreview();
+    expect(controller.formulaResult.value?.expression).toBe("formal formula");
+    expect(controller.plottedCurvePoints.value).toBe("formal curve");
+    controller.dispose();
+  });
+
+  it("publishes and commits validated incumbent snapshots without Worker requests", async () => {
     const frames = installFakeBrowserRuntime();
     const state = createControllerState();
     state.options.settings.equationMode.value = "ddy";
@@ -314,31 +349,31 @@ describe("main trajectory result lifecycle", () => {
     });
     await nextTick();
 
-    controller.publishIncumbentPreview("first incumbent");
-    controller.publishIncumbentPreview("latest incumbent", Math.PI / 4);
-    expect(FakeWorker.instances.find((worker) => worker.terminated && worker.requests.length > 0)).toBeDefined();
-    expect(controller.isIncumbentPreviewActive.value).toBe(false);
-    expect(controller.formulaResult.value?.expression).toBe("formal formula");
-    expect(controller.plottedCurvePoints.value).toBe("formal curve");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "preview curve", trajectoryPoints: [] } });
-    await nextTick();
+    const requestCount = countWorkerRequests();
+    controller.publishIncumbentPreview({
+      equationMode: "ddy",
+      expression: "first incumbent",
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
+    });
+    controller.publishIncumbentPreview({
+      equationMode: "ddy",
+      expression: "latest incumbent",
+      launchAngleRadians: Math.PI / 4,
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: [createPixelPoint(5, 6), createPixelPoint(7, 8)],
+    });
 
     expect(controller.isIncumbentPreviewActive.value).toBe(true);
     expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("preview curve");
+    expect(controller.plottedCurvePoints.value).toBe("5.00,6.00 7.00,8.00");
+    expect(controller.plottedTrajectory.value?.points).toEqual([createPixelPoint(5, 6), createPixelPoint(7, 8)]);
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(45);
     expect(controller.secondOrderLaunchAngleRadians.value).toBe(Math.PI / 4);
     expect(controller.pathError.value).toBeUndefined();
     expect(controller.hasTargetMissWarning.value).toBe(false);
     expect(controller.trajectoryWarningReason.value).toBeUndefined();
-
-    controller.publishIncumbentPreview("pending incumbent");
-    expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("preview curve");
-    respondToActiveWorker({ message: "preview failed", ok: false, stage: "trajectory" });
-    await nextTick();
-    expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("preview curve");
+    expect(countWorkerRequests()).toBe(requestCount);
 
     controller.clearIncumbentPreview();
     expect(controller.isIncumbentPreviewActive.value).toBe(false);
@@ -348,110 +383,66 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.hasTargetMissWarning.value).toBe(true);
     expect(controller.trajectoryWarningReason.value).toBe("obstacle");
 
-    controller.publishIncumbentPreview("cancelled incumbent");
-    controller.clearIncumbentPreview();
-    respondToActiveWorker({ ok: true, result: { curvePoints: "stale curve", trajectoryPoints: [] } });
-    await nextTick();
-    expect(controller.formulaResult.value?.expression).toBe("formal formula");
-    expect(controller.plottedCurvePoints.value).toBe("formal curve");
-
-    controller.publishIncumbentPreview("committed incumbent");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "committed curve", trajectoryPoints: [] } });
-    await nextTick();
-    expect(controller.commitIncumbentPreview("stale incumbent")).toBe(false);
-    expect(controller.commitIncumbentPreview("committed incumbent")).toBe(true);
+    const committedTrajectory = [createPixelPoint(9, 10), createPixelPoint(11, 12)];
+    controller.publishIncumbentPreview({
+      equationMode: "ddy",
+      expression: "committed incumbent",
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: committedTrajectory,
+    });
+    expect(
+      controller.commitIncumbentPreview({
+        equationMode: "ddy",
+        expression: "stale incumbent",
+        sourceIdentity: "agent-scene-1",
+        trajectoryPoints: [],
+      }),
+    ).toBe(false);
+    expect(
+      controller.commitIncumbentPreview({
+        equationMode: "ddy",
+        expression: "committed incumbent",
+        sourceIdentity: "agent-scene-2",
+        trajectoryPoints: committedTrajectory,
+      }),
+    ).toBe(false);
+    expect(
+      controller.commitIncumbentPreview({
+        equationMode: "ddy",
+        expression: "committed incumbent",
+        sourceIdentity: "agent-scene-1",
+        trajectoryPoints: [...committedTrajectory],
+      }),
+    ).toBe(false);
+    expect(
+      controller.commitIncumbentPreview({
+        equationMode: "ddy",
+        expression: "committed incumbent",
+        sourceIdentity: "agent-scene-1",
+        trajectoryPoints: committedTrajectory,
+      }),
+    ).toBe(true);
 
     expect(controller.isIncumbentPreviewActive.value).toBe(false);
     expect(controller.formulaResult.value?.expression).toBe("committed incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("committed curve");
+    expect(controller.plottedCurvePoints.value).toBe("9.00,10.00 11.00,12.00");
 
-    controller.commitIncumbentResult("headless incumbent", Math.PI / 2);
-    const requestCount = countWorkerRequests();
+    controller.commitIncumbentResult({
+      equationMode: "ddy",
+      expression: "direct incumbent",
+      launchAngleRadians: Math.PI / 2,
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: [createPixelPoint(13, 14), createPixelPoint(15, 16)],
+    });
+    const committedRequestCount = countWorkerRequests();
     setSolverPath(state, -5, 2);
     await nextTick();
     frames.flush();
     expect(controller.calculationStatus.value.type).toBe("idle");
-    expect(countWorkerRequests()).toBe(requestCount);
-    expect(controller.formulaResult.value?.expression).toBe("committed incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("committed curve");
-
-    respondToActiveWorker({ ok: true, result: { curvePoints: "headless curve", trajectoryPoints: [] } });
-    await nextTick();
-    expect(controller.formulaResult.value?.expression).toBe("headless incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("headless curve");
+    expect(countWorkerRequests()).toBe(committedRequestCount);
+    expect(controller.formulaResult.value?.expression).toBe("direct incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("13.00,14.00 15.00,16.00");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(90);
-    controller.dispose();
-  });
-
-  it("commits a pending incumbent after its existing preview task finishes", async () => {
-    const frames = installFakeBrowserRuntime();
-    const state = createControllerState();
-    const controller = useGraphwarTrajectoryResult(state.options);
-
-    setSolverPath(state, -10, 1);
-    await nextTick();
-    frames.flush();
-    respondToActiveWorker({
-      ok: true,
-      result: {
-        curvePoints: "formal curve",
-        formulaResult: { expression: "formal formula", terms: [] },
-        trajectoryPoints: [],
-      },
-    });
-    await nextTick();
-
-    controller.publishIncumbentPreview("old incumbent");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "old curve", trajectoryPoints: [] } });
-    await nextTick();
-    controller.publishIncumbentPreview("pending incumbent", Math.PI / 4);
-    const requestCount = countWorkerRequests();
-
-    controller.commitIncumbentResult("pending incumbent", Math.PI / 4);
-    setSolverPath(state, -5, 2);
-    await nextTick();
-    frames.flush();
-
-    expect(countWorkerRequests()).toBe(requestCount);
-    expect(controller.formulaResult.value?.expression).toBe("old incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("old curve");
-
-    respondToActiveWorker({ ok: true, result: { curvePoints: "pending curve", trajectoryPoints: [] } });
-    await nextTick();
-    expect(controller.isIncumbentPreviewActive.value).toBe(false);
-    expect(controller.formulaResult.value?.expression).toBe("pending incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("pending curve");
-    expect(controller.secondOrderLaunchAngleDegrees.value).toBe(45);
-    controller.dispose();
-  });
-
-  it("keeps the exact formula without a stale curve when committed trajectory sampling fails", async () => {
-    const frames = installFakeBrowserRuntime();
-    const state = createControllerState();
-    const controller = useGraphwarTrajectoryResult(state.options);
-
-    setSolverPath(state, -10, 1);
-    await nextTick();
-    frames.flush();
-    respondToActiveWorker({
-      ok: true,
-      result: {
-        curvePoints: "formal curve",
-        formulaResult: { expression: "formal formula", terms: [] },
-        trajectoryPoints: [],
-      },
-    });
-    await nextTick();
-
-    controller.commitIncumbentResult("committed formula");
-    setSolverPath(state, -5, 2);
-    await nextTick();
-    frames.flush();
-    respondToActiveWorker({ message: "trajectory failed", ok: false, stage: "trajectory" });
-    await nextTick();
-
-    expect(controller.formulaResult.value?.expression).toBe("committed formula");
-    expect(controller.plottedCurvePoints.value).toBe("");
     controller.dispose();
   });
 });

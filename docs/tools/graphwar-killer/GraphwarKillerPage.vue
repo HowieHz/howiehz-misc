@@ -64,7 +64,10 @@ import { deriveGraphwarCapabilities, type GraphwarCapabilityReason } from "./con
 import { useGraphwarPathAppendWorkflow } from "./controllers/path/append-workflow";
 import { useGraphwarPathPointEditing } from "./controllers/path/point-editing";
 import { useGraphwarPathState } from "./controllers/path/state";
-import { useGraphwarTrajectoryResult } from "./controllers/path/trajectory-result";
+import {
+  useGraphwarTrajectoryResult,
+  type GraphwarValidatedTrajectorySnapshot,
+} from "./controllers/path/trajectory-result";
 import {
   useGraphwarPathfindingRouteBoundaryInset,
   useGraphwarPathfindingObstacleProjection,
@@ -231,6 +234,9 @@ interface GraphwarManagedPreparedShot {
   /** Agent turn that owned the shot plan. */
   turnToken: string | null;
 }
+/** 一键清图搜索动画按帧发布的完整验证快照。 */
+type GraphwarOneClickClearPreview = GraphwarValidatedTrajectorySnapshot &
+  Pick<GraphwarOneClickClearIncumbent, "pathPoints">;
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
 }>();
@@ -490,17 +496,12 @@ const {
   trajectoryStrokeColor,
   undoActivePathPoint,
 } = useGraphwarPathState(toolWorkflowMode);
-const incumbentPointPreview =
-  ref<Pick<GraphwarOneClickClearIncumbent, "expression" | "launchAngleRadians" | "pathPoints">>();
+const incumbentPointPreview = ref<GraphwarOneClickClearPreview>();
 const incumbentPreviewPathPixels = computed(() => incumbentPointPreview.value?.pathPoints);
 const hasIncumbentPreviewPath = computed(() => incumbentPointPreview.value !== undefined);
 const displayedPathPixels = computed(() => incumbentPointPreview.value?.pathPoints ?? pathPixels.value);
-let queuedIncumbentPreview:
-  | Pick<GraphwarOneClickClearIncumbent, "expression" | "launchAngleRadians" | "pathPoints">
-  | undefined;
-let pendingIncumbentCommit: GraphwarOneClickClearIncumbent | undefined;
+let queuedIncumbentPreview: GraphwarOneClickClearPreview | undefined;
 let incumbentPreviewFrame: number | undefined;
-const hasPendingIncumbentCommit = ref(false);
 // 截图工作流拥有文件输入、粘贴、截屏和舞台坐标换算；识别流程只消费落地后的 ImageData。
 const {
   applyGeneratedImage,
@@ -1200,37 +1201,6 @@ const {
 const isIncumbentPreviewActive = computed(
   () => hasIncumbentPreviewPath.value || isTrajectoryIncumbentPreviewActive.value,
 );
-const isIncumbentTrajectoryPending = computed(() => {
-  const preview = incumbentPointPreview.value;
-  return (
-    preview !== undefined &&
-    (formulaResult.value?.expression !== preview.expression ||
-      secondOrderLaunchAngleRadians.value !== preview.launchAngleRadians)
-  );
-});
-watch(
-  () => [formulaResult.value, trajectoryCalculationStatus.value] as const,
-  ([result, status]) => {
-    const incumbent = pendingIncumbentCommit;
-    if (!incumbent) {
-      return;
-    }
-    if (status.type === "failure") {
-      clearIncumbentPreview();
-      return;
-    }
-    if (
-      result?.expression !== incumbent.expression ||
-      secondOrderLaunchAngleRadians.value !== incumbent.launchAngleRadians
-    ) {
-      return;
-    }
-    pendingIncumbentCommit = undefined;
-    hasPendingIncumbentCommit.value = false;
-    applyValidatedPath(incumbent.pathPoints);
-    clearIncumbentPointPreview();
-  },
-);
 const generatedFormulaConversion = computed(() => {
   const expression = formulaResult.value?.expression ?? "";
   return isFractionOutputEnabled.value
@@ -1247,7 +1217,6 @@ watch(
     equationMode,
     toolWorkflowMode,
     trajectoryCalculationStatus,
-    isIncumbentTrajectoryPending,
   ],
   () => {
     const pending = graphwarAgentPendingFunctionDraw;
@@ -1310,7 +1279,7 @@ const graphwarCapabilities = computed(() =>
         isAgentFireBusy: isGraphwarAgentFireInProgress.value,
         isAgentReadBusy: isGraphwarAgentReadInProgress.value,
         isManagedModeBusy: isGraphwarManagedModeEnabled.value,
-        isPathfindingBusy: isSmartPathfindingInProgress.value || hasPendingIncumbentCommit.value,
+        isPathfindingBusy: isSmartPathfindingInProgress.value,
       },
       formula: {
         // 托管会跨三个 profile 运行，必须按 repair 后的最终算法校验每份保留输入。
@@ -2315,10 +2284,8 @@ const resultPanel = computed(() => {
     canInteract: !isGraphwarManagedModeEnabled.value,
     temporaryDisabledReason: managedLockReason.value,
     canClearSimulatorInputs: canClearSimulatorInputs.value,
-    canCopyFormula: canCopyFormula.value && !isIncumbentTrajectoryPending.value,
-    copyDisabledReason: isIncumbentTrajectoryPending.value
-      ? locale.ui.pathfinding.capabilityReasons["pathfinding-busy"]
-      : undefined,
+    canCopyFormula: canCopyFormula.value,
+    copyDisabledReason: undefined,
     calculationMessage: calculationMessage.value,
     isCalculationMessageVisible:
       Boolean(calculationMessage.value) && (toolWorkflowMode.value === "simulator" || !solverResult),
@@ -2331,24 +2298,19 @@ const resultPanel = computed(() => {
     isFractionOutputEnabled: isFractionOutputEnabled.value,
     pointRows: createResultPanelPointRows(),
     pathQualityWarning:
-      isIncumbentTrajectoryPending.value ||
-      pathError === undefined ||
-      pathError <= graphwarToolDefaults.formulaPathQualityTargetPlanePixels
+      pathError === undefined || pathError <= graphwarToolDefaults.formulaPathQualityTargetPlanePixels
         ? ""
         : Number.isFinite(pathError)
           ? locale.status.trajectoryWarning.pathQuality(pathError.toFixed(2))
           : locale.status.trajectoryWarning.pathQualityUnreached,
-    secondOrderAngleHint: isIncumbentTrajectoryPending.value ? undefined : secondOrderAngleHint.value,
+    secondOrderAngleHint: secondOrderAngleHint.value,
     isSimulatorLaunchAngleInputVisible: toolWorkflowMode.value === "simulator" && equationMode.value === "ddy",
     simulatorFormulaText: simulatorFormulaText.value,
     simulatorLaunchAngleText: simulatorLaunchAngleText.value,
     solverExpression: generatedFormulaOutput.value,
-    isSolverResultVisible: toolWorkflowMode.value === "solver" && !!solverResult && !isIncumbentTrajectoryPending.value,
-    trajectoryWarning: isIncumbentTrajectoryPending.value ? "" : trajectoryWarning.value,
-    targetHitWarning:
-      !isIncumbentTrajectoryPending.value && hasFormulaTargetMissWarning.value
-        ? locale.status.trajectoryWarning.targetMissed
-        : "",
+    isSolverResultVisible: toolWorkflowMode.value === "solver" && !!solverResult,
+    trajectoryWarning: trajectoryWarning.value,
+    targetHitWarning: hasFormulaTargetMissWarning.value ? locale.status.trajectoryWarning.targetMissed : "",
     workflowMode: toolWorkflowMode.value,
   };
 });
@@ -3107,7 +3069,6 @@ function getCurrentGraphwarAgentFunctionDrawTrajectoryPoints(pending: GraphwarAg
   const trajectory = plottedTrajectory.value;
   if (
     trajectoryCalculationStatus.value.type === "in-progress" ||
-    isIncumbentTrajectoryPending.value ||
     !trajectory ||
     trajectory.points.length < 2 ||
     trajectory.equationMode !== pending.equationMode ||
@@ -4498,11 +4459,7 @@ function enqueueGraphwarAgentClearFailureExport(
 
 /** Queues only the latest incumbent while retaining the last complete trajectory. */
 function queueIncumbentPreview(incumbent: GraphwarOneClickClearIncumbent) {
-  queuedIncumbentPreview = {
-    expression: incumbent.expression,
-    ...(incumbent.launchAngleRadians === undefined ? {} : { launchAngleRadians: incumbent.launchAngleRadians }),
-    pathPoints: incumbent.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
-  };
+  queuedIncumbentPreview = createOneClickClearPreview(incumbent);
   if (incumbentPreviewFrame !== undefined) {
     return;
   }
@@ -4516,21 +4473,36 @@ function queueIncumbentPreview(incumbent: GraphwarOneClickClearIncumbent) {
   });
 }
 
-/** Publishes the latest point identity, then starts matching latest-only trajectory sampling. */
+/** Atomically publishes the latest validated point, formula, and trajectory snapshot. */
 function publishQueuedIncumbentPreview() {
   const incumbent = queuedIncumbentPreview;
   queuedIncumbentPreview = undefined;
   if (!incumbent) {
     return;
   }
-  incumbentPointPreview.value = incumbent;
-  publishTrajectoryIncumbentPreview(incumbent.expression, incumbent.launchAngleRadians);
+  const preview: GraphwarOneClickClearPreview = {
+    ...incumbent,
+    pathPoints: incumbent.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
+  };
+  incumbentPointPreview.value = preview;
+  publishTrajectoryIncumbentPreview(preview);
 }
 
-/** Clears queued points and formula sampling together so internal invalidation restores the formal result. */
+/** Freezes the equation and authoritative scene when the Worker incumbent reaches the page. */
+function createOneClickClearPreview(incumbent: GraphwarOneClickClearIncumbent): GraphwarOneClickClearPreview {
+  const sourceIdentity = graphwarTrajectorySourceIdentity.value;
+  return {
+    equationMode: equationMode.value,
+    expression: incumbent.expression,
+    ...(incumbent.launchAngleRadians === undefined ? {} : { launchAngleRadians: incumbent.launchAngleRadians }),
+    pathPoints: incumbent.pathPoints,
+    ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
+    trajectoryPoints: incumbent.trajectoryPoints,
+  };
+}
+
+/** Clears queued points and the matching trajectory preview so invalidation restores the formal result. */
 function clearIncumbentPreview() {
-  pendingIncumbentCommit = undefined;
-  hasPendingIncumbentCommit.value = false;
   clearIncumbentPointPreview();
   clearTrajectoryIncumbentPreview();
 }
@@ -4569,7 +4541,7 @@ async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClear
         runOptions?.onOutcome?.(outcome);
       },
       onIncumbent: (incumbent) => {
-        // 搜索动画只控制独立轨迹 Worker；主搜索始终上报检查点供取消和托管截止使用。
+        // 搜索动画只控制验证快照上屏；主搜索始终上报检查点供取消和托管截止使用。
         if (isSearchAnimationEnabled.value) {
           queueIncumbentPreview(incumbent);
         }
@@ -4607,7 +4579,7 @@ function applyValidatedPath(points: PixelPoint[]) {
   pathStatus.value = "";
 }
 
-/** 提交已验证 incumbent；复用已有绘图，否则只采样精确表达式，不从控制点重算公式。 */
+/** 提交已验证 incumbent；复用匹配预览，否则直接发布 Worker 携带的轨迹快照。 */
 function applyOneClickClearIncumbent(incumbent: GraphwarOneClickClearIncumbent) {
   if (queuedIncumbentPreview) {
     if (incumbentPreviewFrame !== undefined && typeof cancelAnimationFrame !== "undefined") {
@@ -4616,14 +4588,18 @@ function applyOneClickClearIncumbent(incumbent: GraphwarOneClickClearIncumbent) 
     incumbentPreviewFrame = undefined;
     publishQueuedIncumbentPreview();
   }
-  if (commitIncumbentPreview(incumbent.expression, incumbent.launchAngleRadians)) {
+  const preview =
+    incumbentPointPreview.value?.trajectoryPoints === incumbent.trajectoryPoints
+      ? incumbentPointPreview.value
+      : createOneClickClearPreview(incumbent);
+  if (commitIncumbentPreview(preview)) {
     applyValidatedPath(incumbent.pathPoints);
     clearIncumbentPointPreview();
     return;
   }
-  pendingIncumbentCommit = incumbent;
-  hasPendingIncumbentCommit.value = true;
-  commitIncumbentResult(incumbent.expression, incumbent.launchAngleRadians, true);
+  commitIncumbentResult(preview);
+  applyValidatedPath(incumbent.pathPoints);
+  clearIncumbentPointPreview();
 }
 
 /** 发射点改变会影响友方士兵是否写入寻路障碍 mask。 */

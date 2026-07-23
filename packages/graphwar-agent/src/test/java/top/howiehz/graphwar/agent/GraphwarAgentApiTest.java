@@ -1107,29 +1107,38 @@ public final class GraphwarAgentApiTest {
         GraphwarAgentConfig raised =
                 GraphwarAgentConfig.parse(
                         "maxRequestHeaderBytes=1048576,maxRequestBodyBytes=16777216,"
-                                + "maxFunctionBytes=65536,"
-                                + "maxFunctionTokens=3072");
+                                + "maxFunctionBytes=1048576,"
+                                + "maxFunctionTokens=4432");
         assertEquals(1_048_576, raised.maxRequestHeaderBytes, "raised header limit");
         assertEquals(
                 8_192,
                 GraphwarAgentConfig.parse("maxRequestHeaderBytes=1024").maxRequestHeaderBytes,
                 "undersized header limit");
         assertEquals(16_777_216, raised.maxRequestBodyBytes, "raised body limit");
-        assertEquals(65_536, raised.maxFunctionBytes, "maximum function byte limit");
+        assertEquals(1_048_576, raised.maxFunctionBytes, "maximum function byte limit");
         assertEquals(
                 32_768,
                 GraphwarAgentConfig.parse("maxFunctionBytes=32768").maxFunctionBytes,
                 "lower function byte limit");
         assertEquals(
+                524_288,
+                GraphwarAgentConfig.parse("maxRequestBodyBytes=524288,maxFunctionBytes=1048576")
+                        .maxFunctionBytes,
+                "function byte limit capped to request body");
+        assertEquals(
                 65_536,
-                GraphwarAgentConfig.parse("maxRequestBodyBytes=16777216,maxFunctionBytes=1048576")
+                GraphwarAgentConfig.parse("maxRequestBodyBytes=16777216,maxFunctionBytes=1048577")
                         .maxFunctionBytes,
                 "oversized function byte limit");
-        assertEquals(3_072, raised.maxFunctionTokens, "raised token limit");
+        assertEquals(4_432, raised.maxFunctionTokens, "maximum token limit");
         assertEquals(
                 2_048,
                 GraphwarAgentConfig.parse("maxFunctionTokens=2048").maxFunctionTokens,
                 "lower token limit");
+        assertEquals(
+                3_072,
+                GraphwarAgentConfig.parse("maxFunctionTokens=4433").maxFunctionTokens,
+                "oversized token limit");
         boolean hasRejectedInvalidToken = false;
         try {
             GraphwarAgentConfig.parse("token=not valid");

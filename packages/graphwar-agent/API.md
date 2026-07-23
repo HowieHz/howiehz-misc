@@ -151,8 +151,8 @@ The reference implementation applies these limits before invoking the official p
 | ----------------------- | --------------: | -----------------: | ------------------------------------------------------------------------ |
 | `maxRequestHeaderBytes` |          `8192` |   `8192`–`1048576` | Maximum request-header bytes, including the terminating empty line       |
 | `maxRequestBodyBytes`   |         `65536` |  `1024`–`16777216` | Maximum JSON data accepted in one API request; checked before allocation |
-| `maxFunctionBytes`      |         `65536` |        `1`–`65536` | UTF-8 bytes after JSON decoding; capped to the effective body limit      |
-| `maxFunctionTokens`     |          `3072` |         `1`–`3072` | Effective evaluation tokens, including inserted implicit multiplication  |
+| `maxFunctionBytes`      |         `65536` |      `1`–`1048576` | UTF-8 bytes after JSON decoding; capped to the effective body limit      |
+| `maxFunctionTokens`     |          `3072` |         `1`–`4432` | Effective evaluation tokens, including inserted implicit multiplication  |
 | Stored shot commands    |    `50` records |              fixed | Old safe records are removed when space is needed                        |
 | Synchronous shot wait   |       `5000` ms |              fixed | Does not cancel the official call                                        |
 | Shot worker stack hint  | `2097152` bytes |              fixed | A JVM/platform hint, not a guaranteed exact stack size                   |
@@ -163,12 +163,16 @@ The configurable startup names are the names returned by `/health.limits`. Inval
 Graphwar itself defines no formula-length limit, and its original parser recursively rebuilds expression trees.
 The 3072-token default rounds down 70% of the first unstable cold mixed-shape result: 4448 effective tokens on a
 1 MiB JDK 21 thread. Testing each shape alone produced a misleadingly higher limit because JIT profiling changed
-recursive frame usage. A bracket-heavy 65535-byte formula with one effective token parsed in about 617 ms, while
-the equivalent 1048575-byte input took about 12 seconds. The 65536-byte default is therefore also the hard
-formula-volume ceiling. These are engineering limits, not natural Graphwar protocol maxima. The source under
-`tmp/graphwar` is design evidence only and MUST NOT become a runtime, build, or conformance-test dependency.
+recursive frame usage. The opt-in 4432-token maximum was the highest tested candidate below that unstable result
+to pass in all three fresh JVMs. A bracket-heavy 1048575-byte formula with one effective token and an exact
+1048576-byte/4432-token combined formula also parsed successfully in the same probe. The combined opt-in maxima
+can exceed the five-second synchronous shot wait, in which case the POST response contains a pending command and
+`Retry-After`; the official call continues. These opt-in maxima have less safety margin than the defaults, and
+the JDK 21 measurements do not guarantee identical JRE 8 stack behavior. These are engineering limits, not
+natural Graphwar protocol maxima. The source under `tmp/graphwar` is design evidence only and MUST NOT become a
+runtime, build, or conformance-test dependency.
 
-Replicas MUST reject inputs outside the advertised effective limits before invoking recursive official code. Token counting MUST be iterative or otherwise independently bounded. Neither formula limit can be raised above its measured safe default; no unlimited mode exists.
+Replicas MUST reject inputs outside the advertised effective limits before invoking recursive official code. Token counting MUST be iterative or otherwise independently bounded. Neither formula limit can be configured above its opt-in maximum; no unlimited mode exists.
 
 ## 4. Match state
 
@@ -450,7 +454,7 @@ Once the JSON fields and ID formats are accepted, the Agent creates a command re
 
 The Agent fingerprints `gameInstanceId`, function UTF-8 bytes, `turnToken`, `battleRevision`, and exact optional angle bits with unambiguous length-prefix encoding and SHA-256. The fingerprint is internal and MUST NOT appear in responses. A retained `requestId` with different content returns `409 request-id-conflict`.
 
-Concurrent identical replays MUST return the currently observable record without waiting for the creator. A response in `validating` or `claimed` includes `Retry-After: 1`. Clients SHOULD query the `Location` resource rather than invent a new request ID.
+Concurrent identical replays MUST return the currently observable record without waiting for the creator. A POST response in `validating` or `claimed` includes `Retry-After: 1`. Clients SHOULD query the `Location` resource rather than invent a new request ID.
 
 ### 6.2 Read a command
 
@@ -575,7 +579,7 @@ The required client flow is:
 2. Generate one canonical lowercase UUID.
 3. POST `/shots` once.
 4. If the HTTP response is lost or times out, replay the exact same request ID and content or query `/shots/{requestId}`.
-5. If the command is `validating` or `claimed`, follow `Retry-After` and query it again.
+5. If the command is `validating` or `claimed`, honor a POST response's `Retry-After` when present; otherwise wait one second before querying it again.
 6. Treat `submitted`, `failed`, and `unknown` according to section 6.3.
 7. While the command remains `validating` or `claimed`, query only the command resource; do not accumulate
    timed-out `/state` requests behind a possibly held `GameData` monitor.

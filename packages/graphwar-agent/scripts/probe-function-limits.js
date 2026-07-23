@@ -27,6 +27,8 @@ const configSource = join(
 );
 const DEFAULT_MAX_FUNCTION_BYTES = readJavaIntegerConstant("DEFAULT_MAX_FUNCTION_BYTES");
 const DEFAULT_MAX_FUNCTION_TOKENS = readJavaIntegerConstant("DEFAULT_MAX_FUNCTION_TOKENS");
+const MAX_CONFIGURED_FUNCTION_BYTES = readJavaIntegerConstant("MAX_CONFIGURED_FUNCTION_BYTES");
+const MAX_CONFIGURED_FUNCTION_TOKENS = readJavaIntegerConstant("MAX_CONFIGURED_FUNCTION_TOKENS");
 const probeSource = join(packageRoot, "scripts", "probes", "GraphwarFunctionLimitProbe.java");
 const cacheRoot = join(repoRoot, ".cache", "graphwar-function-limit-probe");
 const classesRoot = join(cacheRoot, "classes");
@@ -53,7 +55,7 @@ runCommand(
 );
 
 const mixedCandidates = [4_608, 4_480, 4_464, 4_448, 4_432, 4_352, 4_096];
-const totalRuns = mixedCandidates.length * FRESH_JVM_RUNS + 10 + 1 + 1 + 2;
+const totalRuns = mixedCandidates.length * FRESH_JVM_RUNS + 10 + 2 + 2 + 2;
 let completedRuns = 0;
 const mixedResults = [];
 
@@ -97,6 +99,10 @@ if (!firstUnstable) {
   throw new Error("No unstable mixed-shape candidate was observed; extend the probe range");
 }
 const selectedTokens = Math.floor((firstUnstable.tokens * 0.7) / 1_024) * 1_024;
+const configuredMaximumResult = mixedResults.find((result) => result.tokens === MAX_CONFIGURED_FUNCTION_TOKENS);
+if (!configuredMaximumResult || configuredMaximumResult.passes !== FRESH_JVM_RUNS) {
+  throw new Error("The configured maximum token limit did not pass every fresh-JVM mixed-shape probe");
+}
 
 let defaultPasses = 0;
 for (let run = 1; run <= 10; run += 1) {
@@ -117,52 +123,59 @@ stdout.write(
 stdout.write(
   `selectedDefaultTokens=${selectedTokens} rationale="70% of the first unstable ${firstUnstable.tokens}-token cold mixed-shape result, rounded down"\n`,
 );
+stdout.write(
+  `verifiedConfiguredMaximumTokens=${MAX_CONFIGURED_FUNCTION_TOKENS} mixedPasses=${configuredMaximumResult.passes}/${FRESH_JVM_RUNS}\n`,
+);
 if (defaultPasses !== 10 || DEFAULT_MAX_FUNCTION_TOKENS > selectedTokens) {
   throw new Error("The configured default token limit did not retain the measured safety margin");
 }
 
-const performance = runProbe(["performance", String(DEFAULT_MAX_FUNCTION_TOKENS)]);
-if (performance.status !== 0) {
-  throwProbeError("performance", performance);
-}
-reportProgress("20,000-evaluation performance probe", totalRuns);
-stdout.write(performance.stdout);
-if (readMaximumMilliseconds(performance.stdout) >= SHOT_WAIT_MILLISECONDS) {
-  throw new Error("A default-limit 20,000-evaluation probe exceeded the five-second shot wait");
+for (const [label, tokens] of [
+  ["default", DEFAULT_MAX_FUNCTION_TOKENS],
+  ["configured maximum", MAX_CONFIGURED_FUNCTION_TOKENS],
+]) {
+  const performance = runProbe(["performance", String(tokens)]);
+  if (performance.status !== 0) {
+    throwProbeError(`${label} performance`, performance);
+  }
+  reportProgress(`${label} 20,000-evaluation performance probe`, totalRuns);
+  stdout.write(performance.stdout);
+  if (readMaximumMilliseconds(performance.stdout) >= SHOT_WAIT_MILLISECONDS) {
+    throw new Error(`The ${label}-limit 20,000-evaluation probe exceeded the five-second shot wait`);
+  }
 }
 
-const combinedBoundary = runProbe([
-  "combined",
-  String(DEFAULT_MAX_FUNCTION_BYTES),
-  String(DEFAULT_MAX_FUNCTION_TOKENS),
-]);
-if (combinedBoundary.status !== 0) {
-  throwProbeError("combined byte/token boundary", combinedBoundary);
-}
-reportProgress("combined byte/token boundary", totalRuns);
-stdout.write(combinedBoundary.stdout);
-if (readMaximumMilliseconds(combinedBoundary.stdout) >= SHOT_WAIT_MILLISECONDS) {
-  throw new Error("The combined default byte/token boundary exceeded the five-second shot wait");
+for (const [label, bytes, tokens] of [
+  ["default", DEFAULT_MAX_FUNCTION_BYTES, DEFAULT_MAX_FUNCTION_TOKENS],
+  ["configured maximum", MAX_CONFIGURED_FUNCTION_BYTES, MAX_CONFIGURED_FUNCTION_TOKENS],
+]) {
+  const combinedBoundary = runProbe(["combined", String(bytes), String(tokens)]);
+  if (combinedBoundary.status !== 0) {
+    throwProbeError(`${label} combined byte/token boundary`, combinedBoundary);
+  }
+  reportProgress(`${label} combined byte/token boundary`, totalRuns);
+  stdout.write(combinedBoundary.stdout);
+  const isWithinShotWait = readMaximumMilliseconds(combinedBoundary.stdout) < SHOT_WAIT_MILLISECONDS;
+  stdout.write(`combinedWithinShotWait=${isWithinShotWait} boundary=${label}\n`);
+  if (label === "default" && !isWithinShotWait) {
+    throw new Error(`The ${label} combined byte/token boundary exceeded the five-second shot wait`);
+  }
 }
 
 stdout.write("bracket-byte-probe effectiveTokens=1\n");
-let defaultBoundaryMilliseconds = 0;
-for (const bytes of [65_535, 1_048_575]) {
+for (const bytes of [DEFAULT_MAX_FUNCTION_BYTES - 1, MAX_CONFIGURED_FUNCTION_BYTES - 1]) {
   const result = runProbe(["bracket", String(bytes)]);
   if (result.status !== 0) {
     throwProbeError(`bracket bytes=${bytes}`, result);
   }
   reportProgress(`bracket bytes=${bytes}`, totalRuns);
   stdout.write(result.stdout);
-  if (bytes === DEFAULT_MAX_FUNCTION_BYTES - 1) {
-    defaultBoundaryMilliseconds = readMaximumMilliseconds(result.stdout);
+  if (readMaximumMilliseconds(result.stdout) >= SHOT_WAIT_MILLISECONDS) {
+    throw new Error(`The ${bytes}-byte bracket-heavy probe exceeded the five-second shot wait`);
   }
 }
-if (defaultBoundaryMilliseconds >= SHOT_WAIT_MILLISECONDS) {
-  throw new Error("The default bracket-heavy byte boundary exceeded the five-second shot wait");
-}
 stdout.write(
-  `selectedMaximumFunctionBytes=${DEFAULT_MAX_FUNCTION_BYTES} rationale="1 MiB bracket-heavy input can exceed the 5 s shot wait; keep the measured 64 KiB boundary"\n`,
+  `defaultFunctionBytes=${DEFAULT_MAX_FUNCTION_BYTES} verifiedConfiguredMaximumFunctionBytes=${MAX_CONFIGURED_FUNCTION_BYTES}\n`,
 );
 
 /** Runs one fresh 1 MiB-stack JVM against the unmodified original parser classes. */
@@ -195,7 +208,7 @@ function hashSources(sources) {
   return hash.digest("hex");
 }
 
-/** Reads one numeric production default so the probe cannot silently drift from the Agent. */
+/** Reads one numeric production boundary so the probe cannot silently drift from the Agent. */
 function readJavaIntegerConstant(name) {
   const match = readFileSync(configSource, "utf8").match(new RegExp(`static final int ${name} = ([0-9_]+);`, "u"));
   if (!match) {

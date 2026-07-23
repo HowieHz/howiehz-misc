@@ -35,7 +35,7 @@ final class GraphwarFunctionLimits {
         // Source: PolishNotationFunction.createRegularNotationTokens lowercases the input,
         // rewrites minus/exp/comma, then applies its fixed token regex and implicit products.
         // String lowercasing is intentionally retained because Unicode special casing can expand
-        // one source character. Production callers bound the original input to 64 KiB first.
+        // one source character. Production callers enforce the configured byte limit first.
         String normalized = function.toLowerCase();
         int count = 0;
         int pendingType = 0;

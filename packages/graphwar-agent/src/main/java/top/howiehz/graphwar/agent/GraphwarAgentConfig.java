@@ -7,8 +7,8 @@ import java.util.Base64;
 
 /** Parses and owns bounded Graphwar Agent startup configuration. */
 final class GraphwarAgentConfig {
-    // A bracket-heavy 65,535-byte formula parsed in about 617 ms, while 1 MiB took about 12 s.
-    // Keep the existing body boundary as both the default and hard formula-volume limit.
+    // Keep the measured conservative limits as defaults; explicit configuration may opt into the
+    // larger probe-observed boundaries below.
     static final int DEFAULT_MAX_FUNCTION_BYTES = 65_536;
     // Cold mixed-shape probes became unstable at 4,448 tokens on a 1 MiB JDK 21 thread. Rounding
     // 70% down to 3,072 leaves stack/JVM headroom and also bounds 20,000-step evaluation work.
@@ -17,8 +17,11 @@ final class GraphwarAgentConfig {
     static final int DEFAULT_MAX_REQUEST_HEADER_BYTES = 8_192;
     static final int DEFAULT_PORT = 17_900;
     static final int DEFAULT_PORT_SEARCH_LIMIT = 100;
-    private static final int MAX_CONFIGURED_FUNCTION_BYTES = DEFAULT_MAX_FUNCTION_BYTES;
-    private static final int MAX_CONFIGURED_FUNCTION_TOKENS = DEFAULT_MAX_FUNCTION_TOKENS;
+    // The original parser completed the 1 MiB bracket-heavy probe, while its 1 MiB-stack mixed
+    // probe was stable through 4,432 tokens and first became unstable at 4,448. These opt-in
+    // boundaries deliberately retain less headroom than the defaults.
+    private static final int MAX_CONFIGURED_FUNCTION_BYTES = 1_048_576;
+    private static final int MAX_CONFIGURED_FUNCTION_TOKENS = 4_432;
     private static final int MAX_CONFIGURED_REQUEST_BODY_BYTES = 16_777_216;
     private static final int MAX_CONFIGURED_REQUEST_HEADER_BYTES = 1_048_576;
     private static final int MAX_TOKEN_CHARACTERS = 4_096;

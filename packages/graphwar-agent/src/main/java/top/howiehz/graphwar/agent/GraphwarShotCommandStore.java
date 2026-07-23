@@ -11,6 +11,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -65,7 +66,18 @@ final class GraphwarShotCommandStore {
             activeCommand = command;
         }
 
-        Future<?> future = executor.submit(() -> execute(command, request));
+        Future<?> future;
+        try {
+            future = executor.submit(() -> execute(command, request));
+        } catch (RejectedExecutionException error) {
+            synchronized (lock) {
+                command.fail("internal-error", "The shot executor is unavailable", true);
+                if (activeCommand == command) {
+                    activeCommand = null;
+                }
+                return new Submission(true, false, command.toJson());
+            }
+        }
         try {
             future.get(SYNCHRONOUS_WAIT_MILLISECONDS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException ignored) {
@@ -261,8 +273,8 @@ final class GraphwarShotCommandStore {
             if ("Graphwar function exceeds the byte limit".equals(message)) {
                 return new ShotFailure("function-too-large", true);
             }
-            if ("Graphwar function exceeds the nesting depth limit".equals(message)) {
-                return new ShotFailure("function-nesting-too-deep", true);
+            if ("Graphwar function exceeds the token limit".equals(message)) {
+                return new ShotFailure("function-too-complex", true);
             }
             return new ShotFailure("malformed-function", true);
         }

@@ -30,11 +30,23 @@ public final class GameData {
     private volatile CountDownLatch stateReadBlocker;
     private volatile CountDownLatch stateReadEntered;
     private volatile boolean shouldThrowFromFunction;
+    private volatile boolean shouldThrowOtherErrorFromFunction;
+    private volatile boolean shouldOverflowFromFunction;
+    private volatile boolean shouldThrowOtherErrorFromInbound;
+    private volatile boolean shouldOverflowFromInbound;
+    private boolean isDisconnected;
+    private final List<String> inboundFunctions = new ArrayList<String>();
 
     /** Mirrors the official current-turn index getter. */
     public int getCurrentTurnIndex() {
         assertRequiredLock();
         return currentTurn;
+    }
+
+    /** Mirrors the official current-turn player getter used by inbound function gating. */
+    public Player getCurrentTurnPlayer() {
+        assertRequiredLock();
+        return players.get(currentTurn);
     }
 
     /** Mirrors the official game-mode getter. */
@@ -122,6 +134,12 @@ public final class GameData {
     /** Records one original GameData.sendFunction call. */
     public void sendFunction(String function) {
         assertRequiredLock();
+        if (shouldOverflowFromFunction) {
+            throw new StackOverflowError("simulated official parser overflow");
+        }
+        if (shouldThrowOtherErrorFromFunction) {
+            throw new AssertionError("simulated unrelated outbound JVM error");
+        }
         synchronized (shotCalls) {
             shotCalls.add("function:" + function);
         }
@@ -133,6 +151,46 @@ public final class GameData {
         if (shouldThrowFromFunction) {
             throw new IllegalStateException("simulated original-client failure");
         }
+    }
+
+    /** Exposes the official private inbound dispatch call for transformed-fixture tests. */
+    public synchronized void handleIncomingFunction(String[] fields) throws Exception {
+        fireFunctionMessage(fields);
+    }
+
+    /** Mirrors the official inbound handler boundary redirected by the Agent. */
+    private void fireFunctionMessage(String[] fields) throws Exception {
+        if (fields.length == 3
+                && !isDrawingFunction
+                && players.get(currentTurn).getID() == Integer.parseInt(fields[1])) {
+            if (shouldOverflowFromInbound) {
+                throw new StackOverflowError("simulated inbound parser overflow");
+            }
+            if (shouldThrowOtherErrorFromInbound) {
+                throw new AssertionError("simulated unrelated JVM error");
+            }
+            inboundFunctions.add(java.net.URLDecoder.decode(fields[2], "UTF-8"));
+        }
+    }
+
+    /** Mirrors the official disconnect-and-kick recovery used for unsafe broadcasts. */
+    public void disconnectKick() {
+        isDisconnected = true;
+    }
+
+    /** Mirrors the fallback local cleanup when the socket disconnect path fails. */
+    public void kickFromGame() {
+        isDisconnected = true;
+    }
+
+    /** Reports whether inbound protection left the unsafe match. */
+    public boolean isDisconnected() {
+        return isDisconnected;
+    }
+
+    /** Returns the accepted inbound functions without exposing mutable fixture storage. */
+    public List<String> getInboundFunctions() {
+        return new ArrayList<String>(inboundFunctions);
     }
 
     /** Records one original GameData.setReady call without applying a server echo. */
@@ -307,6 +365,26 @@ public final class GameData {
     /** Selects whether the original function call throws after the irreversible claim. */
     public void setShouldThrowFromFunction(boolean shouldThrow) {
         shouldThrowFromFunction = shouldThrow;
+    }
+
+    /** Selects whether the official outbound parser exhausts its stack. */
+    public void setShouldOverflowFromFunction(boolean shouldOverflow) {
+        shouldOverflowFromFunction = shouldOverflow;
+    }
+
+    /** Selects an unrelated outbound Error that the Agent must not suppress. */
+    public void setShouldThrowOtherErrorFromFunction(boolean shouldThrow) {
+        shouldThrowOtherErrorFromFunction = shouldThrow;
+    }
+
+    /** Selects whether the official inbound parser exhausts its stack. */
+    public void setShouldOverflowFromInbound(boolean shouldOverflow) {
+        shouldOverflowFromInbound = shouldOverflow;
+    }
+
+    /** Selects an unrelated Error that the Agent must not suppress. */
+    public void setShouldThrowOtherErrorFromInbound(boolean shouldThrow) {
+        shouldThrowOtherErrorFromInbound = shouldThrow;
     }
 
     /** Fails when a reflected state getter runs outside the GameData monitor. */

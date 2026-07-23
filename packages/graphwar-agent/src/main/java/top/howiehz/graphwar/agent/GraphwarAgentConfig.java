@@ -7,21 +7,25 @@ import java.util.Base64;
 
 /** Parses and owns bounded Graphwar Agent startup configuration. */
 final class GraphwarAgentConfig {
-    static final int DEFAULT_MAX_FUNCTION_BYTES = 16_384;
-    static final int DEFAULT_MAX_FUNCTION_NESTING_DEPTH = 256;
+    // A bracket-heavy 65,535-byte formula parsed in about 617 ms, while 1 MiB took about 12 s.
+    // Keep the existing body boundary as both the default and hard formula-volume limit.
+    static final int DEFAULT_MAX_FUNCTION_BYTES = 65_536;
+    // Cold mixed-shape probes became unstable at 4,448 tokens on a 1 MiB JDK 21 thread. Rounding
+    // 70% down to 3,072 leaves stack/JVM headroom and also bounds 20,000-step evaluation work.
+    static final int DEFAULT_MAX_FUNCTION_TOKENS = 3_072;
     static final int DEFAULT_MAX_REQUEST_BODY_BYTES = 65_536;
     static final int DEFAULT_MAX_REQUEST_HEADER_BYTES = 8_192;
     static final int DEFAULT_PORT = 17_900;
     static final int DEFAULT_PORT_SEARCH_LIMIT = 100;
-    private static final int MAX_CONFIGURED_FUNCTION_BYTES = 1_048_576;
-    private static final int MAX_CONFIGURED_FUNCTION_NESTING_DEPTH = 4_096;
+    private static final int MAX_CONFIGURED_FUNCTION_BYTES = DEFAULT_MAX_FUNCTION_BYTES;
+    private static final int MAX_CONFIGURED_FUNCTION_TOKENS = DEFAULT_MAX_FUNCTION_TOKENS;
     private static final int MAX_CONFIGURED_REQUEST_BODY_BYTES = 16_777_216;
     private static final int MAX_CONFIGURED_REQUEST_HEADER_BYTES = 1_048_576;
     private static final int MAX_TOKEN_CHARACTERS = 4_096;
 
     final int fallbackPortCount;
     final int maxFunctionBytes;
-    final int maxFunctionNestingDepth;
+    final int maxFunctionTokens;
     final int maxRequestBodyBytes;
     final int maxRequestHeaderBytes;
     final int port;
@@ -34,11 +38,11 @@ final class GraphwarAgentConfig {
             int maxRequestHeaderBytes,
             int maxRequestBodyBytes,
             int maxFunctionBytes,
-            int maxFunctionNestingDepth,
+            int maxFunctionTokens,
             String token) {
         this.fallbackPortCount = fallbackPortCount;
         this.maxFunctionBytes = maxFunctionBytes;
-        this.maxFunctionNestingDepth = maxFunctionNestingDepth;
+        this.maxFunctionTokens = maxFunctionTokens;
         this.maxRequestBodyBytes = maxRequestBodyBytes;
         this.maxRequestHeaderBytes = maxRequestHeaderBytes;
         this.port = port;
@@ -52,7 +56,7 @@ final class GraphwarAgentConfig {
         int maxRequestHeaderBytes = DEFAULT_MAX_REQUEST_HEADER_BYTES;
         int maxRequestBodyBytes = DEFAULT_MAX_REQUEST_BODY_BYTES;
         int maxFunctionBytes = DEFAULT_MAX_FUNCTION_BYTES;
-        int maxFunctionNestingDepth = DEFAULT_MAX_FUNCTION_NESTING_DEPTH;
+        int maxFunctionTokens = DEFAULT_MAX_FUNCTION_TOKENS;
         String token = null;
 
         if (agentArgs != null && !agentArgs.trim().isEmpty()) {
@@ -89,11 +93,10 @@ final class GraphwarAgentConfig {
                     if (parsed != null) {
                         maxFunctionBytes = parsed.intValue();
                     }
-                } else if ("maxFunctionNestingDepth".equals(name)) {
-                    Integer parsed =
-                            parseBoundedInteger(value, 1, MAX_CONFIGURED_FUNCTION_NESTING_DEPTH);
+                } else if ("maxFunctionTokens".equals(name)) {
+                    Integer parsed = parseBoundedInteger(value, 1, MAX_CONFIGURED_FUNCTION_TOKENS);
                     if (parsed != null) {
-                        maxFunctionNestingDepth = parsed.intValue();
+                        maxFunctionTokens = parsed.intValue();
                     }
                 } else if ("token".equals(name)) {
                     if ("auto".equals(value)) {
@@ -120,7 +123,7 @@ final class GraphwarAgentConfig {
                 maxRequestHeaderBytes,
                 maxRequestBodyBytes,
                 maxFunctionBytes,
-                maxFunctionNestingDepth,
+                maxFunctionTokens,
                 token);
     }
 
@@ -132,7 +135,7 @@ final class GraphwarAgentConfig {
                 DEFAULT_MAX_REQUEST_HEADER_BYTES,
                 DEFAULT_MAX_REQUEST_BODY_BYTES,
                 DEFAULT_MAX_FUNCTION_BYTES,
-                DEFAULT_MAX_FUNCTION_NESTING_DEPTH,
+                DEFAULT_MAX_FUNCTION_TOKENS,
                 null);
     }
 
@@ -149,7 +152,7 @@ final class GraphwarAgentConfig {
                 maxRequestHeaderBytes,
                 maxRequestBodyBytes,
                 Math.min(DEFAULT_MAX_FUNCTION_BYTES, maxRequestBodyBytes),
-                DEFAULT_MAX_FUNCTION_NESTING_DEPTH,
+                DEFAULT_MAX_FUNCTION_TOKENS,
                 token);
     }
 

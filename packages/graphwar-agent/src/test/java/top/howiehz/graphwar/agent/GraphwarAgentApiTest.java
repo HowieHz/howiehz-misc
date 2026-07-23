@@ -41,10 +41,13 @@ public final class GraphwarAgentApiTest {
     public static void main(String[] arguments) throws Exception {
         testShotJsonParser();
         testLedgerInvariantFailureIsInternalError();
+        testStoppedShotExecutorReleasesSlot();
         testOutOfOrderStateObservation();
         testGameDataReplacementCannotPublishOutOfOrder();
         testEquivalentFractionFunction();
+        testFunctionTokenCounting();
         testGraphPlaneAlphaClamp();
+        testFunctionGuardTransformation();
         GameData gameData = new GameData();
         configureRoom(gameData);
         Graphwar graphwar = new Graphwar(gameData);
@@ -113,6 +116,25 @@ public final class GraphwarAgentApiTest {
         }
     }
 
+    /** Verifies shutdown-race rejection cannot leave the sole shot slot permanently occupied. */
+    private static void testStoppedShotExecutorReleasesSlot() throws Exception {
+        GraphwarShotCommandStore commands =
+                new GraphwarShotCommandStore(new GraphwarStateReader(() -> null));
+        commands.stop();
+        GraphwarShotCommandStore.Submission submission =
+                commands.submit(
+                        GraphwarShotRequest.parse(
+                                createV3ShotBody(
+                                        uuidFor(899),
+                                        GAME_INSTANCE_ID,
+                                        TURN_TOKEN,
+                                        REVISION,
+                                        "x",
+                                        null)));
+        assertContains(submission.json, "\"code\":\"internal-error\"", "stopped executor error");
+        assertTrue(commands.canAcceptShotCommands(), "stopped executor leaked the shot slot");
+    }
+
     /**
      * Verifies the long fraction accepted by the Agent preserves Graphwar's parsed double value.
      */
@@ -129,20 +151,7 @@ public final class GraphwarAgentApiTest {
 
     /** Reproduces the official renderer crash and verifies transformed alpha clamping. */
     private static void testGraphPlaneAlphaClamp() throws Exception {
-        byte[] originalClass;
-        try (InputStream input =
-                GraphwarAgentApiTest.class.getResourceAsStream("/Graphwar/GraphPlane.class")) {
-            if (input == null) {
-                throw new AssertionError("missing Graphwar.GraphPlane test class");
-            }
-            ByteArrayOutputStream output = new ByteArrayOutputStream();
-            byte[] buffer = new byte[4096];
-            int bytesRead;
-            while ((bytesRead = input.read(buffer)) >= 0) {
-                output.write(buffer, 0, bytesRead);
-            }
-            originalClass = output.toByteArray();
-        }
+        byte[] originalClass = readClassBytes("/Graphwar/GraphPlane.class");
 
         GraphwarAlphaCompositeFixer fixer = new GraphwarAlphaCompositeFixer();
         assertTrue(
@@ -172,6 +181,161 @@ public final class GraphwarAgentApiTest {
                         .getMethod("renderAlpha", Float.TYPE)
                         .invoke(graphPlane, Float.valueOf(0.4f)),
                 "valid alpha");
+    }
+
+    /** Verifies UI rejection, inbound disconnect, and precise stack-overflow containment. */
+    private static void testFunctionGuardTransformation() throws Exception {
+        GraphwarFunctionGuard guard = new GraphwarFunctionGuard(GraphwarAgentConfig.forTest(0, 0));
+        byte[] gameScreenBytes = readClassBytes("/Graphwar/GameScreen.class");
+        byte[] patchedGameScreen =
+                guard.transform(null, "Graphwar/GameScreen", null, null, gameScreenBytes);
+        assertTrue(patchedGameScreen != null, "GameScreen sendFunction call was not guarded");
+        Class<?> gameScreenClass =
+                new TransformedClassLoader().define("Graphwar.GameScreen", patchedGameScreen);
+        Object gameScreen = gameScreenClass.getConstructor().newInstance();
+        GameData gameData = new GameData();
+        gameScreenClass
+                .getMethod("fire", GameData.class, String.class)
+                .invoke(gameScreen, gameData, repeatedTerms("x", "+", 1_537));
+        assertEquals(0, gameData.getShotCalls().size(), "guarded UI complex function calls");
+        gameScreenClass
+                .getMethod("fire", GameData.class, String.class)
+                .invoke(gameScreen, gameData, "x");
+        assertEquals(
+                Collections.singletonList("function:x"),
+                gameData.getShotCalls(),
+                "guarded UI valid function call");
+        gameData.setShouldOverflowFromFunction(true);
+        gameScreenClass
+                .getMethod("fire", GameData.class, String.class)
+                .invoke(gameScreen, gameData, "x");
+        assertEquals(1, gameData.getShotCalls().size(), "outbound stack overflow side effects");
+        gameData.setShouldOverflowFromFunction(false);
+        gameData.setShouldThrowOtherErrorFromFunction(true);
+        try {
+            gameScreenClass
+                    .getMethod("fire", GameData.class, String.class)
+                    .invoke(gameScreen, gameData, "x");
+            throw new AssertionError("unrelated outbound Error was suppressed");
+        } catch (java.lang.reflect.InvocationTargetException expected) {
+            assertTrue(
+                    expected.getCause() instanceof AssertionError,
+                    "unrelated outbound Error type changed");
+        }
+
+        byte[] computerPlayerBytes = readClassBytes("/Graphwar/ComputerPlayer.class");
+        byte[] patchedComputerPlayer =
+                guard.transform(null, "Graphwar/ComputerPlayer", null, null, computerPlayerBytes);
+        assertTrue(
+                patchedComputerPlayer != null, "ComputerPlayer sendFunction call was not guarded");
+        Class<?> computerPlayerClass =
+                new TransformedClassLoader()
+                        .define("Graphwar.ComputerPlayer", patchedComputerPlayer);
+        GameData computerGameData = new GameData();
+        Object computerPlayer =
+                computerPlayerClass
+                        .getConstructor(
+                                GameData.class,
+                                Integer.TYPE,
+                                String.class,
+                                Integer.TYPE,
+                                Boolean.TYPE,
+                                Integer.TYPE)
+                        .newInstance(computerGameData, 7, "computer", 1, true, 1);
+        computerPlayerClass
+                .getMethod("fire", GameData.class, String.class)
+                .invoke(computerPlayer, computerGameData, repeatedTerms("x", "+", 1_537));
+        assertEquals(
+                0, computerGameData.getShotCalls().size(), "guarded AI complex function calls");
+
+        byte[] gameDataBytes = readClassBytes("/Graphwar/GameData.class");
+        byte[] patchedGameData =
+                guard.transform(null, "Graphwar/GameData", null, null, gameDataBytes);
+        assertTrue(patchedGameData != null, "GameData inbound function call was not guarded");
+        Class<?> gameDataClass =
+                new TransformedClassLoader().define("Graphwar.GameData", patchedGameData);
+
+        Object ignoredDrawingGameData = gameDataClass.getConstructor().newInstance();
+        addTransformedCurrentPlayer(gameDataClass, ignoredDrawingGameData, false);
+        gameDataClass
+                .getMethod("setDrawingFunction", Boolean.TYPE)
+                .invoke(ignoredDrawingGameData, Boolean.TRUE);
+        gameDataClass
+                .getMethod("handleIncomingFunction", String[].class)
+                .invoke(
+                        ignoredDrawingGameData,
+                        new Object[] {new String[] {"24", "7", repeatedTerms("x", "%2B", 1_537)}});
+        assertEquals(
+                Boolean.FALSE,
+                gameDataClass.getMethod("isDisconnected").invoke(ignoredDrawingGameData),
+                "drawing-state inbound no-op");
+
+        Object ignoredOutOfTurnGameData = gameDataClass.getConstructor().newInstance();
+        addTransformedCurrentPlayer(gameDataClass, ignoredOutOfTurnGameData, false);
+        gameDataClass
+                .getMethod("handleIncomingFunction", String[].class)
+                .invoke(
+                        ignoredOutOfTurnGameData,
+                        new Object[] {new String[] {"24", "9", repeatedTerms("x", "%2B", 1_537)}});
+        assertEquals(
+                Boolean.FALSE,
+                gameDataClass.getMethod("isDisconnected").invoke(ignoredOutOfTurnGameData),
+                "out-of-turn inbound no-op");
+
+        Object inboundGameData = gameDataClass.getConstructor().newInstance();
+        addTransformedCurrentPlayer(gameDataClass, inboundGameData, false);
+        gameDataClass
+                .getMethod("handleIncomingFunction", String[].class)
+                .invoke(
+                        inboundGameData,
+                        new Object[] {new String[] {"24", "7", repeatedTerms("x", "%2B", 1_537)}});
+        assertEquals(
+                Boolean.TRUE,
+                gameDataClass.getMethod("isDisconnected").invoke(inboundGameData),
+                "complex inbound disconnect");
+        assertEquals(
+                Collections.emptyList(),
+                gameDataClass.getMethod("getInboundFunctions").invoke(inboundGameData),
+                "complex inbound processing");
+
+        Object computerInboundGameData = gameDataClass.getConstructor().newInstance();
+        addTransformedCurrentPlayer(gameDataClass, computerInboundGameData, true);
+        gameDataClass
+                .getMethod("handleIncomingFunction", String[].class)
+                .invoke(computerInboundGameData, new Object[] {new String[] {"24", "7", "x"}});
+        assertEquals(
+                Collections.singletonList("x"),
+                gameDataClass.getMethod("getInboundFunctions").invoke(computerInboundGameData),
+                "computer-player inbound processing");
+
+        Object overflowGameData = gameDataClass.getConstructor().newInstance();
+        addTransformedCurrentPlayer(gameDataClass, overflowGameData, false);
+        gameDataClass
+                .getMethod("setShouldOverflowFromInbound", Boolean.TYPE)
+                .invoke(overflowGameData, Boolean.TRUE);
+        gameDataClass
+                .getMethod("handleIncomingFunction", String[].class)
+                .invoke(overflowGameData, new Object[] {new String[] {"24", "7", "x"}});
+        assertEquals(
+                Boolean.TRUE,
+                gameDataClass.getMethod("isDisconnected").invoke(overflowGameData),
+                "inbound stack overflow disconnect");
+
+        Object unrelatedErrorGameData = gameDataClass.getConstructor().newInstance();
+        addTransformedCurrentPlayer(gameDataClass, unrelatedErrorGameData, false);
+        gameDataClass
+                .getMethod("setShouldThrowOtherErrorFromInbound", Boolean.TYPE)
+                .invoke(unrelatedErrorGameData, Boolean.TRUE);
+        try {
+            gameDataClass
+                    .getMethod("handleIncomingFunction", String[].class)
+                    .invoke(unrelatedErrorGameData, new Object[] {new String[] {"24", "7", "x"}});
+            throw new AssertionError("unrelated inbound Error was suppressed");
+        } catch (java.lang.reflect.InvocationTargetException expected) {
+            assertTrue(
+                    expected.getCause() instanceof AssertionError,
+                    "unrelated inbound Error type changed");
+        }
     }
 
     /** Verifies strict field, escape, and JSON-number handling before HTTP routing. */
@@ -308,6 +472,8 @@ public final class GraphwarAgentApiTest {
         assertContains(health, "\"version\":\"2.0.0\"", "Agent version");
         assertContains(health, "\"isAuthenticationRequired\":false", "health auth flag");
         assertContains(health, "\"maxRequestHeaderBytes\":8192", "health header limit");
+        assertContains(health, "\"maxFunctionBytes\":65536", "health function byte limit");
+        assertContains(health, "\"maxFunctionTokens\":3072", "health function token limit");
 
         assertContains(
                 request(port, "GET", "/room", null, null).bodyText(),
@@ -388,6 +554,25 @@ public final class GraphwarAgentApiTest {
         String shotBody =
                 createV3ShotBody(REQUEST_ID, gameInstanceId, turnToken, revision, "x", null);
         gameData.clearShotCalls();
+        HttpResponse complexFunction =
+                request(
+                        port,
+                        "POST",
+                        "/shots",
+                        createV3ShotBody(
+                                uuidFor(90),
+                                gameInstanceId,
+                                turnToken,
+                                revision,
+                                repeatedTerms("x", "+", 1_537),
+                                null),
+                        "application/json");
+        assertEquals(201, complexFunction.status, "complex function command creation");
+        assertContains(
+                complexFunction.bodyText(),
+                "\"code\":\"function-too-complex\"",
+                "complex function error code");
+        assertEquals(0, gameData.getShotCalls().size(), "complex function side effects");
         HttpResponse created = request(port, "POST", "/shots", shotBody, "application/json");
         assertEquals(201, created.status, "created command status");
         assertContains(created.bodyText(), "\"status\":\"submitted\"", "submitted command");
@@ -705,16 +890,29 @@ public final class GraphwarAgentApiTest {
         GraphwarAgentConfig raised =
                 GraphwarAgentConfig.parse(
                         "maxRequestHeaderBytes=1048576,maxRequestBodyBytes=16777216,"
-                                + "maxFunctionBytes=1048576,"
-                                + "maxFunctionNestingDepth=4096");
+                                + "maxFunctionBytes=65536,"
+                                + "maxFunctionTokens=3072");
         assertEquals(1_048_576, raised.maxRequestHeaderBytes, "raised header limit");
         assertEquals(
                 8_192,
                 GraphwarAgentConfig.parse("maxRequestHeaderBytes=1024").maxRequestHeaderBytes,
                 "undersized header limit");
         assertEquals(16_777_216, raised.maxRequestBodyBytes, "raised body limit");
-        assertEquals(1_048_576, raised.maxFunctionBytes, "raised function limit");
-        assertEquals(4_096, raised.maxFunctionNestingDepth, "raised nesting limit");
+        assertEquals(65_536, raised.maxFunctionBytes, "maximum function byte limit");
+        assertEquals(
+                32_768,
+                GraphwarAgentConfig.parse("maxFunctionBytes=32768").maxFunctionBytes,
+                "lower function byte limit");
+        assertEquals(
+                65_536,
+                GraphwarAgentConfig.parse("maxRequestBodyBytes=16777216,maxFunctionBytes=1048576")
+                        .maxFunctionBytes,
+                "oversized function byte limit");
+        assertEquals(3_072, raised.maxFunctionTokens, "raised token limit");
+        assertEquals(
+                2_048,
+                GraphwarAgentConfig.parse("maxFunctionTokens=2048").maxFunctionTokens,
+                "lower token limit");
         boolean hasRejectedInvalidToken = false;
         try {
             GraphwarAgentConfig.parse("token=not valid");
@@ -731,6 +929,125 @@ public final class GraphwarAgentApiTest {
             value.append(character);
         }
         return value.toString();
+    }
+
+    /** Verifies Graphwar-compatible tokens, aliases, replacements, and implicit products. */
+    private static void testFunctionTokenCounting() throws Exception {
+        assertEquals(1, GraphwarFunctionLimits.countTokens("x", 100), "single variable tokens");
+        assertEquals(1, GraphwarFunctionLimits.countTokens("y'", 100), "original y token order");
+        assertEquals(9, GraphwarFunctionLimits.countTokens("x+x*x/x^x", 100), "binary tokens");
+        assertEquals(2, GraphwarFunctionLimits.countTokens("sqrt(x)", 100), "sqrt token");
+        assertEquals(2, GraphwarFunctionLimits.countTokens("log(x)", 100), "log token");
+        assertEquals(2, GraphwarFunctionLimits.countTokens("abs(x)", 100), "abs token");
+        assertEquals(3, GraphwarFunctionLimits.countTokens("2x", 100), "implicit product tokens");
+        assertEquals(
+                5,
+                GraphwarFunctionLimits.countTokens("2(x+1)", 100),
+                "bracket implicit product tokens");
+        assertEquals(
+                2, GraphwarFunctionLimits.countTokens(")x", 100), "right bracket product tokens");
+        assertEquals(4, GraphwarFunctionLimits.countTokens("xsin(x)", 100), "unary product tokens");
+        assertEquals(2, GraphwarFunctionLimits.countTokens("sin(x)", 100), "unary tokens");
+        assertEquals(2, GraphwarFunctionLimits.countTokens("sen(x)", 100), "alias tokens");
+        assertEquals(3, GraphwarFunctionLimits.countTokens("tan(tg(x))", 100), "tan alias tokens");
+        assertEquals(3, GraphwarFunctionLimits.countTokens("cos(ln(x))", 100), "cos ln tokens");
+        assertEquals(3, GraphwarFunctionLimits.countTokens("e*pi", 100), "constant tokens");
+        assertEquals(3, GraphwarFunctionLimits.countTokens("exp(x)", 100), "exp rewrite tokens");
+        assertEquals(
+                3, GraphwarFunctionLimits.countTokens("EXP(X)", 100), "uppercase rewrite tokens");
+        assertEquals(
+                7,
+                GraphwarFunctionLimits.countTokens("PİPİPİX", 100),
+                "Unicode lowercase expansion tokens");
+        assertEquals(7, GraphwarFunctionLimits.countTokens("+++x", 100), "unary plus nodes");
+        assertEquals(5, GraphwarFunctionLimits.countTokens("x+x+x", 100), "binary plus nodes");
+        assertEquals(4, GraphwarFunctionLimits.countTokens("x-y", 100), "minus rewrite tokens");
+        assertEquals(1, GraphwarFunctionLimits.countTokens("1,5", 100), "decimal rewrite tokens");
+        assertEquals(1, GraphwarFunctionLimits.countTokens("???x???", 100), "ignored text tokens");
+        assertEquals(
+                1, GraphwarFunctionLimits.countTokens(" \t?x\n", 100), "ignored whitespace tokens");
+        assertEquals(
+                3_072,
+                GraphwarFunctionLimits.countTokens(repeatedTerms("sin", "", 3_071) + "x", 3_072),
+                "exact token limit");
+        assertEquals(
+                3_073,
+                GraphwarFunctionLimits.countTokens(repeatedTerms("sin", "", 3_072) + "x", 3_072),
+                "early token cutoff");
+
+        new GraphwarFunctionLimits(3, 100).validate("界");
+        new GraphwarFunctionLimits(4, 100).validate("😀");
+        try {
+            new GraphwarFunctionLimits(2, 100).validate("界");
+            throw new AssertionError("UTF-8 byte limit was not independent from token count");
+        } catch (GraphwarInvalidFunctionException expected) {
+            assertEquals(
+                    "Graphwar function exceeds the byte limit",
+                    expected.getMessage(),
+                    "UTF-8 byte rejection");
+        }
+
+        String unicodeBypass = repeatedTerms("Pİ", "", 21_845) + "X";
+        try {
+            new GraphwarFunctionLimits(65_536, 3_072).validate(unicodeBypass);
+            throw new AssertionError("Unicode lowercase expansion bypassed the token limit");
+        } catch (GraphwarInvalidFunctionException expected) {
+            assertEquals(
+                    "Graphwar function exceeds the token limit",
+                    expected.getMessage(),
+                    "Unicode expansion token rejection");
+        }
+
+        try {
+            new GraphwarFunctionLimits(65_536, 3_072).validate(repeatedTerms("+", "", 3_071) + "x");
+            throw new AssertionError("Unary plus nodes bypassed the token limit");
+        } catch (GraphwarInvalidFunctionException expected) {
+            assertEquals(
+                    "Graphwar function exceeds the token limit",
+                    expected.getMessage(),
+                    "unary plus token rejection");
+        }
+    }
+
+    /** Joins repeated terms without relying on newer JDK collection helpers. */
+    private static String repeatedTerms(String term, String separator, int count) {
+        StringBuilder value = new StringBuilder(count * (term.length() + separator.length()));
+        for (int index = 0; index < count; index += 1) {
+            if (index > 0) {
+                value.append(separator);
+            }
+            value.append(term);
+        }
+        return value.toString();
+    }
+
+    /** Reads one compiled fixture class without assuming the resource length. */
+    private static byte[] readClassBytes(String resourceName) throws IOException {
+        try (InputStream input = GraphwarAgentApiTest.class.getResourceAsStream(resourceName)) {
+            if (input == null) {
+                throw new AssertionError("missing test class " + resourceName);
+            }
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = input.read(buffer)) >= 0) {
+                output.write(buffer, 0, bytesRead);
+            }
+            return output.toByteArray();
+        }
+    }
+
+    /** Adds one current player whose public ID getter is compatible across fixture loaders. */
+    private static void addTransformedCurrentPlayer(
+            Class<?> gameDataClass, Object gameData, boolean isComputerPlayer) throws Exception {
+        gameDataClass
+                .getMethod("addPlayer", Player.class)
+                .invoke(
+                        gameData,
+                        isComputerPlayer
+                                ? new ComputerPlayer(new GameData(), 7, "Inbound", 1, false, 1)
+                                : new Player(
+                                        new GameData(), 7, "Inbound", 1, false, false, 1, false));
     }
 
     /** Builds one exact v3 shot payload with a stable caller-generated request ID. */

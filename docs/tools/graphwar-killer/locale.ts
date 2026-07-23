@@ -166,8 +166,8 @@ export const graphwarKillerLocale = {
             return "请求缺少 Content-Length";
           case "function-empty":
             return "发射函数不能为空";
-          case "function-nesting-too-deep":
-            return "发射函数嵌套层级超过 Agent 限制";
+          case "function-too-complex":
+            return "发射函数复杂度超过 Agent 限制";
           case "function-too-large":
             return "发射函数超过 Agent 大小限制";
           case "game-instance-stale":

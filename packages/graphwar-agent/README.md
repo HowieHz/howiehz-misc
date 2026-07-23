@@ -28,14 +28,14 @@ To set multiple options, pass a comma-separated list after the Agent JAR path:
 java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxRequestBodyBytes=1048576 -jar graphwar.jar
 ```
 
-| Option                    | Purpose                                      | Default                                                    | Accepted values                                             |
-| ------------------------- | -------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- |
-| `port`                    | Set the HTTP listening port                  | `17900`; if busy, try the next 100 ports (`17901`–`18000`) | `1`–`65535`; an explicit value disables fallback            |
-| `token`                   | Enable bearer-token authentication           | Authentication disabled                                    | `auto`, or 1–4096 visible ASCII characters excluding commas |
-| `maxRequestHeaderBytes`   | Limit HTTP request-header size               | `8192`                                                     | `8192`–`1048576`                                            |
-| `maxRequestBodyBytes`     | Limit the JSON data accepted per API request | `65536`                                                    | `1024`–`16777216`                                           |
-| `maxFunctionBytes`        | Limit submitted function size in UTF-8 bytes | `16384`                                                    | `1`–`1048576`, capped to the effective request-body limit   |
-| `maxFunctionNestingDepth` | Limit function-expression nesting depth      | `256`                                                      | `1`–`4096`                                                  |
+| Option                  | Purpose                                      | Default                                                    | Accepted values                                             |
+| ----------------------- | -------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- |
+| `port`                  | Set the HTTP listening port                  | `17900`; if busy, try the next 100 ports (`17901`–`18000`) | `1`–`65535`; an explicit value disables fallback            |
+| `token`                 | Enable bearer-token authentication           | Authentication disabled                                    | `auto`, or 1–4096 visible ASCII characters excluding commas |
+| `maxRequestHeaderBytes` | Limit HTTP request-header size               | `8192`                                                     | `8192`–`1048576`                                            |
+| `maxRequestBodyBytes`   | Limit the JSON data accepted per API request | `65536`                                                    | `1024`–`16777216`                                           |
+| `maxFunctionBytes`      | Limit submitted function size in UTF-8 bytes | `65536`                                                    | `1`–`65536`, capped to the effective request-body limit     |
+| `maxFunctionTokens`     | Limit effective Graphwar evaluation tokens   | `3072`                                                     | `1`–`3072`                                                  |
 
 Startup logs show the Agent version, source commit, effective limits, authentication token when enabled, and listening address. `GET /health` is always public and reports API version 3, build information, whether authentication is required, and the effective limits.
 

@@ -508,7 +508,7 @@ components:
         - maxRequestHeaderBytes
         - maxRequestBodyBytes
         - maxFunctionBytes
-        - maxFunctionNestingDepth
+        - maxFunctionTokens
       properties:
         maxRequestHeaderBytes:
           type: integer
@@ -525,14 +525,15 @@ components:
         maxFunctionBytes:
           type: integer
           minimum: 1
-          maximum: 1048576
-          default: 16384
-          description: Never greater than maxRequestBodyBytes.
-        maxFunctionNestingDepth:
+          maximum: 65536
+          default: 65536
+          description: Hard safety ceiling; never greater than maxRequestBodyBytes.
+        maxFunctionTokens:
           type: integer
           minimum: 1
-          maximum: 4096
-          default: 256
+          maximum: 3072
+          default: 3072
+          description: Maximum effective Graphwar evaluation tokens after implicit multiplication.
     HealthResponse:
       type: object
       additionalProperties: false
@@ -1087,7 +1088,7 @@ components:
             - shot-executor-busy
             - function-empty
             - function-too-large
-            - function-nesting-too-deep
+            - function-too-complex
             - malformed-function
             - angle-required
             - angle-not-allowed

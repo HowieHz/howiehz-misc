@@ -25,6 +25,9 @@ public final class GraphwarAgent {
             return;
         }
 
+        GraphwarAgentConfig config = GraphwarAgentConfig.parse(agentArgs);
+        // Source: Graphwar's recursive formula parser and evaluator run on network/UI threads.
+        instrumentation.addTransformer(new GraphwarFunctionGuard(config), false);
         // Source: Graphwar's countdown helpers cancel sleep with Thread.interrupt() and
         // print the expected InterruptedException. Register before game classes load.
         instrumentation.addTransformer(new GraphwarInterruptedSleepSilencer(), false);
@@ -42,7 +45,6 @@ public final class GraphwarAgent {
         instrumentation.addTransformer(new GraphwarAlphaCompositeFixer(), false);
 
         printBuildInfo();
-        GraphwarAgentConfig config = GraphwarAgentConfig.parse(agentArgs);
         GraphwarStateReader stateReader = new GraphwarStateReader(config);
         GraphwarShotCommandStore shotCommands = new GraphwarShotCommandStore(stateReader);
         stateReader.setShotCommands(shotCommands);
@@ -62,8 +64,9 @@ public final class GraphwarAgent {
         System.err.println(
                 "[graphwar-agent] function limits "
                         + config.maxFunctionBytes
-                        + " bytes, nesting depth "
-                        + config.maxFunctionNestingDepth);
+                        + " bytes, "
+                        + config.maxFunctionTokens
+                        + " tokens");
         if (config.isAuthenticationRequired()) {
             System.err.println("[graphwar-agent] access token " + config.token);
         }

@@ -197,8 +197,8 @@ export const graphwarKillerLocale = {
             return "The request is missing Content-Length";
           case "function-empty":
             return "The shot function cannot be empty";
-          case "function-nesting-too-deep":
-            return "The shot function exceeds the Agent nesting limit";
+          case "function-too-complex":
+            return "The shot function exceeds the Agent complexity limit";
           case "function-too-large":
             return "The shot function exceeds the Agent size limit";
           case "game-instance-stale":

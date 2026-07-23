@@ -464,9 +464,7 @@ final class GraphwarHttpServer {
         json.append("\"maxRequestHeaderBytes\":").append(config.maxRequestHeaderBytes);
         json.append(",\"maxRequestBodyBytes\":").append(config.maxRequestBodyBytes);
         json.append(",\"maxFunctionBytes\":").append(config.maxFunctionBytes);
-        json.append(",\"maxFunctionNestingDepth\":")
-                .append(config.maxFunctionNestingDepth)
-                .append('}');
+        json.append(",\"maxFunctionTokens\":").append(config.maxFunctionTokens).append('}');
         GraphwarStateReader.appendAgent(json);
         json.append("}\n");
         return json.toString();

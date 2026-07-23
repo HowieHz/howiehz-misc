@@ -148,11 +148,7 @@ describe("Graphwar Agent status", () => {
   it.each([
     ["function-empty", "发射函数不能为空", "The shot function cannot be empty"],
     ["function-too-large", "发射函数超过 Agent 大小限制", "The shot function exceeds the Agent size limit"],
-    [
-      "function-nesting-too-deep",
-      "发射函数嵌套层级超过 Agent 限制",
-      "The shot function exceeds the Agent nesting limit",
-    ],
+    ["function-too-complex", "发射函数复杂度超过 Agent 限制", "The shot function exceeds the Agent complexity limit"],
     ["malformed-function", "发射函数格式无效", "The shot function is malformed"],
     ["angle-required", "当前方程模式需要发射角度", "The current equation mode requires a shot angle"],
     ["angle-not-allowed", "当前方程模式不接受发射角度", "The current equation mode does not accept a shot angle"],

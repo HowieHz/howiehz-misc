@@ -129,8 +129,8 @@ A `405` response MUST include `Allow`. Successfully parsed API errors MUST use t
   "limits": {
     "maxRequestHeaderBytes": 8192,
     "maxRequestBodyBytes": 65536,
-    "maxFunctionBytes": 16384,
-    "maxFunctionNestingDepth": 256
+    "maxFunctionBytes": 65536,
+    "maxFunctionTokens": 3072
   },
   "agent": {
     "version": "2.0.0",
@@ -147,26 +147,28 @@ Clients MUST verify `apiVersion === 3` before using protected endpoints. `agent`
 
 The reference implementation applies these limits before invoking the official parser:
 
-| Limit                     |         Default | Configurable range | Notes                                                                    |
-| ------------------------- | --------------: | -----------------: | ------------------------------------------------------------------------ |
-| `maxRequestHeaderBytes`   |          `8192` |   `8192`–`1048576` | Maximum request-header bytes, including the terminating empty line       |
-| `maxRequestBodyBytes`     |         `65536` |  `1024`–`16777216` | Maximum JSON data accepted in one API request; checked before allocation |
-| `maxFunctionBytes`        |         `16384` |      `1`–`1048576` | UTF-8 bytes after JSON decoding; capped to the effective body limit      |
-| `maxFunctionNestingDepth` |           `256` |         `1`–`4096` | Maximum open-parenthesis depth from an iterative scan                    |
-| Stored shot commands      |    `50` records |              fixed | Old safe records are removed when space is needed                        |
-| Synchronous shot wait     |       `5000` ms |              fixed | Does not cancel the official call                                        |
-| Shot worker stack hint    | `2097152` bytes |              fixed | A JVM/platform hint, not a guaranteed exact stack size                   |
-| Graphwar HTTP slots       |             `6` |              fixed | Leaves two of eight workers available for health and command reads       |
+| Limit                   |         Default | Configurable range | Notes                                                                    |
+| ----------------------- | --------------: | -----------------: | ------------------------------------------------------------------------ |
+| `maxRequestHeaderBytes` |          `8192` |   `8192`–`1048576` | Maximum request-header bytes, including the terminating empty line       |
+| `maxRequestBodyBytes`   |         `65536` |  `1024`–`16777216` | Maximum JSON data accepted in one API request; checked before allocation |
+| `maxFunctionBytes`      |         `65536` |        `1`–`65536` | UTF-8 bytes after JSON decoding; capped to the effective body limit      |
+| `maxFunctionTokens`     |          `3072` |         `1`–`3072` | Effective evaluation tokens, including inserted implicit multiplication  |
+| Stored shot commands    |    `50` records |              fixed | Old safe records are removed when space is needed                        |
+| Synchronous shot wait   |       `5000` ms |              fixed | Does not cancel the official call                                        |
+| Shot worker stack hint  | `2097152` bytes |              fixed | A JVM/platform hint, not a guaranteed exact stack size                   |
+| Graphwar HTTP slots     |             `6` |              fixed | Leaves two of eight workers available for health and command reads       |
 
 The configurable startup names are the names returned by `/health.limits`. Invalid or out-of-range numeric options are ignored by the reference implementation. The effective `maxFunctionBytes` MUST NOT exceed `maxRequestBodyBytes`.
 
 Graphwar itself defines no formula-length limit, and its original parser recursively rebuilds expression trees.
-The defaults above are conservative engineering limits selected after local JDK 21 stress checks of the
-original parser using flat operations, parenthesis nesting, unary nesting, dense tokens, and encoded network
-payloads. They are not claims about a natural Graphwar protocol maximum. The original source under
+The 3072-token default rounds down 70% of the first unstable cold mixed-shape result: 4448 effective tokens on a
+1 MiB JDK 21 thread. Testing each shape alone produced a misleadingly higher limit because JIT profiling changed
+recursive frame usage. A bracket-heavy 65535-byte formula with one effective token parsed in about 617 ms, while
+the equivalent 1048575-byte input took about 12 seconds. The 65536-byte default is therefore also the hard
+formula-volume ceiling. These are engineering limits, not natural Graphwar protocol maxima. The source under
 `tmp/graphwar` is design evidence only and MUST NOT become a runtime, build, or conformance-test dependency.
 
-Replicas MUST reject inputs outside the advertised effective limits before invoking recursive official code. The nesting precheck MUST be iterative or otherwise independently bounded. Raising the limits increases parser, stack, and memory risk; no unlimited mode exists.
+Replicas MUST reject inputs outside the advertised effective limits before invoking recursive official code. Token counting MUST be iterative or otherwise independently bounded. Neither formula limit can be raised above its measured safe default; no unlimited mode exists.
 
 ## 4. Match state
 
@@ -515,7 +517,7 @@ Stable command error codes are:
 | `shot-executor-busy`         | `failed`                                   | `true`                                 |
 | `function-empty`             | `failed`                                   | `true`                                 |
 | `function-too-large`         | `failed`                                   | `true`                                 |
-| `function-nesting-too-deep`  | `failed`                                   | `true`                                 |
+| `function-too-complex`       | `failed`                                   | `true`                                 |
 | `malformed-function`         | `failed`                                   | `true`                                 |
 | `angle-required`             | `failed`                                   | `true`                                 |
 | `angle-not-allowed`          | `failed`                                   | `true`                                 |

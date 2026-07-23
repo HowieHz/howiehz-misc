@@ -26,8 +26,8 @@ final class GraphwarStateReader {
     private static final String GRAPHWAR_COMPUTER_PLAYER_CLASS_NAME = "Graphwar.ComputerPlayer";
     private static final double MAX_ANGLE_RADIANS = Math.PI / 2.0;
     private final String agentInstanceId = UUID.randomUUID().toString();
-    private final GraphwarAgentConfig config;
     private final Supplier<Object> graphwarFinder;
+    private final GraphwarFunctionLimits functionLimits;
     private final Object identityLock = new Object();
     // Serializes GameData replacement with identity publication; old snapshots must never retire a
     // newer game.
@@ -65,7 +65,8 @@ final class GraphwarStateReader {
 
     /** Accepts both limits and a client locator for complete contract tests. */
     GraphwarStateReader(GraphwarAgentConfig config, Supplier<Object> graphwarFinder) {
-        this.config = config;
+        this.functionLimits =
+                new GraphwarFunctionLimits(config.maxFunctionBytes, config.maxFunctionTokens);
         this.graphwarFinder = graphwarFinder;
     }
 
@@ -224,7 +225,7 @@ final class GraphwarStateReader {
         if (request.function.isEmpty()) {
             throw new GraphwarInvalidFunctionException("Graphwar function is empty");
         }
-        validateFunctionLimits(request.function);
+        functionLimits.validate(request.function);
         if (request.turnToken.isEmpty() || request.battleRevision.isEmpty()) {
             throw new GraphwarInvalidShotException(
                     "turnToken and battleRevision must not be empty");
@@ -756,27 +757,6 @@ final class GraphwarStateReader {
                 throw new GraphwarInvalidFunctionException("Malformed Graphwar function");
             }
             throw new GraphwarStateException("Graphwar function validation failed", cause);
-        }
-    }
-
-    /** Rejects inputs that exceed the configured byte or iterative parenthesis limits. */
-    private void validateFunctionLimits(String function) throws GraphwarInvalidFunctionException {
-        if (function.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
-                > config.maxFunctionBytes) {
-            throw new GraphwarInvalidFunctionException("Graphwar function exceeds the byte limit");
-        }
-        int nestingDepth = 0;
-        for (int index = 0; index < function.length(); index += 1) {
-            char character = function.charAt(index);
-            if (character == '(') {
-                nestingDepth += 1;
-                if (nestingDepth > config.maxFunctionNestingDepth) {
-                    throw new GraphwarInvalidFunctionException(
-                            "Graphwar function exceeds the nesting depth limit");
-                }
-            } else if (character == ')' && nestingDepth > 0) {
-                nestingDepth -= 1;
-            }
         }
     }
 

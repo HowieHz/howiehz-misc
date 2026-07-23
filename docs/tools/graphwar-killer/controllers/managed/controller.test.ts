@@ -237,7 +237,10 @@ describe("Graphwar managed controller v3", () => {
     await vi.advanceTimersByTimeAsync(0);
     controller.submitShot(state, { equationMode: "y", function: "x" });
 
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(999);
+
+    expect(client.readShotCommand).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(client.readShotCommand).toHaveBeenCalled();
     expect(client.readState).toHaveBeenCalledOnce();
@@ -278,7 +281,7 @@ describe("Graphwar managed controller v3", () => {
 
     commandStatus = "submitted";
     state = createAvailableState({ shotCommand: { requestId: request.requestId, status: "submitted" } });
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(1_010);
 
     expect(client.readState.mock.calls.length).toBeGreaterThan(1);
     expect(client.readShotCommand).toHaveBeenCalledTimes(pendingReadCount + 1);

@@ -42,6 +42,7 @@ public final class GraphwarAgentApiTest {
         testShotJsonParser();
         testLedgerInvariantFailureIsInternalError();
         testStoppedShotExecutorReleasesSlot();
+        testShotWorkerStartupFailureReleasesSlot();
         testOutOfOrderStateObservation();
         testGameDataReplacementCannotPublishOutOfOrder();
         testEquivalentFractionFunction();
@@ -134,6 +135,40 @@ public final class GraphwarAgentApiTest {
                                         null)));
         assertContains(submission.json, "\"code\":\"internal-error\"", "stopped executor error");
         assertTrue(commands.canAcceptShotCommands(), "stopped executor leaked the shot slot");
+    }
+
+    /**
+     * Verifies a failure before the worker starts still terminates its command and releases its
+     * slot.
+     */
+    private static void testShotWorkerStartupFailureReleasesSlot() throws Exception {
+        GraphwarShotCommandStore commands =
+                new GraphwarShotCommandStore(
+                        new GraphwarStateReader(() -> null),
+                        runnable -> {
+                            throw new SecurityException("worker creation denied");
+                        });
+        try {
+            GraphwarShotCommandStore.Submission submission =
+                    commands.submit(
+                            GraphwarShotRequest.parse(
+                                    createV3ShotBody(
+                                            uuidFor(898),
+                                            GAME_INSTANCE_ID,
+                                            TURN_TOKEN,
+                                            REVISION,
+                                            "x",
+                                            null)));
+            assertContains(
+                    submission.json, "\"status\":\"failed\"", "worker startup failure status");
+            assertContains(
+                    submission.json, "\"code\":\"internal-error\"", "worker startup failure code");
+            assertTrue(
+                    commands.canAcceptShotCommands(),
+                    "worker startup failure leaked the shot slot");
+        } finally {
+            commands.stop();
+        }
     }
 
     /**
@@ -570,13 +605,14 @@ public final class GraphwarAgentApiTest {
         String shotBody =
                 createV3ShotBody(REQUEST_ID, gameInstanceId, turnToken, revision, "x", null);
         gameData.clearShotCalls();
+        String complexRequestId = uuidFor(90);
         HttpResponse complexFunction =
                 request(
                         port,
                         "POST",
                         "/shots",
                         createV3ShotBody(
-                                uuidFor(90),
+                                complexRequestId,
                                 gameInstanceId,
                                 turnToken,
                                 revision,
@@ -584,14 +620,13 @@ public final class GraphwarAgentApiTest {
                                 null),
                         "application/json");
         assertEquals(201, complexFunction.status, "complex function command creation");
+        String complexCommand = waitForCommandStatus(port, complexRequestId, "failed");
         assertContains(
-                complexFunction.bodyText(),
-                "\"code\":\"function-too-complex\"",
-                "complex function error code");
+                complexCommand, "\"code\":\"function-too-complex\"", "complex function error code");
         assertEquals(0, gameData.getShotCalls().size(), "complex function side effects");
         HttpResponse created = request(port, "POST", "/shots", shotBody, "application/json");
         assertEquals(201, created.status, "created command status");
-        assertContains(created.bodyText(), "\"status\":\"submitted\"", "submitted command");
+        waitForCommandStatus(port, REQUEST_ID, "submitted");
         assertEquals(
                 Collections.singletonList("function:x"),
                 gameData.getShotCalls(),
@@ -632,8 +667,10 @@ public final class GraphwarAgentApiTest {
                                 secondRequestId, gameInstanceId, turnToken, revision, "x", null),
                         "application/json");
         assertEquals(201, usedToken.status, "failed command resource status");
-        assertContains(usedToken.bodyText(), "\"status\":\"failed\"", "failed command");
-        assertContains(usedToken.bodyText(), "\"code\":\"turn-token-used\"", "stable error code");
+        assertContains(
+                waitForCommandStatus(port, secondRequestId, "failed"),
+                "\"code\":\"turn-token-used\"",
+                "stable error code");
 
         testStuckShotRecoveryAndLedgerBound(port, gameData);
         String unknownRequestId = testUnknownAfterClaim(port, gameData);
@@ -650,7 +687,7 @@ public final class GraphwarAgentApiTest {
                 "missing GameData room");
     }
 
-    /** Verifies concurrent replay, a stuck single slot, busy failures, and 50-record eviction. */
+    /** Verifies immediate response, concurrent replay, a stuck slot, and bounded eviction. */
     private static void testStuckShotRecoveryAndLedgerBound(int port, GameData gameData)
             throws Exception {
         configureActiveMatch(gameData);
@@ -670,9 +707,19 @@ public final class GraphwarAgentApiTest {
             assertTrue(
                     gameData.awaitFunctionCall(2, TimeUnit.SECONDS),
                     "shot worker did not enter the blocked original call");
+            HttpResponse created = first.get(2, TimeUnit.SECONDS);
+            assertEquals(201, created.status, "non-blocking initial command status");
+            assertEquals(
+                    "/shots/" + activeRequestId, created.location, "non-blocking command location");
+            assertEquals("1", created.retryAfter, "non-blocking command retry interval");
+            assertTrue(
+                    created.bodyText().contains("\"status\":\"validating\"")
+                            || created.bodyText().contains("\"status\":\"claimed\""),
+                    "initial command did not return a pending state: " + created.bodyText());
             HttpResponse replay = request(port, "POST", "/shots", body, "application/json");
             assertEquals(200, replay.status, "concurrent replay status");
             assertContains(replay.bodyText(), "\"status\":\"claimed\"", "concurrent replay state");
+            assertEquals("1", replay.retryAfter, "concurrent replay retry interval");
 
             String firstBusyRequestId = null;
             for (int index = 0; index < 55; index += 1) {
@@ -706,10 +753,6 @@ public final class GraphwarAgentApiTest {
                     404,
                     request(port, "GET", "/shots/" + firstBusyRequestId, null, null).status,
                     "oldest terminal command evicted");
-            HttpResponse timedOut = first.get(7, TimeUnit.SECONDS);
-            assertEquals(201, timedOut.status, "timed-out initial command status");
-            assertContains(
-                    timedOut.bodyText(), "\"status\":\"claimed\"", "timed-out command state");
 
             ExecutorService blockedStateReadExecutor = Executors.newFixedThreadPool(6);
             List<Future<HttpResponse>> blockedStateReads = new ArrayList<Future<HttpResponse>>(6);
@@ -749,20 +792,11 @@ public final class GraphwarAgentApiTest {
             executor.shutdownNow();
         }
 
-        long deadline = System.currentTimeMillis() + 2_000L;
-        String completed;
-        do {
-            completed = request(port, "GET", "/shots/" + activeRequestId, null, null).bodyText();
-            if (completed.contains("\"status\":\"submitted\"")) {
-                return;
-            }
-            Thread.sleep(10L);
-        } while (System.currentTimeMillis() < deadline);
-        throw new AssertionError("released blocked command did not become submitted: " + completed);
+        waitForCommandStatus(port, activeRequestId, "submitted");
     }
 
     /** Verifies that an exception after claim is retained as unknown rather than retried. */
-    private static String testUnknownAfterClaim(int port, GameData gameData) throws IOException {
+    private static String testUnknownAfterClaim(int port, GameData gameData) throws Exception {
         configureActiveMatch(gameData);
         gameData.setTimeTurnStarted(3_000L);
         String state = request(port, "GET", "/state", null, null).bodyText();
@@ -783,9 +817,10 @@ public final class GraphwarAgentApiTest {
                                     null),
                             "application/json");
             assertEquals(201, response.status, "unknown command creation");
-            assertContains(response.bodyText(), "\"status\":\"unknown\"", "unknown command status");
             assertContains(
-                    response.bodyText(), "\"code\":\"graphwar-call-failed\"", "unknown error code");
+                    waitForCommandStatus(port, requestId, "unknown"),
+                    "\"code\":\"graphwar-call-failed\"",
+                    "unknown error code");
             return requestId;
         } finally {
             gameData.setShouldThrowFromFunction(false);
@@ -809,13 +844,14 @@ public final class GraphwarAgentApiTest {
                     GraphwarFunctionLimits.countTokens(exactTokenFunction, 3_072),
                     "exact HTTP token boundary fixture");
             String state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            String exactTokenRequestId = uuidFor(400);
             HttpResponse exactTokenResponse =
                     request(
                             server.getPort(),
                             "POST",
                             "/shots",
                             createV3ShotBody(
-                                    uuidFor(400),
+                                    exactTokenRequestId,
                                     extractJsonString(state, "gameInstanceId"),
                                     extractJsonString(state, "turnToken"),
                                     extractJsonString(state, "battleRevision"),
@@ -823,21 +859,19 @@ public final class GraphwarAgentApiTest {
                                     null),
                             "application/json");
             assertEquals(201, exactTokenResponse.status, "exact token boundary HTTP status");
-            assertContains(
-                    exactTokenResponse.bodyText(),
-                    "\"status\":\"submitted\"",
-                    "exact token boundary submission");
+            waitForCommandStatus(server.getPort(), exactTokenRequestId, "submitted");
 
             gameData.clearShotCalls();
             gameData.setTimeTurnStarted(10_001L);
             state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            String exactByteRequestId = uuidFor(401);
             HttpResponse exactByteResponse =
                     request(
                             server.getPort(),
                             "POST",
                             "/shots",
                             createV3ShotBody(
-                                    uuidFor(401),
+                                    exactByteRequestId,
                                     extractJsonString(state, "gameInstanceId"),
                                     extractJsonString(state, "turnToken"),
                                     extractJsonString(state, "battleRevision"),
@@ -846,7 +880,7 @@ public final class GraphwarAgentApiTest {
                             "application/json");
             assertEquals(201, exactByteResponse.status, "exact byte boundary HTTP status");
             assertContains(
-                    exactByteResponse.bodyText(),
+                    waitForCommandStatus(server.getPort(), exactByteRequestId, "failed"),
                     "\"code\":\"function-too-complex\"",
                     "exact byte boundary reached token validation");
             assertEquals(0, gameData.getShotCalls().size(), "exact byte boundary side effects");
@@ -854,13 +888,14 @@ public final class GraphwarAgentApiTest {
             gameData.setGameMode(2);
             gameData.setTimeTurnStarted(10_002L);
             state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            String oversizedRequestId = uuidFor(402);
             HttpResponse oversizedResponse =
                     request(
                             server.getPort(),
                             "POST",
                             "/shots",
                             createV3ShotBody(
-                                    uuidFor(402),
+                                    oversizedRequestId,
                                     extractJsonString(state, "gameInstanceId"),
                                     extractJsonString(state, "turnToken"),
                                     extractJsonString(state, "battleRevision"),
@@ -869,27 +904,25 @@ public final class GraphwarAgentApiTest {
                             "application/json");
             assertEquals(201, oversizedResponse.status, "oversized formula command status");
             assertContains(
-                    oversizedResponse.bodyText(),
+                    waitForCommandStatus(server.getPort(), oversizedRequestId, "failed"),
                     "\"code\":\"function-too-large\"",
                     "oversized formula error code");
             assertEquals(0, gameData.getShotCalls().size(), "oversized formula angle side effect");
 
-            assertContains(
-                    request(
-                                    server.getPort(),
-                                    "POST",
-                                    "/shots",
-                                    createV3ShotBody(
-                                            uuidFor(403),
-                                            extractJsonString(state, "gameInstanceId"),
-                                            extractJsonString(state, "turnToken"),
-                                            extractJsonString(state, "battleRevision"),
-                                            "x",
-                                            "0.25"),
-                                    "application/json")
-                            .bodyText(),
-                    "\"status\":\"submitted\"",
-                    "legal retry after oversized formula");
+            String oversizedRetryRequestId = uuidFor(403);
+            request(
+                    server.getPort(),
+                    "POST",
+                    "/shots",
+                    createV3ShotBody(
+                            oversizedRetryRequestId,
+                            extractJsonString(state, "gameInstanceId"),
+                            extractJsonString(state, "turnToken"),
+                            extractJsonString(state, "battleRevision"),
+                            "x",
+                            "0.25"),
+                    "application/json");
+            waitForCommandStatus(server.getPort(), oversizedRetryRequestId, "submitted");
             assertEquals(
                     Arrays.asList("angle:0.25", "function:x"),
                     gameData.getShotCalls(),
@@ -899,69 +932,63 @@ public final class GraphwarAgentApiTest {
             gameData.setGameMode(0);
             gameData.setTimeTurnStarted(10_003L);
             state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            String parserErrorRequestId = uuidFor(404);
             HttpResponse parserErrorResponse =
                     request(
                             server.getPort(),
                             "POST",
                             "/shots",
                             createV3ShotBody(
-                                    uuidFor(404),
+                                    parserErrorRequestId,
                                     extractJsonString(state, "gameInstanceId"),
                                     extractJsonString(state, "turnToken"),
                                     extractJsonString(state, "battleRevision"),
                                     "error",
                                     null),
                             "application/json");
+            assertEquals(201, parserErrorResponse.status, "reflected parser Error command status");
             assertContains(
-                    parserErrorResponse.bodyText(),
-                    "\"status\":\"failed\"",
-                    "reflected parser Error terminal status");
-            assertContains(
-                    parserErrorResponse.bodyText(),
+                    waitForCommandStatus(server.getPort(), parserErrorRequestId, "failed"),
                     "\"code\":\"internal-error\"",
                     "reflected parser Error classification");
             assertTrue(
                     commands.canAcceptShotCommands(),
                     "reflected parser Error leaked the shot slot");
-            assertContains(
-                    request(
-                                    server.getPort(),
-                                    "POST",
-                                    "/shots",
-                                    createV3ShotBody(
-                                            uuidFor(405),
-                                            extractJsonString(state, "gameInstanceId"),
-                                            extractJsonString(state, "turnToken"),
-                                            extractJsonString(state, "battleRevision"),
-                                            "x",
-                                            null),
-                                    "application/json")
-                            .bodyText(),
-                    "\"status\":\"submitted\"",
-                    "legal request after reflected parser Error");
+            String parserErrorRetryRequestId = uuidFor(405);
+            request(
+                    server.getPort(),
+                    "POST",
+                    "/shots",
+                    createV3ShotBody(
+                            parserErrorRetryRequestId,
+                            extractJsonString(state, "gameInstanceId"),
+                            extractJsonString(state, "turnToken"),
+                            extractJsonString(state, "battleRevision"),
+                            "x",
+                            null),
+                    "application/json");
+            waitForCommandStatus(server.getPort(), parserErrorRetryRequestId, "submitted");
 
             gameData.setTimeTurnStarted(10_004L);
             state = request(server.getPort(), "GET", "/state", null, null).bodyText();
             gameData.setShouldThrowOtherErrorFromFunction(true);
+            String methodErrorRequestId = uuidFor(406);
             HttpResponse methodErrorResponse =
                     request(
                             server.getPort(),
                             "POST",
                             "/shots",
                             createV3ShotBody(
-                                    uuidFor(406),
+                                    methodErrorRequestId,
                                     extractJsonString(state, "gameInstanceId"),
                                     extractJsonString(state, "turnToken"),
                                     extractJsonString(state, "battleRevision"),
                                     "x",
                                     null),
                             "application/json");
+            assertEquals(201, methodErrorResponse.status, "reflected method Error command status");
             assertContains(
-                    methodErrorResponse.bodyText(),
-                    "\"status\":\"unknown\"",
-                    "reflected method Error terminal status");
-            assertContains(
-                    methodErrorResponse.bodyText(),
+                    waitForCommandStatus(server.getPort(), methodErrorRequestId, "unknown"),
                     "\"code\":\"internal-error\"",
                     "reflected method Error classification");
             assertTrue(
@@ -971,22 +998,20 @@ public final class GraphwarAgentApiTest {
             gameData.setShouldThrowOtherErrorFromFunction(false);
             gameData.setTimeTurnStarted(10_005L);
             state = request(server.getPort(), "GET", "/state", null, null).bodyText();
-            assertContains(
-                    request(
-                                    server.getPort(),
-                                    "POST",
-                                    "/shots",
-                                    createV3ShotBody(
-                                            uuidFor(407),
-                                            extractJsonString(state, "gameInstanceId"),
-                                            extractJsonString(state, "turnToken"),
-                                            extractJsonString(state, "battleRevision"),
-                                            "x",
-                                            null),
-                                    "application/json")
-                            .bodyText(),
-                    "\"status\":\"submitted\"",
-                    "legal request after reflected method Error");
+            String methodErrorRetryRequestId = uuidFor(407);
+            request(
+                    server.getPort(),
+                    "POST",
+                    "/shots",
+                    createV3ShotBody(
+                            methodErrorRetryRequestId,
+                            extractJsonString(state, "gameInstanceId"),
+                            extractJsonString(state, "turnToken"),
+                            extractJsonString(state, "battleRevision"),
+                            "x",
+                            null),
+                    "application/json");
+            waitForCommandStatus(server.getPort(), methodErrorRetryRequestId, "submitted");
         } finally {
             gameData.setShouldThrowOtherErrorFromFunction(false);
             server.stop();
@@ -1365,7 +1390,6 @@ public final class GraphwarAgentApiTest {
         HttpURLConnection connection =
                 (HttpURLConnection) new URL("http://127.0.0.1:" + port + path).openConnection();
         connection.setConnectTimeout(5000);
-        // The v3 shot endpoint deliberately waits up to five seconds before returning claimed.
         connection.setReadTimeout(10_000);
         connection.setRequestMethod(method);
         connection.setUseCaches(false);
@@ -1385,6 +1409,8 @@ public final class GraphwarAgentApiTest {
         int status = connection.getResponseCode();
         String entityTag = connection.getHeaderField("ETag");
         String exposedHeaders = connection.getHeaderField("Access-Control-Expose-Headers");
+        String location = connection.getHeaderField("Location");
+        String retryAfter = connection.getHeaderField("Retry-After");
         InputStream input =
                 status >= 400 ? connection.getErrorStream() : connection.getInputStream();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -1398,7 +1424,35 @@ public final class GraphwarAgentApiTest {
             }
         }
         connection.disconnect();
-        return new HttpResponse(status, output.toByteArray(), entityTag, exposedHeaders);
+        return new HttpResponse(
+                status, output.toByteArray(), entityTag, exposedHeaders, location, retryAfter);
+    }
+
+    /** Polls one command resource until the expected terminal status is observable. */
+    private static String waitForCommandStatus(int port, String requestId, String expectedStatus)
+            throws IOException, InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5L);
+        String body;
+        do {
+            HttpResponse response = request(port, "GET", "/shots/" + requestId, null, null);
+            assertEquals(200, response.status, "polled command status");
+            body = response.bodyText();
+            if (body.contains("\"status\":\"" + expectedStatus + "\"")) {
+                return body;
+            }
+            if (body.contains("\"status\":\"submitted\"")
+                    || body.contains("\"status\":\"failed\"")
+                    || body.contains("\"status\":\"unknown\"")) {
+                throw new AssertionError(
+                        "command reached an unexpected terminal status; expected "
+                                + expectedStatus
+                                + ": "
+                                + body);
+            }
+            Thread.sleep(10L);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError(
+                "command did not reach status " + expectedStatus + " before timeout: " + body);
     }
 
     /** Verifies a UTF-8 response status and body together for clearer failures. */
@@ -1443,14 +1497,24 @@ public final class GraphwarAgentApiTest {
         final byte[] body;
         final String entityTag;
         final String exposedHeaders;
+        final String location;
+        final String retryAfter;
         final int status;
 
         /** Captures one completed local HTTP exchange. */
-        HttpResponse(int status, byte[] body, String entityTag, String exposedHeaders) {
+        HttpResponse(
+                int status,
+                byte[] body,
+                String entityTag,
+                String exposedHeaders,
+                String location,
+                String retryAfter) {
             this.battleRevision = entityTag == null ? null : entityTag.replace("\"", "");
             this.body = body;
             this.entityTag = entityTag;
             this.exposedHeaders = exposedHeaders;
+            this.location = location;
+            this.retryAfter = retryAfter;
             this.status = status;
         }
 

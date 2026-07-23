@@ -7,6 +7,9 @@ import {
   type GraphwarAgentShotRequest,
 } from "./client";
 
+/** Minimum command-query delay advertised by pending shot POST responses. */
+const GRAPHWAR_AGENT_SHOT_RETRY_AFTER_MS = 1_000;
+
 /** Timing and lifecycle controls shared by command-resource polling loops. */
 export interface GraphwarAgentShotCommandPollingOptions {
   onCommand?: (command: GraphwarAgentShotCommand) => void;
@@ -177,14 +180,17 @@ async function waitForSubmission(
   }
 }
 
-/** Delays the next GET without creating a recursive promise chain. */
+/** Delays the next GET by at least the Agent's pending-command retry interval. */
 async function waitForNextRead(timeoutMs: number, signal?: AbortSignal) {
   throwIfAborted(signal);
   await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      signal?.removeEventListener("abort", rejectForAbort);
-      resolve();
-    }, timeoutMs);
+    const timeout = setTimeout(
+      () => {
+        signal?.removeEventListener("abort", rejectForAbort);
+        resolve();
+      },
+      Math.max(timeoutMs, GRAPHWAR_AGENT_SHOT_RETRY_AFTER_MS),
+    );
     const rejectForAbort = () => {
       clearTimeout(timeout);
       reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));

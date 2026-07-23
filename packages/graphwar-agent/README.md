@@ -37,7 +37,7 @@ java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxReq
 | `maxFunctionBytes`      | Limit submitted function size in UTF-8 bytes | `65536`                                                    | `1`–`1048576`, capped to the effective request-body limit   |
 | `maxFunctionTokens`     | Limit effective Graphwar evaluation tokens   | `3072`                                                     | `1`–`4432`                                                  |
 
-The defaults retain conservative stack and latency headroom. Raising both formula limits to their opt-in maxima can make validation exceed the five-second synchronous shot wait; clients must wait for a pending POST response's `Retry-After` interval, then poll its `Location` until the command finishes.
+The defaults retain conservative stack and latency headroom. Raising both formula limits to their opt-in maxima can make background validation take several seconds. Shot POSTs still return immediately; clients must wait for a pending response's `Retry-After` interval, then poll its `Location` until the command finishes.
 
 Startup logs show the Agent version, source commit, effective limits, authentication token when enabled, and listening address. `GET /health` is always public and reports API version 3, build information, whether authentication is required, and the effective limits.
 

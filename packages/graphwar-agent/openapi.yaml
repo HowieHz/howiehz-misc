@@ -157,8 +157,8 @@ paths:
       description: |
         A first valid resource ID returns 201 even when later command validation
         produces a `failed` resource. A retained identical replay returns 200 and
-        never repeats the original shot side effect. See `API.md` for the five-second
-        synchronous wait and the single-worker guarantee.
+        never repeats the original shot side effect. The response never waits for
+        the original call. See `API.md` for the single-worker guarantee.
       requestBody:
         required: true
         content:

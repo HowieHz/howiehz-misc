@@ -154,7 +154,6 @@ The reference implementation applies these limits before invoking the official p
 | `maxFunctionBytes`      |         `65536` |      `1`–`1048576` | UTF-8 bytes after JSON decoding; capped to the effective body limit      |
 | `maxFunctionTokens`     |          `3072` |         `1`–`4432` | Effective evaluation tokens, including inserted implicit multiplication  |
 | Stored shot commands    |    `50` records |              fixed | Old safe records are removed when space is needed                        |
-| Synchronous shot wait   |       `5000` ms |              fixed | Does not cancel the official call                                        |
 | Shot worker stack hint  | `2097152` bytes |              fixed | A JVM/platform hint, not a guaranteed exact stack size                   |
 | Graphwar HTTP slots     |             `6` |              fixed | Leaves two of eight workers available for health and command reads       |
 
@@ -166,11 +165,11 @@ The 3072-token default rounds down 70% of the first unstable cold mixed-shape re
 recursive frame usage. The opt-in 4432-token maximum was the highest tested candidate below that unstable result
 to pass in all three fresh JVMs. A bracket-heavy 1048575-byte formula with one effective token and an exact
 1048576-byte/4432-token combined formula also parsed successfully in the same probe. The combined opt-in maxima
-can exceed the five-second synchronous shot wait, in which case the POST response contains a pending command and
-`Retry-After`; the official call continues. These opt-in maxima have less safety margin than the defaults, and
-the JDK 21 measurements do not guarantee identical JRE 8 stack behavior. These are engineering limits, not
-natural Graphwar protocol maxima. The source under `tmp/graphwar` is design evidence only and MUST NOT become a
-runtime, build, or conformance-test dependency.
+can make background validation take several seconds. The POST still returns the current pending command
+immediately with `Retry-After`; the worker continues independently. These opt-in maxima have less safety margin
+than the defaults, and the JDK 21 measurements do not guarantee identical JRE 8 stack behavior. These are
+engineering limits, not natural Graphwar protocol maxima. The source under `tmp/graphwar` is design evidence only
+and MUST NOT become a runtime, build, or conformance-test dependency.
 
 Replicas MUST reject inputs outside the advertised effective limits before invoking recursive official code. Token counting MUST be iterative or otherwise independently bounded. Neither formula limit can be configured above its opt-in maximum; no unlimited mode exists.
 
@@ -537,11 +536,14 @@ Stable command error codes are:
 | `graphwar-call-failed`       | `unknown`                                  | omitted                                |
 | `internal-error`             | `failed` before claim, otherwise `unknown` | `true` when failed, otherwise omitted  |
 
-### 6.4 Synchronous wait and the single execution slot
+### 6.4 Asynchronous submission and the single execution slot
 
 The reference Agent uses exactly one dedicated daemon worker for original shot calls and requests a 2 MiB thread stack. The stack size is a JVM/platform hint, while input limits are the primary guard.
 
-`POST /shots` waits synchronously for at most five seconds. This wait timeout MUST NOT cancel, interrupt, replace, or duplicate the original Graphwar call. If the task remains active, the POST returns its current `validating` or `claimed` resource and the single execution slot remains occupied. New command IDs are recorded as `failed/shot-executor-busy`; they are never queued behind the stuck call.
+`POST /shots` returns as soon as the command record exists and its task has been accepted by the shot executor. It does
+not wait for the original Graphwar call. If the task remains active, the POST returns its current `validating` or
+`claimed` resource with `Retry-After: 1`, and the single execution slot remains occupied. New command IDs are
+recorded as `failed/shot-executor-busy`; they are never queued behind the active call.
 
 When the original task later returns, the record changes to `submitted` or `unknown` and the slot becomes available. If it never returns, recovery requires restarting Graphwar/the Agent. Java cannot safely terminate an arbitrary stuck thread, and an implementation MUST NOT create replacement workers that could accumulate or execute concurrent original shots.
 
@@ -635,7 +637,7 @@ A compatible replica MUST test at least the following:
 - Concurrent replay returns the current command without waiting for the original task.
 - Token claim occurs immediately before the first possible shot side effect and is never rolled back.
 - Post-claim exceptions become `unknown`; clients are never told they can retry such a command.
-- A five-second POST wait does not cancel or replace a stuck official call.
+- A pending POST returns without waiting for, cancelling, or replacing the original call.
 - Only one original shot worker can exist, and a stuck worker prevents further original calls.
 - Command queries and health remain responsive when a claimed call holds the `GameData` monitor.
 - Stored command count never exceeds 50; active and current-turn records are preserved; the oldest safe finished records are removed; and an impossible full state returns `500 internal-error` without creating a record.

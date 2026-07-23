@@ -7,23 +7,16 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /** Owns the bounded idempotency ledger and the single official shot execution slot. */
 final class GraphwarShotCommandStore {
     static final int MAX_RECORDS = 50;
-    private static final long SYNCHRONOUS_WAIT_MILLISECONDS = 5_000L;
     private static final long SHOT_THREAD_STACK_BYTES = 2L * 1_024L * 1_024L;
     private final Map<String, Command> commands = new LinkedHashMap<String, Command>();
-    private final ExecutorService executor =
-            Executors.newSingleThreadExecutor(new ShotThreadFactory());
+    private final ExecutorService executor;
     private final Object lock = new Object();
     private final GraphwarStateReader stateReader;
     private Command activeCommand;
@@ -34,10 +27,16 @@ final class GraphwarShotCommandStore {
 
     /** Uses one state reader for every guarded official-client call. */
     GraphwarShotCommandStore(GraphwarStateReader stateReader) {
-        this.stateReader = stateReader;
+        this(stateReader, new ShotThreadFactory());
     }
 
-    /** Creates or safely replays one command without queueing behind a stuck official call. */
+    /** Uses the supplied factory so worker-start failures remain deterministic to test. */
+    GraphwarShotCommandStore(GraphwarStateReader stateReader, ThreadFactory threadFactory) {
+        this.stateReader = stateReader;
+        this.executor = Executors.newSingleThreadExecutor(threadFactory);
+    }
+
+    /** Creates or safely replays one command and returns after background-task acceptance. */
     Submission submit(GraphwarShotRequest request) throws GraphwarShotCommandException {
         byte[] fingerprint = createFingerprint(request);
         Command command;
@@ -66,35 +65,17 @@ final class GraphwarShotCommandStore {
             activeCommand = command;
         }
 
-        Future<?> future;
         try {
-            future = executor.submit(() -> execute(command, request));
-        } catch (RejectedExecutionException error) {
+            executor.execute(() -> execute(command, request));
+        } catch (RuntimeException | Error error) {
+            // The task does not own cleanup until execute() starts. Cover thread-factory and
+            // executor failures here so an unstarted command cannot retain the execution slot.
             synchronized (lock) {
                 command.fail("internal-error", "The shot executor is unavailable", true);
                 if (activeCommand == command) {
                     activeCommand = null;
                 }
                 return new Submission(true, false, command.toJson());
-            }
-        }
-        try {
-            future.get(SYNCHRONOUS_WAIT_MILLISECONDS, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException ignored) {
-            // The official call may still complete. Keep the sole execution slot occupied and
-            // return the observable claimed state instead of spawning another worker.
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException error) {
-            // execute() records every expected result. An unexpected task failure is still
-            // captured defensively so the resource never remains validating forever.
-            synchronized (lock) {
-                if (!command.isTerminal()) {
-                    command.unknown("internal-error", "The shot command failed unexpectedly");
-                }
-                if (activeCommand == command) {
-                    activeCommand = null;
-                }
             }
         }
 
@@ -184,6 +165,7 @@ final class GraphwarShotCommandStore {
                     });
             synchronized (lock) {
                 command.submit();
+                releaseActiveCommand(command);
             }
         } catch (GraphwarStateException error) {
             synchronized (lock) {
@@ -194,10 +176,11 @@ final class GraphwarShotCommandStore {
                     command.fail(
                             failure.code, error.getMessage(), failure.canRetryWithNewRequestId);
                 }
+                releaseActiveCommand(command);
             }
         } catch (Throwable error) {
-            // Future.get is no longer observing this task after the five-second POST boundary.
-            // Record every late unchecked failure here so no command can remain pending forever.
+            // No request thread joins this background task. Record every unchecked failure here
+            // so no command can remain pending forever.
             synchronized (lock) {
                 if ("claimed".equals(command.status)) {
                     command.unknown("internal-error", "The shot command failed unexpectedly");
@@ -207,13 +190,20 @@ final class GraphwarShotCommandStore {
                             "The shot command failed before claiming the turn",
                             true);
                 }
+                releaseActiveCommand(command);
             }
         } finally {
             synchronized (lock) {
-                if (activeCommand == command) {
-                    activeCommand = null;
-                }
+                // Keep cleanup reliable even if recording the terminal result itself fails.
+                releaseActiveCommand(command);
             }
+        }
+    }
+
+    /** Releases the completed command's slot while the caller holds the store lock. */
+    private void releaseActiveCommand(Command command) {
+        if (activeCommand == command) {
+            activeCommand = null;
         }
     }
 

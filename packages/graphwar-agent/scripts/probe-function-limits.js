@@ -10,7 +10,7 @@ import { runCommand } from "./utils.js";
 const EXPECTED_ORIGINAL_SOURCE_SHA256 = "756cb38c614f25380af7e6bd38be8189c8c196c1c8e2cf593b47ac6fa06c51f3";
 const FRESH_JVM_RUNS = 3;
 const MIXED_REPETITIONS = 100;
-const SHOT_WAIT_MILLISECONDS = 5_000;
+const PROBE_TIME_BUDGET_MILLISECONDS = 5_000;
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const repoRoot = join(packageRoot, "..", "..");
 const originalSourceRoot = join(repoRoot, "tmp", "graphwar", "src");
@@ -140,8 +140,8 @@ for (const [label, tokens] of [
   }
   reportProgress(`${label} 20,000-evaluation performance probe`, totalRuns);
   stdout.write(performance.stdout);
-  if (readMaximumMilliseconds(performance.stdout) >= SHOT_WAIT_MILLISECONDS) {
-    throw new Error(`The ${label}-limit 20,000-evaluation probe exceeded the five-second shot wait`);
+  if (readMaximumMilliseconds(performance.stdout) >= PROBE_TIME_BUDGET_MILLISECONDS) {
+    throw new Error(`The ${label}-limit 20,000-evaluation probe exceeded the five-second probe budget`);
   }
 }
 
@@ -155,10 +155,10 @@ for (const [label, bytes, tokens] of [
   }
   reportProgress(`${label} combined byte/token boundary`, totalRuns);
   stdout.write(combinedBoundary.stdout);
-  const isWithinShotWait = readMaximumMilliseconds(combinedBoundary.stdout) < SHOT_WAIT_MILLISECONDS;
-  stdout.write(`combinedWithinShotWait=${isWithinShotWait} boundary=${label}\n`);
-  if (label === "default" && !isWithinShotWait) {
-    throw new Error(`The ${label} combined byte/token boundary exceeded the five-second shot wait`);
+  const isWithinProbeBudget = readMaximumMilliseconds(combinedBoundary.stdout) < PROBE_TIME_BUDGET_MILLISECONDS;
+  stdout.write(`combinedWithinProbeBudget=${isWithinProbeBudget} boundary=${label}\n`);
+  if (label === "default" && !isWithinProbeBudget) {
+    throw new Error(`The ${label} combined byte/token boundary exceeded the five-second probe budget`);
   }
 }
 
@@ -170,8 +170,8 @@ for (const bytes of [DEFAULT_MAX_FUNCTION_BYTES - 1, MAX_CONFIGURED_FUNCTION_BYT
   }
   reportProgress(`bracket bytes=${bytes}`, totalRuns);
   stdout.write(result.stdout);
-  if (readMaximumMilliseconds(result.stdout) >= SHOT_WAIT_MILLISECONDS) {
-    throw new Error(`The ${bytes}-byte bracket-heavy probe exceeded the five-second shot wait`);
+  if (readMaximumMilliseconds(result.stdout) >= PROBE_TIME_BUDGET_MILLISECONDS) {
+    throw new Error(`The ${bytes}-byte bracket-heavy probe exceeded the five-second probe budget`);
   }
 }
 stdout.write(

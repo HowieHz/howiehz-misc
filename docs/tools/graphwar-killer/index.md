@@ -147,7 +147,7 @@ java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxReq
 | `maxFunctionBytes`      | 限制单次提交的函数大小（按 UTF-8 计） | `65536`                                                 | `1`–`1048576`，且不会超过实际请求体上限       |
 | `maxFunctionTokens`     | 限制 Graphwar 实际求值 token 数       | `3072`                                                  | `1`–`4432`                                    |
 
-默认值保留了较保守的栈和延迟余量。同时把两个公式限制提高到可选最大值时，校验可能超过五秒同步发射等待；客户端必须先按 pending POST 响应的 `Retry-After` 等待，再轮询其 `Location`，直至命令结束。
+默认值保留了较保守的栈和延迟余量。同时把两个公式限制提高到可选最大值时，后台校验可能持续数秒。发射 POST 仍会立即返回；客户端必须先按 pending 响应的 `Retry-After` 等待，再轮询其 `Location`，直至命令结束。
 
 :::
 

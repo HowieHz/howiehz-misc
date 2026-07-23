@@ -8,8 +8,9 @@ public final class ComputerPlayer extends Player {
         super(gameData, id, name, team, true, ready, numSoldiers, false);
     }
 
-    /** Mirrors the official AI call site that submits a generated function. */
-    public void fire(GameData gameData, String function) {
+    /** Mirrors the official AI call order, including its non-transactional angle update. */
+    public void fire(GameData gameData, double bestAngle, String function) {
+        gameData.setAngle(bestAngle);
         gameData.sendFunction(function);
     }
 }

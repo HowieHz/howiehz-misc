@@ -58,6 +58,7 @@ public final class GraphwarAgentApiTest {
         } finally {
             server.stop();
         }
+        testFunctionHttpBoundariesAndReflectedErrors();
         testAuthenticationAndRequestLimit();
 
         System.out.println("graphwar-agent API tests passed");
@@ -242,11 +243,26 @@ public final class GraphwarAgentApiTest {
                                 Boolean.TYPE,
                                 Integer.TYPE)
                         .newInstance(computerGameData, 7, "computer", 1, true, 1);
+        computerGameData.addPlayer((Player) computerPlayer);
         computerPlayerClass
-                .getMethod("fire", GameData.class, String.class)
-                .invoke(computerPlayer, computerGameData, repeatedTerms("x", "+", 1_537));
+                .getMethod("fire", GameData.class, Double.TYPE, String.class)
+                .invoke(
+                        computerPlayer,
+                        computerGameData,
+                        Double.valueOf(0.25),
+                        repeatedTerms("x", "+", 1_537));
         assertEquals(
-                0, computerGameData.getShotCalls().size(), "guarded AI complex function calls");
+                Collections.singletonList("angle:0.25"),
+                computerGameData.getShotCalls(),
+                "guarded AI complex function calls");
+        computerGameData.clearShotCalls();
+        computerPlayerClass
+                .getMethod("fire", GameData.class, Double.TYPE, String.class)
+                .invoke(computerPlayer, computerGameData, Double.valueOf(0.5), "x");
+        assertEquals(
+                Arrays.asList("angle:0.5", "function:x"),
+                computerGameData.getShotCalls(),
+                "guarded AI valid call order");
 
         byte[] gameDataBytes = readClassBytes("/Graphwar/GameData.class");
         byte[] patchedGameData =
@@ -773,6 +789,207 @@ public final class GraphwarAgentApiTest {
             return requestId;
         } finally {
             gameData.setShouldThrowFromFunction(false);
+        }
+    }
+
+    /** Covers formula limits above the HTTP envelope and reflected Error terminal semantics. */
+    private static void testFunctionHttpBoundariesAndReflectedErrors() throws Exception {
+        GameData gameData = new GameData();
+        configureActiveMatch(gameData);
+        Graphwar graphwar = new Graphwar(gameData);
+        GraphwarAgentConfig config = GraphwarAgentConfig.forTest(0, 0, 8_192, 131_072, null);
+        GraphwarStateReader stateReader = new GraphwarStateReader(config, () -> graphwar);
+        GraphwarShotCommandStore commands = new GraphwarShotCommandStore(stateReader);
+        stateReader.setShotCommands(commands);
+        GraphwarHttpServer server = GraphwarHttpServer.start(config, stateReader, commands);
+        try {
+            String exactTokenFunction = repeatedTerms("sin", "", 3_071) + "x";
+            assertEquals(
+                    3_072,
+                    GraphwarFunctionLimits.countTokens(exactTokenFunction, 3_072),
+                    "exact HTTP token boundary fixture");
+            String state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            HttpResponse exactTokenResponse =
+                    request(
+                            server.getPort(),
+                            "POST",
+                            "/shots",
+                            createV3ShotBody(
+                                    uuidFor(400),
+                                    extractJsonString(state, "gameInstanceId"),
+                                    extractJsonString(state, "turnToken"),
+                                    extractJsonString(state, "battleRevision"),
+                                    exactTokenFunction,
+                                    null),
+                            "application/json");
+            assertEquals(201, exactTokenResponse.status, "exact token boundary HTTP status");
+            assertContains(
+                    exactTokenResponse.bodyText(),
+                    "\"status\":\"submitted\"",
+                    "exact token boundary submission");
+
+            gameData.clearShotCalls();
+            gameData.setTimeTurnStarted(10_001L);
+            state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            HttpResponse exactByteResponse =
+                    request(
+                            server.getPort(),
+                            "POST",
+                            "/shots",
+                            createV3ShotBody(
+                                    uuidFor(401),
+                                    extractJsonString(state, "gameInstanceId"),
+                                    extractJsonString(state, "turnToken"),
+                                    extractJsonString(state, "battleRevision"),
+                                    repeat('x', 65_536),
+                                    null),
+                            "application/json");
+            assertEquals(201, exactByteResponse.status, "exact byte boundary HTTP status");
+            assertContains(
+                    exactByteResponse.bodyText(),
+                    "\"code\":\"function-too-complex\"",
+                    "exact byte boundary reached token validation");
+            assertEquals(0, gameData.getShotCalls().size(), "exact byte boundary side effects");
+
+            gameData.setGameMode(2);
+            gameData.setTimeTurnStarted(10_002L);
+            state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            HttpResponse oversizedResponse =
+                    request(
+                            server.getPort(),
+                            "POST",
+                            "/shots",
+                            createV3ShotBody(
+                                    uuidFor(402),
+                                    extractJsonString(state, "gameInstanceId"),
+                                    extractJsonString(state, "turnToken"),
+                                    extractJsonString(state, "battleRevision"),
+                                    repeat('x', 65_537),
+                                    "0.25"),
+                            "application/json");
+            assertEquals(201, oversizedResponse.status, "oversized formula command status");
+            assertContains(
+                    oversizedResponse.bodyText(),
+                    "\"code\":\"function-too-large\"",
+                    "oversized formula error code");
+            assertEquals(0, gameData.getShotCalls().size(), "oversized formula angle side effect");
+
+            assertContains(
+                    request(
+                                    server.getPort(),
+                                    "POST",
+                                    "/shots",
+                                    createV3ShotBody(
+                                            uuidFor(403),
+                                            extractJsonString(state, "gameInstanceId"),
+                                            extractJsonString(state, "turnToken"),
+                                            extractJsonString(state, "battleRevision"),
+                                            "x",
+                                            "0.25"),
+                                    "application/json")
+                            .bodyText(),
+                    "\"status\":\"submitted\"",
+                    "legal retry after oversized formula");
+            assertEquals(
+                    Arrays.asList("angle:0.25", "function:x"),
+                    gameData.getShotCalls(),
+                    "legal retry call order");
+
+            gameData.clearShotCalls();
+            gameData.setGameMode(0);
+            gameData.setTimeTurnStarted(10_003L);
+            state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            HttpResponse parserErrorResponse =
+                    request(
+                            server.getPort(),
+                            "POST",
+                            "/shots",
+                            createV3ShotBody(
+                                    uuidFor(404),
+                                    extractJsonString(state, "gameInstanceId"),
+                                    extractJsonString(state, "turnToken"),
+                                    extractJsonString(state, "battleRevision"),
+                                    "error",
+                                    null),
+                            "application/json");
+            assertContains(
+                    parserErrorResponse.bodyText(),
+                    "\"status\":\"failed\"",
+                    "reflected parser Error terminal status");
+            assertContains(
+                    parserErrorResponse.bodyText(),
+                    "\"code\":\"internal-error\"",
+                    "reflected parser Error classification");
+            assertTrue(
+                    commands.canAcceptShotCommands(),
+                    "reflected parser Error leaked the shot slot");
+            assertContains(
+                    request(
+                                    server.getPort(),
+                                    "POST",
+                                    "/shots",
+                                    createV3ShotBody(
+                                            uuidFor(405),
+                                            extractJsonString(state, "gameInstanceId"),
+                                            extractJsonString(state, "turnToken"),
+                                            extractJsonString(state, "battleRevision"),
+                                            "x",
+                                            null),
+                                    "application/json")
+                            .bodyText(),
+                    "\"status\":\"submitted\"",
+                    "legal request after reflected parser Error");
+
+            gameData.setTimeTurnStarted(10_004L);
+            state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            gameData.setShouldThrowOtherErrorFromFunction(true);
+            HttpResponse methodErrorResponse =
+                    request(
+                            server.getPort(),
+                            "POST",
+                            "/shots",
+                            createV3ShotBody(
+                                    uuidFor(406),
+                                    extractJsonString(state, "gameInstanceId"),
+                                    extractJsonString(state, "turnToken"),
+                                    extractJsonString(state, "battleRevision"),
+                                    "x",
+                                    null),
+                            "application/json");
+            assertContains(
+                    methodErrorResponse.bodyText(),
+                    "\"status\":\"unknown\"",
+                    "reflected method Error terminal status");
+            assertContains(
+                    methodErrorResponse.bodyText(),
+                    "\"code\":\"internal-error\"",
+                    "reflected method Error classification");
+            assertTrue(
+                    commands.canAcceptShotCommands(),
+                    "reflected method Error leaked the shot slot");
+
+            gameData.setShouldThrowOtherErrorFromFunction(false);
+            gameData.setTimeTurnStarted(10_005L);
+            state = request(server.getPort(), "GET", "/state", null, null).bodyText();
+            assertContains(
+                    request(
+                                    server.getPort(),
+                                    "POST",
+                                    "/shots",
+                                    createV3ShotBody(
+                                            uuidFor(407),
+                                            extractJsonString(state, "gameInstanceId"),
+                                            extractJsonString(state, "turnToken"),
+                                            extractJsonString(state, "battleRevision"),
+                                            "x",
+                                            null),
+                                    "application/json")
+                            .bodyText(),
+                    "\"status\":\"submitted\"",
+                    "legal request after reflected method Error");
+        } finally {
+            gameData.setShouldThrowOtherErrorFromFunction(false);
+            server.stop();
         }
     }
 

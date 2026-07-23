@@ -381,7 +381,8 @@ final class GraphwarStateReader {
         } catch (ClassNotFoundException | IllegalAccessException | NoSuchMethodException error) {
             throw new GraphwarStateException("Cannot call Graphwar method setReady", error);
         } catch (InvocationTargetException error) {
-            throw new GraphwarStateException("Graphwar method setReady failed", error.getCause());
+            throw new GraphwarStateException(
+                    "Graphwar method setReady failed", unwrapInvocationFailure(error));
         }
     }
 
@@ -752,7 +753,7 @@ final class GraphwarStateReader {
                 | NoSuchMethodException error) {
             throw new GraphwarStateException("Cannot validate Graphwar function syntax", error);
         } catch (InvocationTargetException error) {
-            Throwable cause = error.getCause();
+            Throwable cause = unwrapInvocationFailure(error);
             if (cause != null && "Graphwar.MalformedFunction".equals(cause.getClass().getName())) {
                 throw new GraphwarInvalidFunctionException("Malformed Graphwar function");
             }
@@ -913,7 +914,7 @@ final class GraphwarStateReader {
             throw new GraphwarStateException("Cannot read Graphwar method " + methodName, error);
         } catch (InvocationTargetException error) {
             throw new GraphwarStateException(
-                    "Graphwar method " + methodName + " failed", error.getCause());
+                    "Graphwar method " + methodName + " failed", unwrapInvocationFailure(error));
         }
     }
 
@@ -928,8 +929,17 @@ final class GraphwarStateReader {
             throw new GraphwarStateException("Cannot call Graphwar method " + methodName, error);
         } catch (InvocationTargetException error) {
             throw new GraphwarStateException(
-                    "Graphwar method " + methodName + " failed", error.getCause());
+                    "Graphwar method " + methodName + " failed", unwrapInvocationFailure(error));
         }
+    }
+
+    /** Preserves serious JVM failures while returning ordinary reflected causes for translation. */
+    private static Throwable unwrapInvocationFailure(InvocationTargetException error) {
+        Throwable cause = error.getCause();
+        if (cause instanceof Error) {
+            throw (Error) cause;
+        }
+        return cause;
     }
 
     /** Iteratively locates the private turn marker across compatible GameData subclasses. */

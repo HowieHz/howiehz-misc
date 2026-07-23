@@ -266,7 +266,9 @@ export const graphwarKillerLocale = {
       stateFileLoaded: "已读取状态文件，请读取障碍文件",
     },
     pathPointCoordinateNumber: "点坐标需要填写数字",
-    secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到 ${angle}°`,
+    secondOrderAngleHint: (roundedAngle, exactAngle = undefined) =>
+      `需要用键盘上下键把发射角调到约 ${roundedAngle}°${exactAngle === undefined ? "" : `（${exactAngle}°）`}`,
+    secondOrderAngleHintTitle: (angle) => `需要用键盘上下键把发射角调到 ${angle}°`,
     trajectoryWarning: {
       obstacle: "当前公式轨迹会撞到障碍物或边界",
       pathQuality: (error) => `公式已生成，但普通控制点的最大路径误差为 ${error} 个原始平面像素`,

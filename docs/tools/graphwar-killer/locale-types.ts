@@ -228,7 +228,8 @@ export interface GraphwarKillerLocale {
       stateFileLoaded: string;
     };
     pathPointCoordinateNumber: string;
-    secondOrderAngleHint: (angle: string) => string;
+    secondOrderAngleHint: (roundedAngle: string, exactAngle?: string) => string;
+    secondOrderAngleHintTitle: (angle: string) => string;
     trajectoryWarning: {
       obstacle: string;
       pathQuality: (error: string) => string;

@@ -155,7 +155,7 @@ describe("Graphwar Killer page settings", () => {
     }
   });
 
-  it("uses compact double text for tiny angle hints and keeps the expanded title", async () => {
+  it("uses original two-decimal angle text, short exact details, and an expanded title", async () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const angleDegrees = 1.0976980032456007e-101;
     const expandedAngleText =
@@ -167,12 +167,25 @@ describe("Graphwar Killer page settings", () => {
     ).setupState;
 
     await wrapper.findAll(".graphwar-killer__equation-toggle button")[2].trigger("click");
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("x", Math.PI / 4));
+    await nextTick();
+    expect(wrapper.get(".graphwar-killer__second-order-angle-hint").text()).toContain(
+      "需要用键盘上下键把发射角调到约 45.00°",
+    );
+    expect(wrapper.get(".graphwar-killer__second-order-angle-hint").text()).not.toContain("（45°）");
+
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("x", 0));
+    await nextTick();
+    expect(wrapper.get(".graphwar-killer__second-order-angle-hint").text()).toContain(
+      "需要用键盘上下键把发射角调到约 0.00°（0°）",
+    );
+
     page.commitIncumbentResult(createValidatedTrajectorySnapshot("x", (angleDegrees * Math.PI) / 180));
     await nextTick();
 
     const hint = wrapper.get(".graphwar-killer__second-order-angle-hint");
-    expect(hint.text()).toContain("1.0976980032456007e-101°");
-    expect(hint.attributes("title")).toBe(graphwarKillerLocale.status.secondOrderAngleHint(expandedAngleText));
+    expect(hint.text()).toContain("约 0.00°（1.0976980032456007e-101°）");
+    expect(hint.attributes("title")).toBe(graphwarKillerLocale.status.secondOrderAngleHintTitle(expandedAngleText));
     wrapper.unmount();
   });
 

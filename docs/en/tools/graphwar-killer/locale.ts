@@ -297,7 +297,9 @@ export const graphwarKillerLocale = {
       stateFileLoaded: "State file loaded; select an obstacle file",
     },
     pathPointCoordinateNumber: "Point coordinates must be numbers",
-    secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to ${angle} deg.`,
+    secondOrderAngleHint: (roundedAngle, exactAngle = undefined) =>
+      `Use the Up/Down keys to set the launch angle to approximately ${roundedAngle} deg${exactAngle === undefined ? "." : ` (${exactAngle} deg).`}`,
+    secondOrderAngleHintTitle: (angle) => `Use the Up/Down keys to set the launch angle to ${angle} deg.`,
     trajectoryWarning: {
       obstacle: "The current function trajectory hits an obstacle or boundary",
       pathQuality: (error) =>

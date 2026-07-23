@@ -113,6 +113,7 @@ import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
   clampNumber,
+  formatAngleDegree,
   formatDecimal,
   formatDoublePrecisionDecimal,
   parseFiniteNumber,
@@ -1862,15 +1863,20 @@ const secondOrderLaunchAngleText = computed(() =>
     ? ""
     : formatDoublePrecisionDecimal(secondOrderLaunchAngleDegrees.value),
 );
-/** 为二阶角度提示分离短展示文本和完整悬停文本，避免极小 double 撑宽页面。 */
+/** 正文贴近原版两位角度面板，必要时附短原值；title 始终保留展开后的完整值。 */
 const secondOrderAngleHint = computed(() => {
   const angleDegrees = secondOrderLaunchAngleDegrees.value;
   if (toolWorkflowMode.value !== "solver" || angleDegrees === undefined) {
     return undefined;
   }
+  const roundedAngle = formatAngleDegree(angleDegrees);
+  const exactAngle = angleDegrees.toString();
   return {
-    text: locale.status.secondOrderAngleHint(angleDegrees.toString()),
-    title: locale.status.secondOrderAngleHint(secondOrderLaunchAngleText.value),
+    text: locale.status.secondOrderAngleHint(
+      roundedAngle,
+      angleDegrees === 0 || Number(roundedAngle) !== angleDegrees ? exactAngle : undefined,
+    ),
+    title: locale.status.secondOrderAngleHintTitle(secondOrderLaunchAngleText.value),
   };
 });
 

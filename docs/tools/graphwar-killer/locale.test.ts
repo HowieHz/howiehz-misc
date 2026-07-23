@@ -17,6 +17,7 @@ while (pendingChineseLocaleValues.length > 0) {
 }
 chineseLocaleStrings.push(
   graphwarKillerLocale.status.secondOrderAngleHint("45"),
+  graphwarKillerLocale.status.secondOrderAngleHintTitle("45"),
   graphwarKillerLocale.ui.point.coordinateTitle("路径 1", "x"),
 );
 
@@ -63,8 +64,12 @@ describe("Chinese Graphwar Killer locale", () => {
     );
   });
 
-  it("presents the full-precision launch angle without approximation wording", () => {
-    expect(graphwarKillerLocale.status.secondOrderAngleHint(fullPrecisionAngleText)).toBe(
+  it("separates the approximate launch angle hint from its full-precision title", () => {
+    expect(graphwarKillerLocale.status.secondOrderAngleHint("0.00", "0")).toBe(
+      "需要用键盘上下键把发射角调到约 0.00°（0°）",
+    );
+    expect(graphwarKillerLocale.status.secondOrderAngleHint("12.34")).toBe("需要用键盘上下键把发射角调到约 12.34°");
+    expect(graphwarKillerLocale.status.secondOrderAngleHintTitle(fullPrecisionAngleText)).toBe(
       `需要用键盘上下键把发射角调到 ${fullPrecisionAngleText}°`,
     );
   });
@@ -143,8 +148,14 @@ describe("English Graphwar Killer locale", () => {
     expect(englishGraphwarKillerLocale.ui.result.turnTimeRemaining("58.0")).toBe("58.0s left");
   });
 
-  it("presents the full-precision launch angle without approximation wording", () => {
-    expect(englishGraphwarKillerLocale.status.secondOrderAngleHint(fullPrecisionAngleText)).toBe(
+  it("separates the approximate launch angle hint from its full-precision title", () => {
+    expect(englishGraphwarKillerLocale.status.secondOrderAngleHint("0.00", "0")).toBe(
+      "Use the Up/Down keys to set the launch angle to approximately 0.00 deg (0 deg).",
+    );
+    expect(englishGraphwarKillerLocale.status.secondOrderAngleHint("12.34")).toBe(
+      "Use the Up/Down keys to set the launch angle to approximately 12.34 deg.",
+    );
+    expect(englishGraphwarKillerLocale.status.secondOrderAngleHintTitle(fullPrecisionAngleText)).toBe(
       `Use the Up/Down keys to set the launch angle to ${fullPrecisionAngleText} deg.`,
     );
   });

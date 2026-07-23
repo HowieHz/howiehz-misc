@@ -67,7 +67,7 @@
     "happy-dom": "^20.11.0",
     "markdownlint-cli": "^0.49.1",
     "oxfmt": "^0.59.0",
-    "oxlint": "^1.74.0",
+    "oxlint": "^1.75.0",
     "oxlint-tsgolint": "^7.0.2001",
     "postcss-html": "^1.8.1",
     "stylelint": "^17.14.1",

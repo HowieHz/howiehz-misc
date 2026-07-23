@@ -75,6 +75,8 @@ export interface GraphwarAdvancedSettingsActionBar {
 export interface GraphwarAdvancedSettingsPanelModel {
   /** 托管期间锁定所有会改变识别、公式或寻路输入的高级设置。 */
   canInteract: boolean;
+  /** `canInteract` 临时为 false 时前置到受影响控件 title 的原因。 */
+  temporaryDisabledReason?: string;
   /** 生成公式工作流专用的识别、寻路和操作栏设置是否可见。 */
   isSolverSettingsVisible: boolean;
   /** 坐标边界设置展示模型。 */

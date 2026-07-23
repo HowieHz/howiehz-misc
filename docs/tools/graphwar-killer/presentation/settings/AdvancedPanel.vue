@@ -205,7 +205,8 @@ const liveClickPreviewWorkerCountText = computed({
               id="graphwar-killer-skip-unknown-characters"
               :checked="panel.simulator.shouldSkipUnknownCharacters"
               :label="locale.ui.settings.skipUnknownCharacters"
-              state="normal"
+              :reason="panel.temporaryDisabledReason"
+              :state="panel.canInteract ? 'normal' : 'busy'"
               :title="locale.ui.settings.skipUnknownCharactersTitle"
               @toggle="emit('toggleSimulatorSkipUnknownCharacters')"
             />
@@ -213,7 +214,8 @@ const liveClickPreviewWorkerCountText = computed({
               id="graphwar-killer-parse-derivative-as-y"
               :checked="panel.simulator.shouldParseDerivativeAsY"
               :label="locale.ui.settings.parseDerivativeAsY"
-              state="normal"
+              :reason="panel.temporaryDisabledReason"
+              :state="panel.canInteract ? 'normal' : 'busy'"
               :title="locale.ui.settings.parseDerivativeAsYTitle"
               @toggle="emit('toggleSimulatorParseDerivativeAsY')"
             />

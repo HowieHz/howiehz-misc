@@ -4,6 +4,7 @@ import { computed } from "vue";
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { AlgorithmMode, EquationMode, ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import { prependControlTitle } from "../controls/title";
 import ToggleField from "../controls/ToggleField.vue";
 
 type GraphwarSettingsPanelStatusKind = "info" | "success" | "warning" | "error";
@@ -50,6 +51,8 @@ interface GraphwarSettingsPanelPrecision {
 export interface GraphwarSettingsPanelModel {
   /** 托管期间锁定所有会改变公式或寻路输入的基础设置。 */
   canInteract: boolean;
+  /** `canInteract` 临时为 false 时前置到受影响控件 title 的原因。 */
+  temporaryDisabledReason?: string;
   /** 高级设置区是否展开。 */
   isAdvancedSettingsVisible: boolean;
   /** 当前公式生成算法。 */
@@ -149,7 +152,8 @@ const activeToolWorkflowHint = computed(
             class="graphwar-killer-segmented-button"
             :aria-pressed="panel.toolWorkflowMode === mode.value"
             :class="{ 'graphwar-killer-segmented-button--active': panel.toolWorkflowMode === mode.value }"
-            :title="mode.title"
+            :disabled="!panel.canInteract"
+            :title="prependControlTitle(panel.temporaryDisabledReason, mode.title)"
             @click="emit('setToolWorkflowMode', mode.value)"
           >
             {{ mode.label }}
@@ -192,8 +196,8 @@ const activeToolWorkflowHint = computed(
             class="graphwar-killer-segmented-button"
             :aria-pressed="panel.equationMode === mode.value"
             :class="{ 'graphwar-killer-segmented-button--active': panel.equationMode === mode.value }"
-            :disabled="!mode.isEnabled"
-            :title="mode.title"
+            :disabled="!panel.canInteract || !mode.isEnabled"
+            :title="prependControlTitle(panel.temporaryDisabledReason, mode.title)"
             @click="emit('setEquationMode', mode.value)"
           >
             {{ mode.label }}
@@ -246,8 +250,8 @@ const activeToolWorkflowHint = computed(
               class="graphwar-killer-segmented-button"
               :aria-pressed="panel.algorithmMode === mode.value"
               :class="{ 'graphwar-killer-segmented-button--active': panel.algorithmMode === mode.value }"
-              :disabled="!mode.isEnabled"
-              :title="mode.title"
+              :disabled="!panel.canInteract || !mode.isEnabled"
+              :title="prependControlTitle(panel.temporaryDisabledReason, mode.title)"
               @click="emit('setAlgorithmMode', mode.value)"
             >
               {{ mode.label }}
@@ -291,7 +295,8 @@ const activeToolWorkflowHint = computed(
               class="graphwar-killer__formula-toggle"
               :checked="panel.isStepOverflowProtectionEnabled"
               :label="locale.ui.settings.overflowProtection"
-              state="normal"
+              :reason="panel.temporaryDisabledReason"
+              :state="panel.canInteract ? 'normal' : 'busy'"
               :title="locale.ui.settings.overflowProtectionTitle"
               @toggle="emit('toggleStepOverflowProtection')"
             />
@@ -311,6 +316,7 @@ const activeToolWorkflowHint = computed(
             class="graphwar-killer__formula-toggle"
             :checked="panel.isAdvancedSettingsVisible"
             :label="locale.ui.settings.advancedSettings"
+            :reason="panel.temporaryDisabledReason"
             :state="panel.canInteract ? 'normal' : 'busy'"
             @pointercancel="emit('cancelDebugActivationHold')"
             @pointerdown="emit('startDebugActivationHold', $event)"

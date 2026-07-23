@@ -121,6 +121,40 @@ describe("Settings MainPanel", () => {
     await wrapper.setProps({ panel: { ...panel, headerStatus: { kind: "warning", message: "warning" } } });
     expect(panels[2].find(".graphwar-killer__label-row > span").text()).toBe("warning");
   });
+
+  it("adds the managed lock to every temporarily disabled settings button and switch", () => {
+    const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        panel: {
+          ...createPanel(),
+          canInteract: false,
+          stepGlitchModeReason: reason,
+          stepGlitchModeState: "busy" as const,
+          temporaryDisabledReason: reason,
+        },
+      },
+    });
+
+    for (const button of wrapper.findAll<HTMLButtonElement>(".graphwar-killer-segmented-button")) {
+      expect(button.element.disabled).toBe(true);
+      expect(button.attributes("title")?.startsWith(`${reason}\n`)).toBe(true);
+    }
+
+    const switchTitles = new Map([
+      ["graphwar-killer-overflow-protection", graphwarKillerLocale.ui.settings.overflowProtectionTitle],
+      ["graphwar-killer-step-glitch-mode", graphwarKillerLocale.ui.settings.stepGlitchModeTitle],
+      ["graphwar-killer-advanced-settings", undefined],
+    ]);
+    for (const [id, title] of switchTitles) {
+      const control = wrapper.get(`#${id}`);
+      expect(control.attributes("disabled")).toBeDefined();
+      expect(control.attributes("title")).toBe(title ? `${reason}\n${title}` : reason);
+      expect(wrapper.find(`#${id}-reason`).exists()).toBe(false);
+    }
+    expect(wrapper.text()).not.toContain(reason);
+  });
 });
 
 /** 创建覆盖公式开关排列所需的最小完整设置模型。 */

@@ -3,6 +3,7 @@ import type { GraphwarControlCapability } from "../../controllers/page/capabilit
 import type { GraphwarKillerLocale } from "../../locale-types";
 import ControlReason from "../controls/ControlReason.vue";
 import PanelDetails from "../controls/PanelDetails.vue";
+import { prependControlTitle } from "../controls/title";
 import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
 
@@ -48,11 +49,13 @@ interface GraphwarDetectionPanelAgentModel {
   isExportInProgress: boolean;
   /** 导出只读取 Agent 快照，因此不继承托管锁。 */
   exportState: GraphwarControlCapability["state"];
+  /** Agent 导出忙碌时前置到导出控件 title 的临时原因。 */
+  exportReason?: string;
   /** 是否使用 Agent 作为识别来源。 */
   isEnabled: boolean;
   /** 读取命令与页面 guard 共享的能力状态。 */
   readState: GraphwarControlCapability["state"];
-  /** Agent 未就绪或忙碌时的可见说明。 */
+  /** Agent 未就绪时外显、忙碌时前置到 title 的能力说明。 */
   readReason?: string;
   /** Optional bearer token retained only by the page session. */
   tokenText: string;
@@ -62,6 +65,8 @@ interface GraphwarDetectionPanelAgentModel {
 export interface GraphwarDetectionPanelModel {
   /** 托管期间锁定识别来源、Agent 配置和手动读取入口。 */
   canInteract: boolean;
+  /** `canInteract` 临时为 false 时前置到受影响控件 title 的原因。 */
+  temporaryDisabledReason?: string;
   /** 使用 Graphwar Agent 的展示模型。 */
   agent: GraphwarDetectionPanelAgentModel;
   /** 是否允许从截图中识别边界。 */
@@ -140,7 +145,8 @@ function handleAgentTokenInput(event: Event) {
           class="graphwar-killer__source-toggle"
           :checked="panel.agent.isEnabled"
           :label="locale.ui.detection.agent.toggle"
-          :state="panel.canInteract ? 'normal' : 'blocked'"
+          :reason="panel.temporaryDisabledReason"
+          :state="panel.canInteract ? 'normal' : 'busy'"
           :title="locale.ui.detection.agent.toggleTitle"
           @toggle="emit('toggleAgentUsage')"
         />
@@ -180,14 +186,14 @@ function handleAgentTokenInput(event: Event) {
           <button
             type="button"
             :disabled="!panel.canInteract"
-            :title="locale.ui.screenshot.captureTitle"
+            :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.screenshot.captureTitle)"
             @click="emit('captureImage')"
           >
             {{ locale.ui.screenshot.capture }}
           </button>
           <label
             class="graphwar-killer__file-button graphwar-killer__upload"
-            :title="locale.ui.screenshot.uploadTitle"
+            :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.screenshot.uploadTitle)"
           >
             <input
               type="file"
@@ -206,7 +212,7 @@ function handleAgentTokenInput(event: Event) {
           <button
             type="button"
             :disabled="!panel.canInteract || !panel.canDetectBounds"
-            :title="locale.ui.detection.detectBoundsTitle"
+            :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.detection.detectBoundsTitle)"
             @click="emit('detectBounds')"
           >
             {{ locale.ui.detection.detectBounds }}
@@ -214,7 +220,7 @@ function handleAgentTokenInput(event: Event) {
           <button
             type="button"
             :disabled="!panel.canInteract || !panel.canDetectObjects"
-            :title="panel.detectObjectsTitle"
+            :title="prependControlTitle(panel.temporaryDisabledReason, panel.detectObjectsTitle)"
             @click="emit('detectObjects')"
           >
             {{ locale.ui.detection.detectObjects }}
@@ -223,7 +229,8 @@ function handleAgentTokenInput(event: Event) {
             id="graphwar-killer-auto-detection"
             :checked="panel.isAutoDetectionEnabled"
             :label="locale.ui.detection.autoDetection"
-            :state="panel.canInteract ? 'normal' : 'blocked'"
+            :reason="panel.temporaryDisabledReason"
+            :state="panel.canInteract ? 'normal' : 'busy'"
             :title="locale.ui.detection.autoDetectionTitle"
             @toggle="emit('toggleAutoDetection')"
           />
@@ -235,9 +242,19 @@ function handleAgentTokenInput(event: Event) {
           <div class="graphwar-killer__agent-read-field">
             <button
               type="button"
-              :aria-describedby="panel.agent.readReason ? 'graphwar-killer-agent-read-reason' : undefined"
+              class="graphwar-killer__agent-read-button"
+              :aria-describedby="
+                panel.agent.readState !== 'busy' && panel.agent.readReason
+                  ? 'graphwar-killer-agent-read-reason'
+                  : undefined
+              "
               :disabled="panel.agent.readState === 'blocked' || panel.agent.readState === 'busy'"
-              :title="locale.ui.detection.agent.readTitle"
+              :title="
+                prependControlTitle(
+                  panel.agent.readState === 'busy' ? panel.agent.readReason : undefined,
+                  locale.ui.detection.agent.readTitle,
+                )
+              "
               @click="emit('readAgent')"
             >
               {{ panel.agent.isInProgress ? locale.ui.detection.agent.reading : locale.ui.detection.agent.read }}
@@ -245,7 +262,12 @@ function handleAgentTokenInput(event: Event) {
             <template v-if="panel.agent.isDebugFileActionsVisible">
               <label
                 class="graphwar-killer__file-button"
-                :title="locale.ui.detection.agent.readStateFileTitle"
+                :title="
+                  prependControlTitle(
+                    panel.agent.readState === 'busy' ? panel.agent.readReason : undefined,
+                    locale.ui.detection.agent.readStateFileTitle,
+                  )
+                "
               >
                 <input
                   type="file"
@@ -257,7 +279,12 @@ function handleAgentTokenInput(event: Event) {
               </label>
               <label
                 class="graphwar-killer__file-button"
-                :title="locale.ui.detection.agent.readObstacleFileTitle"
+                :title="
+                  prependControlTitle(
+                    panel.agent.readState === 'busy' ? panel.agent.readReason : undefined,
+                    locale.ui.detection.agent.readObstacleFileTitle,
+                  )
+                "
               >
                 <input
                   type="file"
@@ -269,8 +296,14 @@ function handleAgentTokenInput(event: Event) {
               </label>
               <button
                 type="button"
+                class="graphwar-killer__agent-export-button"
                 :disabled="panel.agent.exportState !== 'normal'"
-                :title="locale.ui.detection.agent.exportSceneTitle"
+                :title="
+                  prependControlTitle(
+                    panel.agent.exportState === 'busy' ? panel.agent.exportReason : undefined,
+                    locale.ui.detection.agent.exportSceneTitle,
+                  )
+                "
                 @click="emit('exportAgentScene')"
               >
                 {{
@@ -283,13 +316,14 @@ function handleAgentTokenInput(event: Event) {
                 id="graphwar-killer-export-on-clear-failure"
                 :checked="panel.agent.isAutoExportOnClearFailureEnabled"
                 :label="locale.ui.detection.agent.exportOnClearFailure"
+                :reason="panel.agent.exportReason"
                 :state="panel.agent.exportState"
                 :title="locale.ui.detection.agent.exportOnClearFailureTitle"
                 @toggle="emit('toggleExportOnClearFailure')"
               />
             </template>
             <ControlReason
-              v-if="panel.agent.readReason"
+              v-if="panel.agent.readState !== 'busy' && panel.agent.readReason"
               id="graphwar-killer-agent-read-reason"
               :message="panel.agent.readReason"
             />

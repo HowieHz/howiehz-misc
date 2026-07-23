@@ -8,6 +8,7 @@ import MainPanel from "./MainPanel.vue";
 
 describe("Result MainPanel", () => {
   it("places the fraction-output switch beside the solver title and locks it with managed interactions", async () => {
+    const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
     const result = { ...createResultModel(), workflowMode: "solver" as const };
     const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, result } });
     const leading = wrapper.get(".graphwar-killer__result-leading");
@@ -21,9 +22,13 @@ describe("Result MainPanel", () => {
     await toggle.trigger("click");
     expect(wrapper.emitted("toggleFractionOutput")).toHaveLength(1);
 
-    await wrapper.setProps({ result: { ...result, isFractionOutputEnabled: true, canInteract: false } });
+    await wrapper.setProps({
+      result: { ...result, isFractionOutputEnabled: true, canInteract: false, temporaryDisabledReason: reason },
+    });
     expect(toggle.attributes("aria-checked")).toBe("true");
     expect(toggle.attributes()).toHaveProperty("disabled");
+    expect(toggle.attributes("title")).toBe(`${reason}\n${graphwarKillerLocale.ui.result.fractionOutputTitle}`);
+    expect(wrapper.find("#graphwar-killer-fraction-output-reason").exists()).toBe(false);
   });
 
   it("hides the fraction-output switch for simulator input", () => {
@@ -65,6 +70,8 @@ describe("Result MainPanel", () => {
   it("keeps the Agent fire reason inside the button field without occupying the countdown column", () => {
     const result = {
       ...createResultModel(),
+      agentFireReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["agent-url-invalid"],
+      agentFireState: "blocked" as const,
       agentTurnCountdown: { isZeroVisible: false, text: "剩余 58.0 秒" },
     };
     const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, result } });
@@ -79,6 +86,37 @@ describe("Result MainPanel", () => {
     expect(command.element.nextElementSibling).toBe(actions.get(".graphwar-killer__primary-button").element);
     expect(actions.get(".graphwar-killer__primary-button").element.parentElement).toBe(actions.element);
     expect(actions.get(".graphwar-killer__icon-button").element.parentElement).toBe(actions.element);
+  });
+
+  it("moves temporary Agent, pathfinding, and managed locks into the affected control titles", () => {
+    const managedReason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
+    const pathfindingReason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["pathfinding-busy"];
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        result: {
+          ...createResultModel(),
+          copyDisabledReason: pathfindingReason,
+          canCopyFormula: false,
+          canInteract: false,
+          temporaryDisabledReason: managedReason,
+        },
+      },
+    });
+
+    const fireButton = wrapper.get(".graphwar-killer__agent-fire-button");
+    expect(fireButton.attributes("aria-describedby")).toBeUndefined();
+    expect(fireButton.attributes("title")).toBe(`${managedReason}\n${graphwarKillerLocale.ui.result.fireTitle}`);
+    expect(wrapper.find("#graphwar-killer-agent-fire-reason").exists()).toBe(false);
+
+    expect(wrapper.get(".graphwar-killer__primary-button").attributes("title")).toBe(
+      `${pathfindingReason}\n${graphwarKillerLocale.ui.result.copyTitle}`,
+    );
+    expect(wrapper.get(".graphwar-killer__icon-button").attributes("title")).toBe(
+      `${managedReason}\n${graphwarKillerLocale.ui.result.clearSimulatorTitle}`,
+    );
+    expect(wrapper.text()).not.toContain(managedReason);
+    expect(wrapper.text()).not.toContain(pathfindingReason);
   });
 
   it("keeps the turn countdown immediately left of the Agent fire button", () => {

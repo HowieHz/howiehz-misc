@@ -7,6 +7,7 @@ import type { ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
 import ControlReason from "../controls/ControlReason.vue";
 import PanelDetails from "../controls/PanelDetails.vue";
+import { prependControlTitle } from "../controls/title";
 import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
 
@@ -46,6 +47,8 @@ interface GraphwarResultPanelHint {
 export interface GraphwarResultPanelModel {
   /** 是否允许编辑结果面板中的公式类输入。 */
   canInteract: boolean;
+  /** `canInteract` 临时为 false 时前置到受影响控件 title 的原因。 */
+  temporaryDisabledReason?: string;
   /** 是否允许编辑正式路径坐标；incumbent 预览坐标保持只读。 */
   canEditPointCoordinates: boolean;
   /** Agent 开火按钮当前文案。 */
@@ -58,6 +61,8 @@ export interface GraphwarResultPanelModel {
   canClearSimulatorInputs: boolean;
   /** 是否允许复制当前结果。 */
   canCopyFormula: boolean;
+  /** 复制仅因临时工作流被禁用时前置到 title 的原因。 */
+  copyDisabledReason?: string;
   /** 当前计算错误文案。 */
   calculationMessage: string;
   /** 是否展示计算错误；父页面应保留原来的 workflow/formulaResult 判定。 */
@@ -151,7 +156,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           id="graphwar-killer-fraction-output"
           :checked="result.isFractionOutputEnabled"
           :label="locale.ui.result.fractionOutput"
-          :reason="result.fractionConversionWarning"
+          :reason="result.canInteract ? result.fractionConversionWarning : result.temporaryDisabledReason"
           :state="result.canInteract ? 'normal' : 'busy'"
           :title="locale.ui.result.fractionOutputTitle"
           @toggle="emit('toggleFractionOutput')"
@@ -173,15 +178,24 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
             <button
               type="button"
               class="graphwar-killer__agent-fire-button"
-              :aria-describedby="result.agentFireReason ? 'graphwar-killer-agent-fire-reason' : undefined"
+              :aria-describedby="
+                result.agentFireState !== 'busy' && result.agentFireReason
+                  ? 'graphwar-killer-agent-fire-reason'
+                  : undefined
+              "
               :disabled="result.agentFireState === 'blocked' || result.agentFireState === 'busy'"
-              :title="locale.ui.result.fireTitle"
+              :title="
+                prependControlTitle(
+                  result.agentFireState === 'busy' ? result.agentFireReason : undefined,
+                  locale.ui.result.fireTitle,
+                )
+              "
               @click="emit('fireAgentFunction')"
             >
               {{ result.agentFireButtonText }}
             </button>
             <ControlReason
-              v-if="result.agentFireReason"
+              v-if="result.agentFireState !== 'busy' && result.agentFireReason"
               id="graphwar-killer-agent-fire-reason"
               :message="result.agentFireReason"
             />
@@ -191,7 +205,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           type="button"
           class="graphwar-killer__primary-button"
           :disabled="!result.canCopyFormula"
-          :title="locale.ui.result.copyTitle"
+          :title="prependControlTitle(result.copyDisabledReason, locale.ui.result.copyTitle)"
           @click="emit('copyFormula')"
         >
           {{ result.copyButtonText }}
@@ -202,7 +216,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           class="graphwar-killer__icon-button"
           :aria-label="locale.ui.result.clearSimulator"
           :disabled="!result.canInteract || !result.canClearSimulatorInputs"
-          :title="locale.ui.result.clearSimulatorTitle"
+          :title="prependControlTitle(result.temporaryDisabledReason, locale.ui.result.clearSimulatorTitle)"
           @click="emit('clearSimulator')"
         >
           <Trash2

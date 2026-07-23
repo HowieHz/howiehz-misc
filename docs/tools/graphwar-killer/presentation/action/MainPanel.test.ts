@@ -57,4 +57,47 @@ describe("Action MainPanel", () => {
     expect(wrapper.find("#graphwar-killer-collision-check").exists()).toBe(false);
     expect(wrapper.find("#graphwar-killer-live-click-preview").exists()).toBe(false);
   });
+
+  it("adds the managed lock to every temporarily disabled edit button and switch", async () => {
+    const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        panel: {
+          ...panel,
+          canInteract: false,
+          collisionCheck: { isEnabled: false, reason, state: "busy" as const },
+          snapSoldiers: { isEnabled: false, reason, state: "busy" as const },
+          temporaryDisabledReason: reason,
+        },
+      },
+    });
+
+    for (const button of wrapper.findAll<HTMLButtonElement>(
+      ".graphwar-killer__tool-toggle button, .graphwar-killer__path-actions button:disabled",
+    )) {
+      expect(button.attributes("title")?.startsWith(`${reason}\n`)).toBe(true);
+    }
+    for (const id of ["graphwar-killer-snap-soldiers", "graphwar-killer-collision-check"]) {
+      const control = wrapper.get(`#${id}`);
+      expect(control.attributes("title")?.startsWith(`${reason}\n`)).toBe(true);
+      expect(wrapper.find(`#${id}-reason`).exists()).toBe(false);
+    }
+    expect(wrapper.get("#graphwar-killer-live-click-preview").attributes("disabled")).toBeUndefined();
+
+    await wrapper.setProps({
+      panel: {
+        ...panel,
+        canInteract: false,
+        hasObstacleEdits: true,
+        isObstacleBrushControlsVisible: true,
+        temporaryDisabledReason: reason,
+        toolMode: "obstacle" as const,
+      },
+    });
+    for (const button of wrapper.findAll<HTMLButtonElement>(".graphwar-killer__obstacle-brush-actions button")) {
+      expect(button.attributes("disabled")).toBeDefined();
+      expect(button.attributes("title")?.startsWith(`${reason}\n`)).toBe(true);
+    }
+  });
 });

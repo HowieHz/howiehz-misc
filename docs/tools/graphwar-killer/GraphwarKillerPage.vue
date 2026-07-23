@@ -988,6 +988,10 @@ const debugActivationCountdownMessage = computed(() => {
     ? ""
     : locale.ui.settings.debugActivationCountdown(formatDebugActivationRemainingSeconds(remainingMs));
 });
+// 托管锁只进入被临时禁用控件的 title，避免在每个面板重复派生同一文案。
+const managedLockReason = computed(() =>
+  isGraphwarManagedModeEnabled.value ? locale.ui.pathfinding.capabilityReasons["managed-lock"] : undefined,
+);
 // 基础设置面板只应消费展示 DTO；模式切换、校验和调试长按流程仍由页面侧保持原语义。
 const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
   const headerStatus = getFirstHeaderStatus(
@@ -1023,6 +1027,7 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
       message: headerStatus.message,
     },
     canInteract: !isGraphwarManagedModeEnabled.value,
+    temporaryDisabledReason: managedLockReason.value,
     precision: {
       maximum: MAX_FORMULA_DECIMAL_PLACES,
       text: precisionText.value,
@@ -1709,6 +1714,10 @@ const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
     isEnabled: isGraphwarAgentEnabled.value,
     isExportInProgress: isGraphwarAgentExportInProgress.value,
     exportState: graphwarCapabilities.value.agentExport.state,
+    exportReason:
+      graphwarCapabilities.value.agentExport.state === "busy"
+        ? getCapabilityReason(graphwarCapabilities.value.agentExport.reason)
+        : undefined,
     isInProgress: isGraphwarAgentReadInProgress.value,
     readReason: isGraphwarAgentExportInProgress.value
       ? locale.status.agent.exporting
@@ -1735,6 +1744,7 @@ const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
     message: detectionHeaderStatus.value,
   },
   canInteract: !isGraphwarManagedModeEnabled.value,
+  temporaryDisabledReason: managedLockReason.value,
   isScreenshotActionsVisible: !isGraphwarAgentEnabled.value,
   // 当前设置错误展示时，旧识别警告也应隐藏，避免混入上一轮结果元数据。
   statusWarning: {
@@ -1784,6 +1794,7 @@ const actionPanel = computed<GraphwarActionPanelModel>(() => ({
     state: graphwarCapabilities.value.collisionCheck.state,
   },
   canInteract: !isGraphwarManagedModeEnabled.value,
+  temporaryDisabledReason: managedLockReason.value,
   isLiveClickPreviewEnabled: isLiveClickPreviewEnabled.value,
   isMagnifierEnabled: isMagnifierEnabled.value,
   magnifierZoom: {
@@ -1994,6 +2005,7 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     minYText: minYText.value,
   },
   canInteract: !isGraphwarManagedModeEnabled.value,
+  temporaryDisabledReason: managedLockReason.value,
   pathfinding: {
     agentObstacleSimulationToleranceText: graphwarAgentObstacleSimulationToleranceText.value,
     agentRoutePlanningToleranceText: graphwarAgentRoutePlanningToleranceText.value,
@@ -2295,8 +2307,12 @@ const resultPanel = computed(() => {
     isAgentFireVisible: isGraphwarAgentEnabled.value,
     canEditPointCoordinates: !isIncumbentPreviewActive.value,
     canInteract: !isGraphwarManagedModeEnabled.value,
+    temporaryDisabledReason: managedLockReason.value,
     canClearSimulatorInputs: canClearSimulatorInputs.value,
     canCopyFormula: canCopyFormula.value && !isIncumbentTrajectoryPending.value,
+    copyDisabledReason: isIncumbentTrajectoryPending.value
+      ? locale.ui.pathfinding.capabilityReasons["pathfinding-busy"]
+      : undefined,
     calculationMessage: calculationMessage.value,
     isCalculationMessageVisible:
       Boolean(calculationMessage.value) && (toolWorkflowMode.value === "simulator" || !solverResult),

@@ -5,6 +5,7 @@ import type { CSSProperties } from "vue";
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { ToolMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import { prependControlTitle } from "../controls/title";
 import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
 
@@ -46,6 +47,8 @@ interface GraphwarActionPanelToggle {
 export interface GraphwarActionPanelModel {
   /** 托管期间锁定路径和障碍编辑，保留放大镜等纯展示控制。 */
   canInteract: boolean;
+  /** `canInteract` 临时为 false 时前置到受影响控件 title 的原因。 */
+  temporaryDisabledReason?: string;
   /** 标题行右侧的当前工具提示。 */
   activeToolHint: GraphwarActionPanelStatus;
   /** 手工轨迹碰撞检查。 */
@@ -151,7 +154,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           :aria-pressed="panel.toolMode === 'bounds'"
           :class="{ 'graphwar-killer-segmented-button--active': panel.toolMode === 'bounds' }"
           :disabled="!panel.canInteract"
-          :title="locale.ui.actions.pickBoundsTitle"
+          :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.actions.pickBoundsTitle)"
           @click="emit('setToolMode', 'bounds')"
         >
           {{ locale.ui.actions.pickBounds }}
@@ -162,7 +165,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           :aria-pressed="panel.toolMode === 'path'"
           :class="{ 'graphwar-killer-segmented-button--active': panel.toolMode === 'path' }"
           :disabled="!panel.canInteract"
-          :title="locale.ui.actions.pickPathTitle"
+          :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.actions.pickPathTitle)"
           @click="emit('setToolMode', 'path')"
         >
           {{ locale.ui.actions.pickPath }}
@@ -173,7 +176,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           :aria-pressed="panel.toolMode === 'obstacle'"
           :class="{ 'graphwar-killer-segmented-button--active': panel.toolMode === 'obstacle' }"
           :disabled="!panel.canInteract || !panel.isObstacleBrushAvailable"
-          :title="locale.ui.actions.drawObstacleTitle"
+          :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.actions.drawObstacleTitle)"
           @click="emit('setToolMode', 'obstacle')"
         >
           {{ locale.ui.actions.drawObstacle }}
@@ -227,7 +230,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
         class="graphwar-killer__icon-button"
         :aria-label="locale.ui.actions.clearPath"
         :disabled="!panel.canInteract"
-        :title="locale.ui.actions.clearPathTitle"
+        :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.actions.clearPathTitle)"
         @click="emit('clearPath')"
       >
         <Trash2
@@ -240,7 +243,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
         class="graphwar-killer__icon-button"
         :aria-label="locale.ui.actions.undoPoint"
         :disabled="!panel.canInteract"
-        :title="locale.ui.actions.undoPointTitle"
+        :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.actions.undoPointTitle)"
         @click="emit('undoPoint')"
       >
         <Undo2
@@ -285,7 +288,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           class="graphwar-killer__icon-button"
           :aria-label="locale.ui.actions.clearObstacleEdits"
           :disabled="!panel.canInteract || !panel.hasObstacleEdits"
-          :title="locale.ui.actions.clearObstacleEditsTitle"
+          :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.actions.clearObstacleEditsTitle)"
           @click="emit('clearObstacleEdits')"
         >
           <Trash2
@@ -300,7 +303,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           :aria-label="locale.ui.actions.eraseObstacle"
           :aria-pressed="panel.isObstacleBrushEraseEnabled"
           :disabled="!panel.canInteract"
-          :title="locale.ui.actions.eraseObstacleTitle"
+          :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.actions.eraseObstacleTitle)"
           @click="emit('toggleObstacleBrushErase')"
         >
           <Eraser

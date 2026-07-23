@@ -134,5 +134,17 @@ describe("AdvancedPanel", () => {
         graphwarKillerLocale.ui.settings.actionBar.liveClickPreviewWorkerCountAriaLabel,
       ].some((ariaLabel) => wrapper.find(`[aria-label="${ariaLabel}"]`).exists()),
     ).toBe(false);
+
+    const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
+    await wrapper.setProps({ panel: { ...panel, canInteract: false, temporaryDisabledReason: reason } });
+    for (const [id, title] of [
+      ["graphwar-killer-skip-unknown-characters", graphwarKillerLocale.ui.settings.skipUnknownCharactersTitle],
+      ["graphwar-killer-parse-derivative-as-y", graphwarKillerLocale.ui.settings.parseDerivativeAsYTitle],
+    ]) {
+      const control = wrapper.get(`#${id}`);
+      expect(control.attributes("disabled")).toBeDefined();
+      expect(control.attributes("title")).toBe(`${reason}\n${title}`);
+      expect(wrapper.find(`#${id}-reason`).exists()).toBe(false);
+    }
   });
 });

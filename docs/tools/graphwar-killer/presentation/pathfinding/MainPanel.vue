@@ -4,6 +4,7 @@ import type { GraphwarKillerLocale } from "../../locale-types";
 import type { GraphwarPathfindingRouteMode } from "../../pathfinding/routing/mode";
 import ControlReason from "../controls/ControlReason.vue";
 import PanelDetails from "../controls/PanelDetails.vue";
+import { prependControlTitle } from "../controls/title";
 import ToggleField from "../controls/ToggleField.vue";
 
 type GraphwarPathfindingPanelStatusKind = "info" | "success" | "warning" | "error";
@@ -136,15 +137,24 @@ const emit = defineEmits<{
         <div class="graphwar-killer-command-field">
           <button
             type="button"
-            :aria-describedby="panel.oneClickClear.reason ? 'graphwar-killer-one-click-clear-reason' : undefined"
+            :aria-describedby="
+              panel.oneClickClear.state !== 'busy' && panel.oneClickClear.reason
+                ? 'graphwar-killer-one-click-clear-reason'
+                : undefined
+            "
             :disabled="panel.oneClickClear.state === 'blocked' || panel.oneClickClear.state === 'busy'"
-            :title="panel.oneClickClear.title"
+            :title="
+              prependControlTitle(
+                panel.oneClickClear.state === 'busy' ? panel.oneClickClear.reason : undefined,
+                panel.oneClickClear.title,
+              )
+            "
             @click="emit('runOneClickClear')"
           >
             {{ locale.ui.pathfinding.autoGraph }}
           </button>
           <ControlReason
-            v-if="panel.oneClickClear.reason"
+            v-if="panel.oneClickClear.state !== 'busy' && panel.oneClickClear.reason"
             id="graphwar-killer-one-click-clear-reason"
             :message="panel.oneClickClear.reason"
           />
@@ -193,6 +203,12 @@ const emit = defineEmits<{
               :aria-pressed="panel.routeMode === 'visibility-graph'"
               :class="{ 'graphwar-killer-segmented-button--active': panel.routeMode === 'visibility-graph' }"
               :disabled="panel.deleteOptimization.state === 'busy'"
+              :title="
+                prependControlTitle(
+                  panel.deleteOptimization.state === 'busy' ? panel.deleteOptimization.reason : undefined,
+                  locale.ui.pathfinding.routeAlgorithmTitle,
+                )
+              "
               @click="emit('setRouteMode', 'visibility-graph')"
             >
               {{ locale.ui.pathfinding.routeLazyVisibilityGraph }}
@@ -203,6 +219,12 @@ const emit = defineEmits<{
               :aria-pressed="panel.routeMode === 'theta-star'"
               :class="{ 'graphwar-killer-segmented-button--active': panel.routeMode === 'theta-star' }"
               :disabled="panel.deleteOptimization.state === 'busy'"
+              :title="
+                prependControlTitle(
+                  panel.deleteOptimization.state === 'busy' ? panel.deleteOptimization.reason : undefined,
+                  locale.ui.pathfinding.routeAlgorithmTitle,
+                )
+              "
               @click="emit('setRouteMode', 'theta-star')"
             >
               {{ locale.ui.pathfinding.routeThetaStar }}

@@ -124,6 +124,103 @@ describe("main trajectory calculation", () => {
     expect(outcome).toMatchObject({ ok: false, stage: "trajectory" });
   });
 
+  it("keeps the formula and visible prefix when an obstacle stops the trajectory before its final target", () => {
+    const points = [createGraphPoint(-10, 0), createGraphPoint(0, 0), createGraphPoint(10, 0)];
+    const input = {
+      bounds,
+      boundsRect,
+      points,
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "y",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+      targetHitRadiusPixels: 7,
+      targetPoint: graphToImagePoint(points[2], bounds, boundsRect),
+      type: "solver",
+    } satisfies Parameters<typeof calculateGraphwarTrajectory>[0];
+    const baseline = calculateGraphwarTrajectory(input);
+    expect(baseline.ok).toBe(true);
+    if (!baseline.ok) {
+      return;
+    }
+
+    const middlePixelX = graphToImagePoint(points[1], bounds, boundsRect).x;
+    const collisionPixel = baseline.result.trajectoryPoints.find(
+      (point) => point.x > middlePixelX + 2 && point.x < input.targetPoint.x - 2,
+    );
+    expect(collisionPixel).toBeDefined();
+    if (!collisionPixel) {
+      return;
+    }
+    const mask = new Uint8Array(boundsRect.width * boundsRect.height);
+    mask[Math.floor(collisionPixel.y) * boundsRect.width + Math.floor(collisionPixel.x)] = 1;
+
+    const outcome = calculateGraphwarTrajectory({ ...input, collision: { mask } });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+    expect(outcome.result.formulaResult?.expression).toBeTruthy();
+    expect(outcome.result.curvePoints).not.toBe("");
+    expect(outcome.result.trajectoryPoints.length).toBeLessThan(baseline.result.trajectoryPoints.length);
+    expect(outcome.result.hasTargetMissWarning).toBeUndefined();
+    expect(outcome.result.warningReason).toBe("obstacle");
+  });
+
+  it("rejects a target miss when an obstacle is hit at the target circle's forward boundary", () => {
+    const input = {
+      bounds,
+      boundsRect,
+      points: [createGraphPoint(-10, 0), createGraphPoint(10, 0)],
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "y",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+      type: "solver",
+    } satisfies Parameters<typeof calculateGraphwarTrajectory>[0];
+    const baseline = calculateGraphwarTrajectory(input);
+    expect(baseline.ok).toBe(true);
+    if (!baseline.ok) {
+      return;
+    }
+
+    const collisionPixel = baseline.result.trajectoryPoints.find(
+      (point) => point.x > graphToImagePoint(createGraphPoint(10, 0), bounds, boundsRect).x + 2,
+    );
+    expect(collisionPixel).toBeDefined();
+    if (!collisionPixel) {
+      return;
+    }
+    const mask = new Uint8Array(boundsRect.width * boundsRect.height);
+    mask[Math.floor(collisionPixel.y) * boundsRect.width + Math.floor(collisionPixel.x)] = 1;
+    const obstacleOnly = calculateGraphwarTrajectory({ ...input, collision: { mask } });
+    expect(obstacleOnly.ok && obstacleOnly.result.warningReason).toBe("obstacle");
+
+    const targetHitRadiusPixels = 1;
+    const targetPoint = createPixelPoint(
+      collisionPixel.x - targetHitRadiusPixels,
+      collisionPixel.y - targetHitRadiusPixels * 2,
+    );
+
+    expect(
+      calculateGraphwarTrajectory({
+        ...input,
+        collision: { mask },
+        targetHitRadiusPixels,
+        targetPoint,
+      }),
+    ).toMatchObject({ ok: false, stage: "trajectory" });
+  });
+
   it.each(["dy", "ddy"] as const)("keeps a finite soft %s result when hard Step cannot improve it", (equation) => {
     const points = [
       createGraphPoint(-12, 0),

@@ -151,7 +151,14 @@ function calculateSolverTrajectory(
 
   try {
     const { context, result: sampleResult } = resolved;
-    const hasTargetMissWarning = isTargetCircleConfigured && sampleResult.targetHitIndex < 0;
+    const obstacleHitPoint =
+      sampleResult.obstacleHitIndex >= 0 ? sampleResult.visiblePixels[sampleResult.obstacleHitIndex] : undefined;
+    // 目标圆右边界前的碰撞会阻止继续命中；越过该边界后的碰撞不能掩盖真实轨迹偏差。
+    const hasTargetMissWarning =
+      input.targetPoint !== undefined &&
+      input.targetHitRadiusPixels !== undefined &&
+      sampleResult.targetHitIndex < 0 &&
+      (!obstacleHitPoint || obstacleHitPoint.x >= input.targetPoint.x + input.targetHitRadiusPixels);
     // 只有显式使用两位小数执行角的 Y''= 保留最佳努力公式；完整精度结果和其它方程都严格命中。
     if (
       hasTargetMissWarning &&

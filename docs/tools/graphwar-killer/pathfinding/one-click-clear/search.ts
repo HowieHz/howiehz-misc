@@ -24,6 +24,7 @@ import type {
   GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import {
   createGraphwarStepGlitchPrefixScanner,
@@ -186,6 +187,8 @@ export interface GraphwarOneClickClearIncumbent {
   launchAngleRadians?: number;
   /** 已验证方案的完整截图像素路径。 */
   pathPoints: PixelPoint[];
+  /** 与表达式和可选发射角来自同一次权威验证的可绘制轨迹快照。 */
+  trajectoryPoints: readonly PixelPoint[];
 }
 
 /** 运行一键清图所需的纯数据。 */
@@ -373,6 +376,8 @@ interface OneClickClearValidatedRoute {
   pathPoints: PixelPoint[];
   /** 已按 DAG 序列验证命中的目标。 */
   targetSequence: OneClickClearTarget[];
+  /** 与 formulaContext 同一次验证得到的可绘制轨迹；路径变更时必须一并丢弃。 */
+  trajectoryPoints?: PixelPoint[];
 }
 
 /** 最终回放中需记录命中时刻的目标。 */
@@ -466,12 +471,16 @@ interface OneClickClearRouteSegmentValidationState {
   signProtection?: GraphwarSignProtection;
   /** 已验证前缀的普通控制点最大路径误差；续播后与新增段误差取最大值。 */
   pathError?: number;
+  /** ABS 从物理状态续播时已经验证过的可绘制轨迹前缀。 */
+  trajectoryPoints?: PixelPoint[];
 }
 
 /** 单条新增边的公式上下文和采样结果。 */
 interface OneClickClearRouteSegmentValidationResult {
   formulaContext: GraphwarTrajectoryFormulaContext;
   sampleResult: GraphwarTrajectorySampleResult;
+  /** 当前完整路径对应的可绘制轨迹；ABS 续播结果已和旧前缀拼接。 */
+  trajectoryPoints: PixelPoint[];
 }
 
 const START_NODE_INDEX = -1;
@@ -629,6 +638,7 @@ async function buildOneClickClearStepGlitchPath(
         ...(scan.formulaContext ? { formulaContext: scan.formulaContext } : {}),
         pathPoints: scan.path,
         targetSequence: [...route.targetSequence, target],
+        trajectoryPoints: scan.trajectoryPoints,
       };
       // hit 已包含精确整式模拟；此时发布不会为了预览再做一次昂贵采样。
       if (route.formulaContext) {
@@ -664,6 +674,10 @@ async function buildOneClickClearStepGlitchPath(
     ...finalized.route,
     formulaContext: finalValidation.formulaContext,
     ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
+    trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+      finalValidation.visiblePixels,
+      finalValidation.obstacleHitIndex,
+    ),
   };
   publishOneClickClearValidatedRoute(context, finalRoute);
 
@@ -757,6 +771,10 @@ async function runOneClickClearSearchAttempt(
         ...optimized.route,
         formulaContext: finalValidation.formulaContext,
         ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
+        trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+          finalValidation.visiblePixels,
+          finalValidation.obstacleHitIndex,
+        ),
       },
       type: "validated",
       workUnits: optimized.workUnits,
@@ -1299,6 +1317,7 @@ function validateOneClickClearDagRoute(
   let pathPoints = reused ? [...reused.pathPoints] : [...context.options.pathPoints];
   let formulaContext: GraphwarTrajectoryFormulaContext | undefined;
   let pathError: number | undefined;
+  let trajectoryPoints = reused?.segmentState.trajectoryPoints;
   let segmentState: OneClickClearRouteSegmentValidationState = reused ? { ...reused.segmentState } : {};
   const targetSequence: OneClickClearTarget[] = reused ? [...reused.targetSequence] : [];
   const validatedPrefix = cachedPrefix.slice(0, sharedPrefixLength);
@@ -1329,10 +1348,12 @@ function validateOneClickClearDagRoute(
     pathPoints = nextPath;
     formulaContext = validation.formulaContext;
     pathError = validation.sampleResult.pathError;
+    trajectoryPoints = validation.trajectoryPoints;
     segmentState = {
       ...(validation.sampleResult.sample.endState ? { initialState: validation.sampleResult.sample.endState } : {}),
       ...(pathError === undefined ? {} : { pathError }),
       signProtection: validation.formulaContext.signProtection,
+      trajectoryPoints,
     };
     targetSequence.push(target);
     validatedPrefix.push({
@@ -1347,6 +1368,7 @@ function validateOneClickClearDagRoute(
       ...(pathError === undefined ? {} : { pathError }),
       pathPoints,
       targetSequence,
+      trajectoryPoints,
     });
   }
 
@@ -1358,6 +1380,7 @@ function validateOneClickClearDagRoute(
       ...(pathError === undefined ? {} : { pathError }),
       pathPoints,
       targetSequence,
+      ...(trajectoryPoints ? { trajectoryPoints } : {}),
     },
     validationCount,
   };
@@ -1415,6 +1438,7 @@ function validateOneClickClearRouteSegment(
         boundaryExpansion: options.simulationBoundaryExpansion,
         mask: options.simulationMask,
       },
+      collectVisiblePixels: true,
       // Step 后续项会反向改变旧段；ABS y'' 的平滑脉冲也有折点前尾值，两者都必须从发射点完整回放。
       initialState: reusableInitialState,
       initialReachedRequiredTargetCount: reusableInitialState ? validationTargets.requiredTargets.length : 0,
@@ -1442,22 +1466,39 @@ function validateOneClickClearRouteSegment(
   }
 
   const firstSamplePoint = result.sample.points[0];
-  const resumedFromRequestedState = Boolean(
+  const isResumedFromRequestedState = Boolean(
     reusableInitialState &&
     firstSamplePoint &&
     firstSamplePoint.x === reusableInitialState.currentPoint.x &&
     firstSamplePoint.y === reusableInitialState.currentPoint.y,
   );
-  let pathError = resumedFromRequestedState
+  let pathError = isResumedFromRequestedState
     ? result.pathError
     : measureGraphwarFormulaPathError(result.sample.points, qualityPoints, options.bounds);
-  if (resumedFromRequestedState && state.pathError !== undefined) {
+  if (isResumedFromRequestedState && state.pathError !== undefined) {
     pathError = pathError === undefined ? state.pathError : Math.max(state.pathError, pathError);
   }
   const sampleResult = pathError === undefined ? result : { ...result, pathError };
+  const sampledTrajectoryPoints = snapshotGraphwarVisibleTrajectoryPoints(
+    result.visiblePixels,
+    result.obstacleHitIndex,
+  );
+  const trajectoryPoints =
+    isResumedFromRequestedState && state.trajectoryPoints
+      ? [
+          ...state.trajectoryPoints,
+          ...sampledTrajectoryPoints.slice(
+            state.trajectoryPoints.length > 0 &&
+              sampledTrajectoryPoints.length > 0 &&
+              pixelPointsEqual(state.trajectoryPoints[state.trajectoryPoints.length - 1], sampledTrajectoryPoints[0])
+              ? 1
+              : 0,
+          ),
+        ]
+      : sampledTrajectoryPoints;
 
   if (options.settings.algorithm !== "step") {
-    return { formulaContext, sampleResult };
+    return { formulaContext, sampleResult, trajectoryPoints };
   }
   return {
     formulaContext,
@@ -1465,6 +1506,7 @@ function validateOneClickClearRouteSegment(
       ...sampleResult,
       reachedTargetCount: sampleResult.reachedTargetCount - validationTargets.prefixTargetCount,
     },
+    trajectoryPoints,
   };
 }
 
@@ -1495,6 +1537,7 @@ function sampleOneClickClearTargetSequence(
     boundaryExpansion: options.simulationBoundaryExpansion,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
+    collectVisiblePixels: true,
     ...(targetControlGraphX === undefined || trackActualHits
       ? {}
       : { continueAfterTargetsUntilGraphX: targetControlGraphX }),
@@ -1681,13 +1724,12 @@ function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext,
   ) {
     return;
   }
-  const formulaContext = route.formulaContext;
   let incumbent: GraphwarOneClickClearIncumbent | undefined;
   if (context.options.onValidatedIncumbent) {
-    if (!formulaContext) {
+    incumbent = createOneClickClearIncumbent(context.options, route);
+    if (!incumbent) {
       return;
     }
-    incumbent = createOneClickClearIncumbent(context.options, route.pathPoints, formulaContext);
   }
 
   context.bestValidatedPathError = route.pathError;
@@ -1701,19 +1743,19 @@ function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext,
 /** 从已验证路径生成不可变 shot plan；公式和角度共享同一份数值上下文。 */
 function createOneClickClearIncumbent(
   options: GraphwarOneClickClearOptions,
-  pathPoints: readonly PixelPoint[],
-  formulaContext: GraphwarTrajectoryFormulaContext,
+  route: OneClickClearValidatedRoute,
 ): GraphwarOneClickClearIncumbent | undefined {
-  if (formulaContext.formulaPoints.length < 2) {
+  if (!route.formulaContext || !route.trajectoryPoints || route.formulaContext.formulaPoints.length < 2) {
     return undefined;
   }
 
   const launchAngleRadians =
-    options.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(formulaContext) : Number.NaN;
+    options.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(route.formulaContext) : Number.NaN;
   return {
-    expression: formulaContext.formulaResult.expression,
+    expression: route.formulaContext.formulaResult.expression,
     ...(Number.isFinite(launchAngleRadians) ? { launchAngleRadians } : {}),
-    pathPoints: [...pathPoints],
+    pathPoints: [...route.pathPoints],
+    trajectoryPoints: [...route.trajectoryPoints],
   };
 }
 
@@ -1725,9 +1767,7 @@ function createOneClickClearSuccessResult(
   startedAt: number,
   expandedStates: number,
 ): GraphwarOneClickClearResult {
-  const incumbent = route.formulaContext
-    ? createOneClickClearIncumbent(options, route.pathPoints, route.formulaContext)
-    : undefined;
+  const incumbent = createOneClickClearIncumbent(options, route);
   if (!incumbent) {
     return createOneClickClearFailure("no-usable-target", startedAt, expandedStates);
   }

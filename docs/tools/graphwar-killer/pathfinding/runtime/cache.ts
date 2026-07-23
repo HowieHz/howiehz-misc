@@ -372,6 +372,7 @@ function cloneOneClickClearResult(result: GraphwarOneClickClearPathWorkerResult[
       ...(result.launchAngleRadians === undefined ? {} : { launchAngleRadians: result.launchAngleRadians }),
       pathPoints: result.pathPoints.map(clonePixelPoint),
       targetIds: [...result.targetIds],
+      trajectoryPoints: result.trajectoryPoints.map(clonePixelPoint),
       type: result.type,
     };
   }

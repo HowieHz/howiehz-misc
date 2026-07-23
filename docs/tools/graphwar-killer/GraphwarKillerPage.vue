@@ -218,6 +218,19 @@ interface GraphwarAgentPendingFunctionDraw {
   identity: GraphwarAgentFunctionDrawIdentity;
   launchAngleRadians?: number;
 }
+/** Binds one managed shot plan to the incumbent trajectory validated for the same authoritative scene. */
+interface GraphwarManagedPreparedShot {
+  /** Agent game that owned the shot plan. */
+  gameInstanceId: string;
+  /** Exact values passed to the managed controller and eventually `/shots`. */
+  plan: GraphwarAgentShotPlan;
+  /** Full managed-search identity, including shooter, equation settings, revision, and turn. */
+  sceneKey: string;
+  /** Independently copied trajectory produced by the matching incumbent validation. */
+  trajectoryPoints: readonly PixelPoint[];
+  /** Agent turn that owned the shot plan. */
+  turnToken: string | null;
+}
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
 }>();
@@ -378,6 +391,7 @@ const isGraphwarAgentFireInProgress = ref(false);
 const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
 const isGraphwarManagedModeEnabled = ref(false);
+const canAcceptScreenshotInput = computed(() => !isGraphwarAgentEnabled.value && !isGraphwarManagedModeEnabled.value);
 // 手动模式也显示求解器的完整推荐角，由用户按实际轨迹用方向键微调。
 const secondOrderLaunchAngleMode = ref("full-precision" as const);
 let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -390,6 +404,7 @@ let graphwarManagedController: GraphwarManagedController | undefined;
 let graphwarManagedShotReserveMs = GRAPHWAR_MANAGED_SHOT_DEADLINE_MS;
 let graphwarManagedDeadlineTurnToken: string | undefined;
 let graphwarManagedIncumbent: GraphwarOneClickClearIncumbent | undefined;
+let graphwarManagedPreparedShot: GraphwarManagedPreparedShot | undefined;
 let graphwarManagedLastRequestedTurnToken: string | undefined;
 let graphwarManagedSceneKey = "";
 let graphwarManagedSearchErrorSceneKey: string | undefined;
@@ -478,7 +493,9 @@ const {
 const incumbentPreviewPathPixels = ref<readonly PixelPoint[]>();
 const hasIncumbentPreviewPath = computed(() => incumbentPreviewPathPixels.value !== undefined);
 const displayedPathPixels = computed(() => incumbentPreviewPathPixels.value ?? pathPixels.value);
-let queuedIncumbentPreview: GraphwarOneClickClearIncumbent | undefined;
+let queuedIncumbentPreview:
+  | Pick<GraphwarOneClickClearIncumbent, "expression" | "launchAngleRadians" | "pathPoints">
+  | undefined;
 let pendingIncumbentCommit: GraphwarOneClickClearIncumbent | undefined;
 let incumbentPreviewFrame: number | undefined;
 const hasPendingIncumbentCommit = ref(false);
@@ -2431,9 +2448,9 @@ function createResultPanelPointRows() {
   });
 }
 
-/** 托管锁定截图来源时忽略全局粘贴，避免绕过已禁用的上传入口。 */
+/** Agent 锁定截图来源时忽略全局粘贴，避免绕过已隐藏的截图输入入口。 */
 function handleWindowPaste(event: ClipboardEvent) {
-  if (!isGraphwarManagedModeEnabled.value) {
+  if (canAcceptScreenshotInput.value) {
     handlePaste(event);
   }
 }
@@ -2793,6 +2810,8 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
   if (!requestBaseUrl) {
     return;
   }
+  // A manual snapshot is an explicit presentation boundary even when the Agent still reports the same turn.
+  clearGraphwarAgentFunctionDrawPlayback();
   graphwarAgentDebugFiles.clear();
   const requestGeneration = ++graphwarAgentTransferGeneration;
   // 同一代次、来源和规范化 URL 必须全部匹配，响应才仍属于当前页面场景。
@@ -3004,6 +3023,8 @@ async function exportGraphwarAgentDebugScene() {
 
 /** 把同一 revision 的 Agent 视角原子写入页面，并以新发射点重建当前工作流路径。 */
 function applyGraphwarAgentSnapshot(snapshot: GraphwarAgentSnapshot, pathStart: PixelPoint | undefined) {
+  // Every authoritative viewport replacement is a presentation boundary, including debug-file imports.
+  clearGraphwarAgentFunctionDrawPlayback();
   graphwarAgentAppliedSnapshot = snapshot;
   graphwarAgentBaseUrlText.value = snapshot.baseUrl;
   // Agent 画布 URL 固定；每次重放仍需触发截图回调，统一清除上一权威场景的路径和临时选点。
@@ -3251,6 +3272,7 @@ async function fireGraphwarAgentFunction() {
 
   isGraphwarAgentFireInProgress.value = true;
   setGraphwarAgentFireStatus("idle");
+  const functionDrawObservationGenerationAtStart = graphwarAgentFunctionDrawObservationGeneration;
   const request = new AbortController();
   graphwarAgentManualFireRequest = request;
   let requestBaseUrl: string | undefined;
@@ -3339,7 +3361,11 @@ async function fireGraphwarAgentFunction() {
     if (command.status === "failed") {
       throw createGraphwarAgentShotCommandError(command);
     }
-    observeSubmittedGraphwarAgentFunction(client, state, shotPlan, trajectoryPointsSnapshot);
+    // A manual snapshot may finish while the irreversible shot command is pending. Preserve the
+    // command result, but never let that older visual intent re-arm playback on the replaced viewport.
+    if (functionDrawObservationGenerationAtStart === graphwarAgentFunctionDrawObservationGeneration) {
+      observeSubmittedGraphwarAgentFunction(client, state, shotPlan, trajectoryPointsSnapshot);
+    }
     if (command.status === "unknown") {
       graphwarAgentFireFailureMessage.value = locale.status.agent.fireUnknown(
         createGraphwarAgentFailureReason(locale, createGraphwarAgentShotCommandError(command)),
@@ -3494,6 +3520,7 @@ function toggleGraphwarManagedMode() {
   isGraphwarManagedModeEnabled.value = true;
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
+  graphwarManagedPreparedShot = undefined;
   graphwarManagedSearchErrorSceneKey = undefined;
   graphwarManagedSearchSnapshot = undefined;
   graphwarManagedSearchStartedAt = undefined;
@@ -3646,7 +3673,12 @@ function handleGraphwarManagedShotSubmitted(
     return;
   }
   if (graphwarManagedClient) {
-    observeSubmittedGraphwarAgentFunction(graphwarManagedClient, state, plan);
+    observeSubmittedGraphwarAgentFunction(
+      graphwarManagedClient,
+      state,
+      plan,
+      getGraphwarManagedPreparedShotTrajectoryPoints(state, plan),
+    );
   }
   if (plan.function === GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION) {
     setGraphwarManagedStatus(locale.smartPathfinding.managed.skipTurnFired, "warning");
@@ -3670,7 +3702,12 @@ function handleGraphwarManagedShotUnknown(
     return;
   }
   if (graphwarManagedClient) {
-    observeSubmittedGraphwarAgentFunction(graphwarManagedClient, state, plan);
+    observeSubmittedGraphwarAgentFunction(
+      graphwarManagedClient,
+      state,
+      plan,
+      getGraphwarManagedPreparedShotTrajectoryPoints(state, plan),
+    );
   }
   setGraphwarManagedStatus(
     locale.smartPathfinding.managed.shotUnknown(createGraphwarAgentFailureReason(locale, error)),
@@ -3743,6 +3780,7 @@ function handleGraphwarManagedState(
   clearGraphwarManagedCalculationStatus();
   graphwarManagedSceneKey = sceneKey;
   graphwarManagedIncumbent = undefined;
+  graphwarManagedPreparedShot = undefined;
   graphwarManagedSearchErrorSceneKey = undefined;
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
@@ -3894,6 +3932,7 @@ function resetGraphwarManagedSearch(shouldPreservePreview = false) {
   cancelGraphwarManagedSearch(shouldPreservePreview);
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
+  graphwarManagedPreparedShot = undefined;
   graphwarManagedSearchErrorSceneKey = undefined;
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
@@ -3901,34 +3940,66 @@ function resetGraphwarManagedSearch(shouldPreservePreview = false) {
 
 /** 仅将当前完整指纹下的验证结果转换为 Agent 的模式化发射参数。 */
 function createGraphwarManagedShotPlan(state: GraphwarAgentAvailableState): GraphwarAgentShotPlan | undefined {
+  graphwarManagedPreparedShot = undefined;
   const incumbent = graphwarManagedIncumbent;
-  const player = state.currentPlayerIndex === null ? undefined : state.players[state.currentPlayerIndex];
-  const soldier =
-    player?.currentSoldierIndex === null || player?.currentSoldierIndex === undefined
-      ? undefined
-      : player.soldiers[player.currentSoldierIndex];
+  const shooter = getGraphwarManagedCurrentShooter(state);
   if (
     !incumbent ||
-    !isGraphwarAgentLocalHuman(player) ||
-    !soldier?.isAlive ||
+    !shooter ||
     !incumbent.expression.trim() ||
-    createGraphwarManagedSceneKey(state, { player, soldier }) !== graphwarManagedSceneKey
+    createGraphwarManagedSceneKey(state, shooter) !== graphwarManagedSceneKey
   ) {
     return undefined;
   }
   const functionText = isFractionOutputEnabled.value
     ? convertGraphwarExpressionDecimalsToFractions(incumbent.expression).expression
     : incumbent.expression;
-  if (state.equationMode !== "ddy") {
-    return { equationMode: state.equationMode, function: functionText };
+  const plan: GraphwarAgentShotPlan | undefined =
+    state.equationMode !== "ddy"
+      ? { equationMode: state.equationMode, function: functionText }
+      : incumbent.launchAngleRadians === undefined
+        ? undefined
+        : {
+            angleRadians: incumbent.launchAngleRadians,
+            equationMode: "ddy",
+            function: functionText,
+          };
+  if (!plan) {
+    return undefined;
   }
-  return incumbent.launchAngleRadians === undefined
-    ? undefined
-    : {
-        angleRadians: incumbent.launchAngleRadians,
-        equationMode: "ddy",
-        function: functionText,
-      };
+  graphwarManagedPreparedShot = {
+    gameInstanceId: state.gameInstanceId,
+    plan,
+    sceneKey: graphwarManagedSceneKey,
+    trajectoryPoints: incumbent.trajectoryPoints.map((point) => createPixelPoint(point.x, point.y)),
+    turnToken: state.turnToken,
+  };
+  return plan;
+}
+
+/** Returns managed trajectory points only while every submitted-plan and authoritative-scene field still matches. */
+function getGraphwarManagedPreparedShotTrajectoryPoints(
+  state: GraphwarAgentAvailableState,
+  plan: GraphwarAgentShotPlan,
+) {
+  const prepared = graphwarManagedPreparedShot;
+  const shooter = getGraphwarManagedCurrentShooter(state);
+  if (
+    !prepared ||
+    !shooter ||
+    prepared.sceneKey !== graphwarManagedSceneKey ||
+    createGraphwarManagedSceneKey(state, shooter) !== prepared.sceneKey ||
+    prepared.gameInstanceId !== state.gameInstanceId ||
+    prepared.turnToken !== state.turnToken ||
+    state.equationMode !== plan.equationMode ||
+    prepared.plan.equationMode !== plan.equationMode ||
+    prepared.plan.function !== plan.function ||
+    (prepared.plan.equationMode === "ddy" ? prepared.plan.angleRadians : undefined) !==
+      (plan.equationMode === "ddy" ? plan.angleRadians : undefined)
+  ) {
+    return [];
+  }
+  return prepared.trajectoryPoints;
 }
 
 /** 正常完成只提交 controller 当前快照，并返回本回合是否已在 await 前完成 once-only claim。 */
@@ -3948,12 +4019,17 @@ function hasGraphwarManagedStateSearchError(state: GraphwarAgentAvailableState) 
 
 /** 检查最新权威回合是否属于当前本地真人发射者。 */
 function isGraphwarManagedCurrentLocalTurn(state: GraphwarAgentAvailableState) {
+  return state.phase === "aiming" && getGraphwarManagedCurrentShooter(state) !== undefined;
+}
+
+/** Selects the alive local human who owns the current managed scene, independent of the Agent phase. */
+function getGraphwarManagedCurrentShooter(state: GraphwarAgentAvailableState): GraphwarManagedShooter | undefined {
   const player = state.currentPlayerIndex === null ? undefined : state.players[state.currentPlayerIndex];
   const soldier =
     player?.currentSoldierIndex === null || player?.currentSoldierIndex === undefined
       ? undefined
       : player.soldiers[player.currentSoldierIndex];
-  return Boolean(state.phase === "aiming" && isGraphwarAgentLocalHuman(player) && soldier?.isAlive);
+  return isGraphwarAgentLocalHuman(player) && soldier?.isAlive ? { player, soldier } : undefined;
 }
 
 /** 保存托管状态；后台警告临时覆盖展示，回到前台后恢复真实状态。 */
@@ -4402,7 +4478,8 @@ function enqueueGraphwarAgentClearFailureExport(
 function queueIncumbentPreview(incumbent: GraphwarOneClickClearIncumbent) {
   clearTrajectoryIncumbentPreview();
   queuedIncumbentPreview = {
-    ...incumbent,
+    expression: incumbent.expression,
+    ...(incumbent.launchAngleRadians === undefined ? {} : { launchAngleRadians: incumbent.launchAngleRadians }),
     pathPoints: incumbent.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
   };
   if (incumbentPreviewFrame !== undefined) {
@@ -4935,7 +5012,7 @@ function undoLastPoint() {
       <GraphwarDetectionPanel
         :locale="locale"
         :panel="detectionPanel"
-        @capture-image="!isGraphwarManagedModeEnabled && captureScreenImage()"
+        @capture-image="canAcceptScreenshotInput && captureScreenImage()"
         @detect-bounds="void detectGraphwarBounds()"
         @detect-objects="void detectGraphwarObjectsInCurrentBounds()"
         @export-agent-scene="void exportGraphwarAgentDebugScene()"
@@ -4947,7 +5024,7 @@ function undoLastPoint() {
         @toggle-export-on-clear-failure="
           isGraphwarAgentAutoExportOnClearFailureEnabled = !isGraphwarAgentAutoExportOnClearFailureEnabled
         "
-        @upload-image="!isGraphwarManagedModeEnabled && handleImageUpload($event)"
+        @upload-image="canAcceptScreenshotInput && handleImageUpload($event)"
         @update-agent-base-url="setGraphwarAgentBaseUrlText"
         @update-agent-token="setGraphwarAgentTokenText"
       />
@@ -4956,7 +5033,7 @@ function undoLastPoint() {
       :locale="locale"
       :panel="screenshotPanel"
       @cancel-detection="cancelDetection(true)"
-      @drop-image="!isGraphwarManagedModeEnabled && handleDrop($event)"
+      @drop-image="canAcceptScreenshotInput && handleDrop($event)"
       @image-load="handleImageLoad"
       @set-image-element="setScreenshotImageElement"
       @set-stage-element="setScreenshotStageElement"

@@ -9,7 +9,8 @@ import {
   type GraphwarTrajectoryFormulaSettings,
   type GraphwarTrajectorySampleResult,
 } from "../../formula/trajectory/sampling";
-import { formatVisibleTrajectoryPoints, getVisibleTrajectoryPointCount } from "../../presentation/stage/svg-polyline";
+import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
+import { formatVisibleTrajectoryPoints } from "../../presentation/stage/svg-polyline";
 
 /** 轨迹结果提示原因；页面负责把原因映射成本地化文案。 */
 export type GraphwarTrajectoryWarningReason = "invalid" | "max-steps" | "obstacle" | "out-of-bounds" | "too-steep";
@@ -180,9 +181,9 @@ function calculateSolverTrajectory(
             }
           : {}),
         ...(hasTargetMissWarning ? { hasTargetMissWarning: true } : {}),
-        trajectoryPoints: sampleResult.visiblePixels.slice(
-          0,
-          getVisibleTrajectoryPointCount(sampleResult.visiblePixels, sampleResult.obstacleHitIndex),
+        trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+          sampleResult.visiblePixels,
+          sampleResult.obstacleHitIndex,
         ),
         ...(warningReason ? { warningReason } : {}),
       },
@@ -213,9 +214,9 @@ function calculateSimulatorTrajectory(
       ok: true,
       result: {
         curvePoints: formatVisibleTrajectoryPoints(sampleResult.visiblePixels, sampleResult.obstacleHitIndex),
-        trajectoryPoints: sampleResult.visiblePixels.slice(
-          0,
-          getVisibleTrajectoryPointCount(sampleResult.visiblePixels, sampleResult.obstacleHitIndex),
+        trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+          sampleResult.visiblePixels,
+          sampleResult.obstacleHitIndex,
         ),
         ...(warningReason ? { warningReason } : {}),
       },

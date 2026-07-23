@@ -7,6 +7,7 @@ import type {
   GraphwarOneClickClearPathWorkerResult,
   GraphwarPathfindingWorkerRequest,
 } from "./protocol";
+import { isGraphwarOneClickClearIncumbent } from "./protocol";
 import { createGraphwarPathfindingRunner, isGraphwarPathfindingCancelledError } from "./runner";
 
 const originalWorkerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Worker");
@@ -28,6 +29,15 @@ afterEach(() => {
 });
 
 describe("Graphwar pathfinding runner incumbents", () => {
+  it("rejects a shot-ready incumbent without its validated trajectory snapshot", () => {
+    expect(
+      isGraphwarOneClickClearIncumbent({
+        expression: "x",
+        pathPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
+      }),
+    ).toBe(false);
+  });
+
   it("preserves the deletion preference in the cloned Worker request", async () => {
     const runner = createGraphwarPathfindingRunner();
     const input = createInput();
@@ -242,6 +252,7 @@ function createIncumbent(id: string): GraphwarOneClickClearIncumbent {
   return {
     expression: id,
     pathPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
+    trajectoryPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
   };
 }
 
@@ -254,6 +265,7 @@ function createResult(): GraphwarOneClickClearPathWorkerResult {
       expandedStates: 1,
       pathPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
       targetIds: ["target"],
+      trajectoryPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
       type: "success",
     },
     timings: [],

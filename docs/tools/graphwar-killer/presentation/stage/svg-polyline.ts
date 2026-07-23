@@ -1,5 +1,6 @@
 import { formatSvgNumber } from "../../core/numbers";
 import type { PixelPoint } from "../../core/types";
+import { getGraphwarVisibleTrajectoryPointCount } from "../../formula/trajectory/visible-points";
 
 /**
  * 将截图像素点格式化为 SVG polyline 的 points 属性。
@@ -16,13 +17,8 @@ export function formatSvgPolylinePoints(points: readonly PixelPoint[]) {
  * `hitIndex` 是第一个障碍命中点；Graphwar 原版碰撞后只绘制到 numSteps - 1。因此这里排除命中点本身；-1 表示保留完整轨迹。
  */
 export function formatVisibleTrajectoryPoints(points: readonly PixelPoint[], hitIndex: number) {
-  const visiblePointCount = getVisibleTrajectoryPointCount(points, hitIndex);
+  const visiblePointCount = getGraphwarVisibleTrajectoryPointCount(points, hitIndex);
   return visiblePointCount < 2 ? "" : formatSvgPolylinePointRange(points, 0, visiblePointCount);
-}
-
-/** Returns the prefix length that Graphwar draws before the first obstacle collision point. */
-export function getVisibleTrajectoryPointCount(points: readonly PixelPoint[], hitIndex: number) {
-  return hitIndex >= 0 ? Math.min(points.length, hitIndex) : points.length;
 }
 
 /** 格式化 points 的半开区间；直接遍历原数组，避免渐进轨迹每帧额外 slice。 */

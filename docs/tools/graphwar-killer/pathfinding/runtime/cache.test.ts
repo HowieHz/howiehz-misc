@@ -129,6 +129,7 @@ describe("Graphwar pathfinding result cache keys", () => {
         launchAngleRadians: Math.PI / 4,
         pathPoints: [createPixelPoint(10, 20), createPixelPoint(30, 40)],
         targetIds: ["target"],
+        trajectoryPoints: [createPixelPoint(10, 20), createPixelPoint(20, 30)],
         type: "success" as const,
       },
       timings: [],
@@ -141,6 +142,7 @@ describe("Graphwar pathfinding result cache keys", () => {
     expect(cached?.result).not.toBe(result.result);
     if (cached?.result.type === "success") {
       expect(cached.result.pathPoints).not.toBe(result.result.pathPoints);
+      expect(cached.result.trajectoryPoints).not.toBe(result.result.trajectoryPoints);
     }
   });
 

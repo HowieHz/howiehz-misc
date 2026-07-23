@@ -75,6 +75,7 @@ describe("Anytime one-click-clear progress", () => {
     const incumbent: GraphwarOneClickClearIncumbent = {
       expression: "0",
       pathPoints: input.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
+      trajectoryPoints: input.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
     };
     mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearOptions) => {
       options.onValidatedIncumbent?.(incumbent);

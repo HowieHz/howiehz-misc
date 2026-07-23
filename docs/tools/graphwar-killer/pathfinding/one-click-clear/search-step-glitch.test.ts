@@ -96,6 +96,7 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
                 reachedTargetCount: (options.requiredTargets?.length ?? 0) + 1,
                 status: "hit" as const,
                 timings: [],
+                trajectoryPoints: path,
               };
             }
             return {

@@ -148,7 +148,8 @@ export function isGraphwarOneClickClearIncumbent(value: unknown): value is Graph
     !isRecord(value) ||
     typeof value.expression !== "string" ||
     !value.expression.trim() ||
-    !isPixelPointArray(value.pathPoints)
+    !isPixelPointArray(value.pathPoints) ||
+    !isPixelPointArray(value.trajectoryPoints, 0)
   ) {
     return false;
   }
@@ -200,10 +201,10 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 /** 校验 Worker 返回的截图像素路径。 */
-function isPixelPointArray(value: unknown): value is PixelPoint[] {
+function isPixelPointArray(value: unknown, minimumLength = 1): value is PixelPoint[] {
   return (
     Array.isArray(value) &&
-    value.length > 0 &&
+    value.length >= minimumLength &&
     value.every((point) => isRecord(point) && isFiniteNumber(point.x) && isFiniteNumber(point.y))
   );
 }

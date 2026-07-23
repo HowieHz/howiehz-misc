@@ -54,7 +54,7 @@ interface GraphwarOneClickClearRunRunner {
 
 /** Per-run behavior used by interactive and managed-play callers. */
 export interface GraphwarOneClickClearRunOptions {
-  /** 接收主搜索自然产生的已验证方案；只用于展示或托管发射，不触发额外验证。 */
+  /** 接收主搜索自然产生的检查点和最终完整复验方案；只用于展示或托管发射，不触发额外验证。 */
   onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
   /** 每次运行只报告一个最终结局；调用方据此区分有效失败、预检失败和取消。 */
   onOutcome?: (outcome: GraphwarOneClickClearRunOutcome) => void;
@@ -222,9 +222,13 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
         } else {
           runOptions.onOutcome?.({ kind: "complete" });
         }
+        // 最终完整复验可能比自然检查点多出目标后的可绘制轨迹；托管发射前必须先提升这份权威快照。
+        activeRun = { incumbent: result, token: pathfindingToken };
+        runOptions.onIncumbent?.(result);
         runOptions.onSuccessBeforeEffects?.();
         options.run.finish(pathfindingToken);
         applySuccessResult(startedAt, timings, result, searchResult.cacheHit, finishOneClickClearDebugTimings);
+        activeRun = undefined;
         return true;
       }
 

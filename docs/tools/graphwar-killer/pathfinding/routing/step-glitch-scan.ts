@@ -31,6 +31,7 @@ import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
 
 const glitchWindows = createGlitchWindows();
 /** 统一搜索网格中固定的近到远回退距离。 */
@@ -98,6 +99,8 @@ export type GraphwarStepGlitchScanResult =
       stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
       path: PixelPoint[];
       status: "hit";
+      /** 与本次量化回放公式和发射角严格绑定的可绘制轨迹。 */
+      trajectoryPoints: PixelPoint[];
     })
   | (GraphwarStepGlitchScanResultBase & {
       blockedPoint?: GraphPoint;
@@ -235,6 +238,8 @@ export interface GraphwarStepGlitchReplayResult {
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
   /** 当前有序目标和全部无序必达目标是否都已命中。 */
   targetsHit: boolean;
+  /** 本次回放在首次障碍碰撞前实际可绘制的轨迹快照。 */
+  trajectoryPoints: PixelPoint[];
 }
 
 /** 生成任何 gate 候选前先执行的目标直连回放。 */
@@ -412,6 +417,7 @@ export function createGraphwarStepGlitchPrefixScanner(
             : {}),
           status: "hit",
           timings,
+          trajectoryPoints: directReplay.trajectoryPoints,
         };
       }
 
@@ -456,7 +462,7 @@ export function replayGraphwarStepGlitchPathToControlX(
 ): GraphwarStepGlitchReplayResult {
   const context = createGraphwarStepGlitchReplayContext(options, []);
   return "status" in context
-    ? { reachedTargetCount: 0, targetsHit: false }
+    ? { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] }
     : replayPathToControlX(
         options,
         context,
@@ -676,6 +682,7 @@ function scanPreparedGraphwarStepGlitchPath(
         ...(replay.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: replay.stepGlitchFormulaPrefix } : {}),
         status: "hit",
         timings,
+        trajectoryPoints: replay.trajectoryPoints,
       };
     }
     if (!replay.targetsHit || !replay.acceptedPoint) {
@@ -713,7 +720,7 @@ function replayPathToControlX(
   stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[],
 ): GraphwarStepGlitchReplayResult {
   if (path.length < 2 || path.length < options.sourcePath.length) {
-    return { reachedTargetCount: 0, targetsHit: false };
+    return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
   }
   const graphPoints = [
     ...context.graphPoints,
@@ -728,6 +735,7 @@ function replayPathToControlX(
       boundaryExpansion: context.simulationBoundaryExpansion,
       mask: options.simulationMask,
     },
+    collectVisiblePixels: true,
     continueAfterTargetsUntilGraphX: controlX,
     points: graphPoints,
     requiredTargets,
@@ -739,11 +747,11 @@ function replayPathToControlX(
     targetSequence,
   });
   if (!resolved) {
-    return { reachedTargetCount: 0, targetsHit: false };
+    return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
   }
   const { context: formulaContext, result } = resolved;
   if (formulaContext.formulaPoints.length < 2) {
-    return { reachedTargetCount: 0, targetsHit: false };
+    return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
   }
 
   const targetsHit =
@@ -770,6 +778,7 @@ function replayPathToControlX(
     reachedTargetCount: result.reachedTargetCount + result.reachedRequiredTargetCount,
     stepGlitchFormulaPrefix: formulaContext.stepGlitchFormulaPrefix,
     targetsHit,
+    trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(result.visiblePixels, result.obstacleHitIndex),
   };
 }
 

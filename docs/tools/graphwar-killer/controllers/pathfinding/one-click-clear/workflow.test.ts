@@ -27,6 +27,7 @@ describe("one-click clear workflow", () => {
     let boundsValid = true;
     let clearFailureCount = 0;
     const outcomes: string[] = [];
+    const reportedIncumbents: string[] = [];
     let runnerCallCount = 0;
     let runnerFailureReason: GraphwarOneClickClearFailureReason = "no-usable-target";
     let runnerMode: "error" | "failure" | "pending" | "success" = "success";
@@ -117,7 +118,11 @@ describe("one-click clear workflow", () => {
             expect(input.settings.stepGlitchObstacleMask).toBe(simulationMask);
             if (runnerMode !== "success") {
               if (publishIncumbent) {
-                runnerOptions?.onIncumbent?.({ expression: "x", pathPoints: [start, target] });
+                runnerOptions?.onIncumbent?.({
+                  expression: "x",
+                  pathPoints: [start, target],
+                  trajectoryPoints: [start, target],
+                });
               }
               if (runnerMode === "error") {
                 throw new Error("worker failed after incumbent");
@@ -139,6 +144,7 @@ describe("one-click clear workflow", () => {
                 expandedStates: 1,
                 pathPoints: [start, target],
                 targetIds: ["target", "target", "incidental"],
+                trajectoryPoints: [start, target],
                 type: "success",
               },
               timings: [],
@@ -172,6 +178,7 @@ describe("one-click clear workflow", () => {
 
     await expect(
       workflow.run({
+        onIncumbent: (incumbent) => reportedIncumbents.push(incumbent.expression),
         onOutcome: (outcome) => {
           outcomes.push(outcome.kind);
           if (outcome.kind === "incomplete") {
@@ -179,7 +186,10 @@ describe("one-click clear workflow", () => {
             order.push("clear-failure");
           }
         },
-        onSuccessBeforeEffects: () => order.push("submit"),
+        onSuccessBeforeEffects: () => {
+          expect(reportedIncumbents.at(-1)).toBe("final");
+          order.push("submit");
+        },
         shouldUseResultCache: false,
       }),
     ).resolves.toBe(true);
@@ -189,6 +199,7 @@ describe("one-click clear workflow", () => {
     expect(order.slice(0, 6)).toEqual(["clear-failure", "submit", "finish", "apply-incumbent", "flash", "status"]);
     expect(clearFailureCount).toBe(1);
     expect(appliedExpressions).toContain("final");
+    expect(reportedIncumbents).toEqual(["final"]);
 
     cachedResult = {
       result: {
@@ -197,6 +208,7 @@ describe("one-click clear workflow", () => {
         expandedStates: 1,
         pathPoints: [start, target],
         targetIds: ["target", "missed", "incidental"],
+        trajectoryPoints: [start, target],
         type: "success",
       },
       timings: [],

@@ -6,6 +6,7 @@ import { nextTick } from "vue";
 
 import {
   createGraphwarAgentClient,
+  createGraphwarAgentSnapshot,
   GraphwarAgentClientError,
   type GraphwarAgentClient,
   type GraphwarAgentAvailableState,
@@ -19,6 +20,7 @@ import {
 import { createPixelPoint } from "./core/types";
 import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
+import GraphwarScreenshotPanel from "./presentation/screenshot/MainPanel.vue";
 
 describe("Graphwar Killer page settings", () => {
   it("coalesces incumbent control-point previews per frame and restores the formal path on clear", () => {
@@ -36,7 +38,11 @@ describe("Graphwar Killer page settings", () => {
           displayedPathPixels: readonly { x: number; y: number }[];
           isIncumbentTrajectoryPending: boolean;
           pathPixels: { x: number; y: number }[];
-          queueIncumbentPreview: (incumbent: { expression: string; pathPoints: { x: number; y: number }[] }) => void;
+          queueIncumbentPreview: (incumbent: {
+            expression: string;
+            pathPoints: { x: number; y: number }[];
+            trajectoryPoints: { x: number; y: number }[];
+          }) => void;
         };
       }
     ).setupState;
@@ -44,8 +50,12 @@ describe("Graphwar Killer page settings", () => {
     const latestPreview = [createPixelPoint(1, 2), createPixelPoint(7, 8)];
     page.pathPixels = formalPath;
 
-    page.queueIncumbentPreview({ expression: "first", pathPoints: [formalPath[0], createPixelPoint(5, 6)] });
-    page.queueIncumbentPreview({ expression: "latest", pathPoints: latestPreview });
+    page.queueIncumbentPreview({
+      expression: "first",
+      pathPoints: [formalPath[0], createPixelPoint(5, 6)],
+      trajectoryPoints: formalPath,
+    });
+    page.queueIncumbentPreview({ expression: "latest", pathPoints: latestPreview, trajectoryPoints: latestPreview });
     expect(page.displayedPathPixels).toEqual(formalPath);
 
     previewFrame?.(performance.now());
@@ -313,6 +323,246 @@ describe("Graphwar Killer page settings", () => {
     vi.unstubAllGlobals();
   });
 
+  it("invalidates submitted-function playback as soon as a manual Agent read starts", async () => {
+    let resolveStateResponse!: (response: Response) => void;
+    const stateResponse = new Promise<Response>((resolve) => {
+      resolveStateResponse = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input) => {
+        if (String(input).endsWith("/state")) {
+          return stateResponse;
+        }
+        return Promise.reject(new Error(`Unexpected Agent request: ${String(input)}`));
+      }),
+    );
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          graphwarAgentFunctionDrawPlayback: {
+            curvePoints: { value: string | undefined };
+          };
+          graphwarAgentPendingFunctionDraw: unknown;
+          handleGraphwarAgentLiveState: (state: GraphwarAgentAvailableState) => boolean;
+          isGraphwarAgentEnabled: boolean;
+          observeSubmittedGraphwarAgentFunction: (
+            client: { readState: (signal?: AbortSignal) => Promise<GraphwarAgentAvailableState> },
+            state: GraphwarAgentAvailableState,
+            plan: GraphwarAgentShotPlan,
+            trajectoryPoints: readonly { x: number; y: number }[],
+          ) => void;
+          readGraphwarAgent: () => Promise<void>;
+        };
+      }
+    ).setupState;
+    const state = createAgentState("y", {
+      functionDraw: { currentStep: 2, stepsPerSecond: 1500 },
+      observationSequence: 1,
+      phase: "drawing",
+    });
+    let observationSignal: AbortSignal | undefined;
+    page.isGraphwarAgentEnabled = true;
+    page.observeSubmittedGraphwarAgentFunction(
+      {
+        readState: (signal) => {
+          observationSignal = signal;
+          return new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      },
+      state,
+      { equationMode: "y", function: "x" },
+      [createPixelPoint(1, 1), createPixelPoint(2, 2), createPixelPoint(3, 3)],
+    );
+    page.handleGraphwarAgentLiveState(state);
+    expect(page.graphwarAgentFunctionDrawPlayback.curvePoints.value).not.toBeUndefined();
+    const readPromise = page.readGraphwarAgent();
+
+    expect(page.graphwarAgentFunctionDrawPlayback.curvePoints.value).toBeUndefined();
+    expect(page.graphwarAgentPendingFunctionDraw).toBeUndefined();
+    expect(observationSignal?.aborted).toBe(true);
+
+    resolveStateResponse(jsonResponse(state));
+    await readPromise;
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not let a pending manual shot re-arm playback after a manual Agent read", async () => {
+    let resolveShotResponse!: (response: Response) => void;
+    const shotResponse = new Promise<Response>((resolve) => {
+      resolveShotResponse = resolve;
+    });
+    let shotInit: RequestInit | undefined;
+    let stateReadCount = 0;
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = String(input);
+      if (url.endsWith("/state")) {
+        stateReadCount += 1;
+        if (stateReadCount === 1) {
+          return Promise.resolve(jsonResponse(createAgentState("y")));
+        }
+        if (stateReadCount === 2) {
+          return Promise.resolve(
+            jsonResponse(
+              createAgentState("y", {
+                functionDraw: { currentStep: 2, stepsPerSecond: 1500 },
+                observationSequence: 2,
+                phase: "drawing",
+              }),
+            ),
+          );
+        }
+        return new Promise<Response>(() => undefined);
+      }
+      if (url.endsWith("/obstacle-masks/world.bin")) {
+        const state = createAgentState("y");
+        return Promise.resolve(
+          new Response(new Uint8Array(state.obstacleMask.width * state.obstacleMask.height), {
+            headers: { ETag: `"${state.obstacleMask.revision}"` },
+          }),
+        );
+      }
+      if (url.endsWith("/shots")) {
+        shotInit = init;
+        return shotResponse;
+      }
+      return Promise.reject(new Error(`Unexpected Agent request: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          commitIncumbentResult: (expression: string) => void;
+          graphwarAgentPendingFunctionDraw: unknown;
+          isGraphwarAgentEnabled: boolean;
+          readGraphwarAgent: () => Promise<void>;
+        };
+      }
+    ).setupState;
+
+    page.isGraphwarAgentEnabled = true;
+    page.commitIncumbentResult("x");
+    await nextTick();
+    await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
+    await flushPromises();
+    expect(stateReadCount).toBe(1);
+
+    await page.readGraphwarAgent();
+    resolveShotResponse(jsonResponse(createShotCommand(shotInit)));
+    await flushPromises();
+
+    expect(stateReadCount).toBe(2);
+    expect(page.graphwarAgentPendingFunctionDraw).toBeUndefined();
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it("clears submitted-function playback whenever an Agent snapshot replaces the viewport", () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          applyGraphwarAgentSnapshot: (
+            snapshot: ReturnType<typeof createGraphwarAgentSnapshot>,
+            pathStart: { x: number; y: number } | undefined,
+          ) => void;
+          graphwarAgentFunctionDrawPlayback: { curvePoints: { value: string | undefined } };
+          graphwarAgentPendingFunctionDraw: unknown;
+          handleGraphwarAgentLiveState: (state: GraphwarAgentAvailableState) => boolean;
+          isGraphwarAgentEnabled: boolean;
+          observeSubmittedGraphwarAgentFunction: (
+            client: { readState: (signal?: AbortSignal) => Promise<GraphwarAgentAvailableState> },
+            state: GraphwarAgentAvailableState,
+            plan: GraphwarAgentShotPlan,
+            trajectoryPoints: readonly { x: number; y: number }[],
+          ) => void;
+        };
+      }
+    ).setupState;
+    const drawingState = createAgentState("y", {
+      functionDraw: { currentStep: 2, stepsPerSecond: 1500 },
+      observationSequence: 1,
+      phase: "drawing",
+    });
+    let observationSignal: AbortSignal | undefined;
+    page.isGraphwarAgentEnabled = true;
+    page.observeSubmittedGraphwarAgentFunction(
+      {
+        readState: (signal) => {
+          observationSignal = signal;
+          return new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      },
+      drawingState,
+      { equationMode: "y", function: "x" },
+      [createPixelPoint(1, 1), createPixelPoint(2, 2), createPixelPoint(3, 3)],
+    );
+    page.handleGraphwarAgentLiveState(drawingState);
+    expect(page.graphwarAgentFunctionDrawPlayback.curvePoints.value).not.toBeUndefined();
+
+    const snapshotState = createAgentState("y", { observationSequence: 2 });
+    page.applyGraphwarAgentSnapshot(
+      createGraphwarAgentSnapshot(
+        "http://127.0.0.1:17900",
+        snapshotState,
+        new Uint8Array(snapshotState.obstacleMask.width * snapshotState.obstacleMask.height),
+      ),
+      undefined,
+    );
+
+    expect(page.graphwarAgentFunctionDrawPlayback.curvePoints.value).toBeUndefined();
+    expect(page.graphwarAgentPendingFunctionDraw).toBeUndefined();
+    expect(observationSignal?.aborted).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("ignores pasted and dropped screenshots while Agent owns the image source", async () => {
+    const readAsDataUrl = vi.fn();
+    class FakeFileReader {
+      addEventListener() {
+        return undefined;
+      }
+
+      readAsDataURL = readAsDataUrl;
+    }
+    vi.stubGlobal("FileReader", FakeFileReader);
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          handleWindowPaste: (event: ClipboardEvent) => void;
+          isGraphwarAgentEnabled: boolean;
+        };
+      }
+    ).setupState;
+    const imageFile = { name: "foreign.png", type: "image/png" } as File;
+    const preventDefault = vi.fn();
+    page.isGraphwarAgentEnabled = true;
+
+    page.handleWindowPaste({
+      clipboardData: {
+        items: [{ getAsFile: () => imageFile, type: "image/png" }],
+      },
+      preventDefault,
+    } as unknown as ClipboardEvent);
+    wrapper.findComponent(GraphwarScreenshotPanel).vm.$emit("dropImage", {
+      dataTransfer: { files: [imageFile] },
+    } as unknown as DragEvent);
+    await nextTick();
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(readAsDataUrl).not.toHaveBeenCalled();
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
+
   it.each([
     {
       label: "turn",
@@ -504,6 +754,142 @@ describe("Graphwar Killer page settings", () => {
     wrapper.unmount();
   });
 
+  it.each(["submitted", "unknown"] as const)(
+    "starts managed %s playback from the incumbent trajectory while page sampling is unavailable",
+    (outcome) => {
+      const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+      const page = (
+        wrapper.vm.$ as unknown as {
+          setupState: {
+            createGraphwarManagedSceneKey: (
+              state: GraphwarAgentAvailableState,
+              shooter: {
+                player: GraphwarAgentAvailableState["players"][number];
+                soldier: GraphwarAgentAvailableState["players"][number]["soldiers"][number];
+              },
+            ) => string;
+            createGraphwarManagedShotPlan: (state: GraphwarAgentAvailableState) => GraphwarAgentShotPlan | undefined;
+            graphwarAgentFunctionDrawPlayback: { curvePoints: { value: string | undefined } };
+            graphwarManagedClient: GraphwarAgentClient | undefined;
+            graphwarManagedController: GraphwarManagedController | undefined;
+            graphwarManagedIncumbent: unknown;
+            graphwarManagedLastRequestedTurnToken: string | undefined;
+            graphwarManagedSceneKey: string;
+            handleGraphwarAgentLiveState: (state: GraphwarAgentAvailableState) => boolean;
+            handleGraphwarManagedShotSubmitted: (
+              state: GraphwarAgentAvailableState,
+              plan: GraphwarAgentShotPlan,
+              shotReserveSeconds: string,
+            ) => void;
+            handleGraphwarManagedShotUnknown: (
+              state: GraphwarAgentAvailableState,
+              plan: GraphwarAgentShotPlan,
+              error: GraphwarAgentClientError,
+            ) => void;
+            isGraphwarAgentEnabled: boolean;
+          };
+        }
+      ).setupState;
+      const state = createAgentState("y");
+      const trajectoryPoints = [createPixelPoint(100, 225), createPixelPoint(110, 220), createPixelPoint(120, 215)];
+      page.isGraphwarAgentEnabled = true;
+      page.graphwarManagedClient = {
+        readState: () => new Promise(() => undefined),
+      } as unknown as GraphwarAgentClient;
+      page.graphwarManagedSceneKey = page.createGraphwarManagedSceneKey(state, {
+        player: state.players[0],
+        soldier: state.players[0].soldiers[0],
+      });
+      page.graphwarManagedIncumbent = {
+        expression: "x",
+        pathPoints: [trajectoryPoints[0], trajectoryPoints[2]],
+        trajectoryPoints,
+      };
+      const plan = page.createGraphwarManagedShotPlan(state);
+      if (!plan) {
+        throw new Error("Expected the incumbent to produce a managed shot plan");
+      }
+
+      if (outcome === "submitted") {
+        page.graphwarManagedLastRequestedTurnToken = state.turnToken ?? undefined;
+        page.handleGraphwarManagedShotSubmitted(state, plan, "3");
+      } else {
+        page.graphwarManagedController = {
+          getLatestState: () => state,
+          stop: () => undefined,
+        } as GraphwarManagedController;
+        page.handleGraphwarManagedShotUnknown(state, plan, new GraphwarAgentClientError("transient", "unknown"));
+      }
+      page.handleGraphwarAgentLiveState(
+        createAgentState("y", {
+          functionDraw: { currentStep: 2, stepsPerSecond: 1500 },
+          observationSequence: 2,
+          phase: "drawing",
+        }),
+      );
+
+      expect(page.graphwarAgentFunctionDrawPlayback.curvePoints.value).toBe("100.00,225.00 110.00,220.00");
+      wrapper.unmount();
+    },
+  );
+
+  it("does not reuse a managed incumbent trajectory for a mismatched submitted plan", () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          createGraphwarManagedSceneKey: (
+            state: GraphwarAgentAvailableState,
+            shooter: {
+              player: GraphwarAgentAvailableState["players"][number];
+              soldier: GraphwarAgentAvailableState["players"][number]["soldiers"][number];
+            },
+          ) => string;
+          createGraphwarManagedShotPlan: (state: GraphwarAgentAvailableState) => GraphwarAgentShotPlan | undefined;
+          getGraphwarManagedPreparedShotTrajectoryPoints: (
+            state: GraphwarAgentAvailableState,
+            plan: GraphwarAgentShotPlan,
+          ) => readonly { x: number; y: number }[];
+          graphwarManagedIncumbent: unknown;
+          graphwarManagedSceneKey: string;
+        };
+      }
+    ).setupState;
+    const state = createAgentState("ddy");
+    page.graphwarManagedSceneKey = page.createGraphwarManagedSceneKey(state, {
+      player: state.players[0],
+      soldier: state.players[0].soldiers[0],
+    });
+    page.graphwarManagedIncumbent = {
+      expression: "x",
+      launchAngleRadians: 0.25,
+      pathPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
+      trajectoryPoints: [createPixelPoint(100, 225), createPixelPoint(110, 220)],
+    };
+    const plan = page.createGraphwarManagedShotPlan(state);
+    if (!plan || plan.equationMode !== "ddy") {
+      throw new Error("Expected a second-order managed shot plan");
+    }
+
+    expect(page.getGraphwarManagedPreparedShotTrajectoryPoints(state, { ...plan, function: "x+1" })).toEqual([]);
+    expect(page.getGraphwarManagedPreparedShotTrajectoryPoints(state, { ...plan, angleRadians: 0.5 })).toEqual([]);
+    expect(
+      page.getGraphwarManagedPreparedShotTrajectoryPoints(
+        { ...state, turnToken: "00000000-0000-4000-8000-000000000012" },
+        plan,
+      ),
+    ).toEqual([]);
+    expect(
+      page.getGraphwarManagedPreparedShotTrajectoryPoints(
+        { ...state, gameInstanceId: "00000000-0000-4000-8000-000000000020" },
+        plan,
+      ),
+    ).toEqual([]);
+    page.graphwarManagedSceneKey = `${page.graphwarManagedSceneKey}:changed`;
+    expect(page.getGraphwarManagedPreparedShotTrajectoryPoints(state, plan)).toEqual([]);
+    wrapper.unmount();
+  });
+
   it("continues submitted-function observation through explosion until the turn changes", async () => {
     vi.useFakeTimers();
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
@@ -613,7 +999,13 @@ describe("Graphwar Killer page settings", () => {
           createGraphwarManagedShotPlan: (state: GraphwarAgentAvailableState) => GraphwarAgentShotPlan | undefined;
           isFractionOutputEnabled: boolean;
           graphwarManagedController: GraphwarManagedController | undefined;
-          graphwarManagedIncumbent: { expression: string; launchAngleRadians?: number } | undefined;
+          graphwarManagedIncumbent:
+            | {
+                expression: string;
+                launchAngleRadians?: number;
+                trajectoryPoints: { x: number; y: number }[];
+              }
+            | undefined;
           graphwarManagedSceneKey: string;
           submitGraphwarManagedShot: (state: GraphwarAgentAvailableState) => boolean;
         };
@@ -627,7 +1019,10 @@ describe("Graphwar Killer page settings", () => {
 
     page.commitIncumbentResult("0.5*x");
     page.isFractionOutputEnabled = true;
-    page.graphwarManagedIncumbent = { expression: "88.008750871454684" };
+    page.graphwarManagedIncumbent = {
+      expression: "88.008750871454684",
+      trajectoryPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
+    };
     page.graphwarManagedSceneKey = page.createGraphwarManagedSceneKey(normalState, {
       player: normalState.players[0],
       soldier: normalState.players[0].soldiers[0],

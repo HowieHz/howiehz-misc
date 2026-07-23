@@ -46,13 +46,36 @@ describe("Graphwar managed controller v3", () => {
     const client = createClient(state);
     const controller = createGraphwarManagedController({
       client,
-      hooks: { onStateRead: () => controller.stop() },
+      hooks: {
+        onStateRead: () => {
+          controller.stop();
+          return undefined;
+        },
+      },
     });
 
     controller.start();
     await vi.advanceTimersByTimeAsync(0);
 
     expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+  });
+
+  it("does not process a live state rejected as stale by the freshness hook", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    const onState = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onState, onStateRead: () => false },
+    });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+    expect(onState).not.toHaveBeenCalled();
+    expect(controller.getLatestState()).toBeUndefined();
+    controller.stop();
   });
 
   it("submits one stable command and reports submitted exactly once", async () => {
@@ -552,6 +575,7 @@ const revision = `sha256:${"a".repeat(64)}`;
 /** Creates an active local-human turn with v3 static and dynamic capabilities. */
 function createAvailableState(overrides: Partial<GraphwarAgentAvailableState> = {}): GraphwarAgentAvailableState {
   return {
+    agentInstanceId: "00000000-0000-4000-8000-000000000001",
     apiVersion: 3,
     battleRevision: revision,
     canAcceptShotCommands: true,
@@ -600,6 +624,8 @@ function createAvailableState(overrides: Partial<GraphwarAgentAvailableState> = 
     shotCommand: null,
     turnToken,
     ...overrides,
+    functionDraw: overrides.functionDraw ?? null,
+    observationSequence: overrides.observationSequence ?? 1,
     observedAtEpochMs: overrides.observedAtEpochMs ?? Date.now(),
   };
 }
@@ -607,9 +633,11 @@ function createAvailableState(overrides: Partial<GraphwarAgentAvailableState> = 
 /** Creates the unavailable branch while retaining static capabilities and plane metadata. */
 function createUnavailableState(): GraphwarAgentState {
   return {
+    agentInstanceId: "00000000-0000-4000-8000-000000000001",
     apiVersion: 3,
     capabilities: createCapabilities(),
     isAvailable: false,
+    observationSequence: 1,
     observedAtEpochMs: Date.now(),
     plane: { gameLength: 50, height: 450, width: 770 },
     reason: "game-not-active",

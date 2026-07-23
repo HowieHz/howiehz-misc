@@ -42,6 +42,7 @@ public final class GraphwarAgentApiTest {
         testShotJsonParser();
         testLedgerInvariantFailureIsInternalError();
         testOutOfOrderStateObservation();
+        testGameDataReplacementCannotPublishOutOfOrder();
         testEquivalentFractionFunction();
         testGraphPlaneAlphaClamp();
         GameData gameData = new GameData();
@@ -255,6 +256,49 @@ public final class GraphwarAgentApiTest {
         }
     }
 
+    /** Ensures an old GameData read cannot retire a newer game identity after replacement. */
+    private static void testGameDataReplacementCannotPublishOutOfOrder() throws Exception {
+        GameData oldGameData = new GameData();
+        configureActiveMatch(oldGameData);
+        oldGameData.setShouldBlockStateRead(true);
+        GameData newGameData = new GameData();
+        configureActiveMatch(newGameData);
+        newGameData.setShouldBlockStateRead(true);
+        Graphwar graphwar = new Graphwar(oldGameData);
+        GraphwarStateReader stateReader = new GraphwarStateReader(() -> graphwar);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<String> oldState = executor.submit(stateReader::readStateJson);
+            assertTrue(
+                    oldGameData.awaitStateRead(5, TimeUnit.SECONDS),
+                    "old GameData read reached replacement barrier");
+            graphwar.setGameData(newGameData);
+            Future<String> newState = executor.submit(stateReader::readStateJson);
+            boolean hasNewStateReadStarted = newGameData.awaitStateRead(100, TimeUnit.MILLISECONDS);
+            newGameData.setShouldBlockStateRead(false);
+            oldGameData.setShouldBlockStateRead(false);
+
+            assertTrue(
+                    !hasNewStateReadStarted,
+                    "new GameData read waits for the older snapshot to publish");
+            String oldStateBody = oldState.get(5, TimeUnit.SECONDS);
+            String newStateBody = newState.get(5, TimeUnit.SECONDS);
+            String finalStateBody = stateReader.readStateJson();
+            String oldGameInstanceId = extractJsonString(oldStateBody, "gameInstanceId");
+            String newGameInstanceId = extractJsonString(newStateBody, "gameInstanceId");
+            assertNotEquals(
+                    oldGameInstanceId, newGameInstanceId, "replacement changes game identity");
+            assertEquals(
+                    newGameInstanceId,
+                    extractJsonString(finalStateBody, "gameInstanceId"),
+                    "later reads retain the replacement identity");
+        } finally {
+            oldGameData.setShouldBlockStateRead(false);
+            newGameData.setShouldBlockStateRead(false);
+            executor.shutdownNow();
+        }
+    }
+
     /** Verifies the v3 wire contract, idempotent commands, conditions, and renamed fields. */
     private static void testV3HttpContract(
             int port, GameData gameData, Graphwar graphwar, GraphwarStateReader stateReader)
@@ -286,6 +330,9 @@ public final class GraphwarAgentApiTest {
                         + "\"canSetReady\":true,\"canReadWorldObstacleMask\":true}",
                 "v3 capabilities");
         assertContains(stateBody, "\"equationMode\":\"y\"", "equation mode");
+        assertContains(stateBody, "\"agentInstanceId\":", "Agent process identity");
+        assertContains(stateBody, "\"observationSequence\":", "state observation sequence");
+        assertContains(stateBody, "\"functionDraw\":null", "idle function draw state");
         assertContains(stateBody, "\"currentPlayerIndex\":0", "current player index");
         assertContains(stateBody, "\"currentPlayerId\":7", "current player ID");
         assertContains(stateBody, "\"isTerrainReversed\":true", "orientation");
@@ -293,6 +340,26 @@ public final class GraphwarAgentApiTest {
         assertContains(stateBody, "\"isConnected\":true", "connection state");
         assertContains(stateBody, "\"soldierIndex\":0,\"isAlive\":true", "soldier state");
         assertContains(stateBody, "\"shotCommand\":null", "empty shot summary");
+
+        gameData.setDrawingFunction(true);
+        gameData.setCurrentFunctionPosition(1500);
+        String drawingStateBody = request(port, "GET", "/state", null, null).bodyText();
+        assertContains(drawingStateBody, "\"phase\":\"drawing\"", "drawing phase");
+        assertContains(drawingStateBody, "\"functionDraw\":{\"currentStep\":1500", "draw cursor");
+        assertContains(drawingStateBody, "\"stepsPerSecond\":1500}", "draw step rate");
+        gameData.setFunctionNumSteps(1500);
+        gameData.setCurrentFunctionPosition(1501);
+        assertContains(
+                request(port, "GET", "/state", null, null).bodyText(),
+                "\"phase\":\"exploding\",\"functionDraw\":null",
+                "official cursor transition");
+        gameData.setExploding(true);
+        assertContains(
+                request(port, "GET", "/state", null, null).bodyText(),
+                "\"phase\":\"exploding\",\"functionDraw\":null",
+                "explosion draw state");
+        gameData.setDrawingFunction(false);
+        gameData.setExploding(false);
 
         String revision = extractJsonString(stateBody, "battleRevision");
         HttpResponse mask =
@@ -307,6 +374,10 @@ public final class GraphwarAgentApiTest {
         assertEquals(200, mask.status, "conditioned mask status");
         assertEquals("\"" + revision + "\"", mask.entityTag, "mask ETag");
         assertEquals(770 * 450, mask.body.length, "mask length");
+        assertEquals(
+                2,
+                gameData.getObstacle().getImageReadCount(),
+                "terrain rescans per explosion signature");
         assertEquals(
                 428,
                 request(port, "GET", "/obstacle-masks/world.bin", null, null).status,
@@ -390,7 +461,7 @@ public final class GraphwarAgentApiTest {
         String activeRequestId = uuidFor(100);
         String body =
                 createV3ShotBody(activeRequestId, gameInstanceId, turnToken, revision, "x", null);
-        gameData.setFunctionBlocked(true);
+        gameData.setShouldBlockFunction(true);
         ExecutorService executor = Executors.newSingleThreadExecutor();
         Future<HttpResponse> first =
                 executor.submit(() -> request(port, "POST", "/shots", body, "application/json"));
@@ -460,7 +531,7 @@ public final class GraphwarAgentApiTest {
                 // Releasing the Graphwar monitor does not immediately release the six HTTP
                 // admission slots. Wait for every blocked request to finish before the next
                 // contract test sends another Graphwar-dependent request.
-                gameData.setFunctionBlocked(false);
+                gameData.setShouldBlockFunction(false);
                 try {
                     for (Future<HttpResponse> blockedStateRead : blockedStateReads) {
                         assertEquals(
@@ -473,7 +544,7 @@ public final class GraphwarAgentApiTest {
                 }
             }
         } finally {
-            gameData.setFunctionBlocked(false);
+            gameData.setShouldBlockFunction(false);
             executor.shutdownNow();
         }
 
@@ -817,8 +888,8 @@ public final class GraphwarAgentApiTest {
     }
 
     /** Verifies one boolean invariant. */
-    private static void assertTrue(boolean condition, String message) {
-        if (!condition) {
+    private static void assertTrue(boolean isConditionMet, String message) {
+        if (!isConditionMet) {
             throw new AssertionError(message);
         }
     }

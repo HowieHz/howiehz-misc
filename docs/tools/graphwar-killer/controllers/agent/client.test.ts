@@ -46,6 +46,7 @@ describe("Graphwar Agent API v3 client", () => {
 
     expect(state).toMatchObject({
       apiVersion: 3,
+      agentInstanceId: "00000000-0000-4000-8000-000000000001",
       battleRevision: revision,
       canAcceptShotCommands: true,
       capabilities: {
@@ -56,8 +57,10 @@ describe("Graphwar Agent API v3 client", () => {
       },
       currentPlayerId: 7,
       currentPlayerIndex: 0,
+      functionDraw: null,
       isAvailable: true,
       isTerrainReversed: true,
+      observationSequence: 17,
       observedAtEpochMs: 1_735_689_600_000,
       shotCommand: null,
     });
@@ -81,6 +84,19 @@ describe("Graphwar Agent API v3 client", () => {
         turnToken: null,
       }),
     ).toThrow("shotCommand/turnToken");
+    expect(
+      parseGraphwarAgentState({
+        ...createStateResponse(),
+        functionDraw: { currentStep: 1842, stepsPerSecond: 1500 },
+        phase: "drawing",
+      }),
+    ).toMatchObject({ functionDraw: { currentStep: 1842, stepsPerSecond: 1500 }, phase: "drawing" });
+    expect(() =>
+      parseGraphwarAgentState({
+        ...createStateResponse(),
+        functionDraw: { currentStep: 1842, stepsPerSecond: 1500 },
+      }),
+    ).toThrow("phase/functionDraw");
   });
 
   it("rejects v2 aliases instead of silently adapting them", () => {
@@ -99,9 +115,31 @@ describe("Graphwar Agent API v3 client", () => {
     expect(() => parseGraphwarAgentState({ ...createStateResponse(), observedAtEpochMs: 1.5 })).toThrow(
       "observedAtEpochMs",
     );
+    expect(() => parseGraphwarAgentState({ ...createStateResponse(), observationSequence: undefined })).toThrow(
+      "observationSequence",
+    );
+    expect(() => parseGraphwarAgentState({ ...createStateResponse(), agentInstanceId: undefined })).toThrow(
+      "agentInstanceId",
+    );
+    expect(() => parseGraphwarAgentState({ ...createStateResponse(), functionDraw: undefined })).toThrow(
+      "functionDraw",
+    );
+    expect(() =>
+      parseGraphwarAgentState({
+        ...createStateResponse(),
+        functionDraw: { currentStep: 1, stepsPerSecond: 0 },
+        phase: "drawing",
+      }),
+    ).toThrow("functionDraw.stepsPerSecond");
   });
 
   it("rejects non-canonical v3 identities and battle revisions", () => {
+    expect(() =>
+      parseGraphwarAgentState({
+        ...createStateResponse(),
+        agentInstanceId: "00000000-0000-4000-8000-00000000000A",
+      }),
+    ).toThrow("agentInstanceId");
     expect(() =>
       parseGraphwarAgentState({ ...createStateResponse(), gameInstanceId: "00000000-0000-4000-8000-00000000000A" }),
     ).toThrow("gameInstanceId");
@@ -149,6 +187,9 @@ describe("Graphwar Agent API v3 client", () => {
       .mockResolvedValueOnce(new Response(mask, { headers: { ETag: `"${revision}"` } }));
 
     const snapshot = await readGraphwarAgentSnapshot("http://127.0.0.1:17900", { fetch: fetchMock });
+    if (!snapshot) {
+      throw new Error("Expected a snapshot when no freshness hook rejects the state");
+    }
 
     expect(snapshot.localCurrentTurnSoldierPoint).toEqual({ x: 70, y: 210 });
     expect(snapshot.detectionResult.soldiers[0]).toMatchObject({
@@ -179,6 +220,15 @@ describe("Graphwar Agent API v3 client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     resolveMask(new Response(new Uint8Array(770 * 450), { headers: { ETag: `"${revision}"` } }));
     await snapshotPromise;
+  });
+
+  it("skips the obstacle mask when the live state is rejected as stale", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse(createStateResponse()));
+
+    await expect(
+      readGraphwarAgentSnapshot("http://127.0.0.1:17900", { fetch: fetchMock, onStateRead: () => false }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("keeps current-only selection empty while manual reads predict the next local human", () => {
@@ -382,6 +432,7 @@ const turnToken = "00000000-0000-4000-8000-000000000011";
 /** Creates one complete v3 wire-state fixture with authoritative world ownership. */
 function createStateResponse() {
   return {
+    agentInstanceId: "00000000-0000-4000-8000-000000000001",
     apiVersion: 3 as const,
     battleRevision: revision,
     canAcceptShotCommands: true,
@@ -394,9 +445,11 @@ function createStateResponse() {
     currentPlayerId: 7,
     currentPlayerIndex: 0,
     equationMode: "y" as const,
+    functionDraw: null,
     gameInstanceId,
     isAvailable: true as const,
     isTerrainReversed: true,
+    observationSequence: 17,
     observedAtEpochMs: 1_735_689_600_000,
     obstacleMask: {
       blockedValue: 1,

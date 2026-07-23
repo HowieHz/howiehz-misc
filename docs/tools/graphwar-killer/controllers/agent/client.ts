@@ -105,11 +105,19 @@ export interface GraphwarAgentObstacleMaskMetadata {
 
 export type GraphwarAgentPhase = "aiming" | "drawing" | "exploding";
 
+/** Authoritative Graphwar function cursor at the surrounding state observation time. */
+export interface GraphwarAgentFunctionDraw {
+  currentStep: number;
+  stepsPerSecond: number;
+}
+
 /** Fields shared by available and unavailable Agent polling responses. */
 interface GraphwarAgentStateBase {
+  agentInstanceId: string;
   apiVersion: typeof GRAPHWAR_AGENT_API_VERSION;
   capabilities: GraphwarAgentCapabilities;
   isAvailable: boolean;
+  observationSequence: number;
   observedAtEpochMs: number;
   plane: GraphwarAgentPlane;
 }
@@ -128,6 +136,7 @@ export interface GraphwarAgentAvailableState extends GraphwarAgentStateBase {
   currentPlayerId: number | null;
   currentPlayerIndex: number | null;
   equationMode: EquationMode;
+  functionDraw: GraphwarAgentFunctionDraw | null;
   gameInstanceId: string;
   isTerrainReversed: boolean;
   obstacleMask: GraphwarAgentObstacleMaskMetadata;
@@ -300,7 +309,8 @@ export interface GraphwarAgentClientOptions {
 
 /** Snapshot-only hooks that keep live state observation separate from offline snapshot adaptation. */
 export interface GraphwarAgentSnapshotReadOptions extends GraphwarAgentClientOptions {
-  onStateRead?: (state: GraphwarAgentState) => void;
+  /** Applies freshness-sensitive state before the mask request; false rejects the snapshot. */
+  onStateRead?: (state: GraphwarAgentState) => boolean | undefined;
 }
 
 /** Creates a client bound to one normalized local Agent address. */
@@ -354,10 +364,12 @@ export function createGraphwarAgentClient(
 export async function readGraphwarAgentSnapshot(
   baseUrlText: string,
   options: GraphwarAgentSnapshotReadOptions = {},
-): Promise<GraphwarAgentSnapshot> {
+): Promise<GraphwarAgentSnapshot | undefined> {
   const client = createGraphwarAgentClient(baseUrlText, options);
   const state = await client.readState();
-  options.onStateRead?.(state);
+  if (options.onStateRead?.(state) === false) {
+    return undefined;
+  }
   if (!state.isAvailable) {
     throw new GraphwarAgentClientError("unavailable", state.reason);
   }
@@ -739,14 +751,18 @@ export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
   if (apiVersion !== GRAPHWAR_AGENT_API_VERSION) {
     throw new GraphwarAgentClientError("incompatible", `Unsupported Graphwar Agent API version: ${apiVersion}`);
   }
+  const agentInstanceId = requireCanonicalUuid(state.agentInstanceId, "agentInstanceId");
   const capabilities = parseGraphwarAgentCapabilities(state.capabilities);
+  const observationSequence = requireNonNegativeInteger(state.observationSequence, "observationSequence");
   const observedAtEpochMs = requireNonNegativeInteger(state.observedAtEpochMs, "observedAtEpochMs");
   const plane = parseGraphwarAgentPlane(state.plane);
   if (state.isAvailable === false) {
     return {
+      agentInstanceId,
       apiVersion: GRAPHWAR_AGENT_API_VERSION,
       capabilities,
       isAvailable: false,
+      observationSequence,
       observedAtEpochMs,
       plane,
       reason: requireString(state.reason, "reason"),
@@ -759,6 +775,21 @@ export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
   const phase = requireString(state.phase, "phase");
   if (phase !== "aiming" && phase !== "drawing" && phase !== "exploding") {
     throw incompatibleSchema("phase");
+  }
+  let functionDraw: GraphwarAgentFunctionDraw | null = null;
+  if (state.functionDraw !== null) {
+    const value = requireRecord(state.functionDraw, "functionDraw");
+    const stepsPerSecond = requireInteger(value.stepsPerSecond, "functionDraw.stepsPerSecond");
+    if (stepsPerSecond <= 0) {
+      throw incompatibleSchema("functionDraw.stepsPerSecond");
+    }
+    functionDraw = {
+      currentStep: requireNonNegativeInteger(value.currentStep, "functionDraw.currentStep"),
+      stepsPerSecond,
+    };
+  }
+  if ((phase === "drawing") !== (functionDraw !== null)) {
+    throw incompatibleSchema("phase/functionDraw");
   }
   const battleRevision = requireBattleRevision(state.battleRevision, "battleRevision");
   const obstacleMask = parseGraphwarAgentObstacleMask(state.obstacleMask);
@@ -792,7 +823,8 @@ export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
   if (shotCommand && !turnToken) {
     throw incompatibleSchema("shotCommand/turnToken");
   }
-  const parsed: GraphwarAgentAvailableState = {
+  return {
+    agentInstanceId,
     apiVersion: GRAPHWAR_AGENT_API_VERSION,
     battleRevision,
     canAcceptShotCommands: requireBoolean(state.canAcceptShotCommands, "canAcceptShotCommands"),
@@ -800,10 +832,12 @@ export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
     currentPlayerId,
     currentPlayerIndex,
     equationMode: parseGraphwarAgentEquationMode(state.equationMode, "equationMode"),
+    functionDraw,
     gameInstanceId: requireCanonicalUuid(state.gameInstanceId, "gameInstanceId"),
     isAvailable: true,
     isTerrainReversed,
     obstacleMask,
+    observationSequence,
     observedAtEpochMs,
     phase,
     plane,
@@ -812,7 +846,6 @@ export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
     shotCommand,
     turnToken,
   };
-  return parsed;
 }
 
 /** Parses the four independently advertised managed-mode capabilities. */

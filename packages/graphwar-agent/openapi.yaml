@@ -593,13 +593,19 @@ components:
       type: object
       required:
         - plane
+        - agentInstanceId
         - apiVersion
         - capabilities
         - agent
+        - observationSequence
         - observedAtEpochMs
       properties:
         plane:
           $ref: "#/components/schemas/Plane"
+        agentInstanceId:
+          allOf:
+            - $ref: "#/components/schemas/CanonicalUuid"
+          description: Opaque canonical lowercase UUID regenerated whenever the Agent process starts.
         apiVersion:
           type: integer
           const: 3
@@ -607,6 +613,11 @@ components:
           $ref: "#/components/schemas/Capabilities"
         agent:
           $ref: "#/components/schemas/AgentBuild"
+        observationSequence:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Monotonic sequence of state snapshots formed by this Agent process.
         observedAtEpochMs:
           type: integer
           format: int64
@@ -641,6 +652,7 @@ components:
             - battleRevision
             - remainingTurnMs
             - phase
+            - functionDraw
             - isTerrainReversed
             - equationMode
             - currentPlayerIndex
@@ -667,6 +679,10 @@ components:
               minimum: 0
             phase:
               $ref: "#/components/schemas/MatchPhase"
+            functionDraw:
+              oneOf:
+                - $ref: "#/components/schemas/FunctionDraw"
+                - type: "null"
             isTerrainReversed:
               type: boolean
             equationMode:
@@ -703,6 +719,21 @@ components:
         - aiming
         - drawing
         - exploding
+    FunctionDraw:
+      type: object
+      additionalProperties: false
+      required:
+        - currentStep
+        - stepsPerSecond
+      properties:
+        currentStep:
+          type: integer
+          minimum: 0
+          description: Function sample step visible at observedAtEpochMs.
+        stepsPerSecond:
+          type: integer
+          minimum: 1
+          description: Official Graphwar function drawing velocity.
     EquationMode:
       type: string
       enum:

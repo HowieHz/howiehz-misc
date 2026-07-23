@@ -174,7 +174,7 @@ describe("main trajectory calculation", () => {
     expect(outcome.ok).toBe(true);
     if (outcome.ok) {
       expect(outcome.result.formulaResult?.expression).toBeTruthy();
-      expect(outcome.result.targetMissed).toBe(true);
+      expect(outcome.result.hasTargetMissWarning).toBe(true);
     }
   });
 
@@ -257,6 +257,7 @@ describe("main trajectory calculation", () => {
       ok: true,
       result: {
         curvePoints: "",
+        trajectoryPoints: [],
         warningReason: "invalid",
       },
     });
@@ -326,5 +327,7 @@ describe("main trajectory calculation", () => {
     }
     // 主轨迹一直按“先命中、后碰撞”结算；合并扫描不能把同点命中改成障碍警告。
     expect(outcome.result.warningReason).toBeUndefined();
+    expect(outcome.result.curvePoints).toBe(obstacleOnly.ok ? obstacleOnly.result.curvePoints : undefined);
+    expect(outcome.result.trajectoryPoints).toEqual(obstacleOnly.ok ? obstacleOnly.result.trajectoryPoints : undefined);
   });
 });

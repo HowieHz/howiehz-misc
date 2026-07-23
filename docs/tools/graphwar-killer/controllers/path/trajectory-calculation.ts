@@ -9,7 +9,7 @@ import {
   type GraphwarTrajectoryFormulaSettings,
   type GraphwarTrajectorySampleResult,
 } from "../../formula/trajectory/sampling";
-import { formatVisibleTrajectoryPoints } from "../../presentation/stage/svg-polyline";
+import { formatVisibleTrajectoryPoints, getVisibleTrajectoryPointCount } from "../../presentation/stage/svg-polyline";
 
 /** 轨迹结果提示原因；页面负责把原因映射成本地化文案。 */
 export type GraphwarTrajectoryWarningReason = "invalid" | "max-steps" | "obstacle" | "out-of-bounds" | "too-steep";
@@ -57,6 +57,8 @@ export type GraphwarTrajectoryCalculationInput =
 export interface GraphwarTrajectoryCalculationResult {
   /** 已格式化给 SVG polyline 使用的轨迹点字符串。 */
   curvePoints: string;
+  /** 与 Graphwar 函数 step 一一对应的可见轨迹像素前缀。 */
+  trajectoryPoints: readonly PixelPoint[];
   /** 求解器生成的最终公式；模拟器不设置。 */
   formulaResult?: FormulaResult;
   /** Y''= 求解器建议的发射角，单位为度。 */
@@ -66,7 +68,7 @@ export interface GraphwarTrajectoryCalculationResult {
   /** 普通控制点的最大纵向误差，单位为 Graphwar 原始平面像素；没有质量点时省略。 */
   pathError?: number;
   /** 显式使用两位小数执行角的 Y''= 回放没有命中目标；不阻止最佳努力公式输出。 */
-  targetMissed?: boolean;
+  hasTargetMissWarning?: boolean;
   /** 正常完成采样后的轨迹提示原因。 */
   warningReason?: GraphwarTrajectoryWarningReason;
 }
@@ -111,7 +113,7 @@ function calculateSolverTrajectory(
 ): GraphwarTrajectoryCalculationOutcome {
   let resolved: ReturnType<typeof resolveGraphwarTrajectory>;
   let launchAngleRadians: number;
-  const targetCircleIsConfigured = input.targetPoint !== undefined && input.targetHitRadiusPixels !== undefined;
+  const isTargetCircleConfigured = input.targetPoint !== undefined && input.targetHitRadiusPixels !== undefined;
   try {
     if (input.points.length < 2) {
       throw new Error("At least two solver points are required.");
@@ -123,7 +125,7 @@ function calculateSolverTrajectory(
       ...(input.collision ? { collision: input.collision } : {}),
       collectVisiblePixels: true,
       points: input.points,
-      qualityPoints: input.points.slice(1, targetCircleIsConfigured ? -1 : input.points.length),
+      qualityPoints: input.points.slice(1, isTargetCircleConfigured ? -1 : input.points.length),
       settings: input.settings,
       soldierCenter: input.points[0],
       // 主轨迹必须继续画到自然停止点；目标只记录首次命中，不能为了统计截短曲线。
@@ -148,24 +150,27 @@ function calculateSolverTrajectory(
 
   try {
     const { context, result: sampleResult } = resolved;
-    const targetMissed = targetCircleIsConfigured && sampleResult.targetHitIndex < 0;
+    const hasTargetMissWarning = isTargetCircleConfigured && sampleResult.targetHitIndex < 0;
     // 只有显式使用两位小数执行角的 Y''= 保留最佳努力公式；完整精度结果和其它方程都严格命中。
     if (
-      targetMissed &&
+      hasTargetMissWarning &&
       !(input.settings.equation === "ddy" && input.settings.secondOrderLaunchAngleMode === "display-rounded")
     ) {
       return createFailureOutcome("trajectory", new Error("The final formula trajectory did not hit its target."));
     }
     // 命中目标后的碰撞不影响当前路径成功提示，保持与原主线程实现一致。
-    const obstacleHitIndex =
+    const warningReason = resolveWarningReason(
+      sampleResult,
+      sampleResult.targetHitIndex,
       sampleResult.targetHitIndex >= 0 && sampleResult.obstacleHitIndex >= sampleResult.targetHitIndex
         ? -1
-        : sampleResult.obstacleHitIndex;
-    const warningReason = resolveWarningReason(sampleResult, sampleResult.targetHitIndex, obstacleHitIndex);
+        : sampleResult.obstacleHitIndex,
+    );
     return {
       ok: true,
       result: {
-        curvePoints: formatVisibleTrajectoryPoints(sampleResult.visiblePixels, obstacleHitIndex),
+        // Graphwar never draws the collision sample itself, even when the target was already reached there.
+        curvePoints: formatVisibleTrajectoryPoints(sampleResult.visiblePixels, sampleResult.obstacleHitIndex),
         formulaResult: context.formulaResult,
         ...(sampleResult.pathError === undefined ? {} : { pathError: sampleResult.pathError }),
         ...(Number.isFinite(launchAngleRadians)
@@ -174,7 +179,11 @@ function calculateSolverTrajectory(
               secondOrderLaunchAngleRadians: launchAngleRadians,
             }
           : {}),
-        ...(targetMissed ? { targetMissed: true } : {}),
+        ...(hasTargetMissWarning ? { hasTargetMissWarning: true } : {}),
+        trajectoryPoints: sampleResult.visiblePixels.slice(
+          0,
+          getVisibleTrajectoryPointCount(sampleResult.visiblePixels, sampleResult.obstacleHitIndex),
+        ),
         ...(warningReason ? { warningReason } : {}),
       },
     };
@@ -204,6 +213,10 @@ function calculateSimulatorTrajectory(
       ok: true,
       result: {
         curvePoints: formatVisibleTrajectoryPoints(sampleResult.visiblePixels, sampleResult.obstacleHitIndex),
+        trajectoryPoints: sampleResult.visiblePixels.slice(
+          0,
+          getVisibleTrajectoryPointCount(sampleResult.visiblePixels, sampleResult.obstacleHitIndex),
+        ),
         ...(warningReason ? { warningReason } : {}),
       },
     };

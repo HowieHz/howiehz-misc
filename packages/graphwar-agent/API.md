@@ -175,9 +175,11 @@ Replicas MUST reject inputs outside the advertised effective limits before invok
 Every response contains:
 
 - `plane`: fixed geometry (`width: 770`, `height: 450`, `gameLength: 50.0`)
+- `agentInstanceId`: opaque canonical lowercase UUID regenerated whenever the Agent process starts
 - `apiVersion: 3`
 - static `capabilities`
 - `agent` build information
+- `observationSequence`: monotonically increases for every state snapshot formed by this Agent process
 - `observedAtEpochMs`: Unix epoch milliseconds when the Agent formed the state snapshot
 - `isAvailable`
 
@@ -212,6 +214,8 @@ Clients MUST NOT interpret `capabilities.canSubmitShots` as permission to submit
     "sourceCommitShort": "unknown",
     "sourceCommitTime": "unknown"
   },
+  "agentInstanceId": "00000000-0000-4000-8000-000000000001",
+  "observationSequence": 1,
   "observedAtEpochMs": 1735689600000,
   "isAvailable": false,
   "reason": "game-not-started"
@@ -238,6 +242,7 @@ An available response adds:
   "battleRevision": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "remainingTurnMs": 42000,
   "phase": "aiming",
+  "functionDraw": null,
   "isTerrainReversed": false,
   "equationMode": "y",
   "currentPlayerIndex": 0,
@@ -259,10 +264,24 @@ An available response adds:
 ```
 
 - `gameInstanceId` changes when the Agent observes a different `GameData` or obstacle identity.
+- `agentInstanceId` scopes `observationSequence`; a changed value starts a new ordering domain.
+- `observationSequence` orders snapshots formed in the same Agent process, including responses that share the same wall-clock millisecond. Clients should use it instead of wall-clock time when rejecting out-of-order responses.
 - `observedAtEpochMs` is the Agent wall-clock time, in Unix epoch milliseconds, when this `/state` snapshot was formed. Clients can combine it with `remainingTurnMs` to remove response age before anchoring a local monotonic countdown.
 - `turnToken` changes with the official turn marker, player ID, or soldier index. It is `null` when no current player is valid.
 - `battleRevision` is a lowercase SHA-256 revision over pathfinding-relevant state: equation mode, orientation, player ownership/team/connectivity, soldier life/explosion/position, and the world obstacle mask. Turn cursors and angles are intentionally excluded.
 - `phase` is `aiming`, `drawing`, or `exploding`.
+- `functionDraw` is `null` outside `drawing`. During `drawing` it contains the authoritative `currentStep` at `observedAtEpochMs` and the official `stepsPerSecond` rate. Clients can advance locally between snapshots and recalibrate from later states without hard-coding the original client's velocity.
+
+```json
+{
+  "phase": "drawing",
+  "functionDraw": {
+    "currentStep": 1842,
+    "stepsPerSecond": 1500
+  }
+}
+```
+
 - `equationMode` is `y`, `dy`, or `ddy`.
 - Missing current player IDs and indexes use `null`, never negative sentinels.
 - `canAcceptShotCommands` is false while the single shot execution slot is occupied. It says nothing about token freshness, turn ownership, remaining time, or formula validity.

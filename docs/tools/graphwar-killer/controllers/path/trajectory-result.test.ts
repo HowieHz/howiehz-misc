@@ -30,10 +30,11 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "first curve",
+        trajectoryPoints: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
         formulaResult: { expression: "first formula", terms: [] },
         pathError: Number.POSITIVE_INFINITY,
         secondOrderLaunchAngleDegrees: 12,
-        targetMissed: true,
+        hasTargetMissWarning: true,
         warningReason: "obstacle",
       },
     });
@@ -41,6 +42,12 @@ describe("main trajectory result lifecycle", () => {
 
     expect(controller.formulaResult.value?.expression).toBe("first formula");
     expect(controller.plottedCurvePoints.value).toBe("first curve");
+    expect(controller.plottedTrajectory.value).toEqual({
+      equationMode: "dy",
+      expression: "first formula",
+      points: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
+      sourceIdentity: "agent-scene-1",
+    });
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(12);
     expect(controller.pathError.value).toBe(Number.POSITIVE_INFINITY);
     expect(controller.hasTargetMissWarning.value).toBe(true);
@@ -85,6 +92,7 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "formula", terms: [] },
       },
     });
@@ -101,6 +109,46 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.plottedCurvePoints.value).toBe("");
     expect(controller.calculationStatus.value.type).toBe("idle");
 
+    controller.dispose();
+  });
+
+  it("recalculates an unchanged formula input when its authoritative scene identity changes", async () => {
+    const frames = installFakeBrowserRuntime();
+    const state = createControllerState();
+    const controller = useGraphwarTrajectoryResult(state.options);
+
+    setSolverPath(state, -10, 0);
+    await nextTick();
+    frames.flush();
+    respondToActiveWorker({
+      ok: true,
+      result: {
+        curvePoints: "first scene curve",
+        formulaResult: { expression: "same formula", terms: [] },
+        trajectoryPoints: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
+      },
+    });
+    await nextTick();
+    expect(controller.plottedTrajectory.value?.sourceIdentity).toBe("agent-scene-1");
+
+    state.sourceIdentity.value = "agent-scene-2";
+    await nextTick();
+    expect(controller.calculationStatus.value.type).toBe("in-progress");
+    expect(controller.plottedTrajectory.value?.sourceIdentity).toBe("agent-scene-1");
+    frames.flush();
+    respondToActiveWorker({
+      ok: true,
+      result: {
+        curvePoints: "second scene curve",
+        formulaResult: { expression: "same formula", terms: [] },
+        trajectoryPoints: [createPixelPoint(5, 6), createPixelPoint(7, 8)],
+      },
+    });
+    await nextTick();
+    expect(controller.plottedTrajectory.value).toMatchObject({
+      points: [createPixelPoint(5, 6), createPixelPoint(7, 8)],
+      sourceIdentity: "agent-scene-2",
+    });
     controller.dispose();
   });
 
@@ -127,6 +175,7 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "latest curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "latest formula", terms: [] },
       },
     });
@@ -151,6 +200,7 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "full curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "full formula", terms: [] },
         secondOrderLaunchAngleDegrees: 7.073552961289569,
         secondOrderLaunchAngleRadians: 0.12345678901234568,
@@ -158,6 +208,7 @@ describe("main trajectory result lifecycle", () => {
     });
     await nextTick();
     expect(controller.secondOrderLaunchAngleRadians.value).toBe(0.12345678901234568);
+    expect(controller.plottedTrajectory.value?.launchAngleRadians).toBe(0.12345678901234568);
 
     state.secondOrderLaunchAngleMode.value = "display-rounded";
     await nextTick();
@@ -183,6 +234,7 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "solver curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "solver formula", terms: [] },
         secondOrderLaunchAngleDegrees: 12,
       },
@@ -195,7 +247,7 @@ describe("main trajectory result lifecycle", () => {
     frames.flush();
     respondToActiveWorker({
       ok: true,
-      result: { curvePoints: "simulator curve" },
+      result: { curvePoints: "simulator curve", trajectoryPoints: [] },
     });
     await nextTick();
 
@@ -225,6 +277,7 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "formula", terms: [] },
       },
     });
@@ -252,9 +305,10 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "formal curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "formal formula", terms: [] },
         pathError: Number.POSITIVE_INFINITY,
-        targetMissed: true,
+        hasTargetMissWarning: true,
         warningReason: "obstacle",
       },
     });
@@ -266,7 +320,7 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.isIncumbentPreviewActive.value).toBe(false);
     expect(controller.formulaResult.value?.expression).toBe("formal formula");
     expect(controller.plottedCurvePoints.value).toBe("formal curve");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "preview curve" } });
+    respondToActiveWorker({ ok: true, result: { curvePoints: "preview curve", trajectoryPoints: [] } });
     await nextTick();
 
     expect(controller.isIncumbentPreviewActive.value).toBe(true);
@@ -296,13 +350,13 @@ describe("main trajectory result lifecycle", () => {
 
     controller.publishIncumbentPreview("cancelled incumbent");
     controller.clearIncumbentPreview();
-    respondToActiveWorker({ ok: true, result: { curvePoints: "stale curve" } });
+    respondToActiveWorker({ ok: true, result: { curvePoints: "stale curve", trajectoryPoints: [] } });
     await nextTick();
     expect(controller.formulaResult.value?.expression).toBe("formal formula");
     expect(controller.plottedCurvePoints.value).toBe("formal curve");
 
     controller.publishIncumbentPreview("committed incumbent");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "committed curve" } });
+    respondToActiveWorker({ ok: true, result: { curvePoints: "committed curve", trajectoryPoints: [] } });
     await nextTick();
     expect(controller.commitIncumbentPreview("stale incumbent")).toBe(false);
     expect(controller.commitIncumbentPreview("committed incumbent")).toBe(true);
@@ -321,7 +375,7 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.formulaResult.value?.expression).toBe("committed incumbent");
     expect(controller.plottedCurvePoints.value).toBe("committed curve");
 
-    respondToActiveWorker({ ok: true, result: { curvePoints: "headless curve" } });
+    respondToActiveWorker({ ok: true, result: { curvePoints: "headless curve", trajectoryPoints: [] } });
     await nextTick();
     expect(controller.formulaResult.value?.expression).toBe("headless incumbent");
     expect(controller.plottedCurvePoints.value).toBe("headless curve");
@@ -339,12 +393,16 @@ describe("main trajectory result lifecycle", () => {
     frames.flush();
     respondToActiveWorker({
       ok: true,
-      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
+      result: {
+        curvePoints: "formal curve",
+        formulaResult: { expression: "formal formula", terms: [] },
+        trajectoryPoints: [],
+      },
     });
     await nextTick();
 
     controller.publishIncumbentPreview("old incumbent");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "old curve" } });
+    respondToActiveWorker({ ok: true, result: { curvePoints: "old curve", trajectoryPoints: [] } });
     await nextTick();
     controller.publishIncumbentPreview("pending incumbent", Math.PI / 4);
     const requestCount = countWorkerRequests();
@@ -358,7 +416,7 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.formulaResult.value?.expression).toBe("old incumbent");
     expect(controller.plottedCurvePoints.value).toBe("old curve");
 
-    respondToActiveWorker({ ok: true, result: { curvePoints: "pending curve" } });
+    respondToActiveWorker({ ok: true, result: { curvePoints: "pending curve", trajectoryPoints: [] } });
     await nextTick();
     expect(controller.isIncumbentPreviewActive.value).toBe(false);
     expect(controller.formulaResult.value?.expression).toBe("pending incumbent");
@@ -377,7 +435,11 @@ describe("main trajectory result lifecycle", () => {
     frames.flush();
     respondToActiveWorker({
       ok: true,
-      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
+      result: {
+        curvePoints: "formal curve",
+        formulaResult: { expression: "formal formula", terms: [] },
+        trajectoryPoints: [],
+      },
     });
     await nextTick();
 
@@ -464,6 +526,7 @@ function createControllerState() {
   const pathPixels = ref([createPixelPoint(77, 225)]);
   const equationMode = ref<"ddy" | "dy">("dy");
   const secondOrderLaunchAngleMode = ref<"display-rounded" | "full-precision">("full-precision");
+  const sourceIdentity = ref<string | undefined>("agent-scene-1");
   const options = {
     isCollisionSettingsValid,
     geometry: {
@@ -472,6 +535,7 @@ function createControllerState() {
     },
     getCollisionSettings: () => undefined,
     getTargetHitRadiusPixels: () => 7,
+    sourceIdentity,
     path: { mappedPathPoints, pathPixels },
     settings: {
       algorithmMode,
@@ -495,7 +559,14 @@ function createControllerState() {
       shouldSkipUnknownCharacters: ref(true),
     },
   };
-  return { isCollisionSettingsValid, mappedPathPoints, options, pathPixels, secondOrderLaunchAngleMode };
+  return {
+    isCollisionSettingsValid,
+    mappedPathPoints,
+    options,
+    pathPixels,
+    secondOrderLaunchAngleMode,
+    sourceIdentity,
+  };
 }
 
 function setSolverPath(state: ReturnType<typeof createControllerState>, targetX: number, targetY: number) {

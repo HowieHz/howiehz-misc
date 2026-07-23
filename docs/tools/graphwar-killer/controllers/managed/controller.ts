@@ -49,8 +49,8 @@ export interface GraphwarManagedControllerHooks {
     shooter: GraphwarManagedShooter | undefined,
     worldObstacleMask: Uint8Array | undefined,
   ) => void;
-  /** Reports every accepted live state immediately, before optional room or obstacle requests. */
-  onStateRead?: (state: GraphwarAgentState) => void;
+  /** Applies freshness-sensitive live state before later work; false rejects this poll as stale. */
+  onStateRead?: (state: GraphwarAgentState) => boolean | undefined;
   /** Reports a command that reached the Agent's deterministic failed state. */
   onShotFailed?: (
     state: GraphwarAgentAvailableState,
@@ -200,7 +200,9 @@ export function createGraphwarManagedController(options: GraphwarManagedControll
       if (!isCurrentGeneration(pollGeneration)) {
         return;
       }
-      hooks.onStateRead?.(state);
+      if (hooks.onStateRead?.(state) === false) {
+        return;
+      }
       if (!isCurrentGeneration(pollGeneration)) {
         return;
       }

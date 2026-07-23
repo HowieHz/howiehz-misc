@@ -6,10 +6,16 @@ import { nextTick } from "vue";
 
 import {
   createGraphwarAgentClient,
+  GraphwarAgentClientError,
+  type GraphwarAgentClient,
   type GraphwarAgentAvailableState,
   type GraphwarAgentShotPlan,
 } from "./controllers/agent/client";
-import { createGraphwarManagedController, type GraphwarManagedController } from "./controllers/managed/controller";
+import {
+  createGraphwarManagedController,
+  GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
+  type GraphwarManagedController,
+} from "./controllers/managed/controller";
 import { createPixelPoint } from "./core/types";
 import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
@@ -148,7 +154,7 @@ describe("Graphwar Killer page settings", () => {
         return stateResponse;
       }
       if (String(input).endsWith("/shots")) {
-        return Promise.resolve(jsonResponse(createSubmittedCommand(init)));
+        return Promise.resolve(jsonResponse(createShotCommand(init)));
       }
       return Promise.reject(new Error(`Unexpected Agent request: ${String(input)} ${String(init?.method)}`));
     });
@@ -197,6 +203,7 @@ describe("Graphwar Killer page settings", () => {
       function: displayedFormula,
     });
     expect(new Headers(shotCall?.[1]?.headers).get("Authorization")).toBe("Bearer session-token");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/state")).length).toBeGreaterThan(1);
 
     wrapper.unmount();
     vi.unstubAllGlobals();
@@ -205,6 +212,389 @@ describe("Graphwar Killer page settings", () => {
     } else {
       delete (navigator as { clipboard?: unknown }).clipboard;
     }
+  });
+
+  it("rejects out-of-order live states and resets freshness with the Agent connection", () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          graphwarAgentObservationOrder: {
+            isCurrent: (state: GraphwarAgentAvailableState) => boolean;
+          };
+          handleGraphwarAgentLiveState: (state: GraphwarAgentAvailableState) => boolean;
+          invalidateGraphwarAgentSceneWork: () => void;
+        };
+      }
+    ).setupState;
+
+    expect(
+      page.handleGraphwarAgentLiveState(createAgentState("y", { observationSequence: 2, observedAtEpochMs: 2000 })),
+    ).toBe(true);
+    expect(
+      page.graphwarAgentObservationOrder.isCurrent(
+        createAgentState("y", { observationSequence: 2, observedAtEpochMs: 2000 }),
+      ),
+    ).toBe(true);
+    expect(
+      page.handleGraphwarAgentLiveState(createAgentState("y", { observationSequence: 1, observedAtEpochMs: 2000 })),
+    ).toBe(false);
+    expect(
+      page.graphwarAgentObservationOrder.isCurrent(
+        createAgentState("y", { observationSequence: 1, observedAtEpochMs: 2000 }),
+      ),
+    ).toBe(false);
+    expect(
+      page.handleGraphwarAgentLiveState(createAgentState("y", { observationSequence: 3, observedAtEpochMs: 1000 })),
+    ).toBe(true);
+    expect(
+      page.handleGraphwarAgentLiveState(
+        createAgentState("y", {
+          agentInstanceId: "00000000-0000-4000-8000-000000000002",
+          observationSequence: 1,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      page.handleGraphwarAgentLiveState(createAgentState("y", { observationSequence: 4, observedAtEpochMs: 3000 })),
+    ).toBe(false);
+
+    page.invalidateGraphwarAgentSceneWork();
+    expect(
+      page.handleGraphwarAgentLiveState(createAgentState("y", { observationSequence: 1, observedAtEpochMs: 1000 })),
+    ).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("does not apply a snapshot whose obstacle mask finishes after a newer live state", async () => {
+    const initialState = createAgentState("y", { observationSequence: 1 });
+    let resolveMask!: (response: Response) => void;
+    const maskResponse = new Promise<Response>((resolve) => {
+      resolveMask = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      if (String(input).endsWith("/state")) {
+        return Promise.resolve(jsonResponse(initialState));
+      }
+      if (String(input).endsWith("/obstacle-masks/world.bin")) {
+        return maskResponse;
+      }
+      return Promise.reject(new Error(`Unexpected Agent request: ${String(input)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          graphwarAgentAppliedSnapshot: unknown;
+          handleGraphwarAgentLiveState: (state: GraphwarAgentAvailableState) => boolean;
+          isGraphwarAgentEnabled: boolean;
+          readGraphwarAgent: () => Promise<void>;
+        };
+      }
+    ).setupState;
+    page.isGraphwarAgentEnabled = true;
+    await nextTick();
+
+    const readPromise = page.readGraphwarAgent();
+    await vi.waitFor(() =>
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/obstacle-masks/world.bin"))).toBe(true),
+    );
+    expect(page.handleGraphwarAgentLiveState(createAgentState("y", { observationSequence: 2 }))).toBe(true);
+    resolveMask(
+      new Response(new Uint8Array(initialState.obstacleMask.width * initialState.obstacleMask.height), {
+        headers: { ETag: `"${initialState.obstacleMask.revision}"` },
+      }),
+    );
+    await readPromise;
+
+    expect(page.graphwarAgentAppliedSnapshot).toBeUndefined();
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    {
+      label: "turn",
+      overrides: { observationSequence: 2, turnToken: "00000000-0000-4000-8000-000000000012" },
+    },
+    {
+      label: "game",
+      overrides: {
+        agentInstanceId: "00000000-0000-4000-8000-000000000002",
+        gameInstanceId: "00000000-0000-4000-8000-000000000020",
+        observationSequence: 1,
+      },
+    },
+  ])("clears progressive playback immediately when a live $label identity replaces it", ({ overrides }) => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          graphwarAgentFunctionDrawPlayback: {
+            arm: (
+              identity: { gameInstanceId: string; turnToken: string },
+              points: readonly { x: number; y: number }[],
+            ) => void;
+            curvePoints: { value: string | undefined };
+          };
+          handleGraphwarAgentLiveState: (state: GraphwarAgentAvailableState) => boolean;
+        };
+      }
+    ).setupState;
+    const drawingState = createAgentState("y", {
+      functionDraw: { currentStep: 2, stepsPerSecond: 1500 },
+      observationSequence: 1,
+      phase: "drawing",
+    });
+    if (!drawingState.turnToken) {
+      throw new Error("Expected the fixture to include a turn token");
+    }
+    page.graphwarAgentFunctionDrawPlayback.arm(
+      { gameInstanceId: drawingState.gameInstanceId, turnToken: drawingState.turnToken },
+      [createPixelPoint(1, 1), createPixelPoint(2, 2), createPixelPoint(3, 3)],
+    );
+    page.handleGraphwarAgentLiveState(drawingState);
+    expect(page.graphwarAgentFunctionDrawPlayback.curvePoints.value).not.toBeUndefined();
+
+    page.handleGraphwarAgentLiveState(createAgentState("y", overrides));
+
+    expect(page.graphwarAgentFunctionDrawPlayback.curvePoints.value).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it("does not re-arm submitted-function polling after the Agent credential changes", async () => {
+    let resolveShotResponse!: (response: Response) => void;
+    const shotResponse = new Promise<Response>((resolve) => {
+      resolveShotResponse = resolve;
+    });
+    let shotInit: RequestInit | undefined;
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      if (String(input).endsWith("/state")) {
+        return Promise.resolve(jsonResponse(createAgentState("y")));
+      }
+      if (String(input).endsWith("/shots")) {
+        shotInit = init;
+        return shotResponse;
+      }
+      return Promise.reject(new Error(`Unexpected Agent request: ${String(input)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          commitIncumbentResult: (expression: string) => void;
+          isGraphwarAgentEnabled: boolean;
+          setGraphwarAgentTokenText: (value: string) => void;
+        };
+      }
+    ).setupState;
+
+    page.isGraphwarAgentEnabled = true;
+    page.commitIncumbentResult("x");
+    await nextTick();
+    await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
+    await flushPromises();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/state"))).toHaveLength(1);
+
+    page.setGraphwarAgentTokenText("replacement-token");
+    resolveShotResponse(jsonResponse(createShotCommand(shotInit)));
+    await flushPromises();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/state"))).toHaveLength(1);
+
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it("observes a manual shot whose original-client result is unknown", async () => {
+    let stateReadCount = 0;
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      if (String(input).endsWith("/state")) {
+        stateReadCount += 1;
+        return Promise.resolve(
+          jsonResponse(
+            createAgentState("y", {
+              observationSequence: stateReadCount,
+              ...(stateReadCount > 1 ? { turnToken: "00000000-0000-4000-8000-000000000012" } : {}),
+            }),
+          ),
+        );
+      }
+      if (String(input).endsWith("/shots")) {
+        return Promise.resolve(jsonResponse(createShotCommand(init, "unknown")));
+      }
+      return Promise.reject(new Error(`Unexpected Agent request: ${String(input)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          commitIncumbentResult: (expression: string) => void;
+          isGraphwarAgentEnabled: boolean;
+        };
+      }
+    ).setupState;
+
+    page.isGraphwarAgentEnabled = true;
+    page.commitIncumbentResult("x");
+    await nextTick();
+    await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
+    await flushPromises();
+
+    expect(stateReadCount).toBe(2);
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it.each(["submitted-skip", "unknown"] as const)("observes a managed %s shot", async (outcome) => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          graphwarManagedClient: GraphwarAgentClient | undefined;
+          graphwarManagedController: GraphwarManagedController | undefined;
+          graphwarManagedLastRequestedTurnToken: string | undefined;
+          handleGraphwarManagedShotSubmitted: (
+            state: GraphwarAgentAvailableState,
+            plan: GraphwarAgentShotPlan,
+            shotReserveSeconds: string,
+          ) => void;
+          handleGraphwarManagedShotUnknown: (
+            state: GraphwarAgentAvailableState,
+            plan: GraphwarAgentShotPlan,
+            error: GraphwarAgentClientError,
+          ) => void;
+          isGraphwarAgentEnabled: boolean;
+        };
+      }
+    ).setupState;
+    const state = createAgentState("y");
+    const readState = vi.fn().mockResolvedValue(
+      createAgentState("y", {
+        observationSequence: 2,
+        turnToken: "00000000-0000-4000-8000-000000000012",
+      }),
+    );
+    page.isGraphwarAgentEnabled = true;
+    page.graphwarManagedClient = { readState } as unknown as GraphwarAgentClient;
+
+    if (outcome === "submitted-skip") {
+      page.graphwarManagedLastRequestedTurnToken = state.turnToken ?? undefined;
+      page.handleGraphwarManagedShotSubmitted(
+        state,
+        { equationMode: "y", function: GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION },
+        "3",
+      );
+    } else {
+      page.graphwarManagedController = {
+        getLatestState: () => state,
+        stop: () => undefined,
+      } as GraphwarManagedController;
+      page.handleGraphwarManagedShotUnknown(
+        state,
+        { equationMode: "y", function: "x" },
+        new GraphwarAgentClientError("transient", "unknown"),
+      );
+    }
+    await flushPromises();
+
+    expect(readState).toHaveBeenCalledOnce();
+    wrapper.unmount();
+  });
+
+  it("continues submitted-function observation through explosion until the turn changes", async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          isGraphwarAgentEnabled: boolean;
+          observeSubmittedGraphwarAgentFunction: (
+            client: { readState: (signal?: AbortSignal) => Promise<GraphwarAgentAvailableState> },
+            state: GraphwarAgentAvailableState,
+            plan: GraphwarAgentShotPlan,
+          ) => void;
+        };
+      }
+    ).setupState;
+    const submittedState = createAgentState("y", { observationSequence: 1, observedAtEpochMs: 10_000 });
+    const readState = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createAgentState("y", {
+          functionDraw: { currentStep: 1, stepsPerSecond: 1500 },
+          observationSequence: 2,
+          observedAtEpochMs: 10_001,
+          phase: "drawing",
+        }),
+      )
+      .mockResolvedValueOnce(
+        createAgentState("y", {
+          observationSequence: 3,
+          observedAtEpochMs: 10_002,
+          phase: "exploding",
+        }),
+      )
+      .mockResolvedValueOnce(
+        createAgentState("y", {
+          observationSequence: 4,
+          observedAtEpochMs: 10_003,
+          turnToken: "00000000-0000-4000-8000-000000000012",
+        }),
+      );
+
+    page.isGraphwarAgentEnabled = true;
+    page.observeSubmittedGraphwarAgentFunction({ readState }, submittedState, {
+      equationMode: "y",
+      function: "x",
+    });
+    await flushPromises();
+    expect(readState).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(readState).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(readState).toHaveBeenCalledTimes(3);
+
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("aborts an in-flight submitted-function observation when the page is unmounted", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          isGraphwarAgentEnabled: boolean;
+          observeSubmittedGraphwarAgentFunction: (
+            client: { readState: (signal?: AbortSignal) => Promise<GraphwarAgentAvailableState> },
+            state: GraphwarAgentAvailableState,
+            plan: GraphwarAgentShotPlan,
+          ) => void;
+        };
+      }
+    ).setupState;
+    let observationSignal: AbortSignal | undefined;
+    const readState = vi.fn(
+      (signal?: AbortSignal) =>
+        new Promise<GraphwarAgentAvailableState>((_resolve, reject) => {
+          observationSignal = signal;
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+
+    page.isGraphwarAgentEnabled = true;
+    page.observeSubmittedGraphwarAgentFunction({ readState }, createAgentState("y"), {
+      equationMode: "y",
+      function: "x",
+    });
+    await flushPromises();
+    expect(observationSignal?.aborted).toBe(false);
+
+    wrapper.unmount();
+    expect(observationSignal?.aborted).toBe(true);
+    await flushPromises();
   });
 
   it("submits normal and deadline managed shots from the incumbent instead of the displayed result", async () => {
@@ -598,6 +988,7 @@ function createAgentState(
 ): GraphwarAgentAvailableState {
   const battleRevision = `sha256:${"b".repeat(64)}`;
   return {
+    agentInstanceId: "00000000-0000-4000-8000-000000000001",
     apiVersion: 3,
     battleRevision,
     canAcceptShotCommands: true,
@@ -613,6 +1004,7 @@ function createAgentState(
     gameInstanceId: "00000000-0000-4000-8000-000000000010",
     isAvailable: true,
     isTerrainReversed: false,
+    observationSequence: overrides.observationSequence ?? 1,
     observedAtEpochMs: Date.now(),
     obstacleMask: {
       blockedValue: 1,
@@ -652,6 +1044,7 @@ function createAgentState(
     shotCommand: null,
     turnToken: "00000000-0000-4000-8000-000000000011",
     ...overrides,
+    functionDraw: overrides.functionDraw ?? null,
   };
 }
 
@@ -675,14 +1068,14 @@ function createManagedAgentFetch(state: GraphwarAgentAvailableState) {
       );
     }
     if (url.endsWith("/shots")) {
-      return Promise.resolve(jsonResponse(createSubmittedCommand(init)));
+      return Promise.resolve(jsonResponse(createShotCommand(init)));
     }
     return Promise.reject(new Error(`Unexpected managed Agent request: ${url}`));
   });
 }
 
-/** Builds the terminal v3 resource matching one mocked POST body. */
-function createSubmittedCommand(init: RequestInit | undefined) {
+/** Builds a terminal v3 command resource matching one mocked POST body. */
+function createShotCommand(init: RequestInit | undefined, status: "submitted" | "unknown" = "submitted") {
   const request = JSON.parse(String(init?.body)) as {
     battleRevision: string;
     gameInstanceId: string;
@@ -694,7 +1087,8 @@ function createSubmittedCommand(init: RequestInit | undefined) {
     createdAtEpochMs: 1,
     gameInstanceId: request.gameInstanceId,
     requestId: request.requestId,
-    status: "submitted",
+    ...(status === "unknown" ? { error: { code: "original-client-result-unknown", message: "unknown" } } : {}),
+    status,
     turnToken: request.turnToken,
     updatedAtEpochMs: 2,
   };

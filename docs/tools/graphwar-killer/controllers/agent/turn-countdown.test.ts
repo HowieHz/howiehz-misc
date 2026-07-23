@@ -95,9 +95,11 @@ describe("Graphwar Agent turn countdown", () => {
     const countdown = useGraphwarAgentTurnCountdown();
     countdown.update(createAvailableState());
     countdown.update({
+      agentInstanceId: "00000000-0000-4000-8000-000000000001",
       apiVersion: 3,
       capabilities: createAvailableState().capabilities,
       isAvailable: false,
+      observationSequence: 2,
       observedAtEpochMs: Date.now(),
       plane: createAvailableState().plane,
       reason: "game-not-started",
@@ -124,6 +126,7 @@ describe("Graphwar Agent turn countdown", () => {
 /** Creates the minimal typed state needed by the countdown controller. */
 function createAvailableState(overrides: Partial<GraphwarAgentAvailableState> = {}): GraphwarAgentAvailableState {
   return {
+    agentInstanceId: "00000000-0000-4000-8000-000000000001",
     apiVersion: 3,
     battleRevision: `sha256:${"a".repeat(64)}`,
     canAcceptShotCommands: true,
@@ -156,6 +159,8 @@ function createAvailableState(overrides: Partial<GraphwarAgentAvailableState> = 
     shotCommand: null,
     turnToken: null,
     ...overrides,
+    functionDraw: overrides.functionDraw ?? null,
+    observationSequence: overrides.observationSequence ?? 1,
     observedAtEpochMs: overrides.observedAtEpochMs ?? Date.now(),
   };
 }

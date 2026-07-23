@@ -35,7 +35,7 @@ import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajector
 
 const glitchWindows = createGlitchWindows();
 /** 统一搜索网格中固定的近到远回退距离。 */
-const GATE_BACKOFF_COLUMNS = [1, 2] as const;
+const GATE_BACKOFF_COLUMNS = [1, 2, 3] as const;
 
 /** 固定 simulation mask 的 x+ 水平可达索引，可在单目标和一键清图的多次扫描间复用。 */
 export interface GraphwarStepGlitchScanMaskIndex {
@@ -181,7 +181,7 @@ interface ScanLandingRow {
   startDeltaY: number;
   /** 目标命中圈中心行到候选行的垂直像素距离。 */
   targetDeltaY: number;
-  /** 按回退顺序记录的两位可用性掩码：第 0 位表示 B-1，第 1 位表示 B-2。 */
+  /** 按回退顺序记录的三位可用性掩码：第 0、1、2 位分别表示 B-1、B-2、B-3。 */
   usableWindowBatchMask: number;
 }
 
@@ -196,11 +196,11 @@ interface ScanGateWindow {
 
 /** 按一个回退距离分组的 11 档 gate 宽度；原版像素固定，但低公式精度时仍可能跨列。 */
 interface ScanGateWindowBatch {
-  /** 批次对应的回退列，1 表示 B-1，2 表示 B-2。 */
+  /** 批次对应的回退列，1、2、3 分别表示 B-1、B-2、B-3。 */
   backoffColumns: (typeof GATE_BACKOFF_COLUMNS)[number];
   /** 共享的右门列；为 undefined 时，低精度量化让门宽跨列，使用旧的逐窗口 fallback。 */
   sharedWindowSearchX: number | undefined;
-  /** 只有右门仍位于预期回退列时，才能使用“跳过下一批”的单调性规则。 */
+  /** 只有右门仍位于预期回退列时，才能使用“跳过剩余更远批次”的单调性规则。 */
   usesMonotonicBackoffPruning: boolean;
   /** 所有宽度共享右门列时实际查询的原生列；跨列时仅作为 fallback 提示。 */
   searchX: number;
@@ -577,8 +577,8 @@ function scanPreparedGraphwarStepGlitchPath(
         }
         const windowBatchBit = 1 << (windowBatch.backoffColumns - 1);
         if ((row.usableWindowBatchMask & windowBatchBit) === 0) {
-          // B-2 只有在该行的 B-1 批次全部失败、真正切换到下一批时才查询。
-          if (windowBatch.backoffColumns === 2) {
+          // 后续回退列只在该行的前一批全部失败、真正切换批次时才查询。
+          if (windowBatch.backoffColumns > 1) {
             if (
               windowBatch.sharedWindowSearchX !== undefined &&
               windowBatch.usesMonotonicBackoffPruning &&
@@ -821,7 +821,7 @@ function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, bounda
       });
 }
 
-/** 从首次阻挡像素沿 x- 回退一列和两列放置左门，并准备稳定排序的落点行。 */
+/** 从首次阻挡像素沿 x- 依次回退一至三列放置左门，并准备稳定排序的落点行。 */
 function createGateRowScan(
   state: ScanState,
   firstBlockedSearchX: number,
@@ -907,7 +907,7 @@ function createGateRowScan(
   }
 
   const rows: ScanLandingRow[] = [];
-  // 原碰撞列只查询一次用于评分；B-1 在这里查询，B-2 延迟到候选循环真正切换批次时再查询。
+  // 原碰撞列只查询一次用于评分；B-1 在这里查询，更远回退列延迟到候选循环真正切换批次时再查询。
   for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
     const farthestX = getFarthestFreeX(maskIndex, firstBlockedSearchX, row);
     if (farthestX < firstBlockedSearchX) {
@@ -921,7 +921,7 @@ function createGateRowScan(
         firstWindowBatch.usesMonotonicBackoffPruning &&
         getFarthestFreeX(maskIndex, firstWindowBatch.searchX, row) < firstBlockedSearchX
       ) {
-        // B-1 不能到达 B 时，按列连续可达性可知 B-2 也不可能绕过 B-1。
+        // B-1 不能到达 B 时，按列连续可达性可知所有更远回退列也不可能绕过 B-1。
         continue;
       }
       // 低精度跨列时，fallback 会在候选循环逐档检查，这里只记录 B-1 批次存在。

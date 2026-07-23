@@ -555,7 +555,7 @@ describe("Step glitch scanner replay acceptance", () => {
     expect(replayMockState.testedWindowStartXs.length).toBeGreaterThan(0);
   });
 
-  it("keeps both backoff batches in one native column with mirrored bounds", () => {
+  it("keeps all three backoff batches in one native column with mirrored bounds", () => {
     replayMockState.orderedGateSuccessAttempt = Number.POSITIVE_INFINITY;
     replayMockState.orderedRowScenario = true;
     // 原版 50 Graph x 宽度大于最大 0.01 门宽；镜像只改变截图方向，不改变 Graph x- 回退语义。
@@ -590,18 +590,22 @@ describe("Step glitch scanner replay acceptance", () => {
     const expectedWidths = createExpectedWindowWidths();
     const firstBackoffStartX = replayMockState.testedWindowStartXs[0];
     const secondBackoffStartX = replayMockState.testedWindowStartXs[expectedWidths.length];
+    const thirdBackoffStartX = replayMockState.testedWindowStartXs[expectedWidths.length * 2];
 
     expect(result.status).toBe("no-path");
-    expect(result.expandedStates).toBe(1 + expectedWidths.length * 2);
+    expect(result.expandedStates).toBe(1 + expectedWidths.length * 3);
     expect(firstBackoffStartX).toBeDefined();
     expect(secondBackoffStartX).toBeDefined();
-    if (firstBackoffStartX === undefined || secondBackoffStartX === undefined) {
+    expect(thirdBackoffStartX).toBeDefined();
+    if (firstBackoffStartX === undefined || secondBackoffStartX === undefined || thirdBackoffStartX === undefined) {
       return;
     }
     expect(secondBackoffStartX).toBeLessThan(firstBackoffStartX);
+    expect(thirdBackoffStartX).toBeLessThan(secondBackoffStartX);
     for (let offset = 0; offset < expectedWidths.length; offset += 1) {
       expect(replayMockState.testedWindowStartXs[offset]).toBe(firstBackoffStartX);
       expect(replayMockState.testedWindowStartXs[expectedWidths.length + offset]).toBe(secondBackoffStartX);
+      expect(replayMockState.testedWindowStartXs[expectedWidths.length * 2 + offset]).toBe(thirdBackoffStartX);
     }
     expect(
       new Set(
@@ -617,9 +621,16 @@ describe("Step glitch scanner replay acceptance", () => {
         ),
       ).size,
     ).toBe(1);
+    expect(
+      new Set(
+        expectedWidths.map((width) =>
+          Math.floor(graphToImagePoint(createGraphPoint(thirdBackoffStartX + width, 0), mirroredBounds, boundsRect).x),
+        ),
+      ).size,
+    ).toBe(1);
   });
 
-  it("exhausts both backoff batches on the farthest row before scanning the next row", () => {
+  it("exhausts all three backoff batches on the farthest row before scanning the next row", () => {
     replayMockState.orderedGateSuccessAttempt = Number.POSITIVE_INFINITY;
     replayMockState.orderedRowScenario = true;
     const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
@@ -656,31 +667,38 @@ describe("Step glitch scanner replay acceptance", () => {
     const nearerY = imageToGraphPoint(createPixelPoint(0, nearerRow + 0.5), bounds, boundsRect).y;
 
     expect(result.status).toBe("no-path");
-    expect(result.expandedStates).toBe(1 + expectedWidths.length * 4);
+    expect(result.expandedStates).toBe(1 + expectedWidths.length * 6);
     expect(replayMockState.testedGateYs).toEqual([
       ...Array.from({ length: expectedWidths.length }, () => fartherY),
       ...Array.from({ length: expectedWidths.length }, () => fartherY),
+      ...Array.from({ length: expectedWidths.length }, () => fartherY),
+      ...Array.from({ length: expectedWidths.length }, () => nearerY),
       ...Array.from({ length: expectedWidths.length }, () => nearerY),
       ...Array.from({ length: expectedWidths.length }, () => nearerY),
     ]);
-    expect(replayMockState.testedWindowStartXs).toHaveLength(expectedWidths.length * 4);
-    expect(replayMockState.testedWindowWidths).toHaveLength(expectedWidths.length * 4);
+    expect(replayMockState.testedWindowStartXs).toHaveLength(expectedWidths.length * 6);
+    expect(replayMockState.testedWindowWidths).toHaveLength(expectedWidths.length * 6);
     for (let index = 0; index < replayMockState.testedWindowWidths.length; index += 1) {
       expect(replayMockState.testedWindowWidths[index]).toBeCloseTo(expectedWidths[index % expectedWidths.length] ?? 0);
     }
     const firstBackoffStartX = replayMockState.testedWindowStartXs[0];
     const secondBackoffStartX = replayMockState.testedWindowStartXs[expectedWidths.length];
+    const thirdBackoffStartX = replayMockState.testedWindowStartXs[expectedWidths.length * 2];
     expect(firstBackoffStartX).toBeDefined();
     expect(secondBackoffStartX).toBeDefined();
-    if (firstBackoffStartX === undefined || secondBackoffStartX === undefined) {
+    expect(thirdBackoffStartX).toBeDefined();
+    if (firstBackoffStartX === undefined || secondBackoffStartX === undefined || thirdBackoffStartX === undefined) {
       return;
     }
     expect(secondBackoffStartX).toBeLessThan(firstBackoffStartX);
+    expect(thirdBackoffStartX).toBeLessThan(secondBackoffStartX);
     expect(replayMockState.testedWindowStartXs).toEqual([
       ...Array.from({ length: expectedWidths.length }, () => firstBackoffStartX),
       ...Array.from({ length: expectedWidths.length }, () => secondBackoffStartX),
+      ...Array.from({ length: expectedWidths.length }, () => thirdBackoffStartX),
       ...Array.from({ length: expectedWidths.length }, () => firstBackoffStartX),
       ...Array.from({ length: expectedWidths.length }, () => secondBackoffStartX),
+      ...Array.from({ length: expectedWidths.length }, () => thirdBackoffStartX),
     ]);
   });
 });

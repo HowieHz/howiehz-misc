@@ -490,9 +490,11 @@ const {
   trajectoryStrokeColor,
   undoActivePathPoint,
 } = useGraphwarPathState(toolWorkflowMode);
-const incumbentPreviewPathPixels = ref<readonly PixelPoint[]>();
-const hasIncumbentPreviewPath = computed(() => incumbentPreviewPathPixels.value !== undefined);
-const displayedPathPixels = computed(() => incumbentPreviewPathPixels.value ?? pathPixels.value);
+const incumbentPointPreview =
+  ref<Pick<GraphwarOneClickClearIncumbent, "expression" | "launchAngleRadians" | "pathPoints">>();
+const incumbentPreviewPathPixels = computed(() => incumbentPointPreview.value?.pathPoints);
+const hasIncumbentPreviewPath = computed(() => incumbentPointPreview.value !== undefined);
+const displayedPathPixels = computed(() => incumbentPointPreview.value?.pathPoints ?? pathPixels.value);
 let queuedIncumbentPreview:
   | Pick<GraphwarOneClickClearIncumbent, "expression" | "launchAngleRadians" | "pathPoints">
   | undefined;
@@ -1198,9 +1200,14 @@ const {
 const isIncumbentPreviewActive = computed(
   () => hasIncumbentPreviewPath.value || isTrajectoryIncumbentPreviewActive.value,
 );
-const isIncumbentTrajectoryPending = computed(
-  () => hasIncumbentPreviewPath.value && !isTrajectoryIncumbentPreviewActive.value,
-);
+const isIncumbentTrajectoryPending = computed(() => {
+  const preview = incumbentPointPreview.value;
+  return (
+    preview !== undefined &&
+    (formulaResult.value?.expression !== preview.expression ||
+      secondOrderLaunchAngleRadians.value !== preview.launchAngleRadians)
+  );
+});
 watch(
   () => [formulaResult.value, trajectoryCalculationStatus.value] as const,
   ([result, status]) => {
@@ -2244,9 +2251,8 @@ const stageOverlay = computed(() => ({
     previewPoints: smartPathfindingPreviewPoints.value,
   },
   trajectory: {
-    curvePoints:
-      graphwarAgentFunctionDrawPlayback.curvePoints.value ??
-      (isIncumbentTrajectoryPending.value ? "" : plottedCurvePoints.value),
+    // 新 incumbent 的控制点先上屏；上一条完整曲线保留到匹配轨迹原子发布。
+    curvePoints: graphwarAgentFunctionDrawPlayback.curvePoints.value ?? plottedCurvePoints.value,
     strokeColor: trajectoryStrokeColor.value,
   },
   viewport: {
@@ -4490,9 +4496,8 @@ function enqueueGraphwarAgentClearFailureExport(
   return graphwarAgentClearFailureExportQueue.enqueue(failureKind, snapshot);
 }
 
-/** Queues only the latest verified incumbent for one paint and one trajectory preview. */
+/** Queues only the latest incumbent while retaining the last complete trajectory. */
 function queueIncumbentPreview(incumbent: GraphwarOneClickClearIncumbent) {
-  clearTrajectoryIncumbentPreview();
   queuedIncumbentPreview = {
     expression: incumbent.expression,
     ...(incumbent.launchAngleRadians === undefined ? {} : { launchAngleRadians: incumbent.launchAngleRadians }),
@@ -4511,14 +4516,14 @@ function queueIncumbentPreview(incumbent: GraphwarOneClickClearIncumbent) {
   });
 }
 
-/** Publishes the frame's latest points first, then starts matching latest-only trajectory sampling. */
+/** Publishes the latest point identity, then starts matching latest-only trajectory sampling. */
 function publishQueuedIncumbentPreview() {
   const incumbent = queuedIncumbentPreview;
   queuedIncumbentPreview = undefined;
   if (!incumbent) {
     return;
   }
-  incumbentPreviewPathPixels.value = incumbent.pathPoints;
+  incumbentPointPreview.value = incumbent;
   publishTrajectoryIncumbentPreview(incumbent.expression, incumbent.launchAngleRadians);
 }
 
@@ -4539,7 +4544,7 @@ function clearIncumbentPointPreview() {
     }
     incumbentPreviewFrame = undefined;
   }
-  incumbentPreviewPathPixels.value = undefined;
+  incumbentPointPreview.value = undefined;
 }
 
 /** 标记一键清图任务，让只属于该任务的设置变化不会取消普通单目标寻路。 */

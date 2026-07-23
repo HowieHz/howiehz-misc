@@ -17,6 +17,10 @@ import {
   GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
   type GraphwarManagedController,
 } from "./controllers/managed/controller";
+import type {
+  GraphwarTrajectoryCalculationWorkerRequest,
+  GraphwarTrajectoryCalculationWorkerResponse,
+} from "./controllers/path/trajectory-calculation";
 import { createPixelPoint } from "./core/types";
 import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
@@ -66,6 +70,117 @@ describe("Graphwar Killer page settings", () => {
     expect(page.displayedPathPixels).toEqual(formalPath);
     wrapper.unmount();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the previous trajectory until the latest incumbent trajectory is ready", async () => {
+    const frameCallbacks = new Map<number, FrameRequestCallback>();
+    const trajectoryWorkers: FakeTrajectoryWorker[] = [];
+    let nextFrameId = 1;
+    class FakeTrajectoryWorker {
+      readonly requests: GraphwarTrajectoryCalculationWorkerRequest[] = [];
+      private messageListener?: (event: MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>) => void;
+
+      constructor(_url: URL, options: WorkerOptions) {
+        if (options.name === "graphwar-main-trajectory") {
+          trajectoryWorkers.push(this);
+        }
+      }
+
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        if (type === "message" && typeof listener === "function") {
+          this.messageListener = listener;
+        }
+      }
+
+      postMessage(request: GraphwarTrajectoryCalculationWorkerRequest) {
+        this.requests.push(request);
+      }
+
+      respond(curvePoints: string, trajectoryPoints: readonly { x: number; y: number }[]) {
+        const request = this.requests.at(-1);
+        if (!request || !this.messageListener) {
+          throw new Error("Trajectory Worker has no pending request");
+        }
+        this.messageListener({
+          data: {
+            id: request.id,
+            outcome: { ok: true, result: { curvePoints, trajectoryPoints } },
+          },
+        } as MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>);
+      }
+
+      terminate() {
+        this.messageListener = undefined;
+      }
+    }
+    vi.stubGlobal("Worker", FakeTrajectoryWorker);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = nextFrameId;
+      nextFrameId += 1;
+      frameCallbacks.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frameCallbacks.delete(id));
+    const flushFrames = () => {
+      const callbacks = [...frameCallbacks.entries()];
+      frameCallbacks.clear();
+      for (const [id, callback] of callbacks) {
+        callback(id);
+      }
+    };
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          displayedPathPixels: readonly { x: number; y: number }[];
+          isIncumbentTrajectoryPending: boolean;
+          pathPixels: { x: number; y: number }[];
+          queueIncumbentPreview: (incumbent: {
+            expression: string;
+            pathPoints: { x: number; y: number }[];
+            trajectoryPoints: { x: number; y: number }[];
+          }) => void;
+          stageOverlay: { trajectory: { curvePoints: string } };
+        };
+      }
+    ).setupState;
+    const oldPath = [createPixelPoint(100, 225), createPixelPoint(200, 200)];
+    const latestPath = [createPixelPoint(100, 225), createPixelPoint(300, 180)];
+    try {
+      page.pathPixels = oldPath;
+      await nextTick();
+      flushFrames();
+
+      page.queueIncumbentPreview({ expression: "x", pathPoints: oldPath, trajectoryPoints: oldPath });
+      flushFrames();
+      trajectoryWorkers
+        .findLast((worker) => {
+          const input = worker.requests.at(-1)?.input;
+          return input?.type === "simulator" && input.expression === "x";
+        })
+        ?.respond("old trajectory", oldPath);
+      await flushPromises();
+      expect(page.stageOverlay.trajectory.curvePoints).toBe("old trajectory");
+
+      page.queueIncumbentPreview({ expression: "x+1", pathPoints: latestPath, trajectoryPoints: latestPath });
+      flushFrames();
+      expect(page.displayedPathPixels).toEqual(latestPath);
+      expect(page.isIncumbentTrajectoryPending).toBe(true);
+      expect(page.stageOverlay.trajectory.curvePoints).toBe("old trajectory");
+
+      trajectoryWorkers
+        .findLast((worker) => {
+          const input = worker.requests.at(-1)?.input;
+          return input?.type === "simulator" && input.expression === "x+1";
+        })
+        ?.respond("latest trajectory", latestPath);
+      await flushPromises();
+      expect(page.isIncumbentTrajectoryPending).toBe(false);
+      expect(page.stageOverlay.trajectory.curvePoints).toBe("latest trajectory");
+    } finally {
+      wrapper.unmount();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("uses compact double text for tiny angle hints and keeps the expanded title", async () => {

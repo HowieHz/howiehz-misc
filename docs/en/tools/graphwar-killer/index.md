@@ -95,7 +95,7 @@ If a game mode uses an algorithm that does not support One-Click Clear, Managed 
 
 Managed Mode always keeps the best formula found so far in the background. Search Animation affects only the on-page preview, not the search or deadline firing.
 
-With Search Animation enabled, control points from a new best plan appear first, while the previous plan's trajectory stays hidden until the matching trajectory is ready.
+With Search Animation enabled, control points from a new best plan appear first. The previous complete trajectory remains visible until the matching trajectory is ready to replace it.
 
 When the configured shot reserve is reached, Managed Mode fires the best validated plan. If no plan is available, it submits a skip-turn function. It does not deliberately hit an obstacle as a fallback because doing so could change the map and open a route for an opponent.
 

@@ -4,15 +4,43 @@ import {
   createGraphwarAgentClearFailureExportQueue,
   createGraphwarAgentClearFailureSceneKey,
   type GraphwarAgentClearFailureExportRequest,
+  type GraphwarAgentPathfindingDebugBundle,
 } from "./clear-failure-export";
-import type { GraphwarAgentAvailableState, GraphwarAgentSnapshot } from "./client";
+import type { GraphwarAgentAvailableState } from "./client";
 
-/** 创建自动导出测试只会读取的最小权威快照。 */
-function createSnapshot(gameInstanceId: string, turnToken: string | undefined, battleRevision: string) {
+/** 创建自动导出测试只会读取的最小已完成报告。 */
+function createBundle(gameInstanceId: string, turnToken: string | undefined, battleRevision: string) {
   return {
-    state: { battleRevision, gameInstanceId, turnToken } as GraphwarAgentAvailableState,
-    worldObstacleMask: new Uint8Array([1, 2, 3]),
-  } as GraphwarAgentSnapshot;
+    report: {
+      attempts: [],
+      completedAt: "2026-07-24T00:00:01.000Z",
+      elapsedMs: 1000,
+      outcome: { type: "failure" },
+      pageTimings: [],
+      path: [],
+      sceneSource: "agent",
+      schemaVersion: 1,
+      settings: {
+        formula: {
+          algorithm: "step",
+          decimalPlaces: 4,
+          equation: "y",
+          steepness: 67,
+          stepGlitchMode: false,
+          stepOverflowProtection: true,
+        },
+        isDeleteOptimizationEnabled: false,
+        isFriendlyFireEnabled: false,
+        isResultCacheEnabled: true,
+        isSearchAnimationEnabled: true,
+        routeMode: "visibility-graph",
+      },
+      startedAt: "2026-07-24T00:00:00.000Z",
+      taskType: "one-click-clear",
+    },
+    sceneState: { battleRevision, gameInstanceId, turnToken } as GraphwarAgentAvailableState,
+    sourceObstacleMask: new Uint8Array([1, 2, 3]),
+  } satisfies GraphwarAgentPathfindingDebugBundle;
 }
 
 /** 刷新队列中 await 产生的微任务。 */
@@ -30,13 +58,14 @@ describe("Graphwar Agent clear-failure export queue", () => {
         requests.push(request);
       },
     });
-    const snapshot = createSnapshot("game", "turn", "revision");
-    const duplicateSnapshot = createSnapshot("game", "turn", "revision");
+    const bundle = createBundle("game", "turn", "revision");
+    const duplicateBundle = createBundle("game", "turn", "revision");
 
-    expect(queue.enqueue("incomplete", snapshot)).toBe(true);
-    snapshot.worldObstacleMask[0] = 9;
-    snapshot.state.battleRevision = "changed";
-    expect(queue.enqueue("search-error", duplicateSnapshot)).toBe(false);
+    expect(queue.enqueue("incomplete", bundle)).toBe(true);
+    bundle.sourceObstacleMask[0] = 9;
+    bundle.sceneState.battleRevision = "changed";
+    bundle.report.elapsedMs = 9999;
+    expect(queue.enqueue("search-error", duplicateBundle)).toBe(false);
     await flushQueue();
 
     expect(requests).toHaveLength(1);
@@ -46,12 +75,13 @@ describe("Graphwar Agent clear-failure export queue", () => {
     }
     expect(request.worldObstacleMask).toEqual(new Uint8Array([1, 2, 3]));
     expect(request.state.battleRevision).toBe("revision");
+    expect(request.report.elapsedMs).toBe(1000);
     expect(createGraphwarAgentClearFailureSceneKey(request.state)).toBe('["game","turn","revision"]');
     expect(
-      createGraphwarAgentClearFailureSceneKey(createSnapshot("game\u0000turn", "revision", "tail").state),
-    ).not.toBe(createGraphwarAgentClearFailureSceneKey(createSnapshot("game", "turn\u0000revision", "tail").state));
+      createGraphwarAgentClearFailureSceneKey(createBundle("game\u0000turn", "revision", "tail").sceneState),
+    ).not.toBe(createGraphwarAgentClearFailureSceneKey(createBundle("game", "turn\u0000revision", "tail").sceneState));
     expect(
-      createGraphwarAgentClearFailureSceneKey(createSnapshot("game", undefined, "revision").state),
+      createGraphwarAgentClearFailureSceneKey(createBundle("game", undefined, "revision").sceneState),
     ).toBeUndefined();
   });
 
@@ -71,11 +101,11 @@ describe("Graphwar Agent clear-failure export queue", () => {
       },
     });
 
-    expect(queue.enqueue("deadline", createSnapshot("first", "turn", "revision"))).toBe(true);
+    expect(queue.enqueue("deadline", createBundle("first", "turn", "revision"))).toBe(true);
     expect(events).toEqual([]);
     await Promise.resolve();
     expect(events).toEqual(["start:first"]);
-    expect(queue.enqueue("search-failure", createSnapshot("second", "turn", "revision"))).toBe(true);
+    expect(queue.enqueue("search-failure", createBundle("second", "turn", "revision"))).toBe(true);
 
     queue.clearPending();
     releaseFirst?.();
@@ -86,7 +116,7 @@ describe("Graphwar Agent clear-failure export queue", () => {
   it("does not retry a failed scene and continues with the next scene", async () => {
     const attempts: string[] = [];
     const onExportFailed = vi.fn();
-    const first = createSnapshot("first", "turn", "revision");
+    const first = createBundle("first", "turn", "revision");
     const queue = createGraphwarAgentClearFailureExportQueue({
       exportRequest: (request) => {
         attempts.push(request.state.gameInstanceId);
@@ -99,7 +129,7 @@ describe("Graphwar Agent clear-failure export queue", () => {
 
     expect(queue.enqueue("search-error", first)).toBe(true);
     expect(queue.enqueue("deadline", first)).toBe(false);
-    expect(queue.enqueue("incomplete", createSnapshot("second", "turn", "revision"))).toBe(true);
+    expect(queue.enqueue("incomplete", createBundle("second", "turn", "revision"))).toBe(true);
     await flushQueue();
 
     expect(attempts).toEqual(["first", "second"]);

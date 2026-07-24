@@ -37,6 +37,8 @@ export interface GraphwarPathfindingRunOptions {
   onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
   /** 普通智能寻路搜索动画快照。 */
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
+  /** 请求 Worker 返回调试计数器和自然边界耗时。 */
+  shouldCollectDiagnostics?: boolean;
 }
 
 /** 当前等待 Worker 响应的主线程任务，用 request id 防止旧响应覆盖新结果。 */
@@ -123,6 +125,7 @@ export function createGraphwarPathfindingRunner() {
       {
         id: nextRequestId,
         task: {
+          ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
           input,
           type: "find-smart-path",
         },
@@ -162,8 +165,9 @@ export function createGraphwarPathfindingRunner() {
       {
         id: nextRequestId,
         task: {
+          ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
           input,
-          reportIncumbents: options?.onIncumbent !== undefined,
+          shouldReportIncumbents: options?.onIncumbent !== undefined,
           type: "build-one-click-clear-path",
         },
       },
@@ -351,6 +355,7 @@ function cloneGraphwarPathfindingWorkerRequest(
     return {
       id: request.id,
       task: {
+        ...(request.task.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
         input: cloneGraphwarSmartPathfindingPathInput(request.task.input),
         type: "find-smart-path",
       },
@@ -369,8 +374,9 @@ function cloneGraphwarPathfindingWorkerRequest(
   return {
     id: request.id,
     task: {
+      ...(request.task.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
       input: cloneGraphwarOneClickClearPathWorkerInput(request.task.input),
-      reportIncumbents: request.task.reportIncumbents,
+      shouldReportIncumbents: request.task.shouldReportIncumbents,
       type: "build-one-click-clear-path",
     },
   };
@@ -382,7 +388,7 @@ function cloneGraphwarPathfindingRouteInput(input: GraphwarPathfindingRouteInput
     boundaryExpansion: input.boundaryExpansion,
     bounds: cloneGraphBounds(input.bounds),
     boundsRect: cloneBoundsRect(input.boundsRect),
-    previewEnabled: input.previewEnabled,
+    isPreviewEnabled: input.isPreviewEnabled,
     routeMask: input.routeMask,
     routeMaskCacheId: input.routeMaskCacheId,
     routeMode: input.routeMode,
@@ -400,9 +406,9 @@ function cloneGraphwarSmartPathfindingPathInput(
     boundaryExpansion: input.boundaryExpansion,
     bounds: cloneGraphBounds(input.bounds),
     boundsRect: cloneBoundsRect(input.boundsRect),
-    deleteOptimizationEnabled: input.deleteOptimizationEnabled,
+    isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled,
     hitTarget: cloneGraphwarTrajectoryTargetCircle(input.hitTarget),
-    previewEnabled: input.previewEnabled,
+    isPreviewEnabled: input.isPreviewEnabled,
     routeMaskCacheId: input.routeMaskCacheId,
     routeMode: input.routeMode,
     routeObstacleMask: input.routeObstacleMask,
@@ -461,7 +467,7 @@ function cloneGraphwarOneClickClearPathWorkerInput(
     boundsRect: cloneBoundsRect(input.boundsRect),
     candidates: input.candidates.map(cloneGraphwarOneClickClearCandidate),
     dagEdgeWorkerCount: input.dagEdgeWorkerCount,
-    deleteOptimizationEnabled: input.deleteOptimizationEnabled,
+    isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled,
     deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
     hitCandidates: input.hitCandidates.map(cloneGraphwarOneClickClearCandidate),
     pathPoints: input.pathPoints.map(clonePixelPoint),

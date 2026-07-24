@@ -55,16 +55,16 @@ describe("Graphwar main trajectory runner", () => {
     const firstCancelled = first.catch((error: unknown) => error);
     const firstRequestId = workers[0].requests[0].id;
     const second = runner.run(createSimulatorInput("2"));
-    let secondSettled = false;
+    let isSecondSettled = false;
     void second.finally(() => {
-      secondSettled = true;
+      isSecondSettled = true;
     });
 
     workers[0].emitResponse({ id: firstRequestId, outcome: workerOutcome });
     await Promise.resolve();
 
     expect(isGraphwarTrajectoryCancelledError(await firstCancelled)).toBe(true);
-    expect(secondSettled).toBe(false);
+    expect(isSecondSettled).toBe(false);
     workers[1].respond(workerOutcome);
     await second;
     runner.close();
@@ -105,9 +105,9 @@ describe("Graphwar main trajectory runner", () => {
         }),
     });
     const result = runner.run(createSimulatorInput("0"));
-    let settled = false;
+    let isSettled = false;
     void result.finally(() => {
-      settled = true;
+      isSettled = true;
     });
 
     workers[0].fail("first failure");
@@ -116,20 +116,20 @@ describe("Graphwar main trajectory runner", () => {
     await Promise.resolve();
 
     expect(events).toEqual(["fallback:second failure", "paint"]);
-    expect(settled).toBe(false);
+    expect(isSettled).toBe(false);
     pendingPaints.shift()?.();
     await expect(result).resolves.toMatchObject({ outcome: { ok: true } });
 
     const workerCount = workers.length;
     const fallbackResult = runner.run(createSimulatorInput("1"));
-    let fallbackSettled = false;
+    let isFallbackSettled = false;
     void fallbackResult.finally(() => {
-      fallbackSettled = true;
+      isFallbackSettled = true;
     });
     await Promise.resolve();
 
     expect(events).toEqual(["fallback:second failure", "paint", "paint"]);
-    expect(fallbackSettled).toBe(false);
+    expect(isFallbackSettled).toBe(false);
     pendingPaints.shift()?.();
     await expect(fallbackResult).resolves.toMatchObject({ outcome: { ok: true } });
     expect(workers).toHaveLength(workerCount);

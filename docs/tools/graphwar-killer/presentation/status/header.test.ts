@@ -8,7 +8,7 @@ describe("getSmartPathfindingHeaderStatus", () => {
       getSmartPathfindingHeaderStatus({
         enableHintMessage: "开启路径规划",
         hintMessage: "路径规划提示",
-        smartPathfindingEnabled: false,
+        isSmartPathfindingEnabled: false,
         smartPathfindingSettingsMessage: "",
         smartPathfindingStatusKind: "success",
         smartPathfindingStatusMessage: "一键清图完成",
@@ -21,7 +21,7 @@ describe("getSmartPathfindingHeaderStatus", () => {
       getSmartPathfindingHeaderStatus({
         enableHintMessage: "开启路径规划",
         hintMessage: "路径规划提示",
-        smartPathfindingEnabled: false,
+        isSmartPathfindingEnabled: false,
         smartPathfindingSettingsMessage: "",
         smartPathfindingStatusKind: "info",
         smartPathfindingStatusMessage: "",
@@ -34,7 +34,7 @@ describe("getSmartPathfindingHeaderStatus", () => {
       getSmartPathfindingHeaderStatus({
         enableHintMessage: "开启路径规划",
         hintMessage: "路径规划提示",
-        smartPathfindingEnabled: true,
+        isSmartPathfindingEnabled: true,
         smartPathfindingSettingsMessage: "请修正障碍容差",
         smartPathfindingStatusKind: "warning",
         smartPathfindingStatusMessage: "正在一键清图",
@@ -49,7 +49,7 @@ describe("getSmartPathfindingHeaderStatus", () => {
         getSmartPathfindingHeaderStatus({
           enableHintMessage: "开启路径规划",
           hintMessage: "路径规划提示",
-          smartPathfindingEnabled: true,
+          isSmartPathfindingEnabled: true,
           smartPathfindingSettingsMessage: "",
           smartPathfindingStatusKind: kind,
           smartPathfindingStatusMessage: "寻路任务状态",
@@ -63,7 +63,7 @@ describe("getSmartPathfindingHeaderStatus", () => {
       getSmartPathfindingHeaderStatus({
         enableHintMessage: "开启路径规划",
         hintMessage: "路径规划提示",
-        smartPathfindingEnabled: true,
+        isSmartPathfindingEnabled: true,
         smartPathfindingSettingsMessage: "",
         smartPathfindingStatusKind: "info",
         smartPathfindingStatusMessage: "",

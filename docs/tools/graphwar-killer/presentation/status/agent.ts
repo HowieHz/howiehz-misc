@@ -6,5 +6,6 @@ export function createGraphwarAgentFailureReason(locale: GraphwarKillerLocale, e
   return locale.status.agent.failureReason(
     error instanceof GraphwarAgentClientError ? error.kind : undefined,
     error instanceof Error ? error.message : String(error),
+    error instanceof GraphwarAgentClientError ? error.code : undefined,
   );
 }

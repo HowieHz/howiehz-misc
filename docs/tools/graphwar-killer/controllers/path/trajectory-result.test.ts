@@ -30,10 +30,11 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "first curve",
+        trajectoryPoints: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
         formulaResult: { expression: "first formula", terms: [] },
         pathError: Number.POSITIVE_INFINITY,
         secondOrderLaunchAngleDegrees: 12,
-        targetMissed: true,
+        hasTargetMissWarning: true,
         warningReason: "obstacle",
       },
     });
@@ -41,9 +42,15 @@ describe("main trajectory result lifecycle", () => {
 
     expect(controller.formulaResult.value?.expression).toBe("first formula");
     expect(controller.plottedCurvePoints.value).toBe("first curve");
+    expect(controller.plottedTrajectory.value).toEqual({
+      equationMode: "dy",
+      expression: "first formula",
+      points: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
+      sourceIdentity: "agent-scene-1",
+    });
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(12);
     expect(controller.pathError.value).toBe(Number.POSITIVE_INFINITY);
-    expect(controller.targetMissed.value).toBe(true);
+    expect(controller.hasTargetMissWarning.value).toBe(true);
     expect(controller.trajectoryWarningReason.value).toBe("obstacle");
     expect(controller.calculationStatus.value.type).toBe("success");
 
@@ -66,7 +73,7 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.secondOrderLaunchAngleDegrees.value).toBeUndefined();
     expect(controller.secondOrderLaunchAngleRadians.value).toBeUndefined();
     expect(controller.pathError.value).toBeUndefined();
-    expect(controller.targetMissed.value).toBe(false);
+    expect(controller.hasTargetMissWarning.value).toBe(false);
     expect(controller.trajectoryWarningReason.value).toBeUndefined();
 
     controller.dispose();
@@ -85,6 +92,7 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "formula", terms: [] },
       },
     });
@@ -101,6 +109,46 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.plottedCurvePoints.value).toBe("");
     expect(controller.calculationStatus.value.type).toBe("idle");
 
+    controller.dispose();
+  });
+
+  it("recalculates an unchanged formula input when its authoritative scene identity changes", async () => {
+    const frames = installFakeBrowserRuntime();
+    const state = createControllerState();
+    const controller = useGraphwarTrajectoryResult(state.options);
+
+    setSolverPath(state, -10, 0);
+    await nextTick();
+    frames.flush();
+    respondToActiveWorker({
+      ok: true,
+      result: {
+        curvePoints: "first scene curve",
+        formulaResult: { expression: "same formula", terms: [] },
+        trajectoryPoints: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
+      },
+    });
+    await nextTick();
+    expect(controller.plottedTrajectory.value?.sourceIdentity).toBe("agent-scene-1");
+
+    state.sourceIdentity.value = "agent-scene-2";
+    await nextTick();
+    expect(controller.calculationStatus.value.type).toBe("in-progress");
+    expect(controller.plottedTrajectory.value?.sourceIdentity).toBe("agent-scene-1");
+    frames.flush();
+    respondToActiveWorker({
+      ok: true,
+      result: {
+        curvePoints: "second scene curve",
+        formulaResult: { expression: "same formula", terms: [] },
+        trajectoryPoints: [createPixelPoint(5, 6), createPixelPoint(7, 8)],
+      },
+    });
+    await nextTick();
+    expect(controller.plottedTrajectory.value).toMatchObject({
+      points: [createPixelPoint(5, 6), createPixelPoint(7, 8)],
+      sourceIdentity: "agent-scene-2",
+    });
     controller.dispose();
   });
 
@@ -127,6 +175,7 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "latest curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "latest formula", terms: [] },
       },
     });
@@ -151,6 +200,7 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "full curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "full formula", terms: [] },
         secondOrderLaunchAngleDegrees: 7.073552961289569,
         secondOrderLaunchAngleRadians: 0.12345678901234568,
@@ -158,6 +208,7 @@ describe("main trajectory result lifecycle", () => {
     });
     await nextTick();
     expect(controller.secondOrderLaunchAngleRadians.value).toBe(0.12345678901234568);
+    expect(controller.plottedTrajectory.value?.launchAngleRadians).toBe(0.12345678901234568);
 
     state.secondOrderLaunchAngleMode.value = "display-rounded";
     await nextTick();
@@ -183,25 +234,30 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "solver curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "solver formula", terms: [] },
         secondOrderLaunchAngleDegrees: 12,
       },
     });
     await nextTick();
 
-    state.options.simulator.formulaText.value = "x";
+    state.options.simulator.formulaText.value = "solver formula";
+    state.options.settings.equationMode.value = "ddy";
     state.options.settings.toolWorkflowMode.value = "simulator";
     await nextTick();
     frames.flush();
     respondToActiveWorker({
       ok: true,
-      result: { curvePoints: "simulator curve" },
+      result: { curvePoints: "simulator curve", trajectoryPoints: [] },
     });
     await nextTick();
 
     expect(controller.formulaResult.value?.expression).toBe("solver formula");
+    expect(controller.formulaResultEquationMode.value).toBe("dy");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(12);
     expect(controller.plottedCurvePoints.value).toBe("simulator curve");
+    expect(controller.plottedTrajectory.value?.equationMode).toBe("ddy");
+    expect(controller.plottedTrajectory.value?.expression).toBe("solver formula");
 
     state.options.settings.toolWorkflowMode.value = "solver";
     await nextTick();
@@ -225,12 +281,13 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "formula", terms: [] },
       },
     });
     await nextTick();
 
-    state.collisionSettingsValid.value = false;
+    state.isCollisionSettingsValid.value = false;
     await nextTick();
 
     expect(controller.calculationStatus.value.type).toBe("idle");
@@ -239,7 +296,42 @@ describe("main trajectory result lifecycle", () => {
     controller.dispose();
   });
 
-  it("atomically publishes only completed incumbent previews and restores or commits them without recalculating", async () => {
+  it("keeps the formal calculation running underneath a validated incumbent preview", async () => {
+    const frames = installFakeBrowserRuntime();
+    const state = createControllerState();
+    const controller = useGraphwarTrajectoryResult(state.options);
+
+    setSolverPath(state, -10, 1);
+    await nextTick();
+    frames.flush();
+    const requestCount = countWorkerRequests();
+    controller.publishIncumbentPreview({
+      equationMode: "dy",
+      expression: "incumbent",
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
+    });
+
+    expect(countWorkerRequests()).toBe(requestCount);
+    respondToActiveWorker({
+      ok: true,
+      result: {
+        curvePoints: "formal curve",
+        formulaResult: { expression: "formal formula", terms: [] },
+        trajectoryPoints: [createPixelPoint(5, 6), createPixelPoint(7, 8)],
+      },
+    });
+    await nextTick();
+    expect(controller.formulaResult.value?.expression).toBe("incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("1.00,2.00 3.00,4.00");
+
+    controller.clearIncumbentPreview();
+    expect(controller.formulaResult.value?.expression).toBe("formal formula");
+    expect(controller.plottedCurvePoints.value).toBe("formal curve");
+    controller.dispose();
+  });
+
+  it("publishes and commits validated incumbent snapshots without Worker requests", async () => {
     const frames = installFakeBrowserRuntime();
     const state = createControllerState();
     state.options.settings.equationMode.value = "ddy";
@@ -252,144 +344,109 @@ describe("main trajectory result lifecycle", () => {
       ok: true,
       result: {
         curvePoints: "formal curve",
+        trajectoryPoints: [],
         formulaResult: { expression: "formal formula", terms: [] },
         pathError: Number.POSITIVE_INFINITY,
-        targetMissed: true,
+        hasTargetMissWarning: true,
         warningReason: "obstacle",
       },
     });
     await nextTick();
 
-    controller.publishIncumbentPreview("first incumbent");
-    controller.publishIncumbentPreview("latest incumbent", Math.PI / 4);
-    expect(FakeWorker.instances.find((worker) => worker.terminated && worker.requests.length > 0)).toBeDefined();
-    expect(controller.incumbentPreviewActive.value).toBe(false);
-    expect(controller.formulaResult.value?.expression).toBe("formal formula");
-    expect(controller.plottedCurvePoints.value).toBe("formal curve");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "preview curve" } });
-    await nextTick();
+    const requestCount = countWorkerRequests();
+    controller.publishIncumbentPreview({
+      equationMode: "ddy",
+      expression: "first incumbent",
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
+    });
+    controller.publishIncumbentPreview({
+      equationMode: "ddy",
+      expression: "latest incumbent",
+      launchAngleRadians: Math.PI / 4,
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: [createPixelPoint(5, 6), createPixelPoint(7, 8)],
+    });
 
-    expect(controller.incumbentPreviewActive.value).toBe(true);
+    expect(controller.isIncumbentPreviewActive.value).toBe(true);
     expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("preview curve");
+    expect(controller.plottedCurvePoints.value).toBe("5.00,6.00 7.00,8.00");
+    expect(controller.plottedTrajectory.value?.points).toEqual([createPixelPoint(5, 6), createPixelPoint(7, 8)]);
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(45);
     expect(controller.secondOrderLaunchAngleRadians.value).toBe(Math.PI / 4);
     expect(controller.pathError.value).toBeUndefined();
-    expect(controller.targetMissed.value).toBe(false);
+    expect(controller.hasTargetMissWarning.value).toBe(false);
     expect(controller.trajectoryWarningReason.value).toBeUndefined();
-
-    controller.publishIncumbentPreview("pending incumbent");
-    expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("preview curve");
-    respondToActiveWorker({ message: "preview failed", ok: false, stage: "trajectory" });
-    await nextTick();
-    expect(controller.formulaResult.value?.expression).toBe("latest incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("preview curve");
+    expect(countWorkerRequests()).toBe(requestCount);
 
     controller.clearIncumbentPreview();
-    expect(controller.incumbentPreviewActive.value).toBe(false);
+    expect(controller.isIncumbentPreviewActive.value).toBe(false);
     expect(controller.formulaResult.value?.expression).toBe("formal formula");
     expect(controller.plottedCurvePoints.value).toBe("formal curve");
     expect(controller.pathError.value).toBe(Number.POSITIVE_INFINITY);
-    expect(controller.targetMissed.value).toBe(true);
+    expect(controller.hasTargetMissWarning.value).toBe(true);
     expect(controller.trajectoryWarningReason.value).toBe("obstacle");
 
-    controller.publishIncumbentPreview("cancelled incumbent");
-    controller.clearIncumbentPreview();
-    respondToActiveWorker({ ok: true, result: { curvePoints: "stale curve" } });
-    await nextTick();
-    expect(controller.formulaResult.value?.expression).toBe("formal formula");
-    expect(controller.plottedCurvePoints.value).toBe("formal curve");
+    const committedTrajectory = [createPixelPoint(9, 10), createPixelPoint(11, 12)];
+    controller.publishIncumbentPreview({
+      equationMode: "ddy",
+      expression: "committed incumbent",
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: committedTrajectory,
+    });
+    expect(
+      controller.commitIncumbentPreview({
+        equationMode: "ddy",
+        expression: "stale incumbent",
+        sourceIdentity: "agent-scene-1",
+        trajectoryPoints: [],
+      }),
+    ).toBe(false);
+    expect(
+      controller.commitIncumbentPreview({
+        equationMode: "ddy",
+        expression: "committed incumbent",
+        sourceIdentity: "agent-scene-2",
+        trajectoryPoints: committedTrajectory,
+      }),
+    ).toBe(false);
+    expect(
+      controller.commitIncumbentPreview({
+        equationMode: "ddy",
+        expression: "committed incumbent",
+        sourceIdentity: "agent-scene-1",
+        trajectoryPoints: [...committedTrajectory],
+      }),
+    ).toBe(false);
+    expect(
+      controller.commitIncumbentPreview({
+        equationMode: "ddy",
+        expression: "committed incumbent",
+        sourceIdentity: "agent-scene-1",
+        trajectoryPoints: committedTrajectory,
+      }),
+    ).toBe(true);
 
-    controller.publishIncumbentPreview("committed incumbent");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "committed curve" } });
-    await nextTick();
-    expect(controller.commitIncumbentPreview("stale incumbent")).toBe(false);
-    expect(controller.commitIncumbentPreview("committed incumbent")).toBe(true);
-
-    expect(controller.incumbentPreviewActive.value).toBe(false);
+    expect(controller.isIncumbentPreviewActive.value).toBe(false);
     expect(controller.formulaResult.value?.expression).toBe("committed incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("committed curve");
+    expect(controller.plottedCurvePoints.value).toBe("9.00,10.00 11.00,12.00");
 
-    controller.commitIncumbentResult("headless incumbent", Math.PI / 2);
-    const requestCount = countWorkerRequests();
+    controller.commitIncumbentResult({
+      equationMode: "ddy",
+      expression: "direct incumbent",
+      launchAngleRadians: Math.PI / 2,
+      sourceIdentity: "agent-scene-1",
+      trajectoryPoints: [createPixelPoint(13, 14), createPixelPoint(15, 16)],
+    });
+    const committedRequestCount = countWorkerRequests();
     setSolverPath(state, -5, 2);
     await nextTick();
     frames.flush();
     expect(controller.calculationStatus.value.type).toBe("idle");
-    expect(countWorkerRequests()).toBe(requestCount);
-    expect(controller.formulaResult.value?.expression).toBe("committed incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("committed curve");
-
-    respondToActiveWorker({ ok: true, result: { curvePoints: "headless curve" } });
-    await nextTick();
-    expect(controller.formulaResult.value?.expression).toBe("headless incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("headless curve");
+    expect(countWorkerRequests()).toBe(committedRequestCount);
+    expect(controller.formulaResult.value?.expression).toBe("direct incumbent");
+    expect(controller.plottedCurvePoints.value).toBe("13.00,14.00 15.00,16.00");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(90);
-    controller.dispose();
-  });
-
-  it("commits a pending incumbent after its existing preview task finishes", async () => {
-    const frames = installFakeBrowserRuntime();
-    const state = createControllerState();
-    const controller = useGraphwarTrajectoryResult(state.options);
-
-    setSolverPath(state, -10, 1);
-    await nextTick();
-    frames.flush();
-    respondToActiveWorker({
-      ok: true,
-      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
-    });
-    await nextTick();
-
-    controller.publishIncumbentPreview("old incumbent");
-    respondToActiveWorker({ ok: true, result: { curvePoints: "old curve" } });
-    await nextTick();
-    controller.publishIncumbentPreview("pending incumbent", Math.PI / 4);
-    const requestCount = countWorkerRequests();
-
-    controller.commitIncumbentResult("pending incumbent", Math.PI / 4);
-    setSolverPath(state, -5, 2);
-    await nextTick();
-    frames.flush();
-
-    expect(countWorkerRequests()).toBe(requestCount);
-    expect(controller.formulaResult.value?.expression).toBe("old incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("old curve");
-
-    respondToActiveWorker({ ok: true, result: { curvePoints: "pending curve" } });
-    await nextTick();
-    expect(controller.incumbentPreviewActive.value).toBe(false);
-    expect(controller.formulaResult.value?.expression).toBe("pending incumbent");
-    expect(controller.plottedCurvePoints.value).toBe("pending curve");
-    expect(controller.secondOrderLaunchAngleDegrees.value).toBe(45);
-    controller.dispose();
-  });
-
-  it("keeps the exact formula without a stale curve when committed trajectory sampling fails", async () => {
-    const frames = installFakeBrowserRuntime();
-    const state = createControllerState();
-    const controller = useGraphwarTrajectoryResult(state.options);
-
-    setSolverPath(state, -10, 1);
-    await nextTick();
-    frames.flush();
-    respondToActiveWorker({
-      ok: true,
-      result: { curvePoints: "formal curve", formulaResult: { expression: "formal formula", terms: [] } },
-    });
-    await nextTick();
-
-    controller.commitIncumbentResult("committed formula");
-    setSolverPath(state, -5, 2);
-    await nextTick();
-    frames.flush();
-    respondToActiveWorker({ message: "trajectory failed", ok: false, stage: "trajectory" });
-    await nextTick();
-
-    expect(controller.formulaResult.value?.expression).toBe("committed formula");
-    expect(controller.plottedCurvePoints.value).toBe("");
     controller.dispose();
   });
 });
@@ -459,43 +516,52 @@ function installFakeBrowserRuntime() {
 function createControllerState() {
   const algorithmMode = ref<"step">("step");
   const boundsRect = ref({ height: 450, width: 770, x: 0, y: 0 });
-  const collisionSettingsValid = ref(true);
+  const isCollisionSettingsValid = ref(true);
   const mappedPathPoints = ref([createGraphPoint(-20, 0)]);
   const pathPixels = ref([createPixelPoint(77, 225)]);
   const equationMode = ref<"ddy" | "dy">("dy");
   const secondOrderLaunchAngleMode = ref<"display-rounded" | "full-precision">("full-precision");
+  const sourceIdentity = ref<string | undefined>("agent-scene-1");
   const options = {
-    collisionSettingsValid,
+    isCollisionSettingsValid,
     geometry: {
       boundsRect,
       getBounds: () => ({ maxX: 25, maxY: 15, minX: -25, minY: -15 }),
     },
     getCollisionSettings: () => undefined,
     getTargetHitRadiusPixels: () => 7,
+    sourceIdentity,
     path: { mappedPathPoints, pathPixels },
     settings: {
       algorithmMode,
       equationMode,
       secondOrderLaunchAngleMode,
       getStepGlitchObstacleMask: () => undefined,
-      isEquationModeDisabled: () => false,
+      isEquationModeEnabled: () => true,
       precisionDecimalPlaces: ref(4),
-      precisionValid: ref(true),
+      isPrecisionValid: ref(true),
       steepness: ref(67),
-      steepnessValid: ref(true),
-      stepGlitchModeEnabled: ref(false),
-      stepOverflowProtectionEnabled: ref(true),
+      isSteepnessValid: ref(true),
+      isStepGlitchModeEnabled: ref(false),
+      isStepOverflowProtectionEnabled: ref(true),
       toolWorkflowMode: ref<"simulator" | "solver">("solver"),
     },
     simulator: {
       formulaText: ref(""),
       launchAngleText: ref(""),
-      parseDerivativeAsY: ref(true),
+      shouldParseDerivativeAsY: ref(true),
       parseNumber: Number,
-      skipUnknownCharacters: ref(true),
+      shouldSkipUnknownCharacters: ref(true),
     },
   };
-  return { collisionSettingsValid, mappedPathPoints, options, pathPixels, secondOrderLaunchAngleMode };
+  return {
+    isCollisionSettingsValid,
+    mappedPathPoints,
+    options,
+    pathPixels,
+    secondOrderLaunchAngleMode,
+    sourceIdentity,
+  };
 }
 
 function setSolverPath(state: ReturnType<typeof createControllerState>, targetX: number, targetY: number) {

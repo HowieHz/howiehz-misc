@@ -14,8 +14,8 @@ import {
 const defaultFormulaPreferences = {
   precisionText: "4",
   steepnessText: "210",
-  stepGlitchModeEnabled: true,
-  stepOverflowProtectionEnabled: true,
+  isStepGlitchModeEnabled: true,
+  isStepOverflowProtectionEnabled: true,
 } as const;
 
 describe("formula profiles", () => {
@@ -42,15 +42,15 @@ describe("formula profiles", () => {
       steepnessText: "67",
     });
     const updated = updateGraphwarFormulaProfile(withDerivativeAlgorithm, "dy", {
-      stepGlitchModeEnabled: false,
+      isStepGlitchModeEnabled: false,
     });
 
     expect(getGraphwarFormulaProfile(updated, "dy")).toEqual({
       algorithm: "akima",
       precisionText: "6",
       steepnessText: "67",
-      stepGlitchModeEnabled: false,
-      stepOverflowProtectionEnabled: true,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
     });
     expect(updated.y).toBe(original.y);
     expect(updated.ddy).toBe(original.ddy);
@@ -62,16 +62,16 @@ describe("formula profiles", () => {
     const updated = updateGraphwarFormulaProfile(profiles, equation, {
       algorithm: "pchip",
       precisionText: "1",
-      stepGlitchModeEnabled: false,
-      stepOverflowProtectionEnabled: false,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: false,
       steepnessText: "67",
     });
 
     expect(updated[equation]).toEqual({
       algorithm: "pchip",
       precisionText: "1",
-      stepGlitchModeEnabled: false,
-      stepOverflowProtectionEnabled: false,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: false,
       steepnessText: "67",
     });
     for (const otherEquation of ["y", "dy", "ddy"] as const) {
@@ -99,29 +99,29 @@ describe("formula profiles", () => {
         algorithm: "pchip",
         precisionText: "1",
         steepnessText: "11",
-        stepGlitchModeEnabled: false,
-        stepOverflowProtectionEnabled: false,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: false,
       },
       dy: {
         algorithm: "abs",
         precisionText: "2",
         steepnessText: "22",
-        stepGlitchModeEnabled: false,
-        stepOverflowProtectionEnabled: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       ddy: {
         algorithm: "akima",
         precisionText: "3",
         steepnessText: "33",
-        stepGlitchModeEnabled: false,
-        stepOverflowProtectionEnabled: false,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: false,
       },
     };
     const plan = createGraphwarManagedFormulaProfileRepairPlan(profiles);
 
     expect(plan).toEqual({
       y: { algorithm: "abs" },
-      ddy: { algorithm: "step", stepGlitchModeEnabled: true },
+      ddy: { algorithm: "step", isStepGlitchModeEnabled: true },
     });
 
     const repaired = applyGraphwarManagedFormulaProfileRepairPlan(profiles, plan);
@@ -130,22 +130,22 @@ describe("formula profiles", () => {
         algorithm: "abs",
         precisionText: "1",
         steepnessText: "11",
-        stepGlitchModeEnabled: false,
-        stepOverflowProtectionEnabled: false,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: false,
       },
       dy: {
         algorithm: "abs",
         precisionText: "2",
         steepnessText: "22",
-        stepGlitchModeEnabled: false,
-        stepOverflowProtectionEnabled: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       ddy: {
         algorithm: "step",
         precisionText: "3",
         steepnessText: "33",
-        stepGlitchModeEnabled: true,
-        stepOverflowProtectionEnabled: false,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: false,
       },
     });
     expect(repaired.dy).toBe(profiles.dy);
@@ -156,11 +156,11 @@ describe("formula profiles", () => {
   it("uses the managed derivative fallback only when that profile is unsupported", () => {
     const unsupported = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), "dy", {
       algorithm: "pchip",
-      stepGlitchModeEnabled: false,
+      isStepGlitchModeEnabled: false,
     });
 
     expect(createGraphwarManagedFormulaProfileRepairPlan(unsupported)).toEqual({
-      dy: { algorithm: "step", stepGlitchModeEnabled: true },
+      dy: { algorithm: "step", isStepGlitchModeEnabled: true },
     });
   });
 
@@ -199,8 +199,8 @@ describe("formula profiles", () => {
   it("is idempotent after the first confirmed repair", () => {
     const profiles: GraphwarFormulaProfiles = {
       y: { algorithm: "akima", ...defaultFormulaPreferences },
-      dy: { algorithm: "pchip", ...defaultFormulaPreferences, stepGlitchModeEnabled: false },
-      ddy: { algorithm: "abs", ...defaultFormulaPreferences, stepGlitchModeEnabled: false },
+      dy: { algorithm: "pchip", ...defaultFormulaPreferences, isStepGlitchModeEnabled: false },
+      ddy: { algorithm: "abs", ...defaultFormulaPreferences, isStepGlitchModeEnabled: false },
     };
     const repaired = applyGraphwarManagedFormulaProfileRepairPlan(
       profiles,
@@ -208,7 +208,7 @@ describe("formula profiles", () => {
     );
     const secondPlan = createGraphwarManagedFormulaProfileRepairPlan(repaired);
 
-    expect(repaired.ddy).toEqual({ algorithm: "abs", ...defaultFormulaPreferences, stepGlitchModeEnabled: false });
+    expect(repaired.ddy).toEqual({ algorithm: "abs", ...defaultFormulaPreferences, isStepGlitchModeEnabled: false });
     expect(secondPlan).toEqual({});
     expect(applyGraphwarManagedFormulaProfileRepairPlan(repaired, secondPlan)).toBe(repaired);
   });

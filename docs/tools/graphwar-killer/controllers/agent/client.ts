@@ -11,16 +11,15 @@ import {
   type GraphwarObjectsDetectionResult,
 } from "../../detection/objects";
 
-export const GRAPHWAR_AGENT_API_VERSION = 2;
+export const GRAPHWAR_AGENT_API_VERSION = 3;
 export const GRAPHWAR_AGENT_DEFAULT_BASE_URL = "http://127.0.0.1:17900";
-export const GRAPHWAR_AGENT_BATTLE_REVISION_HEADER = "X-Graphwar-Battle-Revision";
 
 /** Agent feature flags checked before the page enables dependent workflows. */
 export interface GraphwarAgentCapabilities {
-  ready: boolean;
-  room: boolean;
-  shot: boolean;
-  worldObstacleMask: boolean;
+  canReadRoom: boolean;
+  canReadWorldObstacleMask: boolean;
+  canSetReady: boolean;
+  canSubmitShots: boolean;
 }
 
 /** Fixed Graphwar plane dimensions reported by the Agent. */
@@ -37,23 +36,23 @@ export interface GraphwarAgentWorldPoint {
 
 /** Authoritative soldier state before adapting it to the local shooter's view. */
 export interface GraphwarAgentSoldier {
-  alive: boolean;
-  angle: number;
-  exploding: boolean;
-  index: number;
+  angleRadians: number;
+  isAlive: boolean;
+  isRendered: boolean;
+  soldierIndex: number;
   world: GraphwarAgentWorldPoint;
 }
 
 /** One player and its soldiers in an Agent polling response. */
 export interface GraphwarAgentPlayer {
-  computer: boolean;
-  currentTurnSoldier: number;
-  disconnected: boolean;
-  id: number;
-  index: number;
-  local: boolean;
+  currentSoldierIndex: number | null;
+  isComputerControlled: boolean;
+  isConnected: boolean;
+  isLocal: boolean;
+  isReady: boolean;
   name: string;
-  ready?: boolean;
+  playerId: number;
+  playerIndex: number;
   soldiers: GraphwarAgentSoldier[];
   team: number;
 }
@@ -66,17 +65,17 @@ export interface GraphwarAgentCurrentShooter {
 
 /** Local human shooter selected for managed play and view adaptation. */
 export interface GraphwarAgentShooter extends GraphwarAgentCurrentShooter {
-  speculative: boolean;
+  isSpeculative: boolean;
 }
 
 /** Agent soldier adapted to the detection-box interface used by page workflows. */
 export interface GraphwarAgentDetectionBox extends GraphwarDetectionBox {
   /** Authoritative local-computer ownership, independent of screen position. */
-  computer: boolean;
+  isComputerControlled: boolean;
   /** Authoritative relation to the selected shooter's team, independent of screen position. */
-  friendly: boolean;
+  isFriendly: boolean;
   /** Authoritative local-client ownership, independent of screen position. */
-  local: boolean;
+  isLocal: boolean;
   /** Stable Graphwar protocol player id. */
   playerId: number;
   /** Current player-array index in the state snapshot. */
@@ -94,74 +93,86 @@ export interface GraphwarAgentDetectionResult extends Omit<GraphwarObjectsDetect
 
 /** Metadata required to fetch and verify the matching world obstacle mask. */
 export interface GraphwarAgentObstacleMaskMetadata {
+  blockedValue: 1;
+  emptyValue: 0;
   height: number;
+  isViewMirrored: boolean;
   revision: string;
-  revisionHeader: string;
+  viewUrl: "/obstacle-masks/view.bin";
   width: number;
-  worldUrl: string;
+  worldUrl: "/obstacle-masks/world.bin";
 }
 
-export type GraphwarAgentPhase = "aiming" | "drawing" | "exploding" | "inactive";
+export type GraphwarAgentPhase = "aiming" | "drawing" | "exploding";
+
+/** Authoritative Graphwar function cursor at the surrounding state observation time. */
+export interface GraphwarAgentFunctionDraw {
+  currentStep: number;
+  stepsPerSecond: number;
+}
 
 /** Fields shared by available and unavailable Agent polling responses. */
 interface GraphwarAgentStateBase {
+  agentInstanceId: string;
   apiVersion: typeof GRAPHWAR_AGENT_API_VERSION;
-  available: boolean;
   capabilities: GraphwarAgentCapabilities;
+  isAvailable: boolean;
+  observationSequence: number;
+  observedAtEpochMs: number;
   plane: GraphwarAgentPlane;
 }
 
 /** Stable unavailable response returned outside an active match. */
 export interface GraphwarAgentUnavailableState extends GraphwarAgentStateBase {
-  available: false;
+  isAvailable: false;
   reason: string;
 }
 
 /** Authoritative active-match snapshot with a battle revision and optional firing token. */
 export interface GraphwarAgentAvailableState extends GraphwarAgentStateBase {
-  available: true;
+  isAvailable: true;
   battleRevision: string;
-  currentTurn: number;
-  drawingFunction: boolean;
+  canAcceptShotCommands: boolean;
+  currentPlayerId: number | null;
+  currentPlayerIndex: number | null;
   equationMode: EquationMode;
-  exploding: boolean;
+  functionDraw: GraphwarAgentFunctionDraw | null;
   gameInstanceId: string;
-  gameMode: 0 | 1 | 2;
-  gameState: number;
+  isTerrainReversed: boolean;
   obstacleMask: GraphwarAgentObstacleMaskMetadata;
   phase: GraphwarAgentPhase;
   players: GraphwarAgentPlayer[];
   remainingTurnMs: number;
-  turnToken?: string;
+  shotCommand: GraphwarAgentShotCommandSummary | null;
+  turnToken: string | null;
 }
 
 export type GraphwarAgentState = GraphwarAgentAvailableState | GraphwarAgentUnavailableState;
 
 /** One pre-game room participant; remote computer ownership may be unknown. */
 export interface GraphwarAgentRoomPlayer {
-  computer: boolean | null;
-  disconnected: boolean;
-  id: number;
-  index: number;
-  local: boolean;
+  isComputerControlled: boolean | null;
+  isConnected: boolean;
+  isLocal: boolean;
+  isReady: boolean;
   name: string;
   numSoldiers: number;
-  ready: boolean;
+  playerId: number;
+  playerIndex: number;
   team: number;
 }
 
 /** Available pre-game room snapshot. */
 export interface GraphwarAgentAvailableRoom {
-  available: true;
-  gameMode: number;
-  gameState: number;
-  leader: boolean;
+  equationMode: EquationMode;
+  isAvailable: true;
+  isLeader: boolean;
   players: GraphwarAgentRoomPlayer[];
 }
 
 /** Stable response used when the client is not in a pre-game room. */
 export interface GraphwarAgentUnavailableRoom {
-  available: false;
+  isAvailable: false;
   reason: string;
 }
 
@@ -169,8 +180,7 @@ export type GraphwarAgentRoom = GraphwarAgentAvailableRoom | GraphwarAgentUnavai
 
 /** Acknowledgement that the requested ready command was submitted. */
 export interface GraphwarAgentReadyResult {
-  ok: true;
-  requestedReady: boolean;
+  isReady: boolean;
 }
 
 /** Shot command guarded by the state snapshot's token and revision. */
@@ -178,12 +188,42 @@ export interface GraphwarAgentShotRequest {
   angleRadians?: number;
   battleRevision: string;
   function: string;
+  gameInstanceId: string;
+  requestId: string;
   turnToken: string;
 }
 
-/** Acknowledgement that the guarded shot command was accepted. */
-export interface GraphwarAgentShotResult {
-  ok: true;
+/** Guard fields shared by a shot request and every command representation. */
+export type GraphwarAgentShotCommandIdentity = Pick<
+  GraphwarAgentShotRequest,
+  "battleRevision" | "gameInstanceId" | "requestId" | "turnToken"
+>;
+
+export type GraphwarAgentShotCommandStatus = "validating" | "claimed" | "submitted" | "failed" | "unknown";
+
+/** Status-specific diagnostic returned by a failed or unknown command resource. */
+export interface GraphwarAgentShotCommandError {
+  canRetryWithNewRequestId?: boolean;
+  code: string;
+  message: string;
+}
+
+/** Bounded command identity embedded in the current state snapshot. */
+export interface GraphwarAgentShotCommandSummary {
+  requestId: string;
+  status: Exclude<GraphwarAgentShotCommandStatus, "failed">;
+}
+
+/** Retained idempotent result of one guarded shot command. */
+export interface GraphwarAgentShotCommand {
+  battleRevision: string;
+  createdAtEpochMs: number;
+  error?: GraphwarAgentShotCommandError;
+  gameInstanceId: string;
+  requestId: string;
+  status: GraphwarAgentShotCommandStatus;
+  turnToken: string;
+  updatedAtEpochMs: number;
 }
 
 export type GraphwarAgentShotPlan =
@@ -227,6 +267,7 @@ export type GraphwarAgentWorldSnapshot = Omit<
 >;
 
 export type GraphwarAgentClientErrorKind =
+  | "command"
   | "conflict"
   | "incompatible"
   | "invalid-request"
@@ -235,14 +276,16 @@ export type GraphwarAgentClientErrorKind =
 
 /** Typed failure used to separate retryable transport failures from protocol incompatibility. */
 export class GraphwarAgentClientError extends Error {
+  readonly code?: string;
   readonly kind: GraphwarAgentClientErrorKind;
   readonly status?: number;
 
   /** Captures one normalized Agent failure without losing its original cause. */
-  constructor(kind: GraphwarAgentClientErrorKind, message: string, status?: number, cause?: unknown) {
+  constructor(kind: GraphwarAgentClientErrorKind, message: string, status?: number, cause?: unknown, code?: string) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "GraphwarAgentClientError";
     this.kind = kind;
+    this.code = code;
     this.status = status;
   }
 }
@@ -251,15 +294,23 @@ export class GraphwarAgentClientError extends Error {
 export interface GraphwarAgentClient {
   readonly baseUrl: string;
   readRoom: (signal?: AbortSignal) => Promise<GraphwarAgentRoom>;
+  readShotCommand: (requestId: string, signal?: AbortSignal) => Promise<GraphwarAgentShotCommand>;
   readState: (signal?: AbortSignal) => Promise<GraphwarAgentState>;
   readWorldObstacleMask: (state: GraphwarAgentAvailableState, signal?: AbortSignal) => Promise<Uint8Array>;
-  submitReady: (ready: boolean, signal?: AbortSignal) => Promise<GraphwarAgentReadyResult>;
-  submitShot: (request: GraphwarAgentShotRequest) => Promise<GraphwarAgentShotResult>;
+  submitReady: (isReady: boolean, signal?: AbortSignal) => Promise<GraphwarAgentReadyResult>;
+  submitShot: (request: GraphwarAgentShotRequest, signal?: AbortSignal) => Promise<GraphwarAgentShotCommand>;
 }
 
 /** Injectable transport used by tests and browsers without global fetch. */
 export interface GraphwarAgentClientOptions {
   fetch?: typeof globalThis.fetch;
+  token?: string;
+}
+
+/** Snapshot-only hooks that keep live state observation separate from offline snapshot adaptation. */
+export interface GraphwarAgentSnapshotReadOptions extends GraphwarAgentClientOptions {
+  /** Applies freshness-sensitive state before the mask request; false rejects the snapshot. */
+  onStateRead?: (state: GraphwarAgentState) => boolean | undefined;
 }
 
 /** Creates a client bound to one normalized local Agent address. */
@@ -272,29 +323,55 @@ export function createGraphwarAgentClient(
   if (!fetchImplementation) {
     throw new GraphwarAgentClientError("transient", "Fetch is unavailable in this browser");
   }
+  const token = options.token ?? "";
+  if (token.length > 4096) {
+    throw new GraphwarAgentClientError(
+      "invalid-request",
+      "Graphwar Agent token must contain at most 4096 visible ASCII characters excluding comma",
+    );
+  }
+  for (let index = 0; index < token.length; index += 1) {
+    const character = token.charCodeAt(index);
+    if (character < 0x21 || character > 0x7e || character === 0x2c) {
+      throw new GraphwarAgentClientError(
+        "invalid-request",
+        "Graphwar Agent token must contain visible ASCII characters excluding comma",
+      );
+    }
+  }
+  const transport: typeof globalThis.fetch = (input, init = {}) => {
+    if (!token) {
+      return fetchImplementation(input, init);
+    }
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    return fetchImplementation(input, { ...init, headers });
+  };
 
   return {
     baseUrl: baseUrl.toString().replace(/\/$/, ""),
-    readRoom: (signal) => readGraphwarAgentRoomResponse(fetchImplementation, baseUrl, signal),
-    readState: (signal) => readGraphwarAgentStateResponse(fetchImplementation, baseUrl, signal),
+    readRoom: (signal) => readGraphwarAgentRoomResponse(transport, baseUrl, signal),
+    readShotCommand: (requestId, signal) => readGraphwarAgentShotCommandResponse(transport, baseUrl, requestId, signal),
+    readState: (signal) => readGraphwarAgentStateResponse(transport, baseUrl, signal),
     readWorldObstacleMask: (state, signal) =>
-      readGraphwarAgentWorldObstacleMaskResponse(fetchImplementation, baseUrl, state, signal),
-    submitReady: (ready, signal) => submitGraphwarAgentReadyResponse(fetchImplementation, baseUrl, ready, signal),
-    // A shot is deliberately not coupled to a polling AbortSignal: once submitted, its
-    // result may be unknown, but it must never be retried by this client.
-    submitShot: (request) => submitGraphwarAgentShotResponse(fetchImplementation, baseUrl, request),
+      readGraphwarAgentWorldObstacleMaskResponse(transport, baseUrl, state, signal),
+    submitReady: (isReady, signal) => submitGraphwarAgentReadyResponse(transport, baseUrl, isReady, signal),
+    submitShot: (request, signal) => submitGraphwarAgentShotResponse(transport, baseUrl, request, signal),
   };
 }
 
 /** Reads and adapts one complete authoritative Agent snapshot for the existing page workflow. */
 export async function readGraphwarAgentSnapshot(
   baseUrlText: string,
-  options: GraphwarAgentClientOptions = {},
-): Promise<GraphwarAgentSnapshot> {
+  options: GraphwarAgentSnapshotReadOptions = {},
+): Promise<GraphwarAgentSnapshot | undefined> {
   const client = createGraphwarAgentClient(baseUrlText, options);
   const state = await client.readState();
-  if (!state.available || state.phase === "inactive") {
-    throw new GraphwarAgentClientError("unavailable", state.available ? "game-not-active" : state.reason);
+  if (options.onStateRead?.(state) === false) {
+    return undefined;
+  }
+  if (!state.isAvailable) {
+    throw new GraphwarAgentClientError("unavailable", state.reason);
   }
 
   const worldObstacleMask = await client.readWorldObstacleMask(state);
@@ -310,7 +387,7 @@ export function createGraphwarAgentSnapshot(
   const worldSnapshot = createGraphwarAgentWorldSnapshot(baseUrl, state, worldObstacleMask);
   const shooter = selectGraphwarAgentShooter(state);
   if (shooter) {
-    return createGraphwarAgentShooterViewSnapshot(worldSnapshot, shooter.player.id, shooter.soldier.index);
+    return createGraphwarAgentShooterViewSnapshot(worldSnapshot, shooter.player.playerId, shooter.soldier.soldierIndex);
   }
   return { ...worldSnapshot, detectionResult: createGraphwarAgentDetectionResult(state, worldObstacleMask, 1) };
 }
@@ -339,9 +416,9 @@ export function createGraphwarAgentShooterViewSnapshot(
   playerId: number,
   soldierIndex: number,
 ): GraphwarAgentSnapshot {
-  const player = snapshot.state.players.find((candidate) => candidate.id === playerId);
-  const soldier = player?.soldiers.find((candidate) => candidate.index === soldierIndex);
-  if (!player || !soldier?.alive) {
+  const player = snapshot.state.players.find((candidate) => candidate.playerId === playerId);
+  const soldier = player?.soldiers.find((candidate) => candidate.soldierIndex === soldierIndex);
+  if (!player || !soldier?.isAlive) {
     throw new GraphwarAgentClientError("conflict", "The selected Graphwar shooter is unavailable");
   }
 
@@ -349,12 +426,15 @@ export function createGraphwarAgentShooterViewSnapshot(
   const shooter = {
     player,
     soldier,
-    speculative: selected?.player.id !== playerId || selected.soldier.index !== soldierIndex || selected.speculative,
+    isSpeculative:
+      selected?.player.playerId !== playerId ||
+      selected.soldier.soldierIndex !== soldierIndex ||
+      selected.isSpeculative,
   };
   return {
     ...snapshot,
     detectionResult: createGraphwarAgentDetectionResult(snapshot.state, snapshot.worldObstacleMask, player.team),
-    localCurrentTurnSoldierPoint: shooter.speculative
+    localCurrentTurnSoldierPoint: shooter.isSpeculative
       ? undefined
       : worldPointToShooterView(soldier.world.pixel, player.team),
     shooter,
@@ -365,43 +445,47 @@ export function createGraphwarAgentShooterViewSnapshot(
 export function selectGraphwarAgentCurrentShooter(
   state: GraphwarAgentAvailableState,
 ): GraphwarAgentCurrentShooter | undefined {
-  const currentPlayer = state.players[state.currentTurn];
+  const currentPlayer = state.currentPlayerIndex === null ? undefined : state.players[state.currentPlayerIndex];
   if (state.phase !== "aiming" || !isGraphwarAgentLocalHuman(currentPlayer)) {
     return undefined;
   }
-  const soldier = currentPlayer.soldiers[currentPlayer.currentTurnSoldier];
-  return soldier?.alive ? { player: currentPlayer, soldier } : undefined;
+  const soldier =
+    currentPlayer.currentSoldierIndex === null ? undefined : currentPlayer.soldiers[currentPlayer.currentSoldierIndex];
+  return soldier?.isAlive ? { player: currentPlayer, soldier } : undefined;
 }
 
 /** Chooses the active local human or predicts the next one for a manual state read. */
 export function selectGraphwarAgentShooter(state: GraphwarAgentAvailableState): GraphwarAgentShooter | undefined {
   const currentShooter = selectGraphwarAgentCurrentShooter(state);
   if (currentShooter) {
-    return { ...currentShooter, speculative: false };
+    return { ...currentShooter, isSpeculative: false };
   }
 
+  const currentPlayerIndex = state.currentPlayerIndex ?? -1;
   for (let offset = 1; offset <= state.players.length; offset += 1) {
-    const player = state.players[(state.currentTurn + offset) % state.players.length];
+    const player = state.players[(currentPlayerIndex + offset + state.players.length) % state.players.length];
     if (!isGraphwarAgentLocalHuman(player)) {
       continue;
     }
     for (let soldierOffset = 1; soldierOffset <= player.soldiers.length; soldierOffset += 1) {
-      const index = (player.currentTurnSoldier + soldierOffset + player.soldiers.length) % player.soldiers.length;
+      const currentSoldierIndex = player.currentSoldierIndex ?? -1;
+      const index = (currentSoldierIndex + soldierOffset + player.soldiers.length) % player.soldiers.length;
       const soldier = player.soldiers[index];
-      if (soldier?.alive) {
-        return { player, soldier, speculative: true };
+      if (soldier?.isAlive) {
+        return { isSpeculative: true, player, soldier };
       }
     }
   }
   return undefined;
 }
 
-/** Builds the exact mode-specific payload accepted by Agent API v2. */
+/** Builds the exact mode-specific payload accepted by Agent API v3. */
 export function createGraphwarAgentShotRequest(
   state: GraphwarAgentAvailableState,
   plan: GraphwarAgentShotPlan,
+  requestId = crypto.randomUUID(),
 ): GraphwarAgentShotRequest {
-  if (state.phase !== "aiming" || state.drawingFunction || state.exploding || !state.turnToken) {
+  if (state.phase !== "aiming" || !state.turnToken || !state.canAcceptShotCommands) {
     throw new GraphwarAgentClientError("conflict", "Graphwar is not accepting a shot for this snapshot");
   }
   if (plan.equationMode !== state.equationMode) {
@@ -418,19 +502,28 @@ export function createGraphwarAgentShotRequest(
       angleRadians: plan.angleRadians,
       battleRevision: state.battleRevision,
       function: plan.function,
+      gameInstanceId: state.gameInstanceId,
+      requestId,
       turnToken: state.turnToken,
     };
   }
   return {
     battleRevision: state.battleRevision,
     function: plan.function,
+    gameInstanceId: state.gameInstanceId,
+    requestId,
     turnToken: state.turnToken,
   };
 }
 
 /** Reports whether the Agent advertises every capability required by managed mode. */
 export function supportsGraphwarManagedMode(capabilities: GraphwarAgentCapabilities) {
-  return capabilities.ready && capabilities.room && capabilities.shot && capabilities.worldObstacleMask;
+  return (
+    capabilities.canReadRoom &&
+    capabilities.canReadWorldObstacleMask &&
+    capabilities.canSetReady &&
+    capabilities.canSubmitShots
+  );
 }
 
 /** Identifies a malformed or unsupported Agent contract that should stop managed mode. */
@@ -483,10 +576,11 @@ async function readGraphwarAgentWorldObstacleMaskResponse(
   signal?: AbortSignal,
 ) {
   const response = await requestGraphwarAgent(fetchImplementation, new URL(state.obstacleMask.worldUrl, baseUrl), {
+    headers: { "If-Match": `"${state.obstacleMask.revision}"` },
     signal,
   });
-  const revision = response.headers.get(state.obstacleMask.revisionHeader);
-  if (revision !== state.obstacleMask.revision) {
+  const revision = response.headers.get("ETag");
+  if (revision !== `"${state.obstacleMask.revision}"`) {
     throw new GraphwarAgentClientError("conflict", "Graphwar state changed while reading the obstacle mask");
   }
 
@@ -515,38 +609,58 @@ export function parseGraphwarAgentWorldObstacleMask(buffer: ArrayBufferLike, sta
 async function submitGraphwarAgentReadyResponse(
   fetchImplementation: typeof globalThis.fetch,
   baseUrl: URL,
-  ready: boolean,
+  isReady: boolean,
   signal?: AbortSignal,
 ) {
-  const response = await requestGraphwarAgent(fetchImplementation, new URL("ready", baseUrl), {
-    body: String(ready),
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-    method: "POST",
+  const response = await requestGraphwarAgent(fetchImplementation, new URL("room/ready", baseUrl), {
+    body: JSON.stringify({ isReady }),
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+    method: "PUT",
     signal,
   });
-  const result = requireRecord(await readGraphwarAgentJson(response, "/ready"), "/ready response");
-  if (result.ok !== true || result.requestedReady !== ready) {
-    throw incompatibleSchema("/ready response");
+  const result = requireRecord(await readGraphwarAgentJson(response, "/room/ready"), "/room/ready response");
+  if (result.isReady !== isReady) {
+    throw incompatibleSchema("/room/ready response");
   }
-  return { ok: true, requestedReady: ready } as const;
+  return { isReady };
 }
 
-/** Sends one shot exactly once and validates its acknowledgement. */
+/** Creates or safely replays one idempotent shot command. */
 async function submitGraphwarAgentShotResponse(
   fetchImplementation: typeof globalThis.fetch,
   baseUrl: URL,
   request: GraphwarAgentShotRequest,
+  signal?: AbortSignal,
 ) {
-  const response = await requestGraphwarAgent(fetchImplementation, new URL("shot", baseUrl), {
+  const response = await requestGraphwarAgent(fetchImplementation, new URL("shots", baseUrl), {
     body: JSON.stringify(request),
     headers: { "Content-Type": "application/json; charset=utf-8" },
     method: "POST",
+    signal,
   });
-  const result = requireRecord(await readGraphwarAgentJson(response, "/shot"), "/shot response");
-  if (result.ok !== true) {
-    throw incompatibleSchema("/shot response");
+  return requireMatchingGraphwarAgentShotCommand(
+    parseGraphwarAgentShotCommand(await readGraphwarAgentJson(response, "/shots")),
+    request,
+  );
+}
+
+/** Reads one retained shot command without changing its execution state. */
+async function readGraphwarAgentShotCommandResponse(
+  fetchImplementation: typeof globalThis.fetch,
+  baseUrl: URL,
+  requestId: string,
+  signal?: AbortSignal,
+) {
+  const response = await requestGraphwarAgent(
+    fetchImplementation,
+    new URL(`shots/${encodeURIComponent(requestId)}`, baseUrl),
+    { signal },
+  );
+  const command = parseGraphwarAgentShotCommand(await readGraphwarAgentJson(response, "/shots/{requestId}"));
+  if (command.requestId !== requestId) {
+    throw incompatibleSchema("shot command.requestId");
   }
-  return { ok: true } as const;
+  return command;
 }
 
 /** Converts transport and HTTP failures into stable controller-facing categories. */
@@ -561,17 +675,51 @@ async function requestGraphwarAgent(fetchImplementation: typeof globalThis.fetch
     return response;
   }
 
-  const message = (await response.text()).trim() || `HTTP ${response.status}`;
-  if (response.status === 404 || response.status === 405) {
-    throw new GraphwarAgentClientError("incompatible", message, response.status);
+  const errorBody = await readGraphwarAgentError(response);
+  if ((response.status === 404 && errorBody.code === "route-not-found") || response.status === 405) {
+    throw new GraphwarAgentClientError("incompatible", errorBody.message, response.status, undefined, errorBody.code);
   }
-  if (response.status === 400) {
-    throw new GraphwarAgentClientError("invalid-request", message, response.status);
+  if (
+    response.status === 400 ||
+    response.status === 401 ||
+    response.status === 411 ||
+    response.status === 413 ||
+    response.status === 415 ||
+    response.status === 431
+  ) {
+    throw new GraphwarAgentClientError(
+      "invalid-request",
+      errorBody.message,
+      response.status,
+      undefined,
+      errorBody.code,
+    );
   }
-  if (response.status === 409) {
-    throw new GraphwarAgentClientError("conflict", message, response.status);
+  if (response.status === 404 || response.status === 409 || response.status === 412 || response.status === 428) {
+    throw new GraphwarAgentClientError("conflict", errorBody.message, response.status, undefined, errorBody.code);
   }
-  throw new GraphwarAgentClientError("transient", message, response.status);
+  throw new GraphwarAgentClientError("transient", errorBody.message, response.status, undefined, errorBody.code);
+}
+
+/** Parses the stable v3 error envelope without trusting its human message for control flow. */
+async function readGraphwarAgentError(response: Response) {
+  try {
+    const body = requireRecord(await response.json(), "error response");
+    const error = requireRecord(body.error, "error response.error");
+    return {
+      code: requireString(error.code, "error.code"),
+      message: requireString(error.message, "error.message"),
+    };
+  } catch (error) {
+    if (error instanceof GraphwarAgentClientError) {
+      throw error;
+    }
+    throw new GraphwarAgentClientError(
+      "incompatible",
+      "Graphwar Agent returned an invalid error response",
+      response.status,
+    );
+  }
 }
 
 /** Separates retryable body-stream failures from malformed successful JSON. */
@@ -596,37 +744,54 @@ function createGraphwarAgentTransientError(error: unknown, messagePrefix = "") {
   );
 }
 
-/** Parses the API-v2 state union and validates all authoritative match fields. */
+/** Parses the API-v3 state union and validates all authoritative match fields. */
 export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
   const state = requireRecord(value, "/state response");
   const apiVersion = requireInteger(state.apiVersion, "apiVersion");
   if (apiVersion !== GRAPHWAR_AGENT_API_VERSION) {
     throw new GraphwarAgentClientError("incompatible", `Unsupported Graphwar Agent API version: ${apiVersion}`);
   }
+  const agentInstanceId = requireCanonicalUuid(state.agentInstanceId, "agentInstanceId");
   const capabilities = parseGraphwarAgentCapabilities(state.capabilities);
+  const observationSequence = requireNonNegativeInteger(state.observationSequence, "observationSequence");
+  const observedAtEpochMs = requireNonNegativeInteger(state.observedAtEpochMs, "observedAtEpochMs");
   const plane = parseGraphwarAgentPlane(state.plane);
-  if (state.available === false) {
+  if (state.isAvailable === false) {
     return {
+      agentInstanceId,
       apiVersion: GRAPHWAR_AGENT_API_VERSION,
-      available: false,
       capabilities,
+      isAvailable: false,
+      observationSequence,
+      observedAtEpochMs,
       plane,
       reason: requireString(state.reason, "reason"),
     };
   }
-  if (state.available !== true) {
-    throw incompatibleSchema("available");
+  if (state.isAvailable !== true) {
+    throw incompatibleSchema("isAvailable");
   }
 
-  const gameMode = requireInteger(state.gameMode, "gameMode");
-  if (gameMode !== 0 && gameMode !== 1 && gameMode !== 2) {
-    throw incompatibleSchema("gameMode");
-  }
   const phase = requireString(state.phase, "phase");
-  if (phase !== "aiming" && phase !== "drawing" && phase !== "exploding" && phase !== "inactive") {
+  if (phase !== "aiming" && phase !== "drawing" && phase !== "exploding") {
     throw incompatibleSchema("phase");
   }
-  const battleRevision = requireOpaqueString(state.battleRevision, "battleRevision");
+  let functionDraw: GraphwarAgentFunctionDraw | null = null;
+  if (state.functionDraw !== null) {
+    const value = requireRecord(state.functionDraw, "functionDraw");
+    const stepsPerSecond = requireInteger(value.stepsPerSecond, "functionDraw.stepsPerSecond");
+    if (stepsPerSecond <= 0) {
+      throw incompatibleSchema("functionDraw.stepsPerSecond");
+    }
+    functionDraw = {
+      currentStep: requireNonNegativeInteger(value.currentStep, "functionDraw.currentStep"),
+      stepsPerSecond,
+    };
+  }
+  if ((phase === "drawing") !== (functionDraw !== null)) {
+    throw incompatibleSchema("phase/functionDraw");
+  }
+  const battleRevision = requireBattleRevision(state.battleRevision, "battleRevision");
   const obstacleMask = parseGraphwarAgentObstacleMask(state.obstacleMask);
   if (obstacleMask.revision !== battleRevision) {
     throw incompatibleSchema("obstacleMask.revision");
@@ -635,41 +800,65 @@ export function parseGraphwarAgentState(value: unknown): GraphwarAgentState {
     throw incompatibleSchema("obstacleMask dimensions");
   }
 
-  const parsed: GraphwarAgentAvailableState = {
+  const players = requireArray(state.players, "players").map(parseGraphwarAgentPlayer);
+  const currentPlayerIndex = requireNullableInteger(state.currentPlayerIndex, "currentPlayerIndex");
+  const currentPlayerId = requireNullableInteger(state.currentPlayerId, "currentPlayerId");
+  if ((currentPlayerIndex === null) !== (currentPlayerId === null)) {
+    throw incompatibleSchema("currentPlayerIndex/currentPlayerId");
+  }
+  if (
+    currentPlayerIndex !== null &&
+    (players[currentPlayerIndex]?.playerIndex !== currentPlayerIndex ||
+      players[currentPlayerIndex]?.playerId !== currentPlayerId)
+  ) {
+    throw incompatibleSchema("currentPlayerIndex/currentPlayerId");
+  }
+
+  const turnToken = state.turnToken === null ? null : requireCanonicalUuid(state.turnToken, "turnToken");
+  const isTerrainReversed = requireBoolean(state.isTerrainReversed, "isTerrainReversed");
+  if (obstacleMask.isViewMirrored !== isTerrainReversed) {
+    throw incompatibleSchema("obstacleMask.isViewMirrored");
+  }
+  const shotCommand = state.shotCommand === null ? null : parseGraphwarAgentShotCommandSummary(state.shotCommand);
+  if (shotCommand && !turnToken) {
+    throw incompatibleSchema("shotCommand/turnToken");
+  }
+  return {
+    agentInstanceId,
     apiVersion: GRAPHWAR_AGENT_API_VERSION,
-    available: true,
     battleRevision,
+    canAcceptShotCommands: requireBoolean(state.canAcceptShotCommands, "canAcceptShotCommands"),
     capabilities,
-    currentTurn: requireInteger(state.currentTurn, "currentTurn"),
-    drawingFunction: requireBoolean(state.drawingFunction, "drawingFunction"),
-    equationMode: gameMode === 0 ? "y" : gameMode === 1 ? "dy" : "ddy",
-    exploding: requireBoolean(state.exploding, "exploding"),
-    gameInstanceId: requireOpaqueString(state.gameInstanceId, "gameInstanceId"),
-    gameMode,
-    gameState: requireInteger(state.gameState, "gameState"),
+    currentPlayerId,
+    currentPlayerIndex,
+    equationMode: parseGraphwarAgentEquationMode(state.equationMode, "equationMode"),
+    functionDraw,
+    gameInstanceId: requireCanonicalUuid(state.gameInstanceId, "gameInstanceId"),
+    isAvailable: true,
+    isTerrainReversed,
     obstacleMask,
+    observationSequence,
+    observedAtEpochMs,
     phase,
     plane,
-    players: requireArray(state.players, "players").map(parseGraphwarAgentPlayer),
+    players,
     remainingTurnMs: requireNonNegativeInteger(state.remainingTurnMs, "remainingTurnMs"),
+    shotCommand,
+    turnToken,
   };
-  if (state.turnToken !== undefined && state.turnToken !== null) {
-    parsed.turnToken = requireOpaqueString(state.turnToken, "turnToken");
-  }
-  if (phase === "aiming" && !parsed.turnToken) {
-    throw incompatibleSchema("turnToken");
-  }
-  return parsed;
 }
 
 /** Parses the four independently advertised managed-mode capabilities. */
 function parseGraphwarAgentCapabilities(value: unknown): GraphwarAgentCapabilities {
   const capabilities = requireRecord(value, "capabilities");
   return {
-    ready: requireBoolean(capabilities.ready, "capabilities.ready"),
-    room: requireBoolean(capabilities.room, "capabilities.room"),
-    shot: requireBoolean(capabilities.shot, "capabilities.shot"),
-    worldObstacleMask: requireBoolean(capabilities.worldObstacleMask, "capabilities.worldObstacleMask"),
+    canReadRoom: requireBoolean(capabilities.canReadRoom, "capabilities.canReadRoom"),
+    canReadWorldObstacleMask: requireBoolean(
+      capabilities.canReadWorldObstacleMask,
+      "capabilities.canReadWorldObstacleMask",
+    ),
+    canSetReady: requireBoolean(capabilities.canSetReady, "capabilities.canSetReady"),
+    canSubmitShots: requireBoolean(capabilities.canSubmitShots, "capabilities.canSubmitShots"),
   };
 }
 
@@ -690,20 +879,22 @@ function parseGraphwarAgentPlane(value: unknown): GraphwarAgentPlane {
 /** Parses one player while retaining authoritative ownership and team data. */
 function parseGraphwarAgentPlayer(value: unknown, fallbackIndex: number): GraphwarAgentPlayer {
   const player = requireRecord(value, `players[${fallbackIndex}]`);
-  const ready =
-    player.ready === undefined ? undefined : requireBoolean(player.ready, `players[${fallbackIndex}].ready`);
+  const playerIndex = requireInteger(player.playerIndex, `players[${fallbackIndex}].playerIndex`);
+  if (playerIndex !== fallbackIndex) {
+    throw incompatibleSchema(`players[${fallbackIndex}].playerIndex`);
+  }
   return {
-    computer: requireBoolean(player.computer, `players[${fallbackIndex}].computer`),
-    currentTurnSoldier: requireInteger(
-      player.currentTurnSoldier ?? player.currentTurnSoldierIndex,
-      `players[${fallbackIndex}].currentTurnSoldier`,
+    currentSoldierIndex: requireNullableInteger(
+      player.currentSoldierIndex,
+      `players[${fallbackIndex}].currentSoldierIndex`,
     ),
-    disconnected: requireBoolean(player.disconnected, `players[${fallbackIndex}].disconnected`),
-    id: requireInteger(player.id ?? player.playerId, `players[${fallbackIndex}].id`),
-    index: requireInteger(player.index, `players[${fallbackIndex}].index`),
-    local: requireBoolean(player.local, `players[${fallbackIndex}].local`),
+    isComputerControlled: requireBoolean(player.isComputerControlled, `players[${fallbackIndex}].isComputerControlled`),
+    isConnected: requireBoolean(player.isConnected, `players[${fallbackIndex}].isConnected`),
+    isLocal: requireBoolean(player.isLocal, `players[${fallbackIndex}].isLocal`),
+    isReady: requireBoolean(player.isReady, `players[${fallbackIndex}].isReady`),
     name: requireString(player.name, `players[${fallbackIndex}].name`),
-    ...(ready === undefined ? {} : { ready }),
+    playerId: requireInteger(player.playerId, `players[${fallbackIndex}].playerId`),
+    playerIndex,
     soldiers: requireArray(player.soldiers, `players[${fallbackIndex}].soldiers`).map(parseGraphwarAgentSoldier),
     team: requireInteger(player.team, `players[${fallbackIndex}].team`),
   };
@@ -714,14 +905,15 @@ function parseGraphwarAgentSoldier(value: unknown, fallbackIndex: number): Graph
   const soldier = requireRecord(value, `soldiers[${fallbackIndex}]`);
   const world = requireRecord(soldier.world, `soldiers[${fallbackIndex}].world`);
   const pixel = requireRecord(world.pixel, `soldiers[${fallbackIndex}].world.pixel`);
+  const soldierIndex = requireInteger(soldier.soldierIndex, `soldiers[${fallbackIndex}].soldierIndex`);
+  if (soldierIndex !== fallbackIndex) {
+    throw incompatibleSchema(`soldiers[${fallbackIndex}].soldierIndex`);
+  }
   return {
-    alive: requireBoolean(soldier.alive, `soldiers[${fallbackIndex}].alive`),
-    angle: requireFiniteNumber(soldier.angle, `soldiers[${fallbackIndex}].angle`),
-    exploding:
-      soldier.exploding === undefined
-        ? false
-        : requireBoolean(soldier.exploding, `soldiers[${fallbackIndex}].exploding`),
-    index: requireInteger(soldier.index ?? soldier.soldierIndex, `soldiers[${fallbackIndex}].index`),
+    angleRadians: requireFiniteNumber(soldier.angleRadians, `soldiers[${fallbackIndex}].angleRadians`),
+    isAlive: requireBoolean(soldier.isAlive, `soldiers[${fallbackIndex}].isAlive`),
+    isRendered: requireBoolean(soldier.isRendered, `soldiers[${fallbackIndex}].isRendered`),
+    soldierIndex,
     world: {
       pixel: createPixelPoint(
         requireFiniteNumber(pixel.x, `soldiers[${fallbackIndex}].world.pixel.x`),
@@ -734,32 +926,45 @@ function parseGraphwarAgentSoldier(value: unknown, fallbackIndex: number): Graph
 /** Parses the revision-bound world obstacle endpoint metadata. */
 function parseGraphwarAgentObstacleMask(value: unknown): GraphwarAgentObstacleMaskMetadata {
   const mask = requireRecord(value, "obstacleMask");
+  if (mask.blockedValue !== 1) {
+    throw incompatibleSchema("obstacleMask.blockedValue");
+  }
+  if (mask.emptyValue !== 0) {
+    throw incompatibleSchema("obstacleMask.emptyValue");
+  }
+  const viewUrl = requireString(mask.viewUrl, "obstacleMask.viewUrl");
+  if (viewUrl !== "/obstacle-masks/view.bin") {
+    throw incompatibleSchema("obstacleMask.viewUrl");
+  }
+  const worldUrl = requireString(mask.worldUrl, "obstacleMask.worldUrl");
+  if (worldUrl !== "/obstacle-masks/world.bin") {
+    throw incompatibleSchema("obstacleMask.worldUrl");
+  }
   return {
+    blockedValue: 1,
+    emptyValue: 0,
     height: requireInteger(mask.height, "obstacleMask.height"),
-    revision: requireOpaqueString(mask.revision, "obstacleMask.revision"),
-    revisionHeader:
-      mask.revisionHeader === undefined
-        ? GRAPHWAR_AGENT_BATTLE_REVISION_HEADER
-        : requireString(mask.revisionHeader, "obstacleMask.revisionHeader"),
+    isViewMirrored: requireBoolean(mask.isViewMirrored, "obstacleMask.isViewMirrored"),
+    revision: requireBattleRevision(mask.revision, "obstacleMask.revision"),
+    viewUrl,
     width: requireInteger(mask.width, "obstacleMask.width"),
-    worldUrl: requireString(mask.worldUrl, "obstacleMask.worldUrl"),
+    worldUrl,
   };
 }
 
 /** Parses the room availability union used by the managed-mode polling loop. */
 function parseGraphwarAgentRoom(value: unknown): GraphwarAgentRoom {
   const room = requireRecord(value, "/room response");
-  if (room.available === false) {
-    return { available: false, reason: requireString(room.reason, "reason") };
+  if (room.isAvailable === false) {
+    return { isAvailable: false, reason: requireString(room.reason, "reason") };
   }
-  if (room.available !== true) {
-    throw incompatibleSchema("room.available");
+  if (room.isAvailable !== true) {
+    throw incompatibleSchema("room.isAvailable");
   }
   return {
-    available: true,
-    gameMode: requireInteger(room.gameMode, "room.gameMode"),
-    gameState: requireInteger(room.gameState, "room.gameState"),
-    leader: requireBoolean(room.leader, "room.leader"),
+    equationMode: parseGraphwarAgentEquationMode(room.equationMode, "room.equationMode"),
+    isAvailable: true,
+    isLeader: requireBoolean(room.isLeader, "room.isLeader"),
     players: requireArray(room.players, "room.players").map(parseGraphwarAgentRoomPlayer),
   };
 }
@@ -767,18 +972,128 @@ function parseGraphwarAgentRoom(value: unknown): GraphwarAgentRoom {
 /** Parses one room player, preserving the remote computer-player unknown state. */
 function parseGraphwarAgentRoomPlayer(value: unknown, fallbackIndex: number): GraphwarAgentRoomPlayer {
   const player = requireRecord(value, `room.players[${fallbackIndex}]`);
+  const playerIndex = requireInteger(player.playerIndex, `room.players[${fallbackIndex}].playerIndex`);
+  if (playerIndex !== fallbackIndex) {
+    throw incompatibleSchema(`room.players[${fallbackIndex}].playerIndex`);
+  }
   return {
-    computer:
-      player.computer === null ? null : requireBoolean(player.computer, `room.players[${fallbackIndex}].computer`),
-    disconnected: requireBoolean(player.disconnected, `room.players[${fallbackIndex}].disconnected`),
-    id: requireInteger(player.id, `room.players[${fallbackIndex}].id`),
-    index: requireInteger(player.index, `room.players[${fallbackIndex}].index`),
-    local: requireBoolean(player.local, `room.players[${fallbackIndex}].local`),
+    isComputerControlled:
+      player.isComputerControlled === null
+        ? null
+        : requireBoolean(player.isComputerControlled, `room.players[${fallbackIndex}].isComputerControlled`),
+    isConnected: requireBoolean(player.isConnected, `room.players[${fallbackIndex}].isConnected`),
+    isLocal: requireBoolean(player.isLocal, `room.players[${fallbackIndex}].isLocal`),
+    isReady: requireBoolean(player.isReady, `room.players[${fallbackIndex}].isReady`),
     name: requireString(player.name, `room.players[${fallbackIndex}].name`),
     numSoldiers: requireNonNegativeInteger(player.numSoldiers, `room.players[${fallbackIndex}].numSoldiers`),
-    ready: requireBoolean(player.ready, `room.players[${fallbackIndex}].ready`),
+    playerId: requireInteger(player.playerId, `room.players[${fallbackIndex}].playerId`),
+    playerIndex,
     team: requireInteger(player.team, `room.players[${fallbackIndex}].team`),
   };
+}
+
+/** Parses one retained command and enforces status-specific error fields. */
+export function parseGraphwarAgentShotCommand(value: unknown): GraphwarAgentShotCommand {
+  const command = requireRecord(value, "shot command");
+  const status = parseGraphwarAgentShotCommandStatus(command.status, "shot command.status");
+  const error = command.error === undefined ? undefined : parseGraphwarAgentShotCommandError(command.error, status);
+  if ((status === "failed" || status === "unknown") !== (error !== undefined)) {
+    throw incompatibleSchema("shot command.error");
+  }
+  return {
+    battleRevision: requireBattleRevision(command.battleRevision, "shot command.battleRevision"),
+    createdAtEpochMs: requireNonNegativeInteger(command.createdAtEpochMs, "shot command.createdAtEpochMs"),
+    ...(error ? { error } : {}),
+    gameInstanceId: requireCanonicalUuid(command.gameInstanceId, "shot command.gameInstanceId"),
+    requestId: requireCanonicalUuid(command.requestId, "shot command.requestId"),
+    status,
+    turnToken: requireCanonicalUuid(command.turnToken, "shot command.turnToken"),
+    updatedAtEpochMs: requireNonNegativeInteger(command.updatedAtEpochMs, "shot command.updatedAtEpochMs"),
+  };
+}
+
+/** Rejects a valid command resource that belongs to a different guarded submission. */
+export function requireMatchingGraphwarAgentShotCommand(
+  command: GraphwarAgentShotCommand,
+  identity: GraphwarAgentShotCommandIdentity,
+) {
+  if (
+    command.requestId !== identity.requestId ||
+    command.gameInstanceId !== identity.gameInstanceId ||
+    command.turnToken !== identity.turnToken ||
+    command.battleRevision !== identity.battleRevision
+  ) {
+    throw incompatibleSchema("shot command identity");
+  }
+  return command;
+}
+
+/** Converts a terminal command diagnostic to the page's structured error type. */
+export function createGraphwarAgentShotCommandError(command: GraphwarAgentShotCommand) {
+  return new GraphwarAgentClientError(
+    "command",
+    command.error?.message ?? `Graphwar Agent returned ${command.status} without command error details`,
+    undefined,
+    undefined,
+    command.error?.code,
+  );
+}
+
+/** Parses the current-turn command summary embedded in `/state`. */
+function parseGraphwarAgentShotCommandSummary(value: unknown): GraphwarAgentShotCommandSummary {
+  const summary = requireRecord(value, "shotCommand");
+  const status = parseGraphwarAgentShotCommandStatus(summary.status, "shotCommand.status");
+  if (status === "failed") {
+    throw incompatibleSchema("shotCommand.status");
+  }
+  return {
+    requestId: requireCanonicalUuid(summary.requestId, "shotCommand.requestId"),
+    status,
+  };
+}
+
+/** Parses one status-specific public command error. */
+function parseGraphwarAgentShotCommandError(
+  value: unknown,
+  status: GraphwarAgentShotCommandStatus,
+): GraphwarAgentShotCommandError {
+  const error = requireRecord(value, "shot command.error");
+  const canRetryWithNewRequestId =
+    error.canRetryWithNewRequestId === undefined
+      ? undefined
+      : requireBoolean(error.canRetryWithNewRequestId, "shot command.error.canRetryWithNewRequestId");
+  if ((status === "failed") !== (canRetryWithNewRequestId !== undefined)) {
+    throw incompatibleSchema("shot command.error.canRetryWithNewRequestId");
+  }
+  return {
+    ...(canRetryWithNewRequestId === undefined ? {} : { canRetryWithNewRequestId }),
+    code: requireString(error.code, "shot command.error.code"),
+    message: requireString(error.message, "shot command.error.message"),
+  };
+}
+
+/** Parses one command state without accepting future or misspelled values. */
+function parseGraphwarAgentShotCommandStatus(value: unknown, field: string): GraphwarAgentShotCommandStatus {
+  const status = requireString(value, field);
+  if (
+    status !== "validating" &&
+    status !== "claimed" &&
+    status !== "submitted" &&
+    status !== "failed" &&
+    status !== "unknown"
+  ) {
+    throw incompatibleSchema(field);
+  }
+  return status;
+}
+
+/** Parses the public equation-mode enum shared by state and room responses. */
+function parseGraphwarAgentEquationMode(value: unknown, field: string): EquationMode {
+  const equationMode = requireString(value, field);
+  if (equationMode !== "y" && equationMode !== "dy" && equationMode !== "ddy") {
+    throw incompatibleSchema(field);
+  }
+  return equationMode;
 }
 
 /** Adapts live soldiers to the existing detection-box model in the selected shooter's view. */
@@ -790,26 +1105,26 @@ function createGraphwarAgentSoldierBoxes(
   const visualRadius = GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2;
   for (const player of state.players) {
     for (const soldier of player.soldiers) {
-      if (!soldier.alive) {
+      if (!soldier.isAlive) {
         continue;
       }
       const center = worldPointToShooterView(soldier.world.pixel, shooterTeam);
       soldiers.push({
         confidence: 1,
-        computer: player.computer,
-        friendly: player.team === shooterTeam,
+        isComputerControlled: player.isComputerControlled,
+        isFriendly: player.team === shooterTeam,
         height: visualRadius * 2,
         hitRadius: GRAPHWAR_SOLDIER_RADIUS,
-        id: `agent-player-${player.id}-soldier-${soldier.index}`,
+        id: `agent-player-${player.playerId}-soldier-${soldier.soldierIndex}`,
         kind: "soldier",
-        local: player.local,
+        isLocal: player.isLocal,
         mirrored: false,
-        playerId: player.id,
-        playerIndex: player.index,
+        playerId: player.playerId,
+        playerIndex: player.playerIndex,
         selectionRadius: visualRadius,
         sourceCenterX: center.x,
         sourceCenterY: center.y,
-        soldierIndex: soldier.index,
+        soldierIndex: soldier.soldierIndex,
         team: player.team,
         templateName: "agent",
         visualCenterX: center.x,
@@ -859,7 +1174,7 @@ function worldMaskToShooterView(worldMask: Uint8Array, shooterTeam: number) {
 
 /** 判断玩家是否为可由本地托管模式控制的已连接真人。 */
 export function isGraphwarAgentLocalHuman(player: GraphwarAgentPlayer | undefined): player is GraphwarAgentPlayer {
-  return Boolean(player?.local && !player.computer && !player.disconnected);
+  return Boolean(player?.isLocal && !player.isComputerControlled && player.isConnected);
 }
 
 /** Creates a transparent canvas without relying on an external image asset. */
@@ -919,6 +1234,11 @@ function requireNonNegativeInteger(value: unknown, field: string) {
   return number;
 }
 
+/** Requires an integer or the explicit null used for unavailable fixed-shape fields. */
+function requireNullableInteger(value: unknown, field: string) {
+  return value === null ? null : requireInteger(value, field);
+}
+
 /** Requires a string field. */
 function requireString(value: unknown, field: string) {
   if (typeof value !== "string") {
@@ -927,13 +1247,22 @@ function requireString(value: unknown, field: string) {
   return value;
 }
 
-/** Requires a non-empty opaque identifier without interpreting its format. */
-function requireOpaqueString(value: unknown, field: string) {
-  const string = requireString(value, field);
-  if (!string) {
+/** Requires the canonical lowercase UUID shape emitted by the v3 identity contract. */
+function requireCanonicalUuid(value: unknown, field: string) {
+  const identifier = requireString(value, field);
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(identifier)) {
     throw incompatibleSchema(field);
   }
-  return string;
+  return identifier;
+}
+
+/** Requires the fixed lowercase SHA-256 revision shape used by state guards and ETags. */
+function requireBattleRevision(value: unknown, field: string) {
+  const revision = requireString(value, field);
+  if (!/^sha256:[0-9a-f]{64}$/.test(revision)) {
+    throw incompatibleSchema(field);
+  }
+  return revision;
 }
 
 /** Creates a consistent malformed-contract error. */

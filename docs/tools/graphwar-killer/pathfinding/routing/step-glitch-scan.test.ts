@@ -346,6 +346,42 @@ describe("Step ODE glitch scan", () => {
     expect(result.expandedStates).toBeGreaterThan(1);
   }, 30_000);
 
+  it("tries the third earlier gate when the first two gates collapse at 15 decimals", () => {
+    const collapsedBounds: GraphBounds = {
+      maxX: 8_800_000_000_000.25,
+      maxY: 10,
+      minX: 8_800_000_000_000,
+      minY: -10,
+    };
+    const wallX = 30;
+    const obstacleLeftX = imageToGraphPoint(createPixelPoint(wallX, 0), collapsedBounds, boundsRect).x;
+    expect(imageToGraphPoint(createPixelPoint(wallX - 1, 0), collapsedBounds, boundsRect).x).toBe(obstacleLeftX);
+    expect(imageToGraphPoint(createPixelPoint(wallX - 2, 0), collapsedBounds, boundsRect).x).toBe(obstacleLeftX);
+    expect(imageToGraphPoint(createPixelPoint(wallX - 3, 0), collapsedBounds, boundsRect).x).toBeLessThan(
+      obstacleLeftX,
+    );
+
+    const start = toPixelForBounds(collapsedBounds.minX, 0, collapsedBounds);
+    const target = toPixelForBounds(collapsedBounds.minX + 0.23, 0, collapsedBounds);
+    const mask = createEmptyMask();
+    for (let row = 1; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      mask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const result = scanGraphwarStepGlitchPath({
+      bounds: collapsedBounds,
+      boundsRect,
+      hitTarget: { center: target, radius: 12 },
+      settings,
+      simulationMask: mask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("no-path");
+    // B-1 与 B-2 坍缩后，只有 B-3 能生成 gate 候选。
+    expect(result.expandedStates).toBeGreaterThan(1);
+  }, 30_000);
+
   it("keeps the pixel-derived right gate that used to exceed the fixed ULP retry limit", () => {
     const wideBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
     const start = toPixelForBounds(-1.5, 0, wideBounds);

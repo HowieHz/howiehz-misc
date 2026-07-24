@@ -17,7 +17,7 @@ import java.util.function.Supplier;
 
 final class GraphwarStateReader {
     // Source: official GraphServer.Constants game-state and game-mode values.
-    private static final int API_VERSION = 2;
+    private static final int API_VERSION = 3;
     private static final int GRAPHWAR_GAME_MODE_NORMAL = 0;
     private static final int GRAPHWAR_GAME_MODE_FIRST_DERIVATIVE = 1;
     private static final int GRAPHWAR_GAME_MODE_SECOND_DERIVATIVE = 2;
@@ -25,32 +25,65 @@ final class GraphwarStateReader {
     private static final int GRAPHWAR_GAME_STATE_GAME = 2;
     private static final String GRAPHWAR_COMPUTER_PLAYER_CLASS_NAME = "Graphwar.ComputerPlayer";
     private static final double MAX_ANGLE_RADIANS = Math.PI / 2.0;
+    private final String agentInstanceId = UUID.randomUUID().toString();
     private final Supplier<Object> graphwarFinder;
+    private final GraphwarFunctionLimits functionLimits;
     private final Object identityLock = new Object();
+    // Serializes GameData replacement with identity publication; old snapshots must never retire a
+    // newer game.
+    private final Object snapshotLock = new Object();
+    private byte[] cachedWorldObstacleMask;
+    private int cachedWorldObstacleMaskExplosionRadius = Integer.MIN_VALUE;
+    private int cachedWorldObstacleMaskExplosionX = Integer.MIN_VALUE;
+    private int cachedWorldObstacleMaskExplosionY = Integer.MIN_VALUE;
+    private Object cachedWorldObstacleMaskSource;
     private Object identityGameData;
     private Object identityObstacle;
     private String gameInstanceId;
     private int identityPlayerId = -1;
     private int identitySoldierIndex = -1;
     private long identityTurnStartedAt = Long.MIN_VALUE;
+    private long identityObservationSequence;
     private String turnToken;
-    private boolean turnTokenClaimed;
+    private boolean isTurnTokenClaimed;
+    private GraphwarShotCommandStore shotCommands;
 
     /** Locates the live official client through AWT in production. */
     GraphwarStateReader() {
-        this(GraphwarStateReader::findGraphwarWindow);
+        this(GraphwarAgentConfig.parse(null), GraphwarStateReader::findGraphwarWindow);
+    }
+
+    /** Uses one startup configuration for formula validation and production window lookup. */
+    GraphwarStateReader(GraphwarAgentConfig config) {
+        this(config, GraphwarStateReader::findGraphwarWindow);
     }
 
     /** Accepts a client locator so tests can exercise the same reflection and HTTP paths. */
     GraphwarStateReader(Supplier<Object> graphwarFinder) {
+        this(GraphwarAgentConfig.parse(null), graphwarFinder);
+    }
+
+    /** Accepts both limits and a client locator for complete contract tests. */
+    GraphwarStateReader(GraphwarAgentConfig config, Supplier<Object> graphwarFinder) {
+        this.functionLimits =
+                new GraphwarFunctionLimits(config.maxFunctionBytes, config.maxFunctionTokens);
         this.graphwarFinder = graphwarFinder;
+    }
+
+    /** Connects the command ledger after construction without creating an ownership cycle. */
+    void setShotCommands(GraphwarShotCommandStore shotCommands) {
+        this.shotCommands = shotCommands;
     }
 
     /** Reads and then serializes one immutable active-match snapshot. */
     String readStateJson() throws GraphwarStateException {
         StateSnapshot snapshot = readStateSnapshot(false);
-        if (!snapshot.available) {
-            return unavailableStateJson(snapshot.reason);
+        if (!snapshot.isAvailable) {
+            return unavailableStateJson(
+                    snapshot.reason,
+                    agentInstanceId,
+                    snapshot.observationSequence,
+                    snapshot.observedAtEpochMs);
         }
 
         StringBuilder json = new StringBuilder(10_240);
@@ -58,7 +91,11 @@ final class GraphwarStateReader {
         appendPlane(json);
         appendApiMetadata(json);
         appendAgent(json);
-        json.append(",\"available\":true");
+        json.append(",\"agentInstanceId\":");
+        appendJsonString(json, agentInstanceId);
+        json.append(",\"observationSequence\":").append(snapshot.observationSequence);
+        json.append(",\"observedAtEpochMs\":").append(snapshot.observedAtEpochMs);
+        json.append(",\"isAvailable\":true");
         json.append(",\"gameInstanceId\":");
         appendJsonString(json, snapshot.gameInstanceId);
         json.append(",\"turnToken\":");
@@ -70,17 +107,42 @@ final class GraphwarStateReader {
         json.append(",\"battleRevision\":");
         appendJsonString(json, snapshot.battleRevision);
         json.append(",\"remainingTurnMs\":").append(snapshot.remainingTurnMs);
-        json.append(",\"drawingFunction\":").append(snapshot.drawingFunction);
-        json.append(",\"exploding\":").append(snapshot.exploding);
         json.append(",\"phase\":");
         appendJsonString(json, snapshot.phase);
-        json.append(",\"terrainReversed\":").append(snapshot.terrainReversed);
-        json.append(",\"gameState\":").append(snapshot.gameState);
-        json.append(",\"gameMode\":").append(snapshot.gameMode);
-        json.append(",\"currentTurn\":").append(snapshot.currentTurn);
-        json.append(",\"currentTurnPlayerId\":").append(snapshot.currentTurnPlayerId);
-        appendObstacleMaskMetadata(json, snapshot.terrainReversed, snapshot.battleRevision);
-        appendPlayers(json, snapshot.players, snapshot.terrainReversed);
+        json.append(",\"functionDraw\":");
+        if (snapshot.functionDraw == null) {
+            json.append("null");
+        } else {
+            json.append("{\"currentStep\":")
+                    .append(snapshot.functionDraw.currentStep)
+                    .append(",\"stepsPerSecond\":")
+                    .append(snapshot.functionDraw.stepsPerSecond)
+                    .append('}');
+        }
+        json.append(",\"isTerrainReversed\":").append(snapshot.isTerrainReversed);
+        json.append(",\"equationMode\":");
+        appendJsonString(json, equationMode(snapshot.gameMode));
+        json.append(",\"currentPlayerIndex\":");
+        appendNullableInteger(json, snapshot.currentTurn);
+        json.append(",\"currentPlayerId\":");
+        appendNullableInteger(json, snapshot.currentTurnPlayerId);
+        json.append(",\"canAcceptShotCommands\":")
+                .append(shotCommands == null || shotCommands.canAcceptShotCommands());
+        json.append(",\"shotCommand\":");
+        if (shotCommands == null) {
+            json.append("null");
+        } else {
+            shotCommands.observeState(
+                    snapshot.observationSequence, snapshot.gameInstanceId, snapshot.turnToken);
+            if (snapshot.turnToken == null) {
+                json.append("null");
+            } else {
+                shotCommands.appendCurrentSummary(
+                        json, snapshot.gameInstanceId, snapshot.turnToken);
+            }
+        }
+        appendObstacleMaskMetadata(json, snapshot.isTerrainReversed, snapshot.battleRevision);
+        appendPlayers(json, snapshot.players, snapshot.isTerrainReversed);
         json.append('}');
         return json.toString();
     }
@@ -105,10 +167,10 @@ final class GraphwarStateReader {
 
             List<?> players = readPlayers(gameData);
             StringBuilder json = new StringBuilder(1024);
-            json.append("{\"available\":true");
-            json.append(",\"gameState\":").append(GRAPHWAR_GAME_STATE_PRE_GAME);
-            json.append(",\"gameMode\":").append(readInt(gameData, "getGameMode", -1));
-            json.append(",\"leader\":").append(readBoolean(gameData, "isLeader", false));
+            json.append("{\"isAvailable\":true");
+            json.append(",\"equationMode\":");
+            appendJsonString(json, equationMode(readInt(gameData, "getGameMode", -1)));
+            json.append(",\"isLeader\":").append(readBoolean(gameData, "isLeader", false));
             json.append(",\"players\":[");
 
             for (int index = 0; index < players.size(); index += 1) {
@@ -117,21 +179,21 @@ final class GraphwarStateReader {
                 }
 
                 Object player = players.get(index);
-                boolean local = readBoolean(player, "isLocalPlayer", false);
+                boolean isLocal = readBoolean(player, "isLocalPlayer", false);
                 json.append('{');
-                json.append("\"index\":").append(index);
-                json.append(",\"id\":").append(readInt(player, "getID", -1));
+                json.append("\"playerIndex\":").append(index);
+                json.append(",\"playerId\":").append(readInt(player, "getID", -1));
                 json.append(",\"name\":");
                 appendJsonString(json, readString(player, "getName", ""));
                 json.append(",\"team\":").append(readInt(player, "getTeam", -1));
-                json.append(",\"local\":").append(local);
-                json.append(",\"computer\":");
+                json.append(",\"isLocal\":").append(isLocal);
+                json.append(",\"isComputerControlled\":");
                 // Remote computer ownership is not represented by the official protocol.
-                json.append(local ? Boolean.toString(isComputerPlayer(player)) : "null");
-                json.append(",\"ready\":").append(readBoolean(player, "getReady", false));
+                json.append(isLocal ? Boolean.toString(isComputerPlayer(player)) : "null");
+                json.append(",\"isReady\":").append(readBoolean(player, "getReady", false));
                 json.append(",\"numSoldiers\":").append(readInt(player, "getNumSoldiers", 0));
-                json.append(",\"disconnected\":")
-                        .append(readBoolean(player, "isDisconnected", false));
+                json.append(",\"isConnected\":")
+                        .append(!readBoolean(player, "isDisconnected", false));
                 json.append('}');
             }
 
@@ -143,7 +205,7 @@ final class GraphwarStateReader {
     /** Returns an immutable mask and the revision of the snapshot that produced it. */
     ObstacleMaskSnapshot readObstacleMask(String space) throws GraphwarStateException {
         StateSnapshot snapshot = readStateSnapshot(true);
-        if ("world".equals(space) || !snapshot.terrainReversed) {
+        if ("world".equals(space) || !snapshot.isTerrainReversed) {
             return new ObstacleMaskSnapshot(snapshot.worldObstacleMask, snapshot.battleRevision);
         }
 
@@ -158,11 +220,12 @@ final class GraphwarStateReader {
         return new ObstacleMaskSnapshot(viewMask, snapshot.battleRevision);
     }
 
-    /** Validates, claims, and submits one shot while the official state monitor is held. */
-    void submitShot(GraphwarShotRequest request) throws GraphwarStateException {
+    /** Validates, claims, and submits one shot while reporting the irreversible claim point. */
+    void submitShot(GraphwarShotRequest request, Runnable onClaimed) throws GraphwarStateException {
         if (request.function.isEmpty()) {
             throw new GraphwarInvalidFunctionException("Graphwar function is empty");
         }
+        functionLimits.validate(request.function);
         if (request.turnToken.isEmpty() || request.battleRevision.isEmpty()) {
             throw new GraphwarInvalidShotException(
                     "turnToken and battleRevision must not be empty");
@@ -176,91 +239,106 @@ final class GraphwarStateReader {
                     "angleRadians must be finite and between -pi/2 and pi/2");
         }
 
-        Object graphwar = graphwarFinder.get();
-        if (graphwar == null) {
+        Object graphwarForValidation = graphwarFinder.get();
+        if (graphwarForValidation == null) {
             throw new GraphwarStateUnavailableException("Graphwar window was not found");
-        }
-        Object gameData = invoke(graphwar, "getGameData");
-        if (gameData == null) {
-            throw new GraphwarStateUnavailableException("Graphwar GameData is not initialized yet");
         }
 
         // Syntax does not depend on mutable match state and is cheaper to reject before locking it.
-        validateFunctionSyntax(graphwar, request.function);
-        synchronized (gameData) {
-            if (readInt(gameData, "getGameState", -1) != GRAPHWAR_GAME_STATE_GAME) {
-                throw new GraphwarStateUnavailableException("Graphwar is not in an active game");
+        validateFunctionSyntax(graphwarForValidation, request.function);
+        synchronized (snapshotLock) {
+            Object graphwar = graphwarFinder.get();
+            if (graphwar == null) {
+                throw new GraphwarStateUnavailableException("Graphwar window was not found");
             }
-
-            StateSnapshot snapshot = readStateSnapshotLocked(gameData, true);
-            if (!request.turnToken.equals(snapshot.turnToken)) {
-                throw new GraphwarStateUnavailableException("Graphwar turn token is stale");
-            }
-            if (!request.battleRevision.equals(snapshot.battleRevision)) {
-                throw new GraphwarStateUnavailableException("Graphwar battle revision is stale");
-            }
-            if (snapshot.drawingFunction || snapshot.exploding) {
+            Object gameData = invoke(graphwar, "getGameData");
+            if (gameData == null) {
                 throw new GraphwarStateUnavailableException(
-                        "Graphwar is already resolving a function");
+                        "Graphwar GameData is not initialized yet");
             }
-            if (snapshot.remainingTurnMs <= 0) {
-                throw new GraphwarStateUnavailableException("Graphwar turn has expired");
-            }
-            if (snapshot.currentTurn < 0 || snapshot.currentTurn >= snapshot.players.size()) {
-                throw new GraphwarStateUnavailableException("Graphwar current turn is unavailable");
-            }
-
-            PlayerSnapshot currentPlayer = snapshot.players.get(snapshot.currentTurn);
-            if (!currentPlayer.local) {
-                throw new GraphwarStateUnavailableException("It is not this client's turn");
-            }
-            if (currentPlayer.computer) {
-                throw new GraphwarStateUnavailableException(
-                        "The current turn belongs to a local computer player");
-            }
-            if (currentPlayer.disconnected) {
-                throw new GraphwarStateUnavailableException(
-                        "The current local player is disconnected");
-            }
-            if (currentPlayer.currentTurnSoldierIndex < 0
-                    || currentPlayer.currentTurnSoldierIndex >= currentPlayer.soldiers.size()
-                    || !currentPlayer.soldiers.get(currentPlayer.currentTurnSoldierIndex).alive) {
-                throw new GraphwarStateUnavailableException(
-                        "Graphwar current soldier is unavailable");
-            }
-
-            if (snapshot.gameMode == GRAPHWAR_GAME_MODE_SECOND_DERIVATIVE) {
-                if (request.angleRadians == null) {
-                    throw new GraphwarInvalidShotException(
-                            "angleRadians is required in second-derivative mode");
-                }
-            } else {
-                if (snapshot.gameMode != GRAPHWAR_GAME_MODE_NORMAL
-                        && snapshot.gameMode != GRAPHWAR_GAME_MODE_FIRST_DERIVATIVE) {
+            synchronized (gameData) {
+                if (readInt(gameData, "getGameState", -1) != GRAPHWAR_GAME_STATE_GAME) {
                     throw new GraphwarStateUnavailableException(
-                            "Graphwar game mode is unsupported");
+                            "Graphwar is not in an active game");
                 }
+
+                StateSnapshot snapshot = readStateSnapshotLocked(gameData, true);
+                if (!request.gameInstanceId.equals(snapshot.gameInstanceId)) {
+                    throw new GraphwarStateUnavailableException("Graphwar game instance is stale");
+                }
+                if (!request.turnToken.equals(snapshot.turnToken)) {
+                    throw new GraphwarStateUnavailableException("Graphwar turn token is stale");
+                }
+                if (!request.battleRevision.equals(snapshot.battleRevision)) {
+                    throw new GraphwarStateUnavailableException(
+                            "Graphwar battle revision is stale");
+                }
+                if (snapshot.isDrawingFunction || snapshot.isExploding) {
+                    throw new GraphwarStateUnavailableException(
+                            "Graphwar is already resolving a function");
+                }
+                if (snapshot.remainingTurnMs <= 0) {
+                    throw new GraphwarStateUnavailableException("Graphwar turn has expired");
+                }
+                if (snapshot.currentTurn < 0 || snapshot.currentTurn >= snapshot.players.size()) {
+                    throw new GraphwarStateUnavailableException(
+                            "Graphwar current turn is unavailable");
+                }
+
+                PlayerSnapshot currentPlayer = snapshot.players.get(snapshot.currentTurn);
+                if (!currentPlayer.isLocal) {
+                    throw new GraphwarStateUnavailableException("It is not this client's turn");
+                }
+                if (currentPlayer.isComputerControlled) {
+                    throw new GraphwarStateUnavailableException(
+                            "The current turn belongs to a local computer player");
+                }
+                if (!currentPlayer.isConnected) {
+                    throw new GraphwarStateUnavailableException(
+                            "The current local player is disconnected");
+                }
+                if (currentPlayer.currentTurnSoldierIndex < 0
+                        || currentPlayer.currentTurnSoldierIndex >= currentPlayer.soldiers.size()
+                        || !currentPlayer.soldiers.get(currentPlayer.currentTurnSoldierIndex)
+                                .isAlive) {
+                    throw new GraphwarStateUnavailableException(
+                            "Graphwar current soldier is unavailable");
+                }
+
+                if (snapshot.gameMode == GRAPHWAR_GAME_MODE_SECOND_DERIVATIVE) {
+                    if (request.angleRadians == null) {
+                        throw new GraphwarInvalidShotException(
+                                "angleRadians is required in second-derivative mode");
+                    }
+                } else {
+                    if (snapshot.gameMode != GRAPHWAR_GAME_MODE_NORMAL
+                            && snapshot.gameMode != GRAPHWAR_GAME_MODE_FIRST_DERIVATIVE) {
+                        throw new GraphwarStateUnavailableException(
+                                "Graphwar game mode is unsupported");
+                    }
+                    if (request.angleRadians != null) {
+                        throw new GraphwarInvalidShotException(
+                                "angleRadians is not allowed in this game mode");
+                    }
+                }
+                claimTurnToken(request.turnToken);
+                onClaimed.run();
                 if (request.angleRadians != null) {
-                    throw new GraphwarInvalidShotException(
-                            "angleRadians is not allowed in this game mode");
+                    invoke(
+                            gameData,
+                            "setAngle",
+                            Double.TYPE,
+                            Double.valueOf(request.angleRadians.doubleValue()));
                 }
+                // The local monitor prevents a Graphwar message from changing turns between
+                // validation, angle mutation, and queuing the original two wire messages.
+                invoke(gameData, "sendFunction", String.class, request.function);
             }
-            claimTurnToken(request.turnToken);
-            if (request.angleRadians != null) {
-                invoke(
-                        gameData,
-                        "setAngle",
-                        Double.TYPE,
-                        Double.valueOf(request.angleRadians.doubleValue()));
-            }
-            // The local monitor prevents a Graphwar message from changing turns between
-            // validation, angle mutation, and queuing the original two wire messages.
-            invoke(gameData, "sendFunction", String.class, request.function);
         }
     }
 
     /** Sends one contiguous original-button-equivalent ready batch for all local players. */
-    void submitReady(boolean ready) throws GraphwarStateException {
+    void submitReady(boolean isReady) throws GraphwarStateException {
         Object graphwar = graphwarFinder.get();
         if (graphwar == null) {
             throw new GraphwarStateUnavailableException("Graphwar window was not found");
@@ -286,15 +364,16 @@ final class GraphwarStateReader {
                             "Graphwar is not in a pre-game room");
                 }
 
-                boolean foundLocalPlayer = false;
+                boolean hasLocalPlayer = false;
                 for (Object player : readPlayers(gameData)) {
                     if (readBoolean(player, "isLocalPlayer", false)) {
-                        foundLocalPlayer = true;
-                        // Repeated values are intentional: the server owns final ready state.
-                        setReadyMethod.invoke(gameData, player, Boolean.valueOf(ready));
+                        hasLocalPlayer = true;
+                        if (readBoolean(player, "getReady", false) != isReady) {
+                            setReadyMethod.invoke(gameData, player, Boolean.valueOf(isReady));
+                        }
                     }
                 }
-                if (!foundLocalPlayer) {
+                if (!hasLocalPlayer) {
                     throw new GraphwarStateUnavailableException(
                             "Graphwar has no local players to update");
                 }
@@ -302,63 +381,109 @@ final class GraphwarStateReader {
         } catch (ClassNotFoundException | IllegalAccessException | NoSuchMethodException error) {
             throw new GraphwarStateException("Cannot call Graphwar method setReady", error);
         } catch (InvocationTargetException error) {
-            throw new GraphwarStateException("Graphwar method setReady failed", error.getCause());
+            throw new GraphwarStateException(
+                    "Graphwar method setReady failed", unwrapInvocationFailure(error));
         }
     }
 
     /** Copies every mutable field needed by callers while GameData.handleMessage is excluded. */
-    private StateSnapshot readStateSnapshot(boolean requireObstacle) throws GraphwarStateException {
-        Object graphwar = graphwarFinder.get();
-        if (graphwar == null) {
-            if (requireObstacle) {
-                throw new GraphwarStateUnavailableException("Graphwar window was not found");
+    private StateSnapshot readStateSnapshot(boolean shouldRequireObstacle)
+            throws GraphwarStateException {
+        synchronized (snapshotLock) {
+            Object graphwar = graphwarFinder.get();
+            if (graphwar == null) {
+                if (shouldRequireObstacle) {
+                    throw new GraphwarStateUnavailableException("Graphwar window was not found");
+                }
+                return StateSnapshot.unavailable(
+                        "graphwar-window-not-found", nextObservationSequence());
             }
-            return StateSnapshot.unavailable("graphwar-window-not-found");
-        }
 
-        Object gameData = invoke(graphwar, "getGameData");
-        if (gameData == null) {
-            if (requireObstacle) {
-                throw new GraphwarStateUnavailableException(
-                        "Graphwar GameData is not initialized yet");
+            Object gameData = invoke(graphwar, "getGameData");
+            if (gameData == null) {
+                if (shouldRequireObstacle) {
+                    throw new GraphwarStateUnavailableException(
+                            "Graphwar GameData is not initialized yet");
+                }
+                return StateSnapshot.unavailable(
+                        "game-data-not-initialized", nextObservationSequence());
             }
-            return StateSnapshot.unavailable("game-data-not-initialized");
-        }
 
-        synchronized (gameData) {
-            return readStateSnapshotLocked(gameData, requireObstacle);
+            synchronized (gameData) {
+                return readStateSnapshotLocked(gameData, shouldRequireObstacle);
+            }
         }
     }
 
-    /** Assumes the caller owns the GameData monitor and returns no live Graphwar objects. */
-    private StateSnapshot readStateSnapshotLocked(Object gameData, boolean requireObstacle)
+    /** Assumes snapshotLock then the GameData monitor and returns no live Graphwar objects. */
+    private StateSnapshot readStateSnapshotLocked(Object gameData, boolean shouldRequireObstacle)
             throws GraphwarStateException {
         int gameState = readInt(gameData, "getGameState", -1);
         if (gameState != GRAPHWAR_GAME_STATE_GAME) {
-            if (requireObstacle) {
+            if (shouldRequireObstacle) {
                 throw new GraphwarStateUnavailableException("Graphwar is not in an active game");
             }
-            return StateSnapshot.unavailable("game-not-started");
+            return StateSnapshot.unavailable("game-not-started", nextObservationSequence());
         }
 
         Object obstacle = invoke(gameData, "getObstacle");
         if (obstacle == null) {
-            if (requireObstacle) {
+            if (shouldRequireObstacle) {
                 throw new GraphwarStateUnavailableException(
                         "Graphwar game has not started; obstacle is unavailable");
             }
-            return StateSnapshot.unavailable("game-not-started");
+            return StateSnapshot.unavailable("game-not-started", nextObservationSequence());
         }
 
         int gameMode = readInt(gameData, "getGameMode", -1);
         int currentTurn = readInt(gameData, "getCurrentTurnIndex", -1);
-        boolean drawingFunction = readBoolean(gameData, "isDrawingFunction", false);
-        boolean exploding = readBoolean(gameData, "isExploding", false);
-        boolean terrainReversed = readBoolean(gameData, "isTerrainReversed", false);
+        boolean isDrawingFunction = readBoolean(gameData, "isDrawingFunction", false);
+        boolean isExploding = readBoolean(gameData, "isExploding", false);
+        boolean isTerrainReversed = readBoolean(gameData, "isTerrainReversed", false);
+        long observedAtEpochMs;
+        FunctionDrawSnapshot functionDraw = null;
+        if (isDrawingFunction && !isExploding) {
+            int stepsPerSecond;
+            try {
+                Class<?> constantsClass =
+                        Class.forName(
+                                "GraphServer.Constants",
+                                false,
+                                gameData.getClass().getClassLoader());
+                stepsPerSecond = constantsClass.getField("FUNCTION_VELOCITY").getInt(null);
+            } catch (ClassNotFoundException
+                    | IllegalAccessException
+                    | NoSuchFieldException
+                    | RuntimeException error) {
+                throw new GraphwarStateException(
+                        "Cannot read Graphwar static field GraphServer.Constants.FUNCTION_VELOCITY",
+                        error);
+            }
+            if (stepsPerSecond <= 0) {
+                throw new GraphwarStateException("Graphwar FUNCTION_VELOCITY is not positive");
+            }
+            // Anchor response-age correction immediately beside the official time-derived cursor;
+            // first-use class loading above must not make clients advance the trajectory twice.
+            observedAtEpochMs = System.currentTimeMillis();
+            int currentStep = readInt(gameData, "getCurrentFunctionPosition", -1);
+            if (currentStep < 0) {
+                throw new GraphwarStateException("Graphwar function draw cursor is negative");
+            }
+            functionDraw = new FunctionDrawSnapshot(currentStep, stepsPerSecond);
+        } else {
+            observedAtEpochMs = System.currentTimeMillis();
+        }
+        // The official cursor getter performs the drawing-to-explosion transition at the exact
+        // final step, so phase and cursor must be sampled again before copying the battlefield.
+        isExploding = readBoolean(gameData, "isExploding", false);
+        if (isExploding) {
+            functionDraw = null;
+        }
+        long remainingTurnMs = Math.max(0L, readLong(gameData, "getRemainingTime", 0L));
         List<PlayerSnapshot> players = readPlayerSnapshots(gameData);
         byte[] worldObstacleMask = readWorldObstacleMask(obstacle);
         String battleRevision =
-                createBattleRevision(gameMode, terrainReversed, players, worldObstacleMask);
+                createBattleRevision(gameMode, isTerrainReversed, players, worldObstacleMask);
 
         int currentTurnPlayerId = -1;
         int currentTurnSoldierIndex = -1;
@@ -384,12 +509,15 @@ final class GraphwarStateReader {
                 null,
                 identity.gameInstanceId,
                 identity.turnToken,
+                identity.observationSequence,
                 battleRevision,
-                Math.max(0L, readLong(gameData, "getRemainingTime", 0L)),
-                drawingFunction,
-                exploding,
-                exploding ? "exploding" : drawingFunction ? "drawing" : "aiming",
-                terrainReversed,
+                observedAtEpochMs,
+                remainingTurnMs,
+                functionDraw,
+                isDrawingFunction,
+                isExploding,
+                isExploding ? "exploding" : isDrawingFunction ? "drawing" : "aiming",
+                isTerrainReversed,
                 gameState,
                 gameMode,
                 currentTurn,
@@ -412,7 +540,7 @@ final class GraphwarStateReader {
     /** Computes one revision from inputs that affect automatic path calculation. */
     private static String createBattleRevision(
             int gameMode,
-            boolean terrainReversed,
+            boolean isTerrainReversed,
             List<PlayerSnapshot> players,
             byte[] worldObstacleMask)
             throws GraphwarStateException {
@@ -420,21 +548,21 @@ final class GraphwarStateReader {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             updateDigestInt(digest, 1);
             updateDigestInt(digest, gameMode);
-            digest.update((byte) (terrainReversed ? 1 : 0));
+            digest.update((byte) (isTerrainReversed ? 1 : 0));
             updateDigestInt(digest, players.size());
             for (PlayerSnapshot player : players) {
                 updateDigestInt(digest, player.playerId);
                 updateDigestInt(digest, player.team);
-                digest.update((byte) (player.local ? 1 : 0));
-                digest.update((byte) (player.computer ? 1 : 0));
-                digest.update((byte) (player.disconnected ? 1 : 0));
+                digest.update((byte) (player.isLocal ? 1 : 0));
+                digest.update((byte) (player.isComputerControlled ? 1 : 0));
+                digest.update((byte) (player.isConnected ? 1 : 0));
                 updateDigestInt(digest, player.soldiers.size());
                 // Turn cursors and angles are intentionally excluded: prediction targets
-                // the next soldier and /shot supplies the second-derivative angle.
+                // the next soldier and /shots supplies the second-derivative angle.
                 for (SoldierSnapshot soldier : player.soldiers) {
                     updateDigestInt(digest, soldier.soldierIndex);
-                    digest.update((byte) (soldier.alive ? 1 : 0));
-                    digest.update((byte) (soldier.exploding ? 1 : 0));
+                    digest.update((byte) (soldier.isAlive ? 1 : 0));
+                    digest.update((byte) (soldier.isExploding ? 1 : 0));
                     updateDigestInt(digest, soldier.worldX);
                     updateDigestInt(digest, soldier.worldY);
                 }
@@ -459,7 +587,7 @@ final class GraphwarStateReader {
     private IdentitySnapshot resolveIdentity(
             Object gameData,
             Object obstacle,
-            boolean activeTurn,
+            boolean isActiveTurn,
             long turnStartedAt,
             int playerId,
             int soldierIndex) {
@@ -472,10 +600,10 @@ final class GraphwarStateReader {
                 identityPlayerId = -1;
                 identitySoldierIndex = -1;
                 turnToken = null;
-                turnTokenClaimed = false;
+                isTurnTokenClaimed = false;
             }
 
-            if (activeTurn
+            if (isActiveTurn
                     && (identityTurnStartedAt != turnStartedAt
                             || identityPlayerId != playerId
                             || identitySoldierIndex != soldierIndex)) {
@@ -483,9 +611,18 @@ final class GraphwarStateReader {
                 identityPlayerId = playerId;
                 identitySoldierIndex = soldierIndex;
                 turnToken = UUID.randomUUID().toString();
-                turnTokenClaimed = false;
+                isTurnTokenClaimed = false;
             }
-            return new IdentitySnapshot(gameInstanceId, activeTurn ? turnToken : null);
+            return new IdentitySnapshot(
+                    gameInstanceId, isActiveTurn ? turnToken : null, nextObservationSequence());
+        }
+    }
+
+    /** Orders every available and unavailable state snapshot formed by this Agent process. */
+    private long nextObservationSequence() {
+        synchronized (identityLock) {
+            identityObservationSequence += 1L;
+            return identityObservationSequence;
         }
     }
 
@@ -495,11 +632,11 @@ final class GraphwarStateReader {
             if (turnToken == null || !turnToken.equals(expectedToken)) {
                 throw new GraphwarStateUnavailableException("Graphwar turn token is stale");
             }
-            if (turnTokenClaimed) {
+            if (isTurnTokenClaimed) {
                 throw new GraphwarStateUnavailableException(
                         "Graphwar turn token has already been used");
             }
-            turnTokenClaimed = true;
+            isTurnTokenClaimed = true;
         }
     }
 
@@ -539,32 +676,52 @@ final class GraphwarStateReader {
                             readBoolean(player, "isLocalPlayer", false),
                             isComputerPlayer(player),
                             readBoolean(player, "getReady", false),
-                            readBoolean(player, "isDisconnected", false),
+                            !readBoolean(player, "isDisconnected", false),
                             readInt(player, "getCurrentTurnSoldierIndex", -1),
                             soldiers));
         }
         return players;
     }
 
-    /** Copies the mutable terrain image into the stable world-space wire format. */
-    private static byte[] readWorldObstacleMask(Object obstacle) throws GraphwarStateException {
-        Object image = invoke(obstacle, "getImage");
-        if (!(image instanceof BufferedImage)) {
-            throw new GraphwarStateException(
-                    image == null
-                            ? "Graphwar obstacle image is unavailable"
-                            : "Graphwar obstacle image is not a BufferedImage");
-        }
-        BufferedImage terrain = (BufferedImage) image;
-        byte[] mask = new byte[Coordinates.PLANE_WIDTH * Coordinates.PLANE_HEIGHT];
-        // Source: Obstacle.collidePoint treats terrain.getRGB(x, y) != -1 as blocked.
-        for (int y = 0; y < Coordinates.PLANE_HEIGHT; y += 1) {
-            int rowOffset = y * Coordinates.PLANE_WIDTH;
-            for (int x = 0; x < Coordinates.PLANE_WIDTH; x += 1) {
-                mask[rowOffset + x] = terrain.getRGB(x, y) != -1 ? (byte) 1 : (byte) 0;
+    /**
+     * Copies terrain only after the official explosion signature says its pixels may have changed.
+     */
+    private byte[] readWorldObstacleMask(Object obstacle) throws GraphwarStateException {
+        int explosionX = readInt(obstacle, "getExplosionX", 0);
+        int explosionY = readInt(obstacle, "getExplosionY", 0);
+        int explosionRadius = readInt(obstacle, "getExplosionRadius", 0);
+        synchronized (identityLock) {
+            if (cachedWorldObstacleMask != null
+                    && cachedWorldObstacleMaskSource == obstacle
+                    && cachedWorldObstacleMaskExplosionX == explosionX
+                    && cachedWorldObstacleMaskExplosionY == explosionY
+                    && cachedWorldObstacleMaskExplosionRadius == explosionRadius) {
+                return cachedWorldObstacleMask;
             }
+
+            Object image = invoke(obstacle, "getImage");
+            if (!(image instanceof BufferedImage)) {
+                throw new GraphwarStateException(
+                        image == null
+                                ? "Graphwar obstacle image is unavailable"
+                                : "Graphwar obstacle image is not a BufferedImage");
+            }
+            BufferedImage terrain = (BufferedImage) image;
+            byte[] mask = new byte[Coordinates.PLANE_WIDTH * Coordinates.PLANE_HEIGHT];
+            // Source: Obstacle.collidePoint treats terrain.getRGB(x, y) != -1 as blocked.
+            for (int y = 0; y < Coordinates.PLANE_HEIGHT; y += 1) {
+                int rowOffset = y * Coordinates.PLANE_WIDTH;
+                for (int x = 0; x < Coordinates.PLANE_WIDTH; x += 1) {
+                    mask[rowOffset + x] = terrain.getRGB(x, y) != -1 ? (byte) 1 : (byte) 0;
+                }
+            }
+            cachedWorldObstacleMaskSource = obstacle;
+            cachedWorldObstacleMaskExplosionX = explosionX;
+            cachedWorldObstacleMaskExplosionY = explosionY;
+            cachedWorldObstacleMaskExplosionRadius = explosionRadius;
+            cachedWorldObstacleMask = mask;
+            return mask;
         }
-        return mask;
     }
 
     /** Validates the official player collection before any indexed access. */
@@ -596,7 +753,7 @@ final class GraphwarStateReader {
                 | NoSuchMethodException error) {
             throw new GraphwarStateException("Cannot validate Graphwar function syntax", error);
         } catch (InvocationTargetException error) {
-            Throwable cause = error.getCause();
+            Throwable cause = unwrapInvocationFailure(error);
             if (cause != null && "Graphwar.MalformedFunction".equals(cause.getClass().getName())) {
                 throw new GraphwarInvalidFunctionException("Malformed Graphwar function");
             }
@@ -617,20 +774,28 @@ final class GraphwarStateReader {
     private static void appendApiMetadata(StringBuilder json) {
         json.append(",\"apiVersion\":").append(API_VERSION);
         json.append(",\"capabilities\":{");
-        json.append("\"shot\":true");
-        json.append(",\"room\":true");
-        json.append(",\"ready\":true");
-        json.append(",\"worldObstacleMask\":true}");
+        json.append("\"canSubmitShots\":true");
+        json.append(",\"canReadRoom\":true");
+        json.append(",\"canSetReady\":true");
+        json.append(",\"canReadWorldObstacleMask\":true}");
     }
 
     /** Preserves capability discovery when no active battlefield can be copied. */
-    private static String unavailableStateJson(String reason) {
+    private static String unavailableStateJson(
+            String reason,
+            String agentInstanceId,
+            long observationSequence,
+            long observedAtEpochMs) {
         StringBuilder json = new StringBuilder(384);
         json.append('{');
         appendPlane(json);
         appendApiMetadata(json);
         appendAgent(json);
-        json.append(",\"available\":false,\"reason\":");
+        json.append(",\"agentInstanceId\":");
+        appendJsonString(json, agentInstanceId);
+        json.append(",\"observationSequence\":").append(observationSequence);
+        json.append(",\"observedAtEpochMs\":").append(observedAtEpochMs);
+        json.append(",\"isAvailable\":false,\"reason\":");
         appendJsonString(json, reason);
         json.append('}');
         return json.toString();
@@ -639,14 +804,14 @@ final class GraphwarStateReader {
     /** Returns a polling-friendly room response when no pre-game room is available. */
     private static String unavailableRoomJson(String reason) {
         StringBuilder json = new StringBuilder(96);
-        json.append("{\"available\":false,\"reason\":");
+        json.append("{\"isAvailable\":false,\"reason\":");
         appendJsonString(json, reason);
         json.append('}');
         return json.toString();
     }
 
     /** Writes build provenance used to diagnose stale jars. */
-    private static void appendAgent(StringBuilder json) {
+    static void appendAgent(StringBuilder json) {
         json.append(",\"agent\":{");
         json.append("\"version\":");
         appendJsonString(json, GraphwarAgentBuildInfo.VERSION);
@@ -661,72 +826,66 @@ final class GraphwarStateReader {
 
     /** Describes the mask response and the header required for snapshot verification. */
     private static void appendObstacleMaskMetadata(
-            StringBuilder json, boolean terrainReversed, String battleRevision) {
+            StringBuilder json, boolean isTerrainReversed, String battleRevision) {
         json.append(",\"obstacleMask\":{");
-        json.append("\"available\":true");
-        json.append(",\"width\":").append(Coordinates.PLANE_WIDTH);
+        json.append("\"width\":").append(Coordinates.PLANE_WIDTH);
         json.append(",\"height\":").append(Coordinates.PLANE_HEIGHT);
         json.append(",\"blockedValue\":1,\"emptyValue\":0");
-        json.append(",\"defaultSpace\":\"view\"");
-        json.append(",\"viewMirrored\":").append(terrainReversed);
+        json.append(",\"isViewMirrored\":").append(isTerrainReversed);
         json.append(",\"revision\":");
         appendJsonString(json, battleRevision);
-        json.append(",\"revisionHeader\":\"X-Graphwar-Battle-Revision\"");
-        json.append(",\"viewUrl\":\"/obstacle-mask.bin?space=view\"");
-        json.append(",\"worldUrl\":\"/obstacle-mask.bin?space=world\"");
+        json.append(",\"viewUrl\":\"/obstacle-masks/view.bin\"");
+        json.append(",\"worldUrl\":\"/obstacle-masks/world.bin\"");
         json.append('}');
     }
 
     /** Serializes copied players in their protocol-significant list order. */
     private static void appendPlayers(
-            StringBuilder json, List<PlayerSnapshot> players, boolean terrainReversed) {
+            StringBuilder json, List<PlayerSnapshot> players, boolean isTerrainReversed) {
         json.append(",\"players\":[");
         for (int index = 0; index < players.size(); index += 1) {
             if (index > 0) {
                 json.append(',');
             }
-            appendPlayer(json, players.get(index), terrainReversed);
+            appendPlayer(json, players.get(index), isTerrainReversed);
         }
         json.append(']');
     }
 
-    /** Preserves legacy field names while exposing explicit ownership aliases. */
+    /** Serializes one player with explicit protocol ID and array-index names. */
     private static void appendPlayer(
-            StringBuilder json, PlayerSnapshot player, boolean terrainReversed) {
+            StringBuilder json, PlayerSnapshot player, boolean isTerrainReversed) {
         json.append('{');
-        json.append("\"index\":").append(player.playerIndex);
+        json.append("\"playerIndex\":").append(player.playerIndex);
         json.append(",\"playerId\":").append(player.playerId);
-        json.append(",\"id\":").append(player.playerId);
         json.append(",\"team\":").append(player.team);
         json.append(",\"name\":");
         appendJsonString(json, player.name);
-        json.append(",\"local\":").append(player.local);
-        json.append(",\"computer\":").append(player.computer);
-        json.append(",\"ready\":").append(player.ready);
-        json.append(",\"disconnected\":").append(player.disconnected);
-        json.append(",\"currentTurnSoldier\":").append(player.currentTurnSoldierIndex);
-        json.append(",\"currentTurnSoldierIndex\":").append(player.currentTurnSoldierIndex);
+        json.append(",\"isLocal\":").append(player.isLocal);
+        json.append(",\"isComputerControlled\":").append(player.isComputerControlled);
+        json.append(",\"isReady\":").append(player.isReady);
+        json.append(",\"isConnected\":").append(player.isConnected);
+        json.append(",\"currentSoldierIndex\":");
+        appendNullableInteger(json, player.currentTurnSoldierIndex);
         json.append(",\"soldiers\":[");
         for (int index = 0; index < player.soldiers.size(); index += 1) {
             if (index > 0) {
                 json.append(',');
             }
-            appendSoldier(json, player.soldiers.get(index), terrainReversed);
+            appendSoldier(json, player.soldiers.get(index), isTerrainReversed);
         }
         json.append("]}");
     }
 
     /** Serializes one copied soldier in both world and current-view coordinates. */
     private static void appendSoldier(
-            StringBuilder json, SoldierSnapshot soldier, boolean terrainReversed) {
-        int viewX = Coordinates.toViewPointX(soldier.worldX, terrainReversed);
+            StringBuilder json, SoldierSnapshot soldier, boolean isTerrainReversed) {
+        int viewX = Coordinates.toViewPointX(soldier.worldX, isTerrainReversed);
         json.append('{');
-        json.append("\"index\":").append(soldier.soldierIndex);
-        json.append(",\"soldierIndex\":").append(soldier.soldierIndex);
-        json.append(",\"alive\":").append(soldier.alive);
-        json.append(",\"exploding\":").append(soldier.exploding);
-        json.append(",\"rendered\":").append(soldier.alive || soldier.exploding);
-        json.append(",\"angle\":").append(soldier.angle);
+        json.append("\"soldierIndex\":").append(soldier.soldierIndex);
+        json.append(",\"isAlive\":").append(soldier.isAlive);
+        json.append(",\"isRendered\":").append(soldier.isAlive || soldier.isExploding);
+        json.append(",\"angleRadians\":").append(soldier.angle);
         json.append(",\"world\":");
         appendPoint(json, soldier.worldX, soldier.worldY);
         json.append(",\"view\":");
@@ -755,7 +914,7 @@ final class GraphwarStateReader {
             throw new GraphwarStateException("Cannot read Graphwar method " + methodName, error);
         } catch (InvocationTargetException error) {
             throw new GraphwarStateException(
-                    "Graphwar method " + methodName + " failed", error.getCause());
+                    "Graphwar method " + methodName + " failed", unwrapInvocationFailure(error));
         }
     }
 
@@ -770,8 +929,17 @@ final class GraphwarStateReader {
             throw new GraphwarStateException("Cannot call Graphwar method " + methodName, error);
         } catch (InvocationTargetException error) {
             throw new GraphwarStateException(
-                    "Graphwar method " + methodName + " failed", error.getCause());
+                    "Graphwar method " + methodName + " failed", unwrapInvocationFailure(error));
         }
+    }
+
+    /** Preserves serious JVM failures while returning ordinary reflected causes for translation. */
+    private static Throwable unwrapInvocationFailure(InvocationTargetException error) {
+        Throwable cause = error.getCause();
+        if (cause instanceof Error) {
+            throw (Error) cause;
+        }
+        return cause;
     }
 
     /** Iteratively locates the private turn marker across compatible GameData subclasses. */
@@ -793,10 +961,10 @@ final class GraphwarStateReader {
     }
 
     /** Reads a reflected boolean while keeping unexpected return types deterministic. */
-    private static boolean readBoolean(Object target, String methodName, boolean fallback)
+    private static boolean readBoolean(Object target, String methodName, boolean isFallback)
             throws GraphwarStateException {
         Object value = invoke(target, methodName);
-        return value instanceof Boolean ? ((Boolean) value).booleanValue() : fallback;
+        return value instanceof Boolean ? ((Boolean) value).booleanValue() : isFallback;
     }
 
     /** Reads a reflected floating-point number with a deterministic type fallback. */
@@ -828,7 +996,7 @@ final class GraphwarStateReader {
     }
 
     /** Escapes arbitrary official names and opaque values as one JSON string. */
-    private static void appendJsonString(StringBuilder json, String value) {
+    static void appendJsonString(StringBuilder json, String value) {
         json.append('"');
         for (int index = 0; index < value.length(); index += 1) {
             char character = value.charAt(index);
@@ -871,6 +1039,29 @@ final class GraphwarStateReader {
         json.append('"');
     }
 
+    /** Maps official numeric modes to the stable public equation enum. */
+    private static String equationMode(int gameMode) throws GraphwarStateException {
+        switch (gameMode) {
+            case GRAPHWAR_GAME_MODE_NORMAL:
+                return "y";
+            case GRAPHWAR_GAME_MODE_FIRST_DERIVATIVE:
+                return "dy";
+            case GRAPHWAR_GAME_MODE_SECOND_DERIVATIVE:
+                return "ddy";
+            default:
+                throw new GraphwarStateException("Graphwar game mode is unsupported");
+        }
+    }
+
+    /** Uses JSON null instead of negative integer sentinels for missing indexes and IDs. */
+    private static void appendNullableInteger(StringBuilder json, int value) {
+        if (value < 0) {
+            json.append("null");
+        } else {
+            json.append(value);
+        }
+    }
+
     /** Adds fixed-endian integers so revisions are stable across JVM architectures. */
     private static void updateDigestInt(MessageDigest digest, int value) {
         digest.update((byte) (value >>> 24));
@@ -893,24 +1084,26 @@ final class GraphwarStateReader {
 
     private static final class IdentitySnapshot {
         final String gameInstanceId;
+        final long observationSequence;
         final String turnToken;
 
         /** Captures both identity scopes without exposing their source markers. */
-        IdentitySnapshot(String gameInstanceId, String turnToken) {
+        IdentitySnapshot(String gameInstanceId, String turnToken, long observationSequence) {
             this.gameInstanceId = gameInstanceId;
+            this.observationSequence = observationSequence;
             this.turnToken = turnToken;
         }
     }
 
     private static final class PlayerSnapshot {
-        final boolean computer;
+        final boolean isComputerControlled;
         final int currentTurnSoldierIndex;
-        final boolean disconnected;
-        final boolean local;
+        final boolean isConnected;
+        final boolean isLocal;
         final String name;
         final int playerId;
         final int playerIndex;
-        final boolean ready;
+        final boolean isReady;
         final List<SoldierSnapshot> soldiers;
         final int team;
 
@@ -920,29 +1113,29 @@ final class GraphwarStateReader {
                 int playerId,
                 int team,
                 String name,
-                boolean local,
-                boolean computer,
-                boolean ready,
-                boolean disconnected,
+                boolean isLocal,
+                boolean isComputerControlled,
+                boolean isReady,
+                boolean isConnected,
                 int currentTurnSoldierIndex,
                 List<SoldierSnapshot> soldiers) {
-            this.computer = computer;
+            this.isComputerControlled = isComputerControlled;
             this.currentTurnSoldierIndex = currentTurnSoldierIndex;
-            this.disconnected = disconnected;
-            this.local = local;
+            this.isConnected = isConnected;
+            this.isLocal = isLocal;
             this.name = name;
             this.playerId = playerId;
             this.playerIndex = playerIndex;
-            this.ready = ready;
+            this.isReady = isReady;
             this.soldiers = Collections.unmodifiableList(soldiers);
             this.team = team;
         }
     }
 
     private static final class SoldierSnapshot {
-        final boolean alive;
+        final boolean isAlive;
         final double angle;
-        final boolean exploding;
+        final boolean isExploding;
         final int soldierIndex;
         final int worldX;
         final int worldY;
@@ -950,14 +1143,14 @@ final class GraphwarStateReader {
         /** Copies one soldier's calculation and presentation inputs. */
         SoldierSnapshot(
                 int soldierIndex,
-                boolean alive,
-                boolean exploding,
+                boolean isAlive,
+                boolean isExploding,
                 double angle,
                 int worldX,
                 int worldY) {
-            this.alive = alive;
+            this.isAlive = isAlive;
             this.angle = angle;
-            this.exploding = exploding;
+            this.isExploding = isExploding;
             this.soldierIndex = soldierIndex;
             this.worldX = worldX;
             this.worldY = worldY;
@@ -965,68 +1158,80 @@ final class GraphwarStateReader {
     }
 
     private static final class StateSnapshot {
-        final boolean available;
+        final boolean isAvailable;
         final String battleRevision;
         final int currentTurn;
         final int currentTurnPlayerId;
-        final boolean drawingFunction;
-        final boolean exploding;
+        final boolean isDrawingFunction;
+        final boolean isExploding;
         final int gameMode;
         final String gameInstanceId;
         final int gameState;
+        final FunctionDrawSnapshot functionDraw;
         final String phase;
         final List<PlayerSnapshot> players;
+        final long observedAtEpochMs;
+        final long observationSequence;
         final long remainingTurnMs;
         final String reason;
-        final boolean terrainReversed;
+        final boolean isTerrainReversed;
         final String turnToken;
         final byte[] worldObstacleMask;
 
         /** Owns all fields copied under one GameData monitor acquisition. */
         private StateSnapshot(
-                boolean available,
+                boolean isAvailable,
                 String reason,
                 String gameInstanceId,
                 String turnToken,
+                long observationSequence,
                 String battleRevision,
+                long observedAtEpochMs,
                 long remainingTurnMs,
-                boolean drawingFunction,
-                boolean exploding,
+                FunctionDrawSnapshot functionDraw,
+                boolean isDrawingFunction,
+                boolean isExploding,
                 String phase,
-                boolean terrainReversed,
+                boolean isTerrainReversed,
                 int gameState,
                 int gameMode,
                 int currentTurn,
                 int currentTurnPlayerId,
                 List<PlayerSnapshot> players,
                 byte[] worldObstacleMask) {
-            this.available = available;
+            this.isAvailable = isAvailable;
             this.battleRevision = battleRevision;
             this.currentTurn = currentTurn;
             this.currentTurnPlayerId = currentTurnPlayerId;
-            this.drawingFunction = drawingFunction;
-            this.exploding = exploding;
+            this.isDrawingFunction = isDrawingFunction;
+            this.isExploding = isExploding;
             this.gameMode = gameMode;
             this.gameInstanceId = gameInstanceId;
             this.gameState = gameState;
+            this.functionDraw = functionDraw;
             this.phase = phase;
             this.players = players == null ? null : Collections.unmodifiableList(players);
+            this.observedAtEpochMs = observedAtEpochMs;
+            this.observationSequence = observationSequence;
             this.remainingTurnMs = remainingTurnMs;
             this.reason = reason;
-            this.terrainReversed = terrainReversed;
+            this.isTerrainReversed = isTerrainReversed;
             this.turnToken = turnToken;
             this.worldObstacleMask = worldObstacleMask;
         }
 
         /** Represents a polling response before the official obstacle exists. */
-        static StateSnapshot unavailable(String reason) {
+        static StateSnapshot unavailable(String reason, long observationSequence) {
             return new StateSnapshot(
                     false,
                     reason,
                     null,
                     null,
+                    observationSequence,
                     null,
+                    System.currentTimeMillis(),
                     0L,
+                    null,
                     false,
                     false,
                     "inactive",
@@ -1037,6 +1242,17 @@ final class GraphwarStateReader {
                     -1,
                     null,
                     null);
+        }
+    }
+
+    private static final class FunctionDrawSnapshot {
+        final int currentStep;
+        final int stepsPerSecond;
+
+        /** Stores the authoritative draw cursor and its official advancement rate. */
+        FunctionDrawSnapshot(int currentStep, int stepsPerSecond) {
+            this.currentStep = currentStep;
+            this.stepsPerSecond = stepsPerSecond;
         }
     }
 }

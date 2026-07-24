@@ -2,7 +2,7 @@ import { ref, type Ref } from "vue";
 
 import { nowMs } from "../../core/time";
 
-const debugActivationHoldMs = 3000;
+const debugActivationHoldMs = 2000;
 const debugActivationCountdownStepMs = 100;
 const debugActivationCountdownVisibleAfterMs = 1000;
 const debugActivationSuccessFlashMs = 2000;

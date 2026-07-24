@@ -30,6 +30,7 @@ import {
 } from "../../../pathfinding/smart/trajectory";
 import type { GraphwarSmartPathfindingSoldierTarget } from "../../../pathfinding/targeting";
 import type { SmartPathfindingDebugTimingEntry } from "../../debug/timings";
+import { createGraphwarSmartPathfindingDebugAttempt, type GraphwarPathfindingDebugAttempt } from "../debug-report";
 import type { GraphwarSmartPathfindingRunBuildResult } from "./workflow";
 
 type GraphwarSmartPathfindingBuildTarget = PixelPoint | GraphwarSmartPathfindingSoldierTarget;
@@ -60,6 +61,10 @@ interface GraphwarSmartPathfindingBuilderOptions {
     addWorkerTimings: (
       timings: SmartPathfindingDebugTimingEntry[] | undefined,
       workerTimings: readonly GraphwarSmartPathfindingWorkerTiming[],
+    ) => void;
+    recordAttempt: (
+      attempt: GraphwarPathfindingDebugAttempt,
+      timings: SmartPathfindingDebugTimingEntry[] | undefined,
     ) => void;
   };
   /** 页面副作用应保留在页面侧，builder 只在对应结果出现时触发。 */
@@ -98,6 +103,8 @@ interface GraphwarSmartPathfindingBuilderOptions {
   pathfinding: {
     /** 页面侧寻路结果缓存；builder 只消费智能寻路相关入口。 */
     cache: GraphwarSmartPathfindingBuilderCache;
+    /** 调试开关只控制完整结果缓存，不影响 Worker 内部准备缓存。 */
+    isResultCacheEnabled: () => boolean;
     /** Master worker runner。 */
     runner: GraphwarSmartPathfindingBuilderRunner;
   };
@@ -128,7 +135,7 @@ export interface GraphwarSmartPathfindingBuilderController {
     target: GraphwarSmartPathfindingBuildTarget,
     cancelToken: number,
     timings?: SmartPathfindingDebugTimingEntry[],
-  ) => Promise<GraphwarSmartPathfindingRunBuildResult | undefined>;
+  ) => Promise<GraphwarSmartPathfindingRunBuildResult>;
 }
 
 /** 管理单目标智能寻路的 worker 输入、结果缓存、搜索预览和结果解释。 */
@@ -140,10 +147,13 @@ export function useGraphwarSmartPathfindingBuilder(
     target: GraphwarSmartPathfindingBuildTarget,
     cancelToken: number,
     timings?: SmartPathfindingDebugTimingEntry[],
-  ): Promise<GraphwarSmartPathfindingRunBuildResult | undefined> {
+  ): Promise<GraphwarSmartPathfindingRunBuildResult> {
+    // Workflow 只会为调试任务传入 timings；在首次 await 前冻结，避免运行中切换改变本任务协议。
+    const shouldCollectDiagnostics = timings !== undefined;
+    const shouldUseResultCache = options.pathfinding.isResultCacheEnabled();
     const bounds = options.input.getBounds();
     if (!bounds) {
-      return undefined;
+      return { type: "failure" };
     }
     const targetPoint = "targetPoint" in target ? target.targetPoint : target;
     const fallbackTargetPoint = "targetPoint" in target ? target.fallbackTargetPoint : undefined;
@@ -156,7 +166,7 @@ export function useGraphwarSmartPathfindingBuilder(
     const sourcePath = [...options.input.getPathPixels()];
     const startPoint = sourcePath.at(-1);
     if (!tolerances || !startPoint) {
-      return undefined;
+      return { type: "failure" };
     }
 
     const obstacleMask = options.input.getObstacleMask();
@@ -174,7 +184,7 @@ export function useGraphwarSmartPathfindingBuilder(
       setTimeout(resolve, 0);
     });
     if (!options.run.isCurrent(cancelToken)) {
-      return undefined;
+      return { type: "cancelled" };
     }
 
     const targetHitCircle = createGraphwarSmartPathfindingHitTarget(
@@ -182,7 +192,7 @@ export function useGraphwarSmartPathfindingBuilder(
       options.input.getTargetHitRadiusPixels(),
     );
     if (!targetHitCircle) {
-      return undefined;
+      return { type: "failure" };
     }
     // Snapshot narrowed inputs for the nested async attempts; TypeScript does not retain
     // outer control-flow narrowing inside a function declaration.
@@ -195,22 +205,22 @@ export function useGraphwarSmartPathfindingBuilder(
     const simulationMaskCacheId = simulationMask ? options.pathfinding.cache.getMaskCacheId(simulationMask) : 0;
 
     let result: GraphwarSmartPathfindingPathResult | undefined;
-    let resultCacheHit = false;
+    let hasResultCacheHit = false;
     for (let index = 0; index < targetPoints.length; index += 1) {
       const candidateTargetPoint = targetPoints[index];
       if (!candidateTargetPoint || !options.run.isCurrent(cancelToken)) {
-        return undefined;
+        return { type: "cancelled" };
       }
       if (index > 0 && options.preview.isSearchAnimationEnabled()) {
         options.preview.setConnection(startPoint, candidateTargetPoint);
       }
 
       const attempt = await findPathfindingResult(candidateTargetPoint);
-      if (!attempt) {
-        return undefined;
+      if (attempt.type !== "result") {
+        return attempt;
       }
       result = attempt.result;
-      resultCacheHit = attempt.cacheHit;
+      hasResultCacheHit = attempt.hasResultCacheHit;
       options.debug.addWorkerTimings(timings, result.timings);
       // 旧路径严格域失败与目标点无关；其他失败才值得尝试命中圈 x+ 边缘。
       if (result.path || result.invalidSegmentIndex !== undefined) {
@@ -218,7 +228,7 @@ export function useGraphwarSmartPathfindingBuilder(
       }
     }
     if (!result) {
-      return undefined;
+      return { type: "failure" };
     }
     if (result.failureReason === "graph-rule") {
       return { reason: "graph-rule", type: "failure" };
@@ -235,17 +245,17 @@ export function useGraphwarSmartPathfindingBuilder(
     if (result.path && options.preview.isSearchAnimationEnabled()) {
       options.preview.setPath(getGraphwarSmartPathfindingAppendedSegment(result.path, sourcePath.length));
     }
-    return result.path ? { cacheHit: resultCacheHit, path: result.path, type: "success" } : undefined;
+    return result.path ? { hasResultCacheHit, path: result.path, type: "success" } : { type: "failure" };
 
     /** 对一个候选目标点执行缓存查询或 Worker 寻路。 */
     async function findPathfindingResult(candidateTargetPoint: PixelPoint) {
       const input = createGraphwarSmartPathfindingSearchInput({
         bounds: searchBounds,
         boundsRect: options.input.boundsRect.value,
-        deleteOptimizationEnabled: options.input.getDeleteOptimizationEnabled(),
+        isDeleteOptimizationEnabled: options.input.getDeleteOptimizationEnabled(),
         hitTarget: searchTargetHitCircle,
         prefixTarget: options.input.getPrefixTarget(),
-        previewEnabled: options.preview.isSearchAnimationEnabled(),
+        isPreviewEnabled: options.preview.isSearchAnimationEnabled(),
         routeMaskCacheId: options.pathfinding.cache.getMaskCacheId(searchObstacleMask),
         routeMode: options.input.getRouteMode(),
         routeObstacleMask: searchObstacleMask,
@@ -256,25 +266,46 @@ export function useGraphwarSmartPathfindingBuilder(
         targetPoint: candidateTargetPoint,
         tolerances: searchTolerances,
       });
-      const resultCacheKey = options.pathfinding.cache.createSmartPathfindingResultCacheKey(input);
-      let attemptResult = options.pathfinding.cache.getCachedSmartPathfindingResult(resultCacheKey, (timing) =>
-        timings?.push(timing),
-      );
-      const cacheHit = attemptResult !== undefined;
+      const resultCacheKey = shouldUseResultCache
+        ? options.pathfinding.cache.createSmartPathfindingResultCacheKey(input)
+        : "";
+      let attemptResult = shouldUseResultCache
+        ? options.pathfinding.cache.getCachedSmartPathfindingResult(resultCacheKey, (timing) => timings?.push(timing))
+        : undefined;
+      const hasResultCacheHit = attemptResult !== undefined;
       try {
         if (!attemptResult) {
           attemptResult = await options.pathfinding.runner.findSmartPath(input, {
             onPreview: options.preview.isSearchAnimationEnabled() ? setSearchPreview : undefined,
+            shouldCollectDiagnostics,
           });
-          options.pathfinding.cache.cacheSmartPathfindingResult(resultCacheKey, attemptResult);
+          if (shouldUseResultCache) {
+            options.pathfinding.cache.cacheSmartPathfindingResult(resultCacheKey, attemptResult);
+          }
         }
       } catch (error) {
-        if (!options.run.isCurrent(cancelToken) || isGraphwarPathfindingCancelledError(error)) {
-          return undefined;
+        if (shouldCollectDiagnostics) {
+          options.debug.recordAttempt(
+            createGraphwarSmartPathfindingDebugAttempt(input, "worker", undefined, error),
+            timings,
+          );
         }
-        return undefined;
+        if (!options.run.isCurrent(cancelToken) || isGraphwarPathfindingCancelledError(error)) {
+          return { type: "cancelled" as const };
+        }
+        return { type: "worker-exception" as const };
       }
-      return { cacheHit, result: attemptResult };
+      if (shouldCollectDiagnostics) {
+        options.debug.recordAttempt(
+          createGraphwarSmartPathfindingDebugAttempt(
+            input,
+            hasResultCacheHit ? "result-cache" : "worker",
+            attemptResult,
+          ),
+          timings,
+        );
+      }
+      return { hasResultCacheHit, result: attemptResult, type: "result" as const };
     }
   }
 

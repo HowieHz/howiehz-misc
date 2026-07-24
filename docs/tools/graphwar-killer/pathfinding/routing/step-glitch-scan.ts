@@ -31,10 +31,12 @@ import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
+import type { GraphwarPathfindingDebugMetrics } from "../runtime/diagnostics";
 
 const glitchWindows = createGlitchWindows();
 /** 统一搜索网格中固定的近到远回退距离。 */
-const GATE_BACKOFF_COLUMNS = [1, 2] as const;
+const GATE_BACKOFF_COLUMNS = [1, 2, 3] as const;
 
 /** 固定 simulation mask 的 x+ 水平可达索引，可在单目标和一键清图的多次扫描间复用。 */
 export interface GraphwarStepGlitchScanMaskIndex {
@@ -49,6 +51,8 @@ export interface GraphwarStepGlitchScanMaskIndex {
 export interface GraphwarStepGlitchPrefixOptions {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
+  /** Optional one-click-clear diagnostics shared by every replay in this scanner. */
+  debugMetrics?: GraphwarPathfindingDebugMetrics;
   /** 可复用的同 mask 索引；不匹配时扫描器会自行重建。 */
   maskIndex?: GraphwarStepGlitchScanMaskIndex;
   /** 完全相同旧整式已经回放成功时，可直接复用其真实恢复点。 */
@@ -98,6 +102,8 @@ export type GraphwarStepGlitchScanResult =
       stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
       path: PixelPoint[];
       status: "hit";
+      /** 与本次量化回放公式和发射角严格绑定的可绘制轨迹。 */
+      trajectoryPoints: PixelPoint[];
     })
   | (GraphwarStepGlitchScanResultBase & {
       blockedPoint?: GraphPoint;
@@ -178,7 +184,7 @@ interface ScanLandingRow {
   startDeltaY: number;
   /** 目标命中圈中心行到候选行的垂直像素距离。 */
   targetDeltaY: number;
-  /** 按回退顺序记录的两位可用性掩码：第 0 位表示 B-1，第 1 位表示 B-2。 */
+  /** 按回退顺序记录的三位可用性掩码：第 0、1、2 位分别表示 B-1、B-2、B-3。 */
   usableWindowBatchMask: number;
 }
 
@@ -193,11 +199,11 @@ interface ScanGateWindow {
 
 /** 按一个回退距离分组的 11 档 gate 宽度；原版像素固定，但低公式精度时仍可能跨列。 */
 interface ScanGateWindowBatch {
-  /** 批次对应的回退列，1 表示 B-1，2 表示 B-2。 */
+  /** 批次对应的回退列，1、2、3 分别表示 B-1、B-2、B-3。 */
   backoffColumns: (typeof GATE_BACKOFF_COLUMNS)[number];
   /** 共享的右门列；为 undefined 时，低精度量化让门宽跨列，使用旧的逐窗口 fallback。 */
   sharedWindowSearchX: number | undefined;
-  /** 只有右门仍位于预期回退列时，才能使用“跳过下一批”的单调性规则。 */
+  /** 只有右门仍位于预期回退列时，才能使用“跳过剩余更远批次”的单调性规则。 */
   usesMonotonicBackoffPruning: boolean;
   /** 所有宽度共享右门列时实际查询的原生列；跨列时仅作为 fallback 提示。 */
   searchX: number;
@@ -235,6 +241,8 @@ export interface GraphwarStepGlitchReplayResult {
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
   /** 当前有序目标和全部无序必达目标是否都已命中。 */
   targetsHit: boolean;
+  /** 本次回放在首次障碍碰撞前实际可绘制的轨迹快照。 */
+  trajectoryPoints: PixelPoint[];
 }
 
 /** 生成任何 gate 候选前先执行的目标直连回放。 */
@@ -311,7 +319,9 @@ function createGraphwarStepGlitchReplayContext(
       options.settings.stepGlitchObstacleMask === options.simulationMask
         ? options.settings
         : { ...options.settings, stepGlitchObstacleMask: options.simulationMask },
-    graphPoints: options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
+    graphPoints: measureStepGlitchMetric(options.debugMetrics, "formulaPointMappingElapsedMs", () =>
+      options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
+    ),
     simulationBoundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
   };
 }
@@ -397,6 +407,9 @@ export function createGraphwarStepGlitchPrefixScanner(
       }
 
       const directPath = [...options.sourcePath, target.targetPoint];
+      if (options.debugMetrics?.stepGlitch) {
+        options.debugMetrics.stepGlitch.directReplayCount += 1;
+      }
       const directReplay = measureSyncStage(timings, "validate-direct", () =>
         replayPathToControlX(options, context, directPath, targetSequence, requiredTargets, targetGraphPoint.x),
       );
@@ -412,6 +425,7 @@ export function createGraphwarStepGlitchPrefixScanner(
             : {}),
           status: "hit",
           timings,
+          trajectoryPoints: directReplay.trajectoryPoints,
         };
       }
 
@@ -456,7 +470,7 @@ export function replayGraphwarStepGlitchPathToControlX(
 ): GraphwarStepGlitchReplayResult {
   const context = createGraphwarStepGlitchReplayContext(options, []);
   return "status" in context
-    ? { reachedTargetCount: 0, targetsHit: false }
+    ? { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] }
     : replayPathToControlX(
         options,
         context,
@@ -571,8 +585,8 @@ function scanPreparedGraphwarStepGlitchPath(
         }
         const windowBatchBit = 1 << (windowBatch.backoffColumns - 1);
         if ((row.usableWindowBatchMask & windowBatchBit) === 0) {
-          // B-2 只有在该行的 B-1 批次全部失败、真正切换到下一批时才查询。
-          if (windowBatch.backoffColumns === 2) {
+          // 后续回退列只在该行的前一批全部失败、真正切换批次时才查询。
+          if (windowBatch.backoffColumns > 1) {
             if (
               windowBatch.sharedWindowSearchX !== undefined &&
               windowBatch.usesMonotonicBackoffPruning &&
@@ -651,6 +665,9 @@ function scanPreparedGraphwarStepGlitchPath(
       continue;
     }
     expandedStates += 1;
+    if (options.debugMetrics?.stepGlitch) {
+      options.debugMetrics.stepGlitch.candidateReplayCount += 1;
+    }
     const finalTargetCandidate = item.candidate.kind === "target";
     const replay = replayPathToControlX(
       options,
@@ -676,6 +693,7 @@ function scanPreparedGraphwarStepGlitchPath(
         ...(replay.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: replay.stepGlitchFormulaPrefix } : {}),
         status: "hit",
         timings,
+        trajectoryPoints: replay.trajectoryPoints,
       };
     }
     if (!replay.targetsHit || !replay.acceptedPoint) {
@@ -713,14 +731,14 @@ function replayPathToControlX(
   stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[],
 ): GraphwarStepGlitchReplayResult {
   if (path.length < 2 || path.length < options.sourcePath.length) {
-    return { reachedTargetCount: 0, targetsHit: false };
+    return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
   }
-  const graphPoints = [
+  const graphPoints = measureStepGlitchMetric(options.debugMetrics, "formulaPointMappingElapsedMs", () => [
     ...context.graphPoints,
     ...path
       .slice(options.sourcePath.length)
       .map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
-  ];
+  ]);
   const resolved = tryResolveGraphwarTrajectoryCandidate({
     bounds: options.bounds,
     boundsRect: options.boundsRect,
@@ -728,7 +746,9 @@ function replayPathToControlX(
       boundaryExpansion: context.simulationBoundaryExpansion,
       mask: options.simulationMask,
     },
+    collectVisiblePixels: true,
     continueAfterTargetsUntilGraphX: controlX,
+    debugMetrics: options.debugMetrics,
     points: graphPoints,
     requiredTargets,
     settings: context.formulaSettings,
@@ -739,11 +759,11 @@ function replayPathToControlX(
     targetSequence,
   });
   if (!resolved) {
-    return { reachedTargetCount: 0, targetsHit: false };
+    return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
   }
   const { context: formulaContext, result } = resolved;
   if (formulaContext.formulaPoints.length < 2) {
-    return { reachedTargetCount: 0, targetsHit: false };
+    return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
   }
 
   const targetsHit =
@@ -770,6 +790,11 @@ function replayPathToControlX(
     reachedTargetCount: result.reachedTargetCount + result.reachedRequiredTargetCount,
     stepGlitchFormulaPrefix: formulaContext.stepGlitchFormulaPrefix,
     targetsHit,
+    trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+      result.visiblePixels,
+      result.obstacleHitIndex,
+      options.debugMetrics,
+    ),
   };
 }
 
@@ -812,7 +837,7 @@ function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, bounda
       });
 }
 
-/** 从首次阻挡像素沿 x- 回退一列和两列放置左门，并准备稳定排序的落点行。 */
+/** 从首次阻挡像素沿 x- 依次回退一至三列放置左门，并准备稳定排序的落点行。 */
 function createGateRowScan(
   state: ScanState,
   firstBlockedSearchX: number,
@@ -898,7 +923,7 @@ function createGateRowScan(
   }
 
   const rows: ScanLandingRow[] = [];
-  // 原碰撞列只查询一次用于评分；B-1 在这里查询，B-2 延迟到候选循环真正切换批次时再查询。
+  // 原碰撞列只查询一次用于评分；B-1 在这里查询，更远回退列延迟到候选循环真正切换批次时再查询。
   for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
     const farthestX = getFarthestFreeX(maskIndex, firstBlockedSearchX, row);
     if (farthestX < firstBlockedSearchX) {
@@ -912,7 +937,7 @@ function createGateRowScan(
         firstWindowBatch.usesMonotonicBackoffPruning &&
         getFarthestFreeX(maskIndex, firstWindowBatch.searchX, row) < firstBlockedSearchX
       ) {
-        // B-1 不能到达 B 时，按列连续可达性可知 B-2 也不可能绕过 B-1。
+        // B-1 不能到达 B 时，按列连续可达性可知所有更远回退列也不可能绕过 B-1。
         continue;
       }
       // 低精度跨列时，fallback 会在候选循环逐档检查，这里只记录 B-1 批次存在。
@@ -1057,4 +1082,21 @@ function createFailedResult(
     status,
     timings,
   };
+}
+
+/** Measures scanner-side coordinate work only when diagnostics are enabled. */
+function measureStepGlitchMetric<TResult>(
+  metrics: GraphwarPathfindingDebugMetrics | undefined,
+  timing: keyof GraphwarPathfindingDebugMetrics["timings"],
+  task: () => TResult,
+) {
+  if (!metrics) {
+    return task();
+  }
+  const startedAt = nowMs();
+  try {
+    return task();
+  } finally {
+    metrics.timings[timing] += nowMs() - startedAt;
+  }
 }

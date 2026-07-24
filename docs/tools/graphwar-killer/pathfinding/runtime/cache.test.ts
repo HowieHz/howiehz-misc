@@ -5,6 +5,7 @@ import { createPixelPoint } from "../../core/types";
 import type { GraphwarDetectionBox } from "../../detection/objects";
 import { createGraphwarOneClickClearSearchInput } from "../one-click-clear/input";
 import { createGraphwarPathfindingCacheController } from "./cache";
+import { createGraphwarPathfindingDebugMetrics } from "./diagnostics";
 
 describe("Graphwar pathfinding result cache keys", () => {
   it("separates one-click-clear inputs with different current path prefixes", () => {
@@ -19,8 +20,8 @@ describe("Graphwar pathfinding result cache keys", () => {
   it("keeps ordinary route mode and deletion preference as independent result identities", () => {
     const cache = createGraphwarPathfindingCacheController();
     const keys = (["visibility-graph", "theta-star"] as const).flatMap((routeMode) =>
-      [false, true].map((deleteOptimizationEnabled) =>
-        cache.createOneClickClearResultCacheKey(createInput({ deleteOptimizationEnabled, routeMode })),
+      [false, true].map((isDeleteOptimizationEnabled) =>
+        cache.createOneClickClearResultCacheKey(createInput({ isDeleteOptimizationEnabled, routeMode })),
       ),
     );
 
@@ -31,10 +32,10 @@ describe("Graphwar pathfinding result cache keys", () => {
     const cache = createGraphwarPathfindingCacheController();
 
     const visibilityKey = cache.createOneClickClearResultCacheKey(
-      createInput({ routeMode: "visibility-graph", stepGlitchMode: true }),
+      createInput({ isStepGlitchModeEnabled: true, routeMode: "visibility-graph" }),
     );
     const thetaKey = cache.createOneClickClearResultCacheKey(
-      createInput({ routeMode: "theta-star", stepGlitchMode: true }),
+      createInput({ isStepGlitchModeEnabled: true, routeMode: "theta-star" }),
     );
 
     expect(visibilityKey).toBe(thetaKey);
@@ -42,8 +43,8 @@ describe("Graphwar pathfinding result cache keys", () => {
 
   it("separates Step glitch fallback masks when no simulation mask is available", () => {
     const cache = createGraphwarPathfindingCacheController();
-    const first = createInput({ stepGlitchMode: true });
-    const second = createInput({ stepGlitchMode: true });
+    const first = createInput({ isStepGlitchModeEnabled: true });
+    const second = createInput({ isStepGlitchModeEnabled: true });
     first.simulationMask = undefined;
     first.simulationMaskCacheId = 0;
     first.settings = { ...first.settings, stepGlitchObstacleMask: new Uint8Array(1) };
@@ -122,6 +123,7 @@ describe("Graphwar pathfinding result cache keys", () => {
   it("preserves the validated formula when caching a one-click-clear success", () => {
     const cache = createGraphwarPathfindingCacheController();
     const result = {
+      diagnostics: createGraphwarPathfindingDebugMetrics(false),
       result: {
         elapsedMs: 12,
         expression: "x",
@@ -129,6 +131,7 @@ describe("Graphwar pathfinding result cache keys", () => {
         launchAngleRadians: Math.PI / 4,
         pathPoints: [createPixelPoint(10, 20), createPixelPoint(30, 40)],
         targetIds: ["target"],
+        trajectoryPoints: [createPixelPoint(10, 20), createPixelPoint(20, 30)],
         type: "success" as const,
       },
       timings: [],
@@ -137,10 +140,12 @@ describe("Graphwar pathfinding result cache keys", () => {
     cache.cacheOneClickClearResult("success", result);
     const cached = cache.getCachedOneClickClearResult("success");
 
-    expect(cached).toEqual(result);
+    expect(cached).toEqual({ result: result.result, timings: [] });
+    expect(cached).not.toHaveProperty("diagnostics");
     expect(cached?.result).not.toBe(result.result);
     if (cached?.result.type === "success") {
       expect(cached.result.pathPoints).not.toBe(result.result.pathPoints);
+      expect(cached.result.trajectoryPoints).not.toBe(result.result.trajectoryPoints);
     }
   });
 
@@ -232,10 +237,10 @@ function createOneClickClearResult(index: number) {
 
 function createInput(
   options: {
-    deleteOptimizationEnabled?: boolean;
+    isDeleteOptimizationEnabled?: boolean;
     middleX?: number;
     routeMode?: "theta-star" | "visibility-graph";
-    stepGlitchMode?: boolean;
+    isStepGlitchModeEnabled?: boolean;
   } = {},
 ) {
   const mask = new Uint8Array(1);
@@ -246,7 +251,7 @@ function createInput(
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     candidates: [],
     dagEdgeWorkerCount: 1,
-    deleteOptimizationEnabled: options.deleteOptimizationEnabled ?? false,
+    isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled ?? false,
     hitCandidates: [],
     pathPoints: [start, createPixelPoint(options.middleX ?? 20, 20), createPixelPoint(24, 20)],
     prefixTarget: hitCircle,
@@ -254,11 +259,11 @@ function createInput(
     routeMode: options.routeMode ?? "visibility-graph",
     routeObstacleMask: mask,
     settings: {
-      algorithm: options.stepGlitchMode ? "step" : "abs",
+      algorithm: options.isStepGlitchModeEnabled ? "step" : "abs",
       decimalPlaces: 4,
-      equation: options.stepGlitchMode ? "dy" : "y",
+      equation: options.isStepGlitchModeEnabled ? "dy" : "y",
       steepness: 67,
-      stepGlitchMode: options.stepGlitchMode ?? false,
+      stepGlitchMode: options.isStepGlitchModeEnabled ?? false,
       stepOverflowProtection: true,
     },
     simulationMask: mask,

@@ -48,7 +48,7 @@ interface PendingTrajectoryTask {
   input: GraphwarTrajectoryCalculationInput;
   reject: (reason?: unknown) => void;
   resolve: (value: GraphwarTrajectoryRunResult) => void;
-  settled: boolean;
+  isSettled: boolean;
   startedAt: number;
   workerFailureCount: number;
 }
@@ -71,16 +71,16 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
   const createWorker = options.createWorker ?? createDefaultTrajectoryWorker;
   const now = options.now ?? nowMs;
   const workerSlots: TrajectoryWorkerSlot[] = [];
-  let closed = false;
+  let isClosed = false;
   let currentTask: PendingTrajectoryTask | undefined;
   let generation = 0;
   let nextRequestId = 1;
-  let workerFallback = false;
+  let isWorkerFallbackActive = false;
 
   /** 固定输入快照并启动 latest-wins 主轨迹任务。 */
   function run(input: GraphwarTrajectoryCalculationInput) {
     const startedAt = now();
-    if (closed) {
+    if (isClosed) {
       return Promise.reject<GraphwarTrajectoryRunResult>(new GraphwarTrajectoryCancelledError());
     }
 
@@ -105,12 +105,12 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
         input: taskInput,
         reject,
         resolve,
-        settled: false,
+        isSettled: false,
         startedAt,
         workerFailureCount: 0,
       };
       currentTask = task;
-      if (workerFallback) {
+      if (isWorkerFallbackActive) {
         void runOnMainThread(task);
         return;
       }
@@ -126,10 +126,10 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
 
   /** 页面卸载后永久关闭 runner，并释放热备 Worker。 */
   function close() {
-    if (closed) {
+    if (isClosed) {
       return;
     }
-    closed = true;
+    isClosed = true;
     cancel();
     for (const slot of [...workerSlots]) {
       terminateWorkerSlot(slot);
@@ -186,7 +186,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       return;
     }
 
-    while (!closed && !workerFallback && workerSlots.length < WORKER_SLOT_TARGET) {
+    while (!isClosed && !isWorkerFallbackActive && workerSlots.length < WORKER_SLOT_TARGET) {
       if (!tryCreateWorkerSlot().slot) {
         return;
       }
@@ -285,8 +285,8 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       return;
     }
 
-    if (!workerFallback) {
-      workerFallback = true;
+    if (!isWorkerFallbackActive) {
+      isWorkerFallbackActive = true;
       for (const slot of [...workerSlots]) {
         terminateWorkerSlot(slot);
       }
@@ -336,15 +336,15 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
 
   /** 判断任务是否仍是唯一可写回页面的权威任务。 */
   function isCurrentTask(task: PendingTrajectoryTask) {
-    return !closed && currentTask === task && task.generation === generation && !task.settled;
+    return !isClosed && currentTask === task && task.generation === generation && !task.isSettled;
   }
 
   /** 保证每个任务的 Promise 只结算一次。 */
   function settleTask(task: PendingTrajectoryTask, callback: () => void) {
-    if (task.settled) {
+    if (task.isSettled) {
       return;
     }
-    task.settled = true;
+    task.isSettled = true;
     callback();
   }
 
@@ -424,7 +424,11 @@ function isGraphwarTrajectoryCalculationOutcome(
     ) {
       return false;
     }
-    if ("targetMissed" in result && result.targetMissed !== undefined && typeof result.targetMissed !== "boolean") {
+    if (
+      "hasTargetMissWarning" in result &&
+      result.hasTargetMissWarning !== undefined &&
+      typeof result.hasTargetMissWarning !== "boolean"
+    ) {
       return false;
     }
     if (

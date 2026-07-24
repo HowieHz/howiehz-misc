@@ -26,7 +26,7 @@ describe("Graphwar debug activation", () => {
     const controller = useGraphwarDebugActivation({ toggleAdvancedSettings });
 
     controller.startHold({ button: 0 } as PointerEvent);
-    vi.advanceTimersByTime(3000);
+    vi.advanceTimersByTime(2000);
     controller.finishHold();
     controller.toggleAdvancedSettings();
 
@@ -35,6 +35,20 @@ describe("Graphwar debug activation", () => {
 
     controller.toggleAdvancedSettings();
     expect(toggleAdvancedSettings).toHaveBeenCalledOnce();
+    controller.dispose();
+  });
+
+  it("shows the final one-second countdown before activation", () => {
+    vi.useFakeTimers();
+    const controller = useGraphwarDebugActivation({ toggleAdvancedSettings: vi.fn() });
+
+    controller.startHold({ button: 0 } as PointerEvent);
+    vi.advanceTimersByTime(999);
+    expect(controller.remainingMs.value).toBeUndefined();
+
+    vi.advanceTimersByTime(1);
+    expect(controller.remainingMs.value).toBe(1000);
+    expect(controller.debugInfoEnabled.value).toBe(false);
     controller.dispose();
   });
 });

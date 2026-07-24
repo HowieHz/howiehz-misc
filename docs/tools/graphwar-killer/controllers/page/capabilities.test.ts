@@ -33,40 +33,40 @@ function createFacts(overrides: GraphwarCapabilityFactsOverrides = {}): Graphwar
     workflowMode: overrides.workflowMode ?? "solver",
     activeSource: overrides.activeSource ?? "screenshot",
     scene: {
-      imageAvailable: true,
-      boundsAvailable: true,
-      soldiersAvailable: true,
-      obstaclesAvailable: true,
+      hasImage: true,
+      hasBounds: true,
+      hasSoldiers: true,
+      hasObstacles: true,
       provenance: { source: "screenshot" },
       ...overrides.scene,
     },
     agent: {
-      enabled: true,
+      isEnabled: true,
       normalizedBaseUrl: currentAgentProvenance.normalizedAgentBaseUrl,
       ...overrides.agent,
     },
     formula: {
-      managedSettingsValid: true,
-      settingsValid: true,
-      oneClickClearSupported: true,
-      usesStepGlitchRouting: false,
+      isManagedSettingsValid: true,
+      isSettingsValid: true,
+      isOneClickClearSupported: true,
+      isStepGlitchRoutingUsed: false,
       ...overrides.formula,
     },
     pathfinding: {
-      pathStartAvailable: true,
-      workerCountValid: true,
-      managedTimingValid: true,
-      obstacleTolerancesValid: true,
-      deleteCheckRadiusValid: true,
+      hasPathStart: true,
+      hasValidObstacleTolerances: true,
+      isDeleteCheckRadiusValid: true,
+      isManagedTimingValid: true,
+      isWorkerCountValid: true,
       ...overrides.pathfinding,
     },
-    resultAvailable: overrides.resultAvailable ?? true,
+    hasResult: overrides.hasResult ?? true,
     busy: {
-      pathfinding: false,
-      agentRead: false,
-      agentExport: false,
-      agentFire: false,
-      managedMode: false,
+      isAgentExportBusy: false,
+      isAgentFireBusy: false,
+      isAgentReadBusy: false,
+      isManagedModeBusy: false,
+      isPathfindingBusy: false,
       ...overrides.busy,
     },
   };
@@ -75,10 +75,10 @@ function createFacts(overrides: GraphwarCapabilityFactsOverrides = {}): Graphwar
 /** Creates enabled interaction preferences while keeping deletion opt-in explicit. */
 function createPreferences(overrides: Partial<GraphwarCapabilityPreferences> = {}): GraphwarCapabilityPreferences {
   return {
-    snapSoldiersEnabled: true,
-    collisionCheckEnabled: true,
-    pathPlanningEnabled: true,
-    deleteOptimizationEnabled: false,
+    isSnapSoldiersEnabled: true,
+    isCollisionCheckEnabled: true,
+    isPathPlanningEnabled: true,
+    isDeleteOptimizationEnabled: false,
     ...overrides,
   };
 }
@@ -110,7 +110,7 @@ describe("Graphwar capabilities", () => {
 
   it("blocks managed mode on a dormant formula setting without blocking the current one-click command", () => {
     const capabilities = deriveGraphwarCapabilities(
-      createFacts({ formula: { managedSettingsValid: false, settingsValid: true } }),
+      createFacts({ formula: { isManagedSettingsValid: false, isSettingsValid: true } }),
       createPreferences(),
     );
 
@@ -120,7 +120,7 @@ describe("Graphwar capabilities", () => {
 
   it("blocks only managed mode when managed timing is invalid", () => {
     const capabilities = deriveGraphwarCapabilities(
-      createFacts({ pathfinding: { managedTimingValid: false } }),
+      createFacts({ pathfinding: { isManagedTimingValid: false } }),
       createPreferences(),
     );
 
@@ -130,14 +130,19 @@ describe("Graphwar capabilities", () => {
   });
 
   it.each([
-    ["snapSoldiers", { scene: { soldiersAvailable: false } }, { state: "dormant", reason: "soldiers-required" }],
-    ["collisionCheck", { scene: { obstaclesAvailable: false } }, { state: "dormant", reason: "obstacles-required" }],
-    ["obstacleEditing", { scene: { obstaclesAvailable: false } }, { state: "blocked", reason: "obstacles-required" }],
-    ["agentRead", { agent: { enabled: false } }, { state: "blocked", reason: "agent-disabled" }],
+    ["snapSoldiers", { scene: { hasSoldiers: false } }, { state: "dormant", reason: "soldiers-required" }],
+    ["collisionCheck", { scene: { hasObstacles: false } }, { state: "dormant", reason: "obstacles-required" }],
+    ["obstacleEditing", { scene: { hasObstacles: false } }, { state: "blocked", reason: "obstacles-required" }],
+    ["agentRead", { agent: { isEnabled: false } }, { state: "blocked", reason: "agent-disabled" }],
     ["agentRead", { agent: { normalizedBaseUrl: undefined } }, { state: "blocked", reason: "agent-url-invalid" }],
-    ["agentExport", { agent: { enabled: false } }, { state: "blocked", reason: "agent-disabled" }],
+    ["agentExport", { agent: { isEnabled: false } }, { state: "blocked", reason: "agent-disabled" }],
     ["agentExport", { agent: { normalizedBaseUrl: undefined } }, { state: "blocked", reason: "agent-url-invalid" }],
-    ["agentFire", { resultAvailable: false }, { state: "blocked" }],
+    ["agentFire", { hasResult: false }, { state: "blocked", reason: "solver-result-required" }],
+    [
+      "agentFire",
+      { hasResult: false, workflowMode: "simulator" },
+      { state: "blocked", reason: "simulator-function-required" },
+    ],
   ] satisfies [keyof GraphwarCapabilities, GraphwarCapabilityFactsOverrides, GraphwarControlCapability][])(
     "derives %s's local control state",
     (name, overrides, expected) => {
@@ -149,16 +154,16 @@ describe("Graphwar capabilities", () => {
     const capabilities = deriveGraphwarCapabilities(
       createFacts({
         scene: {
-          imageAvailable: false,
-          boundsAvailable: false,
-          soldiersAvailable: false,
-          obstaclesAvailable: false,
+          hasImage: false,
+          hasBounds: false,
+          hasSoldiers: false,
+          hasObstacles: false,
         },
       }),
       createPreferences({
-        snapSoldiersEnabled: false,
-        collisionCheckEnabled: false,
-        pathPlanningEnabled: false,
+        isSnapSoldiersEnabled: false,
+        isCollisionCheckEnabled: false,
+        isPathPlanningEnabled: false,
       }),
     );
 
@@ -171,25 +176,25 @@ describe("Graphwar capabilities", () => {
     expect(
       deriveCapability(
         "pathPlanning",
-        createFacts({ formula: { usesStepGlitchRouting: true } }),
-        createPreferences({ pathPlanningEnabled: false }),
+        createFacts({ formula: { isStepGlitchRoutingUsed: true } }),
+        createPreferences({ isPathPlanningEnabled: false }),
       ),
     ).toEqual({ state: "normal" });
   });
 
   it.each([
     [
-      { imageAvailable: false, boundsAvailable: false, obstaclesAvailable: false },
+      { hasImage: false, hasBounds: false, hasObstacles: false },
       { state: "dormant", reason: "image-required" },
       { state: "blocked", reason: "image-required" },
     ],
     [
-      { imageAvailable: true, boundsAvailable: false, obstaclesAvailable: false },
+      { hasImage: true, hasBounds: false, hasObstacles: false },
       { state: "dormant", reason: "bounds-required" },
       { state: "blocked", reason: "bounds-required" },
     ],
     [
-      { imageAvailable: true, boundsAvailable: true, obstaclesAvailable: false },
+      { hasImage: true, hasBounds: true, hasObstacles: false },
       { state: "dormant", reason: "obstacles-required" },
       { state: "blocked", reason: "obstacles-required" },
     ],
@@ -205,23 +210,23 @@ describe("Graphwar capabilities", () => {
 
   it.each([
     [
-      { scene: { soldiersAvailable: false }, pathfinding: { pathStartAvailable: false }, formula: {} },
+      { scene: { hasSoldiers: false }, pathfinding: { hasPathStart: false }, formula: {} },
       { state: "blocked", reason: "soldiers-required" },
     ],
     [
-      { pathfinding: { pathStartAvailable: false }, formula: { oneClickClearSupported: false } },
+      { pathfinding: { hasPathStart: false }, formula: { isOneClickClearSupported: false } },
       { state: "blocked", reason: "path-start-required" },
     ],
     [
-      { formula: { oneClickClearSupported: false, settingsValid: false } },
+      { formula: { isOneClickClearSupported: false, isSettingsValid: false } },
       { state: "blocked", reason: "formula-unsupported" },
     ],
     [
-      { formula: { settingsValid: false }, pathfinding: { workerCountValid: false } },
+      { formula: { isSettingsValid: false }, pathfinding: { isWorkerCountValid: false } },
       { state: "blocked", reason: "formula-settings-invalid" },
     ],
     [
-      { pathfinding: { workerCountValid: false, obstacleTolerancesValid: false } },
+      { pathfinding: { isWorkerCountValid: false, hasValidObstacleTolerances: false } },
       { state: "blocked", reason: "pathfinding-worker-count-invalid" },
     ],
   ] satisfies [GraphwarCapabilityFactsOverrides, GraphwarControlCapability][])(
@@ -231,18 +236,37 @@ describe("Graphwar capabilities", () => {
     },
   );
 
-  it("shows busy ownership before missing prerequisites", () => {
+  it("keeps stable blocked reasons while unrelated tasks are temporarily busy", () => {
     const capabilities = deriveGraphwarCapabilities(
       createFacts({
         workflowMode: "simulator",
         scene: {
-          imageAvailable: false,
-          boundsAvailable: false,
-          soldiersAvailable: false,
-          obstaclesAvailable: false,
+          hasImage: false,
+          hasBounds: false,
+          hasSoldiers: false,
+          hasObstacles: false,
         },
-        agent: { enabled: false, normalizedBaseUrl: undefined },
-        busy: { pathfinding: true, agentRead: true, agentFire: true, managedMode: false },
+        agent: { isEnabled: false, normalizedBaseUrl: undefined },
+        busy: { isPathfindingBusy: true, isAgentReadBusy: true, isAgentFireBusy: true, isManagedModeBusy: false },
+      }),
+      createPreferences(),
+    );
+
+    expect(capabilities.agentRead).toEqual({ state: "blocked", reason: "agent-disabled" });
+    expect(capabilities.agentExport).toEqual({ state: "blocked", reason: "agent-disabled" });
+    expect(capabilities.agentFire).toEqual({ state: "blocked", reason: "agent-disabled" });
+    expect(capabilities.snapSoldiers).toEqual({ state: "dormant", reason: "soldiers-required" });
+    expect(capabilities.collisionCheck).toEqual({ state: "dormant", reason: "obstacles-required" });
+    expect(capabilities.pathPlanning).toEqual({ state: "busy", reason: "pathfinding-busy" });
+    expect(capabilities.obstacleEditing).toEqual({ state: "blocked", reason: "obstacles-required" });
+    expect(capabilities.oneClickClear).toEqual({ state: "blocked", reason: "solver-required" });
+    expect(capabilities.managedMode).toEqual({ state: "blocked", reason: "solver-required" });
+  });
+
+  it("uses temporary busy reasons when controls are otherwise available", () => {
+    const capabilities = deriveGraphwarCapabilities(
+      createFacts({
+        busy: { isPathfindingBusy: true, isAgentReadBusy: true, isAgentFireBusy: true },
       }),
       createPreferences(),
     );
@@ -273,32 +297,32 @@ describe("Graphwar capabilities", () => {
 
   it.each([
     [
-      { enabled: false, normalizedBaseUrl: undefined },
+      { isEnabled: false, normalizedBaseUrl: undefined },
       currentAgentProvenance,
       { state: "dormant", reason: "agent-disabled" },
     ],
     [
-      { enabled: true, normalizedBaseUrl: undefined },
+      { isEnabled: true, normalizedBaseUrl: undefined },
       currentAgentProvenance,
       { state: "dormant", reason: "agent-url-invalid" },
     ],
     [
-      { enabled: true, normalizedBaseUrl: currentAgentProvenance.normalizedAgentBaseUrl },
+      { isEnabled: true, normalizedBaseUrl: currentAgentProvenance.normalizedAgentBaseUrl },
       undefined,
       { state: "dormant", reason: "agent-scene-required" },
     ],
     [
-      { enabled: true, normalizedBaseUrl: currentAgentProvenance.normalizedAgentBaseUrl },
+      { isEnabled: true, normalizedBaseUrl: currentAgentProvenance.normalizedAgentBaseUrl },
       { source: "screenshot" } as const,
       { state: "dormant", reason: "agent-scene-required" },
     ],
     [
-      { enabled: true, normalizedBaseUrl: currentAgentProvenance.normalizedAgentBaseUrl },
+      { isEnabled: true, normalizedBaseUrl: currentAgentProvenance.normalizedAgentBaseUrl },
       { ...currentAgentProvenance, normalizedAgentBaseUrl: "http://127.0.0.1:18000" },
       { state: "dormant", reason: "agent-scene-required" },
     ],
     [
-      { enabled: true, normalizedBaseUrl: currentAgentProvenance.normalizedAgentBaseUrl },
+      { isEnabled: true, normalizedBaseUrl: currentAgentProvenance.normalizedAgentBaseUrl },
       currentAgentProvenance,
       { state: "normal" },
     ],
@@ -332,7 +356,7 @@ describe("Graphwar capabilities", () => {
   it("does not make one-click clear or managed mode depend on path planning or manual collision", () => {
     const capabilities = deriveGraphwarCapabilities(
       createFacts(),
-      createPreferences({ pathPlanningEnabled: false, collisionCheckEnabled: false }),
+      createPreferences({ isPathPlanningEnabled: false, isCollisionCheckEnabled: false }),
     );
 
     expect(capabilities.pathPlanning).toEqual({ state: "normal" });
@@ -345,10 +369,10 @@ describe("Graphwar capabilities", () => {
       createFacts({
         activeSource: "agent",
         scene: {
-          imageAvailable: false,
-          boundsAvailable: false,
-          soldiersAvailable: false,
-          obstaclesAvailable: false,
+          hasImage: false,
+          hasBounds: false,
+          hasSoldiers: false,
+          hasObstacles: false,
           provenance: undefined,
         },
       }),
@@ -361,7 +385,7 @@ describe("Graphwar capabilities", () => {
 
   it("lets managed repair unsupported profiles without weakening the manual command guard", () => {
     const capabilities = deriveGraphwarCapabilities(
-      createFacts({ formula: { oneClickClearSupported: false } }),
+      createFacts({ formula: { isOneClickClearSupported: false } }),
       createPreferences(),
     );
 
@@ -371,8 +395,8 @@ describe("Graphwar capabilities", () => {
 
   it("ignores the DAG worker count only for manual Step y' glitch one-click clear", () => {
     const facts = createFacts({
-      formula: { usesStepGlitchRouting: true },
-      pathfinding: { workerCountValid: false },
+      formula: { isStepGlitchRoutingUsed: true },
+      pathfinding: { isWorkerCountValid: false },
     });
     const capabilities = deriveGraphwarCapabilities(facts, createPreferences());
 
@@ -392,10 +416,10 @@ describe("Graphwar capabilities", () => {
     ],
   ] satisfies [boolean, GraphwarControlCapability, GraphwarControlCapability][])(
     "validates deletion radius only while deletion optimisation is %s",
-    (deleteOptimizationEnabled, oneClickClear, managedMode) => {
+    (isDeleteOptimizationEnabled, oneClickClear, managedMode) => {
       const capabilities = deriveGraphwarCapabilities(
-        createFacts({ pathfinding: { deleteCheckRadiusValid: false } }),
-        createPreferences({ deleteOptimizationEnabled }),
+        createFacts({ pathfinding: { isDeleteCheckRadiusValid: false } }),
+        createPreferences({ isDeleteOptimizationEnabled }),
       );
 
       expect(capabilities.pathPlanning).toEqual({ state: "normal" });
@@ -408,28 +432,28 @@ describe("Graphwar capabilities", () => {
     const capabilities = deriveGraphwarCapabilities(
       createFacts({
         workflowMode: "simulator",
-        agent: { enabled: false, normalizedBaseUrl: undefined },
-        busy: { managedMode: true },
+        agent: { isEnabled: false, normalizedBaseUrl: undefined },
+        busy: { isManagedModeBusy: true },
       }),
       createPreferences(),
     );
 
     expect(capabilities.semanticControls).toEqual({ state: "busy", reason: "managed-lock" });
-    expect(capabilities.agentRead).toEqual({ state: "busy", reason: "managed-lock" });
+    expect(capabilities.agentRead).toEqual({ state: "blocked", reason: "agent-disabled" });
     expect(capabilities.agentExport).toEqual({ state: "blocked", reason: "agent-disabled" });
-    expect(capabilities.oneClickClear).toEqual({ state: "busy", reason: "managed-lock" });
+    expect(capabilities.oneClickClear).toEqual({ state: "blocked", reason: "solver-required" });
     expect(capabilities.managedMode).toEqual({ state: "normal" });
   });
 
   it("keeps Agent export available during managed mode while serializing debug transfers", () => {
-    expect(deriveCapability("agentExport", createFacts({ busy: { managedMode: true } }))).toEqual({
+    expect(deriveCapability("agentExport", createFacts({ busy: { isManagedModeBusy: true } }))).toEqual({
       state: "normal",
     });
-    expect(deriveCapability("agentExport", createFacts({ busy: { agentRead: true } }))).toEqual({
+    expect(deriveCapability("agentExport", createFacts({ busy: { isAgentReadBusy: true } }))).toEqual({
       state: "busy",
       reason: "agent-read-busy",
     });
-    expect(deriveCapability("agentExport", createFacts({ busy: { agentExport: true } }))).toEqual({
+    expect(deriveCapability("agentExport", createFacts({ busy: { isAgentExportBusy: true } }))).toEqual({
       state: "busy",
       reason: "agent-read-busy",
     });

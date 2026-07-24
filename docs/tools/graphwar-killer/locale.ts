@@ -146,8 +146,82 @@ export const graphwarKillerLocale = {
     agent: {
       defaultStatus: "点击“读取状态”从 Graphwar Agent 载入当前游戏信息",
       failed: (message) => `读取状态失败：${message}`,
-      failureReason: (kind, message) => {
+      failureReason: (kind, message, code) => {
+        switch (code) {
+          case "angle-not-allowed":
+            return "当前方程模式不接受发射角度";
+          case "angle-out-of-range":
+            return "发射角度超出允许范围";
+          case "angle-required":
+            return "当前方程模式需要发射角度";
+          case "authentication-required":
+            return "Agent 访问令牌未设置或无效";
+          case "bad-request":
+            return "Agent 无法解析请求";
+          case "battle-revision-changed":
+            return "Graphwar 战场状态已变化，请重试";
+          case "battle-revision-stale":
+            return "发射前战场状态已变化";
+          case "content-length-required":
+            return "请求缺少 Content-Length";
+          case "function-empty":
+            return "发射函数不能为空";
+          case "function-too-complex":
+            return "发射函数复杂度超过 Agent 限制";
+          case "function-too-large":
+            return "发射函数超过 Agent 大小限制";
+          case "game-instance-stale":
+            return "当前对局已发生变化";
+          case "graphwar-call-failed":
+            return "Graphwar 执行发射时失败，结果未知";
+          case "graphwar-state-unavailable":
+            return "Graphwar 当前无法接受发射命令";
+          case "if-match-required":
+            return "障碍请求缺少战场版本";
+          case "internal-error":
+            return "Graphwar Agent 内部错误";
+          case "invalid-ready-request":
+            return "准备状态请求无效";
+          case "invalid-request-id":
+            return "发射请求 ID 格式无效";
+          case "invalid-shot-request":
+            return "发射请求无效";
+          case "malformed-function":
+            return "发射函数格式无效";
+          case "method-not-allowed":
+            return "Agent 地址错误或不支持所需的 v3 API 方法，请检查 Agent 地址或升级 Agent";
+          case "obstacle-mask-unavailable":
+            return "当前没有可用的障碍快照";
+          case "request-body-too-large":
+            return "请求数据超过 Agent 限制";
+          case "request-headers-too-large":
+            return "请求头超过 Agent 限制";
+          case "request-id-conflict":
+            return "发射请求 ID 与已有命令冲突";
+          case "room-unavailable":
+            return "当前房间无法更改准备状态";
+          case "route-not-found":
+            return "Agent 地址错误或缺少所需的 v3 API 路由，请检查 Agent 地址或升级 Agent";
+          case "server-busy":
+            return "Agent 的 Graphwar 请求槽正忙，请稍后重试";
+          case "shot-already-resolving":
+            return "当前回合的发射正在结算";
+          case "shot-command-not-found":
+            return "Agent 找不到该发射命令";
+          case "shot-executor-busy":
+            return "Agent 正在处理上一条发射命令";
+          case "turn-expired":
+            return "当前回合已经结束";
+          case "turn-token-stale":
+            return "当前回合令牌已失效";
+          case "turn-token-used":
+            return "当前回合已经提交过发射命令";
+          case "unsupported-media-type":
+            return "请求数据格式不受 Agent 支持";
+        }
         switch (message) {
+          case "graphwar-window-not-found":
+            return "未找到 Graphwar 游戏窗口";
           case "game-data-not-initialized":
             return "Graphwar 游戏数据尚未初始化";
           case "game-not-active":
@@ -160,6 +234,8 @@ export const graphwarKillerLocale = {
             return "状态文件不是有效的 JSON";
         }
         switch (kind) {
+          case "command":
+            return "Graphwar Agent 返回了未知的发射错误";
           case "conflict":
             return "Graphwar 状态已变化，请重试";
           case "incompatible":
@@ -180,6 +256,7 @@ export const graphwarKillerLocale = {
       exported: "已导出当前局面",
       exporting: "正在导出局面",
       fireFailed: (message) => `开火失败：${message}`,
+      fireUnknown: (message) => `发射结果未知，本次不会换用新请求重试：${message}`,
       fired: "已提交函数并开火",
       loaded: (soldiers) => `已读取当前状态：障碍和 ${soldiers} 个士兵`,
       obstacleFileLoaded: "已读取障碍文件，请读取状态文件",
@@ -189,7 +266,11 @@ export const graphwarKillerLocale = {
       stateFileLoaded: "已读取状态文件，请读取障碍文件",
     },
     pathPointCoordinateNumber: "点坐标需要填写数字",
-    secondOrderAngleHint: (angle) => `需要用键盘上下键把发射角调到 ${angle}°`,
+    secondOrderAngleHint: (roundedAngle, exactAngle = undefined) =>
+      exactAngle === undefined
+        ? `需要用键盘上下键把发射角调到 ${roundedAngle}°`
+        : `需要用键盘上下键把发射角调到约 ${roundedAngle}°（${exactAngle}°）`,
+    secondOrderAngleHintTitle: (angle) => `需要用键盘上下键把发射角调到 ${angle}°`,
     trajectoryWarning: {
       obstacle: "当前公式轨迹会撞到障碍物或边界",
       pathQuality: (error) => `公式已生成，但普通控制点的最大路径误差为 ${error} 个原始平面像素`,
@@ -218,8 +299,8 @@ export const graphwarKillerLocale = {
       stopSuffix: "，在截图中右键停止",
       trajectory: "验证函数轨迹",
     },
-    success: (elapsed, resultCacheHit) => {
-      const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
+    success: (elapsed, hasResultCacheHit) => {
+      const cacheText = hasResultCacheHit ? "（使用结果缓存）" : "";
       return elapsed === undefined ? `路径规划完成${cacheText}` : `路径规划完成${cacheText}，耗时 ${elapsed}`;
     },
     oneClickClear: {
@@ -230,8 +311,8 @@ export const graphwarKillerLocale = {
       noUsableTarget: (elapsed) => `一键清图失败：搜索后没有找到可用目标，耗时 ${elapsed}`,
       pathfindingWorkerFailed: (elapsed) => `一键清图失败：寻路工作线程不可用或运行失败，耗时 ${elapsed}`,
       retained: "已保留当前最优结果",
-      success: (killCount, elapsed, resultCacheHit) => {
-        const cacheText = resultCacheHit ? "（使用结果缓存）" : "";
+      success: (killCount, elapsed, hasResultCacheHit) => {
+        const cacheText = hasResultCacheHit ? "（使用结果缓存）" : "";
         return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
       },
       unsupported: "一键清图仅支持双绝对值的 y、y'，或阶跃 y、y'、y''",
@@ -242,14 +323,17 @@ export const graphwarKillerLocale = {
         `托管计算完成，当前最优方案命中 ${targetCount} 个目标，耗时 ${elapsed}`,
       calculating: () => "托管计算中",
       completedWaiting: "托管计算完成，等待己方回合",
-      connectionFailed: (message) => `Agent 连接失败，正在重试：${message}`,
-      deadlineFired: "剩余 3 秒中断，已发射当前最优方案",
-      deadlineNoPlan: "剩余 3 秒中断，无法提交跳过回合公式",
-      deadlinePlan: (elapsed) => `托管计算在剩余 3 秒时中断，已采用当前最优方案，耗时 ${elapsed}`,
+      connectionFailed: (message) => `Agent 请求失败，正在重试：${message}`,
+      deadlineFired: (shotReserveSeconds) => `剩余 ${shotReserveSeconds} 秒中断，已发射当前最优方案`,
+      deadlineNoPlan: (shotReserveSeconds) => `剩余 ${shotReserveSeconds} 秒中断，无法提交跳过回合公式`,
+      deadlinePlan: (shotReserveSeconds, elapsed) =>
+        `托管计算在剩余 ${shotReserveSeconds} 秒时中断，已采用当前最优方案，耗时 ${elapsed}`,
       enabled: "托管已启用，正在读取游戏状态",
       incompatible: "Agent 接口不兼容，托管已关闭，请升级 Agent",
+      invalidRequest: (message) => `Agent 拒绝请求，托管已关闭：${message}`,
       readying: "房间内本地玩家尚未准备，正在自动准备",
       searchFailed: "托管计算失败，无法跳过本回合",
+      shotFailed: (message) => `发射命令失败，本回合不再自动重试：${message}`,
       skippingTurn: "没有可用方案，正在跳过本回合",
       skipTurnFired: "没有可用方案，已跳过本回合",
       shotUnknown: (message) => `发射结果未知，本回合不再重试：${message}`,
@@ -300,6 +384,10 @@ export const graphwarKillerLocale = {
         address: "Agent 地址",
         addressAriaLabel: "Graphwar Agent 地址",
         addressTitle: "Graphwar Agent 本机 HTTP 地址，默认 http://127.0.0.1:17900",
+        token: "访问令牌",
+        tokenAriaLabel: "Graphwar Agent 访问令牌",
+        tokenPlaceholder: "未启用鉴权时留空",
+        tokenTitle: "可选的 Graphwar Agent Bearer token；仅保留到当前页面关闭",
         exportOnClearFailure: "清图失败自动导出",
         exportOnClearFailureTitle:
           "一键清图漏杀、搜索失败、工作线程异常或托管截止中断时，自动导出搜索启动时的 Graphwar Agent 局面；同一回合和战场版本只导出一次",
@@ -431,10 +519,28 @@ export const graphwarKillerLocale = {
         "path-start-required": "请先选择当前发射士兵",
         "pathfinding-busy": "当前寻路任务结束后才能操作",
         "pathfinding-worker-count-invalid": "请修正寻路工作线程数量",
+        "simulator-function-required": "请先输入有效函数",
+        "solver-result-required": "请先生成有效函数",
         "soldiers-required": "请先识别或读取士兵",
         "solver-required": "切换到解算器后生效",
       },
+      debugCounters: {
+        acceptedSamplePointCount: { label: "接受采样点数", title: "全部完整轨迹回放返回的采样点总数" },
+        formulaTermEvaluationCount: { label: "公式项求值次数", title: "编译后的公式项在全部轨迹回放中的求值总次数" },
+        incumbentReportCount: { label: "当前最优结果上报次数", title: "工作线程实际发送到页面的 incumbent 消息数" },
+        incumbentTrajectoryPointLoad: { label: "当前最优轨迹点负载", title: "全部 incumbent 消息携带的轨迹点总数" },
+        rk4StepCount: { label: "RK4 步数", title: "包含步长重试在内的 RK4 试算总步数" },
+        stepBisectionCount: { label: "步长二分次数", title: "自适应采样因步长过大而执行的二分总次数" },
+        trajectoryReplayCount: { label: "轨迹回放次数", title: "包含失败候选和准备探测在内的完整轨迹回放总数" },
+      },
+      debugNoDiagnostics: "暂无搜索工作量或内部明细",
       debugNoTiming: "暂无寻路耗时记录",
+      debugPhaseTimings: "阶段耗时",
+      debugResultCacheHit: "结果缓存命中，未执行搜索 Worker",
+      debugStepGlitchCounters: {
+        candidateReplayCount: { label: "邪道候选回放次数", title: "直连失败后实际验证的邪道候选公式数量" },
+        directReplayCount: { label: "邪道直连回放次数", title: "进入邪道候选扫描前执行的直连公式回放数量" },
+      },
       debugDetails: {
         "build-dag-edges": {
           label: "- 清图建立有向无环图边",
@@ -464,6 +570,10 @@ export const graphwarKillerLocale = {
         "optimize-path": {
           label: "- 清图删点优化",
           title: "对验证通过的清图路径做保守删点，并确认每次删除后仍命中全部新旧目标",
+        },
+        "outside-search-stages": {
+          label: "- 清图搜索阶段外耗时",
+          title: "清图搜索父阶段扣除全部非嵌套已分类阶段后的剩余时间，包括搜索编排与消息落地",
         },
         "prefix-evidence-hit": {
           label: "- 清图前缀证据命中",
@@ -658,8 +768,27 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "调试信息",
+      debugTimings: {
+        expressionFinalizationElapsedMs: {
+          label: "表达式最终化",
+          title: "数值材料稳定后生成可发射 Graphwar 表达式的累计耗时",
+        },
+        formulaPointMappingElapsedMs: { label: "公式点映射", title: "把截图像素控制点转换为 Graphwar 坐标的累计耗时" },
+        formulaPreparationElapsedMs: { label: "公式材料准备", title: "准备公式点、编译材料与求解数值保护的累计耗时" },
+        incumbentBuildElapsedMs: { label: "构造当前最优结果", title: "复制可发射表达式、控制点与轨迹快照的累计耗时" },
+        incumbentMessageSendElapsedMs: {
+          label: "发送当前最优结果",
+          title: "工作线程将 incumbent 消息加入页面消息队列的同步累计耗时",
+        },
+        pathErrorElapsedMs: { label: "路径误差统计", title: "轨迹完成后统计控制点路径误差的累计耗时" },
+        trajectoryReplayElapsedMs: { label: "完整轨迹回放", title: "包含积分、命中与障碍检查在内的完整回放累计耗时" },
+        visibleTrajectoryCopyElapsedMs: { label: "复制可见轨迹", title: "固化可对外发布的可见轨迹快照的累计耗时" },
+      },
+      debugWorkload: "搜索工作量 / 内部明细",
       deleteOptimization: "删点优化",
       deleteOptimizationTitle: "尝试删除多余控制点；最终仍验证完整轨迹",
+      exportDebugReport: "导出最近寻路调试报告",
+      exportDebugReportTitle: "下载最近一次完整寻路任务匹配的 state JSON、原始障碍二进制和调试 JSON",
       obstacleExpansionAgentMode: "Agent 模式",
       obstacleExpansionDetectionMode: "识别模式",
       obstacleExpansion: "障碍外扩",
@@ -668,10 +797,10 @@ export const graphwarKillerLocale = {
       oneClickClearDeleteCheckRadiusAriaLabel: "一键清图删点命中检查半径，单位为 Graphwar 原始 770x450 平面像素",
       oneClickClearDeleteCheckRadiusTitle: "删点时快速检查局部路径是否仍经过相同士兵；设为 0 时直接验证完整轨迹",
       oneClickClearTitle: "从当前路径末端开始，分配并尽量击杀 x+ 侧命中圈可达的士兵",
-      managedFriendlyFireWarning: "托管已允许友伤，友军会作为一键清图候选",
+      managedFriendlyFireWarning: "寻路设置已允许友伤，友军会作为一键清图候选",
       managedMode: "托管模式",
       managedModeDisableTitle: "关闭托管模式并解锁设置",
-      managedModeConfirmation: (settings, repairs, friendlyFireEnabled, timing) => {
+      managedModeConfirmation: (settings, repairs, isFriendlyFireEnabled, timing) => {
         const algorithmStatus = [
           "当前算法设定：",
           ...settings.map(
@@ -689,7 +818,7 @@ export const graphwarKillerLocale = {
                 ),
               ]),
         ].join("\n");
-        return `托管会自动向 Graphwar 发射\n在房间内会自动准备\n当前${friendlyFireEnabled ? "允许" : "禁止"}友伤\n发射预留时间：${timing.shotReserveSeconds} 秒\n状态轮询间隔：${timing.pollIntervalSeconds} 秒\n\n${algorithmStatus}\n\n确认开启托管？`;
+        return `托管会自动向 Graphwar 发射\n在房间内会自动准备\n当前${isFriendlyFireEnabled ? "允许" : "禁止"}友伤\n发射预留时间：${timing.shotReserveSeconds} 秒\n状态轮询间隔：${timing.pollIntervalSeconds} 秒\n\n${algorithmStatus}\n\n确认开启托管？`;
       },
       managedModeTitle: "在己方回合自动读取状态、规划并发射",
       routePlanningTolerance: "路线规划容差",
@@ -700,6 +829,8 @@ export const graphwarKillerLocale = {
       routeLazyVisibilityGraph: "惰性可视图",
       routeThetaStar: "Theta*",
       routeXPlusScan: "X+ 扫描",
+      resultCache: "结果缓存",
+      resultCacheTitle: "复用普通寻路与一键清图的完整结果；关闭时只绕过读写，不清空已有缓存",
       searchAnimation: "搜索动画",
       searchAnimationTitle: "显示单目标搜索过程，以及一键清图和托管的当前最优公式与轨迹",
       simulationTolerance: "函数模拟容差",
@@ -724,10 +855,10 @@ export const graphwarKillerLocale = {
       clearSimulatorTitle: "清空模拟器里的函数、发射角和已选初始士兵",
       copyTitle: "复制生成的 Graphwar 函数",
       fire: "开火",
-      fireError: "开火失败",
       fireSuccess: "已开火",
       fireTitle: "通过 Graphwar Agent 提交当前函数并开火",
       firing: "开火中",
+      turnTimeRemaining: (time) => `剩余 ${time} 秒`,
       fractionConversionIncomplete: "部分小数无法等价转换",
       fractionOutput: "结果转分数",
       fractionOutputTitle: "将生成函数中的有限小数转换为 Graphwar 运行值等价的分数",
@@ -819,7 +950,6 @@ export const graphwarKillerLocale = {
       skipUnknownCharactersTitle: "Graphwar 会跳过未知字符",
       stepGlitchMode: "邪道模式",
       stepGlitchModeAlgorithmInactiveReason: "当前算法不生效",
-      stepGlitchModeGameModeInactiveReason: "当前游戏模式不生效",
       stepGlitchModeTitle: "用于阶跃 y' 或 y''；遇到障碍或普通阶跃无法连接时尝试纵向瞬移，障碍数据存在时仍会验证碰撞",
       steepness: "陡峭度 k",
       steepnessAriaLabel: "公式陡峭度 k",

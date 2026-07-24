@@ -23,26 +23,26 @@ describe("one-click-clear input semantics", () => {
 });
 
 /** Builds the minimal preflight needed to isolate the conditional DAG worker rule. */
-function createPreflight(requiresDagWorker: boolean) {
+function createPreflight(shouldUseDagWorker: boolean) {
   return createGraphwarOneClickClearSearchPreflight({
     bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
     createPrefixTarget: () => undefined,
     getObstacleMask: () => new Uint8Array(1),
     pathPointCount: 1,
     pathfindingWorkerCount: undefined,
-    requiresDagWorker,
+    shouldUseDagWorker,
     tolerances: {
       oneClickClearDeleteCheckRadiusPlanePixels: 0,
       routeBoundaryInsetPlanePixels: 0,
       routePlanningTolerancePlanePixels: 0,
       simulationBoundaryInsetPlanePixels: 0,
     },
-    unsupportedMode: () => false,
+    isModeSupported: () => true,
   });
 }
 
 /** Builds a Step y' glitch input whose dormant settings have deliberately non-canonical values. */
-function createInput(deleteOptimizationEnabled: boolean, routeMode: "theta-star" | "visibility-graph") {
+function createInput(isDeleteOptimizationEnabled: boolean, routeMode: "theta-star" | "visibility-graph") {
   const mask = new Uint8Array(1);
   const point = createPixelPoint(10, 10);
   return createGraphwarOneClickClearSearchInput({
@@ -50,7 +50,7 @@ function createInput(deleteOptimizationEnabled: boolean, routeMode: "theta-star"
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     candidates: [],
     dagEdgeWorkerCount: 1,
-    deleteOptimizationEnabled,
+    isDeleteOptimizationEnabled,
     hitCandidates: [],
     pathPoints: [point],
     prefixTarget: undefined,

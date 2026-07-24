@@ -2,13 +2,16 @@
 import { Trash2 } from "@lucide/vue";
 import { computed } from "vue";
 
+import type { GraphwarAgentTurnCountdownDisplayState } from "../../controllers/agent/turn-countdown";
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
 import ControlReason from "../controls/ControlReason.vue";
 import PanelDetails from "../controls/PanelDetails.vue";
+import { prependControlTitle } from "../controls/title";
 import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
+import AgentTurnCountdown from "./AgentTurnCountdown.vue";
 
 type GraphwarResultPanelCoordinateAxis = "x" | "y";
 
@@ -44,8 +47,12 @@ interface GraphwarResultPanelHint {
 
 /** 公式结果、路径坐标、警告和 Agent 发射的展示模型。 */
 export interface GraphwarResultPanelModel {
-  /** 托管期间锁定公式输入、路径坐标和手动发射，保留复制。 */
-  interactionDisabled: boolean;
+  /** 是否允许编辑结果面板中的公式类输入。 */
+  canInteract: boolean;
+  /** `canInteract` 临时为 false 时前置到受影响控件 title 的原因。 */
+  temporaryDisabledReason?: string;
+  /** 是否允许编辑正式路径坐标；incumbent 预览坐标保持只读。 */
+  canEditPointCoordinates: boolean;
   /** Agent 开火按钮当前文案。 */
   agentFireButtonText: string;
   /** Agent 开火命令与页面 guard 共享的能力状态。 */
@@ -56,16 +63,18 @@ export interface GraphwarResultPanelModel {
   canClearSimulatorInputs: boolean;
   /** 是否允许复制当前结果。 */
   canCopyFormula: boolean;
+  /** 复制仅因临时工作流被禁用时前置到 title 的原因。 */
+  copyDisabledReason?: string;
   /** 当前计算错误文案。 */
   calculationMessage: string;
   /** 是否展示计算错误；父页面应保留原来的 workflow/formulaResult 判定。 */
-  calculationMessageVisible: boolean;
+  isCalculationMessageVisible: boolean;
   /** 复制按钮当前文案。 */
   copyButtonText: string;
   /** 仅显示在函数输入/输出框左侧的方程前缀。 */
   equationPrefix: string;
   /** 是否把当前生成结果中的小数字面量展示为 Graphwar 运行值等价的分数。 */
-  fractionOutputEnabled: boolean;
+  isFractionOutputEnabled: boolean;
   /** 当前结果存在无法保证 Graphwar 运行值等价的小数时，在开关旁展示的提示。 */
   fractionConversionWarning?: string;
   /** 路径点坐标表行。 */
@@ -73,7 +82,7 @@ export interface GraphwarResultPanelModel {
   /** 二阶发射角提示；可见文本和完整 title 分开保留。 */
   secondOrderAngleHint?: GraphwarResultPanelHint;
   /** 是否展示模拟器发射角输入。 */
-  showSimulatorLaunchAngleInput: boolean;
+  isSimulatorLaunchAngleInputVisible: boolean;
   /** 模拟器表达式输入框文本。 */
   simulatorFormulaText: string;
   /** 模拟器发射角输入框文本。 */
@@ -81,7 +90,7 @@ export interface GraphwarResultPanelModel {
   /** 公式生成结果文本。 */
   solverExpression: string;
   /** 是否展示公式生成结果；父页面应使用原 `formulaResult` truthiness 投影。 */
-  solverResultVisible: boolean;
+  isSolverResultVisible: boolean;
   /** 当前轨迹警告文案。 */
   trajectoryWarning: string;
   /** 普通控制点路径质量未达到可选目标时的独立警告。 */
@@ -91,10 +100,12 @@ export interface GraphwarResultPanelModel {
   /** 当前主工作流。 */
   workflowMode: ToolWorkflowMode;
   /** 是否展示 Agent 开火按钮。 */
-  agentFireVisible: boolean;
+  isAgentFireVisible: boolean;
 }
 
 const props = defineProps<{
+  /** Stable countdown state passed through without subscribing this panel to its ticks. */
+  agentTurnCountdown?: GraphwarAgentTurnCountdownDisplayState;
   /** 页面本地化文案。 */
   locale: GraphwarKillerLocale;
   /** 结果面板展示模型。 */
@@ -145,40 +156,56 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         <ToggleField
           v-if="result.workflowMode === 'solver'"
           id="graphwar-killer-fraction-output"
-          :checked="result.fractionOutputEnabled"
+          :checked="result.isFractionOutputEnabled"
           :label="locale.ui.result.fractionOutput"
-          :reason="result.fractionConversionWarning"
-          :state="result.interactionDisabled ? 'busy' : 'normal'"
+          :reason="result.canInteract ? result.fractionConversionWarning : result.temporaryDisabledReason"
+          :state="result.canInteract ? 'normal' : 'busy'"
           :title="locale.ui.result.fractionOutputTitle"
           @toggle="emit('toggleFractionOutput')"
         />
       </div>
       <div class="graphwar-killer__result-actions graphwar-killer-command-row">
         <div
-          v-if="result.agentFireVisible"
-          class="graphwar-killer-command-field"
+          v-if="result.isAgentFireVisible"
+          class="graphwar-killer__agent-fire-command"
         >
-          <button
-            type="button"
-            class="graphwar-killer__agent-fire-button"
-            :aria-describedby="result.agentFireReason ? 'graphwar-killer-agent-fire-reason' : undefined"
-            :disabled="result.agentFireState === 'blocked' || result.agentFireState === 'busy'"
-            :title="locale.ui.result.fireTitle"
-            @click="emit('fireAgentFunction')"
-          >
-            {{ result.agentFireButtonText }}
-          </button>
-          <ControlReason
-            v-if="result.agentFireReason"
-            id="graphwar-killer-agent-fire-reason"
-            :message="result.agentFireReason"
+          <AgentTurnCountdown
+            v-if="agentTurnCountdown"
+            :countdown="agentTurnCountdown"
+            :locale="locale"
           />
+          <div class="graphwar-killer-command-field graphwar-killer__agent-fire-field">
+            <button
+              type="button"
+              class="graphwar-killer__agent-fire-button"
+              :aria-describedby="
+                result.agentFireState !== 'busy' && result.agentFireReason
+                  ? 'graphwar-killer-agent-fire-reason'
+                  : undefined
+              "
+              :disabled="result.agentFireState === 'blocked' || result.agentFireState === 'busy'"
+              :title="
+                prependControlTitle(
+                  result.agentFireState === 'busy' ? result.agentFireReason : undefined,
+                  locale.ui.result.fireTitle,
+                )
+              "
+              @click="emit('fireAgentFunction')"
+            >
+              {{ result.agentFireButtonText }}
+            </button>
+            <ControlReason
+              v-if="result.agentFireState !== 'busy' && result.agentFireReason"
+              id="graphwar-killer-agent-fire-reason"
+              :message="result.agentFireReason"
+            />
+          </div>
         </div>
         <button
           type="button"
           class="graphwar-killer__primary-button"
           :disabled="!result.canCopyFormula"
-          :title="locale.ui.result.copyTitle"
+          :title="prependControlTitle(result.copyDisabledReason, locale.ui.result.copyTitle)"
           @click="emit('copyFormula')"
         >
           {{ result.copyButtonText }}
@@ -188,8 +215,8 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           type="button"
           class="graphwar-killer__icon-button"
           :aria-label="locale.ui.result.clearSimulator"
-          :disabled="result.interactionDisabled || !result.canClearSimulatorInputs"
-          :title="locale.ui.result.clearSimulatorTitle"
+          :disabled="!result.canInteract || !result.canClearSimulatorInputs"
+          :title="prependControlTitle(result.temporaryDisabledReason, locale.ui.result.clearSimulatorTitle)"
           @click="emit('clearSimulator')"
         >
           <Trash2
@@ -200,7 +227,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
       </div>
     </div>
     <div
-      v-if="result.solverResultVisible"
+      v-if="result.isSolverResultVisible"
       class="graphwar-killer__formula-row"
     >
       <span class="graphwar-killer__formula-prefix">
@@ -224,11 +251,11 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         autocomplete="off"
         :aria-label="locale.ui.result.formulaInputAriaLabel"
         :title="locale.ui.result.formulaInputTitle"
-        :disabled="result.interactionDisabled"
+        :disabled="!result.canInteract"
       >
     </div>
     <div
-      v-if="result.showSimulatorLaunchAngleInput"
+      v-if="result.isSimulatorLaunchAngleInputVisible"
       class="graphwar-killer__formula-row"
     >
       <span class="graphwar-killer__formula-prefix">
@@ -241,7 +268,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         autocomplete="off"
         :aria-label="locale.ui.result.launchAngleAriaLabel"
         :title="locale.ui.result.launchAngleTitle"
-        :disabled="result.interactionDisabled"
+        :disabled="!result.canInteract"
       >
     </div>
     <p
@@ -270,7 +297,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
       {{ result.pathQualityWarning }}
     </p>
     <p
-      v-if="result.calculationMessageVisible"
+      v-if="result.isCalculationMessageVisible"
       class="graphwar-killer__error"
     >
       {{ result.calculationMessage }}
@@ -297,10 +324,11 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
             :title="row.x.title"
             inputmode="decimal"
             autocomplete="off"
-            :disabled="result.interactionDisabled"
-            @focus="emit('startPointCoordinateEdit', row.index, 'x')"
-            @blur="emit('finishPointCoordinateEdit')"
-            @input="handlePointCoordinateInput(row.index, 'x', $event)"
+            :disabled="!result.canInteract"
+            :readonly="!result.canEditPointCoordinates"
+            @focus="result.canEditPointCoordinates && emit('startPointCoordinateEdit', row.index, 'x')"
+            @blur="result.canEditPointCoordinates && emit('finishPointCoordinateEdit')"
+            @input="result.canEditPointCoordinates && handlePointCoordinateInput(row.index, 'x', $event)"
           >
           <input
             class="graphwar-killer__point-coordinate-input"
@@ -309,10 +337,11 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
             :title="row.y.title"
             inputmode="decimal"
             autocomplete="off"
-            :disabled="result.interactionDisabled"
-            @focus="emit('startPointCoordinateEdit', row.index, 'y')"
-            @blur="emit('finishPointCoordinateEdit')"
-            @input="handlePointCoordinateInput(row.index, 'y', $event)"
+            :disabled="!result.canInteract"
+            :readonly="!result.canEditPointCoordinates"
+            @focus="result.canEditPointCoordinates && emit('startPointCoordinateEdit', row.index, 'y')"
+            @blur="result.canEditPointCoordinates && emit('finishPointCoordinateEdit')"
+            @input="result.canEditPointCoordinates && handlePointCoordinateInput(row.index, 'y', $event)"
           >
         </div>
       </div>
@@ -366,6 +395,31 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   justify-content: flex-end;
 }
 
+.graphwar-killer__agent-fire-command {
+  align-items: start;
+  display: flex;
+  gap: 8px;
+}
+
+.graphwar-killer__agent-fire-field {
+  max-width: min(320px, 100%);
+}
+
+.graphwar-killer__agent-turn-countdown {
+  align-items: center;
+  color: var(--vp-c-text-2);
+  display: flex;
+  font-variant-numeric: tabular-nums;
+  min-height: 34px;
+  min-width: 82px;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.graphwar-killer__agent-turn-countdown--expired {
+  opacity: 58%;
+}
+
 .graphwar-killer__primary-button {
   background: var(--vp-c-brand-1);
   border-color: var(--vp-c-brand-1);
@@ -381,8 +435,9 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   color: var(--vp-c-danger-1);
   min-height: 34px;
   min-width: 72px;
+  overflow-wrap: anywhere;
   padding: 6px 12px;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .graphwar-killer__formula-row {
@@ -479,6 +534,11 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   width: 130px;
 }
 
+.graphwar-killer__point-coordinate-input:read-only:not(:disabled) {
+  color: var(--vp-c-text-2);
+  cursor: default;
+}
+
 .graphwar-killer__primary-button:hover:not(:disabled) {
   color: var(--vp-c-white);
 }
@@ -495,6 +555,10 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   }
 
   .graphwar-killer-command-field {
+    width: 100%;
+  }
+
+  .graphwar-killer__agent-fire-command {
     width: 100%;
   }
 

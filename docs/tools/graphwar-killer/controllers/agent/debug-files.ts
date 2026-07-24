@@ -7,12 +7,14 @@ export interface GraphwarAgentDebugFilePair {
   state: GraphwarAgentAvailableState;
 }
 
-/** 单个可下载的 Agent 调试文件。 */
-export interface GraphwarAgentDebugDownload {
+/** 单个可下载的 Graphwar 调试文件。 */
+export interface GraphwarDebugDownload {
   content: ArrayBuffer | string;
   fileName: string;
   mediaType: string;
 }
+
+export type GraphwarAgentDebugDownload = GraphwarDebugDownload;
 
 /** Agent 调试文件导入、匹配与导出的统一状态。 */
 export interface GraphwarAgentDebugFiles {
@@ -35,9 +37,18 @@ export function createGraphwarAgentDebugDownloads(
   state: GraphwarAgentAvailableState,
   worldObstacleMask: Uint8Array,
   options: GraphwarAgentDebugDownloadOptions = {},
-): { obstacle: GraphwarAgentDebugDownload; state: GraphwarAgentDebugDownload } {
+): { obstacle: GraphwarDebugDownload; state: GraphwarDebugDownload } {
+  return createGraphwarDebugSceneDownloads(state, worldObstacleMask, options);
+}
+
+/** 把任意版本化源局面与原始障碍 mask 序列化为时间戳匹配的文件对。 */
+export function createGraphwarDebugSceneDownloads(
+  state: unknown,
+  worldObstacleMask: Uint8Array,
+  options: GraphwarAgentDebugDownloadOptions = {},
+): { obstacle: GraphwarDebugDownload; state: GraphwarDebugDownload } {
   // 两个文件共用不含非法字符的时间戳，之后从下载目录中也能直观看出它们属于同一局面。
-  const suffix = (options.exportedAt ?? new Date()).toISOString().replaceAll(":", "-").replace(".", "-");
+  const suffix = createGraphwarDebugFileNameSuffix(options.exportedAt ?? new Date());
   const prefix = options.failureKind ? `clear-failure-${options.failureKind}-` : "";
   return {
     obstacle: {
@@ -51,6 +62,11 @@ export function createGraphwarAgentDebugDownloads(
       mediaType: "application/json",
     },
   };
+}
+
+/** 生成 Windows/macOS/Linux 文件名均可用的 UTC 时间戳。 */
+export function createGraphwarDebugFileNameSuffix(exportedAt: Date) {
+  return exportedAt.toISOString().replaceAll(":", "-").replace(".", "-");
 }
 
 /** 缓存一对调试导出文件；页面成功应用后必须 clear，避免下一局与旧文件混配。 */

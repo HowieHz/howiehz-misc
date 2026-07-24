@@ -1,5 +1,10 @@
 import type { GraphwarKillerLocale } from "../../../tools/graphwar-killer/locale-types";
 
+/** Formats a validated decimal second count with the correct English unit. */
+function formatSeconds(seconds: string) {
+  return `${seconds} ${Number(seconds) === 1 ? "second" : "seconds"}`;
+}
+
 export const graphwarKillerLocale = {
   equationModes: [
     {
@@ -172,8 +177,82 @@ export const graphwarKillerLocale = {
     agent: {
       defaultStatus: "Click Read State to load the current game state from Graphwar Agent",
       failed: (message) => `Failed to read state: ${message}`,
-      failureReason: (kind, message) => {
+      failureReason: (kind, message, code) => {
+        switch (code) {
+          case "angle-not-allowed":
+            return "The current equation mode does not accept a shot angle";
+          case "angle-out-of-range":
+            return "The shot angle is outside the allowed range";
+          case "angle-required":
+            return "The current equation mode requires a shot angle";
+          case "authentication-required":
+            return "The Agent access token is missing or invalid";
+          case "bad-request":
+            return "The Agent could not parse the request";
+          case "battle-revision-changed":
+            return "The Graphwar battlefield changed; try again";
+          case "battle-revision-stale":
+            return "The battlefield changed before the shot was executed";
+          case "content-length-required":
+            return "The request is missing Content-Length";
+          case "function-empty":
+            return "The shot function cannot be empty";
+          case "function-too-complex":
+            return "The shot function exceeds the Agent complexity limit";
+          case "function-too-large":
+            return "The shot function exceeds the Agent size limit";
+          case "game-instance-stale":
+            return "The current match has changed";
+          case "graphwar-call-failed":
+            return "Graphwar failed while executing the shot; the result is unknown";
+          case "graphwar-state-unavailable":
+            return "Graphwar cannot accept a shot command right now";
+          case "if-match-required":
+            return "The obstacle request is missing the battlefield revision";
+          case "internal-error":
+            return "Graphwar Agent encountered an internal error";
+          case "invalid-ready-request":
+            return "The ready-state request is invalid";
+          case "invalid-request-id":
+            return "The shot request ID format is invalid";
+          case "invalid-shot-request":
+            return "The shot request is invalid";
+          case "malformed-function":
+            return "The shot function is malformed";
+          case "method-not-allowed":
+            return "The Agent address is incorrect or the required v3 API method is unsupported; check the address or upgrade the Agent";
+          case "obstacle-mask-unavailable":
+            return "No obstacle snapshot is currently available";
+          case "request-body-too-large":
+            return "The request data exceeds the Agent limit";
+          case "request-headers-too-large":
+            return "The request headers exceed the Agent limit";
+          case "request-id-conflict":
+            return "The shot request ID conflicts with an existing command";
+          case "room-unavailable":
+            return "The ready state cannot be changed in the current room";
+          case "route-not-found":
+            return "The Agent address is incorrect or a required v3 API route is missing; check the address or upgrade the Agent";
+          case "server-busy":
+            return "The Agent's Graphwar request slots are busy; try again shortly";
+          case "shot-already-resolving":
+            return "The shot for this turn is already resolving";
+          case "shot-command-not-found":
+            return "The Agent could not find this shot command";
+          case "shot-executor-busy":
+            return "The Agent is still processing the previous shot command";
+          case "turn-expired":
+            return "The current turn has ended";
+          case "turn-token-stale":
+            return "The current turn token is no longer current";
+          case "turn-token-used":
+            return "A shot command has already been submitted for this turn";
+          case "unsupported-media-type":
+            return "The Agent does not support the request data format";
+        }
         switch (message) {
+          case "graphwar-window-not-found":
+            return "The Graphwar game window was not found";
           case "game-data-not-initialized":
             return "Graphwar game data has not initialized";
           case "game-not-active":
@@ -186,6 +265,8 @@ export const graphwarKillerLocale = {
             return "The state file is not valid JSON";
         }
         switch (kind) {
+          case "command":
+            return "Graphwar Agent returned an unknown shot error";
           case "conflict":
             return "Graphwar state changed; try again";
           case "incompatible":
@@ -206,6 +287,7 @@ export const graphwarKillerLocale = {
       exported: "Current scene exported",
       exporting: "Exporting scene",
       fireFailed: (message) => `Failed to fire: ${message}`,
+      fireUnknown: (message) => `The shot result is unknown and will not be retried with a new request: ${message}`,
       fired: "Function submitted and fired.",
       loaded: (soldiers) => `Read current state: obstacles and ${soldiers} ${soldiers === 1 ? "soldier" : "soldiers"}`,
       obstacleFileLoaded: "Obstacle file loaded; select a state file",
@@ -215,7 +297,11 @@ export const graphwarKillerLocale = {
       stateFileLoaded: "State file loaded; select an obstacle file",
     },
     pathPointCoordinateNumber: "Point coordinates must be numbers",
-    secondOrderAngleHint: (angle) => `Use the Up/Down keys to set the launch angle to ${angle} deg.`,
+    secondOrderAngleHint: (roundedAngle, exactAngle = undefined) =>
+      exactAngle === undefined
+        ? `Use the Up/Down keys to set the launch angle to ${roundedAngle} deg.`
+        : `Use the Up/Down keys to set the launch angle to approximately ${roundedAngle} deg (${exactAngle} deg).`,
+    secondOrderAngleHintTitle: (angle) => `Use the Up/Down keys to set the launch angle to ${angle} deg.`,
     trajectoryWarning: {
       obstacle: "The current function trajectory hits an obstacle or boundary",
       pathQuality: (error) =>
@@ -252,8 +338,8 @@ export const graphwarKillerLocale = {
       stopSuffix: ", right-click the screenshot to stop",
       trajectory: "Validate function trajectory",
     },
-    success: (elapsed, resultCacheHit) => {
-      const cacheText = resultCacheHit ? " (using result cache)" : "";
+    success: (elapsed, hasResultCacheHit) => {
+      const cacheText = hasResultCacheHit ? " (using result cache)" : "";
       return elapsed === undefined
         ? `Path Planning completed${cacheText}`
         : `Path Planning completed${cacheText} in ${elapsed}`;
@@ -267,8 +353,8 @@ export const graphwarKillerLocale = {
       pathfindingWorkerFailed: (elapsed) =>
         `One-Click Clear failed: the pathfinding Worker is unavailable or failed after ${elapsed}`,
       retained: "Kept the best result found so far",
-      success: (killCount, elapsed, resultCacheHit) => {
-        const cacheText = resultCacheHit ? " (using result cache)" : "";
+      success: (killCount, elapsed, hasResultCacheHit) => {
+        const cacheText = hasResultCacheHit ? " (using result cache)" : "";
         return `One-Click Clear completed${cacheText}, the full trajectory killed ${killCount} ${killCount === 1 ? "soldier" : "soldiers"} in ${elapsed}`;
       },
       unsupported: "One-Click Clear supports double absolute-value y and y', or Step y, y', and y''",
@@ -279,15 +365,19 @@ export const graphwarKillerLocale = {
         `Managed calculation completed in ${elapsed}; the best plan hits ${targetCount} ${targetCount === 1 ? "target" : "targets"}`,
       calculating: () => "Managed mode is calculating",
       completedWaiting: "Managed calculation complete; waiting for a local turn",
-      connectionFailed: (message) => `Agent connection failed; retrying: ${message}`,
-      deadlineFired: "Stopped with 3 seconds remaining and fired the current best plan",
-      deadlineNoPlan: "Stopped with 3 seconds remaining but could not submit the skip-turn function",
-      deadlinePlan: (elapsed) =>
-        `Managed calculation stopped with 3 seconds remaining and kept the best plan after ${elapsed}`,
+      connectionFailed: (message) => `Agent request failed; retrying: ${message}`,
+      deadlineFired: (shotReserveSeconds) =>
+        `Stopped with ${formatSeconds(shotReserveSeconds)} remaining and fired the current best plan`,
+      deadlineNoPlan: (shotReserveSeconds) =>
+        `Stopped with ${formatSeconds(shotReserveSeconds)} remaining but could not submit the skip-turn function`,
+      deadlinePlan: (shotReserveSeconds, elapsed) =>
+        `Managed calculation stopped with ${formatSeconds(shotReserveSeconds)} remaining and kept the best plan after ${elapsed}`,
       enabled: "Managed mode enabled; reading game state",
       incompatible: "Managed mode stopped because the Agent API is incompatible; upgrade the Agent",
+      invalidRequest: (message) => `Managed mode stopped because the Agent rejected the request: ${message}`,
       readying: "A local player is not ready; marking them ready",
       searchFailed: "Managed calculation failed and could not skip this turn",
+      shotFailed: (message) => `The shot command failed and will not be retried automatically this turn: ${message}`,
       skippingTurn: "No usable plan; skipping this turn",
       skipTurnFired: "No usable plan; skipped this turn",
       shotUnknown: (message) => `Shot result is unknown and will not be retried this turn: ${message}`,
@@ -339,6 +429,10 @@ export const graphwarKillerLocale = {
         address: "Agent URL",
         addressAriaLabel: "Graphwar Agent URL",
         addressTitle: "Local Graphwar Agent URL; default http://127.0.0.1:17900",
+        token: "Access token",
+        tokenAriaLabel: "Graphwar Agent access token",
+        tokenPlaceholder: "Leave empty when authentication is disabled",
+        tokenTitle: "Optional Graphwar Agent bearer token; retained only until this page closes",
         exportOnClearFailure: "Export on clear failure",
         exportOnClearFailureTitle:
           "Export the Graphwar Agent scene captured when One-Click Clear started if it misses targets, fails, encounters a Worker error, or is interrupted at the managed deadline; each turn and battle revision is exported once",
@@ -476,10 +570,52 @@ export const graphwarKillerLocale = {
         "path-start-required": "Select the firing soldier first.",
         "pathfinding-busy": "Wait for the current pathfinding task.",
         "pathfinding-worker-count-invalid": "Fix the pathfinding Worker count.",
+        "simulator-function-required": "Enter a valid function first.",
+        "solver-result-required": "Generate a valid function first.",
         "soldiers-required": "Detect or read soldiers first.",
         "solver-required": "Switch to Solver to use this setting.",
       },
+      debugCounters: {
+        acceptedSamplePointCount: {
+          label: "Accepted sample points",
+          title: "Total points returned by all complete trajectory replays",
+        },
+        formulaTermEvaluationCount: {
+          label: "Formula term evaluations",
+          title: "Total compiled formula-term evaluations across all trajectory replays",
+        },
+        incumbentReportCount: {
+          label: "Incumbent reports",
+          title: "Incumbent messages actually sent from the Worker to the page",
+        },
+        incumbentTrajectoryPointLoad: {
+          label: "Incumbent trajectory-point load",
+          title: "Total trajectory points carried by incumbent messages",
+        },
+        rk4StepCount: { label: "RK4 steps", title: "RK4 trial steps, including retries after step-size reduction" },
+        stepBisectionCount: {
+          label: "Step bisections",
+          title: "Adaptive-sampling step halvings caused by an oversized step",
+        },
+        trajectoryReplayCount: {
+          label: "Trajectory replays",
+          title: "Complete trajectory replays, including failed candidates and preparation probes",
+        },
+      },
+      debugNoDiagnostics: "No search workload or internal diagnostics recorded",
       debugNoTiming: "No pathfinding timing recorded yet",
+      debugPhaseTimings: "Phase timings",
+      debugResultCacheHit: "Result cache hit; the search Worker did not run",
+      debugStepGlitchCounters: {
+        candidateReplayCount: {
+          label: "Glitch candidate replays",
+          title: "Glitch candidate formulas replayed after direct validation failed",
+        },
+        directReplayCount: {
+          label: "Glitch direct replays",
+          title: "Direct formula replays performed before Glitch candidate scanning",
+        },
+      },
       debugDetails: {
         "build-dag-edges": {
           label: "- Build clear DAG edges",
@@ -514,6 +650,11 @@ export const graphwarKillerLocale = {
           label: "- Optimize clear path",
           title:
             "Conservatively delete points from the validated clear path and verify each deletion still hits every new and committed target.",
+        },
+        "outside-search-stages": {
+          label: "- Clear search outside stages",
+          title:
+            "Search-parent time remaining after subtracting every classified non-nested phase, including orchestration and message delivery",
         },
         "prefix-evidence-hit": {
           label: "- Clear prefix evidence hit",
@@ -744,8 +885,46 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
+      debugTimings: {
+        expressionFinalizationElapsedMs: {
+          label: "Finalize expressions",
+          title: "Cumulative time building fireable Graphwar expressions after numeric materials stabilize",
+        },
+        formulaPointMappingElapsedMs: {
+          label: "Map formula points",
+          title: "Cumulative time converting screenshot control points into Graphwar coordinates",
+        },
+        formulaPreparationElapsedMs: {
+          label: "Prepare formula materials",
+          title: "Cumulative time preparing formula points, compiled materials, and numeric protection",
+        },
+        incumbentBuildElapsedMs: {
+          label: "Build incumbents",
+          title: "Cumulative time copying fireable expressions, control points, and trajectory snapshots",
+        },
+        incumbentMessageSendElapsedMs: {
+          label: "Send incumbents",
+          title: "Cumulative synchronous time enqueueing incumbent messages for the page",
+        },
+        pathErrorElapsedMs: {
+          label: "Measure path error",
+          title: "Cumulative time measuring control-point path error after trajectory replay",
+        },
+        trajectoryReplayElapsedMs: {
+          label: "Replay complete trajectories",
+          title: "Cumulative full-replay time including integration, target hits, and obstacle checks",
+        },
+        visibleTrajectoryCopyElapsedMs: {
+          label: "Copy visible trajectories",
+          title: "Cumulative time freezing externally publishable visible trajectory snapshots",
+        },
+      },
+      debugWorkload: "Search workload / internal details",
       deleteOptimization: "Point removal",
       deleteOptimizationTitle: "Remove unnecessary control points; the full trajectory is still validated",
+      exportDebugReport: "Export latest pathfinding debug report",
+      exportDebugReportTitle:
+        "Download the matching state JSON, original obstacle mask, and debug JSON from the latest completed pathfinding task",
       obstacleExpansionAgentMode: "Agent mode",
       obstacleExpansionDetectionMode: "Detection mode",
       obstacleExpansion: "Obstacle expansion",
@@ -757,10 +936,11 @@ export const graphwarKillerLocale = {
       oneClickClearDeleteCheckRadiusTitle:
         "Quickly check whether a local route still crosses the same soldiers; set to 0 to validate the full trajectory",
       oneClickClearTitle: "Start at the current path end, assign targets, and hit reachable soldiers on the x+ side",
-      managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
+      managedFriendlyFireWarning:
+        "Pathfinding settings allow friendly fire; allied soldiers are One-Click Clear candidates.",
       managedMode: "Managed mode",
       managedModeDisableTitle: "Turn off Managed Mode and unlock settings",
-      managedModeConfirmation: (settings, repairs, friendlyFireEnabled, timing) => {
+      managedModeConfirmation: (settings, repairs, isFriendlyFireEnabled, timing) => {
         const algorithmStatus = [
           "Current algorithm settings:",
           ...settings.map(
@@ -778,7 +958,7 @@ export const graphwarKillerLocale = {
                 ),
               ]),
         ].join("\n");
-        return `Managed mode submits shots to Graphwar automatically\nAutomatically readies in rooms\nFriendly fire is ${friendlyFireEnabled ? "enabled" : "disabled"}\nShot reserve time: ${timing.shotReserveSeconds} seconds\nState polling interval: ${timing.pollIntervalSeconds} seconds\n\n${algorithmStatus}\n\nEnable managed mode?`;
+        return `Managed mode submits shots to Graphwar automatically\nAutomatically readies in rooms\nFriendly fire is ${isFriendlyFireEnabled ? "enabled" : "disabled"}\nShot reserve time: ${formatSeconds(timing.shotReserveSeconds)}\nState polling interval: ${formatSeconds(timing.pollIntervalSeconds)}\n\n${algorithmStatus}\n\nEnable managed mode?`;
       },
       managedModeTitle: "Read state, plan, and fire automatically during local turns",
       routePlanningTolerance: "Route planning tolerance",
@@ -789,6 +969,9 @@ export const graphwarKillerLocale = {
       routeLazyVisibilityGraph: "Lazy visibility graph",
       routeThetaStar: "Theta*",
       routeXPlusScan: "X+ Scan",
+      resultCache: "Result cache",
+      resultCacheTitle:
+        "Reuse complete Path Planning and One-Click Clear results; turning this off bypasses reads and writes without clearing cached entries",
       searchAnimation: "Search animation",
       searchAnimationTitle:
         "Show single-target search progress and the current best formula and trajectory for One-Click Clear and managed mode",
@@ -815,10 +998,10 @@ export const graphwarKillerLocale = {
       clearSimulatorTitle: "Clear the function, launch angle, and selected firing soldier",
       copyTitle: "Copy the generated Graphwar function",
       fire: "Fire",
-      fireError: "Fire failed",
       fireSuccess: "Fired",
       fireTitle: "Submit the current function through Graphwar Agent and fire",
       firing: "Firing",
+      turnTimeRemaining: (time) => `${time}s left`,
       fractionConversionIncomplete: "Some decimals could not be converted equivalently.",
       fractionOutput: "Fraction output",
       fractionOutputTitle: "Convert finite decimals to fractions with equivalent Graphwar runtime values",
@@ -912,7 +1095,6 @@ export const graphwarKillerLocale = {
       skipUnknownCharactersTitle: "Match Graphwar's behavior of skipping unknown characters",
       stepGlitchMode: "Glitch Mode",
       stepGlitchModeAlgorithmInactiveReason: "Inactive in the current algorithm",
-      stepGlitchModeGameModeInactiveReason: "Inactive in the current game mode",
       stepGlitchModeTitle:
         "Use with Step y' or y'' to jump past obstacles or fall back when a normal Step cannot connect; collisions are still checked when obstacle data is available",
       steepness: "Steepness k",

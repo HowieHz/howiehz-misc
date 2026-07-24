@@ -44,7 +44,7 @@ interface GraphwarOneClickClearSuccessMessageInput {
   /** 页面当前本地化文案。 */
   locale: GraphwarKillerLocale;
   /** 结果是否来自页面侧完整结果缓存。 */
-  resultCacheHit: boolean;
+  hasResultCacheHit: boolean;
   /** 本次一键清图命中的目标数量。 */
   targetCount: number;
 }
@@ -112,7 +112,7 @@ export function createOneClickClearSuccessMessage(input: GraphwarOneClickClearSu
   return input.locale.smartPathfinding.oneClickClear.success(
     input.targetCount,
     formatElapsedDuration(input.elapsedMs),
-    input.resultCacheHit,
+    input.hasResultCacheHit,
   );
 }
 
@@ -140,11 +140,11 @@ export function createSmartPathfindingCurrentPathBlockedMessage(locale: Graphwar
 export function createSmartPathfindingSuccessMessage(
   locale: GraphwarKillerLocale,
   elapsedMs?: number,
-  resultCacheHit = false,
+  hasResultCacheHit = false,
 ) {
   return locale.smartPathfinding.success(
     elapsedMs === undefined ? undefined : formatElapsedDuration(elapsedMs),
-    resultCacheHit,
+    hasResultCacheHit,
   );
 }
 

@@ -4,6 +4,7 @@ import type { GraphwarKillerLocale } from "../../locale-types";
 import type { GraphwarPathfindingRouteMode } from "../../pathfinding/routing/mode";
 import ControlReason from "../controls/ControlReason.vue";
 import PanelDetails from "../controls/PanelDetails.vue";
+import { prependControlTitle } from "../controls/title";
 import ToggleField from "../controls/ToggleField.vue";
 
 type GraphwarPathfindingPanelStatusKind = "info" | "success" | "warning" | "error";
@@ -30,10 +31,20 @@ interface GraphwarPathfindingPanelDebugRow {
   title?: string;
 }
 
+/** One preformatted counter or internal timing from the latest completed Worker diagnostics. */
+interface GraphwarPathfindingPanelDiagnosticRow {
+  /** Stable diagnostics field name. */
+  key: string;
+  /** Localized label and formatted value. */
+  text: string;
+  /** Optional explanation of the counter or timing boundary. */
+  title?: string;
+}
+
 /** 由偏好值和能力状态共同驱动的寻路开关。 */
 interface GraphwarPathfindingToggle {
-  /** 持久化的偏好值。 */
-  enabled: boolean;
+  /** 当前偏好值；具体设置可只在本次页面会话内保留。 */
+  isEnabled: boolean;
   /** 展示层和命令守卫共用的能力状态。 */
   state: GraphwarControlCapability["state"];
   /** 非 normal 状态的本地化说明。 */
@@ -52,8 +63,10 @@ interface GraphwarPathfindingTask {
 
 /** 智能寻路、一键清图和托管控制的展示模型。 */
 export interface GraphwarSmartPathfindingPanelModel {
+  /** Whether the latest completed report has all three export files. */
+  canExportDebugReport: boolean;
   /** 当前 Step ODE 是否实际使用固定邪道扫描器。 */
-  usesStepGlitchRouting: boolean;
+  isUsingStepGlitchRouting: boolean;
   /** 普通几何路由器；固定邪道扫描器启用时忽略。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 全局删点偏好。 */
@@ -62,6 +75,8 @@ export interface GraphwarSmartPathfindingPanelModel {
   friendlyFire: GraphwarPathfindingToggle;
   /** 仅影响展示的搜索预览偏好。 */
   searchAnimation: GraphwarPathfindingToggle;
+  /** 调试模式会话内的完整结果缓存偏好。 */
+  resultCache: GraphwarPathfindingToggle;
   /** 单目标寻路偏好。 */
   pathPlanning: GraphwarPathfindingToggle;
   /** 一键清图命令状态。 */
@@ -73,9 +88,13 @@ export interface GraphwarSmartPathfindingPanelModel {
   /** 面板标题中显示的当前任务状态。 */
   headerStatus: GraphwarPathfindingPanelHeaderStatus;
   /** 是否显示调试耗时详情。 */
-  debugTimingVisible: boolean;
+  isDebugTimingVisible: boolean;
   /** 预先格式化的调试耗时行。 */
   debugTimingRows: readonly GraphwarPathfindingPanelDebugRow[];
+  /** 最近完整报告聚合后的 Worker 工作量与内部耗时。 */
+  debugDiagnosticRows: readonly GraphwarPathfindingPanelDiagnosticRow[];
+  /** 最近任务完全来自结果缓存，因此没有执行搜索 Worker。 */
+  hasResultCacheOnlyReport: boolean;
 }
 
 defineProps<{
@@ -86,12 +105,14 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  exportDebugReport: [];
   runOneClickClear: [];
   setRouteMode: [mode: GraphwarPathfindingRouteMode];
   toggleDeleteOptimization: [];
   toggleFriendlyFire: [];
   toggleManagedMode: [];
   togglePathPlanning: [];
+  toggleResultCache: [];
   toggleSearchAnimation: [];
 }>();
 </script>
@@ -126,7 +147,7 @@ const emit = defineEmits<{
       <div class="graphwar-killer__task-controls graphwar-killer-command-row">
         <ToggleField
           id="graphwar-killer-path-planning"
-          :checked="panel.pathPlanning.enabled"
+          :checked="panel.pathPlanning.isEnabled"
           :label="locale.ui.actions.pathPlanning"
           :reason="panel.pathPlanning.reason"
           :state="panel.pathPlanning.state"
@@ -136,22 +157,31 @@ const emit = defineEmits<{
         <div class="graphwar-killer-command-field">
           <button
             type="button"
-            :aria-describedby="panel.oneClickClear.reason ? 'graphwar-killer-one-click-clear-reason' : undefined"
+            :aria-describedby="
+              panel.oneClickClear.state !== 'busy' && panel.oneClickClear.reason
+                ? 'graphwar-killer-one-click-clear-reason'
+                : undefined
+            "
             :disabled="panel.oneClickClear.state === 'blocked' || panel.oneClickClear.state === 'busy'"
-            :title="panel.oneClickClear.title"
+            :title="
+              prependControlTitle(
+                panel.oneClickClear.state === 'busy' ? panel.oneClickClear.reason : undefined,
+                panel.oneClickClear.title,
+              )
+            "
             @click="emit('runOneClickClear')"
           >
             {{ locale.ui.pathfinding.autoGraph }}
           </button>
           <ControlReason
-            v-if="panel.oneClickClear.reason"
+            v-if="panel.oneClickClear.state !== 'busy' && panel.oneClickClear.reason"
             id="graphwar-killer-one-click-clear-reason"
             :message="panel.oneClickClear.reason"
           />
         </div>
         <ToggleField
           id="graphwar-killer-managed-mode"
-          :checked="panel.managedMode.enabled"
+          :checked="panel.managedMode.isEnabled"
           :label="locale.ui.pathfinding.managedMode"
           :reason="panel.managedMode.reason"
           :state="panel.managedMode.state"
@@ -172,7 +202,7 @@ const emit = defineEmits<{
         <div class="graphwar-killer__route-row">
           <span>{{ locale.ui.pathfinding.routeAlgorithm }}</span>
           <div
-            v-if="panel.usesStepGlitchRouting"
+            v-if="panel.isUsingStepGlitchRouting"
             class="graphwar-killer__route-toggle graphwar-killer__route-toggle--single graphwar-killer-segmented-control"
           >
             <strong class="graphwar-killer__route-toggle-static">
@@ -193,6 +223,12 @@ const emit = defineEmits<{
               :aria-pressed="panel.routeMode === 'visibility-graph'"
               :class="{ 'graphwar-killer-segmented-button--active': panel.routeMode === 'visibility-graph' }"
               :disabled="panel.deleteOptimization.state === 'busy'"
+              :title="
+                prependControlTitle(
+                  panel.deleteOptimization.state === 'busy' ? panel.deleteOptimization.reason : undefined,
+                  locale.ui.pathfinding.routeAlgorithmTitle,
+                )
+              "
               @click="emit('setRouteMode', 'visibility-graph')"
             >
               {{ locale.ui.pathfinding.routeLazyVisibilityGraph }}
@@ -203,6 +239,12 @@ const emit = defineEmits<{
               :aria-pressed="panel.routeMode === 'theta-star'"
               :class="{ 'graphwar-killer-segmented-button--active': panel.routeMode === 'theta-star' }"
               :disabled="panel.deleteOptimization.state === 'busy'"
+              :title="
+                prependControlTitle(
+                  panel.deleteOptimization.state === 'busy' ? panel.deleteOptimization.reason : undefined,
+                  locale.ui.pathfinding.routeAlgorithmTitle,
+                )
+              "
               @click="emit('setRouteMode', 'theta-star')"
             >
               {{ locale.ui.pathfinding.routeThetaStar }}
@@ -212,7 +254,7 @@ const emit = defineEmits<{
         <div class="graphwar-killer__option-grid">
           <ToggleField
             id="graphwar-killer-delete-optimization"
-            :checked="panel.deleteOptimization.enabled"
+            :checked="panel.deleteOptimization.isEnabled"
             :label="locale.ui.pathfinding.deleteOptimization"
             :reason="panel.deleteOptimization.reason"
             :state="panel.deleteOptimization.state"
@@ -221,7 +263,7 @@ const emit = defineEmits<{
           />
           <ToggleField
             id="graphwar-killer-friendly-fire"
-            :checked="panel.friendlyFire.enabled"
+            :checked="panel.friendlyFire.isEnabled"
             :label="locale.ui.pathfinding.allowFriendlyFire"
             :reason="panel.friendlyFire.reason"
             :state="panel.friendlyFire.state"
@@ -230,22 +272,41 @@ const emit = defineEmits<{
           />
           <ToggleField
             id="graphwar-killer-search-animation"
-            :checked="panel.searchAnimation.enabled"
+            :checked="panel.searchAnimation.isEnabled"
             :label="locale.ui.pathfinding.searchAnimation"
             :reason="panel.searchAnimation.reason"
             :state="panel.searchAnimation.state"
             :title="locale.ui.pathfinding.searchAnimationTitle"
             @toggle="emit('toggleSearchAnimation')"
           />
+          <ToggleField
+            v-if="panel.isDebugTimingVisible"
+            id="graphwar-killer-result-cache"
+            :checked="panel.resultCache.isEnabled"
+            :label="locale.ui.pathfinding.resultCache"
+            :reason="panel.resultCache.reason"
+            :state="panel.resultCache.state"
+            :title="locale.ui.pathfinding.resultCacheTitle"
+            @toggle="emit('toggleResultCache')"
+          />
         </div>
       </div>
     </PanelDetails>
 
     <PanelDetails
-      v-if="panel.debugTimingVisible"
+      v-if="panel.isDebugTimingVisible"
       :summary="locale.ui.pathfinding.debugSummary"
     >
       <div class="graphwar-killer__debug-timing">
+        <button
+          type="button"
+          :disabled="!panel.canExportDebugReport"
+          :title="locale.ui.pathfinding.exportDebugReportTitle"
+          @click="emit('exportDebugReport')"
+        >
+          {{ locale.ui.pathfinding.exportDebugReport }}
+        </button>
+        <strong>{{ locale.ui.pathfinding.debugPhaseTimings }}</strong>
         <span v-if="!panel.debugTimingRows.length">{{ locale.ui.pathfinding.debugNoTiming }}</span>
         <template v-else>
           <span
@@ -253,6 +314,19 @@ const emit = defineEmits<{
             :key="entry.key"
             class="graphwar-killer__debug-timing-row"
             :style="{ '--graphwar-killer-debug-indent-level': entry.indentLevel }"
+            :title="entry.title"
+          >
+            {{ entry.text }}
+          </span>
+        </template>
+        <strong>{{ locale.ui.pathfinding.debugWorkload }}</strong>
+        <span v-if="panel.hasResultCacheOnlyReport">{{ locale.ui.pathfinding.debugResultCacheHit }}</span>
+        <span v-else-if="!panel.debugDiagnosticRows.length">{{ locale.ui.pathfinding.debugNoDiagnostics }}</span>
+        <template v-else>
+          <span
+            v-for="entry in panel.debugDiagnosticRows"
+            :key="entry.key"
+            class="graphwar-killer__debug-timing-row"
             :title="entry.title"
           >
             {{ entry.text }}

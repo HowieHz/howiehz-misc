@@ -19,6 +19,8 @@ export type GraphwarCapabilityReason =
   | "pathfinding-busy"
   | "agent-read-busy"
   | "agent-fire-busy"
+  | "solver-result-required"
+  | "simulator-function-required"
   | "solver-required"
   | "agent-disabled"
   | "agent-url-invalid"
@@ -46,49 +48,49 @@ export interface GraphwarCapabilityFacts {
   workflowMode: ToolWorkflowMode;
   activeSource: GraphwarSceneSource;
   scene: {
-    imageAvailable: boolean;
-    boundsAvailable: boolean;
-    soldiersAvailable: boolean;
-    obstaclesAvailable: boolean;
+    hasImage: boolean;
+    hasBounds: boolean;
+    hasSoldiers: boolean;
+    hasObstacles: boolean;
     provenance?: GraphwarSceneProvenance;
   };
   agent: {
-    enabled: boolean;
+    isEnabled: boolean;
     /** 仅在已启用的 Agent URL 成功解析并规范化后存在。 */
     normalizedBaseUrl?: string;
   };
   formula: {
-    settingsValid: boolean;
+    isSettingsValid: boolean;
     /** 包含后续由 Agent 选择的托管 profile 可能消费的休眠设定。 */
-    managedSettingsValid: boolean;
-    oneClickClearSupported: boolean;
+    isManagedSettingsValid: boolean;
+    isOneClickClearSupported: boolean;
     /** 当前 Step ODE 是否实际使用固定邪道扫描器。 */
-    usesStepGlitchRouting: boolean;
+    isStepGlitchRoutingUsed: boolean;
   };
   pathfinding: {
-    pathStartAvailable: boolean;
-    workerCountValid: boolean;
+    hasPathStart: boolean;
+    isWorkerCountValid: boolean;
     /** 托管轮询与发射预留输入是否都能精确换算为允许范围内的整数毫秒。 */
-    managedTimingValid: boolean;
-    obstacleTolerancesValid: boolean;
-    deleteCheckRadiusValid: boolean;
+    isManagedTimingValid: boolean;
+    hasValidObstacleTolerances: boolean;
+    isDeleteCheckRadiusValid: boolean;
   };
-  resultAvailable: boolean;
+  hasResult: boolean;
   busy: {
-    pathfinding: boolean;
-    agentRead: boolean;
-    agentExport: boolean;
-    agentFire: boolean;
-    managedMode: boolean;
+    isPathfindingBusy: boolean;
+    isAgentReadBusy: boolean;
+    isAgentExportBusy: boolean;
+    isAgentFireBusy: boolean;
+    isManagedModeBusy: boolean;
   };
 }
 
 /** 判断保留值当前是否生效所需的偏好设定。 */
 export interface GraphwarCapabilityPreferences {
-  snapSoldiersEnabled: boolean;
-  collisionCheckEnabled: boolean;
-  pathPlanningEnabled: boolean;
-  deleteOptimizationEnabled: boolean;
+  isSnapSoldiersEnabled: boolean;
+  isCollisionCheckEnabled: boolean;
+  isPathPlanningEnabled: boolean;
+  isDeleteOptimizationEnabled: boolean;
 }
 
 /** 控件、可见原因和命令守卫消费的第一阶段能力。 */
@@ -122,7 +124,7 @@ export function isCurrentGraphwarAgentScene(
 /** 返回强制碰撞寻路命令执行前首个缺少的局面条件。 */
 function getGraphwarPathfindingSceneReason(facts: GraphwarCapabilityFacts): GraphwarCapabilityReason | undefined {
   if (facts.activeSource === "agent") {
-    if (!facts.agent.enabled) {
+    if (!facts.agent.isEnabled) {
       return "agent-disabled";
     }
     if (!facts.agent.normalizedBaseUrl) {
@@ -131,18 +133,18 @@ function getGraphwarPathfindingSceneReason(facts: GraphwarCapabilityFacts): Grap
     if (!isCurrentGraphwarAgentScene(facts.agent.normalizedBaseUrl, facts.scene.provenance)) {
       return "agent-scene-required";
     }
-  } else if (!facts.scene.imageAvailable) {
+  } else if (!facts.scene.hasImage) {
     return "image-required";
   }
 
-  if (!facts.scene.boundsAvailable) {
+  if (!facts.scene.hasBounds) {
     return "bounds-required";
   }
   // 其他来源的可见对象可能仍留在页面上，但不能满足当前截图工作流的条件。
   if (facts.activeSource === "screenshot" && facts.scene.provenance?.source !== "screenshot") {
     return "obstacles-required";
   }
-  if (!facts.scene.obstaclesAvailable) {
+  if (!facts.scene.hasObstacles) {
     return "obstacles-required";
   }
   return undefined;
@@ -156,55 +158,57 @@ export function deriveGraphwarCapabilities(
   const sceneReason = getGraphwarPathfindingSceneReason(facts);
 
   return {
-    semanticControls: facts.busy.managedMode ? { state: "busy", reason: "managed-lock" } : normalCapability,
-    agentRead: facts.busy.managedMode
-      ? { state: "busy", reason: "managed-lock" }
-      : facts.busy.agentRead || facts.busy.agentExport
-        ? { state: "busy", reason: "agent-read-busy" }
-        : !facts.agent.enabled
-          ? { state: "blocked", reason: "agent-disabled" }
-          : !facts.agent.normalizedBaseUrl
-            ? { state: "blocked", reason: "agent-url-invalid" }
+    semanticControls: facts.busy.isManagedModeBusy ? { state: "busy", reason: "managed-lock" } : normalCapability,
+    agentRead: !facts.agent.isEnabled
+      ? { state: "blocked", reason: "agent-disabled" }
+      : !facts.agent.normalizedBaseUrl
+        ? { state: "blocked", reason: "agent-url-invalid" }
+        : facts.busy.isManagedModeBusy
+          ? { state: "busy", reason: "managed-lock" }
+          : facts.busy.isAgentReadBusy || facts.busy.isAgentExportBusy
+            ? { state: "busy", reason: "agent-read-busy" }
             : normalCapability,
     // 导出只读取 revision 一致的快照而不应用局面，因此可以与托管并行。
-    agentExport:
-      facts.busy.agentRead || facts.busy.agentExport
-        ? { state: "busy", reason: "agent-read-busy" }
-        : !facts.agent.enabled
-          ? { state: "blocked", reason: "agent-disabled" }
-          : !facts.agent.normalizedBaseUrl
-            ? { state: "blocked", reason: "agent-url-invalid" }
-            : normalCapability,
-    agentFire: facts.busy.managedMode
-      ? { state: "busy", reason: "managed-lock" }
-      : facts.busy.pathfinding
-        ? { state: "busy", reason: "pathfinding-busy" }
-        : facts.busy.agentFire
-          ? { state: "busy", reason: "agent-fire-busy" }
-          : !facts.agent.enabled
-            ? { state: "blocked", reason: "agent-disabled" }
-            : !facts.agent.normalizedBaseUrl
-              ? { state: "blocked", reason: "agent-url-invalid" }
-              : !facts.formula.settingsValid
-                ? { state: "blocked", reason: "formula-settings-invalid" }
-                : !facts.resultAvailable
-                  ? { state: "blocked" }
+    agentExport: !facts.agent.isEnabled
+      ? { state: "blocked", reason: "agent-disabled" }
+      : !facts.agent.normalizedBaseUrl
+        ? { state: "blocked", reason: "agent-url-invalid" }
+        : facts.busy.isAgentReadBusy || facts.busy.isAgentExportBusy
+          ? { state: "busy", reason: "agent-read-busy" }
+          : normalCapability,
+    agentFire: !facts.agent.isEnabled
+      ? { state: "blocked", reason: "agent-disabled" }
+      : !facts.agent.normalizedBaseUrl
+        ? { state: "blocked", reason: "agent-url-invalid" }
+        : !facts.formula.isSettingsValid
+          ? { state: "blocked", reason: "formula-settings-invalid" }
+          : !facts.hasResult
+            ? {
+                state: "blocked",
+                reason: facts.workflowMode === "simulator" ? "simulator-function-required" : "solver-result-required",
+              }
+            : facts.busy.isManagedModeBusy
+              ? { state: "busy", reason: "managed-lock" }
+              : facts.busy.isPathfindingBusy
+                ? { state: "busy", reason: "pathfinding-busy" }
+                : facts.busy.isAgentFireBusy
+                  ? { state: "busy", reason: "agent-fire-busy" }
                   : normalCapability,
-    snapSoldiers: facts.busy.managedMode
+    snapSoldiers: facts.busy.isManagedModeBusy
       ? { state: "busy", reason: "managed-lock" }
-      : preferences.snapSoldiersEnabled && !facts.scene.soldiersAvailable
+      : preferences.isSnapSoldiersEnabled && !facts.scene.hasSoldiers
         ? { state: "dormant", reason: "soldiers-required" }
         : normalCapability,
-    collisionCheck: facts.busy.managedMode
+    collisionCheck: facts.busy.isManagedModeBusy
       ? { state: "busy", reason: "managed-lock" }
-      : preferences.collisionCheckEnabled && !facts.scene.obstaclesAvailable
+      : preferences.isCollisionCheckEnabled && !facts.scene.hasObstacles
         ? { state: "dormant", reason: "obstacles-required" }
         : normalCapability,
     pathPlanning: deriveGraphwarPathPlanningCapability(facts, preferences, sceneReason),
-    obstacleEditing: facts.busy.managedMode
-      ? { state: "busy", reason: "managed-lock" }
-      : !facts.scene.obstaclesAvailable
-        ? { state: "blocked", reason: "obstacles-required" }
+    obstacleEditing: !facts.scene.hasObstacles
+      ? { state: "blocked", reason: "obstacles-required" }
+      : facts.busy.isManagedModeBusy
+        ? { state: "busy", reason: "managed-lock" }
         : normalCapability,
     oneClickClear: deriveGraphwarOneClickClearCapability(facts, preferences, sceneReason),
     managedMode: deriveGraphwarManagedModeCapability(facts, preferences),
@@ -217,25 +221,22 @@ function deriveGraphwarPathPlanningCapability(
   preferences: GraphwarCapabilityPreferences,
   sceneReason: GraphwarCapabilityReason | undefined,
 ): GraphwarControlCapability {
-  if (facts.busy.managedMode) {
+  if (facts.busy.isManagedModeBusy) {
     return { state: "busy", reason: "managed-lock" };
   }
-  if (facts.busy.pathfinding) {
+  if (facts.busy.isPathfindingBusy) {
     return { state: "busy", reason: "pathfinding-busy" };
   }
   if (facts.workflowMode === "simulator") {
     return { state: "dormant", reason: "solver-required" };
   }
-  if (!preferences.pathPlanningEnabled) {
-    return normalCapability;
-  }
-  if (sceneReason) {
+  if (preferences.isPathPlanningEnabled && sceneReason) {
     return { state: "dormant", reason: sceneReason };
   }
-  if (!facts.formula.settingsValid) {
+  if (preferences.isPathPlanningEnabled && !facts.formula.isSettingsValid) {
     return { state: "dormant", reason: "formula-settings-invalid" };
   }
-  if (!facts.pathfinding.obstacleTolerancesValid) {
+  if (preferences.isPathPlanningEnabled && !facts.pathfinding.hasValidObstacleTolerances) {
     return { state: "dormant", reason: "obstacle-tolerances-invalid" };
   }
   return normalCapability;
@@ -247,39 +248,39 @@ function deriveGraphwarOneClickClearCapability(
   preferences: GraphwarCapabilityPreferences,
   sceneReason: GraphwarCapabilityReason | undefined,
 ): GraphwarControlCapability {
-  if (facts.busy.managedMode) {
-    return { state: "busy", reason: "managed-lock" };
-  }
-  if (facts.busy.pathfinding) {
-    return { state: "busy", reason: "pathfinding-busy" };
-  }
   if (facts.workflowMode === "simulator") {
     return { state: "blocked", reason: "solver-required" };
   }
   if (sceneReason) {
     return { state: "blocked", reason: sceneReason };
   }
-  if (!facts.scene.soldiersAvailable) {
+  if (!facts.scene.hasSoldiers) {
     return { state: "blocked", reason: "soldiers-required" };
   }
-  if (!facts.pathfinding.pathStartAvailable) {
+  if (!facts.pathfinding.hasPathStart) {
     return { state: "blocked", reason: "path-start-required" };
   }
-  if (!facts.formula.oneClickClearSupported) {
+  if (!facts.formula.isOneClickClearSupported) {
     return { state: "blocked", reason: "formula-unsupported" };
   }
-  if (!facts.formula.settingsValid) {
+  if (!facts.formula.isSettingsValid) {
     return { state: "blocked", reason: "formula-settings-invalid" };
   }
   // 手动 ODE 邪道使用固定扫描器，不会构建普通 DAG。
-  if (!facts.formula.usesStepGlitchRouting && !facts.pathfinding.workerCountValid) {
+  if (!facts.formula.isStepGlitchRoutingUsed && !facts.pathfinding.isWorkerCountValid) {
     return { state: "blocked", reason: "pathfinding-worker-count-invalid" };
   }
-  if (!facts.pathfinding.obstacleTolerancesValid) {
+  if (!facts.pathfinding.hasValidObstacleTolerances) {
     return { state: "blocked", reason: "obstacle-tolerances-invalid" };
   }
-  if (preferences.deleteOptimizationEnabled && !facts.pathfinding.deleteCheckRadiusValid) {
+  if (preferences.isDeleteOptimizationEnabled && !facts.pathfinding.isDeleteCheckRadiusValid) {
     return { state: "blocked", reason: "delete-check-radius-invalid" };
+  }
+  if (facts.busy.isManagedModeBusy) {
+    return { state: "busy", reason: "managed-lock" };
+  }
+  if (facts.busy.isPathfindingBusy) {
+    return { state: "busy", reason: "pathfinding-busy" };
   }
   return normalCapability;
 }
@@ -289,42 +290,42 @@ function deriveGraphwarManagedModeCapability(
   facts: GraphwarCapabilityFacts,
   preferences: GraphwarCapabilityPreferences,
 ): GraphwarControlCapability {
-  if (facts.busy.managedMode) {
+  if (facts.busy.isManagedModeBusy) {
     return normalCapability;
-  }
-  if (facts.busy.pathfinding) {
-    return { state: "busy", reason: "pathfinding-busy" };
-  }
-  if (facts.busy.agentRead) {
-    return { state: "busy", reason: "agent-read-busy" };
-  }
-  if (facts.busy.agentFire) {
-    return { state: "busy", reason: "agent-fire-busy" };
   }
   if (facts.workflowMode === "simulator") {
     return { state: "blocked", reason: "solver-required" };
   }
-  if (!facts.agent.enabled) {
+  if (!facts.agent.isEnabled) {
     return { state: "blocked", reason: "agent-disabled" };
   }
   if (!facts.agent.normalizedBaseUrl) {
     return { state: "blocked", reason: "agent-url-invalid" };
   }
-  if (!facts.formula.managedSettingsValid) {
+  if (!facts.formula.isManagedSettingsValid) {
     return { state: "blocked", reason: "formula-settings-invalid" };
   }
-  if (!facts.pathfinding.managedTimingValid) {
+  if (!facts.pathfinding.isManagedTimingValid) {
     return { state: "blocked", reason: "managed-timing-invalid" };
   }
   // 托管模式始终校验 DAG 容量，因为 Agent 后续回合可能选择普通 profile。
-  if (!facts.pathfinding.workerCountValid) {
+  if (!facts.pathfinding.isWorkerCountValid) {
     return { state: "blocked", reason: "pathfinding-worker-count-invalid" };
   }
-  if (!facts.pathfinding.obstacleTolerancesValid) {
+  if (!facts.pathfinding.hasValidObstacleTolerances) {
     return { state: "blocked", reason: "obstacle-tolerances-invalid" };
   }
-  if (preferences.deleteOptimizationEnabled && !facts.pathfinding.deleteCheckRadiusValid) {
+  if (preferences.isDeleteOptimizationEnabled && !facts.pathfinding.isDeleteCheckRadiusValid) {
     return { state: "blocked", reason: "delete-check-radius-invalid" };
+  }
+  if (facts.busy.isPathfindingBusy) {
+    return { state: "busy", reason: "pathfinding-busy" };
+  }
+  if (facts.busy.isAgentReadBusy) {
+    return { state: "busy", reason: "agent-read-busy" };
+  }
+  if (facts.busy.isAgentFireBusy) {
+    return { state: "busy", reason: "agent-fire-busy" };
   }
   return normalCapability;
 }

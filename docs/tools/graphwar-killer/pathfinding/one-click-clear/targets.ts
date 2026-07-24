@@ -21,7 +21,7 @@ export interface GraphwarOneClickClearTargetCollectionOptions<
   TSoldier extends GraphwarOneClickClearTargetSoldier = GraphwarOneClickClearTargetSoldier,
 > {
   /** 是否允许把友方士兵作为清图候选。 */
-  friendlyFireEnabled: boolean;
+  isFriendlyFireEnabled: boolean;
   /** 当前坐标映射；缺失时一键清图入口候选应保持空结果。 */
   geometry: GraphwarTargetingGeometry | undefined;
   /** 当前路径像素点；第一个点视为发射士兵，最后一个点是一键清图起点。 */
@@ -82,7 +82,7 @@ function createOneClickClearTargetCandidate<TSoldier extends GraphwarOneClickCle
   }
 
   const friendly = options.isFriendlySoldier?.(soldier) ?? isOneClickClearFriendlySoldier(options.geometry, soldier);
-  if (friendly && !options.friendlyFireEnabled) {
+  if (friendly && !options.isFriendlyFireEnabled) {
     return undefined;
   }
 

@@ -4,6 +4,7 @@ import { computed } from "vue";
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { AlgorithmMode, EquationMode, ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
+import { prependControlTitle } from "../controls/title";
 import ToggleField from "../controls/ToggleField.vue";
 
 type GraphwarSettingsPanelStatusKind = "info" | "success" | "warning" | "error";
@@ -29,13 +30,13 @@ interface GraphwarSettingsPanelOption<T extends string> {
 /** 带可用状态的公式算法选项。 */
 interface GraphwarSettingsPanelAlgorithmOption extends GraphwarSettingsPanelOption<AlgorithmMode> {
   /** Unsupported combinations remain visible and explainable. */
-  disabled: boolean;
+  isEnabled: boolean;
 }
 
 /** 带可用状态的 Graphwar 方程选项。 */
 interface GraphwarSettingsPanelEquationOption extends GraphwarSettingsPanelOption<EquationMode> {
-  /** 当前模式是否被父页面判定为不可选。 */
-  disabled: boolean;
+  /** 当前模式是否被父页面判定为可选。 */
+  isEnabled: boolean;
 }
 
 /** 公式精度文本和值域信息。 */
@@ -49,9 +50,11 @@ interface GraphwarSettingsPanelPrecision {
 /** 基础公式、方程和工作流设置的展示模型。 */
 export interface GraphwarSettingsPanelModel {
   /** 托管期间锁定所有会改变公式或寻路输入的基础设置。 */
-  interactionDisabled: boolean;
+  canInteract: boolean;
+  /** `canInteract` 临时为 false 时前置到受影响控件 title 的原因。 */
+  temporaryDisabledReason?: string;
   /** 高级设置区是否展开。 */
-  advancedSettingsVisible: boolean;
+  isAdvancedSettingsVisible: boolean;
   /** 当前公式生成算法。 */
   algorithmMode: AlgorithmMode;
   /** 公式生成算法选项。 */
@@ -65,9 +68,9 @@ export interface GraphwarSettingsPanelModel {
   /** 公式小数位输入展示模型。 */
   precision: GraphwarSettingsPanelPrecision;
   /** 当前游戏模式是否启用 Step 溢出保护。 */
-  stepOverflowProtectionEnabled: boolean;
+  isStepOverflowProtectionEnabled: boolean;
   /** 当前游戏模式的邪道偏好；不兼容组合仍保留该值。 */
-  stepGlitchModeEnabled: boolean;
+  isStepGlitchModeEnabled: boolean;
   /** 邪道偏好在不兼容组合或缺少障碍时保持可编辑的休眠状态。 */
   stepGlitchModeState: GraphwarControlCapability["state"];
   /** 邪道偏好当前没有效果时的可见说明。 */
@@ -75,7 +78,7 @@ export interface GraphwarSettingsPanelModel {
   /** 公式陡峭度输入框当前文本；非法输入应原样保留给父页面校验。 */
   steepnessText: string;
   /** 当前公式组合是否消费陡峭度。 */
-  steepnessVisible: boolean;
+  isSteepnessVisible: boolean;
   /** 当前页面主工作流。 */
   toolWorkflowMode: ToolWorkflowMode;
   /** 页面主工作流选项。 */
@@ -123,7 +126,7 @@ const activeToolWorkflowHint = computed(
     <section
       class="graphwar-killer__panel graphwar-killer__workflow-panel graphwar-killer-control-surface"
       aria-labelledby="graphwar-killer-workflow-title"
-      :aria-disabled="panel.interactionDisabled"
+      :aria-disabled="!panel.canInteract"
     >
       <div class="graphwar-killer__label-row">
         <h2 id="graphwar-killer-workflow-title">
@@ -133,7 +136,7 @@ const activeToolWorkflowHint = computed(
       </div>
       <fieldset
         class="graphwar-killer__settings-fields"
-        :disabled="panel.interactionDisabled"
+        :disabled="!panel.canInteract"
       >
         <div
           class="graphwar-killer__tool-toggle graphwar-killer__mode-toggle graphwar-killer-segmented-control"
@@ -149,7 +152,8 @@ const activeToolWorkflowHint = computed(
             class="graphwar-killer-segmented-button"
             :aria-pressed="panel.toolWorkflowMode === mode.value"
             :class="{ 'graphwar-killer-segmented-button--active': panel.toolWorkflowMode === mode.value }"
-            :title="mode.title"
+            :disabled="!panel.canInteract"
+            :title="prependControlTitle(panel.temporaryDisabledReason, mode.title)"
             @click="emit('setToolWorkflowMode', mode.value)"
           >
             {{ mode.label }}
@@ -161,7 +165,7 @@ const activeToolWorkflowHint = computed(
     <section
       class="graphwar-killer__panel graphwar-killer__game-mode-panel graphwar-killer-control-surface"
       aria-labelledby="graphwar-killer-game-mode-title"
-      :aria-disabled="panel.interactionDisabled"
+      :aria-disabled="!panel.canInteract"
     >
       <div class="graphwar-killer__label-row">
         <h2 id="graphwar-killer-game-mode-title">
@@ -173,7 +177,7 @@ const activeToolWorkflowHint = computed(
       </div>
       <fieldset
         class="graphwar-killer__settings-fields"
-        :disabled="panel.interactionDisabled"
+        :disabled="!panel.canInteract"
       >
         <div
           class="graphwar-killer__equation-toggle graphwar-killer-segmented-control"
@@ -192,8 +196,8 @@ const activeToolWorkflowHint = computed(
             class="graphwar-killer-segmented-button"
             :aria-pressed="panel.equationMode === mode.value"
             :class="{ 'graphwar-killer-segmented-button--active': panel.equationMode === mode.value }"
-            :disabled="mode.disabled"
-            :title="mode.title"
+            :disabled="!panel.canInteract || !mode.isEnabled"
+            :title="prependControlTitle(panel.temporaryDisabledReason, mode.title)"
             @click="emit('setEquationMode', mode.value)"
           >
             {{ mode.label }}
@@ -205,7 +209,6 @@ const activeToolWorkflowHint = computed(
     <section
       class="graphwar-killer__panel graphwar-killer__settings-panel graphwar-killer-control-surface"
       aria-labelledby="graphwar-killer-settings-title"
-      :aria-disabled="panel.interactionDisabled"
     >
       <div class="graphwar-killer__label-row">
         <h2 id="graphwar-killer-settings-title">
@@ -223,10 +226,7 @@ const activeToolWorkflowHint = computed(
           {{ panel.headerStatus.message }}
         </span>
       </div>
-      <fieldset
-        class="graphwar-killer__settings-fields"
-        :disabled="panel.interactionDisabled"
-      >
+      <fieldset class="graphwar-killer__settings-fields">
         <div
           v-if="panel.toolWorkflowMode !== 'simulator'"
           class="graphwar-killer__setting-row"
@@ -246,8 +246,8 @@ const activeToolWorkflowHint = computed(
               class="graphwar-killer-segmented-button"
               :aria-pressed="panel.algorithmMode === mode.value"
               :class="{ 'graphwar-killer-segmented-button--active': panel.algorithmMode === mode.value }"
-              :disabled="mode.disabled"
-              :title="mode.title"
+              :disabled="!panel.canInteract || !mode.isEnabled"
+              :title="prependControlTitle(panel.temporaryDisabledReason, mode.title)"
               @click="emit('setAlgorithmMode', mode.value)"
             >
               {{ mode.label }}
@@ -268,11 +268,12 @@ const activeToolWorkflowHint = computed(
                 min="0"
                 :max="panel.precision.maximum"
                 :aria-label="locale.ui.settings.decimalPlacesAriaLabel"
-                :title="locale.ui.settings.decimalPlacesTitle"
+                :disabled="!panel.canInteract"
+                :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.settings.decimalPlacesTitle)"
               >
             </label>
             <label
-              v-if="panel.steepnessVisible"
+              v-if="panel.isSteepnessVisible"
               class="graphwar-killer__steepness-label"
               :title="locale.ui.settings.steepnessTitle"
             >
@@ -282,23 +283,26 @@ const activeToolWorkflowHint = computed(
                 inputmode="decimal"
                 autocomplete="off"
                 :aria-label="locale.ui.settings.steepnessAriaLabel"
-                :title="locale.ui.settings.steepnessTitle"
+                :disabled="!panel.canInteract"
+                :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.settings.steepnessTitle)"
               >
             </label>
             <ToggleField
               v-if="panel.algorithmMode === 'step'"
               id="graphwar-killer-overflow-protection"
               class="graphwar-killer__formula-toggle"
-              :checked="panel.stepOverflowProtectionEnabled"
+              :checked="panel.isStepOverflowProtectionEnabled"
               :label="locale.ui.settings.overflowProtection"
-              state="normal"
+              :reason="panel.temporaryDisabledReason"
+              :state="panel.canInteract ? 'normal' : 'busy'"
               :title="locale.ui.settings.overflowProtectionTitle"
               @toggle="emit('toggleStepOverflowProtection')"
             />
             <ToggleField
+              v-if="panel.equationMode !== 'y'"
               id="graphwar-killer-step-glitch-mode"
               class="graphwar-killer__formula-toggle"
-              :checked="panel.stepGlitchModeEnabled"
+              :checked="panel.isStepGlitchModeEnabled"
               :label="locale.ui.settings.stepGlitchMode"
               :reason="panel.stepGlitchModeReason"
               :state="panel.stepGlitchModeState"
@@ -309,9 +313,9 @@ const activeToolWorkflowHint = computed(
           <ToggleField
             id="graphwar-killer-advanced-settings"
             class="graphwar-killer__formula-toggle"
-            :checked="panel.advancedSettingsVisible"
+            :checked="panel.isAdvancedSettingsVisible"
             :label="locale.ui.settings.advancedSettings"
-            :state="panel.interactionDisabled ? 'busy' : 'normal'"
+            state="normal"
             @pointercancel="emit('cancelDebugActivationHold')"
             @pointerdown="emit('startDebugActivationHold', $event)"
             @pointerleave="emit('cancelDebugActivationHold')"

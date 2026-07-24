@@ -28,18 +28,44 @@ describe("ToggleField", () => {
     expect(wrapper.emitted("toggle")).toHaveLength(1);
   });
 
-  it.each(["blocked", "busy"] as const)("disables %s controls at the native input boundary", (state) => {
+  it("keeps a blocked reason visible while disabling the native control", () => {
     const wrapper = mount(ToggleField, {
       props: {
         checked: false,
-        id: `control-${state}`,
+        id: "control-blocked",
         label: "Control",
         reason: "Unavailable",
-        state,
+        state: "blocked",
+        title: "Original title",
       },
     });
+    const control = wrapper.get('[role="switch"]');
 
-    expect(wrapper.get('[role="switch"]').attributes()).toHaveProperty("disabled");
+    expect(control.attributes()).toHaveProperty("disabled");
+    expect(control.attributes("aria-describedby")).toBe("control-blocked-reason");
+    expect(control.attributes("title")).toBe("Original title");
+    expect(wrapper.get("#control-blocked-reason").text()).toContain("Unavailable");
+  });
+
+  it("moves a busy reason before the original title without rendering it visibly", () => {
+    const wrapper = mount(ToggleField, {
+      props: {
+        checked: false,
+        description: "Supporting description",
+        id: "control-busy",
+        label: "Control",
+        reason: "Temporarily unavailable",
+        state: "busy",
+        title: "Original title",
+      },
+    });
+    const control = wrapper.get('[role="switch"]');
+
+    expect(control.attributes()).toHaveProperty("disabled");
+    expect(control.attributes("aria-describedby")).toBe("control-busy-description");
+    expect(control.attributes("title")).toBe("Temporarily unavailable\nOriginal title");
+    expect(wrapper.find("#control-busy-reason").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Temporarily unavailable");
   });
 
   it("keeps the rendered state unchanged when the parent rejects a toggle request", async () => {

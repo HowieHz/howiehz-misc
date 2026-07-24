@@ -3,9 +3,9 @@
 /** 用户输入表达式的 Graphwar 源码兼容解析选项。 */
 export interface GraphwarExpressionParserOptions {
   /** 是否跳过 Graphwar 表达式中无法识别的字符。 */
-  skipUnknownCharacters: boolean;
+  shouldSkipUnknownCharacters: boolean;
   /** 是否复刻原版 token 正则顺序，把 y' 当作 y 后再处理剩余 apostrophe。 */
-  parseDerivativeAsY: boolean;
+  shouldParseDerivativeAsY: boolean;
 }
 
 /** Graphwar 原版 PolishNotationFunction 使用的简单数值 token。 */
@@ -89,8 +89,8 @@ function parseGraphwarExpression(
 function tokenizeGraphwarExpression(
   expression: string,
   parserOptions: GraphwarExpressionParserOptions = {
-    parseDerivativeAsY: false,
-    skipUnknownCharacters: false,
+    shouldParseDerivativeAsY: false,
+    shouldSkipUnknownCharacters: false,
   },
 ): GraphwarExpressionToken[] | undefined {
   const tokens: GraphwarExpressionToken[] = [];
@@ -113,7 +113,7 @@ function tokenizeGraphwarExpression(
 
     const token = readGraphwarExpressionToken(rest, parserOptions);
     if (!token) {
-      if (parserOptions.skipUnknownCharacters) {
+      if (parserOptions.shouldSkipUnknownCharacters) {
         index += 1;
         continue;
       }
@@ -131,7 +131,7 @@ function readGraphwarExpressionToken(
   rest: string,
   parserOptions: GraphwarExpressionParserOptions,
 ): { length: number; token: GraphwarExpressionToken } | undefined {
-  if (!parserOptions.parseDerivativeAsY && rest.startsWith("y'")) {
+  if (!parserOptions.shouldParseDerivativeAsY && rest.startsWith("y'")) {
     return { length: 2, token: { type: GraphwarExpressionTokenType.DY } };
   }
 
@@ -222,8 +222,8 @@ function reorderGraphwarExpressionTokens(
   start: number,
   end: number,
 ): boolean {
-  const pendingRanges: { end: number; mustContainToken: boolean; start: number }[] = [
-    { start, end, mustContainToken: true },
+  const pendingRanges: { end: number; shouldContainToken: boolean; start: number }[] = [
+    { start, end, shouldContainToken: true },
   ];
   while (pendingRanges.length > 0) {
     const currentRange = pendingRanges.pop();
@@ -233,7 +233,7 @@ function reorderGraphwarExpressionTokens(
 
     const rootIndex = findGraphwarExpressionRootTokenIndex(input, currentRange.start, currentRange.end);
     if (rootIndex === -1) {
-      if (currentRange.mustContainToken) {
+      if (currentRange.shouldContainToken) {
         return false;
       }
       continue;
@@ -244,17 +244,17 @@ function reorderGraphwarExpressionTokens(
     output.push(token);
     if (paramCount === 1) {
       // 函数和一元负号只消费右侧表达式，左侧空区间由调用方判定是否合法。
-      pendingRanges.push({ start: rootIndex + 1, end: currentRange.end, mustContainToken: false });
+      pendingRanges.push({ start: rootIndex + 1, end: currentRange.end, shouldContainToken: false });
     } else if (paramCount === 2) {
       // 栈后进先出：先压右区间，才能保持旧递归的 left-before-right 输出顺序。
-      pendingRanges.push({ start: rootIndex + 1, end: currentRange.end, mustContainToken: false });
+      pendingRanges.push({ start: rootIndex + 1, end: currentRange.end, shouldContainToken: false });
       if (
         token.type === GraphwarExpressionTokenType.Add &&
         findGraphwarExpressionRootTokenIndex(input, currentRange.start, rootIndex - 1) === -1
       ) {
         output.push({ type: GraphwarExpressionTokenType.Value, value: 0 });
       } else {
-        pendingRanges.push({ start: currentRange.start, end: rootIndex - 1, mustContainToken: false });
+        pendingRanges.push({ start: currentRange.start, end: rootIndex - 1, shouldContainToken: false });
       }
     }
   }

@@ -20,7 +20,7 @@ const soldiers: GraphwarOneClickClearTargetSoldier[] = [
 describe("one-click-clear authoritative teams", () => {
   it("uses Agent ownership instead of the screenshot x-range heuristic", () => {
     const candidates = createGraphwarOneClickClearHitCandidates({
-      friendlyFireEnabled: false,
+      isFriendlyFireEnabled: false,
       geometry,
       isFriendlySoldier: (soldier) => soldier.id === "same-team-right",
       pathPoints: [createPixelPoint(385, 100)],
@@ -33,7 +33,7 @@ describe("one-click-clear authoritative teams", () => {
 
   it("keeps the x-range heuristic for screenshot recognition", () => {
     const candidates = createGraphwarOneClickClearHitCandidates({
-      friendlyFireEnabled: false,
+      isFriendlyFireEnabled: false,
       geometry,
       pathPoints: [createPixelPoint(385, 100)],
       soldiers,
@@ -44,7 +44,7 @@ describe("one-click-clear authoritative teams", () => {
 
   it("includes authoritative friendlies only when friendly fire is enabled", () => {
     const candidates = createGraphwarOneClickClearHitCandidates({
-      friendlyFireEnabled: true,
+      isFriendlyFireEnabled: true,
       geometry,
       isFriendlySoldier: (soldier) => soldier.id === "same-team-right",
       pathPoints: [createPixelPoint(385, 100)],
@@ -59,7 +59,7 @@ describe("one-click-clear authoritative teams", () => {
 
   it("does not select the soldier already containing the current path tail", () => {
     const options = {
-      friendlyFireEnabled: false,
+      isFriendlyFireEnabled: false,
       geometry,
       isFriendlySoldier: () => false,
       pathPoints: [createPixelPoint(385, 100), createPixelPoint(494, 100)],
@@ -76,7 +76,7 @@ describe("one-click-clear authoritative teams", () => {
 
   it("keeps a target whose center is behind the tail when its strict x+ edge remains reachable", () => {
     const candidates = createGraphwarOneClickClearCandidates({
-      friendlyFireEnabled: false,
+      isFriendlyFireEnabled: false,
       geometry,
       isFriendlySoldier: () => false,
       pathPoints: [createPixelPoint(385, 100), createPixelPoint(503, 200)],

@@ -3,6 +3,7 @@ import { computed } from "vue";
 
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import ControlReason from "./ControlReason.vue";
+import { prependControlTitle } from "./title";
 
 const props = defineProps<{
   /** Stable DOM id used to connect the switch, label, and visible explanations. */
@@ -13,7 +14,7 @@ const props = defineProps<{
   label: string;
   /** Optional supporting description shown before a state reason. */
   description?: string;
-  /** Visible status or reason associated with the switch in any capability state. */
+  /** Capability reason; busy reasons move into the title while persistent reasons remain visible. */
   reason?: string;
   /** Capability state shared with the parent command guard. */
   state: GraphwarControlCapability["state"];
@@ -25,11 +26,15 @@ const emit = defineEmits<{
   toggle: [];
 }>();
 
+const visibleReason = computed(() => (props.state === "busy" ? undefined : props.reason));
 const describedBy = computed(
   () =>
-    [props.description ? `${props.id}-description` : undefined, props.reason ? `${props.id}-reason` : undefined]
+    [props.description ? `${props.id}-description` : undefined, visibleReason.value ? `${props.id}-reason` : undefined]
       .filter(Boolean)
       .join(" ") || undefined,
+);
+const controlTitle = computed(() =>
+  prependControlTitle(props.state === "busy" ? props.reason : undefined, props.title),
 );
 </script>
 
@@ -46,7 +51,7 @@ const describedBy = computed(
       class="graphwar-killer-toggle-field__control"
       :disabled="state === 'blocked' || state === 'busy'"
       role="switch"
-      :title="title"
+      :title="controlTitle"
       type="button"
       @click="emit('toggle')"
     >
@@ -66,9 +71,9 @@ const describedBy = computed(
       {{ description }}
     </p>
     <ControlReason
-      v-if="reason"
+      v-if="visibleReason"
       :id="`${id}-reason`"
-      :message="reason"
+      :message="visibleReason"
     />
   </div>
 </template>

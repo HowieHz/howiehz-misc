@@ -579,7 +579,6 @@ export interface GraphwarKillerLocale {
       skipUnknownCharactersTitle: string;
       stepGlitchMode: string;
       stepGlitchModeAlgorithmInactiveReason: string;
-      stepGlitchModeGameModeInactiveReason: string;
       stepGlitchModeTitle: string;
       steepness: string;
       steepnessAriaLabel: string;

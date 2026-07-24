@@ -67,6 +67,21 @@ describe("Settings MainPanel", () => {
     expect(wrapper.emitted("finishDebugActivationHold")).toHaveLength(1);
   });
 
+  it("hides the Step glitch switch for y mode", () => {
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        panel: {
+          ...createPanel(),
+          equationMode: "y",
+          equationModes: [{ isEnabled: true, label: "y", title: "y", value: "y" }],
+        },
+      },
+    });
+
+    expect(wrapper.find("#graphwar-killer-step-glitch-mode").exists()).toBe(false);
+  });
+
   it("shows steepness but not the Step overflow switch for ABS y''", () => {
     const wrapper = mount(MainPanel, {
       props: {
@@ -122,7 +137,7 @@ describe("Settings MainPanel", () => {
     expect(panels[2].find(".graphwar-killer__label-row > span").text()).toBe("warning");
   });
 
-  it("adds the managed lock to every temporarily disabled settings button and switch", () => {
+  it("keeps advanced settings available while managed mode locks formula controls", async () => {
     const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
     const wrapper = mount(MainPanel, {
       props: {
@@ -145,7 +160,6 @@ describe("Settings MainPanel", () => {
     const switchTitles = new Map([
       ["graphwar-killer-overflow-protection", graphwarKillerLocale.ui.settings.overflowProtectionTitle],
       ["graphwar-killer-step-glitch-mode", graphwarKillerLocale.ui.settings.stepGlitchModeTitle],
-      ["graphwar-killer-advanced-settings", undefined],
     ]);
     for (const [id, title] of switchTitles) {
       const control = wrapper.get(`#${id}`);
@@ -153,6 +167,15 @@ describe("Settings MainPanel", () => {
       expect(control.attributes("title")).toBe(title ? `${reason}\n${title}` : reason);
       expect(wrapper.find(`#${id}-reason`).exists()).toBe(false);
     }
+    for (const input of wrapper.findAll<HTMLInputElement>("input")) {
+      expect(input.element.disabled).toBe(true);
+      expect(input.attributes("title")?.startsWith(`${reason}\n`)).toBe(true);
+    }
+    const advancedSettings = wrapper.get("#graphwar-killer-advanced-settings");
+    expect(advancedSettings.attributes("disabled")).toBeUndefined();
+    expect(advancedSettings.attributes("title")).toBeUndefined();
+    await advancedSettings.trigger("click");
+    expect(wrapper.emitted("toggleAdvancedSettings")).toHaveLength(1);
     expect(wrapper.text()).not.toContain(reason);
   });
 });

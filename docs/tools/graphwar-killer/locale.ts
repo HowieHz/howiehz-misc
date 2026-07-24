@@ -909,7 +909,6 @@ export const graphwarKillerLocale = {
       skipUnknownCharactersTitle: "Graphwar 会跳过未知字符",
       stepGlitchMode: "邪道模式",
       stepGlitchModeAlgorithmInactiveReason: "当前算法不生效",
-      stepGlitchModeGameModeInactiveReason: "当前游戏模式不生效",
       stepGlitchModeTitle: "用于阶跃 y' 或 y''；遇到障碍或普通阶跃无法连接时尝试纵向瞬移，障碍数据存在时仍会验证碰撞",
       steepness: "陡峭度 k",
       steepnessAriaLabel: "公式陡峭度 k",

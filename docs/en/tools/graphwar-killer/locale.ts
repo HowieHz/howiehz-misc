@@ -1008,7 +1008,6 @@ export const graphwarKillerLocale = {
       skipUnknownCharactersTitle: "Match Graphwar's behavior of skipping unknown characters",
       stepGlitchMode: "Glitch Mode",
       stepGlitchModeAlgorithmInactiveReason: "Inactive in the current algorithm",
-      stepGlitchModeGameModeInactiveReason: "Inactive in the current game mode",
       stepGlitchModeTitle:
         "Use with Step y' or y'' to jump past obstacles or fall back when a normal Step cannot connect; collisions are still checked when obstacle data is available",
       steepness: "Steepness k",

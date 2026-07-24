@@ -1010,10 +1010,7 @@ const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
   if (isGraphwarManagedModeEnabled.value) {
     stepGlitchModeReason = getCapabilityReason("managed-lock");
     stepGlitchModeState = "busy";
-  } else if (solverEquationMode.value === "y") {
-    stepGlitchModeReason = locale.ui.settings.stepGlitchModeGameModeInactiveReason;
-    stepGlitchModeState = "dormant";
-  } else if (!isFormulaStepGlitchSupported.value) {
+  } else if (solverEquationMode.value !== "y" && isStepGlitchModeEnabled.value && !isFormulaStepGlitchSupported.value) {
     stepGlitchModeReason = locale.ui.settings.stepGlitchModeAlgorithmInactiveReason;
     stepGlitchModeState = "dormant";
   }
@@ -2697,9 +2694,6 @@ function cancelDetection(shouldShowStatus: boolean) {
 
 /** 展开或折叠高级设置面板。 */
 function toggleAdvancedSettings() {
-  if (isGraphwarManagedModeEnabled.value) {
-    return;
-  }
   isAdvancedSettingsVisible.value = !isAdvancedSettingsVisible.value;
 }
 

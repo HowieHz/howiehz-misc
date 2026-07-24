@@ -1379,6 +1379,28 @@ describe("Graphwar Killer page settings", () => {
     wrapper.unmount();
   });
 
+  it("keeps the advanced-settings switch available during managed mode", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          isAdvancedSettingsVisible: boolean;
+          isGraphwarManagedModeEnabled: boolean;
+        };
+      }
+    ).setupState;
+
+    page.isGraphwarManagedModeEnabled = true;
+    await nextTick();
+    const advancedSettings = wrapper.get("#graphwar-killer-advanced-settings");
+    expect(advancedSettings.attributes("disabled")).toBeUndefined();
+
+    await advancedSettings.trigger("click");
+    expect(page.isAdvancedSettingsVisible).toBe(true);
+    expect(advancedSettings.attributes("aria-checked")).toBe("true");
+    wrapper.unmount();
+  });
+
   it("exports the Agent snapshot captured before a clear-failure result without rereading", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -1430,36 +1452,30 @@ describe("Graphwar Killer page settings", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps the glitch preference independent while leaving it inactive for ABS ODE modes", async () => {
+  it("hides glitch mode for y while preserving its ODE preferences", async () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const yMode = wrapper.findAll(".graphwar-killer__equation-toggle button")[0];
-    const absAlgorithm = wrapper.findAll(".graphwar-killer__algorithm-toggle button")[0];
-    const glitchMode = wrapper.find("#graphwar-killer-step-glitch-mode");
 
     expect(yMode.attributes("aria-pressed")).toBe("true");
-    expect(absAlgorithm.attributes("aria-pressed")).toBe("true");
-    expect(glitchMode.attributes("aria-checked")).toBe("true");
-    expect(wrapper.find("#graphwar-killer-step-glitch-mode-reason").text()).toContain(
-      graphwarKillerLocale.ui.settings.stepGlitchModeGameModeInactiveReason,
-    );
-
-    await glitchMode.trigger("click");
-    expect(glitchMode.attributes("aria-checked")).toBe("false");
-    await glitchMode.trigger("click");
-
-    expect(yMode.attributes("aria-pressed")).toBe("true");
-    expect(absAlgorithm.attributes("aria-pressed")).toBe("true");
-    expect(glitchMode.attributes("aria-checked")).toBe("true");
+    expect(wrapper.find("#graphwar-killer-step-glitch-mode").exists()).toBe(false);
 
     await wrapper.findAll(".graphwar-killer__equation-toggle button")[1].trigger("click");
-    await absAlgorithm.trigger("click");
+    const glitchMode = wrapper.get("#graphwar-killer-step-glitch-mode");
+    expect(glitchMode.attributes("aria-checked")).toBe("true");
+    await wrapper.findAll(".graphwar-killer__algorithm-toggle button")[0].trigger("click");
 
     expect(wrapper.find("#graphwar-killer-step-glitch-mode-reason").text()).toContain(
       graphwarKillerLocale.ui.settings.stepGlitchModeAlgorithmInactiveReason,
     );
+    await glitchMode.trigger("click");
+    expect(wrapper.find("#graphwar-killer-step-glitch-mode-reason").exists()).toBe(false);
+    await glitchMode.trigger("click");
+
+    await yMode.trigger("click");
+    expect(wrapper.find("#graphwar-killer-step-glitch-mode").exists()).toBe(false);
 
     await wrapper.findAll(".graphwar-killer__equation-toggle button")[2].trigger("click");
-    await absAlgorithm.trigger("click");
+    await wrapper.findAll(".graphwar-killer__algorithm-toggle button")[0].trigger("click");
     expect(wrapper.find("#graphwar-killer-step-glitch-mode-reason").text()).toContain(
       graphwarKillerLocale.ui.settings.stepGlitchModeAlgorithmInactiveReason,
     );
@@ -1486,7 +1502,6 @@ describe("Graphwar Killer page settings", () => {
     await wrapper.findAll(".graphwar-killer__algorithm-toggle button")[1].trigger("click");
     await wrapper.find(`[aria-label="${graphwarKillerLocale.ui.settings.decimalPlacesAriaLabel}"]`).setValue("1");
     await wrapper.find(`[aria-label="${graphwarKillerLocale.ui.settings.steepnessAriaLabel}"]`).setValue("67");
-    await wrapper.find("#graphwar-killer-step-glitch-mode").trigger("click");
     await wrapper.find("#graphwar-killer-overflow-protection").trigger("click");
     await wrapper.find("#graphwar-killer-advanced-settings").trigger("click");
 
@@ -1514,7 +1529,7 @@ describe("Graphwar Killer page settings", () => {
       wrapper.find<HTMLInputElement>(`[aria-label="${graphwarKillerLocale.ui.settings.steepnessAriaLabel}"]`).element
         .value,
     ).toBe("67");
-    expect(wrapper.find("#graphwar-killer-step-glitch-mode").attributes("aria-checked")).toBe("false");
+    expect(wrapper.find("#graphwar-killer-step-glitch-mode").exists()).toBe(false);
     expect(wrapper.find("#graphwar-killer-overflow-protection").attributes("aria-checked")).toBe("false");
     expect(wrapper.find("#graphwar-killer-advanced-settings").attributes("aria-checked")).toBe("true");
     wrapper.unmount();

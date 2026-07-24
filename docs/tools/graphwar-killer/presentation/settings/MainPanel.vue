@@ -209,7 +209,6 @@ const activeToolWorkflowHint = computed(
     <section
       class="graphwar-killer__panel graphwar-killer__settings-panel graphwar-killer-control-surface"
       aria-labelledby="graphwar-killer-settings-title"
-      :aria-disabled="!panel.canInteract"
     >
       <div class="graphwar-killer__label-row">
         <h2 id="graphwar-killer-settings-title">
@@ -227,10 +226,7 @@ const activeToolWorkflowHint = computed(
           {{ panel.headerStatus.message }}
         </span>
       </div>
-      <fieldset
-        class="graphwar-killer__settings-fields"
-        :disabled="!panel.canInteract"
-      >
+      <fieldset class="graphwar-killer__settings-fields">
         <div
           v-if="panel.toolWorkflowMode !== 'simulator'"
           class="graphwar-killer__setting-row"
@@ -272,7 +268,8 @@ const activeToolWorkflowHint = computed(
                 min="0"
                 :max="panel.precision.maximum"
                 :aria-label="locale.ui.settings.decimalPlacesAriaLabel"
-                :title="locale.ui.settings.decimalPlacesTitle"
+                :disabled="!panel.canInteract"
+                :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.settings.decimalPlacesTitle)"
               >
             </label>
             <label
@@ -286,7 +283,8 @@ const activeToolWorkflowHint = computed(
                 inputmode="decimal"
                 autocomplete="off"
                 :aria-label="locale.ui.settings.steepnessAriaLabel"
-                :title="locale.ui.settings.steepnessTitle"
+                :disabled="!panel.canInteract"
+                :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.settings.steepnessTitle)"
               >
             </label>
             <ToggleField
@@ -301,6 +299,7 @@ const activeToolWorkflowHint = computed(
               @toggle="emit('toggleStepOverflowProtection')"
             />
             <ToggleField
+              v-if="panel.equationMode !== 'y'"
               id="graphwar-killer-step-glitch-mode"
               class="graphwar-killer__formula-toggle"
               :checked="panel.isStepGlitchModeEnabled"
@@ -316,8 +315,7 @@ const activeToolWorkflowHint = computed(
             class="graphwar-killer__formula-toggle"
             :checked="panel.isAdvancedSettingsVisible"
             :label="locale.ui.settings.advancedSettings"
-            :reason="panel.temporaryDisabledReason"
-            :state="panel.canInteract ? 'normal' : 'busy'"
+            state="normal"
             @pointercancel="emit('cancelDebugActivationHold')"
             @pointerdown="emit('startDebugActivationHold', $event)"
             @pointerleave="emit('cancelDebugActivationHold')"

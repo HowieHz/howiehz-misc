@@ -32,6 +32,29 @@ interface ValidatedTrajectorySnapshot {
 }
 
 describe("Graphwar Killer page settings", () => {
+  it("creates a cloneable prefix target from a reactive path tail", () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          createCurrentPrefixTargetCircle: () => { center: { x: number; y: number }; radius: number } | undefined;
+          pathPixels: { x: number; y: number }[];
+        };
+      }
+    ).setupState;
+    const path = [createPixelPoint(100, 200), createPixelPoint(300, 250)];
+
+    try {
+      page.pathPixels = path;
+      const prefixTarget = page.createCurrentPrefixTargetCircle();
+
+      expect(prefixTarget?.center).toEqual(path[1]);
+      expect(() => structuredClone(prefixTarget)).not.toThrow();
+    } finally {
+      wrapper.unmount();
+    }
+  });
+
   it("coalesces incumbent control-point previews per frame and restores the formal path on clear", () => {
     let previewFrame: FrameRequestCallback | undefined;
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {

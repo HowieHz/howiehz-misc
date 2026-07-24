@@ -1476,10 +1476,10 @@ function createCurrentPrefixTargetCircle() {
     return undefined;
   }
   if ("center" in target) {
-    return target;
+    return { center: { ...target.center }, radius: target.radius };
   }
   const radius = soldierHitRadiusPixels.value;
-  return radius === undefined ? undefined : { center: target, radius };
+  return radius === undefined ? undefined : { center: { ...target }, radius };
 }
 
 // 一键清图 workflow 应集中预检、候选收集、worker 输入、cache 和结果落地；页面只保留当前状态入口。

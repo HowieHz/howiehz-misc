@@ -18,6 +18,7 @@ import {
   tryResolveGraphwarTrajectoryCandidate,
 } from "../../formula/trajectory/sampling";
 import type {
+  GraphwarStepGlitchFormulaBoundaryState,
   GraphwarStepGlitchFormulaPrefix,
   GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaSettings,
@@ -504,12 +505,12 @@ export async function buildGraphwarOneClickClearPath(
     return createOneClickClearFailure("preflight-blocked", startedAt, 0);
   }
 
-  const stepGlitchMode = formulaModeUsesStepGlitch(
+  const isStepGlitchModeEnabled = formulaModeUsesStepGlitch(
     options.settings.algorithm,
     options.settings.equation,
     options.settings.stepGlitchMode,
   );
-  const prefixValid = stepGlitchMode
+  const isPrefixValid = isStepGlitchModeEnabled
     ? true
     : options.pathPoints.length >= 2
       ? measureOneClickClearDebugTiming(
@@ -518,7 +519,7 @@ export async function buildGraphwarOneClickClearPath(
           () => oneClickClearStepRouteIsValid(options, options.pathPoints) && validateOneClickClearPrefix(options),
         )
       : true;
-  if (!prefixValid) {
+  if (!isPrefixValid) {
     return createOneClickClearFailure("preflight-blocked", startedAt, 0);
   }
 
@@ -535,7 +536,7 @@ export async function buildGraphwarOneClickClearPath(
     options,
   };
   // 失败仍按失败返回，让主线程明确显示“已保留当前最优结果”；检查点已通过回调独立保存。
-  return stepGlitchMode
+  return isStepGlitchModeEnabled
     ? await buildOneClickClearStepGlitchPath(context, targets, startedAt)
     : await buildOneClickClearDagPath(context, targets, startedAt);
 }
@@ -606,6 +607,7 @@ async function buildOneClickClearStepGlitchPath(
   };
   let prefixScanner: GraphwarStepGlitchPrefixScanner | undefined;
   let prefixEvidence = options.stepGlitchPrefixEvidence;
+  let stepGlitchFormulaBoundaryState: GraphwarStepGlitchFormulaBoundaryState | undefined;
   let stepGlitchFormulaPrefix = options.stepGlitchPrefixEvidence?.stepGlitchFormulaPrefix;
   let workUnits = 0;
   let acceptedLayerGraphX: number | undefined;
@@ -625,6 +627,7 @@ async function buildOneClickClearStepGlitchPath(
       debugMetrics: options.debugMetrics,
       maskIndex,
       ...(prefixEvidence ? { prefixEvidence } : {}),
+      ...(stepGlitchFormulaBoundaryState ? { stepGlitchFormulaBoundaryState } : {}),
       ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
       ...(route.targetSequence.length === 0 && options.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
       requiredTargets: createOneClickClearPreviousTargets(route.targetSequence),
@@ -652,6 +655,7 @@ async function buildOneClickClearStepGlitchPath(
       }
       // 成功候选已完整模拟；下一目标复用 exact path 的恢复点，不再重算刚提交的 prefix。
       prefixEvidence = { acceptedPoint: scan.acceptedPoint };
+      stepGlitchFormulaBoundaryState = scan.stepGlitchFormulaBoundaryState;
       stepGlitchFormulaPrefix = scan.stepGlitchFormulaPrefix;
       // 每个 hit 都是可独立采用的精确路径；最终失败时 Master 仍应能复用被页面保留的这个前缀。
       publishOneClickClearStepGlitchHitEvidence(options, route, scan.acceptedPoint, scan.stepGlitchFormulaPrefix);

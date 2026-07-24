@@ -10,6 +10,7 @@ import { graphToImagePoint } from "../../core/geometry";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
+import { createGraphwarTrajectoryDebugMetrics } from "../debug-metrics";
 import {
   buildFormula,
   compileFormulaEvaluator,
@@ -1640,15 +1641,28 @@ describe("Step glitch formula prefix", () => {
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-    }).context;
-    const reused = resolveGraphwarTrajectory({
+    });
+    const prefixOnlyMetrics = createGraphwarTrajectoryDebugMetrics();
+    const prefixOnly = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
+      debugMetrics: prefixOnlyMetrics,
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
-    }).context;
+    });
+    const reusedMetrics = createGraphwarTrajectoryDebugMetrics();
+    const reused = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      debugMetrics: reusedMetrics,
+      points: appendedPoints,
+      settings: stepSettings,
+      soldierCenter: appendedPoints[0],
+      stepGlitchFormulaBoundaryState: prefix.stepGlitchFormulaBoundaryState,
+      stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
+    });
     const prefixFormula = prefix.stepGlitchFormulaPrefix;
     const rebuiltWithFixedWindows = prefixFormula
       ? resolveGraphwarTrajectory({
@@ -1667,27 +1681,245 @@ describe("Step glitch formula prefix", () => {
       : undefined;
 
     expect(prefix.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
-    expect(reused.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBe(
+    expect(prefix.stepGlitchFormulaBoundaryState).toBeDefined();
+    expect(reusedMetrics.counters.trajectoryReplayCount).toBeLessThan(prefixOnlyMetrics.counters.trajectoryReplayCount);
+    expect(prefixOnlyMetrics.counters.trajectoryReplayCount - reusedMetrics.counters.trajectoryReplayCount).toBe(1);
+    expect(reusedMetrics.counters.rk4StepCount).toBeLessThan(prefixOnlyMetrics.counters.rk4StepCount);
+    expect(reused.context.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBe(
       prefix.stepGlitchFormulaPrefix?.stepGlitchSegments[0],
     );
-    expect(reused.formulaResult.expression).toBe(cold.formulaResult.expression);
-    expect(reused.formulaPoints).toEqual(cold.formulaPoints);
-    expect(reused.stepGlitchFormulaPrefix?.refinedFormulaPoints).toEqual(
-      cold.stepGlitchFormulaPrefix?.refinedFormulaPoints,
+    expect(reused.context.formulaResult.expression).toBe(cold.context.formulaResult.expression);
+    expect(reused.context.formulaPoints).toEqual(cold.context.formulaPoints);
+    expect(reused.context.stepGlitchFormulaPrefix?.refinedFormulaPoints).toEqual(
+      cold.context.stepGlitchFormulaPrefix?.refinedFormulaPoints,
     );
-    expect(reused.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual(
-      cold.stepGlitchFormulaPrefix?.stepGlitchRequirements,
+    expect(reused.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual(
+      cold.context.stepGlitchFormulaPrefix?.stepGlitchRequirements,
     );
-    expect(reused.stepGlitchFormulaPrefix?.stepGlitchSegments).toEqual(
-      cold.stepGlitchFormulaPrefix?.stepGlitchSegments,
+    expect(reused.context.stepGlitchFormulaPrefix?.stepGlitchSegments).toEqual(
+      cold.context.stepGlitchFormulaPrefix?.stepGlitchSegments,
     );
-    expect(reused.stepGlitchFormulaPrefix?.stepSegmentDeltaYs).toEqual(
-      cold.stepGlitchFormulaPrefix?.stepSegmentDeltaYs,
+    expect(reused.context.stepGlitchFormulaPrefix?.stepSegmentDeltaYs).toEqual(
+      cold.context.stepGlitchFormulaPrefix?.stepSegmentDeltaYs,
     );
+    expectTrajectorySamplesToBeIdentical(prefixOnly.result.sample, cold.result.sample);
+    expectTrajectorySamplesToBeIdentical(reused.result.sample, cold.result.sample);
     expect(rebuiltWithFixedWindows?.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toMatchObject({
       endX: prefixFormula?.stepGlitchSegments[0]?.endX,
       startX: prefixFormula?.stepGlitchSegments[0]?.startX,
     });
+  });
+
+  it("falls back to muzzle replay when any local boundary field is stale", () => {
+    const prefixPoints = [createGraphPoint(-10, 0), createGraphPoint(-5, 3)];
+    const stepSettings = {
+      algorithm: "step" as const,
+      decimalPlaces: 4,
+      equation: "dy" as const,
+      steepness: 67,
+      stepGlitchMode: true,
+      stepOverflowProtection: true,
+    };
+    const prefix = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: prefixPoints,
+      settings: stepSettings,
+      soldierCenter: prefixPoints[0],
+    }).context;
+    const formulaPrefix = prefix.stepGlitchFormulaPrefix;
+    const boundaryState = prefix.stepGlitchFormulaBoundaryState;
+    expect(formulaPrefix).toBeDefined();
+    expect(boundaryState).toBeDefined();
+    if (!formulaPrefix || !boundaryState) {
+      return;
+    }
+
+    const appendedPoints = [...prefixPoints, createGraphPoint(0, 1)];
+    const fallbackMetrics = createGraphwarTrajectoryDebugMetrics();
+    const fallback = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      debugMetrics: fallbackMetrics,
+      points: appendedPoints,
+      settings: stepSettings,
+      soldierCenter: appendedPoints[0],
+      stepGlitchFormulaPrefix: formulaPrefix,
+    });
+    const staleBoundaries = [
+      {
+        name: "formula materials",
+        state: { ...boundaryState, formulaMaterialsIdentity: `${boundaryState.formulaMaterialsIdentity} ` },
+      },
+      { name: "launch angle", state: { ...boundaryState, launchAngleRadians: 0 } },
+      { name: "segment count", state: { ...boundaryState, segmentCount: boundaryState.segmentCount + 1 } },
+      { name: "boundary x", state: { ...boundaryState, stopX: boundaryState.stopX + GRAPHWAR_STEP_SIZE } },
+      {
+        name: "sampling state",
+        state: {
+          ...boundaryState,
+          state: {
+            ...boundaryState.state,
+            currentPoint: createGraphPoint(
+              boundaryState.stopX - GRAPHWAR_STEP_SIZE,
+              boundaryState.state.currentPoint.y,
+            ),
+          },
+        },
+      },
+    ];
+
+    for (const stale of staleBoundaries) {
+      const metrics = createGraphwarTrajectoryDebugMetrics();
+      const resolved = resolveGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        debugMetrics: metrics,
+        points: appendedPoints,
+        settings: stepSettings,
+        soldierCenter: appendedPoints[0],
+        stepGlitchFormulaBoundaryState: stale.state,
+        stepGlitchFormulaPrefix: formulaPrefix,
+      });
+
+      expect(metrics.counters.trajectoryReplayCount, stale.name).toBe(fallbackMetrics.counters.trajectoryReplayCount);
+      expect(metrics.counters.rk4StepCount, stale.name).toBe(fallbackMetrics.counters.rk4StepCount);
+      expectTrajectorySamplesToBeIdentical(resolved.result.sample, fallback.result.sample);
+    }
+  });
+
+  it("rejects a boundary from a different exact prefix even when its serialized identity matches", () => {
+    const stepSettings = {
+      algorithm: "step" as const,
+      decimalPlaces: 4,
+      equation: "dy" as const,
+      steepness: 210,
+      stepGlitchMode: true,
+      stepOverflowProtection: true,
+    };
+    const firstPrefixPoints = [createGraphPoint(-10, 0), createGraphPoint(-5, 3)];
+    const secondPrefixPoints = [createGraphPoint(-10, 1), createGraphPoint(-5, 4)];
+    const firstPrefix = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: firstPrefixPoints,
+      settings: stepSettings,
+      soldierCenter: firstPrefixPoints[0],
+    }).context;
+    const secondPrefix = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: secondPrefixPoints,
+      settings: stepSettings,
+      soldierCenter: secondPrefixPoints[0],
+    }).context;
+    const formulaPrefix = firstPrefix.stepGlitchFormulaPrefix;
+    const matchingBoundaryState = firstPrefix.stepGlitchFormulaBoundaryState;
+    const crossedBoundaryState = secondPrefix.stepGlitchFormulaBoundaryState;
+    expect(formulaPrefix).toBeDefined();
+    expect(matchingBoundaryState).toBeDefined();
+    expect(crossedBoundaryState).toBeDefined();
+    if (!formulaPrefix || !matchingBoundaryState || !crossedBoundaryState) {
+      return;
+    }
+
+    // 平移后的另一条合法路径具有相同公式材料和边界字段，但物理 y 状态不同。
+    expect(crossedBoundaryState.formulaMaterialsIdentity).toBe(matchingBoundaryState.formulaMaterialsIdentity);
+    expect(crossedBoundaryState.segmentCount).toBe(matchingBoundaryState.segmentCount);
+    expect(crossedBoundaryState.stopX).toBe(matchingBoundaryState.stopX);
+    expect(crossedBoundaryState.state.currentPoint.y).not.toBe(matchingBoundaryState.state.currentPoint.y);
+    expect(crossedBoundaryState.prefix).not.toBe(formulaPrefix);
+
+    const appendedPoints = [...firstPrefixPoints, createGraphPoint(0, 1)];
+    const fallbackMetrics = createGraphwarTrajectoryDebugMetrics();
+    const fallback = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      debugMetrics: fallbackMetrics,
+      points: appendedPoints,
+      settings: stepSettings,
+      soldierCenter: appendedPoints[0],
+      stepGlitchFormulaPrefix: formulaPrefix,
+    });
+    const crossedMetrics = createGraphwarTrajectoryDebugMetrics();
+    const crossed = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      debugMetrics: crossedMetrics,
+      points: appendedPoints,
+      settings: stepSettings,
+      soldierCenter: appendedPoints[0],
+      stepGlitchFormulaBoundaryState: crossedBoundaryState,
+      stepGlitchFormulaPrefix: formulaPrefix,
+    });
+    const matchingMetrics = createGraphwarTrajectoryDebugMetrics();
+    const matching = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      debugMetrics: matchingMetrics,
+      points: appendedPoints,
+      settings: stepSettings,
+      soldierCenter: appendedPoints[0],
+      stepGlitchFormulaBoundaryState: matchingBoundaryState,
+      stepGlitchFormulaPrefix: formulaPrefix,
+    });
+
+    expect(crossedMetrics.counters.trajectoryReplayCount).toBe(fallbackMetrics.counters.trajectoryReplayCount);
+    expect(crossedMetrics.counters.rk4StepCount).toBe(fallbackMetrics.counters.rk4StepCount);
+    expect(fallbackMetrics.counters.trajectoryReplayCount - matchingMetrics.counters.trajectoryReplayCount).toBe(1);
+    expect(matchingMetrics.counters.rk4StepCount).toBeLessThan(fallbackMetrics.counters.rk4StepCount);
+    expect(crossed.context.formulaResult.expression).toBe(fallback.context.formulaResult.expression);
+    expect(matching.context.formulaResult.expression).toBe(fallback.context.formulaResult.expression);
+    expectTrajectorySamplesToBeIdentical(crossed.result.sample, fallback.result.sample);
+    expectTrajectorySamplesToBeIdentical(matching.result.sample, fallback.result.sample);
+  });
+
+  it("restores the exact y'' RK4 boundary without changing the appended trajectory", () => {
+    const prefixPoints = [createGraphPoint(-20, 0), createGraphPoint(-15, 0.05)];
+    const stepSettings = {
+      algorithm: "step" as const,
+      decimalPlaces: 4,
+      equation: "ddy" as const,
+      steepness: 153,
+      stepGlitchMode: true,
+      stepOverflowProtection: true,
+    };
+    const prefix = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: prefixPoints,
+      settings: stepSettings,
+      soldierCenter: prefixPoints[0],
+    }).context;
+    const appendedPoints = [...prefixPoints, createGraphPoint(-10, -0.05)];
+    const fallbackMetrics = createGraphwarTrajectoryDebugMetrics();
+    const fallback = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      debugMetrics: fallbackMetrics,
+      points: appendedPoints,
+      settings: stepSettings,
+      soldierCenter: appendedPoints[0],
+      stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
+    });
+    const reusedMetrics = createGraphwarTrajectoryDebugMetrics();
+    const reused = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      debugMetrics: reusedMetrics,
+      points: appendedPoints,
+      settings: stepSettings,
+      soldierCenter: appendedPoints[0],
+      stepGlitchFormulaBoundaryState: prefix.stepGlitchFormulaBoundaryState,
+      stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
+    });
+
+    expect(prefix.stepGlitchFormulaBoundaryState?.state.dy).toBeDefined();
+    expect(fallbackMetrics.counters.trajectoryReplayCount - reusedMetrics.counters.trajectoryReplayCount).toBe(1);
+    expect(reusedMetrics.counters.rk4StepCount).toBeLessThan(fallbackMetrics.counters.rk4StepCount);
+    expect(reused.context.formulaResult.expression).toBe(fallback.context.formulaResult.expression);
+    expect(getGraphwarTrajectoryLaunchAngle(reused.context)).toBe(getGraphwarTrajectoryLaunchAngle(fallback.context));
+    expectTrajectorySamplesToBeIdentical(reused.result.sample, fallback.result.sample);
   });
 });
 

@@ -25,6 +25,7 @@ import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core
 import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import { tryResolveGraphwarTrajectoryCandidate } from "../../formula/trajectory/sampling";
 import type {
+  GraphwarStepGlitchFormulaBoundaryState,
   GraphwarStepGlitchFormulaPrefix,
   GraphwarStepGlitchXWindow,
   GraphwarTrajectoryFormulaContext,
@@ -59,6 +60,8 @@ export interface GraphwarStepGlitchPrefixOptions {
   prefixEvidence?: GraphwarStepGlitchPrefixEvidence;
   /** 已成功 sourcePath 的邪道求解结果；公式 Module 核对精确前缀后才会复用。 */
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
+  /** 同一搜索 Worker 内最新已接受段边界；只尝试恢复首个新增段。 */
+  stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
   /** 旧公式必须命中的当前尾点；只用于 evidence/prefix 准备，不约束新最终直连公式。 */
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 固定前缀必须继续命中的士兵；后续控制点允许改变它们的实际命中顺序。 */
@@ -99,6 +102,7 @@ export type GraphwarStepGlitchScanResult =
       acceptedPoint: GraphPoint;
       /** 本次命中回放已经使用的精确公式上下文；调用方可直接生成 incumbent。 */
       formulaContext?: GraphwarTrajectoryFormulaContext;
+      stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
       stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
       path: PixelPoint[];
       status: "hit";
@@ -237,6 +241,8 @@ export interface GraphwarStepGlitchReplayResult {
   reachedTargetCount: number;
   /** 本次回放已经构造的公式上下文；命中候选发布时应直接复用。 */
   formulaContext?: GraphwarTrajectoryFormulaContext;
+  /** 当前精确路径最后一段的局部可恢复状态；不得发布到 Master。 */
+  stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
   /** 本条精确路径的求解结果；只有路径验证成功后才能提升为下一条 sourcePath 前缀。 */
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
   /** 当前有序目标和全部无序必达目标是否都已命中。 */
@@ -422,6 +428,9 @@ export function createGraphwarStepGlitchPrefixScanner(
           reachedTargetCount: directReplay.reachedTargetCount,
           ...(directReplay.stepGlitchFormulaPrefix
             ? { stepGlitchFormulaPrefix: directReplay.stepGlitchFormulaPrefix }
+            : {}),
+          ...(directReplay.stepGlitchFormulaBoundaryState
+            ? { stepGlitchFormulaBoundaryState: directReplay.stepGlitchFormulaBoundaryState }
             : {}),
           status: "hit",
           timings,
@@ -690,6 +699,9 @@ function scanPreparedGraphwarStepGlitchPath(
         ...(replay.formulaContext ? { formulaContext: replay.formulaContext } : {}),
         path: item.candidate.path,
         reachedTargetCount: replay.reachedTargetCount,
+        ...(replay.stepGlitchFormulaBoundaryState
+          ? { stepGlitchFormulaBoundaryState: replay.stepGlitchFormulaBoundaryState }
+          : {}),
         ...(replay.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: replay.stepGlitchFormulaPrefix } : {}),
         status: "hit",
         timings,
@@ -754,6 +766,9 @@ function replayPathToControlX(
     settings: context.formulaSettings,
     soldierCenter: graphPoints[0],
     ...(options.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: options.stepGlitchFormulaPrefix } : {}),
+    ...(options.stepGlitchFormulaBoundaryState
+      ? { stepGlitchFormulaBoundaryState: options.stepGlitchFormulaBoundaryState }
+      : {}),
     ...(stepGlitchXWindows ? { stepGlitchXWindows } : {}),
     stopOnTargetsComplete: false,
     targetSequence,
@@ -766,18 +781,18 @@ function replayPathToControlX(
     return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
   }
 
-  const targetsHit =
+  const hasHitTargets =
     result.reachedTargetCount >= targetSequence.length && result.reachedRequiredTargetCount >= requiredTargets.length;
   const lastSafeIndex = result.obstacleHitIndex >= 0 ? result.obstacleHitIndex - 1 : result.sample.points.length - 1;
   const validationTargetHitIndex = Math.max(result.targetHitIndex, result.requiredTargetsHitIndex);
-  const validationTargetsFinishSafely =
+  const isValidationTargetCompletionSafe =
     targetSequence.length === 0 && requiredTargets.length === 0
       ? true
       : validationTargetHitIndex >= 0 && validationTargetHitIndex <= lastSafeIndex;
   return {
     // Required 只证明整式最终命中，可能位于下个控制点右侧；扫描恢复点只等待当前有序目标。
     acceptedPoint:
-      targetsHit && validationTargetsFinishSafely
+      hasHitTargets && isValidationTargetCompletionSafe
         ? findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
             result.sample.points,
             result.obstacleHitIndex,
@@ -788,8 +803,9 @@ function replayPathToControlX(
     blockedPoint: result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined,
     formulaContext,
     reachedTargetCount: result.reachedTargetCount + result.reachedRequiredTargetCount,
+    stepGlitchFormulaBoundaryState: formulaContext.stepGlitchFormulaBoundaryState,
     stepGlitchFormulaPrefix: formulaContext.stepGlitchFormulaPrefix,
-    targetsHit,
+    targetsHit: hasHitTargets,
     trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
       result.visiblePixels,
       result.obstacleHitIndex,

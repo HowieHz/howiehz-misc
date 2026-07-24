@@ -10,6 +10,7 @@ import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 const scanMockState = vi.hoisted(() => ({
   outcomes: [] as ("hit" | "no-path")[],
   scanners: [] as {
+    hasBoundaryState: boolean;
     hasPrefixEvidence: boolean;
     requiredTargets: { center: { x: number; y: number }; radius: number }[];
     sourcePath: { x: number; y: number }[];
@@ -61,6 +62,7 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
       (options: Parameters<typeof original.createGraphwarStepGlitchPrefixScanner>[0]) => {
         const scannerId = scanMockState.scanners.length;
         scanMockState.scanners.push({
+          hasBoundaryState: options.stepGlitchFormulaBoundaryState !== undefined,
           hasPrefixEvidence: options.prefixEvidence !== undefined,
           requiredTargets: (options.requiredTargets ?? []).map((target) => ({
             center: { ...target.center },
@@ -82,19 +84,26 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
                 throw new Error("Formula context test factory is unavailable");
               }
               const graphPoints = path.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
+              const lastGraphPoint = graphPoints.at(-1);
+              if (!lastGraphPoint) {
+                throw new Error("Step glitch scanner mock path is empty");
+              }
+              const resolution = resolveTrajectory({
+                bounds: options.bounds,
+                boundsRect: options.boundsRect,
+                points: graphPoints,
+                settings: options.settings,
+                soldierCenter: graphPoints[0],
+              });
               return {
                 acceptedPoint: { x: 0, y: 0 },
                 expandedStates: 1,
-                formulaContext: resolveTrajectory({
-                  bounds: options.bounds,
-                  boundsRect: options.boundsRect,
-                  points: graphPoints,
-                  settings: { ...options.settings, stepGlitchMode: false },
-                  soldierCenter: graphPoints[0],
-                }).context,
+                formulaContext: resolution.context,
                 path,
                 reachedTargetCount: (options.requiredTargets?.length ?? 0) + 1,
                 status: "hit" as const,
+                stepGlitchFormulaBoundaryState: resolution.context.stepGlitchFormulaBoundaryState,
+                stepGlitchFormulaPrefix: resolution.context.stepGlitchFormulaPrefix,
                 timings: [],
                 trajectoryPoints: path,
               };
@@ -193,6 +202,7 @@ describe("Step glitch one-click-clear target retries", () => {
 
     expect(scanMockState.scans.map((scan) => scan.scannerId)).toEqual([0, 1, 2, 2, 3]);
     expect(scanMockState.scanners.map((scanner) => scanner.sourcePath.length)).toEqual([1, 2, 3, 4]);
+    expect(scanMockState.scanners.map((scanner) => scanner.hasBoundaryState)).toEqual([false, true, true, true]);
     expect(scanMockState.scanners.map((scanner) => scanner.hasPrefixEvidence)).toEqual([false, true, true, true]);
     expect(scanMockState.scanners.map((scanner) => scanner.requiredTargets.length)).toEqual([0, 1, 2, 3]);
     expect(scanMockState.scanners[3]?.requiredTargets.map((target) => target.center)).toEqual([

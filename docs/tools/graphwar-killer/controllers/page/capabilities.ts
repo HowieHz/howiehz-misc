@@ -19,7 +19,8 @@ export type GraphwarCapabilityReason =
   | "pathfinding-busy"
   | "agent-read-busy"
   | "agent-fire-busy"
-  | "result-required"
+  | "solver-result-required"
+  | "simulator-function-required"
   | "solver-required"
   | "agent-disabled"
   | "agent-url-invalid"
@@ -182,7 +183,10 @@ export function deriveGraphwarCapabilities(
         : !facts.formula.isSettingsValid
           ? { state: "blocked", reason: "formula-settings-invalid" }
           : !facts.hasResult
-            ? { state: "blocked", reason: "result-required" }
+            ? {
+                state: "blocked",
+                reason: facts.workflowMode === "simulator" ? "simulator-function-required" : "solver-result-required",
+              }
             : facts.busy.isManagedModeBusy
               ? { state: "busy", reason: "managed-lock" }
               : facts.busy.isPathfindingBusy

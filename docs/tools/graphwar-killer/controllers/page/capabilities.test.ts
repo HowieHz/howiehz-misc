@@ -137,7 +137,12 @@ describe("Graphwar capabilities", () => {
     ["agentRead", { agent: { normalizedBaseUrl: undefined } }, { state: "blocked", reason: "agent-url-invalid" }],
     ["agentExport", { agent: { isEnabled: false } }, { state: "blocked", reason: "agent-disabled" }],
     ["agentExport", { agent: { normalizedBaseUrl: undefined } }, { state: "blocked", reason: "agent-url-invalid" }],
-    ["agentFire", { hasResult: false }, { state: "blocked", reason: "result-required" }],
+    ["agentFire", { hasResult: false }, { state: "blocked", reason: "solver-result-required" }],
+    [
+      "agentFire",
+      { hasResult: false, workflowMode: "simulator" },
+      { state: "blocked", reason: "simulator-function-required" },
+    ],
   ] satisfies [keyof GraphwarCapabilities, GraphwarCapabilityFactsOverrides, GraphwarControlCapability][])(
     "derives %s's local control state",
     (name, overrides, expected) => {

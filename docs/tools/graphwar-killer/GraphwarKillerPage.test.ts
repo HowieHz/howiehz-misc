@@ -238,6 +238,48 @@ describe("Graphwar Killer page settings", () => {
     wrapper.unmount();
   });
 
+  it("inherits the Agent-selected mode when opening an empty Simulator", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          applyGraphwarAgentEquationMode: (mode: "ddy" | "dy" | "y") => void;
+          simulatorEquationMode: "ddy" | "dy" | "y";
+          solverEquationMode: "ddy" | "dy" | "y";
+        };
+      }
+    ).setupState;
+    page.applyGraphwarAgentEquationMode("ddy");
+    expect(page.solverEquationMode).toBe("ddy");
+
+    await wrapper.findAll(".graphwar-killer__mode-toggle button")[1].trigger("click");
+
+    expect(page.simulatorEquationMode).toBe("ddy");
+    wrapper.unmount();
+  });
+
+  it("preserves a partial y'' Simulator draft when returning from Solver", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          applyGraphwarAgentEquationMode: (mode: "ddy" | "dy" | "y") => void;
+          simulatorEquationMode: "ddy" | "dy" | "y";
+          simulatorLaunchAngleText: string;
+        };
+      }
+    ).setupState;
+    page.simulatorEquationMode = "ddy";
+    page.simulatorLaunchAngleText = "45";
+    page.applyGraphwarAgentEquationMode("dy");
+
+    await wrapper.findAll(".graphwar-killer__mode-toggle button")[1].trigger("click");
+
+    expect(page.simulatorEquationMode).toBe("ddy");
+    expect(page.simulatorLaunchAngleText).toBe("45");
+    wrapper.unmount();
+  });
+
   it("shows a guarded Agent fire failure reason in the button", async () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const page = (
@@ -254,7 +296,27 @@ describe("Graphwar Killer page settings", () => {
     await page.fireGraphwarAgentFunction();
     await nextTick();
 
-    expect(wrapper.get(".graphwar-killer__agent-fire-button").text()).toBe("开火失败：请先生成或输入有效函数");
+    expect(wrapper.get(".graphwar-killer__agent-fire-button").text()).toBe("开火失败：请先生成有效函数");
+    wrapper.unmount();
+  });
+
+  it("asks for a Simulator function before firing", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          fireGraphwarAgentFunction: () => Promise<void>;
+          isGraphwarAgentEnabled: boolean;
+        };
+      }
+    ).setupState;
+    page.isGraphwarAgentEnabled = true;
+    await wrapper.findAll(".graphwar-killer__mode-toggle button")[1].trigger("click");
+
+    await page.fireGraphwarAgentFunction();
+    await nextTick();
+
+    expect(wrapper.get(".graphwar-killer__agent-fire-button").text()).toBe("开火失败：请先输入有效函数");
     wrapper.unmount();
   });
 

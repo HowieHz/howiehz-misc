@@ -2607,11 +2607,13 @@ function setToolWorkflowMode(mode: ToolWorkflowMode) {
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
   if (mode === "simulator") {
-    if (!simulatorFormulaText.value.trim() && formulaResult.value) {
+    if (!simulatorFormulaText.value.trim() && !simulatorLaunchAngleText.value.trim()) {
       simulatorEquationMode.value =
         formulaResultEquationMode.value === undefined ? solverEquationMode.value : formulaResultEquationMode.value;
-      simulatorFormulaText.value = generatedFormulaOutput.value;
-      simulatorLaunchAngleText.value = secondOrderLaunchAngleText.value;
+      if (formulaResult.value) {
+        simulatorFormulaText.value = generatedFormulaOutput.value;
+        simulatorLaunchAngleText.value = secondOrderLaunchAngleText.value;
+      }
     }
     if (simulatorPathPixels.value.length === 0 && solverPathPixels.value.length > 0) {
       simulatorPathPixels.value = [solverPathPixels.value[0]];

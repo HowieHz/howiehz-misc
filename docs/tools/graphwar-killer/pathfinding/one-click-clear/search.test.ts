@@ -93,7 +93,7 @@ describe("One-click clear optimization", () => {
         };
       },
       candidates,
-      deleteOptimizationEnabled: false,
+      isDeleteOptimizationEnabled: false,
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
       onDebugTiming: (timing) => {
@@ -123,6 +123,10 @@ describe("One-click clear optimization", () => {
       [start, first],
       [start, first, second],
     ]);
+    expect(incumbents.every((incumbent) => incumbent.trajectoryPoints.length >= 2)).toBe(true);
+    expect(incumbents[1]?.trajectoryPoints.slice(0, incumbents[0]?.trajectoryPoints.length)).toEqual(
+      incumbents[0]?.trajectoryPoints,
+    );
     expect(segmentValidationCount).toBe(2);
     expect(finalValidationCount).toBe(1);
     expect(incumbents[0]?.expression).not.toBe("");
@@ -173,6 +177,8 @@ describe("One-click clear optimization", () => {
     if (result.type === "success") {
       expect(incumbents.at(-1)?.pathPoints).toEqual(result.pathPoints);
       expect(incumbents.at(-1)?.expression).toBe(result.expression);
+      expect(incumbents.at(-1)?.trajectoryPoints.length).toBeGreaterThan(1);
+      expect(result.trajectoryPoints.length).toBeGreaterThanOrEqual(incumbents.at(-1)?.trajectoryPoints.length ?? 0);
     }
   });
 
@@ -263,8 +269,10 @@ describe("One-click clear optimization", () => {
     expect(incumbents).toHaveLength(1);
     expect(incumbents[0]?.launchAngleRadians).toBeTypeOf("number");
     expect(Number.isFinite(incumbents[0]?.launchAngleRadians)).toBe(true);
+    expect(incumbents[0]?.trajectoryPoints.length).toBeGreaterThan(1);
     if (result.type === "success") {
       expect(result.launchAngleRadians).toBe(incumbents[0]?.launchAngleRadians);
+      expect(result.trajectoryPoints.length).toBeGreaterThanOrEqual(incumbents[0]?.trajectoryPoints.length ?? 0);
     }
   });
 
@@ -354,6 +362,7 @@ describe("One-click clear optimization", () => {
     expect(result.type).toBe("success");
     if (result.type === "success") {
       expect(result.targetIds).toEqual(["lower", "upper"]);
+      expect(result.trajectoryPoints.length).toBeGreaterThan(1);
       const graphPoints = result.pathPoints.map((point) => imageToGraphPoint(point, bounds, boundsRect));
       for (let index = 1; index < graphPoints.length; index += 1) {
         const previous = graphPoints[index - 1];
@@ -561,6 +570,7 @@ describe("One-click clear optimization", () => {
     const target = toImagePoint(-10, 0);
     const simulationMask = new Uint8Array(770 * 450);
     const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const incumbents: GraphwarOneClickClearIncumbent[] = [];
     let finalValidationCount = 0;
 
     const result = await buildGraphwarOneClickClearPath({
@@ -582,6 +592,7 @@ describe("One-click clear optimization", () => {
           finalValidationCount += 1;
         }
       },
+      onValidatedIncumbent: (incumbent) => incumbents.push(incumbent),
       pathPoints: [start],
       routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
@@ -598,6 +609,9 @@ describe("One-click clear optimization", () => {
     if (result.type === "success") {
       expect(result.pathPoints).toEqual([start, target]);
       expect(result.targetIds).toEqual(["target"]);
+      expect(incumbents.at(-1)?.pathPoints).toEqual(result.pathPoints);
+      expect(incumbents.at(-1)?.expression).toBe(result.expression);
+      expect(incumbents.at(-1)?.trajectoryPoints).toEqual(result.trajectoryPoints);
     }
     expect(finalValidationCount).toBe(1);
   });
@@ -751,7 +765,7 @@ function createDagCaptureOptions(
       return { routes: [], timings: [] };
     },
     candidates,
-    deleteOptimizationEnabled: false,
+    isDeleteOptimizationEnabled: false,
     deleteHitCheckRadiusPixels: 0,
     hitCandidates: candidates,
     pathPoints: [start],

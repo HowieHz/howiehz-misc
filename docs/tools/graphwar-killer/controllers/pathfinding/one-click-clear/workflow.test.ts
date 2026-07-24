@@ -27,32 +27,41 @@ describe("one-click clear workflow", () => {
     let boundsValid = true;
     let clearFailureCount = 0;
     const outcomes: string[] = [];
+    const reportedIncumbents: string[] = [];
     let runnerCallCount = 0;
     let runnerFailureReason: GraphwarOneClickClearFailureReason = "no-usable-target";
     let runnerMode: "error" | "failure" | "pending" | "success" = "success";
     let publishIncumbent = true;
     const preflightReasons: string[] = [];
+    const recordedAttempts: unknown[] = [];
+    const debugMetricFlags: (boolean | undefined)[] = [];
+    let isDebugEnabled = false;
+    let isResultCacheEnabled = true;
     let resolvePending: ((result: GraphwarOneClickClearPathWorkerResult) => void) | undefined;
     const workflow = useGraphwarOneClickClearRunWorkflow<GraphwarOneClickClearTargetSoldier>({
       debug: {
         appendSearchWorkerTimings: () => undefined,
         finishTimings: (_startedAt, timings) => {
           displayedDebugStages = timings.map((timing) => timing.stage);
+          return [...timings];
         },
+        isEnabled: () => isDebugEnabled,
         measureStage: (timings, stage, task) => {
           try {
             return task();
           } finally {
-            timings.push({ elapsedMs: 0, stage });
+            timings?.push({ elapsedMs: 0, stage });
           }
         },
         measureStageAsync: async (timings, stage, task) => {
           try {
             return await task();
           } finally {
-            timings.push({ elapsedMs: 0, stage });
+            timings?.push({ elapsedMs: 0, stage });
           }
         },
+        recordAttempt: (attempt) => recordedAttempts.push(attempt),
+        registerRun: () => undefined,
       },
       effects: {
         applyIncumbent: (incumbent) => {
@@ -69,7 +78,7 @@ describe("one-click clear workflow", () => {
       input: {
         boundsRect: { value: { height: 450, width: 770, x: 0, y: 0 } },
         getBounds: () => (boundsValid ? { maxX: 25, maxY: 15, minX: -25, minY: -15 } : undefined),
-        getDeleteOptimizationEnabled: () => false,
+        isDeleteOptimizationEnabled: () => false,
         getFormulaSettings: () => ({
           algorithm: "step",
           decimalPlaces: 4,
@@ -83,7 +92,7 @@ describe("one-click clear workflow", () => {
         getPathPoints: () => [start],
         getPathfindingWorkerCount: () => 1,
         getRouteMode: () => "visibility-graph",
-        requiresDagWorker: () => false,
+        shouldUseDagWorker: () => false,
         getSimulationMask: () => simulationMask,
         getTolerances: () => ({
           oneClickClearDeleteCheckRadiusPlanePixels: 0,
@@ -91,7 +100,7 @@ describe("one-click clear workflow", () => {
           routePlanningTolerancePlanePixels: 0,
           simulationBoundaryInsetPlanePixels: 0,
         }),
-        isUnsupportedMode: () => false,
+        isModeSupported: () => true,
       },
       messages: {
         getFailureMessage: () => "failure",
@@ -110,14 +119,20 @@ describe("one-click clear workflow", () => {
           getCachedOneClickClearResult: () => cachedResult,
           getMaskCacheId: () => 1,
         },
+        isResultCacheEnabled: () => isResultCacheEnabled,
         runner: {
           buildOneClickClearPath: async (input, runnerOptions) => {
             runnerCallCount += 1;
+            debugMetricFlags.push(runnerOptions?.shouldCollectDiagnostics);
             expect(input.candidates.map((candidate) => candidate.id)).toEqual(["target", "target", "missed"]);
             expect(input.settings.stepGlitchObstacleMask).toBe(simulationMask);
             if (runnerMode !== "success") {
               if (publishIncumbent) {
-                runnerOptions?.onIncumbent?.({ expression: "x", pathPoints: [start, target] });
+                runnerOptions?.onIncumbent?.({
+                  expression: "x",
+                  pathPoints: [start, target],
+                  trajectoryPoints: [start, target],
+                });
               }
               if (runnerMode === "error") {
                 throw new Error("worker failed after incumbent");
@@ -139,6 +154,7 @@ describe("one-click clear workflow", () => {
                 expandedStates: 1,
                 pathPoints: [start, target],
                 targetIds: ["target", "target", "incidental"],
+                trajectoryPoints: [start, target],
                 type: "success",
               },
               timings: [],
@@ -162,7 +178,7 @@ describe("one-click clear workflow", () => {
           bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
           boundsRect: { height: 450, width: 770, x: 0, y: 0 },
         }),
-        getFriendlyFireEnabled: () => false,
+        isFriendlyFireEnabled: () => false,
         getPrefixTarget: () => undefined,
         getSoldiers: () => candidateSoldiers,
         isFriendlySoldier: () => false,
@@ -172,6 +188,7 @@ describe("one-click clear workflow", () => {
 
     await expect(
       workflow.run({
+        onIncumbent: (incumbent) => reportedIncumbents.push(incumbent.expression),
         onOutcome: (outcome) => {
           outcomes.push(outcome.kind);
           if (outcome.kind === "incomplete") {
@@ -179,16 +196,21 @@ describe("one-click clear workflow", () => {
             order.push("clear-failure");
           }
         },
-        onSuccessBeforeEffects: () => order.push("submit"),
-        useResultCache: false,
+        onSuccessBeforeEffects: () => {
+          expect(reportedIncumbents.at(-1)).toBe("final");
+          order.push("submit");
+        },
+        shouldUseResultCache: false,
       }),
     ).resolves.toBe(true);
 
-    expect(displayedDebugStages).not.toContain("previous");
-    expect(displayedDebugStages).toContain("one-click-clear-apply-result");
+    expect(displayedDebugStages).toEqual(["previous"]);
     expect(order.slice(0, 6)).toEqual(["clear-failure", "submit", "finish", "apply-incumbent", "flash", "status"]);
     expect(clearFailureCount).toBe(1);
     expect(appliedExpressions).toContain("final");
+    expect(reportedIncumbents).toEqual(["final"]);
+    expect(recordedAttempts).toEqual([]);
+    expect(debugMetricFlags).toEqual([false]);
 
     cachedResult = {
       result: {
@@ -197,6 +219,7 @@ describe("one-click clear workflow", () => {
         expandedStates: 1,
         pathPoints: [start, target],
         targetIds: ["target", "missed", "incidental"],
+        trajectoryPoints: [start, target],
         type: "success",
       },
       timings: [],
@@ -213,8 +236,15 @@ describe("one-click clear workflow", () => {
     expect(order.slice(0, 4)).toEqual(["finish", "apply-incumbent", "flash", "status"]);
     expect(clearFailureCount).toBe(1);
     expect(outcomes).toContain("complete");
-    cachedResult = undefined;
+    expect(recordedAttempts).toEqual([]);
+    expect(debugMetricFlags).toEqual([false]);
 
+    isDebugEnabled = true;
+    await expect(workflow.run()).resolves.toBe(true);
+    expect(runnerCallCount).toBe(callsBeforeCacheHit);
+    expect(recordedAttempts).toMatchObject([{ source: "result-cache" }]);
+    recordedAttempts.length = 0;
+    isResultCacheEnabled = false;
     order.length = 0;
     runnerMode = "failure";
     await expect(
@@ -225,18 +255,23 @@ describe("one-click clear workflow", () => {
             clearFailureCount += 1;
           }
         },
-        useResultCache: false,
       }),
     ).resolves.toBe(true);
     expect(order).toContain("apply-incumbent");
     expect(order).not.toContain("apply");
     expect(order).not.toContain("flash");
     expect(clearFailureCount).toBe(2);
+    expect(recordedAttempts).toHaveLength(1);
+    expect(displayedDebugStages).toContain("one-click-clear-apply-result");
+    expect(debugMetricFlags.at(-1)).toBe(true);
+    expect(runnerCallCount).toBe(callsBeforeCacheHit + 1);
+    cachedResult = undefined;
+    isResultCacheEnabled = true;
 
     order.length = 0;
     runnerFailureReason = "pathfinding-worker-failed";
     await expect(
-      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), useResultCache: false }),
+      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), shouldUseResultCache: false }),
     ).resolves.toBe(true);
     expect(outcomes.at(-2)).toBe("search-error");
     expect(outcomes.at(-1)).toBe("status:error");
@@ -252,7 +287,7 @@ describe("one-click clear workflow", () => {
             clearFailureCount += 1;
           }
         },
-        useResultCache: false,
+        shouldUseResultCache: false,
       }),
     ).resolves.toBe(true);
     expect(order).toContain("apply-incumbent");
@@ -265,7 +300,7 @@ describe("one-click clear workflow", () => {
     displayedDebugStages = ["last-complete"];
     const pendingRun = workflow.run({
       onOutcome: (outcome) => outcomes.push(outcome.kind),
-      useResultCache: false,
+      shouldUseResultCache: false,
     });
     await Promise.resolve();
     expect(workflow.finalizeActiveIncumbent()).toBe(true);
@@ -283,14 +318,14 @@ describe("one-click clear workflow", () => {
     publishIncumbent = false;
     runnerMode = "failure";
     await expect(
-      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), useResultCache: false }),
+      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), shouldUseResultCache: false }),
     ).resolves.toBe(false);
     expect(outcomes.at(-2)).toBe("search-failure");
     expect(outcomes.at(-1)).toBe("status:error");
 
     runnerMode = "error";
     await expect(
-      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), useResultCache: false }),
+      workflow.run({ onOutcome: (outcome) => outcomes.push(outcome.kind), shouldUseResultCache: false }),
     ).resolves.toBe(false);
     expect(outcomes.at(-2)).toBe("search-error");
     expect(outcomes.at(-1)).toBe("status:error");

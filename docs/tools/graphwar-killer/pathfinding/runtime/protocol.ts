@@ -16,6 +16,7 @@ import type {
 } from "../one-click-clear/search";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
+import type { GraphwarPathfindingDiagnostics } from "./diagnostics";
 
 /** 普通智能寻路的一条几何搜索请求。 */
 export interface GraphwarPathfindingRouteInput {
@@ -36,7 +37,7 @@ export interface GraphwarPathfindingRouteInput {
   /** 路径终点，截图像素坐标。 */
   targetPoint: PixelPoint;
   /** 是否需要把搜索动画快照发回主线程。 */
-  previewEnabled: boolean;
+  isPreviewEnabled: boolean;
   /** 几何路线算法模式；默认页面会传 visibility graph，复杂地形可切到 Theta*。 */
   routeMode: GraphwarPathfindingRouteMode;
 }
@@ -81,7 +82,7 @@ export interface GraphwarSmartPathfindingPathInput {
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;
   /** 是否尝试删除新增控制点；关闭时仍保留最终轨迹验证。 */
-  deleteOptimizationEnabled: boolean;
+  isDeleteOptimizationEnabled: boolean;
   /** 截图内 Graphwar 坐标系矩形。 */
   boundsRect: BoundsRect;
   /** 障碍和坐标系边界命中检测的内收值，单位为 Graphwar 原始平面像素。 */
@@ -89,7 +90,7 @@ export interface GraphwarSmartPathfindingPathInput {
   /** 命中目标圆；普通点击使用士兵默认半径。 */
   hitTarget: GraphwarTrajectoryTargetCircle;
   /** 是否需要把搜索动画快照发回主线程。 */
-  previewEnabled: boolean;
+  isPreviewEnabled: boolean;
   /** 几何路线算法模式；普通寻路和一键清图保持同一个选择。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
@@ -120,6 +121,8 @@ export interface GraphwarSmartPathfindingPathResult {
   blockedPoint?: PixelPoint;
   /** 无可用路径时的失败阶段，页面用它保留原来的状态语义。 */
   failureReason?: "graph-rule" | "route" | "trajectory";
+  /** 调试模式请求的 Worker 内部计数器和自然边界耗时。 */
+  diagnostics?: GraphwarPathfindingDiagnostics;
   /** Step 已有路径严格域失败时的首个段下标；页面用它高亮整段。 */
   invalidSegmentIndex?: number;
   /** 可写回页面的完整像素路径；undefined 表示没有可用路径。 */
@@ -136,6 +139,8 @@ export type GraphwarOneClickClearPathWorkerInput = GraphwarOneClickClearSearchIn
 
 /** 一键清图完整搜索结果，携带 worker 内部聚合的调试耗时。 */
 export interface GraphwarOneClickClearPathWorkerResult {
+  /** 调试模式请求的 Worker 内部计数器和自然边界耗时。 */
+  diagnostics?: GraphwarPathfindingDiagnostics;
   /** 一键清图搜索成功或失败结果。 */
   result: GraphwarOneClickClearResult;
   /** Worker 内部收集到的细分耗时。 */
@@ -148,7 +153,8 @@ export function isGraphwarOneClickClearIncumbent(value: unknown): value is Graph
     !isRecord(value) ||
     typeof value.expression !== "string" ||
     !value.expression.trim() ||
-    !isPixelPointArray(value.pathPoints)
+    !isPixelPointArray(value.pathPoints) ||
+    !isPixelPointArray(value.trajectoryPoints, 0)
   ) {
     return false;
   }
@@ -161,6 +167,7 @@ export function isGraphwarOneClickClearPathWorkerResult(
 ): value is GraphwarOneClickClearPathWorkerResult {
   if (
     !isRecord(value) ||
+    (value.diagnostics !== undefined && !isGraphwarPathfindingDiagnostics(value.diagnostics)) ||
     !Array.isArray(value.timings) ||
     !value.timings.every(
       (timing) => isRecord(timing) && typeof timing.stage === "string" && isFiniteNumber(timing.elapsedMs),
@@ -189,6 +196,41 @@ export function isGraphwarOneClickClearPathWorkerResult(
   );
 }
 
+/** 校验可选 Worker 诊断；缓存命中结果不携带该字段。 */
+function isGraphwarPathfindingDiagnostics(value: unknown): value is GraphwarPathfindingDiagnostics {
+  if (!isRecord(value) || !isRecord(value.counters) || !isRecord(value.timings)) {
+    return false;
+  }
+  const counters = [
+    value.counters.acceptedSamplePointCount,
+    value.counters.formulaTermEvaluationCount,
+    value.counters.incumbentReportCount,
+    value.counters.incumbentTrajectoryPointLoad,
+    value.counters.rk4StepCount,
+    value.counters.stepBisectionCount,
+    value.counters.trajectoryReplayCount,
+  ].every((counter) => isFiniteNumber(counter) && Number.isInteger(counter) && counter >= 0);
+  const timings = [
+    value.timings.expressionFinalizationElapsedMs,
+    value.timings.formulaPointMappingElapsedMs,
+    value.timings.formulaPreparationElapsedMs,
+    value.timings.incumbentBuildElapsedMs,
+    value.timings.incumbentMessageSendElapsedMs,
+    value.timings.pathErrorElapsedMs,
+    value.timings.trajectoryReplayElapsedMs,
+    value.timings.visibleTrajectoryCopyElapsedMs,
+  ].every((timing) => isFiniteNumber(timing) && timing >= 0);
+  if (!counters || !timings || value.stepGlitch === undefined) {
+    return counters && timings;
+  }
+  return (
+    isRecord(value.stepGlitch) &&
+    [value.stepGlitch.candidateReplayCount, value.stepGlitch.directReplayCount].every(
+      (counter) => isFiniteNumber(counter) && Number.isInteger(counter) && counter >= 0,
+    )
+  );
+}
+
 /** 判断未知值是否为可安全读取字段的普通对象。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -200,10 +242,10 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 /** 校验 Worker 返回的截图像素路径。 */
-function isPixelPointArray(value: unknown): value is PixelPoint[] {
+function isPixelPointArray(value: unknown, minimumLength = 1): value is PixelPoint[] {
   return (
     Array.isArray(value) &&
-    value.length > 0 &&
+    value.length >= minimumLength &&
     value.every((point) => isRecord(point) && isFiniteNumber(point.x) && isFiniteNumber(point.y))
   );
 }
@@ -226,6 +268,8 @@ export type GraphwarPathfindingWorkerTask =
       type: "find-route";
     }
   | {
+      /** 调试模式才请求 Worker 内部诊断。 */
+      shouldCollectDiagnostics?: true;
       input: GraphwarSmartPathfindingPathInput;
       type: "find-smart-path";
     }
@@ -234,9 +278,11 @@ export type GraphwarPathfindingWorkerTask =
       type: "build-one-click-clear-dag-edges";
     }
   | {
+      /** 调试模式才请求 Worker 内部诊断。 */
+      shouldCollectDiagnostics?: true;
       input: GraphwarOneClickClearPathWorkerInput;
       /** True 时 master 会发布主搜索自然验证出的当前最优前缀。 */
-      reportIncumbents: boolean;
+      shouldReportIncumbents: boolean;
       type: "build-one-click-clear-path";
     };
 

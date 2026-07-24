@@ -1,9 +1,18 @@
+import type { GraphwarPathfindingDebugReport } from "../pathfinding/debug-report";
 import type { GraphwarClearFailureExportKind } from "../pathfinding/one-click-clear/outcome";
-import type { GraphwarAgentAvailableState, GraphwarAgentSnapshot } from "./client";
+import type { GraphwarAgentAvailableState } from "./client";
+
+/** A completed Agent-source report with the exact state and mask frozen at task start. */
+export interface GraphwarAgentPathfindingDebugBundle {
+  report: GraphwarPathfindingDebugReport;
+  sceneState: GraphwarAgentAvailableState;
+  sourceObstacleMask: Uint8Array;
+}
 
 /** 已去重并冻结的自动导出任务。 */
 export interface GraphwarAgentClearFailureExportRequest {
   failureKind: GraphwarClearFailureExportKind;
+  report: GraphwarPathfindingDebugReport;
   state: GraphwarAgentAvailableState;
   worldObstacleMask: Uint8Array;
 }
@@ -19,7 +28,7 @@ export interface GraphwarAgentClearFailureExportQueue {
   /** 清除尚未开始的任务；当前任务继续完成，已登记局面仍保持去重。 */
   clearPending: () => void;
   /** 先按权威局面登记再排队；缺少回合标识或已经登记时返回 false。 */
-  enqueue: (failureKind: GraphwarClearFailureExportKind, snapshot: GraphwarAgentSnapshot) => boolean;
+  enqueue: (failureKind: GraphwarClearFailureExportKind, bundle: GraphwarAgentPathfindingDebugBundle) => boolean;
 }
 
 /** 创建同局面只执行一次、不同局面串行执行的自动导出队列。 */
@@ -28,11 +37,11 @@ export function createGraphwarAgentClearFailureExportQueue(
 ): GraphwarAgentClearFailureExportQueue {
   const registeredSceneKeys = new Set<string>();
   const pendingRequests: GraphwarAgentClearFailureExportRequest[] = [];
-  let processing = false;
+  let isProcessing = false;
 
   /** 使用不透明字段的完整三元组，避免同回合不同 battle revision 被误判为同一局面。 */
-  function enqueue(failureKind: GraphwarClearFailureExportKind, snapshot: GraphwarAgentSnapshot) {
-    const sceneKey = createGraphwarAgentClearFailureSceneKey(snapshot.state);
+  function enqueue(failureKind: GraphwarClearFailureExportKind, bundle: GraphwarAgentPathfindingDebugBundle) {
+    const sceneKey = createGraphwarAgentClearFailureSceneKey(bundle.sceneState);
     if (!sceneKey || registeredSceneKeys.has(sceneKey)) {
       return false;
     }
@@ -41,11 +50,12 @@ export function createGraphwarAgentClearFailureExportQueue(
     registeredSceneKeys.add(sceneKey);
     pendingRequests.push({
       failureKind,
-      state: structuredClone(snapshot.state),
-      worldObstacleMask: snapshot.worldObstacleMask.slice(),
+      report: structuredClone(bundle.report),
+      state: structuredClone(bundle.sceneState),
+      worldObstacleMask: bundle.sourceObstacleMask.slice(),
     });
-    if (!processing) {
-      processing = true;
+    if (!isProcessing) {
+      isProcessing = true;
       // 截止回调只负责登记；下载在微任务中开始，避免占用 incumbent/跳过函数的认领关键路径。
       queueMicrotask(() => void processPendingRequests());
     }
@@ -72,7 +82,7 @@ export function createGraphwarAgentClearFailureExportQueue(
         }
       }
     } finally {
-      processing = false;
+      isProcessing = false;
     }
   }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 
 import {
   createGraphwarAgentClearFailureExportQueue,
@@ -9,6 +9,7 @@ import {
   createGraphwarAgentClient,
   createGraphwarAgentSnapshot,
   createGraphwarAgentShooterViewSnapshot,
+  createGraphwarAgentShotCommandError,
   createGraphwarAgentShotRequest,
   createGraphwarAgentWorldSnapshot,
   GRAPHWAR_AGENT_DEFAULT_BASE_URL,
@@ -23,6 +24,7 @@ import {
   type GraphwarAgentDetectionBox,
   type GraphwarAgentSnapshot,
   type GraphwarAgentShotPlan,
+  type GraphwarAgentState,
 } from "./controllers/agent/client";
 import {
   createGraphwarAgentDebugDownloads,
@@ -30,8 +32,22 @@ import {
   type GraphwarAgentDebugDownload,
   type GraphwarAgentDebugFilePair,
 } from "./controllers/agent/debug-files";
+import {
+  useGraphwarAgentFunctionDrawPlayback,
+  type GraphwarAgentFunctionDrawIdentity,
+} from "./controllers/agent/function-draw-playback";
+import { createGraphwarAgentObservationOrder } from "./controllers/agent/observation-order";
+import { resolveGraphwarAgentShotCommand } from "./controllers/agent/shot-command";
+import {
+  getAdjustedGraphwarAgentRemainingTurnMs,
+  useGraphwarAgentTurnCountdown,
+} from "./controllers/agent/turn-countdown";
 import { useGraphwarDebugActivation } from "./controllers/debug/activation";
-import { useGraphwarDebugTimings } from "./controllers/debug/timings";
+import {
+  createFinalSmartPathfindingDebugTimingEntries,
+  useGraphwarDebugTimings,
+  type SmartPathfindingDebugTimingEntry,
+} from "./controllers/debug/timings";
 import {
   useGraphwarDetectionWorkflow,
   type DetectionStatusKind,
@@ -41,6 +57,7 @@ import {
   createGraphwarManagedController,
   createGraphwarManagedSkipTurnPlan,
   GRAPHWAR_MANAGED_POLL_INTERVAL_MS,
+  GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS,
   GRAPHWAR_MANAGED_SHOT_DEADLINE_MS,
   GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
   type GraphwarManagedController,
@@ -50,13 +67,31 @@ import { deriveGraphwarCapabilities, type GraphwarCapabilityReason } from "./con
 import { useGraphwarPathAppendWorkflow } from "./controllers/path/append-workflow";
 import { useGraphwarPathPointEditing } from "./controllers/path/point-editing";
 import { useGraphwarPathState } from "./controllers/path/state";
-import { useGraphwarTrajectoryResult } from "./controllers/path/trajectory-result";
+import {
+  useGraphwarTrajectoryResult,
+  type GraphwarValidatedTrajectorySnapshot,
+} from "./controllers/path/trajectory-result";
+import {
+  createGraphwarPathfindingDebugCapture,
+  createGraphwarPathfindingDebugDownloads,
+  createGraphwarPathfindingDebugFormulaSettings,
+  finishGraphwarPathfindingDebugCapture,
+  summarizeGraphwarPathfindingDiagnostics,
+  type GraphwarPathfindingDebugAttempt,
+  type GraphwarPathfindingDebugBundle,
+  type GraphwarPathfindingDebugCapture,
+  type GraphwarPathfindingDebugOutcome,
+  type GraphwarPathfindingScreenshotSceneState,
+} from "./controllers/pathfinding/debug-report";
 import {
   useGraphwarPathfindingRouteBoundaryInset,
   useGraphwarPathfindingObstacleProjection,
 } from "./controllers/pathfinding/obstacles";
 import type { GraphwarClearFailureExportKind } from "./controllers/pathfinding/one-click-clear/outcome";
-import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/one-click-clear/workflow";
+import {
+  useGraphwarOneClickClearRunWorkflow,
+  type GraphwarOneClickClearRunOutcome,
+} from "./controllers/pathfinding/one-click-clear/workflow";
 import { useGraphwarSmartPathfindingBuilder } from "./controllers/pathfinding/smart/builder";
 import {
   useGraphwarSmartPathfindingSession,
@@ -96,6 +131,7 @@ import {
   DEFAULT_FORMULA_DECIMAL_PLACES,
   MAX_FORMULA_DECIMAL_PLACES,
   clampNumber,
+  formatAngleDegree,
   formatDecimal,
   formatDoublePrecisionDecimal,
   parseFiniteNumber,
@@ -128,6 +164,11 @@ import type { GraphwarOneClickClearIncumbent } from "./pathfinding/one-click-cle
 import { supportsOneClickClear } from "./pathfinding/one-click-clear/support";
 import type { GraphwarPathfindingRouteMode } from "./pathfinding/routing/mode";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/runtime/cache";
+import {
+  graphwarPathfindingDebugCounterKeys,
+  graphwarPathfindingDebugTimingKeys,
+  graphwarStepGlitchDebugCounterKeys,
+} from "./pathfinding/runtime/diagnostics";
 import { createGraphwarPathfindingRunner } from "./pathfinding/runtime/runner";
 import { createGraphwarPathLineSegments, type GraphwarPathfindingLineSegment } from "./pathfinding/smart/preview";
 import {
@@ -184,6 +225,7 @@ type GraphwarDetectionProvenance =
       gameInstanceId: string;
       normalizedAgentUrl: string;
       source: "agent";
+      turnToken: string | null;
     };
 /** Minimal Wake Lock surface used without requiring optional browser typings. */
 interface GraphwarWakeLockSentinel {
@@ -193,6 +235,38 @@ interface GraphwarWakeLockSentinel {
 interface GraphwarWakeLockRequest {
   generation: number;
   promise: Promise<GraphwarWakeLockSentinel>;
+}
+/** Exact submitted function and authoritative scene allowed to own progressive trajectory points. */
+interface GraphwarAgentPendingFunctionDraw {
+  attachedPoints?: readonly PixelPoint[];
+  battleRevision: string;
+  equationMode: EquationMode;
+  functionText: string;
+  identity: GraphwarAgentFunctionDrawIdentity;
+  launchAngleRadians?: number;
+}
+/** Binds one managed shot plan to the incumbent trajectory validated for the same authoritative scene. */
+interface GraphwarManagedPreparedShot {
+  /** Agent game that owned the shot plan. */
+  gameInstanceId: string;
+  /** Exact values passed to the managed controller and eventually `/shots`. */
+  plan: GraphwarAgentShotPlan;
+  /** Full managed-search identity, including shooter, equation settings, revision, and turn. */
+  sceneKey: string;
+  /** Independently copied trajectory produced by the matching incumbent validation. */
+  trajectoryPoints: readonly PixelPoint[];
+  /** Agent turn that owned the shot plan. */
+  turnToken: string | null;
+}
+/** 一键清图搜索动画按帧发布的完整验证快照。 */
+type GraphwarOneClickClearPreview = GraphwarValidatedTrajectorySnapshot &
+  Pick<GraphwarOneClickClearIncumbent, "pathPoints">;
+/** One task-local debug capture; only the newest completed task may replace the visible report. */
+interface GraphwarActivePathfindingDebugCapture {
+  capture: GraphwarPathfindingDebugCapture;
+  failureKind?: GraphwarClearFailureExportKind;
+  generation: number;
+  outcome?: GraphwarPathfindingDebugOutcome;
 }
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
@@ -211,19 +285,23 @@ const obstacleBrushMinimumDiameter = 1;
 const obstacleBrushSliderMaximumDiameter = 200;
 const obstacleBrushInputMaximumDiameter = 1000;
 const graphwarAgentStatusFlashMs = 2000;
+const graphwarAgentManualRecoveryTimeoutMs = 60_000;
+const graphwarAgentFunctionDrawStartTimeoutMs = 5000;
+const graphwarAgentFunctionDrawStartPollIntervalMs = 100;
+const graphwarAgentFunctionDrawCalibrationPollIntervalMs = 500;
 // 页面状态按未来可抽工作流分区维护：基础舞台、公式设置、截图、识别、障碍编辑、寻路。
 const boundsRect = ref<BoundsRect>({ ...graphwarToolDefaults.boundsRect });
-// boundsRect 会保留上一次矩形数值；boundsReady 表示该矩形已在当前截图上被用户或识别流程确认。
-const boundsReady = ref(false);
-const activeBoundsReady = computed(() => boundsReady.value && isUsableBoundsRect(boundsRect.value));
+// boundsRect 会保留上一次矩形数值；isBoundsReady 表示该矩形已在当前截图上被用户或识别流程确认。
+const isBoundsReady = ref(false);
+const isActiveBoundsReady = computed(() => isBoundsReady.value && isUsableBoundsRect(boundsRect.value));
 const boundsFirstPoint = ref<PixelPoint>();
 const pointerPreviewPoint = ref<PixelPoint>();
-const magnifierEnabled = ref(false);
+const isMagnifierEnabled = ref(false);
 const magnifierZoomText = ref(String(graphwarToolDefaults.magnifierZoom));
 const magnifierPoint = ref<PixelPoint>();
 const toolMode = ref<ToolMode>("bounds");
 const toolWorkflowMode = ref<ToolWorkflowMode>("solver");
-const fractionOutputEnabled = ref(false);
+const isFractionOutputEnabled = ref(false);
 const solverEquationMode = ref<EquationMode>("y");
 const simulatorEquationMode = ref<EquationMode>("y");
 const equationMode = computed<EquationMode>({
@@ -259,31 +337,31 @@ const steepnessText = computed({
   get: () => solverFormulaProfiles.value[solverEquationMode.value].steepnessText,
   set: (text: string) => updateCurrentFormulaProfile({ steepnessText: text }),
 });
-const stepGlitchModeEnabled = computed({
-  get: () => solverFormulaProfiles.value[solverEquationMode.value].stepGlitchModeEnabled,
-  set: (enabled: boolean) => updateCurrentFormulaProfile({ stepGlitchModeEnabled: enabled }),
+const isStepGlitchModeEnabled = computed({
+  get: () => solverFormulaProfiles.value[solverEquationMode.value].isStepGlitchModeEnabled,
+  set: (isEnabled: boolean) => updateCurrentFormulaProfile({ isStepGlitchModeEnabled: isEnabled }),
 });
-const stepOverflowProtectionEnabled = computed({
-  get: () => solverFormulaProfiles.value[solverEquationMode.value].stepOverflowProtectionEnabled,
-  set: (enabled: boolean) => updateCurrentFormulaProfile({ stepOverflowProtectionEnabled: enabled }),
+const isStepOverflowProtectionEnabled = computed({
+  get: () => solverFormulaProfiles.value[solverEquationMode.value].isStepOverflowProtectionEnabled,
+  set: (isEnabled: boolean) => updateCurrentFormulaProfile({ isStepOverflowProtectionEnabled: isEnabled }),
 });
 const minXText = ref(`-${graphwarDefaultXLimitText}`);
 const maxXText = ref(graphwarDefaultXLimitText);
 const minYText = ref(`-${graphwarVisibleYLimitText}`);
 const maxYText = ref(graphwarVisibleYLimitText);
 // 公式输入和开关按游戏模式保存；只有高级设置的展开状态有意跨模式共享。
-const effectiveStepGlitchModeEnabled = computed(
+const isEffectiveStepGlitchModeEnabled = computed(
   () =>
     toolWorkflowMode.value === "solver" &&
-    formulaModeUsesStepGlitch(algorithmMode.value, solverEquationMode.value, stepGlitchModeEnabled.value),
+    formulaModeUsesStepGlitch(algorithmMode.value, solverEquationMode.value, isStepGlitchModeEnabled.value),
 );
-const formulaSupportsStepGlitch = computed(() =>
+const isFormulaStepGlitchSupported = computed(() =>
   formulaModeSupportsStepGlitch(algorithmMode.value, solverEquationMode.value),
 );
-const formulaUsesSteepness = computed(() => formulaModeUsesSteepness(algorithmMode.value, solverEquationMode.value));
-const advancedSettingsVisible = ref(false);
-const simulatorSkipUnknownCharacters = ref(true);
-const simulatorParseDerivativeAsY = ref(true);
+const isFormulaUsingSteepness = computed(() => formulaModeUsesSteepness(algorithmMode.value, solverEquationMode.value));
+const isAdvancedSettingsVisible = ref(false);
+const shouldSimulatorSkipUnknownCharacters = ref(true);
+const shouldSimulatorParseDerivativeAsY = ref(true);
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
 const maximumSoldierCountText = ref(String(graphwarToolDefaults.maximumSoldierCount));
 const soldierTemplateCandidateTopRatioText = ref(String(graphwarToolDefaults.soldierTemplateCandidateTopRatio));
@@ -304,26 +382,44 @@ const stepGlitchObstacleSimulationToleranceText = ref("0");
 const oneClickClearDeleteCheckRadiusText = ref(String(GRAPHWAR_SOLDIER_RADIUS / 2));
 const simulatorFormulaText = ref("");
 const simulatorLaunchAngleText = ref("");
-const graphwarAgentEnabled = ref(false);
+const isGraphwarAgentEnabled = ref(false);
 const graphwarAgentBaseUrlText = ref(GRAPHWAR_AGENT_DEFAULT_BASE_URL);
-const graphwarAgentReadInProgress = ref(false);
-const graphwarAgentManualExportInProgress = ref(false);
-const graphwarAgentAutoExportInProgress = ref(false);
-const graphwarAgentExportInProgress = computed(
-  () => graphwarAgentManualExportInProgress.value || graphwarAgentAutoExportInProgress.value,
+// The optional bearer token is deliberately session-only and never enters persisted settings.
+const graphwarAgentTokenText = ref("");
+const graphwarAgentTurnCountdown = useGraphwarAgentTurnCountdown();
+const graphwarAgentFunctionDrawPlayback = useGraphwarAgentFunctionDrawPlayback();
+const graphwarAgentObservationOrder = createGraphwarAgentObservationOrder();
+const isGraphwarAgentReadInProgress = ref(false);
+const isGraphwarAgentManualExportInProgress = ref(false);
+const isGraphwarAgentAutoExportInProgress = ref(false);
+const isGraphwarAgentExportInProgress = computed(
+  () => isGraphwarAgentManualExportInProgress.value || isGraphwarAgentAutoExportInProgress.value,
 );
-const graphwarAgentAutoExportOnClearFailureEnabled = ref(false);
+const isGraphwarAgentAutoExportOnClearFailureEnabled = ref(false);
 let graphwarAgentTransferGeneration = 0;
+// 导出会轮换传输代次，但只有连接身份变化才能作废同一连接上的开火预检。
+let graphwarAgentConnectionGeneration = 0;
+let graphwarAgentFunctionDrawObservationGeneration = 0;
+let graphwarAgentFunctionDrawObservationRequest: AbortController | undefined;
+let graphwarAgentManualFireRequest: AbortController | undefined;
+let graphwarAgentPendingFunctionDraw: GraphwarAgentPendingFunctionDraw | undefined;
 const graphwarAgentDebugFiles = createGraphwarAgentDebugFiles();
 const graphwarAgentClearFailureExportQueue = createGraphwarAgentClearFailureExportQueue({
   exportRequest: (request) => {
-    graphwarAgentAutoExportInProgress.value = true;
+    isGraphwarAgentAutoExportInProgress.value = true;
     setGraphwarAgentExportStatus(locale.status.agent.exporting, "warning");
     try {
-      downloadGraphwarAgentDebugSceneFiles(request.state, request.worldObstacleMask, request.failureKind);
+      downloadGraphwarPathfindingDebugFiles(
+        {
+          report: request.report,
+          sceneState: request.state,
+          sourceObstacleMask: request.worldObstacleMask,
+        },
+        request.failureKind,
+      );
       setGraphwarAgentExportStatus(locale.status.agent.exported, "success");
     } finally {
-      graphwarAgentAutoExportInProgress.value = false;
+      isGraphwarAgentAutoExportInProgress.value = false;
     }
   },
   onExportFailed: (error) => {
@@ -335,10 +431,11 @@ const graphwarAgentClearFailureExportQueue = createGraphwarAgentClearFailureExpo
 });
 // 保留页面当前实际应用的权威快照，自动导出可在托管开火前同步固化同一局面。
 let graphwarAgentAppliedSnapshot: GraphwarAgentSnapshot | undefined;
-const graphwarAgentFireInProgress = ref(false);
+const isGraphwarAgentFireInProgress = ref(false);
 const graphwarAgentFireStatus = ref<TransferStatus>("idle");
 const graphwarAgentFireFailureMessage = ref("");
-const graphwarManagedModeEnabled = ref(false);
+const isGraphwarManagedModeEnabled = ref(false);
+const canAcceptScreenshotInput = computed(() => !isGraphwarAgentEnabled.value && !isGraphwarManagedModeEnabled.value);
 // 手动模式也显示求解器的完整推荐角，由用户按实际轨迹用方向键微调。
 const secondOrderLaunchAngleMode = ref("full-precision" as const);
 let graphwarAgentFireStatusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -351,7 +448,8 @@ let graphwarManagedController: GraphwarManagedController | undefined;
 let graphwarManagedShotReserveMs = GRAPHWAR_MANAGED_SHOT_DEADLINE_MS;
 let graphwarManagedDeadlineTurnToken: string | undefined;
 let graphwarManagedIncumbent: GraphwarOneClickClearIncumbent | undefined;
-let graphwarManagedLastSubmittedTurnToken: string | undefined;
+let graphwarManagedPreparedShot: GraphwarManagedPreparedShot | undefined;
+let graphwarManagedLastRequestedTurnToken: string | undefined;
 let graphwarManagedSceneKey = "";
 let graphwarManagedSearchErrorSceneKey: string | undefined;
 let graphwarManagedSearchGeneration = 0;
@@ -364,7 +462,7 @@ let graphwarManagedWakeLock: GraphwarWakeLockSentinel | undefined;
 let graphwarManagedWakeLockGeneration = 0;
 let graphwarManagedWakeLockRequest: GraphwarWakeLockRequest | undefined;
 const normalizedGraphwarAgentBaseUrl = computed(() => {
-  if (!graphwarAgentEnabled.value || !graphwarAgentBaseUrlText.value.trim()) {
+  if (!isGraphwarAgentEnabled.value || !graphwarAgentBaseUrlText.value.trim()) {
     return undefined;
   }
   try {
@@ -376,17 +474,17 @@ const normalizedGraphwarAgentBaseUrl = computed(() => {
 const activeRoutePlanningToleranceText = computed({
   get: () => {
     // 邪道扫描的精确像素配置优先于障碍数据来源，避免 Agent 开关改变同一路线的容差。
-    if (effectiveStepGlitchModeEnabled.value) {
+    if (isEffectiveStepGlitchModeEnabled.value) {
       return stepGlitchRoutePlanningToleranceText.value;
     }
-    return graphwarAgentEnabled.value
+    return isGraphwarAgentEnabled.value
       ? graphwarAgentRoutePlanningToleranceText.value
       : detectionRoutePlanningToleranceText.value;
   },
   set: (value) => {
-    if (effectiveStepGlitchModeEnabled.value) {
+    if (isEffectiveStepGlitchModeEnabled.value) {
       stepGlitchRoutePlanningToleranceText.value = value;
-    } else if (graphwarAgentEnabled.value) {
+    } else if (isGraphwarAgentEnabled.value) {
       graphwarAgentRoutePlanningToleranceText.value = value;
     } else {
       detectionRoutePlanningToleranceText.value = value;
@@ -395,17 +493,17 @@ const activeRoutePlanningToleranceText = computed({
 });
 const activeObstacleSimulationToleranceText = computed({
   get: () => {
-    if (effectiveStepGlitchModeEnabled.value) {
+    if (isEffectiveStepGlitchModeEnabled.value) {
       return stepGlitchObstacleSimulationToleranceText.value;
     }
-    return graphwarAgentEnabled.value
+    return isGraphwarAgentEnabled.value
       ? graphwarAgentObstacleSimulationToleranceText.value
       : detectionObstacleSimulationToleranceText.value;
   },
   set: (value) => {
-    if (effectiveStepGlitchModeEnabled.value) {
+    if (isEffectiveStepGlitchModeEnabled.value) {
       stepGlitchObstacleSimulationToleranceText.value = value;
-    } else if (graphwarAgentEnabled.value) {
+    } else if (isGraphwarAgentEnabled.value) {
       graphwarAgentObstacleSimulationToleranceText.value = value;
     } else {
       detectionObstacleSimulationToleranceText.value = value;
@@ -436,6 +534,12 @@ const {
   trajectoryStrokeColor,
   undoActivePathPoint,
 } = useGraphwarPathState(toolWorkflowMode);
+const incumbentPointPreview = ref<GraphwarOneClickClearPreview>();
+const incumbentPreviewPathPixels = computed(() => incumbentPointPreview.value?.pathPoints);
+const hasIncumbentPreviewPath = computed(() => incumbentPointPreview.value !== undefined);
+const displayedPathPixels = computed(() => incumbentPointPreview.value?.pathPoints ?? pathPixels.value);
+let queuedIncumbentPreview: GraphwarOneClickClearPreview | undefined;
+let incumbentPreviewFrame: number | undefined;
 // 截图工作流拥有文件输入、粘贴、截屏和舞台坐标换算；识别流程只消费落地后的 ImageData。
 const {
   applyGeneratedImage,
@@ -467,28 +571,39 @@ const pathfindingCache = createGraphwarPathfindingCacheController();
 // 识别结果应由页面持有，供舞台投影、目标过滤、友方障碍和一键清图共享。
 const detectedSoldiers = ref<DetectionBox[]>([]);
 const detectionProvenance = ref<GraphwarDetectionProvenance>();
+const graphwarTrajectorySourceIdentity = computed(() => {
+  const provenance = detectionProvenance.value;
+  return provenance?.source === "agent"
+    ? createGraphwarAgentTrajectorySourceIdentity(
+        provenance.gameInstanceId,
+        provenance.turnToken,
+        provenance.battleRevision,
+      )
+    : undefined;
+});
 const hoveredDetectedSoldierId = ref<string>();
-const pathPlanningEnabled = ref(false);
+const isPathPlanningEnabled = ref(false);
 // undefined 表示用户尚未选择；首次得到对应数据时才应用一次默认开启。
-const snapSoldiersPreference = ref<boolean>();
-const collisionCheckPreference = ref<boolean>();
-const snapSoldiersEnabled = computed(() => snapSoldiersPreference.value ?? false);
-const collisionCheckEnabled = computed(() => collisionCheckPreference.value ?? false);
-const friendlyFireEnabled = ref(false);
+const shouldSnapSoldiers = ref<boolean>();
+const shouldCheckCollisions = ref<boolean>();
+const isSnapSoldiersEnabled = computed(() => shouldSnapSoldiers.value ?? false);
+const isCollisionCheckEnabled = computed(() => shouldCheckCollisions.value ?? false);
+const isFriendlyFireEnabled = ref(false);
 const obstacleBrushDiameterText = ref("30");
-const searchAnimationEnabled = ref(true);
+const isSearchAnimationEnabled = ref(true);
+const isPathfindingResultCacheEnabled = ref(true);
 const pathfindingRouteMode = ref<GraphwarPathfindingRouteMode>("visibility-graph");
-const deleteOptimizationEnabled = ref(false);
+const isDeleteOptimizationEnabled = ref(false);
 let activePathfindingTask:
   | { readonly kind: "single" }
-  | { readonly kind: "one-click"; readonly usesDagWorker: boolean }
+  | { readonly kind: "one-click"; readonly shouldUseDagWorker: boolean }
   | undefined;
 // 智能寻路和一键清图共用同一组运行状态、预览层和取消 token，避免两个异步任务同时回写页面。
 const smartPathfindingSession = useGraphwarSmartPathfindingSession({
   blockedPointFlashMs: 1800,
   getCancelledMessage: () => createSmartPathfindingCancelledMessage(locale),
   getInProgressMessage: () => getSmartPathfindingInProgressMessage(),
-  isPathfindingModeActive: () => effectiveSmartPathfindingEnabled.value,
+  isPathfindingModeActive: () => isSmartPathfindingEnabled.value,
   pathStatus,
   pathfindingRunner: graphwarPathfindingRunner,
 });
@@ -496,7 +611,7 @@ const {
   activePhase: activeSmartPathfindingPhase,
   blockedPoint: smartPathfindingBlockedPoint,
   blockedSegment: smartPathfindingBlockedSegment,
-  inProgress: smartPathfindingInProgress,
+  inProgress: isSmartPathfindingInProgress,
   optimizationPreviewPoint: pathfindingOptimizationPreviewPoint,
   previewAcceptedEdges: smartPathfindingPreviewAcceptedEdges,
   previewConnection: smartPathfindingPreviewConnection,
@@ -510,6 +625,7 @@ const {
 const {
   addSmartPathfindingWorkerTimings,
   appendOneClickClearSearchWorkerTimings,
+  clearSmartPathfindingDebugTimings,
   createDetectionDebugTimingEntriesFromWorker,
   detectionDebugTimingRows,
   finishDetectionDebugTimings,
@@ -526,6 +642,7 @@ const {
 const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
   debug: {
     addWorkerTimings: addSmartPathfindingWorkerTimings,
+    recordAttempt: recordPathfindingDebugAttempt,
   },
   effects: {
     flashBlockedPoint: smartPathfindingSession.flashBlockedPoint,
@@ -534,7 +651,7 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
   input: {
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
-    getDeleteOptimizationEnabled: () => deleteOptimizationEnabled.value,
+    getDeleteOptimizationEnabled: () => isDeleteOptimizationEnabled.value,
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
     getPathPixels: () => pathPixels.value,
@@ -546,10 +663,11 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
   },
   pathfinding: {
     cache: pathfindingCache,
+    isResultCacheEnabled: () => isPathfindingResultCacheEnabled.value,
     runner: graphwarPathfindingRunner,
   },
   preview: {
-    isSearchAnimationEnabled: () => searchAnimationEnabled.value,
+    isSearchAnimationEnabled: () => isSearchAnimationEnabled.value,
     setConnection: smartPathfindingSession.setPreviewConnection,
     setPath: smartPathfindingSession.setPreviewPath,
     setSearch: smartPathfindingSession.setSearchPreview,
@@ -561,13 +679,18 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
 });
 // 单目标寻路 workflow 应集中维护 token、状态和调试耗时顺序；worker 细节由 builder 持有。
 const smartPathfindingRunWorkflow = useGraphwarSmartPathfindingRunWorkflow<PixelPoint | SmartPathfindingTarget>({
+  debug: {
+    isEnabled: () => isDebugInfoEnabled.value,
+    onOutcome: setPathfindingDebugOutcome,
+    registerRun: registerPathfindingDebugRun,
+  },
   applyPath: setPathPixels,
   buildPath: smartPathfindingBuilder.buildPath,
-  finishDebugTimings: finishSmartPathfindingDebugTimings,
+  finishDebugTimings: finishPathfindingDebugTimings,
   finishRun: finishSmartPathfindingRun,
   getFailureMessage: (elapsedMs, reason) => createSmartPathfindingFailureMessage(locale, elapsedMs, reason),
-  getSuccessMessage: (elapsedMs, resultCacheHit) =>
-    createSmartPathfindingSuccessMessage(locale, elapsedMs, resultCacheHit),
+  getSuccessMessage: (elapsedMs, hasResultCacheHit) =>
+    createSmartPathfindingSuccessMessage(locale, elapsedMs, hasResultCacheHit),
   isRunCurrent: isSmartPathfindingRunCurrent,
   measureStage: measureSmartPathfindingDebugStage,
   now: nowMs,
@@ -576,27 +699,27 @@ const smartPathfindingRunWorkflow = useGraphwarSmartPathfindingRunWorkflow<Pixel
 });
 // 舞台反馈只应持有短暂高亮状态和清理逻辑；页面应决定触发时机。
 const {
-  boundsFlashActive,
+  boundsFlashActive: isBoundsFlashActive,
   clearDetectionSoldierFlash,
   clearOneClickClearHitFlash,
-  detectionSoldierFlashActive,
+  detectionSoldierFlashActive: isDetectionSoldierFlashActive,
   dispose: disposeStageFeedback,
   flashBoundsRect,
   flashDetectedSoldiers,
   flashOneClickClearHitSoldiers,
-  oneClickClearHitFlashActive,
+  oneClickClearHitFlashActive: isOneClickClearHitFlashActive,
   oneClickClearHitFlashSoldiers,
 } = useGraphwarStageFeedback(detectedSoldiers);
 // 障碍编辑只应管理 mask、baseline、笔刷手势和延迟统计；页面应维护模式分派和寻路语义。
 const {
   applyDetectedObstacles,
-  brushDragging: obstacleBrushDragging,
-  brushEraseEnabled: obstacleBrushEraseEnabled,
+  brushDragging: isObstacleBrushDragging,
+  brushEraseEnabled: isObstacleBrushEraseEnabled,
   brushPointerPoint: obstacleBrushPointerPoint,
   clear: clearObstacleEditor,
   clearInteractionState: clearObstacleBrushInteractionState,
   dispose: disposeObstacleEditor,
-  editsDirty: obstacleEditsDirty,
+  editsDirty: hasObstacleEdits,
   finishBrushDrag: finishObstacleBrushDrag,
   obstacles: detectedObstacles,
   paintBrushAtPoint: paintObstacleBrushAtPoint,
@@ -619,12 +742,12 @@ const {
   },
   setStatus: setDetectionStatus,
 });
-const objectDetectionReady = computed(() => activeBoundsReady.value && Boolean(detectedObstacles.value));
-const activeObjectDetectionReady = computed(() => {
-  if (!objectDetectionReady.value) {
+const isObjectDetectionReady = computed(() => isActiveBoundsReady.value && Boolean(detectedObstacles.value));
+const isActiveObjectDetectionReady = computed(() => {
+  if (!isObjectDetectionReady.value) {
     return false;
   }
-  if (!graphwarAgentEnabled.value) {
+  if (!isGraphwarAgentEnabled.value) {
     return detectionProvenance.value?.source === "screenshot";
   }
   const provenance = detectionProvenance.value;
@@ -670,7 +793,7 @@ const detectionWorkflow = useGraphwarDetectionWorkflow({
   formatElapsedDuration,
   getLocale: () => locale,
   getSettings: () => parsedDetectionSettings.value,
-  hasActiveBounds: () => activeBoundsReady.value,
+  hasActiveBounds: () => isActiveBoundsReady.value,
   image: {
     canSchedule: () => Boolean(imageUrl.value),
     getImageData: getImageDataFromCurrentImage,
@@ -678,8 +801,8 @@ const detectionWorkflow = useGraphwarDetectionWorkflow({
   },
 });
 const {
-  autoDetectionEnabled,
-  inProgress: detectionInProgress,
+  autoDetectionEnabled: isAutoDetectionEnabled,
+  inProgress: isDetectionInProgress,
   status: detectionStatus,
   statusKind: detectionStatusKind,
   statusWarning: detectionStatusWarning,
@@ -688,28 +811,35 @@ const {
 // 调试启用流程只应管理长按状态和定时器；高级设置展开状态仍由页面持有。
 const {
   cancelHold: cancelDebugActivationHold,
-  debugInfoEnabled,
+  debugInfoEnabled: isDebugInfoEnabled,
   dispose: disposeDebugActivation,
   finishHold: finishDebugActivationHold,
   remainingMs: debugActivationRemainingMs,
   startHold: startDebugActivationHold,
-  successVisible: debugActivationSuccessVisible,
+  successVisible: isDebugActivationSuccessVisible,
   toggleAdvancedSettings: toggleAdvancedSettingsFromControl,
 } = useGraphwarDebugActivation({
   toggleAdvancedSettings,
 });
-const effectiveSmartPathfindingEnabled = computed(
+const latestPathfindingDebugBundle = shallowRef<GraphwarPathfindingDebugBundle>();
+const pathfindingDebugCapturesByTimings = new Map<
+  readonly SmartPathfindingDebugTimingEntry[],
+  GraphwarActivePathfindingDebugCapture
+>();
+let activePathfindingDebugCapture: GraphwarActivePathfindingDebugCapture | undefined;
+let pathfindingDebugCaptureGeneration = 0;
+const isSmartPathfindingEnabled = computed(
   () =>
     toolWorkflowMode.value !== "simulator" &&
-    pathPlanningEnabled.value &&
-    activeObjectDetectionReady.value &&
+    isPathPlanningEnabled.value &&
+    isActiveObjectDetectionReady.value &&
     !settingsMessage.value &&
     parsedObstacleTolerances.value.ok,
 );
-const pathfindingObstacleEdgesActive = computed(() => effectiveSmartPathfindingEnabled.value);
-const includesFriendlySoldierObstacles = computed(() => !friendlyFireEnabled.value && pathPixels.value.length > 0);
-const blocksFriendlyFireTargets = computed(
-  () => pathfindingObstacleEdgesActive.value && includesFriendlySoldierObstacles.value,
+const isPathfindingObstacleEdgesActive = computed(() => isSmartPathfindingEnabled.value);
+const hasFriendlySoldierObstacles = computed(() => !isFriendlyFireEnabled.value && pathPixels.value.length > 0);
+const shouldBlockFriendlyFireTargets = computed(
+  () => isPathfindingObstacleEdgesActive.value && hasFriendlySoldierObstacles.value,
 );
 
 const equationModes = computed(() => locale.equationModes);
@@ -783,7 +913,7 @@ const {
   },
 });
 const effectiveOneClickClearTolerances = computed(() => {
-  if (deleteOptimizationEnabled.value) {
+  if (isDeleteOptimizationEnabled.value) {
     return parsedOneClickClearTolerances.value.ok ? parsedOneClickClearTolerances.value : undefined;
   }
   const tolerances = parsedObstacleTolerances.value;
@@ -806,7 +936,7 @@ function getGraphwarPlaneRadiusPixels(sourceRadius: number) {
 
 /** Agent 士兵按权威队伍动态判断敌我；截图识别返回 undefined 继续使用 x 范围规则。 */
 function getGraphwarAgentFriendlyState(soldier: DetectionBox) {
-  return soldier.templateName === "agent" ? (soldier as GraphwarAgentDetectionBox).friendly : undefined;
+  return soldier.templateName === "agent" ? (soldier as GraphwarAgentDetectionBox).isFriendly : undefined;
 }
 
 const mappedPathPoints = computed<GraphPoint[]>(() => {
@@ -855,8 +985,8 @@ const formulaInputDecimalPlaces = computed(() =>
   parsedPrecision.value.ok ? parsedPrecision.value.decimalPlaces : DEFAULT_FORMULA_DECIMAL_PLACES,
 );
 const formulaInputSteepness = computed(() => (parsedSteepness.value.ok ? parsedSteepness.value.steepness : 1));
-const formulaInputPrecisionValid = computed(() => parsedPrecision.value.ok);
-const formulaInputSteepnessValid = computed(() => parsedSteepness.value.ok);
+const isFormulaInputPrecisionValid = computed(() => parsedPrecision.value.ok);
+const isFormulaInputSteepnessValid = computed(() => parsedSteepness.value.ok);
 /** 把用户配置收敛到实时预览 runner 支持的 Worker 数范围。 */
 const liveClickPreviewWorkerCount = computed(() => {
   const workerCount = parseFiniteNumber(liveClickPreviewWorkerCountText.value);
@@ -901,7 +1031,7 @@ const settingsMessage = computed(() => {
   if (toolWorkflowMode.value !== "simulator" && !parsedPrecision.value.ok) {
     return parsedPrecision.value.message;
   }
-  if (toolWorkflowMode.value !== "simulator" && formulaUsesSteepness.value && !parsedSteepness.value.ok) {
+  if (toolWorkflowMode.value !== "simulator" && isFormulaUsingSteepness.value && !parsedSteepness.value.ok) {
     return parsedSteepness.value.message;
   }
   return "";
@@ -915,50 +1045,52 @@ const debugActivationCountdownMessage = computed(() => {
     ? ""
     : locale.ui.settings.debugActivationCountdown(formatDebugActivationRemainingSeconds(remainingMs));
 });
+// 托管锁只进入被临时禁用控件的 title，避免在每个面板重复派生同一文案。
+const managedLockReason = computed(() =>
+  isGraphwarManagedModeEnabled.value ? locale.ui.pathfinding.capabilityReasons["managed-lock"] : undefined,
+);
 // 基础设置面板只应消费展示 DTO；模式切换、校验和调试长按流程仍由页面侧保持原语义。
 const settingsPanel = computed<GraphwarSettingsPanelModel>(() => {
   const headerStatus = getFirstHeaderStatus(
     createHeaderStatus(settingsMessage.value, "error"),
     createHeaderStatus(managedTimingMessage.value, "error"),
     createHeaderStatus(debugActivationCountdownMessage.value, "warning"),
-    createHeaderStatus(debugActivationSuccessVisible.value ? locale.ui.settings.debugInfoEnabled : "", "success"),
+    createHeaderStatus(isDebugActivationSuccessVisible.value ? locale.ui.settings.debugInfoEnabled : "", "success"),
     createHeaderStatus(activeEquationDescription.value),
   );
   let stepGlitchModeReason: string | undefined;
   let stepGlitchModeState: GraphwarSettingsPanelModel["stepGlitchModeState"] = "normal";
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     stepGlitchModeReason = getCapabilityReason("managed-lock");
     stepGlitchModeState = "busy";
-  } else if (solverEquationMode.value === "y") {
-    stepGlitchModeReason = locale.ui.settings.stepGlitchModeGameModeInactiveReason;
-    stepGlitchModeState = "dormant";
-  } else if (!formulaSupportsStepGlitch.value) {
+  } else if (solverEquationMode.value !== "y" && isStepGlitchModeEnabled.value && !isFormulaStepGlitchSupported.value) {
     stepGlitchModeReason = locale.ui.settings.stepGlitchModeAlgorithmInactiveReason;
     stepGlitchModeState = "dormant";
   }
   return {
-    advancedSettingsVisible: advancedSettingsVisible.value,
+    isAdvancedSettingsVisible: isAdvancedSettingsVisible.value,
     algorithmMode: algorithmMode.value,
-    algorithmModes: algorithmModes.value.map((mode) => ({ ...mode, disabled: false })),
+    algorithmModes: algorithmModes.value.map((mode) => ({ ...mode, isEnabled: true })),
     equationMode: equationMode.value,
     equationModes: equationModes.value.map((mode) => ({
       ...mode,
-      disabled: false,
+      isEnabled: true,
     })),
     headerStatus: {
       kind: headerStatus.kind,
       message: headerStatus.message,
     },
-    interactionDisabled: graphwarManagedModeEnabled.value,
+    canInteract: !isGraphwarManagedModeEnabled.value,
+    temporaryDisabledReason: managedLockReason.value,
     precision: {
       maximum: MAX_FORMULA_DECIMAL_PLACES,
       text: precisionText.value,
     },
-    stepGlitchModeEnabled: stepGlitchModeEnabled.value,
+    isStepGlitchModeEnabled: isStepGlitchModeEnabled.value,
     stepGlitchModeReason,
     stepGlitchModeState,
-    stepOverflowProtectionEnabled: stepOverflowProtectionEnabled.value,
-    steepnessVisible: formulaUsesSteepness.value,
+    isStepOverflowProtectionEnabled: isStepOverflowProtectionEnabled.value,
+    isSteepnessVisible: isFormulaUsingSteepness.value,
     steepnessText: steepnessText.value,
     toolWorkflowMode: toolWorkflowMode.value,
     toolWorkflowModes: toolWorkflowModes.value,
@@ -979,12 +1111,12 @@ const boundsPreviewRect = computed(() =>
     : undefined,
 );
 const visibleBoundsRect = computed(() => boundsPreviewRect.value ?? boundsRect.value);
-const recognizedObjectOverlayVisible = computed(
+const isRecognizedObjectOverlayVisible = computed(
   () => detectedSoldiers.value.length > 0 || Boolean(detectedObstacles.value),
 );
 const stageCoordinateLines = computed<StageCoordinateLines>(() => {
   const boundsResult = parsedBounds.value;
-  if (!graphwarAgentEnabled.value || !boundsResult.ok) {
+  if (!isGraphwarAgentEnabled.value || !boundsResult.ok) {
     return { axisLines: [], gridLines: [] };
   }
 
@@ -992,8 +1124,8 @@ const stageCoordinateLines = computed<StageCoordinateLines>(() => {
 });
 const activeRouteBoundaryInset = useGraphwarPathfindingRouteBoundaryInset({
   modes: {
-    collisionCheckEnabled,
-    pathfindingObstacleEdgesActive,
+    isCollisionCheckEnabled,
+    isPathfindingObstacleEdgesActive,
   },
   settings: {
     parsedObstacleTolerances,
@@ -1045,10 +1177,10 @@ const {
     soldiers: detectedSoldiers,
   },
   modes: {
-    collisionCheckEnabled,
-    effectiveSmartPathfindingEnabled,
-    includesFriendlySoldierObstacles,
-    pathfindingObstacleEdgesActive,
+    hasFriendlySoldierObstacles,
+    isCollisionCheckEnabled,
+    isEffectiveSmartPathfindingEnabled: isSmartPathfindingEnabled,
+    isPathfindingObstacleEdgesActive,
   },
   settings: {
     activeSimulationBoundaryInset,
@@ -1057,38 +1189,41 @@ const {
     parsedObstacleTolerances,
   },
 });
-const trajectoryCollisionSettingsValid = computed(
-  () => !collisionCheckEnabled.value || parsedObstacleTolerances.value.ok,
+const isTrajectoryCollisionSettingsValid = computed(
+  () => !isCollisionCheckEnabled.value || parsedObstacleTolerances.value.ok,
 );
 // 主轨迹 Module 在依赖准备完成后统一异步解算函数、模拟轨迹并原子发布结果。
 const {
   calculationFallbackReason: trajectoryCalculationFallbackReason,
   calculationStatus: trajectoryCalculationStatus,
-  clearIncumbentPreview,
+  clearIncumbentPreview: clearTrajectoryIncumbentPreview,
   commitIncumbentPreview,
   commitIncumbentResult,
   createPathTrajectoryFormulaSettings,
   dispose: disposeTrajectoryResult,
   formulaOutputDecimalPlaces,
   formulaResult,
+  formulaResultEquationMode,
   graphwarTrajectoryFormulaSettings,
-  incumbentPreviewActive,
+  isIncumbentPreviewActive: isTrajectoryIncumbentPreviewActive,
   pathError: formulaPathError,
   plottedCurvePoints,
-  publishIncumbentPreview,
+  plottedTrajectory,
+  publishIncumbentPreview: publishTrajectoryIncumbentPreview,
   secondOrderLaunchAngleDegrees,
   secondOrderLaunchAngleRadians,
   simulatorLaunchAngleRadians,
-  targetMissed: formulaTargetMissed,
+  hasTargetMissWarning: hasFormulaTargetMissWarning,
   trajectoryWarningReason,
 } = useGraphwarTrajectoryResult({
-  collisionSettingsValid: trajectoryCollisionSettingsValid,
+  isCollisionSettingsValid: isTrajectoryCollisionSettingsValid,
   geometry: {
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
   },
   getCollisionSettings: () => trajectoryCollisionSettings.value,
   getTargetHitRadiusPixels: () => soldierHitRadiusPixels.value,
+  sourceIdentity: graphwarTrajectorySourceIdentity,
   path: {
     mappedPathPoints,
     pathPixels,
@@ -1097,31 +1232,57 @@ const {
     algorithmMode,
     equationMode,
     secondOrderLaunchAngleMode,
-    isEquationModeDisabled,
+    isEquationModeEnabled,
     precisionDecimalPlaces: formulaInputDecimalPlaces,
-    precisionValid: formulaInputPrecisionValid,
+    isPrecisionValid: isFormulaInputPrecisionValid,
     steepness: formulaInputSteepness,
-    steepnessValid: formulaInputSteepnessValid,
+    isSteepnessValid: isFormulaInputSteepnessValid,
     getStepGlitchObstacleMask: () => simulationObstacleMask.value,
-    stepGlitchModeEnabled,
-    stepOverflowProtectionEnabled,
+    isStepGlitchModeEnabled,
+    isStepOverflowProtectionEnabled,
     toolWorkflowMode,
   },
   simulator: {
     formulaText: simulatorFormulaText,
     launchAngleText: simulatorLaunchAngleText,
-    parseDerivativeAsY: simulatorParseDerivativeAsY,
+    shouldParseDerivativeAsY: shouldSimulatorParseDerivativeAsY,
     parseNumber: parseFiniteNumber,
-    skipUnknownCharacters: simulatorSkipUnknownCharacters,
+    shouldSkipUnknownCharacters: shouldSimulatorSkipUnknownCharacters,
   },
 });
+const isIncumbentPreviewActive = computed(
+  () => hasIncumbentPreviewPath.value || isTrajectoryIncumbentPreviewActive.value,
+);
 const generatedFormulaConversion = computed(() => {
   const expression = formulaResult.value?.expression ?? "";
-  return fractionOutputEnabled.value
+  return isFractionOutputEnabled.value
     ? convertGraphwarExpressionDecimalsToFractions(expression)
     : { expression, fullyConverted: true };
 });
 const generatedFormulaOutput = computed(() => generatedFormulaConversion.value.expression);
+// Attach only an atomically published curve that still matches the exact submitted function and scene.
+watch(
+  [
+    plottedTrajectory,
+    generatedFormulaOutput,
+    simulatorFormulaText,
+    equationMode,
+    toolWorkflowMode,
+    trajectoryCalculationStatus,
+  ],
+  () => {
+    const pending = graphwarAgentPendingFunctionDraw;
+    if (!pending) {
+      return;
+    }
+    const points = getCurrentGraphwarAgentFunctionDrawTrajectoryPoints(pending);
+    if (pending.attachedPoints === points || points.length < 2) {
+      return;
+    }
+    pending.attachedPoints = points;
+    graphwarAgentFunctionDrawPlayback.attachTrajectory(pending.identity, points);
+  },
+);
 // 结果操作 Module 应集中复制反馈、clipboard fallback 和模拟器清空；页面只提供当前结果来源。
 const {
   canClearSimulatorInputs,
@@ -1140,14 +1301,14 @@ const {
 });
 
 const graphwarAgentFireButtonText = computed(() => {
-  if (graphwarAgentFireInProgress.value) {
+  if (isGraphwarAgentFireInProgress.value) {
     return locale.ui.result.firing;
   }
   if (graphwarAgentFireStatus.value === "success") {
     return locale.ui.result.fireSuccess;
   }
   if (graphwarAgentFireStatus.value === "error") {
-    return locale.ui.result.fireError;
+    return locale.status.agent.fireFailed(graphwarAgentFireFailureMessage.value);
   }
   return locale.ui.result.fire;
 });
@@ -1160,42 +1321,42 @@ function getCapabilityReason(reason: GraphwarCapabilityReason | undefined) {
 const graphwarCapabilities = computed(() =>
   deriveGraphwarCapabilities(
     {
-      activeSource: graphwarAgentEnabled.value ? "agent" : "screenshot",
+      activeSource: isGraphwarAgentEnabled.value ? "agent" : "screenshot",
       agent: {
-        enabled: graphwarAgentEnabled.value,
+        isEnabled: isGraphwarAgentEnabled.value,
         normalizedBaseUrl: normalizedGraphwarAgentBaseUrl.value,
       },
       busy: {
-        agentFire: graphwarAgentFireInProgress.value,
-        agentRead: graphwarAgentReadInProgress.value,
-        agentExport: graphwarAgentExportInProgress.value,
-        managedMode: graphwarManagedModeEnabled.value,
-        pathfinding: smartPathfindingInProgress.value,
+        isAgentExportBusy: isGraphwarAgentExportInProgress.value,
+        isAgentFireBusy: isGraphwarAgentFireInProgress.value,
+        isAgentReadBusy: isGraphwarAgentReadInProgress.value,
+        isManagedModeBusy: isGraphwarManagedModeEnabled.value,
+        isPathfindingBusy: isSmartPathfindingInProgress.value,
       },
       formula: {
         // 托管会跨三个 profile 运行，必须按 repair 后的最终算法校验每份保留输入。
-        managedSettingsValid:
+        isManagedSettingsValid:
           parsedBounds.value.ok && graphwarFormulaProfilesAreValidForManagedMode(solverFormulaProfiles.value),
-        oneClickClearSupported: supportsOneClickClear(algorithmMode.value),
-        settingsValid: !settingsMessage.value,
-        usesStepGlitchRouting: effectiveStepGlitchModeEnabled.value,
+        isOneClickClearSupported: supportsOneClickClear(algorithmMode.value),
+        isSettingsValid: !settingsMessage.value,
+        isStepGlitchRoutingUsed: isEffectiveStepGlitchModeEnabled.value,
       },
       pathfinding: {
-        deleteCheckRadiusValid: parsedOneClickClearTolerances.value.ok,
-        managedTimingValid: parsedManagedTiming.value.ok,
-        obstacleTolerancesValid: parsedObstacleTolerances.value.ok,
-        pathStartAvailable: mappedPathPoints.value.length > 0,
-        workerCountValid: parsedPathfindingWorkerCount.value.ok,
+        hasPathStart: mappedPathPoints.value.length > 0,
+        hasValidObstacleTolerances: parsedObstacleTolerances.value.ok,
+        isDeleteCheckRadiusValid: parsedOneClickClearTolerances.value.ok,
+        isManagedTimingValid: parsedManagedTiming.value.ok,
+        isWorkerCountValid: parsedPathfindingWorkerCount.value.ok,
       },
-      resultAvailable:
+      hasResult:
         canCopyFormula.value &&
         (equationMode.value !== "ddy" ||
           toolWorkflowMode.value !== "solver" ||
           secondOrderLaunchAngleRadians.value !== undefined),
       scene: {
-        boundsAvailable: activeBoundsReady.value,
-        imageAvailable: Boolean(imageUrl.value),
-        obstaclesAvailable: Boolean(detectedObstacles.value),
+        hasBounds: isActiveBoundsReady.value,
+        hasImage: Boolean(imageUrl.value),
+        hasObstacles: Boolean(detectedObstacles.value),
         provenance:
           detectionProvenance.value?.source === "agent"
             ? {
@@ -1205,20 +1366,20 @@ const graphwarCapabilities = computed(() =>
                 source: "agent",
               }
             : detectionProvenance.value,
-        soldiersAvailable: detectedSoldiers.value.length > 0,
+        hasSoldiers: detectedSoldiers.value.length > 0,
       },
       workflowMode: toolWorkflowMode.value,
     },
     {
-      collisionCheckEnabled: collisionCheckEnabled.value,
-      deleteOptimizationEnabled: deleteOptimizationEnabled.value,
-      pathPlanningEnabled: pathPlanningEnabled.value,
-      snapSoldiersEnabled: snapSoldiersEnabled.value,
+      isCollisionCheckEnabled: isCollisionCheckEnabled.value,
+      isDeleteOptimizationEnabled: isDeleteOptimizationEnabled.value,
+      isPathPlanningEnabled: isPathPlanningEnabled.value,
+      isSnapSoldiersEnabled: isSnapSoldiersEnabled.value,
     },
   ),
 );
 const statusAnnouncement = computed(() => {
-  if (graphwarAgentFireInProgress.value) {
+  if (isGraphwarAgentFireInProgress.value) {
     return locale.ui.result.firing;
   }
   if (graphwarAgentFireStatus.value === "success") {
@@ -1257,7 +1418,7 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
       getSmartPathfindingCurrentPathBlockedMessage: () => createSmartPathfindingCurrentPathBlockedMessage(locale),
     },
     modes: {
-      isSmartPathfindingEnabled: () => effectiveSmartPathfindingEnabled.value,
+      isSmartPathfindingEnabled: () => isSmartPathfindingEnabled.value,
       toolWorkflowMode,
     },
     path: {
@@ -1272,11 +1433,13 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
       runWorkflow: {
         run: async (request) => {
           const task = { kind: "single" } as const;
+          const debugCapture = beginPathfindingDebugCapture("smart-pathfinding");
           clearIncumbentPreview();
           activePathfindingTask = task;
           try {
             return await smartPathfindingRunWorkflow.run(request);
           } finally {
+            completePathfindingDebugCapture(debugCapture);
             if (activePathfindingTask === task) {
               activePathfindingTask = undefined;
             }
@@ -1321,23 +1484,26 @@ function createCurrentPrefixTargetCircle() {
 
 // 一键清图 workflow 应集中预检、候选收集、worker 输入、cache 和结果落地；页面只保留当前状态入口。
 /** 托管需要预检三套配置；普通阶跃一键清图才由当前公式分支决定是否使用 DAG Worker。 */
-function requiresOneClickClearDagWorker() {
-  return graphwarManagedModeEnabled.value || !effectiveStepGlitchModeEnabled.value;
+function shouldUseOneClickClearDagWorker() {
+  return isGraphwarManagedModeEnabled.value || !isEffectiveStepGlitchModeEnabled.value;
 }
 
 const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBox>({
   debug: {
     appendSearchWorkerTimings: appendOneClickClearSearchWorkerTimings,
-    finishTimings: finishSmartPathfindingDebugTimings,
+    finishTimings: finishPathfindingDebugTimings,
+    isEnabled: () => isDebugInfoEnabled.value,
     measureStage: measureSmartPathfindingDebugStage,
     measureStageAsync: measureSmartPathfindingDebugStageAsync,
+    recordAttempt: recordPathfindingDebugAttempt,
+    registerRun: registerPathfindingDebugRun,
   },
   effects: {
     applyIncumbent: applyOneClickClearIncumbent,
     flashBlockedSegment: smartPathfindingSession.flashBlockedSegment,
     flashHitSoldiers: flashOneClickClearHitSoldiers,
     setStatus: (message, kind) => {
-      if (graphwarManagedModeEnabled.value) {
+      if (isGraphwarManagedModeEnabled.value) {
         if (kind === "success") {
           showGraphwarManagedCalculationStatus(message, kind);
           return;
@@ -1351,17 +1517,17 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
   input: {
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
-    getDeleteOptimizationEnabled: () => deleteOptimizationEnabled.value,
+    isDeleteOptimizationEnabled: () => isDeleteOptimizationEnabled.value,
     getFormulaSettings: () => createPathTrajectoryFormulaSettings(),
     getObstacleMask: () => smartPathfindingBaseObstacleMask.value,
     getPathfindingWorkerCount: () =>
       parsedPathfindingWorkerCount.value.ok ? parsedPathfindingWorkerCount.value.workerCount : undefined,
     getPathPoints: () => pathPixels.value,
     getRouteMode: getPathfindingRouteMode,
-    requiresDagWorker: requiresOneClickClearDagWorker,
+    shouldUseDagWorker: shouldUseOneClickClearDagWorker,
     getSimulationMask: () => smartPathfindingSimulationObstacleMask.value,
     getTolerances: () => effectiveOneClickClearTolerances.value,
-    isUnsupportedMode: isOneClickClearModeUnsupported,
+    isModeSupported: isOneClickClearModeSupported,
   },
   messages: {
     getFailureMessage: (reason, elapsedMs) => createOneClickClearFailureMessage({ elapsedMs, locale, reason }),
@@ -1373,14 +1539,20 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
         reason,
         settingsMessage: oneClickClearSettingsMessage.value,
       }),
-    getSuccessMessage: (targetCount, elapsedMs, resultCacheHit) =>
-      graphwarManagedModeEnabled.value
+    getSuccessMessage: (targetCount, elapsedMs, hasResultCacheHit) =>
+      isGraphwarManagedModeEnabled.value
         ? locale.smartPathfinding.managed.calculationComplete(targetCount, formatElapsedDuration(elapsedMs))
-        : createOneClickClearSuccessMessage({ elapsedMs, locale, resultCacheHit, targetCount }),
+        : createOneClickClearSuccessMessage({
+            elapsedMs,
+            locale,
+            hasResultCacheHit,
+            targetCount,
+          }),
     getRetainedMessage: () => locale.smartPathfinding.oneClickClear.retained,
   },
   pathfinding: {
     cache: pathfindingCache,
+    isResultCacheEnabled: () => isPathfindingResultCacheEnabled.value,
     runner: graphwarPathfindingRunner,
   },
   run: {
@@ -1390,7 +1562,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
   },
   targets: {
     createGeometry: createTargetingGeometry,
-    getFriendlyFireEnabled: () => friendlyFireEnabled.value,
+    isFriendlyFireEnabled: () => isFriendlyFireEnabled.value,
     getPrefixTarget: createCurrentPrefixTargetCircle,
     getSoldiers: () => detectedSoldiers.value,
     isFriendlySoldier: getGraphwarAgentFriendlyState,
@@ -1404,8 +1576,8 @@ const {
   clearPointerPoint: clearLiveClickPreviewPointerPoint,
   curvePoints: liveClickPreviewCurvePoints,
   dispose: disposeLiveClickPreview,
-  enabled: liveClickPreviewEnabled,
-  inProgress: liveClickPreviewInProgress,
+  isEnabled: isLiveClickPreviewEnabled,
+  isInProgress: isLiveClickPreviewInProgress,
   label: liveClickPreviewLabel,
   lineSegments: liveClickPreviewLineSegments,
   points: liveClickPreviewPoints,
@@ -1422,7 +1594,7 @@ const {
   interaction: {
     draggingPathPointIndex,
     getPathPointIndexAtPoint,
-    smartPathfindingInProgress,
+    isSmartPathfindingInProgress,
     toolMode,
   },
   path: {
@@ -1435,18 +1607,18 @@ const {
   },
   settings: {
     algorithmMode,
-    effectiveSmartPathfindingEnabled,
+    isEffectiveSmartPathfindingEnabled: isSmartPathfindingEnabled,
     equationMode,
-    isEquationModeDisabled,
-    precisionValid: formulaInputPrecisionValid,
-    steepnessValid: formulaInputSteepnessValid,
+    isEquationModeEnabled,
+    isPrecisionValid: isFormulaInputPrecisionValid,
+    isSteepnessValid: isFormulaInputSteepnessValid,
     toolWorkflowMode,
   },
   simulator: {
     formulaText: simulatorFormulaText,
     launchAngleRadians: simulatorLaunchAngleRadians,
-    parseDerivativeAsY: simulatorParseDerivativeAsY,
-    skipUnknownCharacters: simulatorSkipUnknownCharacters,
+    shouldParseDerivativeAsY: shouldSimulatorParseDerivativeAsY,
+    shouldSkipUnknownCharacters: shouldSimulatorSkipUnknownCharacters,
   },
   target: {
     createMinimumForwardTargetPoint,
@@ -1454,7 +1626,7 @@ const {
     createSmartPathfindingSoldierTarget,
     getDetectedSoldierAtPoint,
     getDetectionBoxCenter,
-    snapSoldiersEnabled,
+    isSnapSoldiersEnabled,
   },
   trajectory: {
     formulaSettings: graphwarTrajectoryFormulaSettings,
@@ -1467,7 +1639,7 @@ const liveClickPreviewRenderedStatus = computed(() =>
     : locale.status.liveClickPreview.rendered(formatElapsedDuration(liveClickPreviewRenderedElapsedMs.value)),
 );
 const activeToolHint = computed(() => {
-  if (liveClickPreviewInProgress.value) {
+  if (isLiveClickPreviewInProgress.value) {
     return {
       kind: "warning" as const,
       message: locale.status.liveClickPreview.inProgress,
@@ -1486,7 +1658,7 @@ const activeToolHint = computed(() => {
 });
 const visibleBoundaryExpansionRect = computed<BoundsRect | undefined>(() => {
   const simulationBoundaryInset = activeSimulationBoundaryInset.value;
-  if ((!collisionCheckEnabled.value && !pathfindingObstacleEdgesActive.value) || simulationBoundaryInset <= 0) {
+  if ((!isCollisionCheckEnabled.value && !isPathfindingObstacleEdgesActive.value) || simulationBoundaryInset <= 0) {
     return undefined;
   }
 
@@ -1504,10 +1676,10 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
   if (toolWorkflowMode.value === "simulator") {
     return visibleSoldiers;
   }
-  if (blocksFriendlyFireTargets.value) {
+  if (shouldBlockFriendlyFireTargets.value) {
     visibleSoldiers = visibleSoldiers.filter((box) => !isDetectedFriendlySoldierObstacle(box));
   }
-  if (recognizedObjectOverlayVisible.value && pathPixels.value.length === 0) {
+  if (isRecognizedObjectOverlayVisible.value && pathPixels.value.length === 0) {
     visibleSoldiers = visibleSoldiers.filter((box) => isDetectionBoxOnLaunchSide(box));
   }
   const lastPoint = pathPixels.value.at(-1);
@@ -1520,13 +1692,13 @@ const detectionBoxes = computed<DetectionBox[]>(() => {
 
   // 单点智能寻路还可尝试 Step 命中圈 x+ 边缘；普通追加路径仍沿用各算法自己的首选瞄点。
   return visibleSoldiers.filter((box) =>
-    effectiveSmartPathfindingEnabled.value
+    isSmartPathfindingEnabled.value
       ? Boolean(createSmartPathfindingSoldierTarget(lastPoint, box))
       : Boolean(createSearchStartSoldierAimPoint(lastPoint, box)),
   );
 });
 const inactiveDetectionBoxes = computed<DetectionBox[]>(() => {
-  if (!recognizedObjectOverlayVisible.value || toolWorkflowMode.value === "simulator") {
+  if (!isRecognizedObjectOverlayVisible.value || toolWorkflowMode.value === "simulator") {
     return [];
   }
 
@@ -1547,7 +1719,7 @@ const calculationMessage = computed(() => {
     }
     return "";
   }
-  if (formulaUsesSteepness.value && !parsedSteepness.value.ok) {
+  if (isFormulaUsingSteepness.value && !parsedSteepness.value.ok) {
     return "";
   }
   if (pathPixels.value.length < 2) {
@@ -1570,38 +1742,44 @@ const detectionHeaderStatusKind = computed<DetectionStatusKind>(() =>
 // 识别面板只应消费展示 DTO；识别运行、状态优先级和耗时格式化仍由页面侧保持原语义。
 const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
   agent: {
-    autoExportOnClearFailureEnabled: graphwarAgentAutoExportOnClearFailureEnabled.value,
+    isAutoExportOnClearFailureEnabled: isGraphwarAgentAutoExportOnClearFailureEnabled.value,
     baseUrlText: graphwarAgentBaseUrlText.value,
-    debugFileActionsVisible: debugInfoEnabled.value,
-    enabled: graphwarAgentEnabled.value,
-    exportInProgress: graphwarAgentExportInProgress.value,
+    isDebugFileActionsVisible: isDebugInfoEnabled.value,
+    isEnabled: isGraphwarAgentEnabled.value,
+    isExportInProgress: isGraphwarAgentExportInProgress.value,
     exportState: graphwarCapabilities.value.agentExport.state,
-    inProgress: graphwarAgentReadInProgress.value,
-    readReason: graphwarAgentExportInProgress.value
+    exportReason:
+      graphwarCapabilities.value.agentExport.state === "busy"
+        ? getCapabilityReason(graphwarCapabilities.value.agentExport.reason)
+        : undefined,
+    isInProgress: isGraphwarAgentReadInProgress.value,
+    readReason: isGraphwarAgentExportInProgress.value
       ? locale.status.agent.exporting
       : getCapabilityReason(graphwarCapabilities.value.agentRead.reason),
     readState: graphwarCapabilities.value.agentRead.state,
+    tokenText: graphwarAgentTokenText.value,
   },
-  autoDetectionEnabled: autoDetectionEnabled.value,
-  canDetectBounds: Boolean(imageUrl.value) && !detectionInProgress.value && !graphwarAgentReadInProgress.value,
+  isAutoDetectionEnabled: isAutoDetectionEnabled.value,
+  canDetectBounds: Boolean(imageUrl.value) && !isDetectionInProgress.value && !isGraphwarAgentReadInProgress.value,
   canDetectObjects:
     Boolean(imageUrl.value) &&
-    activeBoundsReady.value &&
-    !detectionInProgress.value &&
-    !graphwarAgentReadInProgress.value,
+    isActiveBoundsReady.value &&
+    !isDetectionInProgress.value &&
+    !isGraphwarAgentReadInProgress.value,
   debugTimingRows: detectionDebugTimingRows.value.map((entry, index) => ({
     key: `${entry.stage}-${index}`,
-    text: entry.elapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
+    text: entry.isElapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
     title: entry.title,
   })),
-  debugTimingVisible: debugInfoEnabled.value,
+  isDebugTimingVisible: isDebugInfoEnabled.value,
   detectObjectsTitle: getDetectObjectsTitle(),
   headerStatus: {
     kind: detectionHeaderStatusKind.value,
     message: detectionHeaderStatus.value,
   },
-  interactionDisabled: graphwarManagedModeEnabled.value,
-  screenshotActionsVisible: !graphwarAgentEnabled.value,
+  canInteract: !isGraphwarManagedModeEnabled.value,
+  temporaryDisabledReason: managedLockReason.value,
+  isScreenshotActionsVisible: !isGraphwarAgentEnabled.value,
   // 当前设置错误展示时，旧识别警告也应隐藏，避免混入上一轮结果元数据。
   statusWarning: {
     message: detectionSettingsMessage.value ? "" : detectionStatusWarning.value,
@@ -1617,8 +1795,8 @@ const magnifierSliderZoom = computed(() =>
 const magnifierZoomRangeStyle = computed(() =>
   createRangeProgressStyle(magnifierSliderZoom.value, magnifierMinimumZoom, magnifierSliderMaximumZoom),
 );
-const obstacleBrushAvailable = computed(() => Boolean(detectedObstacles.value));
-const obstacleBrushControlsVisible = computed(() => toolMode.value === "obstacle");
+const isObstacleBrushAvailable = computed(() => Boolean(detectedObstacles.value));
+const isObstacleBrushControlsVisible = computed(() => toolMode.value === "obstacle");
 const obstacleBrushSliderDiameter = computed(() =>
   clampNumber(
     parseFiniteNumber(obstacleBrushDiameterText.value) ?? obstacleBrushMinimumDiameter,
@@ -1645,13 +1823,14 @@ function createRangeProgressStyle(value: number, minimum: number, maximum: numbe
 const actionPanel = computed<GraphwarActionPanelModel>(() => ({
   activeToolHint: activeToolHint.value,
   collisionCheck: {
-    enabled: collisionCheckEnabled.value,
+    isEnabled: isCollisionCheckEnabled.value,
     reason: getCapabilityReason(graphwarCapabilities.value.collisionCheck.reason),
     state: graphwarCapabilities.value.collisionCheck.state,
   },
-  interactionDisabled: graphwarManagedModeEnabled.value,
-  liveClickPreviewEnabled: liveClickPreviewEnabled.value,
-  magnifierEnabled: magnifierEnabled.value,
+  canInteract: !isGraphwarManagedModeEnabled.value,
+  temporaryDisabledReason: managedLockReason.value,
+  isLiveClickPreviewEnabled: isLiveClickPreviewEnabled.value,
+  isMagnifierEnabled: isMagnifierEnabled.value,
   magnifierZoom: {
     inputMaximum: magnifierInputMaximumZoom,
     minimum: magnifierMinimumZoom,
@@ -1660,8 +1839,8 @@ const actionPanel = computed<GraphwarActionPanelModel>(() => ({
     sliderValue: magnifierSliderZoom.value,
     text: magnifierZoomText.value,
   },
-  obstacleBrushAvailable: obstacleBrushAvailable.value,
-  obstacleBrushControlsVisible: obstacleBrushControlsVisible.value,
+  isObstacleBrushAvailable: isObstacleBrushAvailable.value,
+  isObstacleBrushControlsVisible: isObstacleBrushControlsVisible.value,
   obstacleBrushDiameter: {
     inputMaximum: obstacleBrushInputMaximumDiameter,
     minimum: obstacleBrushMinimumDiameter,
@@ -1670,10 +1849,10 @@ const actionPanel = computed<GraphwarActionPanelModel>(() => ({
     sliderValue: obstacleBrushSliderDiameter.value,
     text: obstacleBrushDiameterText.value,
   },
-  obstacleBrushEraseEnabled: obstacleBrushEraseEnabled.value,
-  obstacleEditsDirty: obstacleEditsDirty.value,
+  isObstacleBrushEraseEnabled: isObstacleBrushEraseEnabled.value,
+  hasObstacleEdits: hasObstacleEdits.value,
   snapSoldiers: {
-    enabled: snapSoldiersEnabled.value,
+    isEnabled: isSnapSoldiersEnabled.value,
     reason: getCapabilityReason(graphwarCapabilities.value.snapSoldiers.reason),
     state: graphwarCapabilities.value.snapSoldiers.state,
   },
@@ -1700,11 +1879,11 @@ const oneClickClearSettingsMessage = computed(() => {
   if (toolWorkflowMode.value === "simulator") {
     return "";
   }
-  if (!effectiveStepGlitchModeEnabled.value && !parsedPathfindingWorkerCount.value.ok) {
+  if (!isEffectiveStepGlitchModeEnabled.value && !parsedPathfindingWorkerCount.value.ok) {
     return parsedPathfindingWorkerCount.value.message;
   }
   if (!effectiveOneClickClearTolerances.value) {
-    return deleteOptimizationEnabled.value && !parsedOneClickClearTolerances.value.ok
+    return isDeleteOptimizationEnabled.value && !parsedOneClickClearTolerances.value.ok
       ? parsedOneClickClearTolerances.value.message
       : parsedObstacleTolerances.value.ok
         ? ""
@@ -1713,16 +1892,16 @@ const oneClickClearSettingsMessage = computed(() => {
   return "";
 });
 const smartPathfindingPrerequisiteMessage = computed(() => {
-  if (activeObjectDetectionReady.value) {
+  if (isActiveObjectDetectionReady.value) {
     return "";
   }
-  if (graphwarAgentEnabled.value) {
+  if (isGraphwarAgentEnabled.value) {
     return locale.smartPathfinding.needDetection;
   }
   if (!imageUrl.value) {
     return getMissingStateImageMessage();
   }
-  if (!activeBoundsReady.value) {
+  if (!isActiveBoundsReady.value) {
     return locale.smartPathfinding.needBounds;
   }
   return locale.smartPathfinding.needDetection;
@@ -1741,15 +1920,19 @@ const secondOrderLaunchAngleText = computed(() =>
     ? ""
     : formatDoublePrecisionDecimal(secondOrderLaunchAngleDegrees.value),
 );
-/** 为二阶角度提示分离短展示文本和完整悬停文本，避免极小 double 撑宽页面。 */
+/** 正文使用原版两位角度，仅在发生舍入时附短原值；title 保留展开后的完整值。 */
 const secondOrderAngleHint = computed(() => {
   const angleDegrees = secondOrderLaunchAngleDegrees.value;
   if (toolWorkflowMode.value !== "solver" || angleDegrees === undefined) {
     return undefined;
   }
+  const roundedAngle = formatAngleDegree(angleDegrees);
   return {
-    text: locale.status.secondOrderAngleHint(angleDegrees.toString()),
-    title: locale.status.secondOrderAngleHint(secondOrderLaunchAngleText.value),
+    text: locale.status.secondOrderAngleHint(
+      roundedAngle,
+      Number(roundedAngle) !== angleDegrees ? angleDegrees.toString() : undefined,
+    ),
+    title: locale.status.secondOrderAngleHintTitle(secondOrderLaunchAngleText.value),
   };
 });
 
@@ -1772,10 +1955,39 @@ const trajectoryWarning = computed(() => {
   }
   return locale.status.trajectoryWarning.stopped.invalid;
 });
+const latestPathfindingDiagnostics = computed(() => {
+  const report = latestPathfindingDebugBundle.value?.report;
+  return report ? summarizeGraphwarPathfindingDiagnostics(report) : undefined;
+});
+const pathfindingDebugDiagnosticRows = computed(() => {
+  const diagnostics = latestPathfindingDiagnostics.value;
+  if (!diagnostics) {
+    return [];
+  }
+  return [
+    ...graphwarPathfindingDebugCounterKeys.map((key) => ({
+      key,
+      text: `${locale.ui.pathfinding.debugCounters[key].label}: ${diagnostics.counters[key]}`,
+      title: locale.ui.pathfinding.debugCounters[key].title,
+    })),
+    ...graphwarPathfindingDebugTimingKeys.map((key) => ({
+      key,
+      text: `${locale.ui.pathfinding.debugTimings[key].label}: ${formatDebugElapsedDuration(diagnostics.timings[key])}`,
+      title: locale.ui.pathfinding.debugTimings[key].title,
+    })),
+    ...(diagnostics.stepGlitch
+      ? graphwarStepGlitchDebugCounterKeys.map((key) => ({
+          key: `step-glitch-${key}`,
+          text: `${locale.ui.pathfinding.debugStepGlitchCounters[key].label}: ${diagnostics.stepGlitch?.[key] ?? 0}`,
+          title: locale.ui.pathfinding.debugStepGlitchCounters[key].title,
+        }))
+      : []),
+  ];
+});
 // 智能寻路面板只应消费展示 DTO；按钮 guard、运行状态和调试耗时仍由页面侧保持原语义。
 const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() => {
   const headerStatus = getSmartPathfindingHeaderStatus({
-    smartPathfindingEnabled: effectiveSmartPathfindingEnabled.value,
+    isSmartPathfindingEnabled: isSmartPathfindingEnabled.value,
     smartPathfindingSettingsMessage:
       toolWorkflowMode.value === "simulator" || parsedObstacleTolerances.value.ok
         ? ""
@@ -1788,21 +2000,27 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
   const semanticCapability = graphwarCapabilities.value.semanticControls;
   const oneClickClearCapability = graphwarCapabilities.value.oneClickClear;
   const managedModeCapability = graphwarCapabilities.value.managedMode;
+  const debugReport = latestPathfindingDebugBundle.value?.report;
   return {
+    canExportDebugReport: latestPathfindingDebugBundle.value?.sourceObstacleMask !== undefined,
+    debugDiagnosticRows: pathfindingDebugDiagnosticRows.value,
     debugTimingRows: smartPathfindingDebugTimingRows.value.map((entry, index) => ({
       indentLevel: entry.indentLevel,
       key: `${entry.stage}-${index}`,
-      text: entry.elapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
+      text: entry.isElapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
       title: entry.title,
     })),
-    debugTimingVisible: debugInfoEnabled.value,
+    hasResultCacheOnlyReport:
+      Boolean(debugReport?.attempts.length) &&
+      debugReport?.attempts.every((attempt) => attempt.source === "result-cache") === true,
+    isDebugTimingVisible: isDebugInfoEnabled.value,
     deleteOptimization: {
-      enabled: deleteOptimizationEnabled.value,
+      isEnabled: isDeleteOptimizationEnabled.value,
       reason: getCapabilityReason(semanticCapability.reason),
       state: semanticCapability.state,
     },
     friendlyFire: {
-      enabled: friendlyFireEnabled.value,
+      isEnabled: isFriendlyFireEnabled.value,
       reason: getCapabilityReason(semanticCapability.reason),
       state: semanticCapability.state,
     },
@@ -1812,14 +2030,14 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
       title: headerStatus.message,
     },
     managedFriendlyFireWarning:
-      graphwarManagedModeEnabled.value && friendlyFireEnabled.value
+      isGraphwarManagedModeEnabled.value && isFriendlyFireEnabled.value
         ? locale.ui.pathfinding.managedFriendlyFireWarning
         : "",
     managedMode: {
-      enabled: graphwarManagedModeEnabled.value,
+      isEnabled: isGraphwarManagedModeEnabled.value,
       reason: getCapabilityReason(managedModeCapability.reason),
       state: managedModeCapability.state,
-      title: graphwarManagedModeEnabled.value
+      title: isGraphwarManagedModeEnabled.value
         ? locale.ui.pathfinding.managedModeDisableTitle
         : locale.ui.pathfinding.managedModeTitle,
     },
@@ -1829,16 +2047,20 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
       title: locale.ui.pathfinding.oneClickClearTitle,
     },
     pathPlanning: {
-      enabled: pathPlanningEnabled.value,
+      isEnabled: isPathPlanningEnabled.value,
       reason: getCapabilityReason(graphwarCapabilities.value.pathPlanning.reason),
       state: graphwarCapabilities.value.pathPlanning.state,
     },
     routeMode: pathfindingRouteMode.value,
-    searchAnimation: {
-      enabled: searchAnimationEnabled.value,
+    resultCache: {
+      isEnabled: isPathfindingResultCacheEnabled.value,
       state: "normal",
     },
-    usesStepGlitchRouting: effectiveStepGlitchModeEnabled.value,
+    searchAnimation: {
+      isEnabled: isSearchAnimationEnabled.value,
+      state: "normal",
+    },
+    isUsingStepGlitchRouting: isEffectiveStepGlitchModeEnabled.value,
   };
 });
 
@@ -1859,7 +2081,8 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     minXText: minXText.value,
     minYText: minYText.value,
   },
-  interactionDisabled: graphwarManagedModeEnabled.value,
+  canInteract: !isGraphwarManagedModeEnabled.value,
+  temporaryDisabledReason: managedLockReason.value,
   pathfinding: {
     agentObstacleSimulationToleranceText: graphwarAgentObstacleSimulationToleranceText.value,
     agentRoutePlanningToleranceText: graphwarAgentRoutePlanningToleranceText.value,
@@ -1871,7 +2094,7 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     stepGlitchRoutePlanningToleranceText: stepGlitchRoutePlanningToleranceText.value,
     oneClickClearDeleteCheckRadiusMinimumPlanePixels,
     oneClickClearDeleteCheckRadiusText: oneClickClearDeleteCheckRadiusText.value,
-    oneClickClearDeleteCheckRadiusVisible: deleteOptimizationEnabled.value,
+    isOneClickClearDeleteCheckRadiusVisible: isDeleteOptimizationEnabled.value,
     workerCountText: pathfindingWorkerCountText.value,
   },
   recognition: {
@@ -1882,10 +2105,10 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     templateMatchingWorkerCountText: templateMatchingWorkerCountText.value,
   },
   simulator: {
-    parseDerivativeAsY: simulatorParseDerivativeAsY.value,
-    skipUnknownCharacters: simulatorSkipUnknownCharacters.value,
+    shouldParseDerivativeAsY: shouldSimulatorParseDerivativeAsY.value,
+    shouldSkipUnknownCharacters: shouldSimulatorSkipUnknownCharacters.value,
   },
-  solverSettingsVisible: toolWorkflowMode.value === "solver",
+  isSolverSettingsVisible: toolWorkflowMode.value === "solver",
 }));
 // 截图/SVG 坐标像素：只描述 Graphwar 源码可视圈，不参与真实命中。
 const soldierVisibleRadiusPixels = computed(() => getGraphwarPlaneRadiusPixels(GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2));
@@ -1894,7 +2117,7 @@ const displayedSoldierVisibleRadiusPixels = computed(
   () => soldierVisibleRadiusPixels.value ?? GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2,
 );
 const pathLineSegments = computed<GraphwarPathfindingLineSegment[]>(() =>
-  incumbentPreviewActive.value ? [] : createPathLineSegments(pathPixels.value),
+  createPathLineSegments(displayedPathPixels.value),
 );
 
 /** 按路径点圆半径截短线段，避免线条穿过点心。 */
@@ -2041,7 +2264,7 @@ const stageOverlay = computed(() => ({
     allowedTargetRect: allowedTargetRect.value,
     axisLines: stageCoordinateLines.value.axisLines,
     clipBoundsRect: boundsRect.value,
-    flashActive: boundsFlashActive.value,
+    flashActive: isBoundsFlashActive.value,
     firstPoint: boundsFirstPoint.value,
     gridLines: stageCoordinateLines.value.gridLines,
     previewRect: boundsPreviewRect.value,
@@ -2052,11 +2275,11 @@ const stageOverlay = computed(() => ({
     boxes: detectionBoxes.value,
     hoveredSoldierId: hoveredDetectedSoldierId.value,
     inactiveBoxes: inactiveDetectionBoxes.value,
-    oneClickClearHitFlashActive: oneClickClearHitFlashActive.value,
+    oneClickClearHitFlashActive: isOneClickClearHitFlashActive.value,
     oneClickClearHitFlashBoxes: oneClickClearHitFlashSoldiers.value,
-    soldierFlashActive: detectionSoldierFlashActive.value,
+    soldierFlashActive: isDetectionSoldierFlashActive.value,
     soldierFlashBoxes: detectedSoldiers.value,
-    visible: recognizedObjectOverlayVisible.value,
+    visible: isRecognizedObjectOverlayVisible.value,
   },
   liveClickPreview: {
     curvePoints: liveClickPreviewCurvePoints.value,
@@ -2066,28 +2289,28 @@ const stageOverlay = computed(() => ({
     points: liveClickPreviewPoints.value,
   },
   obstacles: {
-    brushEraseEnabled: obstacleBrushEraseEnabled.value,
+    brushEraseEnabled: isObstacleBrushEraseEnabled.value,
     brushPreview: obstacleBrushPreview.value,
-    pathfindingEdgesActive: pathfindingObstacleEdgesActive.value,
+    pathfindingEdgesActive: isPathfindingObstacleEdgesActive.value,
     routeEdgePath: smartPathfindingObstacleRouteEdgePath.value,
     routeFillPath: smartPathfindingObstacleRouteFillPath.value,
     simulationEdgePath: smartPathfindingObstacleSimulationEdgePath.value,
     simulationFillPath: smartPathfindingObstacleSimulationFillPath.value,
-    visible: recognizedObjectOverlayVisible.value,
+    visible: isRecognizedObjectOverlayVisible.value,
     visibleEdgePath: visibleObstacleEdgePath.value,
     visibleFillPath: visibleObstacleFillPath.value,
   },
   path: {
-    hoveredPointIndex: hoveredPathPointIndex.value,
+    hoveredPointIndex: hasIncumbentPreviewPath.value ? undefined : hoveredPathPointIndex.value,
     lineSegments: pathLineSegments.value,
-    points: incumbentPreviewActive.value ? [] : pathPixels.value,
+    points: displayedPathPixels.value,
     selfLabel: locale.ui.point.svgSelfLabel,
     selectionRadius: displayedSoldierVisibleRadiusPixels.value,
   },
   pathfinding: {
     blockedPoint: smartPathfindingBlockedPoint.value,
     blockedSegment: smartPathfindingBlockedSegment.value,
-    inProgress: smartPathfindingInProgress.value,
+    inProgress: isSmartPathfindingInProgress.value,
     optimizationPreviewPoint: pathfindingOptimizationPreviewPoint.value,
     // 搜索动画只应表达“正在优化这个点”，沿用路径点可视圈，不引入单独预览半径。
     optimizationPreviewRadius: displayedSoldierVisibleRadiusPixels.value,
@@ -2098,7 +2321,8 @@ const stageOverlay = computed(() => ({
     previewPoints: smartPathfindingPreviewPoints.value,
   },
   trajectory: {
-    curvePoints: plottedCurvePoints.value,
+    // 新 incumbent 的控制点先上屏；上一条完整曲线保留到匹配轨迹原子发布。
+    curvePoints: graphwarAgentFunctionDrawPlayback.curvePoints.value ?? plottedCurvePoints.value,
     strokeColor: trajectoryStrokeColor.value,
   },
   viewport: {
@@ -2108,7 +2332,7 @@ const stageOverlay = computed(() => ({
 }));
 const magnifierStyle = computed(() => {
   const point = magnifierPoint.value;
-  if (!magnifierEnabled.value || !imageUrl.value || !point) {
+  if (!isMagnifierEnabled.value || !imageUrl.value || !point) {
     return {};
   }
 
@@ -2125,7 +2349,7 @@ const magnifierStyle = computed(() => {
 });
 const magnifierContentStyle = computed(() => {
   const point = magnifierPoint.value;
-  if (!magnifierEnabled.value || !imageUrl.value || !point) {
+  if (!isMagnifierEnabled.value || !imageUrl.value || !point) {
     return {};
   }
 
@@ -2148,21 +2372,24 @@ const resultPanel = computed(() => {
     agentFireButtonText: graphwarAgentFireButtonText.value,
     agentFireReason: getCapabilityReason(graphwarCapabilities.value.agentFire.reason),
     agentFireState: graphwarCapabilities.value.agentFire.state,
-    agentFireVisible: graphwarAgentEnabled.value,
+    isAgentFireVisible: isGraphwarAgentEnabled.value,
+    canEditPointCoordinates: !isIncumbentPreviewActive.value,
+    canInteract: !isGraphwarManagedModeEnabled.value,
+    temporaryDisabledReason: managedLockReason.value,
     canClearSimulatorInputs: canClearSimulatorInputs.value,
     canCopyFormula: canCopyFormula.value,
+    copyDisabledReason: undefined,
     calculationMessage: calculationMessage.value,
-    calculationMessageVisible:
+    isCalculationMessageVisible:
       Boolean(calculationMessage.value) && (toolWorkflowMode.value === "simulator" || !solverResult),
     copyButtonText: copyButtonText.value,
     equationPrefix: equationModes.value.find((mode) => mode.value === equationMode.value)?.formulaPrefix ?? "",
     fractionConversionWarning:
-      fractionOutputEnabled.value && solverResult && !generatedFormulaConversion.value.fullyConverted
+      isFractionOutputEnabled.value && solverResult && !generatedFormulaConversion.value.fullyConverted
         ? locale.ui.result.fractionConversionIncomplete
         : undefined,
-    fractionOutputEnabled: fractionOutputEnabled.value,
-    interactionDisabled: graphwarManagedModeEnabled.value,
-    pointRows: incumbentPreviewActive.value ? [] : createResultPanelPointRows(),
+    isFractionOutputEnabled: isFractionOutputEnabled.value,
+    pointRows: createResultPanelPointRows(),
     pathQualityWarning:
       pathError === undefined || pathError <= graphwarToolDefaults.formulaPathQualityTargetPlanePixels
         ? ""
@@ -2170,13 +2397,13 @@ const resultPanel = computed(() => {
           ? locale.status.trajectoryWarning.pathQuality(pathError.toFixed(2))
           : locale.status.trajectoryWarning.pathQualityUnreached,
     secondOrderAngleHint: secondOrderAngleHint.value,
-    showSimulatorLaunchAngleInput: toolWorkflowMode.value === "simulator" && equationMode.value === "ddy",
+    isSimulatorLaunchAngleInputVisible: toolWorkflowMode.value === "simulator" && equationMode.value === "ddy",
     simulatorFormulaText: simulatorFormulaText.value,
     simulatorLaunchAngleText: simulatorLaunchAngleText.value,
     solverExpression: generatedFormulaOutput.value,
-    solverResultVisible: toolWorkflowMode.value === "solver" && !!solverResult,
+    isSolverResultVisible: toolWorkflowMode.value === "solver" && !!solverResult,
     trajectoryWarning: trajectoryWarning.value,
-    targetHitWarning: formulaTargetMissed.value ? locale.status.trajectoryWarning.targetMissed : "",
+    targetHitWarning: hasFormulaTargetMissWarning.value ? locale.status.trajectoryWarning.targetMissed : "",
     workflowMode: toolWorkflowMode.value,
   };
 });
@@ -2184,10 +2411,10 @@ const screenshotImageStatusText = computed(
   () =>
     imageStatus.value ||
     imageName.value ||
-    (graphwarAgentEnabled.value ? locale.status.agent.defaultStatus : locale.status.image.defaultStatus),
+    (isGraphwarAgentEnabled.value ? locale.status.agent.defaultStatus : locale.status.image.defaultStatus),
 );
 const stepGlitchAgentRecommendation = computed(() =>
-  toolWorkflowMode.value === "solver" && effectiveStepGlitchModeEnabled.value && !graphwarAgentEnabled.value
+  toolWorkflowMode.value === "solver" && isEffectiveStepGlitchModeEnabled.value && !isGraphwarAgentEnabled.value
     ? locale.ui.screenshot.stepGlitchAgentRecommendation(locale.ui.detection.agent.toggle)
     : "",
 );
@@ -2238,18 +2465,18 @@ const screenshotStatusWarning = computed(() => {
 });
 // 截图面板只应消费展示 DTO；DOM refs 和舞台交互语义仍由页面侧工作流持有。
 const screenshotPanel = computed<GraphwarScreenshotPanelModel>(() => ({
-  busyOverlayVisible: detectionInProgress.value,
+  busyOverlayVisible: isDetectionInProgress.value,
   headerStatus: screenshotHeaderStatus.value,
   imageStatusText: screenshotImageStatusText.value,
   imageUrl: imageUrl.value,
   magnifier: {
     contentStyle: magnifierContentStyle.value,
     style: magnifierStyle.value,
-    visible: magnifierEnabled.value && Boolean(imageUrl.value) && Boolean(magnifierPoint.value),
+    visible: isMagnifierEnabled.value && Boolean(imageUrl.value) && Boolean(magnifierPoint.value),
   },
   stage: {
     empty: !imageUrl.value,
-    emptyPlaceholder: graphwarAgentEnabled.value
+    emptyPlaceholder: isGraphwarAgentEnabled.value
       ? locale.ui.screenshot.agentPlaceholder
       : locale.ui.screenshot.placeholder,
     magnifierClipPathId: "graphwar-killer-magnifier-obstacle-brush-clip",
@@ -2272,28 +2499,35 @@ function setScreenshotImageElement(element: HTMLImageElement | undefined) {
 
 /** 将路径点转换成结果面板需要的编号和坐标文本。 */
 function createResultPanelPointRows() {
-  return mappedPathPoints.value.map((_, index) => {
+  const previewPath = incumbentPreviewPathPixels.value;
+  const currentBounds = parsedBounds.value;
+  const mappedPoints = previewPath
+    ? currentBounds.ok
+      ? previewPath.map((point) => imageToGraphPoint(point, currentBounds.bounds, boundsRect.value))
+      : []
+    : mappedPathPoints.value;
+  return mappedPoints.map((point, index) => {
     const label = index === 0 ? locale.ui.point.selfLabel : locale.ui.point.pathLabel(index);
     return {
       index,
       label,
       x: {
         ariaLabel: locale.ui.point.coordinateAriaLabel(label, "x"),
-        text: getPathPointCoordinateText(index, "x"),
+        text: previewPath ? formatDoublePrecisionDecimal(point.x) : getPathPointCoordinateText(index, "x"),
         title: locale.ui.point.coordinateTitle(label, "x"),
       },
       y: {
         ariaLabel: locale.ui.point.coordinateAriaLabel(label, "y"),
-        text: getPathPointCoordinateText(index, "y"),
+        text: previewPath ? formatDoublePrecisionDecimal(point.y) : getPathPointCoordinateText(index, "y"),
         title: locale.ui.point.coordinateTitle(label, "y"),
       },
     };
   });
 }
 
-/** 托管锁定截图来源时忽略全局粘贴，避免绕过已禁用的上传入口。 */
+/** Agent 锁定截图来源时忽略全局粘贴，避免绕过已隐藏的截图输入入口。 */
 function handleWindowPaste(event: ClipboardEvent) {
-  if (!graphwarManagedModeEnabled.value) {
+  if (canAcceptScreenshotInput.value) {
     handlePaste(event);
   }
 }
@@ -2306,7 +2540,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("paste", handleWindowPaste);
   document.removeEventListener("visibilitychange", handleGraphwarManagedVisibilityChange);
+  graphwarAgentConnectionGeneration += 1;
+  abortGraphwarAgentManualFireRequest();
   graphwarAgentClearFailureExportQueue.clearPending();
+  graphwarAgentTurnCountdown.dispose();
+  clearGraphwarAgentFunctionDrawPlayback();
   stopGraphwarManagedMode(false);
   detectionWorkflow.dispose();
   graphwarPathfindingRunner.close();
@@ -2330,30 +2568,35 @@ watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTop
   scheduleGraphwarObjectDetection();
 });
 
-watch(debugInfoEnabled, (enabled) => {
-  if (!enabled) {
+watch(isDebugInfoEnabled, (isEnabled) => {
+  if (!isEnabled) {
     graphwarAgentClearFailureExportQueue.clearPending();
+    pathfindingDebugCaptureGeneration += 1;
+    activePathfindingDebugCapture = undefined;
+    pathfindingDebugCapturesByTimings.clear();
+    latestPathfindingDebugBundle.value = undefined;
+    clearSmartPathfindingDebugTimings();
   }
 });
 
 watch(
   detectedSoldiers,
   (soldiers) => {
-    if (snapSoldiersPreference.value === undefined && soldiers.length > 0) {
-      snapSoldiersPreference.value = true;
+    if (shouldSnapSoldiers.value === undefined && soldiers.length > 0) {
+      shouldSnapSoldiers.value = true;
     }
   },
   { deep: false },
 );
 
 watch(detectedObstacles, (obstacles) => {
-  if (collisionCheckPreference.value === undefined && obstacles) {
-    collisionCheckPreference.value = true;
+  if (shouldCheckCollisions.value === undefined && obstacles) {
+    shouldCheckCollisions.value = true;
   }
 });
 
 watch([formulaOutputDecimalPlaces], () => {
-  if (graphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver") {
+  if (isGraphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver") {
     return;
   }
   cancelSmartPathfinding(false);
@@ -2361,7 +2604,7 @@ watch([formulaOutputDecimalPlaces], () => {
 });
 
 watch([algorithmMode, solverEquationMode], () => {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     // 托管已在启动新 scene 前同步作废旧搜索，不能让 Vue 的延迟 watcher 再取消刚启动的任务。
     return;
   }
@@ -2369,8 +2612,8 @@ watch([algorithmMode, solverEquationMode], () => {
   cancelSmartPathfinding(false);
 });
 
-watch([stepOverflowProtectionEnabled], () => {
-  if (graphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
+watch([isStepOverflowProtectionEnabled], () => {
+  if (isGraphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
     return;
   }
   cancelSmartPathfinding(false);
@@ -2378,25 +2621,25 @@ watch([stepOverflowProtectionEnabled], () => {
 });
 
 watch([activeObstacleSimulationToleranceText], () => {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
-  if (collisionCheckEnabled.value || activePathfindingTask) {
+  if (isCollisionCheckEnabled.value || activePathfindingTask) {
     cancelSmartPathfinding(false);
     clearSmartPathfindingStatus();
   }
 });
 
 watch(steepnessText, () => {
-  if (graphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver" || !formulaUsesSteepness.value) {
+  if (isGraphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver" || !isFormulaUsingSteepness.value) {
     return;
   }
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
 });
 
-watch(effectiveStepGlitchModeEnabled, () => {
-  if (graphwarManagedModeEnabled.value) {
+watch(isEffectiveStepGlitchModeEnabled, () => {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   cancelSmartPathfinding(false);
@@ -2404,13 +2647,13 @@ watch(effectiveStepGlitchModeEnabled, () => {
 });
 
 watch(detectedObstacles, () => {
-  if (toolMode.value === "obstacle" && !obstacleBrushAvailable.value) {
+  if (toolMode.value === "obstacle" && !isObstacleBrushAvailable.value) {
     setToolMode("path");
   }
 });
 
 watch([activeRoutePlanningToleranceText, minXText, maxXText, minYText, maxYText], () => {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   // 这些输入会改变几何搜索、worker 并行或公式边界语义，页面 cache 和 worker cache 必须一起失效。
@@ -2421,9 +2664,9 @@ watch([activeRoutePlanningToleranceText, minXText, maxXText, minYText, maxYText]
 
 watch(pathfindingWorkerCountText, () => {
   if (
-    graphwarManagedModeEnabled.value ||
+    isGraphwarManagedModeEnabled.value ||
     activePathfindingTask?.kind !== "one-click" ||
-    !activePathfindingTask.usesDagWorker
+    !activePathfindingTask.shouldUseDagWorker
   ) {
     return;
   }
@@ -2432,7 +2675,7 @@ watch(pathfindingWorkerCountText, () => {
 });
 
 watch(oneClickClearDeleteCheckRadiusText, () => {
-  if (!deleteOptimizationEnabled.value) {
+  if (!isDeleteOptimizationEnabled.value) {
     return;
   }
   if (activePathfindingTask?.kind === "one-click") {
@@ -2443,24 +2686,26 @@ watch(oneClickClearDeleteCheckRadiusText, () => {
 });
 
 /** 三种游戏模式始终可进入。 */
-function isEquationModeDisabled() {
-  return false;
+function isEquationModeEnabled() {
+  return true;
 }
 
 /** 切换公式生成/模拟器工作流，并清理只属于旧工作流的临时状态。 */
 function setToolWorkflowMode(mode: ToolWorkflowMode) {
-  if (graphwarManagedModeEnabled.value || toolWorkflowMode.value === mode) {
+  if (isGraphwarManagedModeEnabled.value || toolWorkflowMode.value === mode) {
     return;
   }
 
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
   if (mode === "simulator") {
-    const solverResult = formulaResult.value;
-    if (!simulatorFormulaText.value.trim() && solverResult) {
-      simulatorEquationMode.value = solverEquationMode.value;
-      simulatorFormulaText.value = generatedFormulaOutput.value;
-      simulatorLaunchAngleText.value = secondOrderLaunchAngleText.value;
+    if (!simulatorFormulaText.value.trim() && !simulatorLaunchAngleText.value.trim()) {
+      simulatorEquationMode.value =
+        formulaResultEquationMode.value === undefined ? solverEquationMode.value : formulaResultEquationMode.value;
+      if (formulaResult.value) {
+        simulatorFormulaText.value = generatedFormulaOutput.value;
+        simulatorLaunchAngleText.value = secondOrderLaunchAngleText.value;
+      }
     }
     if (simulatorPathPixels.value.length === 0 && solverPathPixels.value.length > 0) {
       simulatorPathPixels.value = [solverPathPixels.value[0]];
@@ -2474,7 +2719,7 @@ function setToolWorkflowMode(mode: ToolWorkflowMode) {
 
 /** 切换公式解释模式；各模式独立保留自己的算法 profile。 */
 function setEquationMode(mode: EquationMode) {
-  if (graphwarManagedModeEnabled.value || equationMode.value === mode) {
+  if (isGraphwarManagedModeEnabled.value || equationMode.value === mode) {
     return;
   }
   clearSmartPathfindingStatus();
@@ -2483,7 +2728,7 @@ function setEquationMode(mode: EquationMode) {
 
 /** 更新当前游戏模式的公式算法，不影响其他方程 profile。 */
 function setAlgorithmMode(mode: AlgorithmMode) {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   algorithmMode.value = mode;
@@ -2491,10 +2736,10 @@ function setAlgorithmMode(mode: AlgorithmMode) {
 
 /** 切换当前游戏模式的邪道偏好，不替用户改写工作流、游戏模式或算法。 */
 function toggleStepGlitchMode() {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
-  stepGlitchModeEnabled.value = !stepGlitchModeEnabled.value;
+  isStepGlitchModeEnabled.value = !isStepGlitchModeEnabled.value;
 }
 
 /** 清理依赖旧场景的业务状态；边界矩形数值只保留为参考，需要由新场景重新确认。 */
@@ -2517,7 +2762,7 @@ function handleLoadedScreenshot() {
     return;
   }
   graphwarAgentAppliedSnapshot = undefined;
-  if (autoDetectionEnabled.value) {
+  if (isAutoDetectionEnabled.value) {
     void runAutomaticGraphwarDetection();
   }
 }
@@ -2529,7 +2774,7 @@ function clearDetections() {
 
 /** 清除当前截图的有效边界标记；boundsRect 数值保留给舞台显示和用户参考。 */
 function clearActiveBounds() {
-  boundsReady.value = false;
+  isBoundsReady.value = false;
 }
 
 /** 判断异步检测回调是否仍属于当前运行。 */
@@ -2538,16 +2783,13 @@ function isActiveDetectionRun(runId: number) {
 }
 
 /** 取消当前检测任务，并按调用场景决定是否显示取消提示。 */
-function cancelDetection(showStatus: boolean) {
-  return detectionWorkflow.cancel(showStatus);
+function cancelDetection(shouldShowStatus: boolean) {
+  return detectionWorkflow.cancel(shouldShowStatus);
 }
 
 /** 展开或折叠高级设置面板。 */
 function toggleAdvancedSettings() {
-  if (graphwarManagedModeEnabled.value) {
-    return;
-  }
-  advancedSettingsVisible.value = !advancedSettingsVisible.value;
+  isAdvancedSettingsVisible.value = !isAdvancedSettingsVisible.value;
 }
 
 /** 设置检测状态主文案，并清掉上一轮警告详情。 */
@@ -2558,7 +2800,7 @@ function setDetectionStatus(message: string, kind: DetectionStatusKind) {
 /** 写入已确认的截图边界；边界变化会让所有基于旧矩形的寻路缓存失效。 */
 function applyDetectedBounds(edgeRect: BoundsRect) {
   boundsRect.value = edgeRect;
-  boundsReady.value = true;
+  isBoundsReady.value = true;
   invalidatePathfindingCaches();
   boundsFirstPoint.value = undefined;
   pointerPreviewPoint.value = undefined;
@@ -2569,14 +2811,14 @@ function getDetectObjectsTitle() {
   if (!imageUrl.value) {
     return getMissingStateImageMessage();
   }
-  return activeBoundsReady.value
+  return isActiveBoundsReady.value
     ? locale.ui.detection.detectObjectsTitle
     : locale.ui.detection.detectObjectsNeedBoundsTitle;
 }
 
 /** 根据当前数据源返回缺失局面图片的提示。 */
 function getMissingStateImageMessage() {
-  return graphwarAgentEnabled.value ? locale.status.agent.readFirst : locale.status.detection.uploadFirst;
+  return isGraphwarAgentEnabled.value ? locale.status.agent.readFirst : locale.status.detection.uploadFirst;
 }
 
 /** 有效截图边界至少需要能形成可见区域，和手动画框提交阈值保持一致。 */
@@ -2586,7 +2828,7 @@ function isUsableBoundsRect(rect: BoundsRect) {
 
 /** 延迟重新识别，合并连续设置变化，避免每次输入都立即读像素。 */
 function scheduleGraphwarObjectDetection() {
-  if (graphwarAgentEnabled.value) {
+  if (isGraphwarAgentEnabled.value) {
     return;
   }
   detectionWorkflow.schedule();
@@ -2594,7 +2836,7 @@ function scheduleGraphwarObjectDetection() {
 
 /** 完整自动识别入口：只处理截图像素；Agent 读取保持手动触发。 */
 async function runAutomaticGraphwarDetection() {
-  if (graphwarAgentEnabled.value) {
+  if (isGraphwarAgentEnabled.value) {
     return;
   }
 
@@ -2603,7 +2845,7 @@ async function runAutomaticGraphwarDetection() {
 
 /** 当前边界内的自动刷新入口；Agent 读取保持手动触发。 */
 async function runAutomaticGraphwarObjectsInCurrentBounds() {
-  if (graphwarAgentEnabled.value) {
+  if (isGraphwarAgentEnabled.value) {
     return;
   }
 
@@ -2612,7 +2854,7 @@ async function runAutomaticGraphwarObjectsInCurrentBounds() {
 
 /** 使用 Canvas 像素自动检测 Graphwar 坐标系边界，再按该边界识别士兵和障碍。 */
 async function detectGraphwarObjects(trigger: GraphwarDetectionRunTrigger = "manual") {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   await detectionWorkflow.detect(trigger);
@@ -2620,7 +2862,7 @@ async function detectGraphwarObjects(trigger: GraphwarDetectionRunTrigger = "man
 
 /** 只识别 Graphwar 坐标系边界，并清除旧边界下的士兵和障碍结果。 */
 async function detectGraphwarBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   await detectionWorkflow.detectBounds(trigger);
@@ -2628,7 +2870,7 @@ async function detectGraphwarBounds(trigger: GraphwarDetectionRunTrigger = "manu
 
 /** 在当前手动/自动边界内重新识别对象，不重新推断坐标系区域。 */
 async function detectGraphwarObjectsInCurrentBounds(trigger: GraphwarDetectionRunTrigger = "manual") {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   await detectionWorkflow.detectInCurrentBounds(trigger);
@@ -2649,27 +2891,37 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
   if (!requestBaseUrl) {
     return;
   }
+  // A manual snapshot is an explicit presentation boundary even when the Agent still reports the same turn.
+  clearGraphwarAgentFunctionDrawPlayback();
   graphwarAgentDebugFiles.clear();
   const requestGeneration = ++graphwarAgentTransferGeneration;
   // 同一代次、来源和规范化 URL 必须全部匹配，响应才仍属于当前页面场景。
-  const requestIsCurrent = () =>
+  const isRequestCurrent = () =>
     requestGeneration === graphwarAgentTransferGeneration &&
-    !graphwarManagedModeEnabled.value &&
-    graphwarAgentEnabled.value &&
+    !isGraphwarManagedModeEnabled.value &&
+    isGraphwarAgentEnabled.value &&
     normalizedGraphwarAgentBaseUrl.value === requestBaseUrl;
-  graphwarAgentReadInProgress.value = true;
+  isGraphwarAgentReadInProgress.value = true;
   cancelDetection(false);
   imageStatus.value = locale.status.agent.reading;
   setDetectionStatus(locale.status.agent.reading, "warning");
   try {
-    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl);
+    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl, {
+      onStateRead: (state) => isRequestCurrent() && handleGraphwarAgentLiveState(state),
+      token: graphwarAgentTokenText.value,
+    });
     // Agent 响应只属于发起时的来源和规范化地址；迟到响应不能覆盖用户刚切换的新场景。
-    if (!requestIsCurrent()) {
+    if (!isRequestCurrent()) {
+      return;
+    }
+    if (!snapshot || !graphwarAgentObservationOrder.isCurrent(snapshot.state)) {
+      imageStatus.value = "";
+      setDetectionStatus("", "info");
       return;
     }
     applyGraphwarAgentSnapshot(snapshot, snapshot.localCurrentTurnSoldierPoint);
   } catch (error) {
-    if (!requestIsCurrent()) {
+    if (!isRequestCurrent()) {
       return;
     }
     const failedMessage = locale.status.agent.failed(createGraphwarAgentFailureReason(locale, error));
@@ -2677,7 +2929,7 @@ async function readGraphwarAgent(trigger: GraphwarDetectionRunTrigger = "manual"
     setDetectionStatus(failedMessage, "error");
   } finally {
     if (requestGeneration === graphwarAgentTransferGeneration) {
-      graphwarAgentReadInProgress.value = false;
+      isGraphwarAgentReadInProgress.value = false;
     }
   }
 }
@@ -2688,11 +2940,11 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
   if (
     !(input instanceof HTMLInputElement) ||
     !input.files?.[0] ||
-    !debugInfoEnabled.value ||
-    !graphwarAgentEnabled.value ||
-    graphwarManagedModeEnabled.value ||
-    graphwarAgentReadInProgress.value ||
-    graphwarAgentExportInProgress.value
+    !isDebugInfoEnabled.value ||
+    !isGraphwarAgentEnabled.value ||
+    isGraphwarManagedModeEnabled.value ||
+    isGraphwarAgentReadInProgress.value ||
+    isGraphwarAgentExportInProgress.value
   ) {
     return;
   }
@@ -2700,12 +2952,12 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
   const file = input.files[0];
   input.value = "";
   const requestGeneration = ++graphwarAgentTransferGeneration;
-  const requestIsCurrent = () =>
+  const isRequestCurrent = () =>
     requestGeneration === graphwarAgentTransferGeneration &&
-    debugInfoEnabled.value &&
-    graphwarAgentEnabled.value &&
-    !graphwarManagedModeEnabled.value;
-  graphwarAgentReadInProgress.value = true;
+    isDebugInfoEnabled.value &&
+    isGraphwarAgentEnabled.value &&
+    !isGraphwarManagedModeEnabled.value;
+  isGraphwarAgentReadInProgress.value = true;
   cancelDetection(false);
   imageStatus.value = locale.status.agent.readingFile;
   setDetectionStatus(locale.status.agent.readingFile, "warning");
@@ -2719,17 +2971,17 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
       } catch (error) {
         throw new GraphwarAgentClientError("incompatible", "state-file-invalid-json", undefined, error);
       }
-      if (!requestIsCurrent()) {
+      if (!isRequestCurrent()) {
         return;
       }
       const state = parseGraphwarAgentState(value);
-      if (!state.available || state.phase === "inactive") {
-        throw new GraphwarAgentClientError("unavailable", state.available ? "game-not-active" : state.reason);
+      if (!state.isAvailable) {
+        throw new GraphwarAgentClientError("unavailable", state.reason);
       }
       pair = graphwarAgentDebugFiles.setState(state);
     } else {
       const buffer = await file.arrayBuffer();
-      if (!requestIsCurrent()) {
+      if (!isRequestCurrent()) {
         return;
       }
       pair = graphwarAgentDebugFiles.setObstacleBuffer(buffer);
@@ -2747,13 +2999,13 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
       pair.state,
       parseGraphwarAgentWorldObstacleMask(pair.obstacleBuffer, pair.state),
     );
-    if (requestIsCurrent()) {
+    if (isRequestCurrent()) {
       applyGraphwarAgentSnapshot(snapshot, snapshot.localCurrentTurnSoldierPoint);
       // 一对文件只消费一次；下一次读取从空配对开始，避免新文件与上一局缓存混用。
       graphwarAgentDebugFiles.clear();
     }
   } catch (error) {
-    if (!requestIsCurrent()) {
+    if (!isRequestCurrent()) {
       return;
     }
     const failedMessage = locale.status.agent.fileFailed(
@@ -2767,13 +3019,13 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
     setDetectionStatus(failedMessage, "error");
   } finally {
     if (requestGeneration === graphwarAgentTransferGeneration) {
-      graphwarAgentReadInProgress.value = false;
+      isGraphwarAgentReadInProgress.value = false;
     }
   }
 }
 
-/** 使用短生命周期对象 URL 下载文件，避免大体积障碍掩码长期占用浏览器内存。 */
-function downloadGraphwarAgentDebugFile(file: GraphwarAgentDebugDownload) {
+/** 使用短生命周期对象 URL 下载文件，避免大体积调试数据长期占用浏览器内存。 */
+function downloadGraphwarDebugFile(file: GraphwarAgentDebugDownload) {
   const url = URL.createObjectURL(new Blob([file.content], { type: file.mediaType }));
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -2795,8 +3047,213 @@ function downloadGraphwarAgentDebugSceneFiles(
   failureKind?: GraphwarClearFailureExportKind,
 ) {
   const downloads = createGraphwarAgentDebugDownloads(state, worldObstacleMask, failureKind ? { failureKind } : {});
-  downloadGraphwarAgentDebugFile(downloads.state);
-  downloadGraphwarAgentDebugFile(downloads.obstacle);
+  downloadGraphwarDebugFile(downloads.state);
+  downloadGraphwarDebugFile(downloads.obstacle);
+}
+
+/** Starts a debug-only capture before task preflight without allocating anything in normal mode. */
+function beginPathfindingDebugCapture(
+  taskType: GraphwarPathfindingDebugCapture["taskType"],
+): GraphwarActivePathfindingDebugCapture | undefined {
+  if (!isDebugInfoEnabled.value || !parsedBounds.value.ok) {
+    return undefined;
+  }
+
+  const agentSnapshot = isGraphwarAgentEnabled.value ? graphwarAgentAppliedSnapshot : undefined;
+  const sceneState =
+    agentSnapshot?.state ??
+    ({
+      bounds: { ...parsedBounds.value.bounds },
+      boundsRect: { ...boundsRect.value },
+      equationMode: equationMode.value,
+      isViewMirrored: false,
+      mask: {
+        blockedValue: 1,
+        emptyValue: 0,
+        height: GRAPHWAR_PLANE_HEIGHT,
+        width: GRAPHWAR_PLANE_LENGTH,
+      },
+      ...(pathPixels.value[0] ? { pathOrigin: { ...pathPixels.value[0] } } : {}),
+      schemaVersion: 1,
+      soldiers: detectedSoldiers.value.map((soldier) => ({ ...soldier })),
+      source: "screenshot",
+    } satisfies GraphwarPathfindingScreenshotSceneState);
+  const tolerances = parsedObstacleTolerances.value.ok
+    ? {
+        routeBoundaryInsetPlanePixels: parsedObstacleTolerances.value.routeBoundaryInsetPlanePixels,
+        routePlanningTolerancePlanePixels: parsedObstacleTolerances.value.routePlanningTolerancePlanePixels,
+        simulationBoundaryInsetPlanePixels: parsedObstacleTolerances.value.simulationBoundaryInsetPlanePixels,
+        simulationTolerancePlanePixels: parsedObstacleTolerances.value.simulationTolerancePlanePixels,
+      }
+    : undefined;
+  const generation = ++pathfindingDebugCaptureGeneration;
+  const capture: GraphwarActivePathfindingDebugCapture = {
+    capture: createGraphwarPathfindingDebugCapture({
+      path: pathPixels.value,
+      sceneSource: agentSnapshot ? "agent" : "screenshot",
+      sceneState,
+      settings: {
+        formula: createGraphwarPathfindingDebugFormulaSettings(createPathTrajectoryFormulaSettings()),
+        isDeleteOptimizationEnabled: isDeleteOptimizationEnabled.value,
+        isFriendlyFireEnabled: isFriendlyFireEnabled.value,
+        isResultCacheEnabled: isPathfindingResultCacheEnabled.value,
+        isSearchAnimationEnabled: isSearchAnimationEnabled.value,
+        ...(parsedPathfindingWorkerCount.value.ok
+          ? { pathfindingWorkerCount: parsedPathfindingWorkerCount.value.workerCount }
+          : {}),
+        routeMode: getPathfindingRouteMode(),
+        ...(tolerances ? { tolerances } : {}),
+      },
+      sourceObstacleMask: agentSnapshot?.worldObstacleMask ?? detectedObstacles.value?.mask,
+      startedAtMs: nowMs(),
+      taskType,
+    }),
+    generation,
+  };
+  activePathfindingDebugCapture = capture;
+  return capture;
+}
+
+/** Binds the workflow-owned timing array to the capture that was active at synchronous task start. */
+function registerPathfindingDebugRun(timings: SmartPathfindingDebugTimingEntry[]) {
+  if (activePathfindingDebugCapture) {
+    pathfindingDebugCapturesByTimings.set(timings, activePathfindingDebugCapture);
+  }
+}
+
+/** Records one mask-free attempt in the task that owns the supplied timing array. */
+function recordPathfindingDebugAttempt(
+  attempt: GraphwarPathfindingDebugAttempt,
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
+) {
+  const capture = timings ? pathfindingDebugCapturesByTimings.get(timings) : undefined;
+  capture?.capture.attempts.push(attempt);
+}
+
+/** Stores a smart-pathfinding outcome without publishing an incomplete report. */
+function setPathfindingDebugOutcome(
+  outcome: GraphwarPathfindingDebugOutcome,
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
+) {
+  const capture = timings ? pathfindingDebugCapturesByTimings.get(timings) : undefined;
+  if (capture) {
+    capture.outcome = outcome;
+  }
+}
+
+/** Finalizes page timings while keeping them attached to the task-local report capture. */
+function finishPathfindingDebugTimings(
+  startedAt: number,
+  timings: readonly SmartPathfindingDebugTimingEntry[],
+  completedAt?: number,
+) {
+  const capture = pathfindingDebugCapturesByTimings.get(timings);
+  const elapsedMs = (completedAt ?? nowMs()) - startedAt;
+  const finalTimings =
+    isDebugInfoEnabled.value && (!capture || capture.generation === pathfindingDebugCaptureGeneration)
+      ? finishSmartPathfindingDebugTimings(startedAt, timings, completedAt)
+      : createFinalSmartPathfindingDebugTimingEntries(timings, elapsedMs);
+  if (capture) {
+    capture.capture.pageTimings = finalTimings;
+  }
+  return finalTimings;
+}
+
+/** Maps the existing one-click-clear outcome protocol to the unified debug report outcome. */
+function setOneClickClearDebugOutcome(
+  capture: GraphwarActivePathfindingDebugCapture | undefined,
+  outcome: GraphwarOneClickClearRunOutcome,
+) {
+  if (!capture) {
+    return;
+  }
+  switch (outcome.kind) {
+    case "cancelled":
+      capture.outcome = { type: "cancelled" };
+      return;
+    case "complete":
+      capture.outcome = { type: "success" };
+      return;
+    case "preflight-failure":
+      capture.outcome = { reason: outcome.reason, type: "preflight-failure" };
+      return;
+    case "incomplete":
+      capture.outcome = { reason: outcome.kind, type: "failure" };
+      requestGraphwarAgentClearFailureExport(outcome.kind, undefined, capture);
+      return;
+    case "search-error":
+      capture.outcome = { type: "worker-exception" };
+      requestGraphwarAgentClearFailureExport(outcome.kind, undefined, capture);
+      return;
+    case "search-failure":
+      capture.outcome = { reason: outcome.reason, type: "failure" };
+      requestGraphwarAgentClearFailureExport(outcome.kind, undefined, capture);
+  }
+}
+
+/** Publishes only the newest completed task and queues any matching Agent failure export afterward. */
+function completePathfindingDebugCapture(capture: GraphwarActivePathfindingDebugCapture | undefined) {
+  if (!capture) {
+    return;
+  }
+  const completedAtMs = nowMs();
+  let capturedTimings: readonly SmartPathfindingDebugTimingEntry[] = [];
+  for (const [timings, registeredCapture] of pathfindingDebugCapturesByTimings) {
+    if (registeredCapture === capture) {
+      capturedTimings = timings;
+      pathfindingDebugCapturesByTimings.delete(timings);
+    }
+  }
+  if (!capture.capture.pageTimings) {
+    capture.capture.pageTimings =
+      capture.generation === pathfindingDebugCaptureGeneration && isDebugInfoEnabled.value
+        ? finishSmartPathfindingDebugTimings(capture.capture.startedAtMs, capturedTimings, completedAtMs)
+        : createFinalSmartPathfindingDebugTimingEntries(
+            capturedTimings,
+            Math.max(0, completedAtMs - capture.capture.startedAtMs),
+          );
+  }
+  if (activePathfindingDebugCapture === capture) {
+    activePathfindingDebugCapture = undefined;
+  }
+  if (capture.generation !== pathfindingDebugCaptureGeneration || !isDebugInfoEnabled.value) {
+    return;
+  }
+
+  const bundle = finishGraphwarPathfindingDebugCapture(
+    capture.capture,
+    capture.outcome ?? { type: "worker-exception" },
+    completedAtMs,
+  );
+  latestPathfindingDebugBundle.value = bundle;
+  if (capture.failureKind && bundle.sourceObstacleMask && "gameInstanceId" in bundle.sceneState) {
+    graphwarAgentClearFailureExportQueue.enqueue(capture.failureKind, {
+      report: bundle.report,
+      sceneState: bundle.sceneState,
+      sourceObstacleMask: bundle.sourceObstacleMask,
+    });
+  }
+}
+
+/** Downloads the state, original mask, and report frozen by the latest completed debug task. */
+function exportLatestPathfindingDebugReport() {
+  const bundle = latestPathfindingDebugBundle.value;
+  const sourceObstacleMask = bundle?.sourceObstacleMask;
+  if (!bundle || !sourceObstacleMask) {
+    return;
+  }
+  downloadGraphwarPathfindingDebugFiles({ ...bundle, sourceObstacleMask });
+}
+
+/** Downloads one timestamp-matched pathfinding report bundle in source-file order. */
+function downloadGraphwarPathfindingDebugFiles(
+  bundle: GraphwarPathfindingDebugBundle & { sourceObstacleMask: Uint8Array },
+  failureKind?: GraphwarClearFailureExportKind,
+) {
+  const downloads = createGraphwarPathfindingDebugDownloads(bundle, failureKind ? { failureKind } : {});
+  downloadGraphwarDebugFile(downloads.state);
+  downloadGraphwarDebugFile(downloads.obstacle);
+  downloadGraphwarDebugFile(downloads.debug);
 }
 
 /** 同步图片区和识别区的 Agent 导出反馈。 */
@@ -2807,7 +3264,7 @@ function setGraphwarAgentExportStatus(message: string, kind: DetectionStatusKind
 
 /** 实时读取 revision 一致快照，并导出调试导入控件可直接接受的文件对。 */
 async function exportGraphwarAgentDebugScene() {
-  if (!debugInfoEnabled.value || graphwarAgentReadInProgress.value || graphwarAgentExportInProgress.value) {
+  if (!isDebugInfoEnabled.value || isGraphwarAgentReadInProgress.value || isGraphwarAgentExportInProgress.value) {
     return;
   }
   const capability = graphwarCapabilities.value.agentExport;
@@ -2821,22 +3278,22 @@ async function exportGraphwarAgentDebugScene() {
   }
 
   const requestGeneration = ++graphwarAgentTransferGeneration;
-  const requestIsCurrent = () =>
+  const isRequestCurrent = () =>
     requestGeneration === graphwarAgentTransferGeneration &&
-    debugInfoEnabled.value &&
-    graphwarAgentEnabled.value &&
+    isDebugInfoEnabled.value &&
+    isGraphwarAgentEnabled.value &&
     normalizedGraphwarAgentBaseUrl.value === requestBaseUrl;
-  graphwarAgentManualExportInProgress.value = true;
+  isGraphwarAgentManualExportInProgress.value = true;
   setGraphwarAgentExportStatus(locale.status.agent.exporting, "warning");
   try {
-    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl);
-    if (!requestIsCurrent()) {
+    const snapshot = await readGraphwarAgentSnapshot(requestBaseUrl, { token: graphwarAgentTokenText.value });
+    if (!snapshot || !isRequestCurrent()) {
       return;
     }
     downloadGraphwarAgentDebugSceneFiles(snapshot.state, snapshot.worldObstacleMask);
     setGraphwarAgentExportStatus(locale.status.agent.exported, "success");
   } catch (error) {
-    if (!requestIsCurrent()) {
+    if (!isRequestCurrent()) {
       return;
     }
     setGraphwarAgentExportStatus(
@@ -2845,13 +3302,15 @@ async function exportGraphwarAgentDebugScene() {
     );
   } finally {
     if (requestGeneration === graphwarAgentTransferGeneration) {
-      graphwarAgentManualExportInProgress.value = false;
+      isGraphwarAgentManualExportInProgress.value = false;
     }
   }
 }
 
 /** 把同一 revision 的 Agent 视角原子写入页面，并以新发射点重建当前工作流路径。 */
 function applyGraphwarAgentSnapshot(snapshot: GraphwarAgentSnapshot, pathStart: PixelPoint | undefined) {
+  // Every authoritative viewport replacement is a presentation boundary, including debug-file imports.
+  clearGraphwarAgentFunctionDrawPlayback();
   graphwarAgentAppliedSnapshot = snapshot;
   graphwarAgentBaseUrlText.value = snapshot.baseUrl;
   // Agent 画布 URL 固定；每次重放仍需触发截图回调，统一清除上一权威场景的路径和临时选点。
@@ -2869,6 +3328,7 @@ function applyGraphwarAgentSnapshot(snapshot: GraphwarAgentSnapshot, pathStart: 
     gameInstanceId: snapshot.state.gameInstanceId,
     normalizedAgentUrl: normalizeGraphwarAgentBaseUrl(snapshot.baseUrl).toString(),
     source: "agent",
+    turnToken: snapshot.state.turnToken,
   };
   // 场景回调已经清空两种路径；只有权威发射者存在时才为当前工作流建立起点。
   if (pathStart) {
@@ -2876,6 +3336,214 @@ function applyGraphwarAgentSnapshot(snapshot: GraphwarAgentSnapshot, pathStart: 
   }
   toolMode.value = "path";
   imageStatus.value = "";
+}
+
+/** Applies accepted live state to every locally extrapolated Agent presentation. */
+function handleGraphwarAgentLiveState(state: GraphwarAgentState) {
+  if (!graphwarAgentObservationOrder.accept(state)) {
+    return false;
+  }
+  graphwarAgentTurnCountdown.update(state);
+  graphwarAgentFunctionDrawPlayback.update(state);
+  const pending = graphwarAgentPendingFunctionDraw;
+  if (
+    pending &&
+    (!state.isAvailable ||
+      state.gameInstanceId !== pending.identity.gameInstanceId ||
+      state.turnToken !== pending.identity.turnToken)
+  ) {
+    graphwarAgentPendingFunctionDraw = undefined;
+  }
+  return true;
+}
+
+/** Builds the opaque scene tag shared by Agent state and trajectory publication. */
+function createGraphwarAgentTrajectorySourceIdentity(
+  gameInstanceId: string,
+  turnToken: string | null,
+  battleRevision: string,
+) {
+  return `${gameInstanceId}\0${turnToken ?? ""}\0${battleRevision}`;
+}
+
+/** Returns only a complete trajectory proven to match the submitted function and Agent scene. */
+function getCurrentGraphwarAgentFunctionDrawTrajectoryPoints(pending: GraphwarAgentPendingFunctionDraw) {
+  const trajectory = plottedTrajectory.value;
+  if (
+    trajectoryCalculationStatus.value.type === "in-progress" ||
+    !trajectory ||
+    trajectory.points.length < 2 ||
+    trajectory.equationMode !== pending.equationMode ||
+    trajectory.expression !==
+      (toolWorkflowMode.value === "solver" ? formulaResult.value?.expression : simulatorFormulaText.value) ||
+    trajectory.launchAngleRadians !== pending.launchAngleRadians ||
+    trajectory.sourceIdentity !==
+      createGraphwarAgentTrajectorySourceIdentity(
+        pending.identity.gameInstanceId,
+        pending.identity.turnToken,
+        pending.battleRevision,
+      ) ||
+    equationMode.value !== pending.equationMode ||
+    (toolWorkflowMode.value === "solver" ? generatedFormulaOutput.value : simulatorFormulaText.value) !==
+      pending.functionText
+  ) {
+    return [];
+  }
+  return trajectory.points;
+}
+
+/** Starts one exact-turn playback and a lightweight state loop that discovers drawing promptly. */
+function observeSubmittedGraphwarAgentFunction(
+  client: GraphwarAgentClient,
+  state: GraphwarAgentAvailableState,
+  plan: GraphwarAgentShotPlan,
+  trajectoryPoints: readonly PixelPoint[] = [],
+) {
+  if (!state.turnToken) {
+    return;
+  }
+  const identity = { gameInstanceId: state.gameInstanceId, turnToken: state.turnToken };
+  const pending: GraphwarAgentPendingFunctionDraw = {
+    battleRevision: state.battleRevision,
+    equationMode: plan.equationMode,
+    functionText: plan.function,
+    identity,
+    ...(plan.equationMode === "ddy" ? { launchAngleRadians: plan.angleRadians } : {}),
+  };
+  const points =
+    trajectoryPoints.length >= 2 ? trajectoryPoints : getCurrentGraphwarAgentFunctionDrawTrajectoryPoints(pending);
+  graphwarAgentPendingFunctionDraw = {
+    ...pending,
+    ...(points.length < 2 ? {} : { attachedPoints: points }),
+  };
+  graphwarAgentFunctionDrawPlayback.arm(identity, points);
+  abortGraphwarAgentFunctionDrawObservationRequest();
+  void pollSubmittedGraphwarAgentFunction(
+    client,
+    identity,
+    ++graphwarAgentFunctionDrawObservationGeneration,
+    graphwarAgentConnectionGeneration,
+    nowMs(),
+  );
+}
+
+/** Polls quickly until drawing begins, then sparsely recalibrates the local animation. */
+async function pollSubmittedGraphwarAgentFunction(
+  client: GraphwarAgentClient,
+  identity: GraphwarAgentFunctionDrawIdentity,
+  observationGeneration: number,
+  connectionGeneration: number,
+  startedAtMonotonicMs: number,
+) {
+  let hasObservedResolution = false;
+  while (
+    observationGeneration === graphwarAgentFunctionDrawObservationGeneration &&
+    connectionGeneration === graphwarAgentConnectionGeneration &&
+    isGraphwarAgentEnabled.value
+  ) {
+    if (nowMs() - startedAtMonotonicMs >= graphwarAgentManualRecoveryTimeoutMs) {
+      abandonGraphwarAgentFunctionDraw(identity);
+      return;
+    }
+    const request = new AbortController();
+    graphwarAgentFunctionDrawObservationRequest = request;
+    const timeout = setTimeout(
+      () => request.abort(new DOMException("Graphwar Agent draw-state request timed out", "TimeoutError")),
+      GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS,
+    );
+    let state: GraphwarAgentState | undefined;
+    try {
+      state = await client.readState(request.signal);
+    } catch {
+      // A transient read must not cancel an already calibrated local animation.
+    } finally {
+      clearTimeout(timeout);
+      if (graphwarAgentFunctionDrawObservationRequest === request) {
+        graphwarAgentFunctionDrawObservationRequest = undefined;
+      }
+    }
+    if (
+      observationGeneration !== graphwarAgentFunctionDrawObservationGeneration ||
+      connectionGeneration !== graphwarAgentConnectionGeneration ||
+      !isGraphwarAgentEnabled.value
+    ) {
+      return;
+    }
+    if (!state) {
+      if (!hasObservedResolution && nowMs() - startedAtMonotonicMs >= graphwarAgentFunctionDrawStartTimeoutMs) {
+        abandonGraphwarAgentFunctionDraw(identity);
+        return;
+      }
+      await waitGraphwarAgentFunctionDrawPoll(
+        hasObservedResolution
+          ? graphwarAgentFunctionDrawCalibrationPollIntervalMs
+          : graphwarAgentFunctionDrawStartPollIntervalMs,
+      );
+      continue;
+    }
+    let isMatchingTurn = false;
+    if (state.isAvailable) {
+      isMatchingTurn = state.gameInstanceId === identity.gameInstanceId && state.turnToken === identity.turnToken;
+      if (isMatchingTurn && (state.phase === "drawing" || state.phase === "exploding")) {
+        // A concurrent managed poll may already have applied a newer state, but this older state
+        // still proves that resolution began and must prevent the five-second start timeout.
+        hasObservedResolution = true;
+      }
+    }
+    if (!handleGraphwarAgentLiveState(state)) {
+      await waitGraphwarAgentFunctionDrawPoll(
+        hasObservedResolution
+          ? graphwarAgentFunctionDrawCalibrationPollIntervalMs
+          : graphwarAgentFunctionDrawStartPollIntervalMs,
+      );
+      continue;
+    }
+    if (!isMatchingTurn) {
+      return;
+    }
+    if (!hasObservedResolution && nowMs() - startedAtMonotonicMs >= graphwarAgentFunctionDrawStartTimeoutMs) {
+      abandonGraphwarAgentFunctionDraw(identity);
+      return;
+    }
+    await waitGraphwarAgentFunctionDrawPoll(
+      hasObservedResolution
+        ? graphwarAgentFunctionDrawCalibrationPollIntervalMs
+        : graphwarAgentFunctionDrawStartPollIntervalMs,
+    );
+  }
+}
+
+/** Removes one abandoned turn without allowing an older poll loop to clear its replacement. */
+function abandonGraphwarAgentFunctionDraw(identity: GraphwarAgentFunctionDrawIdentity) {
+  graphwarAgentFunctionDrawPlayback.clearIdentity(identity);
+  if (graphwarAgentPendingFunctionDraw?.identity === identity) {
+    graphwarAgentPendingFunctionDraw = undefined;
+  }
+}
+
+/** Yields between local-only draw observations without coupling them to managed-mode cadence. */
+function waitGraphwarAgentFunctionDrawPoll(delayMs: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+}
+
+/** Invalidates pending observation work and restores the ordinary complete trajectory. */
+function clearGraphwarAgentFunctionDrawPlayback() {
+  graphwarAgentFunctionDrawObservationGeneration += 1;
+  abortGraphwarAgentFunctionDrawObservationRequest();
+  graphwarAgentPendingFunctionDraw = undefined;
+  graphwarAgentFunctionDrawPlayback.clear();
+}
+
+/** Aborts the current draw-state request before a new turn or connection can replace it. */
+function abortGraphwarAgentFunctionDrawObservationRequest() {
+  const request = graphwarAgentFunctionDrawObservationRequest;
+  graphwarAgentFunctionDrawObservationRequest = undefined;
+  request?.abort(new DOMException("Graphwar Agent draw observation changed", "AbortError"));
+}
+
+/** Aborts the one manual fire preflight/recovery so it cannot re-arm work after invalidation. */
+function abortGraphwarAgentManualFireRequest() {
+  graphwarAgentManualFireRequest?.abort(new DOMException("Graphwar Agent connection changed", "AbortError"));
 }
 
 /** 通过 Agent 调用 Graphwar 原版开火路径，提交当前结果面板里的函数文本。 */
@@ -2887,8 +3555,22 @@ async function fireGraphwarAgentFunction() {
     return;
   }
 
-  graphwarAgentFireInProgress.value = true;
+  isGraphwarAgentFireInProgress.value = true;
   setGraphwarAgentFireStatus("idle");
+  const functionDrawObservationGenerationAtStart = graphwarAgentFunctionDrawObservationGeneration;
+  const request = new AbortController();
+  graphwarAgentManualFireRequest = request;
+  let requestBaseUrl: string | undefined;
+  let requestGeneration = -1;
+  let requestTimeout: ReturnType<typeof setTimeout> | undefined;
+  let requestToken = "";
+  const isRequestForCurrentConnection = () =>
+    graphwarAgentManualFireRequest === request &&
+    requestGeneration === graphwarAgentConnectionGeneration &&
+    isGraphwarAgentEnabled.value &&
+    normalizedGraphwarAgentBaseUrl.value === requestBaseUrl &&
+    graphwarAgentTokenText.value === requestToken;
+  const isRequestCurrent = () => isRequestForCurrentConnection() && !request.signal.aborted;
   try {
     // A click owns one immutable shot intent even if the result or controls change while Agent state is loading.
     const functionText =
@@ -2900,9 +3582,27 @@ async function fireGraphwarAgentFunction() {
           ? secondOrderLaunchAngleRadians.value
           : simulatorLaunchAngleRadians.value
         : undefined;
-    const client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value);
-    const state = await client.readState();
-    if (!state.available) {
+    requestBaseUrl = normalizedGraphwarAgentBaseUrl.value;
+    requestToken = graphwarAgentTokenText.value;
+    if (!requestBaseUrl) {
+      return;
+    }
+    requestGeneration = graphwarAgentConnectionGeneration;
+    const client = createGraphwarAgentClient(requestBaseUrl, { token: requestToken });
+    requestTimeout = setTimeout(
+      () => request.abort(new DOMException("Graphwar Agent state request timed out", "TimeoutError")),
+      GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS,
+    );
+    const state = await client.readState(request.signal).finally(() => {
+      if (requestTimeout) {
+        clearTimeout(requestTimeout);
+        requestTimeout = undefined;
+      }
+    });
+    if (!isRequestCurrent() || !handleGraphwarAgentLiveState(state)) {
+      return;
+    }
+    if (!state.isAvailable) {
       throw new GraphwarAgentClientError("unavailable", state.reason);
     }
     if (state.phase !== "aiming") {
@@ -2921,13 +3621,58 @@ async function fireGraphwarAgentFunction() {
     } else {
       shotPlan = { equationMode: equationModeSnapshot, function: functionText };
     }
-    await client.submitShot(createGraphwarAgentShotRequest(state, shotPlan));
+    const trajectoryPointsSnapshot = state.turnToken
+      ? getCurrentGraphwarAgentFunctionDrawTrajectoryPoints({
+          battleRevision: state.battleRevision,
+          equationMode: shotPlan.equationMode,
+          functionText: shotPlan.function,
+          identity: { gameInstanceId: state.gameInstanceId, turnToken: state.turnToken },
+          ...(shotPlan.equationMode === "ddy" ? { launchAngleRadians: shotPlan.angleRadians } : {}),
+        })
+      : [];
+    requestTimeout = setTimeout(
+      () => request.abort(new DOMException("Graphwar Agent shot recovery timed out", "TimeoutError")),
+      graphwarAgentManualRecoveryTimeoutMs,
+    );
+    const command = await resolveGraphwarAgentShotCommand(client, createGraphwarAgentShotRequest(state, shotPlan), {
+      pollIntervalMs: GRAPHWAR_MANAGED_POLL_INTERVAL_MS,
+      postResultTimeoutMs: GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS,
+      readTimeoutMs: GRAPHWAR_MANAGED_REQUEST_TIMEOUT_MS,
+      signal: request.signal,
+    });
+    if (!isRequestCurrent()) {
+      return;
+    }
+    if (command.status === "failed") {
+      throw createGraphwarAgentShotCommandError(command);
+    }
+    // A manual snapshot may finish while the irreversible shot command is pending. Preserve the
+    // command result, but never let that older visual intent re-arm playback on the replaced viewport.
+    if (functionDrawObservationGenerationAtStart === graphwarAgentFunctionDrawObservationGeneration) {
+      observeSubmittedGraphwarAgentFunction(client, state, shotPlan, trajectoryPointsSnapshot);
+    }
+    if (command.status === "unknown") {
+      graphwarAgentFireFailureMessage.value = locale.status.agent.fireUnknown(
+        createGraphwarAgentFailureReason(locale, createGraphwarAgentShotCommandError(command)),
+      );
+      setGraphwarAgentFireStatus("error");
+      return;
+    }
     setGraphwarAgentFireStatus("success");
   } catch (error) {
+    if (!isRequestForCurrentConnection()) {
+      return;
+    }
     graphwarAgentFireFailureMessage.value = createGraphwarAgentFailureReason(locale, error);
     setGraphwarAgentFireStatus("error");
   } finally {
-    graphwarAgentFireInProgress.value = false;
+    if (requestTimeout) {
+      clearTimeout(requestTimeout);
+    }
+    if (graphwarAgentManualFireRequest === request) {
+      graphwarAgentManualFireRequest = undefined;
+      isGraphwarAgentFireInProgress.value = false;
+    }
   }
 }
 
@@ -2973,7 +3718,7 @@ function applyGraphwarAgentEquationMode(mode: EquationMode | undefined) {
 
 /** 切换托管模式；开启前重新执行完整资格检查，关闭始终可用。 */
 function toggleGraphwarManagedMode() {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     stopGraphwarManagedMode(true);
     return;
   }
@@ -2990,6 +3735,7 @@ function toggleGraphwarManagedMode() {
     setSmartPathfindingStatus(managedTiming.message, "warning");
     return;
   }
+  const shotReserveSeconds = String(managedTiming.shotReserveMs / 1000);
 
   const repairPlan = createGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value);
   const repairs = locale.equationModes.flatMap((mode) => {
@@ -3002,7 +3748,7 @@ function toggleGraphwarManagedMode() {
         algorithm:
           locale.algorithmModes.find((algorithm) => algorithm.value === repair.algorithm)?.label ?? repair.algorithm,
         equation: mode.label,
-        properties: formulaModeUsesStepGlitch(repair.algorithm, mode.value, repair.stepGlitchModeEnabled === true)
+        properties: formulaModeUsesStepGlitch(repair.algorithm, mode.value, repair.isStepGlitchModeEnabled === true)
           ? [locale.ui.settings.stepGlitchMode]
           : [],
       },
@@ -3019,16 +3765,16 @@ function toggleGraphwarManagedMode() {
               locale.algorithmModes.find((algorithm) => algorithm.value === profile.algorithm)?.label ??
               profile.algorithm,
             equation: mode.label,
-            properties: formulaModeUsesStepGlitch(profile.algorithm, mode.value, profile.stepGlitchModeEnabled)
+            properties: formulaModeUsesStepGlitch(profile.algorithm, mode.value, profile.isStepGlitchModeEnabled)
               ? [locale.ui.settings.stepGlitchMode]
               : [],
           };
         }),
         repairs,
-        friendlyFireEnabled.value,
+        isFriendlyFireEnabled.value,
         {
           pollIntervalSeconds: String(managedTiming.pollIntervalMs / 1000),
-          shotReserveSeconds: String(managedTiming.shotReserveMs / 1000),
+          shotReserveSeconds,
         },
       ),
     )
@@ -3039,7 +3785,7 @@ function toggleGraphwarManagedMode() {
 
   let client: GraphwarAgentClient;
   try {
-    client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value);
+    client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value, { token: graphwarAgentTokenText.value });
   } catch (error) {
     setSmartPathfindingStatus(createGraphwarAgentFailureReason(locale, error), "error");
     return;
@@ -3056,14 +3802,15 @@ function toggleGraphwarManagedMode() {
   graphwarManagedClient = client;
   graphwarManagedShotReserveMs = managedTiming.shotReserveMs;
   graphwarAgentBaseUrlText.value = client.baseUrl;
-  graphwarManagedModeEnabled.value = true;
+  isGraphwarManagedModeEnabled.value = true;
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
+  graphwarManagedPreparedShot = undefined;
   graphwarManagedSearchErrorSceneKey = undefined;
   graphwarManagedSearchSnapshot = undefined;
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
-  graphwarManagedLastSubmittedTurnToken = undefined;
+  graphwarManagedLastRequestedTurnToken = undefined;
   graphwarManagedDeadlineTurnToken = undefined;
   graphwarManagedWakeLockGeneration += 1;
   toolMode.value = "path";
@@ -3081,15 +3828,18 @@ function toggleGraphwarManagedMode() {
         if (!plan || !incumbent) {
           return undefined;
         }
-        if (searchStartedAt !== undefined && !graphwarManagedStateHasSearchError(state)) {
+        if (searchStartedAt !== undefined && !hasGraphwarManagedStateSearchError(state)) {
           showGraphwarManagedCalculationStatus(
-            locale.smartPathfinding.managed.deadlinePlan(formatElapsedDuration(nowMs() - searchStartedAt)),
+            locale.smartPathfinding.managed.deadlinePlan(
+              shotReserveSeconds,
+              formatElapsedDuration(nowMs() - searchStartedAt),
+            ),
             "warning",
           );
         }
         // 截止发射直接使用主线程检查点；路径与公式转正只服务页面，不进入发射关键路径。
         applyOneClickClearIncumbent(incumbent);
-        graphwarManagedDeadlineTurnToken = state.turnToken;
+        graphwarManagedDeadlineTurnToken = state.turnToken ?? undefined;
         return plan;
       },
       onDeadline: (state) => {
@@ -3100,19 +3850,46 @@ function toggleGraphwarManagedMode() {
           createGraphwarAgentClearFailureSceneKey(snapshot.state) === createGraphwarAgentClearFailureSceneKey(state)
         ) {
           // 截止是搜索结局，不依赖随后选择 incumbent、跳过函数或 Agent 是否接受发射。
-          enqueueGraphwarAgentClearFailureExport("deadline", snapshot);
+          requestGraphwarAgentClearFailureExport("deadline", snapshot);
         }
       },
       onDeadlineWithoutShot: () => {
         cancelGraphwarManagedSearch();
-        setGraphwarManagedStatus(locale.smartPathfinding.managed.deadlineNoPlan, "error");
+        setGraphwarManagedStatus(locale.smartPathfinding.managed.deadlineNoPlan(shotReserveSeconds), "error");
       },
       onIncompatibleError: () => {
         stopGraphwarManagedMode(false);
         setSmartPathfindingStatus(locale.smartPathfinding.managed.incompatible, "error");
       },
+      onInvalidRequestError: (error) => {
+        stopGraphwarManagedMode(false);
+        setSmartPathfindingStatus(
+          locale.smartPathfinding.managed.invalidRequest(createGraphwarAgentFailureReason(locale, error)),
+          "error",
+        );
+      },
       onReadyRequested: () => {
         setGraphwarManagedStatus(locale.smartPathfinding.managed.readying, "warning");
+      },
+      onRecoveredShotCommand: (state, command) => {
+        graphwarManagedLastRequestedTurnToken = state.turnToken ?? undefined;
+        if (command.status === "submitted") {
+          setGraphwarManagedStatus(locale.ui.result.fireSuccess, "success");
+          return;
+        }
+        const error = createGraphwarAgentShotCommandError(command);
+        if (command.status === "failed") {
+          graphwarManagedSearchState = "failure";
+          setGraphwarManagedStatus(
+            locale.smartPathfinding.managed.shotFailed(createGraphwarAgentFailureReason(locale, error)),
+            "error",
+          );
+        } else if (command.status === "unknown") {
+          setGraphwarManagedStatus(
+            locale.smartPathfinding.managed.shotUnknown(createGraphwarAgentFailureReason(locale, error)),
+            "error",
+          );
+        }
       },
       onRoom: () => {
         resetGraphwarManagedSearch();
@@ -3122,19 +3899,15 @@ function toggleGraphwarManagedMode() {
         if (graphwarManagedController?.getLatestState()?.turnToken !== state.turnToken) {
           return;
         }
-        if (graphwarManagedLastSubmittedTurnToken === state.turnToken) {
-          setGraphwarManagedStatus(
-            locale.smartPathfinding.managed.shotUnknown(createGraphwarAgentFailureReason(locale, error)),
-            "error",
-          );
-          return;
-        }
         graphwarManagedSearchState = "failure";
-        setGraphwarManagedStatus(locale.smartPathfinding.managed.searchFailed, "error");
+        setGraphwarManagedStatus(
+          locale.smartPathfinding.managed.shotFailed(createGraphwarAgentFailureReason(locale, error)),
+          "error",
+        );
       },
-      onShotSubmitted: (state, plan) => {
-        graphwarManagedLastSubmittedTurnToken = state.turnToken;
-        if (graphwarManagedStateHasSearchError(state)) {
+      onShotRequestStarted: (state, plan) => {
+        graphwarManagedLastRequestedTurnToken = state.turnToken ?? undefined;
+        if (hasGraphwarManagedStateSearchError(state)) {
           return;
         }
         setGraphwarManagedStatus(
@@ -3144,22 +3917,19 @@ function toggleGraphwarManagedMode() {
           "warning",
         );
       },
-      onShotSucceeded: (state, plan) => {
-        if (graphwarManagedLastSubmittedTurnToken !== state.turnToken || graphwarManagedStateHasSearchError(state)) {
-          return;
-        }
-        if (plan.function === GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION) {
-          setGraphwarManagedStatus(locale.smartPathfinding.managed.skipTurnFired, "warning");
-          return;
-        }
-        setGraphwarManagedStatus(
-          graphwarManagedDeadlineTurnToken === state.turnToken
-            ? locale.smartPathfinding.managed.deadlineFired
-            : locale.smartPathfinding.managed.successFired,
-          graphwarManagedDeadlineTurnToken === state.turnToken ? "warning" : "success",
-        );
+      onShotRecoveryStarted: (state) => {
+        cancelGraphwarManagedSearch(true);
+        graphwarManagedLastRequestedTurnToken = state.turnToken ?? undefined;
+        setGraphwarManagedStatus(locale.ui.result.firing, "warning");
+      },
+      onShotSubmitted: (state, plan) => {
+        handleGraphwarManagedShotSubmitted(state, plan, shotReserveSeconds);
+      },
+      onShotUnknown: (state, plan, error) => {
+        handleGraphwarManagedShotUnknown(state, plan, error);
       },
       onState: handleGraphwarManagedState,
+      onStateRead: handleGraphwarAgentLiveState,
       onTransientError: (error) => {
         setGraphwarManagedStatus(
           locale.smartPathfinding.managed.connectionFailed(createGraphwarAgentFailureReason(locale, error)),
@@ -3178,13 +3948,65 @@ function toggleGraphwarManagedMode() {
   void requestGraphwarManagedWakeLock();
 }
 
+/** Starts playback for submitted managed shots, including the skip-turn fallback. */
+function handleGraphwarManagedShotSubmitted(
+  state: GraphwarAgentAvailableState,
+  plan: GraphwarAgentShotPlan,
+  shotReserveSeconds: string,
+) {
+  if (graphwarManagedLastRequestedTurnToken !== state.turnToken || hasGraphwarManagedStateSearchError(state)) {
+    return;
+  }
+  if (graphwarManagedClient) {
+    observeSubmittedGraphwarAgentFunction(
+      graphwarManagedClient,
+      state,
+      plan,
+      getGraphwarManagedPreparedShotTrajectoryPoints(state, plan),
+    );
+  }
+  if (plan.function === GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION) {
+    setGraphwarManagedStatus(locale.smartPathfinding.managed.skipTurnFired, "warning");
+    return;
+  }
+  setGraphwarManagedStatus(
+    graphwarManagedDeadlineTurnToken === state.turnToken
+      ? locale.smartPathfinding.managed.deadlineFired(shotReserveSeconds)
+      : locale.smartPathfinding.managed.successFired,
+    graphwarManagedDeadlineTurnToken === state.turnToken ? "warning" : "success",
+  );
+}
+
+/** Continues observing an unknown managed shot because its original call may have been submitted. */
+function handleGraphwarManagedShotUnknown(
+  state: GraphwarAgentAvailableState,
+  plan: GraphwarAgentShotPlan,
+  error: GraphwarAgentClientError,
+) {
+  if (graphwarManagedController?.getLatestState()?.turnToken !== state.turnToken) {
+    return;
+  }
+  if (graphwarManagedClient) {
+    observeSubmittedGraphwarAgentFunction(
+      graphwarManagedClient,
+      state,
+      plan,
+      getGraphwarManagedPreparedShotTrajectoryPoints(state, plan),
+    );
+  }
+  setGraphwarManagedStatus(
+    locale.smartPathfinding.managed.shotUnknown(createGraphwarAgentFailureReason(locale, error)),
+    "error",
+  );
+}
+
 /** 停止托管并解锁输入；用户主动关闭时先提交当前已验证 incumbent。 */
-function stopGraphwarManagedMode(showStatus: boolean) {
+function stopGraphwarManagedMode(shouldShowStatus: boolean) {
   // 手动取消和关闭托管必须共享同一转正入口，避免一个显示路径点、另一个只留下隐藏预览。
-  if (showStatus) {
+  if (shouldShowStatus) {
     finalizeActiveOneClickClearIncumbent();
   }
-  graphwarManagedModeEnabled.value = false;
+  isGraphwarManagedModeEnabled.value = false;
   clearGraphwarManagedCalculationStatus();
   graphwarManagedWakeLockGeneration += 1;
   graphwarManagedController?.stop();
@@ -3192,9 +4014,9 @@ function stopGraphwarManagedMode(showStatus: boolean) {
   graphwarManagedClient = undefined;
   resetGraphwarManagedSearch(true);
   graphwarManagedDeadlineTurnToken = undefined;
-  graphwarManagedLastSubmittedTurnToken = undefined;
+  graphwarManagedLastRequestedTurnToken = undefined;
   void releaseGraphwarManagedWakeLock();
-  if (showStatus) {
+  if (shouldShowStatus) {
     setSmartPathfindingStatus(locale.smartPathfinding.managed.stopped, "warning");
   }
 }
@@ -3205,7 +4027,7 @@ function handleGraphwarManagedState(
   shooter: GraphwarManagedShooter | undefined,
   worldObstacleMask: Uint8Array | undefined,
 ) {
-  if (!graphwarManagedModeEnabled.value || !graphwarManagedClient) {
+  if (!isGraphwarManagedModeEnabled.value || !graphwarManagedClient) {
     return;
   }
   if (!shooter || !state.turnToken || !worldObstacleMask) {
@@ -3225,13 +4047,13 @@ function handleGraphwarManagedState(
   if (sceneKey === graphwarManagedSceneKey) {
     if (
       graphwarManagedSearchState === "success" &&
-      state.remainingTurnMs > graphwarManagedShotReserveMs &&
+      hasGraphwarManagedShotTimeRemaining(state) &&
       isGraphwarManagedCurrentLocalTurn(state)
     ) {
       submitGraphwarManagedShot(state);
-    } else if (graphwarManagedStateHasSearchError(state)) {
+    } else if (hasGraphwarManagedStateSearchError(state)) {
       return;
-    } else if (graphwarManagedSearchState === "success" && graphwarManagedLastSubmittedTurnToken !== state.turnToken) {
+    } else if (graphwarManagedSearchState === "success" && graphwarManagedLastRequestedTurnToken !== state.turnToken) {
       setGraphwarManagedStatus(locale.smartPathfinding.managed.completedWaiting, "success");
     } else if (graphwarManagedSearchState === "running") {
       setGraphwarManagedStatus(locale.smartPathfinding.managed.calculating(), "warning");
@@ -3243,18 +4065,19 @@ function handleGraphwarManagedState(
   clearGraphwarManagedCalculationStatus();
   graphwarManagedSceneKey = sceneKey;
   graphwarManagedIncumbent = undefined;
+  graphwarManagedPreparedShot = undefined;
   graphwarManagedSearchErrorSceneKey = undefined;
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
   graphwarManagedDeadlineTurnToken = undefined;
-  graphwarManagedLastSubmittedTurnToken = undefined;
+  graphwarManagedLastRequestedTurnToken = undefined;
   const snapshot = createGraphwarAgentShooterViewSnapshot(
     createGraphwarAgentWorldSnapshot(graphwarManagedClient.baseUrl, state, worldObstacleMask),
-    shooter.player.id,
-    shooter.soldier.index,
+    shooter.player.playerId,
+    shooter.soldier.soldierIndex,
   );
   const shooterBox = snapshot.detectionResult.soldiers.find(
-    (soldier) => soldier.playerId === shooter.player.id && soldier.soldierIndex === shooter.soldier.index,
+    (soldier) => soldier.playerId === shooter.player.playerId && soldier.soldierIndex === shooter.soldier.soldierIndex,
   );
   if (!shooterBox) {
     stopGraphwarManagedMode(false);
@@ -3277,16 +4100,16 @@ function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shoot
     battleRevision: state.battleRevision,
     bounds: parsedBounds.value.bounds,
     decimalPlaces: settings.decimalPlaces,
-    deleteOptimizationEnabled: deleteOptimizationEnabled.value,
+    isDeleteOptimizationEnabled: isDeleteOptimizationEnabled.value,
     equation: state.equationMode,
     secondOrderLaunchAngleMode: settings.secondOrderLaunchAngleMode,
     formulaPathSteepness: settings.formulaPathSteepness,
-    friendlyFire: friendlyFireEnabled.value,
+    friendlyFire: isFriendlyFireEnabled.value,
     gameInstanceId: state.gameInstanceId,
     pathfindingWorkerCount: parsedPathfindingWorkerCount.value.workerCount,
     routeMode: settings.stepGlitchMode ? "visibility-graph" : getPathfindingRouteMode(),
-    shooterPlayerId: shooter.player.id,
-    shooterSoldierIndex: shooter.soldier.index,
+    shooterPlayerId: shooter.player.playerId,
+    shooterSoldierIndex: shooter.soldier.soldierIndex,
     shooterTeam: shooter.player.team,
     steepness: settings.steepness,
     stepGlitchMode: settings.stepGlitchMode,
@@ -3306,7 +4129,7 @@ async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgen
   const succeeded = await runOneClickClearWorkflow({
     onIncumbent: (incumbent) => {
       if (
-        !graphwarManagedModeEnabled.value ||
+        !isGraphwarManagedModeEnabled.value ||
         searchGeneration !== graphwarManagedSearchGeneration ||
         sceneKey !== graphwarManagedSceneKey
       ) {
@@ -3318,7 +4141,7 @@ async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgen
     onOutcome: (outcome) => {
       if (
         outcome.kind === "search-error" &&
-        graphwarManagedModeEnabled.value &&
+        isGraphwarManagedModeEnabled.value &&
         searchGeneration === graphwarManagedSearchGeneration &&
         sceneKey === graphwarManagedSceneKey
       ) {
@@ -3327,7 +4150,7 @@ async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgen
     },
     onSuccessBeforeEffects: () => {
       if (
-        !graphwarManagedModeEnabled.value ||
+        !isGraphwarManagedModeEnabled.value ||
         searchGeneration !== graphwarManagedSearchGeneration ||
         sceneKey !== graphwarManagedSceneKey ||
         !graphwarManagedIncumbent
@@ -3336,7 +4159,7 @@ async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgen
       }
       graphwarManagedSearchState = "success";
       const state = graphwarManagedController?.getLatestState();
-      if (state && state.remainingTurnMs > graphwarManagedShotReserveMs && isGraphwarManagedCurrentLocalTurn(state)) {
+      if (state && hasGraphwarManagedShotTimeRemaining(state) && isGraphwarManagedCurrentLocalTurn(state)) {
         // 方案已经完整验证；必须在 workflow 写回最终路径或完成状态前提交，不把页面刷新放进关键路径。
         if (submitGraphwarManagedShot(state)) {
           return;
@@ -3344,16 +4167,16 @@ async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgen
       }
       setGraphwarManagedStatus(locale.smartPathfinding.managed.completedWaiting, "success");
     },
-    useResultCache: false,
+    shouldUseResultCache: false,
   });
   if (
-    !graphwarManagedModeEnabled.value ||
+    !isGraphwarManagedModeEnabled.value ||
     searchGeneration !== graphwarManagedSearchGeneration ||
     sceneKey !== graphwarManagedSceneKey
   ) {
     return;
   }
-  if (graphwarManagedStateHasSearchError(snapshot.state)) {
+  if (hasGraphwarManagedStateSearchError(snapshot.state)) {
     // 发射仍照常认领，但托管持久状态必须保留 workflow 已写入的真实 Worker 错误。
     setGraphwarManagedStatus(smartPathfindingStatus.value, "error");
   }
@@ -3372,12 +4195,17 @@ async function runGraphwarManagedSearch(sceneKey: string, snapshot: GraphwarAgen
   }
 }
 
+/** Uses the response-age-corrected budget so transport delay cannot consume the configured shot reserve. */
+function hasGraphwarManagedShotTimeRemaining(state: GraphwarAgentAvailableState) {
+  return getAdjustedGraphwarAgentRemainingTurnMs(state) > graphwarManagedShotReserveMs;
+}
+
 /** 取消当前 Worker 并递增 generation，使迟到的 incumbent 和完成结果都无法回写。 */
-function cancelGraphwarManagedSearch(preservePreview = false) {
+function cancelGraphwarManagedSearch(shouldPreservePreview = false) {
   graphwarManagedSearchGeneration += 1;
   graphwarManagedSearchSnapshot = undefined;
-  if (smartPathfindingInProgress.value) {
-    cancelSmartPathfinding(false, preservePreview);
+  if (isSmartPathfindingInProgress.value) {
+    cancelSmartPathfinding(false, shouldPreservePreview);
   }
   if (graphwarManagedSearchState === "running") {
     graphwarManagedSearchState = "idle";
@@ -3385,10 +4213,11 @@ function cancelGraphwarManagedSearch(preservePreview = false) {
 }
 
 /** 离开活动局面时丢弃未发布方案，但保留页面上最后一次已发布结果。 */
-function resetGraphwarManagedSearch(preservePreview = false) {
-  cancelGraphwarManagedSearch(preservePreview);
+function resetGraphwarManagedSearch(shouldPreservePreview = false) {
+  cancelGraphwarManagedSearch(shouldPreservePreview);
   graphwarManagedSceneKey = "";
   graphwarManagedIncumbent = undefined;
+  graphwarManagedPreparedShot = undefined;
   graphwarManagedSearchErrorSceneKey = undefined;
   graphwarManagedSearchStartedAt = undefined;
   graphwarManagedSearchState = "idle";
@@ -3396,31 +4225,66 @@ function resetGraphwarManagedSearch(preservePreview = false) {
 
 /** 仅将当前完整指纹下的验证结果转换为 Agent 的模式化发射参数。 */
 function createGraphwarManagedShotPlan(state: GraphwarAgentAvailableState): GraphwarAgentShotPlan | undefined {
+  graphwarManagedPreparedShot = undefined;
   const incumbent = graphwarManagedIncumbent;
-  const player = state.players[state.currentTurn];
-  const soldier = player?.soldiers[player.currentTurnSoldier];
+  const shooter = getGraphwarManagedCurrentShooter(state);
   if (
     !incumbent ||
-    !isGraphwarAgentLocalHuman(player) ||
-    !soldier?.alive ||
+    !shooter ||
     !incumbent.expression.trim() ||
-    createGraphwarManagedSceneKey(state, { player, soldier }) !== graphwarManagedSceneKey
+    createGraphwarManagedSceneKey(state, shooter) !== graphwarManagedSceneKey
   ) {
     return undefined;
   }
-  const functionText = fractionOutputEnabled.value
+  const functionText = isFractionOutputEnabled.value
     ? convertGraphwarExpressionDecimalsToFractions(incumbent.expression).expression
     : incumbent.expression;
-  if (state.equationMode !== "ddy") {
-    return { equationMode: state.equationMode, function: functionText };
+  const plan: GraphwarAgentShotPlan | undefined =
+    state.equationMode !== "ddy"
+      ? { equationMode: state.equationMode, function: functionText }
+      : incumbent.launchAngleRadians === undefined
+        ? undefined
+        : {
+            angleRadians: incumbent.launchAngleRadians,
+            equationMode: "ddy",
+            function: functionText,
+          };
+  if (!plan) {
+    return undefined;
   }
-  return incumbent.launchAngleRadians === undefined
-    ? undefined
-    : {
-        angleRadians: incumbent.launchAngleRadians,
-        equationMode: "ddy",
-        function: functionText,
-      };
+  graphwarManagedPreparedShot = {
+    gameInstanceId: state.gameInstanceId,
+    plan,
+    sceneKey: graphwarManagedSceneKey,
+    trajectoryPoints: incumbent.trajectoryPoints.map((point) => createPixelPoint(point.x, point.y)),
+    turnToken: state.turnToken,
+  };
+  return plan;
+}
+
+/** Returns managed trajectory points only while every submitted-plan and authoritative-scene field still matches. */
+function getGraphwarManagedPreparedShotTrajectoryPoints(
+  state: GraphwarAgentAvailableState,
+  plan: GraphwarAgentShotPlan,
+) {
+  const prepared = graphwarManagedPreparedShot;
+  const shooter = getGraphwarManagedCurrentShooter(state);
+  if (
+    !prepared ||
+    !shooter ||
+    prepared.sceneKey !== graphwarManagedSceneKey ||
+    createGraphwarManagedSceneKey(state, shooter) !== prepared.sceneKey ||
+    prepared.gameInstanceId !== state.gameInstanceId ||
+    prepared.turnToken !== state.turnToken ||
+    state.equationMode !== plan.equationMode ||
+    prepared.plan.equationMode !== plan.equationMode ||
+    prepared.plan.function !== plan.function ||
+    (prepared.plan.equationMode === "ddy" ? prepared.plan.angleRadians : undefined) !==
+      (plan.equationMode === "ddy" ? plan.angleRadians : undefined)
+  ) {
+    return [];
+  }
+  return prepared.trajectoryPoints;
 }
 
 /** 正常完成只提交 controller 当前快照，并返回本回合是否已在 await 前完成 once-only claim。 */
@@ -3433,17 +4297,24 @@ function submitGraphwarManagedShot(state: GraphwarAgentAvailableState) {
 }
 
 /** 判断权威状态是否属于当前已记录 Worker 错误的托管局面。 */
-function graphwarManagedStateHasSearchError(state: GraphwarAgentAvailableState) {
+function hasGraphwarManagedStateSearchError(state: GraphwarAgentAvailableState) {
   const sceneKey = createGraphwarAgentClearFailureSceneKey(state);
   return sceneKey !== undefined && sceneKey === graphwarManagedSearchErrorSceneKey;
 }
 
 /** 检查最新权威回合是否属于当前本地真人发射者。 */
 function isGraphwarManagedCurrentLocalTurn(state: GraphwarAgentAvailableState) {
-  const player = state.players[state.currentTurn];
-  return Boolean(
-    state.phase === "aiming" && isGraphwarAgentLocalHuman(player) && player.soldiers[player.currentTurnSoldier]?.alive,
-  );
+  return state.phase === "aiming" && getGraphwarManagedCurrentShooter(state) !== undefined;
+}
+
+/** Selects the alive local human who owns the current managed scene, independent of the Agent phase. */
+function getGraphwarManagedCurrentShooter(state: GraphwarAgentAvailableState): GraphwarManagedShooter | undefined {
+  const player = state.currentPlayerIndex === null ? undefined : state.players[state.currentPlayerIndex];
+  const soldier =
+    player?.currentSoldierIndex === null || player?.currentSoldierIndex === undefined
+      ? undefined
+      : player.soldiers[player.currentSoldierIndex];
+  return isGraphwarAgentLocalHuman(player) && soldier?.isAlive ? { player, soldier } : undefined;
 }
 
 /** 保存托管状态；后台警告临时覆盖展示，回到前台后恢复真实状态。 */
@@ -3504,7 +4375,7 @@ function clearGraphwarManagedCalculationStatus() {
 /** 尽力申请屏幕常亮；浏览器拒绝时继续托管但不承诺后台准时。 */
 async function requestGraphwarManagedWakeLock() {
   if (
-    !graphwarManagedModeEnabled.value ||
+    !isGraphwarManagedModeEnabled.value ||
     typeof document === "undefined" ||
     document.visibilityState !== "visible" ||
     typeof navigator === "undefined"
@@ -3530,7 +4401,7 @@ async function requestGraphwarManagedWakeLock() {
     }
     if (
       requestGeneration !== graphwarManagedWakeLockGeneration ||
-      !graphwarManagedModeEnabled.value ||
+      !isGraphwarManagedModeEnabled.value ||
       document.visibilityState !== "visible" ||
       graphwarManagedWakeLock
     ) {
@@ -3563,7 +4434,7 @@ async function releaseGraphwarManagedWakeLock() {
 
 /** 后台时覆盖警告；恢复可见后重申请 Wake Lock 并还原最后托管状态。 */
 function handleGraphwarManagedVisibilityChange() {
-  if (!graphwarManagedModeEnabled.value || typeof document === "undefined") {
+  if (!isGraphwarManagedModeEnabled.value || typeof document === "undefined") {
     return;
   }
   if (document.visibilityState === "hidden") {
@@ -3583,7 +4454,7 @@ function handleGraphwarManagedVisibilityChange() {
 
 /** 切换自动识别；关闭后保留当前识别结果供用户继续编辑。 */
 function toggleAutoDetection() {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   detectionWorkflow.toggleAutoDetection();
@@ -3591,14 +4462,18 @@ function toggleAutoDetection() {
 
 /** 作废旧 Agent 场景的异步读取、寻路和派生缓存，保留当前画布供新来源继续使用。 */
 function invalidateGraphwarAgentSceneWork() {
-  const agentTransferWasInProgress = graphwarAgentReadInProgress.value || graphwarAgentManualExportInProgress.value;
+  const hasActiveAgentTransfer = isGraphwarAgentReadInProgress.value || isGraphwarAgentManualExportInProgress.value;
+  graphwarAgentConnectionGeneration += 1;
+  graphwarAgentObservationOrder.clear();
+  abortGraphwarAgentManualFireRequest();
+  clearGraphwarAgentFunctionDrawPlayback();
   graphwarAgentTransferGeneration += 1;
-  graphwarAgentReadInProgress.value = false;
-  graphwarAgentManualExportInProgress.value = false;
+  isGraphwarAgentReadInProgress.value = false;
+  isGraphwarAgentManualExportInProgress.value = false;
   graphwarAgentDebugFiles.clear();
   // 只收尾本次 Agent reading 文案；并行产生的其他检测状态必须保留。
   if (
-    agentTransferWasInProgress &&
+    hasActiveAgentTransfer &&
     (imageStatus.value === locale.status.agent.reading ||
       imageStatus.value === locale.status.agent.readingFile ||
       imageStatus.value === locale.status.agent.exporting)
@@ -3606,7 +4481,7 @@ function invalidateGraphwarAgentSceneWork() {
     imageStatus.value = "";
   }
   if (
-    agentTransferWasInProgress &&
+    hasActiveAgentTransfer &&
     (detectionStatus.value === locale.status.agent.reading ||
       detectionStatus.value === locale.status.agent.readingFile ||
       detectionStatus.value === locale.status.agent.exporting)
@@ -3619,15 +4494,16 @@ function invalidateGraphwarAgentSceneWork() {
 
 /** 切换是否使用 Agent；保留当前画布，但立即阻止旧来源的异步结果回写。 */
 function toggleGraphwarAgentUsage() {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
-  if (graphwarAgentEnabled.value) {
+  if (isGraphwarAgentEnabled.value) {
     graphwarAgentClearFailureExportQueue.clearPending();
   }
   invalidateGraphwarAgentSceneWork();
-  graphwarAgentEnabled.value = !graphwarAgentEnabled.value;
-  if (graphwarAgentEnabled.value) {
+  isGraphwarAgentEnabled.value = !isGraphwarAgentEnabled.value;
+  graphwarAgentTurnCountdown.clear();
+  if (isGraphwarAgentEnabled.value) {
     detectionWorkflow.cancel(false);
   } else {
     setGraphwarAgentFireStatus("idle");
@@ -3636,13 +4512,27 @@ function toggleGraphwarAgentUsage() {
 
 /** 同步 Agent 地址输入；地址为空时不展示手动读取按钮。 */
 function setGraphwarAgentBaseUrlText(value: string) {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   const previousBaseUrl = normalizedGraphwarAgentBaseUrl.value;
   graphwarAgentBaseUrlText.value = value;
   // 尾斜杠等价写法仍指向同一场景，不应打断正在运行的任务。
-  if (graphwarAgentEnabled.value && previousBaseUrl !== normalizedGraphwarAgentBaseUrl.value) {
+  if (isGraphwarAgentEnabled.value && previousBaseUrl !== normalizedGraphwarAgentBaseUrl.value) {
+    graphwarAgentTurnCountdown.clear();
+    invalidateGraphwarAgentSceneWork();
+  }
+  setGraphwarAgentFireStatus("idle");
+}
+
+/** Updates the session-only bearer token and invalidates requests made with the previous credential. */
+function setGraphwarAgentTokenText(value: string) {
+  if (isGraphwarManagedModeEnabled.value || graphwarAgentTokenText.value === value) {
+    return;
+  }
+  graphwarAgentTokenText.value = value;
+  if (isGraphwarAgentEnabled.value) {
+    graphwarAgentTurnCountdown.clear();
     invalidateGraphwarAgentSceneWork();
   }
   setGraphwarAgentFireStatus("idle");
@@ -3650,21 +4540,21 @@ function setGraphwarAgentBaseUrlText(value: string) {
 
 /** 切换士兵吸附；关闭时清掉悬停，避免视觉状态暗示仍会吸附。 */
 function toggleSnapSoldiers() {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
-  snapSoldiersPreference.value = !snapSoldiersEnabled.value;
-  if (!snapSoldiersEnabled.value) {
+  shouldSnapSoldiers.value = !isSnapSoldiersEnabled.value;
+  if (!isSnapSoldiersEnabled.value) {
     hoveredDetectedSoldierId.value = undefined;
   }
 }
 
 /** 切换手工碰撞检查；寻路任务仍使用自己的强制碰撞输入。 */
 function toggleCollisionCheck() {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
-  collisionCheckPreference.value = !collisionCheckEnabled.value;
+  shouldCheckCollisions.value = !isCollisionCheckEnabled.value;
 }
 
 /** 切换单目标路径规划；休眠状态仍允许用户预先保存偏好。 */
@@ -3679,12 +4569,12 @@ function togglePathPlanning() {
 
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
-  pathPlanningEnabled.value = !pathPlanningEnabled.value;
+  isPathPlanningEnabled.value = !isPathPlanningEnabled.value;
 }
 
 /** 同步障碍笔刷直径文本，保留非法输入供校验提示展示。 */
 function setObstacleBrushDiameterText(value: string) {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   obstacleBrushDiameterText.value = value;
@@ -3701,39 +4591,50 @@ function getSmartPathfindingDisabledMessage() {
 }
 
 /** 复用单一能力表判断当前组合，避免托管和手动入口各自硬编码算法。 */
-function isOneClickClearModeUnsupported() {
-  return !supportsOneClickClear(algorithmMode.value);
+function isOneClickClearModeSupported() {
+  return supportsOneClickClear(algorithmMode.value);
 }
 
 /** 切换友伤设置；该设置会改变士兵是否写入障碍 mask，因此需要重建路线。 */
 function toggleFriendlyFire() {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
-  if (smartPathfindingInProgress.value) {
+  if (isSmartPathfindingInProgress.value) {
     cancelSmartPathfinding(false);
   }
   invalidatePathfindingCaches();
   clearSmartPathfindingStatus();
-  friendlyFireEnabled.value = !friendlyFireEnabled.value;
+  isFriendlyFireEnabled.value = !isFriendlyFireEnabled.value;
 }
 
 /** 切换搜索动画，并清理当前动画层避免新设置下显示旧帧。 */
 function toggleSearchAnimation() {
-  searchAnimationEnabled.value = !searchAnimationEnabled.value;
+  isSearchAnimationEnabled.value = !isSearchAnimationEnabled.value;
   clearSmartPathfindingPreview();
+  if (!isSearchAnimationEnabled.value) {
+    clearIncumbentPreview();
+  }
+}
+
+/** Toggles complete-result cache reads and writes for subsequent debug-mode tasks. */
+function togglePathfindingResultCache() {
+  if (!isDebugInfoEnabled.value) {
+    return;
+  }
+  isPathfindingResultCacheEnabled.value = !isPathfindingResultCacheEnabled.value;
 }
 
 /** 更新普通几何路线算法；邪道扫描不消费该设置，也不应因此被取消。 */
 function setPathfindingRouteMode(mode: GraphwarPathfindingRouteMode) {
-  if (graphwarManagedModeEnabled.value || pathfindingRouteMode.value === mode) {
+  if (isGraphwarManagedModeEnabled.value || pathfindingRouteMode.value === mode) {
     return;
   }
-  if (!effectiveStepGlitchModeEnabled.value && smartPathfindingInProgress.value) {
+  if (!isEffectiveStepGlitchModeEnabled.value && isSmartPathfindingInProgress.value) {
     cancelSmartPathfinding(false);
   }
   pathfindingRouteMode.value = mode;
-  if (!effectiveStepGlitchModeEnabled.value) {
+  if (!isEffectiveStepGlitchModeEnabled.value) {
     invalidatePathfindingCaches();
     clearSmartPathfindingStatus();
     clearSmartPathfindingPreview();
@@ -3742,13 +4643,13 @@ function setPathfindingRouteMode(mode: GraphwarPathfindingRouteMode) {
 
 /** 切换删点优化；只丢弃最终结果缓存，保留与路线几何相同的 Worker 准备数据。 */
 function toggleDeleteOptimization() {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
-  if (smartPathfindingInProgress.value) {
+  if (isSmartPathfindingInProgress.value) {
     cancelSmartPathfinding(false);
   }
-  deleteOptimizationEnabled.value = !deleteOptimizationEnabled.value;
+  isDeleteOptimizationEnabled.value = !isDeleteOptimizationEnabled.value;
   invalidatePathfindingResultCache();
   clearSmartPathfindingStatus();
   clearSmartPathfindingPreview();
@@ -3756,12 +4657,12 @@ function toggleDeleteOptimization() {
 
 /** 邪道固定使用 X+ 扫描；普通模式才消费用户选择的几何路线算法。 */
 function getPathfindingRouteMode(): GraphwarPathfindingRouteMode {
-  return effectiveStepGlitchModeEnabled.value ? "visibility-graph" : pathfindingRouteMode.value;
+  return isEffectiveStepGlitchModeEnabled.value ? "visibility-graph" : pathfindingRouteMode.value;
 }
 
 /** 根据当前模式将指针点击分发给边界点选或路径点选。 */
 function handleStagePointerDown(event: PointerEvent) {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   const point = getImagePointFromEvent(event);
@@ -3787,7 +4688,7 @@ function handleStagePointerDown(event: PointerEvent) {
     if (isUsableBoundsRect(nextRect)) {
       applyDetectedBounds(nextRect);
       toolMode.value = "path";
-      if (autoDetectionEnabled.value) {
+      if (isAutoDetectionEnabled.value) {
         // 手动框选只负责更新边界；对象识别仍应遵守自动识别开关。
         void runAutomaticGraphwarObjectsInCurrentBounds();
       }
@@ -3802,7 +4703,7 @@ function handleStagePointerDown(event: PointerEvent) {
       return;
     }
 
-    if (!obstacleBrushAvailable.value || !parsedObstacleBrushDiameter.value.ok) {
+    if (!isObstacleBrushAvailable.value || !parsedObstacleBrushDiameter.value.ok) {
       return;
     }
 
@@ -3817,7 +4718,7 @@ function handleStagePointerDown(event: PointerEvent) {
   }
 
   clearLiveClickPreviewPointerPoint();
-  if (smartPathfindingInProgress.value) {
+  if (isSmartPathfindingInProgress.value) {
     setLiveClickPreviewPointerPoint(point, getPathPointIndexAtPoint(point));
     updateSmartPathfindingInProgressStatus();
     return;
@@ -3833,7 +4734,7 @@ function handleStagePointerDown(event: PointerEvent) {
   }
 
   const selectedSoldier = getDetectedSoldierAtPoint(point);
-  if (snapSoldiersEnabled.value && selectedSoldier) {
+  if (isSnapSoldiersEnabled.value && selectedSoldier) {
     void appendDetectedSoldierPathPoint(selectedSoldier);
     return;
   }
@@ -3851,23 +4752,97 @@ async function runOneClickClear() {
   return runOneClickClearWorkflow();
 }
 
-/** 在失败发生时冻结开关决策，并把权威启动快照交给统一去重队列。 */
-function enqueueGraphwarAgentClearFailureExport(
+/** Freezes the auto-export decision; the completed report is queued only after finalization. */
+function requestGraphwarAgentClearFailureExport(
   failureKind: GraphwarClearFailureExportKind,
-  snapshot: GraphwarAgentSnapshot,
+  snapshot?: GraphwarAgentSnapshot,
+  requestedCapture = activePathfindingDebugCapture,
 ) {
-  if (!debugInfoEnabled.value || !graphwarAgentEnabled.value || !graphwarAgentAutoExportOnClearFailureEnabled.value) {
+  const capture = requestedCapture;
+  if (
+    !isDebugInfoEnabled.value ||
+    !isGraphwarAgentEnabled.value ||
+    !isGraphwarAgentAutoExportOnClearFailureEnabled.value ||
+    !capture ||
+    capture.capture.sceneSource !== "agent" ||
+    !("gameInstanceId" in capture.capture.sceneState) ||
+    (snapshot &&
+      createGraphwarAgentClearFailureSceneKey(snapshot.state) !==
+        createGraphwarAgentClearFailureSceneKey(capture.capture.sceneState))
+  ) {
     return false;
   }
-  return graphwarAgentClearFailureExportQueue.enqueue(failureKind, snapshot);
+  capture.failureKind = failureKind;
+  return true;
+}
+
+/** Queues only the latest incumbent while retaining the last complete trajectory. */
+function queueIncumbentPreview(incumbent: GraphwarOneClickClearIncumbent) {
+  queuedIncumbentPreview = createOneClickClearPreview(incumbent);
+  if (incumbentPreviewFrame !== undefined) {
+    return;
+  }
+  if (typeof requestAnimationFrame === "undefined") {
+    publishQueuedIncumbentPreview();
+    return;
+  }
+  incumbentPreviewFrame = requestAnimationFrame(() => {
+    incumbentPreviewFrame = undefined;
+    publishQueuedIncumbentPreview();
+  });
+}
+
+/** Atomically publishes the latest validated point, formula, and trajectory snapshot. */
+function publishQueuedIncumbentPreview() {
+  const incumbent = queuedIncumbentPreview;
+  queuedIncumbentPreview = undefined;
+  if (!incumbent) {
+    return;
+  }
+  const preview: GraphwarOneClickClearPreview = {
+    ...incumbent,
+    pathPoints: incumbent.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
+  };
+  incumbentPointPreview.value = preview;
+  publishTrajectoryIncumbentPreview(preview);
+}
+
+/** Freezes the equation and authoritative scene when the Worker incumbent reaches the page. */
+function createOneClickClearPreview(incumbent: GraphwarOneClickClearIncumbent): GraphwarOneClickClearPreview {
+  const sourceIdentity = graphwarTrajectorySourceIdentity.value;
+  return {
+    equationMode: equationMode.value,
+    expression: incumbent.expression,
+    ...(incumbent.launchAngleRadians === undefined ? {} : { launchAngleRadians: incumbent.launchAngleRadians }),
+    pathPoints: incumbent.pathPoints,
+    ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
+    trajectoryPoints: incumbent.trajectoryPoints,
+  };
+}
+
+/** Clears queued points and the matching trajectory preview so invalidation restores the formal result. */
+function clearIncumbentPreview() {
+  clearIncumbentPointPreview();
+  clearTrajectoryIncumbentPreview();
+}
+
+/** Clears only the point overlay after a matching complete formula/trajectory snapshot is formal. */
+function clearIncumbentPointPreview() {
+  queuedIncumbentPreview = undefined;
+  if (incumbentPreviewFrame !== undefined) {
+    if (typeof cancelAnimationFrame !== "undefined") {
+      cancelAnimationFrame(incumbentPreviewFrame);
+    }
+    incumbentPreviewFrame = undefined;
+  }
+  incumbentPointPreview.value = undefined;
 }
 
 /** 标记一键清图任务，让只属于该任务的设置变化不会取消普通单目标寻路。 */
 async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClearRunWorkflow.run>) {
   // 冻结启动时实际采用的分支，避免运行期间的响应式配置让休眠参数误取消任务。
-  const task = { kind: "one-click", usesDagWorker: requiresOneClickClearDagWorker() } as const;
-  // 自动导出必须绑定搜索使用的局面，不能在托管开火后重新读取 Agent。
-  const agentSnapshotAtStart = graphwarAgentEnabled.value ? graphwarAgentAppliedSnapshot : undefined;
+  const task = { kind: "one-click", shouldUseDagWorker: shouldUseOneClickClearDagWorker() } as const;
+  const debugCapture = beginPathfindingDebugCapture("one-click-clear");
   clearIncumbentPreview();
   activePathfindingTask = task;
   try {
@@ -3875,23 +4850,19 @@ async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClear
     return await oneClickClearRunWorkflow.run({
       ...runOptions,
       onOutcome: (outcome) => {
-        if (
-          agentSnapshotAtStart &&
-          (outcome.kind === "incomplete" || outcome.kind === "search-failure" || outcome.kind === "search-error")
-        ) {
-          enqueueGraphwarAgentClearFailureExport(outcome.kind, agentSnapshotAtStart);
-        }
+        setOneClickClearDebugOutcome(debugCapture, outcome);
         runOptions?.onOutcome?.(outcome);
       },
       onIncumbent: (incumbent) => {
-        // 搜索动画只控制独立轨迹 Worker；主搜索始终上报检查点供取消和托管截止使用。
-        if (searchAnimationEnabled.value) {
-          publishIncumbentPreview(incumbent.expression, incumbent.launchAngleRadians);
+        // 搜索动画只控制验证快照上屏；主搜索始终上报检查点供取消和托管截止使用。
+        if (isSearchAnimationEnabled.value) {
+          queueIncumbentPreview(incumbent);
         }
         runOptions?.onIncumbent?.(incumbent);
       },
     });
   } finally {
+    completePathfindingDebugCapture(debugCapture);
     if (activePathfindingTask === task) {
       activePathfindingTask = undefined;
     }
@@ -3922,12 +4893,27 @@ function applyValidatedPath(points: PixelPoint[]) {
   pathStatus.value = "";
 }
 
-/** 提交已验证 incumbent；复用已有绘图，否则只采样精确表达式，不从控制点重算公式。 */
+/** 提交已验证 incumbent；复用匹配预览，否则直接发布 Worker 携带的轨迹快照。 */
 function applyOneClickClearIncumbent(incumbent: GraphwarOneClickClearIncumbent) {
-  if (!commitIncumbentPreview(incumbent.expression, incumbent.launchAngleRadians)) {
-    commitIncumbentResult(incumbent.expression, incumbent.launchAngleRadians);
+  if (queuedIncumbentPreview) {
+    if (incumbentPreviewFrame !== undefined && typeof cancelAnimationFrame !== "undefined") {
+      cancelAnimationFrame(incumbentPreviewFrame);
+    }
+    incumbentPreviewFrame = undefined;
+    publishQueuedIncumbentPreview();
   }
+  const preview =
+    incumbentPointPreview.value?.trajectoryPoints === incumbent.trajectoryPoints
+      ? incumbentPointPreview.value
+      : createOneClickClearPreview(incumbent);
+  if (commitIncumbentPreview(preview)) {
+    applyValidatedPath(incumbent.pathPoints);
+    clearIncumbentPointPreview();
+    return;
+  }
+  commitIncumbentResult(preview);
   applyValidatedPath(incumbent.pathPoints);
+  clearIncumbentPointPreview();
 }
 
 /** 发射点改变会影响友方士兵是否写入寻路障碍 mask。 */
@@ -3946,15 +4932,15 @@ function startSmartPathfinding(message?: string) {
 }
 
 /** 主动停止可提交一键清图检查点；内部失效必须先丢弃它，不能让旧局面结果落地。 */
-function cancelSmartPathfinding(showStatus: boolean, preservePreview = false) {
-  const retained = showStatus && finalizeActiveOneClickClearIncumbent();
-  if (!retained) {
+function cancelSmartPathfinding(shouldShowStatus: boolean, shouldPreservePreview = false) {
+  const hasRetainedIncumbent = shouldShowStatus && finalizeActiveOneClickClearIncumbent();
+  if (!hasRetainedIncumbent) {
     oneClickClearRunWorkflow.discardActiveIncumbent();
   }
-  if (!preservePreview && !retained) {
+  if (!shouldPreservePreview && !hasRetainedIncumbent) {
     clearIncumbentPreview();
   }
-  return smartPathfindingSession.cancel(retained ? false : showStatus);
+  return smartPathfindingSession.cancel(hasRetainedIncumbent ? false : shouldShowStatus);
 }
 
 /** 转正当前一键清图检查点；调用方仍负责终止共享寻路 session。 */
@@ -4045,16 +5031,16 @@ function handleStagePointerMove(event: PointerEvent) {
     return;
   }
 
-  if (magnifierEnabled.value) {
+  if (isMagnifierEnabled.value) {
     magnifierPoint.value = point;
   }
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   if (toolMode.value === "obstacle") {
     clearLiveClickPreviewPointerPoint();
     updateObstacleBrushPreview(point);
-    if (obstacleBrushDragging.value) {
+    if (isObstacleBrushDragging.value) {
       paintObstacleBrushAtPoint(point, true);
     }
     hoveredPathPointIndex.value = undefined;
@@ -4075,7 +5061,7 @@ function handleStagePointerMove(event: PointerEvent) {
     clearLiveClickPreviewPointerPoint();
   }
   hoveredPathPointIndex.value = pathPointIndex;
-  hoveredDetectedSoldierId.value = snapSoldiersEnabled.value ? getDetectedSoldierAtPoint(point)?.id : undefined;
+  hoveredDetectedSoldierId.value = isSnapSoldiersEnabled.value ? getDetectedSoldierAtPoint(point)?.id : undefined;
   if (toolMode.value !== "bounds") {
     return;
   }
@@ -4096,7 +5082,7 @@ function handleStagePointerLeave() {
 
 /** 使用右键取消边界点或撤回最新路径点。 */
 function handleStageContextMenu(event: MouseEvent) {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   if (cancelDetection(true)) {
@@ -4132,7 +5118,7 @@ function handleStageContextMenu(event: MouseEvent) {
 
 /** 结束路径点拖拽，释放 pointer capture。 */
 function handleStagePointerUp(event: PointerEvent) {
-  if (graphwarManagedModeEnabled.value) {
+  if (isGraphwarManagedModeEnabled.value) {
     return;
   }
   if (finishObstacleBrushDrag()) {
@@ -4153,7 +5139,7 @@ function handleStagePointerUp(event: PointerEvent) {
 
 /** 切换边界/路径模式，并清理当前模式的临时状态。 */
 function setToolMode(mode: ToolMode) {
-  if (graphwarManagedModeEnabled.value || (mode === "obstacle" && !obstacleBrushAvailable.value)) {
+  if (isGraphwarManagedModeEnabled.value || (mode === "obstacle" && !isObstacleBrushAvailable.value)) {
     return;
   }
 
@@ -4199,7 +5185,7 @@ function formatDebugActivationRemainingSeconds(remainingMs: number) {
 
 /** 清除全部已选路径点，并保留图片边界和设定。 */
 function clearPath() {
-  if (graphwarManagedModeEnabled.value || toolMode.value !== "path") {
+  if (isGraphwarManagedModeEnabled.value || toolMode.value !== "path") {
     return;
   }
 
@@ -4221,7 +5207,7 @@ function clearAllModePaths() {
 
 /** 删除最新选择的路径点。 */
 function undoLastPoint() {
-  if (graphwarManagedModeEnabled.value || toolMode.value !== "path") {
+  if (isGraphwarManagedModeEnabled.value || toolMode.value !== "path") {
     return;
   }
 
@@ -4254,79 +5240,81 @@ function undoLastPoint() {
     <GraphwarSettingsPanel
       :locale="locale"
       :panel="settingsPanel"
-      @cancel-debug-activation-hold="!graphwarManagedModeEnabled && cancelDebugActivationHold()"
-      @finish-debug-activation-hold="!graphwarManagedModeEnabled && finishDebugActivationHold()"
+      @cancel-debug-activation-hold="cancelDebugActivationHold"
+      @finish-debug-activation-hold="finishDebugActivationHold"
       @set-algorithm-mode="setAlgorithmMode"
       @set-equation-mode="setEquationMode"
       @set-tool-workflow-mode="setToolWorkflowMode"
-      @start-debug-activation-hold="!graphwarManagedModeEnabled && startDebugActivationHold($event)"
+      @start-debug-activation-hold="startDebugActivationHold"
       @toggle-advanced-settings="toggleAdvancedSettingsFromControl"
       @toggle-step-glitch-mode="toggleStepGlitchMode"
       @toggle-step-overflow-protection="
-        !graphwarManagedModeEnabled && (stepOverflowProtectionEnabled = !stepOverflowProtectionEnabled)
+        !isGraphwarManagedModeEnabled && (isStepOverflowProtectionEnabled = !isStepOverflowProtectionEnabled)
       "
-      @update-precision-text="!graphwarManagedModeEnabled && (precisionText = $event)"
-      @update-steepness-text="!graphwarManagedModeEnabled && (steepnessText = $event)"
+      @update-precision-text="!isGraphwarManagedModeEnabled && (precisionText = $event)"
+      @update-steepness-text="!isGraphwarManagedModeEnabled && (steepnessText = $event)"
     />
     <GraphwarAdvancedSettingsPanel
-      v-if="advancedSettingsVisible"
+      v-if="isAdvancedSettingsVisible"
       :locale="locale"
       :panel="advancedSettingsPanel"
       @toggle-simulator-parse-derivative-as-y="
-        !graphwarManagedModeEnabled && (simulatorParseDerivativeAsY = !simulatorParseDerivativeAsY)
+        !isGraphwarManagedModeEnabled && (shouldSimulatorParseDerivativeAsY = !shouldSimulatorParseDerivativeAsY)
       "
       @toggle-simulator-skip-unknown-characters="
-        !graphwarManagedModeEnabled && (simulatorSkipUnknownCharacters = !simulatorSkipUnknownCharacters)
+        !isGraphwarManagedModeEnabled && (shouldSimulatorSkipUnknownCharacters = !shouldSimulatorSkipUnknownCharacters)
       "
-      @update-candidate-top-ratio-text="!graphwarManagedModeEnabled && (soldierTemplateCandidateTopRatioText = $event)"
-      @update-max-x-text="!graphwarManagedModeEnabled && (maxXText = $event)"
-      @update-max-y-text="!graphwarManagedModeEnabled && (maxYText = $event)"
-      @update-maximum-soldier-count-text="!graphwarManagedModeEnabled && (maximumSoldierCountText = $event)"
-      @update-min-x-text="!graphwarManagedModeEnabled && (minXText = $event)"
-      @update-min-y-text="!graphwarManagedModeEnabled && (minYText = $event)"
+      @update-candidate-top-ratio-text="
+        !isGraphwarManagedModeEnabled && (soldierTemplateCandidateTopRatioText = $event)
+      "
+      @update-max-x-text="!isGraphwarManagedModeEnabled && (maxXText = $event)"
+      @update-max-y-text="!isGraphwarManagedModeEnabled && (maxYText = $event)"
+      @update-maximum-soldier-count-text="!isGraphwarManagedModeEnabled && (maximumSoldierCountText = $event)"
+      @update-min-x-text="!isGraphwarManagedModeEnabled && (minXText = $event)"
+      @update-min-y-text="!isGraphwarManagedModeEnabled && (minYText = $event)"
       @update-live-click-preview-worker-count-text="
-        !graphwarManagedModeEnabled && (liveClickPreviewWorkerCountText = $event)
+        !isGraphwarManagedModeEnabled && (liveClickPreviewWorkerCountText = $event)
       "
-      @update-managed-poll-interval-text="!graphwarManagedModeEnabled && (graphwarManagedPollIntervalText = $event)"
-      @update-managed-shot-reserve-text="!graphwarManagedModeEnabled && (graphwarManagedShotReserveText = $event)"
-      @update-obstacle-min-area-text="!graphwarManagedModeEnabled && (obstacleMinAreaText = $event)"
+      @update-managed-poll-interval-text="!isGraphwarManagedModeEnabled && (graphwarManagedPollIntervalText = $event)"
+      @update-managed-shot-reserve-text="!isGraphwarManagedModeEnabled && (graphwarManagedShotReserveText = $event)"
+      @update-obstacle-min-area-text="!isGraphwarManagedModeEnabled && (obstacleMinAreaText = $event)"
       @update-agent-obstacle-simulation-tolerance-text="
-        !graphwarManagedModeEnabled && (graphwarAgentObstacleSimulationToleranceText = $event)
+        !isGraphwarManagedModeEnabled && (graphwarAgentObstacleSimulationToleranceText = $event)
       "
       @update-agent-route-planning-tolerance-text="
-        !graphwarManagedModeEnabled && (graphwarAgentRoutePlanningToleranceText = $event)
+        !isGraphwarManagedModeEnabled && (graphwarAgentRoutePlanningToleranceText = $event)
       "
       @update-detection-obstacle-simulation-tolerance-text="
-        !graphwarManagedModeEnabled && (detectionObstacleSimulationToleranceText = $event)
+        !isGraphwarManagedModeEnabled && (detectionObstacleSimulationToleranceText = $event)
       "
       @update-detection-route-planning-tolerance-text="
-        !graphwarManagedModeEnabled && (detectionRoutePlanningToleranceText = $event)
+        !isGraphwarManagedModeEnabled && (detectionRoutePlanningToleranceText = $event)
       "
       @update-step-glitch-obstacle-simulation-tolerance-text="
-        !graphwarManagedModeEnabled && (stepGlitchObstacleSimulationToleranceText = $event)
+        !isGraphwarManagedModeEnabled && (stepGlitchObstacleSimulationToleranceText = $event)
       "
       @update-step-glitch-route-planning-tolerance-text="
-        !graphwarManagedModeEnabled && (stepGlitchRoutePlanningToleranceText = $event)
+        !isGraphwarManagedModeEnabled && (stepGlitchRoutePlanningToleranceText = $event)
       "
       @update-one-click-clear-delete-check-radius-text="
-        !graphwarManagedModeEnabled && (oneClickClearDeleteCheckRadiusText = $event)
+        !isGraphwarManagedModeEnabled && (oneClickClearDeleteCheckRadiusText = $event)
       "
-      @update-pathfinding-worker-count-text="!graphwarManagedModeEnabled && (pathfindingWorkerCountText = $event)"
+      @update-pathfinding-worker-count-text="!isGraphwarManagedModeEnabled && (pathfindingWorkerCountText = $event)"
       @update-template-matching-worker-count-text="
-        !graphwarManagedModeEnabled && (templateMatchingWorkerCountText = $event)
+        !isGraphwarManagedModeEnabled && (templateMatchingWorkerCountText = $event)
       "
     />
     <div class="graphwar-killer__action-detection-row">
       <GraphwarActionPanel
         :locale="locale"
         :panel="actionPanel"
-        @clear-obstacle-edits="!graphwarManagedModeEnabled && resetObstacleEdits()"
+        @clear-obstacle-edits="!isGraphwarManagedModeEnabled && resetObstacleEdits()"
         @clear-path="clearPath"
         @set-tool-mode="setToolMode"
         @toggle-collision-check="toggleCollisionCheck"
-        @toggle-live-click-preview="liveClickPreviewEnabled = !liveClickPreviewEnabled"
-        @toggle-magnifier="magnifierEnabled = !magnifierEnabled"
-        @toggle-obstacle-brush-erase="!graphwarManagedModeEnabled && toggleObstacleBrushErase()"
+        @toggle-live-click-preview="isLiveClickPreviewEnabled = !isLiveClickPreviewEnabled"
+        @toggle-magnifier="isMagnifierEnabled = !isMagnifierEnabled"
+        @toggle-obstacle-brush-erase="!isGraphwarManagedModeEnabled && toggleObstacleBrushErase()"
         @toggle-snap-soldiers="toggleSnapSoldiers"
         @undo-point="undoLastPoint"
         @update-magnifier-zoom="setMagnifierZoomText"
@@ -4335,7 +5323,7 @@ function undoLastPoint() {
       <GraphwarDetectionPanel
         :locale="locale"
         :panel="detectionPanel"
-        @capture-image="!graphwarManagedModeEnabled && captureScreenImage()"
+        @capture-image="canAcceptScreenshotInput && captureScreenImage()"
         @detect-bounds="void detectGraphwarBounds()"
         @detect-objects="void detectGraphwarObjectsInCurrentBounds()"
         @export-agent-scene="void exportGraphwarAgentDebugScene()"
@@ -4345,17 +5333,18 @@ function undoLastPoint() {
         @toggle-agent-usage="toggleGraphwarAgentUsage"
         @toggle-auto-detection="toggleAutoDetection"
         @toggle-export-on-clear-failure="
-          graphwarAgentAutoExportOnClearFailureEnabled = !graphwarAgentAutoExportOnClearFailureEnabled
+          isGraphwarAgentAutoExportOnClearFailureEnabled = !isGraphwarAgentAutoExportOnClearFailureEnabled
         "
-        @upload-image="!graphwarManagedModeEnabled && handleImageUpload($event)"
+        @upload-image="canAcceptScreenshotInput && handleImageUpload($event)"
         @update-agent-base-url="setGraphwarAgentBaseUrlText"
+        @update-agent-token="setGraphwarAgentTokenText"
       />
     </div>
     <GraphwarScreenshotPanel
       :locale="locale"
       :panel="screenshotPanel"
       @cancel-detection="cancelDetection(true)"
-      @drop-image="!graphwarManagedModeEnabled && handleDrop($event)"
+      @drop-image="canAcceptScreenshotInput && handleDrop($event)"
       @image-load="handleImageLoad"
       @set-image-element="setScreenshotImageElement"
       @set-stage-element="setScreenshotStageElement"
@@ -4366,25 +5355,27 @@ function undoLastPoint() {
       @stage-pointer-up="handleStagePointerUp"
     />
     <GraphwarResultPanel
+      :agent-turn-countdown="graphwarAgentTurnCountdown"
       :locale="locale"
       :result="resultPanel"
-      @clear-simulator="!graphwarManagedModeEnabled && clearSimulatorInputs()"
+      @clear-simulator="!isGraphwarManagedModeEnabled && clearSimulatorInputs()"
       @copy-formula="copyFormula"
       @fire-agent-function="void fireGraphwarAgentFunction()"
-      @finish-point-coordinate-edit="!graphwarManagedModeEnabled && finishPathPointCoordinateEdit()"
+      @finish-point-coordinate-edit="!isGraphwarManagedModeEnabled && finishPathPointCoordinateEdit()"
       @start-point-coordinate-edit="
-        (index, axis) => !graphwarManagedModeEnabled && startPathPointCoordinateEdit(index, axis)
+        (index, axis) => !isGraphwarManagedModeEnabled && startPathPointCoordinateEdit(index, axis)
       "
-      @toggle-fraction-output="!graphwarManagedModeEnabled && (fractionOutputEnabled = !fractionOutputEnabled)"
+      @toggle-fraction-output="!isGraphwarManagedModeEnabled && (isFractionOutputEnabled = !isFractionOutputEnabled)"
       @update-point-coordinate="
-        (index, axis, value) => !graphwarManagedModeEnabled && handlePathPointCoordinateInput(index, axis, value)
+        (index, axis, value) => !isGraphwarManagedModeEnabled && handlePathPointCoordinateInput(index, axis, value)
       "
-      @update-simulator-formula-text="!graphwarManagedModeEnabled && (simulatorFormulaText = $event)"
-      @update-simulator-launch-angle-text="!graphwarManagedModeEnabled && (simulatorLaunchAngleText = $event)"
+      @update-simulator-formula-text="!isGraphwarManagedModeEnabled && (simulatorFormulaText = $event)"
+      @update-simulator-launch-angle-text="!isGraphwarManagedModeEnabled && (simulatorLaunchAngleText = $event)"
     />
     <GraphwarSmartPathfindingPanel
       :locale="locale"
       :panel="smartPathfindingPanel"
+      @export-debug-report="exportLatestPathfindingDebugReport"
       @run-one-click-clear="void runOneClickClear()"
       @set-route-mode="setPathfindingRouteMode"
       @toggle-delete-optimization="toggleDeleteOptimization"
@@ -4392,6 +5383,7 @@ function undoLastPoint() {
       @toggle-search-animation="toggleSearchAnimation"
       @toggle-managed-mode="toggleGraphwarManagedMode"
       @toggle-path-planning="togglePathPlanning"
+      @toggle-result-cache="togglePathfindingResultCache"
     />
   </div>
 </template>

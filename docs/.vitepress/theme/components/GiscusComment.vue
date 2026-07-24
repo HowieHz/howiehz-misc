@@ -35,7 +35,6 @@ interface Props extends Omit<GiscusProps, "strict" | "reactionsEnabled" | "emitM
   mapping?: GiscusProps["mapping"];
 }
 
-/* oxlint-disable eslint(no-undef) */
 const props = withDefaults(defineProps<Props>(), {
   mapping: "pathname",
   strict: true,

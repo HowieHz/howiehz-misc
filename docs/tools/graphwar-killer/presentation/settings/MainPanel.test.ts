@@ -67,6 +67,21 @@ describe("Settings MainPanel", () => {
     expect(wrapper.emitted("finishDebugActivationHold")).toHaveLength(1);
   });
 
+  it("hides the Step glitch switch for y mode", () => {
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        panel: {
+          ...createPanel(),
+          equationMode: "y",
+          equationModes: [{ isEnabled: true, label: "y", title: "y", value: "y" }],
+        },
+      },
+    });
+
+    expect(wrapper.find("#graphwar-killer-step-glitch-mode").exists()).toBe(false);
+  });
+
   it("shows steepness but not the Step overflow switch for ABS y''", () => {
     const wrapper = mount(MainPanel, {
       props: {
@@ -74,10 +89,10 @@ describe("Settings MainPanel", () => {
         panel: {
           ...createPanel(),
           algorithmMode: "abs",
-          algorithmModes: [{ disabled: false, label: "ABS", title: "ABS", value: "abs" }],
+          algorithmModes: [{ isEnabled: true, label: "ABS", title: "ABS", value: "abs" }],
           equationMode: "ddy",
-          equationModes: [{ disabled: false, label: "y''", title: "y''", value: "ddy" }],
-          steepnessVisible: true,
+          equationModes: [{ isEnabled: true, label: "y''", title: "y''", value: "ddy" }],
+          isSteepnessVisible: true,
         },
       },
     });
@@ -121,24 +136,66 @@ describe("Settings MainPanel", () => {
     await wrapper.setProps({ panel: { ...panel, headerStatus: { kind: "warning", message: "warning" } } });
     expect(panels[2].find(".graphwar-killer__label-row > span").text()).toBe("warning");
   });
+
+  it("keeps advanced settings available while managed mode locks formula controls", async () => {
+    const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        panel: {
+          ...createPanel(),
+          canInteract: false,
+          stepGlitchModeReason: reason,
+          stepGlitchModeState: "busy" as const,
+          temporaryDisabledReason: reason,
+        },
+      },
+    });
+
+    for (const button of wrapper.findAll<HTMLButtonElement>(".graphwar-killer-segmented-button")) {
+      expect(button.element.disabled).toBe(true);
+      expect(button.attributes("title")?.startsWith(`${reason}\n`)).toBe(true);
+    }
+
+    const switchTitles = new Map([
+      ["graphwar-killer-overflow-protection", graphwarKillerLocale.ui.settings.overflowProtectionTitle],
+      ["graphwar-killer-step-glitch-mode", graphwarKillerLocale.ui.settings.stepGlitchModeTitle],
+    ]);
+    for (const [id, title] of switchTitles) {
+      const control = wrapper.get(`#${id}`);
+      expect(control.attributes("disabled")).toBeDefined();
+      expect(control.attributes("title")).toBe(title ? `${reason}\n${title}` : reason);
+      expect(wrapper.find(`#${id}-reason`).exists()).toBe(false);
+    }
+    for (const input of wrapper.findAll<HTMLInputElement>("input")) {
+      expect(input.element.disabled).toBe(true);
+      expect(input.attributes("title")?.startsWith(`${reason}\n`)).toBe(true);
+    }
+    const advancedSettings = wrapper.get("#graphwar-killer-advanced-settings");
+    expect(advancedSettings.attributes("disabled")).toBeUndefined();
+    expect(advancedSettings.attributes("title")).toBeUndefined();
+    await advancedSettings.trigger("click");
+    expect(wrapper.emitted("toggleAdvancedSettings")).toHaveLength(1);
+    expect(wrapper.text()).not.toContain(reason);
+  });
 });
 
 /** 创建覆盖公式开关排列所需的最小完整设置模型。 */
 function createPanel() {
   return {
-    advancedSettingsVisible: false,
+    isAdvancedSettingsVisible: false,
     algorithmMode: "step",
-    algorithmModes: [{ disabled: false, label: "Step", title: "Step", value: "step" }],
+    algorithmModes: [{ isEnabled: true, label: "Step", title: "Step", value: "step" }],
     equationMode: "dy",
-    equationModes: [{ disabled: false, label: "y'", title: "y'", value: "dy" }],
+    equationModes: [{ isEnabled: true, label: "y'", title: "y'", value: "dy" }],
     headerStatus: { kind: "info", message: "" },
-    interactionDisabled: false,
+    canInteract: true,
     precision: { maximum: 12, text: "4" },
     steepnessText: "67",
-    steepnessVisible: true,
-    stepGlitchModeEnabled: false,
+    isSteepnessVisible: true,
+    isStepGlitchModeEnabled: false,
     stepGlitchModeState: "normal",
-    stepOverflowProtectionEnabled: true,
+    isStepOverflowProtectionEnabled: true,
     toolWorkflowMode: "solver",
     toolWorkflowModes: [
       { label: "Solver", title: "Solver", value: "solver" },

@@ -17,9 +17,9 @@ type GraphwarPathfindingCacheController = ReturnType<typeof createGraphwarPathfi
 interface GraphwarPathfindingRouteBoundaryInsetOptions {
   modes: {
     /** 手工碰撞检查启用时，普通目标选择也应避开 route 边界。 */
-    collisionCheckEnabled: ReadonlyRef<boolean>;
+    isCollisionCheckEnabled: ReadonlyRef<boolean>;
     /** 寻路障碍显示启用时，目标选择应按 route tolerance 同步边界内收。 */
-    pathfindingObstacleEdgesActive: ReadonlyRef<boolean>;
+    isPathfindingObstacleEdgesActive: ReadonlyRef<boolean>;
   };
   settings: {
     /** 容差校验结果应由 settings controller 保持原错误优先级。 */
@@ -43,13 +43,13 @@ interface GraphwarPathfindingObstacleProjectionOptions {
   };
   modes: {
     /** 关闭友伤且已有路径时，友方士兵应写入所有寻路任务的基础 mask。 */
-    includesFriendlySoldierObstacles: ReadonlyRef<boolean>;
+    hasFriendlySoldierObstacles: ReadonlyRef<boolean>;
     /** 普通模式不应把 route tolerance mask 用作公式模拟碰撞。 */
-    effectiveSmartPathfindingEnabled: ReadonlyRef<boolean>;
+    isEffectiveSmartPathfindingEnabled: ReadonlyRef<boolean>;
     /** 只有智能寻路展示启用时才绘制 route/simulation 派生障碍。 */
-    pathfindingObstacleEdgesActive: ReadonlyRef<boolean>;
+    isPathfindingObstacleEdgesActive: ReadonlyRef<boolean>;
     /** 手工解算和模拟器是否检查碰撞；寻路任务始终强制检查。 */
-    collisionCheckEnabled: ReadonlyRef<boolean>;
+    isCollisionCheckEnabled: ReadonlyRef<boolean>;
   };
   settings: {
     /** 弹道模拟边界收缩值和 simulation tolerance 同源，避免边界另起一套安全距离。 */
@@ -91,7 +91,7 @@ export function useGraphwarPathfindingRouteBoundaryInset(
   options: GraphwarPathfindingRouteBoundaryInsetOptions,
 ): ComputedRef<number> {
   return computed(() =>
-    (options.modes.collisionCheckEnabled.value || options.modes.pathfindingObstacleEdgesActive.value) &&
+    (options.modes.isCollisionCheckEnabled.value || options.modes.isPathfindingObstacleEdgesActive.value) &&
     options.settings.parsedObstacleTolerances.value.ok
       ? options.settings.parsedObstacleTolerances.value.routeBoundaryInsetPlanePixels
       : 0,
@@ -104,7 +104,7 @@ export function useGraphwarPathfindingObstacleProjection(
 ): GraphwarPathfindingObstacleProjectionController {
   const visibleObstacleEdgePath = computed(() => {
     const obstacleMap = options.detection.obstacles.value;
-    if (!obstacleMap || options.modes.pathfindingObstacleEdgesActive.value) {
+    if (!obstacleMap || options.modes.isPathfindingObstacleEdgesActive.value) {
       return "";
     }
 
@@ -113,7 +113,7 @@ export function useGraphwarPathfindingObstacleProjection(
 
   const visibleObstacleFillPath = computed(() => {
     const obstacleMap = options.detection.obstacles.value;
-    if (!obstacleMap || options.modes.pathfindingObstacleEdgesActive.value) {
+    if (!obstacleMap || options.modes.isPathfindingObstacleEdgesActive.value) {
       return "";
     }
 
@@ -122,11 +122,7 @@ export function useGraphwarPathfindingObstacleProjection(
 
   const smartPathfindingBaseObstacleMask = computed(() => {
     const obstacleMap = options.detection.obstacles.value;
-    if (
-      !obstacleMap ||
-      !options.modes.includesFriendlySoldierObstacles.value ||
-      !options.settings.parsedBounds.value.ok
-    ) {
+    if (!obstacleMap || !options.modes.hasFriendlySoldierObstacles.value || !options.settings.parsedBounds.value.ok) {
       return obstacleMap?.mask;
     }
 
@@ -149,7 +145,7 @@ export function useGraphwarPathfindingObstacleProjection(
   });
 
   const activePathfindingBaseObstacleMask = computed(() => {
-    if (options.modes.pathfindingObstacleEdgesActive.value) {
+    if (options.modes.isPathfindingObstacleEdgesActive.value) {
       return smartPathfindingBaseObstacleMask.value;
     }
     return options.detection.obstacles.value?.mask;
@@ -229,13 +225,13 @@ export function useGraphwarPathfindingObstacleProjection(
     if (!obstacleMap) {
       return undefined;
     }
-    return options.modes.effectiveSmartPathfindingEnabled.value
+    return options.modes.isEffectiveSmartPathfindingEnabled.value
       ? smartPathfindingSimulationObstacleMask.value
       : obstacleMap.mask;
   });
 
   const trajectoryCollisionSettings = computed<GraphwarTrajectoryCollisionSettings | undefined>(() => {
-    if (!options.modes.collisionCheckEnabled.value && !options.modes.pathfindingObstacleEdgesActive.value) {
+    if (!options.modes.isCollisionCheckEnabled.value && !options.modes.isPathfindingObstacleEdgesActive.value) {
       return undefined;
     }
 
@@ -252,7 +248,7 @@ export function useGraphwarPathfindingObstacleProjection(
 
   /** SVG path 只应在寻路障碍显示启用时消费派生 mask，保持普通障碍显示短路语义。 */
   function getPathfindingObstacleMaskForSvgPath() {
-    return options.modes.pathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
+    return options.modes.isPathfindingObstacleEdgesActive.value ? activePathfindingBaseObstacleMask.value : undefined;
   }
 
   return {

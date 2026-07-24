@@ -24,6 +24,7 @@ import type {
   GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import {
   createGraphwarStepGlitchPrefixScanner,
@@ -35,6 +36,7 @@ import type {
   GraphwarStepGlitchPrefixScanner,
   GraphwarStepGlitchScanTimingStage,
 } from "../routing/step-glitch-scan";
+import type { GraphwarPathfindingDebugMetrics } from "../runtime/diagnostics";
 import { supportsOneClickClear } from "./support";
 import { assignGraphwarOneClickClearTargetRoutePoints } from "./target-assignment";
 
@@ -67,6 +69,7 @@ export type GraphwarOneClickClearDebugStage =
   | "build-dag-edges"
   | "dag-longest-path"
   | "optimize-path"
+  | "outside-search-stages"
   | "prefix-evidence-hit"
   | "prefix-evidence-miss"
   | "prepare-pathfinding-prefix"
@@ -182,10 +185,12 @@ export interface GraphwarOneClickClearDagEdgeRoute {
 export interface GraphwarOneClickClearIncumbent {
   /** 与前缀验证使用相同公式上下文生成的 Graphwar 表达式。 */
   expression: string;
-  /** Y'' 模式需要的发射角；其他模式省略，单位为弧度，可直接用于 /shot。 */
+  /** Y'' 模式需要的发射角；其他模式省略，单位为弧度，可直接用于 /shots。 */
   launchAngleRadians?: number;
   /** 已验证方案的完整截图像素路径。 */
   pathPoints: PixelPoint[];
+  /** 与表达式和可选发射角来自同一次权威验证的可绘制轨迹快照。 */
+  trajectoryPoints: readonly PixelPoint[];
 }
 
 /** 运行一键清图所需的纯数据。 */
@@ -198,6 +203,8 @@ export interface GraphwarOneClickClearOptions {
   boundsRect: BoundsRect;
   /** 候选士兵；友伤开关过滤由调用方负责。 */
   candidates: readonly GraphwarOneClickClearCandidate[];
+  /** 调试开启时跨全部候选累计的计数器与细分耗时。 */
+  debugMetrics?: GraphwarPathfindingDebugMetrics;
   /** 用于统计整条弹道击杀数的士兵；不受 DAG 起点右侧过滤影响。 */
   hitCandidates: readonly GraphwarOneClickClearCandidate[];
   /** 长循环取消检查。 */
@@ -225,7 +232,7 @@ export interface GraphwarOneClickClearOptions {
   /** 一键清图删点局部命中检查半径，单位为截图像素；0 表示每次候选删点都走整路验证。 */
   deleteHitCheckRadiusPixels: number;
   /** 是否尝试删除控制点；关闭时仍执行最终整路验证和命中统计。 */
-  deleteOptimizationEnabled?: boolean;
+  isDeleteOptimizationEnabled?: boolean;
   /** 当前路径已有像素点。 */
   pathPoints: readonly PixelPoint[];
   /** 当前最后路径点的验证目标；传入士兵命中圈时可复用现有路径预检语义。 */
@@ -252,6 +259,7 @@ export interface GraphwarOneClickClearOptions {
 export type GraphwarOneClickClearSearchInput = Omit<
   GraphwarOneClickClearOptions,
   | "buildDagEdges"
+  | "debugMetrics"
   | "isCancelled"
   | "onDebugTiming"
   | "onValidatedIncumbent"
@@ -262,7 +270,7 @@ export type GraphwarOneClickClearSearchInput = Omit<
   | "yieldControl"
 > & {
   /** Worker 请求显式传递删点偏好，不依赖直接调用 API 的兼容默认值。 */
-  deleteOptimizationEnabled: boolean;
+  isDeleteOptimizationEnabled: boolean;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
@@ -373,6 +381,8 @@ interface OneClickClearValidatedRoute {
   pathPoints: PixelPoint[];
   /** 已按 DAG 序列验证命中的目标。 */
   targetSequence: OneClickClearTarget[];
+  /** 与 formulaContext 同一次验证得到的可绘制轨迹；路径变更时必须一并丢弃。 */
+  trajectoryPoints?: PixelPoint[];
 }
 
 /** 最终回放中需记录命中时刻的目标。 */
@@ -466,12 +476,16 @@ interface OneClickClearRouteSegmentValidationState {
   signProtection?: GraphwarSignProtection;
   /** 已验证前缀的普通控制点最大路径误差；续播后与新增段误差取最大值。 */
   pathError?: number;
+  /** ABS 从物理状态续播时已经验证过的可绘制轨迹前缀。 */
+  trajectoryPoints?: PixelPoint[];
 }
 
 /** 单条新增边的公式上下文和采样结果。 */
 interface OneClickClearRouteSegmentValidationResult {
   formulaContext: GraphwarTrajectoryFormulaContext;
   sampleResult: GraphwarTrajectorySampleResult;
+  /** 当前完整路径对应的可绘制轨迹；ABS 续播结果已和旧前缀拼接。 */
+  trajectoryPoints: PixelPoint[];
 }
 
 const START_NODE_INDEX = -1;
@@ -608,6 +622,7 @@ async function buildOneClickClearStepGlitchPath(
     prefixScanner ??= createGraphwarStepGlitchPrefixScanner({
       bounds: options.bounds,
       boundsRect: options.boundsRect,
+      debugMetrics: options.debugMetrics,
       maskIndex,
       ...(prefixEvidence ? { prefixEvidence } : {}),
       ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
@@ -629,6 +644,7 @@ async function buildOneClickClearStepGlitchPath(
         ...(scan.formulaContext ? { formulaContext: scan.formulaContext } : {}),
         pathPoints: scan.path,
         targetSequence: [...route.targetSequence, target],
+        trajectoryPoints: scan.trajectoryPoints,
       };
       // hit 已包含精确整式模拟；此时发布不会为了预览再做一次昂贵采样。
       if (route.formulaContext) {
@@ -648,7 +664,7 @@ async function buildOneClickClearStepGlitchPath(
   }
 
   const finalized =
-    options.deleteOptimizationEnabled !== false
+    options.isDeleteOptimizationEnabled !== false
       ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
           optimizeOneClickClearPath(context, route, workUnits),
         )
@@ -664,6 +680,11 @@ async function buildOneClickClearStepGlitchPath(
     ...finalized.route,
     formulaContext: finalValidation.formulaContext,
     ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
+    trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+      finalValidation.visiblePixels,
+      finalValidation.obstacleHitIndex,
+      options.debugMetrics,
+    ),
   };
   publishOneClickClearValidatedRoute(context, finalRoute);
 
@@ -733,7 +754,7 @@ async function runOneClickClearSearchAttempt(
 
   // 即使关闭删点也保留最终整路复验；它负责裁决后缀对本轮先前目标和碰撞的影响。
   const optimized =
-    options.deleteOptimizationEnabled !== false
+    options.isDeleteOptimizationEnabled !== false
       ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
           optimizeOneClickClearPath(context, validatedRoute, nextWorkUnits),
         )
@@ -757,6 +778,11 @@ async function runOneClickClearSearchAttempt(
         ...optimized.route,
         formulaContext: finalValidation.formulaContext,
         ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
+        trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+          finalValidation.visiblePixels,
+          finalValidation.obstacleHitIndex,
+          options.debugMetrics,
+        ),
       },
       type: "validated",
       workUnits: optimized.workUnits,
@@ -1299,6 +1325,7 @@ function validateOneClickClearDagRoute(
   let pathPoints = reused ? [...reused.pathPoints] : [...context.options.pathPoints];
   let formulaContext: GraphwarTrajectoryFormulaContext | undefined;
   let pathError: number | undefined;
+  let trajectoryPoints = reused?.segmentState.trajectoryPoints;
   let segmentState: OneClickClearRouteSegmentValidationState = reused ? { ...reused.segmentState } : {};
   const targetSequence: OneClickClearTarget[] = reused ? [...reused.targetSequence] : [];
   const validatedPrefix = cachedPrefix.slice(0, sharedPrefixLength);
@@ -1329,10 +1356,12 @@ function validateOneClickClearDagRoute(
     pathPoints = nextPath;
     formulaContext = validation.formulaContext;
     pathError = validation.sampleResult.pathError;
+    trajectoryPoints = validation.trajectoryPoints;
     segmentState = {
       ...(validation.sampleResult.sample.endState ? { initialState: validation.sampleResult.sample.endState } : {}),
       ...(pathError === undefined ? {} : { pathError }),
       signProtection: validation.formulaContext.signProtection,
+      trajectoryPoints,
     };
     targetSequence.push(target);
     validatedPrefix.push({
@@ -1347,6 +1376,7 @@ function validateOneClickClearDagRoute(
       ...(pathError === undefined ? {} : { pathError }),
       pathPoints,
       targetSequence,
+      trajectoryPoints,
     });
   }
 
@@ -1358,6 +1388,7 @@ function validateOneClickClearDagRoute(
       ...(pathError === undefined ? {} : { pathError }),
       pathPoints,
       targetSequence,
+      ...(trajectoryPoints ? { trajectoryPoints } : {}),
     },
     validationCount,
   };
@@ -1378,7 +1409,9 @@ function validateOneClickClearRouteSegment(
     return undefined;
   }
 
-  const mappedPoints = nextPath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
+  const mappedPoints = measureOneClickClearMetric(options.debugMetrics, "formulaPointMappingElapsedMs", () =>
+    nextPath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
+  );
   if (mappedPoints.length < 2) {
     return undefined;
   }
@@ -1415,6 +1448,8 @@ function validateOneClickClearRouteSegment(
         boundaryExpansion: options.simulationBoundaryExpansion,
         mask: options.simulationMask,
       },
+      collectVisiblePixels: true,
+      debugMetrics: options.debugMetrics,
       // Step 后续项会反向改变旧段；ABS y'' 的平滑脉冲也有折点前尾值，两者都必须从发射点完整回放。
       initialState: reusableInitialState,
       initialReachedRequiredTargetCount: reusableInitialState ? validationTargets.requiredTargets.length : 0,
@@ -1442,22 +1477,40 @@ function validateOneClickClearRouteSegment(
   }
 
   const firstSamplePoint = result.sample.points[0];
-  const resumedFromRequestedState = Boolean(
+  const isResumedFromRequestedState = Boolean(
     reusableInitialState &&
     firstSamplePoint &&
     firstSamplePoint.x === reusableInitialState.currentPoint.x &&
     firstSamplePoint.y === reusableInitialState.currentPoint.y,
   );
-  let pathError = resumedFromRequestedState
+  let pathError = isResumedFromRequestedState
     ? result.pathError
     : measureGraphwarFormulaPathError(result.sample.points, qualityPoints, options.bounds);
-  if (resumedFromRequestedState && state.pathError !== undefined) {
+  if (isResumedFromRequestedState && state.pathError !== undefined) {
     pathError = pathError === undefined ? state.pathError : Math.max(state.pathError, pathError);
   }
   const sampleResult = pathError === undefined ? result : { ...result, pathError };
+  const sampledTrajectoryPoints = snapshotGraphwarVisibleTrajectoryPoints(
+    result.visiblePixels,
+    result.obstacleHitIndex,
+    options.debugMetrics,
+  );
+  const trajectoryPoints =
+    isResumedFromRequestedState && state.trajectoryPoints
+      ? [
+          ...state.trajectoryPoints,
+          ...sampledTrajectoryPoints.slice(
+            state.trajectoryPoints.length > 0 &&
+              sampledTrajectoryPoints.length > 0 &&
+              pixelPointsEqual(state.trajectoryPoints[state.trajectoryPoints.length - 1], sampledTrajectoryPoints[0])
+              ? 1
+              : 0,
+          ),
+        ]
+      : sampledTrajectoryPoints;
 
   if (options.settings.algorithm !== "step") {
-    return { formulaContext, sampleResult };
+    return { formulaContext, sampleResult, trajectoryPoints };
   }
   return {
     formulaContext,
@@ -1465,6 +1518,7 @@ function validateOneClickClearRouteSegment(
       ...sampleResult,
       reachedTargetCount: sampleResult.reachedTargetCount - validationTargets.prefixTargetCount,
     },
+    trajectoryPoints,
   };
 }
 
@@ -1495,6 +1549,8 @@ function sampleOneClickClearTargetSequence(
     boundaryExpansion: options.simulationBoundaryExpansion,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
+    collectVisiblePixels: true,
+    debugMetrics: options.debugMetrics,
     ...(targetControlGraphX === undefined || trackActualHits
       ? {}
       : { continueAfterTargetsUntilGraphX: targetControlGraphX }),
@@ -1681,13 +1737,14 @@ function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext,
   ) {
     return;
   }
-  const formulaContext = route.formulaContext;
   let incumbent: GraphwarOneClickClearIncumbent | undefined;
   if (context.options.onValidatedIncumbent) {
-    if (!formulaContext) {
+    incumbent = measureOneClickClearMetric(context.options.debugMetrics, "incumbentBuildElapsedMs", () =>
+      createOneClickClearIncumbent(context.options, route),
+    );
+    if (!incumbent) {
       return;
     }
-    incumbent = createOneClickClearIncumbent(context.options, route.pathPoints, formulaContext);
   }
 
   context.bestValidatedPathError = route.pathError;
@@ -1701,19 +1758,19 @@ function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext,
 /** 从已验证路径生成不可变 shot plan；公式和角度共享同一份数值上下文。 */
 function createOneClickClearIncumbent(
   options: GraphwarOneClickClearOptions,
-  pathPoints: readonly PixelPoint[],
-  formulaContext: GraphwarTrajectoryFormulaContext,
+  route: OneClickClearValidatedRoute,
 ): GraphwarOneClickClearIncumbent | undefined {
-  if (formulaContext.formulaPoints.length < 2) {
+  if (!route.formulaContext || !route.trajectoryPoints || route.formulaContext.formulaPoints.length < 2) {
     return undefined;
   }
 
   const launchAngleRadians =
-    options.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(formulaContext) : Number.NaN;
+    options.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(route.formulaContext) : Number.NaN;
   return {
-    expression: formulaContext.formulaResult.expression,
+    expression: route.formulaContext.formulaResult.expression,
     ...(Number.isFinite(launchAngleRadians) ? { launchAngleRadians } : {}),
-    pathPoints: [...pathPoints],
+    pathPoints: [...route.pathPoints],
+    trajectoryPoints: [...route.trajectoryPoints],
   };
 }
 
@@ -1725,9 +1782,9 @@ function createOneClickClearSuccessResult(
   startedAt: number,
   expandedStates: number,
 ): GraphwarOneClickClearResult {
-  const incumbent = route.formulaContext
-    ? createOneClickClearIncumbent(options, route.pathPoints, route.formulaContext)
-    : undefined;
+  const incumbent = measureOneClickClearMetric(options.debugMetrics, "incumbentBuildElapsedMs", () =>
+    createOneClickClearIncumbent(options, route),
+  );
   if (!incumbent) {
     return createOneClickClearFailure("no-usable-target", startedAt, expandedStates);
   }
@@ -2091,4 +2148,21 @@ function emitOneClickClearDebugTimings(
 /** 发送单条调试耗时；未配置回调时为空操作。 */
 function emitOneClickClearDebugTiming(options: GraphwarOneClickClearOptions, timing: GraphwarOneClickClearDebugTiming) {
   options.onDebugTiming?.(timing);
+}
+
+/** Measures a low-level diagnostic phase only when request metrics are enabled. */
+function measureOneClickClearMetric<TResult>(
+  metrics: GraphwarPathfindingDebugMetrics | undefined,
+  timing: keyof GraphwarPathfindingDebugMetrics["timings"],
+  task: () => TResult,
+) {
+  if (!metrics) {
+    return task();
+  }
+  const startedAt = nowMs();
+  try {
+    return task();
+  } finally {
+    metrics.timings[timing] += nowMs() - startedAt;
+  }
 }

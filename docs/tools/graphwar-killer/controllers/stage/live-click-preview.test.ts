@@ -19,14 +19,14 @@ describe("live click preview status", () => {
   it("publishes a stale curve with its point while the latest render stays in progress", async () => {
     installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const olderPoint = createPixelPoint(200, 180);
     const latestPoint = createPixelPoint(220, 160);
 
     controller.setPointerPoint(olderPoint, undefined);
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
     expect(controller.curvePoints.value).toBe("");
     expect(controller.renderedElapsedMs.value).toBeUndefined();
     expect(FakeWorker.instances).toHaveLength(1);
@@ -38,7 +38,7 @@ describe("live click preview status", () => {
     FakeWorker.instances[0].respond({ curvePoints: "older curve", elapsedMs: 10 });
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
     expect(controller.curvePoints.value).toBe("older curve");
     expect(controller.points.value).toEqual([olderPoint, latestPoint]);
     expect(controller.renderedElapsedMs.value).toBeUndefined();
@@ -46,7 +46,7 @@ describe("live click preview status", () => {
     FakeWorker.instances[1].respond({ curvePoints: "latest curve", elapsedMs: 20 });
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     expect(controller.curvePoints.value).toBe("latest curve");
     expect(controller.points.value).toEqual([latestPoint]);
     expect(controller.renderedElapsedMs.value).toBe(20);
@@ -56,7 +56,7 @@ describe("live click preview status", () => {
   it("shows the completed curve point immediately after the mouse moves", async () => {
     installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const renderedPoint = createPixelPoint(200, 180);
     const currentPoint = createPixelPoint(220, 160);
     controller.setPointerPoint(renderedPoint, undefined);
@@ -67,7 +67,7 @@ describe("live click preview status", () => {
     controller.setPointerPoint(currentPoint, undefined);
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
     expect(controller.curvePoints.value).toBe("rendered curve");
     expect(controller.points.value).toEqual([renderedPoint, currentPoint]);
     controller.dispose();
@@ -76,7 +76,7 @@ describe("live click preview status", () => {
   it("keeps the warning when pointer intent is newer than the point committed by the next frame", async () => {
     const frames = installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const renderedPoint = createPixelPoint(200, 180);
     const pendingPoint = createPixelPoint(220, 160);
     controller.setPointerPoint(renderedPoint, undefined);
@@ -86,19 +86,19 @@ describe("live click preview status", () => {
     FakeWorker.instances[0].respond({ curvePoints: "stale curve", elapsedMs: 10 });
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
     expect(controller.curvePoints.value).toBe("stale curve");
     expect(controller.points.value).toEqual([renderedPoint]);
     expect(controller.renderedElapsedMs.value).toBeUndefined();
 
     frames.flush();
     await nextTick();
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
     expect(controller.points.value).toEqual([renderedPoint, pendingPoint]);
 
     FakeWorker.instances[0].respond({ curvePoints: "latest curve", elapsedMs: 20 });
     await nextTick();
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     expect(controller.points.value).toEqual([pendingPoint]);
     expect(controller.renderedElapsedMs.value).toBe(20);
     controller.dispose();
@@ -107,7 +107,7 @@ describe("live click preview status", () => {
   it("ignores an error for the committed point while a newer pointer frame is pending", async () => {
     const frames = installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const committedPoint = createPixelPoint(200, 180);
     const pendingPoint = createPixelPoint(220, 160);
     controller.setPointerPoint(committedPoint, undefined);
@@ -117,7 +117,7 @@ describe("live click preview status", () => {
     FakeWorker.instances[0].fail("stale render failed");
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
     expect(controller.curvePoints.value).toBe("");
     expect(controller.points.value).toEqual([committedPoint]);
     expect(controller.renderedElapsedMs.value).toBeUndefined();
@@ -126,7 +126,7 @@ describe("live click preview status", () => {
     await nextTick();
     FakeWorker.instances[0].respond({ curvePoints: "latest curve", elapsedMs: 20 });
     await nextTick();
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     expect(controller.points.value).toEqual([pendingPoint]);
     controller.dispose();
   });
@@ -135,7 +135,7 @@ describe("live click preview status", () => {
     const frames = installFakeBrowserRuntime();
     const options = createOptions();
     const controller = useGraphwarLiveClickPreview(options);
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const committedPoint = createPixelPoint(200, 180);
     const pendingPoint = createPixelPoint(220, 160);
     controller.setPointerPoint(committedPoint, undefined);
@@ -154,7 +154,7 @@ describe("live click preview status", () => {
     committedPointWorker.respond({ curvePoints: "committed curve", elapsedMs: 10 });
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
     expect(controller.curvePoints.value).toBe("committed curve");
     expect(controller.points.value).toEqual([committedPoint, pendingPoint]);
     expect(controller.renderedElapsedMs.value).toBeUndefined();
@@ -164,7 +164,7 @@ describe("live click preview status", () => {
       elapsedMs: 20,
     });
     await nextTick();
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     expect(controller.points.value).toEqual([pendingPoint]);
     expect(controller.renderedElapsedMs.value).toBe(20);
     controller.dispose();
@@ -173,7 +173,7 @@ describe("live click preview status", () => {
   it("does not duplicate the rendered point when the current control point has the same coordinates", async () => {
     installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const point = createPixelPoint(200, 180);
     controller.setPointerPoint(point, undefined);
     await nextTick();
@@ -184,7 +184,7 @@ describe("live click preview status", () => {
     controller.setPointerPoint(equivalentPoint, undefined);
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
     expect(controller.curvePoints.value).toBe("rendered curve");
     expect(controller.points.value).toEqual([equivalentPoint]);
     controller.dispose();
@@ -193,7 +193,7 @@ describe("live click preview status", () => {
   it("never rolls back from a newer stale result to an older result", async () => {
     installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const firstPoint = createPixelPoint(180, 200);
     const secondPoint = createPixelPoint(200, 180);
     const latestPoint = createPixelPoint(220, 160);
@@ -209,7 +209,7 @@ describe("live click preview status", () => {
     await nextTick();
     expect(controller.curvePoints.value).toBe("second curve");
     expect(controller.points.value).toEqual([secondPoint, latestPoint]);
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
 
     FakeWorker.instances[0].respond({ curvePoints: "first curve", elapsedMs: 10 });
     await nextTick();
@@ -220,7 +220,7 @@ describe("live click preview status", () => {
     await nextTick();
     expect(controller.curvePoints.value).toBe("latest curve");
     expect(controller.points.value).toEqual([latestPoint]);
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     controller.dispose();
   });
 
@@ -228,7 +228,7 @@ describe("live click preview status", () => {
     installFakeBrowserRuntime();
     const options = createOptions();
     const controller = useGraphwarLiveClickPreview(options);
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const firstPoint = createPixelPoint(200, 180);
     const currentPoint = createPixelPoint(220, 160);
     controller.setPointerPoint(firstPoint, undefined);
@@ -247,7 +247,7 @@ describe("live click preview status", () => {
     expect(controller.curvePoints.value).toBe("");
     expect(controller.points.value).toEqual([currentPoint]);
     expect(controller.renderedElapsedMs.value).toBeUndefined();
-    expect(controller.inProgress.value).toBe(true);
+    expect(controller.isInProgress.value).toBe(true);
 
     FakeWorker.instances[0].respond({ curvePoints: "old context curve", elapsedMs: 20 });
     await nextTick();
@@ -258,14 +258,14 @@ describe("live click preview status", () => {
     await nextTick();
     expect(controller.curvePoints.value).toBe("new context curve");
     expect(controller.points.value).toEqual([currentPoint]);
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     controller.dispose();
   });
 
   it("clears a stale curve and point when the latest render fails", async () => {
     installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const renderedPoint = createPixelPoint(200, 180);
     const currentPoint = createPixelPoint(220, 160);
     controller.setPointerPoint(renderedPoint, undefined);
@@ -279,7 +279,7 @@ describe("live click preview status", () => {
     await Promise.resolve();
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     expect(controller.curvePoints.value).toBe("");
     expect(controller.points.value).toEqual([currentPoint]);
     expect(controller.renderedElapsedMs.value).toBeUndefined();
@@ -289,7 +289,7 @@ describe("live click preview status", () => {
   it("clears a stale curve and elapsed status when the latest render is empty", async () => {
     installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     const renderedPoint = createPixelPoint(200, 180);
     const currentPoint = createPixelPoint(220, 160);
     controller.setPointerPoint(renderedPoint, undefined);
@@ -302,7 +302,7 @@ describe("live click preview status", () => {
     FakeWorker.instances[0].respond({ curvePoints: "", elapsedMs: 20 });
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     expect(controller.curvePoints.value).toBe("");
     expect(controller.points.value).toEqual([currentPoint]);
     expect(controller.renderedElapsedMs.value).toBeUndefined();
@@ -330,7 +330,7 @@ describe("live click preview status", () => {
   it("does not restore a pending pointer frame after the scene clears", async () => {
     const frames = installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
 
     controller.schedulePointerPoint(createPixelPoint(200, 180), undefined);
     controller.clearPointerPoint();
@@ -338,7 +338,7 @@ describe("live click preview status", () => {
     await nextTick();
 
     expect(controller.points.value).toEqual([]);
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     expect(FakeWorker.instances).toEqual([]);
     controller.dispose();
   });
@@ -346,7 +346,7 @@ describe("live click preview status", () => {
   it("does not publish a resolved render after the pointer preview is cleared", async () => {
     installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     controller.setPointerPoint(createPixelPoint(200, 180), undefined);
     await nextTick();
 
@@ -354,7 +354,7 @@ describe("live click preview status", () => {
     controller.clearPointerPoint();
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     expect(controller.curvePoints.value).toBe("");
     expect(controller.points.value).toEqual([]);
     expect(controller.renderedElapsedMs.value).toBeUndefined();
@@ -364,7 +364,7 @@ describe("live click preview status", () => {
   it("does not publish a resolved render after disposal", async () => {
     installFakeBrowserRuntime();
     const controller = useGraphwarLiveClickPreview(createOptions());
-    controller.enabled.value = true;
+    controller.isEnabled.value = true;
     controller.setPointerPoint(createPixelPoint(200, 180), undefined);
     await nextTick();
 
@@ -373,7 +373,7 @@ describe("live click preview status", () => {
     controller.dispose();
     await nextTick();
 
-    expect(controller.inProgress.value).toBe(false);
+    expect(controller.isInProgress.value).toBe(false);
     expect(controller.curvePoints.value).toBe("");
     expect(controller.points.value).toEqual([]);
     expect(controller.renderedElapsedMs.value).toBeUndefined();
@@ -468,7 +468,7 @@ function createOptions() {
     interaction: {
       draggingPathPointIndex: ref<number>(),
       getPathPointIndexAtPoint: () => undefined,
-      smartPathfindingInProgress: ref(false),
+      isSmartPathfindingInProgress: ref(false),
       toolMode: ref<"path">("path"),
     },
     path: {
@@ -481,18 +481,18 @@ function createOptions() {
     },
     settings: {
       algorithmMode: ref<"step">("step"),
-      effectiveSmartPathfindingEnabled: ref(false),
+      isEffectiveSmartPathfindingEnabled: ref(false),
       equationMode: ref<"y">("y"),
-      isEquationModeDisabled: () => false,
-      precisionValid: ref(true),
-      steepnessValid: ref(true),
+      isEquationModeEnabled: () => true,
+      isPrecisionValid: ref(true),
+      isSteepnessValid: ref(true),
       toolWorkflowMode: ref<"solver">("solver"),
     },
     simulator: {
       formulaText: ref(""),
       launchAngleRadians: ref<number>(),
-      parseDerivativeAsY: ref(true),
-      skipUnknownCharacters: ref(true),
+      shouldParseDerivativeAsY: ref(true),
+      shouldSkipUnknownCharacters: ref(true),
     },
     target: {
       createMinimumForwardTargetPoint: (point: ReturnType<typeof createPixelPoint>) => point,
@@ -500,7 +500,7 @@ function createOptions() {
       createSmartPathfindingSoldierTarget: () => undefined,
       getDetectedSoldierAtPoint: () => undefined,
       getDetectionBoxCenter: () => createPixelPoint(0, 0),
-      snapSoldiersEnabled: ref(false),
+      isSnapSoldiersEnabled: ref(false),
     },
     trajectory: {
       formulaSettings: ref({

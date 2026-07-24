@@ -19,7 +19,7 @@ export function formulaModeSupportsStepGlitch(algorithm: AlgorithmMode, equation
 export function formulaModeUsesStepGlitch(
   algorithm: AlgorithmMode,
   equation: EquationMode,
-  stepGlitchModeEnabled: boolean,
+  isStepGlitchModeEnabled: boolean,
 ) {
-  return stepGlitchModeEnabled && formulaModeSupportsStepGlitch(algorithm, equation);
+  return isStepGlitchModeEnabled && formulaModeSupportsStepGlitch(algorithm, equation);
 }

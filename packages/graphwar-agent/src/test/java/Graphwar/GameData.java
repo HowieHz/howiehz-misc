@@ -8,26 +8,45 @@ import java.util.concurrent.TimeUnit;
 /** Minimal mutable state with the official GameData methods reflected by the agent. */
 public final class GameData {
     private int currentTurn;
-    private boolean drawingFunction;
-    private boolean exploding;
+    private int currentFunctionPosition;
+    private int functionNumSteps = 20_000;
+    private boolean isDrawingFunction;
+    private boolean isExploding;
     private int gameMode;
     private int gameState;
-    private boolean leader;
-    private boolean lockRequired;
+    private boolean isLeader;
+    private boolean isLockRequired;
     private Obstacle obstacle;
     private final List<Player> players = new ArrayList<Player>();
     private final List<String> readyCalls = new ArrayList<String>();
     private long remainingTime = 57_000L;
     private final List<String> shotCalls = new ArrayList<String>();
-    private boolean terrainReversed;
+    private boolean isTerrainReversed;
     // The production reader intentionally reflects this exact official field.
     private long timeTurnStarted = 1L;
     private volatile CountDownLatch concurrentReadyBarrier;
+    private volatile CountDownLatch functionBlocker;
+    private volatile CountDownLatch functionEntered;
+    private volatile CountDownLatch stateReadBlocker;
+    private volatile CountDownLatch stateReadEntered;
+    private volatile boolean shouldThrowFromFunction;
+    private volatile boolean shouldThrowOtherErrorFromFunction;
+    private volatile boolean shouldOverflowFromFunction;
+    private volatile boolean shouldThrowOtherErrorFromInbound;
+    private volatile boolean shouldOverflowFromInbound;
+    private boolean isDisconnected;
+    private final List<String> inboundFunctions = new ArrayList<String>();
 
     /** Mirrors the official current-turn index getter. */
     public int getCurrentTurnIndex() {
         assertRequiredLock();
         return currentTurn;
+    }
+
+    /** Mirrors the official current-turn player getter used by inbound function gating. */
+    public Player getCurrentTurnPlayer() {
+        assertRequiredLock();
+        return players.get(currentTurn);
     }
 
     /** Mirrors the official game-mode getter. */
@@ -39,6 +58,11 @@ public final class GameData {
     /** Mirrors the official game-state getter. */
     public int getGameState() {
         assertRequiredLock();
+        CountDownLatch entered = stateReadEntered;
+        if (entered != null) {
+            entered.countDown();
+        }
+        awaitBlocker(stateReadBlocker, "state read");
         return gameState;
     }
 
@@ -63,25 +87,39 @@ public final class GameData {
     /** Mirrors the official function-resolution flag. */
     public boolean isDrawingFunction() {
         assertRequiredLock();
-        return drawingFunction;
+        return isDrawingFunction;
     }
 
     /** Mirrors the official explosion phase flag. */
     public boolean isExploding() {
         assertRequiredLock();
-        return exploding;
+        return isExploding;
+    }
+
+    /** Mirrors the official cursor getter, including its final-step explosion transition. */
+    public int getCurrentFunctionPosition() {
+        assertRequiredLock();
+        if (isExploding) {
+            return functionNumSteps;
+        }
+        if (isDrawingFunction && currentFunctionPosition > functionNumSteps) {
+            currentFunctionPosition = functionNumSteps;
+            isExploding = true;
+            obstacle.setExplosion(700, 400, 10);
+        }
+        return currentFunctionPosition;
     }
 
     /** Mirrors the official room-leader getter. */
     public boolean isLeader() {
         assertRequiredLock();
-        return leader;
+        return isLeader;
     }
 
     /** Mirrors the official current-view orientation getter. */
     public boolean isTerrainReversed() {
         assertRequiredLock();
-        return terrainReversed;
+        return isTerrainReversed;
     }
 
     /** Records one original GameData.setAngle call and its local soldier mutation. */
@@ -96,16 +134,70 @@ public final class GameData {
     /** Records one original GameData.sendFunction call. */
     public void sendFunction(String function) {
         assertRequiredLock();
+        if (shouldOverflowFromFunction) {
+            throw new StackOverflowError("simulated official parser overflow");
+        }
+        if (shouldThrowOtherErrorFromFunction) {
+            throw new AssertionError("simulated unrelated outbound JVM error");
+        }
         synchronized (shotCalls) {
             shotCalls.add("function:" + function);
         }
+        CountDownLatch entered = functionEntered;
+        if (entered != null) {
+            entered.countDown();
+        }
+        awaitBlocker(functionBlocker, "function");
+        if (shouldThrowFromFunction) {
+            throw new IllegalStateException("simulated original-client failure");
+        }
+    }
+
+    /** Exposes the official private inbound dispatch call for transformed-fixture tests. */
+    public synchronized void handleIncomingFunction(String[] fields) throws Exception {
+        fireFunctionMessage(fields);
+    }
+
+    /** Mirrors the official inbound handler boundary redirected by the Agent. */
+    private void fireFunctionMessage(String[] fields) throws Exception {
+        if (fields.length == 3
+                && !isDrawingFunction
+                && players.get(currentTurn).getID() == Integer.parseInt(fields[1])) {
+            if (shouldOverflowFromInbound) {
+                throw new StackOverflowError("simulated inbound parser overflow");
+            }
+            if (shouldThrowOtherErrorFromInbound) {
+                throw new AssertionError("simulated unrelated JVM error");
+            }
+            inboundFunctions.add(java.net.URLDecoder.decode(fields[2], "UTF-8"));
+        }
+    }
+
+    /** Mirrors the official disconnect-and-kick recovery used for unsafe broadcasts. */
+    public void disconnectKick() {
+        isDisconnected = true;
+    }
+
+    /** Mirrors the fallback local cleanup when the socket disconnect path fails. */
+    public void kickFromGame() {
+        isDisconnected = true;
+    }
+
+    /** Reports whether inbound protection left the unsafe match. */
+    public boolean isDisconnected() {
+        return isDisconnected;
+    }
+
+    /** Returns the accepted inbound functions without exposing mutable fixture storage. */
+    public List<String> getInboundFunctions() {
+        return new ArrayList<String>(inboundFunctions);
     }
 
     /** Records one original GameData.setReady call without applying a server echo. */
-    public void setReady(Player player, boolean ready) {
+    public void setReady(Player player, boolean isReady) {
         assertRequiredLock();
         synchronized (readyCalls) {
-            readyCalls.add(player.id + ":" + ready);
+            readyCalls.add(player.id + ":" + isReady);
         }
 
         CountDownLatch barrier = concurrentReadyBarrier;
@@ -164,13 +256,23 @@ public final class GameData {
     }
 
     /** Sets whether a function is already being drawn. */
-    public void setDrawingFunction(boolean drawingFunction) {
-        this.drawingFunction = drawingFunction;
+    public void setDrawingFunction(boolean isDrawingFunction) {
+        this.isDrawingFunction = isDrawingFunction;
+    }
+
+    /** Sets the raw official cursor returned while drawing. */
+    public void setCurrentFunctionPosition(int currentFunctionPosition) {
+        this.currentFunctionPosition = currentFunctionPosition;
+    }
+
+    /** Sets the fixture's official function length used by the transition test. */
+    public void setFunctionNumSteps(int functionNumSteps) {
+        this.functionNumSteps = functionNumSteps;
     }
 
     /** Sets whether the match is resolving an explosion. */
-    public void setExploding(boolean exploding) {
-        this.exploding = exploding;
+    public void setExploding(boolean isExploding) {
+        this.isExploding = isExploding;
     }
 
     /** Sets the reflected game mode. */
@@ -184,13 +286,13 @@ public final class GameData {
     }
 
     /** Sets the reflected room-leader flag. */
-    public void setLeader(boolean leader) {
-        this.leader = leader;
+    public void setLeader(boolean isLeader) {
+        this.isLeader = isLeader;
     }
 
     /** Enables lock assertions while snapshots and submissions are performed. */
-    public void setLockRequired(boolean lockRequired) {
-        this.lockRequired = lockRequired;
+    public void setLockRequired(boolean isLockRequired) {
+        this.isLockRequired = isLockRequired;
     }
 
     /** Replaces the active terrain object, which also identifies a new game instance. */
@@ -204,8 +306,8 @@ public final class GameData {
     }
 
     /** Sets the current client view orientation. */
-    public void setTerrainReversed(boolean terrainReversed) {
-        this.terrainReversed = terrainReversed;
+    public void setTerrainReversed(boolean isTerrainReversed) {
+        this.isTerrainReversed = isTerrainReversed;
     }
 
     /** Changes the exact official turn-start marker used to issue a fresh token. */
@@ -214,14 +316,94 @@ public final class GameData {
     }
 
     /** Enables a first-player barrier that exposes interleaved ready batches. */
-    public void setConcurrentReadyBarrier(boolean enabled) {
-        concurrentReadyBarrier = enabled ? new CountDownLatch(2) : null;
+    public void setConcurrentReadyBarrier(boolean isEnabled) {
+        concurrentReadyBarrier = isEnabled ? new CountDownLatch(2) : null;
+    }
+
+    /** Makes the next and subsequent function calls wait until the test releases them. */
+    public void setShouldBlockFunction(boolean shouldBlockFunction) {
+        if (shouldBlockFunction) {
+            functionEntered = new CountDownLatch(1);
+            functionBlocker = new CountDownLatch(1);
+            return;
+        }
+        CountDownLatch blocker = functionBlocker;
+        functionBlocker = null;
+        functionEntered = null;
+        if (blocker != null) {
+            blocker.countDown();
+        }
+    }
+
+    /** Waits until the dedicated shot worker has entered the original function call. */
+    public boolean awaitFunctionCall(long timeout, TimeUnit unit) throws InterruptedException {
+        CountDownLatch entered = functionEntered;
+        return entered != null && entered.await(timeout, unit);
+    }
+
+    /** Blocks or releases reflected state reads at a deterministic point for replacement races. */
+    public void setShouldBlockStateRead(boolean shouldBlockStateRead) {
+        if (shouldBlockStateRead) {
+            stateReadEntered = new CountDownLatch(1);
+            stateReadBlocker = new CountDownLatch(1);
+            return;
+        }
+        CountDownLatch blocker = stateReadBlocker;
+        stateReadBlocker = null;
+        stateReadEntered = null;
+        if (blocker != null) {
+            blocker.countDown();
+        }
+    }
+
+    /** Waits until a state reader reaches the fixture's deterministic replacement barrier. */
+    public boolean awaitStateRead(long timeout, TimeUnit unit) throws InterruptedException {
+        CountDownLatch entered = stateReadEntered;
+        return entered != null && entered.await(timeout, unit);
+    }
+
+    /** Selects whether the original function call throws after the irreversible claim. */
+    public void setShouldThrowFromFunction(boolean shouldThrow) {
+        shouldThrowFromFunction = shouldThrow;
+    }
+
+    /** Selects whether the official outbound parser exhausts its stack. */
+    public void setShouldOverflowFromFunction(boolean shouldOverflow) {
+        shouldOverflowFromFunction = shouldOverflow;
+    }
+
+    /** Selects an unrelated outbound Error that the Agent must not suppress. */
+    public void setShouldThrowOtherErrorFromFunction(boolean shouldThrow) {
+        shouldThrowOtherErrorFromFunction = shouldThrow;
+    }
+
+    /** Selects whether the official inbound parser exhausts its stack. */
+    public void setShouldOverflowFromInbound(boolean shouldOverflow) {
+        shouldOverflowFromInbound = shouldOverflow;
+    }
+
+    /** Selects an unrelated Error that the Agent must not suppress. */
+    public void setShouldThrowOtherErrorFromInbound(boolean shouldThrow) {
+        shouldThrowOtherErrorFromInbound = shouldThrow;
     }
 
     /** Fails when a reflected state getter runs outside the GameData monitor. */
     void assertRequiredLock() {
-        if (lockRequired && !Thread.holdsLock(this)) {
+        if (isLockRequired && !Thread.holdsLock(this)) {
             throw new AssertionError("state was read or changed without holding the GameData lock");
+        }
+    }
+
+    /** Waits on one optional fixture blocker without duplicating interruption handling. */
+    private static void awaitBlocker(CountDownLatch blocker, String operation) {
+        if (blocker == null) {
+            return;
+        }
+        try {
+            blocker.await();
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("blocked " + operation + " was interrupted", error);
         }
     }
 }

@@ -76,7 +76,7 @@ export interface DetectionDebugTimingRow extends DetectionDebugTimingEntry {
   /** 展示标签，子项会以 "- " 开头。 */
   label: string;
   /** 是否展示耗时；有些子项只记录调度元信息。 */
-  elapsedVisible: boolean;
+  isElapsedVisible: boolean;
 }
 
 /** 单次智能寻路调试耗时记录。 */
@@ -92,7 +92,7 @@ export interface SmartPathfindingDebugTimingEntry {
 /** 智能寻路调试耗时展示行。 */
 export interface SmartPathfindingDebugTimingRow extends SmartPathfindingDebugTimingEntry {
   /** 是否展示耗时；调度模式项只解释模式，不展示 0ms。 */
-  elapsedVisible: boolean;
+  isElapsedVisible: boolean;
   /** 鼠标悬停说明；用于解释不直接对应某个函数块的阶段。 */
   title?: string;
   /** 展示缩进层级；一键清图内部阶段有父子 inclusive 耗时，缩进避免误读为同级相加。 */
@@ -113,7 +113,7 @@ interface GraphwarDebugTimingsOptions {
 export interface GraphwarDebugTimingsController {
   /** 追加并整理一键清图 Worker 返回的搜索内部耗时。 */
   appendOneClickClearSearchWorkerTimings: (
-    timings: SmartPathfindingDebugTimingEntry[],
+    timings: SmartPathfindingDebugTimingEntry[] | undefined,
     workerTimings: readonly GraphwarOneClickClearDebugTiming[],
   ) => void;
   /** 追加智能寻路 worker 返回的阶段耗时。 */
@@ -121,6 +121,8 @@ export interface GraphwarDebugTimingsController {
     timings: SmartPathfindingDebugTimingEntry[] | undefined,
     workerTimings: readonly GraphwarSmartPathfindingWorkerTiming[],
   ) => void;
+  /** 关闭调试模式时清除最近寻路耗时。 */
+  clearSmartPathfindingDebugTimings: () => void;
   /** 转换检测 Worker 返回的 timing 格式。 */
   createDetectionDebugTimingEntriesFromWorker: (
     timings: readonly GraphwarDetectionWorkerTimingEntry[],
@@ -139,7 +141,7 @@ export interface GraphwarDebugTimingsController {
     startedAt: number,
     timings: readonly SmartPathfindingDebugTimingEntry[],
     completedAt?: number,
-  ) => void;
+  ) => SmartPathfindingDebugTimingEntry[];
   /** 包装页面侧检测阶段计时。 */
   measureDetectionDebugStage: <TResult>(
     timings: DetectionDebugTimingEntry[],
@@ -193,16 +195,17 @@ export function useGraphwarDebugTimings(options: GraphwarDebugTimingsOptions): G
     timings: readonly SmartPathfindingDebugTimingEntry[],
     completedAt = nowMs(),
   ) {
-    if (timings.length === 0) {
-      return;
-    }
-
-    smartPathfindingDebugTimingEntries.value = createFinalDebugTimingEntries(timings, completedAt - startedAt);
+    const finalTimings = createFinalSmartPathfindingDebugTimingEntries(timings, completedAt - startedAt);
+    smartPathfindingDebugTimingEntries.value = finalTimings;
+    return finalTimings;
   }
 
   return {
     addSmartPathfindingWorkerTimings,
     appendOneClickClearSearchWorkerTimings,
+    clearSmartPathfindingDebugTimings: () => {
+      smartPathfindingDebugTimingEntries.value = [];
+    },
     createDetectionDebugTimingEntriesFromWorker,
     detectionDebugTimingRows,
     finishDetectionDebugTimings,
@@ -212,6 +215,14 @@ export function useGraphwarDebugTimings(options: GraphwarDebugTimingsOptions): G
     measureSmartPathfindingDebugStageAsync,
     smartPathfindingDebugTimingRows,
   };
+}
+
+/** Finalizes pathfinding timings without publishing them to the visible latest-report rows. */
+export function createFinalSmartPathfindingDebugTimingEntries(
+  timings: readonly SmartPathfindingDebugTimingEntry[],
+  totalElapsedMs: number,
+) {
+  return createFinalDebugTimingEntries(timings, totalElapsedMs);
 }
 
 /** 将 Worker 返回的 timing 格式转换成页面统一调试条目。 */
@@ -277,10 +288,13 @@ async function measureSmartPathfindingDebugStageAsync<TResult>(
 }
 
 /** 一键清图内部阶段会在搜索循环里重复发生；调试面板只展示聚合后的耗时。 */
-function appendOneClickClearSearchWorkerTimings(
-  timings: SmartPathfindingDebugTimingEntry[],
+export function appendOneClickClearSearchWorkerTimings(
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
   workerTimings: readonly GraphwarOneClickClearDebugTiming[],
 ) {
+  if (!timings) {
+    return;
+  }
   const routeMaskTimings: SmartPathfindingDebugTimingEntry[] = [];
   const searchDetailTimings: SmartPathfindingDebugTimingEntry[] = [];
   for (const timing of workerTimings) {
@@ -297,6 +311,18 @@ function appendOneClickClearSearchWorkerTimings(
     routeMaskTimings.reduce((total, timing) => total + timing.elapsedMs, 0),
   );
   insertDebugTimingsBeforeLastStage(timings, "one-click-clear-search", routeMaskTimings);
+  const searchElapsedMs = getLastDebugStageElapsed(timings, "one-click-clear-search");
+  const classifiedElapsedMs = searchDetailTimings.reduce(
+    (total, timing) => total + (isNestedOneClickClearSearchDetail(timing.detail) ? 0 : timing.elapsedMs),
+    0,
+  );
+  if (searchElapsedMs > classifiedElapsedMs) {
+    searchDetailTimings.push({
+      detail: "outside-search-stages",
+      elapsedMs: searchElapsedMs - classifiedElapsedMs,
+      stage: "one-click-clear-search",
+    });
+  }
   timings.push(...searchDetailTimings);
 }
 
@@ -399,6 +425,19 @@ function subtractLastDebugStageElapsed(
   }
 }
 
+/** Reads the last matching parent stage after page-side adjustments. */
+function getLastDebugStageElapsed(
+  timings: readonly SmartPathfindingDebugTimingEntry[],
+  stage: SmartPathfindingDebugStage,
+) {
+  for (let index = timings.length - 1; index >= 0; index -= 1) {
+    if (timings[index]?.stage === stage) {
+      return timings[index]?.elapsedMs ?? 0;
+    }
+  }
+  return 0;
+}
+
 /** 将平铺耗时展开成带缩进的一键清图展示行。 */
 function createSmartPathfindingDebugTimingRows(
   entries: readonly SmartPathfindingDebugTimingEntry[],
@@ -441,7 +480,7 @@ function createSmartPathfindingDebugTimingRow(
 ): SmartPathfindingDebugTimingRow {
   return {
     ...entry,
-    elapsedVisible: shouldShowSmartPathfindingDebugElapsed(entry),
+    isElapsedVisible: shouldShowSmartPathfindingDebugElapsed(entry),
     indentLevel: getSmartPathfindingDebugTimingIndentLevel(entry),
     label: getSmartPathfindingDebugTimingLabel(entry, locale),
     title: getSmartPathfindingDebugTimingTitle(entry, locale),
@@ -505,6 +544,7 @@ const oneClickClearSearchDebugDetailOrder: readonly (
   "remove-failed-edge",
   "optimize-path",
   "validate-final",
+  "outside-search-stages",
 ];
 
 const oneClickClearNestedDebugDetails = new Set<GraphwarOneClickClearDebugStage>([
@@ -523,6 +563,11 @@ function getSmartPathfindingDebugTimingIndentLevel(entry: SmartPathfindingDebugT
     return 2;
   }
   return oneClickClearNestedDebugDetails.has(entry.detail) ? 2 : 1;
+}
+
+/** 识别已包含在父阶段中的明细，剩余项只扣除真正的顶层阶段。 */
+function isNestedOneClickClearSearchDetail(detail: SmartPathfindingDebugTimingEntry["detail"]) {
+  return detail !== undefined && (typeof detail !== "string" || oneClickClearNestedDebugDetails.has(detail));
 }
 
 /** 获取智能寻路阶段或明细的本地化短标签。 */
@@ -561,7 +606,7 @@ function createDetectionDebugTimingRow(
 ): DetectionDebugTimingRow {
   return {
     ...entry,
-    elapsedVisible: shouldShowDetectionDebugElapsed(entry),
+    isElapsedVisible: shouldShowDetectionDebugElapsed(entry),
     label: getDetectionDebugTimingLabel(entry, locale),
     title: getDetectionDebugTimingTitle(entry, locale),
   };

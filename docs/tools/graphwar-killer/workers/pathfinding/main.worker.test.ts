@@ -75,6 +75,7 @@ describe("Anytime one-click-clear progress", () => {
     const incumbent: GraphwarOneClickClearIncumbent = {
       expression: "0",
       pathPoints: input.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
+      trajectoryPoints: input.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
     };
     mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearOptions) => {
       options.onValidatedIncumbent?.(incumbent);
@@ -91,12 +92,19 @@ describe("Anytime one-click-clear progress", () => {
       throw new Error("Pathfinding worker message handler was not registered");
     }
 
-    handleMessage({
-      data: {
-        id: 41,
-        task: { input, reportIncumbents: true, type: "build-one-click-clear-path" },
-      },
-    } as MessageEvent<GraphwarPathfindingWorkerRequest>);
+    handleMessage(
+      new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
+        data: {
+          id: 41,
+          task: {
+            shouldCollectDiagnostics: true,
+            input,
+            shouldReportIncumbents: true,
+            type: "build-one-click-clear-path",
+          },
+        },
+      }),
+    );
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
 
     expect(postMessage.mock.calls[0]?.[0]).toEqual({
@@ -106,6 +114,14 @@ describe("Anytime one-click-clear progress", () => {
     });
     expect(postMessage.mock.calls[1]?.[0]).toMatchObject({
       id: 41,
+      result: {
+        diagnostics: {
+          counters: {
+            incumbentReportCount: 1,
+            incumbentTrajectoryPointLoad: incumbent.trajectoryPoints.length,
+          },
+        },
+      },
       taskType: "build-one-click-clear-path",
       type: "success",
     });
@@ -126,12 +142,18 @@ describe("Anytime one-click-clear progress", () => {
       throw new Error("Pathfinding worker message handler was not registered");
     }
 
-    handleMessage({
-      data: {
-        id: 42,
-        task: { input, reportIncumbents: false, type: "build-one-click-clear-path" },
-      },
-    } as MessageEvent<GraphwarPathfindingWorkerRequest>);
+    handleMessage(
+      new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
+        data: {
+          id: 42,
+          task: {
+            input,
+            shouldReportIncumbents: false,
+            type: "build-one-click-clear-path",
+          },
+        },
+      }),
+    );
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
     expect(postMessage.mock.calls[0]?.[0]).toMatchObject({
@@ -167,9 +189,18 @@ describe("Anytime one-click-clear progress", () => {
     if (!handleMessage) {
       throw new Error("Pathfinding worker message handler was not registered");
     }
-    handleMessage({
-      data: { id: 43, task: { input, reportIncumbents: true, type: "build-one-click-clear-path" } },
-    } as MessageEvent<GraphwarPathfindingWorkerRequest>);
+    handleMessage(
+      new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
+        data: {
+          id: 43,
+          task: {
+            input,
+            shouldReportIncumbents: true,
+            type: "build-one-click-clear-path",
+          },
+        },
+      }),
+    );
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
     postMessage.mockClear();
@@ -179,7 +210,7 @@ describe("Anytime one-click-clear progress", () => {
           id: 44,
           task: {
             input: { ...input, pathPoints: adoptedPath, prefixTarget },
-            reportIncumbents: true,
+            shouldReportIncumbents: true,
             type: "build-one-click-clear-path",
           },
         } satisfies GraphwarPathfindingWorkerRequest,
@@ -352,9 +383,9 @@ function createStepGlitchInput(simulationMask: Uint8Array, formulaMask: Uint8Arr
     boundaryExpansion: 0,
     bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
-    deleteOptimizationEnabled: false,
+    isDeleteOptimizationEnabled: false,
     hitTarget: { center: createPixelPoint(200, 225), radius: 10 },
-    previewEnabled: false,
+    isPreviewEnabled: false,
     routeMaskCacheId: 1,
     routeMode: "visibility-graph",
     routeObstacleMask: new Uint8Array(1),
@@ -384,7 +415,7 @@ function createOneClickClearInput(): GraphwarOneClickClearPathWorkerInput {
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     candidates: [],
     dagEdgeWorkerCount: 1,
-    deleteOptimizationEnabled: false,
+    isDeleteOptimizationEnabled: false,
     deleteHitCheckRadiusPixels: 0,
     hitCandidates: [],
     pathPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],

@@ -1,689 +1,724 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createPixelPoint } from "../../core/types";
 import {
-  createGraphwarAgentClient,
   GraphwarAgentClientError,
-  type GraphwarAgentAvailableRoom,
   type GraphwarAgentAvailableState,
   type GraphwarAgentClient,
   type GraphwarAgentRoom,
+  type GraphwarAgentShotCommand,
+  type GraphwarAgentShotRequest,
   type GraphwarAgentState,
 } from "../agent/client";
-import {
-  createGraphwarManagedController,
-  createGraphwarManagedSkipTurnPlan,
-  GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
-} from "./controller";
+import { createGraphwarManagedController } from "./controller";
 
-afterEach(() => {
-  vi.useRealTimers();
-});
+describe("Graphwar managed controller v3", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
 
-describe("Graphwar managed-mode controller", () => {
-  it.each([
-    ["y", undefined],
-    ["dy", undefined],
-    ["ddy", 0],
-  ] as const)("builds a valid %s skip-turn plan", (equationMode, angleRadians) => {
-    const state = createAvailableState({ equationMode });
-
-    expect(createGraphwarManagedSkipTurnPlan(state)).toEqual({
-      ...(angleRadians === undefined ? {} : { angleRadians }),
-      equationMode,
-      function: GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
-    });
-  });
-
-  it("keeps polling single-flight and waits one interval after settlement", async () => {
-    vi.useFakeTimers();
-    const pending = createDeferred<GraphwarAgentState>();
-    const state = createAvailableState({ remainingTurnMs: 40_000 });
-    const client = createFakeClient();
-    client.readState.mockImplementationOnce(() => pending.promise).mockResolvedValue(state);
-    const controller = createGraphwarManagedController({ client });
-
-    controller.start();
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(client.readState).toHaveBeenCalledTimes(1);
-
-    pending.resolve(state);
-    await flushPromises();
-    await vi.advanceTimersByTimeAsync(999);
-    expect(client.readState).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(client.readState).toHaveBeenCalledTimes(2);
-    controller.stop();
-  });
-
-  it("aborts a hung poll and retries after the normal interval", async () => {
-    vi.useFakeTimers();
-    const client = createFakeClient();
-    client.readState.mockImplementation(
-      (signal) =>
-        new Promise((_, reject) => {
-          signal?.addEventListener("abort", () => reject(new DOMException("timed out", "AbortError")), {
-            once: true,
-          });
-        }),
+  it("reports live state before waiting for the matching obstacle mask", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    let resolveMask!: (mask: Uint8Array) => void;
+    client.readWorldObstacleMask.mockReturnValue(
+      new Promise((resolve) => {
+        resolveMask = resolve;
+      }),
     );
-    const onTransientError = vi.fn();
-    const controller = createGraphwarManagedController({
-      client,
-      hooks: { onTransientError },
-      requestTimeoutMs: 50,
-    });
-
-    controller.start();
-    await vi.advanceTimersByTimeAsync(50);
-    expect(onTransientError).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(999);
-    expect(client.readState).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(client.readState).toHaveBeenCalledTimes(2);
-    controller.stop();
-  });
-
-  it("retries when the request timeout interrupts a successful response body", async () => {
-    vi.useFakeTimers();
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockImplementationOnce((_input, init) =>
-        Promise.resolve(
-          new Response(
-            new ReadableStream({
-              start(responseController) {
-                init?.signal?.addEventListener(
-                  "abort",
-                  () => responseController.error(new DOMException("timed out", "AbortError")),
-                  { once: true },
-                );
-              },
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          ),
-        ),
-      )
-      .mockResolvedValue(
-        new Response(JSON.stringify(createAvailableState({ drawingFunction: true, phase: "drawing" })), {
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    const onIncompatibleError = vi.fn();
-    const onTransientError = vi.fn();
-    const controller = createGraphwarManagedController({
-      client: createGraphwarAgentClient("http://127.0.0.1:17900", { fetch: fetchMock }),
-      hooks: { onIncompatibleError, onTransientError },
-    });
-
-    controller.start();
-    await flushPromises();
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(onTransientError).toHaveBeenCalledOnce();
-    expect(onIncompatibleError).not.toHaveBeenCalled();
-    expect(controller.isRunning()).toBe(true);
-
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(controller.isRunning()).toBe(true);
-    controller.stop();
-  });
-
-  it("reuses the world mask until the battle revision changes", async () => {
-    vi.useFakeTimers();
-    const client = createFakeClient();
-    client.readState
-      .mockResolvedValueOnce(createAvailableState({ remainingTurnMs: 40_000 }))
-      .mockResolvedValueOnce(createAvailableState({ remainingTurnMs: 39_000 }))
-      .mockResolvedValue(createAvailableState({ battleRevision: "sha256:battle-2", remainingTurnMs: 38_000 }));
-    const controller = createGraphwarManagedController({ client });
-
-    controller.start();
-    await flushPromises();
-    expect(client.readWorldObstacleMask).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(client.readWorldObstacleMask).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(client.readWorldObstacleMask).toHaveBeenCalledTimes(2);
-    controller.stop();
-  });
-
-  it("waits through remote, drawing, and exploding states for the current local-human turn", async () => {
-    vi.useFakeTimers();
-    const localPlayer = createAvailableState().players[0];
-    if (!localPlayer) {
-      throw new Error("Expected a local player fixture");
-    }
-    const players = [
-      { ...localPlayer, id: 6, local: false, name: "Remote", team: 1 },
-      { ...localPlayer, id: 7, index: 1, name: "Local", team: 2 },
-    ];
-    const client = createFakeClient();
-    client.readState
-      .mockResolvedValueOnce(createAvailableState({ currentTurn: 0, players, turnToken: "turn-remote" }))
-      .mockResolvedValueOnce(
-        createAvailableState({
-          currentTurn: 1,
-          drawingFunction: true,
-          phase: "drawing",
-          players,
-          turnToken: "turn-local",
-        }),
-      )
-      .mockResolvedValueOnce(
-        createAvailableState({
-          currentTurn: 1,
-          exploding: true,
-          phase: "exploding",
-          players,
-          turnToken: "turn-local",
-        }),
-      )
-      .mockResolvedValue(createAvailableState({ currentTurn: 1, players, turnToken: "turn-local" }));
     const onState = vi.fn();
-    const controller = createGraphwarManagedController({ client, hooks: { onState } });
+    const onStateRead = vi.fn();
+    const controller = createGraphwarManagedController({ client, hooks: { onState, onStateRead } });
 
     controller.start();
-    await flushPromises();
-    expect(onState).toHaveBeenCalledOnce();
-    expect(onState.mock.calls[0]?.[1]).toBeUndefined();
-    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
 
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(onState).toHaveBeenCalledTimes(2);
-    expect(onState.mock.calls[1]?.[1]).toBeUndefined();
-    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(onState).toHaveBeenCalledTimes(3);
-    expect(onState.mock.calls[2]?.[1]).toBeUndefined();
-    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(onState).toHaveBeenCalledTimes(4);
-    expect(onState.mock.calls[3]?.[1]).toMatchObject({
-      player: { id: 7, team: 2 },
-      soldier: { index: 0 },
-    });
-    expect(client.readWorldObstacleMask).toHaveBeenCalledOnce();
-    controller.stop();
-  });
-
-  it("invalidates a state response that arrives after lifecycle stop", async () => {
-    const pending = createDeferred<GraphwarAgentState>();
-    const client = createFakeClient();
-    client.readState.mockReturnValue(pending.promise);
-    const onState = vi.fn();
-    const controller = createGraphwarManagedController({ client, hooks: { onState } });
-
-    controller.start();
-    controller.stop();
-    pending.resolve(createAvailableState());
-    await flushPromises();
-
+    expect(onStateRead).toHaveBeenCalledWith(state);
     expect(onState).not.toHaveBeenCalled();
-    expect(controller.isRunning()).toBe(false);
-  });
 
-  it("does not cache a world mask response that arrives after lifecycle stop", async () => {
-    const pendingMask = createDeferred<Uint8Array>();
-    const client = createFakeClient();
-    client.readState.mockResolvedValue(createAvailableState({ remainingTurnMs: 40_000 }));
-    client.readWorldObstacleMask
-      .mockImplementationOnce(() => pendingMask.promise)
-      .mockResolvedValue(new Uint8Array([0]));
-    const controller = createGraphwarManagedController({ client });
-
-    controller.start();
-    await flushPromises();
-    controller.stop();
-    pendingMask.resolve(new Uint8Array([1]));
-    await flushPromises();
-    controller.start();
-    await flushPromises();
-
-    expect(client.readWorldObstacleMask).toHaveBeenCalledTimes(2);
+    resolveMask(new Uint8Array(770 * 450));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onState).toHaveBeenCalled();
     controller.stop();
   });
 
-  it("rejects a pre-stop task after restart even when the game fingerprint is unchanged", async () => {
-    const oldState = createAvailableState();
-    const newState = createAvailableState();
-    const client = createFakeClient();
-    client.readState.mockResolvedValueOnce(oldState).mockResolvedValue(newState);
-    const controller = createGraphwarManagedController({ client });
-
-    controller.start();
-    await flushPromises();
-    controller.stop();
-    controller.start();
-    await flushPromises();
-
-    expect(controller.submitShot(oldState, { equationMode: "y", function: "x" })).toBe(false);
-    expect(client.submitShot).not.toHaveBeenCalled();
-    controller.stop();
-  });
-
-  it("auto-readies when any connected local room player is unready", async () => {
-    vi.useFakeTimers();
-    const client = createFakeClient();
-    client.readState.mockResolvedValue(createUnavailableState());
-    client.readRoom
-      .mockResolvedValueOnce(
-        createAvailableRoom([
-          createRoomPlayer({ computer: true, ready: true }),
-          createRoomPlayer({ id: 8, index: 1, ready: true }),
-        ]),
-      )
-      .mockResolvedValueOnce(
-        createAvailableRoom([
-          createRoomPlayer({ computer: true, ready: false }),
-          createRoomPlayer({ id: 8, index: 1, ready: true }),
-        ]),
-      );
-    const controller = createGraphwarManagedController({ client });
-
-    controller.start();
-    await flushPromises();
-    expect(client.submitReady).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(client.submitReady).toHaveBeenCalledOnce();
-    expect(client.submitReady).toHaveBeenCalledWith(true, expect.any(AbortSignal));
-    controller.stop();
-  });
-
-  it("routes an inactive stale battlefield through room auto-ready", async () => {
-    const client = createFakeClient();
-    client.readState.mockResolvedValue(createAvailableState({ phase: "inactive", turnToken: undefined }));
-    client.readRoom.mockResolvedValue(createAvailableRoom([createRoomPlayer({ ready: false })]));
-    const controller = createGraphwarManagedController({ client });
-
-    controller.start();
-    await flushPromises();
-
-    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
-    expect(client.readRoom).toHaveBeenCalledOnce();
-    expect(client.submitReady).toHaveBeenCalledOnce();
-    controller.stop();
-  });
-
-  it("claims a deadline shot before awaiting and never retries an unknown result", async () => {
-    vi.useFakeTimers();
-    const state = createAvailableState({ remainingTurnMs: 3000 });
-    const shot = createDeferred<{ ok: true }>();
-    const submissionOrder: string[] = [];
-    const client = createFakeClient();
-    client.readState.mockResolvedValue(state);
-    client.submitShot.mockImplementation(() => {
-      submissionOrder.push("request");
-      return shot.promise;
-    });
-    const plan = { equationMode: "y", function: "x" } as const;
-    const onDeadline = vi.fn();
-    const onShotFailed = vi.fn();
-    const onShotSubmitted = vi.fn(() => submissionOrder.push("submitted"));
-    const onShotSucceeded = vi.fn();
+  it("rechecks the managed generation after the live-state hook", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
     const controller = createGraphwarManagedController({
       client,
       hooks: {
-        decideDeadlineShot: () => plan,
-        onDeadline,
-        onShotFailed,
-        onShotSubmitted,
-        onShotSucceeded,
+        onStateRead: () => {
+          controller.stop();
+          return undefined;
+        },
       },
     });
 
     controller.start();
-    await flushPromises();
-    expect(client.submitShot).toHaveBeenCalledOnce();
-    expect(onDeadline).toHaveBeenCalledOnce();
-    expect(onShotSubmitted).toHaveBeenCalledOnce();
-    expect(onShotSucceeded).not.toHaveBeenCalled();
-    expect(submissionOrder).toEqual(["submitted", "request"]);
-    expect(controller.submitShot(state, plan)).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
 
-    shot.reject(new GraphwarAgentClientError("transient", "result unknown"));
-    await flushPromises();
-    expect(onShotFailed).toHaveBeenCalledOnce();
-    expect(onShotSucceeded).not.toHaveBeenCalled();
-    expect(controller.isRunning()).toBe(true);
-    await vi.advanceTimersByTimeAsync(1000);
+    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+  });
+
+  it("does not process a live state rejected as stale by the freshness hook", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    const onState = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onState, onStateRead: () => false },
+    });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+    expect(onState).not.toHaveBeenCalled();
+    expect(controller.getLatestState()).toBeUndefined();
+    controller.stop();
+  });
+
+  it("submits one stable command and reports submitted exactly once", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    client.submitShot.mockImplementation(async (request) => createCommand(request, "submitted"));
+    const onShotRequestStarted = vi.fn();
+    const onShotSubmitted = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onShotRequestStarted, onShotSubmitted },
+      pollIntervalMs: 10,
+    });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(controller.submitShot(state, { equationMode: "y", function: "x" })).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.submitShot).toHaveBeenCalledOnce();
+    expect(onShotRequestStarted).toHaveBeenCalledOnce();
+    expect(onShotSubmitted).toHaveBeenCalledOnce();
+    expect(controller.submitShot(state, { equationMode: "y", function: "x+1" })).toBe(false);
+    controller.stop();
+  });
+
+  it.each(["failed", "unknown"] as const)("keeps %s distinct and never creates a new request ID", async (status) => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    client.submitShot.mockImplementation(async (request) => createCommand(request, status));
+    const onShotFailed = vi.fn();
+    const onShotUnknown = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onShotFailed, onShotUnknown },
+    });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    controller.submitShot(state, { equationMode: "y", function: "x" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(status === "failed" ? onShotFailed : onShotUnknown).toHaveBeenCalledOnce();
+    expect(status === "failed" ? onShotUnknown : onShotFailed).not.toHaveBeenCalled();
     expect(client.submitShot).toHaveBeenCalledOnce();
     controller.stop();
   });
 
-  it.each(["resolve", "reject"] as const)(
-    "reports a hung shot as unknown without retrying or accepting a late %s",
-    async (lateResult) => {
-      vi.useFakeTimers();
-      const state = createAvailableState({ remainingTurnMs: 3000 });
-      const shot = createDeferred<{ ok: true }>();
-      const client = createFakeClient();
-      client.readState.mockResolvedValue(state);
-      client.submitShot.mockReturnValue(shot.promise);
-      const onShotFailed = vi.fn();
-      const onIncompatibleError = vi.fn();
-      const onShotSucceeded = vi.fn();
+  it("recovers a lost POST response by querying the same request ID", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    client.submitShot.mockRejectedValue(new GraphwarAgentClientError("transient", "connection reset"));
+    client.readShotCommand.mockImplementation(async (requestId) =>
+      createCommand({ ...createRequest(), requestId }, "submitted"),
+    );
+    const onShotSubmitted = vi.fn();
+    const controller = createGraphwarManagedController({ client, hooks: { onShotSubmitted }, pollIntervalMs: 10 });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    controller.submitShot(state, { equationMode: "y", function: "x" });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const submittedRequest = client.submitShot.mock.calls[0][0];
+    expect(client.readShotCommand).toHaveBeenCalledWith(submittedRequest.requestId, expect.any(AbortSignal));
+    expect(onShotSubmitted).toHaveBeenCalledOnce();
+    controller.stop();
+  });
+
+  it("does not treat a deterministic HTTP POST failure as a lost response", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    client.submitShot.mockRejectedValue(
+      new GraphwarAgentClientError("transient", "ledger invariant violated", 500, undefined, "internal-error"),
+    );
+    const onShotFailed = vi.fn();
+    const controller = createGraphwarManagedController({ client, hooks: { onShotFailed } });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    controller.submitShot(state, { equationMode: "y", function: "x" });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onShotFailed).toHaveBeenCalledOnce();
+    expect(client.readShotCommand).not.toHaveBeenCalled();
+    controller.stop();
+  });
+
+  it("aborts the POST transport when recovery switches to command queries", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    let submissionSignal: AbortSignal | undefined;
+    client.submitShot.mockImplementation(
+      (_request, signal) =>
+        new Promise((_resolve, reject) => {
+          submissionSignal = signal;
+          signal?.addEventListener(
+            "abort",
+            () => reject(new GraphwarAgentClientError("transient", "submission aborted", undefined, signal.reason)),
+            { once: true },
+          );
+        }),
+    );
+    const controller = createGraphwarManagedController({ client, pollIntervalMs: 10, shotResultTimeoutMs: 10 });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    controller.submitShot(state, { equationMode: "y", function: "x" });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(submissionSignal?.aborted).toBe(true);
+    expect(client.readShotCommand).toHaveBeenCalled();
+    controller.stop();
+  });
+
+  it("replays exactly once after a 404 and preserves the entire payload", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    client.submitShot
+      .mockRejectedValueOnce(new GraphwarAgentClientError("transient", "connection reset"))
+      .mockRejectedValueOnce(new GraphwarAgentClientError("transient", "connection reset again"));
+    client.readShotCommand
+      .mockRejectedValueOnce(
+        new GraphwarAgentClientError("conflict", "missing", 404, undefined, "shot-command-not-found"),
+      )
+      .mockRejectedValueOnce(
+        new GraphwarAgentClientError("conflict", "still missing", 404, undefined, "shot-command-not-found"),
+      )
+      .mockImplementationOnce(async (requestId) => createCommand({ ...createRequest(), requestId }, "submitted"));
+    const controller = createGraphwarManagedController({ client, pollIntervalMs: 10 });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    controller.submitShot(state, { equationMode: "y", function: "x" });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(client.submitShot).toHaveBeenCalledTimes(2);
+    expect(client.submitShot.mock.calls[1][0]).toEqual(client.submitShot.mock.calls[0][0]);
+    controller.stop();
+  });
+
+  it("keeps claimed commands pending instead of reporting failure", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    client.submitShot.mockImplementation(async (request) => createCommand(request, "claimed"));
+    client.readShotCommand.mockImplementation(async (requestId) =>
+      createCommand({ ...createRequest(), requestId }, "claimed"),
+    );
+    const onShotFailed = vi.fn();
+    const onShotSubmitted = vi.fn();
+    const onShotUnknown = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onShotFailed, onShotSubmitted, onShotUnknown },
+      pollIntervalMs: 10,
+      shotResultTimeoutMs: 10,
+    });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    controller.submitShot(state, { equationMode: "y", function: "x" });
+
+    await vi.advanceTimersByTimeAsync(999);
+
+    expect(client.readShotCommand).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(client.readShotCommand).toHaveBeenCalled();
+    expect(client.readState).toHaveBeenCalledOnce();
+    expect(onShotFailed).not.toHaveBeenCalled();
+    expect(onShotSubmitted).not.toHaveBeenCalled();
+    expect(onShotUnknown).not.toHaveBeenCalled();
+    controller.stop();
+  });
+
+  it("adopts a claimed command from state and pauses state polling until it finishes", async () => {
+    const request = createRequest();
+    let commandStatus: GraphwarAgentShotCommand["status"] = "claimed";
+    let state = createAvailableState({ shotCommand: { requestId: request.requestId, status: "claimed" } });
+    const recoveryState = state;
+    const client = createClient(state);
+    client.readState.mockImplementation(async () => state);
+    client.readShotCommand.mockImplementation(async () => createCommand(request, commandStatus));
+    const onRecoveredShotCommand = vi.fn();
+    const onShotRecoveryStarted = vi.fn();
+    const onState = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onRecoveredShotCommand, onShotRecoveryStarted, onState },
+      pollIntervalMs: 10,
+    });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(client.readState).toHaveBeenCalledOnce();
+    expect(client.readShotCommand).toHaveBeenCalled();
+    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+    expect(client.submitShot).not.toHaveBeenCalled();
+    expect(onShotRecoveryStarted).toHaveBeenCalledOnce();
+    expect(onState).not.toHaveBeenCalled();
+    expect(onRecoveredShotCommand).not.toHaveBeenCalled();
+    const pendingReadCount = client.readShotCommand.mock.calls.length;
+
+    commandStatus = "submitted";
+    state = createAvailableState({ shotCommand: { requestId: request.requestId, status: "submitted" } });
+    await vi.advanceTimersByTimeAsync(1_010);
+
+    expect(client.readState.mock.calls.length).toBeGreaterThan(1);
+    expect(client.readShotCommand).toHaveBeenCalledTimes(pendingReadCount + 1);
+    expect(client.submitShot).not.toHaveBeenCalled();
+    expect(onRecoveredShotCommand).toHaveBeenCalledOnce();
+    expect(onRecoveredShotCommand).toHaveBeenCalledWith(recoveryState, createCommand(request, "submitted"));
+    await vi.advanceTimersByTimeAsync(30);
+    expect(client.readShotCommand).toHaveBeenCalledTimes(pendingReadCount + 1);
+    expect(onRecoveredShotCommand).toHaveBeenCalledOnce();
+    controller.stop();
+  });
+
+  it.each(["submitted", "failed", "unknown"] as const)(
+    "reports a recovered %s command once without restarting search",
+    async (status) => {
+      const request = createRequest();
+      const state = createAvailableState({ shotCommand: { requestId: request.requestId, status: "validating" } });
+      const client = createClient(state);
+      const command = createCommand(request, status);
+      client.readShotCommand.mockResolvedValue(command);
+      const onRecoveredShotCommand = vi.fn();
+      const onState = vi.fn();
       const controller = createGraphwarManagedController({
         client,
-        hooks: { onIncompatibleError, onShotFailed, onShotSucceeded },
-        shotResultTimeoutMs: 50,
+        hooks: { onRecoveredShotCommand, onState },
+        pollIntervalMs: 10,
       });
 
       controller.start();
-      await flushPromises();
-      expect(client.submitShot).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(50);
 
-      await vi.advanceTimersByTimeAsync(49);
-      expect(onShotFailed).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
-      expect(onShotFailed).toHaveBeenCalledWith(
-        state,
-        expect.any(Object),
-        expect.objectContaining({ kind: "transient", message: "Graphwar Agent shot result timed out" }),
-      );
-
-      if (lateResult === "resolve") {
-        shot.resolve({ ok: true });
-      } else {
-        shot.reject(new GraphwarAgentClientError("incompatible", "late incompatible result"));
-      }
-      await flushPromises();
-      expect(onShotFailed).toHaveBeenCalledOnce();
-      expect(onIncompatibleError).not.toHaveBeenCalled();
-      expect(onShotSucceeded).not.toHaveBeenCalled();
-      expect(controller.isRunning()).toBe(true);
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(client.submitShot).toHaveBeenCalledOnce();
+      expect(client.readShotCommand).toHaveBeenCalledOnce();
+      expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+      expect(client.submitShot).not.toHaveBeenCalled();
+      expect(onState).not.toHaveBeenCalled();
+      expect(onRecoveredShotCommand).toHaveBeenCalledOnce();
+      expect(onRecoveredShotCommand).toHaveBeenCalledWith(state, command);
       controller.stop();
     },
   );
 
-  it("abandons an invalid local plan without retrying it at the deadline", async () => {
-    vi.useFakeTimers();
-    const state = createAvailableState({ remainingTurnMs: 4000 });
-    const client = createFakeClient();
-    client.readState.mockResolvedValue(state);
-    const onDeadlineWithoutShot = vi.fn();
-    const onShotFailed = vi.fn();
+  it("preserves a recovered failure after its summary disappears and resumes on the next turn", async () => {
+    const request = createRequest();
+    let state = createAvailableState({ shotCommand: { requestId: request.requestId, status: "validating" } });
+    const client = createClient(state);
+    client.readState.mockImplementation(async () => state);
+    client.readShotCommand.mockResolvedValue(createCommand(request, "failed"));
+    const onRecoveredShotCommand = vi.fn();
+    const onState = vi.fn();
     const controller = createGraphwarManagedController({
       client,
-      hooks: { onDeadlineWithoutShot, onShotFailed },
+      hooks: { onRecoveredShotCommand, onState },
+      pollIntervalMs: 10,
     });
 
     controller.start();
-    await flushPromises();
-    const invalidPlan = { equationMode: "dy", function: "x" } as const;
-    expect(controller.submitShot(state, invalidPlan)).toBe(false);
-    expect(controller.submitShot(state, invalidPlan)).toBe(false);
-    expect(onShotFailed).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(0);
+    state = createAvailableState({ shotCommand: null });
+    await vi.advanceTimersByTimeAsync(30);
 
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(onDeadlineWithoutShot).not.toHaveBeenCalled();
-    expect(client.submitShot).not.toHaveBeenCalled();
+    expect(onRecoveredShotCommand).toHaveBeenCalledOnce();
+    expect(onState).not.toHaveBeenCalled();
+    expect(client.readWorldObstacleMask).not.toHaveBeenCalled();
+
+    state = createAvailableState({
+      shotCommand: null,
+      turnToken: "00000000-0000-4000-8000-000000000012",
+    });
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(onState).toHaveBeenCalled();
+    expect(client.readWorldObstacleMask).toHaveBeenCalled();
     controller.stop();
   });
 
-  it("fires the retained deadline plan even when the next poll hangs", async () => {
-    vi.useFakeTimers();
-    const client = createFakeClient();
-    client.readState
-      .mockResolvedValueOnce(createAvailableState({ remainingTurnMs: 4000 }))
-      .mockImplementation(() => new Promise(() => void 0));
+  it("re-observes a retained command when the same controller is stopped and restarted", async () => {
+    const request = createRequest();
+    const state = createAvailableState({ shotCommand: { requestId: request.requestId, status: "submitted" } });
+    const client = createClient(state);
+    client.readShotCommand.mockResolvedValue(createCommand(request, "submitted"));
+    const onRecoveredShotCommand = vi.fn();
+    const controller = createGraphwarManagedController({ client, hooks: { onRecoveredShotCommand } });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    controller.stop();
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.readShotCommand).toHaveBeenCalledTimes(2);
+    expect(onRecoveredShotCommand).toHaveBeenCalledTimes(2);
+    controller.stop();
+  });
+
+  it("does not retry a retained command query rejected with HTTP 431", async () => {
+    const request = createRequest();
+    const state = createAvailableState({ shotCommand: { requestId: request.requestId, status: "claimed" } });
+    const client = createClient(state);
+    client.readShotCommand.mockRejectedValue(
+      new GraphwarAgentClientError("invalid-request", "headers too large", 431, undefined, "request-headers-too-large"),
+    );
+    const onInvalidRequestError = vi.fn();
     const controller = createGraphwarManagedController({
       client,
-      hooks: { decideDeadlineShot: () => ({ equationMode: "y", function: "x" }) },
+      hooks: { onInvalidRequestError },
+      pollIntervalMs: 10,
     });
 
     controller.start();
-    await flushPromises();
-    expect(client.submitShot).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(50);
 
-    expect(client.readState).toHaveBeenCalledTimes(2);
-    expect(client.submitShot).toHaveBeenCalledOnce();
-    controller.stop();
+    expect(client.readShotCommand).toHaveBeenCalledOnce();
+    expect(onInvalidRequestError).toHaveBeenCalledOnce();
+    expect(controller.isRunning()).toBe(false);
   });
 
-  it("skips a deadline with no validated plan exactly once", async () => {
-    vi.useFakeTimers();
-    const state = createAvailableState({ remainingTurnMs: 2500 });
-    const client = createFakeClient();
-    client.readState.mockResolvedValue(state);
-    const onDeadline = vi.fn();
-    const onDeadlineWithoutShot = vi.fn();
-    const controller = createGraphwarManagedController({
-      client,
-      hooks: { decideDeadlineShot: () => undefined, onDeadline, onDeadlineWithoutShot },
-    });
-
-    controller.start();
-    await flushPromises();
-    expect(client.submitShot).toHaveBeenCalledOnce();
-    expect(client.submitShot).toHaveBeenCalledWith({
-      battleRevision: state.battleRevision,
-      function: GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
-      turnToken: state.turnToken,
-    });
-    expect(onDeadlineWithoutShot).not.toHaveBeenCalled();
-    expect(onDeadline).toHaveBeenCalledOnce();
-    expect(controller.submitShot(state, { equationMode: "y", function: "x" })).toBe(false);
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(onDeadlineWithoutShot).not.toHaveBeenCalled();
-    expect(client.submitShot).toHaveBeenCalledOnce();
-    controller.stop();
-  });
-
-  it("includes the required launch angle when skipping a y'' deadline", async () => {
-    const state = createAvailableState({ equationMode: "ddy", remainingTurnMs: 2500 });
-    const client = createFakeClient();
-    client.readState.mockResolvedValue(state);
-    const controller = createGraphwarManagedController({ client });
-
-    controller.start();
-    await flushPromises();
-
-    expect(client.submitShot).toHaveBeenCalledWith({
-      angleRadians: 0,
-      battleRevision: state.battleRevision,
-      function: GRAPHWAR_MANAGED_SKIP_TURN_FUNCTION,
-      turnToken: state.turnToken,
-    });
-    controller.stop();
-  });
-
-  it.each([
-    [3001, 0],
-    [3000, 1],
-    [1, 1],
-    [0, 1],
-  ])("applies the 3000ms deadline boundary at %ims", async (remainingTurnMs, expectedCalls) => {
-    const client = createFakeClient();
-    client.readState.mockResolvedValue(createAvailableState({ remainingTurnMs }));
-    const onDeadlineWithoutShot = vi.fn();
-    const controller = createGraphwarManagedController({
-      client,
-      hooks: { decideDeadlineShot: () => undefined, onDeadlineWithoutShot },
-    });
-
-    controller.start();
-    await flushPromises();
-    expect(client.submitShot).toHaveBeenCalledTimes(expectedCalls);
-    expect(onDeadlineWithoutShot).not.toHaveBeenCalled();
-    controller.stop();
-  });
-
-  it("stops on incompatibility but retries a transient poll on the next interval", async () => {
-    vi.useFakeTimers();
-    const incompatibleClient = createFakeClient();
-    incompatibleClient.readState.mockRejectedValue(new GraphwarAgentClientError("incompatible", "upgrade"));
+  it("stops with the invalid-request hook when Agent authentication fails", async () => {
+    const client = createClient(createUnavailableState());
+    client.readState.mockRejectedValue(
+      new GraphwarAgentClientError(
+        "invalid-request",
+        "A valid bearer token is required",
+        401,
+        undefined,
+        "authentication-required",
+      ),
+    );
     const onIncompatibleError = vi.fn();
-    const incompatibleController = createGraphwarManagedController({
-      client: incompatibleClient,
-      hooks: { onIncompatibleError },
+    const onInvalidRequestError = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onIncompatibleError, onInvalidRequestError },
+      pollIntervalMs: 10,
     });
-
-    incompatibleController.start();
-    await flushPromises();
-    expect(incompatibleController.isRunning()).toBe(false);
-    expect(onIncompatibleError).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(incompatibleClient.readState).toHaveBeenCalledOnce();
-
-    const transientClient = createFakeClient();
-    transientClient.readState
-      .mockRejectedValueOnce(new GraphwarAgentClientError("transient", "offline"))
-      .mockResolvedValue(createAvailableState({ remainingTurnMs: 40_000 }));
-    const onTransientError = vi.fn();
-    const transientController = createGraphwarManagedController({
-      client: transientClient,
-      hooks: { onTransientError },
-    });
-    transientController.start();
-    await flushPromises();
-    expect(onTransientError).toHaveBeenCalledOnce();
-    expect(transientController.isRunning()).toBe(true);
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(transientClient.readState).toHaveBeenCalledTimes(2);
-    transientController.stop();
-  });
-
-  it("rejects a completed plan after a newer battle revision is observed", async () => {
-    vi.useFakeTimers();
-    const oldState = createAvailableState({ battleRevision: "sha256:old", remainingTurnMs: 40_000 });
-    const newState = createAvailableState({ battleRevision: "sha256:new", remainingTurnMs: 39_000 });
-    const client = createFakeClient();
-    client.readState.mockResolvedValueOnce(oldState).mockResolvedValue(newState);
-    const controller = createGraphwarManagedController({ client });
 
     controller.start();
-    await flushPromises();
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(50);
 
-    expect(controller.submitShot(oldState, { equationMode: "y", function: "x" })).toBe(false);
+    expect(client.readState).toHaveBeenCalledOnce();
+    expect(onInvalidRequestError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "authentication-required", kind: "invalid-request", status: 401 }),
+    );
+    expect(onIncompatibleError).not.toHaveBeenCalled();
+    expect(controller.isRunning()).toBe(false);
+  });
+
+  it("retries a retained command after a state-command conflict without reporting incompatibility", async () => {
+    const request = createRequest();
+    const state = createAvailableState({ shotCommand: { requestId: request.requestId, status: "claimed" } });
+    const client = createClient(state);
+    client.readShotCommand
+      .mockRejectedValueOnce(new GraphwarAgentClientError("conflict", "state changed", 409))
+      .mockResolvedValue(createCommand(request, "submitted"));
+    const onIncompatibleError = vi.fn();
+    const onRecoveredShotCommand = vi.fn();
+    const onTransientError = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onIncompatibleError, onRecoveredShotCommand, onTransientError },
+      pollIntervalMs: 10,
+    });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(client.readShotCommand).toHaveBeenCalledTimes(2);
+    expect(onTransientError).toHaveBeenCalledOnce();
+    expect(onRecoveredShotCommand).toHaveBeenCalledOnce();
+    expect(onIncompatibleError).not.toHaveBeenCalled();
+    expect(controller.isRunning()).toBe(true);
+    controller.stop();
+  });
+
+  it("waits while the dynamic execution slot is busy without disabling managed mode", async () => {
+    const state = createAvailableState({ canAcceptShotCommands: false });
+    const client = createClient(state);
+    const onIncompatibleError = vi.fn();
+    const controller = createGraphwarManagedController({ client, hooks: { onIncompatibleError } });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(controller.submitShot(state, { equationMode: "y", function: "x" })).toBe(false);
+    expect(controller.isRunning()).toBe(true);
     expect(client.submitShot).not.toHaveBeenCalled();
+    expect(onIncompatibleError).not.toHaveBeenCalled();
+    controller.stop();
+  });
+
+  it("uses v3 room fields and PUT-ready client semantics", async () => {
+    const client = createClient(createUnavailableState());
+    client.readRoom.mockResolvedValue(createAvailableRoom());
+    const onReadyRequested = vi.fn();
+    const controller = createGraphwarManagedController({ client, hooks: { onReadyRequested } });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onReadyRequested).toHaveBeenCalledOnce();
+    expect(client.submitReady).toHaveBeenCalledWith(true, expect.any(AbortSignal));
+    controller.stop();
+  });
+
+  it("stops for a missing static capability but not for a dynamic busy state", async () => {
+    const state = createAvailableState({
+      capabilities: { ...createCapabilities(), canSubmitShots: false },
+    });
+    const client = createClient(state);
+    const onIncompatibleError = vi.fn();
+    const controller = createGraphwarManagedController({ client, hooks: { onIncompatibleError } });
+
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(controller.isRunning()).toBe(false);
+    expect(onIncompatibleError).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a late terminal result after stop", async () => {
+    const state = createAvailableState();
+    const client = createClient(state);
+    let resolveSubmission: ((command: GraphwarAgentShotCommand) => void) | undefined;
+    client.submitShot.mockImplementation(
+      (request) =>
+        new Promise((resolve) => {
+          resolveSubmission = (command) => resolve(command);
+          expect(commandRequestId(commandPlaceholder(request))).toBe(request.requestId);
+        }),
+    );
+    const onShotSubmitted = vi.fn();
+    const controller = createGraphwarManagedController({
+      client,
+      hooks: { onShotSubmitted },
+      shotResultTimeoutMs: 100,
+    });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    controller.submitShot(state, { equationMode: "y", function: "x" });
+    const request = client.submitShot.mock.calls[0][0];
+    controller.stop();
+
+    resolveSubmission?.(createCommand(request, "submitted"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onShotSubmitted).not.toHaveBeenCalled();
+  });
+
+  it("rotates bounded turn flags across many turns", async () => {
+    let state = createAvailableState();
+    const client = createClient(state);
+    client.readState.mockImplementation(async () => state);
+    client.submitShot.mockImplementation(async (request) => createCommand(request, "submitted"));
+    const controller = createGraphwarManagedController({ client, pollIntervalMs: 1 });
+    controller.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    for (let index = 0; index < 60; index += 1) {
+      expect(controller.submitShot(state, { equationMode: "y", function: "x" })).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      state = createAvailableState({
+        battleRevision: `sha256:${index.toString(16).padStart(64, "0")}`,
+        turnToken: `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+      });
+      await vi.advanceTimersByTimeAsync(1);
+    }
+
+    expect(client.submitShot).toHaveBeenCalledTimes(60);
     controller.stop();
   });
 });
 
-type FakeGraphwarAgentClient = GraphwarAgentClient & {
-  readRoom: ReturnType<typeof vi.fn<GraphwarAgentClient["readRoom"]>>;
-  readState: ReturnType<typeof vi.fn<GraphwarAgentClient["readState"]>>;
-  readWorldObstacleMask: ReturnType<typeof vi.fn<GraphwarAgentClient["readWorldObstacleMask"]>>;
-  submitReady: ReturnType<typeof vi.fn<GraphwarAgentClient["submitReady"]>>;
-  submitShot: ReturnType<typeof vi.fn<GraphwarAgentClient["submitShot"]>>;
+type FakeClient = {
+  [Key in keyof GraphwarAgentClient]: GraphwarAgentClient[Key] extends (...args: infer Args) => infer Result
+    ? ReturnType<typeof vi.fn<(...args: Args) => Result>>
+    : GraphwarAgentClient[Key];
 };
 
-/** Creates a fully mocked client with harmless polling defaults. */
-function createFakeClient(): FakeGraphwarAgentClient {
+/** Creates a complete mock client whose individual endpoints can be overridden per test. */
+function createClient(state: GraphwarAgentState): FakeClient {
   return {
     baseUrl: "http://127.0.0.1:17900",
-    readRoom: vi.fn<GraphwarAgentClient["readRoom"]>().mockResolvedValue({ available: false, reason: "lobby" }),
-    readState: vi.fn<GraphwarAgentClient["readState"]>().mockResolvedValue(createUnavailableState()),
-    readWorldObstacleMask: vi.fn<GraphwarAgentClient["readWorldObstacleMask"]>().mockResolvedValue(new Uint8Array([0])),
-    submitReady: vi.fn<GraphwarAgentClient["submitReady"]>().mockResolvedValue({ ok: true, requestedReady: true }),
-    submitShot: vi.fn<GraphwarAgentClient["submitShot"]>().mockResolvedValue({ ok: true }),
+    readRoom: vi.fn(async () => ({ isAvailable: false, reason: "not-in-pre-game-room" })),
+    readShotCommand: vi.fn(async (requestId) => createCommand({ ...createRequest(), requestId }, "claimed")),
+    readState: vi.fn(async () => state),
+    readWorldObstacleMask: vi.fn(async () => new Uint8Array(770 * 450)),
+    submitReady: vi.fn(async (isReady) => ({ isReady })),
+    submitShot: vi.fn(async (request) => createCommand(request, "submitted")),
   };
 }
 
-/** Creates one active local-human turn fixture. */
+const gameInstanceId = "00000000-0000-4000-8000-000000000010";
+const turnToken = "00000000-0000-4000-8000-000000000011";
+const revision = `sha256:${"a".repeat(64)}`;
+
+/** Creates an active local-human turn with v3 static and dynamic capabilities. */
 function createAvailableState(overrides: Partial<GraphwarAgentAvailableState> = {}): GraphwarAgentAvailableState {
   return {
-    apiVersion: 2,
-    available: true,
-    battleRevision: "sha256:battle-1",
-    capabilities: { ready: true, room: true, shot: true, worldObstacleMask: true },
-    currentTurn: 0,
-    drawingFunction: false,
+    agentInstanceId: "00000000-0000-4000-8000-000000000001",
+    apiVersion: 3,
+    battleRevision: revision,
+    canAcceptShotCommands: true,
+    capabilities: createCapabilities(),
+    currentPlayerId: 7,
+    currentPlayerIndex: 0,
     equationMode: "y",
-    exploding: false,
-    gameInstanceId: "game-1",
-    gameMode: 0,
-    gameState: 2,
+    gameInstanceId,
+    isAvailable: true,
+    isTerrainReversed: false,
     obstacleMask: {
+      blockedValue: 1,
+      emptyValue: 0,
       height: 450,
-      revision: overrides.battleRevision ?? "sha256:battle-1",
-      revisionHeader: "X-Graphwar-Battle-Revision",
+      isViewMirrored: false,
+      revision,
+      viewUrl: "/obstacle-masks/view.bin",
       width: 770,
-      worldUrl: "/obstacle-mask.bin?space=world",
+      worldUrl: "/obstacle-masks/world.bin",
     },
     phase: "aiming",
     plane: { gameLength: 50, height: 450, width: 770 },
     players: [
       {
-        computer: false,
-        currentTurnSoldier: 0,
-        disconnected: false,
-        id: 7,
-        index: 0,
-        local: true,
+        currentSoldierIndex: 0,
+        isComputerControlled: false,
+        isConnected: true,
+        isLocal: true,
+        isReady: true,
         name: "Local",
-        ready: true,
+        playerId: 7,
+        playerIndex: 0,
         soldiers: [
           {
-            alive: true,
-            angle: 0,
-            exploding: false,
-            index: 0,
+            angleRadians: 0,
+            isAlive: true,
+            isRendered: true,
+            soldierIndex: 0,
             world: { pixel: createPixelPoint(100, 200) },
           },
         ],
         team: 1,
       },
     ],
-    remainingTurnMs: 40_000,
-    turnToken: "turn-1",
+    remainingTurnMs: 30_000,
+    shotCommand: null,
+    turnToken,
     ...overrides,
+    functionDraw: overrides.functionDraw ?? null,
+    observationSequence: overrides.observationSequence ?? 1,
+    observedAtEpochMs: overrides.observedAtEpochMs ?? Date.now(),
   };
 }
 
-/** Creates a versioned state response for a lobby or pre-game room. */
+/** Creates the unavailable branch while retaining static capabilities and plane metadata. */
 function createUnavailableState(): GraphwarAgentState {
   return {
-    apiVersion: 2,
-    available: false,
-    capabilities: { ready: true, room: true, shot: true, worldObstacleMask: true },
+    agentInstanceId: "00000000-0000-4000-8000-000000000001",
+    apiVersion: 3,
+    capabilities: createCapabilities(),
+    isAvailable: false,
+    observationSequence: 1,
+    observedAtEpochMs: Date.now(),
     plane: { gameLength: 50, height: 450, width: 770 },
-    reason: "game-not-started",
+    reason: "game-not-active",
   };
 }
 
-/** Creates one available room with caller-selected player states. */
-function createAvailableRoom(players: GraphwarAgentAvailableRoom["players"]): GraphwarAgentRoom {
-  return { available: true, gameMode: 0, gameState: 1, leader: false, players };
-}
-
-/** Creates one local room player fixture. */
-function createRoomPlayer(overrides: Partial<GraphwarAgentAvailableRoom["players"][number]> = {}) {
+/** Creates all static managed-mode capabilities. */
+function createCapabilities() {
   return {
-    computer: false,
-    disconnected: false,
-    id: 7,
-    index: 0,
-    local: true,
-    name: "Local",
-    numSoldiers: 2,
-    ready: false,
-    team: 1,
-    ...overrides,
+    canReadRoom: true,
+    canReadWorldObstacleMask: true,
+    canSetReady: true,
+    canSubmitShots: true,
   };
 }
 
-/** Creates a manually settled Promise for overlap and stale-response tests. */
-function createDeferred<TValue>() {
-  let resolve!: (value: TValue) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<TValue>((promiseResolve, promiseReject) => {
-    resolve = promiseResolve;
-    reject = promiseReject;
-  });
-  return { promise, reject, resolve };
+/** Creates an available room with one local player needing ready=true. */
+function createAvailableRoom(): GraphwarAgentRoom {
+  return {
+    equationMode: "y",
+    isAvailable: true,
+    isLeader: false,
+    players: [
+      {
+        isComputerControlled: false,
+        isConnected: true,
+        isLocal: true,
+        isReady: false,
+        name: "Local",
+        numSoldiers: 2,
+        playerId: 7,
+        playerIndex: 0,
+        team: 1,
+      },
+    ],
+  };
 }
 
-/** Flushes the short Promise chains used by controller callbacks. */
-async function flushPromises() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+/** Creates one stable request fixture used by command reads. */
+function createRequest(): GraphwarAgentShotRequest {
+  return {
+    battleRevision: revision,
+    function: "x",
+    gameInstanceId,
+    requestId: "00000000-0000-4000-8000-000000000001",
+    turnToken,
+  };
+}
+
+/** Creates a complete command resource for one request and public status. */
+function createCommand(
+  request: GraphwarAgentShotRequest,
+  status: GraphwarAgentShotCommand["status"],
+): GraphwarAgentShotCommand {
+  const error =
+    status === "failed"
+      ? { canRetryWithNewRequestId: false, code: "shot-rejected", message: "rejected" }
+      : status === "unknown"
+        ? { code: "original-client-result-unknown", message: "unknown" }
+        : undefined;
+  return {
+    battleRevision: request.battleRevision,
+    createdAtEpochMs: 1,
+    ...(error ? { error } : {}),
+    gameInstanceId: request.gameInstanceId,
+    requestId: request.requestId,
+    status,
+    turnToken: request.turnToken,
+    updatedAtEpochMs: 2,
+  };
+}
+
+/** Provides a command-shaped assertion value without retaining extra test state. */
+function commandPlaceholder(request: GraphwarAgentShotRequest) {
+  return createCommand(request, "claimed");
+}
+
+/** Keeps the late-result test's request-ID assertion readable. */
+function commandRequestId(command: GraphwarAgentShotCommand) {
+  return command.requestId;
 }

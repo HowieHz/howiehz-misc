@@ -89,11 +89,15 @@ Glitch Mode is available for Step `y'` and `y''`. When a normal Step cannot get 
 
 Turn on Use Agent and enter a valid URL to use Managed Mode. It marks local players in the room as ready, then reads state, runs One-Click Clear, and fires during local turns.
 
+After the page receives live Agent state, it shows the current turn countdown to the left of Fire. Manual reads, Managed Mode polling, and the pre-fire check all recalibrate it.
+
 If a game mode uses an algorithm that does not support One-Click Clear, Managed Mode lists the required changes before updating those settings. After a search, it briefly shows the elapsed time and submits the shot without waiting for the page to render.
 
 Managed Mode always keeps the best formula found so far in the background. Search Animation affects only the on-page preview, not the search or deadline firing.
 
-With 3 seconds left, Managed Mode fires the best validated plan. If no plan is available, it submits a skip-turn function. It does not deliberately hit an obstacle as a fallback because doing so could change the map and open a route for an opponent.
+With Search Animation enabled, control points from a new best plan appear first. The previous complete trajectory remains visible until the matching trajectory is ready to replace it.
+
+When the configured shot reserve is reached, Managed Mode fires the best validated plan. If no plan is available, it submits a skip-turn function. It does not deliberately hit an obstacle as a fallback because doing so could change the map and open a route for an opponent.
 
 Keep this page in the foreground while Managed Mode is active. Browser background limits may delay a shot.
 
@@ -118,10 +122,37 @@ Then run:
 java -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
+This starts Graphwar Agent and the game. Return to the page and turn on Use Agent to read state or enable Managed Mode.
+
 The Windows Steam version of Graphwar can use its bundled Java directly:
 
 ```shell
 .\jre1.8\bin\java.exe -javaagent:graphwar-agent.jar -jar graphwar.jar
 ```
 
-This starts Graphwar Agent and the game. Return to the tool and turn on Use Agent to read state or enable Managed Mode. For more information, see [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent).
+::: details Graphwar Agent startup options
+
+Append `=...` to the Agent JAR path to set startup options. Separate multiple options with commas:
+
+```shell
+java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxRequestBodyBytes=1048576 -jar graphwar.jar
+```
+
+| Option                  | Purpose                                      | Default                                                    | Accepted values                                             |
+| ----------------------- | -------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- |
+| `port`                  | Set the HTTP listening port                  | `17900`; if busy, try the next 100 ports (`17901`–`18000`) | `1`–`65535`; an explicit value disables fallback            |
+| `token`                 | Enable bearer-token authentication           | Authentication disabled                                    | `auto`, or 1–4096 visible ASCII characters excluding commas |
+| `maxRequestHeaderBytes` | Limit HTTP request-header size               | `8192`                                                     | `8192`–`1048576`                                            |
+| `maxRequestBodyBytes`   | Limit the JSON data accepted per API request | `65536`                                                    | `1024`–`16777216`                                           |
+| `maxFunctionBytes`      | Limit submitted function size in UTF-8 bytes | `65536`                                                    | `1`–`1048576`, capped to the effective request-body limit   |
+| `maxFunctionTokens`     | Limit effective Graphwar evaluation tokens   | `4432`                                                     | `1`–`40960`                                                 |
+
+The 4432-token default passed all repeated runs in the reference 1 MiB-stack probe. Nearby higher candidates varied
+between fresh JVM runs, so values above 4432 are parser-unsafe opt-ins: deeply recursive formulas can exhaust
+Graphwar's thread stack, and large formulas can occupy its processing thread for a long time. Shot POSTs still
+return immediately; clients must wait for a pending response's `Retry-After` interval, then poll its `Location`
+until the command finishes.
+
+:::
+
+For more information, see [Graphwar Agent](https://github.com/HowieHz/howiehz-misc/tree/main/packages/graphwar-agent).

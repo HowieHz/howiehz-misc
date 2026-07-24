@@ -8,6 +8,11 @@ import type {
   GraphwarOneClickClearDebugDetail,
   GraphwarOneClickClearDebugStage,
 } from "./pathfinding/one-click-clear/search";
+import type {
+  GraphwarPathfindingDebugCounters,
+  GraphwarPathfindingDebugTimings,
+  GraphwarStepGlitchDebugCounters,
+} from "./pathfinding/runtime/diagnostics";
 
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
 export type GraphwarKillerStopReason = "invalid" | "max-steps" | "out-of-bounds" | "too-steep";
@@ -211,8 +216,9 @@ export interface GraphwarKillerLocale {
     agent: {
       defaultStatus: string;
       failed: (message: string) => string;
-      failureReason: (kind: GraphwarAgentClientErrorKind | undefined, message: string) => string;
+      failureReason: (kind: GraphwarAgentClientErrorKind | undefined, message: string, code?: string) => string;
       fireFailed: (message: string) => string;
+      fireUnknown: (message: string) => string;
       fileFailed: (message: string) => string;
       fileIncompatible: string;
       exportFailed: (message: string) => string;
@@ -227,7 +233,8 @@ export interface GraphwarKillerLocale {
       stateFileLoaded: string;
     };
     pathPointCoordinateNumber: string;
-    secondOrderAngleHint: (angle: string) => string;
+    secondOrderAngleHint: (roundedAngle: string, exactAngle?: string) => string;
+    secondOrderAngleHintTitle: (angle: string) => string;
     trajectoryWarning: {
       obstacle: string;
       pathQuality: (error: string) => string;
@@ -251,7 +258,7 @@ export interface GraphwarKillerLocale {
       trajectory: string;
       stopSuffix: string;
     };
-    success: (elapsed?: string, resultCacheHit?: boolean) => string;
+    success: (elapsed?: string, hasResultCacheHit?: boolean) => string;
     oneClickClear: {
       inProgress: string;
       needDetection: string;
@@ -260,7 +267,7 @@ export interface GraphwarKillerLocale {
       noUsableTarget: (elapsed: string) => string;
       pathfindingWorkerFailed: (elapsed: string) => string;
       retained: string;
-      success: (killCount: number, elapsed: string, resultCacheHit?: boolean) => string;
+      success: (killCount: number, elapsed: string, hasResultCacheHit?: boolean) => string;
       unsupported: string;
     };
     managed: {
@@ -269,13 +276,15 @@ export interface GraphwarKillerLocale {
       calculating: () => string;
       completedWaiting: string;
       connectionFailed: (message: string) => string;
-      deadlineFired: string;
-      deadlineNoPlan: string;
-      deadlinePlan: (elapsed: string) => string;
+      deadlineFired: (shotReserveSeconds: string) => string;
+      deadlineNoPlan: (shotReserveSeconds: string) => string;
+      deadlinePlan: (shotReserveSeconds: string, elapsed: string) => string;
       enabled: string;
       incompatible: string;
+      invalidRequest: (message: string) => string;
       readying: string;
       searchFailed: string;
+      shotFailed: (message: string) => string;
       skippingTurn: string;
       skipTurnFired: string;
       shotUnknown: (message: string) => string;
@@ -327,6 +336,10 @@ export interface GraphwarKillerLocale {
         address: string;
         addressAriaLabel: string;
         addressTitle: string;
+        token: string;
+        tokenAriaLabel: string;
+        tokenPlaceholder: string;
+        tokenTitle: string;
         exportOnClearFailure: string;
         exportOnClearFailureTitle: string;
         exportScene: string;
@@ -378,8 +391,13 @@ export interface GraphwarKillerLocale {
       allowFriendlyFire: string;
       allowFriendlyFireTitle: string;
       capabilityReasons: Record<GraphwarCapabilityReason, string>;
+      debugCounters: Record<keyof GraphwarPathfindingDebugCounters, GraphwarKillerDebugStageText>;
       debugDetails: GraphwarKillerPathfindingDebugDetailText;
+      debugNoDiagnostics: string;
       debugNoTiming: string;
+      debugPhaseTimings: string;
+      debugResultCacheHit: string;
+      debugStepGlitchCounters: Record<keyof GraphwarStepGlitchDebugCounters, GraphwarKillerDebugStageText>;
       debugStages: Record<
         | "preflight"
         | "prefix-evidence-hit"
@@ -413,8 +431,12 @@ export interface GraphwarKillerLocale {
         GraphwarKillerDebugStageText
       >;
       debugSummary: string;
+      debugTimings: Record<keyof GraphwarPathfindingDebugTimings, GraphwarKillerDebugStageText>;
+      debugWorkload: string;
       deleteOptimization: string;
       deleteOptimizationTitle: string;
+      exportDebugReport: string;
+      exportDebugReportTitle: string;
       obstacleExpansionAgentMode: string;
       obstacleExpansionDetectionMode: string;
       obstacleExpansion: string;
@@ -438,7 +460,7 @@ export interface GraphwarKillerLocale {
           algorithm: string;
           properties: readonly string[];
         }[],
-        friendlyFireEnabled: boolean,
+        isFriendlyFireEnabled: boolean,
         timing: {
           pollIntervalSeconds: string;
           shotReserveSeconds: string;
@@ -453,6 +475,8 @@ export interface GraphwarKillerLocale {
       routeLazyVisibilityGraph: string;
       routeThetaStar: string;
       routeXPlusScan: string;
+      resultCache: string;
+      resultCacheTitle: string;
       searchAnimation: string;
       searchAnimationTitle: string;
       simulationTolerance: string;
@@ -477,10 +501,10 @@ export interface GraphwarKillerLocale {
       clearSimulatorTitle: string;
       copyTitle: string;
       fire: string;
-      fireError: string;
       fireSuccess: string;
       fireTitle: string;
       firing: string;
+      turnTimeRemaining: (time: string) => string;
       fractionConversionIncomplete: string;
       fractionOutput: string;
       fractionOutputTitle: string;
@@ -571,7 +595,6 @@ export interface GraphwarKillerLocale {
       skipUnknownCharactersTitle: string;
       stepGlitchMode: string;
       stepGlitchModeAlgorithmInactiveReason: string;
-      stepGlitchModeGameModeInactiveReason: string;
       stepGlitchModeTitle: string;
       steepness: string;
       steepnessAriaLabel: string;

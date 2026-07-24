@@ -5,9 +5,19 @@ import { describe, expect, it } from "vitest";
 
 import { graphwarKillerLocale } from "../../locale";
 import type { GraphwarAdvancedSettingsPanelModel } from "./advanced-panel-model";
+import advancedPanelSource from "./AdvancedPanel.vue?raw";
 import AdvancedPanel from "./AdvancedPanel.vue";
 
 describe("AdvancedPanel", () => {
+  it("keeps grouped pathfinding settings left-aligned", () => {
+    expect(advancedPanelSource).toMatch(
+      /\.graphwar-killer__managed-settings-grid\s*{[^}]*grid-template-columns:\s*repeat\(auto-fit,[^;]+;[^}]*justify-content:\s*start;/s,
+    );
+    expect(advancedPanelSource).toMatch(
+      /\.graphwar-killer__obstacle-expansion-grid\s*{[^}]*grid-template-columns:\s*repeat\(auto-fit,[^;]+;[^}]*justify-content:\s*start;/s,
+    );
+  });
+
   it("keeps worker count visible while deletion radius follows the deletion preference", async () => {
     const panel: GraphwarAdvancedSettingsPanelModel = {
       actionBar: {
@@ -15,7 +25,7 @@ describe("AdvancedPanel", () => {
         liveClickPreviewWorkerCountText: "2",
       },
       bounds: { maxXText: "25", maxYText: "15", minXText: "-25", minYText: "-15" },
-      interactionDisabled: false,
+      canInteract: true,
       pathfinding: {
         agentObstacleSimulationToleranceText: "0",
         agentRoutePlanningToleranceText: "2",
@@ -27,7 +37,7 @@ describe("AdvancedPanel", () => {
         stepGlitchRoutePlanningToleranceText: "0",
         oneClickClearDeleteCheckRadiusMinimumPlanePixels: 0,
         oneClickClearDeleteCheckRadiusText: "3.5",
-        oneClickClearDeleteCheckRadiusVisible: false,
+        isOneClickClearDeleteCheckRadiusVisible: false,
         workerCountText: "4",
       },
       recognition: {
@@ -37,8 +47,8 @@ describe("AdvancedPanel", () => {
         obstacleMinAreaText: "8",
         templateMatchingWorkerCountText: "2",
       },
-      simulator: { parseDerivativeAsY: true, skipUnknownCharacters: true },
-      solverSettingsVisible: true,
+      simulator: { shouldParseDerivativeAsY: true, shouldSkipUnknownCharacters: true },
+      isSolverSettingsVisible: true,
     };
     const wrapper = mount(AdvancedPanel, { props: { locale: graphwarKillerLocale, panel } });
     expect(wrapper.classes()).toContain("graphwar-killer-control-surface");
@@ -98,7 +108,7 @@ describe("AdvancedPanel", () => {
     await wrapper.setProps({
       panel: {
         ...panel,
-        pathfinding: { ...panel.pathfinding, oneClickClearDeleteCheckRadiusVisible: true },
+        pathfinding: { ...panel.pathfinding, isOneClickClearDeleteCheckRadiusVisible: true },
       },
     });
 
@@ -112,7 +122,7 @@ describe("AdvancedPanel", () => {
         ),
     ).toBe(true);
 
-    await wrapper.setProps({ panel: { ...panel, solverSettingsVisible: false } });
+    await wrapper.setProps({ panel: { ...panel, isSolverSettingsVisible: false } });
     expect(wrapper.findAll("h3").map((heading) => heading.text())).toEqual([
       graphwarKillerLocale.ui.settings.bounds.heading,
       graphwarKillerLocale.ui.settings.simulator,
@@ -124,5 +134,17 @@ describe("AdvancedPanel", () => {
         graphwarKillerLocale.ui.settings.actionBar.liveClickPreviewWorkerCountAriaLabel,
       ].some((ariaLabel) => wrapper.find(`[aria-label="${ariaLabel}"]`).exists()),
     ).toBe(false);
+
+    const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
+    await wrapper.setProps({ panel: { ...panel, canInteract: false, temporaryDisabledReason: reason } });
+    for (const [id, title] of [
+      ["graphwar-killer-skip-unknown-characters", graphwarKillerLocale.ui.settings.skipUnknownCharactersTitle],
+      ["graphwar-killer-parse-derivative-as-y", graphwarKillerLocale.ui.settings.parseDerivativeAsYTitle],
+    ]) {
+      const control = wrapper.get(`#${id}`);
+      expect(control.attributes("disabled")).toBeDefined();
+      expect(control.attributes("title")).toBe(`${reason}\n${title}`);
+      expect(wrapper.find(`#${id}-reason`).exists()).toBe(false);
+    }
   });
 });

@@ -8,6 +8,7 @@ import {
   roundToDecimalPlaces,
 } from "../../core/numbers";
 import type { AlgorithmMode, EquationMode, FormulaResult, GraphPoint, StepTerm } from "../../core/types";
+import type { GraphwarFormulaDebugCounters } from "../debug-metrics";
 import { GraphwarSignRole, isGraphwarSignProtected } from "./sign-protection";
 import type { GraphwarSignProtection } from "./sign-protection";
 import {
@@ -261,14 +262,15 @@ export function compileFormulaEvaluator(
   algorithm: AlgorithmMode,
   options?: FormulaEvaluationOptions,
   compiledMaterials = compileGraphwarFormulaMaterials(points, steepness, algorithm, options),
+  debugCounters?: GraphwarFormulaDebugCounters,
 ): CompiledFormulaEvaluator {
   if (algorithm === "abs") {
-    return compileAbsConnectorEvaluator(points, steepness, options, compiledMaterials);
+    return compileAbsConnectorEvaluator(points, steepness, options, compiledMaterials, debugCounters);
   }
   if (algorithm === "pchip" || algorithm === "akima") {
-    return compileSoftCubicInterpolationEvaluator(points, algorithm, options, compiledMaterials);
+    return compileSoftCubicInterpolationEvaluator(points, algorithm, options, compiledMaterials, debugCounters);
   }
-  return compileStepEvaluator(points, steepness, options, compiledMaterials);
+  return compileStepEvaluator(points, steepness, options, compiledMaterials, debugCounters);
 }
 
 /** 按最终文本规则预编译公式材料；结果可结构化传递，不包含闭包。 */
@@ -308,11 +310,11 @@ function compileStepEvaluator(
   steepness: number,
   options?: FormulaEvaluationOptions,
   compiledMaterials?: CompiledGraphwarFormulaMaterials,
+  debugCounters?: GraphwarFormulaDebugCounters,
 ): CompiledFormulaEvaluator {
   const baseY = points[0]?.y ?? 0;
   const formula = getCompiledStepFormula(points, steepness, options, compiledMaterials);
-
-  return {
+  const evaluator: CompiledFormulaEvaluator = {
     evaluateFirstDerivativeY(x, y) {
       let slope = 0;
       for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
@@ -401,6 +403,23 @@ function compileStepEvaluator(
       return baseY + yOffset;
     },
   };
+  if (!debugCounters) {
+    return evaluator;
+  }
+  const firstDerivativeTermCount = formula.terms.filter(
+    (term) =>
+      (term.glitchSegment?.equation === "dy" && term.glitchSegment.derivative !== 0) ||
+      (!term.glitchSegment && term.firstDerivativeCoefficient !== 0),
+  ).length;
+  const secondDerivativeTermCount = formula.terms.filter(
+    (term) => term.glitchSegment?.equation === "ddy" || (!term.glitchSegment && term.secondDerivativeCoefficient !== 0),
+  ).length;
+  const yTermCount = formula.terms.filter((term) => !term.glitchSegment && term.yCoefficient !== 0).length;
+  return instrumentCompiledFormulaEvaluator(evaluator, debugCounters, {
+    firstDerivativeTermCount,
+    secondDerivativeTermCount,
+    yTermCount,
+  });
 }
 
 /** Graphwar 会把 exp(z) 改写成 e^z；内部回放也应走同一种 pow 语义。 */
@@ -743,6 +762,7 @@ function compileAbsConnectorEvaluator(
   steepness: number,
   options?: FormulaEvaluationOptions,
   compiledMaterials?: CompiledGraphwarFormulaMaterials,
+  debugCounters?: GraphwarFormulaDebugCounters,
 ): CompiledFormulaEvaluator {
   const segments = getCompiledAbsConnectorSegments(points, options, compiledMaterials);
   const secondDerivativeFormula =
@@ -750,7 +770,7 @@ function compileAbsConnectorEvaluator(
       ? getCompiledAbsSecondDerivativeFormula(points, steepness, options, compiledMaterials)
       : undefined;
 
-  return {
+  const evaluator: CompiledFormulaEvaluator = {
     evaluateFirstDerivativeY(x) {
       let slope: number | undefined;
       for (let index = segments.length - 1; index >= 0; index -= 1) {
@@ -788,6 +808,11 @@ function compileAbsConnectorEvaluator(
       return y;
     },
   };
+  return instrumentCompiledFormulaEvaluator(evaluator, debugCounters, {
+    firstDerivativeTermCount: segments.length,
+    secondDerivativeTermCount: secondDerivativeFormula?.pulses.length ?? 0,
+    yTermCount: segments.length,
+  });
 }
 
 /** 预编译 PCHIP/Akima 软分段三次插值，缓存 segments/slopes 供 y、dy、ddy 共用。 */
@@ -796,12 +821,50 @@ function compileSoftCubicInterpolationEvaluator(
   algorithm: "pchip" | "akima",
   options?: FormulaEvaluationOptions,
   compiledMaterials?: CompiledGraphwarFormulaMaterials,
+  debugCounters?: GraphwarFormulaDebugCounters,
 ): CompiledFormulaEvaluator {
   const segments = getCompiledSoftCubicSegments(points, algorithm, options, compiledMaterials);
+  return instrumentCompiledFormulaEvaluator(
+    {
+      evaluateFirstDerivativeY: (x) => evaluateCompiledSoftCubicInterpolationY(x, segments, "dy"),
+      evaluateSecondDerivativeY: (x) => evaluateCompiledSoftCubicInterpolationY(x, segments, "ddy"),
+      evaluateY: (x) => evaluateCompiledSoftCubicInterpolationY(x, segments, "y"),
+    },
+    debugCounters,
+    {
+      firstDerivativeTermCount: segments.length,
+      secondDerivativeTermCount: segments.length,
+      yTermCount: segments.length,
+    },
+  );
+}
+
+/** Adds deterministic formula-work counters only to diagnostic evaluators, leaving normal hot loops branch-free. */
+function instrumentCompiledFormulaEvaluator(
+  evaluator: CompiledFormulaEvaluator,
+  debugCounters: GraphwarFormulaDebugCounters | undefined,
+  termCounts: {
+    firstDerivativeTermCount: number;
+    secondDerivativeTermCount: number;
+    yTermCount: number;
+  },
+): CompiledFormulaEvaluator {
+  if (!debugCounters) {
+    return evaluator;
+  }
   return {
-    evaluateFirstDerivativeY: (x) => evaluateCompiledSoftCubicInterpolationY(x, segments, "dy"),
-    evaluateSecondDerivativeY: (x) => evaluateCompiledSoftCubicInterpolationY(x, segments, "ddy"),
-    evaluateY: (x) => evaluateCompiledSoftCubicInterpolationY(x, segments, "y"),
+    evaluateFirstDerivativeY(x, y) {
+      debugCounters.formulaTermEvaluationCount += termCounts.firstDerivativeTermCount;
+      return evaluator.evaluateFirstDerivativeY(x, y);
+    },
+    evaluateSecondDerivativeY(x, y, dy) {
+      debugCounters.formulaTermEvaluationCount += termCounts.secondDerivativeTermCount;
+      return evaluator.evaluateSecondDerivativeY(x, y, dy);
+    },
+    evaluateY(x) {
+      debugCounters.formulaTermEvaluationCount += termCounts.yTermCount;
+      return evaluator.evaluateY(x);
+    },
   };
 }
 

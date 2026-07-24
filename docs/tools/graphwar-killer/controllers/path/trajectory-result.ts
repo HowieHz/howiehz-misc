@@ -174,6 +174,8 @@ export interface GraphwarTrajectoryResultController {
   formulaOutputDecimalPlaces: ReadonlyRef<number>;
   /** 最后一次完整成功的求解器公式；模拟器计算不会覆盖该快照。 */
   formulaResult: ReadonlyRef<FormulaResult | undefined>;
+  /** 当前主公式同一发布结果中的游戏模式；模拟器轨迹不会覆盖该模式。 */
+  formulaResultEquationMode: ReadonlyRef<EquationMode | undefined>;
   /** 当前是否由搜索 incumbent 覆盖正式求解器结果。 */
   isIncumbentPreviewActive: ReadonlyRef<boolean>;
   /** 当前公式采样设置。 */
@@ -245,6 +247,7 @@ export function useGraphwarTrajectoryResult(
     () => publishedResult.value.incumbentPreview?.trajectory ?? publishedResult.value.displayedTrajectory,
   );
   const formulaResult = computed(() => activeFormulaResult.value?.formulaResult);
+  const formulaResultEquationMode = computed(() => activeFormulaResult.value?.trajectory.equationMode);
   const plottedCurvePoints = computed(() => activeTrajectory.value?.curvePoints ?? "");
   const plottedTrajectory = computed(() => {
     const trajectory = activeTrajectory.value;
@@ -684,6 +687,7 @@ export function useGraphwarTrajectoryResult(
     dispose,
     formulaOutputDecimalPlaces,
     formulaResult,
+    formulaResultEquationMode,
     graphwarTrajectoryFormulaSettings,
     isIncumbentPreviewActive,
     plottedCurvePoints,

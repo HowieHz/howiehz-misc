@@ -402,7 +402,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
 }
 
 .graphwar-killer__agent-fire-field {
-  width: min-content;
+  max-width: min(320px, 100%);
 }
 
 .graphwar-killer__agent-turn-countdown {
@@ -435,8 +435,9 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   color: var(--vp-c-danger-1);
   min-height: 34px;
   min-width: 72px;
+  overflow-wrap: anywhere;
   padding: 6px 12px;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .graphwar-killer__formula-row {

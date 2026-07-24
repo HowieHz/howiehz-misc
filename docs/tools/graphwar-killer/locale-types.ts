@@ -485,7 +485,6 @@ export interface GraphwarKillerLocale {
       clearSimulatorTitle: string;
       copyTitle: string;
       fire: string;
-      fireError: string;
       fireSuccess: string;
       fireTitle: string;
       firing: string;

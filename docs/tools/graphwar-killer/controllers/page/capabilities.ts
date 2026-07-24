@@ -19,6 +19,7 @@ export type GraphwarCapabilityReason =
   | "pathfinding-busy"
   | "agent-read-busy"
   | "agent-fire-busy"
+  | "result-required"
   | "solver-required"
   | "agent-disabled"
   | "agent-url-invalid"
@@ -157,38 +158,37 @@ export function deriveGraphwarCapabilities(
 
   return {
     semanticControls: facts.busy.isManagedModeBusy ? { state: "busy", reason: "managed-lock" } : normalCapability,
-    agentRead: facts.busy.isManagedModeBusy
-      ? { state: "busy", reason: "managed-lock" }
-      : facts.busy.isAgentReadBusy || facts.busy.isAgentExportBusy
-        ? { state: "busy", reason: "agent-read-busy" }
-        : !facts.agent.isEnabled
-          ? { state: "blocked", reason: "agent-disabled" }
-          : !facts.agent.normalizedBaseUrl
-            ? { state: "blocked", reason: "agent-url-invalid" }
+    agentRead: !facts.agent.isEnabled
+      ? { state: "blocked", reason: "agent-disabled" }
+      : !facts.agent.normalizedBaseUrl
+        ? { state: "blocked", reason: "agent-url-invalid" }
+        : facts.busy.isManagedModeBusy
+          ? { state: "busy", reason: "managed-lock" }
+          : facts.busy.isAgentReadBusy || facts.busy.isAgentExportBusy
+            ? { state: "busy", reason: "agent-read-busy" }
             : normalCapability,
     // 导出只读取 revision 一致的快照而不应用局面，因此可以与托管并行。
-    agentExport:
-      facts.busy.isAgentReadBusy || facts.busy.isAgentExportBusy
-        ? { state: "busy", reason: "agent-read-busy" }
-        : !facts.agent.isEnabled
-          ? { state: "blocked", reason: "agent-disabled" }
-          : !facts.agent.normalizedBaseUrl
-            ? { state: "blocked", reason: "agent-url-invalid" }
-            : normalCapability,
-    agentFire: facts.busy.isManagedModeBusy
-      ? { state: "busy", reason: "managed-lock" }
-      : facts.busy.isPathfindingBusy
-        ? { state: "busy", reason: "pathfinding-busy" }
-        : facts.busy.isAgentFireBusy
-          ? { state: "busy", reason: "agent-fire-busy" }
-          : !facts.agent.isEnabled
-            ? { state: "blocked", reason: "agent-disabled" }
-            : !facts.agent.normalizedBaseUrl
-              ? { state: "blocked", reason: "agent-url-invalid" }
-              : !facts.formula.isSettingsValid
-                ? { state: "blocked", reason: "formula-settings-invalid" }
-                : !facts.hasResult
-                  ? { state: "blocked" }
+    agentExport: !facts.agent.isEnabled
+      ? { state: "blocked", reason: "agent-disabled" }
+      : !facts.agent.normalizedBaseUrl
+        ? { state: "blocked", reason: "agent-url-invalid" }
+        : facts.busy.isAgentReadBusy || facts.busy.isAgentExportBusy
+          ? { state: "busy", reason: "agent-read-busy" }
+          : normalCapability,
+    agentFire: !facts.agent.isEnabled
+      ? { state: "blocked", reason: "agent-disabled" }
+      : !facts.agent.normalizedBaseUrl
+        ? { state: "blocked", reason: "agent-url-invalid" }
+        : !facts.formula.isSettingsValid
+          ? { state: "blocked", reason: "formula-settings-invalid" }
+          : !facts.hasResult
+            ? { state: "blocked", reason: "result-required" }
+            : facts.busy.isManagedModeBusy
+              ? { state: "busy", reason: "managed-lock" }
+              : facts.busy.isPathfindingBusy
+                ? { state: "busy", reason: "pathfinding-busy" }
+                : facts.busy.isAgentFireBusy
+                  ? { state: "busy", reason: "agent-fire-busy" }
                   : normalCapability,
     snapSoldiers: facts.busy.isManagedModeBusy
       ? { state: "busy", reason: "managed-lock" }
@@ -201,10 +201,10 @@ export function deriveGraphwarCapabilities(
         ? { state: "dormant", reason: "obstacles-required" }
         : normalCapability,
     pathPlanning: deriveGraphwarPathPlanningCapability(facts, preferences, sceneReason),
-    obstacleEditing: facts.busy.isManagedModeBusy
-      ? { state: "busy", reason: "managed-lock" }
-      : !facts.scene.hasObstacles
-        ? { state: "blocked", reason: "obstacles-required" }
+    obstacleEditing: !facts.scene.hasObstacles
+      ? { state: "blocked", reason: "obstacles-required" }
+      : facts.busy.isManagedModeBusy
+        ? { state: "busy", reason: "managed-lock" }
         : normalCapability,
     oneClickClear: deriveGraphwarOneClickClearCapability(facts, preferences, sceneReason),
     managedMode: deriveGraphwarManagedModeCapability(facts, preferences),
@@ -226,16 +226,13 @@ function deriveGraphwarPathPlanningCapability(
   if (facts.workflowMode === "simulator") {
     return { state: "dormant", reason: "solver-required" };
   }
-  if (!preferences.isPathPlanningEnabled) {
-    return normalCapability;
-  }
-  if (sceneReason) {
+  if (preferences.isPathPlanningEnabled && sceneReason) {
     return { state: "dormant", reason: sceneReason };
   }
-  if (!facts.formula.isSettingsValid) {
+  if (preferences.isPathPlanningEnabled && !facts.formula.isSettingsValid) {
     return { state: "dormant", reason: "formula-settings-invalid" };
   }
-  if (!facts.pathfinding.hasValidObstacleTolerances) {
+  if (preferences.isPathPlanningEnabled && !facts.pathfinding.hasValidObstacleTolerances) {
     return { state: "dormant", reason: "obstacle-tolerances-invalid" };
   }
   return normalCapability;
@@ -247,12 +244,6 @@ function deriveGraphwarOneClickClearCapability(
   preferences: GraphwarCapabilityPreferences,
   sceneReason: GraphwarCapabilityReason | undefined,
 ): GraphwarControlCapability {
-  if (facts.busy.isManagedModeBusy) {
-    return { state: "busy", reason: "managed-lock" };
-  }
-  if (facts.busy.isPathfindingBusy) {
-    return { state: "busy", reason: "pathfinding-busy" };
-  }
   if (facts.workflowMode === "simulator") {
     return { state: "blocked", reason: "solver-required" };
   }
@@ -281,6 +272,12 @@ function deriveGraphwarOneClickClearCapability(
   if (preferences.isDeleteOptimizationEnabled && !facts.pathfinding.isDeleteCheckRadiusValid) {
     return { state: "blocked", reason: "delete-check-radius-invalid" };
   }
+  if (facts.busy.isManagedModeBusy) {
+    return { state: "busy", reason: "managed-lock" };
+  }
+  if (facts.busy.isPathfindingBusy) {
+    return { state: "busy", reason: "pathfinding-busy" };
+  }
   return normalCapability;
 }
 
@@ -291,15 +288,6 @@ function deriveGraphwarManagedModeCapability(
 ): GraphwarControlCapability {
   if (facts.busy.isManagedModeBusy) {
     return normalCapability;
-  }
-  if (facts.busy.isPathfindingBusy) {
-    return { state: "busy", reason: "pathfinding-busy" };
-  }
-  if (facts.busy.isAgentReadBusy) {
-    return { state: "busy", reason: "agent-read-busy" };
-  }
-  if (facts.busy.isAgentFireBusy) {
-    return { state: "busy", reason: "agent-fire-busy" };
   }
   if (facts.workflowMode === "simulator") {
     return { state: "blocked", reason: "solver-required" };
@@ -325,6 +313,15 @@ function deriveGraphwarManagedModeCapability(
   }
   if (preferences.isDeleteOptimizationEnabled && !facts.pathfinding.isDeleteCheckRadiusValid) {
     return { state: "blocked", reason: "delete-check-radius-invalid" };
+  }
+  if (facts.busy.isPathfindingBusy) {
+    return { state: "busy", reason: "pathfinding-busy" };
+  }
+  if (facts.busy.isAgentReadBusy) {
+    return { state: "busy", reason: "agent-read-busy" };
+  }
+  if (facts.busy.isAgentFireBusy) {
+    return { state: "busy", reason: "agent-fire-busy" };
   }
   return normalCapability;
 }

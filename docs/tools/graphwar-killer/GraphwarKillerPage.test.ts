@@ -213,6 +213,77 @@ describe("Graphwar Killer page settings", () => {
     wrapper.unmount();
   });
 
+  it("transfers a published y'' result's formula, mode, and angle to Simulator together", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void;
+          simulatorEquationMode: "ddy" | "dy" | "y";
+          simulatorFormulaText: string;
+          simulatorLaunchAngleText: string;
+          solverEquationMode: "ddy" | "dy" | "y";
+        };
+      }
+    ).setupState;
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("x^2", 0.25));
+    expect(page.solverEquationMode).toBe("y");
+
+    await wrapper.findAll(".graphwar-killer__mode-toggle button")[1].trigger("click");
+
+    expect(page.simulatorFormulaText).toBe("x^2");
+    expect(page.simulatorEquationMode).toBe("ddy");
+    expect(page.simulatorLaunchAngleText).not.toBe("");
+    expect(wrapper.findAll(".graphwar-killer__equation-toggle button")[2].attributes("aria-pressed")).toBe("true");
+    wrapper.unmount();
+  });
+
+  it("shows a guarded Agent fire failure reason in the button", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          fireGraphwarAgentFunction: () => Promise<void>;
+          isGraphwarAgentEnabled: boolean;
+        };
+      }
+    ).setupState;
+    page.isGraphwarAgentEnabled = true;
+    await nextTick();
+
+    await page.fireGraphwarAgentFunction();
+    await nextTick();
+
+    expect(wrapper.get(".graphwar-killer__agent-fire-button").text()).toBe("开火失败：请先生成或输入有效函数");
+    wrapper.unmount();
+  });
+
+  it("shows an asynchronous Agent fire failure reason in the button", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockRejectedValue(new Error("offline")));
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          commitIncumbentResult: (snapshot: ValidatedTrajectorySnapshot) => void;
+          isGraphwarAgentEnabled: boolean;
+        };
+      }
+    ).setupState;
+    page.isGraphwarAgentEnabled = true;
+    page.commitIncumbentResult(createValidatedTrajectorySnapshot("x"));
+    await nextTick();
+
+    await wrapper.get(".graphwar-killer__agent-fire-button").trigger("click");
+    await flushPromises();
+    await nextTick();
+
+    expect(wrapper.get(".graphwar-killer__agent-fire-button").text()).toBe(
+      "开火失败：网络或 Graphwar Agent 暂时不可用",
+    );
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
+
   it("shows a partial-conversion warning only while the current fraction output needs it", async () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const page = (
@@ -915,9 +986,10 @@ describe("Graphwar Killer page settings", () => {
         } as GraphwarManagedController;
         page.handleGraphwarManagedShotUnknown(state, plan, new GraphwarAgentClientError("transient", "unknown"));
       }
+      // Keep this assertion on the authoritative step; wall-clock extrapolation is covered by the playback tests.
       page.handleGraphwarAgentLiveState(
         createAgentState("y", {
-          functionDraw: { currentStep: 2, stepsPerSecond: 1500 },
+          functionDraw: { currentStep: 2, stepsPerSecond: 0 },
           observationSequence: 2,
           phase: "drawing",
         }),

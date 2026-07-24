@@ -137,7 +137,7 @@ describe("Graphwar capabilities", () => {
     ["agentRead", { agent: { normalizedBaseUrl: undefined } }, { state: "blocked", reason: "agent-url-invalid" }],
     ["agentExport", { agent: { isEnabled: false } }, { state: "blocked", reason: "agent-disabled" }],
     ["agentExport", { agent: { normalizedBaseUrl: undefined } }, { state: "blocked", reason: "agent-url-invalid" }],
-    ["agentFire", { hasResult: false }, { state: "blocked" }],
+    ["agentFire", { hasResult: false }, { state: "blocked", reason: "result-required" }],
   ] satisfies [keyof GraphwarCapabilities, GraphwarCapabilityFactsOverrides, GraphwarControlCapability][])(
     "derives %s's local control state",
     (name, overrides, expected) => {
@@ -231,7 +231,7 @@ describe("Graphwar capabilities", () => {
     },
   );
 
-  it("shows busy ownership before missing prerequisites", () => {
+  it("keeps stable blocked reasons while unrelated tasks are temporarily busy", () => {
     const capabilities = deriveGraphwarCapabilities(
       createFacts({
         workflowMode: "simulator",
@@ -243,6 +243,25 @@ describe("Graphwar capabilities", () => {
         },
         agent: { isEnabled: false, normalizedBaseUrl: undefined },
         busy: { isPathfindingBusy: true, isAgentReadBusy: true, isAgentFireBusy: true, isManagedModeBusy: false },
+      }),
+      createPreferences(),
+    );
+
+    expect(capabilities.agentRead).toEqual({ state: "blocked", reason: "agent-disabled" });
+    expect(capabilities.agentExport).toEqual({ state: "blocked", reason: "agent-disabled" });
+    expect(capabilities.agentFire).toEqual({ state: "blocked", reason: "agent-disabled" });
+    expect(capabilities.snapSoldiers).toEqual({ state: "dormant", reason: "soldiers-required" });
+    expect(capabilities.collisionCheck).toEqual({ state: "dormant", reason: "obstacles-required" });
+    expect(capabilities.pathPlanning).toEqual({ state: "busy", reason: "pathfinding-busy" });
+    expect(capabilities.obstacleEditing).toEqual({ state: "blocked", reason: "obstacles-required" });
+    expect(capabilities.oneClickClear).toEqual({ state: "blocked", reason: "solver-required" });
+    expect(capabilities.managedMode).toEqual({ state: "blocked", reason: "solver-required" });
+  });
+
+  it("uses temporary busy reasons when controls are otherwise available", () => {
+    const capabilities = deriveGraphwarCapabilities(
+      createFacts({
+        busy: { isPathfindingBusy: true, isAgentReadBusy: true, isAgentFireBusy: true },
       }),
       createPreferences(),
     );
@@ -415,9 +434,9 @@ describe("Graphwar capabilities", () => {
     );
 
     expect(capabilities.semanticControls).toEqual({ state: "busy", reason: "managed-lock" });
-    expect(capabilities.agentRead).toEqual({ state: "busy", reason: "managed-lock" });
+    expect(capabilities.agentRead).toEqual({ state: "blocked", reason: "agent-disabled" });
     expect(capabilities.agentExport).toEqual({ state: "blocked", reason: "agent-disabled" });
-    expect(capabilities.oneClickClear).toEqual({ state: "busy", reason: "managed-lock" });
+    expect(capabilities.oneClickClear).toEqual({ state: "blocked", reason: "solver-required" });
     expect(capabilities.managedMode).toEqual({ state: "normal" });
   });
 

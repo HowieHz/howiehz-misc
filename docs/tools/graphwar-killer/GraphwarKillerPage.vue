@@ -1153,6 +1153,7 @@ const {
   dispose: disposeTrajectoryResult,
   formulaOutputDecimalPlaces,
   formulaResult,
+  formulaResultEquationMode,
   graphwarTrajectoryFormulaSettings,
   isIncumbentPreviewActive: isTrajectoryIncumbentPreviewActive,
   pathError: formulaPathError,
@@ -1257,7 +1258,7 @@ const graphwarAgentFireButtonText = computed(() => {
     return locale.ui.result.fireSuccess;
   }
   if (graphwarAgentFireStatus.value === "error") {
-    return locale.ui.result.fireError;
+    return locale.status.agent.fireFailed(graphwarAgentFireFailureMessage.value);
   }
   return locale.ui.result.fire;
 });
@@ -2606,9 +2607,9 @@ function setToolWorkflowMode(mode: ToolWorkflowMode) {
   cancelSmartPathfinding(false);
   clearSmartPathfindingStatus();
   if (mode === "simulator") {
-    const solverResult = formulaResult.value;
-    if (!simulatorFormulaText.value.trim() && solverResult) {
-      simulatorEquationMode.value = solverEquationMode.value;
+    if (!simulatorFormulaText.value.trim() && formulaResult.value) {
+      simulatorEquationMode.value =
+        formulaResultEquationMode.value === undefined ? solverEquationMode.value : formulaResultEquationMode.value;
       simulatorFormulaText.value = generatedFormulaOutput.value;
       simulatorLaunchAngleText.value = secondOrderLaunchAngleText.value;
     }

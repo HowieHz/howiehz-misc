@@ -241,7 +241,8 @@ describe("main trajectory result lifecycle", () => {
     });
     await nextTick();
 
-    state.options.simulator.formulaText.value = "x";
+    state.options.simulator.formulaText.value = "solver formula";
+    state.options.settings.equationMode.value = "ddy";
     state.options.settings.toolWorkflowMode.value = "simulator";
     await nextTick();
     frames.flush();
@@ -252,8 +253,11 @@ describe("main trajectory result lifecycle", () => {
     await nextTick();
 
     expect(controller.formulaResult.value?.expression).toBe("solver formula");
+    expect(controller.formulaResultEquationMode.value).toBe("dy");
     expect(controller.secondOrderLaunchAngleDegrees.value).toBe(12);
     expect(controller.plottedCurvePoints.value).toBe("simulator curve");
+    expect(controller.plottedTrajectory.value?.equationMode).toBe("ddy");
+    expect(controller.plottedTrajectory.value?.expression).toBe("solver formula");
 
     state.options.settings.toolWorkflowMode.value = "solver";
     await nextTick();

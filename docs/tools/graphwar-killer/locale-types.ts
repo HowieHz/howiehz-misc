@@ -8,6 +8,11 @@ import type {
   GraphwarOneClickClearDebugDetail,
   GraphwarOneClickClearDebugStage,
 } from "./pathfinding/one-click-clear/search";
+import type {
+  GraphwarPathfindingDebugCounters,
+  GraphwarPathfindingDebugTimings,
+  GraphwarStepGlitchDebugCounters,
+} from "./pathfinding/runtime/diagnostics";
 
 /** 模拟器停止原因的可本地化子集，只暴露用户需要理解的结果。 */
 export type GraphwarKillerStopReason = "invalid" | "max-steps" | "out-of-bounds" | "too-steep";
@@ -386,8 +391,13 @@ export interface GraphwarKillerLocale {
       allowFriendlyFire: string;
       allowFriendlyFireTitle: string;
       capabilityReasons: Record<GraphwarCapabilityReason, string>;
+      debugCounters: Record<keyof GraphwarPathfindingDebugCounters, GraphwarKillerDebugStageText>;
       debugDetails: GraphwarKillerPathfindingDebugDetailText;
+      debugNoDiagnostics: string;
       debugNoTiming: string;
+      debugPhaseTimings: string;
+      debugResultCacheHit: string;
+      debugStepGlitchCounters: Record<keyof GraphwarStepGlitchDebugCounters, GraphwarKillerDebugStageText>;
       debugStages: Record<
         | "preflight"
         | "prefix-evidence-hit"
@@ -421,8 +431,12 @@ export interface GraphwarKillerLocale {
         GraphwarKillerDebugStageText
       >;
       debugSummary: string;
+      debugTimings: Record<keyof GraphwarPathfindingDebugTimings, GraphwarKillerDebugStageText>;
+      debugWorkload: string;
       deleteOptimization: string;
       deleteOptimizationTitle: string;
+      exportDebugReport: string;
+      exportDebugReportTitle: string;
       obstacleExpansionAgentMode: string;
       obstacleExpansionDetectionMode: string;
       obstacleExpansion: string;
@@ -461,6 +475,8 @@ export interface GraphwarKillerLocale {
       routeLazyVisibilityGraph: string;
       routeThetaStar: string;
       routeXPlusScan: string;
+      resultCache: string;
+      resultCacheTitle: string;
       searchAnimation: string;
       searchAnimationTitle: string;
       simulationTolerance: string;

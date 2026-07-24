@@ -93,7 +93,7 @@ describe("One-click clear optimization", () => {
         };
       },
       candidates,
-      deleteOptimizationEnabled: false,
+      isDeleteOptimizationEnabled: false,
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
       onDebugTiming: (timing) => {
@@ -765,7 +765,7 @@ function createDagCaptureOptions(
       return { routes: [], timings: [] };
     },
     candidates,
-    deleteOptimizationEnabled: false,
+    isDeleteOptimizationEnabled: false,
     deleteHitCheckRadiusPixels: 0,
     hitCandidates: candidates,
     pathPoints: [start],

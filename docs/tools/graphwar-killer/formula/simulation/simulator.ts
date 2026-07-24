@@ -8,6 +8,7 @@ import {
   GRAPHWAR_STEP_SIZE,
 } from "../../core/game/constants";
 import { roundGraphwarLaunchAngleToDisplayRadians } from "../../core/numbers";
+import { nowMs } from "../../core/time";
 import { createGraphPoint } from "../../core/types";
 import type {
   AlgorithmMode,
@@ -16,6 +17,7 @@ import type {
   GraphPoint,
   GraphwarSecondOrderLaunchAngleMode,
 } from "../../core/types";
+import type { GraphwarTrajectoryDebugCounters, GraphwarTrajectoryDebugMetrics } from "../debug-metrics";
 import { createGraphwarExpressionEvaluator } from "../expression/evaluator";
 import type { GraphwarExpressionParserOptions } from "../expression/evaluator";
 /** 封装 Graphwar 公式模拟器，按游戏步进规则计算轨迹和停止原因。 */
@@ -45,6 +47,8 @@ export interface SampleGraphwarTrajectoryOptions {
   formulaEvaluation?: FormulaEvaluationOptions;
   /** 已按最终文本规则预编译的公式材料；用于候选验证热路径复用。 */
   compiledFormulaMaterials?: CompiledGraphwarFormulaMaterials;
+  /** Optional mutable diagnostics; omitted in normal sampling to keep hot loops uninstrumented. */
+  debugMetrics?: GraphwarTrajectoryDebugMetrics;
   /** 已按 Graphwar 坐标表示的公式控制点。 */
   points: readonly GraphPoint[];
   /** Y''= 使用完整建议角，还是调用方指定的两位小数执行角。 */
@@ -110,6 +114,8 @@ export interface CreateGraphwarFormulaPathOptions {
   formulaEvaluation?: FormulaEvaluationOptions;
   /** 已按最终文本规则预编译的公式材料；用于避免发射角迭代重复建段。 */
   compiledFormulaMaterials?: CompiledGraphwarFormulaMaterials;
+  /** Optional counters for launch solving performed while preparing the final formula. */
+  debugCounters?: GraphwarTrajectoryDebugCounters;
   /** 用户选择或 worker 生成的 Graphwar 路径点。 */
   points: readonly GraphPoint[];
   /** Y''= 使用完整建议角，还是调用方指定的两位小数执行角。 */
@@ -310,12 +316,20 @@ function createStepAdjustedFormulaPathPoints(
 
 /** 使用 Graphwar 的采样、步长二分和 RK4 规则生成预览轨迹点。 */
 export function sampleGraphwarTrajectory(options: SampleGraphwarTrajectoryOptions) {
-  const stepperResult = createGraphwarTrajectoryStepper(options);
-  if (!stepperResult.ok) {
-    return createTrajectorySample([], stepperResult.stopReason);
+  const debugMetrics = options.debugMetrics;
+  const startedAt = debugMetrics ? nowMs() : 0;
+  if (debugMetrics) {
+    debugMetrics.counters.trajectoryReplayCount += 1;
   }
-
-  return sampleWithTrajectoryStepper(stepperResult.stepper, options);
+  const stepperResult = createGraphwarTrajectoryStepper(options);
+  const sample = stepperResult.ok
+    ? sampleWithTrajectoryStepper(stepperResult.stepper, options)
+    : createTrajectorySample([], stepperResult.stopReason);
+  if (debugMetrics) {
+    debugMetrics.counters.acceptedSamplePointCount += sample.points.length;
+    debugMetrics.timings.trajectoryReplayElapsedMs += nowMs() - startedAt;
+  }
+  return sample;
 }
 
 /** 创建可恢复的 Graphwar 轨迹采样器，供完整采样和增量前缀验证共用。 */
@@ -376,7 +390,7 @@ function createNormalFunctionStepper(options: SampleGraphwarTrajectoryOptions) {
       const x = previous.x + step;
       return createGraphPoint(x, evaluateY(x) + offset);
     },
-    { initialState: options.initialState, stopAtMinStep: true },
+    { debugCounters: getGraphwarDebugCounters(options), initialState: options.initialState, stopAtMinStep: true },
   );
 }
 
@@ -386,18 +400,25 @@ function createFirstOrderEquationStepper(options: SampleGraphwarTrajectoryOption
   // 发射角和 RK4 共用同一 evaluator，避免 PCHIP/Akima 路径重复构建插值段。
   const launchPoint = moveFromSoldierCenter(
     options.soldierCenter,
-    getFirstOrderStartAngle(options.soldierCenter, evaluateDY),
+    getFirstOrderStartAngle(options.soldierCenter, evaluateDY, getGraphwarDebugCounters(options)),
   );
   if (!isFinitePoint(launchPoint)) {
     return { ok: false as const, stopReason: "invalid" as const };
   }
 
+  const debugCounters = getGraphwarDebugCounters(options);
+  const calculateNext = debugCounters
+    ? (previous: GraphPoint, step: number) => {
+        debugCounters.rk4StepCount += 1;
+        return rk4FirstOrderStep(previous, step, evaluateDY);
+      }
+    : (previous: GraphPoint, step: number) => rk4FirstOrderStep(previous, step, evaluateDY);
   return createBisectionTrajectoryStepper(
     launchPoint,
     options.bounds,
-    (previous, step) => rk4FirstOrderStep(previous, step, evaluateDY),
+    calculateNext,
     // Graphwar 原版 ODE 循环在 x 步长缩到下限后仍接受过长线段；这会产生穿墙隧穿。
-    { initialState: options.initialState, stopAtMinStep: false },
+    { debugCounters, initialState: options.initialState, stopAtMinStep: false },
   );
 }
 
@@ -412,12 +433,19 @@ function createSecondOrderEquationStepper(options: SampleGraphwarTrajectoryOptio
     return { ok: false as const, stopReason: "invalid" as const };
   }
 
+  const debugCounters = getGraphwarDebugCounters(options);
+  const calculateNext = debugCounters
+    ? (previous: SecondOrderState, step: number) => {
+        debugCounters.rk4StepCount += 1;
+        return rk4SecondOrderStep(previous, step, evaluateDDY);
+      }
+    : (previous: SecondOrderState, step: number) => rk4SecondOrderStep(previous, step, evaluateDDY);
   return createBisectionTrajectoryStepper(
     launchState,
     options.bounds,
-    (previous, step) => rk4SecondOrderStep(previous, step, evaluateDDY),
+    calculateNext,
     // 保持和一阶 ODE 相同的原版隧穿行为，避免预览误判会在陡峭段爆炸。
-    { initialState: options.initialState, stopAtMinStep: false },
+    { debugCounters, initialState: options.initialState, stopAtMinStep: false },
   );
 }
 
@@ -503,7 +531,7 @@ function getLaunchAngle(options: GraphwarFormulaOptions, center: GraphPoint) {
     return getNormalStartAngle(center.x, createYEvaluator(options));
   }
   if (options.equation === "dy") {
-    return getFirstOrderStartAngle(center, createFirstOrderEvaluator(options));
+    return getFirstOrderStartAngle(center, createFirstOrderEvaluator(options), getGraphwarDebugCounters(options));
   }
   if (options.algorithm === "abs") {
     return resolveSecondOrderExecutionAngle(
@@ -528,6 +556,7 @@ function createYEvaluator(options: GraphwarFormulaOptions) {
     options.algorithm,
     createEquationAwareFormulaEvaluation(options),
     options.compiledFormulaMaterials,
+    getGraphwarDebugCounters(options),
   ).evaluateY;
 }
 
@@ -539,6 +568,7 @@ function createFirstOrderEvaluator(options: GraphwarFormulaOptions): FirstOrderE
     options.algorithm,
     createEquationAwareFormulaEvaluation(options),
     options.compiledFormulaMaterials,
+    getGraphwarDebugCounters(options),
   ).evaluateFirstDerivativeY;
 }
 
@@ -550,6 +580,7 @@ function createSecondOrderEvaluator(options: GraphwarFormulaOptions): SecondOrde
     options.algorithm,
     createEquationAwareFormulaEvaluation(options),
     options.compiledFormulaMaterials,
+    getGraphwarDebugCounters(options),
   ).evaluateSecondDerivativeY;
 }
 
@@ -579,13 +610,20 @@ function getNormalStartAngle(centerX: number, evaluateY: (x: number) => number) 
 }
 
 /** 模拟 Graphwar y'= 模式用一次 RK4 预测斜率并迭代初始发射角。 */
-function getFirstOrderStartAngle(center: GraphPoint, evaluateDY: FirstOrderEvaluator) {
+function getFirstOrderStartAngle(
+  center: GraphPoint,
+  evaluateDY: FirstOrderEvaluator,
+  debugCounters?: GraphwarTrajectoryDebugMetrics["counters"],
+) {
   let angle = 0;
   let error = Number.POSITIVE_INFINITY;
 
   // 与 y= 相同，100 次后的末值是 Graphwar 既有语义；严格失败只用于工具自有迭代。
   for (let index = 0; error > GRAPHWAR_ANGLE_ERROR && index < GRAPHWAR_MAX_ANGLE_LOOPS; index += 1) {
     const finalPoint = moveFromSoldierCenter(center, angle);
+    if (debugCounters) {
+      debugCounters.rk4StepCount += 1;
+    }
     const nextPoint = rk4FirstOrderStep(finalPoint, GRAPHWAR_STEP_SIZE, evaluateDY);
     const tangent = (nextPoint.y - finalPoint.y) / (nextPoint.x - finalPoint.x);
     const nextAngle = Math.atan(tangent);
@@ -688,6 +726,8 @@ function sampleByBisection<TPoint extends GraphPoint>(
   bounds: GraphBounds,
   calculateNext: (previous: TPoint, step: number) => TPoint,
   options: {
+    debugCounters?: GraphwarTrajectoryDebugCounters;
+    debugMetrics?: GraphwarTrajectoryDebugMetrics;
     initialState?: GraphwarTrajectorySamplingState;
     shouldStop?: GraphwarTrajectoryStopPredicate;
     skipInitialStop?: boolean;
@@ -695,6 +735,7 @@ function sampleByBisection<TPoint extends GraphPoint>(
   },
 ) {
   const stepperResult = createBisectionTrajectoryStepper(start, bounds, calculateNext, {
+    debugCounters: getGraphwarDebugCounters(options),
     initialState: options.initialState,
     stopAtMinStep: options.stopAtMinStep,
   });
@@ -706,7 +747,11 @@ function createBisectionTrajectoryStepper<TPoint extends GraphPoint>(
   start: TPoint,
   bounds: GraphBounds,
   calculateNext: (previous: TPoint, step: number) => TPoint,
-  options: { initialState?: GraphwarTrajectorySamplingState; stopAtMinStep: boolean },
+  options: {
+    debugCounters?: GraphwarTrajectoryDebugCounters;
+    initialState?: GraphwarTrajectorySamplingState;
+    stopAtMinStep: boolean;
+  },
 ) {
   const initialPoint = createInitialBisectionPoint(start, options.initialState);
   // bounds 是本次同步采样的固定快照；归一化一次，避免最多 20,000 个接受点重复 Math.min/max。
@@ -801,7 +846,7 @@ function isSecondOrderState(point: GraphPoint): point is SecondOrderState {
 function findNextSample<TPoint extends GraphPoint>(
   previous: TPoint,
   calculateNext: (previous: TPoint, step: number) => TPoint,
-  options: { stopAtMinStep: boolean },
+  options: { debugCounters?: GraphwarTrajectoryDebugCounters; stopAtMinStep: boolean },
 ) {
   let step = GRAPHWAR_STEP_SIZE;
   let next = calculateNext(previous, step);
@@ -815,12 +860,23 @@ function findNextSample<TPoint extends GraphPoint>(
     }
 
     step /= 2;
+    if (options.debugCounters) {
+      options.debugCounters.stepBisectionCount += 1;
+    }
     next = calculateNext(previous, step);
   }
 
   return isFinitePoint(next)
     ? { ok: true as const, point: next }
     : { ok: false as const, stopReason: "invalid" as const };
+}
+
+/** Resolves counters once before hot loops; detailed timers remain available only through debugMetrics. */
+function getGraphwarDebugCounters(options: {
+  debugCounters?: GraphwarTrajectoryDebugCounters;
+  debugMetrics?: GraphwarTrajectoryDebugMetrics;
+}) {
+  return options.debugMetrics?.counters ?? options.debugCounters;
 }
 
 /** 一阶微分方程 y'=f(x,y) 的 RK4 单步。 */

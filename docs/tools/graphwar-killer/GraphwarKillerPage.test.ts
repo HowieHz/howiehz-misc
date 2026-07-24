@@ -1380,11 +1380,52 @@ describe("Graphwar Killer page settings", () => {
   });
 
   it("keeps the advanced-settings switch available during managed mode", async () => {
+    vi.useFakeTimers();
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const page = (
       wrapper.vm.$ as unknown as {
         setupState: {
+          debugActivationRemainingMs: number | undefined;
           isAdvancedSettingsVisible: boolean;
+          isDebugInfoEnabled: boolean;
+          isGraphwarManagedModeEnabled: boolean;
+        };
+      }
+    ).setupState;
+
+    try {
+      page.isGraphwarManagedModeEnabled = true;
+      await nextTick();
+      const advancedSettings = wrapper.get("#graphwar-killer-advanced-settings");
+      expect(advancedSettings.attributes("disabled")).toBeUndefined();
+
+      await advancedSettings.trigger("click");
+      expect(page.isAdvancedSettingsVisible).toBe(true);
+      expect(advancedSettings.attributes("aria-checked")).toBe("true");
+      await advancedSettings.trigger("click");
+      expect(page.isAdvancedSettingsVisible).toBe(false);
+
+      await advancedSettings.trigger("pointerdown", { button: 0 });
+      vi.advanceTimersByTime(1000);
+      expect(page.debugActivationRemainingMs).toBe(1000);
+      expect(page.isDebugInfoEnabled).toBe(false);
+      vi.advanceTimersByTime(1000);
+      expect(page.isDebugInfoEnabled).toBe(true);
+      await advancedSettings.trigger("pointerup", { button: 0 });
+      await advancedSettings.trigger("click");
+      expect(page.isAdvancedSettingsVisible).toBe(false);
+    } finally {
+      wrapper.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("attributes managed friendly targets to the pathfinding setting", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          isFriendlyFireEnabled: boolean;
           isGraphwarManagedModeEnabled: boolean;
         };
       }
@@ -1392,12 +1433,15 @@ describe("Graphwar Killer page settings", () => {
 
     page.isGraphwarManagedModeEnabled = true;
     await nextTick();
-    const advancedSettings = wrapper.get("#graphwar-killer-advanced-settings");
-    expect(advancedSettings.attributes("disabled")).toBeUndefined();
+    expect(wrapper.find(".graphwar-killer__managed-warning").exists()).toBe(false);
 
-    await advancedSettings.trigger("click");
-    expect(page.isAdvancedSettingsVisible).toBe(true);
-    expect(advancedSettings.attributes("aria-checked")).toBe("true");
+    page.isFriendlyFireEnabled = true;
+    await nextTick();
+    expect(wrapper.get(".graphwar-killer__managed-warning").text()).toBe("寻路设置已允许友伤，友军会作为一键清图候选");
+
+    page.isGraphwarManagedModeEnabled = false;
+    await nextTick();
+    expect(wrapper.find(".graphwar-killer__managed-warning").exists()).toBe(false);
     wrapper.unmount();
   });
 
@@ -1442,14 +1486,68 @@ describe("Graphwar Killer page settings", () => {
     await expect(page.runOneClickClearWorkflow()).resolves.toBe(true);
     await flushPromises();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(anchorClick).toHaveBeenCalledTimes(2);
-    expect(downloadedFiles).toHaveLength(2);
+    expect(anchorClick).toHaveBeenCalledTimes(3);
+    expect(downloadedFiles).toHaveLength(3);
     expect(downloadedFiles[0]).toMatch(/^clear-failure-incomplete-state-/);
     expect(downloadedFiles[1]).toMatch(/^clear-failure-incomplete-obstacle-mask-/);
+    expect(downloadedFiles[2]).toMatch(/^clear-failure-incomplete-pathfinding-debug-/);
+    expect(
+      new Set([
+        downloadedFiles[0]?.replace("clear-failure-incomplete-state-", "").replace(/\.json$/, ""),
+        downloadedFiles[1]?.replace("clear-failure-incomplete-obstacle-mask-", "").replace(/\.bin$/, ""),
+        downloadedFiles[2]?.replace("clear-failure-incomplete-pathfinding-debug-", "").replace(/\.json$/, ""),
+      ]).size,
+    ).toBe(1);
 
     wrapper.unmount();
     anchorClick.mockRestore();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the previous completed pathfinding report until the next task completes and clears it with debug mode", async () => {
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          isDebugInfoEnabled: boolean;
+          latestPathfindingDebugBundle: object | undefined;
+          oneClickClearRunWorkflow: {
+            run: (options?: { onOutcome?: (outcome: { kind: "complete" }) => void }) => Promise<boolean>;
+          };
+          runOneClickClearWorkflow: () => Promise<boolean>;
+        };
+      }
+    ).setupState;
+
+    page.isDebugInfoEnabled = true;
+    page.oneClickClearRunWorkflow.run = async (options) => {
+      options?.onOutcome?.({ kind: "complete" });
+      return true;
+    };
+    await nextTick();
+    await expect(page.runOneClickClearWorkflow()).resolves.toBe(true);
+    const firstReport = page.latestPathfindingDebugBundle;
+    expect(firstReport).toBeDefined();
+
+    let completeSecondTask: (() => void) | undefined;
+    page.oneClickClearRunWorkflow.run = (options) => {
+      options?.onOutcome?.({ kind: "complete" });
+      return new Promise<boolean>((resolve) => {
+        completeSecondTask = () => resolve(true);
+      });
+    };
+    const secondTask = page.runOneClickClearWorkflow();
+    await Promise.resolve();
+    expect(page.latestPathfindingDebugBundle).toBe(firstReport);
+
+    completeSecondTask?.();
+    await expect(secondTask).resolves.toBe(true);
+    expect(page.latestPathfindingDebugBundle).not.toBe(firstReport);
+
+    page.isDebugInfoEnabled = false;
+    await nextTick();
+    expect(page.latestPathfindingDebugBundle).toBeUndefined();
+    wrapper.unmount();
   });
 
   it("hides glitch mode for y while preserving its ODE preferences", async () => {

@@ -33,27 +33,35 @@ describe("one-click clear workflow", () => {
     let runnerMode: "error" | "failure" | "pending" | "success" = "success";
     let publishIncumbent = true;
     const preflightReasons: string[] = [];
+    const recordedAttempts: unknown[] = [];
+    const debugMetricFlags: (boolean | undefined)[] = [];
+    let isDebugEnabled = false;
+    let isResultCacheEnabled = true;
     let resolvePending: ((result: GraphwarOneClickClearPathWorkerResult) => void) | undefined;
     const workflow = useGraphwarOneClickClearRunWorkflow<GraphwarOneClickClearTargetSoldier>({
       debug: {
         appendSearchWorkerTimings: () => undefined,
         finishTimings: (_startedAt, timings) => {
           displayedDebugStages = timings.map((timing) => timing.stage);
+          return [...timings];
         },
+        isEnabled: () => isDebugEnabled,
         measureStage: (timings, stage, task) => {
           try {
             return task();
           } finally {
-            timings.push({ elapsedMs: 0, stage });
+            timings?.push({ elapsedMs: 0, stage });
           }
         },
         measureStageAsync: async (timings, stage, task) => {
           try {
             return await task();
           } finally {
-            timings.push({ elapsedMs: 0, stage });
+            timings?.push({ elapsedMs: 0, stage });
           }
         },
+        recordAttempt: (attempt) => recordedAttempts.push(attempt),
+        registerRun: () => undefined,
       },
       effects: {
         applyIncumbent: (incumbent) => {
@@ -111,9 +119,11 @@ describe("one-click clear workflow", () => {
           getCachedOneClickClearResult: () => cachedResult,
           getMaskCacheId: () => 1,
         },
+        isResultCacheEnabled: () => isResultCacheEnabled,
         runner: {
           buildOneClickClearPath: async (input, runnerOptions) => {
             runnerCallCount += 1;
+            debugMetricFlags.push(runnerOptions?.shouldCollectDiagnostics);
             expect(input.candidates.map((candidate) => candidate.id)).toEqual(["target", "target", "missed"]);
             expect(input.settings.stepGlitchObstacleMask).toBe(simulationMask);
             if (runnerMode !== "success") {
@@ -194,12 +204,13 @@ describe("one-click clear workflow", () => {
       }),
     ).resolves.toBe(true);
 
-    expect(displayedDebugStages).not.toContain("previous");
-    expect(displayedDebugStages).toContain("one-click-clear-apply-result");
+    expect(displayedDebugStages).toEqual(["previous"]);
     expect(order.slice(0, 6)).toEqual(["clear-failure", "submit", "finish", "apply-incumbent", "flash", "status"]);
     expect(clearFailureCount).toBe(1);
     expect(appliedExpressions).toContain("final");
     expect(reportedIncumbents).toEqual(["final"]);
+    expect(recordedAttempts).toEqual([]);
+    expect(debugMetricFlags).toEqual([false]);
 
     cachedResult = {
       result: {
@@ -225,8 +236,15 @@ describe("one-click clear workflow", () => {
     expect(order.slice(0, 4)).toEqual(["finish", "apply-incumbent", "flash", "status"]);
     expect(clearFailureCount).toBe(1);
     expect(outcomes).toContain("complete");
-    cachedResult = undefined;
+    expect(recordedAttempts).toEqual([]);
+    expect(debugMetricFlags).toEqual([false]);
 
+    isDebugEnabled = true;
+    await expect(workflow.run()).resolves.toBe(true);
+    expect(runnerCallCount).toBe(callsBeforeCacheHit);
+    expect(recordedAttempts).toMatchObject([{ source: "result-cache" }]);
+    recordedAttempts.length = 0;
+    isResultCacheEnabled = false;
     order.length = 0;
     runnerMode = "failure";
     await expect(
@@ -237,13 +255,18 @@ describe("one-click clear workflow", () => {
             clearFailureCount += 1;
           }
         },
-        shouldUseResultCache: false,
       }),
     ).resolves.toBe(true);
     expect(order).toContain("apply-incumbent");
     expect(order).not.toContain("apply");
     expect(order).not.toContain("flash");
     expect(clearFailureCount).toBe(2);
+    expect(recordedAttempts).toHaveLength(1);
+    expect(displayedDebugStages).toContain("one-click-clear-apply-result");
+    expect(debugMetricFlags.at(-1)).toBe(true);
+    expect(runnerCallCount).toBe(callsBeforeCacheHit + 1);
+    cachedResult = undefined;
+    isResultCacheEnabled = true;
 
     order.length = 0;
     runnerFailureReason = "pathfinding-worker-failed";

@@ -29,6 +29,7 @@ import type {
 import { isGraphwarPathfindingCancelledError } from "../../../pathfinding/runtime/runner";
 import type { GraphwarTargetingGeometry } from "../../../pathfinding/targeting";
 import type { SmartPathfindingDebugStage, SmartPathfindingDebugTimingEntry } from "../../debug/timings";
+import { createGraphwarOneClickClearDebugAttempt, type GraphwarPathfindingDebugAttempt } from "../debug-report";
 
 type GraphwarOneClickClearStatusKind = "error" | "success" | "warning";
 type GraphwarOneClickClearPrefixTarget = PixelPoint | GraphwarTrajectoryTargetCircle;
@@ -48,7 +49,10 @@ interface GraphwarOneClickClearRunCache {
 interface GraphwarOneClickClearRunRunner {
   buildOneClickClearPath: (
     input: GraphwarOneClickClearPathWorkerInput,
-    options?: { onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void },
+    options?: {
+      onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
+      shouldCollectDiagnostics?: boolean;
+    },
   ) => Promise<GraphwarOneClickClearPathWorkerResult>;
 }
 
@@ -78,21 +82,28 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
   /** 调试耗时顺序应和旧页面流程一致，避免面板展示发生语义偏移。 */
   debug: {
     appendSearchWorkerTimings: (
-      timings: SmartPathfindingDebugTimingEntry[],
+      timings: SmartPathfindingDebugTimingEntry[] | undefined,
       workerTimings: readonly GraphwarOneClickClearDebugTiming[],
     ) => void;
     finishTimings: (
       startedAt: number,
       timings: readonly SmartPathfindingDebugTimingEntry[],
       completedAt?: number,
+    ) => SmartPathfindingDebugTimingEntry[];
+    /** Worker diagnostics and attempts exist only while a task-start capture is active. */
+    isEnabled: () => boolean;
+    recordAttempt: (
+      attempt: GraphwarPathfindingDebugAttempt,
+      timings: SmartPathfindingDebugTimingEntry[] | undefined,
     ) => void;
+    registerRun: (timings: SmartPathfindingDebugTimingEntry[]) => void;
     measureStage: <TResult>(
-      timings: SmartPathfindingDebugTimingEntry[],
+      timings: SmartPathfindingDebugTimingEntry[] | undefined,
       stage: SmartPathfindingDebugStage,
       task: () => TResult,
     ) => TResult;
     measureStageAsync: <TResult>(
-      timings: SmartPathfindingDebugTimingEntry[],
+      timings: SmartPathfindingDebugTimingEntry[] | undefined,
       stage: SmartPathfindingDebugStage,
       task: () => Promise<TResult>,
     ) => Promise<TResult>;
@@ -133,6 +144,7 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
   /** 一键清图的 worker 与页面侧完整结果缓存。 */
   pathfinding: {
     cache: GraphwarOneClickClearRunCache;
+    isResultCacheEnabled: () => boolean;
     runner: GraphwarOneClickClearRunRunner;
   };
   /** 智能寻路 session token 仍统一管理一键清图和单目标寻路。 */
@@ -174,7 +186,10 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
   /** 从当前路径尾部出发，追加当前模型下击杀最多的路径。 */
   async function run(runOptions: GraphwarOneClickClearRunOptions = {}) {
     const startedAt = options.time.now();
-    const timings: SmartPathfindingDebugTimingEntry[] = [];
+    const timings = options.debug.isEnabled() ? [] : undefined;
+    if (timings) {
+      options.debug.registerRun(timings);
+    }
     const preflightResult = createMeasuredPreflight(timings);
     if (!preflightResult.ok) {
       runOptions.onOutcome?.({ kind: "preflight-failure", reason: preflightResult.reason });
@@ -200,7 +215,9 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       if (!options.run.isCurrent(pathfindingToken)) {
         return;
       }
-      options.debug.finishTimings(startedAt, timings, completedAt);
+      if (timings) {
+        options.debug.finishTimings(startedAt, timings, completedAt);
+      }
     };
 
     try {
@@ -227,7 +244,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
         runOptions.onIncumbent?.(result);
         runOptions.onSuccessBeforeEffects?.();
         options.run.finish(pathfindingToken);
-        applySuccessResult(startedAt, timings, result, searchResult.cacheHit, finishOneClickClearDebugTimings);
+        applySuccessResult(startedAt, timings, result, searchResult.hasResultCacheHit, finishOneClickClearDebugTimings);
         activeRun = undefined;
         return true;
       }
@@ -259,7 +276,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       finishFailureResult(
         timings,
         result.reason,
-        (completedAt) => (searchResult.cacheHit ? completedAt - startedAt : result.elapsedMs),
+        (completedAt) => (searchResult.hasResultCacheHit ? completedAt - startedAt : result.elapsedMs),
         finishOneClickClearDebugTimings,
       );
       return false;
@@ -295,7 +312,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
   }
 
   /** 执行一键清图预检并记录页面侧耗时。 */
-  function createMeasuredPreflight(timings: SmartPathfindingDebugTimingEntry[]) {
+  function createMeasuredPreflight(timings: SmartPathfindingDebugTimingEntry[] | undefined) {
     return options.debug.measureStage(timings, "one-click-clear-preflight", () => {
       const bounds = options.input.getBounds();
       const tolerances = options.input.getTolerances();
@@ -325,7 +342,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
   /** 写入预检失败状态并结算调试耗时。 */
   function finishPreflightFailure(
     startedAt: number,
-    timings: SmartPathfindingDebugTimingEntry[],
+    timings: SmartPathfindingDebugTimingEntry[] | undefined,
     message: string,
     kind: "error" | "warning",
   ) {
@@ -335,14 +352,16 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       options.effects.setStatus(message, kind);
       completedAt = options.time.now();
     });
-    options.debug.finishTimings(startedAt, timings, completedAt);
+    if (timings) {
+      options.debug.finishTimings(startedAt, timings, completedAt);
+    }
   }
 
   /** 优先读取结果缓存，否则调度 Worker 并缓存稳定结果。 */
   async function buildSearchResult(
     preflightResult: Extract<ReturnType<typeof createGraphwarOneClickClearSearchPreflight>, { ok: true }>,
     candidates: readonly GraphwarOneClickClearCandidate[],
-    timings: SmartPathfindingDebugTimingEntry[],
+    timings: SmartPathfindingDebugTimingEntry[] | undefined,
     runOptions: GraphwarOneClickClearRunOptions,
     pathfindingToken: number,
   ) {
@@ -364,39 +383,57 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       simulationMaskCacheId: simulationMask ? options.pathfinding.cache.getMaskCacheId(simulationMask) : 0,
       tolerances: preflightResult.tolerances,
     });
-    const searchCacheKey =
-      runOptions.shouldUseResultCache === false
-        ? ""
-        : options.pathfinding.cache.createOneClickClearResultCacheKey(searchInput);
-    let search =
-      runOptions.shouldUseResultCache === false
-        ? undefined
-        : options.pathfinding.cache.getCachedOneClickClearResult(searchCacheKey, (timing) => timings.push(timing));
+    const isDebugEnabled = options.debug.isEnabled();
+    const shouldUseResultCache =
+      runOptions.shouldUseResultCache !== false && options.pathfinding.isResultCacheEnabled();
+    const searchCacheKey = !shouldUseResultCache
+      ? ""
+      : options.pathfinding.cache.createOneClickClearResultCacheKey(searchInput);
+    let search = shouldUseResultCache
+      ? options.pathfinding.cache.getCachedOneClickClearResult(searchCacheKey, (timing) => timings?.push(timing))
+      : undefined;
     const hasResultCacheHit = search !== undefined;
     if (!search) {
-      search = await options.debug.measureStageAsync(timings, "one-click-clear-search", () =>
-        options.pathfinding.runner.buildOneClickClearPath(searchInput, {
-          onIncumbent: (incumbent) => {
-            if (activeRun?.token !== pathfindingToken || !options.run.isCurrent(pathfindingToken)) {
-              return;
-            }
-            // 动画关闭时仍保存检查点，用户取消和托管截止才能零额外搜索地使用最新有效方案。
-            activeRun = { incumbent, token: pathfindingToken };
-            runOptions.onIncumbent?.(incumbent);
-          },
-        }),
-      );
+      try {
+        search = await options.debug.measureStageAsync(timings, "one-click-clear-search", () =>
+          options.pathfinding.runner.buildOneClickClearPath(searchInput, {
+            onIncumbent: (incumbent) => {
+              if (activeRun?.token !== pathfindingToken || !options.run.isCurrent(pathfindingToken)) {
+                return;
+              }
+              // 动画关闭时仍保存检查点，用户取消和托管截止才能零额外搜索地使用最新有效方案。
+              activeRun = { incumbent, token: pathfindingToken };
+              runOptions.onIncumbent?.(incumbent);
+            },
+            shouldCollectDiagnostics: isDebugEnabled,
+          }),
+        );
+      } catch (error) {
+        if (isDebugEnabled) {
+          options.debug.recordAttempt(
+            createGraphwarOneClickClearDebugAttempt(searchInput, "worker", undefined, error),
+            timings,
+          );
+        }
+        throw error;
+      }
       // 带 incumbent 的 failure 会丢检查点，Worker 错误可能是瞬时故障；两者都不能污染结果缓存。
       if (
-        runOptions.shouldUseResultCache !== false &&
+        shouldUseResultCache &&
         (search.result.type === "success" ||
           (search.result.reason !== "pathfinding-worker-failed" && !activeRun?.incumbent))
       ) {
         options.pathfinding.cache.cacheOneClickClearResult(searchCacheKey, search);
       }
     }
+    if (isDebugEnabled) {
+      options.debug.recordAttempt(
+        createGraphwarOneClickClearDebugAttempt(searchInput, hasResultCacheHit ? "result-cache" : "worker", search),
+        timings,
+      );
+    }
     return {
-      cacheHit: hasResultCacheHit,
+      hasResultCacheHit,
       candidateIds: new Set(candidates.map((candidate) => candidate.id)),
       search,
     };
@@ -405,7 +442,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
   /** 组装敌我筛选和目标几何所需的最小选项。 */
   function createTargetCollectionOptions() {
     return {
-      friendlyFireEnabled: options.targets.isFriendlyFireEnabled(),
+      isFriendlyFireEnabled: options.targets.isFriendlyFireEnabled(),
       geometry: options.targets.createGeometry(),
       isFriendlySoldier: options.targets.isFriendlySoldier,
       pathPoints: options.input.getPathPoints(),
@@ -416,7 +453,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
   /** 将成功路径、公式和命中目标原子写回页面。 */
   function applySuccessResult(
     startedAt: number,
-    timings: SmartPathfindingDebugTimingEntry[],
+    timings: SmartPathfindingDebugTimingEntry[] | undefined,
     result: Extract<GraphwarOneClickClearPathWorkerResult["result"], { type: "success" }>,
     hasResultCacheHit: boolean,
     finishDebugTimings: (completedAt?: number) => void,
@@ -441,7 +478,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
 
   /** 根据失败原因选择保留 incumbent 或显示最终失败。 */
   function finishFailureResult(
-    timings: SmartPathfindingDebugTimingEntry[],
+    timings: SmartPathfindingDebugTimingEntry[] | undefined,
     reason: GraphwarOneClickClearFailureReason,
     getElapsedMs: (completedAt: number) => number,
     finishDebugTimings: (completedAt?: number) => void,
@@ -459,7 +496,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
   function finishWithActiveIncumbent(
     token: number,
     runOptions: GraphwarOneClickClearRunOptions,
-    timings: SmartPathfindingDebugTimingEntry[],
+    timings: SmartPathfindingDebugTimingEntry[] | undefined,
     finishDebugTimings: (completedAt?: number) => void,
     workerFailureStartedAt?: number,
   ) {

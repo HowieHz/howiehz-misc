@@ -135,13 +135,13 @@ describe("Step glitch one-click-clear target retries", () => {
   });
 
   it.each([
-    { deleteOptimizationEnabled: false, routeMode: "visibility-graph" },
-    { deleteOptimizationEnabled: true, routeMode: "visibility-graph" },
-    { deleteOptimizationEnabled: false, routeMode: "theta-star" },
-    { deleteOptimizationEnabled: true, routeMode: "theta-star" },
+    { isDeleteOptimizationEnabled: false, routeMode: "visibility-graph" },
+    { isDeleteOptimizationEnabled: true, routeMode: "visibility-graph" },
+    { isDeleteOptimizationEnabled: false, routeMode: "theta-star" },
+    { isDeleteOptimizationEnabled: true, routeMode: "theta-star" },
   ] as const)(
-    "permanently skips no-path with $routeMode and deletion=$deleteOptimizationEnabled",
-    async ({ deleteOptimizationEnabled, routeMode }) => {
+    "permanently skips no-path with $routeMode and deletion=$isDeleteOptimizationEnabled",
+    async ({ isDeleteOptimizationEnabled, routeMode }) => {
       scanMockState.outcomes.push("no-path", "hit");
       const start = toPixel(-11, 0);
       const missed = toPixel(-9, 8);
@@ -155,7 +155,7 @@ describe("Step glitch one-click-clear target retries", () => {
       ];
 
       const result = await buildGraphwarOneClickClearPath({
-        ...createOptions(start, candidates, simulationMask, routeMode, deleteOptimizationEnabled),
+        ...createOptions(start, candidates, simulationMask, routeMode, isDeleteOptimizationEnabled),
         onDebugTiming: (timing) => debugStages.push(timing.stage),
       });
 
@@ -167,7 +167,7 @@ describe("Step glitch one-click-clear target retries", () => {
         expect(result.pathPoints.at(-1)).toEqual(assignedHit);
       }
       expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
-      expect(debugStages.includes("optimize-path")).toBe(deleteOptimizationEnabled);
+      expect(debugStages.includes("optimize-path")).toBe(isDeleteOptimizationEnabled);
       expect(debugStages).toContain("validate-final");
     },
   );
@@ -393,7 +393,7 @@ describe("Step glitch one-click-clear target retries", () => {
         timings: [],
       }),
       candidates,
-      deleteOptimizationEnabled: false,
+      isDeleteOptimizationEnabled: false,
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
       pathPoints: [start],
@@ -422,7 +422,7 @@ function createOptions(
   candidates: { enemy: boolean; hitCenter: PixelPoint; hitRadius: number; id: string }[],
   simulationMask: Uint8Array,
   routeMode: GraphwarPathfindingRouteMode,
-  deleteOptimizationEnabled = true,
+  isDeleteOptimizationEnabled = true,
 ) {
   return {
     boundaryExpansion: 0,
@@ -432,7 +432,7 @@ function createOptions(
       throw new Error("Step glitch clear must not build DAG edges");
     },
     candidates,
-    deleteOptimizationEnabled,
+    isDeleteOptimizationEnabled,
     deleteHitCheckRadiusPixels: 0,
     hitCandidates: candidates,
     pathPoints: [start],

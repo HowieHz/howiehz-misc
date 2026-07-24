@@ -6,6 +6,7 @@ import {
   GRAPHWAR_GAME_SOLDIER_RADIUS,
 } from "../../core/game/constants";
 import { createGraphPoint } from "../../core/types";
+import { createGraphwarTrajectoryDebugMetrics } from "../debug-metrics";
 import {
   createGraphwarFormulaPathPoints,
   getGraphwarLaunchAngle,
@@ -153,5 +154,27 @@ describe("Graphwar launch-angle convergence contracts", () => {
     expect((acceptedPoint?.x ?? 0) ** 2 + (acceptedPoint?.y ?? 0) ** 2).toBeGreaterThan(
       GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
     );
+  });
+
+  it("counts launch solving, RK4 retries, bisections, formula terms, and accepted samples", () => {
+    const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+    const result = sampleGraphwarTrajectory({
+      algorithm: "abs",
+      bounds: { maxX: 1e9, maxY: 1e9, minX: -1e9, minY: -1e9 },
+      debugMetrics,
+      equation: "dy",
+      initialState: { currentPoint: createGraphPoint(0, 0), sampleIndex: 0 },
+      points: [createGraphPoint(-10, 0), createGraphPoint(10, 1e9)],
+      shouldStop: (_point, _previousPoint, index) => index === 1,
+      soldierCenter: createGraphPoint(-10, 0),
+      steepness: 210,
+    });
+
+    expect(result.stopReason).toBe("stopped");
+    expect(debugMetrics.counters.acceptedSamplePointCount).toBe(2);
+    expect(debugMetrics.counters.trajectoryReplayCount).toBe(1);
+    expect(debugMetrics.counters.stepBisectionCount).toBeGreaterThan(0);
+    expect(debugMetrics.counters.rk4StepCount).toBeGreaterThan(debugMetrics.counters.stepBisectionCount);
+    expect(debugMetrics.counters.formulaTermEvaluationCount).toBe(debugMetrics.counters.rk4StepCount * 4);
   });
 });

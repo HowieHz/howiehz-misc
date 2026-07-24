@@ -112,7 +112,7 @@ export function createGraphwarPathfindingCacheController() {
       createGraphBoundsCacheKey(input.bounds),
       createBoundsRectCacheKey(input.boundsRect),
       input.boundaryExpansion,
-      input.deleteOptimizationEnabled,
+      input.isDeleteOptimizationEnabled,
       input.routeMode,
       input.routeMaskCacheId,
       input.routeTolerancePlanePixels,
@@ -138,7 +138,7 @@ export function createGraphwarPathfindingCacheController() {
       createGraphBoundsCacheKey(input.bounds),
       createBoundsRectCacheKey(input.boundsRect),
       input.boundaryExpansion,
-      input.deleteOptimizationEnabled,
+      input.isDeleteOptimizationEnabled,
       input.deleteHitCheckRadiusPixels,
       input.routeMode,
       input.routeMaskCacheId,
@@ -205,7 +205,7 @@ export function createGraphwarPathfindingCacheController() {
     const cached = entries.get(key);
     if (cached) {
       return {
-        cacheHit: true,
+        hasCacheHit: true,
         entry: cached,
       };
     }
@@ -216,7 +216,7 @@ export function createGraphwarPathfindingCacheController() {
     };
     entries.set(key, entry);
     return {
-      cacheHit: false,
+      hasCacheHit: false,
       entry,
     };
   }

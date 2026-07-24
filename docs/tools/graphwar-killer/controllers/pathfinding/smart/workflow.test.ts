@@ -11,6 +11,11 @@ describe("smart pathfinding workflow debug timings", () => {
     let resolvePending: (() => void) | undefined;
     let pending = false;
     const workflow = useGraphwarSmartPathfindingRunWorkflow<string>({
+      debug: {
+        isEnabled: () => true,
+        onOutcome: () => undefined,
+        registerRun: () => undefined,
+      },
       applyPath: () => undefined,
       buildPath: async () => {
         if (pending) {
@@ -18,10 +23,11 @@ describe("smart pathfinding workflow debug timings", () => {
             resolvePending = resolve;
           });
         }
-        return { cacheHit: false, path: [createPixelPoint(1, 2)], type: "success" };
+        return { hasResultCacheHit: false, path: [createPixelPoint(1, 2)], type: "success" };
       },
       finishDebugTimings: (_startedAt, timings) => {
         displayedStages = timings.map((timing) => timing.stage);
+        return [...timings];
       },
       finishRun: () => true,
       getFailureMessage: () => "failure",
@@ -59,13 +65,13 @@ describe("smart pathfinding workflow debug timings", () => {
 
 /** 记录同步阶段，模拟页面调试计时器而不依赖真实时钟。 */
 function measureStage<TResult>(
-  timings: SmartPathfindingDebugTimingEntry[],
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
   stage: SmartPathfindingDebugTimingEntry["stage"],
   task: () => TResult,
 ) {
   try {
     return task();
   } finally {
-    timings.push({ elapsedMs: 0, stage });
+    timings?.push({ elapsedMs: 0, stage });
   }
 }

@@ -575,7 +575,47 @@ export const graphwarKillerLocale = {
         "soldiers-required": "Detect or read soldiers first.",
         "solver-required": "Switch to Solver to use this setting.",
       },
+      debugCounters: {
+        acceptedSamplePointCount: {
+          label: "Accepted sample points",
+          title: "Total points returned by all complete trajectory replays",
+        },
+        formulaTermEvaluationCount: {
+          label: "Formula term evaluations",
+          title: "Total compiled formula-term evaluations across all trajectory replays",
+        },
+        incumbentReportCount: {
+          label: "Incumbent reports",
+          title: "Incumbent messages actually sent from the Worker to the page",
+        },
+        incumbentTrajectoryPointLoad: {
+          label: "Incumbent trajectory-point load",
+          title: "Total trajectory points carried by incumbent messages",
+        },
+        rk4StepCount: { label: "RK4 steps", title: "RK4 trial steps, including retries after step-size reduction" },
+        stepBisectionCount: {
+          label: "Step bisections",
+          title: "Adaptive-sampling step halvings caused by an oversized step",
+        },
+        trajectoryReplayCount: {
+          label: "Trajectory replays",
+          title: "Complete trajectory replays, including failed candidates and preparation probes",
+        },
+      },
+      debugNoDiagnostics: "No search workload or internal diagnostics recorded",
       debugNoTiming: "No pathfinding timing recorded yet",
+      debugPhaseTimings: "Phase timings",
+      debugResultCacheHit: "Result cache hit; the search Worker did not run",
+      debugStepGlitchCounters: {
+        candidateReplayCount: {
+          label: "Glitch candidate replays",
+          title: "Glitch candidate formulas replayed after direct validation failed",
+        },
+        directReplayCount: {
+          label: "Glitch direct replays",
+          title: "Direct formula replays performed before Glitch candidate scanning",
+        },
+      },
       debugDetails: {
         "build-dag-edges": {
           label: "- Build clear DAG edges",
@@ -610,6 +650,11 @@ export const graphwarKillerLocale = {
           label: "- Optimize clear path",
           title:
             "Conservatively delete points from the validated clear path and verify each deletion still hits every new and committed target.",
+        },
+        "outside-search-stages": {
+          label: "- Clear search outside stages",
+          title:
+            "Search-parent time remaining after subtracting every classified non-nested phase, including orchestration and message delivery",
         },
         "prefix-evidence-hit": {
           label: "- Clear prefix evidence hit",
@@ -840,8 +885,46 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "Debug info",
+      debugTimings: {
+        expressionFinalizationElapsedMs: {
+          label: "Finalize expressions",
+          title: "Cumulative time building fireable Graphwar expressions after numeric materials stabilize",
+        },
+        formulaPointMappingElapsedMs: {
+          label: "Map formula points",
+          title: "Cumulative time converting screenshot control points into Graphwar coordinates",
+        },
+        formulaPreparationElapsedMs: {
+          label: "Prepare formula materials",
+          title: "Cumulative time preparing formula points, compiled materials, and numeric protection",
+        },
+        incumbentBuildElapsedMs: {
+          label: "Build incumbents",
+          title: "Cumulative time copying fireable expressions, control points, and trajectory snapshots",
+        },
+        incumbentMessageSendElapsedMs: {
+          label: "Send incumbents",
+          title: "Cumulative synchronous time enqueueing incumbent messages for the page",
+        },
+        pathErrorElapsedMs: {
+          label: "Measure path error",
+          title: "Cumulative time measuring control-point path error after trajectory replay",
+        },
+        trajectoryReplayElapsedMs: {
+          label: "Replay complete trajectories",
+          title: "Cumulative full-replay time including integration, target hits, and obstacle checks",
+        },
+        visibleTrajectoryCopyElapsedMs: {
+          label: "Copy visible trajectories",
+          title: "Cumulative time freezing externally publishable visible trajectory snapshots",
+        },
+      },
+      debugWorkload: "Search workload / internal details",
       deleteOptimization: "Point removal",
       deleteOptimizationTitle: "Remove unnecessary control points; the full trajectory is still validated",
+      exportDebugReport: "Export latest pathfinding debug report",
+      exportDebugReportTitle:
+        "Download the matching state JSON, original obstacle mask, and debug JSON from the latest completed pathfinding task",
       obstacleExpansionAgentMode: "Agent mode",
       obstacleExpansionDetectionMode: "Detection mode",
       obstacleExpansion: "Obstacle expansion",
@@ -853,7 +936,8 @@ export const graphwarKillerLocale = {
       oneClickClearDeleteCheckRadiusTitle:
         "Quickly check whether a local route still crosses the same soldiers; set to 0 to validate the full trajectory",
       oneClickClearTitle: "Start at the current path end, assign targets, and hit reachable soldiers on the x+ side",
-      managedFriendlyFireWarning: "Managed mode allows friendly fire; allied soldiers are One-Click Clear candidates.",
+      managedFriendlyFireWarning:
+        "Pathfinding settings allow friendly fire; allied soldiers are One-Click Clear candidates.",
       managedMode: "Managed mode",
       managedModeDisableTitle: "Turn off Managed Mode and unlock settings",
       managedModeConfirmation: (settings, repairs, isFriendlyFireEnabled, timing) => {
@@ -885,6 +969,9 @@ export const graphwarKillerLocale = {
       routeLazyVisibilityGraph: "Lazy visibility graph",
       routeThetaStar: "Theta*",
       routeXPlusScan: "X+ Scan",
+      resultCache: "Result cache",
+      resultCacheTitle:
+        "Reuse complete Path Planning and One-Click Clear results; turning this off bypasses reads and writes without clearing cached entries",
       searchAnimation: "Search animation",
       searchAnimationTitle:
         "Show single-target search progress and the current best formula and trajectory for One-Click Clear and managed mode",

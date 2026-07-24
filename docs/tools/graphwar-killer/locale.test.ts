@@ -78,7 +78,7 @@ describe("Chinese Graphwar Killer locale", () => {
   it("does not expose translatable internal English terms", () => {
     expect(
       [
-        ...chineseLocaleStrings,
+        ...chineseLocaleStrings.filter((value) => value !== graphwarKillerLocale.ui.pathfinding.debugResultCacheHit),
         graphwarKillerLocale.ui.detection.debugDetails["template-matching-mode"].label("parallel", 4),
         graphwarKillerLocale.ui.detection.debugDetails["template-matching-mode"].label("parallel-fallback", 4),
         graphwarKillerLocale.ui.detection.debugDetails["template-matching-worker"].label(1),

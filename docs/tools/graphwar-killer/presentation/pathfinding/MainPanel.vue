@@ -31,9 +31,19 @@ interface GraphwarPathfindingPanelDebugRow {
   title?: string;
 }
 
+/** One preformatted counter or internal timing from the latest completed Worker diagnostics. */
+interface GraphwarPathfindingPanelDiagnosticRow {
+  /** Stable diagnostics field name. */
+  key: string;
+  /** Localized label and formatted value. */
+  text: string;
+  /** Optional explanation of the counter or timing boundary. */
+  title?: string;
+}
+
 /** 由偏好值和能力状态共同驱动的寻路开关。 */
 interface GraphwarPathfindingToggle {
-  /** 持久化的偏好值。 */
+  /** 当前偏好值；具体设置可只在本次页面会话内保留。 */
   isEnabled: boolean;
   /** 展示层和命令守卫共用的能力状态。 */
   state: GraphwarControlCapability["state"];
@@ -53,6 +63,8 @@ interface GraphwarPathfindingTask {
 
 /** 智能寻路、一键清图和托管控制的展示模型。 */
 export interface GraphwarSmartPathfindingPanelModel {
+  /** Whether the latest completed report has all three export files. */
+  canExportDebugReport: boolean;
   /** 当前 Step ODE 是否实际使用固定邪道扫描器。 */
   isUsingStepGlitchRouting: boolean;
   /** 普通几何路由器；固定邪道扫描器启用时忽略。 */
@@ -63,6 +75,8 @@ export interface GraphwarSmartPathfindingPanelModel {
   friendlyFire: GraphwarPathfindingToggle;
   /** 仅影响展示的搜索预览偏好。 */
   searchAnimation: GraphwarPathfindingToggle;
+  /** 调试模式会话内的完整结果缓存偏好。 */
+  resultCache: GraphwarPathfindingToggle;
   /** 单目标寻路偏好。 */
   pathPlanning: GraphwarPathfindingToggle;
   /** 一键清图命令状态。 */
@@ -77,6 +91,10 @@ export interface GraphwarSmartPathfindingPanelModel {
   isDebugTimingVisible: boolean;
   /** 预先格式化的调试耗时行。 */
   debugTimingRows: readonly GraphwarPathfindingPanelDebugRow[];
+  /** 最近完整报告聚合后的 Worker 工作量与内部耗时。 */
+  debugDiagnosticRows: readonly GraphwarPathfindingPanelDiagnosticRow[];
+  /** 最近任务完全来自结果缓存，因此没有执行搜索 Worker。 */
+  hasResultCacheOnlyReport: boolean;
 }
 
 defineProps<{
@@ -87,12 +105,14 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
+  exportDebugReport: [];
   runOneClickClear: [];
   setRouteMode: [mode: GraphwarPathfindingRouteMode];
   toggleDeleteOptimization: [];
   toggleFriendlyFire: [];
   toggleManagedMode: [];
   togglePathPlanning: [];
+  toggleResultCache: [];
   toggleSearchAnimation: [];
 }>();
 </script>
@@ -259,6 +279,16 @@ const emit = defineEmits<{
             :title="locale.ui.pathfinding.searchAnimationTitle"
             @toggle="emit('toggleSearchAnimation')"
           />
+          <ToggleField
+            v-if="panel.isDebugTimingVisible"
+            id="graphwar-killer-result-cache"
+            :checked="panel.resultCache.isEnabled"
+            :label="locale.ui.pathfinding.resultCache"
+            :reason="panel.resultCache.reason"
+            :state="panel.resultCache.state"
+            :title="locale.ui.pathfinding.resultCacheTitle"
+            @toggle="emit('toggleResultCache')"
+          />
         </div>
       </div>
     </PanelDetails>
@@ -268,6 +298,15 @@ const emit = defineEmits<{
       :summary="locale.ui.pathfinding.debugSummary"
     >
       <div class="graphwar-killer__debug-timing">
+        <button
+          type="button"
+          :disabled="!panel.canExportDebugReport"
+          :title="locale.ui.pathfinding.exportDebugReportTitle"
+          @click="emit('exportDebugReport')"
+        >
+          {{ locale.ui.pathfinding.exportDebugReport }}
+        </button>
+        <strong>{{ locale.ui.pathfinding.debugPhaseTimings }}</strong>
         <span v-if="!panel.debugTimingRows.length">{{ locale.ui.pathfinding.debugNoTiming }}</span>
         <template v-else>
           <span
@@ -275,6 +314,19 @@ const emit = defineEmits<{
             :key="entry.key"
             class="graphwar-killer__debug-timing-row"
             :style="{ '--graphwar-killer-debug-indent-level': entry.indentLevel }"
+            :title="entry.title"
+          >
+            {{ entry.text }}
+          </span>
+        </template>
+        <strong>{{ locale.ui.pathfinding.debugWorkload }}</strong>
+        <span v-if="panel.hasResultCacheOnlyReport">{{ locale.ui.pathfinding.debugResultCacheHit }}</span>
+        <span v-else-if="!panel.debugDiagnosticRows.length">{{ locale.ui.pathfinding.debugNoDiagnostics }}</span>
+        <template v-else>
+          <span
+            v-for="entry in panel.debugDiagnosticRows"
+            :key="entry.key"
+            class="graphwar-killer__debug-timing-row"
             :title="entry.title"
           >
             {{ entry.text }}

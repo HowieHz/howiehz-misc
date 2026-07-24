@@ -32,6 +32,7 @@ import type {
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
+import type { GraphwarPathfindingDebugMetrics } from "../runtime/diagnostics";
 
 const glitchWindows = createGlitchWindows();
 /** 统一搜索网格中固定的近到远回退距离。 */
@@ -50,6 +51,8 @@ export interface GraphwarStepGlitchScanMaskIndex {
 export interface GraphwarStepGlitchPrefixOptions {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
+  /** Optional one-click-clear diagnostics shared by every replay in this scanner. */
+  debugMetrics?: GraphwarPathfindingDebugMetrics;
   /** 可复用的同 mask 索引；不匹配时扫描器会自行重建。 */
   maskIndex?: GraphwarStepGlitchScanMaskIndex;
   /** 完全相同旧整式已经回放成功时，可直接复用其真实恢复点。 */
@@ -316,7 +319,9 @@ function createGraphwarStepGlitchReplayContext(
       options.settings.stepGlitchObstacleMask === options.simulationMask
         ? options.settings
         : { ...options.settings, stepGlitchObstacleMask: options.simulationMask },
-    graphPoints: options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
+    graphPoints: measureStepGlitchMetric(options.debugMetrics, "formulaPointMappingElapsedMs", () =>
+      options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
+    ),
     simulationBoundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
   };
 }
@@ -402,6 +407,9 @@ export function createGraphwarStepGlitchPrefixScanner(
       }
 
       const directPath = [...options.sourcePath, target.targetPoint];
+      if (options.debugMetrics?.stepGlitch) {
+        options.debugMetrics.stepGlitch.directReplayCount += 1;
+      }
       const directReplay = measureSyncStage(timings, "validate-direct", () =>
         replayPathToControlX(options, context, directPath, targetSequence, requiredTargets, targetGraphPoint.x),
       );
@@ -657,6 +665,9 @@ function scanPreparedGraphwarStepGlitchPath(
       continue;
     }
     expandedStates += 1;
+    if (options.debugMetrics?.stepGlitch) {
+      options.debugMetrics.stepGlitch.candidateReplayCount += 1;
+    }
     const finalTargetCandidate = item.candidate.kind === "target";
     const replay = replayPathToControlX(
       options,
@@ -722,12 +733,12 @@ function replayPathToControlX(
   if (path.length < 2 || path.length < options.sourcePath.length) {
     return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
   }
-  const graphPoints = [
+  const graphPoints = measureStepGlitchMetric(options.debugMetrics, "formulaPointMappingElapsedMs", () => [
     ...context.graphPoints,
     ...path
       .slice(options.sourcePath.length)
       .map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
-  ];
+  ]);
   const resolved = tryResolveGraphwarTrajectoryCandidate({
     bounds: options.bounds,
     boundsRect: options.boundsRect,
@@ -737,6 +748,7 @@ function replayPathToControlX(
     },
     collectVisiblePixels: true,
     continueAfterTargetsUntilGraphX: controlX,
+    debugMetrics: options.debugMetrics,
     points: graphPoints,
     requiredTargets,
     settings: context.formulaSettings,
@@ -778,7 +790,11 @@ function replayPathToControlX(
     reachedTargetCount: result.reachedTargetCount + result.reachedRequiredTargetCount,
     stepGlitchFormulaPrefix: formulaContext.stepGlitchFormulaPrefix,
     targetsHit,
-    trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(result.visiblePixels, result.obstacleHitIndex),
+    trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+      result.visiblePixels,
+      result.obstacleHitIndex,
+      options.debugMetrics,
+    ),
   };
 }
 
@@ -1066,4 +1082,21 @@ function createFailedResult(
     status,
     timings,
   };
+}
+
+/** Measures scanner-side coordinate work only when diagnostics are enabled. */
+function measureStepGlitchMetric<TResult>(
+  metrics: GraphwarPathfindingDebugMetrics | undefined,
+  timing: keyof GraphwarPathfindingDebugMetrics["timings"],
+  task: () => TResult,
+) {
+  if (!metrics) {
+    return task();
+  }
+  const startedAt = nowMs();
+  try {
+    return task();
+  } finally {
+    metrics.timings[timing] += nowMs() - startedAt;
+  }
 }

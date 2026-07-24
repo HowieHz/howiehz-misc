@@ -36,6 +36,7 @@ import type {
   GraphwarStepGlitchPrefixScanner,
   GraphwarStepGlitchScanTimingStage,
 } from "../routing/step-glitch-scan";
+import type { GraphwarPathfindingDebugMetrics } from "../runtime/diagnostics";
 import { supportsOneClickClear } from "./support";
 import { assignGraphwarOneClickClearTargetRoutePoints } from "./target-assignment";
 
@@ -68,6 +69,7 @@ export type GraphwarOneClickClearDebugStage =
   | "build-dag-edges"
   | "dag-longest-path"
   | "optimize-path"
+  | "outside-search-stages"
   | "prefix-evidence-hit"
   | "prefix-evidence-miss"
   | "prepare-pathfinding-prefix"
@@ -201,6 +203,8 @@ export interface GraphwarOneClickClearOptions {
   boundsRect: BoundsRect;
   /** 候选士兵；友伤开关过滤由调用方负责。 */
   candidates: readonly GraphwarOneClickClearCandidate[];
+  /** 调试开启时跨全部候选累计的计数器与细分耗时。 */
+  debugMetrics?: GraphwarPathfindingDebugMetrics;
   /** 用于统计整条弹道击杀数的士兵；不受 DAG 起点右侧过滤影响。 */
   hitCandidates: readonly GraphwarOneClickClearCandidate[];
   /** 长循环取消检查。 */
@@ -228,7 +232,7 @@ export interface GraphwarOneClickClearOptions {
   /** 一键清图删点局部命中检查半径，单位为截图像素；0 表示每次候选删点都走整路验证。 */
   deleteHitCheckRadiusPixels: number;
   /** 是否尝试删除控制点；关闭时仍执行最终整路验证和命中统计。 */
-  deleteOptimizationEnabled?: boolean;
+  isDeleteOptimizationEnabled?: boolean;
   /** 当前路径已有像素点。 */
   pathPoints: readonly PixelPoint[];
   /** 当前最后路径点的验证目标；传入士兵命中圈时可复用现有路径预检语义。 */
@@ -255,6 +259,7 @@ export interface GraphwarOneClickClearOptions {
 export type GraphwarOneClickClearSearchInput = Omit<
   GraphwarOneClickClearOptions,
   | "buildDagEdges"
+  | "debugMetrics"
   | "isCancelled"
   | "onDebugTiming"
   | "onValidatedIncumbent"
@@ -265,7 +270,7 @@ export type GraphwarOneClickClearSearchInput = Omit<
   | "yieldControl"
 > & {
   /** Worker 请求显式传递删点偏好，不依赖直接调用 API 的兼容默认值。 */
-  deleteOptimizationEnabled: boolean;
+  isDeleteOptimizationEnabled: boolean;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
@@ -617,6 +622,7 @@ async function buildOneClickClearStepGlitchPath(
     prefixScanner ??= createGraphwarStepGlitchPrefixScanner({
       bounds: options.bounds,
       boundsRect: options.boundsRect,
+      debugMetrics: options.debugMetrics,
       maskIndex,
       ...(prefixEvidence ? { prefixEvidence } : {}),
       ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
@@ -658,7 +664,7 @@ async function buildOneClickClearStepGlitchPath(
   }
 
   const finalized =
-    options.deleteOptimizationEnabled !== false
+    options.isDeleteOptimizationEnabled !== false
       ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
           optimizeOneClickClearPath(context, route, workUnits),
         )
@@ -677,6 +683,7 @@ async function buildOneClickClearStepGlitchPath(
     trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
       finalValidation.visiblePixels,
       finalValidation.obstacleHitIndex,
+      options.debugMetrics,
     ),
   };
   publishOneClickClearValidatedRoute(context, finalRoute);
@@ -747,7 +754,7 @@ async function runOneClickClearSearchAttempt(
 
   // 即使关闭删点也保留最终整路复验；它负责裁决后缀对本轮先前目标和碰撞的影响。
   const optimized =
-    options.deleteOptimizationEnabled !== false
+    options.isDeleteOptimizationEnabled !== false
       ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
           optimizeOneClickClearPath(context, validatedRoute, nextWorkUnits),
         )
@@ -774,6 +781,7 @@ async function runOneClickClearSearchAttempt(
         trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
           finalValidation.visiblePixels,
           finalValidation.obstacleHitIndex,
+          options.debugMetrics,
         ),
       },
       type: "validated",
@@ -1401,7 +1409,9 @@ function validateOneClickClearRouteSegment(
     return undefined;
   }
 
-  const mappedPoints = nextPath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
+  const mappedPoints = measureOneClickClearMetric(options.debugMetrics, "formulaPointMappingElapsedMs", () =>
+    nextPath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
+  );
   if (mappedPoints.length < 2) {
     return undefined;
   }
@@ -1439,6 +1449,7 @@ function validateOneClickClearRouteSegment(
         mask: options.simulationMask,
       },
       collectVisiblePixels: true,
+      debugMetrics: options.debugMetrics,
       // Step 后续项会反向改变旧段；ABS y'' 的平滑脉冲也有折点前尾值，两者都必须从发射点完整回放。
       initialState: reusableInitialState,
       initialReachedRequiredTargetCount: reusableInitialState ? validationTargets.requiredTargets.length : 0,
@@ -1482,6 +1493,7 @@ function validateOneClickClearRouteSegment(
   const sampledTrajectoryPoints = snapshotGraphwarVisibleTrajectoryPoints(
     result.visiblePixels,
     result.obstacleHitIndex,
+    options.debugMetrics,
   );
   const trajectoryPoints =
     isResumedFromRequestedState && state.trajectoryPoints
@@ -1538,6 +1550,7 @@ function sampleOneClickClearTargetSequence(
     bounds: options.bounds,
     boundsRect: options.boundsRect,
     collectVisiblePixels: true,
+    debugMetrics: options.debugMetrics,
     ...(targetControlGraphX === undefined || trackActualHits
       ? {}
       : { continueAfterTargetsUntilGraphX: targetControlGraphX }),
@@ -1726,7 +1739,9 @@ function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext,
   }
   let incumbent: GraphwarOneClickClearIncumbent | undefined;
   if (context.options.onValidatedIncumbent) {
-    incumbent = createOneClickClearIncumbent(context.options, route);
+    incumbent = measureOneClickClearMetric(context.options.debugMetrics, "incumbentBuildElapsedMs", () =>
+      createOneClickClearIncumbent(context.options, route),
+    );
     if (!incumbent) {
       return;
     }
@@ -1767,7 +1782,9 @@ function createOneClickClearSuccessResult(
   startedAt: number,
   expandedStates: number,
 ): GraphwarOneClickClearResult {
-  const incumbent = createOneClickClearIncumbent(options, route);
+  const incumbent = measureOneClickClearMetric(options.debugMetrics, "incumbentBuildElapsedMs", () =>
+    createOneClickClearIncumbent(options, route),
+  );
   if (!incumbent) {
     return createOneClickClearFailure("no-usable-target", startedAt, expandedStates);
   }
@@ -2131,4 +2148,21 @@ function emitOneClickClearDebugTimings(
 /** 发送单条调试耗时；未配置回调时为空操作。 */
 function emitOneClickClearDebugTiming(options: GraphwarOneClickClearOptions, timing: GraphwarOneClickClearDebugTiming) {
   options.onDebugTiming?.(timing);
+}
+
+/** Measures a low-level diagnostic phase only when request metrics are enabled. */
+function measureOneClickClearMetric<TResult>(
+  metrics: GraphwarPathfindingDebugMetrics | undefined,
+  timing: keyof GraphwarPathfindingDebugMetrics["timings"],
+  task: () => TResult,
+) {
+  if (!metrics) {
+    return task();
+  }
+  const startedAt = nowMs();
+  try {
+    return task();
+  } finally {
+    metrics.timings[timing] += nowMs() - startedAt;
+  }
 }

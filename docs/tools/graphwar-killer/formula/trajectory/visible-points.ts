@@ -1,4 +1,6 @@
+import { nowMs } from "../../core/time";
 import type { PixelPoint } from "../../core/types";
+import type { GraphwarTrajectoryDebugMetrics } from "../debug-metrics";
 
 /** 返回 Graphwar 在首次障碍碰撞前实际绘制的轨迹点数；碰撞采样点本身不可见。 */
 export function getGraphwarVisibleTrajectoryPointCount(points: readonly PixelPoint[], obstacleHitIndex: number) {
@@ -9,6 +11,15 @@ export function getGraphwarVisibleTrajectoryPointCount(points: readonly PixelPoi
 export function snapshotGraphwarVisibleTrajectoryPoints(
   points: readonly PixelPoint[],
   obstacleHitIndex: number,
+  debugMetrics?: GraphwarTrajectoryDebugMetrics,
 ): PixelPoint[] {
-  return points.slice(0, getGraphwarVisibleTrajectoryPointCount(points, obstacleHitIndex));
+  if (!debugMetrics) {
+    return points.slice(0, getGraphwarVisibleTrajectoryPointCount(points, obstacleHitIndex));
+  }
+  const startedAt = nowMs();
+  try {
+    return points.slice(0, getGraphwarVisibleTrajectoryPointCount(points, obstacleHitIndex));
+  } finally {
+    debugMetrics.timings.visibleTrajectoryCopyElapsedMs += nowMs() - startedAt;
+  }
 }

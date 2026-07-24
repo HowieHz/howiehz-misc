@@ -524,7 +524,23 @@ export const graphwarKillerLocale = {
         "soldiers-required": "请先识别或读取士兵",
         "solver-required": "切换到解算器后生效",
       },
+      debugCounters: {
+        acceptedSamplePointCount: { label: "接受采样点数", title: "全部完整轨迹回放返回的采样点总数" },
+        formulaTermEvaluationCount: { label: "公式项求值次数", title: "编译后的公式项在全部轨迹回放中的求值总次数" },
+        incumbentReportCount: { label: "当前最优结果上报次数", title: "工作线程实际发送到页面的 incumbent 消息数" },
+        incumbentTrajectoryPointLoad: { label: "当前最优轨迹点负载", title: "全部 incumbent 消息携带的轨迹点总数" },
+        rk4StepCount: { label: "RK4 步数", title: "包含步长重试在内的 RK4 试算总步数" },
+        stepBisectionCount: { label: "步长二分次数", title: "自适应采样因步长过大而执行的二分总次数" },
+        trajectoryReplayCount: { label: "轨迹回放次数", title: "包含失败候选和准备探测在内的完整轨迹回放总数" },
+      },
+      debugNoDiagnostics: "暂无搜索工作量或内部明细",
       debugNoTiming: "暂无寻路耗时记录",
+      debugPhaseTimings: "阶段耗时",
+      debugResultCacheHit: "结果缓存命中，未执行搜索 Worker",
+      debugStepGlitchCounters: {
+        candidateReplayCount: { label: "邪道候选回放次数", title: "直连失败后实际验证的邪道候选公式数量" },
+        directReplayCount: { label: "邪道直连回放次数", title: "进入邪道候选扫描前执行的直连公式回放数量" },
+      },
       debugDetails: {
         "build-dag-edges": {
           label: "- 清图建立有向无环图边",
@@ -554,6 +570,10 @@ export const graphwarKillerLocale = {
         "optimize-path": {
           label: "- 清图删点优化",
           title: "对验证通过的清图路径做保守删点，并确认每次删除后仍命中全部新旧目标",
+        },
+        "outside-search-stages": {
+          label: "- 清图搜索阶段外耗时",
+          title: "清图搜索父阶段扣除全部非嵌套已分类阶段后的剩余时间，包括搜索编排与消息落地",
         },
         "prefix-evidence-hit": {
           label: "- 清图前缀证据命中",
@@ -748,8 +768,27 @@ export const graphwarKillerLocale = {
         },
       },
       debugSummary: "调试信息",
+      debugTimings: {
+        expressionFinalizationElapsedMs: {
+          label: "表达式最终化",
+          title: "数值材料稳定后生成可发射 Graphwar 表达式的累计耗时",
+        },
+        formulaPointMappingElapsedMs: { label: "公式点映射", title: "把截图像素控制点转换为 Graphwar 坐标的累计耗时" },
+        formulaPreparationElapsedMs: { label: "公式材料准备", title: "准备公式点、编译材料与求解数值保护的累计耗时" },
+        incumbentBuildElapsedMs: { label: "构造当前最优结果", title: "复制可发射表达式、控制点与轨迹快照的累计耗时" },
+        incumbentMessageSendElapsedMs: {
+          label: "发送当前最优结果",
+          title: "工作线程将 incumbent 消息加入页面消息队列的同步累计耗时",
+        },
+        pathErrorElapsedMs: { label: "路径误差统计", title: "轨迹完成后统计控制点路径误差的累计耗时" },
+        trajectoryReplayElapsedMs: { label: "完整轨迹回放", title: "包含积分、命中与障碍检查在内的完整回放累计耗时" },
+        visibleTrajectoryCopyElapsedMs: { label: "复制可见轨迹", title: "固化可对外发布的可见轨迹快照的累计耗时" },
+      },
+      debugWorkload: "搜索工作量 / 内部明细",
       deleteOptimization: "删点优化",
       deleteOptimizationTitle: "尝试删除多余控制点；最终仍验证完整轨迹",
+      exportDebugReport: "导出最近寻路调试报告",
+      exportDebugReportTitle: "下载最近一次完整寻路任务匹配的 state JSON、原始障碍二进制和调试 JSON",
       obstacleExpansionAgentMode: "Agent 模式",
       obstacleExpansionDetectionMode: "识别模式",
       obstacleExpansion: "障碍外扩",
@@ -758,7 +797,7 @@ export const graphwarKillerLocale = {
       oneClickClearDeleteCheckRadiusAriaLabel: "一键清图删点命中检查半径，单位为 Graphwar 原始 770x450 平面像素",
       oneClickClearDeleteCheckRadiusTitle: "删点时快速检查局部路径是否仍经过相同士兵；设为 0 时直接验证完整轨迹",
       oneClickClearTitle: "从当前路径末端开始，分配并尽量击杀 x+ 侧命中圈可达的士兵",
-      managedFriendlyFireWarning: "托管已允许友伤，友军会作为一键清图候选",
+      managedFriendlyFireWarning: "寻路设置已允许友伤，友军会作为一键清图候选",
       managedMode: "托管模式",
       managedModeDisableTitle: "关闭托管模式并解锁设置",
       managedModeConfirmation: (settings, repairs, isFriendlyFireEnabled, timing) => {
@@ -790,6 +829,8 @@ export const graphwarKillerLocale = {
       routeLazyVisibilityGraph: "惰性可视图",
       routeThetaStar: "Theta*",
       routeXPlusScan: "X+ 扫描",
+      resultCache: "结果缓存",
+      resultCacheTitle: "复用普通寻路与一键清图的完整结果；关闭时只绕过读写，不清空已有缓存",
       searchAnimation: "搜索动画",
       searchAnimationTitle: "显示单目标搜索过程，以及一键清图和托管的当前最优公式与轨迹",
       simulationTolerance: "函数模拟容差",

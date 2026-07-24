@@ -44,7 +44,11 @@ import {
   useGraphwarAgentTurnCountdown,
 } from "./controllers/agent/turn-countdown";
 import { useGraphwarDebugActivation } from "./controllers/debug/activation";
-import { useGraphwarDebugTimings } from "./controllers/debug/timings";
+import {
+  createFinalSmartPathfindingDebugTimingEntries,
+  useGraphwarDebugTimings,
+  type SmartPathfindingDebugTimingEntry,
+} from "./controllers/debug/timings";
 import {
   useGraphwarDetectionWorkflow,
   type DetectionStatusKind,
@@ -69,11 +73,26 @@ import {
   type GraphwarValidatedTrajectorySnapshot,
 } from "./controllers/path/trajectory-result";
 import {
+  createGraphwarPathfindingDebugCapture,
+  createGraphwarPathfindingDebugDownloads,
+  createGraphwarPathfindingDebugFormulaSettings,
+  finishGraphwarPathfindingDebugCapture,
+  summarizeGraphwarPathfindingDiagnostics,
+  type GraphwarPathfindingDebugAttempt,
+  type GraphwarPathfindingDebugBundle,
+  type GraphwarPathfindingDebugCapture,
+  type GraphwarPathfindingDebugOutcome,
+  type GraphwarPathfindingScreenshotSceneState,
+} from "./controllers/pathfinding/debug-report";
+import {
   useGraphwarPathfindingRouteBoundaryInset,
   useGraphwarPathfindingObstacleProjection,
 } from "./controllers/pathfinding/obstacles";
 import type { GraphwarClearFailureExportKind } from "./controllers/pathfinding/one-click-clear/outcome";
-import { useGraphwarOneClickClearRunWorkflow } from "./controllers/pathfinding/one-click-clear/workflow";
+import {
+  useGraphwarOneClickClearRunWorkflow,
+  type GraphwarOneClickClearRunOutcome,
+} from "./controllers/pathfinding/one-click-clear/workflow";
 import { useGraphwarSmartPathfindingBuilder } from "./controllers/pathfinding/smart/builder";
 import {
   useGraphwarSmartPathfindingSession,
@@ -146,6 +165,11 @@ import type { GraphwarOneClickClearIncumbent } from "./pathfinding/one-click-cle
 import { supportsOneClickClear } from "./pathfinding/one-click-clear/support";
 import type { GraphwarPathfindingRouteMode } from "./pathfinding/routing/mode";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/runtime/cache";
+import {
+  graphwarPathfindingDebugCounterKeys,
+  graphwarPathfindingDebugTimingKeys,
+  graphwarStepGlitchDebugCounterKeys,
+} from "./pathfinding/runtime/diagnostics";
 import { createGraphwarPathfindingRunner } from "./pathfinding/runtime/runner";
 import { createGraphwarPathLineSegments, type GraphwarPathfindingLineSegment } from "./pathfinding/smart/preview";
 import {
@@ -238,6 +262,13 @@ interface GraphwarManagedPreparedShot {
 /** 一键清图搜索动画按帧发布的完整验证快照。 */
 type GraphwarOneClickClearPreview = GraphwarValidatedTrajectorySnapshot &
   Pick<GraphwarOneClickClearIncumbent, "pathPoints">;
+/** One task-local debug capture; only the newest completed task may replace the visible report. */
+interface GraphwarActivePathfindingDebugCapture {
+  capture: GraphwarPathfindingDebugCapture;
+  failureKind?: GraphwarClearFailureExportKind;
+  generation: number;
+  outcome?: GraphwarPathfindingDebugOutcome;
+}
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
 }>();
@@ -379,7 +410,14 @@ const graphwarAgentClearFailureExportQueue = createGraphwarAgentClearFailureExpo
     isGraphwarAgentAutoExportInProgress.value = true;
     setGraphwarAgentExportStatus(locale.status.agent.exporting, "warning");
     try {
-      downloadGraphwarAgentDebugSceneFiles(request.state, request.worldObstacleMask, request.failureKind);
+      downloadGraphwarPathfindingDebugFiles(
+        {
+          report: request.report,
+          sceneState: request.state,
+          sourceObstacleMask: request.worldObstacleMask,
+        },
+        request.failureKind,
+      );
       setGraphwarAgentExportStatus(locale.status.agent.exported, "success");
     } finally {
       isGraphwarAgentAutoExportInProgress.value = false;
@@ -554,6 +592,7 @@ const isCollisionCheckEnabled = computed(() => shouldCheckCollisions.value ?? fa
 const isFriendlyFireEnabled = ref(false);
 const obstacleBrushDiameterText = ref("30");
 const isSearchAnimationEnabled = ref(true);
+const isPathfindingResultCacheEnabled = ref(true);
 const pathfindingRouteMode = ref<GraphwarPathfindingRouteMode>("visibility-graph");
 const isDeleteOptimizationEnabled = ref(false);
 let activePathfindingTask:
@@ -587,6 +626,7 @@ const {
 const {
   addSmartPathfindingWorkerTimings,
   appendOneClickClearSearchWorkerTimings,
+  clearSmartPathfindingDebugTimings,
   createDetectionDebugTimingEntriesFromWorker,
   detectionDebugTimingRows,
   finishDetectionDebugTimings,
@@ -603,6 +643,7 @@ const {
 const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
   debug: {
     addWorkerTimings: addSmartPathfindingWorkerTimings,
+    recordAttempt: recordPathfindingDebugAttempt,
   },
   effects: {
     flashBlockedPoint: smartPathfindingSession.flashBlockedPoint,
@@ -623,6 +664,7 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
   },
   pathfinding: {
     cache: pathfindingCache,
+    isResultCacheEnabled: () => isPathfindingResultCacheEnabled.value,
     runner: graphwarPathfindingRunner,
   },
   preview: {
@@ -638,9 +680,14 @@ const smartPathfindingBuilder = useGraphwarSmartPathfindingBuilder({
 });
 // 单目标寻路 workflow 应集中维护 token、状态和调试耗时顺序；worker 细节由 builder 持有。
 const smartPathfindingRunWorkflow = useGraphwarSmartPathfindingRunWorkflow<PixelPoint | SmartPathfindingTarget>({
+  debug: {
+    isEnabled: () => isDebugInfoEnabled.value,
+    onOutcome: setPathfindingDebugOutcome,
+    registerRun: registerPathfindingDebugRun,
+  },
   applyPath: setPathPixels,
   buildPath: smartPathfindingBuilder.buildPath,
-  finishDebugTimings: finishSmartPathfindingDebugTimings,
+  finishDebugTimings: finishPathfindingDebugTimings,
   finishRun: finishSmartPathfindingRun,
   getFailureMessage: (elapsedMs, reason) => createSmartPathfindingFailureMessage(locale, elapsedMs, reason),
   getSuccessMessage: (elapsedMs, hasResultCacheHit) =>
@@ -775,6 +822,13 @@ const {
 } = useGraphwarDebugActivation({
   toggleAdvancedSettings,
 });
+const latestPathfindingDebugBundle = ref<GraphwarPathfindingDebugBundle>();
+const pathfindingDebugCapturesByTimings = new Map<
+  readonly SmartPathfindingDebugTimingEntry[],
+  GraphwarActivePathfindingDebugCapture
+>();
+let activePathfindingDebugCapture: GraphwarActivePathfindingDebugCapture | undefined;
+let pathfindingDebugCaptureGeneration = 0;
 const isSmartPathfindingEnabled = computed(
   () =>
     toolWorkflowMode.value !== "simulator" &&
@@ -1380,11 +1434,13 @@ const { appendDetectedSoldierPathPoint, appendPathPoint, createCurrentLastPathHi
       runWorkflow: {
         run: async (request) => {
           const task = { kind: "single" } as const;
+          const debugCapture = beginPathfindingDebugCapture("smart-pathfinding");
           clearIncumbentPreview();
           activePathfindingTask = task;
           try {
             return await smartPathfindingRunWorkflow.run(request);
           } finally {
+            completePathfindingDebugCapture(debugCapture);
             if (activePathfindingTask === task) {
               activePathfindingTask = undefined;
             }
@@ -1436,9 +1492,12 @@ function shouldUseOneClickClearDagWorker() {
 const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBox>({
   debug: {
     appendSearchWorkerTimings: appendOneClickClearSearchWorkerTimings,
-    finishTimings: finishSmartPathfindingDebugTimings,
+    finishTimings: finishPathfindingDebugTimings,
+    isEnabled: () => isDebugInfoEnabled.value,
     measureStage: measureSmartPathfindingDebugStage,
     measureStageAsync: measureSmartPathfindingDebugStageAsync,
+    recordAttempt: recordPathfindingDebugAttempt,
+    registerRun: registerPathfindingDebugRun,
   },
   effects: {
     applyIncumbent: applyOneClickClearIncumbent,
@@ -1494,6 +1553,7 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
   },
   pathfinding: {
     cache: pathfindingCache,
+    isResultCacheEnabled: () => isPathfindingResultCacheEnabled.value,
     runner: graphwarPathfindingRunner,
   },
   run: {
@@ -1709,7 +1769,7 @@ const detectionPanel = computed<GraphwarDetectionPanelModel>(() => ({
     !isGraphwarAgentReadInProgress.value,
   debugTimingRows: detectionDebugTimingRows.value.map((entry, index) => ({
     key: `${entry.stage}-${index}`,
-    text: entry.elapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
+    text: entry.isElapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
     title: entry.title,
   })),
   isDebugTimingVisible: isDebugInfoEnabled.value,
@@ -1896,6 +1956,35 @@ const trajectoryWarning = computed(() => {
   }
   return locale.status.trajectoryWarning.stopped.invalid;
 });
+const latestPathfindingDiagnostics = computed(() => {
+  const report = latestPathfindingDebugBundle.value?.report;
+  return report ? summarizeGraphwarPathfindingDiagnostics(report) : undefined;
+});
+const pathfindingDebugDiagnosticRows = computed(() => {
+  const diagnostics = latestPathfindingDiagnostics.value;
+  if (!diagnostics) {
+    return [];
+  }
+  return [
+    ...graphwarPathfindingDebugCounterKeys.map((key) => ({
+      key,
+      text: `${locale.ui.pathfinding.debugCounters[key].label}: ${diagnostics.counters[key]}`,
+      title: locale.ui.pathfinding.debugCounters[key].title,
+    })),
+    ...graphwarPathfindingDebugTimingKeys.map((key) => ({
+      key,
+      text: `${locale.ui.pathfinding.debugTimings[key].label}: ${formatDebugElapsedDuration(diagnostics.timings[key])}`,
+      title: locale.ui.pathfinding.debugTimings[key].title,
+    })),
+    ...(diagnostics.stepGlitch
+      ? graphwarStepGlitchDebugCounterKeys.map((key) => ({
+          key: `step-glitch-${key}`,
+          text: `${locale.ui.pathfinding.debugStepGlitchCounters[key].label}: ${diagnostics.stepGlitch?.[key] ?? 0}`,
+          title: locale.ui.pathfinding.debugStepGlitchCounters[key].title,
+        }))
+      : []),
+  ];
+});
 // 智能寻路面板只应消费展示 DTO；按钮 guard、运行状态和调试耗时仍由页面侧保持原语义。
 const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() => {
   const headerStatus = getSmartPathfindingHeaderStatus({
@@ -1912,13 +2001,19 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
   const semanticCapability = graphwarCapabilities.value.semanticControls;
   const oneClickClearCapability = graphwarCapabilities.value.oneClickClear;
   const managedModeCapability = graphwarCapabilities.value.managedMode;
+  const debugReport = latestPathfindingDebugBundle.value?.report;
   return {
+    canExportDebugReport: latestPathfindingDebugBundle.value?.sourceObstacleMask !== undefined,
+    debugDiagnosticRows: pathfindingDebugDiagnosticRows.value,
     debugTimingRows: smartPathfindingDebugTimingRows.value.map((entry, index) => ({
       indentLevel: entry.indentLevel,
       key: `${entry.stage}-${index}`,
-      text: entry.elapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
+      text: entry.isElapsedVisible ? `${entry.label}: ${formatDebugElapsedDuration(entry.elapsedMs)}` : entry.label,
       title: entry.title,
     })),
+    hasResultCacheOnlyReport:
+      Boolean(debugReport?.attempts.length) &&
+      debugReport?.attempts.every((attempt) => attempt.source === "result-cache") === true,
     isDebugTimingVisible: isDebugInfoEnabled.value,
     deleteOptimization: {
       isEnabled: isDeleteOptimizationEnabled.value,
@@ -1958,6 +2053,10 @@ const smartPathfindingPanel = computed<GraphwarSmartPathfindingPanelModel>(() =>
       state: graphwarCapabilities.value.pathPlanning.state,
     },
     routeMode: pathfindingRouteMode.value,
+    resultCache: {
+      isEnabled: isPathfindingResultCacheEnabled.value,
+      state: "normal",
+    },
     searchAnimation: {
       isEnabled: isSearchAnimationEnabled.value,
       state: "normal",
@@ -2481,6 +2580,11 @@ watch([maximumSoldierCountText, obstacleMinAreaText, soldierTemplateCandidateTop
 watch(isDebugInfoEnabled, (isEnabled) => {
   if (!isEnabled) {
     graphwarAgentClearFailureExportQueue.clearPending();
+    pathfindingDebugCaptureGeneration += 1;
+    activePathfindingDebugCapture = undefined;
+    pathfindingDebugCapturesByTimings.clear();
+    latestPathfindingDebugBundle.value = undefined;
+    clearSmartPathfindingDebugTimings();
   }
 });
 
@@ -2929,8 +3033,8 @@ async function readGraphwarAgentDebugFile(event: Event, kind: "state" | "obstacl
   }
 }
 
-/** 使用短生命周期对象 URL 下载文件，避免大体积障碍掩码长期占用浏览器内存。 */
-function downloadGraphwarAgentDebugFile(file: GraphwarAgentDebugDownload) {
+/** 使用短生命周期对象 URL 下载文件，避免大体积调试数据长期占用浏览器内存。 */
+function downloadGraphwarDebugFile(file: GraphwarAgentDebugDownload) {
   const url = URL.createObjectURL(new Blob([file.content], { type: file.mediaType }));
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -2952,8 +3056,213 @@ function downloadGraphwarAgentDebugSceneFiles(
   failureKind?: GraphwarClearFailureExportKind,
 ) {
   const downloads = createGraphwarAgentDebugDownloads(state, worldObstacleMask, failureKind ? { failureKind } : {});
-  downloadGraphwarAgentDebugFile(downloads.state);
-  downloadGraphwarAgentDebugFile(downloads.obstacle);
+  downloadGraphwarDebugFile(downloads.state);
+  downloadGraphwarDebugFile(downloads.obstacle);
+}
+
+/** Starts a debug-only capture before task preflight without allocating anything in normal mode. */
+function beginPathfindingDebugCapture(
+  taskType: GraphwarPathfindingDebugCapture["taskType"],
+): GraphwarActivePathfindingDebugCapture | undefined {
+  if (!isDebugInfoEnabled.value || !parsedBounds.value.ok) {
+    return undefined;
+  }
+
+  const agentSnapshot = isGraphwarAgentEnabled.value ? graphwarAgentAppliedSnapshot : undefined;
+  const sceneState =
+    agentSnapshot?.state ??
+    ({
+      bounds: { ...parsedBounds.value.bounds },
+      boundsRect: { ...boundsRect.value },
+      equationMode: equationMode.value,
+      isViewMirrored: false,
+      mask: {
+        blockedValue: 1,
+        emptyValue: 0,
+        height: GRAPHWAR_PLANE_HEIGHT,
+        width: GRAPHWAR_PLANE_LENGTH,
+      },
+      ...(pathPixels.value[0] ? { pathOrigin: { ...pathPixels.value[0] } } : {}),
+      schemaVersion: 1,
+      soldiers: detectedSoldiers.value.map((soldier) => ({ ...soldier })),
+      source: "screenshot",
+    } satisfies GraphwarPathfindingScreenshotSceneState);
+  const tolerances = parsedObstacleTolerances.value.ok
+    ? {
+        routeBoundaryInsetPlanePixels: parsedObstacleTolerances.value.routeBoundaryInsetPlanePixels,
+        routePlanningTolerancePlanePixels: parsedObstacleTolerances.value.routePlanningTolerancePlanePixels,
+        simulationBoundaryInsetPlanePixels: parsedObstacleTolerances.value.simulationBoundaryInsetPlanePixels,
+        simulationTolerancePlanePixels: parsedObstacleTolerances.value.simulationTolerancePlanePixels,
+      }
+    : undefined;
+  const generation = ++pathfindingDebugCaptureGeneration;
+  const capture: GraphwarActivePathfindingDebugCapture = {
+    capture: createGraphwarPathfindingDebugCapture({
+      path: pathPixels.value,
+      sceneSource: agentSnapshot ? "agent" : "screenshot",
+      sceneState,
+      settings: {
+        formula: createGraphwarPathfindingDebugFormulaSettings(createPathTrajectoryFormulaSettings()),
+        isDeleteOptimizationEnabled: isDeleteOptimizationEnabled.value,
+        isFriendlyFireEnabled: isFriendlyFireEnabled.value,
+        isResultCacheEnabled: isPathfindingResultCacheEnabled.value,
+        isSearchAnimationEnabled: isSearchAnimationEnabled.value,
+        ...(parsedPathfindingWorkerCount.value.ok
+          ? { pathfindingWorkerCount: parsedPathfindingWorkerCount.value.workerCount }
+          : {}),
+        routeMode: getPathfindingRouteMode(),
+        ...(tolerances ? { tolerances } : {}),
+      },
+      sourceObstacleMask: agentSnapshot?.worldObstacleMask ?? detectedObstacles.value?.mask,
+      startedAtMs: nowMs(),
+      taskType,
+    }),
+    generation,
+  };
+  activePathfindingDebugCapture = capture;
+  return capture;
+}
+
+/** Binds the workflow-owned timing array to the capture that was active at synchronous task start. */
+function registerPathfindingDebugRun(timings: SmartPathfindingDebugTimingEntry[]) {
+  if (activePathfindingDebugCapture) {
+    pathfindingDebugCapturesByTimings.set(timings, activePathfindingDebugCapture);
+  }
+}
+
+/** Records one mask-free attempt in the task that owns the supplied timing array. */
+function recordPathfindingDebugAttempt(
+  attempt: GraphwarPathfindingDebugAttempt,
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
+) {
+  const capture = timings ? pathfindingDebugCapturesByTimings.get(timings) : undefined;
+  capture?.capture.attempts.push(attempt);
+}
+
+/** Stores a smart-pathfinding outcome without publishing an incomplete report. */
+function setPathfindingDebugOutcome(
+  outcome: GraphwarPathfindingDebugOutcome,
+  timings: SmartPathfindingDebugTimingEntry[] | undefined,
+) {
+  const capture = timings ? pathfindingDebugCapturesByTimings.get(timings) : undefined;
+  if (capture) {
+    capture.outcome = outcome;
+  }
+}
+
+/** Finalizes page timings while keeping them attached to the task-local report capture. */
+function finishPathfindingDebugTimings(
+  startedAt: number,
+  timings: readonly SmartPathfindingDebugTimingEntry[],
+  completedAt?: number,
+) {
+  const capture = pathfindingDebugCapturesByTimings.get(timings);
+  const elapsedMs = (completedAt ?? nowMs()) - startedAt;
+  const finalTimings =
+    isDebugInfoEnabled.value && (!capture || capture.generation === pathfindingDebugCaptureGeneration)
+      ? finishSmartPathfindingDebugTimings(startedAt, timings, completedAt)
+      : createFinalSmartPathfindingDebugTimingEntries(timings, elapsedMs);
+  if (capture) {
+    capture.capture.pageTimings = finalTimings;
+  }
+  return finalTimings;
+}
+
+/** Maps the existing one-click-clear outcome protocol to the unified debug report outcome. */
+function setOneClickClearDebugOutcome(
+  capture: GraphwarActivePathfindingDebugCapture | undefined,
+  outcome: GraphwarOneClickClearRunOutcome,
+) {
+  if (!capture) {
+    return;
+  }
+  switch (outcome.kind) {
+    case "cancelled":
+      capture.outcome = { type: "cancelled" };
+      return;
+    case "complete":
+      capture.outcome = { type: "success" };
+      return;
+    case "preflight-failure":
+      capture.outcome = { reason: outcome.reason, type: "preflight-failure" };
+      return;
+    case "incomplete":
+      capture.outcome = { reason: outcome.kind, type: "failure" };
+      requestGraphwarAgentClearFailureExport(outcome.kind, undefined, capture);
+      return;
+    case "search-error":
+      capture.outcome = { type: "worker-exception" };
+      requestGraphwarAgentClearFailureExport(outcome.kind, undefined, capture);
+      return;
+    case "search-failure":
+      capture.outcome = { reason: outcome.reason, type: "failure" };
+      requestGraphwarAgentClearFailureExport(outcome.kind, undefined, capture);
+  }
+}
+
+/** Publishes only the newest completed task and queues any matching Agent failure export afterward. */
+function completePathfindingDebugCapture(capture: GraphwarActivePathfindingDebugCapture | undefined) {
+  if (!capture) {
+    return;
+  }
+  const completedAtMs = nowMs();
+  let capturedTimings: readonly SmartPathfindingDebugTimingEntry[] = [];
+  for (const [timings, registeredCapture] of pathfindingDebugCapturesByTimings) {
+    if (registeredCapture === capture) {
+      capturedTimings = timings;
+      pathfindingDebugCapturesByTimings.delete(timings);
+    }
+  }
+  if (!capture.capture.pageTimings) {
+    capture.capture.pageTimings =
+      capture.generation === pathfindingDebugCaptureGeneration && isDebugInfoEnabled.value
+        ? finishSmartPathfindingDebugTimings(capture.capture.startedAtMs, capturedTimings, completedAtMs)
+        : createFinalSmartPathfindingDebugTimingEntries(
+            capturedTimings,
+            Math.max(0, completedAtMs - capture.capture.startedAtMs),
+          );
+  }
+  if (activePathfindingDebugCapture === capture) {
+    activePathfindingDebugCapture = undefined;
+  }
+  if (capture.generation !== pathfindingDebugCaptureGeneration || !isDebugInfoEnabled.value) {
+    return;
+  }
+
+  const bundle = finishGraphwarPathfindingDebugCapture(
+    capture.capture,
+    capture.outcome ?? { type: "worker-exception" },
+    completedAtMs,
+  );
+  latestPathfindingDebugBundle.value = bundle;
+  if (capture.failureKind && bundle.sourceObstacleMask && "gameInstanceId" in bundle.sceneState) {
+    graphwarAgentClearFailureExportQueue.enqueue(capture.failureKind, {
+      report: bundle.report,
+      sceneState: bundle.sceneState,
+      sourceObstacleMask: bundle.sourceObstacleMask,
+    });
+  }
+}
+
+/** Downloads the state, original mask, and report frozen by the latest completed debug task. */
+function exportLatestPathfindingDebugReport() {
+  const bundle = latestPathfindingDebugBundle.value;
+  const sourceObstacleMask = bundle?.sourceObstacleMask;
+  if (!bundle || !sourceObstacleMask) {
+    return;
+  }
+  downloadGraphwarPathfindingDebugFiles({ ...bundle, sourceObstacleMask });
+}
+
+/** Downloads one timestamp-matched pathfinding report bundle in source-file order. */
+function downloadGraphwarPathfindingDebugFiles(
+  bundle: GraphwarPathfindingDebugBundle & { sourceObstacleMask: Uint8Array },
+  failureKind?: GraphwarClearFailureExportKind,
+) {
+  const downloads = createGraphwarPathfindingDebugDownloads(bundle, failureKind ? { failureKind } : {});
+  downloadGraphwarDebugFile(downloads.state);
+  downloadGraphwarDebugFile(downloads.obstacle);
+  downloadGraphwarDebugFile(downloads.debug);
 }
 
 /** 同步图片区和识别区的 Agent 导出反馈。 */
@@ -3550,7 +3859,7 @@ function toggleGraphwarManagedMode() {
           createGraphwarAgentClearFailureSceneKey(snapshot.state) === createGraphwarAgentClearFailureSceneKey(state)
         ) {
           // 截止是搜索结局，不依赖随后选择 incumbent、跳过函数或 Agent 是否接受发射。
-          enqueueGraphwarAgentClearFailureExport("deadline", snapshot);
+          requestGraphwarAgentClearFailureExport("deadline", snapshot);
         }
       },
       onDeadlineWithoutShot: () => {
@@ -4317,6 +4626,14 @@ function toggleSearchAnimation() {
   }
 }
 
+/** Toggles complete-result cache reads and writes for subsequent debug-mode tasks. */
+function togglePathfindingResultCache() {
+  if (!isDebugInfoEnabled.value) {
+    return;
+  }
+  isPathfindingResultCacheEnabled.value = !isPathfindingResultCacheEnabled.value;
+}
+
 /** 更新普通几何路线算法；邪道扫描不消费该设置，也不应因此被取消。 */
 function setPathfindingRouteMode(mode: GraphwarPathfindingRouteMode) {
   if (isGraphwarManagedModeEnabled.value || pathfindingRouteMode.value === mode) {
@@ -4444,19 +4761,28 @@ async function runOneClickClear() {
   return runOneClickClearWorkflow();
 }
 
-/** 在失败发生时冻结开关决策，并把权威启动快照交给统一去重队列。 */
-function enqueueGraphwarAgentClearFailureExport(
+/** Freezes the auto-export decision; the completed report is queued only after finalization. */
+function requestGraphwarAgentClearFailureExport(
   failureKind: GraphwarClearFailureExportKind,
-  snapshot: GraphwarAgentSnapshot,
+  snapshot?: GraphwarAgentSnapshot,
+  requestedCapture = activePathfindingDebugCapture,
 ) {
+  const capture = requestedCapture;
   if (
     !isDebugInfoEnabled.value ||
     !isGraphwarAgentEnabled.value ||
-    !isGraphwarAgentAutoExportOnClearFailureEnabled.value
+    !isGraphwarAgentAutoExportOnClearFailureEnabled.value ||
+    !capture ||
+    capture.capture.sceneSource !== "agent" ||
+    !("gameInstanceId" in capture.capture.sceneState) ||
+    (snapshot &&
+      createGraphwarAgentClearFailureSceneKey(snapshot.state) !==
+        createGraphwarAgentClearFailureSceneKey(capture.capture.sceneState))
   ) {
     return false;
   }
-  return graphwarAgentClearFailureExportQueue.enqueue(failureKind, snapshot);
+  capture.failureKind = failureKind;
+  return true;
 }
 
 /** Queues only the latest incumbent while retaining the last complete trajectory. */
@@ -4525,8 +4851,7 @@ function clearIncumbentPointPreview() {
 async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClearRunWorkflow.run>) {
   // 冻结启动时实际采用的分支，避免运行期间的响应式配置让休眠参数误取消任务。
   const task = { kind: "one-click", shouldUseDagWorker: shouldUseOneClickClearDagWorker() } as const;
-  // 自动导出必须绑定搜索使用的局面，不能在托管开火后重新读取 Agent。
-  const agentSnapshotAtStart = isGraphwarAgentEnabled.value ? graphwarAgentAppliedSnapshot : undefined;
+  const debugCapture = beginPathfindingDebugCapture("one-click-clear");
   clearIncumbentPreview();
   activePathfindingTask = task;
   try {
@@ -4534,12 +4859,7 @@ async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClear
     return await oneClickClearRunWorkflow.run({
       ...runOptions,
       onOutcome: (outcome) => {
-        if (
-          agentSnapshotAtStart &&
-          (outcome.kind === "incomplete" || outcome.kind === "search-failure" || outcome.kind === "search-error")
-        ) {
-          enqueueGraphwarAgentClearFailureExport(outcome.kind, agentSnapshotAtStart);
-        }
+        setOneClickClearDebugOutcome(debugCapture, outcome);
         runOptions?.onOutcome?.(outcome);
       },
       onIncumbent: (incumbent) => {
@@ -4551,6 +4871,7 @@ async function runOneClickClearWorkflow(...args: Parameters<typeof oneClickClear
       },
     });
   } finally {
+    completePathfindingDebugCapture(debugCapture);
     if (activePathfindingTask === task) {
       activePathfindingTask = undefined;
     }
@@ -4928,12 +5249,12 @@ function undoLastPoint() {
     <GraphwarSettingsPanel
       :locale="locale"
       :panel="settingsPanel"
-      @cancel-debug-activation-hold="!isGraphwarManagedModeEnabled && cancelDebugActivationHold()"
-      @finish-debug-activation-hold="!isGraphwarManagedModeEnabled && finishDebugActivationHold()"
+      @cancel-debug-activation-hold="cancelDebugActivationHold"
+      @finish-debug-activation-hold="finishDebugActivationHold"
       @set-algorithm-mode="setAlgorithmMode"
       @set-equation-mode="setEquationMode"
       @set-tool-workflow-mode="setToolWorkflowMode"
-      @start-debug-activation-hold="!isGraphwarManagedModeEnabled && startDebugActivationHold($event)"
+      @start-debug-activation-hold="startDebugActivationHold"
       @toggle-advanced-settings="toggleAdvancedSettingsFromControl"
       @toggle-step-glitch-mode="toggleStepGlitchMode"
       @toggle-step-overflow-protection="
@@ -5062,6 +5383,7 @@ function undoLastPoint() {
     <GraphwarSmartPathfindingPanel
       :locale="locale"
       :panel="smartPathfindingPanel"
+      @export-debug-report="exportLatestPathfindingDebugReport"
       @run-one-click-clear="void runOneClickClear()"
       @set-route-mode="setPathfindingRouteMode"
       @toggle-delete-optimization="toggleDeleteOptimization"
@@ -5069,6 +5391,7 @@ function undoLastPoint() {
       @toggle-search-animation="toggleSearchAnimation"
       @toggle-managed-mode="toggleGraphwarManagedMode"
       @toggle-path-planning="togglePathPlanning"
+      @toggle-result-cache="togglePathfindingResultCache"
     />
   </div>
 </template>

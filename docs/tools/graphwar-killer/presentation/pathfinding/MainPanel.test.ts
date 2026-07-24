@@ -9,7 +9,10 @@ import MainPanel from "./MainPanel.vue";
 describe("Pathfinding MainPanel", () => {
   it("places Path Planning before One-Click Clear and preserves its toggle event", async () => {
     const panel = {
+      canExportDebugReport: false,
+      debugDiagnosticRows: [],
       debugTimingRows: [],
+      hasResultCacheOnlyReport: false,
       isDebugTimingVisible: false,
       deleteOptimization: { isEnabled: false, state: "normal" as const },
       friendlyFire: { isEnabled: false, state: "normal" as const },
@@ -27,6 +30,7 @@ describe("Pathfinding MainPanel", () => {
       },
       pathPlanning: { isEnabled: false, state: "normal" as const },
       routeMode: "visibility-graph" as const,
+      resultCache: { isEnabled: true, state: "normal" as const },
       searchAnimation: { isEnabled: false, state: "normal" as const },
       isUsingStepGlitchRouting: false,
     };
@@ -68,12 +72,30 @@ describe("Pathfinding MainPanel", () => {
     const managedMode = wrapper.get("#graphwar-killer-managed-mode");
     expect(managedMode.attributes("aria-describedby")).toBeUndefined();
     expect(managedMode.attributes("title")).toBe(`${reason}\n${panel.managedMode.title}`);
+
+    await wrapper.setProps({
+      panel: { ...panel, canExportDebugReport: true, isDebugTimingVisible: true },
+    });
+    const exportButton = wrapper
+      .findAll("button")
+      .find((button) => button.text() === graphwarKillerLocale.ui.pathfinding.exportDebugReport);
+    expect(exportButton?.attributes("disabled")).toBeUndefined();
+    await exportButton?.trigger("click");
+    expect(wrapper.emitted("exportDebugReport")).toHaveLength(1);
+    const optionControls = wrapper.findAll(".graphwar-killer__option-grid > *");
+    expect(optionControls.at(-2)?.find("#graphwar-killer-search-animation").exists()).toBe(true);
+    expect(optionControls.at(-1)?.find("#graphwar-killer-result-cache").exists()).toBe(true);
+    await wrapper.get("#graphwar-killer-result-cache").trigger("click");
+    expect(wrapper.emitted("toggleResultCache")).toHaveLength(1);
   });
 
   it("adds the managed lock to every temporarily disabled route setting", () => {
     const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
     const panel = {
+      canExportDebugReport: false,
+      debugDiagnosticRows: [],
       debugTimingRows: [],
+      hasResultCacheOnlyReport: false,
       isDebugTimingVisible: false,
       deleteOptimization: { isEnabled: false, reason, state: "busy" as const },
       friendlyFire: { isEnabled: false, reason, state: "busy" as const },
@@ -83,6 +105,7 @@ describe("Pathfinding MainPanel", () => {
       oneClickClear: { reason, state: "busy" as const, title: "One-Click Clear" },
       pathPlanning: { isEnabled: false, reason, state: "busy" as const },
       routeMode: "visibility-graph" as const,
+      resultCache: { isEnabled: true, state: "normal" as const },
       searchAnimation: { isEnabled: false, state: "normal" as const },
       isUsingStepGlitchRouting: false,
     };

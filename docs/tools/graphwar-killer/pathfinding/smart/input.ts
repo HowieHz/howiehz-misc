@@ -22,13 +22,13 @@ interface GraphwarSmartPathfindingSearchInputOptions {
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;
   /** 是否尝试删除新增控制点。 */
-  deleteOptimizationEnabled: boolean;
+  isDeleteOptimizationEnabled: boolean;
   /** 截图内 Graphwar 坐标系矩形。 */
   boundsRect: BoundsRect;
   /** 命中目标圆；页面负责把普通点击转换为默认半径目标。 */
   hitTarget: GraphwarTrajectoryTargetCircle;
   /** 是否需要把搜索动画快照发回主线程。 */
-  previewEnabled: boolean;
+  isPreviewEnabled: boolean;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
   routeMaskCacheId: number;
   /** 普通几何路线算法；Step ODE 邪道会在协议边界改用规范值。 */
@@ -59,9 +59,9 @@ export function createGraphwarSmartPathfindingSearchInput(
     boundaryExpansion: options.tolerances.routeBoundaryInsetPlanePixels,
     bounds: options.bounds,
     boundsRect: options.boundsRect,
-    deleteOptimizationEnabled: options.deleteOptimizationEnabled,
+    isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
     hitTarget: options.hitTarget,
-    previewEnabled: options.previewEnabled,
+    isPreviewEnabled: options.isPreviewEnabled,
     routeMaskCacheId: options.routeMaskCacheId,
     // 邪道扫描不消费普通路由算法；规范值避免无关偏好污染结果缓存和 evidence。
     routeMode: formulaModeUsesStepGlitch(

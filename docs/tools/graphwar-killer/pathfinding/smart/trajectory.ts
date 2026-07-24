@@ -1,5 +1,6 @@
 import { imageToGraphPoint } from "../../core/geometry";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type { GraphwarTrajectoryDebugMetrics } from "../../formula/debug-metrics";
 import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import {
   graphwarTrajectoryReachesGraphXBeforeObstacle,
@@ -30,6 +31,8 @@ interface GraphwarSmartPathfindingTrajectoryOptions {
   boundaryExpansion: number;
   /** 当前 Graphwar 坐标边界；缺失时应沿用页面原来的预检失败语义。 */
   bounds: GraphBounds | undefined;
+  /** 调试模式下跨候选累计的轨迹诊断。 */
+  debugMetrics?: GraphwarTrajectoryDebugMetrics;
   /** 截图内 Graphwar 坐标系矩形。 */
   boundsRect: BoundsRect;
   /** 普通点击目标点或士兵真实命中圈。 */
@@ -88,6 +91,7 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
     boundsRect: options.boundsRect,
     // 调用方同时用可见轨迹绘制预览、定位首次阻挡点，不能只保留命中计数。
     collectVisiblePixels: true,
+    debugMetrics: options.debugMetrics,
     ...(targetControlGraphX === undefined ? {} : { continueAfterTargetsUntilGraphX: targetControlGraphX }),
     obstacleMask: options.obstacleMask,
     points: options.points,

@@ -5,6 +5,7 @@ import { createPixelPoint } from "../../core/types";
 import type { GraphwarDetectionBox } from "../../detection/objects";
 import { createGraphwarOneClickClearSearchInput } from "../one-click-clear/input";
 import { createGraphwarPathfindingCacheController } from "./cache";
+import { createGraphwarPathfindingDebugMetrics } from "./diagnostics";
 
 describe("Graphwar pathfinding result cache keys", () => {
   it("separates one-click-clear inputs with different current path prefixes", () => {
@@ -122,6 +123,7 @@ describe("Graphwar pathfinding result cache keys", () => {
   it("preserves the validated formula when caching a one-click-clear success", () => {
     const cache = createGraphwarPathfindingCacheController();
     const result = {
+      diagnostics: createGraphwarPathfindingDebugMetrics(false),
       result: {
         elapsedMs: 12,
         expression: "x",
@@ -138,7 +140,8 @@ describe("Graphwar pathfinding result cache keys", () => {
     cache.cacheOneClickClearResult("success", result);
     const cached = cache.getCachedOneClickClearResult("success");
 
-    expect(cached).toEqual(result);
+    expect(cached).toEqual({ result: result.result, timings: [] });
+    expect(cached).not.toHaveProperty("diagnostics");
     expect(cached?.result).not.toBe(result.result);
     if (cached?.result.type === "success") {
       expect(cached.result.pathPoints).not.toBe(result.result.pathPoints);

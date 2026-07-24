@@ -146,7 +146,7 @@ export function createGraphwarOneClickClearSearchInput(
     boundsRect: options.boundsRect,
     candidates: options.candidates,
     dagEdgeWorkerCount: options.dagEdgeWorkerCount,
-    deleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
+    isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
     // Worker 内删点命中检查在截图坐标里量距离，因此在协议边界从 Graphwar 平面像素换算为截图像素。
     deleteHitCheckRadiusPixels: options.isDeleteOptimizationEnabled
       ? options.tolerances.oneClickClearDeleteCheckRadiusPlanePixels *

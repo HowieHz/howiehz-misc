@@ -34,7 +34,7 @@ describe("Step single-target fallback", () => {
       1,
     );
 
-    expect(result).toEqual({ cacheHit: false, path: [startPoint, edgePoint], type: "success" });
+    expect(result).toEqual({ hasResultCacheHit: false, path: [startPoint, edgePoint], type: "success" });
     expect(requests.map((request) => request.targetPoint)).toEqual([centerPoint, edgePoint]);
     expect(requests.every((request) => request.hitTarget.center === centerPoint)).toBe(true);
   });
@@ -74,6 +74,72 @@ describe("Step single-target fallback", () => {
 
     expect(setSearch).not.toHaveBeenCalled();
   });
+
+  it("keeps debug runs on the normal result-cache path and bypasses reads and writes only when disabled", async () => {
+    const cachedResult = { path: [startPoint, centerPoint], timings: [] };
+    const findSmartPath = vi.fn(async () => cachedResult);
+    const getCachedResult = vi.fn(() => cachedResult);
+    const cacheResult = vi.fn();
+    const attempts: { source: string }[] = [];
+    const cachedBuilder = createBuilder(
+      findSmartPath,
+      {},
+      {
+        cacheResult,
+        getCachedResult,
+        recordAttempt: (attempt) => attempts.push(attempt),
+      },
+    );
+
+    await expect(cachedBuilder.buildPath(centerPoint, 1, [])).resolves.toMatchObject({
+      hasResultCacheHit: true,
+      type: "success",
+    });
+    expect(findSmartPath).not.toHaveBeenCalled();
+    expect(cacheResult).not.toHaveBeenCalled();
+    expect(attempts).toMatchObject([{ source: "result-cache" }]);
+
+    const uncachedBuilder = createBuilder(
+      findSmartPath,
+      {},
+      {
+        cacheResult,
+        getCachedResult,
+        isResultCacheEnabled: false,
+      },
+    );
+    await expect(uncachedBuilder.buildPath(centerPoint, 1, [])).resolves.toMatchObject({
+      hasResultCacheHit: false,
+      type: "success",
+    });
+    expect(getCachedResult).toHaveBeenCalledTimes(1);
+    expect(findSmartPath).toHaveBeenCalledOnce();
+    expect(findSmartPath).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ shouldCollectDiagnostics: true }),
+    );
+    expect(cacheResult).not.toHaveBeenCalled();
+  });
+
+  it("freezes the result-cache preference before yielding for the connection preview", async () => {
+    const cachedResult = { path: [startPoint, centerPoint], timings: [] };
+    const findSmartPath = vi.fn(async () => cachedResult);
+    const attempts: { source: string }[] = [];
+    const controls = {
+      getCachedResult: vi.fn(() => cachedResult),
+      isResultCacheEnabled: true,
+      recordAttempt: (attempt: { source: string }) => attempts.push(attempt),
+    };
+    const builder = createBuilder(findSmartPath, {}, controls);
+
+    const task = builder.buildPath(centerPoint, 1, []);
+    controls.isResultCacheEnabled = false;
+
+    await expect(task).resolves.toMatchObject({ hasResultCacheHit: true, type: "success" });
+    expect(controls.getCachedResult).toHaveBeenCalledOnce();
+    expect(findSmartPath).not.toHaveBeenCalled();
+    expect(attempts).toMatchObject([{ source: "result-cache" }]);
+  });
 });
 
 function createBuilder(
@@ -85,9 +151,18 @@ function createBuilder(
     isSearchAnimationEnabled?: () => boolean;
     setSearch?: (snapshot: GraphwarPathfindingPreviewSnapshot) => void;
   } = {},
+  controls: {
+    cacheResult?: () => void;
+    getCachedResult?: () => GraphwarSmartPathfindingPathResult | undefined;
+    isResultCacheEnabled?: boolean;
+    recordAttempt?: (attempt: { source: string }) => void;
+  } = {},
 ) {
   return useGraphwarSmartPathfindingBuilder({
-    debug: { addWorkerTimings: () => undefined },
+    debug: {
+      addWorkerTimings: () => undefined,
+      recordAttempt: controls.recordAttempt ?? (() => undefined),
+    },
     effects: {
       flashBlockedPoint: () => undefined,
       flashBlockedSegment: () => undefined,
@@ -118,11 +193,12 @@ function createBuilder(
     },
     pathfinding: {
       cache: {
-        cacheSmartPathfindingResult: () => undefined,
+        cacheSmartPathfindingResult: controls.cacheResult ?? (() => undefined),
         createSmartPathfindingResultCacheKey: (input) => String(input.targetPoint.x),
-        getCachedSmartPathfindingResult: () => undefined,
+        getCachedSmartPathfindingResult: controls.getCachedResult ?? (() => undefined),
         getMaskCacheId: () => 1,
       },
+      isResultCacheEnabled: () => controls.isResultCacheEnabled ?? true,
       runner: { findSmartPath },
     },
     preview: {

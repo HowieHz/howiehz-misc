@@ -41,12 +41,12 @@ describe("Graphwar pathfinding runner incumbents", () => {
   it("preserves the deletion preference in the cloned Worker request", async () => {
     const runner = createGraphwarPathfindingRunner();
     const input = createInput();
-    input.deleteOptimizationEnabled = true;
+    input.isDeleteOptimizationEnabled = true;
     const resultPromise = runner.buildOneClickClearPath(input);
     const worker = getWorker(0);
     const request = getOneClickClearRequest(worker, 0);
 
-    expect(request.task.input.deleteOptimizationEnabled).toBe(true);
+    expect(request.task.input.isDeleteOptimizationEnabled).toBe(true);
     worker.emit({
       id: request.id,
       result: createResult(),
@@ -65,7 +65,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
     const request = getOneClickClearRequest(worker, 0);
     const incumbent = createIncumbent("target");
 
-    expect(request.task.reportIncumbents).toBe(true);
+    expect(request.task.shouldReportIncumbents).toBe(true);
     worker.emit({ id: request.id, incumbent, type: "one-click-clear-incumbent" });
 
     expect(onIncumbent).toHaveBeenCalledWith(incumbent);
@@ -226,7 +226,7 @@ function createInput(): GraphwarOneClickClearPathWorkerInput {
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     candidates: [],
     dagEdgeWorkerCount: 1,
-    deleteOptimizationEnabled: false,
+    isDeleteOptimizationEnabled: false,
     deleteHitCheckRadiusPixels: 0,
     hitCandidates: [],
     pathPoints: [createPixelPoint(100, 225)],

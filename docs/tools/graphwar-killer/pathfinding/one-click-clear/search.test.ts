@@ -244,9 +244,8 @@ describe("One-click clear optimization", () => {
         return {
           routes: request.jobs.map((job) => ({
             jobId: job.id,
-            resolvedEndStateKey: "0",
-            resolvedEndY: 0,
             route: [job.startPoint, job.targetPoint],
+            stepRouteEndState: { resolvedStateKey: "0", resolvedY: 0 },
           })),
           timings: [],
         };
@@ -457,9 +456,8 @@ describe("One-click clear optimization", () => {
         buildDagEdges: async (request) => ({
           routes: request.jobs.map((job) => ({
             jobId: job.id,
-            resolvedEndStateKey: "0",
-            resolvedEndY: 0,
             route: [job.startPoint, job.targetPoint],
+            stepRouteEndState: { resolvedStateKey: "0", resolvedY: 0 },
           })),
           timings: [],
         }),
@@ -710,9 +708,8 @@ describe("One-click clear optimization", () => {
       buildDagEdges: async (request) => ({
         routes: request.jobs.map((job) => ({
           jobId: job.id,
-          resolvedEndStateKey: "40000",
-          resolvedEndY: 4,
           route: [job.startPoint, middle, job.targetPoint],
+          stepRouteEndState: { resolvedStateKey: "40000", resolvedY: 4 },
         })),
         timings: [],
       }),

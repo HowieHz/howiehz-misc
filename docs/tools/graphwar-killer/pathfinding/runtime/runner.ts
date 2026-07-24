@@ -434,9 +434,15 @@ function cloneGraphwarOneClickClearDagEdgeBuildRequest(
     jobs: input.jobs.map((job) => ({
       from: job.from,
       id: job.id,
-      ...(job.resolvedStartStateKey === undefined ? {} : { resolvedStartStateKey: job.resolvedStartStateKey }),
-      ...(job.resolvedStartY === undefined ? {} : { resolvedStartY: job.resolvedStartY }),
       startPoint: clonePixelPoint(job.startPoint),
+      ...(job.stepRouteStartState
+        ? {
+            stepRouteStartState: {
+              resolvedStateKey: job.stepRouteStartState.resolvedStateKey,
+              resolvedY: job.stepRouteStartState.resolvedY,
+            },
+          }
+        : {}),
       targetPoint: clonePixelPoint(job.targetPoint),
       to: job.to,
     })),

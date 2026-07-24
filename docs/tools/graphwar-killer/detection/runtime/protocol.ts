@@ -58,13 +58,18 @@ export interface GraphwarBoundsDetectionInput extends GraphwarAutoDetectionInput
   edgeRect: BoundsRect;
 }
 
-/** 自动识别任务结果；找不到坐标系边界时只返回空 edgeRect。 */
-export interface GraphwarAutoDetectionResult {
-  /** 自动推断出的坐标系边界；undefined 表示未识别到坐标系边界。 */
-  edgeRect?: BoundsRect;
-  /** 坐标系边界存在时识别到的对象。 */
-  objects?: GraphwarObjectsDetectionResult;
-}
+/** 自动识别任务的互斥结果；对象只会与已识别的坐标系边界一同存在。 */
+export type GraphwarAutoDetectionResult =
+  | {
+      /** Undefined 明确表示未识别到坐标系边界。 */
+      edgeRect: undefined;
+    }
+  | {
+      /** 自动推断出的坐标系边界。 */
+      edgeRect: BoundsRect;
+      /** 在同一坐标系边界内识别到的对象。 */
+      objects: GraphwarObjectsDetectionResult;
+    };
 
 /** 只识别坐标系边界的结果；undefined 表示未识别到坐标系边界。 */
 export interface GraphwarBoundsOnlyDetectionResult {

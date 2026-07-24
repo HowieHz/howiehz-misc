@@ -1,12 +1,13 @@
 import { imageToGraphPoint } from "../../../core/geometry";
 /** 一键清图 DAG 边消费者 worker：初始化一次私有上下文，然后按需处理单条边。 */
-import { buildOneClickClearDagEdgeRoute } from "../../../pathfinding/one-click-clear/edge-route";
-import type { GraphwarPlaneMaskSummedArea } from "../../../pathfinding/routing/step-envelope";
+import {
+  buildOneClickClearDagEdgeRoute,
+  type GraphwarOneClickClearDagEdgeRouteBuildContext,
+} from "../../../pathfinding/one-click-clear/edge-route";
 import {
   createGraphwarStepRouteModel,
   createGraphwarStepRouteSummedArea,
 } from "../../../pathfinding/routing/step-route";
-import type { GraphwarStepRouteModel } from "../../../pathfinding/routing/step-route";
 import { createGraphwarThetaStarScratch } from "../../../pathfinding/routing/theta-star";
 import type { GraphwarThetaStarScratch } from "../../../pathfinding/routing/theta-star";
 import { createGraphwarVisibilityGraphObstacleData } from "../../../pathfinding/routing/visibility-graph";
@@ -32,12 +33,8 @@ const workerScope = self as unknown as GraphwarOneClickClearEdgeWorkerScope;
 
 /** 一键清图边 Worker 初始化后持有的只读搜索上下文。 */
 interface EdgeWorkerContext extends GraphwarOneClickClearEdgeWorkerInit {
-  /** Step 批次缺少状态化 runtime 时必须拒绝边，不能回退为 ABS 直线。 */
-  stepRouteRequired: boolean;
-  /** 本 worker 共用的 Step 数值模型。 */
-  stepRouteModel?: GraphwarStepRouteModel;
-  /** 本 worker 共用的 Step route mask 二维前缀和。 */
-  stepRouteSummedArea?: GraphwarPlaneMaskSummedArea;
+  /** 本 worker 共用的原子 Step runtime；ABS 批次省略。 */
+  stepRouteRuntime?: GraphwarOneClickClearDagEdgeRouteBuildContext["stepRouteRuntime"];
   /** 本 worker 私有 Theta* 工作区；同一批 DAG 边复用，避免每条边分配和清空全图数组。 */
   thetaStarScratch?: GraphwarThetaStarScratch;
   /** 本 worker 私有可视图 cache，绑定本 worker 自己收到的 routeMask 引用；Theta* 模式不需要。 */
@@ -75,11 +72,12 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
       );
       context = {
         ...request.context,
-        stepRouteRequired: request.context.settings.algorithm === "step",
         ...(stepRouteModel
           ? {
-              stepRouteModel,
-              stepRouteSummedArea: createGraphwarStepRouteSummedArea(request.context.routeMask),
+              stepRouteRuntime: {
+                model: stepRouteModel,
+                summedArea: createGraphwarStepRouteSummedArea(request.context.routeMask),
+              },
             }
           : {}),
         ...(thetaStarScratch ? { thetaStarScratch } : {}),

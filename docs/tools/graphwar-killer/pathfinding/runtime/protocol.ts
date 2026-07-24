@@ -13,6 +13,7 @@ import type {
   GraphwarOneClickClearIncumbent,
   GraphwarOneClickClearResult,
   GraphwarOneClickClearSearchInput,
+  GraphwarOneClickClearStepRouteState,
 } from "../one-click-clear/search";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
@@ -385,10 +386,8 @@ export interface GraphwarOneClickClearEdgeWorkerJobResult {
   routeMapPixelsElapsedMs: number;
   /** 已按截图像素映射且首尾替换为精确控制点的路线。 */
   route?: PixelPoint[];
-  /** Step 路线终点的实际累计高度；ABS 结果保持 undefined。 */
-  resolvedEndY?: number;
-  /** Step 路线终点的 canonical 打印系数累计身份。 */
-  resolvedEndStateKey?: string;
+  /** Step 路线逐段解析后的原子终点状态；ABS 结果省略。 */
+  stepRouteEndState?: GraphwarOneClickClearStepRouteState;
 }
 
 /** Edge Worker 发回 master Worker 的消息。 */

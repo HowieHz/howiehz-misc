@@ -16,6 +16,14 @@ import type { GraphwarOneClickClearEdgeWorkerJobResult } from "../runtime/protoc
 /** 一键清图 DAG 单边建路；master 串行 fallback 和 edge Worker 并行消费者共用同一条路线规则。 */
 import type { GraphwarOneClickClearDagEdgeBuildJob } from "./search";
 
+/** Step 单边建路批次共享的数值模型和 route mask 查询材料。 */
+export interface GraphwarOneClickClearStepRouteBuildRuntime {
+  /** 当前公式设置解析出的 Step 数值模型。 */
+  model: GraphwarStepRouteModel;
+  /** 与当前 route mask 同生命周期的二维前缀和。 */
+  summedArea: GraphwarPlaneMaskSummedArea;
+}
+
 /** 单边建路所需的共享上下文；可视图轮廓 cache 的生命周期由调用方控制。 */
 export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   /** 当前 Graphwar 坐标边界。 */
@@ -26,12 +34,8 @@ export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** True 时缺少完整 Step runtime 应直接把边判为不可用。 */
-  stepRouteRequired: boolean;
-  /** Step 批次共用的数值模型；ABS 批次保持 undefined。 */
-  stepRouteModel?: GraphwarStepRouteModel;
-  /** Step 批次共用的 route mask 二维前缀和。 */
-  stepRouteSummedArea?: GraphwarPlaneMaskSummedArea;
+  /** Step 批次共用的原子 runtime；ABS 批次省略。 */
+  stepRouteRuntime?: GraphwarOneClickClearStepRouteBuildRuntime;
   /** 几何路线算法模式；和单目标路径规划共用页面上的寻路算法选择。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
@@ -53,14 +57,16 @@ export async function buildOneClickClearDagEdgeRoute(
   context: GraphwarOneClickClearDagEdgeRouteBuildContext,
   job: GraphwarOneClickClearDagEdgeBuildJob,
 ): Promise<GraphwarOneClickClearEdgeWorkerJobResult> {
-  const stepRoute = createOneClickClearStepRouteRuntime(context, job);
-  if (context.stepRouteRequired && !stepRoute) {
+  const hasStepRouteRuntime = context.stepRouteRuntime !== undefined;
+  const hasStepRouteStartState = job.stepRouteStartState !== undefined;
+  if (hasStepRouteRuntime !== hasStepRouteStartState) {
     return {
       jobId: job.id,
       routeMapPixelsElapsedMs: 0,
       routePathfindingElapsedMs: 0,
     };
   }
+  const stepRoute = createOneClickClearStepRouteRuntime(context, job);
 
   const pathfindingStartedAt = nowMs();
   const route =
@@ -133,7 +139,7 @@ export async function buildOneClickClearDagEdgeRoute(
       points: pixelRoute,
       summedArea: stepRoute.summedArea,
     });
-    if (!validation.ok || validation.resolvedEndY === undefined) {
+    if (!validation.ok) {
       return {
         jobId: job.id,
         routeMapPixelsElapsedMs,
@@ -142,8 +148,14 @@ export async function buildOneClickClearDagEdgeRoute(
     }
     return {
       jobId: job.id,
-      ...(validation.routeStateKey === undefined ? {} : { resolvedEndStateKey: validation.routeStateKey }),
-      resolvedEndY: validation.resolvedEndY,
+      ...(validation.routeStateKey === undefined
+        ? {}
+        : {
+            stepRouteEndState: {
+              resolvedStateKey: validation.routeStateKey,
+              resolvedY: validation.resolvedEndY,
+            },
+          }),
       route: pixelRoute,
       routeMapPixelsElapsedMs,
       routePathfindingElapsedMs,
@@ -162,19 +174,13 @@ function createOneClickClearStepRouteRuntime(
   context: GraphwarOneClickClearDagEdgeRouteBuildContext,
   job: GraphwarOneClickClearDagEdgeBuildJob,
 ) {
-  const model = context.stepRouteModel;
-  const summedArea = context.stepRouteSummedArea;
-  const resolvedStartY = job.resolvedStartY;
-  const resolvedStartStateKey = job.resolvedStartStateKey;
-  if (
-    !model ||
-    !summedArea ||
-    resolvedStartY === undefined ||
-    !Number.isFinite(resolvedStartY) ||
-    resolvedStartStateKey === undefined
-  ) {
+  const runtime = context.stepRouteRuntime;
+  const startState = job.stepRouteStartState;
+  if (!runtime || !startState) {
     return undefined;
   }
+  const { model, summedArea } = runtime;
+  const { resolvedStateKey: resolvedStartStateKey, resolvedY: resolvedStartY } = startState;
   return {
     model,
     resolvedStartStateKey,

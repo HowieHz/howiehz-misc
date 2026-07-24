@@ -400,10 +400,6 @@ async function findSmartPathResult(
         timings,
       };
     }
-    if (prefixValidation.resolvedEndY === undefined) {
-      return { failureReason: "route", timings };
-    }
-
     stepContext = {
       model,
       summedArea: routeMaskLookup.summedArea,
@@ -1458,11 +1454,12 @@ function createOneClickClearSerialRouteContext(
     routeMask: input.routeMask,
     routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-    stepRouteRequired: input.settings.algorithm === "step",
     ...(stepRouteModel
       ? {
-          stepRouteModel,
-          stepRouteSummedArea: getOrCreateMasterStepSummedArea(input.routeMask),
+          stepRouteRuntime: {
+            model: stepRouteModel,
+            summedArea: getOrCreateMasterStepSummedArea(input.routeMask),
+          },
         }
       : {}),
     ...(thetaStarScratch ? { thetaStarScratch } : {}),
@@ -1527,14 +1524,13 @@ function collectOneClickClearDagEdgeBatchRoutes(batch: OneClickClearDagEdgeBatch
 
 /** 把单边 worker 结果合并回 DAG 边结果；默认没有 route 表示不可达边，jobId 仍用于稳定匹配边。 */
 function createOneClickClearDagEdgeRoute(
-  result: Pick<GraphwarOneClickClearEdgeWorkerJobResult, "jobId" | "resolvedEndStateKey" | "resolvedEndY" | "route">,
+  result: Pick<GraphwarOneClickClearEdgeWorkerJobResult, "jobId" | "route" | "stepRouteEndState">,
 ): GraphwarOneClickClearDagEdgeRoute {
   return result.route
     ? {
         jobId: result.jobId,
-        ...(result.resolvedEndStateKey === undefined ? {} : { resolvedEndStateKey: result.resolvedEndStateKey }),
-        ...(result.resolvedEndY === undefined ? {} : { resolvedEndY: result.resolvedEndY }),
         route: result.route,
+        ...(result.stepRouteEndState ? { stepRouteEndState: result.stepRouteEndState } : {}),
       }
     : { jobId: result.jobId };
 }

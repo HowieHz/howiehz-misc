@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { createPixelPoint } from "../../core/types";
+import { createGraphwarStepRouteModel, createGraphwarStepRouteSummedArea } from "../routing/step-route";
 
 const mocks = vi.hoisted(() => ({
   buildVisibilityRoute: vi.fn(),
@@ -22,7 +23,6 @@ const context = {
   routeMask: new Uint8Array(770 * 450),
   routeMode: "visibility-graph" as const,
   routeTolerancePlanePixels: 0,
-  stepRouteRequired: false,
 };
 
 describe("one-click-clear DAG edge native forward distance", () => {
@@ -72,6 +72,47 @@ describe("one-click-clear DAG edge native forward distance", () => {
       createPixelPoint(103, 225),
     ]);
   });
+
+  it("returns an atomic Step end state for a job with matching runtime", async () => {
+    mocks.buildVisibilityRoute.mockResolvedValue([
+      { x: 100, y: 224 },
+      { x: 101, y: 224 },
+      { x: 103, y: 224 },
+    ]);
+    const result = await buildOneClickClearDagEdgeRoute(
+      {
+        ...context,
+        stepRouteRuntime: createStepRouteRuntime(),
+      },
+      {
+        ...createJob(100.4, 103),
+        stepRouteStartState: { resolvedStateKey: "0", resolvedY: 0 },
+      },
+    );
+
+    expect(result.stepRouteEndState).toEqual({ resolvedStateKey: "0", resolvedY: 0 });
+  });
+
+  it.each([
+    {
+      name: "runtime is unavailable",
+      stepRouteRuntime: undefined,
+      stepRouteStartState: { resolvedStateKey: "0", resolvedY: 0 },
+    },
+    {
+      name: "start state is unavailable",
+      stepRouteRuntime: createStepRouteRuntime(),
+      stepRouteStartState: undefined,
+    },
+  ])("rejects a Step half-state when $name", async ({ stepRouteRuntime, stepRouteStartState }) => {
+    const result = await buildOneClickClearDagEdgeRoute(
+      { ...context, ...(stepRouteRuntime ? { stepRouteRuntime } : {}) },
+      { ...createJob(100.4, 103), ...(stepRouteStartState ? { stepRouteStartState } : {}) },
+    );
+
+    expect(mocks.buildVisibilityRoute).not.toHaveBeenCalled();
+    expect(result.route).toBeUndefined();
+  });
 });
 
 /** 创建只携带单边建路必需字段的测试 job。 */
@@ -82,5 +123,22 @@ function createJob(startX: number, targetX: number): GraphwarOneClickClearDagEdg
     startPoint: createPixelPoint(startX, 225),
     targetPoint: createPixelPoint(targetX, 225),
     to: 0,
+  };
+}
+
+/** 创建测试共享的完整 Step runtime；无效测试设置应立即暴露。 */
+function createStepRouteRuntime() {
+  const model = createGraphwarStepRouteModel(0, {
+    algorithm: "step",
+    decimalPlaces: 2,
+    equation: "y",
+    steepness: 1,
+  });
+  if (!model) {
+    throw new Error("Expected valid Step route model");
+  }
+  return {
+    model,
+    summedArea: createGraphwarStepRouteSummedArea(context.routeMask),
   };
 }

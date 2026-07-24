@@ -57,6 +57,8 @@ interface PendingWorkerTask {
   reject: (reason?: unknown) => void;
   /** Promise 成功回调。 */
   resolve: (value: GraphwarDetectionWorkerSuccessResponse["result"]) => void;
+  /** 当前请求的任务类型；成功响应必须与它一致。 */
+  taskType: GraphwarDetectionWorkerRequest["task"]["type"];
 }
 
 /** 创建页面可复用的检测 runner。 */
@@ -167,6 +169,7 @@ export function createGraphwarDetectionRunner() {
         onTimings: options?.onTimings,
         reject,
         resolve: resolve as PendingWorkerTask["resolve"],
+        taskType: request.task.type,
       };
       try {
         const cloneableRequest = cloneGraphwarDetectionWorkerRequest(request);
@@ -215,6 +218,18 @@ export function createGraphwarDetectionRunner() {
     if (response.type === "error") {
       completedTask.reject(new Error(response.message));
       return;
+    }
+    if (response.taskType !== completedTask.taskType) {
+      completedTask.reject(new Error("Detection Worker returned a mismatched task result"));
+      return;
+    }
+    if (response.taskType === "detect-auto") {
+      const hasEdgeRect = response.result.edgeRect !== undefined;
+      const hasObjects = "objects" in response.result && response.result.objects !== undefined;
+      if (hasEdgeRect !== hasObjects) {
+        completedTask.reject(new Error("Detection Worker returned incomplete auto-detection results"));
+        return;
+      }
     }
     completedTask.onTimings?.(response.timings);
     completedTask.resolve(response.result);

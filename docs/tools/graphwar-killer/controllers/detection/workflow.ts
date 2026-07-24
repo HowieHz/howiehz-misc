@@ -408,7 +408,7 @@ export function useGraphwarDetectionWorkflow(
       if (!isActiveRun(activeRunId)) {
         return;
       }
-      if (!result.edgeRect || !result.objects) {
+      if (!result.edgeRect) {
         clearDetectedObjects();
         setStatus(options.getLocale().status.detection.noBounds, "error");
         return;

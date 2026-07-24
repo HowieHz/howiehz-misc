@@ -117,16 +117,22 @@ export interface GraphwarOneClickClearDebugTiming {
   detail?: GraphwarOneClickClearDebugDetail;
 }
 
+/** Step DAG 节点在相邻边之间传递的原子公式平台状态。 */
+export interface GraphwarOneClickClearStepRouteState {
+  /** Canonical 打印系数累计身份。 */
+  resolvedStateKey: string;
+  /** 实际累计高度。 */
+  resolvedY: number;
+}
+
 /** 一键清图 DAG 边批量建路 job；按生成顺序合并结果，保证 edge id 稳定。 */
 export interface GraphwarOneClickClearDagEdgeBuildJob {
   /** 稳定 job id。 */
   id: number;
   /** 本边起点的具体 DAG node id；START 使用固定虚拟 node id。 */
   from: number;
-  /** Step 本边开始前的实际累计高度；ABS 建路忽略该字段。 */
-  resolvedStartY?: number;
-  /** Step 本边开始前的 canonical 打印系数累计身份。 */
-  resolvedStartStateKey?: string;
+  /** Step 本边开始前的原子公式平台状态；ABS 建路省略。 */
+  stepRouteStartState?: GraphwarOneClickClearStepRouteState;
   /** 本边起点，截图像素坐标。 */
   startPoint: PixelPoint;
   /** 本边几何建路终点，截图像素坐标。 */
@@ -174,10 +180,8 @@ export interface GraphwarOneClickClearDagEdgeBuildResult {
 export interface GraphwarOneClickClearDagEdgeRoute {
   /** 对应 job id。 */
   jobId: number;
-  /** Step route 逐段解析后的实际累计高度；ABS 建路不返回该字段。 */
-  resolvedEndY?: number;
-  /** Step route 终点的 canonical 打印系数累计身份。 */
-  resolvedEndStateKey?: string;
+  /** Step route 逐段解析后的原子终点状态；ABS 建路不返回该字段。 */
+  stepRouteEndState?: GraphwarOneClickClearStepRouteState;
   /** 已按截图像素映射且首尾替换为精确控制点的几何路径。 */
   route?: PixelPoint[];
 }
@@ -338,10 +342,8 @@ interface OneClickClearDagEdge {
 interface OneClickClearDagNode {
   /** 稳定 node id；边和 DP 都只引用该 id。 */
   id: number;
-  /** Step 到达该目标后的实际累计高度；ABS 节点不需要状态。 */
-  resolvedY?: number;
-  /** Step 到达该目标后的 canonical 打印系数累计身份。 */
-  resolvedStateKey?: string;
+  /** Step 到达该目标后的原子公式平台状态；ABS 节点不需要状态。 */
+  stepRouteState?: GraphwarOneClickClearStepRouteState;
   /** 本节点对应的目标士兵下标。 */
   targetIndex: number;
 }
@@ -372,18 +374,24 @@ interface OneClickClearBestEntry {
   verticalVariation: number;
 }
 
-/** 通过公式回放的路径、目标序列和可选公式上下文。 */
-interface OneClickClearValidatedRoute {
-  /** 最后一次段验证已经构造的精确公式上下文；路径变更后必须丢弃。 */
-  formulaContext?: GraphwarTrajectoryFormulaContext;
+/** 同一次公式回放产生、可直接构造 incumbent 的原子证据。 */
+interface OneClickClearIncumbentEvidence {
+  /** 已构造的精确公式上下文。 */
+  formulaContext: GraphwarTrajectoryFormulaContext;
+  /** 与公式上下文来自同一次回放的可绘制轨迹。 */
+  trajectoryPoints: PixelPoint[];
+}
+
+/** 一键清图候选路线、目标序列和可选权威验证证据。 */
+interface OneClickClearRoute {
+  /** 路径未改变时可直接构造 incumbent 的权威证据。 */
+  incumbentEvidence?: OneClickClearIncumbentEvidence;
   /** 最终整路回放的普通控制点最大误差；只用于同业务指标 incumbent 的末级排序。 */
   pathError?: number;
   /** 当前清图结果的完整路径。 */
   pathPoints: PixelPoint[];
   /** 已按 DAG 序列验证命中的目标。 */
   targetSequence: OneClickClearTarget[];
-  /** 与 formulaContext 同一次验证得到的可绘制轨迹；路径变更时必须一并丢弃。 */
-  trajectoryPoints?: PixelPoint[];
 }
 
 /** 最终回放中需记录命中时刻的目标。 */
@@ -401,15 +409,20 @@ interface OneClickClearHitTarget extends OneClickClearTrackedTarget {
   hitSamplePointCount: number;
 }
 
-/** DAG 路线验证结果及失败边统计。 */
-interface OneClickClearRouteValidationResult {
-  /** 失败的边；存在时调用方应删除该边并重新跑 DP。 */
-  failedEdge?: OneClickClearDagEdge;
-  /** 验证成功的完整路线。 */
-  route?: OneClickClearValidatedRoute;
-  /** 本轮验证做过的公式模拟次数。 */
-  validationCount: number;
-}
+/** DAG 路线验证的互斥结果及本轮公式模拟次数。 */
+type OneClickClearRouteValidationResult =
+  | {
+      /** 失败的边；调用方应删除该边并重新跑 DP。 */
+      failedEdge: OneClickClearDagEdge;
+      type: "failed";
+      validationCount: number;
+    }
+  | {
+      /** 验证成功的完整路线。 */
+      route: OneClickClearRoute;
+      type: "validated";
+      validationCount: number;
+    };
 
 /** 可供下一条 DAG 候选恢复的已验证前缀快照。 */
 interface OneClickClearRouteValidationSnapshot {
@@ -427,7 +440,7 @@ interface OneClickClearRouteValidationSnapshot {
 interface OneClickClearPathOptimizationResult {
   /** 局部快检删点后的精确路径若已完整复验，调用方可直接复用结果及其公式上下文。 */
   finalValidation?: ReturnType<typeof sampleOneClickClearTargetSequence>;
-  route: OneClickClearValidatedRoute;
+  route: OneClickClearRoute;
   workUnits: number;
 }
 
@@ -449,7 +462,7 @@ type OneClickClearSearchAttemptResult =
     }
   | {
       /** 已通过增量验证、删点优化和最终整路复验的路线。 */
-      route: OneClickClearValidatedRoute;
+      route: OneClickClearRoute;
       /** 最终整路复验同一次回放统计出的全部实际命中。 */
       hitTargets: OneClickClearHitTarget[];
       type: "validated";
@@ -469,16 +482,22 @@ interface OneClickClearSearchContext {
   routeValidationPrefix?: OneClickClearRouteValidationSnapshot[];
 }
 
-/** 增量验证下一条边时可恢复的轨迹状态。 */
-interface OneClickClearRouteSegmentValidationState {
+/** ABS 增量验证可续播的物理状态及其同次历史证据。 */
+interface OneClickClearRouteResumeEvidence {
   /** 上一个增量采样段结束时可恢复的物理状态。 */
-  initialState?: GraphwarTrajectorySamplingState;
+  initialState: GraphwarTrajectorySamplingState;
   /** 物理状态只对生成它的局部 sign 保护集合有效。 */
-  signProtection?: GraphwarSignProtection;
+  signProtection: GraphwarSignProtection;
   /** 已验证前缀的普通控制点最大路径误差；续播后与新增段误差取最大值。 */
   pathError?: number;
   /** ABS 从物理状态续播时已经验证过的可绘制轨迹前缀。 */
-  trajectoryPoints?: PixelPoint[];
+  trajectoryPoints: PixelPoint[];
+}
+
+/** 增量验证下一条边时的可选原子续播证据。 */
+interface OneClickClearRouteSegmentValidationState {
+  /** 没有完整物理状态时省略，后续边从发射点重新回放。 */
+  resumeEvidence?: OneClickClearRouteResumeEvidence;
 }
 
 /** 单条新增边的公式上下文和采样结果。 */
@@ -601,7 +620,7 @@ async function buildOneClickClearStepGlitchPath(
     bounds: options.bounds,
     simulationMask,
   });
-  let route: OneClickClearValidatedRoute = {
+  let route: OneClickClearRoute = {
     pathPoints: [...options.pathPoints],
     targetSequence: [],
   };
@@ -644,13 +663,19 @@ async function buildOneClickClearStepGlitchPath(
     if (scan.status === "hit") {
       acceptedLayerGraphX = target.sortGraphX;
       route = {
-        ...(scan.formulaContext ? { formulaContext: scan.formulaContext } : {}),
+        ...(scan.formulaContext
+          ? {
+              incumbentEvidence: {
+                formulaContext: scan.formulaContext,
+                trajectoryPoints: scan.trajectoryPoints,
+              },
+            }
+          : {}),
         pathPoints: scan.path,
         targetSequence: [...route.targetSequence, target],
-        trajectoryPoints: scan.trajectoryPoints,
       };
       // hit 已包含精确整式模拟；此时发布不会为了预览再做一次昂贵采样。
-      if (route.formulaContext) {
+      if (route.incumbentEvidence) {
         publishOneClickClearValidatedRoute(context, route);
       }
       // 成功候选已完整模拟；下一目标复用 exact path 的恢复点，不再重算刚提交的 prefix。
@@ -682,13 +707,15 @@ async function buildOneClickClearStepGlitchPath(
   }
   const finalRoute = {
     ...finalized.route,
-    formulaContext: finalValidation.formulaContext,
+    incumbentEvidence: {
+      formulaContext: finalValidation.formulaContext,
+      trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+        finalValidation.visiblePixels,
+        finalValidation.obstacleHitIndex,
+        options.debugMetrics,
+      ),
+    },
     ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
-    trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
-      finalValidation.visiblePixels,
-      finalValidation.obstacleHitIndex,
-      options.debugMetrics,
-    ),
   };
   publishOneClickClearValidatedRoute(context, finalRoute);
 
@@ -740,21 +767,14 @@ async function runOneClickClearSearchAttempt(
     validateOneClickClearDagRoute(context, dag, selectedEdges),
   );
   const nextWorkUnits = workUnits + validation.validationCount;
-  const validatedRoute = validation.route;
-  if (!validatedRoute) {
-    // 增量验证失败时优先返回精确失败边；没有失败边代表 DAG 已无法提供可用路线。
-    return validation.failedEdge
-      ? {
-          failedEdge: validation.failedEdge,
-          type: "retry",
-          workUnits: nextWorkUnits,
-        }
-      : {
-          reason: "no-usable-target",
-          type: "failure",
-          workUnits: nextWorkUnits,
-        };
+  if (validation.type === "failed") {
+    return {
+      failedEdge: validation.failedEdge,
+      type: "retry",
+      workUnits: nextWorkUnits,
+    };
   }
+  const validatedRoute = validation.route;
 
   // 即使关闭删点也保留最终整路复验；它负责裁决后缀对本轮先前目标和碰撞的影响。
   const optimized =
@@ -780,13 +800,15 @@ async function runOneClickClearSearchAttempt(
       ),
       route: {
         ...optimized.route,
-        formulaContext: finalValidation.formulaContext,
+        incumbentEvidence: {
+          formulaContext: finalValidation.formulaContext,
+          trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+            finalValidation.visiblePixels,
+            finalValidation.obstacleHitIndex,
+            options.debugMetrics,
+          ),
+        },
         ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
-        trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
-          finalValidation.visiblePixels,
-          finalValidation.obstacleHitIndex,
-          options.debugMetrics,
-        ),
       },
       type: "validated",
       workUnits: optimized.workUnits,
@@ -994,13 +1016,12 @@ async function buildOneClickClearStepDag(
     const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route]));
     for (const job of jobs) {
       const builtRoute = routesByJobId.get(job.id);
-      const resolvedEndY = builtRoute?.resolvedEndY;
-      const resolvedEndStateKey = builtRoute?.resolvedEndStateKey;
+      const stepRouteEndState = builtRoute?.stepRouteEndState;
       if (
         !builtRoute?.route ||
-        resolvedEndY === undefined ||
-        !Number.isFinite(resolvedEndY) ||
-        resolvedEndStateKey === undefined
+        !stepRouteEndState ||
+        stepRouteEndState.resolvedStateKey === undefined ||
+        !Number.isFinite(stepRouteEndState.resolvedY)
       ) {
         continue;
       }
@@ -1011,17 +1032,16 @@ async function buildOneClickClearStepDag(
       if (!stateNodes || !targetNodes) {
         continue;
       }
-      let targetNode = stateNodes.get(resolvedEndStateKey);
+      let targetNode = stateNodes.get(stepRouteEndState.resolvedStateKey);
       if (!targetNode) {
         targetNode = {
           id: nodes.length,
-          resolvedStateKey: resolvedEndStateKey,
-          resolvedY: resolvedEndY,
+          stepRouteState: stepRouteEndState,
           targetIndex: job.to,
         };
         nodes.push(targetNode);
         targetNodes.push(targetNode);
-        stateNodes.set(resolvedEndStateKey, targetNode);
+        stateNodes.set(stepRouteEndState.resolvedStateKey, targetNode);
       }
       addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, builtRoute.route);
     }
@@ -1036,9 +1056,8 @@ async function buildOneClickClearStepDag(
     startJobs.push({
       from: START_NODE_INDEX,
       id: nextJobId,
-      resolvedStartStateKey: startState.resolvedStateKey,
-      resolvedStartY: startState.resolvedY,
       startPoint,
+      stepRouteStartState: startState,
       targetPoint: target.routePoint,
       to: targetIndex,
     });
@@ -1061,9 +1080,8 @@ async function buildOneClickClearStepDag(
         continue;
       }
       for (const sourceNode of nodesByTargetIndex[sourceTargetIndex] ?? []) {
-        const resolvedStartY = sourceNode.resolvedY;
-        const resolvedStartStateKey = sourceNode.resolvedStateKey;
-        if (resolvedStartY === undefined || !Number.isFinite(resolvedStartY) || resolvedStartStateKey === undefined) {
+        const stepRouteStartState = sourceNode.stepRouteState;
+        if (!stepRouteStartState) {
           continue;
         }
         for (let targetIndex = layerEnd; targetIndex < targets.length; targetIndex += 1) {
@@ -1074,9 +1092,8 @@ async function buildOneClickClearStepDag(
           jobs.push({
             from: sourceNode.id,
             id: nextJobId,
-            resolvedStartStateKey,
-            resolvedStartY,
             startPoint: sourceTarget.routePoint,
+            stepRouteStartState,
             targetPoint: target.routePoint,
             to: targetIndex,
           });
@@ -1327,9 +1344,8 @@ function validateOneClickClearDagRoute(
 
   const reused = sharedPrefixLength > 0 ? cachedPrefix[sharedPrefixLength - 1] : undefined;
   let pathPoints = reused ? [...reused.pathPoints] : [...context.options.pathPoints];
-  let formulaContext: GraphwarTrajectoryFormulaContext | undefined;
+  let incumbentEvidence: OneClickClearIncumbentEvidence | undefined;
   let pathError: number | undefined;
-  let trajectoryPoints = reused?.segmentState.trajectoryPoints;
   let segmentState: OneClickClearRouteSegmentValidationState = reused ? { ...reused.segmentState } : {};
   const targetSequence: OneClickClearTarget[] = reused ? [...reused.targetSequence] : [];
   const validatedPrefix = cachedPrefix.slice(0, sharedPrefixLength);
@@ -1337,15 +1353,11 @@ function validateOneClickClearDagRoute(
 
   for (let edgeIndex = sharedPrefixLength; edgeIndex < edges.length; edgeIndex += 1) {
     const edge = edges[edgeIndex];
-    if (!edge) {
-      context.routeValidationPrefix = validatedPrefix;
-      return { validationCount };
-    }
     const targetNode = dag.nodes[edge.to];
     const target = targetNode ? dag.targets[targetNode.targetIndex] : undefined;
     if (!targetNode || !target) {
       context.routeValidationPrefix = validatedPrefix;
-      return { failedEdge: edge, validationCount };
+      return { failedEdge: edge, type: "failed", validationCount };
     }
 
     // 边 route 首点已经是当前路径尾点，追加时必须跳过。
@@ -1354,19 +1366,26 @@ function validateOneClickClearDagRoute(
     const validation = validateOneClickClearRouteSegment(context, nextPath, [...targetSequence, target], segmentState);
     if (!validation) {
       context.routeValidationPrefix = validatedPrefix;
-      return { failedEdge: edge, validationCount };
+      return { failedEdge: edge, type: "failed", validationCount };
     }
 
     pathPoints = nextPath;
-    formulaContext = validation.formulaContext;
     pathError = validation.sampleResult.pathError;
-    trajectoryPoints = validation.trajectoryPoints;
-    segmentState = {
-      ...(validation.sampleResult.sample.endState ? { initialState: validation.sampleResult.sample.endState } : {}),
-      ...(pathError === undefined ? {} : { pathError }),
-      signProtection: validation.formulaContext.signProtection,
-      trajectoryPoints,
+    incumbentEvidence = {
+      formulaContext: validation.formulaContext,
+      trajectoryPoints: validation.trajectoryPoints,
     };
+    const endState = validation.sampleResult.sample.endState;
+    segmentState = endState
+      ? {
+          resumeEvidence: {
+            initialState: endState,
+            ...(pathError === undefined ? {} : { pathError }),
+            signProtection: validation.formulaContext.signProtection,
+            trajectoryPoints: validation.trajectoryPoints,
+          },
+        }
+      : {};
     targetSequence.push(target);
     validatedPrefix.push({
       edgeId: edge.id,
@@ -1376,11 +1395,10 @@ function validateOneClickClearDagRoute(
     });
     // 独立前缀已被本次 segment 回放证明，后续边失败不会使它失效。
     publishOneClickClearValidatedRoute(context, {
-      formulaContext,
+      incumbentEvidence,
       ...(pathError === undefined ? {} : { pathError }),
       pathPoints,
       targetSequence,
-      trajectoryPoints,
     });
   }
 
@@ -1388,12 +1406,12 @@ function validateOneClickClearDagRoute(
 
   return {
     route: {
-      ...(formulaContext ? { formulaContext } : {}),
+      ...(incumbentEvidence ? { incumbentEvidence } : {}),
       ...(pathError === undefined ? {} : { pathError }),
       pathPoints,
       targetSequence,
-      ...(trajectoryPoints ? { trajectoryPoints } : {}),
     },
+    type: "validated",
     validationCount,
   };
 }
@@ -1424,16 +1442,18 @@ function validateOneClickClearRouteSegment(
   if (!currentTarget) {
     return undefined;
   }
-  const reusableInitialState =
+  const resumeEvidence = state.resumeEvidence;
+  const reusableEvidence =
     options.settings.algorithm === "abs" &&
     options.settings.equation !== "ddy" &&
-    state.initialState &&
+    resumeEvidence &&
     graphXAdvancesStrictly(
-      state.initialState.currentPoint.x,
+      resumeEvidence.initialState.currentPoint.x,
       imageToGraphPoint(currentTarget.routePoint, options.bounds, options.boundsRect).x,
     )
-      ? state.initialState
+      ? resumeEvidence
       : undefined;
+  const reusableInitialState = reusableEvidence?.initialState;
   const validationTargets = createOneClickClearValidationTargets(options, targetSequence, true);
   const targetControlPoints = createOneClickClearTargetControlPoints(options, targetSequence);
   const qualityPoints = mappedPoints.filter((_point, index) => {
@@ -1463,7 +1483,7 @@ function validateOneClickClearRouteSegment(
         : qualityPoints,
       requiredTargets: validationTargets.requiredTargets,
       settings: options.settings,
-      signProtection: reusableInitialState ? state.signProtection : undefined,
+      signProtection: reusableEvidence?.signProtection,
       skipInitialStop: reusableInitialState !== undefined,
       soldierCenter: mappedPoints[0],
       targetSequence: validationTargets.orderedTargets,
@@ -1490,8 +1510,8 @@ function validateOneClickClearRouteSegment(
   let pathError = isResumedFromRequestedState
     ? result.pathError
     : measureGraphwarFormulaPathError(result.sample.points, qualityPoints, options.bounds);
-  if (isResumedFromRequestedState && state.pathError !== undefined) {
-    pathError = pathError === undefined ? state.pathError : Math.max(state.pathError, pathError);
+  if (isResumedFromRequestedState && reusableEvidence?.pathError !== undefined) {
+    pathError = pathError === undefined ? reusableEvidence.pathError : Math.max(reusableEvidence.pathError, pathError);
   }
   const sampleResult = pathError === undefined ? result : { ...result, pathError };
   const sampledTrajectoryPoints = snapshotGraphwarVisibleTrajectoryPoints(
@@ -1500,13 +1520,16 @@ function validateOneClickClearRouteSegment(
     options.debugMetrics,
   );
   const trajectoryPoints =
-    isResumedFromRequestedState && state.trajectoryPoints
+    isResumedFromRequestedState && reusableEvidence
       ? [
-          ...state.trajectoryPoints,
+          ...reusableEvidence.trajectoryPoints,
           ...sampledTrajectoryPoints.slice(
-            state.trajectoryPoints.length > 0 &&
+            reusableEvidence.trajectoryPoints.length > 0 &&
               sampledTrajectoryPoints.length > 0 &&
-              pixelPointsEqual(state.trajectoryPoints[state.trajectoryPoints.length - 1], sampledTrajectoryPoints[0])
+              pixelPointsEqual(
+                reusableEvidence.trajectoryPoints[reusableEvidence.trajectoryPoints.length - 1],
+                sampledTrajectoryPoints[0],
+              )
               ? 1
               : 0,
           ),
@@ -1538,7 +1561,7 @@ function oneClickClearStepRouteIsValid(options: GraphwarOneClickClearOptions, pa
 /** 返回整条弹道复验结果；routePoint 提供目标采样点，hitCircle 提供真实命中半径。 */
 function sampleOneClickClearTargetSequence(
   options: GraphwarOneClickClearOptions,
-  route: Pick<OneClickClearValidatedRoute, "pathPoints" | "targetSequence">,
+  route: Pick<OneClickClearRoute, "pathPoints" | "targetSequence">,
   trackActualHits = false,
 ) {
   const validationTargets = createOneClickClearValidationTargets(options, route.targetSequence, true);
@@ -1660,7 +1683,7 @@ function createOneClickClearPreviousTargets(targetSequence: readonly OneClickCle
 /** 最终统计模拟已经证明 exact path；只在整次清图成功时把它交给 Master 发布。 */
 function publishOneClickClearStepGlitchEvidence(
   options: GraphwarOneClickClearOptions,
-  route: OneClickClearValidatedRoute,
+  route: OneClickClearRoute,
   validation: ReturnType<typeof sampleOneClickClearTargetSequence>,
   stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix | undefined,
 ) {
@@ -1685,7 +1708,7 @@ function publishOneClickClearStepGlitchEvidence(
 /** 发布自然 hit 的精确恢复证据；exact path key 让未被页面采用的证据自然失配。 */
 function publishOneClickClearStepGlitchHitEvidence(
   options: GraphwarOneClickClearOptions,
-  route: OneClickClearValidatedRoute,
+  route: OneClickClearRoute,
   acceptedPoint: GraphPoint,
   stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix | undefined,
 ) {
@@ -1728,7 +1751,7 @@ function appendOneClickClearTargetCircle(
  *
  * 这里仅从现有控制点生成公式，不采样轨迹或统计顺路命中；动画因此不会增加搜索验证工作。
  */
-function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext, route: OneClickClearValidatedRoute) {
+function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext, route: OneClickClearRoute) {
   const targetCount = route.targetSequence.length;
   if (targetCount === 0 || targetCount < context.bestValidatedTargetCount) {
     return;
@@ -1762,26 +1785,27 @@ function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext,
 /** 从已验证路径生成不可变 shot plan；公式和角度共享同一份数值上下文。 */
 function createOneClickClearIncumbent(
   options: GraphwarOneClickClearOptions,
-  route: OneClickClearValidatedRoute,
+  route: OneClickClearRoute,
 ): GraphwarOneClickClearIncumbent | undefined {
-  if (!route.formulaContext || !route.trajectoryPoints || route.formulaContext.formulaPoints.length < 2) {
+  const evidence = route.incumbentEvidence;
+  if (!evidence || evidence.formulaContext.formulaPoints.length < 2) {
     return undefined;
   }
 
   const launchAngleRadians =
-    options.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(route.formulaContext) : Number.NaN;
+    options.settings.equation === "ddy" ? getGraphwarTrajectoryLaunchAngle(evidence.formulaContext) : Number.NaN;
   return {
-    expression: route.formulaContext.formulaResult.expression,
+    expression: evidence.formulaContext.formulaResult.expression,
     ...(Number.isFinite(launchAngleRadians) ? { launchAngleRadians } : {}),
     pathPoints: [...route.pathPoints],
-    trajectoryPoints: [...route.trajectoryPoints],
+    trajectoryPoints: [...evidence.trajectoryPoints],
   };
 }
 
 /** 将最终验证使用的同一公式上下文固化进成功结果，禁止页面只拿路径重新解算。 */
 function createOneClickClearSuccessResult(
   options: GraphwarOneClickClearOptions,
-  route: OneClickClearValidatedRoute,
+  route: OneClickClearRoute,
   hitTargets: readonly OneClickClearHitTarget[],
   startedAt: number,
   expandedStates: number,
@@ -1837,7 +1861,7 @@ function countOneClickClearReachedRouteTargets(
 /** 最终统计合并当前识别候选与显式 route 目标，并为仍在路径中的目标保留锚点。 */
 function createOneClickClearTrackedTargets(
   options: GraphwarOneClickClearOptions,
-  route: Pick<OneClickClearValidatedRoute, "pathPoints" | "targetSequence">,
+  route: Pick<OneClickClearRoute, "pathPoints" | "targetSequence">,
 ) {
   const tracked: OneClickClearTrackedTarget[] = [];
   for (const candidate of options.hitCandidates) {
@@ -1892,7 +1916,7 @@ function compareOneClickClearHitTargets(left: OneClickClearHitTarget, right: One
 /** 全局删点保护原 prefix；邪道还要保留每条已提交边精确结束的目标锚点。 */
 async function optimizeOneClickClearPath(
   context: OneClickClearSearchContext,
-  route: OneClickClearValidatedRoute,
+  route: OneClickClearRoute,
   workUnits: number,
 ): Promise<OneClickClearPathOptimizationResult> {
   let optimized = route;

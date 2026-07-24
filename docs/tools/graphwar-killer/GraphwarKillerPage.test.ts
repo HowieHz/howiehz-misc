@@ -2,7 +2,7 @@
 
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
-import { nextTick } from "vue";
+import { nextTick, type ComponentPublicInstance } from "vue";
 
 import {
   createGraphwarAgentClient,
@@ -1443,6 +1443,61 @@ describe("Graphwar Killer page settings", () => {
     await nextTick();
     expect(wrapper.find(".graphwar-killer__managed-warning").exists()).toBe(false);
     wrapper.unmount();
+  });
+
+  it("updates the Agent countdown without rebuilding the result panel model", async () => {
+    vi.useFakeTimers();
+    const pageInstance: { value?: unknown } = {};
+    let pageUpdateCount = 0;
+    const wrapper = mount(GraphwarKillerPage, {
+      global: {
+        mixins: [
+          {
+            updated(this: ComponentPublicInstance) {
+              if (this.$ === pageInstance.value) {
+                pageUpdateCount += 1;
+              }
+            },
+          },
+        ],
+      },
+      props: { locale: graphwarKillerLocale },
+    });
+    pageInstance.value = wrapper.vm.$;
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          graphwarAgentTurnCountdown: { update: (state: GraphwarAgentAvailableState) => void };
+          isGraphwarAgentEnabled: boolean;
+          resultPanel: object;
+        };
+      }
+    ).setupState;
+
+    try {
+      page.isGraphwarAgentEnabled = true;
+      await nextTick();
+      expect(pageUpdateCount).toBeGreaterThan(0);
+      pageUpdateCount = 0;
+      const resultPanel = page.resultPanel;
+
+      page.graphwarAgentTurnCountdown.update(
+        createAgentState("y", { observedAtEpochMs: Date.now(), remainingTurnMs: 58_000 }),
+      );
+      await nextTick();
+      expect(page.resultPanel).toBe(resultPanel);
+      expect(pageUpdateCount).toBe(0);
+      expect(wrapper.get(".graphwar-killer__agent-turn-countdown").text()).toBe("剩余 58.0 秒");
+
+      vi.advanceTimersByTime(100);
+      await nextTick();
+      expect(page.resultPanel).toBe(resultPanel);
+      expect(pageUpdateCount).toBe(0);
+      expect(wrapper.get(".graphwar-killer__agent-turn-countdown").text()).toBe("剩余 57.9 秒");
+    } finally {
+      wrapper.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("exports the Agent snapshot captured before a clear-failure result without rereading", async () => {

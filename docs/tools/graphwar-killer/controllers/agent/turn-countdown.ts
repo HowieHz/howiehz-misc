@@ -5,16 +5,20 @@ import type { GraphwarAgentAvailableState, GraphwarAgentState } from "./client";
 
 const zeroDisplayDurationMs = 2000;
 
-/** Current Agent turn countdown projected for the result panel. */
-export interface GraphwarAgentTurnCountdown {
-  /** Clears stale state when the active Agent connection identity changes. */
-  clear: () => void;
-  /** Stops the scheduled display update when the page is disposed. */
-  dispose: () => void;
+/** Stable reactive state consumed by the isolated countdown display. */
+export interface GraphwarAgentTurnCountdownDisplayState {
   /** Reports whether the visible zero is inside its short grace period. */
   isZeroVisible: ComputedRef<boolean>;
   /** Display-quantized milliseconds, then zero during the grace period. */
   remainingMilliseconds: Readonly<Ref<number | undefined>>;
+}
+
+/** Current Agent turn countdown projected for the result panel. */
+export interface GraphwarAgentTurnCountdown extends GraphwarAgentTurnCountdownDisplayState {
+  /** Clears stale state when the active Agent connection identity changes. */
+  clear: () => void;
+  /** Stops the scheduled display update when the page is disposed. */
+  dispose: () => void;
   /** Calibrates from one accepted live `/state` response. */
   update: (state: GraphwarAgentState) => void;
 }

@@ -2,6 +2,7 @@
 import { Trash2 } from "@lucide/vue";
 import { computed } from "vue";
 
+import type { GraphwarAgentTurnCountdownDisplayState } from "../../controllers/agent/turn-countdown";
 import type { GraphwarControlCapability } from "../../controllers/page/capabilities";
 import type { ToolWorkflowMode } from "../../core/types";
 import type { GraphwarKillerLocale } from "../../locale-types";
@@ -10,6 +11,7 @@ import PanelDetails from "../controls/PanelDetails.vue";
 import { prependControlTitle } from "../controls/title";
 import ToggleField from "../controls/ToggleField.vue";
 import { getInputValue } from "../dom/input";
+import AgentTurnCountdown from "./AgentTurnCountdown.vue";
 
 type GraphwarResultPanelCoordinateAxis = "x" | "y";
 
@@ -99,11 +101,11 @@ export interface GraphwarResultPanelModel {
   workflowMode: ToolWorkflowMode;
   /** 是否展示 Agent 开火按钮。 */
   isAgentFireVisible: boolean;
-  /** 当前回合倒计时；undefined 表示没有可展示的实时 aiming 状态。 */
-  agentTurnCountdown?: { isZeroVisible: boolean; text: string };
 }
 
 const props = defineProps<{
+  /** Stable countdown state passed through without subscribing this panel to its ticks. */
+  agentTurnCountdown?: GraphwarAgentTurnCountdownDisplayState;
   /** 页面本地化文案。 */
   locale: GraphwarKillerLocale;
   /** 结果面板展示模型。 */
@@ -167,13 +169,11 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
           v-if="result.isAgentFireVisible"
           class="graphwar-killer__agent-fire-command"
         >
-          <span
-            v-if="result.agentTurnCountdown"
-            class="graphwar-killer__agent-turn-countdown"
-            :class="{ 'graphwar-killer__agent-turn-countdown--expired': result.agentTurnCountdown.isZeroVisible }"
-          >
-            {{ result.agentTurnCountdown.text }}
-          </span>
+          <AgentTurnCountdown
+            v-if="agentTurnCountdown"
+            :countdown="agentTurnCountdown"
+            :locale="locale"
+          />
           <div class="graphwar-killer-command-field graphwar-killer__agent-fire-field">
             <button
               type="button"

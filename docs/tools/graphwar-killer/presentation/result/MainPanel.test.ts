@@ -2,8 +2,10 @@
 
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
+import { computed, nextTick, ref, type ComponentPublicInstance } from "vue";
 
 import { graphwarKillerLocale } from "../../locale";
+import AgentTurnCountdown from "./AgentTurnCountdown.vue";
 import MainPanel from "./MainPanel.vue";
 
 describe("Result MainPanel", () => {
@@ -72,9 +74,10 @@ describe("Result MainPanel", () => {
       ...createResultModel(),
       agentFireReason: graphwarKillerLocale.ui.pathfinding.capabilityReasons["agent-url-invalid"],
       agentFireState: "blocked" as const,
-      agentTurnCountdown: { isZeroVisible: false, text: "剩余 58.0 秒" },
     };
-    const wrapper = mount(MainPanel, { props: { locale: graphwarKillerLocale, result } });
+    const wrapper = mount(MainPanel, {
+      props: { agentTurnCountdown: createTurnCountdown(), locale: graphwarKillerLocale, result },
+    });
     const actions = wrapper.get(".graphwar-killer__result-actions");
     const command = actions.get(".graphwar-killer__agent-fire-command");
     const fireField = command.get(".graphwar-killer__agent-fire-field");
@@ -119,19 +122,57 @@ describe("Result MainPanel", () => {
     expect(wrapper.text()).not.toContain(pathfindingReason);
   });
 
-  it("keeps the turn countdown immediately left of the Agent fire button", () => {
+  it("keeps the isolated turn countdown immediately left of the Agent fire button", async () => {
+    const agentTurnCountdown = createTurnCountdown();
+    const componentInstances: { countdown?: unknown; mainPanel?: unknown } = {};
+    let countdownUpdateCount = 0;
+    let mainPanelUpdateCount = 0;
     const wrapper = mount(MainPanel, {
+      global: {
+        mixins: [
+          {
+            updated(this: ComponentPublicInstance) {
+              if (this.$ === componentInstances.countdown) {
+                countdownUpdateCount += 1;
+              } else if (this.$ === componentInstances.mainPanel) {
+                mainPanelUpdateCount += 1;
+              }
+            },
+          },
+        ],
+      },
       props: {
+        agentTurnCountdown,
         locale: graphwarKillerLocale,
-        result: { ...createResultModel(), agentTurnCountdown: { isZeroVisible: false, text: "剩余 58.0 秒" } },
+        result: createResultModel(),
       },
     });
+    componentInstances.countdown = wrapper.getComponent(AgentTurnCountdown).vm.$;
+    componentInstances.mainPanel = wrapper.vm.$;
+    await wrapper.setProps({ result: { ...createResultModel(), simulatorFormulaText: "known root update" } });
+    expect(mainPanelUpdateCount).toBeGreaterThan(0);
+    expect(countdownUpdateCount).toBe(0);
+    mainPanelUpdateCount = 0;
     const command = wrapper.get(".graphwar-killer__agent-fire-command");
     const fireField = command.get(".graphwar-killer__agent-fire-field");
 
     expect(command.element.children[0]).toBe(command.get(".graphwar-killer__agent-turn-countdown").element);
     expect(command.element.children[1]).toBe(fireField.element);
     expect(fireField.element.children[0]).toBe(command.get(".graphwar-killer__agent-fire-button").element);
+
+    agentTurnCountdown.remainingMilliseconds.value = 57_900;
+    await nextTick();
+    expect(command.get(".graphwar-killer__agent-turn-countdown").text()).toBe("剩余 57.9 秒");
+    expect(countdownUpdateCount).toBe(1);
+    expect(mainPanelUpdateCount).toBe(0);
+
+    agentTurnCountdown.remainingMilliseconds.value = 0;
+    await nextTick();
+    const countdown = command.get(".graphwar-killer__agent-turn-countdown");
+    expect(countdown.text()).toBe("剩余 0.000 秒");
+    expect(countdown.classes()).toContain("graphwar-killer__agent-turn-countdown--expired");
+    expect(countdownUpdateCount).toBe(2);
+    expect(mainPanelUpdateCount).toBe(0);
   });
 
   it("shows the path point list in a collapsed shared details panel", () => {
@@ -204,4 +245,13 @@ function createResultModel() {
     trajectoryWarning: "",
     workflowMode: "simulator",
   } as const;
+}
+
+/** 创建只供结果面板布局测试读取的稳定倒计时状态。 */
+function createTurnCountdown() {
+  const remainingMilliseconds = ref<number | undefined>(58_000);
+  return {
+    isZeroVisible: computed(() => remainingMilliseconds.value === 0),
+    remainingMilliseconds,
+  };
 }

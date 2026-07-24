@@ -39,7 +39,6 @@ import {
 import { createGraphwarAgentObservationOrder } from "./controllers/agent/observation-order";
 import { resolveGraphwarAgentShotCommand } from "./controllers/agent/shot-command";
 import {
-  formatGraphwarAgentTurnCountdown,
   getAdjustedGraphwarAgentRemainingTurnMs,
   useGraphwarAgentTurnCountdown,
 } from "./controllers/agent/turn-countdown";
@@ -2369,18 +2368,10 @@ const magnifierContentStyle = computed(() => {
 const resultPanel = computed(() => {
   const solverResult = formulaResult.value;
   const pathError = formulaPathError.value;
-  const remainingTurnMilliseconds = graphwarAgentTurnCountdown.remainingMilliseconds.value;
   return {
     agentFireButtonText: graphwarAgentFireButtonText.value,
     agentFireReason: getCapabilityReason(graphwarCapabilities.value.agentFire.reason),
     agentFireState: graphwarCapabilities.value.agentFire.state,
-    agentTurnCountdown:
-      remainingTurnMilliseconds === undefined
-        ? undefined
-        : {
-            isZeroVisible: graphwarAgentTurnCountdown.isZeroVisible.value,
-            text: locale.ui.result.turnTimeRemaining(formatGraphwarAgentTurnCountdown(remainingTurnMilliseconds)),
-          },
     isAgentFireVisible: isGraphwarAgentEnabled.value,
     canEditPointCoordinates: !isIncumbentPreviewActive.value,
     canInteract: !isGraphwarManagedModeEnabled.value,
@@ -5364,6 +5355,7 @@ function undoLastPoint() {
       @stage-pointer-up="handleStagePointerUp"
     />
     <GraphwarResultPanel
+      :agent-turn-countdown="graphwarAgentTurnCountdown"
       :locale="locale"
       :result="resultPanel"
       @clear-simulator="!isGraphwarManagedModeEnabled && clearSimulatorInputs()"

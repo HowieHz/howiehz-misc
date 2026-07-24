@@ -606,14 +606,18 @@ const ABS_SECOND_DERIVATIVE_MAX_REFINEMENT_ITERATIONS = 100;
 /** 解析响应不是 RK4 本身；保留少量带内余量，避免系数量化把理论边界重新推到 1px 外。 */
 const SECOND_ORDER_POSITION_CORRECTION_TARGET_FACTOR = 0.9;
 
-/** 邪道候选及其求值过程中确认的 sign 保护。 */
-interface StepGlitchCandidateSelection {
+/** 可与最终 prefix 材料核对并保存为下一次局部续播边界的一份原子候选。 */
+interface StepGlitchFormulaBoundaryCandidate {
   /** 生成 resumeState 的最终文本等价材料；只保留获胜候选的一份引用。 */
   compiledMaterials: CompiledGraphwarFormulaMaterials;
   /** Y''= 候选完整回放时使用的有效发射角。 */
   launchAngleRadians?: number;
   /** 候选在右门后的首个真实接受状态；只保留最终选中的一份。 */
   resumeState: GraphwarTrajectorySamplingState;
+}
+
+/** 邪道候选及其求值过程中确认的 sign 保护。 */
+interface StepGlitchCandidateSelection extends StepGlitchFormulaBoundaryCandidate {
   segment: StepGlitchSegment;
   signProtection: GraphwarSignProtection;
 }
@@ -2120,9 +2124,7 @@ function refineStepSegmentsWithSimulation(
   const nextSignProtection = [...signProtection];
   let launchAngleRadians = reusablePrefix?.launchAngleRadians;
   let acceptedSignProtection: GraphwarSignProtection | undefined;
-  let latestAcceptedBoundaryMaterials: CompiledGraphwarFormulaMaterials | undefined;
-  let latestAcceptedBoundaryLaunchAngleRadians: number | undefined;
-  let latestAcceptedBoundaryState: GraphwarTrajectorySamplingState | undefined;
+  let latestAcceptedBoundary: StepGlitchFormulaBoundaryCandidate | undefined;
   let nextSegmentStartSample: StepSegmentStartSample | undefined;
   let acceptedSegmentCount = reusableSegmentCount;
   let hasSignProtectionChanged = false;
@@ -2163,7 +2165,6 @@ function refineStepSegmentsWithSimulation(
             ),
             signProtection,
             reusableSegmentCount,
-            segmentIndex,
             createStepSegmentRefinementStopX(options.points[segmentIndex].x, previousSegment),
           )
         : undefined;
@@ -2250,8 +2251,7 @@ function refineStepSegmentsWithSimulation(
     };
     let acceptedSoftDeltaYOverride: number | undefined = nextDeltaYOverride;
     let acceptedSoftFormulaPoint = nextFormulaPoint;
-    let acceptedSoftCompiledMaterials: CompiledGraphwarFormulaMaterials | undefined;
-    let acceptedSoftLaunchAngleRadians: number | undefined;
+    let acceptedSoftBoundary: StepGlitchFormulaBoundaryCandidate | undefined;
     let acceptedSoftStartSample: StepSegmentStartSample | undefined;
     let softPathError = Number.POSITIVE_INFINITY;
     let isSoftReplayValid = true;
@@ -2329,8 +2329,6 @@ function refineStepSegmentsWithSimulation(
         }
       }
       const softCandidate = softSelection.result;
-      acceptedSoftCompiledMaterials = softCandidate.compiledMaterials;
-      acceptedSoftLaunchAngleRadians = softCandidate.launchAngleRadians;
       if (!graphwarSignProtectionEquals(softCandidate.signProtection, signProtection)) {
         return {
           formulaPoints: refinedFormulaPoints,
@@ -2346,6 +2344,13 @@ function refineStepSegmentsWithSimulation(
       const acceptedPoint = softCandidate.sample.points.at(-1);
       if (acceptedPoint && Number.isFinite(acceptedPoint.y) && softCandidate.sample.endState) {
         acceptedSoftStartSample = { point: acceptedPoint, resumeState: softCandidate.sample.endState };
+        acceptedSoftBoundary = {
+          compiledMaterials: softCandidate.compiledMaterials,
+          ...(softCandidate.launchAngleRadians === undefined
+            ? {}
+            : { launchAngleRadians: softCandidate.launchAngleRadians }),
+          resumeState: softCandidate.sample.endState,
+        };
       }
       const verticalSpan = Math.abs(options.bounds.maxY - options.bounds.minY);
       softPathError =
@@ -2409,9 +2414,7 @@ function refineStepSegmentsWithSimulation(
     refinedDeltaYs[segmentIndex] = selection ? nextDeltaYOverride : acceptedSoftDeltaYOverride;
     disabledSegments[segmentIndex] = false;
     refinedFormulaPoints[segmentIndex + 1] = selection ? nextFormulaPoint : acceptedSoftFormulaPoint;
-    latestAcceptedBoundaryLaunchAngleRadians = selection?.launchAngleRadians ?? acceptedSoftLaunchAngleRadians;
-    latestAcceptedBoundaryMaterials = selection?.compiledMaterials ?? acceptedSoftCompiledMaterials;
-    latestAcceptedBoundaryState = selection?.resumeState ?? acceptedSoftStartSample?.resumeState;
+    latestAcceptedBoundary = selection ?? acceptedSoftBoundary;
     acceptedSegmentCount = segmentIndex + 1;
     nextSegmentStartSample = selection ? undefined : acceptedSoftStartSample;
   }
@@ -2443,17 +2446,15 @@ function refineStepSegmentsWithSimulation(
       currentBoundaryLaunchAngleRadians,
       acceptedSignProtection ?? signProtection,
       segmentCount,
-      segmentCount,
       stopX,
     )?.resumeState;
     const formulaMaterialsIdentity = createStepGlitchFormulaMaterialsIdentity(prefixFormula.compiledMaterials);
-    const isLatestBoundaryMatch = Boolean(
-      latestAcceptedBoundaryState &&
-      latestAcceptedBoundaryMaterials &&
-      createStepGlitchFormulaMaterialsIdentity(latestAcceptedBoundaryMaterials) === formulaMaterialsIdentity &&
-      Object.is(latestAcceptedBoundaryLaunchAngleRadians, currentBoundaryLaunchAngleRadians),
-    );
-    const resolvedBoundaryState = isLatestBoundaryMatch ? latestAcceptedBoundaryState : reusableBoundaryState;
+    const resolvedBoundaryState =
+      latestAcceptedBoundary &&
+      createStepGlitchFormulaMaterialsIdentity(latestAcceptedBoundary.compiledMaterials) === formulaMaterialsIdentity &&
+      Object.is(latestAcceptedBoundary.launchAngleRadians, currentBoundaryLaunchAngleRadians)
+        ? latestAcceptedBoundary.resumeState
+        : reusableBoundaryState;
     if (resolvedBoundaryState) {
       stepGlitchFormulaBoundaryState = createStepGlitchFormulaBoundaryState(
         formulaMaterialsIdentity,
@@ -2595,36 +2596,27 @@ function reuseStepGlitchFormulaBoundaryState(
   launchAngleRadians: number | undefined,
   signProtection: GraphwarSignProtection,
   reusableSegmentCount: number,
-  segmentIndex: number,
   stopX: number,
 ): StepSegmentStartSample | undefined {
-  const state = boundaryState?.state;
   if (
     !prefix ||
     !boundaryState ||
-    !state ||
     boundaryState.prefix !== prefix ||
     reusableSegmentCount !== prefix.stepGlitchSegments.length ||
-    segmentIndex !== reusableSegmentCount ||
     boundaryState.segmentCount !== reusableSegmentCount ||
     boundaryState.stopX !== stopX ||
     !Object.is(boundaryState.launchAngleRadians, launchAngleRadians) ||
     !graphwarSignProtectionEquals(prefix.signProtection, signProtection) ||
     boundaryState.formulaMaterialsIdentity !==
       createStepGlitchFormulaMaterialsIdentity(prefixFormula.compiledMaterials) ||
-    !Number.isInteger(state.sampleIndex) ||
-    state.sampleIndex < 0 ||
-    !Number.isFinite(state.currentPoint.x) ||
-    !Number.isFinite(state.currentPoint.y) ||
-    state.currentPoint.x < stopX ||
-    (prefixFormula.compiledMaterials.stepFormula?.equation === "ddy" && !Number.isFinite(state.dy)) ||
-    (state.previousPoint !== undefined &&
-      (!Number.isFinite(state.previousPoint.x) || !Number.isFinite(state.previousPoint.y))) ||
-    (state.previousDy !== undefined && !Number.isFinite(state.previousDy))
+    !Number.isFinite(boundaryState.state.currentPoint.x) ||
+    !Number.isFinite(boundaryState.state.currentPoint.y) ||
+    boundaryState.state.currentPoint.x < stopX ||
+    (prefixFormula.compiledMaterials.stepFormula?.equation === "ddy" && !Number.isFinite(boundaryState.state.dy))
   ) {
     return undefined;
   }
-  const reusableState = copyGraphwarTrajectorySamplingState(state);
+  const reusableState = copyGraphwarTrajectorySamplingState(boundaryState.state);
   return { point: reusableState.currentPoint, resumeState: reusableState };
 }
 

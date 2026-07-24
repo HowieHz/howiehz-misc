@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 
 import {
   createGraphwarAgentClearFailureExportQueue,
@@ -821,7 +821,7 @@ const {
 } = useGraphwarDebugActivation({
   toggleAdvancedSettings,
 });
-const latestPathfindingDebugBundle = ref<GraphwarPathfindingDebugBundle>();
+const latestPathfindingDebugBundle = shallowRef<GraphwarPathfindingDebugBundle>();
 const pathfindingDebugCapturesByTimings = new Map<
   readonly SmartPathfindingDebugTimingEntry[],
   GraphwarActivePathfindingDebugCapture

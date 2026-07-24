@@ -1559,6 +1559,61 @@ describe("Graphwar Killer page settings", () => {
     vi.unstubAllGlobals();
   });
 
+  it("exports the latest completed pathfinding report from reactive page state", async () => {
+    const downloadedFiles: string[] = [];
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadedFiles.push(this.download);
+      });
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          exportLatestPathfindingDebugReport: () => void;
+          graphwarAgentAppliedSnapshot: unknown;
+          isDebugInfoEnabled: boolean;
+          isGraphwarAgentEnabled: boolean;
+          oneClickClearRunWorkflow: {
+            run: (options?: { onOutcome?: (outcome: { kind: "complete" }) => void }) => Promise<boolean>;
+          };
+          runOneClickClearWorkflow: () => Promise<boolean>;
+        };
+      }
+    ).setupState;
+
+    try {
+      page.isDebugInfoEnabled = true;
+      page.graphwarAgentAppliedSnapshot = {
+        state: { battleRevision: "manual-export", gameInstanceId: "game", turnToken: "turn" },
+        worldObstacleMask: new Uint8Array([0, 1]),
+      };
+      page.isGraphwarAgentEnabled = true;
+      page.oneClickClearRunWorkflow.run = async (options) => {
+        options?.onOutcome?.({ kind: "complete" });
+        return true;
+      };
+      await nextTick();
+
+      await expect(page.runOneClickClearWorkflow()).resolves.toBe(true);
+      expect(() => page.exportLatestPathfindingDebugReport()).not.toThrow();
+      expect(downloadedFiles).toHaveLength(3);
+      expect(downloadedFiles[0]).toMatch(/^state-/);
+      expect(downloadedFiles[1]).toMatch(/^obstacle-mask-/);
+      expect(downloadedFiles[2]).toMatch(/^pathfinding-debug-/);
+      expect(
+        new Set([
+          downloadedFiles[0]?.replace("state-", "").replace(/\.json$/, ""),
+          downloadedFiles[1]?.replace("obstacle-mask-", "").replace(/\.bin$/, ""),
+          downloadedFiles[2]?.replace("pathfinding-debug-", "").replace(/\.json$/, ""),
+        ]).size,
+      ).toBe(1);
+    } finally {
+      wrapper.unmount();
+      anchorClick.mockRestore();
+    }
+  });
+
   it("keeps the previous completed pathfinding report until the next task completes and clears it with debug mode", async () => {
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const page = (

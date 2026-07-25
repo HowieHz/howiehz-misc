@@ -315,7 +315,7 @@ export const graphwarKillerLocale = {
         const cacheText = hasResultCacheHit ? "（使用结果缓存）" : "";
         return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
       },
-      unsupported: "一键清图仅支持双绝对值的 y、y'，或阶跃 y、y'、y''",
+      unsupported: "当前公式配置不支持一键清图",
     },
     managed: {
       backgroundWarning: "页面位于后台，托管发射可能延迟",

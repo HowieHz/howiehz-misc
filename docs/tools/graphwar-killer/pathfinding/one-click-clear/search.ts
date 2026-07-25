@@ -7,6 +7,7 @@ import { clonePixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import {
   formulaModePreservesPrefixWhenAppending,
+  formulaModeSupportsLocalDeleteHitProof,
   formulaModeUsesStepGlitch,
 } from "../../formula/generation/capabilities";
 import { resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
@@ -2412,8 +2413,7 @@ async function optimizeOneClickClearPath(
     : undefined;
   const canLocalHitCheckSkipFullValidation =
     context.options.deleteHitCheckRadiusPixels > 0 &&
-    context.options.settings.algorithm === "abs" &&
-    context.options.settings.equation !== "ddy";
+    formulaModeSupportsLocalDeleteHitProof(context.options.settings.algorithm, context.options.settings.equation);
   // 只做一轮全局删点，防止反复扫描让大路径的优化时间失控。
   for (let index = firstGeneratedIndex; index < optimized.pathPoints.length;) {
     if (context.options.isCancelled?.()) {

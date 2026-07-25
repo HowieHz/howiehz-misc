@@ -15,6 +15,11 @@ export function formulaModePreservesPrefixWhenAppending(algorithm: AlgorithmMode
   return algorithm === "abs" && equation !== "ddy";
 }
 
+/** ABS y=/y'= 删点只替换相邻连接段，控制折线的局部命中可作为顺路士兵命中的保守证明。 */
+export function formulaModeSupportsLocalDeleteHitProof(algorithm: AlgorithmMode, equation: EquationMode) {
+  return algorithm === "abs" && equation !== "ddy";
+}
+
 /** 只有 ODE 的 Step 能把受阻段替换为硬 Step。 */
 export function formulaModeSupportsStepGlitch(algorithm: AlgorithmMode, equation: EquationMode) {
   return algorithm === "step" && equation !== "y";

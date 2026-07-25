@@ -10,6 +10,11 @@ export function formulaModeUsesPositionCompensation(algorithm: AlgorithmMode, eq
   return (algorithm === "step" && equation !== "y") || (algorithm === "abs" && equation !== "y");
 }
 
+/** 只有 ABS y=/y'= 追加新项时不会反向改变已有公式前缀，可安全续播其物理状态。 */
+export function formulaModePreservesPrefixWhenAppending(algorithm: AlgorithmMode, equation: EquationMode) {
+  return algorithm === "abs" && equation !== "ddy";
+}
+
 /** 只有 ODE 的 Step 能把受阻段替换为硬 Step。 */
 export function formulaModeSupportsStepGlitch(algorithm: AlgorithmMode, equation: EquationMode) {
   return algorithm === "step" && equation !== "y";

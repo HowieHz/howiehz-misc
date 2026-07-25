@@ -13,8 +13,8 @@ import type {
   GraphwarOneClickClearIncumbent,
   GraphwarOneClickClearResult,
   GraphwarOneClickClearSearchInput,
-  GraphwarOneClickClearStepRouteState,
 } from "../one-click-clear/search";
+import type { GraphwarOneClickClearStepRouteState } from "../one-click-clear/step-route-state";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
 import type { GraphwarPathfindingDiagnostics } from "./diagnostics";
@@ -352,7 +352,7 @@ export interface GraphwarOneClickClearEdgeWorkerInit {
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** Step 累计高度的首路径点；ABS 建路忽略该字段。 */
+  /** Step 累计高度的首路径点；stateless route 建路忽略该字段。 */
   routeOriginPoint: PixelPoint;
   /** 几何路线算法模式；edge Worker 内按它决定是否建立可视图 cache。 */
   routeMode: GraphwarPathfindingRouteMode;

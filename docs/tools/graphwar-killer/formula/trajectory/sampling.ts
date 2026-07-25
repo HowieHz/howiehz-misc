@@ -87,6 +87,27 @@ export interface GraphwarTrajectoryFormulaSettings {
   stepOverflowProtection: boolean;
 }
 
+/** 轨迹求解的原子起点；续播状态、命中历史、停止语义和 sign protection 必须来自同一份证据。 */
+export type GraphwarTrajectoryStart =
+  | {
+      /** Cold 求解可以携带已知保护集合，但不得伪造物理恢复状态。 */
+      signProtection?: GraphwarSignProtection;
+      type: "cold";
+    }
+  | {
+      /** 从该物理状态开始时已经命中的无序目标数量。 */
+      reachedRequiredTargetCount: number;
+      /** 从该物理状态开始时已经命中的有序目标数量。 */
+      reachedTargetCount: number;
+      /** 与命中历史、停止语义和保护集合来自同一次采样的状态。 */
+      samplingState: GraphwarTrajectorySamplingState;
+      /** 恢复点本身已经由前一段检查过时跳过首点停止判断。 */
+      shouldSkipInitialStop: boolean;
+      /** 生成 samplingState 的精确保护集合；变化时整个 continuation 会被丢弃。 */
+      signProtection: GraphwarSignProtection;
+      type: "continuation";
+    };
+
 /** 一次轨迹采样可复用的公式上下文，避免多个验证入口重复整理路径点、输出文本和保护参数。 */
 export interface GraphwarTrajectoryFormulaContext {
   /** 最终文本等价的公式材料；文本生成、sign 探测和内部采样应复用同一份结构。 */
@@ -374,18 +395,13 @@ export function resolveGraphwarTrajectory(options: {
   /** Optional request diagnostics; normal trajectory previews omit it. */
   debugMetrics?: GraphwarTrajectoryDebugMetrics;
   continueAfterTargetsUntilGraphX?: number;
-  /** 从 initialState 续播时已经命中的无序目标前缀；整路重跑时会自动清零。 */
-  initialReachedRequiredTargetCount?: number;
-  initialReachedTargetCount?: number;
-  initialState?: GraphwarTrajectorySamplingState;
   points: readonly GraphPoint[];
   /** 不受真实命中圆约束的普通控制点；只用于非阻塞路径质量统计。 */
   qualityPoints?: readonly GraphPoint[];
   requiredTargets?: readonly GraphwarTrajectoryTargetCircle[];
   settings: GraphwarTrajectoryFormulaSettings;
-  /** 与 initialState 成对保存的保护快照；公式配置或路径身份不匹配时调用方不得传入。 */
-  signProtection?: GraphwarSignProtection;
-  skipInitialStop?: boolean;
+  /** 省略表示无已知 sign protection 的 cold 求解；continuation 分支禁止构造半状态。 */
+  start?: GraphwarTrajectoryStart;
   soldierCenter?: GraphPoint;
   stepGlitchFormulaEvidence?: GraphwarStepGlitchFormulaEvidence;
   stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
@@ -398,12 +414,12 @@ export function resolveGraphwarTrajectory(options: {
 }): { context: GraphwarTrajectoryFormulaContext; result: GraphwarTrajectorySampleResult } {
   const prefix = options.stepGlitchFormulaEvidence?.prefix;
   let signProtection = [
-    ...(options.signProtection ??
+    ...(options.start?.signProtection ??
       (prefix && graphwarStepGlitchFormulaEvidenceMatchesSource(options, options.stepGlitchFormulaEvidence)
         ? prefix.signProtection
         : [])),
   ];
-  let initialState = options.initialState;
+  let continuation = options.start?.type === "continuation" ? options.start : undefined;
   while (true) {
     const formulaPreparationStartedAt = options.debugMetrics ? nowMs() : 0;
     const stateResult = createTrajectoryFormulaState(options, signProtection);
@@ -412,7 +428,7 @@ export function resolveGraphwarTrajectory(options: {
     }
     if (stateResult.status === "protection-changed") {
       signProtection = [...stateResult.signProtection];
-      initialState = undefined;
+      continuation = undefined;
       continue;
     }
 
@@ -421,8 +437,8 @@ export function resolveGraphwarTrajectory(options: {
     let hasSignProtectionChanged = false;
     const stopTracker = createGraphwarTrajectoryStopTracker({
       ...options,
-      initialReachedRequiredTargetCount: initialState ? options.initialReachedRequiredTargetCount : 0,
-      initialReachedTargetCount: initialState ? options.initialReachedTargetCount : 0,
+      initialReachedRequiredTargetCount: continuation?.reachedRequiredTargetCount ?? 0,
+      initialReachedTargetCount: continuation?.reachedTargetCount ?? 0,
     });
     let sample: GraphwarTrajectorySample;
     try {
@@ -439,12 +455,12 @@ export function resolveGraphwarTrajectory(options: {
               addGraphwarSignProtection(nextSignProtection, segmentIndex, role) || hasSignProtectionChanged;
           },
         },
-        initialState,
+        initialState: continuation?.samplingState,
         ...(state.launchAngleRadians === undefined ? {} : { launchAngleRadians: state.launchAngleRadians }),
         points: state.formulaPoints,
         secondOrderLaunchAngleMode: options.settings.secondOrderLaunchAngleMode,
         shouldStop: stopTracker.shouldStop,
-        skipInitialStop: initialState ? options.skipInitialStop : false,
+        skipInitialStop: continuation?.shouldSkipInitialStop ?? false,
         soldierCenter: options.soldierCenter ?? state.formulaPoints[0],
         steepness: options.settings.steepness,
       });
@@ -457,7 +473,7 @@ export function resolveGraphwarTrajectory(options: {
     if (hasSignProtectionChanged) {
       // 当前成功前缀属于旧保护集合；只重置坐标而保留命中计数会制造不存在的验证证据。
       signProtection = nextSignProtection;
-      initialState = undefined;
+      continuation = undefined;
       continue;
     }
 
@@ -2129,7 +2145,6 @@ function refineStepSegmentsWithSimulation(
   let launchAngleRadians = reusablePrefix?.launchAngleRadians;
   let acceptedSignProtection: GraphwarSignProtection | undefined;
   let latestAcceptedBoundary: StepGlitchFormulaBoundaryCandidate | undefined;
-  let nextSegmentStartSample: StepSegmentStartSample | undefined;
   let acceptedSegmentCount = reusableSegmentCount;
   let hasSignProtectionChanged = false;
   const onZeroSignArgument = (segmentIndex: number, role: GraphwarSignRole) => {
@@ -2156,22 +2171,20 @@ function refineStepSegmentsWithSimulation(
     });
     const boundaryStopX = createStepSegmentRefinementStopX(options.points[segmentIndex].x, previousSegment);
     const shouldResolveBoundaryStart =
-      nextSegmentStartSample === undefined &&
-      (latestAcceptedBoundary !== undefined ||
-        (segmentIndex === reusableSegmentCount && reusableFormulaEvidence?.boundaryState !== undefined));
+      latestAcceptedBoundary !== undefined ||
+      (segmentIndex === reusableSegmentCount && reusableFormulaEvidence?.boundaryState !== undefined);
     const boundaryLaunchAngleRadians = shouldResolveBoundaryStart
       ? getStepGlitchPrefixLaunchAngle(options, refinedFormulaPoints, prefixFormula, launchAngleRadians, soldierCenter)
       : launchAngleRadians;
-    const sameSolveBoundaryStartSample =
-      nextSegmentStartSample === undefined && latestAcceptedBoundary
-        ? reuseStepGlitchFormulaBoundaryCandidate(
-            prefixFormula,
-            latestAcceptedBoundary,
-            boundaryLaunchAngleRadians,
-            signProtection,
-            boundaryStopX,
-          )
-        : undefined;
+    const sameSolveBoundaryStartSample = latestAcceptedBoundary
+      ? reuseStepGlitchFormulaBoundaryCandidate(
+          prefixFormula,
+          latestAcceptedBoundary,
+          boundaryLaunchAngleRadians,
+          signProtection,
+          boundaryStopX,
+        )
+      : undefined;
     const reusableBoundaryStartSample =
       segmentIndex === reusableSegmentCount && reusableFormulaEvidence?.boundaryState
         ? reuseStepGlitchFormulaBoundaryState(
@@ -2186,8 +2199,7 @@ function refineStepSegmentsWithSimulation(
     const startSample =
       segmentIndex === 0
         ? { point: refinedFormulaPoints[0] }
-        : (nextSegmentStartSample ??
-          sameSolveBoundaryStartSample ??
+        : (sameSolveBoundaryStartSample ??
           reusableBoundaryStartSample ??
           sampleStepSegmentStart(options, refinedFormulaPoints, prefixFormula, {
             launchAngleRadians,
@@ -2268,7 +2280,6 @@ function refineStepSegmentsWithSimulation(
     let acceptedSoftDeltaYOverride: number | undefined = nextDeltaYOverride;
     let acceptedSoftFormulaPoint = nextFormulaPoint;
     let acceptedSoftBoundary: StepGlitchFormulaBoundaryCandidate | undefined;
-    let acceptedSoftStartSample: StepSegmentStartSample | undefined;
     let softPathError = Number.POSITIVE_INFINITY;
     let isSoftReplayValid = true;
     let hasSoftReplayObstacleHit = false;
@@ -2359,7 +2370,6 @@ function refineStepSegmentsWithSimulation(
       acceptedSoftFormulaPoint = softSelection.formulaPoint;
       const acceptedPoint = softCandidate.sample.points.at(-1);
       if (acceptedPoint && Number.isFinite(acceptedPoint.y) && softCandidate.sample.endState) {
-        acceptedSoftStartSample = { point: acceptedPoint, resumeState: softCandidate.sample.endState };
         acceptedSoftBoundary = {
           compiledMaterials: softCandidate.compiledMaterials,
           ...(softCandidate.launchAngleRadians === undefined
@@ -2427,14 +2437,13 @@ function refineStepSegmentsWithSimulation(
       // 几何失败不能回退；障碍-only soft 只有交给同次最终碰撞回放时，才可保留既有命中/碰撞顺序。
       throw new GraphwarStepSegmentConnectionError(segmentIndex);
     }
-    // 当前段一经接受便冻结；soft 直接携带末状态，hard 留到下一轮用最终前缀材料和发射角核对后再续播。
+    // 当前段一经接受便冻结；soft/hard 都只保存同次候选，下一轮统一按最终前缀材料和发射角核对后续播。
     refinedSegments[segmentIndex] = selection?.segment;
     refinedDeltaYs[segmentIndex] = selection ? nextDeltaYOverride : acceptedSoftDeltaYOverride;
     disabledSegments[segmentIndex] = false;
     refinedFormulaPoints[segmentIndex + 1] = selection ? nextFormulaPoint : acceptedSoftFormulaPoint;
     latestAcceptedBoundary = selection ?? acceptedSoftBoundary;
     acceptedSegmentCount = segmentIndex + 1;
-    nextSegmentStartSample = selection ? undefined : acceptedSoftStartSample;
   }
 
   let stepGlitchFormulaBoundaryState: GraphwarStepGlitchFormulaBoundaryStateDraft | undefined;
@@ -2467,13 +2476,15 @@ function refineStepSegmentsWithSimulation(
     )?.resumeState;
     const formulaMaterialsIdentity = createStepGlitchFormulaMaterialsIdentity(prefixFormula.compiledMaterials);
     const resolvedBoundaryState =
-      latestAcceptedBoundary &&
-      createStepGlitchFormulaMaterialsIdentity(latestAcceptedBoundary.compiledMaterials) === formulaMaterialsIdentity &&
-      Object.is(latestAcceptedBoundary.launchAngleRadians, currentBoundaryLaunchAngleRadians) &&
-      graphwarSignProtectionEquals(latestAcceptedBoundary.signProtection, acceptedSignProtection ?? signProtection) &&
-      Object.is(latestAcceptedBoundary.stopX, stopX)
-        ? latestAcceptedBoundary.resumeState
-        : reusableBoundaryState;
+      (latestAcceptedBoundary
+        ? reuseStepGlitchFormulaBoundaryCandidate(
+            prefixFormula,
+            latestAcceptedBoundary,
+            currentBoundaryLaunchAngleRadians,
+            acceptedSignProtection ?? signProtection,
+            stopX,
+          )?.resumeState
+        : undefined) ?? reusableBoundaryState;
     if (resolvedBoundaryState) {
       stepGlitchFormulaBoundaryState = createStepGlitchFormulaBoundaryState(
         formulaMaterialsIdentity,

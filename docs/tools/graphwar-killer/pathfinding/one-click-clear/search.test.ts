@@ -28,6 +28,14 @@ const settings = {
   stepGlitchMode: false,
   stepOverflowProtection: true,
 };
+const statelessSplineModes = [
+  ["pchip", "y"],
+  ["pchip", "dy"],
+  ["pchip", "ddy"],
+  ["akima", "y"],
+  ["akima", "dy"],
+  ["akima", "ddy"],
+] as const;
 
 describe("One-click clear optimization", () => {
   it("builds an ordinary DAG target at the next legal native column when the center does not advance", async () => {
@@ -484,7 +492,7 @@ describe("One-click clear optimization", () => {
     expect(segmentSampleCount).toBe(3);
   });
 
-  it.each(["abs", "step"] as const)(
+  it.each(["abs", "step", "pchip", "akima"] as const)(
     "allows %s to add a target from the existing path tail without prior-run constraints",
     async (algorithm) => {
       const start = toImagePoint(-20, 0);
@@ -523,6 +531,300 @@ describe("One-click clear optimization", () => {
       if (result.type === "success") {
         expect(result.targetIds).toEqual(["next"]);
       }
+    },
+  );
+
+  it.each(statelessSplineModes)(
+    "validates a stateless %s %s route through the shared DAG",
+    async (algorithm, equation) => {
+      const start = toImagePoint(-20, 0);
+      const tail = toImagePoint(-15, 0);
+      const nextTarget = toImagePoint(-10, 0);
+      const simulationMask = new Uint8Array(770 * 450);
+      const candidate = { enemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        pathPoints: [start, tail],
+        prefixTarget: { center: tail, radius: 4 },
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        settings: { ...settings, algorithm, equation },
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.targetIds).toEqual(["next"]);
+      }
+    },
+  );
+
+  it.each(statelessSplineModes)(
+    "preserves target order for a stateless %s %s cold replay",
+    async (algorithm, equation) => {
+      const start = toImagePoint(-20, 0);
+      const first = toImagePoint(-15, 0);
+      const second = toImagePoint(-10, 0);
+      const simulationMask = new Uint8Array(770 * 450);
+      const candidates = [
+        { enemy: true, hitCenter: first, hitRadius: 4, id: "first" },
+        { enemy: true, hitCenter: second, hitRadius: 4, id: "second" },
+      ];
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          timings: [],
+        }),
+        candidates,
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: candidates,
+        pathPoints: [start],
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        settings: { ...settings, algorithm, equation },
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.targetIds).toEqual(["first", "second"]);
+      }
+    },
+  );
+
+  it.each(statelessSplineModes)(
+    "rejects a stateless %s %s route that hits the simulation mask",
+    async (algorithm, equation) => {
+      const start = toImagePoint(-20, 0);
+      const target = toImagePoint(-10, 0);
+      const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+      const splineSettings = { ...settings, algorithm, equation };
+      const directSample = sampleGraphwarPathTargetSequence({
+        bounds,
+        boundsRect,
+        points: [start, target],
+        settings: splineSettings,
+        targetCircles: [{ center: target, radius: candidate.hitRadius }],
+        targetHitRadiusPixels: candidate.hitRadius,
+        targetPoints: [target],
+      });
+      const obstacleGraphPoint = directSample.sample.points.find((point) => point.x >= -15);
+      if (!obstacleGraphPoint) {
+        throw new Error(`Expected ${algorithm} ${equation} to reach the obstacle x`);
+      }
+      const obstacle = imagePointToPlaneGridPoint(
+        graphToImagePoint(obstacleGraphPoint, bounds, boundsRect),
+        boundsRect,
+      );
+      const simulationMask = new Uint8Array(770 * 450);
+      simulationMask[obstacle.y * 770 + obstacle.x] = 1;
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        pathPoints: [start],
+        routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        settings: splineSettings,
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+    },
+  );
+
+  it.each(statelessSplineModes)(
+    "revalidates stateless %s %s deletion and the returned final replay",
+    async (algorithm, equation) => {
+      const start = toImagePoint(-20, 0);
+      const middle = toImagePoint(-15, 0);
+      const target = toImagePoint(-10, 0);
+      const simulationMask = new Uint8Array(770 * 450);
+      const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+      let finalValidationCount = 0;
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({
+            jobId: job.id,
+            route: [job.startPoint, middle, job.targetPoint],
+          })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        isDeleteOptimizationEnabled: true,
+        onDebugTiming: (timing) => {
+          if (timing.stage === "validate-final") {
+            finalValidationCount += 1;
+          }
+        },
+        pathPoints: [start],
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        settings: { ...settings, algorithm, equation },
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.pathPoints).toEqual([start, target]);
+        expect(result.targetIds).toEqual(["target"]);
+      }
+      expect(finalValidationCount).toBe(1);
+    },
+  );
+
+  it.each(["pchip", "akima"] as const)("returns a failed edge for a stateless %s route", async (algorithm) => {
+    const start = toImagePoint(-20, 0);
+    const target = toImagePoint(-10, 0);
+    const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({ jobId: job.id })),
+        timings: [],
+      }),
+      candidates: [candidate],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: { ...settings, algorithm },
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result).toMatchObject({ type: "failure" });
+  });
+
+  it.each([
+    { resolvedStateKey: "0", resolvedY: Number.NaN },
+    { resolvedStateKey: "invalid", resolvedY: 0 },
+  ])("rejects an invalid Step state returned across the Worker seam", async (stepRouteEndState) => {
+    const start = toImagePoint(-20, 0);
+    const target = toImagePoint(-10, 0);
+    const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({
+          jobId: job.id,
+          route: [job.startPoint, job.targetPoint],
+          stepRouteEndState,
+        })),
+        timings: [],
+      }),
+      candidates: [candidate],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings,
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 1,
+      validateStepRoute: () => true,
+    });
+
+    expect(result).toMatchObject({ type: "failure" });
+  });
+
+  it.each(["pchip", "akima"] as const)(
+    "rejects a %s append when the new spline invalidates the existing prefix target",
+    async (algorithm) => {
+      const start = toImagePoint(-20, 0);
+      const tail = toImagePoint(-5, -2);
+      const nextTarget = toImagePoint(20, -14);
+      const simulationMask = new Uint8Array(770 * 450);
+      const prefixTarget = { center: tail, radius: 0.01 };
+      const candidate = { enemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
+      const splineSettings = { ...settings, algorithm };
+      const prefixValidation = sampleGraphwarPathTargetSequence({
+        bounds,
+        boundsRect,
+        points: [start, tail],
+        settings: splineSettings,
+        targetCircles: [prefixTarget],
+        targetHitRadiusPixels: prefixTarget.radius,
+        targetPoints: [tail],
+      });
+      const appendedTargetValidation = sampleGraphwarPathTargetSequence({
+        bounds,
+        boundsRect,
+        points: [start, tail, nextTarget],
+        settings: splineSettings,
+        targetCircles: [{ center: nextTarget, radius: candidate.hitRadius }],
+        targetHitRadiusPixels: candidate.hitRadius,
+        targetPoints: [nextTarget],
+      });
+
+      expect(prefixValidation.reachesTargetSequenceBeforeObstacle).toBe(true);
+      expect(appendedTargetValidation.reachesTargetSequenceBeforeObstacle).toBe(true);
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        pathPoints: [start, tail],
+        prefixTarget,
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        settings: splineSettings,
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
     },
   );
 

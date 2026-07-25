@@ -7,8 +7,8 @@ describe("one-click-clear support", () => {
   it.each([
     ["abs", true],
     ["step", true],
-    ["pchip", false],
-    ["akima", false],
+    ["pchip", true],
+    ["akima", true],
   ] satisfies [AlgorithmMode, boolean][])("reports %s support", (algorithm, expected) => {
     expect(supportsOneClickClear(algorithm)).toBe(expected);
   });

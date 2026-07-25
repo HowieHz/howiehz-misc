@@ -187,6 +187,44 @@ describe("Anytime one-click-clear progress", () => {
     });
   });
 
+  it.each(["pchip", "akima"] as const)("passes a stateless %s task through the Worker adapter", async (algorithm) => {
+    const input = createOneClickClearInput();
+    input.settings = { ...input.settings, algorithm };
+    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearOptions) => {
+      expect(options.settings.algorithm).toBe(algorithm);
+      return {
+        elapsedMs: 1,
+        expandedStates: 0,
+        reason: "no-usable-target" as const,
+        type: "failure" as const,
+      };
+    });
+    if (!handleMessage) {
+      throw new Error("Pathfinding worker message handler was not registered");
+    }
+
+    handleMessage(
+      new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
+        data: {
+          id: 43,
+          task: {
+            input,
+            shouldReportIncumbents: false,
+            type: "build-one-click-clear-path",
+          },
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+    expect(postMessage.mock.calls[0]?.[0]).toMatchObject({
+      id: 43,
+      result: { result: { reason: "no-usable-target", type: "failure" } },
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+  });
+
   it("reuses Step glitch evidence from a failed search whose incumbent may be retained", async () => {
     const input = createOneClickClearInput();
     const targetPoint = createPixelPoint(300, 225);

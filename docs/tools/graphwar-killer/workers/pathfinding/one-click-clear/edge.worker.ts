@@ -33,7 +33,7 @@ const workerScope = self as unknown as GraphwarOneClickClearEdgeWorkerScope;
 
 /** 一键清图边 Worker 初始化后持有的只读搜索上下文。 */
 interface EdgeWorkerContext extends GraphwarOneClickClearEdgeWorkerInit {
-  /** 本 worker 共用的原子 Step runtime；ABS 批次省略。 */
+  /** 本 worker 共用的原子 Step runtime；stateless route 批次省略。 */
   stepRouteRuntime?: GraphwarOneClickClearDagEdgeRouteBuildContext["stepRouteRuntime"];
   /** 本 worker 私有 Theta* 工作区；同一批 DAG 边复用，避免每条边分配和清空全图数组。 */
   thetaStarScratch?: GraphwarThetaStarScratch;

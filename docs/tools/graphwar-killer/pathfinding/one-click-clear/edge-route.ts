@@ -15,6 +15,7 @@ import {
 import type { GraphwarOneClickClearEdgeWorkerJobResult } from "../runtime/protocol";
 /** 一键清图 DAG 单边建路；master 串行 fallback 和 edge Worker 并行消费者共用同一条路线规则。 */
 import type { GraphwarOneClickClearDagEdgeBuildJob } from "./search";
+import { isGraphwarOneClickClearStepRouteState } from "./step-route-state";
 
 /** Step 单边建路批次共享的数值模型和 route mask 查询材料。 */
 export interface GraphwarOneClickClearStepRouteBuildRuntime {
@@ -34,7 +35,7 @@ export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** Step 批次共用的原子 runtime；ABS 批次省略。 */
+  /** Step 批次共用的原子 runtime；stateless route 批次省略。 */
   stepRouteRuntime?: GraphwarOneClickClearStepRouteBuildRuntime;
   /** 几何路线算法模式；和单目标路径规划共用页面上的寻路算法选择。 */
   routeMode: GraphwarPathfindingRouteMode;
@@ -59,7 +60,10 @@ export async function buildOneClickClearDagEdgeRoute(
 ): Promise<GraphwarOneClickClearEdgeWorkerJobResult> {
   const hasStepRouteRuntime = context.stepRouteRuntime !== undefined;
   const hasStepRouteStartState = job.stepRouteStartState !== undefined;
-  if (hasStepRouteRuntime !== hasStepRouteStartState) {
+  if (
+    hasStepRouteRuntime !== hasStepRouteStartState ||
+    (hasStepRouteStartState && !isGraphwarOneClickClearStepRouteState(job.stepRouteStartState))
+  ) {
     return {
       jobId: job.id,
       routeMapPixelsElapsedMs: 0,

@@ -5,7 +5,7 @@ import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { imageXToNearestPlaneColumn, planeXToImageX } from "../../core/plane-grid";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
-import { createGraphwarTrajectoryFormulaSettingsIdentityKey } from "../../formula/trajectory/settings-identity";
+import { captureGraphwarFinalReplaySnapshot } from "../../formula/trajectory/final-replay-snapshot";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 
 const scanMockState = vi.hoisted(() => ({
@@ -27,6 +27,7 @@ const scanMockState = vi.hoisted(() => ({
   }[],
 }));
 const samplingMockState = vi.hoisted(() => ({
+  candidateTargetSequences: [] as { x: number; y: number }[][],
   resolveTrajectory: undefined as
     | (typeof import("../../formula/trajectory/sampling"))["resolveGraphwarTrajectory"]
     | undefined,
@@ -49,7 +50,10 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
     tryResolveGraphwarTrajectoryCandidate: vi.fn(
       (options: Parameters<typeof original.tryResolveGraphwarTrajectoryCandidate>[0]) => {
         samplingMockState.formulaContextCalls += 1;
-        samplingMockState.formulaContextInitialStatePresent.push(options.initialState !== undefined);
+        samplingMockState.formulaContextInitialStatePresent.push(options.start?.type === "continuation");
+        samplingMockState.candidateTargetSequences.push(
+          (options.targetSequence ?? []).map((target) => ({ ...target.center })),
+        );
         return original.tryResolveGraphwarTrajectoryCandidate(options);
       },
     ),
@@ -172,44 +176,30 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
               if (!stepGlitchFormulaEvidence) {
                 throw new Error("Step glitch scanner mock resolution is missing formula evidence");
               }
+              const finalValidation = shouldCreateFinalEvidence
+                ? captureGraphwarFinalReplaySnapshot({
+                    boundaryExpansion: options.simulationBoundaryExpansion,
+                    bounds: options.bounds,
+                    boundsRect: options.boundsRect,
+                    formulaSettings: options.settings,
+                    path: finalValidationPath,
+                    replaySemantics: "full-natural-visible",
+                    requiredTargets: options.requiredTargets ?? [],
+                    result: resolution.result,
+                    simulationMask: finalValidationMask,
+                    simulationMaskCacheId: target.finalValidation?.simulationMaskCacheId ?? 0,
+                    targetControlPoints: target.finalValidation?.targetControlPoints ?? [],
+                    targetSequence: [target.hitTarget],
+                    trackedTargets: finalValidationTrackedTargets,
+                  })
+                : undefined;
               return {
                 acceptedPoint: { x: 0, y: 0 },
                 expandedStates: 1,
                 path,
                 reachedTargetCount: (options.requiredTargets?.length ?? 0) + 1,
                 replayEvidence: {
-                  ...(shouldCreateFinalEvidence
-                    ? {
-                        finalValidation: {
-                          boundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
-                          bounds: { ...options.bounds },
-                          boundsRect: { ...options.boundsRect },
-                          formulaSettingsIdentity: createGraphwarTrajectoryFormulaSettingsIdentityKey(options.settings),
-                          path: finalValidationPath,
-                          requiredTargets: (options.requiredTargets ?? []).map((requiredTarget) => ({
-                            center: createPixelPoint(requiredTarget.center.x, requiredTarget.center.y),
-                            radius: requiredTarget.radius,
-                          })),
-                          result: resolution.result,
-                          simulationMask: finalValidationMask,
-                          simulationMaskCacheId: target.finalValidation?.simulationMaskCacheId ?? 0,
-                          targetControlPoints:
-                            target.finalValidation?.targetControlPoints.map((point) =>
-                              createPixelPoint(point.x, point.y),
-                            ) ?? [],
-                          targetSequence: [
-                            {
-                              center: createPixelPoint(target.hitTarget.center.x, target.hitTarget.center.y),
-                              radius: target.hitTarget.radius,
-                            },
-                          ],
-                          trackedTargets: finalValidationTrackedTargets.map((trackedTarget) => ({
-                            center: createPixelPoint(trackedTarget.center.x, trackedTarget.center.y),
-                            radius: trackedTarget.radius,
-                          })),
-                        },
-                      }
-                    : {}),
+                  ...(finalValidation ? { finalValidation } : {}),
                   formulaContext: { ...resolution.context, stepGlitchFormulaEvidence },
                   trajectoryPoints: path,
                 },
@@ -248,6 +238,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.scanners.length = 0;
     scanMockState.scans.length = 0;
     samplingMockState.pathTargetSequenceCalls = 0;
+    samplingMockState.candidateTargetSequences.length = 0;
     samplingMockState.formulaContextCalls = 0;
     samplingMockState.formulaContextInitialStatePresent.length = 0;
     samplingMockState.requiredTargets.length = 0;
@@ -661,6 +652,7 @@ describe("Step glitch one-click-clear target retries", () => {
 
   it("replays ABS y'' candidates from the muzzle instead of reusing a smooth-tail prefix", async () => {
     const start = toPixel(-11, 0);
+    const tail = toPixel(-10, 0);
     const first = toPixel(-9, 0);
     const second = toPixel(-6, 0);
     const candidates = [
@@ -680,7 +672,8 @@ describe("Step glitch one-click-clear target retries", () => {
       isDeleteOptimizationEnabled: false,
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
-      pathPoints: [start],
+      pathPoints: [start, tail],
+      prefixTarget: { center: tail, radius: 12 },
       routeMask: { mask: createEmptyMask(), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
       settings: {
@@ -698,6 +691,7 @@ describe("Step glitch one-click-clear target retries", () => {
     expect(result.type).toBe("success");
     expect(samplingMockState.formulaContextCalls).toBe(2);
     expect(samplingMockState.formulaContextInitialStatePresent).toEqual([false, false]);
+    expect(samplingMockState.candidateTargetSequences.every((sequence) => sequence[0]?.x === tail.x)).toBe(true);
   });
 });
 

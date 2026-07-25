@@ -73,13 +73,20 @@ describe("Graphwar trajectory target tracking", () => {
     const { result } = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
-      initialState: {
-        currentPoint: createGraphPoint(0, 0),
-        sampleIndex: 0,
-      },
       points: horizontalPoints,
       settings,
       soldierCenter: horizontalPoints[0],
+      start: {
+        reachedRequiredTargetCount: 0,
+        reachedTargetCount: 0,
+        samplingState: {
+          currentPoint: createGraphPoint(0, 0),
+          sampleIndex: 0,
+        },
+        shouldSkipInitialStop: false,
+        signProtection: [],
+        type: "continuation",
+      },
       stopOnTargetsComplete: false,
       targetSequence: [{ center: firstPixel, radius: 0.01 }],
       trackedTargets: [
@@ -107,14 +114,20 @@ describe("Graphwar trajectory target tracking", () => {
       bounds,
       boundsRect,
       collision: { mask: obstacleMask },
-      initialState: {
-        currentPoint: createGraphPoint(0, 0),
-        sampleIndex: 0,
-      },
       points: horizontalPoints,
       settings,
-      skipInitialStop: true,
       soldierCenter: horizontalPoints[0],
+      start: {
+        reachedRequiredTargetCount: 0,
+        reachedTargetCount: 0,
+        samplingState: {
+          currentPoint: createGraphPoint(0, 0),
+          sampleIndex: 0,
+        },
+        shouldSkipInitialStop: true,
+        signProtection: [],
+        type: "continuation",
+      },
       stopOnTargetsComplete: false,
       targetSequence: [{ center: firstPixel, radius: 0.01 }],
       trackedTargets: [
@@ -138,10 +151,6 @@ describe("Graphwar trajectory target tracking", () => {
     const { result } = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
-      initialState: {
-        currentPoint: createGraphPoint(0, 0),
-        sampleIndex: 0,
-      },
       points: horizontalPoints,
       // 故意按实际命中顺序的反序传入，证明 requiredTargets 不携带顺序约束。
       requiredTargets: [
@@ -150,6 +159,17 @@ describe("Graphwar trajectory target tracking", () => {
       ],
       settings,
       soldierCenter: horizontalPoints[0],
+      start: {
+        reachedRequiredTargetCount: 0,
+        reachedTargetCount: 0,
+        samplingState: {
+          currentPoint: createGraphPoint(0, 0),
+          sampleIndex: 0,
+        },
+        shouldSkipInitialStop: false,
+        signProtection: [],
+        type: "continuation",
+      },
       targetSequence: [{ center: orderedTarget, radius: 0.01 }],
     });
 
@@ -167,22 +187,31 @@ describe("Graphwar trajectory target tracking", () => {
     const options = {
       bounds,
       boundsRect,
-      initialReachedRequiredTargetCount: 1,
-      initialState: { currentPoint: createGraphPoint(0, 1), sampleIndex: 200 },
       points,
       requiredTargets: [requiredTarget],
       settings: { ...settings, equation: "dy" as const },
       soldierCenter: points[0],
+      start: {
+        reachedRequiredTargetCount: 1,
+        reachedTargetCount: 0,
+        samplingState: { currentPoint: createGraphPoint(0, 1), sampleIndex: 200 },
+        shouldSkipInitialStop: false,
+        signProtection: [],
+        type: "continuation" as const,
+      },
       targetSequence: [{ center: toPixel(1, 10), radius: 0.01 }],
     };
 
     const restarted = resolveGraphwarTrajectory(options);
     const reused = resolveGraphwarTrajectory({
       ...options,
-      signProtection: [
-        GraphwarSignRole.StartX | GraphwarSignRole.EndX,
-        GraphwarSignRole.StartX | GraphwarSignRole.EndX,
-      ],
+      start: {
+        ...options.start,
+        signProtection: [
+          GraphwarSignRole.StartX | GraphwarSignRole.EndX,
+          GraphwarSignRole.StartX | GraphwarSignRole.EndX,
+        ],
+      },
     });
 
     // 未保护公式会在发射点确认零值并整路重跑；旧状态携带的命中计数不能跟着留下。
@@ -723,7 +752,7 @@ describe("ODE segment position compensation", () => {
     const baseline = resolveGraphwarTrajectory(options);
     const fixedOptions = {
       ...options,
-      signProtection: [GraphwarSignRole.StartX],
+      start: { signProtection: [GraphwarSignRole.StartX], type: "cold" as const },
       stepGlitchXWindows: baseline.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments.map((segment) =>
         segment ? { endX: segment.endX, startX: segment.startX } : undefined,
       ),
@@ -741,7 +770,8 @@ describe("ODE segment position compensation", () => {
 
     expect(resolved.context.signProtection).toEqual([GraphwarSignRole.StartX]);
     expect(resolved.context.stepGlitchFormulaEvidence?.prefix.stepGlitchRequirements).toEqual([false, true, false]);
-    expect(forcedColdMetrics.counters.trajectoryReplayCount - debugMetrics.counters.trajectoryReplayCount).toBe(1);
+    // 同一 matcher 同时复用前一 soft 段和当前 hard 段的精确边界，各省一次 cold replay。
+    expect(forcedColdMetrics.counters.trajectoryReplayCount - debugMetrics.counters.trajectoryReplayCount).toBe(2);
     expect(debugMetrics.counters.rk4StepCount).toBeLessThan(forcedColdMetrics.counters.rk4StepCount);
     expect(resolved.context.formulaResult.expression).toBe(forcedCold.context.formulaResult.expression);
     expect(getGraphwarTrajectoryLaunchAngle(resolved.context)).toBe(
@@ -759,6 +789,47 @@ describe("ODE segment position compensation", () => {
         soldierCenter: pathPoints[0],
       }),
     );
+  });
+
+  it("continues a hard y' Step boundary through the same-solve matcher", () => {
+    const pathPoints = [
+      createGraphPoint(-24, 12),
+      createGraphPoint(-22.857142857142858, 13.571428571428571),
+      createGraphPoint(-22.84714285714286, 1.7532467532467528),
+    ];
+    const options = {
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "dy" as const,
+        steepness: 210,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const baseline = resolveGraphwarTrajectory(options);
+    const hardSegment = baseline.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments[1];
+    expect(hardSegment?.equation).toBe("dy");
+    if (!hardSegment) {
+      return;
+    }
+    const fixedOptions = {
+      ...options,
+      stepGlitchXWindows: [undefined, { endX: hardSegment.endX, startX: hardSegment.startX }],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+    const resolved = resolveGraphwarTrajectory({ ...fixedOptions, debugMetrics });
+    const forcedColdMetrics = createGraphwarTrajectoryDebugMetrics();
+    const forcedCold = resolveWithForcedMaterialIdentityMismatch({ ...fixedOptions, debugMetrics: forcedColdMetrics });
+
+    expect(debugMetrics.counters.trajectoryReplayCount).toBeLessThan(forcedColdMetrics.counters.trajectoryReplayCount);
+    expect(debugMetrics.counters.rk4StepCount).toBeLessThan(forcedColdMetrics.counters.rk4StepCount);
+    expect(resolved.context.formulaResult.expression).toBe(forcedCold.context.formulaResult.expression);
+    expectTrajectorySamplesToBeIdentical(resolved.result.sample, forcedCold.result.sample);
   });
 
   it("retries a resumed hard y'' gate with real sign protection", () => {
@@ -791,10 +862,17 @@ describe("ODE segment position compensation", () => {
     }
     const resumedOptions = {
       ...options,
-      initialState: {
-        currentPoint: createGraphPoint(hardSegment.startX, hardSegment.accelerationGateY),
-        dy: 0,
-        sampleIndex: 0,
+      start: {
+        reachedRequiredTargetCount: 0,
+        reachedTargetCount: 0,
+        samplingState: {
+          currentPoint: createGraphPoint(hardSegment.startX, hardSegment.accelerationGateY),
+          dy: 0,
+          sampleIndex: 0,
+        },
+        shouldSkipInitialStop: false,
+        signProtection: prefix.signProtection,
+        type: "continuation" as const,
       },
       stepGlitchFormulaEvidence: { prefix },
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -909,7 +987,7 @@ describe("ODE segment position compensation", () => {
     incompatibleSignProtection[0] = (incompatibleSignProtection[0] ?? 0) ^ GraphwarSignRole.StartX;
     const incompatible = resolveGraphwarTrajectory({
       ...options,
-      signProtection: prefix.signProtection,
+      start: { signProtection: prefix.signProtection, type: "cold" },
       stepGlitchFormulaEvidence: {
         prefix: {
           ...prefix,
@@ -1811,7 +1889,7 @@ describe("Step glitch formula prefix", () => {
           boundsRect,
           points: appendedPoints,
           settings: stepSettings,
-          signProtection: [],
+          start: { signProtection: [], type: "cold" },
           soldierCenter: appendedPoints[0],
           // 强制保护快照失配，覆盖未来段新增 epsilon 后必须重算旧段的分支。
           stepGlitchFormulaEvidence: { prefix: { ...prefixFormula, signProtection: [1] } },

@@ -113,6 +113,20 @@ describe("one-click-clear DAG edge native forward distance", () => {
     expect(mocks.buildVisibilityRoute).not.toHaveBeenCalled();
     expect(result.route).toBeUndefined();
   });
+
+  it.each([
+    { name: "resolvedY is not finite", stepRouteStartState: { resolvedStateKey: "0", resolvedY: Number.NaN } },
+    { name: "state key is not an integer", stepRouteStartState: { resolvedStateKey: "invalid", resolvedY: 0 } },
+    { name: "state key is not canonical", stepRouteStartState: { resolvedStateKey: "01", resolvedY: 0 } },
+  ])("rejects an invalid Step state when $name", async ({ stepRouteStartState }) => {
+    const result = await buildOneClickClearDagEdgeRoute(
+      { ...context, stepRouteRuntime: createStepRouteRuntime() },
+      { ...createJob(100.4, 103), stepRouteStartState },
+    );
+
+    expect(mocks.buildVisibilityRoute).not.toHaveBeenCalled();
+    expect(result.route).toBeUndefined();
+  });
 });
 
 /** 创建只携带单边建路必需字段的测试 job。 */

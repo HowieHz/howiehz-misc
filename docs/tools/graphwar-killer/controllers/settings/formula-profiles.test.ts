@@ -86,14 +86,15 @@ describe("formula profiles", () => {
     ["dy", "abs", true],
     ["ddy", "abs", true],
     ["y", "step", true],
-    ["dy", "pchip", false],
+    ["dy", "pchip", true],
+    ["ddy", "akima", true],
   ] as const)("reports %s %s support through the authoritative contract", (equation, algorithm, supported) => {
     const profiles = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), equation, { algorithm });
 
     expect(graphwarFormulaProfileSupportsOneClickClear(profiles, equation)).toBe(supported);
   });
 
-  it("repairs only unsupported profiles and retains supported custom preferences", () => {
+  it("retains every profile whose algorithm now satisfies the shared one-click-clear contract", () => {
     const profiles: GraphwarFormulaProfiles = {
       y: {
         algorithm: "pchip",
@@ -119,49 +120,21 @@ describe("formula profiles", () => {
     };
     const plan = createGraphwarManagedFormulaProfileRepairPlan(profiles);
 
-    expect(plan).toEqual({
-      y: { algorithm: "abs" },
-      ddy: { algorithm: "step", isStepGlitchModeEnabled: true },
-    });
+    expect(plan).toEqual({});
 
     const repaired = applyGraphwarManagedFormulaProfileRepairPlan(profiles, plan);
-    expect(repaired).toEqual({
-      y: {
-        algorithm: "abs",
-        precisionText: "1",
-        steepnessText: "11",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: false,
-      },
-      dy: {
-        algorithm: "abs",
-        precisionText: "2",
-        steepnessText: "22",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: true,
-      },
-      ddy: {
-        algorithm: "step",
-        precisionText: "3",
-        steepnessText: "33",
-        isStepGlitchModeEnabled: true,
-        isStepOverflowProtectionEnabled: false,
-      },
-    });
-    expect(repaired.dy).toBe(profiles.dy);
+    expect(repaired).toBe(profiles);
     expect(profiles.y.algorithm).toBe("pchip");
     expect(profiles.ddy.algorithm).toBe("akima");
   });
 
-  it("uses the managed derivative fallback only when that profile is unsupported", () => {
-    const unsupported = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), "dy", {
+  it("does not replace a supported managed derivative profile", () => {
+    const supported = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), "dy", {
       algorithm: "pchip",
       isStepGlitchModeEnabled: false,
     });
 
-    expect(createGraphwarManagedFormulaProfileRepairPlan(unsupported)).toEqual({
-      dy: { algorithm: "step", isStepGlitchModeEnabled: true },
-    });
+    expect(createGraphwarManagedFormulaProfileRepairPlan(supported)).toEqual({});
   });
 
   it("rejects an invalid precision retained by a non-current managed profile", () => {
@@ -172,14 +145,14 @@ describe("formula profiles", () => {
     expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(false);
   });
 
-  it("validates steepness against the algorithm selected by the managed repair", () => {
+  it("ignores inactive steepness after an Akima profile no longer needs managed repair", () => {
     const profiles = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), "ddy", {
       algorithm: "akima",
       steepnessText: "invalid",
     });
 
-    expect(createGraphwarManagedFormulaProfileRepairPlan(profiles).ddy?.algorithm).toBe("step");
-    expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(false);
+    expect(createGraphwarManagedFormulaProfileRepairPlan(profiles)).toEqual({});
+    expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(true);
   });
 
   it("ignores invalid steepness in profiles whose final algorithm does not consume it", () => {
@@ -192,7 +165,7 @@ describe("formula profiles", () => {
       steepnessText: "invalid",
     });
 
-    expect(createGraphwarManagedFormulaProfileRepairPlan(profiles).y?.algorithm).toBe("abs");
+    expect(createGraphwarManagedFormulaProfileRepairPlan(profiles)).toEqual({});
     expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(true);
   });
 

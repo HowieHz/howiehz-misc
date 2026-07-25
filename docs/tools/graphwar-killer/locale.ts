@@ -572,8 +572,9 @@ export const graphwarKillerLocale = {
           title: "对验证通过的清图路径做保守删点，并确认每次删除后仍命中全部新旧目标",
         },
         "outside-search-stages": {
-          label: "- 清图搜索阶段外耗时",
-          title: "清图搜索父阶段扣除全部非嵌套已分类阶段后的剩余时间，包括搜索编排与消息落地",
+          label: "- 清图搜索内未分类耗时",
+          title:
+            "清图搜索父阶段扣除全部非嵌套已分类子阶段后的未分类剩余时间，可能包括搜索编排、消息落地及其他未分类时间",
         },
         "prefix-evidence-hit": {
           label: "- 清图前缀证据命中",

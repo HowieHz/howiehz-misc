@@ -2,7 +2,6 @@ import { DEFAULT_FORMULA_DECIMAL_PLACES } from "../../core/numbers";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
 import type { AlgorithmMode, EquationMode } from "../../core/types";
 import { resolveFormulaModeDefinition } from "../../formula/mode-contract";
-import { supportsOneClickClear } from "../../pathfinding/one-click-clear/support";
 import { parseGraphwarFormulaPrecision, parseGraphwarFormulaSteepness } from "./validation";
 
 /** 单个 Solver 游戏模式独立保留的公式偏好。 */
@@ -24,13 +23,6 @@ export interface GraphwarFormulaProfiles {
   dy: GraphwarFormulaProfile;
   ddy: GraphwarFormulaProfile;
 }
-
-/** 托管模式对单份公式偏好的最小修复，包括算法和可选的邪道模式联动。 */
-type GraphwarFormulaProfileRepair = Pick<GraphwarFormulaProfile, "algorithm"> &
-  Partial<Pick<GraphwarFormulaProfile, "isStepGlitchModeEnabled">>;
-
-/** 稀疏且不可变地描述托管模式必须替换的不受支持配置。 */
-export type GraphwarManagedFormulaProfileRepairPlan = Partial<Record<EquationMode, GraphwarFormulaProfileRepair>>;
 
 const defaultFormulaPreferences = {
   precisionText: String(DEFAULT_FORMULA_DECIMAL_PLACES),
@@ -84,51 +76,10 @@ export function updateGraphwarFormulaProfile(
   };
 }
 
-/** 委托一键清图实现的权威契约判断 profile 是否受支持。 */
-export function graphwarFormulaProfileSupportsOneClickClear(profiles: GraphwarFormulaProfiles, equation: EquationMode) {
-  return supportsOneClickClear(profiles[equation].algorithm);
-}
-
-/** 仅将不受支持的 profile 投影到托管模式回退配置，不修改输入。 */
-export function createGraphwarManagedFormulaProfileRepairPlan(
-  profiles: GraphwarFormulaProfiles,
-): GraphwarManagedFormulaProfileRepairPlan {
-  const plan: GraphwarManagedFormulaProfileRepairPlan = {};
-  if (!graphwarFormulaProfileSupportsOneClickClear(profiles, "y")) {
-    plan.y = { algorithm: "abs" };
-  }
-  if (!graphwarFormulaProfileSupportsOneClickClear(profiles, "dy")) {
-    plan.dy = { algorithm: "step", isStepGlitchModeEnabled: true };
-  }
-  if (!graphwarFormulaProfileSupportsOneClickClear(profiles, "ddy")) {
-    plan.ddy = { algorithm: "step", isStepGlitchModeEnabled: true };
-  }
-  return plan;
-}
-
-/** 一次性应用已确认的 profile 映射修复，并保留所有计划外配置。 */
-export function applyGraphwarManagedFormulaProfileRepairPlan(
-  profiles: GraphwarFormulaProfiles,
-  plan: GraphwarManagedFormulaProfileRepairPlan,
-): GraphwarFormulaProfiles {
-  let repaired = profiles;
-  for (const equation of ["y", "dy", "ddy"] as const) {
-    const update = plan[equation];
-    if (update) {
-      repaired = updateGraphwarFormulaProfile(repaired, equation, update);
-    }
-  }
-  return repaired;
-}
-
-/** 按托管模式应用必要修复后的实际用法校验每份公式 profile。 */
+/** 按每个托管公式模式的实际设置档案校验其保留输入。 */
 export function graphwarFormulaProfilesAreValidForManagedMode(profiles: GraphwarFormulaProfiles) {
-  const repaired = applyGraphwarManagedFormulaProfileRepairPlan(
-    profiles,
-    createGraphwarManagedFormulaProfileRepairPlan(profiles),
-  );
   for (const equation of ["y", "dy", "ddy"] as const) {
-    const profile = repaired[equation];
+    const profile = profiles[equation];
     if (
       parseGraphwarFormulaPrecision(profile.precisionText) === undefined ||
       (resolveFormulaModeDefinition(profile.algorithm, equation).formulaSettings.type !== "standard" &&

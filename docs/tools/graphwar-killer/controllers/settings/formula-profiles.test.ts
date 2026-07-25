@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  applyGraphwarManagedFormulaProfileRepairPlan,
   createDefaultGraphwarFormulaProfiles,
-  createGraphwarManagedFormulaProfileRepairPlan,
   getGraphwarFormulaProfile,
-  graphwarFormulaProfileSupportsOneClickClear,
   graphwarFormulaProfilesAreValidForManagedMode,
   updateGraphwarFormulaProfile,
-  type GraphwarFormulaProfiles,
 } from "./formula-profiles";
 
 const defaultFormulaPreferences = {
@@ -81,62 +77,6 @@ describe("formula profiles", () => {
     }
   });
 
-  it.each([
-    ["y", "abs", true],
-    ["dy", "abs", true],
-    ["ddy", "abs", true],
-    ["y", "step", true],
-    ["dy", "pchip", true],
-    ["ddy", "akima", true],
-  ] as const)("reports %s %s support through the authoritative contract", (equation, algorithm, supported) => {
-    const profiles = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), equation, { algorithm });
-
-    expect(graphwarFormulaProfileSupportsOneClickClear(profiles, equation)).toBe(supported);
-  });
-
-  it("retains every profile whose algorithm now satisfies the shared one-click-clear contract", () => {
-    const profiles: GraphwarFormulaProfiles = {
-      y: {
-        algorithm: "pchip",
-        precisionText: "1",
-        steepnessText: "11",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: false,
-      },
-      dy: {
-        algorithm: "abs",
-        precisionText: "2",
-        steepnessText: "22",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: true,
-      },
-      ddy: {
-        algorithm: "akima",
-        precisionText: "3",
-        steepnessText: "33",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: false,
-      },
-    };
-    const plan = createGraphwarManagedFormulaProfileRepairPlan(profiles);
-
-    expect(plan).toEqual({});
-
-    const repaired = applyGraphwarManagedFormulaProfileRepairPlan(profiles, plan);
-    expect(repaired).toBe(profiles);
-    expect(profiles.y.algorithm).toBe("pchip");
-    expect(profiles.ddy.algorithm).toBe("akima");
-  });
-
-  it("does not replace a supported managed derivative profile", () => {
-    const supported = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), "dy", {
-      algorithm: "pchip",
-      isStepGlitchModeEnabled: false,
-    });
-
-    expect(createGraphwarManagedFormulaProfileRepairPlan(supported)).toEqual({});
-  });
-
   it("rejects an invalid precision retained by a non-current managed profile", () => {
     const profiles = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), "dy", {
       precisionText: "invalid",
@@ -151,7 +91,6 @@ describe("formula profiles", () => {
       steepnessText: "invalid",
     });
 
-    expect(createGraphwarManagedFormulaProfileRepairPlan(profiles)).toEqual({});
     expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(true);
   });
 
@@ -165,24 +104,6 @@ describe("formula profiles", () => {
       steepnessText: "invalid",
     });
 
-    expect(createGraphwarManagedFormulaProfileRepairPlan(profiles)).toEqual({});
     expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(true);
-  });
-
-  it("is idempotent after the first confirmed repair", () => {
-    const profiles: GraphwarFormulaProfiles = {
-      y: { algorithm: "akima", ...defaultFormulaPreferences },
-      dy: { algorithm: "pchip", ...defaultFormulaPreferences, isStepGlitchModeEnabled: false },
-      ddy: { algorithm: "abs", ...defaultFormulaPreferences, isStepGlitchModeEnabled: false },
-    };
-    const repaired = applyGraphwarManagedFormulaProfileRepairPlan(
-      profiles,
-      createGraphwarManagedFormulaProfileRepairPlan(profiles),
-    );
-    const secondPlan = createGraphwarManagedFormulaProfileRepairPlan(repaired);
-
-    expect(repaired.ddy).toEqual({ algorithm: "abs", ...defaultFormulaPreferences, isStepGlitchModeEnabled: false });
-    expect(secondPlan).toEqual({});
-    expect(applyGraphwarManagedFormulaProfileRepairPlan(repaired, secondPlan)).toBe(repaired);
   });
 });

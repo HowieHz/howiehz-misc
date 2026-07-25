@@ -37,7 +37,6 @@ function createPreflight(shouldUseDagWorker: boolean) {
       routePlanningTolerancePlanePixels: 0,
       simulationBoundaryInsetPlanePixels: 0,
     },
-    isModeSupported: () => true,
   });
 }
 

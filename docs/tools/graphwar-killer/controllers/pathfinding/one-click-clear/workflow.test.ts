@@ -100,7 +100,6 @@ describe("one-click clear workflow", () => {
           routePlanningTolerancePlanePixels: 0,
           simulationBoundaryInsetPlanePixels: 0,
         }),
-        isModeSupported: () => true,
       },
       messages: {
         getFailureMessage: () => "failure",

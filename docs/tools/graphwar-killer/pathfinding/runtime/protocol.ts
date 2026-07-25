@@ -555,8 +555,7 @@ function isGraphwarOneClickClearFailureReason(value: unknown) {
     value === "no-candidate" ||
     value === "no-usable-target" ||
     value === "pathfinding-worker-failed" ||
-    value === "preflight-blocked" ||
-    value === "unsupported"
+    value === "preflight-blocked"
   );
 }
 

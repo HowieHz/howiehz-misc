@@ -6,6 +6,7 @@ import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import {
   continueResolvedGraphwarTrajectory,
+  createGraphwarTrajectoryFormulaMode,
   createGraphwarResolvedTrajectoryContinuationEvidence,
   resolveGraphwarTrajectory,
   sampleGraphwarPathTargetSequence,
@@ -122,6 +123,18 @@ const splinePrefixInvalidationCases = [
 ] as const;
 
 describe("One-click clear optimization", () => {
+  it("rejects both formula mode half-states at the compatibility boundary", async () => {
+    const start = toImagePoint(-20, 0);
+    const options = createDagCaptureOptions(start, [], []);
+    const formulaMode = createGraphwarTrajectoryFormulaMode(options.settings);
+    // Runtime boundary tests deliberately bypass the compile-time union to exercise malformed JavaScript callers.
+    const buildFromUnknown = buildGraphwarOneClickClearPath as (input: unknown) => Promise<unknown>;
+
+    await expect(buildFromUnknown({ ...options, formulaMode })).rejects.toThrow("both formulaMode and settings");
+    const { settings: _settings, ...optionsWithoutMode } = options;
+    await expect(buildFromUnknown(optionsWithoutMode)).rejects.toThrow("requires formulaMode or settings");
+  });
+
   it("builds an ordinary DAG target at the next legal native column when the center does not advance", async () => {
     const requests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
     const start = createPixelPoint(200, 225);

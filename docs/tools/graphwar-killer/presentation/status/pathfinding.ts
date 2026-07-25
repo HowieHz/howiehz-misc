@@ -59,12 +59,6 @@ export function createOneClickClearPreflightFailureStatus(
       message: input.settingsMessage || input.getDisabledMessage(),
     };
   }
-  if (input.reason === "unsupported-mode") {
-    return {
-      kind: "warning",
-      message: input.locale.smartPathfinding.oneClickClear.unsupported,
-    };
-  }
   if (input.reason === "missing-current-path") {
     return {
       kind: "warning",
@@ -97,9 +91,6 @@ export function createOneClickClearFailureMessage(input: GraphwarOneClickClearFa
   }
   if (input.reason === "preflight-blocked") {
     return createSmartPathfindingCurrentPathBlockedMessage(input.locale);
-  }
-  if (input.reason === "unsupported") {
-    return input.locale.smartPathfinding.oneClickClear.unsupported;
   }
   if (input.reason === "pathfinding-worker-failed") {
     return input.locale.smartPathfinding.oneClickClear.pathfindingWorkerFailed(elapsed);

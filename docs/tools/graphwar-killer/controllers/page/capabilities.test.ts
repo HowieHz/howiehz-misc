@@ -48,7 +48,6 @@ function createFacts(overrides: GraphwarCapabilityFactsOverrides = {}): Graphwar
     formula: {
       isManagedSettingsValid: true,
       isSettingsValid: true,
-      isOneClickClearSupported: true,
       isStepGlitchRoutingUsed: false,
       ...overrides.formula,
     },
@@ -213,14 +212,7 @@ describe("Graphwar capabilities", () => {
       { scene: { hasSoldiers: false }, pathfinding: { hasPathStart: false }, formula: {} },
       { state: "blocked", reason: "soldiers-required" },
     ],
-    [
-      { pathfinding: { hasPathStart: false }, formula: { isOneClickClearSupported: false } },
-      { state: "blocked", reason: "path-start-required" },
-    ],
-    [
-      { formula: { isOneClickClearSupported: false, isSettingsValid: false } },
-      { state: "blocked", reason: "formula-unsupported" },
-    ],
+    [{ pathfinding: { hasPathStart: false } }, { state: "blocked", reason: "path-start-required" }],
     [
       { formula: { isSettingsValid: false }, pathfinding: { isWorkerCountValid: false } },
       { state: "blocked", reason: "formula-settings-invalid" },
@@ -380,16 +372,6 @@ describe("Graphwar capabilities", () => {
     );
 
     expect(capabilities.oneClickClear).toEqual({ state: "blocked", reason: "agent-scene-required" });
-    expect(capabilities.managedMode).toEqual({ state: "normal" });
-  });
-
-  it("lets managed repair unsupported profiles without weakening the manual command guard", () => {
-    const capabilities = deriveGraphwarCapabilities(
-      createFacts({ formula: { isOneClickClearSupported: false } }),
-      createPreferences(),
-    );
-
-    expect(capabilities.oneClickClear).toEqual({ state: "blocked", reason: "formula-unsupported" });
     expect(capabilities.managedMode).toEqual({ state: "normal" });
   });
 

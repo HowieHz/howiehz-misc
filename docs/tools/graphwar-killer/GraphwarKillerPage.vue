@@ -102,9 +102,7 @@ import { useGraphwarTargetingContext } from "./controllers/pathfinding/targeting
 import { useGraphwarResultActions } from "./controllers/result/actions";
 import { useGraphwarScreenshotWorkflow } from "./controllers/screenshot/workflow";
 import {
-  applyGraphwarManagedFormulaProfileRepairPlan,
   createDefaultGraphwarFormulaProfiles,
-  createGraphwarManagedFormulaProfileRepairPlan,
   type GraphwarFormulaProfile,
   graphwarFormulaProfilesAreValidForManagedMode,
   updateGraphwarFormulaProfile,
@@ -157,7 +155,6 @@ import { resolveFormulaModeContract } from "./formula/mode-contract";
 import type { GraphwarKillerLocale } from "./locale-types";
 import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";
 import type { GraphwarOneClickClearIncumbent } from "./pathfinding/one-click-clear/search";
-import { supportsOneClickClear } from "./pathfinding/one-click-clear/support";
 import type { GraphwarPathfindingRouteMode } from "./pathfinding/routing/mode";
 import { createGraphwarPathfindingCacheController } from "./pathfinding/runtime/cache";
 import {
@@ -1334,7 +1331,6 @@ const graphwarCapabilities = computed(() =>
         // 托管会跨三个 profile 运行，必须按 repair 后的最终算法校验每份保留输入。
         isManagedSettingsValid:
           parsedBounds.value.ok && graphwarFormulaProfilesAreValidForManagedMode(solverFormulaProfiles.value),
-        isOneClickClearSupported: supportsOneClickClear(algorithmMode.value),
         isSettingsValid: !settingsMessage.value,
         isStepGlitchRoutingUsed: isEffectiveStepGlitchModeEnabled.value,
       },
@@ -1524,7 +1520,6 @@ const oneClickClearRunWorkflow = useGraphwarOneClickClearRunWorkflow<DetectionBo
     shouldUseDagWorker: shouldUseOneClickClearDagWorker,
     getSimulationMask: () => smartPathfindingSimulationObstacleMask.value,
     getTolerances: () => effectiveOneClickClearTolerances.value,
-    isModeSupported: isOneClickClearModeSupported,
   },
   messages: {
     getFailureMessage: (reason, elapsedMs) => createOneClickClearFailureMessage({ elapsedMs, locale, reason }),
@@ -3737,25 +3732,6 @@ function toggleGraphwarManagedMode() {
   }
   const shotReserveSeconds = String(managedTiming.shotReserveMs / 1000);
 
-  const repairPlan = createGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value);
-  const repairs = locale.equationModes.flatMap((mode) => {
-    const repair = repairPlan[mode.value];
-    if (!repair) {
-      return [];
-    }
-    return [
-      {
-        algorithm:
-          locale.algorithmModes.find((algorithm) => algorithm.value === repair.algorithm)?.label ?? repair.algorithm,
-        equation: mode.label,
-        properties:
-          resolveFormulaModeContract(repair.algorithm, mode.value, repair.isStepGlitchModeEnabled === true)
-            .pathSearchPolicy.type === "step-glitch"
-            ? [locale.ui.settings.stepGlitchMode]
-            : [],
-      },
-    ];
-  });
   // 每次启动都让用户确认本轮托管行为、友伤状态和算法设定，不能沿用上一次同意。
   if (
     !window.confirm(
@@ -3774,7 +3750,7 @@ function toggleGraphwarManagedMode() {
                 : [],
           };
         }),
-        repairs,
+        [],
         isFriendlyFireEnabled.value,
         {
           pollIntervalSeconds: String(managedTiming.pollIntervalMs / 1000),
@@ -3785,8 +3761,6 @@ function toggleGraphwarManagedMode() {
   ) {
     return;
   }
-  solverFormulaProfiles.value = applyGraphwarManagedFormulaProfileRepairPlan(solverFormulaProfiles.value, repairPlan);
-
   let client: GraphwarAgentClient;
   try {
     client = createGraphwarAgentClient(graphwarAgentBaseUrlText.value, { token: graphwarAgentTokenText.value });
@@ -4592,11 +4566,6 @@ function setMagnifierZoomText(value: string) {
 /** 返回智能寻路被禁用的具体原因。 */
 function getSmartPathfindingDisabledMessage() {
   return smartPathfindingPrerequisiteMessage.value;
-}
-
-/** 复用单一能力表判断当前组合，避免托管和手动入口各自硬编码算法。 */
-function isOneClickClearModeSupported() {
-  return supportsOneClickClear(algorithmMode.value);
 }
 
 /** 切换友伤设置；该设置会改变士兵是否写入障碍 mask，因此需要重建路线。 */

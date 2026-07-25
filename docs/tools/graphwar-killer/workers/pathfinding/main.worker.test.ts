@@ -7,8 +7,8 @@ import type {
   GraphwarStepGlitchFormulaPrefix,
 } from "../../formula/trajectory/sampling";
 import type {
+  GraphwarOneClickClearBuildOptions,
   GraphwarOneClickClearIncumbent,
-  GraphwarOneClickClearOptions,
 } from "../../pathfinding/one-click-clear/search";
 import type {
   GraphwarStepGlitchPrefixEvidence,
@@ -102,7 +102,7 @@ describe("Anytime one-click-clear progress", () => {
       pathPoints: input.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
       trajectoryPoints: input.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
     };
-    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearOptions) => {
+    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearBuildOptions) => {
       options.onValidatedIncumbent?.(incumbent);
       return {
         elapsedMs: 3,
@@ -154,7 +154,7 @@ describe("Anytime one-click-clear progress", () => {
 
   it("keeps the incumbent callback disabled for ordinary one-click-clear requests", async () => {
     const input = createOneClickClearInput();
-    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearOptions) => {
+    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearBuildOptions) => {
       expect(options.onValidatedIncumbent).toBeUndefined();
       return {
         elapsedMs: 1,
@@ -191,8 +191,8 @@ describe("Anytime one-click-clear progress", () => {
   it.each(["pchip", "akima"] as const)("passes a stateless %s task through the Worker adapter", async (algorithm) => {
     const input = createOneClickClearInput();
     input.settings = { ...input.settings, algorithm };
-    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearOptions) => {
-      expect(options.settings.algorithm).toBe(algorithm);
+    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearBuildOptions) => {
+      expect(options.formulaMode?.settings.algorithm).toBe(algorithm);
       return {
         elapsedMs: 1,
         expandedStates: 0,
@@ -235,7 +235,7 @@ describe("Anytime one-click-clear progress", () => {
     input.simulationMask = new Uint8Array(770 * 450);
     input.simulationMaskCacheId = 904;
     mocks.buildOneClickClearPath
-      .mockImplementationOnce(async (options: GraphwarOneClickClearOptions) => {
+      .mockImplementationOnce(async (options: GraphwarOneClickClearBuildOptions) => {
         options.onValidatedStepGlitchPath?.({
           path: adoptedPath,
           prefixEvidence: {
@@ -251,7 +251,7 @@ describe("Anytime one-click-clear progress", () => {
         });
         return { elapsedMs: 1, expandedStates: 1, reason: "no-usable-target", type: "failure" as const };
       })
-      .mockImplementationOnce(async (options: GraphwarOneClickClearOptions) => {
+      .mockImplementationOnce(async (options: GraphwarOneClickClearBuildOptions) => {
         expect(options.stepGlitchPrefixEvidence).toMatchObject({ acceptedPoint: createGraphPoint(-5, 1) });
         return { elapsedMs: 1, expandedStates: 0, reason: "no-candidate", type: "failure" as const };
       });

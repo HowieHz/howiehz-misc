@@ -26,8 +26,7 @@ export type GraphwarOneClickClearSearchPreflightFailureReason =
   | "invalid-settings"
   | "missing-current-path"
   | "missing-obstacle-mask"
-  | "no-target"
-  | "unsupported-mode";
+  | "no-target";
 
 /** 一键清图预检所需的路径、目标和设置输入。 */
 interface GraphwarOneClickClearSearchPreflightOptions {
@@ -45,8 +44,6 @@ interface GraphwarOneClickClearSearchPreflightOptions {
   pathfindingWorkerCount: number | undefined;
   /** 成功解析后的寻路容差；缺失时应保持页面原设置错误语义。 */
   tolerances: GraphwarOneClickClearSearchTolerances | undefined;
-  /** 当前公式模式是否支持一键清图；用函数保留原来的校验顺序。 */
-  isModeSupported: () => boolean;
 }
 
 export type GraphwarOneClickClearSearchPreflightResult =
@@ -109,9 +106,6 @@ export function createGraphwarOneClickClearSearchPreflight(
     (options.shouldUseDagWorker && options.pathfindingWorkerCount === undefined)
   ) {
     return { ok: false, reason: "invalid-settings" };
-  }
-  if (!options.isModeSupported()) {
-    return { ok: false, reason: "unsupported-mode" };
   }
   if (options.pathPointCount === 0) {
     return { ok: false, reason: "missing-current-path" };

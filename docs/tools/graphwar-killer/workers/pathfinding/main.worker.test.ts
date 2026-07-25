@@ -310,6 +310,9 @@ describe("Step glitch smart-path validation", () => {
 
     const response = await dispatchSmartPathRequest(input);
 
+    expect(mocks.scanStepGlitchPath.mock.calls[0]?.[0].formulaMode.settings.stepGlitchObstacleMask).toBe(
+      input.simulationMask,
+    );
     expect(mocks.validateTrajectory).toHaveBeenCalledTimes(1);
     expect(response.result).toMatchObject({ failureReason: "trajectory" });
   });

@@ -237,7 +237,7 @@ export interface GraphwarOneClickClearOptions {
   /** 一键清图删点局部命中检查半径，单位为截图像素；0 表示每次候选删点都走整路验证。 */
   deleteHitCheckRadiusPixels: number;
   /** 是否尝试删除控制点；关闭时仍执行最终整路验证和命中统计。 */
-  isDeleteOptimizationEnabled?: boolean;
+  isDeleteOptimizationEnabled: boolean;
   /** 当前路径已有像素点。 */
   pathPoints: readonly PixelPoint[];
   /** 当前最后路径点的验证目标；传入士兵命中圈时可复用现有路径预检语义。 */
@@ -265,13 +265,8 @@ type GraphwarOneClickClearSearchOptions = Omit<GraphwarOneClickClearOptions, "se
   formulaMode: GraphwarTrajectoryFormulaMode;
 };
 
-/** 调用方只能传 raw settings 或已解析 mode 之一；Worker 内部 job 使用后一分支保持同一契约身份。 */
-export type GraphwarOneClickClearBuildOptions =
-  | (GraphwarOneClickClearOptions & { formulaMode?: never })
-  | (Omit<GraphwarOneClickClearOptions, "settings"> & {
-      formulaMode: GraphwarTrajectoryFormulaMode;
-      settings?: never;
-    });
+/** 内部构建入口只接收 Worker Adapter 已构造的原子公式模式。 */
+export type GraphwarOneClickClearBuildOptions = GraphwarOneClickClearSearchOptions;
 
 /** Worker 边界只能传纯数据；回调在 worker 内部重新挂接。 */
 export type GraphwarOneClickClearSearchInput = Omit<
@@ -287,8 +282,6 @@ export type GraphwarOneClickClearSearchInput = Omit<
   | "validateStepRoute"
   | "yieldControl"
 > & {
-  /** Worker 请求显式传递删点偏好，不依赖直接调用 API 的兼容默认值。 */
-  isDeleteOptimizationEnabled: boolean;
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
   routeObstacleMask: Uint8Array;
   /** 页面侧基础障碍 mask 的稳定 id，用于 worker 内 route mask cache。 */
@@ -549,14 +542,8 @@ const FALLBACK_TARGET_RADIUS_IMAGE_PIXELS = 1;
 
 /** 在唯一入口冻结请求数据；回调、yield 和外部 Worker adapter 只能观察自己的副本。 */
 function snapshotOneClickClearOptions(input: GraphwarOneClickClearBuildOptions): GraphwarOneClickClearSearchOptions {
-  const { formulaMode: providedFormulaMode, settings: providedSettings, ...inputBase } = input;
-  if (providedFormulaMode !== undefined && providedSettings !== undefined) {
-    throw new Error("One-Click Clear cannot receive both formulaMode and settings");
-  }
-  const sourceSettings = providedFormulaMode?.settings ?? providedSettings;
-  if (!sourceSettings) {
-    throw new Error("One-Click Clear requires formulaMode or settings");
-  }
+  const { formulaMode: providedFormulaMode, ...inputBase } = input;
+  const sourceSettings = providedFormulaMode.settings;
   const maskSnapshots = new Map<Uint8Array, Uint8Array>();
   const routeMask = input.routeMask.mask.slice();
   maskSnapshots.set(input.routeMask.mask, routeMask);
@@ -580,9 +567,7 @@ function snapshotOneClickClearOptions(input: GraphwarOneClickClearBuildOptions):
   };
   // 含 mask 的设置必须和复制后的 mask 重新绑定；无 mask 的 Worker 内部 job 保留 Adapter 创建的同一 mode。
   const formulaMode =
-    providedFormulaMode && stepGlitchObstacleMask === undefined
-      ? providedFormulaMode
-      : createGraphwarTrajectoryFormulaMode(settings);
+    stepGlitchObstacleMask === undefined ? providedFormulaMode : createGraphwarTrajectoryFormulaMode(settings);
   return {
     ...inputBase,
     bounds: { ...input.bounds },
@@ -714,14 +699,13 @@ async function buildOneClickClearStepGlitchPath(
 ): Promise<GraphwarOneClickClearResult> {
   let options = context.options;
   let formulaMode = options.formulaMode;
-  let settings = formulaMode.settings;
+  const settings = formulaMode.settings;
   const simulationMask = options.simulationMask ?? settings.stepGlitchObstacleMask;
   if (!simulationMask) {
     return createOneClickClearFailure("preflight-blocked", startedAt, 0);
   }
   if (options.simulationMask !== simulationMask || settings.stepGlitchObstacleMask !== simulationMask) {
     formulaMode = createGraphwarTrajectoryFormulaMode({ ...settings, stepGlitchObstacleMask: simulationMask });
-    settings = formulaMode.settings;
     options = {
       ...options,
       formulaMode,
@@ -761,7 +745,7 @@ async function buildOneClickClearStepGlitchPath(
       ...(prefixEvidence ? { prefixEvidence } : {}),
       ...(route.targetSequence.length === 0 && options.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
       requiredTargets: createOneClickClearPreviousTargets(route.targetSequence),
-      settings,
+      formulaMode,
       simulationBoundaryExpansion: options.simulationBoundaryExpansion,
       simulationMask,
       sourcePath: route.pathPoints,
@@ -815,12 +799,11 @@ async function buildOneClickClearStepGlitchPath(
     await yieldOneClickClearControl(options);
   }
 
-  const finalized =
-    options.isDeleteOptimizationEnabled !== false
-      ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
-          optimizeOneClickClearPath(context, route, workUnits),
-        )
-      : { route, workUnits };
+  const finalized = options.isDeleteOptimizationEnabled
+    ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
+        optimizeOneClickClearPath(context, route, workUnits),
+      )
+    : { route, workUnits };
   workUnits = finalized.workUnits;
   const finalValidation =
     finalized.finalValidation ??
@@ -907,12 +890,11 @@ async function runOneClickClearSearchAttempt(
   const validatedRoute = validation.route;
 
   // 即使关闭删点也保留最终整路复验；它负责裁决后缀对本轮先前目标和碰撞的影响。
-  const optimized =
-    options.isDeleteOptimizationEnabled !== false
-      ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
-          optimizeOneClickClearPath(context, validatedRoute, nextWorkUnits),
-        )
-      : { route: validatedRoute, workUnits: nextWorkUnits };
+  const optimized = options.isDeleteOptimizationEnabled
+    ? await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
+        optimizeOneClickClearPath(context, validatedRoute, nextWorkUnits),
+      )
+    : { route: validatedRoute, workUnits: nextWorkUnits };
   const finalValidation =
     optimized.finalValidation ??
     measureOneClickClearDebugTiming(

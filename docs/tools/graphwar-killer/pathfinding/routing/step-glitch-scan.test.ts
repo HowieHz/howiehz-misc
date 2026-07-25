@@ -13,12 +13,16 @@ import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds } from "../../core/types";
 import { sampleGraphwarExpressionTrajectory } from "../../formula/simulation/simulator";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
-import { getGraphwarTrajectoryLaunchAngle, resolveGraphwarTrajectory } from "../../formula/trajectory/sampling";
+import {
+  createGraphwarTrajectoryFormulaMode,
+  getGraphwarTrajectoryLaunchAngle,
+  resolveGraphwarTrajectory,
+} from "../../formula/trajectory/sampling";
 import { createGraphwarTrajectoryFormulaSettingsIdentityKey } from "../../formula/trajectory/settings-identity";
 import {
   createGraphwarStepGlitchScanMaskIndex,
-  replayGraphwarStepGlitchPathToControlX,
-  scanGraphwarStepGlitchPath,
+  replayGraphwarStepGlitchPathToControlX as replayGraphwarStepGlitchPathToControlXWithMode,
+  scanGraphwarStepGlitchPath as scanGraphwarStepGlitchPathWithMode,
 } from "./step-glitch-scan";
 
 const bounds: GraphBounds = { maxX: -4, maxY: 10, minX: -12, minY: -10 };
@@ -31,6 +35,40 @@ const settings: GraphwarTrajectoryFormulaSettings = {
   isStepGlitchModeEnabled: true,
   isStepOverflowProtectionEnabled: true,
 };
+
+/** 测试 fixture 从 raw settings 构造和 simulation mask 绑定的原子模式。 */
+function scanGraphwarStepGlitchPath(
+  options: Omit<Parameters<typeof scanGraphwarStepGlitchPathWithMode>[0], "formulaMode"> & {
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+) {
+  const { settings: formulaSettings, simulationMask, ...scanOptions } = options;
+  return scanGraphwarStepGlitchPathWithMode({
+    ...scanOptions,
+    formulaMode: createGraphwarTrajectoryFormulaMode({
+      ...formulaSettings,
+      stepGlitchObstacleMask: simulationMask,
+    }),
+    simulationMask,
+  });
+}
+
+/** 精确复播 fixture 使用与扫描入口相同的原子 mode 构造规则。 */
+function replayGraphwarStepGlitchPathToControlX(
+  options: Omit<Parameters<typeof replayGraphwarStepGlitchPathToControlXWithMode>[0], "formulaMode"> & {
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+) {
+  const { settings: formulaSettings, simulationMask, ...replayOptions } = options;
+  return replayGraphwarStepGlitchPathToControlXWithMode({
+    ...replayOptions,
+    formulaMode: createGraphwarTrajectoryFormulaMode({
+      ...formulaSettings,
+      stepGlitchObstacleMask: simulationMask,
+    }),
+    simulationMask,
+  });
+}
 
 describe("Step ODE glitch scan", () => {
   it("precomputes the farthest same-row free column in x+ order", () => {
@@ -72,6 +110,26 @@ describe("Step ODE glitch scan", () => {
     });
 
     expect(result).toMatchObject({ expandedStates: 0, status: "unsupported" });
+  });
+
+  it("rejects a formula mode whose obstacle mask is not the simulation mask", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+    const simulationMask = createEmptyMask();
+    const result = scanGraphwarStepGlitchPathWithMode({
+      bounds,
+      boundsRect,
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        ...settings,
+        stepGlitchObstacleMask: createEmptyMask(),
+      }),
+      hitTarget: { center: target, radius: 8 },
+      simulationMask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result).toMatchObject({ expandedStates: 0, status: "invalid-input" });
   });
 
   it("returns hit after replaying the complete final expression", () => {
@@ -278,7 +336,11 @@ describe("Step ODE glitch scan", () => {
       boundsRect,
       collision: { mask },
       points,
-      settings: { ...settings, equation: "ddy", stepGlitchObstacleMask: mask },
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        ...settings,
+        equation: "ddy",
+        stepGlitchObstacleMask: mask,
+      }),
       soldierCenter: points[0],
       stepGlitchXWindows: [{ endX: -6.5977, startX: -6.6077 }],
     });

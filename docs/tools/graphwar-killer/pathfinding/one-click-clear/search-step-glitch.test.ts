@@ -6,6 +6,7 @@ import { imageXToNearestPlaneColumn, planeXToImageX } from "../../core/plane-gri
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import { captureGraphwarFinalReplaySnapshot } from "../../formula/trajectory/final-replay-snapshot";
+import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 
 const scanMockState = vi.hoisted(() => ({
@@ -90,7 +91,7 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
         scanMockState.scanners.push({
           hasBoundaryState: options.prefixEvidence?.formulaEvidence.boundaryState !== undefined,
           hasPrefixEvidence: options.prefixEvidence !== undefined,
-          isFormulaMaskSimulationMask: options.settings.stepGlitchObstacleMask === options.simulationMask,
+          isFormulaMaskSimulationMask: options.formulaMode.settings.stepGlitchObstacleMask === options.simulationMask,
           requiredTargets: (options.requiredTargets ?? []).map((target) => ({
             center: { ...target.center },
             radius: target.radius,
@@ -151,7 +152,7 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
                       requiredTargets: options.requiredTargets,
                     }
                   : {}),
-                settings: options.settings,
+                formulaMode: options.formulaMode,
                 soldierCenter: graphPoints[0],
                 ...(options.prefixEvidence
                   ? { stepGlitchFormulaEvidence: options.prefixEvidence.formulaEvidence }
@@ -188,7 +189,7 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
                     boundaryExpansion: options.simulationBoundaryExpansion,
                     bounds: options.bounds,
                     boundsRect: options.boundsRect,
-                    formulaSettings: options.settings,
+                    formulaSettings: options.formulaMode.settings,
                     path: finalValidationPath,
                     replaySemantics: "full-natural-visible",
                     requiredTargets: options.requiredTargets ?? [],
@@ -334,34 +335,15 @@ describe("Step glitch one-click-clear target retries", () => {
 
     const result = await buildGraphwarOneClickClearPath({
       ...options,
-      settings: { ...options.settings, stepGlitchObstacleMask: createEmptyMask() },
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        ...options.formulaMode.settings,
+        stepGlitchObstacleMask: createEmptyMask(),
+      }),
     });
 
     expect(result.type).toBe("success");
     expect(scanMockState.scanners[0]?.isFormulaMaskSimulationMask).toBe(true);
     expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
-  });
-
-  it("keeps the request snapshot when external formula settings mutate after direct replay", async () => {
-    scanMockState.finalEvidenceMode = "valid";
-    scanMockState.outcomes.push("hit");
-    const start = toPixel(-11, 0);
-    const target = toPixel(-6, 0);
-    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
-    const options = createOptions(start, candidates, createEmptyMask(), "visibility-graph", false);
-    const debugStages: string[] = [];
-
-    const result = await buildGraphwarOneClickClearPath({
-      ...options,
-      onDebugTiming: (timing) => debugStages.push(timing.stage),
-      yieldControl: () => {
-        options.settings.steepness += 1;
-      },
-    });
-
-    expect(result.type).toBe("success");
-    expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
-    expect(debugStages).not.toContain("validate-final");
   });
 
   it("keeps the request snapshot when the external formula mask mutates after direct replay", async () => {
@@ -377,9 +359,10 @@ describe("Step glitch one-click-clear target retries", () => {
       ...options,
       onDebugTiming: (timing) => debugStages.push(timing.stage),
       yieldControl: () => {
-        const changedMask = createEmptyMask();
-        changedMask[0] = 1;
-        options.settings.stepGlitchObstacleMask = changedMask;
+        const formulaMask = options.formulaMode.settings.stepGlitchObstacleMask;
+        if (formulaMask) {
+          formulaMask[0] = 1;
+        }
       },
     });
 
@@ -684,14 +667,14 @@ describe("Step glitch one-click-clear target retries", () => {
       prefixTarget: { center: tail, radius: 12 },
       routeMask: { mask: createEmptyMask(), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: false,
-      },
+      }),
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 1,
     });
@@ -727,14 +710,14 @@ describe("Step glitch one-click-clear target retries", () => {
       pathPoints: [start],
       routeMask: { mask: createEmptyMask(), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: false,
-      },
+      }),
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 1,
     });
@@ -772,7 +755,7 @@ function createOptions(
     pathPoints: [start],
     routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
     routeMode,
-    settings: {
+    formulaMode: createGraphwarTrajectoryFormulaMode({
       algorithm: "step" as const,
       decimalPlaces: 4,
       equation: "dy" as const,
@@ -780,7 +763,7 @@ function createOptions(
       isStepGlitchModeEnabled: true,
       stepGlitchObstacleMask: simulationMask,
       isStepOverflowProtectionEnabled: true,
-    },
+    }),
     simulationBoundaryExpansion: 0,
     simulationMask,
     simulationMaskCacheId: 1,

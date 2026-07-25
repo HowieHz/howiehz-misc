@@ -541,6 +541,13 @@ function findStepGlitchSmartPath(
   debugMetrics?: GraphwarPathfindingDebugMetrics,
 ): GraphwarSmartPathfindingPathResult {
   const simulationMask = pathSearchPolicy.runtime.simulationMask;
+  const scannerFormulaMode =
+    formulaMode.settings.stepGlitchObstacleMask === simulationMask
+      ? formulaMode
+      : createGraphwarTrajectoryFormulaMode({
+          ...formulaMode.settings,
+          stepGlitchObstacleMask: simulationMask,
+        });
   const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, input.prefixTarget);
   const scanResult = scanGraphwarStepGlitchPath({
     bounds: input.bounds,
@@ -551,7 +558,7 @@ function findStepGlitchSmartPath(
     ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
     // 单目标请求只从当前尾点继续；更早运行命中的士兵不属于本次目标。
     requiredTargets: [],
-    settings: input.settings,
+    formulaMode: scannerFormulaMode,
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     simulationMask,
     sourcePath: input.sourcePath,
@@ -570,7 +577,7 @@ function findStepGlitchSmartPath(
   }
 
   const validation = measureSyncStage(timings, "validate-trajectory", () => {
-    if (input.settings.stepGlitchObstacleMask !== simulationMask) {
+    if (formulaMode.settings.stepGlitchObstacleMask !== simulationMask) {
       return validateSmartPathfindingTrajectory(input, scanResult.path, formulaMode, pathSearchPolicy, debugMetrics);
     }
 
@@ -600,9 +607,17 @@ function findStepGlitchSmartPath(
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     simulationMask,
   });
-  if (input.isDeleteOptimizationEnabled && input.settings.stepGlitchObstacleMask === simulationMask) {
+  if (input.isDeleteOptimizationEnabled && formulaMode.settings.stepGlitchObstacleMask === simulationMask) {
     const optimized = measureSyncStage(timings, "optimize-path", () =>
-      optimizeStepGlitchSmartPath(input, path, input.hitTarget, resultPrefixEvidence, prefixEvidence, debugMetrics),
+      optimizeStepGlitchSmartPath(
+        input,
+        path,
+        formulaMode,
+        input.hitTarget,
+        resultPrefixEvidence,
+        prefixEvidence,
+        debugMetrics,
+      ),
     );
     path = optimized.path;
     resultPrefixEvidence = optimized.prefixEvidence;
@@ -619,6 +634,7 @@ function findStepGlitchSmartPath(
 function optimizeStepGlitchSmartPath(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
+  formulaMode: GraphwarTrajectoryFormulaMode,
   target: GraphwarTrajectoryTargetCircle,
   prefixEvidence: GraphwarStepGlitchPrefixEvidence,
   sourcePrefixEvidence: GraphwarStepGlitchPrefixEvidence | undefined,
@@ -638,9 +654,9 @@ function optimizeStepGlitchSmartPath(
       boundsRect: input.boundsRect,
       controlX: imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x,
       debugMetrics,
+      formulaMode,
       path: candidatePath,
       requiredTargets: [],
-      settings: input.settings,
       ...(sourcePrefixEvidence ? { prefixEvidence: sourcePrefixEvidence } : {}),
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       simulationMask: input.simulationMask,

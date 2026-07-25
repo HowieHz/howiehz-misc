@@ -9,7 +9,11 @@ import {
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds } from "../../core/types";
-import type { GraphwarStepGlitchFormulaPrefix } from "../../formula/trajectory/sampling";
+import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
+import type {
+  GraphwarStepGlitchFormulaPrefix,
+  GraphwarTrajectoryFormulaSettings,
+} from "../../formula/trajectory/sampling";
 
 const replayMockState = vi.hoisted(() => ({
   callCount: 0,
@@ -194,7 +198,10 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
   };
 });
 
-import { createGraphwarStepGlitchPrefixEvidence, scanGraphwarStepGlitchPath } from "./step-glitch-scan";
+import {
+  createGraphwarStepGlitchPrefixEvidence,
+  scanGraphwarStepGlitchPath as scanGraphwarStepGlitchPathWithMode,
+} from "./step-glitch-scan";
 
 const bounds: GraphBounds = { maxX: -4, maxY: 10, minX: -12, minY: -10 };
 const boundsRect: BoundsRect = {
@@ -203,6 +210,20 @@ const boundsRect: BoundsRect = {
   x: 0,
   y: 0,
 };
+
+/** Replay fixtures 从 raw settings 构造与本次 simulation mask 绑定的原子模式。 */
+function scanGraphwarStepGlitchPath(
+  options: Omit<Parameters<typeof scanGraphwarStepGlitchPathWithMode>[0], "formulaMode"> & {
+    settings: GraphwarTrajectoryFormulaSettings;
+  },
+) {
+  const { settings, simulationMask, ...scanOptions } = options;
+  return scanGraphwarStepGlitchPathWithMode({
+    ...scanOptions,
+    formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, stepGlitchObstacleMask: simulationMask }),
+    simulationMask,
+  });
+}
 
 /** 构造与固定两点 source path 完全匹配的精确前缀证据。 */
 function createCompatiblePrefixEvidence(

@@ -6,7 +6,7 @@ import {
   sampleGraphwarTrajectory,
   type GraphwarTrajectorySample,
 } from "../simulation/simulator";
-import { resolveGraphwarTrajectory } from "./sampling";
+import { createGraphwarTrajectoryFormulaMode, resolveGraphwarTrajectory } from "./sampling";
 
 vi.mock("../simulation/simulator", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../simulation/simulator")>();
@@ -188,7 +188,7 @@ function resolveTrajectory() {
     bounds,
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     points,
-    settings,
+    formulaMode: createGraphwarTrajectoryFormulaMode(settings),
     soldierCenter: points[0],
   });
 }

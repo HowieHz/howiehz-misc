@@ -29,7 +29,6 @@ import {
 } from "../../formula/trajectory/final-replay-snapshot";
 import type { GraphwarFinalReplaySnapshot } from "../../formula/trajectory/final-replay-snapshot";
 import {
-  createGraphwarTrajectoryFormulaMode,
   graphwarStepGlitchFormulaEvidenceMatchesSource,
   tryResolveGraphwarTrajectoryCandidate,
 } from "../../formula/trajectory/sampling";
@@ -38,7 +37,6 @@ import type {
   GraphwarStepGlitchXWindow,
   GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaMode,
-  GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
@@ -71,11 +69,12 @@ export interface GraphwarStepGlitchPrefixOptions {
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 固定前缀必须继续命中的士兵；后续控制点允许改变它们的实际命中顺序。 */
   requiredTargets?: readonly GraphwarTrajectoryTargetCircle[];
+  /** Adapter 已把公式 mask 绑定到本次 simulation mask 的原子 Step-glitch 模式。 */
+  formulaMode: GraphwarTrajectoryFormulaMode;
   /** 函数采样边界内收值，单位为 Graphwar 原始平面像素。 */
   simulationBoundaryExpansion?: number;
   /** 前缀回放和后续候选都使用这一份 mask。 */
   simulationMask: Uint8Array;
-  settings: GraphwarTrajectoryFormulaSettings;
   /** 已提交的完整固定前缀；最后一点是后续边的起点。 */
   sourcePath: readonly PixelPoint[];
 }
@@ -361,13 +360,12 @@ function createGraphwarStepGlitchReplayContext(
     return createFailedResult("invalid-input", 0, 0, undefined, timings);
   }
 
-  const settings =
-    options.settings.stepGlitchObstacleMask === options.simulationMask
-      ? options.settings
-      : { ...options.settings, stepGlitchObstacleMask: options.simulationMask };
-  const formulaMode = createGraphwarTrajectoryFormulaMode(settings);
+  const formulaMode = options.formulaMode;
   if (formulaMode.contract.pathSearchPolicy.type !== "step-glitch") {
     return createFailedResult("unsupported", 0, 0, undefined, timings);
+  }
+  if (formulaMode.settings.stepGlitchObstacleMask !== options.simulationMask) {
+    return createFailedResult("invalid-input", 0, 0, undefined, timings);
   }
   return {
     formulaMode,
@@ -980,7 +978,7 @@ function createGateRowScan(
     // 从用户精度开始直接验证门是否仍在障碍格左侧。不用 log10 估算：double 减法可能把
     // 0.01 变成 0.009999...，在十进制幂边界多估一位；这个有界循环通常首轮即通过。
     for (
-      let decimalPlaces = clampDecimalPlaces(options.settings.decimalPlaces);
+      let decimalPlaces = clampDecimalPlaces(options.formulaMode.settings.decimalPlaces);
       decimalPlaces <= MAX_FORMULA_DECIMAL_PLACES;
       decimalPlaces += 1
     ) {

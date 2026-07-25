@@ -119,13 +119,13 @@ describe("Graphwar trajectory target tracking", () => {
         collectVisiblePixels: true,
         points,
         requiredTargets,
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           ...settings,
           algorithm,
           equation,
           steepness: 67,
           isStepOverflowProtectionEnabled: true,
-        },
+        }),
         soldierCenter: points[0],
         targetSequence,
         trackedTargets,
@@ -186,7 +186,7 @@ describe("Graphwar trajectory target tracking", () => {
       bounds,
       boundsRect,
       points: horizontalPoints,
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: horizontalPoints[0],
       targetSequence: [target],
     });
@@ -223,7 +223,7 @@ describe("Graphwar trajectory target tracking", () => {
       boundsRect,
       collectVisiblePixels: true,
       points,
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: points[0],
       targetSequence: [target],
     });
@@ -239,7 +239,7 @@ describe("Graphwar trajectory target tracking", () => {
       collision: { mask: obstacleMask },
       collectVisiblePixels: true,
       points,
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: points[0],
       targetSequence: [target],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -276,7 +276,7 @@ describe("Graphwar trajectory target tracking", () => {
       bounds,
       boundsRect,
       points: horizontalPoints,
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: horizontalPoints[0],
       targetSequence: [target],
     });
@@ -285,7 +285,7 @@ describe("Graphwar trajectory target tracking", () => {
       bounds,
       boundsRect,
       points: secondPoints,
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: secondPoints[0],
       targetSequence: [{ center: toPixel(0, 1.5), radius: 2 }],
     });
@@ -321,7 +321,7 @@ describe("Graphwar trajectory target tracking", () => {
       boundsRect,
       collectVisiblePixels: true,
       points,
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: points[0],
       targetSequence: [targets[0]],
       trackedTargets: targets,
@@ -371,7 +371,7 @@ describe("Graphwar trajectory target tracking", () => {
       collectVisiblePixels: true,
       points,
       requiredTargets: targets.slice(0, 2),
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: points[0],
       stopOnTargetsComplete: false,
       targetSequence: [targets[2]],
@@ -408,7 +408,7 @@ describe("Graphwar trajectory target tracking", () => {
       bounds,
       boundsRect,
       points: horizontalPoints,
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: horizontalPoints[0],
       start: {
         reachedRequiredTargetCount: 0,
@@ -449,7 +449,7 @@ describe("Graphwar trajectory target tracking", () => {
       boundsRect,
       collision: { mask: obstacleMask },
       points: horizontalPoints,
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: horizontalPoints[0],
       start: {
         reachedRequiredTargetCount: 0,
@@ -491,7 +491,7 @@ describe("Graphwar trajectory target tracking", () => {
         { center: fartherRequiredTarget, radius: 0.01 },
         { center: nearerRequiredTarget, radius: 0.01 },
       ],
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: horizontalPoints[0],
       start: {
         reachedRequiredTargetCount: 0,
@@ -523,7 +523,7 @@ describe("Graphwar trajectory target tracking", () => {
       boundsRect,
       points,
       requiredTargets: [requiredTarget],
-      settings: { ...settings, equation: "dy" as const },
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, equation: "dy" as const }),
       soldierCenter: points[0],
       start: {
         reachedRequiredTargetCount: 1,
@@ -564,7 +564,7 @@ describe("Graphwar trajectory target tracking", () => {
       boundsRect,
       obstacleMask,
       points: [start, trackedTarget],
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       targetCircles: [{ center: orderedTarget, radius: 1 }],
       targetHitRadiusPixels: 1,
       targetPoints: [orderedTarget],
@@ -645,7 +645,7 @@ describe("formula path quality", () => {
       bounds,
       boundsRect,
       points: [start, middle, target],
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       targetCircles: [{ center: target, radius: 1 }],
       targetControlPoints: [middle, target],
       targetHitRadiusPixels: 1,
@@ -686,14 +686,14 @@ describe("Generated formula evaluator equivalence", () => {
           bounds,
           boundsRect,
           points,
-          settings: {
+          formulaMode: createGraphwarTrajectoryFormulaMode({
             algorithm: testCase.algorithm,
             decimalPlaces,
             equation: testCase.equation,
             steepness: 210,
             isStepGlitchModeEnabled: false,
             isStepOverflowProtectionEnabled: true,
-          },
+          }),
           soldierCenter: points[0],
         });
         const parsed = sampleGraphwarExpressionTrajectory({
@@ -722,14 +722,14 @@ describe("Generated formula evaluator equivalence", () => {
       bounds: mirroredBounds,
       boundsRect,
       points,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 15,
         equation: "ddy",
         steepness: 210,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: points[0],
     });
 
@@ -932,14 +932,14 @@ describe("Canonical formula settings behavior", () => {
         bounds,
         boundsRect,
         points,
-        settings: testCase.settings,
+        formulaMode: createGraphwarTrajectoryFormulaMode(testCase.settings),
         soldierCenter: points[0],
       });
       const changed = resolveGraphwarTrajectory({
         bounds,
         boundsRect,
         points,
-        settings: { ...testCase.settings, ...testCase.changedSettings },
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...testCase.settings, ...testCase.changedSettings }),
         soldierCenter: points[0],
       });
 
@@ -975,7 +975,7 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points: reproductionPoints,
-        settings: { ...baseSettings, isStepGlitchModeEnabled: false },
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...baseSettings, isStepGlitchModeEnabled: false }),
         soldierCenter: reproductionPoints[0],
         targetHitRadiusPixels: 7,
         targetPoint,
@@ -984,7 +984,7 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points: reproductionPoints,
-        settings: { ...baseSettings, isStepGlitchModeEnabled: true },
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...baseSettings, isStepGlitchModeEnabled: true }),
         soldierCenter: reproductionPoints[0],
         stopOnTargetsComplete: false,
         targetHitRadiusPixels: 7,
@@ -1038,14 +1038,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation,
         steepness: 210,
         isStepGlitchModeEnabled: true,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
       targetHitRadiusPixels: 7,
       targetPoint: toPixel(pathPoints[2].x, pathPoints[2].y),
@@ -1073,14 +1073,14 @@ describe("ODE segment position compensation", () => {
       boundsRect,
       points: pathPoints,
       qualityPoints: pathPoints.slice(1),
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
         isStepGlitchModeEnabled: true,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const baseline = resolveGraphwarTrajectory(options);
@@ -1135,14 +1135,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 210,
         isStepGlitchModeEnabled: true,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const baseline = resolveGraphwarTrajectory(options);
@@ -1177,14 +1177,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
         isStepGlitchModeEnabled: true,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const baseline = resolveGraphwarTrajectory(options);
@@ -1237,14 +1237,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation,
         steepness: 210,
         isStepGlitchModeEnabled: true,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
 
@@ -1258,7 +1258,7 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "dy" as const,
@@ -1266,7 +1266,7 @@ describe("ODE segment position compensation", () => {
         steepness: 67,
         isStepGlitchModeEnabled: true,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const initial = resolveGraphwarTrajectory(options);
@@ -1278,7 +1278,10 @@ describe("ODE segment position compensation", () => {
     }
     const changedOptions = {
       ...options,
-      settings: { ...options.settings, secondOrderLaunchAngleMode: "display-rounded" as const },
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        ...options.formulaMode.settings,
+        secondOrderLaunchAngleMode: "display-rounded" as const,
+      }),
     };
     const compileMaterials = vi.mocked(compileGraphwarFormulaMaterials);
     compileMaterials.mockClear();
@@ -1300,14 +1303,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 67,
         isStepGlitchModeEnabled: true,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const cold = resolveGraphwarTrajectory(options);
@@ -1361,14 +1364,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 210,
         isStepGlitchModeEnabled: true,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
       targetHitRadiusPixels: 7,
       targetPoint: toPixel(pathPoints[2].x, pathPoints[2].y),
@@ -1410,14 +1413,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
         isStepGlitchModeEnabled: true,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
     const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
@@ -1445,14 +1448,14 @@ describe("ODE segment position compensation", () => {
         boundsRect,
         points: pathPoints,
         qualityPoints: pathPoints.slice(1),
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm: "step" as const,
           decimalPlaces: 4,
           equation,
           steepness: 210,
           isStepGlitchModeEnabled: true,
           isStepOverflowProtectionEnabled: true,
-        },
+        }),
         soldierCenter: pathPoints[0],
       } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
 
@@ -1474,7 +1477,7 @@ describe("ODE segment position compensation", () => {
       bounds: obstacleBounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "dy" as const,
@@ -1482,7 +1485,7 @@ describe("ODE segment position compensation", () => {
         isStepGlitchModeEnabled: true,
         stepGlitchObstacleMask: obstacleMask,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
 
@@ -1511,14 +1514,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: shortPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: shortPoints[0],
     });
     const shortCompileCount = compileMaterials.mock.calls.length;
@@ -1528,14 +1531,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: points[0],
     });
     const longCompileCount = compileMaterials.mock.calls.length;
@@ -1556,14 +1559,14 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points,
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm,
           decimalPlaces: 4,
           equation,
           steepness,
           isStepGlitchModeEnabled: false,
           isStepOverflowProtectionEnabled: true,
-        },
+        }),
         soldierCenter: points[0],
       });
       const segmentStartPoints = resolved.context.formulaEvaluation.segmentStartPoints;
@@ -1604,14 +1607,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     }).result.sample;
 
@@ -1637,14 +1640,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 1,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     }).result.sample;
 
@@ -1671,14 +1674,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 1,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     }).result.sample;
 
@@ -1695,14 +1698,14 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points: pathPoints,
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm: "abs",
           decimalPlaces: 4,
           equation: "ddy",
           steepness,
           isStepGlitchModeEnabled: false,
           isStepOverflowProtectionEnabled: true,
-        },
+        }),
         soldierCenter: pathPoints[0],
       });
       const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
@@ -1727,14 +1730,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1756,14 +1759,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 0.5,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1782,14 +1785,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1809,14 +1812,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 1,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1836,14 +1839,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1862,14 +1865,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1884,14 +1887,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
     const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
@@ -1917,14 +1920,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
 
@@ -1954,14 +1957,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1987,14 +1990,14 @@ describe("ODE segment position compensation", () => {
         bounds: customBounds,
         boundsRect,
         points: customPoints,
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm,
           decimalPlaces: 4,
           equation,
           steepness,
           isStepGlitchModeEnabled: false,
           isStepOverflowProtectionEnabled: true,
-        },
+        }),
         soldierCenter: customPoints[0],
       }).result.sample;
 
@@ -2022,14 +2025,14 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points,
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm,
           decimalPlaces: 4,
           equation: "dy",
           steepness,
           isStepGlitchModeEnabled: false,
           isStepOverflowProtectionEnabled: true,
-        },
+        }),
         soldierCenter: points[0],
       }).result.sample;
 
@@ -2067,14 +2070,14 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points: directPoints,
-        settings,
+        formulaMode: createGraphwarTrajectoryFormulaMode(settings),
         soldierCenter: directPoints[0],
       }).context;
       const withStaleMask = resolveGraphwarTrajectory({
         bounds,
         boundsRect,
         points: directPoints,
-        settings: { ...settings, stepGlitchObstacleMask: obstacleMask },
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, stepGlitchObstacleMask: obstacleMask }),
         soldierCenter: directPoints[0],
       }).context;
 
@@ -2097,7 +2100,7 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: points.slice(0, 3),
-      settings: absSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(absSettings),
       soldierCenter: points[0],
     };
     const plain = resolveGraphwarTrajectory(options).context;
@@ -2132,14 +2135,14 @@ describe("pathfinding formula convergence", () => {
       bounds,
       boundsRect,
       points: [toPixel(-10, -1), toPixel(-7, 2), toPixel(-3, -2), target],
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "pchip",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
-      },
+      }),
       targetHitRadiusPixels: 1,
       targetPoints: [target],
     });
@@ -2173,7 +2176,7 @@ describe("Step glitch formula prefix", () => {
       bounds,
       boundsRect,
       points: prefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: prefixPoints[0],
     });
     const prefix = prefixResolution.context;
@@ -2191,7 +2194,7 @@ describe("Step glitch formula prefix", () => {
       bounds,
       boundsRect,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
     });
     const prefixOnlyMetrics = createGraphwarTrajectoryDebugMetrics();
@@ -2200,7 +2203,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: prefixOnlyMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       ...(prefix.stepGlitchFormulaEvidence
         ? { stepGlitchFormulaEvidence: { prefix: prefix.stepGlitchFormulaEvidence.prefix } }
@@ -2212,7 +2215,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: reusedMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       ...(prefix.stepGlitchFormulaEvidence ? { stepGlitchFormulaEvidence: prefix.stepGlitchFormulaEvidence } : {}),
     });
@@ -2222,7 +2225,7 @@ describe("Step glitch formula prefix", () => {
           bounds,
           boundsRect,
           points: appendedPoints,
-          settings: stepSettings,
+          formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
           start: { signProtection: [], type: "cold" },
           soldierCenter: appendedPoints[0],
           // 强制保护快照失配，覆盖未来段新增 epsilon 后必须重算旧段的分支。
@@ -2277,7 +2280,7 @@ describe("Step glitch formula prefix", () => {
       bounds,
       boundsRect,
       points: prefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: prefixPoints[0],
     }).context;
     const formulaPrefix = prefix.stepGlitchFormulaEvidence?.prefix;
@@ -2295,7 +2298,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: fallbackMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaEvidence: { prefix: formulaPrefix },
     });
@@ -2329,7 +2332,7 @@ describe("Step glitch formula prefix", () => {
         boundsRect,
         debugMetrics: metrics,
         points: appendedPoints,
-        settings: stepSettings,
+        formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
         soldierCenter: appendedPoints[0],
         stepGlitchFormulaEvidence: { boundaryState: stale.state, prefix: formulaPrefix },
       });
@@ -2355,14 +2358,14 @@ describe("Step glitch formula prefix", () => {
       bounds,
       boundsRect,
       points: firstPrefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: firstPrefixPoints[0],
     }).context;
     const secondPrefix = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
       points: secondPrefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: secondPrefixPoints[0],
     }).context;
     const formulaPrefix = firstPrefix.stepGlitchFormulaEvidence?.prefix;
@@ -2389,7 +2392,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: fallbackMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaEvidence: { prefix: formulaPrefix },
     });
@@ -2399,7 +2402,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: crossedMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaEvidence: { boundaryState: crossedBoundaryState, prefix: formulaPrefix },
     });
@@ -2409,7 +2412,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: matchingMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaEvidence: { boundaryState: matchingBoundaryState, prefix: formulaPrefix },
     });
@@ -2438,7 +2441,7 @@ describe("Step glitch formula prefix", () => {
       bounds,
       boundsRect,
       points: prefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: prefixPoints[0],
     }).context;
     const appendedPoints = [...prefixPoints, createGraphPoint(-10, -0.05)];
@@ -2448,7 +2451,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: fallbackMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       ...(prefix.stepGlitchFormulaEvidence
         ? { stepGlitchFormulaEvidence: { prefix: prefix.stepGlitchFormulaEvidence.prefix } }
@@ -2460,7 +2463,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: reusedMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       ...(prefix.stepGlitchFormulaEvidence ? { stepGlitchFormulaEvidence: prefix.stepGlitchFormulaEvidence } : {}),
     });

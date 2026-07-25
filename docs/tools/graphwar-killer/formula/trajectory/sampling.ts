@@ -267,22 +267,6 @@ export interface GraphwarTrajectoryResolution {
   startType: "cold" | "continuation";
 }
 
-/** 单目标路径验证结果，一键清图和智能寻路用它判断弹道是否先命中目标。 */
-export interface GraphwarPathTrajectoryResult {
-  /** 目标或障碍导致的早停原因。 */
-  earlyStopReason?: GraphwarTrajectoryEarlyStopReason;
-  /** True 表示轨迹在碰到障碍前命中目标。 */
-  reachesTargetBeforeObstacle: boolean;
-  /** 原始 Graphwar 采样结果，供调试和成本统计使用。 */
-  sample: GraphwarTrajectorySample;
-  /** 普通质量点的最大纵向误差，单位为 Graphwar 原始平面像素；没有质量点时省略。 */
-  pathError?: number;
-  /** 实际检查过的采样点数量。 */
-  samplePointCount: number;
-  /** 截图像素轨迹，页面可直接绘制。 */
-  visiblePixels: PixelPoint[];
-}
-
 /** 多目标验证结果：新增目标保持顺序，历史必达目标只要求全部命中。 */
 export interface GraphwarPathTargetSequenceResult {
   /** 目标或障碍导致的早停原因。 */
@@ -333,7 +317,7 @@ class GraphwarStepSegmentConnectionError extends GraphwarTrajectoryResolutionErr
 
 /** 命中后续播模式会在目标 x 主动停止；障碍先停或采样未到 x 都不能作为可继续前缀。 */
 export function graphwarTrajectoryReachesGraphXBeforeObstacle(
-  result: Pick<GraphwarPathTrajectoryResult, "earlyStopReason" | "sample">,
+  result: { earlyStopReason?: GraphwarTrajectoryEarlyStopReason; sample: GraphwarTrajectorySample },
   graphX: number,
 ) {
   const lastPoint = result.sample.points.at(-1);
@@ -443,16 +427,10 @@ interface GraphwarTrajectoryResolutionOptionsBase {
   trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
 }
 
-/**
- * 轨迹入口在迁移期接受原子 formulaMode 或旧 settings，由唯一入口完成归一化。
- *
- * `never` 明确禁止调用方同时携带两份可错配状态；旧分支会在第 5 步随调用方迁移完成后删除。
- */
-export type GraphwarTrajectoryResolutionOptions = GraphwarTrajectoryResolutionOptionsBase &
-  (
-    | { formulaMode: GraphwarTrajectoryFormulaMode; settings?: never }
-    | { formulaMode?: never; settings: GraphwarTrajectoryFormulaSettings }
-  );
+/** 内部轨迹入口只接收 Adapter 已构造的原子公式模式，避免沿调用链重新解释 raw settings。 */
+export interface GraphwarTrajectoryResolutionOptions extends GraphwarTrajectoryResolutionOptionsBase {
+  formulaMode: GraphwarTrajectoryFormulaMode;
+}
 
 /**
  * 一次完成生成公式求解、局部 sign 探测和带早停的轨迹验证。
@@ -460,7 +438,7 @@ export type GraphwarTrajectoryResolutionOptions = GraphwarTrajectoryResolutionOp
  * 保护集合变化会使分母 epsilon 在旧门前产生尾值，因此每次重试都从发射点开始，并创建全新的命中统计器。
  */
 export function resolveGraphwarTrajectory(options: GraphwarTrajectoryResolutionOptions): GraphwarTrajectoryResolution {
-  const formulaMode = resolveGraphwarTrajectoryFormulaMode(options);
+  const formulaMode = options.formulaMode;
   const settings = formulaMode.settings;
   const prefix = options.stepGlitchFormulaEvidence?.prefix;
   let signProtection = [
@@ -729,22 +707,6 @@ export function graphwarStepGlitchFormulaEvidenceMatchesSource(
     }
   }
   return true;
-}
-
-/** 兼容入口只在这里解析旧 settings，并拒绝任何运行时半状态或双重状态。 */
-function resolveGraphwarTrajectoryFormulaMode(
-  options: GraphwarTrajectoryResolutionOptions,
-): GraphwarTrajectoryFormulaMode {
-  if (options.formulaMode !== undefined) {
-    if (options.settings !== undefined) {
-      throw new Error("Trajectory resolution cannot receive both formulaMode and settings.");
-    }
-    return options.formulaMode;
-  }
-  if (options.settings === undefined) {
-    throw new Error("Trajectory resolution requires formulaMode or settings.");
-  }
-  return createGraphwarTrajectoryFormulaMode(options.settings);
 }
 
 /** 保护集合稳定后才生成可发射文本，避免为必然丢弃的中间状态反复拼接表达式。 */
@@ -3814,75 +3776,14 @@ export function sampleGraphwarExpressionTrajectoryWithStops(options: {
   return stopTracker.createResult(sample);
 }
 
-/** 验证一条像素路径生成的公式轨迹是否在撞障碍前命中目标，并返回可绘制轨迹。 */
-export function sampleGraphwarPathTrajectory(options: {
-  boundaryExpansion?: number;
-  bounds: GraphBounds;
-  boundsRect: BoundsRect;
-  /** 命中后继续回放到该 Graphwar x；用于确认目标控制点确实可达。 */
-  continueAfterTargetUntilGraphX?: number;
-  debugMetrics?: GraphwarTrajectoryDebugMetrics;
-  hitTargetPoint?: PixelPoint;
-  obstacleMask?: Uint8Array;
-  points: readonly PixelPoint[];
-  settings: GraphwarTrajectoryFormulaSettings;
-  /** 目标命中圆半径，单位为截图像素。 */
-  targetHitRadiusPixels: number;
-}): GraphwarPathTrajectoryResult {
-  if (!options.hitTargetPoint) {
-    return createEmptyPathTrajectoryResult();
-  }
-
-  // 调用方只提供页面像素路径；采样 Module 内部统一换算 Graphwar 坐标和公式点。
-  const mappedPoints = measureGraphwarTrajectoryMetric(options.debugMetrics, "formulaPointMappingElapsedMs", () =>
-    options.points.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
-  );
-  if (mappedPoints.length < 2) {
-    return createEmptyPathTrajectoryResult();
-  }
-  const resolved = tryResolveGraphwarTrajectoryCandidate({
-    bounds: options.bounds,
-    boundsRect: options.boundsRect,
-    collision: {
-      boundaryExpansion: options.boundaryExpansion,
-      mask: options.obstacleMask,
-    },
-    collectVisiblePixels: true,
-    debugMetrics: options.debugMetrics,
-    ...(options.continueAfterTargetUntilGraphX === undefined
-      ? {}
-      : {
-          continueAfterTargetsUntilGraphX: options.continueAfterTargetUntilGraphX,
-          stopOnTargetsComplete: false,
-        }),
-    points: mappedPoints,
-    qualityPoints: mappedPoints.slice(1, -1),
-    settings: options.settings,
-    soldierCenter: mappedPoints[0],
-    targetHitRadiusPixels: options.targetHitRadiusPixels,
-    targetPoint: options.hitTargetPoint,
-  });
-  if (!resolved) {
-    return createEmptyPathTrajectoryResult();
-  }
-  const { result } = resolved;
-  return {
-    earlyStopReason: result.earlyStopReason,
-    reachesTargetBeforeObstacle: result.targetHitIndex >= 0,
-    sample: result.sample,
-    ...(result.pathError === undefined ? {} : { pathError: result.pathError }),
-    samplePointCount: result.sample.points.length,
-    visiblePixels: result.visiblePixels,
-  };
-}
-
-/** 有序目标采样的几何、碰撞和命中输入；公式模式另以原子联合携带。 */
-interface GraphwarPathTargetSequenceOptionsBase {
+/** 有序目标采样的几何、碰撞和命中输入；内部调用链只携带原子公式模式。 */
+interface GraphwarPathTargetSequenceOptions {
   boundaryExpansion?: number;
   bounds: GraphBounds;
   boundsRect: BoundsRect;
   collectVisiblePixels?: boolean;
   debugMetrics?: GraphwarTrajectoryDebugMetrics;
+  formulaMode: GraphwarTrajectoryFormulaMode;
   /** 完成有序目标和无序必达目标后继续回放到该 Graphwar x。 */
   continueAfterTargetsUntilGraphX?: number;
   obstacleMask?: Uint8Array;
@@ -3900,12 +3801,6 @@ interface GraphwarPathTargetSequenceOptionsBase {
   /** 只记录首次命中位置、不参与顺序和停止条件的目标圆。 */
   trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
 }
-
-type GraphwarPathTargetSequenceOptions = GraphwarPathTargetSequenceOptionsBase &
-  (
-    | { formulaMode: GraphwarTrajectoryFormulaMode; settings?: never }
-    | { formulaMode?: never; settings: GraphwarTrajectoryFormulaSettings }
-  );
 
 /** 验证有序目标和无序必达目标；一键清图用它确认优化后没有丢失任何击杀。 */
 export function sampleGraphwarPathTargetSequence(
@@ -3968,7 +3863,7 @@ export function sampleGraphwarPathTargetSequence(
     points: mappedPoints,
     qualityPoints,
     requiredTargets,
-    ...(options.formulaMode === undefined ? { settings: options.settings } : { formulaMode: options.formulaMode }),
+    formulaMode: options.formulaMode,
     soldierCenter: mappedPoints[0],
     ...(stopOnTargetsComplete === undefined ? {} : { stopOnTargetsComplete }),
     targetHitRadiusPixels: options.targetHitRadiusPixels,
@@ -4218,16 +4113,6 @@ function createTrajectoryTargetSequenceFromPoints(
     return [];
   }
   return points.map((center) => ({ center, radius: targetHitRadiusPixels }));
-}
-
-/** 创建缺少路径点或目标时的空路径验证结果。 */
-function createEmptyPathTrajectoryResult(): GraphwarPathTrajectoryResult {
-  return {
-    reachesTargetBeforeObstacle: false,
-    sample: createEmptyTrajectorySample(),
-    samplePointCount: 0,
-    visiblePixels: [],
-  };
 }
 
 /** 候选公式收敛失败时返回可判定的失败结果；其他异常继续向调用方暴露。 */

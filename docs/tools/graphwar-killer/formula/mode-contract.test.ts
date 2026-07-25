@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import type { AlgorithmMode, EquationMode } from "../core/types";
-import {
-  formulaModePreservesPrefixWhenAppending,
-  formulaModeSupportsLocalDeleteHitProof,
-  formulaModeSupportsStepGlitch,
-  formulaModeUsesPositionCompensation,
-  formulaModeUsesSteepness,
-  formulaModeUsesStepGlitch,
-} from "./generation/capabilities";
 import { FORMULA_MODE_DEFINITIONS, resolveFormulaModeContract } from "./mode-contract";
 import type {
   FormulaAppendPrefixContinuation,
@@ -121,17 +113,6 @@ describe("formula mode contract", () => {
         requestedPathSearchPolicy,
       });
       expect(dormant.pathSearchPolicy.type).toBe(pathSearchProfile === "stateless" ? "stateless" : "step-stateful");
-
-      // 兼容 helper 必须只投影组合根，不再维护第二份算法矩阵。
-      expect(formulaModeUsesSteepness(algorithm, equation)).toBe(formulaSettings !== "standard");
-      expect(formulaModeUsesPositionCompensation(algorithm, equation)).toBe(formulaRefinement !== "direct");
-      expect(formulaModePreservesPrefixWhenAppending(algorithm, equation)).toBe(
-        appendPrefixContinuation === "physical-continuation",
-      );
-      expect(formulaModeSupportsLocalDeleteHitProof(algorithm, equation)).toBe(deleteInfluence === "adjacent-local");
-      expect(formulaModeSupportsStepGlitch(algorithm, equation)).toBe(pathSearchProfile === "step-glitch-capable");
-      expect(formulaModeUsesStepGlitch(algorithm, equation, false)).toBe(false);
-      expect(formulaModeUsesStepGlitch(algorithm, equation, true)).toBe(requestedPathSearchPolicy === "step-glitch");
     },
   );
 });

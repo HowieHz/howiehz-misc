@@ -3876,8 +3876,8 @@ export function sampleGraphwarPathTrajectory(options: {
   };
 }
 
-/** 验证有序目标和无序必达目标；一键清图用它确认优化后没有丢失任何击杀。 */
-export function sampleGraphwarPathTargetSequence(options: {
+/** 有序目标采样的几何、碰撞和命中输入；公式模式另以原子联合携带。 */
+interface GraphwarPathTargetSequenceOptionsBase {
   boundaryExpansion?: number;
   bounds: GraphBounds;
   boundsRect: BoundsRect;
@@ -3889,7 +3889,6 @@ export function sampleGraphwarPathTargetSequence(options: {
   points: readonly PixelPoint[];
   /** 不要求命中顺序，但全部命中后才能视为验证完成的目标圆。 */
   requiredTargets?: readonly GraphwarTrajectoryTargetCircle[];
-  settings: GraphwarTrajectoryFormulaSettings;
   /** 默认目标命中圆半径，单位为截图像素；显式 targetCircles 会覆盖。 */
   targetHitRadiusPixels: number;
   targetCircles?: readonly GraphwarTrajectoryTargetCircle[];
@@ -3900,7 +3899,18 @@ export function sampleGraphwarPathTargetSequence(options: {
   stopOnTargetsComplete?: boolean;
   /** 只记录首次命中位置、不参与顺序和停止条件的目标圆。 */
   trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
-}): GraphwarPathTargetSequenceResult {
+}
+
+type GraphwarPathTargetSequenceOptions = GraphwarPathTargetSequenceOptionsBase &
+  (
+    | { formulaMode: GraphwarTrajectoryFormulaMode; settings?: never }
+    | { formulaMode?: never; settings: GraphwarTrajectoryFormulaSettings }
+  );
+
+/** 验证有序目标和无序必达目标；一键清图用它确认优化后没有丢失任何击杀。 */
+export function sampleGraphwarPathTargetSequence(
+  options: GraphwarPathTargetSequenceOptions,
+): GraphwarPathTargetSequenceResult {
   const targetSequence =
     options.targetCircles ??
     options.targetPoints.map((center) => ({
@@ -3958,7 +3968,7 @@ export function sampleGraphwarPathTargetSequence(options: {
     points: mappedPoints,
     qualityPoints,
     requiredTargets,
-    settings: options.settings,
+    ...(options.formulaMode === undefined ? { settings: options.settings } : { formulaMode: options.formulaMode }),
     soldierCenter: mappedPoints[0],
     ...(stopOnTargetsComplete === undefined ? {} : { stopOnTargetsComplete }),
     targetHitRadiusPixels: options.targetHitRadiusPixels,

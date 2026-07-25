@@ -10,7 +10,7 @@ import type {
   ReadonlyValue as ReadonlyRef,
   ToolWorkflowMode,
 } from "../../core/types";
-import { resolveFormulaModeContract } from "../../formula/mode-contract";
+import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
@@ -178,10 +178,8 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
     }
 
     const settings = options.trajectory.getFormulaSettings();
-    if (
-      resolveFormulaModeContract(settings.algorithm, settings.equation, settings.isStepGlitchModeEnabled)
-        .pathSearchPolicy.type === "step-glitch"
-    ) {
+    const formulaMode = createGraphwarTrajectoryFormulaMode(settings);
+    if (formulaMode.contract.pathSearchPolicy.type === "step-glitch") {
       // 邪道 Worker 会先试最终直连公式；失败后才用 exact evidence 或一次旧整式回放准备 prefix。
       return true;
     }
@@ -195,10 +193,10 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
       boundaryExpansion: getBoundaryExpansion(),
       bounds: getBounds(),
       boundsRect: options.geometry.boundsRect.value,
+      formulaMode,
       hitTarget: currentTarget,
       obstacleMask: options.trajectory.getSimulationObstacleMask(),
       points: [...options.path.pathPixels.value],
-      settings,
       targetHitRadiusPixels: options.trajectory.getTargetHitRadiusPixels(),
     });
     if (result.reachesTargetBeforeObstacle) {

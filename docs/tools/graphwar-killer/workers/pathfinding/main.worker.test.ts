@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type {
   GraphwarStepGlitchFormulaBoundaryState,
@@ -291,7 +292,7 @@ describe("Anytime one-click-clear progress", () => {
 
 describe("Step glitch smart-path validation", () => {
   it("reuses the scanner replay when both validations share the same mask", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const input = createStepGlitchInput(mask, mask);
     const path = [input.sourcePath[0], input.targetPoint];
     mockHit(path);
@@ -303,7 +304,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("keeps the full trajectory validation when the formula mask differs", async () => {
-    const input = createStepGlitchInput(new Uint8Array(1), new Uint8Array(1));
+    const input = createStepGlitchInput(createPlaneMask(), createPlaneMask());
     mockHit([input.sourcePath[0], input.targetPoint]);
     mocks.validateTrajectory.mockReturnValue({ reachesTargetBeforeObstacle: false, visiblePixels: [] });
 
@@ -314,7 +315,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("still rejects a scanner path that violates the Graph x rule", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const input = createStepGlitchInput(mask, mask);
     mockHit([input.targetPoint, input.sourcePath[0]]);
 
@@ -325,7 +326,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("reuses the last exact successful formula across an irrelevant settings change", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 701;
     const firstPath = [first.sourcePath[0], first.targetPoint];
@@ -372,7 +373,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("rejects prefix evidence after an effective settings change", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 731;
     const firstPath = [first.sourcePath[0], first.targetPoint];
@@ -397,7 +398,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("reuses prefix evidence when the previous target was an ordinary point", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 751;
     const firstPath = [first.sourcePath[0], first.targetPoint];
@@ -423,7 +424,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("rejects prefix evidence after the simulation mask id changes", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 801;
     const firstPath = [first.sourcePath[0], first.targetPoint];
@@ -459,7 +460,7 @@ function createStepGlitchInput(simulationMask: Uint8Array, formulaMask: Uint8Arr
     isPreviewEnabled: false,
     routeMaskCacheId: 1,
     routeMode: "visibility-graph",
-    routeObstacleMask: new Uint8Array(1),
+    routeObstacleMask: createPlaneMask(),
     routeTolerancePlanePixels: 2,
     settings: {
       algorithm: "step",
@@ -505,6 +506,10 @@ function createOneClickClearInput(): GraphwarOneClickClearPathWorkerInput {
     simulationBoundaryExpansion: 0,
     simulationMaskCacheId: 0,
   };
+}
+
+function createPlaneMask() {
+  return new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
 }
 
 /** 让邪道 scanner 返回一条已完整回放成功的精确路径。 */

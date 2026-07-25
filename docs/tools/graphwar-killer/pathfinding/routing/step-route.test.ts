@@ -17,23 +17,27 @@ const boundsRect: BoundsRect = { height: 512, width: 1024, x: 0, y: 0 };
 const emptyArea = createGraphwarPlaneMaskSummedArea(new Uint8Array(770 * 450));
 
 describe("stateful Step route evaluation", () => {
-  it("rejects effective ODE Glitch Mode combinations", () => {
-    const base = {
-      algorithm: "step" as const,
-      decimalPlaces: 0,
-      formulaPathSteepness: 67,
-      steepness: 67,
-      isStepGlitchModeEnabled: true,
-    };
-
-    expect(createGraphwarStepRouteModel(200, { ...base, equation: "y" })).toBeDefined();
-    expect(createGraphwarStepRouteModel(200, { ...base, equation: "dy" })).toBeUndefined();
-    expect(createGraphwarStepRouteModel(200, { ...base, equation: "ddy" })).toBeUndefined();
+  it("only validates the numeric model after the Adapter selects Step-stateful policy", () => {
+    expect(
+      createGraphwarStepRouteModel(200, {
+        decimalPlaces: 0,
+        equation: "y",
+        formulaPathSteepness: 67,
+        steepness: 67,
+      }),
+    ).toBeDefined();
+    expect(
+      createGraphwarStepRouteModel(Number.NaN, {
+        decimalPlaces: 0,
+        equation: "y",
+        formulaPathSteepness: 67,
+        steepness: 67,
+      }),
+    ).toBeUndefined();
   });
 
   it("uses the incoming label state instead of projecting from the route origin", () => {
     const model = createGraphwarStepRouteModel(200, {
-      algorithm: "step",
       decimalPlaces: 0,
       equation: "y",
       steepness: 67,
@@ -64,7 +68,6 @@ describe("stateful Step route evaluation", () => {
 
   it("reconstructs the incoming plateau from its canonical integer key", () => {
     const model = createGraphwarStepRouteModel(0, {
-      algorithm: "step",
       decimalPlaces: 0,
       equation: "y",
       steepness: 67,
@@ -94,7 +97,6 @@ describe("stateful Step route evaluation", () => {
   it("derives the route envelope center from custom vertical bounds", () => {
     const customBounds: GraphBounds = { maxX: 25, maxY: 0.5, minX: -25, minY: -0.5 };
     const model = createGraphwarStepRouteModel(0, {
-      algorithm: "step",
       decimalPlaces: 4,
       equation: "y",
       steepness: 67,

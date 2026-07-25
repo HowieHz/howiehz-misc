@@ -23,6 +23,7 @@ const context = {
   routeMask: new Uint8Array(770 * 450),
   routeMode: "visibility-graph" as const,
   routeTolerancePlanePixels: 0,
+  type: "stateless" as const,
 };
 
 describe("one-click-clear DAG edge native forward distance", () => {
@@ -82,7 +83,8 @@ describe("one-click-clear DAG edge native forward distance", () => {
     const result = await buildOneClickClearDagEdgeRoute(
       {
         ...context,
-        stepRouteRuntime: createStepRouteRuntime(),
+        runtime: createStepRouteRuntime(),
+        type: "step-stateful",
       },
       {
         ...createJob(100.4, 103),
@@ -96,19 +98,20 @@ describe("one-click-clear DAG edge native forward distance", () => {
   it.each([
     {
       name: "runtime is unavailable",
-      stepRouteRuntime: undefined,
+      runtime: undefined,
       stepRouteStartState: { resolvedStateKey: "0", resolvedY: 0 },
     },
     {
       name: "start state is unavailable",
-      stepRouteRuntime: createStepRouteRuntime(),
+      runtime: createStepRouteRuntime(),
       stepRouteStartState: undefined,
     },
-  ])("rejects a Step half-state when $name", async ({ stepRouteRuntime, stepRouteStartState }) => {
-    const result = await buildOneClickClearDagEdgeRoute(
-      { ...context, ...(stepRouteRuntime ? { stepRouteRuntime } : {}) },
-      { ...createJob(100.4, 103), ...(stepRouteStartState ? { stepRouteStartState } : {}) },
-    );
+  ])("rejects a Step half-state when $name", async ({ runtime, stepRouteStartState }) => {
+    const routeContext = runtime ? { ...context, runtime, type: "step-stateful" as const } : context;
+    const result = await buildOneClickClearDagEdgeRoute(routeContext, {
+      ...createJob(100.4, 103),
+      ...(stepRouteStartState ? { stepRouteStartState } : {}),
+    });
 
     expect(mocks.buildVisibilityRoute).not.toHaveBeenCalled();
     expect(result.route).toBeUndefined();
@@ -120,7 +123,7 @@ describe("one-click-clear DAG edge native forward distance", () => {
     { name: "state key is not canonical", stepRouteStartState: { resolvedStateKey: "01", resolvedY: 0 } },
   ])("rejects an invalid Step state when $name", async ({ stepRouteStartState }) => {
     const result = await buildOneClickClearDagEdgeRoute(
-      { ...context, stepRouteRuntime: createStepRouteRuntime() },
+      { ...context, runtime: createStepRouteRuntime(), type: "step-stateful" },
       { ...createJob(100.4, 103), stepRouteStartState },
     );
 
@@ -143,7 +146,6 @@ function createJob(startX: number, targetX: number): GraphwarOneClickClearDagEdg
 /** 创建测试共享的完整 Step runtime；无效测试设置应立即暴露。 */
 function createStepRouteRuntime() {
   const model = createGraphwarStepRouteModel(0, {
-    algorithm: "step",
     decimalPlaces: 2,
     equation: "y",
     steepness: 1,

@@ -8,7 +8,6 @@ import {
   type PlaneGridPoint,
 } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
-import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import {
   quantizeStepFormulaSteepness,
   resolveStepFormulaPlateauTransition,
@@ -67,9 +66,8 @@ export type GraphwarStepRoutePathValidation =
 
 type GraphwarStepRouteSettings = Pick<
   GraphwarTrajectoryFormulaSettings,
-  "algorithm" | "decimalPlaces" | "equation" | "formulaPathSteepness" | "steepness"
-> &
-  Partial<Pick<GraphwarTrajectoryFormulaSettings, "isStepGlitchModeEnabled">>;
+  "decimalPlaces" | "equation" | "formulaPathSteepness" | "steepness"
+>;
 
 /** Step 边评估共享的包络和障碍碰撞上下文。 */
 interface GraphwarStepRouteCollisionContext {
@@ -90,16 +88,12 @@ interface GraphwarStepPathfindingEvaluatorOptions extends GraphwarStepRouteColli
   resolvedStartStateKey?: string;
 }
 
-/** 有效 ODE 邪道模式会改变逐段语义，必须改走固定扫描器。 */
+/** 构造 Step-stateful policy 使用的数值模型；公式模式与路线策略必须已由调用方 Adapter 解析。 */
 export function createGraphwarStepRouteModel(
   originY: number,
   settings: GraphwarStepRouteSettings,
 ): GraphwarStepRouteModel | undefined {
-  if (
-    settings.algorithm !== "step" ||
-    formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.isStepGlitchModeEnabled === true) ||
-    !Number.isFinite(originY)
-  ) {
+  if (!Number.isFinite(originY)) {
     return undefined;
   }
   const formulaSteepness = quantizeStepFormulaSteepness(

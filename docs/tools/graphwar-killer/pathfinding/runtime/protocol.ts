@@ -1,5 +1,8 @@
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { MAX_FORMULA_DECIMAL_PLACES } from "../../core/numbers";
 import type { PlaneGridPoint } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import { resolveFormulaModeContract } from "../../formula/mode-contract";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
@@ -14,7 +17,10 @@ import type {
   GraphwarOneClickClearResult,
   GraphwarOneClickClearSearchInput,
 } from "../one-click-clear/search";
-import type { GraphwarOneClickClearStepRouteState } from "../one-click-clear/step-route-state";
+import {
+  isGraphwarOneClickClearStepRouteState,
+  type GraphwarOneClickClearStepRouteState,
+} from "../one-click-clear/step-route-state";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
 import type { GraphwarPathfindingDiagnostics } from "./diagnostics";
@@ -146,6 +152,298 @@ export interface GraphwarOneClickClearPathWorkerResult {
   result: GraphwarOneClickClearResult;
   /** Worker 内部收集到的细分耗时。 */
   timings: GraphwarOneClickClearDebugTiming[];
+}
+
+/**
+ * 校验页面发给 Pathfinding master Worker 的完整请求。
+ *
+ * Worker 消息是真实运行时边界；公式 contract 只能在 settings、mask 和有限数通过校验后重新解析。
+ */
+export function isGraphwarPathfindingWorkerRequest(value: unknown): value is GraphwarPathfindingWorkerRequest {
+  if (!isRecord(value) || !isNonNegativeInteger(value.id) || !isRecord(value.task)) {
+    return false;
+  }
+  const task = value.task;
+  if (task.type === "find-route") {
+    return isGraphwarPathfindingRouteInput(task.input);
+  }
+  if (task.type === "find-smart-path") {
+    return (
+      (task.shouldCollectDiagnostics === undefined || task.shouldCollectDiagnostics === true) &&
+      isGraphwarSmartPathfindingPathInput(task.input)
+    );
+  }
+  if (task.type === "build-one-click-clear-dag-edges") {
+    return isGraphwarOneClickClearDagEdgeBuildRequest(task.input);
+  }
+  return (
+    task.type === "build-one-click-clear-path" &&
+    typeof task.shouldReportIncumbents === "boolean" &&
+    (task.shouldCollectDiagnostics === undefined || task.shouldCollectDiagnostics === true) &&
+    isGraphwarOneClickClearPathWorkerInput(task.input)
+  );
+}
+
+/** 校验 master 发给一键清图 edge Worker 的初始化或单 job 请求。 */
+export function isGraphwarOneClickClearEdgeWorkerRequest(
+  value: unknown,
+): value is GraphwarOneClickClearEdgeWorkerRequest {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === "init") {
+    return isGraphwarOneClickClearEdgeWorkerInit(value.context);
+  }
+  return (
+    value.type === "job" && isNonNegativeInteger(value.requestId) && isGraphwarOneClickClearDagEdgeBuildJob(value.job)
+  );
+}
+
+/** 从畸形请求中只恢复可安全回显的 id；完全缺失时使用 0。 */
+export function getGraphwarPathfindingWorkerRequestId(value: unknown) {
+  return isRecord(value) && isNonNegativeInteger(value.id) ? value.id : 0;
+}
+
+function isGraphwarPathfindingRouteInput(value: unknown): value is GraphwarPathfindingRouteInput {
+  return (
+    isRecord(value) &&
+    isGraphBounds(value.bounds) &&
+    isBoundsRect(value.boundsRect) &&
+    isNonNegativeFiniteNumber(value.boundaryExpansion) &&
+    isNonNegativeInteger(value.routeMaskCacheId) &&
+    isGraphwarPlaneMask(value.routeMask) &&
+    isNonNegativeFiniteNumber(value.routeTolerancePlanePixels) &&
+    isPixelPoint(value.startPoint) &&
+    isPixelPoint(value.targetPoint) &&
+    typeof value.isPreviewEnabled === "boolean" &&
+    isGraphwarPathfindingRouteMode(value.routeMode)
+  );
+}
+
+function isGraphwarSmartPathfindingPathInput(value: unknown): value is GraphwarSmartPathfindingPathInput {
+  if (
+    !isRecord(value) ||
+    !isGraphBounds(value.bounds) ||
+    !isBoundsRect(value.boundsRect) ||
+    !isNonNegativeFiniteNumber(value.boundaryExpansion) ||
+    typeof value.isDeleteOptimizationEnabled !== "boolean" ||
+    !isGraphwarTrajectoryTargetCircle(value.hitTarget) ||
+    typeof value.isPreviewEnabled !== "boolean" ||
+    !isGraphwarPathfindingRouteMode(value.routeMode) ||
+    !isGraphwarPlaneMask(value.routeObstacleMask) ||
+    !isNonNegativeInteger(value.routeMaskCacheId) ||
+    !isNonNegativeFiniteNumber(value.routeTolerancePlanePixels) ||
+    !isNonNegativeFiniteNumber(value.simulationBoundaryExpansion) ||
+    (value.simulationMask !== undefined && !isGraphwarPlaneMask(value.simulationMask)) ||
+    !isGraphwarTrajectoryFormulaSettings(value.settings) ||
+    !isPixelPointArray(value.sourcePath) ||
+    (value.prefixTarget !== undefined && !isGraphwarTrajectoryTargetCircle(value.prefixTarget)) ||
+    !isNonNegativeInteger(value.simulationMaskCacheId) ||
+    !isPixelPoint(value.targetPoint)
+  ) {
+    return false;
+  }
+  const contract = resolveFormulaModeContract(
+    value.settings.algorithm,
+    value.settings.equation,
+    value.settings.isStepGlitchModeEnabled,
+  );
+  return (
+    contract.pathSearchPolicy.type !== "step-glitch" ||
+    (value.routeMode === "visibility-graph" && value.simulationMask !== undefined)
+  );
+}
+
+function isGraphwarOneClickClearPathWorkerInput(value: unknown): value is GraphwarOneClickClearPathWorkerInput {
+  if (
+    !isRecord(value) ||
+    !isGraphBounds(value.bounds) ||
+    !isBoundsRect(value.boundsRect) ||
+    !isNonNegativeFiniteNumber(value.boundaryExpansion) ||
+    !Array.isArray(value.candidates) ||
+    !value.candidates.every(isGraphwarOneClickClearCandidate) ||
+    !Array.isArray(value.hitCandidates) ||
+    !value.hitCandidates.every(isGraphwarOneClickClearCandidate) ||
+    !isPositiveInteger(value.dagEdgeWorkerCount) ||
+    !isNonNegativeFiniteNumber(value.deleteHitCheckRadiusPixels) ||
+    typeof value.isDeleteOptimizationEnabled !== "boolean" ||
+    !isPixelPointArray(value.pathPoints) ||
+    (value.prefixTarget !== undefined && !isGraphwarTrajectoryTargetCircle(value.prefixTarget)) ||
+    !isGraphwarPathfindingRouteMode(value.routeMode) ||
+    !isGraphwarPlaneMask(value.routeObstacleMask) ||
+    !isNonNegativeInteger(value.routeMaskCacheId) ||
+    !isNonNegativeFiniteNumber(value.routeTolerancePlanePixels) ||
+    !isNonNegativeFiniteNumber(value.simulationBoundaryExpansion) ||
+    (value.simulationMask !== undefined && !isGraphwarPlaneMask(value.simulationMask)) ||
+    !isNonNegativeInteger(value.simulationMaskCacheId) ||
+    !isGraphwarTrajectoryFormulaSettings(value.settings)
+  ) {
+    return false;
+  }
+  const contract = resolveFormulaModeContract(
+    value.settings.algorithm,
+    value.settings.equation,
+    value.settings.isStepGlitchModeEnabled,
+  );
+  return (
+    contract.pathSearchPolicy.type !== "step-glitch" ||
+    (value.routeMode === "visibility-graph" && value.simulationMask !== undefined)
+  );
+}
+
+function isGraphwarOneClickClearDagEdgeBuildRequest(value: unknown): value is GraphwarOneClickClearDagEdgeBuildRequest {
+  if (
+    !isRecord(value) ||
+    !isGraphBounds(value.bounds) ||
+    !isBoundsRect(value.boundsRect) ||
+    !isNonNegativeFiniteNumber(value.boundaryExpansion) ||
+    !Array.isArray(value.jobs) ||
+    !value.jobs.every(isGraphwarOneClickClearDagEdgeBuildJob) ||
+    !isGraphwarPlaneMask(value.routeMask) ||
+    !isPixelPoint(value.routeOriginPoint) ||
+    !isGraphwarPathfindingRouteMode(value.routeMode) ||
+    !isNonNegativeFiniteNumber(value.routeTolerancePlanePixels) ||
+    !isGraphwarStepRouteSettings(value.settings) ||
+    !isPositiveInteger(value.workerCount)
+  ) {
+    return false;
+  }
+  const isStepStateful = value.settings.algorithm === "step";
+  return value.jobs.every((job) => (job.stepRouteStartState !== undefined) === isStepStateful);
+}
+
+function isGraphwarOneClickClearEdgeWorkerInit(value: unknown): value is GraphwarOneClickClearEdgeWorkerInit {
+  return (
+    isRecord(value) &&
+    isGraphBounds(value.bounds) &&
+    isBoundsRect(value.boundsRect) &&
+    isNonNegativeFiniteNumber(value.boundaryExpansion) &&
+    isGraphwarPlaneMask(value.routeMask) &&
+    isPixelPoint(value.routeOriginPoint) &&
+    isGraphwarPathfindingRouteMode(value.routeMode) &&
+    isNonNegativeFiniteNumber(value.routeTolerancePlanePixels) &&
+    isGraphwarStepRouteSettings(value.settings) &&
+    isPositiveInteger(value.workerIndex)
+  );
+}
+
+function isGraphwarOneClickClearDagEdgeBuildJob(value: unknown): value is GraphwarOneClickClearDagEdgeBuildJob {
+  return (
+    isRecord(value) &&
+    Number.isInteger(value.from) &&
+    isNonNegativeInteger(value.id) &&
+    isPixelPoint(value.startPoint) &&
+    (value.stepRouteStartState === undefined || isGraphwarOneClickClearStepRouteState(value.stepRouteStartState)) &&
+    isPixelPoint(value.targetPoint) &&
+    isNonNegativeInteger(value.to)
+  );
+}
+
+function isGraphwarOneClickClearCandidate(value: unknown) {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    typeof value.enemy === "boolean" &&
+    isPixelPoint(value.hitCenter) &&
+    isNonNegativeFiniteNumber(value.hitRadius)
+  );
+}
+
+function isGraphwarTrajectoryFormulaSettings(value: unknown): value is GraphwarTrajectoryFormulaSettings {
+  return (
+    isRecord(value) &&
+    isAlgorithmMode(value.algorithm) &&
+    isGraphwarFormulaDecimalPlaces(value.decimalPlaces) &&
+    isEquationMode(value.equation) &&
+    (value.secondOrderLaunchAngleMode === undefined ||
+      value.secondOrderLaunchAngleMode === "display-rounded" ||
+      value.secondOrderLaunchAngleMode === "full-precision") &&
+    (value.formulaPathSteepness === undefined || isPositiveFiniteNumber(value.formulaPathSteepness)) &&
+    isPositiveFiniteNumber(value.steepness) &&
+    typeof value.isStepGlitchModeEnabled === "boolean" &&
+    (value.stepGlitchObstacleMask === undefined || isGraphwarPlaneMask(value.stepGlitchObstacleMask)) &&
+    typeof value.isStepOverflowProtectionEnabled === "boolean"
+  );
+}
+
+function isGraphwarStepRouteSettings(value: unknown): value is GraphwarOneClickClearDagEdgeBuildRequest["settings"] {
+  return (
+    isRecord(value) &&
+    isAlgorithmMode(value.algorithm) &&
+    isGraphwarFormulaDecimalPlaces(value.decimalPlaces) &&
+    isEquationMode(value.equation) &&
+    (value.formulaPathSteepness === undefined || isPositiveFiniteNumber(value.formulaPathSteepness)) &&
+    isPositiveFiniteNumber(value.steepness)
+  );
+}
+
+function isGraphBounds(value: unknown): value is GraphBounds {
+  return (
+    isRecord(value) &&
+    isFiniteNumber(value.maxX) &&
+    isFiniteNumber(value.maxY) &&
+    isFiniteNumber(value.minX) &&
+    isFiniteNumber(value.minY) &&
+    value.maxX !== value.minX &&
+    value.maxY !== value.minY
+  );
+}
+
+function isBoundsRect(value: unknown): value is BoundsRect {
+  return (
+    isRecord(value) &&
+    isFiniteNumber(value.x) &&
+    isFiniteNumber(value.y) &&
+    isFiniteNumber(value.width) &&
+    value.width > 0 &&
+    isFiniteNumber(value.height) &&
+    value.height > 0
+  );
+}
+
+function isGraphwarTrajectoryTargetCircle(value: unknown): value is GraphwarTrajectoryTargetCircle {
+  return isRecord(value) && isPixelPoint(value.center) && isNonNegativeFiniteNumber(value.radius);
+}
+
+function isPixelPoint(value: unknown): value is PixelPoint {
+  return isRecord(value) && isFiniteNumber(value.x) && isFiniteNumber(value.y);
+}
+
+function isGraphwarPlaneMask(value: unknown): value is Uint8Array {
+  return value instanceof Uint8Array && value.length === GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
+}
+
+function isGraphwarPathfindingRouteMode(value: unknown): value is GraphwarPathfindingRouteMode {
+  return value === "theta-star" || value === "visibility-graph";
+}
+
+function isAlgorithmMode(value: unknown) {
+  return value === "abs" || value === "step" || value === "pchip" || value === "akima";
+}
+
+function isEquationMode(value: unknown) {
+  return value === "y" || value === "dy" || value === "ddy";
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return isNonNegativeFiniteNumber(value) && Number.isInteger(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return isNonNegativeInteger(value) && value > 0;
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return isFiniteNumber(value) && value > 0;
+}
+
+function isGraphwarFormulaDecimalPlaces(value: unknown): value is number {
+  return isNonNegativeInteger(value) && value <= MAX_FORMULA_DECIMAL_PLACES;
 }
 
 /** 在 Worker 信任边界校验可直接落地或发射的一键清图 incumbent。 */
@@ -407,3 +705,30 @@ export type GraphwarOneClickClearEdgeWorkerResponse =
       type: "error";
       workerIndex: number;
     };
+
+/** 校验 edge Worker 发回 master 的完整响应，避免畸形 job 永久悬挂并行批次。 */
+export function isGraphwarOneClickClearEdgeWorkerResponse(
+  value: unknown,
+): value is GraphwarOneClickClearEdgeWorkerResponse {
+  if (!isRecord(value) || !isPositiveInteger(value.workerIndex)) {
+    return false;
+  }
+  if (value.type === "ready") {
+    return true;
+  }
+  if (value.type === "error") {
+    return typeof value.message === "string";
+  }
+  if (value.type !== "job-result" || !isNonNegativeInteger(value.requestId) || !isRecord(value.result)) {
+    return false;
+  }
+  const result = value.result;
+  return (
+    isNonNegativeInteger(result.jobId) &&
+    isNonNegativeFiniteNumber(result.routePathfindingElapsedMs) &&
+    isNonNegativeFiniteNumber(result.routeMapPixelsElapsedMs) &&
+    (result.route === undefined || isPixelPointArray(result.route, 2)) &&
+    (result.stepRouteEndState === undefined ||
+      (result.route !== undefined && isGraphwarOneClickClearStepRouteState(result.stepRouteEndState)))
+  );
+}

@@ -1,11 +1,12 @@
 import { GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
-import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
+import { resolveFormulaModeContract } from "../../formula/mode-contract";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
+import { resolveGraphwarPathSearchPolicy } from "../routing/policy";
 import type { GraphwarOneClickClearPathWorkerInput } from "../runtime/protocol";
 import type { GraphwarOneClickClearCandidate } from "./search";
 
@@ -135,10 +136,13 @@ export function createGraphwarOneClickClearSearchPreflight(
 export function createGraphwarOneClickClearSearchInput(
   options: GraphwarOneClickClearSearchInputOptions,
 ): GraphwarOneClickClearPathWorkerInput {
-  const isStepGlitchModeEnabled = formulaModeUsesStepGlitch(
-    options.settings.algorithm,
-    options.settings.equation,
-    options.settings.isStepGlitchModeEnabled,
+  const pathSearchPolicy = resolveGraphwarPathSearchPolicy(
+    resolveFormulaModeContract(
+      options.settings.algorithm,
+      options.settings.equation,
+      options.settings.isStepGlitchModeEnabled,
+    ),
+    options.routeMode,
   );
   return {
     boundaryExpansion: options.tolerances.routeBoundaryInsetPlanePixels,
@@ -157,12 +161,12 @@ export function createGraphwarOneClickClearSearchInput(
     prefixTarget: options.prefixTarget,
     routeMaskCacheId: options.routeMaskCacheId,
     // Step ODE 邪道不消费普通路由算法；规范值让无关配置共享同一结果身份。
-    routeMode: isStepGlitchModeEnabled ? "visibility-graph" : options.routeMode,
+    routeMode: pathSearchPolicy.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     // 一键清图的 simulation mask 是任务的唯一碰撞快照；Step 门、验证和最终公式必须共享它。
     settings:
-      isStepGlitchModeEnabled && options.simulationMask
+      pathSearchPolicy.type === "step-glitch" && options.simulationMask
         ? { ...options.settings, stepGlitchObstacleMask: options.simulationMask }
         : options.settings,
     simulationBoundaryExpansion: options.tolerances.simulationBoundaryInsetPlanePixels,

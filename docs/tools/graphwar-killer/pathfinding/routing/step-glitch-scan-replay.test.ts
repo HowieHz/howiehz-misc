@@ -9,6 +9,7 @@ import {
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds } from "../../core/types";
+import type { GraphwarStepGlitchFormulaPrefix } from "../../formula/trajectory/sampling";
 
 const replayMockState = vi.hoisted(() => ({
   callCount: 0,
@@ -181,6 +182,11 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
               // 扫描器验收只读取已解析的点和可选 prefix；上下文构造由其他测试单独覆盖。
               context: {
                 formulaPoints: [...options.points],
+                stepGlitchFormulaEvidence:
+                  options.stepGlitchFormulaEvidence ??
+                  ({ prefix: { stepGlitchSegments: [] } } as unknown as NonNullable<
+                    ReturnType<typeof original.resolveGraphwarTrajectory>["context"]["stepGlitchFormulaEvidence"]
+                  >),
               } as ReturnType<typeof original.resolveGraphwarTrajectory>["context"],
               result: sampleFormulaTrajectory(options),
             },
@@ -188,7 +194,7 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
   };
 });
 
-import { scanGraphwarStepGlitchPath } from "./step-glitch-scan";
+import { createGraphwarStepGlitchPrefixEvidence, scanGraphwarStepGlitchPath } from "./step-glitch-scan";
 
 const bounds: GraphBounds = { maxX: -4, maxY: 10, minX: -12, minY: -10 };
 const boundsRect: BoundsRect = {
@@ -197,6 +203,35 @@ const boundsRect: BoundsRect = {
   x: 0,
   y: 0,
 };
+
+/** 构造与固定两点 source path 完全匹配的精确前缀证据。 */
+function createCompatiblePrefixEvidence(
+  simulationMask: Uint8Array,
+  settings: GraphwarStepGlitchFormulaPrefix["settings"],
+  prefixTarget: ReturnType<typeof createPixelPoint>,
+) {
+  const graphPoints = [createGraphPoint(-11, 0), createGraphPoint(-8.5, 0)];
+  return createGraphwarStepGlitchPrefixEvidence({
+    acceptedPoint: createGraphPoint(-8.5, 0),
+    formulaEvidence: {
+      prefix: {
+        bounds,
+        initialFormulaPoints: graphPoints,
+        points: graphPoints,
+        refinedFormulaPoints: graphPoints,
+        segmentStartPoints: [undefined],
+        settings,
+        signProtection: [],
+        soldierCenter: graphPoints[0],
+        stepGlitchRequirements: [false],
+        stepGlitchSegments: [undefined],
+        stepSegmentDeltaYs: [undefined],
+      } satisfies GraphwarStepGlitchFormulaPrefix,
+    },
+    prefixTarget: { center: prefixTarget, radius: 12 },
+    simulationMask,
+  });
+}
 
 describe("Step glitch scanner replay acceptance", () => {
   beforeEach(() => {
@@ -262,22 +297,25 @@ describe("Step glitch scanner replay acceptance", () => {
     const prefixTarget = graphToImagePoint(createGraphPoint(-8.5, 0), bounds, boundsRect);
     const targetPoint = graphToImagePoint(createGraphPoint(-6, 0), bounds, boundsRect);
     const missedTarget = graphToImagePoint(createGraphPoint(-6, 8), bounds, boundsRect);
+    const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const settings = {
+      algorithm: "step" as const,
+      decimalPlaces: 4,
+      equation: "dy" as const,
+      steepness: 67,
+      stepGlitchMode: true,
+      stepGlitchObstacleMask: simulationMask,
+      stepOverflowProtection: true,
+    };
 
     const result = scanGraphwarStepGlitchPath({
       bounds,
       boundsRect,
       hitTarget: { center: missedTarget, radius: 2 },
-      prefixEvidence: { acceptedPoint: createGraphPoint(-8.5, 0) },
+      prefixEvidence: createCompatiblePrefixEvidence(simulationMask, settings, prefixTarget),
       requiredTargets: [{ center: prefixTarget, radius: 12 }],
-      settings: {
-        algorithm: "step",
-        decimalPlaces: 4,
-        equation: "dy",
-        steepness: 67,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
-      simulationMask: new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT),
+      settings,
+      simulationMask,
       sourcePath: [start, prefixTarget],
       targetPoint,
     });
@@ -290,6 +328,44 @@ describe("Step glitch scanner replay acceptance", () => {
       "scan-candidates",
     ]);
     expect(sampleFormulaTrajectory.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("replays the prefix cold when the evidence mask is mutated in place", () => {
+    const start = graphToImagePoint(createGraphPoint(-11, 0), bounds, boundsRect);
+    const prefixTarget = graphToImagePoint(createGraphPoint(-8.5, 0), bounds, boundsRect);
+    const targetPoint = graphToImagePoint(createGraphPoint(-6, 0), bounds, boundsRect);
+    const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const settings = {
+      algorithm: "step" as const,
+      decimalPlaces: 4,
+      equation: "dy" as const,
+      steepness: 67,
+      stepGlitchMode: true,
+      stepGlitchObstacleMask: simulationMask,
+      stepOverflowProtection: true,
+    };
+    const prefixEvidence = createCompatiblePrefixEvidence(simulationMask, settings, prefixTarget);
+    simulationMask[0] = 1;
+
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      hitTarget: { center: targetPoint, radius: 2 },
+      prefixEvidence,
+      requiredTargets: [{ center: prefixTarget, radius: 12 }],
+      settings,
+      simulationMask,
+      sourcePath: [start, prefixTarget],
+      targetPoint,
+    });
+
+    expect(result.status).toBe("no-path");
+    expect(result.timings.map((timing) => timing.stage)).toEqual([
+      "validate-direct",
+      "prefix-evidence-miss",
+      "prepare-prefix",
+    ]);
+    expect(sampleFormulaTrajectory).toHaveBeenCalledTimes(2);
   });
 
   it("starts gate scanning at the prefix control x when a required hit lies beyond the new target", () => {

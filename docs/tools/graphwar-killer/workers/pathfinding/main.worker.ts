@@ -6,7 +6,7 @@ import {
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { measureSyncStage, nowMs } from "../../core/time";
-import { createGraphPoint, type GraphBounds, type GraphPoint, type PixelPoint } from "../../core/types";
+import { createGraphPoint, type GraphBounds, type PixelPoint } from "../../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../../detection/objects";
 import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
@@ -27,6 +27,7 @@ import type {
 import { buildGraphwarOneClickClearPath } from "../../pathfinding/one-click-clear/search";
 import type { GraphwarPlaneMaskSummedArea } from "../../pathfinding/routing/step-envelope";
 import {
+  createGraphwarStepGlitchPrefixEvidence,
   replayGraphwarStepGlitchPathToControlX,
   scanGraphwarStepGlitchPath,
   type GraphwarStepGlitchPrefixEvidence,
@@ -496,9 +497,6 @@ function findStepGlitchSmartPath(
     debugMetrics,
     hitTarget: input.hitTarget,
     ...(prefixEvidence ? { prefixEvidence } : {}),
-    ...(prefixEvidence?.stepGlitchFormulaPrefix
-      ? { stepGlitchFormulaPrefix: prefixEvidence.stepGlitchFormulaPrefix }
-      : {}),
     ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
     // 单目标请求只从当前尾点继续；更早运行命中的士兵不属于本次目标。
     requiredTargets: [],
@@ -509,9 +507,6 @@ function findStepGlitchSmartPath(
     targetPoint: input.targetPoint,
   });
   appendStepGlitchScanTimings(timings, scanResult.timings);
-  if (!scanResult) {
-    return { failureReason: "route", timings };
-  }
   if (scanResult.status !== "hit") {
     const blockedPoint = scanResult.blockedPoint
       ? graphToImagePoint(scanResult.blockedPoint, input.bounds, input.boundsRect)
@@ -547,29 +542,25 @@ function findStepGlitchSmartPath(
   }
 
   let path = scanResult.path;
-  let acceptedPoint = scanResult.acceptedPoint;
-  let stepGlitchFormulaPrefix = scanResult.stepGlitchFormulaPrefix;
+  let resultPrefixEvidence = createGraphwarStepGlitchPrefixEvidence({
+    acceptedPoint: scanResult.acceptedPoint,
+    formulaEvidence: scanResult.replayEvidence.formulaContext.stepGlitchFormulaEvidence,
+    prefixTarget: input.hitTarget,
+    simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+    simulationMask,
+  });
   if (input.isDeleteOptimizationEnabled && input.settings.stepGlitchObstacleMask === simulationMask) {
     const optimized = measureSyncStage(timings, "optimize-path", () =>
-      optimizeStepGlitchSmartPath(
-        input,
-        path,
-        input.hitTarget,
-        acceptedPoint,
-        stepGlitchFormulaPrefix,
-        prefixEvidence?.stepGlitchFormulaPrefix,
-        debugMetrics,
-      ),
+      optimizeStepGlitchSmartPath(input, path, input.hitTarget, resultPrefixEvidence, prefixEvidence, debugMetrics),
     );
     path = optimized.path;
-    acceptedPoint = optimized.acceptedPoint;
-    stepGlitchFormulaPrefix = optimized.stepGlitchFormulaPrefix;
+    resultPrefixEvidence = optimized.prefixEvidence;
   } else if (input.isDeleteOptimizationEnabled) {
     path = measureSyncStage(timings, "optimize-path", () =>
       optimizeSmartPathfindingPath(input, path, undefined, debugMetrics),
     );
   }
-  setMasterStepGlitchEvidence(input, path, input.hitTarget, acceptedPoint, stepGlitchFormulaPrefix);
+  setMasterStepGlitchEvidence(input, path, resultPrefixEvidence);
   return { path, timings };
 }
 
@@ -578,14 +569,12 @@ function optimizeStepGlitchSmartPath(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
   target: GraphwarTrajectoryTargetCircle,
-  acceptedPoint: GraphPoint,
-  stepGlitchFormulaPrefix: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"],
-  sourceFormulaPrefix: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"],
+  prefixEvidence: GraphwarStepGlitchPrefixEvidence,
+  sourcePrefixEvidence: GraphwarStepGlitchPrefixEvidence | undefined,
   debugMetrics?: GraphwarPathfindingDebugMetrics,
 ) {
   let optimized = [...points];
-  let optimizedAcceptedPoint = acceptedPoint;
-  let optimizedFormulaPrefix = stepGlitchFormulaPrefix;
+  let optimizedPrefixEvidence = prefixEvidence;
   const firstOptimizableIndex = Math.max(1, input.sourcePath.length);
   for (let index = firstOptimizableIndex; index < optimized.length - 1 && optimized.length > 2;) {
     const candidatePath = [...optimized.slice(0, index), ...optimized.slice(index + 1)];
@@ -601,24 +590,28 @@ function optimizeStepGlitchSmartPath(
       path: candidatePath,
       requiredTargets: [],
       settings: input.settings,
-      ...(sourceFormulaPrefix ? { stepGlitchFormulaPrefix: sourceFormulaPrefix } : {}),
+      ...(sourcePrefixEvidence ? { prefixEvidence: sourcePrefixEvidence } : {}),
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       simulationMask: input.simulationMask,
       sourcePath: input.sourcePath,
       targetSequence: [target],
     });
-    if (!replay.targetsHit || !replay.acceptedPoint) {
+    if (replay.status === "miss") {
       index += 1;
       continue;
     }
     optimized = candidatePath;
-    optimizedAcceptedPoint = replay.acceptedPoint;
-    optimizedFormulaPrefix = replay.stepGlitchFormulaPrefix;
+    optimizedPrefixEvidence = createGraphwarStepGlitchPrefixEvidence({
+      acceptedPoint: replay.acceptedPoint,
+      formulaEvidence: replay.replayEvidence.formulaContext.stepGlitchFormulaEvidence,
+      prefixTarget: target,
+      simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+      simulationMask: input.simulationMask,
+    });
   }
   return {
-    acceptedPoint: optimizedAcceptedPoint,
     path: optimized,
-    ...(optimizedFormulaPrefix ? { stepGlitchFormulaPrefix: optimizedFormulaPrefix } : {}),
+    prefixEvidence: optimizedPrefixEvidence,
   };
 }
 
@@ -648,14 +641,13 @@ function getMasterStepGlitchEvidence(
           masterStepGlitchEvidence.acceptedPoint.x,
           masterStepGlitchEvidence.acceptedPoint.y,
         ),
-        ...(masterStepGlitchEvidence.stepGlitchFormulaPrefix
-          ? {
-              stepGlitchFormulaPrefix: {
-                ...masterStepGlitchEvidence.stepGlitchFormulaPrefix,
-                settings: input.settings,
-              },
-            }
-          : {}),
+        formulaEvidence: {
+          prefix: {
+            ...masterStepGlitchEvidence.formulaEvidence.prefix,
+            settings: input.settings,
+          },
+        },
+        replayIdentity: masterStepGlitchEvidence.replayIdentity,
       }
     : undefined;
 }
@@ -664,17 +656,17 @@ function getMasterStepGlitchEvidence(
 function setMasterStepGlitchEvidence(
   input: MasterStepGlitchEvidenceContext,
   path: readonly PixelPoint[],
-  prefixTarget: GraphwarTrajectoryTargetCircle,
-  acceptedPoint: GraphPoint,
-  stepGlitchFormulaPrefix?: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"],
+  prefixEvidence: GraphwarStepGlitchPrefixEvidence,
 ) {
   if (!masterStepGlitchEvidenceIsEnabled(input)) {
     return;
   }
   masterStepGlitchEvidence = {
-    acceptedPoint: createGraphPoint(acceptedPoint.x, acceptedPoint.y),
-    key: createMasterStepGlitchEvidenceKey(input, path, prefixTarget),
-    ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
+    acceptedPoint: createGraphPoint(prefixEvidence.acceptedPoint.x, prefixEvidence.acceptedPoint.y),
+    // Master 只缓存 prefix-only 分支，局部 RK4 boundary 不跨 job。
+    formulaEvidence: { prefix: prefixEvidence.formulaEvidence.prefix },
+    key: createMasterStepGlitchEvidenceKey(input, path, prefixEvidence.replayIdentity.prefixTarget),
+    replayIdentity: prefixEvidence.replayIdentity,
   };
 }
 
@@ -981,10 +973,8 @@ async function buildOneClickClearPath(
   let dagEdgeSession: OneClickClearDagEdgeSession | undefined;
   let validatedStepGlitchEvidence:
     | {
-        acceptedPoint: GraphPoint;
         path: readonly PixelPoint[];
-        prefixTarget: GraphwarTrajectoryTargetCircle;
-        stepGlitchFormulaPrefix?: GraphwarStepGlitchPrefixEvidence["stepGlitchFormulaPrefix"];
+        prefixEvidence: GraphwarStepGlitchPrefixEvidence;
       }
     | undefined;
   let result: GraphwarOneClickClearPathWorkerResult["result"];
@@ -1072,13 +1062,7 @@ async function buildOneClickClearPath(
   }
   if (validatedStepGlitchEvidence) {
     // failure 也可能由主线程提升最后一个自然 incumbent；exact path key 可安全保存该恢复证据。
-    setMasterStepGlitchEvidence(
-      input,
-      validatedStepGlitchEvidence.path,
-      validatedStepGlitchEvidence.prefixTarget,
-      validatedStepGlitchEvidence.acceptedPoint,
-      validatedStepGlitchEvidence.stepGlitchFormulaPrefix,
-    );
+    setMasterStepGlitchEvidence(input, validatedStepGlitchEvidence.path, validatedStepGlitchEvidence.prefixEvidence);
   }
   return { ...(debugMetrics ? { diagnostics: debugMetrics } : {}), result, timings };
 }

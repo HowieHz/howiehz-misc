@@ -23,10 +23,12 @@ import { measureSyncStage, nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
-import { tryResolveGraphwarTrajectoryCandidate } from "../../formula/trajectory/sampling";
+import {
+  graphwarStepGlitchFormulaEvidenceMatchesSource,
+  tryResolveGraphwarTrajectoryCandidate,
+} from "../../formula/trajectory/sampling";
 import type {
-  GraphwarStepGlitchFormulaBoundaryState,
-  GraphwarStepGlitchFormulaPrefix,
+  GraphwarStepGlitchFormulaEvidence,
   GraphwarStepGlitchXWindow,
   GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaSettings,
@@ -60,10 +62,6 @@ export interface GraphwarStepGlitchPrefixOptions {
   maskIndex?: GraphwarStepGlitchScanMaskIndex;
   /** 完全相同旧整式已经回放成功时，可直接复用其真实恢复点。 */
   prefixEvidence?: GraphwarStepGlitchPrefixEvidence;
-  /** 已成功 sourcePath 的邪道求解结果；公式 Module 核对精确前缀后才会复用。 */
-  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
-  /** 同一搜索 Worker 内最新已接受段边界；只尝试恢复首个新增段。 */
-  stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
   /** 旧公式必须命中的当前尾点；只用于 evidence/prefix 准备，不约束新最终直连公式。 */
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 固定前缀必须继续命中的士兵；后续控制点允许改变它们的实际命中顺序。 */
@@ -111,16 +109,10 @@ interface GraphwarStepGlitchScanResultBase {
 export type GraphwarStepGlitchScanResult =
   | (GraphwarStepGlitchScanResultBase & {
       acceptedPoint: GraphPoint;
-      /** 仅末目标自然完整回放可产生；路径或验证输入变化后调用方必须丢弃。 */
-      finalValidationEvidence?: GraphwarStepGlitchFinalValidationEvidence;
-      /** 本次命中回放已经使用的精确公式上下文；调用方可直接生成 incumbent。 */
-      formulaContext?: GraphwarTrajectoryFormulaContext;
-      stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
-      stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
       path: PixelPoint[];
+      /** 公式上下文、轨迹和可选最终验证必须作为同次回放证据整体传递。 */
+      replayEvidence: GraphwarStepGlitchReplayEvidence;
       status: "hit";
-      /** 与本次量化回放公式和发射角严格绑定的可绘制轨迹。 */
-      trajectoryPoints: PixelPoint[];
     })
   | (GraphwarStepGlitchScanResultBase & {
       blockedPoint?: GraphPoint;
@@ -135,8 +127,33 @@ export interface GraphwarStepGlitchPrefixScanner {
 /** 完全相同旧整式的验证证据；新增后缀仍必须从发射点完整回放。 */
 export interface GraphwarStepGlitchPrefixEvidence {
   acceptedPoint: GraphPoint;
-  /** Master 精确 key 命中时可一并复用的公式求解前缀。 */
-  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
+  /** 已解前缀和可选同 Worker 边界整体替换；Master 证据只保留 prefix-only 分支。 */
+  formulaEvidence: GraphwarStepGlitchFormulaEvidence;
+  /** AcceptedPoint 所属的碰撞与尾目标身份；mask 保存精确快照以拒绝原地修改。 */
+  replayIdentity: {
+    boundaryExpansion: number;
+    prefixTarget: GraphwarTrajectoryTargetCircle;
+    simulationMask: Uint8Array;
+  };
+}
+
+/** 把同次成功回放的恢复点、公式和全部运行时依赖固化为一份可复用证据。 */
+export function createGraphwarStepGlitchPrefixEvidence(options: {
+  acceptedPoint: GraphPoint;
+  formulaEvidence: GraphwarStepGlitchFormulaEvidence;
+  prefixTarget: GraphwarTrajectoryTargetCircle;
+  simulationBoundaryExpansion?: number;
+  simulationMask: Uint8Array;
+}): GraphwarStepGlitchPrefixEvidence {
+  return {
+    acceptedPoint: createGraphPoint(options.acceptedPoint.x, options.acceptedPoint.y),
+    formulaEvidence: options.formulaEvidence,
+    replayIdentity: {
+      boundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
+      prefixTarget: copyGraphwarTrajectoryTargetCircle(options.prefixTarget),
+      simulationMask: options.simulationMask.slice(),
+    },
+  };
 }
 
 /** Worker 和页面耗时汇总使用的稳定扫描阶段。 */
@@ -247,34 +264,42 @@ type ScanWorkItem =
     }
   | { state: ScanState; type: "state" };
 
-/** 一条完整 Step 路径的实际回放证据。 */
-export interface GraphwarStepGlitchReplayResult {
-  acceptedPoint?: GraphPoint;
-  blockedPoint?: GraphPoint;
-  /** 与本条精确路径同次自然完整回放产生的最终验证证据。 */
-  finalValidationEvidence?: GraphwarStepGlitchFinalValidationEvidence;
-  reachedTargetCount: number;
-  /** 本次回放已经构造的公式上下文；命中候选发布时应直接复用。 */
-  formulaContext?: GraphwarTrajectoryFormulaContext;
-  /** 当前精确路径最后一段的局部可恢复状态；不得发布到 Master。 */
-  stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
-  /** 本条精确路径的求解结果；只有路径验证成功后才能提升为下一条 sourcePath 前缀。 */
-  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
-  /** 当前有序目标和全部无序必达目标是否都已命中。 */
-  targetsHit: boolean;
-  /** 本次回放在首次障碍碰撞前实际可绘制的轨迹快照。 */
+/** 同一次完整公式回放产生的原子证据，禁止调用方重新拼接公式上下文和轨迹。 */
+export interface GraphwarStepGlitchReplayEvidence {
+  /** 仅初始末目标直连自然完整回放成功时存在。 */
+  finalValidation?: GraphwarStepGlitchFinalValidationEvidence;
+  formulaContext: GraphwarTrajectoryFormulaContext & {
+    stepGlitchFormulaEvidence: GraphwarStepGlitchFormulaEvidence;
+  };
+  /** 与公式上下文严格绑定的可绘制轨迹。 */
   trajectoryPoints: PixelPoint[];
 }
 
-/** 最终公式上下文和全部命中、碰撞、轨迹统计必须来自同一次完整回放。 */
+/** 一条 Step 路径的互斥回放结果；只有完整命中且取得安全恢复点才携带运行时证据。 */
+export type GraphwarStepGlitchReplayResult =
+  | {
+      acceptedPoint: GraphPoint;
+      blockedPoint?: GraphPoint;
+      reachedTargetCount: number;
+      replayEvidence: GraphwarStepGlitchReplayEvidence;
+      status: "hit";
+    }
+  | {
+      acceptedPoint?: never;
+      blockedPoint?: GraphPoint;
+      reachedTargetCount: number;
+      replayEvidence?: never;
+      status: "miss";
+    };
+
+/** 最终命中与碰撞统计由父级 replay evidence 绑定同次公式上下文和可绘制轨迹。 */
 export interface GraphwarStepGlitchFinalValidationEvidence {
   /** 本次碰撞回放实际使用的非负整数边界收缩值。 */
   boundaryExpansion: number;
   /** 坐标边界与截图矩形都必须和提升时完全一致。 */
   bounds: GraphBounds;
   boundsRect: BoundsRect;
-  formulaContext: GraphwarTrajectoryFormulaContext;
-  /** 公式设置的不可变 canonical 身份；formulaContext 中的 settings 仍是调用方引用。 */
+  /** 公式设置的不可变 canonical 身份；父级 replay evidence 中的 settings 仍是调用方引用。 */
   formulaSettingsIdentity: string;
   /** 生成公式和轨迹的完整像素路径快照。 */
   path: readonly PixelPoint[];
@@ -402,12 +427,34 @@ function prepareGraphwarStepGlitchPrefix(
 
   const evidenceStartedAt = nowMs();
   const evidence = options.prefixEvidence;
-  const evidenceMatchesControlX = Boolean(evidence && evidence.acceptedPoint.x >= lastGraphPoint.x);
+  const hasEvidencePrefixTarget = Boolean(
+    evidence &&
+    (prefixTarget
+      ? pixelCirclesEqual(evidence.replayIdentity.prefixTarget, prefixTarget)
+      : requiredTargets.some((target) => pixelCirclesEqual(evidence.replayIdentity.prefixTarget, target))),
+  );
+  const isEvidenceSourceCompatible = Boolean(
+    evidence &&
+    hasEvidencePrefixTarget &&
+    evidence.replayIdentity.boundaryExpansion === context.simulationBoundaryExpansion &&
+    stepGlitchByteArraysEqual(evidence.replayIdentity.simulationMask, options.simulationMask) &&
+    evidence.formulaEvidence.prefix.points.length === context.graphPoints.length &&
+    graphwarStepGlitchFormulaEvidenceMatchesSource(
+      {
+        bounds: options.bounds,
+        points: context.graphPoints,
+        settings: context.formulaSettings,
+        soldierCenter: context.graphPoints[0],
+      },
+      evidence.formulaEvidence,
+    ) &&
+    evidence.acceptedPoint.x >= lastGraphPoint.x,
+  );
   timings.push({
     elapsedMs: nowMs() - evidenceStartedAt,
-    stage: evidenceMatchesControlX ? "prefix-evidence-hit" : "prefix-evidence-miss",
+    stage: isEvidenceSourceCompatible ? "prefix-evidence-hit" : "prefix-evidence-miss",
   });
-  if (evidence && evidenceMatchesControlX) {
+  if (evidence && isEvidenceSourceCompatible) {
     return {
       acceptedPoint: evidence.acceptedPoint,
       ...context,
@@ -419,7 +466,7 @@ function prepareGraphwarStepGlitchPrefix(
   const replay = measureSyncStage(timings, "prepare-prefix", () =>
     replayPathToControlX(options, context, options.sourcePath, prefixTargetSequence, requiredTargets, lastGraphPoint.x),
   );
-  if (!replay.targetsHit || !replay.acceptedPoint) {
+  if (replay.status === "miss") {
     return createFailedResult("no-path", 0, replay.reachedTargetCount, replay.blockedPoint, timings);
   }
 
@@ -469,25 +516,15 @@ export function createGraphwarStepGlitchPrefixScanner(
           target.finalValidation,
         ),
       );
-      if (directReplay.targetsHit && directReplay.acceptedPoint) {
+      if (directReplay.status === "hit") {
         return {
           acceptedPoint: directReplay.acceptedPoint,
           expandedStates: 1,
-          ...(directReplay.finalValidationEvidence
-            ? { finalValidationEvidence: directReplay.finalValidationEvidence }
-            : {}),
-          ...(directReplay.formulaContext ? { formulaContext: directReplay.formulaContext } : {}),
           path: directPath,
           reachedTargetCount: directReplay.reachedTargetCount,
-          ...(directReplay.stepGlitchFormulaPrefix
-            ? { stepGlitchFormulaPrefix: directReplay.stepGlitchFormulaPrefix }
-            : {}),
-          ...(directReplay.stepGlitchFormulaBoundaryState
-            ? { stepGlitchFormulaBoundaryState: directReplay.stepGlitchFormulaBoundaryState }
-            : {}),
+          replayEvidence: directReplay.replayEvidence,
           status: "hit",
           timings,
-          trajectoryPoints: directReplay.trajectoryPoints,
         };
       }
 
@@ -532,7 +569,7 @@ export function replayGraphwarStepGlitchPathToControlX(
 ): GraphwarStepGlitchReplayResult {
   const context = createGraphwarStepGlitchReplayContext(options, []);
   return "status" in context
-    ? { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] }
+    ? { reachedTargetCount: 0, status: "miss" }
     : replayPathToControlX(
         options,
         context,
@@ -575,7 +612,7 @@ function scanPreparedGraphwarStepGlitchPath(
         row: initialGridPoint.y,
         searchX: initialGridPoint.x,
         stepGlitchXWindows: Array.from({ length: Math.max(0, options.sourcePath.length - 1) }, (_, index) => {
-          const segment = options.stepGlitchFormulaPrefix?.stepGlitchSegments[index];
+          const segment = options.prefixEvidence?.formulaEvidence.prefix.stepGlitchSegments[index];
           return segment ? { endX: segment.endX, startX: segment.startX } : undefined;
         }),
       },
@@ -730,38 +767,33 @@ function scanPreparedGraphwarStepGlitchPath(
     if (options.debugMetrics?.stepGlitch) {
       options.debugMetrics.stepGlitch.candidateReplayCount += 1;
     }
-    const finalTargetCandidate = item.candidate.kind === "target";
+    const isFinalTargetCandidate = item.candidate.kind === "target";
     const replay = replayPathToControlX(
       options,
       prefix,
       item.candidate.path,
-      finalTargetCandidate ? targetSequence : [],
+      isFinalTargetCandidate ? targetSequence : [],
       requiredTargets,
       item.candidate.controlX,
       item.candidate.stepGlitchXWindows,
     );
     bestReachedTargetCount = Math.max(bestReachedTargetCount, replay.reachedTargetCount);
     blockedPoint ??= replay.blockedPoint;
-    if (finalTargetCandidate) {
-      if (!replay.targetsHit || !replay.acceptedPoint) {
+    if (isFinalTargetCandidate) {
+      if (replay.status === "miss") {
         continue;
       }
       return {
         acceptedPoint: replay.acceptedPoint,
         expandedStates,
-        ...(replay.formulaContext ? { formulaContext: replay.formulaContext } : {}),
         path: item.candidate.path,
         reachedTargetCount: replay.reachedTargetCount,
-        ...(replay.stepGlitchFormulaBoundaryState
-          ? { stepGlitchFormulaBoundaryState: replay.stepGlitchFormulaBoundaryState }
-          : {}),
-        ...(replay.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: replay.stepGlitchFormulaPrefix } : {}),
+        replayEvidence: replay.replayEvidence,
         status: "hit",
         timings,
-        trajectoryPoints: replay.trajectoryPoints,
       };
     }
-    if (!replay.targetsHit || !replay.acceptedPoint) {
+    if (replay.status === "miss") {
       continue;
     }
 
@@ -797,7 +829,7 @@ function replayPathToControlX(
   finalValidation?: GraphwarStepGlitchTargetOptions["finalValidation"],
 ): GraphwarStepGlitchReplayResult {
   if (path.length < 2 || path.length < options.sourcePath.length) {
-    return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
+    return { reachedTargetCount: 0, status: "miss" };
   }
   const graphPoints = measureStepGlitchMetric(options.debugMetrics, "formulaPointMappingElapsedMs", () => [
     ...context.graphPoints,
@@ -830,21 +862,18 @@ function replayPathToControlX(
     requiredTargets,
     settings: context.formulaSettings,
     soldierCenter: graphPoints[0],
-    ...(options.stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix: options.stepGlitchFormulaPrefix } : {}),
-    ...(options.stepGlitchFormulaBoundaryState
-      ? { stepGlitchFormulaBoundaryState: options.stepGlitchFormulaBoundaryState }
-      : {}),
+    ...(options.prefixEvidence ? { stepGlitchFormulaEvidence: options.prefixEvidence.formulaEvidence } : {}),
     ...(stepGlitchXWindows ? { stepGlitchXWindows } : {}),
     stopOnTargetsComplete: false,
     targetSequence,
     ...(finalValidation ? { trackedTargets: finalValidation.trackedTargets } : {}),
   });
   if (!resolved) {
-    return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
+    return { reachedTargetCount: 0, status: "miss" };
   }
   const { context: formulaContext, result } = resolved;
   if (formulaContext.formulaPoints.length < 2) {
-    return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
+    return { reachedTargetCount: 0, status: "miss" };
   }
 
   const hasHitTargets =
@@ -864,34 +893,45 @@ function replayPathToControlX(
           Math.max(result.targetHitIndex, 0),
         )
       : undefined;
+  const blockedPoint = result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined;
+  const reachedTargetCount = result.reachedTargetCount + result.reachedRequiredTargetCount;
+  if (!acceptedPoint) {
+    return {
+      ...(blockedPoint ? { blockedPoint } : {}),
+      reachedTargetCount,
+      status: "miss",
+    };
+  }
+  const stepGlitchFormulaEvidence = formulaContext.stepGlitchFormulaEvidence;
+  if (!stepGlitchFormulaEvidence) {
+    throw new Error("Resolved Step glitch replay is missing its formula evidence.");
+  }
   return {
-    // Required 只证明整式最终命中，可能位于下个控制点右侧；扫描恢复点只等待当前有序目标。
-    ...(acceptedPoint ? { acceptedPoint } : {}),
-    blockedPoint: result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined,
-    ...(finalValidation && acceptedPoint
-      ? {
-          finalValidationEvidence: createGraphwarStepGlitchFinalValidationEvidence(
-            options,
-            context,
-            path,
-            targetSequence,
-            requiredTargets,
-            finalValidation,
-            formulaContext,
-            result,
-          ),
-        }
-      : {}),
-    formulaContext,
-    reachedTargetCount: result.reachedTargetCount + result.reachedRequiredTargetCount,
-    stepGlitchFormulaBoundaryState: formulaContext.stepGlitchFormulaBoundaryState,
-    stepGlitchFormulaPrefix: formulaContext.stepGlitchFormulaPrefix,
-    targetsHit: hasHitTargets,
-    trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
-      result.visiblePixels,
-      result.obstacleHitIndex,
-      options.debugMetrics,
-    ),
+    acceptedPoint,
+    ...(blockedPoint ? { blockedPoint } : {}),
+    reachedTargetCount,
+    replayEvidence: {
+      ...(finalValidation
+        ? {
+            finalValidation: createGraphwarStepGlitchFinalValidationEvidence(
+              options,
+              context,
+              path,
+              targetSequence,
+              requiredTargets,
+              finalValidation,
+              result,
+            ),
+          }
+        : {}),
+      formulaContext: { ...formulaContext, stepGlitchFormulaEvidence },
+      trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+        result.visiblePixels,
+        result.obstacleHitIndex,
+        options.debugMetrics,
+      ),
+    },
+    status: "hit",
   };
 }
 
@@ -903,14 +943,12 @@ function createGraphwarStepGlitchFinalValidationEvidence(
   targetSequence: readonly GraphwarTrajectoryTargetCircle[],
   requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
   finalValidation: NonNullable<GraphwarStepGlitchTargetOptions["finalValidation"]>,
-  formulaContext: GraphwarTrajectoryFormulaContext,
   result: GraphwarTrajectorySampleResult,
 ): GraphwarStepGlitchFinalValidationEvidence {
   return {
     boundaryExpansion: context.simulationBoundaryExpansion,
     bounds: { ...options.bounds },
     boundsRect: { ...options.boundsRect },
-    formulaContext,
     formulaSettingsIdentity: createGraphwarTrajectoryFormulaSettingsIdentityKey(context.formulaSettings),
     path: path.map((point) => createPixelPoint(point.x, point.y)),
     requiredTargets: requiredTargets.map(copyGraphwarTrajectoryTargetCircle),
@@ -948,6 +986,19 @@ function samePixelPath(left: readonly PixelPoint[], right: readonly PixelPoint[]
     const leftPoint = left[index];
     const rightPoint = right[index];
     if (!leftPoint || !rightPoint || leftPoint.x !== rightPoint.x || leftPoint.y !== rightPoint.y) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Prefix acceptedPoint 的碰撞身份必须逐字节一致，不能依赖可变 mask 的引用。 */
+function stepGlitchByteArraysEqual(left: Uint8Array, right: Uint8Array) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
       return false;
     }
   }

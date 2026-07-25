@@ -118,7 +118,7 @@ describe("Step ODE glitch scan", () => {
     expect(result.status).toBe("hit");
     expect(maskSlice).toHaveBeenCalledOnce();
     if (result.status === "hit") {
-      expect(result.finalValidationEvidence?.formulaSettingsIdentity).toBe(
+      expect(result.replayEvidence.finalValidation?.formulaSettingsIdentity).toBe(
         createGraphwarTrajectoryFormulaSettingsIdentityKey(settings),
       );
     }
@@ -152,7 +152,7 @@ describe("Step ODE glitch scan", () => {
     expect(maskSlice).not.toHaveBeenCalled();
     if (result.status === "hit") {
       expect(result.path).toHaveLength(3);
-      expect(result.finalValidationEvidence).toBeUndefined();
+      expect(result.replayEvidence.finalValidation).toBeUndefined();
     }
   });
 
@@ -197,8 +197,7 @@ describe("Step ODE glitch scan", () => {
       targetSequence: [],
     });
 
-    expect(replay.targetsHit).toBe(true);
-    expect(replay.acceptedPoint).toBeUndefined();
+    expect(replay.status).toBe("miss");
   });
 
   it("returns no-path when the formula reaches the control x without hitting the requested circle", () => {
@@ -241,13 +240,9 @@ describe("Step ODE glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
-      const formulaContext = result.formulaContext;
+      const formulaContext = result.replayEvidence.formulaContext;
       expect(result.path).toEqual([start, target]);
-      expect(formulaContext).toBeDefined();
-      if (!formulaContext) {
-        return;
-      }
-      expect(formulaContext.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
+      expect(formulaContext.stepGlitchFormulaEvidence.prefix.stepGlitchSegments[0]).toBeDefined();
       const replay = sampleGraphwarExpressionTrajectory({
         bounds,
         equation: "dy",
@@ -287,7 +282,7 @@ describe("Step ODE glitch scan", () => {
       soldierCenter: points[0],
       stepGlitchXWindows: [{ endX: -6.5977, startX: -6.6077 }],
     });
-    const segment = resolved.context.stepGlitchFormulaPrefix?.stepGlitchSegments[0];
+    const segment = resolved.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments[0];
     expect(segment).toEqual(expect.objectContaining({ equation: "ddy" }));
     expect(resolved.result.obstacleHitIndex).toBe(-1);
     expect(countPhysicalStepGlitchJumps(resolved.result.sample.points)).toBe(1);
@@ -325,7 +320,7 @@ describe("Step ODE glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
-      expect(result.formulaContext?.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
+      expect(result.replayEvidence.formulaContext.stepGlitchFormulaEvidence.prefix.stepGlitchSegments[0]).toBeDefined();
       const controlPoint = result.path.at(-2);
       const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), bounds, boundsRect).x;
       const leftGateX = -floorToDecimalPlaces(-rawLeftGateX, 2);
@@ -335,7 +330,7 @@ describe("Step ODE glitch scan", () => {
         const controlX = imageToGraphPoint(controlPoint, bounds, boundsRect).x;
         expect(floorToDecimalPlaces(controlX, 2)).toBe(leftGateX + GRAPHWAR_STEP_SIZE);
       }
-      const segment = result.formulaContext?.stepGlitchFormulaPrefix?.stepGlitchSegments.find(
+      const segment = result.replayEvidence.formulaContext.stepGlitchFormulaEvidence.prefix.stepGlitchSegments.find(
         (candidate) => candidate !== undefined,
       );
       expect(segment?.startX).toBe(leftGateX);
@@ -363,7 +358,7 @@ describe("Step ODE glitch scan", () => {
 
     expect(result.status).toBe("hit");
     if (result.status === "hit") {
-      expect(result.formulaContext?.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
+      expect(result.replayEvidence.formulaContext.stepGlitchFormulaEvidence.prefix.stepGlitchSegments[0]).toBeDefined();
       const controlPoint = result.path.at(-2);
       const rawLeftGateX = imageToGraphPoint(createPixelPoint(wallX - 1, 0), bounds, boundsRect).x;
       const leftGateX = -floorToDecimalPlaces(-rawLeftGateX, 2);

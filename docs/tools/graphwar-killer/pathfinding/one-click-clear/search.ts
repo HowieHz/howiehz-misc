@@ -3,7 +3,7 @@ import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/co
 import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import { nowMs } from "../../core/time";
-import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type { GraphwarSignProtection } from "../../formula/generation/build";
 import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import { resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
@@ -18,8 +18,7 @@ import {
   tryResolveGraphwarTrajectoryCandidate,
 } from "../../formula/trajectory/sampling";
 import type {
-  GraphwarStepGlitchFormulaBoundaryState,
-  GraphwarStepGlitchFormulaPrefix,
+  GraphwarStepGlitchFormulaEvidence,
   GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectorySampleResult,
@@ -29,14 +28,15 @@ import { createGraphwarTrajectoryFormulaSettingsIdentityKey } from "../../formul
 import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import {
+  createGraphwarStepGlitchPrefixEvidence,
   createGraphwarStepGlitchPrefixScanner,
   createGraphwarStepGlitchScanMaskIndex,
   findGraphwarStepGlitchAcceptedPointAtOrAfterControlX,
 } from "../routing/step-glitch-scan";
 import type {
-  GraphwarStepGlitchFinalValidationEvidence,
   GraphwarStepGlitchPrefixEvidence,
   GraphwarStepGlitchPrefixScanner,
+  GraphwarStepGlitchReplayEvidence,
   GraphwarStepGlitchScanTimingStage,
 } from "../routing/step-glitch-scan";
 import type { GraphwarPathfindingDebugMetrics } from "../runtime/diagnostics";
@@ -224,10 +224,8 @@ export interface GraphwarOneClickClearOptions {
   stepGlitchPrefixEvidence?: GraphwarStepGlitchPrefixEvidence;
   /** 最终整路成功后把 exact path evidence 交回 Master 事务性发布。 */
   onValidatedStepGlitchPath?: (evidence: {
-    acceptedPoint: GraphPoint;
     path: readonly PixelPoint[];
-    prefixTarget: GraphwarTrajectoryTargetCircle;
-    stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
+    prefixEvidence: GraphwarStepGlitchPrefixEvidence;
     targetSequence: readonly GraphwarTrajectoryTargetCircle[];
   }) => void;
   /** 批量 DAG 建边入口；即使串行也交给 master Worker，避免在主线程跑几何搜索。 */
@@ -376,18 +374,19 @@ interface OneClickClearBestEntry {
   verticalVariation: number;
 }
 
-/** 同一次公式回放产生、可直接构造 incumbent 的原子证据。 */
-interface OneClickClearIncumbentEvidence {
-  /** 已构造的精确公式上下文。 */
-  formulaContext: GraphwarTrajectoryFormulaContext;
-  /** 与公式上下文来自同一次回放的可绘制轨迹。 */
-  trajectoryPoints: PixelPoint[];
-}
+/** Step replay 沿调用链保持原子；普通验证分支明确禁止携带 final replay 半状态。 */
+type OneClickClearIncumbentEvidence =
+  | GraphwarStepGlitchReplayEvidence
+  | {
+      finalValidation?: never;
+      /** 已构造的精确公式上下文。 */
+      formulaContext: GraphwarTrajectoryFormulaContext;
+      /** 与公式上下文来自同一次回放的可绘制轨迹。 */
+      trajectoryPoints: PixelPoint[];
+    };
 
 /** 一键清图候选路线、目标序列和可选权威验证证据。 */
 interface OneClickClearRoute {
-  /** 路径未改变时，末目标完整回放可直接提升为最终验证。 */
-  finalValidationEvidence?: GraphwarStepGlitchFinalValidationEvidence;
   /** 路径未改变时可直接构造 incumbent 的权威证据。 */
   incumbentEvidence?: OneClickClearIncumbentEvidence;
   /** 最终整路回放的普通控制点最大误差；只用于同业务指标 incumbent 的末级排序。 */
@@ -638,8 +637,6 @@ async function buildOneClickClearStepGlitchPath(
   };
   let prefixScanner: GraphwarStepGlitchPrefixScanner | undefined;
   let prefixEvidence = options.stepGlitchPrefixEvidence;
-  let stepGlitchFormulaBoundaryState: GraphwarStepGlitchFormulaBoundaryState | undefined;
-  let stepGlitchFormulaPrefix = options.stepGlitchPrefixEvidence?.stepGlitchFormulaPrefix;
   let workUnits = 0;
   let acceptedLayerGraphX: number | undefined;
 
@@ -658,8 +655,6 @@ async function buildOneClickClearStepGlitchPath(
       debugMetrics: options.debugMetrics,
       maskIndex,
       ...(prefixEvidence ? { prefixEvidence } : {}),
-      ...(stepGlitchFormulaBoundaryState ? { stepGlitchFormulaBoundaryState } : {}),
-      ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
       ...(route.targetSequence.length === 0 && options.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
       requiredTargets: createOneClickClearPreviousTargets(route.targetSequence),
       settings: options.settings,
@@ -692,28 +687,22 @@ async function buildOneClickClearStepGlitchPath(
     if (scan.status === "hit") {
       acceptedLayerGraphX = target.sortGraphX;
       route = {
-        ...(scan.finalValidationEvidence ? { finalValidationEvidence: scan.finalValidationEvidence } : {}),
-        ...(scan.formulaContext
-          ? {
-              incumbentEvidence: {
-                formulaContext: scan.formulaContext,
-                trajectoryPoints: scan.trajectoryPoints,
-              },
-            }
-          : {}),
+        incumbentEvidence: scan.replayEvidence,
         pathPoints: scan.path,
         targetSequence: nextTargetSequence,
       };
       // hit 已包含精确整式模拟；此时发布不会为了预览再做一次昂贵采样。
-      if (route.incumbentEvidence) {
-        publishOneClickClearValidatedRoute(context, route);
-      }
+      publishOneClickClearValidatedRoute(context, route);
       // 成功候选已完整模拟；下一目标复用 exact path 的恢复点，不再重算刚提交的 prefix。
-      prefixEvidence = { acceptedPoint: scan.acceptedPoint };
-      stepGlitchFormulaBoundaryState = scan.stepGlitchFormulaBoundaryState;
-      stepGlitchFormulaPrefix = scan.stepGlitchFormulaPrefix;
+      prefixEvidence = createGraphwarStepGlitchPrefixEvidence({
+        acceptedPoint: scan.acceptedPoint,
+        formulaEvidence: scan.replayEvidence.formulaContext.stepGlitchFormulaEvidence,
+        prefixTarget: target.hitCircle,
+        simulationBoundaryExpansion: options.simulationBoundaryExpansion,
+        simulationMask,
+      });
       // 每个 hit 都是可独立采用的精确路径；最终失败时 Master 仍应能复用被页面保留的这个前缀。
-      publishOneClickClearStepGlitchHitEvidence(options, route, scan.acceptedPoint, scan.stepGlitchFormulaPrefix);
+      publishOneClickClearStepGlitchHitEvidence(options, route, prefixEvidence);
       prefixScanner = undefined;
     } else if (scan.status === "invalid-input" || scan.status === "unsupported") {
       return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
@@ -737,6 +726,10 @@ async function buildOneClickClearStepGlitchPath(
     );
   if (!finalValidation.reachesTargetSequenceBeforeObstacle || !finalValidation.formulaContext) {
     return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+  }
+  const finalFormulaEvidence = finalValidation.formulaContext.stepGlitchFormulaEvidence;
+  if (!finalFormulaEvidence) {
+    throw new Error("Validated Step glitch path is missing its formula evidence.");
   }
   const finalRoute = {
     ...finalized.route,
@@ -765,7 +758,7 @@ async function buildOneClickClearStepGlitchPath(
     finalRoute,
     finalValidation,
     // 最终验证可能新增局部保护；恢复证据必须绑定它实际验证的精确公式前缀。
-    finalValidation.formulaContext.stepGlitchFormulaPrefix,
+    finalFormulaEvidence,
   );
   return createOneClickClearSuccessResult(options, finalRoute, hitTargets, startedAt, workUnits);
 }
@@ -1651,7 +1644,8 @@ function createOneClickClearFinalValidationFromStepGlitchEvidence(
   options: GraphwarOneClickClearOptions,
   route: OneClickClearRoute,
 ) {
-  const evidence = route.finalValidationEvidence;
+  const replayEvidence = route.incumbentEvidence;
+  const evidence = replayEvidence?.finalValidation;
   const lastPathPoint = route.pathPoints.at(-1);
   if (!evidence || !lastPathPoint) {
     return undefined;
@@ -1677,10 +1671,9 @@ function createOneClickClearFinalValidationFromStepGlitchEvidence(
       trackedTargets.map((target) => target.hitCircle),
     ) ||
     !oneClickClearByteArraysEqual(evidence.simulationMask, simulationMask) ||
-    evidence.formulaSettingsIdentity !== createGraphwarTrajectoryFormulaSettingsIdentityKey(options.settings) ||
-    result.trackedTargetHitIndexes.length !== trackedTargets.length ||
-    result.reachedTargetCount < validationTargets.orderedTargets.length ||
-    result.reachedRequiredTargetCount < validationTargets.requiredTargets.length
+    !options.settings.stepGlitchObstacleMask ||
+    !oneClickClearByteArraysEqual(evidence.simulationMask, options.settings.stepGlitchObstacleMask) ||
+    evidence.formulaSettingsIdentity !== createGraphwarTrajectoryFormulaSettingsIdentityKey(options.settings)
   ) {
     return undefined;
   }
@@ -1688,7 +1681,7 @@ function createOneClickClearFinalValidationFromStepGlitchEvidence(
   const targetControlGraphX = imageToGraphPoint(lastPathPoint, options.bounds, options.boundsRect).x;
   return {
     earlyStopReason: result.earlyStopReason,
-    formulaContext: evidence.formulaContext,
+    formulaContext: replayEvidence.formulaContext,
     obstacleHitIndex: result.obstacleHitIndex,
     reachedRequiredTargetCount: result.reachedRequiredTargetCount,
     reachedTargetCount: countOneClickClearReachedRouteTargets(
@@ -1829,7 +1822,7 @@ function publishOneClickClearStepGlitchEvidence(
   options: GraphwarOneClickClearOptions,
   route: OneClickClearRoute,
   validation: ReturnType<typeof sampleOneClickClearTargetSequence>,
-  stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix | undefined,
+  formulaEvidence: GraphwarStepGlitchFormulaEvidence,
 ) {
   const lastPathPoint = route.pathPoints.at(-1);
   if (!options.onValidatedStepGlitchPath || !lastPathPoint) {
@@ -1846,30 +1839,47 @@ function publishOneClickClearStepGlitchEvidence(
   if (!acceptedPoint) {
     return;
   }
-  publishOneClickClearStepGlitchHitEvidence(options, route, acceptedPoint, stepGlitchFormulaPrefix);
+  const simulationMask = options.simulationMask ?? options.settings.stepGlitchObstacleMask;
+  if (!simulationMask) {
+    throw new Error("Validated Step glitch path is missing its simulation mask.");
+  }
+  const prefixTarget = createOneClickClearStepGlitchPrefixTarget(route, lastPathPoint);
+  publishOneClickClearStepGlitchHitEvidence(
+    options,
+    route,
+    createGraphwarStepGlitchPrefixEvidence({
+      acceptedPoint,
+      formulaEvidence,
+      prefixTarget,
+      simulationBoundaryExpansion: options.simulationBoundaryExpansion,
+      simulationMask,
+    }),
+  );
 }
 
 /** 发布自然 hit 的精确恢复证据；exact path key 让未被页面采用的证据自然失配。 */
 function publishOneClickClearStepGlitchHitEvidence(
   options: GraphwarOneClickClearOptions,
   route: OneClickClearRoute,
-  acceptedPoint: GraphPoint,
-  stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix | undefined,
+  prefixEvidence: GraphwarStepGlitchPrefixEvidence,
 ) {
   const lastPathPoint = route.pathPoints.at(-1);
   if (!options.onValidatedStepGlitchPath || !lastPathPoint) {
     return;
   }
-  const prefixTarget =
-    route.targetSequence.find((target) => pixelPointsEqual(target.routePoint, lastPathPoint))?.hitCircle ??
-    ({ center: lastPathPoint, radius: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS } satisfies GraphwarTrajectoryTargetCircle);
   options.onValidatedStepGlitchPath({
-    acceptedPoint,
     path: route.pathPoints,
-    prefixTarget,
-    ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
+    prefixEvidence,
     targetSequence: route.targetSequence.map((target) => target.hitCircle),
   });
+}
+
+/** 找出路径尾点对应的命中圈；普通控制点保持既有兜底半径语义。 */
+function createOneClickClearStepGlitchPrefixTarget(route: OneClickClearRoute, lastPathPoint: PixelPoint) {
+  return (
+    route.targetSequence.find((target) => pixelPointsEqual(target.routePoint, lastPathPoint))?.hitCircle ??
+    ({ center: lastPathPoint, radius: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS } satisfies GraphwarTrajectoryTargetCircle)
+  );
 }
 
 /** 按目标 id 去重并追加实际命中圆。 */

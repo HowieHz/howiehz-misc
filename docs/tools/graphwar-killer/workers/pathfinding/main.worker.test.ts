@@ -1,11 +1,18 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createGraphPoint, createPixelPoint } from "../../core/types";
-import type { GraphwarStepGlitchFormulaPrefix } from "../../formula/trajectory/sampling";
+import type {
+  GraphwarStepGlitchFormulaBoundaryState,
+  GraphwarStepGlitchFormulaPrefix,
+} from "../../formula/trajectory/sampling";
 import type {
   GraphwarOneClickClearIncumbent,
   GraphwarOneClickClearOptions,
 } from "../../pathfinding/one-click-clear/search";
+import type {
+  GraphwarStepGlitchPrefixEvidence,
+  GraphwarStepGlitchReplayEvidence,
+} from "../../pathfinding/routing/step-glitch-scan";
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarPathfindingWorkerRequest,
@@ -24,6 +31,23 @@ vi.mock("../../pathfinding/one-click-clear/search", () => ({
 }));
 
 vi.mock("../../pathfinding/routing/step-glitch-scan", () => ({
+  createGraphwarStepGlitchPrefixEvidence: vi.fn(
+    (options: {
+      acceptedPoint: ReturnType<typeof createGraphPoint>;
+      formulaEvidence: GraphwarStepGlitchPrefixEvidence["formulaEvidence"];
+      prefixTarget: GraphwarStepGlitchPrefixEvidence["replayIdentity"]["prefixTarget"];
+      simulationBoundaryExpansion?: number;
+      simulationMask: Uint8Array;
+    }) => ({
+      acceptedPoint: createGraphPoint(options.acceptedPoint.x, options.acceptedPoint.y),
+      formulaEvidence: options.formulaEvidence,
+      replayIdentity: {
+        boundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
+        prefixTarget: options.prefixTarget,
+        simulationMask: options.simulationMask.slice(),
+      },
+    }),
+  ),
   scanGraphwarStepGlitchPath: mocks.scanStepGlitchPath,
 }));
 
@@ -174,9 +198,16 @@ describe("Anytime one-click-clear progress", () => {
     mocks.buildOneClickClearPath
       .mockImplementationOnce(async (options: GraphwarOneClickClearOptions) => {
         options.onValidatedStepGlitchPath?.({
-          acceptedPoint: createGraphPoint(-5, 1),
           path: adoptedPath,
-          prefixTarget,
+          prefixEvidence: {
+            acceptedPoint: createGraphPoint(-5, 1),
+            formulaEvidence: { prefix: createMockStepGlitchFormulaPrefix() },
+            replayIdentity: {
+              boundaryExpansion: input.simulationBoundaryExpansion,
+              prefixTarget,
+              simulationMask: input.simulationMask?.slice() ?? new Uint8Array(),
+            },
+          },
           targetSequence: [prefixTarget],
         });
         return { elapsedMs: 1, expandedStates: 1, reason: "no-usable-target", type: "failure" as const };
@@ -294,10 +325,12 @@ describe("Step glitch smart-path validation", () => {
     expect(mocks.scanStepGlitchPath.mock.calls[1]?.[0]).toMatchObject({
       prefixEvidence: {
         acceptedPoint: createGraphPoint(0, 0),
-        stepGlitchFormulaPrefix: { points: formulaPoints, settings: second.settings },
+        formulaEvidence: { prefix: { points: formulaPoints, settings: second.settings } },
       },
-      stepGlitchFormulaPrefix: { points: formulaPoints, settings: second.settings },
     });
+    expect(mocks.scanStepGlitchPath.mock.calls[1]?.[0].prefixEvidence?.formulaEvidence).not.toHaveProperty(
+      "boundaryState",
+    );
   });
 
   it("rejects prefix evidence after an effective settings change", async () => {
@@ -441,15 +474,27 @@ function mockHit(
   path: GraphwarSmartPathfindingPathInput["sourcePath"],
   stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix,
 ) {
+  const prefix = stepGlitchFormulaPrefix ?? createMockStepGlitchFormulaPrefix();
+  const boundaryState = { prefix } as unknown as GraphwarStepGlitchFormulaBoundaryState;
   mocks.scanStepGlitchPath.mockReturnValue({
     acceptedPoint: createGraphPoint(0, 0),
     expandedStates: 1,
     path,
     reachedTargetCount: 1,
-    ...(stepGlitchFormulaPrefix ? { stepGlitchFormulaPrefix } : {}),
+    replayEvidence: {
+      formulaContext: {
+        stepGlitchFormulaEvidence: { boundaryState, prefix },
+      } as unknown as GraphwarStepGlitchReplayEvidence["formulaContext"],
+      trajectoryPoints: path,
+    },
     status: "hit",
     timings: [],
   });
+}
+
+/** Worker 单元测试只消费 formula evidence 身份，其余 prefix 数值由 scanner 专项测试覆盖。 */
+function createMockStepGlitchFormulaPrefix() {
+  return { points: [], settings: {} } as unknown as GraphwarStepGlitchFormulaPrefix;
 }
 
 async function dispatchSmartPathRequest(input: GraphwarSmartPathfindingPathInput) {

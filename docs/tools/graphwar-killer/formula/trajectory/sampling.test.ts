@@ -642,7 +642,7 @@ describe("ODE segment position compensation", () => {
           return;
         }
         expect(Math.abs(launchAngleRadians)).toBeGreaterThan(0);
-        expect(hard.context.stepGlitchFormulaPrefix?.launchAngleRadians).toBe(launchAngleRadians);
+        expect(hard.context.stepGlitchFormulaEvidence?.prefix.launchAngleRadians).toBe(launchAngleRadians);
         expect(hardSegment?.equation).toBe("ddy");
         if (hardSegment?.equation === "ddy") {
           const landingState = sampleResolvedSecondOrderStateAtX(hard.context, reproductionPoints[0], hardSegment.endX);
@@ -724,7 +724,7 @@ describe("ODE segment position compensation", () => {
     const fixedOptions = {
       ...options,
       signProtection: [GraphwarSignRole.StartX],
-      stepGlitchXWindows: baseline.context.stepGlitchFormulaPrefix?.stepGlitchSegments.map((segment) =>
+      stepGlitchXWindows: baseline.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments.map((segment) =>
         segment ? { endX: segment.endX, startX: segment.startX } : undefined,
       ),
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -740,7 +740,7 @@ describe("ODE segment position compensation", () => {
     });
 
     expect(resolved.context.signProtection).toEqual([GraphwarSignRole.StartX]);
-    expect(resolved.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual([false, true, false]);
+    expect(resolved.context.stepGlitchFormulaEvidence?.prefix.stepGlitchRequirements).toEqual([false, true, false]);
     expect(forcedColdMetrics.counters.trajectoryReplayCount - debugMetrics.counters.trajectoryReplayCount).toBe(1);
     expect(debugMetrics.counters.rk4StepCount).toBeLessThan(forcedColdMetrics.counters.rk4StepCount);
     expect(resolved.context.formulaResult.expression).toBe(forcedCold.context.formulaResult.expression);
@@ -783,7 +783,7 @@ describe("ODE segment position compensation", () => {
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const baseline = resolveGraphwarTrajectory(options);
-    const prefix = baseline.context.stepGlitchFormulaPrefix;
+    const prefix = baseline.context.stepGlitchFormulaEvidence?.prefix;
     const hardSegment = prefix?.stepGlitchSegments[1];
     expect(hardSegment?.equation).toBe("ddy");
     if (!prefix || hardSegment?.equation !== "ddy") {
@@ -796,7 +796,7 @@ describe("ODE segment position compensation", () => {
         dy: 0,
         sampleIndex: 0,
       },
-      stepGlitchFormulaPrefix: prefix,
+      stepGlitchFormulaEvidence: { prefix },
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const debugMetrics = createGraphwarTrajectoryDebugMetrics();
     const resolved = resolveGraphwarTrajectory({ ...resumedOptions, debugMetrics });
@@ -837,7 +837,7 @@ describe("ODE segment position compensation", () => {
     });
 
     expect(resolved.context.compiledMaterials.stepFormula?.terms[0]?.glitchSegment).toBeUndefined();
-    expect(resolved.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual([false]);
+    expect(resolved.context.stepGlitchFormulaEvidence?.prefix.stepGlitchRequirements).toEqual([false]);
   });
 
   it("reuses a Step prefix across an irrelevant launch-angle setting change", () => {
@@ -858,7 +858,7 @@ describe("ODE segment position compensation", () => {
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const initial = resolveGraphwarTrajectory(options);
-    const prefix = initial.context.stepGlitchFormulaPrefix;
+    const prefix = initial.context.stepGlitchFormulaEvidence?.prefix;
 
     expect(prefix).toBeDefined();
     if (!prefix) {
@@ -870,7 +870,7 @@ describe("ODE segment position compensation", () => {
     };
     const compileMaterials = vi.mocked(compileGraphwarFormulaMaterials);
     compileMaterials.mockClear();
-    const reused = resolveGraphwarTrajectory({ ...changedOptions, stepGlitchFormulaPrefix: prefix });
+    const reused = resolveGraphwarTrajectory({ ...changedOptions, stepGlitchFormulaEvidence: { prefix } });
     const reusedCompileCount = compileMaterials.mock.calls.length;
     compileMaterials.mockClear();
     const cold = resolveGraphwarTrajectory(changedOptions);
@@ -899,7 +899,7 @@ describe("ODE segment position compensation", () => {
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const cold = resolveGraphwarTrajectory(options);
-    const prefix = cold.context.stepGlitchFormulaPrefix;
+    const prefix = cold.context.stepGlitchFormulaEvidence?.prefix;
 
     expect(prefix?.stepGlitchRequirements).toEqual([false]);
     if (!prefix) {
@@ -910,30 +910,32 @@ describe("ODE segment position compensation", () => {
     const incompatible = resolveGraphwarTrajectory({
       ...options,
       signProtection: prefix.signProtection,
-      stepGlitchFormulaPrefix: {
-        ...prefix,
-        signProtection: incompatibleSignProtection,
-        stepGlitchRequirements: [true],
-        stepGlitchSegments: [
-          {
-            derivative: 1,
-            endX: -5.5,
-            equation: "dy",
-            gateY: 0,
-            startX: -6,
-            targetY: 3,
-          },
-        ],
+      stepGlitchFormulaEvidence: {
+        prefix: {
+          ...prefix,
+          signProtection: incompatibleSignProtection,
+          stepGlitchRequirements: [true],
+          stepGlitchSegments: [
+            {
+              derivative: 1,
+              endX: -5.5,
+              equation: "dy",
+              gateY: 0,
+              startX: -6,
+              targetY: 3,
+            },
+          ],
+        },
       },
     });
 
     expect(incompatible.context.formulaResult.expression).toBe(cold.context.formulaResult.expression);
     expect(incompatible.context.formulaPoints).toEqual(cold.context.formulaPoints);
-    expect(incompatible.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual(
-      cold.context.stepGlitchFormulaPrefix?.stepGlitchRequirements,
+    expect(incompatible.context.stepGlitchFormulaEvidence?.prefix.stepGlitchRequirements).toEqual(
+      cold.context.stepGlitchFormulaEvidence?.prefix.stepGlitchRequirements,
     );
-    expect(incompatible.context.stepGlitchFormulaPrefix?.stepGlitchSegments).toEqual(
-      cold.context.stepGlitchFormulaPrefix?.stepGlitchSegments,
+    expect(incompatible.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments).toEqual(
+      cold.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments,
     );
   });
 
@@ -960,7 +962,7 @@ describe("ODE segment position compensation", () => {
       targetPoint: toPixel(pathPoints[2].x, pathPoints[2].y),
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const baseline = resolveGraphwarTrajectory(options);
-    const prefix = baseline.context.stepGlitchFormulaPrefix;
+    const prefix = baseline.context.stepGlitchFormulaEvidence?.prefix;
 
     expect(prefix?.stepGlitchRequirements).toEqual([false, true]);
     const hardSegment = prefix?.stepGlitchSegments[1];
@@ -975,16 +977,18 @@ describe("ODE segment position compensation", () => {
     const cold = resolveGraphwarTrajectory(fixedOptions);
     const incompatible = resolveGraphwarTrajectory({
       ...fixedOptions,
-      stepGlitchFormulaPrefix: {
-        ...prefix,
-        stepGlitchRequirements: [true, false],
-        stepGlitchSegments: [hardSegment, undefined],
+      stepGlitchFormulaEvidence: {
+        prefix: {
+          ...prefix,
+          stepGlitchRequirements: [true, false],
+          stepGlitchSegments: [hardSegment, undefined],
+        },
       },
     });
 
     expect(incompatible.context.formulaResult.expression).toBe(cold.context.formulaResult.expression);
     expect(incompatible.context.formulaPoints).toEqual(cold.context.formulaPoints);
-    expect(incompatible.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual([false, true]);
+    expect(incompatible.context.stepGlitchFormulaEvidence?.prefix.stepGlitchRequirements).toEqual([false, true]);
     expectTrajectorySamplesToBeIdentical(incompatible.result.sample, cold.result.sample);
   });
 
@@ -1073,14 +1077,17 @@ describe("ODE segment position compensation", () => {
     expect(() => resolveGraphwarTrajectory(options)).toThrow(GraphwarTrajectoryResolutionError);
     const withCollision = resolveGraphwarTrajectory({ ...options, collision: { mask: obstacleMask } });
     expect(withCollision.result.earlyStopReason).toBe("obstacle");
-    const collisionDependentPrefix = withCollision.context.stepGlitchFormulaPrefix;
+    const collisionDependentPrefix = withCollision.context.stepGlitchFormulaEvidence?.prefix;
     expect(collisionDependentPrefix).toBeDefined();
     if (!collisionDependentPrefix) {
       return;
     }
-    expect(() => resolveGraphwarTrajectory({ ...options, stepGlitchFormulaPrefix: collisionDependentPrefix })).toThrow(
-      GraphwarTrajectoryResolutionError,
-    );
+    expect(() =>
+      resolveGraphwarTrajectory({
+        ...options,
+        stepGlitchFormulaEvidence: { prefix: collisionDependentPrefix },
+      }),
+    ).toThrow(GraphwarTrajectoryResolutionError);
   });
 
   it("compiles each ABS y'' refinement target sweep only once", () => {
@@ -1684,18 +1691,20 @@ describe("ODE segment position compensation", () => {
     const plain = resolveGraphwarTrajectory(options).context;
     const withStalePrefix = resolveGraphwarTrajectory({
       ...options,
-      stepGlitchFormulaPrefix: {
-        bounds: { ...bounds },
-        initialFormulaPoints: prefixPoints,
-        points: prefixPoints,
-        refinedFormulaPoints: prefixPoints,
-        segmentStartPoints: [undefined],
-        settings: absSettings,
-        signProtection: [],
-        soldierCenter: points[0],
-        stepGlitchRequirements: [true],
-        stepGlitchSegments: [{ derivative: 1, endX: -5.5, equation: "dy", gateY: 0, startX: -6, targetY: 0 }],
-        stepSegmentDeltaYs: [-2],
+      stepGlitchFormulaEvidence: {
+        prefix: {
+          bounds: { ...bounds },
+          initialFormulaPoints: prefixPoints,
+          points: prefixPoints,
+          refinedFormulaPoints: prefixPoints,
+          segmentStartPoints: [undefined],
+          settings: absSettings,
+          signProtection: [],
+          soldierCenter: points[0],
+          stepGlitchRequirements: [true],
+          stepGlitchSegments: [{ derivative: 1, endX: -5.5, equation: "dy", gateY: 0, startX: -6, targetY: 0 }],
+          stepSegmentDeltaYs: [-2],
+        },
       },
     }).context;
 
@@ -1781,7 +1790,9 @@ describe("Step glitch formula prefix", () => {
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-      stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
+      ...(prefix.stepGlitchFormulaEvidence
+        ? { stepGlitchFormulaEvidence: { prefix: prefix.stepGlitchFormulaEvidence.prefix } }
+        : {}),
     });
     const reusedMetrics = createGraphwarTrajectoryDebugMetrics();
     const reused = resolveGraphwarTrajectory({
@@ -1791,10 +1802,9 @@ describe("Step glitch formula prefix", () => {
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-      stepGlitchFormulaBoundaryState: prefix.stepGlitchFormulaBoundaryState,
-      stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
+      ...(prefix.stepGlitchFormulaEvidence ? { stepGlitchFormulaEvidence: prefix.stepGlitchFormulaEvidence } : {}),
     });
-    const prefixFormula = prefix.stepGlitchFormulaPrefix;
+    const prefixFormula = prefix.stepGlitchFormulaEvidence?.prefix;
     const rebuiltWithFixedWindows = prefixFormula
       ? resolveGraphwarTrajectory({
           bounds,
@@ -1804,38 +1814,38 @@ describe("Step glitch formula prefix", () => {
           signProtection: [],
           soldierCenter: appendedPoints[0],
           // 强制保护快照失配，覆盖未来段新增 epsilon 后必须重算旧段的分支。
-          stepGlitchFormulaPrefix: { ...prefixFormula, signProtection: [1] },
+          stepGlitchFormulaEvidence: { prefix: { ...prefixFormula, signProtection: [1] } },
           stepGlitchXWindows: prefixFormula.stepGlitchSegments.map((segment) =>
             segment ? { endX: segment.endX, startX: segment.startX } : undefined,
           ),
         }).context
       : undefined;
 
-    expect(prefix.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBeDefined();
-    expect(prefix.stepGlitchFormulaBoundaryState).toBeDefined();
+    expect(prefix.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments[0]).toBeDefined();
+    expect(prefix.stepGlitchFormulaEvidence?.boundaryState).toBeDefined();
     expect(reusedMetrics.counters.trajectoryReplayCount).toBeLessThan(prefixOnlyMetrics.counters.trajectoryReplayCount);
     expect(prefixOnlyMetrics.counters.trajectoryReplayCount - reusedMetrics.counters.trajectoryReplayCount).toBe(1);
     expect(reusedMetrics.counters.rk4StepCount).toBeLessThan(prefixOnlyMetrics.counters.rk4StepCount);
-    expect(reused.context.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toBe(
-      prefix.stepGlitchFormulaPrefix?.stepGlitchSegments[0],
+    expect(reused.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments[0]).toBe(
+      prefix.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments[0],
     );
     expect(reused.context.formulaResult.expression).toBe(cold.context.formulaResult.expression);
     expect(reused.context.formulaPoints).toEqual(cold.context.formulaPoints);
-    expect(reused.context.stepGlitchFormulaPrefix?.refinedFormulaPoints).toEqual(
-      cold.context.stepGlitchFormulaPrefix?.refinedFormulaPoints,
+    expect(reused.context.stepGlitchFormulaEvidence?.prefix.refinedFormulaPoints).toEqual(
+      cold.context.stepGlitchFormulaEvidence?.prefix.refinedFormulaPoints,
     );
-    expect(reused.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual(
-      cold.context.stepGlitchFormulaPrefix?.stepGlitchRequirements,
+    expect(reused.context.stepGlitchFormulaEvidence?.prefix.stepGlitchRequirements).toEqual(
+      cold.context.stepGlitchFormulaEvidence?.prefix.stepGlitchRequirements,
     );
-    expect(reused.context.stepGlitchFormulaPrefix?.stepGlitchSegments).toEqual(
-      cold.context.stepGlitchFormulaPrefix?.stepGlitchSegments,
+    expect(reused.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments).toEqual(
+      cold.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments,
     );
-    expect(reused.context.stepGlitchFormulaPrefix?.stepSegmentDeltaYs).toEqual(
-      cold.context.stepGlitchFormulaPrefix?.stepSegmentDeltaYs,
+    expect(reused.context.stepGlitchFormulaEvidence?.prefix.stepSegmentDeltaYs).toEqual(
+      cold.context.stepGlitchFormulaEvidence?.prefix.stepSegmentDeltaYs,
     );
     expectTrajectorySamplesToBeIdentical(prefixOnly.result.sample, cold.result.sample);
     expectTrajectorySamplesToBeIdentical(reused.result.sample, cold.result.sample);
-    expect(rebuiltWithFixedWindows?.stepGlitchFormulaPrefix?.stepGlitchSegments[0]).toMatchObject({
+    expect(rebuiltWithFixedWindows?.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments[0]).toMatchObject({
       endX: prefixFormula?.stepGlitchSegments[0]?.endX,
       startX: prefixFormula?.stepGlitchSegments[0]?.startX,
     });
@@ -1858,8 +1868,8 @@ describe("Step glitch formula prefix", () => {
       settings: stepSettings,
       soldierCenter: prefixPoints[0],
     }).context;
-    const formulaPrefix = prefix.stepGlitchFormulaPrefix;
-    const boundaryState = prefix.stepGlitchFormulaBoundaryState;
+    const formulaPrefix = prefix.stepGlitchFormulaEvidence?.prefix;
+    const boundaryState = prefix.stepGlitchFormulaEvidence?.boundaryState;
     expect(formulaPrefix).toBeDefined();
     expect(boundaryState).toBeDefined();
     if (!formulaPrefix || !boundaryState) {
@@ -1875,7 +1885,7 @@ describe("Step glitch formula prefix", () => {
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-      stepGlitchFormulaPrefix: formulaPrefix,
+      stepGlitchFormulaEvidence: { prefix: formulaPrefix },
     });
     const staleBoundaries = [
       {
@@ -1909,8 +1919,7 @@ describe("Step glitch formula prefix", () => {
         points: appendedPoints,
         settings: stepSettings,
         soldierCenter: appendedPoints[0],
-        stepGlitchFormulaBoundaryState: stale.state,
-        stepGlitchFormulaPrefix: formulaPrefix,
+        stepGlitchFormulaEvidence: { boundaryState: stale.state, prefix: formulaPrefix },
       });
 
       expect(metrics.counters.trajectoryReplayCount, stale.name).toBe(fallbackMetrics.counters.trajectoryReplayCount);
@@ -1944,9 +1953,9 @@ describe("Step glitch formula prefix", () => {
       settings: stepSettings,
       soldierCenter: secondPrefixPoints[0],
     }).context;
-    const formulaPrefix = firstPrefix.stepGlitchFormulaPrefix;
-    const matchingBoundaryState = firstPrefix.stepGlitchFormulaBoundaryState;
-    const crossedBoundaryState = secondPrefix.stepGlitchFormulaBoundaryState;
+    const formulaPrefix = firstPrefix.stepGlitchFormulaEvidence?.prefix;
+    const matchingBoundaryState = firstPrefix.stepGlitchFormulaEvidence?.boundaryState;
+    const crossedBoundaryState = secondPrefix.stepGlitchFormulaEvidence?.boundaryState;
     expect(formulaPrefix).toBeDefined();
     expect(matchingBoundaryState).toBeDefined();
     expect(crossedBoundaryState).toBeDefined();
@@ -1970,7 +1979,7 @@ describe("Step glitch formula prefix", () => {
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-      stepGlitchFormulaPrefix: formulaPrefix,
+      stepGlitchFormulaEvidence: { prefix: formulaPrefix },
     });
     const crossedMetrics = createGraphwarTrajectoryDebugMetrics();
     const crossed = resolveGraphwarTrajectory({
@@ -1980,8 +1989,7 @@ describe("Step glitch formula prefix", () => {
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-      stepGlitchFormulaBoundaryState: crossedBoundaryState,
-      stepGlitchFormulaPrefix: formulaPrefix,
+      stepGlitchFormulaEvidence: { boundaryState: crossedBoundaryState, prefix: formulaPrefix },
     });
     const matchingMetrics = createGraphwarTrajectoryDebugMetrics();
     const matching = resolveGraphwarTrajectory({
@@ -1991,8 +1999,7 @@ describe("Step glitch formula prefix", () => {
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-      stepGlitchFormulaBoundaryState: matchingBoundaryState,
-      stepGlitchFormulaPrefix: formulaPrefix,
+      stepGlitchFormulaEvidence: { boundaryState: matchingBoundaryState, prefix: formulaPrefix },
     });
 
     expect(crossedMetrics.counters.trajectoryReplayCount).toBe(fallbackMetrics.counters.trajectoryReplayCount);
@@ -2031,7 +2038,9 @@ describe("Step glitch formula prefix", () => {
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-      stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
+      ...(prefix.stepGlitchFormulaEvidence
+        ? { stepGlitchFormulaEvidence: { prefix: prefix.stepGlitchFormulaEvidence.prefix } }
+        : {}),
     });
     const reusedMetrics = createGraphwarTrajectoryDebugMetrics();
     const reused = resolveGraphwarTrajectory({
@@ -2041,11 +2050,10 @@ describe("Step glitch formula prefix", () => {
       points: appendedPoints,
       settings: stepSettings,
       soldierCenter: appendedPoints[0],
-      stepGlitchFormulaBoundaryState: prefix.stepGlitchFormulaBoundaryState,
-      stepGlitchFormulaPrefix: prefix.stepGlitchFormulaPrefix,
+      ...(prefix.stepGlitchFormulaEvidence ? { stepGlitchFormulaEvidence: prefix.stepGlitchFormulaEvidence } : {}),
     });
 
-    expect(prefix.stepGlitchFormulaBoundaryState?.state.dy).toBeDefined();
+    expect(prefix.stepGlitchFormulaEvidence?.boundaryState?.state.dy).toBeDefined();
     expect(fallbackMetrics.counters.trajectoryReplayCount - reusedMetrics.counters.trajectoryReplayCount).toBe(1);
     expect(reusedMetrics.counters.rk4StepCount).toBeLessThan(fallbackMetrics.counters.rk4StepCount);
     expect(reused.context.formulaResult.expression).toBe(fallback.context.formulaResult.expression);

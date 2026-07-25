@@ -105,10 +105,8 @@ export interface GraphwarTrajectoryFormulaContext {
   signProtection: GraphwarSignProtection;
   /** 可选士兵中心；存在时可直接计算 Graphwar 发射角。 */
   soldierCenter?: GraphPoint;
-  /** 邪道从左到右求解结果；只可作为精确追加路径的候选前缀。 */
-  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
-  /** 当前 Worker 内最新邪道段边界的物理状态；不进入 Master 前缀证据。 */
-  stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
+  /** 邪道前缀和可选局部边界必须作为同一份运行时证据传递。 */
+  stepGlitchFormulaEvidence?: GraphwarStepGlitchFormulaEvidence;
 }
 
 /** 仅供下一条精确追加路径恢复首个新段起点的一份局部证据。 */
@@ -117,7 +115,7 @@ export interface GraphwarStepGlitchFormulaBoundaryState {
   readonly formulaMaterialsIdentity: string;
   /** 生成状态时 Y''= 实际消费的发射角。 */
   readonly launchAngleRadians?: number;
-  /** 生成这份物理状态的精确前缀对象；只在同一 Worker 搜索局部按引用配对。 */
+  /** 生成本状态的精确 prefix 引用；原子 evidence 构造时绑定。 */
   readonly prefix: GraphwarStepGlitchFormulaPrefix;
   /** 最新已接受段数；只允许恢复紧随其后的首个新段。 */
   readonly segmentCount: number;
@@ -127,8 +125,16 @@ export interface GraphwarStepGlitchFormulaBoundaryState {
   readonly stopX: number;
 }
 
-/** 段细化先返回未绑定草稿；公式状态创建者把它与刚生成的精确 prefix 原子配对。 */
+/** 段细化先返回未绑定草稿；公式状态创建者将它与刚生成的 prefix 原子配对。 */
 type GraphwarStepGlitchFormulaBoundaryStateDraft = Omit<GraphwarStepGlitchFormulaBoundaryState, "prefix">;
+
+/** 已解公式前缀和同一 Worker 内可选边界状态；boundary 不允许脱离 prefix 单独传递。 */
+export interface GraphwarStepGlitchFormulaEvidence {
+  /** 当前 Worker 内最新邪道段边界的物理状态；发布到 Master 时必须剥离。 */
+  readonly boundaryState?: GraphwarStepGlitchFormulaBoundaryState;
+  /** 邪道从左到右求解结果；只可作为精确追加路径的候选前缀。 */
+  readonly prefix: GraphwarStepGlitchFormulaPrefix;
+}
 
 /** 已求解邪道前缀；公式 Module 会逐项核对后再决定是否复用。 */
 export interface GraphwarStepGlitchFormulaPrefix {
@@ -381,8 +387,7 @@ export function resolveGraphwarTrajectory(options: {
   signProtection?: GraphwarSignProtection;
   skipInitialStop?: boolean;
   soldierCenter?: GraphPoint;
-  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
-  stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
+  stepGlitchFormulaEvidence?: GraphwarStepGlitchFormulaEvidence;
   stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
   stopOnTargetsComplete?: boolean;
   targetHitRadiusPixels?: number;
@@ -391,10 +396,12 @@ export function resolveGraphwarTrajectory(options: {
   targetSequencePoints?: readonly PixelPoint[];
   trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
 }): { context: GraphwarTrajectoryFormulaContext; result: GraphwarTrajectorySampleResult } {
-  const prefix = options.stepGlitchFormulaPrefix;
+  const prefix = options.stepGlitchFormulaEvidence?.prefix;
   let signProtection = [
     ...(options.signProtection ??
-      (prefix && stepGlitchPrefixMatchesSource(options, prefix) ? prefix.signProtection : [])),
+      (prefix && graphwarStepGlitchFormulaEvidenceMatchesSource(options, options.stepGlitchFormulaEvidence)
+        ? prefix.signProtection
+        : [])),
   ];
   let initialState = options.initialState;
   while (true) {
@@ -478,15 +485,16 @@ export function tryResolveGraphwarTrajectoryCandidate(
 }
 
 /** 保护位会改变整条公式的 double 轨迹，只能从相同边界、设置、士兵和原始路径前缀继承。更昂贵的公式点与邪道段核对仍留给实际前缀复用分支。 */
-function stepGlitchPrefixMatchesSource(
+export function graphwarStepGlitchFormulaEvidenceMatchesSource(
   options: {
     bounds: GraphBounds;
     points: readonly GraphPoint[];
     settings: GraphwarTrajectoryFormulaSettings;
     soldierCenter?: GraphPoint;
   },
-  prefix: GraphwarStepGlitchFormulaPrefix | undefined,
+  evidence: GraphwarStepGlitchFormulaEvidence | undefined,
 ) {
+  const prefix = evidence?.prefix;
   if (
     !formulaModeUsesStepGlitch(
       options.settings.algorithm,
@@ -545,8 +553,7 @@ function finalizeGraphwarTrajectoryFormulaContext(
     settings: options.settings,
     signProtection: state.signProtection,
     soldierCenter: options.soldierCenter,
-    stepGlitchFormulaBoundaryState: state.stepGlitchFormulaBoundaryState,
-    stepGlitchFormulaPrefix: state.stepGlitchFormulaPrefix,
+    stepGlitchFormulaEvidence: state.stepGlitchFormulaEvidence,
   };
 }
 
@@ -557,8 +564,7 @@ interface TrajectoryFormulaState {
   formulaPoints: GraphPoint[];
   launchAngleRadians?: number;
   signProtection: GraphwarSignProtection;
-  stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
-  stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
+  stepGlitchFormulaEvidence?: GraphwarStepGlitchFormulaEvidence;
 }
 
 /** 把新证据写入可变副本；返回值让调用方只在保护集合真正扩大时重算。 */
@@ -748,8 +754,7 @@ function createTrajectoryFormulaState(
     points: readonly GraphPoint[];
     settings: GraphwarTrajectoryFormulaSettings;
     soldierCenter?: GraphPoint;
-    stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
-    stepGlitchFormulaPrefix?: GraphwarStepGlitchFormulaPrefix;
+    stepGlitchFormulaEvidence?: GraphwarStepGlitchFormulaEvidence;
     stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
   },
   signProtection: GraphwarSignProtection,
@@ -767,9 +772,7 @@ function createTrajectoryFormulaState(
   let absSecondDerivativePulseDeltaSlopes: readonly (number | undefined)[] | undefined;
   let absSecondDerivativeLaunchAngleRadians: number | undefined;
   let stepLaunchAngleRadians: number | undefined;
-  let stepGlitchFormulaBoundaryState: GraphwarStepGlitchFormulaBoundaryState | undefined;
-  let stepGlitchFormulaBoundaryStateDraft: GraphwarStepGlitchFormulaBoundaryStateDraft | undefined;
-  let stepGlitchFormulaPrefix: GraphwarStepGlitchFormulaPrefix | undefined;
+  let stepGlitchFormulaEvidence: GraphwarStepGlitchFormulaEvidence | undefined;
   let resolvedSignProtection = signProtection;
   if (options.settings.algorithm === "abs" && options.settings.equation === "ddy") {
     const solved = refineAbsSecondDerivativeSegmentsWithSimulation(options, formulaPoints, signProtection);
@@ -783,8 +786,7 @@ function createTrajectoryFormulaState(
       formulaPoints,
       stepGlitchRequirements,
       signProtection,
-      options.stepGlitchFormulaPrefix,
-      options.stepGlitchFormulaBoundaryState,
+      options.stepGlitchFormulaEvidence,
     );
     if (solved.signProtection) {
       return { status: "protection-changed", signProtection: solved.signProtection };
@@ -793,12 +795,11 @@ function createTrajectoryFormulaState(
     stepSegmentDeltaYs = solved.stepSegmentDeltaYs;
     segmentStartPoints = solved.segmentStartPoints;
     stepLaunchAngleRadians = solved.launchAngleRadians;
-    stepGlitchFormulaBoundaryStateDraft = solved.stepGlitchFormulaBoundaryState;
     resolvedSignProtection = solved.acceptedSignProtection ?? signProtection;
     if (
       formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode)
     ) {
-      stepGlitchFormulaPrefix = {
+      const prefix: GraphwarStepGlitchFormulaPrefix = {
         bounds: { ...options.bounds },
         initialFormulaPoints: formulaPoints.map((point) => createGraphPoint(point.x, point.y)),
         points: options.points.map((point) => createGraphPoint(point.x, point.y)),
@@ -816,12 +817,12 @@ function createTrajectoryFormulaState(
         stepGlitchSegments: [...stepGlitchSegments],
         stepSegmentDeltaYs: [...stepSegmentDeltaYs],
       };
-      if (stepGlitchFormulaBoundaryStateDraft) {
-        stepGlitchFormulaBoundaryState = {
-          ...stepGlitchFormulaBoundaryStateDraft,
-          prefix: stepGlitchFormulaPrefix,
-        };
-      }
+      stepGlitchFormulaEvidence = {
+        ...(solved.stepGlitchFormulaBoundaryState
+          ? { boundaryState: { ...solved.stepGlitchFormulaBoundaryState, prefix } }
+          : {}),
+        prefix,
+      };
     }
 
     // 求解后的替换项只回算一次发射边缘和普通段中心；最终预编译模拟负责裁决残余尾值误差。
@@ -881,8 +882,7 @@ function createTrajectoryFormulaState(
       formulaPoints,
       ...(launchAngleRadians === undefined ? {} : { launchAngleRadians }),
       signProtection: [...resolvedSignProtection],
-      ...(stepGlitchFormulaBoundaryState ? { stepGlitchFormulaBoundaryState } : {}),
-      stepGlitchFormulaPrefix,
+      ...(stepGlitchFormulaEvidence ? { stepGlitchFormulaEvidence } : {}),
     },
   };
 }
@@ -2048,9 +2048,9 @@ function refineStepSegmentsWithSimulation(
   formulaPoints: readonly GraphPoint[],
   stepGlitchRequirements: boolean[],
   signProtection: GraphwarSignProtection,
-  prefix: GraphwarStepGlitchFormulaPrefix | undefined,
-  boundaryState: GraphwarStepGlitchFormulaBoundaryState | undefined,
+  formulaEvidence: GraphwarStepGlitchFormulaEvidence | undefined,
 ): StepSimulationRefinement {
+  const prefix = formulaEvidence?.prefix;
   const mask = options.settings.stepGlitchObstacleMask;
   const soldierCenter = options.soldierCenter ?? formulaPoints[0];
   const isStepGlitchModeEnabled = formulaModeUsesStepGlitch(
@@ -2066,7 +2066,7 @@ function refineStepSegmentsWithSimulation(
   // requirement 没有 hard 段只可能是依赖最终 collision 的 soft 兜底；跨请求不能冻结这份临时裁决。
   if (
     prefix &&
-    stepGlitchPrefixMatchesSource(options, prefix) &&
+    graphwarStepGlitchFormulaEvidenceMatchesSource(options, formulaEvidence) &&
     graphwarSignProtectionPrefixMatches(prefix.signProtection, signProtection, Math.max(0, prefix.points.length - 1)) &&
     prefix.initialFormulaPoints.length === prefix.points.length &&
     prefix.refinedFormulaPoints.length === prefix.points.length &&
@@ -2109,6 +2109,7 @@ function refineStepSegmentsWithSimulation(
   }
 
   const reusablePrefix = reusableSegmentCount > 0 ? prefix : undefined;
+  const reusableFormulaEvidence = reusablePrefix ? formulaEvidence : undefined;
   const refinedSegments: (StepGlitchSegment | undefined)[] = reusablePrefix
     ? [...reusablePrefix.stepGlitchSegments]
     : new Array(stepGlitchRequirements.length);
@@ -2157,7 +2158,7 @@ function refineStepSegmentsWithSimulation(
     const shouldResolveBoundaryStart =
       nextSegmentStartSample === undefined &&
       (latestAcceptedBoundary !== undefined ||
-        (segmentIndex === reusableSegmentCount && reusablePrefix !== undefined && boundaryState !== undefined));
+        (segmentIndex === reusableSegmentCount && reusableFormulaEvidence?.boundaryState !== undefined));
     const boundaryLaunchAngleRadians = shouldResolveBoundaryStart
       ? getStepGlitchPrefixLaunchAngle(options, refinedFormulaPoints, prefixFormula, launchAngleRadians, soldierCenter)
       : launchAngleRadians;
@@ -2172,11 +2173,10 @@ function refineStepSegmentsWithSimulation(
           )
         : undefined;
     const reusableBoundaryStartSample =
-      segmentIndex === reusableSegmentCount && reusablePrefix && boundaryState
+      segmentIndex === reusableSegmentCount && reusableFormulaEvidence?.boundaryState
         ? reuseStepGlitchFormulaBoundaryState(
             prefixFormula,
-            reusablePrefix,
-            boundaryState,
+            reusableFormulaEvidence,
             boundaryLaunchAngleRadians,
             signProtection,
             reusableSegmentCount,
@@ -2459,8 +2459,7 @@ function refineStepSegmentsWithSimulation(
     );
     const reusableBoundaryState = reuseStepGlitchFormulaBoundaryState(
       prefixFormula,
-      prefix,
-      boundaryState,
+      reusableFormulaEvidence,
       currentBoundaryLaunchAngleRadians,
       acceptedSignProtection ?? signProtection,
       segmentCount,
@@ -2611,13 +2610,14 @@ function createStepGlitchFormulaBoundaryState(
 /** 所有前缀身份都完全一致时恢复首个新增段；任一失配保持原有 cold path。 */
 function reuseStepGlitchFormulaBoundaryState(
   prefixFormula: StepGlitchPrefixFormula,
-  prefix: GraphwarStepGlitchFormulaPrefix | undefined,
-  boundaryState: GraphwarStepGlitchFormulaBoundaryState | undefined,
+  formulaEvidence: GraphwarStepGlitchFormulaEvidence | undefined,
   launchAngleRadians: number | undefined,
   signProtection: GraphwarSignProtection,
   reusableSegmentCount: number,
   stopX: number,
 ): StepSegmentStartSample | undefined {
+  const prefix = formulaEvidence?.prefix;
+  const boundaryState = formulaEvidence?.boundaryState;
   if (
     !prefix ||
     !boundaryState ||

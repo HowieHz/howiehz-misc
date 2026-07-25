@@ -67,13 +67,13 @@ describe("Graphwar local sign protection", () => {
           targetY: 2.123456,
         },
       ],
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
     const expression = buildFormula(points, 210, "dy", "step", 4, {
       compiledMaterials,
       signProtection: formulaEvaluation.signProtection,
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     }).expression;
 
     expect(countOccurrences(expression, epsilonText)).toBe(1);

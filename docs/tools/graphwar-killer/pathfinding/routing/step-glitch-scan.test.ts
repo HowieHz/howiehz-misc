@@ -28,8 +28,8 @@ const settings: GraphwarTrajectoryFormulaSettings = {
   decimalPlaces: 4,
   equation: "dy",
   steepness: 67,
-  stepGlitchMode: true,
-  stepOverflowProtection: true,
+  isStepGlitchModeEnabled: true,
+  isStepOverflowProtectionEnabled: true,
 };
 
 describe("Step ODE glitch scan", () => {

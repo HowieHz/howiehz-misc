@@ -67,7 +67,7 @@ export function createGraphwarSmartPathfindingSearchInput(
     routeMode: formulaModeUsesStepGlitch(
       options.settings.algorithm,
       options.settings.equation,
-      options.settings.stepGlitchMode,
+      options.settings.isStepGlitchModeEnabled,
     )
       ? "visibility-graph"
       : options.routeMode,

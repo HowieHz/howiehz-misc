@@ -10,7 +10,7 @@ import type {
   ReadonlyValue as ReadonlyRef,
   ToolWorkflowMode,
 } from "../../core/types";
-import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
+import { resolveFormulaModeContract } from "../../formula/mode-contract";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
@@ -178,7 +178,10 @@ export function useGraphwarPathAppendWorkflow<TSoldier, TSmartTarget>(
     }
 
     const settings = options.trajectory.getFormulaSettings();
-    if (formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.stepGlitchMode)) {
+    if (
+      resolveFormulaModeContract(settings.algorithm, settings.equation, settings.isStepGlitchModeEnabled)
+        .pathSearchPolicy.type === "step-glitch"
+    ) {
       // 邪道 Worker 会先试最终直连公式；失败后才用 exact evidence 或一次旧整式回放准备 prefix。
       return true;
     }

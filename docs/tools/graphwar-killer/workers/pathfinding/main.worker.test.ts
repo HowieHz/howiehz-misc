@@ -230,7 +230,7 @@ describe("Anytime one-click-clear progress", () => {
     const targetPoint = createPixelPoint(300, 225);
     const adoptedPath = [...input.pathPoints, targetPoint];
     const prefixTarget = { center: targetPoint, radius: 7 };
-    input.settings = { ...input.settings, equation: "dy", stepGlitchMode: true };
+    input.settings = { ...input.settings, equation: "dy", isStepGlitchModeEnabled: true };
     input.simulationMask = new Uint8Array(770 * 450);
     input.simulationMaskCacheId = 904;
     mocks.buildOneClickClearPath
@@ -466,9 +466,9 @@ function createStepGlitchInput(simulationMask: Uint8Array, formulaMask: Uint8Arr
       decimalPlaces: 4,
       equation: "dy",
       steepness: 67,
-      stepGlitchMode: true,
+      isStepGlitchModeEnabled: true,
       stepGlitchObstacleMask: formulaMask,
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     },
     simulationBoundaryExpansion: 0,
     simulationMask,
@@ -499,8 +499,8 @@ function createOneClickClearInput(): GraphwarOneClickClearPathWorkerInput {
       decimalPlaces: 4,
       equation: "y",
       steepness: 67,
-      stepGlitchMode: false,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
     },
     simulationBoundaryExpansion: 0,
     simulationMaskCacheId: 0,

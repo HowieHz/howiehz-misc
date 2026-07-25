@@ -33,7 +33,6 @@ import type { GraphwarTrajectoryDebugMetrics } from "../debug-metrics";
 /** 负责按 Graphwar 公式规则采样轨迹，并判断路径与目标/障碍的交互。 */
 import { buildFormula, compileGraphwarFormulaMaterials } from "../generation/build";
 import type { CompiledGraphwarFormulaMaterials, GraphwarSignProtection } from "../generation/build";
-import { formulaModeUsesPositionCompensation, formulaModeUsesStepGlitch } from "../generation/capabilities";
 import { graphwarSignProtectionEquals } from "../generation/sign-protection";
 import type { GraphwarSignRole } from "../generation/sign-protection";
 import {
@@ -47,6 +46,8 @@ import {
   resolveStepFormulaTransition,
 } from "../generation/step-numeric-strategy";
 import type { FormulaEvaluationOptions, StepGlitchSegment } from "../generation/step-numeric-strategy";
+import { resolveFormulaModeContract } from "../mode-contract";
+import type { FormulaModeContract } from "../mode-contract";
 import {
   createGraphwarFormulaPathPoints,
   GraphwarFormulaConvergenceError,
@@ -80,11 +81,38 @@ export interface GraphwarTrajectoryFormulaSettings {
   /** Step 或 ABS y'' 公式的陡峭度。 */
   steepness: number;
   /** 是否允许 ODE 的 Step 在普通段无法安全连接时把当前段替换为硬 Step 邪道项。 */
-  stepGlitchMode: boolean;
+  isStepGlitchModeEnabled: boolean;
   /** 邪道扫描和候选碰撞验证共用的 Graphwar 原始平面 mask；无障碍数据时可以省略。 */
   stepGlitchObstacleMask?: Uint8Array;
   /** 是否允许 step 公式启用 exp 抗溢出保护。 */
-  stepOverflowProtection: boolean;
+  isStepOverflowProtectionEnabled: boolean;
+}
+
+const graphwarTrajectoryFormulaModeBrand: unique symbol = Symbol("GraphwarTrajectoryFormulaMode");
+
+/** 单次轨迹 job 共用的公式设置与解析契约；私有 brand 强制调用方通过唯一构造入口创建。 */
+export interface GraphwarTrajectoryFormulaMode {
+  readonly [graphwarTrajectoryFormulaModeBrand]: true;
+  readonly contract: FormulaModeContract;
+  readonly settings: Readonly<GraphwarTrajectoryFormulaSettings>;
+}
+
+/** 在页面或 Worker Adapter 的已验证设置入口构造原子公式模式。 */
+export function createGraphwarTrajectoryFormulaMode(
+  settings: GraphwarTrajectoryFormulaSettings,
+): GraphwarTrajectoryFormulaMode {
+  const settingsSnapshot = Object.freeze({ ...settings });
+  return Object.freeze({
+    [graphwarTrajectoryFormulaModeBrand]: true as const,
+    contract: Object.freeze(
+      resolveFormulaModeContract(
+        settingsSnapshot.algorithm,
+        settingsSnapshot.equation,
+        settingsSnapshot.isStepGlitchModeEnabled,
+      ),
+    ),
+    settings: settingsSnapshot,
+  });
 }
 
 /** 轨迹求解的原子起点；续播状态、命中历史、停止语义和 sign protection 必须来自同一份证据。 */
@@ -390,12 +418,7 @@ export function measureGraphwarFormulaPathError(
   return pathError;
 }
 
-/**
- * 一次完成生成公式求解、局部 sign 探测和带早停的轨迹验证。
- *
- * 保护集合变化会使分母 epsilon 在旧门前产生尾值，因此每次重试都从发射点开始，并创建全新的命中统计器。
- */
-export function resolveGraphwarTrajectory(options: {
+interface GraphwarTrajectoryResolutionOptionsBase {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
   collision?: GraphwarTrajectoryCollisionSettings;
@@ -407,7 +430,6 @@ export function resolveGraphwarTrajectory(options: {
   /** 不受真实命中圆约束的普通控制点；只用于非阻塞路径质量统计。 */
   qualityPoints?: readonly GraphPoint[];
   requiredTargets?: readonly GraphwarTrajectoryTargetCircle[];
-  settings: GraphwarTrajectoryFormulaSettings;
   /** 省略表示无已知 sign protection 的 cold 求解；continuation 分支禁止构造半状态。 */
   start?: GraphwarTrajectoryStart;
   soldierCenter?: GraphPoint;
@@ -419,18 +441,47 @@ export function resolveGraphwarTrajectory(options: {
   targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   targetSequencePoints?: readonly PixelPoint[];
   trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
-}): GraphwarTrajectoryResolution {
+}
+
+/**
+ * 轨迹入口在迁移期接受原子 formulaMode 或旧 settings，由唯一入口完成归一化。
+ *
+ * `never` 明确禁止调用方同时携带两份可错配状态；旧分支会在第 5 步随调用方迁移完成后删除。
+ */
+export type GraphwarTrajectoryResolutionOptions = GraphwarTrajectoryResolutionOptionsBase &
+  (
+    | { formulaMode: GraphwarTrajectoryFormulaMode; settings?: never }
+    | { formulaMode?: never; settings: GraphwarTrajectoryFormulaSettings }
+  );
+
+/**
+ * 一次完成生成公式求解、局部 sign 探测和带早停的轨迹验证。
+ *
+ * 保护集合变化会使分母 epsilon 在旧门前产生尾值，因此每次重试都从发射点开始，并创建全新的命中统计器。
+ */
+export function resolveGraphwarTrajectory(options: GraphwarTrajectoryResolutionOptions): GraphwarTrajectoryResolution {
+  const formulaMode = resolveGraphwarTrajectoryFormulaMode(options);
+  const settings = formulaMode.settings;
   const prefix = options.stepGlitchFormulaEvidence?.prefix;
   let signProtection = [
     ...(options.start?.signProtection ??
-      (prefix && graphwarStepGlitchFormulaEvidenceMatchesSource(options, options.stepGlitchFormulaEvidence)
+      (prefix &&
+      graphwarStepGlitchFormulaEvidenceMatchesSource(
+        {
+          bounds: options.bounds,
+          formulaMode,
+          points: options.points,
+          soldierCenter: options.soldierCenter,
+        },
+        options.stepGlitchFormulaEvidence,
+      )
         ? prefix.signProtection
         : [])),
   ];
   let continuation = options.start?.type === "continuation" ? options.start : undefined;
   while (true) {
     const formulaPreparationStartedAt = options.debugMetrics ? nowMs() : 0;
-    const stateResult = createTrajectoryFormulaState(options, signProtection);
+    const stateResult = createTrajectoryFormulaState(options, formulaMode, signProtection);
     if (options.debugMetrics) {
       options.debugMetrics.timings.formulaPreparationElapsedMs += nowMs() - formulaPreparationStartedAt;
     }
@@ -451,9 +502,9 @@ export function resolveGraphwarTrajectory(options: {
     let sample: GraphwarTrajectorySample;
     try {
       sample = sampleGraphwarTrajectory({
-        algorithm: options.settings.algorithm,
+        algorithm: settings.algorithm,
         bounds: options.bounds,
-        equation: options.settings.equation,
+        equation: settings.equation,
         compiledFormulaMaterials: state.compiledMaterials,
         debugMetrics: options.debugMetrics,
         formulaEvaluation: {
@@ -466,11 +517,11 @@ export function resolveGraphwarTrajectory(options: {
         initialState: continuation?.samplingState,
         ...(state.launchAngleRadians === undefined ? {} : { launchAngleRadians: state.launchAngleRadians }),
         points: state.formulaPoints,
-        secondOrderLaunchAngleMode: options.settings.secondOrderLaunchAngleMode,
+        secondOrderLaunchAngleMode: settings.secondOrderLaunchAngleMode,
         shouldStop: stopTracker.shouldStop,
         skipInitialStop: continuation?.shouldSkipInitialStop ?? false,
         soldierCenter: options.soldierCenter ?? state.formulaPoints[0],
-        steepness: options.settings.steepness,
+        steepness: settings.steepness,
       });
     } catch (error) {
       if (isGraphwarFormulaConvergenceError(error)) {
@@ -486,7 +537,7 @@ export function resolveGraphwarTrajectory(options: {
     }
 
     const expressionFinalizationStartedAt = options.debugMetrics ? nowMs() : 0;
-    const context = finalizeGraphwarTrajectoryFormulaContext(options, state);
+    const context = finalizeGraphwarTrajectoryFormulaContext({ ...options, settings }, state);
     if (options.debugMetrics) {
       options.debugMetrics.timings.expressionFinalizationElapsedMs += nowMs() - expressionFinalizationStartedAt;
     }
@@ -633,7 +684,7 @@ export function tryContinueResolvedGraphwarTrajectory(
 
 /** 候选搜索只淘汰明确的公式收敛或 Step 连接失败；实现异常必须继续暴露。 */
 export function tryResolveGraphwarTrajectoryCandidate(
-  options: Parameters<typeof resolveGraphwarTrajectory>[0],
+  options: GraphwarTrajectoryResolutionOptions,
 ): ReturnType<typeof resolveGraphwarTrajectory> | undefined {
   try {
     return resolveGraphwarTrajectory(options);
@@ -649,26 +700,23 @@ export function tryResolveGraphwarTrajectoryCandidate(
 export function graphwarStepGlitchFormulaEvidenceMatchesSource(
   options: {
     bounds: GraphBounds;
+    formulaMode: GraphwarTrajectoryFormulaMode;
     points: readonly GraphPoint[];
-    settings: GraphwarTrajectoryFormulaSettings;
     soldierCenter?: GraphPoint;
   },
   evidence: GraphwarStepGlitchFormulaEvidence | undefined,
 ) {
+  const { contract, settings } = options.formulaMode;
   const prefix = evidence?.prefix;
   if (
-    !formulaModeUsesStepGlitch(
-      options.settings.algorithm,
-      options.settings.equation,
-      options.settings.stepGlitchMode,
-    ) ||
+    contract.pathSearchPolicy.type !== "step-glitch" ||
     !prefix ||
     prefix.bounds.maxX !== options.bounds.maxX ||
     prefix.bounds.maxY !== options.bounds.maxY ||
     prefix.bounds.minX !== options.bounds.minX ||
     prefix.bounds.minY !== options.bounds.minY ||
-    !graphwarTrajectoryFormulaSettingsAreEquivalent(prefix.settings, options.settings) ||
-    prefix.settings.stepGlitchObstacleMask !== options.settings.stepGlitchObstacleMask ||
+    !graphwarTrajectoryFormulaSettingsAreEquivalent(prefix.settings, settings) ||
+    prefix.settings.stepGlitchObstacleMask !== settings.stepGlitchObstacleMask ||
     prefix.soldierCenter?.x !== options.soldierCenter?.x ||
     prefix.soldierCenter?.y !== options.soldierCenter?.y ||
     prefix.points.length > options.points.length
@@ -681,6 +729,22 @@ export function graphwarStepGlitchFormulaEvidenceMatchesSource(
     }
   }
   return true;
+}
+
+/** 兼容入口只在这里解析旧 settings，并拒绝任何运行时半状态或双重状态。 */
+function resolveGraphwarTrajectoryFormulaMode(
+  options: GraphwarTrajectoryResolutionOptions,
+): GraphwarTrajectoryFormulaMode {
+  if (options.formulaMode !== undefined) {
+    if (options.settings !== undefined) {
+      throw new Error("Trajectory resolution cannot receive both formulaMode and settings.");
+    }
+    return options.formulaMode;
+  }
+  if (options.settings === undefined) {
+    throw new Error("Trajectory resolution requires formulaMode or settings.");
+  }
+  return createGraphwarTrajectoryFormulaMode(options.settings);
 }
 
 /** 保护集合稳定后才生成可发射文本，避免为必然丢弃的中间状态反复拼接表达式。 */
@@ -701,7 +765,7 @@ function finalizeGraphwarTrajectoryFormulaContext(
     {
       compiledMaterials: state.compiledMaterials,
       signProtection: state.signProtection,
-      stepOverflowProtection: state.formulaEvaluation.stepOverflowProtection,
+      isStepOverflowProtectionEnabled: state.formulaEvaluation.isStepOverflowProtectionEnabled,
       stepOverflowProtectionRange: state.formulaEvaluation.stepOverflowProtectionRange,
     },
   );
@@ -907,24 +971,26 @@ interface StepGlitchPrefixFormula {
 
 /** 按一份固定局部保护集合求解真实段起点与邪道替换项，并编译最终公式材料。 */
 function createTrajectoryFormulaState(
-  options: {
+  resolutionOptions: {
     bounds: GraphBounds;
     /** 最终完整回放使用的真实碰撞设置。 */
     collision?: GraphwarTrajectoryCollisionSettings;
     debugMetrics?: GraphwarTrajectoryDebugMetrics;
     points: readonly GraphPoint[];
-    settings: GraphwarTrajectoryFormulaSettings;
     soldierCenter?: GraphPoint;
     stepGlitchFormulaEvidence?: GraphwarStepGlitchFormulaEvidence;
     stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
   },
+  formulaMode: GraphwarTrajectoryFormulaMode,
   signProtection: GraphwarSignProtection,
 ):
   | { status: "protection-changed"; signProtection: GraphwarSignProtection }
   | { status: "resolved"; state: TrajectoryFormulaState } {
+  const options = { ...resolutionOptions, settings: formulaMode.settings };
+  const modeContract = formulaMode.contract;
   let formulaPoints = createResolvedFormulaPathPoints(options, signProtection);
   const stepGlitchRequirements =
-    createStepGlitchRequirements(options, formulaPoints) ??
+    createStepGlitchRequirements(options, modeContract, formulaPoints) ??
     new Array(Math.max(0, options.points.length - 1)).fill(false);
   let stepGlitchSegments: readonly (StepGlitchSegment | undefined)[] | undefined;
   let stepSegmentDeltaYs: readonly (number | undefined)[] | undefined;
@@ -935,15 +1001,16 @@ function createTrajectoryFormulaState(
   let stepLaunchAngleRadians: number | undefined;
   let stepGlitchFormulaEvidence: GraphwarStepGlitchFormulaEvidence | undefined;
   let resolvedSignProtection = signProtection;
-  if (options.settings.algorithm === "abs" && options.settings.equation === "ddy") {
+  if (modeContract.formulaRefinement.type === "abs-second-derivative") {
     const solved = refineAbsSecondDerivativeSegmentsWithSimulation(options, formulaPoints, signProtection);
     segmentStartPoints = solved.segmentStartPoints;
     absSecondDerivativeLaunchAngleRadians = solved.launchAngleRadians;
     absSecondDerivativePulseCenterXs = solved.pulseCenterXs;
     absSecondDerivativePulseDeltaSlopes = solved.pulseDeltaSlopes;
-  } else if (formulaModeUsesPositionCompensation(options.settings.algorithm, options.settings.equation)) {
+  } else if (modeContract.formulaRefinement.type === "position-compensation") {
     const solved = refineStepSegmentsWithSimulation(
       options,
+      formulaMode,
       formulaPoints,
       stepGlitchRequirements,
       signProtection,
@@ -957,9 +1024,7 @@ function createTrajectoryFormulaState(
     segmentStartPoints = solved.segmentStartPoints;
     stepLaunchAngleRadians = solved.launchAngleRadians;
     resolvedSignProtection = solved.acceptedSignProtection ?? signProtection;
-    if (
-      formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode)
-    ) {
+    if (modeContract.pathSearchPolicy.type === "step-glitch") {
       const prefix: GraphwarStepGlitchFormulaPrefix = {
         bounds: { ...options.bounds },
         initialFormulaPoints: formulaPoints.map((point) => createGraphPoint(point.x, point.y)),
@@ -1073,7 +1138,7 @@ function createTrajectoryFormulaEvaluation(
     signProtection,
     stepGlitchSegments,
     stepSegmentDeltaYs,
-    stepOverflowProtection: options.settings.stepOverflowProtection,
+    isStepOverflowProtectionEnabled: options.settings.isStepOverflowProtectionEnabled,
     stepOverflowProtectionRange: createStepOverflowProtectionRange(options.bounds, formulaPoints),
   };
 }
@@ -2206,19 +2271,17 @@ function refineStepSegmentsWithSimulation(
     soldierCenter?: GraphPoint;
     stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
   },
+  formulaMode: GraphwarTrajectoryFormulaMode,
   formulaPoints: readonly GraphPoint[],
   stepGlitchRequirements: boolean[],
   signProtection: GraphwarSignProtection,
   formulaEvidence: GraphwarStepGlitchFormulaEvidence | undefined,
 ): StepSimulationRefinement {
+  const modeContract = formulaMode.contract;
   const prefix = formulaEvidence?.prefix;
   const mask = options.settings.stepGlitchObstacleMask;
   const soldierCenter = options.soldierCenter ?? formulaPoints[0];
-  const isStepGlitchModeEnabled = formulaModeUsesStepGlitch(
-    options.settings.algorithm,
-    options.settings.equation,
-    options.settings.stepGlitchMode,
-  );
+  const isStepGlitchModeEnabled = modeContract.pathSearchPolicy.type === "step-glitch";
   if (!soldierCenter || options.points.length < 2) {
     return { formulaPoints, segmentStartPoints: [], stepGlitchSegments: [], stepSegmentDeltaYs: [] };
   }
@@ -2227,7 +2290,15 @@ function refineStepSegmentsWithSimulation(
   // requirement 没有 hard 段只可能是依赖最终 collision 的 soft 兜底；跨请求不能冻结这份临时裁决。
   if (
     prefix &&
-    graphwarStepGlitchFormulaEvidenceMatchesSource(options, formulaEvidence) &&
+    graphwarStepGlitchFormulaEvidenceMatchesSource(
+      {
+        bounds: options.bounds,
+        formulaMode,
+        points: options.points,
+        soldierCenter: options.soldierCenter,
+      },
+      formulaEvidence,
+    ) &&
     graphwarSignProtectionPrefixMatches(prefix.signProtection, signProtection, Math.max(0, prefix.points.length - 1)) &&
     prefix.initialFormulaPoints.length === prefix.points.length &&
     prefix.refinedFormulaPoints.length === prefix.points.length &&
@@ -3474,16 +3545,10 @@ function createStepGlitchRequirements(
     settings: GraphwarTrajectoryFormulaSettings;
     stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[];
   },
+  modeContract: FormulaModeContract,
   formulaPoints: readonly GraphPoint[],
 ) {
-  if (
-    !formulaModeUsesStepGlitch(
-      options.settings.algorithm,
-      options.settings.equation,
-      options.settings.stepGlitchMode,
-    ) ||
-    options.points.length < 2
-  ) {
+  if (modeContract.pathSearchPolicy.type !== "step-glitch" || options.points.length < 2) {
     return undefined;
   }
 

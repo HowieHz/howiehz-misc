@@ -1,7 +1,7 @@
 import { DEFAULT_FORMULA_DECIMAL_PLACES } from "../../core/numbers";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
 import type { AlgorithmMode, EquationMode } from "../../core/types";
-import { formulaModeUsesSteepness } from "../../formula/generation/capabilities";
+import { resolveFormulaModeDefinition } from "../../formula/mode-contract";
 import { supportsOneClickClear } from "../../pathfinding/one-click-clear/support";
 import { parseGraphwarFormulaPrecision, parseGraphwarFormulaSteepness } from "./validation";
 
@@ -131,7 +131,7 @@ export function graphwarFormulaProfilesAreValidForManagedMode(profiles: Graphwar
     const profile = repaired[equation];
     if (
       parseGraphwarFormulaPrecision(profile.precisionText) === undefined ||
-      (formulaModeUsesSteepness(profile.algorithm, equation) &&
+      (resolveFormulaModeDefinition(profile.algorithm, equation).formulaSettings.type !== "standard" &&
         parseGraphwarFormulaSteepness(profile.steepnessText) === undefined)
     ) {
       return false;

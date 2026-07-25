@@ -86,8 +86,8 @@ describe("formula mode capabilities", () => {
       decimalPlaces: 4,
       equation: "y" as const,
       steepness: 67,
-      stepGlitchMode: false,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
     };
     const oldResult = sampleGraphwarPathTargetSequence({
       bounds,

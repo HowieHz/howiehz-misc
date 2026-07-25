@@ -2,6 +2,7 @@ import { nowMs } from "../../core/time";
 import type { BoundsRect, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
+  createGraphwarTrajectoryFormulaMode,
   resolveGraphwarTrajectory,
   sampleGraphwarExpressionTrajectoryWithStops,
   type GraphwarTrajectoryCollisionSettings,
@@ -87,8 +88,8 @@ export function renderGraphwarLiveClickPreview(
             boundsRect: input.boundsRect,
             ...(input.collision ? { collision: input.collision } : {}),
             collectVisiblePixels: true,
+            formulaMode: createGraphwarTrajectoryFormulaMode(input.settings),
             points: input.points,
-            settings: input.settings,
             soldierCenter: input.points[0],
           }).result;
   return {

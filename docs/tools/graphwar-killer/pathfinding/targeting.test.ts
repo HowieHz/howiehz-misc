@@ -78,8 +78,8 @@ describe("Step single-target soldier aiming", () => {
       decimalPlaces: 4,
       equation: "y" as const,
       steepness: 67,
-      stepGlitchMode: false,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
     };
     const centerResult = sampleGraphwarPathTargetSequence({
       bounds: area.bounds,

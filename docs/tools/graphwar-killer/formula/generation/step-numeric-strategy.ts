@@ -384,7 +384,7 @@ export interface FormulaEvaluationOptions {
   /** 只在该 x 范围内判断 exp 是否可能溢出，避免过度改写无关区间。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否对 step 表达式使用抗溢出的等价格式。 */
-  stepOverflowProtection?: boolean;
+  isStepOverflowProtectionEnabled?: boolean;
 }
 
 /** Graphwar 只会沿 x+ 方向采样；抗溢出判断只需要覆盖从发射点到右侧边界的 x 区间。 */
@@ -406,7 +406,7 @@ export function shouldUseStepDerivativeOverflowProtection(
   centerX: number,
   options?: FormulaEvaluationOptions,
 ) {
-  if (!(options?.stepOverflowProtection ?? true)) {
+  if (!(options?.isStepOverflowProtectionEnabled ?? true)) {
     return false;
   }
   const range = options?.stepOverflowProtectionRange;
@@ -422,10 +422,12 @@ export function shouldUseStepDerivativeOverflowProtection(
 export function shouldFormatStepDerivativeWithOverflowProtection(
   steepness: number,
   centerX: number,
-  stepOverflowProtection: boolean,
+  isStepOverflowProtectionEnabled: boolean,
   range: StepOverflowProtectionRange | undefined,
 ) {
-  return stepOverflowProtection && (!range || stepDerivativeTermNeedsOverflowProtection(steepness, centerX, range));
+  return (
+    isStepOverflowProtectionEnabled && (!range || stepDerivativeTermNeedsOverflowProtection(steepness, centerX, range))
+  );
 }
 
 /** 判断指定 x 范围内 step 导数直写式是否会因 exp 本身溢出而产生 NaN。 */

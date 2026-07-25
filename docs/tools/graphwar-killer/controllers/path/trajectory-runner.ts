@@ -544,9 +544,9 @@ function cloneGraphwarTrajectoryCalculationInput(
         ? {}
         : { formulaPathSteepness: input.settings.formulaPathSteepness }),
       steepness: input.settings.steepness,
-      stepGlitchMode: input.settings.stepGlitchMode,
+      isStepGlitchModeEnabled: input.settings.isStepGlitchModeEnabled,
       ...(glitchMask ? { stepGlitchObstacleMask: glitchMask } : {}),
-      stepOverflowProtection: input.settings.stepOverflowProtection,
+      isStepOverflowProtectionEnabled: input.settings.isStepOverflowProtectionEnabled,
     },
     ...(input.targetHitRadiusPixels === undefined ? {} : { targetHitRadiusPixels: input.targetHitRadiusPixels }),
     ...(input.targetPoint ? { targetPoint: createPixelPoint(input.targetPoint.x, input.targetPoint.y) } : {}),

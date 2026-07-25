@@ -52,9 +52,13 @@ export type GraphwarPathfindingDebugSceneState = GraphwarAgentAvailableState | G
 /** Formula settings without the large mask already exported as the source .bin file. */
 export type GraphwarPathfindingDebugFormulaSettings = Omit<
   GraphwarTrajectoryFormulaSettings,
-  "stepGlitchObstacleMask"
+  "isStepGlitchModeEnabled" | "isStepOverflowProtectionEnabled" | "stepGlitchObstacleMask"
 > & {
+  /** Version-1 export key retained independently from the internal positive boolean name. */
+  stepGlitchMode: boolean;
   stepGlitchObstacleMaskLength?: number;
+  /** Version-1 export key retained independently from the internal positive boolean name. */
+  stepOverflowProtection: boolean;
 };
 
 /** Settings frozen before any task-side preparation or Worker dispatch. */
@@ -278,10 +282,13 @@ export function createGraphwarOneClickClearDebugAttempt(
 export function createGraphwarPathfindingDebugFormulaSettings(
   settings: GraphwarTrajectoryFormulaSettings,
 ): GraphwarPathfindingDebugFormulaSettings {
-  const { stepGlitchObstacleMask, ...serializableSettings } = settings;
+  const { isStepGlitchModeEnabled, isStepOverflowProtectionEnabled, stepGlitchObstacleMask, ...serializableSettings } =
+    settings;
   return {
     ...serializableSettings,
+    stepGlitchMode: isStepGlitchModeEnabled,
     ...(stepGlitchObstacleMask ? { stepGlitchObstacleMaskLength: stepGlitchObstacleMask.length } : {}),
+    stepOverflowProtection: isStepOverflowProtectionEnabled,
   };
 }
 

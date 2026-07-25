@@ -63,14 +63,14 @@ describe("Graphwar pathfinding result cache keys", () => {
       ...enabled.settings,
       algorithm: "abs",
       equation: "dy",
-      stepGlitchMode: true,
+      isStepGlitchModeEnabled: true,
       stepGlitchObstacleMask: new Uint8Array(1),
     };
     disabled.settings = {
       ...disabled.settings,
       algorithm: "abs",
       equation: "dy",
-      stepGlitchMode: false,
+      isStepGlitchModeEnabled: false,
       stepGlitchObstacleMask: new Uint8Array(1),
     };
 
@@ -263,8 +263,8 @@ function createInput(
       decimalPlaces: 4,
       equation: options.isStepGlitchModeEnabled ? "dy" : "y",
       steepness: 67,
-      stepGlitchMode: options.isStepGlitchModeEnabled ?? false,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: options.isStepGlitchModeEnabled ?? false,
+      isStepOverflowProtectionEnabled: true,
     },
     simulationMask: mask,
     simulationMaskCacheId: 1,

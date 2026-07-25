@@ -153,11 +153,7 @@ import {
 } from "./core/types";
 import type { GraphwarDetectionBox } from "./detection/objects";
 import { convertGraphwarExpressionDecimalsToFractions } from "./formula/expression/fraction-output";
-import {
-  formulaModeSupportsStepGlitch,
-  formulaModeUsesSteepness,
-  formulaModeUsesStepGlitch,
-} from "./formula/generation/capabilities";
+import { resolveFormulaModeContract } from "./formula/mode-contract";
 import type { GraphwarKillerLocale } from "./locale-types";
 import { GRAPHWAR_DEFAULT_ROUTE_PLANNING_TOLERANCE_PLANE_PIXELS } from "./pathfinding/one-click-clear/search";
 import type { GraphwarOneClickClearIncumbent } from "./pathfinding/one-click-clear/search";
@@ -350,15 +346,16 @@ const maxXText = ref(graphwarDefaultXLimitText);
 const minYText = ref(`-${graphwarVisibleYLimitText}`);
 const maxYText = ref(graphwarVisibleYLimitText);
 // 公式输入和开关按游戏模式保存；只有高级设置的展开状态有意跨模式共享。
+const formulaModeContract = computed(() =>
+  resolveFormulaModeContract(algorithmMode.value, solverEquationMode.value, isStepGlitchModeEnabled.value),
+);
 const isEffectiveStepGlitchModeEnabled = computed(
-  () =>
-    toolWorkflowMode.value === "solver" &&
-    formulaModeUsesStepGlitch(algorithmMode.value, solverEquationMode.value, isStepGlitchModeEnabled.value),
+  () => toolWorkflowMode.value === "solver" && formulaModeContract.value.pathSearchPolicy.type === "step-glitch",
 );
-const isFormulaStepGlitchSupported = computed(() =>
-  formulaModeSupportsStepGlitch(algorithmMode.value, solverEquationMode.value),
+const isFormulaStepGlitchSupported = computed(
+  () => formulaModeContract.value.pathSearchProfile.type === "step-glitch-capable",
 );
-const isFormulaUsingSteepness = computed(() => formulaModeUsesSteepness(algorithmMode.value, solverEquationMode.value));
+const isFormulaUsingSteepness = computed(() => formulaModeContract.value.formulaSettings.type !== "standard");
 const isAdvancedSettingsVisible = ref(false);
 const shouldSimulatorSkipUnknownCharacters = ref(true);
 const shouldSimulatorParseDerivativeAsY = ref(true);
@@ -1154,7 +1151,7 @@ const {
   getTargetBoundsRect: () => targetBoundsRect.value,
   isFriendlySoldier: getGraphwarAgentFriendlyState,
   pathPixels,
-  requireExactSoldierCenter: () => algorithmMode.value === "step",
+  requireExactSoldierCenter: () => formulaModeContract.value.pathSearchProfile.type !== "stateless",
 });
 // 障碍投影应集中 friendly mask、route/simulation mask、SVG path 和轨迹碰撞设置，页面只保留状态来源。
 const {
@@ -1606,7 +1603,6 @@ const {
     workerCount: liveClickPreviewWorkerCount,
   },
   settings: {
-    algorithmMode,
     isEffectiveSmartPathfindingEnabled: isSmartPathfindingEnabled,
     equationMode,
     isEquationModeEnabled,
@@ -2613,7 +2609,11 @@ watch([algorithmMode, solverEquationMode], () => {
 });
 
 watch([isStepOverflowProtectionEnabled], () => {
-  if (isGraphwarManagedModeEnabled.value || toolWorkflowMode.value !== "solver" || algorithmMode.value !== "step") {
+  if (
+    isGraphwarManagedModeEnabled.value ||
+    toolWorkflowMode.value !== "solver" ||
+    formulaModeContract.value.pathSearchProfile.type === "stateless"
+  ) {
     return;
   }
   cancelSmartPathfinding(false);
@@ -3748,9 +3748,11 @@ function toggleGraphwarManagedMode() {
         algorithm:
           locale.algorithmModes.find((algorithm) => algorithm.value === repair.algorithm)?.label ?? repair.algorithm,
         equation: mode.label,
-        properties: formulaModeUsesStepGlitch(repair.algorithm, mode.value, repair.isStepGlitchModeEnabled === true)
-          ? [locale.ui.settings.stepGlitchMode]
-          : [],
+        properties:
+          resolveFormulaModeContract(repair.algorithm, mode.value, repair.isStepGlitchModeEnabled === true)
+            .pathSearchPolicy.type === "step-glitch"
+            ? [locale.ui.settings.stepGlitchMode]
+            : [],
       },
     ];
   });
@@ -3765,9 +3767,11 @@ function toggleGraphwarManagedMode() {
               locale.algorithmModes.find((algorithm) => algorithm.value === profile.algorithm)?.label ??
               profile.algorithm,
             equation: mode.label,
-            properties: formulaModeUsesStepGlitch(profile.algorithm, mode.value, profile.isStepGlitchModeEnabled)
-              ? [locale.ui.settings.stepGlitchMode]
-              : [],
+            properties:
+              resolveFormulaModeContract(profile.algorithm, mode.value, profile.isStepGlitchModeEnabled)
+                .pathSearchPolicy.type === "step-glitch"
+                ? [locale.ui.settings.stepGlitchMode]
+                : [],
           };
         }),
         repairs,
@@ -4107,13 +4111,13 @@ function createGraphwarManagedSceneKey(state: GraphwarAgentAvailableState, shoot
     friendlyFire: isFriendlyFireEnabled.value,
     gameInstanceId: state.gameInstanceId,
     pathfindingWorkerCount: parsedPathfindingWorkerCount.value.workerCount,
-    routeMode: settings.stepGlitchMode ? "visibility-graph" : getPathfindingRouteMode(),
+    routeMode: settings.isStepGlitchModeEnabled ? "visibility-graph" : getPathfindingRouteMode(),
     shooterPlayerId: shooter.player.playerId,
     shooterSoldierIndex: shooter.soldier.soldierIndex,
     shooterTeam: shooter.player.team,
     steepness: settings.steepness,
-    stepGlitchMode: settings.stepGlitchMode,
-    stepOverflowProtection: settings.stepOverflowProtection,
+    isStepGlitchModeEnabled: settings.isStepGlitchModeEnabled,
+    isStepOverflowProtectionEnabled: settings.isStepOverflowProtectionEnabled,
     tolerances,
     turnToken: state.turnToken,
   });

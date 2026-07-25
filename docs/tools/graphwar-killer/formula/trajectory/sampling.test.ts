@@ -22,6 +22,7 @@ import {
   compareGraphwarPathErrors,
   continueResolvedGraphwarTrajectory,
   createGraphwarResolvedTrajectoryContinuationEvidence,
+  createGraphwarTrajectoryFormulaMode,
   getGraphwarTrajectoryLaunchAngle,
   type GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryResolutionError,
@@ -62,8 +63,8 @@ const settings = {
   decimalPlaces: 4,
   equation: "y" as const,
   steepness: 1,
-  stepGlitchMode: false,
-  stepOverflowProtection: false,
+  isStepGlitchModeEnabled: false,
+  isStepOverflowProtectionEnabled: false,
 };
 const horizontalPoints = [createGraphPoint(-1, 0), createGraphPoint(1, 0)];
 const ordinaryFormulaModes = [
@@ -80,6 +81,21 @@ const ordinaryFormulaModes = [
   ["akima", "dy"],
   ["akima", "ddy"],
 ] as const;
+
+describe("Graphwar trajectory formula modes", () => {
+  it("freezes a settings snapshot with its resolved contract", () => {
+    const mutableSettings = { ...settings };
+    const formulaMode = createGraphwarTrajectoryFormulaMode(mutableSettings);
+
+    mutableSettings.steepness = 99;
+
+    expect(formulaMode.settings.steepness).toBe(settings.steepness);
+    expect(formulaMode.contract.formulaRefinement.type).toBe("direct");
+    expect(Object.isFrozen(formulaMode)).toBe(true);
+    expect(Object.isFrozen(formulaMode.contract)).toBe(true);
+    expect(Object.isFrozen(formulaMode.settings)).toBe(true);
+  });
+});
 
 describe("Graphwar trajectory target tracking", () => {
   it.each(ordinaryFormulaModes)(
@@ -108,7 +124,7 @@ describe("Graphwar trajectory target tracking", () => {
           algorithm,
           equation,
           steepness: 67,
-          stepOverflowProtection: true,
+          isStepOverflowProtectionEnabled: true,
         },
         soldierCenter: points[0],
         targetSequence,
@@ -675,8 +691,8 @@ describe("Generated formula evaluator equivalence", () => {
             decimalPlaces,
             equation: testCase.equation,
             steepness: 210,
-            stepGlitchMode: false,
-            stepOverflowProtection: true,
+            isStepGlitchModeEnabled: false,
+            isStepOverflowProtectionEnabled: true,
           },
           soldierCenter: points[0],
         });
@@ -711,8 +727,8 @@ describe("Generated formula evaluator equivalence", () => {
         decimalPlaces: 15,
         equation: "ddy",
         steepness: 210,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: points[0],
     });
@@ -813,13 +829,13 @@ describe("Generated formula evaluator equivalence", () => {
           targetY: 0,
         },
       ],
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
     const expression = buildFormula(points, 210, "ddy", "step", 4, {
       compiledMaterials,
       signProtection: formulaEvaluation.signProtection,
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     }).expression;
     const compiled = sampleGraphwarTrajectory({
       algorithm: "step",
@@ -871,15 +887,15 @@ describe("Canonical formula settings behavior", () => {
   const points = [createGraphPoint(-10, -1), createGraphPoint(-7, 2), createGraphPoint(-3, -2), createGraphPoint(1, 1)];
   const cases = [
     {
-      changedSettings: { stepOverflowProtection: true },
+      changedSettings: { isStepOverflowProtectionEnabled: true },
       name: "Step y overflow protection",
       settings: {
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "y" as const,
         steepness: 210,
-        stepGlitchMode: false,
-        stepOverflowProtection: false,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: false,
       },
     },
     {
@@ -891,8 +907,8 @@ describe("Canonical formula settings behavior", () => {
         equation: "dy" as const,
         secondOrderLaunchAngleMode: "full-precision" as const,
         steepness: 210,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
     },
     {
@@ -904,8 +920,8 @@ describe("Canonical formula settings behavior", () => {
         equation: "dy" as const,
         formulaPathSteepness: 210,
         steepness: 67,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
     },
   ];
@@ -953,13 +969,13 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation,
         steepness: 210,
-        stepOverflowProtection: true,
+        isStepOverflowProtectionEnabled: true,
       };
       const soft = resolveGraphwarTrajectory({
         bounds,
         boundsRect,
         points: reproductionPoints,
-        settings: { ...baseSettings, stepGlitchMode: false },
+        settings: { ...baseSettings, isStepGlitchModeEnabled: false },
         soldierCenter: reproductionPoints[0],
         targetHitRadiusPixels: 7,
         targetPoint,
@@ -968,7 +984,7 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points: reproductionPoints,
-        settings: { ...baseSettings, stepGlitchMode: true },
+        settings: { ...baseSettings, isStepGlitchModeEnabled: true },
         soldierCenter: reproductionPoints[0],
         stopOnTargetsComplete: false,
         targetHitRadiusPixels: 7,
@@ -1027,8 +1043,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation,
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
       targetHitRadiusPixels: 7,
@@ -1062,8 +1078,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -1124,8 +1140,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -1166,8 +1182,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -1226,8 +1242,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation,
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1248,8 +1264,8 @@ describe("ODE segment position compensation", () => {
         equation: "dy" as const,
         secondOrderLaunchAngleMode: "full-precision" as const,
         steepness: 67,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -1289,8 +1305,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 67,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -1350,8 +1366,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
       targetHitRadiusPixels: 7,
@@ -1399,8 +1415,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1434,8 +1450,8 @@ describe("ODE segment position compensation", () => {
           decimalPlaces: 4,
           equation,
           steepness: 210,
-          stepGlitchMode: true,
-          stepOverflowProtection: true,
+          isStepGlitchModeEnabled: true,
+          isStepOverflowProtectionEnabled: true,
         },
         soldierCenter: pathPoints[0],
       } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -1463,9 +1479,9 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 67,
-        stepGlitchMode: true,
+        isStepGlitchModeEnabled: true,
         stepGlitchObstacleMask: obstacleMask,
-        stepOverflowProtection: true,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -1500,8 +1516,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: shortPoints[0],
     });
@@ -1517,8 +1533,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: points[0],
     });
@@ -1545,8 +1561,8 @@ describe("ODE segment position compensation", () => {
           decimalPlaces: 4,
           equation,
           steepness,
-          stepGlitchMode: false,
-          stepOverflowProtection: true,
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
         },
         soldierCenter: points[0],
       });
@@ -1593,8 +1609,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     }).result.sample;
@@ -1626,8 +1642,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 1,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     }).result.sample;
@@ -1660,8 +1676,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 1,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     }).result.sample;
@@ -1684,8 +1700,8 @@ describe("ODE segment position compensation", () => {
           decimalPlaces: 4,
           equation: "ddy",
           steepness,
-          stepGlitchMode: false,
-          stepOverflowProtection: true,
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
         },
         soldierCenter: pathPoints[0],
       });
@@ -1716,8 +1732,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1745,8 +1761,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 0.5,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1771,8 +1787,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1798,8 +1814,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 1,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1825,8 +1841,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1851,8 +1867,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1873,8 +1889,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1906,8 +1922,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1943,8 +1959,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       soldierCenter: pathPoints[0],
     });
@@ -1976,8 +1992,8 @@ describe("ODE segment position compensation", () => {
           decimalPlaces: 4,
           equation,
           steepness,
-          stepGlitchMode: false,
-          stepOverflowProtection: true,
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
         },
         soldierCenter: customPoints[0],
       }).result.sample;
@@ -2011,8 +2027,8 @@ describe("ODE segment position compensation", () => {
           decimalPlaces: 4,
           equation: "dy",
           steepness,
-          stepGlitchMode: false,
-          stepOverflowProtection: true,
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
         },
         soldierCenter: points[0],
       }).result.sample;
@@ -2030,11 +2046,11 @@ describe("ODE segment position compensation", () => {
   );
 
   it.each([
-    { algorithm: "step", stepGlitchMode: false },
-    { algorithm: "abs", stepGlitchMode: true },
+    { algorithm: "step", isStepGlitchModeEnabled: false },
+    { algorithm: "abs", isStepGlitchModeEnabled: true },
   ] as const)(
     "ignores glitch inputs for $algorithm y' when the mode is disabled or unsupported",
-    ({ algorithm, stepGlitchMode }) => {
+    ({ algorithm, isStepGlitchModeEnabled }) => {
       const directPoints = [createGraphPoint(-11, 0), createGraphPoint(-6, 4)];
       const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
       const obstacle = toPixel(-8.5, 2);
@@ -2044,8 +2060,8 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 67,
-        stepGlitchMode,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled,
+        isStepOverflowProtectionEnabled: true,
       };
       const plain = resolveGraphwarTrajectory({
         bounds,
@@ -2074,8 +2090,8 @@ describe("ODE segment position compensation", () => {
       decimalPlaces: 4,
       equation: "dy" as const,
       steepness: 67,
-      stepGlitchMode: true,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const options = {
       bounds,
@@ -2121,8 +2137,8 @@ describe("pathfinding formula convergence", () => {
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       targetHitRadiusPixels: 1,
       targetPoints: [target],
@@ -2143,9 +2159,9 @@ describe("Step glitch formula prefix", () => {
       decimalPlaces: 4,
       equation: "dy" as const,
       steepness: 67,
-      stepGlitchMode: true,
+      isStepGlitchModeEnabled: true,
       stepGlitchObstacleMask: obstacleMask,
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const prefixPoints = [
       createGraphPoint(-11, 0),
@@ -2254,8 +2270,8 @@ describe("Step glitch formula prefix", () => {
       decimalPlaces: 4,
       equation: "dy" as const,
       steepness: 67,
-      stepGlitchMode: true,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const prefix = resolveGraphwarTrajectory({
       bounds,
@@ -2330,8 +2346,8 @@ describe("Step glitch formula prefix", () => {
       decimalPlaces: 4,
       equation: "dy" as const,
       steepness: 210,
-      stepGlitchMode: true,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const firstPrefixPoints = [createGraphPoint(-10, 0), createGraphPoint(-5, 3)];
     const secondPrefixPoints = [createGraphPoint(-10, 1), createGraphPoint(-5, 4)];
@@ -2415,8 +2431,8 @@ describe("Step glitch formula prefix", () => {
       decimalPlaces: 4,
       equation: "ddy" as const,
       steepness: 153,
-      stepGlitchMode: true,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const prefix = resolveGraphwarTrajectory({
       bounds,

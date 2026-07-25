@@ -341,7 +341,7 @@ async function findSmartPath(
   const isStepGlitchRoute = formulaModeUsesStepGlitch(
     input.settings.algorithm,
     input.settings.equation,
-    input.settings.stepGlitchMode,
+    input.settings.isStepGlitchModeEnabled,
   );
   const debugMetrics = shouldCollectDiagnostics ? createGraphwarPathfindingDebugMetrics(isStepGlitchRoute) : undefined;
   const result = await findSmartPathResult(id, input, debugMetrics, isStepGlitchRoute);
@@ -924,7 +924,7 @@ async function buildOneClickClearPath(
   const isStepGlitchRoute = formulaModeUsesStepGlitch(
     input.settings.algorithm,
     input.settings.equation,
-    input.settings.stepGlitchMode,
+    input.settings.isStepGlitchModeEnabled,
   );
   const debugMetrics = shouldCollectDiagnostics ? createGraphwarPathfindingDebugMetrics(isStepGlitchRoute) : undefined;
   const routeMaskLookup = getMasterRouteMaskFromBase(input, isStepRoute && !isStepGlitchRoute);

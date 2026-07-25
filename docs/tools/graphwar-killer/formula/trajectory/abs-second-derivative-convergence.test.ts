@@ -24,8 +24,8 @@ const settings = {
   equation: "ddy" as const,
   secondOrderLaunchAngleMode: "display-rounded" as const,
   steepness: 1,
-  stepGlitchMode: false,
-  stepOverflowProtection: false,
+  isStepGlitchModeEnabled: false,
+  isStepOverflowProtectionEnabled: false,
 };
 const sampleTrajectory = vi.mocked(sampleGraphwarTrajectory);
 

@@ -135,10 +135,10 @@ export function createGraphwarOneClickClearSearchPreflight(
 export function createGraphwarOneClickClearSearchInput(
   options: GraphwarOneClickClearSearchInputOptions,
 ): GraphwarOneClickClearPathWorkerInput {
-  const stepGlitchMode = formulaModeUsesStepGlitch(
+  const isStepGlitchModeEnabled = formulaModeUsesStepGlitch(
     options.settings.algorithm,
     options.settings.equation,
-    options.settings.stepGlitchMode,
+    options.settings.isStepGlitchModeEnabled,
   );
   return {
     boundaryExpansion: options.tolerances.routeBoundaryInsetPlanePixels,
@@ -157,12 +157,12 @@ export function createGraphwarOneClickClearSearchInput(
     prefixTarget: options.prefixTarget,
     routeMaskCacheId: options.routeMaskCacheId,
     // Step ODE 邪道不消费普通路由算法；规范值让无关配置共享同一结果身份。
-    routeMode: stepGlitchMode ? "visibility-graph" : options.routeMode,
+    routeMode: isStepGlitchModeEnabled ? "visibility-graph" : options.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     // 一键清图的 simulation mask 是任务的唯一碰撞快照；Step 门、验证和最终公式必须共享它。
     settings:
-      stepGlitchMode && options.simulationMask
+      isStepGlitchModeEnabled && options.simulationMask
         ? { ...options.settings, stepGlitchObstacleMask: options.simulationMask }
         : options.settings,
     simulationBoundaryExpansion: options.tolerances.simulationBoundaryInsetPlanePixels,

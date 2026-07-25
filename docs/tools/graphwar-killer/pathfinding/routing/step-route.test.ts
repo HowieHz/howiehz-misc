@@ -23,7 +23,7 @@ describe("stateful Step route evaluation", () => {
       decimalPlaces: 0,
       formulaPathSteepness: 67,
       steepness: 67,
-      stepGlitchMode: true,
+      isStepGlitchModeEnabled: true,
     };
 
     expect(createGraphwarStepRouteModel(200, { ...base, equation: "y" })).toBeDefined();

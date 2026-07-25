@@ -22,7 +22,6 @@ import {
 import { measureSyncStage, nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
-import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import {
   captureGraphwarFinalReplaySnapshot,
   graphwarByteArraysEqual,
@@ -30,6 +29,7 @@ import {
 } from "../../formula/trajectory/final-replay-snapshot";
 import type { GraphwarFinalReplaySnapshot } from "../../formula/trajectory/final-replay-snapshot";
 import {
+  createGraphwarTrajectoryFormulaMode,
   graphwarStepGlitchFormulaEvidenceMatchesSource,
   tryResolveGraphwarTrajectoryCandidate,
 } from "../../formula/trajectory/sampling";
@@ -37,6 +37,7 @@ import type {
   GraphwarStepGlitchFormulaEvidence,
   GraphwarStepGlitchXWindow,
   GraphwarTrajectoryFormulaContext,
+  GraphwarTrajectoryFormulaMode,
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
@@ -176,7 +177,7 @@ export interface GraphwarStepGlitchScanTiming {
 
 /** 固定前缀的坐标和公式设置；候选回放复用映射结果，但不复用物理状态。 */
 interface GraphwarStepGlitchReplayContext {
-  formulaSettings: GraphwarTrajectoryFormulaSettings;
+  formulaMode: GraphwarTrajectoryFormulaMode;
   graphPoints: readonly GraphPoint[];
   simulationBoundaryExpansion: number;
 }
@@ -354,22 +355,22 @@ function createGraphwarStepGlitchReplayContext(
   timings: GraphwarStepGlitchScanTiming[],
 ): GraphwarStepGlitchReplayContext | Exclude<GraphwarStepGlitchScanResult, { status: "hit" }> {
   if (
-    !formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode)
-  ) {
-    return createFailedResult("unsupported", 0, 0, undefined, timings);
-  }
-  if (
     options.sourcePath.length === 0 ||
     options.simulationMask.length !== GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT
   ) {
     return createFailedResult("invalid-input", 0, 0, undefined, timings);
   }
 
+  const settings =
+    options.settings.stepGlitchObstacleMask === options.simulationMask
+      ? options.settings
+      : { ...options.settings, stepGlitchObstacleMask: options.simulationMask };
+  const formulaMode = createGraphwarTrajectoryFormulaMode(settings);
+  if (formulaMode.contract.pathSearchPolicy.type !== "step-glitch") {
+    return createFailedResult("unsupported", 0, 0, undefined, timings);
+  }
   return {
-    formulaSettings:
-      options.settings.stepGlitchObstacleMask === options.simulationMask
-        ? options.settings
-        : { ...options.settings, stepGlitchObstacleMask: options.simulationMask },
+    formulaMode,
     graphPoints: measureStepGlitchMetric(options.debugMetrics, "formulaPointMappingElapsedMs", () =>
       options.sourcePath.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
     ),
@@ -421,8 +422,8 @@ function prepareGraphwarStepGlitchPrefix(
     graphwarStepGlitchFormulaEvidenceMatchesSource(
       {
         bounds: options.bounds,
+        formulaMode: context.formulaMode,
         points: context.graphPoints,
-        settings: context.formulaSettings,
         soldierCenter: context.graphPoints[0],
       },
       evidence.formulaEvidence,
@@ -838,8 +839,8 @@ function replayPathToControlX(
           ),
         }
       : {}),
+    formulaMode: context.formulaMode,
     requiredTargets,
-    settings: context.formulaSettings,
     soldierCenter: graphPoints[0],
     ...(options.prefixEvidence ? { stepGlitchFormulaEvidence: options.prefixEvidence.formulaEvidence } : {}),
     ...(stepGlitchXWindows ? { stepGlitchXWindows } : {}),
@@ -896,7 +897,7 @@ function replayPathToControlX(
               boundaryExpansion: context.simulationBoundaryExpansion,
               bounds: options.bounds,
               boundsRect: options.boundsRect,
-              formulaSettings: context.formulaSettings,
+              formulaSettings: context.formulaMode.settings,
               path,
               replaySemantics: "full-natural-visible",
               requiredTargets,

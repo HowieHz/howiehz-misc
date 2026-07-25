@@ -13,8 +13,8 @@ const settings = {
   decimalPlaces: 4,
   equation: "dy" as const,
   steepness: 67,
-  stepGlitchMode: true,
-  stepOverflowProtection: true,
+  isStepGlitchModeEnabled: true,
+  isStepOverflowProtectionEnabled: true,
 };
 
 describe("Graphwar final replay snapshot", () => {

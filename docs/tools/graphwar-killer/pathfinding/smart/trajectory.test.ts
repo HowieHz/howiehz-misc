@@ -31,9 +31,9 @@ describe("Step glitch smart trajectory validation", () => {
         decimalPlaces: 4,
         equation: "dy",
         steepness: 67,
-        stepGlitchMode: true,
+        isStepGlitchModeEnabled: true,
         stepGlitchObstacleMask: obstacleMask,
-        stepOverflowProtection: true,
+        isStepOverflowProtectionEnabled: true,
       },
       targetHitRadiusPixels: 300,
     });
@@ -58,8 +58,8 @@ describe("Step glitch smart trajectory validation", () => {
         decimalPlaces: 4,
         equation: "y",
         steepness: 67,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
       targetHitRadiusPixels: 2,
     });

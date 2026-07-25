@@ -32,8 +32,8 @@ const settings = {
   decimalPlaces: 4,
   equation: "y" as const,
   steepness: 67,
-  stepGlitchMode: false,
-  stepOverflowProtection: true,
+  isStepGlitchModeEnabled: false,
+  isStepOverflowProtectionEnabled: true,
 };
 const statelessSplineModes = [
   ["pchip", "y"],
@@ -844,7 +844,7 @@ describe("One-click clear optimization", () => {
     const glitchSettings = {
       ...settings,
       equation: "dy" as const,
-      stepGlitchMode: true,
+      isStepGlitchModeEnabled: true,
       stepGlitchObstacleMask: simulationMask,
     };
     let finalValidationCount = 0;

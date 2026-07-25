@@ -1,22 +1,28 @@
-import { formulaModeUsesSteepness, formulaModeUsesStepGlitch } from "../generation/capabilities";
+import { resolveFormulaModeContract } from "../mode-contract";
 import type { GraphwarTrajectoryFormulaSettings } from "./sampling";
 
 /** 只保留当前算法和方程实际消费字段的 canonical 公式设置身份。 */
 export function createGraphwarTrajectoryFormulaSettingsIdentity(settings: GraphwarTrajectoryFormulaSettings) {
+  const modeContract = resolveFormulaModeContract(
+    settings.algorithm,
+    settings.equation,
+    settings.isStepGlitchModeEnabled,
+  );
   return {
     algorithm: settings.algorithm,
     decimalPlaces: settings.decimalPlaces,
     equation: settings.equation,
-    ...(settings.algorithm === "step"
+    ...(modeContract.formulaSettings.type === "step" || modeContract.formulaSettings.type === "step-ode"
       ? { formulaPathSteepness: settings.formulaPathSteepness ?? settings.steepness }
       : {}),
     ...(settings.equation === "ddy"
       ? { secondOrderLaunchAngleMode: settings.secondOrderLaunchAngleMode ?? "full-precision" }
       : {}),
-    ...(formulaModeUsesSteepness(settings.algorithm, settings.equation) ? { steepness: settings.steepness } : {}),
-    stepGlitchMode: formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.stepGlitchMode),
-    ...(settings.algorithm === "step" && settings.equation !== "y"
-      ? { stepOverflowProtection: settings.stepOverflowProtection }
+    ...(modeContract.formulaSettings.type === "standard" ? {} : { steepness: settings.steepness }),
+    // 旧字段名属于 canonical cache JSON 协议，输入字段重命名不能改变既有 key。
+    stepGlitchMode: modeContract.pathSearchPolicy.type === "step-glitch",
+    ...(modeContract.formulaSettings.type === "step-ode"
+      ? { stepOverflowProtection: settings.isStepOverflowProtectionEnabled }
       : {}),
   };
 }

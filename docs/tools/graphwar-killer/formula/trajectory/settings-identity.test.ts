@@ -13,8 +13,8 @@ const baseSettings: GraphwarTrajectoryFormulaSettings = {
   decimalPlaces: 4,
   equation: "dy",
   steepness: 67,
-  stepGlitchMode: false,
-  stepOverflowProtection: true,
+  isStepGlitchModeEnabled: false,
+  isStepOverflowProtectionEnabled: true,
 };
 
 describe("Graphwar trajectory formula settings identity", () => {
@@ -27,7 +27,7 @@ describe("Graphwar trajectory formula settings identity", () => {
     ),
   )(
     "preserves the legacy canonical key for %s %s with Step-glitch request %s",
-    (algorithm, equation, stepGlitchMode) => {
+    (algorithm, equation, isStepGlitchModeEnabled) => {
       const settings: GraphwarTrajectoryFormulaSettings = {
         ...baseSettings,
         algorithm,
@@ -35,8 +35,8 @@ describe("Graphwar trajectory formula settings identity", () => {
         formulaPathSteepness: 71,
         secondOrderLaunchAngleMode: "display-rounded",
         steepness: 68,
-        stepGlitchMode,
-        stepOverflowProtection: false,
+        isStepGlitchModeEnabled,
+        isStepOverflowProtectionEnabled: false,
       };
       const expectedIdentity = {
         algorithm,
@@ -47,9 +47,9 @@ describe("Graphwar trajectory formula settings identity", () => {
         ...(algorithm === "step" || (algorithm === "abs" && equation === "ddy")
           ? { steepness: settings.steepness }
           : {}),
-        stepGlitchMode: stepGlitchMode && algorithm === "step" && equation !== "y",
+        stepGlitchMode: isStepGlitchModeEnabled && algorithm === "step" && equation !== "y",
         ...(algorithm === "step" && equation !== "y"
-          ? { stepOverflowProtection: settings.stepOverflowProtection }
+          ? { stepOverflowProtection: settings.isStepOverflowProtectionEnabled }
           : {}),
       };
 
@@ -92,26 +92,26 @@ describe("Graphwar trajectory formula settings identity", () => {
   });
 
   it("only includes overflow protection for Step ODE formulas", () => {
-    expect(identity({ equation: "dy", stepOverflowProtection: false })).not.toEqual(
-      identity({ equation: "dy", stepOverflowProtection: true }),
+    expect(identity({ equation: "dy", isStepOverflowProtectionEnabled: false })).not.toEqual(
+      identity({ equation: "dy", isStepOverflowProtectionEnabled: true }),
     );
-    expect(identity({ equation: "y", stepOverflowProtection: false })).toEqual(
-      identity({ equation: "y", stepOverflowProtection: true }),
+    expect(identity({ equation: "y", isStepOverflowProtectionEnabled: false })).toEqual(
+      identity({ equation: "y", isStepOverflowProtectionEnabled: true }),
     );
-    expect(identity({ algorithm: "abs", equation: "ddy", stepOverflowProtection: false })).toEqual(
-      identity({ algorithm: "abs", equation: "ddy", stepOverflowProtection: true }),
+    expect(identity({ algorithm: "abs", equation: "ddy", isStepOverflowProtectionEnabled: false })).toEqual(
+      identity({ algorithm: "abs", equation: "ddy", isStepOverflowProtectionEnabled: true }),
     );
   });
 
   it("normalizes dormant glitch preferences and leaves mask identity to callers", () => {
-    expect(identity({ equation: "dy", stepGlitchMode: false })).not.toEqual(
-      identity({ equation: "dy", stepGlitchMode: true }),
+    expect(identity({ equation: "dy", isStepGlitchModeEnabled: false })).not.toEqual(
+      identity({ equation: "dy", isStepGlitchModeEnabled: true }),
     );
-    expect(identity({ equation: "y", stepGlitchMode: false })).toEqual(
-      identity({ equation: "y", stepGlitchMode: true }),
+    expect(identity({ equation: "y", isStepGlitchModeEnabled: false })).toEqual(
+      identity({ equation: "y", isStepGlitchModeEnabled: true }),
     );
-    expect(identity({ algorithm: "abs", equation: "dy", stepGlitchMode: false })).toEqual(
-      identity({ algorithm: "abs", equation: "dy", stepGlitchMode: true }),
+    expect(identity({ algorithm: "abs", equation: "dy", isStepGlitchModeEnabled: false })).toEqual(
+      identity({ algorithm: "abs", equation: "dy", isStepGlitchModeEnabled: true }),
     );
     expect(
       graphwarTrajectoryFormulaSettingsAreEquivalent(

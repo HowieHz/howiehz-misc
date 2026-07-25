@@ -219,8 +219,8 @@ describe("one-click-clear native-column target assignment", () => {
         equation: "dy",
         formulaPathSteepness: 210,
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
       },
       targetCircles: [
         { center: firstCenter, radius: 7 },

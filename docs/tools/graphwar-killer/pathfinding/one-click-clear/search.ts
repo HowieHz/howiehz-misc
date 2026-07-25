@@ -614,7 +614,7 @@ export async function buildGraphwarOneClickClearPath(
   const isStepGlitchModeEnabled = formulaModeUsesStepGlitch(
     options.settings.algorithm,
     options.settings.equation,
-    options.settings.stepGlitchMode,
+    options.settings.isStepGlitchModeEnabled,
   );
   const isPrefixValid = isStepGlitchModeEnabled
     ? true
@@ -1744,7 +1744,11 @@ function mergeOneClickClearContinuationPoints<TPoint extends { readonly x: numbe
 function oneClickClearStepRouteIsValid(options: GraphwarOneClickClearOptions, pathPoints: readonly PixelPoint[]) {
   return (
     options.settings.algorithm !== "step" ||
-    formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode) ||
+    formulaModeUsesStepGlitch(
+      options.settings.algorithm,
+      options.settings.equation,
+      options.settings.isStepGlitchModeEnabled,
+    ) ||
     options.validateStepRoute?.(pathPoints.map(clonePixelPoint)) === true
   );
 }
@@ -1758,8 +1762,11 @@ function sampleOneClickClearTargetSequence(
   const validationTargets = createOneClickClearValidationTargets(options, route.targetSequence, true);
   const lastPathPoint = route.pathPoints.at(-1);
   const targetControlGraphX =
-    formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode) &&
-    lastPathPoint
+    formulaModeUsesStepGlitch(
+      options.settings.algorithm,
+      options.settings.equation,
+      options.settings.isStepGlitchModeEnabled,
+    ) && lastPathPoint
       ? imageToGraphPoint(lastPathPoint, options.bounds, options.boundsRect).x
       : undefined;
   const trackedTargets = trackActualHits ? createOneClickClearTrackedTargets(options, route) : [];
@@ -2121,7 +2128,7 @@ function shouldValidateOneClickClearPrefixTarget(options: GraphwarOneClickClearO
     !formulaModeUsesStepGlitch(
       options.settings.algorithm,
       options.settings.equation,
-      options.settings.stepGlitchMode,
+      options.settings.isStepGlitchModeEnabled,
     ) &&
     !formulaModePreservesPrefixWhenAppending(options.settings.algorithm, options.settings.equation)
   );
@@ -2407,7 +2414,7 @@ async function optimizeOneClickClearPath(
   const protectedTargetPoints = formulaModeUsesStepGlitch(
     context.options.settings.algorithm,
     context.options.settings.equation,
-    context.options.settings.stepGlitchMode,
+    context.options.settings.isStepGlitchModeEnabled,
   )
     ? new Set(route.targetSequence.map((target) => target.routePoint))
     : undefined;

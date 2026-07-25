@@ -12,7 +12,7 @@ import type {
   ReadonlyValue as ReadonlyRef,
   ToolWorkflowMode,
 } from "../../core/types";
-import { formulaModeUsesSteepness, formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
+import { resolveFormulaModeContract } from "../../formula/mode-contract";
 import type {
   GraphwarTrajectoryCollisionSettings,
   GraphwarTrajectoryFormulaSettings,
@@ -208,6 +208,13 @@ export function useGraphwarTrajectoryResult(
 ): GraphwarTrajectoryResultController {
   const formulaOutputDecimalPlaces = computed(() => options.settings.precisionDecimalPlaces.value);
   const formulaSteepness = computed(() => options.settings.steepness.value);
+  const formulaModeContract = computed(() =>
+    resolveFormulaModeContract(
+      options.settings.algorithmMode.value,
+      options.settings.equationMode.value,
+      options.settings.isStepGlitchModeEnabled.value,
+    ),
+  );
   const simulatorLaunchAngleRadians = computed(() => {
     if (options.settings.equationMode.value !== "ddy") {
       return undefined;
@@ -217,12 +224,8 @@ export function useGraphwarTrajectoryResult(
   });
   const graphwarTrajectoryFormulaSettings = computed<GraphwarTrajectoryFormulaSettings>(() => {
     const equation = options.settings.equationMode.value;
-    const stepGlitchMode = formulaModeUsesStepGlitch(
-      options.settings.algorithmMode.value,
-      options.settings.equationMode.value,
-      options.settings.isStepGlitchModeEnabled.value,
-    );
-    const stepGlitchObstacleMask = stepGlitchMode ? options.settings.getStepGlitchObstacleMask() : undefined;
+    const isStepGlitchModeEnabled = formulaModeContract.value.pathSearchPolicy.type === "step-glitch";
+    const stepGlitchObstacleMask = isStepGlitchModeEnabled ? options.settings.getStepGlitchObstacleMask() : undefined;
     return {
       algorithm: options.settings.algorithmMode.value,
       decimalPlaces: formulaOutputDecimalPlaces.value,
@@ -232,9 +235,9 @@ export function useGraphwarTrajectoryResult(
         : {}),
       formulaPathSteepness: formulaSteepness.value,
       steepness: formulaSteepness.value,
-      stepGlitchMode,
+      isStepGlitchModeEnabled,
       ...(stepGlitchObstacleMask ? { stepGlitchObstacleMask } : {}),
-      stepOverflowProtection: options.settings.isStepOverflowProtectionEnabled.value,
+      isStepOverflowProtectionEnabled: options.settings.isStepOverflowProtectionEnabled.value,
     };
   });
 
@@ -548,8 +551,7 @@ export function useGraphwarTrajectoryResult(
     if (
       points.length < 2 ||
       !options.settings.isPrecisionValid.value ||
-      (formulaModeUsesSteepness(options.settings.algorithmMode.value, options.settings.equationMode.value) &&
-        !options.settings.isSteepnessValid.value) ||
+      (formulaModeContract.value.formulaSettings.type !== "standard" && !options.settings.isSteepnessValid.value) ||
       !options.settings.isEquationModeEnabled(options.settings.equationMode.value)
     ) {
       return undefined;

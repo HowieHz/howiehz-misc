@@ -3,7 +3,6 @@ import { computed, ref, watch, type Ref } from "vue";
 import { imageToGraphPoint, normalizePathPoint, pixelPointsEqual } from "../../core/geometry";
 import { createGraphPoint } from "../../core/types";
 import type {
-  AlgorithmMode,
   BoundsRect,
   EquationMode,
   GraphBounds,
@@ -14,7 +13,7 @@ import type {
   ToolWorkflowMode,
 } from "../../core/types";
 import type { GraphwarDetectionBox } from "../../detection/objects";
-import { formulaModeUsesSteepness } from "../../formula/generation/capabilities";
+import { resolveFormulaModeContract } from "../../formula/mode-contract";
 import type {
   GraphwarTrajectoryCollisionSettings,
   GraphwarTrajectoryFormulaSettings,
@@ -56,7 +55,6 @@ interface GraphwarLiveClickPreviewOptions {
   };
   /** 公式和模式开关应由页面统一解析，预览只消费合法性结果。 */
   settings: {
-    algorithmMode: ReadonlyRef<AlgorithmMode>;
     isEffectiveSmartPathfindingEnabled: ReadonlyRef<boolean>;
     equationMode: ReadonlyRef<EquationMode>;
     isEquationModeEnabled: (mode: EquationMode) => boolean;
@@ -503,11 +501,16 @@ export function useGraphwarLiveClickPreview(
       };
     }
 
+    const formulaSettings = options.trajectory.formulaSettings.value;
+    const modeContract = resolveFormulaModeContract(
+      formulaSettings.algorithm,
+      formulaSettings.equation,
+      formulaSettings.isStepGlitchModeEnabled,
+    );
     if (
       options.path.pathPixels.value.length === 0 ||
       !options.settings.isPrecisionValid.value ||
-      (formulaModeUsesSteepness(options.settings.algorithmMode.value, options.settings.equationMode.value) &&
-        !options.settings.isSteepnessValid.value) ||
+      (modeContract.formulaSettings.type !== "standard" && !options.settings.isSteepnessValid.value) ||
       !options.settings.isEquationModeEnabled(options.settings.equationMode.value)
     ) {
       return undefined;
@@ -516,7 +519,7 @@ export function useGraphwarLiveClickPreview(
       ...base,
       // 固定已有路径点；仅鼠标预览点留到每个请求创建时追加。
       points: options.path.mappedPathPoints.value.map((pathPoint) => createGraphPoint(pathPoint.x, pathPoint.y)),
-      settings: options.trajectory.formulaSettings.value,
+      settings: formulaSettings,
       type: "formula",
     };
   }

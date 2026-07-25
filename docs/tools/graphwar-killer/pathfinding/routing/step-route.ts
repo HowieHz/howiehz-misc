@@ -69,7 +69,7 @@ type GraphwarStepRouteSettings = Pick<
   GraphwarTrajectoryFormulaSettings,
   "algorithm" | "decimalPlaces" | "equation" | "formulaPathSteepness" | "steepness"
 > &
-  Partial<Pick<GraphwarTrajectoryFormulaSettings, "stepGlitchMode">>;
+  Partial<Pick<GraphwarTrajectoryFormulaSettings, "isStepGlitchModeEnabled">>;
 
 /** Step 边评估共享的包络和障碍碰撞上下文。 */
 interface GraphwarStepRouteCollisionContext {
@@ -97,7 +97,7 @@ export function createGraphwarStepRouteModel(
 ): GraphwarStepRouteModel | undefined {
   if (
     settings.algorithm !== "step" ||
-    formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.stepGlitchMode === true) ||
+    formulaModeUsesStepGlitch(settings.algorithm, settings.equation, settings.isStepGlitchModeEnabled === true) ||
     !Number.isFinite(originY)
   ) {
     return undefined;

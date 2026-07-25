@@ -38,7 +38,7 @@ export interface BuildFormulaOptions {
   /** 判断 step 项是否可能溢出的有效 x 范围。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否允许输出抗溢出的 step 表达式。 */
-  stepOverflowProtection?: boolean;
+  isStepOverflowProtectionEnabled?: boolean;
 }
 
 /** A(abs(x+b)-abs(x+c)) 连接函数使用的标准化线段数据。 */
@@ -602,7 +602,7 @@ function createCompiledStepDerivativeOverflowProtection(
 ) {
   return options?.stepOverflowProtectionRange
     ? shouldUseStepDerivativeOverflowProtection(steepness, centerX, options)
-    : (options?.stepOverflowProtection ?? true);
+    : (options?.isStepOverflowProtectionEnabled ?? true);
 }
 
 /** 编译和输出都应显式使用同一份最终公式小数位。 */
@@ -620,7 +620,7 @@ function createFormulaEvaluationOptions(
     equation,
     formulaDecimalPlaces: decimalPlaces,
     signProtection: options.signProtection,
-    stepOverflowProtection: options.stepOverflowProtection ?? true,
+    isStepOverflowProtectionEnabled: options.isStepOverflowProtectionEnabled ?? true,
     stepOverflowProtectionRange: options.stepOverflowProtectionRange,
   };
 }

@@ -81,8 +81,11 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
 
   const lastPoint = options.points.at(-1);
   const targetControlGraphX =
-    formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode) &&
-    lastPoint
+    formulaModeUsesStepGlitch(
+      options.settings.algorithm,
+      options.settings.equation,
+      options.settings.isStepGlitchModeEnabled,
+    ) && lastPoint
       ? imageToGraphPoint(lastPoint, options.bounds, options.boundsRect).x
       : undefined;
   const result = sampleGraphwarPathTargetSequence({

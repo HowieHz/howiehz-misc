@@ -1,11 +1,13 @@
 import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
+  createGraphwarTrajectoryFormulaMode,
   getGraphwarTrajectoryLaunchAngle,
   GraphwarTrajectoryResolutionError,
   resolveGraphwarTrajectory,
   sampleGraphwarExpressionTrajectoryWithStops,
   type GraphwarTrajectoryCollisionSettings,
+  type GraphwarTrajectoryFormulaMode,
   type GraphwarTrajectoryFormulaSettings,
   type GraphwarTrajectorySampleResult,
 } from "../../formula/trajectory/sampling";
@@ -105,12 +107,15 @@ export interface GraphwarTrajectoryCalculationWorkerResponse {
 export function calculateGraphwarTrajectory(
   input: GraphwarTrajectoryCalculationInput,
 ): GraphwarTrajectoryCalculationOutcome {
-  return input.type === "solver" ? calculateSolverTrajectory(input) : calculateSimulatorTrajectory(input);
+  return input.type === "solver"
+    ? calculateSolverTrajectory(input, createGraphwarTrajectoryFormulaMode(input.settings))
+    : calculateSimulatorTrajectory(input);
 }
 
 /** 分阶段解算求解器输入，让公式生成与轨迹模拟异常保留各自的页面错误语义。 */
 function calculateSolverTrajectory(
   input: Extract<GraphwarTrajectoryCalculationInput, { type: "solver" }>,
+  formulaMode: GraphwarTrajectoryFormulaMode,
 ): GraphwarTrajectoryCalculationOutcome {
   let resolved: ReturnType<typeof resolveGraphwarTrajectory>;
   let launchAngleRadians: number;
@@ -125,9 +130,9 @@ function calculateSolverTrajectory(
       boundsRect: input.boundsRect,
       ...(input.collision ? { collision: input.collision } : {}),
       collectVisiblePixels: true,
+      formulaMode,
       points: input.points,
       qualityPoints: input.points.slice(1, isTargetCircleConfigured ? -1 : input.points.length),
-      settings: input.settings,
       soldierCenter: input.points[0],
       // 主轨迹必须继续画到自然停止点；目标只记录首次命中，不能为了统计截短曲线。
       stopOnTargetsComplete: false,

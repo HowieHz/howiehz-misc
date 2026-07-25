@@ -20,6 +20,8 @@ import {
 import { sampleGraphwarExpressionTrajectory, sampleGraphwarTrajectory } from "../simulation/simulator";
 import {
   compareGraphwarPathErrors,
+  continueResolvedGraphwarTrajectory,
+  createGraphwarResolvedTrajectoryContinuationEvidence,
   getGraphwarTrajectoryLaunchAngle,
   type GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryResolutionError,
@@ -64,8 +66,324 @@ const settings = {
   stepOverflowProtection: false,
 };
 const horizontalPoints = [createGraphPoint(-1, 0), createGraphPoint(1, 0)];
+const ordinaryFormulaModes = [
+  ["step", "y"],
+  ["step", "dy"],
+  ["step", "ddy"],
+  ["abs", "y"],
+  ["abs", "dy"],
+  ["abs", "ddy"],
+  ["pchip", "y"],
+  ["pchip", "dy"],
+  ["pchip", "ddy"],
+  ["akima", "y"],
+  ["akima", "dy"],
+  ["akima", "ddy"],
+] as const;
 
 describe("Graphwar trajectory target tracking", () => {
+  it.each(ordinaryFormulaModes)(
+    "keeps fixed-formula %s %s continuation identical through required, tracked, and collision boundaries",
+    (algorithm, equation) => {
+      const points = [createGraphPoint(-20, 0), createGraphPoint(-15, 0), createGraphPoint(-10, 0)];
+      const requiredTargets = [{ center: toPixel(-15, 0), radius: 2 }];
+      const targetSequence = [{ center: toPixel(-10, 0), radius: 2 }];
+      const trackedTargets = [
+        { center: toPixel(-15, 0), radius: 2 },
+        { center: toPixel(-10, 0), radius: 2 },
+        { center: toPixel(0, 0), radius: 2 },
+      ];
+      const obstaclePixel = toPixel(5, 0);
+      const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+      obstacleMask[Math.floor(obstaclePixel.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(obstaclePixel.x)] = 1;
+      const common = {
+        bounds,
+        boundsRect,
+        collision: { mask: obstacleMask },
+        collectVisiblePixels: true,
+        points,
+        requiredTargets,
+        settings: {
+          ...settings,
+          algorithm,
+          equation,
+          steepness: 67,
+          stepOverflowProtection: true,
+        },
+        soldierCenter: points[0],
+        targetSequence,
+        trackedTargets,
+      } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+      const prefix = resolveGraphwarTrajectory(common);
+      const evidence = createGraphwarResolvedTrajectoryContinuationEvidence(prefix);
+      expect(evidence).toBeDefined();
+      if (!evidence) {
+        return;
+      }
+      const continued = continueResolvedGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        collision: common.collision,
+        collectVisiblePixels: true,
+        evidence,
+        qualityPoints: [],
+        requiredTargets,
+        stopOnTargetsComplete: false,
+        targetSequence,
+        trackedTargets,
+      });
+      expect(continued.status).toBe("continued");
+      if (continued.status !== "continued") {
+        return;
+      }
+      const cold = resolveGraphwarTrajectory({ ...common, stopOnTargetsComplete: false });
+      const combinedPoints = mergeContinuationTestPoints(prefix.result.sample.points, continued.result.sample.points);
+      const combinedVisiblePixels = mergeContinuationTestPoints(
+        prefix.result.visiblePixels,
+        continued.result.visiblePixels,
+      );
+      const trackedTargetHitIndexes = trackedTargets.map((_target, targetIndex) => {
+        const prefixHitIndex = prefix.result.trackedTargetHitIndexes[targetIndex] ?? -1;
+        return prefixHitIndex >= 0 ? prefixHitIndex : (continued.result.trackedTargetHitIndexes[targetIndex] ?? -1);
+      });
+
+      expect(prefix.context.formulaResult.expression).toBe(cold.context.formulaResult.expression);
+      expect(getGraphwarTrajectoryLaunchAngle(prefix.context)).toBe(getGraphwarTrajectoryLaunchAngle(cold.context));
+      expect(prefix.context.signProtection).toEqual(cold.context.signProtection);
+      expect(combinedPoints).toEqual(cold.result.sample.points);
+      expect(continued.result.sample.endState).toEqual(cold.result.sample.endState);
+      expect(continued.result.sample.stopReason).toBe(cold.result.sample.stopReason);
+      expect(combinedVisiblePixels).toEqual(cold.result.visiblePixels);
+      expect(continued.result.earlyStopReason).toBe(cold.result.earlyStopReason);
+      expect(continued.result.obstacleHitIndex).toBe(cold.result.obstacleHitIndex);
+      expect(continued.result.reachedRequiredTargetCount).toBe(cold.result.reachedRequiredTargetCount);
+      expect(continued.result.reachedTargetCount).toBe(cold.result.reachedTargetCount);
+      expect(prefix.result.requiredTargetsHitIndex).toBe(cold.result.requiredTargetsHitIndex);
+      expect(prefix.result.targetHitIndex).toBe(cold.result.targetHitIndex);
+      expect(trackedTargetHitIndexes).toEqual(cold.result.trackedTargetHitIndexes);
+    },
+  );
+
+  it("requires a cold replay when resolved-continuation sign identity mismatches", () => {
+    const target = { center: toPixel(0, 0), radius: 2 };
+    const prefix = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: horizontalPoints,
+      settings,
+      soldierCenter: horizontalPoints[0],
+      targetSequence: [target],
+    });
+    const evidence = createGraphwarResolvedTrajectoryContinuationEvidence(prefix);
+    expect(evidence).toBeDefined();
+    if (!evidence) {
+      return;
+    }
+    const incompatibleSignProtection = [...prefix.context.signProtection];
+    incompatibleSignProtection[0] = (incompatibleSignProtection[0] ?? 0) ^ GraphwarSignRole.StartX;
+    const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+
+    const continued = continueResolvedGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      debugMetrics,
+      evidence: {
+        ...evidence,
+        start: { ...evidence.start, signProtection: incompatibleSignProtection },
+      },
+      stopOnTargetsComplete: false,
+      targetSequence: [target],
+    });
+
+    expect(continued).toEqual({ status: "cold-required" });
+    expect(debugMetrics.counters.trajectoryReplayCount).toBe(0);
+  });
+
+  it("rechecks collision at a target-completion continuation seam", () => {
+    const points = [createGraphPoint(-20, 0), createGraphPoint(-10, 0)];
+    const target = { center: toPixel(-10, 0), radius: 2 };
+    const probe = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      points,
+      settings,
+      soldierCenter: points[0],
+      targetSequence: [target],
+    });
+    const seamPixel = probe.result.visiblePixels.at(-1);
+    if (!seamPixel) {
+      throw new Error("Expected the target-completion sample to expose a visible seam point");
+    }
+    const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    obstacleMask[Math.floor(seamPixel.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(seamPixel.x)] = 1;
+    const common = {
+      bounds,
+      boundsRect,
+      collision: { mask: obstacleMask },
+      collectVisiblePixels: true,
+      points,
+      settings,
+      soldierCenter: points[0],
+      targetSequence: [target],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const prefix = resolveGraphwarTrajectory(common);
+    const evidence = createGraphwarResolvedTrajectoryContinuationEvidence(prefix);
+    if (!evidence) {
+      throw new Error("Expected target completion to expose a resumable state");
+    }
+
+    const continued = continueResolvedGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collision: common.collision,
+      collectVisiblePixels: true,
+      evidence,
+      stopOnTargetsComplete: false,
+      targetSequence: [target],
+    });
+    const cold = resolveGraphwarTrajectory({ ...common, stopOnTargetsComplete: false });
+
+    expect(prefix.result.earlyStopReason).toBe("target");
+    expect(continued.status).toBe("continued");
+    if (continued.status === "continued") {
+      expect(continued.result.obstacleHitIndex).toBe(cold.result.obstacleHitIndex);
+      expect(mergeContinuationTestPoints(prefix.result.visiblePixels, continued.result.visiblePixels)).toEqual(
+        cold.result.visiblePixels,
+      );
+    }
+  });
+
+  it("requires a cold replay when resolved context and continuation state come from different formulas", () => {
+    const target = { center: toPixel(0, 0), radius: 2 };
+    const first = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: horizontalPoints,
+      settings,
+      soldierCenter: horizontalPoints[0],
+      targetSequence: [target],
+    });
+    const secondPoints = [createGraphPoint(-1, 1), createGraphPoint(1, 2)];
+    const second = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: secondPoints,
+      settings,
+      soldierCenter: secondPoints[0],
+      targetSequence: [{ center: toPixel(0, 1.5), radius: 2 }],
+    });
+    const evidence = createGraphwarResolvedTrajectoryContinuationEvidence(first);
+    if (!evidence) {
+      throw new Error("Expected the first formula to expose a resumable state");
+    }
+
+    expect(
+      continueResolvedGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        evidence: { ...evidence, context: second.context },
+        stopOnTargetsComplete: false,
+      }),
+    ).toEqual({ status: "cold-required" });
+  });
+
+  it("preserves exact required, ordered, and tracked indexes across multiple fixed-formula continuations", () => {
+    const points = [
+      createGraphPoint(-20, 0),
+      createGraphPoint(-15, 0),
+      createGraphPoint(-10, 0),
+      createGraphPoint(-5, 0),
+    ];
+    const targets = [
+      { center: toPixel(-15, 0), radius: 2 },
+      { center: toPixel(-10, 0), radius: 2 },
+      { center: toPixel(-5, 0), radius: 2 },
+    ];
+    const first = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      points,
+      settings,
+      soldierCenter: points[0],
+      targetSequence: [targets[0]],
+      trackedTargets: targets,
+    });
+    const firstEvidence = createGraphwarResolvedTrajectoryContinuationEvidence(first, {
+      reachedRequiredTargetCount: 1,
+      reachedTargetCount: 0,
+    });
+    if (!firstEvidence) {
+      throw new Error("Expected the first target to expose continuation evidence");
+    }
+    const second = continueResolvedGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      evidence: firstEvidence,
+      requiredTargets: [targets[0]],
+      targetSequence: [targets[1]],
+      trackedTargets: targets,
+    });
+    if (second.status !== "continued") {
+      throw new Error("Expected the second target to continue the fixed formula");
+    }
+    const secondEvidence = createGraphwarResolvedTrajectoryContinuationEvidence(
+      { context: first.context, result: second.result },
+      { reachedRequiredTargetCount: 2, reachedTargetCount: 0 },
+    );
+    if (!secondEvidence) {
+      throw new Error("Expected the second target to expose continuation evidence");
+    }
+    const third = continueResolvedGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      evidence: secondEvidence,
+      requiredTargets: targets.slice(0, 2),
+      stopOnTargetsComplete: false,
+      targetSequence: [targets[2]],
+      trackedTargets: targets,
+    });
+    if (third.status !== "continued") {
+      throw new Error("Expected the third target to continue the fixed formula");
+    }
+    const cold = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      points,
+      requiredTargets: targets.slice(0, 2),
+      settings,
+      soldierCenter: points[0],
+      stopOnTargetsComplete: false,
+      targetSequence: [targets[2]],
+      trackedTargets: targets,
+    });
+    const mergedPoints = mergeContinuationTestPoints(
+      mergeContinuationTestPoints(first.result.sample.points, second.result.sample.points),
+      third.result.sample.points,
+    );
+    const mergedVisiblePixels = mergeContinuationTestPoints(
+      mergeContinuationTestPoints(first.result.visiblePixels, second.result.visiblePixels),
+      third.result.visiblePixels,
+    );
+    const mergedTrackedTargetHitIndexes = targets.map((_target, targetIndex) =>
+      [first.result, second.result, third.result]
+        .map((result) => result.trackedTargetHitIndexes[targetIndex] ?? -1)
+        .find((index) => index >= 0),
+    );
+
+    expect(second.result.requiredTargetsHitIndex).toBe(first.result.targetHitIndex);
+    expect(third.result.requiredTargetsHitIndex).toBe(second.result.targetHitIndex);
+    expect(third.result.requiredTargetsHitIndex).toBe(cold.result.requiredTargetsHitIndex);
+    expect(third.result.targetHitIndex).toBe(cold.result.targetHitIndex);
+    expect(mergedTrackedTargetHitIndexes).toEqual(cold.result.trackedTargetHitIndexes);
+    expect(mergedPoints).toEqual(cold.result.sample.points);
+    expect(mergedVisiblePixels).toEqual(cold.result.visiblePixels);
+  });
+
   it("tracks every strict-circle hit after the launch point while continuing past the ordered sequence", () => {
     const launchPixel = toPixel(0, 0);
     const firstPixel = toPixel(GRAPHWAR_STEP_SIZE, 0);
@@ -2143,6 +2461,19 @@ describe("Step glitch formula prefix", () => {
 /** Converts a Graphwar coordinate pair into the shared test fixture's image space. */
 function toPixel(x: number, y: number) {
   return graphToImagePoint(createGraphPoint(x, y), bounds, boundsRect);
+}
+
+/** Mirrors the production continuation seam: the simulator may include the resume point or start at its successor. */
+function mergeContinuationTestPoints<TPoint extends { readonly x: number; readonly y: number }>(
+  prefix: readonly TPoint[],
+  suffix: readonly TPoint[],
+) {
+  const prefixEnd = prefix.at(-1);
+  const suffixStart = suffix[0];
+  return [
+    ...prefix,
+    ...suffix.slice(prefixEnd && suffixStart && prefixEnd.x === suffixStart.x && prefixEnd.y === suffixStart.y ? 1 : 0),
+  ];
 }
 
 /** 让语义无关的材料 nonce 禁用局部边界复用，生成逐点等价的 forced-cold 对照。 */

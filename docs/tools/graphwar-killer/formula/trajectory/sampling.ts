@@ -231,6 +231,14 @@ export interface GraphwarTrajectorySampleResult {
   visiblePixels: PixelPoint[];
 }
 
+/** 公式上下文、采样结果和实际起始路径来自同一次 resolver 调用。 */
+export interface GraphwarTrajectoryResolution {
+  context: GraphwarTrajectoryFormulaContext;
+  result: GraphwarTrajectorySampleResult;
+  /** Sign protection 扩大时 continuation 会被丢弃并从发射点 cold replay。 */
+  startType: "cold" | "continuation";
+}
+
 /** 单目标路径验证结果，一键清图和智能寻路用它判断弹道是否先命中目标。 */
 export interface GraphwarPathTrajectoryResult {
   /** 目标或障碍导致的早停原因。 */
@@ -411,7 +419,7 @@ export function resolveGraphwarTrajectory(options: {
   targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
   targetSequencePoints?: readonly PixelPoint[];
   trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
-}): { context: GraphwarTrajectoryFormulaContext; result: GraphwarTrajectorySampleResult } {
+}): GraphwarTrajectoryResolution {
   const prefix = options.stepGlitchFormulaEvidence?.prefix;
   let signProtection = [
     ...(options.start?.signProtection ??
@@ -482,7 +490,144 @@ export function resolveGraphwarTrajectory(options: {
     if (options.debugMetrics) {
       options.debugMetrics.timings.expressionFinalizationElapsedMs += nowMs() - expressionFinalizationStartedAt;
     }
-    return { context, result: stopTracker.createResult(sample) };
+    return {
+      context,
+      result: stopTracker.createResult(sample),
+      startType: continuation ? "continuation" : "cold",
+    };
+  }
+}
+
+/** 已解析公式和其物理恢复起点的原子证据；compiled materials 引用用于拒绝跨公式重组。 */
+export interface GraphwarResolvedTrajectoryContinuationEvidence {
+  /** 生成恢复状态的同一公式上下文。 */
+  context: GraphwarTrajectoryFormulaContext;
+  /** 构造时绑定的 compiled materials 身份；与 context 失配时必须 cold replay。 */
+  formulaMaterials: CompiledGraphwarFormulaMaterials;
+  /** 状态、命中历史、停止语义和 sign protection 来自同一次采样。 */
+  start: Extract<GraphwarTrajectoryStart, { type: "continuation" }>;
+}
+
+/** 从同一次已解析结果构造 continuation atom；没有可恢复终态时明确返回 undefined。 */
+export function createGraphwarResolvedTrajectoryContinuationEvidence(
+  resolution: Pick<GraphwarTrajectoryResolution, "context" | "result">,
+  reachedCounts: {
+    reachedRequiredTargetCount: number;
+    reachedTargetCount: number;
+  } = resolution.result,
+): GraphwarResolvedTrajectoryContinuationEvidence | undefined {
+  const samplingState = resolution.result.sample.endState;
+  if (!samplingState) {
+    return undefined;
+  }
+  return {
+    context: resolution.context,
+    formulaMaterials: resolution.context.compiledMaterials,
+    start: {
+      reachedRequiredTargetCount: reachedCounts.reachedRequiredTargetCount,
+      reachedTargetCount: reachedCounts.reachedTargetCount,
+      samplingState,
+      // Target completion returns before collision; every other accepted stop has completed the stop callback.
+      shouldSkipInitialStop: resolution.result.earlyStopReason !== "target",
+      signProtection: resolution.context.signProtection,
+      type: "continuation",
+    },
+  };
+}
+
+/** 已解析公式的后缀续播结果；保护集合变化时调用方必须使用原始输入 cold replay。 */
+export type GraphwarResolvedTrajectoryContinuationResult =
+  | { status: "cold-required" }
+  | { result: GraphwarTrajectorySampleResult; status: "continued" };
+
+/**
+ * 复用同一公式上下文，从一份完整原子起点继续采样，不再重复公式点整理、材料编译和发射角求解。
+ *
+ * 本入口只接受生成 context 的同一公式身份。若恢复证据的 sign protection 不匹配，或后缀首次发现新的零值保护，返回 cold-required；调用方必须用原始路径和设置完整重算，不能把旧状态迁移到新公式。
+ */
+export function continueResolvedGraphwarTrajectory(options: {
+  bounds: GraphBounds;
+  boundsRect: BoundsRect;
+  collision?: GraphwarTrajectoryCollisionSettings;
+  collectVisiblePixels?: boolean;
+  debugMetrics?: GraphwarTrajectoryDebugMetrics;
+  evidence: GraphwarResolvedTrajectoryContinuationEvidence;
+  qualityPoints?: readonly GraphPoint[];
+  requiredTargets?: readonly GraphwarTrajectoryTargetCircle[];
+  stopOnTargetsComplete?: boolean;
+  targetSequence?: readonly GraphwarTrajectoryTargetCircle[];
+  trackedTargets?: readonly GraphwarTrajectoryTargetCircle[];
+}): GraphwarResolvedTrajectoryContinuationResult {
+  const { context, formulaMaterials, start } = options.evidence;
+  if (
+    formulaMaterials !== context.compiledMaterials ||
+    !graphwarSignProtectionEquals(start.signProtection, context.signProtection)
+  ) {
+    return { status: "cold-required" };
+  }
+
+  const nextSignProtection = [...context.signProtection];
+  let hasSignProtectionChanged = false;
+  const stopTracker = createGraphwarTrajectoryStopTracker({
+    bounds: options.bounds,
+    boundsRect: options.boundsRect,
+    collision: options.collision,
+    collectVisiblePixels: options.collectVisiblePixels,
+    debugMetrics: options.debugMetrics,
+    initialReachedRequiredTargetCount: start.reachedRequiredTargetCount,
+    initialReachedTargetCount: start.reachedTargetCount,
+    qualityPoints: options.qualityPoints,
+    requiredTargets: options.requiredTargets,
+    stopOnTargetsComplete: options.stopOnTargetsComplete,
+    targetSequence: options.targetSequence,
+    trackedTargets: options.trackedTargets,
+  });
+  let sample: GraphwarTrajectorySample;
+  try {
+    sample = sampleGraphwarTrajectory({
+      algorithm: context.settings.algorithm,
+      bounds: options.bounds,
+      compiledFormulaMaterials: context.compiledMaterials,
+      debugMetrics: options.debugMetrics,
+      equation: context.settings.equation,
+      formulaEvaluation: {
+        ...context.formulaEvaluation,
+        onZeroSignArgument(segmentIndex, role) {
+          hasSignProtectionChanged =
+            addGraphwarSignProtection(nextSignProtection, segmentIndex, role) || hasSignProtectionChanged;
+        },
+      },
+      initialState: start.samplingState,
+      ...(context.launchAngleRadians === undefined ? {} : { launchAngleRadians: context.launchAngleRadians }),
+      points: context.formulaPoints,
+      secondOrderLaunchAngleMode: context.settings.secondOrderLaunchAngleMode,
+      shouldStop: stopTracker.shouldStop,
+      skipInitialStop: start.shouldSkipInitialStop,
+      soldierCenter: context.soldierCenter ?? context.formulaPoints[0],
+      steepness: context.settings.steepness,
+    });
+  } catch (error) {
+    if (isGraphwarFormulaConvergenceError(error)) {
+      throw error;
+    }
+    throw new GraphwarTrajectoryResolutionError(error);
+  }
+  return hasSignProtectionChanged
+    ? { status: "cold-required" }
+    : { result: stopTracker.createResult(sample), status: "continued" };
+}
+
+/** 候选搜索续播只吞掉与 cold candidate 相同的数值失败；实现异常继续暴露。 */
+export function tryContinueResolvedGraphwarTrajectory(
+  options: Parameters<typeof continueResolvedGraphwarTrajectory>[0],
+): GraphwarResolvedTrajectoryContinuationResult | undefined {
+  try {
+    return continueResolvedGraphwarTrajectory(options);
+  } catch (error) {
+    if (isGraphwarFormulaConvergenceError(error) || error instanceof GraphwarStepSegmentConnectionError) {
+      return undefined;
+    }
+    throw error;
   }
 }
 

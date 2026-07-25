@@ -34,6 +34,7 @@ const samplingMockState = vi.hoisted(() => ({
   formulaContextCalls: 0,
   formulaContextInitialStatePresent: [] as boolean[],
   pathTargetSequenceCalls: 0,
+  resolvedContinuationCalls: 0,
   requiredTargets: [] as { x: number; y: number }[][],
   shouldStripStepGlitchFormulaEvidence: false,
   targetSequences: [] as { x: number; y: number }[][],
@@ -68,6 +69,12 @@ vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
         }
         const { stepGlitchFormulaEvidence: _stepGlitchFormulaEvidence, ...formulaContext } = result.formulaContext;
         return { ...result, formulaContext };
+      },
+    ),
+    tryContinueResolvedGraphwarTrajectory: vi.fn(
+      (options: Parameters<typeof original.tryContinueResolvedGraphwarTrajectory>[0]) => {
+        samplingMockState.resolvedContinuationCalls += 1;
+        return original.tryContinueResolvedGraphwarTrajectory(options);
       },
     ),
   };
@@ -238,6 +245,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.scanners.length = 0;
     scanMockState.scans.length = 0;
     samplingMockState.pathTargetSequenceCalls = 0;
+    samplingMockState.resolvedContinuationCalls = 0;
     samplingMockState.candidateTargetSequences.length = 0;
     samplingMockState.formulaContextCalls = 0;
     samplingMockState.formulaContextInitialStatePresent.length = 0;
@@ -334,7 +342,7 @@ describe("Step glitch one-click-clear target retries", () => {
     expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
   });
 
-  it("falls back when formula settings are mutated after the direct replay evidence is created", async () => {
+  it("keeps the request snapshot when external formula settings mutate after direct replay", async () => {
     scanMockState.finalEvidenceMode = "valid";
     scanMockState.outcomes.push("hit");
     const start = toPixel(-11, 0);
@@ -352,11 +360,11 @@ describe("Step glitch one-click-clear target retries", () => {
     });
 
     expect(result.type).toBe("success");
-    expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
-    expect(debugStages).toContain("validate-final");
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
+    expect(debugStages).not.toContain("validate-final");
   });
 
-  it("falls back when the formula obstacle mask is mutated after direct replay", async () => {
+  it("keeps the request snapshot when the external formula mask mutates after direct replay", async () => {
     scanMockState.finalEvidenceMode = "valid";
     scanMockState.outcomes.push("hit");
     const start = toPixel(-11, 0);
@@ -376,8 +384,8 @@ describe("Step glitch one-click-clear target retries", () => {
     });
 
     expect(result.type).toBe("success");
-    expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
-    expect(debugStages).toContain("validate-final");
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
+    expect(debugStages).not.toContain("validate-final");
   });
 
   it.each(["wrong-mask", "wrong-path"] as const)(
@@ -650,7 +658,7 @@ describe("Step glitch one-click-clear target retries", () => {
     expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
   });
 
-  it("replays ABS y'' candidates from the muzzle instead of reusing a smooth-tail prefix", async () => {
+  it("cold-replays ABS y'' appends before continuing the unchanged final formula", async () => {
     const start = toPixel(-11, 0);
     const tail = toPixel(-10, 0);
     const first = toPixel(-9, 0);
@@ -691,7 +699,55 @@ describe("Step glitch one-click-clear target retries", () => {
     expect(result.type).toBe("success");
     expect(samplingMockState.formulaContextCalls).toBe(2);
     expect(samplingMockState.formulaContextInitialStatePresent).toEqual([false, false]);
+    expect(samplingMockState.resolvedContinuationCalls).toBe(1);
     expect(samplingMockState.candidateTargetSequences.every((sequence) => sequence[0]?.x === tail.x)).toBe(true);
+  });
+
+  it("continues the newly validated ABS y'' formula after deleting a control point", async () => {
+    const start = toPixel(-11, 0);
+    const middle = toPixel(-8, 0);
+    const target = toPixel(-6, 0);
+    const candidate = { enemy: true, hitCenter: target, hitRadius: 12, id: "target" };
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({
+          jobId: job.id,
+          route: [job.startPoint, middle, job.targetPoint],
+        })),
+        timings: [],
+      }),
+      candidates: [candidate],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      isDeleteOptimizationEnabled: true,
+      pathPoints: [start],
+      routeMask: { mask: createEmptyMask(), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 210,
+        stepGlitchMode: false,
+        stepOverflowProtection: false,
+      },
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.pathPoints).toHaveLength(2);
+      expect(result.pathPoints).not.toContain(middle);
+    }
+    // 两次 wrapper 调用分别验证“删除 middle 成功”和“删除末目标失败”；最终统计不再增加第三次 cold wrapper。
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(2);
+    expect(samplingMockState.formulaContextInitialStatePresent).toEqual([false]);
+    expect(samplingMockState.resolvedContinuationCalls).toBe(1);
   });
 });
 

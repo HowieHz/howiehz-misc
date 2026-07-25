@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import type { AlgorithmMode, EquationMode } from "../../core/types";
 import type { GraphwarTrajectoryFormulaSettings } from "./sampling";
 import {
   createGraphwarTrajectoryFormulaSettingsIdentity,
+  createGraphwarTrajectoryFormulaSettingsIdentityKey,
   graphwarTrajectoryFormulaSettingsAreEquivalent,
 } from "./settings-identity";
 
@@ -16,6 +18,46 @@ const baseSettings: GraphwarTrajectoryFormulaSettings = {
 };
 
 describe("Graphwar trajectory formula settings identity", () => {
+  it.each(
+    (["abs", "step", "pchip", "akima"] satisfies AlgorithmMode[]).flatMap((algorithm) =>
+      (["y", "dy", "ddy"] satisfies EquationMode[]).flatMap((equation) => [
+        [algorithm, equation, false] as const,
+        [algorithm, equation, true] as const,
+      ]),
+    ),
+  )(
+    "preserves the legacy canonical key for %s %s with Step-glitch request %s",
+    (algorithm, equation, stepGlitchMode) => {
+      const settings: GraphwarTrajectoryFormulaSettings = {
+        ...baseSettings,
+        algorithm,
+        equation,
+        formulaPathSteepness: 71,
+        secondOrderLaunchAngleMode: "display-rounded",
+        steepness: 68,
+        stepGlitchMode,
+        stepOverflowProtection: false,
+      };
+      const expectedIdentity = {
+        algorithm,
+        decimalPlaces: settings.decimalPlaces,
+        equation,
+        ...(algorithm === "step" ? { formulaPathSteepness: settings.formulaPathSteepness } : {}),
+        ...(equation === "ddy" ? { secondOrderLaunchAngleMode: settings.secondOrderLaunchAngleMode } : {}),
+        ...(algorithm === "step" || (algorithm === "abs" && equation === "ddy")
+          ? { steepness: settings.steepness }
+          : {}),
+        stepGlitchMode: stepGlitchMode && algorithm === "step" && equation !== "y",
+        ...(algorithm === "step" && equation !== "y"
+          ? { stepOverflowProtection: settings.stepOverflowProtection }
+          : {}),
+      };
+
+      expect(createGraphwarTrajectoryFormulaSettingsIdentity(settings)).toEqual(expectedIdentity);
+      expect(createGraphwarTrajectoryFormulaSettingsIdentityKey(settings)).toBe(JSON.stringify(expectedIdentity));
+    },
+  );
+
   it("only separates Y'' execution modes for second-order equations", () => {
     expect(identity({ equation: "ddy", secondOrderLaunchAngleMode: undefined })).toEqual(
       identity({ equation: "ddy", secondOrderLaunchAngleMode: "full-precision" }),

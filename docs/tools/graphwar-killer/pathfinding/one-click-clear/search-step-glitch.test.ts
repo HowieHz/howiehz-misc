@@ -5,17 +5,32 @@ import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { imageXToNearestPlaneColumn, planeXToImageX } from "../../core/plane-grid";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import { createGraphwarTrajectoryFormulaSettingsIdentityKey } from "../../formula/trajectory/settings-identity";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 
 const scanMockState = vi.hoisted(() => ({
+  finalEvidenceMode: "none" as
+    | "none"
+    | "valid"
+    | "wrong-mask"
+    | "wrong-path"
+    | "wrong-tracked-count"
+    | "wrong-tracked-order",
+  gatePoint: undefined as PixelPoint | undefined,
   outcomes: [] as ("hit" | "no-path")[],
   scanners: [] as {
     hasBoundaryState: boolean;
     hasPrefixEvidence: boolean;
+    isFormulaMaskSimulationMask: boolean;
     requiredTargets: { center: { x: number; y: number }; radius: number }[];
     sourcePath: { x: number; y: number }[];
   }[],
-  scans: [] as { scannerId: number; targetPoint: { x: number; y: number } }[],
+  scans: [] as {
+    hasFinalValidation: boolean;
+    scannerId: number;
+    targetPoint: { x: number; y: number };
+    trackedTargetCount: number;
+  }[],
 }));
 const samplingMockState = vi.hoisted(() => ({
   resolveTrajectory: undefined as
@@ -64,6 +79,7 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
         scanMockState.scanners.push({
           hasBoundaryState: options.stepGlitchFormulaBoundaryState !== undefined,
           hasPrefixEvidence: options.prefixEvidence !== undefined,
+          isFormulaMaskSimulationMask: options.settings.stepGlitchObstacleMask === options.simulationMask,
           requiredTargets: (options.requiredTargets ?? []).map((target) => ({
             center: { ...target.center },
             radius: target.radius,
@@ -76,9 +92,18 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
             if (!outcome) {
               throw new Error("Missing Step glitch scanner mock outcome");
             }
-            scanMockState.scans.push({ scannerId, targetPoint: { ...target.targetPoint } });
+            scanMockState.scans.push({
+              hasFinalValidation: target.finalValidation !== undefined,
+              scannerId,
+              targetPoint: { ...target.targetPoint },
+              trackedTargetCount: target.finalValidation?.trackedTargets.length ?? 0,
+            });
             if (outcome === "hit") {
-              const path = [...options.sourcePath, target.targetPoint];
+              const path = [
+                ...options.sourcePath,
+                ...(scanMockState.gatePoint ? [{ ...scanMockState.gatePoint }] : []),
+                target.targetPoint,
+              ];
               const resolveTrajectory = samplingMockState.resolveTrajectory;
               if (!resolveTrajectory) {
                 throw new Error("Formula context test factory is unavailable");
@@ -88,16 +113,98 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
               if (!lastGraphPoint) {
                 throw new Error("Step glitch scanner mock path is empty");
               }
+              const shouldCreateFinalEvidence =
+                scanMockState.finalEvidenceMode !== "none" && target.finalValidation !== undefined;
               const resolution = resolveTrajectory({
                 bounds: options.bounds,
                 boundsRect: options.boundsRect,
+                ...(shouldCreateFinalEvidence
+                  ? {
+                      collectVisiblePixels: true,
+                      collision: {
+                        boundaryExpansion: options.simulationBoundaryExpansion,
+                        mask: options.simulationMask,
+                      },
+                    }
+                  : {}),
                 points: graphPoints,
+                ...(shouldCreateFinalEvidence
+                  ? {
+                      qualityPoints: graphPoints.filter(
+                        (_point, index) =>
+                          index > 0 &&
+                          !target.finalValidation?.targetControlPoints.some(
+                            (targetPoint) => targetPoint.x === path[index]?.x && targetPoint.y === path[index]?.y,
+                          ),
+                      ),
+                      requiredTargets: options.requiredTargets,
+                    }
+                  : {}),
                 settings: options.settings,
                 soldierCenter: graphPoints[0],
+                ...(shouldCreateFinalEvidence
+                  ? {
+                      stopOnTargetsComplete: false,
+                      targetSequence: [target.hitTarget],
+                      trackedTargets: target.finalValidation?.trackedTargets,
+                    }
+                  : {}),
               });
+              const finalValidationResult =
+                scanMockState.finalEvidenceMode === "wrong-tracked-count"
+                  ? { ...resolution.result, trackedTargetHitIndexes: [] }
+                  : resolution.result;
+              const finalValidationPath = path.map((point) => createPixelPoint(point.x, point.y));
+              if (scanMockState.finalEvidenceMode === "wrong-path" && finalValidationPath.length > 0) {
+                const lastPoint = finalValidationPath[finalValidationPath.length - 1];
+                if (lastPoint) {
+                  finalValidationPath[finalValidationPath.length - 1] = createPixelPoint(lastPoint.x, lastPoint.y + 1);
+                }
+              }
+              const finalValidationMask = options.simulationMask.slice();
+              if (scanMockState.finalEvidenceMode === "wrong-mask" && finalValidationMask.length > 0) {
+                finalValidationMask[0] = (finalValidationMask[0] ?? 0) ^ 1;
+              }
+              const finalValidationTrackedTargets = [...(target.finalValidation?.trackedTargets ?? [])];
+              if (scanMockState.finalEvidenceMode === "wrong-tracked-order") {
+                finalValidationTrackedTargets.reverse();
+              }
               return {
                 acceptedPoint: { x: 0, y: 0 },
                 expandedStates: 1,
+                ...(shouldCreateFinalEvidence
+                  ? {
+                      finalValidationEvidence: {
+                        boundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
+                        bounds: { ...options.bounds },
+                        boundsRect: { ...options.boundsRect },
+                        formulaContext: resolution.context,
+                        formulaSettingsIdentity: createGraphwarTrajectoryFormulaSettingsIdentityKey(options.settings),
+                        path: finalValidationPath,
+                        requiredTargets: (options.requiredTargets ?? []).map((requiredTarget) => ({
+                          center: createPixelPoint(requiredTarget.center.x, requiredTarget.center.y),
+                          radius: requiredTarget.radius,
+                        })),
+                        result: finalValidationResult,
+                        simulationMask: finalValidationMask,
+                        simulationMaskCacheId: target.finalValidation?.simulationMaskCacheId ?? 0,
+                        targetControlPoints:
+                          target.finalValidation?.targetControlPoints.map((point) =>
+                            createPixelPoint(point.x, point.y),
+                          ) ?? [],
+                        targetSequence: [
+                          {
+                            center: createPixelPoint(target.hitTarget.center.x, target.hitTarget.center.y),
+                            radius: target.hitTarget.radius,
+                          },
+                        ],
+                        trackedTargets: finalValidationTrackedTargets.map((trackedTarget) => ({
+                          center: createPixelPoint(trackedTarget.center.x, trackedTarget.center.y),
+                          radius: trackedTarget.radius,
+                        })),
+                      },
+                    }
+                  : {}),
                 formulaContext: resolution.context,
                 path,
                 reachedTargetCount: (options.requiredTargets?.length ?? 0) + 1,
@@ -133,6 +240,8 @@ const boundsRect: BoundsRect = {
 
 describe("Step glitch one-click-clear target retries", () => {
   beforeEach(() => {
+    scanMockState.finalEvidenceMode = "none";
+    scanMockState.gatePoint = undefined;
     scanMockState.outcomes.length = 0;
     scanMockState.scanners.length = 0;
     scanMockState.scans.length = 0;
@@ -180,6 +289,132 @@ describe("Step glitch one-click-clear target retries", () => {
       expect(debugStages).toContain("validate-final");
     },
   );
+
+  it("promotes the final scan's complete replay without a cold final validation", async () => {
+    scanMockState.finalEvidenceMode = "valid";
+    scanMockState.outcomes.push("hit");
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+    const debugStages: string[] = [];
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(start, candidates, createEmptyMask(), "visibility-graph", false),
+      onDebugTiming: (timing) => debugStages.push(timing.stage),
+    });
+
+    expect(result.type).toBe("success");
+    expect(scanMockState.scans).toEqual([expect.objectContaining({ hasFinalValidation: true, trackedTargetCount: 1 })]);
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
+    expect(debugStages).not.toContain("validate-final");
+  });
+
+  it("normalizes a different formula mask to the explicit simulation mask before producing evidence", async () => {
+    scanMockState.finalEvidenceMode = "valid";
+    scanMockState.outcomes.push("hit");
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+    const simulationMask = createEmptyMask();
+    const options = createOptions(start, candidates, simulationMask, "visibility-graph", false);
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...options,
+      settings: { ...options.settings, stepGlitchObstacleMask: createEmptyMask() },
+    });
+
+    expect(result.type).toBe("success");
+    expect(scanMockState.scanners[0]?.isFormulaMaskSimulationMask).toBe(true);
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
+  });
+
+  it("falls back when formula settings are mutated after the direct replay evidence is created", async () => {
+    scanMockState.finalEvidenceMode = "valid";
+    scanMockState.outcomes.push("hit");
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+    const options = createOptions(start, candidates, createEmptyMask(), "visibility-graph", false);
+    const debugStages: string[] = [];
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...options,
+      onDebugTiming: (timing) => debugStages.push(timing.stage),
+      yieldControl: () => {
+        options.settings.steepness += 1;
+      },
+    });
+
+    expect(result.type).toBe("success");
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
+    expect(debugStages).toContain("validate-final");
+  });
+
+  it.each(["wrong-tracked-count", "wrong-mask", "wrong-path"] as const)(
+    "falls back when final replay evidence has $finalEvidenceMode",
+    async (finalEvidenceMode) => {
+      scanMockState.finalEvidenceMode = finalEvidenceMode;
+      scanMockState.outcomes.push("hit");
+      const start = toPixel(-11, 0);
+      const target = toPixel(-6, 0);
+      const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+      const debugStages: string[] = [];
+
+      const result = await buildGraphwarOneClickClearPath({
+        ...createOptions(start, candidates, createEmptyMask(), "visibility-graph", false),
+        onDebugTiming: (timing) => debugStages.push(timing.stage),
+      });
+
+      expect(result.type).toBe("success");
+      expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
+      expect(debugStages).toContain("validate-final");
+    },
+  );
+
+  it("falls back when final replay tracked targets have the same count in a different order", async () => {
+    scanMockState.finalEvidenceMode = "wrong-tracked-order";
+    scanMockState.outcomes.push("hit", "hit");
+    const start = toPixel(-11, 0);
+    const first = toPixel(-9, 0);
+    const second = toPixel(-6, 0);
+    const candidates = [
+      { enemy: true, hitCenter: first, hitRadius: 12, id: "first" },
+      { enemy: true, hitCenter: second, hitRadius: 12, id: "second" },
+    ];
+    const debugStages: string[] = [];
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(start, candidates, createEmptyMask(), "visibility-graph", false),
+      onDebugTiming: (timing) => debugStages.push(timing.stage),
+    });
+
+    expect(result.type).toBe("success");
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(1);
+    expect(debugStages).toContain("validate-final");
+  });
+
+  it("discards final replay evidence after point deletion changes the path", async () => {
+    scanMockState.finalEvidenceMode = "valid";
+    scanMockState.gatePoint = toPixel(-8, 0);
+    scanMockState.outcomes.push("hit");
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+    const debugStages: string[] = [];
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(start, candidates, createEmptyMask(), "visibility-graph", true),
+      onDebugTiming: (timing) => debugStages.push(timing.stage),
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.pathPoints).toEqual([start, toNativeColumnPoint(target)]);
+    }
+    // 一次验证删点候选，一次 cold 最终统计；旧路径证据不得随新公式继续。
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(2);
+    expect(debugStages).toContain("validate-final");
+  });
 
   it("keeps a fixed prefix edge-by-edge, reuses it after failure, and counts an incidental skipped hit", async () => {
     scanMockState.outcomes.push("hit", "hit", "no-path", "hit", "hit");

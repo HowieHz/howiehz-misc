@@ -30,8 +30,10 @@ import type {
   GraphwarStepGlitchXWindow,
   GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaSettings,
+  GraphwarTrajectorySampleResult,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import { createGraphwarTrajectoryFormulaSettingsIdentityKey } from "../../formula/trajectory/settings-identity";
 import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
 import type { GraphwarPathfindingDebugMetrics } from "../runtime/diagnostics";
 
@@ -77,6 +79,15 @@ export interface GraphwarStepGlitchPrefixOptions {
 
 /** 已准备好的扫描器用于评估单个目标的控制点和实际命中圈。 */
 export interface GraphwarStepGlitchTargetOptions {
+  /** 初始末目标直连额外收集的最终验证输入；gate 派生路径仍由调用方 cold 验证。 */
+  finalValidation?: {
+    /** 页面侧稳定 mask 快照 id；相同字节但不同请求身份也不跨用证据。 */
+    simulationMaskCacheId: number;
+    /** 不影响停止条件、只记录首次命中位置的全部候选。 */
+    trackedTargets: readonly GraphwarTrajectoryTargetCircle[];
+    /** 最终路径中的目标锚点；其余控制点继续参与路径质量统计。 */
+    targetControlPoints: readonly PixelPoint[];
+  };
   /** 当前目标的实际命中圈。 */
   hitTarget: GraphwarTrajectoryTargetCircle;
   /** 当前目标使用的控制点；可与命中圈中心不同。 */
@@ -100,6 +111,8 @@ interface GraphwarStepGlitchScanResultBase {
 export type GraphwarStepGlitchScanResult =
   | (GraphwarStepGlitchScanResultBase & {
       acceptedPoint: GraphPoint;
+      /** 仅末目标自然完整回放可产生；路径或验证输入变化后调用方必须丢弃。 */
+      finalValidationEvidence?: GraphwarStepGlitchFinalValidationEvidence;
       /** 本次命中回放已经使用的精确公式上下文；调用方可直接生成 incumbent。 */
       formulaContext?: GraphwarTrajectoryFormulaContext;
       stepGlitchFormulaBoundaryState?: GraphwarStepGlitchFormulaBoundaryState;
@@ -238,6 +251,8 @@ type ScanWorkItem =
 export interface GraphwarStepGlitchReplayResult {
   acceptedPoint?: GraphPoint;
   blockedPoint?: GraphPoint;
+  /** 与本条精确路径同次自然完整回放产生的最终验证证据。 */
+  finalValidationEvidence?: GraphwarStepGlitchFinalValidationEvidence;
   reachedTargetCount: number;
   /** 本次回放已经构造的公式上下文；命中候选发布时应直接复用。 */
   formulaContext?: GraphwarTrajectoryFormulaContext;
@@ -249,6 +264,32 @@ export interface GraphwarStepGlitchReplayResult {
   targetsHit: boolean;
   /** 本次回放在首次障碍碰撞前实际可绘制的轨迹快照。 */
   trajectoryPoints: PixelPoint[];
+}
+
+/** 最终公式上下文和全部命中、碰撞、轨迹统计必须来自同一次完整回放。 */
+export interface GraphwarStepGlitchFinalValidationEvidence {
+  /** 本次碰撞回放实际使用的非负整数边界收缩值。 */
+  boundaryExpansion: number;
+  /** 坐标边界与截图矩形都必须和提升时完全一致。 */
+  bounds: GraphBounds;
+  boundsRect: BoundsRect;
+  formulaContext: GraphwarTrajectoryFormulaContext;
+  /** 公式设置的不可变 canonical 身份；formulaContext 中的 settings 仍是调用方引用。 */
+  formulaSettingsIdentity: string;
+  /** 生成公式和轨迹的完整像素路径快照。 */
+  path: readonly PixelPoint[];
+  /** 最终回放中的无序必达目标快照。 */
+  requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
+  result: GraphwarTrajectorySampleResult;
+  /** 碰撞 mask 的精确字节快照，不依赖可变数组的对象生命周期。 */
+  simulationMask: Uint8Array;
+  simulationMaskCacheId: number;
+  /** 排除路径质量统计的真实目标锚点快照。 */
+  targetControlPoints: readonly PixelPoint[];
+  /** 最终回放中的有序目标快照。 */
+  targetSequence: readonly GraphwarTrajectoryTargetCircle[];
+  /** 只统计首次命中的全部士兵快照。 */
+  trackedTargets: readonly GraphwarTrajectoryTargetCircle[];
 }
 
 /** 生成任何 gate 候选前先执行的目标直连回放。 */
@@ -417,12 +458,24 @@ export function createGraphwarStepGlitchPrefixScanner(
         options.debugMetrics.stepGlitch.directReplayCount += 1;
       }
       const directReplay = measureSyncStage(timings, "validate-direct", () =>
-        replayPathToControlX(options, context, directPath, targetSequence, requiredTargets, targetGraphPoint.x),
+        replayPathToControlX(
+          options,
+          context,
+          directPath,
+          targetSequence,
+          requiredTargets,
+          targetGraphPoint.x,
+          undefined,
+          target.finalValidation,
+        ),
       );
       if (directReplay.targetsHit && directReplay.acceptedPoint) {
         return {
           acceptedPoint: directReplay.acceptedPoint,
           expandedStates: 1,
+          ...(directReplay.finalValidationEvidence
+            ? { finalValidationEvidence: directReplay.finalValidationEvidence }
+            : {}),
           ...(directReplay.formulaContext ? { formulaContext: directReplay.formulaContext } : {}),
           path: directPath,
           reachedTargetCount: directReplay.reachedTargetCount,
@@ -741,6 +794,7 @@ function replayPathToControlX(
   requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
   controlX: number,
   stepGlitchXWindows?: readonly (GraphwarStepGlitchXWindow | undefined)[],
+  finalValidation?: GraphwarStepGlitchTargetOptions["finalValidation"],
 ): GraphwarStepGlitchReplayResult {
   if (path.length < 2 || path.length < options.sourcePath.length) {
     return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
@@ -759,9 +813,20 @@ function replayPathToControlX(
       mask: options.simulationMask,
     },
     collectVisiblePixels: true,
-    continueAfterTargetsUntilGraphX: controlX,
+    ...(finalValidation ? {} : { continueAfterTargetsUntilGraphX: controlX }),
     debugMetrics: options.debugMetrics,
     points: graphPoints,
+    ...(finalValidation
+      ? {
+          qualityPoints: graphPoints.filter(
+            (_point, index) =>
+              index > 0 &&
+              !finalValidation.targetControlPoints.some(
+                (targetPoint) => targetPoint.x === path[index]?.x && targetPoint.y === path[index]?.y,
+              ),
+          ),
+        }
+      : {}),
     requiredTargets,
     settings: context.formulaSettings,
     soldierCenter: graphPoints[0],
@@ -772,6 +837,7 @@ function replayPathToControlX(
     ...(stepGlitchXWindows ? { stepGlitchXWindows } : {}),
     stopOnTargetsComplete: false,
     targetSequence,
+    ...(finalValidation ? { trackedTargets: finalValidation.trackedTargets } : {}),
   });
   if (!resolved) {
     return { reachedTargetCount: 0, targetsHit: false, trajectoryPoints: [] };
@@ -789,18 +855,33 @@ function replayPathToControlX(
     targetSequence.length === 0 && requiredTargets.length === 0
       ? true
       : validationTargetHitIndex >= 0 && validationTargetHitIndex <= lastSafeIndex;
+  const acceptedPoint =
+    hasHitTargets && isValidationTargetCompletionSafe
+      ? findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
+          result.sample.points,
+          result.obstacleHitIndex,
+          controlX,
+          Math.max(result.targetHitIndex, 0),
+        )
+      : undefined;
   return {
     // Required 只证明整式最终命中，可能位于下个控制点右侧；扫描恢复点只等待当前有序目标。
-    acceptedPoint:
-      hasHitTargets && isValidationTargetCompletionSafe
-        ? findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
-            result.sample.points,
-            result.obstacleHitIndex,
-            controlX,
-            Math.max(result.targetHitIndex, 0),
-          )
-        : undefined,
+    ...(acceptedPoint ? { acceptedPoint } : {}),
     blockedPoint: result.obstacleHitIndex >= 0 ? result.sample.points[result.obstacleHitIndex] : undefined,
+    ...(finalValidation && acceptedPoint
+      ? {
+          finalValidationEvidence: createGraphwarStepGlitchFinalValidationEvidence(
+            options,
+            context,
+            path,
+            targetSequence,
+            requiredTargets,
+            finalValidation,
+            formulaContext,
+            result,
+          ),
+        }
+      : {}),
     formulaContext,
     reachedTargetCount: result.reachedTargetCount + result.reachedRequiredTargetCount,
     stepGlitchFormulaBoundaryState: formulaContext.stepGlitchFormulaBoundaryState,
@@ -811,6 +892,42 @@ function replayPathToControlX(
       result.obstacleHitIndex,
       options.debugMetrics,
     ),
+  };
+}
+
+/** 固化末目标完整回放的全部有效输入，提升时逐项精确核对。 */
+function createGraphwarStepGlitchFinalValidationEvidence(
+  options: GraphwarStepGlitchPrefixOptions,
+  context: GraphwarStepGlitchReplayContext,
+  path: readonly PixelPoint[],
+  targetSequence: readonly GraphwarTrajectoryTargetCircle[],
+  requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
+  finalValidation: NonNullable<GraphwarStepGlitchTargetOptions["finalValidation"]>,
+  formulaContext: GraphwarTrajectoryFormulaContext,
+  result: GraphwarTrajectorySampleResult,
+): GraphwarStepGlitchFinalValidationEvidence {
+  return {
+    boundaryExpansion: context.simulationBoundaryExpansion,
+    bounds: { ...options.bounds },
+    boundsRect: { ...options.boundsRect },
+    formulaContext,
+    formulaSettingsIdentity: createGraphwarTrajectoryFormulaSettingsIdentityKey(context.formulaSettings),
+    path: path.map((point) => createPixelPoint(point.x, point.y)),
+    requiredTargets: requiredTargets.map(copyGraphwarTrajectoryTargetCircle),
+    result,
+    simulationMask: options.simulationMask.slice(),
+    simulationMaskCacheId: finalValidation.simulationMaskCacheId,
+    targetControlPoints: finalValidation.targetControlPoints.map((point) => createPixelPoint(point.x, point.y)),
+    targetSequence: targetSequence.map(copyGraphwarTrajectoryTargetCircle),
+    trackedTargets: finalValidation.trackedTargets.map(copyGraphwarTrajectoryTargetCircle),
+  };
+}
+
+/** 复制命中圆，避免证据受调用方后续原地修改。 */
+function copyGraphwarTrajectoryTargetCircle(target: GraphwarTrajectoryTargetCircle) {
+  return {
+    center: createPixelPoint(target.center.x, target.center.y),
+    radius: target.radius,
   };
 }
 

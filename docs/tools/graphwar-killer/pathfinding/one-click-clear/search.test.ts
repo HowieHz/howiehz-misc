@@ -5,6 +5,7 @@ import { imagePointToPlaneGridPoint } from "../../core/plane-grid";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import { sampleGraphwarPathTargetSequence } from "../../formula/trajectory/sampling";
+import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
 import {
   createGraphwarStepRouteModel,
   createGraphwarStepRouteSummedArea,
@@ -333,6 +334,13 @@ describe("One-click clear optimization", () => {
         id: "lower",
       },
     ];
+    const glitchSettings = {
+      ...settings,
+      equation: "dy" as const,
+      stepGlitchMode: true,
+      stepGlitchObstacleMask: simulationMask,
+    };
+    let finalValidationCount = 0;
 
     const result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: 0,
@@ -344,17 +352,16 @@ describe("One-click clear optimization", () => {
       candidates,
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: candidates,
+      onDebugTiming: (timing) => {
+        if (timing.stage === "validate-final") {
+          finalValidationCount += 1;
+        }
+      },
       pathPoints: [start],
       routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: {
-        ...settings,
-        equation: "dy",
-        stepGlitchMode: true,
-        stepGlitchObstacleMask: simulationMask,
-      },
+      settings: glitchSettings,
       simulationBoundaryExpansion: 0,
-      simulationMask,
       simulationMaskCacheId: 1,
     });
 
@@ -371,7 +378,44 @@ describe("One-click clear optimization", () => {
         }
         expect(point.x).toBeGreaterThan(previous.x);
       }
+
+      const coldValidation = sampleGraphwarPathTargetSequence({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        collectVisiblePixels: true,
+        obstacleMask: simulationMask,
+        points: result.pathPoints,
+        requiredTargets: [{ center: lower, radius: 24 }],
+        settings: glitchSettings,
+        stopOnTargetsComplete: false,
+        targetCircles: [{ center: upper, radius: 24 }],
+        targetControlPoints: result.pathPoints.slice(1),
+        targetHitRadiusPixels: 24,
+        targetPoints: [upper],
+        trackedTargets: candidates.map((candidate) => ({
+          center: candidate.hitCenter,
+          radius: candidate.hitRadius,
+        })),
+      });
+      const coldHitIds = candidates
+        .map((candidate, index) => ({
+          hitIndex: coldValidation.trackedTargetHitIndexes[index] ?? -1,
+          id: candidate.id,
+        }))
+        .filter((candidate) => candidate.hitIndex >= 0)
+        .sort((left, right) => left.hitIndex - right.hitIndex)
+        .map((candidate) => candidate.id);
+
+      expect(coldValidation.reachesTargetSequenceBeforeObstacle).toBe(true);
+      expect(coldValidation.formulaContext?.formulaResult.expression).toBe(result.expression);
+      expect(coldValidation.formulaContext?.launchAngleRadians).toBe(result.launchAngleRadians);
+      expect(result.targetIds).toEqual(coldHitIds);
+      expect(result.trajectoryPoints).toEqual(
+        snapshotGraphwarVisibleTrajectoryPoints(coldValidation.visiblePixels, coldValidation.obstacleHitIndex),
+      );
     }
+    expect(finalValidationCount).toBe(0);
   });
 
   it("reuses the validated DAG edge prefix after a failed suffix is disabled", async () => {

@@ -21,13 +21,18 @@ export function createGraphwarTrajectoryFormulaSettingsIdentity(settings: Graphw
   };
 }
 
+/** 把 canonical 设置固化为不可受调用方后续原地修改影响的值身份。 */
+export function createGraphwarTrajectoryFormulaSettingsIdentityKey(settings: GraphwarTrajectoryFormulaSettings) {
+  return JSON.stringify(createGraphwarTrajectoryFormulaSettingsIdentity(settings));
+}
+
 /** 判断两组设置是否会生成并执行相同公式；mask 和 sign protection 由调用方单独核对。 */
 export function graphwarTrajectoryFormulaSettingsAreEquivalent(
   left: GraphwarTrajectoryFormulaSettings,
   right: GraphwarTrajectoryFormulaSettings,
 ) {
   return (
-    JSON.stringify(createGraphwarTrajectoryFormulaSettingsIdentity(left)) ===
-    JSON.stringify(createGraphwarTrajectoryFormulaSettingsIdentity(right))
+    createGraphwarTrajectoryFormulaSettingsIdentityKey(left) ===
+    createGraphwarTrajectoryFormulaSettingsIdentityKey(right)
   );
 }

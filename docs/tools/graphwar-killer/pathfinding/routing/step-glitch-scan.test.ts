@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED,
@@ -14,6 +14,7 @@ import type { BoundsRect, GraphBounds } from "../../core/types";
 import { sampleGraphwarExpressionTrajectory } from "../../formula/simulation/simulator";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
 import { getGraphwarTrajectoryLaunchAngle, resolveGraphwarTrajectory } from "../../formula/trajectory/sampling";
+import { createGraphwarTrajectoryFormulaSettingsIdentityKey } from "../../formula/trajectory/settings-identity";
 import {
   createGraphwarStepGlitchScanMaskIndex,
   replayGraphwarStepGlitchPathToControlX,
@@ -91,6 +92,67 @@ describe("Step ODE glitch scan", () => {
     expect(result.reachedTargetCount).toBe(1);
     if (result.status === "hit") {
       expect(result.path.at(-1)).toBe(target);
+    }
+  });
+
+  it("snapshots final validation evidence only after a successful direct replay", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 2);
+    const simulationMask = createEmptyMask();
+    const maskSlice = vi.spyOn(simulationMask, "slice");
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      finalValidation: {
+        simulationMaskCacheId: 7,
+        targetControlPoints: [target],
+        trackedTargets: [{ center: target, radius: 12 }],
+      },
+      hitTarget: { center: target, radius: 12 },
+      settings,
+      simulationMask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    expect(maskSlice).toHaveBeenCalledOnce();
+    if (result.status === "hit") {
+      expect(result.finalValidationEvidence?.formulaSettingsIdentity).toBe(
+        createGraphwarTrajectoryFormulaSettingsIdentityKey(settings),
+      );
+    }
+  });
+
+  it("does not snapshot or promote a failed direct replay when a fixed-window gate later hits", () => {
+    const start = toPixel(-11, 0);
+    const target = toPixel(-5.5, 4);
+    const simulationMask = createEmptyMask();
+    const wallX = 516;
+    for (let row = 180; row <= 270; row += 1) {
+      simulationMask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
+    }
+    const maskSlice = vi.spyOn(simulationMask, "slice");
+    const result = scanGraphwarStepGlitchPath({
+      bounds,
+      boundsRect,
+      finalValidation: {
+        simulationMaskCacheId: 7,
+        targetControlPoints: [target],
+        trackedTargets: [{ center: target, radius: 12 }],
+      },
+      hitTarget: { center: target, radius: 12 },
+      settings,
+      simulationMask,
+      sourcePath: [start],
+      targetPoint: target,
+    });
+
+    expect(result.status).toBe("hit");
+    expect(maskSlice).not.toHaveBeenCalled();
+    if (result.status === "hit") {
+      expect(result.path).toHaveLength(3);
+      expect(result.finalValidationEvidence).toBeUndefined();
     }
   });
 

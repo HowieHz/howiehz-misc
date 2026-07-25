@@ -30,11 +30,21 @@ import {
   tryResolveGraphwarTrajectoryCandidate,
 } from "./sampling";
 
+const buildMockState = vi.hoisted(() => ({
+  materialIdentityNonce: 0,
+  shouldForceMaterialIdentityMismatch: false,
+}));
+
 vi.mock("../generation/build", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../generation/build")>();
   return {
     ...actual,
-    compileGraphwarFormulaMaterials: vi.fn(actual.compileGraphwarFormulaMaterials),
+    compileGraphwarFormulaMaterials: vi.fn((...args: Parameters<typeof actual.compileGraphwarFormulaMaterials>) => {
+      const compiledMaterials = actual.compileGraphwarFormulaMaterials(...args);
+      return buildMockState.shouldForceMaterialIdentityMismatch
+        ? Object.assign(compiledMaterials, { testMaterialIdentityNonce: buildMockState.materialIdentityNonce++ })
+        : compiledMaterials;
+    }),
   };
 });
 
@@ -686,6 +696,127 @@ describe("ODE segment position compensation", () => {
     expect(terms.some((term) => term.sourceSegmentIndex === 0 && term.glitchSegment !== undefined)).toBe(false);
     expect(terms.find((term) => term.sourceSegmentIndex === 1)?.glitchSegment).toMatchObject({ equation });
     expect(resolved.result.targetHitIndex).toBeGreaterThanOrEqual(0);
+  });
+
+  it("continues a later hard y'' Step from its exact boundary within the same solve", () => {
+    const pathPoints = [
+      createGraphPoint(-24, 12),
+      createGraphPoint(-22.857142857142858, 13.571428571428571),
+      createGraphPoint(-22.84714285714286, 1.7532467532467528),
+      createGraphPoint(-20, 0),
+    ];
+    const options = {
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      qualityPoints: pathPoints.slice(1),
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 210,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const baseline = resolveGraphwarTrajectory(options);
+    const fixedOptions = {
+      ...options,
+      signProtection: [GraphwarSignRole.StartX],
+      stepGlitchXWindows: baseline.context.stepGlitchFormulaPrefix?.stepGlitchSegments.map((segment) =>
+        segment ? { endX: segment.endX, startX: segment.startX } : undefined,
+      ),
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+    const resolved = resolveGraphwarTrajectory({
+      ...fixedOptions,
+      debugMetrics,
+    });
+    const forcedColdMetrics = createGraphwarTrajectoryDebugMetrics();
+    const forcedCold = resolveWithForcedMaterialIdentityMismatch({
+      ...fixedOptions,
+      debugMetrics: forcedColdMetrics,
+    });
+
+    expect(resolved.context.signProtection).toEqual([GraphwarSignRole.StartX]);
+    expect(resolved.context.stepGlitchFormulaPrefix?.stepGlitchRequirements).toEqual([false, true, false]);
+    expect(forcedColdMetrics.counters.trajectoryReplayCount - debugMetrics.counters.trajectoryReplayCount).toBe(1);
+    expect(debugMetrics.counters.rk4StepCount).toBeLessThan(forcedColdMetrics.counters.rk4StepCount);
+    expect(resolved.context.formulaResult.expression).toBe(forcedCold.context.formulaResult.expression);
+    expect(getGraphwarTrajectoryLaunchAngle(resolved.context)).toBe(
+      getGraphwarTrajectoryLaunchAngle(forcedCold.context),
+    );
+    expect(resolved.context.signProtection).toEqual(forcedCold.context.signProtection);
+    expectTrajectorySamplesToBeIdentical(resolved.result.sample, forcedCold.result.sample);
+    expectTrajectorySamplesToBeIdentical(
+      resolved.result.sample,
+      sampleGraphwarExpressionTrajectory({
+        bounds,
+        equation: "ddy",
+        expression: resolved.context.formulaResult.expression,
+        launchAngleRadians: getGraphwarTrajectoryLaunchAngle(resolved.context),
+        soldierCenter: pathPoints[0],
+      }),
+    );
+  });
+
+  it("retries a resumed hard y'' gate with real sign protection", () => {
+    const pathPoints = [
+      createGraphPoint(-24, 12),
+      createGraphPoint(-22.857142857142858, 13.571428571428571),
+      createGraphPoint(-22.84714285714286, 1.7532467532467528),
+      createGraphPoint(-20, 0),
+    ];
+    const options = {
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      settings: {
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "ddy",
+        steepness: 210,
+        stepGlitchMode: true,
+        stepOverflowProtection: true,
+      },
+      soldierCenter: pathPoints[0],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const baseline = resolveGraphwarTrajectory(options);
+    const prefix = baseline.context.stepGlitchFormulaPrefix;
+    const hardSegment = prefix?.stepGlitchSegments[1];
+    expect(hardSegment?.equation).toBe("ddy");
+    if (!prefix || hardSegment?.equation !== "ddy") {
+      return;
+    }
+    const resumedOptions = {
+      ...options,
+      initialState: {
+        currentPoint: createGraphPoint(hardSegment.startX, hardSegment.accelerationGateY),
+        dy: 0,
+        sampleIndex: 0,
+      },
+      stepGlitchFormulaPrefix: prefix,
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+    const resolved = resolveGraphwarTrajectory({ ...resumedOptions, debugMetrics });
+    const forcedColdMetrics = createGraphwarTrajectoryDebugMetrics();
+    const forcedCold = resolveWithForcedMaterialIdentityMismatch({
+      ...resumedOptions,
+      debugMetrics: forcedColdMetrics,
+    });
+
+    expect(resolved.context.signProtection.some((roles) => roles !== 0)).toBe(true);
+    expect(resolved.context.signProtection).toEqual(forcedCold.context.signProtection);
+    expect(forcedColdMetrics.counters.trajectoryReplayCount).toBeGreaterThan(
+      debugMetrics.counters.trajectoryReplayCount,
+    );
+    expect(debugMetrics.counters.rk4StepCount).toBeLessThan(forcedColdMetrics.counters.rk4StepCount);
+    expect(resolved.context.formulaResult.expression).toBe(forcedCold.context.formulaResult.expression);
+    expect(getGraphwarTrajectoryLaunchAngle(resolved.context)).toBe(
+      getGraphwarTrajectoryLaunchAngle(forcedCold.context),
+    );
+    expectTrajectorySamplesToBeIdentical(resolved.result.sample, forcedCold.result.sample);
   });
 
   it.each(["dy", "ddy"] as const)("keeps a successful soft %s segment when glitch mode is enabled", (equation) => {
@@ -1926,6 +2057,16 @@ describe("Step glitch formula prefix", () => {
 /** Converts a Graphwar coordinate pair into the shared test fixture's image space. */
 function toPixel(x: number, y: number) {
   return graphToImagePoint(createGraphPoint(x, y), bounds, boundsRect);
+}
+
+/** 让语义无关的材料 nonce 禁用局部边界复用，生成逐点等价的 forced-cold 对照。 */
+function resolveWithForcedMaterialIdentityMismatch(options: Parameters<typeof resolveGraphwarTrajectory>[0]) {
+  buildMockState.shouldForceMaterialIdentityMismatch = true;
+  try {
+    return resolveGraphwarTrajectory(options);
+  } finally {
+    buildMockState.shouldForceMaterialIdentityMismatch = false;
+  }
 }
 
 /** Replays one resolved y'' formula to the first real accepted state on or after a control line. */

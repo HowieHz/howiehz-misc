@@ -614,12 +614,15 @@ interface StepGlitchFormulaBoundaryCandidate {
   launchAngleRadians?: number;
   /** 候选在右门后的首个真实接受状态；只保留最终选中的一份。 */
   resumeState: GraphwarTrajectorySamplingState;
+  /** 生成候选状态时实际使用的局部 sign 保护。 */
+  signProtection: GraphwarSignProtection;
+  /** 候选回放请求的精确停止 x；接受状态可以位于它右侧。 */
+  stopX: number;
 }
 
 /** 邪道候选及其求值过程中确认的 sign 保护。 */
 interface StepGlitchCandidateSelection extends StepGlitchFormulaBoundaryCandidate {
   segment: StepGlitchSegment;
-  signProtection: GraphwarSignProtection;
 }
 
 /** 二阶候选只把 1px 当作排序分层；层内优先减小真实控制线导数，不建立新的失败阈值。 */
@@ -2150,28 +2153,41 @@ function refineStepSegmentsWithSimulation(
       signProtection,
       onZeroSignArgument,
     });
+    const boundaryStopX = createStepSegmentRefinementStopX(options.points[segmentIndex].x, previousSegment);
+    const shouldResolveBoundaryStart =
+      nextSegmentStartSample === undefined &&
+      (latestAcceptedBoundary !== undefined ||
+        (segmentIndex === reusableSegmentCount && reusablePrefix !== undefined && boundaryState !== undefined));
+    const boundaryLaunchAngleRadians = shouldResolveBoundaryStart
+      ? getStepGlitchPrefixLaunchAngle(options, refinedFormulaPoints, prefixFormula, launchAngleRadians, soldierCenter)
+      : launchAngleRadians;
+    const sameSolveBoundaryStartSample =
+      nextSegmentStartSample === undefined && latestAcceptedBoundary
+        ? reuseStepGlitchFormulaBoundaryCandidate(
+            prefixFormula,
+            latestAcceptedBoundary,
+            boundaryLaunchAngleRadians,
+            signProtection,
+            boundaryStopX,
+          )
+        : undefined;
     const reusableBoundaryStartSample =
       segmentIndex === reusableSegmentCount && reusablePrefix && boundaryState
         ? reuseStepGlitchFormulaBoundaryState(
             prefixFormula,
             reusablePrefix,
             boundaryState,
-            getStepGlitchPrefixLaunchAngle(
-              options,
-              refinedFormulaPoints,
-              prefixFormula,
-              launchAngleRadians,
-              soldierCenter,
-            ),
+            boundaryLaunchAngleRadians,
             signProtection,
             reusableSegmentCount,
-            createStepSegmentRefinementStopX(options.points[segmentIndex].x, previousSegment),
+            boundaryStopX,
           )
         : undefined;
     const startSample =
       segmentIndex === 0
         ? { point: refinedFormulaPoints[0] }
         : (nextSegmentStartSample ??
+          sameSolveBoundaryStartSample ??
           reusableBoundaryStartSample ??
           sampleStepSegmentStart(options, refinedFormulaPoints, prefixFormula, {
             launchAngleRadians,
@@ -2350,6 +2366,8 @@ function refineStepSegmentsWithSimulation(
             ? {}
             : { launchAngleRadians: softCandidate.launchAngleRadians }),
           resumeState: softCandidate.sample.endState,
+          signProtection: softCandidate.signProtection,
+          stopX: options.points[segmentIndex + 1].x,
         };
       }
       const verticalSpan = Math.abs(options.bounds.maxY - options.bounds.minY);
@@ -2409,7 +2427,7 @@ function refineStepSegmentsWithSimulation(
       // 几何失败不能回退；障碍-only soft 只有交给同次最终碰撞回放时，才可保留既有命中/碰撞顺序。
       throw new GraphwarStepSegmentConnectionError(segmentIndex);
     }
-    // 当前段一经接受便冻结；soft 已有最终文本等价的真实末状态，下一段直接续播，hard 仍从枪口重放。
+    // 当前段一经接受便冻结；soft 直接携带末状态，hard 留到下一轮用最终前缀材料和发射角核对后再续播。
     refinedSegments[segmentIndex] = selection?.segment;
     refinedDeltaYs[segmentIndex] = selection ? nextDeltaYOverride : acceptedSoftDeltaYOverride;
     disabledSegments[segmentIndex] = false;
@@ -2452,7 +2470,9 @@ function refineStepSegmentsWithSimulation(
     const resolvedBoundaryState =
       latestAcceptedBoundary &&
       createStepGlitchFormulaMaterialsIdentity(latestAcceptedBoundary.compiledMaterials) === formulaMaterialsIdentity &&
-      Object.is(latestAcceptedBoundary.launchAngleRadians, currentBoundaryLaunchAngleRadians)
+      Object.is(latestAcceptedBoundary.launchAngleRadians, currentBoundaryLaunchAngleRadians) &&
+      graphwarSignProtectionEquals(latestAcceptedBoundary.signProtection, acceptedSignProtection ?? signProtection) &&
+      Object.is(latestAcceptedBoundary.stopX, stopX)
         ? latestAcceptedBoundary.resumeState
         : reusableBoundaryState;
     if (resolvedBoundaryState) {
@@ -2617,6 +2637,31 @@ function reuseStepGlitchFormulaBoundaryState(
     return undefined;
   }
   const reusableState = copyGraphwarTrajectorySamplingState(boundaryState.state);
+  return { point: reusableState.currentPoint, resumeState: reusableState };
+}
+
+/** Hard 候选与下一轮最终前缀完全一致时，复用同次求解刚产生的右门状态。 */
+function reuseStepGlitchFormulaBoundaryCandidate(
+  prefixFormula: StepGlitchPrefixFormula,
+  candidate: StepGlitchFormulaBoundaryCandidate,
+  launchAngleRadians: number | undefined,
+  signProtection: GraphwarSignProtection,
+  stopX: number,
+): StepSegmentStartSample | undefined {
+  if (
+    createStepGlitchFormulaMaterialsIdentity(candidate.compiledMaterials) !==
+      createStepGlitchFormulaMaterialsIdentity(prefixFormula.compiledMaterials) ||
+    !Object.is(candidate.launchAngleRadians, launchAngleRadians) ||
+    !graphwarSignProtectionEquals(candidate.signProtection, signProtection) ||
+    !Object.is(candidate.stopX, stopX) ||
+    !Number.isFinite(candidate.resumeState.currentPoint.x) ||
+    !Number.isFinite(candidate.resumeState.currentPoint.y) ||
+    candidate.resumeState.currentPoint.x < stopX ||
+    (prefixFormula.compiledMaterials.stepFormula?.equation === "ddy" && !Number.isFinite(candidate.resumeState.dy))
+  ) {
+    return undefined;
+  }
+  const reusableState = copyGraphwarTrajectorySamplingState(candidate.resumeState);
   return { point: reusableState.currentPoint, resumeState: reusableState };
 }
 
@@ -2975,6 +3020,7 @@ function selectStepGlitchSegmentCandidate(
           resumeState: bestResumeState,
           segment: bestSegment,
           signProtection: bestSignProtection,
+          stopX: bestSegment.endX,
         } satisfies StepGlitchCandidateSelection;
       }
     }

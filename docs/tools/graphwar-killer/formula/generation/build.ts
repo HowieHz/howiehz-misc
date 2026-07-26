@@ -314,6 +314,12 @@ function compileStepEvaluator(
 ): CompiledFormulaEvaluator {
   const baseY = points[0]?.y ?? 0;
   const formula = getCompiledStepFormula(points, steepness, options, compiledMaterials);
+  // CenterX sign protection 与 canonical terms 共同构成 evaluator 快照；保护身份变化时调用方会重建 evaluator。
+  const centerXSignProtectionEpsilons = formula.terms.map((term) =>
+    isGraphwarSignProtected(options?.signProtection, term.sourceSegmentIndex, GraphwarSignRole.CenterX)
+      ? Number.EPSILON
+      : 0,
+  );
   let shouldNormalizeSecondDerivativeZero = false;
   for (const term of formula.terms) {
     if (term.glitchSegment?.equation === "ddy") {
@@ -396,7 +402,13 @@ function compileStepEvaluator(
 
         const t = formula.formulaSteepness * (x - term.formulaCenterX);
         if (term.isDerivativeOverflowProtected) {
-          const sign = evaluateStableSignRatio(t, term.sourceSegmentIndex, GraphwarSignRole.CenterX, options);
+          const sign = evaluateStableSignRatioWithKnownProtection(
+            t,
+            term.sourceSegmentIndex,
+            GraphwarSignRole.CenterX,
+            options,
+            centerXSignProtectionEpsilons[index],
+          );
           // Stable 二阶导文本是 k*sign*q*(1-q)/denom；Graphwar 会逐层把左侧 * 作为根节点。
           const contribution =
             -term.secondDerivativeCoefficient * (sign * evaluateCompiledStepStableSecondDerivativeBody(t));
@@ -1607,14 +1619,27 @@ function evaluateStableSignRatio(
   role: GraphwarSignRole,
   options?: FormulaEvaluationOptions,
 ) {
+  return evaluateStableSignRatioWithKnownProtection(
+    value,
+    sourceSegmentIndex,
+    role,
+    options,
+    isGraphwarSignProtected(options?.signProtection, sourceSegmentIndex, role) ? Number.EPSILON : 0,
+  );
+}
+
+/** 已冻结保护身份的 evaluator 热路径不应在每次代入时重复查询角色位。 */
+function evaluateStableSignRatioWithKnownProtection(
+  value: number,
+  sourceSegmentIndex: number,
+  role: GraphwarSignRole,
+  options: FormulaEvaluationOptions | undefined,
+  protectionEpsilon: number,
+) {
   if (value === 0) {
     options?.onZeroSignArgument?.(sourceSegmentIndex, role);
   }
-  return (
-    value /
-    (Math.abs(value) +
-      (isGraphwarSignProtected(options?.signProtection, sourceSegmentIndex, role) ? Number.EPSILON : 0))
-  );
+  return value / (Math.abs(value) + protectionEpsilon);
 }
 
 /** 格式化逻辑 sign 项；未确认折点时保留 Graphwar 原始数值行为。 */

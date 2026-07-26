@@ -314,6 +314,26 @@ function compileStepEvaluator(
 ): CompiledFormulaEvaluator {
   const baseY = points[0]?.y ?? 0;
   const formula = getCompiledStepFormula(points, steepness, options, compiledMaterials);
+  let shouldNormalizeSecondDerivativeZero = false;
+  for (const term of formula.terms) {
+    if (term.glitchSegment?.equation === "ddy") {
+      if (term.glitchSegment.acceleration !== 0) {
+        shouldNormalizeSecondDerivativeZero = term.glitchSegment.acceleration < 0;
+        break;
+      }
+      if (term.glitchSegment.braking !== 0) {
+        shouldNormalizeSecondDerivativeZero = term.glitchSegment.braking < 0;
+        break;
+      }
+      continue;
+    }
+    if (!term.glitchSegment && term.secondDerivativeCoefficient !== 0) {
+      shouldNormalizeSecondDerivativeZero = term.derivativeUsesOverflowProtection
+        ? -term.secondDerivativeCoefficient < 0
+        : term.secondDerivativeCoefficient < 0;
+      break;
+    }
+  }
   const evaluator: CompiledFormulaEvaluator = {
     evaluateFirstDerivativeY(x, y) {
       let slope = 0;
@@ -384,7 +404,8 @@ function compileStepEvaluator(
           acceleration = acceleration === undefined ? contribution : contribution + acceleration;
         }
       }
-      return acceleration ?? 0;
+      // Graphwar 仅在首个文本项为负时注入隐式 `0 +`，该加法会把最终 -0 规范成 +0。
+      return shouldNormalizeSecondDerivativeZero && acceleration === 0 ? 0 : (acceleration ?? 0);
     },
     evaluateY(x) {
       let yOffset = 0;

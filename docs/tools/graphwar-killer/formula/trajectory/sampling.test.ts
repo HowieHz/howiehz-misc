@@ -11,6 +11,7 @@ import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
 import { createGraphwarTrajectoryDebugMetrics } from "../debug-metrics";
+import { createGraphwarExpressionEvaluator } from "../expression/evaluator";
 import {
   buildFormula,
   compileFormulaEvaluator,
@@ -18,6 +19,7 @@ import {
   GraphwarSignRole,
 } from "../generation/build";
 import { sampleGraphwarExpressionTrajectory, sampleGraphwarTrajectory } from "../simulation/simulator";
+import type { GraphwarTrajectorySample } from "../simulation/simulator";
 import {
   compareGraphwarPathErrors,
   continueResolvedGraphwarTrajectory,
@@ -806,7 +808,7 @@ describe("Generated formula evaluator equivalence", () => {
 
   it("matches the complete Step y'' trajectory before, on, and after protected high-precision gates", () => {
     const soldierCenter = createGraphPoint(-GRAPHWAR_GAME_SOLDIER_RADIUS, 0);
-    const points = [createGraphPoint(0, 0), createGraphPoint(1, 0)];
+    const points = [createGraphPoint(0, 0), createGraphPoint(1, 0), createGraphPoint(2, 1)];
     const startX = GRAPHWAR_STEP_SIZE;
     const pulseEndX = 2 * GRAPHWAR_STEP_SIZE;
     const formulaEvaluation = {
@@ -856,7 +858,10 @@ describe("Generated formula evaluator equivalence", () => {
       soldierCenter,
     });
 
+    expect(compiledMaterials.stepFormula?.terms).toHaveLength(2);
     expect(compiledMaterials.stepFormula?.terms[0]?.glitchSegment?.formulaDecimalPlaces).toBe(15);
+    expect(compiledMaterials.stepFormula?.terms[1]?.glitchSegment).toBeUndefined();
+    expect(compiledMaterials.stepFormula?.terms[1]?.secondDerivativeCoefficient).not.toBe(0);
     for (const gateX of [startX, pulseEndX]) {
       const gateIndex = compiled.points.findIndex((point) => Object.is(point.x, gateX));
       expect(gateIndex).toBeGreaterThan(0);
@@ -864,6 +869,96 @@ describe("Generated formula evaluator equivalence", () => {
       expect(compiled.points[gateIndex + 1]?.x).toBeGreaterThan(gateX);
     }
     expectTrajectorySamplesToBeIdentical(compiled, parsed);
+  });
+
+  it("preserves Step y'' stable-center signed zero and unprotected callback identity", () => {
+    const points = [createGraphPoint(-1, 0), createGraphPoint(0, 1)];
+    const protectedFormulaEvaluation = {
+      equation: "ddy" as const,
+      formulaDecimalPlaces: 4,
+      signProtection: [GraphwarSignRole.CenterX],
+      isStepOverflowProtectionEnabled: true,
+    };
+    const protectedMaterials = compileGraphwarFormulaMaterials(points, 210, "step", protectedFormulaEvaluation);
+    const protectedExpression = buildFormula(points, 210, "ddy", "step", 4, {
+      compiledMaterials: protectedMaterials,
+      signProtection: protectedFormulaEvaluation.signProtection,
+      isStepOverflowProtectionEnabled: true,
+    }).expression;
+    const protectedParsed = createGraphwarExpressionEvaluator(protectedExpression);
+    if (!protectedParsed) {
+      throw new Error("Expected the protected Step y'' expression to parse");
+    }
+    const protectedValue = compileFormulaEvaluator(
+      points,
+      210,
+      "step",
+      protectedFormulaEvaluation,
+      protectedMaterials,
+    ).evaluateSecondDerivativeY(0, 0, 0);
+
+    expect(Object.is(protectedValue, protectedParsed(0, 0, 0))).toBe(true);
+    expect(Object.is(protectedValue, 0)).toBe(true);
+
+    const zeroSites: [number, GraphwarSignRole][] = [];
+    const unprotectedFormulaEvaluation = {
+      equation: "ddy" as const,
+      formulaDecimalPlaces: 4,
+      onZeroSignArgument: (segmentIndex: number, role: GraphwarSignRole) => zeroSites.push([segmentIndex, role]),
+      signProtection: [],
+      isStepOverflowProtectionEnabled: true,
+    };
+    const unprotectedMaterials = compileGraphwarFormulaMaterials(points, 210, "step", unprotectedFormulaEvaluation);
+    const unprotectedExpression = buildFormula(points, 210, "ddy", "step", 4, {
+      compiledMaterials: unprotectedMaterials,
+      signProtection: unprotectedFormulaEvaluation.signProtection,
+      isStepOverflowProtectionEnabled: true,
+    }).expression;
+    const unprotectedParsed = createGraphwarExpressionEvaluator(unprotectedExpression);
+    if (!unprotectedParsed) {
+      throw new Error("Expected the unprotected Step y'' expression to parse");
+    }
+    const unprotectedValue = compileFormulaEvaluator(
+      points,
+      210,
+      "step",
+      unprotectedFormulaEvaluation,
+      unprotectedMaterials,
+    ).evaluateSecondDerivativeY(0, 0, 0);
+
+    expect(Object.is(unprotectedValue, unprotectedParsed(0, 0, 0))).toBe(true);
+    expect(unprotectedValue).toBeNaN();
+    expect(zeroSites).toEqual([[0, GraphwarSignRole.CenterX]]);
+  });
+
+  it("preserves Step y'' negative zero when a leading positive direct term underflows", () => {
+    const points = [createGraphPoint(-1, 0), createGraphPoint(0, 1)];
+    const formulaEvaluation = {
+      equation: "ddy" as const,
+      formulaDecimalPlaces: 4,
+      isStepOverflowProtectionEnabled: false,
+    };
+    const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+    const expression = buildFormula(points, 210, "ddy", "step", 4, {
+      compiledMaterials,
+      isStepOverflowProtectionEnabled: false,
+    }).expression;
+    const parsed = createGraphwarExpressionEvaluator(expression);
+    if (!parsed) {
+      throw new Error("Expected the direct Step y'' expression to parse");
+    }
+    const evaluateSecondDerivativeY = compileFormulaEvaluator(
+      points,
+      210,
+      "step",
+      formulaEvaluation,
+      compiledMaterials,
+    ).evaluateSecondDerivativeY;
+    const x = 4;
+    const compiledValue = evaluateSecondDerivativeY(x, 0, 0);
+
+    expect(Object.is(parsed(x, 0, 0), -0)).toBe(true);
+    expect(Object.is(compiledValue, parsed(x, 0, 0))).toBe(true);
   });
 
   it("keeps soft ddy weighting finite when Graphwar divides before multiplying by two", () => {
@@ -2561,10 +2656,7 @@ function measureResolvedSecondOrderControlQuality(
  * Generated evaluators are authoritative only while every Graphwar double operation remains bit-for-bit text
  * equivalent.
  */
-function expectTrajectorySamplesToBeIdentical(
-  actual: { points: readonly { x: number; y: number }[]; stopReason: string },
-  expected: { points: readonly { x: number; y: number }[]; stopReason: string },
-) {
+function expectTrajectorySamplesToBeIdentical(actual: GraphwarTrajectorySample, expected: GraphwarTrajectorySample) {
   expect(actual.stopReason).toBe(expected.stopReason);
   expect(actual.points).toHaveLength(expected.points.length);
   for (let index = 0; index < actual.points.length; index += 1) {
@@ -2576,5 +2668,16 @@ function expectTrajectorySamplesToBeIdentical(
       Object.is(actual.points[index]?.y, expected.points[index]?.y),
       `y differs at sample ${index}, x=${actual.points[index]?.x}: ${actual.points[index]?.y} !== ${expected.points[index]?.y}`,
     ).toBe(true);
+  }
+  expect(actual.endState?.sampleIndex).toBe(expected.endState?.sampleIndex);
+  for (const [name, actualValue, expectedValue] of [
+    ["current x", actual.endState?.currentPoint.x, expected.endState?.currentPoint.x],
+    ["current y", actual.endState?.currentPoint.y, expected.endState?.currentPoint.y],
+    ["dy", actual.endState?.dy, expected.endState?.dy],
+    ["previous x", actual.endState?.previousPoint?.x, expected.endState?.previousPoint?.x],
+    ["previous y", actual.endState?.previousPoint?.y, expected.endState?.previousPoint?.y],
+    ["previous dy", actual.endState?.previousDy, expected.endState?.previousDy],
+  ] as const) {
+    expect(Object.is(actualValue, expectedValue), `${name} differs: ${actualValue} !== ${expectedValue}`).toBe(true);
   }
 }

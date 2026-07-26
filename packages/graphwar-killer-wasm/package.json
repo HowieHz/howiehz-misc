@@ -1,0 +1,20 @@
+{
+  "name": "graphwar-killer-wasm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./graphwar-kernel.wasm": "./build/graphwar-kernel.wasm"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "pnpm run build && node --test test/*.test.mjs",
+    "watch": "node scripts/watch.mjs"
+  },
+  "devDependencies": {
+    "assemblyscript": "0.28.20"
+  },
+  "engines": {
+    "node": "^22 || >=24"
+  }
+}

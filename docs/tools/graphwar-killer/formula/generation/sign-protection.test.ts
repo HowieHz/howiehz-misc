@@ -97,6 +97,67 @@ describe("Graphwar local sign protection", () => {
     }
   });
 
+  it("keeps each Step y'' glitch gate one-hot equivalent at its adjacent doubles", () => {
+    const points = [createGraphPoint(-2, 0), createGraphPoint(0, 2)];
+    for (const { inputs, role } of [
+      {
+        inputs: [nextDownDouble(-1), -1, nextUpDouble(-1)].map((x) => ({ x, y: 0 })),
+        role: GraphwarSignRole.StartX,
+      },
+      {
+        inputs: [nextDownDouble(1), 1, nextUpDouble(1)].map((x) => ({ x, y: 0 })),
+        role: GraphwarSignRole.EndX,
+      },
+      {
+        inputs: [nextDownDouble(1), 1, nextUpDouble(1)].map((y) => ({ x: 0, y })),
+        role: GraphwarSignRole.GateY,
+      },
+      {
+        inputs: [nextDownDouble(-1), -1, nextUpDouble(-1)].map((y) => ({ x: 0, y })),
+        role: GraphwarSignRole.BrakingGateY,
+      },
+    ]) {
+      const formulaEvaluation = {
+        equation: "ddy" as const,
+        formulaDecimalPlaces: 15,
+        signProtection: [role],
+        stepGlitchSegments: [
+          {
+            acceleration: 8,
+            accelerationGateY: 1,
+            braking: -4,
+            brakingGateY: -1,
+            endX: 2,
+            equation: "ddy" as const,
+            formulaDecimalPlaces: 15,
+            pulseEndX: 1,
+            startX: -1,
+            targetY: 2,
+          },
+        ],
+        isStepOverflowProtectionEnabled: true,
+      };
+      const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+      const expression = buildFormula(points, 210, "ddy", "step", 15, {
+        compiledMaterials,
+        signProtection: formulaEvaluation.signProtection,
+        isStepOverflowProtectionEnabled: true,
+      }).expression;
+      const parsed = createGraphwarExpressionEvaluator(expression);
+      if (!parsed) {
+        throw new Error("Expected the one-hot Step y'' glitch expression to parse");
+      }
+      const compiled = compileFormulaEvaluator(points, 210, "step", formulaEvaluation, compiledMaterials);
+
+      expect(countOccurrences(expression, epsilonText)).toBe(
+        role === GraphwarSignRole.StartX || role === GraphwarSignRole.EndX ? 2 : 1,
+      );
+      for (const { x, y } of inputs) {
+        expect(Object.is(compiled.evaluateSecondDerivativeY(x, y, 0), parsed(x, y, 0))).toBe(true);
+      }
+    }
+  });
+
   it("treats absent and trailing zero protection entries as the same snapshot", () => {
     expect(graphwarSignProtectionEquals([GraphwarSignRole.StartX], [GraphwarSignRole.StartX, 0, 0])).toBe(true);
     expect(graphwarSignProtectionEquals(undefined, [])).toBe(true);

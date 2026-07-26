@@ -961,6 +961,150 @@ describe("Generated formula evaluator equivalence", () => {
     expect(Object.is(compiledValue, parsed(x, 0, 0))).toBe(true);
   });
 
+  it("omits zero Step y'' glitch branches before evaluating their gates", () => {
+    const points = [createGraphPoint(-2, 0), createGraphPoint(0, 1)];
+    for (const glitchSegment of [
+      { acceleration: 8, accelerationGateY: 1, braking: 0, brakingGateY: 0 },
+      { acceleration: 0, accelerationGateY: 0, braking: 8, brakingGateY: -1 },
+    ]) {
+      const formulaEvaluation = {
+        equation: "ddy" as const,
+        formulaDecimalPlaces: 15,
+        signProtection: [],
+        stepGlitchSegments: [
+          {
+            ...glitchSegment,
+            endX: 2,
+            equation: "ddy" as const,
+            formulaDecimalPlaces: 15,
+            pulseEndX: 1,
+            startX: -1,
+            targetY: 1,
+          },
+        ],
+        isStepOverflowProtectionEnabled: true,
+      };
+      const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+      const expression = buildFormula(points, 210, "ddy", "step", 15, {
+        compiledMaterials,
+        signProtection: formulaEvaluation.signProtection,
+        isStepOverflowProtectionEnabled: true,
+      }).expression;
+      const parsed = createGraphwarExpressionEvaluator(expression);
+      if (!parsed) {
+        throw new Error("Expected the one-branch Step glitch expression to parse");
+      }
+      const compiled = compileFormulaEvaluator(
+        points,
+        210,
+        "step",
+        formulaEvaluation,
+        compiledMaterials,
+      ).evaluateSecondDerivativeY;
+
+      expect(parsed(0, 0, 0)).toBe(8);
+      expect(Object.is(compiled(0, 0, 0), parsed(0, 0, 0))).toBe(true);
+    }
+  });
+
+  it("counts an active Step y'' glitch pair once and an omitted pair zero times", () => {
+    const points = [createGraphPoint(-2, 0), createGraphPoint(0, 1)];
+    for (const [acceleration, braking, expectedTermCount] of [
+      [8, -8, 1],
+      [0, 0, 0],
+    ] as const) {
+      const formulaEvaluation = {
+        equation: "ddy" as const,
+        formulaDecimalPlaces: 15,
+        signProtection: [GraphwarSignRole.GateY | GraphwarSignRole.BrakingGateY],
+        stepGlitchSegments: [
+          {
+            acceleration,
+            accelerationGateY: 0,
+            braking,
+            brakingGateY: 0,
+            endX: 2,
+            equation: "ddy" as const,
+            formulaDecimalPlaces: 15,
+            pulseEndX: 1,
+            startX: -1,
+            targetY: 1,
+          },
+        ],
+        isStepOverflowProtectionEnabled: true,
+      };
+      const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+      const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+      compileFormulaEvaluator(
+        points,
+        210,
+        "step",
+        formulaEvaluation,
+        compiledMaterials,
+        debugMetrics.counters,
+      ).evaluateSecondDerivativeY(0, 0, 0);
+
+      expect(debugMetrics.counters.formulaTermEvaluationCount).toBe(expectedTermCount);
+    }
+  });
+
+  it("right-folds Step y'' glitch pairs with following terms like Graphwar", () => {
+    const points = [createGraphPoint(-2, 0), createGraphPoint(-1, 1), createGraphPoint(0, 2)];
+    const protectedGateRoles = GraphwarSignRole.GateY | GraphwarSignRole.BrakingGateY;
+    const formulaEvaluation = {
+      equation: "ddy" as const,
+      formulaDecimalPlaces: 15,
+      signProtection: [protectedGateRoles, protectedGateRoles],
+      stepGlitchSegments: [
+        {
+          acceleration: 2e16,
+          accelerationGateY: 0,
+          braking: -2e16,
+          brakingGateY: 0,
+          endX: 2,
+          equation: "ddy" as const,
+          formulaDecimalPlaces: 15,
+          pulseEndX: 1,
+          startX: -1,
+          targetY: 1,
+        },
+        {
+          acceleration: 2,
+          accelerationGateY: 0,
+          braking: 0,
+          brakingGateY: 0,
+          endX: 2,
+          equation: "ddy" as const,
+          formulaDecimalPlaces: 15,
+          pulseEndX: 1,
+          startX: -1,
+          targetY: 2,
+        },
+      ],
+      isStepOverflowProtectionEnabled: true,
+    };
+    const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+    const expression = buildFormula(points, 210, "ddy", "step", 15, {
+      compiledMaterials,
+      signProtection: formulaEvaluation.signProtection,
+      isStepOverflowProtectionEnabled: true,
+    }).expression;
+    const parsed = createGraphwarExpressionEvaluator(expression);
+    if (!parsed) {
+      throw new Error("Expected the right-associated Step glitch expression to parse");
+    }
+    const compiled = compileFormulaEvaluator(
+      points,
+      210,
+      "step",
+      formulaEvaluation,
+      compiledMaterials,
+    ).evaluateSecondDerivativeY;
+
+    expect(parsed(0, 0, 0)).toBe(0);
+    expect(Object.is(compiled(0, 0, 0), parsed(0, 0, 0))).toBe(true);
+  });
+
   it("keeps soft ddy weighting finite when Graphwar divides before multiplying by two", () => {
     const evaluator = compileFormulaEvaluator(
       [

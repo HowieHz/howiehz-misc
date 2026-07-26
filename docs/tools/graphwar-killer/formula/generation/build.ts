@@ -314,14 +314,17 @@ function compileStepEvaluator(
 ): CompiledFormulaEvaluator {
   const baseY = points[0]?.y ?? 0;
   const formula = getCompiledStepFormula(points, steepness, options, compiledMaterials);
+  // evaluator 生命周期内绑定同一 canonical 材料快照；热循环不再逐项追溯 formula 容器属性。
+  const terms = formula.terms;
+  const formulaSteepness = formula.formulaSteepness;
   // CenterX sign protection 与 canonical terms 共同构成 evaluator 快照；保护身份变化时调用方会重建 evaluator。
-  const centerXSignProtectionEpsilons = formula.terms.map((term) =>
+  const centerXSignProtectionEpsilons = terms.map((term) =>
     isGraphwarSignProtected(options?.signProtection, term.sourceSegmentIndex, GraphwarSignRole.CenterX)
       ? Number.EPSILON
       : 0,
   );
   let shouldNormalizeSecondDerivativeZero = false;
-  for (const term of formula.terms) {
+  for (const term of terms) {
     if (term.glitchSegment?.equation === "ddy") {
       if (term.glitchSegment.acceleration !== 0) {
         shouldNormalizeSecondDerivativeZero = term.glitchSegment.acceleration < 0;
@@ -343,8 +346,8 @@ function compileStepEvaluator(
   const evaluator: CompiledFormulaEvaluator = {
     evaluateFirstDerivativeY(x, y) {
       let slope = 0;
-      for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
-        const term = formula.terms[index];
+      for (let index = terms.length - 1; index >= 0; index -= 1) {
+        const term = terms[index];
         if (term.glitchSegment) {
           if (term.glitchSegment.equation !== "dy") {
             // 二阶邪道项在窗口外没有一阶导尾值，不能参与建议发射角。
@@ -364,7 +367,7 @@ function compileStepEvaluator(
           continue;
         }
 
-        const t = formula.formulaSteepness * (x - term.formulaCenterX);
+        const t = formulaSteepness * (x - term.formulaCenterX);
         if (term.isDerivativeOverflowProtected) {
           // Stable 文本同样由首个 * 作为 Graphwar Polish 根节点，应先折叠右侧分式再乘系数。
           slope = term.firstDerivativeCoefficient * evaluateCompiledStepStableFirstDerivativeBody(t) + slope;
@@ -377,8 +380,8 @@ function compileStepEvaluator(
     },
     evaluateSecondDerivativeY(x, y = 0) {
       let acceleration: number | undefined;
-      for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
-        const term = formula.terms[index];
+      for (let index = terms.length - 1; index >= 0; index -= 1) {
+        const term = terms[index];
         if (term.glitchSegment) {
           if (
             term.glitchSegment.equation === "ddy" &&
@@ -400,7 +403,7 @@ function compileStepEvaluator(
           continue;
         }
 
-        const t = formula.formulaSteepness * (x - term.formulaCenterX);
+        const t = formulaSteepness * (x - term.formulaCenterX);
         if (term.isDerivativeOverflowProtected) {
           const sign = evaluateStableSignRatioWithKnownProtection(
             t,
@@ -424,8 +427,8 @@ function compileStepEvaluator(
     },
     evaluateY(x) {
       let yOffset = 0;
-      for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
-        const term = formula.terms[index];
+      for (let index = terms.length - 1; index >= 0; index -= 1) {
+        const term = terms[index];
         if (term.glitchSegment) {
           continue;
         }
@@ -433,7 +436,7 @@ function compileStepEvaluator(
           continue;
         }
 
-        const t = formula.formulaSteepness * (x - term.formulaCenterX);
+        const t = formulaSteepness * (x - term.formulaCenterX);
         yOffset = term.yCoefficient / (1 + evaluateCompiledStepExp(-t)) + yOffset;
       }
       return baseY + yOffset;
@@ -442,18 +445,18 @@ function compileStepEvaluator(
   if (!debugCounters) {
     return evaluator;
   }
-  const firstDerivativeTermCount = formula.terms.filter(
+  const firstDerivativeTermCount = terms.filter(
     (term) =>
       (term.glitchSegment?.equation === "dy" && term.glitchSegment.derivative !== 0) ||
       (!term.glitchSegment && term.firstDerivativeCoefficient !== 0),
   ).length;
-  const secondDerivativeTermCount = formula.terms.filter(
+  const secondDerivativeTermCount = terms.filter(
     (term) =>
       (term.glitchSegment?.equation === "ddy" &&
         (term.glitchSegment.acceleration !== 0 || term.glitchSegment.braking !== 0)) ||
       (!term.glitchSegment && term.secondDerivativeCoefficient !== 0),
   ).length;
-  const yTermCount = formula.terms.filter((term) => !term.glitchSegment && term.yCoefficient !== 0).length;
+  const yTermCount = terms.filter((term) => !term.glitchSegment && term.yCoefficient !== 0).length;
   return instrumentCompiledFormulaEvaluator(evaluator, debugCounters, {
     firstDerivativeTermCount,
     secondDerivativeTermCount,

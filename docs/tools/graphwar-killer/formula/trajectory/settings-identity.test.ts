@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import type { AlgorithmMode, EquationMode } from "../../core/types";
 import type { GraphwarTrajectoryFormulaSettings } from "./sampling";
 import {
   createGraphwarTrajectoryFormulaSettingsIdentity,
+  createGraphwarTrajectoryFormulaSettingsIdentityKey,
   graphwarTrajectoryFormulaSettingsAreEquivalent,
 } from "./settings-identity";
 
@@ -11,11 +13,51 @@ const baseSettings: GraphwarTrajectoryFormulaSettings = {
   decimalPlaces: 4,
   equation: "dy",
   steepness: 67,
-  stepGlitchMode: false,
-  stepOverflowProtection: true,
+  isStepGlitchModeEnabled: false,
+  isStepOverflowProtectionEnabled: true,
 };
 
 describe("Graphwar trajectory formula settings identity", () => {
+  it.each(
+    (["abs", "step", "pchip", "akima"] satisfies AlgorithmMode[]).flatMap((algorithm) =>
+      (["y", "dy", "ddy"] satisfies EquationMode[]).flatMap((equation) => [
+        [algorithm, equation, false] as const,
+        [algorithm, equation, true] as const,
+      ]),
+    ),
+  )(
+    "preserves the legacy canonical key for %s %s with Step-glitch request %s",
+    (algorithm, equation, isStepGlitchModeEnabled) => {
+      const settings: GraphwarTrajectoryFormulaSettings = {
+        ...baseSettings,
+        algorithm,
+        equation,
+        formulaPathSteepness: 71,
+        secondOrderLaunchAngleMode: "display-rounded",
+        steepness: 68,
+        isStepGlitchModeEnabled,
+        isStepOverflowProtectionEnabled: false,
+      };
+      const expectedIdentity = {
+        algorithm,
+        decimalPlaces: settings.decimalPlaces,
+        equation,
+        ...(algorithm === "step" ? { formulaPathSteepness: settings.formulaPathSteepness } : {}),
+        ...(equation === "ddy" ? { secondOrderLaunchAngleMode: settings.secondOrderLaunchAngleMode } : {}),
+        ...(algorithm === "step" || (algorithm === "abs" && equation === "ddy")
+          ? { steepness: settings.steepness }
+          : {}),
+        stepGlitchMode: isStepGlitchModeEnabled && algorithm === "step" && equation !== "y",
+        ...(algorithm === "step" && equation !== "y"
+          ? { stepOverflowProtection: settings.isStepOverflowProtectionEnabled }
+          : {}),
+      };
+
+      expect(createGraphwarTrajectoryFormulaSettingsIdentity(settings)).toEqual(expectedIdentity);
+      expect(createGraphwarTrajectoryFormulaSettingsIdentityKey(settings)).toBe(JSON.stringify(expectedIdentity));
+    },
+  );
+
   it("only separates Y'' execution modes for second-order equations", () => {
     expect(identity({ equation: "ddy", secondOrderLaunchAngleMode: undefined })).toEqual(
       identity({ equation: "ddy", secondOrderLaunchAngleMode: "full-precision" }),
@@ -50,26 +92,26 @@ describe("Graphwar trajectory formula settings identity", () => {
   });
 
   it("only includes overflow protection for Step ODE formulas", () => {
-    expect(identity({ equation: "dy", stepOverflowProtection: false })).not.toEqual(
-      identity({ equation: "dy", stepOverflowProtection: true }),
+    expect(identity({ equation: "dy", isStepOverflowProtectionEnabled: false })).not.toEqual(
+      identity({ equation: "dy", isStepOverflowProtectionEnabled: true }),
     );
-    expect(identity({ equation: "y", stepOverflowProtection: false })).toEqual(
-      identity({ equation: "y", stepOverflowProtection: true }),
+    expect(identity({ equation: "y", isStepOverflowProtectionEnabled: false })).toEqual(
+      identity({ equation: "y", isStepOverflowProtectionEnabled: true }),
     );
-    expect(identity({ algorithm: "abs", equation: "ddy", stepOverflowProtection: false })).toEqual(
-      identity({ algorithm: "abs", equation: "ddy", stepOverflowProtection: true }),
+    expect(identity({ algorithm: "abs", equation: "ddy", isStepOverflowProtectionEnabled: false })).toEqual(
+      identity({ algorithm: "abs", equation: "ddy", isStepOverflowProtectionEnabled: true }),
     );
   });
 
   it("normalizes dormant glitch preferences and leaves mask identity to callers", () => {
-    expect(identity({ equation: "dy", stepGlitchMode: false })).not.toEqual(
-      identity({ equation: "dy", stepGlitchMode: true }),
+    expect(identity({ equation: "dy", isStepGlitchModeEnabled: false })).not.toEqual(
+      identity({ equation: "dy", isStepGlitchModeEnabled: true }),
     );
-    expect(identity({ equation: "y", stepGlitchMode: false })).toEqual(
-      identity({ equation: "y", stepGlitchMode: true }),
+    expect(identity({ equation: "y", isStepGlitchModeEnabled: false })).toEqual(
+      identity({ equation: "y", isStepGlitchModeEnabled: true }),
     );
-    expect(identity({ algorithm: "abs", equation: "dy", stepGlitchMode: false })).toEqual(
-      identity({ algorithm: "abs", equation: "dy", stepGlitchMode: true }),
+    expect(identity({ algorithm: "abs", equation: "dy", isStepGlitchModeEnabled: false })).toEqual(
+      identity({ algorithm: "abs", equation: "dy", isStepGlitchModeEnabled: true }),
     );
     expect(
       graphwarTrajectoryFormulaSettingsAreEquivalent(

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { graphToImagePoint } from "../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../core/types";
-import { sampleGraphwarPathTargetSequence } from "../formula/trajectory/sampling";
+import { createGraphwarTrajectoryFormulaMode, sampleGraphwarPathTargetSequence } from "../formula/trajectory/sampling";
 import type { GraphwarTargetingArea, GraphwarTargetingSoldier } from "./targeting";
 import {
   createAllowedTargetRect,
@@ -78,14 +78,14 @@ describe("Step single-target soldier aiming", () => {
       decimalPlaces: 4,
       equation: "y" as const,
       steepness: 67,
-      stepGlitchMode: false,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
     };
     const centerResult = sampleGraphwarPathTargetSequence({
       bounds: area.bounds,
       boundsRect: area.boundsRect,
       points: [start, center],
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       targetCircles: [target.hitCircle],
       targetHitRadiusPixels: closeSoldier.hitRadius,
       targetPoints: [center],
@@ -94,7 +94,7 @@ describe("Step single-target soldier aiming", () => {
       bounds: area.bounds,
       boundsRect: area.boundsRect,
       points: [start, target.fallbackTargetPoint],
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       targetCircles: [target.hitCircle],
       targetHitRadiusPixels: closeSoldier.hitRadius,
       targetPoints: [target.fallbackTargetPoint],

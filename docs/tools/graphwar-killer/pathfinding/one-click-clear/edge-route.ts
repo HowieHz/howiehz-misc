@@ -2,7 +2,7 @@ import { pointAdvancesByMinimumAutomaticForwardStep } from "../../core/game/forw
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds } from "../../core/types";
-import type { GraphwarPathfindingRouteMode } from "../routing/mode";
+import type { GraphwarPathSearchRuntimePolicy } from "../routing/policy";
 import type { GraphwarPlaneMaskSummedArea } from "../routing/step-envelope";
 import type { GraphwarStepRouteModel } from "../routing/step-route";
 import { createGraphwarStepPathfindingEdgeEvaluator, validateGraphwarStepRoutePath } from "../routing/step-route";
@@ -15,6 +15,7 @@ import {
 import type { GraphwarOneClickClearEdgeWorkerJobResult } from "../runtime/protocol";
 /** 一键清图 DAG 单边建路；master 串行 fallback 和 edge Worker 并行消费者共用同一条路线规则。 */
 import type { GraphwarOneClickClearDagEdgeBuildJob } from "./search";
+import { isGraphwarOneClickClearStepRouteState } from "./step-route-state";
 
 /** Step 单边建路批次共享的数值模型和 route mask 查询材料。 */
 export interface GraphwarOneClickClearStepRouteBuildRuntime {
@@ -25,7 +26,7 @@ export interface GraphwarOneClickClearStepRouteBuildRuntime {
 }
 
 /** 单边建路所需的共享上下文；可视图轮廓 cache 的生命周期由调用方控制。 */
-export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
+interface GraphwarOneClickClearDagEdgeRouteBuildContextBase {
   /** 当前 Graphwar 坐标边界。 */
   bounds: GraphBounds;
   /** 截图内 Graphwar 坐标系矩形。 */
@@ -34,10 +35,6 @@ export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   boundaryExpansion: number;
   /** 已按 route tolerance 处理后的障碍 mask。 */
   routeMask: Uint8Array;
-  /** Step 批次共用的原子 runtime；ABS 批次省略。 */
-  stepRouteRuntime?: GraphwarOneClickClearStepRouteBuildRuntime;
-  /** 几何路线算法模式；和单目标路径规划共用页面上的寻路算法选择。 */
-  routeMode: GraphwarPathfindingRouteMode;
   /** 当前 route tolerance，单位为 Graphwar 原始平面像素，供可视图轮廓简化使用。 */
   routeTolerancePlanePixels: number;
   /** 与当前 worker 或串行批次同生命周期的 Theta* 工作区；可减少一键清图重复分配。 */
@@ -45,6 +42,10 @@ export interface GraphwarOneClickClearDagEdgeRouteBuildContext {
   /** 与 routeMask 同生命周期的可视图数据；Theta* 模式不需要。 */
   visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
 }
+
+/** 单边建路的路线选择与 Step runtime 是同一判别联合，不允许出现两种半状态。 */
+export type GraphwarOneClickClearDagEdgeRouteBuildContext = GraphwarOneClickClearDagEdgeRouteBuildContextBase &
+  Exclude<GraphwarPathSearchRuntimePolicy<GraphwarOneClickClearStepRouteBuildRuntime, never>, { type: "step-glitch" }>;
 
 /**
  * 构建单条一键清图 DAG 边路线。
@@ -57,9 +58,12 @@ export async function buildOneClickClearDagEdgeRoute(
   context: GraphwarOneClickClearDagEdgeRouteBuildContext,
   job: GraphwarOneClickClearDagEdgeBuildJob,
 ): Promise<GraphwarOneClickClearEdgeWorkerJobResult> {
-  const hasStepRouteRuntime = context.stepRouteRuntime !== undefined;
+  const hasStepRouteRuntime = context.type === "step-stateful";
   const hasStepRouteStartState = job.stepRouteStartState !== undefined;
-  if (hasStepRouteRuntime !== hasStepRouteStartState) {
+  if (
+    hasStepRouteRuntime !== hasStepRouteStartState ||
+    (hasStepRouteStartState && !isGraphwarOneClickClearStepRouteState(job.stepRouteStartState))
+  ) {
     return {
       jobId: job.id,
       routeMapPixelsElapsedMs: 0,
@@ -174,7 +178,7 @@ function createOneClickClearStepRouteRuntime(
   context: GraphwarOneClickClearDagEdgeRouteBuildContext,
   job: GraphwarOneClickClearDagEdgeBuildJob,
 ) {
-  const runtime = context.stepRouteRuntime;
+  const runtime = context.type === "step-stateful" ? context.runtime : undefined;
   const startState = job.stepRouteStartState;
   if (!runtime || !startState) {
     return undefined;

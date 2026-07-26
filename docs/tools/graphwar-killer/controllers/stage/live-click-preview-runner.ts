@@ -407,11 +407,11 @@ function cloneRenderInput(input: GraphwarLiveClickPreviewRenderInput): GraphwarL
         ? {}
         : { formulaPathSteepness: input.settings.formulaPathSteepness }),
       steepness: input.settings.steepness,
-      stepGlitchMode: input.settings.stepGlitchMode,
+      isStepGlitchModeEnabled: input.settings.isStepGlitchModeEnabled,
       ...(input.settings.stepGlitchObstacleMask
         ? { stepGlitchObstacleMask: input.settings.stepGlitchObstacleMask }
         : {}),
-      stepOverflowProtection: input.settings.stepOverflowProtection,
+      isStepOverflowProtectionEnabled: input.settings.isStepOverflowProtectionEnabled,
     },
     type: "formula",
   };

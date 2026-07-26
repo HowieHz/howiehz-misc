@@ -4,6 +4,11 @@ tmp
 output
 release-animation
 
+# Local architecture discussion notes
+/CONTEXT.md
+/docs/adr/
+/AGENTS.override.md
+
 # Logs
 logs
 *.log

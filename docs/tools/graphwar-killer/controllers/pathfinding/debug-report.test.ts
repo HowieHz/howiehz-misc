@@ -57,7 +57,16 @@ describe("Graphwar pathfinding debug reports", () => {
         state: downloads.state.fileName,
       },
       schemaVersion: 1,
+      settings: {
+        formula: {
+          stepGlitchMode: true,
+          stepGlitchObstacleMaskLength: 2,
+          stepOverflowProtection: true,
+        },
+      },
     });
+    expect(downloads.debug.content).not.toContain('"isStepGlitchModeEnabled":');
+    expect(downloads.debug.content).not.toContain('"isStepOverflowProtectionEnabled":');
     expect(downloads.debug.content).not.toContain("sourceObstacleMask");
     expect(downloads.debug.content).not.toContain('"stepGlitchObstacleMask":');
     expect(new Uint8Array(downloads.obstacle.content as ArrayBuffer)).toEqual(new Uint8Array([0, 1, 0, 1]));
@@ -162,8 +171,8 @@ function createOneClickClearInput() {
       decimalPlaces: 4,
       equation: "y",
       steepness: 67,
-      stepGlitchMode: false,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
     },
     simulationMask: undefined,
     simulationMaskCacheId: 0,
@@ -198,9 +207,9 @@ function createCapture() {
         decimalPlaces: 4,
         equation: "y",
         steepness: 67,
-        stepGlitchMode: true,
+        isStepGlitchModeEnabled: true,
         stepGlitchObstacleMask: new Uint8Array([1, 0]),
-        stepOverflowProtection: true,
+        isStepOverflowProtectionEnabled: true,
       }),
       isDeleteOptimizationEnabled: false,
       isFriendlyFireEnabled: false,

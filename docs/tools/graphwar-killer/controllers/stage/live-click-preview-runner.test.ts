@@ -181,8 +181,8 @@ function createRenderInput(targetY: number): GraphwarLiveClickPreviewRenderInput
       decimalPlaces: 4,
       equation: "y",
       steepness: 67,
-      stepGlitchMode: false,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
     },
     type: "formula",
   };

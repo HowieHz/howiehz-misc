@@ -315,7 +315,7 @@ export const graphwarKillerLocale = {
         const cacheText = hasResultCacheHit ? "（使用结果缓存）" : "";
         return `一键清图完成${cacheText}，整条弹道击杀 ${killCount} 个士兵，耗时 ${elapsed}`;
       },
-      unsupported: "一键清图仅支持双绝对值的 y、y'，或阶跃 y、y'、y''",
+      unsupported: "当前公式配置不支持一键清图",
     },
     managed: {
       backgroundWarning: "页面位于后台，托管发射可能延迟",
@@ -511,7 +511,6 @@ export const graphwarKillerLocale = {
         "delete-check-radius-invalid": "请修正删点命中检查半径",
         "formula-settings-invalid": "请先修正公式设置",
         "managed-timing-invalid": "请修正托管模式设定",
-        "formula-unsupported": "当前公式配置不支持一键清图",
         "image-required": "请先载入截图",
         "managed-lock": "托管运行期间此设置被锁定",
         "obstacle-tolerances-invalid": "请修正障碍容差",

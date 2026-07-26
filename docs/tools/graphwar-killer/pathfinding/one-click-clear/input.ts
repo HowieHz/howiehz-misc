@@ -1,11 +1,12 @@
 import { GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
-import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
+import { resolveFormulaModeContract } from "../../formula/mode-contract";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
+import { resolveGraphwarPathSearchPolicy } from "../routing/policy";
 import type { GraphwarOneClickClearPathWorkerInput } from "../runtime/protocol";
 import type { GraphwarOneClickClearCandidate } from "./search";
 
@@ -25,8 +26,7 @@ export type GraphwarOneClickClearSearchPreflightFailureReason =
   | "invalid-settings"
   | "missing-current-path"
   | "missing-obstacle-mask"
-  | "no-target"
-  | "unsupported-mode";
+  | "no-target";
 
 /** 一键清图预检所需的路径、目标和设置输入。 */
 interface GraphwarOneClickClearSearchPreflightOptions {
@@ -44,8 +44,6 @@ interface GraphwarOneClickClearSearchPreflightOptions {
   pathfindingWorkerCount: number | undefined;
   /** 成功解析后的寻路容差；缺失时应保持页面原设置错误语义。 */
   tolerances: GraphwarOneClickClearSearchTolerances | undefined;
-  /** 当前公式模式是否支持一键清图；用函数保留原来的校验顺序。 */
-  isModeSupported: () => boolean;
 }
 
 export type GraphwarOneClickClearSearchPreflightResult =
@@ -109,9 +107,6 @@ export function createGraphwarOneClickClearSearchPreflight(
   ) {
     return { ok: false, reason: "invalid-settings" };
   }
-  if (!options.isModeSupported()) {
-    return { ok: false, reason: "unsupported-mode" };
-  }
   if (options.pathPointCount === 0) {
     return { ok: false, reason: "missing-current-path" };
   }
@@ -135,10 +130,13 @@ export function createGraphwarOneClickClearSearchPreflight(
 export function createGraphwarOneClickClearSearchInput(
   options: GraphwarOneClickClearSearchInputOptions,
 ): GraphwarOneClickClearPathWorkerInput {
-  const stepGlitchMode = formulaModeUsesStepGlitch(
-    options.settings.algorithm,
-    options.settings.equation,
-    options.settings.stepGlitchMode,
+  const pathSearchPolicy = resolveGraphwarPathSearchPolicy(
+    resolveFormulaModeContract(
+      options.settings.algorithm,
+      options.settings.equation,
+      options.settings.isStepGlitchModeEnabled,
+    ),
+    options.routeMode,
   );
   return {
     boundaryExpansion: options.tolerances.routeBoundaryInsetPlanePixels,
@@ -157,12 +155,12 @@ export function createGraphwarOneClickClearSearchInput(
     prefixTarget: options.prefixTarget,
     routeMaskCacheId: options.routeMaskCacheId,
     // Step ODE 邪道不消费普通路由算法；规范值让无关配置共享同一结果身份。
-    routeMode: stepGlitchMode ? "visibility-graph" : options.routeMode,
+    routeMode: pathSearchPolicy.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     // 一键清图的 simulation mask 是任务的唯一碰撞快照；Step 门、验证和最终公式必须共享它。
     settings:
-      stepGlitchMode && options.simulationMask
+      pathSearchPolicy.type === "step-glitch" && options.simulationMask
         ? { ...options.settings, stepGlitchObstacleMask: options.simulationMask }
         : options.settings,
     simulationBoundaryExpansion: options.tolerances.simulationBoundaryInsetPlanePixels,

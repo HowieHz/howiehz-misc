@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type {
   GraphwarStepGlitchFormulaBoundaryState,
   GraphwarStepGlitchFormulaPrefix,
 } from "../../formula/trajectory/sampling";
 import type {
+  GraphwarOneClickClearBuildOptions,
   GraphwarOneClickClearIncumbent,
-  GraphwarOneClickClearOptions,
 } from "../../pathfinding/one-click-clear/search";
 import type {
   GraphwarStepGlitchPrefixEvidence,
@@ -101,7 +102,7 @@ describe("Anytime one-click-clear progress", () => {
       pathPoints: input.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
       trajectoryPoints: input.pathPoints.map((point) => createPixelPoint(point.x, point.y)),
     };
-    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearOptions) => {
+    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearBuildOptions) => {
       options.onValidatedIncumbent?.(incumbent);
       return {
         elapsedMs: 3,
@@ -153,7 +154,7 @@ describe("Anytime one-click-clear progress", () => {
 
   it("keeps the incumbent callback disabled for ordinary one-click-clear requests", async () => {
     const input = createOneClickClearInput();
-    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearOptions) => {
+    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearBuildOptions) => {
       expect(options.onValidatedIncumbent).toBeUndefined();
       return {
         elapsedMs: 1,
@@ -187,16 +188,54 @@ describe("Anytime one-click-clear progress", () => {
     });
   });
 
+  it.each(["pchip", "akima"] as const)("passes a stateless %s task through the Worker adapter", async (algorithm) => {
+    const input = createOneClickClearInput();
+    input.settings = { ...input.settings, algorithm };
+    mocks.buildOneClickClearPath.mockImplementation(async (options: GraphwarOneClickClearBuildOptions) => {
+      expect(options.formulaMode?.settings.algorithm).toBe(algorithm);
+      return {
+        elapsedMs: 1,
+        expandedStates: 0,
+        reason: "no-usable-target" as const,
+        type: "failure" as const,
+      };
+    });
+    if (!handleMessage) {
+      throw new Error("Pathfinding worker message handler was not registered");
+    }
+
+    handleMessage(
+      new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
+        data: {
+          id: 43,
+          task: {
+            input,
+            shouldReportIncumbents: false,
+            type: "build-one-click-clear-path",
+          },
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+    expect(postMessage.mock.calls[0]?.[0]).toMatchObject({
+      id: 43,
+      result: { result: { reason: "no-usable-target", type: "failure" } },
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+  });
+
   it("reuses Step glitch evidence from a failed search whose incumbent may be retained", async () => {
     const input = createOneClickClearInput();
     const targetPoint = createPixelPoint(300, 225);
     const adoptedPath = [...input.pathPoints, targetPoint];
     const prefixTarget = { center: targetPoint, radius: 7 };
-    input.settings = { ...input.settings, equation: "dy", stepGlitchMode: true };
+    input.settings = { ...input.settings, equation: "dy", isStepGlitchModeEnabled: true };
     input.simulationMask = new Uint8Array(770 * 450);
     input.simulationMaskCacheId = 904;
     mocks.buildOneClickClearPath
-      .mockImplementationOnce(async (options: GraphwarOneClickClearOptions) => {
+      .mockImplementationOnce(async (options: GraphwarOneClickClearBuildOptions) => {
         options.onValidatedStepGlitchPath?.({
           path: adoptedPath,
           prefixEvidence: {
@@ -212,7 +251,7 @@ describe("Anytime one-click-clear progress", () => {
         });
         return { elapsedMs: 1, expandedStates: 1, reason: "no-usable-target", type: "failure" as const };
       })
-      .mockImplementationOnce(async (options: GraphwarOneClickClearOptions) => {
+      .mockImplementationOnce(async (options: GraphwarOneClickClearBuildOptions) => {
         expect(options.stepGlitchPrefixEvidence).toMatchObject({ acceptedPoint: createGraphPoint(-5, 1) });
         return { elapsedMs: 1, expandedStates: 0, reason: "no-candidate", type: "failure" as const };
       });
@@ -253,7 +292,7 @@ describe("Anytime one-click-clear progress", () => {
 
 describe("Step glitch smart-path validation", () => {
   it("reuses the scanner replay when both validations share the same mask", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const input = createStepGlitchInput(mask, mask);
     const path = [input.sourcePath[0], input.targetPoint];
     mockHit(path);
@@ -265,18 +304,21 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("keeps the full trajectory validation when the formula mask differs", async () => {
-    const input = createStepGlitchInput(new Uint8Array(1), new Uint8Array(1));
+    const input = createStepGlitchInput(createPlaneMask(), createPlaneMask());
     mockHit([input.sourcePath[0], input.targetPoint]);
     mocks.validateTrajectory.mockReturnValue({ reachesTargetBeforeObstacle: false, visiblePixels: [] });
 
     const response = await dispatchSmartPathRequest(input);
 
+    expect(mocks.scanStepGlitchPath.mock.calls[0]?.[0].formulaMode.settings.stepGlitchObstacleMask).toBe(
+      input.simulationMask,
+    );
     expect(mocks.validateTrajectory).toHaveBeenCalledTimes(1);
     expect(response.result).toMatchObject({ failureReason: "trajectory" });
   });
 
   it("still rejects a scanner path that violates the Graph x rule", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const input = createStepGlitchInput(mask, mask);
     mockHit([input.targetPoint, input.sourcePath[0]]);
 
@@ -287,7 +329,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("reuses the last exact successful formula across an irrelevant settings change", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 701;
     const firstPath = [first.sourcePath[0], first.targetPoint];
@@ -334,7 +376,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("rejects prefix evidence after an effective settings change", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 731;
     const firstPath = [first.sourcePath[0], first.targetPoint];
@@ -359,7 +401,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("reuses prefix evidence when the previous target was an ordinary point", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 751;
     const firstPath = [first.sourcePath[0], first.targetPoint];
@@ -385,7 +427,7 @@ describe("Step glitch smart-path validation", () => {
   });
 
   it("rejects prefix evidence after the simulation mask id changes", async () => {
-    const mask = new Uint8Array(1);
+    const mask = createPlaneMask();
     const first = createStepGlitchInput(mask, mask);
     first.simulationMaskCacheId = 801;
     const firstPath = [first.sourcePath[0], first.targetPoint];
@@ -421,16 +463,16 @@ function createStepGlitchInput(simulationMask: Uint8Array, formulaMask: Uint8Arr
     isPreviewEnabled: false,
     routeMaskCacheId: 1,
     routeMode: "visibility-graph",
-    routeObstacleMask: new Uint8Array(1),
+    routeObstacleMask: createPlaneMask(),
     routeTolerancePlanePixels: 2,
     settings: {
       algorithm: "step",
       decimalPlaces: 4,
       equation: "dy",
       steepness: 67,
-      stepGlitchMode: true,
+      isStepGlitchModeEnabled: true,
       stepGlitchObstacleMask: formulaMask,
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     },
     simulationBoundaryExpansion: 0,
     simulationMask,
@@ -461,12 +503,16 @@ function createOneClickClearInput(): GraphwarOneClickClearPathWorkerInput {
       decimalPlaces: 4,
       equation: "y",
       steepness: 67,
-      stepGlitchMode: false,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
     },
     simulationBoundaryExpansion: 0,
     simulationMaskCacheId: 0,
   };
+}
+
+function createPlaneMask() {
+  return new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
 }
 
 /** 让邪道 scanner 返回一条已完整回放成功的精确路径。 */

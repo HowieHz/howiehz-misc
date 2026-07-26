@@ -30,7 +30,6 @@ export type GraphwarCapabilityReason =
   | "soldiers-required"
   | "obstacles-required"
   | "path-start-required"
-  | "formula-unsupported"
   | "formula-settings-invalid"
   | "managed-timing-invalid"
   | "pathfinding-worker-count-invalid"
@@ -63,7 +62,6 @@ export interface GraphwarCapabilityFacts {
     isSettingsValid: boolean;
     /** 包含后续由 Agent 选择的托管 profile 可能消费的休眠设定。 */
     isManagedSettingsValid: boolean;
-    isOneClickClearSupported: boolean;
     /** 当前 Step ODE 是否实际使用固定邪道扫描器。 */
     isStepGlitchRoutingUsed: boolean;
   };
@@ -259,9 +257,6 @@ function deriveGraphwarOneClickClearCapability(
   }
   if (!facts.pathfinding.hasPathStart) {
     return { state: "blocked", reason: "path-start-required" };
-  }
-  if (!facts.formula.isOneClickClearSupported) {
-    return { state: "blocked", reason: "formula-unsupported" };
   }
   if (!facts.formula.isSettingsValid) {
     return { state: "blocked", reason: "formula-settings-invalid" };

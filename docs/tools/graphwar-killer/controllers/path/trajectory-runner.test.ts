@@ -320,9 +320,9 @@ function createSolverInput(mask: Uint8Array): Extract<GraphwarTrajectoryCalculat
       decimalPlaces: 4,
       equation: "dy",
       steepness: 67,
-      stepGlitchMode: true,
+      isStepGlitchModeEnabled: true,
       stepGlitchObstacleMask: mask,
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     },
     type: "solver",
   };

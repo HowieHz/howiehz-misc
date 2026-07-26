@@ -53,9 +53,9 @@ describe("ABS second-derivative formula", () => {
 
   it("always uses the stable pulse form and ignores the Step overflow switch", () => {
     const points = [createGraphPoint(-10, 0), createGraphPoint(-5, 3), createGraphPoint(0, -1)];
-    const stable = buildFormula(points, 210, "ddy", "abs", 4, { stepOverflowProtection: true }).expression;
+    const stable = buildFormula(points, 210, "ddy", "abs", 4, { isStepOverflowProtectionEnabled: true }).expression;
     const switchDisabled = buildFormula(points, 210, "ddy", "abs", 4, {
-      stepOverflowProtection: false,
+      isStepOverflowProtectionEnabled: false,
     }).expression;
 
     expect(switchDisabled).toBe(stable);

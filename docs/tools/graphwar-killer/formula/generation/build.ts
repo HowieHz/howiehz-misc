@@ -38,7 +38,7 @@ export interface BuildFormulaOptions {
   /** 判断 step 项是否可能溢出的有效 x 范围。 */
   stepOverflowProtectionRange?: StepOverflowProtectionRange;
   /** 是否允许输出抗溢出的 step 表达式。 */
-  stepOverflowProtection?: boolean;
+  isStepOverflowProtectionEnabled?: boolean;
 }
 
 /** A(abs(x+b)-abs(x+c)) 连接函数使用的标准化线段数据。 */
@@ -104,29 +104,29 @@ export interface CompiledAbsSecondDerivativeFormula {
 /** Step 公式的一项最终文本等价预编译数据，统一支持 y、y'、y'' 三种模式。 */
 export interface CompiledStepTerm {
   /** 最终公式里的 Sigmoid 中心点。 */
-  formulaCenterX: number;
-  /** Y'= 邪道模式下替换普通 step 项的高导数门函数。 */
-  glitchSegment?: StepGlitchSegment;
+  readonly formulaCenterX: number;
+  /** 导数邪道模式下替换普通 step 项的高导数门函数。 */
+  readonly glitchSegment?: Readonly<StepGlitchSegment>;
   /** 一阶导前置系数。 */
-  firstDerivativeCoefficient: number;
+  readonly firstDerivativeCoefficient: number;
   /** 二阶导前置系数。 */
-  secondDerivativeCoefficient: number;
+  readonly secondDerivativeCoefficient: number;
   /** 导数项是否必须使用抗溢出的 exp 写法。 */
-  derivativeUsesOverflowProtection: boolean;
+  readonly isDerivativeOverflowProtected: boolean;
   /** Y= 模式累计高度系数。 */
-  yCoefficient: number;
+  readonly yCoefficient: number;
   /** 编译会省略零系数项；保护身份必须继续对应原始路径段。 */
-  sourceSegmentIndex: number;
+  readonly sourceSegmentIndex: number;
 }
 
 /** Step 公式最终文本等价材料；同一份数据应同时服务输出和采样。 */
 export interface CompiledStepFormula {
   /** 生成 canonical 系数时采用的方程模式。 */
-  equation: EquationMode;
+  readonly equation: EquationMode;
   /** 最终公式文本里的陡峭度。 */
-  formulaSteepness: number;
+  readonly formulaSteepness: number;
   /** 当前精度下仍会输出的阶跃项。 */
-  terms: CompiledStepTerm[];
+  readonly terms: readonly CompiledStepTerm[];
 }
 
 /** 软插值单段的最终文本等价常量；所有派生系数分别量化，不能从另一组舍入值反推。 */
@@ -314,11 +314,40 @@ function compileStepEvaluator(
 ): CompiledFormulaEvaluator {
   const baseY = points[0]?.y ?? 0;
   const formula = getCompiledStepFormula(points, steepness, options, compiledMaterials);
+  // evaluator 生命周期内绑定同一 canonical 材料快照；热循环不再逐项追溯 formula 容器属性。
+  const terms = formula.terms;
+  const formulaSteepness = formula.formulaSteepness;
+  // CenterX sign protection 与 canonical terms 共同构成 evaluator 快照；保护身份变化时调用方会重建 evaluator。
+  const centerXSignProtectionEpsilons = terms.map((term) =>
+    isGraphwarSignProtected(options?.signProtection, term.sourceSegmentIndex, GraphwarSignRole.CenterX)
+      ? Number.EPSILON
+      : 0,
+  );
+  let shouldNormalizeSecondDerivativeZero = false;
+  for (const term of terms) {
+    if (term.glitchSegment?.equation === "ddy") {
+      if (term.glitchSegment.acceleration !== 0) {
+        shouldNormalizeSecondDerivativeZero = term.glitchSegment.acceleration < 0;
+        break;
+      }
+      if (term.glitchSegment.braking !== 0) {
+        shouldNormalizeSecondDerivativeZero = term.glitchSegment.braking < 0;
+        break;
+      }
+      continue;
+    }
+    if (!term.glitchSegment && term.secondDerivativeCoefficient !== 0) {
+      shouldNormalizeSecondDerivativeZero = term.isDerivativeOverflowProtected
+        ? -term.secondDerivativeCoefficient < 0
+        : term.secondDerivativeCoefficient < 0;
+      break;
+    }
+  }
   const evaluator: CompiledFormulaEvaluator = {
     evaluateFirstDerivativeY(x, y) {
       let slope = 0;
-      for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
-        const term = formula.terms[index];
+      for (let index = terms.length - 1; index >= 0; index -= 1) {
+        const term = terms[index];
         if (term.glitchSegment) {
           if (term.glitchSegment.equation !== "dy") {
             // 二阶邪道项在窗口外没有一阶导尾值，不能参与建议发射角。
@@ -338,8 +367,8 @@ function compileStepEvaluator(
           continue;
         }
 
-        const t = formula.formulaSteepness * (x - term.formulaCenterX);
-        if (term.derivativeUsesOverflowProtection) {
+        const t = formulaSteepness * (x - term.formulaCenterX);
+        if (term.isDerivativeOverflowProtected) {
           // Stable 文本同样由首个 * 作为 Graphwar Polish 根节点，应先折叠右侧分式再乘系数。
           slope = term.firstDerivativeCoefficient * evaluateCompiledStepStableFirstDerivativeBody(t) + slope;
         } else {
@@ -351,18 +380,21 @@ function compileStepEvaluator(
     },
     evaluateSecondDerivativeY(x, y = 0) {
       let acceleration: number | undefined;
-      for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
-        const term = formula.terms[index];
+      for (let index = terms.length - 1; index >= 0; index -= 1) {
+        const term = terms[index];
         if (term.glitchSegment) {
-          if (term.glitchSegment.equation === "ddy") {
-            const contribution = evaluateCompiledStepGlitchSecondDerivative(
+          if (
+            term.glitchSegment.equation === "ddy" &&
+            (term.glitchSegment.acceleration !== 0 || term.glitchSegment.braking !== 0)
+          ) {
+            acceleration = foldCompiledStepGlitchSecondDerivative(
               x,
               y,
               term.glitchSegment,
               term.sourceSegmentIndex,
               options,
+              acceleration,
             );
-            acceleration = acceleration === undefined ? contribution : contribution + acceleration;
           }
           continue;
         }
@@ -371,9 +403,15 @@ function compileStepEvaluator(
           continue;
         }
 
-        const t = formula.formulaSteepness * (x - term.formulaCenterX);
-        if (term.derivativeUsesOverflowProtection) {
-          const sign = evaluateStableSignRatio(t, term.sourceSegmentIndex, GraphwarSignRole.CenterX, options);
+        const t = formulaSteepness * (x - term.formulaCenterX);
+        if (term.isDerivativeOverflowProtected) {
+          const sign = evaluateStableSignRatioWithKnownProtection(
+            t,
+            term.sourceSegmentIndex,
+            GraphwarSignRole.CenterX,
+            options,
+            centerXSignProtectionEpsilons[index],
+          );
           // Stable 二阶导文本是 k*sign*q*(1-q)/denom；Graphwar 会逐层把左侧 * 作为根节点。
           const contribution =
             -term.secondDerivativeCoefficient * (sign * evaluateCompiledStepStableSecondDerivativeBody(t));
@@ -384,12 +422,13 @@ function compileStepEvaluator(
           acceleration = acceleration === undefined ? contribution : contribution + acceleration;
         }
       }
-      return acceleration ?? 0;
+      // Graphwar 仅在首个文本项为负时注入隐式 `0 +`，该加法会把最终 -0 规范成 +0。
+      return shouldNormalizeSecondDerivativeZero && acceleration === 0 ? 0 : (acceleration ?? 0);
     },
     evaluateY(x) {
       let yOffset = 0;
-      for (let index = formula.terms.length - 1; index >= 0; index -= 1) {
-        const term = formula.terms[index];
+      for (let index = terms.length - 1; index >= 0; index -= 1) {
+        const term = terms[index];
         if (term.glitchSegment) {
           continue;
         }
@@ -397,7 +436,7 @@ function compileStepEvaluator(
           continue;
         }
 
-        const t = formula.formulaSteepness * (x - term.formulaCenterX);
+        const t = formulaSteepness * (x - term.formulaCenterX);
         yOffset = term.yCoefficient / (1 + evaluateCompiledStepExp(-t)) + yOffset;
       }
       return baseY + yOffset;
@@ -406,15 +445,18 @@ function compileStepEvaluator(
   if (!debugCounters) {
     return evaluator;
   }
-  const firstDerivativeTermCount = formula.terms.filter(
+  const firstDerivativeTermCount = terms.filter(
     (term) =>
       (term.glitchSegment?.equation === "dy" && term.glitchSegment.derivative !== 0) ||
       (!term.glitchSegment && term.firstDerivativeCoefficient !== 0),
   ).length;
-  const secondDerivativeTermCount = formula.terms.filter(
-    (term) => term.glitchSegment?.equation === "ddy" || (!term.glitchSegment && term.secondDerivativeCoefficient !== 0),
+  const secondDerivativeTermCount = terms.filter(
+    (term) =>
+      (term.glitchSegment?.equation === "ddy" &&
+        (term.glitchSegment.acceleration !== 0 || term.glitchSegment.braking !== 0)) ||
+      (!term.glitchSegment && term.secondDerivativeCoefficient !== 0),
   ).length;
-  const yTermCount = formula.terms.filter((term) => !term.glitchSegment && term.yCoefficient !== 0).length;
+  const yTermCount = terms.filter((term) => !term.glitchSegment && term.yCoefficient !== 0).length;
   return instrumentCompiledFormulaEvaluator(evaluator, debugCounters, {
     firstDerivativeTermCount,
     secondDerivativeTermCount,
@@ -472,18 +514,34 @@ function evaluateCompiledStepGlitchFirstDerivative(
   return (segment.derivative / 8) * (xGate * (xLimitGate * yGate));
 }
 
-/** 回放 y'' 邪道的近侧加速门和远侧刹车门；最终文本只使用原版可靠的 x、y 变量。 */
-function evaluateCompiledStepGlitchSecondDerivative(
+/** 把 y'' 邪道 pair 按最终文本的 `acceleration + (braking + tail)` 顺序折叠。 */
+function foldCompiledStepGlitchSecondDerivative(
   x: number,
   y: number,
   segment: Extract<StepGlitchSegment, { equation: "ddy" }>,
   sourceSegmentIndex: number,
   options?: FormulaEvaluationOptions,
+  tail?: number,
 ) {
   const direction: 1 | -1 = segment.acceleration < 0 ? -1 : 1;
+  const accelerationCoefficient = segment.acceleration / 8;
+  const brakingCoefficient = segment.braking / 8;
   const xGate = 1 + evaluateStableSignRatio(x - segment.startX, sourceSegmentIndex, GraphwarSignRole.StartX, options);
   const xLimitGate =
     1 - evaluateStableSignRatio(x - segment.pulseEndX, sourceSegmentIndex, GraphwarSignRole.EndX, options);
+  if (accelerationCoefficient === 0) {
+    const brakingGate =
+      1 +
+      evaluateStableSignRatio(
+        direction * (y - segment.brakingGateY),
+        sourceSegmentIndex,
+        GraphwarSignRole.BrakingGateY,
+        options,
+      );
+    const contribution = brakingCoefficient * (xGate * (xLimitGate * brakingGate));
+    return tail === undefined ? contribution : contribution + tail;
+  }
+
   const accelerationGate =
     1 +
     evaluateStableSignRatio(
@@ -492,6 +550,11 @@ function evaluateCompiledStepGlitchSecondDerivative(
       GraphwarSignRole.GateY,
       options,
     );
+  const accelerationContribution = accelerationCoefficient * (xGate * (xLimitGate * accelerationGate));
+  if (brakingCoefficient === 0) {
+    return tail === undefined ? accelerationContribution : accelerationContribution + tail;
+  }
+
   const brakingGate =
     1 +
     evaluateStableSignRatio(
@@ -500,10 +563,9 @@ function evaluateCompiledStepGlitchSecondDerivative(
       GraphwarSignRole.BrakingGateY,
       options,
     );
-  return (
-    (segment.acceleration / 8) * (xGate * (xLimitGate * accelerationGate)) +
-    (segment.braking / 8) * (xGate * (xLimitGate * brakingGate))
-  );
+  const brakingContribution = brakingCoefficient * (xGate * (xLimitGate * brakingGate));
+  const foldedTail = tail === undefined ? brakingContribution : brakingContribution + tail;
+  return accelerationContribution + foldedTail;
 }
 
 /** 内部 step 采样应使用最终公式文本中的陡峭度，确保 y/dy/ddy 回放一致。 */
@@ -535,7 +597,7 @@ function createCompiledStepFormula(
     terms.push({
       formulaCenterX,
       ...(glitchSegment ? { glitchSegment } : {}),
-      derivativeUsesOverflowProtection: createCompiledStepDerivativeOverflowProtection(
+      isDerivativeOverflowProtected: createCompiledStepDerivativeOverflowProtection(
         formulaSteepness,
         formulaCenterX,
         options,
@@ -602,7 +664,7 @@ function createCompiledStepDerivativeOverflowProtection(
 ) {
   return options?.stepOverflowProtectionRange
     ? shouldUseStepDerivativeOverflowProtection(steepness, centerX, options)
-    : (options?.stepOverflowProtection ?? true);
+    : (options?.isStepOverflowProtectionEnabled ?? true);
 }
 
 /** 编译和输出都应显式使用同一份最终公式小数位。 */
@@ -620,7 +682,7 @@ function createFormulaEvaluationOptions(
     equation,
     formulaDecimalPlaces: decimalPlaces,
     signProtection: options.signProtection,
-    stepOverflowProtection: options.stepOverflowProtection ?? true,
+    isStepOverflowProtectionEnabled: options.isStepOverflowProtectionEnabled ?? true,
     stepOverflowProtectionRange: options.stepOverflowProtectionRange,
   };
 }
@@ -1071,7 +1133,7 @@ function formatStepFirstDerivativeExpression(
     }
 
     let body: string;
-    if (term.derivativeUsesOverflowProtection) {
+    if (term.isDerivativeOverflowProtected) {
       body = formatStableStepFirstDerivativeBody(formula.formulaSteepness, term.formulaCenterX, decimalPlaces);
     } else {
       const expText = formatDirectStepDerivativeExp(formula.formulaSteepness, term.formulaCenterX, decimalPlaces);
@@ -1133,7 +1195,7 @@ function formatStepSecondDerivativeExpression(
     }
 
     // 二阶导稳定写法需要额外的 sign(t)，用于还原 exp(-abs(t)) 两侧的方向。
-    if (term.derivativeUsesOverflowProtection) {
+    if (term.isDerivativeOverflowProtected) {
       const argumentText = formatStepDerivativeArgument(formula.formulaSteepness, term.formulaCenterX, decimalPlaces);
       const expText = formatStableStepDerivativeExp(formula.formulaSteepness, term.formulaCenterX, decimalPlaces);
       const signText = formatStableSignRatio(
@@ -1560,14 +1622,27 @@ function evaluateStableSignRatio(
   role: GraphwarSignRole,
   options?: FormulaEvaluationOptions,
 ) {
+  return evaluateStableSignRatioWithKnownProtection(
+    value,
+    sourceSegmentIndex,
+    role,
+    options,
+    isGraphwarSignProtected(options?.signProtection, sourceSegmentIndex, role) ? Number.EPSILON : 0,
+  );
+}
+
+/** 已冻结保护身份的 evaluator 热路径不应在每次代入时重复查询角色位。 */
+function evaluateStableSignRatioWithKnownProtection(
+  value: number,
+  sourceSegmentIndex: number,
+  role: GraphwarSignRole,
+  options: FormulaEvaluationOptions | undefined,
+  protectionEpsilon: number,
+) {
   if (value === 0) {
     options?.onZeroSignArgument?.(sourceSegmentIndex, role);
   }
-  return (
-    value /
-    (Math.abs(value) +
-      (isGraphwarSignProtected(options?.signProtection, sourceSegmentIndex, role) ? Number.EPSILON : 0))
-  );
+  return value / (Math.abs(value) + protectionEpsilon);
 }
 
 /** 格式化逻辑 sign 项；未确认折点时保留 Graphwar 原始数值行为。 */

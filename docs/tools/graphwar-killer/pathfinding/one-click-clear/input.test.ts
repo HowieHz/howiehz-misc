@@ -37,7 +37,6 @@ function createPreflight(shouldUseDagWorker: boolean) {
       routePlanningTolerancePlanePixels: 0,
       simulationBoundaryInsetPlanePixels: 0,
     },
-    isModeSupported: () => true,
   });
 }
 
@@ -62,8 +61,8 @@ function createInput(isDeleteOptimizationEnabled: boolean, routeMode: "theta-sta
       decimalPlaces: 4,
       equation: "dy",
       steepness: 67,
-      stepGlitchMode: true,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: true,
+      isStepOverflowProtectionEnabled: true,
     },
     simulationMask: mask,
     simulationMaskCacheId: 1,

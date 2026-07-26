@@ -4,13 +4,21 @@ import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { imagePointToPlaneGridPoint } from "../../core/plane-grid";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
-import { sampleGraphwarPathTargetSequence } from "../../formula/trajectory/sampling";
+import {
+  continueResolvedGraphwarTrajectory,
+  createGraphwarTrajectoryFormulaMode,
+  createGraphwarResolvedTrajectoryContinuationEvidence,
+  resolveGraphwarTrajectory,
+  sampleGraphwarPathTargetSequence,
+} from "../../formula/trajectory/sampling";
+import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
 import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
 import {
   createGraphwarStepRouteModel,
   createGraphwarStepRouteSummedArea,
   validateGraphwarStepRoutePath,
 } from "../routing/step-route";
+import { createGraphwarPathfindingDebugMetrics } from "../runtime/diagnostics";
 import {
   buildGraphwarOneClickClearPath,
   type GraphwarOneClickClearCandidate,
@@ -25,9 +33,94 @@ const settings = {
   decimalPlaces: 4,
   equation: "y" as const,
   steepness: 67,
-  stepGlitchMode: false,
-  stepOverflowProtection: true,
+  isStepGlitchModeEnabled: false,
+  isStepOverflowProtectionEnabled: true,
 };
+const statelessSplineModes = [
+  ["pchip", "y"],
+  ["pchip", "dy"],
+  ["pchip", "ddy"],
+  ["akima", "y"],
+  ["akima", "dy"],
+  ["akima", "ddy"],
+] as const;
+const ordinaryFormulaModes = [
+  ["step", "y"],
+  ["step", "dy"],
+  ["step", "ddy"],
+  ["abs", "y"],
+  ["abs", "dy"],
+  ["abs", "ddy"],
+  ...statelessSplineModes,
+] as const;
+const splinePrefixInvalidationCases = [
+  {
+    algorithm: "pchip",
+    appendPoint: [20, -14],
+    equation: "y",
+    prefixPoints: [
+      [-20, 0],
+      [-5, -2],
+    ],
+    prefixTargetRadius: 0.01,
+  },
+  {
+    algorithm: "pchip",
+    appendPoint: [5, 6],
+    equation: "dy",
+    prefixPoints: [
+      [-20, 2],
+      [-12, 13],
+      [-5, -14],
+    ],
+    prefixTargetRadius: 0.01,
+  },
+  {
+    algorithm: "pchip",
+    appendPoint: [13, 7],
+    equation: "ddy",
+    prefixPoints: [
+      [-20, -4],
+      [-4, -5],
+      [3, -11],
+      [8, -3],
+    ],
+    prefixTargetRadius: 0.1,
+  },
+  {
+    algorithm: "akima",
+    appendPoint: [20, -14],
+    equation: "y",
+    prefixPoints: [
+      [-20, 0],
+      [-5, -2],
+    ],
+    prefixTargetRadius: 0.01,
+  },
+  {
+    algorithm: "akima",
+    appendPoint: [-4, -14],
+    equation: "dy",
+    prefixPoints: [
+      [-20, 0],
+      [-10, -6],
+      [-5, -6],
+    ],
+    prefixTargetRadius: 0.01,
+  },
+  {
+    algorithm: "akima",
+    appendPoint: [-5, -5],
+    equation: "ddy",
+    prefixPoints: [
+      [-20, -8],
+      [-18, 6],
+      [-11, 6],
+      [-7, -11],
+    ],
+    prefixTargetRadius: 0.1,
+  },
+] as const;
 
 describe("One-click clear optimization", () => {
   it("builds an ordinary DAG target at the next legal native column when the center does not advance", async () => {
@@ -112,7 +205,7 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: { ...settings, algorithm: "abs" },
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm: "abs" }),
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 0,
     });
@@ -134,6 +227,421 @@ describe("One-click clear optimization", () => {
     expect(incumbents[0]).not.toHaveProperty("targetCount");
     expect(incumbents[0]).not.toHaveProperty("targetIds");
     expect(incumbents[0]).not.toHaveProperty("targetSequence");
+  });
+
+  it.each(ordinaryFormulaModes)(
+    "continues the fixed final %s %s formula instead of replaying its accepted prefix",
+    async (algorithm, equation) => {
+      const start = toImagePoint(-20, 0);
+      const target = toImagePoint(-10, 0);
+      const targetCircle = { center: target, radius: 4 };
+      const candidate = { enemy: true, hitCenter: target, hitRadius: targetCircle.radius, id: "target" };
+      const modeSettings = { ...settings, algorithm, equation };
+      const graphPoints = [start, target].map((point) => imageToGraphPoint(point, bounds, boundsRect));
+      const simulationMask = new Uint8Array(770 * 450);
+      const expectedMetrics = createGraphwarPathfindingDebugMetrics(false);
+      const commonResolution = {
+        bounds,
+        boundsRect,
+        collision: { boundaryExpansion: 0, mask: simulationMask },
+        collectVisiblePixels: true,
+        debugMetrics: expectedMetrics,
+        points: graphPoints,
+        qualityPoints: [],
+        requiredTargets: [],
+        formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+        soldierCenter: graphPoints[0],
+        targetSequence: [targetCircle],
+        trackedTargets: [targetCircle],
+      } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+      const prefix = resolveGraphwarTrajectory(commonResolution);
+      const evidence = createGraphwarResolvedTrajectoryContinuationEvidence(prefix);
+      if (!evidence) {
+        throw new Error(`Expected ${algorithm} ${equation} to expose a resumable final prefix`);
+      }
+      const suffix = continueResolvedGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        collision: commonResolution.collision,
+        collectVisiblePixels: true,
+        debugMetrics: expectedMetrics,
+        evidence,
+        qualityPoints: [],
+        requiredTargets: [],
+        stopOnTargetsComplete: false,
+        targetSequence: [targetCircle],
+        trackedTargets: [targetCircle],
+      });
+      if (suffix.status !== "continued") {
+        throw new Error(`Expected ${algorithm} ${equation} final suffix to continue the resolved formula`);
+      }
+      const prefixTrajectory = snapshotGraphwarVisibleTrajectoryPoints(
+        prefix.result.visiblePixels,
+        prefix.result.obstacleHitIndex,
+      );
+      const suffixTrajectory = snapshotGraphwarVisibleTrajectoryPoints(
+        suffix.result.visiblePixels,
+        suffix.result.obstacleHitIndex,
+      );
+      const shouldDropRepeatedResumePoint =
+        prefixTrajectory.length > 0 &&
+        suffixTrajectory.length > 0 &&
+        prefixTrajectory.at(-1)?.x === suffixTrajectory[0]?.x &&
+        prefixTrajectory.at(-1)?.y === suffixTrajectory[0]?.y;
+      const expectedTrajectory = [
+        ...prefixTrajectory,
+        ...suffixTrajectory.slice(shouldDropRepeatedResumePoint ? 1 : 0),
+      ];
+      const debugMetrics = createGraphwarPathfindingDebugMetrics(false);
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({
+            jobId: job.id,
+            route: [job.startPoint, job.targetPoint],
+            ...(algorithm === "step" ? { stepRouteEndState: { resolvedStateKey: "0", resolvedY: 0 } } : {}),
+          })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        debugMetrics,
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        isDeleteOptimizationEnabled: false,
+        pathPoints: [start],
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+        ...(algorithm === "step" ? { validateStepRoute: () => true } : {}),
+      });
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.expression).toBe(prefix.context.formulaResult.expression);
+        expect(result.trajectoryPoints).toEqual(expectedTrajectory);
+        expect(result.targetIds).toEqual([candidate.id]);
+      }
+      expect(debugMetrics.counters.acceptedSamplePointCount).toBe(expectedMetrics.counters.acceptedSamplePointCount);
+      expect(debugMetrics.counters.formulaTermEvaluationCount).toBe(
+        expectedMetrics.counters.formulaTermEvaluationCount,
+      );
+      expect(debugMetrics.counters.rk4StepCount).toBe(expectedMetrics.counters.rk4StepCount);
+      expect(debugMetrics.counters.stepBisectionCount).toBe(expectedMetrics.counters.stepBisectionCount);
+      expect(debugMetrics.counters.trajectoryReplayCount).toBe(expectedMetrics.counters.trajectoryReplayCount);
+    },
+  );
+
+  it("merges required-prefix and incidental tracked hits across the fixed final continuation", async () => {
+    const start = toImagePoint(-20, 0);
+    const first = toImagePoint(-15, 0);
+    const incidental = toImagePoint(-12.5, 0);
+    const second = toImagePoint(-10, 0);
+    const candidates = [
+      { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+      { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+    ];
+    const hitCandidates = [
+      candidates[0],
+      { enemy: true, hitCenter: incidental, hitRadius: 2, id: "incidental" },
+      candidates[1],
+    ].filter((candidate) => candidate !== undefined);
+    const simulationMask = new Uint8Array(770 * 450);
+    const modeSettings = { ...settings, algorithm: "abs" as const };
+    const cold = sampleGraphwarPathTargetSequence({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      obstacleMask: simulationMask,
+      points: [start, first, second],
+      requiredTargets: [{ center: first, radius: 2 }],
+      formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+      stopOnTargetsComplete: false,
+      targetCircles: [{ center: second, radius: 2 }],
+      targetControlPoints: [first, second],
+      targetHitRadiusPixels: 2,
+      targetPoints: [second],
+      trackedTargets: hitCandidates.map((candidate) => ({
+        center: candidate.hitCenter,
+        radius: candidate.hitRadius,
+      })),
+    });
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        timings: [],
+      }),
+      candidates,
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates,
+      isDeleteOptimizationEnabled: false,
+      pathPoints: [start],
+      routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+      simulationBoundaryExpansion: 0,
+      simulationMask,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.expression).toBe(cold.formulaContext?.formulaResult.expression);
+      expect(result.targetIds).toEqual(["first", "incidental", "second"]);
+      expect(result.trajectoryPoints).toEqual(
+        snapshotGraphwarVisibleTrajectoryPoints(cold.visiblePixels, cold.obstacleHitIndex),
+      );
+    }
+  });
+
+  it("rechecks the target-completion point before continuing the fixed final formula", async () => {
+    const start = toImagePoint(-20, 0);
+    const target = toImagePoint(-10, 0);
+    const targetCircle = { center: target, radius: 2 };
+    const candidate = { enemy: true, hitCenter: target, hitRadius: targetCircle.radius, id: "target" };
+    const modeSettings = { ...settings, algorithm: "abs" as const };
+    const probe = sampleGraphwarPathTargetSequence({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      points: [start, target],
+      formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+      targetCircles: [targetCircle],
+      targetHitRadiusPixels: targetCircle.radius,
+      targetPoints: [target],
+    });
+    const seamPixel = probe.visiblePixels.at(-1);
+    if (!seamPixel) {
+      throw new Error("Expected the target-completion sample to expose a visible seam point");
+    }
+    const simulationMask = new Uint8Array(770 * 450);
+    const seam = imagePointToPlaneGridPoint(seamPixel, boundsRect);
+    simulationMask[seam.y * 770 + seam.x] = 1;
+    const cold = sampleGraphwarPathTargetSequence({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      obstacleMask: simulationMask,
+      points: [start, target],
+      formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+      stopOnTargetsComplete: false,
+      targetCircles: [targetCircle],
+      targetControlPoints: [target],
+      targetHitRadiusPixels: targetCircle.radius,
+      targetPoints: [target],
+      trackedTargets: [targetCircle],
+    });
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        timings: [],
+      }),
+      candidates: [candidate],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      isDeleteOptimizationEnabled: false,
+      pathPoints: [start],
+      routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+      simulationBoundaryExpansion: 0,
+      simulationMask,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.trajectoryPoints).toEqual(
+        snapshotGraphwarVisibleTrajectoryPoints(cold.visiblePixels, cold.obstacleHitIndex),
+      );
+    }
+  });
+
+  it("rechecks an append-stable target seam before validating the next edge", async () => {
+    const start = toImagePoint(-20, 0);
+    const first = toImagePoint(-15, 0);
+    const second = toImagePoint(-10, 0);
+    const firstCircle = { center: first, radius: 2 };
+    const modeSettings = { ...settings, algorithm: "abs" as const };
+    const probe = sampleGraphwarPathTargetSequence({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      points: [start, first],
+      formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+      targetCircles: [firstCircle],
+      targetHitRadiusPixels: firstCircle.radius,
+      targetPoints: [first],
+    });
+    const seamPixel = probe.visiblePixels.at(-1);
+    if (!seamPixel) {
+      throw new Error("Expected the first target to expose a visible seam point");
+    }
+    const seam = imagePointToPlaneGridPoint(seamPixel, boundsRect);
+    const simulationMask = new Uint8Array(770 * 450);
+    simulationMask[seam.y * 770 + seam.x] = 1;
+    const candidates = [
+      { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+      { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+    ];
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        timings: [],
+      }),
+      candidates,
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: candidates,
+      isDeleteOptimizationEnabled: false,
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+      simulationBoundaryExpansion: 0,
+      simulationMask,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.targetIds).toEqual(["first"]);
+    }
+  });
+
+  it("isolates the search from caller mutations after an incumbent callback", async () => {
+    const mutableBounds = { ...bounds };
+    const mutableBoundsRect = { ...boundsRect };
+    const start = toImagePoint(-20, 0);
+    const originalStart = createPixelPoint(start.x, start.y);
+    const target = toImagePoint(-10, 0);
+    const originalTarget = createPixelPoint(target.x, target.y);
+    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const simulationMask = new Uint8Array(770 * 450);
+    const modeSettings: GraphwarTrajectoryFormulaSettings = { ...settings, algorithm: "abs" };
+    const cold = sampleGraphwarPathTargetSequence({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      obstacleMask: simulationMask,
+      points: [originalStart, originalTarget],
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...modeSettings }),
+      stopOnTargetsComplete: false,
+      targetCircles: [{ center: originalTarget, radius: candidate.hitRadius }],
+      targetControlPoints: [originalTarget],
+      targetHitRadiusPixels: candidate.hitRadius,
+      targetPoints: [originalTarget],
+      trackedTargets: [{ center: originalTarget, radius: candidate.hitRadius }],
+    });
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds: mutableBounds,
+      boundsRect: mutableBoundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        timings: [],
+      }),
+      candidates: [candidate],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      isDeleteOptimizationEnabled: false,
+      onValidatedIncumbent: () => {
+        mutableBounds.minX = -100;
+        mutableBoundsRect.width = 1;
+        start.y += 100;
+        candidate.hitCenter.y += 100;
+        modeSettings.equation = "dy";
+        simulationMask.fill(1);
+      },
+      pathPoints: [start],
+      routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      formulaMode: createGraphwarTrajectoryFormulaMode(modeSettings),
+      simulationBoundaryExpansion: 0,
+      simulationMask,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.expression).toBe(cold.formulaContext?.formulaResult.expression);
+      expect(result.pathPoints).toEqual([originalStart, originalTarget]);
+      expect(result.targetIds).toEqual(["target"]);
+      expect(result.trajectoryPoints).toEqual(
+        snapshotGraphwarVisibleTrajectoryPoints(cold.visiblePixels, cold.obstacleHitIndex),
+      );
+    }
+  });
+
+  it("isolates DAG request, response, and incumbent point references across callbacks", async () => {
+    const start = toImagePoint(-20, 0);
+    const target = toImagePoint(-10, 0);
+    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    let leakedRequest: GraphwarOneClickClearDagEdgeBuildRequest | undefined;
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => {
+        leakedRequest = request;
+        return {
+          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          timings: [],
+        };
+      },
+      candidates: [candidate],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      isDeleteOptimizationEnabled: false,
+      onValidatedIncumbent: (incumbent) => {
+        const firstJob = leakedRequest?.jobs[0];
+        if (firstJob) {
+          firstJob.startPoint.y += 100;
+          firstJob.targetPoint.y += 100;
+        }
+        leakedRequest?.routeMask.fill(1);
+        const incumbentStart = incumbent.pathPoints[0];
+        if (incumbentStart) {
+          incumbentStart.y += 100;
+        }
+        const trajectoryStart = incumbent.trajectoryPoints[0];
+        if (trajectoryStart) {
+          trajectoryStart.y += 100;
+        }
+      },
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm: "abs" }),
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.pathPoints).toEqual([start, target]);
+      expect(result.targetIds).toEqual(["target"]);
+      expect(result.trajectoryPoints[0]?.y).toBe(start.y);
+    }
   });
 
   it("keeps the natural prefix when the completed result has identical business metrics", async () => {
@@ -168,7 +676,8 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: { ...settings, algorithm: "abs" },
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm: "abs" }),
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 0,
     });
@@ -220,7 +729,8 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: { ...settings, algorithm: "abs" },
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm: "abs" }),
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 0,
     });
@@ -258,7 +768,8 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: { ...settings, equation: "ddy" },
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, equation: "ddy" }),
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 0,
       validateStepRoute: () => true,
@@ -305,7 +816,8 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: { ...settings, algorithm: "abs" },
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm: "abs" }),
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 0,
     });
@@ -337,7 +849,7 @@ describe("One-click clear optimization", () => {
     const glitchSettings = {
       ...settings,
       equation: "dy" as const,
-      stepGlitchMode: true,
+      isStepGlitchModeEnabled: true,
       stepGlitchObstacleMask: simulationMask,
     };
     let finalValidationCount = 0;
@@ -360,7 +872,8 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: glitchSettings,
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode(glitchSettings),
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 1,
     });
@@ -387,7 +900,7 @@ describe("One-click clear optimization", () => {
         obstacleMask: simulationMask,
         points: result.pathPoints,
         requiredTargets: [{ center: lower, radius: 24 }],
-        settings: glitchSettings,
+        formulaMode: createGraphwarTrajectoryFormulaMode(glitchSettings),
         stopOnTargetsComplete: false,
         targetCircles: [{ center: upper, radius: 24 }],
         targetControlPoints: result.pathPoints.slice(1),
@@ -467,10 +980,11 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: {
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         ...settings,
         algorithm: "abs",
-      },
+      }),
       simulationBoundaryExpansion: 0,
       simulationMask,
       simulationMaskCacheId: 1,
@@ -484,7 +998,7 @@ describe("One-click clear optimization", () => {
     expect(segmentSampleCount).toBe(3);
   });
 
-  it.each(["abs", "step"] as const)(
+  it.each(["abs", "step", "pchip", "akima"] as const)(
     "allows %s to add a target from the existing path tail without prior-run constraints",
     async (algorithm) => {
       const start = toImagePoint(-20, 0);
@@ -512,7 +1026,8 @@ describe("One-click clear optimization", () => {
         prefixTarget: { center: tail, radius: 4 },
         routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
         routeMode: "visibility-graph",
-        settings: { ...settings, algorithm },
+        isDeleteOptimizationEnabled: true,
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm }),
         simulationBoundaryExpansion: 0,
         simulationMask,
         simulationMaskCacheId: 1,
@@ -523,6 +1038,310 @@ describe("One-click clear optimization", () => {
       if (result.type === "success") {
         expect(result.targetIds).toEqual(["next"]);
       }
+    },
+  );
+
+  it.each(statelessSplineModes)(
+    "validates a stateless %s %s route through the shared DAG",
+    async (algorithm, equation) => {
+      const start = toImagePoint(-20, 0);
+      const tail = toImagePoint(-15, 0);
+      const nextTarget = toImagePoint(-10, 0);
+      const simulationMask = new Uint8Array(770 * 450);
+      const candidate = { enemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        pathPoints: [start, tail],
+        prefixTarget: { center: tail, radius: 4 },
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        isDeleteOptimizationEnabled: true,
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm, equation }),
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.targetIds).toEqual(["next"]);
+      }
+    },
+  );
+
+  it.each(statelessSplineModes)(
+    "preserves target order for a stateless %s %s cold replay",
+    async (algorithm, equation) => {
+      const start = toImagePoint(-20, 0);
+      const first = toImagePoint(-15, 0);
+      const second = toImagePoint(-10, 0);
+      const simulationMask = new Uint8Array(770 * 450);
+      const candidates = [
+        { enemy: true, hitCenter: first, hitRadius: 4, id: "first" },
+        { enemy: true, hitCenter: second, hitRadius: 4, id: "second" },
+      ];
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          timings: [],
+        }),
+        candidates,
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: candidates,
+        pathPoints: [start],
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        isDeleteOptimizationEnabled: true,
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm, equation }),
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.targetIds).toEqual(["first", "second"]);
+      }
+    },
+  );
+
+  it.each(statelessSplineModes)(
+    "rejects a stateless %s %s route that hits the simulation mask",
+    async (algorithm, equation) => {
+      const start = toImagePoint(-20, 0);
+      const target = toImagePoint(-10, 0);
+      const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+      const splineSettings = { ...settings, algorithm, equation };
+      const directSample = sampleGraphwarPathTargetSequence({
+        bounds,
+        boundsRect,
+        points: [start, target],
+        formulaMode: createGraphwarTrajectoryFormulaMode(splineSettings),
+        targetCircles: [{ center: target, radius: candidate.hitRadius }],
+        targetHitRadiusPixels: candidate.hitRadius,
+        targetPoints: [target],
+      });
+      const obstacleGraphPoint = directSample.sample.points.find((point) => point.x >= -15);
+      if (!obstacleGraphPoint) {
+        throw new Error(`Expected ${algorithm} ${equation} to reach the obstacle x`);
+      }
+      const obstacle = imagePointToPlaneGridPoint(
+        graphToImagePoint(obstacleGraphPoint, bounds, boundsRect),
+        boundsRect,
+      );
+      const simulationMask = new Uint8Array(770 * 450);
+      simulationMask[obstacle.y * 770 + obstacle.x] = 1;
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        pathPoints: [start],
+        routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        isDeleteOptimizationEnabled: true,
+        formulaMode: createGraphwarTrajectoryFormulaMode(splineSettings),
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+    },
+  );
+
+  it.each(statelessSplineModes)(
+    "revalidates stateless %s %s deletion and the returned final replay",
+    async (algorithm, equation) => {
+      const start = toImagePoint(-20, 0);
+      const middle = toImagePoint(-15, 0);
+      const target = toImagePoint(-10, 0);
+      const simulationMask = new Uint8Array(770 * 450);
+      const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+      let finalValidationCount = 0;
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({
+            jobId: job.id,
+            route: [job.startPoint, middle, job.targetPoint],
+          })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        isDeleteOptimizationEnabled: true,
+        onDebugTiming: (timing) => {
+          if (timing.stage === "validate-final") {
+            finalValidationCount += 1;
+          }
+        },
+        pathPoints: [start],
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm, equation }),
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result.type).toBe("success");
+      if (result.type === "success") {
+        expect(result.pathPoints).toEqual([start, target]);
+        expect(result.targetIds).toEqual(["target"]);
+      }
+      expect(finalValidationCount).toBe(1);
+    },
+  );
+
+  it.each(["pchip", "akima"] as const)("returns a failed edge for a stateless %s route", async (algorithm) => {
+    const start = toImagePoint(-20, 0);
+    const target = toImagePoint(-10, 0);
+    const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({ jobId: job.id })),
+        timings: [],
+      }),
+      candidates: [candidate],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm }),
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 1,
+    });
+
+    expect(result).toMatchObject({ type: "failure" });
+  });
+
+  it.each([
+    { resolvedStateKey: "0", resolvedY: Number.NaN },
+    { resolvedStateKey: "invalid", resolvedY: 0 },
+  ])("rejects an invalid Step state returned across the Worker seam", async (stepRouteEndState) => {
+    const start = toImagePoint(-20, 0);
+    const target = toImagePoint(-10, 0);
+    const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.map((job) => ({
+          jobId: job.id,
+          route: [job.startPoint, job.targetPoint],
+          stepRouteEndState,
+        })),
+        timings: [],
+      }),
+      candidates: [candidate],
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: [candidate],
+      pathPoints: [start],
+      routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 1,
+      validateStepRoute: () => true,
+    });
+
+    expect(result).toMatchObject({ type: "failure" });
+  });
+
+  it.each(splinePrefixInvalidationCases)(
+    "rejects an $algorithm $equation append when the new spline invalidates the existing prefix target",
+    async ({ algorithm, appendPoint, equation, prefixPoints, prefixTargetRadius }) => {
+      const prefixPath = prefixPoints.map(([x, y]) => toImagePoint(x, y));
+      const start = prefixPath[0];
+      const tail = prefixPath.at(-1);
+      if (!start || !tail) {
+        throw new Error("Expected a non-empty spline prefix");
+      }
+      const nextTarget = toImagePoint(appendPoint[0], appendPoint[1]);
+      const simulationMask = new Uint8Array(770 * 450);
+      const prefixTarget = { center: tail, radius: prefixTargetRadius };
+      const candidate = { enemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
+      const splineSettings = { ...settings, algorithm, equation };
+      const prefixValidation = sampleGraphwarPathTargetSequence({
+        bounds,
+        boundsRect,
+        points: prefixPath,
+        formulaMode: createGraphwarTrajectoryFormulaMode(splineSettings),
+        targetCircles: [prefixTarget],
+        targetHitRadiusPixels: prefixTarget.radius,
+        targetPoints: [tail],
+      });
+      const appendedTargetValidation = sampleGraphwarPathTargetSequence({
+        bounds,
+        boundsRect,
+        points: [...prefixPath, nextTarget],
+        formulaMode: createGraphwarTrajectoryFormulaMode(splineSettings),
+        targetCircles: [{ center: nextTarget, radius: candidate.hitRadius }],
+        targetHitRadiusPixels: candidate.hitRadius,
+        targetPoints: [nextTarget],
+      });
+
+      expect(prefixValidation.reachesTargetSequenceBeforeObstacle).toBe(true);
+      expect(appendedTargetValidation.reachesTargetSequenceBeforeObstacle).toBe(true);
+
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          timings: [],
+        }),
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        hitCandidates: [candidate],
+        pathPoints: prefixPath,
+        prefixTarget,
+        routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        isDeleteOptimizationEnabled: true,
+        formulaMode: createGraphwarTrajectoryFormulaMode(splineSettings),
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+      });
+
+      expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
     },
   );
 
@@ -558,7 +1377,8 @@ describe("One-click clear optimization", () => {
       prefixTarget: { center: tail, radius: 4 },
       routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: { ...settings, algorithm: "abs" },
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm: "abs" }),
       simulationBoundaryExpansion: 0,
       simulationMask,
       simulationMaskCacheId: 1,
@@ -594,7 +1414,8 @@ describe("One-click clear optimization", () => {
       prefixTarget: { center: tail, radius: 4 },
       routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: { ...settings, algorithm: "abs" },
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm: "abs" }),
       simulationBoundaryExpansion: 0,
       simulationMask,
       simulationMaskCacheId: 1,
@@ -638,10 +1459,11 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: {
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         ...settings,
         algorithm: "abs",
-      },
+      }),
       simulationBoundaryExpansion: 0,
       simulationMask,
       simulationMaskCacheId: 1,
@@ -668,7 +1490,7 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       points: [start, target],
-      settings: absSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(absSettings),
       targetCircles: [{ center: target, radius: candidate.hitRadius }],
       targetHitRadiusPixels: candidate.hitRadius,
       targetPoints: [target],
@@ -704,7 +1526,8 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings: absSettings,
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode(absSettings),
       simulationBoundaryExpansion: 0,
       simulationMask,
       simulationMaskCacheId: 1,
@@ -777,7 +1600,8 @@ describe("One-click clear optimization", () => {
       pathPoints: [start],
       routeMask: { mask: routeMask, routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
-      settings,
+      isDeleteOptimizationEnabled: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 0,
       validateStepRoute,
@@ -812,7 +1636,7 @@ function createDagCaptureOptions(
     pathPoints: [start],
     routeMask: { mask: new Uint8Array(770 * 450), routeTolerancePlanePixels: 2 },
     routeMode: "visibility-graph" as const,
-    settings: { ...settings, algorithm: "abs" as const },
+    formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, algorithm: "abs" as const }),
     simulationBoundaryExpansion: 0,
     simulationMaskCacheId: 0,
   };

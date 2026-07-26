@@ -128,7 +128,6 @@ interface GraphwarOneClickClearRunWorkflowOptions<TSoldier extends GraphwarOneCl
     shouldUseDagWorker: () => boolean;
     getSimulationMask: () => Uint8Array | undefined;
     getTolerances: () => GraphwarOneClickClearSearchTolerances | undefined;
-    isModeSupported: () => boolean;
   };
   /** 本地化和状态文案仍由页面持有。 */
   messages: {
@@ -324,7 +323,6 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
         pathPointCount: options.input.getPathPoints().length,
         shouldUseDagWorker: options.input.shouldUseDagWorker(),
         tolerances,
-        isModeSupported: options.input.isModeSupported,
       });
       return result.ok ? result : { ...result, ...options.messages.getPreflightFailureStatus(result.reason) };
     });

@@ -562,7 +562,6 @@ export const graphwarKillerLocale = {
         "delete-check-radius-invalid": "Fix the point removal check radius.",
         "formula-settings-invalid": "Fix the formula settings first.",
         "managed-timing-invalid": "Fix the managed mode settings.",
-        "formula-unsupported": "The current formula profile does not support One-Click Clear.",
         "image-required": "Load a screenshot first.",
         "managed-lock": "Managed mode owns this setting.",
         "obstacle-tolerances-invalid": "Fix the obstacle tolerances.",

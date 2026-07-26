@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  applyGraphwarManagedFormulaProfileRepairPlan,
   createDefaultGraphwarFormulaProfiles,
-  createGraphwarManagedFormulaProfileRepairPlan,
   getGraphwarFormulaProfile,
-  graphwarFormulaProfileSupportsOneClickClear,
   graphwarFormulaProfilesAreValidForManagedMode,
   updateGraphwarFormulaProfile,
-  type GraphwarFormulaProfiles,
 } from "./formula-profiles";
 
 const defaultFormulaPreferences = {
@@ -81,89 +77,6 @@ describe("formula profiles", () => {
     }
   });
 
-  it.each([
-    ["y", "abs", true],
-    ["dy", "abs", true],
-    ["ddy", "abs", true],
-    ["y", "step", true],
-    ["dy", "pchip", false],
-  ] as const)("reports %s %s support through the authoritative contract", (equation, algorithm, supported) => {
-    const profiles = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), equation, { algorithm });
-
-    expect(graphwarFormulaProfileSupportsOneClickClear(profiles, equation)).toBe(supported);
-  });
-
-  it("repairs only unsupported profiles and retains supported custom preferences", () => {
-    const profiles: GraphwarFormulaProfiles = {
-      y: {
-        algorithm: "pchip",
-        precisionText: "1",
-        steepnessText: "11",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: false,
-      },
-      dy: {
-        algorithm: "abs",
-        precisionText: "2",
-        steepnessText: "22",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: true,
-      },
-      ddy: {
-        algorithm: "akima",
-        precisionText: "3",
-        steepnessText: "33",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: false,
-      },
-    };
-    const plan = createGraphwarManagedFormulaProfileRepairPlan(profiles);
-
-    expect(plan).toEqual({
-      y: { algorithm: "abs" },
-      ddy: { algorithm: "step", isStepGlitchModeEnabled: true },
-    });
-
-    const repaired = applyGraphwarManagedFormulaProfileRepairPlan(profiles, plan);
-    expect(repaired).toEqual({
-      y: {
-        algorithm: "abs",
-        precisionText: "1",
-        steepnessText: "11",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: false,
-      },
-      dy: {
-        algorithm: "abs",
-        precisionText: "2",
-        steepnessText: "22",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: true,
-      },
-      ddy: {
-        algorithm: "step",
-        precisionText: "3",
-        steepnessText: "33",
-        isStepGlitchModeEnabled: true,
-        isStepOverflowProtectionEnabled: false,
-      },
-    });
-    expect(repaired.dy).toBe(profiles.dy);
-    expect(profiles.y.algorithm).toBe("pchip");
-    expect(profiles.ddy.algorithm).toBe("akima");
-  });
-
-  it("uses the managed derivative fallback only when that profile is unsupported", () => {
-    const unsupported = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), "dy", {
-      algorithm: "pchip",
-      isStepGlitchModeEnabled: false,
-    });
-
-    expect(createGraphwarManagedFormulaProfileRepairPlan(unsupported)).toEqual({
-      dy: { algorithm: "step", isStepGlitchModeEnabled: true },
-    });
-  });
-
   it("rejects an invalid precision retained by a non-current managed profile", () => {
     const profiles = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), "dy", {
       precisionText: "invalid",
@@ -172,14 +85,13 @@ describe("formula profiles", () => {
     expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(false);
   });
 
-  it("validates steepness against the algorithm selected by the managed repair", () => {
+  it("ignores inactive steepness after an Akima profile no longer needs managed repair", () => {
     const profiles = updateGraphwarFormulaProfile(createDefaultGraphwarFormulaProfiles(), "ddy", {
       algorithm: "akima",
       steepnessText: "invalid",
     });
 
-    expect(createGraphwarManagedFormulaProfileRepairPlan(profiles).ddy?.algorithm).toBe("step");
-    expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(false);
+    expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(true);
   });
 
   it("ignores invalid steepness in profiles whose final algorithm does not consume it", () => {
@@ -192,24 +104,6 @@ describe("formula profiles", () => {
       steepnessText: "invalid",
     });
 
-    expect(createGraphwarManagedFormulaProfileRepairPlan(profiles).y?.algorithm).toBe("abs");
     expect(graphwarFormulaProfilesAreValidForManagedMode(profiles)).toBe(true);
-  });
-
-  it("is idempotent after the first confirmed repair", () => {
-    const profiles: GraphwarFormulaProfiles = {
-      y: { algorithm: "akima", ...defaultFormulaPreferences },
-      dy: { algorithm: "pchip", ...defaultFormulaPreferences, isStepGlitchModeEnabled: false },
-      ddy: { algorithm: "abs", ...defaultFormulaPreferences, isStepGlitchModeEnabled: false },
-    };
-    const repaired = applyGraphwarManagedFormulaProfileRepairPlan(
-      profiles,
-      createGraphwarManagedFormulaProfileRepairPlan(profiles),
-    );
-    const secondPlan = createGraphwarManagedFormulaProfileRepairPlan(repaired);
-
-    expect(repaired.ddy).toEqual({ algorithm: "abs", ...defaultFormulaPreferences, isStepGlitchModeEnabled: false });
-    expect(secondPlan).toEqual({});
-    expect(applyGraphwarManagedFormulaProfileRepairPlan(repaired, secondPlan)).toBe(repaired);
   });
 });

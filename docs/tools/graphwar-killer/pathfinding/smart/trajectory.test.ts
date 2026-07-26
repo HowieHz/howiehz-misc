@@ -4,6 +4,7 @@ import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/co
 import { graphToImagePoint } from "../../core/geometry";
 import { createGraphPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds } from "../../core/types";
+import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
 import { createGraphwarSmartPathfindingTrajectoryResult } from "./trajectory";
 
 const bounds: GraphBounds = { maxX: -4, maxY: 10, minX: -12, minY: -10 };
@@ -19,22 +20,23 @@ describe("Step glitch smart trajectory validation", () => {
       obstacleMask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
     }
 
+    const formulaMode = createGraphwarTrajectoryFormulaMode({
+      algorithm: "step",
+      decimalPlaces: 4,
+      equation: "dy",
+      steepness: 67,
+      isStepGlitchModeEnabled: true,
+      stepGlitchObstacleMask: obstacleMask,
+      isStepOverflowProtectionEnabled: true,
+    });
     const result = createGraphwarSmartPathfindingTrajectoryResult({
       boundaryExpansion: 0,
       bounds,
       boundsRect,
+      formulaMode,
       hitTarget: { center: target, radius: 300 },
       obstacleMask,
       points: [start, target],
-      settings: {
-        algorithm: "step",
-        decimalPlaces: 4,
-        equation: "dy",
-        steepness: 67,
-        stepGlitchMode: true,
-        stepGlitchObstacleMask: obstacleMask,
-        stepOverflowProtection: true,
-      },
       targetHitRadiusPixels: 300,
     });
 
@@ -46,21 +48,22 @@ describe("Step glitch smart trajectory validation", () => {
     const start = toPixel(-11, 0);
     const target = toPixel(-8, 0);
 
+    const formulaMode = createGraphwarTrajectoryFormulaMode({
+      algorithm: "step",
+      decimalPlaces: 4,
+      equation: "y",
+      steepness: 67,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
+    });
     const result = createGraphwarSmartPathfindingTrajectoryResult({
       boundaryExpansion: 0,
       bounds,
       boundsRect,
+      formulaMode,
       hitTarget: { center: target, radius: 2 },
       obstacleMask: new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT),
       points: [start, target],
-      settings: {
-        algorithm: "step",
-        decimalPlaces: 4,
-        equation: "y",
-        steepness: 67,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
       targetHitRadiusPixels: 2,
     });
 

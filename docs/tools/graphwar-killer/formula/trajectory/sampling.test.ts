@@ -11,6 +11,7 @@ import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { AlgorithmMode, BoundsRect, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
 import { createGraphwarTrajectoryDebugMetrics } from "../debug-metrics";
+import { createGraphwarExpressionEvaluator } from "../expression/evaluator";
 import {
   buildFormula,
   compileFormulaEvaluator,
@@ -18,8 +19,12 @@ import {
   GraphwarSignRole,
 } from "../generation/build";
 import { sampleGraphwarExpressionTrajectory, sampleGraphwarTrajectory } from "../simulation/simulator";
+import type { GraphwarTrajectorySample } from "../simulation/simulator";
 import {
   compareGraphwarPathErrors,
+  continueResolvedGraphwarTrajectory,
+  createGraphwarResolvedTrajectoryContinuationEvidence,
+  createGraphwarTrajectoryFormulaMode,
   getGraphwarTrajectoryLaunchAngle,
   type GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryResolutionError,
@@ -60,12 +65,343 @@ const settings = {
   decimalPlaces: 4,
   equation: "y" as const,
   steepness: 1,
-  stepGlitchMode: false,
-  stepOverflowProtection: false,
+  isStepGlitchModeEnabled: false,
+  isStepOverflowProtectionEnabled: false,
 };
 const horizontalPoints = [createGraphPoint(-1, 0), createGraphPoint(1, 0)];
+const ordinaryFormulaModes = [
+  ["step", "y"],
+  ["step", "dy"],
+  ["step", "ddy"],
+  ["abs", "y"],
+  ["abs", "dy"],
+  ["abs", "ddy"],
+  ["pchip", "y"],
+  ["pchip", "dy"],
+  ["pchip", "ddy"],
+  ["akima", "y"],
+  ["akima", "dy"],
+  ["akima", "ddy"],
+] as const;
+
+describe("Graphwar trajectory formula modes", () => {
+  it("freezes a settings snapshot with its resolved contract", () => {
+    const mutableSettings = { ...settings };
+    const formulaMode = createGraphwarTrajectoryFormulaMode(mutableSettings);
+
+    mutableSettings.steepness = 99;
+
+    expect(formulaMode.settings.steepness).toBe(settings.steepness);
+    expect(formulaMode.contract.formulaRefinement.type).toBe("direct");
+    expect(Object.isFrozen(formulaMode)).toBe(true);
+    expect(Object.isFrozen(formulaMode.contract)).toBe(true);
+    expect(Object.isFrozen(formulaMode.settings)).toBe(true);
+  });
+});
 
 describe("Graphwar trajectory target tracking", () => {
+  it.each(ordinaryFormulaModes)(
+    "keeps fixed-formula %s %s continuation identical through required, tracked, and collision boundaries",
+    (algorithm, equation) => {
+      const points = [createGraphPoint(-20, 0), createGraphPoint(-15, 0), createGraphPoint(-10, 0)];
+      const requiredTargets = [{ center: toPixel(-15, 0), radius: 2 }];
+      const targetSequence = [{ center: toPixel(-10, 0), radius: 2 }];
+      const trackedTargets = [
+        { center: toPixel(-15, 0), radius: 2 },
+        { center: toPixel(-10, 0), radius: 2 },
+        { center: toPixel(0, 0), radius: 2 },
+      ];
+      const obstaclePixel = toPixel(5, 0);
+      const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+      obstacleMask[Math.floor(obstaclePixel.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(obstaclePixel.x)] = 1;
+      const common = {
+        bounds,
+        boundsRect,
+        collision: { mask: obstacleMask },
+        collectVisiblePixels: true,
+        points,
+        requiredTargets,
+        formulaMode: createGraphwarTrajectoryFormulaMode({
+          ...settings,
+          algorithm,
+          equation,
+          steepness: 67,
+          isStepOverflowProtectionEnabled: true,
+        }),
+        soldierCenter: points[0],
+        targetSequence,
+        trackedTargets,
+      } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+      const prefix = resolveGraphwarTrajectory(common);
+      const evidence = createGraphwarResolvedTrajectoryContinuationEvidence(prefix);
+      expect(evidence).toBeDefined();
+      if (!evidence) {
+        return;
+      }
+      const continued = continueResolvedGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        collision: common.collision,
+        collectVisiblePixels: true,
+        evidence,
+        qualityPoints: [],
+        requiredTargets,
+        stopOnTargetsComplete: false,
+        targetSequence,
+        trackedTargets,
+      });
+      expect(continued.status).toBe("continued");
+      if (continued.status !== "continued") {
+        return;
+      }
+      const cold = resolveGraphwarTrajectory({ ...common, stopOnTargetsComplete: false });
+      const combinedPoints = mergeContinuationTestPoints(prefix.result.sample.points, continued.result.sample.points);
+      const combinedVisiblePixels = mergeContinuationTestPoints(
+        prefix.result.visiblePixels,
+        continued.result.visiblePixels,
+      );
+      const trackedTargetHitIndexes = trackedTargets.map((_target, targetIndex) => {
+        const prefixHitIndex = prefix.result.trackedTargetHitIndexes[targetIndex] ?? -1;
+        return prefixHitIndex >= 0 ? prefixHitIndex : (continued.result.trackedTargetHitIndexes[targetIndex] ?? -1);
+      });
+
+      expect(prefix.context.formulaResult.expression).toBe(cold.context.formulaResult.expression);
+      expect(getGraphwarTrajectoryLaunchAngle(prefix.context)).toBe(getGraphwarTrajectoryLaunchAngle(cold.context));
+      expect(prefix.context.signProtection).toEqual(cold.context.signProtection);
+      expect(combinedPoints).toEqual(cold.result.sample.points);
+      expect(continued.result.sample.endState).toEqual(cold.result.sample.endState);
+      expect(continued.result.sample.stopReason).toBe(cold.result.sample.stopReason);
+      expect(combinedVisiblePixels).toEqual(cold.result.visiblePixels);
+      expect(continued.result.earlyStopReason).toBe(cold.result.earlyStopReason);
+      expect(continued.result.obstacleHitIndex).toBe(cold.result.obstacleHitIndex);
+      expect(continued.result.reachedRequiredTargetCount).toBe(cold.result.reachedRequiredTargetCount);
+      expect(continued.result.reachedTargetCount).toBe(cold.result.reachedTargetCount);
+      expect(prefix.result.requiredTargetsHitIndex).toBe(cold.result.requiredTargetsHitIndex);
+      expect(prefix.result.targetHitIndex).toBe(cold.result.targetHitIndex);
+      expect(trackedTargetHitIndexes).toEqual(cold.result.trackedTargetHitIndexes);
+    },
+  );
+
+  it("requires a cold replay when resolved-continuation sign identity mismatches", () => {
+    const target = { center: toPixel(0, 0), radius: 2 };
+    const prefix = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: horizontalPoints,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      soldierCenter: horizontalPoints[0],
+      targetSequence: [target],
+    });
+    const evidence = createGraphwarResolvedTrajectoryContinuationEvidence(prefix);
+    expect(evidence).toBeDefined();
+    if (!evidence) {
+      return;
+    }
+    const incompatibleSignProtection = [...prefix.context.signProtection];
+    incompatibleSignProtection[0] = (incompatibleSignProtection[0] ?? 0) ^ GraphwarSignRole.StartX;
+    const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+
+    const continued = continueResolvedGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      debugMetrics,
+      evidence: {
+        ...evidence,
+        start: { ...evidence.start, signProtection: incompatibleSignProtection },
+      },
+      stopOnTargetsComplete: false,
+      targetSequence: [target],
+    });
+
+    expect(continued).toEqual({ status: "cold-required" });
+    expect(debugMetrics.counters.trajectoryReplayCount).toBe(0);
+  });
+
+  it("rechecks collision at a target-completion continuation seam", () => {
+    const points = [createGraphPoint(-20, 0), createGraphPoint(-10, 0)];
+    const target = { center: toPixel(-10, 0), radius: 2 };
+    const probe = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      points,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      soldierCenter: points[0],
+      targetSequence: [target],
+    });
+    const seamPixel = probe.result.visiblePixels.at(-1);
+    if (!seamPixel) {
+      throw new Error("Expected the target-completion sample to expose a visible seam point");
+    }
+    const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    obstacleMask[Math.floor(seamPixel.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(seamPixel.x)] = 1;
+    const common = {
+      bounds,
+      boundsRect,
+      collision: { mask: obstacleMask },
+      collectVisiblePixels: true,
+      points,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      soldierCenter: points[0],
+      targetSequence: [target],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const prefix = resolveGraphwarTrajectory(common);
+    const evidence = createGraphwarResolvedTrajectoryContinuationEvidence(prefix);
+    if (!evidence) {
+      throw new Error("Expected target completion to expose a resumable state");
+    }
+
+    const continued = continueResolvedGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collision: common.collision,
+      collectVisiblePixels: true,
+      evidence,
+      stopOnTargetsComplete: false,
+      targetSequence: [target],
+    });
+    const cold = resolveGraphwarTrajectory({ ...common, stopOnTargetsComplete: false });
+
+    expect(prefix.result.earlyStopReason).toBe("target");
+    expect(continued.status).toBe("continued");
+    if (continued.status === "continued") {
+      expect(continued.result.obstacleHitIndex).toBe(cold.result.obstacleHitIndex);
+      expect(mergeContinuationTestPoints(prefix.result.visiblePixels, continued.result.visiblePixels)).toEqual(
+        cold.result.visiblePixels,
+      );
+    }
+  });
+
+  it("requires a cold replay when resolved context and continuation state come from different formulas", () => {
+    const target = { center: toPixel(0, 0), radius: 2 };
+    const first = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: horizontalPoints,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      soldierCenter: horizontalPoints[0],
+      targetSequence: [target],
+    });
+    const secondPoints = [createGraphPoint(-1, 1), createGraphPoint(1, 2)];
+    const second = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      points: secondPoints,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      soldierCenter: secondPoints[0],
+      targetSequence: [{ center: toPixel(0, 1.5), radius: 2 }],
+    });
+    const evidence = createGraphwarResolvedTrajectoryContinuationEvidence(first);
+    if (!evidence) {
+      throw new Error("Expected the first formula to expose a resumable state");
+    }
+
+    expect(
+      continueResolvedGraphwarTrajectory({
+        bounds,
+        boundsRect,
+        evidence: { ...evidence, context: second.context },
+        stopOnTargetsComplete: false,
+      }),
+    ).toEqual({ status: "cold-required" });
+  });
+
+  it("preserves exact required, ordered, and tracked indexes across multiple fixed-formula continuations", () => {
+    const points = [
+      createGraphPoint(-20, 0),
+      createGraphPoint(-15, 0),
+      createGraphPoint(-10, 0),
+      createGraphPoint(-5, 0),
+    ];
+    const targets = [
+      { center: toPixel(-15, 0), radius: 2 },
+      { center: toPixel(-10, 0), radius: 2 },
+      { center: toPixel(-5, 0), radius: 2 },
+    ];
+    const first = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      points,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      soldierCenter: points[0],
+      targetSequence: [targets[0]],
+      trackedTargets: targets,
+    });
+    const firstEvidence = createGraphwarResolvedTrajectoryContinuationEvidence(first, {
+      reachedRequiredTargetCount: 1,
+      reachedTargetCount: 0,
+    });
+    if (!firstEvidence) {
+      throw new Error("Expected the first target to expose continuation evidence");
+    }
+    const second = continueResolvedGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      evidence: firstEvidence,
+      requiredTargets: [targets[0]],
+      targetSequence: [targets[1]],
+      trackedTargets: targets,
+    });
+    if (second.status !== "continued") {
+      throw new Error("Expected the second target to continue the fixed formula");
+    }
+    const secondEvidence = createGraphwarResolvedTrajectoryContinuationEvidence(
+      { context: first.context, result: second.result },
+      { reachedRequiredTargetCount: 2, reachedTargetCount: 0 },
+    );
+    if (!secondEvidence) {
+      throw new Error("Expected the second target to expose continuation evidence");
+    }
+    const third = continueResolvedGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      evidence: secondEvidence,
+      requiredTargets: targets.slice(0, 2),
+      stopOnTargetsComplete: false,
+      targetSequence: [targets[2]],
+      trackedTargets: targets,
+    });
+    if (third.status !== "continued") {
+      throw new Error("Expected the third target to continue the fixed formula");
+    }
+    const cold = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collectVisiblePixels: true,
+      points,
+      requiredTargets: targets.slice(0, 2),
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      soldierCenter: points[0],
+      stopOnTargetsComplete: false,
+      targetSequence: [targets[2]],
+      trackedTargets: targets,
+    });
+    const mergedPoints = mergeContinuationTestPoints(
+      mergeContinuationTestPoints(first.result.sample.points, second.result.sample.points),
+      third.result.sample.points,
+    );
+    const mergedVisiblePixels = mergeContinuationTestPoints(
+      mergeContinuationTestPoints(first.result.visiblePixels, second.result.visiblePixels),
+      third.result.visiblePixels,
+    );
+    const mergedTrackedTargetHitIndexes = targets.map((_target, targetIndex) =>
+      [first.result, second.result, third.result]
+        .map((result) => result.trackedTargetHitIndexes[targetIndex] ?? -1)
+        .find((index) => index >= 0),
+    );
+
+    expect(second.result.requiredTargetsHitIndex).toBe(first.result.targetHitIndex);
+    expect(third.result.requiredTargetsHitIndex).toBe(second.result.targetHitIndex);
+    expect(third.result.requiredTargetsHitIndex).toBe(cold.result.requiredTargetsHitIndex);
+    expect(third.result.targetHitIndex).toBe(cold.result.targetHitIndex);
+    expect(mergedTrackedTargetHitIndexes).toEqual(cold.result.trackedTargetHitIndexes);
+    expect(mergedPoints).toEqual(cold.result.sample.points);
+    expect(mergedVisiblePixels).toEqual(cold.result.visiblePixels);
+  });
+
   it("tracks every strict-circle hit after the launch point while continuing past the ordered sequence", () => {
     const launchPixel = toPixel(0, 0);
     const firstPixel = toPixel(GRAPHWAR_STEP_SIZE, 0);
@@ -73,13 +409,20 @@ describe("Graphwar trajectory target tracking", () => {
     const { result } = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
-      initialState: {
-        currentPoint: createGraphPoint(0, 0),
-        sampleIndex: 0,
-      },
       points: horizontalPoints,
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: horizontalPoints[0],
+      start: {
+        reachedRequiredTargetCount: 0,
+        reachedTargetCount: 0,
+        samplingState: {
+          currentPoint: createGraphPoint(0, 0),
+          sampleIndex: 0,
+        },
+        shouldSkipInitialStop: false,
+        signProtection: [],
+        type: "continuation",
+      },
       stopOnTargetsComplete: false,
       targetSequence: [{ center: firstPixel, radius: 0.01 }],
       trackedTargets: [
@@ -107,14 +450,20 @@ describe("Graphwar trajectory target tracking", () => {
       bounds,
       boundsRect,
       collision: { mask: obstacleMask },
-      initialState: {
-        currentPoint: createGraphPoint(0, 0),
-        sampleIndex: 0,
-      },
       points: horizontalPoints,
-      settings,
-      skipInitialStop: true,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: horizontalPoints[0],
+      start: {
+        reachedRequiredTargetCount: 0,
+        reachedTargetCount: 0,
+        samplingState: {
+          currentPoint: createGraphPoint(0, 0),
+          sampleIndex: 0,
+        },
+        shouldSkipInitialStop: true,
+        signProtection: [],
+        type: "continuation",
+      },
       stopOnTargetsComplete: false,
       targetSequence: [{ center: firstPixel, radius: 0.01 }],
       trackedTargets: [
@@ -138,18 +487,25 @@ describe("Graphwar trajectory target tracking", () => {
     const { result } = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
-      initialState: {
-        currentPoint: createGraphPoint(0, 0),
-        sampleIndex: 0,
-      },
       points: horizontalPoints,
       // 故意按实际命中顺序的反序传入，证明 requiredTargets 不携带顺序约束。
       requiredTargets: [
         { center: fartherRequiredTarget, radius: 0.01 },
         { center: nearerRequiredTarget, radius: 0.01 },
       ],
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       soldierCenter: horizontalPoints[0],
+      start: {
+        reachedRequiredTargetCount: 0,
+        reachedTargetCount: 0,
+        samplingState: {
+          currentPoint: createGraphPoint(0, 0),
+          sampleIndex: 0,
+        },
+        shouldSkipInitialStop: false,
+        signProtection: [],
+        type: "continuation",
+      },
       targetSequence: [{ center: orderedTarget, radius: 0.01 }],
     });
 
@@ -167,22 +523,31 @@ describe("Graphwar trajectory target tracking", () => {
     const options = {
       bounds,
       boundsRect,
-      initialReachedRequiredTargetCount: 1,
-      initialState: { currentPoint: createGraphPoint(0, 1), sampleIndex: 200 },
       points,
       requiredTargets: [requiredTarget],
-      settings: { ...settings, equation: "dy" as const },
+      formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, equation: "dy" as const }),
       soldierCenter: points[0],
+      start: {
+        reachedRequiredTargetCount: 1,
+        reachedTargetCount: 0,
+        samplingState: { currentPoint: createGraphPoint(0, 1), sampleIndex: 200 },
+        shouldSkipInitialStop: false,
+        signProtection: [],
+        type: "continuation" as const,
+      },
       targetSequence: [{ center: toPixel(1, 10), radius: 0.01 }],
     };
 
     const restarted = resolveGraphwarTrajectory(options);
     const reused = resolveGraphwarTrajectory({
       ...options,
-      signProtection: [
-        GraphwarSignRole.StartX | GraphwarSignRole.EndX,
-        GraphwarSignRole.StartX | GraphwarSignRole.EndX,
-      ],
+      start: {
+        ...options.start,
+        signProtection: [
+          GraphwarSignRole.StartX | GraphwarSignRole.EndX,
+          GraphwarSignRole.StartX | GraphwarSignRole.EndX,
+        ],
+      },
     });
 
     // 未保护公式会在发射点确认零值并整路重跑；旧状态携带的命中计数不能跟着留下。
@@ -201,7 +566,7 @@ describe("Graphwar trajectory target tracking", () => {
       boundsRect,
       obstacleMask,
       points: [start, trackedTarget],
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       targetCircles: [{ center: orderedTarget, radius: 1 }],
       targetHitRadiusPixels: 1,
       targetPoints: [orderedTarget],
@@ -282,7 +647,7 @@ describe("formula path quality", () => {
       bounds,
       boundsRect,
       points: [start, middle, target],
-      settings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
       targetCircles: [{ center: target, radius: 1 }],
       targetControlPoints: [middle, target],
       targetHitRadiusPixels: 1,
@@ -323,14 +688,14 @@ describe("Generated formula evaluator equivalence", () => {
           bounds,
           boundsRect,
           points,
-          settings: {
+          formulaMode: createGraphwarTrajectoryFormulaMode({
             algorithm: testCase.algorithm,
             decimalPlaces,
             equation: testCase.equation,
             steepness: 210,
-            stepGlitchMode: false,
-            stepOverflowProtection: true,
-          },
+            isStepGlitchModeEnabled: false,
+            isStepOverflowProtectionEnabled: true,
+          }),
           soldierCenter: points[0],
         });
         const parsed = sampleGraphwarExpressionTrajectory({
@@ -359,14 +724,14 @@ describe("Generated formula evaluator equivalence", () => {
       bounds: mirroredBounds,
       boundsRect,
       points,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 15,
         equation: "ddy",
         steepness: 210,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: points[0],
     });
 
@@ -443,7 +808,7 @@ describe("Generated formula evaluator equivalence", () => {
 
   it("matches the complete Step y'' trajectory before, on, and after protected high-precision gates", () => {
     const soldierCenter = createGraphPoint(-GRAPHWAR_GAME_SOLDIER_RADIUS, 0);
-    const points = [createGraphPoint(0, 0), createGraphPoint(1, 0)];
+    const points = [createGraphPoint(0, 0), createGraphPoint(1, 0), createGraphPoint(2, 1)];
     const startX = GRAPHWAR_STEP_SIZE;
     const pulseEndX = 2 * GRAPHWAR_STEP_SIZE;
     const formulaEvaluation = {
@@ -466,13 +831,13 @@ describe("Generated formula evaluator equivalence", () => {
           targetY: 0,
         },
       ],
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
     const expression = buildFormula(points, 210, "ddy", "step", 4, {
       compiledMaterials,
       signProtection: formulaEvaluation.signProtection,
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     }).expression;
     const compiled = sampleGraphwarTrajectory({
       algorithm: "step",
@@ -493,7 +858,10 @@ describe("Generated formula evaluator equivalence", () => {
       soldierCenter,
     });
 
+    expect(compiledMaterials.stepFormula?.terms).toHaveLength(2);
     expect(compiledMaterials.stepFormula?.terms[0]?.glitchSegment?.formulaDecimalPlaces).toBe(15);
+    expect(compiledMaterials.stepFormula?.terms[1]?.glitchSegment).toBeUndefined();
+    expect(compiledMaterials.stepFormula?.terms[1]?.secondDerivativeCoefficient).not.toBe(0);
     for (const gateX of [startX, pulseEndX]) {
       const gateIndex = compiled.points.findIndex((point) => Object.is(point.x, gateX));
       expect(gateIndex).toBeGreaterThan(0);
@@ -501,6 +869,240 @@ describe("Generated formula evaluator equivalence", () => {
       expect(compiled.points[gateIndex + 1]?.x).toBeGreaterThan(gateX);
     }
     expectTrajectorySamplesToBeIdentical(compiled, parsed);
+  });
+
+  it("preserves Step y'' stable-center signed zero and unprotected callback identity", () => {
+    const points = [createGraphPoint(-1, 0), createGraphPoint(0, 1)];
+    const protectedFormulaEvaluation = {
+      equation: "ddy" as const,
+      formulaDecimalPlaces: 4,
+      signProtection: [GraphwarSignRole.CenterX],
+      isStepOverflowProtectionEnabled: true,
+    };
+    const protectedMaterials = compileGraphwarFormulaMaterials(points, 210, "step", protectedFormulaEvaluation);
+    const protectedExpression = buildFormula(points, 210, "ddy", "step", 4, {
+      compiledMaterials: protectedMaterials,
+      signProtection: protectedFormulaEvaluation.signProtection,
+      isStepOverflowProtectionEnabled: true,
+    }).expression;
+    const protectedParsed = createGraphwarExpressionEvaluator(protectedExpression);
+    if (!protectedParsed) {
+      throw new Error("Expected the protected Step y'' expression to parse");
+    }
+    const protectedValue = compileFormulaEvaluator(
+      points,
+      210,
+      "step",
+      protectedFormulaEvaluation,
+      protectedMaterials,
+    ).evaluateSecondDerivativeY(0, 0, 0);
+
+    expect(Object.is(protectedValue, protectedParsed(0, 0, 0))).toBe(true);
+    expect(Object.is(protectedValue, 0)).toBe(true);
+
+    const zeroSites: [number, GraphwarSignRole][] = [];
+    const unprotectedFormulaEvaluation = {
+      equation: "ddy" as const,
+      formulaDecimalPlaces: 4,
+      onZeroSignArgument: (segmentIndex: number, role: GraphwarSignRole) => zeroSites.push([segmentIndex, role]),
+      signProtection: [],
+      isStepOverflowProtectionEnabled: true,
+    };
+    const unprotectedMaterials = compileGraphwarFormulaMaterials(points, 210, "step", unprotectedFormulaEvaluation);
+    const unprotectedExpression = buildFormula(points, 210, "ddy", "step", 4, {
+      compiledMaterials: unprotectedMaterials,
+      signProtection: unprotectedFormulaEvaluation.signProtection,
+      isStepOverflowProtectionEnabled: true,
+    }).expression;
+    const unprotectedParsed = createGraphwarExpressionEvaluator(unprotectedExpression);
+    if (!unprotectedParsed) {
+      throw new Error("Expected the unprotected Step y'' expression to parse");
+    }
+    const unprotectedValue = compileFormulaEvaluator(
+      points,
+      210,
+      "step",
+      unprotectedFormulaEvaluation,
+      unprotectedMaterials,
+    ).evaluateSecondDerivativeY(0, 0, 0);
+
+    expect(Object.is(unprotectedValue, unprotectedParsed(0, 0, 0))).toBe(true);
+    expect(unprotectedValue).toBeNaN();
+    expect(zeroSites).toEqual([[0, GraphwarSignRole.CenterX]]);
+  });
+
+  it("preserves Step y'' negative zero when a leading positive direct term underflows", () => {
+    const points = [createGraphPoint(-1, 0), createGraphPoint(0, 1)];
+    const formulaEvaluation = {
+      equation: "ddy" as const,
+      formulaDecimalPlaces: 4,
+      isStepOverflowProtectionEnabled: false,
+    };
+    const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+    const expression = buildFormula(points, 210, "ddy", "step", 4, {
+      compiledMaterials,
+      isStepOverflowProtectionEnabled: false,
+    }).expression;
+    const parsed = createGraphwarExpressionEvaluator(expression);
+    if (!parsed) {
+      throw new Error("Expected the direct Step y'' expression to parse");
+    }
+    const evaluateSecondDerivativeY = compileFormulaEvaluator(
+      points,
+      210,
+      "step",
+      formulaEvaluation,
+      compiledMaterials,
+    ).evaluateSecondDerivativeY;
+    const x = 4;
+    const compiledValue = evaluateSecondDerivativeY(x, 0, 0);
+
+    expect(Object.is(parsed(x, 0, 0), -0)).toBe(true);
+    expect(Object.is(compiledValue, parsed(x, 0, 0))).toBe(true);
+  });
+
+  it("omits zero Step y'' glitch branches before evaluating their gates", () => {
+    const points = [createGraphPoint(-2, 0), createGraphPoint(0, 1)];
+    for (const glitchSegment of [
+      { acceleration: 8, accelerationGateY: 1, braking: 0, brakingGateY: 0 },
+      { acceleration: 0, accelerationGateY: 0, braking: 8, brakingGateY: -1 },
+    ]) {
+      const formulaEvaluation = {
+        equation: "ddy" as const,
+        formulaDecimalPlaces: 15,
+        signProtection: [],
+        stepGlitchSegments: [
+          {
+            ...glitchSegment,
+            endX: 2,
+            equation: "ddy" as const,
+            formulaDecimalPlaces: 15,
+            pulseEndX: 1,
+            startX: -1,
+            targetY: 1,
+          },
+        ],
+        isStepOverflowProtectionEnabled: true,
+      };
+      const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+      const expression = buildFormula(points, 210, "ddy", "step", 15, {
+        compiledMaterials,
+        signProtection: formulaEvaluation.signProtection,
+        isStepOverflowProtectionEnabled: true,
+      }).expression;
+      const parsed = createGraphwarExpressionEvaluator(expression);
+      if (!parsed) {
+        throw new Error("Expected the one-branch Step glitch expression to parse");
+      }
+      const compiled = compileFormulaEvaluator(
+        points,
+        210,
+        "step",
+        formulaEvaluation,
+        compiledMaterials,
+      ).evaluateSecondDerivativeY;
+
+      expect(parsed(0, 0, 0)).toBe(8);
+      expect(Object.is(compiled(0, 0, 0), parsed(0, 0, 0))).toBe(true);
+    }
+  });
+
+  it("counts an active Step y'' glitch pair once and an omitted pair zero times", () => {
+    const points = [createGraphPoint(-2, 0), createGraphPoint(0, 1)];
+    for (const [acceleration, braking, expectedTermCount] of [
+      [8, -8, 1],
+      [0, 0, 0],
+    ] as const) {
+      const formulaEvaluation = {
+        equation: "ddy" as const,
+        formulaDecimalPlaces: 15,
+        signProtection: [GraphwarSignRole.GateY | GraphwarSignRole.BrakingGateY],
+        stepGlitchSegments: [
+          {
+            acceleration,
+            accelerationGateY: 0,
+            braking,
+            brakingGateY: 0,
+            endX: 2,
+            equation: "ddy" as const,
+            formulaDecimalPlaces: 15,
+            pulseEndX: 1,
+            startX: -1,
+            targetY: 1,
+          },
+        ],
+        isStepOverflowProtectionEnabled: true,
+      };
+      const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+      const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+      compileFormulaEvaluator(
+        points,
+        210,
+        "step",
+        formulaEvaluation,
+        compiledMaterials,
+        debugMetrics.counters,
+      ).evaluateSecondDerivativeY(0, 0, 0);
+
+      expect(debugMetrics.counters.formulaTermEvaluationCount).toBe(expectedTermCount);
+    }
+  });
+
+  it("right-folds Step y'' glitch pairs with following terms like Graphwar", () => {
+    const points = [createGraphPoint(-2, 0), createGraphPoint(-1, 1), createGraphPoint(0, 2)];
+    const protectedGateRoles = GraphwarSignRole.GateY | GraphwarSignRole.BrakingGateY;
+    const formulaEvaluation = {
+      equation: "ddy" as const,
+      formulaDecimalPlaces: 15,
+      signProtection: [protectedGateRoles, protectedGateRoles],
+      stepGlitchSegments: [
+        {
+          acceleration: 2e16,
+          accelerationGateY: 0,
+          braking: -2e16,
+          brakingGateY: 0,
+          endX: 2,
+          equation: "ddy" as const,
+          formulaDecimalPlaces: 15,
+          pulseEndX: 1,
+          startX: -1,
+          targetY: 1,
+        },
+        {
+          acceleration: 2,
+          accelerationGateY: 0,
+          braking: 0,
+          brakingGateY: 0,
+          endX: 2,
+          equation: "ddy" as const,
+          formulaDecimalPlaces: 15,
+          pulseEndX: 1,
+          startX: -1,
+          targetY: 2,
+        },
+      ],
+      isStepOverflowProtectionEnabled: true,
+    };
+    const compiledMaterials = compileGraphwarFormulaMaterials(points, 210, "step", formulaEvaluation);
+    const expression = buildFormula(points, 210, "ddy", "step", 15, {
+      compiledMaterials,
+      signProtection: formulaEvaluation.signProtection,
+      isStepOverflowProtectionEnabled: true,
+    }).expression;
+    const parsed = createGraphwarExpressionEvaluator(expression);
+    if (!parsed) {
+      throw new Error("Expected the right-associated Step glitch expression to parse");
+    }
+    const compiled = compileFormulaEvaluator(
+      points,
+      210,
+      "step",
+      formulaEvaluation,
+      compiledMaterials,
+    ).evaluateSecondDerivativeY;
+
+    expect(parsed(0, 0, 0)).toBe(0);
+    expect(Object.is(compiled(0, 0, 0), parsed(0, 0, 0))).toBe(true);
   });
 
   it("keeps soft ddy weighting finite when Graphwar divides before multiplying by two", () => {
@@ -524,15 +1126,15 @@ describe("Canonical formula settings behavior", () => {
   const points = [createGraphPoint(-10, -1), createGraphPoint(-7, 2), createGraphPoint(-3, -2), createGraphPoint(1, 1)];
   const cases = [
     {
-      changedSettings: { stepOverflowProtection: true },
+      changedSettings: { isStepOverflowProtectionEnabled: true },
       name: "Step y overflow protection",
       settings: {
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "y" as const,
         steepness: 210,
-        stepGlitchMode: false,
-        stepOverflowProtection: false,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: false,
       },
     },
     {
@@ -544,8 +1146,8 @@ describe("Canonical formula settings behavior", () => {
         equation: "dy" as const,
         secondOrderLaunchAngleMode: "full-precision" as const,
         steepness: 210,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
     },
     {
@@ -557,8 +1159,8 @@ describe("Canonical formula settings behavior", () => {
         equation: "dy" as const,
         formulaPathSteepness: 210,
         steepness: 67,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
       },
     },
   ];
@@ -569,14 +1171,14 @@ describe("Canonical formula settings behavior", () => {
         bounds,
         boundsRect,
         points,
-        settings: testCase.settings,
+        formulaMode: createGraphwarTrajectoryFormulaMode(testCase.settings),
         soldierCenter: points[0],
       });
       const changed = resolveGraphwarTrajectory({
         bounds,
         boundsRect,
         points,
-        settings: { ...testCase.settings, ...testCase.changedSettings },
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...testCase.settings, ...testCase.changedSettings }),
         soldierCenter: points[0],
       });
 
@@ -606,13 +1208,13 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation,
         steepness: 210,
-        stepOverflowProtection: true,
+        isStepOverflowProtectionEnabled: true,
       };
       const soft = resolveGraphwarTrajectory({
         bounds,
         boundsRect,
         points: reproductionPoints,
-        settings: { ...baseSettings, stepGlitchMode: false },
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...baseSettings, isStepGlitchModeEnabled: false }),
         soldierCenter: reproductionPoints[0],
         targetHitRadiusPixels: 7,
         targetPoint,
@@ -621,7 +1223,7 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points: reproductionPoints,
-        settings: { ...baseSettings, stepGlitchMode: true },
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...baseSettings, isStepGlitchModeEnabled: true }),
         soldierCenter: reproductionPoints[0],
         stopOnTargetsComplete: false,
         targetHitRadiusPixels: 7,
@@ -675,14 +1277,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation,
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
       targetHitRadiusPixels: 7,
       targetPoint: toPixel(pathPoints[2].x, pathPoints[2].y),
@@ -710,20 +1312,20 @@ describe("ODE segment position compensation", () => {
       boundsRect,
       points: pathPoints,
       qualityPoints: pathPoints.slice(1),
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const baseline = resolveGraphwarTrajectory(options);
     const fixedOptions = {
       ...options,
-      signProtection: [GraphwarSignRole.StartX],
+      start: { signProtection: [GraphwarSignRole.StartX], type: "cold" as const },
       stepGlitchXWindows: baseline.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments.map((segment) =>
         segment ? { endX: segment.endX, startX: segment.startX } : undefined,
       ),
@@ -741,7 +1343,8 @@ describe("ODE segment position compensation", () => {
 
     expect(resolved.context.signProtection).toEqual([GraphwarSignRole.StartX]);
     expect(resolved.context.stepGlitchFormulaEvidence?.prefix.stepGlitchRequirements).toEqual([false, true, false]);
-    expect(forcedColdMetrics.counters.trajectoryReplayCount - debugMetrics.counters.trajectoryReplayCount).toBe(1);
+    // 同一 matcher 同时复用前一 soft 段和当前 hard 段的精确边界，各省一次 cold replay。
+    expect(forcedColdMetrics.counters.trajectoryReplayCount - debugMetrics.counters.trajectoryReplayCount).toBe(2);
     expect(debugMetrics.counters.rk4StepCount).toBeLessThan(forcedColdMetrics.counters.rk4StepCount);
     expect(resolved.context.formulaResult.expression).toBe(forcedCold.context.formulaResult.expression);
     expect(getGraphwarTrajectoryLaunchAngle(resolved.context)).toBe(
@@ -761,6 +1364,47 @@ describe("ODE segment position compensation", () => {
     );
   });
 
+  it("continues a hard y' Step boundary through the same-solve matcher", () => {
+    const pathPoints = [
+      createGraphPoint(-24, 12),
+      createGraphPoint(-22.857142857142858, 13.571428571428571),
+      createGraphPoint(-22.84714285714286, 1.7532467532467528),
+    ];
+    const options = {
+      bounds,
+      boundsRect,
+      points: pathPoints,
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "dy" as const,
+        steepness: 210,
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
+      soldierCenter: pathPoints[0],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const baseline = resolveGraphwarTrajectory(options);
+    const hardSegment = baseline.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments[1];
+    expect(hardSegment?.equation).toBe("dy");
+    if (!hardSegment) {
+      return;
+    }
+    const fixedOptions = {
+      ...options,
+      stepGlitchXWindows: [undefined, { endX: hardSegment.endX, startX: hardSegment.startX }],
+    } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
+    const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+    const resolved = resolveGraphwarTrajectory({ ...fixedOptions, debugMetrics });
+    const forcedColdMetrics = createGraphwarTrajectoryDebugMetrics();
+    const forcedCold = resolveWithForcedMaterialIdentityMismatch({ ...fixedOptions, debugMetrics: forcedColdMetrics });
+
+    expect(debugMetrics.counters.trajectoryReplayCount).toBeLessThan(forcedColdMetrics.counters.trajectoryReplayCount);
+    expect(debugMetrics.counters.rk4StepCount).toBeLessThan(forcedColdMetrics.counters.rk4StepCount);
+    expect(resolved.context.formulaResult.expression).toBe(forcedCold.context.formulaResult.expression);
+    expectTrajectorySamplesToBeIdentical(resolved.result.sample, forcedCold.result.sample);
+  });
+
   it("retries a resumed hard y'' gate with real sign protection", () => {
     const pathPoints = [
       createGraphPoint(-24, 12),
@@ -772,14 +1416,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const baseline = resolveGraphwarTrajectory(options);
@@ -791,10 +1435,17 @@ describe("ODE segment position compensation", () => {
     }
     const resumedOptions = {
       ...options,
-      initialState: {
-        currentPoint: createGraphPoint(hardSegment.startX, hardSegment.accelerationGateY),
-        dy: 0,
-        sampleIndex: 0,
+      start: {
+        reachedRequiredTargetCount: 0,
+        reachedTargetCount: 0,
+        samplingState: {
+          currentPoint: createGraphPoint(hardSegment.startX, hardSegment.accelerationGateY),
+          dy: 0,
+          sampleIndex: 0,
+        },
+        shouldSkipInitialStop: false,
+        signProtection: prefix.signProtection,
+        type: "continuation" as const,
       },
       stepGlitchFormulaEvidence: { prefix },
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
@@ -825,14 +1476,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation,
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
 
@@ -846,15 +1497,15 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "dy" as const,
         secondOrderLaunchAngleMode: "full-precision" as const,
         steepness: 67,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const initial = resolveGraphwarTrajectory(options);
@@ -866,7 +1517,10 @@ describe("ODE segment position compensation", () => {
     }
     const changedOptions = {
       ...options,
-      settings: { ...options.settings, secondOrderLaunchAngleMode: "display-rounded" as const },
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        ...options.formulaMode.settings,
+        secondOrderLaunchAngleMode: "display-rounded" as const,
+      }),
     };
     const compileMaterials = vi.mocked(compileGraphwarFormulaMaterials);
     compileMaterials.mockClear();
@@ -888,14 +1542,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 67,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
     const cold = resolveGraphwarTrajectory(options);
@@ -909,7 +1563,7 @@ describe("ODE segment position compensation", () => {
     incompatibleSignProtection[0] = (incompatibleSignProtection[0] ?? 0) ^ GraphwarSignRole.StartX;
     const incompatible = resolveGraphwarTrajectory({
       ...options,
-      signProtection: prefix.signProtection,
+      start: { signProtection: prefix.signProtection, type: "cold" },
       stepGlitchFormulaEvidence: {
         prefix: {
           ...prefix,
@@ -949,14 +1603,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
       targetHitRadiusPixels: 7,
       targetPoint: toPixel(pathPoints[2].x, pathPoints[2].y),
@@ -998,14 +1652,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
     const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
@@ -1033,14 +1687,14 @@ describe("ODE segment position compensation", () => {
         boundsRect,
         points: pathPoints,
         qualityPoints: pathPoints.slice(1),
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm: "step" as const,
           decimalPlaces: 4,
           equation,
           steepness: 210,
-          stepGlitchMode: true,
-          stepOverflowProtection: true,
-        },
+          isStepGlitchModeEnabled: true,
+          isStepOverflowProtectionEnabled: true,
+        }),
         soldierCenter: pathPoints[0],
       } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
 
@@ -1062,15 +1716,15 @@ describe("ODE segment position compensation", () => {
       bounds: obstacleBounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step" as const,
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 67,
-        stepGlitchMode: true,
+        isStepGlitchModeEnabled: true,
         stepGlitchObstacleMask: obstacleMask,
-        stepOverflowProtection: true,
-      },
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     } satisfies Parameters<typeof resolveGraphwarTrajectory>[0];
 
@@ -1099,14 +1753,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: shortPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: shortPoints[0],
     });
     const shortCompileCount = compileMaterials.mock.calls.length;
@@ -1116,14 +1770,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: points[0],
     });
     const longCompileCount = compileMaterials.mock.calls.length;
@@ -1144,14 +1798,14 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points,
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm,
           decimalPlaces: 4,
           equation,
           steepness,
-          stepGlitchMode: false,
-          stepOverflowProtection: true,
-        },
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+        }),
         soldierCenter: points[0],
       });
       const segmentStartPoints = resolved.context.formulaEvaluation.segmentStartPoints;
@@ -1192,14 +1846,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     }).result.sample;
 
@@ -1225,14 +1879,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 1,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     }).result.sample;
 
@@ -1259,14 +1913,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 1,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     }).result.sample;
 
@@ -1283,14 +1937,14 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points: pathPoints,
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm: "abs",
           decimalPlaces: 4,
           equation: "ddy",
           steepness,
-          stepGlitchMode: false,
-          stepOverflowProtection: true,
-        },
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+        }),
         soldierCenter: pathPoints[0],
       });
       const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
@@ -1315,14 +1969,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1344,14 +1998,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 0.5,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1370,14 +2024,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1397,14 +2051,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 1,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1424,14 +2078,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 10,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1450,14 +2104,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1472,14 +2126,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
     const targetState = sampleResolvedSecondOrderStateAtX(resolved.context, pathPoints[0], pathPoints[1].x);
@@ -1505,14 +2159,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
 
@@ -1542,14 +2196,14 @@ describe("ODE segment position compensation", () => {
       bounds,
       boundsRect,
       points: pathPoints,
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "abs",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 153,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       soldierCenter: pathPoints[0],
     });
     const quality = measureResolvedSecondOrderControlQuality(resolved.context, pathPoints, bounds);
@@ -1575,14 +2229,14 @@ describe("ODE segment position compensation", () => {
         bounds: customBounds,
         boundsRect,
         points: customPoints,
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm,
           decimalPlaces: 4,
           equation,
           steepness,
-          stepGlitchMode: false,
-          stepOverflowProtection: true,
-        },
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+        }),
         soldierCenter: customPoints[0],
       }).result.sample;
 
@@ -1610,14 +2264,14 @@ describe("ODE segment position compensation", () => {
         bounds,
         boundsRect,
         points,
-        settings: {
+        formulaMode: createGraphwarTrajectoryFormulaMode({
           algorithm,
           decimalPlaces: 4,
           equation: "dy",
           steepness,
-          stepGlitchMode: false,
-          stepOverflowProtection: true,
-        },
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+        }),
         soldierCenter: points[0],
       }).result.sample;
 
@@ -1634,11 +2288,11 @@ describe("ODE segment position compensation", () => {
   );
 
   it.each([
-    { algorithm: "step", stepGlitchMode: false },
-    { algorithm: "abs", stepGlitchMode: true },
+    { algorithm: "step", isStepGlitchModeEnabled: false },
+    { algorithm: "abs", isStepGlitchModeEnabled: true },
   ] as const)(
     "ignores glitch inputs for $algorithm y' when the mode is disabled or unsupported",
-    ({ algorithm, stepGlitchMode }) => {
+    ({ algorithm, isStepGlitchModeEnabled }) => {
       const directPoints = [createGraphPoint(-11, 0), createGraphPoint(-6, 4)];
       const obstacleMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
       const obstacle = toPixel(-8.5, 2);
@@ -1648,21 +2302,21 @@ describe("ODE segment position compensation", () => {
         decimalPlaces: 4,
         equation: "dy" as const,
         steepness: 67,
-        stepGlitchMode,
-        stepOverflowProtection: true,
+        isStepGlitchModeEnabled,
+        isStepOverflowProtectionEnabled: true,
       };
       const plain = resolveGraphwarTrajectory({
         bounds,
         boundsRect,
         points: directPoints,
-        settings,
+        formulaMode: createGraphwarTrajectoryFormulaMode(settings),
         soldierCenter: directPoints[0],
       }).context;
       const withStaleMask = resolveGraphwarTrajectory({
         bounds,
         boundsRect,
         points: directPoints,
-        settings: { ...settings, stepGlitchObstacleMask: obstacleMask },
+        formulaMode: createGraphwarTrajectoryFormulaMode({ ...settings, stepGlitchObstacleMask: obstacleMask }),
         soldierCenter: directPoints[0],
       }).context;
 
@@ -1678,14 +2332,14 @@ describe("ODE segment position compensation", () => {
       decimalPlaces: 4,
       equation: "dy" as const,
       steepness: 67,
-      stepGlitchMode: true,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const options = {
       bounds,
       boundsRect,
       points: points.slice(0, 3),
-      settings: absSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(absSettings),
       soldierCenter: points[0],
     };
     const plain = resolveGraphwarTrajectory(options).context;
@@ -1720,14 +2374,14 @@ describe("pathfinding formula convergence", () => {
       bounds,
       boundsRect,
       points: [toPixel(-10, -1), toPixel(-7, 2), toPixel(-3, -2), target],
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "pchip",
         decimalPlaces: 4,
         equation: "ddy",
         steepness: 210,
-        stepGlitchMode: false,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      }),
       targetHitRadiusPixels: 1,
       targetPoints: [target],
     });
@@ -1747,9 +2401,9 @@ describe("Step glitch formula prefix", () => {
       decimalPlaces: 4,
       equation: "dy" as const,
       steepness: 67,
-      stepGlitchMode: true,
+      isStepGlitchModeEnabled: true,
       stepGlitchObstacleMask: obstacleMask,
-      stepOverflowProtection: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const prefixPoints = [
       createGraphPoint(-11, 0),
@@ -1761,7 +2415,7 @@ describe("Step glitch formula prefix", () => {
       bounds,
       boundsRect,
       points: prefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: prefixPoints[0],
     });
     const prefix = prefixResolution.context;
@@ -1779,7 +2433,7 @@ describe("Step glitch formula prefix", () => {
       bounds,
       boundsRect,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
     });
     const prefixOnlyMetrics = createGraphwarTrajectoryDebugMetrics();
@@ -1788,7 +2442,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: prefixOnlyMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       ...(prefix.stepGlitchFormulaEvidence
         ? { stepGlitchFormulaEvidence: { prefix: prefix.stepGlitchFormulaEvidence.prefix } }
@@ -1800,7 +2454,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: reusedMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       ...(prefix.stepGlitchFormulaEvidence ? { stepGlitchFormulaEvidence: prefix.stepGlitchFormulaEvidence } : {}),
     });
@@ -1810,8 +2464,8 @@ describe("Step glitch formula prefix", () => {
           bounds,
           boundsRect,
           points: appendedPoints,
-          settings: stepSettings,
-          signProtection: [],
+          formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
+          start: { signProtection: [], type: "cold" },
           soldierCenter: appendedPoints[0],
           // 强制保护快照失配，覆盖未来段新增 epsilon 后必须重算旧段的分支。
           stepGlitchFormulaEvidence: { prefix: { ...prefixFormula, signProtection: [1] } },
@@ -1858,14 +2512,14 @@ describe("Step glitch formula prefix", () => {
       decimalPlaces: 4,
       equation: "dy" as const,
       steepness: 67,
-      stepGlitchMode: true,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const prefix = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
       points: prefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: prefixPoints[0],
     }).context;
     const formulaPrefix = prefix.stepGlitchFormulaEvidence?.prefix;
@@ -1883,7 +2537,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: fallbackMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaEvidence: { prefix: formulaPrefix },
     });
@@ -1917,7 +2571,7 @@ describe("Step glitch formula prefix", () => {
         boundsRect,
         debugMetrics: metrics,
         points: appendedPoints,
-        settings: stepSettings,
+        formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
         soldierCenter: appendedPoints[0],
         stepGlitchFormulaEvidence: { boundaryState: stale.state, prefix: formulaPrefix },
       });
@@ -1934,8 +2588,8 @@ describe("Step glitch formula prefix", () => {
       decimalPlaces: 4,
       equation: "dy" as const,
       steepness: 210,
-      stepGlitchMode: true,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const firstPrefixPoints = [createGraphPoint(-10, 0), createGraphPoint(-5, 3)];
     const secondPrefixPoints = [createGraphPoint(-10, 1), createGraphPoint(-5, 4)];
@@ -1943,14 +2597,14 @@ describe("Step glitch formula prefix", () => {
       bounds,
       boundsRect,
       points: firstPrefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: firstPrefixPoints[0],
     }).context;
     const secondPrefix = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
       points: secondPrefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: secondPrefixPoints[0],
     }).context;
     const formulaPrefix = firstPrefix.stepGlitchFormulaEvidence?.prefix;
@@ -1977,7 +2631,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: fallbackMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaEvidence: { prefix: formulaPrefix },
     });
@@ -1987,7 +2641,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: crossedMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaEvidence: { boundaryState: crossedBoundaryState, prefix: formulaPrefix },
     });
@@ -1997,7 +2651,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: matchingMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       stepGlitchFormulaEvidence: { boundaryState: matchingBoundaryState, prefix: formulaPrefix },
     });
@@ -2019,14 +2673,14 @@ describe("Step glitch formula prefix", () => {
       decimalPlaces: 4,
       equation: "ddy" as const,
       steepness: 153,
-      stepGlitchMode: true,
-      stepOverflowProtection: true,
+      isStepGlitchModeEnabled: true,
+      isStepOverflowProtectionEnabled: true,
     };
     const prefix = resolveGraphwarTrajectory({
       bounds,
       boundsRect,
       points: prefixPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: prefixPoints[0],
     }).context;
     const appendedPoints = [...prefixPoints, createGraphPoint(-10, -0.05)];
@@ -2036,7 +2690,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: fallbackMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       ...(prefix.stepGlitchFormulaEvidence
         ? { stepGlitchFormulaEvidence: { prefix: prefix.stepGlitchFormulaEvidence.prefix } }
@@ -2048,7 +2702,7 @@ describe("Step glitch formula prefix", () => {
       boundsRect,
       debugMetrics: reusedMetrics,
       points: appendedPoints,
-      settings: stepSettings,
+      formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
       soldierCenter: appendedPoints[0],
       ...(prefix.stepGlitchFormulaEvidence ? { stepGlitchFormulaEvidence: prefix.stepGlitchFormulaEvidence } : {}),
     });
@@ -2065,6 +2719,19 @@ describe("Step glitch formula prefix", () => {
 /** Converts a Graphwar coordinate pair into the shared test fixture's image space. */
 function toPixel(x: number, y: number) {
   return graphToImagePoint(createGraphPoint(x, y), bounds, boundsRect);
+}
+
+/** Mirrors the production continuation seam: the simulator may include the resume point or start at its successor. */
+function mergeContinuationTestPoints<TPoint extends { readonly x: number; readonly y: number }>(
+  prefix: readonly TPoint[],
+  suffix: readonly TPoint[],
+) {
+  const prefixEnd = prefix.at(-1);
+  const suffixStart = suffix[0];
+  return [
+    ...prefix,
+    ...suffix.slice(prefixEnd && suffixStart && prefixEnd.x === suffixStart.x && prefixEnd.y === suffixStart.y ? 1 : 0),
+  ];
 }
 
 /** 让语义无关的材料 nonce 禁用局部边界复用，生成逐点等价的 forced-cold 对照。 */
@@ -2133,10 +2800,7 @@ function measureResolvedSecondOrderControlQuality(
  * Generated evaluators are authoritative only while every Graphwar double operation remains bit-for-bit text
  * equivalent.
  */
-function expectTrajectorySamplesToBeIdentical(
-  actual: { points: readonly { x: number; y: number }[]; stopReason: string },
-  expected: { points: readonly { x: number; y: number }[]; stopReason: string },
-) {
+function expectTrajectorySamplesToBeIdentical(actual: GraphwarTrajectorySample, expected: GraphwarTrajectorySample) {
   expect(actual.stopReason).toBe(expected.stopReason);
   expect(actual.points).toHaveLength(expected.points.length);
   for (let index = 0; index < actual.points.length; index += 1) {
@@ -2148,5 +2812,16 @@ function expectTrajectorySamplesToBeIdentical(
       Object.is(actual.points[index]?.y, expected.points[index]?.y),
       `y differs at sample ${index}, x=${actual.points[index]?.x}: ${actual.points[index]?.y} !== ${expected.points[index]?.y}`,
     ).toBe(true);
+  }
+  expect(actual.endState?.sampleIndex).toBe(expected.endState?.sampleIndex);
+  for (const [name, actualValue, expectedValue] of [
+    ["current x", actual.endState?.currentPoint.x, expected.endState?.currentPoint.x],
+    ["current y", actual.endState?.currentPoint.y, expected.endState?.currentPoint.y],
+    ["dy", actual.endState?.dy, expected.endState?.dy],
+    ["previous x", actual.endState?.previousPoint?.x, expected.endState?.previousPoint?.x],
+    ["previous y", actual.endState?.previousPoint?.y, expected.endState?.previousPoint?.y],
+    ["previous dy", actual.endState?.previousDy, expected.endState?.previousDy],
+  ] as const) {
+    expect(Object.is(actualValue, expectedValue), `${name} differs: ${actualValue} !== ${expectedValue}`).toBe(true);
   }
 }

@@ -12,7 +12,10 @@ import {
 } from "../../core/plane-grid";
 import { createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds } from "../../core/types";
-import { sampleGraphwarPathTargetSequence } from "../../formula/trajectory/sampling";
+import {
+  createGraphwarTrajectoryFormulaMode,
+  sampleGraphwarPathTargetSequence,
+} from "../../formula/trajectory/sampling";
 import {
   assignGraphwarOneClickClearTargetRoutePoints,
   type GraphwarOneClickClearAssignedTarget,
@@ -213,15 +216,15 @@ describe("one-click-clear native-column target assignment", () => {
       bounds: replayBounds,
       boundsRect,
       points: [...prefix, ...assigned.map((target) => target.routePoint)],
-      settings: {
+      formulaMode: createGraphwarTrajectoryFormulaMode({
         algorithm: "step",
         decimalPlaces: 4,
         equation: "dy",
         formulaPathSteepness: 210,
         steepness: 210,
-        stepGlitchMode: true,
-        stepOverflowProtection: true,
-      },
+        isStepGlitchModeEnabled: true,
+        isStepOverflowProtectionEnabled: true,
+      }),
       targetCircles: [
         { center: firstCenter, radius: 7 },
         { center: secondCenter, radius: 7 },

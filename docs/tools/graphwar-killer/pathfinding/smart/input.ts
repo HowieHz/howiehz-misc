@@ -1,10 +1,11 @@
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
-import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
+import { resolveFormulaModeContract } from "../../formula/mode-contract";
 import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
+import { resolveGraphwarPathSearchPolicy } from "../routing/policy";
 import type { GraphwarSmartPathfindingPathInput } from "../runtime/protocol";
 
 /** 智能寻路搜索只消费已经解析成功的寻路容差，避免底层知道输入框和本地化文案。 */
@@ -55,6 +56,14 @@ interface GraphwarSmartPathfindingSearchInputOptions {
 export function createGraphwarSmartPathfindingSearchInput(
   options: GraphwarSmartPathfindingSearchInputOptions,
 ): GraphwarSmartPathfindingPathInput {
+  const pathSearchPolicy = resolveGraphwarPathSearchPolicy(
+    resolveFormulaModeContract(
+      options.settings.algorithm,
+      options.settings.equation,
+      options.settings.isStepGlitchModeEnabled,
+    ),
+    options.routeMode,
+  );
   return {
     boundaryExpansion: options.tolerances.routeBoundaryInsetPlanePixels,
     bounds: options.bounds,
@@ -64,13 +73,7 @@ export function createGraphwarSmartPathfindingSearchInput(
     isPreviewEnabled: options.isPreviewEnabled,
     routeMaskCacheId: options.routeMaskCacheId,
     // 邪道扫描不消费普通路由算法；规范值避免无关偏好污染结果缓存和 evidence。
-    routeMode: formulaModeUsesStepGlitch(
-      options.settings.algorithm,
-      options.settings.equation,
-      options.settings.stepGlitchMode,
-    )
-      ? "visibility-graph"
-      : options.routeMode,
+    routeMode: pathSearchPolicy.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     settings: options.settings,

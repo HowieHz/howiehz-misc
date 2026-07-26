@@ -1,15 +1,11 @@
 import { imageToGraphPoint } from "../../core/geometry";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type { GraphwarTrajectoryDebugMetrics } from "../../formula/debug-metrics";
-import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
 import {
   graphwarTrajectoryReachesGraphXBeforeObstacle,
   sampleGraphwarPathTargetSequence,
 } from "../../formula/trajectory/sampling";
-import type {
-  GraphwarTrajectoryFormulaSettings,
-  GraphwarTrajectoryTargetCircle,
-} from "../../formula/trajectory/sampling";
+import type { GraphwarTrajectoryFormulaMode, GraphwarTrajectoryTargetCircle } from "../../formula/trajectory/sampling";
 
 export type GraphwarSmartPathfindingHitTarget = PixelPoint | GraphwarTrajectoryTargetCircle;
 
@@ -39,10 +35,10 @@ interface GraphwarSmartPathfindingTrajectoryOptions {
   hitTarget: GraphwarSmartPathfindingHitTarget | undefined;
   /** 函数模拟用障碍 mask。 */
   obstacleMask: Uint8Array | undefined;
+  /** 单次轨迹验证共用的公式设置与契约，防止公式采样身份和路线能力错配。 */
+  formulaMode: GraphwarTrajectoryFormulaMode;
   /** 待验证的完整像素路径。 */
   points: readonly PixelPoint[];
-  /** 当前公式采样设置。 */
-  settings: GraphwarTrajectoryFormulaSettings;
   /** 普通点击目标点使用的默认真实命中半径，单位为截图像素；无有效 bounds 时不可用。 */
   targetHitRadiusPixels: number | undefined;
 }
@@ -81,8 +77,7 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
 
   const lastPoint = options.points.at(-1);
   const targetControlGraphX =
-    formulaModeUsesStepGlitch(options.settings.algorithm, options.settings.equation, options.settings.stepGlitchMode) &&
-    lastPoint
+    options.formulaMode.contract.pathSearchPolicy.type === "step-glitch" && lastPoint
       ? imageToGraphPoint(lastPoint, options.bounds, options.boundsRect).x
       : undefined;
   const result = sampleGraphwarPathTargetSequence({
@@ -92,10 +87,10 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
     // 调用方同时用可见轨迹绘制预览、定位首次阻挡点，不能只保留命中计数。
     collectVisiblePixels: true,
     debugMetrics: options.debugMetrics,
+    formulaMode: options.formulaMode,
     ...(targetControlGraphX === undefined ? {} : { continueAfterTargetsUntilGraphX: targetControlGraphX }),
     obstacleMask: options.obstacleMask,
     points: options.points,
-    settings: options.settings,
     ...(lastPoint ? { targetControlPoints: [lastPoint] } : {}),
     targetHitRadiusPixels: target.radius,
     targetCircles: [target],

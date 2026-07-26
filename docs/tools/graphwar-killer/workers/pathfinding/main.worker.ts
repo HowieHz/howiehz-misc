@@ -9,8 +9,10 @@ import { measureSyncStage, nowMs } from "../../core/time";
 import { createGraphPoint, type GraphBounds, type PixelPoint } from "../../core/types";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../../detection/objects";
-import { formulaModeUsesStepGlitch } from "../../formula/generation/capabilities";
+import { resolveFormulaModeContract } from "../../formula/mode-contract";
+import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
 import type {
+  GraphwarTrajectoryFormulaMode,
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
@@ -25,6 +27,8 @@ import type {
   GraphwarOneClickClearDebugTiming,
 } from "../../pathfinding/one-click-clear/search";
 import { buildGraphwarOneClickClearPath } from "../../pathfinding/one-click-clear/search";
+import { resolveGraphwarPathSearchPolicy } from "../../pathfinding/routing/policy";
+import type { GraphwarPathSearchPolicy, GraphwarPathSearchRuntimePolicy } from "../../pathfinding/routing/policy";
 import type { GraphwarPlaneMaskSummedArea } from "../../pathfinding/routing/step-envelope";
 import {
   createGraphwarStepGlitchPrefixEvidence,
@@ -59,10 +63,14 @@ import {
   createGraphwarPathfindingDebugMetrics,
   type GraphwarPathfindingDebugMetrics,
 } from "../../pathfinding/runtime/diagnostics";
+import {
+  getGraphwarPathfindingWorkerRequestId,
+  isGraphwarOneClickClearEdgeWorkerResponse,
+  isGraphwarPathfindingWorkerRequest,
+} from "../../pathfinding/runtime/protocol";
 import type {
   GraphwarOneClickClearDagEdgesWorkerInput,
   GraphwarOneClickClearEdgeWorkerRequest,
-  GraphwarOneClickClearEdgeWorkerResponse,
   GraphwarOneClickClearEdgeWorkerJobResult,
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
@@ -79,10 +87,7 @@ import { createGraphwarSmartPathfindingTrajectoryResult } from "../../pathfindin
 /** 当前 master Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarPathfindingWorkerScope {
   /** 接收主线程几何寻路请求。 */
-  addEventListener: (
-    type: "message",
-    listener: (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => void,
-  ) => void;
+  addEventListener: (type: "message", listener: (event: MessageEvent<unknown>) => void) => void;
   /** 返回预览、成功或错误响应。 */
   postMessage: (message: GraphwarPathfindingWorkerResponse) => void;
 }
@@ -120,11 +125,30 @@ type RouteRuntimeOptions = Pick<
   "estimateRemainingSecondaryCost" | "evaluateEdge" | "initialRouteState" | "initialRouteStateKey"
 >;
 
-/** Step 智能寻路复用的包络和前缀平台状态。 */
-interface SmartStepRouteContext {
+/** Step 路线复用的包络模型和同 mask 前缀和。 */
+interface StepRouteValidationContext {
   model: GraphwarStepRouteModel;
   summedArea: GraphwarPlaneMaskSummedArea;
 }
+
+/** Step 智能寻路额外绑定已验证 prefix 的平台状态。 */
+interface SmartStepRouteContext extends StepRouteValidationContext {
+  /** 已验证 prefix 末端的累计平台高度。 */
+  resolvedStartY: number;
+  /** 已验证 prefix 末端的 canonical 平台身份。 */
+  resolvedStartStateKey?: string;
+}
+
+/** Step-glitch job 必须把扫描与最终回放共用的碰撞 mask 绑定到策略生命周期。 */
+interface SmartStepGlitchRouteContext {
+  simulationMask: Uint8Array;
+}
+
+type SmartPathSearchRuntimePolicy = GraphwarPathSearchRuntimePolicy<SmartStepRouteContext, SmartStepGlitchRouteContext>;
+type OneClickClearPathSearchRuntimePolicy = GraphwarPathSearchRuntimePolicy<
+  StepRouteValidationContext,
+  SmartStepGlitchRouteContext
+>;
 
 /** Master route mask 缓存只需读取的输入字段。 */
 interface MasterRouteMaskSourceInput {
@@ -147,9 +171,9 @@ interface EdgeWorkerHandle {
   /** 清理事件监听器。 */
   cleanup: () => void;
   /** 是否已结束并记录耗时。 */
-  finished: boolean;
+  isFinished: boolean;
   /** 是否已完成初始化，可接收 DAG 边 job。 */
-  ready: boolean;
+  isReady: boolean;
   /** 子 worker 创建时间。 */
   startedAt: number;
   /** 实际子 worker。 */
@@ -183,7 +207,7 @@ interface OneClickClearDagEdgeBatch {
   /** Promise 成功出口。 */
   resolve: (result: GraphwarOneClickClearDagEdgeBuildResult) => void;
   /** 本批是否已结束；迟到消息必须忽略。 */
-  settled: boolean;
+  isSettled: boolean;
   /** 本批累计的实际建路耗时。 */
   totals: EdgeRouteTimingTotals;
   /** 本批实际可参与调度的 worker 数。 */
@@ -211,8 +235,17 @@ interface MasterStepGlitchEvidence extends GraphwarStepGlitchPrefixEvidence {
 }
 
 /** 接收页面请求，并将异步搜索交给统一的 master 分派入口。 */
-workerScope.addEventListener("message", (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => {
-  void handleRequest(event.data);
+workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
+  const request = event.data;
+  if (!isGraphwarPathfindingWorkerRequest(request)) {
+    postResponse({
+      id: getGraphwarPathfindingWorkerRequestId(request),
+      message: "Invalid pathfinding worker request",
+      type: "error",
+    });
+    return;
+  }
+  void handleRequest(request);
 });
 
 /** 将单个 master 请求分派到对应搜索流程，并统一序列化异常。 */
@@ -338,13 +371,12 @@ async function findSmartPath(
   input: GraphwarSmartPathfindingPathInput,
   shouldCollectDiagnostics: boolean,
 ): Promise<GraphwarSmartPathfindingPathResult> {
-  const isStepGlitchRoute = formulaModeUsesStepGlitch(
-    input.settings.algorithm,
-    input.settings.equation,
-    input.settings.stepGlitchMode,
-  );
-  const debugMetrics = shouldCollectDiagnostics ? createGraphwarPathfindingDebugMetrics(isStepGlitchRoute) : undefined;
-  const result = await findSmartPathResult(id, input, debugMetrics, isStepGlitchRoute);
+  const formulaMode = createGraphwarTrajectoryFormulaMode(input.settings);
+  const pathSearchPolicy = resolveGraphwarPathSearchPolicy(formulaMode.contract, input.routeMode);
+  const debugMetrics = shouldCollectDiagnostics
+    ? createGraphwarPathfindingDebugMetrics(pathSearchPolicy.type === "step-glitch")
+    : undefined;
+  const result = await findSmartPathResult(id, input, formulaMode, debugMetrics, pathSearchPolicy);
   return debugMetrics ? { ...result, diagnostics: debugMetrics } : result;
 }
 
@@ -352,8 +384,9 @@ async function findSmartPath(
 async function findSmartPathResult(
   id: number,
   input: GraphwarSmartPathfindingPathInput,
+  formulaMode: GraphwarTrajectoryFormulaMode,
   debugMetrics: GraphwarPathfindingDebugMetrics | undefined,
-  isStepGlitchRoute: boolean,
+  pathSearchPolicy: GraphwarPathSearchPolicy,
 ): Promise<GraphwarSmartPathfindingPathResult> {
   const timings: GraphwarSmartPathfindingWorkerTiming[] = [];
   const startPoint = input.sourcePath.at(-1);
@@ -362,20 +395,26 @@ async function findSmartPathResult(
     return { failureReason: "route", timings };
   }
 
-  if (isStepGlitchRoute) {
-    return findStepGlitchSmartPath(input, timings, debugMetrics);
+  if (pathSearchPolicy.type === "step-glitch") {
+    return input.simulationMask
+      ? findStepGlitchSmartPath(
+          input,
+          formulaMode,
+          timings,
+          { ...pathSearchPolicy, runtime: { simulationMask: input.simulationMask } },
+          debugMetrics,
+        )
+      : { failureReason: "route", timings };
   }
 
-  const isStepRoute = input.settings.algorithm === "step";
-  const routeMaskLookup = getMasterRouteMaskFromBase(input, isStepRoute);
+  const routeMaskLookup = getMasterRouteMaskFromBase(input, pathSearchPolicy.type === "step-stateful");
   timings.push({
     elapsedMs: routeMaskLookup.elapsedMs,
     stage: routeMaskLookup.hasCacheHit ? "route-mask-cache-hit" : "route-mask-cache-miss",
   });
 
-  let stepContext: SmartStepRouteContext | undefined;
-  let routeRuntimeOptions: RouteRuntimeOptions | undefined;
-  if (isStepRoute) {
+  let runtimePolicy: SmartPathSearchRuntimePolicy;
+  if (pathSearchPolicy.type === "step-stateful") {
     const model = createGraphwarStepRouteModel(
       imageToGraphPoint(routeOriginPoint, input.bounds, input.boundsRect).y,
       input.settings,
@@ -401,24 +440,37 @@ async function findSmartPathResult(
         timings,
       };
     }
-    stepContext = {
-      model,
-      summedArea: routeMaskLookup.summedArea,
+    runtimePolicy = {
+      ...pathSearchPolicy,
+      runtime: {
+        model,
+        resolvedStartY: prefixValidation.resolvedEndY,
+        ...(prefixValidation.routeStateKey === undefined
+          ? {}
+          : { resolvedStartStateKey: prefixValidation.routeStateKey }),
+        summedArea: routeMaskLookup.summedArea,
+      },
     };
-    routeRuntimeOptions = createGraphwarStepPathfindingEdgeEvaluator({
-      boundaryInset: input.boundaryExpansion,
-      bounds: input.bounds,
-      boundsRect: input.boundsRect,
-      exactStartPoint: startPoint,
-      exactTargetPoint: input.targetPoint,
-      model,
-      resolvedStartY: prefixValidation.resolvedEndY,
-      ...(prefixValidation.routeStateKey === undefined
-        ? {}
-        : { resolvedStartStateKey: prefixValidation.routeStateKey }),
-      summedArea: routeMaskLookup.summedArea,
-    });
+  } else {
+    runtimePolicy = pathSearchPolicy;
   }
+
+  const routeRuntimeOptions: RouteRuntimeOptions | undefined =
+    runtimePolicy.type === "step-stateful"
+      ? createGraphwarStepPathfindingEdgeEvaluator({
+          boundaryInset: input.boundaryExpansion,
+          bounds: input.bounds,
+          boundsRect: input.boundsRect,
+          exactStartPoint: startPoint,
+          exactTargetPoint: input.targetPoint,
+          model: runtimePolicy.runtime.model,
+          resolvedStartY: runtimePolicy.runtime.resolvedStartY,
+          ...(runtimePolicy.runtime.resolvedStartStateKey === undefined
+            ? {}
+            : { resolvedStartStateKey: runtimePolicy.runtime.resolvedStartStateKey }),
+          summedArea: runtimePolicy.runtime.summedArea,
+        })
+      : undefined;
 
   const routeResult = await findRouteForMask(
     id,
@@ -429,7 +481,7 @@ async function findSmartPathResult(
       isPreviewEnabled: input.isPreviewEnabled,
       routeMask: routeMaskLookup.mask,
       routeMaskCacheId: input.routeMaskCacheId,
-      routeMode: input.routeMode,
+      routeMode: runtimePolicy.routeMode,
       routeTolerancePlanePixels: input.routeTolerancePlanePixels,
       startPoint,
       targetPoint: input.targetPoint,
@@ -458,7 +510,7 @@ async function findSmartPathResult(
 
   const normalizedPath = normalizeSmartPathfindingPathFromPlanePath(routeResult.path, input.targetPoint, input);
   const validation = measureSyncStage(timings, "validate-trajectory", () =>
-    validateSmartPathfindingTrajectory(input, normalizedPath, stepContext, debugMetrics),
+    validateSmartPathfindingTrajectory(input, normalizedPath, formulaMode, runtimePolicy, debugMetrics),
   );
   if (!validation.followsGraphRule) {
     return { failureReason: "graph-rule", timings };
@@ -474,7 +526,7 @@ async function findSmartPathResult(
   const path =
     input.isDeleteOptimizationEnabled && normalizedPath.length > 3
       ? measureSyncStage(timings, "optimize-path", () =>
-          optimizeSmartPathfindingPath(input, normalizedPath, stepContext, debugMetrics),
+          optimizeSmartPathfindingPath(input, normalizedPath, formulaMode, runtimePolicy, debugMetrics),
         )
       : normalizedPath;
   return { path, timings };
@@ -483,13 +535,19 @@ async function findSmartPathResult(
 /** Step ODE 邪道单目标直接扫描控制点；不经过普通 route mask、Theta* 或可视图。 */
 function findStepGlitchSmartPath(
   input: GraphwarSmartPathfindingPathInput,
+  formulaMode: GraphwarTrajectoryFormulaMode,
   timings: GraphwarSmartPathfindingWorkerTiming[],
+  pathSearchPolicy: Extract<SmartPathSearchRuntimePolicy, { type: "step-glitch" }>,
   debugMetrics?: GraphwarPathfindingDebugMetrics,
 ): GraphwarSmartPathfindingPathResult {
-  const simulationMask = input.simulationMask;
-  if (!simulationMask) {
-    return { failureReason: "route", timings };
-  }
+  const simulationMask = pathSearchPolicy.runtime.simulationMask;
+  const scannerFormulaMode =
+    formulaMode.settings.stepGlitchObstacleMask === simulationMask
+      ? formulaMode
+      : createGraphwarTrajectoryFormulaMode({
+          ...formulaMode.settings,
+          stepGlitchObstacleMask: simulationMask,
+        });
   const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, input.prefixTarget);
   const scanResult = scanGraphwarStepGlitchPath({
     bounds: input.bounds,
@@ -500,7 +558,7 @@ function findStepGlitchSmartPath(
     ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
     // 单目标请求只从当前尾点继续；更早运行命中的士兵不属于本次目标。
     requiredTargets: [],
-    settings: input.settings,
+    formulaMode: scannerFormulaMode,
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     simulationMask,
     sourcePath: input.sourcePath,
@@ -519,8 +577,8 @@ function findStepGlitchSmartPath(
   }
 
   const validation = measureSyncStage(timings, "validate-trajectory", () => {
-    if (input.settings.stepGlitchObstacleMask !== input.simulationMask) {
-      return validateSmartPathfindingTrajectory(input, scanResult.path, undefined, debugMetrics);
+    if (formulaMode.settings.stepGlitchObstacleMask !== simulationMask) {
+      return validateSmartPathfindingTrajectory(input, scanResult.path, formulaMode, pathSearchPolicy, debugMetrics);
     }
 
     // Scanner 已用同一公式 mask 完整回放到目标控制点；这里只保留不依赖轨迹采样的 x+ 规则检查。
@@ -549,15 +607,23 @@ function findStepGlitchSmartPath(
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     simulationMask,
   });
-  if (input.isDeleteOptimizationEnabled && input.settings.stepGlitchObstacleMask === simulationMask) {
+  if (input.isDeleteOptimizationEnabled && formulaMode.settings.stepGlitchObstacleMask === simulationMask) {
     const optimized = measureSyncStage(timings, "optimize-path", () =>
-      optimizeStepGlitchSmartPath(input, path, input.hitTarget, resultPrefixEvidence, prefixEvidence, debugMetrics),
+      optimizeStepGlitchSmartPath(
+        input,
+        path,
+        formulaMode,
+        input.hitTarget,
+        resultPrefixEvidence,
+        prefixEvidence,
+        debugMetrics,
+      ),
     );
     path = optimized.path;
     resultPrefixEvidence = optimized.prefixEvidence;
   } else if (input.isDeleteOptimizationEnabled) {
     path = measureSyncStage(timings, "optimize-path", () =>
-      optimizeSmartPathfindingPath(input, path, undefined, debugMetrics),
+      optimizeSmartPathfindingPath(input, path, formulaMode, pathSearchPolicy, debugMetrics),
     );
   }
   setMasterStepGlitchEvidence(input, path, resultPrefixEvidence);
@@ -568,6 +634,7 @@ function findStepGlitchSmartPath(
 function optimizeStepGlitchSmartPath(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
+  formulaMode: GraphwarTrajectoryFormulaMode,
   target: GraphwarTrajectoryTargetCircle,
   prefixEvidence: GraphwarStepGlitchPrefixEvidence,
   sourcePrefixEvidence: GraphwarStepGlitchPrefixEvidence | undefined,
@@ -587,9 +654,9 @@ function optimizeStepGlitchSmartPath(
       boundsRect: input.boundsRect,
       controlX: imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x,
       debugMetrics,
+      formulaMode,
       path: candidatePath,
       requiredTargets: [],
-      settings: input.settings,
       ...(sourcePrefixEvidence ? { prefixEvidence: sourcePrefixEvidence } : {}),
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       simulationMask: input.simulationMask,
@@ -715,12 +782,15 @@ function appendStepGlitchScanTimings(
 }
 
 /** 获取或派生 master 私有 route mask，并按需补齐 Step 前缀和。 */
-function getMasterRouteMaskFromBase(input: MasterRouteMaskSourceInput, needsSummedArea = false): MasterRouteMaskLookup {
+function getMasterRouteMaskFromBase(
+  input: MasterRouteMaskSourceInput,
+  shouldCreateSummedArea = false,
+): MasterRouteMaskLookup {
   const startedAt = nowMs();
   const cacheKey = [input.routeMaskCacheId, createRouteMaskCacheKey(input.routeTolerancePlanePixels)].join("|");
   const cached = masterRouteMaskCache.get(cacheKey);
   if (cached) {
-    if (needsSummedArea && !cached.summedArea) {
+    if (shouldCreateSummedArea && !cached.summedArea) {
       cached.summedArea = getOrCreateMasterStepSummedArea(cached.mask);
     }
     return {
@@ -734,7 +804,7 @@ function getMasterRouteMaskFromBase(input: MasterRouteMaskSourceInput, needsSumm
   const mask = dilateObstacleMask(input.routeObstacleMask, input.routeTolerancePlanePixels);
   const entry: MasterRouteMaskCacheEntry = {
     mask,
-    ...(needsSummedArea ? { summedArea: getOrCreateMasterStepSummedArea(mask) } : {}),
+    ...(shouldCreateSummedArea ? { summedArea: getOrCreateMasterStepSummedArea(mask) } : {}),
   };
   masterRouteMaskCache.set(cacheKey, entry);
   return {
@@ -832,7 +902,8 @@ function normalizeSmartPathfindingPathFromPlanePath(
 function validateSmartPathfindingTrajectory(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
-  stepContext?: SmartStepRouteContext,
+  formulaMode: GraphwarTrajectoryFormulaMode,
+  pathSearchPolicy: SmartPathSearchRuntimePolicy,
   debugMetrics?: GraphwarPathfindingDebugMetrics,
 ) {
   if (!pathFollowsGraphRule(points, input.bounds, input.boundsRect)) {
@@ -842,14 +913,14 @@ function validateSmartPathfindingTrajectory(
     };
   }
   if (
-    stepContext &&
+    pathSearchPolicy.type === "step-stateful" &&
     !validateGraphwarStepRoutePath({
       boundaryInset: input.boundaryExpansion,
       bounds: input.bounds,
       boundsRect: input.boundsRect,
-      model: stepContext.model,
+      model: pathSearchPolicy.runtime.model,
       points,
-      summedArea: stepContext.summedArea,
+      summedArea: pathSearchPolicy.runtime.summedArea,
     }).ok
   ) {
     return {
@@ -863,10 +934,10 @@ function validateSmartPathfindingTrajectory(
     bounds: input.bounds,
     boundsRect: input.boundsRect,
     debugMetrics,
+    formulaMode,
     hitTarget: input.hitTarget,
     obstacleMask: input.simulationMask,
     points,
-    settings: input.settings,
     targetHitRadiusPixels: input.hitTarget.radius,
   });
   return {
@@ -881,7 +952,8 @@ function validateSmartPathfindingTrajectory(
 function optimizeSmartPathfindingPath(
   input: GraphwarSmartPathfindingPathInput,
   points: readonly PixelPoint[],
-  stepContext?: SmartStepRouteContext,
+  formulaMode: GraphwarTrajectoryFormulaMode,
+  pathSearchPolicy: SmartPathSearchRuntimePolicy,
   debugMetrics?: GraphwarPathfindingDebugMetrics,
 ) {
   let optimized = [...points];
@@ -893,7 +965,13 @@ function optimizeSmartPathfindingPath(
     let bestPathError: number | undefined;
     for (let index = firstOptimizableIndex; index < optimized.length - 1 && optimized.length > 2; index += 1) {
       const candidatePath = [...optimized.slice(0, index), ...optimized.slice(index + 1)];
-      const validation = validateSmartPathfindingTrajectory(input, candidatePath, stepContext, debugMetrics);
+      const validation = validateSmartPathfindingTrajectory(
+        input,
+        candidatePath,
+        formulaMode,
+        pathSearchPolicy,
+        debugMetrics,
+      );
       if (
         validation.followsGraphRule &&
         validation.reachesTargetBeforeObstacle &&
@@ -920,55 +998,56 @@ async function buildOneClickClearPath(
 ): Promise<GraphwarOneClickClearPathWorkerResult> {
   const startedAt = nowMs();
   const timings: GraphwarOneClickClearDebugTiming[] = [];
-  const isStepRoute = input.settings.algorithm === "step";
-  const isStepGlitchRoute = formulaModeUsesStepGlitch(
-    input.settings.algorithm,
-    input.settings.equation,
-    input.settings.stepGlitchMode,
-  );
-  const debugMetrics = shouldCollectDiagnostics ? createGraphwarPathfindingDebugMetrics(isStepGlitchRoute) : undefined;
-  const routeMaskLookup = getMasterRouteMaskFromBase(input, isStepRoute && !isStepGlitchRoute);
+  const formulaMode = createGraphwarTrajectoryFormulaMode(input.settings);
+  const pathSearchSelection = resolveGraphwarPathSearchPolicy(formulaMode.contract, input.routeMode);
+  const debugMetrics = shouldCollectDiagnostics
+    ? createGraphwarPathfindingDebugMetrics(pathSearchSelection.type === "step-glitch")
+    : undefined;
+  const routeMaskLookup = getMasterRouteMaskFromBase(input, pathSearchSelection.type === "step-stateful");
   timings.push({
     elapsedMs: routeMaskLookup.elapsedMs,
     stage: routeMaskLookup.hasCacheHit ? "route-mask-cache-hit" : "route-mask-cache-miss",
   });
-  let stepRouteValidationContext: SmartStepRouteContext | undefined;
-  if (isStepRoute && !isStepGlitchRoute && routeMaskLookup.summedArea) {
+  let pathSearchPolicy: OneClickClearPathSearchRuntimePolicy;
+  if (pathSearchSelection.type === "step-stateful") {
     const originPoint = input.pathPoints[0];
-    const model = originPoint
-      ? createGraphwarStepRouteModel(imageToGraphPoint(originPoint, input.bounds, input.boundsRect).y, input.settings)
-      : undefined;
-    if (model) {
-      stepRouteValidationContext = { model, summedArea: routeMaskLookup.summedArea };
-      const validationStartedAt = nowMs();
-      const prefixValidation = validateGraphwarStepRoutePath({
-        boundaryInset: input.boundaryExpansion,
-        bounds: input.bounds,
-        boundsRect: input.boundsRect,
-        model,
-        points: input.pathPoints,
-        summedArea: routeMaskLookup.summedArea,
-      });
-      timings.push({
-        elapsedMs: nowMs() - validationStartedAt,
-        stage: "validate-prefix",
-      });
-      if (!prefixValidation.ok) {
-        return {
-          ...(debugMetrics ? { diagnostics: debugMetrics } : {}),
-          result: {
-            elapsedMs: nowMs() - startedAt,
-            expandedStates: 0,
-            ...(prefixValidation.invalidSegmentIndex === undefined
-              ? {}
-              : { invalidSegmentIndex: prefixValidation.invalidSegmentIndex }),
-            reason: "preflight-blocked",
-            type: "failure",
-          },
-          timings,
-        };
-      }
+    const model =
+      originPoint && routeMaskLookup.summedArea
+        ? createGraphwarStepRouteModel(imageToGraphPoint(originPoint, input.bounds, input.boundsRect).y, input.settings)
+        : undefined;
+    if (!model || !routeMaskLookup.summedArea) {
+      return createOneClickClearPreflightBlockedResult(startedAt, timings, debugMetrics);
     }
+    const runtime = { model, summedArea: routeMaskLookup.summedArea };
+    const validationStartedAt = nowMs();
+    const prefixValidation = validateGraphwarStepRoutePath({
+      boundaryInset: input.boundaryExpansion,
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      model: runtime.model,
+      points: input.pathPoints,
+      summedArea: runtime.summedArea,
+    });
+    timings.push({
+      elapsedMs: nowMs() - validationStartedAt,
+      stage: "validate-prefix",
+    });
+    if (!prefixValidation.ok) {
+      return createOneClickClearPreflightBlockedResult(
+        startedAt,
+        timings,
+        debugMetrics,
+        prefixValidation.invalidSegmentIndex,
+      );
+    }
+    pathSearchPolicy = { ...pathSearchSelection, runtime };
+  } else if (pathSearchSelection.type === "step-glitch") {
+    if (!input.simulationMask) {
+      return createOneClickClearPreflightBlockedResult(startedAt, timings, debugMetrics);
+    }
+    pathSearchPolicy = { ...pathSearchSelection, runtime: { simulationMask: input.simulationMask } };
+  } else {
+    pathSearchPolicy = pathSearchSelection;
   }
   let dagEdgeSession: OneClickClearDagEdgeSession | undefined;
   let validatedStepGlitchEvidence:
@@ -980,9 +1059,10 @@ async function buildOneClickClearPath(
   let result: GraphwarOneClickClearPathWorkerResult["result"];
   try {
     // incumbent 只是观察通道；开启搜索动画或托管上报不能改变精确前缀 evidence 的复用语义。
-    const prefixEvidence = isStepGlitchRoute
-      ? getMasterStepGlitchEvidence(input, input.pathPoints, input.prefixTarget)
-      : undefined;
+    const prefixEvidence =
+      pathSearchPolicy.type === "step-glitch"
+        ? getMasterStepGlitchEvidence(input, input.pathPoints, input.prefixTarget)
+        : undefined;
     result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: input.boundaryExpansion,
       buildDagEdges: (request) => {
@@ -992,6 +1072,7 @@ async function buildOneClickClearPath(
       bounds: input.bounds,
       boundsRect: input.boundsRect,
       candidates: input.candidates,
+      formulaMode,
       ...(debugMetrics ? { debugMetrics } : {}),
       dagEdgeWorkerCount: input.dagEdgeWorkerCount,
       isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled,
@@ -1022,7 +1103,7 @@ async function buildOneClickClearPath(
             },
           }
         : {}),
-      ...(isStepGlitchRoute
+      ...(pathSearchPolicy.type === "step-glitch"
         ? {
             onValidatedStepGlitchPath: (evidence) => {
               validatedStepGlitchEvidence = evidence;
@@ -1037,20 +1118,19 @@ async function buildOneClickClearPath(
         routeTolerancePlanePixels: input.routeTolerancePlanePixels,
       },
       routeMode: input.routeMode,
-      settings: input.settings,
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
       simulationMaskCacheId: input.simulationMaskCacheId,
-      ...(stepRouteValidationContext
+      ...(pathSearchPolicy.type === "step-stateful"
         ? {
             validateStepRoute: (points) =>
               validateGraphwarStepRoutePath({
                 boundaryInset: input.boundaryExpansion,
                 bounds: input.bounds,
                 boundsRect: input.boundsRect,
-                model: stepRouteValidationContext.model,
+                model: pathSearchPolicy.runtime.model,
                 points,
-                summedArea: stepRouteValidationContext.summedArea,
+                summedArea: pathSearchPolicy.runtime.summedArea,
               }).ok,
           }
         : {}),
@@ -1065,6 +1145,26 @@ async function buildOneClickClearPath(
     setMasterStepGlitchEvidence(input, validatedStepGlitchEvidence.path, validatedStepGlitchEvidence.prefixEvidence);
   }
   return { ...(debugMetrics ? { diagnostics: debugMetrics } : {}), result, timings };
+}
+
+/** Worker 内缺少 stateful runtime 或 prefix 无效时统一返回原 preflight-blocked 语义。 */
+function createOneClickClearPreflightBlockedResult(
+  startedAt: number,
+  timings: GraphwarOneClickClearDebugTiming[],
+  debugMetrics?: GraphwarPathfindingDebugMetrics,
+  invalidSegmentIndex?: number,
+): GraphwarOneClickClearPathWorkerResult {
+  return {
+    ...(debugMetrics ? { diagnostics: debugMetrics } : {}),
+    result: {
+      elapsedMs: nowMs() - startedAt,
+      expandedStates: 0,
+      ...(invalidSegmentIndex === undefined ? {} : { invalidSegmentIndex }),
+      reason: "preflight-blocked",
+      type: "failure",
+    },
+    timings,
+  };
 }
 
 /** 复用请求级 edge session 构建一批 DAG 边并收集子 Worker 耗时。 */
@@ -1106,10 +1206,10 @@ function createOneClickClearDagEdgeSession(
 
   /** 终止并解绑单个 edge Worker，且只记录一次生命周期耗时。 */
   const finishWorker = (handle: EdgeWorkerHandle) => {
-    if (handle.finished) {
+    if (handle.isFinished) {
       return;
     }
-    handle.finished = true;
+    handle.isFinished = true;
     handle.activeJob = undefined;
     handle.activeRequestId = undefined;
     handle.cleanup();
@@ -1132,8 +1232,8 @@ function createOneClickClearDagEdgeSession(
     state = "disposed";
     const batch = activeBatch;
     activeBatch = undefined;
-    if (batch && !batch.settled) {
-      batch.settled = true;
+    if (batch && !batch.isSettled) {
+      batch.isSettled = true;
       batch.reject(new Error("One-Click Clear DAG edge session was disposed"));
     }
     for (const handle of handles) {
@@ -1169,10 +1269,10 @@ function createOneClickClearDagEdgeSession(
 
   /** 在所有 jobs 完成后按提交顺序结算并行批次。 */
   const resolveParallelBatch = (batch: OneClickClearDagEdgeBatch) => {
-    if (batch.settled || batch.completedJobIds.size < batch.jobs.length) {
+    if (batch.isSettled || batch.completedJobIds.size < batch.jobs.length) {
       return;
     }
-    batch.settled = true;
+    batch.isSettled = true;
     activeBatch = undefined;
     state = "idle";
     batch.resolve(
@@ -1196,11 +1296,11 @@ function createOneClickClearDagEdgeSession(
     for (const handle of handles) {
       finishWorker(handle);
     }
-    if (!batch || batch.settled) {
+    if (!batch || batch.isSettled) {
       return;
     }
 
-    batch.settled = true;
+    batch.isSettled = true;
     activeBatch = undefined;
     // 已完成的并行 job 已写入 batch，串行 fallback 只补跑剩余部分。
     void runSerialJobs(batch.jobs.filter((job) => !batch.completedJobIds.has(job.id)))
@@ -1229,7 +1329,7 @@ function createOneClickClearDagEdgeSession(
   /** 向空闲且就绪的 edge Worker 分配当前批次的下一个 job。 */
   const assignNextJob = (handle: EdgeWorkerHandle) => {
     const batch = activeBatch;
-    if (state !== "running" || !batch || batch.settled || handle.finished || !handle.ready || handle.activeJob) {
+    if (state !== "running" || !batch || batch.isSettled || handle.isFinished || !handle.isReady || handle.activeJob) {
       return;
     }
     const job = batch.jobs[batch.nextJobIndex];
@@ -1264,14 +1364,17 @@ function createOneClickClearDagEdgeSession(
   ) => {
     const batch = activeBatch;
     const activeJob = handle.activeJob;
+    if (state !== "running" || !batch || batch.isSettled) {
+      return;
+    }
     if (
-      state !== "running" ||
-      !batch ||
-      batch.settled ||
       !activeJob ||
       handle.activeRequestId !== requestId ||
-      activeJob.id !== result.jobId
+      activeJob.id !== result.jobId ||
+      (result.route !== undefined && activeJob.stepRouteStartState !== undefined) !==
+        (result.stepRouteEndState !== undefined)
     ) {
+      switchToSerialFallback();
       return;
     }
 
@@ -1293,20 +1396,28 @@ function createOneClickClearDagEdgeSession(
     });
     const handle: EdgeWorkerHandle = {
       cleanup: () => cleanup(),
-      finished: false,
-      ready: false,
+      isFinished: false,
+      isReady: false,
       startedAt: nowMs(),
       worker,
       workerIndex,
     };
     /** 将 edge Worker 响应路由到就绪、失败或 job 结算流程。 */
-    const handleMessage = (event: MessageEvent<GraphwarOneClickClearEdgeWorkerResponse>) => {
+    const handleMessage = (event: MessageEvent<unknown>) => {
       const response = event.data;
-      if (response.workerIndex !== handle.workerIndex || handle.finished) {
+      if (!isGraphwarOneClickClearEdgeWorkerResponse(response)) {
+        switchToSerialFallback();
+        return;
+      }
+      if (handle.isFinished) {
+        return;
+      }
+      if (response.workerIndex !== handle.workerIndex) {
+        switchToSerialFallback();
         return;
       }
       if (response.type === "ready") {
-        handle.ready = true;
+        handle.isReady = true;
         assignNextJob(handle);
         return;
       }
@@ -1360,7 +1471,7 @@ function createOneClickClearDagEdgeSession(
         reject,
         resolve,
         routesByJobId: new Map(),
-        settled: false,
+        isSettled: false,
         totals: {
           routeMapPixelsElapsedMs: 0,
           routePathfindingElapsedMs: 0,
@@ -1417,8 +1528,15 @@ function createOneClickClearDagEdgeSession(
 function createOneClickClearSerialRouteContext(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
 ): GraphwarOneClickClearDagEdgeRouteBuildContext {
+  const pathSearchPolicy = resolveGraphwarPathSearchPolicy(
+    resolveFormulaModeContract(input.settings.algorithm, input.settings.equation, false),
+    input.routeMode,
+  );
+  if (pathSearchPolicy.type === "step-glitch") {
+    throw new Error("Step-glitch does not build ordinary DAG edges");
+  }
   const visibilityGraphObstacleData =
-    input.routeMode === "visibility-graph"
+    pathSearchPolicy.routeMode === "visibility-graph"
       ? createGraphwarVisibilityGraphObstacleData({
           bounds: input.bounds,
           routeMask: input.routeMask,
@@ -1426,28 +1544,33 @@ function createOneClickClearSerialRouteContext(
         })
       : undefined;
   const thetaStarScratch: GraphwarThetaStarScratch | undefined =
-    input.routeMode === "theta-star" ? createGraphwarThetaStarScratch() : undefined;
-  const stepRouteModel = createGraphwarStepRouteModel(
-    imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect).y,
-    input.settings,
-  );
-  return {
+    pathSearchPolicy.routeMode === "theta-star" ? createGraphwarThetaStarScratch() : undefined;
+  const contextBase = {
     boundaryExpansion: input.boundaryExpansion,
     bounds: input.bounds,
     boundsRect: input.boundsRect,
     routeMask: input.routeMask,
-    routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-    ...(stepRouteModel
-      ? {
-          stepRouteRuntime: {
-            model: stepRouteModel,
-            summedArea: getOrCreateMasterStepSummedArea(input.routeMask),
-          },
-        }
-      : {}),
     ...(thetaStarScratch ? { thetaStarScratch } : {}),
     ...(visibilityGraphObstacleData ? { visibilityGraphObstacleData } : {}),
+  };
+  if (pathSearchPolicy.type === "stateless") {
+    return { ...contextBase, ...pathSearchPolicy };
+  }
+  const model = createGraphwarStepRouteModel(
+    imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect).y,
+    input.settings,
+  );
+  if (!model) {
+    throw new Error("Step-stateful DAG route has no valid numeric model");
+  }
+  return {
+    ...contextBase,
+    ...pathSearchPolicy,
+    runtime: {
+      model,
+      summedArea: getOrCreateMasterStepSummedArea(input.routeMask),
+    },
   };
 }
 

@@ -524,9 +524,9 @@ function cloneGraphwarTrajectoryFormulaSettings(
       : { secondOrderLaunchAngleMode: settings.secondOrderLaunchAngleMode }),
     ...(settings.formulaPathSteepness === undefined ? {} : { formulaPathSteepness: settings.formulaPathSteepness }),
     steepness: settings.steepness,
-    stepGlitchMode: settings.stepGlitchMode,
+    isStepGlitchModeEnabled: settings.isStepGlitchModeEnabled,
     ...(settings.stepGlitchObstacleMask ? { stepGlitchObstacleMask: settings.stepGlitchObstacleMask } : {}),
-    stepOverflowProtection: settings.stepOverflowProtection,
+    isStepOverflowProtectionEnabled: settings.isStepOverflowProtectionEnabled,
   };
 }
 

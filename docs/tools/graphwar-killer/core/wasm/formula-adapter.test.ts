@@ -26,6 +26,10 @@ import { instantiateGraphwarWasmRuntime, type GraphwarWasmKernelRuntime } from "
 import type { GraphwarWasmFormulaInputDescriptor } from "./task-adapter";
 
 const kernelPath = resolve("packages/graphwar-killer-wasm/build/graphwar-kernel.wasm");
+const DEFAULT_MAX_ULP_DISTANCE = 64n;
+// V8 12.x and the WASM-native pow implementation round the high powers used by
+// soft-cubic ddy differently; cancellation can amplify that difference.
+const SOFT_CUBIC_DDY_MAX_ULP_DISTANCE = 256n;
 const bounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
 const points = [
   createGraphPoint(-2, 1),
@@ -104,7 +108,13 @@ describe("Graphwar WASM formula Adapter", () => {
               : equation === "dy"
                 ? expectedEvaluator.evaluateFirstDerivativeY(value.x, value.y)
                 : expectedEvaluator.evaluateSecondDerivativeY(value.x, value.y, value.dy);
-          expectFloatEquivalent(result.values[index], expected, `${algorithm}:${equation}:${index}`);
+          expectFormulaValueEquivalent(
+            result.values[index],
+            expected,
+            algorithm,
+            equation,
+            `${algorithm}:${equation}:${index}`,
+          );
         }
       });
     }
@@ -504,7 +514,12 @@ function writeMalformedInvalidLaunch(runtime: GraphwarWasmKernelRuntime) {
   return resultPointer;
 }
 
-function expectFloatEquivalent(actual: number, expected: number, label: string) {
+function expectFloatEquivalent(
+  actual: number,
+  expected: number,
+  label: string,
+  maxUlpDistance = DEFAULT_MAX_ULP_DISTANCE,
+) {
   expect(Number.isNaN(actual), `${label} NaN classification`).toBe(Number.isNaN(expected));
   expect(actual === Number.POSITIVE_INFINITY, `${label} +Infinity classification`).toBe(
     expected === Number.POSITIVE_INFINITY,
@@ -519,7 +534,21 @@ function expectFloatEquivalent(actual: number, expected: number, label: string) 
     expect(Object.is(actual, expected), `${label} signed zero`).toBe(true);
     return;
   }
-  expect(ulpDistance(actual, expected), `${label} ULP distance`).toBeLessThanOrEqual(64n);
+  expect(ulpDistance(actual, expected), `${label} ULP distance`).toBeLessThanOrEqual(maxUlpDistance);
+}
+
+function expectFormulaValueEquivalent(
+  actual: number,
+  expected: number,
+  algorithm: AlgorithmMode,
+  equation: EquationMode,
+  label: string,
+) {
+  const maxUlpDistance =
+    equation === "ddy" && (algorithm === "pchip" || algorithm === "akima")
+      ? SOFT_CUBIC_DDY_MAX_ULP_DISTANCE
+      : DEFAULT_MAX_ULP_DISTANCE;
+  expectFloatEquivalent(actual, expected, label, maxUlpDistance);
 }
 
 function ulpDistance(left: number, right: number) {

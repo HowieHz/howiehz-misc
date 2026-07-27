@@ -9,6 +9,7 @@ if (!pnpmCliPath) {
   throw new Error("pnpm did not provide npm_execpath");
 }
 
+// The root runner builds the shared WASM once, so the WASM package and docs run unit-only scripts below.
 const testSuites = [
   pnpmTask("compat-finder", "--filter", "compat-finder", "test"),
   pnpmTask("Graphwar Agent OpenAPI", "--filter", "graphwar-agent", "openapi:test"),

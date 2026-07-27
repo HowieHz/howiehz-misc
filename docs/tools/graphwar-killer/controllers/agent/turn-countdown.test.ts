@@ -229,6 +229,37 @@ describe("Graphwar Agent turn countdown", () => {
     expect(animationFrames.pendingCount).toBe(0);
   });
 
+  it.each([
+    {
+      label: "game",
+      overrides: { gameInstanceId: "00000000-0000-4000-8000-000000000022" },
+    },
+    {
+      label: "turn",
+      overrides: { turnToken: "00000000-0000-4000-8000-000000000012" },
+    },
+  ])("clears stale countdown when a non-aiming state changes $label identity", ({ overrides }) => {
+    const countdown = useGraphwarAgentTurnCountdown();
+    countdown.update(
+      createAvailableState({
+        remainingTurnMs: 3000,
+        turnToken: "00000000-0000-4000-8000-000000000011",
+      }),
+    );
+
+    countdown.update(
+      createAvailableState({
+        turnToken: "00000000-0000-4000-8000-000000000011",
+        ...overrides,
+        phase: "drawing",
+        observationSequence: 2,
+      }),
+    );
+
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(animationFrames.pendingCount).toBe(0);
+  });
+
   it("formats seconds with fixed tenths precision", () => {
     expect(formatGraphwarAgentTurnCountdown(0)).toBe("0.0");
     expect(formatGraphwarAgentTurnCountdown(90)).toBe("0.1");

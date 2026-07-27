@@ -178,13 +178,13 @@ describe("Graphwar Agent turn countdown", () => {
 
     expect(countdown.remainingMilliseconds.value).toBeUndefined();
     expect(animationFrames.pendingCount).toBe(0);
-    retainedClearCallback(performance.now());
+    retainedClearCallback(0);
     expect(animationFrames.pendingCount).toBe(0);
 
     countdown.update(createAvailableState());
     const retainedDisposeCallback = animationFrames.peekNext();
     countdown.dispose();
-    retainedDisposeCallback(performance.now());
+    retainedDisposeCallback(0);
     expect(animationFrames.pendingCount).toBe(0);
   });
 
@@ -274,7 +274,7 @@ function installFakeAnimationFrames(): FakeAnimationFrames {
       }
       const [handle, callback] = entry;
       callbacks.delete(handle);
-      callback(performance.now());
+      callback(0);
     },
   };
 }

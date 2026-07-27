@@ -1519,7 +1519,7 @@ describe("Graphwar Killer page settings", () => {
       expect(wrapper.get(".graphwar-killer__agent-turn-countdown").text()).toBe("剩余 58.0 秒");
 
       vi.advanceTimersByTime(100);
-      countdownFrame?.(performance.now());
+      countdownFrame?.(0);
       await nextTick();
       expect(page.resultPanel).toBe(resultPanel);
       expect(pageUpdateCount).toBe(0);

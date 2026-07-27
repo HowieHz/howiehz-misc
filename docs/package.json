@@ -30,6 +30,6 @@
     "vitepress-plugin-rss": "^0.4.4"
   },
   "engines": {
-    "node": "^22 || >=24"
+    "node": ">=24"
   }
 }

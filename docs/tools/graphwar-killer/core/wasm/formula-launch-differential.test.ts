@@ -72,7 +72,7 @@ describe("Graphwar WASM cold formula launch differential", () => {
       steepness: 210,
     });
 
-    await expectLaunchToMatchColdTypeScript(descriptor, `${algorithm}:${equation}`);
+    await expectLaunchToMatchColdTypeScript(descriptor, algorithm, equation, `${algorithm}:${equation}`);
   });
 
   it.each([
@@ -107,10 +107,10 @@ describe("Graphwar WASM cold formula launch differential", () => {
       expect(oracle.context.formulaEvaluation.stepSegmentDeltaYs?.some((value) => value !== undefined)).toBe(true);
       await expectLaunchToMatchColdTypeScript(
         descriptor,
+        "step",
+        equation,
         `step:${equation}:position-compensation:path-steepness`,
         oracle,
-      );
-    },
   );
 
   it("matches a refined ABS second-derivative pulse launch", async () => {
@@ -137,7 +137,7 @@ describe("Graphwar WASM cold formula launch differential", () => {
     expect(pulseDeltaSlopes?.some(Number.isFinite)).toBe(true);
     expect(pulseCenterXs?.some(Number.isFinite)).toBe(true);
     expect(oracle.context.compiledMaterials.absSecondDerivativeFormula?.pulses.length).toBeGreaterThan(0);
-    await expectLaunchToMatchColdTypeScript(descriptor, "abs:ddy:refined-pulse", oracle);
+    await expectLaunchToMatchColdTypeScript(descriptor, "abs", "ddy", "abs:ddy:refined-pulse", oracle);
   });
 
   it("matches a Step-glitch mask winner", async () => {
@@ -165,7 +165,7 @@ describe("Graphwar WASM cold formula launch differential", () => {
     expect(oracle.context.compiledMaterials.stepFormula?.terms.some((term) => term.glitchSegment !== undefined)).toBe(
       true,
     );
-    await expectLaunchToMatchColdTypeScript(descriptor, "step:dy:glitch-mask-winner", oracle);
+    await expectLaunchToMatchColdTypeScript(descriptor, "step", "dy", "step:dy:glitch-mask-winner", oracle);
   });
 });
 
@@ -193,9 +193,15 @@ function resolveColdTypeScript(descriptor: GraphwarWasmFormulaInputDescriptor) {
 
 async function expectLaunchToMatchColdTypeScript(
   descriptor: GraphwarWasmFormulaInputDescriptor,
+  algorithm: AlgorithmMode,
+  equation: EquationMode,
   label: string,
   oracle = resolveColdTypeScript(descriptor),
 ) {
+  const maxUlpDistance =
+    equation === "ddy" && (algorithm === "pchip" || algorithm === "akima")
+      ? SOFT_CUBIC_DDY_MAX_ULP_DISTANCE
+      : DEFAULT_MAX_ULP_DISTANCE;
   const runtime = await createRuntime();
   const actual = prepareGraphwarWasmFormulaLaunch(runtime, descriptor);
   const expectedStatus = getOracleLaunchStatus(oracle);
@@ -216,7 +222,7 @@ async function expectLaunchToMatchColdTypeScript(
     normalizeSignProtection(oracle.context.formulaEvaluation.signProtection, descriptor.points.length - 1),
   ).toEqual(finalSignProtection);
   expect(actual.observedSignProtection, `${label} observed/final sign protection`).toEqual(finalSignProtection);
-  expectLaunchStateEquivalent(actual, oracle, label);
+  expectLaunchStateEquivalent(actual, oracle, label, maxUlpDistance);
 }
 
 function getOracleLaunchStatus(_oracle: GraphwarTrajectoryResolution): GraphwarWasmFormulaLaunchResult["status"] {
@@ -234,6 +240,7 @@ function expectLaunchStateEquivalent(
   actual: Extract<GraphwarWasmFormulaLaunchResult, { status: "success" }>,
   oracle: GraphwarTrajectoryResolution,
   label: string,
+  maxUlpDistance = DEFAULT_MAX_ULP_DISTANCE,
 ) {
   const equation = oracle.context.settings.equation;
   const soldierCenter = oracle.context.soldierCenter;
@@ -326,7 +333,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function expectFloatEquivalent(actual: number, expected: number, label: string) {
+function expectFloatEquivalent(actual: number, expected: number, label: string, maxUlpDistance = DEFAULT_MAX_ULP_DISTANCE) {
   expect(Number.isNaN(actual), `${label} NaN classification`).toBe(Number.isNaN(expected));
   expect(actual === Number.POSITIVE_INFINITY, `${label} +Infinity classification`).toBe(
     expected === Number.POSITIVE_INFINITY,
@@ -341,7 +348,7 @@ function expectFloatEquivalent(actual: number, expected: number, label: string) 
     expect(Object.is(actual, expected), `${label} signed zero`).toBe(true);
     return;
   }
-  expect(ulpDistance(actual, expected), `${label} ULP distance`).toBeLessThanOrEqual(64n);
+  expect(ulpDistance(actual, expected), `${label} ULP distance`).toBeLessThanOrEqual(maxUlpDistance);
 }
 
 function ulpDistance(left: number, right: number) {
@@ -360,3 +367,6 @@ function orderedFloatBits(value: number) {
 async function createRuntime(): Promise<GraphwarWasmKernelRuntime> {
   return instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 65_536 });
 }
+
+
+

@@ -65,9 +65,9 @@ export interface GraphwarResultPanelModel {
   canCopyFormula: boolean;
   /** 复制仅因临时工作流被禁用时前置到 title 的原因。 */
   copyDisabledReason?: string;
-  /** 当前计算错误文案。 */
+  /** 当前计算前置条件提示。 */
   calculationMessage: string;
-  /** 是否展示计算错误；父页面应保留原来的 workflow/formulaResult 判定。 */
+  /** 是否展示计算前置条件；父页面应保留原来的 workflow/formulaResult 判定。 */
   isCalculationMessageVisible: boolean;
   /** 复制按钮当前文案。 */
   copyButtonText: string;
@@ -165,10 +165,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         />
       </div>
       <div class="graphwar-killer__result-actions graphwar-killer-command-row">
-        <div
-          v-if="result.isAgentFireVisible"
-          class="graphwar-killer__agent-fire-command"
-        >
+        <template v-if="result.isAgentFireVisible">
           <AgentTurnCountdown
             v-if="agentTurnCountdown"
             :countdown="agentTurnCountdown"
@@ -200,7 +197,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
               :message="result.agentFireReason"
             />
           </div>
-        </div>
+        </template>
         <button
           type="button"
           class="graphwar-killer__primary-button"
@@ -296,12 +293,10 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
     >
       {{ result.pathQualityWarning }}
     </p>
-    <p
+    <ControlReason
       v-if="result.isCalculationMessageVisible"
-      class="graphwar-killer__error"
-    >
-      {{ result.calculationMessage }}
-    </p>
+      :message="result.calculationMessage"
+    />
     <PanelDetails
       v-if="result.pointRows.length"
       :summary="locale.ui.point.listSummary"
@@ -395,12 +390,6 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   justify-content: flex-end;
 }
 
-.graphwar-killer__agent-fire-command {
-  align-items: start;
-  display: flex;
-  gap: 8px;
-}
-
 .graphwar-killer__agent-fire-field {
   max-width: min(320px, 100%);
 }
@@ -482,11 +471,6 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
   max-width: 160px;
 }
 
-.graphwar-killer__error {
-  color: var(--vp-c-danger-1);
-  margin: 0;
-}
-
 .graphwar-killer__hint {
   color: color-mix(in srgb, var(--vp-c-text-1) 68%, var(--vp-c-text-2) 32%);
   font-size: 0.9rem;
@@ -554,19 +538,14 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
     gap: 4px;
   }
 
-  .graphwar-killer-command-field {
-    width: 100%;
+  .graphwar-killer__result-actions {
+    justify-content: flex-start;
   }
 
-  .graphwar-killer__agent-fire-command {
-    width: 100%;
-  }
-
-  .graphwar-killer__primary-button {
-    width: 100%;
-  }
-
-  .graphwar-killer__agent-fire-button {
+  .graphwar-killer__agent-turn-countdown {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    text-align: start;
     width: 100%;
   }
 

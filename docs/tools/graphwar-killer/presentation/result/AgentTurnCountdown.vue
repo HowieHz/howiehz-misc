@@ -16,17 +16,19 @@ const props = defineProps<{
 
 const countdownText = computed(() => {
   const remainingMilliseconds = props.countdown.remainingMilliseconds.value;
-  return remainingMilliseconds === undefined
-    ? undefined
-    : props.locale.ui.result.turnTimeRemaining(formatGraphwarAgentTurnCountdown(remainingMilliseconds));
+  const time = remainingMilliseconds === undefined ? "--.-" : formatGraphwarAgentTurnCountdown(remainingMilliseconds);
+  return props.locale.ui.result.turnTimeRemaining(time);
 });
+
+const isMuted = computed(
+  () => props.countdown.remainingMilliseconds.value === undefined || props.countdown.isZeroVisible.value,
+);
 </script>
 
 <template>
   <span
-    v-if="countdownText"
     class="graphwar-killer__agent-turn-countdown"
-    :class="{ 'graphwar-killer__agent-turn-countdown--expired': countdown.isZeroVisible.value }"
+    :class="{ 'graphwar-killer__agent-turn-countdown--expired': isMuted }"
   >
     {{ countdownText }}
   </span>

@@ -1470,6 +1470,12 @@ describe("Graphwar Killer page settings", () => {
 
   it("updates the Agent countdown without rebuilding the result panel model", async () => {
     vi.useFakeTimers();
+    let countdownFrame: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      countdownFrame = callback;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
     const pageInstance: { value?: unknown } = {};
     let pageUpdateCount = 0;
     const wrapper = mount(GraphwarKillerPage, {
@@ -1513,12 +1519,14 @@ describe("Graphwar Killer page settings", () => {
       expect(wrapper.get(".graphwar-killer__agent-turn-countdown").text()).toBe("剩余 58.0 秒");
 
       vi.advanceTimersByTime(100);
+      countdownFrame?.(performance.now());
       await nextTick();
       expect(page.resultPanel).toBe(resultPanel);
       expect(pageUpdateCount).toBe(0);
       expect(wrapper.get(".graphwar-killer__agent-turn-countdown").text()).toBe("剩余 57.9 秒");
     } finally {
       wrapper.unmount();
+      vi.unstubAllGlobals();
       vi.useRealTimers();
     }
   });

@@ -1,71 +1,147 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { watch } from "vue";
 
 import type { GraphwarAgentAvailableState } from "./client";
-import { formatGraphwarAgentTurnCountdown, useGraphwarAgentTurnCountdown } from "./turn-countdown";
+import {
+  formatGraphwarAgentTurnCountdown,
+  getAdjustedGraphwarAgentRemainingTurnMs,
+  useGraphwarAgentTurnCountdown,
+} from "./turn-countdown";
 
 describe("Graphwar Agent turn countdown", () => {
+  let animationFrames: FakeAnimationFrames;
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2025-01-01T00:00:00.000Z"));
+    animationFrames = installFakeAnimationFrames();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
-  it("subtracts response age and counts down from a monotonic deadline", () => {
+  it("subtracts response age and recomputes from a monotonic deadline", () => {
     const countdown = useGraphwarAgentTurnCountdown();
     countdown.update(createAvailableState({ observedAtEpochMs: Date.now() - 1500, remainingTurnMs: 5000 }));
 
     expect(countdown.remainingMilliseconds.value).toBe(3500);
+    expect(animationFrames.pendingCount).toBe(1);
     vi.advanceTimersByTime(501);
+    animationFrames.runNext();
     expect(countdown.remainingMilliseconds.value).toBe(3000);
-    vi.advanceTimersByTime(3000);
-    expect(countdown.remainingMilliseconds.value).toBe(0);
+    expect(animationFrames.pendingCount).toBe(1);
   });
 
-  it("shows zero for at most two seconds and then disappears", () => {
+  it("does not let response clock skew add time and clamps expired responses to zero", () => {
+    expect(
+      getAdjustedGraphwarAgentRemainingTurnMs(
+        createAvailableState({ observedAtEpochMs: Date.now() + 1000, remainingTurnMs: 5000 }),
+      ),
+    ).toBe(5000);
+    expect(
+      getAdjustedGraphwarAgentRemainingTurnMs(
+        createAvailableState({ observedAtEpochMs: Date.now() - 5001, remainingTurnMs: 5000 }),
+      ),
+    ).toBe(0);
+  });
+
+  it("publishes synchronously, keeps one request, and continues across frames", () => {
     const countdown = useGraphwarAgentTurnCountdown();
-    countdown.update(createAvailableState({ observedAtEpochMs: Date.now(), remainingTurnMs: 100 }));
+    countdown.update(createAvailableState({ remainingTurnMs: 5000 }));
 
-    vi.advanceTimersByTime(100);
-    expect(countdown.isZeroVisible.value).toBe(true);
-    vi.advanceTimersByTime(1999);
-    expect(countdown.remainingMilliseconds.value).toBe(0);
-    vi.advanceTimersByTime(1);
-    expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(countdown.remainingMilliseconds.value).toBe(5000);
+    expect(animationFrames.pendingCount).toBe(1);
+    countdown.update(createAvailableState({ remainingTurnMs: 4900, observationSequence: 2 }));
+    expect(countdown.remainingMilliseconds.value).toBe(4900);
+    expect(animationFrames.pendingCount).toBe(1);
+
+    animationFrames.runNext();
+    expect(animationFrames.pendingCount).toBe(1);
+    animationFrames.runNext();
+    expect(animationFrames.pendingCount).toBe(1);
   });
 
-  it("increases display precision below one tenth of a second", () => {
+  it("only publishes when a frame crosses a displayed tenth", () => {
+    const countdown = useGraphwarAgentTurnCountdown();
+    let publishedCount = 0;
+    watch(countdown.remainingMilliseconds, () => (publishedCount += 1), { flush: "sync" });
+    countdown.update(createAvailableState({ remainingTurnMs: 1000 }));
+
+    expect(publishedCount).toBe(1);
+    vi.advanceTimersByTime(1);
+    animationFrames.runNext();
+    expect(countdown.remainingMilliseconds.value).toBe(1000);
+    expect(publishedCount).toBe(1);
+
+    vi.advanceTimersByTime(99);
+    animationFrames.runNext();
+    expect(countdown.remainingMilliseconds.value).toBe(900);
+    expect(publishedCount).toBe(2);
+  });
+
+  it("jumps to the absolute deadline after a delayed frame without cumulative drift", () => {
+    const countdown = useGraphwarAgentTurnCountdown();
+    countdown.update(createAvailableState({ remainingTurnMs: 5000 }));
+
+    vi.advanceTimersByTime(3451);
+    animationFrames.runNext();
+    expect(countdown.remainingMilliseconds.value).toBe(1600);
+    expect(animationFrames.pendingCount).toBe(1);
+  });
+
+  it("uses the absolute two-second zero window on delayed frames", () => {
     const countdown = useGraphwarAgentTurnCountdown();
     countdown.update(createAvailableState({ remainingTurnMs: 100 }));
 
-    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.1");
-    vi.advanceTimersByTime(10);
-    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.09");
-    vi.advanceTimersByTime(81);
-    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.009");
-    vi.advanceTimersByTime(8);
-    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.001");
-    vi.advanceTimersByTime(1);
-    expect(formatGraphwarAgentTurnCountdown(countdown.remainingMilliseconds.value ?? -1)).toBe("0.000");
+    vi.advanceTimersByTime(1500);
+    animationFrames.runNext();
+    expect(countdown.remainingMilliseconds.value).toBe(0);
+    expect(animationFrames.pendingCount).toBe(1);
+
+    vi.advanceTimersByTime(600);
+    animationFrames.runNext();
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(animationFrames.pendingCount).toBe(0);
   });
 
-  it("uses millisecond refreshes only at the final display precision", () => {
-    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+  it("does not replay the zero window when the first resumed frame crosses its end", () => {
     const countdown = useGraphwarAgentTurnCountdown();
+    countdown.update(createAvailableState({ remainingTurnMs: 100 }));
 
-    countdown.update(createAvailableState({ remainingTurnMs: 58_000 }));
-    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 100);
+    vi.advanceTimersByTime(2100);
+    animationFrames.runNext();
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(animationFrames.pendingCount).toBe(0);
+  });
 
-    countdown.clear();
-    countdown.update(createAvailableState({ remainingTurnMs: 90 }));
-    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 10);
+  it("does not extend an existing turn window when a delayed zero snapshot arrives", () => {
+    const countdown = useGraphwarAgentTurnCountdown();
+    const turnToken = "00000000-0000-4000-8000-000000000011";
+    countdown.update(createAvailableState({ remainingTurnMs: 100, turnToken }));
 
-    countdown.clear();
-    countdown.update(createAvailableState({ remainingTurnMs: 9 }));
-    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 1);
+    vi.advanceTimersByTime(1500);
+    countdown.update(createAvailableState({ remainingTurnMs: 0, turnToken, observationSequence: 2 }));
+    expect(countdown.remainingMilliseconds.value).toBe(0);
+    expect(animationFrames.pendingCount).toBe(1);
+
+    vi.advanceTimersByTime(600);
+    animationFrames.runNext();
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(animationFrames.pendingCount).toBe(0);
+  });
+
+  it("does not replay an expired turn window when a delayed zero snapshot arrives", () => {
+    const countdown = useGraphwarAgentTurnCountdown();
+    const turnToken = "00000000-0000-4000-8000-000000000011";
+    countdown.update(createAvailableState({ remainingTurnMs: 100, turnToken }));
+
+    vi.advanceTimersByTime(2100);
+    countdown.update(createAvailableState({ remainingTurnMs: 0, turnToken, observationSequence: 2 }));
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(animationFrames.pendingCount).toBe(0);
   });
 
   it("does not extend or restart zero visibility for repeated calibration of the same turn", () => {
@@ -75,12 +151,14 @@ describe("Graphwar Agent turn countdown", () => {
 
     expect(countdown.remainingMilliseconds.value).toBe(0);
     vi.advanceTimersByTime(1000);
-    countdown.update(createAvailableState({ remainingTurnMs: 0, turnToken }));
+    countdown.update(createAvailableState({ remainingTurnMs: 0, turnToken, observationSequence: 2 }));
     vi.advanceTimersByTime(1000);
+    animationFrames.runNext();
     expect(countdown.remainingMilliseconds.value).toBeUndefined();
 
-    countdown.update(createAvailableState({ remainingTurnMs: 0, turnToken }));
+    countdown.update(createAvailableState({ remainingTurnMs: 0, turnToken, observationSequence: 3 }));
     expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(animationFrames.pendingCount).toBe(0);
 
     countdown.update(
       createAvailableState({
@@ -89,6 +167,25 @@ describe("Graphwar Agent turn countdown", () => {
       }),
     );
     expect(countdown.remainingMilliseconds.value).toBe(0);
+    expect(animationFrames.pendingCount).toBe(1);
+  });
+
+  it("cancels clear and dispose frames and retained callbacks cannot revive the loop", () => {
+    const countdown = useGraphwarAgentTurnCountdown();
+    countdown.update(createAvailableState());
+    const retainedClearCallback = animationFrames.peekNext();
+    countdown.clear();
+
+    expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(animationFrames.pendingCount).toBe(0);
+    retainedClearCallback(performance.now());
+    expect(animationFrames.pendingCount).toBe(0);
+
+    countdown.update(createAvailableState());
+    const retainedDisposeCallback = animationFrames.peekNext();
+    countdown.dispose();
+    retainedDisposeCallback(performance.now());
+    expect(animationFrames.pendingCount).toBe(0);
   });
 
   it("clears on unavailable or non-aiming state", () => {
@@ -105,23 +202,63 @@ describe("Graphwar Agent turn countdown", () => {
       reason: "game-not-started",
     });
     expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(animationFrames.pendingCount).toBe(0);
 
     countdown.update(createAvailableState());
     countdown.update(createAvailableState({ phase: "drawing" }));
     expect(countdown.remainingMilliseconds.value).toBeUndefined();
+    expect(animationFrames.pendingCount).toBe(0);
   });
 
-  it("formats seconds with adaptive precision down to Agent milliseconds", () => {
-    expect(formatGraphwarAgentTurnCountdown(0)).toBe("0.000");
-    expect(formatGraphwarAgentTurnCountdown(1)).toBe("0.001");
-    expect(formatGraphwarAgentTurnCountdown(9)).toBe("0.009");
-    expect(formatGraphwarAgentTurnCountdown(10)).toBe("0.01");
-    expect(formatGraphwarAgentTurnCountdown(90)).toBe("0.09");
+  it("formats seconds with fixed tenths precision", () => {
+    expect(formatGraphwarAgentTurnCountdown(0)).toBe("0.0");
+    expect(formatGraphwarAgentTurnCountdown(90)).toBe("0.1");
     expect(formatGraphwarAgentTurnCountdown(100)).toBe("0.1");
     expect(formatGraphwarAgentTurnCountdown(58_000)).toBe("58.0");
     expect(formatGraphwarAgentTurnCountdown(125_000)).toBe("125.0");
   });
 });
+
+interface FakeAnimationFrames {
+  readonly pendingCount: number;
+  peekNext: () => FrameRequestCallback;
+  runNext: () => void;
+}
+
+/** Installs a deterministic single-threaded animation-frame queue for controller tests. */
+function installFakeAnimationFrames(): FakeAnimationFrames {
+  let nextHandle = 1;
+  const callbacks = new Map<number, FrameRequestCallback>();
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const handle = nextHandle;
+    nextHandle += 1;
+    callbacks.set(handle, callback);
+    return handle;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (handle: number) => callbacks.delete(handle));
+
+  return {
+    get pendingCount() {
+      return callbacks.size;
+    },
+    peekNext() {
+      const callback = callbacks.values().next().value;
+      if (callback === undefined) {
+        throw new Error("Expected a pending animation frame");
+      }
+      return callback;
+    },
+    runNext() {
+      const entry = callbacks.entries().next().value;
+      if (entry === undefined) {
+        throw new Error("Expected a pending animation frame");
+      }
+      const [handle, callback] = entry;
+      callbacks.delete(handle);
+      callback(performance.now());
+    },
+  };
+}
 
 /** Creates the minimal typed state needed by the countdown controller. */
 function createAvailableState(overrides: Partial<GraphwarAgentAvailableState> = {}): GraphwarAgentAvailableState {

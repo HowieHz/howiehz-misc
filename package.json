@@ -93,7 +93,7 @@
     "Firefox >= 128"
   ],
   "engines": {
-    "node": "^22 || >=24",
+    "node": ">=24",
     "pnpm": "^11.17.0"
   },
   "packageManager": "pnpm@11.17.0"

@@ -1,6 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -14,10 +11,10 @@ import { GRAPHWAR_GAME_SOLDIER_RADIUS, GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LEN
 import { graphToImagePoint } from "../geometry";
 import { createGraphPoint, type BoundsRect, type GraphBounds, type GraphPoint } from "../types";
 import { prepareGraphwarWasmFormulaLaunch, type GraphwarWasmFormulaLaunchResult } from "./formula-adapter";
+import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime, type GraphwarWasmKernelRuntime } from "./runtime";
 import type { GraphwarWasmFormulaInputDescriptor } from "./task-adapter";
 
-const kernelPath = resolve("packages/graphwar-killer-wasm/build/graphwar-kernel.wasm");
 const bounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
 const boundsRect: BoundsRect = {
   height: GRAPHWAR_PLANE_HEIGHT,
@@ -35,7 +32,7 @@ const hardStepPoints = [
 let kernelModule: WebAssembly.Module;
 
 beforeAll(async () => {
-  kernelModule = await WebAssembly.compile(await readFile(kernelPath));
+  kernelModule = await WebAssembly.compile(await readGraphwarKernelBytes());
 });
 
 describe("Graphwar WASM refined formula launch differential", () => {

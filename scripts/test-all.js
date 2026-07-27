@@ -14,7 +14,7 @@ const testSuites = [
   pnpmTask("Graphwar Agent OpenAPI", "--filter", "graphwar-agent", "openapi:test"),
   pnpmTask("Graphwar Agent", "--filter", "graphwar-agent", "test"),
   pnpmTask("Graphwar Killer WASM", "--filter", "graphwar-killer-wasm", "test:unit"),
-  pnpmTask("Graphwar Killer", "run", "graphwar-killer:test:unit"),
+  pnpmTask("Graphwar Killer", "--filter", "docs", "test:unit"),
 ];
 
 async function main() {

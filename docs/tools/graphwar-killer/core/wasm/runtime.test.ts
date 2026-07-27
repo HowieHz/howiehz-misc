@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { GraphwarWasmFault } from "../algorithm-backend";
+import { createGraphwarGameConstantData } from "../game/constants";
 import {
   compileGraphwarWasmModule,
   graphwarWasmRequiredFunctionExports,
@@ -98,6 +99,43 @@ describe("Graphwar WASM runtime boundary", () => {
     const mark = runtime.markArena();
     runtime.reserveArena(16, 16);
     runtime.resetArena(mark);
+    expect(runtime.runFormula(0, 0, 0)).toBe(0);
+  });
+
+  it("validates formula command fields and result ownership", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
+      instantiate: async () => createSyntheticArenaInstance((previousCursor) => previousCursor).instance,
+    });
+
+    expect(() => runtime.runFormula(-1, 0, 0)).toThrowError(GraphwarWasmFault);
+    expect(() => runtime.runFormula(1, 0, 0)).toThrowError(GraphwarWasmFault);
+  });
+
+  it("uploads the canonical game constants once and releases the initialization scratch", async () => {
+    let uploadedConstants: number[] = [];
+    const arena = createSyntheticArenaInstance(
+      (previousCursor) => previousCursor,
+      (memory, pointer, count) => {
+        uploadedConstants = Array.from(new Float64Array(memory.buffer, pointer, count));
+        return calculateGameConstantAcknowledgment(new Uint8Array(memory.buffer, pointer, count * 8));
+      },
+    );
+    const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
+      instantiate: async () => arena.instance,
+    });
+
+    expect(uploadedConstants).toEqual(Array.from(createGraphwarGameConstantData()));
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a no-op kernel that returns a fixed success value without snapshotting the constants", async () => {
+    const arena = createSyntheticArenaInstance(
+      (previousCursor) => previousCursor,
+      () => 1,
+    );
+    await expect(
+      instantiateGraphwarWasmRuntime(await compileKernel(), { instantiate: async () => arena.instance }),
+    ).rejects.toMatchObject({ code: "abi" });
   });
 
   it("does not expose an unchecked runtime construction path", async () => {
@@ -160,10 +198,18 @@ describe("Graphwar WASM runtime boundary", () => {
 /** 构造一个通过初始化校验、但可注入错误 reserve pointer 的 synthetic instance。 */
 function createSyntheticArenaInstance(
   reservePointer: (previousCursor: number, byteLength: number, alignment: number) => number,
+  initializeGameConstants: (memory: WebAssembly.Memory, pointer: number, count: number) => number = (
+    memory,
+    pointer,
+    count,
+  ) => calculateGameConstantAcknowledgment(new Uint8Array(memory.buffer, pointer, count * 8)),
 ) {
   const memory = new WebAssembly.Memory({ initial: 1 });
   const arenaBase = 1024;
   let arenaCursor = arenaBase;
+  let nextMarkToken = 1;
+  let isGameConstantDataInitialized = false;
+  const markFrames: { cursor: number; token: number }[] = [];
   const exports = Object.fromEntries(graphwarWasmRequiredFunctionExports.map((name) => [name, () => 0])) as Record<
     string,
     (...args: number[]) => number
@@ -176,13 +222,45 @@ function createSyntheticArenaInstance(
     getArenaCursor: () => arenaCursor,
     getArenaPeak: () => 0,
     initializeArena: () => arenaBase,
+    initializeGraphwarGameConstants: (pointer: number, count: number) => {
+      const expectedAcknowledgment = calculateGameConstantAcknowledgment(
+        new Uint8Array(memory.buffer, pointer, count * 8),
+      );
+      const acknowledgment = initializeGameConstants(memory, pointer, count);
+      isGameConstantDataInitialized = acknowledgment === expectedAcknowledgment;
+      return acknowledgment;
+    },
+    markArena: () => {
+      const token = nextMarkToken;
+      nextMarkToken += 1;
+      markFrames.push({ cursor: arenaCursor, token });
+      return token;
+    },
     reserveArena: (byteLength: number, alignment: number) => {
-      const pointer = reservePointer(arenaCursor, byteLength, alignment);
+      const pointer = isGameConstantDataInitialized
+        ? reservePointer(arenaCursor, byteLength, alignment)
+        : Math.ceil(arenaCursor / alignment) * alignment;
       arenaCursor = pointer + byteLength;
       return pointer;
+    },
+    resetArena: (token: number) => {
+      const frame = markFrames.pop();
+      if (frame === undefined || frame.token !== token) {
+        throw new Error("invalid synthetic arena mark");
+      }
+      arenaCursor = frame.cursor;
     },
   });
   return {
     instance: { exports: { ...exports, memory } } as unknown as WebAssembly.Instance,
   };
+}
+
+/** Matches the raw kernel handshake while keeping synthetic runtime tests independent of production internals. */
+function calculateGameConstantAcknowledgment(bytes: Uint8Array) {
+  let hash = 0x811c9dc5;
+  for (const value of bytes) {
+    hash = Math.imul(hash ^ value, 0x01000193) >>> 0;
+  }
+  return hash | 0;
 }

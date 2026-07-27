@@ -16,7 +16,6 @@ import {
   packGraphwarPlaneMask,
   packGraphwarWasmDetectionInput,
   packGraphwarWasmExpressionProgram,
-  packGraphwarWasmFormulaInput,
   packGraphwarWasmPointSoA,
   packGraphwarWasmPathfindingGeometryJobs,
   packGraphwarWasmRgbaImage,
@@ -94,49 +93,6 @@ describe("Graphwar WASM task Adapter", () => {
     expect(copyGraphwarWasmBytes(arena, packed.image.rgba, 8)[0]).toBe(1);
     expectAdapterError(
       () => packGraphwarWasmRgbaImage(arena, { data: new Uint8ClampedArray(7), height: 1, width: 2 } as ImageData, 8),
-      "invalid-image-data",
-    );
-  });
-
-  it("packs structured formula settings, points, and the optional Step-glitch mask atomically", () => {
-    const arena = new TestGraphwarWasmArena();
-    const mask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
-    mask[17] = 1;
-    const packed = packGraphwarWasmFormulaInput(
-      arena,
-      {
-        points: [
-          { x: 1, y: 2 },
-          { x: 3, y: 4 },
-        ],
-        settings: {
-          algorithm: "step",
-          decimalPlaces: 4,
-          equation: "ddy",
-          formulaPathSteepness: 2,
-          isStepGlitchModeEnabled: true,
-          isStepOverflowProtectionEnabled: true,
-          secondOrderLaunchAngleMode: "display-rounded",
-          steepness: 3,
-          stepGlitchObstacleMask: mask,
-        },
-      },
-      8,
-    );
-
-    expect([...copyGraphwarWasmFloat64Values(arena, packed.points.x, 8)]).toEqual([1, 3]);
-    expect([...copyGraphwarWasmFloat64Values(arena, packed.points.y, 8)]).toEqual([2, 4]);
-    expect([...copyGraphwarWasmFloat64Values(arena, packed.settings, 8)]).toEqual([2, 3, 4, 3, 1, 2, 1, 1, 1]);
-    expect(copyGraphwarWasmBytes(arena, packed.stepGlitchObstacleMask, 8)[17]).toBe(1);
-    expectAdapterError(
-      () =>
-        packGraphwarWasmFormulaInput(arena, {
-          points: [
-            { x: 1, y: 2 },
-            { x: 3, y: 4 },
-          ],
-          settings: { ...packedFormulaSettings(), stepGlitchObstacleMask: [] as unknown as Uint8Array },
-        }),
       "invalid-image-data",
     );
   });
@@ -361,16 +317,4 @@ function expectAdapterError(task: () => unknown, code: GraphwarWasmAdapterErrorC
   }
   expect(error).toBeInstanceOf(GraphwarWasmAdapterError);
   expect(error).toMatchObject({ code });
-}
-
-/** 构造启用 Step-glitch 的最小合法公式设置。 */
-function packedFormulaSettings() {
-  return {
-    algorithm: "step" as const,
-    decimalPlaces: 4,
-    equation: "ddy" as const,
-    isStepGlitchModeEnabled: true,
-    isStepOverflowProtectionEnabled: true,
-    steepness: 3,
-  };
 }

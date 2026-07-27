@@ -142,6 +142,24 @@ export function reserveArena(byteLength: u32, alignment: u32): u32 {
   return pointer;
 }
 
+/** Proves that a raw pointer range belongs to the caller-owned allocated arena prefix. */
+export function requireArenaRange(pointer: u32, byteLength: u32, alignment: u32): void {
+  requireArenaInitialized();
+  if (alignment == 0 || (alignment & (alignment - 1)) != 0 || (pointer & (alignment - 1)) != 0) {
+    trap();
+  }
+  if (byteLength == 0) {
+    if (pointer != 0) {
+      trap();
+    }
+    return;
+  }
+  const end = <u64>pointer + byteLength;
+  if (pointer < arenaBase || pointer >= arenaCursor || end > arenaCursor || end > MAX_U32) {
+    trap();
+  }
+}
+
 /** Creates a provenance-bearing LIFO marker and returns its opaque reset token. */
 export function markArena(): u32 {
   requireArenaInitialized();
@@ -163,8 +181,8 @@ export function markArena(): u32 {
   return token;
 }
 
-/** Releases the current nested scope only when the token proves exact LIFO mark ownership. */
-export function resetArena(markToken: u32): void {
+/** Pops one exact LIFO mark, optionally restoring the cursor for a discarded transactional scope. */
+function closeArenaMark(markToken: u32, shouldResetCursor: bool): void {
   requireArenaInitialized();
   const frame = arenaMarkFrame;
   if (
@@ -191,7 +209,19 @@ export function resetArena(markToken: u32): void {
   memory.fill(frame, 0, MARK_FRAME_SIZE);
   arenaMarkFrame = previousFrame;
   arenaMarkToken = previousToken;
-  arenaCursor = previousCursor;
+  if (shouldResetCursor) {
+    arenaCursor = previousCursor;
+  }
+}
+
+/** Releases the current nested scope only when the token proves exact LIFO mark ownership. */
+export function resetArena(markToken: u32): void {
+  closeArenaMark(markToken, true);
+}
+
+/** Commits allocations made after the current mark while releasing its LIFO provenance frame. */
+export function commitArena(markToken: u32): void {
+  closeArenaMark(markToken, false);
 }
 
 export function getArenaBase(): u32 {

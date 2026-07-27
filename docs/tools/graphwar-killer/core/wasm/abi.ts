@@ -10,6 +10,8 @@ export type GraphwarWasmAdapterErrorCode =
   | "invalid-enum"
   | "invalid-finite-number"
   | "invalid-expression-program"
+  | "invalid-formula-input"
+  | "invalid-formula-result"
   | "invalid-image-data"
   | "invalid-index"
   | "invalid-memory-buffer"

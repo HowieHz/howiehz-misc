@@ -75,6 +75,9 @@ export const GRAPHWAR_VISIBLE_Y_LIMIT =
 export const GRAPHWAR_GAME_SOLDIER_RADIUS =
   (GRAPHWAR_SOLDIER_RADIUS * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH;
 
+/** `createGraphwarGameConstantData()` 的稳定 f64 字段数；同时约束 runtime upload ABI。 */
+export const GRAPHWAR_GAME_CONSTANT_COUNT = 11;
+
 /**
  * 为 WASM 实例生成固定顺序的 Graphwar 游戏常量。
  *

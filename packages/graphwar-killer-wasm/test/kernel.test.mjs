@@ -23,6 +23,7 @@ const roleExports = [
 ];
 const arenaExports = [
   "initializeArena",
+  "initializeGraphwarGameConstants",
   "reserveArena",
   "markArena",
   "resetArena",
@@ -89,6 +90,63 @@ test("permanently consumes initialization even when the first request is invalid
   assert.equal(allocatedFailure.exports.getArenaAllocatorCallCount(), 1);
   assert.throws(() => allocatedFailure.exports.initializeArena(64), WebAssembly.RuntimeError);
 });
+
+test("validates and snapshots one raw game-constant record", async () => {
+  const validConstants = new Float64Array([100, 50, 20, 3, 6, 0.1, 1_000, 0.5, 0.01, 0.02, 30]);
+  const { exports } = await instantiateKernel();
+  assert.throws(() => exports.initializeGraphwarGameConstants(0, validConstants.length), WebAssembly.RuntimeError);
+  exports.initializeArena(256);
+  const mark = exports.markArena();
+  const pointer = exports.reserveArena(validConstants.byteLength, Float64Array.BYTES_PER_ELEMENT);
+  new Float64Array(exports.memory.buffer, pointer, validConstants.length).set(validConstants);
+  assert.equal(
+    exports.initializeGraphwarGameConstants(pointer, validConstants.length),
+    calculateGameConstantAcknowledgment(new Uint8Array(validConstants.buffer)),
+  );
+  assert.throws(
+    () => exports.initializeGraphwarGameConstants(pointer, validConstants.length),
+    WebAssembly.RuntimeError,
+  );
+  exports.resetArena(mark);
+
+  const retryableFailure = await instantiateKernel();
+  retryableFailure.exports.initializeArena(256);
+  const invalidPointer = retryableFailure.exports.reserveArena(
+    validConstants.byteLength,
+    Float64Array.BYTES_PER_ELEMENT,
+  );
+  const invalidConstants = validConstants.slice();
+  invalidConstants[0] += 0.5;
+  new Float64Array(retryableFailure.exports.memory.buffer, invalidPointer, invalidConstants.length).set(
+    invalidConstants,
+  );
+  assert.throws(
+    () => retryableFailure.exports.initializeGraphwarGameConstants(invalidPointer, invalidConstants.length),
+    WebAssembly.RuntimeError,
+  );
+  invalidConstants[0] = validConstants[0];
+  invalidConstants[8] = invalidConstants[5] * 2;
+  new Float64Array(retryableFailure.exports.memory.buffer, invalidPointer, invalidConstants.length).set(
+    invalidConstants,
+  );
+  assert.throws(
+    () => retryableFailure.exports.initializeGraphwarGameConstants(invalidPointer, invalidConstants.length),
+    WebAssembly.RuntimeError,
+  );
+  new Float64Array(retryableFailure.exports.memory.buffer, invalidPointer, validConstants.length).set(validConstants);
+  assert.equal(
+    retryableFailure.exports.initializeGraphwarGameConstants(invalidPointer, validConstants.length),
+    calculateGameConstantAcknowledgment(new Uint8Array(validConstants.buffer)),
+  );
+});
+
+function calculateGameConstantAcknowledgment(bytes) {
+  let hash = 0x811c9dc5;
+  for (const value of bytes) {
+    hash = Math.imul(hash ^ value, 0x01000193) >>> 0;
+  }
+  return hash | 0;
+}
 
 test("grows during initialization to provide the requested raw capacity", async () => {
   const { exports } = await instantiateKernel();

@@ -1,4 +1,6 @@
 import { GraphwarValidatedWasmRuntime, GraphwarWasmFault } from "../algorithm-backend";
+import { createGraphwarGameConstantData, GRAPHWAR_GAME_CONSTANT_COUNT } from "../game/constants";
+import { writeGraphwarWasmFloat64Values } from "./abi";
 
 /** 当前单版本 Adapter 要求的 Graphwar kernel exports。 */
 export const graphwarWasmRequiredFunctionExports = [
@@ -11,6 +13,7 @@ export const graphwarWasmRequiredFunctionExports = [
   "beginOneClickClear",
   "resumeOneClickClear",
   "initializeArena",
+  "initializeGraphwarGameConstants",
   "reserveArena",
   "markArena",
   "resetArena",
@@ -33,10 +36,17 @@ interface GraphwarWasmArenaExports {
   getArenaCursor: () => number;
   getArenaPeak: () => number;
   initializeArena: (initialCapacity: number) => number;
+  initializeGraphwarGameConstants: (pointer: number, count: number) => number;
   markArena: () => number;
   reserveArena: (byteLength: number, alignment: number) => number;
   resetArena: (markToken: number) => void;
 }
+
+interface GraphwarWasmFormulaExports {
+  runFormula: (command: number, inputPointer: number, inputByteLength: number) => number;
+}
+
+type GraphwarWasmRuntimeExports = GraphwarWasmArenaExports & GraphwarWasmFormulaExports;
 
 /** Fetch/compile 注入点让 loader failure 可稳定测试，同时不增加第二条生产路径。 */
 export interface GraphwarWasmCompileDependencies {
@@ -58,26 +68,26 @@ export interface GraphwarWasmInstantiationDependencies {
 export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
   readonly arenaBase: number;
   readonly memory: WebAssembly.Memory;
-  readonly #arena: GraphwarWasmArenaExports;
+  readonly #exports: GraphwarWasmRuntimeExports;
 
-  private constructor(memory: WebAssembly.Memory, arena: GraphwarWasmArenaExports, arenaBase: number) {
+  private constructor(memory: WebAssembly.Memory, exports: GraphwarWasmRuntimeExports, arenaBase: number) {
     super();
     this.arenaBase = arenaBase;
     this.memory = memory;
-    this.#arena = arena;
+    this.#exports = exports;
   }
 
   /** 模块私有构造 gate；任意调用方不能把未经验证的 instance 伪装成合法 runtime。 */
   static createValidated(
     token: symbol,
     memory: WebAssembly.Memory,
-    arena: GraphwarWasmArenaExports,
+    exports: GraphwarWasmRuntimeExports,
     arenaBase: number,
   ) {
     if (token !== graphwarWasmRuntimeConstructionToken) {
       throw new GraphwarWasmFault("abi", "Graphwar WASM runtime construction bypassed validation");
     }
-    return new GraphwarWasmKernelRuntime(memory, arena, arenaBase);
+    return new GraphwarWasmKernelRuntime(memory, exports, arenaBase);
   }
 
   /** 当前 raw memory buffer；getter 会在每个可能的 `memory.grow` 后重新读取。 */
@@ -89,7 +99,7 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
   get arenaCursor() {
     let cursor: number;
     try {
-      cursor = this.#arena.getArenaCursor();
+      cursor = this.#exports.getArenaCursor();
     } catch (error) {
       throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM arena cursor could not be read", "trap");
     }
@@ -110,7 +120,7 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
     const previousCursor = this.arenaCursor;
     const expectedPointer = Math.ceil(previousCursor / alignment) * alignment;
     try {
-      const pointer = this.#arena.reserveArena(byteLength, alignment);
+      const pointer = this.#exports.reserveArena(byteLength, alignment);
       const currentCursor = this.arenaCursor;
       if (!isPositiveU32(pointer) || pointer !== expectedPointer || pointer + byteLength !== currentCursor) {
         throw new GraphwarWasmFault("output", "Graphwar WASM arena returned an invalid allocation range");
@@ -124,7 +134,7 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
   /** 开始一个 LIFO scratch scope。 */
   markArena() {
     try {
-      const token = this.#arena.markArena();
+      const token = this.#exports.markArena();
       if (!isPositiveU32(token)) {
         throw new GraphwarWasmFault("output", "Graphwar WASM arena returned an invalid mark token");
       }
@@ -137,10 +147,39 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
   /** 释放精确匹配的当前 LIFO scratch scope。 */
   resetArena(markToken: number) {
     try {
-      this.#arena.resetArena(markToken);
+      this.#exports.resetArena(markToken);
     } catch (error) {
       throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM arena reset failed", "allocation");
     }
+  }
+
+  /** 执行一个 typed formula-domain command；具体 result layout 仍由命令 Adapter 完整验证。 */
+  runFormula(command: number, inputPointer: number, inputByteLength: number) {
+    if (!isU32(command) || !isU32(inputPointer) || !isU32(inputByteLength)) {
+      throw new GraphwarWasmFault("input", "Graphwar WASM formula command fields must be uint32 values");
+    }
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.runFormula(command, inputPointer, inputByteLength);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM formula command failed", "trap");
+    }
+    if (command === 0) {
+      if (resultPointer !== 0) {
+        throw new GraphwarWasmFault("output", "Graphwar WASM formula no-op returned an unexpected result");
+      }
+      return resultPointer;
+    }
+    const cursor = this.arenaCursor;
+    if (
+      !isPositiveU32(resultPointer) ||
+      resultPointer % 8 !== 0 ||
+      resultPointer < this.arenaBase ||
+      resultPointer >= cursor
+    ) {
+      throw new GraphwarWasmFault("output", "Graphwar WASM formula command returned an invalid result pointer");
+    }
+    return resultPointer;
   }
 }
 
@@ -226,7 +265,7 @@ export async function instantiateGraphwarWasmRuntime(
 
   // 上方已检查每个字段；断言只补充 WebAssembly reflection 无法表达的 arena 精确签名。
   // 初始化结果及后续所有 result layout 仍在 runtime 验证。
-  const arena = exports as unknown as GraphwarWasmArenaExports;
+  const runtimeExports = exports as unknown as GraphwarWasmRuntimeExports;
   const initialArenaCapacity = dependencies.initialArenaCapacity ?? 65_536;
   if (!Number.isSafeInteger(initialArenaCapacity) || initialArenaCapacity <= 0 || initialArenaCapacity > 0xffff_ffff) {
     throw new GraphwarWasmFault("input", "Graphwar WASM initial arena capacity is invalid");
@@ -234,7 +273,7 @@ export async function instantiateGraphwarWasmRuntime(
 
   let base: number;
   try {
-    base = arena.initializeArena(initialArenaCapacity);
+    base = runtimeExports.initializeArena(initialArenaCapacity);
   } catch (error) {
     throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM arena initialization failed", "allocation");
   }
@@ -248,13 +287,13 @@ export async function instantiateGraphwarWasmRuntime(
     peak: number;
   };
   try {
-    capacity = arena.getArenaCapacity();
+    capacity = runtimeExports.getArenaCapacity();
     arenaState = {
-      allocatorCallCount: arena.getArenaAllocatorCallCount(),
-      base: arena.getArenaBase(),
-      canaryStatus: arena.getArenaCanaryStatus(),
-      cursor: arena.getArenaCursor(),
-      peak: arena.getArenaPeak(),
+      allocatorCallCount: runtimeExports.getArenaAllocatorCallCount(),
+      base: runtimeExports.getArenaBase(),
+      canaryStatus: runtimeExports.getArenaCanaryStatus(),
+      cursor: runtimeExports.getArenaCursor(),
+      peak: runtimeExports.getArenaPeak(),
     };
   } catch (error) {
     throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM arena state could not be read", "trap");
@@ -272,7 +311,39 @@ export async function instantiateGraphwarWasmRuntime(
     throw new GraphwarWasmFault("abi", "Graphwar WASM arena initialization returned an inconsistent state");
   }
 
-  return GraphwarWasmKernelRuntime.createValidated(graphwarWasmRuntimeConstructionToken, memory, arena, base);
+  const runtime = GraphwarWasmKernelRuntime.createValidated(
+    graphwarWasmRuntimeConstructionToken,
+    memory,
+    runtimeExports,
+    base,
+  );
+  const mark = runtime.markArena();
+  try {
+    const constantData = createGraphwarGameConstantData();
+    if (constantData.length !== GRAPHWAR_GAME_CONSTANT_COUNT) {
+      throw new GraphwarWasmFault("abi", "Graphwar game constant layout is inconsistent");
+    }
+    const expectedAcknowledgment = calculateGraphwarGameConstantAcknowledgment(constantData);
+    const constants = writeGraphwarWasmFloat64Values(runtime, constantData);
+    let acknowledgment: number;
+    try {
+      acknowledgment = runtimeExports.initializeGraphwarGameConstants(constants.pointer, constants.length);
+    } catch (error) {
+      throw new GraphwarWasmFault(
+        "abi",
+        normalizeErrorMessage(error, "Graphwar WASM game constants initialization failed"),
+      );
+    }
+    if (acknowledgment !== expectedAcknowledgment) {
+      throw new GraphwarWasmFault("abi", "Graphwar WASM game constants initialization was not acknowledged");
+    }
+  } finally {
+    runtime.resetArena(mark);
+  }
+  if (runtime.arenaCursor !== base) {
+    throw new GraphwarWasmFault("abi", "Graphwar WASM game constants initialization leaked arena memory");
+  }
+  return runtime;
 }
 
 /** 严格验证当前唯一 module 结构；此处刻意不做 ABI 版本协商。 */
@@ -326,6 +397,21 @@ function normalizeErrorMessage(error: unknown, fallbackMessage: string) {
 /** Arena pointer 与 capacity 使用非零 u32。 */
 function isPositiveU32(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 0xffff_ffff;
+}
+
+/** Formula command tags and canonical null pointers permit zero-valued u32 fields. */
+function isU32(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffff_ffff;
+}
+
+/** Mirrors the raw kernel's allocation-free FNV-1a handshake over the exact uploaded f64 bytes. */
+function calculateGraphwarGameConstantAcknowledgment(values: Float64Array) {
+  const bytes = new Uint8Array(values.buffer, values.byteOffset, values.byteLength);
+  let hash = 0x811c9dc5;
+  for (const value of bytes) {
+    hash = Math.imul(hash ^ value, 0x01000193) >>> 0;
+  }
+  return hash | 0;
 }
 
 /** 编译期 guard，保留测试和后续 wrapper 使用的 export name 联合。 */

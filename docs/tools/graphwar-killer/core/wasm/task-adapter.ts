@@ -6,11 +6,9 @@ import {
 import type { GraphwarDetectionWorkerTask } from "../../detection/runtime/protocol";
 import type { GraphwarExpressionProgram } from "../../formula/expression/program";
 import { isGraphwarExpressionProgram } from "../../formula/expression/program";
-import { resolveFormulaModeContract } from "../../formula/mode-contract";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
-import { MAX_FORMULA_DECIMAL_PLACES } from "../numbers";
-import type { AlgorithmMode, EquationMode } from "../types";
+import type { AlgorithmMode, EquationMode, GraphBounds } from "../types";
 import {
   GraphwarWasmAdapterError,
   copyGraphwarWasmFloat64Values,
@@ -54,17 +52,20 @@ export interface GraphwarWasmPoint {
   y: number;
 }
 
-/** 原子 structured-formula descriptor；源 settings 与 points 不会跨 attempt 拆分。 */
-export interface GraphwarWasmFormulaInputDescriptor {
-  points: readonly GraphwarWasmPoint[];
-  settings: GraphwarTrajectoryFormulaSettings;
+/** 用户或上游求解器提供的二阶发射角；两种单位必须证明来自同一个值。 */
+export interface GraphwarWasmSecondOrderLaunchAngle {
+  degrees: number;
+  radians: number;
 }
 
-/** Trajectory 与 pathfinding command 共用的 packed structured-formula 输入。 */
-export interface GraphwarWasmPackedFormulaInput {
-  points: GraphwarWasmPackedPointSoA;
-  settings: GraphwarWasmMemorySlice;
-  stepGlitchObstacleMask: GraphwarWasmMemorySlice;
+/** 原子 structured-formula descriptor；源 settings 与 points 不会跨 attempt 拆分。 */
+export interface GraphwarWasmFormulaInputDescriptor {
+  bounds: GraphBounds;
+  points: readonly GraphwarWasmPoint[];
+  /** 用户输入角或上游求解角必须原子携带两种展示单位。 */
+  secondOrderLaunchAngle?: GraphwarWasmSecondOrderLaunchAngle;
+  settings: GraphwarTrajectoryFormulaSettings;
+  soldierCenter: GraphwarWasmPoint;
 }
 
 /** 标准 stop target；所属集合决定 ordered、unordered-required 或 tracking 语义。 */
@@ -279,85 +280,45 @@ export function copyGraphwarWasmPointSoA(
   return result;
 }
 
-/** 从 TypeScript fallback 消费的同一 descriptor 打包 formula settings。 */
-export function packGraphwarWasmFormulaInput(
-  arena: GraphwarWasmArenaMemorySource,
-  descriptor: GraphwarWasmFormulaInputDescriptor,
-  minimumPointer = 0,
-): GraphwarWasmPackedFormulaInput {
-  const settings = descriptor.settings;
-  if (!Array.isArray(descriptor.points) || descriptor.points.length < 2) {
+/**
+ * 在唯一 TS→WASM descriptor 边界验证二阶角证据。
+ *
+ * WASM 仍会验证弧度范围，因为线性内存是独立的运行时边界；单位一致性只在对象 Adapter 校验。
+ */
+export function validateGraphwarWasmSecondOrderLaunchAngle(
+  equation: EquationMode,
+  value: unknown,
+): GraphwarWasmSecondOrderLaunchAngle | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    equation !== "ddy" ||
+    typeof value !== "object" ||
+    value === null ||
+    !("degrees" in value) ||
+    !("radians" in value)
+  ) {
     throw new GraphwarWasmAdapterError(
-      "invalid-point-data",
-      "Structured Graphwar formulas require at least two points",
+      "invalid-formula-input",
+      "Only second-order formulas can carry launch-angle evidence",
     );
   }
-  const algorithmTag = getGraphwarAlgorithmTag(settings.algorithm);
-  const equationTag = getGraphwarEquationTag(settings.equation);
-  const decimalPlaces = validateGraphwarWasmU32(settings.decimalPlaces, "settings.decimalPlaces");
-  if (decimalPlaces > MAX_FORMULA_DECIMAL_PLACES) {
-    throw new GraphwarWasmAdapterError("invalid-enum", "settings.decimalPlaces exceeds the supported range");
+  const degrees = validateGraphwarWasmFiniteNumber(value.degrees, "secondOrderLaunchAngle.degrees");
+  const radians = validateGraphwarWasmFiniteNumber(value.radians, "secondOrderLaunchAngle.radians");
+  if (radians < -Math.PI / 2 || radians > Math.PI / 2) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Second-order launch angle must stay within Graphwar's firing range",
+    );
   }
-  const steepness = validateGraphwarWasmFiniteNumber(settings.steepness, "settings.steepness");
-  if (steepness <= 0) {
-    throw new GraphwarWasmAdapterError("invalid-finite-number", "settings.steepness must be positive");
+  if (!Object.is(degrees, (radians * 180) / Math.PI)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Second-order launch angle degrees and radians do not describe the same value",
+    );
   }
-  const formulaPathSteepness =
-    settings.formulaPathSteepness === undefined
-      ? 0
-      : validateGraphwarWasmFiniteNumber(settings.formulaPathSteepness, "settings.formulaPathSteepness");
-  if (settings.formulaPathSteepness !== undefined && formulaPathSteepness <= 0) {
-    throw new GraphwarWasmAdapterError("invalid-finite-number", "settings.formulaPathSteepness must be positive");
-  }
-  const launchAngleModeTag =
-    settings.secondOrderLaunchAngleMode === undefined || settings.secondOrderLaunchAngleMode === "full-precision"
-      ? 0
-      : settings.secondOrderLaunchAngleMode === "display-rounded"
-        ? 1
-        : -1;
-  if (launchAngleModeTag < 0) {
-    throw new GraphwarWasmAdapterError("invalid-enum", "settings.secondOrderLaunchAngleMode is unsupported");
-  }
-  if (
-    typeof settings.isStepGlitchModeEnabled !== "boolean" ||
-    typeof settings.isStepOverflowProtectionEnabled !== "boolean"
-  ) {
-    throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar formula protection flags must be boolean");
-  }
-  const stepGlitchObstacleMask = settings.stepGlitchObstacleMask;
-  if (
-    stepGlitchObstacleMask !== undefined &&
-    (!(stepGlitchObstacleMask instanceof Uint8Array) ||
-      stepGlitchObstacleMask.length !== GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT)
-  ) {
-    throw new GraphwarWasmAdapterError("invalid-image-data", "Step-glitch mask has an invalid Graphwar plane size");
-  }
-  const isStepGlitchActive =
-    resolveFormulaModeContract(settings.algorithm, settings.equation, settings.isStepGlitchModeEnabled).pathSearchPolicy
-      .type === "step-glitch";
-
-  return {
-    points: packGraphwarWasmPointSoA(arena, descriptor.points, minimumPointer),
-    settings: writeGraphwarWasmFloat64Values(
-      arena,
-      new Float64Array([
-        algorithmTag,
-        equationTag,
-        decimalPlaces,
-        steepness,
-        settings.formulaPathSteepness === undefined ? 0 : 1,
-        formulaPathSteepness,
-        launchAngleModeTag,
-        isStepGlitchActive ? 1 : 0,
-        settings.isStepOverflowProtectionEnabled ? 1 : 0,
-      ]),
-      minimumPointer,
-    ),
-    stepGlitchObstacleMask:
-      isStepGlitchActive && stepGlitchObstacleMask
-        ? writeGraphwarWasmBytes(arena, stepGlitchObstacleMask, minimumPointer)
-        : { length: 0, pointer: 0 },
-  };
+  return { degrees, radians };
 }
 
 /** 打包三种合法生产 stop mode，不产生 optional handle/work 半状态。 */
@@ -633,7 +594,7 @@ export function packGraphwarPlaneMask(arena: GraphwarWasmArenaMemorySource, mask
   return writeGraphwarWasmBytes(arena, mask, minimumPointer);
 }
 
-function getGraphwarAlgorithmTag(algorithm: AlgorithmMode) {
+export function getGraphwarWasmFormulaAlgorithmTag(algorithm: AlgorithmMode) {
   switch (algorithm) {
     case "abs":
       return 1;
@@ -648,7 +609,7 @@ function getGraphwarAlgorithmTag(algorithm: AlgorithmMode) {
   }
 }
 
-function getGraphwarEquationTag(equation: EquationMode) {
+export function getGraphwarWasmFormulaEquationTag(equation: EquationMode) {
   switch (equation) {
     case "y":
       return 1;

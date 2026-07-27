@@ -10,6 +10,7 @@ import {
   planeGridPointToIndex,
   type PlaneGridPoint,
 } from "../../core/plane-grid";
+import { graphwarThetaStarHeuristics, graphwarThetaStarLookaheadColumnOffsets } from "./canonical-data";
 import {
   lineHitsPlaneMask,
   pointHitsPlaneMask,
@@ -65,7 +66,7 @@ interface ThetaStarFreeSpanCache {
   /** 按 x+ 搜索坐标系缓存的列区间。 */
   columns: readonly ThetaStarColumnFreeSpan[][];
   /** 是否镜像到 x+ 搜索坐标系。 */
-  mirrored: boolean;
+  isMirrored: boolean;
   /** 区间所属的 route mask 引用。 */
   routeMask: Uint8Array;
 }
@@ -74,7 +75,7 @@ interface ThetaStarFreeSpanCache {
 interface ThetaStarSearchContext {
   boundaryExpansion: number;
   canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
-  mirrored: boolean;
+  isMirrored: boolean;
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   routeMask: Uint8Array;
   start: PlaneGridPoint;
@@ -103,21 +104,6 @@ export interface GraphwarThetaStarPathfindingOptions extends GraphwarPathfinding
   scratch?: GraphwarThetaStarScratch;
 }
 
-const THETA_STAR_HEURISTICS = {
-  /** 页面动画每隔若干扩展点刷新一次，避免大量 postMessage 抢占搜索时间。 */
-  previewExpansionInterval: 128,
-  /** 搜索动画最多展示的候选点数量，和可视图预览保持同量级。 */
-  previewCandidateLimit: 64,
-  /** 搜索动画最多保留的已接受边数量。 */
-  previewEdgeLimit: 24,
-} as const;
-
-/*
- * 下一步仍只推进到 x+1，避免退化成全可见图；y 候选来自前方列的自由区间边界，
- * 让搜索能提前朝障碍上下边缘移动，而不是撞到障碍列后才做大幅跳转。
- */
-const THETA_STAR_LOOKAHEAD_COLUMN_OFFSETS: readonly number[] = [1, 2, 4, 8, 16, 32, 64, 128];
-
 const GRAPHWAR_PLANE_CELL_COUNT = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 
 /** Allocates and initializes one reusable full-plane Theta* workspace. */
@@ -137,27 +123,27 @@ export function createGraphwarThetaStarScratch(): GraphwarThetaStarScratch {
 
 /** 用有向 Theta* 在固定 Graphwar 平面 mask 上搜索更穷尽的 x+ 绕障路线。 */
 export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaStarPathfindingOptions) {
-  const mirrored = !xPlusGoesRight(options.bounds);
-  const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.startPoint, options.boundsRect), mirrored);
-  const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.targetPoint, options.boundsRect), mirrored);
+  const isMirrored = !xPlusGoesRight(options.bounds);
+  const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.startPoint, options.boundsRect), isMirrored);
+  const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.targetPoint, options.boundsRect), isMirrored);
   // Capture the optional callback once so the hot search closure has no unreachable fallback.
   const customCanAdvance = options.canAdvance;
   const canAdvance = customCanAdvance
     ? (previous: PlaneGridPoint, next: PlaneGridPoint) =>
-        customCanAdvance(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored))
+        customCanAdvance(mirrorPlaneGridPoint(previous, isMirrored), mirrorPlaneGridPoint(next, isMirrored))
     : (previous: PlaneGridPoint, next: PlaneGridPoint) => next.x > previous.x;
   const customEdgeEvaluator = options.evaluateEdge
-    ? createThetaStarEdgeEvaluator(options.evaluateEdge, mirrored)
+    ? createThetaStarEdgeEvaluator(options.evaluateEdge, isMirrored)
     : undefined;
-  const estimateRemainingSecondaryCost = createThetaStarRemainingCostEstimator(options, mirrored);
+  const estimateRemainingSecondaryCost = createThetaStarRemainingCostEstimator(options, isMirrored);
   const initialRouteState = options.initialRouteState;
   const initialRouteStateKey = options.initialRouteStateKey;
   if (customEdgeEvaluator && !Number.isFinite(initialRouteState)) {
     return undefined;
   }
   if (
-    pointHitsPlaneMask(start, options.routeMask, mirrored, options.boundaryExpansion) ||
-    pointHitsPlaneMask(target, options.routeMask, mirrored, options.boundaryExpansion)
+    pointHitsPlaneMask(start, options.routeMask, isMirrored, options.boundaryExpansion) ||
+    pointHitsPlaneMask(target, options.routeMask, isMirrored, options.boundaryExpansion)
   ) {
     return undefined;
   }
@@ -170,7 +156,7 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
   if (canAdvance(start, target)) {
     directEdge = customEdgeEvaluator
       ? customEdgeEvaluator(start, target, initialRouteState as number, initialRouteStateKey)
-      : !lineHitsPlaneMask(start, target, options.routeMask, mirrored, options.boundaryExpansion)
+      : !lineHitsPlaneMask(start, target, options.routeMask, isMirrored, options.boundaryExpansion)
         ? { secondaryCost: planeGridPointDistance(start, target) }
         : undefined;
   }
@@ -181,9 +167,9 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
       bestPath: directPath,
       candidates: directPath,
       current: start,
-      mirrored,
+      isMirrored,
     });
-    return directPath.map((point) => mirrorPlaneGridPoint(point, mirrored));
+    return directPath.map((point) => mirrorPlaneGridPoint(point, isMirrored));
   }
 
   const scratch = options.scratch ?? createGraphwarThetaStarScratch();
@@ -199,7 +185,7 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
           initialRouteState: initialRouteState as number,
           initialRouteStateKey,
           isCancelled: options.isCancelled,
-          mirrored,
+          isMirrored,
           onPreview: options.onPreview,
           routeMask: options.routeMask,
           scratch,
@@ -211,7 +197,7 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
           boundaryExpansion: options.boundaryExpansion,
           canAdvance,
           isCancelled: options.isCancelled,
-          mirrored,
+          isMirrored,
           onPreview: options.onPreview,
           routeMask: options.routeMask,
           scratch,
@@ -222,7 +208,7 @@ export async function buildGraphwarThetaStarPathForMask(options: GraphwarThetaSt
   } finally {
     resetThetaStarSearchScratch(scratch);
   }
-  return path?.map((point) => mirrorPlaneGridPoint(point, mirrored));
+  return path?.map((point) => mirrorPlaneGridPoint(point, isMirrored));
 }
 
 /** Step 使用少控制点优先的词典序 Theta*；默认欧氏实现继续走下方 typed-array 热路径。 */
@@ -234,7 +220,7 @@ async function findStepThetaStarPath({
   initialRouteState,
   initialRouteStateKey,
   isCancelled,
-  mirrored,
+  isMirrored,
   onPreview,
   routeMask,
   scratch,
@@ -254,7 +240,7 @@ async function findStepThetaStarPath({
   const targetIndex = planeGridPointToIndex(target);
   const freeSpansByColumn = getThetaStarFreeSpansByColumn({
     boundaryExpansion,
-    mirrored,
+    isMirrored,
     routeMask,
     scratch,
   });
@@ -310,7 +296,7 @@ async function findStepThetaStarPath({
         bestPath: path,
         candidates: collectStepThetaStarPreviewCandidates(openSet, currentNode.index, startIndex, targetIndex),
         current,
-        mirrored,
+        isMirrored,
       });
       return path;
     }
@@ -357,7 +343,7 @@ async function findStepThetaStarPath({
     }
 
     expansionCount += 1;
-    if (expansionCount % THETA_STAR_HEURISTICS.previewExpansionInterval !== 0) {
+    if (expansionCount % graphwarThetaStarHeuristics.previewExpansionInterval !== 0) {
       continue;
     }
     if (isCancelled?.()) {
@@ -368,7 +354,7 @@ async function findStepThetaStarPath({
       bestPath: reconstructStepThetaStarPath(currentNode.key, states),
       candidates: collectStepThetaStarPreviewCandidates(openSet, currentNode.index, startIndex, targetIndex),
       current,
-      mirrored,
+      isMirrored,
     });
     const yielded = yieldControl?.();
     if (yielded) {
@@ -565,9 +551,9 @@ function collectStepThetaStarPreviewCandidates(
   targetIndex: number,
 ) {
   const indexes = new Set<number>([startIndex, targetIndex, currentIndex]);
-  for (const index of openSet.snapshotIndexes(THETA_STAR_HEURISTICS.previewCandidateLimit)) {
+  for (const index of openSet.snapshotIndexes(graphwarThetaStarHeuristics.previewCandidateLimit)) {
     indexes.add(index);
-    if (indexes.size >= THETA_STAR_HEURISTICS.previewCandidateLimit) {
+    if (indexes.size >= graphwarThetaStarHeuristics.previewCandidateLimit) {
       break;
     }
   }
@@ -579,7 +565,7 @@ async function findThetaStarPath({
   boundaryExpansion,
   canAdvance,
   isCancelled,
-  mirrored,
+  isMirrored,
   onPreview,
   routeMask,
   scratch,
@@ -596,7 +582,7 @@ async function findThetaStarPath({
   const { closed, gScore, parentIndexes } = scratch;
   const freeSpansByColumn = getThetaStarFreeSpansByColumn({
     boundaryExpansion,
-    mirrored,
+    isMirrored,
     routeMask,
     scratch,
   });
@@ -627,7 +613,7 @@ async function findThetaStarPath({
       const path = simplifyThetaStarPath(rawPath, {
         boundaryExpansion,
         canAdvance,
-        mirrored,
+        isMirrored,
         routeMask,
         start,
         target,
@@ -637,12 +623,12 @@ async function findThetaStarPath({
         bestPath: path,
         candidates: collectThetaStarPreviewCandidates(openSet, currentNode.index, startIndex, targetIndex),
         current,
-        mirrored,
+        isMirrored,
       });
       return path;
     }
 
-    if (canAdvance(current, target) && edgeIsClear(current, target, routeMask, mirrored, boundaryExpansion)) {
+    if (canAdvance(current, target) && edgeIsClear(current, target, routeMask, isMirrored, boundaryExpansion)) {
       if (acceptedEdges) {
         recordAcceptedEdge(acceptedEdges, current, target);
       }
@@ -650,7 +636,7 @@ async function findThetaStarPath({
       const path = simplifyThetaStarPath(rawPath, {
         boundaryExpansion,
         canAdvance,
-        mirrored,
+        isMirrored,
         routeMask,
         start,
         target,
@@ -660,7 +646,7 @@ async function findThetaStarPath({
         bestPath: path,
         candidates: collectThetaStarPreviewCandidates(openSet, currentNode.index, startIndex, targetIndex),
         current,
-        mirrored,
+        isMirrored,
       });
       return path;
     }
@@ -686,7 +672,7 @@ async function findThetaStarPath({
           canAdvance,
           current,
           currentIndex: currentNode.index,
-          mirrored,
+          isMirrored,
           next,
           openSet,
           routeMask,
@@ -700,12 +686,12 @@ async function findThetaStarPath({
 
     expansionCount += 1;
     if (
-      expansionCount % THETA_STAR_HEURISTICS.previewExpansionInterval === 0 &&
+      expansionCount % graphwarThetaStarHeuristics.previewExpansionInterval === 0 &&
       !(await reportThetaStarProgress({
         acceptedEdges,
         currentIndex: currentNode.index,
         isCancelled,
-        mirrored,
+        isMirrored,
         onPreview,
         openSet,
         parentIndexes,
@@ -727,13 +713,13 @@ function relaxThetaStarNeighbor({
   canAdvance,
   current,
   currentIndex,
-  mirrored,
+  isMirrored,
   next,
   openSet,
   routeMask,
   scratch,
   target,
-}: Pick<ThetaStarSearchContext, "boundaryExpansion" | "canAdvance" | "mirrored" | "routeMask" | "target"> & {
+}: Pick<ThetaStarSearchContext, "boundaryExpansion" | "canAdvance" | "isMirrored" | "routeMask" | "target"> & {
   acceptedEdges?: [PlaneGridPoint, PlaneGridPoint][];
   current: PlaneGridPoint;
   currentIndex: number;
@@ -752,11 +738,11 @@ function relaxThetaStarNeighbor({
     parentIndex >= 0 &&
     parentIndex !== currentIndex &&
     canAdvance(parent, next) &&
-    edgeIsClear(parent, next, routeMask, mirrored, boundaryExpansion)
+    edgeIsClear(parent, next, routeMask, isMirrored, boundaryExpansion)
   ) {
     routeFrom = parent;
     routeFromIndex = parentIndex;
-  } else if (!canAdvance(current, next) || !edgeIsClear(current, next, routeMask, mirrored, boundaryExpansion)) {
+  } else if (!canAdvance(current, next) || !edgeIsClear(current, next, routeMask, isMirrored, boundaryExpansion)) {
     return false;
   }
 
@@ -797,7 +783,7 @@ function collectNextColumnCandidateYs({
   addThetaStarCandidateY(candidateYs, current.y, nextColumnSpans);
   addThetaStarCandidateY(candidateYs, target.y, nextColumnSpans);
 
-  for (const offset of THETA_STAR_LOOKAHEAD_COLUMN_OFFSETS) {
+  for (const offset of graphwarThetaStarLookaheadColumnOffsets) {
     const lookaheadX = Math.min(target.x, current.x + offset);
     const lookaheadSpans = freeSpansByColumn[lookaheadX] ?? [];
     for (const span of lookaheadSpans) {
@@ -840,17 +826,17 @@ function columnFreeSpansIncludeY(spans: readonly ThetaStarColumnFreeSpan[], y: n
 /** 懒计算并缓存指定列的连续空闲跨度。 */
 function getThetaStarFreeSpansByColumn({
   boundaryExpansion,
-  mirrored,
+  isMirrored,
   routeMask,
   scratch,
-}: Pick<ThetaStarSearchContext, "boundaryExpansion" | "mirrored" | "routeMask"> & {
+}: Pick<ThetaStarSearchContext, "boundaryExpansion" | "isMirrored" | "routeMask"> & {
   scratch: GraphwarThetaStarScratch;
 }) {
   const cached = scratch.freeSpanCache;
   if (
     cached &&
     cached.boundaryExpansion === boundaryExpansion &&
-    cached.mirrored === mirrored &&
+    cached.isMirrored === isMirrored &&
     cached.routeMask === routeMask
   ) {
     return cached.columns;
@@ -860,12 +846,12 @@ function getThetaStarFreeSpansByColumn({
   const point = { x: 0, y: 0 };
   for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
     point.x = x;
-    columns.push(collectThetaStarColumnFreeSpans(point, routeMask, mirrored, boundaryExpansion));
+    columns.push(collectThetaStarColumnFreeSpans(point, routeMask, isMirrored, boundaryExpansion));
   }
   scratch.freeSpanCache = {
     boundaryExpansion,
     columns,
-    mirrored,
+    isMirrored,
     routeMask,
   };
   return columns;
@@ -875,14 +861,14 @@ function getThetaStarFreeSpansByColumn({
 function collectThetaStarColumnFreeSpans(
   point: PlaneGridPoint,
   routeMask: Uint8Array,
-  mirrored: boolean,
+  isMirrored: boolean,
   boundaryExpansion: number,
 ) {
   const spans: ThetaStarColumnFreeSpan[] = [];
   let spanStartY: number | undefined;
   for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
     point.y = y;
-    const free = !pointHitsPlaneMask(point, routeMask, mirrored, boundaryExpansion);
+    const free = !pointHitsPlaneMask(point, routeMask, isMirrored, boundaryExpansion);
     if (free && spanStartY === undefined) {
       spanStartY = y;
       continue;
@@ -929,7 +915,7 @@ async function reportThetaStarProgress({
   acceptedEdges,
   currentIndex,
   isCancelled,
-  mirrored,
+  isMirrored,
   onPreview,
   openSet,
   parentIndexes,
@@ -940,7 +926,7 @@ async function reportThetaStarProgress({
   acceptedEdges: readonly [PlaneGridPoint, PlaneGridPoint][] | undefined;
   currentIndex: number;
   isCancelled?: () => boolean;
-  mirrored: boolean;
+  isMirrored: boolean;
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   openSet: ThetaStarOpenSet;
   parentIndexes: Int32Array;
@@ -957,7 +943,7 @@ async function reportThetaStarProgress({
     bestPath: reconstructThetaStarPath(currentIndex, parentIndexes),
     candidates: collectThetaStarPreviewCandidates(openSet, currentIndex, startIndex, targetIndex),
     current: planeGridPointFromIndex(currentIndex),
-    mirrored,
+    isMirrored,
   });
 
   const yielded = yieldControl?.();
@@ -991,7 +977,7 @@ function simplifyThetaStarPath(path: readonly PlaneGridPoint[], context: ThetaSt
       if (
         candidate &&
         context.canAdvance(anchor, candidate) &&
-        edgeIsClear(anchor, candidate, context.routeMask, context.mirrored, context.boundaryExpansion)
+        edgeIsClear(anchor, candidate, context.routeMask, context.isMirrored, context.boundaryExpansion)
       ) {
         nextIndex = candidateIndex;
         break;
@@ -1027,9 +1013,9 @@ function collectThetaStarPreviewCandidates(
   targetIndex: number,
 ) {
   const indexes = new Set<number>([startIndex, targetIndex, currentIndex]);
-  for (const index of openSet.snapshotIndexes(THETA_STAR_HEURISTICS.previewCandidateLimit)) {
+  for (const index of openSet.snapshotIndexes(graphwarThetaStarHeuristics.previewCandidateLimit)) {
     indexes.add(index);
-    if (indexes.size >= THETA_STAR_HEURISTICS.previewCandidateLimit) {
+    if (indexes.size >= graphwarThetaStarHeuristics.previewCandidateLimit) {
       break;
     }
   }
@@ -1043,8 +1029,8 @@ function recordAcceptedEdge(
   target: PlaneGridPoint,
 ) {
   acceptedEdges.push([start, target]);
-  if (acceptedEdges.length > THETA_STAR_HEURISTICS.previewEdgeLimit) {
-    acceptedEdges.splice(0, acceptedEdges.length - THETA_STAR_HEURISTICS.previewEdgeLimit);
+  if (acceptedEdges.length > graphwarThetaStarHeuristics.previewEdgeLimit) {
+    acceptedEdges.splice(0, acceptedEdges.length - graphwarThetaStarHeuristics.previewEdgeLimit);
   }
 }
 
@@ -1053,18 +1039,18 @@ function edgeIsClear(
   start: PlaneGridPoint,
   target: PlaneGridPoint,
   routeMask: Uint8Array,
-  mirrored: boolean,
+  isMirrored: boolean,
   boundaryExpansion: number,
 ) {
-  return !lineHitsPlaneMask(start, target, routeMask, mirrored, boundaryExpansion);
+  return !lineHitsPlaneMask(start, target, routeMask, isMirrored, boundaryExpansion);
 }
 
 /** 为镜像搜索适配底层边评估器。 */
-function createThetaStarEdgeEvaluator(evaluateEdge: GraphwarPathfindingEdgeEvaluator, mirrored: boolean) {
+function createThetaStarEdgeEvaluator(evaluateEdge: GraphwarPathfindingEdgeEvaluator, isMirrored: boolean) {
   return (previous: PlaneGridPoint, next: PlaneGridPoint, routeState: number, routeStateKey?: string) => {
     const result = evaluateEdge(
-      mirrorPlaneGridPoint(previous, mirrored),
-      mirrorPlaneGridPoint(next, mirrored),
+      mirrorPlaneGridPoint(previous, isMirrored),
+      mirrorPlaneGridPoint(next, isMirrored),
       routeState,
       routeStateKey,
     );
@@ -1083,14 +1069,14 @@ function createStepThetaStateKey(index: number, routeState: number, routeStateKe
 }
 
 /** 创建按搜索方向归一化的剩余代价估算器。 */
-function createThetaStarRemainingCostEstimator(options: GraphwarPathfindingOptions, mirrored: boolean) {
+function createThetaStarRemainingCostEstimator(options: GraphwarPathfindingOptions, isMirrored: boolean) {
   if (!options.estimateRemainingSecondaryCost) {
     return planeGridPointDistance;
   }
   return (current: PlaneGridPoint, target: PlaneGridPoint) => {
     const estimate = options.estimateRemainingSecondaryCost?.(
-      mirrorPlaneGridPoint(current, mirrored),
-      mirrorPlaneGridPoint(target, mirrored),
+      mirrorPlaneGridPoint(current, isMirrored),
+      mirrorPlaneGridPoint(target, isMirrored),
     );
     return estimate !== undefined && Number.isFinite(estimate) && estimate >= 0 ? estimate : 0;
   };

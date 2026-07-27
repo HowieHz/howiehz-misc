@@ -71,7 +71,7 @@ export function assignGraphwarOneClickClearTargetRoutePoints<TTarget extends Gra
     return [];
   }
 
-  const mirrored = !xPlusGoesRight(options.bounds);
+  const isMirrored = !xPlusGoesRight(options.bounds);
   const preparedTargets: PreparedTarget<TTarget>[] = [];
   for (const candidate of options.candidates) {
     if (
@@ -88,8 +88,8 @@ export function assignGraphwarOneClickClearTargetRoutePoints<TTarget extends Gra
     preparedTargets.push({
       candidate,
       preferredForwardColumn: planeColumnToForwardColumn(
-        imageXToNearestPlaneColumn(candidate.center.x, options.boundsRect, mirrored),
-        mirrored,
+        imageXToNearestPlaneColumn(candidate.center.x, options.boundsRect, isMirrored),
+        isMirrored,
       ),
     });
   }
@@ -101,7 +101,7 @@ export function assignGraphwarOneClickClearTargetRoutePoints<TTarget extends Gra
   );
 
   const assignedTargets: GraphwarOneClickClearAssignedTarget<TTarget>[] = [];
-  let previousForwardX = planeXToForwardX(imageXToPlaneX(options.pathTail.x, options.boundsRect), mirrored);
+  let previousForwardX = planeXToForwardX(imageXToPlaneX(options.pathTail.x, options.boundsRect), isMirrored);
   let groupStart = 0;
   while (groupStart < preparedTargets.length) {
     const firstTarget = preparedTargets[groupStart];
@@ -140,7 +140,7 @@ export function assignGraphwarOneClickClearTargetRoutePoints<TTarget extends Gra
       let enumeratingFromMinimum = forwardColumn === minimumForwardColumn;
       let checkedColumnCount = 0;
       while (forwardColumn < GRAPHWAR_PLANE_LENGTH && checkedColumnCount < GRAPHWAR_PLANE_LENGTH) {
-        const imageX = planeXToImageX(forwardColumnToPlaneColumn(forwardColumn, mirrored), options.boundsRect);
+        const imageX = planeXToImageX(forwardColumnToPlaneColumn(forwardColumn, isMirrored), options.boundsRect);
         checkedColumnCount += 1;
         if (
           imageX >= options.usableRect.x &&

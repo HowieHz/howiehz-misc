@@ -313,7 +313,7 @@ function createTrajectorySettingsCacheKey(
 
 /** 把一键清图候选编码成稳定 key 片段。 */
 function createOneClickClearCandidateCacheKey(candidate: GraphwarOneClickClearCandidate) {
-  return [candidate.id, candidate.enemy, createPointCacheKey(candidate.hitCenter), candidate.hitRadius];
+  return [candidate.id, candidate.isEnemy, createPointCacheKey(candidate.hitCenter), candidate.hitRadius];
 }
 
 /** 复制普通智能寻路结果并移除请求级耗时。 */

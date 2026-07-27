@@ -74,3 +74,27 @@ export const GRAPHWAR_VISIBLE_Y_LIMIT =
 /** 与 GRAPHWAR_SOLDIER_RADIUS 同一个命中半径，只是从平面像素换算到 Graphwar 游戏坐标。 */
 export const GRAPHWAR_GAME_SOLDIER_RADIUS =
   (GRAPHWAR_SOLDIER_RADIUS * GRAPHWAR_PLANE_GAME_LENGTH) / GRAPHWAR_PLANE_LENGTH;
+
+/** `createGraphwarGameConstantData()` 的稳定 f64 字段数；同时约束 runtime upload ABI。 */
+export const GRAPHWAR_GAME_CONSTANT_COUNT = 11;
+
+/**
+ * 为 WASM 实例生成固定顺序的 Graphwar 游戏常量。
+ *
+ * 返回新数组，避免线性内存打包方意外修改 TypeScript backend 的规范数据源；顺序由测试锁定。
+ */
+export function createGraphwarGameConstantData() {
+  return new Float64Array([
+    graphwarSourceConstants.planeLength,
+    graphwarSourceConstants.planeHeight,
+    graphwarSourceConstants.planeGameLength,
+    graphwarSourceConstants.soldierRadius,
+    graphwarSourceConstants.soldierSelectionRadius,
+    graphwarSourceConstants.stepSize,
+    graphwarSourceConstants.funcMaxSteps,
+    graphwarSourceConstants.funcMaxStepDistanceSquared,
+    graphwarSourceConstants.funcMinXStepDistance,
+    graphwarSourceConstants.angleError,
+    graphwarSourceConstants.maxAngleLoops,
+  ]);
+}

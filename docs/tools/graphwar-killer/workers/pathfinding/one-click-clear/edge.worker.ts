@@ -1,3 +1,8 @@
+import {
+  graphwarBackendAttemptIdentitiesAreEqual,
+  isGraphwarBackendAttemptIdentity,
+  type GraphwarBackendAttemptIdentity,
+} from "../../../core/algorithm-backend";
 import { imageToGraphPoint } from "../../../core/geometry";
 import { resolveFormulaModeContract } from "../../../formula/mode-contract";
 /** 一键清图 DAG 边消费者 worker：初始化一次私有上下文，然后按需处理单条边。 */
@@ -43,6 +48,8 @@ type EdgeWorkerPathSearchPolicy = Exclude<
 
 type EdgeWorkerContext = GraphwarOneClickClearEdgeWorkerInit &
   EdgeWorkerPathSearchPolicy & {
+    /** Master request attempt that owns every init/job/result in this child Worker. */
+    attempt: GraphwarBackendAttemptIdentity;
     /** 本 worker 私有 Theta* 工作区；同一批 DAG 边复用，避免每条边分配和清空全图数组。 */
     thetaStarScratch?: GraphwarThetaStarScratch;
     /** 本 worker 私有可视图 cache，绑定本 worker 自己收到的 routeMask 引用；Theta* 模式不需要。 */
@@ -55,7 +62,10 @@ let context: EdgeWorkerContext | undefined;
 workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
   const request = event.data;
   if (!isGraphwarOneClickClearEdgeWorkerRequest(request)) {
-    postResponse({ message: "Invalid edge worker request", type: "error", workerIndex: 0 });
+    const attempt = getGraphwarEdgeWorkerRequestAttempt(request);
+    if (attempt) {
+      postResponse({ attempt, message: "Invalid edge worker request", type: "error", workerIndex: 0 });
+    }
     return;
   }
   void handleRequest(request);
@@ -65,6 +75,9 @@ workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
 async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
   try {
     if (request.type === "init") {
+      if (context) {
+        throw new Error("Edge worker was already initialized");
+      }
       const pathSearchPolicy = resolveGraphwarPathSearchPolicy(
         resolveFormulaModeContract(request.context.settings.algorithm, request.context.settings.equation, false),
         request.context.routeMode,
@@ -88,6 +101,7 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
         pathSearchPolicy.routeMode === "theta-star" ? createGraphwarThetaStarScratch() : undefined;
       const sharedContext = {
         ...request.context,
+        attempt: request.attempt,
         ...(thetaStarScratch ? { thetaStarScratch } : {}),
         ...(visibilityGraphObstacleData ? { visibilityGraphObstacleData } : {}),
       };
@@ -111,6 +125,7 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
         };
       }
       postResponse({
+        attempt: request.attempt,
         type: "ready",
         workerIndex: request.context.workerIndex,
       });
@@ -121,10 +136,14 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
     if (!activeContext) {
       throw new Error("Edge worker was not initialized");
     }
+    if (!graphwarBackendAttemptIdentitiesAreEqual(request.attempt, activeContext.attempt)) {
+      throw new Error("Edge worker job attempt does not match its initialized attempt");
+    }
     if ((request.job.stepRouteStartState !== undefined) !== (activeContext.type === "step-stateful")) {
       throw new Error("Edge worker job route state does not match its initialized policy");
     }
     postResponse({
+      attempt: request.attempt,
       requestId: request.requestId,
       result: await buildOneClickClearDagEdgeRoute(activeContext, request.job),
       type: "job-result",
@@ -132,6 +151,7 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
     });
   } catch (error) {
     postResponse({
+      attempt: request.attempt,
       message: error instanceof Error ? error.message : String(error),
       type: "error",
       workerIndex: request.type === "init" ? request.context.workerIndex : (context?.workerIndex ?? 0),
@@ -142,4 +162,14 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
 /** 将 edge Worker 的就绪、结果或错误响应发回 master。 */
 function postResponse(response: GraphwarOneClickClearEdgeWorkerResponse) {
   workerScope.postMessage(response);
+}
+
+/** Recovers only a complete attempt from a malformed request; missing identity cannot receive a business response. */
+function getGraphwarEdgeWorkerRequestAttempt(value: unknown) {
+  return typeof value === "object" &&
+    value !== null &&
+    "attempt" in value &&
+    isGraphwarBackendAttemptIdentity(value.attempt)
+    ? value.attempt
+    : undefined;
 }

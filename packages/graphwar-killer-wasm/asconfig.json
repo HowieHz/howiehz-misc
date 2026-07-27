@@ -1,0 +1,9 @@
+{
+  "targets": {
+    "release": {
+      "outFile": "build/graphwar-kernel.wasm",
+      "optimize": true,
+      "runtime": "stub"
+    }
+  }
+}

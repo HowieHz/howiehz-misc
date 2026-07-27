@@ -88,7 +88,7 @@ function createOneClickClearTargetCandidate<TSoldier extends GraphwarOneClickCle
 
   const center = getGraphwarSoldierCenter(soldier);
   return {
-    enemy: !friendly,
+    isEnemy: !friendly,
     hitCenter: center,
     hitRadius: soldier.hitRadius,
     id: soldier.id,

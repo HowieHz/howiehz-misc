@@ -28,7 +28,7 @@ describe("Graphwar automatic forward columns", () => {
     expect(createNextNativePlaneColumnPointAtGraphY(start, 0, bounds, scaledRect)?.x).toBe(scaledRect.x + 421 * scale);
   });
 
-  it("maps the next forward column toward screen left for mirrored bounds", () => {
+  it("maps the next forward column toward screen left for isMirrored bounds", () => {
     const mirroredBounds = { ...bounds, maxX: -25, minX: 25 };
 
     expect(
@@ -36,7 +36,7 @@ describe("Graphwar automatic forward columns", () => {
     ).toBe(349);
   });
 
-  it("does not skip a mirrored column after scaled projection with a large screenshot offset", () => {
+  it("does not skip a isMirrored column after scaled projection with a large screenshot offset", () => {
     const mirroredBounds = { ...bounds, maxX: -25, minX: 25 };
     const translatedRect = { height: 225, width: 385, x: 814.6, y: 20.75 };
     const start = createPixelPoint(814.6 + (419 * 385) / 770, 100);

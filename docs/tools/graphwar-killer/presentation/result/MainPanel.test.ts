@@ -79,16 +79,49 @@ describe("Result MainPanel", () => {
       props: { agentTurnCountdown: createTurnCountdown(), locale: graphwarKillerLocale, result },
     });
     const actions = wrapper.get(".graphwar-killer__result-actions");
-    const command = actions.get(".graphwar-killer__agent-fire-command");
-    const fireField = command.get(".graphwar-killer__agent-fire-field");
+    const countdown = actions.get(".graphwar-killer__agent-turn-countdown");
+    const fireField = actions.get(".graphwar-killer__agent-fire-field");
 
-    expect(command.element.children[0]).toBe(command.get(".graphwar-killer__agent-turn-countdown").element);
-    expect(command.element.children[1]).toBe(fireField.element);
+    expect(actions.element.children[0]).toBe(countdown.element);
+    expect(actions.element.children[1]).toBe(fireField.element);
     expect(fireField.element.children[0]).toBe(fireField.get(".graphwar-killer__agent-fire-button").element);
     expect(fireField.element.children[1]).toBe(fireField.get(".graphwar-killer-control-reason").element);
-    expect(command.element.nextElementSibling).toBe(actions.get(".graphwar-killer__primary-button").element);
+    expect(fireField.element.nextElementSibling).toBe(actions.get(".graphwar-killer__primary-button").element);
     expect(actions.get(".graphwar-killer__primary-button").element.parentElement).toBe(actions.element);
     expect(actions.get(".graphwar-killer__icon-button").element.parentElement).toBe(actions.element);
+  });
+
+  it("shows a muted countdown placeholder only while Agent fire controls are visible", async () => {
+    const agentTurnCountdown = createTurnCountdown();
+    agentTurnCountdown.remainingMilliseconds.value = undefined;
+    const wrapper = mount(MainPanel, {
+      props: { agentTurnCountdown, locale: graphwarKillerLocale, result: createResultModel() },
+    });
+
+    const countdown = wrapper.get(".graphwar-killer__agent-turn-countdown");
+    expect(countdown.text()).toBe("剩余 --.- 秒");
+    expect(countdown.classes()).toContain("graphwar-killer__agent-turn-countdown--expired");
+
+    await wrapper.setProps({ result: { ...createResultModel(), isAgentFireVisible: false } });
+    expect(wrapper.find(".graphwar-killer__agent-turn-countdown").exists()).toBe(false);
+  });
+
+  it("renders calculation prerequisites with the shared control-reason style", () => {
+    const wrapper = mount(MainPanel, {
+      props: {
+        locale: graphwarKillerLocale,
+        result: {
+          ...createResultModel(),
+          calculationMessage: graphwarKillerLocale.status.calculation.selectPath,
+          isCalculationMessageVisible: true,
+        },
+      },
+    });
+
+    const reason = wrapper.get(".graphwar-killer-control-reason");
+    expect(reason.text()).toContain(graphwarKillerLocale.status.calculation.selectPath);
+    expect(reason.get(".graphwar-killer-control-reason__icon").text()).toBe("!");
+    expect(wrapper.find(".graphwar-killer__error").exists()).toBe(false);
   });
 
   it("moves temporary Agent, pathfinding, and managed locks into the affected control titles", () => {
@@ -153,23 +186,23 @@ describe("Result MainPanel", () => {
     expect(mainPanelUpdateCount).toBeGreaterThan(0);
     expect(countdownUpdateCount).toBe(0);
     mainPanelUpdateCount = 0;
-    const command = wrapper.get(".graphwar-killer__agent-fire-command");
-    const fireField = command.get(".graphwar-killer__agent-fire-field");
+    const actions = wrapper.get(".graphwar-killer__result-actions");
+    const fireField = actions.get(".graphwar-killer__agent-fire-field");
 
-    expect(command.element.children[0]).toBe(command.get(".graphwar-killer__agent-turn-countdown").element);
-    expect(command.element.children[1]).toBe(fireField.element);
-    expect(fireField.element.children[0]).toBe(command.get(".graphwar-killer__agent-fire-button").element);
+    expect(actions.element.children[0]).toBe(actions.get(".graphwar-killer__agent-turn-countdown").element);
+    expect(actions.element.children[1]).toBe(fireField.element);
+    expect(fireField.element.children[0]).toBe(actions.get(".graphwar-killer__agent-fire-button").element);
 
     agentTurnCountdown.remainingMilliseconds.value = 57_900;
     await nextTick();
-    expect(command.get(".graphwar-killer__agent-turn-countdown").text()).toBe("剩余 57.9 秒");
+    expect(actions.get(".graphwar-killer__agent-turn-countdown").text()).toBe("剩余 57.9 秒");
     expect(countdownUpdateCount).toBe(1);
     expect(mainPanelUpdateCount).toBe(0);
 
     agentTurnCountdown.remainingMilliseconds.value = 0;
     await nextTick();
-    const countdown = command.get(".graphwar-killer__agent-turn-countdown");
-    expect(countdown.text()).toBe("剩余 0.000 秒");
+    const countdown = actions.get(".graphwar-killer__agent-turn-countdown");
+    expect(countdown.text()).toBe("剩余 0.0 秒");
     expect(countdown.classes()).toContain("graphwar-killer__agent-turn-countdown--expired");
     expect(countdownUpdateCount).toBe(2);
     expect(mainPanelUpdateCount).toBe(0);

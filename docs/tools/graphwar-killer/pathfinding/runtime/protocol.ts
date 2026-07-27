@@ -1,3 +1,4 @@
+import { isGraphwarBackendAttemptIdentity, type GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { MAX_FORMULA_DECIMAL_PLACES } from "../../core/numbers";
 import type { PlaneGridPoint } from "../../core/plane-grid";
@@ -160,7 +161,12 @@ export interface GraphwarOneClickClearPathWorkerResult {
  * Worker 消息是真实运行时边界；公式 contract 只能在 settings、mask 和有限数通过校验后重新解析。
  */
 export function isGraphwarPathfindingWorkerRequest(value: unknown): value is GraphwarPathfindingWorkerRequest {
-  if (!isRecord(value) || !isNonNegativeInteger(value.id) || !isRecord(value.task)) {
+  if (
+    !isRecord(value) ||
+    !isGraphwarBackendAttemptIdentity(value.attempt) ||
+    !isNonNegativeInteger(value.id) ||
+    !isRecord(value.task)
+  ) {
     return false;
   }
   const task = value.task;
@@ -188,7 +194,7 @@ export function isGraphwarPathfindingWorkerRequest(value: unknown): value is Gra
 export function isGraphwarOneClickClearEdgeWorkerRequest(
   value: unknown,
 ): value is GraphwarOneClickClearEdgeWorkerRequest {
-  if (!isRecord(value)) {
+  if (!isRecord(value) || !isGraphwarBackendAttemptIdentity(value.attempt)) {
     return false;
   }
   if (value.type === "init") {
@@ -199,9 +205,11 @@ export function isGraphwarOneClickClearEdgeWorkerRequest(
   );
 }
 
-/** 从畸形请求中只恢复可安全回显的 id；完全缺失时使用 0。 */
-export function getGraphwarPathfindingWorkerRequestId(value: unknown) {
-  return isRecord(value) && isNonNegativeInteger(value.id) ? value.id : 0;
+/** 只在 id 与 attempt 同时完整时恢复错误响应身份，避免把畸形消息归到错误 outer task。 */
+export function getGraphwarPathfindingWorkerRequestIdentity(value: unknown) {
+  return isRecord(value) && isNonNegativeInteger(value.id) && isGraphwarBackendAttemptIdentity(value.attempt)
+    ? { attempt: value.attempt, id: value.id }
+    : undefined;
 }
 
 function isGraphwarPathfindingRouteInput(value: unknown): value is GraphwarPathfindingRouteInput {
@@ -309,7 +317,14 @@ function isGraphwarOneClickClearDagEdgeBuildRequest(value: unknown): value is Gr
     return false;
   }
   const isStepStateful = value.settings.algorithm === "step";
-  return value.jobs.every((job) => (job.stepRouteStartState !== undefined) === isStepStateful);
+  const jobIds = new Set<number>();
+  return value.jobs.every((job) => {
+    if (jobIds.has(job.id) || (job.stepRouteStartState !== undefined) !== isStepStateful) {
+      return false;
+    }
+    jobIds.add(job.id);
+    return true;
+  });
 }
 
 function isGraphwarOneClickClearEdgeWorkerInit(value: unknown): value is GraphwarOneClickClearEdgeWorkerInit {
@@ -344,7 +359,7 @@ function isGraphwarOneClickClearCandidate(value: unknown) {
     isRecord(value) &&
     typeof value.id === "string" &&
     value.id.length > 0 &&
-    typeof value.enemy === "boolean" &&
+    typeof value.isEnemy === "boolean" &&
     isPixelPoint(value.hitCenter) &&
     isNonNegativeFiniteNumber(value.hitRadius)
   );
@@ -446,6 +461,174 @@ function isGraphwarFormulaDecimalPlaces(value: unknown): value is number {
   return isNonNegativeInteger(value) && value <= MAX_FORMULA_DECIMAL_PLACES;
 }
 
+/** 校验普通几何寻路完整结果，防止畸形路径或 cache 状态进入页面。 */
+export function isGraphwarPathfindingRouteResult(value: unknown): value is GraphwarPathfindingRouteResult {
+  return (
+    isRecord(value) &&
+    (value.path === undefined || isPlaneGridPointArray(value.path)) &&
+    (value.visibilityCache === "hit" || value.visibilityCache === "miss" || value.visibilityCache === "skipped") &&
+    isNonNegativeFiniteNumber(value.visibilityCacheElapsedMs) &&
+    isNonNegativeFiniteNumber(value.searchElapsedMs)
+  );
+}
+
+/** 校验搜索动画快照；event buffer 中的每条边和点都必须是完整平面网格坐标。 */
+export function isGraphwarPathfindingPreview(value: unknown): value is GraphwarPathfindingPreview {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.acceptedEdges) &&
+    value.acceptedEdges.every((edge) => Array.isArray(edge) && edge.length === 2 && edge.every(isPlaneGridPoint)) &&
+    isPlaneGridPointArray(value.bestPath) &&
+    isPlaneGridPointArray(value.candidates) &&
+    (value.current === undefined || isPlaneGridPoint(value.current)) &&
+    typeof value.isMirrored === "boolean"
+  );
+}
+
+/** 校验智能寻路原子成功/失败结果及全部可选诊断。 */
+export function isGraphwarSmartPathfindingPathResult(value: unknown): value is GraphwarSmartPathfindingPathResult {
+  if (
+    !isRecord(value) ||
+    (value.blockedPoint !== undefined && !isPixelPoint(value.blockedPoint)) ||
+    (value.failureReason !== undefined && !isGraphwarSmartPathfindingFailureReason(value.failureReason)) ||
+    (value.diagnostics !== undefined && !isGraphwarPathfindingDiagnostics(value.diagnostics)) ||
+    (value.invalidSegmentIndex !== undefined && !isNonNegativeInteger(value.invalidSegmentIndex)) ||
+    (value.path !== undefined && !isPixelPointArray(value.path)) ||
+    !Array.isArray(value.timings) ||
+    !value.timings.every(isGraphwarSmartPathfindingWorkerTiming)
+  ) {
+    return false;
+  }
+  if (value.path !== undefined) {
+    return (
+      value.blockedPoint === undefined && value.failureReason === undefined && value.invalidSegmentIndex === undefined
+    );
+  }
+  return (
+    (value.failureReason !== undefined || value.invalidSegmentIndex !== undefined) &&
+    (value.blockedPoint === undefined || value.failureReason === "trajectory")
+  );
+}
+
+/** 校验一键清图 DAG 批量建边结果，并拒绝重复 job id 和拆散的 route state。 */
+export function isGraphwarOneClickClearDagEdgeBuildResult(
+  value: unknown,
+): value is GraphwarOneClickClearDagEdgeBuildResult {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.routes) ||
+    !Array.isArray(value.timings) ||
+    !value.timings.every(isGraphwarOneClickClearDebugTiming)
+  ) {
+    return false;
+  }
+  const jobIds = new Set<number>();
+  for (const route of value.routes) {
+    if (
+      !isRecord(route) ||
+      !isNonNegativeInteger(route.jobId) ||
+      jobIds.has(route.jobId) ||
+      (route.route !== undefined && !isPixelPointArray(route.route, 2)) ||
+      (route.stepRouteEndState !== undefined &&
+        (route.route === undefined || !isGraphwarOneClickClearStepRouteState(route.stepRouteEndState)))
+    ) {
+      return false;
+    }
+    jobIds.add(route.jobId);
+  }
+  return true;
+}
+
+function isGraphwarSmartPathfindingWorkerTiming(value: unknown): value is GraphwarSmartPathfindingWorkerTiming {
+  return (
+    isRecord(value) &&
+    isGraphwarSmartPathfindingWorkerTimingStage(value.stage) &&
+    isNonNegativeFiniteNumber(value.elapsedMs)
+  );
+}
+
+function isGraphwarSmartPathfindingWorkerTimingStage(
+  value: unknown,
+): value is GraphwarSmartPathfindingWorkerTimingStage {
+  return (
+    value === "prefix-evidence-hit" ||
+    value === "prefix-evidence-miss" ||
+    value === "prepare-pathfinding-prefix" ||
+    value === "optimize-path" ||
+    value === "route-mask-cache-hit" ||
+    value === "route-mask-cache-miss" ||
+    value === "search-route" ||
+    value === "validate-direct-trajectory" ||
+    value === "validate-trajectory" ||
+    value === "visibility-cache-hit" ||
+    value === "visibility-cache-miss" ||
+    value === "visibility-cache-skipped"
+  );
+}
+
+function isGraphwarSmartPathfindingFailureReason(value: unknown) {
+  return value === "graph-rule" || value === "route" || value === "trajectory";
+}
+
+function isGraphwarOneClickClearDebugTiming(value: unknown): value is GraphwarOneClickClearDebugTiming {
+  return (
+    isRecord(value) &&
+    isGraphwarOneClickClearDebugStage(value.stage) &&
+    isNonNegativeFiniteNumber(value.elapsedMs) &&
+    (value.detail === undefined || isGraphwarOneClickClearDebugDetail(value.detail))
+  );
+}
+
+function isGraphwarOneClickClearDebugStage(value: unknown) {
+  return (
+    value === "assign-clear-targets" ||
+    value === "build-dag-edges" ||
+    value === "dag-longest-path" ||
+    value === "optimize-path" ||
+    value === "outside-search-stages" ||
+    value === "prefix-evidence-hit" ||
+    value === "prefix-evidence-miss" ||
+    value === "prepare-pathfinding-prefix" ||
+    value === "remove-failed-edge" ||
+    value === "route-mask-cache-hit" ||
+    value === "route-mask-cache-miss" ||
+    value === "route-map-pixels" ||
+    value === "route-pathfinding" ||
+    value === "scan-step-glitch" ||
+    value === "segment-graph-rule" ||
+    value === "segment-sample-trajectory" ||
+    value === "validate-final" ||
+    value === "validate-direct-trajectory" ||
+    value === "visibility-cache-hit" ||
+    value === "visibility-cache-miss" ||
+    value === "visibility-cache-skipped" ||
+    value === "validate-prefix" ||
+    value === "validate-route"
+  );
+}
+
+function isGraphwarOneClickClearDebugDetail(value: unknown) {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === "dag-edge-worker") {
+    return isPositiveInteger(value.workerIndex);
+  }
+  return (
+    value.type === "dag-edge-mode" &&
+    (value.mode === "serial" || value.mode === "parallel" || value.mode === "parallel-fallback") &&
+    isPositiveInteger(value.workerCount)
+  );
+}
+
+function isPlaneGridPoint(value: unknown): value is PlaneGridPoint {
+  return isRecord(value) && Number.isInteger(value.x) && Number.isInteger(value.y);
+}
+
+function isPlaneGridPointArray(value: unknown): value is PlaneGridPoint[] {
+  return Array.isArray(value) && value.every(isPlaneGridPoint);
+}
+
 /** 在 Worker 信任边界校验可直接落地或发射的一键清图 incumbent。 */
 export function isGraphwarOneClickClearIncumbent(value: unknown): value is GraphwarOneClickClearIncumbent {
   if (
@@ -468,17 +651,17 @@ export function isGraphwarOneClickClearPathWorkerResult(
     !isRecord(value) ||
     (value.diagnostics !== undefined && !isGraphwarPathfindingDiagnostics(value.diagnostics)) ||
     !Array.isArray(value.timings) ||
-    !value.timings.every(
-      (timing) => isRecord(timing) && typeof timing.stage === "string" && isFiniteNumber(timing.elapsedMs),
-    ) ||
+    !value.timings.every(isGraphwarOneClickClearDebugTiming) ||
     !isRecord(value.result) ||
-    !isFiniteNumber(value.result.elapsedMs) ||
-    !isFiniteNumber(value.result.expandedStates)
+    !isNonNegativeFiniteNumber(value.result.elapsedMs) ||
+    !isNonNegativeInteger(value.result.expandedStates)
   ) {
     return false;
   }
   if (value.result.type === "success") {
     return (
+      value.result.reason === undefined &&
+      value.result.invalidSegmentIndex === undefined &&
       isGraphwarOneClickClearIncumbent(value.result) &&
       Array.isArray(value.result.targetIds) &&
       value.result.targetIds.every((targetId) => typeof targetId === "string")
@@ -488,10 +671,12 @@ export function isGraphwarOneClickClearPathWorkerResult(
     return false;
   }
   return (
-    value.result.invalidSegmentIndex === undefined ||
-    (typeof value.result.invalidSegmentIndex === "number" &&
-      Number.isInteger(value.result.invalidSegmentIndex) &&
-      value.result.invalidSegmentIndex >= 0)
+    value.result.expression === undefined &&
+    value.result.launchAngleRadians === undefined &&
+    value.result.pathPoints === undefined &&
+    value.result.targetIds === undefined &&
+    value.result.trajectoryPoints === undefined &&
+    (value.result.invalidSegmentIndex === undefined || isNonNegativeInteger(value.result.invalidSegmentIndex))
   );
 }
 
@@ -586,6 +771,8 @@ export type GraphwarPathfindingWorkerTask =
 
 /** 主线程发给 pathfinding master Worker 的请求。 */
 export interface GraphwarPathfindingWorkerRequest {
+  /** Stable outer task and current replaceable backend attempt. */
+  attempt: GraphwarBackendAttemptIdentity;
   /** 单调递增请求 id，用于忽略过期响应。 */
   id: number;
   /** 具体几何寻路任务。 */
@@ -595,24 +782,28 @@ export interface GraphwarPathfindingWorkerRequest {
 /** Pathfinding master Worker 的成功响应。 */
 export type GraphwarPathfindingWorkerSuccessResponse =
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       id: number;
       result: GraphwarPathfindingRouteResult;
       taskType: "find-route";
       type: "success";
     }
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       id: number;
       result: GraphwarSmartPathfindingPathResult;
       taskType: "find-smart-path";
       type: "success";
     }
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       id: number;
       result: GraphwarOneClickClearDagEdgeBuildResult;
       taskType: "build-one-click-clear-dag-edges";
       type: "success";
     }
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       id: number;
       result: GraphwarOneClickClearPathWorkerResult;
       taskType: "build-one-click-clear-path";
@@ -623,16 +814,19 @@ export type GraphwarPathfindingWorkerSuccessResponse =
 export type GraphwarPathfindingWorkerResponse =
   | GraphwarPathfindingWorkerSuccessResponse
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       id: number;
       message: string;
       type: "error";
     }
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       id: number;
       preview: GraphwarPathfindingPreview;
       type: "preview";
     }
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       id: number;
       /** 可在截止时直接发射的当前最优方案。 */
       incumbent: GraphwarOneClickClearIncumbent;
@@ -664,10 +858,12 @@ export interface GraphwarOneClickClearEdgeWorkerInit {
 /** Master Worker 发给 edge Worker 的消息。 */
 export type GraphwarOneClickClearEdgeWorkerRequest =
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       context: GraphwarOneClickClearEdgeWorkerInit;
       type: "init";
     }
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       job: GraphwarOneClickClearDagEdgeBuildJob;
       requestId: number;
       type: "job";
@@ -690,16 +886,19 @@ export interface GraphwarOneClickClearEdgeWorkerJobResult {
 /** Edge Worker 发回 master Worker 的消息。 */
 export type GraphwarOneClickClearEdgeWorkerResponse =
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       type: "ready";
       workerIndex: number;
     }
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       requestId: number;
       result: GraphwarOneClickClearEdgeWorkerJobResult;
       type: "job-result";
       workerIndex: number;
     }
   | {
+      attempt: GraphwarBackendAttemptIdentity;
       message: string;
       type: "error";
       workerIndex: number;
@@ -709,7 +908,7 @@ export type GraphwarOneClickClearEdgeWorkerResponse =
 export function isGraphwarOneClickClearEdgeWorkerResponse(
   value: unknown,
 ): value is GraphwarOneClickClearEdgeWorkerResponse {
-  if (!isRecord(value) || !isPositiveInteger(value.workerIndex)) {
+  if (!isRecord(value) || !isGraphwarBackendAttemptIdentity(value.attempt) || !isPositiveInteger(value.workerIndex)) {
     return false;
   }
   if (value.type === "ready") {

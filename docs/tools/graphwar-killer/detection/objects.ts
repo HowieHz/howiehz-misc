@@ -51,7 +51,7 @@ export interface GraphwarDetectionBox extends BoundsRect {
   /** 匹配到的 Graphwar 士兵模板名，来自 rsc/soldiers/*.png。 */
   templateName: string;
   /** Graphwar 渲染时该士兵贴图是否横向镜像。 */
-  mirrored: boolean;
+  isMirrored: boolean;
   /** 模板匹配置信度，1 表示高置信匹配。 */
   confidence: number;
   /** 稳定检测 id，用于路径、缓存和一键清图 route 串联。 */
@@ -533,9 +533,9 @@ interface SoldierTemplateColorPixel extends SoldierTemplatePixel {
 /** 单个动画帧和朝向展开后的士兵模板。 */
 interface SoldierTemplate {
   /** Graphwar 源码资源名。 */
-  name: string;
+  name: (typeof graphwarSoldierTemplateNames)[number];
   /** 是否按 GraphPlane#drawSoldiers 镜像绘制。 */
-  mirrored: boolean;
+  isMirrored: boolean;
   /** Alpha>=128 的合成前景像素。 */
   foregroundPixels: SoldierTemplatePixel[];
   /** 受玩家随机颜色影响的前景像素。 */
@@ -555,7 +555,7 @@ interface SoldierTemplate {
 /** 同一朝向下所有动画帧共享的模板像素集合。 */
 interface SoldierTemplateBase {
   /** 是否按 GraphPlane#drawSoldiers 镜像绘制。 */
-  mirrored: boolean;
+  isMirrored: boolean;
   /** Alpha>=128 的合成前景像素。 */
   foregroundPixels: SoldierTemplatePixel[];
   /** 受玩家随机颜色影响的前景像素。 */
@@ -583,7 +583,7 @@ export interface SoldierMatchCandidate {
   /** 匹配到的 Graphwar 士兵模板名，来自 rsc/soldiers/*.png。 */
   templateName: string;
   /** Graphwar 渲染时该士兵贴图是否横向镜像。 */
-  mirrored: boolean;
+  isMirrored: boolean;
   /** 综合模板匹配分数。 */
   score: number;
   /** 固定像素匹配分数。 */
@@ -601,7 +601,7 @@ export interface SoldierMatchCandidate {
 /** 从黄色/白色固定种子反推出来的源码中心候选。 */
 export interface SoldierTemplateCenterCandidate {
   /** 该候选源码中心对应的士兵绘制方向。 */
-  mirrored: boolean;
+  isMirrored: boolean;
   /** 截图像素 x。 */
   x: number;
   /** 截图像素 y。 */
@@ -627,6 +627,82 @@ const graphwarSoldierTemplateBases: SoldierTemplateBase[] = [
   createGraphwarSoldierTemplateBase(false),
   createGraphwarSoldierTemplateBase(true),
 ];
+
+/** 可直接写入 WASM 线性内存的士兵模板规范数据。 */
+export interface GraphwarSoldierTemplateCanonicalData {
+  /** 每个 base 是否为镜像模板，使用 0/1 表达。 */
+  baseFlags: Uint8Array;
+  /** 每个朝向的 visualCenterX、visualCenterY。 */
+  baseGeometry: Float64Array;
+  /** 每个朝向的前景、玩家色、固定色、种子像素 offset/count。 */
+  basePixelRanges: Uint32Array;
+  /** 所有模板像素的交错 x/y 坐标；range offset 以像素而不是 byte 计数。 */
+  pixelCoordinates: Uint8Array;
+  /** 每个唯一动画模板的 base index、name index、坐标 offset、颜色 offset、count。 */
+  templateRecords: Uint32Array;
+  /** 和 templateRecords 签名 range 一一对应的 0xRRGGBB 颜色。 */
+  signatureColors: Uint32Array;
+  /** TemplateRecords 的 name index 对应的源码资源名。 */
+  templateNames: readonly string[];
+}
+
+/**
+ * 从 TypeScript detection 实际消费的模板对象生成独立 WASM 初始化数据。
+ *
+ * 原始网格和动画签名仍只有上方一份；每次调用返回新 TypedArray，避免 Adapter 修改后污染 TS fallback。
+ */
+export function createGraphwarSoldierTemplateCanonicalData(): GraphwarSoldierTemplateCanonicalData {
+  const baseFlags: number[] = [];
+  const baseGeometry: number[] = [];
+  const basePixelRanges: number[] = [];
+  const pixelCoordinates: number[] = [];
+  const signatureColors: number[] = [];
+  const templateRecords: number[] = [];
+
+  const appendPixels = (pixels: readonly SoldierTemplatePixel[]) => {
+    const offset = pixelCoordinates.length / 2;
+    for (const pixel of pixels) {
+      pixelCoordinates.push(pixel.x, pixel.y);
+    }
+    basePixelRanges.push(offset, pixels.length);
+  };
+
+  for (let baseIndex = 0; baseIndex < graphwarSoldierTemplateBases.length; baseIndex += 1) {
+    const base = graphwarSoldierTemplateBases[baseIndex];
+    baseFlags.push(base.isMirrored ? 1 : 0);
+    baseGeometry.push(base.visualCenterX, base.visualCenterY);
+    appendPixels(base.foregroundPixels);
+    appendPixels(base.playerPixels);
+    appendPixels(base.fixedPixels);
+    appendPixels(base.seedPixels);
+
+    for (const template of base.uniqueSignatureTemplates) {
+      const signatureOffset = pixelCoordinates.length / 2;
+      const signatureColorOffset = signatureColors.length;
+      for (const pixel of template.signaturePixels) {
+        pixelCoordinates.push(pixel.x, pixel.y);
+        signatureColors.push(Number.parseInt(pixel.color, 16));
+      }
+      templateRecords.push(
+        baseIndex,
+        graphwarSoldierTemplateNames.indexOf(template.name),
+        signatureOffset,
+        signatureColorOffset,
+        template.signaturePixels.length,
+      );
+    }
+  }
+
+  return {
+    baseFlags: new Uint8Array(baseFlags),
+    baseGeometry: new Float64Array(baseGeometry),
+    basePixelRanges: new Uint32Array(basePixelRanges),
+    pixelCoordinates: new Uint8Array(pixelCoordinates),
+    signatureColors: new Uint32Array(signatureColors),
+    templateNames: [...graphwarSoldierTemplateNames],
+    templateRecords: new Uint32Array(templateRecords),
+  };
+}
 
 /** 使用 Canvas 像素自动检测 Graphwar 坐标系边界，再按该边界识别士兵和障碍。 */
 export function detectGraphwarObjectsInBounds(
@@ -1079,16 +1155,16 @@ export function createSoldierDetectionBoxes(matches: SoldierMatchCandidate[], ed
   const visualSize = visualRadius * 2;
   return matches.map((match, index) => {
     const sourceCenter = createPixelPoint(match.sourceCenterX, match.sourceCenterY);
-    const visualCenter = getGraphwarSoldierVisualCenter(sourceCenter, match.mirrored, scale);
+    const visualCenter = getGraphwarSoldierVisualCenter(sourceCenter, match.isMirrored, scale);
     const roundedPlaneX = Math.round(((sourceCenter.x - edgeRect.x) / edgeRect.width) * GRAPHWAR_PLANE_LENGTH);
     const roundedPlaneY = Math.round(((sourceCenter.y - edgeRect.y) / edgeRect.height) * GRAPHWAR_PLANE_HEIGHT);
     return {
       confidence: match.score,
       height: visualSize,
       hitRadius,
-      id: `soldier-${roundedPlaneX}-${roundedPlaneY}-${match.mirrored ? "mirror" : "normal"}-${index}`,
+      id: `soldier-${roundedPlaneX}-${roundedPlaneY}-${match.isMirrored ? "mirror" : "normal"}-${index}`,
       kind: "soldier" as const,
-      mirrored: match.mirrored,
+      isMirrored: match.isMirrored,
       selectionRadius: visualRadius,
       sourceCenterX: sourceCenter.x,
       sourceCenterY: sourceCenter.y,
@@ -1188,7 +1264,7 @@ export function matchSoldierTemplates(
       scale,
       candidate.x,
       candidate.y,
-      candidate.mirrored,
+      candidate.isMirrored,
       candidate.votes,
     );
     if (!snapped) {
@@ -1228,7 +1304,7 @@ function createSoldierTemplateCenterCandidates(
   scale: number,
   candidateTopRatio: number,
 ) {
-  const votes = new Map<string, { count: number; mirrored: boolean; x: number; y: number }>();
+  const votes = new Map<string, { count: number; isMirrored: boolean; x: number; y: number }>();
   const stride = Math.max(1, Math.floor(scale / 2));
 
   for (let y = 0; y < edgeRect.height; y += stride) {
@@ -1257,8 +1333,8 @@ function createSoldierTemplateCenterCandidates(
             continue;
           }
           // Graphwar 原版士兵的朝向由所在半场决定。
-          const mirrored = planeX >= GRAPHWAR_PLANE_LENGTH / 2;
-          if (templateBase.mirrored !== mirrored) {
+          const isMirrored = planeX >= GRAPHWAR_PLANE_LENGTH / 2;
+          if (templateBase.isMirrored !== isMirrored) {
             continue;
           }
 
@@ -1267,11 +1343,11 @@ function createSoldierTemplateCenterCandidates(
           const existing = votes.get(key);
           if (existing) {
             existing.count += 1;
-            existing.mirrored = mirrored;
+            existing.isMirrored = isMirrored;
             existing.x = sourceCenter.x;
             existing.y = sourceCenter.y;
           } else {
-            votes.set(key, { count: 1, mirrored, x: sourceCenter.x, y: sourceCenter.y });
+            votes.set(key, { count: 1, isMirrored, x: sourceCenter.x, y: sourceCenter.y });
           }
         }
       }
@@ -1280,7 +1356,7 @@ function createSoldierTemplateCenterCandidates(
 
   const rankedCandidates = [...votes.values()]
     .map((vote) => ({
-      mirrored: vote.mirrored,
+      isMirrored: vote.isMirrored,
       x: vote.x,
       y: vote.y,
       votes: vote.count,
@@ -1303,7 +1379,7 @@ function findBestSoldierTemplateMatch(
 ) {
   let best: SoldierMatchCandidate | undefined;
   const baseScores = graphwarSoldierTemplateBases
-    .filter((templateBase) => templateBase.mirrored === expectedMirrored)
+    .filter((templateBase) => templateBase.isMirrored === expectedMirrored)
     .map((templateBase) => ({
       score: scoreSoldierTemplateBaseAt(imageData, rect, scale, sourceCenterX, sourceCenterY, templateBase),
       templateBase,
@@ -1329,7 +1405,7 @@ function findBestSoldierTemplateMatch(
         best = {
           fixedScore: baseScore.fixedScore,
           foregroundScore: baseScore.foregroundScore,
-          mirrored: template.mirrored,
+          isMirrored: template.isMirrored,
           playerScore: baseScore.playerScore,
           score,
           signatureScore,
@@ -1533,11 +1609,11 @@ function scoreTemplateBackgroundPenalty(
   scale: number,
   sourceCenterX: number,
   sourceCenterY: number,
-  template: { mirrored: boolean },
+  template: { isMirrored: boolean },
 ) {
   const visualCenter = getGraphwarSoldierVisualCenter(
     createPixelPoint(sourceCenterX, sourceCenterY),
-    template.mirrored,
+    template.isMirrored,
     scale,
   );
   const radius = (GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2) * scale;
@@ -1679,18 +1755,18 @@ function getSoldierTemplatePixelOffset(pixelCoordinate: number, scale: number) {
 }
 
 /** 从模板网格构造一套固定像素、玩家色像素和动画签名模板。 */
-function createGraphwarSoldierTemplateBase(mirrored: boolean): SoldierTemplateBase {
-  const fixedPixels = createTemplatePixelsFromGrid(graphwarSoldierFixedColorGrid, mirrored);
-  const foregroundPixels = createTemplatePixelsFromGrid(graphwarSoldierSolidGrid, mirrored);
-  const playerPixels = createTemplatePixelsFromGrid(graphwarSoldierPlayerColorGrid, mirrored);
-  const seedPixels = createTemplatePixelsFromGrid(graphwarSoldierFixedSeedGrid, mirrored);
-  const visualCenterX = mirrored ? graphwarSoldierMirrorVisibleCenterX : graphwarSoldierVisibleCenterX;
+function createGraphwarSoldierTemplateBase(isMirrored: boolean): SoldierTemplateBase {
+  const fixedPixels = createTemplatePixelsFromGrid(graphwarSoldierFixedColorGrid, isMirrored);
+  const foregroundPixels = createTemplatePixelsFromGrid(graphwarSoldierSolidGrid, isMirrored);
+  const playerPixels = createTemplatePixelsFromGrid(graphwarSoldierPlayerColorGrid, isMirrored);
+  const seedPixels = createTemplatePixelsFromGrid(graphwarSoldierFixedSeedGrid, isMirrored);
+  const visualCenterX = isMirrored ? graphwarSoldierMirrorVisibleCenterX : graphwarSoldierVisibleCenterX;
   const visualCenterY = graphwarSoldierVisibleCenterY;
   const templates = graphwarSoldierTemplateNames.map((name) =>
     createGraphwarSoldierTemplate({
       fixedPixels,
       foregroundPixels,
-      mirrored,
+      isMirrored,
       name,
       playerPixels,
       seedPixels,
@@ -1701,7 +1777,7 @@ function createGraphwarSoldierTemplateBase(mirrored: boolean): SoldierTemplateBa
   return {
     fixedPixels,
     foregroundPixels,
-    mirrored,
+    isMirrored,
     playerPixels,
     seedPixels,
     templates,
@@ -1716,7 +1792,7 @@ function createGraphwarSoldierTemplate(options: {
   fixedPixels: SoldierTemplatePixel[];
   foregroundPixels: SoldierTemplatePixel[];
   name: (typeof graphwarSoldierTemplateNames)[number];
-  mirrored: boolean;
+  isMirrored: boolean;
   playerPixels: SoldierTemplatePixel[];
   seedPixels: SoldierTemplatePixel[];
   visualCenterX: number;
@@ -1725,11 +1801,11 @@ function createGraphwarSoldierTemplate(options: {
   return {
     fixedPixels: options.fixedPixels,
     foregroundPixels: options.foregroundPixels,
-    mirrored: options.mirrored,
+    isMirrored: options.isMirrored,
     name: options.name,
     playerPixels: options.playerPixels,
     seedPixels: options.seedPixels,
-    signaturePixels: createSoldierTemplateSignaturePixels(options.name, options.mirrored),
+    signaturePixels: createSoldierTemplateSignaturePixels(options.name, options.isMirrored),
     visualCenterX: options.visualCenterX,
     visualCenterY: options.visualCenterY,
   };
@@ -1751,13 +1827,13 @@ function collectUniqueSoldierSignatureTemplates(templates: SoldierTemplate[]) {
 }
 
 /** 将字符串网格中的模板像素提取成坐标列表，并按需镜像 x。 */
-function createTemplatePixelsFromGrid(grid: readonly string[], mirrored: boolean) {
+function createTemplatePixelsFromGrid(grid: readonly string[], isMirrored: boolean) {
   const pixels: SoldierTemplatePixel[] = [];
   for (let y = 0; y < grid.length; y += 1) {
     for (let x = 0; x < grid[y].length; x += 1) {
       if (grid[y][x] === "#") {
         pixels.push({
-          x: mirrored ? 19 - x : x,
+          x: isMirrored ? 19 - x : x,
           y,
         });
       }
@@ -1767,11 +1843,14 @@ function createTemplatePixelsFromGrid(grid: readonly string[], mirrored: boolean
 }
 
 /** 创建指定动画帧的签名颜色像素，镜像模板需要同步镜像 x。 */
-function createSoldierTemplateSignaturePixels(name: (typeof graphwarSoldierTemplateNames)[number], mirrored: boolean) {
+function createSoldierTemplateSignaturePixels(
+  name: (typeof graphwarSoldierTemplateNames)[number],
+  isMirrored: boolean,
+) {
   // 每帧颜色表与签名坐标按同一固定索引声明；缺项属于源码配置错误，不应伪装成黑色像素。
   return graphwarSoldierAnimationSignatureCoordinates.map(([x, y], index) => ({
     color: graphwarSoldierAnimationSignatureColorsByName[name][index],
-    x: mirrored ? 19 - x : x,
+    x: isMirrored ? 19 - x : x,
     y,
   }));
 }
@@ -2194,8 +2273,8 @@ function collectComponents(mask: Uint8Array, width: number): ComponentBox[] {
 }
 
 /** 从 Graphwar Soldier.x/y 推出屏幕上的 17x17 非透明外框中心，用于视觉选中圈。 */
-function getGraphwarSoldierVisualCenter(sourceCenter: PixelPoint, mirrored: boolean, scale: number) {
-  const visibleCenterX = mirrored ? graphwarSoldierMirrorVisibleCenterX : graphwarSoldierVisibleCenterX;
+function getGraphwarSoldierVisualCenter(sourceCenter: PixelPoint, isMirrored: boolean, scale: number) {
+  const visibleCenterX = isMirrored ? graphwarSoldierMirrorVisibleCenterX : graphwarSoldierVisibleCenterX;
   return createPixelPoint(
     sourceCenter.x + (visibleCenterX - graphwarSoldierCanvasCenter) * scale,
     sourceCenter.y + (graphwarSoldierVisibleCenterY - graphwarSoldierCanvasCenter) * scale,

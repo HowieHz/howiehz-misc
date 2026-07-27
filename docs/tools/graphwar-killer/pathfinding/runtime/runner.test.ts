@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createPixelPoint } from "../../core/types";
-import type { GraphwarOneClickClearIncumbent } from "../one-click-clear/search";
+import type {
+  GraphwarOneClickClearDagEdgeBuildRequest,
+  GraphwarOneClickClearIncumbent,
+} from "../one-click-clear/search";
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
@@ -47,7 +50,9 @@ describe("Graphwar pathfinding runner incumbents", () => {
     const request = getOneClickClearRequest(worker, 0);
 
     expect(request.task.input.isDeleteOptimizationEnabled).toBe(true);
+    expect(request.attempt.backendGeneration).toBe(0);
     worker.emit({
+      attempt: request.attempt,
       id: request.id,
       result: createResult(),
       taskType: "build-one-click-clear-path",
@@ -66,10 +71,18 @@ describe("Graphwar pathfinding runner incumbents", () => {
     const incumbent = createIncumbent("target");
 
     expect(request.task.shouldReportIncumbents).toBe(true);
-    worker.emit({ id: request.id, incumbent, type: "one-click-clear-incumbent" });
+    worker.emit({
+      attempt: { ...request.attempt, attemptId: request.attempt.attemptId + 100 },
+      id: request.id,
+      incumbent: createIncumbent("stale-attempt"),
+      type: "one-click-clear-incumbent",
+    });
+    expect(onIncumbent).not.toHaveBeenCalled();
+    worker.emit({ attempt: request.attempt, id: request.id, incumbent, type: "one-click-clear-incumbent" });
 
     expect(onIncumbent).toHaveBeenCalledWith(incumbent);
     worker.emit({
+      attempt: request.attempt,
       id: request.id,
       result: createResult(),
       taskType: "build-one-click-clear-path",
@@ -93,6 +106,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
     const secondWorker = getWorker(1);
     const secondRequest = getOneClickClearRequest(secondWorker, 0);
     firstWorker.emit({
+      attempt: firstRequest.attempt,
       id: firstRequest.id,
       incumbent: createIncumbent("stale"),
       type: "one-click-clear-incumbent",
@@ -104,6 +118,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
 
     runner.cancel();
     secondWorker.emit({
+      attempt: secondRequest.attempt,
       id: secondRequest.id,
       incumbent: createIncumbent("cancelled"),
       type: "one-click-clear-incumbent",
@@ -113,6 +128,32 @@ describe("Graphwar pathfinding runner incumbents", () => {
     expect(secondProgress).not.toHaveBeenCalled();
     expect(firstWorker.terminated).toBe(true);
     expect(secondWorker.terminated).toBe(true);
+    runner.close();
+  });
+
+  it("ignores malformed messages and errors from a superseded Worker", async () => {
+    const runner = createGraphwarPathfindingRunner();
+    const firstResult = runner.buildOneClickClearPath(createInput());
+    const firstError = firstResult.catch((error: unknown) => error);
+    const firstWorker = getWorker(0);
+
+    const secondResult = runner.buildOneClickClearPath(createInput());
+    const secondWorker = getWorker(1);
+    const secondRequest = getOneClickClearRequest(secondWorker, 0);
+    firstWorker.emit(null);
+    firstWorker.emitMessageError();
+    firstWorker.emitError(new Error("stale Worker failure"));
+
+    expect(isGraphwarPathfindingCancelledError(await firstError)).toBe(true);
+    expect(secondWorker.terminated).toBe(false);
+    secondWorker.emit({
+      attempt: secondRequest.attempt,
+      id: secondRequest.id,
+      result: createResult(),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+    await expect(secondResult).resolves.toEqual(createResult());
     runner.close();
   });
 
@@ -135,12 +176,60 @@ describe("Graphwar pathfinding runner incumbents", () => {
     const request = getOneClickClearRequest(worker, 0);
 
     worker.emit({
+      attempt: request.attempt,
       id: request.id,
       result: {
         result: { elapsedMs: 1, expandedStates: 1, targetIds: [], type: "success" },
         timings: [],
       },
       taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+
+    await expect(resultPromise).rejects.toThrow("invalid response");
+    expect(worker.terminated).toBe(true);
+    runner.close();
+  });
+
+  it("rejects a malformed route result instead of committing a structural cast", async () => {
+    const runner = createGraphwarPathfindingRunner();
+    const resultPromise = runner.findRoute(createRouteInput());
+    const worker = getWorker(0);
+    const request = worker.requests[0];
+    if (!request || request.task.type !== "find-route") {
+      throw new Error("Expected find-route Worker request");
+    }
+
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      result: { searchElapsedMs: 1 },
+      taskType: "find-route",
+      type: "success",
+    });
+
+    await expect(resultPromise).rejects.toThrow("invalid response");
+    expect(worker.terminated).toBe(true);
+    runner.close();
+  });
+
+  it.each([
+    { label: "missing", routes: [{ jobId: 1 }] },
+    { label: "unexpected", routes: [{ jobId: 1 }, { jobId: 2 }, { jobId: 3 }] },
+  ])("rejects a DAG success response with $label job ids", async ({ routes }) => {
+    const runner = createGraphwarPathfindingRunner();
+    const resultPromise = runner.buildOneClickClearDagEdges(createDagEdgeInput());
+    const worker = getWorker(0);
+    const request = worker.requests[0];
+    if (!request || request.task.type !== "build-one-click-clear-dag-edges") {
+      throw new Error("Expected DAG edge Worker request");
+    }
+
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      result: { routes, timings: [] },
+      taskType: "build-one-click-clear-dag-edges",
       type: "success",
     });
 
@@ -156,7 +245,12 @@ describe("Graphwar pathfinding runner incumbents", () => {
     const worker = getWorker(0);
     const request = getOneClickClearRequest(worker, 0);
 
-    worker.emit({ id: request.id, incumbent: { expression: "x" }, type: "one-click-clear-incumbent" });
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      incumbent: { expression: "x" },
+      type: "one-click-clear-incumbent",
+    });
 
     await expect(resultPromise).rejects.toThrow("invalid response");
     expect(onIncumbent).not.toHaveBeenCalled();
@@ -183,6 +277,14 @@ class FakeWorker {
     this.listeners[type].push(listener as never);
   }
 
+  removeEventListener(type: "error" | "message" | "messageerror", listener: EventListener) {
+    const listeners = this.listeners[type];
+    const index = listeners.indexOf(listener as never);
+    if (index >= 0) {
+      listeners.splice(index, 1);
+    }
+  }
+
   postMessage(request: GraphwarPathfindingWorkerRequest) {
     this.requests.push(request);
   }
@@ -196,6 +298,20 @@ class FakeWorker {
     const event = { data: response } as MessageEvent<unknown>;
     for (const listener of this.listeners.message) {
       listener(event);
+    }
+  }
+
+  /** 模拟已终止 Worker 的迟到 messageerror。 */
+  emitMessageError() {
+    for (const listener of this.listeners.messageerror) {
+      listener({} as MessageEvent);
+    }
+  }
+
+  /** 模拟已终止 Worker 的迟到运行时错误。 */
+  emitError(error: Error) {
+    for (const listener of this.listeners.error) {
+      listener({ error, message: error.message } as ErrorEvent);
     }
   }
 }
@@ -215,7 +331,7 @@ function getOneClickClearRequest(worker: FakeWorker, index: number) {
   if (!request || request.task.type !== "build-one-click-clear-path") {
     throw new Error("Expected one-click-clear Worker request");
   }
-  return { id: request.id, task: request.task };
+  return { attempt: request.attempt, id: request.id, task: request.task };
 }
 
 /** 构造无需执行实际搜索的纯数据输入。 */
@@ -244,6 +360,41 @@ function createInput(): GraphwarOneClickClearPathWorkerInput {
     },
     simulationBoundaryExpansion: 0,
     simulationMaskCacheId: 0,
+  };
+}
+
+/** 构造普通几何寻路请求。 */
+function createRouteInput() {
+  return {
+    boundaryExpansion: 0,
+    bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+    boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+    isPreviewEnabled: false,
+    routeMask: new Uint8Array(770 * 450),
+    routeMaskCacheId: 1,
+    routeMode: "visibility-graph" as const,
+    routeTolerancePlanePixels: 2,
+    startPoint: createPixelPoint(100, 225),
+    targetPoint: createPixelPoint(200, 225),
+  };
+}
+
+/** 构造两个稳定 job id 的 DAG edge 请求。 */
+function createDagEdgeInput(): GraphwarOneClickClearDagEdgeBuildRequest {
+  return {
+    boundaryExpansion: 0,
+    bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+    boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+    jobs: [
+      { from: -1, id: 1, startPoint: createPixelPoint(100, 225), targetPoint: createPixelPoint(150, 225), to: 0 },
+      { from: 0, id: 2, startPoint: createPixelPoint(150, 225), targetPoint: createPixelPoint(200, 225), to: 1 },
+    ],
+    routeMask: new Uint8Array(770 * 450),
+    routeMode: "visibility-graph",
+    routeOriginPoint: createPixelPoint(100, 225),
+    routeTolerancePlanePixels: 2,
+    settings: { algorithm: "abs", decimalPlaces: 4, equation: "y", steepness: 67 },
+    workerCount: 1,
   };
 }
 

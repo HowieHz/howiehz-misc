@@ -1118,7 +1118,7 @@ function createGraphwarAgentSoldierBoxes(
         id: `agent-player-${player.playerId}-soldier-${soldier.soldierIndex}`,
         kind: "soldier",
         isLocal: player.isLocal,
-        mirrored: false,
+        isMirrored: false,
         playerId: player.playerId,
         playerIndex: player.playerIndex,
         selectionRadius: visualRadius,

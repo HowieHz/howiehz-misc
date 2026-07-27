@@ -220,6 +220,6 @@ function createPreview(): GraphwarPathfindingPreview {
     acceptedEdges: [],
     bestPath: [],
     candidates: [],
-    mirrored: false,
+    isMirrored: false,
   };
 }

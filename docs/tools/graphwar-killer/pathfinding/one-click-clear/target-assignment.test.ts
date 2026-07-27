@@ -160,7 +160,7 @@ describe("one-click-clear native-column target assignment", () => {
     expect(forcedFractional[0]?.routePoint.x).toBe(421);
   });
 
-  it("keeps forward columns increasing when mirrored screenshot x decreases", () => {
+  it("keeps forward columns increasing when isMirrored screenshot x decreases", () => {
     const mirroredBounds: GraphBounds = { ...bounds, maxX: -25, minX: 25 };
     const assigned = assignGraphwarOneClickClearTargetRoutePoints({
       ...defaultAssignmentOptions,
@@ -242,16 +242,16 @@ describe("one-click-clear native-column target assignment", () => {
   it("keeps bounded exhaustive assignments finite, half-open, strict-circle, and at least one pixel forward", () => {
     for (const scale of [0.5, 1, 2]) {
       const scaledRect = { height: 450 * scale, width: 770 * scale, x: 10.25, y: 20.75 };
-      for (const mirrored of [false, true]) {
+      for (const isMirrored of [false, true]) {
         for (const centerColumn of [0, 1, 7, 384, 763, 769]) {
-          const centerForwardColumn = planeColumnToForwardColumn(centerColumn, mirrored);
+          const centerForwardColumn = planeColumnToForwardColumn(centerColumn, isMirrored);
           for (const hitRadiusPlanePixels of [1.1, 3, 7]) {
             for (const pathTailOffset of [-8, 0, 8]) {
               const pathTailForwardX = centerForwardColumn + pathTailOffset;
-              const pathTailPlaneX = mirrored ? 769 - pathTailForwardX : pathTailForwardX;
+              const pathTailPlaneX = isMirrored ? 769 - pathTailForwardX : pathTailForwardX;
               for (const targetCount of [1, 2, 3]) {
                 const options: GraphwarOneClickClearTargetAssignmentOptions<TestTarget> = {
-                  bounds: mirrored ? { ...bounds, maxX: -25, minX: 25 } : bounds,
+                  bounds: isMirrored ? { ...bounds, maxX: -25, minX: 25 } : bounds,
                   boundsRect: scaledRect,
                   candidates: Array.from({ length: targetCount }, (_, index) =>
                     createTarget(
@@ -297,7 +297,7 @@ function createTarget(
 
 /** 用直接枚举全部 770 列的测试 oracle 计算稳定贪心结果。 */
 function createNaiveAssignment(options: GraphwarOneClickClearTargetAssignmentOptions<TestTarget>) {
-  const mirrored = options.bounds.maxX < options.bounds.minX;
+  const isMirrored = options.bounds.maxX < options.bounds.minX;
   const prepared = options.candidates
     .filter(
       (candidate) =>
@@ -311,8 +311,8 @@ function createNaiveAssignment(options: GraphwarOneClickClearTargetAssignmentOpt
     .map((candidate) => ({
       candidate,
       preferredForwardColumn: planeColumnToForwardColumn(
-        imageXToNearestPlaneColumn(candidate.center.x, options.boundsRect, mirrored),
-        mirrored,
+        imageXToNearestPlaneColumn(candidate.center.x, options.boundsRect, isMirrored),
+        isMirrored,
       ),
     }))
     .sort(
@@ -322,7 +322,7 @@ function createNaiveAssignment(options: GraphwarOneClickClearTargetAssignmentOpt
         left.candidate.sourceIndex - right.candidate.sourceIndex,
     );
   const result: ReturnType<typeof summarizeAssignment>[] = [];
-  let previousForwardX = planeXToForwardX(imageXToPlaneX(options.pathTail.x, options.boundsRect), mirrored);
+  let previousForwardX = planeXToForwardX(imageXToPlaneX(options.pathTail.x, options.boundsRect), isMirrored);
 
   let groupStart = 0;
   while (groupStart < prepared.length) {
@@ -343,7 +343,7 @@ function createNaiveAssignment(options: GraphwarOneClickClearTargetAssignmentOpt
       const minimumForwardColumn = Math.max(0, Math.ceil(previousForwardX + 1));
       const legalColumns: { forwardColumn: number; imageX: number }[] = [];
       for (let forwardColumn = minimumForwardColumn; forwardColumn < 770; forwardColumn += 1) {
-        const imageX = planeXToImageX(forwardColumnToPlaneColumn(forwardColumn, mirrored), options.boundsRect);
+        const imageX = planeXToImageX(forwardColumnToPlaneColumn(forwardColumn, isMirrored), options.boundsRect);
         if (
           imageX >= options.usableRect.x &&
           imageX < options.usableRect.x + options.usableRect.width &&
@@ -376,11 +376,11 @@ function expectAssignmentsValid(
   options: Omit<GraphwarOneClickClearTargetAssignmentOptions<TestTarget>, "candidates">,
   assigned: readonly GraphwarOneClickClearAssignedTarget<TestTarget>[],
 ) {
-  const mirrored = options.bounds.maxX < options.bounds.minX;
-  let previousForwardX = planeXToForwardX(imageXToPlaneX(options.pathTail.x, options.boundsRect), mirrored);
+  const isMirrored = options.bounds.maxX < options.bounds.minX;
+  let previousForwardX = planeXToForwardX(imageXToPlaneX(options.pathTail.x, options.boundsRect), isMirrored);
   for (const target of assigned) {
     const planeX = imageXToPlaneX(target.routePoint.x, options.boundsRect);
-    const forwardX = planeXToForwardX(planeX, mirrored);
+    const forwardX = planeXToForwardX(planeX, isMirrored);
     expect(Number.isFinite(target.routePoint.x)).toBe(true);
     expect(planeX).toBeCloseTo(Math.round(planeX), 12);
     expect(target.routePoint.x).toBeGreaterThanOrEqual(options.usableRect.x);

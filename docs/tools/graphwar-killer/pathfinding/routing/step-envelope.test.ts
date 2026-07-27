@@ -98,7 +98,7 @@ describe("strict Step envelope", () => {
     );
   });
 
-  it("keeps both cells on native grid lines after real and mirrored Graph round trips", () => {
+  it("keeps both cells on native grid lines after real and isMirrored Graph round trips", () => {
     const realBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
     for (const [gridX, gridY] of [
       [1, 1],
@@ -126,7 +126,7 @@ describe("strict Step envelope", () => {
     );
   });
 
-  it("uses the same closed-domain query for empty and horizontally mirrored maps", () => {
+  it("uses the same closed-domain query for empty and horizontally isMirrored maps", () => {
     const result = createGraphwarStepEnvelope({
       centerX: 200,
       endX: 300,

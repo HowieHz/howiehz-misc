@@ -125,6 +125,9 @@ importers:
       compat-finder:
         specifier: workspace:*
         version: link:../packages/compat-finder
+      graphwar-killer-wasm:
+        specifier: workspace:*
+        version: link:../packages/graphwar-killer-wasm
       lunar-javascript:
         specifier: ^1.7.7
         version: 1.7.7
@@ -150,6 +153,9 @@ importers:
       pagefind:
         specifier: ^1.5.2
         version: 1.5.2
+      vite:
+        specifier: ^8.1.3
+        version: 8.1.3(@types/node@26.1.1)(less@4.6.7)
       vitepress:
         specifier: 2.0.0-alpha.18
         version: 2.0.0-alpha.18(@types/node@26.1.1)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.16)(typescript@6.0.3)
@@ -179,6 +185,12 @@ importers:
         version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.3)
 
   packages/graphwar-agent: {}
+
+  packages/graphwar-killer-wasm:
+    devDependencies:
+      assemblyscript:
+        specifier: 0.28.20
+        version: 0.28.20
 
 packages:
 
@@ -1930,6 +1942,11 @@ packages:
     resolution: {integrity: sha512-HGyxoOTYUyCM6stUe6EJgnd4EoewAI7zMdfqO+kGjnlZmBDz/cR5pf8r/cR4Wq60sL/p0IkcjUEEPwS3GFrIyw==}
     engines: {node: '>=8'}
 
+  assemblyscript@0.28.20:
+    resolution: {integrity: sha512-5PM7GZpvcLypHcLmi30aP8mqm5HjU+LL3BdV1xDyA3USGtL2w+iMiUnhtH+vW8+2kOuHlAyPu7M+QgyEw5he1g==}
+    engines: {node: '>=20', npm: '>=10'}
+    hasBin: true
+
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
@@ -1990,6 +2007,10 @@ packages:
   better-path-resolve@1.0.0:
     resolution: {integrity: sha512-pbnl5XzGBdrFU/wT4jqmJVPn2B6UHPBOhzMQkY/SPUPB6QtUXtmBHBIwCbXJol93mOpGMnQyP/+BB19q04xj7g==}
     engines: {node: '>=4'}
+
+  binaryen@131.0.0-nightly.20260721:
+    resolution: {integrity: sha512-AAQIkhfbYXh4FBObwBrlO+5L+6Rp6OOMOjh6AdT0M+GLNLyrwKWgtW+EzmizNgx9CWDfTJPfDtKoZi62QESbtg==}
+    hasBin: true
 
   birpc@2.9.0:
     resolution: {integrity: sha512-KrayHS5pBi69Xi9JmvoqrIgYGDkD6mcSe/i6YKi3w5kekCLzrX4+nawcXqrj2tIp50Kw/mT/s3p+GVK0A0sKxw==}
@@ -2902,6 +2923,9 @@ packages:
 
   lodash.truncate@4.4.2:
     resolution: {integrity: sha512-jttmRe7bRse52OsWIMDLaXxWqRAmtIUccAQ3garviCqJjafXOfNMO0yMfNpdD6zbGaTU0P5Nz7e7gAT6cKmJRw==}
+
+  long@5.3.2:
+    resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
 
   longest-streak@3.1.0:
     resolution: {integrity: sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==}
@@ -5590,6 +5614,11 @@ snapshots:
 
   array-union@2.1.0: {}
 
+  assemblyscript@0.28.20:
+    dependencies:
+      binaryen: 131.0.0-nightly.20260721
+      long: 5.3.2
+
   assertion-error@2.0.1: {}
 
   astral-regex@2.0.0: {}
@@ -5626,6 +5655,8 @@ snapshots:
   better-path-resolve@1.0.0:
     dependencies:
       is-windows: 1.0.2
+
+  binaryen@131.0.0-nightly.20260721: {}
 
   birpc@2.9.0: {}
 
@@ -6511,6 +6542,8 @@ snapshots:
   lodash.startcase@4.4.0: {}
 
   lodash.truncate@4.4.2: {}
+
+  long@5.3.2: {}
 
   longest-streak@3.1.0: {}
 

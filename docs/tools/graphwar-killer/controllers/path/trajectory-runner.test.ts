@@ -12,7 +12,7 @@ import { createGraphwarTrajectoryRunner, isGraphwarTrajectoryCancelledError } fr
 const workerOutcome: GraphwarTrajectoryCalculationOutcome = {
   message: "test outcome",
   ok: false,
-  stage: "formula",
+  stage: "trajectory",
 };
 
 describe("Graphwar main trajectory runner", () => {
@@ -26,6 +26,7 @@ describe("Graphwar main trajectory runner", () => {
     expect(workers).toHaveLength(2);
     expect(workers[0].requests).toHaveLength(1);
     expect(workers[1].requests).toHaveLength(0);
+    expect(workers[0].requests[0].attempt).toEqual({ attemptId: 1, backendGeneration: 0, outerTaskId: 1 });
     workers[0].respond(workerOutcome);
     await expect(resultPromise).resolves.toMatchObject({ outcome: workerOutcome });
     runner.close();
@@ -53,14 +54,14 @@ describe("Graphwar main trajectory runner", () => {
     const runner = createGraphwarTrajectoryRunner({ createWorker: createFakeWorkerFactory(workers) });
     const first = runner.run(createSimulatorInput("1"));
     const firstCancelled = first.catch((error: unknown) => error);
-    const firstRequestId = workers[0].requests[0].id;
+    const firstRequest = workers[0].requests[0];
     const second = runner.run(createSimulatorInput("2"));
     let isSecondSettled = false;
     void second.finally(() => {
       isSecondSettled = true;
     });
 
-    workers[0].emitResponse({ id: firstRequestId, outcome: workerOutcome });
+    workers[0].emitResponse({ attempt: firstRequest.attempt, id: firstRequest.id, outcome: workerOutcome });
     await Promise.resolve();
 
     expect(isGraphwarTrajectoryCancelledError(await firstCancelled)).toBe(true);
@@ -175,7 +176,8 @@ describe("Graphwar main trajectory runner", () => {
     const runner = createGraphwarTrajectoryRunner({ createWorker: createFakeWorkerFactory(workers) });
     const result = runner.run(createSimulatorInput());
 
-    workers[0].emitRawResponse({ id: workers[0].requests[0].id });
+    const request = workers[0].requests[0];
+    workers[0].emitRawResponse({ attempt: request.attempt, id: request.id });
 
     expect(workers[0].terminated).toBe(true);
     expect(workers[1].requests).toHaveLength(1);
@@ -189,8 +191,10 @@ describe("Graphwar main trajectory runner", () => {
     const runner = createGraphwarTrajectoryRunner({ createWorker: createFakeWorkerFactory(workers) });
     const result = runner.run(createSimulatorInput());
 
+    const request = workers[0].requests[0];
     workers[0].emitRawResponse({
-      id: workers[0].requests[0].id,
+      attempt: request.attempt,
+      id: request.id,
       outcome: { ok: true, result: {} },
     });
 
@@ -201,16 +205,117 @@ describe("Graphwar main trajectory runner", () => {
     runner.close();
   });
 
+  it("retries success responses with invalid trajectory snapshots or path-error domains", async () => {
+    for (const invalidResult of [
+      { curvePoints: "", trajectoryPoints: [{ x: Number.NaN, y: 0 }] },
+      { curvePoints: "", pathError: -1, trajectoryPoints: [] },
+    ]) {
+      const workers: FakeWorker[] = [];
+      const runner = createGraphwarTrajectoryRunner({ createWorker: createFakeWorkerFactory(workers) });
+      const result = runner.run(createSimulatorInput());
+      const request = workers[0].requests[0];
+
+      workers[0].emitRawResponse({
+        attempt: request.attempt,
+        id: request.id,
+        outcome: { ok: true, result: invalidResult },
+      });
+
+      expect(workers[0].terminated).toBe(true);
+      workers[1].respond(workerOutcome);
+      await expect(result).resolves.toMatchObject({ outcome: workerOutcome });
+      runner.close();
+    }
+  });
+
+  it.each([
+    {
+      label: "success/failure fields mixed",
+      outcome: { message: "mixed", ok: true, result: { curvePoints: "", trajectoryPoints: [] } },
+    },
+    {
+      label: "simulator carrying solver-only evidence",
+      outcome: {
+        ok: true,
+        result: { curvePoints: "", formulaResult: { expression: "x", terms: [] }, trajectoryPoints: [] },
+      },
+    },
+    {
+      label: "failure carrying a result",
+      outcome: { message: "mixed", ok: false, result: {}, stage: "trajectory" },
+    },
+  ])("retries a $label outcome", async ({ outcome }) => {
+    const workers: FakeWorker[] = [];
+    const runner = createGraphwarTrajectoryRunner({ createWorker: createFakeWorkerFactory(workers) });
+    const result = runner.run(createSimulatorInput());
+    const request = workers[0].requests[0];
+
+    workers[0].emitRawResponse({ attempt: request.attempt, id: request.id, outcome });
+
+    expect(workers[0].terminated).toBe(true);
+    workers[1].respond(workerOutcome);
+    await expect(result).resolves.toMatchObject({ outcome: workerOutcome });
+    runner.close();
+  });
+
+  it("rejects split second-order launch-angle evidence", async () => {
+    const workers: FakeWorker[] = [];
+    const runner = createGraphwarTrajectoryRunner({ createWorker: createFakeWorkerFactory(workers) });
+    const input = createSolverInput(new Uint8Array([1, 2, 3]));
+    input.settings.equation = "ddy";
+    const result = runner.run(input);
+    const request = workers[0].requests[0];
+
+    workers[0].emitRawResponse({
+      attempt: request.attempt,
+      id: request.id,
+      outcome: {
+        ok: true,
+        result: {
+          curvePoints: "",
+          formulaResult: { expression: "x", terms: [] },
+          secondOrderLaunchAngle: { radians: 0 },
+          trajectoryPoints: [],
+        },
+      },
+    });
+
+    expect(workers[0].terminated).toBe(true);
+    workers[1].respond(workerOutcome);
+    await expect(result).resolves.toMatchObject({ outcome: workerOutcome });
+    runner.close();
+  });
+
   it("retries a current response with the wrong request id instead of leaving the task pending", async () => {
     const workers: FakeWorker[] = [];
     const runner = createGraphwarTrajectoryRunner({ createWorker: createFakeWorkerFactory(workers) });
     const result = runner.run(createSimulatorInput());
-    const requestId = workers[0].requests[0].id;
+    const request = workers[0].requests[0];
 
-    workers[0].emitResponse({ id: requestId + 1, outcome: workerOutcome });
+    workers[0].emitResponse({ attempt: request.attempt, id: request.id + 1, outcome: workerOutcome });
 
     expect(workers[0].terminated).toBe(true);
     expect(workers[1].requests).toHaveLength(1);
+    workers[1].respond(workerOutcome);
+    await expect(result).resolves.toMatchObject({ outcome: workerOutcome });
+    runner.close();
+  });
+
+  it("retries a response whose backend attempt does not match the active task", async () => {
+    const workers: FakeWorker[] = [];
+    const runner = createGraphwarTrajectoryRunner({ createWorker: createFakeWorkerFactory(workers) });
+    const result = runner.run(createSimulatorInput());
+    const request = workers[0].requests[0];
+
+    workers[0].emitResponse({
+      attempt: { ...request.attempt, attemptId: request.attempt.attemptId + 1 },
+      id: request.id,
+      outcome: workerOutcome,
+    });
+
+    expect(workers[0].terminated).toBe(true);
+    expect(workers[1].requests).toHaveLength(1);
+    expect(workers[1].requests[0].attempt).toEqual(request.attempt);
     workers[1].respond(workerOutcome);
     await expect(result).resolves.toMatchObject({ outcome: workerOutcome });
     runner.close();
@@ -268,7 +373,7 @@ class FakeWorker {
     if (!request) {
       throw new Error("Worker has no pending request");
     }
-    this.emitResponse({ id: request.id, outcome });
+    this.emitResponse({ attempt: request.attempt, id: request.id, outcome });
   }
 
   emitResponse(response: GraphwarTrajectoryCalculationWorkerResponse) {

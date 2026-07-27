@@ -42,7 +42,7 @@ const vueLanguageOptions = {
 };
 
 export default defineConfig(
-  globalIgnores(["public/assets/lib/**/*"]),
+  globalIgnores(["public/assets/lib/**/*", "packages/graphwar-killer-wasm/assembly/**/*.ts"]),
   includeIgnoreFile(gitignorePath),
   js.configs.recommended,
   ...pluginVue.configs["flat/recommended"],
@@ -71,6 +71,8 @@ export default defineConfig(
       "packages/compat-finder/tsdown.config.ts",
       "packages/compat-finder/bin/**/*.mjs",
       "packages/compat-finder/__tests__/**/*.ts",
+      "packages/graphwar-killer-wasm/scripts/**/*.mjs",
+      "packages/graphwar-killer-wasm/test/**/*.mjs",
       "eslint.config.js",
       "stylelint.config.js",
       ".github/scripts/*.ts",

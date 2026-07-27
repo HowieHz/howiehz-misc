@@ -187,7 +187,7 @@ describe("Graphwar pathfinding result cache keys", () => {
           hitRadius: 7,
           id: "friendly",
           kind: "soldier",
-          mirrored: false,
+          isMirrored: false,
           selectionRadius: 7,
           sourceCenterX: 325,
           sourceCenterY: 341,

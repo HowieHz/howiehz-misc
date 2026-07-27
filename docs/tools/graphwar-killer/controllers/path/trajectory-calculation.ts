@@ -1,5 +1,14 @@
+import { isGraphwarBackendAttemptIdentity, type GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
+import {
+  isGraphwarTrajectoryBounds,
+  isGraphwarTrajectoryBoundsRect,
+  isGraphwarTrajectoryCollisionSettings,
+  isGraphwarTrajectoryExpressionParserOptions,
+  isGraphwarTrajectoryFormulaSettings,
+  isGraphwarTrajectoryPoint,
+} from "../../formula/trajectory/input-validation";
 import {
   createGraphwarTrajectoryFormulaMode,
   getGraphwarTrajectoryLaunchAngle,
@@ -36,10 +45,11 @@ export type GraphwarTrajectoryCalculationInput =
       points: readonly GraphPoint[];
       /** 当前公式生成和采样设置。 */
       settings: GraphwarTrajectoryFormulaSettings;
-      /** 最后一个路径点对应的截图像素目标。 */
-      targetPoint?: PixelPoint;
-      /** 目标命中半径，单位为截图像素。 */
-      targetHitRadiusPixels?: number;
+      /** 最后一个路径点及其命中半径必须作为同一份目标证据出现。 */
+      target?: {
+        hitRadiusPixels: number;
+        point: PixelPoint;
+      };
     })
   | (GraphwarTrajectoryCalculationInputBase & {
       /** 直接模拟用户输入的表达式。 */
@@ -64,10 +74,11 @@ export interface GraphwarTrajectoryCalculationResult {
   trajectoryPoints: readonly PixelPoint[];
   /** 求解器生成的最终公式；模拟器不设置。 */
   formulaResult?: FormulaResult;
-  /** Y''= 求解器建议的发射角，单位为度。 */
-  secondOrderLaunchAngleDegrees?: number;
-  /** Y''= 最终回放实际消费的发射角，单位为弧度；Agent 提交必须原样复用。 */
-  secondOrderLaunchAngleRadians?: number;
+  /** Y''= 显示度数与最终回放弧度必须作为同一份发射证据出现。 */
+  secondOrderLaunchAngle?: {
+    degrees: number;
+    radians: number;
+  };
   /** 普通控制点的最大纵向误差，单位为 Graphwar 原始平面像素；没有质量点时省略。 */
   pathError?: number;
   /** 显式使用两位小数执行角的 Y''= 回放没有命中目标；不阻止最佳努力公式输出。 */
@@ -93,14 +104,37 @@ export type GraphwarTrajectoryCalculationOutcome =
 
 /** 主线程发送给轨迹 Worker 的带编号请求。 */
 export interface GraphwarTrajectoryCalculationWorkerRequest {
+  /** Stable outer task and currently authoritative backend attempt. */
+  attempt: GraphwarBackendAttemptIdentity;
   id: number;
   input: GraphwarTrajectoryCalculationInput;
 }
 
 /** 轨迹 Worker 返回给主线程的带编号结果。 */
 export interface GraphwarTrajectoryCalculationWorkerResponse {
+  /** Exact request attempt; stale or mismatched results cannot commit. */
+  attempt: GraphwarBackendAttemptIdentity;
   id: number;
   outcome: GraphwarTrajectoryCalculationOutcome;
+}
+
+/** 从 malformed request 中只恢复可安全回传的完整 Worker 身份。 */
+export function getGraphwarTrajectoryCalculationWorkerRequestIdentity(value: unknown) {
+  if (!isRecord(value) || !isGraphwarBackendAttemptIdentity(value.attempt) || !isNonNegativeSafeInteger(value.id)) {
+    return undefined;
+  }
+  return { attempt: value.attempt, id: value.id };
+}
+
+/** 在 trajectory Worker 唯一入口验证完整 request 和必要数值/TypedArray 边界。 */
+export function isGraphwarTrajectoryCalculationWorkerRequest(
+  value: unknown,
+): value is GraphwarTrajectoryCalculationWorkerRequest {
+  return getGraphwarTrajectoryCalculationWorkerRequestIdentity(value) !== undefined &&
+    isRecord(value) &&
+    "input" in value
+    ? isGraphwarTrajectoryCalculationInput(value.input)
+    : false;
 }
 
 /** 一次完成公式解算和主轨迹模拟；保持纯函数，供 Worker 与主线程降级共用。 */
@@ -119,7 +153,6 @@ function calculateSolverTrajectory(
 ): GraphwarTrajectoryCalculationOutcome {
   let resolved: ReturnType<typeof resolveGraphwarTrajectory>;
   let launchAngleRadians: number;
-  const isTargetCircleConfigured = input.targetPoint !== undefined && input.targetHitRadiusPixels !== undefined;
   try {
     if (input.points.length < 2) {
       throw new Error("At least two solver points are required.");
@@ -132,14 +165,14 @@ function calculateSolverTrajectory(
       collectVisiblePixels: true,
       formulaMode,
       points: input.points,
-      qualityPoints: input.points.slice(1, isTargetCircleConfigured ? -1 : input.points.length),
+      qualityPoints: input.points.slice(1, input.target ? -1 : input.points.length),
       soldierCenter: input.points[0],
       // 主轨迹必须继续画到自然停止点；目标只记录首次命中，不能为了统计截短曲线。
       stopOnTargetsComplete: false,
-      ...(input.targetPoint && input.targetHitRadiusPixels !== undefined
+      ...(input.target
         ? {
-            targetHitRadiusPixels: input.targetHitRadiusPixels,
-            targetPoint: input.targetPoint,
+            targetHitRadiusPixels: input.target.hitRadiusPixels,
+            targetPoint: input.target.point,
           }
         : {}),
     });
@@ -160,10 +193,9 @@ function calculateSolverTrajectory(
       sampleResult.obstacleHitIndex >= 0 ? sampleResult.visiblePixels[sampleResult.obstacleHitIndex] : undefined;
     // 目标圆右边界前的碰撞会阻止继续命中；越过该边界后的碰撞不能掩盖真实轨迹偏差。
     const hasTargetMissWarning =
-      input.targetPoint !== undefined &&
-      input.targetHitRadiusPixels !== undefined &&
+      input.target !== undefined &&
       sampleResult.targetHitIndex < 0 &&
-      (!obstacleHitPoint || obstacleHitPoint.x >= input.targetPoint.x + input.targetHitRadiusPixels);
+      (!obstacleHitPoint || obstacleHitPoint.x >= input.target.point.x + input.target.hitRadiusPixels);
     // 只有显式使用两位小数执行角的 Y''= 保留最佳努力公式；完整精度结果和其它方程都严格命中。
     if (
       hasTargetMissWarning &&
@@ -188,8 +220,10 @@ function calculateSolverTrajectory(
         ...(sampleResult.pathError === undefined ? {} : { pathError: sampleResult.pathError }),
         ...(Number.isFinite(launchAngleRadians)
           ? {
-              secondOrderLaunchAngleDegrees: (launchAngleRadians * 180) / Math.PI,
-              secondOrderLaunchAngleRadians: launchAngleRadians,
+              secondOrderLaunchAngle: {
+                degrees: (launchAngleRadians * 180) / Math.PI,
+                radians: launchAngleRadians,
+              },
             }
           : {}),
         ...(hasTargetMissWarning ? { hasTargetMissWarning: true } : {}),
@@ -271,4 +305,50 @@ function createFailureOutcome(
     ok: false,
     stage,
   };
+}
+
+function isGraphwarTrajectoryCalculationInput(value: unknown): value is GraphwarTrajectoryCalculationInput {
+  if (
+    !isRecord(value) ||
+    !isGraphwarTrajectoryBounds(value.bounds) ||
+    !isGraphwarTrajectoryBoundsRect(value.boundsRect) ||
+    (value.collision !== undefined && !isGraphwarTrajectoryCollisionSettings(value.collision))
+  ) {
+    return false;
+  }
+  if (value.type === "simulator") {
+    return (
+      (value.equation === "y" || value.equation === "dy" || value.equation === "ddy") &&
+      typeof value.expression === "string" &&
+      (value.launchAngleRadians === undefined || isFiniteNumber(value.launchAngleRadians)) &&
+      (value.parser === undefined || isGraphwarTrajectoryExpressionParserOptions(value.parser)) &&
+      isGraphwarTrajectoryPoint(value.soldierCenter)
+    );
+  }
+  if (value.type !== "solver" || !Array.isArray(value.points) || !value.points.every(isGraphwarTrajectoryPoint)) {
+    return false;
+  }
+  return (
+    isGraphwarTrajectoryFormulaSettings(value.settings) &&
+    (value.target === undefined ||
+      (isRecord(value.target) &&
+        isGraphwarTrajectoryPoint(value.target.point) &&
+        isNonNegativeFiniteNumber(value.target.hitRadiusPixels)))
+  );
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

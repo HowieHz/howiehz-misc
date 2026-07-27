@@ -1,3 +1,9 @@
+import {
+  graphwarBackendAttemptIdentitiesAreEqual,
+  isGraphwarBackendAttemptIdentity,
+} from "../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { createGraphPoint, type ReadonlyValue as ReadonlyRef } from "../../core/types";
 import type {
   GraphwarLiveClickPreviewRenderInput,
@@ -21,12 +27,11 @@ export function isGraphwarLiveClickPreviewCancelledError(error: unknown) {
 
 /** 实时预览任务的换代、取消和结算状态。 */
 interface PendingLiveClickPreviewTask {
-  cancelled: boolean;
-  generation: number;
+  attempt: GraphwarBackendAttemptIdentity;
   id: number;
   reject: (reason?: unknown) => void;
   resolve: (value: GraphwarLiveClickPreviewRenderResult) => void;
-  settled: boolean;
+  isSettled: boolean;
 }
 
 /** 实时预览 runner 的并行 Worker 数配置。 */
@@ -45,34 +50,40 @@ export const GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM = 16;
 
 /** 创建实时预览 runner；常驻 Worker 并行处理已开始任务，等待槽只保留最新落点。 */
 export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickPreviewRunnerOptions) {
+  const attemptGate = createGraphwarBackendAttemptGate();
   const workerSlots: LiveClickPreviewWorkerSlot[] = [];
-  let generation = 0;
   let latestSettledRequestId = 0;
   // 单个 runner 内的请求全序号；JS 安全整数空间足够一个浏览器会话使用，不做回绕分支。
   let nextRequestId = 1;
   let queuedTask: PendingLiveClickPreviewTask | undefined;
   let queuedTaskInput: GraphwarLiveClickPreviewRenderInput | undefined;
-  let workerUnavailable = false;
+  let canUseWorkers = true;
 
   /** 复制可变输入外壳，并立即调度或替换等待中的预览任务。 */
   function render(input: GraphwarLiveClickPreviewRenderInput) {
     const requestId = nextRequestId;
     nextRequestId += 1;
+    const attempt = attemptGate.beginOuterTask(0);
     return new Promise<GraphwarLiveClickPreviewRenderResult>((resolve, reject) => {
       const task: PendingLiveClickPreviewTask = {
-        cancelled: false,
-        generation,
+        attempt,
         id: requestId,
         reject,
         resolve,
-        settled: false,
+        isSettled: false,
       };
-      if (isWorkerUnavailable()) {
+      if (!canUseWorkerPool()) {
         settleTaskAsResult(task, createGuideOnlyRenderResult());
         return;
       }
 
-      const taskInput = cloneRenderInput(input);
+      let taskInput: GraphwarLiveClickPreviewRenderInput;
+      try {
+        taskInput = cloneRenderInput(input);
+      } catch (error) {
+        settleTaskAsError(task, error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
       if (startTaskIfPossible(task, taskInput)) {
         return;
       }
@@ -88,7 +99,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   function startTaskIfPossible(task: PendingLiveClickPreviewTask, input: GraphwarLiveClickPreviewRenderInput) {
     const slot = claimIdleWorkerSlot();
     if (!slot) {
-      if (workerUnavailable) {
+      if (!canUseWorkers) {
         settleTaskAsResult(task, createGuideOnlyRenderResult());
         return true;
       }
@@ -98,6 +109,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     slot.activeTask = task;
     try {
       slot.worker.postMessage({
+        attempt: task.attempt,
         id: task.id,
         input,
       } satisfies GraphwarLiveClickPreviewWorkerRequest);
@@ -111,7 +123,6 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
 
   /** 取消当前预览上下文，并保留没有承载任务的热 Worker。 */
   function cancel() {
-    generation += 1;
     latestSettledRequestId = nextRequestId - 1;
     settleTaskAsCancelled(queuedTask);
     queuedTask = undefined;
@@ -140,7 +151,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
 
   /** 在并行上限内复用空闲槽，必要时懒创建 Worker。 */
   function claimIdleWorkerSlot() {
-    if (isWorkerUnavailable()) {
+    if (!canUseWorkerPool()) {
       return undefined;
     }
     if (getActiveTaskCount() >= getWorkerCountLimit()) {
@@ -161,7 +172,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     } catch {
       // 首个 Worker 无法构造时多半是 CSP/WebView/module worker 限制；只保留外层引导虚线，避免退回主线程采样卡住交互。
       if (workerSlots.length === 0) {
-        workerUnavailable = true;
+        canUseWorkers = false;
       }
       return undefined;
     }
@@ -186,7 +197,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
       return;
     }
     const response: unknown = event.data;
-    if (!isWorkerResponseForRequest(response, task.id)) {
+    if (!isWorkerResponseForTask(response, task)) {
       // 当前 slot 同时只处理一个请求；id/envelope 不匹配说明 Worker 协议已失效，沿用现有降级路径。
       handleWorkerFailure(slot);
       return;
@@ -210,7 +221,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     }
 
     // 异步加载/运行失败通常表示当前环境跑不了这个 Worker；降级为外层虚线，不回主线程采样。
-    workerUnavailable = true;
+    canUseWorkers = false;
     for (const workerSlot of workerSlots) {
       if (workerSlot.activeTask) {
         settleTaskAsResult(workerSlot.activeTask, createGuideOnlyRenderResult());
@@ -242,25 +253,27 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     trimIdleWorkerSlots();
   }
 
-  /** 只允许当前 generation 中最新完成的结果成功写回。 */
+  /** 只允许当前 attempt 中尚未被更新结果越过的任务成功写回。 */
   function settleTaskAsResult(task: PendingLiveClickPreviewTask, result: GraphwarLiveClickPreviewRenderResult) {
-    if (task.generation !== generation || task.cancelled || task.id < latestSettledRequestId) {
+    if (!canTaskCommit(task)) {
       settleTaskAsCancelled(task);
       return;
     }
 
     latestSettledRequestId = task.id;
+    attemptGate.completeOuterTask(task.attempt);
     settleTask(task, () => task.resolve(result));
   }
 
   /** 只向仍然权威的任务传播渲染错误。 */
   function settleTaskAsError(task: PendingLiveClickPreviewTask, error: Error) {
-    if (task.generation !== generation || task.cancelled || task.id < latestSettledRequestId) {
+    if (!canTaskCommit(task)) {
       settleTaskAsCancelled(task);
       return;
     }
 
     latestSettledRequestId = task.id;
+    attemptGate.completeOuterTask(task.attempt);
     settleTask(task, () => task.reject(error));
   }
 
@@ -270,17 +283,24 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
       return;
     }
 
-    task.cancelled = true;
+    if (attemptGate.canCommit(task.attempt)) {
+      attemptGate.cancelOuterTask(task.attempt);
+    }
     settleTask(task, () => task.reject(new GraphwarLiveClickPreviewCancelledError()));
+  }
+
+  /** 每次终态提交前同时检查 latest-wins 顺序和完整 attempt authority。 */
+  function canTaskCommit(task: PendingLiveClickPreviewTask) {
+    return !task.isSettled && task.id >= latestSettledRequestId && attemptGate.canCommit(task.attempt);
   }
 
   /** 保证每个预览任务的 Promise 只结算一次。 */
   function settleTask(task: PendingLiveClickPreviewTask, callback: () => void) {
-    if (task.settled) {
+    if (task.isSettled) {
       return;
     }
 
-    task.settled = true;
+    task.isSettled = true;
     callback();
   }
 
@@ -331,12 +351,12 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   }
 
   /** 记录当前环境是否已确定无法使用实时预览 Worker。 */
-  function isWorkerUnavailable() {
-    if (workerUnavailable || typeof Worker === "undefined") {
-      workerUnavailable = true;
-      return true;
+  function canUseWorkerPool() {
+    if (!canUseWorkers || typeof Worker === "undefined") {
+      canUseWorkers = false;
+      return false;
     }
-    return false;
+    return true;
   }
 
   return {
@@ -418,15 +438,19 @@ function cloneRenderInput(input: GraphwarLiveClickPreviewRenderInput): GraphwarL
 }
 
 /** 验证响应属于预期请求且满足成功或失败协议。 */
-function isWorkerResponseForRequest(
+function isWorkerResponseForTask(
   value: unknown,
-  requestId: number,
+  task: PendingLiveClickPreviewTask,
 ): value is GraphwarLiveClickPreviewWorkerResponse {
   if (!value || typeof value !== "object") {
     return false;
   }
   const response = value as Record<string, unknown>;
-  if (response.id !== requestId) {
+  if (
+    !isGraphwarBackendAttemptIdentity(response.attempt) ||
+    !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, task.attempt) ||
+    response.id !== task.id
+  ) {
     return false;
   }
   if (response.type === "error") {
@@ -436,5 +460,10 @@ function isWorkerResponseForRequest(
     return false;
   }
   const result = response.result as Record<string, unknown>;
-  return typeof result.curvePoints === "string" && typeof result.elapsedMs === "number";
+  return (
+    typeof result.curvePoints === "string" &&
+    typeof result.elapsedMs === "number" &&
+    Number.isFinite(result.elapsedMs) &&
+    result.elapsedMs >= 0
+  );
 }

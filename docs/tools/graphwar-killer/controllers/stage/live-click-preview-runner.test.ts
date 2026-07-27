@@ -25,6 +25,11 @@ describe("live click preview runner", () => {
     const firstCancelled = expect(first).rejects.toThrow("cancelled");
     const secondCancelled = expect(second).rejects.toThrow("cancelled");
     expect(FakeWorker.instances).toHaveLength(2);
+    expect(FakeWorker.instances[0].requests[0].attempt).toEqual({
+      attemptId: 1,
+      backendGeneration: 0,
+      outerTaskId: 1,
+    });
 
     runner.cancel();
 
@@ -57,19 +62,45 @@ describe("live click preview runner", () => {
     runner.close();
   });
 
-  it.each([
-    { label: "null envelope", response: null },
+  it.each<{
+    createResponse: (request: GraphwarLiveClickPreviewWorkerRequest) => unknown;
+    label: string;
+  }>([
+    { createResponse: () => null, label: "null envelope" },
     {
+      createResponse: (request) => ({
+        attempt: request.attempt,
+        id: 999,
+        result: { curvePoints: "wrong curve", elapsedMs: 10 },
+        type: "success",
+      }),
       label: "wrong request id",
-      response: { id: 999, result: { curvePoints: "wrong curve", elapsedMs: 10 }, type: "success" },
     },
-  ])("falls back without hanging on $label", async ({ response }) => {
+    {
+      createResponse: (request) => ({
+        attempt: { ...request.attempt, outerTaskId: request.attempt.outerTaskId + 1 },
+        id: request.id,
+        result: { curvePoints: "wrong curve", elapsedMs: 10 },
+        type: "success",
+      }),
+      label: "wrong backend attempt",
+    },
+    {
+      createResponse: (request) => ({
+        attempt: request.attempt,
+        id: request.id,
+        result: { curvePoints: "invalid timing", elapsedMs: Number.NaN },
+        type: "success",
+      }),
+      label: "invalid elapsed time",
+    },
+  ])("falls back without hanging on $label", async ({ createResponse }) => {
     installFakeWorker();
     const runner = createGraphwarLiveClickPreviewRunner({ workerCount: ref(1) });
     const result = runner.render(createRenderInput(1));
     const worker = FakeWorker.instances[0];
 
-    worker.emitMessage(response);
+    worker.emitMessage(createResponse(worker.requests[0]));
 
     await expect(result).resolves.toEqual({ curvePoints: "", elapsedMs: 0 });
     expect(worker.terminated).toBe(true);
@@ -160,7 +191,7 @@ class FakeWorker {
     if (!request) {
       throw new Error("Worker has no pending request");
     }
-    this.emitMessage({ id: request.id, result, type: "success" });
+    this.emitMessage({ attempt: request.attempt, id: request.id, result, type: "success" });
   }
 
   emitMessage(response: unknown) {

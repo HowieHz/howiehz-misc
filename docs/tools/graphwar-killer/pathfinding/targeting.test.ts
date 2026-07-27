@@ -46,7 +46,7 @@ describe("Step single-target soldier aiming", () => {
     expect(target?.fallbackTargetPoint).toBeUndefined();
   });
 
-  it("uses the screen-left edge when mirrored bounds make it the x+ direction", () => {
+  it("uses the screen-left edge when isMirrored bounds make it the x+ direction", () => {
     const mirroredArea = { ...area, bounds: { ...area.bounds, maxX: -25, minX: 25 } };
     const target = createSmartPathfindingSoldierTarget(createPixelPoint(44, 100), soldier, mirroredArea, true);
 
@@ -151,7 +151,7 @@ describe("manual target forward semantics", () => {
     expect(createAllowedTargetRect(area, start)).toEqual({ height: 450, width: 669.75, x: 100.25, y: 0 });
   });
 
-  it("preserves mirrored subpixel clicks and repairs non-forward clicks toward screen left", () => {
+  it("preserves isMirrored subpixel clicks and repairs non-forward clicks toward screen left", () => {
     const mirroredArea = { ...area, bounds: { ...area.bounds, maxX: -25, minX: 25 } };
     const start = createPixelPoint(100.25, 200);
     const forwardPoint = createPixelPoint(100, 120);

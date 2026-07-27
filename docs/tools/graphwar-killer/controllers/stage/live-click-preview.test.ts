@@ -436,7 +436,7 @@ class FakeWorker {
       throw new Error("Worker has no pending request");
     }
     const event = {
-      data: { id: request.id, result, type: "success" },
+      data: { attempt: request.attempt, id: request.id, result, type: "success" },
     } as MessageEvent<GraphwarLiveClickPreviewWorkerResponse>;
     for (const listener of this.messageListeners) {
       listener(event);
@@ -449,7 +449,7 @@ class FakeWorker {
       throw new Error("Worker has no pending request");
     }
     const event = {
-      data: { id: request.id, message, type: "error" },
+      data: { attempt: request.attempt, id: request.id, message, type: "error" },
     } as MessageEvent<GraphwarLiveClickPreviewWorkerResponse>;
     for (const listener of this.messageListeners) {
       listener(event);

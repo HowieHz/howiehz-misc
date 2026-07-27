@@ -14,7 +14,7 @@ const geometry = {
 const soldiers: GraphwarOneClickClearTargetSoldier[] = [
   { hitRadius: 7, id: "shooter", sourceCenterX: 385, sourceCenterY: 100 },
   { hitRadius: 7, id: "same-team-right", sourceCenterX: 500, sourceCenterY: 100 },
-  { hitRadius: 7, id: "enemy-left", sourceCenterX: 300, sourceCenterY: 100 },
+  { hitRadius: 7, id: "isEnemy-left", sourceCenterX: 300, sourceCenterY: 100 },
 ];
 
 describe("one-click-clear authoritative teams", () => {
@@ -27,8 +27,8 @@ describe("one-click-clear authoritative teams", () => {
       soldiers,
     });
 
-    expect(candidates.map((candidate) => candidate.id)).toEqual(["enemy-left"]);
-    expect(candidates[0]?.enemy).toBe(true);
+    expect(candidates.map((candidate) => candidate.id)).toEqual(["isEnemy-left"]);
+    expect(candidates[0]?.isEnemy).toBe(true);
   });
 
   it("keeps the x-range heuristic for screenshot recognition", () => {
@@ -51,9 +51,9 @@ describe("one-click-clear authoritative teams", () => {
       soldiers,
     });
 
-    expect(candidates.map(({ enemy, id }) => ({ enemy, id }))).toEqual([
-      { enemy: false, id: "same-team-right" },
-      { enemy: true, id: "enemy-left" },
+    expect(candidates.map(({ isEnemy, id }) => ({ isEnemy, id }))).toEqual([
+      { isEnemy: false, id: "same-team-right" },
+      { isEnemy: true, id: "isEnemy-left" },
     ]);
   });
 

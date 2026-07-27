@@ -712,7 +712,7 @@ describe("Generated formula evaluator equivalence", () => {
     }
   }
 
-  it("matches the parsed Step y'' trajectory with mirrored coordinate bounds", () => {
+  it("matches the parsed Step y'' trajectory with isMirrored coordinate bounds", () => {
     const mirroredBounds = { maxX: -25, maxY: -15, minX: 25, minY: 15 };
     const points = [
       createGraphPoint(-10, -1),

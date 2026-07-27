@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "pnpm run build && node --test test/*.test.mjs",
+    "test": "pnpm run build && pnpm run test:unit",
+    "test:unit": "node --test test/*.test.mjs",
     "watch": "node scripts/watch.mjs"
   },
   "devDependencies": {

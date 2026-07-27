@@ -34,10 +34,10 @@ If you need to format Java code or build `graphwar-agent`, make sure `java`, `ja
 
 ### compat-finder Package
 
-- Run the CLI directly: `pnpm compat-finder:cli`
-- Build the package: `pnpm compat-finder:build`
-- Start watch mode: `pnpm compat-finder:watch`
-- Run package tests: `pnpm compat-finder:test`
+- Run the CLI directly: `pnpm --filter compat-finder cli`
+- Build the package: `pnpm --filter compat-finder build`
+- Start watch mode: `pnpm --filter compat-finder watch`
+- Run package tests: `pnpm --filter compat-finder test`
 
 ### Local Checks
 

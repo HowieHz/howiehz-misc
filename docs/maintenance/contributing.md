@@ -34,10 +34,10 @@ pnpm install
 
 ### compat-finder 包
 
-- 直接运行 CLI：`pnpm compat-finder:cli`
-- 构建包：`pnpm compat-finder:build`
-- 启动监听构建：`pnpm compat-finder:watch`
-- 运行测试：`pnpm compat-finder:test`
+- 直接运行 CLI：`pnpm --filter compat-finder cli`
+- 构建包：`pnpm --filter compat-finder build`
+- 启动监听构建：`pnpm --filter compat-finder watch`
+- 运行测试：`pnpm --filter compat-finder test`
 
 ### 仓库级检查
 

@@ -5,7 +5,7 @@ inputs:
   build-command:
     description: pnpm command used to build the package
     required: false
-    default: "pnpm compat-finder:build"
+    default: "pnpm --filter compat-finder build"
   artifact-name:
     description: Name for the uploaded build artifact
     required: false

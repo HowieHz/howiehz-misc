@@ -18,6 +18,5 @@ jobs:
       - name: Build with composite action
         uses: ./.github/actions/build-package
         with:
-          build-command: pnpm compat-finder:build
           artifact-name: compat-finder-dist
           artifact-path: packages/compat-finder/dist

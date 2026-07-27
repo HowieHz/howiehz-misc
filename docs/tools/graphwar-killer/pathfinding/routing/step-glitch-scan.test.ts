@@ -82,7 +82,7 @@ describe("Step ODE glitch scan", () => {
     expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH + 5]).toBe(GRAPHWAR_PLANE_LENGTH - 1);
   });
 
-  it("builds the same reachability index for mirrored x+ bounds", () => {
+  it("builds the same reachability index for isMirrored x+ bounds", () => {
     const mask = createEmptyMask();
     mask[2 * GRAPHWAR_PLANE_LENGTH + 4] = 1;
     const index = createGraphwarStepGlitchScanMaskIndex({
@@ -91,7 +91,7 @@ describe("Step ODE glitch scan", () => {
     });
     const blockedSearchX = GRAPHWAR_PLANE_LENGTH - 1 - 4;
 
-    expect(index.mirrored).toBe(true);
+    expect(index.isMirrored).toBe(true);
     expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH]).toBe(blockedSearchX - 1);
     expect(index.farthestFreeX[2 * GRAPHWAR_PLANE_LENGTH + blockedSearchX]).toBe(-1);
   });
@@ -533,7 +533,7 @@ describe("Step ODE glitch scan", () => {
     }
   });
 
-  it("preserves the intended decimal right gate with mirrored x+ bounds", () => {
+  it("preserves the intended decimal right gate with isMirrored x+ bounds", () => {
     const mirroredBounds: GraphBounds = { ...bounds, maxX: bounds.minX, minX: bounds.maxX };
     const start = toPixelForBounds(-11, 0, mirroredBounds);
     const target = toPixelForBounds(-5.5, 4, mirroredBounds);

@@ -51,7 +51,7 @@ export interface GraphwarStepGlitchScanMaskIndex {
   readonly boundaryExpansion: number;
   /** 每格沿 x+ 保持同一 y 时能到达的最远搜索列；-1 表示当前格不可用。 */
   readonly farthestFreeX: Int16Array;
-  readonly mirrored: boolean;
+  readonly isMirrored: boolean;
   readonly simulationMask: Uint8Array;
 }
 
@@ -316,14 +316,14 @@ export function createGraphwarStepGlitchScanMaskIndex(options: {
   }
 
   const boundaryExpansion = Math.max(0, Math.floor(options.boundaryExpansion ?? 0));
-  const mirrored = !xPlusGoesRight(options.bounds);
+  const isMirrored = !xPlusGoesRight(options.bounds);
   const farthestFreeX = new Int16Array(expectedLength);
   farthestFreeX.fill(-1);
 
   for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
     let farthest = -1;
     for (let searchX = GRAPHWAR_PLANE_LENGTH - 1; searchX >= 0; searchX -= 1) {
-      const planeX = forwardColumnToPlaneColumn(searchX, mirrored);
+      const planeX = forwardColumnToPlaneColumn(searchX, isMirrored);
       const blocked =
         planeX < boundaryExpansion ||
         planeX >= GRAPHWAR_PLANE_LENGTH - boundaryExpansion ||
@@ -343,7 +343,7 @@ export function createGraphwarStepGlitchScanMaskIndex(options: {
   return {
     boundaryExpansion,
     farthestFreeX,
-    mirrored,
+    isMirrored,
     simulationMask: options.simulationMask,
   };
 }
@@ -578,9 +578,9 @@ function scanPreparedGraphwarStepGlitchPath(
   }
 
   const initialAcceptedPoint = prefix.acceptedPoint;
-  const initialGridPoint = graphPointToSearchGrid(initialAcceptedPoint, options, maskIndex.mirrored);
-  const targetGridPoint = pixelPointToSearchGrid(target.targetPoint, options.boundsRect, maskIndex.mirrored);
-  const hitTargetGridPoint = pixelPointToSearchGrid(target.hitTarget.center, options.boundsRect, maskIndex.mirrored);
+  const initialGridPoint = graphPointToSearchGrid(initialAcceptedPoint, options, maskIndex.isMirrored);
+  const targetGridPoint = pixelPointToSearchGrid(target.targetPoint, options.boundsRect, maskIndex.isMirrored);
+  const hitTargetGridPoint = pixelPointToSearchGrid(target.hitTarget.center, options.boundsRect, maskIndex.isMirrored);
   const work: ScanWorkItem[] = [
     {
       state: {
@@ -632,7 +632,7 @@ function scanPreparedGraphwarStepGlitchPath(
           // 轨迹可能漂到相邻像素行；真实碰撞定位的像素列优先，mask 行边界只作兜底。
           item.state.blockedX === undefined
             ? farthestX + 1
-            : graphXToSearchColumn(item.state.blockedX, item.state.acceptedPoint.y, options, maskIndex.mirrored),
+            : graphXToSearchColumn(item.state.blockedX, item.state.acceptedPoint.y, options, maskIndex.isMirrored),
           targetGraphPoint,
           hitTargetGridPoint.y,
           options,
@@ -775,7 +775,7 @@ function scanPreparedGraphwarStepGlitchPath(
       continue;
     }
 
-    const nextGridPoint = graphPointToSearchGrid(replay.acceptedPoint, options, maskIndex.mirrored);
+    const nextGridPoint = graphPointToSearchGrid(replay.acceptedPoint, options, maskIndex.isMirrored);
     if (replay.acceptedPoint.x >= targetGraphPoint.x) {
       continue;
     }
@@ -938,11 +938,11 @@ function createOrderedTargetSequence(
 /** 复用输入一致的扫描索引，否则按本次边界设置重建。 */
 function getCompatibleMaskIndex(options: GraphwarStepGlitchPrefixOptions, boundaryExpansion: number) {
   const index = options.maskIndex;
-  const mirrored = !xPlusGoesRight(options.bounds);
+  const isMirrored = !xPlusGoesRight(options.bounds);
   return index &&
     index.simulationMask === options.simulationMask &&
     index.boundaryExpansion === boundaryExpansion &&
-    index.mirrored === mirrored
+    index.isMirrored === isMirrored
     ? index
     : createGraphwarStepGlitchScanMaskIndex({
         boundaryExpansion,
@@ -964,7 +964,7 @@ function createGateRowScan(
     return undefined;
   }
 
-  const obstacleLeftX = searchBoundaryToGraphX(firstBlockedSearchX, options, maskIndex.mirrored);
+  const obstacleLeftX = searchBoundaryToGraphX(firstBlockedSearchX, options, maskIndex.isMirrored);
   const windowBatches: ScanGateWindowBatch[] = [];
   for (const backoffColumns of GATE_BACKOFF_COLUMNS) {
     const searchX = firstBlockedSearchX - backoffColumns;
@@ -972,7 +972,7 @@ function createGateRowScan(
       continue;
     }
 
-    const rawLeftGateX = searchBoundaryToGraphX(searchX, options, maskIndex.mirrored);
+    const rawLeftGateX = searchBoundaryToGraphX(searchX, options, maskIndex.isMirrored);
     let leftGateX: number | undefined;
     let leftGateDecimalPlaces: number | undefined;
     // 从用户精度开始直接验证门是否仍在障碍格左侧。不用 log10 估算：double 减法可能把
@@ -1013,7 +1013,7 @@ function createGateRowScan(
       windows.push({
         controlX,
         decimalPlaces: gateDecimalPlaces,
-        searchX: graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.mirrored),
+        searchX: graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.isMirrored),
         startX: leftGateX,
       });
     }
@@ -1085,21 +1085,21 @@ function getFarthestFreeX(index: GraphwarStepGlitchScanMaskIndex, searchX: numbe
 }
 
 /** 把截图像素点映射到统一向右推进的搜索网格。 */
-function pixelPointToSearchGrid(point: PixelPoint, boundsRect: BoundsRect, mirrored: boolean) {
+function pixelPointToSearchGrid(point: PixelPoint, boundsRect: BoundsRect, isMirrored: boolean) {
   const plane = imagePointToPlaneGridPoint(point, boundsRect);
-  return { x: planeColumnToForwardColumn(plane.x, mirrored), y: plane.y };
+  return { x: planeColumnToForwardColumn(plane.x, isMirrored), y: plane.y };
 }
 
 /** 把 Graphwar 坐标点映射到统一向右推进的搜索网格。 */
 function graphPointToSearchGrid(
   point: GraphPoint,
   options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
-  mirrored: boolean,
+  isMirrored: boolean,
 ) {
   return pixelPointToSearchGrid(
     graphToImagePoint(point, options.bounds, options.boundsRect),
     options.boundsRect,
-    mirrored,
+    isMirrored,
   );
 }
 
@@ -1108,18 +1108,18 @@ function graphXToSearchColumn(
   graphX: number,
   graphY: number,
   options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
-  mirrored: boolean,
+  isMirrored: boolean,
 ) {
-  return graphPointToSearchGrid(createGraphPoint(graphX, graphY), options, mirrored).x;
+  return graphPointToSearchGrid(createGraphPoint(graphX, graphY), options, isMirrored).x;
 }
 
 /** 把搜索网格边界还原成 Graphwar x。 */
 function searchBoundaryToGraphX(
   searchBoundaryX: number,
   options: Pick<GraphwarStepGlitchPrefixOptions, "bounds" | "boundsRect">,
-  mirrored: boolean,
+  isMirrored: boolean,
 ) {
-  const planeBoundaryX = mirrored ? GRAPHWAR_PLANE_LENGTH - searchBoundaryX : searchBoundaryX;
+  const planeBoundaryX = isMirrored ? GRAPHWAR_PLANE_LENGTH - searchBoundaryX : searchBoundaryX;
   const pixel = createPixelPoint(
     options.boundsRect.x + (planeBoundaryX / GRAPHWAR_PLANE_LENGTH) * options.boundsRect.width,
     options.boundsRect.y,

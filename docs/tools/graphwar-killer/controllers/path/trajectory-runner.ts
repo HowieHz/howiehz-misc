@@ -1,3 +1,9 @@
+import {
+  graphwarBackendAttemptIdentitiesAreEqual,
+  isGraphwarBackendAttemptIdentity,
+} from "../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type {
@@ -43,7 +49,7 @@ export interface GraphwarTrajectoryRunnerOptions {
 
 /** 当前权威轨迹任务及其换代和结算状态。 */
 interface PendingTrajectoryTask {
-  generation: number;
+  attempt: GraphwarBackendAttemptIdentity;
   id: number;
   input: GraphwarTrajectoryCalculationInput;
   reject: (reason?: unknown) => void;
@@ -68,12 +74,12 @@ const WORKER_SLOT_TARGET = 2;
  * ready，浏览器会排队消息，因此这里不承诺完全消除冷启动等待。
  */
 export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunnerOptions = {}) {
+  const attemptGate = createGraphwarBackendAttemptGate();
   const createWorker = options.createWorker ?? createDefaultTrajectoryWorker;
   const now = options.now ?? nowMs;
   const workerSlots: TrajectoryWorkerSlot[] = [];
   let isClosed = false;
   let currentTask: PendingTrajectoryTask | undefined;
-  let generation = 0;
   let nextRequestId = 1;
   let isWorkerFallbackActive = false;
 
@@ -85,7 +91,6 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     }
 
     cancelCurrentTask();
-    generation += 1;
     // PostMessage 不能克隆 Vue reactive proxy；进入 runner 时统一固定为本次任务的纯数据快照。
     let taskInput: GraphwarTrajectoryCalculationInput;
     try {
@@ -97,10 +102,11 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     }
     const requestId = nextRequestId;
     nextRequestId += 1;
+    const attempt = attemptGate.beginOuterTask(0);
 
     return new Promise<GraphwarTrajectoryRunResult>((resolve, reject) => {
       const task: PendingTrajectoryTask = {
-        generation,
+        attempt,
         id: requestId,
         input: taskInput,
         reject,
@@ -120,7 +126,6 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
 
   /** 取消权威任务；忙碌 Worker 必须硬终止，避免过期 Step 计算继续占用 CPU。 */
   function cancel() {
-    generation += 1;
     cancelCurrentTask();
   }
 
@@ -148,7 +153,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     if (activeSlot) {
       terminateWorkerSlot(activeSlot);
     }
-    settleTask(task, () => task.reject(new GraphwarTrajectoryCancelledError()));
+    cancelTask(task, () => task.reject(new GraphwarTrajectoryCancelledError()));
   }
 
   /** 优先复用空闲槽，并在没有可用槽时创建新的 Worker。 */
@@ -176,6 +181,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     slot.activeTask = task;
     try {
       slot.worker.postMessage({
+        attempt: task.attempt,
         id: task.id,
         input: task.input,
       } satisfies GraphwarTrajectoryCalculationWorkerRequest);
@@ -231,24 +237,31 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       return;
     }
     const response = event.data as unknown;
-    // Worker 边界只先收窄 request id；完整 outcome 由下方按任务类型校验。
-    if (typeof response !== "object" || response === null || !("id" in response) || typeof response.id !== "number") {
+    if (
+      typeof response !== "object" ||
+      response === null ||
+      !("attempt" in response) ||
+      !isGraphwarBackendAttemptIdentity(response.attempt)
+    ) {
       handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an invalid response"));
       return;
     }
-    if (response.id !== task.id) {
+    if (!graphwarBackendAttemptIdentitiesAreEqual(response.attempt, task.attempt)) {
+      handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an unexpected backend attempt"));
+      return;
+    }
+    if (!("id" in response) || response.id !== task.id) {
       handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an unexpected request id"));
       return;
     }
     const outcome = "outcome" in response ? response.outcome : undefined;
-    if (!isGraphwarTrajectoryCalculationOutcome(outcome, task.input.type)) {
+    if (!isGraphwarTrajectoryCalculationOutcome(outcome, task.input)) {
       handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an invalid outcome"));
       return;
     }
 
     slot.activeTask = undefined;
-    currentTask = undefined;
-    settleTask(task, () =>
+    completeTask(task, () =>
       task.resolve({
         elapsedMs: getElapsedMs(now, task.startedAt),
         outcome,
@@ -318,15 +331,13 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       if (!isCurrentTask(task)) {
         return;
       }
-      currentTask = undefined;
-      settleTask(task, () => task.reject(normalizeError(error, "Graphwar trajectory main-thread fallback failed")));
+      completeTask(task, () => task.reject(normalizeError(error, "Graphwar trajectory main-thread fallback failed")));
       return;
     }
     if (!isCurrentTask(task)) {
       return;
     }
-    currentTask = undefined;
-    settleTask(task, () =>
+    completeTask(task, () =>
       task.resolve({
         elapsedMs: getElapsedMs(now, task.startedAt),
         outcome,
@@ -336,7 +347,25 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
 
   /** 判断任务是否仍是唯一可写回页面的权威任务。 */
   function isCurrentTask(task: PendingTrajectoryTask) {
-    return !isClosed && currentTask === task && task.generation === generation && !task.isSettled;
+    return !isClosed && currentTask === task && !task.isSettled && attemptGate.canCommit(task.attempt);
+  }
+
+  /** 通过 attempt gate 完成唯一终态提交，再结算公开 Promise。 */
+  function completeTask(task: PendingTrajectoryTask, callback: () => void) {
+    if (!isCurrentTask(task)) {
+      return;
+    }
+    attemptGate.completeOuterTask(task.attempt);
+    currentTask = undefined;
+    settleTask(task, callback);
+  }
+
+  /** 用户取消或输入替换撤销整个 outer task，不安装 backend replay。 */
+  function cancelTask(task: PendingTrajectoryTask, callback: () => void) {
+    if (attemptGate.canCommit(task.attempt)) {
+      attemptGate.cancelOuterTask(task.attempt);
+    }
+    settleTask(task, callback);
   }
 
   /** 保证每个任务的 Promise 只结算一次。 */
@@ -390,37 +419,48 @@ function normalizeError(error: unknown, fallbackMessage: string) {
 /** 按请求类型验证 Worker 返回的完整轨迹 outcome。 */
 function isGraphwarTrajectoryCalculationOutcome(
   outcome: unknown,
-  inputType: GraphwarTrajectoryCalculationInput["type"],
+  input: GraphwarTrajectoryCalculationInput,
 ): outcome is GraphwarTrajectoryCalculationOutcome {
   if (typeof outcome !== "object" || outcome === null || !("ok" in outcome)) {
     return false;
   }
   if (outcome.ok === true) {
-    if (!("result" in outcome) || typeof outcome.result !== "object" || outcome.result === null) {
-      return false;
-    }
-    const result = outcome.result;
-    if (!("curvePoints" in result) || typeof result.curvePoints !== "string") {
-      return false;
-    }
     if (
-      "secondOrderLaunchAngleDegrees" in result &&
-      result.secondOrderLaunchAngleDegrees !== undefined &&
-      !Number.isFinite(result.secondOrderLaunchAngleDegrees)
+      "message" in outcome ||
+      "stage" in outcome ||
+      !("result" in outcome) ||
+      typeof outcome.result !== "object" ||
+      outcome.result === null
     ) {
       return false;
     }
+    const result = outcome.result;
     if (
-      "secondOrderLaunchAngleRadians" in result &&
-      result.secondOrderLaunchAngleRadians !== undefined &&
-      !Number.isFinite(result.secondOrderLaunchAngleRadians)
+      "secondOrderLaunchAngleDegrees" in result ||
+      "secondOrderLaunchAngleRadians" in result ||
+      !("curvePoints" in result) ||
+      typeof result.curvePoints !== "string" ||
+      !("trajectoryPoints" in result) ||
+      !isGraphwarTrajectoryPointArray(result.trajectoryPoints)
+    ) {
+      return false;
+    }
+    const secondOrderLaunchAngle = "secondOrderLaunchAngle" in result ? result.secondOrderLaunchAngle : undefined;
+    if (
+      secondOrderLaunchAngle !== undefined &&
+      (typeof secondOrderLaunchAngle !== "object" ||
+        secondOrderLaunchAngle === null ||
+        !("degrees" in secondOrderLaunchAngle) ||
+        !Number.isFinite(secondOrderLaunchAngle.degrees) ||
+        !("radians" in secondOrderLaunchAngle) ||
+        !Number.isFinite(secondOrderLaunchAngle.radians))
     ) {
       return false;
     }
     if (
       "pathError" in result &&
       result.pathError !== undefined &&
-      (typeof result.pathError !== "number" || Number.isNaN(result.pathError))
+      (typeof result.pathError !== "number" || Number.isNaN(result.pathError) || result.pathError < 0)
     ) {
       return false;
     }
@@ -439,14 +479,53 @@ function isGraphwarTrajectoryCalculationOutcome(
       return false;
     }
     const formulaResult = "formulaResult" in result ? result.formulaResult : undefined;
-    return inputType === "solver" ? isFormulaResult(formulaResult) : formulaResult === undefined;
+    const pathError = "pathError" in result ? result.pathError : undefined;
+    const hasTargetMissWarning = "hasTargetMissWarning" in result ? result.hasTargetMissWarning : undefined;
+    if (input.type === "simulator") {
+      return (
+        formulaResult === undefined &&
+        secondOrderLaunchAngle === undefined &&
+        pathError === undefined &&
+        hasTargetMissWarning === undefined
+      );
+    }
+    if (!isFormulaResult(formulaResult)) {
+      return false;
+    }
+    const shouldHaveSecondOrderLaunchAngle = input.settings.equation === "ddy";
+    if ((secondOrderLaunchAngle !== undefined) !== shouldHaveSecondOrderLaunchAngle) {
+      return false;
+    }
+    return (
+      hasTargetMissWarning === undefined ||
+      (hasTargetMissWarning === true &&
+        input.settings.equation === "ddy" &&
+        input.settings.secondOrderLaunchAngleMode === "display-rounded")
+    );
   }
   return (
     outcome.ok === false &&
+    !("result" in outcome) &&
     "message" in outcome &&
     typeof outcome.message === "string" &&
     "stage" in outcome &&
-    (outcome.stage === "formula" || outcome.stage === "trajectory")
+    (outcome.stage === "trajectory" || (input.type === "solver" && outcome.stage === "formula"))
+  );
+}
+
+/** 验证 Worker 返回的可绘制轨迹快照，不保留结构不完整或非有限坐标。 */
+function isGraphwarTrajectoryPointArray(value: unknown) {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (point) =>
+        typeof point === "object" &&
+        point !== null &&
+        "x" in point &&
+        Number.isFinite(point.x) &&
+        "y" in point &&
+        Number.isFinite(point.y),
+    )
   );
 }
 
@@ -548,8 +627,14 @@ function cloneGraphwarTrajectoryCalculationInput(
       ...(glitchMask ? { stepGlitchObstacleMask: glitchMask } : {}),
       isStepOverflowProtectionEnabled: input.settings.isStepOverflowProtectionEnabled,
     },
-    ...(input.targetHitRadiusPixels === undefined ? {} : { targetHitRadiusPixels: input.targetHitRadiusPixels }),
-    ...(input.targetPoint ? { targetPoint: createPixelPoint(input.targetPoint.x, input.targetPoint.y) } : {}),
+    ...(input.target
+      ? {
+          target: {
+            hitRadiusPixels: input.target.hitRadiusPixels,
+            point: createPixelPoint(input.target.point.x, input.target.point.y),
+          },
+        }
+      : {}),
     type: "solver",
   };
 }

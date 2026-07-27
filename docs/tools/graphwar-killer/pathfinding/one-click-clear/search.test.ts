@@ -127,7 +127,7 @@ describe("One-click clear optimization", () => {
     const requests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
     const start = createPixelPoint(200, 225);
     const candidate = {
-      enemy: true,
+      isEnemy: true,
       hitCenter: createPixelPoint(198.25, 225),
       hitRadius: 5,
       id: "edge",
@@ -144,8 +144,8 @@ describe("One-click clear optimization", () => {
     const start = createPixelPoint(200, 225);
     const centerX = 300;
     const candidates = [
-      { enemy: true, hitCenter: createPixelPoint(centerX, 250), hitRadius: 3, id: "large-y" },
-      { enemy: true, hitCenter: createPixelPoint(centerX, 200), hitRadius: 3, id: "small-y" },
+      { isEnemy: true, hitCenter: createPixelPoint(centerX, 250), hitRadius: 3, id: "large-y" },
+      { isEnemy: true, hitCenter: createPixelPoint(centerX, 200), hitRadius: 3, id: "small-y" },
     ];
 
     await buildGraphwarOneClickClearPath(createDagCaptureOptions(start, candidates, requests));
@@ -164,8 +164,8 @@ describe("One-click clear optimization", () => {
     const first = toImagePoint(-15, 0);
     const second = toImagePoint(-10, 0);
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+      { isEnemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 2, id: "second" },
     ];
     const events: string[] = [];
     const incumbents: GraphwarOneClickClearIncumbent[] = [];
@@ -235,7 +235,7 @@ describe("One-click clear optimization", () => {
       const start = toImagePoint(-20, 0);
       const target = toImagePoint(-10, 0);
       const targetCircle = { center: target, radius: 4 };
-      const candidate = { enemy: true, hitCenter: target, hitRadius: targetCircle.radius, id: "target" };
+      const candidate = { isEnemy: true, hitCenter: target, hitRadius: targetCircle.radius, id: "target" };
       const modeSettings = { ...settings, algorithm, equation };
       const graphPoints = [start, target].map((point) => imageToGraphPoint(point, bounds, boundsRect));
       const simulationMask = new Uint8Array(770 * 450);
@@ -343,12 +343,12 @@ describe("One-click clear optimization", () => {
     const incidental = toImagePoint(-12.5, 0);
     const second = toImagePoint(-10, 0);
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+      { isEnemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 2, id: "second" },
     ];
     const hitCandidates = [
       candidates[0],
-      { enemy: true, hitCenter: incidental, hitRadius: 2, id: "incidental" },
+      { isEnemy: true, hitCenter: incidental, hitRadius: 2, id: "incidental" },
       candidates[1],
     ].filter((candidate) => candidate !== undefined);
     const simulationMask = new Uint8Array(770 * 450);
@@ -408,7 +408,7 @@ describe("One-click clear optimization", () => {
     const start = toImagePoint(-20, 0);
     const target = toImagePoint(-10, 0);
     const targetCircle = { center: target, radius: 2 };
-    const candidate = { enemy: true, hitCenter: target, hitRadius: targetCircle.radius, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: targetCircle.radius, id: "target" };
     const modeSettings = { ...settings, algorithm: "abs" as const };
     const probe = sampleGraphwarPathTargetSequence({
       bounds,
@@ -495,8 +495,8 @@ describe("One-click clear optimization", () => {
     const simulationMask = new Uint8Array(770 * 450);
     simulationMask[seam.y * 770 + seam.x] = 1;
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+      { isEnemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 2, id: "second" },
     ];
 
     const result = await buildGraphwarOneClickClearPath({
@@ -533,7 +533,7 @@ describe("One-click clear optimization", () => {
     const originalStart = createPixelPoint(start.x, start.y);
     const target = toImagePoint(-10, 0);
     const originalTarget = createPixelPoint(target.x, target.y);
-    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 2, id: "target" };
     const simulationMask = new Uint8Array(770 * 450);
     const modeSettings: GraphwarTrajectoryFormulaSettings = { ...settings, algorithm: "abs" };
     const cold = sampleGraphwarPathTargetSequence({
@@ -594,7 +594,7 @@ describe("One-click clear optimization", () => {
   it("isolates DAG request, response, and incumbent point references across callbacks", async () => {
     const start = toImagePoint(-20, 0);
     const target = toImagePoint(-10, 0);
-    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 2, id: "target" };
     let leakedRequest: GraphwarOneClickClearDagEdgeBuildRequest | undefined;
 
     const result = await buildGraphwarOneClickClearPath({
@@ -664,13 +664,13 @@ describe("One-click clear optimization", () => {
         timings: [],
       }),
       candidates: [
-        { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
-        { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+        { isEnemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+        { isEnemy: true, hitCenter: second, hitRadius: 2, id: "second" },
       ],
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: [
-        { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
-        { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+        { isEnemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+        { isEnemy: true, hitCenter: second, hitRadius: 2, id: "second" },
       ],
       onValidatedIncumbent: (incumbent) => incumbents.push(incumbent),
       pathPoints: [start],
@@ -698,8 +698,8 @@ describe("One-click clear optimization", () => {
     const second = toImagePoint(-10, 0);
     const backward = toImagePoint(-16, 0);
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+      { isEnemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 2, id: "second" },
     ];
     const incumbents: GraphwarOneClickClearIncumbent[] = [];
     let cancelled = false;
@@ -742,7 +742,7 @@ describe("One-click clear optimization", () => {
   it("includes the validated Y'' launch angle in an incumbent", async () => {
     const start = toImagePoint(-20, 0);
     const target = toImagePoint(-10, 0);
-    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 2, id: "target" };
     const incumbents: GraphwarOneClickClearIncumbent[] = [];
     let buildCount = 0;
 
@@ -791,7 +791,7 @@ describe("One-click clear optimization", () => {
     const start = toImagePoint(-20, 0);
     const backward = toImagePoint(-22, 0);
     const target = toImagePoint(-10, 0);
-    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 2, id: "target" };
     const incumbents: GraphwarOneClickClearIncumbent[] = [];
     let buildCount = 0;
 
@@ -834,13 +834,13 @@ describe("One-click clear optimization", () => {
     const simulationMask = new Uint8Array(770 * 450);
     const candidates = [
       {
-        enemy: true,
+        isEnemy: true,
         hitCenter: upper,
         hitRadius: 24,
         id: "upper",
       },
       {
-        enemy: true,
+        isEnemy: true,
         hitCenter: lower,
         hitRadius: 24,
         id: "lower",
@@ -941,10 +941,10 @@ describe("One-click clear optimization", () => {
     const forward = toImagePoint(-7, 0);
     const simulationMask = new Uint8Array(770 * 450);
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 2, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 2, id: "second" },
-      { enemy: true, hitCenter: failed, hitRadius: 2, id: "failed" },
-      { enemy: true, hitCenter: alternative, hitRadius: 2, id: "alternative" },
+      { isEnemy: true, hitCenter: first, hitRadius: 2, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 2, id: "second" },
+      { isEnemy: true, hitCenter: failed, hitRadius: 2, id: "failed" },
+      { isEnemy: true, hitCenter: alternative, hitRadius: 2, id: "alternative" },
     ];
     let segmentSampleCount = 0;
 
@@ -1005,7 +1005,7 @@ describe("One-click clear optimization", () => {
       const tail = toImagePoint(-15, 0);
       const nextTarget = toImagePoint(-10, 0);
       const simulationMask = new Uint8Array(770 * 450);
-      const candidate = { enemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
+      const candidate = { isEnemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
 
       const result = await buildGraphwarOneClickClearPath({
         boundaryExpansion: 0,
@@ -1048,7 +1048,7 @@ describe("One-click clear optimization", () => {
       const tail = toImagePoint(-15, 0);
       const nextTarget = toImagePoint(-10, 0);
       const simulationMask = new Uint8Array(770 * 450);
-      const candidate = { enemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
+      const candidate = { isEnemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
 
       const result = await buildGraphwarOneClickClearPath({
         boundaryExpansion: 0,
@@ -1087,8 +1087,8 @@ describe("One-click clear optimization", () => {
       const second = toImagePoint(-10, 0);
       const simulationMask = new Uint8Array(770 * 450);
       const candidates = [
-        { enemy: true, hitCenter: first, hitRadius: 4, id: "first" },
-        { enemy: true, hitCenter: second, hitRadius: 4, id: "second" },
+        { isEnemy: true, hitCenter: first, hitRadius: 4, id: "first" },
+        { isEnemy: true, hitCenter: second, hitRadius: 4, id: "second" },
       ];
 
       const result = await buildGraphwarOneClickClearPath({
@@ -1124,7 +1124,7 @@ describe("One-click clear optimization", () => {
     async (algorithm, equation) => {
       const start = toImagePoint(-20, 0);
       const target = toImagePoint(-10, 0);
-      const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+      const candidate = { isEnemy: true, hitCenter: target, hitRadius: 4, id: "target" };
       const splineSettings = { ...settings, algorithm, equation };
       const directSample = sampleGraphwarPathTargetSequence({
         bounds,
@@ -1178,7 +1178,7 @@ describe("One-click clear optimization", () => {
       const middle = toImagePoint(-15, 0);
       const target = toImagePoint(-10, 0);
       const simulationMask = new Uint8Array(770 * 450);
-      const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+      const candidate = { isEnemy: true, hitCenter: target, hitRadius: 4, id: "target" };
       let finalValidationCount = 0;
 
       const result = await buildGraphwarOneClickClearPath({
@@ -1222,7 +1222,7 @@ describe("One-click clear optimization", () => {
   it.each(["pchip", "akima"] as const)("returns a failed edge for a stateless %s route", async (algorithm) => {
     const start = toImagePoint(-20, 0);
     const target = toImagePoint(-10, 0);
-    const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 4, id: "target" };
 
     const result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: 0,
@@ -1253,7 +1253,7 @@ describe("One-click clear optimization", () => {
   ])("rejects an invalid Step state returned across the Worker seam", async (stepRouteEndState) => {
     const start = toImagePoint(-20, 0);
     const target = toImagePoint(-10, 0);
-    const candidate = { enemy: true, hitCenter: target, hitRadius: 4, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 4, id: "target" };
 
     const result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: 0,
@@ -1295,7 +1295,7 @@ describe("One-click clear optimization", () => {
       const nextTarget = toImagePoint(appendPoint[0], appendPoint[1]);
       const simulationMask = new Uint8Array(770 * 450);
       const prefixTarget = { center: tail, radius: prefixTargetRadius };
-      const candidate = { enemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
+      const candidate = { isEnemy: true, hitCenter: nextTarget, hitRadius: 4, id: "next" };
       const splineSettings = { ...settings, algorithm, equation };
       const prefixValidation = sampleGraphwarPathTargetSequence({
         bounds,
@@ -1352,8 +1352,8 @@ describe("One-click clear optimization", () => {
     const second = toImagePoint(-5, 0);
     const simulationMask = new Uint8Array(770 * 450);
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 4, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 4, id: "second" },
+      { isEnemy: true, hitCenter: first, hitRadius: 4, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 4, id: "second" },
     ];
     let segmentSampleCount = 0;
 
@@ -1395,8 +1395,8 @@ describe("One-click clear optimization", () => {
     const second = toImagePoint(-7, 0);
     const simulationMask = new Uint8Array(770 * 450);
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 4, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 4, id: "second" },
+      { isEnemy: true, hitCenter: first, hitRadius: 4, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 4, id: "second" },
     ];
 
     const result = await buildGraphwarOneClickClearPath({
@@ -1432,7 +1432,7 @@ describe("One-click clear optimization", () => {
     const middle = toImagePoint(-15, 0);
     const target = toImagePoint(-10, 0);
     const simulationMask = new Uint8Array(770 * 450);
-    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 2, id: "target" };
     const incumbents: GraphwarOneClickClearIncumbent[] = [];
     let finalValidationCount = 0;
 
@@ -1484,7 +1484,7 @@ describe("One-click clear optimization", () => {
     const start = toImagePoint(-20, 0);
     const middle = toImagePoint(-15, 4);
     const target = toImagePoint(-10, 4);
-    const candidate = { enemy: true, hitCenter: target, hitRadius: 2, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 2, id: "target" };
     const absSettings = { ...settings, algorithm: "abs" as const };
     const directSample = sampleGraphwarPathTargetSequence({
       bounds,
@@ -1582,7 +1582,7 @@ describe("One-click clear optimization", () => {
       }),
       candidates: [
         {
-          enemy: true,
+          isEnemy: true,
           hitCenter: target,
           hitRadius: 2,
           id: "target",
@@ -1591,7 +1591,7 @@ describe("One-click clear optimization", () => {
       deleteHitCheckRadiusPixels: 0,
       hitCandidates: [
         {
-          enemy: true,
+          isEnemy: true,
           hitCenter: target,
           hitRadius: 2,
           id: "target",

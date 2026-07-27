@@ -69,21 +69,21 @@ export function createGraphwarPathfindingPreviewSnapshot(
   preview: GraphwarPathfindingPreview,
   boundsRect: BoundsRect,
 ): GraphwarPathfindingPreviewSnapshot {
-  const { acceptedEdges, bestPath, candidates, current, mirrored } = preview;
+  const { acceptedEdges, bestPath, candidates, current, isMirrored } = preview;
   return {
     acceptedEdges: acceptedEdges.map(([start, end]) =>
       createGraphwarPathfindingLineSegment(
-        previewPlanePointToImagePoint(start, mirrored, boundsRect),
-        previewPlanePointToImagePoint(end, mirrored, boundsRect),
+        previewPlanePointToImagePoint(start, isMirrored, boundsRect),
+        previewPlanePointToImagePoint(end, isMirrored, boundsRect),
       ),
     ),
-    current: current ? previewPlanePointToImagePoint(current, mirrored, boundsRect) : undefined,
-    path: bestPath.map((point) => previewPlanePointToImagePoint(point, mirrored, boundsRect)),
-    points: candidates.map((point) => previewPlanePointToImagePoint(point, mirrored, boundsRect)),
+    current: current ? previewPlanePointToImagePoint(current, isMirrored, boundsRect) : undefined,
+    path: bestPath.map((point) => previewPlanePointToImagePoint(point, isMirrored, boundsRect)),
+    points: candidates.map((point) => previewPlanePointToImagePoint(point, isMirrored, boundsRect)),
   };
 }
 
 /** 将搜索坐标系里的平面点投影成截图像素点。 */
-function previewPlanePointToImagePoint(point: PlaneGridPoint, mirrored: boolean, boundsRect: BoundsRect) {
-  return planeGridCellCenterToImagePoint(mirrorPlaneGridPoint(point, mirrored), boundsRect);
+function previewPlanePointToImagePoint(point: PlaneGridPoint, isMirrored: boolean, boundsRect: BoundsRect) {
+  return planeGridCellCenterToImagePoint(mirrorPlaneGridPoint(point, isMirrored), boundsRect);
 }

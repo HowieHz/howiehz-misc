@@ -25,8 +25,7 @@ describe("main trajectory calculation", () => {
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: true,
       },
-      targetHitRadiusPixels: 7,
-      targetPoint: graphToImagePoint(target, bounds, boundsRect),
+      target: { hitRadiusPixels: 7, point: graphToImagePoint(target, bounds, boundsRect) },
       type: "solver",
     });
 
@@ -35,7 +34,7 @@ describe("main trajectory calculation", () => {
       return;
     }
     expect(outcome.result.formulaResult?.expression).toBeTruthy();
-    expect(outcome.result.secondOrderLaunchAngleDegrees).toBeCloseTo(0);
+    expect(outcome.result.secondOrderLaunchAngle?.degrees).toBeCloseTo(0);
     expect(outcome.result.curvePoints.split(" ").length).toBeGreaterThan(1);
     expect(Number(outcome.result.curvePoints.split(" ").at(-1)?.split(",")[0])).toBeGreaterThan(
       graphToImagePoint(target, bounds, boundsRect).x,
@@ -67,8 +66,8 @@ describe("main trajectory calculation", () => {
     }
     expect(outcome.result.formulaResult?.expression).toContain("exp(-abs(");
     const expectedAngle = Math.atan2(target.y - start.y, target.x - start.x);
-    expect(Object.is(outcome.result.secondOrderLaunchAngleRadians, expectedAngle)).toBe(true);
-    expect(Object.is(outcome.result.secondOrderLaunchAngleDegrees, (expectedAngle * 180) / Math.PI)).toBe(true);
+    expect(Object.is(outcome.result.secondOrderLaunchAngle?.radians, expectedAngle)).toBe(true);
+    expect(Object.is(outcome.result.secondOrderLaunchAngle?.degrees, (expectedAngle * 180) / Math.PI)).toBe(true);
   });
 
   it("replays and returns an explicitly requested two-decimal y'' launch angle", () => {
@@ -90,12 +89,12 @@ describe("main trajectory calculation", () => {
 
     expect(outcome.ok).toBe(true);
     if (outcome.ok) {
-      const angle = outcome.result.secondOrderLaunchAngleDegrees;
+      const angle = outcome.result.secondOrderLaunchAngle?.degrees;
       expect(angle).toBeDefined();
       expect(angle).toBeCloseTo(Number(angle?.toFixed(2)), 12);
       expect(
         Object.is(
-          outcome.result.secondOrderLaunchAngleRadians,
+          outcome.result.secondOrderLaunchAngle?.radians,
           roundGraphwarLaunchAngleToDisplayRadians(Math.atan2(4, 7)),
         ),
       ).toBe(true);
@@ -116,8 +115,7 @@ describe("main trajectory calculation", () => {
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: false,
       },
-      targetHitRadiusPixels: 1,
-      targetPoint: graphToImagePoint(createGraphPoint(10, 10), bounds, boundsRect),
+      target: { hitRadiusPixels: 1, point: graphToImagePoint(createGraphPoint(10, 10), bounds, boundsRect) },
       type: "solver",
     });
 
@@ -138,8 +136,7 @@ describe("main trajectory calculation", () => {
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: false,
       },
-      targetHitRadiusPixels: 7,
-      targetPoint: graphToImagePoint(points[2], bounds, boundsRect),
+      target: { hitRadiusPixels: 7, point: graphToImagePoint(points[2], bounds, boundsRect) },
       type: "solver",
     } satisfies Parameters<typeof calculateGraphwarTrajectory>[0];
     const baseline = calculateGraphwarTrajectory(input);
@@ -150,7 +147,7 @@ describe("main trajectory calculation", () => {
 
     const middlePixelX = graphToImagePoint(points[1], bounds, boundsRect).x;
     const collisionPixel = baseline.result.trajectoryPoints.find(
-      (point) => point.x > middlePixelX + 2 && point.x < input.targetPoint.x - 2,
+      (point) => point.x > middlePixelX + 2 && point.x < input.target.point.x - 2,
     );
     expect(collisionPixel).toBeDefined();
     if (!collisionPixel) {
@@ -215,8 +212,7 @@ describe("main trajectory calculation", () => {
       calculateGraphwarTrajectory({
         ...input,
         collision: { mask },
-        targetHitRadiusPixels,
-        targetPoint,
+        target: { hitRadiusPixels: targetHitRadiusPixels, point: targetPoint },
       }),
     ).toMatchObject({ ok: false, stage: "trajectory" });
   });
@@ -263,8 +259,7 @@ describe("main trajectory calculation", () => {
         isStepGlitchModeEnabled: false,
         isStepOverflowProtectionEnabled: false,
       },
-      targetHitRadiusPixels: 1,
-      targetPoint: graphToImagePoint(createGraphPoint(10, 10), bounds, boundsRect),
+      target: { hitRadiusPixels: 1, point: graphToImagePoint(createGraphPoint(10, 10), bounds, boundsRect) },
       type: "solver",
     });
 
@@ -336,7 +331,7 @@ describe("main trajectory calculation", () => {
     }
     expect(outcome.result.curvePoints.split(" ").length).toBeGreaterThan(1);
     expect(outcome.result.formulaResult).toBeUndefined();
-    expect(outcome.result.secondOrderLaunchAngleDegrees).toBeUndefined();
+    expect(outcome.result.secondOrderLaunchAngle).toBeUndefined();
     expect(outcome.result.warningReason).toBe("out-of-bounds");
   });
 
@@ -414,8 +409,7 @@ describe("main trajectory calculation", () => {
     const outcome = calculateGraphwarTrajectory({
       ...input,
       collision: { mask },
-      targetHitRadiusPixels: 0.01,
-      targetPoint: createPixelPoint(sampleX, sampleY),
+      target: { hitRadiusPixels: 0.01, point: createPixelPoint(sampleX, sampleY) },
     });
 
     expect(outcome.ok).toBe(true);

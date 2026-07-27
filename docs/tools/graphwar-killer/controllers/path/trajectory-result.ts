@@ -38,8 +38,10 @@ export type GraphwarTrajectoryCalculationStatus =
 interface PublishedFormulaTrajectoryResult {
   formulaResult: FormulaResult;
   secondOrderLaunchAngleMode?: GraphwarSecondOrderLaunchAngleMode;
-  secondOrderLaunchAngleDegrees?: number;
-  secondOrderLaunchAngleRadians?: number;
+  secondOrderLaunchAngle?: {
+    degrees: number;
+    radians: number;
+  };
   trajectory: PublishedTrajectorySnapshot;
 }
 
@@ -264,7 +266,7 @@ export function useGraphwarTrajectoryResult(
         }
       : undefined;
   });
-  const secondOrderLaunchAngleDegrees = computed(() => activeFormulaResult.value?.secondOrderLaunchAngleDegrees);
+  const secondOrderLaunchAngleDegrees = computed(() => activeFormulaResult.value?.secondOrderLaunchAngle?.degrees);
   const secondOrderLaunchAngleRadians = computed(() => {
     const result = activeFormulaResult.value;
     if (
@@ -273,7 +275,7 @@ export function useGraphwarTrajectoryResult(
     ) {
       return undefined;
     }
-    return result.secondOrderLaunchAngleRadians;
+    return result.secondOrderLaunchAngle?.radians;
   });
   const pathError = computed(() => activeTrajectory.value?.pathError);
   const trajectoryWarningReason = computed(() => activeTrajectory.value?.warningReason);
@@ -378,7 +380,7 @@ export function useGraphwarTrajectoryResult(
       !preview ||
       preview.formulaResult.expression !== snapshot.expression ||
       preview.secondOrderLaunchAngleMode !== secondOrderLaunchAngleMode ||
-      preview.secondOrderLaunchAngleRadians !== snapshot.launchAngleRadians ||
+      preview.secondOrderLaunchAngle?.radians !== snapshot.launchAngleRadians ||
       preview.trajectory.equationMode !== snapshot.equationMode ||
       preview.trajectory.sourceIdentity !== snapshot.sourceIdentity ||
       preview.trajectory.trajectoryPoints !== snapshot.trajectoryPoints
@@ -430,8 +432,10 @@ export function useGraphwarTrajectoryResult(
       ...(snapshot.launchAngleRadians === undefined
         ? {}
         : {
-            secondOrderLaunchAngleDegrees: (snapshot.launchAngleRadians * 180) / Math.PI,
-            secondOrderLaunchAngleRadians: snapshot.launchAngleRadians,
+            secondOrderLaunchAngle: {
+              degrees: (snapshot.launchAngleRadians * 180) / Math.PI,
+              radians: snapshot.launchAngleRadians,
+            },
           }),
       trajectory: createPublishedTrajectorySnapshot(
         {
@@ -563,8 +567,9 @@ export function useGraphwarTrajectoryResult(
       ...base,
       points,
       settings: graphwarTrajectoryFormulaSettings.value,
-      ...(targetPoint ? { targetPoint } : {}),
-      ...(targetHitRadiusPixels === undefined ? {} : { targetHitRadiusPixels }),
+      ...(targetPoint && targetHitRadiusPixels !== undefined
+        ? { target: { hitRadiusPixels: targetHitRadiusPixels, point: targetPoint } }
+        : {}),
       type: "solver",
     };
   }
@@ -599,7 +604,7 @@ export function useGraphwarTrajectoryResult(
       result,
       input.settings.equation,
       result.formulaResult.expression,
-      result.secondOrderLaunchAngleRadians,
+      result.secondOrderLaunchAngle?.radians,
       sourceIdentity,
     );
     const incumbentPreviewToPreserve = publishedResult.value.incumbentPreview;
@@ -614,12 +619,9 @@ export function useGraphwarTrajectoryResult(
         ...(input.settings.equation === "ddy"
           ? { secondOrderLaunchAngleMode: input.settings.secondOrderLaunchAngleMode ?? "full-precision" }
           : {}),
-        ...(result.secondOrderLaunchAngleDegrees === undefined
+        ...(result.secondOrderLaunchAngle === undefined
           ? {}
-          : { secondOrderLaunchAngleDegrees: result.secondOrderLaunchAngleDegrees }),
-        ...(result.secondOrderLaunchAngleRadians === undefined
-          ? {}
-          : { secondOrderLaunchAngleRadians: result.secondOrderLaunchAngleRadians }),
+          : { secondOrderLaunchAngle: result.secondOrderLaunchAngle }),
         trajectory,
       },
     };

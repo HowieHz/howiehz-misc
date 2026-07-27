@@ -33,8 +33,6 @@ describe("main trajectory result lifecycle", () => {
         trajectoryPoints: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
         formulaResult: { expression: "first formula", terms: [] },
         pathError: Number.POSITIVE_INFINITY,
-        secondOrderLaunchAngleDegrees: 12,
-        hasTargetMissWarning: true,
         warningReason: "obstacle",
       },
     });
@@ -48,9 +46,9 @@ describe("main trajectory result lifecycle", () => {
       points: [createPixelPoint(1, 2), createPixelPoint(3, 4)],
       sourceIdentity: "agent-scene-1",
     });
-    expect(controller.secondOrderLaunchAngleDegrees.value).toBe(12);
+    expect(controller.secondOrderLaunchAngleDegrees.value).toBeUndefined();
     expect(controller.pathError.value).toBe(Number.POSITIVE_INFINITY);
-    expect(controller.hasTargetMissWarning.value).toBe(true);
+    expect(controller.hasTargetMissWarning.value).toBe(false);
     expect(controller.trajectoryWarningReason.value).toBe("obstacle");
     expect(controller.calculationStatus.value.type).toBe("success");
 
@@ -202,8 +200,7 @@ describe("main trajectory result lifecycle", () => {
         curvePoints: "full curve",
         trajectoryPoints: [],
         formulaResult: { expression: "full formula", terms: [] },
-        secondOrderLaunchAngleDegrees: 7.073552961289569,
-        secondOrderLaunchAngleRadians: 0.12345678901234568,
+        secondOrderLaunchAngle: { degrees: 7.073552961289569, radians: 0.12345678901234568 },
       },
     });
     await nextTick();
@@ -236,7 +233,6 @@ describe("main trajectory result lifecycle", () => {
         curvePoints: "solver curve",
         trajectoryPoints: [],
         formulaResult: { expression: "solver formula", terms: [] },
-        secondOrderLaunchAngleDegrees: 12,
       },
     });
     await nextTick();
@@ -254,7 +250,7 @@ describe("main trajectory result lifecycle", () => {
 
     expect(controller.formulaResult.value?.expression).toBe("solver formula");
     expect(controller.formulaResultEquationMode.value).toBe("dy");
-    expect(controller.secondOrderLaunchAngleDegrees.value).toBe(12);
+    expect(controller.secondOrderLaunchAngleDegrees.value).toBeUndefined();
     expect(controller.plottedCurvePoints.value).toBe("simulator curve");
     expect(controller.plottedTrajectory.value?.equationMode).toBe("ddy");
     expect(controller.plottedTrajectory.value?.expression).toBe("solver formula");
@@ -264,7 +260,7 @@ describe("main trajectory result lifecycle", () => {
 
     expect(controller.calculationStatus.value.type).toBe("in-progress");
     expect(controller.formulaResult.value?.expression).toBe("solver formula");
-    expect(controller.secondOrderLaunchAngleDegrees.value).toBe(12);
+    expect(controller.secondOrderLaunchAngleDegrees.value).toBeUndefined();
     expect(controller.plottedCurvePoints.value).toBe("solver curve");
     controller.dispose();
   });
@@ -335,6 +331,7 @@ describe("main trajectory result lifecycle", () => {
     const frames = installFakeBrowserRuntime();
     const state = createControllerState();
     state.options.settings.equationMode.value = "ddy";
+    state.secondOrderLaunchAngleMode.value = "display-rounded";
     const controller = useGraphwarTrajectoryResult(state.options);
 
     setSolverPath(state, -10, 1);
@@ -347,6 +344,7 @@ describe("main trajectory result lifecycle", () => {
         trajectoryPoints: [],
         formulaResult: { expression: "formal formula", terms: [] },
         pathError: Number.POSITIVE_INFINITY,
+        secondOrderLaunchAngle: { degrees: 0, radians: 0 },
         hasTargetMissWarning: true,
         warningReason: "obstacle",
       },
@@ -484,7 +482,9 @@ class FakeWorker {
     if (!request) {
       throw new Error("Worker has no pending request");
     }
-    const event = { data: { id: request.id, outcome } } as MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>;
+    const event = {
+      data: { attempt: request.attempt, id: request.id, outcome },
+    } as MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>;
     for (const listener of this.messageListeners) {
       listener(event);
     }

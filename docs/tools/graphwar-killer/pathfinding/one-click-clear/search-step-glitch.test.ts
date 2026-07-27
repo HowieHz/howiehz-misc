@@ -271,8 +271,8 @@ describe("Step glitch one-click-clear target retries", () => {
       const simulationMask = createEmptyMask();
       const debugStages: string[] = [];
       const candidates = [
-        { enemy: true, hitCenter: missed, hitRadius: 2, id: "missed" },
-        { enemy: true, hitCenter: hit, hitRadius: 12, id: "hit" },
+        { isEnemy: true, hitCenter: missed, hitRadius: 2, id: "missed" },
+        { isEnemy: true, hitCenter: hit, hitRadius: 12, id: "hit" },
       ];
 
       const result = await buildGraphwarOneClickClearPath({
@@ -298,7 +298,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.outcomes.push("hit");
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 0);
-    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+    const candidates = [{ isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
     const debugStages: string[] = [];
 
     const result = await buildGraphwarOneClickClearPath({
@@ -317,7 +317,7 @@ describe("Step glitch one-click-clear target retries", () => {
     samplingMockState.shouldStripStepGlitchFormulaEvidence = true;
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 0);
-    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+    const candidates = [{ isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
 
     await expect(
       buildGraphwarOneClickClearPath(createOptions(start, candidates, createEmptyMask(), "visibility-graph", false)),
@@ -329,7 +329,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.outcomes.push("hit");
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 0);
-    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+    const candidates = [{ isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
     const simulationMask = createEmptyMask();
     const options = createOptions(start, candidates, simulationMask, "visibility-graph", false);
 
@@ -351,7 +351,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.outcomes.push("hit");
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 0);
-    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+    const candidates = [{ isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
     const options = createOptions(start, candidates, createEmptyMask(), "visibility-graph", false);
     const debugStages: string[] = [];
 
@@ -378,7 +378,7 @@ describe("Step glitch one-click-clear target retries", () => {
       scanMockState.outcomes.push("hit");
       const start = toPixel(-11, 0);
       const target = toPixel(-6, 0);
-      const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+      const candidates = [{ isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
       const debugStages: string[] = [];
 
       const result = await buildGraphwarOneClickClearPath({
@@ -399,8 +399,8 @@ describe("Step glitch one-click-clear target retries", () => {
     const first = toPixel(-9, 0);
     const second = toPixel(-6, 0);
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 12, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 12, id: "second" },
+      { isEnemy: true, hitCenter: first, hitRadius: 12, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 12, id: "second" },
     ];
     const debugStages: string[] = [];
 
@@ -420,7 +420,7 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.outcomes.push("hit");
     const start = toPixel(-11, 0);
     const target = toPixel(-6, 0);
-    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
+    const candidates = [{ isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" }];
     const debugStages: string[] = [];
 
     const result = await buildGraphwarOneClickClearPath({
@@ -443,7 +443,7 @@ describe("Step glitch one-click-clear target retries", () => {
     const targetPoints = [-10, -9, -8, -7, -6].map((x) => toPixel(x, 0));
     const assignedTargetPoints = targetPoints.map(toNativeColumnPoint);
     const candidates = targetPoints.map((hitCenter, index) => ({
-      enemy: true,
+      isEnemy: true,
       hitCenter,
       hitRadius: 12,
       id: String(index + 2),
@@ -494,11 +494,11 @@ describe("Step glitch one-click-clear target retries", () => {
     const start = toPixel(-11, 0);
     const centerX = toPixel(-6, 0).x;
     const candidates = [
-      { enemy: true, hitCenter: createPixelPoint(centerX, 320), hitRadius: 0.6, id: "first-small" },
-      { enemy: true, hitCenter: createPixelPoint(centerX, 280), hitRadius: 5, id: "wide" },
-      { enemy: true, hitCenter: createPixelPoint(centerX, 240), hitRadius: 0.6, id: "exhausted-1" },
-      { enemy: true, hitCenter: createPixelPoint(centerX, 200), hitRadius: 0.6, id: "exhausted-2" },
-      { enemy: true, hitCenter: createPixelPoint(centerX, 160), hitRadius: 0.6, id: "exhausted-3" },
+      { isEnemy: true, hitCenter: createPixelPoint(centerX, 320), hitRadius: 0.6, id: "first-small" },
+      { isEnemy: true, hitCenter: createPixelPoint(centerX, 280), hitRadius: 5, id: "wide" },
+      { isEnemy: true, hitCenter: createPixelPoint(centerX, 240), hitRadius: 0.6, id: "exhausted-1" },
+      { isEnemy: true, hitCenter: createPixelPoint(centerX, 200), hitRadius: 0.6, id: "exhausted-2" },
+      { isEnemy: true, hitCenter: createPixelPoint(centerX, 160), hitRadius: 0.6, id: "exhausted-3" },
     ];
 
     await buildGraphwarOneClickClearPath(
@@ -521,7 +521,7 @@ describe("Step glitch one-click-clear target retries", () => {
     const result = await buildGraphwarOneClickClearPath({
       ...createOptions(
         start,
-        [{ enemy: true, hitCenter: nextTarget, hitRadius: 12, id: "next" }],
+        [{ isEnemy: true, hitCenter: nextTarget, hitRadius: 12, id: "next" }],
         simulationMask,
         "visibility-graph",
       ),
@@ -546,7 +546,7 @@ describe("Step glitch one-click-clear target retries", () => {
     const result = await buildGraphwarOneClickClearPath({
       ...createOptions(
         start,
-        [{ enemy: true, hitCenter: missedTarget, hitRadius: 2, id: "missed" }],
+        [{ isEnemy: true, hitCenter: missedTarget, hitRadius: 2, id: "missed" }],
         simulationMask,
         "visibility-graph",
       ),
@@ -566,7 +566,7 @@ describe("Step glitch one-click-clear target retries", () => {
     const result = await buildGraphwarOneClickClearPath({
       ...createOptions(
         start,
-        [{ enemy: true, hitCenter: nextTarget, hitRadius: 12, id: "next" }],
+        [{ isEnemy: true, hitCenter: nextTarget, hitRadius: 12, id: "next" }],
         simulationMask,
         "visibility-graph",
       ),
@@ -587,7 +587,7 @@ describe("Step glitch one-click-clear target retries", () => {
     const result = await buildGraphwarOneClickClearPath({
       ...createOptions(
         start,
-        [{ enemy: true, hitCenter: nextTarget, hitRadius: 12, id: "next" }],
+        [{ isEnemy: true, hitCenter: nextTarget, hitRadius: 12, id: "next" }],
         simulationMask,
         "visibility-graph",
       ),
@@ -607,8 +607,8 @@ describe("Step glitch one-click-clear target retries", () => {
     const first = toPixel(-9, 0);
     const second = toPixel(-6, 0);
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 12, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 12, id: "second" },
+      { isEnemy: true, hitCenter: first, hitRadius: 12, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 12, id: "second" },
     ];
     const simulationMask = createEmptyMask();
 
@@ -632,7 +632,7 @@ describe("Step glitch one-click-clear target retries", () => {
     for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
       simulationMask[row * GRAPHWAR_PLANE_LENGTH + wallX] = 1;
     }
-    const candidates = [{ enemy: true, hitCenter: target, hitRadius: 300, id: "early-hit" }];
+    const candidates = [{ isEnemy: true, hitCenter: target, hitRadius: 300, id: "early-hit" }];
 
     const result = await buildGraphwarOneClickClearPath({
       ...createOptions(start, candidates, simulationMask, "visibility-graph"),
@@ -647,8 +647,8 @@ describe("Step glitch one-click-clear target retries", () => {
     const first = toPixel(-9, 0);
     const second = toPixel(-6, 0);
     const candidates = [
-      { enemy: true, hitCenter: first, hitRadius: 12, id: "first" },
-      { enemy: true, hitCenter: second, hitRadius: 12, id: "second" },
+      { isEnemy: true, hitCenter: first, hitRadius: 12, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 12, id: "second" },
     ];
 
     const result = await buildGraphwarOneClickClearPath({
@@ -690,7 +690,7 @@ describe("Step glitch one-click-clear target retries", () => {
     const start = toPixel(-11, 0);
     const middle = toPixel(-8, 0);
     const target = toPixel(-6, 0);
-    const candidate = { enemy: true, hitCenter: target, hitRadius: 12, id: "target" };
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" };
 
     const result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: 0,
@@ -736,7 +736,7 @@ describe("Step glitch one-click-clear target retries", () => {
 
 function createOptions(
   start: PixelPoint,
-  candidates: { enemy: boolean; hitCenter: PixelPoint; hitRadius: number; id: string }[],
+  candidates: { isEnemy: boolean; hitCenter: PixelPoint; hitRadius: number; id: string }[],
   simulationMask: Uint8Array,
   routeMode: GraphwarPathfindingRouteMode,
   isDeleteOptimizationEnabled = true,

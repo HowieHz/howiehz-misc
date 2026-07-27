@@ -14,6 +14,7 @@ import {
   type PlaneGridPoint,
 } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import { graphwarVisibilityGraphHeuristics } from "./canonical-data";
 
 /** 页面搜索动画需要的图搜索快照；worker 不传回调时不会产生该数据。 */
 export interface GraphwarPathfindingPreview {
@@ -26,7 +27,7 @@ export interface GraphwarPathfindingPreview {
   /** 当前扩展点。 */
   current?: PlaneGridPoint;
   /** 是否把原始平面镜像到 x+ 搜索坐标系。 */
-  mirrored: boolean;
+  isMirrored: boolean;
 }
 
 /** 调用方注入的边判定结果；undefined 表示该有向边不可用。 */
@@ -100,7 +101,7 @@ export interface GraphwarVisibilityGraphObstacleData {
   /** 已按 mirror/tolerance 简化过的障碍轮廓。 */
   readonly contours: readonly VisibilityGraphObstacleContour[];
   /** 是否把原始平面镜像到 x+ 搜索坐标系。 */
-  readonly mirrored: boolean;
+  readonly isMirrored: boolean;
   /** 缓存所属 mask；用引用相等防止跨友伤模式或跨容差误用。 */
   readonly routeMask: Uint8Array;
   /** 缓存所属 route tolerance。 */
@@ -184,28 +185,6 @@ const enum RouteMaskOperation {
   Erode = "erode",
 }
 
-/** 可见图启发式参数集中在一处；这些值只调候选质量和预览成本，不改变 Graphwar 规则本身。 */
-const VISIBILITY_GRAPH_HEURISTICS = {
-  /** 单格面积内的 cross 可能只是边界追踪噪声，不按凹角删除。 */
-  concaveCrossTolerance: 1,
-  /** 近共线阈值，容忍栅格化锯齿，但仍保留肉眼可见的折线拐点。 */
-  collinearDistanceTolerance: 0.75,
-  /** 边界点落在障碍上时，向外搜索可站立候选点的最大半径；过大容易把候选推离真实轮廓。 */
-  contourFreeCellSearchRadius: 3,
-  /** Route tolerance 到 RDP epsilon 的折算系数；容差越大，轮廓本身越平滑。 */
-  rdpEpsilonRouteToleranceRatio: 0.75,
-  /** RDP epsilon 上限，避免大 route tolerance 抹掉窄障碍拐点。 */
-  rdpMaxEpsilon: 6,
-  /** RDP epsilon 下限，避免原始像素锯齿产生过密候选点。 */
-  rdpMinEpsilon: 1,
-  /** 页面动画每帧最多显示的候选点数量。 */
-  previewCandidateLimit: 64,
-  /** 页面动画每帧最多显示的可见边数量，避免 SVG 预览过重。 */
-  previewEdgeLimit: 24,
-  /** 图搜索每扩展若干候选点后发送一次预览，平衡可视反馈和性能。 */
-  previewExpansionInterval: 8,
-} as const;
-
 /** 8 邻域偏移，用于从 mask cell 追踪连通边界。 */
 const EIGHT_CONNECTED_OFFSETS: readonly PlaneGridPoint[] = [
   { x: -1, y: -1 },
@@ -221,26 +200,28 @@ const EIGHT_CONNECTED_OFFSETS: readonly PlaneGridPoint[] = [
 /** 在固定 Graphwar 平面上构造 x+ 单调有向 Lazy Visibility Graph，输出几何可行的绕障折线。 */
 export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarPathfindingOptions) {
   // 统一镜像到 x+ 搜索坐标系，调用方始终拿到原始平面坐标系下的路径。
-  const mirrored = !xPlusGoesRight(options.bounds);
+  const isMirrored = !xPlusGoesRight(options.bounds);
   const boundaryExpansion = normalizeBoundaryExpansion(options.boundaryExpansion);
-  const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.startPoint, options.boundsRect), mirrored);
-  const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.targetPoint, options.boundsRect), mirrored);
+  const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.startPoint, options.boundsRect), isMirrored);
+  const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(options.targetPoint, options.boundsRect), isMirrored);
   // Capture the optional callback once so the hot graph-search closure has no unreachable fallback.
   const customCanAdvance = options.canAdvance;
   const canAdvance = customCanAdvance
     ? (previous: PlaneGridPoint, next: PlaneGridPoint) =>
-        customCanAdvance(mirrorPlaneGridPoint(previous, mirrored), mirrorPlaneGridPoint(next, mirrored))
+        customCanAdvance(mirrorPlaneGridPoint(previous, isMirrored), mirrorPlaneGridPoint(next, isMirrored))
     : (previous: PlaneGridPoint, next: PlaneGridPoint) => next.x > previous.x;
-  const evaluateEdge = options.evaluateEdge ? createVisibilityEdgeEvaluator(options.evaluateEdge, mirrored) : undefined;
-  const estimateRemainingSecondaryCost = createVisibilityRemainingCostEstimator(options, mirrored);
+  const evaluateEdge = options.evaluateEdge
+    ? createVisibilityEdgeEvaluator(options.evaluateEdge, isMirrored)
+    : undefined;
+  const estimateRemainingSecondaryCost = createVisibilityRemainingCostEstimator(options, isMirrored);
   const initialRouteState = options.initialRouteState;
   const initialRouteStateKey = options.initialRouteStateKey;
   if (evaluateEdge && !Number.isFinite(initialRouteState)) {
     return undefined;
   }
   if (
-    pointHitsPlaneMaskWithBoundaryExpansion(start, options.routeMask, mirrored, boundaryExpansion) ||
-    pointHitsPlaneMaskWithBoundaryExpansion(target, options.routeMask, mirrored, boundaryExpansion)
+    pointHitsPlaneMaskWithBoundaryExpansion(start, options.routeMask, isMirrored, boundaryExpansion) ||
+    pointHitsPlaneMaskWithBoundaryExpansion(target, options.routeMask, isMirrored, boundaryExpansion)
   ) {
     return undefined;
   }
@@ -252,7 +233,7 @@ export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarP
   const directEdge = canAdvance(start, target)
     ? evaluateEdge
       ? evaluateEdge(start, target, initialRouteState as number, initialRouteStateKey)
-      : !lineHitsPlaneMaskWithBoundaryExpansion(start, target, options.routeMask, mirrored, boundaryExpansion)
+      : !lineHitsPlaneMaskWithBoundaryExpansion(start, target, options.routeMask, isMirrored, boundaryExpansion)
         ? true
         : undefined
     : undefined;
@@ -263,15 +244,15 @@ export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarP
       bestPath: directPath,
       candidates: directPath,
       current: start,
-      mirrored,
+      isMirrored,
     });
-    return directPath.map((point) => mirrorPlaneGridPoint(point, mirrored));
+    return directPath.map((point) => mirrorPlaneGridPoint(point, isMirrored));
   }
 
   const candidates = collectVisibilityGraphCandidates({
     boundaryExpansion,
     canAdvance,
-    mirrored,
+    isMirrored,
     routeMask: options.routeMask,
     routeTolerancePlanePixels: options.routeTolerancePlanePixels ?? 1,
     start,
@@ -287,7 +268,7 @@ export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarP
         initialRouteState: initialRouteState as number,
         initialRouteStateKey,
         isCancelled: options.isCancelled,
-        mirrored,
+        isMirrored,
         onPreview: options.onPreview,
         startIndex: 0,
         targetIndex: 1,
@@ -298,23 +279,23 @@ export async function buildGraphwarVisibilityGraphPathForMask(options: GraphwarP
         canAdvance,
         candidates,
         isCancelled: options.isCancelled,
-        mirrored,
+        isMirrored,
         onPreview: options.onPreview,
         routeMask: options.routeMask,
         startIndex: 0,
         targetIndex: 1,
         yieldControl: options.yieldControl,
       });
-  return path?.map((point) => mirrorPlaneGridPoint(point, mirrored));
+  return path?.map((point) => mirrorPlaneGridPoint(point, isMirrored));
 }
 
 /** 为固定 route mask 预构建障碍连通域和简化轮廓，供同一批路径搜索复用。 */
 export function createGraphwarVisibilityGraphObstacleData(
   options: GraphwarVisibilityGraphObstacleDataOptions,
 ): GraphwarVisibilityGraphObstacleData {
-  const mirrored = !xPlusGoesRight(options.bounds);
+  const isMirrored = !xPlusGoesRight(options.bounds);
   return createVisibilityGraphObstacleDataForMirroredMask({
-    mirrored,
+    isMirrored,
     routeMask: options.routeMask,
     routeTolerancePlanePixels: options.routeTolerancePlanePixels ?? 1,
   });
@@ -334,14 +315,14 @@ export function lineHitsPlaneMask(
   start: PlaneGridPoint,
   end: PlaneGridPoint,
   mask: Uint8Array,
-  mirrored: boolean,
+  isMirrored: boolean,
   boundaryExpansion: number,
 ) {
   return lineHitsPlaneMaskWithBoundaryExpansion(
     start,
     end,
     mask,
-    mirrored,
+    isMirrored,
     normalizeBoundaryExpansion(boundaryExpansion),
   );
 }
@@ -351,12 +332,12 @@ function lineHitsPlaneMaskWithBoundaryExpansion(
   start: PlaneGridPoint,
   end: PlaneGridPoint,
   mask: Uint8Array,
-  mirrored: boolean,
+  isMirrored: boolean,
   boundaryExpansion: number,
 ) {
   const steps = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
   if (steps === 0) {
-    return pointHitsPlaneMaskWithBoundaryExpansion(start, mask, mirrored, boundaryExpansion);
+    return pointHitsPlaneMaskWithBoundaryExpansion(start, mask, isMirrored, boundaryExpansion);
   }
 
   for (let step = 0; step <= steps; step += 1) {
@@ -365,32 +346,37 @@ function lineHitsPlaneMaskWithBoundaryExpansion(
       x: Math.round(start.x + (end.x - start.x) * ratio),
       y: Math.round(start.y + (end.y - start.y) * ratio),
     };
-    if (pointHitsPlaneMaskWithBoundaryExpansion(point, mask, mirrored, boundaryExpansion)) {
+    if (pointHitsPlaneMaskWithBoundaryExpansion(point, mask, isMirrored, boundaryExpansion)) {
       return true;
     }
   }
   return false;
 }
 
-/** 判断平面点是否碰到障碍；mirrored 让 x- 地图复用同一套 x+ DP。 */
+/** 判断平面点是否碰到障碍；isMirrored 让 x- 地图复用同一套 x+ DP。 */
 export function pointHitsPlaneMask(
   point: PlaneGridPoint,
   mask: Uint8Array,
-  mirrored: boolean,
+  isMirrored: boolean,
   boundaryExpansion: number,
 ) {
-  return pointHitsPlaneMaskWithBoundaryExpansion(point, mask, mirrored, normalizeBoundaryExpansion(boundaryExpansion));
+  return pointHitsPlaneMaskWithBoundaryExpansion(
+    point,
+    mask,
+    isMirrored,
+    normalizeBoundaryExpansion(boundaryExpansion),
+  );
 }
 
 /** 把调用方的原始坐标边判定适配到内部统一的 x+ 镜像坐标；默认分支保持原直线行为。 */
 function createVisibilityEdgeEvaluator(
   evaluateEdge: GraphwarPathfindingEdgeEvaluator,
-  mirrored: boolean,
+  isMirrored: boolean,
 ): GraphwarPathfindingEdgeEvaluator {
   return (previous, next, routeState, routeStateKey) => {
     const result = evaluateEdge(
-      mirrorPlaneGridPoint(previous, mirrored),
-      mirrorPlaneGridPoint(next, mirrored),
+      mirrorPlaneGridPoint(previous, isMirrored),
+      mirrorPlaneGridPoint(next, isMirrored),
       routeState,
       routeStateKey,
     );
@@ -404,14 +390,14 @@ function createVisibilityEdgeEvaluator(
 }
 
 /** 启发式只参与候选顺序；非法或负值回退 0，不能因此错误剪掉可用路径。 */
-function createVisibilityRemainingCostEstimator(options: GraphwarPathfindingOptions, mirrored: boolean) {
+function createVisibilityRemainingCostEstimator(options: GraphwarPathfindingOptions, isMirrored: boolean) {
   if (!options.estimateRemainingSecondaryCost) {
     return planeGridPointDistance;
   }
   return (current: PlaneGridPoint, target: PlaneGridPoint) => {
     const estimate = options.estimateRemainingSecondaryCost?.(
-      mirrorPlaneGridPoint(current, mirrored),
-      mirrorPlaneGridPoint(target, mirrored),
+      mirrorPlaneGridPoint(current, isMirrored),
+      mirrorPlaneGridPoint(target, isMirrored),
     );
     return estimate !== undefined && Number.isFinite(estimate) && estimate >= 0 ? estimate : 0;
   };
@@ -421,10 +407,10 @@ function createVisibilityRemainingCostEstimator(options: GraphwarPathfindingOpti
 function pointHitsPlaneMaskWithBoundaryExpansion(
   point: PlaneGridPoint,
   mask: Uint8Array,
-  mirrored: boolean,
+  isMirrored: boolean,
   boundaryExpansion: number,
 ) {
-  const x = forwardColumnToPlaneColumn(point.x, mirrored);
+  const x = forwardColumnToPlaneColumn(point.x, isMirrored);
   if (!planePointIsInsideBoundaryExpansion(x, point.y, boundaryExpansion)) {
     return true;
   }
@@ -435,7 +421,7 @@ function pointHitsPlaneMaskWithBoundaryExpansion(
 function collectVisibilityGraphCandidates({
   boundaryExpansion,
   canAdvance,
-  mirrored,
+  isMirrored,
   routeMask,
   routeTolerancePlanePixels,
   start,
@@ -444,7 +430,7 @@ function collectVisibilityGraphCandidates({
 }: {
   boundaryExpansion: number;
   canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
-  mirrored: boolean;
+  isMirrored: boolean;
   routeMask: Uint8Array;
   routeTolerancePlanePixels: number;
   start: PlaneGridPoint;
@@ -457,7 +443,7 @@ function collectVisibilityGraphCandidates({
   const minPathX = Math.min(start.x, target.x);
   const maxPathX = Math.max(start.x, target.x);
   const obstacleData = getCompatibleVisibilityGraphObstacleData({
-    mirrored,
+    isMirrored,
     routeMask,
     routeTolerancePlanePixels,
     visibilityGraphObstacleData,
@@ -482,7 +468,7 @@ function collectVisibilityGraphCandidates({
         component: contour.component,
         maxPathX,
         minPathX,
-        mirrored,
+        isMirrored,
         routeMask,
       });
       if (!candidate) {
@@ -504,12 +490,12 @@ function collectVisibilityGraphCandidates({
 
 /** 只复用输入完全一致的轮廓数据；模糊 tolerance 命中会改变真实路线语义。 */
 function getCompatibleVisibilityGraphObstacleData({
-  mirrored,
+  isMirrored,
   routeMask,
   routeTolerancePlanePixels,
   visibilityGraphObstacleData,
 }: {
-  mirrored: boolean;
+  isMirrored: boolean;
   routeMask: Uint8Array;
   routeTolerancePlanePixels: number;
   visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
@@ -517,14 +503,14 @@ function getCompatibleVisibilityGraphObstacleData({
   // 友伤模式、镜像方向和 route tolerance 都会改变轮廓；不匹配时宁可重建，避免复用错误候选。
   if (
     visibilityGraphObstacleData &&
-    visibilityGraphObstacleData.mirrored === mirrored &&
+    visibilityGraphObstacleData.isMirrored === isMirrored &&
     visibilityGraphObstacleData.routeMask === routeMask &&
     visibilityGraphObstacleData.routeTolerancePlanePixels === routeTolerancePlanePixels
   ) {
     return visibilityGraphObstacleData;
   }
   return createVisibilityGraphObstacleDataForMirroredMask({
-    mirrored,
+    isMirrored,
     routeMask,
     routeTolerancePlanePixels,
   });
@@ -532,21 +518,21 @@ function getCompatibleVisibilityGraphObstacleData({
 
 /** 从镜像 mask 构建轮廓、候选点和连通域索引。 */
 function createVisibilityGraphObstacleDataForMirroredMask({
-  mirrored,
+  isMirrored,
   routeMask,
   routeTolerancePlanePixels,
 }: {
-  mirrored: boolean;
+  isMirrored: boolean;
   routeMask: Uint8Array;
   routeTolerancePlanePixels: number;
 }): GraphwarVisibilityGraphObstacleData {
   const epsilon = clampNumber(
-    Math.abs(routeTolerancePlanePixels) * VISIBILITY_GRAPH_HEURISTICS.rdpEpsilonRouteToleranceRatio,
-    VISIBILITY_GRAPH_HEURISTICS.rdpMinEpsilon,
-    VISIBILITY_GRAPH_HEURISTICS.rdpMaxEpsilon,
+    Math.abs(routeTolerancePlanePixels) * graphwarVisibilityGraphHeuristics.rdpEpsilonRouteToleranceRatio,
+    graphwarVisibilityGraphHeuristics.rdpMinEpsilon,
+    graphwarVisibilityGraphHeuristics.rdpMaxEpsilon,
   );
   const contours: VisibilityGraphObstacleContour[] = [];
-  for (const component of collectRouteMaskComponents(routeMask, mirrored)) {
+  for (const component of collectRouteMaskComponents(routeMask, isMirrored)) {
     for (const contour of collectComponentBoundaryContours(component)) {
       const points = simplifyClosedBoundaryContour(contour, epsilon);
       contours.push({
@@ -558,21 +544,21 @@ function createVisibilityGraphObstacleDataForMirroredMask({
   }
   return {
     contours,
-    mirrored,
+    isMirrored,
     routeMask,
     routeTolerancePlanePixels,
   };
 }
 
 /** 用 BFS 收集 route mask 中的 8 邻域阻挡连通域。 */
-function collectRouteMaskComponents(mask: Uint8Array, mirrored: boolean) {
+function collectRouteMaskComponents(mask: Uint8Array, isMirrored: boolean) {
   const components: RouteMaskComponent[] = [];
   const visited = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
   for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
     for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
       const start = { x, y };
       const startIndex = planeGridPointToIndex(start);
-      if (visited[startIndex] || !routeMaskCellIsBlocked(start, mask, mirrored)) {
+      if (visited[startIndex] || !routeMaskCellIsBlocked(start, mask, isMirrored)) {
         continue;
       }
 
@@ -610,7 +596,7 @@ function collectRouteMaskComponents(mask: Uint8Array, mirrored: boolean) {
             continue;
           }
           const nextIndex = planeGridPointToIndex(next);
-          if (visited[nextIndex] || !routeMaskCellIsBlocked(next, mask, mirrored)) {
+          if (visited[nextIndex] || !routeMaskCellIsBlocked(next, mask, isMirrored)) {
             continue;
           }
           visited[nextIndex] = 1;
@@ -858,7 +844,7 @@ function selectNearbyFreeCellCandidate({
   component,
   maxPathX,
   minPathX,
-  mirrored,
+  isMirrored,
   routeMask,
 }: {
   boundaryExpansion: number;
@@ -866,14 +852,14 @@ function selectNearbyFreeCellCandidate({
   component: RouteMaskComponent;
   maxPathX: number;
   minPathX: number;
-  mirrored: boolean;
+  isMirrored: boolean;
   routeMask: Uint8Array;
 }) {
   let bestCandidate: PlaneGridPoint | undefined;
   let bestDistanceToBoundary = Infinity;
   let bestDistanceToCentroid = -Infinity;
 
-  for (let radius = 1; radius <= VISIBILITY_GRAPH_HEURISTICS.contourFreeCellSearchRadius; radius += 1) {
+  for (let radius = 1; radius <= graphwarVisibilityGraphHeuristics.contourFreeCellSearchRadius; radius += 1) {
     // 按 Chebyshev 环逐圈找最近自由格，优先让候选贴近原始轮廓。
     for (let yOffset = -radius; yOffset <= radius; yOffset += 1) {
       for (let xOffset = -radius; xOffset <= radius; xOffset += 1) {
@@ -888,7 +874,7 @@ function selectNearbyFreeCellCandidate({
         if (
           candidate.x < minPathX ||
           candidate.x > maxPathX ||
-          pointHitsPlaneMaskWithBoundaryExpansion(candidate, routeMask, mirrored, boundaryExpansion)
+          pointHitsPlaneMaskWithBoundaryExpansion(candidate, routeMask, isMirrored, boundaryExpansion)
         ) {
           continue;
         }
@@ -922,7 +908,7 @@ async function findLazyVisibilityGraphPath({
   canAdvance,
   candidates,
   isCancelled,
-  mirrored,
+  isMirrored,
   onPreview,
   routeMask,
   startIndex,
@@ -933,7 +919,7 @@ async function findLazyVisibilityGraphPath({
   canAdvance: (previous: PlaneGridPoint, next: PlaneGridPoint) => boolean;
   candidates: readonly PlaneGridPoint[];
   isCancelled?: () => boolean;
-  mirrored: boolean;
+  isMirrored: boolean;
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   routeMask: Uint8Array;
   startIndex: number;
@@ -972,7 +958,7 @@ async function findLazyVisibilityGraphPath({
         bestPath: path,
         candidates: limitPreviewCandidates(candidates, currentPoint),
         current: currentPoint,
-        mirrored,
+        isMirrored,
       });
       return path;
     }
@@ -987,14 +973,14 @@ async function findLazyVisibilityGraphPath({
       if (
         !nextPoint ||
         !canAdvance(currentPoint, nextPoint) ||
-        lineHitsPlaneMaskWithBoundaryExpansion(currentPoint, nextPoint, routeMask, mirrored, boundaryExpansion)
+        lineHitsPlaneMaskWithBoundaryExpansion(currentPoint, nextPoint, routeMask, isMirrored, boundaryExpansion)
       ) {
         continue;
       }
 
       acceptedEdges.push([currentPoint, nextPoint]);
-      if (acceptedEdges.length > VISIBILITY_GRAPH_HEURISTICS.previewEdgeLimit) {
-        acceptedEdges.splice(0, acceptedEdges.length - VISIBILITY_GRAPH_HEURISTICS.previewEdgeLimit);
+      if (acceptedEdges.length > graphwarVisibilityGraphHeuristics.previewEdgeLimit) {
+        acceptedEdges.splice(0, acceptedEdges.length - graphwarVisibilityGraphHeuristics.previewEdgeLimit);
       }
 
       const nextCost = {
@@ -1016,13 +1002,13 @@ async function findLazyVisibilityGraphPath({
 
     expansionCount += 1;
     if (
-      expansionCount % VISIBILITY_GRAPH_HEURISTICS.previewExpansionInterval === 0 &&
+      expansionCount % graphwarVisibilityGraphHeuristics.previewExpansionInterval === 0 &&
       !(await reportVisibilitySearchProgress({
         acceptedEdges,
         candidates,
         currentIndex,
         isCancelled,
-        mirrored,
+        isMirrored,
         onPreview,
         openIndexes,
         startIndex,
@@ -1043,7 +1029,7 @@ async function reportVisibilitySearchProgress({
   candidates,
   currentIndex,
   isCancelled,
-  mirrored,
+  isMirrored,
   onPreview,
   openIndexes,
   startIndex,
@@ -1055,7 +1041,7 @@ async function reportVisibilitySearchProgress({
   candidates: readonly PlaneGridPoint[];
   currentIndex: number;
   isCancelled?: () => boolean;
-  mirrored: boolean;
+  isMirrored: boolean;
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   openIndexes: ReadonlySet<number>;
   startIndex: number;
@@ -1074,7 +1060,7 @@ async function reportVisibilitySearchProgress({
     bestPath: reconstructVisibilitySearchPath(bestOpenIndex, states, candidates),
     candidates: limitPreviewCandidates(candidates, current ?? candidates[startIndex]),
     current,
-    mirrored,
+    isMirrored,
   });
 
   const yielded = yieldControl?.();
@@ -1165,7 +1151,7 @@ async function findStatefulLazyVisibilityGraphPath({
   initialRouteState,
   initialRouteStateKey,
   isCancelled,
-  mirrored,
+  isMirrored,
   onPreview,
   startIndex,
   targetIndex,
@@ -1178,7 +1164,7 @@ async function findStatefulLazyVisibilityGraphPath({
   initialRouteState: number;
   initialRouteStateKey?: string;
   isCancelled?: () => boolean;
-  mirrored: boolean;
+  isMirrored: boolean;
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   startIndex: number;
   targetIndex: number;
@@ -1227,7 +1213,7 @@ async function findStatefulLazyVisibilityGraphPath({
         bestPath: path,
         candidates: limitPreviewCandidates(candidates, currentPoint),
         current: currentPoint,
-        mirrored,
+        isMirrored,
       });
       return path;
     }
@@ -1247,8 +1233,8 @@ async function findStatefulLazyVisibilityGraphPath({
       }
 
       acceptedEdges.push([currentPoint, nextPoint]);
-      if (acceptedEdges.length > VISIBILITY_GRAPH_HEURISTICS.previewEdgeLimit) {
-        acceptedEdges.splice(0, acceptedEdges.length - VISIBILITY_GRAPH_HEURISTICS.previewEdgeLimit);
+      if (acceptedEdges.length > graphwarVisibilityGraphHeuristics.previewEdgeLimit) {
+        acceptedEdges.splice(0, acceptedEdges.length - graphwarVisibilityGraphHeuristics.previewEdgeLimit);
       }
 
       const nextKey = createStatefulVisibilitySearchKey(nextIndex, edge.nextRouteState, edge.nextRouteStateKey);
@@ -1274,14 +1260,14 @@ async function findStatefulLazyVisibilityGraphPath({
 
     expansionCount += 1;
     if (
-      expansionCount % VISIBILITY_GRAPH_HEURISTICS.previewExpansionInterval === 0 &&
+      expansionCount % graphwarVisibilityGraphHeuristics.previewExpansionInterval === 0 &&
       !(await reportStatefulVisibilitySearchProgress({
         acceptedEdges,
         candidates,
         currentKey,
         estimateRemainingSecondaryCost,
         isCancelled,
-        mirrored,
+        isMirrored,
         onPreview,
         openKeys,
         startIndex,
@@ -1303,7 +1289,7 @@ async function reportStatefulVisibilitySearchProgress({
   currentKey,
   estimateRemainingSecondaryCost,
   isCancelled,
-  mirrored,
+  isMirrored,
   onPreview,
   openKeys,
   startIndex,
@@ -1316,7 +1302,7 @@ async function reportStatefulVisibilitySearchProgress({
   currentKey: string;
   estimateRemainingSecondaryCost: (current: PlaneGridPoint, target: PlaneGridPoint) => number;
   isCancelled?: () => boolean;
-  mirrored: boolean;
+  isMirrored: boolean;
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   openKeys: ReadonlySet<string>;
   startIndex: number;
@@ -1338,7 +1324,7 @@ async function reportStatefulVisibilitySearchProgress({
     bestPath: reconstructStatefulVisibilitySearchPath(bestOpenKey, states, candidates),
     candidates: limitPreviewCandidates(candidates, current ?? candidates[startIndex]),
     current,
-    mirrored,
+    isMirrored,
   });
 
   const yielded = yieldControl?.();
@@ -1441,14 +1427,14 @@ function createStatefulVisibilitySearchKey(candidateIndex: number, routeState: n
 
 /** 限制页面预览候选点数量，优先显示当前点附近的候选点。 */
 function limitPreviewCandidates(candidates: readonly PlaneGridPoint[], current?: PlaneGridPoint) {
-  if (candidates.length <= VISIBILITY_GRAPH_HEURISTICS.previewCandidateLimit) {
+  if (candidates.length <= graphwarVisibilityGraphHeuristics.previewCandidateLimit) {
     return candidates;
   }
 
   const start = candidates[0];
   const target = candidates[1];
   if (!start || !target) {
-    return candidates.slice(0, VISIBILITY_GRAPH_HEURISTICS.previewCandidateLimit);
+    return candidates.slice(0, graphwarVisibilityGraphHeuristics.previewCandidateLimit);
   }
   const anchor = current ?? start;
   const selected = candidates
@@ -1458,7 +1444,7 @@ function limitPreviewCandidates(candidates: readonly PlaneGridPoint[], current?:
         planeGridPointDistanceSquared(left, anchor) - planeGridPointDistanceSquared(right, anchor) ||
         comparePlaneGridPoints(left, right),
     )
-    .slice(0, VISIBILITY_GRAPH_HEURISTICS.previewCandidateLimit - 2);
+    .slice(0, graphwarVisibilityGraphHeuristics.previewCandidateLimit - 2);
   return [start, target, ...selected];
 }
 
@@ -1556,13 +1542,13 @@ function calculateSignedArea(points: readonly PlaneGridPoint[]) {
 
 /** 判断三点是否近似共线，过滤不值得作为绕障候选的轻微边界锯齿。 */
 function isNearCollinear(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint) {
-  return distanceToLineSegment(current, previous, next) <= VISIBILITY_GRAPH_HEURISTICS.collinearDistanceTolerance;
+  return distanceToLineSegment(current, previous, next) <= graphwarVisibilityGraphHeuristics.collinearDistanceTolerance;
 }
 
 /** 判断当前拐点是否明显为凹角，凹角不适合作为绕障候选点。 */
 function isClearlyConcave(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGridPoint, signedArea: number) {
   const crossProduct = cross(previous, current, next);
-  if (Math.abs(crossProduct) <= VISIBILITY_GRAPH_HEURISTICS.concaveCrossTolerance) {
+  if (Math.abs(crossProduct) <= graphwarVisibilityGraphHeuristics.concaveCrossTolerance) {
     return false;
   }
   return signedArea * crossProduct < 0;
@@ -1592,11 +1578,11 @@ function cross(previous: PlaneGridPoint, current: PlaneGridPoint, next: PlaneGri
 }
 
 /** 判断指定平面 cell 在 route mask 中是否阻挡。 */
-function routeMaskCellIsBlocked(point: PlaneGridPoint, mask: Uint8Array, mirrored: boolean) {
+function routeMaskCellIsBlocked(point: PlaneGridPoint, mask: Uint8Array, isMirrored: boolean) {
   if (!planePointIsInsideBounds(point.x, point.y)) {
     return false;
   }
-  const x = forwardColumnToPlaneColumn(point.x, mirrored);
+  const x = forwardColumnToPlaneColumn(point.x, isMirrored);
   return Boolean(mask[point.y * GRAPHWAR_PLANE_LENGTH + x]);
 }
 

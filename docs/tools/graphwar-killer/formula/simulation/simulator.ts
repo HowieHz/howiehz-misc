@@ -18,8 +18,9 @@ import type {
   GraphwarSecondOrderLaunchAngleMode,
 } from "../../core/types";
 import type { GraphwarTrajectoryDebugCounters, GraphwarTrajectoryDebugMetrics } from "../debug-metrics";
-import { createGraphwarExpressionEvaluator } from "../expression/evaluator";
+import { parseGraphwarExpressionProgram } from "../expression/evaluator";
 import type { GraphwarExpressionParserOptions } from "../expression/evaluator";
+import { createGraphwarExpressionProgramEvaluator } from "../expression/program";
 /** 封装 Graphwar 公式模拟器，按游戏步进规则计算轨迹和停止原因。 */
 import { compileFormulaEvaluator, compileGraphwarFormulaMaterials } from "../generation/build";
 import type { CompiledGraphwarFormulaMaterials, FormulaEvaluationOptions } from "../generation/build";
@@ -348,10 +349,11 @@ export function createGraphwarTrajectoryStepper(options: SampleGraphwarTrajector
 
 /** 使用用户输入的 Graphwar 表达式生成预览轨迹点。 */
 export function sampleGraphwarExpressionTrajectory(options: SampleGraphwarExpressionTrajectoryOptions) {
-  const evaluateExpression = createGraphwarExpressionEvaluator(options.expression, options.parser);
-  if (!evaluateExpression) {
+  const program = parseGraphwarExpressionProgram(options.expression, options.parser);
+  if (!program) {
     return createTrajectorySample([], "invalid");
   }
+  const evaluateExpression = createGraphwarExpressionProgramEvaluator(program);
 
   if (options.equation === "y") {
     return sampleNormalExpression(options, (x) => evaluateExpression(x, 0, 0));

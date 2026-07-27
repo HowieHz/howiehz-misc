@@ -36,28 +36,32 @@ export function planeXToImageX(planeX: number, edgeRect: BoundsRect) {
  *
  * 镜像使用 769-x，因为普通整数列身份是 0..769；同一变换也可直接还原连续坐标。
  */
-export function planeXToForwardX(planeX: number, mirrored: boolean) {
+export function planeXToForwardX(planeX: number, isMirrored: boolean) {
   assertFiniteNumber(planeX, "planeX");
-  return mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - planeX : planeX;
+  return isMirrored ? GRAPHWAR_PLANE_LENGTH - 1 - planeX : planeX;
 }
 
 /** 将原生整数列映射到统一递增的 x+ 整数列。 */
-export function planeColumnToForwardColumn(column: number, mirrored: boolean) {
+export function planeColumnToForwardColumn(column: number, isMirrored: boolean) {
   assertPlaneColumn(column, "column");
-  return mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - column : column;
+  return isMirrored ? GRAPHWAR_PLANE_LENGTH - 1 - column : column;
 }
 
 /** 将统一递增的 x+ 整数列还原成截图从左到右的原生列。 */
-export function forwardColumnToPlaneColumn(forwardColumn: number, mirrored: boolean) {
+export function forwardColumnToPlaneColumn(forwardColumn: number, isMirrored: boolean) {
   assertPlaneColumn(forwardColumn, "forwardColumn");
-  return mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - forwardColumn : forwardColumn;
+  return isMirrored ? GRAPHWAR_PLANE_LENGTH - 1 - forwardColumn : forwardColumn;
 }
 
 /** 把截图 x 映射到最近的原生列；恰好位于两列中间时选择 Graphwar x+ 方向。 */
-export function imageXToNearestPlaneColumn(imageX: number, edgeRect: BoundsRect, mirrored: boolean) {
+export function imageXToNearestPlaneColumn(imageX: number, edgeRect: BoundsRect, isMirrored: boolean) {
   return forwardColumnToPlaneColumn(
-    clampNumber(Math.round(planeXToForwardX(imageXToPlaneX(imageX, edgeRect), mirrored)), 0, GRAPHWAR_PLANE_LENGTH - 1),
-    mirrored,
+    clampNumber(
+      Math.round(planeXToForwardX(imageXToPlaneX(imageX, edgeRect), isMirrored)),
+      0,
+      GRAPHWAR_PLANE_LENGTH - 1,
+    ),
+    isMirrored,
   );
 }
 
@@ -91,10 +95,10 @@ export function imagePointToPlaneGridPoint(point: PixelPoint, edgeRect: BoundsRe
   };
 }
 
-/** 将实际平面点镜像到 x+ 搜索坐标系；mirrored=false 时应保持点不变。 */
-export function mirrorPlaneGridPoint(point: PlaneGridPoint, mirrored: boolean): PlaneGridPoint {
+/** 将实际平面点镜像到 x+ 搜索坐标系；isMirrored=false 时应保持点不变。 */
+export function mirrorPlaneGridPoint(point: PlaneGridPoint, isMirrored: boolean): PlaneGridPoint {
   return {
-    x: mirrored ? GRAPHWAR_PLANE_LENGTH - 1 - point.x : point.x,
+    x: isMirrored ? GRAPHWAR_PLANE_LENGTH - 1 - point.x : point.x,
     y: point.y,
   };
 }

@@ -652,7 +652,7 @@ describe("Step glitch scanner replay acceptance", () => {
     expect(replayMockState.testedWindowStartXs.length).toBeGreaterThan(0);
   });
 
-  it("keeps all three backoff batches in one native column with mirrored bounds", () => {
+  it("keeps all three backoff batches in one native column with isMirrored bounds", () => {
     replayMockState.orderedGateSuccessAttempt = Number.POSITIVE_INFINITY;
     replayMockState.orderedRowScenario = true;
     // 原版 50 Graph x 宽度大于最大 0.01 门宽；镜像只改变截图方向，不改变 Graph x- 回退语义。

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type {
@@ -57,6 +58,11 @@ vi.mock("../../pathfinding/smart/trajectory", () => ({
 }));
 
 const originalSelfDescriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
+const attempt = {
+  attemptId: 1,
+  backendGeneration: 0,
+  outerTaskId: 1,
+} satisfies GraphwarBackendAttemptIdentity;
 const postMessage = vi.fn<(message: GraphwarPathfindingWorkerResponse) => void>();
 let handleMessage: ((event: MessageEvent<GraphwarPathfindingWorkerRequest>) => void) | undefined;
 
@@ -120,6 +126,7 @@ describe("Anytime one-click-clear progress", () => {
     handleMessage(
       new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
         data: {
+          attempt,
           id: 41,
           task: {
             shouldCollectDiagnostics: true,
@@ -133,11 +140,13 @@ describe("Anytime one-click-clear progress", () => {
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
 
     expect(postMessage.mock.calls[0]?.[0]).toEqual({
+      attempt,
       id: 41,
       incumbent,
       type: "one-click-clear-incumbent",
     });
     expect(postMessage.mock.calls[1]?.[0]).toMatchObject({
+      attempt,
       id: 41,
       result: {
         diagnostics: {
@@ -170,6 +179,7 @@ describe("Anytime one-click-clear progress", () => {
     handleMessage(
       new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
         data: {
+          attempt,
           id: 42,
           task: {
             input,
@@ -182,6 +192,7 @@ describe("Anytime one-click-clear progress", () => {
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
     expect(postMessage.mock.calls[0]?.[0]).toMatchObject({
+      attempt,
       id: 42,
       taskType: "build-one-click-clear-path",
       type: "success",
@@ -207,6 +218,7 @@ describe("Anytime one-click-clear progress", () => {
     handleMessage(
       new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
         data: {
+          attempt,
           id: 43,
           task: {
             input,
@@ -219,6 +231,7 @@ describe("Anytime one-click-clear progress", () => {
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
     expect(postMessage.mock.calls[0]?.[0]).toMatchObject({
+      attempt,
       id: 43,
       result: { result: { reason: "no-usable-target", type: "failure" } },
       taskType: "build-one-click-clear-path",
@@ -262,6 +275,7 @@ describe("Anytime one-click-clear progress", () => {
     handleMessage(
       new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
         data: {
+          attempt,
           id: 43,
           task: {
             input,
@@ -277,6 +291,7 @@ describe("Anytime one-click-clear progress", () => {
     handleMessage(
       new MessageEvent<GraphwarPathfindingWorkerRequest>("message", {
         data: {
+          attempt,
           id: 44,
           task: {
             input: { ...input, pathPoints: adoptedPath, prefixTarget },
@@ -550,6 +565,7 @@ async function dispatchSmartPathRequest(input: GraphwarSmartPathfindingPathInput
 
   handleMessage({
     data: {
+      attempt,
       id: 1,
       task: { input, type: "find-smart-path" },
     },

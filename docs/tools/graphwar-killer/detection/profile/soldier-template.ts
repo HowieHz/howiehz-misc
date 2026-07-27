@@ -26,3 +26,18 @@ export const defaultGraphwarMaximumSoldierCount = 40;
 export const defaultGraphwarTemplateMatchingWorkerCount = 4;
 /** 同一士兵附近会产生多个高分中心候选；低于这个源码像素间距的匹配视为同一士兵。 */
 export const graphwarSoldierGenerationMinimumAxisGap = 20;
+
+/** 为每个 detection WASM 实例生成固定顺序的模板几何和评分阈值。 */
+export function createGraphwarSoldierTemplateProfileData() {
+  return new Float64Array([
+    graphwarSoldierCanvasCenter,
+    graphwarSoldierVisibleCenterX,
+    graphwarSoldierVisibleCenterY,
+    graphwarSoldierMirrorVisibleCenterX,
+    graphwarSoldierTemplateMinimumFixedScore,
+    graphwarSoldierTemplateMinimumForegroundScore,
+    graphwarSoldierTemplateMinimumPlayerScore,
+    graphwarSoldierTemplateMinimumSignatureScore,
+    graphwarSoldierGenerationMinimumAxisGap,
+  ]);
+}

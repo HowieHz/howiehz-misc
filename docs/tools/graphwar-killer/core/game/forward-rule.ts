@@ -89,10 +89,10 @@ export function pointAdvancesByMinimumAutomaticForwardStep(
   bounds: GraphBounds,
   boundsRect: BoundsRect,
 ) {
-  const mirrored = !xPlusGoesRight(bounds);
+  const isMirrored = !xPlusGoesRight(bounds);
   return (
-    planeXToForwardX(imageXToPlaneX(point.x, boundsRect), mirrored) -
-      planeXToForwardX(imageXToPlaneX(previousPoint.x, boundsRect), mirrored) >=
+    planeXToForwardX(imageXToPlaneX(point.x, boundsRect), isMirrored) -
+      planeXToForwardX(imageXToPlaneX(previousPoint.x, boundsRect), isMirrored) >=
     GRAPHWAR_AUTO_CONTROL_POINT_MIN_FORWARD_PLANE_PIXELS
   );
 }
@@ -134,11 +134,11 @@ export function createNextNativePlaneColumnPointAtGraphY(
     return undefined;
   }
 
-  const mirrored = !xPlusGoesRight(bounds);
+  const isMirrored = !xPlusGoesRight(bounds);
   const forwardColumn = Math.max(
     0,
     Math.ceil(
-      planeXToForwardX(imageXToPlaneX(startPoint.x, boundsRect), mirrored) +
+      planeXToForwardX(imageXToPlaneX(startPoint.x, boundsRect), isMirrored) +
         GRAPHWAR_AUTO_CONTROL_POINT_MIN_FORWARD_PLANE_PIXELS,
     ),
   );
@@ -147,7 +147,7 @@ export function createNextNativePlaneColumnPointAtGraphY(
   }
 
   return createPixelPoint(
-    planeXToImageX(forwardColumnToPlaneColumn(forwardColumn, mirrored), boundsRect),
+    planeXToImageX(forwardColumnToPlaneColumn(forwardColumn, isMirrored), boundsRect),
     graphToImagePoint(createGraphPoint(bounds.minX, graphY), bounds, boundsRect).y,
   );
 }

@@ -1,5 +1,12 @@
 /** 解析并求值 Graphwar 用户表达式，保持原版 PolishNotationFunction 的兼容规则。 */
 
+import {
+  createGraphwarExpressionProgram,
+  createGraphwarExpressionProgramEvaluator,
+  GraphwarExpressionOpcode,
+} from "./program";
+import type { GraphwarExpressionProgram } from "./program";
+
 /** 用户输入表达式的 Graphwar 源码兼容解析选项。 */
 export interface GraphwarExpressionParserOptions {
   /** 是否跳过 Graphwar 表达式中无法识别的字符。 */
@@ -16,63 +23,61 @@ interface GraphwarExpressionToken {
   value?: number;
 }
 
-/** Graphwar 表达式 token 编号；数值顺序就是原版重排优先级，不能按可读性随意调整。 */
-const enum GraphwarExpressionTokenType {
+/** Graphwar parser token；运算和值复用 canonical opcode，括号只在优先级重排期间存在。 */
+const GraphwarExpressionTokenType = {
   /** 加法 token。 */
-  Add = 1,
+  Add: GraphwarExpressionOpcode.Add,
   /** 减号 token；Graphwar 原版把它作为一元负号处理。 */
-  Subtract = 2,
+  Subtract: GraphwarExpressionOpcode.Negate,
   /** 乘法 token。 */
-  Multiply = 3,
+  Multiply: GraphwarExpressionOpcode.Multiply,
   /** 除法 token。 */
-  Divide = 4,
+  Divide: GraphwarExpressionOpcode.Divide,
   /** 幂运算 token。 */
-  Pow = 5,
+  Pow: GraphwarExpressionOpcode.Pow,
   /** Sqrt 函数 token。 */
-  Sqrt = 6,
+  Sqrt: GraphwarExpressionOpcode.Sqrt,
   /** Log10 函数 token。 */
-  Log = 7,
+  Log: GraphwarExpressionOpcode.Log10,
   /** Abs 函数 token。 */
-  Abs = 8,
+  Abs: GraphwarExpressionOpcode.Abs,
   /** Sin/sen 函数 token。 */
-  Sin = 9,
+  Sin: GraphwarExpressionOpcode.Sin,
   /** Cos 函数 token。 */
-  Cos = 10,
+  Cos: GraphwarExpressionOpcode.Cos,
   /** Tan/tg 函数 token。 */
-  Tan = 11,
+  Tan: GraphwarExpressionOpcode.Tan,
   /** Ln 函数 token。 */
-  Ln = 12,
+  Ln: GraphwarExpressionOpcode.Ln,
   /** X 变量 token。 */
-  X = 13,
+  X: GraphwarExpressionOpcode.X,
   /** Y 变量 token。 */
-  Y = 14,
+  Y: GraphwarExpressionOpcode.Y,
   /** Y' 变量 token。 */
-  DY = 15,
+  DY: GraphwarExpressionOpcode.DY,
   /** 数字常量 token。 */
-  Value = 16,
+  Value: GraphwarExpressionOpcode.Constant,
   /** 左括号 token，只参与重排时的嵌套层级计算。 */
-  LeftBracket = 17,
+  LeftBracket: 17,
   /** 右括号 token，只参与重排时的嵌套层级计算。 */
-  RightBracket = 18,
-}
+  RightBracket: 18,
+} as const;
+type GraphwarExpressionTokenType = (typeof GraphwarExpressionTokenType)[keyof typeof GraphwarExpressionTokenType];
 
 /** 编译用户输入表达式，只暴露 Graphwar 支持的一小组数学函数。 */
 export function createGraphwarExpressionEvaluator(expression: string, parserOptions?: GraphwarExpressionParserOptions) {
-  const polishTokens = parseGraphwarExpression(expression, parserOptions);
-  if (!polishTokens) {
+  const program = parseGraphwarExpressionProgram(expression, parserOptions);
+  if (!program) {
     return undefined;
   }
-
-  // 栈按 token 上限预分配，并由闭包在同一个 evaluator 的多次采样间复用。
-  const stack = new Array<number>(polishTokens.length);
-  return (x: number, y: number, dy: number) => evaluateGraphwarPolishExpression(polishTokens, stack, x, y, dy);
+  return createGraphwarExpressionProgramEvaluator(program);
 }
 
-/** 按 Graphwar PolishNotationFunction 的 token 规则解析用户表达式。 */
-function parseGraphwarExpression(
+/** 按 Graphwar PolishNotationFunction 规则把用户文本解析为唯一规范程序。 */
+export function parseGraphwarExpressionProgram(
   expression: string,
   parserOptions?: GraphwarExpressionParserOptions,
-): GraphwarExpressionToken[] | undefined {
+): GraphwarExpressionProgram | undefined {
   // 流程刻意保持为 token 化 -> 前缀 Polish 重排 -> 栈求值，便于对齐 Graphwar 原版解析差异。
   const regularTokens = tokenizeGraphwarExpression(expression, parserOptions);
   if (!regularTokens || regularTokens.length === 0) {
@@ -82,7 +87,19 @@ function parseGraphwarExpression(
   if (!reorderGraphwarExpressionTokens(polishTokens, regularTokens, 0, regularTokens.length - 1)) {
     return undefined;
   }
-  return graphwarPolishValuesNeeded(polishTokens) === 0 ? polishTokens : undefined;
+  const constants: number[] = [];
+  const opcodes = new Uint8Array(polishTokens.length);
+  for (let index = 0; index < polishTokens.length; index += 1) {
+    const token = polishTokens[index];
+    opcodes[index] = token.type;
+    if (token.type === GraphwarExpressionTokenType.Value) {
+      if (token.value === undefined) {
+        return undefined;
+      }
+      constants.push(token.value);
+    }
+  }
+  return createGraphwarExpressionProgram(opcodes, Float64Array.from(constants));
 }
 
 /** 模拟 Graphwar 对普通输入的简单 token 化，包括 exp=>e^、逗号小数和隐式乘法。 */
@@ -286,138 +303,6 @@ function findGraphwarExpressionRootTokenIndex(input: GraphwarExpressionToken[], 
     }
   }
   return rootIndex;
-}
-
-/** 校验 Polish token 序列是否刚好消费一个表达式值。 */
-function graphwarPolishValuesNeeded(tokens: readonly GraphwarExpressionToken[]) {
-  let valuesNeeded = 1;
-  for (let index = 0; index < tokens.length; index += 1) {
-    valuesNeeded +=
-      tokens[index].type >= GraphwarExpressionTokenType.Add && tokens[index].type <= GraphwarExpressionTokenType.Ln
-        ? getGraphwarExpressionTokenParamCount(tokens[index].type) - 1
-        : -1;
-    if (valuesNeeded === 0 && index + 1 < tokens.length) {
-      return -1;
-    }
-  }
-  return valuesNeeded;
-}
-
-/** 从后向前求值 Graphwar 前缀 Polish 表达式。 */
-function evaluateGraphwarPolishExpression(
-  tokens: readonly GraphwarExpressionToken[],
-  stack: number[],
-  x: number,
-  y: number,
-  dy: number,
-) {
-  let stackSize = 0;
-  for (let index = tokens.length - 1; index >= 0; index -= 1) {
-    const token = tokens[index];
-
-    switch (token.type) {
-      case GraphwarExpressionTokenType.Add:
-        if (stackSize < 2) {
-          return Number.NaN;
-        }
-        stack[stackSize - 2] += stack[stackSize - 1];
-        stackSize -= 1;
-        break;
-      case GraphwarExpressionTokenType.Subtract:
-        if (stackSize < 1) {
-          return Number.NaN;
-        }
-        stack[stackSize - 1] = -stack[stackSize - 1];
-        break;
-      case GraphwarExpressionTokenType.Multiply:
-        if (stackSize < 2) {
-          return Number.NaN;
-        }
-        stack[stackSize - 2] *= stack[stackSize - 1];
-        stackSize -= 1;
-        break;
-      case GraphwarExpressionTokenType.Divide:
-        if (stackSize < 2) {
-          return Number.NaN;
-        }
-        stack[stackSize - 2] = stack[stackSize - 1] / stack[stackSize - 2];
-        stackSize -= 1;
-        break;
-      case GraphwarExpressionTokenType.Pow:
-        if (stackSize < 2) {
-          return Number.NaN;
-        }
-        stack[stackSize - 2] = Math.pow(stack[stackSize - 1], stack[stackSize - 2]);
-        stackSize -= 1;
-        break;
-      case GraphwarExpressionTokenType.Sqrt:
-        if (stackSize < 1) {
-          return Number.NaN;
-        }
-        stack[stackSize - 1] = Math.sqrt(stack[stackSize - 1]);
-        break;
-      case GraphwarExpressionTokenType.Log:
-        if (stackSize < 1) {
-          return Number.NaN;
-        }
-        stack[stackSize - 1] = Math.log10(stack[stackSize - 1]);
-        break;
-      case GraphwarExpressionTokenType.Abs:
-        if (stackSize < 1) {
-          return Number.NaN;
-        }
-        stack[stackSize - 1] = Math.abs(stack[stackSize - 1]);
-        break;
-      case GraphwarExpressionTokenType.Sin:
-        if (stackSize < 1) {
-          return Number.NaN;
-        }
-        stack[stackSize - 1] = Math.sin(stack[stackSize - 1]);
-        break;
-      case GraphwarExpressionTokenType.Cos:
-        if (stackSize < 1) {
-          return Number.NaN;
-        }
-        stack[stackSize - 1] = Math.cos(stack[stackSize - 1]);
-        break;
-      case GraphwarExpressionTokenType.Tan:
-        if (stackSize < 1) {
-          return Number.NaN;
-        }
-        stack[stackSize - 1] = Math.tan(stack[stackSize - 1]);
-        break;
-      case GraphwarExpressionTokenType.Ln:
-        if (stackSize < 1) {
-          return Number.NaN;
-        }
-        stack[stackSize - 1] = Math.log(stack[stackSize - 1]);
-        break;
-      case GraphwarExpressionTokenType.X:
-        stack[stackSize] = x;
-        stackSize += 1;
-        break;
-      case GraphwarExpressionTokenType.Y:
-        stack[stackSize] = y;
-        stackSize += 1;
-        break;
-      case GraphwarExpressionTokenType.DY:
-        stack[stackSize] = dy;
-        stackSize += 1;
-        break;
-      case GraphwarExpressionTokenType.Value:
-        if (token.value === undefined) {
-          return Number.NaN;
-        }
-        stack[stackSize] = token.value;
-        stackSize += 1;
-        break;
-      default:
-        return Number.NaN;
-    }
-  }
-
-  const value = stackSize === 1 ? stack[0] : Number.NaN;
-  return Number.isFinite(value) ? value : Number.NaN;
 }
 
 /** 返回 Graphwar 运算符需要的参数个数。 */

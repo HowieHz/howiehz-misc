@@ -59,7 +59,7 @@ export interface GraphwarOneClickClearCandidate {
   /** 识别结果里的稳定士兵 id。 */
   id: string;
   /** 是否按当前敌我规则视作敌方。 */
-  enemy: boolean;
+  isEnemy: boolean;
   /** 命中圈圆心，截图像素坐标。 */
   hitCenter: PixelPoint;
   /** 命中圈半径，截图像素。 */
@@ -598,7 +598,7 @@ function snapshotOneClickClearOptions(input: GraphwarOneClickClearBuildOptions):
 /** 复制候选和圆心，避免 candidates/hitCandidates 保留页面代理或共享可变点。 */
 function snapshotOneClickClearCandidate(candidate: GraphwarOneClickClearCandidate): GraphwarOneClickClearCandidate {
   return {
-    enemy: candidate.enemy,
+    isEnemy: candidate.isEnemy,
     hitCenter: clonePixelPoint(candidate.hitCenter),
     hitRadius: candidate.hitRadius,
     id: candidate.id,

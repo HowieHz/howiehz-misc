@@ -1,11 +1,11 @@
 /** 在 Web Worker 中执行耗时的 Graphwar 截图识别，避免阻塞页面主线程。 */
+import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import { nowMs } from "../../core/time";
 import type { BoundsRect } from "../../core/types";
 import {
   collectSoldierTemplateCenterCandidatesForMatching,
   createSoldierDetectionBoxes,
   detectGraphwarObstaclesInBounds,
-  detectGraphwarObjectsInBounds,
   detectGraphwarPlayArea,
   finalizeSoldierTemplateMatches,
   getGraphwarDetectionScale,
@@ -32,16 +32,15 @@ import type {
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
 } from "../../detection/runtime/protocol";
+import { isGraphwarDetectionWorkerRequest } from "../../detection/runtime/protocol";
 import { measureDetectionStage } from "../../detection/runtime/timing";
-import type {
-  GraphwarSoldierTemplateWorkerRequest,
-  GraphwarSoldierTemplateWorkerResponse,
-} from "../../detection/template/protocol";
+import type { GraphwarSoldierTemplateWorkerRequest } from "../../detection/template/protocol";
+import { isGraphwarSoldierTemplateWorkerResponseForRequest } from "../../detection/template/protocol";
 
 /** 当前 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarDetectionWorkerScope {
   /** 接收主线程检测请求。 */
-  addEventListener: (type: "message", listener: (event: MessageEvent<GraphwarDetectionWorkerRequest>) => void) => void;
+  addEventListener: (type: "message", listener: (event: MessageEvent<unknown>) => void) => void;
   /** 向主线程发送阶段、成功或错误响应。 */
   postMessage: (message: GraphwarDetectionWorkerResponse, transfer?: Transferable[]) => void;
 }
@@ -55,6 +54,15 @@ interface SoldierTemplateWorkerTask {
   /** 子 Worker 序号，用于日志和 timing 展示。 */
   workerIndex: number;
 }
+
+/** Detection request id 与 backend attempt 必须作为一份下传身份同行。 */
+type GraphwarDetectionRequestContext = Pick<GraphwarDetectionWorkerRequest, "attempt" | "id">;
+
+/** Task type 与 result 原子同行，构造响应时不靠类型断言恢复关联。 */
+type GraphwarDetectionSuccessPayload =
+  | { result: GraphwarAutoDetectionResult; taskType: "detect-auto" }
+  | { result: GraphwarBoundsOnlyDetectionResult; taskType: "detect-bounds-only" }
+  | { result: GraphwarObjectsDetectionResult; taskType: "detect-bounds" };
 
 /** 子 Worker 生命周期句柄，集中管理结果 Promise 和事件解绑。 */
 interface SoldierTemplateWorkerHandle {
@@ -72,26 +80,31 @@ const workerScope = self as unknown as GraphwarDetectionWorkerScope;
 
 /** 接收主线程请求，并将异步检测交给统一的协议分派入口。 */
 workerScope.addEventListener("message", (event) => {
-  void runDetectionRequest(event.data);
+  if (isGraphwarDetectionWorkerRequest(event.data)) {
+    void runDetectionRequest(event.data);
+  }
 });
 
 /** 分发主线程检测请求，并把所有异常转成 Worker 响应。 */
 async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
+  const requestContext: GraphwarDetectionRequestContext = { attempt: request.attempt, id: request.id };
   const timings: GraphwarDetectionWorkerTimingEntry[] = [];
   try {
     if (request.task.type === "detect-auto") {
-      await runAutoDetectionTask(request.id, request.task, timings);
+      await runAutoDetectionTask(requestContext, request.task, timings);
       return;
     }
     if (request.task.type === "detect-bounds-only") {
-      postStage(request.id, "detecting-bounds");
+      postStage(requestContext, "detecting-bounds");
       postSuccess(
-        request.id,
-        "detect-bounds-only",
+        requestContext,
         {
-          edgeRect: measureDetectionStage(timings, "detecting-bounds", () =>
-            detectGraphwarPlayArea(request.task.imageData),
-          ),
+          result: {
+            edgeRect: measureDetectionStage(timings, "detecting-bounds", () =>
+              detectGraphwarPlayArea(request.task.imageData),
+            ),
+          },
+          taskType: "detect-bounds-only",
         },
         timings,
       );
@@ -99,21 +112,25 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
     }
 
     const task = request.task;
-    postStage(request.id, "detecting-objects");
+    postStage(requestContext, "detecting-objects");
     postSuccess(
-      request.id,
-      "detect-bounds",
-      await detectGraphwarObjectsInBoundsWithTemplateWorkers(
-        task.imageData,
-        task.edgeRect,
-        task.thresholds,
-        task.soldierSettings,
-        timings,
-      ),
+      requestContext,
+      {
+        result: await detectGraphwarObjectsInBoundsWithTemplateWorkers(
+          requestContext,
+          task.imageData,
+          task.edgeRect,
+          task.thresholds,
+          task.soldierSettings,
+          timings,
+        ),
+        taskType: "detect-bounds",
+      },
       timings,
     );
   } catch (error) {
     workerScope.postMessage({
+      attempt: request.attempt,
       id: request.id,
       message: error instanceof Error ? error.message : String(error),
       type: "error",
@@ -123,30 +140,33 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
 
 /** 执行自动检测任务，只有识别到平面边界后才继续对象检测。 */
 async function runAutoDetectionTask(
-  id: number,
+  requestContext: GraphwarDetectionRequestContext,
   task: Extract<GraphwarDetectionWorkerTask, { type: "detect-auto" }>,
   timings: GraphwarDetectionWorkerTimingEntry[],
 ) {
-  postStage(id, "detecting-bounds");
+  postStage(requestContext, "detecting-bounds");
   const edgeRect = measureDetectionStage(timings, "detecting-bounds", () => detectGraphwarPlayArea(task.imageData));
   if (!edgeRect) {
-    postSuccess(id, "detect-auto", { edgeRect: undefined }, timings);
+    postSuccess(requestContext, { result: { edgeRect: undefined }, taskType: "detect-auto" }, timings);
     return;
   }
 
-  postStage(id, "detecting-objects");
+  postStage(requestContext, "detecting-objects");
   postSuccess(
-    id,
-    "detect-auto",
+    requestContext,
     {
-      edgeRect,
-      objects: await detectGraphwarObjectsInBoundsWithTemplateWorkers(
-        task.imageData,
+      result: {
         edgeRect,
-        task.thresholds,
-        task.soldierSettings,
-        timings,
-      ),
+        objects: await detectGraphwarObjectsInBoundsWithTemplateWorkers(
+          requestContext,
+          task.imageData,
+          edgeRect,
+          task.thresholds,
+          task.soldierSettings,
+          timings,
+        ),
+      },
+      taskType: "detect-auto",
     },
     timings,
   );
@@ -154,6 +174,7 @@ async function runAutoDetectionTask(
 
 /** 在已知边界内识别士兵和障碍，并允许模板匹配并行化。 */
 async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
+  requestContext: GraphwarDetectionRequestContext,
   imageData: ImageData,
   edgeRect: BoundsRect,
   thresholds: GraphwarObstacleDetectionThresholds,
@@ -168,6 +189,7 @@ async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
   const warnings: GraphwarDetectionWarning[] = [];
   const matches = await measureDetectionStageAsync(timings, "matching-soldier-templates", async () => {
     const matched = await matchSoldierTemplatesWithOptionalWorkers(
+      requestContext,
       imageData,
       edgeRect,
       scale,
@@ -190,6 +212,7 @@ async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
 
 /** 根据设置选择串行或多 Worker 模板匹配，失败时降级为串行。 */
 async function matchSoldierTemplatesWithOptionalWorkers(
+  requestContext: GraphwarDetectionRequestContext,
   imageData: ImageData,
   edgeRect: BoundsRect,
   scale: number,
@@ -204,7 +227,15 @@ async function matchSoldierTemplatesWithOptionalWorkers(
 
   const laneCount = Math.min(workerCount, candidates.length);
   try {
-    const matches = await runSoldierTemplateWorkerTasks(imageData, edgeRect, scale, candidates, laneCount, timings);
+    const matches = await runSoldierTemplateWorkerTasks(
+      requestContext,
+      imageData,
+      edgeRect,
+      scale,
+      candidates,
+      laneCount,
+      timings,
+    );
     recordDetectionTimingDetail(timings, "matching-soldier-templates", 0, {
       mode: "parallel",
       type: "template-matching-mode",
@@ -252,6 +283,7 @@ function matchSoldierTemplatesSerial(
 
 /** 分发模板候选到子 Worker，并汇总成功结果或失败原因。 */
 async function runSoldierTemplateWorkerTasks(
+  requestContext: GraphwarDetectionRequestContext,
   imageData: ImageData,
   edgeRect: BoundsRect,
   scale: number,
@@ -277,7 +309,7 @@ async function runSoldierTemplateWorkerTasks(
       }
       // 先完成全部像素复制；任一复制失败时都不留下已启动的半组 Worker。
       for (const task of tasks) {
-        handles.push(createSoldierTemplateWorkerHandle(task, edgeRect, scale));
+        handles.push(createSoldierTemplateWorkerHandle(requestContext.attempt, task, edgeRect, scale));
       }
     });
 
@@ -311,6 +343,7 @@ async function runSoldierTemplateWorkerTasks(
 
 /** 创建单个模板匹配子 Worker 的 Promise 封装和清理钩子。 */
 function createSoldierTemplateWorkerHandle(
+  attempt: GraphwarBackendAttemptIdentity,
   task: SoldierTemplateWorkerTask,
   edgeRect: BoundsRect,
   scale: number,
@@ -322,6 +355,7 @@ function createSoldierTemplateWorkerHandle(
   let cleanup: (() => void) | undefined;
   const promise = new Promise<{ elapsedMs: number; matches: SoldierMatchCandidate[] }>((resolve, reject) => {
     const request: GraphwarSoldierTemplateWorkerRequest = {
+      attempt,
       candidates: task.candidates,
       edgeRect,
       id: task.workerIndex,
@@ -329,11 +363,13 @@ function createSoldierTemplateWorkerHandle(
       scale,
     };
     /** 只结算当前请求的首个有效响应，避免迟到消息污染结果。 */
-    const handleMessage = (event: MessageEvent<GraphwarSoldierTemplateWorkerResponse>) => {
-      const response = event.data;
-      if (response.id !== request.id) {
+    const handleMessage = (event: MessageEvent<unknown>) => {
+      if (!isGraphwarSoldierTemplateWorkerResponseForRequest(request, event.data)) {
+        cleanup?.();
+        reject(new Error(`Worker ${task.workerIndex}: returned an unexpected request identity or payload`));
         return;
       }
+      const response = event.data;
       cleanup?.();
       if (response.type === "error") {
         reject(new Error(`Worker ${task.workerIndex}: ${response.message}`));
@@ -376,62 +412,24 @@ function createSoldierTemplateWorkerHandle(
 }
 
 /** 通知主线程当前检测阶段，便于页面显示进度。 */
-function postStage(id: number, stage: GraphwarDetectionWorkerStage) {
-  workerScope.postMessage({ id, stage, type: "stage" });
+function postStage(requestContext: GraphwarDetectionRequestContext, stage: GraphwarDetectionWorkerStage) {
+  workerScope.postMessage({ ...requestContext, stage, type: "stage" });
 }
 
-/** 发送自动检测成功响应，并转移可复用的大型 buffer。 */
+/** 统一构造成功响应，task type 与 result 已由原子 payload 保持关联。 */
 function postSuccess(
-  id: number,
-  taskType: "detect-auto",
-  result: GraphwarAutoDetectionResult,
-  timings: readonly GraphwarDetectionWorkerTimingEntry[],
-): void;
-/** 发送纯边界检测成功响应。 */
-function postSuccess(
-  id: number,
-  taskType: "detect-bounds-only",
-  result: GraphwarBoundsOnlyDetectionResult,
-  timings: readonly GraphwarDetectionWorkerTimingEntry[],
-): void;
-/** 发送边界内检测成功响应，并转移可复用的大型 buffer。 */
-function postSuccess(
-  id: number,
-  taskType: "detect-bounds",
-  result: ReturnType<typeof detectGraphwarObjectsInBounds>,
-  timings: readonly GraphwarDetectionWorkerTimingEntry[],
-): void;
-/** 统一构造成功响应，保持主线程按 taskType 精确收窄结果类型。 */
-function postSuccess(
-  id: number,
-  taskType: "detect-auto" | "detect-bounds-only" | "detect-bounds",
-  result:
-    | GraphwarAutoDetectionResult
-    | GraphwarBoundsOnlyDetectionResult
-    | ReturnType<typeof detectGraphwarObjectsInBounds>,
+  requestContext: GraphwarDetectionRequestContext,
+  payload: GraphwarDetectionSuccessPayload,
   timings: readonly GraphwarDetectionWorkerTimingEntry[],
 ) {
-  const response =
-    taskType === "detect-auto"
-      ? { id, result: result as GraphwarAutoDetectionResult, taskType, timings, type: "success" as const }
-      : taskType === "detect-bounds-only"
-        ? {
-            id,
-            result: result as GraphwarBoundsOnlyDetectionResult,
-            taskType,
-            timings,
-            type: "success" as const,
-          }
-        : {
-            id,
-            result: result as ReturnType<typeof detectGraphwarObjectsInBounds>,
-            taskType,
-            timings,
-            type: "success" as const,
-          };
+  const response = { ...requestContext, ...payload, timings, type: "success" as const };
   // 纯边界结果没有 mask；其余结果只转移最终障碍 mask 的 buffer。
   const buffer = (
-    "obstacles" in result ? result.obstacles.mask : "objects" in result ? result.objects?.obstacles.mask : undefined
+    "obstacles" in payload.result
+      ? payload.result.obstacles.mask
+      : "objects" in payload.result
+        ? payload.result.objects?.obstacles.mask
+        : undefined
   )?.buffer;
   workerScope.postMessage(response, buffer instanceof ArrayBuffer ? [buffer] : []);
 }

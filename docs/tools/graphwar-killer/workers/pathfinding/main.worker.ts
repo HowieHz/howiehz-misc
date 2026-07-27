@@ -1,4 +1,8 @@
 import {
+  graphwarBackendAttemptIdentitiesAreEqual,
+  type GraphwarBackendAttemptIdentity,
+} from "../../core/algorithm-backend";
+import {
   normalizeAutomaticPathPointForMinimumForwardStep,
   normalizePathPointForStrictForward,
   pathFollowsGraphRule,
@@ -64,7 +68,7 @@ import {
   type GraphwarPathfindingDebugMetrics,
 } from "../../pathfinding/runtime/diagnostics";
 import {
-  getGraphwarPathfindingWorkerRequestId,
+  getGraphwarPathfindingWorkerRequestIdentity,
   isGraphwarOneClickClearEdgeWorkerResponse,
   isGraphwarPathfindingWorkerRequest,
 } from "../../pathfinding/runtime/protocol";
@@ -238,11 +242,14 @@ interface MasterStepGlitchEvidence extends GraphwarStepGlitchPrefixEvidence {
 workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
   const request = event.data;
   if (!isGraphwarPathfindingWorkerRequest(request)) {
-    postResponse({
-      id: getGraphwarPathfindingWorkerRequestId(request),
-      message: "Invalid pathfinding worker request",
-      type: "error",
-    });
+    const identity = getGraphwarPathfindingWorkerRequestIdentity(request);
+    if (identity) {
+      postResponse({
+        ...identity,
+        message: "Invalid pathfinding worker request",
+        type: "error",
+      });
+    }
     return;
   }
   void handleRequest(request);
@@ -254,9 +261,11 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
     if (request.task.type === "find-route") {
       const input = request.task.input;
       postResponse({
+        attempt: request.attempt,
         id: request.id,
         result: await findRouteForMask(
           request.id,
+          request.attempt,
           input,
           masterVisibilityGraphCache.get(createMasterVisibilityGraphCacheKey(input))?.routeMask ?? input.routeMask,
         ),
@@ -268,8 +277,14 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
 
     if (request.task.type === "find-smart-path") {
       postResponse({
+        attempt: request.attempt,
         id: request.id,
-        result: await findSmartPath(request.id, request.task.input, request.task.shouldCollectDiagnostics === true),
+        result: await findSmartPath(
+          request.id,
+          request.attempt,
+          request.task.input,
+          request.task.shouldCollectDiagnostics === true,
+        ),
         taskType: "find-smart-path",
         type: "success",
       });
@@ -278,8 +293,9 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
 
     if (request.task.type === "build-one-click-clear-dag-edges") {
       postResponse({
+        attempt: request.attempt,
         id: request.id,
-        result: await buildOneClickClearDagEdges(request.task.input),
+        result: await buildOneClickClearDagEdges(request.attempt, request.task.input),
         taskType: "build-one-click-clear-dag-edges",
         type: "success",
       });
@@ -287,9 +303,11 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
     }
 
     postResponse({
+      attempt: request.attempt,
       id: request.id,
       result: await buildOneClickClearPath(
         request.id,
+        request.attempt,
         request.task.input,
         request.task.shouldReportIncumbents,
         request.task.shouldCollectDiagnostics === true,
@@ -299,6 +317,7 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
     });
   } catch (error) {
     postResponse({
+      attempt: request.attempt,
       id: request.id,
       message: error instanceof Error ? error.message : String(error),
       type: "error",
@@ -309,6 +328,7 @@ async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
 /** 在给定 route mask 上运行所选几何路由器，并归集搜索与可视图缓存耗时。 */
 async function findRouteForMask(
   id: number,
+  attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarPathfindingRouteInput,
   routeMask: Uint8Array,
   runtimeOptions?: RouteRuntimeOptions,
@@ -319,6 +339,7 @@ async function findRouteForMask(
   const postPreview = input.isPreviewEnabled
     ? (preview: GraphwarPathfindingPreview) =>
         postResponse({
+          attempt,
           id,
           preview,
           type: "preview",
@@ -368,6 +389,7 @@ async function findRouteForMask(
 /** 完成智能寻路的几何搜索、轨迹验证和路径删点。 */
 async function findSmartPath(
   id: number,
+  attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarSmartPathfindingPathInput,
   shouldCollectDiagnostics: boolean,
 ): Promise<GraphwarSmartPathfindingPathResult> {
@@ -376,13 +398,14 @@ async function findSmartPath(
   const debugMetrics = shouldCollectDiagnostics
     ? createGraphwarPathfindingDebugMetrics(pathSearchPolicy.type === "step-glitch")
     : undefined;
-  const result = await findSmartPathResult(id, input, formulaMode, debugMetrics, pathSearchPolicy);
+  const result = await findSmartPathResult(id, attempt, input, formulaMode, debugMetrics, pathSearchPolicy);
   return debugMetrics ? { ...result, diagnostics: debugMetrics } : result;
 }
 
 /** 执行智能寻路业务逻辑；外层统一附加可选诊断，避免每个早退分支重复组装。 */
 async function findSmartPathResult(
   id: number,
+  attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarSmartPathfindingPathInput,
   formulaMode: GraphwarTrajectoryFormulaMode,
   debugMetrics: GraphwarPathfindingDebugMetrics | undefined,
@@ -474,6 +497,7 @@ async function findSmartPathResult(
 
   const routeResult = await findRouteForMask(
     id,
+    attempt,
     {
       boundaryExpansion: input.boundaryExpansion,
       bounds: input.bounds,
@@ -992,6 +1016,7 @@ function optimizeSmartPathfindingPath(
 /** 在 master 内执行完整一键清图，并管理请求级 edge Worker session。 */
 async function buildOneClickClearPath(
   requestId: number,
+  attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarOneClickClearPathWorkerInput,
   shouldReportIncumbents: boolean,
   shouldCollectDiagnostics: boolean,
@@ -1066,7 +1091,7 @@ async function buildOneClickClearPath(
     result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: input.boundaryExpansion,
       buildDagEdges: (request) => {
-        dagEdgeSession ??= createOneClickClearDagEdgeSession(request);
+        dagEdgeSession ??= createOneClickClearDagEdgeSession(attempt, request);
         return dagEdgeSession.runBatch(request.jobs);
       },
       bounds: input.bounds,
@@ -1085,6 +1110,7 @@ async function buildOneClickClearPath(
             onValidatedIncumbent: (incumbent) => {
               if (!debugMetrics) {
                 postResponse({
+                  attempt,
                   id: requestId,
                   incumbent,
                   type: "one-click-clear-incumbent",
@@ -1095,6 +1121,7 @@ async function buildOneClickClearPath(
               debugMetrics.counters.incumbentTrajectoryPointLoad += incumbent.trajectoryPoints.length;
               const messageStartedAt = nowMs();
               postResponse({
+                attempt,
                 id: requestId,
                 incumbent,
                 type: "one-click-clear-incumbent",
@@ -1169,9 +1196,10 @@ function createOneClickClearPreflightBlockedResult(
 
 /** 复用请求级 edge session 构建一批 DAG 边并收集子 Worker 耗时。 */
 async function buildOneClickClearDagEdges(
+  attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarOneClickClearDagEdgesWorkerInput,
 ): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
-  const session = createOneClickClearDagEdgeSession(input);
+  const session = createOneClickClearDagEdgeSession(attempt, input);
   try {
     const result = await session.runBatch(input.jobs);
     return {
@@ -1190,6 +1218,7 @@ async function buildOneClickClearDagEdges(
  * Step 动态 DAG 会按 x 层多次提交批次；session 让 child worker、可视图预处理和 Theta* scratch 跨批次复用。
  */
 function createOneClickClearDagEdgeSession(
+  attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarOneClickClearDagEdgesWorkerInput,
 ): OneClickClearDagEdgeSession {
   const requestedWorkerCount = Math.floor(input.workerCount);
@@ -1345,6 +1374,7 @@ function createOneClickClearDagEdgeSession(
     handle.activeRequestId = requestId;
     try {
       handle.worker.postMessage({
+        attempt,
         job,
         requestId,
         type: "job",
@@ -1416,6 +1446,10 @@ function createOneClickClearDagEdgeSession(
         switchToSerialFallback();
         return;
       }
+      if (!graphwarBackendAttemptIdentitiesAreEqual(response.attempt, attempt)) {
+        switchToSerialFallback();
+        return;
+      }
       if (response.type === "ready") {
         handle.isReady = true;
         assignNextJob(handle);
@@ -1443,6 +1477,7 @@ function createOneClickClearDagEdgeSession(
     handles.push(handle);
     try {
       worker.postMessage({
+        attempt,
         context: {
           bounds: input.bounds,
           boundsRect: input.boundsRect,

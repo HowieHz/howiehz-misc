@@ -34,10 +34,16 @@ export function useGraphwarAgentTurnCountdown(): GraphwarAgentTurnCountdown {
   let loopGeneration = 0;
   let zeroGraceTurnKey: string | undefined;
 
-  /** Accepts only live aiming state; all other successful states explicitly clear the timer. */
+  /** Calibrates from available states; only clears authority when the Agent becomes unavailable. */
   function update(state: GraphwarAgentState) {
-    if (!state.isAvailable || state.phase !== "aiming") {
+    if (!state.isAvailable) {
       clear();
+      return;
+    }
+    // Non-aiming phases after a shot still represent the same turn — let the existing
+    // animation loop continue toward the absolute hideAtMs rather than clearing early.
+    if (state.phase !== "aiming") {
+      refreshAndSchedule();
       return;
     }
     const nextTurnKey = `${state.gameInstanceId}\u0000${state.turnToken ?? ""}`;

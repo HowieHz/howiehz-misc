@@ -188,7 +188,7 @@ describe("Graphwar Agent turn countdown", () => {
     expect(animationFrames.pendingCount).toBe(0);
   });
 
-  it("clears on unavailable or non-aiming state", () => {
+  it("clears on unavailable state", () => {
     const countdown = useGraphwarAgentTurnCountdown();
     countdown.update(createAvailableState());
     countdown.update({
@@ -203,9 +203,28 @@ describe("Graphwar Agent turn countdown", () => {
     });
     expect(countdown.remainingMilliseconds.value).toBeUndefined();
     expect(animationFrames.pendingCount).toBe(0);
+  });
 
-    countdown.update(createAvailableState());
-    countdown.update(createAvailableState({ phase: "drawing" }));
+  it("keeps the existing animation loop alive during non-aiming phases", () => {
+    const countdown = useGraphwarAgentTurnCountdown();
+    countdown.update(createAvailableState({ remainingTurnMs: 3000 }));
+    expect(countdown.remainingMilliseconds.value).toBe(3000);
+    expect(animationFrames.pendingCount).toBe(1);
+
+    // After firing, the phase changes but the countdown should continue.
+    countdown.update(createAvailableState({ phase: "drawing", observationSequence: 2 }));
+    expect(countdown.remainingMilliseconds.value).toBe(3000);
+    expect(animationFrames.pendingCount).toBe(1);
+
+    // The loop should still advance toward the absolute deadline.
+    vi.advanceTimersByTime(3000);
+    animationFrames.runNext();
+    expect(countdown.remainingMilliseconds.value).toBe(0);
+    expect(animationFrames.pendingCount).toBe(1);
+
+    // After the two-second zero window, the placeholder takes over.
+    vi.advanceTimersByTime(2000);
+    animationFrames.runNext();
     expect(countdown.remainingMilliseconds.value).toBeUndefined();
     expect(animationFrames.pendingCount).toBe(0);
   });

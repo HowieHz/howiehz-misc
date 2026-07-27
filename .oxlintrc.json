@@ -9,10 +9,10 @@
   },
   "ignorePatterns": [
     "public/assets/lib/**/*",
+    "packages/graphwar-killer-wasm/assembly/**/*.ts",
     "**/.oxlintrc.json.bak",
     "**/build",
     "**/tmp",
-    "packages/graphwar-killer-wasm/assembly/**/*.ts",
     "**/output",
     "**/release-animation",
     "CONTEXT.md",
@@ -264,6 +264,11 @@
     },
     {
       "files": ["docs/.vitepress/theme/**/*.ts"],
+      "globals": {
+        "AsyncDisposableStack": "readonly",
+        "DisposableStack": "readonly",
+        "SuppressedError": "readonly"
+      },
       "env": {
         "es2026": true,
         "browser": true
@@ -271,6 +276,11 @@
     },
     {
       "files": ["docs/**/*.vue"],
+      "globals": {
+        "AsyncDisposableStack": "readonly",
+        "DisposableStack": "readonly",
+        "SuppressedError": "readonly"
+      },
       "env": {
         "es2026": true,
         "browser": true,
@@ -296,6 +306,11 @@
         ".github/scripts/*.ts",
         ".github/scripts/*.js"
       ],
+      "globals": {
+        "AsyncDisposableStack": "readonly",
+        "DisposableStack": "readonly",
+        "SuppressedError": "readonly"
+      },
       "env": {
         "es2022": true,
         "node": true

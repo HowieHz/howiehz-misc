@@ -139,10 +139,18 @@ describe("Anytime one-click-clear progress", () => {
     );
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
 
-    expect(postMessage.mock.calls[0]?.[0]).toEqual({
+    expect(postMessage.mock.calls[0]?.[0]).toMatchObject({
       attempt,
       id: 41,
-      incumbent,
+      progress: {
+        diagnostics: {
+          counters: {
+            incumbentReportCount: 1,
+            incumbentTrajectoryPointLoad: incumbent.trajectoryPoints.length,
+          },
+        },
+        incumbent,
+      },
       type: "one-click-clear-incumbent",
     });
     expect(postMessage.mock.calls[1]?.[0]).toMatchObject({

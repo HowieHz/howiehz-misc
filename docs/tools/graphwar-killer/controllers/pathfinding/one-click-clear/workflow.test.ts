@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { createPixelPoint } from "../../../core/types";
 import type { GraphwarOneClickClearFailureReason } from "../../../pathfinding/one-click-clear/search";
 import type { GraphwarOneClickClearTargetSoldier } from "../../../pathfinding/one-click-clear/targets";
+import { createGraphwarPathfindingDebugMetrics } from "../../../pathfinding/runtime/diagnostics";
 import type { GraphwarOneClickClearPathWorkerResult } from "../../../pathfinding/runtime/protocol";
+import { GraphwarPathfindingCancelledError } from "../../../pathfinding/runtime/runner";
 import { useGraphwarOneClickClearRunWorkflow } from "./workflow";
 
 describe("one-click clear workflow", () => {
@@ -37,7 +39,7 @@ describe("one-click clear workflow", () => {
     const debugMetricFlags: (boolean | undefined)[] = [];
     let isDebugEnabled = false;
     let isResultCacheEnabled = true;
-    let resolvePending: ((result: GraphwarOneClickClearPathWorkerResult) => void) | undefined;
+    let rejectPending: ((error: Error) => void) | undefined;
     const workflow = useGraphwarOneClickClearRunWorkflow<GraphwarOneClickClearTargetSoldier>({
       debug: {
         appendSearchWorkerTimings: () => undefined,
@@ -127,18 +129,27 @@ describe("one-click clear workflow", () => {
             expect(input.settings.stepGlitchObstacleMask).toBe(simulationMask);
             if (runnerMode !== "success") {
               if (publishIncumbent) {
+                const diagnostics = runnerOptions?.shouldCollectDiagnostics
+                  ? createGraphwarPathfindingDebugMetrics(true)
+                  : undefined;
+                if (diagnostics) {
+                  diagnostics.counters.trajectoryReplayCount = 7;
+                }
                 runnerOptions?.onIncumbent?.({
-                  expression: "x",
-                  pathPoints: [start, target],
-                  trajectoryPoints: [start, target],
+                  ...(diagnostics ? { diagnostics } : {}),
+                  incumbent: {
+                    expression: "x",
+                    pathPoints: [start, target],
+                    trajectoryPoints: [start, target],
+                  },
                 });
               }
               if (runnerMode === "error") {
                 throw new Error("worker failed after incumbent");
               }
               if (runnerMode === "pending") {
-                return new Promise((resolve) => {
-                  resolvePending = resolve;
+                return new Promise<GraphwarOneClickClearPathWorkerResult>((_resolve, reject) => {
+                  rejectPending = reject;
                 });
               }
               return {
@@ -295,6 +306,7 @@ describe("one-click clear workflow", () => {
     expect(clearFailureCount).toBe(3);
 
     order.length = 0;
+    recordedAttempts.length = 0;
     runnerMode = "pending";
     displayedDebugStages = ["last-complete"];
     const pendingRun = workflow.run({
@@ -305,12 +317,15 @@ describe("one-click clear workflow", () => {
     expect(workflow.finalizeActiveIncumbent()).toBe(true);
     expect(order).toEqual(["apply-incumbent", "status"]);
     current = false;
-    resolvePending?.({
-      result: { elapsedMs: 10, expandedStates: 1, reason: "no-usable-target", type: "failure" },
-      timings: [],
-    });
+    rejectPending?.(new GraphwarPathfindingCancelledError());
     await expect(pendingRun).resolves.toBe(false);
     expect(outcomes.at(-1)).toBe("cancelled");
+    expect(recordedAttempts).toMatchObject([
+      {
+        diagnostics: { counters: { trajectoryReplayCount: 7 } },
+        source: "worker",
+      },
+    ]);
     expect(displayedDebugStages).toEqual(["last-complete"]);
 
     current = true;

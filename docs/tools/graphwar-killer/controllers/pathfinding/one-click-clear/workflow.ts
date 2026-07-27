@@ -25,6 +25,7 @@ import type { GraphwarPathfindingResultCacheTimingEntry } from "../../../pathfin
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
+  GraphwarOneClickClearProgress,
 } from "../../../pathfinding/runtime/protocol";
 import { isGraphwarPathfindingCancelledError } from "../../../pathfinding/runtime/runner";
 import type { GraphwarTargetingGeometry } from "../../../pathfinding/targeting";
@@ -50,7 +51,7 @@ interface GraphwarOneClickClearRunRunner {
   buildOneClickClearPath: (
     input: GraphwarOneClickClearPathWorkerInput,
     options?: {
-      onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
+      onIncumbent?: (progress: GraphwarOneClickClearProgress) => void;
       shouldCollectDiagnostics?: boolean;
     },
   ) => Promise<GraphwarOneClickClearPathWorkerResult>;
@@ -180,7 +181,7 @@ export interface GraphwarOneClickClearRunWorkflowController {
 export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOneClickClearTargetSoldier>(
   options: GraphwarOneClickClearRunWorkflowOptions<TSoldier>,
 ): GraphwarOneClickClearRunWorkflowController {
-  let activeRun: { incumbent?: GraphwarOneClickClearIncumbent; token: number } | undefined;
+  let activeRun: { progress?: GraphwarOneClickClearProgress; token: number } | undefined;
 
   /** 从当前路径尾部出发，追加当前模型下击杀最多的路径。 */
   async function run(runOptions: GraphwarOneClickClearRunOptions = {}) {
@@ -239,7 +240,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
           runOptions.onOutcome?.({ kind: "complete" });
         }
         // 最终完整复验可能比自然检查点多出目标后的可绘制轨迹；托管发射前必须先提升这份权威快照。
-        activeRun = { incumbent: result, token: pathfindingToken };
+        activeRun = { progress: { incumbent: result }, token: pathfindingToken };
         runOptions.onIncumbent?.(result);
         runOptions.onSuccessBeforeEffects?.();
         options.run.finish(pathfindingToken);
@@ -392,16 +393,18 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       : undefined;
     const hasResultCacheHit = search !== undefined;
     if (!search) {
+      let latestProgress: GraphwarOneClickClearProgress | undefined;
       try {
         search = await options.debug.measureStageAsync(timings, "one-click-clear-search", () =>
           options.pathfinding.runner.buildOneClickClearPath(searchInput, {
-            onIncumbent: (incumbent) => {
+            onIncumbent: (progress) => {
+              latestProgress = progress;
               if (activeRun?.token !== pathfindingToken || !options.run.isCurrent(pathfindingToken)) {
                 return;
               }
               // 动画关闭时仍保存检查点，用户取消和托管截止才能零额外搜索地使用最新有效方案。
-              activeRun = { incumbent, token: pathfindingToken };
-              runOptions.onIncumbent?.(incumbent);
+              activeRun = { progress, token: pathfindingToken };
+              runOptions.onIncumbent?.(progress.incumbent);
             },
             shouldCollectDiagnostics: isDebugEnabled,
           }),
@@ -409,7 +412,13 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       } catch (error) {
         if (isDebugEnabled) {
           options.debug.recordAttempt(
-            createGraphwarOneClickClearDebugAttempt(searchInput, "worker", undefined, error),
+            createGraphwarOneClickClearDebugAttempt(
+              searchInput,
+              "worker",
+              undefined,
+              error,
+              latestProgress?.diagnostics,
+            ),
             timings,
           );
         }
@@ -419,7 +428,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
       if (
         shouldUseResultCache &&
         (search.result.type === "success" ||
-          (search.result.reason !== "pathfinding-worker-failed" && !activeRun?.incumbent))
+          (search.result.reason !== "pathfinding-worker-failed" && !activeRun?.progress))
       ) {
         options.pathfinding.cache.cacheOneClickClearResult(searchCacheKey, search);
       }
@@ -498,7 +507,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
     finishDebugTimings: (completedAt?: number) => void,
     workerFailureStartedAt?: number,
   ) {
-    const incumbent = activeRun?.token === token ? activeRun.incumbent : undefined;
+    const incumbent = activeRun?.token === token ? activeRun.progress?.incumbent : undefined;
     if (!incumbent) {
       return false;
     }
@@ -525,7 +534,7 @@ export function useGraphwarOneClickClearRunWorkflow<TSoldier extends GraphwarOne
 
   /** 用户取消先提交检查点，再由 session 终止 Worker；两步分开才能保持硬取消。 */
   function finalizeActiveIncumbent() {
-    const incumbent = activeRun?.incumbent;
+    const incumbent = activeRun?.progress?.incumbent;
     if (!incumbent) {
       return false;
     }

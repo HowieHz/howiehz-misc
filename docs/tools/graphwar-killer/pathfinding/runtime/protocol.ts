@@ -155,6 +155,14 @@ export interface GraphwarOneClickClearPathWorkerResult {
   timings: GraphwarOneClickClearDebugTiming[];
 }
 
+/** Worker 发布的同一检查点方案及其可选累计诊断快照。 */
+export interface GraphwarOneClickClearProgress {
+  /** 调试模式下截至该 incumbent 发布时的累计 Worker 诊断快照。 */
+  diagnostics?: GraphwarPathfindingDiagnostics;
+  /** 可在截止时直接发射的当前最优方案。 */
+  incumbent: GraphwarOneClickClearIncumbent;
+}
+
 /**
  * 校验页面发给 Pathfinding master Worker 的完整请求。
  *
@@ -643,6 +651,15 @@ export function isGraphwarOneClickClearIncumbent(value: unknown): value is Graph
   return value.launchAngleRadians === undefined || isFiniteNumber(value.launchAngleRadians);
 }
 
+/** 校验可被截止流程原子采用的一键清图进度。 */
+export function isGraphwarOneClickClearProgress(value: unknown): value is GraphwarOneClickClearProgress {
+  return (
+    isRecord(value) &&
+    isGraphwarOneClickClearIncumbent(value.incumbent) &&
+    (value.diagnostics === undefined || isGraphwarPathfindingDiagnostics(value.diagnostics))
+  );
+}
+
 /** 校验一键清图 Worker 最终响应，协议畸形必须由页面归类为 search-error。 */
 export function isGraphwarOneClickClearPathWorkerResult(
   value: unknown,
@@ -681,7 +698,7 @@ export function isGraphwarOneClickClearPathWorkerResult(
 }
 
 /** 校验可选 Worker 诊断；缓存命中结果不携带该字段。 */
-function isGraphwarPathfindingDiagnostics(value: unknown): value is GraphwarPathfindingDiagnostics {
+export function isGraphwarPathfindingDiagnostics(value: unknown): value is GraphwarPathfindingDiagnostics {
   if (!isRecord(value) || !isRecord(value.counters) || !isRecord(value.timings)) {
     return false;
   }
@@ -828,8 +845,8 @@ export type GraphwarPathfindingWorkerResponse =
   | {
       attempt: GraphwarBackendAttemptIdentity;
       id: number;
-      /** 可在截止时直接发射的当前最优方案。 */
-      incumbent: GraphwarOneClickClearIncumbent;
+      /** 同一检查点的方案和诊断证据必须原子传递。 */
+      progress: GraphwarOneClickClearProgress;
       type: "one-click-clear-incumbent";
     };
 

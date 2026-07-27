@@ -443,7 +443,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
             link: "https://howiehz.top",
           },
           {
-            text: "NPM 包",
+            text: "子项目文档",
             items: [{ text: "compat-finder", link: "/compat-finder/" }],
           },
           { text: "文章归档", link: "/posts/" },
@@ -518,7 +518,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
         nav: [
           { text: "Back to Main Site", link: "https://howiehz.top" },
           {
-            text: "NPM Packages",
+            text: "Subproject Docs",
             items: [{ text: "compat-finder", link: "/en/compat-finder/" }],
           },
           { text: "Archive", link: "/en/posts/" },

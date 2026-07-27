@@ -6,6 +6,8 @@
   "scripts": {
     "build": "vitepress build .",
     "preview": "pnpm run build && vitepress preview .",
+    "test": "pnpm --filter graphwar-killer-wasm build && pnpm run test:unit",
+    "test:unit": "vitest run tools/graphwar-killer",
     "watch": "vitepress dev ."
   },
   "dependencies": {
@@ -20,6 +22,9 @@
     "@mdit/plugin-footnote": "^1.0.1",
     "@nolebase/vitepress-plugin-highlight-targeted-heading": "^2.18.2",
     "@shikijs/vitepress-twoslash": "^4.3.1",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.4.11",
+    "happy-dom": "^20.11.1",
     "lightningcss": "^1.33.0",
     "markdown-it-mathjax3": "^4.3.2",
     "pagefind": "^1.5.2",
@@ -27,7 +32,8 @@
     "vitepress": "2.0.0-alpha.18",
     "vitepress-plugin-group-icons": "^1.7.5",
     "vitepress-plugin-pagefind": "^0.4.23",
-    "vitepress-plugin-rss": "^0.4.4"
+    "vitepress-plugin-rss": "^0.4.4",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=24"

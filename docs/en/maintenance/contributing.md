@@ -7,10 +7,34 @@ outline: deep
 
 This document is for repository maintainers and code contributors. If you only want to submit or revise public site content, see the [Contribution Guide](/en/maintenance/submission).
 
-## Primary Directories
+## Workspace Structure
 
-- `docs/`: the VitePress site and online tool pages
-- `packages/compat-finder/`: the compatibility troubleshooting library and CLI
+### Workspace Packages
+
+- `docs/`: the VitePress application, including documentation and online tools
+- `packages/compat-finder/`: the compatibility troubleshooting library and CLI published to npm
+- `packages/graphwar-killer-wasm/`: the private AssemblyScript/WASM kernel used by Graphwar Killer
+- `packages/graphwar-agent/`: a Java agent that exposes a local HTTP API for the official Graphwar client
+
+Workspace relationships:
+
+```text
+docs
+├── depends on compat-finder
+└── depends on graphwar-killer-wasm
+
+graphwar-agent
+└── independent; sync:public copies its build artifacts into docs/public/
+```
+
+See the README in each package directory for its behavior, usage, and constraints.
+
+### Repository Directories
+
+- `.changeset/`: Changesets versioning and release notes
+- `.github/`: GitHub Actions workflows and GitHub project configuration
+- `scripts/`: repository-level orchestration scripts for formatting, testing, and other tasks
+- `tsconfig/`: shared base configurations for the TypeScript projects
 
 ## Development Environment
 
@@ -28,22 +52,28 @@ If you need to format Java code or build `graphwar-agent`, make sure `java`, `ja
 
 ### Docs Site
 
-- Start the docs development server with hot reload: `pnpm docs:watch`
-- Build the docs site: `pnpm docs:build`
-- Build the docs site and start the preview server: `pnpm docs:preview`
+- Develop: `pnpm docs:watch`
+- Build: `pnpm docs:build`
+- Preview: `pnpm docs:preview`
 
-### compat-finder Package
+All three commands first build the required workspace dependencies; development mode then watches the dependencies and site in parallel.
 
-- Run the CLI directly: `pnpm compat-finder:cli`
-- Build the package: `pnpm compat-finder:build`
-- Start watch mode: `pnpm compat-finder:watch`
-- Run package tests: `pnpm compat-finder:test`
+### Package Commands
+
+Run package scripts with `pnpm --filter PACKAGE SCRIPT`, for example `pnpm --filter compat-finder test`. Available scripts:
+
+- `compat-finder`: `cli`, `build`, `watch`, `test`
+- `graphwar-killer-wasm`: `build`, `watch`, `test`
+- `graphwar-agent`: `build`, `openapi:test`, `test`
+- Build the agent and copy it into the docs site: `pnpm --filter graphwar-agent build && pnpm --filter graphwar-agent sync:public`
 
 ### Local Checks
 
-- Format files: `pnpm fmt`. Java files are formatted with `google-java-format` in AOSP style, and the formatter jar is cached under `.cache/google-java-format/`
+- Format files: `pnpm fmt`. Java files use `google-java-format` in AOSP style, while other supported files use `oxfmt`; the formatter jar is cached under `.cache/google-java-format/`.
 - Run linting and type checks: `pnpm lint`
 - Run all tests: `pnpm test`
+
+`lint` builds the docs dependencies before running checks in parallel; `test` builds the shared WASM once before running the test suites in parallel.
 
 ### Changesets
 

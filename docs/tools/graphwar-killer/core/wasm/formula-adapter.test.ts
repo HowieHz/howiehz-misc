@@ -1,6 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { parseGraphwarExpressionProgram } from "../../formula/expression/evaluator";
@@ -22,10 +19,10 @@ import {
   runGraphwarWasmExpressionBatch,
   runGraphwarWasmFormulaBatch,
 } from "./formula-adapter";
+import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime, type GraphwarWasmKernelRuntime } from "./runtime";
 import type { GraphwarWasmFormulaInputDescriptor } from "./task-adapter";
 
-const kernelPath = resolve("packages/graphwar-killer-wasm/build/graphwar-kernel.wasm");
 const DEFAULT_MAX_ULP_DISTANCE = 64n;
 // V8 12.x and the WASM-native pow implementation round the high powers used by
 // soft-cubic ddy differently; cancellation can amplify that difference.
@@ -47,7 +44,7 @@ const values = [
 let kernelModule: WebAssembly.Module;
 
 beforeAll(async () => {
-  kernelModule = await WebAssembly.compile(await readFile(kernelPath));
+  kernelModule = await WebAssembly.compile(await readGraphwarKernelBytes());
 });
 
 describe("Graphwar WASM formula Adapter", () => {

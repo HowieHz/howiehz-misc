@@ -9,13 +9,12 @@ import { clonePixelPoint } from "../../core/types";
 import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearDagEdgeBuildResult,
-  GraphwarOneClickClearIncumbent,
 } from "../one-click-clear/search";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
 import {
   isGraphwarOneClickClearDagEdgeBuildResult,
-  isGraphwarOneClickClearIncumbent,
   isGraphwarOneClickClearPathWorkerResult,
+  isGraphwarOneClickClearProgress,
   isGraphwarPathfindingPreview,
   isGraphwarPathfindingRouteResult,
   isGraphwarSmartPathfindingPathResult,
@@ -23,6 +22,7 @@ import {
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
+  GraphwarOneClickClearProgress,
   GraphwarPathfindingRouteInput,
   GraphwarPathfindingRouteResult,
   GraphwarPathfindingWorkerRequest,
@@ -47,7 +47,7 @@ export function isGraphwarPathfindingCancelledError(error: unknown) {
 /** 单次几何寻路运行时的页面回调。 */
 export interface GraphwarPathfindingRunOptions {
   /** 一键清图最终回放验证后的 best-so-far；其他任务不会调用。 */
-  onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
+  onIncumbent?: (progress: GraphwarOneClickClearProgress) => void;
   /** 普通智能寻路搜索动画快照。 */
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   /** 请求 Worker 返回调试计数器和自然边界耗时。 */
@@ -63,11 +63,13 @@ interface PendingPathfindingWorkerTaskBase {
   /** 搜索动画回调；只有普通智能寻路会使用。 */
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   /** 一键清图当前最优方案回调；请求取消或换代后不会再调用。 */
-  onIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
+  onIncumbent?: GraphwarPathfindingRunOptions["onIncumbent"];
   /** Promise 失败回调。 */
   reject: (reason?: unknown) => void;
   /** Promise 成功回调。 */
   resolve: (value: GraphwarPathfindingWorkerSuccessResponse["result"]) => void;
+  /** 当前请求要求每个一键清图进度都携带累计诊断。 */
+  shouldCollectDiagnostics: boolean;
 }
 
 /** DAG job 集合只和对应 task 分支原子出现，其他请求不能携带这份提交证据。 */
@@ -245,6 +247,7 @@ export function createGraphwarPathfindingRunner() {
         onPreview: options?.onPreview,
         reject,
         resolve: resolve as PendingPathfindingWorkerTask["resolve"],
+        shouldCollectDiagnostics: options?.shouldCollectDiagnostics === true,
         ...taskIdentity,
       };
       try {
@@ -322,12 +325,13 @@ export function createGraphwarPathfindingRunner() {
       if (
         pendingTask.taskType !== "build-one-click-clear-path" ||
         !pendingTask.onIncumbent ||
-        !isGraphwarOneClickClearIncumbent(response.incumbent)
+        !isGraphwarOneClickClearProgress(response.progress) ||
+        pendingTask.shouldCollectDiagnostics !== (response.progress.diagnostics !== undefined)
       ) {
         rejectPendingProtocolResponse();
         return;
       }
-      pendingTask.onIncumbent(response.incumbent);
+      pendingTask.onIncumbent(response.progress);
       return;
     }
 

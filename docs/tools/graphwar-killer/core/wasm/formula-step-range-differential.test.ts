@@ -1,6 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -11,10 +8,10 @@ import {
 import type { FormulaEvaluationOptions } from "../../formula/generation/step-numeric-strategy";
 import { createGraphPoint, type EquationMode, type GraphBounds, type GraphPoint } from "../types";
 import { runGraphwarWasmFormulaBatch, type GraphwarWasmFormulaValue } from "./formula-adapter";
+import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime } from "./runtime";
 import type { GraphwarWasmFormulaInputDescriptor } from "./task-adapter";
 
-const kernelPath = resolve("packages/graphwar-killer-wasm/build/graphwar-kernel.wasm");
 const equations = ["y", "dy", "ddy"] as const satisfies readonly EquationMode[];
 
 interface StepRangeFixture {
@@ -105,7 +102,7 @@ const fixtures = [
 let kernelModule: WebAssembly.Module;
 
 beforeAll(async () => {
-  kernelModule = await WebAssembly.compile(await readFile(kernelPath));
+  kernelModule = await WebAssembly.compile(await readGraphwarKernelBytes());
 });
 
 describe("Graphwar WASM Step overflow-range differential", () => {

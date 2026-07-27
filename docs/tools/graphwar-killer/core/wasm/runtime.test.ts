@@ -1,10 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-
 import { describe, expect, it, vi } from "vitest";
 
 import { GraphwarWasmFault } from "../algorithm-backend";
 import { createGraphwarGameConstantData } from "../game/constants";
+import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import {
   compileGraphwarWasmModule,
   graphwarWasmRequiredFunctionExports,
@@ -13,10 +11,8 @@ import {
   validateGraphwarWasmModule,
 } from "./runtime";
 
-const kernelPath = resolve("packages/graphwar-killer-wasm/build/graphwar-kernel.wasm");
-
 async function readKernelBytes() {
-  return readFile(kernelPath);
+  return readGraphwarKernelBytes();
 }
 
 async function compileKernel() {

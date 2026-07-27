@@ -5,6 +5,7 @@ import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearIncumbent,
 } from "../one-click-clear/search";
+import { createGraphwarPathfindingDebugMetrics } from "./diagnostics";
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
@@ -65,22 +66,31 @@ describe("Graphwar pathfinding runner incumbents", () => {
   it("opts into progress and forwards the current request's incumbent", async () => {
     const onIncumbent = vi.fn();
     const runner = createGraphwarPathfindingRunner();
-    const resultPromise = runner.buildOneClickClearPath(createInput(), { onIncumbent });
+    const resultPromise = runner.buildOneClickClearPath(createInput(), {
+      onIncumbent,
+      shouldCollectDiagnostics: true,
+    });
     const worker = getWorker(0);
     const request = getOneClickClearRequest(worker, 0);
     const incumbent = createIncumbent("target");
+    const diagnostics = createGraphwarPathfindingDebugMetrics(true);
 
     expect(request.task.shouldReportIncumbents).toBe(true);
     worker.emit({
       attempt: { ...request.attempt, attemptId: request.attempt.attemptId + 100 },
       id: request.id,
-      incumbent: createIncumbent("stale-attempt"),
+      progress: { incumbent: createIncumbent("stale-attempt") },
       type: "one-click-clear-incumbent",
     });
     expect(onIncumbent).not.toHaveBeenCalled();
-    worker.emit({ attempt: request.attempt, id: request.id, incumbent, type: "one-click-clear-incumbent" });
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      progress: { diagnostics, incumbent },
+      type: "one-click-clear-incumbent",
+    });
 
-    expect(onIncumbent).toHaveBeenCalledWith(incumbent);
+    expect(onIncumbent).toHaveBeenCalledWith({ diagnostics, incumbent });
     worker.emit({
       attempt: request.attempt,
       id: request.id,
@@ -108,7 +118,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
     firstWorker.emit({
       attempt: firstRequest.attempt,
       id: firstRequest.id,
-      incumbent: createIncumbent("stale"),
+      progress: { incumbent: createIncumbent("stale") },
       type: "one-click-clear-incumbent",
     });
 
@@ -120,7 +130,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
     secondWorker.emit({
       attempt: secondRequest.attempt,
       id: secondRequest.id,
-      incumbent: createIncumbent("cancelled"),
+      progress: { incumbent: createIncumbent("cancelled") },
       type: "one-click-clear-incumbent",
     });
 
@@ -248,7 +258,56 @@ describe("Graphwar pathfinding runner incumbents", () => {
     worker.emit({
       attempt: request.attempt,
       id: request.id,
-      incumbent: { expression: "x" },
+      progress: { incumbent: { expression: "x" } },
+      type: "one-click-clear-incumbent",
+    });
+
+    await expect(resultPromise).rejects.toThrow("invalid response");
+    expect(onIncumbent).not.toHaveBeenCalled();
+    expect(worker.terminated).toBe(true);
+    runner.close();
+  });
+
+  it.each([
+    { label: "missing diagnostics", progress: { incumbent: createIncumbent("missing-diagnostics") } },
+    { label: "missing incumbent", progress: { diagnostics: createGraphwarPathfindingDebugMetrics(true) } },
+  ])("rejects debug progress with $label", async ({ progress }) => {
+    const onIncumbent = vi.fn();
+    const runner = createGraphwarPathfindingRunner();
+    const resultPromise = runner.buildOneClickClearPath(createInput(), {
+      onIncumbent,
+      shouldCollectDiagnostics: true,
+    });
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      progress,
+      type: "one-click-clear-incumbent",
+    });
+
+    await expect(resultPromise).rejects.toThrow("invalid response");
+    expect(onIncumbent).not.toHaveBeenCalled();
+    expect(worker.terminated).toBe(true);
+    runner.close();
+  });
+
+  it("rejects diagnostics that were not requested", async () => {
+    const onIncumbent = vi.fn();
+    const runner = createGraphwarPathfindingRunner();
+    const resultPromise = runner.buildOneClickClearPath(createInput(), { onIncumbent });
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      progress: {
+        diagnostics: createGraphwarPathfindingDebugMetrics(true),
+        incumbent: createIncumbent("unexpected-diagnostics"),
+      },
       type: "one-click-clear-incumbent",
     });
 

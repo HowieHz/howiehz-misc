@@ -261,9 +261,11 @@ export function createGraphwarOneClickClearDebugAttempt(
   source: GraphwarPathfindingDebugAttempt["source"],
   result?: GraphwarOneClickClearPathWorkerResult,
   error?: unknown,
+  interruptedDiagnostics?: GraphwarPathfindingDiagnostics,
 ): GraphwarPathfindingDebugAttempt {
+  const diagnostics = result?.diagnostics ?? interruptedDiagnostics;
   return {
-    ...(result?.diagnostics ? { diagnostics: structuredClone(result.diagnostics) } : {}),
+    ...(diagnostics ? { diagnostics: structuredClone(diagnostics) } : {}),
     ...(error === undefined ? {} : { errorType: getGraphwarPathfindingDebugErrorType(error) }),
     input: {
       candidateIds: input.candidates.map((candidate) => candidate.id),

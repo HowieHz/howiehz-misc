@@ -1112,7 +1112,7 @@ async function buildOneClickClearPath(
                 postResponse({
                   attempt,
                   id: requestId,
-                  incumbent,
+                  progress: { incumbent },
                   type: "one-click-clear-incumbent",
                 });
                 return;
@@ -1123,7 +1123,7 @@ async function buildOneClickClearPath(
               postResponse({
                 attempt,
                 id: requestId,
-                incumbent,
+                progress: { diagnostics: debugMetrics, incumbent },
                 type: "one-click-clear-incumbent",
               });
               debugMetrics.timings.incumbentMessageSendElapsedMs += nowMs() - messageStartedAt;

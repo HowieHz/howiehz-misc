@@ -1,6 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -26,8 +23,8 @@ import {
 import { createGraphwarGameConstantData, GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import { graphwarToolDefaults } from "../tool/defaults";
 import { createGraphPoint, type AlgorithmMode, type BoundsRect, type EquationMode, type GraphPoint } from "../types";
+import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 
-const kernelPath = resolve("packages/graphwar-killer-wasm/build/graphwar-kernel.wasm");
 const FORMULA_INPUT_BYTE_LENGTH = 176;
 const FORMULA_RESULT_BYTE_LENGTH = 48;
 const STEP_MATERIAL_BYTE_LENGTH = 112;
@@ -96,7 +93,7 @@ interface WasmFormulaLaunchResult {
 let kernelModule: WebAssembly.Module;
 
 beforeAll(async () => {
-  kernelModule = await WebAssembly.compile(await readFile(kernelPath));
+  kernelModule = await WebAssembly.compile(await readGraphwarKernelBytes());
 });
 
 describe("Graphwar WASM formula kernel", () => {

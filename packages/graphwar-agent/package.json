@@ -11,6 +11,9 @@
     "sync:public": "node scripts/sync-public-jar.js",
     "test": "node scripts/test.js"
   },
+  "devDependencies": {
+    "@redocly/cli": "^2.40.0"
+  },
   "engines": {
     "node": ">=24"
   }

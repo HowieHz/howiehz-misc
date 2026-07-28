@@ -23,11 +23,7 @@ describe("Graphwar path search policies", () => {
       const expectedOrdinaryType = algorithm === "step" ? "step-stateful" : "stateless";
 
       expect(ordinary).toEqual({ routeMode, type: expectedOrdinaryType });
-      expect(requested).toEqual(
-        canUseStepGlitch
-          ? { routeMode: "visibility-graph", type: "step-glitch" }
-          : { routeMode, type: expectedOrdinaryType },
-      );
+      expect(requested).toEqual(canUseStepGlitch ? { type: "step-glitch" } : { routeMode, type: expectedOrdinaryType });
     }
   });
 });

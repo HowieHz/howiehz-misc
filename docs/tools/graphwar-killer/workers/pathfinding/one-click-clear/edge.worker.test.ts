@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import type { GraphwarBackendAttemptIdentity } from "../../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../../core/game/constants";
@@ -6,11 +6,14 @@ import {
   createGraphwarStepRouteModel,
   createGraphwarStepRouteSummedArea,
 } from "../../../pathfinding/routing/step-route";
+import type { GraphwarStepRouteRuntime } from "../../../pathfinding/routing/step-route";
 import { createGraphwarVisibilityGraphObstacleData } from "../../../pathfinding/routing/visibility-graph";
+import type { GraphwarVisibilityGraphObstacleData } from "../../../pathfinding/routing/visibility-graph";
 import type {
   GraphwarOneClickClearEdgeWorkerInit,
   GraphwarOneClickClearEdgeWorkerRequest,
   GraphwarOneClickClearEdgeWorkerResponse,
+  GraphwarOneClickClearEdgeWorkerSharedInit,
 } from "../../../pathfinding/runtime/protocol";
 
 const originalSelfDescriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
@@ -46,6 +49,20 @@ afterAll(() => {
 });
 
 describe("One-Click Clear edge Worker initialization", () => {
+  it("keeps route preprocessing and Step runtime atomic in the protocol", () => {
+    type StatefulInit = Extract<GraphwarOneClickClearEdgeWorkerSharedInit, { type: "step-stateful" }>;
+    type StatelessInit = Extract<GraphwarOneClickClearEdgeWorkerSharedInit, { type: "stateless" }>;
+    type ThetaStarInit = Extract<GraphwarOneClickClearEdgeWorkerSharedInit, { routeMode: "theta-star" }>;
+    type VisibilityGraphInit = Extract<GraphwarOneClickClearEdgeWorkerSharedInit, { routeMode: "visibility-graph" }>;
+
+    expectTypeOf<StatefulInit["stepRouteRuntime"]>().toEqualTypeOf<GraphwarStepRouteRuntime>();
+    expectTypeOf<StatelessInit["stepRouteRuntime"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<
+      VisibilityGraphInit["visibilityGraphObstacleData"]
+    >().toEqualTypeOf<GraphwarVisibilityGraphObstacleData>();
+    expectTypeOf<ThetaStarInit["visibilityGraphObstacleData"]>().toEqualTypeOf<undefined>();
+  });
+
   it("rejects a mismatched Step runtime and a second init", async () => {
     const context = createContext();
 

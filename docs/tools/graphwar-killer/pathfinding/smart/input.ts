@@ -72,8 +72,8 @@ export function createGraphwarSmartPathfindingSearchInput(
     hitTarget: options.hitTarget,
     isPreviewEnabled: options.isPreviewEnabled,
     routeMaskCacheId: options.routeMaskCacheId,
-    // 邪道扫描不消费普通路由算法；规范值避免无关偏好污染结果缓存和 evidence。
-    routeMode: pathSearchPolicy.routeMode,
+    // Step-glitch 使用 x+ 扫描；规范值只用于缓存身份，避免无关路由偏好污染结果和 evidence。
+    routeMode: pathSearchPolicy.type === "step-glitch" ? "visibility-graph" : pathSearchPolicy.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     settings: options.settings,

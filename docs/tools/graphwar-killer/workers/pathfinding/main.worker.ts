@@ -47,7 +47,7 @@ import {
   createGraphwarStepRouteSummedArea,
   validateGraphwarStepRoutePath,
 } from "../../pathfinding/routing/step-route";
-import type { GraphwarStepRouteModel, GraphwarStepRouteRuntime } from "../../pathfinding/routing/step-route";
+import type { GraphwarStepRouteModel } from "../../pathfinding/routing/step-route";
 import {
   buildGraphwarThetaStarPathForMask,
   createGraphwarThetaStarScratch,
@@ -69,9 +69,10 @@ import {
 } from "../../pathfinding/runtime/diagnostics";
 import type {
   GraphwarOneClickClearDagEdgesWorkerInput,
-  GraphwarOneClickClearEdgeWorkerInit,
   GraphwarOneClickClearEdgeWorkerRequest,
   GraphwarOneClickClearEdgeWorkerResponse,
+  GraphwarOneClickClearEdgeWorkerRouteInit,
+  GraphwarOneClickClearEdgeWorkerSharedInit,
   GraphwarOneClickClearEdgeWorkerJobResult,
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
@@ -188,11 +189,6 @@ interface EdgeWorkerHandle {
   workerIndex: number;
 }
 
-type EdgeWorkerRouteInit<T> = T extends GraphwarOneClickClearEdgeWorkerInit
-  ? Omit<T, "stepRouteRuntime" | "type">
-  : never;
-type EdgeWorkerRouteContext = EdgeWorkerRouteInit<GraphwarOneClickClearEdgeWorkerInit>;
-
 /** 边 Worker 批次聚合的建模、寻路和映射耗时。 */
 interface EdgeRouteTimingTotals {
   /** 平面几何寻路累计耗时。 */
@@ -202,6 +198,9 @@ interface EdgeRouteTimingTotals {
 }
 
 type OneClickClearDagEdgeSessionState = "disposed" | "fallback" | "idle" | "running";
+
+/** 普通 DAG 建边只支持几何路线；Step-glitch 由独立的 x+ scanner 处理。 */
+type OneClickClearDagEdgePolicy = Exclude<GraphwarPathSearchPolicy, { type: "step-glitch" }>;
 
 /** 当前 DAG 建边批次的作业、结果和结算状态。 */
 interface OneClickClearDagEdgeBatch {
@@ -1234,8 +1233,7 @@ function createOneClickClearDagEdgeSession(
   let nextRequestId = 1;
   let serialBatchRunning = false;
   let serialRouteContext: GraphwarOneClickClearDagEdgeRouteBuildContext | undefined;
-  let sharedStepRouteRuntime: GraphwarStepRouteRuntime | undefined;
-  let sharedVisibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData | undefined;
+  let sharedInit: GraphwarOneClickClearEdgeWorkerSharedInit | undefined;
   let state: OneClickClearDagEdgeSessionState = "idle";
 
   /** 终止并解绑单个 edge Worker，且只记录一次生命周期耗时。 */
@@ -1481,51 +1479,15 @@ function createOneClickClearDagEdgeSession(
   };
 
   /** 将同一条消息中的 mask 与共享 cache 原子发送，structured clone 会保留二者的引用绑定。 */
-  const initializeEdgeWorkerHandle = (handle: EdgeWorkerHandle) => {
+  const initializeEdgeWorkerHandle = (handle: EdgeWorkerHandle, init: GraphwarOneClickClearEdgeWorkerSharedInit) => {
     if (handle.isFinished || handle.isInitialized) {
       return;
     }
     handle.isInitialized = true;
     try {
-      const contextBase = {
-        bounds: input.bounds,
-        boundsRect: input.boundsRect,
-        boundaryExpansion: input.boundaryExpansion,
-        routeMask: input.routeMask,
-        routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-        workerIndex: handle.workerIndex,
-      };
-      let routeContext: EdgeWorkerRouteContext;
-      if (input.routeMode === "visibility-graph") {
-        if (!sharedVisibilityGraphObstacleData) {
-          switchToSerialFallback();
-          return;
-        }
-        routeContext = {
-          ...contextBase,
-          routeMode: input.routeMode,
-          visibilityGraphObstacleData: sharedVisibilityGraphObstacleData,
-        };
-      } else {
-        routeContext = { ...contextBase, routeMode: input.routeMode };
-      }
-      let context: GraphwarOneClickClearEdgeWorkerInit;
-      if (pathSearchPolicy.type === "stateless") {
-        context = { ...routeContext, type: pathSearchPolicy.type };
-      } else {
-        if (!sharedStepRouteRuntime) {
-          switchToSerialFallback();
-          return;
-        }
-        context = {
-          ...routeContext,
-          stepRouteRuntime: sharedStepRouteRuntime,
-          type: pathSearchPolicy.type,
-        };
-      }
       handle.worker.postMessage({
         attempt,
-        context,
+        context: { ...init, workerIndex: handle.workerIndex },
         type: "init",
       } satisfies GraphwarOneClickClearEdgeWorkerRequest);
     } catch {
@@ -1574,34 +1536,13 @@ function createOneClickClearDagEdgeSession(
          * 4 Workers 重复扫描 mask。2026-07-28 同一真实 mask、40 条 Step edge 的热态交错测试
          * 各 56 次：结果均为 38 条可达，中位数约 278.9ms 降到 276.0ms，均值约改善 1.0%。
          */
-        sharedVisibilityGraphObstacleData ??=
-          input.routeMode === "visibility-graph"
-            ? createGraphwarVisibilityGraphObstacleData({
-                bounds: input.bounds,
-                routeMask: input.routeMask,
-                routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-              })
-            : undefined;
-        if (pathSearchPolicy.type === "step-stateful" && !sharedStepRouteRuntime) {
-          const model = createGraphwarStepRouteModel(
-            imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect).y,
-            input.settings,
-          );
-          if (!model) {
-            throw new Error("Step-stateful DAG route has no valid numeric model");
-          }
-          sharedStepRouteRuntime = {
-            model,
-            routeMask: input.routeMask,
-            summedArea: getOrCreateMasterStepSummedArea(input.routeMask),
-          };
-        }
+        sharedInit ??= prepareGraphwarOneClickClearEdgeWorkerSharedInit(input, pathSearchPolicy);
       } catch {
         switchToSerialFallback();
         return;
       }
       for (const handle of handles) {
-        initializeEdgeWorkerHandle(handle);
+        initializeEdgeWorkerHandle(handle, sharedInit);
         assignNextJob(handle);
       }
     });
@@ -1636,6 +1577,57 @@ function createOneClickClearDagEdgeSession(
   };
 
   return { dispose, runBatch };
+}
+
+/**
+ * 在 Master 唯一构造完整的请求级 Worker init，避免 cache/runtime 半状态扩散到调度层。
+ *
+ * 调用发生在 child Worker 创建之后，使 module 加载与同步预处理重叠；每个 Worker 随后只追加 lane 身份。
+ */
+function prepareGraphwarOneClickClearEdgeWorkerSharedInit(
+  input: GraphwarOneClickClearDagEdgesWorkerInput,
+  policy: OneClickClearDagEdgePolicy,
+): GraphwarOneClickClearEdgeWorkerSharedInit {
+  const routeInit = (
+    policy.routeMode === "visibility-graph"
+      ? {
+          routeMode: policy.routeMode,
+          visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
+            bounds: input.bounds,
+            routeMask: input.routeMask,
+            routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+          }),
+        }
+      : { routeMode: policy.routeMode }
+  ) satisfies GraphwarOneClickClearEdgeWorkerRouteInit;
+  const initBase = {
+    bounds: input.bounds,
+    boundsRect: input.boundsRect,
+    boundaryExpansion: input.boundaryExpansion,
+    routeMask: input.routeMask,
+    routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    ...routeInit,
+  };
+  if (policy.type === "stateless") {
+    return { ...initBase, type: policy.type };
+  }
+
+  const model = createGraphwarStepRouteModel(
+    imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect).y,
+    input.settings,
+  );
+  if (!model) {
+    throw new Error("Step-stateful DAG route has no valid numeric model");
+  }
+  return {
+    ...initBase,
+    stepRouteRuntime: {
+      model,
+      routeMask: input.routeMask,
+      summedArea: getOrCreateMasterStepSummedArea(input.routeMask),
+    },
+    type: policy.type,
+  };
 }
 
 /** 串行与 parallel-fallback 共用同一份请求级预处理材料。 */

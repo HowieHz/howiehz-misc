@@ -154,8 +154,8 @@ export function createGraphwarOneClickClearSearchInput(
     pathPoints: [...options.pathPoints],
     prefixTarget: options.prefixTarget,
     routeMaskCacheId: options.routeMaskCacheId,
-    // Step ODE 邪道不消费普通路由算法；规范值让无关配置共享同一结果身份。
-    routeMode: pathSearchPolicy.routeMode,
+    // Step-glitch 使用 x+ 扫描；规范值只用于缓存身份，避免无关路由偏好污染结果。
+    routeMode: pathSearchPolicy.type === "step-glitch" ? "visibility-graph" : pathSearchPolicy.routeMode,
     routeObstacleMask: options.routeObstacleMask,
     routeTolerancePlanePixels: options.tolerances.routePlanningTolerancePlanePixels,
     // 一键清图的 simulation mask 是任务的唯一碰撞快照；Step 门、验证和最终公式必须共享它。

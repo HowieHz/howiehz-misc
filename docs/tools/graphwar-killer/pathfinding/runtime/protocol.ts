@@ -210,11 +210,10 @@ interface GraphwarOneClickClearEdgeWorkerInitBase {
   boundaryExpansion: number;
   routeMask: Uint8Array;
   routeTolerancePlanePixels: number;
-  workerIndex: number;
 }
 
-/** Edge Worker 的完整初始化证据；visibility cache 必须与所属 mask 原子同行。 */
-type GraphwarOneClickClearEdgeWorkerRouteInit =
+/** Edge Worker 的路线预处理；visibility cache 必须与所属 mask 原子同行。 */
+export type GraphwarOneClickClearEdgeWorkerRouteInit =
   | {
       routeMode: "visibility-graph";
       visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData;
@@ -228,9 +227,15 @@ type GraphwarOneClickClearEdgeWorkerFormulaInit =
   | { stepRouteRuntime?: never; type: "stateless" }
   | { stepRouteRuntime: GraphwarStepRouteRuntime; type: "step-stateful" };
 
-export type GraphwarOneClickClearEdgeWorkerInit = GraphwarOneClickClearEdgeWorkerInitBase &
+/** 请求级共享初始化证据；只能整体构造、复用和丢弃。 */
+export type GraphwarOneClickClearEdgeWorkerSharedInit = GraphwarOneClickClearEdgeWorkerInitBase &
   GraphwarOneClickClearEdgeWorkerRouteInit &
   GraphwarOneClickClearEdgeWorkerFormulaInit;
+
+/** 单个 Edge Worker 的完整 init；只在请求级共享证据上增加 lane 身份。 */
+export type GraphwarOneClickClearEdgeWorkerInit = GraphwarOneClickClearEdgeWorkerSharedInit & {
+  workerIndex: number;
+};
 
 export type GraphwarOneClickClearEdgeWorkerRequest =
   | {

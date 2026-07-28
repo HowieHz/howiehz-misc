@@ -47,7 +47,7 @@ import {
   createGraphwarStepRouteSummedArea,
   validateGraphwarStepRoutePath,
 } from "../../pathfinding/routing/step-route";
-import type { GraphwarStepRouteModel } from "../../pathfinding/routing/step-route";
+import type { GraphwarStepRouteModel, GraphwarStepRouteRuntime } from "../../pathfinding/routing/step-route";
 import {
   buildGraphwarThetaStarPathForMask,
   createGraphwarThetaStarScratch,
@@ -69,6 +69,7 @@ import {
 } from "../../pathfinding/runtime/diagnostics";
 import type {
   GraphwarOneClickClearDagEdgesWorkerInput,
+  GraphwarOneClickClearEdgeWorkerInit,
   GraphwarOneClickClearEdgeWorkerRequest,
   GraphwarOneClickClearEdgeWorkerResponse,
   GraphwarOneClickClearEdgeWorkerJobResult,
@@ -175,6 +176,8 @@ interface EdgeWorkerHandle {
   cleanup: () => void;
   /** 是否已结束并记录耗时。 */
   isFinished: boolean;
+  /** 是否已发送与当前 session 绑定的完整初始化上下文。 */
+  isInitialized: boolean;
   /** 是否已完成初始化，可接收 DAG 边 job。 */
   isReady: boolean;
   /** 子 worker 创建时间。 */
@@ -184,6 +187,11 @@ interface EdgeWorkerHandle {
   /** 子 worker 序号。 */
   workerIndex: number;
 }
+
+type EdgeWorkerRouteInit<T> = T extends GraphwarOneClickClearEdgeWorkerInit
+  ? Omit<T, "stepRouteRuntime" | "type">
+  : never;
+type EdgeWorkerRouteContext = EdgeWorkerRouteInit<GraphwarOneClickClearEdgeWorkerInit>;
 
 /** 边 Worker 批次聚合的建模、寻路和映射耗时。 */
 interface EdgeRouteTimingTotals {
@@ -1212,6 +1220,13 @@ function createOneClickClearDagEdgeSession(
   const requestedWorkerCount = Math.floor(input.workerCount);
   const configuredWorkerCount =
     Number.isFinite(requestedWorkerCount) && requestedWorkerCount > 0 ? requestedWorkerCount : 1;
+  const pathSearchPolicy = resolveGraphwarPathSearchPolicy(
+    resolveFormulaModeContract(input.settings.algorithm, input.settings.equation, false),
+    input.routeMode,
+  );
+  if (pathSearchPolicy.type === "step-glitch") {
+    throw new Error("Step-glitch does not build ordinary DAG edges");
+  }
   const handles: EdgeWorkerHandle[] = [];
   const workerTimings: GraphwarOneClickClearDebugTiming[] = [];
   let activeBatch: OneClickClearDagEdgeBatch | undefined;
@@ -1219,6 +1234,8 @@ function createOneClickClearDagEdgeSession(
   let nextRequestId = 1;
   let serialBatchRunning = false;
   let serialRouteContext: GraphwarOneClickClearDagEdgeRouteBuildContext | undefined;
+  let sharedStepRouteRuntime: GraphwarStepRouteRuntime | undefined;
+  let sharedVisibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData | undefined;
   let state: OneClickClearDagEdgeSessionState = "idle";
 
   /** 终止并解绑单个 edge Worker，且只记录一次生命周期耗时。 */
@@ -1406,7 +1423,7 @@ function createOneClickClearDagEdgeSession(
     resolveParallelBatch(batch);
   };
 
-  /** 创建并初始化一个绑定当前 session 静态上下文的 edge Worker。 */
+  /** 创建 edge Worker 并立即触发 module 加载；完整 init 等 Master 预处理结束后发送。 */
   const createEdgeWorkerHandle = (workerIndex: number) => {
     const worker = new Worker(new URL("./one-click-clear/edge.worker.ts", import.meta.url), {
       name: `graphwar-one-click-clear-edge-${workerIndex}`,
@@ -1415,6 +1432,7 @@ function createOneClickClearDagEdgeSession(
     const handle: EdgeWorkerHandle = {
       cleanup: () => cleanup(),
       isFinished: false,
+      isInitialized: false,
       isReady: false,
       startedAt: nowMs(),
       worker,
@@ -1459,20 +1477,55 @@ function createOneClickClearDagEdgeSession(
     worker.addEventListener("messageerror", handleMessageError);
     worker.addEventListener("error", handleError);
     handles.push(handle);
+    return handle;
+  };
+
+  /** 将同一条消息中的 mask 与共享 cache 原子发送，structured clone 会保留二者的引用绑定。 */
+  const initializeEdgeWorkerHandle = (handle: EdgeWorkerHandle) => {
+    if (handle.isFinished || handle.isInitialized) {
+      return;
+    }
+    handle.isInitialized = true;
     try {
-      worker.postMessage({
-        attempt,
-        context: {
-          bounds: input.bounds,
-          boundsRect: input.boundsRect,
-          boundaryExpansion: input.boundaryExpansion,
-          routeMask: input.routeMask,
-          routeOriginPoint: input.routeOriginPoint,
+      const contextBase = {
+        bounds: input.bounds,
+        boundsRect: input.boundsRect,
+        boundaryExpansion: input.boundaryExpansion,
+        routeMask: input.routeMask,
+        routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+        workerIndex: handle.workerIndex,
+      };
+      let routeContext: EdgeWorkerRouteContext;
+      if (input.routeMode === "visibility-graph") {
+        if (!sharedVisibilityGraphObstacleData) {
+          switchToSerialFallback();
+          return;
+        }
+        routeContext = {
+          ...contextBase,
           routeMode: input.routeMode,
-          routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-          settings: input.settings,
-          workerIndex,
-        },
+          visibilityGraphObstacleData: sharedVisibilityGraphObstacleData,
+        };
+      } else {
+        routeContext = { ...contextBase, routeMode: input.routeMode };
+      }
+      let context: GraphwarOneClickClearEdgeWorkerInit;
+      if (pathSearchPolicy.type === "stateless") {
+        context = { ...routeContext, type: pathSearchPolicy.type };
+      } else {
+        if (!sharedStepRouteRuntime) {
+          switchToSerialFallback();
+          return;
+        }
+        context = {
+          ...routeContext,
+          stepRouteRuntime: sharedStepRouteRuntime,
+          type: pathSearchPolicy.type,
+        };
+      }
+      handle.worker.postMessage({
+        attempt,
+        context,
         type: "init",
       } satisfies GraphwarOneClickClearEdgeWorkerRequest);
     } catch {
@@ -1506,7 +1559,49 @@ function createOneClickClearDagEdgeSession(
           switchToSerialFallback();
         }
       }
+      if (state !== "running") {
+        return;
+      }
+      try {
+        /*
+         * Worker module 加载与这次同步预处理并行。可视图数据只构建一次，再由 structured clone
+         * 分发私有副本，避免每个 Worker 重复扫描同一 mask；Theta* 没有共享预处理。
+         * 2026-07-28 用真实 346,500-byte mask、40 条 visibility edge、4 Workers 交错测试：
+         * 56 次中位数从约 196.3ms 变为 202.5ms（+3.2%）。当前仍保留该编排以验证其他地形和
+         * 更重批次；不要只凭这组小批次删除，也不要把 cache clone 成本忽略不计。
+         *
+         * Step-stateful 还在这里构建一次 model 和约 1.39MB summed-area，再随 init 分发，避免
+         * 4 Workers 重复扫描 mask。2026-07-28 同一真实 mask、40 条 Step edge 的热态交错测试
+         * 各 56 次：结果均为 38 条可达，中位数约 278.9ms 降到 276.0ms，均值约改善 1.0%。
+         */
+        sharedVisibilityGraphObstacleData ??=
+          input.routeMode === "visibility-graph"
+            ? createGraphwarVisibilityGraphObstacleData({
+                bounds: input.bounds,
+                routeMask: input.routeMask,
+                routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+              })
+            : undefined;
+        if (pathSearchPolicy.type === "step-stateful" && !sharedStepRouteRuntime) {
+          const model = createGraphwarStepRouteModel(
+            imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect).y,
+            input.settings,
+          );
+          if (!model) {
+            throw new Error("Step-stateful DAG route has no valid numeric model");
+          }
+          sharedStepRouteRuntime = {
+            model,
+            routeMask: input.routeMask,
+            summedArea: getOrCreateMasterStepSummedArea(input.routeMask),
+          };
+        }
+      } catch {
+        switchToSerialFallback();
+        return;
+      }
       for (const handle of handles) {
+        initializeEdgeWorkerHandle(handle);
         assignNextJob(handle);
       }
     });
@@ -1588,6 +1683,7 @@ function createOneClickClearSerialRouteContext(
     ...pathSearchPolicy,
     runtime: {
       model,
+      routeMask: input.routeMask,
       summedArea: getOrCreateMasterStepSummedArea(input.routeMask),
     },
   };

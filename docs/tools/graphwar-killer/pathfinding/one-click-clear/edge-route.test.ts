@@ -155,6 +155,7 @@ function createStepRouteRuntime() {
   }
   return {
     model,
+    routeMask: context.routeMask,
     summedArea: createGraphwarStepRouteSummedArea(context.routeMask),
   };
 }

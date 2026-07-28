@@ -34,6 +34,14 @@ export interface GraphwarStepRouteModel {
   originY: number;
 }
 
+/** 与固定公式设置和 route mask 原子绑定的 Step 建边只读预处理。 */
+export interface GraphwarStepRouteRuntime {
+  model: GraphwarStepRouteModel;
+  /** 前缀和所属 mask；与 init 同消息 clone 后用引用相等保持身份绑定。 */
+  routeMask: Uint8Array;
+  summedArea: GraphwarPlaneMaskSummedArea;
+}
+
 /** 一条 Step 路由边的代价、落点状态和包络信息。 */
 export interface GraphwarStepRouteTransition {
   envelope: GraphwarStepEnvelope;

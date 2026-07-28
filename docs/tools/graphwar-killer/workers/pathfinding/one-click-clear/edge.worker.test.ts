@@ -2,7 +2,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { GraphwarBackendAttemptIdentity } from "../../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../../core/game/constants";
-import { createPixelPoint } from "../../../core/types";
+import {
+  createGraphwarStepRouteModel,
+  createGraphwarStepRouteSummedArea,
+} from "../../../pathfinding/routing/step-route";
+import { createGraphwarVisibilityGraphObstacleData } from "../../../pathfinding/routing/visibility-graph";
 import type {
   GraphwarOneClickClearEdgeWorkerInit,
   GraphwarOneClickClearEdgeWorkerRequest,
@@ -42,16 +46,32 @@ afterAll(() => {
 });
 
 describe("One-Click Clear edge Worker initialization", () => {
-  it("rejects a second init instead of rebinding the attempt context", async () => {
+  it("rejects a mismatched Step runtime and a second init", async () => {
     const context = createContext();
 
-    dispatch({ attempt, context, type: "init" });
+    dispatch({
+      attempt,
+      context: {
+        ...context,
+        stepRouteRuntime: { ...context.stepRouteRuntime, routeMask: context.routeMask.slice() },
+      },
+      type: "init",
+    });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
-    expect(postMessage.mock.calls[0]?.[0]).toEqual({ attempt, type: "ready", workerIndex: 1 });
+    expect(postMessage.mock.calls[0]?.[0]).toEqual({
+      attempt,
+      message: "Step-stateful runtime does not match its route mask",
+      type: "error",
+      workerIndex: 1,
+    });
+
+    dispatch({ attempt, context, type: "init" });
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
+    expect(postMessage.mock.calls[1]?.[0]).toEqual({ attempt, type: "ready", workerIndex: 1 });
 
     dispatch({ attempt, context: { ...context, boundaryExpansion: 1 }, type: "init" });
-    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
-    expect(postMessage.mock.calls[1]?.[0]).toEqual({
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(3));
+    expect(postMessage.mock.calls[2]?.[0]).toEqual({
       attempt,
       message: "Edge worker was already initialized",
       type: "error",
@@ -68,20 +88,34 @@ function dispatch(request: GraphwarOneClickClearEdgeWorkerRequest) {
 }
 
 function createContext() {
+  const bounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
+  const routeMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+  const model = createGraphwarStepRouteModel(0, {
+    decimalPlaces: 4,
+    equation: "y",
+    steepness: 67,
+  });
+  if (!model) {
+    throw new Error("Expected valid Step route model");
+  }
   return {
-    bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+    bounds,
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     boundaryExpansion: 0,
-    routeMask: new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT),
+    routeMask,
     routeMode: "visibility-graph",
-    routeOriginPoint: createPixelPoint(100, 225),
     routeTolerancePlanePixels: 2,
-    settings: {
-      algorithm: "abs",
-      decimalPlaces: 4,
-      equation: "y",
-      steepness: 67,
+    stepRouteRuntime: {
+      model,
+      routeMask,
+      summedArea: createGraphwarStepRouteSummedArea(routeMask),
     },
+    type: "step-stateful",
+    visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
+      bounds,
+      routeMask,
+      routeTolerancePlanePixels: 2,
+    }),
     workerIndex: 1,
   } satisfies GraphwarOneClickClearEdgeWorkerInit;
 }

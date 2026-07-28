@@ -16,7 +16,8 @@ import type {
 } from "../one-click-clear/search";
 import type { GraphwarOneClickClearStepRouteState } from "../one-click-clear/step-route-state";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
-import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
+import type { GraphwarStepRouteRuntime } from "../routing/step-route";
+import type { GraphwarPathfindingPreview, GraphwarVisibilityGraphObstacleData } from "../routing/visibility-graph";
 import type { GraphwarPathfindingDiagnostics } from "./diagnostics";
 
 /** 普通几何寻路请求。 */
@@ -203,19 +204,33 @@ export type GraphwarPathfindingWorkerResponse =
     };
 
 /** Edge Worker 生命周期内只设置一次的共享上下文。 */
-export interface GraphwarOneClickClearEdgeWorkerInit {
+interface GraphwarOneClickClearEdgeWorkerInitBase {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
   boundaryExpansion: number;
   routeMask: Uint8Array;
-  /** Step 累计高度的首路径点；stateless route 忽略。 */
-  routeOriginPoint: PixelPoint;
-  routeMode: GraphwarPathfindingRouteMode;
   routeTolerancePlanePixels: number;
-  /** Step 严格边判定所需的精简公式设置。 */
-  settings: GraphwarOneClickClearDagEdgeBuildRequest["settings"];
   workerIndex: number;
 }
+
+/** Edge Worker 的完整初始化证据；visibility cache 必须与所属 mask 原子同行。 */
+type GraphwarOneClickClearEdgeWorkerRouteInit =
+  | {
+      routeMode: "visibility-graph";
+      visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData;
+    }
+  | {
+      routeMode: Exclude<GraphwarPathfindingRouteMode, "visibility-graph">;
+      visibilityGraphObstacleData?: never;
+    };
+
+type GraphwarOneClickClearEdgeWorkerFormulaInit =
+  | { stepRouteRuntime?: never; type: "stateless" }
+  | { stepRouteRuntime: GraphwarStepRouteRuntime; type: "step-stateful" };
+
+export type GraphwarOneClickClearEdgeWorkerInit = GraphwarOneClickClearEdgeWorkerInitBase &
+  GraphwarOneClickClearEdgeWorkerRouteInit &
+  GraphwarOneClickClearEdgeWorkerFormulaInit;
 
 export type GraphwarOneClickClearEdgeWorkerRequest =
   | {

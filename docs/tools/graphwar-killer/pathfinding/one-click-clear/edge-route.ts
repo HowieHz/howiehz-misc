@@ -3,8 +3,7 @@ import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds } from "../../core/types";
 import type { GraphwarPathSearchRuntimePolicy } from "../routing/policy";
-import type { GraphwarPlaneMaskSummedArea } from "../routing/step-envelope";
-import type { GraphwarStepRouteModel } from "../routing/step-route";
+import type { GraphwarStepRouteRuntime } from "../routing/step-route";
 import { createGraphwarStepPathfindingEdgeEvaluator, validateGraphwarStepRoutePath } from "../routing/step-route";
 import { buildGraphwarThetaStarPathForMask } from "../routing/theta-star";
 import type { GraphwarThetaStarScratch } from "../routing/theta-star";
@@ -16,14 +15,6 @@ import type { GraphwarOneClickClearEdgeWorkerJobResult } from "../runtime/protoc
 /** 一键清图 DAG 单边建路；master 串行 fallback 和 edge Worker 并行消费者共用同一条路线规则。 */
 import type { GraphwarOneClickClearDagEdgeBuildJob } from "./search";
 import { isGraphwarOneClickClearStepRouteState } from "./step-route-state";
-
-/** Step 单边建路批次共享的数值模型和 route mask 查询材料。 */
-export interface GraphwarOneClickClearStepRouteBuildRuntime {
-  /** 当前公式设置解析出的 Step 数值模型。 */
-  model: GraphwarStepRouteModel;
-  /** 与当前 route mask 同生命周期的二维前缀和。 */
-  summedArea: GraphwarPlaneMaskSummedArea;
-}
 
 /** 单边建路所需的共享上下文；可视图轮廓 cache 的生命周期由调用方控制。 */
 interface GraphwarOneClickClearDagEdgeRouteBuildContextBase {
@@ -45,7 +36,7 @@ interface GraphwarOneClickClearDagEdgeRouteBuildContextBase {
 
 /** 单边建路的路线选择与 Step runtime 是同一判别联合，不允许出现两种半状态。 */
 export type GraphwarOneClickClearDagEdgeRouteBuildContext = GraphwarOneClickClearDagEdgeRouteBuildContextBase &
-  Exclude<GraphwarPathSearchRuntimePolicy<GraphwarOneClickClearStepRouteBuildRuntime, never>, { type: "step-glitch" }>;
+  Exclude<GraphwarPathSearchRuntimePolicy<GraphwarStepRouteRuntime, never>, { type: "step-glitch" }>;
 
 /**
  * 构建单条一键清图 DAG 边路线。

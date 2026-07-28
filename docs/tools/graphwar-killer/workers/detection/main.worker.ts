@@ -80,6 +80,21 @@ interface SoldierTemplateWorkerHandle {
   workerIndex: number;
 }
 
+/** 已触发 module 加载、尚未收到候选任务的模板 Worker。 */
+interface StartedSoldierTemplateWorker {
+  /** 移除启动期错误监听；派发后由请求监听接管。 */
+  cleanupStartupListener: () => void;
+  /** Module 加载期间发生的首个错误。 */
+  startupError?: Error;
+  worker: Worker;
+  workerIndex: number;
+}
+
+/** 提前启动的原子结果；构造失败不能留下可误用的半组 Worker。 */
+type SoldierTemplateWorkerStartup =
+  | { type: "available"; workers: StartedSoldierTemplateWorker[] }
+  | { error: Error; requestedWorkerCount: number; type: "failed" };
+
 const workerScope = self as unknown as GraphwarDetectionWorkerScope;
 
 /** 接收主线程请求，并将异步检测交给统一的协议分派入口。 */
@@ -185,25 +200,42 @@ async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
 ): Promise<GraphwarObjectsDetectionResult> {
   const settings = getGraphwarSoldierDetectionSettings(soldierSettings);
   const scale = getGraphwarDetectionScale(edgeRect);
-  const candidates = measureDetectionStage(timings, "collecting-soldier-candidates", () =>
-    collectSoldierTemplateCenterCandidatesForMatching(imageData, edgeRect, settings),
-  );
+  /*
+   * new Worker 会立即开始加载 module。让加载与同步候选扫描重叠，待候选完整后再发送任务；
+   * Worker 绝不观察半成品候选或像素副本，串行和 fallback 的业务语义保持不变。
+   * 2026-07-28 用 16 张真实截图、4 Workers 交错测试各 384 次：中位数约从 135.5ms 降到
+   * 134.8ms（-0.5%），均值约改善 0.8%。收益很小，后续调整必须继续覆盖低/高候选截图。
+   */
+  const startup = startSoldierTemplateWorkers(settings.templateMatchingWorkerCount);
   const warnings: GraphwarDetectionWarning[] = [];
-  const matches = await measureDetectionStageAsync(timings, "matching-soldier-templates", async () => {
-    const matched = await matchSoldierTemplatesWithOptionalWorkers(
-      requestContext,
-      imageData,
-      edgeRect,
-      scale,
-      candidates,
-      settings.templateMatchingWorkerCount,
-      timings,
-      warnings,
+  let matches: SoldierMatchCandidate[];
+  try {
+    const candidates = measureDetectionStage(timings, "collecting-soldier-candidates", () =>
+      collectSoldierTemplateCenterCandidatesForMatching(imageData, edgeRect, settings),
     );
-    return measureDetectionDetail(timings, "matching-soldier-templates", { type: "template-matching-merge" }, () =>
-      finalizeSoldierTemplateMatches(matched, scale, settings),
-    );
-  });
+    matches = await measureDetectionStageAsync(timings, "matching-soldier-templates", async () => {
+      const matched = await matchSoldierTemplatesWithOptionalWorkers(
+        requestContext,
+        imageData,
+        edgeRect,
+        scale,
+        candidates,
+        startup,
+        timings,
+        warnings,
+      );
+      return measureDetectionDetail(timings, "matching-soldier-templates", { type: "template-matching-merge" }, () =>
+        finalizeSoldierTemplateMatches(matched, scale, settings),
+      );
+    });
+  } finally {
+    if (startup.type === "available") {
+      for (const started of startup.workers) {
+        started.cleanupStartupListener();
+        started.worker.terminate();
+      }
+    }
+  }
   const soldiers = createSoldierDetectionBoxes(matches, edgeRect);
   const obstacles = detectGraphwarObstaclesInBounds(imageData, edgeRect, thresholds, soldiers, {
     measureStage: <TResult>(stage: GraphwarObjectDetectionStage, task: () => TResult) =>
@@ -219,15 +251,28 @@ async function matchSoldierTemplatesWithOptionalWorkers(
   edgeRect: BoundsRect,
   scale: number,
   candidates: readonly SoldierTemplateCenterCandidate[],
-  workerCount: number,
+  startup: SoldierTemplateWorkerStartup,
   timings: GraphwarDetectionWorkerTimingEntry[],
   warnings: GraphwarDetectionWarning[],
 ) {
-  if (workerCount <= 1 || candidates.length <= 1 || typeof Worker === "undefined") {
+  if (candidates.length <= 1) {
+    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "serial", 1);
+  }
+  if (startup.type === "failed") {
+    warnings.push({ code: "template-matching-worker-fallback", message: startup.error.message });
+    recordDetectionTimingDetail(timings, "matching-soldier-templates", 0, {
+      mode: "parallel-fallback",
+      type: "template-matching-mode",
+      workerCount: startup.requestedWorkerCount,
+    });
+    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "fallback", 1);
+  }
+  const startedWorkers = startup.workers;
+  if (startedWorkers.length === 0) {
     return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "serial", 1);
   }
 
-  const laneCount = Math.min(workerCount, candidates.length);
+  const laneCount = Math.min(startedWorkers.length, candidates.length);
   try {
     const matches = await runSoldierTemplateWorkerTasks(
       requestContext,
@@ -236,6 +281,7 @@ async function matchSoldierTemplatesWithOptionalWorkers(
       scale,
       candidates,
       laneCount,
+      startedWorkers,
       timings,
     );
     recordDetectionTimingDetail(timings, "matching-soldier-templates", 0, {
@@ -291,6 +337,7 @@ async function runSoldierTemplateWorkerTasks(
   scale: number,
   candidates: readonly SoldierTemplateCenterCandidate[],
   laneCount: number,
+  startedWorkers: readonly StartedSoldierTemplateWorker[],
   timings: GraphwarDetectionWorkerTimingEntry[],
 ) {
   const handles: SoldierTemplateWorkerHandle[] = [];
@@ -311,7 +358,11 @@ async function runSoldierTemplateWorkerTasks(
       }
       // 先完成全部像素复制；任一复制失败时都不留下已启动的半组 Worker。
       for (const task of tasks) {
-        handles.push(createSoldierTemplateWorkerHandle(requestContext.attempt, task, edgeRect, scale));
+        const started = startedWorkers[task.workerIndex - 1];
+        if (!started) {
+          throw new Error(`Template worker ${task.workerIndex} was not started`);
+        }
+        handles.push(createSoldierTemplateWorkerHandle(started, requestContext.attempt, task, edgeRect, scale));
       }
     });
 
@@ -338,24 +389,65 @@ async function runSoldierTemplateWorkerTasks(
   } finally {
     for (const handle of handles) {
       handle.cleanup();
-      handle.worker.terminate();
     }
+  }
+}
+
+/** 提前启动配置数量的 Worker；候选数稍后确定，多余实例由调用方统一终止。 */
+function startSoldierTemplateWorkers(workerCount: number) {
+  const startedWorkers: StartedSoldierTemplateWorker[] = [];
+  if (workerCount <= 1 || typeof Worker === "undefined") {
+    return { type: "available", workers: startedWorkers } satisfies SoldierTemplateWorkerStartup;
+  }
+  try {
+    for (let workerIndex = 1; workerIndex <= workerCount; workerIndex += 1) {
+      const worker = new Worker(new URL("./template.worker.ts", import.meta.url), {
+        name: `graphwar-soldier-template-${workerIndex}`,
+        type: "module",
+      });
+      const started: StartedSoldierTemplateWorker = {
+        cleanupStartupListener: () => worker.removeEventListener("error", handleStartupError),
+        worker,
+        workerIndex,
+      };
+      /** 候选扫描期间先保存 module 加载错误，派发时再进入原有 fallback。 */
+      const handleStartupError = (event: ErrorEvent) => {
+        started.startupError ??=
+          event.error instanceof Error ? event.error : new Error(`Worker ${workerIndex}: ${event.message}`);
+      };
+      worker.addEventListener("error", handleStartupError);
+      startedWorkers.push(started);
+    }
+    return { type: "available", workers: startedWorkers } satisfies SoldierTemplateWorkerStartup;
+  } catch (error) {
+    for (const started of startedWorkers) {
+      started.cleanupStartupListener();
+      started.worker.terminate();
+    }
+    return {
+      error: error instanceof Error ? error : new Error(String(error)),
+      requestedWorkerCount: workerCount,
+      type: "failed",
+    } satisfies SoldierTemplateWorkerStartup;
   }
 }
 
 /** 创建单个模板匹配子 Worker 的 Promise 封装和清理钩子。 */
 function createSoldierTemplateWorkerHandle(
+  started: StartedSoldierTemplateWorker,
   attempt: GraphwarBackendAttemptIdentity,
   task: SoldierTemplateWorkerTask,
   edgeRect: BoundsRect,
   scale: number,
 ): SoldierTemplateWorkerHandle {
-  const worker = new Worker(new URL("./template.worker.ts", import.meta.url), {
-    name: `graphwar-soldier-template-${task.workerIndex}`,
-    type: "module",
-  });
+  const { worker } = started;
   let cleanup: (() => void) | undefined;
   const promise = new Promise<{ elapsedMs: number; matches: SoldierMatchCandidate[] }>((resolve, reject) => {
+    started.cleanupStartupListener();
+    if (started.startupError) {
+      reject(started.startupError);
+      return;
+    }
     const request: GraphwarSoldierTemplateWorkerRequest = {
       attempt,
       candidates: task.candidates,

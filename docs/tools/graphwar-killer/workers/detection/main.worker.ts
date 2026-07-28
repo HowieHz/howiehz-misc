@@ -1,5 +1,8 @@
 /** 在 Web Worker 中执行耗时的 Graphwar 截图识别，避免阻塞页面主线程。 */
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import {
+  graphwarBackendAttemptIdentitiesAreEqual,
+  type GraphwarBackendAttemptIdentity,
+} from "../../core/algorithm-backend";
 import { nowMs } from "../../core/time";
 import type { BoundsRect } from "../../core/types";
 import {
@@ -32,15 +35,16 @@ import type {
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
 } from "../../detection/runtime/protocol";
-import { isGraphwarDetectionWorkerRequest } from "../../detection/runtime/protocol";
 import { measureDetectionStage } from "../../detection/runtime/timing";
-import type { GraphwarSoldierTemplateWorkerRequest } from "../../detection/template/protocol";
-import { isGraphwarSoldierTemplateWorkerResponseForRequest } from "../../detection/template/protocol";
+import type {
+  GraphwarSoldierTemplateWorkerRequest,
+  GraphwarSoldierTemplateWorkerResponse,
+} from "../../detection/template/protocol";
 
 /** 当前 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarDetectionWorkerScope {
   /** 接收主线程检测请求。 */
-  addEventListener: (type: "message", listener: (event: MessageEvent<unknown>) => void) => void;
+  addEventListener: (type: "message", listener: (event: MessageEvent<GraphwarDetectionWorkerRequest>) => void) => void;
   /** 向主线程发送阶段、成功或错误响应。 */
   postMessage: (message: GraphwarDetectionWorkerResponse, transfer?: Transferable[]) => void;
 }
@@ -80,9 +84,7 @@ const workerScope = self as unknown as GraphwarDetectionWorkerScope;
 
 /** 接收主线程请求，并将异步检测交给统一的协议分派入口。 */
 workerScope.addEventListener("message", (event) => {
-  if (isGraphwarDetectionWorkerRequest(event.data)) {
-    void runDetectionRequest(event.data);
-  }
+  void runDetectionRequest(event.data);
 });
 
 /** 分发主线程检测请求，并把所有异常转成 Worker 响应。 */
@@ -363,13 +365,13 @@ function createSoldierTemplateWorkerHandle(
       scale,
     };
     /** 只结算当前请求的首个有效响应，避免迟到消息污染结果。 */
-    const handleMessage = (event: MessageEvent<unknown>) => {
-      if (!isGraphwarSoldierTemplateWorkerResponseForRequest(request, event.data)) {
+    const handleMessage = (event: MessageEvent<GraphwarSoldierTemplateWorkerResponse>) => {
+      const response = event.data;
+      if (response.id !== request.id || !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, request.attempt)) {
         cleanup?.();
-        reject(new Error(`Worker ${task.workerIndex}: returned an unexpected request identity or payload`));
+        reject(new Error(`Worker ${task.workerIndex}: returned an unexpected request identity`));
         return;
       }
-      const response = event.data;
       cleanup?.();
       if (response.type === "error") {
         reject(new Error(`Worker ${task.workerIndex}: ${response.message}`));
@@ -424,13 +426,12 @@ function postSuccess(
 ) {
   const response = { ...requestContext, ...payload, timings, type: "success" as const };
   // 纯边界结果没有 mask；其余结果只转移最终障碍 mask 的 buffer。
-  const buffer = (
-    "obstacles" in payload.result
-      ? payload.result.obstacles.mask
-      : "objects" in payload.result
-        ? payload.result.objects?.obstacles.mask
-        : undefined
-  )?.buffer;
+  const buffer =
+    payload.taskType === "detect-bounds"
+      ? payload.result.obstacles.mask.buffer
+      : payload.taskType === "detect-auto" && payload.result.edgeRect !== undefined
+        ? payload.result.objects.obstacles.mask.buffer
+        : undefined;
   workerScope.postMessage(response, buffer instanceof ArrayBuffer ? [buffer] : []);
 }
 

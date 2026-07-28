@@ -1,7 +1,4 @@
-import {
-  graphwarBackendAttemptIdentitiesAreEqual,
-  isGraphwarBackendAttemptIdentity,
-} from "../../core/algorithm-backend";
+import { graphwarBackendAttemptIdentitiesAreEqual } from "../../core/algorithm-backend";
 import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { nowMs } from "../../core/time";
@@ -236,35 +233,20 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     if (workerSlots.indexOf(slot) < 0 || !task || !isCurrentTask(task)) {
       return;
     }
-    const response = event.data as unknown;
-    if (
-      typeof response !== "object" ||
-      response === null ||
-      !("attempt" in response) ||
-      !isGraphwarBackendAttemptIdentity(response.attempt)
-    ) {
-      handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an invalid response"));
+    const response = event.data;
+    if (response.id !== task.id) {
+      handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an unexpected request id"));
       return;
     }
     if (!graphwarBackendAttemptIdentitiesAreEqual(response.attempt, task.attempt)) {
       handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an unexpected backend attempt"));
       return;
     }
-    if (!("id" in response) || response.id !== task.id) {
-      handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an unexpected request id"));
-      return;
-    }
-    const outcome = "outcome" in response ? response.outcome : undefined;
-    if (!isGraphwarTrajectoryCalculationOutcome(outcome, task.input)) {
-      handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an invalid outcome"));
-      return;
-    }
-
     slot.activeTask = undefined;
     completeTask(task, () =>
       task.resolve({
         elapsedMs: getElapsedMs(now, task.startedAt),
-        outcome,
+        outcome: response.outcome,
       }),
     );
   }
@@ -414,150 +396,6 @@ function getElapsedMs(now: () => number, startedAt: number) {
 /** 将跨边界抛出的任意值收敛为可展示的 Error。 */
 function normalizeError(error: unknown, fallbackMessage: string) {
   return error instanceof Error ? error : new Error(error === undefined ? fallbackMessage : String(error));
-}
-
-/** 按请求类型验证 Worker 返回的完整轨迹 outcome。 */
-function isGraphwarTrajectoryCalculationOutcome(
-  outcome: unknown,
-  input: GraphwarTrajectoryCalculationInput,
-): outcome is GraphwarTrajectoryCalculationOutcome {
-  if (typeof outcome !== "object" || outcome === null || !("ok" in outcome)) {
-    return false;
-  }
-  if (outcome.ok === true) {
-    if (
-      "message" in outcome ||
-      "stage" in outcome ||
-      !("result" in outcome) ||
-      typeof outcome.result !== "object" ||
-      outcome.result === null
-    ) {
-      return false;
-    }
-    const result = outcome.result;
-    if (
-      "secondOrderLaunchAngleDegrees" in result ||
-      "secondOrderLaunchAngleRadians" in result ||
-      !("curvePoints" in result) ||
-      typeof result.curvePoints !== "string" ||
-      !("trajectoryPoints" in result) ||
-      !isGraphwarTrajectoryPointArray(result.trajectoryPoints)
-    ) {
-      return false;
-    }
-    const secondOrderLaunchAngle = "secondOrderLaunchAngle" in result ? result.secondOrderLaunchAngle : undefined;
-    if (
-      secondOrderLaunchAngle !== undefined &&
-      (typeof secondOrderLaunchAngle !== "object" ||
-        secondOrderLaunchAngle === null ||
-        !("degrees" in secondOrderLaunchAngle) ||
-        !Number.isFinite(secondOrderLaunchAngle.degrees) ||
-        !("radians" in secondOrderLaunchAngle) ||
-        !Number.isFinite(secondOrderLaunchAngle.radians))
-    ) {
-      return false;
-    }
-    if (
-      "pathError" in result &&
-      result.pathError !== undefined &&
-      (typeof result.pathError !== "number" || Number.isNaN(result.pathError) || result.pathError < 0)
-    ) {
-      return false;
-    }
-    if (
-      "hasTargetMissWarning" in result &&
-      result.hasTargetMissWarning !== undefined &&
-      typeof result.hasTargetMissWarning !== "boolean"
-    ) {
-      return false;
-    }
-    if (
-      "warningReason" in result &&
-      result.warningReason !== undefined &&
-      !isGraphwarTrajectoryWarningReason(result.warningReason)
-    ) {
-      return false;
-    }
-    const formulaResult = "formulaResult" in result ? result.formulaResult : undefined;
-    const pathError = "pathError" in result ? result.pathError : undefined;
-    const hasTargetMissWarning = "hasTargetMissWarning" in result ? result.hasTargetMissWarning : undefined;
-    if (input.type === "simulator") {
-      return (
-        formulaResult === undefined &&
-        secondOrderLaunchAngle === undefined &&
-        pathError === undefined &&
-        hasTargetMissWarning === undefined
-      );
-    }
-    if (!isFormulaResult(formulaResult)) {
-      return false;
-    }
-    const shouldHaveSecondOrderLaunchAngle = input.settings.equation === "ddy";
-    if ((secondOrderLaunchAngle !== undefined) !== shouldHaveSecondOrderLaunchAngle) {
-      return false;
-    }
-    return (
-      hasTargetMissWarning === undefined ||
-      (hasTargetMissWarning === true &&
-        input.settings.equation === "ddy" &&
-        input.settings.secondOrderLaunchAngleMode === "display-rounded")
-    );
-  }
-  return (
-    outcome.ok === false &&
-    !("result" in outcome) &&
-    "message" in outcome &&
-    typeof outcome.message === "string" &&
-    "stage" in outcome &&
-    (outcome.stage === "trajectory" || (input.type === "solver" && outcome.stage === "formula"))
-  );
-}
-
-/** 验证 Worker 返回的可绘制轨迹快照，不保留结构不完整或非有限坐标。 */
-function isGraphwarTrajectoryPointArray(value: unknown) {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (point) =>
-        typeof point === "object" &&
-        point !== null &&
-        "x" in point &&
-        Number.isFinite(point.x) &&
-        "y" in point &&
-        Number.isFinite(point.y),
-    )
-  );
-}
-
-/** 验证求解器结果中可跨 Worker 边界的公式结构。 */
-function isFormulaResult(value: unknown) {
-  if (typeof value !== "object" || value === null || !("expression" in value) || !("terms" in value)) {
-    return false;
-  }
-  return (
-    typeof value.expression === "string" &&
-    Array.isArray(value.terms) &&
-    value.terms.every(
-      (term) =>
-        typeof term === "object" &&
-        term !== null &&
-        "x" in term &&
-        Number.isFinite(term.x) &&
-        "deltaY" in term &&
-        Number.isFinite(term.deltaY),
-    )
-  );
-}
-
-/** 收窄 Worker 可返回的轨迹提示原因。 */
-function isGraphwarTrajectoryWarningReason(value: unknown) {
-  return (
-    value === "invalid" ||
-    value === "max-steps" ||
-    value === "obstacle" ||
-    value === "out-of-bounds" ||
-    value === "too-steep"
-  );
 }
 
 /** 深拷贝输入，且让同源的碰撞 mask 和邪道障碍 mask 在请求快照里继续共用同一份副本。 */

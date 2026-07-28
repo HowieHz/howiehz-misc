@@ -67,14 +67,10 @@ import {
   createGraphwarPathfindingDebugMetrics,
   type GraphwarPathfindingDebugMetrics,
 } from "../../pathfinding/runtime/diagnostics";
-import {
-  getGraphwarPathfindingWorkerRequestIdentity,
-  isGraphwarOneClickClearEdgeWorkerResponse,
-  isGraphwarPathfindingWorkerRequest,
-} from "../../pathfinding/runtime/protocol";
 import type {
   GraphwarOneClickClearDagEdgesWorkerInput,
   GraphwarOneClickClearEdgeWorkerRequest,
+  GraphwarOneClickClearEdgeWorkerResponse,
   GraphwarOneClickClearEdgeWorkerJobResult,
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
@@ -91,7 +87,10 @@ import { createGraphwarSmartPathfindingTrajectoryResult } from "../../pathfindin
 /** 当前 master Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarPathfindingWorkerScope {
   /** 接收主线程几何寻路请求。 */
-  addEventListener: (type: "message", listener: (event: MessageEvent<unknown>) => void) => void;
+  addEventListener: (
+    type: "message",
+    listener: (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => void,
+  ) => void;
   /** 返回预览、成功或错误响应。 */
   postMessage: (message: GraphwarPathfindingWorkerResponse) => void;
 }
@@ -239,19 +238,8 @@ interface MasterStepGlitchEvidence extends GraphwarStepGlitchPrefixEvidence {
 }
 
 /** 接收页面请求，并将异步搜索交给统一的 master 分派入口。 */
-workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
+workerScope.addEventListener("message", (event) => {
   const request = event.data;
-  if (!isGraphwarPathfindingWorkerRequest(request)) {
-    const identity = getGraphwarPathfindingWorkerRequestIdentity(request);
-    if (identity) {
-      postResponse({
-        ...identity,
-        message: "Invalid pathfinding worker request",
-        type: "error",
-      });
-    }
-    return;
-  }
   void handleRequest(request);
 });
 
@@ -1433,12 +1421,8 @@ function createOneClickClearDagEdgeSession(
       workerIndex,
     };
     /** 将 edge Worker 响应路由到就绪、失败或 job 结算流程。 */
-    const handleMessage = (event: MessageEvent<unknown>) => {
+    const handleMessage = (event: MessageEvent<GraphwarOneClickClearEdgeWorkerResponse>) => {
       const response = event.data;
-      if (!isGraphwarOneClickClearEdgeWorkerResponse(response)) {
-        switchToSerialFallback();
-        return;
-      }
       if (handle.isFinished) {
         return;
       }

@@ -1,7 +1,6 @@
 /** 主线程侧 Graphwar 几何寻路 runner，集中管理 Worker 生命周期和取消。 */
 import {
   graphwarBackendAttemptIdentitiesAreEqual,
-  isGraphwarBackendAttemptIdentity,
   type GraphwarBackendAttemptIdentity,
 } from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
@@ -11,14 +10,6 @@ import type {
   GraphwarOneClickClearDagEdgeBuildResult,
 } from "../one-click-clear/search";
 import type { GraphwarPathfindingPreview } from "../routing/visibility-graph";
-import {
-  isGraphwarOneClickClearDagEdgeBuildResult,
-  isGraphwarOneClickClearPathWorkerResult,
-  isGraphwarOneClickClearProgress,
-  isGraphwarPathfindingPreview,
-  isGraphwarPathfindingRouteResult,
-  isGraphwarSmartPathfindingPathResult,
-} from "./protocol";
 import type {
   GraphwarOneClickClearPathWorkerInput,
   GraphwarOneClickClearPathWorkerResult,
@@ -26,6 +17,7 @@ import type {
   GraphwarPathfindingRouteInput,
   GraphwarPathfindingRouteResult,
   GraphwarPathfindingWorkerRequest,
+  GraphwarPathfindingWorkerResponse,
   GraphwarPathfindingWorkerSuccessResponse,
   GraphwarSmartPathfindingPathInput,
   GraphwarSmartPathfindingPathResult,
@@ -113,7 +105,7 @@ export function createGraphwarPathfindingRunner() {
       type: "module",
     });
     worker = createdWorker;
-    const handleMessage = (event: MessageEvent<unknown>) => {
+    const handleMessage = (event: MessageEvent<GraphwarPathfindingWorkerResponse>) => {
       if (worker === createdWorker) {
         handleWorkerMessage(event);
       }
@@ -292,18 +284,9 @@ export function createGraphwarPathfindingRunner() {
   }
 
   /** 只接收当前请求 id 对应的 Worker 消息，丢弃过期响应。 */
-  function handleWorkerMessage(event: MessageEvent<unknown>) {
+  function handleWorkerMessage(event: MessageEvent<GraphwarPathfindingWorkerResponse>) {
     const response = event.data;
     if (!pendingTask) {
-      return;
-    }
-    if (
-      !isRecord(response) ||
-      typeof response.id !== "number" ||
-      !Number.isInteger(response.id) ||
-      !isGraphwarBackendAttemptIdentity(response.attempt)
-    ) {
-      rejectPendingProtocolResponse();
       return;
     }
     if (
@@ -314,7 +297,7 @@ export function createGraphwarPathfindingRunner() {
       return;
     }
     if (response.type === "preview") {
-      if (!isGraphwarPathfindingPreview(response.preview) || !pendingTask.onPreview) {
+      if (!pendingTask.onPreview) {
         rejectPendingProtocolResponse();
         return;
       }
@@ -325,7 +308,6 @@ export function createGraphwarPathfindingRunner() {
       if (
         pendingTask.taskType !== "build-one-click-clear-path" ||
         !pendingTask.onIncumbent ||
-        !isGraphwarOneClickClearProgress(response.progress) ||
         pendingTask.shouldCollectDiagnostics !== (response.progress.diagnostics !== undefined)
       ) {
         rejectPendingProtocolResponse();
@@ -336,10 +318,6 @@ export function createGraphwarPathfindingRunner() {
     }
 
     if (response.type === "error") {
-      if (typeof response.message !== "string") {
-        rejectPendingProtocolResponse();
-        return;
-      }
       const completedTask = pendingTask;
       pendingTask = undefined;
       attemptGate.completeOuterTask(completedTask.attempt);
@@ -347,11 +325,21 @@ export function createGraphwarPathfindingRunner() {
       resetWorkerIfCacheInvalidated();
       return;
     }
-    if (
-      response.type !== "success" ||
-      response.taskType !== pendingTask.taskType ||
-      !isGraphwarPathfindingWorkerResult(pendingTask, response.result)
-    ) {
+    if (response.type !== "success") {
+      rejectPendingProtocolResponse();
+      return;
+    }
+    if (pendingTask.taskType === "build-one-click-clear-dag-edges") {
+      const expectedDagJobIds = pendingTask.expectedDagJobIds;
+      if (
+        response.taskType !== "build-one-click-clear-dag-edges" ||
+        response.result.routes.length !== expectedDagJobIds.size ||
+        !response.result.routes.every((route) => expectedDagJobIds.has(route.jobId))
+      ) {
+        rejectPendingProtocolResponse();
+        return;
+      }
+    } else if (response.taskType !== pendingTask.taskType) {
       rejectPendingProtocolResponse();
       return;
     }
@@ -360,24 +348,6 @@ export function createGraphwarPathfindingRunner() {
     attemptGate.completeOuterTask(completedTask.attempt);
     completedTask.resolve(response.result as GraphwarPathfindingWorkerSuccessResponse["result"]);
     resetWorkerIfCacheInvalidated();
-  }
-
-  /** 按当前 task type 验证完整业务结果，不让结构相似的半状态跨 Worker 边界。 */
-  function isGraphwarPathfindingWorkerResult(task: PendingPathfindingWorkerTask, result: unknown) {
-    if (task.taskType === "find-route") {
-      return isGraphwarPathfindingRouteResult(result);
-    }
-    if (task.taskType === "find-smart-path") {
-      return isGraphwarSmartPathfindingPathResult(result);
-    }
-    if (task.taskType === "build-one-click-clear-dag-edges") {
-      return (
-        isGraphwarOneClickClearDagEdgeBuildResult(result) &&
-        result.routes.length === task.expectedDagJobIds.size &&
-        result.routes.every((route) => task.expectedDagJobIds.has(route.jobId))
-      );
-    }
-    return isGraphwarOneClickClearPathWorkerResult(result);
   }
 
   /** 将当前请求的畸形消息作为协议错误拒绝，并丢弃不可信 Worker。 */
@@ -426,11 +396,6 @@ export function createGraphwarPathfindingRunner() {
     findSmartPath,
     findRoute,
   };
-}
-
-/** 判断未知 Worker 消息是否可安全按字段读取。 */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 /** PostMessage 不能克隆 Vue reactive proxy；runner 边界统一复制成纯数据。 */

@@ -21,7 +21,6 @@ import type {
   GraphwarDetectionWorkerTimingDetail,
   GraphwarDetectionWorkerTimingEntry,
 } from "./protocol";
-import { isGraphwarDetectionWorkerResponse } from "./protocol";
 import { measureDetectionStage } from "./timing";
 
 export type { GraphwarDetectionWorkerStage };
@@ -233,11 +232,7 @@ export function createGraphwarDetectionRunner() {
     if (!task) {
       return;
     }
-    const response = event.data as unknown;
-    if (!isGraphwarDetectionWorkerResponse(response)) {
-      rejectPendingTask(new Error("Graphwar detection worker returned an invalid response"));
-      return;
-    }
+    const response = event.data;
     if (response.id !== task.id || !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, task.attempt)) {
       // Backend replacement 会沿用 outer task；旧 attempt 的迟到消息只作废，不能使新 attempt 失败。
       return;
@@ -254,14 +249,6 @@ export function createGraphwarDetectionRunner() {
     if (response.taskType !== task.taskType) {
       completeTask(task, () => task.reject(new Error("Detection Worker returned a mismatched task result")));
       return;
-    }
-    if (response.taskType === "detect-auto") {
-      const hasEdgeRect = response.result.edgeRect !== undefined;
-      const hasObjects = "objects" in response.result && response.result.objects !== undefined;
-      if (hasEdgeRect !== hasObjects) {
-        completeTask(task, () => task.reject(new Error("Detection Worker returned incomplete auto-detection results")));
-        return;
-      }
     }
     completeTask(task, () => {
       try {

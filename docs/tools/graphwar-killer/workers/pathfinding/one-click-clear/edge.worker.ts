@@ -1,6 +1,5 @@
 import {
   graphwarBackendAttemptIdentitiesAreEqual,
-  isGraphwarBackendAttemptIdentity,
   type GraphwarBackendAttemptIdentity,
 } from "../../../core/algorithm-backend";
 import { imageToGraphPoint } from "../../../core/geometry";
@@ -25,12 +24,14 @@ import type {
   GraphwarOneClickClearEdgeWorkerRequest,
   GraphwarOneClickClearEdgeWorkerResponse,
 } from "../../../pathfinding/runtime/protocol";
-import { isGraphwarOneClickClearEdgeWorkerRequest } from "../../../pathfinding/runtime/protocol";
 
 /** 当前 edge Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarOneClickClearEdgeWorkerScope {
   /** 接收 master Worker 发来的初始化和单边 job。 */
-  addEventListener: (type: "message", listener: (event: MessageEvent<unknown>) => void) => void;
+  addEventListener: (
+    type: "message",
+    listener: (event: MessageEvent<GraphwarOneClickClearEdgeWorkerRequest>) => void,
+  ) => void;
   /** 返回 ready、单边结果或错误。 */
   postMessage: (message: GraphwarOneClickClearEdgeWorkerResponse) => void;
 }
@@ -59,15 +60,8 @@ type EdgeWorkerContext = GraphwarOneClickClearEdgeWorkerInit &
 let context: EdgeWorkerContext | undefined;
 
 /** 接收初始化或单边任务，并复用同一个 Worker 私有上下文。 */
-workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
+workerScope.addEventListener("message", (event) => {
   const request = event.data;
-  if (!isGraphwarOneClickClearEdgeWorkerRequest(request)) {
-    const attempt = getGraphwarEdgeWorkerRequestAttempt(request);
-    if (attempt) {
-      postResponse({ attempt, message: "Invalid edge worker request", type: "error", workerIndex: 0 });
-    }
-    return;
-  }
   void handleRequest(request);
 });
 
@@ -162,14 +156,4 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
 /** 将 edge Worker 的就绪、结果或错误响应发回 master。 */
 function postResponse(response: GraphwarOneClickClearEdgeWorkerResponse) {
   workerScope.postMessage(response);
-}
-
-/** Recovers only a complete attempt from a malformed request; missing identity cannot receive a business response. */
-function getGraphwarEdgeWorkerRequestAttempt(value: unknown) {
-  return typeof value === "object" &&
-    value !== null &&
-    "attempt" in value &&
-    isGraphwarBackendAttemptIdentity(value.attempt)
-    ? value.attempt
-    : undefined;
 }

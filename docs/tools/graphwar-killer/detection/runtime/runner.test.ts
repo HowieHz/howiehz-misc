@@ -126,39 +126,6 @@ describe("Graphwar detection runner backend attempts", () => {
     runner.close();
   });
 
-  it("rejects malformed attempt envelopes and resets the failed Worker", async () => {
-    const runner = createGraphwarDetectionRunner();
-    const result = runner.detectBounds(createInput());
-    const worker = FakeWorker.instances[0];
-    const request = worker.requests[0];
-
-    worker.emitRaw({ id: request.id, stage: "detecting-bounds", type: "stage" });
-
-    await expect(result).rejects.toThrow("invalid response");
-    expect(worker.isTerminated).toBe(true);
-    runner.close();
-  });
-
-  it("rejects a task-specific success half-state instead of leaving the Promise pending", async () => {
-    const runner = createGraphwarDetectionRunner();
-    const result = runner.detectAuto({ ...createInput(), thresholds: { minArea: 1 } });
-    const worker = FakeWorker.instances[0];
-    const request = worker.requests[0];
-
-    worker.emitRaw({
-      attempt: request.attempt,
-      id: request.id,
-      result: null,
-      taskType: "detect-auto",
-      timings: [],
-      type: "success",
-    });
-
-    await expect(result).rejects.toThrow("invalid response");
-    expect(worker.isTerminated).toBe(true);
-    runner.close();
-  });
-
   it("rejects the public Promise if the terminal timing callback throws", async () => {
     const runner = createGraphwarDetectionRunner();
     const result = runner.detectBounds(createInput(), {

@@ -1,14 +1,6 @@
-import { isGraphwarBackendAttemptIdentity, type GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
-import {
-  isGraphwarTrajectoryBounds,
-  isGraphwarTrajectoryBoundsRect,
-  isGraphwarTrajectoryCollisionSettings,
-  isGraphwarTrajectoryExpressionParserOptions,
-  isGraphwarTrajectoryFormulaSettings,
-  isGraphwarTrajectoryPoint,
-} from "../../formula/trajectory/input-validation";
 import {
   createGraphwarTrajectoryFormulaMode,
   getGraphwarTrajectoryLaunchAngle,
@@ -116,25 +108,6 @@ export interface GraphwarTrajectoryCalculationWorkerResponse {
   attempt: GraphwarBackendAttemptIdentity;
   id: number;
   outcome: GraphwarTrajectoryCalculationOutcome;
-}
-
-/** 从 malformed request 中只恢复可安全回传的完整 Worker 身份。 */
-export function getGraphwarTrajectoryCalculationWorkerRequestIdentity(value: unknown) {
-  if (!isRecord(value) || !isGraphwarBackendAttemptIdentity(value.attempt) || !isNonNegativeSafeInteger(value.id)) {
-    return undefined;
-  }
-  return { attempt: value.attempt, id: value.id };
-}
-
-/** 在 trajectory Worker 唯一入口验证完整 request 和必要数值/TypedArray 边界。 */
-export function isGraphwarTrajectoryCalculationWorkerRequest(
-  value: unknown,
-): value is GraphwarTrajectoryCalculationWorkerRequest {
-  return getGraphwarTrajectoryCalculationWorkerRequestIdentity(value) !== undefined &&
-    isRecord(value) &&
-    "input" in value
-    ? isGraphwarTrajectoryCalculationInput(value.input)
-    : false;
 }
 
 /** 一次完成公式解算和主轨迹模拟；保持纯函数，供 Worker 与主线程降级共用。 */
@@ -305,50 +278,4 @@ function createFailureOutcome(
     ok: false,
     stage,
   };
-}
-
-function isGraphwarTrajectoryCalculationInput(value: unknown): value is GraphwarTrajectoryCalculationInput {
-  if (
-    !isRecord(value) ||
-    !isGraphwarTrajectoryBounds(value.bounds) ||
-    !isGraphwarTrajectoryBoundsRect(value.boundsRect) ||
-    (value.collision !== undefined && !isGraphwarTrajectoryCollisionSettings(value.collision))
-  ) {
-    return false;
-  }
-  if (value.type === "simulator") {
-    return (
-      (value.equation === "y" || value.equation === "dy" || value.equation === "ddy") &&
-      typeof value.expression === "string" &&
-      (value.launchAngleRadians === undefined || isFiniteNumber(value.launchAngleRadians)) &&
-      (value.parser === undefined || isGraphwarTrajectoryExpressionParserOptions(value.parser)) &&
-      isGraphwarTrajectoryPoint(value.soldierCenter)
-    );
-  }
-  if (value.type !== "solver" || !Array.isArray(value.points) || !value.points.every(isGraphwarTrajectoryPoint)) {
-    return false;
-  }
-  return (
-    isGraphwarTrajectoryFormulaSettings(value.settings) &&
-    (value.target === undefined ||
-      (isRecord(value.target) &&
-        isGraphwarTrajectoryPoint(value.target.point) &&
-        isNonNegativeFiniteNumber(value.target.hitRadiusPixels)))
-  );
-}
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-function isNonNegativeFiniteNumber(value: unknown): value is number {
-  return isFiniteNumber(value) && value >= 0;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

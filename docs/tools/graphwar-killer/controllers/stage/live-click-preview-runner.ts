@@ -1,7 +1,4 @@
-import {
-  graphwarBackendAttemptIdentitiesAreEqual,
-  isGraphwarBackendAttemptIdentity,
-} from "../../core/algorithm-backend";
+import { graphwarBackendAttemptIdentitiesAreEqual } from "../../core/algorithm-backend";
 import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { createGraphPoint, type ReadonlyValue as ReadonlyRef } from "../../core/types";
@@ -196,9 +193,9 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     if (!task) {
       return;
     }
-    const response: unknown = event.data;
-    if (!isWorkerResponseForTask(response, task)) {
-      // 当前 slot 同时只处理一个请求；id/envelope 不匹配说明 Worker 协议已失效，沿用现有降级路径。
+    const response = event.data;
+    if (response.id !== task.id || !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, task.attempt)) {
+      // 当前 slot 同时只处理一个请求；身份不匹配说明响应已过期，沿用现有降级路径。
       handleWorkerFailure(slot);
       return;
     }
@@ -435,35 +432,4 @@ function cloneRenderInput(input: GraphwarLiveClickPreviewRenderInput): GraphwarL
     },
     type: "formula",
   };
-}
-
-/** 验证响应属于预期请求且满足成功或失败协议。 */
-function isWorkerResponseForTask(
-  value: unknown,
-  task: PendingLiveClickPreviewTask,
-): value is GraphwarLiveClickPreviewWorkerResponse {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const response = value as Record<string, unknown>;
-  if (
-    !isGraphwarBackendAttemptIdentity(response.attempt) ||
-    !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, task.attempt) ||
-    response.id !== task.id
-  ) {
-    return false;
-  }
-  if (response.type === "error") {
-    return typeof response.message === "string";
-  }
-  if (response.type !== "success" || !response.result || typeof response.result !== "object") {
-    return false;
-  }
-  const result = response.result as Record<string, unknown>;
-  return (
-    typeof result.curvePoints === "string" &&
-    typeof result.elapsedMs === "number" &&
-    Number.isFinite(result.elapsedMs) &&
-    result.elapsedMs >= 0
-  );
 }

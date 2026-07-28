@@ -11,7 +11,6 @@ import type {
   GraphwarOneClickClearPathWorkerResult,
   GraphwarPathfindingWorkerRequest,
 } from "./protocol";
-import { isGraphwarOneClickClearIncumbent } from "./protocol";
 import { createGraphwarPathfindingRunner, isGraphwarPathfindingCancelledError } from "./runner";
 
 const originalWorkerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Worker");
@@ -33,15 +32,6 @@ afterEach(() => {
 });
 
 describe("Graphwar pathfinding runner incumbents", () => {
-  it("rejects a shot-ready incumbent without its validated trajectory snapshot", () => {
-    expect(
-      isGraphwarOneClickClearIncumbent({
-        expression: "x",
-        pathPoints: [createPixelPoint(100, 225), createPixelPoint(200, 225)],
-      }),
-    ).toBe(false);
-  });
-
   it("preserves the deletion preference in the cloned Worker request", async () => {
     const runner = createGraphwarPathfindingRunner();
     const input = createInput();
@@ -167,62 +157,6 @@ describe("Graphwar pathfinding runner incumbents", () => {
     runner.close();
   });
 
-  it("rejects a non-object Worker message instead of leaving the task pending", async () => {
-    const runner = createGraphwarPathfindingRunner();
-    const resultPromise = runner.buildOneClickClearPath(createInput());
-    const worker = getWorker(0);
-
-    worker.emit(null);
-
-    await expect(resultPromise).rejects.toThrow("invalid response");
-    expect(worker.terminated).toBe(true);
-    runner.close();
-  });
-
-  it("rejects a malformed one-click-clear success response", async () => {
-    const runner = createGraphwarPathfindingRunner();
-    const resultPromise = runner.buildOneClickClearPath(createInput());
-    const worker = getWorker(0);
-    const request = getOneClickClearRequest(worker, 0);
-
-    worker.emit({
-      attempt: request.attempt,
-      id: request.id,
-      result: {
-        result: { elapsedMs: 1, expandedStates: 1, targetIds: [], type: "success" },
-        timings: [],
-      },
-      taskType: "build-one-click-clear-path",
-      type: "success",
-    });
-
-    await expect(resultPromise).rejects.toThrow("invalid response");
-    expect(worker.terminated).toBe(true);
-    runner.close();
-  });
-
-  it("rejects a malformed route result instead of committing a structural cast", async () => {
-    const runner = createGraphwarPathfindingRunner();
-    const resultPromise = runner.findRoute(createRouteInput());
-    const worker = getWorker(0);
-    const request = worker.requests[0];
-    if (!request || request.task.type !== "find-route") {
-      throw new Error("Expected find-route Worker request");
-    }
-
-    worker.emit({
-      attempt: request.attempt,
-      id: request.id,
-      result: { searchElapsedMs: 1 },
-      taskType: "find-route",
-      type: "success",
-    });
-
-    await expect(resultPromise).rejects.toThrow("invalid response");
-    expect(worker.terminated).toBe(true);
-    runner.close();
-  });
-
   it.each([
     { label: "missing", routes: [{ jobId: 1 }] },
     { label: "unexpected", routes: [{ jobId: 1 }, { jobId: 2 }, { jobId: 3 }] },
@@ -248,30 +182,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
     runner.close();
   });
 
-  it("rejects a malformed incumbent before publishing it", async () => {
-    const onIncumbent = vi.fn();
-    const runner = createGraphwarPathfindingRunner();
-    const resultPromise = runner.buildOneClickClearPath(createInput(), { onIncumbent });
-    const worker = getWorker(0);
-    const request = getOneClickClearRequest(worker, 0);
-
-    worker.emit({
-      attempt: request.attempt,
-      id: request.id,
-      progress: { incumbent: { expression: "x" } },
-      type: "one-click-clear-incumbent",
-    });
-
-    await expect(resultPromise).rejects.toThrow("invalid response");
-    expect(onIncumbent).not.toHaveBeenCalled();
-    expect(worker.terminated).toBe(true);
-    runner.close();
-  });
-
-  it.each([
-    { label: "missing diagnostics", progress: { incumbent: createIncumbent("missing-diagnostics") } },
-    { label: "missing incumbent", progress: { diagnostics: createGraphwarPathfindingDebugMetrics(true) } },
-  ])("rejects debug progress with $label", async ({ progress }) => {
+  it("rejects debug progress without requested diagnostics", async () => {
     const onIncumbent = vi.fn();
     const runner = createGraphwarPathfindingRunner();
     const resultPromise = runner.buildOneClickClearPath(createInput(), {
@@ -284,7 +195,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
     worker.emit({
       attempt: request.attempt,
       id: request.id,
-      progress,
+      progress: { incumbent: createIncumbent("missing-diagnostics") },
       type: "one-click-clear-incumbent",
     });
 
@@ -419,22 +330,6 @@ function createInput(): GraphwarOneClickClearPathWorkerInput {
     },
     simulationBoundaryExpansion: 0,
     simulationMaskCacheId: 0,
-  };
-}
-
-/** 构造普通几何寻路请求。 */
-function createRouteInput() {
-  return {
-    boundaryExpansion: 0,
-    bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
-    boundsRect: { height: 450, width: 770, x: 0, y: 0 },
-    isPreviewEnabled: false,
-    routeMask: new Uint8Array(770 * 450),
-    routeMaskCacheId: 1,
-    routeMode: "visibility-graph" as const,
-    routeTolerancePlanePixels: 2,
-    startPoint: createPixelPoint(100, 225),
-    targetPoint: createPixelPoint(200, 225),
   };
 }
 

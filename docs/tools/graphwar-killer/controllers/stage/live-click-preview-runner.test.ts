@@ -66,7 +66,6 @@ describe("live click preview runner", () => {
     createResponse: (request: GraphwarLiveClickPreviewWorkerRequest) => unknown;
     label: string;
   }>([
-    { createResponse: () => null, label: "null envelope" },
     {
       createResponse: (request) => ({
         attempt: request.attempt,
@@ -84,15 +83,6 @@ describe("live click preview runner", () => {
         type: "success",
       }),
       label: "wrong backend attempt",
-    },
-    {
-      createResponse: (request) => ({
-        attempt: request.attempt,
-        id: request.id,
-        result: { curvePoints: "invalid timing", elapsedMs: Number.NaN },
-        type: "success",
-      }),
-      label: "invalid elapsed time",
     },
   ])("falls back without hanging on $label", async ({ createResponse }) => {
     installFakeWorker();

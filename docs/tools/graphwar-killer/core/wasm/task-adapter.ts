@@ -83,11 +83,14 @@ export type GraphwarWasmCollisionPolicy =
 export type GraphwarWasmStopPolicy =
   | { type: "natural" }
   | {
+      boundsRect: { height: number; width: number; x: number; y: number };
       collision: GraphwarWasmCollisionPolicy;
       continueAfterTargetsUntilGraphX: { type: "none" } | { graphX: number; type: "value" };
       orderedTargets: readonly GraphwarWasmStopTarget[];
+      qualityPoints: readonly GraphwarWasmPoint[];
       requiredTargets: readonly GraphwarWasmStopTarget[];
       shouldCollectVisiblePixels: boolean;
+      shouldStopOnTargetsComplete: boolean;
       trackedTargets: readonly GraphwarWasmStopTarget[];
       type: "targets";
     }
@@ -101,11 +104,14 @@ export type GraphwarWasmStopPolicy =
 export type GraphwarWasmPackedStopPolicy =
   | { type: "natural" }
   | {
+      boundsRect: { height: number; width: number; x: number; y: number };
       collision: { type: "none" } | { boundaryExpansion: number; mask: GraphwarWasmMemorySlice; type: "mask" };
       continueAfterTargetsUntilGraphX: { type: "none" } | { graphX: number; type: "value" };
       orderedTargetCount: number;
+      qualityPoints: GraphwarWasmPackedPointSoA;
       requiredTargetCount: number;
       shouldCollectVisiblePixels: boolean;
+      shouldStopOnTargetsComplete: boolean;
       targetRecords: GraphwarWasmMemorySlice;
       trackedTargetCount: number;
       type: "targets";
@@ -331,24 +337,37 @@ export function packGraphwarWasmStopPolicy(
     return { type: "natural" };
   }
   if (policy.type === "stop-x-observations") {
+    const observationXs = Float64Array.from(policy.observationXs, (value, index) =>
+      validateGraphwarWasmFiniteNumber(value, `observationXs[${index}]`),
+    );
+    for (let index = 1; index < observationXs.length; index += 1) {
+      if (observationXs[index] < observationXs[index - 1]) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-formula-input",
+          "Trajectory observation x values must be non-decreasing",
+        );
+      }
+    }
     return {
-      observationXs: writeGraphwarWasmFloat64Values(
-        arena,
-        Float64Array.from(policy.observationXs, (value, index) =>
-          validateGraphwarWasmFiniteNumber(value, `observationXs[${index}]`),
-        ),
-        minimumPointer,
-      ),
+      observationXs: writeGraphwarWasmFloat64Values(arena, observationXs, minimumPointer),
       stopX: validateGraphwarWasmFiniteNumber(policy.stopX, "stopX"),
       type: "stop-x-observations",
     };
   }
-  if (typeof policy.shouldCollectVisiblePixels !== "boolean") {
-    throw new GraphwarWasmAdapterError("invalid-enum", "shouldCollectVisiblePixels must be boolean");
+  if (
+    typeof policy.shouldCollectVisiblePixels !== "boolean" ||
+    typeof policy.shouldStopOnTargetsComplete !== "boolean"
+  ) {
+    throw new GraphwarWasmAdapterError("invalid-enum", "Trajectory target stop-policy booleans must be explicit");
   }
-  const targetRecords = new Float64Array(
-    (policy.orderedTargets.length + policy.requiredTargets.length + policy.trackedTargets.length) * 3,
-  );
+  const orderedTargetCount = validateGraphwarWasmU32(policy.orderedTargets.length, "orderedTargets.length");
+  const requiredTargetCount = validateGraphwarWasmU32(policy.requiredTargets.length, "requiredTargets.length");
+  const trackedTargetCount = validateGraphwarWasmU32(policy.trackedTargets.length, "trackedTargets.length");
+  const targetCount = orderedTargetCount + requiredTargetCount + trackedTargetCount;
+  if (!Number.isSafeInteger(targetCount) || targetCount > Math.floor(0xffff_ffff / 24)) {
+    throw new GraphwarWasmAdapterError("invalid-memory-buffer", "Trajectory targets overflow memory32");
+  }
+  const targetRecords = new Float64Array(targetCount * 3);
   let targetIndex = 0;
   for (const targets of [policy.orderedTargets, policy.requiredTargets, policy.trackedTargets]) {
     for (const target of targets) {
@@ -384,13 +403,21 @@ export function packGraphwarWasmStopPolicy(
           type: "value" as const,
         };
   return {
+    boundsRect: {
+      height: validatePositiveFiniteNumber(policy.boundsRect.height, "boundsRect.height"),
+      width: validatePositiveFiniteNumber(policy.boundsRect.width, "boundsRect.width"),
+      x: validateGraphwarWasmFiniteNumber(policy.boundsRect.x, "boundsRect.x"),
+      y: validateGraphwarWasmFiniteNumber(policy.boundsRect.y, "boundsRect.y"),
+    },
     collision,
     continueAfterTargetsUntilGraphX,
-    orderedTargetCount: validateGraphwarWasmU32(policy.orderedTargets.length, "orderedTargets.length"),
-    requiredTargetCount: validateGraphwarWasmU32(policy.requiredTargets.length, "requiredTargets.length"),
+    orderedTargetCount,
+    qualityPoints: packGraphwarWasmPointSoA(arena, policy.qualityPoints, minimumPointer),
+    requiredTargetCount,
     shouldCollectVisiblePixels: policy.shouldCollectVisiblePixels,
+    shouldStopOnTargetsComplete: policy.shouldStopOnTargetsComplete,
     targetRecords: writeGraphwarWasmFloat64Values(arena, targetRecords, minimumPointer),
-    trackedTargetCount: validateGraphwarWasmU32(policy.trackedTargets.length, "trackedTargets.length"),
+    trackedTargetCount,
     type: "targets",
   };
 }

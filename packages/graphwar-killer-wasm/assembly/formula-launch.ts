@@ -424,7 +424,7 @@ function memoryEquals(leftPointer: u32, rightPointer: u32, byteLength: u32): boo
 }
 
 /** Merges one fixed-width protection bitset and reports whether the destination identity expanded. */
-function mergeProtectionBits(sourcePointer: u32, destinationPointer: u32, segmentCount: u32): bool {
+export function mergeProtectionBits(sourcePointer: u32, destinationPointer: u32, segmentCount: u32): bool {
   let hasProtectionChanged = false;
   let index: u32 = 0;
   while (index < segmentCount) {
@@ -998,8 +998,6 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
     valueXPointer != 0 ||
     valueYPointer != 0 ||
     valueDyPointer != 0 ||
-    protectionPointer != 0 ||
-    protectionCount != 0 ||
     disabledSegmentPointer != 0 ||
     segmentStartXPointer != 0 ||
     segmentStartYPointer != 0 ||
@@ -1017,6 +1015,11 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
   const segmentCount = pointCount - 1;
   const segmentF64ByteLength = checkedByteLength(segmentCount, sizeof<f64>());
   const protectionByteLength = checkedByteLength(segmentCount, sizeof<u32>());
+  if (
+    (protectionPointer == 0 ? protectionCount != 0 : protectionCount != segmentCount)
+  ) {
+    trap();
+  }
   const planeLength = getGraphwarPlaneLength();
   const planeHeight = getGraphwarPlaneHeight();
   if (
@@ -1077,7 +1080,11 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
   }
   const isDisplayRounded = (flags & FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE) != 0;
   const workingProtectionPointer = reserveArena(protectionByteLength, sizeof<u32>());
-  memory.fill(workingProtectionPointer, 0, protectionByteLength);
+  if (protectionPointer == 0) {
+    memory.fill(workingProtectionPointer, 0, protectionByteLength);
+  } else {
+    memory.copy(workingProtectionPointer, protectionPointer, protectionByteLength);
+  }
   let totalIterationCount: u32 = 0;
   let totalFormulaPointIterationCount: u32 = 0;
   while (true) {

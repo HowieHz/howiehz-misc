@@ -110,16 +110,23 @@ describe("Graphwar WASM task Adapter", () => {
     if (observations.type === "stop-x-observations") {
       expect([...copyGraphwarWasmFloat64Values(arena, observations.observationXs, 8)]).toEqual([2, 4]);
     }
+    expectAdapterError(
+      () => packGraphwarWasmStopPolicy(arena, { observationXs: [4, 2], stopX: 5, type: "stop-x-observations" }, 8),
+      "invalid-formula-input",
+    );
 
     const mask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
     const targets = packGraphwarWasmStopPolicy(
       arena,
       {
+        boundsRect: { height: 450, width: 770, x: 10, y: 20 },
         collision: { boundaryExpansion: 2, mask, type: "mask" },
         continueAfterTargetsUntilGraphX: { graphX: 8, type: "value" },
         orderedTargets: [{ center: { x: 1, y: 2 }, radius: 3 }],
+        qualityPoints: [{ x: 2.5, y: -1 }],
         requiredTargets: [{ center: { x: 4, y: 5 }, radius: 6 }],
         shouldCollectVisiblePixels: true,
+        shouldStopOnTargetsComplete: true,
         trackedTargets: [{ center: { x: 7, y: 8 }, radius: 9 }],
         type: "targets",
       },
@@ -128,6 +135,8 @@ describe("Graphwar WASM task Adapter", () => {
     expect(targets).toMatchObject({ orderedTargetCount: 1, requiredTargetCount: 1, trackedTargetCount: 1 });
     if (targets.type === "targets") {
       expect([...copyGraphwarWasmFloat64Values(arena, targets.targetRecords, 8)]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect([...copyGraphwarWasmFloat64Values(arena, targets.qualityPoints.x, 8)]).toEqual([2.5]);
+      expect([...copyGraphwarWasmFloat64Values(arena, targets.qualityPoints.y, 8)]).toEqual([-1]);
     }
 
     expectAdapterError(
@@ -135,11 +144,14 @@ describe("Graphwar WASM task Adapter", () => {
         packGraphwarWasmStopPolicy(
           arena,
           {
+            boundsRect: { height: 450, width: 770, x: 0, y: 0 },
             collision: { boundaryExpansion: 0, mask: new Uint8Array(1), type: "mask" },
             continueAfterTargetsUntilGraphX: { type: "none" },
             orderedTargets: [],
+            qualityPoints: [],
             requiredTargets: [],
             shouldCollectVisiblePixels: false,
+            shouldStopOnTargetsComplete: true,
             trackedTargets: [],
             type: "targets",
           },

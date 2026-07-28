@@ -53,6 +53,17 @@ export const TRAJECTORY_SCALAR_STOP_REASON_INVALID: i32 = 2;
 export const TRAJECTORY_SCALAR_STOP_REASON_MAX_STEPS: i32 = 3;
 export const TRAJECTORY_SCALAR_STOP_REASON_OUT_OF_BOUNDS: i32 = 4;
 export const TRAJECTORY_SCALAR_STOP_REASON_TOO_STEEP: i32 = 5;
+export const TRAJECTORY_SCALAR_STOP_REASON_OBSTACLE: i32 = 6;
+export const TRAJECTORY_SCALAR_STOP_REASON_TARGET: i32 = 7;
+
+export const TRAJECTORY_TARGET_STATE_REACHED_ORDERED_COUNT_OFFSET: u32 = 0;
+export const TRAJECTORY_TARGET_STATE_REACHED_REQUIRED_COUNT_OFFSET: u32 = 4;
+export const TRAJECTORY_TARGET_STATE_TARGET_HIT_INDEX_OFFSET: u32 = 8;
+export const TRAJECTORY_TARGET_STATE_REQUIRED_HIT_INDEX_OFFSET: u32 = 12;
+export const TRAJECTORY_TARGET_STATE_OBSTACLE_HIT_INDEX_OFFSET: u32 = 16;
+export const TRAJECTORY_TARGET_STATE_REQUIRED_HITS_POINTER_OFFSET: u32 = 20;
+export const TRAJECTORY_TARGET_STATE_TRACKED_HIT_INDEXES_POINTER_OFFSET: u32 = 24;
+export const TRAJECTORY_TARGET_STATE_BYTE_LENGTH: u32 = 32;
 
 @inline
 function trap(): void {
@@ -206,6 +217,7 @@ export function replayFormulaTrajectoryScalarToStopX(
     boundsMaxX,
     boundsMinY,
     boundsMaxY,
+    true,
     stopX,
     protectionPointer,
     statePointer,
@@ -215,7 +227,314 @@ export function replayFormulaTrajectoryScalarToStopX(
     false,
     0,
     0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    false,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    false,
+    0,
+    false,
   );
+}
+
+/** Replays a trajectory while copying accepted graph points into caller-owned SoA buffers. */
+export function replayFormulaTrajectoryScalarToStopXWithPoints(
+  materialResultPointer: u32,
+  equation: i32,
+  baseY: f64,
+  yOffset: f64,
+  boundsMinX: f64,
+  boundsMaxX: f64,
+  boundsMinY: f64,
+  boundsMaxY: f64,
+  hasStopX: bool,
+  stopX: f64,
+  protectionPointer: u32,
+  statePointer: u32,
+  resultPointer: u32,
+  shouldSkipInitialStop: bool,
+  pointXPointer: u32,
+  pointYPointer: u32,
+  pointDyPointer: u32,
+  pointCapacity: u32,
+  pointCountPointer: u32,
+  maskPointer: u32,
+  shouldStopOnObstacle: bool,
+): void {
+  if (pointCapacity == 0 || pointXPointer == 0 || pointYPointer == 0 || pointDyPointer == 0 || pointCountPointer == 0) {
+    trap();
+  }
+  requireArenaRange(pointXPointer, pointCapacity * sizeof<f64>(), sizeof<f64>());
+  requireArenaRange(pointYPointer, pointCapacity * sizeof<f64>(), sizeof<f64>());
+  requireArenaRange(pointDyPointer, pointCapacity * sizeof<f64>(), sizeof<f64>());
+  requireArenaRange(pointCountPointer, sizeof<u32>(), sizeof<u32>());
+  if (maskPointer != 0) {
+    requireArenaRange(maskPointer, <u32>(getGraphwarPlaneLength() * getGraphwarPlaneHeight()), 1);
+  }
+  replayFormulaTrajectoryScalarToStopXInternal(
+    materialResultPointer,
+    equation,
+    baseY,
+    yOffset,
+    boundsMinX,
+    boundsMaxX,
+    boundsMinY,
+    boundsMaxY,
+    hasStopX,
+    stopX,
+    protectionPointer,
+    statePointer,
+    resultPointer,
+    shouldSkipInitialStop,
+    maskPointer,
+    false,
+    0,
+    0,
+    pointXPointer,
+    pointYPointer,
+    pointDyPointer,
+    pointCapacity,
+    pointCountPointer,
+    shouldStopOnObstacle,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    false,
+    0,
+    false,
+  );
+}
+
+/** Replays the production target tracker with target-before-obstacle stop ordering. */
+export function replayFormulaTrajectoryScalarWithTargetsAndPoints(
+  materialResultPointer: u32,
+  equation: i32,
+  baseY: f64,
+  yOffset: f64,
+  boundsMinX: f64,
+  boundsMaxX: f64,
+  boundsMinY: f64,
+  boundsMaxY: f64,
+  protectionPointer: u32,
+  statePointer: u32,
+  resultPointer: u32,
+  shouldSkipInitialStop: bool,
+  pointXPointer: u32,
+  pointYPointer: u32,
+  pointDyPointer: u32,
+  pointCapacity: u32,
+  pointCountPointer: u32,
+  maskPointer: u32,
+  targetRecordPointer: u32,
+  orderedTargetCount: u32,
+  requiredTargetCount: u32,
+  trackedTargetCount: u32,
+  targetStatePointer: u32,
+  boundsRectX: f64,
+  boundsRectY: f64,
+  boundsRectWidth: f64,
+  boundsRectHeight: f64,
+  boundaryExpansion: u32,
+  hasContinueGraphX: bool,
+  continueGraphX: f64,
+  shouldStopOnTargetsComplete: bool,
+): void {
+  const targetCount = orderedTargetCount + requiredTargetCount + trackedTargetCount;
+  if (targetCount < orderedTargetCount || targetCount < requiredTargetCount || targetCount < trackedTargetCount) {
+    trap();
+  }
+  if (targetCount == 0) {
+    if (targetRecordPointer != 0) {
+      trap();
+    }
+  } else {
+    requireArenaRange(targetRecordPointer, targetCount * 3 * sizeof<f64>(), sizeof<f64>());
+  }
+  requireArenaRange(targetStatePointer, TRAJECTORY_TARGET_STATE_BYTE_LENGTH, sizeof<u32>());
+  if (!isFiniteValue(boundsRectX) || !isFiniteValue(boundsRectY) || !isFiniteValue(boundsRectWidth) || !isFiniteValue(boundsRectHeight) || !(boundsRectWidth > 0) || !(boundsRectHeight > 0) || (hasContinueGraphX && !isFiniteValue(continueGraphX))) {
+    trap();
+  }
+  let targetIndex: u32 = 0;
+  while (targetIndex < targetCount) {
+    const recordPointer = targetRecordPointer + targetIndex * 3 * sizeof<f64>();
+    const targetRadius = load<f64>(recordPointer + 2 * sizeof<f64>());
+    if (
+      !isFiniteValue(load<f64>(recordPointer)) ||
+      !isFiniteValue(load<f64>(recordPointer + sizeof<f64>())) ||
+      !isFiniteValue(targetRadius) ||
+      targetRadius < 0
+    ) {
+      trap();
+    }
+    targetIndex += 1;
+  }
+  replayFormulaTrajectoryScalarToStopXInternal(
+    materialResultPointer,
+    equation,
+    baseY,
+    yOffset,
+    boundsMinX,
+    boundsMaxX,
+    boundsMinY,
+    boundsMaxY,
+    false,
+    NativeMath.max(boundsMinX, boundsMaxX),
+    protectionPointer,
+    statePointer,
+    resultPointer,
+    shouldSkipInitialStop,
+    maskPointer,
+    false,
+    0,
+    0,
+    pointXPointer,
+    pointYPointer,
+    pointDyPointer,
+    pointCapacity,
+    pointCountPointer,
+    false,
+    targetRecordPointer,
+    orderedTargetCount,
+    requiredTargetCount,
+    trackedTargetCount,
+    targetStatePointer,
+    boundsRectX,
+    boundsRectY,
+    boundsRectWidth,
+    boundsRectHeight,
+    boundaryExpansion,
+    hasContinueGraphX,
+    continueGraphX,
+    shouldStopOnTargetsComplete,
+  );
+}
+
+@inline
+function trajectoryTargetStateIsComplete(
+  targetStatePointer: u32,
+  orderedTargetCount: u32,
+  requiredTargetCount: u32,
+): bool {
+  return (
+    load<u32>(targetStatePointer + TRAJECTORY_TARGET_STATE_REACHED_ORDERED_COUNT_OFFSET) >= orderedTargetCount &&
+    load<u32>(targetStatePointer + TRAJECTORY_TARGET_STATE_REACHED_REQUIRED_COUNT_OFFSET) >= requiredTargetCount
+  );
+}
+
+function updateTrajectoryTargetState(
+  graphX: f64,
+  graphY: f64,
+  sampleIndex: u32,
+  boundsMinX: f64,
+  boundsMaxX: f64,
+  boundsMinY: f64,
+  boundsMaxY: f64,
+  boundsRectX: f64,
+  boundsRectY: f64,
+  boundsRectWidth: f64,
+  boundsRectHeight: f64,
+  targetRecordPointer: u32,
+  orderedTargetCount: u32,
+  requiredTargetCount: u32,
+  trackedTargetCount: u32,
+  targetStatePointer: u32,
+): bool {
+  const pixelX = boundsRectX + ((graphX - boundsMinX) / (boundsMaxX - boundsMinX)) * boundsRectWidth;
+  const pixelY = boundsRectY + ((boundsMaxY - graphY) / (boundsMaxY - boundsMinY)) * boundsRectHeight;
+  const requiredHitsPointer = load<u32>(targetStatePointer + TRAJECTORY_TARGET_STATE_REQUIRED_HITS_POINTER_OFFSET);
+  let reachedRequiredTargetCount = load<u32>(
+    targetStatePointer + TRAJECTORY_TARGET_STATE_REACHED_REQUIRED_COUNT_OFFSET,
+  );
+  let requiredIndex: u32 = 0;
+  while (requiredIndex < requiredTargetCount) {
+    if (load<u8>(requiredHitsPointer + requiredIndex) == 0) {
+      const recordPointer = targetRecordPointer + (orderedTargetCount + requiredIndex) * 3 * sizeof<f64>();
+      if (trajectoryPointHitsTarget(pixelX, pixelY, recordPointer)) {
+        store<u8>(requiredHitsPointer + requiredIndex, 1);
+        reachedRequiredTargetCount += 1;
+      }
+    }
+    requiredIndex += 1;
+  }
+  store<u32>(
+    targetStatePointer + TRAJECTORY_TARGET_STATE_REACHED_REQUIRED_COUNT_OFFSET,
+    reachedRequiredTargetCount,
+  );
+
+  const trackedHitIndexesPointer = load<u32>(
+    targetStatePointer + TRAJECTORY_TARGET_STATE_TRACKED_HIT_INDEXES_POINTER_OFFSET,
+  );
+  let trackedIndex: u32 = 0;
+  while (trackedIndex < trackedTargetCount) {
+    if (load<i32>(trackedHitIndexesPointer + trackedIndex * sizeof<i32>()) < 0) {
+      const recordPointer =
+        targetRecordPointer + (orderedTargetCount + requiredTargetCount + trackedIndex) * 3 * sizeof<f64>();
+      if (trajectoryPointHitsTarget(pixelX, pixelY, recordPointer)) {
+        store<i32>(trackedHitIndexesPointer + trackedIndex * sizeof<i32>(), <i32>sampleIndex);
+      }
+    }
+    trackedIndex += 1;
+  }
+
+  let reachedOrderedTargetCount = load<u32>(
+    targetStatePointer + TRAJECTORY_TARGET_STATE_REACHED_ORDERED_COUNT_OFFSET,
+  );
+  while (reachedOrderedTargetCount < orderedTargetCount) {
+    const recordPointer = targetRecordPointer + reachedOrderedTargetCount * 3 * sizeof<f64>();
+    if (!trajectoryPointHitsTarget(pixelX, pixelY, recordPointer)) {
+      break;
+    }
+    reachedOrderedTargetCount += 1;
+  }
+  store<u32>(
+    targetStatePointer + TRAJECTORY_TARGET_STATE_REACHED_ORDERED_COUNT_OFFSET,
+    reachedOrderedTargetCount,
+  );
+
+  if (orderedTargetCount > 0 && reachedOrderedTargetCount >= orderedTargetCount) {
+    const targetHitIndexPointer = targetStatePointer + TRAJECTORY_TARGET_STATE_TARGET_HIT_INDEX_OFFSET;
+    if (load<i32>(targetHitIndexPointer) < 0) {
+      store<i32>(targetHitIndexPointer, <i32>sampleIndex);
+    }
+  }
+  if (requiredTargetCount > 0 && reachedRequiredTargetCount >= requiredTargetCount) {
+    const requiredHitIndexPointer = targetStatePointer + TRAJECTORY_TARGET_STATE_REQUIRED_HIT_INDEX_OFFSET;
+    if (load<i32>(requiredHitIndexPointer) < 0) {
+      store<i32>(requiredHitIndexPointer, <i32>sampleIndex);
+    }
+  }
+  return (
+    (orderedTargetCount > 0 || requiredTargetCount > 0) &&
+    reachedOrderedTargetCount >= orderedTargetCount &&
+    reachedRequiredTargetCount >= requiredTargetCount
+  );
+}
+
+@inline
+function trajectoryPointHitsTarget(pixelX: f64, pixelY: f64, recordPointer: u32): bool {
+  const dx = pixelX - load<f64>(recordPointer);
+  const dy = pixelY - load<f64>(recordPointer + sizeof<f64>());
+  const radius = load<f64>(recordPointer + 2 * sizeof<f64>());
+  return dx * dx + dy * dy < radius * radius;
 }
 
 /** Replays the same scalar trajectory while recording whether any published sample point occupies the raw mask. */
@@ -248,6 +567,7 @@ export function replayFormulaTrajectoryScalarToStopXWithMask(
     boundsMaxX,
     boundsMinY,
     boundsMaxY,
+    true,
     stopX,
     protectionPointer,
     statePointer,
@@ -257,6 +577,25 @@ export function replayFormulaTrajectoryScalarToStopXWithMask(
     false,
     0,
     0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    false,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    false,
+    0,
+    false,
   );
 }
 
@@ -294,6 +633,7 @@ export function replayFormulaTrajectoryScalarToStopXWithMaskAndJumpWindow(
     boundsMaxX,
     boundsMinY,
     boundsMaxY,
+    true,
     stopX,
     protectionPointer,
     statePointer,
@@ -303,6 +643,25 @@ export function replayFormulaTrajectoryScalarToStopXWithMaskAndJumpWindow(
     true,
     jumpWindowStartX,
     jumpWindowEndX,
+    0,
+    0,
+    0,
+    0,
+    0,
+    false,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    false,
+    0,
+    false,
   );
 }
 
@@ -315,6 +674,7 @@ function replayFormulaTrajectoryScalarToStopXInternal(
   boundsMaxX: f64,
   boundsMinY: f64,
   boundsMaxY: f64,
+  hasStopX: bool,
   stopX: f64,
   protectionPointer: u32,
   statePointer: u32,
@@ -324,6 +684,25 @@ function replayFormulaTrajectoryScalarToStopXInternal(
   hasJumpWindow: bool,
   jumpWindowStartX: f64,
   jumpWindowEndX: f64,
+  pointXPointer: u32,
+  pointYPointer: u32,
+  pointDyPointer: u32,
+  pointCapacity: u32,
+  pointCountPointer: u32,
+  shouldStopOnObstacle: bool,
+  targetRecordPointer: u32,
+  orderedTargetCount: u32,
+  requiredTargetCount: u32,
+  trackedTargetCount: u32,
+  targetStatePointer: u32,
+  boundsRectX: f64,
+  boundsRectY: f64,
+  boundsRectWidth: f64,
+  boundsRectHeight: f64,
+  boundaryExpansion: u32,
+  hasContinueGraphX: bool,
+  continueGraphX: f64,
+  shouldStopOnTargetsComplete: bool,
 ): void {
   requireGraphwarGameConstantsInitialized();
   requireArenaRange(materialResultPointer, FORMULA_RESULT_BYTE_LENGTH, sizeof<f64>());
@@ -345,15 +724,72 @@ function replayFormulaTrajectoryScalarToStopXInternal(
     !isFiniteValue(boundsMinX) ||
     !isFiniteValue(boundsMaxX) ||
     ((!isFiniteValue(boundsMinY) || !isFiniteValue(boundsMaxY)) && !hasTerminalProbeYBounds) ||
-    !isFiniteValue(stopX)
+    (hasStopX && !isFiniteValue(stopX))
   ) {
+    trap();
+  }
+  if (pointXPointer != 0 || pointYPointer != 0 || pointDyPointer != 0 || pointCapacity != 0 || pointCountPointer != 0) {
+    if (pointXPointer == 0 || pointYPointer == 0 || pointDyPointer == 0 || pointCapacity == 0 || pointCountPointer == 0) {
+      trap();
+    }
+    requireArenaRange(pointXPointer, pointCapacity * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(pointYPointer, pointCapacity * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(pointDyPointer, pointCapacity * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(pointCountPointer, sizeof<u32>(), sizeof<u32>());
+    store<u32>(pointCountPointer, 0);
+    appendTrajectoryPoint(pointXPointer, pointYPointer, pointDyPointer, pointCapacity, pointCountPointer, statePointer, equation);
+  }
+  const hasTargetPolicy = targetStatePointer != 0;
+  if (hasTargetPolicy) {
+    const targetCount = orderedTargetCount + requiredTargetCount + trackedTargetCount;
+    if (targetCount < orderedTargetCount || targetCount < requiredTargetCount || targetCount < trackedTargetCount) {
+      trap();
+    }
+    if (targetCount == 0) {
+      if (targetRecordPointer != 0) {
+        trap();
+      }
+    } else {
+      requireArenaRange(targetRecordPointer, targetCount * 3 * sizeof<f64>(), sizeof<f64>());
+    }
+    requireArenaRange(targetStatePointer, TRAJECTORY_TARGET_STATE_BYTE_LENGTH, sizeof<u32>());
+  } else if (orderedTargetCount != 0 || requiredTargetCount != 0 || trackedTargetCount != 0 || targetStatePointer != 0) {
     trap();
   }
   validateTrajectoryScalarState(statePointer, equation);
 
   memory.fill(resultPointer, 0, TRAJECTORY_SCALAR_RESULT_BYTE_LENGTH);
   store<i32>(resultPointer + TRAJECTORY_SCALAR_RESULT_STOP_REASON_OFFSET, TRAJECTORY_SCALAR_STOP_REASON_NOT_RUN);
+  const initialSampleIndex = load<u32>(statePointer + TRAJECTORY_SCALAR_STATE_SAMPLE_INDEX_OFFSET);
   if (
+    !shouldSkipInitialStop &&
+    hasTargetPolicy &&
+    initialSampleIndex > 0 &&
+    updateTrajectoryTargetState(
+      load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET),
+      load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET),
+      initialSampleIndex,
+      boundsMinX,
+      boundsMaxX,
+      boundsMinY,
+      boundsMaxY,
+      boundsRectX,
+      boundsRectY,
+      boundsRectWidth,
+      boundsRectHeight,
+      targetRecordPointer,
+      orderedTargetCount,
+      requiredTargetCount,
+      trackedTargetCount,
+      targetStatePointer,
+    ) &&
+    shouldStopOnTargetsComplete
+  ) {
+    writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_TARGET);
+    return;
+  }
+  if (
+    !shouldSkipInitialStop &&
     maskPointer != 0 &&
     trajectoryScalarPointHitsObstacle(
       load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET),
@@ -362,12 +798,28 @@ function replayFormulaTrajectoryScalarToStopXInternal(
       boundsMaxX,
       boundsMinY,
       boundsMaxY,
+      hasTargetPolicy ? boundsRectX : 0,
+      hasTargetPolicy ? boundsRectY : 0,
+      hasTargetPolicy ? boundsRectWidth : getGraphwarPlaneLength(),
+      hasTargetPolicy ? boundsRectHeight : getGraphwarPlaneHeight(),
       maskPointer,
+      boundaryExpansion,
     )
   ) {
     store<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_FLAGS_OFFSET, TRAJECTORY_SCALAR_RESULT_FLAG_OBSTACLE_HIT);
+    if (shouldStopOnObstacle || hasTargetPolicy) {
+      if (hasTargetPolicy) {
+        store<i32>(
+          targetStatePointer + TRAJECTORY_TARGET_STATE_OBSTACLE_HIT_INDEX_OFFSET,
+          <i32>initialSampleIndex,
+        );
+      }
+      writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_OBSTACLE);
+      return;
+    }
   }
   if (
+    hasStopX &&
     !shouldSkipInitialStop &&
     load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET) >= stopX
   ) {
@@ -439,6 +891,34 @@ function replayFormulaTrajectoryScalarToStopXInternal(
       writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_OUT_OF_BOUNDS);
       return;
     }
+    if (pointXPointer != 0) {
+      appendTrajectoryPoint(pointXPointer, pointYPointer, pointDyPointer, pointCapacity, pointCountPointer, statePointer, equation);
+    }
+    if (
+      hasTargetPolicy &&
+      updateTrajectoryTargetState(
+        currentX,
+        currentY,
+        load<u32>(statePointer + TRAJECTORY_SCALAR_STATE_SAMPLE_INDEX_OFFSET),
+        boundsMinX,
+        boundsMaxX,
+        boundsMinY,
+        boundsMaxY,
+        boundsRectX,
+        boundsRectY,
+        boundsRectWidth,
+        boundsRectHeight,
+        targetRecordPointer,
+        orderedTargetCount,
+        requiredTargetCount,
+        trackedTargetCount,
+        targetStatePointer,
+      ) &&
+      shouldStopOnTargetsComplete
+    ) {
+      writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_TARGET);
+      return;
+    }
     if (hasJumpWindow && acceptedTrajectoryScalarJumpIntersectsWindow(statePointer, jumpWindowStartX, jumpWindowEndX)) {
       store<u32>(
         resultPointer + TRAJECTORY_SCALAR_RESULT_FLAGS_OFFSET,
@@ -455,12 +935,36 @@ function replayFormulaTrajectoryScalarToStopXInternal(
         boundsMaxX,
         boundsMinY,
         boundsMaxY,
+        hasTargetPolicy ? boundsRectX : 0,
+        hasTargetPolicy ? boundsRectY : 0,
+        hasTargetPolicy ? boundsRectWidth : getGraphwarPlaneLength(),
+        hasTargetPolicy ? boundsRectHeight : getGraphwarPlaneHeight(),
         maskPointer,
+        boundaryExpansion,
       )
     ) {
       store<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_FLAGS_OFFSET, TRAJECTORY_SCALAR_RESULT_FLAG_OBSTACLE_HIT);
+      if (shouldStopOnObstacle || hasTargetPolicy) {
+        if (hasTargetPolicy) {
+          store<i32>(
+            targetStatePointer + TRAJECTORY_TARGET_STATE_OBSTACLE_HIT_INDEX_OFFSET,
+            <i32>load<u32>(statePointer + TRAJECTORY_SCALAR_STATE_SAMPLE_INDEX_OFFSET),
+          );
+        }
+        writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_OBSTACLE);
+        return;
+      }
     }
-    if (currentX >= stopX) {
+    if (
+      hasTargetPolicy &&
+      hasContinueGraphX &&
+      trajectoryTargetStateIsComplete(targetStatePointer, orderedTargetCount, requiredTargetCount) &&
+      currentX >= continueGraphX
+    ) {
+      writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_STOP_X);
+      return;
+    }
+    if (hasStopX && currentX >= stopX) {
       writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_STOP_X);
       return;
     }
@@ -490,17 +994,28 @@ function trajectoryScalarPointHitsObstacle(
   boundsMaxX: f64,
   boundsMinY: f64,
   boundsMaxY: f64,
+  boundsRectX: f64,
+  boundsRectY: f64,
+  boundsRectWidth: f64,
+  boundsRectHeight: f64,
   maskPointer: u32,
+  boundaryExpansion: u32,
 ): bool {
-  const planeX = NativeMath.floor(((x - boundsMinX) / (boundsMaxX - boundsMinX)) * getGraphwarPlaneLength());
-  const planeY = NativeMath.floor(((boundsMaxY - y) / (boundsMaxY - boundsMinY)) * getGraphwarPlaneHeight());
+  const pixelX = boundsRectX + ((x - boundsMinX) / (boundsMaxX - boundsMinX)) * boundsRectWidth;
+  const pixelY = boundsRectY + ((boundsMaxY - y) / (boundsMaxY - boundsMinY)) * boundsRectHeight;
+  const planeX = NativeMath.floor(
+    (pixelX - boundsRectX) * (getGraphwarPlaneLength() / boundsRectWidth),
+  );
+  const planeY = NativeMath.floor(
+    (pixelY - boundsRectY) * (getGraphwarPlaneHeight() / boundsRectHeight),
+  );
   if (
     !isFiniteValue(planeX) ||
     !isFiniteValue(planeY) ||
-    planeX < 0 ||
-    planeX >= getGraphwarPlaneLength() ||
-    planeY < 0 ||
-    planeY >= getGraphwarPlaneHeight()
+    planeX < <f64>boundaryExpansion ||
+    planeX >= getGraphwarPlaneLength() - boundaryExpansion ||
+    planeY < <f64>boundaryExpansion ||
+    planeY >= getGraphwarPlaneHeight() - boundaryExpansion
   ) {
     return true;
   }
@@ -646,6 +1161,28 @@ function isTrajectoryScalarCandidateTooDistant(resultPointer: u32, statePointer:
     load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_CURRENT_Y_OFFSET) -
     load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET);
   return dx * dx + dy * dy > getGraphwarFuncMaxStepDistanceSquared();
+}
+
+function appendTrajectoryPoint(
+  pointXPointer: u32,
+  pointYPointer: u32,
+  pointDyPointer: u32,
+  pointCapacity: u32,
+  pointCountPointer: u32,
+  statePointer: u32,
+  equation: i32,
+): void {
+  const pointCount = load<u32>(pointCountPointer);
+  if (pointCount >= pointCapacity) {
+    trap();
+  }
+  store<f64>(pointXPointer + pointCount * sizeof<f64>(), load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET));
+  store<f64>(pointYPointer + pointCount * sizeof<f64>(), load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET));
+  store<f64>(
+    pointDyPointer + pointCount * sizeof<f64>(),
+    equation == FORMULA_EQUATION_DDY ? load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_DY_OFFSET) : 0,
+  );
+  store<u32>(pointCountPointer, pointCount + 1);
 }
 
 function acceptTrajectoryScalarCandidate(statePointer: u32, resultPointer: u32, equation: i32): void {

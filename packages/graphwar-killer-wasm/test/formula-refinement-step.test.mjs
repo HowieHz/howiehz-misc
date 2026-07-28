@@ -276,6 +276,68 @@ test("ports Step cold hard-glitch candidate math and stable ordering", async () 
     }
     assert.equal(hasSingleAcceptedJump, true, JSON.stringify(scalarOutcomes));
 
+    const rejectedGlitchPointer = exports.reserveArena(segmentByteLength, 8);
+    new Uint8Array(exports.memory.buffer, rejectedGlitchPointer, segmentByteLength).fill(0);
+    view = new DataView(exports.memory.buffer);
+    view.setInt32(rejectedGlitchPointer, 2, true);
+    view.setInt32(rejectedGlitchPointer + 4, 5, true);
+    view.setFloat64(rejectedGlitchPointer + 8, 0.1, true);
+    view.setFloat64(rejectedGlitchPointer + 16, 0.11, true);
+    view.setFloat64(rejectedGlitchPointer + 24, 4, true);
+    view.setFloat64(rejectedGlitchPointer + 32, 819_200, true);
+    view.setFloat64(rejectedGlitchPointer + 40, 4, true);
+
+    const endProtectedInputPointer = writeScalarStepInput(exports, rejectedGlitchPointer, 2);
+    const endProtectedMaterialPointer = exports.runStepBatch(endProtectedInputPointer);
+    const rejectedStatePointer = exports.reserveArena(64, 8);
+    const rejectedResultPointer = exports.reserveArena(48, 8);
+    exports.initializeTrajectoryScalarState(rejectedStatePointer, 2, 0.095, 0, 0, 0, 0, 0, 0, 0);
+    exports.replayFormulaTrajectoryScalarToStopX(
+      endProtectedMaterialPointer,
+      2,
+      0,
+      0,
+      -1,
+      2,
+      -1e9,
+      1e9,
+      0.0975,
+      new DataView(exports.memory.buffer).getUint32(endProtectedInputPointer + 28, true),
+      rejectedStatePointer,
+      rejectedResultPointer,
+      0,
+    );
+    view = new DataView(exports.memory.buffer);
+    assert.equal(view.getInt32(rejectedResultPointer, true), 2);
+    assert.equal(view.getUint32(rejectedResultPointer + 8, true), 0);
+    assert.equal(view.getUint32(view.getUint32(endProtectedMaterialPointer + 32, true), true) & 1, 1);
+
+    const gateProtectedInputPointer = writeScalarStepInput(exports, rejectedGlitchPointer, 3);
+    const gateProtectedMaterialPointer = exports.runStepBatch(gateProtectedInputPointer);
+    const acceptedStatePointer = exports.reserveArena(64, 8);
+    const acceptedResultPointer = exports.reserveArena(48, 8);
+    exports.initializeTrajectoryScalarState(acceptedStatePointer, 2, 0.095, 0, 0, 0, 0, 0, 0, 0);
+    exports.replayFormulaTrajectoryScalarToStopX(
+      gateProtectedMaterialPointer,
+      2,
+      0,
+      0,
+      -1,
+      2,
+      -1e9,
+      1e9,
+      0.0975,
+      new DataView(exports.memory.buffer).getUint32(gateProtectedInputPointer + 28, true),
+      acceptedStatePointer,
+      acceptedResultPointer,
+      0,
+    );
+    view = new DataView(exports.memory.buffer);
+    assert.equal(view.getInt32(acceptedResultPointer, true), 1);
+    assert.equal(view.getUint32(acceptedResultPointer + 8, true), 2);
+    assert.equal(view.getFloat64(acceptedResultPointer + 16, true), 0.0975);
+    assert.equal(view.getFloat64(acceptedResultPointer + 24, true), 6.313409054807027e-11);
+
     const maskPointer = exports.reserveArena(770 * 450, 1);
     new Uint8Array(exports.memory.buffer, maskPointer, 770 * 450).fill(0);
     assert.equal(exports.stepGlitchObstacleEnvelopeHitsObstacle(-1, 0, 1, 0, 0, -25, 25, -14, 14, maskPointer), 0);
@@ -472,14 +534,14 @@ function initializeGameConstants(exports) {
   exports.resetArena(mark);
 }
 
-function writeScalarStepInput(exports, glitchPointer) {
+function writeScalarStepInput(exports, glitchPointer, protection = 11) {
   const pointXPointer = exports.reserveArena(16, 8);
   const pointYPointer = exports.reserveArena(16, 8);
   const protectionPointer = exports.reserveArena(4, 4);
   const inputPointer = exports.reserveArena(176, 8);
   new Float64Array(exports.memory.buffer, pointXPointer, 2).set([0, 1]);
   new Float64Array(exports.memory.buffer, pointYPointer, 2).set([0, 0]);
-  new Uint32Array(exports.memory.buffer, protectionPointer, 1)[0] = 11;
+  new Uint32Array(exports.memory.buffer, protectionPointer, 1)[0] = protection;
   const view = new DataView(exports.memory.buffer);
   for (let offset = 0; offset < 176; offset += 4) {
     view.setUint32(inputPointer + offset, 0, true);

@@ -44,9 +44,19 @@ interface GraphwarWasmArenaExports {
 
 interface GraphwarWasmFormulaExports {
   runFormula: (command: number, inputPointer: number, inputByteLength: number) => number;
+  runTrajectory: (inputPointer: number, inputByteLength: number) => number;
 }
 
 type GraphwarWasmRuntimeExports = GraphwarWasmArenaExports & GraphwarWasmFormulaExports;
+
+/** Atomic diagnostic snapshot used by soak tests and later benchmark reporting. */
+export interface GraphwarWasmArenaDiagnostics {
+  allocatorCallCount: number;
+  capacityBytes: number;
+  cursor: number;
+  isCanaryIntact: true;
+  peakUsedBytes: number;
+}
 
 /** Fetch/compile 注入点让 loader failure 可稳定测试，同时不增加第二条生产路径。 */
 export interface GraphwarWasmCompileDependencies {
@@ -107,6 +117,44 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
       throw new GraphwarWasmFault("output", "Graphwar WASM arena returned an invalid cursor");
     }
     return cursor;
+  }
+
+  /** Reads one internally consistent arena snapshot and rejects allocator/canary ownership violations. */
+  getArenaDiagnostics(): GraphwarWasmArenaDiagnostics {
+    let allocatorCallCount: number;
+    let canaryStatus: number;
+    let capacityBytes: number;
+    let cursor: number;
+    let peakUsedBytes: number;
+    try {
+      allocatorCallCount = this.#exports.getArenaAllocatorCallCount();
+      canaryStatus = this.#exports.getArenaCanaryStatus();
+      capacityBytes = this.#exports.getArenaCapacity();
+      cursor = this.#exports.getArenaCursor();
+      peakUsedBytes = this.#exports.getArenaPeak();
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM arena diagnostics could not be read", "trap");
+    }
+    if (
+      allocatorCallCount !== 1 ||
+      canaryStatus !== 1 ||
+      !isPositiveU32(capacityBytes) ||
+      this.arenaBase + capacityBytes !== this.buffer.byteLength ||
+      !isPositiveU32(cursor) ||
+      cursor < this.arenaBase ||
+      cursor > this.buffer.byteLength ||
+      !isU32(peakUsedBytes) ||
+      peakUsedBytes > capacityBytes
+    ) {
+      throw new GraphwarWasmFault("output", "Graphwar WASM arena diagnostics are inconsistent");
+    }
+    return {
+      allocatorCallCount,
+      capacityBytes,
+      cursor,
+      isCanaryIntact: true,
+      peakUsedBytes,
+    };
   }
 
   /** 预留 raw arena 字节；memory 可能增长，因此调用方随后必须重新读取 `memory.buffer`。 */
@@ -178,6 +226,29 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
       resultPointer >= cursor
     ) {
       throw new GraphwarWasmFault("output", "Graphwar WASM formula command returned an invalid result pointer");
+    }
+    return resultPointer;
+  }
+
+  /** Executes one complete trajectory command and validates its returned arena pointer. */
+  runTrajectory(inputPointer: number, inputByteLength: number) {
+    if (!isU32(inputPointer) || !isU32(inputByteLength)) {
+      throw new GraphwarWasmFault("input", "Graphwar WASM trajectory fields must be uint32 values");
+    }
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.runTrajectory(inputPointer, inputByteLength);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM trajectory command failed", "trap");
+    }
+    const cursor = this.arenaCursor;
+    if (
+      !isPositiveU32(resultPointer) ||
+      resultPointer % 8 !== 0 ||
+      resultPointer < this.arenaBase ||
+      resultPointer >= cursor
+    ) {
+      throw new GraphwarWasmFault("output", "Graphwar WASM trajectory returned an invalid result pointer");
     }
     return resultPointer;
   }

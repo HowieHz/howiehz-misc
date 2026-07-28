@@ -13,13 +13,24 @@ import {
   isGraphwarTrajectoryFormulaSettings,
   isGraphwarTrajectoryPoint,
 } from "../../formula/trajectory/input-validation";
+import { GRAPHWAR_FUNC_MAX_STEPS } from "../game/constants";
 import { graphwarToolDefaults } from "../tool/defaults";
-import { createGraphPoint, type AlgorithmMode, type EquationMode, type GraphBounds, type GraphPoint } from "../types";
+import {
+  createGraphPoint,
+  createPixelPoint,
+  type AlgorithmMode,
+  type EquationMode,
+  type GraphBounds,
+  type GraphPoint,
+  type PixelPoint,
+} from "../types";
 import {
   GraphwarWasmAdapterError,
   copyGraphwarWasmFloat64Values,
   copyGraphwarWasmUint32Values,
   validateGraphwarWasmMemoryRange,
+  validateGraphwarWasmFiniteNumber,
+  validateGraphwarWasmPathError,
   validateGraphwarWasmProtectionBits,
   validateGraphwarWasmU32,
   writeGraphwarWasmBytes,
@@ -32,8 +43,10 @@ import {
   getGraphwarWasmFormulaEquationTag,
   packGraphwarWasmExpressionProgram,
   packGraphwarWasmPointSoA,
+  packGraphwarWasmStopPolicy,
   validateGraphwarWasmSecondOrderLaunchAngle,
   type GraphwarWasmFormulaInputDescriptor,
+  type GraphwarWasmStopPolicy,
 } from "./task-adapter";
 
 const EXPRESSION_INPUT_BYTE_LENGTH = 36;
@@ -66,6 +79,38 @@ const FORMULA_LAUNCH_STATUS_SUCCESS = 1;
 const FORMULA_LAUNCH_FLAG_HAS_INITIAL_DY = 1;
 const FORMULA_LAUNCH_FLAG_HAS_Y_OFFSET = 2;
 const FORMULA_LAUNCH_FLAG_USED_USER_ANGLE = 4;
+const TRAJECTORY_INPUT_BYTE_LENGTH = 284;
+const TRAJECTORY_RESULT_BYTE_LENGTH = 216;
+const TRAJECTORY_EVIDENCE_BYTE_LENGTH = 104;
+const TRAJECTORY_STOP_TYPE_NATURAL = 0;
+const TRAJECTORY_STOP_TYPE_STOP_X = 1;
+const TRAJECTORY_STOP_TYPE_TARGETS = 2;
+const TRAJECTORY_FLAG_HAS_CONTINUE_GRAPH_X = 2;
+const TRAJECTORY_FLAG_COLLECT_VISIBLE_PIXELS = 4;
+const TRAJECTORY_FLAG_HAS_CONTINUATION_EVIDENCE = 8;
+const TRAJECTORY_FLAG_STOP_ON_TARGETS_COMPLETE = 16;
+const TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT = 1;
+const TRAJECTORY_EVIDENCE_FLAG_HAS_DY = 2;
+const TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY = 4;
+const TRAJECTORY_EVIDENCE_FLAG_SKIP_INITIAL_STOP = 8;
+const TRAJECTORY_EVIDENCE_FLAG_CAN_CONTINUE_TO_LATER_FRONTIER = 16;
+const TRAJECTORY_RESULT_FLAG_OBSTACLE_HIT = 1;
+const TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR = 2;
+const TRAJECTORY_RESULT_FLAG_USED_CONTINUATION = 4;
+const TRAJECTORY_RESULT_STATE_FLAG_HAS_PREVIOUS_POINT = 1;
+const TRAJECTORY_RESULT_STATE_FLAG_HAS_DY = 2;
+const TRAJECTORY_RESULT_STATE_FLAG_HAS_PREVIOUS_DY = 4;
+const TRAJECTORY_STOP_REASON_STOP_X = 1;
+const TRAJECTORY_STOP_REASON_INVALID = 2;
+const TRAJECTORY_STOP_REASON_MAX_STEPS = 3;
+const TRAJECTORY_STOP_REASON_OUT_OF_BOUNDS = 4;
+const TRAJECTORY_STOP_REASON_TOO_STEEP = 5;
+const TRAJECTORY_STOP_REASON_OBSTACLE = 6;
+const TRAJECTORY_STOP_REASON_TARGET = 7;
+const TRAJECTORY_HASH_MASK = (1n << 64n) - 1n;
+const TRAJECTORY_HASH_PRIME = 1_099_511_628_211n;
+const TRAJECTORY_HASH_A_SEED = 14_695_981_039_346_656_037n;
+const TRAJECTORY_HASH_B_SEED = 7_809_847_782_465_536_322n;
 
 const STEP_MATERIAL_FLAG_OVERFLOW_PROTECTED = 1;
 const ALLOWED_SIGN_PROTECTION_BITS =
@@ -122,6 +167,66 @@ export type GraphwarWasmFormulaLaunchResult =
       observedSignProtection: readonly number[];
       status: "success";
     };
+
+export interface GraphwarWasmTrajectoryResult {
+  bisectionCount: number;
+  continuationEvidence: GraphwarWasmTrajectoryContinuationEvidence;
+  initialDy: number;
+  launchAngleRadians?: number;
+  launchPoint: GraphPoint;
+  minStepJumpCount: number;
+  obstacle: { type: "none" } | { sampleIndex: number; type: "hit" };
+  observations: readonly { dy: number; sampleIndex: number; x: number; y: number }[];
+  pathError?: number;
+  points: readonly GraphPoint[];
+  reachedRequiredTargetCount: number;
+  reachedTargetCount: number;
+  requiredTargetsHitIndex: number;
+  rk4StepCount: number;
+  startType: "cold" | "continuation";
+  stopReason: GraphwarWasmTrajectoryStopReason;
+  targetHitIndex: number;
+  trackedTargetHitIndexes: readonly number[];
+  visiblePixels: readonly PixelPoint[];
+  yOffset: number;
+}
+
+export type GraphwarWasmTrajectoryStopReason = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+type GraphwarWasmIdentityHash = readonly [number, number, number, number];
+
+export type GraphwarWasmTrajectoryPhysicalState =
+  | {
+      currentPoint: GraphPoint;
+      equation: "dy" | "y";
+      previousPoint?: GraphPoint;
+      sampleIndex: number;
+    }
+  | {
+      currentDy: number;
+      currentPoint: GraphPoint;
+      equation: "ddy";
+      previous?: { dy: number; point: GraphPoint };
+      sampleIndex: number;
+    };
+
+/** Owned continuation atom; hashes bind the physical state to every formula and stop-policy dependency. */
+export interface GraphwarWasmTrajectoryContinuationEvidence {
+  canContinueToLaterFrontier: boolean;
+  dependencyHash: GraphwarWasmIdentityHash;
+  observedSignProtection: readonly number[];
+  proofHash: GraphwarWasmIdentityHash;
+  reachedRequiredTargetCount: number;
+  reachedTargetCount: number;
+  shouldSkipInitialStop: boolean;
+  state: GraphwarWasmTrajectoryPhysicalState;
+}
+
+export interface GraphwarWasmTrajectoryInput {
+  descriptor: GraphwarWasmFormulaInputDescriptor;
+  start: { type: "cold" } | { evidence: GraphwarWasmTrajectoryContinuationEvidence; type: "continuation" };
+  stop: GraphwarWasmStopPolicy;
+}
 
 interface PackedFormulaInput {
   inputPointer: number;
@@ -404,6 +509,352 @@ export function prepareGraphwarWasmFormulaLaunch(
   });
 }
 
+/** Executes launch preparation and trajectory sampling without exposing WASM-backed views. */
+export function runGraphwarWasmTrajectory(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmTrajectoryInput,
+): GraphwarWasmTrajectoryResult | undefined {
+  return withFormulaArenaScope(runtime, () => {
+    const { descriptor, start, stop } = input;
+    const packedFormula = packFormulaInput(runtime, descriptor, undefined, [], true);
+    const commandPointer = runtime.reserveArena(TRAJECTORY_INPUT_BYTE_LENGTH, 8);
+    if (commandPointer !== packedFormula.inputPointer + FORMULA_INPUT_BYTE_LENGTH) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-memory-buffer",
+        "Trajectory command is not adjacent to formula input",
+      );
+    }
+    new Uint8Array(runtime.buffer, commandPointer, FORMULA_INPUT_BYTE_LENGTH).set(
+      new Uint8Array(runtime.buffer, packedFormula.inputPointer, FORMULA_INPUT_BYTE_LENGTH),
+    );
+    new Uint8Array(
+      runtime.buffer,
+      commandPointer + FORMULA_INPUT_BYTE_LENGTH,
+      TRAJECTORY_INPUT_BYTE_LENGTH - FORMULA_INPUT_BYTE_LENGTH,
+    ).fill(0);
+    const packedStop = packGraphwarWasmStopPolicy(runtime, stop);
+    const packedEvidence =
+      start.type === "cold"
+        ? { byteLength: 0, pointer: 0 }
+        : packGraphwarWasmTrajectoryEvidence(
+            runtime,
+            start.evidence,
+            descriptor.settings.equation,
+            packedFormula.segmentCount,
+          );
+    const commandView = new DataView(runtime.buffer, commandPointer, TRAJECTORY_INPUT_BYTE_LENGTH);
+    let commandFlags = start.type === "continuation" ? TRAJECTORY_FLAG_HAS_CONTINUATION_EVIDENCE : 0;
+    commandView.setUint32(
+      176,
+      packedStop.type === "natural"
+        ? TRAJECTORY_STOP_TYPE_NATURAL
+        : packedStop.type === "stop-x-observations"
+          ? TRAJECTORY_STOP_TYPE_STOP_X
+          : TRAJECTORY_STOP_TYPE_TARGETS,
+      true,
+    );
+    commandView.setUint32(200, 0, true);
+    if (packedStop.type === "stop-x-observations") {
+      commandView.setFloat64(184, packedStop.stopX, true);
+      commandView.setUint32(256, packedStop.observationXs.pointer, true);
+      commandView.setUint32(260, packedStop.observationXs.length, true);
+    } else if (packedStop.type === "targets") {
+      const packedCollision = packedStop.collision;
+      const packedContinueGraphX = packedStop.continueAfterTargetsUntilGraphX;
+      const hasContinueGraphX = packedContinueGraphX.type === "value";
+      commandFlags |=
+        (hasContinueGraphX ? TRAJECTORY_FLAG_HAS_CONTINUE_GRAPH_X : 0) |
+        (packedStop.shouldCollectVisiblePixels ? TRAJECTORY_FLAG_COLLECT_VISIBLE_PIXELS : 0) |
+        (packedStop.shouldStopOnTargetsComplete ? TRAJECTORY_FLAG_STOP_ON_TARGETS_COMPLETE : 0);
+      commandView.setFloat64(184, packedContinueGraphX.type === "value" ? packedContinueGraphX.graphX : 0, true);
+      commandView.setUint32(192, packedCollision.type === "mask" ? packedCollision.mask.pointer : 0, true);
+      commandView.setUint32(196, packedCollision.type === "mask" ? packedCollision.mask.length : 0, true);
+      commandView.setUint32(204, packedStop.orderedTargetCount, true);
+      commandView.setUint32(208, packedStop.requiredTargetCount, true);
+      commandView.setUint32(212, packedStop.trackedTargetCount, true);
+      commandView.setUint32(216, packedStop.targetRecords.pointer, true);
+      commandView.setUint32(
+        220,
+        packedCollision.type === "mask"
+          ? validateGraphwarWasmU32(Math.floor(packedCollision.boundaryExpansion), "collision.boundaryExpansion")
+          : 0,
+        true,
+      );
+      commandView.setFloat64(224, packedStop.boundsRect.x, true);
+      commandView.setFloat64(232, packedStop.boundsRect.y, true);
+      commandView.setFloat64(240, packedStop.boundsRect.width, true);
+      commandView.setFloat64(248, packedStop.boundsRect.height, true);
+      commandView.setUint32(264, packedStop.qualityPoints.x.pointer, true);
+      commandView.setUint32(268, packedStop.qualityPoints.y.pointer, true);
+      commandView.setUint32(272, packedStop.qualityPoints.length, true);
+    }
+    commandView.setUint32(180, commandFlags, true);
+    commandView.setUint32(276, packedEvidence.pointer, true);
+    commandView.setUint32(280, packedEvidence.byteLength, true);
+    const outputMinimumPointer = runtime.arenaCursor;
+    const resultPointer = runtime.runTrajectory(commandPointer, TRAJECTORY_INPUT_BYTE_LENGTH);
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: resultPointer },
+      { alignment: 8, elementByteLength: TRAJECTORY_RESULT_BYTE_LENGTH, minimumPointer: outputMinimumPointer },
+    );
+    const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    const launchStatus = resultView.getInt32(0, true);
+    if (launchStatus !== FORMULA_LAUNCH_STATUS_INVALID && launchStatus !== FORMULA_LAUNCH_STATUS_SUCCESS) {
+      throwFormulaResultError("Trajectory result contains an invalid launch status");
+    }
+    if (launchStatus === FORMULA_LAUNCH_STATUS_INVALID) {
+      validateGraphwarWasmInvalidTrajectoryResult(
+        runtime,
+        resultView,
+        packedFormula.segmentCount,
+        outputMinimumPointer,
+      );
+      return undefined;
+    }
+    const stopReason = validateGraphwarWasmTrajectoryStopReason(resultView.getInt32(4, true));
+    const pointCount = validateGraphwarWasmU32(resultView.getUint32(8, true), "trajectory.pointCount");
+    if (pointCount === 0) {
+      throwFormulaResultError("Trajectory result must contain its initial physical point");
+    }
+    const pointXs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pointCount, pointer: resultView.getUint32(24, true) },
+      outputMinimumPointer,
+    );
+    const pointYs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pointCount, pointer: resultView.getUint32(28, true) },
+      outputMinimumPointer,
+    );
+    const pointDys = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pointCount, pointer: resultView.getUint32(208, true) },
+      outputMinimumPointer,
+    );
+    const points: GraphPoint[] = [];
+    const equation = descriptor.settings.equation;
+    for (let index = 0; index < pointCount; index += 1) {
+      if (equation === "ddy") {
+        validateGraphwarWasmFiniteNumber(pointDys[index], `trajectory.points[${index}].dy`);
+      } else if (!Object.is(pointDys[index], 0)) {
+        throwFormulaResultError(`Trajectory point ${index} contains derivative state for a non-second-order equation`);
+      }
+      points.push(
+        createGraphPoint(
+          validateGraphwarWasmFiniteNumber(pointXs[index], `trajectory.points[${index}].x`),
+          validateGraphwarWasmFiniteNumber(pointYs[index], `trajectory.points[${index}].y`),
+        ),
+      );
+    }
+    const resultFlags = resultView.getUint32(96, true);
+    if (
+      (resultFlags &
+        ~(
+          TRAJECTORY_RESULT_FLAG_OBSTACLE_HIT |
+          TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR |
+          TRAJECTORY_RESULT_FLAG_USED_CONTINUATION
+        )) !==
+      0
+    ) {
+      throwFormulaResultError("Trajectory result contains unsupported flags");
+    }
+    const isContinuationUsed = (resultFlags & TRAJECTORY_RESULT_FLAG_USED_CONTINUATION) !== 0;
+    if (isContinuationUsed && start.type !== "continuation") {
+      throwFormulaResultError("Cold trajectory result cannot claim continuation state");
+    }
+    const visiblePointCount = validateGraphwarWasmU32(resultView.getUint32(152, true), "trajectory.visiblePointCount");
+    const visibleXs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: visiblePointCount, pointer: resultView.getUint32(144, true) },
+      outputMinimumPointer,
+    );
+    const visibleYs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: visiblePointCount, pointer: resultView.getUint32(148, true) },
+      outputMinimumPointer,
+    );
+    const visiblePixels: PixelPoint[] = [];
+    for (let index = 0; index < visiblePointCount; index += 1) {
+      visiblePixels.push(
+        createPixelPoint(
+          validateGraphwarWasmFiniteNumber(visibleXs[index], `trajectory.visiblePixels[${index}].x`),
+          validateGraphwarWasmFiniteNumber(visibleYs[index], `trajectory.visiblePixels[${index}].y`),
+        ),
+      );
+    }
+    const shouldCollectVisiblePixels = packedStop.type === "targets" && packedStop.shouldCollectVisiblePixels;
+    const shouldSkipPublishedInitialPoint =
+      isContinuationUsed && start.type === "continuation" && start.evidence.shouldSkipInitialStop;
+    const expectedVisiblePointCount = shouldCollectVisiblePixels
+      ? pointCount - (shouldSkipPublishedInitialPoint ? 1 : 0)
+      : 0;
+    if (visiblePointCount !== expectedVisiblePointCount) {
+      throwFormulaResultError("Trajectory visible-point count does not match the stop policy");
+    }
+    const hasExpectedPathError = packedStop.type === "targets" && packedStop.qualityPoints.length > 0;
+    if (((resultFlags & TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR) !== 0) !== hasExpectedPathError) {
+      throwFormulaResultError("Trajectory path-error state does not match the quality-point input");
+    }
+    const pathError =
+      (resultFlags & TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR) === 0
+        ? undefined
+        : validateGraphwarWasmPathError(resultView.getFloat64(160, true));
+    const trackedTargetCount = validateGraphwarWasmU32(
+      resultView.getUint32(124, true),
+      "trajectory.trackedTargetCount",
+    );
+    const trackedTargetRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: trackedTargetCount, pointer: resultView.getUint32(120, true) },
+      {
+        alignment: Int32Array.BYTES_PER_ELEMENT,
+        elementByteLength: Int32Array.BYTES_PER_ELEMENT,
+        minimumPointer: outputMinimumPointer,
+      },
+    );
+    const trackedTargetHitIndexes = [
+      ...new Int32Array(trackedTargetRange.buffer, trackedTargetRange.byteOffset, trackedTargetRange.elementLength),
+    ];
+    const observationCount = validateGraphwarWasmU32(resultView.getUint32(132, true), "trajectory.observationCount");
+    const observationRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: observationCount, pointer: resultView.getUint32(128, true) },
+      { alignment: 8, elementByteLength: 32, minimumPointer: outputMinimumPointer },
+    );
+    const observationView = new DataView(
+      observationRange.buffer,
+      observationRange.byteOffset,
+      observationRange.byteLength,
+    );
+    const observations: { dy: number; sampleIndex: number; x: number; y: number }[] = [];
+    for (let index = 0; index < observationCount; index += 1) {
+      const offset = index * 32;
+      observations.push({
+        dy: validateGraphwarWasmFiniteNumber(observationView.getFloat64(offset + 16, true), "observation.dy"),
+        sampleIndex: validateGraphwarWasmU32(observationView.getUint32(offset + 24, true), "observation.sampleIndex"),
+        x: validateGraphwarWasmFiniteNumber(observationView.getFloat64(offset, true), "observation.x"),
+        y: validateGraphwarWasmFiniteNumber(observationView.getFloat64(offset + 8, true), "observation.y"),
+      });
+    }
+    const rawLaunchAngleRadians = resultView.getFloat64(56, true);
+    const rawInitialDy = resultView.getFloat64(80, true);
+    const rawYOffset = resultView.getFloat64(88, true);
+    if (equation === "y") {
+      if (
+        rawLaunchAngleRadians === Number.POSITIVE_INFINITY ||
+        rawLaunchAngleRadians === Number.NEGATIVE_INFINITY ||
+        !Object.is(rawInitialDy, 0) ||
+        !Number.isFinite(rawYOffset)
+      ) {
+        throwFormulaResultError("Normal trajectory launch state is inconsistent");
+      }
+    } else if (equation === "dy") {
+      if (!Number.isFinite(rawLaunchAngleRadians) || !Object.is(rawInitialDy, 0) || !Object.is(rawYOffset, 0)) {
+        throwFormulaResultError("First-order trajectory launch state is inconsistent");
+      }
+    } else if (
+      !Number.isFinite(rawLaunchAngleRadians) ||
+      !Number.isFinite(rawInitialDy) ||
+      !Object.is(rawYOffset, 0) ||
+      (descriptor.secondOrderLaunchAngle !== undefined &&
+        !Object.is(rawLaunchAngleRadians, descriptor.secondOrderLaunchAngle.radians))
+    ) {
+      throwFormulaResultError("Second-order trajectory launch state is inconsistent");
+    }
+    const launchPoint = createGraphPoint(
+      validateGraphwarWasmFiniteNumber(resultView.getFloat64(64, true), "trajectory.launchPoint.x"),
+      validateGraphwarWasmFiniteNumber(resultView.getFloat64(72, true), "trajectory.launchPoint.y"),
+    );
+    if (!isContinuationUsed && !graphwarPointsEqual(launchPoint, points[0])) {
+      throwFormulaResultError("Trajectory launch point does not match its first published point");
+    }
+    const observedSignProtection = copyAndValidateProtection(
+      runtime,
+      resultView.getUint32(136, true),
+      resultView.getUint32(140, true),
+      outputMinimumPointer,
+    );
+    if (observedSignProtection.length !== packedFormula.segmentCount) {
+      throwFormulaResultError("Trajectory protection count does not match the formula segments");
+    }
+    const reachedTargetCount = validateGraphwarWasmU32(
+      resultView.getUint32(100, true),
+      "trajectory.reachedTargetCount",
+    );
+    const reachedRequiredTargetCount = validateGraphwarWasmU32(
+      resultView.getUint32(104, true),
+      "trajectory.reachedRequiredTargetCount",
+    );
+    const targetHitIndex = resultView.getInt32(108, true);
+    const requiredTargetsHitIndex = resultView.getInt32(112, true);
+    const obstacleHitIndex = resultView.getInt32(116, true);
+    const state = unpackGraphwarWasmTrajectoryResultState(resultView, descriptor.settings.equation);
+    const continuationEvidence = unpackGraphwarWasmTrajectoryEvidence(
+      runtime,
+      {
+        byteLength: resultView.getUint32(204, true),
+        pointer: resultView.getUint32(200, true),
+      },
+      descriptor.settings.equation,
+      packedFormula.segmentCount,
+      outputMinimumPointer,
+    );
+    validateGraphwarWasmTrajectoryResultConsistency({
+      bounds: descriptor.bounds,
+      continuationEvidence,
+      isContinuationUsed,
+      observations,
+      obstacleHitIndex,
+      pointCount,
+      pointDys,
+      points,
+      reachedRequiredTargetCount,
+      reachedTargetCount,
+      requiredTargetsHitIndex,
+      resultFlags,
+      start,
+      state,
+      stop,
+      stopReason,
+      targetHitIndex,
+      trackedTargetHitIndexes,
+    });
+    if (!uint32ArraysEqual(observedSignProtection, continuationEvidence.observedSignProtection)) {
+      throwFormulaResultError("Trajectory result and continuation evidence protection differ");
+    }
+    return {
+      bisectionCount: validateGraphwarWasmU32(resultView.getUint32(16, true), "trajectory.bisectionCount"),
+      continuationEvidence,
+      initialDy: rawInitialDy,
+      ...(equation === "y"
+        ? {}
+        : {
+            launchAngleRadians: rawLaunchAngleRadians,
+          }),
+      launchPoint,
+      minStepJumpCount: validateGraphwarWasmU32(resultView.getUint32(20, true), "trajectory.minStepJumpCount"),
+      obstacle:
+        (resultFlags & TRAJECTORY_RESULT_FLAG_OBSTACLE_HIT) === 0
+          ? { type: "none" }
+          : { sampleIndex: obstacleHitIndex, type: "hit" },
+      observations,
+      ...(pathError === undefined ? {} : { pathError }),
+      points,
+      reachedRequiredTargetCount,
+      reachedTargetCount,
+      requiredTargetsHitIndex,
+      rk4StepCount: validateGraphwarWasmU32(resultView.getUint32(12, true), "trajectory.rk4StepCount"),
+      startType: isContinuationUsed ? "continuation" : "cold",
+      stopReason,
+      targetHitIndex,
+      trackedTargetHitIndexes,
+      visiblePixels,
+      yOffset: rawYOffset,
+    };
+  });
+}
+
 function withFormulaArenaScope<TResult>(runtime: GraphwarWasmKernelRuntime, run: () => TResult): TResult {
   const mark = runtime.markArena();
   try {
@@ -411,6 +862,634 @@ function withFormulaArenaScope<TResult>(runtime: GraphwarWasmKernelRuntime, run:
   } finally {
     runtime.resetArena(mark);
   }
+}
+
+function validateGraphwarWasmInvalidTrajectoryResult(
+  runtime: GraphwarWasmKernelRuntime,
+  view: DataView,
+  segmentCount: number,
+  outputMinimumPointer: number,
+): void {
+  if (
+    view.getInt32(4, true) !== TRAJECTORY_STOP_REASON_INVALID ||
+    !graphwarWasmBytesAreZero(view, 8, 100) ||
+    view.getInt32(108, true) !== -1 ||
+    view.getInt32(112, true) !== -1 ||
+    view.getInt32(116, true) !== -1 ||
+    !graphwarWasmBytesAreZero(view, 120, 16) ||
+    !graphwarWasmBytesAreZero(view, 144, 64) ||
+    view.getUint32(208, true) !== 0
+  ) {
+    throwFormulaResultError("Invalid trajectory result leaked success-only state");
+  }
+  const protection = copyAndValidateProtection(
+    runtime,
+    view.getUint32(136, true),
+    view.getUint32(140, true),
+    outputMinimumPointer,
+  );
+  if (protection.length !== segmentCount) {
+    throwFormulaResultError("Invalid trajectory protection count does not match the formula segments");
+  }
+}
+
+function graphwarWasmBytesAreZero(view: DataView, offset: number, byteLength: number) {
+  for (let index = 0; index < byteLength; index += 1) {
+    if (view.getUint8(offset + index) !== 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function unpackGraphwarWasmTrajectoryResultState(
+  view: DataView,
+  equation: EquationMode,
+): GraphwarWasmTrajectoryPhysicalState {
+  return createGraphwarWasmTrajectoryPhysicalState(
+    {
+      currentDy: view.getFloat64(48, true),
+      currentX: view.getFloat64(32, true),
+      currentY: view.getFloat64(40, true),
+      flags: view.getUint32(196, true),
+      previousDy: view.getFloat64(184, true),
+      previousX: view.getFloat64(168, true),
+      previousY: view.getFloat64(176, true),
+      sampleIndex: view.getUint32(192, true),
+    },
+    equation,
+    "trajectory.state",
+  );
+}
+
+function unpackGraphwarWasmTrajectoryEvidence(
+  runtime: GraphwarWasmKernelRuntime,
+  slice: { byteLength: number; pointer: number },
+  equation: EquationMode,
+  segmentCount: number,
+  outputMinimumPointer: number,
+): GraphwarWasmTrajectoryContinuationEvidence {
+  if (slice.byteLength !== TRAJECTORY_EVIDENCE_BYTE_LENGTH) {
+    throwFormulaResultError("Trajectory continuation evidence has an invalid byte length");
+  }
+  const range = validateGraphwarWasmMemoryRange(
+    runtime,
+    { length: slice.byteLength, pointer: slice.pointer },
+    { alignment: 8, elementByteLength: 1, minimumPointer: outputMinimumPointer },
+  );
+  const view = new DataView(range.buffer, range.byteOffset, range.byteLength);
+  const evidenceFlags = view.getUint32(100, true);
+  if ((evidenceFlags & ~31) !== 0) {
+    throwFormulaResultError("Trajectory continuation evidence contains unsupported flags");
+  }
+  const observedSignProtection = copyAndValidateProtection(
+    runtime,
+    view.getUint32(32, true),
+    view.getUint32(36, true),
+    outputMinimumPointer,
+  );
+  if (observedSignProtection.length !== segmentCount) {
+    throwFormulaResultError("Trajectory continuation protection count does not match the formula segments");
+  }
+  const protectionRange = validateGraphwarWasmMemoryRange(
+    runtime,
+    { length: observedSignProtection.length, pointer: view.getUint32(32, true) },
+    {
+      alignment: Uint32Array.BYTES_PER_ELEMENT,
+      elementByteLength: Uint32Array.BYTES_PER_ELEMENT,
+      minimumPointer: outputMinimumPointer,
+    },
+  );
+  validateGraphwarWasmTrajectoryEvidenceProof(
+    view,
+    new Uint8Array(protectionRange.buffer, protectionRange.byteOffset, protectionRange.byteLength),
+  );
+  const state = createGraphwarWasmTrajectoryPhysicalState(
+    {
+      currentDy: view.getFloat64(56, true),
+      currentX: view.getFloat64(40, true),
+      currentY: view.getFloat64(48, true),
+      flags:
+        evidenceFlags &
+        (TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT |
+          TRAJECTORY_EVIDENCE_FLAG_HAS_DY |
+          TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY),
+      previousDy: view.getFloat64(80, true),
+      previousX: view.getFloat64(64, true),
+      previousY: view.getFloat64(72, true),
+      sampleIndex: view.getUint32(88, true),
+    },
+    equation,
+    "trajectory.evidence.state",
+  );
+  return {
+    canContinueToLaterFrontier: (evidenceFlags & TRAJECTORY_EVIDENCE_FLAG_CAN_CONTINUE_TO_LATER_FRONTIER) !== 0,
+    dependencyHash: readGraphwarWasmIdentityHash(view, 0),
+    observedSignProtection,
+    proofHash: readGraphwarWasmIdentityHash(view, 16),
+    reachedRequiredTargetCount: validateGraphwarWasmU32(
+      view.getUint32(96, true),
+      "trajectory.evidence.reachedRequiredTargetCount",
+    ),
+    reachedTargetCount: validateGraphwarWasmU32(view.getUint32(92, true), "trajectory.evidence.reachedTargetCount"),
+    shouldSkipInitialStop: (evidenceFlags & TRAJECTORY_EVIDENCE_FLAG_SKIP_INITIAL_STOP) !== 0,
+    state,
+  };
+}
+
+function createGraphwarWasmTrajectoryPhysicalState(
+  raw: {
+    currentDy: number;
+    currentX: number;
+    currentY: number;
+    flags: number;
+    previousDy: number;
+    previousX: number;
+    previousY: number;
+    sampleIndex: number;
+  },
+  equation: EquationMode,
+  fieldName: string,
+): GraphwarWasmTrajectoryPhysicalState {
+  const allowedFlags =
+    TRAJECTORY_RESULT_STATE_FLAG_HAS_PREVIOUS_POINT |
+    TRAJECTORY_RESULT_STATE_FLAG_HAS_DY |
+    TRAJECTORY_RESULT_STATE_FLAG_HAS_PREVIOUS_DY;
+  if ((raw.flags & ~allowedFlags) !== 0) {
+    throwFormulaResultError(`${fieldName} contains unsupported flags`);
+  }
+  const hasPreviousPoint = (raw.flags & TRAJECTORY_RESULT_STATE_FLAG_HAS_PREVIOUS_POINT) !== 0;
+  const hasDy = (raw.flags & TRAJECTORY_RESULT_STATE_FLAG_HAS_DY) !== 0;
+  const hasPreviousDy = (raw.flags & TRAJECTORY_RESULT_STATE_FLAG_HAS_PREVIOUS_DY) !== 0;
+  const sampleIndex = validateGraphwarWasmU32(raw.sampleIndex, `${fieldName}.sampleIndex`);
+  if (hasPreviousPoint === (sampleIndex === 0)) {
+    throwFormulaResultError(`${fieldName} previous point does not match its sample index`);
+  }
+  const currentPoint = createGraphPoint(
+    validateGraphwarWasmFiniteNumber(raw.currentX, `${fieldName}.currentPoint.x`),
+    validateGraphwarWasmFiniteNumber(raw.currentY, `${fieldName}.currentPoint.y`),
+  );
+  const previousPoint = hasPreviousPoint
+    ? createGraphPoint(
+        validateGraphwarWasmFiniteNumber(raw.previousX, `${fieldName}.previousPoint.x`),
+        validateGraphwarWasmFiniteNumber(raw.previousY, `${fieldName}.previousPoint.y`),
+      )
+    : undefined;
+  if (!hasPreviousPoint && (!Object.is(raw.previousX, 0) || !Object.is(raw.previousY, 0))) {
+    throwFormulaResultError(`${fieldName} contains a previous point without its flag`);
+  }
+  if (equation === "ddy") {
+    if (!hasDy || hasPreviousDy !== hasPreviousPoint) {
+      throwFormulaResultError(`${fieldName} second-order derivative flags are inconsistent`);
+    }
+    const currentDy = validateGraphwarWasmFiniteNumber(raw.currentDy, `${fieldName}.currentDy`);
+    if (hasPreviousPoint) {
+      if (!previousPoint) {
+        throwFormulaResultError(`${fieldName} previous point flag has no point`);
+      }
+      return {
+        currentDy,
+        currentPoint,
+        equation,
+        previous: {
+          dy: validateGraphwarWasmFiniteNumber(raw.previousDy, `${fieldName}.previousDy`),
+          point: previousPoint,
+        },
+        sampleIndex,
+      };
+    }
+    if (!Object.is(raw.previousDy, 0)) {
+      throwFormulaResultError(`${fieldName} contains a previous derivative without its flag`);
+    }
+    return { currentDy, currentPoint, equation, sampleIndex };
+  }
+  if (hasDy || hasPreviousDy || !Object.is(raw.currentDy, 0) || !Object.is(raw.previousDy, 0)) {
+    throwFormulaResultError(`${fieldName} contains derivative state for a non-second-order equation`);
+  }
+  return {
+    currentPoint,
+    equation,
+    ...(previousPoint === undefined ? {} : { previousPoint }),
+    sampleIndex,
+  };
+}
+
+function validateGraphwarWasmTrajectoryResultConsistency(options: {
+  bounds: GraphBounds;
+  continuationEvidence: GraphwarWasmTrajectoryContinuationEvidence;
+  isContinuationUsed: boolean;
+  observations: readonly { dy: number; sampleIndex: number; x: number; y: number }[];
+  obstacleHitIndex: number;
+  pointCount: number;
+  pointDys: Float64Array;
+  points: readonly GraphPoint[];
+  reachedRequiredTargetCount: number;
+  reachedTargetCount: number;
+  requiredTargetsHitIndex: number;
+  resultFlags: number;
+  start: GraphwarWasmTrajectoryInput["start"];
+  state: GraphwarWasmTrajectoryPhysicalState;
+  stop: GraphwarWasmStopPolicy;
+  stopReason: GraphwarWasmTrajectoryStopReason;
+  targetHitIndex: number;
+  trackedTargetHitIndexes: readonly number[];
+}): void {
+  const {
+    bounds,
+    continuationEvidence,
+    isContinuationUsed,
+    observations,
+    obstacleHitIndex,
+    pointCount,
+    pointDys,
+    points,
+    reachedRequiredTargetCount,
+    reachedTargetCount,
+    requiredTargetsHitIndex,
+    resultFlags,
+    start,
+    state,
+    stop,
+    stopReason,
+    targetHitIndex,
+    trackedTargetHitIndexes,
+  } = options;
+  if (!graphwarWasmTrajectoryStatesEqual(state, continuationEvidence.state)) {
+    throwFormulaResultError("Trajectory result and continuation evidence physical states differ");
+  }
+  if (
+    continuationEvidence.canContinueToLaterFrontier !== (stopReason === TRAJECTORY_STOP_REASON_STOP_X) ||
+    continuationEvidence.reachedTargetCount !== reachedTargetCount ||
+    continuationEvidence.reachedRequiredTargetCount !== reachedRequiredTargetCount ||
+    continuationEvidence.shouldSkipInitialStop !== (stopReason !== TRAJECTORY_STOP_REASON_TARGET)
+  ) {
+    throwFormulaResultError("Trajectory continuation evidence does not match its result state");
+  }
+  const initialSampleIndex = isContinuationUsed && start.type === "continuation" ? start.evidence.state.sampleIndex : 0;
+  const acceptedTerminalOffset = stopReason === TRAJECTORY_STOP_REASON_OUT_OF_BOUNDS ? pointCount : pointCount - 1;
+  const expectedSampleIndex = initialSampleIndex + acceptedTerminalOffset;
+  if (expectedSampleIndex > 0xffff_ffff || state.sampleIndex !== expectedSampleIndex) {
+    throwFormulaResultError("Trajectory terminal sample index does not match its published points");
+  }
+  const lastPoint = points.at(-1);
+  if (!lastPoint) {
+    throwFormulaResultError("Trajectory result must publish at least one point");
+  }
+  if (stopReason === TRAJECTORY_STOP_REASON_OUT_OF_BOUNDS) {
+    const previousPoint = getGraphwarWasmTrajectoryPreviousPoint(state);
+    if (!previousPoint || !graphwarPointsEqual(previousPoint, lastPoint)) {
+      throwFormulaResultError("Out-of-bounds trajectory state must retain the last published point as previous");
+    }
+    const minX = Math.min(bounds.minX, bounds.maxX);
+    const maxX = Math.max(bounds.minX, bounds.maxX);
+    const minY = Math.min(bounds.minY, bounds.maxY);
+    const maxY = Math.max(bounds.minY, bounds.maxY);
+    if (
+      state.currentPoint.x >= minX &&
+      state.currentPoint.x <= maxX &&
+      state.currentPoint.y >= minY &&
+      state.currentPoint.y <= maxY
+    ) {
+      throwFormulaResultError("Out-of-bounds trajectory state remained inside its graph bounds");
+    }
+  } else if (!graphwarPointsEqual(state.currentPoint, lastPoint)) {
+    throwFormulaResultError("Trajectory terminal state does not match its last published point");
+  }
+  if (pointCount > 1 && stopReason !== TRAJECTORY_STOP_REASON_OUT_OF_BOUNDS) {
+    const previousPoint = getGraphwarWasmTrajectoryPreviousPoint(state);
+    if (!previousPoint || !graphwarPointsEqual(previousPoint, points[pointCount - 2])) {
+      throwFormulaResultError("Trajectory previous state does not match its penultimate published point");
+    }
+  }
+
+  const lastPublishedSampleIndex = initialSampleIndex + pointCount - 1;
+  const hasObstacleHit = (resultFlags & TRAJECTORY_RESULT_FLAG_OBSTACLE_HIT) !== 0;
+  validateGraphwarWasmTrajectoryHitIndex(obstacleHitIndex, initialSampleIndex, lastPublishedSampleIndex, "obstacle");
+  const canHitObstacle = stop.type === "targets" && stop.collision.type === "mask";
+  if (
+    hasObstacleHit !== obstacleHitIndex >= 0 ||
+    hasObstacleHit !== (stopReason === TRAJECTORY_STOP_REASON_OBSTACLE) ||
+    (hasObstacleHit && (!canHitObstacle || obstacleHitIndex !== lastPublishedSampleIndex))
+  ) {
+    throwFormulaResultError("Trajectory obstacle flag, index, and stop reason are inconsistent");
+  }
+
+  if (stop.type === "targets") {
+    if (
+      reachedTargetCount > stop.orderedTargets.length ||
+      reachedRequiredTargetCount > stop.requiredTargets.length ||
+      trackedTargetHitIndexes.length !== stop.trackedTargets.length
+    ) {
+      throwFormulaResultError("Trajectory target counts exceed the stop policy");
+    }
+    validateGraphwarWasmTrajectoryHitIndex(targetHitIndex, initialSampleIndex, lastPublishedSampleIndex, "target");
+    validateGraphwarWasmTrajectoryHitIndex(
+      requiredTargetsHitIndex,
+      initialSampleIndex,
+      lastPublishedSampleIndex,
+      "required target",
+    );
+    const hasCompletedOrderedTargets =
+      stop.orderedTargets.length > 0 && reachedTargetCount === stop.orderedTargets.length;
+    const hasCompletedRequiredTargets =
+      stop.requiredTargets.length > 0 && reachedRequiredTargetCount === stop.requiredTargets.length;
+    if (
+      targetHitIndex >= 0 !== hasCompletedOrderedTargets ||
+      requiredTargetsHitIndex >= 0 !== hasCompletedRequiredTargets
+    ) {
+      throwFormulaResultError("Trajectory target completion indexes do not match reached counts");
+    }
+    for (let index = 0; index < trackedTargetHitIndexes.length; index += 1) {
+      validateGraphwarWasmTrajectoryHitIndex(
+        trackedTargetHitIndexes[index],
+        initialSampleIndex,
+        lastPublishedSampleIndex,
+        `tracked target ${index}`,
+      );
+    }
+    if (
+      stopReason === TRAJECTORY_STOP_REASON_TARGET &&
+      (!stop.shouldStopOnTargetsComplete ||
+        (stop.orderedTargets.length === 0 && stop.requiredTargets.length === 0) ||
+        reachedTargetCount !== stop.orderedTargets.length ||
+        reachedRequiredTargetCount !== stop.requiredTargets.length)
+    ) {
+      throwFormulaResultError("Trajectory target stop reason does not match the stop policy");
+    }
+    if (stopReason === TRAJECTORY_STOP_REASON_STOP_X && stop.continueAfterTargetsUntilGraphX.type !== "value") {
+      throwFormulaResultError("Target trajectory stopped on x without a continuation boundary");
+    }
+  } else if (
+    reachedTargetCount !== 0 ||
+    reachedRequiredTargetCount !== 0 ||
+    targetHitIndex !== -1 ||
+    requiredTargetsHitIndex !== -1 ||
+    trackedTargetHitIndexes.length !== 0 ||
+    stopReason === TRAJECTORY_STOP_REASON_TARGET ||
+    stopReason === TRAJECTORY_STOP_REASON_OBSTACLE
+  ) {
+    throwFormulaResultError("Non-target trajectory returned target or obstacle state");
+  }
+  if (stopReason === TRAJECTORY_STOP_REASON_STOP_X && stop.type === "natural") {
+    throwFormulaResultError("Natural trajectory returned an explicit stop-x reason");
+  }
+  const requestedStopX =
+    stop.type === "stop-x-observations"
+      ? stop.stopX
+      : stop.type === "targets" && stop.continueAfterTargetsUntilGraphX.type === "value"
+        ? stop.continueAfterTargetsUntilGraphX.graphX
+        : undefined;
+  if (
+    stopReason === TRAJECTORY_STOP_REASON_STOP_X &&
+    (requestedStopX === undefined || state.currentPoint.x < requestedStopX)
+  ) {
+    throwFormulaResultError("Trajectory stop-x state did not reach its requested frontier");
+  }
+  if (stopReason === TRAJECTORY_STOP_REASON_MAX_STEPS && state.sampleIndex !== GRAPHWAR_FUNC_MAX_STEPS - 1) {
+    throwFormulaResultError("Max-steps trajectory state did not reach the sampling limit");
+  }
+
+  if (stop.type !== "stop-x-observations" && observations.length !== 0) {
+    throwFormulaResultError("Trajectory returned observations for a stop policy without observations");
+  }
+  if (stop.type === "stop-x-observations") {
+    const firstObservablePointIndex =
+      isContinuationUsed && start.type === "continuation" && start.evidence.shouldSkipInitialStop ? 1 : 0;
+    const expectedObservationPointIndexes: number[] = [];
+    let expectedObservationIndex = 0;
+    for (
+      let pointIndex = firstObservablePointIndex;
+      pointIndex < points.length && expectedObservationIndex < stop.observationXs.length;
+      pointIndex += 1
+    ) {
+      while (
+        expectedObservationIndex < stop.observationXs.length &&
+        points[pointIndex].x >= stop.observationXs[expectedObservationIndex]
+      ) {
+        expectedObservationPointIndexes.push(pointIndex);
+        expectedObservationIndex += 1;
+      }
+    }
+    if (observations.length !== expectedObservationPointIndexes.length) {
+      throwFormulaResultError("Trajectory observation count does not match its accepted points");
+    }
+    for (let index = 0; index < observations.length; index += 1) {
+      const observation = observations[index];
+      const expectedPointIndex = expectedObservationPointIndexes[index];
+      const localIndex = observation.sampleIndex - initialSampleIndex;
+      if (
+        localIndex !== expectedPointIndex ||
+        !graphwarPointsEqual(points[expectedPointIndex], observation) ||
+        !Object.is(pointDys[expectedPointIndex], observation.dy)
+      ) {
+        throwFormulaResultError("Trajectory observation state does not match its accepted point");
+      }
+    }
+  }
+}
+
+function validateGraphwarWasmTrajectoryStopReason(value: number): GraphwarWasmTrajectoryStopReason {
+  if (
+    value !== TRAJECTORY_STOP_REASON_STOP_X &&
+    value !== TRAJECTORY_STOP_REASON_INVALID &&
+    value !== TRAJECTORY_STOP_REASON_MAX_STEPS &&
+    value !== TRAJECTORY_STOP_REASON_OUT_OF_BOUNDS &&
+    value !== TRAJECTORY_STOP_REASON_TOO_STEEP &&
+    value !== TRAJECTORY_STOP_REASON_OBSTACLE &&
+    value !== TRAJECTORY_STOP_REASON_TARGET
+  ) {
+    throwFormulaResultError("Trajectory result contains an invalid stop reason");
+  }
+  return value;
+}
+
+function validateGraphwarWasmTrajectoryHitIndex(
+  value: number,
+  minimum: number,
+  maximum: number,
+  fieldName: string,
+): void {
+  if (value !== -1 && (!Number.isInteger(value) || value < minimum || value > maximum)) {
+    throwFormulaResultError(`Trajectory ${fieldName} hit index is outside the published sample range`);
+  }
+}
+
+function validateGraphwarWasmTrajectoryEvidenceProof(view: DataView, protectionBytes: Uint8Array): void {
+  const dependencyBytes = new Uint8Array(view.buffer, view.byteOffset, 16);
+  const protectionCountBytes = new Uint8Array(view.buffer, view.byteOffset + 36, 4);
+  const stateBytes = new Uint8Array(view.buffer, view.byteOffset + 40, 64);
+  const calculate = (seed: bigint) => {
+    let hash = hashGraphwarWasmTrajectoryBytes(seed, dependencyBytes);
+    hash = hashGraphwarWasmTrajectoryBytes(hash, protectionCountBytes);
+    hash = hashGraphwarWasmTrajectoryBytes(hash, stateBytes);
+    return hashGraphwarWasmTrajectoryBytes(hash, protectionBytes);
+  };
+  if (
+    view.getBigUint64(16, true) !== calculate(TRAJECTORY_HASH_A_SEED) ||
+    view.getBigUint64(24, true) !== calculate(TRAJECTORY_HASH_B_SEED)
+  ) {
+    throwFormulaResultError("Trajectory continuation evidence proof is invalid");
+  }
+}
+
+function hashGraphwarWasmTrajectoryBytes(seed: bigint, bytes: Uint8Array) {
+  let hash = seed;
+  for (const value of bytes) {
+    hash = ((hash ^ BigInt(value)) * TRAJECTORY_HASH_PRIME) & TRAJECTORY_HASH_MASK;
+  }
+  return hash;
+}
+
+function readGraphwarWasmIdentityHash(view: DataView, offset: number): GraphwarWasmIdentityHash {
+  return [
+    view.getUint32(offset, true),
+    view.getUint32(offset + 4, true),
+    view.getUint32(offset + 8, true),
+    view.getUint32(offset + 12, true),
+  ];
+}
+
+function graphwarWasmTrajectoryStatesEqual(
+  left: GraphwarWasmTrajectoryPhysicalState,
+  right: GraphwarWasmTrajectoryPhysicalState,
+) {
+  if (
+    left.equation !== right.equation ||
+    left.sampleIndex !== right.sampleIndex ||
+    !graphwarPointsEqual(left.currentPoint, right.currentPoint)
+  ) {
+    return false;
+  }
+  if (left.equation === "ddy" && right.equation === "ddy") {
+    return (
+      Object.is(left.currentDy, right.currentDy) &&
+      ((left.previous === undefined && right.previous === undefined) ||
+        (left.previous !== undefined &&
+          right.previous !== undefined &&
+          Object.is(left.previous.dy, right.previous.dy) &&
+          graphwarPointsEqual(left.previous.point, right.previous.point)))
+    );
+  }
+  return (
+    left.equation !== "ddy" &&
+    right.equation !== "ddy" &&
+    ((left.previousPoint === undefined && right.previousPoint === undefined) ||
+      (left.previousPoint !== undefined &&
+        right.previousPoint !== undefined &&
+        graphwarPointsEqual(left.previousPoint, right.previousPoint)))
+  );
+}
+
+function getGraphwarWasmTrajectoryPreviousPoint(state: GraphwarWasmTrajectoryPhysicalState) {
+  return state.equation === "ddy" ? state.previous?.point : state.previousPoint;
+}
+
+function graphwarPointsEqual(left: { x: number; y: number }, right: { x: number; y: number }) {
+  return Object.is(left.x, right.x) && Object.is(left.y, right.y);
+}
+
+function packGraphwarWasmTrajectoryEvidence(
+  runtime: GraphwarWasmKernelRuntime,
+  evidence: GraphwarWasmTrajectoryContinuationEvidence,
+  equation: EquationMode,
+  segmentCount: number,
+) {
+  if (!isRecord(evidence) || !isRecord(evidence.state)) {
+    throw new GraphwarWasmAdapterError("invalid-formula-input", "Trajectory continuation evidence is malformed");
+  }
+  const dependencyHash = validateGraphwarWasmIdentityHash(evidence.dependencyHash, "evidence.dependencyHash");
+  const proofHash = validateGraphwarWasmIdentityHash(evidence.proofHash, "evidence.proofHash");
+  if (!Array.isArray(evidence.observedSignProtection) || evidence.observedSignProtection.length !== segmentCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Trajectory continuation protection must match the formula segments",
+    );
+  }
+  const protection = Uint32Array.from(evidence.observedSignProtection, (value, index) =>
+    validateGraphwarWasmProtectionBits(value, ALLOWED_SIGN_PROTECTION_BITS, `evidence.protection[${index}]`),
+  );
+  if (typeof evidence.canContinueToLaterFrontier !== "boolean" || typeof evidence.shouldSkipInitialStop !== "boolean") {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Trajectory continuation capability flags must be boolean",
+    );
+  }
+  const reachedTargetCount = validateGraphwarWasmU32(evidence.reachedTargetCount, "evidence.reachedTargetCount");
+  const reachedRequiredTargetCount = validateGraphwarWasmU32(
+    evidence.reachedRequiredTargetCount,
+    "evidence.reachedRequiredTargetCount",
+  );
+  const state = evidence.state;
+  if (state.equation !== equation) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Trajectory continuation equation does not match the descriptor",
+    );
+  }
+  const sampleIndex = validateGraphwarWasmU32(state.sampleIndex, "evidence.state.sampleIndex");
+  const currentX = validateGraphwarWasmFiniteNumber(state.currentPoint.x, "evidence.state.currentPoint.x");
+  const currentY = validateGraphwarWasmFiniteNumber(state.currentPoint.y, "evidence.state.currentPoint.y");
+  let currentDy = 0;
+  let previousX = 0;
+  let previousY = 0;
+  let previousDy = 0;
+  let evidenceFlags =
+    (evidence.shouldSkipInitialStop ? TRAJECTORY_EVIDENCE_FLAG_SKIP_INITIAL_STOP : 0) |
+    (evidence.canContinueToLaterFrontier ? TRAJECTORY_EVIDENCE_FLAG_CAN_CONTINUE_TO_LATER_FRONTIER : 0);
+  if (state.equation === "ddy") {
+    currentDy = validateGraphwarWasmFiniteNumber(state.currentDy, "evidence.state.currentDy");
+    evidenceFlags |= TRAJECTORY_EVIDENCE_FLAG_HAS_DY;
+    if (state.previous !== undefined) {
+      previousX = validateGraphwarWasmFiniteNumber(state.previous.point.x, "evidence.state.previous.point.x");
+      previousY = validateGraphwarWasmFiniteNumber(state.previous.point.y, "evidence.state.previous.point.y");
+      previousDy = validateGraphwarWasmFiniteNumber(state.previous.dy, "evidence.state.previous.dy");
+      evidenceFlags |= TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT | TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY;
+    }
+  } else if (state.previousPoint !== undefined) {
+    previousX = validateGraphwarWasmFiniteNumber(state.previousPoint.x, "evidence.state.previousPoint.x");
+    previousY = validateGraphwarWasmFiniteNumber(state.previousPoint.y, "evidence.state.previousPoint.y");
+    evidenceFlags |= TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT;
+  }
+  const hasPreviousPoint = (evidenceFlags & TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT) !== 0;
+  if ((sampleIndex === 0) === hasPreviousPoint) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Trajectory continuation previous state does not match its sample index",
+    );
+  }
+  const protectionSlice = writeGraphwarWasmUint32Values(runtime, protection);
+  const pointer = runtime.reserveArena(TRAJECTORY_EVIDENCE_BYTE_LENGTH, 8);
+  new Uint8Array(runtime.buffer, pointer, TRAJECTORY_EVIDENCE_BYTE_LENGTH).fill(0);
+  const view = new DataView(runtime.buffer, pointer, TRAJECTORY_EVIDENCE_BYTE_LENGTH);
+  for (let index = 0; index < dependencyHash.length; index += 1) {
+    view.setUint32(index * 4, dependencyHash[index], true);
+    view.setUint32(16 + index * 4, proofHash[index], true);
+  }
+  view.setUint32(32, protectionSlice.pointer, true);
+  view.setUint32(36, protectionSlice.length, true);
+  view.setFloat64(40, currentX, true);
+  view.setFloat64(48, currentY, true);
+  view.setFloat64(56, currentDy, true);
+  view.setFloat64(64, previousX, true);
+  view.setFloat64(72, previousY, true);
+  view.setFloat64(80, previousDy, true);
+  view.setUint32(88, sampleIndex, true);
+  view.setUint32(92, reachedTargetCount, true);
+  view.setUint32(96, reachedRequiredTargetCount, true);
+  view.setUint32(100, evidenceFlags, true);
+  return { byteLength: TRAJECTORY_EVIDENCE_BYTE_LENGTH, pointer };
+}
+
+function validateGraphwarWasmIdentityHash(value: unknown, fieldName: string): GraphwarWasmIdentityHash {
+  if (!Array.isArray(value) || value.length !== 4) {
+    throw new GraphwarWasmAdapterError("invalid-formula-input", `${fieldName} must contain four u32 limbs`);
+  }
+  return [
+    validateGraphwarWasmU32(value[0], `${fieldName}[0]`),
+    validateGraphwarWasmU32(value[1], `${fieldName}[1]`),
+    validateGraphwarWasmU32(value[2], `${fieldName}[2]`),
+    validateGraphwarWasmU32(value[3], `${fieldName}[3]`),
+  ];
 }
 
 function packFormulaValues(runtime: GraphwarWasmKernelRuntime, values: readonly GraphwarWasmFormulaValue[]) {

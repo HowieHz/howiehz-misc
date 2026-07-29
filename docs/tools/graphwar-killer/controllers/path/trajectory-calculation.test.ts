@@ -349,7 +349,7 @@ describe("main trajectory calculation", () => {
       ok: true,
       result: {
         curvePoints: "",
-        trajectoryPoints: [],
+        trajectoryPoints: [createPixelPoint(231, 225)],
         warningReason: "invalid",
       },
     });

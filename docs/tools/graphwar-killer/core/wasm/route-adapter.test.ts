@@ -8,6 +8,8 @@ import {
 } from "../../pathfinding/routing/step-envelope";
 import {
   createGraphwarStepRouteModel,
+  createGraphwarStepPathfindingEdgeEvaluator,
+  createGraphwarStepRouteSummedArea,
   evaluateGraphwarStepRouteTransition,
 } from "../../pathfinding/routing/step-route";
 import { buildGraphwarThetaStarPathForMask } from "../../pathfinding/routing/theta-star";
@@ -15,9 +17,11 @@ import {
   buildGraphwarVisibilityGraphPathForMask,
   lineHitsPlaneMask,
   pointHitsPlaneMask,
+  type GraphwarPathfindingEdgeEvaluator,
 } from "../../pathfinding/routing/visibility-graph";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
-import { mirrorPlaneGridPoint } from "../plane-grid";
+import { imageToGraphPoint } from "../geometry";
+import { mirrorPlaneGridPoint, type PlaneGridPoint } from "../plane-grid";
 import { graphwarToolDefaults } from "../tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../types";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
@@ -311,6 +315,411 @@ describe("Graphwar WASM route context", () => {
     expect(() => stepRoute.evaluateTransition(previous, next, { resolvedY: 0, routeStateKey: "0" })).toThrow(
       /inconsistent with its request/u,
     );
+    context.dispose();
+  });
+
+  it.each([
+    {
+      equation: "y" as const,
+      isMirrored: false,
+      name: "direct",
+      obstacle: "none" as const,
+      routeState: 0n,
+      routeTolerance: 0,
+      shouldFindPath: true,
+    },
+    {
+      equation: "dy" as const,
+      isMirrored: false,
+      name: "routed multi-label",
+      obstacle: "two-wide-gaps" as const,
+      routeState: 0n,
+      routeTolerance: 0,
+      shouldFindPath: true,
+    },
+    {
+      equation: "y" as const,
+      isMirrored: false,
+      name: "no route",
+      obstacle: "wall" as const,
+      routeState: 0n,
+      routeTolerance: 0,
+      shouldFindPath: false,
+    },
+    {
+      equation: "y" as const,
+      isMirrored: true,
+      name: "mirrored oversized parent-key tie",
+      obstacle: "staggered-walls" as const,
+      routeState: -0x1_0000_0000_0000_0001n,
+      routeTolerance: 0,
+      shouldFindPath: true,
+    },
+    {
+      equation: "dy" as const,
+      isMirrored: false,
+      name: "negative tolerance",
+      obstacle: "wall" as const,
+      routeState: -0x1_0000_0000_0000_0001n,
+      routeTolerance: -2.25,
+      shouldFindPath: true,
+    },
+  ])(
+    "matches stateful Step Theta* for $name",
+    { timeout: 120_000 },
+    async ({ equation, isMirrored, name, obstacle, routeState, routeTolerance, shouldFindPath }) => {
+      const runtime = await createRuntime();
+      const sourceMask = new Uint8Array(planeCellCount);
+      if (obstacle === "staggered-walls") {
+        let seed = 10 * 0x9e37_79b1;
+        for (const x of [180, 260, 340, 420, 500]) {
+          seed = Math.imul(seed ^ (seed >>> 16), 0x45d9_f3b);
+          const center = 30 + ((seed >>> 0) % 390);
+          const radius = 6 + ((seed >>> 8) % 24);
+          for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+            if (Math.abs(y - center) > radius) sourceMask[y * GRAPHWAR_PLANE_LENGTH + x] = 1;
+          }
+        }
+      } else if (obstacle !== "none") {
+        for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+          if (obstacle === "two-wide-gaps" && ((y >= 80 && y <= 120) || (y >= 330 && y <= 370))) {
+            continue;
+          }
+          sourceMask[y * GRAPHWAR_PLANE_LENGTH + 300] = 1;
+        }
+      }
+      const routeBounds = isMirrored ? { ...bounds, maxX: bounds.minX, minX: bounds.maxX } : bounds;
+      const decimalPlaces = 4;
+      const scale = equation === "y" ? 1 : equation === "dy" ? 2 : 4;
+      const originY = -Number(routeState) / 10 ** decimalPlaces / scale;
+      const model = createGraphwarStepRouteModel(originY, {
+        decimalPlaces,
+        equation,
+        formulaPathSteepness: 2,
+        steepness: 2,
+      });
+      if (!model) {
+        throw new Error("Expected a valid Step route model");
+      }
+      const context = createGraphwarWasmRouteContext(runtime, {
+        boundaryExpansion: 0,
+        bounds: routeBounds,
+        boundsRect,
+        friendlySoldierCenters: [],
+        routeOriginPoint: { x: obstacle === "staggered-walls" ? 90 : 100, y: 225 },
+        routeTolerancePlanePixels: routeTolerance,
+        simulationTolerancePlanePixels: 0,
+        soldierHitRadiusPixels: 7,
+        sourceMask,
+        stepRouteModel: {
+          ...model,
+          qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+        },
+      });
+      const stepRoute = context.stepRoute;
+      if (!stepRoute) {
+        throw new Error("Expected a retained Step route capability");
+      }
+      const isParentKeyFixture = obstacle === "staggered-walls";
+      const start = { x: isParentKeyFixture ? 90 : 100, y: 225 };
+      const target = { x: isParentKeyFixture ? 620 : 600, y: 225 };
+      const physicalStart = mirrorPlaneGridPoint(start, isMirrored);
+      const physicalTarget = mirrorPlaneGridPoint(target, isMirrored);
+      const exactStartPoint = createPixelPoint(
+        physicalStart.x + (isParentKeyFixture ? 0.17 : 0.25),
+        physicalStart.y + (isParentKeyFixture ? 0.31 : 0.25),
+      );
+      const exactTargetPoint = createPixelPoint(
+        physicalTarget.x + (isParentKeyFixture ? 0.79 : 0.75),
+        physicalTarget.y + (isParentKeyFixture ? 0.63 : 0.75),
+      );
+      const evaluator = createGraphwarStepPathfindingEdgeEvaluator({
+        boundaryInset: 0,
+        bounds: routeBounds,
+        boundsRect,
+        exactStartPoint,
+        exactTargetPoint,
+        model,
+        resolvedStartStateKey: routeState.toString(),
+        resolvedStartY: 0,
+        summedArea: createGraphwarStepRouteSummedArea(context.routeMask),
+      });
+      const expectedPreviews: unknown[] = [];
+      const expected = await buildGraphwarThetaStarPathForMask({
+        boundaryExpansion: 0,
+        bounds: routeBounds,
+        boundsRect,
+        estimateRemainingSecondaryCost: evaluator.estimateRemainingSecondaryCost,
+        evaluateEdge: evaluator.evaluateEdge,
+        initialRouteState: evaluator.initialRouteState,
+        initialRouteStateKey: evaluator.initialRouteStateKey,
+        onPreview: (preview) => expectedPreviews.push(structuredClone(preview)),
+        routeMask: context.routeMask,
+        startPoint: exactStartPoint,
+        targetPoint: exactTargetPoint,
+      });
+      const request = {
+        exactStart: imageToGraphPoint(exactStartPoint, routeBounds, boundsRect),
+        exactTarget: imageToGraphPoint(exactTargetPoint, routeBounds, boundsRect),
+        initialState: { resolvedY: 0, routeStateKey: routeState.toString() },
+        shouldCollectPreviews: true,
+        start,
+        target,
+      } as const;
+      const contextCursor = runtime.arenaCursor;
+      const actual = stepRoute.findThetaStarPath(request);
+      expect(runtime.arenaCursor).toBe(contextCursor);
+      expect(expected !== undefined).toBe(shouldFindPath);
+      if (!expected) {
+        expect(actual).toEqual({ expansionCount: expect.any(Number), previews: expectedPreviews, type: "no-route" });
+      } else {
+        expect(actual.type).toBe("success");
+        if (actual.type === "success") {
+          expect(actual.path).toEqual(expected.map((point) => mirrorPlaneGridPoint(point, isMirrored)));
+          expect(actual.terminalState).toEqual(
+            evaluateExpectedStepTerminalState(expected, evaluator.evaluateEdge, {
+              resolvedY: 0,
+              routeStateKey: routeState.toString(),
+            }),
+          );
+        }
+      }
+      expect(actual.previews).toEqual(expectedPreviews);
+      if (name === "routed multi-label") {
+        const growMark = runtime.markArena();
+        runtime.reserveArena(runtime.buffer.byteLength * 2, 16);
+        runtime.resetArena(growMark);
+        expect(stepRoute.findThetaStarPath(request)).toEqual(actual);
+        expect(runtime.arenaCursor).toBe(contextCursor);
+      }
+      context.dispose();
+      expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+    },
+  );
+
+  it("preserves the initial canonical state for a single-cell Step Theta* path", async () => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) throw new Error("Expected a valid Step route model");
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const point = { x: 100, y: 225 };
+    const exactPoint = imageToGraphPoint(createPixelPoint(100.25, 225.25), bounds, boundsRect);
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) throw new Error("Expected a retained Step route capability");
+    expect(
+      stepRoute.findThetaStarPath({
+        exactStart: exactPoint,
+        exactTarget: exactPoint,
+        initialState: { resolvedY: 0, routeStateKey: "0" },
+        shouldCollectPreviews: true,
+        start: point,
+        target: point,
+      }),
+    ).toMatchObject({
+      expansionCount: 0,
+      path: [point],
+      terminalState: { resolvedY: 0, routeStateKey: "0" },
+      type: "success",
+    });
+    context.dispose();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each([
+    {
+      corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+        resultView.setUint32(4, 0, true);
+        resultView.setUint32(8, 0, true);
+        resultView.setUint32(12, 0, true);
+        resultView.setUint32(16, 0, true);
+      },
+      expectedMessage: /no-route result contains path state/u,
+      name: "no-route half-state",
+    },
+    {
+      corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+        resultView.setInt32(40, 2, true);
+      },
+      expectedMessage: /sign is not canonical/u,
+      name: "state sign",
+    },
+    {
+      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+        resultView.setUint32(44, runtime.arenaBase, true);
+      },
+      expectedMessage: /outside the raw arena/u,
+      name: "state pointing into retained context",
+    },
+    {
+      corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+        resultView.setFloat64(32, resultView.getFloat64(32, true) + 1, true);
+      },
+      expectedMessage: /runtime height does not match/u,
+      name: "runtime height",
+    },
+    {
+      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+        const statePointer = resultView.getUint32(44, true);
+        const stateCount = resultView.getUint32(48, true);
+        new DataView(runtime.buffer).setUint32(statePointer + (stateCount - 1) * 4, 0, true);
+      },
+      expectedMessage: /magnitude is not canonical/u,
+      name: "state magnitude",
+    },
+    {
+      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+        resultView.setUint32(8, runtime.arenaBase, true);
+      },
+      expectedMessage: /outside the raw arena/u,
+      name: "path pointing into retained context",
+    },
+  ])("rejects a malformed Step Theta* $name", async ({ corrupt, expectedMessage }) => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) throw new Error("Expected a valid Step route model");
+    const originalRunRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = originalRunRouteTask(command, inputPointer, inputByteLength);
+      if (command === 9) corrupt(runtime, new DataView(runtime.buffer, resultPointer, 56));
+      return resultPointer;
+    });
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) throw new Error("Expected a retained Step route capability");
+    expect(() =>
+      stepRoute.findThetaStarPath({
+        exactStart: imageToGraphPoint(createPixelPoint(100.25, 225.25), bounds, boundsRect),
+        exactTarget: imageToGraphPoint(createPixelPoint(300.75, 150.75), bounds, boundsRect),
+        initialState: { resolvedY: 0, routeStateKey: "0" },
+        start: { x: 100, y: 225 },
+        target: { x: 300, y: 150 },
+      }),
+    ).toThrow(expectedMessage);
+    context.dispose();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a Step search whose runtime height and canonical identity disagree", async () => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) throw new Error("Expected a valid Step route model");
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) throw new Error("Expected a retained Step route capability");
+    expect(() =>
+      stepRoute.findThetaStarPath({
+        exactStart: imageToGraphPoint(createPixelPoint(100.25, 225.25), bounds, boundsRect),
+        exactTarget: imageToGraphPoint(createPixelPoint(300.75, 150.75), bounds, boundsRect),
+        initialState: { resolvedY: 1, routeStateKey: "0" },
+        start: { x: 100, y: 225 },
+        target: { x: 300, y: 150 },
+      }),
+    ).toThrow(/runtime height does not match/u);
+    context.dispose();
+  });
+
+  it("rejects exact Step endpoints that do not identify their declared grid cells", async () => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) throw new Error("Expected a valid Step route model");
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) throw new Error("Expected a retained Step route capability");
+    const request = {
+      exactStart: imageToGraphPoint(createPixelPoint(100.25, 225.25), bounds, boundsRect),
+      exactTarget: imageToGraphPoint(createPixelPoint(300.75, 150.75), bounds, boundsRect),
+      initialState: { resolvedY: 0, routeStateKey: "0" },
+      start: { x: 100, y: 225 },
+      target: { x: 300, y: 150 },
+    } as const;
+    expect(() =>
+      stepRoute.findThetaStarPath({
+        ...request,
+        exactStart: imageToGraphPoint(createPixelPoint(101.25, 225.25), bounds, boundsRect),
+      }),
+    ).toThrow(/exactStart does not identify/u);
+    expect(() =>
+      stepRoute.findThetaStarPath({
+        ...request,
+        exactTarget: imageToGraphPoint(createPixelPoint(301.75, 150.75), bounds, boundsRect),
+      }),
+    ).toThrow(/exactTarget does not identify/u);
     context.dispose();
   });
 
@@ -1245,6 +1654,29 @@ function createDeterministicThetaMask(fixture: number) {
     }
   }
   return mask;
+}
+
+function evaluateExpectedStepTerminalState(
+  path: readonly PlaneGridPoint[],
+  evaluateEdge: GraphwarPathfindingEdgeEvaluator,
+  initialState: { resolvedY: number; routeStateKey: string },
+) {
+  let resolvedY = initialState.resolvedY;
+  let routeStateKey = initialState.routeStateKey;
+  for (let index = 1; index < path.length; index += 1) {
+    const previous = path[index - 1];
+    const next = path[index];
+    if (!previous || !next) {
+      throw new Error("Expected a complete TS Step path");
+    }
+    const edge = evaluateEdge(previous, next, resolvedY, routeStateKey);
+    if (!edge?.nextRouteStateKey) {
+      throw new Error("Expected the TS Step path to preserve its canonical route state");
+    }
+    resolvedY = edge.nextRouteState;
+    routeStateKey = edge.nextRouteStateKey;
+  }
+  return { resolvedY, routeStateKey };
 }
 
 function fillRectangle(mask: Uint8Array, minX: number, maxX: number, minY: number, maxY: number) {

@@ -9,7 +9,13 @@ import type {
   PlaneMaskClosedRegion,
 } from "../../pathfinding/routing/step-envelope";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
-import type { PlaneGridPoint } from "../plane-grid";
+import { graphToImagePoint } from "../geometry";
+import {
+  imagePointToPlaneGridPoint,
+  mirrorPlaneGridPoint,
+  planeGridPointsEqual,
+  type PlaneGridPoint,
+} from "../plane-grid";
 import type { GraphPoint } from "../types";
 import {
   GraphwarWasmAdapterError,
@@ -29,6 +35,7 @@ import {
   type GraphwarWasmPathfindingPreviewEvent,
   type GraphwarWasmRouteContextInput,
   type GraphwarWasmPoint,
+  type GraphwarWasmStepRouteModelInput,
 } from "./task-adapter";
 
 const routeCommand = {
@@ -40,6 +47,7 @@ const routeCommand = {
   thetaStar: 6,
   visibilityGraph: 7,
   stepTransition: 8,
+  stepThetaStar: 9,
 } as const;
 const routeCreateInputByteLength = 48;
 const routeContextByteLength = 264;
@@ -59,6 +67,9 @@ const routeStepModelByteLength = 40;
 const routeStepTransitionInputByteLength = 64;
 const routeStepTransitionResultByteLength = 160;
 const routeStepTransitionResultMagic = 0x5354_4550;
+const routeStepSearchInputByteLength = 104;
+const routeStepSearchResultByteLength = 56;
+const routeStepSearchResultMagic = 0x5354_4854;
 const routeBoundaryEdgeRecordU32Length = 5;
 const planeCellCount = 770 * 450;
 const summedAreaValueCount = 771 * 451;
@@ -118,7 +129,33 @@ export interface GraphwarWasmStepRouteContext {
     next: GraphPoint,
     state: GraphwarWasmStepRouteState,
   ) => GraphwarWasmStepRouteTransitionResult;
+  findThetaStarPath: (input: GraphwarWasmStepRouteSearchInput) => GraphwarWasmStepRouteSearchResult;
 }
+
+/** Exact endpoints and canonical state are one request because the intermediate grid centers depend on both. */
+export interface GraphwarWasmStepRouteSearchInput {
+  readonly exactStart: GraphPoint;
+  readonly exactTarget: GraphPoint;
+  readonly initialState: GraphwarWasmStepRouteState;
+  readonly shouldCollectPreviews?: boolean;
+  readonly start: PlaneGridPoint;
+  readonly target: PlaneGridPoint;
+}
+
+/** A successful Step path carries the terminal canonical state produced by that exact final path. */
+export type GraphwarWasmStepRouteSearchResult =
+  | {
+      readonly expansionCount: number;
+      readonly previews: readonly GraphwarWasmPathfindingPreviewEvent[];
+      readonly type: "no-route";
+    }
+  | {
+      readonly expansionCount: number;
+      readonly path: readonly PlaneGridPoint[];
+      readonly previews: readonly GraphwarWasmPathfindingPreviewEvent[];
+      readonly terminalState: GraphwarWasmStepRouteState;
+      readonly type: "success";
+    };
 
 /** Stateless route search returns one complete path or an explicit normal no-route result. */
 export type GraphwarWasmRouteSearchResult =
@@ -190,6 +227,8 @@ export function createGraphwarWasmRouteContext(
       );
     }
     validateRouteContextIdentity(contextView, input, packed.routePolicy, packed.thetaStarLookaheadColumnOffsets);
+    const routeBounds = { ...input.bounds };
+    const routeBoundsRect = { ...input.boundsRect };
     const stepModelPointer = contextView.getUint32(260, true);
     if (
       ((flags & routeContextStepModelFlag) !== 0) !== (packed.stepRouteModel !== undefined) ||
@@ -604,11 +643,33 @@ export function createGraphwarWasmRouteContext(
       ]);
     }
 
-    const stepRoute: GraphwarWasmStepRouteContext | undefined = input.stepRouteModel
+    const sourceStepRouteModel = input.stepRouteModel;
+    const stepRouteModel = sourceStepRouteModel
+      ? {
+          decimalPlaces: sourceStepRouteModel.decimalPlaces,
+          equation: sourceStepRouteModel.equation,
+          formulaSteepness: sourceStepRouteModel.formulaSteepness,
+          originY: sourceStepRouteModel.originY,
+          qualityTargetPlanePixels: sourceStepRouteModel.qualityTargetPlanePixels,
+        }
+      : undefined;
+    const stepRoute: GraphwarWasmStepRouteContext | undefined = stepRouteModel
       ? {
           evaluateTransition(previous, next, state) {
             assertActive();
-            return runStepRouteTransition(runtime, contextPointer, previous, next, state);
+            return runStepRouteTransition(runtime, contextPointer, stepRouteModel, previous, next, state);
+          },
+          findThetaStarPath(searchInput) {
+            assertActive();
+            return runStepRouteSearch(
+              runtime,
+              contextPointer,
+              stepRouteModel,
+              searchInput,
+              routeBounds,
+              routeBoundsRect,
+              isMirrored,
+            );
           },
         }
       : undefined;
@@ -816,28 +877,7 @@ function runRouteSearch(
       commandMinimumPointer,
     );
     const path = Array.from(xValues, (x, index) => ({ x, y: yValues[index] ?? Number.NaN }));
-    for (let index = 0; index < path.length; index += 1) {
-      validatePlanePoint(path[index] ?? { x: Number.NaN, y: Number.NaN }, `path[${index}]`, "output");
-      if (index > 0 && (path[index]?.x ?? -1) <= (path[index - 1]?.x ?? GRAPHWAR_PLANE_LENGTH)) {
-        throw new GraphwarWasmAdapterError(
-          "invalid-point-data",
-          "Graphwar WASM route path does not advance in x+ order",
-          "output",
-        );
-      }
-    }
-    if (
-      path[0]?.x !== start.x ||
-      path[0]?.y !== start.y ||
-      path.at(-1)?.x !== target.x ||
-      path.at(-1)?.y !== target.y
-    ) {
-      throw new GraphwarWasmAdapterError(
-        "invalid-session-identity",
-        "Graphwar WASM route path endpoints do not match its request",
-        "output",
-      );
-    }
+    validateRoutePath(path, start, target, "route");
     const terminalPreview = previews.at(-1);
     if (shouldCollectPreviews && !pathsEqual(terminalPreview?.bestPath, path)) {
       throw new GraphwarWasmAdapterError(
@@ -852,10 +892,320 @@ function runRouteSearch(
   }
 }
 
+/** Runs one complete stateful Step Theta* command and validates its path/state pair before releasing scratch. */
+function runStepRouteSearch(
+  runtime: GraphwarWasmKernelRuntime,
+  contextPointer: number,
+  model: GraphwarWasmStepRouteModelInput,
+  input: GraphwarWasmStepRouteSearchInput,
+  bounds: GraphwarWasmRouteContextInput["bounds"],
+  boundsRect: GraphwarWasmRouteContextInput["boundsRect"],
+  isMirrored: boolean,
+): GraphwarWasmStepRouteSearchResult {
+  const commandMinimumPointer = runtime.arenaCursor;
+  const mark = runtime.markArena();
+  try {
+    validatePlanePoint(input.start, "start");
+    validatePlanePoint(input.target, "target");
+    const exactStartX = validateGraphwarWasmFiniteNumber(input.exactStart.x, "exactStart.x", "input");
+    const exactStartY = validateGraphwarWasmFiniteNumber(input.exactStart.y, "exactStart.y", "input");
+    const exactTargetX = validateGraphwarWasmFiniteNumber(input.exactTarget.x, "exactTarget.x", "input");
+    const exactTargetY = validateGraphwarWasmFiniteNumber(input.exactTarget.y, "exactTarget.y", "input");
+    validateStepRouteEndpointIdentity(input.exactStart, input.start, bounds, boundsRect, isMirrored, "exactStart");
+    validateStepRouteEndpointIdentity(input.exactTarget, input.target, bounds, boundsRect, isMirrored, "exactTarget");
+    const initialState = packStepRouteState(runtime, model, input.initialState, commandMinimumPointer);
+    const inputPointer = runtime.reserveArena(routeStepSearchInputByteLength, 8);
+    const inputView = new DataView(runtime.buffer, inputPointer, routeStepSearchInputByteLength);
+    inputView.setUint32(0, contextPointer, true);
+    inputView.setFloat64(8, input.start.x, true);
+    inputView.setFloat64(16, input.start.y, true);
+    inputView.setFloat64(24, input.target.x, true);
+    inputView.setFloat64(32, input.target.y, true);
+    inputView.setUint32(40, input.shouldCollectPreviews ? 1 : 0, true);
+    inputView.setFloat64(48, initialState.resolvedY, true);
+    inputView.setInt32(56, initialState.sign, true);
+    inputView.setUint32(60, initialState.limbs.pointer, true);
+    inputView.setUint32(64, initialState.limbs.length, true);
+    inputView.setFloat64(72, exactStartX, true);
+    inputView.setFloat64(80, exactStartY, true);
+    inputView.setFloat64(88, exactTargetX, true);
+    inputView.setFloat64(96, exactTargetY, true);
+
+    const resultPointer = runtime.runRouteTask(
+      routeCommand.stepThetaStar,
+      inputPointer,
+      routeStepSearchInputByteLength,
+    );
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: routeStepSearchResultByteLength, pointer: resultPointer },
+      { alignment: 8, elementByteLength: 1, minimumPointer: commandMinimumPointer },
+    );
+    const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    if (resultView.getUint32(0, true) !== routeStepSearchResultMagic) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step Theta* result magic is invalid",
+        "output",
+      );
+    }
+    const status = validateGraphwarWasmEnumValue(resultView.getUint32(4, true), [0, 1] as const, "Step Theta* status");
+    const pathLength = resultView.getUint32(16, true);
+    const previewPointer = resultView.getUint32(20, true);
+    const previewCount = resultView.getUint32(24, true);
+    const expansionCount = validateGraphwarWasmU32(
+      resultView.getUint32(28, true),
+      "Step Theta* expansion count",
+      "output",
+    );
+    const shouldCollectPreviews = input.shouldCollectPreviews === true;
+    const expectedPreviewCount = shouldCollectPreviews
+      ? Math.floor(expansionCount / graphwarThetaStarHeuristics.previewExpansionInterval) + status
+      : 0;
+    if ((previewCount === 0) !== (previewPointer === 0) || previewCount !== expectedPreviewCount) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step Theta* returned an invalid preview range",
+        "output",
+      );
+    }
+    const previewRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: previewCount, pointer: previewPointer },
+      { alignment: 4, elementByteLength: routePreviewByteLength, minimumPointer: commandMinimumPointer },
+    );
+    const previews = Array.from({ length: previewCount }, (_, index) => {
+      const view = new DataView(
+        previewRange.buffer,
+        previewRange.byteOffset + index * routePreviewByteLength,
+        routePreviewByteLength,
+      );
+      const preview = copyGraphwarWasmPathfindingPreviewEvent(
+        runtime,
+        {
+          acceptedEdgePointIndexes: { length: view.getUint32(16, true), pointer: view.getUint32(12, true) },
+          bestPathPointIndexes: { length: view.getUint32(24, true), pointer: view.getUint32(20, true) },
+          candidatePointIndexes: { length: view.getUint32(32, true), pointer: view.getUint32(28, true) },
+          currentPointIndex: view.getUint32(36, true),
+          isMirrored: view.getUint32(40, true),
+          points: {
+            length: view.getUint32(8, true),
+            x: { length: view.getUint32(8, true), pointer: view.getUint32(0, true) },
+            y: { length: view.getUint32(8, true), pointer: view.getUint32(4, true) },
+          },
+        },
+        commandMinimumPointer,
+      );
+      if (preview.isMirrored !== isMirrored) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          "Graphwar WASM Step Theta* preview mirror identity is invalid",
+          "output",
+        );
+      }
+      validateRoutePreview(preview, input.start, input.target, index, true);
+      return preview;
+    });
+    if (status === 0) {
+      if (
+        resultView.getUint32(8, true) !== 0 ||
+        resultView.getUint32(12, true) !== 0 ||
+        pathLength !== 0 ||
+        !Object.is(resultView.getFloat64(32, true), 0) ||
+        resultView.getInt32(40, true) !== 0 ||
+        resultView.getUint32(44, true) !== 0 ||
+        resultView.getUint32(48, true) !== 0
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step Theta* no-route result contains path state",
+          "output",
+        );
+      }
+      if (previews.some((preview) => pointsEqual(preview.bestPath.at(-1), input.target))) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step Theta* no-route preview reaches its target",
+          "output",
+        );
+      }
+      return { expansionCount, previews, type: "no-route" };
+    }
+    if (pathLength === 0 || pathLength > GRAPHWAR_PLANE_LENGTH) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step Theta* path length is invalid",
+        "output",
+      );
+    }
+    const pathXPointer = resultView.getUint32(8, true);
+    const pathYPointer = resultView.getUint32(12, true);
+    const xValues = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pathLength, pointer: pathXPointer },
+      commandMinimumPointer,
+    );
+    const yValues = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pathLength, pointer: pathYPointer },
+      commandMinimumPointer,
+    );
+    const path = Array.from(xValues, (x, index) => ({ x, y: yValues[index] ?? Number.NaN }));
+    validateRoutePath(path, input.start, input.target, "Step Theta*");
+    const terminalState = copyStepRouteState(
+      runtime,
+      resultView.getFloat64(32, true),
+      resultView.getInt32(40, true),
+      resultView.getUint32(44, true),
+      resultView.getUint32(48, true),
+      commandMinimumPointer,
+      "Step Theta* terminal state",
+    );
+    validateStepRouteStateModel(model, terminalState, "Step Theta* terminal state", "output");
+    validateDisjointRouteContextRanges([
+      { byteLength: routeStepSearchResultByteLength, label: "Step Theta* result", pointer: resultPointer },
+      {
+        byteLength: pathLength * Float64Array.BYTES_PER_ELEMENT,
+        label: "Step Theta* path x",
+        pointer: pathXPointer,
+      },
+      {
+        byteLength: pathLength * Float64Array.BYTES_PER_ELEMENT,
+        label: "Step Theta* path y",
+        pointer: pathYPointer,
+      },
+      {
+        byteLength: resultView.getUint32(48, true) * Uint32Array.BYTES_PER_ELEMENT,
+        label: "Step Theta* terminal state",
+        pointer: resultView.getUint32(44, true),
+      },
+    ]);
+    const terminalPreview = previews.at(-1);
+    if (shouldCollectPreviews && !pathsEqual(terminalPreview?.bestPath, path)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step Theta* terminal preview does not match its result path",
+        "output",
+      );
+    }
+    return { expansionCount, path, previews, terminalState, type: "success" };
+  } finally {
+    runtime.resetArena(mark);
+  }
+}
+
+/** Exact graph endpoints may replace only the mirrored search cell that contains their source pixel. */
+function validateStepRouteEndpointIdentity(
+  exactPoint: GraphPoint,
+  cell: PlaneGridPoint,
+  bounds: GraphwarWasmRouteContextInput["bounds"],
+  boundsRect: GraphwarWasmRouteContextInput["boundsRect"],
+  isMirrored: boolean,
+  fieldName: string,
+) {
+  const exactCell = mirrorPlaneGridPoint(
+    imagePointToPlaneGridPoint(graphToImagePoint(exactPoint, bounds, boundsRect), boundsRect),
+    isMirrored,
+  );
+  if (!planeGridPointsEqual(exactCell, cell)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      `Graphwar WASM ${fieldName} does not identify its declared grid cell`,
+      "input",
+    );
+  }
+}
+
+function packStepRouteState(
+  runtime: GraphwarWasmKernelRuntime,
+  model: GraphwarWasmStepRouteModelInput,
+  state: GraphwarWasmStepRouteState,
+  minimumPointer: number,
+) {
+  const resolvedY = validateGraphwarWasmFiniteNumber(state.resolvedY, "state.resolvedY", "input");
+  const routeState = parseCanonicalStepRouteState(state.routeStateKey);
+  validateStepRouteStateModel(model, state, "Step route state", "input", routeState);
+  const magnitude = routeState < 0n ? -routeState : routeState;
+  const limbs: number[] = [];
+  let remaining = magnitude;
+  while (remaining !== 0n) {
+    limbs.push(Number(remaining & 0xffff_ffffn));
+    remaining >>= 32n;
+  }
+  return {
+    limbs: writeGraphwarWasmUint32Values(runtime, new Uint32Array(limbs), minimumPointer),
+    resolvedY,
+    sign: routeState === 0n ? 0 : routeState < 0n ? -1 : 1,
+  };
+}
+
+function copyStepRouteState(
+  runtime: GraphwarWasmKernelRuntime,
+  resolvedYValue: number,
+  stateSign: number,
+  statePointer: number,
+  stateCount: number,
+  minimumPointer: number,
+  fieldName: string,
+): GraphwarWasmStepRouteState {
+  const resolvedY = validateGraphwarWasmFiniteNumber(resolvedYValue, `${fieldName}.resolvedY`, "output");
+  if ((stateCount === 0 && stateSign !== 0) || (stateCount !== 0 && stateSign !== -1 && stateSign !== 1)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      `Graphwar WASM ${fieldName} sign is not canonical`,
+      "output",
+    );
+  }
+  const stateLimbs = copyGraphwarWasmUint32Values(
+    runtime,
+    { length: stateCount, pointer: statePointer },
+    minimumPointer,
+  );
+  if (stateLimbs.at(-1) === 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      `Graphwar WASM ${fieldName} magnitude is not canonical`,
+      "output",
+    );
+  }
+  let routeState = 0n;
+  for (let index = stateLimbs.length - 1; index >= 0; index -= 1) {
+    routeState = (routeState << 32n) | BigInt(stateLimbs[index] ?? 0);
+  }
+  if (stateSign < 0) routeState = -routeState;
+  return { resolvedY, routeStateKey: routeState.toString() };
+}
+
+function validateRoutePath(
+  path: readonly PlaneGridPoint[],
+  start: PlaneGridPoint,
+  target: PlaneGridPoint,
+  label: string,
+) {
+  for (let index = 0; index < path.length; index += 1) {
+    validatePlanePoint(path[index] ?? { x: Number.NaN, y: Number.NaN }, `path[${index}]`, "output");
+    if (index > 0 && (path[index]?.x ?? -1) <= (path[index - 1]?.x ?? GRAPHWAR_PLANE_LENGTH)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-point-data",
+        `Graphwar WASM ${label} path does not advance in x+ order`,
+        "output",
+      );
+    }
+  }
+  if (path[0]?.x !== start.x || path[0]?.y !== start.y || path.at(-1)?.x !== target.x || path.at(-1)?.y !== target.y) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      `Graphwar WASM ${label} path endpoints do not match its request`,
+      "output",
+    );
+  }
+}
+
 /** Runs one stateful Step edge below the retained context and copies its exact successor state. */
 function runStepRouteTransition(
   runtime: GraphwarWasmKernelRuntime,
   contextPointer: number,
+  model: GraphwarWasmStepRouteModelInput,
   previous: GraphPoint,
   next: GraphPoint,
   state: GraphwarWasmStepRouteState,
@@ -867,16 +1217,7 @@ function runStepRouteTransition(
     const previousY = validateGraphwarWasmFiniteNumber(previous.y, "previous.y", "input");
     const nextX = validateGraphwarWasmFiniteNumber(next.x, "next.x", "input");
     const nextY = validateGraphwarWasmFiniteNumber(next.y, "next.y", "input");
-    const resolvedY = validateGraphwarWasmFiniteNumber(state.resolvedY, "state.resolvedY", "input");
-    const routeState = parseCanonicalStepRouteState(state.routeStateKey);
-    const magnitude = routeState < 0n ? -routeState : routeState;
-    const limbs: number[] = [];
-    let remaining = magnitude;
-    while (remaining !== 0n) {
-      limbs.push(Number(remaining & 0xffff_ffffn));
-      remaining >>= 32n;
-    }
-    const packedLimbs = writeGraphwarWasmUint32Values(runtime, new Uint32Array(limbs), commandMinimumPointer);
+    const packedState = packStepRouteState(runtime, model, state, commandMinimumPointer);
     const inputPointer = runtime.reserveArena(routeStepTransitionInputByteLength, 8);
     const inputView = new DataView(runtime.buffer, inputPointer, routeStepTransitionInputByteLength);
     inputView.setUint32(0, contextPointer, true);
@@ -884,10 +1225,10 @@ function runStepRouteTransition(
     inputView.setFloat64(16, previousY, true);
     inputView.setFloat64(24, nextX, true);
     inputView.setFloat64(32, nextY, true);
-    inputView.setFloat64(40, resolvedY, true);
-    inputView.setInt32(48, routeState === 0n ? 0 : routeState < 0n ? -1 : 1, true);
-    inputView.setUint32(52, packedLimbs.pointer, true);
-    inputView.setUint32(56, packedLimbs.length, true);
+    inputView.setFloat64(40, packedState.resolvedY, true);
+    inputView.setInt32(48, packedState.sign, true);
+    inputView.setUint32(52, packedState.limbs.pointer, true);
+    inputView.setUint32(56, packedState.limbs.length, true);
 
     const resultPointer = runtime.runRouteTask(
       routeCommand.stepTransition,
@@ -979,13 +1320,6 @@ function runStepRouteTransition(
     const stateSign = resultView.getInt32(144, true);
     const statePointer = resultView.getUint32(148, true);
     const stateCount = resultView.getUint32(152, true);
-    if ((stateCount === 0 && stateSign !== 0) || (stateCount !== 0 && stateSign !== -1 && stateSign !== 1)) {
-      throw new GraphwarWasmAdapterError(
-        "invalid-session-state",
-        "Graphwar WASM Step transition state sign is not canonical",
-        "output",
-      );
-    }
     validateDisjointRouteContextRanges([
       { byteLength: routeStepTransitionResultByteLength, label: "Step transition result", pointer: resultPointer },
       {
@@ -994,25 +1328,16 @@ function runStepRouteTransition(
         pointer: statePointer,
       },
     ]);
-    const stateLimbs = copyGraphwarWasmUint32Values(
+    const routeState = copyStepRouteState(
       runtime,
-      { length: stateCount, pointer: statePointer },
+      resolvedEndY,
+      stateSign,
+      statePointer,
+      stateCount,
       commandMinimumPointer,
+      "Step transition state",
     );
-    if (stateLimbs.at(-1) === 0) {
-      throw new GraphwarWasmAdapterError(
-        "invalid-session-state",
-        "Graphwar WASM Step transition state magnitude is not canonical",
-        "output",
-      );
-    }
-    let nextRouteState = 0n;
-    for (let index = stateLimbs.length - 1; index >= 0; index -= 1) {
-      nextRouteState = (nextRouteState << 32n) | BigInt(stateLimbs[index] ?? 0);
-    }
-    if (stateSign < 0) {
-      nextRouteState = -nextRouteState;
-    }
+    validateStepRouteStateModel(model, routeState, "Step transition state", "output");
 
     return {
       transition: {
@@ -1025,7 +1350,7 @@ function runStepRouteTransition(
         },
         resolvedEndY,
         resolvedStartY,
-        routeState: { resolvedY: resolvedEndY, routeStateKey: nextRouteState.toString() },
+        routeState,
         secondaryCost,
       },
       type: "success",
@@ -1108,6 +1433,26 @@ function parseCanonicalStepRouteState(value: string) {
       "invalid-formula-input",
       "Step route state key must be a canonical decimal integer",
       "input",
+    );
+  }
+}
+
+/** Exact Step plateau identity determines its finite runtime height; reject either half when they disagree. */
+function validateStepRouteStateModel(
+  model: GraphwarWasmStepRouteModelInput,
+  state: GraphwarWasmStepRouteState,
+  fieldName: string,
+  faultDomain: "input" | "output",
+  parsedRouteState = parseCanonicalStepRouteState(state.routeStateKey),
+) {
+  const scale =
+    model.equation === "y" ? 1 : model.equation === "dy" ? model.formulaSteepness : model.formulaSteepness ** 2;
+  const expectedResolvedY = model.originY + Number(parsedRouteState) / 10 ** model.decimalPlaces / scale;
+  if (state.resolvedY !== expectedResolvedY) {
+    throw new GraphwarWasmAdapterError(
+      faultDomain === "input" ? "invalid-formula-input" : "invalid-session-state",
+      `Graphwar WASM ${fieldName} runtime height does not match its canonical identity`,
+      faultDomain,
     );
   }
 }

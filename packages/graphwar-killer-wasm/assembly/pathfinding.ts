@@ -1,5 +1,5 @@
 import { getGraphwarPlaneHeight, getGraphwarPlaneLength, requireGraphwarGameConstantsInitialized } from "./game-constants";
-import { floorFormulaDecimal } from "./decimal";
+import { floorFormulaDecimal, serializeMagnitudeDecimal } from "./decimal";
 import { FORMULA_EQUATION_DDY, FORMULA_EQUATION_DY, FORMULA_EQUATION_Y } from "./formula-layout";
 import {
   createStepFormulaResolutionFromPlateauState,
@@ -12,7 +12,7 @@ import {
   STEP_TRANSITION_RESOLVED_END_Y_OFFSET,
   STEP_TRANSITION_RESOLVED_START_Y_OFFSET,
 } from "./formula-step-resolution";
-import { markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "./memory";
+import { commitArena, markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "./memory";
 import * as Layout from "./pathfinding-layout";
 
 const ROUTE_POLICY_VALUE_COUNT: u32 = 12;
@@ -2626,6 +2626,1924 @@ function runThetaStarSearch(inputPointer: u32, inputByteLength: u32): u32 {
   return createNoRouteSearchResult(expansions, previewStatePointer);
 }
 
+const STEP_STATE_CELL_INDEX_OFFSET: u32 = 0;
+const STEP_STATE_SIGN_OFFSET: u32 = 4;
+const STEP_STATE_LIMB_POINTER_OFFSET: u32 = 8;
+const STEP_STATE_LIMB_COUNT_OFFSET: u32 = 12;
+const STEP_STATE_DIGIT_POINTER_OFFSET: u32 = 16;
+const STEP_STATE_DIGIT_COUNT_OFFSET: u32 = 20;
+const STEP_STATE_RESOLVED_Y_OFFSET: u32 = 24;
+const STEP_STATE_COST_SEGMENTS_OFFSET: u32 = 32;
+const STEP_STATE_IS_CLOSED_OFFSET: u32 = 36;
+const STEP_STATE_COST_SECONDARY_OFFSET: u32 = 40;
+const STEP_STATE_PARENT_INDEX_OFFSET: u32 = 48;
+const STEP_STATE_BYTE_LENGTH: u32 = 56;
+const STEP_STATE_TABLE_RECORDS_POINTER_OFFSET: u32 = 0;
+const STEP_STATE_TABLE_COUNT_OFFSET: u32 = 4;
+const STEP_STATE_TABLE_RECORD_CAPACITY_OFFSET: u32 = 8;
+const STEP_STATE_TABLE_BUCKETS_POINTER_OFFSET: u32 = 12;
+const STEP_STATE_TABLE_BUCKET_CAPACITY_OFFSET: u32 = 16;
+const STEP_STATE_TABLE_BYTE_LENGTH: u32 = 24;
+const STEP_STATE_MISSING_INDEX: u32 = u32.MAX_VALUE;
+
+@inline
+function stepStateRecordPointer(tablePointer: u32, index: u32): u32 {
+  return load<u32>(tablePointer + STEP_STATE_TABLE_RECORDS_POINTER_OFFSET) + index * STEP_STATE_BYTE_LENGTH;
+}
+
+@inline
+function mixStepStateHash(hash: u32, value: u32): u32 {
+  return (hash ^ value) * 0x0100_0193;
+}
+
+function hashStepStateKey(cellIndex: u32, sign: i32, limbPointer: u32, limbCount: u32): u32 {
+  let hash: u32 = mixStepStateHash(0x811c_9dc5, cellIndex);
+  hash = mixStepStateHash(hash, <u32>(sign + 1));
+  hash = mixStepStateHash(hash, limbCount);
+  let index: u32 = 0;
+  while (index < limbCount) {
+    hash = mixStepStateHash(hash, load<u32>(limbPointer + index * sizeof<u32>()));
+    index += 1;
+  }
+  return hash;
+}
+
+function stepStateKeyEquals(
+  recordPointer: u32,
+  cellIndex: u32,
+  sign: i32,
+  limbPointer: u32,
+  limbCount: u32,
+): bool {
+  if (
+    load<u32>(recordPointer + STEP_STATE_CELL_INDEX_OFFSET) != cellIndex ||
+    load<i32>(recordPointer + STEP_STATE_SIGN_OFFSET) != sign ||
+    load<u32>(recordPointer + STEP_STATE_LIMB_COUNT_OFFSET) != limbCount
+  ) return false;
+  const recordLimbPointer = load<u32>(recordPointer + STEP_STATE_LIMB_POINTER_OFFSET);
+  let index: u32 = 0;
+  while (index < limbCount) {
+    if (
+      load<u32>(recordLimbPointer + index * sizeof<u32>()) !=
+      load<u32>(limbPointer + index * sizeof<u32>())
+    ) return false;
+    index += 1;
+  }
+  return true;
+}
+
+function createStepStateTable(): u32 {
+  const tablePointer = reserveArena(STEP_STATE_TABLE_BYTE_LENGTH, sizeof<u32>());
+  const recordCapacity: u32 = 64;
+  const bucketCapacity: u32 = 128;
+  const recordsPointer = reserveArena(recordCapacity * STEP_STATE_BYTE_LENGTH, sizeof<f64>());
+  const bucketsPointer = reserveArena(bucketCapacity * sizeof<u32>(), sizeof<u32>());
+  memory.fill(bucketsPointer, 0, bucketCapacity * sizeof<u32>());
+  store<u32>(tablePointer + STEP_STATE_TABLE_RECORDS_POINTER_OFFSET, recordsPointer);
+  store<u32>(tablePointer + STEP_STATE_TABLE_COUNT_OFFSET, 0);
+  store<u32>(tablePointer + STEP_STATE_TABLE_RECORD_CAPACITY_OFFSET, recordCapacity);
+  store<u32>(tablePointer + STEP_STATE_TABLE_BUCKETS_POINTER_OFFSET, bucketsPointer);
+  store<u32>(tablePointer + STEP_STATE_TABLE_BUCKET_CAPACITY_OFFSET, bucketCapacity);
+  return tablePointer;
+}
+
+function growStepStateRecords(tablePointer: u32): void {
+  const capacity = load<u32>(tablePointer + STEP_STATE_TABLE_RECORD_CAPACITY_OFFSET);
+  const nextCapacity = capacity * 2;
+  if (nextCapacity <= capacity || nextCapacity > u32.MAX_VALUE / STEP_STATE_BYTE_LENGTH) trap();
+  const nextPointer = reserveArena(nextCapacity * STEP_STATE_BYTE_LENGTH, sizeof<f64>());
+  const count = load<u32>(tablePointer + STEP_STATE_TABLE_COUNT_OFFSET);
+  memory.copy(
+    nextPointer,
+    load<u32>(tablePointer + STEP_STATE_TABLE_RECORDS_POINTER_OFFSET),
+    count * STEP_STATE_BYTE_LENGTH,
+  );
+  store<u32>(tablePointer + STEP_STATE_TABLE_RECORDS_POINTER_OFFSET, nextPointer);
+  store<u32>(tablePointer + STEP_STATE_TABLE_RECORD_CAPACITY_OFFSET, nextCapacity);
+}
+
+function insertStepStateBucket(tablePointer: u32, recordIndex: u32): void {
+  const recordPointer = stepStateRecordPointer(tablePointer, recordIndex);
+  const capacity = load<u32>(tablePointer + STEP_STATE_TABLE_BUCKET_CAPACITY_OFFSET);
+  const bucketsPointer = load<u32>(tablePointer + STEP_STATE_TABLE_BUCKETS_POINTER_OFFSET);
+  let bucket = hashStepStateKey(
+    load<u32>(recordPointer + STEP_STATE_CELL_INDEX_OFFSET),
+    load<i32>(recordPointer + STEP_STATE_SIGN_OFFSET),
+    load<u32>(recordPointer + STEP_STATE_LIMB_POINTER_OFFSET),
+    load<u32>(recordPointer + STEP_STATE_LIMB_COUNT_OFFSET),
+  ) & (capacity - 1);
+  while (load<u32>(bucketsPointer + bucket * sizeof<u32>()) != 0) {
+    bucket = (bucket + 1) & (capacity - 1);
+  }
+  store<u32>(bucketsPointer + bucket * sizeof<u32>(), recordIndex + 1);
+}
+
+function growStepStateBuckets(tablePointer: u32): void {
+  const capacity = load<u32>(tablePointer + STEP_STATE_TABLE_BUCKET_CAPACITY_OFFSET);
+  const nextCapacity = capacity * 2;
+  if (nextCapacity <= capacity || nextCapacity > u32.MAX_VALUE / sizeof<u32>()) trap();
+  const nextPointer = reserveArena(nextCapacity * sizeof<u32>(), sizeof<u32>());
+  memory.fill(nextPointer, 0, nextCapacity * sizeof<u32>());
+  store<u32>(tablePointer + STEP_STATE_TABLE_BUCKETS_POINTER_OFFSET, nextPointer);
+  store<u32>(tablePointer + STEP_STATE_TABLE_BUCKET_CAPACITY_OFFSET, nextCapacity);
+  const count = load<u32>(tablePointer + STEP_STATE_TABLE_COUNT_OFFSET);
+  let index: u32 = 0;
+  while (index < count) {
+    insertStepStateBucket(tablePointer, index);
+    index += 1;
+  }
+}
+
+function findStepStateIndex(
+  tablePointer: u32,
+  cellIndex: u32,
+  sign: i32,
+  limbPointer: u32,
+  limbCount: u32,
+): u32 {
+  const capacity = load<u32>(tablePointer + STEP_STATE_TABLE_BUCKET_CAPACITY_OFFSET);
+  const bucketsPointer = load<u32>(tablePointer + STEP_STATE_TABLE_BUCKETS_POINTER_OFFSET);
+  let bucket = hashStepStateKey(cellIndex, sign, limbPointer, limbCount) & (capacity - 1);
+  while (true) {
+    const encodedIndex = load<u32>(bucketsPointer + bucket * sizeof<u32>());
+    if (encodedIndex == 0) return STEP_STATE_MISSING_INDEX;
+    const recordIndex = encodedIndex - 1;
+    if (stepStateKeyEquals(stepStateRecordPointer(tablePointer, recordIndex), cellIndex, sign, limbPointer, limbCount)) {
+      return recordIndex;
+    }
+    bucket = (bucket + 1) & (capacity - 1);
+  }
+}
+
+function appendStepState(
+  tablePointer: u32,
+  cellIndex: u32,
+  sign: i32,
+  limbPointer: u32,
+  limbCount: u32,
+  resolvedY: f64,
+  costSegments: u32,
+  costSecondary: f64,
+  parentIndex: u32,
+): u32 {
+  let count = load<u32>(tablePointer + STEP_STATE_TABLE_COUNT_OFFSET);
+  if (count == load<u32>(tablePointer + STEP_STATE_TABLE_RECORD_CAPACITY_OFFSET)) {
+    growStepStateRecords(tablePointer);
+  }
+  if ((<u64>(count + 1) * 4) >= <u64>load<u32>(tablePointer + STEP_STATE_TABLE_BUCKET_CAPACITY_OFFSET) * 3) {
+    growStepStateBuckets(tablePointer);
+  }
+  if (limbCount > (u32.MAX_VALUE - 1) / 10) trap();
+  const digitCapacity: u32 = limbCount == 0 ? 1 : limbCount * 10 + 1;
+  const digitPointer = reserveArena(digitCapacity, 1);
+  const serializationMark = markArena();
+  const digitCount = serializeMagnitudeDecimal(limbPointer, limbCount, digitPointer, digitCapacity);
+  resetArena(serializationMark);
+  const recordPointer = stepStateRecordPointer(tablePointer, count);
+  memory.fill(recordPointer, 0, STEP_STATE_BYTE_LENGTH);
+  store<u32>(recordPointer + STEP_STATE_CELL_INDEX_OFFSET, cellIndex);
+  store<i32>(recordPointer + STEP_STATE_SIGN_OFFSET, sign);
+  store<u32>(recordPointer + STEP_STATE_LIMB_POINTER_OFFSET, limbCount == 0 ? 0 : limbPointer);
+  store<u32>(recordPointer + STEP_STATE_LIMB_COUNT_OFFSET, limbCount);
+  store<u32>(recordPointer + STEP_STATE_DIGIT_POINTER_OFFSET, digitPointer);
+  store<u32>(recordPointer + STEP_STATE_DIGIT_COUNT_OFFSET, digitCount);
+  store<f64>(recordPointer + STEP_STATE_RESOLVED_Y_OFFSET, resolvedY);
+  store<u32>(recordPointer + STEP_STATE_COST_SEGMENTS_OFFSET, costSegments);
+  store<f64>(recordPointer + STEP_STATE_COST_SECONDARY_OFFSET, costSecondary);
+  store<u32>(recordPointer + STEP_STATE_PARENT_INDEX_OFFSET, parentIndex);
+  store<u32>(tablePointer + STEP_STATE_TABLE_COUNT_OFFSET, count + 1);
+  insertStepStateBucket(tablePointer, count);
+  return count;
+}
+
+@inline
+function stepSecondaryValuesAreNearlyEqual(left: f64, right: f64): bool {
+  return NativeMath.abs(left - right) <= f64.EPSILON * NativeMath.max(1, NativeMath.max(NativeMath.abs(left), NativeMath.abs(right)));
+}
+
+@inline
+function compareStepCosts(leftSegments: u32, leftSecondary: f64, rightSegments: u32, rightSecondary: f64): i32 {
+  if (leftSegments != rightSegments) return leftSegments < rightSegments ? -1 : 1;
+  if (stepSecondaryValuesAreNearlyEqual(leftSecondary, rightSecondary)) return 0;
+  return leftSecondary < rightSecondary ? -1 : 1;
+}
+
+function compareStepRouteKeys(leftRecordPointer: u32, rightRecordPointer: u32): i32 {
+  const leftSign = load<i32>(leftRecordPointer + STEP_STATE_SIGN_OFFSET);
+  const rightSign = load<i32>(rightRecordPointer + STEP_STATE_SIGN_OFFSET);
+  if ((leftSign < 0) != (rightSign < 0)) return leftSign < 0 ? -1 : 1;
+  const leftPointer = load<u32>(leftRecordPointer + STEP_STATE_DIGIT_POINTER_OFFSET);
+  const rightPointer = load<u32>(rightRecordPointer + STEP_STATE_DIGIT_POINTER_OFFSET);
+  const leftCount = load<u32>(leftRecordPointer + STEP_STATE_DIGIT_COUNT_OFFSET);
+  const rightCount = load<u32>(rightRecordPointer + STEP_STATE_DIGIT_COUNT_OFFSET);
+  const commonCount = leftCount < rightCount ? leftCount : rightCount;
+  let index: u32 = 0;
+  while (index < commonCount) {
+    const left = load<u8>(leftPointer + index);
+    const right = load<u8>(rightPointer + index);
+    if (left != right) return left < right ? -1 : 1;
+    index += 1;
+  }
+  return leftCount < rightCount ? -1 : leftCount > rightCount ? 1 : 0;
+}
+
+@inline
+function decimalDivisor(value: u32): u32 {
+  let divisor: u32 = 1;
+  while (value / divisor >= 10) divisor *= 10;
+  return divisor;
+}
+
+/** Compares the decimal index prefix with the same prefix-first collation used by String#localeCompare. */
+function compareStepParentCellKeys(left: u32, right: u32): i32 {
+  let leftDivisor = decimalDivisor(left);
+  let rightDivisor = decimalDivisor(right);
+  while (true) {
+    const leftDigit = left / leftDivisor;
+    const rightDigit = right / rightDivisor;
+    if (leftDigit != rightDigit) return leftDigit < rightDigit ? -1 : 1;
+    left %= leftDivisor;
+    right %= rightDivisor;
+    if (leftDivisor == 1 || rightDivisor == 1) break;
+    leftDivisor /= 10;
+    rightDivisor /= 10;
+  }
+  if (leftDivisor == 1 && rightDivisor != 1) return -1;
+  if (leftDivisor != 1 && rightDivisor == 1) return 1;
+  return 0;
+}
+
+function compareStepParentKeys(tablePointer: u32, leftIndex: u32, rightIndex: u32): i32 {
+  const leftPointer = stepStateRecordPointer(tablePointer, leftIndex);
+  const rightPointer = stepStateRecordPointer(tablePointer, rightIndex);
+  const cellComparison = compareStepParentCellKeys(
+    load<u32>(leftPointer + STEP_STATE_CELL_INDEX_OFFSET),
+    load<u32>(rightPointer + STEP_STATE_CELL_INDEX_OFFSET),
+  );
+  return cellComparison != 0 ? cellComparison : compareStepRouteKeys(leftPointer, rightPointer);
+}
+
+const STEP_HEAP_STATE_INDEX_OFFSET: u32 = 0;
+const STEP_HEAP_PARENT_INDEX_OFFSET: u32 = 4;
+const STEP_HEAP_ESTIMATED_SEGMENTS_OFFSET: u32 = 8;
+const STEP_HEAP_COST_SEGMENTS_OFFSET: u32 = 12;
+const STEP_HEAP_ESTIMATED_SECONDARY_OFFSET: u32 = 16;
+const STEP_HEAP_COST_SECONDARY_OFFSET: u32 = 24;
+const STEP_HEAP_RESOLVED_Y_OFFSET: u32 = 32;
+const STEP_HEAP_NODE_BYTE_LENGTH: u32 = 40;
+const STEP_HEAP_NODES_POINTER_OFFSET: u32 = 0;
+const STEP_HEAP_LENGTH_OFFSET: u32 = 4;
+const STEP_HEAP_CAPACITY_OFFSET: u32 = 8;
+const STEP_HEAP_TABLE_POINTER_OFFSET: u32 = 12;
+const STEP_HEAP_BYTE_LENGTH: u32 = 16;
+
+@inline
+function stepHeapNodePointer(heapPointer: u32, index: u32): u32 {
+  return load<u32>(heapPointer + STEP_HEAP_NODES_POINTER_OFFSET) + index * STEP_HEAP_NODE_BYTE_LENGTH;
+}
+
+function compareStepHeapNodes(heapPointer: u32, leftPointer: u32, rightPointer: u32): i32 {
+  let comparison = compareStepCosts(
+    load<u32>(leftPointer + STEP_HEAP_ESTIMATED_SEGMENTS_OFFSET),
+    load<f64>(leftPointer + STEP_HEAP_ESTIMATED_SECONDARY_OFFSET),
+    load<u32>(rightPointer + STEP_HEAP_ESTIMATED_SEGMENTS_OFFSET),
+    load<f64>(rightPointer + STEP_HEAP_ESTIMATED_SECONDARY_OFFSET),
+  );
+  if (comparison != 0) return comparison;
+  comparison = compareStepCosts(
+    load<u32>(leftPointer + STEP_HEAP_COST_SEGMENTS_OFFSET),
+    load<f64>(leftPointer + STEP_HEAP_COST_SECONDARY_OFFSET),
+    load<u32>(rightPointer + STEP_HEAP_COST_SEGMENTS_OFFSET),
+    load<f64>(rightPointer + STEP_HEAP_COST_SECONDARY_OFFSET),
+  );
+  if (comparison != 0) return comparison;
+  const tablePointer = load<u32>(heapPointer + STEP_HEAP_TABLE_POINTER_OFFSET);
+  const leftStatePointer = stepStateRecordPointer(
+    tablePointer,
+    load<u32>(leftPointer + STEP_HEAP_STATE_INDEX_OFFSET),
+  );
+  const rightStatePointer = stepStateRecordPointer(
+    tablePointer,
+    load<u32>(rightPointer + STEP_HEAP_STATE_INDEX_OFFSET),
+  );
+  const leftCell = load<u32>(leftStatePointer + STEP_STATE_CELL_INDEX_OFFSET);
+  const rightCell = load<u32>(rightStatePointer + STEP_STATE_CELL_INDEX_OFFSET);
+  if (leftCell != rightCell) return leftCell < rightCell ? -1 : 1;
+  const leftResolvedY = load<f64>(leftPointer + STEP_HEAP_RESOLVED_Y_OFFSET);
+  const rightResolvedY = load<f64>(rightPointer + STEP_HEAP_RESOLVED_Y_OFFSET);
+  if (leftResolvedY < rightResolvedY) return -1;
+  if (leftResolvedY > rightResolvedY) return 1;
+  comparison = compareStepRouteKeys(leftStatePointer, rightStatePointer);
+  if (comparison != 0) return comparison;
+  return compareStepParentKeys(
+    tablePointer,
+    load<u32>(leftPointer + STEP_HEAP_PARENT_INDEX_OFFSET),
+    load<u32>(rightPointer + STEP_HEAP_PARENT_INDEX_OFFSET),
+  );
+}
+
+function swapStepHeapNodes(leftPointer: u32, rightPointer: u32): void {
+  let offset: u32 = 0;
+  while (offset < STEP_HEAP_NODE_BYTE_LENGTH) {
+    const temporary = load<u64>(leftPointer + offset);
+    store<u64>(leftPointer + offset, load<u64>(rightPointer + offset));
+    store<u64>(rightPointer + offset, temporary);
+    offset += sizeof<u64>();
+  }
+}
+
+function growStepHeap(heapPointer: u32): void {
+  const capacity = load<u32>(heapPointer + STEP_HEAP_CAPACITY_OFFSET);
+  const nextCapacity: u32 = capacity == 0 ? 64 : capacity * 2;
+  if (nextCapacity <= capacity || nextCapacity > u32.MAX_VALUE / STEP_HEAP_NODE_BYTE_LENGTH) trap();
+  const nextPointer = reserveArena(nextCapacity * STEP_HEAP_NODE_BYTE_LENGTH, sizeof<f64>());
+  const length = load<u32>(heapPointer + STEP_HEAP_LENGTH_OFFSET);
+  if (length > 0) {
+    memory.copy(
+      nextPointer,
+      load<u32>(heapPointer + STEP_HEAP_NODES_POINTER_OFFSET),
+      length * STEP_HEAP_NODE_BYTE_LENGTH,
+    );
+  }
+  store<u32>(heapPointer + STEP_HEAP_NODES_POINTER_OFFSET, nextPointer);
+  store<u32>(heapPointer + STEP_HEAP_CAPACITY_OFFSET, nextCapacity);
+}
+
+function pushStepHeap(
+  heapPointer: u32,
+  stateIndex: u32,
+  parentIndex: u32,
+  estimatedSegments: u32,
+  estimatedSecondary: f64,
+  costSegments: u32,
+  costSecondary: f64,
+  resolvedY: f64,
+): void {
+  let length = load<u32>(heapPointer + STEP_HEAP_LENGTH_OFFSET);
+  if (length == load<u32>(heapPointer + STEP_HEAP_CAPACITY_OFFSET)) growStepHeap(heapPointer);
+  let nodePointer = stepHeapNodePointer(heapPointer, length);
+  store<u32>(nodePointer + STEP_HEAP_STATE_INDEX_OFFSET, stateIndex);
+  store<u32>(nodePointer + STEP_HEAP_PARENT_INDEX_OFFSET, parentIndex);
+  store<u32>(nodePointer + STEP_HEAP_ESTIMATED_SEGMENTS_OFFSET, estimatedSegments);
+  store<u32>(nodePointer + STEP_HEAP_COST_SEGMENTS_OFFSET, costSegments);
+  store<f64>(nodePointer + STEP_HEAP_ESTIMATED_SECONDARY_OFFSET, estimatedSecondary);
+  store<f64>(nodePointer + STEP_HEAP_COST_SECONDARY_OFFSET, costSecondary);
+  store<f64>(nodePointer + STEP_HEAP_RESOLVED_Y_OFFSET, resolvedY);
+  length += 1;
+  store<u32>(heapPointer + STEP_HEAP_LENGTH_OFFSET, length);
+  let nodeIndex = length - 1;
+  while (nodeIndex > 0) {
+    const parentNodeIndex = (nodeIndex - 1) / 2;
+    nodePointer = stepHeapNodePointer(heapPointer, nodeIndex);
+    const parentPointer = stepHeapNodePointer(heapPointer, parentNodeIndex);
+    if (compareStepHeapNodes(heapPointer, nodePointer, parentPointer) >= 0) break;
+    swapStepHeapNodes(nodePointer, parentPointer);
+    nodeIndex = parentNodeIndex;
+  }
+}
+
+function popStepHeap(heapPointer: u32, outputPointer: u32): bool {
+  let length = load<u32>(heapPointer + STEP_HEAP_LENGTH_OFFSET);
+  if (length == 0) return false;
+  const rootPointer = stepHeapNodePointer(heapPointer, 0);
+  memory.copy(outputPointer, rootPointer, STEP_HEAP_NODE_BYTE_LENGTH);
+  length -= 1;
+  store<u32>(heapPointer + STEP_HEAP_LENGTH_OFFSET, length);
+  if (length == 0) return true;
+  memory.copy(rootPointer, stepHeapNodePointer(heapPointer, length), STEP_HEAP_NODE_BYTE_LENGTH);
+  let nodeIndex: u32 = 0;
+  while (true) {
+    const leftIndex = nodeIndex * 2 + 1;
+    if (leftIndex >= length) break;
+    const rightIndex = leftIndex + 1;
+    let bestIndex = leftIndex;
+    if (
+      rightIndex < length &&
+      compareStepHeapNodes(
+        heapPointer,
+        stepHeapNodePointer(heapPointer, rightIndex),
+        stepHeapNodePointer(heapPointer, leftIndex),
+      ) < 0
+    ) bestIndex = rightIndex;
+    const nodePointer = stepHeapNodePointer(heapPointer, nodeIndex);
+    const bestPointer = stepHeapNodePointer(heapPointer, bestIndex);
+    if (compareStepHeapNodes(heapPointer, bestPointer, nodePointer) >= 0) break;
+    swapStepHeapNodes(nodePointer, bestPointer);
+    nodeIndex = bestIndex;
+  }
+  return true;
+}
+
+@inline
+function stepGraphXForCell(
+  contextPointer: u32,
+  cellIndex: u32,
+  startIndex: u32,
+  targetIndex: u32,
+  exactStartX: f64,
+  exactTargetX: f64,
+): f64 {
+  if (cellIndex == startIndex) return exactStartX;
+  if (cellIndex == targetIndex) return exactTargetX;
+  const gridX = cellIndex % getPlaneWidth();
+  const physicalX =
+    (load<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET) & Layout.ROUTE_CONTEXT_FLAG_MIRRORED) == 0
+      ? gridX
+      : getPlaneWidth() - 1 - gridX;
+  const minimum = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MIN_X_OFFSET);
+  const maximum = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MAX_X_OFFSET);
+  return minimum + ((<f64>physicalX + 0.5) / getGraphwarPlaneLength()) * (maximum - minimum);
+}
+
+@inline
+function stepGraphYForCell(
+  contextPointer: u32,
+  cellIndex: u32,
+  startIndex: u32,
+  targetIndex: u32,
+  exactStartY: f64,
+  exactTargetY: f64,
+): f64 {
+  if (cellIndex == startIndex) return exactStartY;
+  if (cellIndex == targetIndex) return exactTargetY;
+  const maximum = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MAX_Y_OFFSET);
+  const minimum = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MIN_Y_OFFSET);
+  return maximum - ((<f64>(cellIndex / getPlaneWidth()) + 0.5) / getGraphwarPlaneHeight()) * (maximum - minimum);
+}
+
+function runStepSearchEdgeTransition(
+  contextPointer: u32,
+  fromCellIndex: u32,
+  nextCellIndex: u32,
+  startIndex: u32,
+  targetIndex: u32,
+  exactStartX: f64,
+  exactStartY: f64,
+  exactTargetX: f64,
+  exactTargetY: f64,
+  resolvedY: f64,
+  stateSign: i32,
+  statePointer: u32,
+  stateCount: u32,
+): u32 {
+  const inputPointer = reserveArena(Layout.ROUTE_STEP_TRANSITION_INPUT_BYTE_LENGTH, sizeof<f64>());
+  store<u32>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_CONTEXT_POINTER_OFFSET, contextPointer);
+  store<f64>(
+    inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_PREVIOUS_X_OFFSET,
+    stepGraphXForCell(contextPointer, fromCellIndex, startIndex, targetIndex, exactStartX, exactTargetX),
+  );
+  store<f64>(
+    inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_PREVIOUS_Y_OFFSET,
+    stepGraphYForCell(contextPointer, fromCellIndex, startIndex, targetIndex, exactStartY, exactTargetY),
+  );
+  store<f64>(
+    inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_NEXT_X_OFFSET,
+    stepGraphXForCell(contextPointer, nextCellIndex, startIndex, targetIndex, exactStartX, exactTargetX),
+  );
+  store<f64>(
+    inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_NEXT_Y_OFFSET,
+    stepGraphYForCell(contextPointer, nextCellIndex, startIndex, targetIndex, exactStartY, exactTargetY),
+  );
+  store<f64>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_RESOLVED_Y_OFFSET, resolvedY);
+  store<i32>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_SIGN_OFFSET, stateSign);
+  store<u32>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_POINTER_OFFSET, statePointer);
+  store<u32>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_COUNT_OFFSET, stateCount);
+  return runStepTransition(inputPointer, Layout.ROUTE_STEP_TRANSITION_INPUT_BYTE_LENGTH);
+}
+
+function pushStepState(
+  contextPointer: u32,
+  tablePointer: u32,
+  heapPointer: u32,
+  stateIndex: u32,
+  targetIndex: u32,
+  exactStartY: f64,
+  exactTargetY: f64,
+  startIndex: u32,
+): void {
+  const statePointer = stepStateRecordPointer(tablePointer, stateIndex);
+  const cellIndex = load<u32>(statePointer + STEP_STATE_CELL_INDEX_OFFSET);
+  const costSegments = load<u32>(statePointer + STEP_STATE_COST_SEGMENTS_OFFSET);
+  const costSecondary = load<f64>(statePointer + STEP_STATE_COST_SECONDARY_OFFSET);
+  const isTarget = cellIndex == targetIndex;
+  pushStepHeap(
+    heapPointer,
+    stateIndex,
+    load<u32>(statePointer + STEP_STATE_PARENT_INDEX_OFFSET),
+    isTarget ? costSegments : costSegments + 1,
+    isTarget
+      ? costSecondary
+      : costSecondary +
+        NativeMath.abs(
+          stepGraphYForCell(contextPointer, targetIndex, startIndex, targetIndex, exactStartY, exactTargetY) -
+          stepGraphYForCell(contextPointer, cellIndex, startIndex, targetIndex, exactStartY, exactTargetY),
+        ),
+    costSegments,
+    costSecondary,
+    load<f64>(statePointer + STEP_STATE_RESOLVED_Y_OFFSET),
+  );
+}
+
+function relaxStepSearchTransition(
+  contextPointer: u32,
+  tablePointer: u32,
+  heapPointer: u32,
+  previewStatePointer: u32,
+  fromStateIndex: u32,
+  nextCellIndex: u32,
+  startIndex: u32,
+  targetIndex: u32,
+  exactStartX: f64,
+  exactStartY: f64,
+  exactTargetX: f64,
+  exactTargetY: f64,
+): void {
+  const fromStatePointer = stepStateRecordPointer(tablePointer, fromStateIndex);
+  const fromCellIndex = load<u32>(fromStatePointer + STEP_STATE_CELL_INDEX_OFFSET);
+  const width = getPlaneWidth();
+  if (nextCellIndex % width <= fromCellIndex % width) return;
+  const edgeMark = markArena();
+  const resultPointer = runStepSearchEdgeTransition(
+    contextPointer,
+    fromCellIndex,
+    nextCellIndex,
+    startIndex,
+    targetIndex,
+    exactStartX,
+    exactStartY,
+    exactTargetX,
+    exactTargetY,
+    load<f64>(fromStatePointer + STEP_STATE_RESOLVED_Y_OFFSET),
+    load<i32>(fromStatePointer + STEP_STATE_SIGN_OFFSET),
+    load<u32>(fromStatePointer + STEP_STATE_LIMB_POINTER_OFFSET),
+    load<u32>(fromStatePointer + STEP_STATE_LIMB_COUNT_OFFSET),
+  );
+  if (load<u32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATUS_OFFSET) != Layout.ROUTE_STEP_TRANSITION_STATUS_SUCCESS) {
+    resetArena(edgeMark);
+    return;
+  }
+  const nextSign = load<i32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_SIGN_OFFSET);
+  const nextStatePointer = load<u32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_POINTER_OFFSET);
+  const nextStateCount = load<u32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_COUNT_OFFSET);
+  const nextResolvedY = load<f64>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_RESOLVED_END_Y_OFFSET);
+  const nextSegments = load<u32>(fromStatePointer + STEP_STATE_COST_SEGMENTS_OFFSET) + 1;
+  const nextSecondary =
+    load<f64>(fromStatePointer + STEP_STATE_COST_SECONDARY_OFFSET) +
+    load<f64>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_SECONDARY_COST_OFFSET);
+  let nextStateIndex = findStepStateIndex(
+    tablePointer,
+    nextCellIndex,
+    nextSign,
+    nextStatePointer,
+    nextStateCount,
+  );
+  if (nextStateIndex != STEP_STATE_MISSING_INDEX) {
+    const previousPointer = stepStateRecordPointer(tablePointer, nextStateIndex);
+    if (
+      compareStepCosts(
+        load<u32>(previousPointer + STEP_STATE_COST_SEGMENTS_OFFSET),
+        load<f64>(previousPointer + STEP_STATE_COST_SECONDARY_OFFSET),
+        nextSegments,
+        nextSecondary,
+      ) <= 0
+    ) {
+      resetArena(edgeMark);
+      return;
+    }
+    resetArena(edgeMark);
+    const refreshedPointer = stepStateRecordPointer(tablePointer, nextStateIndex);
+    store<f64>(refreshedPointer + STEP_STATE_RESOLVED_Y_OFFSET, nextResolvedY);
+    store<u32>(refreshedPointer + STEP_STATE_COST_SEGMENTS_OFFSET, nextSegments);
+    store<u32>(refreshedPointer + STEP_STATE_IS_CLOSED_OFFSET, 0);
+    store<f64>(refreshedPointer + STEP_STATE_COST_SECONDARY_OFFSET, nextSecondary);
+    store<u32>(refreshedPointer + STEP_STATE_PARENT_INDEX_OFFSET, fromStateIndex);
+  } else {
+    nextStateIndex = appendStepState(
+      tablePointer,
+      nextCellIndex,
+      nextSign,
+      nextStatePointer,
+      nextStateCount,
+      nextResolvedY,
+      nextSegments,
+      nextSecondary,
+      fromStateIndex,
+    );
+    commitArena(edgeMark);
+  }
+  pushStepState(
+    contextPointer,
+    tablePointer,
+    heapPointer,
+    nextStateIndex,
+    targetIndex,
+    exactStartY,
+    exactTargetY,
+    startIndex,
+  );
+  if (previewStatePointer != 0) {
+    appendRoutePreviewAcceptedEdge(
+      previewStatePointer,
+      <i32>(fromCellIndex % width),
+      <i32>(fromCellIndex / width),
+      <i32>(nextCellIndex % width),
+      <i32>(nextCellIndex / width),
+    );
+  }
+}
+
+function relaxStepSearchNeighbor(
+  contextPointer: u32,
+  tablePointer: u32,
+  heapPointer: u32,
+  previewStatePointer: u32,
+  currentStateIndex: u32,
+  nextCellIndex: u32,
+  startIndex: u32,
+  targetIndex: u32,
+  exactStartX: f64,
+  exactStartY: f64,
+  exactTargetX: f64,
+  exactTargetY: f64,
+): void {
+  const currentPointer = stepStateRecordPointer(tablePointer, currentStateIndex);
+  const currentCellIndex = load<u32>(currentPointer + STEP_STATE_CELL_INDEX_OFFSET);
+  const parentIndex = load<u32>(currentPointer + STEP_STATE_PARENT_INDEX_OFFSET);
+  relaxStepSearchTransition(
+    contextPointer,
+    tablePointer,
+    heapPointer,
+    previewStatePointer,
+    currentStateIndex,
+    nextCellIndex,
+    startIndex,
+    targetIndex,
+    exactStartX,
+    exactStartY,
+    exactTargetX,
+    exactTargetY,
+  );
+  if (
+    load<u32>(stepStateRecordPointer(tablePointer, parentIndex) + STEP_STATE_CELL_INDEX_OFFSET) !=
+    currentCellIndex
+  ) {
+    relaxStepSearchTransition(
+      contextPointer,
+      tablePointer,
+      heapPointer,
+      previewStatePointer,
+      parentIndex,
+      nextCellIndex,
+      startIndex,
+      targetIndex,
+      exactStartX,
+      exactStartY,
+      exactTargetX,
+      exactTargetY,
+    );
+  }
+}
+
+function createStepStatePath(tablePointer: u32, targetStateIndex: u32): u32 {
+  const stateCount = load<u32>(tablePointer + STEP_STATE_TABLE_COUNT_OFFSET);
+  let pathLength: u32 = 0;
+  let stateIndex = targetStateIndex;
+  while (pathLength <= stateCount) {
+    pathLength += 1;
+    const statePointer = stepStateRecordPointer(tablePointer, stateIndex);
+    const parentIndex = load<u32>(statePointer + STEP_STATE_PARENT_INDEX_OFFSET);
+    if (parentIndex == stateIndex) break;
+    stateIndex = parentIndex;
+  }
+  if (pathLength > stateCount) trap();
+  const pathXPointer = reserveArena(pathLength * sizeof<f64>(), sizeof<f64>());
+  const pathYPointer = reserveArena(pathLength * sizeof<f64>(), sizeof<f64>());
+  stateIndex = targetStateIndex;
+  let outputIndex = pathLength;
+  const width = getPlaneWidth();
+  while (outputIndex > 0) {
+    outputIndex -= 1;
+    const statePointer = stepStateRecordPointer(tablePointer, stateIndex);
+    const cellIndex = load<u32>(statePointer + STEP_STATE_CELL_INDEX_OFFSET);
+    store<f64>(pathXPointer + outputIndex * sizeof<f64>(), <f64>(cellIndex % width));
+    store<f64>(pathYPointer + outputIndex * sizeof<f64>(), <f64>(cellIndex / width));
+    const parentIndex = load<u32>(statePointer + STEP_STATE_PARENT_INDEX_OFFSET);
+    if (parentIndex == stateIndex) break;
+    stateIndex = parentIndex;
+  }
+  const pathPointer = reserveArena(12, sizeof<u32>());
+  store<u32>(pathPointer, pathXPointer);
+  store<u32>(pathPointer + 4, pathYPointer);
+  store<u32>(pathPointer + 8, pathLength);
+  return pathPointer;
+}
+
+const STEP_SIMPLIFIED_PATH_POINTER_OFFSET: u32 = 0;
+const STEP_SIMPLIFIED_TERMINAL_RESOLVED_Y_OFFSET: u32 = 16;
+const STEP_SIMPLIFIED_TERMINAL_SIGN_OFFSET: u32 = 24;
+const STEP_SIMPLIFIED_TERMINAL_LIMB_POINTER_OFFSET: u32 = 28;
+const STEP_SIMPLIFIED_TERMINAL_LIMB_COUNT_OFFSET: u32 = 32;
+const STEP_SIMPLIFIED_BYTE_LENGTH: u32 = 40;
+
+function createSimplifiedStepPath(
+  contextPointer: u32,
+  tablePointer: u32,
+  rawPathPointer: u32,
+  startStateIndex: u32,
+  targetStateIndex: u32,
+  startIndex: u32,
+  targetIndex: u32,
+  exactStartX: f64,
+  exactStartY: f64,
+  exactTargetX: f64,
+  exactTargetY: f64,
+): u32 {
+  const descriptorPointer = reserveArena(STEP_SIMPLIFIED_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(descriptorPointer, 0, STEP_SIMPLIFIED_BYTE_LENGTH);
+  const rawLength = load<u32>(rawPathPointer + 8);
+  const terminalStatePointer = stepStateRecordPointer(tablePointer, targetStateIndex);
+  if (rawLength <= 2) {
+    store<u32>(descriptorPointer + STEP_SIMPLIFIED_PATH_POINTER_OFFSET, rawPathPointer);
+    store<f64>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_RESOLVED_Y_OFFSET, load<f64>(terminalStatePointer + STEP_STATE_RESOLVED_Y_OFFSET));
+    store<i32>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_SIGN_OFFSET, load<i32>(terminalStatePointer + STEP_STATE_SIGN_OFFSET));
+    store<u32>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_LIMB_POINTER_OFFSET, load<u32>(terminalStatePointer + STEP_STATE_LIMB_POINTER_OFFSET));
+    store<u32>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_LIMB_COUNT_OFFSET, load<u32>(terminalStatePointer + STEP_STATE_LIMB_COUNT_OFFSET));
+    return descriptorPointer;
+  }
+  const rawXPointer = load<u32>(rawPathPointer);
+  const rawYPointer = load<u32>(rawPathPointer + 4);
+  const simplifiedXPointer = reserveArena(rawLength * sizeof<f64>(), sizeof<f64>());
+  const simplifiedYPointer = reserveArena(rawLength * sizeof<f64>(), sizeof<f64>());
+  const initialPointer = stepStateRecordPointer(tablePointer, startStateIndex);
+  let routeResolvedY = load<f64>(initialPointer + STEP_STATE_RESOLVED_Y_OFFSET);
+  let routeSign = load<i32>(initialPointer + STEP_STATE_SIGN_OFFSET);
+  let routeLimbPointer = load<u32>(initialPointer + STEP_STATE_LIMB_POINTER_OFFSET);
+  let routeLimbCount = load<u32>(initialPointer + STEP_STATE_LIMB_COUNT_OFFSET);
+  let simplifiedLength: u32 = 0;
+  let anchorIndex: u32 = 0;
+  const width = getPlaneWidth();
+  while (anchorIndex < rawLength) {
+    const anchorX = <u32>load<f64>(rawXPointer + anchorIndex * sizeof<f64>());
+    const anchorY = <u32>load<f64>(rawYPointer + anchorIndex * sizeof<f64>());
+    store<f64>(simplifiedXPointer + simplifiedLength * sizeof<f64>(), <f64>anchorX);
+    store<f64>(simplifiedYPointer + simplifiedLength * sizeof<f64>(), <f64>anchorY);
+    simplifiedLength += 1;
+    if (anchorIndex + 1 >= rawLength) break;
+    let nextIndex = STEP_STATE_MISSING_INDEX;
+    let candidateIndex = rawLength;
+    while (candidateIndex > anchorIndex + 1) {
+      candidateIndex -= 1;
+      const candidateX = <u32>load<f64>(rawXPointer + candidateIndex * sizeof<f64>());
+      const candidateY = <u32>load<f64>(rawYPointer + candidateIndex * sizeof<f64>());
+      if (candidateX <= anchorX) continue;
+      const candidateMark = markArena();
+      const transitionPointer = runStepSearchEdgeTransition(
+        contextPointer,
+        anchorY * width + anchorX,
+        candidateY * width + candidateX,
+        startIndex,
+        targetIndex,
+        exactStartX,
+        exactStartY,
+        exactTargetX,
+        exactTargetY,
+        routeResolvedY,
+        routeSign,
+        routeLimbPointer,
+        routeLimbCount,
+      );
+      if (
+        load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATUS_OFFSET) ==
+        Layout.ROUTE_STEP_TRANSITION_STATUS_SUCCESS
+      ) {
+        nextIndex = candidateIndex;
+        routeResolvedY = load<f64>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_RESOLVED_END_Y_OFFSET);
+        routeSign = load<i32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_SIGN_OFFSET);
+        routeLimbPointer = load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_POINTER_OFFSET);
+        routeLimbCount = load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_COUNT_OFFSET);
+        commitArena(candidateMark);
+        break;
+      }
+      resetArena(candidateMark);
+    }
+    if (nextIndex == STEP_STATE_MISSING_INDEX) {
+      store<u32>(descriptorPointer + STEP_SIMPLIFIED_PATH_POINTER_OFFSET, rawPathPointer);
+      store<f64>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_RESOLVED_Y_OFFSET, load<f64>(terminalStatePointer + STEP_STATE_RESOLVED_Y_OFFSET));
+      store<i32>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_SIGN_OFFSET, load<i32>(terminalStatePointer + STEP_STATE_SIGN_OFFSET));
+      store<u32>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_LIMB_POINTER_OFFSET, load<u32>(terminalStatePointer + STEP_STATE_LIMB_POINTER_OFFSET));
+      store<u32>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_LIMB_COUNT_OFFSET, load<u32>(terminalStatePointer + STEP_STATE_LIMB_COUNT_OFFSET));
+      return descriptorPointer;
+    }
+    anchorIndex = nextIndex;
+  }
+  const pathPointer = reserveArena(12, sizeof<u32>());
+  store<u32>(pathPointer, simplifiedXPointer);
+  store<u32>(pathPointer + 4, simplifiedYPointer);
+  store<u32>(pathPointer + 8, simplifiedLength);
+  store<u32>(descriptorPointer + STEP_SIMPLIFIED_PATH_POINTER_OFFSET, pathPointer);
+  store<f64>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_RESOLVED_Y_OFFSET, routeResolvedY);
+  store<i32>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_SIGN_OFFSET, routeSign);
+  store<u32>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_LIMB_POINTER_OFFSET, routeLimbCount == 0 ? 0 : routeLimbPointer);
+  store<u32>(descriptorPointer + STEP_SIMPLIFIED_TERMINAL_LIMB_COUNT_OFFSET, routeLimbCount);
+  return descriptorPointer;
+}
+
+// The TS preview sorts at most 64 heap nodes with V8's stable PowerSort. Because nearlyEqual makes
+// the comparator non-transitive, a different stable algorithm changes candidate order. Keep this
+// bounded raw implementation aligned with V8's natural runs, binary insertion, and galloping merge.
+// Upstream reference: v8/v8 third_party/v8/builtins/array-sort.tq.
+@inline
+function compareStepHeapPositions(heapPointer: u32, positionsPointer: u32, leftIndex: u32, rightIndex: u32): i32 {
+  return compareStepHeapNodes(
+    heapPointer,
+    stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + leftIndex * sizeof<u32>())),
+    stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + rightIndex * sizeof<u32>())),
+  );
+}
+
+function countAndMakeStepPreviewRun(
+  heapPointer: u32,
+  positionsPointer: u32,
+  low: u32,
+  high: u32,
+): u32 {
+  if (low + 1 == high) return 1;
+  let runLength: u32 = 2;
+  const isDescending = compareStepHeapPositions(heapPointer, positionsPointer, low + 1, low) < 0;
+  while (low + runLength < high) {
+    const comparison = compareStepHeapPositions(
+      heapPointer,
+      positionsPointer,
+      low + runLength,
+      low + runLength - 1,
+    );
+    if (isDescending ? comparison >= 0 : comparison < 0) break;
+    runLength += 1;
+  }
+  if (isDescending) {
+    let left = low;
+    let right = low + runLength - 1;
+    while (left < right) {
+      const value = load<u32>(positionsPointer + left * sizeof<u32>());
+      store<u32>(positionsPointer + left * sizeof<u32>(), load<u32>(positionsPointer + right * sizeof<u32>()));
+      store<u32>(positionsPointer + right * sizeof<u32>(), value);
+      left += 1;
+      right -= 1;
+    }
+  }
+  return runLength;
+}
+
+function binaryInsertionSortStepPreview(
+  heapPointer: u32,
+  positionsPointer: u32,
+  low: u32,
+  start: u32,
+  high: u32,
+): void {
+  if (start == low) start += 1;
+  while (start < high) {
+    const pivot = load<u32>(positionsPointer + start * sizeof<u32>());
+    let left = low;
+    let right = start;
+    while (left < right) {
+      const middle = left + ((right - left) >> 1);
+      const comparison = compareStepHeapNodes(
+        heapPointer,
+        stepHeapNodePointer(heapPointer, pivot),
+        stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + middle * sizeof<u32>())),
+      );
+      if (comparison < 0) right = middle;
+      else left = middle + 1;
+    }
+    let position = start;
+    while (position > left) {
+      store<u32>(
+        positionsPointer + position * sizeof<u32>(),
+        load<u32>(positionsPointer + (position - 1) * sizeof<u32>()),
+      );
+      position -= 1;
+    }
+    store<u32>(positionsPointer + left * sizeof<u32>(), pivot);
+    start += 1;
+  }
+}
+
+function gallopLeftStepPreview(
+  heapPointer: u32,
+  positionsPointer: u32,
+  keyPosition: u32,
+  base: u32,
+  length: u32,
+  hint: u32,
+): u32 {
+  let lastOffset: i32 = 0;
+  let offset: i32 = 1;
+  let comparison = compareStepHeapNodes(
+    heapPointer,
+    stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + (base + hint) * sizeof<u32>())),
+    stepHeapNodePointer(heapPointer, keyPosition),
+  );
+  if (comparison < 0) {
+    const maximumOffset = <i32>(length - hint);
+    while (offset < maximumOffset) {
+      comparison = compareStepHeapNodes(
+        heapPointer,
+        stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + (base + hint + <u32>offset) * sizeof<u32>())),
+        stepHeapNodePointer(heapPointer, keyPosition),
+      );
+      if (comparison >= 0) break;
+      lastOffset = offset;
+      offset = (offset << 1) + 1;
+    }
+    if (offset > maximumOffset) offset = maximumOffset;
+    lastOffset += <i32>hint;
+    offset += <i32>hint;
+  } else {
+    const maximumOffset = <i32>hint + 1;
+    while (offset < maximumOffset) {
+      comparison = compareStepHeapNodes(
+        heapPointer,
+        stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + (base + hint - <u32>offset) * sizeof<u32>())),
+        stepHeapNodePointer(heapPointer, keyPosition),
+      );
+      if (comparison < 0) break;
+      lastOffset = offset;
+      offset = (offset << 1) + 1;
+    }
+    if (offset > maximumOffset) offset = maximumOffset;
+    const previousLastOffset = lastOffset;
+    lastOffset = <i32>hint - offset;
+    offset = <i32>hint - previousLastOffset;
+  }
+  lastOffset += 1;
+  while (lastOffset < offset) {
+    const middle = lastOffset + ((offset - lastOffset) >> 1);
+    comparison = compareStepHeapNodes(
+      heapPointer,
+      stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + (base + <u32>middle) * sizeof<u32>())),
+      stepHeapNodePointer(heapPointer, keyPosition),
+    );
+    if (comparison < 0) lastOffset = middle + 1;
+    else offset = middle;
+  }
+  return <u32>offset;
+}
+
+function gallopRightStepPreview(
+  heapPointer: u32,
+  positionsPointer: u32,
+  keyPosition: u32,
+  base: u32,
+  length: u32,
+  hint: u32,
+): u32 {
+  let lastOffset: i32 = 0;
+  let offset: i32 = 1;
+  let comparison = compareStepHeapNodes(
+    heapPointer,
+    stepHeapNodePointer(heapPointer, keyPosition),
+    stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + (base + hint) * sizeof<u32>())),
+  );
+  if (comparison < 0) {
+    const maximumOffset = <i32>hint + 1;
+    while (offset < maximumOffset) {
+      comparison = compareStepHeapNodes(
+        heapPointer,
+        stepHeapNodePointer(heapPointer, keyPosition),
+        stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + (base + hint - <u32>offset) * sizeof<u32>())),
+      );
+      if (comparison >= 0) break;
+      lastOffset = offset;
+      offset = (offset << 1) + 1;
+    }
+    if (offset > maximumOffset) offset = maximumOffset;
+    const previousLastOffset = lastOffset;
+    lastOffset = <i32>hint - offset;
+    offset = <i32>hint - previousLastOffset;
+  } else {
+    const maximumOffset = <i32>(length - hint);
+    while (offset < maximumOffset) {
+      comparison = compareStepHeapNodes(
+        heapPointer,
+        stepHeapNodePointer(heapPointer, keyPosition),
+        stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + (base + hint + <u32>offset) * sizeof<u32>())),
+      );
+      if (comparison < 0) break;
+      lastOffset = offset;
+      offset = (offset << 1) + 1;
+    }
+    if (offset > maximumOffset) offset = maximumOffset;
+    lastOffset += <i32>hint;
+    offset += <i32>hint;
+  }
+  lastOffset += 1;
+  while (lastOffset < offset) {
+    const middle = lastOffset + ((offset - lastOffset) >> 1);
+    comparison = compareStepHeapNodes(
+      heapPointer,
+      stepHeapNodePointer(heapPointer, keyPosition),
+      stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + (base + <u32>middle) * sizeof<u32>())),
+    );
+    if (comparison < 0) offset = middle;
+    else lastOffset = middle + 1;
+  }
+  return <u32>offset;
+}
+
+function mergeLowStepPreview(
+  heapPointer: u32,
+  positionsPointer: u32,
+  scratchPointer: u32,
+  leftBase: u32,
+  leftLengthArgument: u32,
+  rightBase: u32,
+  rightLengthArgument: u32,
+): void {
+  let leftLength = leftLengthArgument;
+  let rightLength = rightLengthArgument;
+  memory.copy(scratchPointer, positionsPointer + leftBase * sizeof<u32>(), leftLength * sizeof<u32>());
+  let outputIndex = leftBase;
+  let scratchIndex: u32 = 0;
+  let rightIndex = rightBase;
+  store<u32>(positionsPointer + outputIndex++ * sizeof<u32>(), load<u32>(positionsPointer + rightIndex++ * sizeof<u32>()));
+  rightLength -= 1;
+  if (rightLength == 0) {
+    memory.copy(positionsPointer + outputIndex * sizeof<u32>(), scratchPointer, leftLength * sizeof<u32>());
+    return;
+  }
+  if (leftLength == 1) {
+    memory.copy(
+      positionsPointer + outputIndex * sizeof<u32>(),
+      positionsPointer + rightIndex * sizeof<u32>(),
+      rightLength * sizeof<u32>(),
+    );
+    store<u32>(positionsPointer + (outputIndex + rightLength) * sizeof<u32>(), load<u32>(scratchPointer));
+    return;
+  }
+  let minimumGallop: u32 = 7;
+  while (true) {
+    let leftWins: u32 = 0;
+    let rightWins: u32 = 0;
+    while (true) {
+      const comparison = compareStepHeapNodes(
+        heapPointer,
+        stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + rightIndex * sizeof<u32>())),
+        stepHeapNodePointer(heapPointer, load<u32>(scratchPointer + scratchIndex * sizeof<u32>())),
+      );
+      if (comparison < 0) {
+        store<u32>(
+          positionsPointer + outputIndex++ * sizeof<u32>(),
+          load<u32>(positionsPointer + rightIndex++ * sizeof<u32>()),
+        );
+        rightWins += 1;
+        rightLength -= 1;
+        leftWins = 0;
+        if (rightLength == 0) {
+          memory.copy(
+            positionsPointer + outputIndex * sizeof<u32>(),
+            scratchPointer + scratchIndex * sizeof<u32>(),
+            leftLength * sizeof<u32>(),
+          );
+          return;
+        }
+        if (rightWins >= minimumGallop) break;
+      } else {
+        store<u32>(
+          positionsPointer + outputIndex++ * sizeof<u32>(),
+          load<u32>(scratchPointer + scratchIndex++ * sizeof<u32>()),
+        );
+        leftWins += 1;
+        leftLength -= 1;
+        rightWins = 0;
+        if (leftLength == 1) {
+          memory.copy(
+            positionsPointer + outputIndex * sizeof<u32>(),
+            positionsPointer + rightIndex * sizeof<u32>(),
+            rightLength * sizeof<u32>(),
+          );
+          store<u32>(
+            positionsPointer + (outputIndex + rightLength) * sizeof<u32>(),
+            load<u32>(scratchPointer + scratchIndex * sizeof<u32>()),
+          );
+          return;
+        }
+        if (leftWins >= minimumGallop) break;
+      }
+    }
+    minimumGallop += 1;
+    let isFirstIteration = true;
+    while (leftWins >= 7 || rightWins >= 7 || isFirstIteration) {
+      isFirstIteration = false;
+      if (minimumGallop > 1) minimumGallop -= 1;
+      leftWins = gallopRightStepPreview(
+        heapPointer,
+        scratchPointer,
+        load<u32>(positionsPointer + rightIndex * sizeof<u32>()),
+        scratchIndex,
+        leftLength,
+        0,
+      );
+      if (leftWins > 0) {
+        memory.copy(
+          positionsPointer + outputIndex * sizeof<u32>(),
+          scratchPointer + scratchIndex * sizeof<u32>(),
+          leftWins * sizeof<u32>(),
+        );
+        outputIndex += leftWins;
+        scratchIndex += leftWins;
+        leftLength -= leftWins;
+        if (leftLength == 0) return;
+        if (leftLength == 1) {
+          memory.copy(
+            positionsPointer + outputIndex * sizeof<u32>(),
+            positionsPointer + rightIndex * sizeof<u32>(),
+            rightLength * sizeof<u32>(),
+          );
+          store<u32>(
+            positionsPointer + (outputIndex + rightLength) * sizeof<u32>(),
+            load<u32>(scratchPointer + scratchIndex * sizeof<u32>()),
+          );
+          return;
+        }
+      }
+      store<u32>(
+        positionsPointer + outputIndex++ * sizeof<u32>(),
+        load<u32>(positionsPointer + rightIndex++ * sizeof<u32>()),
+      );
+      rightLength -= 1;
+      if (rightLength == 0) {
+        memory.copy(
+          positionsPointer + outputIndex * sizeof<u32>(),
+          scratchPointer + scratchIndex * sizeof<u32>(),
+          leftLength * sizeof<u32>(),
+        );
+        return;
+      }
+      rightWins = gallopLeftStepPreview(
+        heapPointer,
+        positionsPointer,
+        load<u32>(scratchPointer + scratchIndex * sizeof<u32>()),
+        rightIndex,
+        rightLength,
+        0,
+      );
+      if (rightWins > 0) {
+        memory.copy(
+          positionsPointer + outputIndex * sizeof<u32>(),
+          positionsPointer + rightIndex * sizeof<u32>(),
+          rightWins * sizeof<u32>(),
+        );
+        outputIndex += rightWins;
+        rightIndex += rightWins;
+        rightLength -= rightWins;
+        if (rightLength == 0) {
+          memory.copy(
+            positionsPointer + outputIndex * sizeof<u32>(),
+            scratchPointer + scratchIndex * sizeof<u32>(),
+            leftLength * sizeof<u32>(),
+          );
+          return;
+        }
+      }
+      store<u32>(
+        positionsPointer + outputIndex++ * sizeof<u32>(),
+        load<u32>(scratchPointer + scratchIndex++ * sizeof<u32>()),
+      );
+      leftLength -= 1;
+      if (leftLength == 1) {
+        memory.copy(
+          positionsPointer + outputIndex * sizeof<u32>(),
+          positionsPointer + rightIndex * sizeof<u32>(),
+          rightLength * sizeof<u32>(),
+        );
+        store<u32>(
+          positionsPointer + (outputIndex + rightLength) * sizeof<u32>(),
+          load<u32>(scratchPointer + scratchIndex * sizeof<u32>()),
+        );
+        return;
+      }
+    }
+    minimumGallop += 1;
+  }
+}
+
+function mergeHighStepPreview(
+  heapPointer: u32,
+  positionsPointer: u32,
+  scratchPointer: u32,
+  leftBase: u32,
+  leftLengthArgument: u32,
+  rightBase: u32,
+  rightLengthArgument: u32,
+): void {
+  let leftLength = leftLengthArgument;
+  let rightLength = rightLengthArgument;
+  memory.copy(scratchPointer, positionsPointer + rightBase * sizeof<u32>(), rightLength * sizeof<u32>());
+  let outputIndex = rightBase + rightLength - 1;
+  let scratchIndex = rightLength - 1;
+  let leftIndex = leftBase + leftLength - 1;
+  store<u32>(positionsPointer + outputIndex-- * sizeof<u32>(), load<u32>(positionsPointer + leftIndex-- * sizeof<u32>()));
+  leftLength -= 1;
+  if (leftLength == 0) {
+    memory.copy(
+      positionsPointer + (outputIndex - (rightLength - 1)) * sizeof<u32>(),
+      scratchPointer,
+      rightLength * sizeof<u32>(),
+    );
+    return;
+  }
+  if (rightLength == 1) {
+    outputIndex -= leftLength;
+    leftIndex -= leftLength;
+    memory.copy(
+      positionsPointer + (outputIndex + 1) * sizeof<u32>(),
+      positionsPointer + (leftIndex + 1) * sizeof<u32>(),
+      leftLength * sizeof<u32>(),
+    );
+    store<u32>(positionsPointer + outputIndex * sizeof<u32>(), load<u32>(scratchPointer + scratchIndex * sizeof<u32>()));
+    return;
+  }
+  let minimumGallop: u32 = 7;
+  while (true) {
+    let leftWins: u32 = 0;
+    let rightWins: u32 = 0;
+    while (true) {
+      const comparison = compareStepHeapNodes(
+        heapPointer,
+        stepHeapNodePointer(heapPointer, load<u32>(scratchPointer + scratchIndex * sizeof<u32>())),
+        stepHeapNodePointer(heapPointer, load<u32>(positionsPointer + leftIndex * sizeof<u32>())),
+      );
+      if (comparison < 0) {
+        store<u32>(
+          positionsPointer + outputIndex-- * sizeof<u32>(),
+          load<u32>(positionsPointer + leftIndex-- * sizeof<u32>()),
+        );
+        leftWins += 1;
+        leftLength -= 1;
+        rightWins = 0;
+        if (leftLength == 0) {
+          memory.copy(
+            positionsPointer + (outputIndex - (rightLength - 1)) * sizeof<u32>(),
+            scratchPointer,
+            rightLength * sizeof<u32>(),
+          );
+          return;
+        }
+        if (leftWins >= minimumGallop) break;
+      } else {
+        store<u32>(
+          positionsPointer + outputIndex-- * sizeof<u32>(),
+          load<u32>(scratchPointer + scratchIndex-- * sizeof<u32>()),
+        );
+        rightWins += 1;
+        rightLength -= 1;
+        leftWins = 0;
+        if (rightLength == 1) {
+          outputIndex -= leftLength;
+          leftIndex -= leftLength;
+          memory.copy(
+            positionsPointer + (outputIndex + 1) * sizeof<u32>(),
+            positionsPointer + (leftIndex + 1) * sizeof<u32>(),
+            leftLength * sizeof<u32>(),
+          );
+          store<u32>(
+            positionsPointer + outputIndex * sizeof<u32>(),
+            load<u32>(scratchPointer + scratchIndex * sizeof<u32>()),
+          );
+          return;
+        }
+        if (rightWins >= minimumGallop) break;
+      }
+    }
+    minimumGallop += 1;
+    let isFirstIteration = true;
+    while (leftWins >= 7 || rightWins >= 7 || isFirstIteration) {
+      isFirstIteration = false;
+      if (minimumGallop > 1) minimumGallop -= 1;
+      const leftGallop = gallopRightStepPreview(
+        heapPointer,
+        positionsPointer,
+        load<u32>(scratchPointer + scratchIndex * sizeof<u32>()),
+        leftBase,
+        leftLength,
+        leftLength - 1,
+      );
+      leftWins = leftLength - leftGallop;
+      if (leftWins > 0) {
+        outputIndex -= leftWins;
+        leftIndex -= leftWins;
+        memory.copy(
+          positionsPointer + (outputIndex + 1) * sizeof<u32>(),
+          positionsPointer + (leftIndex + 1) * sizeof<u32>(),
+          leftWins * sizeof<u32>(),
+        );
+        leftLength -= leftWins;
+        if (leftLength == 0) {
+          memory.copy(
+            positionsPointer + (outputIndex - (rightLength - 1)) * sizeof<u32>(),
+            scratchPointer,
+            rightLength * sizeof<u32>(),
+          );
+          return;
+        }
+      }
+      store<u32>(
+        positionsPointer + outputIndex-- * sizeof<u32>(),
+        load<u32>(scratchPointer + scratchIndex-- * sizeof<u32>()),
+      );
+      rightLength -= 1;
+      if (rightLength == 1) {
+        outputIndex -= leftLength;
+        leftIndex -= leftLength;
+        memory.copy(
+          positionsPointer + (outputIndex + 1) * sizeof<u32>(),
+          positionsPointer + (leftIndex + 1) * sizeof<u32>(),
+          leftLength * sizeof<u32>(),
+        );
+        store<u32>(
+          positionsPointer + outputIndex * sizeof<u32>(),
+          load<u32>(scratchPointer + scratchIndex * sizeof<u32>()),
+        );
+        return;
+      }
+      const rightGallop = gallopLeftStepPreview(
+        heapPointer,
+        scratchPointer,
+        load<u32>(positionsPointer + leftIndex * sizeof<u32>()),
+        0,
+        rightLength,
+        rightLength - 1,
+      );
+      rightWins = rightLength - rightGallop;
+      if (rightWins > 0) {
+        outputIndex -= rightWins;
+        scratchIndex -= rightWins;
+        memory.copy(
+          positionsPointer + (outputIndex + 1) * sizeof<u32>(),
+          scratchPointer + (scratchIndex + 1) * sizeof<u32>(),
+          rightWins * sizeof<u32>(),
+        );
+        rightLength -= rightWins;
+        if (rightLength == 0) return;
+        if (rightLength == 1) {
+          outputIndex -= leftLength;
+          leftIndex -= leftLength;
+          memory.copy(
+            positionsPointer + (outputIndex + 1) * sizeof<u32>(),
+            positionsPointer + (leftIndex + 1) * sizeof<u32>(),
+            leftLength * sizeof<u32>(),
+          );
+          store<u32>(
+            positionsPointer + outputIndex * sizeof<u32>(),
+            load<u32>(scratchPointer + scratchIndex * sizeof<u32>()),
+          );
+          return;
+        }
+      }
+      store<u32>(
+        positionsPointer + outputIndex-- * sizeof<u32>(),
+        load<u32>(positionsPointer + leftIndex-- * sizeof<u32>()),
+      );
+      leftLength -= 1;
+      if (leftLength == 0) {
+        memory.copy(
+          positionsPointer + (outputIndex - (rightLength - 1)) * sizeof<u32>(),
+          scratchPointer,
+          rightLength * sizeof<u32>(),
+        );
+        return;
+      }
+    }
+    minimumGallop += 1;
+  }
+}
+
+function mergeStepPreviewRuns(
+  heapPointer: u32,
+  positionsPointer: u32,
+  scratchPointer: u32,
+  middle: u32,
+  length: u32,
+): void {
+  let leftBase: u32 = 0;
+  let leftLength = middle;
+  const rightBase = middle;
+  let rightLength = length - middle;
+  const leftPrefixLength = gallopRightStepPreview(
+    heapPointer,
+    positionsPointer,
+    load<u32>(positionsPointer + rightBase * sizeof<u32>()),
+    leftBase,
+    leftLength,
+    0,
+  );
+  leftBase += leftPrefixLength;
+  leftLength -= leftPrefixLength;
+  if (leftLength == 0) return;
+  rightLength = gallopLeftStepPreview(
+    heapPointer,
+    positionsPointer,
+    load<u32>(positionsPointer + (leftBase + leftLength - 1) * sizeof<u32>()),
+    rightBase,
+    rightLength,
+    rightLength - 1,
+  );
+  if (rightLength == 0) return;
+  if (leftLength <= rightLength) {
+    mergeLowStepPreview(
+      heapPointer,
+      positionsPointer,
+      scratchPointer,
+      leftBase,
+      leftLength,
+      rightBase,
+      rightLength,
+    );
+  } else {
+    mergeHighStepPreview(
+      heapPointer,
+      positionsPointer,
+      scratchPointer,
+      leftBase,
+      leftLength,
+      rightBase,
+      rightLength,
+    );
+  }
+}
+
+function sortStepPreviewHeapPositions(
+  heapPointer: u32,
+  positionsPointer: u32,
+  scratchPointer: u32,
+  length: u32,
+): void {
+  if (length < 2) return;
+  if (length < 16) {
+    binaryInsertionSortStepPreview(heapPointer, positionsPointer, 0, 0, length);
+    return;
+  }
+  const minimumRunLength = length < 64 ? length : 32;
+  let firstRunLength = countAndMakeStepPreviewRun(heapPointer, positionsPointer, 0, length);
+  if (firstRunLength < minimumRunLength) {
+    binaryInsertionSortStepPreview(heapPointer, positionsPointer, 0, firstRunLength, minimumRunLength);
+    firstRunLength = minimumRunLength;
+  }
+  if (firstRunLength == length) return;
+  const secondRunLength = countAndMakeStepPreviewRun(heapPointer, positionsPointer, firstRunLength, length);
+  if (secondRunLength < length - firstRunLength) {
+    binaryInsertionSortStepPreview(
+      heapPointer,
+      positionsPointer,
+      firstRunLength,
+      firstRunLength + secondRunLength,
+      length,
+    );
+  }
+  mergeStepPreviewRuns(heapPointer, positionsPointer, scratchPointer, firstRunLength, length);
+}
+
+function collectStepPreviewCandidateIndexes(
+  tablePointer: u32,
+  heapPointer: u32,
+  currentCellIndex: u32,
+  startIndex: u32,
+  targetIndex: u32,
+  outputPointer: u32,
+  candidateLimit: u32,
+): u32 {
+  let count = addUniquePreviewCandidate(outputPointer, 0, startIndex, candidateLimit);
+  count = addUniquePreviewCandidate(outputPointer, count, targetIndex, candidateLimit);
+  count = addUniquePreviewCandidate(outputPointer, count, currentCellIndex, candidateLimit);
+  const heapLength = load<u32>(heapPointer + STEP_HEAP_LENGTH_OFFSET);
+  const snapshotLength = <u32>NativeMath.min(<f64>heapLength, <f64>candidateLimit);
+  const heapPositionsPointer = reserveArena(snapshotLength * sizeof<u32>(), sizeof<u32>());
+  let position: u32 = 0;
+  while (position < snapshotLength) {
+    store<u32>(heapPositionsPointer + position * sizeof<u32>(), position);
+    position += 1;
+  }
+  const mergeScratchPointer = reserveArena(snapshotLength * sizeof<u32>(), sizeof<u32>());
+  sortStepPreviewHeapPositions(heapPointer, heapPositionsPointer, mergeScratchPointer, snapshotLength);
+  position = 0;
+  while (position < snapshotLength && count < candidateLimit) {
+    const nodePointer = stepHeapNodePointer(
+      heapPointer,
+      load<u32>(heapPositionsPointer + position * sizeof<u32>()),
+    );
+    const statePointer = stepStateRecordPointer(
+      tablePointer,
+      load<u32>(nodePointer + STEP_HEAP_STATE_INDEX_OFFSET),
+    );
+    count = addUniquePreviewCandidate(
+      outputPointer,
+      count,
+      load<u32>(statePointer + STEP_STATE_CELL_INDEX_OFFSET),
+      candidateLimit,
+    );
+    position += 1;
+  }
+  return count;
+}
+
+function publishStepThetaPreview(
+  contextPointer: u32,
+  previewStatePointer: u32,
+  tablePointer: u32,
+  heapPointer: u32,
+  currentStateIndex: u32,
+  pathPointer: u32,
+  startIndex: u32,
+  targetIndex: u32,
+): void {
+  const width = getPlaneWidth();
+  const acceptedPointer = load<u32>(previewStatePointer + ROUTE_PREVIEW_ACCEPTED_POINTER_OFFSET);
+  const acceptedCount = load<u32>(previewStatePointer + ROUTE_PREVIEW_ACCEPTED_COUNT_OFFSET);
+  const pathLength = load<u32>(pathPointer + 8);
+  const candidateLimit = load<u32>(previewStatePointer + ROUTE_PREVIEW_CANDIDATE_LIMIT_OFFSET);
+  const candidateIndexesPointer = reserveArena(candidateLimit * sizeof<u32>(), sizeof<u32>());
+  const currentStatePointer = stepStateRecordPointer(tablePointer, currentStateIndex);
+  const currentCellIndex = load<u32>(currentStatePointer + STEP_STATE_CELL_INDEX_OFFSET);
+  const candidateCount = collectStepPreviewCandidateIndexes(
+    tablePointer,
+    heapPointer,
+    currentCellIndex,
+    startIndex,
+    targetIndex,
+    candidateIndexesPointer,
+    candidateLimit,
+  );
+  const pointCount = acceptedCount * 2 + pathLength + candidateCount + 1;
+  const pointsXPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<f64>());
+  const pointsYPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<f64>());
+  const acceptedIndexesPointer =
+    acceptedCount == 0 ? 0 : reserveArena(acceptedCount * 2 * sizeof<u32>(), sizeof<u32>());
+  const pathIndexesPointer = reserveArena(pathLength * sizeof<u32>(), sizeof<u32>());
+  const candidateOutputIndexesPointer = reserveArena(candidateCount * sizeof<u32>(), sizeof<u32>());
+  let pointIndex: u32 = 0;
+  let acceptedIndex: u32 = 0;
+  while (acceptedIndex < acceptedCount) {
+    const edgePointer = acceptedPointer + acceptedIndex * ROUTE_PREVIEW_ACCEPTED_EDGE_BYTE_LENGTH;
+    let endpoint: u32 = 0;
+    while (endpoint < 2) {
+      const coordinateOffset = endpoint * 8;
+      store<f64>(pointsXPointer + pointIndex * sizeof<f64>(), <f64>load<u32>(edgePointer + coordinateOffset));
+      store<f64>(pointsYPointer + pointIndex * sizeof<f64>(), <f64>load<u32>(edgePointer + coordinateOffset + 4));
+      store<u32>(acceptedIndexesPointer + pointIndex * sizeof<u32>(), pointIndex);
+      pointIndex += 1;
+      endpoint += 1;
+    }
+    acceptedIndex += 1;
+  }
+  const pathXPointer = load<u32>(pathPointer);
+  const pathYPointer = load<u32>(pathPointer + 4);
+  let pathIndex: u32 = 0;
+  while (pathIndex < pathLength) {
+    store<f64>(pointsXPointer + pointIndex * sizeof<f64>(), load<f64>(pathXPointer + pathIndex * sizeof<f64>()));
+    store<f64>(pointsYPointer + pointIndex * sizeof<f64>(), load<f64>(pathYPointer + pathIndex * sizeof<f64>()));
+    store<u32>(pathIndexesPointer + pathIndex * sizeof<u32>(), pointIndex);
+    pointIndex += 1;
+    pathIndex += 1;
+  }
+  let candidateIndex: u32 = 0;
+  while (candidateIndex < candidateCount) {
+    const cellIndex = load<u32>(candidateIndexesPointer + candidateIndex * sizeof<u32>());
+    store<f64>(pointsXPointer + pointIndex * sizeof<f64>(), <f64>(cellIndex % width));
+    store<f64>(pointsYPointer + pointIndex * sizeof<f64>(), <f64>(cellIndex / width));
+    store<u32>(candidateOutputIndexesPointer + candidateIndex * sizeof<u32>(), pointIndex);
+    pointIndex += 1;
+    candidateIndex += 1;
+  }
+  const currentPointIndex = pointIndex;
+  store<f64>(pointsXPointer + pointIndex * sizeof<f64>(), <f64>(currentCellIndex % width));
+  store<f64>(pointsYPointer + pointIndex * sizeof<f64>(), <f64>(currentCellIndex / width));
+  const eventPointer = appendRoutePreviewEventRecord(previewStatePointer);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_POINTS_X_POINTER_OFFSET, pointsXPointer);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_POINTS_Y_POINTER_OFFSET, pointsYPointer);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_POINT_COUNT_OFFSET, pointCount);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_ACCEPTED_INDEXES_POINTER_OFFSET, acceptedIndexesPointer);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_ACCEPTED_INDEXES_LENGTH_OFFSET, acceptedCount * 2);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_BEST_PATH_INDEXES_POINTER_OFFSET, pathIndexesPointer);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_BEST_PATH_INDEXES_LENGTH_OFFSET, pathLength);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_CANDIDATE_INDEXES_POINTER_OFFSET, candidateOutputIndexesPointer);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_CANDIDATE_INDEXES_LENGTH_OFFSET, candidateCount);
+  store<u32>(eventPointer + Layout.ROUTE_PREVIEW_CURRENT_INDEX_OFFSET, currentPointIndex);
+  store<u32>(
+    eventPointer + Layout.ROUTE_PREVIEW_FLAGS_OFFSET,
+    (load<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET) & Layout.ROUTE_CONTEXT_FLAG_MIRRORED) != 0
+      ? Layout.ROUTE_PREVIEW_FLAG_MIRRORED
+      : 0,
+  );
+}
+
+function createStepSearchResult(
+  status: u32,
+  pathPointer: u32,
+  expansions: u32,
+  previewStatePointer: u32,
+  resolvedY: f64,
+  stateSign: i32,
+  statePointer: u32,
+  stateCount: u32,
+): u32 {
+  const resultPointer = reserveArena(Layout.ROUTE_STEP_SEARCH_RESULT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(resultPointer, 0, Layout.ROUTE_STEP_SEARCH_RESULT_BYTE_LENGTH);
+  store<u32>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_MAGIC_OFFSET, Layout.ROUTE_STEP_SEARCH_RESULT_MAGIC);
+  store<u32>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_STATUS_OFFSET, status);
+  if (pathPointer != 0) {
+    store<u32>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_PATH_X_POINTER_OFFSET, load<u32>(pathPointer));
+    store<u32>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_PATH_Y_POINTER_OFFSET, load<u32>(pathPointer + 4));
+    store<u32>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_PATH_LENGTH_OFFSET, load<u32>(pathPointer + 8));
+  }
+  store<u32>(
+    resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_PREVIEW_POINTER_OFFSET,
+    previewStatePointer == 0 ? 0 : load<u32>(previewStatePointer + ROUTE_PREVIEW_EVENTS_POINTER_OFFSET),
+  );
+  store<u32>(
+    resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_PREVIEW_COUNT_OFFSET,
+    previewStatePointer == 0 ? 0 : load<u32>(previewStatePointer + ROUTE_PREVIEW_EVENT_COUNT_OFFSET),
+  );
+  store<u32>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_EXPANSION_COUNT_OFFSET, expansions);
+  if (status == Layout.ROUTE_STEP_SEARCH_RESULT_STATUS_SUCCESS) {
+    store<f64>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_RESOLVED_Y_OFFSET, resolvedY);
+    store<i32>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_STATE_SIGN_OFFSET, stateSign);
+    store<u32>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_STATE_POINTER_OFFSET, stateCount == 0 ? 0 : statePointer);
+    store<u32>(resultPointer + Layout.ROUTE_STEP_SEARCH_RESULT_STATE_COUNT_OFFSET, stateCount);
+  }
+  return resultPointer;
+}
+
+function createNoStepSearchResult(expansions: u32, previewStatePointer: u32): u32 {
+  return createStepSearchResult(
+    Layout.ROUTE_STEP_SEARCH_RESULT_STATUS_NO_ROUTE,
+    0,
+    expansions,
+    previewStatePointer,
+    0,
+    0,
+    0,
+    0,
+  );
+}
+
+function runStepThetaStarSearch(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.ROUTE_STEP_SEARCH_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<f64>());
+  const contextPointer = load<u32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_CONTEXT_POINTER_OFFSET);
+  requireRouteContext(contextPointer);
+  if ((load<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET) & Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL) == 0) {
+    trap();
+  }
+  const startX = readPlaneCoordinate(inputPointer, Layout.ROUTE_STEP_SEARCH_INPUT_START_X_OFFSET, getPlaneWidth());
+  const startY = readPlaneCoordinate(inputPointer, Layout.ROUTE_STEP_SEARCH_INPUT_START_Y_OFFSET, getPlaneHeight());
+  const targetX = readPlaneCoordinate(inputPointer, Layout.ROUTE_STEP_SEARCH_INPUT_TARGET_X_OFFSET, getPlaneWidth());
+  const targetY = readPlaneCoordinate(inputPointer, Layout.ROUTE_STEP_SEARCH_INPUT_TARGET_Y_OFFSET, getPlaneHeight());
+  const shouldCollectPreviews = load<u32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_COLLECT_PREVIEWS_OFFSET);
+  const initialResolvedY = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_RESOLVED_Y_OFFSET);
+  const initialSign = load<i32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_STATE_SIGN_OFFSET);
+  const initialStatePointer = load<u32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_STATE_POINTER_OFFSET);
+  const initialStateCount = load<u32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_STATE_COUNT_OFFSET);
+  const exactStartX = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_EXACT_START_X_OFFSET);
+  const exactStartY = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_EXACT_START_Y_OFFSET);
+  const exactTargetX = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_EXACT_TARGET_X_OFFSET);
+  const exactTargetY = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_EXACT_TARGET_Y_OFFSET);
+  if (
+    shouldCollectPreviews > 1 ||
+    !isFiniteValue(initialResolvedY) ||
+    !isFiniteValue(exactStartX) ||
+    !isFiniteValue(exactStartY) ||
+    !isFiniteValue(exactTargetX) ||
+    !isFiniteValue(exactTargetY) ||
+    initialStateCount > u32.MAX_VALUE / sizeof<u32>()
+  ) trap();
+  requireArenaRange(
+    initialStateCount == 0 ? 0 : initialStatePointer,
+    initialStateCount * sizeof<u32>(),
+    sizeof<u32>(),
+  );
+  if (
+    (initialStateCount == 0 && initialSign != 0) ||
+    (initialStateCount != 0 && (initialSign != -1 && initialSign != 1)) ||
+    (initialStateCount != 0 && load<u32>(initialStatePointer + (initialStateCount - 1) * sizeof<u32>()) == 0)
+  ) trap();
+  const previewStatePointer =
+    shouldCollectPreviews == 0
+      ? 0
+      : createRoutePreviewState(
+          load<u32>(contextPointer + Layout.ROUTE_CONTEXT_THETA_PREVIEW_EDGE_LIMIT_OFFSET),
+          load<u32>(contextPointer + Layout.ROUTE_CONTEXT_THETA_PREVIEW_CANDIDATE_LIMIT_OFFSET),
+        );
+  if (
+    pointHitsRouteContext(contextPointer, startX, startY) ||
+    pointHitsRouteContext(contextPointer, targetX, targetY) ||
+    targetX < startX ||
+    (targetX == startX && targetY != startY)
+  ) return createNoStepSearchResult(0, previewStatePointer);
+  const width = getPlaneWidth();
+  const startIndex = <u32>startY * width + <u32>startX;
+  const targetIndex = <u32>targetY * width + <u32>targetX;
+  if (targetX > startX) {
+    const directMark = markArena();
+    const transitionPointer = runStepSearchEdgeTransition(
+      contextPointer,
+      startIndex,
+      targetIndex,
+      startIndex,
+      targetIndex,
+      exactStartX,
+      exactStartY,
+      exactTargetX,
+      exactTargetY,
+      initialResolvedY,
+      initialSign,
+      initialStatePointer,
+      initialStateCount,
+    );
+    if (
+      load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATUS_OFFSET) ==
+      Layout.ROUTE_STEP_TRANSITION_STATUS_SUCCESS
+    ) {
+      const pathXPointer = reserveArena(2 * sizeof<f64>(), sizeof<f64>());
+      const pathYPointer = reserveArena(2 * sizeof<f64>(), sizeof<f64>());
+      store<f64>(pathXPointer, <f64>startX);
+      store<f64>(pathXPointer + sizeof<f64>(), <f64>targetX);
+      store<f64>(pathYPointer, <f64>startY);
+      store<f64>(pathYPointer + sizeof<f64>(), <f64>targetY);
+      const pathPointer = reserveArena(12, sizeof<u32>());
+      store<u32>(pathPointer, pathXPointer);
+      store<u32>(pathPointer + 4, pathYPointer);
+      store<u32>(pathPointer + 8, 2);
+      if (previewStatePointer != 0) {
+        publishDirectThetaPreview(contextPointer, previewStatePointer, startX, startY, targetX, targetY);
+      }
+      commitArena(directMark);
+      return createStepSearchResult(
+        Layout.ROUTE_STEP_SEARCH_RESULT_STATUS_SUCCESS,
+        pathPointer,
+        0,
+        previewStatePointer,
+        load<f64>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_RESOLVED_END_Y_OFFSET),
+        load<i32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_SIGN_OFFSET),
+        load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_POINTER_OFFSET),
+        load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_COUNT_OFFSET),
+      );
+    }
+    resetArena(directMark);
+  }
+  const tablePointer = createStepStateTable();
+  const startStateIndex = appendStepState(
+    tablePointer,
+    startIndex,
+    initialSign,
+    initialStatePointer,
+    initialStateCount,
+    initialResolvedY,
+    0,
+    0,
+    0,
+  );
+  store<u32>(stepStateRecordPointer(tablePointer, startStateIndex) + STEP_STATE_PARENT_INDEX_OFFSET, startStateIndex);
+  const heapPointer = reserveArena(STEP_HEAP_BYTE_LENGTH, sizeof<u32>());
+  memory.fill(heapPointer, 0, STEP_HEAP_BYTE_LENGTH);
+  store<u32>(heapPointer + STEP_HEAP_TABLE_POINTER_OFFSET, tablePointer);
+  pushStepState(
+    contextPointer,
+    tablePointer,
+    heapPointer,
+    startStateIndex,
+    targetIndex,
+    exactStartY,
+    exactTargetY,
+    startIndex,
+  );
+  const poppedNodePointer = reserveArena(STEP_HEAP_NODE_BYTE_LENGTH, sizeof<f64>());
+  const candidatesPointer = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_THETA_CANDIDATES_POINTER_OFFSET);
+  const seenCandidatesPointer = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_THETA_SEEN_POINTER_OFFSET);
+  let expansions: u32 = 0;
+  while (popStepHeap(heapPointer, poppedNodePointer)) {
+    const currentStateIndex = load<u32>(poppedNodePointer + STEP_HEAP_STATE_INDEX_OFFSET);
+    const currentStatePointer = stepStateRecordPointer(tablePointer, currentStateIndex);
+    if (
+      load<u32>(currentStatePointer + STEP_STATE_IS_CLOSED_OFFSET) != 0 ||
+      compareStepCosts(
+        load<u32>(poppedNodePointer + STEP_HEAP_COST_SEGMENTS_OFFSET),
+        load<f64>(poppedNodePointer + STEP_HEAP_COST_SECONDARY_OFFSET),
+        load<u32>(currentStatePointer + STEP_STATE_COST_SEGMENTS_OFFSET),
+        load<f64>(currentStatePointer + STEP_STATE_COST_SECONDARY_OFFSET),
+      ) != 0
+    ) continue;
+    const currentIndex = load<u32>(currentStatePointer + STEP_STATE_CELL_INDEX_OFFSET);
+    if (currentIndex == targetIndex) {
+      const rawPathPointer = createStepStatePath(tablePointer, currentStateIndex);
+      const simplifiedPointer = createSimplifiedStepPath(
+        contextPointer,
+        tablePointer,
+        rawPathPointer,
+        startStateIndex,
+        currentStateIndex,
+        startIndex,
+        targetIndex,
+        exactStartX,
+        exactStartY,
+        exactTargetX,
+        exactTargetY,
+      );
+      const pathPointer = load<u32>(simplifiedPointer + STEP_SIMPLIFIED_PATH_POINTER_OFFSET);
+      if (previewStatePointer != 0) {
+        publishStepThetaPreview(
+          contextPointer,
+          previewStatePointer,
+          tablePointer,
+          heapPointer,
+          currentStateIndex,
+          pathPointer,
+          startIndex,
+          targetIndex,
+        );
+      }
+      return createStepSearchResult(
+        Layout.ROUTE_STEP_SEARCH_RESULT_STATUS_SUCCESS,
+        pathPointer,
+        expansions,
+        previewStatePointer,
+        load<f64>(simplifiedPointer + STEP_SIMPLIFIED_TERMINAL_RESOLVED_Y_OFFSET),
+        load<i32>(simplifiedPointer + STEP_SIMPLIFIED_TERMINAL_SIGN_OFFSET),
+        load<u32>(simplifiedPointer + STEP_SIMPLIFIED_TERMINAL_LIMB_POINTER_OFFSET),
+        load<u32>(simplifiedPointer + STEP_SIMPLIFIED_TERMINAL_LIMB_COUNT_OFFSET),
+      );
+    }
+    store<u32>(currentStatePointer + STEP_STATE_IS_CLOSED_OFFSET, 1);
+    const currentX = <i32>(currentIndex % width);
+    const currentY = <i32>(currentIndex / width);
+    if (targetX > currentX) {
+      relaxStepSearchNeighbor(
+        contextPointer,
+        tablePointer,
+        heapPointer,
+        previewStatePointer,
+        currentStateIndex,
+        targetIndex,
+        startIndex,
+        targetIndex,
+        exactStartX,
+        exactStartY,
+        exactTargetX,
+        exactTargetY,
+      );
+    }
+    const nextX = currentX + 1;
+    if (nextX <= targetX) {
+      const candidateCount = collectThetaCandidates(
+        contextPointer,
+        currentX,
+        currentY,
+        targetX,
+        targetY,
+        nextX,
+        candidatesPointer,
+        seenCandidatesPointer,
+      );
+      let candidateIndex: u32 = 0;
+      while (candidateIndex < candidateCount) {
+        const nextY = load<u32>(candidatesPointer + candidateIndex * sizeof<u32>());
+        relaxStepSearchNeighbor(
+          contextPointer,
+          tablePointer,
+          heapPointer,
+          previewStatePointer,
+          currentStateIndex,
+          nextY * width + <u32>nextX,
+          startIndex,
+          targetIndex,
+          exactStartX,
+          exactStartY,
+          exactTargetX,
+          exactTargetY,
+        );
+        candidateIndex += 1;
+      }
+    }
+    expansions += 1;
+    if (
+      previewStatePointer != 0 &&
+      expansions % load<u32>(contextPointer + Layout.ROUTE_CONTEXT_THETA_PREVIEW_EXPANSION_INTERVAL_OFFSET) == 0
+    ) {
+      publishStepThetaPreview(
+        contextPointer,
+        previewStatePointer,
+        tablePointer,
+        heapPointer,
+        currentStateIndex,
+        createStepStatePath(tablePointer, currentStateIndex),
+        startIndex,
+        targetIndex,
+      );
+    }
+  }
+  return createNoStepSearchResult(expansions, previewStatePointer);
+}
+
 const VISIBILITY_CANDIDATE_X_POINTER_OFFSET: u32 = 0;
 const VISIBILITY_CANDIDATE_Y_POINTER_OFFSET: u32 = 4;
 const VISIBILITY_CANDIDATE_COUNT_OFFSET: u32 = 8;
@@ -3426,6 +5344,7 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   if (command == Layout.ROUTE_COMMAND_THETA_STAR) return runThetaStarSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_VISIBILITY_GRAPH) return runVisibilityGraphSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_STEP_TRANSITION) return runStepTransition(inputPointer, inputByteLength);
+  if (command == Layout.ROUTE_COMMAND_STEP_THETA_STAR) return runStepThetaStarSearch(inputPointer, inputByteLength);
   trap();
   return 0;
 }

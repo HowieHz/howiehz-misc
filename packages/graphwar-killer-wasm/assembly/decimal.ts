@@ -726,7 +726,7 @@ function divideMagnitudeSmall(pointer: u32, count: u32, divisor: u32): u32 {
 }
 
 /** Serializes a nonnegative magnitude as canonical forward ASCII digits without managed strings. */
-function serializeMagnitudeDecimal(
+export function serializeMagnitudeDecimal(
   pointer: u32,
   count: u32,
   digitPointer: u32,

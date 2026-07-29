@@ -441,6 +441,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
           {
             text: "回到主站",
             link: "https://howiehz.top",
+            target: "_blank",
           },
           {
             text: "子项目文档",
@@ -516,7 +517,11 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
       themeConfig: {
         socialLinks: [{ icon: "github", link: githubRepoUrl }],
         nav: [
-          { text: "Back to Main Site", link: "https://howiehz.top" },
+          {
+            text: "Back to Main Site",
+            link: "https://howiehz.top",
+            target: "_blank",
+          },
           {
             text: "Subproject Docs",
             items: [{ text: "compat-finder", link: "/en/compat-finder/" }],

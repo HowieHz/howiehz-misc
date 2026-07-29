@@ -18,6 +18,7 @@ export const graphwarWasmRequiredFunctionExports = [
   "reserveArena",
   "markArena",
   "resetArena",
+  "resetArenaAfterFault",
   "getArenaBase",
   "getArenaCursor",
   "getArenaPeak",
@@ -41,6 +42,7 @@ interface GraphwarWasmArenaExports {
   markArena: () => number;
   reserveArena: (byteLength: number, alignment: number) => number;
   resetArena: (markToken: number) => void;
+  resetArenaAfterFault: (markToken: number) => void;
 }
 
 interface GraphwarWasmFormulaExports {
@@ -202,6 +204,15 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
       this.#exports.resetArena(markToken);
     } catch (error) {
       throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM arena reset failed", "allocation");
+    }
+  }
+
+  /** Fault cleanup may unwind command-owned nested marks, but still requires a proven caller-owned ancestor. */
+  resetArenaAfterFault(markToken: number) {
+    try {
+      this.#exports.resetArenaAfterFault(markToken);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM faulted arena reset failed", "allocation");
     }
   }
 

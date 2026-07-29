@@ -18,6 +18,7 @@ import {
   DETECTION_INPUT_SESSION_EDGE_WIDTH_OFFSET,
   DETECTION_INPUT_SESSION_EDGE_X_OFFSET,
   DETECTION_INPUT_SESSION_EDGE_Y_OFFSET,
+  DETECTION_INPUT_SOURCE_MASK_POINTER_OFFSET,
   DETECTION_INPUT_TASK_OFFSET,
   DETECTION_INPUT_WIDTH_OFFSET,
   DETECTION_RESULT_BYTE_LENGTH,
@@ -33,6 +34,9 @@ import {
   DETECTION_RESULT_FLAG_HAS_EDGE_RECT,
   DETECTION_RESULT_MATCH_COUNT_OFFSET,
   DETECTION_RESULT_MATCH_POINTER_OFFSET,
+  DETECTION_RESULT_MASK_LENGTH_OFFSET,
+  DETECTION_RESULT_MASK_POINTER_OFFSET,
+  DETECTION_RESULT_OBSTACLE_COUNT_OFFSET,
   DETECTION_RESULT_SESSION_POINTER_OFFSET,
   DETECTION_RESULT_STAGE_COUNT_OFFSET,
   DETECTION_RESULT_STAGE_POINTER_OFFSET,
@@ -45,6 +49,10 @@ import {
   DETECTION_STAGE_BOUNDS_START,
   DETECTION_STAGE_CANDIDATES_END,
   DETECTION_STAGE_CANDIDATES_START,
+  DETECTION_STAGE_COMPONENTS_END,
+  DETECTION_STAGE_COMPONENTS_START,
+  DETECTION_STAGE_OBSTACLE_MASK_END,
+  DETECTION_STAGE_OBSTACLE_MASK_START,
   DETECTION_STAGE_TEMPLATES_END,
   DETECTION_STAGE_TEMPLATES_START,
   DETECTION_TASK_AUTO,
@@ -53,6 +61,11 @@ import {
   DETECTION_TEMPLATE_SHARD_RESULT_BYTE_LENGTH,
   DETECTION_MATCH_BYTE_LENGTH,
 } from "./detection-layout";
+import {
+  buildDetectionObstacleSourceMask,
+  filterDetectionObstacleComponents,
+  getDetectionObstacleMaskLength,
+} from "./detection-obstacle";
 import {
   collectDetectionCandidates,
   detectionMatchCandidateIndexOffset,
@@ -79,8 +92,9 @@ const AXIS_TRIPLET_LIMIT: u32 = 16;
 const DETECTION_SESSION_PHASE_BOUNDS_PENDING: u32 = 1;
 const DETECTION_SESSION_PHASE_CANDIDATES_PENDING: u32 = 2;
 const DETECTION_SESSION_PHASE_TEMPLATES_PENDING: u32 = 3;
-const DETECTION_SESSION_PHASE_OBSTACLES_PENDING: u32 = 4;
-const DETECTION_SESSION_PHASE_COMPLETE: u32 = 5;
+const DETECTION_SESSION_PHASE_OBSTACLE_MASK_PENDING: u32 = 4;
+const DETECTION_SESSION_PHASE_COMPONENTS_PENDING: u32 = 5;
+const DETECTION_SESSION_PHASE_COMPLETE: u32 = 6;
 
 @inline
 function trap(): void {
@@ -193,6 +207,14 @@ export function resumeDetectionTask(sessionPointer: u32, workPointer: u32, workC
     }
     return resumeTemplates(sessionPointer, task, workPointer, workCount);
   }
+  if (phase == DETECTION_SESSION_PHASE_OBSTACLE_MASK_PENDING) {
+    if (task == DETECTION_TASK_BOUNDS_ONLY || workPointer != 0 || workCount != 0) trap();
+    return resumeObstacleMask(sessionPointer, task);
+  }
+  if (phase == DETECTION_SESSION_PHASE_COMPONENTS_PENDING) {
+    if (task == DETECTION_TASK_BOUNDS_ONLY || workPointer != 0 || workCount != 0) trap();
+    return resumeObstacleComponents(sessionPointer, task);
+  }
   trap();
   return 0;
 }
@@ -298,13 +320,13 @@ function resumeTemplates(sessionPointer: u32, task: u32, workPointer: u32, workC
     }
   }
   finalizeDetectionTemplateMatches(sessionPointer, rawMatchesPointer, workCount);
-  store<u32>(sessionPointer + DETECTION_INPUT_PHASE_OFFSET, DETECTION_SESSION_PHASE_OBSTACLES_PENDING);
+  store<u32>(sessionPointer + DETECTION_INPUT_PHASE_OFFSET, DETECTION_SESSION_PHASE_OBSTACLE_MASK_PENDING);
   return writeDetectionResult(
     task,
     DETECTION_RESULT_RUNNING,
     sessionPointer,
     DETECTION_STAGE_TEMPLATES_END,
-    0,
+    DETECTION_STAGE_OBSTACLE_MASK_START,
     0,
     0,
     candidatePointer,
@@ -314,6 +336,65 @@ function resumeTemplates(sessionPointer: u32, task: u32, workPointer: u32, workC
     load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_WIDTH_OFFSET),
     load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_HEIGHT_OFFSET),
   );
+}
+
+function resumeObstacleMask(sessionPointer: u32, task: u32): u32 {
+  const maskLength = getDetectionObstacleMaskLength();
+  const sourceMaskPointer = reserveArena(maskLength, 1);
+  const scratchMark = markArena();
+  buildDetectionObstacleSourceMask(sessionPointer, sourceMaskPointer);
+  resetArena(scratchMark);
+  store<u32>(sessionPointer + DETECTION_INPUT_SOURCE_MASK_POINTER_OFFSET, sourceMaskPointer);
+  store<u32>(sessionPointer + DETECTION_INPUT_PHASE_OFFSET, DETECTION_SESSION_PHASE_COMPONENTS_PENDING);
+  return writeDetectionResult(
+    task,
+    DETECTION_RESULT_RUNNING,
+    sessionPointer,
+    DETECTION_STAGE_OBSTACLE_MASK_END,
+    DETECTION_STAGE_COMPONENTS_START,
+    0,
+    0,
+    load<u32>(sessionPointer + DETECTION_INPUT_CANDIDATE_POINTER_OFFSET),
+    load<u32>(sessionPointer + DETECTION_INPUT_CANDIDATE_COUNT_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_X_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_Y_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_WIDTH_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_HEIGHT_OFFSET),
+  );
+}
+
+function resumeObstacleComponents(sessionPointer: u32, task: u32): u32 {
+  const maskLength = getDetectionObstacleMaskLength();
+  const finalMaskPointer = reserveArena(maskLength, 1);
+  const scratchMark = markArena();
+  const obstacleCount = filterDetectionObstacleComponents(
+    sessionPointer,
+    load<u32>(sessionPointer + DETECTION_INPUT_SOURCE_MASK_POINTER_OFFSET),
+    finalMaskPointer,
+  );
+  resetArena(scratchMark);
+  store<u32>(sessionPointer + DETECTION_INPUT_PHASE_OFFSET, DETECTION_SESSION_PHASE_COMPLETE);
+  const resultPointer = writeDetectionResult(
+    task,
+    DETECTION_RESULT_COMPLETE,
+    0,
+    DETECTION_STAGE_COMPONENTS_END,
+    0,
+    0,
+    0,
+    0,
+    0,
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_X_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_Y_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_WIDTH_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_HEIGHT_OFFSET),
+  );
+  store<u32>(resultPointer + DETECTION_RESULT_MATCH_POINTER_OFFSET, load<u32>(sessionPointer + DETECTION_INPUT_MATCH_POINTER_OFFSET));
+  store<u32>(resultPointer + DETECTION_RESULT_MATCH_COUNT_OFFSET, load<u32>(sessionPointer + DETECTION_INPUT_MATCH_COUNT_OFFSET));
+  store<u32>(resultPointer + DETECTION_RESULT_MASK_POINTER_OFFSET, finalMaskPointer);
+  store<u32>(resultPointer + DETECTION_RESULT_MASK_LENGTH_OFFSET, maskLength);
+  store<u32>(resultPointer + DETECTION_RESULT_OBSTACLE_COUNT_OFFSET, obstacleCount);
+  return resultPointer;
 }
 
 /** Scores one child Worker shard through the same canonical template implementation as the main instance. */

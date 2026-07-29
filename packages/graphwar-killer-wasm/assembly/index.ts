@@ -12,6 +12,7 @@ export {
   markArena,
   reserveArena,
   resetArena,
+  resetArenaAfterFault,
 } from "./memory";
 export { beginOneClickClear, resumeOneClickClear, runRouteTask, runSmartPathfinding } from "./pathfinding";
 export { runTrajectory } from "./trajectory";

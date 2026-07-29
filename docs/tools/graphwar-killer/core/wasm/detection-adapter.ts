@@ -1,6 +1,7 @@
 import type { SoldierMatchCandidate, SoldierTemplateCenterCandidate } from "../../detection/objects";
 import type { GraphwarDetectionWorkerStage, GraphwarDetectionWorkerTask } from "../../detection/runtime/protocol";
 import { GraphwarWasmFault, type GraphwarWasmSessionIdentity } from "../algorithm-backend";
+import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import type { BoundsRect } from "../types";
 import {
   GraphwarWasmAdapterError,
@@ -18,8 +19,8 @@ import {
 } from "./session";
 import { packGraphwarWasmDetectionInput } from "./task-adapter";
 
-const DETECTION_INPUT_BYTE_LENGTH = 152;
-const DETECTION_RESULT_BYTE_LENGTH = 80;
+const DETECTION_INPUT_BYTE_LENGTH = 160;
+const DETECTION_RESULT_BYTE_LENGTH = 96;
 const DETECTION_CANDIDATE_BYTE_LENGTH = 32;
 const DETECTION_MATCH_BYTE_LENGTH = 72;
 const DETECTION_SHARD_BYTE_LENGTH = 16;
@@ -33,6 +34,10 @@ const DETECTION_STAGE_CANDIDATES_START = 3;
 const DETECTION_STAGE_CANDIDATES_END = 4;
 const DETECTION_STAGE_TEMPLATES_START = 5;
 const DETECTION_STAGE_TEMPLATES_END = 6;
+const DETECTION_STAGE_OBSTACLE_MASK_START = 7;
+const DETECTION_STAGE_OBSTACLE_MASK_END = 8;
+const DETECTION_STAGE_COMPONENTS_START = 9;
+const DETECTION_STAGE_COMPONENTS_END = 10;
 
 const detectionTaskTags = {
   "detect-bounds-only": 1,
@@ -55,6 +60,15 @@ export interface GraphwarWasmDetectionRunningResult {
   edgeRect?: BoundsRect;
   stageEvents: readonly GraphwarWasmDetectionStageEvent[];
   taskType: GraphwarDetectionWorkerTask["type"];
+}
+
+export interface GraphwarWasmDetectionObjectsResult {
+  edgeRect: BoundsRect;
+  matches: readonly GraphwarWasmDetectionTemplateMatch[];
+  obstacleCount: number;
+  obstacleMask: Uint8Array;
+  stageEvents: readonly GraphwarWasmDetectionStageEvent[];
+  taskType: "detect-auto" | "detect-bounds";
 }
 
 export interface GraphwarWasmDetectionCandidate extends SoldierTemplateCenterCandidate {
@@ -92,13 +106,16 @@ type ActiveDetectionCommand = {
       phase: "templates-pending";
       shards: readonly GraphwarWasmDetectionTemplateShard[];
     }
-  | { matches: readonly GraphwarWasmDetectionTemplateMatch[]; phase: "obstacles-pending" }
+  | { matches: readonly GraphwarWasmDetectionTemplateMatch[]; phase: "obstacle-mask-pending" }
+  | { matches: readonly GraphwarWasmDetectionTemplateMatch[]; phase: "components-pending" }
 );
 
 interface RawDetectionResult {
   candidates: readonly GraphwarWasmDetectionCandidate[];
   edgeRect?: BoundsRect;
   matches: readonly GraphwarWasmDetectionTemplateMatch[];
+  obstacleCount: number;
+  obstacleMask?: Uint8Array;
   sessionPointer: number;
   shards: readonly { candidateCount: number; candidateStart: number; id: number }[];
   stageEvents: readonly GraphwarWasmDetectionStageEvent[];
@@ -194,7 +211,7 @@ export function createGraphwarWasmDetectionController(runtime: GraphwarWasmKerne
       if (handle) {
         sessions.cancelSession(handle);
       }
-      runtime.resetArena(mark);
+      resetDetectionArenaAfterFault(runtime, mark);
       throw error;
     }
   }
@@ -252,7 +269,7 @@ export function createGraphwarWasmDetectionController(runtime: GraphwarWasmKerne
       if (activeCommand?.handle === handle) {
         activeCommand = undefined;
         sessions.cancelSession(handle);
-        runtime.resetArena(command.mark);
+        resetDetectionArenaAfterFault(runtime, command.mark);
       }
       throw error;
     }
@@ -321,7 +338,7 @@ export function createGraphwarWasmDetectionController(runtime: GraphwarWasmKerne
         outputMinimumPointer,
         command.sessionDataMinimumPointer,
         command.task.type,
-        [DETECTION_STAGE_TEMPLATES_END],
+        [DETECTION_STAGE_TEMPLATES_END, DETECTION_STAGE_OBSTACLE_MASK_START],
         command.templateNames,
       );
       validateResultEdgeRect(command.task, result.edgeRect);
@@ -333,7 +350,10 @@ export function createGraphwarWasmDetectionController(runtime: GraphwarWasmKerne
       ) {
         throwDetectionResultError("Template scoring returned an inconsistent retained detection session");
       }
-      activeCommand = { ...command, matches: result.matches, phase: "obstacles-pending" };
+      if (result.obstacleMask || result.obstacleCount !== 0) {
+        throwDetectionResultError("Template scoring returned obstacle output before its phase");
+      }
+      activeCommand = { ...command, matches: result.matches, phase: "obstacle-mask-pending" };
       return {
         edgeRect: result.edgeRect,
         handle,
@@ -342,6 +362,113 @@ export function createGraphwarWasmDetectionController(runtime: GraphwarWasmKerne
         taskType: result.taskType,
         type: "running" as const,
       };
+    } catch (error) {
+      discardActiveCommandAfterFault(command, handle);
+      throw error;
+    }
+  }
+
+  function resumeObstacleMask(handle: GraphwarWasmSessionHandle) {
+    const command = requireActiveCommand(handle);
+    if (command.phase !== "obstacle-mask-pending") {
+      throw new GraphwarWasmAdapterError("invalid-session-state", "Detection obstacle-mask phase is no longer pending");
+    }
+    try {
+      const sessionPointer = sessions.getSessionPointer(handle);
+      const outputMinimumPointer = runtime.arenaCursor;
+      const result = copyGraphwarWasmDetectionResult(
+        runtime,
+        runtime.resumeDetectionTask(sessionPointer),
+        outputMinimumPointer,
+        command.sessionDataMinimumPointer,
+        command.task.type,
+        [DETECTION_STAGE_OBSTACLE_MASK_END, DETECTION_STAGE_COMPONENTS_START],
+        command.templateNames,
+      );
+      validateResultEdgeRect(command.task, result.edgeRect);
+      if (
+        result.state !== DETECTION_RESULT_RUNNING ||
+        result.sessionPointer !== sessionPointer ||
+        result.obstacleMask ||
+        result.obstacleCount !== 0
+      ) {
+        throwDetectionResultError("Obstacle source-mask phase returned an inconsistent retained session");
+      }
+      activeCommand = { ...command, phase: "components-pending" };
+      return {
+        edgeRect: result.edgeRect,
+        handle,
+        matches: command.matches,
+        stageEvents: result.stageEvents,
+        taskType: result.taskType,
+        type: "running" as const,
+      };
+    } catch (error) {
+      discardActiveCommandAfterFault(command, handle);
+      throw error;
+    }
+  }
+
+  function resumeObstacleComponents(
+    handle: GraphwarWasmSessionHandle,
+  ): Extract<GraphwarWasmSessionState<GraphwarWasmDetectionObjectsResult>, { type: "complete" }> {
+    const command = requireActiveCommand(handle);
+    if (command.phase !== "components-pending") {
+      throw new GraphwarWasmAdapterError("invalid-session-state", "Detection component phase is no longer pending");
+    }
+    try {
+      const sessionPointer = sessions.getSessionPointer(handle);
+      const outputMinimumPointer = runtime.arenaCursor;
+      const result = copyGraphwarWasmDetectionResult(
+        runtime,
+        runtime.resumeDetectionTask(sessionPointer),
+        outputMinimumPointer,
+        command.sessionDataMinimumPointer,
+        command.task.type,
+        [DETECTION_STAGE_COMPONENTS_END],
+        command.templateNames,
+      );
+      validateResultEdgeRect(command.task, result.edgeRect);
+      if (
+        result.state !== DETECTION_RESULT_COMPLETE ||
+        result.sessionPointer !== 0 ||
+        !result.edgeRect ||
+        !result.obstacleMask ||
+        result.taskType === "detect-bounds-only" ||
+        result.matches.length !== command.matches.length
+      ) {
+        throwDetectionResultError("Completed obstacle filtering returned an inconsistent detection result");
+      }
+      for (let index = 0; index < result.matches.length; index += 1) {
+        const match = result.matches[index];
+        const expected = command.matches[index];
+        if (
+          match.candidateIndex !== expected.candidateIndex ||
+          !Object.is(match.sourceCenterX, expected.sourceCenterX) ||
+          !Object.is(match.sourceCenterY, expected.sourceCenterY) ||
+          match.isMirrored !== expected.isMirrored ||
+          match.votes !== expected.votes ||
+          match.templateName !== expected.templateName ||
+          !Object.is(match.score, expected.score) ||
+          !Object.is(match.fixedScore, expected.fixedScore) ||
+          !Object.is(match.foregroundScore, expected.foregroundScore) ||
+          !Object.is(match.playerScore, expected.playerScore) ||
+          !Object.is(match.signatureScore, expected.signatureScore)
+        ) {
+          throwDetectionResultError("Completed obstacle filtering changed its retained template matches");
+        }
+      }
+      const complete = sessions.completeSession(handle, {
+        edgeRect: result.edgeRect,
+        matches: result.matches,
+        obstacleCount: result.obstacleCount,
+        obstacleMask: result.obstacleMask,
+        stageEvents: result.stageEvents,
+        taskType: result.taskType,
+      });
+      activeCommand = undefined;
+      runtime.resetArena(command.mark);
+      return complete;
     } catch (error) {
       discardActiveCommandAfterFault(command, handle);
       throw error;
@@ -366,11 +493,19 @@ export function createGraphwarWasmDetectionController(runtime: GraphwarWasmKerne
     if (activeCommand?.handle === handle) {
       activeCommand = undefined;
       sessions.cancelSession(handle);
-      runtime.resetArena(command.mark);
+      resetDetectionArenaAfterFault(runtime, command.mark);
     }
   }
 
-  return { begin, cancel, resumeBounds, resumeCandidates, resumeTemplates };
+  return {
+    begin,
+    cancel,
+    resumeBounds,
+    resumeCandidates,
+    resumeObstacleComponents,
+    resumeObstacleMask,
+    resumeTemplates,
+  };
 }
 
 /** Runs one template Worker shard entirely in its Worker-local WASM instance. */
@@ -618,6 +753,9 @@ export function copyGraphwarWasmDetectionResult(
   if ((flags & ~DETECTION_RESULT_FLAG_HAS_EDGE_RECT) !== 0) {
     throwDetectionResultError("Detection result contains unsupported flags");
   }
+  if (view.getUint32(92, true) !== 0) {
+    throwDetectionResultError("Detection result has nonzero reserved fields");
+  }
   const stageTags = copyGraphwarWasmUint32Values(
     runtime,
     { length: view.getUint32(16, true), pointer: view.getUint32(12, true) },
@@ -649,6 +787,10 @@ export function copyGraphwarWasmDetectionResult(
         DETECTION_STAGE_CANDIDATES_END,
         DETECTION_STAGE_TEMPLATES_START,
         DETECTION_STAGE_TEMPLATES_END,
+        DETECTION_STAGE_OBSTACLE_MASK_START,
+        DETECTION_STAGE_OBSTACLE_MASK_END,
+        DETECTION_STAGE_COMPONENTS_START,
+        DETECTION_STAGE_COMPONENTS_END,
       ],
       "detection.stage",
     );
@@ -661,9 +803,21 @@ export function copyGraphwarWasmDetectionResult(
         stage: "collecting-soldier-candidates",
       };
     }
+    if (tag === DETECTION_STAGE_TEMPLATES_START || tag === DETECTION_STAGE_TEMPLATES_END) {
+      return {
+        phase: tag === DETECTION_STAGE_TEMPLATES_START ? "start" : "end",
+        stage: "matching-soldier-templates",
+      };
+    }
+    if (tag === DETECTION_STAGE_OBSTACLE_MASK_START || tag === DETECTION_STAGE_OBSTACLE_MASK_END) {
+      return {
+        phase: tag === DETECTION_STAGE_OBSTACLE_MASK_START ? "start" : "end",
+        stage: "building-obstacle-mask",
+      };
+    }
     return {
-      phase: tag === DETECTION_STAGE_TEMPLATES_START ? "start" : "end",
-      stage: "matching-soldier-templates",
+      phase: tag === DETECTION_STAGE_COMPONENTS_START ? "start" : "end",
+      stage: "filtering-obstacle-components",
     };
   });
 
@@ -690,6 +844,31 @@ export function copyGraphwarWasmDetectionResult(
     resultPointer,
     templateNames,
   );
+  const maskRange = validateGraphwarWasmMemoryRange(
+    runtime,
+    { length: view.getUint32(84, true), pointer: view.getUint32(80, true) },
+    { alignment: 1, elementByteLength: 1, minimumPointer: sessionDataMinimumPointer },
+  );
+  if (maskRange.byteLength > 0 && maskRange.byteOffset + maskRange.byteLength > resultPointer) {
+    throwDetectionResultError("Detection obstacle mask overlaps or follows its result record");
+  }
+  const obstacleMask = new Uint8Array(maskRange.buffer, maskRange.byteOffset, maskRange.elementLength).slice();
+  let solidPixelCount = 0;
+  for (const value of obstacleMask) {
+    if (value !== 0 && value !== 1) {
+      throwDetectionResultError("Detection obstacle mask contains a non-binary value");
+    }
+    solidPixelCount += value;
+  }
+  const obstacleCount = validateGraphwarWasmU32(view.getUint32(88, true), "detection.obstacleCount");
+  if (
+    (obstacleMask.length !== 0 && obstacleMask.length !== GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT) ||
+    (obstacleMask.length === 0 && obstacleCount !== 0) ||
+    (solidPixelCount === 0) !== (obstacleCount === 0) ||
+    obstacleCount > solidPixelCount
+  ) {
+    throwDetectionResultError("Detection obstacle mask and component count form a half-state");
+  }
   assertDetectionOutputRangesAreDisjoint([
     {
       byteLength: view.getUint32(16, true) * Uint32Array.BYTES_PER_ELEMENT,
@@ -711,6 +890,7 @@ export function copyGraphwarWasmDetectionResult(
       label: "matches",
       pointer: view.getUint32(72, true),
     },
+    { byteLength: view.getUint32(84, true), label: "mask", pointer: view.getUint32(80, true) },
   ]);
 
   const hasEdgeRect = (flags & DETECTION_RESULT_FLAG_HAS_EDGE_RECT) !== 0;
@@ -728,6 +908,8 @@ export function copyGraphwarWasmDetectionResult(
     candidates,
     ...(edgeRect ? { edgeRect } : {}),
     matches,
+    obstacleCount,
+    ...(obstacleMask.length ? { obstacleMask } : {}),
     sessionPointer: validateGraphwarWasmU32(view.getUint32(20, true), "detection.sessionPointer"),
     stageEvents,
     state,
@@ -943,4 +1125,13 @@ function validateDetectionEdgeRect(rect: BoundsRect): BoundsRect {
 
 function throwDetectionResultError(message: string): never {
   throw new GraphwarWasmAdapterError("invalid-detection-result", message);
+}
+
+/** The original command fault stays authoritative; a failed cleanup only confirms that this instance must be discarded. */
+function resetDetectionArenaAfterFault(runtime: GraphwarWasmKernelRuntime, mark: number): void {
+  try {
+    runtime.resetArenaAfterFault(mark);
+  } catch {
+    // The page-level fuse destroys a faulted instance, so cleanup cannot replace the diagnostic that caused it.
+  }
 }

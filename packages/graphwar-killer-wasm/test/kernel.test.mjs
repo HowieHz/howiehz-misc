@@ -28,6 +28,7 @@ const arenaExports = [
   "reserveArena",
   "markArena",
   "resetArena",
+  "resetArenaAfterFault",
   "getArenaBase",
   "getArenaCursor",
   "getArenaPeak",
@@ -196,6 +197,29 @@ test("supports aligned reserve and provenance-bearing LIFO mark/reset", async ()
   assert.throws(() => exports.reserveArena(0xffff_ffff, 1), WebAssembly.RuntimeError);
 });
 
+test("fault cleanup validates an ancestor before unwinding nested marks", async () => {
+  const { exports } = await instantiateKernel();
+  const base = exports.initializeArena(64);
+  const rootMark = exports.markArena();
+  exports.reserveArena(17, 8);
+  exports.markArena();
+  exports.reserveArena(31, 16);
+  exports.markArena();
+  exports.reserveArena(47, 8);
+
+  exports.resetArenaAfterFault(rootMark);
+  assert.equal(exports.getArenaCursor(), base);
+
+  const retainedMark = exports.markArena();
+  exports.reserveArena(9, 8);
+  exports.markArena();
+  const cursorBeforeInvalidReset = exports.getArenaCursor();
+  assert.throws(() => exports.resetArenaAfterFault(rootMark), WebAssembly.RuntimeError);
+  assert.equal(exports.getArenaCursor(), cursorBeforeInvalidReset);
+  exports.resetArenaAfterFault(retainedMark);
+  assert.equal(exports.getArenaCursor(), base);
+});
+
 test("grows a continuous arena and requires callers to refresh detached views", async () => {
   const { exports } = await instantiateKernel();
   const base = exports.initializeArena(64);
@@ -235,16 +259,16 @@ test("keeps allocator count, canary, cursor, and high-water stable across long-l
   const detectionMark = exports.markArena();
   const rgbaPointer = exports.reserveArena(4, 1);
   new Uint8Array(exports.memory.buffer, rgbaPointer, 4).fill(255);
-  const detectionInputPointer = exports.reserveArena(152, 8);
-  const detectionInput = new DataView(exports.memory.buffer, detectionInputPointer, 152);
+  const detectionInputPointer = exports.reserveArena(160, 8);
+  const detectionInput = new DataView(exports.memory.buffer, detectionInputPointer, 160);
   detectionInput.setUint32(0, 1, true);
   detectionInput.setUint32(4, 1, true);
   detectionInput.setUint32(8, 1, true);
   detectionInput.setUint32(12, rgbaPointer, true);
   detectionInput.setUint32(16, 4, true);
-  const detectionBeginResult = exports.beginDetectionTask(detectionInputPointer, 152);
+  const detectionBeginResult = exports.beginDetectionTask(detectionInputPointer, 160);
   assert.ok(detectionBeginResult > detectionInputPointer);
-  const detectionSessionPointer = new DataView(exports.memory.buffer, detectionBeginResult, 80).getUint32(20, true);
+  const detectionSessionPointer = new DataView(exports.memory.buffer, detectionBeginResult, 96).getUint32(20, true);
   assert.equal(detectionSessionPointer, detectionInputPointer);
   assert.ok(exports.resumeDetectionTask(detectionSessionPointer, 0, 0) > detectionBeginResult);
   assert.throws(() => exports.resumeDetectionTask(detectionSessionPointer, 0, 0), WebAssembly.RuntimeError);

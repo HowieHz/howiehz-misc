@@ -673,3 +673,26 @@ export const detectionCandidateVotesOffset = CANDIDATE_VOTES;
 export const detectionCandidateMirroredOffset = CANDIDATE_MIRRORED;
 export const detectionCandidateIndexOffset = CANDIDATE_INDEX;
 export const detectionMatchCandidateIndexOffset = MATCH_CANDIDATE_INDEX;
+export const detectionMatchXOffset = MATCH_X;
+export const detectionMatchYOffset = MATCH_Y;
+export const detectionMatchMirroredOffset = MATCH_MIRRORED;
+
+@inline
+export function getDetectionSoldierCanvasCenter(commandPointer: u32): f64 {
+  return profileValue(commandPointer, PROFILE_CANVAS_CENTER);
+}
+
+@inline
+export function getDetectionSoldierVisibleCenterX(commandPointer: u32, isMirrored: bool): f64 {
+  return profileValue(commandPointer, isMirrored ? PROFILE_MIRROR_VISIBLE_CENTER_X : PROFILE_VISIBLE_CENTER_X);
+}
+
+@inline
+export function getDetectionSoldierVisibleCenterY(commandPointer: u32): f64 {
+  return profileValue(commandPointer, PROFILE_VISIBLE_CENTER_Y);
+}
+
+@inline
+export function getDetectionSoldierVisibleRadius(commandPointer: u32): f64 {
+  return profileValue(commandPointer, PROFILE_VISIBLE_RADIUS);
+}

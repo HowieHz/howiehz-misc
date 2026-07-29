@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   collectSoldierTemplateCenterCandidatesForMatching,
+  createSoldierDetectionBoxes,
+  detectGraphwarObstaclesInBounds,
   detectGraphwarPlayArea,
   finalizeSoldierTemplateMatches,
   getGraphwarDetectionScale,
@@ -183,12 +185,23 @@ describe("Graphwar WASM detection bounds", () => {
       Array.from({ length: Math.min(4, expectedCandidates.length) }, (_, index) => index + 1),
     );
 
+    const retainedCursor = runtime.arenaCursor;
+    const largeFallbackImage = createWhiteImage(802, 632);
+    const byteLengthBeforeFallback = runtime.buffer.byteLength;
+    runGraphwarWasmDetectionTemplateShard(runtime, {
+      candidates: [{ candidateIndex: 0, isMirrored: false, votes: 1, x: 100, y: 100 }],
+      edgeRect: { height: 600, width: 780, x: 5, y: 4 },
+      imageData: largeFallbackImage,
+    });
+    expect(runtime.buffer.byteLength).toBeGreaterThan(byteLengthBeforeFallback);
+    expect(runtime.arenaCursor).toBe(retainedCursor);
     const shardResults = candidateState.shards.map((shard) => {
       const matches = runGraphwarWasmDetectionTemplateShard(runtime, {
         candidates: shard.candidates,
         edgeRect,
         imageData,
       });
+      expect(runtime.arenaCursor).toBe(retainedCursor);
       const expectedMatches = matchSoldierTemplates(
         imageData,
         edgeRect,
@@ -205,7 +218,13 @@ describe("Graphwar WASM detection bounds", () => {
       settings,
     );
     expect(completedTemplates.matches.map(({ candidateIndex: _, ...match }) => match)).toEqual(expectedMatches);
-    controller.cancel(started.handle);
+    expect(controller.resumeObstacleMask(started.handle).stageEvents).toEqual([
+      { phase: "end", stage: "building-obstacle-mask" },
+      { phase: "start", stage: "filtering-obstacle-components" },
+    ]);
+    const completed = controller.resumeObstacleComponents(started.handle);
+    expect(completed.result).toMatchObject({ obstacleCount: 0 });
+    expect(completed.result.obstacleMask).toEqual(new Uint8Array(770 * 450));
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
@@ -241,7 +260,8 @@ describe("Graphwar WASM detection bounds", () => {
           settings,
         ),
       );
-      controller.cancel(started.handle);
+      controller.resumeObstacleMask(started.handle);
+      controller.resumeObstacleComponents(started.handle);
       expect(runtime.arenaCursor).toBe(runtime.arenaBase);
     }
   });
@@ -314,7 +334,7 @@ describe("Graphwar WASM detection bounds", () => {
     const memory = { arenaBase: 8, arenaCursor: 256, buffer };
     const resultPointer = 64;
     const stagePointer = 48;
-    const resultView = new DataView(buffer, resultPointer, 80);
+    const resultView = new DataView(buffer, resultPointer, 96);
     resultView.setUint32(0, 1, true);
     resultView.setUint32(4, 1, true);
     resultView.setUint32(8, 1, true);
@@ -344,12 +364,165 @@ describe("Graphwar WASM detection bounds", () => {
     );
   });
 
+  it("matches obstacle resampling, morphology, guide removal, soldier clearing, and component restoration", async () => {
+    const imageData = createWhiteImage(140, 90);
+    const edgeRect = { height: 80, width: 130, x: 5, y: 4 };
+    for (let x = 24; x <= 52; x += 1) {
+      // red > green used to underflow an unsigned `green - red` green-pixel check in WASM.
+      setPixel(imageData, x, 21, 170, 160, 130);
+      setPixel(imageData, x, 42, 170, 160, 130);
+    }
+    for (let y = 22; y < 42; y += 1) {
+      setPixel(imageData, 24, y, 170, 160, 130);
+      setPixel(imageData, 52, y, 170, 160, 130);
+    }
+    for (let y = 22; y < 42; y += 1) {
+      for (let x = 25; x < 52; x += 1) {
+        setPixel(imageData, x, y, 64, 64, 64);
+      }
+    }
+    for (let y = 34; y < 58; y += 1) {
+      for (let x = 66; x < 93; x += 1) {
+        setPixel(imageData, x, y, 88, 88, 88);
+      }
+    }
+    const task = {
+      edgeRect,
+      imageData,
+      soldierSettings: { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 1 },
+      thresholds: { minArea: 12 },
+      type: "detect-bounds",
+    } satisfies GraphwarDetectionWorkerTask;
+    const runtime = await createRuntime(module);
+    const controller = createGraphwarWasmDetectionController(runtime);
+    const started = controller.begin({ backendGeneration: 9, requestId: 41, task });
+    const candidates = controller.resumeCandidates(started.handle);
+    const templates = controller.resumeTemplates(started.handle);
+    expect(candidates.shards).toHaveLength(0);
+    const byteLengthBeforeObstacleScratch = runtime.buffer.byteLength;
+    controller.resumeObstacleMask(started.handle);
+    expect(runtime.buffer.byteLength).toBeGreaterThan(byteLengthBeforeObstacleScratch);
+    const completed = controller.resumeObstacleComponents(started.handle);
+    const expected = detectGraphwarObstaclesInBounds(
+      imageData,
+      edgeRect,
+      task.thresholds,
+      createSoldierDetectionBoxes(
+        templates.matches.map(({ candidateIndex: _, ...match }) => match),
+        edgeRect,
+      ),
+    );
+    expect(completed.result.obstacleCount).toBe(expected.count);
+    expect(completed.result.obstacleMask).toEqual(expected.mask);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+    expect(runtime.getArenaDiagnostics()).toMatchObject({ allocatorCallCount: 1, isCanaryIntact: true });
+  });
+
+  it("removes accepted soldier visual regions before restoring obstacle details", async () => {
+    const imageData = createWhiteImage(120, 72);
+    const edgeRect = { height: 64, width: 110, x: 5, y: 3 };
+    for (let y = 26; y <= 42; y += 1) {
+      for (let x = 51; x <= 69; x += 1) {
+        setPixel(imageData, x, y, 56, 56, 56);
+      }
+    }
+    setPixel(imageData, 60, 34, 0xff, 0xe8, 0x20);
+    setPixel(imageData, 61, 34, 0xff, 0xe8, 0x20);
+    const task = {
+      edgeRect,
+      imageData,
+      soldierSettings: { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 2 },
+      thresholds: { minArea: 3 },
+      type: "detect-bounds",
+    } satisfies GraphwarDetectionWorkerTask;
+    const runtime = await createRuntime(module);
+    const controller = createGraphwarWasmDetectionController(runtime);
+    const started = controller.begin({ backendGeneration: 10, requestId: 42, task });
+    const candidates = controller.resumeCandidates(started.handle);
+    expect(candidates.shards.length).toBeGreaterThan(0);
+    const shardResults = candidates.shards.map((shard) => ({
+      id: shard.id,
+      matches: runGraphwarWasmDetectionTemplateShard(runtime, {
+        candidates: shard.candidates,
+        edgeRect,
+        imageData,
+      }).map((match) => ({
+        ...match,
+        fixedScore: 1,
+        foregroundScore: 1,
+        playerScore: 1,
+        score: 1,
+        signatureScore: 1,
+      })),
+      session: candidates.handle,
+    }));
+    const templates = controller.resumeTemplates(started.handle, shardResults);
+    expect(templates.matches.length).toBeGreaterThan(0);
+    controller.resumeObstacleMask(started.handle);
+    const completed = controller.resumeObstacleComponents(started.handle);
+    const soldiers = createSoldierDetectionBoxes(
+      templates.matches.map(({ candidateIndex: _, ...match }) => match),
+      edgeRect,
+    );
+    const expected = detectGraphwarObstaclesInBounds(imageData, edgeRect, task.thresholds, soldiers);
+    const withoutSoldiers = detectGraphwarObstaclesInBounds(imageData, edgeRect, task.thresholds, []);
+    expect(completed.result.obstacleMask).toEqual(expected.mask);
+    expect(completed.result.obstacleCount).toBe(expected.count);
+    expect(completed.result.obstacleMask).not.toEqual(withoutSoldiers.mask);
+  });
+
+  it("reuses the obstacle arena high-water mark across alternating large and small tasks", async () => {
+    const runtime = await createRuntime(module);
+    const controller = createGraphwarWasmDetectionController(runtime);
+    const largeImage = createWhiteImage(802, 632);
+    const smallImage = createWhiteImage(96, 64);
+    for (let componentIndex = 0; componentIndex < 8; componentIndex += 1) {
+      const startX = 40 + (componentIndex % 4) * 160;
+      const startY = 90 + Math.floor(componentIndex / 4) * 220;
+      for (let y = startY; y < startY + 12; y += 1) {
+        for (let x = startX; x < startX + 12; x += 1) {
+          setPixel(largeImage, x, y, 48);
+        }
+      }
+      setPixel(largeImage, 80 + componentIndex * 70, 45, 0xff, 0xe8, 0x20);
+      setPixel(largeImage, 81 + componentIndex * 70, 45, 0xff, 0xe8, 0x20);
+    }
+    const createTask = (imageData: ImageData) =>
+      ({
+        edgeRect: { height: imageData.height - 8, width: imageData.width - 10, x: 5, y: 4 },
+        imageData,
+        soldierSettings: { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 1 },
+        thresholds: { minArea: 3 },
+        type: "detect-bounds",
+      }) satisfies GraphwarDetectionWorkerTask;
+    const largeTask = createTask(largeImage);
+    const smallTask = createTask(smallImage);
+
+    const warmResult = runCompleteObstacleTask(controller, largeTask, 1);
+    expect(warmResult.candidateCount).toBeGreaterThan(0);
+    expect(warmResult.result.obstacleCount).toBeGreaterThan(0);
+    const stableByteLength = runtime.buffer.byteLength;
+    const stablePeak = runtime.getArenaDiagnostics().peakUsedBytes;
+    for (let iteration = 0; iteration < 4; iteration += 1) {
+      const result = runCompleteObstacleTask(controller, iteration % 2 === 0 ? smallTask : largeTask, iteration + 2);
+      expect(result.candidateCount > 0).toBe(iteration % 2 !== 0);
+      expect(result.result.obstacleCount > 0).toBe(iteration % 2 !== 0);
+      expect(runtime.buffer.byteLength).toBe(stableByteLength);
+      expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+      expect(runtime.getArenaDiagnostics()).toMatchObject({
+        allocatorCallCount: 1,
+        isCanaryIntact: true,
+        peakUsedBytes: stablePeak,
+      });
+    }
+  });
+
   it("rejects aliased detection output arrays", () => {
     const buffer = new ArrayBuffer(512);
     const memory = { arenaBase: 8, arenaCursor: 512, buffer };
     const sharedPointer = 64;
     const resultPointer = 160;
-    const resultView = new DataView(buffer, resultPointer, 80);
+    const resultView = new DataView(buffer, resultPointer, 96);
     resultView.setUint32(0, 1, true);
     resultView.setUint32(4, 1, true);
     resultView.setUint32(12, sharedPointer, true);
@@ -363,6 +536,63 @@ describe("Graphwar WASM detection bounds", () => {
     expectDetectionResultError(() =>
       copyGraphwarWasmDetectionResult(memory, resultPointer, 32, 32, "detect-bounds-only", [1, 2], []),
     );
+  });
+
+  it("rejects an obstacle mask that overlaps its result record", () => {
+    const fixture = createCompletedObstacleResultMemory();
+    fixture.resultView.setUint32(80, fixture.maskPointer + 8, true);
+    expectDetectionResultError(() =>
+      copyGraphwarWasmDetectionResult(fixture.memory, fixture.resultPointer, 32, 32, "detect-bounds", [10], []),
+    );
+  });
+
+  it("binds obstacle component count to the actual solid mask pixels", () => {
+    const fixture = createCompletedObstacleResultMemory();
+    expect(
+      copyGraphwarWasmDetectionResult(fixture.memory, fixture.resultPointer, 32, 32, "detect-bounds", [10], []),
+    ).toMatchObject({ obstacleCount: 0, obstacleMask: new Uint8Array(770 * 450) });
+
+    fixture.mask[0] = 1;
+    expectDetectionResultError(() =>
+      copyGraphwarWasmDetectionResult(fixture.memory, fixture.resultPointer, 32, 32, "detect-bounds", [10], []),
+    );
+    fixture.resultView.setUint32(88, 2, true);
+    expectDetectionResultError(() =>
+      copyGraphwarWasmDetectionResult(fixture.memory, fixture.resultPointer, 32, 32, "detect-bounds", [10], []),
+    );
+  });
+
+  it("unwinds an obstacle command's leaked nested mark without replacing the original fault", async () => {
+    const runtime = await createRuntime(module);
+    const controller = createGraphwarWasmDetectionController(runtime);
+    const task = {
+      edgeRect: { height: 56, width: 86, x: 5, y: 4 },
+      imageData: createWhiteImage(96, 64),
+      soldierSettings: { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 1 },
+      thresholds: { minArea: 3 },
+      type: "detect-bounds",
+    } satisfies GraphwarDetectionWorkerTask;
+    const started = controller.begin({ backendGeneration: 13, requestId: 1, task });
+    controller.resumeCandidates(started.handle);
+    controller.resumeTemplates(started.handle);
+    const fault = new GraphwarWasmFault("trap", "injected obstacle scratch trap");
+    vi.spyOn(runtime, "resumeDetectionTask").mockImplementationOnce(() => {
+      runtime.markArena();
+      throw fault;
+    });
+
+    let thrown: unknown;
+    try {
+      controller.resumeObstacleMask(started.handle);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBe(fault);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+    expect(runtime.getArenaDiagnostics()).toMatchObject({ allocatorCallCount: 1, isCanaryIntact: true });
+
+    runCompleteObstacleTask(controller, task, 2);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
   it("classifies malformed template output and changed candidate identity as a typed output fault", async () => {
@@ -395,6 +625,50 @@ describe("Graphwar WASM detection bounds", () => {
     expect(error).toMatchObject({ code: "output" });
   });
 });
+
+function runCompleteObstacleTask(
+  controller: ReturnType<typeof createGraphwarWasmDetectionController>,
+  task: Extract<GraphwarDetectionWorkerTask, { type: "detect-bounds" }>,
+  requestId: number,
+) {
+  const started = controller.begin({ backendGeneration: 12, requestId, task });
+  const candidates = controller.resumeCandidates(started.handle);
+  expect(candidates.shards).toHaveLength(0);
+  controller.resumeTemplates(started.handle);
+  controller.resumeObstacleMask(started.handle);
+  return {
+    candidateCount: candidates.candidates.length,
+    result: controller.resumeObstacleComponents(started.handle).result,
+  };
+}
+
+function createCompletedObstacleResultMemory() {
+  const maskLength = 770 * 450;
+  const maskPointer = 64;
+  const resultPointer = 346_568;
+  const buffer = new ArrayBuffer(resultPointer + 96);
+  const memory = { arenaBase: 8, arenaCursor: buffer.byteLength, buffer };
+  new Uint32Array(buffer, 32, 1)[0] = 10;
+  const resultView = new DataView(buffer, resultPointer, 96);
+  resultView.setUint32(0, 1, true);
+  resultView.setUint32(4, 3, true);
+  resultView.setUint32(8, 1, true);
+  resultView.setUint32(12, 32, true);
+  resultView.setUint32(16, 1, true);
+  resultView.setFloat64(32, 1, true);
+  resultView.setFloat64(40, 2, true);
+  resultView.setFloat64(48, 770, true);
+  resultView.setFloat64(56, 450, true);
+  resultView.setUint32(80, maskPointer, true);
+  resultView.setUint32(84, maskLength, true);
+  return {
+    mask: new Uint8Array(buffer, maskPointer, maskLength),
+    maskPointer,
+    memory,
+    resultPointer,
+    resultView,
+  };
+}
 
 async function createRuntime(module: WebAssembly.Module): Promise<GraphwarWasmKernelRuntime> {
   return instantiateGraphwarWasmRuntime(module, { initialArenaCapacity: 64 });

@@ -219,6 +219,43 @@ export function resetArena(markToken: u32): void {
   closeArenaMark(markToken, true);
 }
 
+/**
+ * Discards a faulted nested command and every mark it left above the caller-owned root mark.
+ * A validation pass proves the target is an ancestor before any arena state is mutated.
+ */
+export function resetArenaAfterFault(markToken: u32): void {
+  requireArenaInitialized();
+  let frame = arenaMarkFrame;
+  let token = arenaMarkToken;
+  let hasTarget = false;
+  while (frame != 0) {
+    if (token == 0 || load<u32>(frame) != MARK_MAGIC || load<u32>(frame + MARK_TOKEN_OFFSET) != token) trap();
+    const previousFrame = load<u32>(frame + MARK_PREVIOUS_FRAME_OFFSET);
+    const previousToken = load<u32>(frame + MARK_PREVIOUS_TOKEN_OFFSET);
+    const previousCursor = load<u32>(frame + MARK_PREVIOUS_CURSOR_OFFSET);
+    if (
+      previousCursor < arenaBase ||
+      previousCursor > frame ||
+      (previousFrame == 0 && previousToken != 0) ||
+      (previousFrame != 0 && (previousToken == 0 || previousFrame < arenaBase || previousFrame >= frame))
+    ) {
+      trap();
+    }
+    if (token == markToken) {
+      hasTarget = true;
+      break;
+    }
+    frame = previousFrame;
+    token = previousToken;
+  }
+  if (!hasTarget) trap();
+
+  while (arenaMarkToken != markToken) {
+    closeArenaMark(arenaMarkToken, true);
+  }
+  closeArenaMark(markToken, true);
+}
+
 /** Commits allocations made after the current mark while releasing its LIFO provenance frame. */
 export function commitArena(markToken: u32): void {
   closeArenaMark(markToken, false);
